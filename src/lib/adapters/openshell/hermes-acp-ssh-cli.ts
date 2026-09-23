@@ -20,6 +20,7 @@ import { isValidName } from "../../sandbox-name-contract";
 import { isSshTransportFailure } from "../../state/ssh-transport";
 import { resolveOpenshellBinaryOrNull } from "./resolve-shared";
 import { buildOpenShellRuntimeSelectionEnv } from "./runtime-selection";
+import { captureSandboxSshConfig } from "./sandbox-ssh-config-capture";
 import { OPENSHELL_DEFAULT_WORKSPACE } from "./sandbox-ssh-host";
 import {
   HERMES_ACP_EXECUTABLE,
@@ -297,7 +298,7 @@ async function runProbe(
     return failure(
       "cancelled",
       "The Hermes ACP compatibility probe was cancelled.",
-      requestedSignal === "SIGTERM" ? 143 : 130,
+      requestedSignal === "SIGINT" ? 130 : 143,
     );
   }
   if (outputOverflow) {
@@ -449,33 +450,6 @@ function buildRuntimeEnv(gatewayName: string): NodeJS.ProcessEnv {
   return environment;
 }
 
-function captureConfig(
-  binary: string,
-  request: HermesAcpSshRequest,
-  environment: NodeJS.ProcessEnv,
-  capture: CaptureOpenShell,
-): string | null {
-  const options = {
-    env: environment,
-    ignoreError: true,
-    includeStreams: true,
-    maxBuffer: SSH_CONFIG_MAX_BYTES,
-    openshellBinary: binary,
-    replaceEnv: true,
-    timeout: ACP_SETUP_TIMEOUT_MS,
-  } as const;
-  const sandbox = capture(
-    ["sandbox", "get", "-g", request.gatewayName, request.sandboxName],
-    options,
-  );
-  if (sandbox.status !== 0 || sandbox.error) return null;
-  const result = capture(
-    ["sandbox", "ssh-config", "-g", request.gatewayName, request.sandboxName],
-    options,
-  );
-  return result.status === 0 && !result.error && result.output.trim() ? result.output : null;
-}
-
 function parseExactVersion(output: string): string | null {
   const matches = [...output.matchAll(/(?:^|[^0-9.])(\d+\.\d+\.\d+)(?![0-9.])/gu)]
     .map((match) => match[1])
@@ -568,12 +542,24 @@ export function createCliHermesAcpSshTransport(
           69,
         );
       }
-      const config = captureConfig(
-        binaries.openshell,
-        request,
-        environment,
-        deps.captureOpenShell ?? captureOpenShell,
+      const configResult = captureSandboxSshConfig(
+        request.sandboxName,
+        request.gatewayName,
+        (args) =>
+          (deps.captureOpenShell ?? captureOpenShell)(args, {
+            env: environment,
+            ignoreError: true,
+            includeStreams: true,
+            maxBuffer: SSH_CONFIG_MAX_BYTES,
+            openshellBinary: binaries.openshell,
+            replaceEnv: true,
+            timeout: ACP_SETUP_TIMEOUT_MS,
+          }),
       );
+      const config =
+        configResult.status === 0 && !configResult.error && configResult.output.trim()
+          ? configResult.output
+          : null;
       if (!config) {
         return failure(
           "transport",

@@ -19,6 +19,14 @@ import {
 } from "../docker-driver-gateway-prelaunch";
 import { waitForStandaloneDockerDriverGateway } from "../docker-driver-gateway-readiness";
 import * as dockerDriverGatewayRuntimeMarker from "../docker-driver-gateway-runtime-marker";
+import {
+  createDockerDriverGatewayStateOwnership,
+  type DockerDriverGatewayStateOwnership,
+} from "./state-ownership";
+import {
+  getTrustedActiveOpenShellGatewayUserServiceStopTarget,
+  type TrustedActiveOpenShellGatewayUserServiceStopTarget,
+} from "../docker-driver-gateway-service";
 import * as gatewayStateLifecycleLock from "./state-lifecycle-lock";
 import { formatGatewayHealthWaitLimit } from "../gateway-health-wait";
 import { verifySandboxBridgeGatewayReachableOrExit } from "../gateway-sandbox-reachability";
@@ -32,6 +40,7 @@ type DynamicGatewayHelpers = ReturnType<
 >;
 
 export interface DockerDriverGatewayStartDeps {
+  observer: import("../../adapters/openshell/gateway-reuse").OpenShellGatewayReuseObserver;
   SUPPORTED_OPENSHELL_FALLBACK_VERSION: string;
   checkGatewayPortAvailable(): Promise<import("../preflight").PortProbeResult>;
   clearDockerDriverGatewayRuntimeFiles: GatewayRuntimeHelpers["clearDockerDriverGatewayRuntimeFiles"];
@@ -47,18 +56,22 @@ export interface DockerDriverGatewayStartDeps {
   getDockerDriverGatewayPortListenerScan: GatewayRuntimeHelpers["getDockerDriverGatewayPortListenerScan"];
   getDockerDriverGatewayRuntimeDrift: GatewayRuntimeHelpers["getDockerDriverGatewayRuntimeDrift"];
   getDockerDriverGatewayStateDir: GatewayRuntimeHelpers["getDockerDriverGatewayStateDir"];
+  getGatewayPortListenerRawScan: GatewayRuntimeHelpers["getGatewayPortListenerRawScan"];
+  getTrustedActiveOpenShellGatewayUserServiceStopTarget?: typeof getTrustedActiveOpenShellGatewayUserServiceStopTarget;
   getInstalledOpenshellVersion: typeof import("../openshell-version").getInstalledOpenshellVersion;
   isDockerDriverGatewayHttpReady: DynamicGatewayHelpers["isDockerDriverGatewayHttpReady"];
+  isDockerDriverGatewayProcess: GatewayRuntimeHelpers["isDockerDriverGatewayProcess"];
   isDockerDriverGatewayProcessAlive: GatewayRuntimeHelpers["isDockerDriverGatewayProcessAlive"];
-  isDockerDriverGatewayStateInUse: GatewayRuntimeHelpers["isDockerDriverGatewayStateInUse"];
-  isGatewayHealthy(status: string, namedInfo: string, activeInfo: string): boolean;
   isGatewayTcpReady: DynamicGatewayHelpers["isGatewayTcpReady"];
   isPidAlive: GatewayRuntimeHelpers["isPidAlive"];
   logDockerDriverGatewayRestart(reason: string): void;
-  registerDockerDriverGatewayEndpoint(runtimeSelection?: OpenShellRuntimeSelection): boolean;
+  registerDockerDriverGatewayEndpoint(
+    runtimeSelection?: OpenShellRuntimeSelection,
+  ): Promise<boolean>;
   rememberDockerDriverGatewayPid: GatewayRuntimeHelpers["rememberDockerDriverGatewayPid"];
   resolveOpenShellGatewayBinary: GatewayRuntimeHelpers["resolveOpenShellGatewayBinary"];
   resolveOpenShellSandboxBinary: GatewayRuntimeHelpers["resolveOpenShellSandboxBinary"];
+  runner: Pick<typeof import("../../runner"), "runCapture" | "runCaptureEx">;
   runCaptureOpenshell(
     args: string[],
     options?: {
@@ -78,6 +91,10 @@ export interface DockerDriverGatewayStart {
     runtimeSelection?: OpenShellRuntimeSelection;
     skipSandboxBridgeReachability?: boolean;
   }): Promise<void>;
+  verifyDockerDriverGatewaySandboxReachability(options: {
+    exitOnFailure: boolean;
+    skipSandboxBridgeReachability: boolean;
+  }): Promise<void>;
 }
 
 export function resolveDockerDriverGatewayRuntimeMarkerEndpoint(
@@ -87,9 +104,79 @@ export function resolveDockerDriverGatewayRuntimeMarkerEndpoint(
   return desiredEnv.OPENSHELL_GRPC_ENDPOINT?.trim() || fallback();
 }
 
+function gatewayServiceStopTargetsMatch(
+  first: TrustedActiveOpenShellGatewayUserServiceStopTarget,
+  second: TrustedActiveOpenShellGatewayUserServiceStopTarget | null,
+): boolean {
+  return (
+    second !== null &&
+    second.pid === first.pid &&
+    second.executablePath === first.executablePath &&
+    second.stopCommand === first.stopCommand
+  );
+}
+
+/** Return a stop command only when one stable service owns the selected port and state. */
+export async function resolveSelectedGatewayServiceStopCommand(
+  deps: Pick<
+    DockerDriverGatewayStartDeps,
+    | "checkGatewayPortAvailable"
+    | "getGatewayPortListenerRawScan"
+    | "getTrustedActiveOpenShellGatewayUserServiceStopTarget"
+  > &
+    Pick<DockerDriverGatewayStateOwnership, "isDockerDriverGatewayPidUsingSelectedState">,
+): Promise<string | null> {
+  const resolveServiceTarget =
+    deps.getTrustedActiveOpenShellGatewayUserServiceStopTarget ??
+    getTrustedActiveOpenShellGatewayUserServiceStopTarget;
+  try {
+    const serviceBefore = resolveServiceTarget();
+    if (!serviceBefore) return null;
+    const listenerScan = deps.getGatewayPortListenerRawScan(await deps.checkGatewayPortAvailable());
+    if (
+      !listenerScan.complete ||
+      listenerScan.pids.length !== 1 ||
+      listenerScan.pids[0] !== serviceBefore.pid ||
+      !deps.isDockerDriverGatewayPidUsingSelectedState(serviceBefore.pid)
+    ) {
+      return null;
+    }
+    const serviceAfter = resolveServiceTarget();
+    return gatewayServiceStopTargetsMatch(serviceBefore, serviceAfter)
+      ? serviceBefore.stopCommand
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 export function createDockerDriverGatewayStart(
   deps: DockerDriverGatewayStartDeps,
 ): DockerDriverGatewayStart {
+  const verifyReachability =
+    deps.verifySandboxBridgeGatewayReachableOrExit ?? verifySandboxBridgeGatewayReachableOrExit;
+
+  async function verifyDockerDriverGatewaySandboxReachability({
+    exitOnFailure,
+    skipSandboxBridgeReachability,
+  }: {
+    exitOnFailure: boolean;
+    skipSandboxBridgeReachability: boolean;
+  }): Promise<void> {
+    await verifyReachability(exitOnFailure, {
+      port: deps.gatewayPort(),
+      skip: skipSandboxBridgeReachability,
+    });
+  }
+  const stateOwnership = createDockerDriverGatewayStateOwnership({
+    getDockerDriverGatewayStateDir: deps.getDockerDriverGatewayStateDir,
+    isDockerDriverGatewayProcess: deps.isDockerDriverGatewayProcess,
+    isPidAlive: deps.isPidAlive,
+    resolveOpenShellGatewayBinary: deps.resolveOpenShellGatewayBinary,
+    runCapture: deps.runner.runCapture,
+    runCaptureEx: deps.runner.runCaptureEx,
+  });
+
   async function startDockerDriverGateway({
     exitOnFailure = true,
     output,
@@ -119,10 +206,13 @@ export function createDockerDriverGatewayStart(
       args,
       options = {},
     ) => deps.runCaptureOpenshell(args, { ...options, ...runtimeOptions });
+    let registrationAttempt: Promise<boolean> | undefined;
     const registerDockerDriverGatewayEndpoint = () =>
-      deps.registerDockerDriverGatewayEndpoint(runtimeSelection);
-    const verifyReachability =
-      deps.verifySandboxBridgeGatewayReachableOrExit ?? verifySandboxBridgeGatewayReachableOrExit;
+      (registrationAttempt ??= deps.registerDockerDriverGatewayEndpoint(runtimeSelection));
+    const observer = {
+      observeGatewayReuse: (request: Parameters<typeof deps.observer.observeGatewayReuse>[0]) =>
+        deps.observer.observeGatewayReuse({ ...request, runtimeSelection }),
+    };
     const stateDir = deps.gatewayBinding.resolveGatewayStateDirForPort({
       configured: process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
       home: os.homedir(),
@@ -195,8 +285,8 @@ export function createDockerDriverGatewayStart(
             isDockerDriverGatewayReady: () =>
               deps.isDockerDriverGatewayHttpReady(undefined, undefined, driftGatewayEnv),
             registerDockerDriverGatewayEndpoint,
+            observer,
             preparePortForOpenShellGatewayUserServiceStart: servicePortOwnership.preparePort,
-            runCaptureOpenshell,
             skipSandboxBridgeReachability,
             validatePortOwnerForOpenShellGatewayUserServiceStart:
               servicePortOwnership.validatePortOwner,
@@ -222,14 +312,13 @@ export function createDockerDriverGatewayStart(
                 { gatewayBin: identityGatewayBin },
               ),
               pidFileGatewayPid: deps.getDockerDriverGatewayPid(),
-              initialHealth: dockerDriverGatewayCutover.readDockerDriverGatewayHealth(
-                runCaptureOpenshell,
+              initialHealth: await dockerDriverGatewayCutover.readDockerDriverGatewayHealth(
+                observer,
                 deps.gatewayName(),
               ),
             },
             {
               isDockerDriverGatewayProcessAlive: deps.isDockerDriverGatewayProcessAlive,
-              isGatewayHealthy: deps.isGatewayHealthy,
               getDockerDriverGatewayRuntimeDrift: deps.getDockerDriverGatewayRuntimeDrift,
               logDockerDriverGatewayRestart: output
                 ? (reason) => output.log(`  Restarting OpenShell Docker-driver gateway: ${reason}`)
@@ -243,13 +332,10 @@ export function createDockerDriverGatewayStart(
                   ...(output ? { output } : {}),
                   port: deps.gatewayPort(),
                 }),
-              readGatewayHealth: () => ({
-                status: runCaptureOpenshell(["status"], { ignoreError: true }),
-                namedInfo: runCaptureOpenshell(["gateway", "info", "-g", deps.gatewayName()], {
-                  ignoreError: true,
+              readGatewayHealth: () =>
+                observer.observeGatewayReuse({
+                  target: { kind: "named", gatewayName: deps.gatewayName() },
                 }),
-                activeInfo: runCaptureOpenshell(["gateway", "info"], { ignoreError: true }),
-              }),
               rememberDockerDriverGatewayPid: deps.rememberDockerDriverGatewayPid,
               reapDuplicateHostGatewaysExceptOrFail: (
                 keepPid,
@@ -334,7 +420,6 @@ export function createDockerDriverGatewayStart(
         gatewayName: deps.gatewayName(),
         healthPollCount: pollCount,
         healthPollIntervalSeconds: pollInterval,
-        isGatewayHealthy: deps.isGatewayHealthy,
         isGatewayTcpReady: deps.isGatewayTcpReady,
         isPidAlive: deps.isPidAlive,
         onHealthy: async () => {
@@ -345,17 +430,24 @@ export function createDockerDriverGatewayStart(
           });
         },
         registerGatewayEndpoint: registerDockerDriverGatewayEndpoint,
-        runCaptureOpenshell,
+        observer,
         sleepSeconds: deps.sleepSeconds,
       });
       if (startup === "healthy") {
         (output?.log ?? console.log)("  ✓ Docker-driver gateway is healthy");
         return;
       }
+      const gatewayServiceStopCommand = await resolveSelectedGatewayServiceStopCommand({
+        ...deps,
+        isDockerDriverGatewayPidUsingSelectedState:
+          stateOwnership.isDockerDriverGatewayPidUsingSelectedState,
+      });
       reportDockerDriverGatewayStartFailure(logPath, childExit, {
         exitOnFailure,
-        isGatewayStateInUse: deps.isDockerDriverGatewayStateInUse,
+        gatewayPort: deps.gatewayPort(),
+        isGatewayStateInUse: stateOwnership.isDockerDriverGatewayStateInUse,
         launchLogOffset: log.startOffset,
+        resolveGatewayStopCommand: () => gatewayServiceStopCommand,
         ...(output ? { printError: (message?: string) => output.error(message ?? "") } : {}),
       });
       if (startup === "exited") {
@@ -371,5 +463,5 @@ export function createDockerDriverGatewayStart(
     }
   }
 
-  return { startDockerDriverGateway };
+  return { startDockerDriverGateway, verifyDockerDriverGatewaySandboxReachability };
 }

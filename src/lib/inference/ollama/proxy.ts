@@ -355,6 +355,38 @@ function runCurlCaptureWithAuthConfig(
   return result.status === 0 ? String(result.stdout || "") : "";
 }
 
+/** Fixed export reads capture one credential only after the observer admits retained intent. */
+export function createOllamaExportProbe() {
+  let token: string | null = null;
+  const args = [
+    "-q",
+    "--noproxy",
+    "*",
+    "-fsS",
+    "--connect-timeout",
+    "3",
+    "--max-time",
+    "5",
+    "--max-filesize",
+    "65536",
+  ];
+  const readProxy = (port: number, route: string) => {
+    token ??= readProxyStateFile(PROXY_TOKEN_PATH);
+    if (!token) throw new Error("The existing Ollama proxy credential is unavailable.");
+    return runCurlCaptureWithAuthConfig(args, `http://127.0.0.1:${port}${route}`, token);
+  };
+  return {
+    backend: readProxyBackendIdentity(),
+    proxyPort: readProxyStateFile(PROXY_PORT_PATH),
+    pid: readProxyStateFile(PROXY_PID_PATH),
+    processMatches: isOllamaProxyProcess,
+    readActiveConfig: (port: number) => readProxy(port, "/_nemoclaw/proxy-config"),
+    readProxyModels: (port: number) => readProxy(port, "/api/tags"),
+    readDaemonModels: (port: number) =>
+      runCurlCaptureWithAuthConfig(args, `http://127.0.0.1:${port}/api/tags`),
+  };
+}
+
 // ── PID persistence ──────────────────────────────────────────────
 
 function persistProxyPid(pid: number | null | undefined): void {
@@ -401,9 +433,7 @@ function printBindProbeSkipWarning(): void {
   console.error("");
   console.error(`  ⚠ SECURITY PROBE SKIPPED: ${SKIP_BIND_PROBE_ENV}=1 disabled the Ollama auth`);
   console.error("    proxy's loopback bind check for this run.");
-  console.error(
-    "    A selected backend reachable on a non-loopback interface bypasses",
-  );
+  console.error("    A selected backend reachable on a non-loopback interface bypasses");
   console.error("    the proxy's token check entirely.");
   console.error(`    Unset ${SKIP_BIND_PROBE_ENV} to restore enforcement.`);
   console.error("");

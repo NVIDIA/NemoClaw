@@ -41,7 +41,9 @@ function fixture(
     policySource: "sandbox",
     policyHash,
     policyActiveVersion: 7,
-    revalidate: vi.fn((operation) => events.push(operation)),
+    revalidate: vi.fn((operation) => {
+      events.push(operation);
+    }),
   };
   return { component, proof };
 }
@@ -299,6 +301,24 @@ describe("external component activation", () => {
       expect.any(String),
     );
     expect(events).toEqual(["socket", "before_handoff", "request", "socket", "after_activation"]);
+  });
+
+  it("waits for policy revalidation before sending the activation request", async () => {
+    const { component, proof } = fixture();
+    let finishProof!: () => void;
+    proof.revalidate = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishProof = resolve;
+        }),
+    );
+    const transport = vi.fn(async (_path: string, body: string) => responseFor(body));
+    const pending = activateExternalComponent(component, proof, transport);
+    expect(transport).not.toHaveBeenCalled();
+    finishProof();
+    await vi.waitFor(() => expect(transport).toHaveBeenCalledTimes(1));
+    finishProof();
+    await expect(pending).resolves.toEqual({ kind: "activated" });
   });
 
   it("returns failed activation for one exact rejection response (#11340)", async () => {

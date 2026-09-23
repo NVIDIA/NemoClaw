@@ -65,7 +65,7 @@ function slackBotAlias() {
   return {
     channelId: "slack",
     envKey: "SLACK_BOT_TOKEN",
-    match: "^openshell:resolve:env:(v[0-9]+_)?SLACK_BOT_TOKEN$",
+    match: "^openshell:resolve:env:((?:v[0-9]{1,20}|s[a-f0-9]{64})_)?SLACK_BOT_TOKEN$",
     value: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
     message:
       "[channels] Normalized SLACK_BOT_TOKEN runtime placeholder to the Bolt-compatible alias",
@@ -77,7 +77,7 @@ function crossKeyCredentialAlias(channelId: string, envKey: string, targetEnvKey
     channelId,
     envKey,
     targetEnvKey,
-    match: `^openshell:resolve:env:v[0-9]+_${envKey}$`,
+    match: `^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_${envKey}$`,
     value: `openshell:resolve:env:${envKey}`,
   };
 }
@@ -414,7 +414,7 @@ describe("agents/hermes/start.sh runtime API server key", () => {
         `PPID_FILE=${shellQuote(ppidFile)}`,
         `ARGS_FILE=${shellQuote(argsFile)}`,
         "export PPID_FILE ARGS_FILE",
-        "EXPECTED_PARENT=$BASHPID",
+        "EXPECTED_PARENT=$$",
         "ensure_hermes_runtime_api_server_key strict",
         'ACTUAL_PARENT="$(cat "$PPID_FILE")"',
         'printf "expected=%s actual=%s\\n" "$EXPECTED_PARENT" "$ACTUAL_PARENT"',
@@ -449,6 +449,16 @@ describe("agents/hermes/start.sh runtime API server key", () => {
     expect(run.strictHashContent).toContain("/.hermes/.env");
     expect(run.compatHashContent).toContain("/.hermes/.env");
     expect(run.result.stderr).toContain("Minted Hermes API_SERVER_KEY for this sandbox");
+    expect(run.result.stderr).not.toContain(run.apiServerKey ?? "missing-key");
+  });
+
+  it("refreshes only the compatibility hash when minting an API key in non-root mode", () => {
+    const run = runHermesRuntimeApiServerKeyMint({ mode: "compat" });
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.apiServerKey).toMatch(/^[0-9a-f]{64}$/);
+    expect(run.strictHashValid).toBe(false);
+    expect(run.compatHashValid).toBe(true);
     expect(run.result.stderr).not.toContain(run.apiServerKey ?? "missing-key");
   });
 
@@ -844,7 +854,7 @@ describe("agents/hermes/start.sh runtime API server key", () => {
             {
               channelId: "slack",
               envKey: "SLACK_BOT_TOKEN",
-              match: "^openshell:resolve:env:(v[0-9]+_)?SLACK_BOT_TOKEN$",
+              match: "^openshell:resolve:env:((?:v[0-9]{1,20}|s[a-f0-9]{64})_)?SLACK_BOT_TOKEN$",
               value: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
               message:
                 "[channels] Normalized SLACK_BOT_TOKEN runtime placeholder to the Bolt-compatible alias",
@@ -852,7 +862,7 @@ describe("agents/hermes/start.sh runtime API server key", () => {
             {
               channelId: "slack",
               envKey: "SLACK_APP_TOKEN",
-              match: "^openshell:resolve:env:(v[0-9]+_)?SLACK_APP_TOKEN$",
+              match: "^openshell:resolve:env:((?:v[0-9]{1,20}|s[a-f0-9]{64})_)?SLACK_APP_TOKEN$",
               value: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
               message:
                 "[channels] Normalized SLACK_APP_TOKEN runtime placeholder to the Bolt-compatible alias",

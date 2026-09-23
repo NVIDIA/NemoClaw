@@ -3,7 +3,12 @@
 
 import { describe, expect, it } from "vitest";
 
-import { REQUIRED_CHECK_NAMES, runComparatorGate, runGate } from "./check-gates-test-fixtures.ts";
+import {
+  REQUIRED_CHECK_NAMES,
+  runComparatorGate,
+  runGate,
+  successfulRequiredChecks,
+} from "./check-gates-test-fixtures.ts";
 
 describe("maintainer merge-gate contributor compliance", () => {
   it("excludes public docs but keeps inference source behind the risky-code test gate (#9934)", () => {
@@ -650,6 +655,89 @@ describe("maintainer merge-gate contributor compliance", () => {
 });
 
 describe("maintainer PR comparator contributor compliance", () => {
+  it("accepts a mergeable PR when GitHub reports a behind merge state", () => {
+    const currentBaseSha = "d".repeat(40);
+    const fixture = {
+      body: "Signed-off-by: Example User <user@example.com>",
+      verified: true,
+      mergeStateStatus: "BEHIND",
+      currentBaseSha,
+    };
+    const mergeGate = runGate(fixture);
+    const comparator = runComparatorGate(fixture);
+
+    const mergeGateOutput = JSON.parse(mergeGate.stdout);
+    const comparatorOutput = JSON.parse(comparator.stdout);
+    expect(mergeGateOutput.gates.conflicts).toMatchObject({
+      pass: true,
+      details: "No merge conflicts; PR branch is behind its base branch",
+      baseSha: "b".repeat(40),
+      currentBaseSha,
+    });
+    expect(comparatorOutput.gates.mergeable).toBe(true);
+    expect(comparatorOutput.details).toMatchObject({
+      mergeable: "MERGEABLE",
+      merge_state_status: "BEHIND",
+    });
+    expect(comparatorOutput.failures).not.toContain("substantive:mergeable=MERGEABLE,state=BEHIND");
+  });
+
+  it("accepts a mergeable PR when GitHub reports required hooks", () => {
+    const result = runComparatorGate({
+      body: "Signed-off-by: Example User <user@example.com>",
+      verified: true,
+      mergeStateStatus: "HAS_HOOKS",
+    });
+
+    const output = JSON.parse(result.stdout);
+    expect(output.gates.mergeable).toBe(true);
+    expect(output.details).toMatchObject({
+      mergeable: "MERGEABLE",
+      merge_state_status: "HAS_HOOKS",
+    });
+    expect(output.failures).not.toContain("substantive:mergeable=MERGEABLE,state=HAS_HOOKS");
+  });
+
+  it("keeps blocked PRs eligible for approval but rejects them as merge candidates", () => {
+    const fixture = {
+      body: "Signed-off-by: Example User <user@example.com>",
+      verified: true,
+      mergeStateStatus: "BLOCKED",
+      reviewDecision: "APPROVED",
+    };
+    const mergeGate = runGate(fixture);
+    const comparator = runComparatorGate(fixture);
+
+    const mergeGateOutput = JSON.parse(mergeGate.stdout);
+    const comparatorOutput = JSON.parse(comparator.stdout);
+    expect(mergeGateOutput.gates.conflicts).toMatchObject({
+      pass: true,
+      mergeable: "MERGEABLE",
+      mergeStateStatus: "BLOCKED",
+    });
+    expect(comparatorOutput.gates).toMatchObject({
+      mergeable: false,
+      branch_protection: true,
+    });
+    expect(comparatorOutput.failures).toContain("substantive:mergeable=MERGEABLE,state=BLOCKED");
+  });
+
+  it("rejects an unstable merge state as comparator evidence", () => {
+    const result = runComparatorGate({
+      body: "Signed-off-by: Example User <user@example.com>",
+      verified: true,
+      mergeStateStatus: "UNSTABLE",
+    });
+
+    const output = JSON.parse(result.stdout);
+    expect(output.gates.mergeable).toBe(false);
+    expect(output.details).toMatchObject({
+      mergeable: "MERGEABLE",
+      merge_state_status: "UNSTABLE",
+    });
+    expect(output.failures).toContain("substantive:mergeable=MERGEABLE,state=UNSTABLE");
+  });
+
   it("passes when DCO and every commit are verified", () => {
     const result = runComparatorGate({
       body: "Signed-off-by: Example User <user@example.com>",
@@ -844,15 +932,78 @@ describe("maintainer PR comparator contributor compliance", () => {
     expect(comparatorOutput.details.ci_missing_required_checks).toEqual(["checks"]);
   });
 
-  it("treats the former PR E2E gate as advisory", () => {
-    const fixture = {
+  it.each(["E2E / PR Gate", "E2E / PR Gate / Rollup", "E2E / PR Gate Coordination"])(
+    "keeps the former %s check advisory after its retirement from merge readiness (#8445)",
+    (name) => {
+      const fixture = {
+        body: "Signed-off-by: Example User <user@example.com>",
+        verified: true,
+        statusChecks: [
+          ...successfulRequiredChecks(),
+          {
+            __typename: "CheckRun",
+            name,
+            workflowName: "E2E / PR Gate Controller",
+            detailsUrl: "https://github.com/NVIDIA/NemoClaw/runs/8000",
+            startedAt: "2026-01-01T00:01:30Z",
+            status: "COMPLETED",
+            conclusion: "FAILURE",
+          },
+        ],
+      };
+
+      expect(JSON.parse(runGate(fixture).stdout)).toMatchObject({
+        allPass: true,
+        gates: { ci: { pass: true } },
+      });
+      expect(
+        JSON.parse(
+          runComparatorGate({
+            body: fixture.body,
+            verified: fixture.verified,
+            checkNames: [...REQUIRED_CHECK_NAMES, name],
+            checkConclusions: { [name]: "FAILURE" },
+            checkWorkflows: { [name]: "E2E / PR Gate Controller" },
+          }).stdout,
+        ).gates.ci_green_sha,
+      ).toBe(true);
+    },
+  );
+
+  it.each([
+    ["E2E / PR Gate", "CI / Unexpected"],
+    ["unrelated-check", "E2E / PR Gate Controller"],
+  ])("keeps a failed check merge-relevant when only %s / %s matches", (name, workflowName) => {
+    const check = {
+      __typename: "CheckRun",
+      name,
+      workflowName,
+      detailsUrl: "https://github.com/NVIDIA/NemoClaw/runs/8001",
+      startedAt: "2026-01-01T00:01:30Z",
+      status: "COMPLETED",
+      conclusion: "FAILURE",
+    };
+    const mergeGate = runGate({
       body: "Signed-off-by: Example User <user@example.com>",
       verified: true,
-      checkConclusions: { "E2E / PR Gate": "FAILURE" },
-    };
+      statusChecks: [...successfulRequiredChecks(), check],
+    });
+    const comparator = runComparatorGate({
+      body: "Signed-off-by: Example User <user@example.com>",
+      verified: true,
+      checkNames: [...REQUIRED_CHECK_NAMES, name],
+      checkConclusions: { [name]: "FAILURE" },
+      checkWorkflows: { [name]: workflowName },
+    });
 
-    expect(JSON.parse(runGate(fixture).stdout).gates.ci.pass).toBe(true);
-    expect(JSON.parse(runComparatorGate(fixture).stdout).gates.ci_green_sha).toBe(true);
+    expect(JSON.parse(mergeGate.stdout)).toMatchObject({
+      allPass: false,
+      gates: { ci: { pass: false, failingChecks: [`${name}: FAILURE`] } },
+    });
+    expect(JSON.parse(comparator.stdout)).toMatchObject({
+      gates: { ci_green_sha: false },
+      details: { ci_failing_checks: [`${name}: FAILURE`] },
+    });
   });
 
   it.each(["ACTION_REQUIRED", "STARTUP_FAILURE", "STALE"])(

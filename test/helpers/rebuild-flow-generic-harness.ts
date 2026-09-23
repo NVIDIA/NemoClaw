@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { vi } from "vitest";
 import { makePreparedRecoveryManifest } from "../../src/lib/actions/sandbox/rebuild-flow-test-fixtures";
+import type { OpenShellRuntimeSelection } from "../../src/lib/adapters/openshell/runtime-selection";
 import type { RebuildRecreateOnboardOpts } from "../../src/lib/actions/sandbox/rebuild-gpu-opt-out";
 import {
   agentDefs,
@@ -17,8 +18,8 @@ import {
   destroy,
   dockerImage,
   dockerInspect,
-  gatewayDrift,
   forwardRecovery,
+  gatewayDrift,
   gatewayRuntime,
   gatewayState,
   gatewayTeardownAuthority,
@@ -27,18 +28,22 @@ import {
   listHarnessRebuildBackups,
   loadRebuildSandbox,
   mcpBridge,
+  mcpBridgeProviderInspection,
+  mcpBridgeSource,
   messaging,
   messagingHostForwardLifecycle,
   mutableConfigPerms,
   nim,
   onboardCredentialEnv,
   onboardSession,
+  openClawLifecycle,
   openshellRuntime,
-  providerCommand,
   policies,
   policyGet,
   policyState,
+  portableRetirementAuthority,
   processRecovery,
+  providerCommand,
   purgeRebuildModule,
   type RebuildFlowHarness,
   type RebuildFlowOverrides,
@@ -50,11 +55,12 @@ import {
   rebuildOnboardDependencies,
   rebuildPreparedImageContext,
   rebuildRoutePreflight,
-  removedImmutabilityMigration,
   rebuildUsageNotice,
-  registry,
-  registryPersistence,
   registerHarnessRebuildBackup,
+  registry,
+  crossPortRegistry,
+  registryPersistence,
+  removedImmutabilityMigration,
   resolve,
   sandboxList,
   sandboxSession,
@@ -63,6 +69,7 @@ import {
   sourceSandboxGateway,
 } from "./rebuild-flow-harness";
 
+export type { RebuildFlowHarness, RebuildFlowOverrides } from "./rebuild-flow-harness";
 export {
   createHarnessTempDir,
   installRebuildFlowTestHooks,
@@ -74,7 +81,6 @@ export {
   tempFiles,
 } from "./rebuild-flow-harness";
 export { makePreparedRecoveryManifest };
-export type { RebuildFlowHarness, RebuildFlowOverrides } from "./rebuild-flow-harness";
 
 function expectPolicyCaptureOptions() {
   return {
@@ -197,6 +203,10 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   vi.spyOn(gatewayTeardownAuthority, "resolveGatewayRebuildAuthority").mockImplementation(
     resolveGatewayAuthority,
   );
+  vi.spyOn(
+    gatewayTeardownAuthority,
+    "resolveGatewayCredentialMutationAuthority",
+  ).mockImplementation(resolveGatewayAuthority);
   vi.spyOn(sandboxList, "captureSandboxListWithGatewayRecovery").mockResolvedValue({
     result: {
       ok: true,
@@ -222,6 +232,14 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     .mockReturnValue(
       overrides.baseImagePreflight ?? { ok: true, imageRef: null, overrideEnvVar: null },
     );
+  vi.spyOn(rebuildFlowHelpers, "removeStaleRebuildDockerOrphan").mockReturnValue(undefined);
+  vi.spyOn(onboardSession, "listRetainedSandboxRecoveryRecords").mockReturnValue([]);
+  if (!overrides.useRealPortableRetirementBoundary) {
+    vi.spyOn(
+      portableRetirementAuthority,
+      "withPortableOnboardRetirementBoundary",
+    ).mockImplementation(((_boundary: unknown, operation: () => unknown) => operation()) as never);
+  }
   const imageIdsByRef = new Map([
     [agentBaseImageRef, agentBaseImageId],
     [agentBaseImageId, agentBaseImageId],
@@ -384,13 +402,13 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   let hermesCredentialKeys = hermesProviderExists
     ? (overrides.hermesCredentialKeys ?? ["OPENAI_API_KEY"])
     : null;
-  vi.spyOn(hermesProviderAuth, "inspectHermesProviderBinding").mockImplementation(() => ({
+  vi.spyOn(hermesProviderAuth, "inspectHermesProviderBinding").mockImplementation(async () => ({
     exists: hermesProviderExists,
     credentialKeys: hermesCredentialKeys,
   }));
   const registerHermesInferenceProviderSpy = vi
     .spyOn(hermesProviderAuth, "registerHermesInferenceProvider")
-    .mockImplementation((...args: unknown[]) => {
+    .mockImplementation(async (...args: unknown[]) => {
       hermesProviderExists = true;
       hermesCredentialKeys = [String(args[2] ?? "OPENAI_API_KEY")];
     });
@@ -416,12 +434,6 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   vi.spyOn(onboardSession, "acquireOnboardLock").mockReturnValue({ acquired: true });
   const finalizeIncompleteOnboardStepSpy = installTerminalStepFailureMock(onboardSession, session);
   session.sandboxName = overrides.sessionSandboxName ?? session.sandboxName;
-  const modelsCustomOpenClawImage =
-    typeof overrides.sandboxEntry?.fromDockerfile === "string" &&
-    (!overrides.sandboxEntry.agent || overrides.sandboxEntry.agent === "openclaw");
-  const customOpenClawPluginProvenance = modelsCustomOpenClawImage
-    ? { openclawImagePluginInstalls: [] }
-    : {};
   const currentSandboxEntry = {
     name: "alpha",
     provider: "ollama-local",
@@ -434,18 +446,28 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     dashboardPort: 18789,
     gatewayName: "nemoclaw",
     gatewayPort: 8080,
-    ...customOpenClawPluginProvenance,
     ...(overrides.sandboxEntry ?? {}),
   };
   const readCurrentSandboxEntry = () => structuredClone(currentSandboxEntry);
   let sandboxEntryReadCount = 0;
-  vi.spyOn(registry, "getSandbox").mockImplementation(() => {
+  const readSandboxEntry = () => {
     const configuredReads = overrides.sandboxEntryReads ?? [];
     return (
       sandboxEntryReadCount < configuredReads.length
         ? configuredReads[sandboxEntryReadCount++]
         : readCurrentSandboxEntry()
     ) as never;
+  };
+  vi.spyOn(registry, "getSandbox").mockImplementation(readSandboxEntry);
+  vi.spyOn(crossPortRegistry, "findSandboxAcrossGatewayRoots").mockImplementation(() => {
+    const entry = readSandboxEntry() as typeof currentSandboxEntry | null;
+    return entry
+      ? {
+          entry,
+          gatewayPort: entry.gatewayPort ?? null,
+          registryFile: "/test/.nemoclaw/sandboxes.json",
+        }
+      : null;
   });
   const initialDefaultSandbox = overrides.defaultSandbox ?? null;
   const preDeleteDefaultSandbox =
@@ -638,16 +660,11 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
         dir: "/sandbox/.openclaw",
         backupPath,
         timestamp: "2026-06-01T00:00:00.000Z",
+        ...(overrides.backupRuntimeSnapshot
+          ? { runtimeSnapshot: structuredClone(overrides.backupRuntimeSnapshot) }
+          : {}),
         ...(overrides.backupPreservedEnv
           ? { preservedEnv: structuredClone(overrides.backupPreservedEnv) }
-          : {}),
-        ...(modelsCustomOpenClawImage
-          ? {
-              reconcileOpenClawImagePluginProvenance: true,
-              openclawImagePluginInstalls: structuredClone(
-                currentSandboxEntry.openclawImagePluginInstalls,
-              ),
-            }
           : {}),
       };
       registerHarnessRebuildBackup(manifest as ReturnType<typeof sandboxState.listBackups>[number]);
@@ -728,6 +745,18 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
           stdout: "",
           stderr: "sandbox alpha not found",
         };
+      }
+      if (argv[0] === "provider" && argv[1] === "list") {
+        const provider = String(currentSandboxEntry.provider ?? "compatible-endpoint");
+        const credentialEnv =
+          "credentialEnv" in currentSandboxEntry &&
+          typeof currentSandboxEntry.credentialEnv === "string"
+            ? currentSandboxEntry.credentialEnv
+            : "COMPATIBLE_API_KEY";
+        const output = JSON.stringify([
+          { name: provider, credential_keys: credentialEnv ? [credentialEnv] : [] },
+        ]);
+        return { status: 0, output, stdout: output, stderr: "" };
       }
       return argv[0] === "provider" && argv[1] === "get"
         ? {
@@ -837,11 +866,11 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   let policyRemovalObserved = false;
   const applyPresetSpy = vi
     .spyOn(policies, "applyPreset")
-    .mockImplementation((_sandboxName: unknown, presetName: unknown) => {
+    .mockImplementation(async (_sandboxName: unknown, presetName: unknown) => {
       const normalizedPresetName = String(presetName);
       let applied: boolean;
       if (overrides.applyPreset) {
-        applied = overrides.applyPreset(normalizedPresetName);
+        applied = await overrides.applyPreset(normalizedPresetName);
       } else if (normalizedPresetName === "throw") {
         throw new Error("preset boom");
       } else {
@@ -909,6 +938,72 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       overrides.executeSandboxExecCommand ??
         (() => ({ status: 0, stdout: "doctor ok", stderr: "" })),
     );
+  vi.spyOn(processRecovery, "beginOpenClawPostRestoreDoctor").mockImplementation(
+    async (sandboxName, runtimeSelection) => ({
+      ok: true,
+      window: {
+        sandboxName,
+        ...(runtimeSelection ? { runtimeSelection } : {}),
+      },
+    }),
+  );
+  vi.spyOn(openClawLifecycle, "beginUnregisteredOpenClawPostRestoreDoctor").mockImplementation(
+    async (sandboxName, runtimeSelection) => ({
+      ok: true,
+      window: {
+        sandboxName,
+        ...(runtimeSelection ? { runtimeSelection } : {}),
+      },
+    }),
+  );
+  const runOpenClawPostRestoreDoctorSpy = vi
+    .spyOn(openClawLifecycle, "promoteUnregisteredOpenClawBackupQuiesceToPostRestoreDoctor")
+    .mockImplementation(async (window) => {
+      const result = await (
+        overrides.runOpenClawPostRestoreDoctor ?? (async () => ({ ok: true }) as const)
+      )();
+      if (!result.ok) return result;
+      return {
+        ok: true,
+        window: {
+          sandboxName: window.sandboxName,
+          ...(window.runtimeSelection ? { runtimeSelection: window.runtimeSelection } : {}),
+        },
+      };
+    });
+  vi.spyOn(openClawLifecycle, "beginOpenClawBackupQuiesce").mockImplementation(
+    async (sandboxName: string, runtimeSelection?: OpenShellRuntimeSelection) => {
+      return {
+        ok: true,
+        window: {
+          sandboxName,
+          kind: "backup" as const,
+          ...(runtimeSelection ? { runtimeSelection } : {}),
+        },
+      };
+    },
+  );
+  vi.spyOn(openClawLifecycle, "beginUnregisteredOpenClawBackupQuiesce").mockImplementation(
+    async (sandboxName: string, runtimeSelection?: OpenShellRuntimeSelection) => ({
+      ok: true,
+      window: {
+        sandboxName,
+        kind: "backup" as const,
+        ...(runtimeSelection ? { runtimeSelection } : {}),
+      },
+    }),
+  );
+  vi.spyOn(processRecovery, "finishOpenClawPostRestoreDoctor").mockResolvedValue({ ok: true });
+  vi.spyOn(processRecovery, "abortOpenClawPostRestoreDoctor").mockResolvedValue({ ok: true });
+  vi.spyOn(openClawLifecycle, "finishUnregisteredOpenClawPostRestoreDoctor").mockResolvedValue({
+    ok: true,
+  });
+  vi.spyOn(openClawLifecycle, "abortUnregisteredOpenClawPostRestoreDoctor").mockResolvedValue({
+    ok: true,
+  });
+  vi.spyOn(openClawLifecycle, "retireOpenClawPostRestoreDoctorForDelete").mockResolvedValue({
+    ok: true,
+  });
   const checkAndRecoverSandboxProcessesSpy = vi
     .spyOn(processRecovery, "checkAndRecoverSandboxProcesses")
     .mockImplementation(
@@ -949,22 +1044,76 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const ensureMessagingHostForwardAfterRebuildSpy = vi
     .spyOn(messagingHostForwardLifecycle, "ensureMessagingHostForwardAfterRebuild")
     .mockReturnValue(true);
+  const defaultMcpAdapter =
+    agentName === "hermes"
+      ? "hermes-config"
+      : agentName === "langchain-deepagents-code"
+        ? "deepagents-config"
+        : "openclaw-config";
+  for (const entry of overrides.mcpPreparation?.entries ?? []) {
+    if (!entry || typeof entry !== "object") continue;
+    for (const retiredField of ["addState", "addedAt", "createdAt", "updatedAt"]) {
+      delete (entry as Record<string, unknown>)[retiredField];
+    }
+    Object.assign(entry, {
+      agent: "agent" in entry ? entry.agent : agentName,
+      adapter: "adapter" in entry ? entry.adapter : defaultMcpAdapter,
+      url: "url" in entry ? entry.url : "https://mcp.example.test/mcp",
+      env: "env" in entry ? entry.env : ["GITHUB_TOKEN"],
+      policyName: "policyName" in entry ? entry.policyName : `mcp-bridge-${String(entry.server)}`,
+    });
+  }
+  const mcpSourceEntries = overrides.mcpPreparation?.entries ?? [];
+  vi.spyOn(mcpBridgeProviderInspection, "getMcpProviderInspectionRuntimeSelection").mockReturnValue(
+    {
+      gatewayName: String(currentSandboxEntry.gatewayName ?? "nemoclaw"),
+      workspace: "default",
+    },
+  );
+  const nativeMcpSources = Object.fromEntries(
+    mcpSourceEntries.map((entry) => [String(entry.server), structuredClone(entry)]),
+  );
+  const legacyMcpSources = Object.fromEntries(
+    (overrides.mcpLegacySources ?? []).map((entry) => [
+      String(entry.server),
+      structuredClone(entry),
+    ]),
+  );
+  vi.spyOn(mcpBridgeSource, "inspectAgentMcpSources").mockReturnValue({
+    native: nativeMcpSources,
+    legacy: legacyMcpSources,
+  });
+  vi.spyOn(mcpBridgeSource, "joinMcpEntriesToOpenShell").mockReturnValue(nativeMcpSources);
+  const defaultMcpPreparation = (
+    runtimeSelection?: Parameters<typeof mcpBridge.prepareMcpBridgesForRebuild>[1],
+  ) => {
+    return {
+      entries: [],
+      detachedProviderEntries: [],
+      scrubbedAdapterEntries: [],
+      ...(runtimeSelection ? { runtimeSelection } : {}),
+    };
+  };
+  const configuredMcpPreparation = (
+    runtimeSelection?: Parameters<typeof mcpBridge.prepareMcpBridgesForRebuild>[1],
+  ) =>
+    overrides.mcpPreparation
+      ? {
+          ...overrides.mcpPreparation,
+          ...(runtimeSelection && !overrides.mcpPreparation.runtimeSelection
+            ? { runtimeSelection }
+            : {}),
+        }
+      : defaultMcpPreparation(runtimeSelection);
   const prepareMcpBridgesForRebuildSpy = vi
     .spyOn(mcpBridge, "prepareMcpBridgesForRebuild")
-    .mockResolvedValue(
-      overrides.mcpPreparation ?? {
-        entries: [],
-        detachedProviderEntries: [],
-      },
+    .mockImplementation(async (_sandboxName, runtimeSelection) =>
+      configuredMcpPreparation(runtimeSelection),
     );
   const prepareMcpBridgesForAbsentSandboxRebuildSpy = vi
     .spyOn(mcpBridge, "prepareMcpBridgesForAbsentSandboxRebuild")
-    .mockResolvedValue(
-      overrides.mcpPreparation ?? {
-        entries: [],
-        detachedProviderEntries: [],
-        scrubbedAdapterEntries: [],
-      },
+    .mockImplementation(async (_sandboxName, runtimeSelection) =>
+      configuredMcpPreparation(runtimeSelection),
     );
   const reattachMcpProvidersAfterRebuildAbortSpy = vi
     .spyOn(mcpBridge, "reattachMcpProvidersAfterRebuildAbort")
@@ -988,6 +1137,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     errorSpy,
     executeSandboxCommandSpy,
     executeSandboxExecCommandSpy,
+    runOpenClawPostRestoreDoctorSpy,
     ensureMessagingHostForwardAfterRebuildSpy,
     ensureRebuildAgentBaseImageSpy,
     ensureAgentBaseImageSpy,

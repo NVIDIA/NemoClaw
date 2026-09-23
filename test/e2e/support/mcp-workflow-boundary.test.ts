@@ -12,6 +12,42 @@ import { validateMcpOpenShellWorkflowBoundary } from "../../../tools/e2e/mcp-wor
 import { requireFixture } from "./require-fixture";
 
 describe("MCP workflow artifact boundary", () => {
+  it("rejects a stable MCP lane without the reviewed SDK producer and install boundary", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
+    const workflowPath = path.join(directory, "e2e.yaml");
+    try {
+      const workflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8")) as {
+        jobs: Record<
+          string,
+          {
+            needs?: string | string[];
+            steps: Array<{ name?: string; uses?: string; with?: Record<string, unknown> }>;
+          }
+        >;
+      };
+      const stable = workflow.jobs["mcp-bridge"];
+      stable.needs = ["base-image-publication", "generate-matrix"];
+      stable.steps = stable.steps.filter(
+        (step) =>
+          step.name !== "Download reviewed OpenShell SDK archive" &&
+          step.name !== "Install reviewed OpenShell SDK archive without package credentials",
+      );
+      fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+      expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toEqual(
+        expect.arrayContaining([
+          "mcp-bridge must depend on its reviewed artifact producers",
+          "mcp-bridge must use the reviewed SDK artifact downloader",
+          "mcp-bridge must restore exactly the run-scoped reviewed SDK archive",
+          "mcp-bridge must install the reviewed SDK with the shared action",
+          "mcp-bridge must install the reviewed SDK before restoring candidate execution artifacts",
+        ]),
+      );
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
   it.each(["mcp-bridge", "mcp-bridge-dev"])(
     "rejects missing canonical risk-signal evidence in %s",
     (jobName) => {

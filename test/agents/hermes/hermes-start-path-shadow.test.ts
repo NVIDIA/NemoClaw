@@ -55,7 +55,7 @@ describe("agents/hermes/start.sh env secret boundary (PATH shadowing)", () => {
         // list rather than resolving `python3` via `$PATH`. The shadow bin is
         // intentionally NOT on the list, so a compromised PATH cannot redirect
         // the validator to a no-op interpreter.
-        '_HERMES_BOUNDARY_TIMEOUT=(); _HERMES_PYTHON=""; for _c in /opt/hermes/.venv/bin/python3 /usr/local/bin/python3 /usr/bin/python3; do [ -x "$_c" ] && { _HERMES_PYTHON="$_c"; break; }; done',
+        '_HERMES_BOUNDARY_TIMEOUT=(env); _HERMES_PYTHON=""; for _c in /opt/hermes/.venv/bin/python3 /usr/local/bin/python3 /usr/bin/python3; do [ -x "$_c" ] && { _HERMES_PYTHON="$_c"; break; }; done',
         extractShellFunctionFromSource(src, "validate_hermes_env_secret_boundary"),
         `HERMES_DIR=${shellQuote(hermesHome)}`,
         `_HERMES_BOUNDARY_VALIDATOR=${shellQuote(SECRET_BOUNDARY_VALIDATOR_SCRIPT)}`,

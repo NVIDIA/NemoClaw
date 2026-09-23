@@ -32,9 +32,14 @@ function runPython(source: string, args: string[] = []) {
       `openshell:resolve:env:${name!}`,
     ]),
   );
+  const stableEnvironment = Object.fromEntries(
+    [...source.matchAll(/openshell:resolve:env:(s[a-f0-9]{64})_([A-Za-z_][A-Za-z0-9_]*)/gu)].map(
+      ([, handle, name]) => [name!, `openshell:resolve:env:${handle!}_${name!}`],
+    ),
+  );
   return spawnSync("python3", ["-c", source, TRANSACTION, GUARD, ...args], {
     encoding: "utf8",
-    env: { ...process.env, ...canonicalEnvironment },
+    env: { ...process.env, ...canonicalEnvironment, ...stableEnvironment },
   });
 }
 
@@ -160,9 +165,9 @@ if len(errors) != 3:
 
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual([
-      "Authenticated MCP OpenShell host aliases are unavailable with OpenShell v0.0.106",
-      "Authenticated MCP OpenShell host aliases are unavailable with OpenShell v0.0.106",
-      "Authenticated MCP OpenShell host aliases are unavailable with OpenShell v0.0.106",
+      "Authenticated MCP OpenShell host aliases are unavailable with OpenShell v0.0.116",
+      "Authenticated MCP OpenShell host aliases are unavailable with OpenShell v0.0.116",
+      "Authenticated MCP OpenShell host aliases are unavailable with OpenShell v0.0.116",
     ]);
   });
 
@@ -198,6 +203,7 @@ print(json.dumps({"ok": True}))
       "v1_TOKEN",
       "v999999_very_unlikely",
       "v0_1",
+      `s${"a".repeat(64)}_TOKEN`,
     ];
     const result = runPython(
       `
@@ -265,6 +271,7 @@ base = {
 }
 valid = [
     ("add", {**base, "replace_existing": False}),
+    ("add", {**base, "headers": {"Authorization": "Bearer openshell:resolve:env:saaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_SAFE_MCP_TOKEN"}, "replace_existing": False}),
     ("remove", {**base, "force": False}),
 ]
 invalid = [
@@ -298,7 +305,7 @@ print(json.dumps(accepted))
 `);
 
     expect(result.status, result.stderr).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual([true, true, ...Array(16).fill(false)]);
+    expect(JSON.parse(result.stdout)).toEqual([true, true, true, ...Array(16).fill(false)]);
   });
 
   it("rejects command, YAML-tag, and terminal-control injection without executing it", () => {
@@ -337,7 +344,7 @@ print(json.dumps(accepted))
       });
       const yamlResult = runPython(
         `
-import importlib.util, json, os, sys
+import contextlib, importlib.util, json, os, sys
 spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
 module = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = module
@@ -347,7 +354,7 @@ module.HERMES_DIR = sys.argv[3]
 module.CONFIG_PATH = os.path.join(module.HERMES_DIR, "config.yaml")
 module.os.geteuid = lambda: 1000
 module._assert_non_root_lifecycle_identity = lambda: None
-module._configure_gateway_public_port = lambda: None
+module._configure_gateway_public_port = lambda: None; module._mcp_transaction_lock = lambda: contextlib.nullcontext()
 payload = {
     "server": "safe",
     "url": "https://mcp.example.test/mcp",
@@ -761,7 +768,7 @@ print(json.dumps(results, sort_keys=True))
       expect(
         Object.entries(scenario)
           .filter(([property]) => property.endsWith("preserved") || property === "temp_cleaned")
-          .every(([property, value]) => Object.is(value, true)),
+          .every(([_property, value]) => Object.is(value, true)),
       ).toBe(true);
     });
   });
@@ -1120,7 +1127,7 @@ print(json.dumps({str(pid): module._is_trusted_gateway_process(pid) for pid in a
 
   it("allows an ordinary same-UID sandbox exec to reload the trusted gateway", () => {
     const result = runPython(`
-import importlib.util, json, signal, sys, types
+import contextlib, importlib.util, json, signal, sys, types
 spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
 module = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = module
@@ -1172,7 +1179,7 @@ def trusted_gateway(pid):
     return True
 module._is_trusted_gateway_process = trusted_gateway
 module._gateway_has_managed_parent = lambda pid: True
-module._configure_gateway_public_port = lambda: None
+module._configure_gateway_public_port = lambda: None; module._mcp_transaction_lock = lambda: contextlib.nullcontext()
 def signal_gateway(pid, sent_signal):
     observed["signal_uid"] = module.os.geteuid()
     observed["signal_pid"] = pid
@@ -1380,7 +1387,7 @@ print(json.dumps({str(pid): module._is_service_manager_process(pid) for pid in a
 
   it("runs a one-shot mutation through the stock OpenShell exec topology", () => {
     const result = runPython(`
-import importlib.util, json, sys
+import contextlib, importlib.util, json, sys
 spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
 module = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = module
@@ -1389,7 +1396,7 @@ module.os.geteuid = lambda: 1000
 module.os.lstat = lambda path: (_ for _ in ()).throw(FileNotFoundError(path))
 module._gateway_identity = lambda: (123, 456)
 module._gateway_has_managed_parent = lambda pid: True
-module._configure_gateway_public_port = lambda: None
+module._configure_gateway_public_port = lambda: None; module._mcp_transaction_lock = lambda: contextlib.nullcontext()
 module.apply_transaction_and_reload = lambda action, payload: {
     "ok": True, "changed": True, "reloaded": True,
 }
@@ -1482,8 +1489,9 @@ else:
       });
       expect(result.stdout).toContain("re-kick sent: yes");
       expect(fs.readFileSync(configPath, "utf8")).toBe(config);
-      expect(fs.readFileSync(compatHash, "utf8")).toBe(originalHash);
-      expect(fs.readFileSync(strictHash, "utf8")).toBe(originalHash);
+      const nativeHash = `${originalHash.split("\n").slice(0, 2).join("\n")}\n`;
+      expect(fs.readFileSync(compatHash, "utf8")).toBe(nativeHash);
+      expect(fs.readFileSync(strictHash, "utf8")).toBe(nativeHash);
     } finally {
       fs.rmSync(temp, { recursive: true, force: true });
     }

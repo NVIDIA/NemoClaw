@@ -107,6 +107,10 @@ Review the [Prerequisites](prerequisites) before you begin.
     nemohermes my-hermes connect
     hermes
     ```
+
+    When `launch` or `connect` finds the retired `nemoclaw-light` skin, NemoClaw removes its configuration selection and skin file.
+    A cleanup failure produces a warning and does not stop the terminal session.
+    Hermes supplies native terminal appearance behavior, and NemoClaw leaves every other `display.skin` selection unchanged.
   </Step>
 </Steps>
 
@@ -151,7 +155,7 @@ Use these details when your first-run path needs more control.
     nemohermes my-hermes gateway restart
     ```
 
-    Hermes receives revision-scoped `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` placeholders.
+    Hermes receives OpenShell credential-handle `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` placeholders.
     OpenShell decodes the Langfuse Basic-auth header, replaces both placeholders only for `cloud.langfuse.com:443`, and re-encodes the header before forwarding it.
     The managed Hermes plugin rejects a Langfuse base URL that is not absolute HTTPS before it constructs the authenticated client.
     Do not put raw keys or copied `HERMES_LANGFUSE_PUBLIC_KEY` and `HERMES_LANGFUSE_SECRET_KEY` placeholders in `~/.hermes/.env`.
@@ -184,8 +188,9 @@ Use these details when your first-run path needs more control.
   </Accordion>
 
   <Accordion title="Use Portable Ollama">
-    On Linux, fresh Hermes Portable onboarding can run the selected Ollama model in a current-user rootless Podman container.
-    This path requires the Portable preflight to accept the current user's Podman and NVIDIA GPU authority.
+    Hermes Portable uses a current-user rootless Podman container for the selected Ollama model.
+    Before onboarding, complete the [Portable Ollama prerequisites](../inference/set-up-ollama#use-portable-ollama-with-hermes), including the required Podman version check.
+    This path also requires the Portable preflight to accept the current user's Podman and NVIDIA GPU authority.
     Start fresh onboarding with an explicit Ollama model:
 
     ```bash
@@ -195,6 +200,8 @@ Use these details when your first-run path needs more control.
     ```
 
     This path does not inspect, start, or use a host Ollama process.
+    Leave port `11434` free on `127.0.0.1` and on the Portable host-gateway listener IP.
+    A host Ollama service or leftover Portable container on those published addresses fails inference create before the Portable Ollama runner starts.
     It does not use the default Docker runtime.
     Before the provider-selection step completes, NemoClaw creates the receipt-owned runner, sends one validation request for the selected model, and confirms that the model is loaded.
     NemoClaw records the provider selection only after those checks pass.

@@ -5,8 +5,6 @@ import {
   RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION,
   type RuntimeProviderBundle,
   type RuntimeProviderCleanupInput,
-  type RuntimeProviderLifecycleInput,
-  type RuntimeProviderLifecycleStopHooks,
   type RuntimeProviderWorkloadProfile,
 } from "../../src/lib/onboard/runtime-provider/contract";
 import type {
@@ -117,7 +115,6 @@ export function createInMemoryRuntimeProviderBundle({
       providerId,
       supported: true,
       hostLocalInference: hostLocalInference !== undefined,
-      directLifecycle: true,
       legacyGatewayContainerInspection: false,
       workloadImageCleanup: true,
       readOnlyHostMounts: {
@@ -142,6 +139,7 @@ export function createInMemoryRuntimeProviderBundle({
       supported: true,
       launcher: gatewayLauncher,
       inspectLegacyContainer: false,
+      finalSandboxLiveness: "openshell-and-docker",
       ownsHostReadiness: false,
       observeHostRuntime: projectGatewayHostRuntime,
       prepareHostRuntime: projectGatewayHostRuntime,
@@ -193,34 +191,12 @@ export function createInMemoryRuntimeProviderBundle({
           stderr: Buffer.alloc(0),
         }),
       },
-      start(input: RuntimeProviderLifecycleInput) {
-        state.running.add(input.sandboxName);
-        event("start", input.sandboxName);
-        input.log(`  In-memory workload '${input.sandboxName}' started.`);
-        return { exitCode: 0 };
-      },
-      async verifyStarted(input: RuntimeProviderLifecycleInput) {
-        event("verify-started", input.sandboxName);
-      },
-      stop(input: RuntimeProviderLifecycleInput, hooks: RuntimeProviderLifecycleStopHooks) {
-        const wasRunning = state.running.delete(input.sandboxName);
-        const beforeStop = wasRunning ? hooks.beforeStop : () => undefined;
-        const recordStop = wasRunning ? () => event("stop", input.sandboxName) : () => undefined;
-        beforeStop();
-        recordStop();
-        return {
-          exitCode: 0,
-          state: wasRunning ? "stopped" : "already-stopped",
-        };
-      },
     },
     mutationAuthority: {
       providerId,
       supported: true,
       operations: [
         "registration",
-        "start",
-        "stop",
         "inference-set",
         "rebuild",
         "clone",

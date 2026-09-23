@@ -12,6 +12,7 @@ import {
   OLLAMA_PORT,
   probeWindowsHostOllamaRouteProtection,
   resetOllamaHostCache as defaultResetOllamaHostCache,
+  setResolvedOllamaHost as defaultSetResolvedOllamaHost,
   type RunCaptureFn,
 } from "../inference/local";
 import type { NvidiaPlatform } from "../inference/nim";
@@ -32,6 +33,7 @@ import { warnAboutArm64NimImageCompatibility } from "./nim-image-compat-warning"
 import { type OllamaInstallMenuResult, resolveOllamaInstallMenuEntry } from "./ollama-install-menu";
 import { buildVllmMenuEntries, type VllmMenuEntry } from "./vllm-menu";
 import { detectWindowsHostOllama, type WindowsHostOllamaState } from "./windows-host-ollama";
+import { NEMOCLAW_GATEWAY_RUNTIME_ENV } from "./runtime-provider/configured-runtime";
 
 type DockerCapture = RunCaptureFn;
 
@@ -91,6 +93,7 @@ export interface DetectInferenceProviderHostStateDeps {
   prepareDockerEnvironment?: Parameters<typeof createOllamaApiCapture>[2];
   probeWindowsHostOllamaRouteProtection: typeof probeWindowsHostOllamaRouteProtection;
   resetOllamaHostCache: () => void;
+  setResolvedOllamaHost: (host: string) => void;
 }
 
 const LOCAL_PROVIDER_PROBE_CURL_ARGS = ["--connect-timeout", "2", "--max-time", "5"] as const;
@@ -126,6 +129,7 @@ function buildDeps(
     probeWindowsHostOllamaRouteProtection:
       overrides.probeWindowsHostOllamaRouteProtection ?? probeWindowsHostOllamaRouteProtection,
     resetOllamaHostCache: overrides.resetOllamaHostCache ?? defaultResetOllamaHostCache,
+    setResolvedOllamaHost: overrides.setResolvedOllamaHost ?? defaultSetResolvedOllamaHost,
   };
 }
 
@@ -181,10 +185,13 @@ export function detectInferenceProviderHostState(
   const platform = input.platform ?? process.platform;
   const isWsl = deps.isWsl({ platform, env: input.env });
   const hasOllama = deps.hostCommandExists("ollama");
-  const discoveredOllamaHost = input.probeOllama === false ? null : deps.findReachableOllamaHost();
+  let discoveredOllamaHost = input.probeOllama === false ? null : deps.findReachableOllamaHost();
   const vllmRunning = input.probeVllm === false ? false : probeVllmRunning(deps);
   const vllmProfile = deps.detectVllmProfile(input.gpu);
-  const dockerAvailable = deps.hostCommandExists("docker");
+  const dockerAvailable =
+    input.env?.[NEMOCLAW_GATEWAY_RUNTIME_ENV]?.trim().toLowerCase() === "podman"
+      ? false
+      : deps.hostCommandExists("docker");
   const hasVllmImage = !!(
     dockerAvailable &&
     vllmProfile &&
@@ -216,6 +223,10 @@ export function detectInferenceProviderHostState(
         });
   const windowsOllamaReachable = windowsOllamaProtection.reachable;
   const windowsOllamaRouteProtected = windowsOllamaProtection.protected;
+  if (discoveredOllamaHost === null && windowsOllamaRouteProtected) {
+    discoveredOllamaHost = OLLAMA_HOST_DOCKER_INTERNAL;
+    deps.setResolvedOllamaHost(discoveredOllamaHost);
+  }
   const directlyResolvedWindowsHostOllama = discoveredOllamaHost === OLLAMA_HOST_DOCKER_INTERNAL;
   const wslNetworkingMode =
     isWsl && discoveredOllamaHost === "127.0.0.1" && windowsOllamaReachable

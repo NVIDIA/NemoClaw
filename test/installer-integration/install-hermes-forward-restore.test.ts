@@ -70,23 +70,37 @@ function seedLegacyWatcher(
   const runtimeState = path.join(h.state, "state");
   const pidFile = path.join(runtimeState, "hermes-created-by-onboard-8647.forward.pid");
   const watcherScript = `${pidFile}.js`;
+  const readyFile = `${pidFile}.ready`;
   const node = path.join(h.bin, "node");
   const openshell = path.join(h.bin, "openshell");
   fs.mkdirSync(runtimeState, { recursive: true });
-  fs.writeFileSync(watcherScript, "setInterval(() => undefined, 1000);\n");
+  fs.writeFileSync(
+    watcherScript,
+    `require("node:fs").writeFileSync(${JSON.stringify(readyFile)}, "ready");\nsetInterval(() => undefined, 1000);\n`,
+  );
   const started = spawnSync(
     "bash",
     [
       "-c",
-      'nohup "$1" "$2" "$3" "$4" "$5" >/dev/null 2>&1 & printf "%s" "$!"',
+      `nohup "$1" "$2" "$3" "$4" "$5" >/dev/null 2>&1 &
+watcher_pid=$!
+trap 'kill "$watcher_pid" >/dev/null 2>&1 || true; exit 1' TERM INT
+for attempt in {1..500}; do
+  if [ -s "$6" ]; then printf '%s' "$watcher_pid"; exit 0; fi
+  kill -0 "$watcher_pid" >/dev/null 2>&1 || exit 1
+  sleep 0.01
+done
+kill "$watcher_pid" >/dev/null 2>&1 || true
+exit 1`,
       "legacy-forward-watcher",
       node,
       watcherScript,
       openshell,
       "8647",
       sandboxArgument,
+      readyFile,
     ],
-    { encoding: "utf8", env: h.env },
+    { encoding: "utf8", env: h.env, timeout: 10_000 },
   );
   const pid = Number(started.stdout);
   expect(started.status, started.stderr).toBe(0);
@@ -122,16 +136,35 @@ function stopFixtureProcess(pid: number): void {
 
 function expectRecovery(h: ReturnType<typeof fixture>): void {
   const result = restore(h.env);
-  expect(result.status, result.stderr).toBe(0);
+  expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
   expect(fs.readFileSync(h.cliLog, "utf8").trim()).toBe("created-by-onboard recover");
   expect(fs.existsSync(h.openshellLog)).toBe(false);
 }
 
+function seedInactiveLegacyWatcher(h: ReturnType<typeof fixture>): void {
+  const completed = spawnSync(process.execPath, ["-e", "process.exit(0)"], {
+    encoding: "utf8",
+    env: h.env,
+  });
+  expect(completed.status, completed.stderr).toBe(0);
+  expect(Number.isSafeInteger(completed.pid)).toBe(true);
+  expect(processExists(completed.pid)).toBe(false);
+  const runtimeState = path.join(h.state, "state");
+  fs.mkdirSync(runtimeState, { recursive: true });
+  fs.writeFileSync(
+    path.join(runtimeState, "hermes-created-by-onboard-8647.forward.pid"),
+    `${String(completed.pid)}\n`,
+  );
+}
+
 describe("Hermes installer forward restore", () => {
-  it("always invokes identity-bound recovery before accepting healthy transport", () => {
+  it("keeps the forward verified by fresh onboarding without a second recovery (#10691)", () => {
     const h = fixture();
     try {
-      expectRecovery(h);
+      const result = restore(h.env);
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(fs.existsSync(h.cliLog)).toBe(false);
+      expect(fs.existsSync(h.openshellLog)).toBe(false);
     } finally {
       fs.rmSync(h.root, { recursive: true, force: true });
     }
@@ -186,6 +219,8 @@ describe("Hermes installer forward restore", () => {
     const recoveryFailure = fixture();
     const healthFailure = fixture();
     try {
+      seedInactiveLegacyWatcher(recoveryFailure);
+      seedInactiveLegacyWatcher(healthFailure);
       expect(restore({ ...recoveryFailure.env, CLI_STATUS: "1" }).status).toBe(1);
       const unhealthy = restore({ ...healthFailure.env, CURL_STATUS: "1" });
       expect(unhealthy.status).toBe(1);

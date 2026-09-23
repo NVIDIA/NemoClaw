@@ -13,6 +13,8 @@ import {
   runAdvisorSandboxAsync,
   startAdvisorOpenShellInference,
 } from "./openshell.mts";
+import { redactAdvisorDiagnostic } from "./failure-artifacts.mts";
+export { redactAdvisorDiagnostic } from "./failure-artifacts.mts";
 export type AdvisorSpecialistLifecycle = {
   prepare: (env: NodeJS.ProcessEnv) => Promise<void>;
   startGateway: (
@@ -25,19 +27,6 @@ export type AdvisorSpecialistLifecycle = {
   download: (env: NodeJS.ProcessEnv) => void;
   remove: (env: NodeJS.ProcessEnv) => void;
 };
-const SECRET_NAME = /(auth|credential|key|password|secret|token)/iu;
-const SECRET_VALUE =
-  /\b((?:api[_-]?key|credential|password|secret|token)\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/giu;
-const AUTH_VALUE = /\b(authorization\s*[:=]\s*)(?:[^\s,;]+\s+)?(?:"[^"]*"|'[^']*'|[^\s,;]+)/giu;
-const BEARER = /\b(bearer)\s+[^\s,;]+/giu;
-export function redactAdvisorDiagnostic(detail: string): string {
-  for (const [name, value] of Object.entries(process.env))
-    if (value && SECRET_NAME.test(name)) detail = detail.replaceAll(value, "[REDACTED]");
-  return detail
-    .replace(AUTH_VALUE, "$1[REDACTED]")
-    .replace(SECRET_VALUE, "$1[REDACTED]")
-    .replace(BEARER, "$1 [REDACTED]");
-}
 function diagnostic(error: unknown): string {
   return redactAdvisorDiagnostic(
     error instanceof Error ? error.message : "Unknown non-Error failure",
@@ -189,6 +178,18 @@ export async function runAdvisorSpecialist(input: {
     }
   } catch (error) {
     primary = failure(stage, env, error);
+    if (stage === "run" && !input.cancelled?.()) {
+      try {
+        await timeLifecyclePhase("failed-artifact-download", input.timing, () =>
+          lifecycle.download(env),
+        );
+      } catch (downloadError) {
+        primary = new Error(
+          `${primary.message}; artifact recovery also failed: ${diagnostic(downloadError)}`,
+          { cause: primary },
+        );
+      }
+    }
   } finally {
     try {
       await timeLifecyclePhase("cleanup", input.timing, cleanup);

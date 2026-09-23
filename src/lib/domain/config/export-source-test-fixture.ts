@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
+import { expect } from "vitest";
+import { verifyExportSource } from "./verify-export-source";
 import { resolveManagedStartupInferenceRoute } from "../../inference/gateway/route-contract";
 import { fingerprintOpenShellSandboxId } from "../sandbox/openshell-identity";
 import {
@@ -8,13 +11,19 @@ import {
   type ManagedStartupProfileBuilderInput,
 } from "../../onboard/managed-startup/profile-builder";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
-import type { CanonicalExportPolicy, ObservedExportSnapshot } from "./export-evidence";
+import type {
+  CanonicalExportPolicy,
+  ObservedExportSnapshot,
+  QualifiedExportSnapshot,
+} from "./export-evidence";
 
 export const sandboxId = "018f47e2-9d93-7d15-9c41-3ecf70b2550f";
 export const fingerprint = fingerprintOpenShellSandboxId(sandboxId)!;
 export const endpoint = "https://api.openai.com/v1";
 export const imageRef = "ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:" + "a".repeat(64);
 export const hermesImageRef = "ghcr.io/nvidia/nemoclaw/hermes-sandbox@sha256:" + "c".repeat(64);
+export const dcodeImageRef =
+  "ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox@sha256:" + "d".repeat(64);
 export const policy =
   "version: 1\nprocess:\n  run_as_user: sandbox\n  run_as_group: sandbox\nnetwork_policies:\n  api:\n    name: api\n    endpoints: [{host: api.example.com, port: 443}]\n    binaries: [{path: /usr/bin/curl}]\nfilesystem_policy:\n  include_workdir: false\n  read_only: [/usr]\n  read_write: [/sandbox]\n";
 export const canonicalPolicy = {
@@ -69,7 +78,7 @@ export function hermesProfileInput(): ManagedStartupProfileBuilderInput {
     ...profileInput(),
     agent: "hermes",
     inference: {
-      ...profileInput().inference,
+      ...profileInput().inference!,
       primaryModelRef: null,
       compatibility: null,
     },
@@ -82,6 +91,35 @@ export function hermesProfileInput(): ManagedStartupProfileBuilderInput {
       internalPort: null,
       tuiEnabled: false,
     },
+  };
+}
+
+export function dcodeProfileInput(
+  overrides: Partial<ManagedStartupProfileBuilderInput> = {},
+): ManagedStartupProfileBuilderInput {
+  const route = resolveManagedStartupInferenceRoute(
+    "langchain-deepagents-code",
+    "openai-api",
+    "gpt-5",
+    "openai-completions",
+  );
+  return {
+    ...profileInput(),
+    agent: "langchain-deepagents-code",
+    inference: {
+      routeProvider: route.providerKey,
+      upstreamProvider: "openai-api",
+      model: "gpt-5",
+      routedBaseUrl: route.inferenceBaseUrl,
+      upstreamEndpointUrl: endpoint,
+      api: "openai-completions",
+      primaryModelRef: null,
+      compatibility: null,
+    },
+    dashboard: { agent: "langchain-deepagents-code", mode: "disabled" },
+    dcodeAutoApprovalMode: "disabled",
+    observabilityEnabled: false,
+    ...overrides,
   };
 }
 
@@ -102,6 +140,7 @@ export function managedWorkload(
     startupProfileContractVersion: 1,
     encodedProfile: built.encodedProfile,
     startupProfileSha256: built.startupProfileSha256,
+    ...(built.corporateCaB64 === undefined ? {} : { corporateCaB64: built.corporateCaB64 }),
     credentialProxyReplayRequired: false,
     shared: true,
   };
@@ -189,9 +228,6 @@ export function snapshot(overrides: Partial<ObservedExportSnapshot> = {}): Obser
   };
 }
 
-const nousEndpoint = "https://inference-api.nousresearch.com/v1";
-const model = "moonshotai/kimi-k2.6";
-
 export function braveSnapshot(): ObservedExportSnapshot {
   const value = snapshot();
   return {
@@ -235,6 +271,80 @@ export function hermesSnapshot(
   });
 }
 
+export function dcodeSnapshot(
+  registryOverrides: Partial<SandboxEntry> = {},
+): ObservedExportSnapshot {
+  const base = snapshot();
+  const workload = managedWorkload(dcodeProfileInput(), dcodeImageRef);
+  return snapshot({
+    registry: entry({
+      agent: "langchain-deepagents-code",
+      preferredInferenceApi: "openai-completions",
+      imageTag: dcodeImageRef,
+      workload,
+      dcodeAutoApprovalMode: "disabled",
+      observabilityEnabled: false,
+      toolDisclosure: "progressive",
+      webSearchEnabled: false,
+      webSearchProvider: null,
+      ...registryOverrides,
+    }),
+    sandbox: { ...base.sandbox, imageRef: dcodeImageRef },
+    inference: {
+      ...base.inference,
+      api: "openai-completions",
+      endpointEvidence: {
+        ...base.inference.endpointEvidence!,
+        source: { kind: "provider-config", key: "OPENAI_BASE_URL" },
+      },
+    },
+  });
+}
+
+export function verify(
+  value: ObservedExportSnapshot,
+  requestedSandboxName = "alpha",
+  policyRepresentable = true,
+) {
+  const identity = { sandboxId: value.policy.sandboxId, revision: value.policy.revision };
+  const qualified = {
+    ...value,
+    policy: policyRepresentable
+      ? { ...identity, kind: "verified", canonical: canonicalPolicy }
+      : { ...identity, kind: "not-representable" },
+  } as QualifiedExportSnapshot;
+  return verifyExportSource(requestedSandboxName, qualified);
+}
+
+export function changeRetainedProfile(
+  observed: ObservedExportSnapshot,
+  change: (profile: Record<string, Record<string, unknown>>) => void,
+) {
+  const workload = observed.registry.workload as Extract<
+    SandboxWorkloadReceipt,
+    { kind: "managed-image" }
+  >;
+  expect(workload?.kind).toBe("managed-image");
+  const value = JSON.parse(Buffer.from(workload.encodedProfile, "base64url").toString("utf8"));
+  change(value);
+  const serialized = JSON.stringify(value);
+  const encodedProfile = Buffer.from(serialized).toString("base64url");
+  return {
+    ...observed,
+    registry: {
+      ...observed.registry,
+      workload: {
+        ...workload,
+        encodedProfile,
+        startupProfileSha256: createHash("sha256").update(encodedProfile).digest("hex"),
+      },
+    },
+  };
+}
+
+const nousEndpoint = "https://inference-api.nousresearch.com/v1";
+const hermesAuthModel = "moonshotai/kimi-k2.6";
+
 export function hermesManagedAuthSnapshot(
   registryOverrides: Partial<SandboxEntry> = {},
 ): ObservedExportSnapshot {
@@ -249,7 +359,7 @@ export function hermesManagedAuthSnapshot(
       inference: {
         routeProvider: "inference",
         upstreamProvider: "hermes-provider",
-        model,
+        model: hermesAuthModel,
         routedBaseUrl: "https://inference.local/v1",
         upstreamEndpointUrl: null,
         api,
@@ -261,7 +371,7 @@ export function hermesManagedAuthSnapshot(
   );
   const value = hermesSnapshot({
     provider: "hermes-provider",
-    model,
+    model: hermesAuthModel,
     preferredInferenceApi: api,
     endpointUrl,
     credentialEnv: "NOUS_API_KEY",
@@ -274,7 +384,7 @@ export function hermesManagedAuthSnapshot(
     inference: {
       topology: "hosted",
       provider: "hermes-provider",
-      model,
+      model: hermesAuthModel,
       api,
       endpoint: endpointUrl,
       endpointEvidence: {
@@ -325,7 +435,7 @@ export function compatibleSnapshot(
   const input = {
     ...base,
     inference: {
-      ...base.inference,
+      ...base.inference!,
       routeProvider: route.providerKey,
       upstreamProvider: "compatible-endpoint",
       api: "openai-completions" as const,
@@ -343,12 +453,15 @@ export function compatibleSnapshot(
       ...registryOverrides,
     }),
     inference: {
-      ...observed.inference,
+      ...observed.inference!,
       provider: "compatible-endpoint",
       api: "openai-completions",
       endpointEvidence: {
-        ...observed.inference.endpointEvidence!,
-        provider: { ...observed.inference.endpointEvidence!.provider, name: "compatible-endpoint" },
+        ...observed.inference!.endpointEvidence!,
+        provider: {
+          ...observed.inference!.endpointEvidence!.provider,
+          name: "compatible-endpoint",
+        },
       },
     },
   });

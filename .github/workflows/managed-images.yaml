@@ -32,6 +32,7 @@ on:
   pull_request:
     paths:
       - ".github/actions/ci-reviewed-npm-audit/**"
+      - ".github/actions/setup-reviewed-npm/**"
       - ".github/workflows/base-image.yaml"
       - ".github/actions/publish-managed-image-digest/**"
       - ".github/workflows/managed-images.yaml"
@@ -44,9 +45,8 @@ on:
       - "nemoclaw/**"
       - "nemoclaw-blueprint/**"
       - "scripts/**"
-      - "src/lib/actions/sandbox/openshell-child-visible-credentials.v*.json"
-      - "src/lib/actions/sandbox/mcp-bridge-*.ts"
-      - "src/lib/actions/sandbox/rebuild-post-restore-phase.ts"
+      - "src/lib/actions/sandbox/**"
+      - "src/lib/adapters/openshell/**"
       - "src/lib/agent/candidate-authority.ts"
       - "src/lib/extra-agents-validation.ts"
       - "src/lib/core/json-types.ts"
@@ -57,6 +57,9 @@ on:
       - "src/lib/state/paths.ts"
       - "src/lib/state/state-root.ts"
       - "test/e2e/live/mcp-bridge*.ts"
+      - "test/e2e/support/mcp-bridge-portable-lock-barrier.ts"
+      - "test/e2e/fixtures/gateway-runtime-start.ts"
+      - "test/e2e/fixtures/phases/lifecycle.ts"
       - "test/e2e/live/managed-image-activation-e2e*.ts"
       - "src/lib/tool-disclosure.ts"
       - "tools/mcp-tool-discovery-runtime/**"
@@ -92,13 +95,14 @@ jobs:
       - name: Checkout npm audit code from the base commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: 5310ad0a5c25d49f06910525456ea2529506b3ae
           path: .trusted-reviewed-npm-audit
           persist-credentials: false
           sparse-checkout: |
+            .github/actions/setup-reviewed-npm
+            ci/reviewed-npm-audit.json
             .github/actions/ci-reviewed-npm-audit
             ci/npm-audit-exceptions.json
-            ci/reviewed-npm-audit.json
             scripts/audit-reviewed-npm-graph.mts
             scripts/lib/npm-audit-receipt.mts
             scripts/lib/repository-input-path.mts
@@ -110,13 +114,13 @@ jobs:
       - name: Verify exact audit source and target
         shell: bash
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
           CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
+          REVIEWED_AUDIT_SHA: 5310ad0a5c25d49f06910525456ea2529506b3ae
         run: |
           set -euo pipefail
-          [[ "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]]
           [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ ]]
-          test "$(git -C .trusted-reviewed-npm-audit rev-parse --verify HEAD)" = "$BASE_SHA"
+          [[ "$REVIEWED_AUDIT_SHA" =~ ^[a-f0-9]{40}$ ]]
+          test "$(git -C .trusted-reviewed-npm-audit rev-parse --verify HEAD)" = "$REVIEWED_AUDIT_SHA"
           test "$(git -C candidate rev-parse --verify HEAD)" = "$CANDIDATE_SHA"
 
       - name: Audit exact PR production npm graphs
@@ -141,6 +145,7 @@ jobs:
       STAGING_QA_SOURCE_SHA: ce96811ddb418ad01c040521a1fe912b5bcb405e
       STAGING_QA_BASE_IMAGE: nemoclaw-deepagents-code-base:staging-31396519688
       STAGING_QA_FINAL_IMAGE: nemoclaw-managed-pr/langchain-deepagents-code-staging-qa
+      STAGING_QA_DARWIN_IMAGE: nemoclaw-managed-pr/langchain-deepagents-code-staging-qa-darwin
     steps:
       - name: Checkout latest PR commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -161,7 +166,10 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22.19.0
+          node-version: 24.18.1
+
+      - name: Install reviewed npm
+        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
 
       - name: Validate staging QA source
         shell: bash
@@ -191,6 +199,7 @@ jobs:
           staging_root="$GITHUB_WORKSPACE/staging-qa-base-source"
           for relative in \
             agents/langchain-deepagents-code/Dockerfile.base \
+            scripts/security/build-native-security-packages.sh \
             agents/langchain-deepagents-code/requirements.lock
           do
             source_file="$candidate_root/$relative"
@@ -202,7 +211,16 @@ jobs:
             install -m 0644 "$source_file" "$destination_file"
           done
           for support_relative in \
+            agents/langchain-deepagents-code/validate-runtime-contract.py \
+            ci/reviewed-npm-audit.json \
             scripts/lib/bundled-npm-package.mts \
+            scripts/lib/patch-bundled-npm-ip-address.mts \
+            scripts/lib/reviewed-npm-archive.mts \
+            scripts/lib/reviewed-npm-audit.mts \
+            scripts/lib/reviewed-npm-identity.mts \
+            scripts/patch-bundled-npm-brace-expansion.mts \
+            scripts/patch-bundled-npm-tar.mts \
+            scripts/upgrade-bundled-npm.mts \
             scripts/security/patches/perl-5.44.0-net-ping-capability-tests.patch
           do
             support_source="$candidate_root/$support_relative"
@@ -288,10 +306,40 @@ jobs:
           fi
           printf 'id=%s\n' "$final_id" >> "$GITHUB_OUTPUT"
 
+      - name: Build Darwin compatibility image against reproduced staging QA base
+        id: staging-darwin-final
+        shell: bash
+        working-directory: candidate
+        env:
+          DOCKER_BUILDKIT: "1"
+        run: |
+          set -euo pipefail
+          final_reference="${STAGING_QA_DARWIN_IMAGE}:${CANDIDATE_SHA}"
+          docker build --progress=plain \
+            -f agents/langchain-deepagents-code/Dockerfile \
+            --build-arg BASE_IMAGE="$STAGING_QA_BASE_IMAGE" \
+            --build-arg NEMOCLAW_MODEL=nvidia/nemotron-3-ultra-550b-a55b \
+            --build-arg NEMOCLAW_INFERENCE_PROVIDER_ID=inference \
+            --build-arg NEMOCLAW_UPSTREAM_PROVIDER=nvidia-nim \
+            --build-arg NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1 \
+            --build-arg NEMOCLAW_INFERENCE_API=openai-completions \
+            --build-arg NEMOCLAW_DCODE_AUTO_APPROVAL=thread-opt-in \
+            --build-arg NEMOCLAW_BUILD_ID="$STAGING_QA_SOURCE_SHA" \
+            --build-arg NEMOCLAW_DARWIN_VM_COMPAT=1 \
+            -t "$final_reference" \
+            .
+          final_id="$(docker image inspect --format "{{.Id}}" "$final_reference")"
+          if [[ ! "$final_id" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "ERROR: Darwin compatibility image did not resolve to an immutable local image ID." >&2
+            exit 1
+          fi
+          printf 'id=%s\n' "$final_id" >> "$GITHUB_OUTPUT"
+
       - name: Validate staging QA final image contract
         shell: bash
         env:
           BASE_ID: ${{ steps.staging-base.outputs.id }}
+          DARWIN_FINAL_ID: ${{ steps.staging-darwin-final.outputs.id }}
           FINAL_ID: ${{ steps.staging-final.outputs.id }}
         run: |
           set -euo pipefail
@@ -307,6 +355,10 @@ jobs:
             echo "ERROR: staging QA final image does not extend the rebuilt QA base." >&2
             exit 1
           fi
+          candidate/scripts/checks/verify-dcode-conversation-history-image.sh \
+            "$FINAL_ID" linux/amd64 0
+          candidate/scripts/checks/verify-dcode-conversation-history-image.sh \
+            "$DARWIN_FINAL_ID" linux/amd64 1
           if ! actual_discovery_contract="$(
             docker run --rm --platform linux/amd64 --entrypoint /bin/sh "$FINAL_ID" -c '
             set -eu
@@ -482,6 +534,28 @@ jobs:
           name: reviewed-npm-audit
           path: ${{ runner.temp }}/reviewed-npm-audit
 
+      - name: Checkout trusted mcporter audit verifier
+        if: matrix.agent == 'openclaw'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 5310ad0a5c25d49f06910525456ea2529506b3ae
+          path: .trusted-mcporter-audit
+          persist-credentials: false
+          sparse-checkout: |
+            ci/npm-audit-exceptions.json
+            ci/reviewed-npm-audit.json
+            scripts/lib/npm-audit-receipt.mts
+            scripts/lib/reviewed-npm-audit.mts
+          sparse-checkout-cone-mode: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.18.1
+
+      - name: Install reviewed npm
+        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
+
       - name: Prepare same-run mcporter audit evidence
         if: matrix.agent == 'openclaw'
         id: mcporter-audit
@@ -490,17 +564,27 @@ jobs:
           set -euo pipefail
           receipt="$RUNNER_TEMP/reviewed-npm-audit/mcporter-runtime.receipt.json"
           raw="$RUNNER_TEMP/reviewed-npm-audit/mcporter-runtime.raw.json"
-          test -f "$receipt"; test -f "$raw"
-          printf 'receipt=%s\nraw=%s\nreceipt_sha256=%s\n' "$receipt" "$raw" "$(sha256sum "$receipt" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          policy="$RUNNER_TEMP/reviewed-npm-audit/mcporter-runtime.policy.json"
+          trusted_root="$GITHUB_WORKSPACE/.trusted-mcporter-audit"
+          test "$(git -C "$trusted_root" rev-parse --verify HEAD)" = '5310ad0a5c25d49f06910525456ea2529506b3ae'
+          node --experimental-strip-types --no-warnings \
+            "$trusted_root/scripts/lib/npm-audit-receipt.mts" \
+            --receipt "$receipt" \
+            --package-json "$GITHUB_WORKSPACE/agents/openclaw/mcporter-runtime/package.json" \
+            --package-lock "$GITHUB_WORKSPACE/agents/openclaw/mcporter-runtime/package-lock.json" \
+            --raw-report "$raw" \
+            --exceptions "$trusted_root/ci/npm-audit-exceptions.json" \
+            --graph mcporter-runtime \
+            --audit-config "$trusted_root/ci/reviewed-npm-audit.json" \
+            --registry https://registry.yarnpkg.com \
+            --threshold high \
+            --result "$policy"
+          test -f "$receipt"; test -f "$raw"; test -s "$policy"; test ! -L "$policy"
+          printf 'receipt=%s\nraw=%s\npolicy=%s\nreceipt_sha256=%s\npolicy_sha256=%s\n' "$receipt" "$raw" "$policy" "$(sha256sum "$receipt" | cut -d' ' -f1)" "$(sha256sum "$policy" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         id: buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-
-      - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 22.19.0
 
       - name: Validate Deep Agents PR base build arguments
         if: matrix.agent == 'langchain-deepagents-code'
@@ -533,7 +617,7 @@ jobs:
             -f "$DOCKERFILE" \
             --build-arg "BASE_IMAGE=${BASE_REFERENCE}" \
             --build-arg "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1" \
-            --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root"
+            --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox"
 
       - name: Build PR managed image from local base
         if: steps.base.outputs.local == 'true'
@@ -550,7 +634,9 @@ jobs:
           RESOLUTION_LABEL: ${{ steps.base.outputs.resolution_label }}
           MCPORTER_AUDIT_RECEIPT: ${{ steps.mcporter-audit.outputs.receipt }}
           MCPORTER_AUDIT_RAW_REPORT: ${{ steps.mcporter-audit.outputs.raw }}
+          MCPORTER_AUDIT_POLICY_RESULT: ${{ steps.mcporter-audit.outputs.policy }}
           MCPORTER_AUDIT_RECEIPT_SHA256: ${{ steps.mcporter-audit.outputs.receipt_sha256 }}
+          MCPORTER_AUDIT_POLICY_RESULT_SHA256: ${{ steps.mcporter-audit.outputs.policy_sha256 }}
         run: |
           set -euo pipefail
           # The base resolver loads a changed base into Docker's local image
@@ -561,8 +647,10 @@ jobs:
           if [ "$AGENT" = "openclaw" ]; then
             audit_options+=(
               --build-arg "NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256=${MCPORTER_AUDIT_RECEIPT_SHA256}"
+              --build-arg "NEMOCLAW_MCPORTER_AUDIT_POLICY_RESULT_SHA256=${MCPORTER_AUDIT_POLICY_RESULT_SHA256}"
               --secret "id=nemoclaw-mcporter-audit-receipt,src=${MCPORTER_AUDIT_RECEIPT}"
               --secret "id=nemoclaw-mcporter-audit-raw-report,src=${MCPORTER_AUDIT_RAW_REPORT}"
+              --secret "id=nemoclaw-mcporter-audit-policy-result,src=${MCPORTER_AUDIT_POLICY_RESULT}"
             )
           fi
           if [ "$AGENT" = "langchain-deepagents-code" ]; then
@@ -588,7 +676,7 @@ jobs:
             "${audit_options[@]}" \
             --build-arg "BASE_IMAGE=${BASE_IMAGE}" \
             --build-arg "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1" \
-            --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root" \
+            --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox" \
             .
 
       - name: Build PR managed image from registry base
@@ -616,11 +704,13 @@ jobs:
           build-args: |
             BASE_IMAGE=${{ steps.base.outputs.ref }}
             NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1
-            NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root
+            NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox
             ${{ matrix.agent == 'openclaw' && format('NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256={0}', steps.mcporter-audit.outputs.receipt_sha256) || '' }}
+            ${{ matrix.agent == 'openclaw' && format('NEMOCLAW_MCPORTER_AUDIT_POLICY_RESULT_SHA256={0}', steps.mcporter-audit.outputs.policy_sha256) || '' }}
           secret-files: |
             ${{ matrix.agent == 'openclaw' && format('nemoclaw-mcporter-audit-receipt={0}', steps.mcporter-audit.outputs.receipt) || '' }}
             ${{ matrix.agent == 'openclaw' && format('nemoclaw-mcporter-audit-raw-report={0}', steps.mcporter-audit.outputs.raw) || '' }}
+            ${{ matrix.agent == 'openclaw' && format('nemoclaw-mcporter-audit-policy-result={0}', steps.mcporter-audit.outputs.policy) || '' }}
           cache-from: type=registry,ref=ghcr.io/nvidia/nemoclaw/${{ matrix.agent }}-sandbox:buildcache-linux-amd64
           provenance: false
           sbom: false
@@ -685,8 +775,7 @@ jobs:
                --arg revision "$CANDIDATE_SHA" '
                  length == 1 and
                  .[0].Id == $image_id and
-                 ((.[0].Config.User // "") as $user |
-                   $user == "" or $user == "root" or $user == "0") and
+                 .[0].Config.User == "sandbox" and
                  .[0].Config.Labels["io.nvidia.nemoclaw.agent"] == $agent and
                  .[0].Config.Labels["io.nvidia.nemoclaw.managed-image.contract"] == "1" and
                  .[0].Config.Labels["io.nvidia.nemoclaw.managed-image.platform"] == $platform and
@@ -706,6 +795,9 @@ jobs:
              ' <<< "$image_json" >/dev/null; then
             echo "ERROR: Deep Agents Code managed image lost base resolution metadata." >&2
             exit 1
+          fi
+          if [ "$AGENT" = "langchain-deepagents-code" ]; then
+            scripts/checks/verify-dcode-conversation-history-image.sh "$image_id" "$PLATFORM" 0
           fi
 
           discovery_runtime="/usr/local/lib/nemoclaw/mcp-tool-discovery-runtime"
@@ -851,11 +943,13 @@ jobs:
           build-args: |
             BASE_IMAGE=${{ steps.base.outputs.local == 'true' && 'nemoclaw-pr-base' || steps.base.outputs.ref }}
             NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1
-            NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root
+            NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox
             ${{ matrix.agent == 'openclaw' && format('NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256={0}', steps.mcporter-audit.outputs.receipt_sha256) || '' }}
+            ${{ matrix.agent == 'openclaw' && format('NEMOCLAW_MCPORTER_AUDIT_POLICY_RESULT_SHA256={0}', steps.mcporter-audit.outputs.policy_sha256) || '' }}
           secret-files: |
             ${{ matrix.agent == 'openclaw' && format('nemoclaw-mcporter-audit-receipt={0}', steps.mcporter-audit.outputs.receipt) || '' }}
             ${{ matrix.agent == 'openclaw' && format('nemoclaw-mcporter-audit-raw-report={0}', steps.mcporter-audit.outputs.raw) || '' }}
+            ${{ matrix.agent == 'openclaw' && format('nemoclaw-mcporter-audit-policy-result={0}', steps.mcporter-audit.outputs.policy) || '' }}
           cache-from: type=registry,ref=ghcr.io/nvidia/nemoclaw/${{ matrix.agent }}-sandbox:buildcache-linux-amd64
           provenance: false
           sbom: false
@@ -984,7 +1078,10 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22.19.0
+          node-version: 24.18.1
+
+      - name: Install reviewed npm
+        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
 
       - name: Bind E2E correlation identity
         shell: bash
@@ -1006,7 +1103,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          npm ci --ignore-scripts --no-audit --no-fund
+          node scripts/lib/openshell-sdk-install.mts prepare
+          npm ci --ignore-scripts --no-audit --no-fund --@nvidia:registry=https://npm.pkg.github.com
+          node scripts/lib/openshell-sdk-install.mts check
           mapfile -d '' contracts < <(
             find "$RUNNER_TEMP/managed-pr-contracts" -type f -name contract.json -print0
           )
@@ -1046,35 +1145,30 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  pr-openclaw-mcp-discovery:
-    name: PR exact OpenClaw managed-image MCP discovery (pass ${{ matrix.pass }})
+  pr-managed-podman-activation:
+    name: PR exact all-agent managed runtime activation on rootless Podman
     needs: pr-build-and-entrypoint
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    runs-on: ubuntu-26.04
+    timeout-minutes: 90
     permissions:
       contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        pass: [1, 2]
     env:
       CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/pr-exact-mcp/pass-${{ matrix.pass }}
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/managed-image-podman-activation
       E2E_JOB: "1"
-      E2E_TARGET_ID: mcp-bridge
+      E2E_SOURCE_REVISION: ${{ github.event.pull_request.head.sha }}
+      E2E_TARGET_ID: managed-image-activation
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_E2E_EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
-      NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: ${{ github.workspace }}/managed-pr-catalog.json
-      NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST: "1"
-      NEMOCLAW_E2E_SHARD: openclaw
-      NEMOCLAW_MCP_BRIDGE_AGENT: openclaw
-      NEMOCLAW_MCP_BRIDGE_E2E_SCOPE: managed-image-discovery
+      NEMOCLAW_E2E_SHARD: default
+      NEMOCLAW_GATEWAY_RUNTIME: podman
+      NEMOCLAW_MANAGED_ACTIVATION_CATALOG: ${{ github.workspace }}/managed-pr-catalog.json
       NEMOCLAW_NON_INTERACTIVE: "1"
-      NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF: "1"
       NEMOCLAW_RUN_LIVE_E2E: "1"
-      NEMOCLAW_SANDBOX_NAME: e2e-pr-exact-mcp-${{ matrix.pass }}
-      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ghcr.io/nvidia/openshell/supervisor@sha256:722f44669722961b7f432b0b81de25b91a58f34a61d6403bef967acaf2b3af01
+      OPENSHELL_DRIVERS: podman
+      OPENSHELL_GATEWAY: nemoclaw
+      PODMAN_APT_VERSION: "5.7.0+ds2-3build1"
     steps:
       - name: Checkout exact PR head
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1083,10 +1177,21 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Initialize managed Podman activation diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -d -m 0700 "$E2E_ARTIFACT_DIR"
+          printf 'candidate_sha=%s\nphase=setup\n' "$CANDIDATE_SHA" \
+            >"$E2E_ARTIFACT_DIR/setup-context.txt"
+
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22.19.0
+          node-version: 24.18.1
+
+      - name: Install reviewed npm
+        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
 
       - name: Bind E2E correlation identity
         shell: bash
@@ -1104,75 +1209,265 @@ jobs:
           path: ${{ runner.temp }}/managed-pr-contracts
           merge-multiple: false
 
-      - name: Assemble exact all-agent MCP catalog
+      - name: Assemble exact all-agent activation catalog
         shell: bash
         run: |
           set -euo pipefail
-          npm ci --ignore-scripts --no-audit --no-fund
+          node scripts/lib/openshell-sdk-install.mts prepare
+          npm ci --ignore-scripts --no-audit --no-fund --@nvidia:registry=https://npm.pkg.github.com
+          node scripts/lib/openshell-sdk-install.mts check
           mapfile -d '' contracts < <(
             find "$RUNNER_TEMP/managed-pr-contracts" -type f -name contract.json -print0
           )
           node --no-warnings \
             tools/e2e/pr-managed-image-publication.mts assemble \
             "$CANDIDATE_SHA" \
-            "$NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG" \
+            "$NEMOCLAW_MANAGED_ACTIVATION_CATALOG" \
             "${contracts[@]}"
 
       - name: Build exact candidate CLI
         run: npm run build:cli
 
-      - name: Install and verify cloudflared prerequisite
-        env:
-          CLOUDFLARED_VERSION: "2026.6.1"
-          CLOUDFLARED_DEB_SHA256: "ccd02ec216c62bfa573395d8f72cb2e91e95cbdf8726a8acc06b3e2d9aa31526"
-        run: |
-          set -euo pipefail
-          cloudflared_deb="${RUNNER_TEMP}/cloudflared-${CLOUDFLARED_VERSION}-linux-amd64.deb"
-          curl -fL "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-amd64.deb" -o "${cloudflared_deb}"
-          printf '%s  %s\n' "${CLOUDFLARED_DEB_SHA256}" "${cloudflared_deb}" | sha256sum -c -
-          package="$(dpkg-deb -f "${cloudflared_deb}" Package)"
-          version="$(dpkg-deb -f "${cloudflared_deb}" Version)"
-          architecture="$(dpkg-deb -f "${cloudflared_deb}" Architecture)"
-          if [[ "${package}" != "cloudflared" || "${version}" != "${CLOUDFLARED_VERSION}" || "${architecture}" != "amd64" ]]; then
-            printf 'Unexpected cloudflared package metadata: package=%s version=%s architecture=%s\n' "${package}" "${version}" "${architecture}" >&2
-            exit 1
-          fi
-          sudo dpkg -i "${cloudflared_deb}"
-          cloudflared --version | grep -F "cloudflared version ${CLOUDFLARED_VERSION}"
-
-      - name: Generate MCP test TLS
-        run: bash test/e2e/setup-mcp-test-tls.sh
-
       - name: Install OpenShell CLI
-        env:
-          NEMOCLAW_OPENSHELL_FORCE_INSTALL: "1"
-        run: bash scripts/install-openshell.sh
+        shell: bash
+        run: env -u GITHUB_TOKEN bash scripts/install-openshell.sh
 
-      - name: Run exact OpenClaw managed-image MCP discovery
+      - name: Install rootless Podman runtime
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$(git rev-parse --verify HEAD)" == "$CANDIDATE_SHA" ]] || {
-            echo "ERROR: MCP discovery checkout does not match the exact PR head" >&2
+          sudo apt-get update
+          sudo apt-get install --yes \
+            apparmor \
+            fuse-overlayfs \
+            passt \
+            slirp4netns \
+            uidmap \
+            "podman=$PODMAN_APT_VERSION"
+          test "$(dpkg-query --show --showformat='${Version}' podman)" = "$PODMAN_APT_VERSION"
+          test "$(podman --version)" = "podman version 5.7.0"
+          pasta_profile=/etc/apparmor.d/usr.bin.pasta
+          signal_rule='^[[:space:]]*signal[[:space:]]+\(receive\)[[:space:]]+peer=podman,[[:space:]]*$'
+          test -f "$pasta_profile"
+          if ! grep -Eq "$signal_rule" "$pasta_profile"; then
+            sudo sed -i \
+              '/^[[:space:]]*include <abstractions\/pasta>[[:space:]]*$/a\  signal (receive) peer=podman,' \
+              "$pasta_profile"
+          fi
+          sudo apparmor_parser -r "$pasta_profile"
+
+      - name: Start exact rootless Podman API service
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          uid="$(id -u)"
+          runtime_dir="/run/user/$uid"
+          socket_path="$runtime_dir/podman/podman.sock"
+          install -d -m 0700 "$runtime_dir" "$runtime_dir/podman" "$E2E_ARTIFACT_DIR"
+          export XDG_RUNTIME_DIR="$runtime_dir"
+          containers_conf="$RUNNER_TEMP/nemoclaw-managed-podman-containers.conf"
+          cat >"$containers_conf" <<'CONTAINERS_CONF'
+          [network]
+          default_rootless_network_cmd = "pasta"
+          firewall_driver = "iptables"
+
+          [engine]
+          env = ["NETAVARK_FW=iptables"]
+          CONTAINERS_CONF
+          chmod 0600 "$containers_conf"
+          export CONTAINERS_CONF="$containers_conf"
+          export NETAVARK_FW=iptables
+          service_log="$E2E_ARTIFACT_DIR/podman-system-service.log"
+          podman system service --time=0 "unix://$socket_path" >"$service_log" 2>&1 &
+          service_pid="$!"
+          for attempt in $(seq 1 30); do
+            if podman --url "unix://$socket_path" info --format json \
+              >"$E2E_ARTIFACT_DIR/podman-info.json" 2>>"$service_log"; then
+              break
+            fi
+            test "$attempt" -lt 30
+            sleep 1
+          done
+          test -S "$socket_path"
+          jq -e '(.host.security.rootless // .Host.Security.Rootless) == true' \
+            "$E2E_ARTIFACT_DIR/podman-info.json" >/dev/null
+          sudo ip address replace 169.254.2.2/32 dev lo
+          {
+            printf 'CONTAINER_HOST=unix://%s\n' "$socket_path"
+            printf 'CONTAINERS_CONF=%s\n' "$containers_conf"
+            printf 'E2E_MANAGED_PODMAN_SERVICE_PID=%s\n' "$service_pid"
+            printf 'NETAVARK_FW=iptables\n'
+            printf 'OPENSHELL_PODMAN_SOCKET=%s\n' "$socket_path"
+            printf 'XDG_RUNTIME_DIR=%s\n' "$runtime_dir"
+          } >>"$GITHUB_ENV"
+
+      - name: Disable and guard Docker
+        shell: bash
+        run: |
+          set -euo pipefail
+          guard_dir="$RUNNER_TEMP/nemoclaw-managed-podman-docker-guard"
+          guard_log="$guard_dir/invocations.log"
+          install -d -m 0700 "$guard_dir/bin"
+          : >"$guard_log"
+          cat >"$guard_dir/bin/docker" <<'DOCKER_GUARD'
+          #!/usr/bin/env bash
+          subcommand="${1:-missing}"
+          [[ "$subcommand" =~ ^[a-z][a-z0-9-]{0,31}$ ]] || subcommand=invalid
+          printf '%s\n' "$subcommand" >>"${E2E_DOCKER_GUARD_LOG:?}"
+          printf 'Docker CLI use is forbidden in managed Podman activation.\n' >&2
+          exit 97
+          DOCKER_GUARD
+          chmod 0700 "$guard_dir/bin/docker"
+          guard_bin="$guard_dir/bin/docker"
+          guarded_path="$guard_dir/bin:$PATH"
+          export DOCKER_API_VERSION= DOCKER_CERT_PATH= DOCKER_CONFIG= DOCKER_CONTEXT=
+          export DOCKER_HOST= DOCKER_TLS_VERIFY=
+          export E2E_DOCKER_GUARD_BIN="$guard_bin" E2E_DOCKER_GUARD_LOG="$guard_log"
+          export PATH="$guarded_path"
+          sudo systemctl stop docker.service docker.socket || true
+          sudo systemctl mask --runtime docker.service docker.socket || true
+          sudo pkill -TERM -x dockerd 2>/dev/null || true
+          for attempt in $(seq 1 20); do
+            if ! pgrep -x dockerd >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          if pgrep -x dockerd >/dev/null; then
+            echo "::error::dockerd remained active after Docker shutdown" >&2
             exit 1
-          }
+          fi
+          sudo rm -f /var/run/docker.sock /run/docker.sock
+          {
+            printf 'DOCKER_API_VERSION=\n'
+            printf 'DOCKER_CERT_PATH=\n'
+            printf 'DOCKER_CONFIG=\n'
+            printf 'DOCKER_CONTEXT=\n'
+            printf 'DOCKER_HOST=\n'
+            printf 'DOCKER_TLS_VERIFY=\n'
+            printf 'E2E_DOCKER_GUARD_BIN=%s\n' "$guard_bin"
+            printf 'E2E_DOCKER_GUARD_LOG=%s\n' "$guard_log"
+            printf 'PATH=%s\n' "$guarded_path"
+          } >>"$GITHUB_ENV"
+          if systemctl is-active --quiet docker.service; then
+            echo "::error::docker.service remained active after Docker shutdown" >&2
+            exit 1
+          fi
+          if systemctl is-active --quiet docker.socket; then
+            echo "::error::docker.socket remained active after Docker shutdown" >&2
+            exit 1
+          fi
+          if [ -S /var/run/docker.sock ]; then
+            echo "::error::Docker socket remained available after Docker shutdown" >&2
+            exit 1
+          fi
+          docker_candidate="$(command -v docker || true)"
+          if [ "$docker_candidate" != "$guard_bin" ]; then
+            echo "::error::Docker command resolution escaped the invocation guard" >&2
+            exit 1
+          fi
+          jq -n \
+            --arg dockerCandidate "$docker_candidate" \
+            '{
+              schemaVersion: 1,
+              phase: "before-candidate",
+              dockerServiceActive: false,
+              dockerSocketActive: false,
+              dockerDaemonActive: false,
+              dockerSocketPresent: false,
+              dockerGuardInvocationCount: 0,
+              dockerCandidate: $dockerCandidate
+            }' >"$E2E_ARTIFACT_DIR/docker-absence-before-candidate.json"
+
+      - name: Run real all-agent managed runtime activation on Podman
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse --verify HEAD)" = "$CANDIDATE_SHA"
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
           export OPENSHELL_BIN="$(command -v openshell)"
           "$OPENSHELL_BIN" --version
           npx --no-install tsx tools/e2e/live-vitest-invocation.mts run \
-            --test-path test/e2e/live/mcp-bridge.test.ts
+            --test-path test/e2e/live/managed-image-activation-e2e.test.ts
 
-      - id: mcp_artifact_secret_scan
-        name: Scan MCP artifacts for fixture credentials
+      - name: Verify Docker stayed unavailable
         if: always()
-        run: npx --no-install tsx tools/e2e/assert-mcp-artifact-secrets-absent.mts "$E2E_ARTIFACT_DIR"
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "$E2E_DOCKER_GUARD_LOG"
+          guard_bytes="$(wc -c <"$E2E_DOCKER_GUARD_LOG" | tr -d '[:space:]')"
+          guard_commands="$(jq -Rsc 'split("\n") | map(select(length > 0)) | unique' "$E2E_DOCKER_GUARD_LOG")"
+          docker_candidate="$(command -v docker || true)"
+          docker_service_state="$(systemctl is-active docker.service 2>/dev/null || true)"
+          docker_socket_state="$(systemctl is-active docker.socket 2>/dev/null || true)"
+          docker_daemon_active=false
+          docker_socket_present=false
+          pgrep -x dockerd >/dev/null && docker_daemon_active=true
+          [ -S /var/run/docker.sock ] && docker_socket_present=true
+          jq -n \
+            --arg dockerCandidate "$docker_candidate" \
+            --arg dockerServiceState "$docker_service_state" \
+            --arg dockerSocketState "$docker_socket_state" \
+            --argjson dockerDaemonActive "$docker_daemon_active" \
+            --argjson dockerSocketPresent "$docker_socket_present" \
+            --argjson dockerGuardCommands "$guard_commands" \
+            --argjson guardBytes "$guard_bytes" \
+            '{
+              schemaVersion: 1,
+              phase: "after-candidate",
+              dockerServiceState: $dockerServiceState,
+              dockerSocketState: $dockerSocketState,
+              dockerDaemonActive: $dockerDaemonActive,
+              dockerSocketPresent: $dockerSocketPresent,
+              dockerGuardBytes: $guardBytes,
+              dockerGuardCommands: $dockerGuardCommands,
+              dockerCandidate: $dockerCandidate
+            }' >"$E2E_ARTIFACT_DIR/docker-absence-after-candidate.json"
+          if [ "$guard_bytes" -ne 0 ]; then
+            echo "::error::Docker invocation guard recorded candidate execution: $(jq -r 'join(",")' <<<"$guard_commands")" >&2
+            exit 1
+          fi
+          if [ "$docker_candidate" != "$E2E_DOCKER_GUARD_BIN" ]; then
+            echo "::error::Docker command resolution escaped the invocation guard" >&2
+            exit 1
+          fi
+          if [ "$docker_service_state" = active ]; then
+            echo "::error::docker.service became active during managed Podman activation" >&2
+            exit 1
+          fi
+          if [ "$docker_socket_state" = active ]; then
+            echo "::error::docker.socket became active during managed Podman activation" >&2
+            exit 1
+          fi
+          if [ "$docker_daemon_active" = true ]; then
+            echo "::error::dockerd became active during managed Podman activation" >&2
+            exit 1
+          fi
+          if [ "$docker_socket_present" = true ]; then
+            echo "::error::Docker socket became available during managed Podman activation" >&2
+            exit 1
+          fi
 
-      - name: Upload exact MCP discovery evidence
-        if: ${{ always() && steps.mcp_artifact_secret_scan.outcome == 'success' }}
+      - name: Stop rootless Podman API service
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo ip address delete 169.254.2.2/32 dev lo 2>/dev/null || true
+          service_pid="${E2E_MANAGED_PODMAN_SERVICE_PID:-}"
+          if [[ "$service_pid" =~ ^[1-9][0-9]*$ ]]; then
+            kill "$service_pid" 2>/dev/null || true
+            wait "$service_pid" 2>/dev/null || true
+          fi
+
+      - name: Upload managed Podman activation evidence
+        if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: pr-exact-openclaw-mcp-${{ github.run_id }}-${{ github.run_attempt }}-pass-${{ matrix.pass }}
-          path: e2e-artifacts/live/pr-exact-mcp/pass-${{ matrix.pass }}/
+          name: managed-image-podman-activation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: e2e-artifacts/live/managed-image-podman-activation/
           if-no-files-found: error
           retention-days: 1
 
@@ -1216,10 +1511,18 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22.19.0
+          node-version: 24.18.1
       # Pi has no published base alias yet, so the candidate lane builds its own
       # base on the target architecture. The activation change adds the shared
       # published-base contract with the rest of the release cohort.
+      - name: Install reviewed npm
+        if: github.event_name == 'pull_request'
+        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
+
+      - name: Install trusted-event reviewed npm
+        if: github.event_name != 'pull_request'
+        uses: ./.github/actions/setup-reviewed-npm
+
       - name: Build the exact Pi candidate base
         id: base
         shell: bash
@@ -1259,7 +1562,7 @@ jobs:
             -f "$DOCKERFILE" \
             --build-arg "BASE_IMAGE=nemoclaw-pi-base" \
             --build-arg "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1" \
-            --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root"
+            --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox"
       - name: Build the Pi candidate managed image
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
@@ -1283,7 +1586,7 @@ jobs:
           build-args: |
             BASE_IMAGE=nemoclaw-pi-base
             NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1
-            NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root
+            NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox
           provenance: false
           sbom: false
       - name: Validate the Pi candidate runtime contract
@@ -1315,7 +1618,13 @@ jobs:
             test "$(stat -c %a /sandbox/.pi/agent/models.json)" = 600
             test "$(stat -c %U /sandbox/.pi/agent/models.json)" = sandbox
             node -e "const c=require(\"/sandbox/.pi/agent/models.json\"); if (!c.defaultModel || !c.providers.openshell.baseUrl) process.exit(1)"
-            test -x /usr/local/bin/nemoclaw-managed-bootstrap
+            runtime=/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs
+            test -f "$runtime"
+            test ! -L "$runtime"
+            test "$(stat -c "%u:%g:%a" "$runtime")" = 0:0:444
+            test -x /usr/local/bin/nemoclaw-managed-startup-hold
+            test ! -e /usr/local/bin/nemoclaw-managed-bootstrap
+            test ! -e /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh
           '
       - name: Log in to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -1346,7 +1655,7 @@ jobs:
           build-args: |
             BASE_IMAGE=nemoclaw-pi-base
             NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1
-            NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root
+            NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox
           provenance: false
           sbom: false
       - name: Remove Pi publication credentials
@@ -1385,7 +1694,13 @@ jobs:
             test "$(stat -c %a /sandbox/.pi/agent/models.json)" = 600
             test "$(stat -c %U /sandbox/.pi/agent/models.json)" = sandbox
             node -e "const c=require(\"/sandbox/.pi/agent/models.json\"); if (!c.defaultModel || !c.providers.openshell.baseUrl) process.exit(1)"
-            test -x /usr/local/bin/nemoclaw-managed-bootstrap
+            runtime=/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs
+            test -f "$runtime"
+            test ! -L "$runtime"
+            test "$(stat -c "%u:%g:%a" "$runtime")" = 0:0:444
+            test -x /usr/local/bin/nemoclaw-managed-startup-hold
+            test ! -e /usr/local/bin/nemoclaw-managed-bootstrap
+            test ! -e /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh
           '
       # The checks above bypass /usr/local/bin/nemoclaw-start with a direct
       # --entrypoint override, so they never prove the entrypoint itself runs
@@ -1457,7 +1772,7 @@ jobs:
           runtime_env="$(docker exec "$entrypoint_container" cat /tmp/nemoclaw-proxy-env.sh)"
           merged_ca=/tmp/nemoclaw-ca-bundle.pem
           merged_ca_status="$(docker exec "$entrypoint_container" stat -c '%u:%g:%a' "$merged_ca")"
-          if [ "$merged_ca_status" != "0:0:444" ]; then
+          if [ "$merged_ca_status" != "999:999:444" ]; then
             echo "ERROR: the Pi candidate merged CA bundle is not protected: $merged_ca_status" >&2
             exit 1
           fi
@@ -1702,6 +2017,14 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.18.1
+
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
+
       - name: Resolve managed image release identity
         id: release
         shell: bash
@@ -1736,8 +2059,9 @@ jobs:
           set -euo pipefail
           receipt="$RUNNER_TEMP/reviewed-npm-audit/mcporter-runtime.receipt.json"
           raw="$RUNNER_TEMP/reviewed-npm-audit/mcporter-runtime.raw.json"
-          test -f "$receipt"; test -f "$raw"
-          printf 'receipt=%s\nraw=%s\nreceipt_sha256=%s\n' "$receipt" "$raw" "$(sha256sum "$receipt" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          policy="$RUNNER_TEMP/reviewed-npm-audit/mcporter-runtime.policy.json"
+          test -f "$receipt"; test -f "$raw"; test -s "$policy"; test ! -L "$policy"
+          printf 'receipt=%s\nraw=%s\npolicy=%s\nreceipt_sha256=%s\npolicy_sha256=%s\n' "$receipt" "$raw" "$policy" "$(sha256sum "$receipt" | cut -d' ' -f1)" "$(sha256sum "$policy" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
 
       - name: Restore exact base image contract
         shell: bash
@@ -1889,7 +2213,7 @@ jobs:
             --build-arg "BASE_IMAGE=${BASE_IMAGE}"
             --build-arg "TARGETARCH=${target_arch}"
             --build-arg "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1"
-            --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root"
+            --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox"
           )
           scripts/check-production-build-args.sh "${build_args[@]}"
 
@@ -1918,11 +2242,13 @@ jobs:
             BASE_IMAGE=${{ steps.base.outputs.ref }}
             TARGETARCH=${{ matrix.arch }}
             NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1
-            NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root
+            NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox
             ${{ matrix.agent == 'openclaw' && format('NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256={0}', steps.mcporter-audit.outputs.receipt_sha256) || '' }}
+            ${{ matrix.agent == 'openclaw' && format('NEMOCLAW_MCPORTER_AUDIT_POLICY_RESULT_SHA256={0}', steps.mcporter-audit.outputs.policy_sha256) || '' }}
           secret-files: |
             ${{ matrix.agent == 'openclaw' && format('nemoclaw-mcporter-audit-receipt={0}', steps.mcporter-audit.outputs.receipt) || '' }}
             ${{ matrix.agent == 'openclaw' && format('nemoclaw-mcporter-audit-raw-report={0}', steps.mcporter-audit.outputs.raw) || '' }}
+            ${{ matrix.agent == 'openclaw' && format('nemoclaw-mcporter-audit-policy-result={0}', steps.mcporter-audit.outputs.policy) || '' }}
           cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ matrix.image }}:buildcache-${{ matrix.artifact_platform }}
           cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ matrix.image }}:buildcache-${{ matrix.artifact_platform }},mode=max
           provenance: mode=max
@@ -1955,8 +2281,8 @@ jobs:
           anonymous_config="$ANONYMOUS_CONFIG"
           image_id="$IMAGE_ID"
           image_user="$(docker image inspect --format '{{.Config.User}}' "$reference")"
-          if [ -n "$image_user" ] && [ "$image_user" != "root" ] && [ "$image_user" != "0" ]; then
-            echo "ERROR: managed image OCI user must be uid 0 for OpenShell supervisor initialization: $image_user" >&2
+          if [ "$image_user" != "sandbox" ]; then
+            echo "ERROR: managed image OCI user must be sandbox for OpenShell 0.0.116: $image_user" >&2
             exit 1
           fi
           if [ "$AGENT" = "langchain-deepagents-code" ] &&
@@ -2050,14 +2376,14 @@ jobs:
             fs.readFileSync("/sandbox/.openclaw/openclaw.json", "utf8"),
           );
           const packages = {
-            "diagnostics-otel": ["@openclaw/diagnostics-otel", "2026.7.1"],
-            brave: ["@openclaw/brave-plugin", "2026.7.1"],
-            discord: ["@openclaw/discord", "2026.7.1"],
+            "diagnostics-otel": ["@openclaw/diagnostics-otel", "2026.9.1"],
+            brave: ["@openclaw/brave-plugin", "2026.9.1"],
+            discord: ["@openclaw/discord", "2026.9.1"],
             "openclaw-weixin": ["@tencent-weixin/openclaw-weixin", "2.4.3"],
-            slack: ["@openclaw/slack", "2026.7.1"],
-            whatsapp: ["@openclaw/whatsapp", "2026.7.1"],
-            msteams: ["@openclaw/msteams", "2026.7.1"],
-            googlechat: ["@openclaw/googlechat", "2026.7.1"],
+            slack: ["@openclaw/slack", "2026.9.1"],
+            whatsapp: ["@openclaw/whatsapp", "2026.9.1"],
+            msteams: ["@openclaw/msteams", "2026.9.1"],
+            googlechat: ["@openclaw/googlechat", "2026.9.1"],
           };
           const projectsRoot = "/sandbox/.openclaw/npm/projects";
           const projectRoots = fs
@@ -2140,6 +2466,13 @@ jobs:
             *) echo "ERROR: unsupported managed agent $AGENT" >&2; exit 1 ;;
           esac
           VALIDATE_FILESYSTEM
+
+          if [ "$AGENT" = "langchain-deepagents-code" ]; then
+            DOCKER_CONFIG="$anonymous_config" \
+              node --no-warnings scripts/checks/validate-dcode-runtime-contract.mts \
+                --reference "$reference" \
+                --platform "$PLATFORM"
+          fi
 
           version_output="$(
             DOCKER_CONFIG="$anonymous_config" docker run --rm \

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import * as onboardSession from "../state/onboard-session";
-import type { SandboxEntry, SandboxMcpState } from "../state/registry";
+import type { SandboxEntry } from "../state/registry";
 import * as registry from "../state/registry";
 import type { SelectionDrift } from "./selection-drift";
 
@@ -62,7 +62,7 @@ export function releaseAbandonedRouteReservation(sandboxName: string): boolean {
 export interface SandboxLifecycleDeps {
   runCaptureOpenshell(args: string[], opts?: Record<string, unknown>): string | null;
   getGatewayName(): string;
-  fetchGatewayAuthTokenFromSandbox(sandboxName: string): string | null;
+  fetchGatewayAuthTokenFromSandbox(sandboxName: string): Promise<string | null>;
   agentProductName(): string;
   prompt(question: string): Promise<string>;
   isAffirmativeAnswer(value: string | null | undefined): boolean;
@@ -71,7 +71,6 @@ export interface SandboxLifecycleDeps {
 export interface SandboxLifecycleHelpers {
   inspectSandboxForCreate(sandboxName: string): {
     existingEntry: SandboxEntry | null;
-    preservedMcpState: SandboxMcpState | undefined;
     liveExists: boolean;
   };
   shouldRestoreLatestBackupOnRecreate(): boolean;
@@ -81,7 +80,7 @@ export interface SandboxLifecycleHelpers {
     requestedProvider: string | null,
     requestedModel: string | null,
   ): Promise<boolean>;
-  isOpenclawReady(sandboxName: string): boolean;
+  isOpenclawReady(sandboxName: string): Promise<boolean>;
 }
 
 export function createSandboxLifecycleHelpers(deps: SandboxLifecycleDeps): SandboxLifecycleHelpers {
@@ -95,19 +94,8 @@ export function createSandboxLifecycleHelpers(deps: SandboxLifecycleDeps): Sandb
 
   function inspectSandboxForCreate(sandboxName: string) {
     const existingEntry = registry.getSandbox(sandboxName);
-    if (existingEntry?.mcp?.destroyPreparedAt || existingEntry?.mcp?.destroyPendingAt) {
-      throw new Error(
-        `Sandbox '${sandboxName}' has an incomplete MCP destroy transaction. Re-run the sandbox destroy command to finish cleanup before recreating it.`,
-      );
-    }
-    const preservedMcpState =
-      existingEntry?.mcp && Object.keys(existingEntry.mcp.bridges).length > 0
-        ? existingEntry.mcp
-        : undefined;
-    // MCP state is the rebuild transaction manifest. Preserve it while the
-    // sandbox is absent; registration carries the validated state forward.
     const liveExists = sandboxExistsInGateway(sandboxName);
-    return { existingEntry, preservedMcpState, liveExists };
+    return { existingEntry, liveExists };
   }
 
   function shouldRestoreLatestBackupOnRecreate(): boolean {
@@ -136,8 +124,8 @@ export function createSandboxLifecycleHelpers(deps: SandboxLifecycleDeps): Sandb
     return deps.isAffirmativeAnswer(answer);
   }
 
-  function isOpenclawReady(sandboxName: string): boolean {
-    return Boolean(deps.fetchGatewayAuthTokenFromSandbox(sandboxName));
+  async function isOpenclawReady(sandboxName: string): Promise<boolean> {
+    return Boolean(await deps.fetchGatewayAuthTokenFromSandbox(sandboxName));
   }
 
   return {

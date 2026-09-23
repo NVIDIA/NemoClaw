@@ -1156,20 +1156,46 @@ describe("source registry fingerprint", () => {
     }
   });
 
-  it("survives MCP cleanup-state preparation", () => {
-    const sourceEntry: SandboxEntry = {
-      ...SOURCE_ENTRY,
-      lifecycleGeneration: TARGET_GENERATION,
-      lifecycleLiveIdentityFingerprint: SOURCE_ID,
-      mcp: { bridges: {}, managedServerNames: ["search"] },
-    };
-    const journaled = fingerprintSandboxRegistryEntry(sourceEntry);
-    const preparedEntry: SandboxEntry = {
-      ...sourceEntry,
-      mcp: { bridges: {}, managedServerNames: [] },
-    };
+  it("survives N1x managed-vLLM route reservation during rebuild (#11886)", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-recreate-journal-"));
+    vi.stubEnv("HOME", home);
+    vi.resetModules();
+    try {
+      const registry = await import("../state/registry");
+      const route = {
+        provider: "vllm-local",
+        model: "nvidia/Qwen3.6-35B-A3B-NVFP4",
+        endpointUrl: null,
+        endpointSource: null,
+        credentialEnv: null,
+        preferredInferenceApi: "openai-completions" as const,
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        openshellDriver: "docker" as const,
+      };
+      registry.registerSandbox({
+        name: "alpha",
+        agent: "openclaw",
+        createdAt: ISO,
+        ...route,
+        deferredN1xManagedVllmAccepted: true,
+      });
+      const sourceEntry = registry.getSandbox("alpha") as SandboxEntry;
+      const journaled = fingerprintSandboxRegistryEntry(sourceEntry);
 
-    expect(fingerprintSandboxRegistryEntry(preparedEntry)).toBe(journaled);
+      expect(
+        registry.reserveSandboxInferenceRoute("alpha", {
+          ...route,
+          reservationSessionId: "session-n1x-rebuild",
+        }),
+      ).toBe(true);
+      const reserved = registry.getSandbox("alpha") as SandboxEntry;
+
+      expect(reserved.deferredN1xManagedVllmAccepted).toBeUndefined();
+      expect(fingerprintSandboxRegistryEntry(reserved)).toBe(journaled);
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+    }
   });
 
   it("changes when the row records another sandbox", async () => {
@@ -1251,6 +1277,7 @@ describe("journal-bound source proof", () => {
     const session = createSession({ sandboxName: "alpha", agent: "openclaw" });
     return sandboxRecreateSourceProof(
       beginSandboxRecreateTransaction(session, beginInput(observation)),
+      session.sessionId,
     );
   }
 

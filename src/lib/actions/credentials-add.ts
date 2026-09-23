@@ -11,7 +11,14 @@ import type {
 } from "../adapters/openshell/provider-adapter";
 import type { OpenShellGatewayTarget } from "../adapters/openshell/sandbox-observer";
 import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../adapters/openshell/timeouts";
+import { resolveAgentNameAlias } from "../agent/aliases";
 import { CLI_NAME } from "../cli/branding";
+import {
+  HERMES_TAVILY_PROVIDER_PROFILE_ID,
+  TAVILY_PROVIDER_PROFILE_AGENTS,
+  TAVILY_PROVIDER_PROFILE_ID,
+  webSearchProviderProfileId,
+} from "../messaging/applier/web-search-provider-profile";
 import {
   isBridgeProviderName,
   recoverCredentialGatewayTargetOrExit,
@@ -21,15 +28,12 @@ import { SECRET_PATTERNS } from "../security/secret-patterns";
 import { assertEndpointResolvesPublic } from "../security/trusted-private-endpoint";
 import { withMcpCredentialOwnershipLock } from "../state/mcp-lifecycle-lock/credential-ownership";
 import { ROOT } from "../state/paths";
-import {
-  forgetExtraProvider,
-  listManagedMcpCredentialReservations,
-  recordExtraProvider,
-} from "./global";
+import { forgetExtraProvider, recordExtraProvider } from "./global";
 
 export type CredentialsAddInput = {
   provider: string;
   type: string;
+  agent?: string;
   credentials: readonly string[];
   configPairs: readonly string[];
   fromExisting: boolean;
@@ -60,26 +64,6 @@ function ok(successLines: readonly string[]): CredentialsAddResult {
 
 function fail(failureLines: readonly string[], exitCode = 1): CredentialsAddResult {
   return { exitCode, successLines: [], failureLines };
-}
-
-function managedMcpCollisionFailure(
-  provider: string,
-  credentialKeys: readonly string[],
-  reservations: ReturnType<typeof listManagedMcpCredentialReservations>,
-): CredentialsAddResult | null {
-  for (const credential of credentialKeys) {
-    const collision = reservations.find((reservation) =>
-      reservation.credentialKeys.includes(credential),
-    );
-    if (collision) {
-      return fail([
-        `  Credential key '${credential}' is reserved by managed MCP server '${collision.server}' on sandbox '${collision.sandboxName}'.`,
-        `  Refusing to register provider '${provider}' because registered providers attach during sandbox rebuild.`,
-        "  Use a different credential key, or remove the managed MCP server before retrying.",
-      ]);
-    }
-  }
-  return null;
 }
 
 function typedProviderConfigFailure(type: string, key: string, value: string): string[] | null {
@@ -269,6 +253,35 @@ export async function runCredentialsAddAction(
     ]);
   }
 
+  const normalizedType = type.toLowerCase();
+  const isTavily =
+    normalizedType === TAVILY_PROVIDER_PROFILE_ID ||
+    normalizedType === HERMES_TAVILY_PROVIDER_PROFILE_ID;
+  let agentName: string | null = null;
+  if (input.agent !== undefined) {
+    if (!isTavily) return fail(["  --agent is supported only with Tavily provider profiles."]);
+    agentName = resolveAgentNameAlias(input.agent, TAVILY_PROVIDER_PROFILE_AGENTS);
+    if (!agentName) {
+      return fail([
+        "  Unsupported Tavily agent. Use --agent hermes, --agent openclaw, or --agent dcode.",
+      ]);
+    }
+    if (normalizedType === HERMES_TAVILY_PROVIDER_PROFILE_ID && agentName !== "hermes") {
+      return fail([
+        `  Provider profile '${HERMES_TAVILY_PROVIDER_PROFILE_ID}' is only compatible with Hermes.`,
+        `  Use --type tavily --agent ${agentName} for the selected runtime.`,
+      ]);
+    }
+  }
+  const effectiveType = isTavily ? webSearchProviderProfileId(normalizedType, agentName) : type;
+  const compatibilityWarnings =
+    normalizedType === TAVILY_PROVIDER_PROFILE_ID && !agentName
+      ? [
+          "  Warning: --type tavily does not authorise the Hermes Python runtime.",
+          `  For Hermes, use --type tavily --agent hermes or --type ${HERMES_TAVILY_PROVIDER_PROFILE_ID}.`,
+        ]
+      : [];
+
   if (isBridgeProviderName(provider)) {
     return fail([
       `  '${provider}' is a per-sandbox messaging bridge, not a credential.`,
@@ -350,14 +363,6 @@ export async function runCredentialsAddAction(
   const endpointFailure = await providerConfigEndpointFailure(config);
   if (endpointFailure) return fail(endpointFailure);
 
-  const managedMcpReservations = listManagedMcpCredentialReservations();
-  const explicitCollision = managedMcpCollisionFailure(
-    provider,
-    credentials,
-    managedMcpReservations,
-  );
-  if (explicitCollision) return explicitCollision;
-
   const recoveryFailureLines: string[] = [];
   const target = await recoverCredentialGatewayTargetOrExit("mutation", (lines) => {
     recoveryFailureLines.push(...lines);
@@ -366,8 +371,8 @@ export async function runCredentialsAddAction(
     return fail(recoveryFailureLines);
   }
 
-  const profile = bundledProviderProfile(type);
-  const providerType = profile?.profileType ?? type;
+  const profile = bundledProviderProfile(effectiveType);
+  const providerType = profile?.profileType ?? effectiveType.toLowerCase();
   const providerProfileFailure = await ensureBundledProviderProfile(
     profile,
     target,
@@ -375,7 +380,6 @@ export async function runCredentialsAddAction(
   );
   if (providerProfileFailure) return providerProfileFailure;
 
-  let importedCredentialKeys: string[] | null = null;
   if (fromExisting) {
     const inspection = await providerAdapter.inspectProviderProfile({
       target,
@@ -389,18 +393,12 @@ export async function runCredentialsAddAction(
         ...(inspection.error.message ? [`  ${inspection.error.message}`] : []),
       ]);
     }
-    importedCredentialKeys = [...inspection.value.credentialKeys];
   }
 
   return withMcpCredentialOwnershipLock(async () => {
-    const providerCredentialKeys = importedCredentialKeys ?? credentials;
-    const collision = managedMcpCollisionFailure(
-      provider,
-      providerCredentialKeys,
-      listManagedMcpCredentialReservations(),
-    );
-    if (collision) return collision;
-
+    // Registration records this provider as an explicit extra-provider intent.
+    // Rebuild validates that intent against current source-backed MCP entries;
+    // orphaned providers retained by conservative MCP removal are not intent.
     const recordedReservation = recordExtraProvider(provider);
     let keepReservation = false;
     try {
@@ -420,6 +418,7 @@ export async function runCredentialsAddAction(
       if (result.ok) {
         keepReservation = true;
         return ok([
+          ...compatibilityWarnings,
           `  Registered provider '${provider}' with the OpenShell gateway.`,
           `  Verify with '${CLI_NAME} credentials list'.`,
           `  Rebuild each sandbox that should use '${provider}' (\`${CLI_NAME} <sandbox> rebuild\`).`,

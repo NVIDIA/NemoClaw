@@ -7,6 +7,7 @@ import type { CollectHostObservationsOptions } from "../readiness/host";
 import { discoverManagedLlamaCppSelectionsForGpu } from "../inference/llama-cpp/managed-selection";
 import { loadManagedInferenceCatalog } from "../inference/serving/catalog-loader";
 import { makeDeps, makeHostState } from "./__test-helpers__/setup-nim-flow";
+import type { HostAssessment } from "./preflight";
 import { createSetupNim, type SetupNimFlowDeps, type SetupNimGpu } from "./setup-nim-flow";
 
 afterEach(() => {
@@ -43,41 +44,61 @@ function managedSelectionFixture(recipeId: string, displayName: string, model: s
   } as never;
 }
 
+function dockerHostAssessment(isWsl: boolean): HostAssessment {
+  return {
+    platform: "linux",
+    isWsl,
+    runtime: isWsl ? "docker-desktop" : "docker",
+    dockerInstalled: true,
+    dockerRunning: true,
+    dockerReachable: true,
+    nodeInstalled: true,
+    openshellInstalled: true,
+    dockerCgroupVersion: "v2",
+    dockerDefaultCgroupnsMode: "private",
+    dockerStorageDriver: "overlay2",
+    dockerUsesContainerdSnapshotter: false,
+    dockerCpus: 12,
+    dockerMemTotalBytes: 64 * 1024 ** 3,
+    isContainerRuntimeUnderProvisioned: false,
+    hasNestedOverlayConflict: false,
+    requiresHostCgroupnsFix: false,
+    isUnsupportedRuntime: false,
+    isHeadlessLikely: false,
+    hasNvidiaGpu: true,
+    dockerCdiSpecDirs: ["/etc/cdi"],
+    cdiNvidiaGpuSpecMissing: false,
+    cdiNvidiaGpuSpecStale: false,
+    cdiNvidiaGpuSpecNeedsRepair: false,
+    nvidiaContainerToolkitInstalled: true,
+    notes: [],
+  };
+}
+
 function n1xCollectionOptions(): Omit<
   CollectHostObservationsOptions,
   "detectGpu" | "containerGpuProof"
 > {
   return {
     architecture: "arm64",
-    assess: () => ({
-      platform: "linux" as const,
-      isWsl: true,
-      runtime: "docker-desktop" as const,
-      dockerInstalled: true,
-      dockerRunning: true,
-      dockerReachable: true,
-      nodeInstalled: true,
-      openshellInstalled: true,
-      dockerCgroupVersion: "v2",
-      dockerDefaultCgroupnsMode: "private",
-      dockerStorageDriver: "overlay2",
-      dockerUsesContainerdSnapshotter: false,
-      dockerCpus: 12,
-      dockerMemTotalBytes: 64 * 1024 ** 3,
-      isContainerRuntimeUnderProvisioned: false,
-      hasNestedOverlayConflict: false,
-      requiresHostCgroupnsFix: false,
-      isUnsupportedRuntime: false,
-      isHeadlessLikely: false,
-      hasNvidiaGpu: true,
-      dockerCdiSpecDirs: ["/etc/cdi"],
-      cdiNvidiaGpuSpecMissing: false,
-      cdiNvidiaGpuSpecStale: false,
-      cdiNvidiaGpuSpecNeedsRepair: false,
-      nvidiaContainerToolkitInstalled: true,
-      notes: [],
-    }),
+    assess: () => dockerHostAssessment(true),
     collectPlatformIdentity: () => ({ productName: "83N7" }),
+    detectNvidiaDriverVersion: () => "580.65.06",
+  };
+}
+
+function sparkCollectionOptions(): Omit<
+  CollectHostObservationsOptions,
+  "detectGpu" | "containerGpuProof"
+> {
+  return {
+    architecture: "arm64",
+    assess: () => dockerHostAssessment(false),
+    collectPlatformIdentity: () => ({
+      nvidiaPlatform: "spark",
+      productName: "NVIDIA DGX Spark",
+    }),
+    detectHostGpuPlatform: () => "spark",
     detectNvidiaDriverVersion: () => "580.65.06",
   };
 }
@@ -144,6 +165,7 @@ function n1xProofHarness(proofPassed: boolean, requestedProvider: string | null)
 describe("managed llama.cpp profile onboarding", () => {
   it("installs an interactive profile despite a different recipe environment", async () => {
     vi.stubEnv("NEMOCLAW_LLAMACPP_RECIPE", "llama-cpp.recommended.v1");
+    vi.stubEnv("NEMOCLAW_SERVING_PRESET", "llama-cpp.recommended.v1.preset");
     const recommended = managedSelectionFixture(
       "llama-cpp.recommended.v1",
       "Recommended model",
@@ -215,7 +237,10 @@ describe("managed llama.cpp profile onboarding", () => {
       model: "alternate-model",
     });
     expect(discoverManagedLlamaCppSelections).toHaveBeenLastCalledWith(
-      expect.objectContaining({ NEMOCLAW_LLAMACPP_RECIPE: "llama-cpp.alternate.v1" }),
+      expect.objectContaining({
+        NEMOCLAW_LLAMACPP_RECIPE: "llama-cpp.alternate.v1",
+        NEMOCLAW_SERVING_PRESET: "",
+      }),
       expect.objectContaining({ platform: "spark" }),
       undefined,
       undefined,
@@ -223,7 +248,7 @@ describe("managed llama.cpp profile onboarding", () => {
     );
     expect(discoverManagedLlamaCppSelections).toHaveBeenNthCalledWith(
       1,
-      expect.objectContaining({ NEMOCLAW_LLAMACPP_RECIPE: "" }),
+      expect.objectContaining({ NEMOCLAW_LLAMACPP_RECIPE: "", NEMOCLAW_SERVING_PRESET: "" }),
       expect.objectContaining({ platform: "spark" }),
       undefined,
       undefined,
@@ -233,6 +258,67 @@ describe("managed llama.cpp profile onboarding", () => {
       alternate,
       expect.objectContaining({ sandboxName: "spark-agent" }),
     );
+  });
+
+  it("installs the serving preset a profile request exports through the managed llama.cpp provider", async () => {
+    vi.stubEnv("NEMOCLAW_SERVING_PRESET", "llama-cpp.dgx-spark-gb10.single.muse-glimmer-30b");
+    const catalog = loadManagedInferenceCatalog();
+    const gpu = {
+      type: "nvidia",
+      name: "NVIDIA GB10",
+      platform: "spark" as const,
+      spark: true,
+      count: 1,
+      totalMemoryMB: 122_880,
+      perGpuMB: 122_880,
+      nimCapable: true,
+    } as never;
+    const discoverManagedLlamaCppSelections = vi.fn(
+      (env, detectedGpu, _catalog, _collectionOptions, selectionOptions) =>
+        discoverManagedLlamaCppSelectionsForGpu(
+          env,
+          detectedGpu,
+          catalog,
+          sparkCollectionOptions(),
+          selectionOptions,
+        ),
+    );
+    const installManagedLlamaCpp = vi.fn<NonNullable<SetupNimFlowDeps["installManagedLlamaCpp"]>>(
+      async (selection) => ({
+        ok: true as const,
+        apiKey: "a".repeat(64),
+        model: selection.recipe.spec.model.servedName,
+        receipt: { schemaVersion: 1 } as never,
+      }),
+    );
+    const handleLlamaCppSelection = vi.fn<SetupNimFlowDeps["handleLlamaCppSelection"]>(
+      async (state, requestedModel) => {
+        state.provider = "llama-cpp-local";
+        state.model = requestedModel;
+        return "selected";
+      },
+    );
+    const setupNim = createSetupNim(
+      makeDeps({
+        discoverManagedLlamaCppSelections,
+        handleLlamaCppSelection,
+        installManagedLlamaCpp,
+        isNonInteractive: () => true,
+        getNonInteractiveProvider: () => "install-llama-cpp",
+      }),
+    );
+
+    await expect(setupNim(gpu, "spark-agent")).resolves.toMatchObject({
+      provider: "llama-cpp-local",
+      servingProfileProvenance: {
+        preset: { id: "llama-cpp.dgx-spark-gb10.single.muse-glimmer-30b" },
+        recipe: { id: "llama-cpp.muse-glimmer-30b.spark-single.v1" },
+      },
+    });
+    expect(installManagedLlamaCpp.mock.calls[0]?.[0]).toMatchObject({
+      selection: "explicit",
+      recipe: { metadata: { id: "llama-cpp.muse-glimmer-30b.spark-single.v1" } },
+    });
   });
 
   it("resumes the exact managed llama.cpp recipe recorded for the sandbox", async () => {

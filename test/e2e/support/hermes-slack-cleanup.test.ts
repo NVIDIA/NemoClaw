@@ -51,7 +51,7 @@ describe("Hermes Slack retained-resource cleanup", () => {
     expect(cleanup.trackSandbox).not.toHaveBeenCalled();
   });
 
-  it("registers gateway, provider, and sandbox cleanup by default", () => {
+  it("registers gateway, provider, and OpenShell sandbox cleanup by default", () => {
     const { cleanup, fixtures } = cleanupFixtures();
 
     registerHermesSlackCleanup(fixtures, {
@@ -64,7 +64,7 @@ describe("Hermes Slack retained-resource cleanup", () => {
 
     expect(cleanup.trackGateway).toHaveBeenCalledTimes(1);
     expect(cleanup.trackDisposable).toHaveBeenCalledTimes(3);
-    expect(cleanup.trackSandbox).toHaveBeenCalledTimes(1);
+    expect(cleanup.trackSandbox).not.toHaveBeenCalled();
   });
 
   it("accepts a confirmed absent provider during idempotent cleanup", async () => {

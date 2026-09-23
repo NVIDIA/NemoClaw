@@ -13,6 +13,8 @@ import {
   managedWorkload,
   entry,
   snapshot,
+  verify,
+  changeRetainedProfile,
   tunedEnvironment,
   hermesSnapshot,
   hermesManagedAuthSnapshot,
@@ -26,12 +28,11 @@ import { Check } from "typebox/value";
 import { ExportSourceValuesSchema } from "./export-evidence";
 import { describe, expect, it } from "vitest";
 import { exportSnapshots } from "../../actions/config/export-test-fixture";
-import { validateNemoClawConfig } from "../../config/schema";
-import { type NemoClawConfig } from "../../config/model";
+import type { V1Alpha1Export } from "../../config/v1alpha1-export";
+import { asExportedConfig } from "../../../../test/support/config-export-document";
 import { observeStableExportSource } from "../../actions/config/observe-export-source";
 import type { ManagedStartupProfileBuilderInput } from "../../onboard/managed-startup/profile-builder";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
-import type { ObservedExportSnapshot, QualifiedExportSnapshot } from "./export-evidence";
 import { classifyExportRegistry, verifyExportSource } from "./verify-export-source";
 import { buildChain } from "../../dashboard/contract";
 
@@ -44,25 +45,10 @@ function verifiedSource(result: ReturnType<typeof verifyExportSource>) {
   return (result as Extract<typeof result, { kind: "verified" }>).source;
 }
 
-function verify(
-  value: ObservedExportSnapshot,
-  requestedSandboxName = "alpha",
-  policyRepresentable = true,
-) {
-  const identity = { sandboxId: value.policy.sandboxId, revision: value.policy.revision };
-  const qualified = {
-    ...value,
-    policy: policyRepresentable
-      ? { ...identity, kind: "verified", canonical: canonicalPolicy }
-      : { ...identity, kind: "not-representable" },
-  } as QualifiedExportSnapshot;
-  return verifyExportSource(requestedSandboxName, qualified);
-}
-
-function primaryOpenClawAgent(config: NemoClawConfig) {
-  const agent = config.spec.sandboxes[0]!.agents[0]!;
-  expect(agent.type).toBe("openclaw");
-  return agent as Extract<typeof agent, { type: "openclaw" }>;
+function primaryOpenClawAgent(config: V1Alpha1Export) {
+  const sandbox = config.spec.sandboxes[0]!;
+  expect(sandbox.harness.kind).toBe("openclaw");
+  return { ...sandbox.agent, ...sandbox.harness };
 }
 
 describe("config export source verification (#10938)", () => {
@@ -234,7 +220,7 @@ describe("config export source verification (#10938)", () => {
       expect(result.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
       expect(result.read).toHaveBeenCalledTimes(2);
       const [yaml] = result.writeStdout.mock.calls[0]!;
-      const config = validateNemoClawConfig(YAML.parse(yaml));
+      const config = asExportedConfig(YAML.parse(yaml));
       const agent = primaryOpenClawAgent(config);
       expect(agent.inference.routes[0]!.overrides).toEqual({
         model: "gpt-5",
@@ -246,7 +232,12 @@ describe("config export source verification (#10938)", () => {
       expect(agent.execution).toEqual({ timeoutSeconds: 900, heartbeatEvery: "30m" });
       expect(agent).toMatchObject(expected);
       expect(Object.hasOwn(agent, "observability")).toBe(telemetry);
-      expect(config.spec.sandboxes[0]!.network.policy.explicit).toEqual(canonicalPolicy);
+      expect(config.spec.sandboxes[0]!.network.policy.explicit).toMatchObject({
+        process: { run_as_user: "1000", run_as_group: "1000" },
+        filesystem_policy: {
+          read_only: expect.arrayContaining(["/opt/fabric", "/opt/nemoclaw", "/app"]),
+        },
+      });
       expect(config.spec.inferenceProviders[0]).toEqual(
         expect.objectContaining({ credential: { env: "OPENAI_API_KEY" } }),
       );
@@ -274,17 +265,17 @@ describe("config export source verification (#10938)", () => {
     ]);
     expect(explicit.outcome.ok).toBe(true);
     expect(explicit.writeStdout.mock.calls).toEqual(baseline.writeStdout.mock.calls);
-    const config = validateNemoClawConfig(YAML.parse(explicit.writeStdout.mock.calls[0]![0]));
-    expect(config.spec.sandboxes[0]!.agents[0]!.inference.routes[0]!.overrides).toEqual({
+    const config = asExportedConfig(YAML.parse(explicit.writeStdout.mock.calls[0]![0]));
+    expect(primaryOpenClawAgent(config).inference.routes[0]!.overrides).toEqual({
       model: "gpt-5",
     });
-    expect(config.spec.sandboxes[0]!.agents[0]).not.toHaveProperty("execution");
+    expect(config.spec.sandboxes[0]!.harness).not.toHaveProperty("execution");
   });
 
   it("retains an explicit zero heartbeat duration", async () => {
     const result = await exportSnapshots([tunedSnapshot({ NEMOCLAW_AGENT_HEARTBEAT_EVERY: "0m" })]);
     expect(result.outcome.ok).toBe(true);
-    const config = validateNemoClawConfig(YAML.parse(result.writeStdout.mock.calls[0]![0]));
+    const config = asExportedConfig(YAML.parse(result.writeStdout.mock.calls[0]![0]));
     expect(primaryOpenClawAgent(config).execution).toEqual({ heartbeatEvery: "0m" });
   });
 
@@ -308,7 +299,7 @@ describe("config export source verification (#10938)", () => {
     const result = await exportSnapshots([snapshot(), changed, changed, changed]);
     expect(result.outcome.ok).toBe(true);
     expect(result.read).toHaveBeenCalledTimes(4);
-    const config = validateNemoClawConfig(YAML.parse(result.writeStdout.mock.calls[0]![0]));
+    const config = asExportedConfig(YAML.parse(result.writeStdout.mock.calls[0]![0]));
     expect(primaryOpenClawAgent(config).execution?.timeoutSeconds).toBe(900);
   });
 
@@ -322,8 +313,9 @@ describe("config export source verification (#10938)", () => {
     );
     const result = await exportSnapshots([observed]);
     expect(result.outcome.ok).toBe(true);
-    const route = validateNemoClawConfig(YAML.parse(result.writeStdout.mock.calls[0]![0])).spec
-      .sandboxes[0]!.agents[0]!.inference.routes[0]!;
+    const route = primaryOpenClawAgent(
+      asExportedConfig(YAML.parse(result.writeStdout.mock.calls[0]![0])),
+    ).inference.routes[0]!;
     expect(route.overrides).toEqual(
       reasoning === "true"
         ? { model: "gpt-5", reasoning: true, reasoningEffort: "high" }
@@ -444,10 +436,12 @@ describe("config export source verification (#10938)", () => {
     expect(result.read).toHaveBeenCalledTimes(2);
     expect(result.publish).not.toHaveBeenCalled();
     const [yaml] = result.writeStdout.mock.calls[0]!;
-    const config = validateNemoClawConfig(YAML.parse(yaml));
-    expect(config.spec.sandboxes[0]!.network).toEqual({
+    const config = asExportedConfig(YAML.parse(yaml));
+    expect(config.spec.sandboxes[0]!.network).toMatchObject({
       proxy: { host: "proxy.internal", port: 3129 },
-      policy: { explicit: canonicalPolicy },
+      policy: {
+        explicit: { process: { run_as_user: "1000", run_as_group: "1000" } },
+      },
     });
     expect(Object.isFrozen(verifiedSource(verify(observed)).proxy)).toBe(true);
   });
@@ -456,8 +450,10 @@ describe("config export source verification (#10938)", () => {
     const result = await exportSnapshots([snapshot()]);
     expect(result.outcome.ok).toBe(true);
     const [yaml] = result.writeStdout.mock.calls[0]!;
-    expect(validateNemoClawConfig(YAML.parse(yaml)).spec.sandboxes[0]!.network).toEqual({
-      policy: { explicit: canonicalPolicy },
+    expect(asExportedConfig(YAML.parse(yaml)).spec.sandboxes[0]!.network).toMatchObject({
+      policy: {
+        explicit: { process: { run_as_user: "1000", run_as_group: "1000" } },
+      },
     });
     expect(verifiedSource(verify(snapshot()))).not.toHaveProperty("proxy");
   });
@@ -476,7 +472,7 @@ describe("config export source verification (#10938)", () => {
     expect(result.outcome.ok).toBe(true);
     expect(result.read).toHaveBeenCalledTimes(4);
     const [yaml] = result.writeStdout.mock.calls[0]!;
-    expect(validateNemoClawConfig(YAML.parse(yaml)).spec.sandboxes[0]!.network.proxy).toEqual({
+    expect(asExportedConfig(YAML.parse(yaml)).spec.sandboxes[0]!.network.proxy).toEqual({
       host: "proxy.internal",
       port: 3129,
     });
@@ -607,20 +603,56 @@ describe("config export source verification (#10938)", () => {
     expect(Check(ExportSourceValuesSchema, verifiedSource(result))).toBe(true);
   });
 
-  it.each([undefined, "progressive"] as const)(
+  it.each([[undefined, "https://api.openai.com/v1"]] as const)(
     "exports canonical Hermes without tools for registry selection %s",
-    async (toolDisclosure) => {
-      const result = await exportSnapshots([hermesSnapshot({ toolDisclosure })]);
+    async (toolDisclosure, endpoint) => {
+      const observed = hermesSnapshot({ toolDisclosure, endpointUrl: endpoint });
+      const result = await exportSnapshots([
+        {
+          ...observed,
+          inference: {
+            ...observed.inference,
+            endpoint,
+            endpointEvidence: { ...observed.inference.endpointEvidence!, endpoint },
+          },
+        },
+      ]);
       expect(result.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
       expect(result.read).toHaveBeenCalledTimes(2);
       expect(result.publish).not.toHaveBeenCalled();
       const [yaml] = result.writeStdout.mock.calls[0]!;
-      const sandbox = validateNemoClawConfig(YAML.parse(yaml)).spec.sandboxes[0]!;
-      expect(sandbox.agents[0]!.type).toBe("hermes");
-      expect(sandbox.agents[0]).not.toHaveProperty("tools");
-      expect(sandbox.network.policy.explicit).toEqual(canonicalPolicy);
+      const config = asExportedConfig(YAML.parse(yaml));
+      expect(config.spec.inferenceProviders[0]).toMatchObject({ endpoint });
+      const sandbox = config.spec.sandboxes[0]!;
+      expect(sandbox.harness.kind).toBe("hermes");
+      expect(sandbox.agent).not.toHaveProperty("tools");
+      expect(sandbox.network.policy.explicit).toMatchObject({
+        process: { run_as_user: "1000", run_as_group: "1000" },
+        filesystem_policy: {
+          read_only: expect.arrayContaining(["/opt/fabric", "/opt/nemoclaw", "/opt/hermes"]),
+        },
+      });
     },
   );
+
+  it("rejects a credential-bearing HTTP inference route that v1 cannot consume (#11977)", () => {
+    const endpoint = "http://host.openshell.internal:35271/v1";
+    const observed = hermesSnapshot({ toolDisclosure: "progressive", endpointUrl: endpoint });
+    const result = verify({
+      ...observed,
+      inference: {
+        ...observed.inference,
+        endpoint,
+        endpointEvidence: { ...observed.inference.endpointEvidence!, endpoint },
+      },
+    });
+
+    expect(findings(result)).toContainEqual({
+      field: "spec.inferenceProviders[].credential",
+      category: "unsupported",
+      diagnostic: "V1alpha1 requires HTTPS when an inference provider declares a credential.",
+    });
+  });
 
   it.each([
     { label: "stale direct selection", selection: "direct", retained: "progressive" },
@@ -659,14 +691,13 @@ describe("config export source verification (#10938)", () => {
     expect(result.read).toHaveBeenCalledTimes(2);
     expect(result.publish).not.toHaveBeenCalled();
     const [yaml] = result.writeStdout.mock.calls[0]!;
-    const document = validateNemoClawConfig(YAML.parse(yaml));
-    expect(document.spec.sandboxes[0]!.agents[0]!.auth).toEqual({
+    const document = asExportedConfig(YAML.parse(yaml));
+    expect(document.spec.sandboxes[0]!.agent.auth).toEqual({
       method: "api-key",
-      providerRef: "hosted-hermes-provider",
     });
     expect(document.spec.inferenceProviders[0]).toMatchObject({
       name: "hosted-hermes-provider",
-      provider: "hermes-provider",
+      provider: "openai",
       credential: { env: "NOUS_API_KEY" },
     });
   });
@@ -700,7 +731,7 @@ describe("config export source verification (#10938)", () => {
         findings: expect.arrayContaining([
           expect.objectContaining({
             category,
-            field: "spec.sandboxes[].agents[0].auth",
+            field: "spec.sandboxes[].agent.auth",
           }),
         ]),
       },
@@ -742,8 +773,6 @@ describe("config export source verification (#10938)", () => {
         observabilityEnabled: true,
         webSearchEnabled: true,
         messaging: { configured: {} } as never,
-        mcp: { bridges: {} } as never,
-        openclawImagePluginInstalls: [{ id: "secondary" }] as never,
         hostLocalInferenceReceipt: "receipt",
       }),
     );
@@ -758,36 +787,19 @@ describe("config export source verification (#10938)", () => {
         "spec.sandboxes[].observability",
         "spec.sandboxes[].integrations.webSearch",
         "spec.sandboxes[].integrations.messaging",
-        "spec.sandboxes[].integrations.mcp",
-        "spec.sandboxes[].agents.secondary",
-        "spec.sandboxes[].agents[0].type",
+        "spec.sandboxes[].harness.kind",
         "spec.inferenceProviders",
       ]),
     );
   });
 
   it.each([
-    [
-      "Hermes tool gateways",
-      { hermesToolGateways: ["browser"] },
-      "spec.sandboxes[].agents[0].tools",
-    ],
-    [
-      "Hermes dashboard",
-      { hermesDashboardEnabled: true, hermesDashboardPort: 18_790 },
-      "spec.sandboxes[].agents[0].dashboard",
-    ],
-    [
-      "invalid Hermes dashboard port evidence",
-      { hermesDashboardPort: 0 },
-      "spec.sandboxes[].agents[0].dashboard",
-    ],
+    ["Hermes tool gateways", { hermesToolGateways: ["browser"] }, "spec.sandboxes[].agent.tools"],
     [
       "Hermes inference provider",
       { hermesInferenceProvider: "hermes-provider" },
-      "spec.sandboxes[].agents[0].auth",
+      "spec.sandboxes[].agent.auth",
     ],
-    ["non-default Hermes API port", { hermesApiPort: 8643 }, "spec.sandboxes[].agents[0].api"],
   ])("rejects excluded %s state (#11286)", (_case, registryOverrides, field) => {
     expect(findings(verify(hermesSnapshot(registryOverrides)))).toContainEqual(
       expect.objectContaining({ category: "unsupported", field }),
@@ -823,7 +835,7 @@ describe("config export source verification (#10938)", () => {
           agent: "hermes",
           mode: "loopback-forwarded",
           url: "http://127.0.0.1:19189",
-          browserUrl: "http://127.0.0.1:19189",
+          browserUrl: "https://dashboard.example.com",
           publicPort: 19_189,
           internalPort: 29_189,
           tuiEnabled: false,
@@ -866,9 +878,9 @@ describe("config export source verification (#10938)", () => {
         provider: "other",
         model: "model-b",
         api: "invalid",
-        endpoint: "http://local",
+        endpoint: "ftp://local",
         endpointEvidence: {
-          endpoint: "http://local",
+          endpoint: "ftp://local",
           provider: {
             gatewayName: "other",
             workspace: "default",
@@ -998,12 +1010,12 @@ describe("config export source verification (#10938)", () => {
   });
 
   it.each([
-    "http://api.example.test/v1",
-    "https://user:credential-canary@api.example.test/v1",
-    "https://api.example.test/v1?token=credential-canary",
-    "https://api.example.test/v1#credential-canary",
-    "https://api.example.test/%0acredential-canary",
-    "https://api.example.test/%0A%",
+    "ftp://api.example.test/v1",
+    "http://user:credential-canary@api.example.test/v1",
+    "http://api.example.test/v1?token=credential-canary",
+    "http://api.example.test/v1#credential-canary",
+    "http://api.example.test/%0acredential-canary",
+    "http://api.example.test/%0A%",
   ])("rejects an unsafe endpoint without exposing it: %s", async (unsafeEndpoint) => {
     const value = snapshot();
     const raw = snapshot({
@@ -1053,6 +1065,7 @@ describe("config export source verification (#10938)", () => {
 
   it.each([
     ["invalid name", 8080],
+    ["nemoclaw", 80],
     ["nemoclaw", 70_000],
     ["nemoclaw", 8080.5],
   ] as const)("rejects an invalid gateway binding", async (name, port) => {
@@ -1096,6 +1109,17 @@ describe("config export source verification (#10938)", () => {
       );
     },
   );
+
+  it("defers Podman until the v1 runtime mapping is qualified (#11977)", () => {
+    const result = verify(snapshot({ registry: entry({ openshellDriver: "podman" }) }));
+
+    expect(findings(result)).toContainEqual({
+      field: "spec.sandboxes[].runtime.provider",
+      category: "unsupported",
+      diagnostic:
+        "V1alpha1 export currently supports the Docker runtime; Podman compatibility is deferred.",
+    });
+  });
 
   it.each([
     { label: "default proxy", environment: {} },
@@ -1142,6 +1166,26 @@ describe("config export source verification (#10938)", () => {
       );
     },
   );
+
+  it("rejects a credential over mixed-case plaintext HTTP", () => {
+    const value = snapshot();
+    const plaintextEndpoint = "HTTP://api.example.com/v1";
+    const raw = snapshot({
+      registry: entry({ endpointUrl: plaintextEndpoint }),
+      inference: {
+        ...value.inference,
+        endpoint: plaintextEndpoint,
+        endpointEvidence: {
+          ...value.inference.endpointEvidence!,
+          endpoint: plaintextEndpoint,
+        },
+      },
+    });
+
+    expect(findings(verify(raw))).toContainEqual(
+      expect.objectContaining({ field: "spec.inferenceProviders[].credential" }),
+    );
+  });
 
   it("rejects credential-bearing policy without exposing its value", async () => {
     const canary = "credential-canary-value";
@@ -1190,39 +1234,13 @@ function dashboardSnapshot(
   });
 }
 
-function changeDashboardProfile(
-  observed: ObservedExportSnapshot,
-  change: (profile: Record<string, Record<string, unknown>>) => void,
-) {
-  const workload = observed.registry.workload as Extract<
-    SandboxWorkloadReceipt,
-    { kind: "managed-image" }
-  >;
-  expect(workload?.kind).toBe("managed-image");
-  const value = JSON.parse(Buffer.from(workload.encodedProfile, "base64url").toString("utf8"));
-  change(value);
-  const serialized = JSON.stringify(value);
-  const encodedProfile = Buffer.from(serialized).toString("base64url");
-  return {
-    ...observed,
-    registry: {
-      ...observed.registry,
-      workload: {
-        ...workload,
-        encodedProfile,
-        startupProfileSha256: createHash("sha256").update(encodedProfile).digest("hex"),
-      },
-    },
-  };
-}
-
 describe("dashboard settings export", () => {
   it("keeps canonical Hermes export free of dashboard interfaces (#10904)", async () => {
     const exported = await exportSnapshots([hermesSnapshot()]);
     expect(exported.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
-    const document = validateNemoClawConfig(YAML.parse(exported.writeStdout.mock.calls[0]![0]));
-    expect(document.spec.sandboxes[0]!.agents[0]).toEqual({
-      type: "hermes",
+    const document = asExportedConfig(YAML.parse(exported.writeStdout.mock.calls[0]![0]));
+    expect(document.spec.sandboxes[0]!.harness).toEqual({ kind: "hermes" });
+    expect(document.spec.sandboxes[0]!.agent).toEqual({
       name: "primary",
       inference: {
         routes: [
@@ -1232,26 +1250,26 @@ describe("dashboard settings export", () => {
     });
   });
 
-  it.each([
-    { hermesDashboardEnabled: true, hermesDashboardPort: 19000 },
-    { dashboardRemoteBindPrepared: true },
-  ])("does not publish unsupported Hermes dashboard state %j (#10904)", async (registry) => {
-    const exported = await exportSnapshots([hermesSnapshot(registry)]);
-    expect(exported.outcome).toMatchObject({
-      ok: false,
-      failure: {
-        kind: "observation",
-        findings: expect.arrayContaining([
-          expect.objectContaining({
-            category: "unsupported",
-            field: "spec.sandboxes[].agents[0].dashboard",
-          }),
-        ]),
-      },
-    });
-    expect(exported.writeStdout).not.toHaveBeenCalled();
-    expect(exported.publish).not.toHaveBeenCalled();
-  });
+  it.each([{ dashboardRemoteBindPrepared: true }])(
+    "does not publish unsupported Hermes dashboard state %j (#10904)",
+    async (registry) => {
+      const exported = await exportSnapshots([hermesSnapshot(registry)]);
+      expect(exported.outcome).toMatchObject({
+        ok: false,
+        failure: {
+          kind: "observation",
+          findings: expect.arrayContaining([
+            expect.objectContaining({
+              category: "unsupported",
+              field: "spec.sandboxes[].harness.interfaces.dashboard",
+            }),
+          ]),
+        },
+      });
+      expect(exported.writeStdout).not.toHaveBeenCalled();
+      expect(exported.publish).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     [19000, "0.0.0.0", { port: 19000, bind: "0.0.0.0" }],
@@ -1264,13 +1282,13 @@ describe("dashboard settings export", () => {
       const outcome = await exportSnapshots([observed]);
       expect(outcome.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
       const raw = outcome.writeStdout.mock.calls[0]![0];
-      const document = validateNemoClawConfig(YAML.parse(raw));
-      expect(document.spec.sandboxes[0]!.agents[0]).toMatchObject({
-        type: "openclaw",
+      const document = asExportedConfig(YAML.parse(raw));
+      expect(document.spec.sandboxes[0]!.harness).toMatchObject({
+        kind: "openclaw",
         interfaces: { dashboard },
       });
       expect(raw).not.toContain("deviceAuth");
-      expect(raw).not.toContain("http://127.0.0.1");
+      expect(raw).not.toContain(`http://127.0.0.1:${port}`);
       expect(outcome.read).toHaveBeenCalledTimes(2);
       expect(outcome.publish).not.toHaveBeenCalled();
     },
@@ -1283,9 +1301,9 @@ describe("dashboard settings export", () => {
     });
     const exported = await exportSnapshots([observed]);
     expect(exported.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
-    const document = validateNemoClawConfig(YAML.parse(exported.writeStdout.mock.calls[0]![0]));
-    expect(document.spec.sandboxes[0]!.agents[0]).toMatchObject({
-      type: "openclaw",
+    const document = asExportedConfig(YAML.parse(exported.writeStdout.mock.calls[0]![0]));
+    expect(document.spec.sandboxes[0]!.harness).toMatchObject({
+      kind: "openclaw",
       interfaces: { dashboard: { port: 19000, bind: "0.0.0.0" } },
     });
     expect(document.spec.sandboxes[0]!.network.proxy).toEqual({
@@ -1311,10 +1329,12 @@ describe("dashboard settings export", () => {
     });
     const exported = await exportSnapshots([observed]);
     expect(exported.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
-    const document = validateNemoClawConfig(YAML.parse(exported.writeStdout.mock.calls[0]![0]));
-    expect(document.spec.sandboxes[0]!.agents[0]).toMatchObject({
+    const document = asExportedConfig(YAML.parse(exported.writeStdout.mock.calls[0]![0]));
+    expect(document.spec.sandboxes[0]!.harness).toMatchObject({
       interfaces: { dashboard: { port: 19000, bind: "0.0.0.0" } },
       execution: { timeoutSeconds: 900, heartbeatEvery: "30m" },
+    });
+    expect(document.spec.sandboxes[0]!.agent).toMatchObject({
       inference: { routes: [{ overrides: { contextWindow: 65536, maxTokens: 8192 } }] },
     });
   });
@@ -1411,8 +1431,8 @@ describe("dashboard settings export", () => {
   ] as const)(
     "rejects retained %s without output or private values (#10904)",
     async (label, change) => {
-      const outcome = await exportSnapshots([changeDashboardProfile(dashboardSnapshot(), change)]);
-      const category = ["malformed port", "URL credential"].includes(label)
+      const outcome = await exportSnapshots([changeRetainedProfile(dashboardSnapshot(), change)]);
+      const category = ["malformed port", "URL credential", "device auth change"].includes(label)
         ? "missing-provenance"
         : "unsupported";
       expect(outcome.outcome).toMatchObject({

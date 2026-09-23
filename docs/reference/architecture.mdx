@@ -86,8 +86,8 @@ Before adoption, NemoClaw asks systemd for the unit's effective `ExecStart`.
 When systemd returns the service identity, NemoClaw requires trusted package paths for both the unit and its effective binary.
 It then checks the effective binary's version against the blueprint range (`min_openshell_version` through `max_openshell_version`).
 This check prevents a supported user-local OpenShell install from hiding an out-of-range binary selected by the package unit's absolute `ExecStart`.
-NemoClaw rejects a known version below the minimum or a known stable version above the maximum.
-An above-maximum development build remains eligible when `NEMOCLAW_OPENSHELL_CHANNEL=dev`.
+NemoClaw rejects a known version below the minimum, above the maximum, or identified as a development build.
+Managed installations require exact stable OpenShell 0.0.116; the development channel is not eligible.
 An undetermined version or an unsupported version stops package-unit adoption.
 When the systemd identity query reports a recognized unavailable user manager, NemoClaw checks the standard user unit paths before standalone fallback.
 It checks `.wants`, `.requires`, and `.upholds` activation links for both gateway service names.
@@ -322,7 +322,7 @@ Before selecting one agent image, NemoClaw validates a complete three-agent coho
 If registry or catalog availability prevents resolution, stock onboarding stops before sandbox creation and does not build a shipped Dockerfile.
 Available catalog evidence that is incomplete, mixed, mutable, wrong-platform, or identity-inconsistent fails closed before sandbox creation.
 An explicit `--from <Dockerfile>` remains a separate complete custom-image path.
-The portable experimental profile retains its existing workload path and lifecycle. Native Podman is independently selected with `NEMOCLAW_GATEWAY_RUNTIME=podman`, consumes the registered Podman provider bundle, and accepts only exact managed-image workload receipts; legacy and custom Dockerfile builds remain disabled for that provider.
+Native Podman is selected with `NEMOCLAW_GATEWAY_RUNTIME=podman`, consumes the registered Podman provider bundle, and accepts only exact managed-image workload receipts; legacy and custom Dockerfile builds remain disabled for that provider.
 <AgentOnly variant="openclaw">
 The direct blueprint runner still carries a pinned OpenShell Community OpenClaw image for legacy `openshell sandbox create --from` compatibility.
 </AgentOnly>
@@ -408,7 +408,8 @@ The following environment variables configure optional services and local access
 | `SLACK_ALLOWED_USERS` | Comma-separated Slack member IDs for DM and channel `@mention` user allowlisting. |
 | `SLACK_ALLOWED_CHANNELS` | Comma-separated Slack channel IDs where channel `@mention` events are enabled (e.g. `C012AB3CD,C987ZY6XW`). Included in the generated sandbox configuration during onboarding. Combine with `SLACK_ALLOWED_USERS` to restrict both channel and member. |
 | `CHAT_UI_URL` | URL for the optional chat UI endpoint. |
-| `NEMOCLAW_DISABLE_DEVICE_AUTH` | Onboarding-time toggle that disables gateway device pairing when set to `1` before the sandbox is created. Stock managed-image onboarding carries it in the identity-bound startup profile; explicit custom Dockerfile onboarding carries it into the custom image. |
+| `NEMOCLAW_DISABLE_DEVICE_AUTH` | Legacy compatibility input retained while managed Dockerfile callers transition. OpenClaw 2026.9.1 retired the bypass, so NemoClaw accepts but does not read, validate, or emit this toggle into generated OpenClaw configuration; pairing remains required. |
+| `NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE` | Legacy provenance input retained for the same transition. NemoClaw validates an explicit value as `operator` or `managed-onboard`, but no longer reads it as an authorization decision or emits it into generated OpenClaw configuration. |
 </AgentOnly>
 <AgentOnly variant="hermes">
 | `TELEGRAM_BOT_TOKEN` | Telegram bot token you provide before `$$nemoclaw onboard`. OpenShell stores it in a provider; the sandbox receives placeholders, not the raw secret. |
@@ -420,10 +421,10 @@ The following environment variables configure optional services and local access
 </AgentOnly>
 <AgentOnly variant="deepagents">
 | `NEMOCLAW_POLICY_TIER` | Optional non-interactive policy tier selection during onboarding. |
-| `TAVILY_API_KEY` | Host-side input for the optional managed Tavily provider. Register it with `$$nemoclaw credentials add tavily-search --type tavily --credential TAVILY_API_KEY` before attaching the provider to Deep Agents. |
+| `TAVILY_API_KEY` | Host-side input for the optional managed Tavily provider. Register it with `$$nemoclaw credentials add tavily-search --type tavily --agent dcode --credential TAVILY_API_KEY` before attaching the provider to Deep Agents. |
 </AgentOnly>
 
 For normal setup and reconfiguration, prefer `$$nemoclaw onboard` over editing these files by hand.
 <AgentOnly variant="openclaw">
-Do not treat `NEMOCLAW_DISABLE_DEVICE_AUTH` as a runtime setting for an already-created sandbox.
+Do not rely on `NEMOCLAW_DISABLE_DEVICE_AUTH` to bypass pairing; it is a retired compatibility input and has no effect on generated OpenClaw configuration.
 </AgentOnly>

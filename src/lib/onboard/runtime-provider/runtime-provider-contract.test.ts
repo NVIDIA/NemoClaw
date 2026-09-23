@@ -21,21 +21,18 @@ import { executeSandboxDestroy } from "../../actions/sandbox/destroy-execution";
 import { SANDBOX_DESTROY_TIMEOUT_MS } from "../../actions/sandbox/destroy-gateway";
 import { startSandbox } from "../../actions/sandbox/start";
 import { stopSandbox } from "../../actions/sandbox/stop";
+import { withCurrentPortableHostFence } from "../../state/portable-uninstall-retirement";
 import { loadAgent } from "../../agent/defs";
+import * as registry from "../../state/registry";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
 import { cloneSandboxWorkloadReceipt } from "../../state/registry/workload";
-import { createDockerManagedBootstrapSurface } from "../managed-bootstrap/docker-runtime";
 import { MANAGED_IMAGE_REPOSITORIES } from "../managed-image/contract";
 import {
   encodeManagedStartupProfile,
   type ManagedStartupProfile,
 } from "../managed-startup/profile";
 import { registerCreatedSandbox } from "../sandbox-registration";
-import type {
-  RuntimeProviderBundle,
-  RuntimeProviderManagedImageBootstrapSurface,
-  RuntimeProviderWorkloadProfile,
-} from "./contract";
+import type { RuntimeProviderBundle, RuntimeProviderWorkloadProfile } from "./contract";
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "./current";
 import { createDockerRuntimeProviderBundle } from "./docker";
 import type { HostLocalInferenceOperation } from "./host-local-inference";
@@ -161,7 +158,7 @@ describe("RuntimeProviderBundle registry contract", () => {
         ).every((surface) => Object.is(bundle[surface].providerId, providerId)),
       ).toBe(true);
       const managedLocalProvider = providerId === "docker" || providerId === "podman";
-      expect(bundle.bootstrap).toMatchObject({ supported: managedLocalProvider });
+      expect(bundle.bootstrap).toMatchObject({ supported: false });
       expect(bundle.snapshot).toMatchObject(
         managedLocalProvider
           ? {
@@ -213,28 +210,6 @@ describe("RuntimeProviderBundle registry contract", () => {
     );
   });
 
-  it("registers the production Docker bootstrap surface through the same bundle registry", () => {
-    const docker = createDockerRuntimeProviderBundle();
-    const providers = createRuntimeProviderBundleRegistry([
-      [
-        "docker",
-        {
-          ...docker,
-          bootstrap: createDockerManagedBootstrapSurface(),
-        },
-      ],
-    ]);
-
-    expect(providers.docker?.bootstrap).toMatchObject({
-      providerId: "docker",
-      supported: true,
-    });
-    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.docker?.bootstrap).toMatchObject({
-      providerId: "docker",
-      supported: true,
-    });
-  });
-
   it("deeply clones and freezes every registered nested value", () => {
     const source = mxcBundle();
     const registry = createRuntimeProviderBundleRegistry([["mxc", source]]);
@@ -251,16 +226,9 @@ describe("RuntimeProviderBundle registry contract", () => {
     expect(support).not.toBeNull();
     expect(Object.isFrozen(support!.platforms)).toBe(true);
     expectSupportedSurface(registered.lifecycle);
-    expect(Object.isFrozen(registered.lifecycle.start)).toBe(true);
-    expect(Object.isFrozen(registered.lifecycle.verifyStarted)).toBe(true);
     expect(registered).not.toBe(source);
-    expect(registered.lifecycle.start).not.toBe(source.lifecycle.start);
-    expect(registered.lifecycle.verifyStarted).not.toBe(source.lifecycle.verifyStarted);
     expect(() => {
       (registered.workload.profile.hostArchitectures as string[]).push("s390x");
-    }).toThrow(TypeError);
-    expect(() => {
-      (registered.capabilities as { directLifecycle: boolean }).directLifecycle = false;
     }).toThrow(TypeError);
   });
 
@@ -283,68 +251,6 @@ describe("RuntimeProviderBundle registry contract", () => {
         ],
       ]),
     ).toThrow(/must declare portable agent runtime openshellSandboxCommand/u);
-  });
-
-  it("registers an MXC-style managed-bootstrap provider through the bundle surface", () => {
-    const bundle = mxcBundle();
-    const createLifecycle = vi.fn(() => ({
-      launchArgv: ["mxc", "create"],
-      patch: {
-        maybeApplyDuringCreate: vi.fn(),
-        createFailureMessage: vi.fn(() => null),
-        exitOnPatchError: vi.fn(),
-        rollbackManagedStartupAfterCreateFailure: vi.fn(),
-        ensureApplied: vi.fn(),
-        waitForSupervisorReconnectIfNeeded: vi.fn(),
-        commitAfterReady: vi.fn(),
-        selectedMode: vi.fn(() => null),
-        printReadinessFailureIfEnabled: vi.fn(),
-        verifyGpuOrExit: vi.fn(async (verify) => verify("alpha")),
-      },
-      recoverUnfinished: vi.fn(async () => ({ receipts: [], failures: [] })),
-      prepareNetwork: vi.fn(async () => undefined),
-      runCreate: vi.fn(),
-    }));
-    const createOnboardRouting = vi.fn(() => ({
-      nativeFallbackHasCleanBaseline: false,
-      inspectNativeRuntime: vi.fn(() => null),
-      isNativeCreateRoutingFailure: vi.fn(() => false),
-      isTrustedNativeRuntimeError: vi.fn(() => false),
-      isNativeReadinessRoutingFailure: vi.fn(() => false),
-      prepareCompatibilityLaunch: vi.fn(() => ({ createArgv: [], registryImageRef: null })),
-    }));
-    const createAuthorityStore = vi.fn(() => ({
-      recordPreparedAuthority: vi.fn(),
-    }));
-    const providers = createRuntimeProviderBundleRegistry([
-      [
-        "mxc",
-        replaceSurface(bundle, "bootstrap", {
-          providerId: "mxc",
-          supported: true,
-          bootstrapKind: "managed-image",
-          createAuthorityStore,
-          createLifecycle,
-          createOnboardRouting,
-        }),
-      ],
-    ]);
-    const registered = providers.mxc!;
-    expectSupportedSurface(registered.bootstrap);
-    expect(registered.bootstrap.bootstrapKind).toBe("managed-image");
-    const managedBootstrap = registered.bootstrap as RuntimeProviderManagedImageBootstrapSurface;
-
-    const routing = managedBootstrap.createOnboardRouting({
-      sandboxName: "alpha",
-      openshellArgv: (args) => args,
-      nativeFallbackEnabled: false,
-    });
-
-    expect(registered.identity.id).toBe("mxc");
-    expect(routing.nativeFallbackHasCleanBaseline).toBe(false);
-    expect(createOnboardRouting).toHaveBeenCalledOnce();
-    expect(createAuthorityStore).not.toHaveBeenCalled();
-    expect(createLifecycle).not.toHaveBeenCalled();
   });
 
   it("rejects an omitted managed platform without changing legacy receipt acceptance", () => {
@@ -430,7 +336,7 @@ describe("RuntimeProviderBundle registry contract", () => {
     [
       "capabilities",
       (bundle: RuntimeProviderBundle) => {
-        const { directLifecycle: _directLifecycle, ...incomplete } = bundle.capabilities;
+        const { hostLocalInference: _hostLocalInference, ...incomplete } = bundle.capabilities;
         return incomplete;
       },
     ],
@@ -466,7 +372,8 @@ describe("RuntimeProviderBundle registry contract", () => {
     [
       "lifecycle",
       (_bundle: RuntimeProviderBundle) => {
-        const { stop: _stop, ...incomplete } = mxcBundle().lifecycle;
+        const { privilegedSandboxControl: _privilegedSandboxControl, ...incomplete } =
+          mxcBundle().lifecycle;
         return incomplete;
       },
     ],
@@ -553,16 +460,16 @@ describe("RuntimeProviderBundle registry contract", () => {
     ).toThrow(message);
   });
 
-  it("rejects a lifecycle surface without provider-owned post-start verification", () => {
+  it("rejects a lifecycle surface without privileged sandbox control", () => {
     const bundle = mxcBundle();
     expectSupportedSurface(bundle.lifecycle);
-    const { verifyStarted: _verifyStarted, ...incomplete } = bundle.lifecycle;
+    const { privilegedSandboxControl: _privilegedSandboxControl, ...incomplete } = bundle.lifecycle;
 
     expect(() =>
       createRuntimeProviderBundleRegistry([
         ["mxc", replaceSurface(bundle, "lifecycle", incomplete)],
       ]),
-    ).toThrow(/lifecycle\.verifyStarted must be a function/u);
+    ).toThrow(/privilegedSandboxControl/u);
   });
 
   it("rejects an invalid provider-owned container mutation timeout", () => {
@@ -635,17 +542,6 @@ describe("RuntimeProviderBundle registry contract", () => {
           "mxc",
           replaceSurface(bundle, "capabilities", {
             ...bundle.capabilities,
-            directLifecycle: false,
-          }),
-        ],
-      ]),
-    ).toThrow(/capabilities disagree/u);
-    expect(() =>
-      createRuntimeProviderBundleRegistry([
-        [
-          "mxc",
-          replaceSurface(bundle, "capabilities", {
-            ...bundle.capabilities,
             hostLocalInference: true,
           }),
         ],
@@ -690,6 +586,38 @@ describe("RuntimeProviderBundle registry contract", () => {
     ).toThrow(/gateway\.ownsHostReadiness must be a boolean/u);
     expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.docker?.gateway.ownsHostReadiness).toBe(false);
     expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.podman?.gateway.ownsHostReadiness).toBe(true);
+  });
+
+  it("requires an explicit final sandbox-liveness source", () => {
+    const bundle = mxcBundle();
+    const { finalSandboxLiveness: _finalSandboxLiveness, ...gatewayWithoutLivenessSource } =
+      bundle.gateway;
+
+    expect(() =>
+      createRuntimeProviderBundleRegistry([
+        ["mxc", replaceSurface(bundle, "gateway", gatewayWithoutLivenessSource)],
+      ]),
+    ).toThrow(/gateway\.finalSandboxLiveness/u);
+    expect(() =>
+      createRuntimeProviderBundleRegistry([
+        [
+          "mxc",
+          replaceSurface(bundle, "gateway", {
+            ...bundle.gateway,
+            finalSandboxLiveness: "host-readiness",
+          }),
+        ],
+      ]),
+    ).toThrow(/gateway\.finalSandboxLiveness/u);
+    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.docker?.gateway.finalSandboxLiveness).toBe(
+      "openshell-and-docker",
+    );
+    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.kubernetes?.gateway.finalSandboxLiveness).toBe(
+      "openshell-and-docker",
+    );
+    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.podman?.gateway.finalSandboxLiveness).toBe(
+      "openshell-only",
+    );
   });
 
   it("requires provider-owned readiness observation from a gateway readiness owner (#10984)", () => {
@@ -950,7 +878,7 @@ describe("sandbox workload ownership receipt", () => {
     const canonicalProfile = Buffer.from(ENCODED_PROFILE, "base64url").toString("utf8");
     const encodedProfile = Buffer.from(
       canonicalProfile.replace(
-        `"model":${JSON.stringify(profile.inference.model)}`,
+        `"model":${JSON.stringify(profile.inference!.model)}`,
         `"model":"nvapi-${"a".repeat(32)}"`,
       ),
       "utf8",
@@ -1045,9 +973,11 @@ describe("socket-free MXC action contract", () => {
   beforeEach(() => {
     testHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-provider-contract-"));
     vi.stubEnv("HOME", testHome);
+    vi.spyOn(registry, "getSandbox").mockReturnValue(null);
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.unstubAllEnvs();
     fs.rmSync(testHome, { recursive: true, force: true });
   });
@@ -1107,49 +1037,100 @@ describe("socket-free MXC action contract", () => {
         hermesToolGateways: [],
         hermesDashboardState: { enabled: false, config: null },
         dashboardPort: 18789,
+        ...(agent === "hermes" ? { hermesApiPort: 8_642 } : {}),
         gatewayName: "nemoclaw",
         gatewayPort: 8080,
         registerSandbox,
         runtimeProviders: providers,
       });
+      const runtimeEntry = {
+        ...entry,
+        lifecycleLiveIdentityFingerprint: "a".repeat(64),
+      };
       state.workloads.add(imageTag);
-      const getSandbox = vi.fn(() => entry);
+      const getSandbox = vi.fn(() => runtimeEntry);
       const updateSandbox = vi.fn(() => true);
       const stopSandboxChannels = vi.fn();
       const teardownSandboxDashboardForward = vi.fn();
-      const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+      const openShellLifecycle = {
+        startSandbox: vi.fn(async () => {
+          state.running.add(sandboxName);
+          recordEvent(`start:${sandboxName}`);
+          return { kind: "accepted" as const };
+        }),
+        stopSandbox: vi.fn(async () => {
+          state.running.delete(sandboxName);
+          recordEvent(`stop:${sandboxName}`);
+          return { kind: "accepted" as const };
+        }),
+      };
+      let deleteConvergenceMs = 0;
+      const runOpenshell = vi.fn((args: string[]) => {
+        switch (`${String(args[0])}:${String(args[1])}`) {
+          case "sandbox:get":
+            return {
+              status: 1,
+              stdout: "",
+              stderr:
+                "Error: code: 'Some requested entity was not found', message: \"sandbox not found\"",
+            };
+          default:
+            return { status: 0, stdout: "", stderr: "" };
+        }
+      });
 
       await expect(
         startSandbox(sandboxName, {
           getSandbox,
+          observer: {
+            listSandboxes: async () => ({
+              ok: true as const,
+              value: {
+                sandboxes: [{ name: sandboxName, phase: "Ready", readiness: "ready" as const }],
+              },
+            }),
+          },
+          openShellLifecycle,
+          probeInferenceInvocation: vi.fn(async () => ({ ok: true as const })),
           updateSandbox,
           runtimeProviders: providers,
+          verifyGateway: vi.fn(async () => undefined),
           log: vi.fn(),
         }),
       ).resolves.toEqual({ exitCode: 0 });
-      expect(
-        stopSandbox(sandboxName, {
-          getSandbox,
-          updateSandbox,
-          runtimeProviders: providers,
-          stopSandboxChannels,
-          teardownSandboxDashboardForward,
-          log: vi.fn(),
-          warn: vi.fn(),
-        }),
-      ).toEqual({ exitCode: 0 });
-      expect(() => requireInferenceSetRuntimeAuthority(entry, providers)).not.toThrow();
+      await expect(
+        withCurrentPortableHostFence(() =>
+          stopSandbox(sandboxName, {
+            getSandbox,
+            openShellLifecycle,
+            updateSandbox,
+            runtimeProviders: providers,
+            stopSandboxChannels,
+            teardownSandboxDashboardForward,
+            log: vi.fn(),
+            warn: vi.fn(),
+          }),
+        ),
+      ).resolves.toEqual({ exitCode: 0 });
+      expect(() => requireInferenceSetRuntimeAuthority(runtimeEntry, providers)).not.toThrow();
       await expect(
         executeSandboxDestroy({
           force: false,
+          deleteGatewayName: "nemoclaw",
           runOpenshell,
-          sandbox: entry,
+          sandbox: runtimeEntry,
           sandboxConfirmedAbsent: false,
           sandboxName,
           stopInferenceResources: vi.fn(),
           runtimeProviders: providers,
           deps: {
             wipeSandboxState: vi.fn(),
+            deleteConvergence: {
+              now: () => deleteConvergenceMs,
+              sleep: (milliseconds) => {
+                deleteConvergenceMs += milliseconds;
+              },
+            },
           },
         }),
       ).resolves.toMatchObject({ ok: true });
@@ -1167,12 +1148,18 @@ describe("socket-free MXC action contract", () => {
       });
 
       expect(registerSandbox).toHaveBeenCalledWith(entry);
-      expect(runOpenshell).toHaveBeenCalledWith(["sandbox", "delete", sandboxName], {
-        ignoreError: true,
-        killSignal: "SIGKILL",
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: SANDBOX_DESTROY_TIMEOUT_MS,
-      });
+      expect(runOpenshell).toHaveBeenCalledWith(
+        ["sandbox", "delete", "-g", "nemoclaw", sandboxName],
+        {
+          ignoreError: true,
+          killProcessTreeOnTimeout: true,
+          killSignal: "SIGKILL",
+          maxBuffer: 1024 * 1024,
+          stdio: ["ignore", "pipe", "pipe"],
+          suppressOutput: true,
+          timeout: SANDBOX_DESTROY_TIMEOUT_MS,
+        },
+      );
       const prepareDestroyIndex = state.events.indexOf(`prepare-destroy:${sandboxName}`);
       expect(prepareDestroyIndex).toBeGreaterThanOrEqual(0);
       expect(recordEvent.mock.invocationCallOrder[prepareDestroyIndex]).toBeLessThan(
@@ -1188,7 +1175,6 @@ describe("socket-free MXC action contract", () => {
       );
       expect(state.events).toEqual([
         `start:${sandboxName}`,
-        `verify-started:${sandboxName}`,
         `stop:${sandboxName}`,
         `prepare-destroy:${sandboxName}`,
         `cleanup:${sandboxName}`,
@@ -1196,6 +1182,7 @@ describe("socket-free MXC action contract", () => {
       expect(state.running).not.toContain(sandboxName);
       expect(state.workloads).not.toContain(imageTag);
     },
+    15_000,
   );
 
   it("blocks cleanup when an in-memory legacy receipt names a different image", () => {

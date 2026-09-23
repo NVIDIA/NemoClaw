@@ -31,7 +31,6 @@ describe("gateway port conflict", () => {
       getGatewayPortCheckOptions: () => ({ host: "127.0.0.1" }),
       isDockerDriverGatewayPortListener: () => false,
       exitProcess,
-      serviceHints: ["       systemctl --user stop openshell-gateway.service"],
       writeError: (line) => lines.push(line),
     });
 
@@ -40,6 +39,8 @@ describe("gateway port conflict", () => {
     expect(lines.join("\n")).toContain("Port 8080 is not available.");
     expect(lines.join("\n")).toContain("Blocked by: python3 (PID 1234)");
     expect(lines.join("\n")).toContain("NEMOCLAW_GATEWAY_PORT=<port> nemoclaw onboard");
+    expect(lines.join("\n")).not.toContain("systemctl --user stop openclaw-gateway.service");
+    expect(lines.join("\n")).not.toContain("launchctl unload");
   });
 
   it("keeps OpenShell-like listeners on the gateway reuse path", async () => {

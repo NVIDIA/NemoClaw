@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createCliOpenShellGatewayReuseObserver } from "../adapters/openshell/gateway-reuse-cli";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -12,12 +13,9 @@ import {
   type GatewayVersionCompatibility,
   type GatewayVersionSource,
   getGatewayClusterContainerName,
-  getGatewayReuseState,
-  isGatewayHealthy,
   OPENSHELL_PROBE_TIMEOUT_MS,
   observeOpenShellGatewayVersionCompatibility,
   parseVersionFromText,
-  stripAnsi,
 } from "../adapters/openshell/gateway-drift";
 export { classifyManagedGatewayEndpointBinding };
 import { cliName as resolveCliName } from "../onboard/branding";
@@ -75,7 +73,7 @@ export interface ProductionGatewayReadinessOptions {
   observeVersionCompatibility?: (
     source: GatewayVersionSource,
     hostProcessPid: number | null,
-  ) => GatewayVersionCompatibility;
+  ) => GatewayVersionCompatibility | Promise<GatewayVersionCompatibility>;
 }
 
 interface ReadonlyCaptureResult {
@@ -305,86 +303,59 @@ function getTrustedHostProcessGatewayRuntime(
   };
 }
 
-function observeReuseState(
+async function observeReuseState(
   gatewayName: string,
   gatewayPort: number,
   openshell: string | null,
   env: NodeJS.ProcessEnv,
-): {
+): Promise<{
   endpointBinding: ManagedGatewayEndpointBinding;
-  managedGatewayOutputs: string[];
+  managedGatewayEndpoints: readonly (string | null)[];
   reuseState: GatewayReuseState | "unknown";
-} {
-  if (!openshell) {
-    return { endpointBinding: "not-applicable", managedGatewayOutputs: [], reuseState: "missing" };
-  }
-
-  const status = captureReadonly([openshell, "status", "-g", gatewayName], env);
-  const named = captureReadonly([openshell, "gateway", "info", "-g", gatewayName], env);
-  const active = captureReadonly([openshell, "gateway", "info"], env);
-  if ([status, named, active].some(({ exitCode, timedOut }) => timedOut || exitCode === null)) {
+}> {
+  if (!openshell)
     return {
-      endpointBinding: "unknown",
-      managedGatewayOutputs: [
-        combinedOutput(active),
-        combinedOutput(status),
-        combinedOutput(named),
-      ],
-      reuseState: "unknown",
+      endpointBinding: "not-applicable",
+      managedGatewayEndpoints: [],
+      reuseState: "missing",
     };
-  }
-
-  const statusOutput = combinedOutput(status);
-  let reuseState: GatewayReuseState | "unknown" = getGatewayReuseState(
-    statusOutput,
-    combinedOutput(named),
-    combinedOutput(active),
-    gatewayName,
-    gatewayName,
-  );
-  if (status.exitCode !== 0 && reuseState === "missing") {
-    reuseState = /\bNo active gateway\b|\bNo gateway metadata found\b/i.test(statusOutput)
-      ? "missing"
-      : "unknown";
-  }
-  const liveManagedState = reuseState === "healthy" || reuseState === "active-unnamed";
+  const observer = createCliOpenShellGatewayReuseObserver((args) => {
+    const captured = captureReadonly([openshell, ...args], env);
+    return {
+      status: captured.exitCode,
+      output: combinedOutput(captured),
+      stdout: captured.stdout,
+      stderr: captured.stderr,
+      ...(captured.timedOut
+        ? { error: Object.assign(new Error("Gateway probe timed out"), { code: "ETIMEDOUT" }) }
+        : {}),
+    };
+  }, env);
+  const observed = await observer.observeGatewayReuse({
+    target: { kind: "named", gatewayName },
+    expectedGatewayPort: gatewayPort,
+  });
   return {
-    reuseState,
-    managedGatewayOutputs: [combinedOutput(active), statusOutput, combinedOutput(named)],
-    endpointBinding: liveManagedState
-      ? classifyManagedGatewayEndpointBinding(
-          [combinedOutput(active), statusOutput, combinedOutput(named)],
-          gatewayPort,
-        )
-      : "not-applicable",
+    endpointBinding: observed.error
+      ? "unknown"
+      : observed.healthy
+        ? observed.endpointBinding
+        : "not-applicable",
+    managedGatewayEndpoints: observed.endpoints,
+    reuseState: observed.error ? "unknown" : observed.gatewayReuseState,
   };
 }
 
-function inspectLegacyCluster(
+async function inspectLegacyCluster(
   gatewayName: string,
   gatewayPort: number,
   openshell: string | null,
   env: NodeJS.ProcessEnv,
-): { active: boolean; imageRef: string | null } {
+): Promise<{ active: boolean; imageRef: string | null }> {
   if (!openshell) return { active: false, imageRef: null };
-  const status = captureReadonly([openshell, "status", "-g", gatewayName], env);
-  const named = captureReadonly([openshell, "gateway", "info", "-g", gatewayName], env);
-  const active = captureReadonly([openshell, "gateway", "info"], env);
-  if (
-    [status, named, active].some(({ exitCode, timedOut }) => timedOut || exitCode === null) ||
-    !isGatewayHealthy(
-      combinedOutput(status),
-      combinedOutput(named),
-      combinedOutput(active),
-      gatewayName,
-    ) ||
-    classifyManagedGatewayEndpointBinding(
-      [combinedOutput(active), combinedOutput(named)],
-      gatewayPort,
-    ) !== "match"
-  ) {
+  const observed = await observeReuseState(gatewayName, gatewayPort, openshell, env);
+  if (observed.reuseState !== "healthy" || observed.endpointBinding !== "match")
     return { active: false, imageRef: null };
-  }
 
   const containerName = getGatewayClusterContainerName(gatewayName);
   const running = captureReadonly(
@@ -549,10 +520,14 @@ function gatewayPortConflictRemediation(
   }
   const subject =
     stopPids.length === 1 ? `PID ${stopPids[0]} is` : `PIDs ${stopPids.join(", ")} are`;
+  // A listener is not proof that a service manager still owns it: after the
+  // standalone fallback runs, the gateway user service is inactive while a
+  // standalone gateway holds the port, so its stop exits 0 and frees nothing
+  // (#11720). Make the port, not the stop command, the success signal.
   const stopInstruction =
     stopPids.length === 1
-      ? "Stop that process through its service manager, or signal only the matching PID from that fresh result before retrying."
-      : "Stop each matching process through its service manager, or signal only the matching PIDs from that fresh result before retrying.";
+      ? "If a service manager owns that process, stop it there and recheck the port; a service that is already inactive reports success without releasing it. Otherwise signal only the matching PID from that fresh result before retrying."
+      : "If a service manager owns those processes, stop them there and recheck the port; a service that is already inactive reports success without releasing it. Otherwise signal only the matching PIDs from that fresh result before retrying.";
   return (
     `Confirm ${subject} not another NemoClaw gateway. ` +
     `Recheck the listener set immediately before stopping a process: sudo lsof -i :${gatewayPort} -sTCP:LISTEN -P -n. ` +
@@ -779,6 +754,15 @@ export function createProductionGatewayReadinessDependencies(
       skipLsof: true,
     });
   const runtime = createGatewayHostRuntime({
+    lifecycle: {
+      supportsLegacyLifecycle: rejectUnexpectedGatewayEffect,
+      selectGateway: rejectUnexpectedGatewayEffect,
+      registerGateway: rejectUnexpectedGatewayEffect,
+      removeGateway: rejectUnexpectedGatewayEffect,
+      destroyGateway: rejectUnexpectedGatewayEffect,
+      listGateways: rejectUnexpectedGatewayEffect,
+    },
+    observer: { observeGatewayReuse: rejectUnexpectedGatewayEffect },
     applyOverlayfsAutoFix: () => null,
     checkGatewayPortAvailable,
     gatewayName: () => gatewayName,
@@ -796,14 +780,12 @@ export function createProductionGatewayReadinessDependencies(
     recordHttpReadinessTrace: false,
     clientProbeEnv: probeEnv,
     resolveOpenShellGatewayBinary: () => null,
-    runCaptureOpenshell: rejectUnexpectedGatewayEffect,
-    runOpenshell: rejectUnexpectedGatewayEffect,
     waitForGatewayHttpReady: async () => false,
     supervisorProbeEnv: probeEnv,
   });
 
   async function collectManagedGatewayObservations(): Promise<ManagedGatewayObservations> {
-    const { endpointBinding, managedGatewayOutputs, reuseState } = observeReuseState(
+    const { endpointBinding, managedGatewayEndpoints, reuseState } = await observeReuseState(
       gatewayName,
       gatewayPort,
       openshellBin,
@@ -831,7 +813,7 @@ export function createProductionGatewayReadinessDependencies(
           gatewayName,
           gatewayPort,
           expectedEndpoint: `https://${observeGatewayHostRuntime().grpcHost}:${String(gatewayPort)}`,
-          managedGatewayOutputs,
+          managedGatewayEndpoints,
           portAvailable: portCheck.ok,
           installedOpenShellVersion: getInstalledOpenShellVersion(),
           trustedGatewayBin,
@@ -857,7 +839,7 @@ export function createProductionGatewayReadinessDependencies(
         } else if (options.isLegacyClusterBound) {
           legacyClusterBound = options.isLegacyClusterBound();
         } else {
-          const legacyCluster = inspectLegacyCluster(
+          const legacyCluster = await inspectLegacyCluster(
             gatewayName,
             gatewayPort,
             openshellBin,
@@ -881,8 +863,7 @@ export function createProductionGatewayReadinessDependencies(
       try {
         if (source) {
           const hostProcessPid = source === "host-process" ? listenerScan.pids[0] : null;
-          compatibility =
-            options.observeVersionCompatibility?.(source, hostProcessPid) ??
+          compatibility = await (options.observeVersionCompatibility?.(source, hostProcessPid) ??
             observeOpenShellGatewayVersionCompatibility({
               gatewayName,
               source,
@@ -904,7 +885,7 @@ export function createProductionGatewayReadinessDependencies(
                               probeEnv,
                             ),
                     },
-            });
+            }));
         }
       } catch {
         compatibility = "unknown";

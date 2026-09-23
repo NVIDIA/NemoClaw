@@ -56,6 +56,7 @@ import {
   buildHermesPortableCommandEnvironment,
   buildHermesPortableOnboardingCommandAuthority,
   assertHermesPortableAgentLifecycleAuthority,
+  classifyRegisteredPortableAgentLifecycle,
   inspectPortableAgentReceiptDisposition,
   qualifyHermesPortableAcceptedReadinessAuthority,
   qualifyPortableAgentLifecycleAuthority,
@@ -152,6 +153,53 @@ describe("portable agent lifecycle dispatch", () => {
     mocks.readRegistry.mockReturnValue(null);
   });
 
+  it.each([
+    ["hermes", "hermes"],
+    ["openclaw", "openclaw"],
+  ] as const)("classifies recorded %s Portable authority once", (agent, profile) => {
+    expect(
+      classifyRegisteredPortableAgentLifecycle(
+        "alpha",
+        "docker",
+        {
+          ...hermesRegistryEntry(),
+          agent,
+          portableLifecycleProfile: profile,
+        } as never,
+        lifecycleAuthorityDeps,
+      ),
+    ).toEqual({ kind: "portable", agent });
+  });
+
+  it("keeps an ordinary Docker entry on the standard lifecycle", () => {
+    expect(
+      classifyRegisteredPortableAgentLifecycle(
+        "alpha",
+        "docker",
+        {
+          ...hermesRegistryEntry(),
+          agent: "openclaw",
+          portableLifecycleProfile: undefined,
+        } as never,
+        lifecycleAuthorityDeps,
+      ),
+    ).toEqual({ kind: "standard" });
+  });
+
+  it("admits a legacy Hermes entry only through the shared receipt qualifier", () => {
+    const qualifyLegacyHermes = vi.fn(() => true);
+
+    expect(
+      classifyRegisteredPortableAgentLifecycle(
+        "alpha",
+        "docker",
+        { ...hermesRegistryEntry(), portableLifecycleProfile: undefined } as never,
+        { ...lifecycleAuthorityDeps, qualifyLegacyHermes },
+      ),
+    ).toEqual({ kind: "portable", agent: "hermes" });
+    expect(qualifyLegacyHermes).toHaveBeenCalledOnce();
+  });
+
   it("directs copied active schema-7 authority to probe instead of migrating on launch (#10423)", () => {
     mocks.isLifecycleLockHeld.mockReturnValue(true);
     mocks.inspectClassification.mockReturnValue({
@@ -168,7 +216,7 @@ describe("portable agent lifecycle dispatch", () => {
     expect(mocks.requalifyHermes).not.toHaveBeenCalled();
   });
 
-  it("routes probe-only schema migration to the exact Hermes lifecycle owner (#10423)", () => {
+  it("routes probe-only schema migration to the exact Hermes lifecycle owner (#10423)", async () => {
     const receiptAuthority = hermes("active");
     const entry = hermesRegistryEntry({ provider: "ollama-local" });
     mocks.inspectClassification.mockReturnValue(receiptAuthority);
@@ -180,7 +228,7 @@ describe("portable agent lifecycle dispatch", () => {
     const classified = qualifyPortableAgentLifecycleAuthority("alpha", lifecycleAuthorityDeps);
     expect(classified).toEqual({ ...hermesDisposition("active"), entry });
     expect(
-      requalifyPortableAgentSandboxAuthority("alpha", {
+      await requalifyPortableAgentSandboxAuthority("alpha", {
         ...lifecycleAuthorityDeps,
         stateDir: "/state",
       }),
@@ -540,24 +588,24 @@ describe("portable agent lifecycle dispatch", () => {
     expect(mocks.buildOpenShellCommandAuthority).not.toHaveBeenCalled();
   });
 
-  it("routes active Hermes recovery without OpenClaw or Docker fallthrough (#9203)", () => {
+  it("routes active Hermes recovery without OpenClaw or Docker fallthrough (#9203)", async () => {
     mocks.inspect.mockReturnValue(hermes("active"));
 
-    expect(recoverPortableAgentSandboxLifecycle("alpha", context)).toEqual({
+    expect(await recoverPortableAgentSandboxLifecycle("alpha", context)).toEqual({
       kind: "already-running",
     });
     expect(mocks.recoverHermes).toHaveBeenCalledOnce();
     expect(mocks.recoverOpenClaw).not.toHaveBeenCalled();
   });
 
-  it("delegates active Hermes authority to the exact lifecycle qualifier (#9203)", () => {
+  it("delegates active Hermes authority to the exact lifecycle qualifier (#9203)", async () => {
     mocks.inspect.mockReturnValue(hermes("active"));
 
-    expect(() =>
+    await expect(
       assertHermesPortableAgentLifecycleAuthority("alpha", context, {
         stateDir: "/state",
       }),
-    ).not.toThrow();
+    ).resolves.toBeUndefined();
 
     expect(mocks.assertHermesAuthority).toHaveBeenCalledWith(
       "alpha",
@@ -572,23 +620,23 @@ describe("portable agent lifecycle dispatch", () => {
     [hermes("active"), { ...context, agent: "openclaw" }, "does not match registry agent"],
   ] as const)(
     "rejects invalid Hermes command authority %# (#9203)",
-    (authority, authorityContext, message) => {
+    async (authority, authorityContext, message) => {
       mocks.inspect.mockReturnValue(authority);
 
-      expect(() =>
+      await expect(
         assertHermesPortableAgentLifecycleAuthority("alpha", authorityContext, {
           stateDir: "/state",
         }),
-      ).toThrow(message);
+      ).rejects.toThrow(message);
       expect(mocks.assertHermesAuthority).not.toHaveBeenCalled();
     },
   );
 
   it.each(["pending", "configuring"] as const)(
     "rejects incomplete Hermes phase %s before recovery (#9203)",
-    (phase) => {
+    async (phase) => {
       mocks.inspect.mockReturnValue(hermes(phase));
-      expect(() => recoverPortableAgentSandboxLifecycle("alpha", context)).toThrow(
+      await expect(recoverPortableAgentSandboxLifecycle("alpha", context)).rejects.toThrow(
         `phase '${phase}' is incomplete`,
       );
       expect(mocks.recoverHermes).not.toHaveBeenCalled();
@@ -596,11 +644,11 @@ describe("portable agent lifecycle dispatch", () => {
     },
   );
 
-  it("stops active Hermes without invoking the Docker-capable channel callback (#9203)", () => {
+  it("stops active Hermes without invoking the Docker-capable channel callback (#9203)", async () => {
     mocks.inspect.mockReturnValue(hermes("active"));
     const beforeStop = vi.fn();
 
-    expect(stopPortableAgentSandboxLifecycle("alpha", context, beforeStop)).toEqual({
+    expect(await stopPortableAgentSandboxLifecycle("alpha", context, beforeStop)).toEqual({
       kind: "stopped",
       portableAgent: "hermes",
     });
@@ -611,12 +659,12 @@ describe("portable agent lifecycle dispatch", () => {
     expect(mocks.stopOpenClaw).not.toHaveBeenCalled();
   });
 
-  it("preserves schema-4 OpenClaw dispatch and its stop callback (#9203)", () => {
+  it("preserves schema-4 OpenClaw dispatch and its stop callback (#9203)", async () => {
     mocks.inspect.mockReturnValue({ kind: "openclaw" });
     mocks.stopOpenClaw.mockReturnValue({ kind: "stopped" });
     const beforeStop = vi.fn();
 
-    stopPortableAgentSandboxLifecycle("alpha", { ...context, agent: "openclaw" }, beforeStop);
+    await stopPortableAgentSandboxLifecycle("alpha", { ...context, agent: "openclaw" }, beforeStop);
     expect(mocks.stopOpenClaw).toHaveBeenCalledWith(
       "alpha",
       expect.objectContaining({ agent: "openclaw" }),
