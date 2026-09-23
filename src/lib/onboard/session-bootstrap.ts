@@ -362,6 +362,7 @@ export interface OnboardSessionBootstrapDeps {
     opts: {
       nonInteractive?: boolean;
       fromDockerfile?: string | null;
+      fromImage?: string | null;
       sandboxName?: string | null;
       agent?: string | null;
       toolDisclosure?: ToolDisclosure | null;
@@ -385,6 +386,7 @@ export interface OnboardSessionBootstrapDeps {
 export interface OnboardSessionBootstrapResult {
   session: Session | null;
   fromDockerfile: string | null;
+  fromImage?: string | null;
 }
 
 export const defaultResolveResumeCheckpoint: () => CheckpointLoadResult = loadResumeCheckpoint;
@@ -519,6 +521,22 @@ function reportResumeConflict(
     }
     return;
   }
+  if (conflict.field === "fromImage") {
+    if (!conflict.recorded) {
+      deps.error(
+        "  Session was started without --from-image; resume without that flag or start a fresh onboarding session.",
+      );
+    } else if (!conflict.requested) {
+      deps.error(
+        `  Session was started with --from-image '${conflict.recorded}'; rerun with that reference to resume it.`,
+      );
+    } else {
+      deps.error(
+        `  Session was started with --from-image '${conflict.recorded}', not '${conflict.requested}'.`,
+      );
+    }
+    return;
+  }
   deps.error(
     `  Resumable state recorded ${conflict.field} '${conflict.recorded}', not '${conflict.requested}'.`,
   );
@@ -590,23 +608,17 @@ async function prepareResumeSession(
   }
   guardResumeCheckpoint(deps);
 
-  const sessionFromImage = session.metadata?.fromImage ?? null;
-  if (input.requestedFromImage && input.requestedFromImage !== sessionFromImage) {
-    throw new Error(
-      "The requested external image differs from the interrupted session. Use --fresh --recreate-sandbox to change the image.",
-    );
-  }
-  if (sessionFromImage && input.requestedFromDockerfile)
-    throw new Error("Cannot resume an external image session with --from.");
   const sessionFrom = session.metadata?.fromDockerfile || null;
   const fromDockerfile = input.requestedFromDockerfile
     ? deps.resolvePath(input.requestedFromDockerfile)
     : sessionFrom
       ? deps.resolvePath(sessionFrom)
       : null;
+  const fromImage = input.requestedFromImage || session.metadata?.fromImage || null;
   const resumeConflicts = deps.getResumeConfigConflicts(session, {
     nonInteractive: input.nonInteractive,
     fromDockerfile: input.requestedFromDockerfile,
+    fromImage: input.requestedFromImage,
     sandboxName: input.requestedSandboxName,
     agent: input.agentFlag || null,
     toolDisclosure: input.requestedToolDisclosure ?? null,
@@ -631,7 +643,7 @@ async function prepareResumeSession(
   });
   session = deps.loadSession();
   assertRecoverableResumeSandboxName(session, input, deps);
-  return { session, fromDockerfile };
+  return { session, fromDockerfile, ...(fromImage ? { fromImage } : {}) };
 }
 
 function prepareFreshSession(
@@ -652,6 +664,7 @@ function prepareFreshSession(
   const fromDockerfile = input.requestedFromDockerfile
     ? deps.resolvePath(input.requestedFromDockerfile)
     : null;
+  const fromImage = input.requestedFromImage || null;
   const session = deps.createSession({
     mode: mode(input.nonInteractive),
     toolDisclosure: input.requestedToolDisclosure ?? DEFAULT_TOOL_DISCLOSURE,
@@ -664,7 +677,7 @@ function prepareFreshSession(
     metadata: {
       gatewayName: "nemoclaw",
       fromDockerfile: fromDockerfile || null,
-      ...(input.requestedFromImage ? { fromImage: input.requestedFromImage } : {}),
+      fromImage,
       ...(input.requestedHostMounts && input.requestedHostMounts.length > 0
         ? { hostMounts: input.requestedHostMounts.map((mount) => ({ ...mount })) }
         : {}),
@@ -675,7 +688,7 @@ function prepareFreshSession(
     runtimeAuthority: input.portableRuntimeAuthority ?? null,
   });
   const savedSession = deps.saveSession(session);
-  return { session: savedSession, fromDockerfile };
+  return { session: savedSession, fromDockerfile, ...(fromImage ? { fromImage } : {}) };
 }
 
 export async function prepareOnboardSession(

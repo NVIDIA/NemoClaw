@@ -34,18 +34,15 @@ type SelectedAgentTransitionOverrides = Partial<Omit<SelectedAgentTransitionDeps
 export function applyOnboardRuntimeControlRequests(
   opts: Pick<
     OnboardOptions,
-    | "fromImage"
     | "toolDisclosure"
     | "observabilityEnabled"
     | "observabilityRequestedExplicitly"
     | "dcodeAutoApprovalMode"
   >,
 ) {
-  const fromImage = opts.fromImage ?? process.env.NEMOCLAW_FROM_IMAGE ?? null;
   const observabilityIsExplicit = opts.observabilityRequestedExplicitly !== false;
   return {
     requestedToolDisclosure: applyOnboardToolDisclosureRequest(opts.toolDisclosure),
-    ...(fromImage === null ? {} : { requestedFromImage: fromImage }),
     requestedObservabilityEnabled:
       observabilityIsExplicit && typeof opts.observabilityEnabled === "boolean"
         ? opts.observabilityEnabled

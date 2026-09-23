@@ -6,6 +6,7 @@ import type { AgentDefinition } from "../../agent/defs";
 import { getVersion } from "../../core/version";
 import type { SandboxMessagingPlan } from "../../messaging/manifest";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
+import type { ToolDisclosure } from "../../tool-disclosure";
 import type {
   CreateSandboxBuildContextResult,
   PreparedSandboxBuildContext,
@@ -67,6 +68,8 @@ import {
   installedManagedImageCatalogRevision,
   liveE2eManagedImageCatalog,
   liveE2eManagedImageRevision,
+  externalImageWorkloadMatches,
+  prepareExternalImageForOnboardSource,
   type PreparedSandboxWorkloadSource,
   prepareSandboxWorkloadSource,
 } from "../workload/preparation";
@@ -75,6 +78,7 @@ import {
   prepareSandboxWorkloadSourceFromRebuildHandoff,
 } from "../workload/rebuild";
 import { resolveSandboxWorkloadRuntimeCapabilities } from "../workload/runtime";
+import type { ExternalImageWorkloadSource } from "../workload/source";
 import {
   prepareManagedStateVolumes,
   removeManagedStateVolumes,
@@ -95,7 +99,42 @@ type ManagedProfileInput = Omit<
 type ResolveBuildPatchInput = Parameters<typeof resolveSandboxBuildPatch>[0];
 type SandboxInferenceConfig = import("../../inference/config").SandboxInferenceConfig;
 export { normalizeRuntimeProviderIdentity };
-export { prepareOnboardExternalImage } from "../workload/preparation";
+export { externalImageWorkloadMatches };
+
+/** Resolve and inspect a user-supplied image through the selected provider. */
+export function prepareExternalImageForOnboard(input: {
+  readonly computePlan: OpenShellComputePlan;
+  readonly reference: string;
+  readonly agentName: string;
+  readonly requestedToolDisclosure: ToolDisclosure | null;
+}): {
+  readonly workload: ExternalImageWorkloadSource;
+  readonly toolDisclosure: ToolDisclosure;
+} {
+  const runtime = resolveSandboxWorkloadRuntimeCapabilities(input.computePlan);
+  const provider = resolveRuntimeProviderBundle(
+    input.computePlan.driverName,
+    CURRENT_RUNTIME_PROVIDER_BUNDLES,
+  );
+  return prepareExternalImageForOnboardSource(
+    {
+      reference: input.reference,
+      agentName: input.agentName,
+      runtime,
+      requestedToolDisclosure: input.requestedToolDisclosure,
+    },
+    {
+      capture: (operation, args, timeoutMs) => {
+        if (!provider?.containerEngine.supported) {
+          throw new Error(
+            `Driver '${input.computePlan.driverName}' does not provide container image preparation.`,
+          );
+        }
+        return provider.containerEngine.capture(operation, args, timeoutMs);
+      },
+    },
+  );
+}
 
 export type ManagedStateVolumeOnboardLifecycle = {
   readonly roots: readonly import("../managed-startup/state-roots").ManagedStartupStateRoot[];
@@ -155,7 +194,7 @@ export interface CreateManagedWorkloadOnboardRuntimeInput {
   readonly agentName: string;
   readonly legacyDockerfilePath: string;
   readonly customDockerfilePath: string | null;
-  readonly externalImage?: import("../workload/external-image").ExternalImageReceipt | null;
+  readonly preparedExternalImage?: ExternalImageWorkloadSource | null;
   readonly rootDir: string;
   readonly model: string | null;
   readonly provider: string | null;
@@ -217,6 +256,9 @@ export async function prepareSandboxWorkloadForPortableLifecycle(
   if (workload.source.kind === "portable-image") {
     throw new Error("Portable image workload activation is not enabled.");
   }
+  if (workload.source.kind === "external-image") {
+    throw new Error("Hermes portable onboarding cannot use a user-supplied Docker image.");
+  }
   assertPortableManagedBootstrapNotSelected(
     portableLifecycle,
     workload.source.kind === "managed-image",
@@ -231,8 +273,6 @@ export async function prepareHermesPortableSandboxWorkloadForLifecycle(
   expectedDockerfilePath: string,
 ): Promise<PreparedSandboxWorkloadSource> {
   const workload = await runtime.ensurePreparedWorkload();
-  if (workload.source.kind === "external-image")
-    throw new Error("Portable onboarding cannot use an external image.");
   if (workload.source.kind === "managed-image") {
     throw new Error(
       "Hermes portable onboarding cannot use managed-image bootstrap because that path requires Docker lifecycle operations.",
@@ -240,6 +280,9 @@ export async function prepareHermesPortableSandboxWorkloadForLifecycle(
   }
   if (workload.source.kind === "portable-image") {
     throw new Error("Portable image workload activation is not enabled.");
+  }
+  if (workload.source.kind === "external-image") {
+    throw new Error("Hermes portable onboarding cannot use a user-supplied Docker image.");
   }
   if (
     workload.source.reason !== "runtime-unsupported" ||
@@ -289,17 +332,6 @@ export function createManagedWorkloadOnboardRuntime(
   let preparedProfile: BuiltManagedStartupOnboardProfile | null = null;
 
   const ensurePreparedWorkload = async (): Promise<PreparedSandboxWorkloadSource> => {
-    if (input.externalImage) {
-      return {
-        source: {
-          kind: "external-image",
-          reference: input.externalImage.reference,
-          receipt: input.externalImage,
-        },
-        release: null,
-        fallbackDiagnostic: null,
-      };
-    }
     const liveCatalogRevision = input.stockManagedRuntime
       ? liveE2eManagedImageRevision(input.startupProfile.environment)
       : null;
@@ -324,6 +356,7 @@ export function createManagedWorkloadOnboardRuntime(
           agentName: input.agentName,
           legacyDockerfilePath: input.legacyDockerfilePath,
           customDockerfilePath: input.customDockerfilePath,
+          preparedExternalImage: input.preparedExternalImage ?? null,
           runtime: runtimeCapabilities,
           version: getVersion({ rootDir: input.rootDir }),
           // Same environment authority the catalog selection above reads, so
@@ -593,7 +626,7 @@ export async function prepareOnboardSandboxWorkloadLaunch(
           ...launchInput,
           policyAttached: Boolean(createPlan.createRequest.policyPath),
         }),
-        prebuild: { imageRef: null, imageId: input.workload.source.receipt.imageId },
+        prebuild: { imageRef: null, imageId: null },
       },
     };
   } else {
@@ -713,15 +746,12 @@ export function resolveOnboardSandboxWorkloadReceipt(input: {
   readonly extractBuiltImageRef: typeof import("../../build-context").extractBuiltImageRef;
   readonly resolveSandboxImageTagFromCreateOutput: typeof import("../../domain/sandbox/image-tag").resolveSandboxImageTagFromCreateOutput;
 }): { readonly resolvedImageTag: string; readonly workloadReceipt: SandboxWorkloadReceipt } {
-  if (input.workload.source.kind === "external-image") {
-    return {
-      resolvedImageTag: input.workload.source.reference,
-      workloadReceipt: input.workload.source.receipt,
-    };
-  }
   const output = `${input.firstCreateOutput}\n${input.createOutput}`;
   const resolvedImageTag =
-    (input.workload.source.kind === "managed-image" ? input.workload.source.reference : null) ??
+    (input.workload.source.kind === "managed-image" ||
+    input.workload.source.kind === "external-image"
+      ? input.workload.source.reference
+      : null) ??
     input.registryImageRef ??
     input.prebuildImageRef ??
     input.extractBuiltImageRef(output) ??
@@ -739,6 +769,19 @@ export function resolveOnboardSandboxWorkloadReceipt(input: {
   }
   if (input.workload.source.kind === "portable-image") {
     throw new Error("Portable image workload activation is not enabled.");
+  }
+  if (input.workload.source.kind === "external-image") {
+    return {
+      resolvedImageTag,
+      workloadReceipt: {
+        schemaVersion: 1,
+        kind: "external-image",
+        reference: input.workload.source.reference,
+        platform: input.workload.source.platform,
+        runtimeImageContentId: input.workload.source.runtimeImageContentId,
+        shared: true,
+      },
+    };
   }
   const profile = input.runtime.ensurePreparedProfile(input.workload);
   if (!profile) throw new Error("Managed sandbox workload is missing its startup profile.");

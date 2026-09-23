@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { requireExternalImageReference } from "./workload/external-image";
-
 import { isNonInteractiveEnv } from "../core/non-interactive";
 import { getNameValidationGuidance } from "../name-validation";
 export { enforceRemovedImmutabilityMigrationBoundary } from "../state/migrations/removed-immutability";
@@ -14,6 +12,7 @@ import {
   parseExtraPlaceholderKeys,
 } from "./extra-placeholder-keys";
 import { RESERVED_SANDBOX_NAMES } from "./sandbox-agent";
+import { parseExactExternalImageReference } from "./workload/external-image";
 import type { OnboardOptions } from "./types";
 import {
   requireStationExpressResumeIntent,
@@ -63,6 +62,7 @@ export interface ResolvedOnboardEntryOptions {
   resume: boolean;
   fresh: boolean;
   requestedFromDockerfile: string | null;
+  requestedFromImage?: string | null;
   requestedSandboxName: string | null;
   cannotPrompt: boolean;
 }
@@ -381,10 +381,24 @@ export function resolveOnboardEntryOptions(
   const requestedFromDockerfile =
     input.opts.fromDockerfile ||
     (deps.isNonInteractive() ? input.env.NEMOCLAW_FROM_DOCKERFILE || null : null);
-  const requestedFromImage = input.opts.fromImage ?? input.env.NEMOCLAW_FROM_IMAGE ?? null;
-  if (requestedFromImage !== null) requireExternalImageReference(requestedFromImage);
-  if (requestedFromImage && requestedFromDockerfile)
-    throw new Error("--from and --from-image cannot both be set.");
+  const rawRequestedFromImage =
+    input.opts.fromImage ||
+    (deps.isNonInteractive() ? input.env.NEMOCLAW_FROM_IMAGE || null : null);
+  let requestedFromImage: string | null = null;
+  if (rawRequestedFromImage) {
+    try {
+      requestedFromImage = parseExactExternalImageReference(rawRequestedFromImage);
+    } catch (error) {
+      deps.error(`  ${error instanceof Error ? error.message : String(error)}`);
+      deps.exitProcess(1);
+    }
+  }
+  if (requestedFromDockerfile && requestedFromImage) {
+    deps.error(
+      "  A Dockerfile source and an external image source cannot both be selected. Use only --from/NEMOCLAW_FROM_DOCKERFILE or --from-image/NEMOCLAW_FROM_IMAGE.",
+    );
+    deps.exitProcess(1);
+  }
   const cannotPrompt = deps.isNonInteractive() || !input.stdinIsTty || !input.stdoutIsTty;
   let requestedSandboxName: string | null =
     typeof input.opts.sandboxName === "string" && input.opts.sandboxName.length > 0
@@ -496,7 +510,9 @@ export function resolveOnboardEntryOptions(
     !requestedSandboxName
   ) {
     deps.error(
-      `  ${requestedFromImage ? "--from-image <repository>@<digest>" : "--from <Dockerfile>"} requires --name <sandbox> (or NEMOCLAW_SANDBOX_NAME) when running without a TTY or with --non-interactive.`,
+      requestedFromDockerfile
+        ? "  --from <Dockerfile> requires --name <sandbox> (or NEMOCLAW_SANDBOX_NAME) when running without a TTY or with --non-interactive."
+        : "  --from-image <repository@sha256:digest> requires --name <sandbox> (or NEMOCLAW_SANDBOX_NAME) when running without a TTY or with --non-interactive.",
     );
     deps.error("  A sandbox name cannot be prompted for in this context.");
     deps.exitProcess(1);
@@ -506,6 +522,7 @@ export function resolveOnboardEntryOptions(
     resume,
     fresh,
     requestedFromDockerfile,
+    ...(requestedFromImage ? { requestedFromImage } : {}),
     requestedSandboxName,
     cannotPrompt,
   };

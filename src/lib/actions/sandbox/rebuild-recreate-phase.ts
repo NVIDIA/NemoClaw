@@ -182,7 +182,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
         metadata: {
           gatewayName: recreateOptions.targetGatewayName,
           fromDockerfile: storedFromDockerfile,
-          ...(recreateOptions.fromImage ? { fromImage: recreateOptions.fromImage } : {}),
+          fromImage: recreateOptions.fromImage,
           ...(recreateOptions.hostMounts && recreateOptions.hostMounts.length > 0
             ? { hostMounts: cloneSandboxHostMounts(recreateOptions.hostMounts) }
             : {}),
@@ -205,7 +205,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     s.hermesToolGateways = rebuildsHermesSandbox ? rebuildHermesToolGateways : [];
     s.gpuPassthrough = rebuildGpuOverrides.sessionGpuPassthrough;
     s.metadata.fromDockerfile = storedFromDockerfile;
-    s.metadata.fromImage = recreateOptions.fromImage ?? null;
+    s.metadata.fromImage = recreateOptions.fromImage;
     s.provider = resumeConfig.provider;
     s.model = resumeConfig.model;
     s.nimContainer = resumeConfig.nimContainer;
@@ -235,7 +235,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     `Recreate env will target NEMOCLAW_SANDBOX_NAME=${sandboxName}; NEMOCLAW_RECREATE_SANDBOX=${process.env.NEMOCLAW_RECREATE_SANDBOX}`,
   );
   log(
-    `Calling onboard({ resume: true, nonInteractive: true, recreateSandbox: true, fromDockerfile: ${storedFromDockerfile} })`,
+    `Calling onboard({ resume: true, nonInteractive: true, recreateSandbox: true, fromDockerfile: ${storedFromDockerfile}, fromImage: ${recreateOptions.fromImage} })`,
   );
 
   let onboardFailed = false;

@@ -78,7 +78,7 @@ export function resolveLiveE2eWorkloadSourceEnv(input: NodeJS.ProcessEnv): NodeJ
   const source = input.E2E_WORKLOAD_SOURCE ?? process.env.E2E_WORKLOAD_SOURCE;
   if (!targetId || source !== "local-dockerfile") return input;
   const localBuildEnvironment = { ...input, NEMOCLAW_SANDBOX_PREBUILD: "1" };
-  if (input.NEMOCLAW_FROM_DOCKERFILE || input.NEMOCLAW_FROM_IMAGE) return localBuildEnvironment;
+  if (input.NEMOCLAW_FROM_DOCKERFILE) return localBuildEnvironment;
   const agentName = normalizeLiveE2EAgentName(
     input.NEMOCLAW_AGENT ?? process.env.NEMOCLAW_AGENT ?? "openclaw",
   );

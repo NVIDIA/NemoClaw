@@ -220,24 +220,6 @@ describe("resolveOnboardEntryOptions", () => {
     expect(deps.validateName).toHaveBeenCalledWith("Demo-Box", "sandbox name");
   });
 
-  it("requires an explicit sandbox name for non-interactive prebuilt images", () => {
-    const deps = createDeps();
-    expect(() =>
-      resolveOnboardEntryOptions(
-        {
-          opts: { fromImage: `ghcr.io/example/harness@sha256:${"a".repeat(64)}` },
-          env: {},
-          stdinIsTty: false,
-          stdoutIsTty: false,
-        },
-        deps,
-      ),
-    ).toThrow(ExitError);
-    expect(deps.error).toHaveBeenCalledWith(
-      expect.stringContaining("--from-image <repository>@<digest> requires --name"),
-    );
-  });
-
   it("requires a sandbox name for --from when prompts are unavailable", () => {
     const deps = createDeps();
 
@@ -258,6 +240,51 @@ describe("resolveOnboardEntryOptions", () => {
     expect(deps.error).toHaveBeenCalledWith(
       "  A sandbox name cannot be prompted for in this context.",
     );
+  });
+
+  it("reads NEMOCLAW_FROM_IMAGE only in non-interactive mode", () => {
+    const reference = `ghcr.io/example/openclaw@sha256:${"a".repeat(64)}`;
+    expect(
+      resolveOnboardEntryOptions(
+        {
+          opts: { sandboxName: "alpha" },
+          env: { NEMOCLAW_FROM_IMAGE: reference },
+          stdinIsTty: false,
+          stdoutIsTty: false,
+        },
+        createDeps({ isNonInteractive: vi.fn(() => true) }),
+      ).requestedFromImage,
+    ).toBe(reference);
+    expect(
+      resolveOnboardEntryOptions(
+        {
+          opts: {},
+          env: { NEMOCLAW_FROM_IMAGE: reference },
+          stdinIsTty: true,
+          stdoutIsTty: true,
+        },
+        createDeps(),
+      ).requestedFromImage,
+    ).toBeUndefined();
+  });
+
+  it("rejects conflicting Dockerfile and external image environment sources", () => {
+    const deps = createDeps({ isNonInteractive: vi.fn(() => true) });
+    expect(() =>
+      resolveOnboardEntryOptions(
+        {
+          opts: { sandboxName: "alpha" },
+          env: {
+            NEMOCLAW_FROM_DOCKERFILE: "Dockerfile.custom",
+            NEMOCLAW_FROM_IMAGE: `ghcr.io/example/openclaw@sha256:${"a".repeat(64)}`,
+          },
+          stdinIsTty: false,
+          stdoutIsTty: false,
+        },
+        deps,
+      ),
+    ).toThrow(ExitError);
+    expect(deps.error).toHaveBeenCalledWith(expect.stringContaining("cannot both be selected"));
   });
 
   it("allows resume with --from and no recovered sandbox name so later resume guards can decide", () => {

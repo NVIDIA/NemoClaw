@@ -60,28 +60,6 @@ function managedEntry(
 }
 
 describe("managed workload authority", () => {
-  it("keeps an explicitly external image outside managed authority even in an official repository", () => {
-    const reference = `${MANAGED_IMAGE_REPOSITORIES.openclaw}@sha256:${"a".repeat(64)}`;
-    const workload = {
-      schemaVersion: 1,
-      kind: "external-image",
-      reference,
-      imageId: `sha256:${"b".repeat(64)}`,
-      platform: "linux/amd64",
-      agent: "openclaw",
-      toolDisclosure: "direct",
-      shared: true,
-    } as const;
-    const entry = { agent: "openclaw", fromDockerfile: null, imageTag: reference, workload };
-    expect(readManagedWorkloadAuthority(entry)).toBeNull();
-    expect(() => readManagedWorkloadAuthority({ ...entry, imageTag: "other" })).toThrow(
-      "invalid source receipt",
-    );
-    expect(() => readManagedWorkloadAuthority({ ...entry, agent: "hermes" })).toThrow(
-      "invalid source receipt",
-    );
-  });
-
   it.each(AGENTS.flatMap((agent) => PLATFORMS.map((platform) => [agent, platform] as const)))(
     "validates exact %s authority on %s",
     (agent, platform) => {

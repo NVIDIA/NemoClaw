@@ -74,16 +74,6 @@ const RECREATE_SELECTIONS: [string, OnboardFlags, Record<string, string>][] = [
 ];
 
 describe("onboard command options", () => {
-  it("selects a digest-pinned external image from the flag or environment", () => {
-    const image = `ghcr.io/example/harness@sha256:${"a".repeat(64)}`;
-    expect(resolve({ "from-image": image }).fromImage).toBe(image);
-    expect(resolve({}, { env: { NEMOCLAW_FROM_IMAGE: image } }).fromImage).toBe(image);
-    expect(() => resolve({ "from-image": "ubuntu:latest" })).toThrow("requires a repository");
-    expect(() =>
-      resolve({ "from-image": image }, { env: { NEMOCLAW_FROM_DOCKERFILE: "/tmp/Dockerfile" } }),
-    ).toThrow("exit:1");
-  });
-
   it("records only explicit APF interceptor selection (#9833)", () => {
     expect(resolve({ "apf-interceptor": true }).apfInterceptorRequested).toBe(true);
     expect(resolve({}).apfInterceptorRequested).toBeNull();
@@ -565,6 +555,34 @@ describe("onboard command options", () => {
     const relativeDockerfilePath = path.relative(process.cwd(), dockerfilePath);
 
     expect(resolve({ from: relativeDockerfilePath }).fromDockerfile).toBe(relativeDockerfilePath);
+  });
+
+  it("accepts only exact-digest external image references", () => {
+    const reference = `ghcr.io/example/openclaw@sha256:${"a".repeat(64)}`;
+    expect(resolve({ "from-image": reference }).fromImage).toBe(reference);
+
+    const errors: string[] = [];
+    expect(() =>
+      resolve(
+        { "from-image": "ghcr.io/example/openclaw:latest" },
+        { error: (message = "") => errors.push(message) },
+      ),
+    ).toThrow("exit:1");
+    expect(errors.join("\n")).toContain("repository@sha256");
+  });
+
+  it("rejects simultaneous Dockerfile and external image sources", () => {
+    const errors: string[] = [];
+    expect(() =>
+      resolve(
+        {
+          from: "Dockerfile",
+          "from-image": `ghcr.io/example/openclaw@sha256:${"a".repeat(64)}`,
+        },
+        { error: (message = "") => errors.push(message) },
+      ),
+    ).toThrow("exit:1");
+    expect(errors.join("\n")).toContain("--from and --from-image cannot both be set");
   });
 
   it("rejects missing and non-file Dockerfile paths before onboarding", () => {

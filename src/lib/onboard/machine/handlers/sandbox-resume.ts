@@ -6,25 +6,6 @@ import type { SandboxEntry } from "../../../state/registry";
 import { persistedSandboxHostMountsEqual } from "../../../state/registry/host-mount";
 import { normalizeToolDisclosure, toolDisclosureOrDefault } from "../../../tool-disclosure";
 
-export function assertExternalImageReuse(
-  requested: string | null,
-  entry: Pick<SandboxEntry, "workload"> | null,
-  recreate: boolean,
-): void {
-  const recorded = entry?.workload?.kind === "external-image" ? entry.workload.reference : null;
-  if (entry && requested !== recorded && !recreate) {
-    throw new Error(
-      "Sandbox image source changed. Re-run with --fresh --recreate-sandbox to replace it.",
-    );
-  }
-}
-
-export function externalImageCreateFields(reference: string | null | undefined): {
-  fromImage?: string;
-} {
-  return reference ? { fromImage: reference } : {};
-}
-
 export interface SandboxResumeSignals {
   readonly resume: boolean;
   readonly resumeAgentChanged: boolean;

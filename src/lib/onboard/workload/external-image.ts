@@ -1,237 +1,293 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { RuntimeProviderBundle } from "../runtime-provider/contract";
 import type { ToolDisclosure } from "../../tool-disclosure";
-import type { OpenShellSandboxBufferedCommandExecutor } from "../../adapters/openshell/sandbox-command";
+import {
+  isExactExternalImageReference,
+  isRuntimeImageContentId,
+} from "../../state/registry/workload";
+import type { RuntimeProviderCommandCapture } from "../runtime-provider/contract";
+import type {
+  ExternalImageAgent,
+  ExternalImageWorkloadSource,
+  SandboxWorkloadRuntimeCapabilities,
+} from "./source";
 
-const REFERENCE =
-  /^(?:[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]+)?\/)?[a-z0-9]+(?:[._-][a-z0-9]+)*(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)*@sha256:[0-9a-f]{64}$/u;
-const CONTENT_ID = /^sha256:[0-9a-f]{64}$/u;
+const INSPECT_LIMIT_BYTES = 256 * 1024;
+const PREPARE_TIMEOUT_MS = 10 * 60 * 1000;
 
-export interface ExternalImageReceipt {
-  readonly schemaVersion: 1;
-  readonly kind: "external-image";
-  readonly reference: string;
-  readonly platform: "linux/amd64" | "linux/arm64";
-  readonly imageId: string;
-  readonly agent: "openclaw" | "hermes";
-  readonly toolDisclosure: ToolDisclosure;
-  readonly shared: true;
+interface DockerImageInspect {
+  readonly Id?: unknown;
+  readonly Os?: unknown;
+  readonly Architecture?: unknown;
+  readonly Config?: {
+    readonly User?: unknown;
+    readonly WorkingDir?: unknown;
+    readonly Entrypoint?: unknown;
+    readonly Cmd?: unknown;
+    readonly Env?: unknown;
+    readonly Labels?: unknown;
+  } | null;
 }
 
-export function requireExternalImageReference(value: unknown): string {
-  if (typeof value !== "string" || value.length > 512 || !REFERENCE.test(value)) {
-    throw new Error(
-      "--from-image requires a repository@sha256:<64 lowercase hex digits> reference; mutable tags are not supported.",
+export interface PrepareExternalImageInput {
+  readonly reference: string;
+  readonly agentName: string;
+  readonly runtime: SandboxWorkloadRuntimeCapabilities;
+}
+
+export interface PrepareExternalImageDependencies {
+  readonly capture: (
+    operation: "external-image-preparation",
+    args: readonly string[],
+    timeoutMs?: number,
+  ) => RuntimeProviderCommandCapture;
+}
+
+export class ExternalImagePreparationError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(`External image preparation failed: ${message}`, options);
+    this.name = "ExternalImagePreparationError";
+  }
+}
+
+/** Adopt the publisher declaration unless the operator explicitly requested a mode. */
+export function resolveExternalImageToolDisclosure(
+  imageDisclosure: ToolDisclosure,
+  requested: ToolDisclosure | null,
+): ToolDisclosure {
+  if (requested && requested !== imageDisclosure) {
+    throw new ExternalImagePreparationError(
+      `requested tool disclosure '${requested}' does not match image tool disclosure '${imageDisclosure}'.`,
     );
+  }
+  return requested ?? imageDisclosure;
+}
+
+export function parseExactExternalImageReference(value: unknown): string {
+  if (typeof value !== "string") {
+    throw new ExternalImagePreparationError("--from-image requires an image reference.");
+  }
+  const reference = value.trim();
+  if (reference !== value || !isExactExternalImageReference(reference)) {
+    throw new ExternalImagePreparationError(
+      "the image reference must use repository@sha256:<64 lowercase hexadecimal characters>.",
+    );
+  }
+  return reference;
+}
+
+function requireExternalImageAgent(agentName: string): ExternalImageAgent {
+  if (agentName === "openclaw" || agentName === "hermes") return agentName;
+  throw new ExternalImagePreparationError(
+    `agent '${agentName}' is not supported for user-supplied images.`,
+  );
+}
+
+function requireStringArray(value: unknown, field: string): readonly string[] {
+  if (value === null || value === undefined) return [];
+  if (
+    !Array.isArray(value) ||
+    value.length > 64 ||
+    value.some((entry) => typeof entry !== "string" || Buffer.byteLength(entry, "utf8") > 8192)
+  ) {
+    throw new ExternalImagePreparationError(`image ${field} is not a bounded string array.`);
   }
   return value;
 }
 
-function object(value: unknown): Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
+function environmentValues(environment: readonly string[], name: string): readonly string[] {
+  const prefix = `${name}=`;
+  return environment
+    .filter((entry) => entry.startsWith(prefix))
+    .map((entry) => entry.slice(prefix.length));
 }
 
-export function cloneExternalImageReceipt(value: unknown): ExternalImageReceipt | undefined {
-  const receipt = object(value);
-  if (
-    receipt.schemaVersion !== 1 ||
-    receipt.kind !== "external-image" ||
-    receipt.shared !== true ||
-    typeof receipt.reference !== "string" ||
-    receipt.reference.length > 512 ||
-    !REFERENCE.test(receipt.reference) ||
-    typeof receipt.imageId !== "string" ||
-    !CONTENT_ID.test(receipt.imageId) ||
-    (receipt.platform !== "linux/amd64" && receipt.platform !== "linux/arm64") ||
-    (receipt.agent !== "openclaw" && receipt.agent !== "hermes") ||
-    (receipt.toolDisclosure !== "progressive" && receipt.toolDisclosure !== "direct")
-  )
-    return undefined;
-  return {
-    schemaVersion: 1,
-    kind: "external-image",
-    reference: receipt.reference,
-    platform: receipt.platform,
-    imageId: receipt.imageId,
-    agent: receipt.agent,
-    toolDisclosure: receipt.toolDisclosure,
-    shared: true,
-  };
+function requireSingleEnvironmentValue(
+  environment: readonly string[],
+  name: string,
+  required: boolean,
+): string | null {
+  const values = environmentValues(environment, name);
+  if (values.length > 1) {
+    throw new ExternalImagePreparationError(`image contains duplicate ${name} metadata.`);
+  }
+  if (values.length === 0) {
+    if (required) throw new ExternalImagePreparationError(`image must set ${name}.`);
+    return null;
+  }
+  return values[0]!;
 }
 
-export function inspectExternalImageMetadata(input: {
-  reference: string;
-  agent: string;
-  platform: string;
-  metadata: unknown;
-  requestedToolDisclosure?: ToolDisclosure | null;
-}): ExternalImageReceipt {
-  const reference = requireExternalImageReference(input.reference);
-  if (input.agent !== "openclaw" && input.agent !== "hermes") {
-    throw new Error("Prebuilt external images support OpenClaw and Hermes only.");
-  }
-  const image = object(input.metadata);
-  const config = object(image.Config);
-  const platform = `${String(image.Os)}/${String(image.Architecture)}`;
-  if ((platform !== "linux/amd64" && platform !== "linux/arm64") || platform !== input.platform) {
-    throw new Error(
-      `External image platform must match the selected runtime platform ${input.platform}.`,
+function requireToolDisclosure(environment: readonly string[]): ToolDisclosure {
+  const raw = requireSingleEnvironmentValue(environment, "NEMOCLAW_TOOL_DISCLOSURE", true);
+  if (raw !== "progressive" && raw !== "direct") {
+    throw new ExternalImagePreparationError(
+      "image NEMOCLAW_TOOL_DISCLOSURE must be progressive or direct.",
     );
   }
-  const user = typeof config.User === "string" ? config.User.split(":")[0] : "";
-  if (!user || user === "root" || (/^[0-9]+$/u.test(user) && Number(user) === 0)) {
-    throw new Error("External image must declare a non-root final USER.");
-  }
-  if (config.WorkingDir !== "/sandbox") {
-    throw new Error("External image must declare WORKDIR /sandbox.");
-  }
-  const command = [config.Entrypoint, config.Cmd].flatMap((value) =>
-    Array.isArray(value) ? value : [],
-  );
+  return raw;
+}
+
+function requireAgentMetadata(
+  inspect: DockerImageInspect,
+  environment: readonly string[],
+  agent: ExternalImageAgent,
+): void {
+  const environmentAgent = requireSingleEnvironmentValue(environment, "NEMOCLAW_AGENT", false);
+  const labels = inspect.Config?.Labels;
   if (
-    !command.length ||
-    command.some((value) => typeof value !== "string" || value.includes("\0")) ||
-    !command.some((value) => value.trim())
+    labels !== undefined &&
+    labels !== null &&
+    (typeof labels !== "object" || Array.isArray(labels))
   ) {
-    throw new Error(
-      "External image must declare a usable ENTRYPOINT or CMD; readiness verifies that it stays alive.",
-    );
+    throw new ExternalImagePreparationError("image labels are malformed.");
   }
-  const env = Array.isArray(config.Env) ? config.Env : [];
-  const disclosureValues = env.filter(
-    (value): value is string =>
-      typeof value === "string" && value.startsWith("NEMOCLAW_TOOL_DISCLOSURE="),
+  const labelAgent =
+    labels && typeof labels === "object"
+      ? (labels as Record<string, unknown>)["io.nvidia.nemoclaw.agent"]
+      : null;
+  if (labelAgent !== null && labelAgent !== undefined && typeof labelAgent !== "string") {
+    throw new ExternalImagePreparationError("image agent label is malformed.");
+  }
+  const declared = [environmentAgent, labelAgent].filter(
+    (value): value is string => typeof value === "string",
   );
-  const toolDisclosure = disclosureValues[0]?.slice("NEMOCLAW_TOOL_DISCLOSURE=".length);
-  if (
-    disclosureValues.length !== 1 ||
-    (toolDisclosure !== "progressive" && toolDisclosure !== "direct")
-  ) {
-    throw new Error(
-      "External image must contain one NEMOCLAW_TOOL_DISCLOSURE value: progressive or direct.",
+  if (declared.some((value) => value !== agent) || new Set(declared).size > 1) {
+    throw new ExternalImagePreparationError(
+      `image agent metadata does not match selected agent '${agent}'.`,
     );
   }
-  if (input.requestedToolDisclosure && input.requestedToolDisclosure !== toolDisclosure) {
-    throw new Error(
-      `Requested tool disclosure conflicts with the external image; select --tool-disclosure ${toolDisclosure}.`,
+}
+
+function parseInspectOutput(output: string): DockerImageInspect {
+  if (Buffer.byteLength(output, "utf8") > INSPECT_LIMIT_BYTES) {
+    throw new ExternalImagePreparationError("Docker returned oversized image metadata.");
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(output);
+  } catch (error) {
+    throw new ExternalImagePreparationError("Docker returned malformed image metadata.", {
+      cause: error,
+    });
+  }
+  if (
+    !Array.isArray(parsed) ||
+    parsed.length !== 1 ||
+    typeof parsed[0] !== "object" ||
+    !parsed[0]
+  ) {
+    throw new ExternalImagePreparationError("Docker must return exactly one image record.");
+  }
+  return parsed[0] as DockerImageInspect;
+}
+
+function isMissingLocalImage(inspection: RuntimeProviderCommandCapture): boolean {
+  return /(?:No such image|No such object)(?::|$)/iu.test(inspection.stderr);
+}
+
+function validateInspect(
+  reference: string,
+  inspect: DockerImageInspect,
+  agent: ExternalImageAgent,
+  runtime: SandboxWorkloadRuntimeCapabilities,
+): ExternalImageWorkloadSource {
+  const support = runtime.externalImages;
+  if (!support?.exactDigestReferences || support.platforms.length !== 1) {
+    throw new ExternalImagePreparationError(
+      `driver '${runtime.driverName}' does not support user-supplied exact-digest images.`,
     );
   }
-  const labels = object(config.Labels);
-  const agentLabels = [labels["io.nvidia.nemoclaw.agent"], labels["harness.agent"]];
-  const agentValues = env.filter(
-    (value): value is string => typeof value === "string" && value.startsWith("NEMOCLAW_AGENT="),
-  );
-  if (
-    agentLabels.some((label) => label !== undefined && label !== input.agent) ||
-    agentValues.some((value) => value !== `NEMOCLAW_AGENT=${input.agent}`)
-  ) {
-    throw new Error("External image agent metadata conflicts with the selected agent.");
+  if (!support.agents.includes(agent)) {
+    throw new ExternalImagePreparationError(
+      `driver '${runtime.driverName}' does not support user-supplied images for '${agent}'.`,
+    );
   }
-  if (typeof image.Id !== "string" || !CONTENT_ID.test(image.Id)) {
-    throw new Error("The selected runtime did not return an immutable image content identity.");
+  const platform = `${String(inspect.Os ?? "")}/${String(inspect.Architecture ?? "")}`;
+  if (platform !== support.platforms[0]) {
+    throw new ExternalImagePreparationError(
+      `image platform '${platform}' does not match host platform '${support.platforms[0]}'.`,
+    );
+  }
+  const user = typeof inspect.Config?.User === "string" ? inspect.Config.User.trim() : "";
+  if (!user || /^(?:root|[+-]?0+)(?::|$)/u.test(user)) {
+    throw new ExternalImagePreparationError("image must declare an explicit non-root final user.");
+  }
+  if (inspect.Config?.WorkingDir !== "/sandbox") {
+    throw new ExternalImagePreparationError("image working directory must be exactly /sandbox.");
+  }
+  const entrypoint = requireStringArray(inspect.Config?.Entrypoint, "entrypoint");
+  const command = requireStringArray(inspect.Config?.Cmd, "command");
+  const executable = entrypoint.length > 0 ? entrypoint[0] : command[0];
+  if (!executable || executable.trim() === "") {
+    throw new ExternalImagePreparationError("image must declare a usable entrypoint or command.");
+  }
+  const environment = requireStringArray(inspect.Config?.Env, "environment");
+  requireAgentMetadata(inspect, environment, agent);
+  const toolDisclosure = requireToolDisclosure(environment);
+  const runtimeImageContentId = inspect.Id;
+  if (!isRuntimeImageContentId(runtimeImageContentId)) {
+    throw new ExternalImagePreparationError("Docker returned an invalid immutable image identity.");
   }
   return {
-    schemaVersion: 1,
     kind: "external-image",
     reference,
-    platform,
-    imageId: image.Id,
-    agent: input.agent,
+    platform: support.platforms[0],
+    runtimeImageContentId,
     toolDisclosure,
-    shared: true,
   };
 }
 
-export function prepareExternalImage(input: {
-  reference: string;
-  agent: string;
-  provider: RuntimeProviderBundle;
-  requestedToolDisclosure?: ToolDisclosure | null;
-  architecture?: string;
-}): ExternalImageReceipt {
-  const reference = requireExternalImageReference(input.reference);
-  const provider = input.provider;
-  if (input.agent !== "openclaw" && input.agent !== "hermes") {
-    throw new Error("Prebuilt external images support OpenClaw and Hermes only.");
-  }
-  if (!provider.workload.profile.externalImages || !provider.containerEngine.supported) {
-    throw new Error(
-      `Runtime '${provider.identity.displayName}' does not support external prebuilt images.`,
+export function prepareExternalImageWorkloadSource(
+  input: PrepareExternalImageInput,
+  dependencies: PrepareExternalImageDependencies,
+): ExternalImageWorkloadSource {
+  const reference = parseExactExternalImageReference(input.reference);
+  const agent = requireExternalImageAgent(input.agentName);
+  if (input.runtime.externalImages === null || input.runtime.externalImages === undefined) {
+    throw new ExternalImagePreparationError(
+      `driver '${input.runtime.driverName}' does not support user-supplied images.`,
     );
   }
-  const architecture = input.architecture ?? process.arch;
-  const platform = `linux/${architecture === "x64" ? "amd64" : architecture}`;
-  const pulled = provider.containerEngine.capture(
-    "sandbox-lifecycle",
-    ["pull", reference],
-    120_000,
-  );
-  if (pulled.status !== 0 || pulled.error) {
-    throw new Error(
-      "Cannot pull the external image. Check its digest, registry visibility, and credentials configured for the selected container runtime. No image was built.",
-    );
-  }
-  const inspected = provider.containerEngine.capture(
-    "sandbox-lifecycle",
+  let inspected = dependencies.capture(
+    "external-image-preparation",
     ["image", "inspect", reference],
-    15_000,
+    PREPARE_TIMEOUT_MS,
   );
-  if (inspected.status !== 0 || inspected.error || inspected.stdout.length > 2 * 1024 * 1024) {
-    throw new Error("Cannot inspect the external image through the selected container runtime.");
+  if (inspected.error) {
+    throw new ExternalImagePreparationError("Docker image inspection is unavailable.", {
+      cause: inspected.error,
+    });
   }
-  let images: unknown;
-  try {
-    images = JSON.parse(inspected.stdout);
-  } catch {
-    throw new Error("The selected container runtime returned invalid image metadata.");
-  }
-  if (!Array.isArray(images) || images.length !== 1)
-    throw new Error("External image inspection must return exactly one image.");
-  return inspectExternalImageMetadata({ ...input, reference, platform, metadata: images[0] });
-}
-
-export async function verifyExternalOpenClawModel(input: {
-  sandboxName: string;
-  gatewayName: string;
-  model: string;
-  commandExecutor: OpenShellSandboxBufferedCommandExecutor;
-}): Promise<void> {
-  const result = await input.commandExecutor.runBuffered({
-    sandboxName: input.sandboxName,
-    target: { kind: "named", gatewayName: input.gatewayName },
-    command: ["/bin/cat", "/sandbox/.openclaw/openclaw.json"],
-    tty: false,
-    timeoutMilliseconds: 15_000,
-    outputLimitBytes: 1024 * 1024,
-  });
-  if (result.outcome.kind !== "completed" || result.outcome.exitCode !== 0) {
-    throw new Error(
-      "Cannot verify the external OpenClaw image's model configuration. Sandbox registration was not published.",
+  if (inspected.status !== 0) {
+    if (!isMissingLocalImage(inspected)) {
+      throw new ExternalImagePreparationError(
+        "Docker could not inspect the requested image locally.",
+      );
+    }
+    const pulled = dependencies.capture(
+      "external-image-preparation",
+      ["pull", reference],
+      PREPARE_TIMEOUT_MS,
     );
-  }
-  let config: Record<string, unknown>;
-  try {
-    config = object(JSON.parse(result.stdout));
-  } catch {
-    throw new Error(
-      "The external OpenClaw image has invalid model configuration. Sandbox registration was not published.",
+    if (pulled.status !== 0 || pulled.error) {
+      throw new ExternalImagePreparationError(
+        "Docker could not pull the requested image. Check image visibility or authenticate with Docker, then retry.",
+        pulled.error ? { cause: pulled.error } : undefined,
+      );
+    }
+    inspected = dependencies.capture(
+      "external-image-preparation",
+      ["image", "inspect", reference],
+      PREPARE_TIMEOUT_MS,
     );
+    if (inspected.status !== 0 || inspected.error) {
+      throw new ExternalImagePreparationError(
+        "Docker could not inspect the pulled image.",
+        inspected.error ? { cause: inspected.error } : undefined,
+      );
+    }
   }
-  const primary = object(object(object(config.agents).defaults).model).primary;
-  const models = object(object(object(config.models).providers).inference).models;
-  const configuredModel = Array.isArray(models) ? object(models[0]).id : undefined;
-  const normalize = (value: unknown) =>
-    typeof value === "string" ? value.replace(/^inference\//u, "") : null;
-  if (
-    normalize(primary) !== normalize(input.model) ||
-    normalize(configuredModel) !== normalize(input.model)
-  ) {
-    throw new Error(
-      "The external OpenClaw image's model does not match the selected route. Use a compatible image whose startup can reconcile the sandbox-owned OpenClaw configuration. Sandbox registration was not published.",
-    );
-  }
+  return validateInspect(reference, parseInspectOutput(inspected.stdout), agent, input.runtime);
 }

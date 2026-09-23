@@ -36,6 +36,7 @@ import {
 } from "../../onboard/dcode-auto-approval";
 import { resolveHermesDashboardOnboardState } from "../../onboard/hermes-dashboard";
 import { hasInvalidSessionToolDisclosure, type Session } from "../../state/onboard-session";
+import { cloneSandboxWorkloadReceipt } from "../../state/registry/workload";
 import {
   DEFAULT_TOOL_DISCLOSURE,
   invalidRecordedToolDisclosure,
@@ -51,6 +52,8 @@ export type RebuildDurableConfig = {
   dcodeAutoApprovalModeError: string | null;
   fromDockerfile: string | null;
   fromDockerfileError: string | null;
+  fromImage: string | null;
+  fromImageError: string | null;
   hermesAuthMethod: "oauth" | "api_key" | null;
   hermesAuthMethodError: string | null;
   webSearchConfig: WebSearchConfig | null;
@@ -244,10 +247,41 @@ export function resolveRebuildDurableConfig(
         ? "confirmed legacy managed-image recovery conflicts with a recorded custom --from image"
         : entry.fromDockerfile === undefined &&
             !recordedFromDockerfile &&
+            entry.workload?.kind !== "external-image" &&
             !entry.nemoclawVersion &&
             !allowLegacyManagedImageRecovery
           ? "legacy registry entry cannot distinguish a managed image from a custom --from image"
           : null;
+  const sessionFromImage = matchingSession?.metadata?.fromImage;
+  const rawExternalReceipt = entry.workload?.kind === "external-image";
+  const clonedWorkloadReceipt = cloneSandboxWorkloadReceipt(entry.workload);
+  const externalReceipt =
+    clonedWorkloadReceipt?.kind === "external-image" ? clonedWorkloadReceipt : null;
+  let fromImageError: string | null = null;
+  if (rawExternalReceipt) {
+    if (externalReceipt === null) {
+      fromImageError = "recorded external-image receipt is invalid";
+    } else if (recordedFromDockerfile) {
+      fromImageError = "recorded external image conflicts with a recorded custom Dockerfile";
+    } else if (
+      sessionFromImage !== undefined &&
+      sessionFromImage !== null &&
+      (typeof sessionFromImage !== "string" ||
+        sessionFromImage.trim() === "" ||
+        sessionFromImage.trim() !== sessionFromImage)
+    ) {
+      fromImageError = "matching onboard session records an invalid external image reference";
+    } else if (sessionFromImage && sessionFromImage !== externalReceipt.reference) {
+      fromImageError = "matching onboard session records a different external image digest";
+    }
+  } else if (sessionFromImage !== undefined && sessionFromImage !== null) {
+    fromImageError =
+      typeof sessionFromImage === "string" &&
+      sessionFromImage.trim() !== "" &&
+      sessionFromImage.trim() === sessionFromImage
+        ? "matching onboard session records an external image without a durable receipt"
+        : "matching onboard session records an invalid external image reference";
+  }
   let hermesAuthMethod =
     entry.hermesAuthMethod !== undefined
       ? normalizeHermesAuthMethod(entry.hermesAuthMethod)
@@ -273,6 +307,8 @@ export function resolveRebuildDurableConfig(
         ? recordedFromDockerfile
         : null,
     fromDockerfileError,
+    fromImage: externalReceipt?.reference ?? null,
+    fromImageError,
     hermesAuthMethod,
     hermesAuthMethodError,
     webSearchConfig:

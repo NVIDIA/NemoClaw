@@ -317,7 +317,6 @@ function projectOptionalBoolean(value: unknown): boolean {
 
 function projectWorkload(workload: SandboxWorkloadReceipt | undefined): unknown {
   if (!workload) return null;
-  if (workload.kind === "external-image") return { ...workload };
   if (workload.kind === "legacy-dockerfile") {
     return {
       schemaVersion: workload.schemaVersion,
@@ -342,6 +341,16 @@ function projectWorkload(workload: SandboxWorkloadReceipt | undefined): unknown 
       corporateCaSha256: workload.corporateCaB64
         ? exactContentDigest(workload.corporateCaB64)
         : null,
+      shared: workload.shared,
+    };
+  }
+  if (workload.kind === "external-image") {
+    return {
+      schemaVersion: workload.schemaVersion,
+      kind: workload.kind,
+      reference: workload.reference,
+      platform: workload.platform,
+      runtimeImageContentId: workload.runtimeImageContentId,
       shared: workload.shared,
     };
   }

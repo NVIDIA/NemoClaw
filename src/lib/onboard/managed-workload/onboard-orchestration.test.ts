@@ -65,6 +65,7 @@ import { buildManagedStartupOnboardProfile } from "../managed-startup/onboard-pr
 import {
   createManagedStateVolumeOnboardLifecycle,
   createManagedWorkloadOnboardRuntime,
+  externalImageWorkloadMatches,
   prepareHermesPortableOnboardSandboxLaunch,
   prepareHermesPortableSandboxWorkloadForLifecycle,
   prepareOnboardSandboxWorkloadLaunch,
@@ -630,6 +631,142 @@ describe("managed workload onboard orchestration", () => {
     expect(preparedLaunch.launch.prebuild).not.toHaveProperty("createArgs");
   });
 
+  it("launches an external image by exact digest without a build", async () => {
+    const reference = `ghcr.io/example/openclaw@sha256:${"a".repeat(64)}`;
+    const prepareSandboxBuildPatchConfig = vi.fn();
+    const preparedLaunch = await prepareOnboardSandboxWorkloadLaunch({
+      runtime: {
+        runtimeProvider: null,
+        ensurePreparedWorkload: vi.fn(),
+        ensurePreparedProfile: vi.fn(),
+      },
+      workload: {
+        source: {
+          kind: "external-image",
+          reference,
+          platform: "linux/amd64",
+          runtimeImageContentId: `sha256:${"b".repeat(64)}`,
+          toolDisclosure: "progressive",
+        },
+        release: null,
+        fallbackDiagnostic: null,
+      },
+      legacy: {},
+      plan: {
+        intent: { sandboxGpuLogMessage: null },
+        rebindMessagingTokenDefs: async () => [],
+        runProviderPreDeleteCleanup: vi.fn(async () => {}),
+        upsertMessagingProviders: vi.fn(() => []),
+        getHermesToolGatewayProviderName: vi.fn(() => "unused"),
+        discloseInitialSandboxPolicy: vi.fn(),
+      },
+      launchInput: {
+        agent: null,
+        chatUiUrl: "http://127.0.0.1:18789",
+        sandboxName: "external-openclaw",
+        env: {},
+        extraPlaceholderKeys: [],
+        getDashboardForwardPort: () => "18789",
+        hermesDashboardState: { enabled: false, config: null },
+        manageDashboard: true,
+        openshellShellCommand: (args: string[]) => args.join(" "),
+      },
+      plannedMessagingPlan: null,
+      gpu: {
+        provider: "openai",
+        config: {
+          mode: "0",
+          hostGpuDetected: false,
+          hostGpuPlatform: null,
+          sandboxGpuEnabled: false,
+          sandboxGpuDevice: null,
+          errors: [],
+        },
+        dockerDriverGateway: false,
+        gatewayPort: 8080,
+      },
+      dependencies: {
+        materializeSandboxCreatePlan: vi.fn(async () => ({
+          activeMessagingChannels: [],
+          compatibilityPolicyPath: null,
+          createRequest: {
+            sandboxName: "external-openclaw",
+            source: { reference },
+            policyPath: "/tmp/nemoclaw-policy.yaml",
+          },
+          gpuRoutePlan: "none",
+          initialSandboxPolicy: {
+            appliedPresets: [],
+            policyPath: "/tmp/nemoclaw-policy.yaml",
+          },
+          messagingProviders: [],
+          sandboxGpuLogMessage: null,
+          activateDeferredProviderEffects: null,
+        })),
+        prepareSandboxBuildPatchConfig,
+      },
+    } as never);
+
+    expect(preparedLaunch.createRequestPlan.source.reference).toBe(reference);
+    expect(preparedLaunch.launch.prebuild).toEqual({ imageRef: null, imageId: null });
+    expect(prepareSandboxBuildPatchConfig).not.toHaveBeenCalled();
+  });
+
+  it("persists the requested and local immutable identities in an external image receipt", () => {
+    const reference = `ghcr.io/example/hermes@sha256:${"a".repeat(64)}`;
+    const runtimeImageContentId = `sha256:${"b".repeat(64)}` as const;
+    expect(
+      resolveOnboardSandboxWorkloadReceipt({
+        runtime: { ensurePreparedProfile: vi.fn() },
+        workload: {
+          source: {
+            kind: "external-image",
+            reference,
+            platform: "linux/amd64",
+            runtimeImageContentId,
+            toolDisclosure: "direct",
+          },
+        },
+        registryImageRef: null,
+        prebuildImageRef: null,
+        firstCreateOutput: "",
+        createOutput: "",
+        buildId: "unused",
+        extractBuiltImageRef: vi.fn(),
+        resolveSandboxImageTagFromCreateOutput: vi.fn(),
+      } as never),
+    ).toEqual({
+      resolvedImageTag: reference,
+      workloadReceipt: {
+        schemaVersion: 1,
+        kind: "external-image",
+        reference,
+        platform: "linux/amd64",
+        runtimeImageContentId,
+        shared: true,
+      },
+    });
+  });
+
+  it("requires the registered external-image receipt to match the requested digest", () => {
+    const first = `ghcr.io/example/openclaw@sha256:${"a".repeat(64)}`;
+    const second = `ghcr.io/example/openclaw@sha256:${"b".repeat(64)}`;
+    const receipt = {
+      schemaVersion: 1,
+      kind: "external-image",
+      reference: first,
+      platform: "linux/amd64",
+      runtimeImageContentId: `sha256:${"c".repeat(64)}`,
+      shared: true,
+    } as const;
+
+    expect(externalImageWorkloadMatches(first, receipt)).toBe(true);
+    expect(externalImageWorkloadMatches(second, receipt)).toBe(false);
+    expect(
+      externalImageWorkloadMatches(first, { ...receipt, runtimeImageContentId: "invalid" }),
+    ).toBe(false);
+  });
+
   it("retains the live qualification catalog revision during fresh onboarding (#9385)", async () => {
     const catalogRevision = "a".repeat(40);
     const { prepared, runtime } = createFreshOnboardingRuntime(
@@ -747,16 +884,6 @@ describe("managed workload onboard orchestration", () => {
 
   it.each([
     {
-      behavior: "launches an external digest without staging or building an image",
-      agentName: "openclaw",
-      fromDockerfile: null,
-      preparedBuildContext: null,
-      expectedFromDockerfile: null,
-      expectedStageCalls: 0,
-      expectedRawCreate: false,
-      externalImage: true,
-    },
-    {
       behavior: "stages a fresh LangChain Deep Agents Code build before resolving patch metadata",
       agentName: "langchain-deepagents-code",
       fromDockerfile: dcodeDockerfile,
@@ -832,17 +959,11 @@ describe("managed workload onboard orchestration", () => {
         ensurePreparedProfile: vi.fn(),
       },
       workload: {
-        source: testCase.externalImage
-          ? {
-              kind: "external-image",
-              reference: `ghcr.io/example/harness@sha256:${"a".repeat(64)}`,
-              receipt: { imageId: `sha256:${"b".repeat(64)}` },
-            }
-          : {
-              kind: "legacy-dockerfile",
-              dockerfilePath: fromDockerfile,
-              reason: "runtime-unsupported",
-            },
+        source: {
+          kind: "legacy-dockerfile",
+          dockerfilePath: fromDockerfile,
+          reason: "runtime-unsupported",
+        },
         release: "v0.0.0",
         fallbackDiagnostic: null,
       },
@@ -897,15 +1018,8 @@ describe("managed workload onboard orchestration", () => {
       },
     } as unknown as Parameters<typeof prepareOnboardSandboxWorkloadLaunch>[0]);
 
-    expect(resolvePatchInput).toHaveBeenCalledTimes(testCase.externalImage ? 0 : 1);
-    expect(resolveSandboxBuildPatch).toHaveBeenCalledTimes(testCase.externalImage ? 0 : 1);
-    expect(materializeSandboxCreatePlan).toHaveBeenCalledWith(
-      expect.objectContaining({
-        fromRef: testCase.externalImage
-          ? `ghcr.io/example/harness@sha256:${"a".repeat(64)}`
-          : `${stagedContext.buildCtx}/Dockerfile`,
-      }),
-    );
+    expect(resolvePatchInput).toHaveBeenCalledOnce();
+    expect(resolveSandboxBuildPatch).toHaveBeenCalledOnce();
     expect(materializeSandboxCreatePlan).toHaveBeenCalledWith(
       expect.objectContaining({ portableLifecycle: testCase.portableLifecycle === true }),
     );

@@ -33,6 +33,7 @@ export type RebuildTargetConfig = {
   hasHermesToolGateways: boolean;
   credentialEnv: string | null;
   fromDockerfile: string | null;
+  fromImage: string | null;
   agentDefinition: ReturnType<typeof loadAgent> | null;
 };
 
@@ -95,6 +96,15 @@ function validateRebuildDurableConfig(
       "recorded custom Dockerfile is invalid.",
       durableConfig.fromDockerfileError,
       "Recorded custom Dockerfile is invalid",
+      bail,
+    );
+    return false;
+  }
+  if (durableConfig.fromImageError) {
+    printRebuildPreflightFailure(
+      "recorded external image is invalid.",
+      durableConfig.fromImageError,
+      "Recorded external image is invalid",
       bail,
     );
     return false;
@@ -192,6 +202,7 @@ export function prepareRebuildTargetConfig(
     hasHermesToolGateways: hermesGateways.recorded,
     credentialEnv,
     fromDockerfile: dockerfile.path,
+    fromImage: durableConfig.fromImage,
     agentDefinition: rebuildAgent && rebuildAgent !== "openclaw" ? loadAgent(rebuildAgent) : null,
   };
 }

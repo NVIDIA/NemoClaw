@@ -39,6 +39,7 @@ export type RuntimeProviderMutationOperation =
   | "workload-cleanup";
 export type RuntimeProviderContainerEngineOperation =
   | "host-doctor"
+  | "external-image-preparation"
   | "gateway-inspection"
   | "host-local-inference"
   | "sandbox-lifecycle"
@@ -314,6 +315,12 @@ export type RuntimeProviderManagedImageSupport = {
   readonly capabilityContractVersions: readonly number[];
 };
 
+export type RuntimeProviderExternalImageSupport = {
+  readonly exactDigestReferences: boolean;
+  readonly platforms: readonly ("linux/amd64" | "linux/arm64")[];
+  readonly agents: readonly ("openclaw" | "hermes")[];
+};
+
 export type RuntimeProviderNativeArtifactSupport = {
   readonly exactDigestReferences: boolean;
   readonly platforms: readonly "windows/x64"[];
@@ -324,13 +331,14 @@ export type RuntimeProviderNativeArtifactSupport = {
 
 export interface RuntimeProviderWorkloadProfile {
   readonly support: RuntimeProviderManagedImageSupport | null;
+  /** Missing or null until this provider supports user-supplied immutable images. */
+  readonly externalImageSupport?: RuntimeProviderExternalImageSupport | null;
   readonly nativeArtifactSupport?: RuntimeProviderNativeArtifactSupport | null;
   /** Missing or null until this provider has complete, reviewed portable runtime qualification. */
   readonly portableAgentRuntimeSupport?: PortableAgentRuntimeProviderSupport | null;
   readonly hostArchitectures: readonly string[];
   readonly managedImageSelectionPolicy: ManagedImageSelectionPolicy;
   readonly legacyDockerfileBuilds: boolean;
-  readonly externalImages?: boolean;
 }
 
 export type RuntimeProviderDoctorCheck = {

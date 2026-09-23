@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { requireExternalImageReference } from "./workload/external-image";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -51,6 +50,7 @@ import { managedSandboxFeatureIssue } from "./managed-sandbox-feature";
 import { parseReadOnlyHostMounts, requireReadOnlyHostMountRuntimeSupport } from "./host-mount";
 import { DCODE_OBSERVABILITY_FEATURE } from "./observability-policy-presets";
 import { isOpenclawAgent } from "./openclaw-otel-policy-presets";
+import { parseExactExternalImageReference } from "./workload/external-image";
 import { NOTICE_ACCEPT_ENV, NOTICE_ACCEPT_FLAG_NAME } from "./usage-notice";
 import {
   OnboardResumeIntentError,
@@ -468,6 +468,18 @@ function resolveOnboardToolDisclosure(
   }
 }
 
+function resolveExternalImageReference(
+  value: string | undefined,
+  deps: ResolveOnboardOptionsDeps,
+): string | null {
+  if (value === undefined) return null;
+  try {
+    return parseExactExternalImageReference(value);
+  } catch (error) {
+    fail(deps, `  ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 export function resolveOnboardOptions(
   flags: OnboardFlags,
   deps: ResolveOnboardOptionsDeps,
@@ -480,18 +492,10 @@ export function resolveOnboardOptions(
   validateObservabilityAgent(flags.observability, agent, deps);
   const toolDisclosure = resolveOnboardToolDisclosure(flags, experimentalProfile, resume, deps);
   const hostMounts = resolveHostMounts(flags["host-mount"], experimentalProfile, deps);
-  const fromImage = flags["from-image"] ?? deps.env.NEMOCLAW_FROM_IMAGE ?? null;
-  if (fromImage !== null) {
-    requireExternalImageReference(fromImage);
-    if (flags.from || deps.env.NEMOCLAW_FROM_DOCKERFILE)
-      fail(deps, "--from and --from-image cannot both be set.");
-    if (
-      experimentalProfile ||
-      flags["temp-managed-runtime"] ||
-      flags["temp-managed-runtime-catalog"]
-    )
-      fail(deps, "--from-image cannot be combined with a portable or managed-image profile.");
+  if (flags.from !== undefined && flags["from-image"] !== undefined) {
+    fail(deps, "  --from and --from-image cannot both be set.");
   }
+  const fromImage = resolveExternalImageReference(flags["from-image"], deps);
   return {
     tempManagedRuntime: flags["temp-managed-runtime"] === true,
     tempManagedRuntimeCatalog: resolveFileOption(
@@ -506,7 +510,7 @@ export function resolveOnboardOptions(
     recreateSandbox: flags["recreate-sandbox"] === true,
     apfInterceptorRequested: flags["apf-interceptor"] === true ? true : null,
     fromDockerfile: resolveFileOption("--from", flags.from, deps, true),
-    ...(fromImage === null ? {} : { fromImage }),
+    ...(fromImage ? { fromImage } : {}),
     sandboxName: flags.name ?? null,
     ...(hostMounts.length > 0 ? { hostMounts } : {}),
     sandboxGpu: resolveSandboxGpu(flags),

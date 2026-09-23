@@ -233,8 +233,7 @@ export function shouldAssertStockManagedImageReceipt(
   if (!selectedRevision && !selectedCatalog) return false;
   const selectedAgent = environment.NEMOCLAW_AGENT?.trim();
   if (selectedAgent && !isShippedManagedImageAgent(selectedAgent)) return false;
-  if (environment.NEMOCLAW_FROM_DOCKERFILE?.trim() || environment.NEMOCLAW_FROM_IMAGE?.trim())
-    return false;
+  if (environment.NEMOCLAW_FROM_DOCKERFILE?.trim()) return false;
   const executable = path.basename(command);
   let onboardArgumentIndex = -1;
   if (executable === "nemoclaw" || executable === "nemoclaw.js") {
@@ -250,10 +249,6 @@ export function shouldAssertStockManagedImageReceipt(
     return false;
   }
   return !onboardArguments.some(
-    (argument) =>
-      argument === "--from" ||
-      argument.startsWith("--from=") ||
-      argument === "--from-image" ||
-      argument.startsWith("--from-image="),
+    (argument) => argument === "--from" || argument.startsWith("--from="),
   );
 }

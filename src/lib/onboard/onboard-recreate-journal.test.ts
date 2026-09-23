@@ -30,6 +30,7 @@ import {
 const BASE_INTENT: OnboardRecreateTargetIntent = {
   agent: "openclaw",
   fromDockerfile: null,
+  fromImage: null,
   provider: "nvidia-prod",
   model: "gpt-5.4",
   preferredInferenceApi: "openai-completions",
@@ -49,6 +50,7 @@ describe("non-resumed replacement target fingerprint (#7735)", () => {
   });
 
   it.each([
+    { fromImage: `ghcr.io/example/openclaw@sha256:${"a".repeat(64)}` },
     { observabilityEnabled: true },
     { toolDisclosure: "direct" },
     { sandboxGpuConfig: { sandboxGpuEnabled: true, mode: "all" } },

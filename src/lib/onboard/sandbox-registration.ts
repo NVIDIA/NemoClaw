@@ -225,17 +225,6 @@ export function buildCreatedSandboxRegistryEntry(
     );
   }
   const agentFields = getSandboxAgentRegistryFields(input.agent, input.agentVersionKnown);
-  if (
-    workload?.kind === "external-image" &&
-    (workload.agent !== getRequestedSandboxAgentName(input.agent) ||
-      workload.reference !== input.imageTag ||
-      workload.toolDisclosure !== input.toolDisclosure ||
-      input.fromDockerfile)
-  ) {
-    throw new RuntimeProviderSelectionError(
-      "External image receipt does not match sandbox registration.",
-    );
-  }
   if (workload?.kind === "managed-image") {
     const requestedAgent = getRequestedSandboxAgentName(input.agent);
     if (

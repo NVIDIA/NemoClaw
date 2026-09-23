@@ -69,7 +69,7 @@ function addOptionalIssue(
 }
 
 function hasCustomImageEvidence(entry: SandboxEntry): boolean {
-  return isPresentString(entry.fromDockerfile) || entry.workload?.kind === "external-image";
+  return isPresentString(entry.fromDockerfile);
 }
 
 export function collectLifecycleRegistrationIssues(

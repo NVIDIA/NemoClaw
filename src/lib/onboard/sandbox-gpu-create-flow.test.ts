@@ -514,6 +514,7 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     input.gpuRoutePlan = "none";
     input.initialGpuRoute = "none";
     input.persistStartupCommand = true;
+    input.externalImage = true;
     input.requiredUlimits = [
       { name: "nproc", soft: 512, hard: 512 },
       { name: "nofile", soft: 65_536, hard: 65_536 },
@@ -552,6 +553,7 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     expect(errorOutput()).toContain(
       "NemoClaw left the sandbox in place for inspection and recovery",
     );
+    expect(errorOutput()).toContain("Verify that it targets this NemoClaw release");
   });
 
   it("keeps a transient recreated-sandbox not-ready response inside the readiness wait (#9050)", async () => {

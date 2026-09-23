@@ -92,40 +92,6 @@ function createDeps(
 }
 
 describe("prepareOnboardSession", () => {
-  it("persists an external image across resume and rejects a different digest before recovery", async () => {
-    const reference = `ghcr.io/example/harness@sha256:${"a".repeat(64)}`;
-    const { deps, getSession } = createDeps();
-    const input = {
-      resume: false,
-      fresh: true,
-      requestedFromDockerfile: null,
-      requestedFromImage: reference,
-      requestedSandboxName: "external",
-      cannotPrompt: true,
-      nonInteractive: true,
-    };
-    await prepareOnboardSession(input, deps);
-    expect(getSession()?.metadata.fromImage).toBe(reference);
-    await prepareOnboardSession(
-      { ...input, resume: true, fresh: false, requestedFromImage: null },
-      deps,
-    );
-    expect(getSession()?.metadata.fromImage).toBe(reference);
-    vi.mocked(deps.applySessionRecovery).mockClear();
-    await expect(
-      prepareOnboardSession(
-        {
-          ...input,
-          resume: true,
-          fresh: false,
-          requestedFromImage: `ghcr.io/example/harness@sha256:${"b".repeat(64)}`,
-        },
-        deps,
-      ),
-    ).rejects.toThrow("differs from the interrupted session");
-    expect(deps.applySessionRecovery).not.toHaveBeenCalled();
-  });
-
   it("stops resume before side effects when saved sandbox identity is invalid (#9833)", async () => {
     const loadSession = vi.fn((): Session | null => {
       throw new Error(
@@ -675,6 +641,36 @@ describe("prepareOnboardSession", () => {
       "  Run: nemoclaw onboard              # start a fresh onboarding session",
     );
     expect(deps.exitProcess).toHaveBeenCalledWith(1);
+  });
+
+  it("explains how to recover when resume newly requests an external image", async () => {
+    const conflict: ResumeConfigConflict = {
+      field: "fromImage",
+      requested: `ghcr.io/example/openclaw@sha256:${"a".repeat(64)}`,
+      recorded: null,
+    };
+    const { deps } = createDeps(createSession(), {
+      getResumeConfigConflicts: vi.fn(() => [conflict]),
+    });
+
+    await expect(
+      prepareOnboardSession(
+        {
+          resume: true,
+          fresh: false,
+          requestedFromDockerfile: null,
+          requestedFromImage: conflict.requested,
+          requestedSandboxName: null,
+          cannotPrompt: false,
+          nonInteractive: false,
+        },
+        deps,
+      ),
+    ).rejects.toThrow(ExitError);
+
+    expect(deps.error).toHaveBeenCalledWith(
+      "  Session was started without --from-image; resume without that flag or start a fresh onboarding session.",
+    );
   });
 
   it("checks requested host mounts for resume conflict without overwriting recorded state", async () => {

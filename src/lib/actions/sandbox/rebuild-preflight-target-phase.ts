@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { prepareExternalImage } from "../../onboard/workload/external-image";
 import { randomUUID } from "node:crypto";
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import { CLI_NAME } from "../../cli/branding";
@@ -51,6 +50,7 @@ import {
   type RebuildRoutePreflightReceipt,
 } from "./rebuild-preflight-guards";
 import { disposePreparedBuildContext } from "./rebuild-prepared-image-context";
+import { preflightExternalImageRebuild } from "./lifecycle/rebuild-external-image-preflight";
 import {
   hasValidDeferredN1xManagedVllmReplacementAuthority,
   hydrateMessagingConfigForRebuild,
@@ -202,7 +202,7 @@ export async function prepareRebuildTargetPreflights(args: {
     requestedDcodeAutoApprovalMode,
   );
   if (!targetConfig) return null;
-  const { resumeConfig, durableConfig, credentialEnv, fromDockerfile } = targetConfig;
+  const { resumeConfig, durableConfig, credentialEnv, fromDockerfile, fromImage } = targetConfig;
   const baseImageResolutionHint = readSandboxBaseImageResolutionMetadata(sandboxEntry.imageTag);
   const forceBaseImageRefresh = isSandboxBaseImageRefreshRequested(process.env);
   const recreateOptions = prepareRebuildRecreateOptions(
@@ -210,6 +210,7 @@ export async function prepareRebuildTargetPreflights(args: {
     sandboxEntry,
     rebuildAgent,
     fromDockerfile,
+    fromImage,
     resumeConfig.registryInferenceRoute,
     autoYes,
     baseImageResolutionHint,
@@ -231,22 +232,6 @@ export async function prepareRebuildTargetPreflights(args: {
     const runtime = resolveSandboxWorkloadRuntimeCapabilities({
       driverName: runtimeProvider.identity.id,
     });
-    if (sandboxEntry.workload?.kind === "external-image") {
-      const receipt = prepareExternalImage({
-        reference: sandboxEntry.workload.reference,
-        agent: rebuildAgent ?? "openclaw",
-        provider: runtimeProvider,
-        requestedToolDisclosure: durableConfig.toolDisclosure,
-      });
-      if (
-        receipt.imageId !== sandboxEntry.workload.imageId ||
-        receipt.platform !== sandboxEntry.workload.platform
-      )
-        throw new Error(
-          "External image identity changed; rebuild refused before deleting the sandbox.",
-        );
-      recreateOptions.fromImage = receipt.reference;
-    }
     managedWorkloadRebuildCatalog = await prepareManagedWorkloadRebuildHandoff(sandboxEntry, {
       runtime,
       provider: runtimeProvider,
@@ -257,6 +242,15 @@ export async function prepareRebuildTargetPreflights(args: {
         runtime,
         runtimeProvider,
       );
+    }
+    if (fromImage) {
+      preflightExternalImageRebuild({
+        agentName: rebuildAgent,
+        expectedToolDisclosure: durableConfig.toolDisclosure,
+        receipt: sandboxEntry.workload,
+        runtime,
+        provider: runtimeProvider,
+      });
     }
   } catch (error) {
     bail(error instanceof Error ? error.message : String(error));
@@ -360,10 +354,10 @@ export async function prepareRebuildTargetPreflights(args: {
   }
 
   const rebuildsDcodeSandbox = isDcodeRebuildAgent(rebuildAgent);
-  const rebuildsManagedWorkload =
-    recreateOptions.managedWorkloadRebuild !== undefined || Boolean(recreateOptions.fromImage);
+  const rebuildsManagedWorkload = recreateOptions.managedWorkloadRebuild !== undefined;
+  const rebuildsExternalImage = fromImage !== null;
   const baseImagePreflight =
-    rebuildsDcodeSandbox || rebuildsManagedWorkload
+    rebuildsDcodeSandbox || rebuildsManagedWorkload || rebuildsExternalImage
       ? { ok: true, imageRef: null, overrideEnvVar: null }
       : ensureRebuildAgentBaseImage(rebuildAgent, bail, {
           resolutionHint: baseImageResolutionHint,
@@ -386,7 +380,8 @@ export async function prepareRebuildTargetPreflights(args: {
         bail,
         {
           allowMissingGatewayProviderWithHostCredential: preparedBackupRecovery,
-          skipImagePreflight: rebuildsDcodeSandbox || rebuildsManagedWorkload,
+          skipImagePreflight:
+            rebuildsDcodeSandbox || rebuildsManagedWorkload || rebuildsExternalImage,
         },
       );
     } finally {
