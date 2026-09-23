@@ -162,6 +162,8 @@ Cross-sandbox restore from a stopped source is available for Docker- and VM-driv
 
 For a new destination, NemoClaw waits for the owning gateway to report the sandbox as Ready with a valid live identity. It checks that identity again immediately before registration. NemoClaw assigns the destination a new lifecycle generation instead of copying the source sandbox's generation.
 
+### Recover a Failed Cross-Sandbox Clone
+
 If NemoClaw cannot securely remove the temporary clone policy after destination creation, it leaves the destination as a pending clone and does not restore snapshot state. Inspect and remove the task-owned file identified by the error, then rerun the same restore without `--force` so NemoClaw can reconcile the destination without deleting or recreating it.
 
 If NemoClaw cannot confirm the same valid destination identity after a clone create-attempt, it prints a create-attempt label.
@@ -173,8 +175,10 @@ NemoClaw removes only the matching retained route reservation before it starts a
 If the selector identifies a sandbox, resolve that retained sandbox through its owning gateway before you retry.
 
 If NemoClaw confirms the destination identity but cannot register or publish it, the restore exits nonzero before state restore.
-The OpenShell sandbox remains created but unregistered, so `--force` cannot select it for deletion.
-Run the exact owner-scoped deletion command printed by the failure:
+If the failure reports that the pending clone changed during registration, NemoClaw preserves the current registry row.
+Preserve the error and the pending row for maintainer review.
+Do not retry the restore, use `--force`, or delete the destination by name because no supported command can prove that the changed row still belongs to this restore.
+If the failure confirms an unregistered destination, run the owner-scoped deletion command that it prints:
 
 ```bash
 openshell sandbox delete -g '<owning-gateway>' '<destination>'
