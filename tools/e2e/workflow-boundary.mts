@@ -3,7 +3,7 @@
 
 import { createHash } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, posix } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
@@ -798,6 +798,22 @@ export interface WorkflowDispatchSelectorEvaluation {
   selectedFreeStandingJobs: string[];
   registryTargets: string[];
   liveTargetsRun: boolean;
+}
+
+function isNativePodmanStagingReference(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  const [owner, repository, ...actionPath] =
+    E2E_ACTION_PROVENANCE.stageNativePodmanToolchains.reference.split("@")[0].split("/");
+  const expectedPath = actionPath.join("/");
+  if (value.startsWith("./")) {
+    return posix.normalize(value).replace(/\/$/, "") === expectedPath;
+  }
+  const [candidateOwner, candidateRepository, ...candidatePath] = value.split("@")[0].split("/");
+  return (
+    candidateOwner?.toLowerCase() === owner.toLowerCase() &&
+    candidateRepository?.toLowerCase() === repository.toLowerCase() &&
+    posix.normalize(candidatePath.join("/")).replace(/\/$/, "") === expectedPath
+  );
 }
 
 function asSteps(value: unknown): WorkflowStep[] {
@@ -2876,9 +2892,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   const stagingSteps = generateSteps.filter(
     (step) =>
       step.name === "Stage immutable native Podman E2E toolchains" ||
-      (typeof step.uses === "string" &&
-        step.uses.split("@")[0] ===
-          E2E_ACTION_PROVENANCE.stageNativePodmanToolchains.reference.split("@")[0]),
+      isNativePodmanStagingReference(step.uses),
   );
   const staging = stagingSteps[0];
   if (

@@ -121,6 +121,16 @@ const stagingMutations: Array<[string, (steps: WorkflowSteps, index: number) => 
   ],
 ];
 
+const stagingReferenceVariants = [
+  "./.github/actions/stage-native-podman-e2e-toolchains",
+  "./.github/actions/stage-native-podman-e2e-toolchains/",
+  "./.github/actions/../actions/stage-native-podman-e2e-toolchains",
+  "./.github/actions/./stage-native-podman-e2e-toolchains",
+  "NVIDIA/NemoClaw/.github/actions/stage-native-podman-e2e-toolchains/@main",
+  "nvidia/nemoclaw/.github/actions/stage-native-podman-e2e-toolchains@" + "0".repeat(40),
+  "NvIdIa/NeMoClAw/.github/actions/stage-native-podman-e2e-toolchains@main",
+];
+
 const actionMutations: Array<[string, (source: string) => string]> = [
   ["artifact-id", (source) => source.replace('artifact-ids: "10385514729"', 'artifact-ids: "1"')],
   ["digest", (source) => source.replace(/sha256:[a-f0-9]{64}/, "sha256:" + "0".repeat(64))],
@@ -157,6 +167,44 @@ describe("shared E2E workflow boundary", () => {
       mutate(steps, index);
     });
     expect(errors.some((error) => error.includes("native Podman staging"))).toBe(true);
+  });
+
+  it.each(stagingReferenceVariants)("rejects renamed staging action alias %s", (uses) => {
+    const errors = validateMutatedWorkflow((workflow) => {
+      const steps = workflow.jobs["generate-matrix"].steps!;
+      const staging = steps.find(
+        (step) => step.name === "Stage immutable native Podman E2E toolchains",
+      )!;
+      steps.push({ ...staging, name: "Candidate staging", uses });
+    });
+    expect(errors).toContain(
+      "native Podman staging must use exactly one reviewed action reference",
+    );
+  });
+
+  it("keeps action paths case-sensitive when classifying staging references", () => {
+    const errors = validateMutatedWorkflow((workflow) => {
+      workflow.jobs["generate-matrix"].steps!.push({
+        name: "Different action",
+        uses:
+          "NVIDIA/NemoClaw/.github/actions/STAGE-native-podman-e2e-toolchains@" + "0".repeat(40),
+      });
+    });
+    expect(errors).not.toContain(
+      "native Podman staging must use exactly one reviewed action reference",
+    );
+  });
+
+  it("rejects replacement by a local staging action", () => {
+    const errors = validateMutatedWorkflow((workflow) => {
+      const staging = workflow.jobs["generate-matrix"].steps!.find(
+        (step) => step.name === "Stage immutable native Podman E2E toolchains",
+      )!;
+      staging.uses = stagingReferenceVariants[0];
+    });
+    expect(errors).toContain(
+      "native Podman staging must use exactly one reviewed action reference",
+    );
   });
 
   it.each(actionMutations)("rejects native Podman staging action %s mutations", (_name, mutate) => {
