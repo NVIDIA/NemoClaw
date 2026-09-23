@@ -217,9 +217,11 @@ impl super::ManagedGateway {
 }
 impl Document {
     fn validate_provider(&self, provider: &InferenceProvider) -> Result<(), ConfigError> {
-        let managed = crate::services::validate_provider(self, provider)?;
-        if !managed {
-            validate_endpoint(&provider.endpoint, false)?;
+        match provider.target()? {
+            InferenceTarget::External { endpoint, .. } => validate_endpoint(endpoint, false)?,
+            InferenceTarget::Service { .. } => {
+                crate::services::validate_provider(self, provider)?;
+            }
         }
         Ok(())
     }

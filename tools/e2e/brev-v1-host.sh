@@ -48,13 +48,20 @@ prepare() {
   ssh -T "${INSTANCE_NAME}" "printf '%s\n' '${revision}' > '${remote_root}/source-revision' && tar -xzf '${remote_root}/candidate-source.tar.gz' -C '${remote_root}/source' && sg docker -c \"NEMOCLAW_BREV_ROOT='${remote_root}' bash '${remote_root}/source/tools/e2e/brev-v1-guest.sh' prepare\""
 }
 
+load_image() {
+  brev refresh
+  remote_home="$(ssh -T "${INSTANCE_NAME}" 'printf %s "$HOME"')"
+  remote_root="${remote_home}/${INSTANCE_NAME}"
+  rsync -a candidate-image/ "${INSTANCE_NAME}:${remote_root}/image-candidate/"
+  ssh -T "${INSTANCE_NAME}" "sg docker -c \"NEMOCLAW_BREV_ROOT='${remote_root}' bash '${remote_root}/source/tools/e2e/brev-v1-guest.sh' load-image\""
+}
+
 qualify() {
   test -n "${NVIDIA_INFERENCE_API_KEY:?set NVIDIA_INFERENCE_API_KEY}"
   brev refresh
   remote_home="$(ssh -T "${INSTANCE_NAME}" 'printf %s "$HOME"')"
   remote_root="${remote_home}/${INSTANCE_NAME}"
   rsync -a candidate/bundle/ "${INSTANCE_NAME}:${remote_root}/bundle/"
-  rsync -a candidate-image/ "${INSTANCE_NAME}:${remote_root}/image-candidate/"
   rsync -a candidate/brev-test "${INSTANCE_NAME}:${remote_root}/brev-test"
   key="${RUNNER_TEMP}/nvidia-api-key"
   trap 'rm -f "${key}"' EXIT
@@ -99,7 +106,8 @@ cleanup() {
 
 case "${1:-}" in
   prepare) prepare ;;
+  load-image) load_image ;;
   qualify) qualify ;;
   cleanup) cleanup ;;
-  *) echo "usage: $0 prepare|qualify|cleanup" >&2; exit 2 ;;
+  *) echo "usage: $0 prepare|load-image|qualify|cleanup" >&2; exit 2 ;;
 esac

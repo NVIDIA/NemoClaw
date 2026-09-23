@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
+use crate::managed::GATEWAY_STORAGE_KIND;
 
 const GATEWAY: &str = "nemoclaw_managed_gateway.runtime";
 
@@ -17,6 +18,7 @@ fn gateway_targets() -> (Spec, Vec<Target>) {
     let fixtures: Vec<Value> =
         serde_json::from_str(include_str!("../../managed/reference.json")).unwrap();
     let mut spec: Spec = serde_json::from_str(fixtures[0]["spec"].as_str().unwrap()).unwrap();
+    spec.compute_driver = crate::config::ComputeDriver::Podman;
     spec.gateway.network_cidr = "172.30.161.0/24".into();
     let mut targets = Vec::new();
     for (kind, address, layout) in [
@@ -34,8 +36,8 @@ fn gateway_targets() -> (Spec, Vec<Target>) {
 }
 
 #[test]
-fn replacement_and_gateway_deferral_use_refreshed_plan_observations() {
-    let (document, generations) = context();
+fn gateway_deferral_uses_refreshed_plan_observations() {
+    let (document, _) = context();
     let (_, mut targets) = gateway_targets();
     let bindings: BTreeMap<String, StateBinding> = targets
         .iter()
@@ -63,19 +65,17 @@ fn replacement_and_gateway_deferral_use_refreshed_plan_observations() {
         }
     })).collect();
     let mut plan: Plan = serde_json::from_value(json!({"resource_changes": changes})).unwrap();
-    let checked =
-        runtime_observations(&document, &generations, &targets, &bindings, &plan).unwrap();
+    let checked = runtime_observations(&document, &targets, &bindings, &plan).unwrap();
     assert!(checked.gateway_running);
-    assert!(checked.replacements.contains(GATEWAY));
     assert_eq!(
-        check_runtime_plan(&plan, &checked.expected, &bindings, &checked.replacements)
+        check_runtime_plan(&plan, &checked.expected, &bindings)
             .unwrap()
             .len(),
         1
     );
     plan.resource_changes[1].change.before["running"] = json!("false");
     assert!(
-        !runtime_observations(&document, &generations, &targets, &bindings, &plan)
+        !runtime_observations(&document, &targets, &bindings, &plan)
             .unwrap()
             .gateway_running
     );
@@ -85,18 +85,64 @@ fn replacement_and_gateway_deferral_use_refreshed_plan_observations() {
         json!({"actions": ["no-op"], "before": {"id": bindings[GATEWAY_STORAGE].id, "spec": "changed"}}),
     ] {
         plan.resource_changes[0].change = serde_json::from_value(invalid).unwrap();
-        let checked =
-            runtime_observations(&document, &generations, &targets, &bindings, &plan).unwrap();
-        assert!(checked.replacements.is_empty());
-        assert!(
-            check_runtime_plan(&plan, &checked.expected, &bindings, &checked.replacements).is_err()
-        );
+        let checked = runtime_observations(&document, &targets, &bindings, &plan).unwrap();
+        assert!(check_runtime_plan(&plan, &checked.expected, &bindings).is_err());
     }
 }
 
 #[test]
+fn opentofu_can_replace_an_unchanged_gateway_with_retained_storage() {
+    let (document, _) = context();
+    let (_, targets) = gateway_targets();
+    let bindings: BTreeMap<String, StateBinding> = targets
+        .iter()
+        .map(|target| {
+            (
+                target.address.clone(),
+                StateBinding {
+                    id: format!("physical-{}", target.kind),
+                    spec: target.values["spec"].clone(),
+                    ..Default::default()
+                },
+            )
+        })
+        .collect();
+    // Core may choose replacement after taint or an explicit replacement request,
+    // even when the desired process specification has not changed.
+    let plan: Plan = serde_json::from_value(json!({"resource_changes": targets.iter().map(|target| json!({
+        "address": target.address,
+        "change": {
+            "actions": if target.kind == GATEWAY_KIND { vec!["delete", "create"] } else { vec!["no-op"] },
+            "before": {"id": bindings[&target.address].id, "spec": bindings[&target.address].spec, "running": "true"}
+        }
+    })).collect::<Vec<_>>()})).unwrap();
+    let checked = runtime_observations(&document, &targets, &bindings, &plan).unwrap();
+    assert_eq!(
+        check_runtime_plan(&plan, &checked.expected, &bindings)
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn bound_podman_gateway_requires_its_retained_storage_binding() {
+    let (_, targets) = gateway_targets();
+    let gateway = &targets[1];
+    let bindings = BTreeMap::from([(
+        gateway.address.clone(),
+        StateBinding {
+            id: "bound-gateway".into(),
+            spec: gateway.values["spec"].clone(),
+            ..Default::default()
+        },
+    )]);
+    assert!(runtime_bindings(&targets, &bindings).is_err());
+}
+
+#[test]
 fn unbound_gateway_is_deferred_and_retained_intent_is_checked_locally() {
-    let (document, generations) = context();
+    let (document, _) = context();
     let (_, targets) = gateway_targets();
     let plan: Plan = serde_json::from_value(
         json!({"resource_changes": targets.iter().map(|target| json!({
@@ -104,18 +150,12 @@ fn unbound_gateway_is_deferred_and_retained_intent_is_checked_locally() {
     })).collect::<Vec<_>>()}),
     )
     .unwrap();
-    let checked =
-        runtime_observations(&document, &generations, &targets, &BTreeMap::new(), &plan).unwrap();
+    let checked = runtime_observations(&document, &targets, &BTreeMap::new(), &plan).unwrap();
     assert!(!checked.gateway_running);
     assert_eq!(
-        check_runtime_plan(
-            &plan,
-            &checked.expected,
-            &BTreeMap::new(),
-            &checked.replacements
-        )
-        .unwrap()
-        .len(),
+        check_runtime_plan(&plan, &checked.expected, &BTreeMap::new(),)
+            .unwrap()
+            .len(),
         2
     );
     let mut bindings = BTreeMap::from([(
@@ -150,7 +190,7 @@ fn native_compute_binding_does_not_require_a_nemoclaw_spec_or_replacement_author
     let expected = runtime_bindings(std::slice::from_ref(&target), &bindings).unwrap();
     let plan: Plan = serde_json::from_value(json!({"resource_changes":[{"address": target.address, "change":{"actions":["delete","create"],"before":{"id":"prior-container"}}}]})).unwrap();
     assert_eq!(
-        check_runtime_plan(&plan, &expected, &bindings, &BTreeSet::new())
+        check_runtime_plan(&plan, &expected, &bindings)
             .unwrap()
             .len(),
         1
@@ -158,7 +198,7 @@ fn native_compute_binding_does_not_require_a_nemoclaw_spec_or_replacement_author
     let removed = runtime_bindings(&[], &bindings).unwrap();
     let plan: Plan = serde_json::from_value(json!({"resource_changes":[{"address": target.address, "change":{"actions":["delete"],"before":{"id":"prior-container"}}}]})).unwrap();
     assert_eq!(
-        check_runtime_plan(&plan, &removed, &bindings, &BTreeSet::new())
+        check_runtime_plan(&plan, &removed, &bindings)
             .unwrap()
             .len(),
         1
@@ -241,8 +281,22 @@ fn docker_gateway_plan_uses_provider_reconciliation_but_requires_durable_identit
         (vec!["create"], false),
     ] {
         let plan: Plan = serde_json::from_value(json!({"resource_changes":[{"address":gateway.address,"change":{"actions":actions,"before":{"id":"container"}}}]})).unwrap();
-        let observed =
-            runtime_observations(&document, &generations, &targets, &bindings, &plan).unwrap();
+        let observed = runtime_observations(&document, &targets, &bindings, &plan).unwrap();
         assert_eq!(observed.gateway_running, running);
     }
+}
+
+#[test]
+fn podman_gateway_replacement_depends_on_protected_storage_in_the_compiled_graph() {
+    let document =
+        Document::parse(include_bytes!("../../../../../examples/managed-podman.yaml").as_slice())
+            .unwrap();
+    let generations = Record::new(document.clone()).unwrap().generations;
+    let graph = compile::compile_runtime(&document, &generations, "0.1.0").unwrap();
+    let process = &graph["resource"]["nemoclaw_managed_gateway"]["runtime"];
+    assert_eq!(process["depends_on"], json!([GATEWAY_STORAGE]));
+    assert_eq!(
+        graph["resource"]["nemoclaw_gateway_storage"]["runtime"]["lifecycle"]["prevent_destroy"],
+        true
+    );
 }

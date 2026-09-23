@@ -56,9 +56,9 @@ sys.stdout.write(text)'
 }
 trap diagnose_failure ERR
 
-phase="${1:?set prepare or qualify}"
-case "${phase}" in prepare|qualify) ;; *) exit 2 ;; esac
-if test "${phase}" != qualify; then
+phase="${1:?set prepare, load-image, or qualify}"
+case "${phase}" in prepare|load-image|qualify) ;; *) exit 2 ;; esac
+if test "${phase}" = prepare; then
   test "$(uname -m)" = x86_64
   command -v docker >/dev/null
   docker info >/dev/null
@@ -92,7 +92,10 @@ PY
   printf '%s\n' "${available_kib}" > "${root}/available-kib"
 fi
 if test "${phase}" = prepare; then exit 0; fi
-python3 "${repo}/tools/ci/brev_image.py" load "${root}/image-candidate" "$(cat "${root}/source-revision")"
+if test "${phase}" = load-image; then
+  python3 "${repo}/tools/ci/brev_image.py" load "${root}/image-candidate" "$(cat "${root}/source-revision")"
+  exit 0
+fi
 image_ref="$(cat "${root}/image-candidate/image-ref")"
 available_kib="$(cat "${root}/available-kib")"
 

@@ -11,7 +11,7 @@ The [accepted scope](scope.md) defines the invariants; this page explains the re
 | Component | Responsibility |
 |---|---|
 | CLI | Arguments, prompts, credential acquisition, and output |
-| Authoring library | Presets, draft edits, and review data |
+| Authoring library | Guided presets, validated draft edits, and review data |
 | SDK | Configuration validation, graph compilation, deployment locking, plan policy, and recovery across stages |
 | OpenTofu | Dependency ordering, concurrent resource reconciliation, and resource state |
 | Docker provider | Docker containers, images, model-cache volumes, and service networks |
@@ -20,27 +20,44 @@ The [accepted scope](scope.md) defines the invariants; this page explains the re
 
 Operation coordination belongs in the SDK so applications and the CLI share the same recovery behavior.
 The SDK checks deployment scope and recovery constraints; providers decide resource transitions and verify remote identity before mutation.
+For reconstructible OpenShell resources and non-retained disposable Docker resources, apply and teardown report OpenTofu's actions without reconstructing absence or replacement cleanup from plan history.
+Durable identity, retained storage, and undeclared-resource checks remain deployment constraints.
 OpenTofu executes the graph with its default parallelism.
 The SDK and NemoClaw provider share backend library code.
 
 The [provider reference](../provider.md) owns resource-specific contracts and protocol details.
 Implementation starts at [Deployment](../../crates/nemoclaw-sdk/src/deployment/mod.rs), [graph compilation](../../crates/nemoclaw-sdk/src/compile.rs), and [backend contracts](../../crates/nemoclaw-sdk/src/backend.rs).
 
+## Terminal Presentation
+
+The CLI renders SDK progress through an inline Ratatui display or plain lines for redirected output.
+Both consume the same typed observations; neither queries resources or interprets runtime logs.
+OpenTofu supplies resource operations and identities, while readiness and health remain with their existing owners.
+The renderer tracks active work and elapsed time without treating animation as evidence of progress.
+It finishes before the CLI writes the final text or JSON result.
+Unsupported health, incomplete plans, and unconfirmed state after failure remain explicit in both formats.
+See [CLI output](../reference/cli.md#output-and-failure) for the user contract.
+
 ## Configuration
 
-The [authoring library](../../crates/nemoclaw-authoring/src/lib.rs) owns an SDK `Document` while a frontend edits or reviews it, without terminal dependencies or deployment operations.
-It can open any valid V1 document without reducing it to onboarding fields.
-Its guided API derives current values and compatible choices from the document and a curated preset table; a document with additional V1 configuration remains available for review but does not permit a lossy guided edit.
-Preset projection constructs SDK configuration types and then passes the result through the same [configuration validation](../configuration-schema.md) as directly supplied YAML.
-The library retains credential references, not values.
-The [example onboarding TUI](../../examples/onboarding-tui/README.md) renders the guided field query and sends typed field changes back to the library, so compatibility rules do not live in the terminal frontend.
-It is a separate generation-only binary and does not define a prescribed onboarding flow or extend the lifecycle CLI.
+Desired-state YAML passes through the SDK's [configuration validation](../configuration-schema.md).
+Configuration retains credential references, not values.
+
+The [authoring library](../../crates/nemoclaw-authoring/src/lib.rs) owns an SDK `Document` while a frontend edits or reviews it.
+It has no terminal or deployment operations.
+Its guided API derives current values and compatible choices from a curated scenario table.
+It refuses a guided edit when the document has V1 configuration that the guided flow cannot show, which prevents data loss.
+The [example onboarding TUI](../../examples/onboarding-tui/README.md) renders these fields and sends typed changes back to the library.
+It is a separate generation-only binary, not a prescribed onboarding flow or a lifecycle CLI command.
+
 The native [bundle](../build.md#build-a-native-bundle) ships the matching CLI, schema, OpenTofu, and providers; source-derived provider versions prevent stale installations from being reused.
 
 ## Why Managed Apply Has Two Stages
 
 OpenShell needs a reachable gateway to refresh resources and plan changes.
 A managed deployment therefore establishes its runtime infrastructure before planning OpenShell resources.
+Deferred provider configuration supports fresh bootstrap, but an unavailable gateway still blocks refresh of existing OpenShell bindings before a combined graph can restore it.
+The runtime stage preserves that recovery path.
 The SDK coordinates two graphs:
 
 ```mermaid
@@ -60,6 +77,9 @@ Apply obtains and checks new plans; a previous preview is not an approval artifa
 
 Destroy reverses the stage order so workloads are removed while their gateway is still available.
 The SDK checks both teardown plans before deleting anything and records completed stages so an interrupted destroy can resume.
+The compiler builds teardown configuration from retained intent and the established resource inventory, keeping storage and workspace declarations while removing workload and readiness declarations.
+It returns the retained addresses with that graph; plan validation and destroy reporting use the same result.
+Storage that was never established is omitted, so partial teardown does not finish creating it.
 For commands and deletion effects, see [deployment lifecycle](../usage.md).
 
 ## State and Recovery
@@ -88,12 +108,17 @@ Older pending records without per-target evidence require the entire original co
 
 Failures involving only observations, established updates or deletions, or disposable compute permit revised intent or teardown using recorded bindings.
 They cannot clear earlier unresolved OpenShell creations; those must be reconciled before teardown.
+An OpenShell-stage apply without non-disposable resource creations does not start a pending-creation guard; export can verify its established bindings through OpenTofu even after that apply fails.
+Managed-runtime failures retain their separate stage recovery evidence.
+Teardown recovery validates current bindings and fresh plans; the failed apply's saved plan file and hash do not authorize the next operation.
 The [recovery guide](../usage.md#recover-an-interrupted-operation) describes the caller's next steps.
 
 ## Storage and Resource Lifetimes
 
 Processes and their data have different lifetimes.
 Separate storage bindings let compute change while gateway signing keys, credentials, and model files survive.
+OpenTofu selects Podman gateway replacement through the provider contract, without an SDK whitelist inferred from specification changes.
+The SDK requires the gateway's independent storage binding, the compiler orders the dependency and protects retained storage, and the provider rechecks identity before replacing the process.
 Missing or substituted bound credentials and gateway storage stop planning; reproducible model caches can be rebuilt.
 
 The shared [OpenShell lifecycle contract](../../crates/nemoclaw-sdk/src/backend.rs) distinguishes retained workspace identity, stateful sandboxes, and reconstructible registrations and configuration.

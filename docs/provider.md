@@ -19,6 +19,8 @@ OpenTofu refresh and provider planning perform environmental checks; the SDK doe
 The SDK then checks the saved plan against its deployment scope, retained bindings, and recovery rules before authorizing changes.
 Docker gateway, inference, and proxy containers may be recreated or replaced while their independent storage bindings remain unchanged.
 Podman gateways retain their stronger process identity checks.
+OpenTofu selects their replacement without an SDK requirement that the desired process specification changed.
+The compiled graph orders the gateway after protected storage; the SDK requires its independent storage binding, and the provider rechecks storage and process identity before replacement.
 Docker gateway storage independently binds signing and encryption keys; its verified mountpoint supplies the process mount through OpenTofu.
 The refreshed gateway running state determines whether the OpenShell stage can be planned or must wait for gateway creation or recovery.
 
@@ -42,6 +44,7 @@ Do not edit SDK-generated graphs or share a deployment state directory between i
 The shared [resource lifecycle contract](../crates/nemoclaw-sdk/src/backend.rs) distinguishes reconstructible configuration from protected identity and sandbox data.
 The provider owns observation and update/replacement behavior; OpenTofu owns action ordering and resource state.
 The SDK checks deployment scope and recovery constraints without imposing a second blanket ban on OpenShell changes.
+For reconstructible resources, OpenTofu and the provider own confirmed absence, physical identity, and replacement cleanup; the SDK does not require a second drift history to report those actions during apply or teardown.
 
 | Resource | Ordinary reconciliation | Protection |
 |---|---|---|
@@ -69,6 +72,9 @@ See [deletion and retention](state.md#deletion-and-retention) before removing wo
 An observation error is not absence.
 Authentication, transport, and incomplete observations preserve prior state and stop planning.
 The backend verifies ownership again immediately before mutation because objects can change after planning.
+Creation readback must match the physical ID, owner, and generation established by the creation response.
+If readback fails or identifies a substituted object, the provider returns the original established binding together with the error.
+OpenTofu retains that failed creation as tainted state; automatic untainting is not a recovery guarantee.
 OpenShell deletion is name-addressed without a conditional ID/version check; an immediate identity check does not make the API operation atomic.
 
 ## Gateway Capabilities

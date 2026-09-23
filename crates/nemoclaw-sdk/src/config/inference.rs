@@ -29,11 +29,55 @@ impl Document {
         &self,
         provider: &InferenceProvider,
     ) -> Result<InferenceConnection, ConfigError> {
-        let endpoint = crate::services::resolve(self, provider)?
-            .map_or_else(|| provider.endpoint.clone(), |service| service.endpoint);
-        Ok(InferenceConnection {
-            endpoint,
-            credential: provider.credential.clone(),
-        })
+        match provider.target()? {
+            InferenceTarget::External {
+                endpoint,
+                credential,
+            } => Ok(InferenceConnection {
+                endpoint: endpoint.into(),
+                credential: credential.cloned(),
+            }),
+            InferenceTarget::Service { .. } => {
+                let service = crate::services::resolve(self, provider)?
+                    .ok_or(ConfigError::new("missing inference service"))?;
+                Ok(InferenceConnection {
+                    endpoint: service.endpoint,
+                    credential: None,
+                })
+            }
+        }
+    }
+}
+
+/// Source of an inference connection. This view checks field combinations;
+/// document validation additionally checks URLs, credentials, and references.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InferenceTarget<'a> {
+    External {
+        endpoint: &'a str,
+        credential: Option<&'a Credential>,
+    },
+    Service {
+        name: &'a str,
+    },
+}
+
+impl InferenceProvider {
+    /// Borrow the connection choice without changing the authored representation.
+    pub fn target(&self) -> Result<InferenceTarget<'_>, ConfigError> {
+        match self.service_ref.as_deref() {
+            Some(name)
+                if !name.is_empty() && self.endpoint.is_empty() && self.credential.is_none() =>
+            {
+                Ok(InferenceTarget::Service { name })
+            }
+            None if !self.endpoint.is_empty() => Ok(InferenceTarget::External {
+                endpoint: &self.endpoint,
+                credential: self.credential.as_ref(),
+            }),
+            _ => Err(ConfigError::new(
+                "declare an external endpoint or serviceRef without endpoint or credential",
+            )),
+        }
     }
 }

@@ -85,18 +85,7 @@ pub(crate) fn runtime_graph(
         generations,
         crate::services::InstallStage::Runtime,
     )?;
-    let mut graph = compile_with_plans(document, generations, version, &service_plans)?;
-    // Sandbox observations belong to the graph owning their resource bindings.
-    graph["data"]
-        .as_object_mut()
-        .unwrap()
-        .remove("nemoclaw_sandbox_readiness");
-    // This graph already waits on gateway reconciliation. The separate
-    // OpenShell graph owns the fresh check before its dependent mutations.
-    graph["data"]["nemoclaw_gateway_capabilities"]
-        .as_object_mut()
-        .unwrap()
-        .remove("apply");
+    let mut graph = graph_base(document, version);
     // Readiness follows gateway reconciliation, including restart or replacement.
     // Keeping it in this stage allows recovery before OpenShell resource refresh.
     let readiness = &mut graph["data"]["nemoclaw_gateway_capabilities"]["current"];
@@ -108,7 +97,6 @@ pub(crate) fn runtime_graph(
     if document.spec.gateway.as_managed().is_some() {
         readiness["depends_on"] = json!(["nemoclaw_managed_gateway.runtime"]);
     }
-    graph["resource"] = json!({});
     let targets = runtime_targets_with_plans(document, generations, &service_plans)?;
     for target in &targets {
         let mut attrs =
@@ -138,6 +126,14 @@ pub fn compile_runtime(
     generations: &Generations,
     version: &str,
 ) -> Result<Value, Error> {
+    compiled_runtime(document, generations, version).map(|(graph, _)| graph)
+}
+
+pub(crate) fn compiled_runtime(
+    document: &Document,
+    generations: &Generations,
+    version: &str,
+) -> Result<(Value, Vec<Target>), Error> {
     let (mut graph, targets) = runtime_graph(document, generations, version)?;
     crate::docker_compute::configure(&mut graph, &targets)?;
     for target in targets
@@ -153,5 +149,5 @@ pub fn compile_runtime(
             "wait_timeout_seconds":9 * 3600
         });
     }
-    Ok(graph)
+    Ok((graph, crate::docker_compute::targets(&targets)?))
 }

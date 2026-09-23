@@ -10,6 +10,89 @@ use std::{fs, path::PathBuf, process::Command};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
+async fn cli_terminal_outputs_preserve_lifecycle_and_json_contract() {
+    let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
+    let directory = tempfile::tempdir().unwrap();
+    let fixture = Fixture::start().await;
+    let mut document = Document::parse(
+        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+    )
+    .unwrap();
+    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+    let input = directory.path().join("deployment.yaml");
+    let state = directory.path().join("state");
+    fs::write(&input, document.yaml().unwrap()).unwrap();
+    let invoke = |operation: &str, format: &str| {
+        let mut command = Command::new(
+            bundle
+                .join("bin")
+                .join(nemoclaw_sdk::bundle::executable("nemoclaw")),
+        );
+        command
+            .args([
+                operation,
+                "-o",
+                format,
+                "--progress",
+                "plain",
+                "--state-dir",
+            ])
+            .arg(&state);
+        if operation != "destroy" {
+            command.arg(&input).arg("--non-interactive");
+        }
+        let output = command.output().unwrap();
+        assert!(
+            output.status.success(),
+            "{operation}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(!output.stdout.contains(&0x1b));
+        assert!(!output.stderr.contains(&0x1b));
+        output
+    };
+    let planned = invoke("plan", "text");
+    let preview = String::from_utf8(planned.stdout).unwrap();
+    assert!(preview.contains("sandbox/assistant"), "{preview}");
+    assert!(preview.contains("No runtime resources changed"));
+    assert_eq!(fixture.state.lock().unwrap().effects, 0);
+
+    let applied = invoke("apply", "json");
+    let result: serde_json::Value = serde_json::from_slice(&applied.stdout).unwrap();
+    assert_eq!(result["outcome"], "succeeded");
+    assert!(!result["changes"].as_array().unwrap().is_empty());
+    let effects = fixture.state.lock().unwrap().effects;
+    let planned = invoke("plan", "json");
+    let result: serde_json::Value = serde_json::from_slice(&planned.stdout).unwrap();
+    assert_eq!(result["complete"], true);
+    assert_eq!(result["changes"], serde_json::json!([]));
+    let applied = invoke("apply", "text");
+    let summary = String::from_utf8(applied.stdout).unwrap();
+    assert!(summary.contains("Apply complete"), "{summary}");
+    assert!(summary.contains("No resource changes"));
+    assert!(summary.contains("Model and agent responses were not tested"));
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+
+    let destroyed = invoke("destroy", "text");
+    let summary = String::from_utf8(destroyed.stdout).unwrap();
+    assert!(summary.contains("Destroy complete"), "{summary}");
+    assert!(summary.contains("Sandbox files and conversation history deleted"));
+    assert!(summary.contains("OpenShell workspace"));
+    assert!(summary.contains(
+        "Retaining the workspace does not preserve sandbox files or conversation history."
+    ));
+    let repeated = invoke("destroy", "json");
+    let result: serde_json::Value = serde_json::from_slice(&repeated.stdout).unwrap();
+    assert_eq!(result["outcome"], "destroyed");
+    assert_eq!(result["changes"], serde_json::json!([]));
+    let observed = fixture.state.lock().unwrap();
+    assert!(observed.sandboxes.is_empty());
+    assert!(observed.providers.is_empty());
+    assert_eq!(observed.workspaces.len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
 async fn missing_selected_provider_reconciles_without_sandbox_changes() {
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
     let directory = tempfile::tempdir().unwrap();
@@ -160,6 +243,13 @@ async fn gateway_change_between_plan_and_apply_preserves_resources_and_allows_te
     // This apply planned no managed-resource mutations, so a failed read
     // must not impose the original-intent guard for ambiguous OpenShell writes.
     fixture.state.lock().unwrap().driver = None;
+    let failed_state = fs::read(directory.path().join("terraform.tfstate")).unwrap();
+    assert_eq!(deployment.export(&cancel).await.unwrap(), document);
+    assert_eq!(
+        fs::read(directory.path().join("terraform.tfstate")).unwrap(),
+        failed_state,
+        "export verifies established bindings without completing another apply"
+    );
     document.metadata.name = "corrected-observation-intent".into();
     assert!(
         deployment
@@ -1112,17 +1202,26 @@ async fn apply_health_failure_retains_resources_and_unchanged_apply_checks_again
             .join("bin")
             .join(nemoclaw_sdk::bundle::executable("nemoclaw")),
     )
-    .arg("apply")
+    .args(["apply", "-o", "json", "--progress", "off"])
     .arg(&input)
     .arg("--state-dir")
     .arg(directory.path())
     .output()
     .unwrap();
     assert_eq!(failed.status.code(), Some(1));
-    assert!(failed.stdout.is_empty());
-    let diagnostic: serde_json::Value = serde_json::from_slice(&failed.stderr).unwrap();
-    assert_eq!(diagnostic["health"]["reason_code"], "fabric_health_timeout");
-    assert_eq!(diagnostic["resourcesRetained"], true);
+    assert!(failed.stderr.is_empty());
+    let diagnostic: serde_json::Value = serde_json::from_slice(&failed.stdout).unwrap();
+    assert_eq!(diagnostic["outcome"], "failed");
+    assert_eq!(
+        diagnostic["error"]["health"]["reason_code"],
+        "fabric_health_timeout"
+    );
+    assert!(
+        diagnostic["remainingState"]
+            .as_str()
+            .unwrap()
+            .contains("Resources retained")
+    );
     fixture.state.lock().unwrap().health_report = None;
     let result = deployment.apply(&document, &cancel).await.unwrap();
     assert!(result.changes.is_empty());
@@ -1247,4 +1346,71 @@ async fn mixed_sandboxes_reorder_add_recover_export_and_destroy_independently() 
     );
     deployment.destroy(&cancel).await.unwrap();
     assert!(fixture.state.lock().unwrap().sandboxes.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
+async fn successful_apply_checkpoints_mutations_before_reading_health() {
+    use nemoclaw_sdk::{Progress, StepOutcome};
+    use std::sync::{Arc, Mutex};
+    let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
+    let directory = tempfile::tempdir().unwrap();
+    let fixture = Fixture::start().await;
+    let mut document = Document::parse(
+        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+    )
+    .unwrap();
+    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+    let cancel = CancellationToken::new();
+    let interrupt = cancel.clone();
+    let observed = Arc::new(Mutex::new((false, None)));
+    let captured = observed.clone();
+    let intent = directory.path().join("intent.json");
+    let deployment =
+        Deployment::new(directory.path(), &bundle).with_progress(Arc::new(move |event| {
+            let mut observed = captured.lock().unwrap();
+            match event {
+                Progress::Completed {
+                    operation: "tofu.apply",
+                    outcome: StepOutcome::Succeeded,
+                    ..
+                } => observed.0 = true,
+                Progress::Waiting {
+                    operation: "tofu.show",
+                    ..
+                } if observed.0 => {
+                    observed.1 = Some(
+                        serde_json::from_slice::<serde_json::Value>(&fs::read(&intent).unwrap())
+                            .unwrap(),
+                    );
+                    interrupt.cancel();
+                }
+                _ => {}
+            }
+        }));
+    assert!(matches!(
+        deployment.apply(&document, &cancel).await,
+        Err(nemoclaw_sdk::Error::Cancelled)
+    ));
+    let record = observed
+        .lock()
+        .unwrap()
+        .1
+        .clone()
+        .expect("post-apply health observation");
+    assert_eq!(
+        record["pending"], false,
+        "mutation checkpoint must precede the health read"
+    );
+    assert_eq!(
+        record["succeeded"], false,
+        "health has not established success"
+    );
+    let effects = fixture.state.lock().unwrap().effects;
+    let result = Deployment::new(directory.path(), &bundle)
+        .apply(&document, &CancellationToken::new())
+        .await
+        .unwrap();
+    assert!(result.changes.is_empty());
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
 }

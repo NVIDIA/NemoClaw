@@ -17,10 +17,10 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 | Workflow | Checks |
 |---|---|
-| CI / Native | `Native / linux_arm64`, `Native / linux_amd64`, `Native / darwin_arm64`, `Native / windows_amd64` |
-| CI / Images | `Images / linux_arm64`, `Images / linux_amd64` |
-| CI / Dependencies | `Dependencies / Policy` |
-| CD / Documentation | `Documentation / Validate`, then PR preview, staging, or release publication |
+| CI / Native | `Test / linux_arm64`, `Test / linux_amd64`, `Test / darwin_arm64`, `Test / windows_amd64` |
+| CI / Images | `Build / linux_arm64`, `Build / linux_amd64` |
+| CI / Dependencies | `Policy` |
+| CD / Documentation | `Validate`, then PR preview, staging, or release publication |
 | Live / Brev | Bundle build, image build, and VM preparation in parallel, then lifecycle qualification and verified VM deletion |
 
 The first eight checks are required by the `v1` ruleset, including documentation validation.
@@ -120,7 +120,10 @@ Run `cargo test -p nemoclaw-cli` for argument, dispatch, I/O, and process tests.
 The CLI's `args.rs` tests parse arguments and inspect help in-process.
 Its `dispatch.rs` tests inject input while calling the SDK, and `io.rs` tests use readers, writers, and temporary files to cover bounded input, cancellation, and output failures.
 
-Process tests cover exit codes, piping, secret-safe diagnostics, and preservation of an existing export file when observation fails.
+Process tests cover text and JSON failures, independent stdout/stderr redirection, progress modes, secret-safe diagnostics, and preservation of an existing export file when observation fails.
+The interruption test keeps credential input open to verify that Ctrl-C exits with 130 without waiting for another line.
+Renderer tests use Ratatui's test backend to check concurrent resource identity, narrow layouts, overflow, measured downloads, and bounded redraws without hiding failure milestones.
+These tests use fixtures and temporary files; they do not start deployment workloads or establish live inference.
 
 ## CI Caches
 

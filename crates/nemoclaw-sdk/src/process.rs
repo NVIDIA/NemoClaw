@@ -52,6 +52,29 @@ pub(crate) async fn run_with_progress(
     if cancel.is_cancelled() {
         return Err(Error::Cancelled);
     }
+    let redactions = std::sync::Arc::new(secret_values(overrides));
+    let progress = progress.map(|callback| {
+        let redactions = redactions.clone();
+        std::sync::Arc::new(move |mut event: crate::Progress| {
+            match &mut event {
+                crate::Progress::Resource {
+                    address: Some(address),
+                    ..
+                } => {
+                    redact(address, &redactions);
+                }
+                crate::Progress::Download(download) => {
+                    redact(&mut download.resource, &redactions);
+                    redact(&mut download.artifact, &redactions);
+                    if let Some(layer) = &mut download.layer {
+                        redact(layer, &redactions);
+                    }
+                }
+                _ => {}
+            }
+            callback(event);
+        }) as std::sync::Arc<dyn Fn(crate::Progress) + Send + Sync>
+    });
     // Progress is optional: endpoint failures must not prevent an operation.
     let downloads = progress
         .as_ref()
@@ -169,12 +192,25 @@ pub(crate) async fn run_with_progress(
             }
         }
     }
+    redact(&mut message, &redactions);
+    if overflow || diagnostic_overflow {
+        message = "child output exceeds the supported limit".into();
+    }
+    Err(Error::Execution {
+        operation: args.first().unwrap_or(&"command").to_string(),
+        diagnostic: message.trim().into(),
+        postcondition_failures,
+    })
+}
+
+fn secret_values(overrides: &BTreeMap<String, String>) -> Vec<String> {
+    let mut secrets = Vec::new();
     for (name, value) in overrides.iter().filter(|(_, value)| !value.is_empty()) {
         if !matches!(
             name.as_str(),
             "TF_IN_AUTOMATION" | "TF_INPUT" | "TF_CLI_CONFIG_FILE" | "CHECKPOINT_DISABLE"
         ) {
-            message = message.replace(value, "[redacted]");
+            secrets.push(value.clone());
         }
     }
     for (name, value) in std::env::vars() {
@@ -184,17 +220,19 @@ pub(crate) async fn run_with_progress(
                 .iter()
                 .any(|part| upper.contains(part))
         {
-            message = message.replace(&value, "[redacted]");
+            secrets.push(value);
         }
     }
-    if overflow || diagnostic_overflow {
-        message = "child output exceeds the supported limit".into();
+    // Replace whole credentials before a shorter credential can partially mask one.
+    secrets.sort_by_key(|value| std::cmp::Reverse(value.len()));
+    secrets.dedup();
+    secrets
+}
+
+fn redact(text: &mut String, secrets: &[String]) {
+    for secret in secrets {
+        *text = text.replace(secret, "[redacted]");
     }
-    Err(Error::Execution {
-        operation: args.first().unwrap_or(&"command").to_string(),
-        diagnostic: message.trim().into(),
-        postcondition_failures,
-    })
 }
 
 #[cfg(test)]
@@ -406,6 +444,23 @@ async fn json_diagnostics_preserve_failures_and_redact_credentials() {
     assert!(error.to_string().contains("provider failed"));
     assert!(error.to_string().contains("[redacted]"));
     assert!(!error.to_string().contains("secret-sentinel"));
+}
+
+#[cfg(all(test, unix))]
+#[tokio::test]
+async fn progress_resource_addresses_redact_credentials() {
+    let directory = tempfile::tempdir().unwrap();
+    let received = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let events = received.clone();
+    run_with_progress(directory.path(), Path::new("/bin/sh"),
+        &["-c", r#"printf '%s\n' '{"type":"version","ui":"1.0"}' '{"type":"apply_start","hook":{"resource":{"resource_type":"nemoclaw_sandbox","addr":"nemoclaw_sandbox.secret-sentinel"},"action":"create"}}'"#],
+        &[("CUSTOM_CREDENTIAL".into(), "secret-sentinel".into())].into(),
+        &CancellationToken::new(),
+        Some(std::sync::Arc::new(move |event| events.lock().unwrap().push(event))))
+        .await.unwrap();
+    let events = format!("{:?}", received.lock().unwrap());
+    assert!(events.contains("nemoclaw_sandbox.[redacted]"));
+    assert!(!events.contains("secret-sentinel"));
 }
 
 #[cfg(all(test, unix))]

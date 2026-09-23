@@ -1,10 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use super::super::vllm::{
-    MemoryArchitecture, ServiceContainer, ServiceHardware, ServicePlacement, ServicePublication,
-};
+use super::super::vllm::{MemoryArchitecture, ServiceContainer, ServiceHardware};
 use crate::config::{ConfigError, ImagePullPolicy, InferenceApi, InferenceProvider};
 use crate::config::{HarnessKind, InferenceProviderKind};
+use crate::services::placement::{ServicePlacement, ServicePublication};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

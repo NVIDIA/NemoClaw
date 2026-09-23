@@ -35,6 +35,7 @@ pub struct State {
     pub expected_bearer: Option<String>,
     pub conditional_updates: usize,
     pub lose_create: bool,
+    pub substitute_sandbox_after_create: Option<(&'static str, String)>,
     pub fail_after_create: Option<(&'static str, tonic::Code)>,
     pub lose_delete: bool,
     pub delete_delay: std::time::Duration,
@@ -515,7 +516,21 @@ fn create_sandbox(
         }),
         ..Default::default()
     };
-    state.sandboxes.insert(key, sandbox.clone());
+    state.sandboxes.insert(key.clone(), sandbox.clone());
+    if let Some((field, value)) = state.substitute_sandbox_after_create.take() {
+        let metadata = state
+            .sandboxes
+            .get_mut(&key)
+            .unwrap()
+            .metadata
+            .as_mut()
+            .unwrap();
+        if field == "id" {
+            metadata.id = value;
+        } else {
+            metadata.labels.insert(field.into(), value);
+        }
+    }
     state.created("sandbox");
     Ok(p::SandboxResponse {
         sandbox: Some(sandbox),

@@ -74,6 +74,7 @@ The design decision defines current invariants; historical test results apply on
 |---|---|
 | Accepted scope, implementation boundaries, and invariants | [Design decision](design/scope.md) |
 | SDK ownership, durable state, staged apply, and retained storage | [Architecture](design/architecture.md) |
+| Apply stages, component handoffs, and agent harness startup | [Apply flow](design/apply-flow.md) |
 | Process lifetime, watchdog recovery, and agent ownership | [Runtime design](design/runtime.md) |
 | Proposed shared Fabric management contract and two-adapter experiment | [Fabric management](design/fabric-management.md) |
 | Connections, engine identity, inference traffic, and host capacity | [Execution targets](design/execution-targets.md) |

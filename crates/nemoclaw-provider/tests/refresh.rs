@@ -71,13 +71,13 @@ async fn omitted_optional_computed_values_get_defaults_when_the_proposed_value_i
 async fn removing_image_pull_policy_restores_the_default_without_replacement() {
     let resource = ResourceAdapter::new(
         Definition::new(
-            "inference_service",
+            "managed_gateway",
             &["spec", "running", "image_pull_policy"],
             &["running", "image_pull_policy"],
         ),
         Arc::new(Fixture(Ok(None))),
     );
-    let encoded = support::specification().to_string();
+    let encoded = support::specification("managed_gateway").to_string();
     let prior: State = [
         ("id", "physical"),
         ("spec", encoded.as_str()),
@@ -230,14 +230,14 @@ impl Backend for ExitedAfterStart {
 #[tokio::test]
 async fn immediate_exit_establishes_state_and_restart_preserves_identity() {
     let resource = ResourceAdapter::new(
-        Definition::new("inference_service", &["spec", "running"], &["running"]),
+        Definition::new("managed_gateway", &["spec", "running"], &["running"]),
         Arc::new(ExitedAfterStart),
     );
     let mut diagnostics = Diagnostics::default();
     let configured = State::from([
         (
             "spec".into(),
-            Value::Value(support::specification().to_string()),
+            Value::Value(support::specification("managed_gateway").to_string()),
         ),
         ("running".into(), Value::Null),
         ("id".into(), Value::Null),

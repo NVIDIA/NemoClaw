@@ -77,12 +77,9 @@ impl Backend for Fixture {
         }
         Ok(Some(row))
     }
-    async fn ensure(&self, kind: &str, want: &Row) -> Mutation {
+    async fn ensure(&self, _: &str, want: &Row) -> Mutation {
         let mut row = want.clone();
         row.insert("id".into(), "fixture-id".into());
-        if kind == "inference_service" {
-            row.insert("running".into(), "true".into());
-        }
         fs::write(
             self.directory.join("resource.json"),
             serde_json::to_vec(&row).unwrap(),
@@ -130,7 +127,7 @@ impl Provider for FixtureProvider {
             (
                 "inference_service".into(),
                 Box::new(ResourceAdapter::new(
-                    Definition::new("inference_service", &["spec", "running"], &["running"]),
+                    Definition::new("inference_service", &["spec"], &[]),
                     self.backend.clone(),
                 )) as Box<dyn DynamicResource>,
             ),

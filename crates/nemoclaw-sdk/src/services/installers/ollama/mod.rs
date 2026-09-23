@@ -33,7 +33,7 @@ use crate::{
     config::Document,
     services::contract::{InstallPlan, Installer, RemovePlan},
 };
-use std::{collections::BTreeMap, net::IpAddr};
+use std::collections::BTreeMap;
 use url::Url;
 
 pub(crate) const MODEL_PATTERN: &str = r"^[a-z0-9][a-z0-9._-]*:[a-z0-9][a-z0-9._-]*$";
@@ -138,50 +138,12 @@ pub(crate) fn constrain_schema(
     );
 }
 
-fn private(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(ip) => ip.is_private(),
-        IpAddr::V6(ip) => ip.is_unique_local(),
-    }
-}
-
 impl ManagedOllama {
     pub fn validate(&self) -> Result<(), crate::config::ConfigError> {
         use crate::config::validation::require;
         crate::config::schema::validate_service("ollama", self)?;
-        if let (Some(placement), Some(publication)) = (&self.placement, &self.publication) {
-            require(
-                placement.engine.starts_with("ssh://"),
-                "explicit Ollama placement requires SSH Docker",
-            )?;
-            require(
-                crate::docker::Engine::validate_endpoint(&placement.engine).is_ok(),
-                "invalid Ollama engine",
-            )?;
-            let network: ipnet::Ipv4Net = placement
-                .network_cidr
-                .parse()
-                .map_err(|_| crate::config::ConfigError::new("invalid Ollama network"))?;
-            crate::config::validate_endpoint(&publication.endpoint, false)?;
-            let endpoint = Url::parse(&publication.endpoint)
-                .map_err(|_| crate::config::ConfigError::new("invalid Ollama publication"))?;
-            let address: std::net::Ipv4Addr = publication
-                .bind_address
-                .parse()
-                .map_err(|_| crate::config::ConfigError::new("invalid Ollama bind address"))?;
-            require(
-                network.prefix_len() == 24
-                    && network.addr() == network.network()
-                    && private(network.addr().into())
-                    && private(address.into())
-                    && !address.is_loopback()
-                    && !network.contains(&address)
-                    && endpoint.scheme() == "http"
-                    && endpoint.host_str() == Some(publication.bind_address.as_str())
-                    && endpoint.port() == Some(self.serving.port as u16)
-                    && endpoint.path() == "/v1",
-                "Ollama publication must match its private bind address, serving port and /v1 path",
-            )?;
+        if let Some(placement) = self.published_placement()? {
+            placement.validate(self.serving.port)?;
         }
         require(
             self.memory.free_gate_gib >= self.memory.min_available_gib,
@@ -264,17 +226,18 @@ fn managed_targets(
         .filter(|value| !value.is_empty())
         .ok_or(Error::State("missing Ollama service generation"))?;
     let runtime = crate::services::ServiceDefinition::Ollama(Box::new(service.runtime_settings()));
-    let (engine, network_cidr) = match &service.placement {
-        Some(placement) => (&placement.engine, &placement.network_cidr),
+    let placement = service.published_placement()?;
+    let (engine, network_cidr, bind_address) = match placement {
+        Some(explicit) => (
+            &explicit.placement.engine,
+            &explicit.placement.network_cidr,
+            explicit.publication.bind_address.clone(),
+        ),
         None => {
             let gateway = document.spec.gateway.managed()?;
-            (&gateway.engine, &gateway.network_cidr)
+            (&gateway.engine, &gateway.network_cidr, gateway.bridge()?)
         }
     };
-    let bind_address = service.publication.as_ref().map_or_else(
-        || document.spec.gateway.managed()?.bridge(),
-        |publication| Ok(publication.bind_address.clone()),
-    )?;
     let process = Process {
         engine: engine.clone(),
         image: service.image.clone(),
@@ -423,5 +386,20 @@ impl OllamaProxy {
             endpoint: spec.settings.endpoint.clone(),
         }
         .json()?)
+    }
+}
+
+impl ManagedOllama {
+    /// Explicit placement and publication, or inheritance from the managed gateway.
+    pub fn published_placement(
+        &self,
+    ) -> Result<
+        Option<crate::services::placement::PublishedPlacement<'_>>,
+        crate::config::ConfigError,
+    > {
+        crate::services::placement::PublishedPlacement::from_parts(
+            self.placement.as_ref(),
+            self.publication.as_ref(),
+        )
     }
 }
