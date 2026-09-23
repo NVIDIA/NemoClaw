@@ -44,6 +44,11 @@ export type RuntimeProviderContainerEngineOperation =
   | "sandbox-lifecycle"
   | "workload-cleanup";
 
+export function normalizeRuntimeProviderIdentity(driverName: string | null | undefined): string {
+  const normalized = driverName?.trim().toLowerCase();
+  return !normalized || normalized === "vm" ? "docker" : normalized;
+}
+
 export interface RuntimeProviderIdentity {
   readonly contractVersion: typeof RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION;
   readonly id: string;

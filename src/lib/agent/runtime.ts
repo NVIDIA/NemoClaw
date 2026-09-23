@@ -87,6 +87,28 @@ export function getRegisteredAgent(source: RegisteredAgentSource): AgentDefiniti
 }
 
 /**
+ * Resolve the agent persisted by the registry root that owns a sandbox.
+ * The selected onboarding session remains the fast path, but it cannot
+ * override a different agent recorded in a sibling gateway registry.
+ */
+export function resolveRegisteredSandboxAgent(
+  sandboxName: string,
+  selectedAgent: AgentDefinition | null,
+): AgentDefinition | null {
+  const sandbox =
+    registry.getSandboxAcrossGatewayRoots(sandboxName) ?? registry.getSandbox(sandboxName);
+  if (!sandbox) return selectedAgent;
+  const persistedAgent = sandbox.agent ?? "openclaw";
+  if (
+    selectedAgent?.name === persistedAgent ||
+    (selectedAgent === null && persistedAgent === "openclaw")
+  ) {
+    return selectedAgent;
+  }
+  return getRegisteredAgent(sandbox);
+}
+
+/**
  * Resolve the trusted manifest command used for an interactive agent handoff.
  * OpenClaw remains `null` in getSessionAgent because its recovery behavior uses
  * legacy defaults, but launch and connect hints still load its repository-owned

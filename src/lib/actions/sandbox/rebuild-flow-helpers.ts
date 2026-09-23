@@ -7,7 +7,6 @@ import {
   snapshotOpenShellEnv,
   type OpenShellRuntimeSelection,
 } from "../../adapters/openshell/runtime-selection";
-import { replaceGatewayHostRuntimeSelectionEnv as replaceOpenShellRuntimeSelectionEnv } from "../../onboard/runtime-provider/configured-runtime";
 import { loadAgent } from "../../agent/defs";
 import {
   bindLocalAgentBaseImageHandoffToResolution,
@@ -28,6 +27,7 @@ import {
 import {
   getNamedGatewayLifecycleState,
   recoverNamedGatewayRuntime,
+  replaceOpenShellRuntimeSelectionEnv,
 } from "../../gateway-runtime-action";
 import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import {
@@ -62,6 +62,7 @@ import {
 export { removeStaleRebuildDockerOrphan };
 export { replaceOpenShellRuntimeSelectionEnv, snapshotOpenShellEnv };
 export { resolveSandboxGatewayName };
+export { delegateRebuildToOwningRegistry } from "./rebuild/owning-registry";
 
 export type RebuildSandboxEntry = SandboxEntry & { agents?: unknown[] };
 
