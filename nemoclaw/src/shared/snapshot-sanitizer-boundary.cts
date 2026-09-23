@@ -727,6 +727,7 @@ export function scanDescriptorSnapshot(
   root: DescriptorSnapshotRoot,
   sensitiveNames: ReadonlySet<string>,
   targetName?: string,
+  timeoutMs = HELPER_TIMEOUT_MS,
 ): DescriptorSnapshotScan | null {
   const mode = targetName === undefined ? "scan-tree" : "scan-file";
   const pythonPath = snapshotSanitizerPythonPath();
@@ -747,7 +748,7 @@ export function scanDescriptorSnapshot(
       encoding: "utf-8",
       env: {},
       maxBuffer: HELPER_MAX_BUFFER_BYTES,
-      timeout: HELPER_TIMEOUT_MS,
+      timeout: timeoutMs,
     },
   );
   if (result.status !== 0 || result.error) return null;
@@ -759,6 +760,7 @@ export function applyDescriptorSnapshotActions(
   root: DescriptorSnapshotRoot,
   scan: DescriptorSnapshotScan,
   actions: readonly SnapshotSanitizationAction[],
+  timeoutMs = HELPER_TIMEOUT_MS,
 ): boolean {
   if (actions.length === 0) return true;
   const pythonPath = snapshotSanitizerPythonPath();
@@ -771,7 +773,7 @@ export function applyDescriptorSnapshotActions(
       env: {},
       input: JSON.stringify({ root: scan.root, directories: scan.directories, actions }),
       maxBuffer: HELPER_MAX_BUFFER_BYTES,
-      timeout: HELPER_TIMEOUT_MS,
+      timeout: timeoutMs,
     },
   );
   return result.status === 0 && !result.error;

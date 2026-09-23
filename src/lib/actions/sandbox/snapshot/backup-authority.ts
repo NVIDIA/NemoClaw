@@ -54,9 +54,10 @@ const OPENCLAW_CONFIG_NAME = "openclaw.json";
 const HERMES_CAPTURE_TIMEOUT_MS = 120_000;
 const HERMES_CAPTURE_MAX_BUFFER = 256 * 1024 * 1024;
 
-function captureTimeoutMs(deadlineMs: number | undefined, maximumMs: number): number {
+function captureTimeoutMs(deadlineMs: number | undefined, maximumMs: number): number | null {
   if (deadlineMs === undefined) return maximumMs;
-  return Math.max(1, Math.min(maximumMs, Math.floor(deadlineMs - Date.now())));
+  const remainingMs = Math.floor(deadlineMs - Date.now());
+  return remainingMs > 0 ? Math.min(maximumMs, remainingMs) : null;
 }
 
 export const OPENCLAW_CONFIG_CAPTURE_SCRIPT = `import os, stat, sys
@@ -177,6 +178,10 @@ export function captureOpenClawStateFile(
     return null;
   }
   try {
+    const timeoutMs = captureTimeoutMs(request.deadlineMs, OPENCLAW_CONFIG_CAPTURE_TIMEOUT_MS);
+    if (timeoutMs === null) {
+      return { outcome: "failed", error: "privileged config capture deadline expired" };
+    }
     return withPrivilegedSandboxExecutionLease(
       sandboxName,
       "OpenClaw config snapshot capture",
@@ -194,7 +199,7 @@ export function captureOpenClawStateFile(
           ],
           {
             sanitizeEnvironment: true,
-            timeout: captureTimeoutMs(request.deadlineMs, OPENCLAW_CONFIG_CAPTURE_TIMEOUT_MS),
+            timeout: timeoutMs,
             maxOutputBytes: OPENCLAW_CONFIG_CAPTURE_MAX_BUFFER,
           },
         );
@@ -425,6 +430,10 @@ export function captureHermesStateFile(
   )
     return null;
   try {
+    const timeoutMs = captureTimeoutMs(request.deadlineMs, HERMES_CAPTURE_TIMEOUT_MS);
+    if (timeoutMs === null) {
+      return { outcome: "failed", error: "privileged Hermes state capture deadline expired" };
+    }
     return withPrivilegedSandboxExecutionLease(sandboxName, "Hermes state snapshot capture", () => {
       const result = dockerSpawnSync(
         privilegedSandboxExecArgv(
@@ -445,7 +454,7 @@ export function captureHermesStateFile(
         {
           encoding: null,
           stdio: ["ignore", "pipe", "pipe"],
-          timeout: captureTimeoutMs(request.deadlineMs, HERMES_CAPTURE_TIMEOUT_MS),
+          timeout: timeoutMs,
           maxBuffer: HERMES_CAPTURE_MAX_BUFFER,
         },
       );
@@ -479,6 +488,10 @@ export function captureHermesStateDirectories(
     return null;
   }
   try {
+    const timeoutMs = captureTimeoutMs(request.deadlineMs, HERMES_CAPTURE_TIMEOUT_MS);
+    if (timeoutMs === null) {
+      return { outcome: "failed", error: "privileged Hermes directory capture deadline expired" };
+    }
     return withPrivilegedSandboxExecutionLease(
       sandboxName,
       "Hermes state directory snapshot capture",
@@ -502,7 +515,7 @@ export function captureHermesStateDirectories(
           {
             encoding: null,
             stdio: ["ignore", archiveFd, "pipe"],
-            timeout: captureTimeoutMs(request.deadlineMs, HERMES_CAPTURE_TIMEOUT_MS),
+            timeout: timeoutMs,
             maxBuffer: 1024 * 1024,
           },
         );

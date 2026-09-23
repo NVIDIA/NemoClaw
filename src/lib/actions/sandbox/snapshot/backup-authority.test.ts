@@ -3,7 +3,7 @@
 
 import { createHash } from "node:crypto";
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const privilegedCaptureMocks = vi.hoisted(() => ({
   dockerSpawnSync: vi.fn(),
@@ -191,6 +191,10 @@ function explicitLlamaSandbox(agent: "openclaw" | "hermes" | "langchain-deepagen
 }
 
 describe("managed snapshot backup authority", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   beforeEach(() => {
     privilegedCaptureMocks.dockerSpawnSync.mockReset();
     privilegedCaptureMocks.executePrivilegedSandboxCommand.mockReset();
@@ -198,7 +202,8 @@ describe("managed snapshot backup authority", () => {
     privilegedCaptureMocks.withPrivilegedSandboxExecutionLease.mockClear();
   });
 
-  it("captures the exact OpenClaw configuration with bounded direct execution", () => {
+  it("captures the exact OpenClaw configuration with the remaining deadline", () => {
+    vi.spyOn(Date, "now").mockReturnValue(10_000);
     const data = Buffer.from('{"models":{"default":"nvidia/test"}}\n');
     privilegedCaptureMocks.executePrivilegedSandboxCommand.mockReturnValue({
       status: 0,
@@ -212,6 +217,7 @@ describe("managed snapshot backup authority", () => {
       sandboxName: "alpha",
       dir: "/sandbox/.openclaw",
       spec: { path: "openclaw.json", strategy: "copy" },
+      deadlineMs: 12_345,
     });
 
     expect(result).toEqual({ outcome: "backed_up", data });
@@ -225,7 +231,7 @@ describe("managed snapshot backup authority", () => {
       expect.arrayContaining(["/usr/bin/python3", "-I", "-S", "-c"]),
       expect.objectContaining({
         sanitizeEnvironment: true,
-        timeout: 30_000,
+        timeout: 2_345,
         maxOutputBytes: 17 * 1024 * 1024,
       }),
     );
@@ -347,6 +353,7 @@ describe("managed snapshot backup authority", () => {
   });
 
   it("captures declared Hermes files and rejects arbitrary paths", () => {
+    vi.spyOn(Date, "now").mockReturnValue(10_000);
     privilegedCaptureMocks.dockerSpawnSync.mockReturnValue({
       status: 0,
       signal: null,
@@ -359,11 +366,12 @@ describe("managed snapshot backup authority", () => {
         sandboxName: "alpha",
         dir: "/sandbox/.hermes",
         spec: { path: "SOUL.md", strategy: "copy" },
+        deadlineMs: 12_345,
       }),
     ).toEqual({ outcome: "backed_up", data: Buffer.from("state") });
     expect(privilegedCaptureMocks.dockerSpawnSync).toHaveBeenLastCalledWith(
       expect.any(Array),
-      expect.objectContaining({ maxBuffer: 256 * 1024 * 1024 }),
+      expect.objectContaining({ maxBuffer: 256 * 1024 * 1024, timeout: 2_345 }),
     );
     expect(privilegedCaptureMocks.privilegedSandboxExecArgv).toHaveBeenLastCalledWith(
       "alpha",
@@ -411,6 +419,7 @@ describe("managed snapshot backup authority", () => {
   );
 
   it("streams only declared Hermes directories to the state-owned archive fd", () => {
+    vi.spyOn(Date, "now").mockReturnValue(10_000);
     privilegedCaptureMocks.dockerSpawnSync.mockReturnValue({
       status: 0,
       signal: null,
@@ -426,13 +435,14 @@ describe("managed snapshot backup authority", () => {
           dir: "/sandbox/.hermes",
           dirs: ["workspace"],
           maxArchiveBytes: 256 * 1024 * 1024,
+          deadlineMs: 12_345,
         },
         42,
       ),
     ).toEqual({ outcome: "backed_up" });
     expect(privilegedCaptureMocks.dockerSpawnSync).toHaveBeenLastCalledWith(
       expect.any(Array),
-      expect.objectContaining({ stdio: ["ignore", 42, "pipe"] }),
+      expect.objectContaining({ stdio: ["ignore", 42, "pipe"], timeout: 2_345 }),
     );
     expect(privilegedCaptureMocks.privilegedSandboxExecArgv).toHaveBeenLastCalledWith(
       "alpha",
@@ -469,6 +479,52 @@ describe("managed snapshot backup authority", () => {
         42,
       ),
     ).toBeNull();
+  });
+
+  it("does not start a privileged capture after its deadline", () => {
+    vi.spyOn(Date, "now").mockReturnValue(10_000);
+
+    expect(
+      captureOpenClawStateFile("alpha", {
+        sandboxName: "alpha",
+        dir: "/sandbox/.openclaw",
+        spec: { path: "openclaw.json", strategy: "copy" },
+        deadlineMs: 10_000,
+      }),
+    ).toEqual({
+      outcome: "failed",
+      error: "privileged config capture deadline expired",
+    });
+    expect(
+      captureHermesStateFile("alpha", {
+        sandboxName: "alpha",
+        dir: "/sandbox/.hermes",
+        spec: { path: "SOUL.md", strategy: "copy" },
+        deadlineMs: 10_000,
+      }),
+    ).toEqual({
+      outcome: "failed",
+      error: "privileged Hermes state capture deadline expired",
+    });
+    expect(
+      captureHermesStateDirectories(
+        "alpha",
+        {
+          sandboxName: "alpha",
+          dir: "/sandbox/.hermes",
+          dirs: ["workspace"],
+          maxArchiveBytes: 256 * 1024 * 1024,
+          deadlineMs: 10_000,
+        },
+        42,
+      ),
+    ).toEqual({
+      outcome: "failed",
+      error: "privileged Hermes directory capture deadline expired",
+    });
+    expect(privilegedCaptureMocks.withPrivilegedSandboxExecutionLease).not.toHaveBeenCalled();
+    expect(privilegedCaptureMocks.executePrivilegedSandboxCommand).not.toHaveBeenCalled();
+    expect(privilegedCaptureMocks.dockerSpawnSync).not.toHaveBeenCalled();
   });
 
   it("does not execute privileged capture when a normal Hermes backup succeeds", () => {

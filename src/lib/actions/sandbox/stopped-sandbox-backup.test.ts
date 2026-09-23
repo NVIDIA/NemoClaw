@@ -587,4 +587,57 @@ describe("backupStartedSandboxState", () => {
     );
     expect(now).toBe(transactionDeadlineMs);
   });
+
+  it("keeps the full stop reserve when extraction and sanitization reach the backup deadline", async () => {
+    const transactionDeadlineMs = startedSandboxBackupTransactionDeadline(() => 0);
+    const backupDeadlineMs = transactionDeadlineMs - 30_000;
+    let now = backupDeadlineMs - 120_001;
+    const extract = vi.fn(() => {
+      now = backupDeadlineMs - 1;
+    });
+    const sanitize = vi.fn(() => {
+      now += 1;
+    });
+    const backup = vi.fn(() => {
+      extract();
+      sanitize();
+      return ok;
+    });
+
+    await expect(
+      backupStartedSandboxState("my-sb", {
+        backup,
+        probe: vi.fn().mockReturnValue(true),
+        deadlineMs: transactionDeadlineMs,
+        now: () => now,
+      }),
+    ).resolves.toEqual(ok);
+    expect(extract).toHaveBeenCalledOnce();
+    expect(sanitize).toHaveBeenCalledOnce();
+    expect(now).toBe(backupDeadlineMs);
+
+    const stopSandbox = vi.fn().mockResolvedValue({ kind: "accepted" });
+    await expect(
+      returnSandboxContainerToStopped(
+        {
+          containerName: "openshell-my-sb-abc123",
+          gatewayName: "nemoclaw",
+          mutationTimeoutMs: 75_000,
+          runtimeProviderId: "podman",
+          sandboxIdentityFingerprint: "a".repeat(64),
+          sandboxName: "my-sb",
+        },
+        {
+          createOpenShellLifecycle: () => ({ startSandbox: vi.fn(), stopSandbox }),
+          deadlineMs: transactionDeadlineMs,
+          now: () => now,
+        },
+      ),
+    ).resolves.toBe(true);
+    expect(stopSandbox).toHaveBeenCalledWith(
+      expect.objectContaining({
+        timeoutMs: 30_000,
+      }),
+    );
+  });
 });

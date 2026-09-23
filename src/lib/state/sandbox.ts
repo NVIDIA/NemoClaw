@@ -628,11 +628,18 @@ function rejectSymlinksOnPath(targetPath: string): void {
 export function validateTarEntries(
   tarArchive: TarArchiveSource,
   targetDir: string,
+  timeoutMs = 60_000,
 ): TarValidationResult {
   const entries: string[] = [];
-  const listingFailure = runTarListing(tarArchive, ["-tf", "-"], "tar listing", (line) => {
-    entries.push(line);
-  });
+  const listingFailure = runTarListing(
+    tarArchive,
+    ["-tf", "-"],
+    "tar listing",
+    (line) => {
+      entries.push(line);
+    },
+    timeoutMs,
+  );
   if (listingFailure) {
     return {
       safe: false,
@@ -751,15 +758,21 @@ function auditExtractedSymlinks(dirPath: string, allowedRoots: string[]): string
  * legitimate reason to contain them, and they can be used to reference
  * files outside the extraction root.
  */
-export function rejectHardLinks(tarArchive: TarArchiveSource): string[] {
+export function rejectHardLinks(tarArchive: TarArchiveSource, timeoutMs = 60_000): string[] {
   const violations: string[] = [];
-  const listingFailure = runTarListing(tarArchive, ["-tvf", "-"], "tar verbose listing", (line) => {
-    // Both GNU tar and bsdtar prefix hard-link entries with 'h' in verbose mode
-    // and include " link to " in the line.
-    if (line.startsWith("h") || / link to /.test(line)) {
-      violations.push(`hard link: ${line.trim()}`);
-    }
-  });
+  const listingFailure = runTarListing(
+    tarArchive,
+    ["-tvf", "-"],
+    "tar verbose listing",
+    (line) => {
+      // Both GNU tar and bsdtar prefix hard-link entries with 'h' in verbose mode
+      // and include " link to " in the line.
+      if (line.startsWith("h") || / link to /.test(line)) {
+        violations.push(`hard link: ${line.trim()}`);
+      }
+    },
+    timeoutMs,
+  );
   if (listingFailure) return [listingFailure];
 
   return violations;
@@ -769,9 +782,17 @@ export function rejectHardLinks(tarArchive: TarArchiveSource): string[] {
  * SECURITY: Validate tar contents, extract with safety flags, then
  * audit for symlink escapes. Nukes the extraction on any violation.
  */
-export function safeTarExtract(tarArchive: TarArchiveSource, targetDir: string): SafeExtractResult {
+export function safeTarExtract(
+  tarArchive: TarArchiveSource,
+  targetDir: string,
+  deadlineMs?: number,
+): SafeExtractResult {
   // Phase 1a: Validate entry paths before extraction
-  const validation = validateTarEntries(tarArchive, targetDir);
+  const validationTimeoutMs = remainingBackupTimeoutMs(deadlineMs, 60_000);
+  if (validationTimeoutMs === null) {
+    return { success: false, error: "tar entry validation skipped: backup deadline expired" };
+  }
+  const validation = validateTarEntries(tarArchive, targetDir, validationTimeoutMs);
   if (!validation.safe) {
     return {
       success: false,
@@ -780,7 +801,11 @@ export function safeTarExtract(tarArchive: TarArchiveSource, targetDir: string):
   }
 
   // Phase 1b: Reject hard links (not detectable via tar -tf, require verbose listing)
-  const hardLinkViolations = rejectHardLinks(tarArchive);
+  const hardLinkTimeoutMs = remainingBackupTimeoutMs(deadlineMs, 60_000);
+  if (hardLinkTimeoutMs === null) {
+    return { success: false, error: "hard link validation skipped: backup deadline expired" };
+  }
+  const hardLinkViolations = rejectHardLinks(tarArchive, hardLinkTimeoutMs);
   if (hardLinkViolations.length > 0) {
     return {
       success: false,
@@ -789,6 +814,10 @@ export function safeTarExtract(tarArchive: TarArchiveSource, targetDir: string):
   }
 
   // Phase 2: Extract with --no-same-owner to prevent ownership manipulation
+  const extractionTimeoutMs = remainingBackupTimeoutMs(deadlineMs, 60_000);
+  if (extractionTimeoutMs === null) {
+    return { success: false, error: "tar extraction skipped: backup deadline expired" };
+  }
   let archiveFd: number | null = null;
   let extractResult: ReturnType<typeof spawnSync>;
   try {
@@ -796,13 +825,13 @@ export function safeTarExtract(tarArchive: TarArchiveSource, targetDir: string):
       ? spawnSync("tar", ["-xf", "-", "--no-same-owner", "-C", targetDir], {
           input: tarArchive,
           stdio: ["pipe", "pipe", "pipe"],
-          timeout: 60000,
+          timeout: extractionTimeoutMs,
         })
       : (() => {
           archiveFd = openSync(tarArchive.filePath, "r");
           return spawnSync("tar", ["-xf", "-", "--no-same-owner", "-C", targetDir], {
             stdio: [archiveFd, "pipe", "pipe"],
-            timeout: 60000,
+            timeout: extractionTimeoutMs,
           });
         })();
   } finally {
@@ -814,6 +843,9 @@ export function safeTarExtract(tarArchive: TarArchiveSource, targetDir: string):
       success: false,
       error: `tar extraction failed (exit ${extractResult.status}): ${(extractResult.stderr?.toString() || "").substring(0, 200)}`,
     };
+  }
+  if (remainingBackupTimeoutMs(deadlineMs, 60_000) === null) {
+    return { success: false, error: "tar extraction exceeded backup deadline" };
   }
 
   // Phase 3: Post-extraction symlink audit (symlink targets are not
@@ -834,6 +866,9 @@ export function safeTarExtract(tarArchive: TarArchiveSource, targetDir: string):
       success: false,
       error: `post-extraction symlink audit failed: ${symlinkViolations.join("; ")}`,
     };
+  }
+  if (remainingBackupTimeoutMs(deadlineMs, 60_000) === null) {
+    return { success: false, error: "post-extraction audit exceeded backup deadline" };
   }
 
   return { success: true };
@@ -947,13 +982,13 @@ function computeBlueprintDigest(): string | null {
 }
 
 export interface BackupSanitizationOperations {
-  sanitizeDirectory: (backupPath: string) => void;
+  sanitizeDirectory: (backupPath: string, deadlineMs?: number) => void;
   removeBackup: (backupPath: string) => void;
   backupExists: (backupPath: string) => boolean;
 }
 
 const DEFAULT_BACKUP_SANITIZATION_OPERATIONS: BackupSanitizationOperations = {
-  sanitizeDirectory: sanitizeSnapshotDirectory,
+  sanitizeDirectory: (backupPath, deadlineMs) => sanitizeSnapshotDirectory(backupPath, deadlineMs),
   removeBackup: (backupPath) => rmSync(backupPath, { recursive: true, force: true }),
   backupExists: existsSync,
 };
@@ -962,6 +997,7 @@ const DEFAULT_BACKUP_SANITIZATION_OPERATIONS: BackupSanitizationOperations = {
 export function sanitizeBackupDirectory(
   dirPath: string,
   overrides: Partial<BackupSanitizationOperations> = {},
+  deadlineMs?: number,
 ): void {
   const operations = {
     ...DEFAULT_BACKUP_SANITIZATION_OPERATIONS,
@@ -969,7 +1005,13 @@ export function sanitizeBackupDirectory(
   };
 
   try {
-    operations.sanitizeDirectory(dirPath);
+    if (remainingBackupTimeoutMs(deadlineMs, 60_000) === null) {
+      throw new Error("snapshot sanitization deadline expired");
+    }
+    operations.sanitizeDirectory(dirPath, deadlineMs);
+    if (remainingBackupTimeoutMs(deadlineMs, 60_000) === null) {
+      throw new Error("snapshot sanitization deadline expired");
+    }
   } catch (error) {
     // sanitizeBackupDirectory replaces the message, so an unmet prerequisite
     // would otherwise survive only as `cause` and never reach the operator. (#8202)
@@ -1521,7 +1563,7 @@ function retryPermissionDeniedDirectories(
       rejectSymlinksOnPath(target);
       rmSync(target, { recursive: true, force: true });
     }
-    const extracted = safeTarExtract({ filePath: archivePath }, backupPath);
+    const extracted = safeTarExtract({ filePath: archivePath }, backupPath, deadlineMs);
     if (!extracted.success) {
       _log(`FAILED: privileged state directory capture: ${extracted.error}`);
       return;
@@ -1793,6 +1835,9 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         throw new Error("sandbox backup deadline expired");
       }
       options.validateBeforePublish?.();
+      if (options.deadlineMs !== undefined && Date.now() >= options.deadlineMs) {
+        throw new Error("sandbox backup deadline expired");
+      }
     });
     if (publicationError) {
       return {
@@ -2091,7 +2136,11 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         try {
           if (tarExitedWithData) {
             // SECURITY: Validate tar entries, extract safely, audit symlinks.
-            extractResult = safeTarExtract({ filePath: downloadedTarPath }, backupPath);
+            extractResult = safeTarExtract(
+              { filePath: downloadedTarPath },
+              backupPath,
+              options.deadlineMs,
+            );
           }
         } finally {
           rmSync(downloadedTarDir, { recursive: true, force: true });
@@ -2207,7 +2256,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
   }
 
   // SECURITY: Strip credentials from the local backup
-  sanitizeBackupDirectory(backupPath);
+  sanitizeBackupDirectory(backupPath, {}, options.deadlineMs);
 
   // Record dynamically discovered directories in the manifest alongside the
   // exact declarations so restoreSandboxState() can find them in backupPath.
@@ -2231,6 +2280,9 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
       throw new Error("sandbox backup deadline expired");
     }
     options.validateBeforePublish?.();
+    if (options.deadlineMs !== undefined && Date.now() >= options.deadlineMs) {
+      throw new Error("sandbox backup deadline expired");
+    }
   });
   if (publicationError) {
     return {
