@@ -29,6 +29,10 @@ import { ROOT, shellQuote } from "../../runner";
 import { buildSubprocessEnv } from "../../subprocess-env";
 import { DCODE_MANAGED_EXEC_LAUNCHER } from "./connect-inference-route-probe";
 import {
+  classifyOutcomeTransportFailure,
+  type SandboxCommandTransportFailure,
+} from "../../adapters/sandbox/command-transport";
+import {
   executeSandboxExecCommand,
   type SandboxCommandResult,
   type SandboxExecCommandOptions,
@@ -69,6 +73,31 @@ export const REBUILD_INFERENCE_INVOCATION_TIMEOUT_MS = 100_000;
 export const INFERENCE_INVOCATION_REQUEST_TIMEOUT_SECONDS = 90;
 export const READINESS_INFERENCE_INVOCATION_TIMEOUT_MS = 95_000;
 const INFERENCE_INVOCATION_MAX_RESPONSE_BYTES = 64 * 1024;
+
+// curl's `--max-time` bounds the whole request (connect + transfer). It must
+// sit safely inside the outer exec timeout so a slow-but-healthy endpoint is
+// bounded by curl (clean exit 28) instead of being SIGTERM-killed by the outer
+// timeout and collapsed into a generic "unavailable" result (#11162). The
+// buffer reserves headroom for `openshell sandbox exec` spawn/attach overhead
+// so curl finishes before the outer kill. Note: an operator override via
+// NEMOCLAW_SANDBOX_EXEC_TIMEOUT_MS shortens only the outer exec timeout, not
+// this derived budget; a genuine timeout there is still reported accurately as
+// a timeout with the effective duration.
+const INFERENCE_INVOCATION_CONNECT_TIMEOUT_SECONDS = 5;
+const INFERENCE_INVOCATION_OUTER_TIMEOUT_BUFFER_MS = 5_000;
+
+/**
+ * Derive curl's `--max-time` (whole seconds) from the outer exec timeout so the
+ * request is always bounded by curl before the outer timeout can SIGTERM the
+ * subprocess. Clamped to at least 1s for a pathologically small outer timeout;
+ * the unit test asserts the derived budget stays strictly below every real
+ * outer timeout the callers use.
+ */
+export function resolveInferenceInvocationMaxTimeSeconds(timeoutMs: number): number {
+  const budgetMs = timeoutMs - INFERENCE_INVOCATION_OUTER_TIMEOUT_BUFFER_MS;
+  const seconds = Math.floor(budgetMs / 1000);
+  return Math.max(1, seconds);
+}
 
 /** Build the protocol-specific request used to verify sandbox inference. */
 function buildProbeRequest(input: SandboxInferenceInvocationInput): {
@@ -124,6 +153,7 @@ export function resolveSandboxInferenceInvocationEndpoint(
 
 export function buildSandboxInferenceInvocationCommand(
   input: SandboxInferenceInvocationInput,
+  timeoutMs: number = REBUILD_INFERENCE_INVOCATION_TIMEOUT_MS,
 ): string {
   const request = buildProbeRequest(input);
   const headerArgs = ["Content-Type: application/json", ...request.headers]
@@ -131,11 +161,12 @@ export function buildSandboxInferenceInvocationCommand(
     .join(" ");
   const payload = shellQuote(JSON.stringify(request.payload));
   const endpoint = shellQuote(request.endpoint);
+  const maxTimeSeconds = resolveInferenceInvocationMaxTimeSeconds(timeoutMs);
   return [
     "umask 077",
     "body=$(mktemp /tmp/nemoclaw-inference-invocation.XXXXXX) || exit 1",
     "trap 'rm -f \"$body\"' EXIT HUP INT TERM",
-    `code=$(curl -q -sS --connect-timeout 5 --max-time ${INFERENCE_INVOCATION_REQUEST_TIMEOUT_SECONDS} --max-filesize ${INFERENCE_INVOCATION_MAX_RESPONSE_BYTES} -o "$body" -w '%{http_code}' ${headerArgs} --data-binary ${payload} ${endpoint}) || { rc=$?; printf 'curl-error:%s\\n' "$rc"; exit "$rc"; }`,
+    `code=$(curl -q -sS --connect-timeout ${INFERENCE_INVOCATION_CONNECT_TIMEOUT_SECONDS} --max-time ${maxTimeSeconds} --max-filesize ${INFERENCE_INVOCATION_MAX_RESPONSE_BYTES} -o "$body" -w '%{http_code}' ${headerArgs} --data-binary ${payload} ${endpoint}) || { rc=$?; printf 'curl-error:%s\\n' "$rc"; exit "$rc"; }`,
     "printf '%s\\n' \"$code\"",
     // A non-2xx body never leaves the sandbox (#6195). A 404 is classified
     // here instead, so status can name the cause the onboarding probe already
@@ -146,7 +177,7 @@ export function buildSandboxInferenceInvocationCommand(
 
 export function buildDcodeSandboxInferenceInvocationRequest(
   input: SandboxInferenceInvocationInput,
-  timeoutMilliseconds: number,
+  timeoutMs: number = REBUILD_INFERENCE_INVOCATION_TIMEOUT_MS,
 ): OpenShellSandboxBufferedCommandRequest {
   const gatewayName = input.gatewayName ?? input.runtimeSelection?.gatewayName;
   return {
@@ -156,7 +187,7 @@ export function buildDcodeSandboxInferenceInvocationRequest(
       DCODE_MANAGED_EXEC_LAUNCHER,
       "/bin/sh",
       "-c",
-      buildSandboxInferenceInvocationCommand(input),
+      buildSandboxInferenceInvocationCommand(input, timeoutMs),
     ],
     sandboxEnvironment: {
       BASH_ENV: "",
@@ -167,14 +198,32 @@ export function buildDcodeSandboxInferenceInvocationRequest(
       ? buildOpenShellRuntimeSelectionEnv(buildSubprocessEnv(), input.runtimeSelection)
       : buildSubprocessEnv(),
     tty: false,
-    timeoutMilliseconds,
+    timeoutMilliseconds: timeoutMs,
   };
+}
+
+/** Describe why the transport produced no result so the probe surfaces the real reason (#11162). */
+function describeInvocationTransportFailure(
+  failure: SandboxCommandTransportFailure | null,
+): string {
+  if (failure?.kind === "timeout") {
+    const seconds = failure.timeoutMs / 1000;
+    const rendered = seconds >= 1 ? `${Math.round(seconds)}s` : `${failure.timeoutMs}ms`;
+    return `sandbox inference invocation probe timed out after ${rendered}`;
+  }
+  if (failure?.kind === "error") {
+    return failure.detail
+      ? `sandbox inference invocation probe subprocess failed (${failure.detail})`
+      : "sandbox inference invocation probe subprocess failed";
+  }
+  return "sandbox inference invocation probe was unavailable";
 }
 
 async function executeDcodeSandboxInferenceInvocation(
   input: SandboxInferenceInvocationInput,
   deps: SandboxInferenceInvocationDeps,
   timeoutMs: number,
+  onTransportFailure: (failure: SandboxCommandTransportFailure) => void,
 ): Promise<SandboxCommandResult | null> {
   const commandExecutor =
     deps.commandExecutor ?? createCliOpenShellSandboxCommandExecutor({ hostCwd: ROOT });
@@ -182,7 +231,12 @@ async function executeDcodeSandboxInferenceInvocation(
     const completed = await commandExecutor.runBuffered(
       buildDcodeSandboxInferenceInvocationRequest(input, timeoutMs),
     );
-    if (completed.outcome.kind !== "completed" || completed.stderr.trim()) {
+    if (completed.outcome.kind !== "completed") {
+      const failure = classifyOutcomeTransportFailure(completed.outcome.error, timeoutMs);
+      if (failure) onTransportFailure(failure);
+      return null;
+    }
+    if (completed.stderr.trim()) {
       return null;
     }
     return {
@@ -190,7 +244,9 @@ async function executeDcodeSandboxInferenceInvocation(
       stdout: completed.stdout,
       stderr: completed.stderr,
     };
-  } catch {
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException | undefined)?.code;
+    onTransportFailure(code ? { kind: "error", detail: code } : { kind: "error" });
     return null;
   }
 }
@@ -207,18 +263,28 @@ export async function probeSandboxInferenceInvocation(
   timeoutMs: number = REBUILD_INFERENCE_INVOCATION_TIMEOUT_MS,
 ): Promise<SandboxInferenceInvocationResult> {
   let result: SandboxCommandResult | null;
+  let transportFailure: SandboxCommandTransportFailure | null = null;
+  const onTransportFailure = (failure: SandboxCommandTransportFailure) => {
+    transportFailure = failure;
+  };
   if (input.agentName === DCODE_AGENT_NAME) {
-    result = await executeDcodeSandboxInferenceInvocation(input, deps, timeoutMs);
+    result = await executeDcodeSandboxInferenceInvocation(
+      input,
+      deps,
+      timeoutMs,
+      onTransportFailure,
+    );
   } else {
     const execute = deps.execute ?? executeSandboxExecCommand;
     const execOptions: SandboxExecCommandOptions = {
       ...(input.gatewayName ? { gatewayName: input.gatewayName } : {}),
       ...(input.runtimeSelection ? { runtimeSelection: input.runtimeSelection } : {}),
       localDockerFallbackPolicy: "never",
+      onTransportFailure,
     };
     result = await execute(
       input.sandboxName,
-      buildSandboxInferenceInvocationCommand(input),
+      buildSandboxInferenceInvocationCommand(input, timeoutMs),
       timeoutMs,
       execOptions,
     );
@@ -226,7 +292,7 @@ export async function probeSandboxInferenceInvocation(
   if (!result) {
     return {
       ok: false,
-      detail: "sandbox inference invocation probe was unavailable",
+      detail: describeInvocationTransportFailure(transportFailure),
       httpStatus: null,
       endpoint: resolveSandboxInferenceInvocationEndpoint(input),
     };
@@ -252,21 +318,44 @@ export async function probeSandboxInferenceInvocation(
     };
   }
   const httpStatus = result.stdout.match(/(?:^|\n)([1-5]\d\d)(?:\n|$)/)?.[1];
-  // Only the fixed marker is read back, never the line that carried it, so an
-  // upstream body can still not reach diagnostics (#6195).
-  const nvcfFunctionNotFound = result.stdout
-    .split("\n")
-    .some((line) => line.trim() === NVCF_FUNCTION_NOT_FOUND_MARKER);
-  const detail = httpStatus
-    ? `sandbox inference invocation probe returned HTTP ${httpStatus}`
-    : `sandbox inference invocation probe exited with status ${result.status}`;
+  if (httpStatus) {
+    // Only the fixed marker is read back, never the line that carried it, so an
+    // upstream body can still not reach diagnostics (#6195).
+    const nvcfFunctionNotFound = result.stdout
+      .split("\n")
+      .some((line) => line.trim() === NVCF_FUNCTION_NOT_FOUND_MARKER);
+    const detail = `sandbox inference invocation probe returned HTTP ${httpStatus}`;
+    return {
+      ok: false,
+      detail:
+        httpStatus === "404" && nvcfFunctionNotFound
+          ? `${detail}: ${nvcfFunctionNotFoundMessage(input.model).replace(/\.$/, "")}`
+          : detail,
+      httpStatus: Number.parseInt(httpStatus, 10),
+      endpoint: resolveSandboxInferenceInvocationEndpoint(input),
+    };
+  }
+  // curl exits non-zero with `curl-error:<rc>` on stdout when the request could
+  // not complete. Exit 28 is curl's own timeout; surface it as an endpoint
+  // timeout instead of a generic exit code so a slow-but-healthy endpoint that
+  // curl bounded is reported accurately (#11162). Only the curl exit code (never
+  // response content) is read from the output here.
+  const curlExit = result.stdout.match(/(?:^|\n)curl-error:(\d+)(?:\n|$)/)?.[1];
+  if (curlExit === "28") {
+    return {
+      ok: false,
+      detail:
+        "sandbox inference invocation probe timed out waiting for the endpoint (curl exit 28)",
+      httpStatus: null,
+      endpoint: resolveSandboxInferenceInvocationEndpoint(input),
+    };
+  }
   return {
     ok: false,
-    detail:
-      httpStatus === "404" && nvcfFunctionNotFound
-        ? `${detail}: ${nvcfFunctionNotFoundMessage(input.model).replace(/\.$/, "")}`
-        : detail,
-    httpStatus: httpStatus ? Number.parseInt(httpStatus, 10) : null,
+    detail: curlExit
+      ? `sandbox inference invocation probe could not complete the request (curl exit ${curlExit})`
+      : `sandbox inference invocation probe exited with status ${result.status}`,
+    httpStatus: null,
     endpoint: resolveSandboxInferenceInvocationEndpoint(input),
   };
 }

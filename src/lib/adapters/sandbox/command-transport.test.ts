@@ -67,6 +67,54 @@ describe("sandbox command transport", () => {
     });
   });
 
+  it("reports a timeout when the gateway-pinned exec is killed by the outer timeout (#11162)", async () => {
+    const deps = createDependencies({
+      commandExecutor: {
+        runBuffered: vi.fn(async () => ({
+          outcome: {
+            kind: "failed" as const,
+            error: { kind: "timeout" as const, message: "OpenShell command timed out" },
+          },
+          stdout: "",
+          stderr: "",
+        })),
+      } as OpenShellSandboxBufferedCommandExecutor,
+    });
+    const failures: unknown[] = [];
+
+    await expect(
+      executeSandboxExecCommandTransport(deps, "alpha", "id", 9000, {
+        localDockerFallbackPolicy: "never",
+        onTransportFailure: (failure) => failures.push(failure),
+      }),
+    ).resolves.toBeNull();
+    expect(failures).toEqual([{ kind: "timeout", timeoutMs: 9000 }]);
+  });
+
+  it("reports a subprocess error kind when the gateway-pinned exec fails (#11162)", async () => {
+    const deps = createDependencies({
+      commandExecutor: {
+        runBuffered: vi.fn(async () => ({
+          outcome: {
+            kind: "failed" as const,
+            error: { kind: "invocation" as const, message: "OpenShell invocation failed" },
+          },
+          stdout: "",
+          stderr: "",
+        })),
+      } as OpenShellSandboxBufferedCommandExecutor,
+    });
+    const failures: unknown[] = [];
+
+    await expect(
+      executeSandboxExecCommandTransport(deps, "alpha", "id", 9000, {
+        localDockerFallbackPolicy: "never",
+        onTransportFailure: (failure) => failures.push(failure),
+      }),
+    ).resolves.toBeNull();
+    expect(failures).toEqual([{ kind: "error", detail: "invocation" }]);
+  });
+
   it.each([
     { result: { kind: "failed", reason: "configuration" }, expected: null },
     {

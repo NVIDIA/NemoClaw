@@ -16,11 +16,14 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { isNvcfFunctionNotFoundForAccount } from "../../inference/nvcf-model-access";
 
+import type { SandboxExecCommandOptions } from "../../adapters/sandbox/command-transport";
 import {
   buildDcodeSandboxInferenceInvocationRequest,
   buildSandboxInferenceInvocationCommand,
   probeSandboxInferenceInvocation,
   READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
+  REBUILD_INFERENCE_INVOCATION_TIMEOUT_MS,
+  resolveInferenceInvocationMaxTimeSeconds,
 } from "./inference-invocation-probe";
 
 const input = {
@@ -168,6 +171,105 @@ describe("sandbox inference invocation probe", () => {
     expect(JSON.stringify(result)).not.toContain("canary-replay-marker");
   });
 
+  it("keeps curl --max-time safely inside the outer exec timeout so a slow endpoint is not killed (#11162)", () => {
+    const readinessCommand = buildSandboxInferenceInvocationCommand(
+      input,
+      READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
+    );
+    const rebuildCommand = buildSandboxInferenceInvocationCommand(
+      input,
+      REBUILD_INFERENCE_INVOCATION_TIMEOUT_MS,
+    );
+
+    const readinessMaxTime = Number(readinessCommand.match(/--max-time (\d+)/)?.[1]);
+    const rebuildMaxTime = Number(rebuildCommand.match(/--max-time (\d+)/)?.[1]);
+
+    // curl --max-time must finish (clean exit 28) before the outer timeout can
+    // SIGTERM the subprocess and collapse a slow-but-healthy endpoint into a
+    // generic "unavailable" result.
+    expect(readinessMaxTime * 1000).toBeLessThan(READINESS_INFERENCE_INVOCATION_TIMEOUT_MS);
+    expect(rebuildMaxTime * 1000).toBeLessThan(REBUILD_INFERENCE_INVOCATION_TIMEOUT_MS);
+    expect(
+      resolveInferenceInvocationMaxTimeSeconds(READINESS_INFERENCE_INVOCATION_TIMEOUT_MS),
+    ).toBe(readinessMaxTime);
+  });
+
+  it("surfaces a probe timeout when the transport reports the subprocess was killed (#11162)", async () => {
+    const execute = vi.fn(
+      async (
+        _sandbox: string,
+        _command: string,
+        _timeout?: number,
+        options?: SandboxExecCommandOptions,
+      ) => {
+        options?.onTransportFailure?.({ kind: "timeout", timeoutMs: 30_000 });
+        return null;
+      },
+    );
+
+    await expect(probeSandboxInferenceInvocation(input, { execute }, 30_000)).resolves.toEqual({
+      ok: false,
+      detail: "sandbox inference invocation probe timed out after 30s",
+      httpStatus: null,
+      endpoint: "https://inference.local/v1/chat/completions",
+    });
+  });
+
+  it("surfaces a subprocess error reason when the transport fails to spawn (#11162)", async () => {
+    const execute = vi.fn(
+      async (
+        _sandbox: string,
+        _command: string,
+        _timeout?: number,
+        options?: SandboxExecCommandOptions,
+      ) => {
+        options?.onTransportFailure?.({ kind: "error", detail: "ENOENT" });
+        return null;
+      },
+    );
+
+    await expect(probeSandboxInferenceInvocation(input, { execute })).resolves.toEqual({
+      ok: false,
+      detail: "sandbox inference invocation probe subprocess failed (ENOENT)",
+      httpStatus: null,
+      endpoint: "https://inference.local/v1/chat/completions",
+    });
+  });
+
+  it("keeps the generic unavailable detail when the transport reports no reason (#11162)", async () => {
+    const execute = vi.fn(async () => null);
+
+    await expect(probeSandboxInferenceInvocation(input, { execute })).resolves.toEqual({
+      ok: false,
+      detail: "sandbox inference invocation probe was unavailable",
+      httpStatus: null,
+      endpoint: "https://inference.local/v1/chat/completions",
+    });
+  });
+
+  it("reports a curl-level endpoint timeout (exit 28) as a timeout, not a generic exit (#11162)", async () => {
+    const execute = vi.fn(async () => ({ status: 28, stdout: "curl-error:28", stderr: "" }));
+
+    await expect(probeSandboxInferenceInvocation(input, { execute })).resolves.toEqual({
+      ok: false,
+      detail:
+        "sandbox inference invocation probe timed out waiting for the endpoint (curl exit 28)",
+      httpStatus: null,
+      endpoint: "https://inference.local/v1/chat/completions",
+    });
+  });
+
+  it("reports a non-timeout curl exit accurately (#11162)", async () => {
+    const execute = vi.fn(async () => ({ status: 7, stdout: "curl-error:7", stderr: "" }));
+
+    await expect(probeSandboxInferenceInvocation(input, { execute })).resolves.toEqual({
+      ok: false,
+      detail: "sandbox inference invocation probe could not complete the request (curl exit 7)",
+      httpStatus: null,
+      endpoint: "https://inference.local/v1/chat/completions",
+    });
+  });
+
   it("names the account entitlement cause behind an invocation 404 (#10879)", async () => {
     const execute = vi.fn(async () => ({
       status: 1,
@@ -297,7 +399,11 @@ describe("sandbox inference invocation probe", () => {
       "dcode-workspace",
       expect.any(String),
       expect.any(Number),
-      { gatewayName: "recorded-gateway", localDockerFallbackPolicy: "never" },
+      {
+        gatewayName: "recorded-gateway",
+        localDockerFallbackPolicy: "never",
+        onTransportFailure: expect.any(Function),
+      },
     );
   });
 
@@ -323,7 +429,11 @@ describe("sandbox inference invocation probe", () => {
       "hermes-workspace",
       expect.any(String),
       expect.any(Number),
-      { gatewayName: "nemoclaw-19080", localDockerFallbackPolicy: "never" },
+      {
+        gatewayName: "nemoclaw-19080",
+        localDockerFallbackPolicy: "never",
+        onTransportFailure: expect.any(Function),
+      },
     );
     expect(execute).toHaveBeenCalledOnce();
   });
@@ -401,6 +511,53 @@ describe("sandbox inference invocation probe", () => {
     ).resolves.toEqual({
       ok: false,
       detail: "sandbox inference invocation probe was unavailable",
+      httpStatus: null,
+      endpoint: "https://inference.local/v1/chat/completions",
+    });
+  });
+
+  it("surfaces a probe timeout when the Deep Agents Code launcher is killed by the outer timeout (#11162)", async () => {
+    const runBuffered = vi.fn(async () => ({
+      outcome: {
+        kind: "failed" as const,
+        error: { kind: "timeout" as const, message: "OpenShell command timed out" },
+      },
+      stdout: "",
+      stderr: "",
+    }));
+
+    await expect(
+      probeSandboxInferenceInvocation(
+        { ...input, agentName: "langchain-deepagents-code" },
+        { commandExecutor: { runBuffered } },
+        REBUILD_INFERENCE_INVOCATION_TIMEOUT_MS,
+      ),
+    ).resolves.toEqual({
+      ok: false,
+      detail: "sandbox inference invocation probe timed out after 100s",
+      httpStatus: null,
+      endpoint: "https://inference.local/v1/chat/completions",
+    });
+  });
+
+  it("surfaces a subprocess error when the Deep Agents Code launcher fails (#11162)", async () => {
+    const runBuffered = vi.fn(async () => ({
+      outcome: {
+        kind: "failed" as const,
+        error: { kind: "invocation" as const, message: "OpenShell invocation failed" },
+      },
+      stdout: "",
+      stderr: "",
+    }));
+
+    await expect(
+      probeSandboxInferenceInvocation(
+        { ...input, agentName: "langchain-deepagents-code" },
+        { commandExecutor: { runBuffered } },
+      ),
+    ).resolves.toEqual({
+      ok: false,
+      detail: "sandbox inference invocation probe subprocess failed (invocation)",
       httpStatus: null,
       endpoint: "https://inference.local/v1/chat/completions",
     });
@@ -539,9 +696,13 @@ describe("sandbox inference invocation probe", () => {
       model,
       max_tokens: maxTokens,
     });
-    expect(argv[argv.indexOf("--max-time") + 1]).toBe("90");
+    // curl's --max-time is derived from the outer timeout so it finishes before
+    // the outer kill instead of being SIGTERM-collapsed into "unavailable" (#11162).
+    expect(argv[argv.indexOf("--max-time") + 1]).toBe(
+      String(resolveInferenceInvocationMaxTimeSeconds(REBUILD_INFERENCE_INVOCATION_TIMEOUT_MS)),
+    );
     expect(Number(argv[argv.indexOf("--max-time") + 1]) * 1000).toBeLessThan(
-      READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
+      REBUILD_INFERENCE_INVOCATION_TIMEOUT_MS,
     );
   });
 
