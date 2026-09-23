@@ -66,9 +66,12 @@ Compilation alone does not qualify migration or platforms.
 The user requested a Kubernetes backend on a branch from `v1` on 2026-09-22.
 This branch accepts `runtime.provider: kubernetes` through an existing, exactly version-matched OpenShell Kubernetes gateway and preserves the SDK's lifecycle and ownership rules.
 Kubernetes requires an external gateway and external inference connections; local managed gateway and service configurations are rejected.
+On 2026-09-23, the user clarified that this path must use an existing Kubernetes cluster independently of kind and reuse the Docker path's credential-reference mechanism.
+The normal path takes the platform-owned OpenShell gateway endpoint and existing `credential.env` references; it does not create a cluster or read an ambient kubeconfig.
+Kind remains an explicitly selected local test fixture, and its endpoint, issuer, credentials, and image-loading procedure are not deployment defaults.
 A separate, explicitly invoked local installer may create one owned kind cluster and deploy the pinned upstream OpenShell chart, its Agent Sandbox prerequisite, an enforcing CNI, and a scoped development authentication fixture.
 The optional pinned CPU inference fixture and Kubernetes builds of the existing agent images may be deployed there for lifecycle and inference tests.
 Those builds must preserve private workspace permissions while matching the upstream Kubernetes driver's non-root identity.
 The SDK continues to own OpenShell resources; the platform installer owns the Kubernetes prerequisites and retains them after SDK destroy.
 This decision does not create a maintained OpenShell fork, a NemoClaw Kubernetes operator, or production and compatibility claims.
-See the [Kubernetes procedure](../kubernetes.md) for credential custody, retained state, validation, and explicit cluster cleanup.
+See the [Kubernetes procedure](../kubernetes.md) for credential custody and retained state, and the [kind test guide](../testing/kubernetes-kind.md) for local setup and explicit cluster cleanup.

@@ -9,7 +9,7 @@ use std::{fs, path::PathBuf, process::Command};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "mutates an explicitly configured owned Kubernetes gateway and invokes its model"]
-async fn owned_kind_stack_applies_invokes_exports_reapplies_and_destroys() {
+async fn owned_kubernetes_gateway_applies_invokes_exports_reapplies_and_destroys() {
     let config = PathBuf::from(
         std::env::var_os("NEMOCLAW_TEST_KUBERNETES_CONFIG").expect("explicit config required"),
     );
@@ -21,7 +21,6 @@ async fn owned_kind_stack_applies_invokes_exports_reapplies_and_destroys() {
         PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").expect("verified bundle required"));
     assert!(config.is_absolute() && state.is_absolute() && bundle.is_absolute());
     let document = Document::parse(fs::File::open(config).unwrap()).unwrap();
-    assert_eq!(document.metadata.name, "kind-agent");
     assert_eq!(document.spec.sandboxes.len(), 1);
     let sandbox = &document.spec.sandboxes[0];
     assert_eq!(sandbox.runtime.provider, ComputeDriver::Kubernetes);

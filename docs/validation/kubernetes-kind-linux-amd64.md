@@ -7,7 +7,7 @@ Recorded on 2026-09-22 for the local `codex/kubernetes-backend` changes based on
 The tested native bundle is `0.1.0-dev.e856f2ca9e76db7f` for Linux AMD64.
 The complete Kubernetes lifecycle passed with a real OpenClaw response of `FOUR` from the user's selected NVIDIA hosted model.
 The [branch scope decision](../design/scope.md#kubernetes-development-branch) permits this development profile.
-Use the [Kubernetes guide](../kubernetes.md) for setup and cleanup.
+Use the [kind test guide](../testing/kubernetes-kind.md) for local setup and cleanup and the [Kubernetes guide](../kubernetes.md) for existing clusters.
 
 ## Environment and Artifacts
 

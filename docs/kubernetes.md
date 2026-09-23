@@ -5,8 +5,9 @@
 
 Select `runtime.provider: kubernetes` to deploy an agent through an existing OpenShell Kubernetes gateway.
 The SDK retains its plan, apply, export, recovery, and destroy behavior; OpenShell creates the Kubernetes sandbox resources.
-This branch adds the Kubernetes development profile under the [branch scope decision](design/scope.md#kubernetes-development-branch).
-The [recorded kind validation](validation/kubernetes-kind-linux-amd64.md) identifies the tested artifacts, results, and limits.
+The normal path uses the gateway endpoint supplied by the cluster owner; it has no kind dependency.
+The [branch scope decision](design/scope.md#kubernetes-development-branch) separates this deployment path from the optional [local kind test fixture](testing/kubernetes-kind.md).
+The [recorded validation](validation/kubernetes-kind-linux-amd64.md) covers Linux AMD64 on kind; other cluster environments still need their own validation.
 
 ## Ownership and Boundaries
 
@@ -14,20 +15,39 @@ The gateway must report the exact OpenShell version in [versions.json](../versio
 Every sandbox using that gateway must select Kubernetes.
 Use `gateway.management: external` and inference provider `endpoint` connections.
 Kubernetes configurations reject the local managed gateway and `spec.services` because those installers target Docker or Podman.
-The local stack installer below owns Kubernetes platform resources separately from the SDK's agent deployment state.
-It does not add a Kubernetes operator or change the behavior of Docker and Podman configurations.
+The platform owner installs OpenShell and the Kubernetes prerequisites separately from the SDK's agent deployment state.
 
 | Owner | Resources |
 |---|---|
-| Local development stack tool | One dedicated kind cluster, enforcing CNI, Agent Sandbox prerequisite, upstream OpenShell release, and local authentication fixture |
+| Platform owner | Kubernetes cluster, networking, storage, Agent Sandbox prerequisite, upstream OpenShell release, gateway authentication, and registry access |
 | OpenShell and Agent Sandbox | Sandbox workloads, their supervisor, native policy, and workspace resources |
 | NemoClaw SDK and OpenTofu | OpenShell workspace, provider definitions, sandbox bindings, runtime configuration, and readiness observations |
-| Optional CPU model fixture | Ollama workload, Service, model PVC, and network policy in the dedicated cluster |
 
 Ordinary apply still refuses sandbox removal or replacement and does not adopt missing or substituted bindings.
 Destroy removes the agent deployment's workloads and retains the OpenShell workspace; it does not uninstall the gateway or destroy the cluster.
-Deleting the kind cluster also deletes its local persistent volumes and every sandbox in it.
-This development profile establishes no production, high-availability, GPU-service, or broad Kubernetes compatibility claim.
+Selecting Kubernetes does not certify a cluster distribution, storage driver, network implementation, or admission policy.
+
+## Cluster Prerequisites
+
+Before applying, the platform owner must provide:
+
+- A reachable OpenShell HTTPS gateway at the exact version in [versions.json](../versions.json), configured with the Kubernetes compute driver and its required permissions.
+- The upstream Agent Sandbox controller and resources required by that gateway; the local validation used version `0.5.0`.
+- Storage and scheduling capacity for the gateway, supervisors, and sandbox workspaces, with a workspace storage mode suitable for the cluster's nodes.
+- Cluster networking that enforces the gateway's ingress and egress NetworkPolicies and permits supervisor Pods to reach DNS, the gateway, and declared inference endpoints while preserving the workload Pods' direct-egress fence.
+- Gateway trust, a valid OpenShell bearer token, and client certificate files for the mutual TLS connection shown in the examples.
+- Immutable agent images available to the target Linux nodes and compatible with their architecture, kernel isolation features, the gateway's runtime UID/GID, and the cluster's admission policy.
+
+Check the pinned OpenShell [cluster runtime requirements](https://github.com/NVIDIA/OpenShell/blob/1fe79f53991debf32776853a60f0cbd4e127dcfb/docs/kubernetes/sandbox-runtime.mdx#check-cluster-requirements).
+They include unprivileged nested seccomp user notification, usable Landlock, Pod scheduling gates, and the safe `net.ipv4.ip_unprivileged_port_start=0` sysctl.
+The platform owner must control sandbox namespaces and OpenShell role labels to preserve network isolation.
+
+Build the agent image from this revision using [the agent image procedure](build.md#build-agent-images).
+The `openclaw-kubernetes` target matches the pinned gateway's UID and GID `10001` and private sandbox directory permissions.
+Supply a registry reference reachable by the cluster; a digest in a client machine's Docker store is insufficient.
+The platform owner provides any registry pull credentials separately from gateway and inference credentials.
+Cluster-specific OpenShell installation, ingress, storage, and identity-provider configuration remain platform responsibilities.
+The platform owner also configures and retains the gateway's credential encryption key and backing storage.
 
 ## Use an Existing Gateway
 
@@ -39,9 +59,54 @@ The bearer token authenticates the user; a client TLS certificate alone is insuf
 Credential values stay outside the configuration.
 
 The selected gateway owns sandbox placement; selecting Kubernetes does not read an ambient kubeconfig or contact the Docker socket.
-Run the usual [plan and apply commands](usage.md) with a separate state directory for the deployment.
+Use a [verified native bundle](build.md) with its `bin` directory on `PATH`.
+Keep the adapted YAML outside the checkout alongside its private deployment state.
+After supplying the credentials described below, run from the directory containing `deployment.yaml`:
+
+```sh
+nemoclaw plan --state-dir ./state deployment.yaml
+nemoclaw apply --state-dir ./state deployment.yaml
+nemoclaw export --state-dir ./state --output exported.yaml
+```
+
+Plan observes the gateway; apply creates the declared OpenShell resources; export records observed configuration.
+Keep the same UID, bundle, and state directory for subsequent operations.
+On failure, retain them and follow [interrupted-operation recovery](usage.md#recover-an-interrupted-operation).
 No-op apply still checks runtime health.
 An application-health result does not establish a successful model response.
+
+### Supply Credentials as on Docker
+
+Kubernetes uses the same `credential: {env: VARIABLE_NAME}` mechanism as Docker and Podman.
+The caller supplies environment values to the NemoClaw CLI or SDK process and its provider subprocess; the YAML contains only references.
+The [Docker NVIDIA fixture](../crates/nemoclaw-e2e/fixtures/openclaw-nvidia-hosted/v1.yaml) and the Kubernetes hosted example both select `NVIDIA_INFERENCE_API_KEY`.
+The [Docker Brev workflow](../.github/workflows/brev.yml) injects that variable from its repository secret named `NVIDIA_API_KEY`.
+
+| Example reference | Value supplied to the client process |
+|---|---|
+| `gateway.credential.env: GATEWAY_TOKEN` | OpenShell bearer token issued by the platform's configured identity provider |
+| `gateway.tls.ca.env: GATEWAY_CA` | Local path to the gateway CA certificate file |
+| `gateway.tls.certificate.env: GATEWAY_CERT` | Local path to the client certificate file |
+| `gateway.tls.key.env: GATEWAY_KEY` | Local path to the client private-key file |
+| `inferenceProviders[].credential.env: NVIDIA_INFERENCE_API_KEY` | NVIDIA hosted API key |
+
+The gateway variable names are examples, not reserved SDK settings.
+The managed Docker fixture uses a local loopback gateway and does not declare these external-gateway credentials; its hosted inference credential uses the same reference mechanism.
+A Kubernetes service-account token is not automatically an OpenShell bearer token.
+See [credential ownership](usage.md#configuration-and-credentials) for storage, access, removal, and rotation limits.
+
+For automated deployments, inject the same values through the CI runner's secret store or an operator-managed secret manager.
+If the client runs inside Kubernetes, use [Secret-backed environment variables](https://kubernetes.io/docs/tasks/inject-data-application/distribute-credentials-secure/#define-container-environment-variables-using-secret-data) for the bearer token and inference key, and read-only Secret volumes for TLS files.
+Set the TLS environment variables to the mounted file paths, not to PEM contents.
+This is configuration of the client Pod; `secretKeyRef` is not a NemoClaw YAML field, and the SDK does not read Kubernetes Secrets directly.
+Restrict access to these Secrets and enable storage encryption through the platform's [Secret controls](https://kubernetes.io/docs/concepts/security/secrets-good-practices/).
+
+A Secret update does not refresh an existing Pod's environment; recreate the client Pod before the next operation when using Secret-backed environment variables.
+The gateway token is read when the connection is created, and the SDK does not refresh it automatically.
+Changing an inference key's value under the same environment reference does not trigger an update of OpenShell's registered provider credential.
+For an already authenticated provider, supply the new key through a new environment variable, update its `credential.env`, then review the plan and apply with the same deployment state.
+Keep its provider name and endpoint unchanged; this updates the registered credential in place.
+Verify inference before revoking the old upstream key.
 
 ### Deploy Multiple Agents
 
@@ -60,156 +125,23 @@ The examples are checked by the schema and parser; the [recorded live validation
 
 The [Kubernetes hosted NVIDIA example](../examples/kubernetes/hosted-nvidia.yaml) preserves the inference provider, API, model, and credential reference from the [Docker hosted fixture](../crates/nemoclaw-e2e/fixtures/openclaw-nvidia-hosted/v1.yaml) and shares that profile across three agents.
 It uses `https://integrate.api.nvidia.com/v1`, model `nvidia/nemotron-3-super-120b-a12b`, API `openai-completions`, and credential environment variable `NVIDIA_INFERENCE_API_KEY`.
-The Docker Brev workflow supplies that variable from its repository secret named `NVIDIA_API_KEY`; the secret's value is not present in the fixture.
 For Kubernetes, supply a fresh deployment UID, the external gateway connection, and the Kubernetes agent image, and keep the process UID and GID at `10001`.
 Provide the referenced credential privately in the client process environment before plan or apply.
 OpenShell stores the supplied provider credential; destroy removes its registration but does not revoke the upstream API key.
 Unset the local variable after use and retire the key separately when it is no longer needed.
-The local Ollama fixture is not needed for this profile.
 The [recorded live test](validation/kubernetes-kind-linux-amd64.md#observed-results) passed with the same endpoint and API using the user-selected Ultra model; the example keeps the Docker fixture's Super model for comparison.
 
-## Create an Isolated kind Stack
+## Validate and Retire a Deployment
 
-Run the following commands from the repository root on a Linux AMD64 development host.
-Install Python 3.12 or newer, OpenSSL, Docker with Buildx, kind, kubectl, and Helm before starting.
-The helper uses existing noninteractive sudo only when the current user cannot access Docker; it does not change groups, socket permissions, host packages, drivers, or kernel settings.
-Build the [native bundle](build.md#build-a-native-bundle) before running NemoClaw.
+Use [headless OpenClaw invocation](agents.md#run-one-headless-openclaw-request) to verify an actual model response separately from apply.
+For a disposable single-agent deployment, the opt-in [Kubernetes lifecycle test](testing/live.md#kubernetes) checks apply, a model response, export, unchanged reapply, and destroy through the supplied gateway.
+It does not create or delete a cluster.
 
-The helper downloads checksum-verified upstream sources and digest-selected images from [sources.json](../tools/kubernetes/sources.json) and [versions.json](../versions.json).
-Additional fixture image pins are defined in the [local issuer](../tools/kubernetes/auth.py) and [CPU model](../tools/kubernetes/model.py) helpers.
-It installs the upstream OpenShell chart without editing or maintaining a chart fork.
-It creates one randomly named `nemoclaw-v1-` cluster with a private kubeconfig outside the checkout and never changes the user's current context.
-Subsequent operations verify the saved node IDs, API endpoint, CA, context, and Kubernetes namespace identity before accessing the cluster.
-An identity mismatch stops the operation.
+To remove all agents and owned provider registrations in the deployment, run from the directory containing its original state:
 
 ```sh
-python3 tools/kubernetes/stack.py preflight
-python3 tools/kubernetes/stack.py render
-python3 tools/kubernetes/stack.py deploy
-python3 tools/kubernetes/stack.py verify
+nemoclaw destroy --state-dir ./state
 ```
 
-The default private state directory is `$HOME/.local/state/nemoclaw/kubernetes-dev` with mode `0700`.
-Use the same explicit `--state-dir` on every command if changing it.
-Private certificate files, token material, kubeconfig, and generated deployment inputs remain there with mode `0600`.
-Do not copy them into the repository or publish them with test results.
-The authentication fixture is for this disposable cluster only; its signing material must never be trusted by another gateway.
-The JWT signing key stays in private operator state; the issuer Pod receives public verification metadata and a separate TLS key.
-The upstream chart supplies the fixture CA through the gateway process's `SSL_CERT_FILE` setting, which affects outbound TLS trust beyond OIDC requests.
-This setting does not change host trust or the SDK's gateway TLS configuration.
-
-The installer checks both ingress and egress enforcement using a healthy connection, a deny policy, and restored connectivity.
-Keep TLS and user authentication enabled.
-In a second terminal, start the loopback gateway connection:
-
-```sh
-python3 tools/kubernetes/stack.py connect
-```
-
-Keep that process running during SDK operations.
-In the client terminal, load the local connection references:
-
-```sh
-. "$HOME/.local/state/nemoclaw/kubernetes-dev/environment.env"
-```
-
-The environment supplies certificate-file paths and a local development bearer token that expires after one hour.
-This token grants administrative access to the isolated gateway with config, provider, sandbox, and workspace read/write scopes.
-The shell and its child processes can read that credential.
-Remove those variables and delete the dedicated cluster's private credential files when retiring the stack.
-
-Before the token expires, renew it and reload the environment:
-
-```sh
-python3 tools/kubernetes/auth.py renew
-. "$HOME/.local/state/nemoclaw/kubernetes-dev/environment.env"
-```
-
-The issuer TLS certificates expire after seven days.
-Renewal refuses certificates with less than one hour remaining and does not rotate keys or trust automatically.
-Retire the stack and create a fresh one with a new private state directory when its certificates expire.
-
-## Run a Local Agent and CPU Model
-
-The Docker image store must retain repository digests for local builds, as described in [agent image prerequisites](build.md#build-agent-images).
-If Docker requires sudo, run the build command with `sudo -n env AGENT_PLATFORM=linux/amd64 IMAGE_PREFIX=nc-kubernetes-dev docker buildx bake openclaw-kubernetes --load` and prefix the inspect command with `sudo -n`.
-Build the AMD64 OpenClaw Kubernetes target and load it into the owned kind cluster.
-This target uses UID and GID `10001` for the sandbox runtime and retains mode `0700` on its sandbox directory.
-The existing Docker and Podman image targets retain their original identity.
-
-```sh
-AGENT_PLATFORM=linux/amd64 IMAGE_PREFIX=nc-kubernetes-dev \
-  docker buildx bake openclaw-kubernetes --load
-python3 tools/kubernetes/stack.py load-image --image nc-kubernetes-dev:openclaw-kubernetes
-docker image inspect nc-kubernetes-dev:openclaw-kubernetes --format '{{index .RepoDigests 0}}'
-```
-
-Use the printed immutable reference in the configuration command below.
-Local image loading does not publish an image.
-The optional CPU fixture downloads the official [Qwen3 4B Instruct 2507 Q4_K_M model](https://ollama.com/library/qwen3:4b-instruct-2507-q4_K_M) into its PVC and grants serving ingress only after its manifest matches the full SHA-256 pin in [model.py](../tools/kubernetes/model.py).
-It requests 2 CPUs and `8Gi` memory, with limits of 8 CPUs and `16Gi`, a `6Gi` model PVC, and a 32,768-token context matching the OpenClaw adapter.
-The model runner uses 8 inference threads to match its CPU limit; automatic thread selection can oversubscribe the Pod's quota on large hosts.
-The context must accommodate OpenClaw's system and tool instructions as well as the user's request and model response.
-Allow that capacity in addition to the gateway, cluster services, and agent workload.
-The model snapshot contains about 2.5 GB of blobs; the larger PVC leaves room for downloads and metadata.
-Its outbound access is removed after model acquisition, including on failure.
-It exercises inference routing on CPU and does not qualify the managed GPU installers.
-
-```sh
-python3 tools/kubernetes/model.py deploy
-python3 tools/kubernetes/model.py configuration \
-  --agent-image repository@sha256:YOUR_IMAGE_DIGEST
-```
-
-The second command creates `deployment.json` in the private stack directory.
-JSON is accepted by the YAML parser.
-The command refuses to overwrite existing desired state so its deployment UID cannot change accidentally.
-Keep the file and its state directory together for later operations.
-Choose either the manual commands below or the live lifecycle test in the next section for this deployment UID.
-
-```sh
-dist/linux_amd64/bin/nemoclaw \
-  --state-dir "$HOME/.local/state/nemoclaw/kubernetes-dev/agent-state" \
-  plan --non-interactive "$HOME/.local/state/nemoclaw/kubernetes-dev/deployment.json"
-dist/linux_amd64/bin/nemoclaw \
-  --state-dir "$HOME/.local/state/nemoclaw/kubernetes-dev/agent-state" \
-  apply --non-interactive "$HOME/.local/state/nemoclaw/kubernetes-dev/deployment.json"
-```
-
-On failure, retain the private stack and deployment state and correct the reported prerequisite before retrying.
-Do not delete the SDK state to bypass an identity conflict.
-After a lost creation response, follow [interrupted-operation recovery](usage.md#recover-an-interrupted-operation).
-
-## Validate and Retire the Stack
-
-Run deterministic tooling tests without contacting a cluster:
-
-```sh
-python3 -m unittest discover -s tools/kubernetes -p 'test_*.py'
-```
-
-The [Kubernetes protocol tests](../crates/nemoclaw-e2e/tests/kubernetes.rs) require `NEMOCLAW_TEST_BUNDLE` and use an isolated gateway fixture.
-The [live lifecycle test](../crates/nemoclaw-e2e/tests/kubernetes_live.rs) additionally requires explicit absolute `NEMOCLAW_TEST_KUBERNETES_CONFIG` and `NEMOCLAW_TEST_KUBERNETES_STATE` paths.
-The state directory must not exist before the test and its parent must be private.
-The live test creates an OpenClaw sandbox, invokes the model, exports through the CLI, reapplies, and destroys the agent workload.
-It retains its deployment state on both success and failure.
-Use newly generated desired state that has not been applied manually or by an earlier test; a new SDK state directory must not reuse an existing deployment UID.
-Run it only against the dedicated stack created for this test:
-
-```sh
-export NEMOCLAW_TEST_BUNDLE="$PWD/dist/linux_amd64"
-export NEMOCLAW_TEST_KUBERNETES_CONFIG="$HOME/.local/state/nemoclaw/kubernetes-dev/deployment.json"
-export NEMOCLAW_TEST_KUBERNETES_STATE="$HOME/.local/state/nemoclaw/kubernetes-dev/live-test-state"
-cargo test --locked -p nemoclaw-e2e --test kubernetes_live -- --ignored
-```
-
-To retain the platform but remove a manually applied agent, use `nemoclaw destroy` with that agent's original state directory.
-To delete the entire disposable cluster and its data, supply the cluster name printed by `deploy`:
-
-```sh
-python3 tools/kubernetes/stack.py cleanup --confirm-cluster nemoclaw-v1-XXXXXXXX
-```
-
-Cleanup verifies ownership before deleting anything and removes local connection credentials after deleting the cluster.
-It leaves source caches and SDK state for inspection; those files cannot recover data deleted with the cluster.
-To create another disposable stack after cleanup, select a new private `--state-dir`; the completed ownership receipt is retained.
+The gateway, Kubernetes prerequisites, and OpenShell workspace remain under their existing owners.
+Use the separate [kind test guide](testing/kubernetes-kind.md) only when creating or retiring an isolated local test cluster.

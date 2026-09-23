@@ -9,14 +9,15 @@ metadata:
   name: kubernetes-agent
   uid: 785e7cc0-d2c1-4847-aede-a9b0ba2b8d83
 spec:
+  # Supply the existing cluster gateway; local kind setup is an optional test fixture.
   gateway:
     management: external
-    endpoint: https://127.0.0.1:17671
-    credential: {env: NEMOCLAW_K8S_TOKEN}
+    endpoint: https://openshell.example.com
+    credential: {env: GATEWAY_TOKEN}
     tls:
-      ca: {env: NEMOCLAW_K8S_CA}
-      certificate: {env: NEMOCLAW_K8S_CERT}
-      key: {env: NEMOCLAW_K8S_KEY}
+      ca: {env: GATEWAY_CA}
+      certificate: {env: GATEWAY_CERT}
+      key: {env: GATEWAY_KEY}
   inferenceProviders:
     - name: inference
       provider: openai

@@ -5,34 +5,61 @@ use nemoclaw_e2e::openshell::Fixture;
 use nemoclaw_sdk::{
     backend::Backend,
     compile::{Generations, targets},
-    config::Document,
+    config::{ComputeDriver, Document},
     openshell::{EnvironmentSecrets, OpenShell},
 };
 use std::sync::Arc;
 
 #[tokio::test]
 async fn owning_api_reconciles_lost_create_reply_and_checks_conditional_updates() {
+    for driver in [ComputeDriver::Docker, ComputeDriver::Kubernetes] {
+        provider_credentials_and_conditional_updates(driver).await;
+    }
+}
+
+async fn provider_credentials_and_conditional_updates(driver: ComputeDriver) {
     let fixture = Fixture::start().await;
+    fixture.state.lock().unwrap().driver = Some(driver.as_str().into());
     let mut document = Document::parse(
         include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
     )
     .unwrap();
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+    document.spec.sandboxes[0].runtime.provider = driver;
     struct Keys;
     impl nemoclaw_sdk::openshell::Secrets for Keys {
-        fn resolve(&self, _: &str) -> Result<String, nemoclaw_sdk::ObservationError> {
-            Ok("owned-fixture-credential".into())
+        fn resolve(&self, reference: &str) -> Result<String, nemoclaw_sdk::ObservationError> {
+            match reference {
+                "FIRST_KEY" => Ok("first-fixture-secret".into()),
+                "SECOND_KEY" => Ok("second-fixture-secret".into()),
+                _ => Err(nemoclaw_sdk::ObservationError::Authentication),
+            }
         }
     }
     document.spec.inference_providers[0].endpoint = "https://models.example/v1".into();
     document.spec.inference_providers[0].credential =
         Some(serde_json::from_value(serde_json::json!({"env":"FIRST_KEY"})).unwrap());
+    document.validate().unwrap();
     let client = OpenShell::connect(&document.spec.gateway, Arc::new(Keys)).unwrap();
+    client.verify_gateway(driver).await.unwrap();
     let generations: Generations = ["workspace", "provider", "sandbox"]
         .into_iter()
         .map(|k| (k.into(), format!("{k}-generation")))
         .collect();
     let targets = targets(&document, &generations).unwrap();
+    let mut rotated_document = document.clone();
+    rotated_document.spec.inference_providers[0]
+        .credential
+        .as_mut()
+        .unwrap()
+        .env = "SECOND_KEY".into();
+    assert_eq!(rotated_document.credential_names(), ["SECOND_KEY"]);
+    let rotated_targets = nemoclaw_sdk::compile::targets(&rotated_document, &generations).unwrap();
+    for (before, after) in targets.iter().zip(&rotated_targets) {
+        if before.kind != "provider" {
+            assert_eq!(before, after, "credential rotation changed {}", before.kind);
+        }
+    }
     let workspace = client.ensure("workspace", &targets[0].values).await;
     assert!(workspace.error().is_none());
     assert!(workspace.state().is_some());
@@ -43,6 +70,15 @@ async fn owning_api_reconciles_lost_create_reply_and_checks_conditional_updates(
             .error()
             .is_none()
     );
+    let effects = fixture.state.lock().unwrap().effects;
+    let mut missing_credential = targets[2].values.clone();
+    missing_credential.insert("credential_env".into(), "MISSING_KEY".into());
+    let missing = client.ensure("provider", &missing_credential).await;
+    assert_eq!(
+        missing.error(),
+        Some(nemoclaw_sdk::ObservationError::Authentication)
+    );
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
     fixture.state.lock().unwrap().lose_create = true;
     let first = client.ensure("provider", &targets[2].values).await;
     assert!(first.error().is_some());
@@ -51,6 +87,26 @@ async fn owning_api_reconciles_lost_create_reply_and_checks_conditional_updates(
     assert!(recovered.error().is_none());
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
     let mut provider = recovered.into_parts().0.unwrap();
+    assert!(
+        provider
+            .values()
+            .all(|value| !value.contains("fixture-secret"))
+    );
+    assert_eq!(
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .providers
+            .values()
+            .next()
+            .unwrap()
+            .credentials
+            .values()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["first-fixture-secret"]
+    );
     let id = provider["id"].clone();
     let mut changed_endpoint = provider.clone();
     changed_endpoint.insert("endpoint".into(), "https://changed.example/v1".into());
@@ -68,6 +124,21 @@ async fn owning_api_reconciles_lost_create_reply_and_checks_conditional_updates(
     assert!(updated.error().is_none());
     assert_eq!(updated.into_parts().0.unwrap()["id"], id);
     assert_eq!(fixture.state.lock().unwrap().conditional_updates, 1);
+    assert_eq!(
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .providers
+            .values()
+            .next()
+            .unwrap()
+            .credentials
+            .values()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["second-fixture-secret"]
+    );
     fixture.state.lock().unwrap().fail_read = Some(("provider", tonic::Code::Unauthenticated));
     let error = client.read("provider", &provider, false).await.unwrap_err();
     assert!(!error.to_string().contains("secret"));

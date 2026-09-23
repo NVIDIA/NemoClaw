@@ -9,6 +9,32 @@ Read each test’s lifecycle effects before running it.
 
 Do not run all ignored tests against a shared deployment.
 
+## Kubernetes
+
+The [Kubernetes lifecycle test](../../crates/nemoclaw-e2e/tests/kubernetes_live.rs) uses an explicitly supplied OpenShell Kubernetes gateway on a cluster owned by the test operator.
+It does not create a cluster and does not require kind, kubectl, a kubeconfig, or a Docker daemon on the client.
+Use the [existing-cluster prerequisites](../kubernetes.md#cluster-prerequisites) or the optional [local kind fixture](kubernetes-kind.md) to prepare the platform.
+
+Provide one OpenClaw sandbox with `runtime.provider: kubernetes`, an explicit immutable image, an external gateway and inference endpoint, a fresh deployment UID, and a new absolute state-directory path whose parent exists and is private.
+The deployment name is arbitrary; when adapting a multi-agent example, retain exactly one sandbox for this test.
+Supply the YAML's credential environment references to the test process using the [shared credential mechanism](../kubernetes.md#supply-credentials-as-on-docker).
+The test creates the sandbox and provider registrations, invokes the model, exports through the CLI, requires an unchanged reapply, and destroys the owned workload on success.
+It makes a real model request and may incur provider charges.
+The gateway, cluster, OpenShell workspace, and SDK state remain; failures retain resources and state for explicit recovery.
+
+From the repository root, using a verified bundle built from the same source:
+
+```sh
+NEMOCLAW_TEST_BUNDLE=/absolute/path/to/immutable/bundle \
+NEMOCLAW_TEST_KUBERNETES_CONFIG=/absolute/path/to/owned-deployment.yaml \
+NEMOCLAW_TEST_KUBERNETES_STATE=/absolute/path/to/new-state \
+  cargo test --locked -p nemoclaw-e2e --test kubernetes_live \
+    owned_kubernetes_gateway_applies_invokes_exports_reapplies_and_destroys -- --ignored --exact
+```
+
+Do not reuse a deployment UID that was applied manually or by another test with a new state directory.
+The [recorded live results](../validation/kubernetes-kind-linux-amd64.md) cover the local kind profile only.
+
 ## Dependency Upgrade Test
 
 Before accepting an OpenShell or Fabric/image upgrade, use the small `dependency_upgrade_survives_apply_process_exit` test.

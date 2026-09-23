@@ -4,7 +4,7 @@ use nemoclaw_e2e::openshell::Fixture;
 use nemoclaw_sdk::{
     ObservationError,
     backend::Backend,
-    config::{Credential, Gateway, TLS},
+    config::{ComputeDriver, Credential, Document, Gateway, TLS},
     openshell::{OpenShell, Secrets},
 };
 use rcgen::{
@@ -41,6 +41,12 @@ fn leaf(issuer: &Issuer<'_, KeyPair>, usage: ExtendedKeyUsagePurpose) -> (String
 }
 #[tokio::test]
 async fn mutual_tls_and_bearer_references_fail_closed_without_disclosing_credentials() {
+    for driver in [ComputeDriver::Docker, ComputeDriver::Kubernetes] {
+        authenticated_gateway(driver).await;
+    }
+}
+
+async fn authenticated_gateway(driver: ComputeDriver) {
     let (ca, issuer) = authority();
     let (server, key) = leaf(&issuer, ExtendedKeyUsagePurpose::ServerAuth);
     let fixture = Fixture::start_with_tls(Some(
@@ -50,6 +56,7 @@ async fn mutual_tls_and_bearer_references_fail_closed_without_disclosing_credent
     ))
     .await;
     fixture.state.lock().unwrap().expected_bearer = Some("Bearer secret-sentinel".into());
+    fixture.state.lock().unwrap().driver = Some(driver.as_str().into());
     let (client, key) = leaf(&issuer, ExtendedKeyUsagePurpose::ClientAuth);
     let directory = tempfile::tempdir().unwrap();
     let mut values = BTreeMap::new();
@@ -69,21 +76,41 @@ async fn mutual_tls_and_bearer_references_fail_closed_without_disclosing_credent
             key: reference("KEY"),
         }),
     });
+    let mut document = Document::parse(
+        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+    )
+    .unwrap();
+    document.spec.gateway = gateway;
+    document.spec.sandboxes[0].runtime.provider = driver;
+    document.validate().unwrap();
+    assert_eq!(document.credential_names(), ["CA", "CERT", "KEY", "TOKEN"]);
+    let gateway = &document.spec.gateway;
     let desired = [
         ("name".into(), "workspace".into()),
         ("owner".into(), "owner".into()),
         ("generation".into(), "generation".into()),
     ]
     .into();
-    let valid = OpenShell::connect(&gateway, Arc::new(Values(values.clone()))).unwrap();
+    let valid = OpenShell::connect(gateway, Arc::new(Values(values.clone()))).unwrap();
+    valid.verify_gateway(driver).await.unwrap();
     let established = valid.ensure("workspace", &desired).await;
     assert!(established.error().is_none(), "{:?}", established.error());
     let binding = established.into_parts().0.unwrap();
-    for failure in ["bearer", "server trust", "client trust", "missing key"] {
+    for failure in [
+        "bearer",
+        "missing bearer",
+        "server trust",
+        "client trust",
+        "missing key reference",
+        "missing key file",
+    ] {
         let mut altered = values.clone();
         match failure {
             "bearer" => {
                 altered.insert("TOKEN".into(), "wrong-secret-sentinel".into());
+            }
+            "missing bearer" => {
+                altered.remove("TOKEN");
             }
             "server trust" => {
                 let path = directory.path().join("wrong-ca");
@@ -99,6 +126,9 @@ async fn mutual_tls_and_bearer_references_fail_closed_without_disclosing_credent
                     altered.insert(name.into(), path.to_str().unwrap().into());
                 }
             }
+            "missing key reference" => {
+                altered.remove("KEY");
+            }
             _ => {
                 altered.insert(
                     "KEY".into(),
@@ -106,8 +136,8 @@ async fn mutual_tls_and_bearer_references_fail_closed_without_disclosing_credent
                 );
             }
         }
-        let result = match OpenShell::connect(&gateway, Arc::new(Values(altered))) {
-            Ok(client) => client.read("workspace", &binding, false).await.map(|_| ()),
+        let result = match OpenShell::connect(gateway, Arc::new(Values(altered))) {
+            Ok(client) => client.gateway_capabilities().await.map(|_| ()),
             Err(error) => Err(error),
         };
         let error = result.expect_err(failure);

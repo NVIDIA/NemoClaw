@@ -10,14 +10,15 @@ metadata:
   name: kubernetes-hosted-nvidia
   uid: ab7d47cd-5466-4ae0-abfc-69155b4e07f2
 spec:
+  # Supply the existing cluster gateway; local kind setup is an optional test fixture.
   gateway:
     management: external
-    endpoint: https://127.0.0.1:17671
-    credential: {env: NEMOCLAW_K8S_TOKEN}
+    endpoint: https://openshell.example.com
+    credential: {env: GATEWAY_TOKEN}
     tls:
-      ca: {env: NEMOCLAW_K8S_CA}
-      certificate: {env: NEMOCLAW_K8S_CERT}
-      key: {env: NEMOCLAW_K8S_KEY}
+      ca: {env: GATEWAY_CA}
+      certificate: {env: GATEWAY_CERT}
+      key: {env: GATEWAY_KEY}
   inferenceProviders:
     - name: hosted-nvidia-prod
       provider: openai

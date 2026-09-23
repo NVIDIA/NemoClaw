@@ -24,7 +24,7 @@ Use the [validation matrix](validation/README.md) to distinguish tested configur
 |---|---|
 | Build the CLI bundle and runtime images | [Build local artifacts](build.md) |
 | Configure, apply, export, recover, and destroy a deployment | [Use desired state](usage.md) |
-| Use the Kubernetes driver and an isolated kind development stack | [Kubernetes backend](kubernetes.md) |
+| Deploy through an existing Kubernetes gateway | [Kubernetes backend](kubernetes.md) |
 | Choose inline configuration or shared definitions | [Definitions and references](configuration-references.md) |
 | Locate deployment state and understand backup limits | [Deployment state](state.md) |
 | Diagnose a failed operation | [Troubleshooting](troubleshooting.md) |
@@ -60,6 +60,7 @@ Use the [validation matrix](validation/README.md) to distinguish tested configur
 | Run workspace checks and collect coverage | [Tests](testing.md) |
 | Exercise OpenTofu and bundles with local fixtures | [Run integration tests](testing/fixtures.md) |
 | Test explicitly owned live resources | [Run live tests](testing/live.md) |
+| Create a disposable local Kubernetes test cluster | [kind test fixture](testing/kubernetes-kind.md) |
 | Inspect retained results and their limits | [Recorded test results](validation/README.md) |
 | Write or reorganize documentation | [Contribute documentation](CONTRIBUTING.md) |
 | Validate, preview, or publish the v1 site | [Documentation build](AUTOMATION.md) |
