@@ -509,7 +509,10 @@
       ],
       "fast": [
         "src/lib/adapters/config/live-export-source-ollama.test.ts",
+        "src/lib/adapters/config/live-export-source-vllm.test.ts",
         "src/lib/domain/config/export-document.test.ts",
+        "src/lib/inference/local-model-profile/cleanup.test.ts",
+        "src/lib/inference/serving/vllm-export-runtime.test.ts",
         "test/e2e/support/gpu-e2e-helpers.test.ts",
         "test/e2e/support/hermes-cli-adapter-live.test.ts",
         "test/e2e/support/runtime-provider-fixture.test.ts",
