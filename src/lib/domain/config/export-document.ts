@@ -241,7 +241,6 @@ function exportSandbox(source: VerifiedExportSource, providerName: string): V1Al
         }
       : {
           ...sandboxBase,
-          image: null,
           harness: { kind: source.agent, ...agentSettings(source) },
           agent: exportAgent(source, providerName, { name: "primary", primary: true }),
         };
