@@ -394,6 +394,7 @@ describe("report-backed runtime readiness (#7411)", () => {
       dockerCredsStore: "desktop",
       dockerCredsStorePath: "~/.docker/config.json",
     };
+
     expect(() =>
       assertOnboardHostReadiness(host, null, {
         explicitlyOptedOutGpuPassthrough: false,
@@ -1186,7 +1187,7 @@ describe("readiness-gated runtime preflight", () => {
     expect(selectDefaultOllamaModel(["qwen3.5:9b", "qwen3.6:35b"], gpu)).toBe("qwen3.5:9b");
   });
 
-  it("marks WSL GPU passthrough absent when provider rows do not match the host (#12073)", async () => {
+  it("preserves a rejected bounded WSL GPU proof as an absent readiness capability (#7411, #12073)", async () => {
     const { gpu, readinessReport } = await runRealProviderPreflight(
       ACCEPTED_N1X_GPU_NAME,
       false,
@@ -1198,33 +1199,7 @@ describe("readiness-gated runtime preflight", () => {
       id: "host.platform.wsl_gpu_passthrough",
       state: "absent",
     });
-  });
-
-  it("preserves a failed bounded WSL GPU proof as an absent readiness capability (#7411)", async () => {
-    const detectGpu = vi.fn((deps?: DetectGpuDeps): GpuDetection | null => {
-      deps?.proveArm64ContainerGpu !== null &&
-        deps?.onContainerGpuProof?.({ providerId: "docker", passed: false });
-      return null;
-    });
-
-    const result = await runReadinessGatedRuntimePreflight(
-      {},
-      {
-        nonInteractive: true,
-        collectGatewayReadiness: async () => collectedGatewayReadiness(),
-        assessHost: wslDockerDesktopHost,
-        detectGpu,
-        warnIfHostProxyMissesLoopback: vi.fn(),
-        assertRuntimeProviderHealthy: vi.fn(),
-        validateSandboxGpuPreflight: vi.fn(),
-      },
-    );
-
-    expect(result.readinessReport.capabilities).toContainEqual({
-      id: "host.platform.wsl_gpu_passthrough",
-      state: "absent",
-    });
-    expect(result.readinessReport.findings).toContainEqual(
+    expect(readinessReport.findings).toContainEqual(
       expect.objectContaining({ id: "host.platform.wsl_gpu_passthrough_unavailable" }),
     );
   });

@@ -170,31 +170,6 @@ export type InstallerLegacyForwardRetirementSummary = Readonly<{
   skipped: number;
 }>;
 
-function resolveSandboxForwardPortsFromAuthority(
-  sandboxName: string,
-  sandbox: NonNullable<ReturnType<typeof registry.getSandbox>>,
-  agent: SandboxPortAgent,
-  primaryPort: number,
-  hermesDashboardPort: number | null,
-): number[] {
-  const ports = new Set<number>([primaryPort]);
-  if (isValidPort(hermesDashboardPort)) ports.add(hermesDashboardPort);
-  const messagingForward = getSandboxMessagingHostForward(sandboxName, sandbox);
-  if (messagingForward) ports.add(messagingForward.port);
-  for (const port of resolveDeclaredAgentForwardPorts(
-    sandbox,
-    primaryPort,
-    agent,
-    hermesDashboardPort,
-  )) {
-    ports.add(port);
-  }
-  return [
-    primaryPort,
-    ...[...ports].filter((port) => port !== primaryPort).sort((first, second) => first - second),
-  ];
-}
-
 function registeredLegacyForwardIdentities(
   sandboxName: string,
   sandbox: NonNullable<ReturnType<typeof registry.getSandbox>>,
@@ -207,18 +182,26 @@ function registeredLegacyForwardIdentities(
     sandbox.hermesDashboardEnabled === true && isValidPort(sandbox.hermesDashboardPort)
       ? sandbox.hermesDashboardPort
       : null;
-  const ports = resolveSandboxForwardPortsFromAuthority(
-    sandboxName,
+  const ports = new Set<number>([primaryPort]);
+  if (hermesDashboardPort !== null) ports.add(hermesDashboardPort);
+  const messagingForward = getSandboxMessagingHostForward(sandboxName, sandbox);
+  if (messagingForward) ports.add(messagingForward.port);
+  for (const port of resolveDeclaredAgentForwardPorts(
     sandbox,
-    registeredAgent,
     primaryPort,
+    registeredAgent,
     hermesDashboardPort,
-  );
+  )) {
+    ports.add(port);
+  }
   const primaryBind = resolveDashboardForwardBind(sandbox, {
     requestedBind: process.env.NEMOCLAW_DASHBOARD_BIND,
     wsl: isWsl(),
   });
-  return ports.map((port) =>
+  return [
+    primaryPort,
+    ...[...ports].filter((port) => port !== primaryPort).sort((first, second) => first - second),
+  ].map((port) =>
     sandboxForwardIdentity(
       runtime,
       sandboxName,
@@ -1036,14 +1019,20 @@ function resolveSandboxLaunchForwardPortsFromAuthority(
 ): number[] {
   if (agent && !agentRuntime.hasGatewayRuntime(agent)) return [];
 
+  const requiredPorts = new Set<number>([primaryPort]);
   const hermesDashboard = getHermesDashboardRecoveryConfig(sandboxName, () => sandbox);
-  return resolveSandboxForwardPortsFromAuthority(
-    sandboxName,
+  if (hermesDashboard) requiredPorts.add(hermesDashboard.publicPort);
+  const messagingForward = getSandboxMessagingHostForward(sandboxName, sandbox);
+  if (messagingForward) requiredPorts.add(messagingForward.port);
+  for (const port of resolveDeclaredAgentForwardPorts(
     sandbox,
-    agent,
     primaryPort,
+    agent,
     hermesDashboard?.publicPort ?? null,
-  );
+  )) {
+    requiredPorts.add(port);
+  }
+  return [...requiredPorts];
 }
 
 /** Resolve the complete forward set used by launch-readiness health. */

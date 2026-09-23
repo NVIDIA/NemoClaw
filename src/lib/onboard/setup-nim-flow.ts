@@ -3,7 +3,6 @@
 
 import type { AgentDefinition } from "../agent/defs";
 import {
-  OPENROUTER_CLOUD_MODEL_OPTIONS,
   resolveAgentDefaultCloudModel,
   resolveAgentProviderInferenceApi,
 } from "../inference/config";
@@ -904,12 +903,7 @@ export function createSetupNim(
       defaultModel: resolveAgentDefaultCloudModel(agent),
       writeLine: deps.log,
     });
-    const openRouterFeaturedModels = deps.createNvidiaFeaturedModelSession({
-      defaultModel: resolveAgentDefaultCloudModel(agent),
-      fallbackModelOptions: OPENROUTER_CLOUD_MODEL_OPTIONS,
-      retiredModelIds: [],
-      writeLine: deps.log,
-    });
+    const openRouterFeaturedModels = nvidiaFeaturedModels;
     const createSelectionState = (): SetupNimSelectionState => {
       const state: SetupNimSelectionState = {
         model,

@@ -197,11 +197,17 @@ describe("OpenClaw Discord pairing helper contracts", () => {
     expect(approveCommand).not.toContain('"abc$(touch /tmp/e2e-should-not-run)"');
   });
 
-  it("loads the managed OpenClaw package without starting a child shell", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-runtime-managed-root-"));
+  it("finds the active OpenClaw package when shell startup shadows openclaw with a function", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-runtime-shadowed-"));
     try {
       const packageRoot = path.join(tmp, "openclaw-package");
+      const packageBin = path.join(packageRoot, "bin");
+      const pathBin = path.join(tmp, "path-bin");
+      const home = path.join(tmp, "home");
       const runtimeDir = path.join(packageRoot, "dist/plugin-sdk");
+      fs.mkdirSync(packageBin, { recursive: true });
+      fs.mkdirSync(pathBin, { recursive: true });
+      fs.mkdirSync(home, { recursive: true });
       fs.mkdirSync(runtimeDir, { recursive: true });
       fs.writeFileSync(
         path.join(packageRoot, "package.json"),
@@ -211,12 +217,20 @@ describe("OpenClaw Discord pairing helper contracts", () => {
         path.join(runtimeDir, "conversation-runtime.js"),
         "export const issuePairingChallenge = () => true;\n",
       );
+      fs.writeFileSync(path.join(packageBin, "openclaw"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      fs.symlinkSync(path.join(packageBin, "openclaw"), path.join(pathBin, "openclaw"));
+      fs.writeFileSync(
+        path.join(home, ".bashrc"),
+        "openclaw() { echo shadowed-shell-function; }\nexport -f openclaw\n",
+      );
+
       const result = spawnSync(process.execPath, ["--input-type=module"], {
         input: `${LOAD_CONVERSATION_RUNTIME_SOURCE}\nconst runtime = await loadConversationRuntime();\nconsole.log(typeof runtime.issuePairingChallenge);\n`,
         encoding: "utf8",
         env: {
           ...process.env,
-          NEMOCLAW_E2E_OPENCLAW_PACKAGE_ROOT: packageRoot,
+          BASH_ENV: path.join(home, ".bashrc"),
+          PATH: `${pathBin}:${process.env.PATH ?? ""}`,
         },
       });
 
@@ -231,7 +245,11 @@ describe("OpenClaw Discord pairing helper contracts", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-runtime-split-pairing-"));
     try {
       const packageRoot = path.join(tmp, "openclaw-package");
+      const packageBin = path.join(packageRoot, "bin");
+      const pathBin = path.join(tmp, "path-bin");
       const runtimeDir = path.join(packageRoot, "dist/plugin-sdk");
+      fs.mkdirSync(packageBin, { recursive: true });
+      fs.mkdirSync(pathBin, { recursive: true });
       fs.mkdirSync(runtimeDir, { recursive: true });
       fs.writeFileSync(
         path.join(packageRoot, "package.json"),
@@ -254,6 +272,9 @@ describe("OpenClaw Discord pairing helper contracts", () => {
           "",
         ].join("\n"),
       );
+      fs.writeFileSync(path.join(packageBin, "openclaw"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      fs.symlinkSync(path.join(packageBin, "openclaw"), path.join(pathBin, "openclaw"));
+
       const result = spawnSync(process.execPath, ["--input-type=module"], {
         input: `${LOAD_CONVERSATION_RUNTIME_SOURCE}
 const runtime = await loadConversationRuntime();
@@ -270,7 +291,7 @@ const paired = await runtime.issuePairingChallenge({
 console.log(JSON.stringify({ paired, reply }));
 `,
         encoding: "utf8",
-        env: { ...process.env, NEMOCLAW_E2E_OPENCLAW_PACKAGE_ROOT: packageRoot },
+        env: { ...process.env, PATH: `${pathBin}:${process.env.PATH ?? ""}` },
       });
 
       expect(result.status, result.stderr).toBe(0);
@@ -287,15 +308,21 @@ console.log(JSON.stringify({ paired, reply }));
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-runtime-missing-"));
     try {
       const packageRoot = path.join(tmp, "openclaw-package");
-      fs.mkdirSync(packageRoot, { recursive: true });
+      const packageBin = path.join(packageRoot, "bin");
+      const pathBin = path.join(tmp, "path-bin");
+      fs.mkdirSync(packageBin, { recursive: true });
+      fs.mkdirSync(pathBin, { recursive: true });
       fs.writeFileSync(
         path.join(packageRoot, "package.json"),
         JSON.stringify({ name: "openclaw" }),
       );
+      fs.writeFileSync(path.join(packageBin, "openclaw"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      fs.symlinkSync(path.join(packageBin, "openclaw"), path.join(pathBin, "openclaw"));
+
       const result = spawnSync(process.execPath, ["--input-type=module"], {
         input: `${LOAD_CONVERSATION_RUNTIME_SOURCE}\nawait loadConversationRuntime();\n`,
         encoding: "utf8",
-        env: { ...process.env, NEMOCLAW_E2E_OPENCLAW_PACKAGE_ROOT: packageRoot },
+        env: { ...process.env, PATH: `${pathBin}:${process.env.PATH ?? ""}` },
       });
 
       expect(result.status).not.toBe(0);
@@ -304,6 +331,8 @@ console.log(JSON.stringify({ paired, reply }));
       );
       expect(result.stderr).toEqual(expect.stringContaining(packageRoot));
       expect(result.stderr).toEqual(expect.not.stringContaining("/usr/local/bin/openclaw"));
+      expect(result.stderr).toEqual(expect.not.stringContaining("/usr/bin/openclaw"));
+      expect(result.stderr).toEqual(expect.not.stringContaining("shadowed-shell-function"));
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

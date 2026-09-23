@@ -261,12 +261,16 @@ describe("Hermes portable installer admission", testTimeoutOptions(60_000), () =
         runtimeAuthority,
         openshellExecutableAuthority: hermesPortableTestOpenShellAuthority(),
         stateDir,
-        createRequest: {
-          ...createPlan.createRequest,
-          target: { kind: "named" as const, gatewayName },
-          startupCommand: startupArgv,
-          environment: {},
-        },
+        createArgv: [
+          "/usr/bin/openshell",
+          "sandbox",
+          "create",
+          "-g",
+          gatewayName,
+          ...createPlan.createArgs,
+          "--",
+          ...startupArgv,
+        ],
         createPolicyPath: createPlan.initialSandboxPolicy.policyPath,
         createPolicySourceBytes: createPlan.initialSandboxPolicy.sourceBytes,
         buildContext: activeBuildContext,
@@ -285,13 +289,10 @@ describe("Hermes portable installer admission", testTimeoutOptions(60_000), () =
         omitCleanup: true,
         policySource: createPlan.initialSandboxPolicy.sourceBytes,
         readRegistry: () => registry.getSandbox(sandboxName),
-        createSandbox: async (request, effectivePolicySourcePath) => {
-          expect(request.workingDirectory).toContain(
-            path.join(stateDir, "hermes-portable-build-context"),
-          );
-          expect(request.source.reference).toBe(path.join(request.workingDirectory!, "Dockerfile"));
-          expect(request.policyPath).toBe(effectivePolicySourcePath);
-          expect(request.policyPath).not.toBe(basePolicyPath);
+        createSandbox: async (argv, buildContextPath) => {
+          expect(buildContextPath).toContain(path.join(stateDir, "hermes-portable-build-context"));
+          expect(argv[argv.indexOf("--from") + 1]).toBe(path.join(buildContextPath, "Dockerfile"));
+          expect(argv[argv.indexOf("--policy") + 1]).not.toBe(basePolicyPath);
           registry.recordPendingSandboxCreateIdentity(createReservation, checkpoint);
           return { ready: true };
         },

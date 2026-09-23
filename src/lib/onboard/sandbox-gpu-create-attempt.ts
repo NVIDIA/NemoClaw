@@ -2,10 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { getSandboxFailurePhase, hasSandboxListEntry, isSandboxReady } from "../state/gateway";
-import {
-  createCliOpenShellSandboxLifecycleFromRunner,
-  isNativeGpuCreatePreBuildRejection,
-} from "../adapters/openshell/sandbox-lifecycle-cli";
+import { createCliOpenShellSandboxLifecycleFromRunner } from "../adapters/openshell/sandbox-lifecycle-cli";
 import {
   canFallbackToDockerGpuCompatibility,
   type DockerGpuRoutePlan,
@@ -91,7 +88,32 @@ export type NativeGpuFallbackCleanupDeps = {
  * Ordinary Linux also requires explicit `NEMOCLAW_DOCKER_GPU_PATCH=fallback`; WSL/Jetson are
  * separately gated, and unrelated create/readiness failures retain their existing paths.
  */
-export { isNativeGpuCreatePreBuildRejection };
+export function isNativeGpuCreatePreBuildRejection(output: string): boolean {
+  const text = String(output ?? "");
+  if (text.length > 4096) return false;
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length === 0 || lines.length > 4) return false;
+  const [errorLine, ...envelope] = lines;
+  const exactError =
+    /^error:\s+(?:unexpected|unrecognized|unknown|unsupported)\s+(?:argument|option|flag)(?:\s+|:\s*)['"`]?--gpu['"`]?(?:\s+(?:found|provided|specified))?\.?$/i.test(
+      errorLine,
+    ) ||
+    /^error:\s+(?:argument|option|flag)\s+['"`]?--gpu['"`]?\s+(?:is not supported|was rejected)\.?$/i.test(
+      errorLine,
+    );
+  return (
+    exactError &&
+    envelope.every(
+      (line) =>
+        /^tip:\s+to pass ['"`]--gpu['"`] as a value, use ['"`]-- --gpu['"`]\.?$/i.test(line) ||
+        /^Usage:\s+openshell sandbox create(?:\s|$)/.test(line) ||
+        /^For more information, try ['"`]--help['"`]\.?$/i.test(line),
+    )
+  );
+}
 
 export function isNativeGpuCreateRoutingFailure(
   output: string,

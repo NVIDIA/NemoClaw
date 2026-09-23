@@ -145,10 +145,12 @@ function providerIdentity(provider: Provider, gatewayName: string, managed: bool
   };
 }
 
-function expectedCredentialKeys(credentialEnv: string | null, routeProvider: string): string[] {
-  // vLLM onboarding always registers this gateway-owned key, including for
-  // legacy host-local installs whose registry credential remains null.
-  if (routeProvider === "vllm-local") return [VLLM_LOCAL_CREDENTIAL_ENV];
+function expectedCredentialKeys(
+  credentialEnv: string | null,
+  managed: boolean,
+  routeProvider: string,
+): string[] {
+  if (managed) return [VLLM_LOCAL_CREDENTIAL_ENV];
   // Ollama onboarding has no user credential; its managed proxy still authenticates the route.
   if (routeProvider === "ollama-local" && credentialEnv === null)
     return [OLLAMA_LOCAL_CREDENTIAL_ENV];
@@ -174,24 +176,14 @@ function matchesProviderMetadata(
 ): boolean {
   const { type, configKey } = providerContract(normalized.preferredInferenceApi);
   const builtin = provider.builtinInferenceEndpoint !== undefined;
-  // OpenShell's CLI writes the selected workspace for a newly created
-  // provider, while legacy records and protobuf defaults can leave the field
-  // empty. A different workspace is outside this direct provider contract.
-  const managedBindingMatches =
-    !managed ||
-    ((provider.profileWorkspace === undefined ||
-      provider.profileWorkspace === "" ||
-      provider.profileWorkspace === provider.workspace) &&
-      provider.managedProfile === undefined);
   return (
     type !== null &&
-    managedBindingMatches &&
     isDeepStrictEqual(
       [provider.name, provider.type, provider.credentialKeys, provider.configKeys],
       [
         routeProvider,
         builtin ? "nvidia" : type,
-        expectedCredentialKeys(normalized.credentialEnv, routeProvider),
+        expectedCredentialKeys(normalized.credentialEnv, managed, routeProvider),
         builtin ? [] : [configKey],
       ],
     )
@@ -206,12 +198,12 @@ async function readProviderEvidence(
   managedServing?: ObservedManagedVllmRuntime,
 ): Promise<ObservedExportEndpointEvidence> {
   const { configKey } = providerContract(normalized.preferredInferenceApi);
-  const inspectOpenAiProfile = routeProvider === "ollama-local";
+  const managedProfile = !!managedServing || routeProvider === "ollama-local";
   const provider = await createProviders().get({
     target: namedOpenShellGateway(gatewayName),
     workspace: "default",
     name: routeProvider,
-    ...(inspectOpenAiProfile ? { profileContract: "openai" as const } : {}),
+    ...(managedProfile ? { profileContract: "openai" as const } : {}),
     configKeys: [configKey],
     signal,
   });
@@ -221,7 +213,7 @@ async function readProviderEvidence(
     throw new Error("The live inference provider metadata does not match the registry.");
   }
   return {
-    provider: providerIdentity(provider, gatewayName, inspectOpenAiProfile),
+    provider: providerIdentity(provider, gatewayName, managedProfile),
     endpoint: provider.builtinInferenceEndpoint ?? provider.config[configKey] ?? "",
     source: builtin
       ? { kind: "builtin-profile", profileId: "nvidia" }
@@ -345,7 +337,7 @@ async function readSnapshot(sandboxName: string): Promise<RawExportSnapshot> {
     const sandbox = sandboxIdentity(row);
     stage = "managed-serving";
     const managedServing =
-      entry.provider === "vllm-local"
+      entry.provider === "vllm-local" && entry.servingProfileProvenance
         ? observeManagedVllmForExport(entry.servingProfileProvenance)
         : undefined;
     stage = "inference-route";

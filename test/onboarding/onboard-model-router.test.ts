@@ -15,7 +15,6 @@ import {
   poolTargetsOnlyNvidiaEndpoints,
   startModelRouter,
 } from "../../src/lib/onboard/model-router";
-import type { RouterHealthSnapshot } from "../../src/lib/onboard/model-router-process";
 import {
   createModelRouterCommandProvisioner,
   type ModelRouterCommandDeps,
@@ -48,22 +47,6 @@ const ROUTER_HEALTHY_BODY = JSON.stringify({
   healthy_endpoints: [{ api_base: "https://integrate.api.nvidia.com/v1" }],
   unhealthy_endpoints: [],
 });
-
-function healthSnapshot(
-  healthy: boolean,
-  body: string | null,
-  overrides: Partial<RouterHealthSnapshot> = {},
-): RouterHealthSnapshot {
-  return {
-    healthy,
-    body,
-    capturedBodyBytes: Buffer.byteLength(body ?? ""),
-    elapsedMs: 0,
-    outcome: body === null ? "transport_error" : "complete",
-    statusCode: healthy ? 200 : null,
-    ...overrides,
-  };
-}
 
 type PrepareCall = {
   venvDir: string;
@@ -368,13 +351,13 @@ describe("onboard Model Router setup", () => {
               ensureModelRouterCommand: () => routerCommand,
               resolveProviderCredential: (name) =>
                 name === "ROUTER_API_KEY" ? "router-secret" : null,
-              isRouterResponsive: async (routerPort) => {
+              isRouterHealthy: async (routerPort) => {
                 healthChecks.push(routerPort);
                 return false;
               },
               getRouterHealthSnapshot: async (routerPort) => {
                 healthChecks.push(routerPort);
-                return healthSnapshot(true, ROUTER_HEALTHY_BODY);
+                return { healthy: true, body: ROUTER_HEALTHY_BODY };
               },
               sleep: async (milliseconds) => {
                 sleepCalls.push(milliseconds);
@@ -455,8 +438,8 @@ describe("onboard Model Router setup", () => {
           homeDir,
           ensureModelRouterCommand: () => routerCommand,
           resolveProviderCredential: () => null,
-          isRouterResponsive: async () => false,
-          getRouterHealthSnapshot: async () => healthSnapshot(true, ROUTER_HEALTHY_BODY),
+          isRouterHealthy: async () => false,
+          getRouterHealthSnapshot: async () => ({ healthy: true, body: ROUTER_HEALTHY_BODY }),
           sleep: async () => undefined,
         },
       );
@@ -473,16 +456,11 @@ describe("onboard Model Router setup", () => {
     }
   });
 
-  it("waits for one slow semantic health response without overlapping requests (#12089)", async () => {
+  it("starts a Model Router whose health check passes after 61 retry intervals", async () => {
     const pid = 12_345;
-    let nowMs = 0;
-    const sleep = vi.fn(async (milliseconds: number) => {
-      nowMs += milliseconds;
-    });
+    const sleep = vi.fn(async () => undefined);
     const terminateProcess = vi.fn();
-    let activeHealthRequests = 0;
-    let maxActiveHealthRequests = 0;
-    const healthTimeouts: number[] = [];
+    let healthProbe = 0;
 
     const startedPid = await startModelRouter(
       { port: 45_679, pool_config_path: "router/test-pool.yaml" },
@@ -500,17 +478,12 @@ describe("onboard Model Router setup", () => {
         }),
         resolveProviderCredential: () => null,
         buildSubprocessEnv: () => ({}),
-        isRouterResponsive: async () => false,
-        getRouterHealthSnapshot: async (_port, timeoutMs = 0) => {
-          activeHealthRequests += 1;
-          maxActiveHealthRequests = Math.max(maxActiveHealthRequests, activeHealthRequests);
-          healthTimeouts.push(timeoutMs);
-          nowMs += 45_000;
-          activeHealthRequests -= 1;
-          return healthSnapshot(true, ROUTER_HEALTHY_BODY, { elapsedMs: 45_000 });
+        isRouterHealthy: async () => false,
+        getRouterHealthSnapshot: async () => {
+          healthProbe += 1;
+          return { healthy: healthProbe > 60, body: ROUTER_HEALTHY_BODY };
         },
         sleep,
-        now: () => nowMs,
         isProcessAlive: () => true,
         terminateProcess,
         getProviderKey: () => "",
@@ -518,79 +491,16 @@ describe("onboard Model Router setup", () => {
     );
 
     assert.equal(startedPid, pid);
-    assert.deepEqual(healthTimeouts, [598_000]);
-    assert.equal(maxActiveHealthRequests, 1);
-    assert.equal(sleep.mock.calls.length, 1);
+    assert.equal(healthProbe, 61);
+    assert.equal(sleep.mock.calls.length, 61);
     assert.equal(terminateProcess.mock.calls.length, 0);
   });
 
-  it("stops waiting for semantic health when the router child exits (#12089)", async () => {
+  it("requests termination for a Model Router that stays unhealthy after 300 retry intervals", async () => {
     const pid = 12_345;
-    let onExit: ((code: number | null, signal: string | null) => void) | undefined;
-    let observedSignal: AbortSignal | undefined;
+    const sleep = vi.fn(async () => undefined);
     const terminateProcess = vi.fn();
-
-    await assert.rejects(
-      startModelRouter(
-        { port: 45_678, pool_config_path: "router/test-pool.yaml" },
-        {
-          rootDir: "/test/repo",
-          homeDir: "/test/home",
-          ensureModelRouterCommand: () => "/test/model-router",
-          mkdirSync: () => undefined,
-          runProxyConfig: () => ({ status: 0 }),
-          spawnProxy: () => ({
-            pid,
-            onError: () => undefined,
-            onExit: (listener) => {
-              onExit = listener;
-            },
-            unref: () => undefined,
-          }),
-          resolveProviderCredential: () => null,
-          buildSubprocessEnv: () => ({}),
-          isRouterResponsive: async () => false,
-          getRouterHealthSnapshot: async (_port, _timeoutMs, signal) => {
-            observedSignal = signal;
-            queueMicrotask(() => onExit?.(17, null));
-            return new Promise<RouterHealthSnapshot>((resolve) => {
-              signal?.addEventListener(
-                "abort",
-                () => resolve(healthSnapshot(false, null, { outcome: "aborted" })),
-                { once: true },
-              );
-            });
-          },
-          sleep: async () => undefined,
-          now: () => 0,
-          isProcessAlive: () => true,
-          terminateProcess,
-          getProviderKey: () => "",
-        },
-      ),
-      /failed to become healthy on port 45678 within 600 seconds \(completed health checks: 0\) \(child exited with code 17\)/,
-    );
-
-    assert.equal(observedSignal?.aborted, true);
-    assert.deepEqual(terminateProcess.mock.calls, [[pid]]);
-  });
-
-  it("terminates a live router whose semantic health requests exhaust the deadline (#12089)", async () => {
-    const pid = 12_345;
-    let nowMs = 0;
-    const sleep = vi.fn(async (milliseconds: number) => {
-      nowMs += milliseconds;
-    });
-    const terminateProcess = vi.fn();
-    const getRouterHealthSnapshot = vi.fn(
-      async (_port: number, timeoutMs = 0, _signal?: AbortSignal) => {
-        nowMs += timeoutMs;
-        return healthSnapshot(false, null, {
-          elapsedMs: timeoutMs,
-          outcome: "timeout",
-        });
-      },
-    );
+    const getRouterHealthSnapshot = vi.fn(async () => ({ healthy: false, body: null }));
 
     await assert.rejects(
       startModelRouter(
@@ -609,24 +519,19 @@ describe("onboard Model Router setup", () => {
           }),
           resolveProviderCredential: () => null,
           buildSubprocessEnv: () => ({}),
-          isRouterResponsive: async () => false,
+          isRouterHealthy: async () => false,
           getRouterHealthSnapshot,
           sleep,
-          now: () => nowMs,
           isProcessAlive: () => true,
           terminateProcess,
           getProviderKey: () => "",
         },
       ),
-      /failed to become healthy on port 45680 within 600 seconds \(completed health checks: 1\) \(last health check: timeout, no HTTP status, 598000 ms, 0 body bytes\)/,
+      /failed to become healthy on port 45680 within 600 seconds \(completed health checks: 300\)/,
     );
 
-    assert.equal(nowMs, 600_000);
-    assert.equal(getRouterHealthSnapshot.mock.calls.length, 1);
-    assert.equal(getRouterHealthSnapshot.mock.calls[0]?.[0], 45_680);
-    assert.equal(getRouterHealthSnapshot.mock.calls[0]?.[1], 598_000);
-    assert.equal(getRouterHealthSnapshot.mock.calls[0]?.[2] instanceof AbortSignal, true);
-    assert.equal(sleep.mock.calls.length, 1);
+    assert.equal(getRouterHealthSnapshot.mock.calls.length, 301);
+    assert.equal(sleep.mock.calls.length, 300);
     assert.deepEqual(terminateProcess.mock.calls, [[pid]]);
   });
 
@@ -656,8 +561,8 @@ describe("onboard Model Router setup", () => {
         resolveProviderCredential: (name) =>
           ({ ROUTER_API_KEY: "router-secret", OPENAI_API_KEY: "stale-openai" })[name] ?? null,
         buildSubprocessEnv: (extra) => ({ ...extra }),
-        isRouterResponsive: async () => false,
-        getRouterHealthSnapshot: async () => healthSnapshot(true, ROUTER_HEALTHY_BODY),
+        isRouterHealthy: async () => false,
+        getRouterHealthSnapshot: async () => ({ healthy: true, body: ROUTER_HEALTHY_BODY }),
         sleep: async () => undefined,
         isProcessAlive: () => true,
         terminateProcess: () => undefined,
@@ -721,8 +626,8 @@ describe("onboard Model Router setup", () => {
           }),
           resolveProviderCredential: () => null,
           buildSubprocessEnv: () => ({}),
-          isRouterResponsive: async () => false,
-          getRouterHealthSnapshot: async () => healthSnapshot(false, unhealthyBody),
+          isRouterHealthy: async () => false,
+          getRouterHealthSnapshot: async () => ({ healthy: false, body: unhealthyBody }),
           openRouterLog: () => ({ fd: 99, startOffset: 0 }),
           closeRouterLog: () => undefined,
           readRouterLogTail: () => "",
@@ -734,6 +639,44 @@ describe("onboard Model Router setup", () => {
       ),
       /failed to become healthy on port 45691[\s\S]*last health error: AuthenticationError: bad key[\s\S]*model-router\.log/,
     );
+  });
+
+  it("returns the router PID when the final health snapshot proves recovery (#8962)", async () => {
+    const pid = 12_345;
+    const terminateProcess = vi.fn();
+
+    const startedPid = await startModelRouter(
+      { port: 45_693, pool_config_path: "router/test-pool.yaml" },
+      {
+        rootDir: "/test/repo",
+        homeDir: "/test/home",
+        ensureModelRouterCommand: () => "/test/model-router",
+        mkdirSync: () => undefined,
+        runProxyConfig: () => ({ status: 0 }),
+        spawnProxy: () => ({
+          pid,
+          onError: () => undefined,
+          onExit: () => undefined,
+          unref: () => undefined,
+        }),
+        resolveProviderCredential: () => null,
+        buildSubprocessEnv: () => ({}),
+        isRouterHealthy: async () => false,
+        // /health outruns the poll's 3-second budget and answers only within
+        // the 30-second final-snapshot budget.
+        getRouterHealthSnapshot: async (_port: number, timeoutMs = 0) => ({
+          healthy: timeoutMs >= 30_000,
+          body: timeoutMs >= 30_000 ? ROUTER_HEALTHY_BODY : null,
+        }),
+        sleep: async () => undefined,
+        isProcessAlive: () => true,
+        terminateProcess,
+        getProviderKey: () => "",
+      },
+    );
+
+    assert.equal(startedPid, pid);
+    assert.equal(terminateProcess.mock.calls.length, 0);
   });
 
   it("redacts a credential-shaped health error from the startup error (#8962)", async () => {
@@ -761,8 +704,8 @@ describe("onboard Model Router setup", () => {
           }),
           resolveProviderCredential: () => null,
           buildSubprocessEnv: () => ({}),
-          isRouterResponsive: async () => false,
-          getRouterHealthSnapshot: async () => healthSnapshot(false, credentialBody),
+          isRouterHealthy: async () => false,
+          getRouterHealthSnapshot: async () => ({ healthy: false, body: credentialBody }),
           sleep: async () => undefined,
           isProcessAlive: () => true,
           terminateProcess: () => undefined,
@@ -781,7 +724,7 @@ describe("onboard Model Router setup", () => {
     );
   });
 
-  it("rejects a completed 2xx snapshot with zero healthy endpoints (#8962)", async () => {
+  it("still fails when the poll and final snapshot are 2xx with zero healthy endpoints (#8962)", async () => {
     const pid = 12_345;
     const terminateProcess = vi.fn();
     const allUnhealthyBody = JSON.stringify({
@@ -806,8 +749,11 @@ describe("onboard Model Router setup", () => {
           }),
           resolveProviderCredential: () => null,
           buildSubprocessEnv: () => ({}),
-          isRouterResponsive: async () => false,
-          getRouterHealthSnapshot: async () => healthSnapshot(true, allUnhealthyBody),
+          // The pre-spawn port guard calls isRouterHealthy without a timeout.
+          // Return true for timeout-bearing calls so a regression to the old
+          // boolean startup poll cannot accept zero healthy endpoints.
+          isRouterHealthy: async (_port: number, timeoutMs) => timeoutMs !== undefined,
+          getRouterHealthSnapshot: async () => ({ healthy: true, body: allUnhealthyBody }),
           sleep: async () => undefined,
           isProcessAlive: () => true,
           terminateProcess,
@@ -848,8 +794,8 @@ describe("onboard Model Router setup", () => {
           },
           resolveProviderCredential: () => null,
           buildSubprocessEnv: () => ({}),
-          isRouterResponsive: async () => false,
-          getRouterHealthSnapshot: async () => healthSnapshot(false, null),
+          isRouterHealthy: async () => false,
+          getRouterHealthSnapshot: async () => ({ healthy: false, body: null }),
           sleep: async () => undefined,
           isProcessAlive: () => false,
           terminateProcess: () => undefined,
@@ -911,8 +857,8 @@ describe("onboard Model Router setup", () => {
           resolveProviderCredential: (name) =>
             ({ ROUTER_API_KEY: "router-secret", OPENAI_API_KEY: "operator-openai" })[name] ?? null,
           buildSubprocessEnv: (extra) => ({ ...extra }),
-          isRouterResponsive: async () => false,
-          getRouterHealthSnapshot: async () => healthSnapshot(true, ROUTER_HEALTHY_BODY),
+          isRouterHealthy: async () => false,
+          getRouterHealthSnapshot: async () => ({ healthy: true, body: ROUTER_HEALTHY_BODY }),
           sleep: async () => undefined,
           isProcessAlive: () => true,
           terminateProcess: () => undefined,
@@ -955,8 +901,8 @@ describe("onboard Model Router setup", () => {
         readPoolConfig: () => 'models:\n  - litellm_model: "openai/gpt-test"\n',
         resolveProviderCredential: (name) => (name === "ROUTER_API_KEY" ? "router-secret" : null),
         buildSubprocessEnv: (extra) => ({ ...extra }),
-        isRouterResponsive: async () => false,
-        getRouterHealthSnapshot: async () => healthSnapshot(true, ROUTER_HEALTHY_BODY),
+        isRouterHealthy: async () => false,
+        getRouterHealthSnapshot: async () => ({ healthy: true, body: ROUTER_HEALTHY_BODY }),
         sleep: async () => undefined,
         isProcessAlive: () => true,
         terminateProcess: () => undefined,
@@ -968,6 +914,56 @@ describe("onboard Model Router setup", () => {
       ROUTER_API_KEY: "router-secret",
       OPENAI_API_KEY: "router-secret",
     });
+  });
+
+  it("stops when the 10-minute Model Router startup deadline expires", async () => {
+    const pid = 12_345;
+    const terminateProcess = vi.fn();
+    let nowMs = 0;
+    const sleep = vi.fn(async (milliseconds: number) => {
+      nowMs += milliseconds;
+    });
+    const getRouterHealthSnapshot = vi.fn(async (_port: number, timeoutMs = 0) => {
+      nowMs += timeoutMs;
+      return { healthy: false, body: null };
+    });
+
+    await assert.rejects(
+      startModelRouter(
+        { port: 45_681, pool_config_path: "router/test-pool.yaml" },
+        {
+          rootDir: "/test/repo",
+          homeDir: "/test/home",
+          ensureModelRouterCommand: () => "/test/model-router",
+          mkdirSync: () => undefined,
+          runProxyConfig: () => ({ status: 0 }),
+          spawnProxy: () => ({
+            pid,
+            onError: () => undefined,
+            onExit: () => undefined,
+            unref: () => undefined,
+          }),
+          resolveProviderCredential: () => null,
+          buildSubprocessEnv: () => ({}),
+          isRouterHealthy: async () => false,
+          getRouterHealthSnapshot,
+          sleep,
+          now: () => nowMs,
+          isProcessAlive: () => true,
+          terminateProcess,
+          getProviderKey: () => "",
+        },
+      ),
+      // The poll owns 570 seconds and the final diagnostic snapshot owns the
+      // remaining 30, so a failed startup never exceeds the 600 seconds the
+      // error reports (#8962).
+      /failed to become healthy on port 45681 within 600 seconds \(completed health checks: 114\)/,
+    );
+
+    assert.equal(nowMs, 600_000);
+    assert.equal(getRouterHealthSnapshot.mock.calls.length, 115);
+    assert.equal(sleep.mock.calls.length, 114);
+    assert.deepEqual(terminateProcess.mock.calls, [[pid]]);
   });
 
   it("writes router state beneath the selected nondefault gateway root", async () => {
@@ -1007,8 +1003,8 @@ describe("onboard Model Router setup", () => {
         },
         resolveProviderCredential: () => null,
         buildSubprocessEnv: () => ({}),
-        isRouterResponsive: async () => false,
-        getRouterHealthSnapshot: async () => healthSnapshot(true, ROUTER_HEALTHY_BODY),
+        isRouterHealthy: async () => false,
+        getRouterHealthSnapshot: async () => ({ healthy: true, body: ROUTER_HEALTHY_BODY }),
         sleep: async () => undefined,
         isProcessAlive: () => true,
         terminateProcess: () => undefined,

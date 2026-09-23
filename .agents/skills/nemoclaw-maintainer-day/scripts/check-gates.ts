@@ -1407,7 +1407,7 @@ function checkConflicts(
 } {
   const conflictStatus = (mergeable ?? "UNKNOWN").toUpperCase();
   const status = (mergeStateStatus ?? "UNKNOWN").toUpperCase();
-  const permittedMergeStates = new Set(["BEHIND", "BLOCKED", "CLEAN", "HAS_HOOKS", "UNSTABLE"]);
+  const currentBaseStates = new Set(["BLOCKED", "CLEAN", "HAS_HOOKS", "UNSTABLE"]);
 
   if (!currentBaseSha) {
     return {
@@ -1418,13 +1418,20 @@ function checkConflicts(
       baseSha,
     };
   }
-  if (conflictStatus === "MERGEABLE" && permittedMergeStates.has(status)) {
+  if (baseSha !== currentBaseSha) {
+    return {
+      pass: false,
+      details: "PR branch is behind its base branch; refresh it before approval",
+      mergeable: conflictStatus,
+      mergeStateStatus: status,
+      baseSha,
+      currentBaseSha,
+    };
+  }
+  if (conflictStatus === "MERGEABLE" && currentBaseStates.has(status)) {
     return {
       pass: true,
-      details:
-        baseSha === currentBaseSha && status !== "BEHIND"
-          ? "No merge conflicts"
-          : "No merge conflicts; PR branch is behind its base branch",
+      details: "No merge conflicts",
       mergeable: conflictStatus,
       mergeStateStatus: status,
       baseSha,
@@ -1433,7 +1440,10 @@ function checkConflicts(
   }
   return {
     pass: false,
-    details: `Mergeability: ${conflictStatus}; merge state: ${status}`,
+    details:
+      status === "BEHIND"
+        ? "PR branch is behind its base branch; refresh it before approval"
+        : `Mergeability: ${conflictStatus}; merge state: ${status}`,
     mergeable: conflictStatus,
     mergeStateStatus: status,
     baseSha,

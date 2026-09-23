@@ -37,7 +37,7 @@ function createDeps(overrides: Partial<StopModelRouterForDestroyedSandboxDeps> =
     }),
     expectedSession: session,
     inspectProcessForPort: vi.fn(() => ({ status: "absent" as const })),
-    isResponsive: vi.fn(async () => false),
+    isHealthy: vi.fn(async () => false),
     isRoutedProvider: vi.fn((provider: string | null | undefined) => provider === "nvidia-router"),
     listHostRegistryEntries: vi.fn(() => []),
     loadSession: vi.fn(() => session),
@@ -269,7 +269,7 @@ describe("stopModelRouterForDestroyedSandbox", () => {
     const { deps, session } = createDeps({
       ownsPort: vi.fn(() => false),
       inspectProcessForPort: vi.fn(() => ({ status: "unavailable" as const })),
-      isResponsive: vi.fn(async () => true),
+      isHealthy: vi.fn(async () => true),
     });
 
     await stopModelRouterForDestroyedSandbox(routedSandbox, deps);
@@ -282,11 +282,11 @@ describe("stopModelRouterForDestroyedSandbox", () => {
     expect(deps.warn).toHaveBeenCalledWith(expect.stringContaining("process inventory"));
   });
 
-  it("keeps router recovery identity when no process is visible but the router port responds", async () => {
+  it("keeps router recovery identity when no process is visible but the router port stays healthy", async () => {
     const { deps, session } = createDeps({
       ownsPort: vi.fn(() => false),
       inspectProcessForPort: vi.fn(() => ({ status: "absent" as const })),
-      isResponsive: vi.fn(async () => true),
+      isHealthy: vi.fn(async () => true),
     });
 
     await stopModelRouterForDestroyedSandbox(routedSandbox, deps);
@@ -295,7 +295,7 @@ describe("stopModelRouterForDestroyedSandbox", () => {
     expect(session.routerPid).toBe(4242);
     expect(session.routerCredentialHash).toBe("hash");
     expect(session.sandboxName).toBeNull();
-    expect(deps.warn).toHaveBeenCalledWith(expect.stringContaining("responsive port 4100"));
+    expect(deps.warn).toHaveBeenCalledWith(expect.stringContaining("healthy port 4100"));
   });
 
   it("clears a stale credential hash when the session records no router PID (#9098)", async () => {

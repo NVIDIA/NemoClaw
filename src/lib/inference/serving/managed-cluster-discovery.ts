@@ -58,7 +58,6 @@ export interface ManagedClusterCommandResult {
 export interface ManagedClusterReadOnlyHostTransport {
   execute(argv: readonly string[]): ManagedClusterCommandResult;
   readFile(filePath: string): string;
-  readOsRelease?(primaryPath: string, fallbackPath: string, maxBytes: number): string | undefined;
   readdir(directory: string): string[];
 }
 

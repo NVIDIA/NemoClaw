@@ -18,13 +18,9 @@ import type { ObservedManagedVllmRuntime } from "../../domain/config/export-evid
 import { buildVllmServeCommand } from "../vllm-models";
 import { buildLocalManagedVllmDockerEnv } from "../vllm-docker-env";
 import { isHostLocalInferenceServingRecipe } from "./adapter-registry";
-import { managedInferenceDigest } from "./catalog-integrity";
 import { loadManagedInferenceCatalog, loadServingCatalog } from "./catalog-loader";
 import { materializeHostLocalVllmModel } from "./host-local-vllm-selection";
-import {
-  assertServingProfileProvenanceCurrent,
-  servingProfileProvenance,
-} from "./profile-provenance";
+import { assertServingProfileProvenanceCurrent } from "./profile-provenance";
 import type { ServingProfileProvenance } from "./types";
 import {
   HOST_LOCAL_VLLM_AUTH_LABEL,
@@ -152,13 +148,7 @@ function expectedRuntime(recorded: ServingProfileProvenance) {
     fail();
   const model = materializeHostLocalVllmModel(recipe, recipe.spec.serve.directInstall, "linux");
   if (model.maxModelLen !== EXPORTED_VLLM_CONTEXT_WINDOW) fail();
-  return {
-    current,
-    recipe,
-    imageRef,
-    runtimeRecipeDigest: managedInferenceDigest(recipe),
-    command: buildVllmServeCommand(model, {}),
-  };
+  return { current, recipe, imageRef, command: buildVllmServeCommand(model, {}) };
 }
 
 function containerFormat(
@@ -173,7 +163,6 @@ function containerFormat(
     (value) =>
       `{{$found := false}}{{range .Config.Env}}{{if eq . ${JSON.stringify(value)}}}{{$found = true}}{{end}}{{end}}{{if not $found}}{{$environment = false}}{{end}}`,
   ).join("");
-  const allowedEnvironmentCheck = `{{range .Config.Env}}{{$entry := .}}{{$allowed := false}}{{if eq (index (split $entry "=") 0) "VLLM_API_KEY"}}{{$allowed = true}}{{end}}{{if eq $entry ${JSON.stringify(`HF_HOME=${runtime.modelCache.target}`)}}}{{$allowed = true}}{{end}}${image.Environment.map((value) => `{{if eq $entry ${JSON.stringify(value)}}}{{$allowed = true}}{{end}}`).join("")}{{if not $allowed}}{{$environment = false}}{{end}}{{end}}`;
   const labels = [
     HOST_LOCAL_VLLM_AUTH_LABEL,
     HOST_LOCAL_VLLM_CATALOG_LABEL,
@@ -198,12 +187,6 @@ function containerFormat(
         `{{$found := false}}{{range .HostConfig.Ulimits}}{{if and (eq .Name ${JSON.stringify(name)}) ${equalJson(".Hard", value)} ${equalJson(".Soft", value)}}}{{$found = true}}{{end}}{{end}}{{if not $found}}{{$ulimits = false}}{{end}}`,
     )
     .join("");
-  const securityOptions = '(index .HostConfig "SecurityOpt")';
-  const ulimits = '(index .HostConfig "Ulimits")';
-  const cacheRoot = path.join(homeDirectory, ".cache/huggingface");
-  const cacheTarget = runtime.modelCache.target;
-  // Docker normalizes host IPC and the current launcher/materializer cache mounts differently.
-  // Admit only the two exact managed shapes observed from those owners.
   const conditions = [
     equalJson(".Config.Cmd", ["-lc", expected.command]),
     equalJson(".Config.Entrypoint", ["/bin/bash"]),
@@ -211,15 +194,16 @@ function containerFormat(
     `(eq .Image ${JSON.stringify(image.Id)})`,
     `(eq .HostConfig.NetworkMode "bridge")`,
     `(eq .HostConfig.IpcMode ${JSON.stringify(runtime.ipcMode)})`,
-    `(or ${equalJson(".HostConfig.ShmSize", runtime.sharedMemoryBytes)} ${equalJson(".HostConfig.ShmSize", 64 * 1024 * 1024)})`,
+    equalJson(".HostConfig.ShmSize", runtime.sharedMemoryBytes),
     `(eq .HostConfig.RestartPolicy.Name "unless-stopped")`,
     `.HostConfig.Init`,
     `(not .HostConfig.Privileged)`,
-    emptyArray('(index .HostConfig "Devices")'),
-    emptyArray('(index .HostConfig "CapAdd")'),
-    `(or ${emptyArray(securityOptions)} ${equalJson(securityOptions, ["label=disable"])})`,
-    `(or ${equalJson(ulimits, null)} (and (eq (len ${ulimits}) 2) $ulimits))`,
-    `(or ${equalJson('(index .HostConfig "Tmpfs")', null)} ${equalJson('(index .HostConfig "Tmpfs")', {})})`,
+    emptyArray(".HostConfig.Devices"),
+    emptyArray(".HostConfig.CapAdd"),
+    emptyArray(".HostConfig.SecurityOpt"),
+    `(eq (len .HostConfig.Ulimits) 2)`,
+    "$ulimits",
+    `(or ${equalJson(".HostConfig.Tmpfs", null)} ${equalJson(".HostConfig.Tmpfs", {})})`,
     equalJson(".HostConfig.Memory", 0),
     equalJson(".HostConfig.NanoCpus", 0),
     `(eq (len .HostConfig.DeviceRequests) 1)`,
@@ -228,15 +212,18 @@ function containerFormat(
     equalJson("(index .HostConfig.DeviceRequests 0).Capabilities", [["gpu"]]),
     `(eq (len .Mounts) 1)`,
     `(eq (index .Mounts 0).Type "bind")`,
-    `(or (and (eq (index .Mounts 0).Source ${JSON.stringify(cacheRoot)}) (eq (index .Mounts 0).Destination ${JSON.stringify(cacheTarget)}) (index .Mounts 0).RW) (and (eq (index .Mounts 0).Source ${JSON.stringify(`${cacheRoot}/hub`)}) (eq (index .Mounts 0).Destination ${JSON.stringify(`${cacheTarget}/hub`)}) (not (index .Mounts 0).RW)))`,
+    `(eq (index .Mounts 0).Source ${JSON.stringify(path.join(homeDirectory, ".cache/huggingface/hub"))})`,
+    `(eq (index .Mounts 0).Destination ${JSON.stringify(`${runtime.modelCache.target}/hub`)})`,
+    `(not (index .Mounts 0).RW)`,
+    `(eq (len .Config.Env) ${String(image.Environment.length + 1)})`,
     "$environment",
   ];
-  return `{{$environment := true}}{{$ulimits := true}}${environmentCheck}${allowedEnvironmentCheck}${ulimitCheck}{"Id":{{json .Id}},"Name":{{json .Name}},"Image":{{json .Image}},"StartedAt":{{json .State.StartedAt}},"Matches":{{and ${conditions.join(" ")}}},"State":{"Running":{{json .State.Running}}},"Config":{"Labels":{${labels}},"Env":[{{range .Config.Env}}{{if eq (index (split . "=") 0) "VLLM_API_KEY"}}{{json .}}{{end}}{{end}}]},"NetworkSettings":{"Ports":{{json .NetworkSettings.Ports}}}}`;
+  return `{{$environment := true}}{{$ulimits := true}}${environmentCheck}${ulimitCheck}{"Id":{{json .Id}},"Name":{{json .Name}},"Image":{{json .Image}},"StartedAt":{{json .State.StartedAt}},"Matches":{{and ${conditions.join(" ")}}},"State":{"Running":{{json .State.Running}}},"Config":{"Labels":{${labels}},"Env":[{{range .Config.Env}}{{if eq (index (split . "=") 0) "VLLM_API_KEY"}}{{json .}}{{end}}{{end}}]},"NetworkSettings":{"Ports":{{json .NetworkSettings.Ports}}}}`;
 }
 
 /** Read the fixed runtime; authentication stays inside existing private lifecycle verification. */
 export function observeManagedVllmForExport(
-  recorded: ServingProfileProvenance | undefined,
+  recorded: ServingProfileProvenance,
   options: VllmExportRuntimeOptions = {},
 ): ObservedManagedVllmRuntime {
   try {
@@ -245,9 +232,7 @@ export function observeManagedVllmForExport(
       (options.architecture ?? process.arch) !== "x64"
     )
       fail();
-    const expected = expectedRuntime(
-      recorded ?? servingProfileProvenance(loadServingCatalog(), EXPORTED_VLLM_PROFILE_ID),
-    );
+    const expected = expectedRuntime(recorded);
     const capture = options.capture ?? dockerCapture;
     const env = buildLocalManagedVllmDockerEnv();
     const inspect = (kind: string, name: string, format: string) =>
@@ -286,20 +271,20 @@ export function observeManagedVllmForExport(
       ),
       ContainerSchema,
     );
+    const identity = {
+      [HOST_LOCAL_VLLM_CATALOG_LABEL]: expected.current.catalogDigest,
+      [HOST_LOCAL_VLLM_PRESET_LABEL]: expected.current.preset.id,
+      [HOST_LOCAL_VLLM_PRESET_DIGEST_LABEL]: expected.current.preset.digest,
+      [HOST_LOCAL_VLLM_RECIPE_LABEL]: expected.current.recipe.id,
+      [HOST_LOCAL_VLLM_RECIPE_DIGEST_LABEL]: expected.current.recipe.digest,
+    };
+    if (Object.entries(identity).some(([key, value]) => row.Config.Labels[key] !== value)) fail();
     const recovered = recoverHostLocalManagedVllmEndpoint({
       ...options.authentication,
       dockerInspect: () => JSON.stringify([row]),
       resolveBridgeHost: () => bridge,
     });
     if (!recovered || recovered.containerId !== row.Id || row.Image !== image.Id) fail();
-    if (
-      row.Config.Labels[HOST_LOCAL_VLLM_CATALOG_LABEL] !== expected.current.catalogDigest ||
-      row.Config.Labels[HOST_LOCAL_VLLM_PRESET_LABEL] !== expected.current.preset.id ||
-      row.Config.Labels[HOST_LOCAL_VLLM_PRESET_DIGEST_LABEL] !== expected.current.preset.digest ||
-      row.Config.Labels[HOST_LOCAL_VLLM_RECIPE_LABEL] !== expected.current.recipe.id ||
-      row.Config.Labels[HOST_LOCAL_VLLM_RECIPE_DIGEST_LABEL] !== expected.runtimeRecipeDigest
-    )
-      fail();
     const hostPort = Number(new URL(recovered.baseUrl).port);
     const serving: NemoClawManagedVllmServing = {
       backend: "vllm",

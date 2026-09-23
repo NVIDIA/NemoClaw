@@ -5,9 +5,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { EXPORTED_VLLM_PROFILE_ID, EXPORTED_VLLM_RECIPE_ID } from "../../config/model";
-import { managedInferenceDigest } from "./catalog-integrity";
-import { loadManagedInferenceCatalog, loadServingCatalog } from "./catalog-loader";
+import { EXPORTED_VLLM_PROFILE_ID } from "../../config/model";
+import { loadServingCatalog } from "./catalog-loader";
 import { servingProfileProvenance } from "./profile-provenance";
 import { runtimeAuthFingerprint } from "./runtime-auth-fingerprint";
 import {
@@ -35,10 +34,6 @@ afterEach(() => {
 
 function fixture() {
   const provenance = profile();
-  const runtimeRecipe = loadManagedInferenceCatalog().recipes.find(
-    ({ metadata }) => metadata.id === EXPORTED_VLLM_RECIPE_ID,
-  )!;
-  const runtimeRecipeDigest = managedInferenceDigest(runtimeRecipe);
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-vllm-export-"));
   temporaryDirectories.push(directory);
   const fingerprint = runtimeAuthFingerprint(key);
@@ -51,7 +46,7 @@ function fixture() {
         presetId: provenance.preset.id,
         presetDigest: provenance.preset.digest,
         recipeId: provenance.recipe.id,
-        recipeDigest: runtimeRecipeDigest,
+        recipeDigest: provenance.recipe.digest,
       },
     },
     directory,
@@ -79,7 +74,7 @@ function fixture() {
         [HOST_LOCAL_VLLM_PRESET_LABEL]: provenance.preset.id,
         [HOST_LOCAL_VLLM_PRESET_DIGEST_LABEL]: provenance.preset.digest,
         [HOST_LOCAL_VLLM_RECIPE_LABEL]: provenance.recipe.id,
-        [HOST_LOCAL_VLLM_RECIPE_DIGEST_LABEL]: runtimeRecipeDigest,
+        [HOST_LOCAL_VLLM_RECIPE_DIGEST_LABEL]: provenance.recipe.digest,
       },
     },
     NetworkSettings: {
@@ -107,9 +102,9 @@ function fixture() {
 }
 
 describe("fixed managed vLLM export observation", () => {
-  it("binds one running runtime without retained provenance to the current catalog", () => {
+  it("binds one running runtime to the current catalog and nondefault listener", () => {
     const f = fixture();
-    const result = observeManagedVllmForExport(undefined, f.options);
+    const result = observeManagedVllmForExport(f.provenance, f.options);
     expect(result).toMatchObject({
       containerId,
       imageId,
@@ -117,10 +112,6 @@ describe("fixed managed vLLM export observation", () => {
       startedAt: f.container.StartedAt,
       serving: {
         profile: { id: EXPORTED_VLLM_PROFILE_ID },
-        recipe: {
-          id: f.provenance.recipe.id,
-          digest: f.provenance.recipe.digest,
-        },
         model: f.provenance.model,
         hostPort: 18000,
       },
@@ -183,27 +174,6 @@ describe("fixed managed vLLM export observation", () => {
       "foreign serving label",
       (f: ReturnType<typeof fixture>) => {
         f.container.Config.Labels[HOST_LOCAL_VLLM_RECIPE_DIGEST_LABEL] = `sha256:${"d".repeat(64)}`;
-      },
-    ],
-    [
-      "stale matching serving identity",
-      (f: ReturnType<typeof fixture>) => {
-        const catalogDigest = `sha256:${"d".repeat(64)}`;
-        f.container.Config.Labels[HOST_LOCAL_VLLM_CATALOG_LABEL] = catalogDigest;
-        persistHostLocalVllmRuntimeReceipt(
-          {
-            containerId,
-            authFingerprint: runtimeAuthFingerprint(key),
-            serving: {
-              catalogDigest,
-              presetId: f.provenance.preset.id,
-              presetDigest: f.provenance.preset.digest,
-              recipeId: f.provenance.recipe.id,
-              recipeDigest: f.container.Config.Labels[HOST_LOCAL_VLLM_RECIPE_DIGEST_LABEL],
-            },
-          },
-          f.directory,
-        );
       },
     ],
     [

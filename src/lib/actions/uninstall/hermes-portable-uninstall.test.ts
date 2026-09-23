@@ -167,11 +167,7 @@ describe("Hermes Portable schema-5 uninstall", () => {
       ...baseInput,
       sandboxName: replacementName,
       lifecycleGeneration: "generation-2",
-      createRequest: {
-        ...baseInput.createRequest,
-        sandboxName: replacementName,
-        startupCommand: baseInput.createRequest.startupCommand.map(replaceName),
-      },
+      createArgv: baseInput.createArgv.map(replaceName),
       startup: {
         ...baseInput.startup,
         sandboxName: replacementName,

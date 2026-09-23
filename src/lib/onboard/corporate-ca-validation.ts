@@ -11,10 +11,6 @@ import {
 } from "./corporate-ca-policy";
 import { CorporateCaValidationError } from "./corporate-ca-types";
 
-function invalidCorporateCa(reason: string, filePath: string): never {
-  throw new CorporateCaValidationError(`${reason}: ${filePath}`, reason);
-}
-
 /**
  * Join validated PEM CERTIFICATE blocks into a normalized bundle.
  *
@@ -43,42 +39,47 @@ export function validateCorporateCaFile(filePath: string): string {
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code === "ELOOP") {
-      return invalidCorporateCa("corporate CA bundle must not be a symlink", filePath);
+      throw new CorporateCaValidationError(
+        `corporate CA bundle must not be a symlink: ${filePath}`,
+      );
     }
-    return invalidCorporateCa("corporate CA bundle not found or unreadable", filePath);
+    throw new CorporateCaValidationError(
+      `corporate CA bundle not found or unreadable: ${filePath}`,
+    );
   }
 
   try {
     const stat = fs.fstatSync(fd);
     if (!stat.isFile()) {
-      return invalidCorporateCa("corporate CA bundle is not a regular file", filePath);
+      throw new CorporateCaValidationError(
+        `corporate CA bundle is not a regular file: ${filePath}`,
+      );
     }
     if (stat.size === 0) {
-      return invalidCorporateCa("corporate CA bundle is empty", filePath);
+      throw new CorporateCaValidationError(`corporate CA bundle is empty: ${filePath}`);
     }
     if (stat.size > MAX_CORPORATE_CA_BYTES) {
-      return invalidCorporateCa(
-        `corporate CA bundle exceeds ${MAX_CORPORATE_CA_BYTES} bytes`,
-        filePath,
+      throw new CorporateCaValidationError(
+        `corporate CA bundle exceeds ${MAX_CORPORATE_CA_BYTES} bytes: ${filePath}`,
       );
     }
     // Refuse a source another local user could tamper with before the build.
     if ((stat.mode & 0o022) !== 0) {
-      return invalidCorporateCa(
-        "corporate CA bundle must not be group- or world-writable",
-        filePath,
+      throw new CorporateCaValidationError(
+        `corporate CA bundle must not be group- or world-writable: ${filePath}`,
       );
     }
 
     const content = fs.readFileSync(fd, "utf8");
     const blocks = content.match(PEM_CERTIFICATE_RE_GLOBAL);
     if (!blocks || blocks.length === 0) {
-      return invalidCorporateCa("corporate CA bundle contains no PEM CERTIFICATE block", filePath);
+      throw new CorporateCaValidationError(
+        `corporate CA bundle contains no PEM CERTIFICATE block: ${filePath}`,
+      );
     }
     if (blocks.length > MAX_CORPORATE_CA_CERTS) {
-      return invalidCorporateCa(
-        `corporate CA bundle has ${blocks.length} certificates (max ${MAX_CORPORATE_CA_CERTS})`,
-        filePath,
+      throw new CorporateCaValidationError(
+        `corporate CA bundle has ${blocks.length} certificates (max ${MAX_CORPORATE_CA_CERTS}): ${filePath}`,
       );
     }
 
@@ -87,15 +88,13 @@ export function validateCorporateCaFile(filePath: string): string {
       try {
         cert = new X509Certificate(block);
       } catch {
-        return invalidCorporateCa(
-          "corporate CA bundle contains a block that is not a valid X.509 certificate",
-          filePath,
+        throw new CorporateCaValidationError(
+          `corporate CA bundle contains a block that is not a valid X.509 certificate: ${filePath}`,
         );
       }
       if (!cert.ca) {
-        return invalidCorporateCa(
-          "corporate CA bundle contains a certificate that is not a CA (basicConstraints CA:TRUE required)",
-          filePath,
+        throw new CorporateCaValidationError(
+          `corporate CA bundle contains a certificate that is not a CA (basicConstraints CA:TRUE required): ${filePath}`,
         );
       }
     }

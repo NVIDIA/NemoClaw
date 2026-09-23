@@ -25,7 +25,7 @@ import {
 } from "../messaging-config";
 
 import {
-  bindRebuildPolicyProvidersToCreateRequest,
+  bindRebuildPolicyProvidersToCreateArgs,
   beginRecreateDeleteAfterPolicyPreflight,
   resolveRebuildMessagingPolicyDeltas,
   resolveRebuildObservabilityPolicyDelta,
@@ -302,15 +302,12 @@ describe("rebuild policy provider handoff", () => {
         expect(endpoints.filter(({ host }) => host.startsWith("idc-"))).toHaveLength(1);
         expect(endpoints.map(({ host }) => host)).not.toContain("*.weixin.qq.com");
 
-        expect(
-          bindRebuildPolicyProvidersToCreateRequest(
-            {
-              sandboxName: "alpha",
-              source: { reference: "image" },
-            },
-            rebuilt,
-          ).providers,
-        ).toEqual([providerName]);
+        expect(bindRebuildPolicyProvidersToCreateArgs(["--from", "image"], rebuilt)).toEqual([
+          "--from",
+          "image",
+          "--provider",
+          providerName,
+        ]);
       } finally {
         rebuilt.cleanup?.();
       }
@@ -344,25 +341,59 @@ describe("rebuild policy provider handoff", () => {
     },
   );
 
-  it("adds missing live-policy providers to the final create request", () => {
+  it("adds missing live-policy providers to the final create arguments", () => {
     expect(
-      bindRebuildPolicyProvidersToCreateRequest(
-        {
-          sandboxName: "alpha",
-          source: { reference: "image" },
-          providers: ["operator-provider"],
-        },
+      bindRebuildPolicyProvidersToCreateArgs(
+        ["--from", "image", "--provider", "operator-provider"],
         {
           credentialBindingProviders: ["operator-provider", "wechat-provider"],
         },
-      ).providers,
-    ).toEqual(["operator-provider", "wechat-provider"]);
+      ),
+    ).toEqual([
+      "--from",
+      "image",
+      "--provider",
+      "operator-provider",
+      "--provider",
+      "wechat-provider",
+    ]);
+  });
+
+  it("inserts rebuild providers before the sandbox startup command separator", () => {
+    expect(
+      bindRebuildPolicyProvidersToCreateArgs(
+        [
+          "openshell",
+          "sandbox",
+          "create",
+          "--provider",
+          "inference-provider",
+          "--",
+          "env",
+          "nemoclaw-start",
+        ],
+        {
+          credentialBindingProviders: ["inference-provider", "mcp-provider"],
+        },
+      ),
+    ).toEqual([
+      "openshell",
+      "sandbox",
+      "create",
+      "--provider",
+      "inference-provider",
+      "--provider",
+      "mcp-provider",
+      "--",
+      "env",
+      "nemoclaw-start",
+    ]);
   });
 
   it("authorizes enabled messaging and managed MCP providers but rejects disabled channels", () => {
     expect(
       resolveRebuildPolicyProviderAuthority({
-        createProviders: ["inference-provider"],
+        createArgs: ["--from", "image", "--provider", "inference-provider"],
         messagingPlan: {
           disabledChannels: ["discord"],
           credentialBindings: [
@@ -417,7 +448,7 @@ describe("rebuild policy provider handoff", () => {
   it("does not authorize MCP providers absent from the source policy", () => {
     expect(
       resolveRebuildPolicyProviderAuthority({
-        createProviders: [],
+        createArgs: [],
         messagingPlan: null,
         policyDocument: YAML.stringify({
           version: 1,
@@ -443,7 +474,7 @@ describe("rebuild policy provider handoff", () => {
   it("rejects malformed policy before any provider authority can be used", () => {
     expect(() =>
       resolveRebuildPolicyProviderAuthority({
-        createProviders: [],
+        createArgs: [],
         messagingPlan: null,
         policyDocument: "network_policies:\n  broken: [\n",
       }),

@@ -11,11 +11,7 @@ export interface ResolvedCorporateCa {
 }
 
 export class CorporateCaValidationError extends Error {
-  constructor(
-    message: string,
-    /** Stable user-facing reason that excludes the operator-controlled source path. */
-    readonly reason: string,
-  ) {
+  constructor(message: string) {
     super(message);
     this.name = "CorporateCaValidationError";
   }

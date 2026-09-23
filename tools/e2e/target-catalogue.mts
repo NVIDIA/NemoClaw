@@ -350,9 +350,7 @@ function commonEgressTarget(options: {
 const GATEWAY_UPGRADE_OWNING_PATHS = Object.freeze([
   "scripts/install.sh",
   "src/lib/actions/global.ts",
-  "src/lib/actions/maintenance.ts",
   "src/lib/actions/sandbox/forward-recovery.ts",
-  "src/lib/actions/upgrade-sandboxes.ts",
   "tools/e2e/openshell-gateway-upgrade-fixture.mts",
   "test/e2e/live/openshell-gateway-upgrade-helpers.ts",
   "test/e2e/live/openshell-gateway-upgrade-old-installer.ts",
@@ -771,13 +769,13 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       NEMOCLAW_OLLAMA_PROXY_PORT: "11435",
     },
   }),
-  dockerOnlyTarget("gpu-e2e", {
-    displayName: "Inference: validates GPU Ollama plus Ollama and vLLM configuration export",
+  managedRuntimeTarget("gpu-e2e", {
+    displayName: "Inference: validates OpenClaw and Hermes turns through GPU Ollama",
     agentRuntime: "openclaw",
-    environmentOrInferenceEndpoint: "NVIDIA GPU runner; local Ollama and managed vLLM",
+    environmentOrInferenceEndpoint: "NVIDIA GPU runner; local Ollama",
     profile: "standard",
     runner: "linux-amd64-gpu-rtxpro6000-latest-1",
-    timeoutMinutes: 150,
+    timeoutMinutes: 90,
     installMode: "authenticated",
     restoreCli: true,
     exposeCliBin: true,
@@ -790,11 +788,6 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       "src/lib/adapters/config/live-export-source.ts",
       "src/lib/config/model.ts",
       "src/lib/config/schema.ts",
-      "src/lib/config/v1alpha1-export.ts",
-      "src/lib/domain/config/export-document.ts",
-      "src/lib/domain/config/verify-export-source.ts",
-      "src/lib/inference/local-model-profile/cleanup.ts",
-      "src/lib/inference/serving/vllm-export-runtime.ts",
     ],
     environment: {
       ...nonInteractive,
@@ -815,7 +808,6 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     restoreCli: true,
     exposeCliBin: true,
     owningPaths: [
-      "scripts/lib/patch-openclaw-container-restart.mts",
       "test/e2e/live/launch-agent-turn.ts",
       "test/e2e/live/pr-base-comparison.ts",
       "src/lib/tunnel/gateway-stop-script.ts",
@@ -976,9 +968,6 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     exposeCliBin: true,
     owningPaths: [
       "nemoclaw-blueprint/router/pool-config.yaml",
-      "src/lib/actions/sandbox/destroy-preflight.ts",
-      "src/lib/onboard/model-router-process.ts",
-      "src/lib/onboard/model-router.ts",
       "test/e2e/live/model-router-provider-routed-inference-helpers.ts",
     ],
     environment: { OPENSHELL_GATEWAY: "nemoclaw" },

@@ -25,8 +25,9 @@ import {
   createHermesPortableOpenShellCapture,
   createHermesPortableReadyCapture,
   observeHermesPortableSandbox,
-  rewriteHermesPortableCreatePolicyRequest,
+  rewriteHermesPortableCreatePolicyArgv,
   runHermesPortableOnboardingTransaction,
+  scopeHermesPortableCreateGatewayArgv,
   shouldManageHermesPortableDashboard,
   type HermesPortableOnboardingInput,
 } from "./hermes-portable-onboarding";
@@ -288,9 +289,13 @@ describe("Hermes portable onboarding transaction", () => {
     expect(spawn).not.toHaveBeenCalled();
   });
 
-  it("carries one typed create gateway authority (#9203)", () => {
+  it("adds exactly one create gateway and rejects existing gateway selection (#9203)", () => {
     const current = input();
-    expect(current.createRequest.target).toEqual({ kind: "named", gatewayName: "nemoclaw" });
+    const unscoped = current.createArgv.filter((value) => !["-g", "nemoclaw"].includes(value));
+    expect(scopeHermesPortableCreateGatewayArgv(unscoped, "nemoclaw")).toEqual(current.createArgv);
+    expect(() => scopeHermesPortableCreateGatewayArgv(current.createArgv, "nemoclaw")).toThrow(
+      "already contains gateway selection authority",
+    );
   });
 
   it("does not enroll dashboard/TUI forward authority for schema-7 Hermes (#9203)", () => {
@@ -538,14 +543,17 @@ describe("Hermes portable onboarding transaction", () => {
 
   it("accepts selected GPU CDI devices in the portable create intent", async () => {
     const current = input();
-    current.createRequest = {
-      ...current.createRequest,
-      driverConfigJson: JSON.stringify({
+    const separator = current.createArgv.indexOf("--");
+    current.createArgv.splice(
+      separator,
+      0,
+      "--driver-config-json",
+      JSON.stringify({
         docker: { cdi_devices: ["nvidia.com/gpu=0"] },
         podman: { cdi_devices: ["nvidia.com/gpu=0"] },
       }),
-      gpu: {},
-    };
+      "--gpu",
+    );
     const fixture = createHermesPortableTransactionFixture(current);
 
     const completed = await runHermesPortableOnboardingTransaction(current, fixture.value);
@@ -669,7 +677,7 @@ network_policies:
     expect(JSON.parse(pendingBytes).createIntentSha256).toMatch(/^[a-f0-9]{64}$/u);
     expect(pendingBytes).not.toContain("ghcr.io/nvidia/nemoclaw/hermes");
     const changed = input();
-    changed.createRequest = { ...changed.createRequest, gpu: {} };
+    changed.createArgv.splice(changed.createArgv.indexOf("--"), 0, "--gpu");
     const second = deps();
 
     await expect(runHermesPortableOnboardingTransaction(changed, second.value)).rejects.toThrow(
@@ -724,13 +732,7 @@ network_policies:
       "temporary policy cleanup did not complete",
     );
     const changed = input();
-    changed.openshellExecutableAuthority = {
-      ...changed.openshellExecutableAuthority,
-      executable: {
-        ...changed.openshellExecutableAuthority.executable,
-        executablePath: "/other/openshell",
-      },
-    };
+    changed.createArgv[0] = "/other/openshell";
     const second = deps();
 
     await expect(runHermesPortableOnboardingTransaction(changed, second.value)).rejects.toThrow(
@@ -836,10 +838,7 @@ network_policies:
     );
     const changed = input();
     changed.gatewayName = "other-gateway";
-    changed.createRequest = {
-      ...changed.createRequest,
-      target: { kind: "named", gatewayName: "other-gateway" },
-    };
+    changed.createArgv[changed.createArgv.indexOf("-g") + 1] = "other-gateway";
     const second = deps({ registryEntry: reservationForOnboarding(changed) });
 
     await expect(runHermesPortableOnboardingTransaction(changed, second.value)).rejects.toThrow(
@@ -848,17 +847,16 @@ network_policies:
     expect(second.events).not.toContain("create");
   });
 
-  it("keeps credential-bearing create environment out of durable authority (#9203)", async () => {
+  it("rejects credential-bearing create env before durable reservation (#9203)", async () => {
     const current = input();
-    current.createRequest = {
-      ...current.createRequest,
-      environment: { API_KEY: "do-not-log" },
-    };
+    current.createArgv.splice(current.createArgv.indexOf("--"), 0, "--env", "API_KEY=do-not-log");
     const fixture = deps();
 
-    const completed = await runHermesPortableOnboardingTransaction(current, fixture.value);
-    expect(completed.active.receipt.phase).toBe("active");
-    expect(JSON.stringify(completed.active.receipt)).not.toContain("do-not-log");
+    await expect(runHermesPortableOnboardingTransaction(current, fixture.value)).rejects.toThrow(
+      "unsupported effect-bearing option",
+    );
+    expect(fs.existsSync(hermesPortableReceiptDirectory("alpha", stateDir))).toBe(false);
+    expect(fixture.events).not.toContain("create");
   });
 
   it("resumes an exact interrupted pending receipt prefix after process-style reentry (#9203)", async () => {
@@ -1198,21 +1196,40 @@ network_policies:
     expect(ambiguous.events).not.toContain("create");
   });
 
-  it("rejects a mismatched policy before semantic request rewriting (#9203)", () => {
-    const request = { ...input().createRequest, policyPath: "/tmp/other.yaml" };
-    expect(() =>
-      rewriteHermesPortableCreatePolicyRequest(request, policyPath, "/durable.yaml"),
-    ).toThrow("does not name the captured source");
+  it.each([
+    [
+      "duplicate pair",
+      (sourcePath: string) => ["--policy", sourcePath, "--policy", sourcePath],
+      /exactly one canonical policy option/,
+    ],
+    [
+      "equals form",
+      (sourcePath: string) => [`--policy=${sourcePath}`],
+      /one canonical '--policy <path>' option/,
+    ],
+    ["wrong path", () => ["--policy", "/tmp/other.yaml"], /does not name the captured source/],
+  ])("rejects %s before policy argv rewriting (#9203)", (_label, buildArgv, error) => {
+    const argv = buildArgv(policyPath);
+    expect(() => rewriteHermesPortableCreatePolicyArgv(argv, policyPath, "/durable.yaml")).toThrow(
+      error,
+    );
   });
 
-  it("rejects a missing typed policy before durable policy or create effects (#9203)", async () => {
+  it("rejects a noncanonical policy option before durable policy or create effects (#9203)", async () => {
     const fixture = deps();
     const invalid = input();
-    const { policyPath: _policyPath, ...requestWithoutPolicy } = invalid.createRequest;
-    invalid.createRequest = requestWithoutPolicy;
+    invalid.createArgv = [
+      "openshell",
+      "sandbox",
+      "create",
+      "--policy",
+      policyPath,
+      `--policy=${policyPath}`,
+      "alpha",
+    ];
 
     await expect(runHermesPortableOnboardingTransaction(invalid, fixture.value)).rejects.toThrow(
-      "does not name the captured source",
+      "one canonical '--policy <path>' option",
     );
     expect(fs.existsSync(hermesPortableReceiptDirectory("alpha", stateDir))).toBe(false);
     expect(fixture.events).not.toContain("create");
