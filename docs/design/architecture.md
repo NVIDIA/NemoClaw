@@ -31,7 +31,10 @@ Implementation starts at [Deployment](../../crates/nemoclaw-sdk/src/deployment/m
 ## OpenShell SDK Boundary
 
 NemoClaw's [OpenShell adapter](../../crates/nemoclaw-sdk/src/openshell/mod.rs) reconciles deployment ownership and desired state against the gateway.
-The adapter uses `openshell-sdk::OpenShellClient` for client construction and authentication, with its supported raw API for operations that need complete protobuf fields.
+NemoClaw uses the SDK's public operations directly where they cover the deployment contract.
+Sandbox teardown uses workspace-scoped `get_sandbox`, `delete_sandbox`, and `wait_deleted`; it checks ownership before deletion and requires confirmed absence afterward.
+Teardown does not require the sandbox's old image, command, or policy to remain intact.
+The reconciliation code retains the SDK's raw API only for operations or fields missing from the high-level interface, without a separate raw-client wrapper.
 The Rust SDK uses gRPC; adopting it does not remove the gateway RPC boundary.
 NemoClaw supplies the channel to preserve mutual TLS, lazy connection, and timeout settings that the pinned SDK configuration cannot express.
 
@@ -42,6 +45,7 @@ At the pinned OpenShell revision `1fe79f53991debf32776853a60f0cbd4e127dcfb`, the
 | Telemetry disabled at build time | Its manifest enables `openshell-core` default features, including telemetry | Use a [vendored manifest patch](../../crates/vendor/openshell-sdk/NOTICE.md) with unchanged Rust source to disable core default features |
 | Mutual TLS and bounded lazy connections | `ClientConfig` lacks client certificate/key fields, lazy connection configuration, and request timeouts | Retain custom channel construction through `OpenShellClient::from_parts` |
 | Complete workspace identity | `WorkspaceRef` omits the physical ID, resource version, and deletion timestamp | Use the SDK's supported `raw_grpc()` escape hatch for workspace observations and creation readback |
+| Sandbox creation with explicit policy | `SandboxSpec` has no policy field; the policy-bearing template API requires a separate workload template | Retain raw creation so the declared policy applies in the initial request |
 | Sandbox drift and startup checks | `SandboxRef` omits the specification, deletion timestamp, and startup conditions | Keep full protobuf observations through the raw SDK client |
 | Conditional provider updates | The curated client has no provider update method | Preserve raw requests carrying the verified physical ID and resource version |
 | Providers, provider profiles, policy status, and gateway capabilities | The curated client has no equivalent methods for these operations | Use the raw SDK client; provider readiness helpers do not replace provider/profile reconciliation |
@@ -50,7 +54,7 @@ At the pinned OpenShell revision `1fe79f53991debf32776853a60f0cbd4e127dcfb`, the
 
 These limits are verified against the pinned [SDK manifest](https://github.com/NVIDIA/OpenShell/blob/1fe79f53991debf32776853a60f0cbd4e127dcfb/crates/openshell-sdk/Cargo.toml), [configuration](https://github.com/NVIDIA/OpenShell/blob/1fe79f53991debf32776853a60f0cbd4e127dcfb/crates/openshell-sdk/src/config.rs), [client](https://github.com/NVIDIA/OpenShell/blob/1fe79f53991debf32776853a60f0cbd4e127dcfb/crates/openshell-sdk/src/client.rs), [types](https://github.com/NVIDIA/OpenShell/blob/1fe79f53991debf32776853a60f0cbd4e127dcfb/crates/openshell-sdk/src/types.rs), and [authentication interceptor](https://github.com/NVIDIA/OpenShell/blob/1fe79f53991debf32776853a60f0cbd4e127dcfb/crates/openshell-sdk/src/auth.rs).
 The supported raw escape hatch provides an SDK integration point but still exposes protobuf compatibility risk.
-NemoClaw constructs the client without a token refresher; raw calls do not automatically retry mutations.
+NemoClaw constructs the client without a token refresher; neither the selected high-level operations nor raw calls automatically retry mutations.
 An [artifact test](../../crates/nemoclaw-sdk/tests/artifact_pins.rs) checks revision alignment and proves telemetry remains disabled even when the process environment requests it.
 Deletion remains name-addressed in the pinned protocol; neither client offers an atomic ID/version precondition, so NemoClaw verifies identity immediately before deletion and never retries an ambiguous mutation automatically.
 Ownership checks, retained bindings, and desired-state comparison remain NemoClaw responsibilities even when the SDK gains broader coverage.

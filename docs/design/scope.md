@@ -51,6 +51,7 @@ See [runtime](runtime.md), [execution targets](execution-targets.md), and [recip
 
 SDK errors and progress must not expose secrets.
 OpenShell transport must use the pinned Rust SDK, with its supported raw clients where the high-level API omits required operations or fields, telemetry disabled, mTLS, bearer credential references, bounded calls, and no automatic mutation retry.
+Call supported SDK operations directly; keep NemoClaw code for deployment ownership and reconciliation, without pass-through client wrappers.
 Verify certificate trust in both directions independently of plaintext protocol tests.
 
 ## Validation
