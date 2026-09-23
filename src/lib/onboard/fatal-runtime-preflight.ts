@@ -38,6 +38,7 @@ import { assessHost, type HostAssessment, planHostAdvisories } from "./preflight
 import {
   printCdiSpecUnavailableError,
   printDockerNotReachableError,
+  printOnboardOsReleaseWarnings,
   printUnsupportedRuntimeError,
 } from "./preflight-messages";
 import { printRemediationActions } from "./remediation";
@@ -122,7 +123,6 @@ const JETSON_INAPPLICABLE_CDI_ADVISORY_IDS = new Set([
   "refresh_nvidia_cdi_spec",
   "install_nvidia_container_toolkit",
 ]);
-
 export interface OnboardHostReadinessOptions {
   explicitlyOptedOutGpuPassthrough: boolean;
   /** Preserve provider-bound proof state across readiness collection phases. */
@@ -135,7 +135,7 @@ export interface OnboardHostReadinessOptions {
   allowDeferredN1xOnboarding?: boolean;
   /** Verified legacy rebuild authority; never inferred from ambient process state. */
   allowLegacyDgxStationQualification?: boolean;
-  /** Print warning-severity host advisories before returning an admitted report. */
+  /** Print OS-release warnings and host advisories before returning an admitted report. */
   presentAdvisories?: boolean;
   exitProcess?: (code: number) => never;
   /** When the caller began observing the host, before it ran its own probes. Provenance only. */
@@ -258,6 +258,9 @@ export function assertOnboardSystemReadiness(
     providerOwnsHostReadiness: selectedRuntimeOwnsHostReadiness,
     resuming: options.resuming,
   });
+  if (!admission.admitted || options.presentAdvisories !== false) {
+    printOnboardOsReleaseWarnings(readinessReport);
+  }
   if (admission.admitted) {
     if (options.presentAdvisories !== false) {
       printRemediationActions(advisories.filter(({ severity }) => severity === "warning"));
