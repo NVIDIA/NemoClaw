@@ -123,6 +123,7 @@ const stagingMutations: Array<[string, (steps: WorkflowSteps, index: number) => 
 
 const stagingReferenceVariants = [
   "./.github/actions/stage-native-podman-e2e-toolchains",
+  "$/.github/actions/stage-native-podman-e2e-toolchains",
   "./.github/actions/stage-native-podman-e2e-toolchains/",
   "./.github/actions/../actions/stage-native-podman-e2e-toolchains",
   "./.github/actions/./stage-native-podman-e2e-toolchains",

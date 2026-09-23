@@ -805,8 +805,8 @@ function isNativePodmanStagingReference(value: unknown): boolean {
   const [owner, repository, ...actionPath] =
     E2E_ACTION_PROVENANCE.stageNativePodmanToolchains.reference.split("@")[0].split("/");
   const expectedPath = actionPath.join("/");
-  if (value.startsWith("./")) {
-    return posix.normalize(value).replace(/\/$/, "") === expectedPath;
+  if (value.startsWith("./") || value.startsWith("$/")) {
+    return posix.normalize(value.slice(2)).replace(/\/$/, "") === expectedPath;
   }
   const [candidateOwner, candidateRepository, ...candidatePath] = value.split("@")[0].split("/");
   return (
