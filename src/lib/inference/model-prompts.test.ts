@@ -33,14 +33,14 @@ describe("model prompt helpers", () => {
     expect(result).toBe("llama");
   });
 
-  it("returns Minimax M3 from the default cloud model menu", async () => {
-    const promptFn = promptSequence(["3"]);
+  it("returns Nemotron 3 Super from the default cloud model menu", async () => {
+    const promptFn = promptSequence(["2"]);
     const result = await promptCloudModel({
       promptFn,
       writeLine: vi.fn(),
     });
 
-    expect(result).toBe("minimaxai/minimax-m3");
+    expect(result).toBe("nvidia/nemotron-3-super-120b-a12b");
   });
 
   it("uses the effective live catalog default when the user presses enter", async () => {

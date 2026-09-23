@@ -464,7 +464,7 @@ describe("managed workload onboard orchestration", () => {
     expect(docker.calls.some((args) => args[0] === "rm")).toBe(true);
   });
 
-  it("keeps raw create rendering only on the deferred Hermes Portable launch", () => {
+  it("keeps deferred Hermes Portable launch on a semantic create request", () => {
     vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
     const preparedLaunch = prepareHermesPortableOnboardSandboxLaunch({
       intent: {
@@ -515,11 +515,16 @@ describe("managed workload onboard orchestration", () => {
       },
     });
 
-    expect(preparedLaunch.createRequestPlan).toBeNull();
+    expect(preparedLaunch.createRequestPlan).toMatchObject({
+      sandboxName: "portable-hermes",
+      source: { reference: "ghcr.io/nvidia/nemoclaw/hermes:test" },
+    });
     expect(preparedLaunch.launch).toMatchObject({
-      createCommand: expect.stringContaining("sandbox create"),
-      createArgv: expect.arrayContaining(["openshell"]),
-      prebuild: { createArgs: expect.any(Array) },
+      prebuild: {
+        sourceReference: "ghcr.io/nvidia/nemoclaw/hermes:test",
+        imageRef: null,
+        imageId: null,
+      },
     });
   });
 
@@ -760,14 +765,14 @@ describe("managed workload onboard orchestration", () => {
       expectedRawCreate: false,
     },
     {
-      behavior: "keeps Portable OpenClaw on the raw create launch",
+      behavior: "keeps Portable OpenClaw on the typed create launch",
       agentName: "openclaw",
       fromDockerfile: path.join(process.cwd(), "Dockerfile"),
       preparedBuildContext: null,
       expectedFromDockerfile: null,
       expectedStageCalls: 1,
       portableLifecycle: true,
-      expectedRawCreate: true,
+      expectedRawCreate: false,
     },
   ])("$behavior", async (testCase) => {
     const { agentName, fromDockerfile, preparedBuildContext } = testCase;
@@ -792,19 +797,14 @@ describe("managed workload onboard orchestration", () => {
       return { buildId: "image-build", dashboardRemoteBindPrepared: false };
     });
     const materializeSandboxCreatePlan = vi.fn(
-      (input: { readonly portableLifecycle?: boolean }) => ({
+      (_input: { readonly portableLifecycle?: boolean }) => ({
         activeMessagingChannels: [],
         compatibilityPolicyPath: null,
-        createArgs: input.portableLifecycle
-          ? ["--from", stagedContext.stagedDockerfile, "--name", "dcode"]
-          : null,
-        createRequest: input.portableLifecycle
-          ? null
-          : {
-              sandboxName: "dcode",
-              source: { reference: stagedContext.stagedDockerfile },
-              policyPath: "/tmp/nemoclaw-policy.yaml",
-            },
+        createRequest: {
+          sandboxName: "dcode",
+          source: { reference: stagedContext.stagedDockerfile },
+          policyPath: "/tmp/nemoclaw-policy.yaml",
+        },
         gpuRoutePlan: "none",
         initialSandboxPolicy: {
           appliedPresets: [],
@@ -884,7 +884,7 @@ describe("managed workload onboard orchestration", () => {
     expect(resolvePatchInput).toHaveBeenCalledOnce();
     expect(resolveSandboxBuildPatch).toHaveBeenCalledOnce();
     expect(materializeSandboxCreatePlan).toHaveBeenCalledWith(
-      expect.objectContaining({ portableLifecycle: testCase.expectedRawCreate }),
+      expect.objectContaining({ portableLifecycle: testCase.portableLifecycle === true }),
     );
     expect(preparedLaunch.createRequestPlan === null).toBe(testCase.expectedRawCreate);
     expect(Object.hasOwn(preparedLaunch.launch, "createCommand")).toBe(testCase.expectedRawCreate);

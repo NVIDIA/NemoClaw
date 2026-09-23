@@ -209,11 +209,8 @@ export interface SandboxGpuCreateFlowInput {
   gatewayName: string;
   gatewayPort: number;
   sandboxReadyTimeoutSecs: number;
-  /** Ordinary create requests use the typed lifecycle boundary. Portable retains argv until #12119. */
-  createRequest?: CreateOpenShellSandboxRequest;
-  createArgv?: string[];
-  /** Exact schema-5 build context consumed by the OpenShell create child. */
-  createWorkingDirectory?: string;
+  /** Semantic request consumed by the selected OpenShell lifecycle adapter. */
+  createRequest: CreateOpenShellSandboxRequest;
   /** Host-side runtime environment used only by the selected lifecycle provider. */
   hostEnv?: NodeJS.ProcessEnv;
   portableLifecycle?: boolean;
@@ -222,8 +219,7 @@ export interface SandboxGpuCreateFlowInput {
   sandboxStartupCommand: string[];
   lifecycleGeneration?: SandboxEntry["lifecycleGeneration"];
   portableRuntimeAuthority?: CheckpointPortableRuntimeAuthority | null;
-  prebuild: Omit<SandboxPrebuildResult, "createArgs"> &
-    Partial<Pick<SandboxPrebuildResult, "createArgs">>;
+  prebuild: Omit<SandboxPrebuildResult, "createArgs">;
   restoreBackupPath: string | null;
   terminalAgent: boolean;
   persistStartupCommand?: boolean;

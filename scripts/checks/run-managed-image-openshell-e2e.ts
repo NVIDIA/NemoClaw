@@ -1107,7 +1107,6 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
       managedStartupRootApplyRequest: rootApplyRequest,
     });
     const prebuild = {
-      createArgs: [...createArgs],
       imageRef: null,
       imageId: null,
     };
@@ -1179,7 +1178,16 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
           gatewayName: GATEWAY_NAME,
           gatewayPort: GATEWAY_PORT,
           sandboxReadyTimeoutSecs: 240,
-          createArgv: launch.createArgv,
+          createRequest: {
+            sandboxName: input.sandbox,
+            target: { kind: "named", gatewayName: GATEWAY_NAME },
+            source: { reference: input.image },
+            policyPath: initialSandboxPolicy.policyPath,
+            ...(managedStateDriverConfig ? { driverConfigJson: managedStateDriverConfig } : {}),
+            ...(input.gpu ? { gpu: {} } : {}),
+            startupCommand: launch.sandboxStartupCommand,
+            environment: launch.sandboxEnv,
+          },
           sandboxEnv: launch.sandboxEnv,
           sandboxStartupCommand: launch.sandboxStartupCommand,
           prebuild,
