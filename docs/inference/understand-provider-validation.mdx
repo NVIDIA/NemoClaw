@@ -14,7 +14,10 @@ The request depends on the provider API that the agent uses.
 
 ## Credential Validation
 
-When credential validation fails, the onboarding wizard lets you re-enter the API key, choose another provider, retry, or exit.
+Credential recovery requires interactive terminals for both standard input and standard error.
+When both streams are available, choose `retry` to open the secure API-key prompt, `back` to choose another provider, or `exit` to stop onboarding.
+If either stream is not an interactive terminal, NemoClaw exits with a nonzero status.
+Rerun onboarding with both streams attached to retry credential entry.
 NemoClaw retries transient upstream failures before it reports a provider failure.
 After a fatal provider or inference-validation failure before sandbox creation, NemoClaw attempts to release an unowned NemoClaw-managed OpenShell gateway and remove its registration so provider credentials do not remain in a live process.
 It preserves a gateway that another registered sandbox uses, an external supervisor owns, or whose teardown authority cannot be proven.

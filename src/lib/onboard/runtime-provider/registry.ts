@@ -8,6 +8,7 @@ import {
   RUNTIME_PROVIDER_NATIVE_ARTIFACT_BOOTSTRAP_CONTRACT_VERSION,
   RUNTIME_PROVIDER_SNAPSHOT_CONTRACT_VERSION,
   RUNTIME_PROVIDER_SNAPSHOT_PREFLIGHT_SCHEMA_VERSION,
+  normalizeRuntimeProviderIdentity,
   type RuntimeProviderBundle,
   type RuntimeProviderBundleRegistry,
   type RuntimeProviderChannelStopTransport,
@@ -21,6 +22,7 @@ import {
   type RuntimeProviderSnapshotRestoreReceipt,
   type RuntimeProviderSnapshotRestoreSource,
 } from "./contract";
+export { normalizeRuntimeProviderIdentity } from "./contract";
 import type {
   HostLocalInferenceOperation,
   HostLocalInferenceOperationInput,
@@ -725,11 +727,6 @@ export function createRuntimeProviderBundleRegistry(
     registry[key] = cloneAndFreeze(bundle);
   }
   return Object.freeze(registry);
-}
-
-export function normalizeRuntimeProviderIdentity(driverName: string | null | undefined): string {
-  const normalized = driverName?.trim().toLowerCase();
-  return !normalized || normalized === "vm" ? "docker" : normalized;
 }
 
 export function resolveRuntimeProviderBundle(

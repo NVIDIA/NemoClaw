@@ -45,6 +45,10 @@ const REQUIRED_RUNTIME_AUTHORITY_PATHS = [
   "src/lib/onboard/runtime-provider/current.ts",
   "src/lib/onboard/setup-nim-flow.ts",
 ] as const;
+const ARM64_PROOF_AUTHORITY_PATHS = [
+  "src/lib/container-gpu-proof.ts",
+  "src/lib/onboard/runtime-provider/nvidia-container-proof.ts",
+] as const;
 
 type RunProcessResult = {
   status: number | null;
@@ -173,6 +177,16 @@ describe.concurrent("generic NVIDIA GPU PR selection", () => {
       const result = await selectGenericGpuLane([changedFile]);
       expect(result).toBe(
         `base_sha=${BASE_SHA}\nhead_sha=${CANDIDATE_SHA}\npr_number=8748\nselected=true`,
+      );
+    },
+  );
+
+  it.for(ARM64_PROOF_AUTHORITY_PATHS)(
+    "does not select the Docker-qualified AMD64 GPU job for ARM64 proof owner %s",
+    async (changedFile, { expect }) => {
+      const result = await selectGenericGpuLane([changedFile]);
+      expect(result).toBe(
+        `base_sha=${BASE_SHA}\nhead_sha=${CANDIDATE_SHA}\npr_number=8748\nselected=false`,
       );
     },
   );
