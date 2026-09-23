@@ -138,4 +138,57 @@ describe("createFinalOnboardFlowPhases", () => {
       expect.stringContaining("receipt-owned native gateway is not qualified and healthy"),
     );
   });
+
+  it("keeps generic recovery for Portable OpenClaw finalization (#11892)", async () => {
+    const authority = {
+      schemaVersion: 1 as const,
+      kind: "podman" as const,
+      ownership: "current-user" as const,
+      uid: 1001,
+      homeDir: "/home/kiosk",
+      configHome: "/home/kiosk/.config",
+      runtimeDir: "/run/user/1001",
+      socketPath: "/run/user/1001/podman/podman.sock",
+    };
+    const environmentScope = createPortableOnboardEnvironmentScope(
+      { HOME: authority.homeDir },
+      null,
+    );
+    const genericRecovery = vi
+      .spyOn(finalizationHandlerDeps, "checkAndRecoverSandboxProcesses")
+      .mockResolvedValue(true);
+    const hermesReadiness = vi.spyOn(
+      finalizationHandlerDeps,
+      "checkHermesPortableSandboxReadiness",
+    );
+    vi.spyOn(finalizationHandlerDeps, "reportDeploymentReadiness").mockImplementation(() => {});
+    createFinalOnboardFlowPhases({
+      branchState: "openclaw",
+      agentSetupDeps: {},
+      policiesDeps: {},
+      finalization: {
+        stagedLegacyKeys: [],
+        migratedLegacyKeys: new Set(),
+        webSearchEnabled: () => false,
+        webSearchProvider: () => "brave",
+      },
+      finalizationDeps: {
+        setDefaultSandbox: vi.fn(),
+        removeLegacyCredentialsFile: vi.fn(),
+        cleanupStaleHostFiles: vi.fn(),
+        error: vi.fn(),
+      },
+      portableRuntimeContext: { authority, environmentScope },
+    } as never);
+    const composedOptions = mocks.createFinalFlowPhases.mock.calls[0]![0];
+    const phases = mocks.actualCreateFinalFlowPhases!(composedOptions as never);
+
+    await expect(
+      phases[2].run(context({ agent: null, sandboxName: "portable-openclaw" })),
+    ).resolves.toMatchObject({
+      result: { type: "transition", next: "post_verify" },
+    });
+    expect(genericRecovery).toHaveBeenCalledWith("portable-openclaw", { quiet: true });
+    expect(hermesReadiness).not.toHaveBeenCalled();
+  });
 });

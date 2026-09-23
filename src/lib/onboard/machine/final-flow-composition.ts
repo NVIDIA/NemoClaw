@@ -51,7 +51,7 @@ export function createFinalOnboardFlowPhases<
     finalizationDeps: {
       ...options.finalizationDeps,
       ...finalizationHandlerDeps,
-      ...(portableRuntime
+      ...(portableRuntime && options.branchState === "agent_setup"
         ? {
             checkAndRecoverSandboxProcesses: (name: string, _options: { quiet: boolean }) => {
               if (!portableRuntime.environmentScope) {

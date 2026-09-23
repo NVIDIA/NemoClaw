@@ -17,6 +17,7 @@ import {
 } from "../../onboard/runtime-provider/access";
 import {
   assertHermesPortableAgentLifecycleAuthority,
+  HermesPortableLifecycleAuthorityError,
   qualifyPortableAgentLifecycleAuthority,
 } from "../../onboard/experimental/portable-agent-lifecycle";
 import { withSandboxLifecycleLock } from "./lifecycle/lock";
@@ -39,7 +40,14 @@ export function inspectSandboxDoctorPortableAuthority(
   sandboxName: string,
   readRegistry: (sandboxName: string) => SandboxEntry | null,
 ) {
-  return qualifyPortableAgentLifecycleAuthority(sandboxName, { readRegistry });
+  try {
+    return qualifyPortableAgentLifecycleAuthority(sandboxName, { readRegistry });
+  } catch (error) {
+    if (error instanceof HermesPortableLifecycleAuthorityError) {
+      return { kind: "hermes-authority-unavailable" as const };
+    }
+    throw error;
+  }
 }
 
 type HermesPortableDoctorAuthority = Extract<

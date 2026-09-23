@@ -141,6 +141,18 @@ function hermesPortableDoctorReport(
   return buildDoctorReport(sandboxName, checks);
 }
 
+function hermesPortableAuthorityFailureReport(sandboxName: string): DoctorReport {
+  return buildDoctorReport(sandboxName, [
+    {
+      group: "Sandbox",
+      label: "Portable lifecycle authority",
+      status: "fail",
+      detail: "Hermes portable receipt and registry authority could not be qualified",
+      hint: "preserve the registry and lifecycle receipt files unchanged and stop; do not edit or recreate either file",
+    },
+  ]);
+}
+
 function parseDoctorIntent(sandboxName: string, args: string[]): DoctorIntent | null {
   const asJson = args.includes("--json");
   const wantsFix = args.includes("--fix");
@@ -673,6 +685,12 @@ export async function runSandboxDoctor(
 
   const outcome = await withSandboxDoctorLifecycleLock(sandboxName, async () => {
     const portable = inspectSandboxDoctorPortableAuthority(sandboxName, registry.getSandbox);
+    if (portable.kind === "hermes-authority-unavailable") {
+      const report = hermesPortableAuthorityFailureReport(sandboxName);
+      if (intent.asJson && options.quietJson) return { report };
+      const exitCode = renderDoctorReport(report, intent.asJson);
+      return { exitCode };
+    }
     if (portable.kind === "hermes") {
       const readiness = await observeSandboxDoctorHermesReadiness(
         sandboxName,
