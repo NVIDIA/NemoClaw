@@ -4,7 +4,6 @@
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
-import { getGatewayHttpsEndpoint } from "../../core/gateway-address";
 
 import {
   buildDockerDriverGatewayRuntimeMarker,
@@ -34,10 +33,9 @@ function input() {
     gatewayName: GATEWAY_NAME,
     gatewayPort: GATEWAY_PORT,
     expectedEndpoint: `https://169.254.2.2:${String(GATEWAY_PORT)}`,
-    expectedClientEndpoint: getGatewayHttpsEndpoint(GATEWAY_PORT),
     managedGatewayEndpoints: [
-      getGatewayHttpsEndpoint(GATEWAY_PORT),
-      getGatewayHttpsEndpoint(GATEWAY_PORT),
+      `https://169.254.2.2:${String(GATEWAY_PORT)}`,
+      `https://169.254.2.2:${String(GATEWAY_PORT)}`,
     ],
     portAvailable: false,
     installedOpenShellVersion: "0.0.116",
@@ -99,25 +97,14 @@ function readinessDeps(
 }
 
 describe("native Podman gateway readiness", () => {
-  it.each(["127.0.0.1", "localhost", "[::1]"])(
-    "recognizes a target-bound listener through %s (#10984)",
-    (host) => {
-      expect(
-        observeNativePodmanGatewayReadiness(
-          {
-            ...input(),
-            managedGatewayEndpoints: [`https://${host}:${String(GATEWAY_PORT)}`],
-          },
-          readinessDeps(),
-        ),
-      ).toEqual({
-        endpointBinding: "match",
-        listenerScan: { pids: [PID], unverifiedPids: [], complete: true },
-        targetBoundListenerPids: [PID],
-        versionCompatibility: "compatible",
-      });
-    },
-  );
+  it("recognizes one target-bound listener and its recorded OpenShell version (#10984)", () => {
+    expect(observeNativePodmanGatewayReadiness(input(), readinessDeps())).toEqual({
+      endpointBinding: "match",
+      listenerScan: { pids: [PID], unverifiedPids: [], complete: true },
+      targetBoundListenerPids: [PID],
+      versionCompatibility: "compatible",
+    });
+  });
 
   it.each([
     ["another provider", { driver: "docker" }],
@@ -149,11 +136,11 @@ describe("native Podman gateway readiness", () => {
     });
   });
 
-  it.each([8080, 8990])("rejects non-client endpoint output on port %s (#10984)", (port) => {
+  it("rejects managed endpoint output outside the provider endpoint (#10984)", () => {
     const observation = observeNativePodmanGatewayReadiness(
       {
         ...input(),
-        managedGatewayEndpoints: [`https://169.254.2.2:${String(port)}`],
+        managedGatewayEndpoints: [`https://169.254.2.2:8990`],
       },
       readinessDeps(),
     );

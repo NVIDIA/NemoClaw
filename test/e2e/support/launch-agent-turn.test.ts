@@ -61,7 +61,6 @@ type FixtureMode =
   | "provider-terminal-spoof"
   | "provider-wrong-api"
   | "provider-wrong-route"
-  | "provider-wrong-status"
   | "recording-timeout"
   | "restored-canonical-timeout"
   | "supervisor-timeout"
@@ -336,11 +335,6 @@ const exitWithStatus = process.exit.bind(process);
   }
   if (terminalCopy === "reordered") process.stdout.write("idle | gateway connected\n");
 
-  const wrongProviderMessages = new Map([
-    ["provider-wrong-api", { api: "openai-responses" }],
-    ["provider-wrong-route", { provider: "attacker-controlled" }],
-    ["provider-wrong-status", { errorCode: "503", errorMessage: "401 litellm.ServiceUnavailableError: upstream unavailable" }],
-  ]);
   if (mode === "delayed-recording" || mode === "provider-exit-after-recording") {
     const publicationDeadline = Date.now() + 2_000;
     while (!fs.existsSync(process.env.NEMOCLAW_FIXTURE_PENDING_QUALIFICATION_MARKER)) {
@@ -352,21 +346,19 @@ const exitWithStatus = process.exit.bind(process);
   if (mode === "invalid-order") {
     append("assistant", "response before input");
     append("user", firstInput);
-  } else if (mode === "provider-empty-message") {
-    append("user", firstInput);
-    fs.appendFileSync(sessionFile, JSON.stringify({
-      type: "message", message: { role: "assistant", content: [] },
-    }) + "\n");
-  } else if (mode === "provider-cleanup-failure" || mode === "provider-exit-after-recording") {
+  } else if (mode === "provider-empty-message" || mode === "provider-cleanup-failure" || mode === "provider-exit-after-recording") {
     append("user", firstInput);
     appendProviderError();
     new Map([["provider-exit-after-recording", () => exitWithStatus(23)]]).get(mode)?.();
   } else if (mode === "provider-terminal-spoof") {
     append("user", firstInput);
     appendProviderError({ errorCode: "400" });
-  } else if (wrongProviderMessages.has(mode)) {
+  } else if (mode === "provider-wrong-api") {
     append("user", firstInput);
-    appendProviderError(wrongProviderMessages.get(mode));
+    appendProviderError({ api: "openai-responses" });
+  } else if (mode === "provider-wrong-route") {
+    append("user", firstInput);
+    appendProviderError({ provider: "attacker-controlled" });
   } else {
     append("user", firstInput);
     append("assistant", "first response");
@@ -452,19 +444,7 @@ if [[ ( "$NEMOCLAW_FIXTURE_MODE" == "delayed-recording" || "$NEMOCLAW_FIXTURE_MO
   set -e
   [[ "$status" != "1" ]] || : > "$NEMOCLAW_FIXTURE_PENDING_QUALIFICATION_MARKER"
   [[ "$NEMOCLAW_FIXTURE_MODE" != "provider-exit-after-recording" ]] || sleep 0.2
-  # OpenShell preserves the diagnostic but normalizes nonzero child statuses.
-  [[ "$NEMOCLAW_FIXTURE_MODE" != "provider-exit-after-recording" || "$status" == "0" ]] || exit 1
   exit "$status"
-fi
-if [[ "$NEMOCLAW_FIXTURE_MODE" == "provider-empty-message" && "$4" == "qualify" ]]; then
-  set +e
-  "$@"
-  status=$?
-  set -e
-  [[ "$status" == "0" ]] && exit 0
-  # Match OpenShell's sandbox-exec boundary, which reports any nonzero child
-  # status as a generic 1 while preserving the child's stderr diagnostic.
-  exit 1
 fi
 exec "$@"
 `,
@@ -502,10 +482,7 @@ exec "$@"
       NEMOCLAW_FIXTURE_PTY_MONITOR_ROOT: ptyMonitorRoot,
       NEMOCLAW_FIXTURE_PTY_PATH_UNREADABLE_MARKER: ptyPathUnreadableMarker,
       NEMOCLAW_FIXTURE_PTY_SOCKET_RECEIPT: ptySocketReceiptPath,
-      NEMOCLAW_FIXTURE_SESSION_FILE: join(
-        sessionRoot,
-        "ed80ef8e-a026-424f-8ca4-669f6060e046.jsonl",
-      ),
+      NEMOCLAW_FIXTURE_SESSION_FILE: join(sessionRoot, "session-a.jsonl"),
       NEMOCLAW_FIXTURE_TERMINAL_COPY: terminalCopy,
       NEMOCLAW_FIXTURE_RUN_ID: runId,
       NEMOCLAW_FIXTURE_TUI_PIDS: tuiPidsPath,
@@ -1074,7 +1051,7 @@ it.runIf(process.platform === "linux").concurrent(
 );
 
 it.runIf(process.platform === "linux").concurrent(
-  "fails an unexplained empty structured turn without a provider retry (#12254)",
+  "marks provider unavailability when it leaves an empty structured turn (#9160, #10978)",
   async ({ expect }) => {
     const { baselineRemoved, result, ttyObserved } = await runLaunchSessionFixture(
       "provider-empty-message",
@@ -1083,24 +1060,22 @@ it.runIf(process.platform === "linux").concurrent(
     expect(ttyObserved).toBe(true);
     expect(baselineRemoved).toBe(true);
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain('"reason":"message_content_empty"');
-    expect(result.stderr).not.toContain("nemoclaw.e2e.launch-failure=provider-unavailable");
+    expect(result.stderr).toContain("nemoclaw.e2e.launch-failure=provider-unavailable");
   },
-  testTimeout(30_000),
 );
 
 it.runIf(process.platform === "linux").each([
-  ["500", "ServiceUnavailableError", "valid", "500: "],
-  ["502", "ServiceUnavailableError", "valid", "502 "],
-  ["503", "ServiceUnavailableError", "valid", "503 "],
-  ["504", "ServiceUnavailableError", "valid", "504 "],
-  ["529", "ServiceUnavailableError", "valid", "529 "],
-  ["500", "InternalServerError", "valid", ""],
-  ["503", "ServiceUnavailableError", "provider-empty-message", "503 "],
+  ["500", "ServiceUnavailableError", "valid"],
+  ["502", "ServiceUnavailableError", "valid"],
+  ["503", "ServiceUnavailableError", "valid"],
+  ["504", "ServiceUnavailableError", "valid"],
+  ["529", "ServiceUnavailableError", "valid"],
+  ["500", "InternalServerError", "valid"],
+  ["503", "ServiceUnavailableError", "provider-empty-message"],
 ] as const)(
   "executes the real $1 HTTP $0 launch producer through $2 (#10978)",
-  async (providerCode, providerError, secondMode, statusPrefix) => {
-    const expectedError = secondMode === "valid" ? null : "launch session failed";
+  async (providerCode, providerError, secondMode) => {
+    const expectedError = secondMode === "valid" ? null : "provider unavailable after 2 attempts";
     const secondTerminal = secondMode === "valid" ? "absent" : "provider";
     const calls: Array<{
       artifactName?: string;
@@ -1127,7 +1102,7 @@ it.runIf(process.platform === "linux").each([
             env: {
               ...options?.env,
               NEMOCLAW_FIXTURE_PROVIDER_ERROR_CODE: providerCode,
-              NEMOCLAW_FIXTURE_PROVIDER_ERROR_MESSAGE: `${statusPrefix}litellm.${providerError}: ${providerError}: upstream unavailable`,
+              NEMOCLAW_FIXTURE_PROVIDER_ERROR_MESSAGE: `litellm.${providerError}: ${providerError}: upstream unavailable`,
             },
           },
         );
@@ -1175,7 +1150,7 @@ it.runIf(process.platform === "linux").each([
       );
       expect(
         calls[1]?.stderr.includes(`${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}:${calls[1]?.runId}`),
-      ).toBe(false);
+      ).toBe(expectedError !== null);
     } finally {
       vi.useRealTimers();
     }
@@ -1253,9 +1228,8 @@ it.runIf(process.platform === "linux").concurrent(
 it.runIf(process.platform === "linux").concurrent.for([
   { mismatch: "API", mode: "provider-wrong-api" },
   { mismatch: "route", mode: "provider-wrong-route" },
-  { mismatch: "status", mode: "provider-wrong-status" },
 ] as const)(
-  "does not retry a structured provider error with mismatched $mismatch evidence (#10978)",
+  "does not retry a structured provider error with the wrong $mismatch identity (#10978)",
   { timeout: testTimeout(30_000) },
   async ({ mode }, { expect }) => {
     const produced = (await runLaunchSessionFixture(mode, "provider")).result;

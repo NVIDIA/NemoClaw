@@ -9,7 +9,6 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getGatewayHttpsEndpoint } from "../core/gateway-address";
 import { isDockerDriverGatewayProcessIdentity } from "../onboard/docker-driver-gateway-process-identity";
 import {
   resolveDockerDriverGatewayStateDir,
@@ -18,7 +17,6 @@ import {
 } from "../onboard/docker-driver-gateway-runtime-marker";
 import type { GatewayOwner } from "../onboard/gateway-ownership";
 import { createCurrentPodmanRuntimeProviderBundle } from "../onboard/runtime-provider/podman";
-import * as gatewayService from "../onboard/docker-driver-gateway-service";
 import { resetTraceForTests, TRACE_FILE_ENV } from "../trace";
 import { collectGatewayObservations, projectGatewayReadiness } from "./gateway";
 
@@ -731,7 +729,7 @@ describe("managed gateway port readiness (#7411)", () => {
     });
     const gatewayPort = (gatewayListener.address() as AddressInfo).port;
     const gatewayName = `nemoclaw-${String(gatewayPort)}`;
-    const endpoint = getGatewayHttpsEndpoint(gatewayPort);
+    const endpoint = `https://169.254.2.2:${String(gatewayPort)}`;
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-podman-readiness-"));
     const openshell = path.join(root, "openshell");
     fs.writeFileSync(openshell, "#!/bin/sh\nexit 1\n", { mode: 0o700 });
@@ -815,8 +813,7 @@ describe("managed gateway port readiness (#7411)", () => {
           }),
           gatewayName,
           gatewayPort,
-          expectedEndpoint: `https://169.254.2.2:${String(gatewayPort)}`,
-          expectedClientEndpoint: endpoint,
+          expectedEndpoint: endpoint,
           managedGatewayEndpoints: expect.arrayContaining([endpoint]),
           portAvailable: false,
         }),
@@ -829,19 +826,9 @@ describe("managed gateway port readiness (#7411)", () => {
     }
   }, 30_000);
 
-  it.runIf(process.platform === "linux").for([
-    ["marker", "podman", "selected", "selected", "none", "present", "present"],
-    ["service", "podman", "selected", "selected", "none", "present", "present"],
-    ["service", "docker", "selected", "selected", "owner-mismatch", "unknown", "absent"],
-    ["service", "podman", "other", "selected", "owner-mismatch", "unknown", "absent"],
-    ["service", "podman", "selected", "other", "owner-mismatch", "unknown", "absent"],
-  ] as const)(
-    "projects a real %s-owned %s listener with %s socket and %s name through Podman readiness (#10984)",
-    { timeout: 30_000 },
-    async (
-      [ownership, driver, socketDirectory, selectedName, conflict, versionState, portState],
-      { onTestFinished },
-    ) => {
+  it.runIf(process.platform === "linux")(
+    "projects a real marker-owned native Podman listener through production readiness (#10984)",
+    async ({ onTestFinished }) => {
       const actualChildProcess =
         await vi.importActual<typeof import("node:child_process")>("node:child_process");
       subprocess.spawnSync.mockImplementation(actualChildProcess.spawnSync);
@@ -852,9 +839,8 @@ describe("managed gateway port readiness (#7411)", () => {
       });
       const gatewayPort = (reservation.address() as AddressInfo).port;
       await new Promise<void>((resolve) => reservation.close(() => resolve()));
-      const gatewayName =
-        selectedName === "selected" ? `nemoclaw-${String(gatewayPort)}` : "another-gateway";
-      const endpoint = getGatewayHttpsEndpoint(gatewayPort);
+      const gatewayName = `nemoclaw-${String(gatewayPort)}`;
+      const endpoint = `https://169.254.2.2:${String(gatewayPort)}`;
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-podman-readiness-real-"));
       const stateDir = path.join(root, "gateway-state");
       const openshell = path.join(root, "openshell");
@@ -884,16 +870,7 @@ esac
           String(gatewayPort),
         ],
         {
-          ...(ownership === "marker"
-            ? { argv0: `openshell-gateway[nemoclaw=${gatewayName};port=${String(gatewayPort)}]` }
-            : {}),
-          env: {
-            OPENSHELL_DRIVERS: driver,
-            OPENSHELL_PODMAN_SOCKET: `/nonexistent/run/${socketDirectory}/podman.sock`,
-            OPENSHELL_BIND_ADDRESS: "0.0.0.0",
-            OPENSHELL_SERVER_PORT: String(gatewayPort),
-            OPENSHELL_GRPC_ENDPOINT: `https://169.254.2.2:${String(gatewayPort)}`,
-          },
+          argv0: `openshell-gateway[nemoclaw=${gatewayName};port=${String(gatewayPort)}]`,
           stdio: ["ignore", "pipe", "pipe"],
         },
       );
@@ -906,24 +883,17 @@ esac
       fs.writeFileSync(lsof, `#!/bin/sh\nprintf '%s\\n' '${String(listener.pid)}'\n`, {
         mode: 0o700,
       });
-      const markerDir = ownership === "marker" ? stateDir : path.join(root, "other-gateway-state");
-      writeDockerDriverGatewayPidFile(path.join(markerDir, "openshell-gateway.pid"), listener.pid!);
-      writeDockerDriverGatewayRuntimeMarkerForStateDir(markerDir, {
+      writeDockerDriverGatewayPidFile(path.join(stateDir, "openshell-gateway.pid"), listener.pid!);
+      writeDockerDriverGatewayRuntimeMarkerForStateDir(stateDir, {
         pid: listener.pid!,
         desiredEnv: {},
-        endpoint: `https://169.254.2.2:${String(gatewayPort)}`,
+        endpoint,
         gatewayBin: process.execPath,
         openshellVersion: "0.0.116",
         platform: "linux",
         arch: process.arch,
         runtimeProviderId: "podman",
       });
-      vi.spyOn(
-        gatewayService,
-        "getTrustedActiveOpenShellGatewayUserServiceIdentity",
-      ).mockReturnValue(
-        ownership === "service" ? { pid: listener.pid!, executablePath: process.execPath } : null,
-      );
       const environment = {
         HOME: root,
         PATH: `${root}:/usr/bin:/bin`,
@@ -931,7 +901,7 @@ esac
         NEMOCLAW_OPENSHELL_BIN: openshell,
         NEMOCLAW_OPENSHELL_GATEWAY_BIN: process.execPath,
         NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: stateDir,
-        OPENSHELL_PODMAN_SOCKET: "/nonexistent/run/selected/podman.sock",
+        OPENSHELL_PODMAN_SOCKET: "/nonexistent/run/podman/podman.sock",
       };
       const gateway = createCurrentPodmanRuntimeProviderBundle(environment).gateway;
       const deps = createProductionGatewayReadinessDependencies({
@@ -941,25 +911,22 @@ esac
         gatewayPort: () => gatewayPort,
         platform: "linux",
         resolveRuntimeProviderGateway: () => gateway,
-        observeVersionCompatibility: () => "compatible",
       });
       const now = new Date("2026-09-08T17:00:00.000Z");
       const snapshot = await collectGatewayObservations(deps, { now: () => now });
       const projection = projectGatewayReadiness(snapshot, { now: () => now });
 
       expect(snapshot.failure).toBeUndefined();
-      expect(snapshot.observations?.portConflictState).toBe(conflict);
       expect(projection.capabilities).toEqual(
         expect.arrayContaining(
-          [
-            ["gateway.reuse.ready", "present"],
-            ["gateway.version.compatible", versionState],
-            ["gateway.port.uncontested", portState],
-          ].map(([id, state]) => expect.objectContaining({ id, state })),
+          ["gateway.reuse.ready", "gateway.version.compatible", "gateway.port.uncontested"].map(
+            (id) => expect.objectContaining({ id, state: "present" }),
+          ),
         ),
       );
       expect(subprocess.spawnSync.mock.calls.some(([command]) => command === "docker")).toBe(false);
     },
+    30_000,
   );
 
   it("keeps portable readiness on the portable gateway topology", async () => {

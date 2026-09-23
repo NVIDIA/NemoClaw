@@ -1369,31 +1369,13 @@ describe("launch readiness validation", () => {
       kind: "evidence-failed",
     });
 
-    const registryUnavailable = deps();
-    registryUnavailable.recordObservationFailure = vi.fn();
-    registryUnavailable.getSandbox = () => {
-      throw new Error("registry unavailable");
-    };
-    expect(await publishLaunchReadiness(publication, registryUnavailable)).toEqual({
-      kind: "evidence-failed",
-    });
-    expect(registryUnavailable.recordObservationFailure).toHaveBeenNthCalledWith(
-      1,
-      "publication-observation",
-    );
-
     const pairingObservationUnavailable = deps();
-    pairingObservationUnavailable.recordObservationFailure = vi.fn();
     pairingObservationUnavailable.observeOpenClawPairingQualification = () => {
       throw new Error("pairing observation unavailable");
     };
     expect(await publishLaunchReadiness(publication, pairingObservationUnavailable)).toEqual({
       kind: "evidence-failed",
     });
-    expect(pairingObservationUnavailable.recordObservationFailure).toHaveBeenNthCalledWith(
-      1,
-      "pairing-qualification",
-    );
 
     const hashUnavailable = deps();
     hashUnavailable.capture = (args) => ({

@@ -5,7 +5,6 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { isManagedGatewayEndpointHost } from "../../../../nemoclaw/dist/shared/openshell-gateway-endpoint-boundary.cjs";
 
 import {
   getDockerDriverGatewayRuntimeMarkerPath,
@@ -109,23 +108,9 @@ function classifyEndpointBinding(
   endpoints: readonly (string | null)[],
   expectedEndpoint: string,
 ): RuntimeProviderOwnedGatewayReadinessObservation["endpointBinding"] {
-  const expected = new URL(expectedEndpoint);
+  const expected = new URL(expectedEndpoint).origin;
   if (!endpoints.length) return "unknown";
-  return endpoints.every((endpoint) => {
-    if (endpoint === null) return false;
-    try {
-      const observed = new URL(endpoint);
-      return (
-        endpoint === observed.origin &&
-        observed.protocol === expected.protocol &&
-        observed.port === expected.port &&
-        isManagedGatewayEndpointHost(observed.hostname) &&
-        isManagedGatewayEndpointHost(expected.hostname)
-      );
-    } catch {
-      return false;
-    }
-  })
+  return endpoints.every((endpoint) => endpoint !== null && endpoint === expected)
     ? "match"
     : "mismatch";
 }
@@ -221,10 +206,7 @@ export function observeNativePodmanGatewayReadiness(
         ? "compatible"
         : "drift";
   return Object.freeze({
-    endpointBinding: classifyEndpointBinding(
-      input.managedGatewayEndpoints,
-      input.expectedClientEndpoint,
-    ),
+    endpointBinding: classifyEndpointBinding(input.managedGatewayEndpoints, input.expectedEndpoint),
     listenerScan: Object.freeze({
       pids: Object.freeze(pids),
       unverifiedPids: Object.freeze(unverifiedPids),

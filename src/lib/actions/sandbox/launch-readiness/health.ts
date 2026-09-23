@@ -32,7 +32,6 @@ import {
   isSandboxGatewayHttpReachableForStatus,
   isSandboxGatewayRunningForStatus,
 } from "../process-recovery";
-import type { ProbeReadinessObservationFailureStage } from "../probe/timing";
 
 export type LaunchReadinessObservationCategory =
   | "missing"
@@ -75,7 +74,7 @@ export interface LaunchReadinessHealthDeps {
   ) => Promise<ReturnType<typeof parseSandboxInferenceRouteProbeResult>>;
   inferenceInvocationProbe?: typeof runSandboxInferenceInvocationProbe;
   recordObservationTiming?: (stage: LaunchReadinessObservationStage, elapsedMs: number) => void;
-  recordObservationFailure?: (stage: ProbeReadinessObservationFailureStage) => void;
+  recordObservationFailure?: (stage: LaunchReadinessObservationStage) => void;
 }
 
 export type LaunchReadinessBoundCapture = (
@@ -146,7 +145,7 @@ function recordObservationTiming(
 
 export function recordLaunchReadinessObservationFailure(
   deps: LaunchReadinessHealthDeps,
-  stage: ProbeReadinessObservationFailureStage,
+  stage: LaunchReadinessObservationStage,
 ): void {
   try {
     deps.recordObservationFailure?.(stage);

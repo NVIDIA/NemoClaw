@@ -4,6 +4,7 @@
 import { dockerRmi } from "../../adapters/docker/image";
 import { printOpenShellStateRpcIssue } from "../../adapters/openshell/gateway-drift";
 import {
+  replaceOpenShellRuntimeSelectionEnv,
   snapshotOpenShellEnv,
   type OpenShellRuntimeSelection,
 } from "../../adapters/openshell/runtime-selection";
@@ -27,7 +28,6 @@ import {
 import {
   getNamedGatewayLifecycleState,
   recoverNamedGatewayRuntime,
-  replaceOpenShellRuntimeSelectionEnv,
 } from "../../gateway-runtime-action";
 import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import {

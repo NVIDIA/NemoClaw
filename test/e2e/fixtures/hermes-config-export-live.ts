@@ -74,8 +74,7 @@ export type HermesConfigExportLiveEvidence =
 
 const CREDENTIAL_HTTP_REFUSAL =
   "V1alpha1 requires HTTPS when an inference provider declares a credential.";
-const PODMAN_REFUSAL =
-  "V1alpha1 export currently supports the Docker runtime; Podman compatibility is deferred.";
+const CREDENTIAL_HTTP_REFUSAL_DIAGNOSTIC = `Config export failed (unsupported).\n${CREDENTIAL_HTTP_REFUSAL}`;
 
 function normalizeCommandDiagnostics(stdout: string, stderr: string): string {
   return [stdout, stderr]
@@ -251,23 +250,16 @@ export async function verifyHermesConfigExportLive(
       typeof entry.credentialEnv === "string" &&
       entry.credentialEnv.length > 0 &&
       entry.endpointUrl?.toLowerCase().startsWith("http:") === true;
-    const expectedRefusals = [
-      ...(entry.openshellDriver === "podman" ? [PODMAN_REFUSAL] : []),
-      ...(expectsCredentialHttpRefusal ? [CREDENTIAL_HTTP_REFUSAL] : []),
-    ];
-    if (expectedRefusals.length > 0) {
-      const expectedDiagnostic = ["Config export failed (unsupported).", ...expectedRefusals].join(
-        "\n",
-      );
+    if (expectsCredentialHttpRefusal) {
       const refusalDiagnosticMatches = [nemoclawDiagnostics, nemohermesDiagnostics].every(
-        (diagnostic) => diagnostic === expectedDiagnostic,
+        (diagnostic) => diagnostic === CREDENTIAL_HTTP_REFUSAL_DIAGNOSTIC,
       );
       const refusalCategory = refusalDiagnosticMatches ? "unsupported" : null;
       const evidence: HermesConfigExportExpectedRefusalEvidence = {
         outcome: "expected-refusal",
         aliasesEquivalent:
-          nemoclaw.exitCode === 2 &&
-          nemohermes.exitCode === 2 &&
+          nemoclaw.exitCode !== 0 &&
+          nemohermes.exitCode !== 0 &&
           nemoclawDiagnostics === nemohermesDiagnostics,
         checked: true,
         credentialValuesOmitted: !containsCredential,

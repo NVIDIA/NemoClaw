@@ -26,14 +26,6 @@ export const PROBE_READINESS_OBSERVATION_STAGES = [
 
 export type ProbeTimingStage = (typeof PROBE_TIMING_STAGES)[number];
 export type ProbeReadinessObservationStage = (typeof PROBE_READINESS_OBSERVATION_STAGES)[number];
-export type ProbeReadinessObservationFailureStage =
-  | ProbeReadinessObservationStage
-  | "agent-definition"
-  | "pairing-qualification"
-  | "publication-authority"
-  | "publication-observation"
-  | "publication-store"
-  | "publication-lock";
 export type ProbeTimingResult = "ready" | "failed";
 export type ProbeLifecycleAction = "skipped" | "reused" | "recovered" | "failed";
 export type ProbeForwardAction = "skipped" | "verified" | "restored" | "failed";
@@ -55,7 +47,7 @@ export type ProbeTimingRecorder = {
   setForwardAction(action: ProbeForwardAction): void;
   markFailureStage(stage: ProbeTimingStage): void;
   recordReadinessObservation(stage: ProbeReadinessObservationStage, elapsedMs: number): void;
-  recordReadinessObservationFailure(stage: ProbeReadinessObservationFailureStage): void;
+  recordReadinessObservationFailure(stage: ProbeReadinessObservationStage): void;
   recordReadinessDecision(category: ProbeReadinessDecisionCategory): void;
   finish(result: ProbeTimingResult, failedStage?: ProbeTimingStage): void;
   finishOnExit(result: ProbeTimingResult, failedStage?: ProbeTimingStage): void;
@@ -88,7 +80,7 @@ export function createProbeTimingRecorder(deps: ProbeTimingDeps = {}): ProbeTimi
   let lifecycleAction: ProbeLifecycleAction = "skipped";
   let forwardAction: ProbeForwardAction = "skipped";
   let recordedFailureStage: ProbeTimingStage | null = null;
-  let firstReadinessObservationFailure: ProbeReadinessObservationFailureStage | null = null;
+  let firstReadinessObservationFailure: ProbeReadinessObservationStage | null = null;
   let firstReadinessDecision: ProbeReadinessDecisionCategory | null = null;
   let firstReadinessFallbackDecision: Exclude<ProbeReadinessDecisionCategory, "accepted"> | null =
     null;
@@ -187,7 +179,7 @@ export function createProbeTimingRecorder(deps: ProbeTimingDeps = {}): ProbeTimi
         (readinessObservationDurations.get(stage) ?? 0) + Math.max(0, elapsedMs),
       );
     },
-    recordReadinessObservationFailure(stage: ProbeReadinessObservationFailureStage): void {
+    recordReadinessObservationFailure(stage: ProbeReadinessObservationStage): void {
       firstReadinessObservationFailure ??= stage;
     },
     recordReadinessDecision(category: ProbeReadinessDecisionCategory): void {

@@ -333,7 +333,6 @@ interface OpenClawPostRestoreDoctorDeps {
     runtimeSelection?: OpenShellRuntimeSelection,
   ) => Promise<string[]>;
   executePrivilegedSandboxCommand?: typeof executePrivilegedSandboxCommand;
-  commandExecutor?: OpenShellSandboxBufferedCommandExecutor;
   executeSandboxExecCommand: typeof executeSandboxExecCommand;
   lookupSandbox?: CliOpenShellSandboxLookup;
   now: () => number;
@@ -402,100 +401,27 @@ async function collectOpenClawRuntimeFailureLogs(
 ): Promise<string[]> {
   try {
     const probeUrl = shellQuote(resolveSandboxHealthProbeUrl(sandboxName));
-    const logTail = shellQuote(
-      [
-        "import sys",
-        "with open(sys.argv[1], 'rb') as log:",
-        "    log.seek(0, 2)",
-        "    start = max(0, log.tell() - 8192)",
-        "    log.seek(max(0, start - 1))",
-        "    data = log.read(8193 if start else 8192)",
-        // Keep credential prefixes intact for redaction, including across rotation/truncation.
-        "if start: data = data.partition(b'\\n')[2]",
-        "sys.stdout.buffer.write(b'\\n'.join(data.split(b'\\n')[-25:-1]) + b'\\n')",
-      ].join("\n"),
-    );
-    const command = [
-      `probe_url=${probeUrl}`,
-      'ambient_code="$(curl -so /dev/null -w \'%{http_code}\' --max-time 3 "$probe_url" 2>/dev/null)"',
-      'ambient_status="$?"',
-      "direct_code=\"$(curl --noproxy '*' -so /dev/null -w '%{http_code}' --max-time 3 \"$probe_url\" 2>/dev/null)\"",
-      'direct_status="$?"',
-      'printf \'[nemoclaw-health-probe] url=%s ambient_status=%s ambient_http=%s direct_status=%s direct_http=%s\\n\' "$probe_url" "$ambient_status" "$ambient_code" "$direct_status" "$direct_code"',
-      "if command -v ss >/dev/null 2>&1; then ss -ltn 2>/dev/null; elif command -v netstat >/dev/null 2>&1; then netstat -ltn 2>/dev/null; fi",
-      `for log_path in /tmp/gateway.log /tmp/nemoclaw-start.log; do printf "==> %s <==\\n" "$log_path"; python3 -I -S -c ${logTail} "$log_path" 2>/dev/null || true; done`,
-      'startup_status=0; startup_count="$(pgrep -fc \'/[n]emoclaw-start(\\.sh)?([[:space:]]|$)\' 2>/dev/null)" || startup_status=$?; printf "[nemoclaw-maintenance] startup_status=%s startup_count=%s\\n" "$startup_status" "$startup_count"',
-      'for state_path in /sandbox/.openclaw /sandbox/.openclaw/.nemoclaw-post-upgrade-doctor /tmp/nemoclaw-post-upgrade-doctor-ready; do printf "[nemoclaw-maintenance] %s " "$state_path"; stat -c "type=%F uid=%u gid=%g mode=%a links=%h" "$state_path" 2>/dev/null || printf "absent\\n"; done',
-    ].join("; ");
-    if (!deps.executePrivilegedSandboxCommand) {
-      const result = await (
-        deps.commandExecutor ?? createCliOpenShellSandboxCommandExecutor({ hostCwd: ROOT })
-      ).runBuffered({
-        sandboxName,
-        target: runtimeSelection
-          ? namedOpenShellGateway(runtimeSelection.gatewayName)
-          : selectedOpenShellGateway(),
-        command: ["sh", "-c", command],
-        environment: runtimeSelection
-          ? buildOpenShellRuntimeSelectionEnv(buildSubprocessEnv(), runtimeSelection)
-          : buildSubprocessEnv(),
-        timeoutMilliseconds: 15_000,
-      });
-      const outcome =
-        result.outcome.kind === "completed"
-          ? `exit=${result.outcome.exitCode}`
-          : `${result.outcome.error.kind}: ${result.outcome.error.message}`;
-      return [
-        ...result.stdout.split("\n"),
-        ...result.stderr.split("\n").slice(-5),
-        `[nemoclaw-runtime-diagnostics] ${outcome}`,
-      ]
-        .map(sanitizeWedgeLogLine)
-        .filter(Boolean)
-        .slice(-60);
-    }
     const result = await executeOpenClawDoctorGateCommand(
       deps,
       sandboxName,
-      command,
+      [
+        `probe_url=${probeUrl}`,
+        'ambient_code="$(curl -so /dev/null -w \'%{http_code}\' --max-time 3 "$probe_url" 2>/dev/null)"',
+        'ambient_status="$?"',
+        "direct_code=\"$(curl --noproxy '*' -so /dev/null -w '%{http_code}' --max-time 3 \"$probe_url\" 2>/dev/null)\"",
+        'direct_status="$?"',
+        'printf \'[nemoclaw-health-probe] url=%s ambient_status=%s ambient_http=%s direct_status=%s direct_http=%s\\n\' "$probe_url" "$ambient_status" "$ambient_code" "$direct_status" "$direct_code"',
+        "if command -v ss >/dev/null 2>&1; then ss -ltn 2>/dev/null; elif command -v netstat >/dev/null 2>&1; then netstat -ltn 2>/dev/null; fi",
+        "tail -n 120 /tmp/gateway.log 2>/dev/null || true",
+      ].join("; "),
       15_000,
       runtimeSelection,
     );
     if (!result?.stdout.trim()) return [];
     return result.stdout.split("\n").map(sanitizeWedgeLogLine).filter(Boolean).slice(-60);
-  } catch (error) {
-    return [sanitizeWedgeLogLine(`OpenClaw runtime diagnostics unavailable: ${String(error)}`)];
+  } catch {
+    return [];
   }
-}
-
-async function collectOpenClawRecoveryFailureDetail(
-  sandboxName: string,
-  runtimeSelection: OpenShellRuntimeSelection | undefined,
-  deps: OpenClawPostRestoreDoctorDeps,
-): Promise<string> {
-  const runtimeFailureLogs = await (
-    deps.collectRuntimeFailureLogs ??
-    ((name, selection) => collectOpenClawRuntimeFailureLogs(name, selection, deps))
-  )(sandboxName, runtimeSelection);
-  const failureLogs = await (deps.collectFailureLogs ?? collectRedactedOpenShellSandboxLogs)(
-    sandboxName,
-    runtimeSelection
-      ? namedOpenShellGateway(runtimeSelection.gatewayName)
-      : selectedOpenShellGateway(),
-  );
-  const logDetail = [
-    ...(runtimeFailureLogs.length > 0
-      ? [
-          `Recent redacted OpenClaw runtime diagnostics:\n${runtimeFailureLogs.map((line) => `  ${line}`).join("\n")}`,
-        ]
-      : []),
-    ...(failureLogs.length > 0
-      ? [
-          `Recent redacted OpenShell sandbox logs:\n${failureLogs.map((line) => `  ${line}`).join("\n")}`,
-        ]
-      : []),
-  ];
-  return logDetail.length > 0 ? `\n${logDetail.join("\n")}` : "";
 }
 
 function captureOpenClawDoctorLifecycle(
@@ -1145,11 +1071,10 @@ export async function releaseOpenClawPostRestoreDoctorForDelete(
     },
   );
   if (consumed) return { ok: true };
-  const logDetail = await collectOpenClawRecoveryFailureDetail(sandboxName, runtimeSelection, deps);
   return {
     ok: false,
     stage: "release",
-    detail: `the released maintenance request was not consumed before source deletion${logDetail}`,
+    detail: "the released maintenance request was not consumed before source deletion",
   };
 }
 
@@ -1214,11 +1139,32 @@ export async function finishOpenClawPostRestoreDoctor(
     },
   );
   if (completed) return { ok: true };
-  const logDetail = await collectOpenClawRecoveryFailureDetail(sandboxName, runtimeSelection, deps);
+  const runtimeFailureLogs = await (
+    deps.collectRuntimeFailureLogs ??
+    ((name, selection) => collectOpenClawRuntimeFailureLogs(name, selection, deps))
+  )(sandboxName, runtimeSelection);
+  const failureLogs = await (deps.collectFailureLogs ?? collectRedactedOpenShellSandboxLogs)(
+    sandboxName,
+    runtimeSelection
+      ? namedOpenShellGateway(runtimeSelection.gatewayName)
+      : selectedOpenShellGateway(),
+  );
+  const logDetail = [
+    ...(runtimeFailureLogs.length > 0
+      ? [
+          `Recent redacted OpenClaw runtime diagnostics:\n${runtimeFailureLogs.map((line) => `  ${line}`).join("\n")}`,
+        ]
+      : []),
+    ...(failureLogs.length > 0
+      ? [
+          `Recent redacted OpenShell sandbox logs:\n${failureLogs.map((line) => `  ${line}`).join("\n")}`,
+        ]
+      : []),
+  ];
   return {
     ok: false,
     stage: "restart",
-    detail: `the released sandbox did not return a healthy gateway${logDetail}`,
+    detail: `the released sandbox did not return a healthy gateway${logDetail.length > 0 ? `\n${logDetail.join("\n")}` : ""}`,
   };
 }
 

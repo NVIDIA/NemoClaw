@@ -1166,11 +1166,6 @@ const providerNonRetryableError =
 
 function isStructuredProviderUnavailable(message) {
   const errorMessage = typeof message.errorMessage === "string" ? message.errorMessage.trim() : "";
-  const errorCode = typeof message.errorCode === "string" ? message.errorCode.trim() : "";
-  // The pinned OpenAI SDK prefixes its error message with the HTTP status.
-  const providerMessage = errorMessage.replace(/^([0-9]{3}):?\s+/, (prefix, status) =>
-    status === errorCode ? "" : prefix,
-  );
   const validEmptyContent = JSON.stringify(message.content) === "[]";
   const identity = [
     message.role,
@@ -1181,8 +1176,9 @@ function isStructuredProviderUnavailable(message) {
   ].join("\n");
   return (
     identity === "assistant\ntrue\nerror\nopenai-completions\ninference" &&
-    providerUnavailableCodes.has(errorCode) &&
-    providerUnavailableError.test(providerMessage) &&
+    typeof message.errorCode === "string" &&
+    providerUnavailableCodes.has(message.errorCode.trim()) &&
+    providerUnavailableError.test(errorMessage) &&
     !providerNonRetryableError.test(errorMessage)
   );
 }
@@ -1476,18 +1472,6 @@ fail_provider_unavailable() {
   fail_launch_session "launch did not record the required structured session turns"
 }
 
-# Retry only a structured provider failure, including when OpenShell normalizes
-# its exit status. Empty content alone does not establish a provider failure.
-has_structured_evidence_reason() {
-  awk -F '"' -v reason="$1" '
-    NR == 1 && /^\{"reason":"[a-z_]+","sessionId":"[0-9a-f]+-[0-9a-f]+-[0-9a-f]+-[0-9a-f]+-[0-9a-f]+"\}$/ && $4 == reason {
-      split($8, groups, "-")
-      matched = length(groups[1]) == 8 && length(groups[2]) == 4 && length(groups[3]) == 4 && length(groups[4]) == 4 && length(groups[5]) == 12
-    }
-    END { exit !(NR == 1 && matched == 1) }
-  ' "$evidence_error"
-}
-
 session_evidence() {
   local mode="$1"
   local expected_turns=""
@@ -1531,13 +1515,10 @@ wait_for_turn_count() {
     else
       evidence_status=$?
     fi
-    # OpenShell normalizes a nonzero sandbox child status to 1. Classify the
-    # exact bounded diagnostic for both the direct and transport-level status.
-    case "$evidence_status" in
-      1|2) has_structured_evidence_reason provider_unavailable && fail_provider_unavailable ;;
-      3) fail_provider_unavailable ;;
-    esac
-    if [[ "$evidence_status" != 1 ]] || has_structured_evidence_reason message_content_empty; then
+    if [[ "$evidence_status" != 1 ]]; then
+      case "$evidence_status" in
+        3) fail_provider_unavailable ;;
+      esac
       fail_launch_session \
         "structured session evidence was invalid or unavailable (status $evidence_status)"
     fi
@@ -1690,7 +1671,6 @@ if session_evidence qualify 2 >/dev/null 2>"$evidence_error"; then
 else
   evidence_status=$?
   case "$evidence_status" in
-    1|2) has_structured_evidence_reason provider_unavailable && fail_provider_unavailable ;;
     3) fail_provider_unavailable ;;
   esac
   fail_launch_session "launch final structured session evidence did not qualify (status $evidence_status)"

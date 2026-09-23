@@ -112,10 +112,7 @@ export interface RuntimeProviderOwnedGatewayReadinessInput {
   readonly architecture: NodeJS.Architecture;
   readonly gatewayName: string;
   readonly gatewayPort: number;
-  /** Sandbox-facing transport origin recorded by the gateway runtime marker. */
   readonly expectedEndpoint: string;
-  /** Host CLI registration origin; it can differ from the sandbox transport. */
-  readonly expectedClientEndpoint: string;
   readonly managedGatewayEndpoints: readonly (string | null)[];
   readonly portAvailable: boolean;
   readonly installedOpenShellVersion: string | null;

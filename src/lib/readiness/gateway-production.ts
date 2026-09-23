@@ -6,7 +6,6 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { getGatewayHttpsEndpoint } from "../core/gateway-address";
 import {
   classifyManagedGatewayEndpointBinding,
   type ManagedGatewayEndpointBinding,
@@ -702,21 +701,6 @@ export function createProductionGatewayReadinessDependencies(
       platform === "linux"
         ? readLinuxProcessExecutable(pid)
         : readDarwinProcessExecutable(pid, probeEnv);
-    // A service owns no standalone PID/marker files. Bind its live environment
-    // to the selected provider before accepting the service's process identity.
-    const providerRuntime = resolveRuntimeProviderGateway().ownsHostReadiness
-      ? observeGatewayHostRuntime()
-      : null;
-    const serviceEnv = providerRuntime ? readDockerDriverGatewayProcessEnvironment(pid) : null;
-    const providerMatches =
-      !providerRuntime ||
-      (gatewayName === resolveDockerDriverGatewayName(gatewayPort) &&
-        serviceEnv?.OPENSHELL_DRIVERS === providerRuntime.openShellDriver &&
-        serviceEnv.OPENSHELL_PODMAN_SOCKET === (providerRuntime.socketPath ?? undefined) &&
-        serviceEnv.OPENSHELL_BIND_ADDRESS === providerRuntime.bindAddress &&
-        serviceEnv.OPENSHELL_SERVER_PORT === String(gatewayPort) &&
-        serviceEnv.OPENSHELL_GRPC_ENDPOINT ===
-          `https://${providerRuntime.grpcHost}:${String(gatewayPort)}`);
     const serviceAfter = getTrustedActiveOpenShellGatewayUserServiceIdentity({
       env: probeEnv,
       homebrewFormulaOperation: runObservedHomebrewFormulaOperation,
@@ -740,7 +724,6 @@ export function createProductionGatewayReadinessDependencies(
       !expected ||
       confirmed !== expected ||
       !stableGeneration ||
-      !providerMatches ||
       !gatewayExecutableSamplesMatchTrustedBinary(executableBefore, executableAfter, expected)
     ) {
       return null;
@@ -830,7 +813,6 @@ export function createProductionGatewayReadinessDependencies(
           gatewayName,
           gatewayPort,
           expectedEndpoint: `https://${observeGatewayHostRuntime().grpcHost}:${String(gatewayPort)}`,
-          expectedClientEndpoint: getGatewayHttpsEndpoint(gatewayPort),
           managedGatewayEndpoints,
           portAvailable: portCheck.ok,
           installedOpenShellVersion: getInstalledOpenShellVersion(),
@@ -846,23 +828,6 @@ export function createProductionGatewayReadinessDependencies(
       : listenerHelpers.getDockerDriverGatewayPortListenerScan(portCheck, {
           gatewayBin: trustedGatewayBin,
         });
-    let verifiedProviderService = false;
-    if (
-      providerObservation &&
-      listenerScan.complete &&
-      listenerScan.pids.length === 0 &&
-      listenerScan.unverifiedPids.length === 1
-    ) {
-      const pid = listenerScan.unverifiedPids[0]!;
-      const serviceBinary = observePackagedServiceGatewayBinary(pid);
-      if (serviceBinary) {
-        listenerScan.pids = [pid];
-        listenerScan.unverifiedPids = [];
-        trustedVersionBinaryByPid.set(pid, serviceBinary);
-        trustedTargetBoundPids.add(pid);
-        verifiedProviderService = true;
-      }
-    }
     const managedGatewayCanBeRunning =
       reuseState === "healthy" || reuseState === "stale" || reuseState === "active-unnamed";
     let legacyClusterBound = false;
@@ -889,7 +854,7 @@ export function createProductionGatewayReadinessDependencies(
     }
     let compatibility: GatewayVersionCompatibility | null =
       providerObservation?.versionCompatibility ?? null;
-    if (!portCheck.ok && (!providerObservation || verifiedProviderService)) {
+    if (!portCheck.ok && !providerObservation) {
       const source = classifyManagedGatewayVersionSource(
         legacyClusterBound,
         listenerScan,
@@ -935,9 +900,9 @@ export function createProductionGatewayReadinessDependencies(
       legacyClusterBound,
       effectiveEndpointBinding,
       listenerScan.pids.length === 1 &&
-        (trustedTargetBoundPids.has(listenerScan.pids[0] ?? -1) ||
-          (providerObservation?.targetBoundListenerPids.includes(listenerScan.pids[0] ?? -1) ??
-            false)),
+        (providerObservation
+          ? providerObservation.targetBoundListenerPids.includes(listenerScan.pids[0] ?? -1)
+          : trustedTargetBoundPids.has(listenerScan.pids[0] ?? -1)),
     );
     const portConflictOwners =
       portConflictState === "none"
