@@ -138,7 +138,9 @@ type ProcessRecoveryProbeTiming = {
 type Awaitable<T> = T | Promise<T>;
 
 function commandTransportDependencies(
-  commandExecutor = createCliOpenShellSandboxCommandExecutor({ hostCwd: ROOT }),
+  commandExecutor: OpenShellSandboxBufferedCommandExecutor = createCliOpenShellSandboxCommandExecutor(
+    { hostCwd: ROOT },
+  ),
 ): CommandTransportDependencies {
   return {
     buildSandboxExecMarkedCommand,

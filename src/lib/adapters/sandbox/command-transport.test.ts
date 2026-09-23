@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { OpenShellSandboxBufferedCommandCompletion } from "../openshell/sandbox-command";
+import type {
+  OpenShellSandboxBufferedCommandCompletion,
+  OpenShellSandboxBufferedCommandExecutor,
+} from "../openshell/sandbox-command";
 import { namedOpenShellGateway } from "../openshell/sandbox-observer";
 import { executeSandboxExecCommandTransport } from "./command-transport";
 
@@ -17,7 +20,11 @@ function fixture(
     buildSandboxExecMarkedCommand: vi.fn((command: string) => `marked:${command}`),
     buildSubprocessEnv: vi.fn(() => ({ PATH: "/usr/bin" })),
     extractSandboxExecCommandStdout: vi.fn((output: string) => output),
-    commandExecutor: { runBuffered: vi.fn(async () => completion) },
+    commandExecutor: {
+      runBuffered: vi.fn<OpenShellSandboxBufferedCommandExecutor["runBuffered"]>(
+        async () => completion,
+      ),
+    },
   };
 }
 
