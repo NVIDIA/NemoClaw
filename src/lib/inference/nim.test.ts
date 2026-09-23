@@ -428,14 +428,14 @@ describe("nim", () => {
   });
 
   describe("detectGpu", () => {
-    const proveArm64ContainerGpu = vi.fn(() => ({
+    const proveArm64ContainerGpu = vi.fn((names: readonly string[]) => ({
       providerId: "docker",
       passed: true,
       timedOut: false,
       exitCode: 0,
       diagnostic: "",
+      verifiedDevices: [{ name: names[0], totalMemoryMB: 65471, availableMemoryMB: 65000 }],
     }));
-
     function withGenericLinuxFirmware(fn: () => void): void {
       const fs = require("fs");
       const origReadFileSync = fs.readFileSync;

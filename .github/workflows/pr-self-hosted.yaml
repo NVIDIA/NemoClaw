@@ -38,11 +38,14 @@ jobs:
       base_sha: ${{ steps.changed.outputs.base_sha }}
       managed_image_revision: ${{ steps.publication.outputs.head_sha }}
       selected: ${{ steps.changed.outputs.selected }}
+      wsl_arm64_runner_label: ${{ steps.changed.outputs.wsl_arm64_runner_label }}
+      wsl_arm64_selected: ${{ steps.changed.outputs.wsl_arm64_selected }}
     steps:
       - id: changed
         name: Select llama.cpp generic GPU E2E from PR files
         env:
           GH_TOKEN: ${{ github.token }}
+          WSL_ARM64_MULTI_GPU_RUNNER_LABEL: ${{ vars.WSL_ARM64_MULTI_GPU_RUNNER_LABEL }}
         shell: bash
         run: |
           set -euo pipefail
@@ -90,11 +93,36 @@ jobs:
           else
             selected=false
           fi
+          if gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/pulls/$pr_number/files?per_page=100" \
+            | jq -e '
+              flatten
+              | any(
+                  .filename == ".github/workflows/pr-self-hosted.yaml"
+                  or .filename == "src/lib/container-gpu-proof.ts"
+                  or .filename == "src/lib/inference/nim.ts"
+                  or .filename == "src/lib/onboard/fatal-runtime-preflight.ts"
+                  or .filename == "src/lib/onboard/runtime-provider/nvidia-container-proof.ts"
+                  or .filename == "src/lib/onboard/sandbox-gpu-mode.ts"
+                  or .filename == "tools/e2e/wsl-arm64-multi-gpu-qualification.mts"
+                  or .filename == "test/e2e/support/pr-self-hosted-llama-selector.test.ts"
+                )
+            ' >/dev/null; then
+            wsl_arm64_selected=true
+            [[ "$WSL_ARM64_MULTI_GPU_RUNNER_LABEL" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || {
+              echo "::error::WSL_ARM64_MULTI_GPU_RUNNER_LABEL must name the reviewed physical WSL ARM64 multi-GPU runner" >&2
+              exit 1
+            }
+          else
+            wsl_arm64_selected=false
+          fi
           {
             printf 'base_sha=%s\n' "$base_sha"
             printf 'head_sha=%s\n' "$head_sha"
             printf 'pr_number=%s\n' "$pr_number"
             printf 'selected=%s\n' "$selected"
+            printf 'wsl_arm64_runner_label=%s\n' "$WSL_ARM64_MULTI_GPU_RUNNER_LABEL"
+            printf 'wsl_arm64_selected=%s\n' "$wsl_arm64_selected"
           } >>"$GITHUB_OUTPUT"
 
       - name: Check out PR base SHA for publication verification
@@ -230,6 +258,186 @@ jobs:
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
+  wsl-arm64-multi-gpu:
+    name: WSL ARM64 multi-GPU qualification
+    needs: select-llama-cpp-generic-gpu
+    if: ${{ needs.select-llama-cpp-generic-gpu.outputs.wsl_arm64_selected == 'true' }}
+    runs-on: ${{ needs.select-llama-cpp-generic-gpu.outputs.wsl_arm64_runner_label }}
+    timeout-minutes: 45
+    env:
+      WSL_DISTRO: Ubuntu
+      WSL_TEST_USER: nemoclaw-ci
+      TRUSTED_WSL_HELPER: ${{ github.workspace }}\trusted-wsl-ci\tools\wsl\ci-helper.ps1
+    steps:
+      - name: Force LF line endings for checkout
+        shell: powershell
+        run: git config --global core.autocrlf false
+
+      - name: Check out trusted WSL helper from PR base
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.select-llama-cpp-generic-gpu.outputs.base_sha }}
+          path: trusted-wsl-ci
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/ci-install-dependencies.sh
+            ci/reviewed-npm-audit.json
+            scripts/audit-reviewed-npm-graph.mts
+            scripts/checks/prepare-ci-npm-install.mts
+            scripts/lib/npm-audit-receipt.mts
+            scripts/lib/openclaw-npm-remediation.mts
+            scripts/lib/repository-input-path.mts
+            scripts/lib/reviewed-npm-archive.mts
+            scripts/lib/reviewed-npm-audit.mts
+            scripts/lib/reviewed-npm-cache.mts
+            tools/wsl/ci-helper.ps1
+          sparse-checkout-cone-mode: false
+
+      - name: Check out exact PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify physical Windows ARM64 runner
+        shell: powershell
+        run: |
+          $architecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+          if ($architecture -ne 'Arm64') {
+            throw "WSL ARM64 qualification requires a physical Windows ARM64 runner; got $architecture"
+          }
+
+      - name: Resolve workspace paths for WSL
+        shell: powershell
+        run: |
+          . "$env:TRUSTED_WSL_HELPER"
+          $paths = Set-WslWorkflowPaths `
+            -Workspace "$env:GITHUB_WORKSPACE\source" `
+            -WorkdirPrefix '/home/nemoclaw-ci/nemoclaw-wsl-vitest' `
+            -RunId $env:GITHUB_RUN_ID `
+            -RunAttempt $env:GITHUB_RUN_ATTEMPT `
+            -EnvironmentFile $env:GITHUB_ENV
+          $trustedCheckout = ConvertTo-WslPath -WindowsPath "$env:GITHUB_WORKSPACE\trusted-wsl-ci"
+          $trustedWorkdir = "$($paths.Workdir)-trusted"
+          "WSL_TRUSTED_CHECKOUT_DIR=$trustedCheckout" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "WSL_TRUSTED_WORKDIR=$trustedWorkdir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Require configured Ubuntu WSL and Docker Desktop GPU integration
+        shell: powershell
+        run: |
+          . "$env:TRUSTED_WSL_HELPER"
+          $probe = Invoke-WslNativeOutput -ArgumentList @('-d', $env:WSL_DISTRO, '--', 'bash', '-lc', 'test "$(uname -m)" = aarch64 && test -c /dev/dxg && docker info >/dev/null && nvidia-smi -L')
+          if ($probe.ExitCode -ne 0) {
+            $probe.Output | Out-Default
+            throw 'The reviewed runner must provide Ubuntu WSL ARM64, /dev/dxg, Docker Desktop integration, and NVIDIA GPU access.'
+          }
+
+      - name: Install WSL qualification dependencies
+        shell: powershell
+        run: |
+          . "$env:TRUSTED_WSL_HELPER"
+          $packages = @(
+            'bash', 'ca-certificates', 'curl', 'git', 'jq', 'make', 'procps',
+            'rsync', 'tar', 'xz-utils'
+          )
+          Install-WslUbuntuDependencies -Distro $env:WSL_DISTRO -Packages $packages -TestUser $env:WSL_TEST_USER
+          Install-WslNode -Distro $env:WSL_DISTRO
+
+      - name: Copy exact PR head into WSL ext4 workspace
+        shell: powershell
+        run: |
+          . "$env:TRUSTED_WSL_HELPER"
+          Sync-WslCheckout `
+            -Distro $env:WSL_DISTRO `
+            -Checkout $env:WSL_CHECKOUT_DIR `
+            -Workdir $env:WSL_WORKDIR `
+            -Owner $env:WSL_TEST_USER
+
+      - name: Copy trusted dependency installer into WSL ext4 workspace
+        shell: powershell
+        run: |
+          . "$env:TRUSTED_WSL_HELPER"
+          Sync-WslCheckout `
+            -Distro $env:WSL_DISTRO `
+            -Checkout $env:WSL_TRUSTED_CHECKOUT_DIR `
+            -Workdir $env:WSL_TRUSTED_WORKDIR `
+            -Owner $env:WSL_TEST_USER
+
+      - name: Install dependencies and build in WSL
+        shell: powershell
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
+        run: |
+          . "$env:TRUSTED_WSL_HELPER"
+          $workdir = ConvertTo-BashLiteral -Value $env:WSL_WORKDIR
+          $trustedWorkdir = ConvertTo-BashLiteral -Value $env:WSL_TRUSTED_WORKDIR
+          $nodeAuthToken = ConvertTo-BashLiteral -Value ([string]$env:NODE_AUTH_TOKEN)
+          $script = @"
+          set -euo pipefail
+          cd $workdir
+          export NPM_CONFIG_CACHE="`$HOME/.npm"
+          export NODE_AUTH_TOKEN=$nodeAuthToken
+          bash $trustedWorkdir/.github/actions/ci-install-dependencies.sh
+          unset NODE_AUTH_TOKEN
+          npm run build:cli
+          "@
+          Invoke-WslScript -Distro $env:WSL_DISTRO -User $env:WSL_TEST_USER -Script $script
+
+      - name: Run WSL ARM64 multi-GPU live qualification
+        shell: powershell
+        run: |
+          . "$env:TRUSTED_WSL_HELPER"
+          $workdir = ConvertTo-BashLiteral -Value $env:WSL_WORKDIR
+          $artifactDir = ConvertTo-BashLiteral -Value "$env:WSL_CHECKOUT_DIR/e2e-artifacts/live/wsl-arm64-multi-gpu"
+          $expectedSha = ConvertTo-BashLiteral -Value $env:GITHUB_SHA
+          $script = @"
+          set -euo pipefail
+          cd $workdir
+          export E2E_ARTIFACT_DIR=$artifactDir
+          export E2E_JOB=1
+          export E2E_TARGET_ID=wsl-arm64-multi-gpu
+          export NEMOCLAW_E2E_EXPECTED_SHA=$expectedSha
+          export NEMOCLAW_E2E_SHARD=default
+          export NEMOCLAW_RUN_LIVE_E2E=1
+          export NEMOCLAW_WSL_ARM64_MULTI_GPU_QUALIFICATION=1
+          mkdir -p "`$E2E_ARTIFACT_DIR"
+          npx tsx tools/e2e/wsl-arm64-multi-gpu-qualification.mts 2>&1 `
+            | tee "`$E2E_ARTIFACT_DIR/qualification.log"
+          "@
+          Invoke-WslScript -Distro $env:WSL_DISTRO -User $env:WSL_TEST_USER -Script $script
+
+      - name: Upload WSL ARM64 multi-GPU qualification artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: wsl-arm64-multi-gpu-qualification
+          path: ${{ github.workspace }}\source\e2e-artifacts\live\wsl-arm64-multi-gpu
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Remove WSL ARM64 qualification workspaces
+        if: always()
+        shell: powershell
+        run: |
+          . "$env:TRUSTED_WSL_HELPER"
+          if (-not $env:WSL_WORKDIR -or -not $env:WSL_TRUSTED_WORKDIR) {
+            Write-Host 'WSL workspaces were not created; cleanup is not required.'
+            exit 0
+          }
+          $expectedWorkdir = "/home/nemoclaw-ci/nemoclaw-wsl-vitest/$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          if ($env:WSL_WORKDIR -ne $expectedWorkdir -or $env:WSL_TRUSTED_WORKDIR -ne "$expectedWorkdir-trusted") {
+            throw 'Refusing to clean an unexpected WSL workspace path.'
+          }
+          $workdir = ConvertTo-BashLiteral -Value $env:WSL_WORKDIR
+          $trustedWorkdir = ConvertTo-BashLiteral -Value $env:WSL_TRUSTED_WORKDIR
+          $script = @"
+          set -euo pipefail
+          rm -rf -- $workdir $trustedWorkdir
+          "@
+          Invoke-WslScript -Distro $env:WSL_DISTRO -User $env:WSL_TEST_USER -Script $script
+
   build-sandbox-images:
     runs-on: linux-amd64-cpu4
     timeout-minutes: 45
@@ -284,7 +492,6 @@ jobs:
           build_args=(--build-arg "BASE_IMAGE=${BASE_IMAGE}")
           scripts/check-production-build-args.sh "${build_args[@]}"
           docker build "${build_args[@]}" -t nemoclaw-production-arm64 .
-
 
   managed-image-openclaw-security:
     runs-on: linux-amd64-cpu4
