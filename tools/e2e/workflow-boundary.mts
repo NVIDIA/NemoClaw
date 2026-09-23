@@ -2873,6 +2873,42 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   if (asRecord(generateCheckout?.with)["persist-credentials"] !== false) {
     errors.push("generate-matrix checkout step must set persist-credentials=false");
   }
+  const stagingSteps = generateSteps.filter(
+    (step) => step.name === "Stage immutable native Podman E2E toolchains",
+  );
+  const staging = stagingSteps[0];
+  if (
+    stagingSteps.length !== 1 ||
+    staging?.uses !== E2E_ACTION_PROVENANCE.stageNativePodmanToolchains.reference
+  ) {
+    errors.push("native Podman staging must use exactly one reviewed action reference");
+  }
+  if (
+    staging?.if !== undefined ||
+    staging?.["continue-on-error"] !== undefined ||
+    asRecord(staging?.with).enabled !==
+      "${{ contains(format(',{0},', inputs.gateway_runtimes || inputs.gateway_runtime || 'docker'), ',podman,') && 'true' || 'false' }}" ||
+    asRecord(staging?.with)["github-token"] !== "${{ github.token }}"
+  ) {
+    errors.push(
+      "native Podman staging must preserve runtime selection, token, and fail-closed execution",
+    );
+  }
+  for (const boundary of [
+    generateCheckout,
+    generateSteps.find((step) => step.name === "Prepare E2E workspace"),
+  ]) {
+    if (
+      !staging ||
+      !boundary ||
+      generateSteps.indexOf(staging) >= generateSteps.indexOf(boundary)
+    ) {
+      errors.push(
+        "native Podman staging must precede candidate checkout and workspace preparation",
+      );
+      break;
+    }
+  }
   validateLargerRunnerRouting(errors, jobs, generateMatrix, generateSteps, generateCheckout);
   const generate = requireStep(errors, generateSteps, "Generate E2E target matrix");
   validateTrustedE2ePlannerBoundary(errors, generateSteps, generate, generateCheckout);
@@ -3410,6 +3446,7 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
     ...validateDockerHubAuthAction(),
     ...validateDockerHubCleanupAction(),
     ...validateHostDependencyAction(),
+    ...validateNativePodmanStagingAction(),
     ...validateNativePodmanSetupAction(),
     ...validateNativePodmanRestoreAction(),
     ...validateE2eWorkflow(workflow),
@@ -3417,6 +3454,23 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
       readFileSync(DEFAULT_LIVE_VITEST_INVOCATION_PATH, "utf8"),
     ),
   ];
+}
+
+export function validateNativePodmanStagingAction(
+  actionPath = join(
+    REPO_ROOT,
+    ".github",
+    "actions",
+    "stage-native-podman-e2e-toolchains",
+    "action.yaml",
+  ),
+): string[] {
+  // Bind the complete reviewed handoff, including verification predicates,
+  // paired download IDs and verification-before-download ordering.
+  return createHash("sha256").update(readFileSync(actionPath, "utf8")).digest("hex") ===
+    E2E_ACTION_PROVENANCE.stageNativePodmanToolchains.contentSha256
+    ? []
+    : ["native Podman staging action content must match its immutable commit pin"];
 }
 
 export function validateNativePodmanSetupAction(

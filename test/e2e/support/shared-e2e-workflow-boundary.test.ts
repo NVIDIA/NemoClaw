@@ -1,20 +1,28 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
+import fs, { readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 
 import {
   discoverCredentialFreeTests,
   stripCredentialFreeTestDeclarations,
 } from "../../../tools/e2e/credential-free-tests.mts";
-import { validateE2eWorkflowBoundary } from "../../../tools/e2e/workflow-boundary.mts";
+import {
+  validateE2eWorkflowBoundary,
+  validateNativePodmanStagingAction,
+} from "../../../tools/e2e/workflow-boundary.mts";
 import { readWorkflow } from "../../helpers/e2e-workflow-contract";
 import { testTimeoutOptions } from "../../helpers/timeouts";
+
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return { ...actual, readFileSync: vi.fn(actual.readFileSync) };
+});
 
 type Workflow = {
   jobs: Record<
@@ -22,7 +30,14 @@ type Workflow = {
     {
       env?: Record<string, unknown>;
       needs?: string[];
-      steps?: Array<{ name?: string; run?: string; with?: Record<string, unknown> }>;
+      steps?: Array<{
+        name?: string;
+        uses?: string;
+        run?: string;
+        if?: unknown;
+        "continue-on-error"?: unknown;
+        with?: Record<string, unknown>;
+      }>;
     }
   >;
 };
@@ -40,7 +55,108 @@ function validateMutatedWorkflow(mutator: (workflow: Workflow) => void): string[
   }
 }
 
+type WorkflowSteps = NonNullable<Workflow["jobs"][string]["steps"]>;
+
+function moveStagingAfter(steps: WorkflowSteps, index: number, boundary: string): void {
+  const [step] = steps.splice(index, 1);
+  steps.splice(steps.findIndex((candidate) => candidate.name === boundary) + 1, 0, step!);
+}
+
+const stagingMutations: Array<[string, (steps: WorkflowSteps, index: number) => void]> = [
+  [
+    "missing",
+    (steps, index) => {
+      steps.splice(index, 1);
+    },
+  ],
+  [
+    "reference",
+    (steps, index) => {
+      steps[index]!.uses =
+        "NVIDIA/NemoClaw/.github/actions/stage-native-podman-e2e-toolchains@" + "0".repeat(40);
+    },
+  ],
+  ["checkout-order", (steps, index) => moveStagingAfter(steps, index, "Check out E2E candidate")],
+  ["prepare-order", (steps, index) => moveStagingAfter(steps, index, "Prepare E2E workspace")],
+  [
+    "disabled",
+    (steps, index) => {
+      steps[index]!.if = false;
+    },
+  ],
+  [
+    "ignore-errors",
+    (steps, index) => {
+      steps[index]!["continue-on-error"] = true;
+    },
+  ],
+  [
+    "enabled-input",
+    (steps, index) => {
+      steps[index]!.with!.enabled = "false";
+    },
+  ],
+  [
+    "token-input",
+    (steps, index) => {
+      steps[index]!.with!["github-token"] = "";
+    },
+  ],
+];
+
+const actionMutations: Array<[string, (source: string) => string]> = [
+  ["artifact-id", (source) => source.replace('artifact-ids: "10385514729"', 'artifact-ids: "1"')],
+  ["digest", (source) => source.replace(/sha256:[a-f0-9]{64}/, "sha256:" + "0".repeat(64))],
+  ["source-run", (source) => source.replace('run-id: "33211526093"', 'run-id: "1"')],
+  [
+    "verification-order",
+    (source) => {
+      const start = source.indexOf("    - name: Verify immutable");
+      const end = source.indexOf("    - name: Download immutable");
+      return source.slice(0, start) + source.slice(end) + source.slice(start, end);
+    },
+  ],
+];
+
 describe("shared E2E workflow boundary", () => {
+  it.each(stagingMutations)("rejects native Podman staging %s mutations", (_name, mutate) => {
+    const errors = validateMutatedWorkflow((workflow) => {
+      const steps = workflow.jobs["generate-matrix"].steps!;
+      const index = steps.findIndex(
+        (step) => step.name === "Stage immutable native Podman E2E toolchains",
+      );
+      mutate(steps, index);
+    });
+    expect(errors.some((error) => error.includes("native Podman staging"))).toBe(true);
+  });
+
+  it.each(actionMutations)("rejects native Podman staging action %s mutations", (_name, mutate) => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-podman-staging-"));
+    const actionPath = path.join(directory, "action.yaml");
+    const reviewedPath = path.resolve(
+      ".github/actions/stage-native-podman-e2e-toolchains/action.yaml",
+    );
+    const source = fs.readFileSync(reviewedPath, "utf8");
+    try {
+      expect(validateNativePodmanStagingAction()).toEqual([]);
+      const mutated = mutate(source);
+      fs.writeFileSync(actionPath, mutated);
+      expect(validateNativePodmanStagingAction(actionPath)).toContain(
+        "native Podman staging action content must match its immutable commit pin",
+      );
+      const overrides = new Map([[reviewedPath, mutated]]);
+      vi.mocked(readFileSync).mockImplementation(
+        (file, options) => overrides.get(String(file)) ?? fs.readFileSync(file, options),
+      );
+      expect(validateE2eWorkflowBoundary()).toContain(
+        "native Podman staging action content must match its immutable commit pin",
+      );
+    } finally {
+      vi.mocked(readFileSync).mockImplementation(fs.readFileSync);
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it.each([
     ["22.19.0", "jetson-nvmap-gpu", "Set up Node for Jetson controller"],
     ["22.19.0", "generate-matrix", "Set up Node for trusted E2E planning"],
