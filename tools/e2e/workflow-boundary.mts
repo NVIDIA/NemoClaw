@@ -1284,16 +1284,18 @@ function validateFreeStandingJobSelector(
   const expectedNeeds =
     jobName === "external-gateway-health"
       ? ["generate-matrix", "package-openshell-sdk"]
-      : jobName === "mcp-bridge-dev"
-        ? ["base-image-publication", "generate-matrix", "openshell-dev-artifact"]
-        : [
-              "mcp-bridge",
-              "openshell-credential-generation-window",
-              "cloud-onboard",
-              "messaging-providers",
-            ].includes(jobName)
-          ? ["base-image-publication", "generate-matrix"]
-          : "generate-matrix";
+      : jobName === "mcp-bridge"
+        ? ["base-image-publication", "generate-matrix", "package-openshell-sdk"]
+        : jobName === "mcp-bridge-dev"
+          ? ["base-image-publication", "generate-matrix", "openshell-dev-artifact"]
+          : [
+                "mcp-bridge",
+                "openshell-credential-generation-window",
+                "cloud-onboard",
+                "messaging-providers",
+              ].includes(jobName)
+            ? ["base-image-publication", "generate-matrix"]
+            : "generate-matrix";
   if (!isDeepStrictEqual(job.needs, expectedNeeds)) {
     errors.push(`${jobName} job must depend on generate-matrix`);
   }
@@ -1310,8 +1312,11 @@ function validateCatalogueOwnedJobs(errors: string[], jobs: WorkflowRecord): voi
   }
 }
 
-function validateExternalGatewayHealthSdkInstall(errors: string[], jobs: WorkflowRecord): void {
-  const jobName = "external-gateway-health";
+function validateReviewedSdkInstall(
+  errors: string[],
+  jobs: WorkflowRecord,
+  jobName: "external-gateway-health" | "mcp-bridge",
+): void {
   const job = asRecord(jobs[jobName]);
   if (Object.keys(job).length === 0) return;
   const jobSteps = asSteps(job.steps);
@@ -1331,7 +1336,7 @@ function validateExternalGatewayHealthSdkInstall(errors: string[], jobs: Workflo
       },
     })
   ) {
-    errors.push("external-gateway-health job must download the run-scoped reviewed SDK archive");
+    errors.push(`${jobName} job must download the run-scoped reviewed SDK archive`);
   }
   const sdkInstall = requireJobStep(
     errors,
@@ -1340,7 +1345,7 @@ function validateExternalGatewayHealthSdkInstall(errors: string[], jobs: Workflo
     REVIEWED_OPEN_SHELL_SDK_INSTALL_STEP,
   );
   if (!isReviewedOpenShellSdkInstallStep(sdkInstall)) {
-    errors.push("external-gateway-health job must install the reviewed SDK with the shared action");
+    errors.push(`${jobName} job must install the reviewed SDK with the shared action`);
   }
 }
 
@@ -3252,7 +3257,8 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   validateStagingBrevLaunchableJob(errors, jobs);
   validateStagingBrevLaunchableIdentityJob(errors, jobs);
   validateCatalogueOwnedJobs(errors, jobs);
-  validateExternalGatewayHealthSdkInstall(errors, jobs);
+  validateReviewedSdkInstall(errors, jobs, "external-gateway-health");
+  validateReviewedSdkInstall(errors, jobs, "mcp-bridge");
   validateHermesE2EJob(errors, jobs);
   validateHermesTimeoutHeadroom(errors, jobs);
 

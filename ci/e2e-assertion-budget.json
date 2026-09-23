@@ -15,28 +15,28 @@
     "testFileCount": 78,
     "liveFileCount": 188,
     "direct": {
-      "expectCalls": 1374,
-      "matcherAssertions": 1353,
+      "expectCalls": 1369,
+      "matcherAssertions": 1348,
       "nodeAssertions": 103,
-      "namedAssertionHelpers": 438,
+      "namedAssertionHelpers": 435,
       "failCalls": 0,
       "throwGuards": 70,
       "objectFieldAssertions": 171,
-      "assertionPoints": 2135,
+      "assertionPoints": 2127,
       "generatedProbeBlocks": 94,
       "generatedProbeConditions": 239
     },
     "unique": {
-      "expectCalls": 1817,
-      "matcherAssertions": 1791,
+      "expectCalls": 1803,
+      "matcherAssertions": 1777,
       "nodeAssertions": 112,
-      "namedAssertionHelpers": 674,
+      "namedAssertionHelpers": 671,
       "failCalls": 1,
       "throwGuards": 556,
       "objectFieldAssertions": 248,
-      "assertionPoints": 3382,
+      "assertionPoints": 3365,
       "generatedProbeBlocks": 235,
-      "generatedProbeConditions": 834
+      "generatedProbeConditions": 830
     },
     "fileMetricOrder": [
       "directExpectCalls",
@@ -46,7 +46,7 @@
       "transitiveGeneratedProbeBlocks"
     ],
     "files": {
-      "test/e2e/live/agent-turn-latency.test.ts": [19,22,28,42,1],
+      "test/e2e/live/agent-turn-latency.test.ts": [15,15,15,26,1],
       "test/e2e/live/bedrock-runtime-compatible-anthropic.test.ts": [12,34,12,55,4],
       "test/e2e/live/bootstrap-install-smoke.test.ts": [0,0,3,9,3],
       "test/e2e/live/brave-search.test.ts": [17,20,27,32,1],
@@ -60,7 +60,7 @@
       "test/e2e/live/dashboard-remote-bind.test.ts": [16,14,16,16,3],
       "test/e2e/live/double-onboard.test.ts": [36,43,36,43,0],
       "test/e2e/live/external-gateway-health.test.ts": [4,5,4,11,0],
-      "test/e2e/live/full-e2e.test.ts": [29,33,38,71,7],
+      "test/e2e/live/full-e2e.test.ts": [28,32,28,61,7],
       "test/e2e/live/gpu-double-onboard.test.ts": [21,24,21,24,0],
       "test/e2e/live/gpu-e2e.test.ts": [39,44,72,90,3],
       "test/e2e/live/hermes-discord.test.ts": [10,25,17,64,14],
