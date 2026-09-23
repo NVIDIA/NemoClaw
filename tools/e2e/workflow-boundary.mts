@@ -3,10 +3,16 @@
 
 import { createHash } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, posix } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
+import {
+  PRE_CANDIDATE_WORKFLOW_ENV,
+  PRE_CANDIDATE_STEP_ENV,
+  PRE_CANDIDATE_STEP_CONDITIONS,
+  PRE_CANDIDATE_STEP_SHELLS,
+} from "./pre-candidate-workflow-contract.mts";
 import {
   CREDENTIAL_FREE_TEST_TAG,
   discoverCredentialFreeTests,
@@ -800,6 +806,22 @@ export interface WorkflowDispatchSelectorEvaluation {
   liveTargetsRun: boolean;
 }
 
+function isNativePodmanStagingReference(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  const [owner, repository, ...actionPath] =
+    E2E_ACTION_PROVENANCE.stageNativePodmanToolchains.reference.split("@")[0].split("/");
+  const expectedPath = actionPath.join("/");
+  if (value.startsWith("./") || value.startsWith("$/")) {
+    return posix.normalize(value.slice(2)).replace(/\/$/, "") === expectedPath;
+  }
+  const [candidateOwner, candidateRepository, ...candidatePath] = value.split("@")[0].split("/");
+  return (
+    candidateOwner?.toLowerCase() === owner.toLowerCase() &&
+    candidateRepository?.toLowerCase() === repository.toLowerCase() &&
+    posix.normalize(candidatePath.join("/")).replace(/\/$/, "") === expectedPath
+  );
+}
+
 function asSteps(value: unknown): WorkflowStep[] {
   return Array.isArray(value)
     ? (value.filter((entry) => asRecord(entry) === entry) as WorkflowStep[])
@@ -1084,12 +1106,7 @@ function validateLargerRunnerRouting(
   if (routing.shell !== "bash") {
     errors.push("trusted larger-runner routing step must use bash");
   }
-  const expectedEnv = {
-    CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
-    LARGER_RUNNER_LABEL: "${{ vars.E2E_LARGER_RUNNER_LABEL }}",
-    REF: "${{ github.ref }}",
-    REPOSITORY: "${{ github.repository }}",
-  };
+  const expectedEnv = PRE_CANDIDATE_STEP_ENV["Build trusted larger-runner routing"];
   if (!isDeepStrictEqual(asRecord(routing.env), expectedEnv)) {
     errors.push(
       "trusted larger-runner routing step must bind only the administrator label and trusted repository identity",
@@ -2118,7 +2135,7 @@ function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord
     "Authorize Launchable E2E maintainer dispatch",
   );
   const expectedAuthorizationSelector =
-    "${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' && ((inputs.jobs == 'staging-brev-launchable' && inputs.targets == '') || (inputs.jobs == 'staging-brev-launchable-identity' && inputs.targets == '') || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '')) }}";
+    PRE_CANDIDATE_STEP_CONDITIONS["Authorize Launchable E2E maintainer dispatch"];
   if (authorization?.if !== expectedAuthorizationSelector) {
     errors.push("Launchable E2E maintainer authorization must cover exact and full dispatches");
   }
@@ -2126,11 +2143,9 @@ function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord
     errors.push("Launchable E2E maintainer authorization must use bash");
   }
   const authorizationEnv = asRecord(authorization?.env);
-  for (const [key, expected] of [
-    ["ACTOR", "${{ github.actor }}"],
-    ["GITHUB_TOKEN", "${{ github.token }}"],
-    ["TRIGGERING_ACTOR", "${{ github.triggering_actor }}"],
-  ] as const) {
+  for (const [key, expected] of Object.entries(
+    PRE_CANDIDATE_STEP_ENV["Authorize Launchable E2E maintainer dispatch"],
+  )) {
     if (authorizationEnv[key] !== expected) {
       errors.push(`Launchable E2E maintainer authorization must bind ${key}`);
     }
@@ -2533,30 +2548,13 @@ function validateTrustedE2eDispatchReceipt(
   generateSteps: readonly WorkflowStep[],
 ): void {
   const dispatchReceipt = requireStep(errors, generateSteps, "Record trusted E2E dispatch receipt");
-  if (dispatchReceipt?.if !== "${{ github.event_name == 'workflow_dispatch' }}") {
+  if (
+    dispatchReceipt?.if !== PRE_CANDIDATE_STEP_CONDITIONS["Record trusted E2E dispatch receipt"]
+  ) {
     errors.push("trusted E2E dispatch receipt must run for workflow dispatches only");
   }
   const dispatchReceiptEnv = asRecord(dispatchReceipt?.env);
-  const expectedDispatchReceiptEnv = {
-    ACTOR: "${{ github.actor }}",
-    ALLOW_JETSON_DISPATCH: "${{ inputs.allow_jetson_dispatch && 'true' || 'false' }}",
-    ALLOW_JETSON_RUNNER_QUEUE: "false",
-    BASE_SHA: "${{ inputs.checkout_sha != '' && inputs.base_sha || github.sha }}",
-    CANDIDATE_REPOSITORY: "${{ inputs.checkout_repository || github.repository }}",
-    CANDIDATE_SHA: "${{ inputs.checkout_sha || github.sha }}",
-    DISPATCH_JOBS: "${{ inputs.jobs }}",
-    DISPATCH_RECEIPT_DIR: "${{ runner.temp }}/nemoclaw-e2e-dispatch",
-    DISPATCH_TARGETS: "${{ inputs.targets }}",
-    EVENT_NAME: "${{ github.event_name }}",
-    INCLUDE_STAGING_BREV_LAUNCHABLE:
-      "${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}",
-    PR_NUMBER: "${{ inputs.checkout_sha != '' && inputs.pr_number || '' }}",
-    REPOSITORY: "${{ github.repository }}",
-    RUN_ATTEMPT: "${{ github.run_attempt }}",
-    RUN_ID: "${{ github.run_id }}",
-    TRIGGERING_ACTOR: "${{ github.triggering_actor }}",
-    WORKFLOW_SHA: "${{ github.workflow_sha }}",
-  };
+  const expectedDispatchReceiptEnv = PRE_CANDIDATE_STEP_ENV["Record trusted E2E dispatch receipt"];
   if (!isDeepStrictEqual(dispatchReceiptEnv, expectedDispatchReceiptEnv)) {
     errors.push(
       "trusted E2E dispatch receipt must bind only the authenticated repository, PR, candidate, workflow, run, and dispatch identities",
@@ -2591,7 +2589,7 @@ function validateTrustedE2eDispatchReceipt(
   }
 
   const dispatchUpload = requireStep(errors, generateSteps, "Upload trusted E2E dispatch receipt");
-  if (dispatchUpload?.if !== "${{ github.event_name == 'workflow_dispatch' }}") {
+  if (dispatchUpload?.if !== PRE_CANDIDATE_STEP_CONDITIONS["Upload trusted E2E dispatch receipt"]) {
     errors.push("trusted E2E dispatch receipt upload must run for workflow dispatches only");
   }
   if (dispatchUpload?.uses !== UPLOAD_E2E_ARTIFACTS_ACTION) {
@@ -2631,6 +2629,109 @@ function validateTrustedE2eDispatchReceipt(
     errors.push(
       "trusted E2E dispatch receipt must be created and uploaded immediately after authentication and before candidate execution",
     );
+  }
+}
+
+// Reviewed canonical shell bodies from the trusted generate-matrix prefix.
+// Substring checks cannot exclude extra commands before immutable toolchain staging.
+const PRE_CANDIDATE_RUN_SHA256: Readonly<Record<string, string>> = {
+  "Authenticate manual PR dispatch":
+    "25c1a828bd0034722e9f01a1da7c76b26f069120929a7d820fd0873ed1d98d5f",
+  "Record trusted E2E dispatch receipt":
+    "ee0b2e6c6aa4552b228bd1cc3ba4e1f9cd72701c30b81f7d5fbf9bc011fb51c7",
+  "Authorize Launchable E2E maintainer dispatch":
+    "bbf442a006b47016eda56133eb400a48c6931c55364c1220b84327b5ffd6f171",
+  "Generate E2E target matrix": "e2678fa3599f04cbe2b09d8be035e3b551359aab8ea8064e4f457da5a35dde3e",
+};
+
+function requirePreCandidateEnvironment(
+  errors: string[],
+  owner: string,
+  actual: unknown,
+  expected: Readonly<Record<string, string>>,
+): void {
+  if (!isDeepStrictEqual(actual === undefined ? {} : actual, expected)) {
+    errors.push(`trusted pre-candidate ${owner} must preserve its exact reviewed environment`);
+  }
+}
+
+function validatePreCandidateActions(
+  errors: string[],
+  steps: WorkflowRecord[],
+  candidateCheckout: WorkflowRecord | undefined,
+): void {
+  const approved = new Map<string, string>([
+    ["Upload trusted E2E dispatch receipt", UPLOAD_E2E_ARTIFACTS_ACTION],
+    ["Check out trusted E2E planner", "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"],
+    [
+      "Set up Node for trusted E2E planning",
+      "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
+    ],
+    [
+      "Install reviewed npm for trusted E2E planning",
+      E2E_ACTION_PROVENANCE.reviewedNpmSetup.reference,
+    ],
+    [
+      "Stage immutable native Podman E2E toolchains",
+      E2E_ACTION_PROVENANCE.stageNativePodmanToolchains.reference,
+    ],
+  ]);
+  // Routing and dependency installation already have exact-body checks in their owners.
+  // Pin the remaining approved bodies here in addition to their semantic checks.
+  const approvedRunSteps = new Set([
+    "Build trusted larger-runner routing",
+    "Authenticate manual PR dispatch",
+    "Record trusted E2E dispatch receipt",
+    "Authorize Launchable E2E maintainer dispatch",
+    "Install trusted E2E planner dependencies",
+    "Generate E2E target matrix",
+  ]);
+  const seen = new Set<string>();
+  for (const step of steps.slice(0, candidateCheckout ? steps.indexOf(candidateCheckout) : 0)) {
+    const name = stringValue(step.name);
+    const expected = approved.get(name);
+    const referenceMatches =
+      step.uses === undefined
+        ? approvedRunSteps.has(name) && typeof step.run === "string"
+        : expected !== undefined && step.uses === expected && step.run === undefined;
+    if (seen.has(name) || !referenceMatches) {
+      errors.push(
+        "native Podman staging must run with only approved actions before candidate checkout",
+      );
+    }
+    requirePreCandidateEnvironment(
+      errors,
+      `step ${name}`,
+      step.env,
+      PRE_CANDIDATE_STEP_ENV[name] ?? {},
+    );
+    if (
+      step.if !== PRE_CANDIDATE_STEP_CONDITIONS[name] ||
+      step["continue-on-error"] !== undefined
+    ) {
+      errors.push(
+        `trusted pre-candidate step ${name} must preserve its reviewed execution condition and failure propagation`,
+      );
+    }
+    if (step.run !== undefined && step.shell !== PRE_CANDIDATE_STEP_SHELLS[name]) {
+      errors.push(`trusted pre-candidate step ${name} must preserve its reviewed shell`);
+    }
+    if (step["working-directory"] !== undefined) {
+      errors.push(
+        `trusted pre-candidate step ${name} must preserve its reviewed working directory`,
+      );
+    }
+    const expectedRunSha256 = PRE_CANDIDATE_RUN_SHA256[name];
+    if (
+      expectedRunSha256 !== undefined &&
+      createHash("sha256").update(stringValue(step.run).trimEnd()).digest("hex") !==
+        expectedRunSha256
+    ) {
+      errors.push(
+        `trusted pre-candidate step ${name} must preserve its exact reviewed command body`,
+      );
+    }
+    seen.add(name);
   }
 }
 
@@ -2873,6 +2974,63 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   if (asRecord(generateCheckout?.with)["persist-credentials"] !== false) {
     errors.push("generate-matrix checkout step must set persist-credentials=false");
   }
+  const stagingSteps = generateSteps.filter(
+    (step) =>
+      step.name === "Stage immutable native Podman E2E toolchains" ||
+      isNativePodmanStagingReference(step.uses),
+  );
+  const staging = stagingSteps[0];
+  if (
+    stagingSteps.length !== 1 ||
+    staging?.name !== "Stage immutable native Podman E2E toolchains" ||
+    staging?.uses !== E2E_ACTION_PROVENANCE.stageNativePodmanToolchains.reference
+  ) {
+    errors.push("native Podman staging must use exactly one reviewed action reference");
+  }
+  if (
+    generateMatrix.if !== undefined ||
+    generateMatrix["continue-on-error"] !== undefined ||
+    staging?.if !== undefined ||
+    staging?.["continue-on-error"] !== undefined ||
+    asRecord(staging?.with).enabled !==
+      "${{ contains(format(',{0},', inputs.gateway_runtimes || inputs.gateway_runtime || 'docker'), ',podman,') && 'true' || 'false' }}" ||
+    asRecord(staging?.with)["github-token"] !== "${{ github.token }}"
+  ) {
+    errors.push(
+      "native Podman staging must preserve runtime selection, token, and fail-closed execution",
+    );
+  }
+  for (const boundary of [
+    generateCheckout,
+    generateSteps.find((step) => step.name === "Prepare E2E workspace"),
+  ]) {
+    if (
+      !staging ||
+      !boundary ||
+      generateSteps.indexOf(staging) >= generateSteps.indexOf(boundary)
+    ) {
+      errors.push(
+        "native Podman staging must precede candidate checkout and workspace preparation",
+      );
+      break;
+    }
+  }
+  requirePreCandidateEnvironment(errors, "workflow", workflow.env, PRE_CANDIDATE_WORKFLOW_ENV);
+  if (
+    asRecord(asRecord(workflow.defaults).run).shell !== undefined ||
+    asRecord(asRecord(generateMatrix.defaults).run).shell !== undefined
+  ) {
+    errors.push("trusted pre-candidate scripts must not inherit a custom default shell");
+  }
+
+  if (
+    asRecord(asRecord(workflow.defaults).run)["working-directory"] !== undefined ||
+    asRecord(asRecord(generateMatrix.defaults).run)["working-directory"] !== undefined
+  ) {
+    errors.push("trusted pre-candidate scripts must not inherit a custom working directory");
+  }
+  requirePreCandidateEnvironment(errors, "generate-matrix job", generateMatrix.env, {});
+  validatePreCandidateActions(errors, generateSteps, generateCheckout);
   validateLargerRunnerRouting(errors, jobs, generateMatrix, generateSteps, generateCheckout);
   const generate = requireStep(errors, generateSteps, "Generate E2E target matrix");
   validateTrustedE2ePlannerBoundary(errors, generateSteps, generate, generateCheckout);
@@ -3410,6 +3568,7 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
     ...validateDockerHubAuthAction(),
     ...validateDockerHubCleanupAction(),
     ...validateHostDependencyAction(),
+    ...validateNativePodmanStagingAction(),
     ...validateNativePodmanSetupAction(),
     ...validateNativePodmanRestoreAction(),
     ...validateE2eWorkflow(workflow),
@@ -3417,6 +3576,29 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
       readFileSync(DEFAULT_LIVE_VITEST_INVOCATION_PATH, "utf8"),
     ),
   ];
+}
+
+export function validateNativePodmanStagingAction(
+  actionPath = join(
+    REPO_ROOT,
+    ".github",
+    "actions",
+    "stage-native-podman-e2e-toolchains",
+    "action.yaml",
+  ),
+): string[] {
+  // Bind the complete reviewed handoff, including verification predicates,
+  // paired download IDs and verification-before-download ordering.
+  let actionSource: string;
+  try {
+    actionSource = readFileSync(actionPath, "utf8");
+  } catch {
+    return ["native Podman staging action must be readable to verify its immutable commit pin"];
+  }
+  return createHash("sha256").update(actionSource).digest("hex") ===
+    E2E_ACTION_PROVENANCE.stageNativePodmanToolchains.contentSha256
+    ? []
+    : ["native Podman staging action content must match its immutable commit pin"];
 }
 
 export function validateNativePodmanSetupAction(
