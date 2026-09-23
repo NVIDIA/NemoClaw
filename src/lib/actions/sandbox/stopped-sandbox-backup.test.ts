@@ -130,6 +130,16 @@ describe("startStoppedSandboxContainerForBackup", () => {
     );
   });
 
+  it("does not start a sandbox after the shared deadline expires", async () => {
+    const d = deps({
+      deadlineMs: 5_000,
+      now: () => 5_000,
+    });
+
+    await expect(startStoppedSandboxContainerForBackup("my-sb", d)).resolves.toBeNull();
+    expect(d.createOpenShellLifecycle().startSandbox).not.toHaveBeenCalled();
+  });
+
   it("uses the same OpenShell lifecycle path for a registered Podman provider", async () => {
     const podmanEngine = lifecycleEngine("podman");
     const d = deps({
@@ -639,5 +649,27 @@ describe("backupStartedSandboxState", () => {
         timeoutMs: 30_000,
       }),
     );
+  });
+
+  it("does not stop a sandbox after the shared deadline expires", async () => {
+    const stopSandbox = vi.fn();
+    await expect(
+      returnSandboxContainerToStopped(
+        {
+          containerName: "openshell-my-sb-abc123",
+          gatewayName: "nemoclaw",
+          mutationTimeoutMs: 75_000,
+          runtimeProviderId: "podman",
+          sandboxIdentityFingerprint: "a".repeat(64),
+          sandboxName: "my-sb",
+        },
+        {
+          createOpenShellLifecycle: () => ({ startSandbox: vi.fn(), stopSandbox }),
+          deadlineMs: 10_000,
+          now: () => 10_000,
+        },
+      ),
+    ).resolves.toBe(false);
+    expect(stopSandbox).not.toHaveBeenCalled();
   });
 });

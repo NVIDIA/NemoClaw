@@ -180,10 +180,12 @@ export async function startStoppedSandboxContainerForBackup(
   const status = deps.inspectStatus(engine, containerName);
   if (status !== "exited" && status !== "created") return null;
   const gatewayName = sandbox.gatewayName ?? "nemoclaw";
+  if (deps.deadlineMs !== undefined && deps.deadlineMs <= deps.now()) return null;
   const remainingMs =
     deps.deadlineMs === undefined
       ? engine.mutationTimeoutMs
-      : Math.max(1, Math.floor(deps.deadlineMs - deps.now()));
+      : Math.floor(deps.deadlineMs - deps.now());
+  if (remainingMs <= 0) return null;
   const result = await deps.createOpenShellLifecycle().startSandbox({
     sandboxName,
     sandboxIdentityFingerprint,
@@ -256,10 +258,12 @@ export async function returnSandboxContainerToStopped(
   depsOverride: Partial<StopDeps> = {},
 ): Promise<boolean> {
   const deps: StopDeps = { ...defaultStopDeps, ...depsOverride };
+  if (deps.deadlineMs !== undefined && deps.deadlineMs <= deps.now()) return false;
   const remainingMs =
     deps.deadlineMs === undefined
       ? started.mutationTimeoutMs
-      : Math.max(1, Math.floor(deps.deadlineMs - deps.now()));
+      : Math.floor(deps.deadlineMs - deps.now());
+  if (remainingMs <= 0) return false;
   const result = await deps.createOpenShellLifecycle().stopSandbox({
     sandboxName: started.sandboxName,
     sandboxIdentityFingerprint: started.sandboxIdentityFingerprint,
