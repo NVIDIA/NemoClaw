@@ -389,16 +389,19 @@ describe("detectGpu trust-gate rejection reasons (#9000)", () => {
 
   it("reports the absent kernel interface when the CUDA proof fails (#9000)", () => {
     const { reasons, onTrustGateRejection } = collectReasons();
+    const proofStatuses: boolean[] = [];
     onWsl2Arm64WithoutKernelInterface(() => {
       expect(
         detectGpu({
           proveArm64ContainerGpu: failingProver(),
           runCaptureImpl: makeRunCapture(`${PLAUSIBLE_NAME}, 8128, 7000\n`),
           isWsl: true,
+          onContainerGpuProof: (proof) => proofStatuses.push(proof.passed),
           onTrustGateRejection,
         }),
       ).toBeNull();
     });
+    expect(proofStatuses).toEqual([false]);
     expect(reasons).toEqual(["/proc/driver/nvidia is absent and the bounded CUDA proof failed"]);
   });
 
