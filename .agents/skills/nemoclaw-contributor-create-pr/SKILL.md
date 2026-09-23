@@ -22,7 +22,7 @@ Preserve the user's scope and any explicit instruction to stop at a draft or wit
 - **Inspect CI or review feedback:** use the shared follow-up contract. Load publication procedures
   only if an authorized branch or PR write is needed.
 - **Mark a draft ready:** use the ready-state requirements in
-  [Publication](references/publication.md#assignment) after the latest commit completes follow-up.
+  [Publication](references/publication.md#complete-follow-up) after the latest commit completes follow-up.
 
 ## Publication requirements
 
