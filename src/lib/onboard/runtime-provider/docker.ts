@@ -420,7 +420,8 @@ export function createDockerRuntimeProviderBundle(
     bootstrap: unsupported(providerId, "OpenShell owns managed-image sandbox creation."),
     snapshot: createDockerRuntimeProviderSnapshotSurface(providerId, {
       captureHostCommand: deps.captureHostCommand,
-      queryRuntimeSnapshot: deps.queryRuntimeSnapshot,
+      queryRuntimeSnapshot: (sandboxName, timeoutMs) =>
+        deps.queryRuntimeSnapshot(sandboxName, {}, timeoutMs === undefined ? {} : { timeoutMs }),
     }),
     recovery: unsupported(providerId, futureReason),
     cleanup: {

@@ -209,11 +209,9 @@ function inspectExactContainer(
     readonly containerId: string;
     readonly previous?: PodmanManagedContainer;
   },
+  timeoutMs = PROBE_TIMEOUT_MS,
 ): PodmanManagedContainer {
-  const inspected = engine.capture(
-    ["container", "inspect", expected.containerId],
-    PROBE_TIMEOUT_MS,
-  );
+  const inspected = engine.capture(["container", "inspect", expected.containerId], timeoutMs);
   if (inspected.status !== 0 || inspected.error) {
     throw commandFailure("container inspect", inspected);
   }
@@ -223,11 +221,13 @@ function inspectExactContainer(
 export function observePodmanManagedContainer(
   engine: ContainerEngine,
   sandboxName: string,
+  timeoutMs = PROBE_TIMEOUT_MS * 2,
 ): PodmanManagedContainer | null {
   requireObservationEngine(engine);
   if (!isValidName(sandboxName)) {
     throw new Error("Podman lifecycle requires a valid sandbox name.");
   }
+  const deadlineMs = Date.now() + timeoutMs;
   const lookup = engine.capture(
     [
       "ps",
@@ -242,7 +242,7 @@ export function observePodmanManagedContainer(
       "--format",
       "{{.ID}}",
     ],
-    PROBE_TIMEOUT_MS,
+    Math.max(1, Math.min(PROBE_TIMEOUT_MS, timeoutMs)),
   );
   if (lookup.status !== 0 || lookup.error) throw commandFailure("container lookup", lookup);
   const rows = lookup.stdout
@@ -258,5 +258,13 @@ export function observePodmanManagedContainer(
     );
   }
   const containerId = fullContainerId(rows[0], "Podman managed container ID");
-  return inspectExactContainer(engine, { sandboxName, containerId });
+  const remainingTimeoutMs = Math.floor(deadlineMs - Date.now());
+  if (remainingTimeoutMs <= 0) {
+    throw new Error("Podman runtime observation deadline expired.");
+  }
+  return inspectExactContainer(
+    engine,
+    { sandboxName, containerId },
+    Math.min(PROBE_TIMEOUT_MS, remainingTimeoutMs),
+  );
 }

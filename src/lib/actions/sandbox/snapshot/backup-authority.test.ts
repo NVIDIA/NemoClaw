@@ -567,6 +567,7 @@ describe("managed snapshot backup authority", () => {
   it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
     "captures and republishes exact %s provider authority",
     (agent) => {
+      vi.spyOn(Date, "now").mockReturnValue(10_000);
       const entry = sandbox(agent);
       const getSandbox = vi.fn(() => entry);
       const requireProvider = vi.fn(() => provider());
@@ -577,7 +578,7 @@ describe("managed snapshot backup authority", () => {
 
       const result = backupSandboxStateWithManagedAuthority(
         "alpha",
-        { name: "stable" },
+        { name: "stable", deadlineMs: 12_345 },
         { getSandbox, requireProvider, captureRuntime, backup },
       );
 
@@ -594,8 +595,32 @@ describe("managed snapshot backup authority", () => {
       expect(getSandbox).toHaveBeenCalledTimes(2);
       expect(requireProvider).toHaveBeenCalledTimes(2);
       expect(captureRuntime).toHaveBeenCalledTimes(2);
+      expect(captureRuntime).toHaveBeenNthCalledWith(1, expect.anything(), entry, 12_345);
+      expect(captureRuntime).toHaveBeenNthCalledWith(2, expect.anything(), entry, 12_345);
     },
   );
+
+  it("does not start managed authority capture after the shared deadline", () => {
+    vi.spyOn(Date, "now").mockReturnValue(10_000);
+    const entry = sandbox("openclaw");
+    const requireProvider = vi.fn(() => provider());
+    const captureRuntime = vi.fn(() => runtime());
+    const backup = vi.fn();
+
+    const result = backupSandboxStateWithManagedAuthority(
+      entry.name,
+      { deadlineMs: 10_000 },
+      { getSandbox: () => entry, requireProvider, captureRuntime, backup },
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+      error: expect.stringContaining("provider snapshot authority deadline expired"),
+    });
+    expect(requireProvider).not.toHaveBeenCalled();
+    expect(captureRuntime).not.toHaveBeenCalled();
+    expect(backup).not.toHaveBeenCalled();
+  });
 
   it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
     "carries exact explicit llama.cpp authority through %s backup",

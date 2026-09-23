@@ -495,6 +495,7 @@ function observePodmanRuntime(
   sandbox: SandboxEntry,
   providerId: string,
   engine: PodmanBoundContainerEngine,
+  timeoutMs?: number,
 ) {
   if (sandbox.openshellDriver !== providerId) {
     throw new PodmanRuntimeSurfaceError(
@@ -503,7 +504,7 @@ function observePodmanRuntime(
   }
   let container: PodmanManagedContainer | null;
   try {
-    container = observePodmanManagedContainer(engine, sandbox.name);
+    container = observePodmanManagedContainer(engine, sandbox.name, timeoutMs);
   } catch (error) {
     throw new PodmanRuntimeSurfaceError(error instanceof Error ? error.message : String(error));
   }
@@ -632,7 +633,8 @@ export function createPodmanRuntimeProviderSnapshotSurface(
     const { createRuntimeProviderSnapshotSurface } =
       require("./snapshot") as typeof import("./snapshot");
     return createRuntimeProviderSnapshotSurface("podman", {
-      observe: (sandbox, providerId) => observePodmanRuntime(sandbox, providerId, engine),
+      observe: (sandbox, providerId, timeoutMs) =>
+        observePodmanRuntime(sandbox, providerId, engine, timeoutMs),
       restoreManagedProfile: (sandbox, authority, runtime) =>
         restoreManagedProfile(sandbox, authority, runtime, engine),
     }) as SupportedSnapshotSurface;

@@ -664,10 +664,12 @@ export type RuntimeProviderSnapshotSurface =
       preflight(
         operation: RuntimeProviderSnapshotOperation,
         sandbox: SandboxEntry,
+        timeoutMs?: number,
       ): RuntimeProviderSnapshotPreflightReceipt;
       capture(
         sandbox: SandboxEntry,
         preflight: RuntimeProviderSnapshotPreflightReceipt,
+        timeoutMs?: number,
       ): RuntimeProviderRuntimeReceipt;
       /** Compare provider-owned acceleration encodings without widening central authority. */
       canRepresentAcceleration?(

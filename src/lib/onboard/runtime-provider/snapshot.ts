@@ -56,6 +56,7 @@ export interface RuntimeProviderSnapshotObservation {
 export type RuntimeProviderSnapshotObserver = (
   sandbox: SandboxEntry,
   providerId: string,
+  timeoutMs?: number,
 ) => RuntimeProviderSnapshotObservation;
 
 export type RuntimeProviderManagedProfileRestorer = (
@@ -93,6 +94,7 @@ export interface DockerRuntimeSnapshotDependencies {
   ) => RuntimeProviderCommandCapture;
   readonly queryRuntimeSnapshot: (
     sandboxName: string,
+    timeoutMs?: number,
   ) => OpenShellDockerSandboxRuntimeSnapshotQuery;
 }
 
@@ -474,16 +476,24 @@ export function observeDockerRuntimeSnapshot(
     DockerRuntimeSnapshotDependencies,
     "captureHostCommand" | "queryRuntimeSnapshot"
   >,
+  timeoutMs = 10_000,
 ): RuntimeProviderSnapshotObservation {
   if (normalizeRuntimeProviderIdentity(sandbox.openshellDriver) !== providerId) {
     throw new RuntimeProviderSnapshotError(
       `sandbox '${sandbox.name}' belongs to another runtime provider`,
     );
   }
-  const snapshot = dependencies.queryRuntimeSnapshot(sandbox.name);
+  const startedAtMs = Date.now();
+  const snapshot = dependencies.queryRuntimeSnapshot(sandbox.name, timeoutMs);
   if (!snapshot.ok || !DOCKER_CONTAINER_ID_PATTERN.test(snapshot.containerId)) {
     throw new RuntimeProviderSnapshotError(
       `sandbox '${sandbox.name}' exact Docker runtime identity could not be inspected`,
+    );
+  }
+  const remainingTimeoutMs = Math.floor(timeoutMs - (Date.now() - startedAtMs));
+  if (remainingTimeoutMs <= 0) {
+    throw new RuntimeProviderSnapshotError(
+      `sandbox '${sandbox.name}' runtime snapshot deadline expired`,
     );
   }
   const lifecycle = parseDockerLifecycle(
@@ -497,7 +507,7 @@ export function observeDockerRuntimeSnapshot(
         "[{{json .Id}},{{json .State.Status}},{{json .State.Paused}},{{json .State.StartedAt}},{{json .State.FinishedAt}},{{json .RestartCount}}]",
         snapshot.containerId,
       ],
-      10_000,
+      Math.min(10_000, remainingTimeoutMs),
     ),
     snapshot.containerId,
   );
@@ -597,8 +607,9 @@ function observeAndNormalize(
   observer: RuntimeProviderSnapshotObserver,
   sandbox: SandboxEntry,
   providerId: string,
+  timeoutMs?: number,
 ): RuntimeProviderSnapshotObservation {
-  const observed = observer(sandbox, providerId);
+  const observed = observer(sandbox, providerId, timeoutMs);
   const runtime = normalizeRuntimeProviderRuntimeReceipt(observed.runtime);
   if (!runtime || runtime.providerId !== providerId) {
     throw new RuntimeProviderSnapshotError(
@@ -745,8 +756,11 @@ export function createRuntimeProviderSnapshotSurface(
     supported: true,
     contractVersion: RUNTIME_PROVIDER_SNAPSHOT_CONTRACT_VERSION,
     capabilities,
-    preflight(operation, sandbox) {
-      const observed = observeAndNormalize(driver.observe, sandbox, providerId);
+    preflight(operation, sandbox, timeoutMs) {
+      const observed =
+        timeoutMs === undefined
+          ? observeAndNormalize(driver.observe, sandbox, providerId)
+          : observeAndNormalize(driver.observe, sandbox, providerId, timeoutMs);
       return {
         schemaVersion: RUNTIME_PROVIDER_SNAPSHOT_PREFLIGHT_SCHEMA_VERSION,
         providerId,
@@ -757,9 +771,12 @@ export function createRuntimeProviderSnapshotSurface(
         lifecycleGeneration: observed.lifecycleGeneration,
       };
     },
-    capture(sandbox, preflight) {
+    capture(sandbox, preflight, timeoutMs) {
       const expected = requireStablePreflight(preflight, providerId, "backup", sandbox);
-      const observed = observeAndNormalize(driver.observe, sandbox, providerId);
+      const observed =
+        timeoutMs === undefined
+          ? observeAndNormalize(driver.observe, sandbox, providerId)
+          : observeAndNormalize(driver.observe, sandbox, providerId, timeoutMs);
       assertUnchanged(providerId, expected, observed);
       return observed.runtime;
     },
@@ -817,11 +834,18 @@ export function createDockerRuntimeProviderSnapshotSurface(
 ): RuntimeProviderSnapshotSurface {
   const resolved = {
     captureHostCommand: dependencies.captureHostCommand,
-    queryRuntimeSnapshot:
-      dependencies.queryRuntimeSnapshot ?? queryOpenShellDockerSandboxRuntimeSnapshot,
+    queryRuntimeSnapshot: dependencies.queryRuntimeSnapshot
+      ? dependencies.queryRuntimeSnapshot
+      : (sandboxName: string, timeoutMs?: number) =>
+          queryOpenShellDockerSandboxRuntimeSnapshot(
+            sandboxName,
+            {},
+            timeoutMs === undefined ? {} : { timeoutMs },
+          ),
   };
   return createRuntimeProviderSnapshotSurface(providerId, {
-    observe: (sandbox, id) => observeDockerRuntimeSnapshot(sandbox, id, resolved),
+    observe: (sandbox, id, timeoutMs) =>
+      observeDockerRuntimeSnapshot(sandbox, id, resolved, timeoutMs),
     canRepresentAcceleration: dockerCanRepresentAcceleration,
     restoreManagedProfile: (sandbox, authority, runtime) =>
       verifyDockerManagedProfileRestore(sandbox, authority, runtime, resolved),

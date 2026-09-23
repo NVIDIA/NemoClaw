@@ -385,6 +385,9 @@ export type OpenShellDockerSandboxRuntimeSnapshotQuery =
 export interface OpenShellDockerSandboxRuntimeSnapshotOptions {
   /** Full transaction-owned container ID selected while a rollback backup is retained. */
   readonly expectedContainerId?: string;
+  /** Total budget for the complete provider observation. */
+  readonly timeoutMs?: number;
+  readonly now?: () => number;
 }
 
 export function isImmutableDockerImageId(value: string): boolean {
@@ -562,8 +565,18 @@ export function queryOpenShellDockerSandboxRuntimeSnapshot(
   deps: DockerSandboxContainerQueryDeps = {},
   options: OpenShellDockerSandboxRuntimeSnapshotOptions = {},
 ): OpenShellDockerSandboxRuntimeSnapshotQuery {
-  const containers = queryOpenShellDockerSandboxContainers(sandboxName, deps);
+  const now = options.now ?? Date.now;
+  const totalTimeoutMs = Math.max(
+    1,
+    Math.min(DOCKER_SANDBOX_QUERY_TIMEOUT_MS, options.timeoutMs ?? DOCKER_SANDBOX_QUERY_TIMEOUT_MS),
+  );
+  const deadlineMs = now() + totalTimeoutMs;
+  const remainingTimeoutMs = () => Math.floor(deadlineMs - now());
+  const containers = queryOpenShellDockerSandboxContainers(sandboxName, deps, remainingTimeoutMs());
   if (!containers.ok) return { ok: false, error: containers.error };
+  if (remainingTimeoutMs() <= 0) {
+    return { ok: false, error: "Docker runtime snapshot deadline expired" };
+  }
   const expectedContainerId = options.expectedContainerId;
   if (expectedContainerId !== undefined && !/^[a-f0-9]{64}$/u.test(expectedContainerId)) {
     return { ok: false, error: "expected sandbox container ID is invalid" };
@@ -593,7 +606,7 @@ export function queryOpenShellDockerSandboxRuntimeSnapshot(
     {
       ignoreError: true,
       suppressOutput: true,
-      timeout: DOCKER_SANDBOX_QUERY_TIMEOUT_MS,
+      timeout: remainingTimeoutMs(),
     },
   );
   if (Number(inspect.status ?? 1) !== 0) {
@@ -627,6 +640,9 @@ export function queryOpenShellDockerSandboxRuntimeSnapshot(
   const runtime = fields[5];
   let nvidiaVisibleDevices: string | null = null;
   if (runtime.trim().toLowerCase() === "nvidia") {
+    if (remainingTimeoutMs() <= 0) {
+      return { ok: false, error: "Docker runtime snapshot deadline expired" };
+    }
     const visibleDevices = parseNvidiaVisibleDevices(
       run(
         [
@@ -640,7 +656,7 @@ export function queryOpenShellDockerSandboxRuntimeSnapshot(
         {
           ignoreError: true,
           suppressOutput: true,
-          timeout: DOCKER_SANDBOX_QUERY_TIMEOUT_MS,
+          timeout: remainingTimeoutMs(),
         },
       ),
     );

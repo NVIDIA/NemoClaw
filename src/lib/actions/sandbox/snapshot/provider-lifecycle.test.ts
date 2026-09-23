@@ -113,6 +113,24 @@ describe("snapshot provider lifecycle", () => {
     expect(capture).toHaveBeenCalledOnce();
   });
 
+  it("bounds both provider observations by the remaining snapshot deadline", () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(10_000);
+    const { bundle, preflight, capture } = provider();
+
+    try {
+      captureSandboxRuntimeSnapshot(bundle, sandbox(), 15_000);
+    } finally {
+      now.mockRestore();
+    }
+
+    expect(preflight).toHaveBeenCalledWith(
+      "backup",
+      expect.objectContaining({ name: "alpha" }),
+      5_000,
+    );
+    expect(capture).toHaveBeenCalledWith(expect.anything(), expect.anything(), 5_000);
+  });
+
   it("preflights before restore and revalidates through the same injected facet", () => {
     const { bundle, restore, validateRestore } = provider();
     const target = sandbox("target");

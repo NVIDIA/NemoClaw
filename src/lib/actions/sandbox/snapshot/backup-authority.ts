@@ -60,6 +60,12 @@ function captureTimeoutMs(deadlineMs: number | undefined, maximumMs: number): nu
   return remainingMs > 0 ? Math.min(maximumMs, remainingMs) : null;
 }
 
+function requireAuthorityBudget(deadlineMs: number | undefined): void {
+  if (deadlineMs !== undefined && deadlineMs <= Date.now()) {
+    throw new Error("provider snapshot authority deadline expired");
+  }
+}
+
 export const OPENCLAW_CONFIG_CAPTURE_SCRIPT = `import os, stat, sys
 maximum = ${MAX_OPENCLAW_CONFIG_BYTES}
 directory = sys.argv[1]
@@ -596,7 +602,9 @@ function readAuthority(entry: SandboxEntry) {
 function captureManagedAuthority(
   entry: SandboxEntry,
   dependencies: SnapshotBackupAuthorityDependencies,
+  deadlineMs?: number,
 ): SnapshotBackupAuthority | null {
+  requireAuthorityBudget(deadlineMs);
   const authority = readAuthority(entry);
   if (!authority) return null;
   const provider = dependencies.requireProvider(entry);
@@ -605,13 +613,14 @@ function captureManagedAuthority(
       `runtime provider '${provider.identity.id}' does not accept the managed workload receipt`,
     );
   }
-  const runtimeSnapshot = dependencies.captureRuntime(provider, entry);
+  const runtimeSnapshot = dependencies.captureRuntime(provider, entry, deadlineMs);
   const workload = authority.receipt;
 
   return {
     runtimeSnapshot,
     workload,
     validateBeforePublish: () => {
+      requireAuthorityBudget(deadlineMs);
       const current = dependencies.getSandbox(entry.name);
       if (!current) {
         throw new Error(`sandbox '${entry.name}' is no longer registered`);
@@ -627,7 +636,7 @@ function captureManagedAuthority(
       ) {
         throw new Error(`sandbox '${entry.name}' runtime provider changed during backup`);
       }
-      const currentRuntime = dependencies.captureRuntime(currentProvider, current);
+      const currentRuntime = dependencies.captureRuntime(currentProvider, current, deadlineMs);
       if (!isDeepStrictEqual(currentRuntime, runtimeSnapshot)) {
         throw new Error(`sandbox '${entry.name}' runtime changed during backup`);
       }
@@ -682,8 +691,9 @@ function captureHostLocalInferenceAuthority(
 function captureSnapshotAuthority(
   entry: SandboxEntry,
   dependencies: SnapshotBackupAuthorityDependencies,
+  deadlineMs?: number,
 ): SnapshotBackupAuthority | null {
-  const managed = captureManagedAuthority(entry, dependencies);
+  const managed = captureManagedAuthority(entry, dependencies, deadlineMs);
   const hostLocal = captureHostLocalInferenceAuthority(entry, dependencies);
   if (!managed && !hostLocal) return null;
   return {
@@ -741,7 +751,7 @@ export function backupSandboxStateWithManagedAuthority(
 
   let authority: SnapshotBackupAuthority | null;
   try {
-    authority = captureSnapshotAuthority(entry, dependencies);
+    authority = captureSnapshotAuthority(entry, dependencies, options.deadlineMs);
   } catch (error) {
     return failure(error);
   }

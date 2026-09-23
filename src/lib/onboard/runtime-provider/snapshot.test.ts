@@ -695,6 +695,7 @@ describe("Docker provider snapshot evidence", () => {
   });
 
   it("captures exact live container, lifecycle, and device selectors", () => {
+    const captureHostCommand = dockerLifecycleCapture();
     const queryRuntimeSnapshot = vi.fn(() =>
       dockerSnapshot({
         deviceRequests: [
@@ -719,7 +720,8 @@ describe("Docker provider snapshot evidence", () => {
         sandboxGpuDevice: null,
       }),
       "docker",
-      { captureHostCommand: dockerLifecycleCapture(), queryRuntimeSnapshot },
+      { captureHostCommand, queryRuntimeSnapshot },
+      4_321,
     );
 
     expect(observed).toMatchObject({
@@ -735,6 +737,12 @@ describe("Docker provider snapshot evidence", () => {
         },
       },
     });
+    expect(queryRuntimeSnapshot).toHaveBeenCalledWith("alpha", 4_321);
+    expect(captureHostCommand).toHaveBeenCalledWith(
+      "docker",
+      expect.any(Array),
+      expect.any(Number),
+    );
   });
 
   it.each([
