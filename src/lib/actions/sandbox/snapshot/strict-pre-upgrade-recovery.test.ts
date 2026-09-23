@@ -174,10 +174,74 @@ describe("strict pre-upgrade recovery retention", () => {
     ).resolves.toMatchObject({
       success: false,
       error:
-        "Strict pre-upgrade recovery retention skipped the policy capture: backup deadline expired",
+        "Strict pre-upgrade recovery retention did not complete the policy capture before the backup deadline",
     });
     expect(mocks.captureRecordedSandboxBasePolicy).not.toHaveBeenCalled();
     expect(mocks.observeMcpStateForRebuild).not.toHaveBeenCalled();
+    expect(mocks.removeSandboxStateBackup).toHaveBeenCalledWith(
+      "alpha",
+      "/backups/alpha/timestamp",
+    );
+  });
+
+  it("abandons a policy capture that never settles within its budget (#11936)", async () => {
+    mocks.captureRecordedSandboxBasePolicy.mockReturnValue(new Promise(() => undefined));
+    const result = {
+      success: true,
+      backedUpDirs: ["workspace"],
+      failedDirs: [],
+      backedUpFiles: [],
+      failedFiles: [],
+      manifest: { backupPath: "/backups/alpha/timestamp" },
+    };
+
+    await expect(
+      retainStrictPreUpgradeRecoveryState(
+        sandbox as never,
+        result as never,
+        runtimeSelection,
+        Date.now() + 25,
+      ),
+    ).resolves.toMatchObject({
+      success: false,
+      error:
+        "Strict pre-upgrade recovery retention did not complete the policy capture before the backup deadline",
+    });
+    expect(mocks.captureRecordedSandboxBasePolicy).toHaveBeenCalledOnce();
+    expect(mocks.observeMcpStateForRebuild).not.toHaveBeenCalled();
+    expect(mocks.writeRebuildPolicyHandoff).not.toHaveBeenCalled();
+    expect(mocks.removeSandboxStateBackup).toHaveBeenCalledWith(
+      "alpha",
+      "/backups/alpha/timestamp",
+    );
+  });
+
+  it("abandons an MCP observation that never settles within its budget (#11936)", async () => {
+    mocks.observeMcpStateForRebuild.mockReturnValue(new Promise(() => undefined));
+    const result = {
+      success: true,
+      backedUpDirs: ["workspace"],
+      failedDirs: [],
+      backedUpFiles: [],
+      failedFiles: [],
+      manifest: { backupPath: "/backups/alpha/timestamp" },
+    };
+
+    await expect(
+      retainStrictPreUpgradeRecoveryState(
+        sandbox as never,
+        result as never,
+        runtimeSelection,
+        Date.now() + 25,
+      ),
+    ).resolves.toMatchObject({
+      success: false,
+      error:
+        "Strict pre-upgrade recovery retention did not complete the MCP observation before the backup deadline",
+    });
+    expect(mocks.observeMcpStateForRebuild).toHaveBeenCalledOnce();
+    expect(mocks.writeRebuildPolicyHandoff).not.toHaveBeenCalled();
+    expect(mocks.writeRebuildMcpHandoff).not.toHaveBeenCalled();
     expect(mocks.removeSandboxStateBackup).toHaveBeenCalledWith(
       "alpha",
       "/backups/alpha/timestamp",
@@ -210,7 +274,7 @@ describe("strict pre-upgrade recovery retention", () => {
     ).resolves.toMatchObject({
       success: false,
       error:
-        "Strict pre-upgrade recovery retention skipped the MCP observation: backup deadline expired",
+        "Strict pre-upgrade recovery retention did not complete the MCP observation before the backup deadline",
     });
     expect(mocks.captureRecordedSandboxBasePolicy).toHaveBeenCalledOnce();
     expect(mocks.observeMcpStateForRebuild).not.toHaveBeenCalled();

@@ -29,12 +29,57 @@ function expiredRetentionResult(
   result: sandboxState.BackupResult,
   observation: string,
 ): sandboxState.BackupResult {
-  const deadlineError = `Strict pre-upgrade recovery retention skipped the ${observation}: backup deadline expired`;
+  const deadlineError = `Strict pre-upgrade recovery retention did not complete the ${observation} before the backup deadline`;
   return {
     ...result,
     success: false,
     error: result.error ? `${result.error}. ${deadlineError}` : deadlineError,
   };
+}
+
+type ObservationOutcome<T> =
+  | { kind: "value"; value: T }
+  | { kind: "error"; error: unknown }
+  | { kind: "timeout" };
+
+/** Remaining budget for one retention observation, or null when the caller
+ * supplied no transaction deadline and keeps the previous contract. */
+function remainingRetentionBudgetMs(
+  deadlineMs: number | undefined,
+  now: () => number,
+): number | null {
+  return deadlineMs === undefined ? null : Math.floor(deadlineMs - now());
+}
+
+/**
+ * Run one live retention observation under a budget.
+ *
+ * The policy and MCP readers reach OpenShell through inspection layers that
+ * take no timeout, so the budget is enforced here at their call boundary: a
+ * request that never settles must not hold the sandbox mutation lock or the
+ * stopped-state cleanup reserve. A late rejection stays handled.
+ */
+async function observeWithinBudget<T>(
+  observe: () => Promise<T>,
+  budgetMs: number | null,
+): Promise<ObservationOutcome<T>> {
+  if (budgetMs !== null && budgetMs <= 0) return { kind: "timeout" };
+  const attempt = observe().then<ObservationOutcome<T>, ObservationOutcome<T>>(
+    (value) => ({ kind: "value", value }),
+    (error: unknown) => ({ kind: "error", error }),
+  );
+  if (budgetMs === null) return attempt;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      attempt,
+      new Promise<ObservationOutcome<T>>((resolve) => {
+        timer = setTimeout(() => resolve({ kind: "timeout" }), budgetMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** Complete a strict pre-upgrade snapshot with the recovery authority that
@@ -58,22 +103,31 @@ export async function retainStrictPreUpgradeRecoveryState(
       `Strict pre-upgrade backup for '${sandbox.name}' completed without a published manifest`,
     );
   }
-  const expired = (): boolean => deadlineMs !== undefined && deadlineMs <= now();
-  if (expired()) {
+  const policyOutcome = await observeWithinBudget(
+    () =>
+      captureRecordedSandboxBasePolicy(
+        sandbox.name,
+        "capture the live policy for pre-upgrade recovery",
+      ),
+    remainingRetentionBudgetMs(deadlineMs, now),
+  );
+  if (policyOutcome.kind === "error") throw policyOutcome.error;
+  if (policyOutcome.kind === "timeout") {
     return discardIncompleteStrictBackup(sandbox, expiredRetentionResult(result, "policy capture"));
   }
-  const policyDocument = await captureRecordedSandboxBasePolicy(
-    sandbox.name,
-    "capture the live policy for pre-upgrade recovery",
+  const mcpOutcome = await observeWithinBudget(
+    () => observeMcpStateForRebuild(sandbox, runtimeSelection, true),
+    remainingRetentionBudgetMs(deadlineMs, now),
   );
-  if (expired()) {
+  if (mcpOutcome.kind === "error") throw mcpOutcome.error;
+  if (mcpOutcome.kind === "timeout") {
     return discardIncompleteStrictBackup(
       sandbox,
       expiredRetentionResult(result, "MCP observation"),
     );
   }
-  const mcpObservation = await observeMcpStateForRebuild(sandbox, runtimeSelection, true);
-  result.manifest = sandboxState.writeRebuildPolicyHandoff(result.manifest, policyDocument);
+  const mcpObservation = mcpOutcome.value;
+  result.manifest = sandboxState.writeRebuildPolicyHandoff(result.manifest, policyOutcome.value);
   result.manifest = sandboxState.writeRebuildMcpHandoff(
     result.manifest,
     mcpObservation.entries,
