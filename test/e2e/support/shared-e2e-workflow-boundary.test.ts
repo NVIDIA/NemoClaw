@@ -27,10 +27,12 @@ vi.mock("node:fs", async (importOriginal) => {
 
 type Workflow = {
   env?: unknown;
+  defaults?: unknown;
   jobs: Record<
     string,
     {
       env?: unknown;
+      defaults?: unknown;
       if?: unknown;
       needs?: string[];
       "continue-on-error"?: unknown;
@@ -39,6 +41,7 @@ type Workflow = {
         name?: string;
         uses?: string;
         run?: string;
+        shell?: unknown;
         if?: unknown;
         "continue-on-error"?: unknown;
         with?: Record<string, unknown>;
@@ -657,4 +660,80 @@ describe("shared environment contract consumers", () => {
     expect(errors).toContain("E2E workflow must bind NEMOCLAW_E2E_EXPECTED_SHA");
     expect(errors).toContain("Manual PR authentication must bind CHECKOUT_SHA");
   });
+});
+
+describe("trusted script interpreter boundary", () => {
+  const names = [
+    "Build trusted larger-runner routing",
+    "Authenticate manual PR dispatch",
+    "Record trusted E2E dispatch receipt",
+    "Authorize Launchable E2E maintainer dispatch",
+    "Install trusted E2E planner dependencies",
+    "Generate E2E target matrix",
+  ];
+  it.each(
+    names.flatMap((name) =>
+      [null, "sh", 'bash --noprofile --norc -c "exit 0" {0}'].map((shell) => ({
+        name,
+        shell,
+      })),
+    ),
+  )("rejects $name shell=$shell", ({ name, shell }) => {
+    const errors = validateMutatedWorkflow((workflow) => {
+      workflow.jobs["generate-matrix"]!.steps!.find((step) => step.name === name)!.shell = shell;
+    });
+    expect(errors).toContain(`trusted pre-candidate step ${name} must preserve its reviewed shell`);
+  });
+});
+
+describe("staging action read failures", () => {
+  const diagnostic =
+    "native Podman staging action must be readable to verify its immutable commit pin";
+  it("returns a boundary violation for a missing action file", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-missing-staging-"));
+    try {
+      expect(validateNativePodmanStagingAction(path.join(directory, "missing.yaml"))).toEqual([
+        diagnostic,
+      ]);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+  it.each(["ENOENT", "EACCES"])(
+    "reports %s safely through the complete workflow validator",
+    (code) => {
+      const reviewedPath = path.resolve(
+        ".github/actions/stage-native-podman-e2e-toolchains/action.yaml",
+      );
+      const error = Object.assign(new Error("private-path-and-credential-must-not-appear"), {
+        code,
+      });
+      try {
+        const failures = new Map([
+          [
+            reviewedPath,
+            () => {
+              throw error;
+            },
+          ],
+        ]);
+        vi.mocked(readFileSync).mockImplementation((file, options) =>
+          (failures.get(String(file)) ?? (() => fs.readFileSync(file, options)))(),
+        );
+        expect(validateE2eWorkflowBoundary()).toEqual([diagnostic]);
+      } finally {
+        vi.mocked(readFileSync).mockImplementation(fs.readFileSync);
+      }
+    },
+  );
+});
+
+it.each([
+  { name: "workflow", select: (workflow: Workflow) => workflow },
+  { name: "planner job", select: (workflow: Workflow) => workflow.jobs["generate-matrix"]! },
+])("rejects inherited shell override from $name", ({ select }) => {
+  const errors = validateMutatedWorkflow((workflow) => {
+    select(workflow).defaults = { run: { shell: 'bash -c "exit 0" {0}' } };
+  });
+  expect(errors).toContain("trusted pre-candidate scripts must not inherit a custom default shell");
 });

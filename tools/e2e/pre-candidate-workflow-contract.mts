@@ -84,3 +84,13 @@ export const PRE_CANDIDATE_STEP_CONDITIONS: Readonly<Record<string, string | und
   "Authorize Launchable E2E maintainer dispatch":
     "${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' && ((inputs.jobs == 'staging-brev-launchable' && inputs.targets == '') || (inputs.jobs == 'staging-brev-launchable-identity' && inputs.targets == '') || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '')) }}",
 };
+
+// The two omitted shells intentionally retain the Ubuntu runner's default invocation.
+export const PRE_CANDIDATE_STEP_SHELLS: Readonly<Record<string, string | undefined>> = {
+  "Build trusted larger-runner routing": "bash",
+  "Authenticate manual PR dispatch": "bash",
+  "Record trusted E2E dispatch receipt": "bash",
+  "Authorize Launchable E2E maintainer dispatch": "bash",
+  "Install trusted E2E planner dependencies": undefined,
+  "Generate E2E target matrix": undefined,
+};

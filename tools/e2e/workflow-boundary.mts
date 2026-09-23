@@ -11,6 +11,7 @@ import {
   PRE_CANDIDATE_WORKFLOW_ENV,
   PRE_CANDIDATE_STEP_ENV,
   PRE_CANDIDATE_STEP_CONDITIONS,
+  PRE_CANDIDATE_STEP_SHELLS,
 } from "./pre-candidate-workflow-contract.mts";
 import {
   CREDENTIAL_FREE_TEST_TAG,
@@ -2712,6 +2713,9 @@ function validatePreCandidateActions(
         `trusted pre-candidate step ${name} must preserve its reviewed execution condition and failure propagation`,
       );
     }
+    if (step.run !== undefined && step.shell !== PRE_CANDIDATE_STEP_SHELLS[name]) {
+      errors.push(`trusted pre-candidate step ${name} must preserve its reviewed shell`);
+    }
     const expectedRunSha256 = PRE_CANDIDATE_RUN_SHA256[name];
     if (
       expectedRunSha256 !== undefined &&
@@ -3007,6 +3011,13 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     }
   }
   requirePreCandidateEnvironment(errors, "workflow", workflow.env, PRE_CANDIDATE_WORKFLOW_ENV);
+  if (
+    asRecord(asRecord(workflow.defaults).run).shell !== undefined ||
+    asRecord(asRecord(generateMatrix.defaults).run).shell !== undefined
+  ) {
+    errors.push("trusted pre-candidate scripts must not inherit a custom default shell");
+  }
+
   requirePreCandidateEnvironment(errors, "generate-matrix job", generateMatrix.env, {});
   validatePreCandidateActions(errors, generateSteps, generateCheckout);
   validateLargerRunnerRouting(errors, jobs, generateMatrix, generateSteps, generateCheckout);
@@ -3567,7 +3578,13 @@ export function validateNativePodmanStagingAction(
 ): string[] {
   // Bind the complete reviewed handoff, including verification predicates,
   // paired download IDs and verification-before-download ordering.
-  return createHash("sha256").update(readFileSync(actionPath, "utf8")).digest("hex") ===
+  let actionSource: string;
+  try {
+    actionSource = readFileSync(actionPath, "utf8");
+  } catch {
+    return ["native Podman staging action must be readable to verify its immutable commit pin"];
+  }
+  return createHash("sha256").update(actionSource).digest("hex") ===
     E2E_ACTION_PROVENANCE.stageNativePodmanToolchains.contentSha256
     ? []
     : ["native Podman staging action content must match its immutable commit pin"];
