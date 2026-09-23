@@ -82,6 +82,8 @@ The default inline Ratatui display uses the normal terminal screen, preserving c
 It uses a compact panel for active resource operations and elapsed time without taking keyboard input or entering fullscreen mode.
 Interactive operation starts stay in the panel; completed milestones and errors remain in scrollback.
 Interactive progress starts with a compact NVIDIA / NemoClaw wordmark.
+Recognized Kitty (0.28 or later) and Ghostty terminals add the NVIDIA eye above the progress panel without querying the terminal or reading input.
+Unknown terminals, tmux, GNU Screen, Zellij, narrow windows, and nonempty `NO_COLOR` use the text wordmark.
 Successful completion headings are green, including destroy; destructive actions and retention warnings remain amber, and failures use red.
 Labels carry the same meaning without color.
 A nonempty `NO_COLOR` disables styling while preserving inline progress.

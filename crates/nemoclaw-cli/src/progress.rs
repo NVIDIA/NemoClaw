@@ -22,6 +22,7 @@ use std::{
 };
 
 mod backend;
+mod logo;
 use backend::OutputBackend;
 
 const HEARTBEAT: Duration = Duration::from_secs(30);
@@ -211,6 +212,7 @@ fn run(receiver: mpsc::Receiver<Option<Progress>>, inline: bool, verbose: bool, 
     };
     let mut output = io::stderr();
     let palette = Palette::detect(inline);
+    let image_brand = logo::write_brand(&mut output, palette).unwrap_or(false);
     let mut terminal = inline
         .then(|| {
             OutputBackend::new()
@@ -226,7 +228,7 @@ fn run(receiver: mpsc::Receiver<Option<Progress>>, inline: bool, verbose: bool, 
         })
         .flatten();
     if let Some(display) = terminal.as_mut() {
-        if insert_header(display, &header, palette).is_err() {
+        if insert_header(display, &header, palette, image_brand).is_err() {
             finish_terminal(&mut terminal);
             let _ = writeln!(output, "{header}");
         }
@@ -443,14 +445,19 @@ fn insert_header<B: Backend>(
     terminal: &mut Terminal<B>,
     header: &str,
     palette: Palette,
+    image_brand: bool,
 ) -> Result<(), B::Error> {
-    let mut lines = vec![
-        Line::from(vec![
-            Span::styled("NVIDIA", palette.style(Tone::Accent)),
-            Span::raw(" / NemoClaw"),
-        ]),
-        Line::default(),
-    ];
+    let mut lines = if image_brand {
+        Vec::new()
+    } else {
+        vec![
+            Line::from(vec![
+                Span::styled("NVIDIA", palette.style(Tone::Accent)),
+                Span::raw(" / NemoClaw"),
+            ]),
+            Line::default(),
+        ]
+    };
     lines.extend(header.lines().map(Line::raw));
     insert_paragraph(terminal, Paragraph::new(Text::from(lines)))
 }

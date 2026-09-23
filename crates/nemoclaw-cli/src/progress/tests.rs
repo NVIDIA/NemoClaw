@@ -242,6 +242,7 @@ fn startup_wordmark_remains_above_the_first_progress_frame() {
         &mut terminal,
         "Plan · demo.yaml\nState: state",
         Palette { enabled: true },
+        false,
     )
     .unwrap();
     draw(

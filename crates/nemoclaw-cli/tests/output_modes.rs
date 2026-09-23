@@ -57,7 +57,11 @@ fn failure_json_and_progress_stay_separate_when_either_stream_is_redirected() {
                 let state = directory.path().join("state-must-not-exist");
                 let captured = directory.path().join("redirected-stream");
                 let mut command = Command::new(env!("CARGO_BIN_EXE_nemoclaw"));
-                command.args([operation, "-o", "json", "--progress", mode, "--verbose"]);
+                command
+                    .args([operation, "-o", "json", "--progress", mode, "--verbose"])
+                    .env("TERM", "xterm-kitty")
+                    .env("KITTY_WINDOW_ID", "1")
+                    .env_remove("NO_COLOR");
                 if operation != "destroy" {
                     command.arg(&config).arg("--non-interactive");
                 }
@@ -108,18 +112,40 @@ fn failure_json_and_progress_stay_separate_when_either_stream_is_redirected() {
 #[test]
 fn terminal_brand_and_color_respect_streams_and_no_color() {
     use std::{io::Read, process::Stdio};
-    for (format, mode, no_color) in [
-        ("text", "auto", false),
-        ("json", "auto", false),
-        ("text", "auto", true),
-        ("text", "plain", false),
-        ("text", "off", false),
+    for (format, mode, no_color, term, multiplexer, width, image) in [
+        ("text", "auto", false, "xterm-256color", None, 80, false),
+        ("text", "auto", false, "xterm-kitty", None, 80, true),
+        ("json", "auto", false, "xterm-kitty", None, 80, true),
+        ("text", "auto", false, "xterm-ghostty", None, 80, true),
+        ("text", "auto", true, "xterm-kitty", None, 80, false),
+        ("text", "plain", false, "xterm-kitty", None, 80, false),
+        ("text", "off", false, "xterm-kitty", None, 80, false),
+        (
+            "text",
+            "auto",
+            false,
+            "xterm-kitty",
+            Some("TMUX"),
+            80,
+            false,
+        ),
+        ("text", "auto", false, "xterm-kitty", Some("STY"), 80, false),
+        (
+            "text",
+            "auto",
+            false,
+            "xterm-kitty",
+            Some("ZELLIJ"),
+            80,
+            false,
+        ),
+        ("text", "auto", false, "xterm-kitty", None, 19, false),
     ] {
         let directory = tempfile::tempdir().unwrap();
         let pty = nix::pty::openpty(
             Some(&nix::pty::Winsize {
                 ws_row: 24,
-                ws_col: 80,
+                ws_col: width,
                 ws_xpixel: 0,
                 ws_ypixel: 0,
             }),
@@ -140,11 +166,19 @@ fn terminal_brand_and_color_respect_streams_and_no_color() {
             .arg(directory.path().join("missing-bundle"))
             .arg("--state-dir")
             .arg(directory.path().join("state"))
-            .env("TERM", "xterm-256color")
+            .env("TERM", term)
+            .env("TERM_PROGRAM", "ghostty")
+            .env("KITTY_WINDOW_ID", "1")
+            .env_remove("TMUX")
+            .env_remove("STY")
+            .env_remove("ZELLIJ")
             .env_remove("NO_COLOR")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::from(fs::File::from(pty.slave)));
+        if let Some(variable) = multiplexer {
+            command.env(variable, "test");
+        }
         if no_color {
             command.env("NO_COLOR", "1");
         }
@@ -179,6 +213,17 @@ fn terminal_brand_and_color_respect_streams_and_no_color() {
             usize::from(mode == "auto"),
             "{terminal:?}"
         );
+        assert_eq!(terminal.contains("\x1b_G"), image, "{terminal:?}");
+        if image {
+            assert!(terminal.contains("U=1"), "image must reflow with text");
+            assert!(terminal.contains('\u{10eeee}'), "image needs text anchors");
+            assert!(
+                terminal.contains("q=2"),
+                "graphics must not solicit terminal replies"
+            );
+            assert!(!terminal.contains("\x1b[6n"), "must not query the cursor");
+            assert_eq!(terminal.matches("\x1b_G").count(), 1);
+        }
         let green = "\x1b[38;2;118;185;0";
         assert_eq!(
             terminal.contains(green),
