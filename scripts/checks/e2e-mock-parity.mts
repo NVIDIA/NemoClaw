@@ -303,6 +303,22 @@ export function filterMockParityRelevantChangedFiles(
   });
 }
 
+function gitRenamedPaths(base: string, head: string, repoRoot: string): Map<string, string> {
+  const fields = execFileSync(
+    "git",
+    ["diff", "--name-status", "-z", "--find-renames", "--diff-filter=R", `${base}...${head}`],
+    {
+      cwd: repoRoot,
+      encoding: "utf8",
+    },
+  ).split("\0");
+  const paths = new Map<string, string>();
+  for (let index = 0; index + 2 < fields.length; index += 3) {
+    paths.set(fields[index + 2]!, fields[index + 1]!);
+  }
+  return paths;
+}
+
 export function collectMockParityChangedFiles(
   base: string,
   head: string,
@@ -325,9 +341,10 @@ export function collectMockParityChangedFiles(
     ...names("ACMR"),
     ...names("D", ["--no-renames"]).filter((file) => SHARED_FIXTURE.test(file)),
   ];
+  const renamedPaths = gitRenamedPaths(base, head, repoRoot);
   return filterMockParityRelevantChangedFiles(
     files,
-    (file) => sourceAtRef(base, file, repoRoot),
+    (file) => sourceAtRef(base, renamedPaths.get(file) ?? file, repoRoot),
     (file) => sourceAtRef(head, file, repoRoot),
   );
 }
@@ -338,19 +355,9 @@ export function collectMockParityRenames(
   head: string,
   repoRoot = REPO_ROOT,
 ): { changedFastTestRenames: Map<string, string>; renamedLiveOwners: Map<string, string> } {
-  const fields = execFileSync(
-    "git",
-    ["diff", "--name-status", "-z", "--find-renames", "--diff-filter=R", `${base}...${head}`],
-    {
-      cwd: repoRoot,
-      encoding: "utf8",
-    },
-  ).split("\0");
   const changedFastTestRenames = new Map<string, string>();
   const renamedLiveOwners = new Map<string, string>();
-  for (let index = 0; index + 2 < fields.length; index += 3) {
-    const oldPath = fields[index + 1]!;
-    const newPath = fields[index + 2]!;
+  for (const [newPath, oldPath] of gitRenamedPaths(base, head, repoRoot)) {
     const before = sourceAtRef(base, oldPath, repoRoot);
     const after = sourceAtRef(head, newPath, repoRoot);
     if (before === null || after === null) continue;

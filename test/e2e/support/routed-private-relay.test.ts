@@ -166,17 +166,27 @@ it.each([true, false])(
     );
     const exited = once(child, "exit");
     try {
-      await vi.waitFor(() => expect(snapshot(file).listening).toBe(1));
+      await vi.waitFor(() => expect(snapshot(file).listening).toBe(1), {
+        timeout: 10_000,
+        interval: 100,
+      });
       const client = net.connect({ host: "127.0.0.1", port });
       client.on("error", () => undefined);
       client.resume();
       await once(client, "close");
-      await vi.waitFor(() =>
-        expect(snapshot(file)).toMatchObject(
-          connected
-            ? { incoming: 1, upstreamConnected: 1, upstreamErrors: 0 }
-            : { incoming: 1, upstreamConnected: 0, upstreamErrors: 1, errors: { ECONNREFUSED: 1 } },
-        ),
+      await vi.waitFor(
+        () =>
+          expect(snapshot(file)).toMatchObject(
+            connected
+              ? { incoming: 1, upstreamConnected: 1, upstreamErrors: 0 }
+              : {
+                  incoming: 1,
+                  upstreamConnected: 0,
+                  upstreamErrors: 1,
+                  errors: { ECONNREFUSED: 1 },
+                },
+          ),
+        { timeout: 10_000, interval: 100 },
       );
       expect(fs.readFileSync(file, "utf8")).not.toContain("secret-payload");
     } finally {

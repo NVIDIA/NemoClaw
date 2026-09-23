@@ -524,7 +524,10 @@ it.each([
     ],
     source: renameSource,
     entries: [{ ...replacementEntry, live: renamedLive }],
-    expected: [missingChangedTest],
+    expected: [
+      missingChangedTest,
+      `${renameFixture}: change at least one fast PR test mapped from ${renamedLive}`,
+    ],
   },
 ])("checks base fast-test obligations for $kind", ({ operations, source, entries, expected }) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "parity-fast-rename-"));
@@ -572,3 +575,57 @@ it.each([
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+it.each([false, true])(
+  "requires semantic fast-test changes after rename (changed=%s)",
+  (changed) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "parity-current-rename-"));
+    const git = (...args: string[]) =>
+      execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
+    const write = (file: string, source: string) => {
+      fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+      fs.writeFileSync(path.join(root, file), source);
+    };
+    const commit = () => {
+      git("add", ".");
+      git(
+        "-c",
+        "user.name=Parity Test",
+        "-c",
+        "user.email=parity@example.invalid",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "-qm",
+        "test",
+      );
+    };
+    try {
+      git("init", "-q");
+      write(live, "export const liveScenario = 1;\n");
+      write(fast, renameSource);
+      commit();
+      const base = git("rev-parse", "HEAD");
+      git("mv", fast, replacementTest);
+      write(live, "export const liveScenario = 2;\n");
+      write(
+        replacementTest,
+        changed ? `${renameSource}export const regression = 21;\n` : renameSource,
+      );
+      commit();
+      const changedFiles = collectMockParityChangedFiles(base, "HEAD", root);
+      expect(changedFiles.includes(replacementTest)).toBe(changed);
+      expect(
+        validateMockParity({
+          manifest: manifest([{ live, fast: [replacementTest] }]),
+          changedFiles,
+          fileExists: (file) => fs.existsSync(path.join(root, file)),
+        }),
+      ).toEqual(
+        changed ? [] : [`${live}: change at least one mapped fast PR test with the live E2E`],
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
