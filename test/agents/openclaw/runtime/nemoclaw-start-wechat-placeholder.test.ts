@@ -243,23 +243,33 @@ describe("OpenClaw WeChat provider placeholder refresh (#10079)", () => {
       CANONICAL,
       { WECHAT_BOT_TOKEN: scoped },
       true,
-      ({ configPath }) => {
+      ({ configPath, tmpDir }) => {
+        const normalizer = path.join(tmpDir, "normalizer.py");
+        fs.writeFileSync(
+          normalizer,
+          fs
+            .readFileSync(MUTABLE_CONFIG_NORMALIZER, "utf-8")
+            .replace(
+              'if __name__ == "__main__":',
+              'runtime_config_modes = lambda: (0o2770, 0o660)\n\nif __name__ == "__main__":',
+            ),
+        );
         const normalized = spawnSync(
           "python3",
           [
             "-I",
-            MUTABLE_CONFIG_NORMALIZER,
+            normalizer,
             path.dirname(configPath),
             String(process.getuid?.() ?? 0),
             String(process.getgid?.() ?? 0),
           ],
           { encoding: "utf-8", timeout: 5000 },
         );
+        expect(normalized.status, normalized.stderr).toBe(0);
         expect(
           fs.statSync(path.join(path.dirname(configPath), "openclaw-weixin/accounts/primary.json"))
             .mode & 0o777,
         ).toBe(0o660);
-        expect(process.platform === "linux" ? normalized.status : 0, normalized.stderr).toBe(0);
       },
     );
 
@@ -373,7 +383,7 @@ describe("OpenClaw WeChat provider placeholder refresh (#10079)", () => {
 
     expect(run.result.status).toBe(1);
     expect(run.account.token).toBe(rawToken);
-    expect(run.result.stderr).toContain("neither canonical nor revision-scoped");
+    expect(run.result.stderr).toContain("neither canonical nor generation-scoped");
     expect(run.result.stderr).not.toContain(rawToken);
   });
 
@@ -446,6 +456,30 @@ describe("OpenClaw WeChat provider placeholder refresh (#10079)", () => {
     expect(run.result.status, String(run.result.stderr)).toBe(0);
     expect(run.account.token).toBe(CANONICAL);
     expect(run.result.stderr).not.toContain("Refusing WeChat provider placeholder refresh");
+  });
+
+  it("leaves an intentionally removed managed WeChat tree absent", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-wechat-placeholder-"));
+    const openclawDir = path.join(tmpDir, ".openclaw");
+    const configPath = path.join(openclawDir, "openclaw.json");
+    fs.mkdirSync(openclawDir);
+    fs.writeFileSync(configPath, `${JSON.stringify(wechatConfig(true), null, 2)}\n`);
+
+    try {
+      const result = spawnSync("python3", ["-I", REFRESH_HELPER, configPath], {
+        encoding: "utf-8",
+        env: {
+          PATH: process.env.PATH || "",
+          WECHAT_BOT_TOKEN: "openshell:resolve:env:v42_WECHAT_BOT_TOKEN",
+        },
+        timeout: 5000,
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.existsSync(path.join(openclawDir, "openclaw-weixin"))).toBe(false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 
   it.each([

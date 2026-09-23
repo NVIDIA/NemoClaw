@@ -16,7 +16,14 @@ const foreignId = "99999999-8888-4777-8666-555555555555";
 let attached = true;
 let liveId = expectedId;
 let detachCalls = 0;
-providerCommands.runOpenshellProviderCommand = (args) => {
+const runtimeSelection = { gatewayName: "nemoclaw-8091", workspace: "default" };
+providerCommands.runOpenshellProviderCommand = (args, options) => {
+  if (
+    options?.runtimeSelection?.gatewayName !== runtimeSelection.gatewayName ||
+    options?.runtimeSelection?.workspace !== runtimeSelection.workspace
+  ) {
+    throw new Error("provider command did not retain the recorded runtime selection");
+  }
   if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "list") {
     return attached
       ? { status: 0, stdout: "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\nalpha-mcp-fake nemoclaw-mcp-v1 1 0\n", stderr: "" }
@@ -25,7 +32,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
   if (args[0] === "provider" && args[1] === "get") {
     return {
       status: 0,
-      stdout: "Id: " + liveId + "\nType: nemoclaw-mcp-v1\nResource version: 4\nCredential keys: EXPECTED_TOKEN\n",
+      stdout: "Name: " + args[2] + "\nId: " + liveId + "\nType: nemoclaw-mcp-v1\nResource version: 4\nCredential keys: EXPECTED_TOKEN\nConfig keys: <none>\n",
       stderr: "",
     };
   }
@@ -51,22 +58,26 @@ const providerActions = require("./src/lib/actions/sandbox/mcp-bridge-provider.j
 const entry = {
   server: "fake",
   agent: "openclaw",
-  adapter: "mcporter",
+  adapter: "openclaw-config",
   url: "https://mcp.example.test/mcp",
   env: ["EXPECTED_TOKEN"],
   providerName: "alpha-mcp-fake",
   providerId: expectedId,
   policyName: "mcp-bridge-fake",
-  addedAt: "2026-06-01T00:00:00.000Z",
 };
 let outcome = null;
 let message = null;
-try {
-  outcome = providerActions.detachProvider("alpha", entry);
-} catch (error) {
-  message = error.message;
-}
-process.stdout.write(JSON.stringify({ outcome, message, detachCalls, attached, liveId }));
+(async () => {
+  try {
+    outcome = await providerActions.detachProvider("alpha", entry, { runtimeSelection });
+  } catch (error) {
+    message = error.message;
+  }
+  process.stdout.write(JSON.stringify({ outcome, message, detachCalls, attached, liveId }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
 `;
   const result = spawnSync(process.execPath, ["-e", script], {
     cwd: process.cwd(),
@@ -111,7 +122,7 @@ describe("MCP provider detach retry", () => {
   it("does not retry unrelated detach failures", () => {
     const result = runDetachScenario("other-error");
     expect(result.outcome).toBeNull();
-    expect(result.message).toContain("permission denied");
+    expect(result.message).toBe("OpenShell could not authenticate the provider operation.");
     expect(result.detachCalls).toBe(1);
     expect(result.attached).toBe(true);
   });

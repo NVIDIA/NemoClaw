@@ -35,6 +35,15 @@
 #define REQUIRED_SEALS 0x000fL
 #define SEEK_SET 0L
 #define NEGATIVE_EINTR -4L
+#define LINUX_CAPABILITY_VERSION_3 0x20080522U
+#define PR_CAPBSET_READ 23L
+#define PR_CAPBSET_DROP 24L
+#define PR_CAP_AMBIENT 47L
+#define PR_CAP_AMBIENT_CLEAR_ALL 4L
+#define BOOTSTRAP_CAPABILITY_MASK 0x32U
+#define CAP_DAC_OVERRIDE 1L
+#define CAP_FSETID 4L
+#define CAP_KILL 5L
 
 #if defined(__x86_64__)
 #define SYSCALL_READ 0L
@@ -43,6 +52,9 @@
 #define SYSCALL_LSEEK 8L
 #define SYSCALL_EXECVE 59L
 #define SYSCALL_FCNTL 72L
+#define SYSCALL_CAPGET 125L
+#define SYSCALL_CAPSET 126L
+#define SYSCALL_PRCTL 157L
 #define SYSCALL_EXIT_GROUP 231L
 #define SYSCALL_DUP3 292L
 #define SYSCALL_MEMFD_CREATE 319L
@@ -69,6 +81,22 @@ static long raw_syscall3(long number, long first, long second, long third) {
   return result;
 }
 
+static long raw_syscall5(long number, long first, long second, long third, long fourth,
+                         long fifth) {
+  register long result __asm__("rax") = number;
+  register long argument_one __asm__("rdi") = first;
+  register long argument_two __asm__("rsi") = second;
+  register long argument_three __asm__("rdx") = third;
+  register long argument_four __asm__("r10") = fourth;
+  register long argument_five __asm__("r8") = fifth;
+  __asm__ volatile("syscall"
+                   : "+r"(result)
+                   : "r"(argument_one), "r"(argument_two), "r"(argument_three),
+                     "r"(argument_four), "r"(argument_five)
+                   : "rcx", "r11", "memory");
+  return result;
+}
+
 __asm__(".global _start\n"
         ".type _start,@function\n"
         "_start:\n"
@@ -86,6 +114,9 @@ __asm__(".global _start\n"
 #define SYSCALL_READ 63L
 #define SYSCALL_WRITE 64L
 #define SYSCALL_EXIT_GROUP 94L
+#define SYSCALL_CAPGET 90L
+#define SYSCALL_CAPSET 91L
+#define SYSCALL_PRCTL 167L
 #define SYSCALL_EXECVE 221L
 #define SYSCALL_MEMFD_CREATE 279L
 
@@ -108,6 +139,22 @@ static long raw_syscall3(long number, long first, long second, long third) {
   return result;
 }
 
+static long raw_syscall5(long number, long first, long second, long third, long fourth,
+                         long fifth) {
+  register long result __asm__("x0") = first;
+  register long argument_two __asm__("x1") = second;
+  register long argument_three __asm__("x2") = third;
+  register long argument_four __asm__("x3") = fourth;
+  register long argument_five __asm__("x4") = fifth;
+  register long syscall_number __asm__("x8") = number;
+  __asm__ volatile("svc 0"
+                   : "+r"(result)
+                   : "r"(argument_two), "r"(argument_three), "r"(argument_four),
+                     "r"(argument_five), "r"(syscall_number)
+                   : "memory");
+  return result;
+}
+
 __asm__(".global _start\n"
         ".type _start,%function\n"
         "_start:\n"
@@ -125,6 +172,19 @@ static char **process_environment;
 static char restored_environment_bytes[MAX_ENVIRONMENT_BYTES];
 static char *restored_environment[MAX_ENVIRONMENT_ENTRIES + 1U];
 
+struct capability_header {
+  unsigned int version;
+  int pid;
+};
+
+struct capability_data {
+  unsigned int effective;
+  unsigned int permitted;
+  unsigned int inheritable;
+};
+
+__attribute__((noreturn)) static void fail(const char *message);
+
 static size_t text_length(const char *text) {
   size_t length = 0U;
   while (text[length] != '\0') length += 1U;
@@ -141,6 +201,62 @@ static bool text_equal(const char *left, const char *right) {
   size_t index = 0U;
   while (left[index] != '\0' && left[index] == right[index]) index += 1U;
   return left[index] == right[index];
+}
+
+static bool remove_bootstrap_capability_marker(size_t *count) {
+  static const char marker[] = "NEMOCLAW_MANAGED_BOOTSTRAP_DROP_CAPABILITIES=0x32";
+  bool found = false;
+  size_t output = 0U;
+  for (size_t index = 0U; index < *count; index += 1U) {
+    if (text_equal(restored_environment[index], marker)) {
+      if (found) fail("bootstrap capability marker is duplicated");
+      found = true;
+      continue;
+    }
+    restored_environment[output++] = restored_environment[index];
+  }
+  restored_environment[output] = NULL;
+  *count = output;
+  return found;
+}
+
+static void drop_bootstrap_capabilities(void) {
+  static const long capabilities[] = {CAP_DAC_OVERRIDE, CAP_FSETID, CAP_KILL};
+  struct capability_header header = {LINUX_CAPABILITY_VERSION_3, 0};
+  struct capability_data data[2] = {{0U, 0U, 0U}, {0U, 0U, 0U}};
+  if (raw_syscall3(SYSCALL_CAPGET, (long)&header, (long)data, 0L) != 0L) {
+    fail("could not inspect bootstrap capabilities before supervisor resume");
+  }
+  if (raw_syscall5(SYSCALL_PRCTL, PR_CAP_AMBIENT, PR_CAP_AMBIENT_CLEAR_ALL, 0L, 0L, 0L) !=
+      0L) {
+    fail("could not clear bootstrap ambient capabilities before supervisor resume");
+  }
+  for (size_t index = 0U; index < sizeof(capabilities) / sizeof(capabilities[0]); index += 1U) {
+    const long present =
+      raw_syscall5(SYSCALL_PRCTL, PR_CAPBSET_READ, capabilities[index], 0L, 0L, 0L);
+    if (present < 0L) fail("could not inspect bootstrap capability bounding set");
+    if (present == 1L &&
+        raw_syscall5(SYSCALL_PRCTL, PR_CAPBSET_DROP, capabilities[index], 0L, 0L, 0L) != 0L) {
+      fail("could not drop bootstrap capability from supervisor bounding set");
+    }
+  }
+  data[0].effective &= ~BOOTSTRAP_CAPABILITY_MASK;
+  data[0].permitted &= ~BOOTSTRAP_CAPABILITY_MASK;
+  data[0].inheritable &= ~BOOTSTRAP_CAPABILITY_MASK;
+  if (raw_syscall3(SYSCALL_CAPSET, (long)&header, (long)data, 0L) != 0L) {
+    fail("could not drop bootstrap process capabilities before supervisor resume");
+  }
+  struct capability_data verified[2] = {{0U, 0U, 0U}, {0U, 0U, 0U}};
+  if (raw_syscall3(SYSCALL_CAPGET, (long)&header, (long)verified, 0L) != 0L ||
+      ((verified[0].effective | verified[0].permitted | verified[0].inheritable) &
+       BOOTSTRAP_CAPABILITY_MASK) != 0U) {
+    fail("bootstrap process capabilities remained after supervisor resume drop");
+  }
+  for (size_t index = 0U; index < sizeof(capabilities) / sizeof(capabilities[0]); index += 1U) {
+    if (raw_syscall5(SYSCALL_PRCTL, PR_CAPBSET_READ, capabilities[index], 0L, 0L, 0L) != 0L) {
+      fail("bootstrap bounding capability remained after supervisor resume drop");
+    }
+  }
 }
 
 static bool write_all(long descriptor, const char *bytes, size_t length) {
@@ -322,6 +438,9 @@ __attribute__((noreturn)) static void resume_supervisor(int argc, char **argv) {
   char **supervisor_argv = &argv[6];
   if (supervisor_argv[0][0] != '/') fail("supervisor executable is not absolute");
   read_environment_transport(environment_count, environment_bytes);
+  if (remove_bootstrap_capability_marker(&environment_count)) {
+    drop_bootstrap_capabilities();
+  }
   exec_process(supervisor_argv[0], supervisor_argv, restored_environment);
   fail("could not execute the exact supervisor process");
 }

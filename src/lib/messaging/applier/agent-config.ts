@@ -26,7 +26,6 @@ import {
   readEnvLineKey,
   staleCredentialEnvKeys,
 } from "./credential-env-cleanup";
-import { allowRenderedOpenClawPlugins } from "./openclaw-plugin-allow";
 import { enabledPlanChannels, filterEnabledPlanEntries } from "./plan-filter";
 import type {
   MessagingHookApplyRequest,
@@ -201,7 +200,9 @@ export function reconcileCredentialEnvAtOpenShell(
   if (existing === undefined) return { changed: false };
 
   const runtimeAliasRender = readHermesRuntimeAliasRender(plan, options.runOpenshell);
-  const contents = applyEnvLines(plan, existing, [...render, ...runtimeAliasRender]);
+  const contents = applyEnvLines(plan, existing, [...render, ...runtimeAliasRender], [], {
+    preserveResolverCredentialLines: true,
+  });
   if (contents === existing) return { changed: false };
   writeSandboxFile(plan.sandboxName, target, contents, options.runOpenshell);
   return { changed: true, target };
@@ -211,7 +212,7 @@ const ENV_KEY_PATTERN = /^[A-Z][A-Z0-9_]*$/u;
 
 /**
  * Resolve only manifest-derived cross-key aliases from OpenShell's injected,
- * revision-scoped placeholders. The exact placeholder grammar prevents a raw
+ * generation-scoped placeholders. The exact placeholder grammar prevents a raw
  * provider credential or arbitrary sandbox value from entering Hermes state.
  */
 function readHermesRuntimeAliasRender(
@@ -229,10 +230,9 @@ function readHermesRuntimeAliasRender(
     ) {
       return [];
     }
-    const expectedPattern = `^openshell:resolve:env:v[0-9]+_${sourceKey}$`;
+    const expectedPattern = `^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_${sourceKey}$`;
     const expectedValue = `openshell:resolve:env:${sourceKey}`;
     if (alias.match !== expectedPattern || alias.value !== expectedValue) return [];
-
     const result = runOpenshell(
       [
         "sandbox",
@@ -390,7 +390,6 @@ function applyJsonFragments(
       preserveCredentialPlaceholders(entry.value, getJsonPath(root, entry.path), rules),
     );
   }
-  if (plan.agent === "openclaw") allowRenderedOpenClawPlugins(root, render);
   return format === "yaml" ? YAML.stringify(root) : JSON.stringify(root, null, 2) + "\n";
 }
 
@@ -529,6 +528,8 @@ function applyEnvLines(
   plan: SandboxMessagingPlan,
   existing: string | undefined,
   render: readonly SandboxMessagingEnvLinesRenderPlan[],
+  additionalLines: readonly string[] = [],
+  options: { readonly preserveResolverCredentialLines?: boolean } = {},
 ): string {
   const desired = new Map<string, string>();
   const rawDesiredLines: string[] = [];
@@ -542,7 +543,22 @@ function applyEnvLines(
       }
     }
   }
-  const stale = staleCredentialEnvKeys(plan, new Set(desired.keys()));
+  for (const line of additionalLines) {
+    const key = readEnvLineKey(line);
+    if (!key) throw new Error("Messaging runtime credential alias line is invalid.");
+    desired.set(key, line);
+  }
+  const stale = new Set(staleCredentialEnvKeys(plan, new Set(desired.keys())));
+  if (options.preserveResolverCredentialLines) {
+    const allowedResolvers = activeResolverEnvAssignments(plan);
+    for (const line of (existing ?? "").split(/\n/u)) {
+      const key = readEnvLineKey(line);
+      const sourceKey = readOpenShellResolverSourceKey(line);
+      if (key && sourceKey && stale.has(key) && allowedResolvers.has(`${key}\0${sourceKey}`)) {
+        stale.delete(key);
+      }
+    }
+  }
 
   const written = new Set<string>();
   const output = (existing ?? "")
@@ -562,6 +578,47 @@ function applyEnvLines(
   }
   output.push(...rawDesiredLines);
   return output.length > 0 ? `${output.join("\n")}\n` : "";
+}
+
+function activeResolverEnvAssignments(plan: SandboxMessagingPlan): ReadonlySet<string> {
+  const assignments = new Set<string>();
+  for (const binding of activeCredentialBindings(plan)) {
+    if (ENV_KEY_PATTERN.test(binding.providerEnvKey)) {
+      assignments.add(`${binding.providerEnvKey}\0${binding.providerEnvKey}`);
+    }
+  }
+  for (const alias of filterEnabledPlanEntries(plan, plan.runtimeSetup?.envAliases ?? [])) {
+    if (
+      alias.targetEnvKey &&
+      ENV_KEY_PATTERN.test(alias.targetEnvKey) &&
+      ENV_KEY_PATTERN.test(alias.envKey)
+    ) {
+      assignments.add(`${alias.targetEnvKey}\0${alias.envKey}`);
+    }
+  }
+  return assignments;
+}
+
+function readOpenShellResolverSourceKey(line: string): string | null {
+  const assignment = line.trim().replace(/^export\s+/u, "");
+  const separator = assignment.indexOf("=");
+  if (separator < 1) return null;
+  const rawValue = assignment.slice(separator + 1).trim();
+  const value =
+    rawValue.length >= 2 &&
+    ((rawValue.startsWith('"') && rawValue.endsWith('"')) ||
+      (rawValue.startsWith("'") && rawValue.endsWith("'")))
+      ? rawValue.slice(1, -1)
+      : rawValue;
+  return (
+    value.match(
+      /^openshell:resolve:env:(?:(?:v[0-9]{1,20}|s[a-f0-9]{64})_)?([A-Z][A-Z0-9_]{0,127})$/u,
+    )?.[1] ??
+    value.match(
+      /^(?:xoxb|xapp)-OPENSHELL-RESOLVE-ENV-(?:(?:v[0-9]{1,20}|s[a-f0-9]{64})_)?([A-Z][A-Z0-9_]{0,127})$/u,
+    )?.[1] ??
+    null
+  );
 }
 
 function applyHookBuildFileOutputs(

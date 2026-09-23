@@ -437,9 +437,7 @@ function collectStaticAliases(sourceFile: ts.SourceFile): StaticAliases {
       const functionScoped = (node.flags & (ts.NodeFlags.Const | ts.NodeFlags.Let)) === 0;
       for (const declaration of node.declarations) {
         const target =
-          isConst && declaration.initializer
-            ? staticReferenceName(declaration.initializer)
-            : null;
+          isConst && declaration.initializer ? staticReferenceName(declaration.initializer) : null;
         recordBindingName(
           declaration.name,
           target,
@@ -454,12 +452,7 @@ function collectStaticAliases(sourceFile: ts.SourceFile): StaticAliases {
       }
     }
     if (ts.isCatchClause(node) && node.variableDeclaration) {
-      recordBindingName(
-        node.variableDeclaration.name,
-        null,
-        node.variableDeclaration,
-        node,
-      );
+      recordBindingName(node.variableDeclaration.name, null, node.variableDeclaration, node);
     }
     if ((ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node)) && node.name) {
       record(nearestAliasScope(node), node.name.text, null, node);
@@ -841,7 +834,12 @@ export function collectOnboardEntryDecisions(sourceText: string): OnboardEntryCo
       const callableBodies = new Set(callables.map((scope) => scope.node));
       const scopes: DecisionScope[] = [{ name, node, prunedNodes: callableBodies }, ...callables];
       for (const scope of scopes) {
-        const declarationCounts = decisionCounts(scope.name, scope.node, aliases, scope.prunedNodes);
+        const declarationCounts = decisionCounts(
+          scope.name,
+          scope.node,
+          aliases,
+          scope.prunedNodes,
+        );
         for (const category of CATEGORIES) {
           for (const [declaration, count] of Object.entries(declarationCounts[category])) {
             decisions[category][declaration] = (decisions[category][declaration] ?? 0) + count;

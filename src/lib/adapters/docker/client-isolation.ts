@@ -78,11 +78,12 @@ export function dockerBuildSubprocessEnv(
       delete env[key];
     }
   }
-  // Match the runner and Docker probe contract: an explicitly selected host
-  // owns daemon authority, so an ambient context must not redirect the build.
-  // Keep DOCKER_CONFIG because the selected daemon can still require registry
-  // credentials or client certificates from that configuration.
-  if (env.DOCKER_HOST !== undefined) {
+  // Match Docker's authority contract. A nonblank context overrides DOCKER_HOST;
+  // otherwise an explicit host owns the selection. Keep DOCKER_CONFIG because
+  // either selected daemon can require credentials or client certificates.
+  if (String(env.DOCKER_CONTEXT ?? "").trim()) {
+    delete env.DOCKER_HOST;
+  } else if (env.DOCKER_HOST !== undefined) {
     delete env.DOCKER_CONTEXT;
   }
   return env;
@@ -120,18 +121,25 @@ function dockerDesktopCredentialHelperRespondsFromBuild(
   });
 }
 
-function dockerContextIsDefaultFromBuild(env: NodeJS.ProcessEnv): boolean {
-  // Any explicit endpoint owns daemon authority, including alternate Unix
-  // sockets. Preserve its client configuration and registry credentials.
+export function dockerContextIsDefaultFromBuild(
+  env: NodeJS.ProcessEnv,
+  showContext: (env: NodeJS.ProcessEnv) => string | null = (sourceEnv) => {
+    const result = dockerSpawnSync(["context", "show"], {
+      encoding: "utf-8",
+      env: dockerBuildSubprocessEnv(sourceEnv),
+      shell: false,
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 5_000,
+    });
+    return result.error || result.status !== 0 ? null : String(result.stdout).trim();
+  },
+): boolean {
+  const explicitContext = String(env.DOCKER_CONTEXT ?? "").trim();
+  if (explicitContext) return explicitContext === "default";
+  // Without a context override, any explicit endpoint owns daemon authority,
+  // including alternate Unix sockets.
   if (env.DOCKER_HOST) return false;
-  const result = dockerSpawnSync(["context", "show"], {
-    encoding: "utf-8",
-    env: dockerBuildSubprocessEnv(env),
-    shell: false,
-    stdio: ["ignore", "pipe", "ignore"],
-    timeout: 5_000,
-  });
-  return !result.error && result.status === 0 && String(result.stdout).trim() === "default";
+  return showContext(env) === "default";
 }
 
 /**

@@ -3,7 +3,18 @@
 
 # Decide Whether to Approve a Pull Request
 
-Approve only when the trusted checker passes and all maintainer judgments pass for the same PR commit and base commit. This workflow never merges.
+Approve only when the trusted checker and maintainer judgments pass for the same PR commit and observed base branch tip.
+A stable older PR base does not block approval. GitHub must report no conflict, and no active rule can require an up-to-date branch.
+This workflow never merges.
+
+## Stabilize the commit under review
+
+Complete [PR follow-up](../_shared/pr-follow-up.md) successfully for one unchanged latest PR commit
+before manual review or the trusted checker. A first-time fork check-approval review is the only exception.
+
+Do not integrate the base branch while this evidence is pending. After every finding settles,
+integrate the base only for a conflict, a required merged dependency, or an active up-to-date rule.
+Then restart PR follow-up and review the new candidate.
 
 ## Apply the approval rule
 
@@ -38,7 +49,8 @@ Require every active status and review rule to pass for the recorded PR commit a
 
 The checker returns `allPass`, gate results, and advisories. It does not decide product scope. The contributor-and-approver overlap advisory does not change `allPass`.
 
-Fail closed when the PR commit, base commit, state, timing, or required evidence is missing, malformed, stale, contradictory, or changed.
+Fail closed when the PR commit, observed base state, timing, or required evidence is missing,
+malformed, stale, contradictory, or changes during evaluation.
 
 ## Complete maintainer judgments
 
@@ -48,13 +60,13 @@ Stop when no accepted issue or design decision establishes a new product surface
 
 ### CI and review evidence
 
-Use [Follow Up on PR CI and Reviews](../_shared/pr-follow-up.md) to collect and classify CI and review evidence. Treat PR Review Advisor output as review input, not approval authority.
+Use [Follow Up on PR CI and Reviews](../_shared/pr-follow-up.md) to collect and classify CI and review evidence. Treat PR Review Advisor output as review input, not approval authority. Deduplicate repeated findings and separate candidate-owned failures from failures that reproduce on the base.
 
 A first-time fork contributor can require an **Approve and run** decision before PR checks appear. Review the complete diff before that approval. Do not expose repository secrets or privileged credentials to candidate code.
 
 ### Live E2E
 
-Live E2E is not a default PR merge gate. When a maintainer requires it, use `nemoclaw-maintainer-e2e`. Evaluate its result for this PR.
+Live E2E is not a default PR merge gate. When a maintainer requires it, follow [Run Maintainer E2E](../nemoclaw-maintainer-e2e/SKILL.md), then evaluate its result for this PR.
 
 ### Contributor and approver overlap
 
@@ -68,9 +80,10 @@ The contributor set includes the PR opener, commit authors, and co-authors. Use 
 |---|---|
 | Product scope is not approved | Stop and request a maintainer decision. |
 | Contributor declaration or verification fails | Ask the contributor to correct the body or commit history. Do not amend, sign, or force-push for them. |
-| PR or base commit changed | Do not approve. Restart the gate for the new state. |
+| PR revision or base branch tip changed during evaluation | Do not approve. Restart the gate for the new state. |
 | CI or review is pending | Wait. |
-| A narrow repair or mechanical conflict is required | Follow [Salvage a Pull Request](SALVAGE-PR.md). |
+| A narrow repair or mechanical conflict is required | Follow [Salvage a Pull Request](SALVAGE-PR.md) after collection completes for the same commit. |
+| An active rule requires the current base | Integrate the base once, then restart PR follow-up for the new candidate. |
 | A required test is missing | Follow [Test Gaps](TEST-GAPS.md). |
 | All checker gates and maintainer judgments pass | Approve the commit under review. |
 

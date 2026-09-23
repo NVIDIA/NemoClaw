@@ -143,7 +143,7 @@ describe("operation-scoped container engine command", () => {
       XDG_RUNTIME_DIR: "/run/user/1000",
     });
     const engine = createContainerEngineCommand({
-      operation: "state-mutation",
+      operation: "sandbox-lifecycle",
       engineId: "podman",
       displayName: "Podman",
       authorityId: "test:podman-socket",
@@ -207,7 +207,7 @@ describe("operation-scoped container engine command", () => {
   it("forwards bounded binary stdin to one endpoint-scoped command", () => {
     const capture = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
     const engine = createContainerEngineCommand({
-      operation: "managed-bootstrap",
+      operation: "workload-cleanup",
       engineId: "podman",
       displayName: "Podman",
       authorityId: "test:podman-socket",

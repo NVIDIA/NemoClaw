@@ -124,7 +124,7 @@ it("journals not-ready repair on the selected non-default gateway (#6492)", asyn
   });
 
   expect(createSandbox).toHaveBeenCalledOnce();
-  const createIntent = createSandbox.mock.calls[0]?.at(-1);
+  const createIntent = createSandbox.mock.calls[0]?.at(-2);
   expect(createIntent).toMatchObject({
     recreate: true,
     recreateTransaction: {
@@ -150,14 +150,7 @@ it("journals not-ready repair on the selected non-default gateway (#6492)", asyn
   );
   expect(calls.note).toHaveBeenCalledWith(expect.stringContaining("run 'nemohermes gc'"));
   const orderedPhases = phases.filter((phase, index) => index === 0 || phase !== phases[index - 1]);
-  expect(orderedPhases).toEqual([
-    null,
-    "planned",
-    "created",
-    "registry_committing",
-    "completed",
-    null,
-  ]);
+  expect(orderedPhases).toEqual([null, "created", "registry_committing", "completed", null]);
   expect(session.checkpoint?.sandboxRecreate).toBeNull();
 });
 
@@ -279,7 +272,7 @@ it("does not carry a recorded preset list through post-delete onboard resume", a
     liveIdentityFingerprint: null,
   };
   const createSandbox = vi.fn(async (...args: unknown[]) => {
-    const createIntent = args.at(-1);
+    const createIntent = args.at(-2);
     expect(createIntent).toMatchObject({
       recreate: true,
       recreateJournalTargetIntentFingerprint: targetIntentFingerprint,
@@ -448,7 +441,7 @@ it("removes the journaled source image after resuming a registered replacement",
   await handleSandboxState(options);
 
   expect(createSandbox).toHaveBeenCalledTimes(2);
-  expect(createSandbox.mock.calls[1]?.at(-1)).toMatchObject({
+  expect(createSandbox.mock.calls[1]?.at(-2)).toMatchObject({
     recreateTransaction: {
       id: journal?.id,
       targetGeneration: journal?.targetGeneration,
@@ -687,6 +680,60 @@ it("creates a missing sandbox from a preserved registry row without removing the
   expect(session.checkpoint?.sandboxRecreate ?? null).toBeNull();
 });
 
+it("keeps durable state and emits no success when FSM CAS save throws (#10491)", async () => {
+  const session = createSession({ sandboxName: "saved", agent: "openclaw" });
+  session.steps.sandbox.status = "complete";
+  session.machine.state = "agent_setup";
+  session.checkpoint = {
+    ...deriveCheckpointFromSession(session),
+    sandboxIdentity: decisionSelected({ name: "saved", agent: "openclaw" }),
+    gatewayAuthority: decisionSelected({
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      mode: "nemoclaw-managed",
+      source: "standalone",
+      endpoint: null,
+      stateDir: null,
+      supervisor: null,
+      requiredCapabilities: [],
+    }),
+  };
+  const oldJournal = session.checkpoint?.sandboxRecreate ?? null;
+  const { deps, calls } = createDeps(
+    {
+      getSandboxReuseState: () => "not_ready",
+      getSandboxRegistryEntry: () => ({
+        name: "saved",
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        provider: "provider",
+        model: "model",
+      }),
+      getSandboxRecreateObservation: () => ({
+        state: "not_ready",
+        liveIdentityFingerprint: fingerprintSandboxRecreateValue("source-id"),
+      }),
+      compareAndSwapSession: vi.fn((matches, mutator) => {
+        const transient = structuredClone(session);
+        return matches(transient)
+          ? (mutator(transient),
+            (() => {
+              throw new Error("durable CAS save failed");
+            })())
+          : ("mismatch" as const);
+      }),
+    },
+    session,
+  );
+
+  await expect(
+    handleSandboxState({ ...baseOptions(deps, session), resume: true, sandboxName: "saved" }),
+  ).rejects.toThrow("durable CAS save failed");
+  expect(session.checkpoint?.sandboxRecreate ?? null).toEqual(oldJournal);
+  expect(calls.createSandbox).not.toHaveBeenCalled();
+  expect(calls.complete).not.toHaveBeenCalled();
+});
+
 it("opens the lifecycle journal for a fresh route reservation before creation (#9833)", async () => {
   const session = createSession({ sandboxName: "fresh", agent: "openclaw" });
   session.checkpoint = {
@@ -721,7 +768,7 @@ it("opens the lifecycle journal for a fresh route reservation before creation (#
   const createSandbox = vi.fn(async (...args: unknown[]) => {
     const transaction = session.checkpoint?.sandboxRecreate;
     expect(transaction).toBeDefined();
-    expect(args.at(-1)).toMatchObject({
+    expect(args.at(-2)).toMatchObject({
       recreate: true,
       recreateTransaction: {
         id: transaction?.id,

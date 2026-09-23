@@ -42,6 +42,22 @@ function makeFixture(): { root: string; trace: string; path: string } {
   return { root, trace, path: `${bin}:${process.env.PATH || ""}` };
 }
 
+function runInstaller(fixture: ReturnType<typeof makeFixture>, args: string[] = []) {
+  return spawnSync("bash", [installer, ...args], {
+    cwd: fixture.root,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      GITHUB_ACTION_PATH: compositeActionPath,
+      GITHUB_EVENT_NAME: "pull_request",
+      NPM_CONFIG_CACHE: join(fixture.root, "npm-cache"),
+      NPM_TRACE: fixture.trace,
+      PATH: fixture.path,
+      RUNNER_TEMP: join(fixture.root, "runner-temp"),
+    },
+  });
+}
+
 afterEach(() => {
   for (const root of temporaryRoots.splice(0)) rmSync(root, { force: true, recursive: true });
 });
@@ -49,25 +65,55 @@ afterEach(() => {
 describe("shared CI dependency installer", () => {
   it("installs from a composite-action path without lifecycle scripts", () => {
     const fixture = makeFixture();
-
-    const result = spawnSync("bash", [installer], {
-      cwd: fixture.root,
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        GITHUB_ACTION_PATH: compositeActionPath,
-        GITHUB_EVENT_NAME: "pull_request",
-        NPM_CONFIG_CACHE: join(fixture.root, "npm-cache"),
-        NPM_TRACE: fixture.trace,
-        PATH: fixture.path,
-      },
-    });
+    const result = runInstaller(fixture);
 
     expect(result.status, result.stderr).toBe(0);
     expect(readFileSync(fixture.trace, "utf8").trim().split("\n")).toEqual([
-      `ci --ignore-scripts --prefer-offline --cache ${join(fixture.root, "npm-cache")}`,
-      `--prefix nemoclaw ci --ignore-scripts --prefer-offline --cache ${join(fixture.root, "npm-cache")}`,
+      `ci --allow-remote=root --ignore-scripts --prefer-offline --no-audit --no-fund --cache ${join(fixture.root, "npm-cache")}`,
+      `--prefix nemoclaw ci --allow-remote=root --ignore-scripts --prefer-offline --no-audit --no-fund --cache ${join(fixture.root, "npm-cache")}`,
     ]);
+  });
+
+  it("can install only plugin production dependencies", () => {
+    const fixture = makeFixture();
+    const result = runInstaller(fixture, ["production"]);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(readFileSync(fixture.trace, "utf8").trim().split("\n")).toEqual([
+      `ci --allow-remote=root --ignore-scripts --prefer-offline --no-audit --no-fund --cache ${join(fixture.root, "npm-cache")}`,
+      `--prefix nemoclaw ci --omit=dev --allow-remote=root --ignore-scripts --prefer-offline --no-audit --no-fund --cache ${join(fixture.root, "npm-cache")}`,
+    ]);
+  });
+
+  it("can skip plugin dependency installation", () => {
+    const fixture = makeFixture();
+    const result = runInstaller(fixture, ["none"]);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(readFileSync(fixture.trace, "utf8").trim()).toBe(
+      `ci --allow-remote=root --ignore-scripts --prefer-offline --no-audit --no-fund --cache ${join(fixture.root, "npm-cache")}`,
+    );
+  });
+
+  it.each([
+    [["invalid"], "Unsupported plugin dependency install mode: invalid\n"],
+    [
+      ["production", "extra", "unexpected"],
+      "Usage: ci-install-dependencies.sh [full|production|none] [auto|artifact|registry]\n",
+    ],
+    [["none", "unexpected"], "Unsupported package dependency source mode: unexpected\n"],
+  ] as const)("rejects unsupported install arguments before npm runs [case %#]", (args, error) => {
+    const fixture = makeFixture();
+
+    const result = spawnSync("bash", [installer, ...args], {
+      cwd: fixture.root,
+      encoding: "utf8",
+      env: { ...process.env, NPM_TRACE: fixture.trace, PATH: fixture.path },
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toBe(error);
+    expect(existsSync(fixture.trace)).toBe(false);
   });
 
   it("rejects candidate npm configuration before npm receives the package token", () => {
@@ -112,7 +158,29 @@ describe("shared CI dependency installer", () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toBe(
-      "Pull request dependency installation must not receive a package credential.\n",
+      "Artifact dependency installation must not receive a package credential.\n",
+    );
+    expect(result.stderr).not.toContain("credential-sentinel");
+    expect(existsSync(fixture.trace)).toBe(false);
+  });
+
+  it("forces credential-free artifact preparation for trusted E2E callers", () => {
+    const fixture = makeFixture();
+    const result = spawnSync("bash", [installer, "none", "artifact"], {
+      cwd: fixture.root,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        GITHUB_EVENT_NAME: "workflow_dispatch",
+        NODE_AUTH_TOKEN: "credential-sentinel",
+        NPM_TRACE: fixture.trace,
+        PATH: fixture.path,
+      },
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toBe(
+      "Artifact dependency installation must not receive a package credential.\n",
     );
     expect(result.stderr).not.toContain("credential-sentinel");
     expect(existsSync(fixture.trace)).toBe(false);

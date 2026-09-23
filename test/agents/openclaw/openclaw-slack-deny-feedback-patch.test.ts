@@ -34,14 +34,71 @@ const WHATSAPP_QR_COMPACT = path.join(
 // channel gate that mirrors the real dist's deny-log line and exposes the same
 // in-scope identifiers the patch references.
 function prepareModuleSource(
-  options: { moduleType?: "commonjs" | "esm"; withMentionState?: boolean; denyLine?: string } = {},
+  options: {
+    moduleType?: "commonjs" | "esm";
+    withMentionState?: boolean;
+    withNativeContextBindings?: boolean;
+    withNativeSenderBinding?: boolean;
+    denyLine?: string;
+    nativeDeniedMentionFeedback?: boolean;
+  } = {},
 ): string {
   const moduleType = options.moduleType ?? "commonjs";
   const withMentionState = options.withMentionState ?? true;
+  const nativeDeniedMentionFeedback = [
+    'const SLACK_CHANNEL_ACCESS_DOCS_URL = "https://docs.openclaw.ai/channels/slack";',
+    "async function authorizeSlackInboundMessage(params) {",
+    "\tconst { drop } = params;",
+    "\tif (params.channelDenied && params.explicitBotMention) {",
+    "\t\tawait params.ctx.app.client.chat.postEphemeral({ text: SLACK_CHANNEL_ACCESS_DOCS_URL });",
+    "\t\tparams.onVisibleDrop?.();",
+    '\t\treturn drop("channel-not-allowed");',
+    "\t}",
+    "\treturn { senderId: params.message.user };",
+    "}",
+    "async function resolveSlackExplicitMentionState(params) {",
+    withMentionState
+      ? "\treturn { explicitlyMentionedBotUser: Boolean(params.explicitlyMentionedBotUser), explicitlyMentionedBotSubteam: Boolean(params.explicitlyMentionedBotSubteam), explicitlyMentioned: false };"
+      : "\treturn { mentionedBotUser: Boolean(params.mentionedBotUser), mentionedBotSubteam: Boolean(params.mentionedBotSubteam), explicitlyMentioned: false };",
+    "}",
+    ...(withMentionState
+      ? []
+      : [
+          "function mentionStateOutsidePrepareSlackMessage() {",
+          "\tconst explicitlyMentionedBotUser = false;",
+          "\tconst explicitlyMentionedBotSubteam = false;",
+          "\treturn explicitlyMentionedBotUser || explicitlyMentionedBotSubteam;",
+          "}",
+        ]),
+    `${moduleType === "esm" ? "export " : ""}async function prepareSlackMessage(params) {`,
+    options.withNativeContextBindings === false
+      ? "\tconst { ctx: slackCtx, message: slackMessage, opts: slackOpts } = params;"
+      : "\tconst { ctx, message, opts } = params;",
+    "\tconst drop = () => null;",
+    "\tconst authorization = await authorizeSlackInboundMessage({",
+    "\t\tctx, message, drop, channelDenied: false,",
+    '\t\texplicitBotMention: opts.source === "app_mention",',
+    "\t});",
+    "\tif (!authorization) return null;",
+    options.withNativeSenderBinding === false
+      ? "\tconst { senderId: authorizedSenderId } = authorization;"
+      : "\tconst { senderId } = authorization;",
+    withMentionState
+      ? "\tconst { explicitlyMentionedBotUser, explicitlyMentionedBotSubteam, explicitlyMentioned } = await resolveSlackExplicitMentionState(params);"
+      : "\tconst { mentionedBotUser, mentionedBotSubteam, explicitlyMentioned } = await resolveSlackExplicitMentionState(params);",
+    "\tconst isRoomish = true;",
+    "\tconst messageIngress = { senderAccess: { gate: { allowed: false } } };",
+    "\tconst senderGate = messageIngress.senderAccess.gate;",
+    '\tif (isRoomish && senderGate?.allowed === false) return drop("unauthorized-sender");',
+    "\treturn { prepared: true };",
+    "}",
+    moduleType === "commonjs" ? "module.exports = { prepareSlackMessage };" : "",
+    "",
+  ].join("\n");
   const denyLine =
     options.denyLine ??
     "logVerbose(`Blocked unauthorized slack sender ${senderId} (not in channel users)`);";
-  return [
+  const legacyDeniedMentionFeedback = [
     "function logVerbose() {}",
     `${moduleType === "esm" ? "export " : ""}async function prepareSlackMessage(params) {`,
     "\tconst { ctx, account, message, opts } = params;",
@@ -64,11 +121,21 @@ function prepareModuleSource(
     moduleType === "commonjs" ? "module.exports = { prepareSlackMessage };" : "",
     "",
   ].join("\n");
+  return options.nativeDeniedMentionFeedback
+    ? nativeDeniedMentionFeedback
+    : legacyDeniedMentionFeedback;
 }
 
 function writeSlackPackage(
   root: string,
-  options: { moduleType?: "commonjs" | "esm"; withMentionState?: boolean; denyLine?: string } = {},
+  options: {
+    moduleType?: "commonjs" | "esm";
+    withMentionState?: boolean;
+    withNativeContextBindings?: boolean;
+    withNativeSenderBinding?: boolean;
+    denyLine?: string;
+    nativeDeniedMentionFeedback?: boolean;
+  } = {},
 ): string {
   const pkgDir = path.join(root, "node_modules", "@openclaw", "slack");
   const distDir = path.join(pkgDir, "dist");
@@ -86,7 +153,12 @@ function writeSlackPackage(
   return prepareFile;
 }
 
-type FeedbackCall = { method: string; channel?: string; user?: string; text?: string };
+type FeedbackCall = {
+  method: string;
+  channel?: string;
+  user?: string;
+  text?: string;
+};
 
 function runGuardProbe(
   prepareFile: string,
@@ -207,7 +279,10 @@ describe("OpenClaw Slack denial-feedback patch", () => {
       );
 
       // Denied explicit @-mention: command stays denied, exactly one ephemeral feedback.
-      const mention = output?.mention as { result: unknown; calls: FeedbackCall[] };
+      const mention = output?.mention as {
+        result: unknown;
+        calls: FeedbackCall[];
+      };
       expect(mention.result).toBeNull();
       expect(mention.calls).toHaveLength(1);
       expect(mention.calls[0]).toMatchObject({
@@ -220,23 +295,35 @@ describe("OpenClaw Slack denial-feedback patch", () => {
       expect(mention.calls[0].text?.toLowerCase()).not.toContain("allowlist");
 
       // Denied non-mention: no sender feedback (stays silent, as before).
-      const silent = output?.silent as { result: unknown; calls: FeedbackCall[] };
+      const silent = output?.silent as {
+        result: unknown;
+        calls: FeedbackCall[];
+      };
       expect(silent.result).toBeNull();
       expect(silent.calls).toHaveLength(0);
 
       // Explicit bot mention on a non-app_mention event also triggers feedback.
-      const explicitUser = output?.explicitUser as { result: unknown; calls: FeedbackCall[] };
+      const explicitUser = output?.explicitUser as {
+        result: unknown;
+        calls: FeedbackCall[];
+      };
       expect(explicitUser.result).toBeNull();
       expect(explicitUser.calls).toHaveLength(1);
       expect(explicitUser.calls[0].method).toBe("chat.postEphemeral");
 
-      const explicitSubteam = output?.explicitSubteam as { result: unknown; calls: FeedbackCall[] };
+      const explicitSubteam = output?.explicitSubteam as {
+        result: unknown;
+        calls: FeedbackCall[];
+      };
       expect(explicitSubteam.result).toBeNull();
       expect(explicitSubteam.calls).toHaveLength(1);
       expect(explicitSubteam.calls[0].method).toBe("chat.postEphemeral");
 
       // Definitive non-delivery (user_not_in_channel) falls back to a DM.
-      const fallback = output?.fallback as { result: unknown; calls: FeedbackCall[] };
+      const fallback = output?.fallback as {
+        result: unknown;
+        calls: FeedbackCall[];
+      };
       expect(fallback.result).toBeNull();
       expect(fallback.calls.map((call) => call.method)).toEqual([
         "chat.postEphemeral",
@@ -245,7 +332,10 @@ describe("OpenClaw Slack denial-feedback patch", () => {
       expect(fallback.calls[1]).toMatchObject({ channel: "DU999DENIED" });
 
       // Ambiguous failure (Slack may have accepted it): log, no DM, no double-notify.
-      const ambiguous = output?.ambiguous as { result: unknown; calls: FeedbackCall[] };
+      const ambiguous = output?.ambiguous as {
+        result: unknown;
+        calls: FeedbackCall[];
+      };
       expect(ambiguous.result).toBeNull();
       expect(ambiguous.calls.map((call) => call.method)).toEqual(["chat.postEphemeral"]);
     } finally {
@@ -266,7 +356,10 @@ describe("OpenClaw Slack denial-feedback patch", () => {
         "__nemoclawNotifyDeniedSlackMention",
       );
 
-      const mention = output?.mention as { result: unknown; calls: FeedbackCall[] };
+      const mention = output?.mention as {
+        result: unknown;
+        calls: FeedbackCall[];
+      };
       expect(mention.result).toBeNull();
       expect(mention.calls).toHaveLength(1);
       expect(mention.calls[0]).toMatchObject({
@@ -290,7 +383,10 @@ describe("OpenClaw Slack denial-feedback patch", () => {
       expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
       expect(result.stderr).not.toMatch(/loadSync|returned for the "source" from the "load" hook/u);
 
-      const mention = output?.mention as { result: unknown; calls: FeedbackCall[] };
+      const mention = output?.mention as {
+        result: unknown;
+        calls: FeedbackCall[];
+      };
       expect(mention.result).toBeNull();
       expect(mention.calls).toHaveLength(1);
       expect(mention.calls[0].method).toBe("chat.postEphemeral");
@@ -303,9 +399,14 @@ describe("OpenClaw Slack denial-feedback patch", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-slack-deny-idem-"));
     const prepareFile = writeSlackPackage(tmp);
     try {
-      const { result, output } = runGuardProbe(prepareFile, { requireGuardTwice: true });
+      const { result, output } = runGuardProbe(prepareFile, {
+        requireGuardTwice: true,
+      });
       expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
-      const mention = output?.mention as { result: unknown; calls: FeedbackCall[] };
+      const mention = output?.mention as {
+        result: unknown;
+        calls: FeedbackCall[];
+      };
       expect(mention.result).toBeNull();
       expect(mention.calls).toHaveLength(1);
     } finally {
@@ -316,6 +417,79 @@ describe("OpenClaw Slack denial-feedback patch", () => {
   it("loads as a no-op when no @openclaw/slack module is required", () => {
     const result = runGuardRequire();
     expect(result.status, result.stderr).toBe(0);
+  });
+
+  it("patches the OpenClaw 2026.9.1 denied-sender gate", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-slack-native-deny-"));
+    const prepareFile = writeSlackPackage(tmp, {
+      moduleType: "esm",
+      nativeDeniedMentionFeedback: true,
+    });
+    try {
+      const original = fs.readFileSync(prepareFile, "utf8");
+      const { result, output } = runGuardProbe(prepareFile, {
+        loadMode: "import",
+      });
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+      expect(fs.readFileSync(prepareFile, "utf8")).toBe(original);
+      expect(original).not.toContain("__nemoclawNotifyDeniedSlackMention");
+
+      const mention = output?.mention as {
+        result: unknown;
+        calls: FeedbackCall[];
+      };
+      expect(mention.result).toBeNull();
+      expect(mention.calls).toHaveLength(1);
+      expect(mention.calls[0]).toMatchObject({
+        method: "chat.postEphemeral",
+        channel: "C1",
+        user: "U999DENIED",
+      });
+
+      const silent = output?.silent as {
+        result: unknown;
+        calls: FeedbackCall[];
+      };
+      expect(silent.result).toBeNull();
+      expect(silent.calls).toHaveLength(0);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    {
+      label: "mention identifiers",
+      options: { withMentionState: false },
+      expectedMissing: "explicitlyMentionedBotUser",
+    },
+    {
+      label: "context identifiers",
+      options: { withNativeContextBindings: false },
+      expectedMissing: "ctx",
+    },
+    {
+      label: "sender identifier",
+      options: { withNativeSenderBinding: false },
+      expectedMissing: "senderId",
+    },
+  ])("rejects native $label outside the injection scope", ({ options, expectedMissing }) => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-slack-native-scope-"));
+    const prepareFile = writeSlackPackage(tmp, {
+      nativeDeniedMentionFeedback: true,
+      ...options,
+    });
+    try {
+      const result = runGuardRequire(prepareFile);
+      expect(
+        result.status,
+        `stdout:\n${result.stdout}\nstderr:\n${result.stderr}\nsource:\n${fs.readFileSync(prepareFile, "utf-8")}`,
+      ).toBe(1);
+      expect(result.stderr).toContain("missing in-scope bindings");
+      expect(result.stderr).toContain(expectedMissing);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("fails loudly when the deny-gate shape changes", () => {

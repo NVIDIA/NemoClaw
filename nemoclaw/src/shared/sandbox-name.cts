@@ -9,7 +9,7 @@
 // consumers: The ESM plugin runner (nemoclaw/src/blueprint/runner.ts) and
 // migration snapshot (nemoclaw/src/blueprint/snapshot.ts) import the generated
 // .cjs directly; the root CLI re-exports the sandbox constants through
-// src/lib/name-validation.ts (mirroring src/lib/policy/merge.ts). Keeping one
+// src/lib/name-validation.ts (mirroring src/lib/adapters/openshell/policy-boundary.ts). Keeping one
 // sandbox definition prevents the leading-char drift already observed between
 // src/lib/name-validation.ts and the copies in mcp-bridge-validation.ts /
 // smoke-macos-install.sh.

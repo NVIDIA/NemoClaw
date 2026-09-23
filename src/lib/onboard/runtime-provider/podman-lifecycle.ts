@@ -6,13 +6,6 @@ import type {
   ContainerEngineCommandResult,
 } from "../../adapters/container-engine";
 import { isValidName } from "../../name-validation";
-import { cliName } from "../branding";
-import type {
-  RuntimeProviderLifecycleInput,
-  RuntimeProviderLifecycleResult,
-  RuntimeProviderLifecycleStopHooks,
-  RuntimeProviderLifecycleStopOutcome,
-} from "./contract";
 
 export const PODMAN_MANAGED_LABEL = "openshell.managed";
 export const PODMAN_SANDBOX_ID_LABEL = "openshell.ai/sandbox-id";
@@ -24,17 +17,15 @@ export const PODMAN_SANDBOX_WORKSPACE = "default";
 export const PODMAN_SANDBOX_CONTAINER_PREFIX = `openshell-${PODMAN_SANDBOX_WORKSPACE}--`;
 
 const PROBE_TIMEOUT_MS = 5000;
-const MUTATION_TIMEOUT_MS = 40_000;
-const STOP_GRACE_SECONDS = 30;
+export const PODMAN_LIFECYCLE_MUTATION_TIMEOUT_MS = 75_000;
 const FULL_CONTAINER_ID_PATTERN = /^[0-9a-f]{64}$/u;
-const AT_REST_STATES = new Set(["configured", "created", "dead", "exited", "stopped"]);
-const STOPPABLE_TRANSITION_STATES = new Set(["restarting", "stopping"]);
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/u;
 
 type JsonRecord = Record<string, unknown>;
 
-interface PodmanManagedContainer {
+export interface PodmanManagedContainer {
   readonly containerId: string;
+  readonly inspect: Readonly<JsonRecord>;
   readonly labels: Readonly<Record<string, string>>;
   readonly name: string;
   readonly paused: boolean;
@@ -178,6 +169,7 @@ function parsePodmanManagedContainer(
   }
   return {
     containerId,
+    inspect: entry,
     labels: containerLabels,
     name,
     running: state.Running,
@@ -201,9 +193,12 @@ function commandFailure(operation: string, result: ContainerEngineCommandResult)
   );
 }
 
-function requireLifecycleEngine(engine: ContainerEngine): void {
-  if (engine.operation !== "sandbox-lifecycle" || engine.engineId !== "podman") {
-    throw new Error("Podman lifecycle requires an operation-scoped Podman engine.");
+function requireObservationEngine(engine: ContainerEngine): void {
+  if (
+    engine.engineId !== "podman" ||
+    (engine.operation !== "sandbox-lifecycle" && engine.operation !== "gateway-inspection")
+  ) {
+    throw new Error("Podman runtime observation requires an operation-scoped Podman engine.");
   }
 }
 
@@ -225,11 +220,11 @@ function inspectExactContainer(
   return parsePodmanManagedContainer(inspected.stdout, expected);
 }
 
-function resolveManagedContainer(
+export function observePodmanManagedContainer(
   engine: ContainerEngine,
   sandboxName: string,
-): PodmanManagedContainer {
-  requireLifecycleEngine(engine);
+): PodmanManagedContainer | null {
+  requireObservationEngine(engine);
   if (!isValidName(sandboxName)) {
     throw new Error("Podman lifecycle requires a valid sandbox name.");
   }
@@ -255,9 +250,7 @@ function resolveManagedContainer(
     .map((line) => line.trim())
     .filter(Boolean);
   if (rows.length === 0) {
-    throw new Error(
-      `No Podman container found for sandbox '${sandboxName}'. Run '${cliName()} ${sandboxName} rebuild' if its workload was removed.`,
-    );
+    return null;
   }
   if (rows.length !== 1) {
     throw new Error(
@@ -266,94 +259,4 @@ function resolveManagedContainer(
   }
   const containerId = fullContainerId(rows[0], "Podman managed container ID");
   return inspectExactContainer(engine, { sandboxName, containerId });
-}
-
-function resultForFailure(error: unknown): RuntimeProviderLifecycleResult {
-  return {
-    exitCode: 1,
-    message: `  ${error instanceof Error ? error.message : String(error)}`,
-  };
-}
-
-function mutateContainer(
-  engine: ContainerEngine,
-  operation: "start" | "stop" | "unpause",
-  container: PodmanManagedContainer,
-): void {
-  const args = [
-    operation,
-    ...(operation === "stop" ? ["--time", String(STOP_GRACE_SECONDS)] : []),
-    container.containerId,
-  ];
-  const result = engine.capture(args, MUTATION_TIMEOUT_MS);
-  if (result.status !== 0 || result.error) throw commandFailure(operation, result);
-}
-
-export function startPodmanSandbox(
-  input: RuntimeProviderLifecycleInput,
-  engine: ContainerEngine,
-): RuntimeProviderLifecycleResult {
-  try {
-    const container = resolveManagedContainer(engine, input.sandboxName);
-    if (container.running && !container.paused) {
-      input.log(`  Sandbox '${input.sandboxName}' is already running.`);
-      return { exitCode: 0 };
-    }
-    if (!container.paused && !AT_REST_STATES.has(container.status)) {
-      throw new Error(
-        `Refusing Podman start for sandbox '${input.sandboxName}': container state '${container.status}' is not safely restartable.`,
-      );
-    }
-    const operation = container.paused ? "unpause" : "start";
-    mutateContainer(engine, operation, container);
-    const verified = inspectExactContainer(engine, {
-      sandboxName: input.sandboxName,
-      containerId: container.containerId,
-      previous: container,
-    });
-    if (!verified.running || verified.paused) {
-      throw new Error(`Podman ${operation} did not leave the exact managed container running.`);
-    }
-    input.log(
-      `  Container '${container.name}' ${operation === "unpause" ? "unpaused" : "started"}.`,
-    );
-    return { exitCode: 0 };
-  } catch (error) {
-    return resultForFailure(error);
-  }
-}
-
-export function stopPodmanSandbox(
-  input: RuntimeProviderLifecycleInput,
-  hooks: RuntimeProviderLifecycleStopHooks,
-  engine: ContainerEngine,
-): RuntimeProviderLifecycleStopOutcome {
-  try {
-    const container = resolveManagedContainer(engine, input.sandboxName);
-    const stoppable =
-      container.running || container.paused || STOPPABLE_TRANSITION_STATES.has(container.status);
-    if (!stoppable) {
-      if (AT_REST_STATES.has(container.status)) {
-        return { exitCode: 0, state: "already-stopped" };
-      }
-      throw new Error(
-        `Refusing Podman stop for sandbox '${input.sandboxName}': container state '${container.status}' is not safely stoppable.`,
-      );
-    }
-
-    hooks.beforeStop();
-    input.log(`  Stopping container '${container.name}'…`);
-    mutateContainer(engine, "stop", container);
-    const verified = inspectExactContainer(engine, {
-      sandboxName: input.sandboxName,
-      containerId: container.containerId,
-      previous: container,
-    });
-    if (verified.running || verified.paused || !AT_REST_STATES.has(verified.status)) {
-      throw new Error("Podman stop did not leave the exact managed container at rest.");
-    }
-    return { exitCode: 0, state: "stopped" };
-  } catch (error) {
-    return resultForFailure(error);
-  }
 }

@@ -21,7 +21,7 @@ function runRetireReleaseLabel(fakeGh: string, args = ["v1.2.3"]) {
   try {
     return spawnSync(
       process.execPath,
-      ["--experimental-strip-types", "--no-warnings", "scripts/retire-release-label.mts", ...args],
+      ["--no-warnings", "scripts/retire-release-label.mts", ...args],
       {
         cwd: process.cwd(),
         encoding: "utf-8",

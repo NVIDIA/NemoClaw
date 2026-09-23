@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import net from "node:net";
-import { isDgxStationGb300Product } from "../../src/lib/inference/dgx-station-identity.ts";
+import {
+  classifyNvidiaFirmwareProducts,
+  NVIDIA_FIRMWARE_VALUE_MAX_BYTES,
+} from "../../src/lib/inference/dgx-station-identity.ts";
 import { stationKnownHostsDigest } from "../../src/lib/inference/vllm-station-ssh-binding.ts";
 
 export const DUAL_STATION_RESUME_SCHEMA_VERSION = 1;
@@ -48,9 +51,13 @@ export interface StationDiscoveryGpu {
 }
 
 export interface StationDiscoveryHost {
-  schemaVersion: 1;
+  schemaVersion: 2;
   hostname: string;
   productName: string;
+  productFamily: string;
+  boardName: string;
+  deviceTreeModel: string;
+  stationGb300PciGpu: boolean;
   architecture: string;
   gpus: StationDiscoveryGpu[];
   rails: StationDiscoveryRail[];
@@ -260,7 +267,7 @@ function subnetOfSlash30(address: string): string {
 }
 
 export function parseStationDiscoveryHost(value: unknown): StationDiscoveryHost {
-  if (!isRecord(value) || value.schemaVersion !== 1) {
+  if (!isRecord(value) || value.schemaVersion !== 2) {
     throw new Error("Station discovery probe schema is unsupported");
   }
   const gpus = requireArray(value.gpus, "Station discovery GPUs", 16).map((entry, index) => {
@@ -341,13 +348,36 @@ export function parseStationDiscoveryHost(value: unknown): StationDiscoveryHost 
     };
   });
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     hostname: requireString(value.hostname, "Station discovery hostname", 256),
-    productName: requireString(value.productName, "Station discovery product", 512),
+    productName: requireFirmwareString(value.productName, "Station discovery product name"),
+    productFamily: requireFirmwareString(value.productFamily, "Station discovery product family"),
+    boardName: requireFirmwareString(value.boardName, "Station discovery board name"),
+    deviceTreeModel: requireFirmwareString(value.deviceTreeModel, "Station discovery device tree"),
+    stationGb300PciGpu: requireBoolean(
+      value.stationGb300PciGpu,
+      "Station discovery GB300 PCI identity",
+    ),
     architecture: requireString(value.architecture, "Station discovery architecture", 64),
     gpus,
     rails,
   };
+}
+
+function requireFirmwareString(value: unknown, label: string): string {
+  if (
+    typeof value !== "string" ||
+    Buffer.byteLength(value, "utf8") > NVIDIA_FIRMWARE_VALUE_MAX_BYTES ||
+    /[\u0000-\u001f\u007f]/u.test(value)
+  ) {
+    throw new Error(`${label} must be bounded printable text`);
+  }
+  return value;
+}
+
+function requireBoolean(value: unknown, label: string): boolean {
+  if (typeof value !== "boolean") throw new Error(`${label} must be a boolean`);
+  return value;
 }
 
 function selectedGb300(host: StationDiscoveryHost, label: string): StationDiscoveryGpu {
@@ -357,8 +387,16 @@ function selectedGb300(host: StationDiscoveryHost, label: string): StationDiscov
 }
 
 function assertStationIdentity(host: StationDiscoveryHost, label: string): void {
+  const firmwareIdentity = classifyNvidiaFirmwareProducts([
+    host.productName,
+    host.productFamily,
+    host.boardName,
+    host.deviceTreeModel,
+  ]);
   if (
-    !isDgxStationGb300Product(host.productName) ||
+    !firmwareIdentity.stationFirmwareProduct ||
+    firmwareIdentity.platformIdentityConflict ||
+    !host.stationGb300PciGpu ||
     !/^(?:aarch64|arm64)$/i.test(host.architecture)
   ) {
     throw new Error(`${label} is not a verified arm64 DGX Station GB300`);
@@ -453,14 +491,12 @@ function buildDiscoveryPlan(
   ) {
     throw new Error("Pretrusted discovery target is not one of the reciprocal peer rail addresses");
   }
-  const rails = matched.map(
-    (entry): DualStationRailIdentity => ({
-      localAddress: entry.local.address,
-      localMac: entry.local.rail.macAddress,
-      peerAddress: entry.peer.address,
-      peerMac: entry.peer.rail.macAddress,
-    }),
-  );
+  const rails = matched.map((entry): DualStationRailIdentity => ({
+    localAddress: entry.local.address,
+    localMac: entry.local.rail.macAddress,
+    peerAddress: entry.peer.address,
+    peerMac: entry.peer.rail.macAddress,
+  }));
   return {
     identity: {
       peerTarget: binding.sshTarget,
@@ -796,9 +832,9 @@ export function prepareDualStationPair(
   if ("kind" in selected) return selected;
   const strict = Boolean(
     resume ||
-      options.explicitPeer?.trim() ||
-      options.reuseExistingManagedPair ||
-      options.migrateLegacySingleStationHead,
+    options.explicitPeer?.trim() ||
+    options.reuseExistingManagedPair ||
+    options.migrateLegacySingleStationHead,
   );
   const { binding, automatic } = selected;
 

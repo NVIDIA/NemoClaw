@@ -2,24 +2,37 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { shellQuote } from "../fixtures/clients/command.ts";
+import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { reviewedOldInstallerProfile } from "./openshell-gateway-upgrade-old-installer.ts";
 
 const NON_INTERACTIVE_INSTALLER_ARGS = ["--non-interactive", "--yes-i-accept-third-party-software"];
 const GATEWAY_VOLUME_PREFIX = "openshell-cluster-nemoclaw";
-const LEGACY_GATEWAY_DOCKER_NETWORK = "openshell-cluster-nemoclaw";
+const MANAGED_IMAGE_QUALIFICATION_ENV_KEYS = [
+  "E2E_MANAGED_IMAGE_REVISION",
+  "E2E_MANAGED_IMAGE_COHORT_RECEIPT",
+  "NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG",
+  "NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON",
+  "NEMOCLAW_E2E_MANAGED_IMAGE_REVISION",
+] as const;
 export const GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS = 35 * 60_000;
+
+export async function captureGatewayUpgradeFailureDiagnostics(
+  exitCode: number | null,
+  capture: (() => Promise<void>) | undefined,
+): Promise<void> {
+  if (exitCode !== 0) await capture?.();
+}
 
 export interface LegacyGatewayUpgradeFixture {
   nemoclawRef: string;
   nemoclawCommit: string;
   installerSha256: string;
+  openShellVersion: string;
   openclawVersion: string;
   sandboxBaseImageRef: string;
 }
 
-export function validateLegacyGatewayUpgradeFixture(fixture: LegacyGatewayUpgradeFixture): {
-  sandboxBaseDigest: string;
-} {
+export function validateLegacyGatewayUpgradeFixture(fixture: LegacyGatewayUpgradeFixture): void {
   if (!/^v\d+\.\d+\.\d+$/.test(fixture.nemoclawRef)) {
     throw new Error(`NEMOCLAW_OLD_NEMOCLAW_REF must be a release tag; got ${fixture.nemoclawRef}`);
   }
@@ -30,35 +43,92 @@ export function validateLegacyGatewayUpgradeFixture(fixture: LegacyGatewayUpgrad
   }
   if (!/^[0-9a-f]{64}$/.test(fixture.installerSha256)) {
     throw new Error(
-      `NEMOCLAW_OLD_INSTALLER_SHA256 must be a lowercase SHA-256 digest; got ${fixture.installerSha256}`,
+      `NEMOCLAW_OLD_INSTALLER_SHA256 must match the reviewed descriptor's lowercase SHA-256 digest; got ${fixture.installerSha256}`,
     );
   }
-  if (!/^\d{4}\.\d{1,2}\.\d{1,2}$/.test(fixture.openclawVersion)) {
+  if (
+    !/^\d{4}\.\d{1,2}\.\d{1,2}$/.test(fixture.openclawVersion) ||
+    !/^\d+\.\d+\.\d+$/.test(fixture.openShellVersion)
+  ) {
     throw new Error(
-      `NEMOCLAW_OLD_OPENCLAW_VERSION must use the YYYY.M.D release format; got ${fixture.openclawVersion}`,
+      `NEMOCLAW_OLD_OPENCLAW_VERSION and NEMOCLAW_OLD_OPENSHELL_VERSION must match the reviewed descriptor; got ${fixture.openclawVersion}/${fixture.openShellVersion}`,
     );
   }
-  reviewedOldInstallerProfile(fixture);
+  const reviewedFixture = reviewedOldInstallerProfile(fixture);
   const sandboxBaseDigest = fixture.sandboxBaseImageRef.match(
     /^[^@\s]+@sha256:([0-9a-f]{64})$/,
   )?.[1];
-  if (!sandboxBaseDigest) {
+  if (
+    fixture.sandboxBaseImageRef !== reviewedFixture.sandboxBaseImageRef ||
+    (reviewedFixture.sandboxBaseImageRef !== "" && !sandboxBaseDigest)
+  ) {
     throw new Error(
-      `NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF must be digest-pinned; got ${fixture.sandboxBaseImageRef}`,
+      `NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF must match the reviewed descriptor's workload path; got ${fixture.sandboxBaseImageRef}`,
     );
   }
-  return { sandboxBaseDigest };
+}
+
+/** Collect both read-only probes without replacing an installer failure. */
+export async function captureGatewayUpgradeProbeEvidence(
+  sandboxName: string,
+  capture: (name: string, args: readonly string[]) => Promise<Pick<ShellProbeResult, "exitCode">>,
+): Promise<boolean> {
+  const probes = [
+    ["get", ["sandbox", "get", "-g", "nemoclaw", sandboxName]],
+    ["list", ["sandbox", "list", "-g", "nemoclaw", "-o", "json"]],
+  ] as const;
+  const results = await Promise.allSettled(probes.map(async ([name, args]) => capture(name, args)));
+  return results.every((result) => result.status === "fulfilled" && result.value.exitCode === 0);
+}
+
+/** Accept recovery only when the command, listener, and restored sandbox checks all succeed. */
+export function gatewayUpgradeRecoverySucceeded(
+  recovery: Pick<ShellProbeResult, "exitCode">,
+  forward: { readonly valid: boolean },
+  stateChecks: readonly Pick<ShellProbeResult, "exitCode">[],
+): boolean {
+  return (
+    recovery.exitCode === 0 && forward.valid && stateChecks.every((result) => result.exitCode === 0)
+  );
+}
+
+/** Accept credential non-exposure only when both inspections complete with no match. */
+export function gatewayCredentialNonExposureScript(
+  credential: string,
+  managedPaths: readonly string[] = [
+    "/sandbox/.openclaw/openclaw.json",
+    "/sandbox/.openclaw/agents",
+  ],
+): string {
+  const quotedCredential = shellQuote(credential);
+  const quotedManagedPaths = managedPaths.map(shellQuote).join(" ");
+  return `env | grep -qF -- ${quotedCredential}
+environment_status=$?
+case "$environment_status" in
+  1) ;;
+  0) printf '%s\\n' 'ERROR: gateway credential is exposed in the sandbox environment' >&2; exit 1 ;;
+  *) printf 'ERROR: sandbox environment credential inspection failed (grep exit %s)\\n' "$environment_status" >&2; exit "$environment_status" ;;
+esac
+grep -rqF -- ${quotedCredential} ${quotedManagedPaths}
+managed_files_status=$?
+case "$managed_files_status" in
+  1) ;;
+  0) printf '%s\\n' 'ERROR: gateway credential is exposed in managed OpenClaw files' >&2; exit 1 ;;
+  *) printf 'ERROR: managed OpenClaw credential inspection failed (grep exit %s)\\n' "$managed_files_status" >&2; exit "$managed_files_status" ;;
+esac`;
 }
 
 export function oldGatewayUpgradeInstallerArgs(installer: string): string[] {
   return [installer, ...NON_INTERACTIVE_INSTALLER_ARGS, "--fresh"];
 }
 
-export function currentGatewayUpgradeInstallerArgs(
-  installer: string,
-  options: { interactive?: boolean } = {},
-): string[] {
-  return options.interactive ? [installer] : [installer, ...NON_INTERACTIVE_INSTALLER_ARGS];
+export function currentGatewayUpgradeInstallerArgs(installer: string): string[] {
+  return [installer, ...NON_INTERACTIVE_INSTALLER_ARGS];
+}
+
+/** Override the historical Dockerfile base only when the reviewed fixture pins one. */
+export function legacyGatewayUpgradeBaseImageOverrideEnabled(baseImageRef: string): boolean {
+  return baseImageRef.length > 0;
 }
 
 export function currentNemoclawUpgradeRef(env: NodeJS.ProcessEnv): string {
@@ -72,28 +142,23 @@ export function currentNemoclawUpgradeRef(env: NodeJS.ProcessEnv): string {
   return "HEAD";
 }
 
-export function legacyGatewayUpgradeHostFirewallOptions(nemoclawRef: string): {
+/** Keep the upgrade fixture on its explicit Dockerfile source across managed-image CI lanes. */
+export function isolateGatewayUpgradeFixtureEnv(
+  environment: NodeJS.ProcessEnv,
+  workloadSource: "" | "local-dockerfile",
+): NodeJS.ProcessEnv {
+  const isolated: NodeJS.ProcessEnv = { ...environment, E2E_WORKLOAD_SOURCE: workloadSource };
+  for (const key of MANAGED_IMAGE_QUALIFICATION_ENV_KEYS) delete isolated[key];
+  return isolated;
+}
+
+export function legacyGatewayUpgradeHostFirewallOptions(): {
   networkName: string | undefined;
   waitForNetworkMs: number;
 } {
-  let networkName: string | undefined;
-  switch (nemoclawRef) {
-    case "v0.0.36":
-      // This cluster-era gateway names its bridge after the gateway; newer
-      // Docker gateways use the host fixture's openshell-docker default.
-      networkName = LEGACY_GATEWAY_DOCKER_NETWORK;
-      break;
-    case "v0.0.55":
-    case "v0.0.74":
-    case "v0.0.89":
-      networkName = undefined;
-      break;
-    default:
-      throw new Error(`Unsupported gateway-upgrade network fixture: ${nemoclawRef}`);
-  }
   // The historical install creates its network after fetching and building
   // its payload, so keep the parallel probe alive for the full install budget.
-  return { networkName, waitForNetworkMs: GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS };
+  return { networkName: undefined, waitForNetworkMs: GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS };
 }
 
 export function throwGatewayUpgradeSetupFailures(
@@ -105,23 +170,6 @@ export function throwGatewayUpgradeSetupFailures(
   if (failures.length === 1) throw failures[0];
   if (failures.length > 1) {
     throw new AggregateError(failures, "legacy install and host mock firewall setup failed");
-  }
-}
-
-export function expectedLegacyRegistryMetadata(nemoclawRef: string): {
-  nemoclawVersion: string | undefined;
-  fromDockerfile: null | undefined;
-} {
-  switch (nemoclawRef) {
-    case "v0.0.36":
-    case "v0.0.55":
-      return { nemoclawVersion: undefined, fromDockerfile: undefined };
-    case "v0.0.74":
-      return { nemoclawVersion: "0.0.74", fromDockerfile: null };
-    case "v0.0.89":
-      return { nemoclawVersion: "0.0.89", fromDockerfile: null };
-    default:
-      throw new Error(`Unsupported gateway-upgrade registry fixture: ${nemoclawRef}`);
   }
 }
 

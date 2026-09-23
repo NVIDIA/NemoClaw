@@ -9,18 +9,13 @@ import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } fr
 
 import {
   expectAbsentSandboxMcpFinalize,
-  expectActiveTimerDestroyOrder,
   expectFailedDeletePreservesHostState,
-  expectFailedHardeningMcpRestore,
-  expectFailedHardeningRefusesForcedCleanup,
-  expectFailedHardeningStillDeletes,
   expectFailedMcpFinalizePreservesRegistry,
   expectFailedMcpRestorePreservesDestroyFailure,
   expectMcpFinalizeAfterDelete,
   expectMcpFinalizeBridgeErrorReturnsFailure,
   expectMcpPrepareBridgeErrorAborts,
   expectMcpRestoreAfterDeleteFailure,
-  expectShieldsUpRefusalBeforeMutation,
   expectStrictSandboxPresenceClassification,
   expectSuccessfulLiveDestroy,
 } from "../../../../test/helpers/destroy-flow-test-assertions";
@@ -34,12 +29,15 @@ import { createSandboxHostLocalInferenceProvenance } from "../../state/registry/
 import type { SandboxWorkloadReceipt } from "../../state/registry";
 import * as dockerLlamaCppOperation from "../../onboard/runtime-provider/docker-llama-cpp-operation";
 import { prepareManagedLlamaCppRuntimeCleanupForSandbox } from "../../inference/local-model-profile/cleanup";
+import { enforceRemovedImmutabilityMigrationBoundary } from "../../state/migrations/removed-immutability";
 import {
   createManagedState,
   engineHarness,
   NETWORK_ID,
   RUNTIME_ID,
 } from "../../inference/local-model-profile/cleanup.test-support";
+
+const enforceRemovedImmutabilityMigrationBoundaryReal = enforceRemovedImmutabilityMigrationBoundary;
 
 const managedHermesWorkload = {
   schemaVersion: 1,
@@ -81,6 +79,38 @@ describe("destroySandbox flow", () => {
     expectStrictSandboxPresenceClassification();
   });
 
+  it("waits for provider detach before deleting the sandbox", { timeout: 30_000 }, async () => {
+    const harness = createDestroyHarness();
+    let finishDetach!: () => void;
+    let detachStarted!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      finishDetach = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      detachStarted = resolve;
+    });
+    harness.runSandboxProviderPreDeleteCleanupSpy.mockImplementationOnce(async () => {
+      detachStarted();
+      await pending;
+      return { detached: [], failures: [] };
+    });
+    const destroy = harness.destroySandbox("alpha", { yes: true, cleanupGateway: false });
+    try {
+      await Promise.race([started, destroy]);
+      expect(harness.runSandboxProviderPreDeleteCleanupSpy).toHaveBeenCalledOnce();
+      expect(harness.events).not.toContain("delete");
+      expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+      expect(harness.lifecycleLockEvents).toContain("acquired");
+      expect(harness.lifecycleLockEvents).not.toContain("released");
+    } finally {
+      finishDetach();
+      await destroy;
+    }
+    expect(harness.events).toContain("delete");
+    expect(harness.removeSandboxSpy).toHaveBeenCalledOnce();
+    expect(harness.lifecycleLockEvents).toContain("released");
+  });
+
   it(
     "selects the sandbox gateway, deletes live resources, cleans host state, and removes registry state",
     { timeout: 30_000 },
@@ -98,6 +128,34 @@ describe("destroySandbox flow", () => {
       );
     },
   );
+
+  it("blocks an unsafe removed-immutability record before destroy effects", async ({
+    onTestFinished,
+  }) => {
+    const stateDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-destroy-unsafe-retired-state-"),
+    );
+    onTestFinished(() => fs.rmSync(stateDir, { force: true, recursive: true }));
+    fs.mkdirSync(path.join(stateDir, "shields-alpha.json"));
+    const harness = createDestroyHarness();
+    harness.enforceRemovedImmutabilityMigrationBoundarySpy.mockImplementation(
+      (sandboxName: string, options: { readonly allowStateRecord?: boolean } = {}) =>
+        enforceRemovedImmutabilityMigrationBoundaryReal(sandboxName, {
+          ...options,
+          stateDir,
+        }),
+    );
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow(
+      /Blocking paths to quarantine/u,
+    );
+
+    expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
+    expect(harness.events).not.toContain("delete");
+    expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+    expect(harness.retireRemovedImmutabilityStateRecordSpy).not.toHaveBeenCalled();
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
 
   it.each([
     ["--yes", false],
@@ -123,6 +181,9 @@ describe("destroySandbox flow", () => {
             trace.push("delete");
             harness.setSandboxPresent(false);
             return { status: 0, stdout: "", stderr: "" };
+          case "sandbox:get":
+            trace.push("get");
+            return { status: 1, stdout: "", stderr: "Error: sandbox alpha not found" };
           case "sandbox:list":
             trace.push("list");
             return { status: 0, stdout: '[{"name":"alpha","phase":"Ready"}]', stderr: "" };
@@ -137,7 +198,7 @@ describe("destroySandbox flow", () => {
         gatewayPort: 19080,
       });
       expect(cleanup).toHaveBeenCalledOnce();
-      expect(trace).toEqual(["prepare", "list", "delete", "cleanup"]);
+      expect(trace).toEqual(["prepare", "list", "delete", "get", "get", "cleanup"]);
       expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
       expect(harness.retirePortableLifecycleReceiptSpy).toHaveBeenCalledWith("alpha");
       expect(exitSpy).not.toHaveBeenCalled();
@@ -180,6 +241,8 @@ describe("destroySandbox flow", () => {
               crossedDeleteBoundary = true;
               harness.setSandboxPresent(false);
               return { status: 0, stdout: "", stderr: "" };
+            case "sandbox:get":
+              return { status: 1, stdout: "", stderr: "Error: sandbox alpha not found" };
             case "sandbox:list":
               return {
                 status: 0,
@@ -212,19 +275,58 @@ describe("destroySandbox flow", () => {
     },
   );
 
-  it("does not let legacy llama.cpp state block an unrelated provider destroy (#9888)", async () => {
+  it("retires removed immutability state after exact delete and before registry removal", async () => {
     const harness = createDestroyHarness({
       provider: "nvidia-prod",
       onPrepareManagedLlamaCppRuntimeCleanup: () => {
         throw new Error("foreign managed llama.cpp state is corrupt");
       },
     });
+    harness.enforceRemovedImmutabilityMigrationBoundarySpy.mockReturnValue({
+      stateRecord: "/tmp/shields-alpha.json",
+      recoveryArtifacts: [],
+    });
 
     await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
 
     expect(harness.prepareManagedLlamaCppRuntimeCleanupSpy).not.toHaveBeenCalled();
     expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
+    expect(harness.retireRemovedImmutabilityStateRecordSpy).toHaveBeenCalledWith(
+      "alpha",
+      "sandbox-destroyed",
+    );
+    expect(harness.enforceRemovedImmutabilityMigrationBoundarySpy).toHaveBeenCalledWith("alpha", {
+      allowStateRecord: true,
+    });
+    expect(harness.events.indexOf("delete")).toBeLessThan(
+      harness.events.indexOf("retire-removed-immutability"),
+    );
+    expect(
+      harness.retireRemovedImmutabilityStateRecordSpy.mock.invocationCallOrder[0],
+    ).toBeLessThan(harness.removeSandboxSpy.mock.invocationCallOrder[0]);
     expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it("retries removed immutability retirement before removing the registry row", async () => {
+    const harness = createDestroyHarness({ provider: "nvidia-prod" });
+    harness.enforceRemovedImmutabilityMigrationBoundarySpy.mockReturnValue({
+      stateRecord: "/tmp/shields-alpha.json",
+      recoveryArtifacts: [],
+    });
+    harness.retireRemovedImmutabilityStateRecordSpy
+      .mockImplementationOnce(() => {
+        throw new Error("retirement fsync failed");
+      })
+      .mockReturnValue(true);
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow(
+      "retirement fsync failed",
+    );
+    expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+    expect(harness.retireRemovedImmutabilityStateRecordSpy).toHaveBeenCalledTimes(2);
+    expect(harness.removeSandboxSpy).toHaveBeenCalledOnce();
   });
 
   it.each([
@@ -395,7 +497,7 @@ describe("destroySandbox flow", () => {
         ok: true,
         alreadyGone: false,
         deleteOutput: "",
-        deleteResult: { status: 0, stdout: "", stderr: "" },
+        deleteResult: { kind: "accepted", diagnostic: "", exitCode: 0 },
         detachOutcome: { detached: [], failures: [] },
         forcedLocalCleanup: false,
         commonLlamaCppAuthorityRetired: true,
@@ -430,6 +532,7 @@ describe("destroySandbox flow", () => {
     expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
     expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
     expect(harness.retirePortableLifecycleReceiptSpy).not.toHaveBeenCalled();
+    expect(harness.retireRemovedImmutabilityStateRecordSpy).not.toHaveBeenCalled();
   });
 
   it("revalidates schema-4 Portable identity at every destroy checkpoint without Docker preflight (#9189)", async () => {
@@ -468,7 +571,13 @@ describe("destroySandbox flow", () => {
 
     await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
 
-    expect(harness.lifecycleLockEvents).toEqual(["acquired", "released", "process-exit"]);
+    expect(harness.lifecycleLockEvents).toEqual([
+      "acquired",
+      "acquired",
+      "released",
+      "released",
+      "process-exit",
+    ]);
     expect(harness.events).not.toContain("delete");
     expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
     expect(harness.retirePortableLifecycleReceiptSpy).not.toHaveBeenCalled();
@@ -476,9 +585,13 @@ describe("destroySandbox flow", () => {
     await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
     expect(harness.lifecycleLockEvents).toEqual([
       "acquired",
+      "acquired",
+      "released",
       "released",
       "process-exit",
       "acquired",
+      "acquired",
+      "released",
       "released",
     ]);
     expect(harness.events.filter((event) => event === "delete")).toHaveLength(1);
@@ -505,7 +618,7 @@ describe("destroySandbox flow", () => {
     await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
     expect(harness.preparePortableDestroyAuthoritySpy).toHaveBeenCalledTimes(2);
     expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
-      ["sandbox", "delete", "alpha"],
+      ["sandbox", "delete", "-g", "nemoclaw-19080", "alpha"],
       expect.any(Object),
     );
   });
@@ -549,18 +662,21 @@ describe("destroySandbox flow", () => {
         agent: "hermes",
         openshellDriver: "docker",
         workload: managedHermesWorkload,
-        managedHermesStateVolumeCleanupResult: { status: "removed" },
+        managedAgentStateVolumeCleanupResults: [{ status: "removed" }],
       });
 
       await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
 
-      expect(harness.removeManagedHermesStateVolumeSpy).toHaveBeenCalledWith({
-        agentName: "hermes",
-        runtimeProviderId: "docker",
-        sandboxName: "alpha",
-        workloadKind: "managed-image",
-      });
-      expect(harness.removeManagedHermesStateVolumeSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      expect(harness.removeManagedAgentStateVolumesSpy).toHaveBeenCalledWith(
+        {
+          agentName: "hermes",
+          runtimeProviderId: "docker",
+          sandboxName: "alpha",
+          workloadKind: "managed-image",
+        },
+        { runtimeProviders: expect.any(Object) },
+      );
+      expect(harness.removeManagedAgentStateVolumesSpy.mock.invocationCallOrder[0]).toBeLessThan(
         harness.removeSandboxSpy.mock.invocationCallOrder[0],
       );
     },
@@ -571,11 +687,13 @@ describe("destroySandbox flow", () => {
       agent: "hermes",
       openshellDriver: "docker",
       workload: managedHermesWorkload,
-      managedHermesStateVolumeCleanupResult: {
-        status: "failed",
-        detail: "volume is still in use",
-        volumeName: "nemoclaw-hermes-state-v1-alpha",
-      },
+      managedAgentStateVolumeCleanupResults: [
+        {
+          status: "failed",
+          detail: "volume is still in use",
+          volumeName: "nemoclaw-hermes-state-v1-alpha",
+        },
+      ],
     });
 
     await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
@@ -591,17 +709,19 @@ describe("destroySandbox flow", () => {
       agent: "hermes",
       openshellDriver: "docker",
       workload: managedHermesWorkload,
-      managedHermesStateVolumeCleanupResult: {
-        status: "not-owned",
-        detail: "the exact NemoClaw ownership labels are absent or changed",
-        volumeName: "nemoclaw-hermes-state-v1-alpha",
-      },
+      managedAgentStateVolumeCleanupResults: [
+        {
+          status: "not-owned",
+          detail: "the exact NemoClaw ownership labels are absent or changed",
+          volumeName: "nemoclaw-hermes-state-v1-alpha",
+        },
+      ],
     });
 
     await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
 
     expect(harness.warnSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
-      "Left Docker volume 'nemoclaw-hermes-state-v1-alpha' untouched",
+      "Left managed state volume 'nemoclaw-hermes-state-v1-alpha' untouched",
     );
     expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
   });
@@ -750,7 +870,6 @@ describe("destroySandbox flow", () => {
     expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
     expect(harness.updateSessionSpy).not.toHaveBeenCalled();
     expect(harness.stopAllSpy).not.toHaveBeenCalled();
-    expect(harness.killTimerSpy).not.toHaveBeenCalled();
     expect(harness.prepareMcpBridgesForDestroySpy).not.toHaveBeenCalled();
     expect(harness.stopNimByNameSpy).not.toHaveBeenCalled();
     expect(harness.killStaleProxySpy).not.toHaveBeenCalled();
@@ -966,7 +1085,7 @@ describe("destroySandbox flow", () => {
 
     await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
 
-    expect(harness.events).toEqual(["wipe", "detach", "mcp-restore"]);
+    expect(harness.events).toEqual(["mcp-prepare", "wipe", "detach", "mcp-restore"]);
     expect(
       harness.runOpenshellSpy.mock.calls.some(
         ([args]) => Array.isArray(args) && args[0] === "sandbox" && args[1] === "delete",
@@ -1070,31 +1189,23 @@ describe("destroySandbox flow", () => {
     );
   });
 
-  it("refuses shields-up Hermes MCP destroy before stopping services or preparing MCP state", async () => {
-    const harness = createDestroyHarness({
-      agent: "hermes",
-      mcpServers: ["github"],
-      shieldsDown: false,
-    });
-
-    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow(
-      "has shields up or an unreadable shields posture",
-    );
-
-    expectShieldsUpRefusalBeforeMutation(harness);
-  });
-
-  it("does not require mutable Hermes config for a prepared-only add", async () => {
+  it("does not resolve runtime authority for a prepared-only add", async () => {
     const harness = createDestroyHarness({
       agent: "hermes",
       mcpAddState: "prepared",
       mcpServers: ["github"],
-      shieldsDown: false,
     });
 
     await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
 
-    expect(harness.prepareMcpBridgesForDestroySpy).toHaveBeenCalledWith("alpha");
+    expect(harness.prepareMcpBridgesForDestroySpy).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({
+        force: false,
+        sandbox: expect.objectContaining({ name: "alpha" }),
+      }),
+    );
+    expect(harness.mcpRuntimeSelectionSpy).not.toHaveBeenCalled();
   });
 
   it("does not require mutable Hermes config for absent-sandbox cleanup", async () => {
@@ -1102,7 +1213,6 @@ describe("destroySandbox flow", () => {
       agent: "hermes",
       mcpServers: ["github"],
       sandboxPresent: false,
-      shieldsDown: false,
     });
 
     await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
@@ -1252,7 +1362,6 @@ describe("destroySandbox flow", () => {
 
   it("fails closed and restores MCP state when --force cannot confirm sandbox deletion", async () => {
     const harness = createDestroyHarness({
-      activeTimer: true,
       deleteStatus: 1,
       deleteOutput: "error trying to connect: connection refused",
       mcpServers: ["github"],
@@ -1268,102 +1377,9 @@ describe("destroySandbox flow", () => {
     expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
     expect(exitSpy).toHaveBeenCalledWith(1);
     const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
-    expect(errorOutput).toContain("MCP ownership required for exact provider cleanup");
-    expect(errorOutput).toContain("--force cannot safely discard MCP ownership");
+    expect(errorOutput).toContain("current MCP sources could not be inspected safely");
+    expect(errorOutput).toContain("--force does not bypass MCP source inspection");
     expect(errorOutput).not.toContain("re-run with --force to remove the local sandbox record");
-  });
-
-  it("wipes while mutable, hardens an active timer window, then deletes and clears it", async () => {
-    const harness = createDestroyHarness({ activeTimer: true });
-
-    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
-
-    expectActiveTimerDestroyOrder(harness);
-  });
-  it("skips unrestorable hardening when Docker confirms absence (#10066)", async () => {
-    const harness = createDestroyHarness({
-      activeTimer: true,
-      sandboxPresent: true,
-      dockerRunResult: { status: 0, stdout: "", stderr: "" },
-      openshellDriver: "docker",
-      shieldsUpError: new Error("inline auto-restore would commit containment"),
-    });
-
-    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
-
-    expect(harness.events).not.toContain("wipe");
-    expect(harness.events).not.toContain("harden");
-    expect(harness.events.indexOf("delete")).toBeLessThan(harness.events.indexOf("timer-cleanup"));
-    expect(harness.killTimerSpy).toHaveBeenCalledOnce();
-    expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
-    expect(exitSpy).not.toHaveBeenCalled();
-  });
-
-  it("hardens a live Docker identity when OpenShell reports absence (#10066)", async () => {
-    const harness = createDestroyHarness({
-      activeTimer: true,
-      sandboxPresent: false,
-      dockerRunResult: {
-        status: 0,
-        stdout: "aaaaaaaaaaaa\topenshell\tdefault\tsb-alpha\n",
-        stderr: "",
-      },
-      openshellDriver: "docker",
-      shieldsUpError: new Error("must still harden a live Docker identity"),
-    });
-
-    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
-
-    expect(harness.events).toContain("wipe");
-    expect(harness.events).toContain("harden");
-    expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
-    expect(exitSpy).not.toHaveBeenCalled();
-  });
-  it("warns with the invoked CLI and still deletes when active-window hardening fails (#7727)", async () => {
-    const harness = createDestroyHarness({
-      activeTimer: true,
-      invokedCliName: "nemohermes",
-      shieldsUpError: new Error("injected hardening failure"),
-    });
-
-    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
-
-    expectFailedHardeningStillDeletes(harness, "nemohermes");
-    expect(exitSpy).not.toHaveBeenCalled();
-    vi.unstubAllEnvs();
-    resetDestroyModuleCache();
-  });
-
-  it("keeps the timer and local record when --force cannot confirm deletion after failed hardening (#7727)", async () => {
-    const harness = createDestroyHarness({
-      activeTimer: true,
-      deleteStatus: 1,
-      deleteOutput: "error trying to connect: connection refused",
-      registeredSandboxCount: 1,
-      shieldsUpError: new Error("injected hardening failure"),
-    });
-
-    await expect(harness.destroySandbox("alpha", { force: true })).rejects.toThrow(
-      "process.exit(1)",
-    );
-
-    expectFailedHardeningRefusesForcedCleanup(harness);
-    expect(exitSpy).toHaveBeenCalledWith(1);
-  });
-
-  it("restores MCP runtime state without a rollback window when delete fails after failed hardening (#7727)", async () => {
-    const harness = createDestroyHarness({
-      activeTimer: true,
-      deleteStatus: 7,
-      deleteOutput: "delete failed",
-      mcpServers: ["github"],
-      shieldsUpError: new Error("injected hardening failure"),
-    });
-
-    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(7)");
-
-    expectFailedHardeningMcpRestore(harness);
-    expect(exitSpy).toHaveBeenCalledWith(7);
   });
 
   it("detaches MCP providers before delete and finalizes them only after delete succeeds", async () => {
@@ -1376,7 +1392,6 @@ describe("destroySandbox flow", () => {
 
   it("restores MCP runtime state when sandbox delete fails", async () => {
     const harness = createDestroyHarness({
-      activeTimer: true,
       deleteStatus: 7,
       deleteOutput: "delete failed",
       mcpServers: ["github"],
@@ -1387,9 +1402,8 @@ describe("destroySandbox flow", () => {
     expectMcpRestoreAfterDeleteFailure(harness);
   });
 
-  it("relocks shields and preserves destroy failure when MCP rollback fails", async () => {
+  it("preserves destroy failure when MCP rollback fails", async () => {
     const harness = createDestroyHarness({
-      activeTimer: true,
       deleteStatus: 7,
       deleteOutput: "delete failed",
       mcpServers: ["github"],
@@ -1472,9 +1486,8 @@ describe("destroySandbox flow", () => {
     expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
     expect(harness.compareAndSwapSessionSpy).toHaveBeenCalledOnce();
     expect(harness.updateSessionSpy).not.toHaveBeenCalled();
-    expect(harness.cleanupGatewaySpy).toHaveBeenCalledWith(
-      "nemoclaw-19080",
-      harness.runOpenshellSpy,
-    );
+    expect(harness.cleanupGatewaySpy).toHaveBeenCalledWith("nemoclaw-19080", expect.any(Function), {
+      runtimeSelection: { gatewayName: "nemoclaw-19080", workspace: "default" },
+    });
   });
 });

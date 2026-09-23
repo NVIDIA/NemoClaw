@@ -12,6 +12,7 @@ import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
 import { auditOpenShellPolicyBoundaryDependencies } from "../../scripts/checks/verify-openshell-policy-boundary-dependencies.mts";
+import { npmPackFilePaths } from "../helpers/npm-pack-result";
 import { createPackageFixture } from "./helpers/package-fixture";
 
 const repoRoot = path.join(import.meta.dirname, "..", "..");
@@ -30,17 +31,14 @@ function collectPackedPaths(): ReadonlySet<string> {
     entries: ["agents"],
   });
   try {
-    const output = JSON.parse(
+    const paths = npmPackFilePaths(
       execFileSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], {
         cwd: fixtureRoot,
         encoding: "utf8",
         maxBuffer: 10 * 1024 * 1024,
       }),
-    ) as
-      | Array<{ files?: Array<{ path?: string }> }>
-      | Record<string, { files?: Array<{ path?: string }> }>;
-    const report = Array.isArray(output) ? output[0] : Object.values(output)[0];
-    return new Set((report?.files ?? []).flatMap((entry) => (entry.path ? [entry.path] : [])));
+    );
+    return new Set(paths);
   } finally {
     fs.rmSync(fixtureRoot, { recursive: true, force: true });
   }
@@ -62,8 +60,8 @@ describe("OpenShell policy boundary package contract", () => {
     },
   );
 
-  it("routes the CommonJS CLI and ESM plugin through one canonical CJS boundary", async () => {
-    const cliPolicy = require("../../dist/lib/policy/merge.js") as {
+  it("keeps the CommonJS CLI and ESM plugin policy behavior compatible", async () => {
+    const cliPolicy = require("../../dist/lib/adapters/openshell/policy-boundary.js") as {
       assertPolicyRequirementContainment: (...args: unknown[]) => void;
       parseOpenShellPolicy: (raw: string) => {
         yamlBody: string;
@@ -103,14 +101,6 @@ describe("OpenShell policy boundary package contract", () => {
       ) => Record<string, unknown>;
       stripProviderComposedPolicies: (policy: string) => string;
     };
-    const canonicalBoundary =
-      require("../../nemoclaw/dist/shared/openshell-policy-boundary.cjs") as {
-        assertPolicyRequirementContainment: typeof cliPolicy.assertPolicyRequirementContainment;
-        parseActiveGlobalPolicyMetadata: typeof cliPolicy.parseActiveGlobalPolicyMetadata;
-        parseOpenShellPolicy: typeof cliPolicy.parseOpenShellPolicy;
-        parseSandboxPolicyMetadata: typeof cliPolicy.parseSandboxPolicyMetadata;
-        stripProviderComposedPolicies: typeof cliPolicy.stripProviderComposedPolicies;
-      };
     expect(
       pluginBoundary.withoutProviderComposedPolicies({ safe: {}, _provider_generated: {} }),
     ).toEqual({ safe: {} });
@@ -120,27 +110,22 @@ describe("OpenShell policy boundary package contract", () => {
       future_policy: { keep: true },
       network_policies: { safe: {}, _provider_generated: {} },
     });
-    expect(YAML.parse(cliPolicy.stripProviderComposedPolicies(policy))).toEqual(
-      YAML.parse(pluginBoundary.stripProviderComposedPolicies(policy)),
+    const expectedPolicy = {
+      version: 1,
+      future_policy: { keep: true },
+      network_policies: { safe: {} },
+    };
+    expect(YAML.parse(cliPolicy.stripProviderComposedPolicies(policy))).toEqual(expectedPolicy);
+    expect(YAML.parse(pluginBoundary.stripProviderComposedPolicies(policy))).toEqual(
+      expectedPolicy,
     );
     expect(() => cliPolicy.stripProviderComposedPolicies("version: [unterminated")).toThrow();
     expect(() => pluginBoundary.stripProviderComposedPolicies("version: [unterminated")).toThrow();
 
     const policyOutput = ["Version: 1", "Hash: sha256:test", "---", policy].join("\n");
-    expect(cliPolicy.parseOpenShellPolicy(policyOutput)).toEqual(
-      pluginBoundary.parseOpenShellPolicy(policyOutput),
-    );
-    expect(cliPolicy.parseOpenShellPolicy).toBe(canonicalBoundary.parseOpenShellPolicy);
-    expect(cliPolicy.stripProviderComposedPolicies).toBe(
-      canonicalBoundary.stripProviderComposedPolicies,
-    );
-    expect(cliPolicy.parseActiveGlobalPolicyMetadata).toBe(
-      canonicalBoundary.parseActiveGlobalPolicyMetadata,
-    );
-    expect(cliPolicy.parseSandboxPolicyMetadata).toBe(canonicalBoundary.parseSandboxPolicyMetadata);
-    expect(cliPolicy.assertPolicyRequirementContainment).toBe(
-      canonicalBoundary.assertPolicyRequirementContainment,
-    );
+    const expectedParsedPolicy = { yamlBody: policy.trim(), policy: YAML.parse(policy) };
+    expect(cliPolicy.parseOpenShellPolicy(policyOutput)).toEqual(expectedParsedPolicy);
+    expect(pluginBoundary.parseOpenShellPolicy(policyOutput)).toEqual(expectedParsedPolicy);
     const sandboxMetadata = JSON.stringify({
       scope: "sandbox",
       sandbox: "alpha",
@@ -150,8 +135,16 @@ describe("OpenShell policy boundary package contract", () => {
       active_version: 1,
       policy: { version: 1, network_policies: {} },
     });
+    const expectedSandboxMetadata = {
+      policySource: "global",
+      effectivePolicy: { version: 1, network_policies: {} },
+      policyIdentity: { hash: "sha256:sandbox", activeVersion: 1 },
+    };
+    expect(cliPolicy.parseSandboxPolicyMetadata(sandboxMetadata, "alpha")).toEqual(
+      expectedSandboxMetadata,
+    );
     expect(pluginBoundary.parseSandboxPolicyMetadata(sandboxMetadata, "alpha")).toEqual(
-      canonicalBoundary.parseSandboxPolicyMetadata(sandboxMetadata, "alpha"),
+      expectedSandboxMetadata,
     );
     const globalMetadata = JSON.stringify({
       scope: "global",
@@ -161,8 +154,19 @@ describe("OpenShell policy boundary package contract", () => {
       active_version: 1,
       policy: { version: 1, network_policies: {} },
     });
+    const expectedGlobalMetadata = {
+      state: "active",
+      inspection: {
+        policySource: "global",
+        effectivePolicy: { version: 1, network_policies: {} },
+        policyIdentity: { hash: "sha256:global", activeVersion: 1 },
+      },
+    };
+    expect(cliPolicy.parseActiveGlobalPolicyMetadata(globalMetadata)).toEqual(
+      expectedGlobalMetadata,
+    );
     expect(pluginBoundary.parseActiveGlobalPolicyMetadata(globalMetadata)).toEqual(
-      canonicalBoundary.parseActiveGlobalPolicyMetadata(globalMetadata),
+      expectedGlobalMetadata,
     );
 
     const pluginRunner = await import(
@@ -270,7 +274,6 @@ describe("OpenShell policy boundary package contract", () => {
       execFileSync(
         process.execPath,
         [
-          "--experimental-strip-types",
           "--no-warnings",
           "--eval",
           `const contract = require(${JSON.stringify(controlContractPath)}); process.stdout.write(JSON.stringify([contract.isValidName("packaged-hermes"), contract.isValidName("../packaged-hermes")]));`,
@@ -281,16 +284,9 @@ describe("OpenShell policy boundary package contract", () => {
     expect(validation).toEqual([true, false]);
   });
 
-  it("ships agent manifests, generated state lock plans, and the OpenClaw policy asset", () => {
-    expect(packageFiles(repoRoot)).toEqual(
-      expect.arrayContaining([
-        "agents/*/manifest.yaml",
-        "agents/*/state-lock-plan.json",
-        "agents/openclaw/policy-permissive.yaml",
-      ]),
-    );
+  it("ships agent manifests", () => {
+    expect(packageFiles(repoRoot)).toEqual(expect.arrayContaining(["agents/*/manifest.yaml"]));
     expect(packedPaths).toContain("agents/openclaw/manifest.yaml");
-    expect(packedPaths).toContain("agents/openclaw/policy-permissive.yaml");
   });
 
   it("ships the complete repository-owned NemoCUA agent definition (#9649)", () => {

@@ -9,7 +9,7 @@
 #
 # What this installs:
 #   1. Docker (docker.io) — enabled and running
-#   2. Node.js 22 (nodesource)
+#   2. Node.js 24.18.1 and verified npm 12.0.2
 #   3. OpenShell CLI binary (pinned release)
 #   4. NemoClaw repo cloned with npm deps installed and TS plugin built
 #
@@ -28,9 +28,8 @@
 #   bash scripts/brev-launchable-ci-cpu.sh --print-openshell-version  # resolve only
 #
 # Environment overrides:
-#   OPENSHELL_VERSION          — OpenShell CLI release tag (default: stable selector below)
-#   NEMOCLAW_OPENSHELL_CHANNEL — Release channel (stable/dev/auto)
-#   NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL — Required opt-in for the unverified dev channel
+#   OPENSHELL_VERSION          — OpenShell CLI release tag (must resolve to v0.0.116)
+#   NEMOCLAW_OPENSHELL_CHANNEL — Release channel (stable/auto)
 #   NEMOCLAW_REF               — NemoClaw git ref to clone (default: main)
 #   NEMOCLAW_CLONE_DIR         — Where to clone NemoClaw (default: ~/NemoClaw)
 #
@@ -70,27 +69,26 @@ assert_openshell_version() {
   fi
 }
 
+case "${NEMOCLAW_OPENSHELL_CHANNEL:-stable}" in
+  stable | auto) ;;
+  dev) fail "NemoClaw requires exact stable OpenShell 0.0.116; the dev channel is not supported." ;;
+  *) fail "NEMOCLAW_OPENSHELL_CHANNEL must be one of: stable, auto" ;;
+esac
 if [ -z "$OPENSHELL_VERSION" ]; then
   case "${NEMOCLAW_OPENSHELL_CHANNEL:-stable}" in
-    dev) OPENSHELL_VERSION="dev" ;;
-    stable | auto) OPENSHELL_VERSION="v0.0.106" ;;
-    *) fail "NEMOCLAW_OPENSHELL_CHANNEL must be one of: stable, dev, auto" ;;
+    stable | auto) OPENSHELL_VERSION="v0.0.116" ;;
   esac
+fi
+assert_openshell_version "$OPENSHELL_VERSION"
+if [[ "$OPENSHELL_VERSION" != v* ]]; then
+  OPENSHELL_VERSION="v${OPENSHELL_VERSION}"
+fi
+if [[ "$OPENSHELL_VERSION" != "v0.0.116" ]]; then
+  fail "NemoClaw requires exact stable OpenShell 0.0.116; OPENSHELL_VERSION resolved to '${OPENSHELL_VERSION}'."
 fi
 if [ "${1:-}" = "--print-openshell-version" ]; then
   printf '%s\n' "$OPENSHELL_VERSION"
   exit 0
-fi
-if [[ "$OPENSHELL_VERSION" = "dev" ]]; then
-  if [[ "${NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL:-}" != "1" ]]; then
-    fail "Dev channel install skips SHA-256 verification. Set NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL=1 to explicitly accept an unverified OpenShell dev-channel install."
-  fi
-  warn "Dev channel install skips SHA-256 verification. Use only in trusted environments."
-else
-  assert_openshell_version "$OPENSHELL_VERSION"
-  if [[ "$OPENSHELL_VERSION" != v* ]]; then
-    OPENSHELL_VERSION="v${OPENSHELL_VERSION}"
-  fi
 fi
 OPENSHELL_VERSION_NO_V="${OPENSHELL_VERSION#v}"
 TARGET_USER="${SUDO_USER:-$(id -un)}"
@@ -148,11 +146,14 @@ openshell_cli_asset_for_arch() {
 openshell_cli_pinned_sha256() {
   local release_tag="$1" asset="$2"
   case "${release_tag}:${asset}" in
-    v0.0.106:openshell-x86_64-unknown-linux-musl.tar.gz)
-      printf '%s\n' "d1a885a91b3e5aaa006c36aca95dc78bed0638c1ba1a79b55f1da93211b8a0a0"
+    v0.0.116:openshell-x86_64-unknown-linux-musl.tar.gz)
+      printf '%s\n' "4fb4476d80a1875a0b83547ec3aba999cf0a2e2d75f95f2f709b622e2103520e"
       ;;
-    v0.0.106:openshell-aarch64-unknown-linux-musl.tar.gz)
-      printf '%s\n' "ce981904ae8febd9cd6b3fbceb04e1dcfb48da6042bac08eadf0c2211f83fe55"
+    v0.0.116:openshell-aarch64-unknown-linux-musl.tar.gz)
+      printf '%s\n' "7a949c48d1e000cd280869eea1e203e24816b9cfefc575b68a8b72b939cb3f43"
+      ;;
+    v0.0.116:openshell-checksums-sha256.txt)
+      printf '%s\n' "f8b6ec65366f9d256737b884ba4d9f184b4dbbbb9540711ed9e4934d772eba7e"
       ;;
     *)
       return 1
@@ -210,9 +211,7 @@ install_openshell_cli_release() {
   retry 3 10 "download openshell" \
     curl -fsSL -o "$tmpdir/$asset" \
     "https://github.com/NVIDIA/OpenShell/releases/download/${OPENSHELL_VERSION}/${asset}"
-  if [[ "$OPENSHELL_VERSION" != "dev" ]]; then
-    verify_openshell_cli_asset "$tmpdir" "$asset"
-  fi
+  verify_openshell_cli_asset "$tmpdir" "$asset"
   validate_openshell_archive "$tmpdir/$asset" openshell
   tar xzf "$tmpdir/$asset" -C "$tmpdir"
   sudo install -m 755 "$tmpdir/openshell" /usr/local/bin/openshell
@@ -251,42 +250,44 @@ sudo usermod -aG docker "$TARGET_USER" 2>/dev/null || true
 # Docker socket permissions to work around stale group membership.
 info "Docker enabled ($(docker --version 2>/dev/null | head -c 40))"
 
-# 3. Node.js 22
-node_major=""
-if command -v node >/dev/null 2>&1; then
-  node_major="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || true)"
-fi
-
-if command -v npm >/dev/null 2>&1 && [[ -n "$node_major" ]] && ((node_major >= 22)); then
+# 3. Node.js 24.18.1
+NODE_VERSION="24.18.1"
+if command -v node >/dev/null 2>&1 && [[ "$(node --version)" == "v${NODE_VERSION}" ]]; then
   info "Node.js already installed: $(node --version)"
 else
-  info "Installing Node.js 22..."
-  # IMPORTANT: update NODESOURCE_SHA256 when changing setup_22.x URL
-  NODESOURCE_URL="https://deb.nodesource.com/setup_22.x"
-  NODESOURCE_SHA256="575583bbac2fccc0b5edd0dbc03e222d9f9dc8d724da996d22754d6411104fd1"
-  ns_tmp="$(mktemp)"
-  curl -fsSL "$NODESOURCE_URL" -o "$ns_tmp" \
-    || {
-      rm -f "$ns_tmp"
-      fail "Failed to download NodeSource installer"
-    }
+  case "$(uname -m)" in
+    x86_64)
+      node_arch="x64"
+      node_sha256="9f5eb6ac21845a66c493c91a253b1da32fd684e89e9b7202d4936982336be4ca"
+      ;;
+    aarch64 | arm64)
+      node_arch="arm64"
+      node_sha256="df224555a083b918e46260cc969838501b9f9a87140c1195e5b9597b56d5dae2"
+      ;;
+    *) fail "Unsupported Node.js architecture: $(uname -m)" ;;
+  esac
+  info "Installing Node.js ${NODE_VERSION}..."
+  node_tmp="$(mktemp)"
+  node_url="https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${node_arch}.tar.gz"
+  curl -fsSL --proto '=https' --tlsv1.2 "$node_url" -o "$node_tmp" || {
+    rm -f "$node_tmp"
+    fail "Failed to download Node.js archive"
+  }
   if command -v sha256sum >/dev/null 2>&1; then
-    actual_hash="$(sha256sum "$ns_tmp" | awk '{print $1}')"
+    actual_hash="$(sha256sum "$node_tmp" | awk '{print $1}')"
   elif command -v shasum >/dev/null 2>&1; then
-    actual_hash="$(shasum -a 256 "$ns_tmp" | awk '{print $1}')"
+    actual_hash="$(shasum -a 256 "$node_tmp" | awk '{print $1}')"
   else
-    rm -f "$ns_tmp"
+    rm -f "$node_tmp"
     fail "No SHA-256 tool available (sha256sum/shasum)"
   fi
-  if [[ "$actual_hash" != "$NODESOURCE_SHA256" ]]; then
-    rm -f "$ns_tmp"
-    fail "NodeSource installer integrity check failed\n  Expected: $NODESOURCE_SHA256\n  Actual:   $actual_hash"
+  if [[ "$actual_hash" != "$node_sha256" ]]; then
+    rm -f "$node_tmp"
+    fail "Node.js archive integrity check failed\n  Expected: $node_sha256\n  Actual:   $actual_hash"
   fi
-  info "NodeSource installer integrity verified"
-  sudo -E bash "$ns_tmp" >/dev/null 2>&1
-  rm -f "$ns_tmp"
-  wait_for_apt_lock
-  retry 3 10 "install nodejs" sudo apt-get install -y -qq nodejs >/dev/null 2>&1
+  sudo tar -xzf "$node_tmp" -C /usr/local --strip-components=1 --no-same-owner
+  rm -f "$node_tmp"
+  [[ "$(node --version)" == "v${NODE_VERSION}" ]] || fail "Node.js installation did not produce v${NODE_VERSION}"
   info "Node.js $(node --version) installed"
 fi
 
@@ -321,6 +322,14 @@ fi
 
 info "Installing npm dependencies..."
 cd "$NEMOCLAW_CLONE_DIR"
+reviewed_npm_tmp="$(mktemp -d)"
+trap 'rm -rf "$reviewed_npm_tmp"' EXIT
+sudo env -u NODE_AUTH_TOKEN -u NPM_TOKEN -u NPM_CONFIG__AUTH_TOKEN \
+  RUNNER_TEMP="$reviewed_npm_tmp" \
+  bash .github/actions/setup-reviewed-npm/verify-and-install-npm.sh ci/reviewed-npm-audit.json
+rm -rf "$reviewed_npm_tmp"
+trap - EXIT
+[[ "$(npm --version)" == "12.0.2" ]] || fail "Reviewed npm 12.0.2 installation failed"
 npm install --ignore-scripts 2>&1 | tail -3
 info "Root deps installed"
 

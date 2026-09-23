@@ -86,8 +86,8 @@ async function runPolicyScenario({
     step: () => undefined,
     note: () => undefined,
     isNonInteractive: () => true,
-    waitForSandboxReady: () => true,
-    waitForSandboxControlPlaneReady: () => true,
+    waitForSandboxReady: async () => ({ ready: true, reason: "ready", error: null }),
+    waitForSandboxControlPlaneReady: async () => true,
     syncPresetSelection: (_sandboxName, current, selected) => {
       const currentSet = new Set(current);
       const selectedSet = new Set(selected);

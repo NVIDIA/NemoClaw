@@ -51,6 +51,7 @@ nemoclaw_normalize_entrypoint_env_wrapper() {
   _nemoclaw_supported_names="${_nemoclaw_supported_names}|NEMOCLAW_CORPORATE_CA_B64"
   _nemoclaw_supported_names="${_nemoclaw_supported_names}|NEMOCLAW_DASHBOARD_BIND|NEMOCLAW_DASHBOARD_PORT"
   _nemoclaw_supported_names="${_nemoclaw_supported_names}|NEMOCLAW_EXTRA_PLACEHOLDER_KEYS"
+  _nemoclaw_supported_names="${_nemoclaw_supported_names}|NEMOCLAW_HERMES_API_PORT"
   _nemoclaw_supported_names="${_nemoclaw_supported_names}|NEMOCLAW_HERMES_DASHBOARD"
   _nemoclaw_supported_names="${_nemoclaw_supported_names}|NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT"
   _nemoclaw_supported_names="${_nemoclaw_supported_names}|NEMOCLAW_HERMES_DASHBOARD_PORT"

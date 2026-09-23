@@ -192,11 +192,40 @@ describe("sandbox-create-stream", () => {
     await vi.advanceTimersByTimeAsync(5_001);
     await expect(promise).resolves.toMatchObject({
       status: 1,
+      readyTerminationTimedOut: true,
       output: expect.stringContaining("did not exit after Ready; aborting cutover"),
     });
     expect((await promise).forcedReady).toBeUndefined();
     expect(child.kill).toHaveBeenCalledWith("SIGKILL");
     expect(child.unref).not.toHaveBeenCalled();
+  });
+
+  it("keeps the create client active while the ready check returns false (#10769)", async () => {
+    vi.useFakeTimers();
+
+    const child = new FakeChild();
+    const readyCheck = vi.fn(() => false);
+    const settled = vi.fn();
+    const promise = streamSandboxCreate("echo create", dockerEnv, {
+      spawnImpl: () => child,
+      readyCheck,
+      waitForReadyTermination: true,
+      pollIntervalMs: 5,
+      heartbeatIntervalMs: 1_000,
+      silentPhaseMs: 10_000,
+      logLine: vi.fn(),
+    });
+    void promise.then(settled);
+
+    child.stdout.emit("data", Buffer.from("Created sandbox: demo\n"));
+    await vi.advanceTimersByTimeAsync(6);
+
+    expect(readyCheck).toHaveBeenCalled();
+    expect(settled).not.toHaveBeenCalled();
+    expect(child.kill).not.toHaveBeenCalled();
+
+    child.emit("close", 0);
+    await expect(promise).resolves.toMatchObject({ status: 0 });
   });
 
   it("traces ready-check errors and keeps polling without forcing ready", async () => {

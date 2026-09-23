@@ -87,9 +87,7 @@ export function checkFiles(filePaths: readonly string[]): DefaultedDependentFlag
   });
 }
 
-export function formatViolations(
-  violations: readonly DefaultedDependentFlagViolation[],
-): string {
+export function formatViolations(violations: readonly DefaultedDependentFlagViolation[]): string {
   return [
     "oclif flags must not combine a parser default with dependsOn.",
     "The default gives the flag a value on every parse, so oclif applies",

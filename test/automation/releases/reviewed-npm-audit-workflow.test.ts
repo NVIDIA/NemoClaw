@@ -8,18 +8,31 @@ import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import YAML from "yaml";
 import {
   assertReviewedAuditReportsPass,
+  NPM_AUDIT_SIGNATURE_ARGV,
   auditMaterializedSourceGraph,
+  emitAuditReceipt,
   materializeSourceGraph,
   normalizeOpenClawSignatureAlias,
   parseAuditConfig,
   reviewedArchiveGraphManifest,
-  selectReviewedLockSha256,
+  selectReviewedLockedGraphIdentity,
+  validateWechatRuntimeInputs,
   verifyMaterializedLockedGraph,
+  verifySignaturesWithReviewedRetry,
 } from "../../../scripts/audit-reviewed-npm-graph.mts";
-import { verifyInstalledNpmLock } from "../../../scripts/lib/reviewed-npm-archive.mts";
+import {
+  verifyInstalledNpmLock,
+  verifyReviewedNpmLock,
+} from "../../../scripts/lib/reviewed-npm-archive.mts";
 import type { AuditPolicyResult } from "../../../scripts/lib/reviewed-npm-audit.mts";
+import {
+  openClawReplacementGraphFixture,
+  type LockedGraphFixture,
+  wechatReplacementGraphFixture,
+} from "./reviewed-npm-audit-fixtures.ts";
 
 type WorkflowStep = {
   readonly env?: Record<string, string>;
@@ -36,11 +49,217 @@ type WorkflowJob = {
   readonly steps?: readonly WorkflowStep[];
 };
 
-type Workflow = {
-  readonly jobs: Record<string, WorkflowJob>;
-};
+type CompositeAction = { readonly runs: WorkflowJob };
 
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
+const REVIEWED_AUDIT_CONFIG_SOURCE = fs.readFileSync(
+  path.join(REPO_ROOT, "ci", "reviewed-npm-audit.json"),
+  "utf8",
+);
+const REVIEWED_AUDIT_CONFIG = parseAuditConfig(REVIEWED_AUDIT_CONFIG_SOURCE);
+
+type ConsolidatedAuditFixture = Readonly<{
+  npmCalls: readonly string[];
+  lockedReceipt?: string;
+  lockedProvenance?: Record<string, unknown>;
+  lockedRawReport?: Buffer;
+  lockedPackageJson: Buffer;
+  lockedPackageLock: Buffer;
+  provenance?: Record<string, unknown>;
+  result: ReturnType<typeof spawnSync>;
+  trustedCacheModes?: { directory: number; entry: number };
+}>;
+
+function runConsolidatedAuditFixture(
+  mutateTarget: (targetRoot: string) => void,
+  auditOutput = JSON.stringify({
+    vulnerabilities: {},
+    metadata: {
+      vulnerabilities: { info: 0, low: 0, moderate: 0, high: 0, critical: 0 },
+    },
+  }),
+  auditStatus = 0,
+  offlinePackStatus = 0,
+  observedNpmVersion = REVIEWED_AUDIT_CONFIG.npmVersion,
+  lockedGraphFixture?: LockedGraphFixture<(typeof REVIEWED_AUDIT_CONFIG.lockedGraphs)[number]>,
+): ConsolidatedAuditFixture {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-audit-entry-"));
+  const trustedRoot = path.join(root, "trusted");
+  const trustedRootAlias = path.join(root, "trusted-alias");
+  const targetRoot = path.join(root, "target");
+  const bin = path.join(root, "bin");
+  const cacheModesFile = path.join(root, "cache-modes");
+  const callsFile = path.join(root, "npm-calls");
+  const artifactDirectory = path.join(targetRoot, "artifacts", "reviewed-npm-audit");
+  try {
+    fs.mkdirSync(path.join(trustedRoot, "ci"), { recursive: true });
+    fs.symlinkSync(trustedRoot, trustedRootAlias, "junction");
+    fs.mkdirSync(bin);
+    fs.cpSync(path.join(REPO_ROOT, "scripts"), path.join(trustedRoot, "scripts"), {
+      recursive: true,
+    });
+    fs.writeFileSync(
+      path.join(trustedRoot, "ci", "npm-audit-exceptions.json"),
+      '{"schemaVersion":1,"exceptions":[]}\n',
+    );
+    const graphFixture = lockedGraphFixture ?? wechatReplacementGraphFixture(REPO_ROOT);
+    const selectedFixtureIdentity = graphFixture.graph.replacement ?? graphFixture.graph;
+    const lockedDirectory = path.join(targetRoot, graphFixture.graph.directory);
+    fs.mkdirSync(lockedDirectory, { recursive: true });
+    fs.writeFileSync(
+      path.join(trustedRoot, "ci", "reviewed-npm-audit.json"),
+      JSON.stringify({
+        archiveGraphId: "reviewed-archive-graph",
+        archivePackages: [],
+        archiveTarVersion: "7.5.21",
+        artifactDirectory: "artifacts/reviewed-npm-audit",
+        exceptionFile: "ci/npm-audit-exceptions.json",
+        lockedGraphs: [graphFixture.graph],
+        nodeVersion: process.version.slice(1),
+        npmArchiveSha256: REVIEWED_AUDIT_CONFIG.npmArchiveSha256,
+        npmIntegrity: REVIEWED_AUDIT_CONFIG.npmIntegrity,
+        npmVersion: REVIEWED_AUDIT_CONFIG.npmVersion,
+        registryOrigin: "https://registry.npmjs.org/",
+        schemaVersion: 2,
+        severityThreshold: "high",
+        sourceNestedShrinkwrapPackages: [],
+        sourceRegistryPackage: {
+          artifactName: "fixture-1.0.0.tgz",
+          integrity: selectedFixtureIdentity.integrity,
+          label: "fixture",
+          packageSpec: "fixture@1.0.0",
+          tarballUrl: selectedFixtureIdentity.tarballUrl,
+        },
+        sourceRegistryPackagesWithoutIntegrity: [],
+      }),
+    );
+    const manifest = { name: "fixture", private: true, version: "1.0.0" };
+    fs.writeFileSync(path.join(targetRoot, "package.json"), JSON.stringify(manifest));
+    fs.writeFileSync(
+      path.join(targetRoot, "package-lock.json"),
+      JSON.stringify({
+        ...manifest,
+        lockfileVersion: 3,
+        packages: { "": manifest },
+      }),
+    );
+    fs.writeFileSync(path.join(lockedDirectory, "package.json"), graphFixture.manifest);
+    fs.writeFileSync(path.join(lockedDirectory, "package-lock.json"), graphFixture.lock);
+    mutateTarget(targetRoot);
+    fs.writeFileSync(
+      path.join(bin, "npm"),
+      `#!/usr/bin/env node
+const fs = require("node:fs");
+fs.appendFileSync(process.env.NEMOCLAW_TEST_NPM_CALLS, JSON.stringify(process.argv.slice(2)) + "\\n");
+const args = process.argv.slice(2);
+if (args[0] === "--version") { console.log(process.env.NEMOCLAW_TEST_NPM_VERSION); process.exit(0); }
+if (args[0] === "config") { console.log("https://registry.npmjs.org/"); process.exit(0); }
+if (args[0] === "view") {
+  console.log(args.includes("dist.tarball") ? process.env.NEMOCLAW_TEST_REVIEWED_TARBALL : process.env.NEMOCLAW_TEST_REVIEWED_INTEGRITY);
+  process.exit(0);
+}
+if (args[0] === "pack") {
+  if (process.env.NPM_CONFIG_OFFLINE === "true") {
+    const trustedCache = process.env.NPM_CONFIG_CACHE.replace(/wechat-install-cache$/, "wechat-trusted-cache");
+    fs.writeFileSync(process.env.NEMOCLAW_TEST_CACHE_MODES_FILE, JSON.stringify({
+      directory: fs.statSync(trustedCache).mode & 0o777,
+      entry: fs.statSync(trustedCache + "/_cacache/fixture").mode & 0o777,
+    }));
+    const status = Number(process.env.NEMOCLAW_TEST_OFFLINE_PACK_STATUS);
+    if (status !== 0) { console.error("simulated offline pack failure"); process.exit(status); }
+  }
+  const destination = args[args.indexOf("--pack-destination") + 1];
+  const filename = "fixture.tgz";
+  fs.writeFileSync(destination + "/" + filename, "fixture");
+  console.log(JSON.stringify([{ filename, integrity: process.env.NEMOCLAW_TEST_REVIEWED_INTEGRITY }]));
+  process.exit(0);
+}
+if (args[0] === "audit" && args[1] === "signatures") process.exit(0);
+if (args[0] === "audit") { process.stdout.write(process.env.NEMOCLAW_TEST_AUDIT_OUTPUT); process.exit(Number(process.env.NEMOCLAW_TEST_AUDIT_STATUS)); }
+if (args[0] === "cache" && args[1] === "add") {
+  fs.mkdirSync(process.env.NPM_CONFIG_CACHE + "/_cacache", { recursive: true });
+  fs.writeFileSync(process.env.NPM_CONFIG_CACHE + "/_cacache/fixture", "cached");
+  process.exit(0);
+}
+if (args[0] === "ci" && !fs.existsSync("package-lock.json")) {
+  console.error("npm ci requires an existing package-lock.json");
+  process.exit(1);
+}
+if (args[0] === "ci") {
+  const lock = JSON.parse(fs.readFileSync("package-lock.json", "utf8"));
+  for (const [location, entry] of Object.entries(lock.packages)) {
+    if (!location) continue;
+    fs.mkdirSync(location, { recursive: true });
+    fs.writeFileSync(location + "/package.json", JSON.stringify({
+      name: location.slice(location.lastIndexOf("node_modules/") + 13),
+      version: entry.version,
+      dependencies: entry.dependencies,
+      peerDependencies: entry.peerDependencies,
+      peerDependenciesMeta: entry.peerDependenciesMeta,
+    }));
+  }
+}
+if (args[0] === "install" && !fs.existsSync("package-lock.json")) {
+  const manifest = JSON.parse(fs.readFileSync("package.json", "utf8"));
+  fs.writeFileSync("package-lock.json", JSON.stringify({ ...manifest, lockfileVersion: 3, packages: { "": manifest } }));
+}
+process.exit(0);
+`,
+      { mode: 0o755 },
+    );
+    const result = spawnSync(
+      process.execPath,
+      [path.join(trustedRootAlias, "scripts/audit-reviewed-npm-graph.mts")],
+      {
+        cwd: trustedRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          NEMOCLAW_REVIEWED_NPM_AUDIT_REPORT_DIR: "artifacts/reviewed-npm-audit",
+          NEMOCLAW_REVIEWED_NPM_AUDIT_TARGET_ROOT: targetRoot,
+          NEMOCLAW_TEST_AUDIT_OUTPUT: auditOutput,
+          NEMOCLAW_TEST_AUDIT_STATUS: String(auditStatus),
+          NEMOCLAW_TEST_CACHE_MODES_FILE: cacheModesFile,
+          NEMOCLAW_TEST_NPM_CALLS: callsFile,
+          NEMOCLAW_TEST_NPM_VERSION: observedNpmVersion,
+          NEMOCLAW_TEST_OFFLINE_PACK_STATUS: String(offlinePackStatus),
+          NEMOCLAW_TEST_REVIEWED_INTEGRITY: selectedFixtureIdentity.integrity,
+          NEMOCLAW_TEST_REVIEWED_TARBALL: selectedFixtureIdentity.tarballUrl,
+          PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
+        },
+      },
+    );
+    const provenanceFile = path.join(artifactDirectory, "source-graph.provenance.json");
+    const lockedProvenanceFile = path.join(artifactDirectory, "locked-graph-1.provenance.json");
+    const receiptFile = path.join(artifactDirectory, `${graphFixture.graph.id}.receipt.json`);
+    const rawReportFile = path.join(artifactDirectory, `${graphFixture.graph.id}.raw.json`);
+    return {
+      lockedReceipt: fs.existsSync(receiptFile) ? fs.readFileSync(receiptFile, "utf-8") : undefined,
+      lockedProvenance: fs.existsSync(lockedProvenanceFile)
+        ? (JSON.parse(fs.readFileSync(lockedProvenanceFile, "utf-8")) as Record<string, unknown>)
+        : undefined,
+      lockedRawReport: fs.existsSync(rawReportFile) ? fs.readFileSync(rawReportFile) : undefined,
+      lockedPackageJson: fs.readFileSync(path.join(lockedDirectory, "package.json")),
+      lockedPackageLock: fs.readFileSync(path.join(lockedDirectory, "package-lock.json")),
+      npmCalls: fs.existsSync(callsFile)
+        ? fs.readFileSync(callsFile, "utf-8").trim().split("\n")
+        : [],
+      provenance: fs.existsSync(provenanceFile)
+        ? (JSON.parse(fs.readFileSync(provenanceFile, "utf-8")) as Record<string, unknown>)
+        : undefined,
+      result,
+      trustedCacheModes: fs.existsSync(cacheModesFile)
+        ? (JSON.parse(fs.readFileSync(cacheModesFile, "utf-8")) as {
+            directory: number;
+            entry: number;
+          })
+        : undefined,
+    };
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
 const DOMEXCEPTION_INTEGRITY =
   "sha512-tlc/FcYIv5i8RYsl2iDil4A0gOihaas1R5jPcIC4Zw3GhjKsVilw90aHcVlhZPTBLGBzd379S+VcnsDjd9ChiA==";
 
@@ -84,58 +303,371 @@ function writeProductionSourceGraph(
   return { sourceLock, sourcePackage };
 }
 
-describe("trusted reviewed npm audit workflow (#5896)", () => {
-  it("accepts only an explicitly reviewed lock during a dependency transition", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-lock-transition-"));
-    const lockfile = path.join(root, "package-lock.json");
-    fs.writeFileSync(lockfile, "reviewed lock\n");
-    const actualLock = "534ade489fdb2d8ff619a8b110c28fedbd2066e16ebf434738f64a5a44ec9860";
-    const previousLock = "a".repeat(64);
-    const unreviewedLock = "b".repeat(64);
+describe("trusted npm audit workflow (#5896)", () => {
+  // source-shape-contract: security -- Composite audit inputs must cross into executable shell only through the step environment
+  it("passes the cache identity target root without interpolating it into shell source", () => {
+    const action = YAML.parse(
+      fs.readFileSync(
+        path.join(REPO_ROOT, ".github", "actions", "ci-reviewed-npm-audit", "action.yaml"),
+        "utf8",
+      ),
+    ) as CompositeAction;
+    const cacheBucketStep = requiredStep(action.runs, "Resolve npm audit cache buckets");
+
+    expect(cacheBucketStep.env).toEqual({
+      NEMOCLAW_REVIEWED_NPM_AUDIT_CACHE_DIRECTORY: "${{ inputs.cache-directory }}",
+      NEMOCLAW_REVIEWED_NPM_AUDIT_TARGET_ROOT: "${{ inputs.target-root }}",
+    });
+    expect(cacheBucketStep.run).toContain(
+      "const targetRoot = process.env.NEMOCLAW_REVIEWED_NPM_AUDIT_TARGET_ROOT;",
+    );
+    expect(cacheBucketStep.run).toContain(
+      "const identity = parseReviewedNpmIdentityConfig(configSource);",
+    );
+    expect(cacheBucketStep.run).toContain(
+      'hash.update(JSON.stringify({ argv: ["audit", "--registry=https://registry.yarnpkg.com", "--omit=dev", "--json"], ...identity, registry: "https://registry.yarnpkg.com/", schemaVersion: 2 }));',
+    );
+    expect(cacheBucketStep.run).not.toContain("${{ inputs.cache-directory }}");
+    expect(cacheBucketStep.run).not.toContain("${{ inputs.target-root }}");
+  });
+
+  it("rejects audit production when installed npm differs from the reviewed identity", () => {
+    const fixture = runConsolidatedAuditFixture(() => {}, undefined, 0, 0, "11.18.0");
+
+    expect(fixture.result.status).not.toBe(0);
+    expect(fixture.result.stderr).toContain(
+      "Reviewed npm audit requires its configured npm version.",
+    );
+    expect(fixture.lockedReceipt).toBeUndefined();
+  });
+
+  it("records the selected replacement identity in locked-graph audit provenance", () => {
+    const graph = REVIEWED_AUDIT_CONFIG.lockedGraphs.find(({ id }) => id === "openclaw-runtime")!;
+    const fixture = runConsolidatedAuditFixture(
+      () => {},
+      undefined,
+      0,
+      0,
+      REVIEWED_AUDIT_CONFIG.npmVersion,
+      openClawReplacementGraphFixture(REPO_ROOT, graph),
+    );
+
+    expect(fixture.result.status, fixture.result.stderr.toString()).toBe(0);
+    expect(fixture.lockedProvenance).toMatchObject({
+      graph: {
+        label: "OpenClaw 2026.9.1 locked runtime graph",
+        packageSpecs: ["openclaw@2026.9.1"],
+      },
+      scanner: {
+        name: "npm audit",
+        nodeVersion: process.version,
+        npmVersion: REVIEWED_AUDIT_CONFIG.npmVersion,
+      },
+    });
+    expect(fixture.lockedReceipt).toBeDefined();
+    expect(fixture.npmCalls).toContain(
+      JSON.stringify(["view", "openclaw@2026.9.1", "dist.integrity"]),
+    );
+    expect(fixture.npmCalls).toContain(
+      JSON.stringify(["view", "openclaw@2026.9.1", "dist.tarball"]),
+    );
+    expect(fixture.npmCalls).toContain(JSON.stringify(NPM_AUDIT_SIGNATURE_ARGV));
+  });
+
+  it("restores the read-only trusted cache after offline packing fails", () => {
+    const fixture = runConsolidatedAuditFixture(() => {}, undefined, 0, 9);
+
+    expect({
+      status: fixture.result.status,
+      stderr: fixture.result.stderr.toString(),
+      trustedCacheModes: fixture.trustedCacheModes,
+      cleanupPermissionFailure: fixture.result.stderr.includes("EACCES"),
+    }).toEqual({
+      status: 1,
+      stderr: expect.stringContaining("Reviewed npm audit could not pack a reviewed archive."),
+      trustedCacheModes: { directory: 0o555, entry: 0o444 },
+      cleanupPermissionFailure: false,
+    });
+  });
+
+  it("rejects a target-controlled npm registry override", () => {
+    const fixture = runConsolidatedAuditFixture((targetRoot) => {
+      fs.writeFileSync(
+        path.join(targetRoot, "agents", "openclaw", "wechat-runtime", ".npmrc"),
+        "registry=https://registry.example.test/\n",
+      );
+    });
+
+    expect(fixture.result.status).not.toBe(0);
+    expect(fixture.result.stderr).toContain(
+      "Reviewed npm audit refused target-controlled npm configuration.",
+    );
+    expect(fixture.npmCalls.some((call) => call.includes("--legacy-peer-deps"))).toBe(false);
+  });
+
+  it("rejects an off-origin transitive package archive before npm installs the WeChat graph", () => {
+    const fixture = runConsolidatedAuditFixture((targetRoot) => {
+      const lockFile = path.join(
+        targetRoot,
+        "agents",
+        "openclaw",
+        "wechat-runtime",
+        "package-lock.json",
+      );
+      const lock = JSON.parse(fs.readFileSync(lockFile, "utf-8"));
+      lock.packages["node_modules/qrcode-terminal"].resolved =
+        "https://registry.example.test/qrcode-terminal-0.12.0.tgz";
+      fs.writeFileSync(lockFile, `${JSON.stringify(lock, null, 2)}\n`);
+    });
+
+    expect(fixture.result.status).not.toBe(0);
+    expect(fixture.result.stderr).toContain(
+      "Reviewed npm audit rejected a package outside the reviewed npm registry.",
+    );
+    expect(fixture.npmCalls.some((call) => call.includes("--legacy-peer-deps"))).toBe(false);
+  });
+
+  it.each([
+    ["malformed npm output", "{not-json", 1, /invalid-json/],
+    [
+      "parseable npm error JSON",
+      JSON.stringify({
+        error: { summary: "registry request failed: ECONNRESET" },
+      }),
+      1,
+      /registry-network-error/,
+    ],
+    ["missing vulnerability metadata", JSON.stringify({}), 0, /incomplete-report/],
+    [
+      "an incomplete severity matrix",
+      JSON.stringify({
+        metadata: {
+          vulnerabilities: { info: 0, low: 0, moderate: 0, high: 0 },
+        },
+      }),
+      0,
+      /incomplete-report/,
+    ],
+  ])("records provenance and fails closed for %s", (_label, output, status, expectedFailure) => {
+    const fixture = runConsolidatedAuditFixture(() => {}, output, status);
+
+    expect(fixture.result.status).not.toBe(0);
+    expect(fixture.provenance, fixture.result.stderr.toString()).toMatchObject({
+      failure: expect.stringMatching(expectedFailure),
+      rawReportPath: "source-graph.json",
+    });
+  });
+
+  it("retains the temporary graph inputs that its receipt authenticates", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "npm-audit-receipt-inputs-"));
+    const packageJsonFile = path.join(root, "package.json");
+    const packageLockFile = path.join(root, "package-lock.json");
+    const rawReportFile = path.join(root, "report.json");
+    const packageJson = Buffer.from("temporary manifest\n");
+    const packageLock = Buffer.from("temporary lock\n");
     try {
-      expect(selectReviewedLockSha256(lockfile, actualLock, undefined, "test graph")).toBe(
-        actualLock,
+      fs.writeFileSync(packageJsonFile, packageJson);
+      fs.writeFileSync(packageLockFile, packageLock);
+      fs.writeFileSync(rawReportFile, "{}\n");
+      fs.writeFileSync(
+        path.join(root, "report.provenance.json"),
+        JSON.stringify({ run: { startedAt: "2026-01-01T00:00:00.000Z" } }),
       );
-      expect(selectReviewedLockSha256(lockfile, previousLock, actualLock, "test graph")).toBe(
-        actualLock,
-      );
+      const receiptOptions = {
+        artifactDirectory: root,
+        graphId: "temporary-graph",
+        reviewedNpmIdentity: REVIEWED_AUDIT_CONFIG,
+        packageJsonFile,
+        packageLockFile,
+        preserveInputs: true,
+        rawReportFile,
+        registryOrigin: "https://registry.npmjs.org/",
+        result: {
+          acceptedAdvisories: [],
+          blockingThreshold: "high",
+          exceptionPolicySha256: "a".repeat(64),
+          graph: "temporary-graph",
+          reported: { info: 0, low: 0, moderate: 0, high: 0, critical: 0 },
+          schemaVersion: 1,
+          status: "clean",
+          unacceptedBlockingAdvisories: [],
+        },
+        threshold: "high",
+      } as const;
       expect(() =>
-        selectReviewedLockSha256(lockfile, previousLock, unreviewedLock, "test graph"),
-      ).toThrow("lock SHA-256 mismatch");
+        emitAuditReceipt({ ...receiptOptions, expectedLockSha256: "b".repeat(64) }),
+      ).toThrow("temporary-graph receipt lock does not match its reviewed identity");
+      emitAuditReceipt({
+        ...receiptOptions,
+        expectedLockSha256: createHash("sha256").update(packageLock).digest("hex"),
+      });
+
+      expect(fs.readFileSync(path.join(root, "temporary-graph.package.json"))).toEqual(packageJson);
+      expect(fs.readFileSync(path.join(root, "temporary-graph.package-lock.json"))).toEqual(
+        packageLock,
+      );
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
 
-  it("rejects a replacement lock digest that duplicates the current digest", () => {
-    const digest = "a".repeat(64);
-    const config = {
-      archiveGraphId: "reviewed-archive-graph",
-      archivePackages: [],
-      archiveTarVersion: "7.5.21",
-      artifactDirectory: "artifacts/reviewed-npm-audit",
-      exceptionFile: "ci/npm-audit-exceptions.json",
-      lockedGraphs: [
-        {
+  it("keeps the WeChat archive and reviewed locked graph distinct", () => {
+    const config = parseAuditConfig(
+      fs.readFileSync(path.join(REPO_ROOT, "ci", "reviewed-npm-audit.json"), "utf-8"),
+    );
+    expect(
+      config.archivePackages.some(
+        ({ packageSpec }) => packageSpec === "@tencent-weixin/openclaw-weixin@2.4.3",
+      ),
+    ).toBe(true);
+    expect(config.lockedGraphs).toContainEqual(
+      expect.objectContaining({
+        id: "wechat-runtime",
+        inputValidation: "wechat-runtime",
+        installMode: "legacy-peer-deps",
+        lockSha256: "09a91cabd559ed2294fb263602009f9f79259e765281992e56961eed0e8c1ed9",
+        severityThreshold: "low",
+        signatureAudit: "retry-download-failures",
+      }),
+    );
+  });
+
+  it.each(REVIEWED_AUDIT_CONFIG.lockedGraphs)(
+    "keeps the committed $id graph coherent with its referenced lock",
+    (graph) => {
+      const lockfilePath = path.join(REPO_ROOT, graph.directory, "package-lock.json");
+      expect(() =>
+        verifyReviewedNpmLock(
+          {
+            expectedIntegrity: graph.integrity,
+            expectedLockSha256: graph.lockSha256,
+            label: graph.label,
+            lockfilePath,
+            packageSpec: graph.packageSpec,
+            registryOrigin: REVIEWED_AUDIT_CONFIG.registryOrigin,
+            tarballUrl: graph.tarballUrl,
+          },
+          (args, request) =>
+            ({
+              "dist.integrity": request.expectedIntegrity,
+              "dist.tarball": request.tarballUrl,
+            })[args[2]!]!,
+        ),
+      ).not.toThrow();
+    },
+  );
+
+  it("validates the exact checked-in WeChat runtime inputs", () => {
+    expect(() =>
+      validateWechatRuntimeInputs(
+        path.join(REPO_ROOT, "agents/openclaw/wechat-runtime/package.json"),
+        path.join(REPO_ROOT, "agents/openclaw/wechat-runtime/package-lock.json"),
+        "https://registry.npmjs.org/",
+      ),
+    ).not.toThrow();
+  });
+
+  it("pins every signature audit to the reviewed Yarn registry", () => {
+    expect(NPM_AUDIT_SIGNATURE_ARGV).toEqual([
+      "audit",
+      "signatures",
+      "--registry=https://registry.yarnpkg.com",
+      "--omit=dev",
+    ]);
+    expect(NPM_AUDIT_SIGNATURE_ARGV).not.toEqual(["audit", "signatures", "--omit=dev"]);
+  });
+
+  it("retries signature downloads only three times and records evidence", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "wechat-signatures-"));
+    const evidence = path.join(root, "signatures.txt");
+    let calls = 0;
+    try {
+      verifySignaturesWithReviewedRetry(root, evidence, () => {
+        calls += 1;
+        return calls < 3
+          ? {
+              status: 1,
+              stdout: "",
+              stderr: "npm error Failed to download signature",
+            }
+          : { status: 0, stdout: "verified", stderr: "" };
+      });
+      expect(calls).toBe(3);
+      expect(fs.readFileSync(evidence, "utf-8")).toContain("attempt=3 status=0");
+      calls = 0;
+      expect(() =>
+        verifySignaturesWithReviewedRetry(root, evidence, () => {
+          calls += 1;
+          return { status: 1, stdout: "", stderr: "invalid signature" };
+        }),
+      ).toThrow("after 1 attempt");
+      expect(calls).toBe(1);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+  it("selects one exact replacement package identity for a reviewed lock", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-graph-transition-"));
+    const lockfile = path.join(root, "package-lock.json");
+    fs.writeFileSync(lockfile, "replacement graph\n");
+    const replacementLock = createHash("sha256").update("replacement graph\n").digest("hex");
+    const replacement = {
+      integrity: "sha512-replacement",
+      label: "OpenClaw replacement",
+      lockSha256: replacementLock,
+      packageSpec: "openclaw@2026.9.1",
+      tarballUrl: "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.1.tgz",
+    };
+    try {
+      expect(
+        selectReviewedLockedGraphIdentity(lockfile, {
           directory: "agents/openclaw/openclaw-runtime",
           id: "openclaw-runtime",
-          lockSha256: digest,
-          replacementLockSha256: digest,
-        },
-      ],
-      nodeVersion: "22.23.2",
-      registryOrigin: "https://registry.npmjs.org/",
-      schemaVersion: 2,
-      severityThreshold: "high",
-      sourceNestedShrinkwrapPackages: [],
-      sourceRegistryPackage: {
-        artifactName: "reviewed-package-1.0.0.tgz",
-        integrity: "sha512-reviewedintegrity",
-        label: "reviewed package 1.0.0",
-        packageSpec: "@example/reviewed@1.0.0",
-        tarballUrl: "https://npm.pkg.github.com/download/@example/reviewed/1.0.0/reviewed",
-      },
-      sourceRegistryPackagesWithoutIntegrity: [],
+          integrity: "sha512-current",
+          label: "OpenClaw current",
+          lockSha256: "a".repeat(64),
+          packageSpec: "openclaw@2026.7.1",
+          replacement,
+          tarballUrl: "https://registry.npmjs.org/openclaw/-/openclaw-2026.7.1.tgz",
+        }),
+      ).toEqual(replacement);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects the prior identity after a reviewed replacement is finalized", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-graph-cutover-"));
+    const lockfile = path.join(root, "package-lock.json");
+    fs.writeFileSync(lockfile, "prior graph\n");
+    try {
+      expect(() =>
+        selectReviewedLockedGraphIdentity(lockfile, {
+          directory: "agents/openclaw/openclaw-runtime",
+          id: "openclaw-runtime",
+          integrity: "sha512-final",
+          label: "OpenClaw final",
+          lockSha256: "a".repeat(64),
+          packageSpec: "openclaw@2026.9.1",
+          tarballUrl: "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.1.tgz",
+        }),
+      ).toThrow(`Expected one of: ${"a".repeat(64)}`);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // source-shape-contract: security -- A replacement graph must retain the same npm package name so reviewed transition authority cannot install an unrelated dependency
+  it("rejects a replacement graph for a different package", () => {
+    const config = JSON.parse(REVIEWED_AUDIT_CONFIG_SOURCE) as {
+      lockedGraphs: Array<Record<string, unknown>>;
+    };
+    config.lockedGraphs[0]!.replacement = {
+      integrity: "sha512-replacement",
+      label: "Different package",
+      lockSha256: "b".repeat(64),
+      packageSpec: "different-package@1.0.0",
+      tarballUrl: "https://registry.npmjs.org/different-package/-/different-package-1.0.0.tgz",
     };
 
     expect(() => parseAuditConfig(JSON.stringify(config))).toThrow(
@@ -143,7 +675,7 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
     );
   });
 
-  // source-shape-contract: security -- One reviewed package field prevents a second package identity from bypassing the credential-isolation workflow
+  // source-shape-contract: security -- One active package plus one same-package replacement prevents an open-ended identity list from bypassing the credential-isolation workflow
   it("rejects the removed plural source-registry package shape", () => {
     const configFile = path.join(REPO_ROOT, "ci", "reviewed-npm-audit.json");
     const config = JSON.parse(fs.readFileSync(configFile, "utf-8")) as Record<string, unknown>;
@@ -201,149 +733,15 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
     );
   });
 
-  it("rejects a mismatched npm bootstrap archive before installation (#8253)", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-npm-bootstrap-"));
-    const bin = path.join(root, "bin");
-    const npmLog = path.join(root, "npm.log");
-    const installMarker = path.join(root, "install-called");
-    const npmStub = path.join(bin, "npm");
-    const bootstrap = path.join(
-      REPO_ROOT,
-      ".github",
-      "actions",
-      "ci-reviewed-npm-audit",
-      "verify-and-install-npm.sh",
-    );
-
-    try {
-      fs.mkdirSync(bin);
-      fs.writeFileSync(
-        npmStub,
-        `#!/usr/bin/env bash
-set -euo pipefail
-printf '%s\\n' "$1" >> "$NEMOCLAW_TEST_NPM_LOG"
-case "$1" in
-  pack)
-    shift
-    download_dir=""
-    while [ "$#" -gt 0 ]; do
-      if [ "$1" = "--pack-destination" ]; then
-        download_dir="$2"
-        break
-      fi
-      shift
-    done
-    [ -n "$download_dir" ]
-    printf 'tampered archive\\n' > "$download_dir/npm-10.9.4.tgz"
-    ;;
-  install)
-    : > "$NEMOCLAW_TEST_INSTALL_MARKER"
-    ;;
-  *)
-    exit 2
-    ;;
-esac
-`,
-        { mode: 0o755 },
-      );
-
-      const result = spawnSync("bash", [bootstrap], {
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          NEMOCLAW_REVIEWED_NPM_INTEGRITY: "sha512-invalid",
-          NEMOCLAW_REVIEWED_NPM_VERSION: "10.9.4",
-          NEMOCLAW_TEST_INSTALL_MARKER: installMarker,
-          NEMOCLAW_TEST_NPM_LOG: npmLog,
-          PATH: `${bin}:${process.env.PATH ?? ""}`,
-          RUNNER_TEMP: root,
-        },
-      });
-
-      expect(result.status).toBe(1);
-      expect(result.stderr).toContain("npm@10.9.4 archive integrity mismatch");
-      expect(fs.readFileSync(npmLog, "utf8")).toBe("pack\n");
-      expect(fs.existsSync(installMarker)).toBe(false);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("installs a matching npm bootstrap archive offline (#8253)", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-npm-bootstrap-"));
-    const bin = path.join(root, "bin");
-    const npmLog = path.join(root, "npm.log");
-    const npmStub = path.join(bin, "npm");
-    const archiveContents = "verified archive\n";
-    const bootstrap = path.join(
-      REPO_ROOT,
-      ".github",
-      "actions",
-      "ci-reviewed-npm-audit",
-      "verify-and-install-npm.sh",
-    );
-
-    try {
-      fs.mkdirSync(bin);
-      fs.writeFileSync(
-        npmStub,
-        `#!/usr/bin/env bash
-set -euo pipefail
-printf '%s\\n' "$*" >> "$NEMOCLAW_TEST_NPM_LOG"
-case "$1" in
-  pack)
-    shift
-    download_dir=""
-    while [ "$#" -gt 0 ]; do
-      if [ "$1" = "--pack-destination" ]; then
-        download_dir="$2"
-        break
-      fi
-      shift
-    done
-    [ -n "$download_dir" ]
-    printf 'verified archive\\n' > "$download_dir/npm-10.9.4.tgz"
-    ;;
-  install)
-    ;;
-  *)
-    exit 2
-    ;;
-esac
-`,
-        { mode: 0o755 },
-      );
-
-      const integrity = `sha512-${createHash("sha512").update(archiveContents).digest("base64")}`;
-      const result = spawnSync("bash", [bootstrap], {
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          NEMOCLAW_REVIEWED_NPM_INTEGRITY: integrity,
-          NEMOCLAW_REVIEWED_NPM_VERSION: "10.9.4",
-          NEMOCLAW_TEST_NPM_LOG: npmLog,
-          PATH: `${bin}:${process.env.PATH ?? ""}`,
-          RUNNER_TEMP: root,
-        },
-      });
-
-      const npmInvocations = fs.readFileSync(npmLog, "utf8").trim().split("\n");
-      expect(result.status).toBe(0);
-      expect(npmInvocations).toHaveLength(2);
-      expect(npmInvocations[0]).toContain("pack npm@10.9.4 --pack-destination");
-      expect(npmInvocations[1]).toMatch(
-        /^install --global .*\/npm-10\.9\.4\.tgz --userconfig \/dev\/null --ignore-scripts --no-audit --no-fund --offline$/,
-      );
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
   it("materializes the NemoClaw production graph without changing its lock (#8116)", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-source-graph-"));
     const source = path.join(root, "source");
     const destination = path.join(root, "materialized");
-    const manifest = { name: "source-graph-fixture", private: true, version: "1.0.0" };
+    const manifest = {
+      name: "source-graph-fixture",
+      private: true,
+      version: "1.0.0",
+    };
     const lock = {
       name: manifest.name,
       version: manifest.version,
@@ -884,7 +1282,10 @@ esac
     const lockSource = `${JSON.stringify(
       {
         lockfileVersion: 3,
-        packages: { "": { name: "fixture", version: "1.0.0" }, "node_modules/fixture": null },
+        packages: {
+          "": { name: "fixture", version: "1.0.0" },
+          "node_modules/fixture": null,
+        },
       },
       null,
       2,
@@ -928,8 +1329,8 @@ esac
         artifactDirectory: "/artifacts",
         directory: "/materialized",
         exceptionFile: "/exceptions.json",
-        npmVersion: "10.9.4",
         packageSpec: "nemoclaw@0.0.0",
+        reviewedNpmIdentity: REVIEWED_AUDIT_CONFIG,
         threshold: "high",
       },
       {
@@ -941,9 +1342,11 @@ esac
             graph: "nemoclaw-cli",
             provenance: {
               label: "NemoClaw CLI locked production graph",
-              npmVersion: "10.9.4",
+              npmIntegrity: REVIEWED_AUDIT_CONFIG.npmIntegrity,
+              npmVersion: REVIEWED_AUDIT_CONFIG.npmVersion,
               packageSpecs: ["nemoclaw@0.0.0"],
             },
+            reviewedNpmIdentity: REVIEWED_AUDIT_CONFIG,
             reportFile: path.join("/artifacts", "source-graph.json"),
             resultFile: path.join("/artifacts", "source-graph-policy.json"),
             threshold: "high",
@@ -964,7 +1367,7 @@ esac
         "high",
       ),
     ).toThrow(
-      "reviewed npm audit threshold failed\nNemoClaw CLI locked production graph: 1 unaccepted at or above high",
+      "npm audit threshold failed\nNemoClaw CLI locked production graph: 1 unaccepted at or above high",
     );
   });
 
@@ -1028,6 +1431,49 @@ esac
       expect(normalizedRequester.dependencies).toEqual({
         "@nolyfill/domexception": "1.0.28",
       });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves the hoisted OpenClaw DOMException package unchanged", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-signature-hoisted-"));
+    const lockfile = path.join(root, "package-lock.json");
+    const lock = {
+      lockfileVersion: 3,
+      packages: {
+        "node_modules/fetch-blob": {
+          dependencies: { "node-domexception": "^1.0.0" },
+          version: "3.2.0",
+        },
+        "node_modules/node-domexception": {
+          version: "1.0.0",
+        },
+      },
+    };
+    try {
+      const contents = `${JSON.stringify(lock, null, 2)}\n`;
+      fs.writeFileSync(lockfile, contents);
+
+      normalizeOpenClawSignatureAlias(root);
+
+      expect(fs.readFileSync(lockfile, "utf8")).toBe(contents);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a malformed lock before treating the legacy alias as absent", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-signature-malformed-"));
+    try {
+      fs.writeFileSync(
+        path.join(root, "package-lock.json"),
+        `${JSON.stringify({ lockfileVersion: 3, packages: [] })}\n`,
+      );
+
+      expect(() => normalizeOpenClawSignatureAlias(root)).toThrow(
+        "OpenClaw signature-audit alias lock identity drifted",
+      );
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

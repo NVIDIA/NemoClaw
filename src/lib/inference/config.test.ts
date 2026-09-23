@@ -22,7 +22,6 @@ import {
   LLAMA_CPP_LOCAL_CREDENTIAL_ENV,
   MANAGED_PROVIDER_ID,
   OLLAMA_LOCAL_CREDENTIAL_ENV,
-  parseGatewayInference,
   planInferenceRouteReconcile,
   resolveAgentDefaultCloudModel,
   resolveAgentInferenceApi,
@@ -103,7 +102,6 @@ describe("inference selection config", () => {
     expect(CLOUD_MODEL_OPTIONS).toEqual([
       { id: "nvidia/nemotron-3-ultra-550b-a55b", label: "Nemotron 3 Ultra 550B" },
       { id: "nvidia/nemotron-3-super-120b-a12b", label: "Nemotron 3 Super 120B" },
-      { id: "minimaxai/minimax-m3", label: "Minimax M3" },
     ]);
     expect(CLOUD_MODEL_OPTIONS.map((option: { id: string }) => option.id)).not.toContain(
       "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
@@ -116,6 +114,9 @@ describe("inference selection config", () => {
     );
     expect(CLOUD_MODEL_OPTIONS.map((option: { id: string }) => option.id)).not.toContain(
       "z-ai/glm-5.2",
+    );
+    expect(CLOUD_MODEL_OPTIONS.map((option: { id: string }) => option.id)).not.toContain(
+      "minimaxai/minimax-m3",
     );
   });
 
@@ -556,65 +557,6 @@ describe("coerceAgentInferenceApi", () => {
     expect(coerceAgentInferenceApi({ inference: {} }, "anthropic-messages")).toBe(
       "anthropic-messages",
     );
-  });
-});
-
-describe("parseGatewayInference", () => {
-  it("parses provider and model from openshell inference get output", () => {
-    const output = [
-      "Gateway inference:",
-      "",
-      "  Provider: nvidia-nim",
-      "  Model: nvidia/nemotron-3-super-120b-a12b",
-      "  Version: 2",
-    ].join("\n");
-    expect(parseGatewayInference(output)).toEqual({
-      provider: "nvidia-nim",
-      model: "nvidia/nemotron-3-super-120b-a12b",
-    });
-  });
-
-  it("parses the OpenShell v0.0.99 inference heading", () => {
-    const output = [
-      "Inference:",
-      "",
-      "  Workspace: default",
-      "  Provider: compatible-endpoint",
-      "  Model: custom-model",
-      "  Version: 1",
-      "",
-      "System inference:",
-      "",
-      "  Not configured",
-    ].join("\n");
-    expect(parseGatewayInference(output)).toEqual({
-      provider: "compatible-endpoint",
-      model: "custom-model",
-    });
-  });
-
-  it("returns null for empty output", () => {
-    expect(parseGatewayInference("")).toBeNull();
-    expect(parseGatewayInference(null)).toBeNull();
-    expect(parseGatewayInference(undefined)).toBeNull();
-  });
-
-  it("returns null when inference is not configured", () => {
-    expect(parseGatewayInference("Gateway inference:\n\n  Not configured")).toBeNull();
-  });
-
-  it("handles output with only provider (no model line)", () => {
-    expect(parseGatewayInference("Gateway inference:\n\n  Provider: nvidia-nim")).toEqual({
-      provider: "nvidia-nim",
-      model: null,
-    });
-  });
-
-  it("handles output with only model (no provider line)", () => {
-    expect(parseGatewayInference("Gateway inference:\n\n  Model: some/model")).toEqual({
-      provider: null,
-      model: "some/model",
-    });
   });
 });
 

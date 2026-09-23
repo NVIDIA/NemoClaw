@@ -47,6 +47,7 @@ export interface ReapHostGatewayBeforeLaunchOptions {
   gatewayBin: string | null;
   /** Extra candidate PIDs to reap (e.g. the current port listener). */
   extraPids?: Array<number | null | undefined>;
+  printError?: (message: string) => void;
 }
 
 // A `stopHostGatewayProcesses` result with nothing stopped — returned when there
@@ -131,7 +132,7 @@ export function reapHostGatewayBeforeLaunchOrFail(
   const result = reapHostGatewayBeforeLaunch(options, deps, stop);
   const failure = prelaunchReapFailureMessage(result);
   if (failure) {
-    console.error(`  ${failure}`);
+    (options.printError ?? console.error)(`  ${failure}`);
     if (options.exitOnFailure) exit(1);
     throw new Error(failure);
   }
@@ -183,11 +184,12 @@ export function reapDuplicateHostGatewaysExceptOrFail(
   deps: Partial<HostGatewayProcessDeps> = {},
   stop: typeof stopHostGatewayProcesses = stopHostGatewayProcesses,
   exit: (code: number) => never = (code) => process.exit(code) as never,
+  printError: (message: string) => void = console.error,
 ): StopHostGatewayResult {
   const result = reapDuplicateHostGatewaysExcept(keepPid, gatewayBin, candidatePids, deps, stop);
   const failure = prelaunchReapFailureMessage(result);
   if (failure) {
-    console.error(`  ${failure}`);
+    printError(`  ${failure}`);
     if (exitOnFailure) exit(1);
     throw new Error(failure);
   }

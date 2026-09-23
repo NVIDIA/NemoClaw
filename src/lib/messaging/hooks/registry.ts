@@ -42,9 +42,3 @@ export class MessagingHookRegistry {
     return Array.from(this.handlers.keys());
   }
 }
-
-export function createMessagingHookRegistry(
-  registrations: readonly MessagingHookRegistration[] = [],
-): MessagingHookRegistry {
-  return new MessagingHookRegistry(registrations);
-}

@@ -27,8 +27,9 @@ import {
 } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
+import { loadAgent } from "../../../src/lib/agent/defs.ts";
 import type { NemoClawInstance } from "../fixtures/phases/onboarding.ts";
-import { ubuntuRepoDocker } from "../registry/matrix.ts";
+import { ubuntuRepoManagedRuntime } from "../registry/matrix.ts";
 import { stripTerminalControl } from "../support/issue-4434-tui-capture.ts";
 import {
   buildIssue6194OpenShellApprovalExpectScript,
@@ -41,29 +42,31 @@ import {
   precreateIssue6194Capture,
   readIssue6194Capture,
 } from "./issue-6194-tui-expect.ts";
-import { verifyNemoClawRefFidelity } from "./openclaw-tui-ref-fidelity.ts";
+import {
+  resolveExpectedOpenClawVersion,
+  verifyNemoClawRefFidelity,
+} from "./openclaw-tui-ref-fidelity.ts";
 import {
   classifyIssue2603Run,
   type Issue2603AttemptOutcome,
   normalizeIssue2603Trace,
 } from "./openclaw-tui-run-classification.ts";
 
-// Reuses the standard ubuntu-repo-docker environment with the
-// `cloud-openclaw` onboarding profile (already in
-// `runtime-support.ts:SUPPORTED_ONBOARDING`). We don't route through the
+// Reuses the standard Ubuntu environment with the `cloud-openclaw`
+// onboarding profile. We don't route through the
 // target registry because the registry is keyed on steady-state
 // expected-state probes; this test's regression-target probes are bespoke
 // websocket-trace assertions that don't fit the
 // `from(env) → from(state, instance)` model.
-const ENVIRONMENT = ubuntuRepoDocker("cloud-openclaw");
+const ENVIRONMENT = ubuntuRepoManagedRuntime("cloud-openclaw");
 
 const SANDBOX_NAME = "e2e-oc-tui-corr";
-// OpenClaw 2026.7.1 is the post-fix regression-guard version for #2603 + #3145.
-// Historical buggy builds were older; this live guard asserts the fixed
-// protocol/history contract stays stable on the pinned OpenClaw version.
-// Override via env so future pin bumps do not require a code edit.
-const EXPECTED_OPENCLAW_VERSION =
-  process.env.E2E_OPENCLAW_TUI_CORRELATION_PINNED_VERSION ?? "2026.7.1";
+// Historical buggy builds were older; this live guard follows the exact
+// manifest pin unless a deliberate E2E override is supplied.
+const EXPECTED_OPENCLAW_VERSION = resolveExpectedOpenClawVersion({
+  override: process.env.E2E_OPENCLAW_TUI_CORRELATION_PINNED_VERSION,
+  manifestVersion: loadAgent("openclaw").expectedVersion,
+});
 
 const LIVE_SCRIPT_NAME = "openclaw-issue2603-chat-correlation.cjs";
 const SANDBOX_GATEWAY_PORT = 18789;
@@ -267,7 +270,11 @@ function looksLikeEventCaptureFailure(repro: LiveIssue2603Trace): boolean {
 function issue2603AttemptOutcome(
   repro: LiveIssue2603Trace,
   index: number,
-): Issue2603AttemptOutcome & { attempt: number; eventCount: number; chatEventCount: number } {
+): Issue2603AttemptOutcome & {
+  attempt: number;
+  eventCount: number;
+  chatEventCount: number;
+} {
   const failedAttempt = {
     attempt: index + 1,
     captureFailure: false,
@@ -647,7 +654,9 @@ test(
     const expectScript = artifacts.pathFor("issue6194-openclaw-tui.expect");
     const tuiSession = `${ISSUE6194_TUI_SESSION_PREFIX}-${instance.sandboxName}-${Date.now()}-${randomUUID()}`;
     precreateIssue6194Capture(captureFile);
-    writeFileSync(expectScript, buildIssue6194TuiExpectScript(), { mode: 0o700 });
+    writeFileSync(expectScript, buildIssue6194TuiExpectScript(), {
+      mode: 0o700,
+    });
     try {
       const tui = await host.command("expect", [expectScript], {
         artifactName: "issue6194-openclaw-tui-post-idle",
@@ -679,7 +688,7 @@ test(
         expectExitCode: tui.exitCode,
         captureExists: tuiCapture.exists,
         captureNonEmpty: plainCapture.length > 0,
-        captureHasMarkers: plainCapture.includes("ISSUE6194_MARK"),
+        captureHasMarkers: combined.includes("ISSUE6194_MARK"),
         connectedIdleInitial: combined.includes("ISSUE6194_MARK connected_idle_initial"),
         chatReply: combined.includes("ISSUE6194_MARK chat_reply"),
         connectedIdleAfterChat: combined.includes("ISSUE6194_MARK connected_idle_after_chat"),
@@ -690,7 +699,7 @@ test(
 
       expect(tuiCapture.exists, "TUI expect capture must exist").toBe(true);
       expect(plainCapture.length, "TUI expect capture must not be empty").toBeGreaterThan(0);
-      expect(plainCapture, "TUI expect capture must include expect-script markers").toContain(
+      expect(combined, "TUI expect output must include expect-script markers").toContain(
         "ISSUE6194_MARK",
       );
       expect(

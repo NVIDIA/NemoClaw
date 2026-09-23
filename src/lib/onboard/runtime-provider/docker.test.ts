@@ -4,30 +4,22 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createDockerRuntimeProviderBundle } from "./docker";
-import type { RuntimeProviderLifecycleInput } from "./contract";
+import * as dockerCommands from "../../adapters/docker/run";
 
-function lifecycleInput(): RuntimeProviderLifecycleInput {
-  return {
-    environment: {},
-    log: vi.fn(),
-    sandboxName: "alpha",
-    sandbox: {
-      name: "alpha",
-      agent: "hermes",
-      openshellDriver: "docker",
-      gatewayName: "nemoclaw",
-      lifecycleGeneration: "generation-1",
-    } as RuntimeProviderLifecycleInput["sandbox"],
-  };
+const GPU_PROOF_RESOURCE = {
+  name: "nemoclaw-gpu-proof-1234",
+  ownership: { label: "com.nvidia.nemoclaw.gpu-proof", value: "true" },
+} as const;
+
+function supportedContainerEngine(provider: ReturnType<typeof createDockerRuntimeProviderBundle>) {
+  expect(provider.containerEngine.supported).toBe(true);
+  return provider.containerEngine as Extract<typeof provider.containerEngine, { supported: true }>;
 }
 
-function poison(): never {
-  throw new Error("Docker dependency must not be called");
-}
-
-function supportedLifecycle(provider: ReturnType<typeof createDockerRuntimeProviderBundle>) {
-  expect(provider.lifecycle.supported).toBe(true);
-  return provider.lifecycle as Extract<typeof provider.lifecycle, { supported: true }>;
+function nvidiaContainer(provider: ReturnType<typeof createDockerRuntimeProviderBundle>) {
+  const capability = supportedContainerEngine(provider).nvidiaContainer;
+  expect(capability).toBeDefined();
+  return capability!;
 }
 
 function inspectDockerHost(stdout: string, status = 0, stderr = "") {
@@ -96,45 +88,135 @@ describe("Docker runtime provider host doctor", () => {
   });
 });
 
-describe("Docker provider portable lifecycle dispatch", () => {
-  it("routes active Hermes start before every Docker dependency (#9203)", () => {
-    const recoverPortableSandbox = vi.fn(() => ({ kind: "already-running" as const }));
-    const provider = createDockerRuntimeProviderBundle({
-      hasPortableLifecycleReceipt: () => true,
-      recoverPortableSandbox,
-      findLabeledSandboxContainers: poison,
-      recoverSandbox: poison,
-      unpauseContainer: poison,
-      withLifecycleLockSync: (_sandboxName, operation) => operation(),
-    });
-    const lifecycle = supportedLifecycle(provider);
+describe("Docker runtime provider NVIDIA container capture", () => {
+  it("maps one provider-neutral NVIDIA run to Docker GPU arguments", () => {
+    const captureHostCommand = vi.fn(() => ({ status: 0, stdout: "proof", stderr: "" }));
+    const provider = createDockerRuntimeProviderBundle({ captureHostCommand });
+    const capability = nvidiaContainer(provider);
 
-    expect(lifecycle.start(lifecycleInput())).toEqual({
-      exitCode: 0,
-      hermesPortableVerified: true,
-    });
-    expect(recoverPortableSandbox).toHaveBeenCalledOnce();
+    expect(
+      capability.capture(
+        "host-local-inference",
+        {
+          image: "registry.example/proof@sha256:" + "a".repeat(64),
+          entrypoint: "/bin/sh",
+          command: ["-c", "proof"],
+          resource: GPU_PROOF_RESOURCE,
+        },
+        12_000,
+      ),
+    ).toMatchObject({ status: 0, stdout: "proof" });
+    expect(captureHostCommand).toHaveBeenCalledWith(
+      "docker",
+      [
+        "run",
+        "--rm",
+        "--name",
+        GPU_PROOF_RESOURCE.name,
+        "--label",
+        "com.nvidia.nemoclaw.gpu-proof=true",
+        "--gpus",
+        "all",
+        "--entrypoint",
+        "/bin/sh",
+        "registry.example/proof@sha256:" + "a".repeat(64),
+        "-c",
+        "proof",
+      ],
+      12_000,
+    );
   });
 
-  it("routes active Hermes stop before Docker capture or mutation (#9203)", () => {
-    const stopPortableSandbox = vi.fn(() => ({
-      kind: "stopped" as const,
-      portableAgent: "hermes" as const,
-    }));
-    const provider = createDockerRuntimeProviderBundle({
-      hasPortableLifecycleReceipt: () => true,
-      stopPortableSandbox,
-      findLabeledSandboxContainers: poison,
-      stopContainer: poison,
-      withLifecycleLockSync: (_sandboxName, operation) => operation(),
-    });
-    const lifecycle = supportedLifecycle(provider);
+  it("removes only the exact owned proof container after timeout", () => {
+    const containerId = "a".repeat(64);
+    const captureHostCommand = vi
+      .fn()
+      .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" })
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: `${containerId}\t${GPU_PROOF_RESOURCE.name}\n`,
+        stderr: "",
+      })
+      .mockReturnValueOnce({ status: 0, stdout: containerId, stderr: "" });
+    const capability = nvidiaContainer(createDockerRuntimeProviderBundle({ captureHostCommand }));
 
-    expect(lifecycle.stop(lifecycleInput(), { beforeStop: poison })).toEqual({
-      exitCode: 0,
-      state: "stopped",
-      hermesPortableVerified: true,
+    expect(
+      capability.cleanup("host-local-inference", GPU_PROOF_RESOURCE, {
+        timeoutMs: 15_000,
+        observation: "until-deadline",
+      }),
+    ).toEqual({ status: "removed" });
+    expect(captureHostCommand).toHaveBeenNthCalledWith(
+      1,
+      "docker",
+      [
+        "ps",
+        "--all",
+        "--no-trunc",
+        "--filter",
+        `name=^/${GPU_PROOF_RESOURCE.name}$`,
+        "--filter",
+        "label=com.nvidia.nemoclaw.gpu-proof=true",
+        "--format",
+        "{{.ID}}\t{{.Names}}",
+      ],
+      expect.any(Number),
+    );
+    expect(captureHostCommand).toHaveBeenNthCalledWith(
+      2,
+      "docker",
+      expect.arrayContaining([
+        "ps",
+        "--filter",
+        `name=^/${GPU_PROOF_RESOURCE.name}$`,
+        "--filter",
+        "label=com.nvidia.nemoclaw.gpu-proof=true",
+      ]),
+      expect.any(Number),
+    );
+    expect(captureHostCommand).toHaveBeenNthCalledWith(
+      3,
+      "docker",
+      ["rm", "-f", containerId],
+      expect.any(Number),
+    );
+  });
+});
+
+describe("Docker network command bounds", () => {
+  it("uses the selected socket, output limit, and forced timeout for provisioning (#11606)", () => {
+    const dockerRun = vi.spyOn(dockerCommands, "dockerRun").mockReturnValue({
+      status: null,
+      signal: "SIGKILL",
+      stdout: Buffer.alloc(0),
+      stderr: Buffer.alloc(0),
+      error: Object.assign(new Error("deadline"), { code: "ETIMEDOUT" }),
+      pid: 1,
+      output: [],
     });
-    expect(stopPortableSandbox).toHaveBeenCalledOnce();
+    const gateway = createDockerRuntimeProviderBundle().gateway as Extract<
+      ReturnType<typeof createDockerRuntimeProviderBundle>["gateway"],
+      { supported: true }
+    >;
+    const runtime = gateway.observeHostRuntime({ environment: {}, platform: "linux" });
+    const args = ["network", "create", "--driver", "bridge", "--attachable", "generic-network"];
+    const result = runtime.network.run(args, 30_000, {
+      maxOutputBytes: 16 * 1024,
+      environment: { DOCKER_HOST: "unix:///run/user/1000/docker.sock" },
+    });
+    expect(dockerRun).toHaveBeenCalledWith(args, {
+      timeout: 30_000,
+      maxBuffer: 16 * 1024,
+      killSignal: "SIGKILL",
+      env: { DOCKER_HOST: "unix:///run/user/1000/docker.sock" },
+      ignoreError: true,
+      suppressOutput: true,
+    });
+    expect(result).toMatchObject({
+      status: null,
+      signal: "SIGKILL",
+      timedOut: true,
+      errorCode: "ETIMEDOUT",
+    });
   });
 });

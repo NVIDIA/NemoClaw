@@ -8,14 +8,20 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { RuntimeProviderPrivilegedSandboxCommandResult } from "../../../src/lib/onboard/runtime-provider/contract.ts";
+import {
+  MANAGED_IMAGE_REPOSITORIES,
+  SHIPPED_MANAGED_IMAGE_AGENTS,
+} from "../../../src/lib/onboard/managed-image/contract.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import {
   assertSecurityPosture,
-  dockerRuntimeEndpointArgs,
   OPENSHELL_SUPERVISOR_CAPABILITY_MASK,
+  parseCapabilitySurfaceReport,
+  parseExpectedOpenShellVersion,
+  PODMAN_OPENSHELL_SUPERVISOR_CAPABILITY_MASK,
   type ProcessSecurityIdentity,
-  parseOpenShellContainerId,
   parseSplitProcessSecurityReport,
   SPLIT_PROCESS_SECURITY_PROBE,
   type SplitProcessSecurityReport,
@@ -28,11 +34,9 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 const ZERO_CAPABILITIES = "0000000000000000";
 const SUPERVISOR_EXECUTABLE = "/opt/openshell/bin/openshell-sandbox";
-const CONTAINER_ID = "a".repeat(64);
 const SANDBOX_NAME = "secure-sandbox";
-const SANDBOX_ID = "sandbox-id";
-const CONTAINER_NAME = `openshell-default--${SANDBOX_NAME}-${SANDBOX_ID}`;
-const PORTABLE_DOCKER_HOST = "unix:///run/user/1000/podman/podman.sock";
+const RESOURCE_HANDLE = "opaque-runtime-resource";
+const MANAGED_IMAGE_REVISION = "a".repeat(40);
 const CONTROLLED_PROC_HARNESS = String.raw`import contextlib
 import grp
 import json
@@ -282,9 +286,71 @@ function successfulProbe(stdout = ""): ShellProbeResult {
   };
 }
 
+function capabilitySurfaceProof(
+  surface: "connect" | "exec",
+  overrides: Partial<Record<"CapInh" | "CapPrm" | "CapEff" | "CapBnd" | "CapAmb", string>> = {},
+): string {
+  const capabilities = {
+    CapInh: ZERO_CAPABILITIES,
+    CapPrm: ZERO_CAPABILITIES,
+    CapEff: ZERO_CAPABILITIES,
+    CapBnd: ZERO_CAPABILITIES,
+    CapAmb: ZERO_CAPABILITIES,
+    ...overrides,
+  };
+  return `NEMOCLAW_SECURITY_CAPABILITY_SURFACE surface=${surface} uid=1000 gid=1000 ${Object.entries(
+    capabilities,
+  )
+    .map(([name, value]) => `${name}=${value}`)
+    .join(" ")}\n`;
+}
+
+function inlineManagedImageCatalogEnvironment(): NodeJS.ProcessEnv {
+  const catalog = Object.fromEntries(
+    SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, index) => {
+      const image = MANAGED_IMAGE_REPOSITORIES[agent];
+      const digest = `sha256:${String(index + 1).repeat(64)}`;
+      return [
+        agent,
+        {
+          agent,
+          capabilityContractVersion: 1,
+          contractVersion: 1,
+          digest,
+          image,
+          platform: "linux/amd64",
+          reference: `${image}@${digest}`,
+          source: {
+            cohort: "ghrun-1-1",
+            release: "v0.0.124",
+            repository: "NVIDIA/NemoClaw",
+            revision: MANAGED_IMAGE_REVISION,
+          },
+          startupProfileContractVersion: 1,
+        },
+      ];
+    }),
+  );
+  return {
+    GITHUB_ACTIONS: "true",
+    NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: JSON.stringify(catalog),
+    NEMOCLAW_RUN_LIVE_E2E: "1",
+  };
+}
+
 afterEach(() => vi.unstubAllEnvs());
 
 describe("security posture fixture", () => {
+  it("accepts only the exact stable OpenShell version token", () => {
+    expect(parseExpectedOpenShellVersion(successfulProbe("openshell 0.0.116\n"))).toBe("0.0.116");
+    expect(() =>
+      parseExpectedOpenShellVersion(successfulProbe("openshell 0.0.116-rc.1\n")),
+    ).toThrow(/expected OpenShell 0\.0\.116/u);
+    expect(() => parseExpectedOpenShellVersion(successfulProbe("openshell 0.0.116+dev\n"))).toThrow(
+      /expected OpenShell 0\.0\.116/u,
+    );
+  });
+
   it("compiles the embedded split-process probe as Python", () => {
     const compiled = spawnSync(
       "python3",
@@ -539,9 +605,31 @@ describe("security posture fixture", () => {
     expect(parseSplitProcessSecurityReport(JSON.stringify(report))).toEqual(report);
   });
 
+  it.each(["CapInh", "CapPrm", "CapEff", "CapBnd", "CapAmb"] as const)(
+    "rejects a nonzero %s set from an exec child",
+    (field) => {
+      const reportField = `${field[0]!.toLowerCase()}${field.slice(1)}`;
+      expect(() =>
+        parseCapabilitySurfaceReport(
+          successfulProbe(capabilitySurfaceProof("exec", { [field]: "0000000000000001" })),
+          "exec",
+          1000,
+          1000,
+        ),
+      ).toThrow(new RegExp(`exec child ${reportField} expected 0`, "u"));
+    },
+  );
+
   it("accepts the exact OpenShell supervisor groups in either report order", () => {
     const report = validReport();
     report.supervisor.status.groups.reverse();
+
+    expect(validateSplitProcessSecurityReport(report)).toEqual(report);
+  });
+
+  it("accepts a root-only OpenShell supervisor without an engine-added sandbox group", () => {
+    const report = validReport();
+    report.supervisor.status.groups = ["0"];
 
     expect(validateSplitProcessSecurityReport(report)).toEqual(report);
   });
@@ -567,26 +655,25 @@ describe("security posture fixture", () => {
       ],
       sandboxGid: 999,
     },
-  ])("accepts the observed $agent process tree with one direct supervisor and secure descendants", ({
-    observedProcEntries,
-    processes,
-    sandboxGid,
-  }) => {
-    const report = validReport();
-    report.observedProcEntries = observedProcEntries;
-    report.sandboxUid = 998;
-    report.sandboxGid = sandboxGid;
-    report.supervisor.status.groups = ["0", String(sandboxGid)];
-    setCurrentChildSupervisors(
-      report,
-      processes.map(({ pid, ppid, startTime }) =>
-        validNemoclawStartProcess({ pid, ppid, sandboxGid, sandboxUid: 998, startTime }),
-      ),
-    );
+  ])(
+    "accepts the observed $agent process tree with one direct supervisor and secure descendants",
+    ({ observedProcEntries, processes, sandboxGid }) => {
+      const report = validReport();
+      report.observedProcEntries = observedProcEntries;
+      report.sandboxUid = 998;
+      report.sandboxGid = sandboxGid;
+      report.supervisor.status.groups = ["0", String(sandboxGid)];
+      setCurrentChildSupervisors(
+        report,
+        processes.map(({ pid, ppid, startTime }) =>
+          validNemoclawStartProcess({ pid, ppid, sandboxGid, sandboxUid: 998, startTime }),
+        ),
+      );
 
-    expect(validateSplitProcessSecurityReport(report)).toEqual(report);
-    expect(parseSplitProcessSecurityReport(JSON.stringify(report))).toEqual(report);
-  });
+      expect(validateSplitProcessSecurityReport(report)).toEqual(report);
+      expect(parseSplitProcessSecurityReport(JSON.stringify(report))).toEqual(report);
+    },
+  );
 
   it("accepts a nested canonical descendant tree", () => {
     const report = validReport();
@@ -636,28 +723,21 @@ describe("security posture fixture", () => {
       name: "group identity",
     },
     {
-      error: /supervisor Groups expected exactly 0 1000/u,
-      mutate: (report) => {
-        report.supervisor.status.groups = ["0"];
-      },
-      name: "missing sandbox supplementary group",
-    },
-    {
-      error: /supervisor Groups expected exactly 0 1000/u,
+      error: /supervisor Groups expected exactly 0 or 0 1000/u,
       mutate: (report) => {
         report.supervisor.status.groups = ["0", "44"];
       },
       name: "wrong sandbox supplementary group",
     },
     {
-      error: /supervisor Groups expected exactly 0 1000/u,
+      error: /supervisor Groups expected exactly 0 or 0 1000/u,
       mutate: (report) => {
         report.supervisor.status.groups = ["0", "1000", "44"];
       },
       name: "extra supplementary group",
     },
     {
-      error: /supervisor Groups expected exactly 0 1000/u,
+      error: /supervisor Groups expected exactly 0 or 0 1000/u,
       mutate: (report) => {
         report.supervisor.status.groups = ["0", "0"];
       },
@@ -734,31 +814,31 @@ describe("security posture fixture", () => {
         );
       },
     },
-  ])("rejects a census with $directCount direct nemoclaw-start child supervisors", ({
-    directCount,
-    mutate,
-  }) => {
-    const report = validReport();
-    mutate(report);
+  ])(
+    "rejects a census with $directCount direct nemoclaw-start child supervisors",
+    ({ directCount, mutate }) => {
+      const report = validReport();
+      mutate(report);
 
-    expect(() => validateSplitProcessSecurityReport(report)).toThrow(
-      new RegExp(`found ${directCount}`, "u"),
-    );
-  });
+      expect(() => validateSplitProcessSecurityReport(report)).toThrow(
+        new RegExp(`found ${directCount}`, "u"),
+      );
+    },
+  );
 
-  it.each([
-    "202",
-    "303",
-  ])("rejects a repeated nemoclaw-start PID with reported start time %s", (startTime) => {
-    const report = validReport();
-    const duplicatePid = structuredClone(report.childSupervisors[0]!);
-    duplicatePid.startTime = startTime;
-    report.childSupervisors.push(duplicatePid);
+  it.each(["202", "303"])(
+    "rejects a repeated nemoclaw-start PID with reported start time %s",
+    (startTime) => {
+      const report = validReport();
+      const duplicatePid = structuredClone(report.childSupervisors[0]!);
+      duplicatePid.startTime = startTime;
+      report.childSupervisors.push(duplicatePid);
 
-    expect(() => validateSplitProcessSecurityReport(report)).toThrow(
-      /PID 42 appeared more than once/u,
-    );
-  });
+      expect(() => validateSplitProcessSecurityReport(report)).toThrow(
+        /PID 42 appeared more than once/u,
+      );
+    },
+  );
 
   it.each([
     {
@@ -864,21 +944,18 @@ describe("security posture fixture", () => {
     });
   });
 
-  it.each([
-    "capInh",
-    "capPrm",
-    "capEff",
-    "capBnd",
-    "capAmb",
-  ] as const)("rejects every nemoclaw-start process with a nonzero %s set", (field) => {
-    reportsWithEachNemoclawStartProcessFirst().forEach((report) => {
-      report.childSupervisors[0]!.status[field] = "0000000000000001";
+  it.each(["capInh", "capPrm", "capEff", "capBnd", "capAmb"] as const)(
+    "rejects every nemoclaw-start process with a nonzero %s set",
+    (field) => {
+      reportsWithEachNemoclawStartProcessFirst().forEach((report) => {
+        report.childSupervisors[0]!.status[field] = "0000000000000001";
 
-      expect(() => validateSplitProcessSecurityReport(report)).toThrow(
-        new RegExp(`nemoclaw-start process\\.${field} expected 0`, "u"),
-      );
-    });
-  });
+        expect(() => validateSplitProcessSecurityReport(report)).toThrow(
+          new RegExp(`nemoclaw-start process\\.${field} expected 0`, "u"),
+        );
+      });
+    },
+  );
 
   it("rejects malformed and overflowing split-process reports", () => {
     expect(() => parseSplitProcessSecurityReport("not-json")).toThrow(/emitted invalid JSON/u);
@@ -946,243 +1023,196 @@ describe("security posture fixture", () => {
     );
   });
 
-  it("selects one exact OpenShell container identity", () => {
-    const row = `${CONTAINER_ID}\t${CONTAINER_NAME}\t${SANDBOX_ID}\tdefault\n`;
-
-    expect(parseOpenShellContainerId(row, SANDBOX_NAME)).toBe(CONTAINER_ID);
-  });
-
-  it("derives Docker discovery from the privileged execution endpoint", () => {
-    expect(dockerRuntimeEndpointArgs(["exec", "--user", "root"])).toEqual([]);
-    expect(
-      dockerRuntimeEndpointArgs(["--host", PORTABLE_DOCKER_HOST, "exec", "--user", "root"]),
-    ).toEqual(["--host", PORTABLE_DOCKER_HOST]);
-    expect(() => dockerRuntimeEndpointArgs(["--host", "", "exec"])).toThrow(
-      /supported runtime endpoint/u,
-    );
-    expect(() => dockerRuntimeEndpointArgs(["--context", "remote", "exec"])).toThrow(
-      /supported runtime endpoint/u,
-    );
-  });
-
   it.each([
-    ["", /found 0/u],
-    [
-      `${CONTAINER_ID}\t${CONTAINER_NAME}\t${SANDBOX_ID}\tdefault\n${"b".repeat(64)}\t${CONTAINER_NAME}\t${SANDBOX_ID}\tdefault`,
-      /found 2/u,
-    ],
-    [
-      `abc\t${CONTAINER_NAME}\t${SANDBOX_ID}\tdefault`,
-      /unexpected OpenShell Docker container identity/u,
-    ],
-    [
-      `${CONTAINER_ID}\twrong-name\t${SANDBOX_ID}\tdefault`,
-      /unexpected OpenShell Docker container identity/u,
-    ],
-    [
-      `${CONTAINER_ID}\t${CONTAINER_NAME}\t${SANDBOX_ID}\tother`,
-      /unexpected OpenShell Docker container identity/u,
-    ],
-    [
-      `${CONTAINER_ID}\t${CONTAINER_NAME}\tunsafe/id\tdefault`,
-      /unexpected OpenShell Docker container identity/u,
-    ],
-  ])("rejects a container selection that is absent, ambiguous, or inexact", (output, error) => {
-    expect(() => parseOpenShellContainerId(output, SANDBOX_NAME)).toThrow(error);
-  });
+    { capabilityMask: OPENSHELL_SUPERVISOR_CAPABILITY_MASK, providerId: "docker" },
+    { capabilityMask: PODMAN_OPENSHELL_SUPERVISOR_CAPABILITY_MASK, providerId: "podman" },
+  ])(
+    "checks the split-process report through the selected $providerId provider",
+    async ({ capabilityMask, providerId }) => {
+      vi.stubEnv("NEMOCLAW_E2E_SECURITY_POSTURE", "1");
+      vi.stubEnv("NEMOCLAW_E2E_EXPECT_OPENSHELL_SPLIT_PROCESS", "1");
+      const report = validReport();
+      report.supervisor.status.capBnd = capabilityMask;
+      report.supervisor.status.capEff = capabilityMask;
+      report.supervisor.status.capPrm = capabilityMask;
+      const directChildSupervisor = report.childSupervisors[0]!;
+      setCurrentChildSupervisors(report, [
+        validNemoclawStartProcess({
+          pid: 43,
+          ppid: directChildSupervisor.pid,
+          startTime: "203",
+        }),
+        directChildSupervisor,
+      ]);
+      const command = vi
+        .fn<HostCliClient["command"]>()
+        .mockResolvedValueOnce(successfulProbe("uid=1000 gid=1000\n"))
+        .mockResolvedValueOnce(successfulProbe("openshell 0.0.116\n"))
+        .mockResolvedValueOnce(successfulProbe(capabilitySurfaceProof("connect")));
+      const execShell = vi.fn<SandboxClient["execShell"]>(async (_name, script) =>
+        String(script).includes("surface=exec")
+          ? successfulProbe(capabilitySurfaceProof("exec"))
+          : successfulProbe(),
+      );
+      const host = {
+        command,
+        commandPath: "/tmp/nemoclaw",
+        openshellCommandPath: "/tmp/openshell",
+      } as unknown as HostCliClient;
+      const sandbox = { execShell } as unknown as SandboxClient;
+      const resolvePrivilegedTarget = vi.fn(() => ({
+        providerId,
+        resourceHandle: RESOURCE_HANDLE,
+      }));
+      const executePrivilegedCommand = vi.fn((): RuntimeProviderPrivilegedSandboxCommandResult => ({
+        status: 0,
+        signal: null,
+        stdout: Buffer.from(JSON.stringify(report), "utf8"),
+        stderr: Buffer.alloc(0),
+      }));
 
-  it.each([
-    ["direct Docker", []],
-    ["portable container runtime", ["--host", PORTABLE_DOCKER_HOST]],
-  ])("checks the split-process report through %s before the remaining posture", async (_runtime, dockerEndpointArgs) => {
+      const summary = await assertSecurityPosture(host, sandbox, SANDBOX_NAME, "openclaw", {
+        environment: inlineManagedImageCatalogEnvironment(),
+        executePrivilegedCommand,
+        resolvePrivilegedTarget,
+      });
+
+      expect(summary).toEqual({
+        capabilitySurfaces: {
+          connect: {
+            surface: "connect",
+            uid: 1000,
+            gid: 1000,
+            capInh: ZERO_CAPABILITIES,
+            capPrm: ZERO_CAPABILITIES,
+            capEff: ZERO_CAPABILITIES,
+            capBnd: ZERO_CAPABILITIES,
+            capAmb: ZERO_CAPABILITIES,
+          },
+          entrypoint: {
+            surface: "entrypoint",
+            uid: 1000,
+            gid: 1000,
+            capInh: ZERO_CAPABILITIES,
+            capPrm: ZERO_CAPABILITIES,
+            capEff: ZERO_CAPABILITIES,
+            capBnd: ZERO_CAPABILITIES,
+            capAmb: ZERO_CAPABILITIES,
+          },
+          exec: {
+            surface: "exec",
+            uid: 1000,
+            gid: 1000,
+            capInh: ZERO_CAPABILITIES,
+            capPrm: ZERO_CAPABILITIES,
+            capEff: ZERO_CAPABILITIES,
+            capBnd: ZERO_CAPABILITIES,
+            capAmb: ZERO_CAPABILITIES,
+          },
+        },
+        configureGuard: true,
+        hostNonRoot: true,
+        rcFilesMutable: true,
+        runtimeProxyEnvLocked: true,
+        runtimeVersions: {
+          managedImageRevision: MANAGED_IMAGE_REVISION,
+          openshell: "0.0.116",
+        },
+        splitProcess: {
+          childSupervisor: directChildSupervisor,
+          supervisor: report.supervisor,
+        },
+        startupLogClean: true,
+      });
+      expect(command).toHaveBeenCalledTimes(3);
+      expect(command.mock.calls[2]?.[1]?.[3]).toMatch(/\nexit 0$/u);
+      expect(resolvePrivilegedTarget).toHaveBeenCalledTimes(2);
+      expect(executePrivilegedCommand).toHaveBeenCalledWith(
+        SANDBOX_NAME,
+        ["/usr/bin/python3", "-I", "-c", SPLIT_PROCESS_SECURITY_PROBE],
+        {
+          expectedResourceHandle: RESOURCE_HANDLE,
+          sanitizeEnvironment: true,
+          timeout: 30_000,
+        },
+      );
+      expect(execShell).toHaveBeenCalledTimes(5);
+    },
+  );
+
+  it("rejects runtime provider resource identity drift during privileged inspection", async () => {
     vi.stubEnv("NEMOCLAW_E2E_SECURITY_POSTURE", "1");
     vi.stubEnv("NEMOCLAW_E2E_EXPECT_OPENSHELL_SPLIT_PROCESS", "1");
-    vi.stubEnv("DOCKER_HOST", "unix:///run/trusted-docker.sock");
-    vi.stubEnv("DOCKER_CONTEXT", "untrusted-context");
-    vi.stubEnv("DOCKER_CONFIG", "/tmp/untrusted-docker-config");
-    vi.stubEnv("DOCKER_TLS_VERIFY", "1");
-    vi.stubEnv("DOCKER_CERT_PATH", "/tmp/untrusted-docker-certs");
-    const report = validReport();
-    const directChildSupervisor = report.childSupervisors[0]!;
-    setCurrentChildSupervisors(report, [
-      validNemoclawStartProcess({
-        pid: 43,
-        ppid: directChildSupervisor.pid,
-        startTime: "203",
-      }),
-      directChildSupervisor,
-    ]);
-    const containerRow = `${CONTAINER_ID}\t${CONTAINER_NAME}\t${SANDBOX_ID}\tdefault\n`;
     const command = vi
       .fn<HostCliClient["command"]>()
       .mockResolvedValueOnce(successfulProbe("uid=1000 gid=1000\n"))
-      .mockResolvedValueOnce(successfulProbe(containerRow))
-      .mockResolvedValueOnce(successfulProbe(JSON.stringify(report)));
-    const execShell = vi.fn<SandboxClient["execShell"]>(async () => successfulProbe());
-    const host = { command } as unknown as HostCliClient;
-    const sandbox = { execShell } as unknown as SandboxClient;
-    const privilegedProbeArgs = [
-      ...dockerEndpointArgs,
-      "exec",
-      "--env",
-      "LD_PRELOAD=",
-      "--env",
-      "PYTHONPATH=",
-      "--user",
-      "root",
-      CONTAINER_ID,
-      "/usr/bin/python3",
-      "-I",
-      "-c",
-      SPLIT_PROCESS_SECURITY_PROBE,
-    ];
-    const privilegedExecArgv = vi.fn(
-      (
-        _sandboxName: string,
-        _command: string[],
-        _stdin?: boolean,
-        _sanitizeEnvironment?: boolean,
-        _expectedContainerId?: string,
-      ) => privilegedProbeArgs,
-    );
-
-    const summary = await assertSecurityPosture(host, sandbox, SANDBOX_NAME, "openclaw", {
-      privilegedExecArgv,
-    });
-
-    expect(summary).toEqual({
-      configureGuard: true,
-      hostNonRoot: true,
-      rcFilesLocked: true,
-      runtimeProxyEnvLocked: true,
-      splitProcess: {
-        childSupervisor: directChildSupervisor,
-        supervisor: report.supervisor,
-      },
-      startupLogClean: true,
-    });
-    expect(command).toHaveBeenCalledTimes(3);
-    expect(command).toHaveBeenNthCalledWith(
-      2,
-      "docker",
-      [
-        ...dockerEndpointArgs,
-        "ps",
-        "--no-trunc",
-        "--filter",
-        "label=openshell.ai/managed-by=openshell",
-        "--filter",
-        `label=openshell.ai/sandbox-name=${SANDBOX_NAME}`,
-        "--format",
-        '{{.ID}}\t{{.Names}}\t{{.Label "openshell.ai/sandbox-id"}}\t{{.Label "openshell.ai/sandbox-workspace"}}',
-      ],
-      expect.objectContaining({ artifactName: "security-posture-container-identity" }),
-    );
-    expect(command).toHaveBeenNthCalledWith(
-      3,
-      "docker",
-      privilegedProbeArgs,
-      expect.objectContaining({ artifactName: "security-posture-split-processes" }),
-    );
-    expect(privilegedExecArgv).toHaveBeenNthCalledWith(
-      1,
-      SANDBOX_NAME,
-      ["/usr/bin/python3", "-I", "-c", SPLIT_PROCESS_SECURITY_PROBE],
-      false,
-      true,
-    );
-    expect(privilegedExecArgv).toHaveBeenNthCalledWith(
-      2,
-      SANDBOX_NAME,
-      ["/usr/bin/python3", "-I", "-c", SPLIT_PROCESS_SECURITY_PROBE],
-      false,
-      true,
-      CONTAINER_ID,
-    );
-    [1, 2].forEach((callIndex) => {
-      const dockerEnv = command.mock.calls[callIndex]?.[2]?.env;
-      expect(dockerEnv).toMatchObject({ DOCKER_HOST: "unix:///run/trusted-docker.sock" });
-      expect(dockerEnv).not.toHaveProperty("DOCKER_CONTEXT");
-      expect(dockerEnv).not.toHaveProperty("DOCKER_CONFIG");
-      expect(dockerEnv).not.toHaveProperty("DOCKER_TLS_VERIFY");
-      expect(dockerEnv).not.toHaveProperty("DOCKER_CERT_PATH");
-    });
-    expect(execShell).toHaveBeenCalledTimes(4);
-  });
-
-  it("rejects container runtime endpoint drift before privileged inspection", async () => {
-    vi.stubEnv("NEMOCLAW_E2E_SECURITY_POSTURE", "1");
-    vi.stubEnv("NEMOCLAW_E2E_EXPECT_OPENSHELL_SPLIT_PROCESS", "1");
-    const containerRow = `${CONTAINER_ID}\t${CONTAINER_NAME}\t${SANDBOX_ID}\tdefault\n`;
-    const command = vi
-      .fn<HostCliClient["command"]>()
-      .mockResolvedValueOnce(successfulProbe("uid=1000 gid=1000\n"))
-      .mockResolvedValueOnce(successfulProbe(containerRow));
+      .mockResolvedValueOnce(successfulProbe("openshell 0.0.116\n"));
     const execShell = vi.fn<SandboxClient["execShell"]>();
-    let invocation = 0;
-    const privilegedExecArgv = vi.fn(
-      (
-        _sandboxName: string,
-        _command: string[],
-        _stdin?: boolean,
-        _sanitizeEnvironment?: boolean,
-        _expectedContainerId?: string,
-      ) => [
-        "--host",
-        invocation++ === 0 ? "unix:///run/podman-a.sock" : "unix:///run/podman-b.sock",
-        "exec",
-      ],
-    );
+    const resolvePrivilegedTarget = vi
+      .fn()
+      .mockReturnValueOnce({ providerId: "podman", resourceHandle: "first" })
+      .mockReturnValueOnce({ providerId: "podman", resourceHandle: "second" });
+    const executePrivilegedCommand = vi.fn((): RuntimeProviderPrivilegedSandboxCommandResult => ({
+      status: 0,
+      signal: null,
+      stdout: Buffer.from(JSON.stringify(validReport()), "utf8"),
+      stderr: Buffer.alloc(0),
+    }));
 
     await expect(
       assertSecurityPosture(
-        { command } as unknown as HostCliClient,
+        { command, openshellCommandPath: "/tmp/openshell" } as unknown as HostCliClient,
         { execShell } as unknown as SandboxClient,
         SANDBOX_NAME,
         "openclaw",
-        { privilegedExecArgv },
+        {
+          environment: inlineManagedImageCatalogEnvironment(),
+          executePrivilegedCommand,
+          resolvePrivilegedTarget,
+        },
       ),
-    ).rejects.toThrow(/runtime endpoint changed/u);
+    ).rejects.toThrow(/runtime provider resource identity changed/u);
 
     expect(command).toHaveBeenCalledTimes(2);
+    expect(executePrivilegedCommand).toHaveBeenCalledOnce();
     expect(execShell).not.toHaveBeenCalled();
   });
 
-  it("rejects Docker environment drift before privileged inspection", async () => {
+  it("rejects a failed provider-owned privileged security probe", async () => {
     vi.stubEnv("NEMOCLAW_E2E_SECURITY_POSTURE", "1");
     vi.stubEnv("NEMOCLAW_E2E_EXPECT_OPENSHELL_SPLIT_PROCESS", "1");
-    vi.stubEnv("DOCKER_HOST", "unix:///run/docker-a.sock");
-    const containerRow = `${CONTAINER_ID}\t${CONTAINER_NAME}\t${SANDBOX_ID}\tdefault\n`;
     const command = vi
       .fn<HostCliClient["command"]>()
       .mockResolvedValueOnce(successfulProbe("uid=1000 gid=1000\n"))
-      .mockImplementationOnce(async () => {
-        vi.stubEnv("DOCKER_HOST", "unix:///run/docker-b.sock");
-        return successfulProbe(containerRow);
-      });
+      .mockResolvedValueOnce(successfulProbe("openshell 0.0.116\n"));
     const execShell = vi.fn<SandboxClient["execShell"]>();
-    const privilegedExecArgv = vi.fn(
-      (
-        _sandboxName: string,
-        _command: string[],
-        _stdin?: boolean,
-        _sanitizeEnvironment?: boolean,
-        _expectedContainerId?: string,
-      ) => ["exec"],
-    );
+    const resolvePrivilegedTarget = vi.fn(() => ({
+      providerId: "podman",
+      resourceHandle: RESOURCE_HANDLE,
+    }));
+    const executePrivilegedCommand = vi.fn((): RuntimeProviderPrivilegedSandboxCommandResult => ({
+      status: 125,
+      signal: null,
+      stdout: Buffer.alloc(0),
+      stderr: Buffer.from("provider probe failed", "utf8"),
+    }));
 
     await expect(
       assertSecurityPosture(
-        { command } as unknown as HostCliClient,
+        { command, openshellCommandPath: "/tmp/openshell" } as unknown as HostCliClient,
         { execShell } as unknown as SandboxClient,
         SANDBOX_NAME,
         "openclaw",
-        { privilegedExecArgv },
+        {
+          environment: inlineManagedImageCatalogEnvironment(),
+          executePrivilegedCommand,
+          resolvePrivilegedTarget,
+        },
       ),
-    ).rejects.toThrow(/privileged Docker environment changed/u);
+    ).rejects.toThrow(/provider probe failed/u);
 
-    expect(privilegedExecArgv).toHaveBeenCalledTimes(1);
     expect(command).toHaveBeenCalledTimes(2);
+    expect(executePrivilegedCommand).toHaveBeenCalledOnce();
     expect(execShell).not.toHaveBeenCalled();
   });
 

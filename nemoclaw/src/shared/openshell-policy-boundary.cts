@@ -7,6 +7,82 @@ import YAML from "yaml";
 
 export type OpenShellPolicyMapping = Record<string, unknown>;
 
+export type OpenShellSandboxPolicyReadScope = "base" | "effective";
+
+export type OpenShellSandboxPolicyRead = Readonly<{
+  document: string;
+  appliedRevision: number | null;
+}>;
+
+export type OpenShellSandboxPolicySetOutcome =
+  | Readonly<{ kind: "applied" }>
+  | Readonly<{ kind: "rejected"; status: number; message: string }>
+  | Readonly<{ kind: "ambiguous"; detail: string }>;
+
+export type OpenShellSandboxPolicySetSubmission = Readonly<{
+  outcome: OpenShellSandboxPolicySetOutcome;
+  status: number | null;
+}>;
+
+export type OpenShellSandboxPolicySetCommandResult = Readonly<{
+  status: number | null;
+  stderr?: string | null;
+  error?: { readonly message?: string } | null;
+}>;
+
+type SandboxPolicyTarget = {
+  readonly sandboxName: string;
+  readonly gatewayName?: string;
+};
+
+function sandboxPolicyGetArgs(input: SandboxPolicyTarget, flags: readonly string[]): string[] {
+  return [
+    "policy",
+    "get",
+    ...(input.gatewayName ? ["-g", input.gatewayName] : []),
+    ...flags,
+    input.sandboxName,
+  ];
+}
+
+/** Build one sandbox policy read without selecting an OpenShell executable. */
+export function buildOpenShellSandboxPolicyReadArgs(
+  input: SandboxPolicyTarget & {
+    readonly scope: OpenShellSandboxPolicyReadScope;
+  },
+): string[] {
+  return sandboxPolicyGetArgs(input, [input.scope === "base" ? "--base" : "--full"]);
+}
+
+/** Build one machine-readable effective-policy inspection. */
+export function buildOpenShellSandboxPolicyInspectionArgs(input: SandboxPolicyTarget): string[] {
+  return sandboxPolicyGetArgs(input, ["--full", "--output", "json"]);
+}
+
+/** Build one immutable sandbox base-policy revision read. */
+export function buildOpenShellSandboxPolicyRevisionReadArgs(
+  input: SandboxPolicyTarget & {
+    readonly revision: number;
+  },
+): string[] {
+  return sandboxPolicyGetArgs(input, ["--rev", String(input.revision), "--base"]);
+}
+
+/** Build one sandbox policy write without selecting an OpenShell executable. */
+export function buildOpenShellSandboxPolicySetArgs(
+  input: SandboxPolicyTarget & { readonly policyPath: string },
+): string[] {
+  return [
+    "policy",
+    "set",
+    ...(input.gatewayName ? ["-g", input.gatewayName] : []),
+    "--policy",
+    input.policyPath,
+    "--wait",
+    input.sandboxName,
+  ];
+}
+
 export type ValidatedOpenShellPolicyMapping = OpenShellPolicyMapping & {
   readonly version?: number;
   readonly network_policies?: OpenShellPolicyMapping;
@@ -15,6 +91,50 @@ export type ValidatedOpenShellPolicyMapping = OpenShellPolicyMapping & {
 export interface ParsedOpenShellPolicy {
   readonly yamlBody: string;
   readonly policy: ValidatedOpenShellPolicyMapping;
+}
+
+const TRANSPORT_FAILURE_MARKERS: ReadonlyArray<string> = [
+  "h2 protocol error",
+  "http2 error",
+  "tonic::transport::error",
+];
+const AUTHORITATIVE_REFUSAL_PATTERN =
+  /^Error:\s+code:\s*'failed[ _]precondition',\s*message:\s*'([^'\r\n]+)'(?:,\s*source:\s*tonic::Status\s*\{\s*code:\s*FailedPrecondition,\s*grpc_status:\s*9\s*\})?\s*$/iu;
+
+/** Parse one sandbox base-policy read into the transport-neutral typed contract. */
+export function parseOpenShellSandboxPolicyRead(raw: string): OpenShellSandboxPolicyRead {
+  const parsed = parseOpenShellPolicy(raw);
+  const metadata = /(?:^|\r?\n)---[ \t]*(?:\r?\n|$)/u.exec(raw);
+  const metadataSource = metadata ? raw.slice(0, metadata.index) : "";
+  const rawRevision = metadataSource.match(/^Active:\s*(\d+)\s*$/imu)?.[1];
+  const revision = rawRevision ? Number.parseInt(rawRevision, 10) : null;
+  return {
+    document: parsed.yamlBody,
+    appliedRevision: revision !== null && Number.isSafeInteger(revision) ? revision : null,
+  };
+}
+
+/** Classify a policy write without trusting an unstructured nonzero diagnostic. */
+export function classifyOpenShellSandboxPolicySetResult(
+  captured: OpenShellSandboxPolicySetCommandResult,
+): OpenShellSandboxPolicySetOutcome {
+  const detail = [captured.error?.message, captured.stderr]
+    .map((part) => part?.trim() ?? "")
+    .filter((part) => part.length > 0)
+    .join("\n");
+  const ambiguous = (): OpenShellSandboxPolicySetOutcome => ({
+    kind: "ambiguous",
+    detail: detail || `openshell policy set exited with status ${String(captured.status)}`,
+  });
+  const normalizedDetail = detail.toLowerCase();
+  if (TRANSPORT_FAILURE_MARKERS.some((marker) => normalizedDetail.includes(marker))) {
+    return ambiguous();
+  }
+  if (captured.status === 0) return captured.error ? ambiguous() : { kind: "applied" };
+  if (captured.status === null) return ambiguous();
+  const firstLine = captured.stderr?.split("\n", 1)[0] ?? "";
+  const message = firstLine.match(AUTHORITATIVE_REFUSAL_PATTERN)?.[1]?.trim() ?? null;
+  return message === null ? ambiguous() : { kind: "rejected", status: captured.status, message };
 }
 
 export interface OpenShellPolicyIdentity {
@@ -162,8 +282,7 @@ function policyValueContains(observed: unknown, required: unknown): boolean {
     return (
       isMapping(observed) &&
       Object.entries(required).every(
-        ([key, value]) =>
-          Object.hasOwn(observed, key) && policyValueContains(observed[key], value),
+        ([key, value]) => Object.hasOwn(observed, key) && policyValueContains(observed[key], value),
       )
     );
   }

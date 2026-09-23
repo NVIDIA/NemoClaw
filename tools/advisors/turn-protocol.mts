@@ -42,8 +42,6 @@ export type AdvisorPromptTurn = {
   requiredToolNames?: string[];
   /** Tools that must finish before the assistant emits text. Context tools are included. */
   requireToolsBeforeText?: string[];
-  /** Ordinary read-tool paths that must finish successfully before assistant text. */
-  requiredReadPaths?: string[];
   /** Require at least one ordinary read from these paths before assistant text. */
   requiredReadOneOfPaths?: string[];
   /** Fail the turn when it completes without non-whitespace assistant analysis. */
@@ -60,7 +58,8 @@ export type AdvisorPromptTurn = {
   /**
    * Terminal submit tool that may follow context, reads, prose, and other active draft tools.
    * With repair enabled, the turn permits settled failed attempts with exactly one success.
-   * Only failed duplicate submit calls may follow a success.
+   * Only failed duplicate submit calls may follow a success in that model turn. A configured,
+   * tool-disabled assistant-text repair may follow when required analysis was omitted.
    */
   terminalSubmitToolName?: string;
   /** Opt into repeated submits or one continuation after omission or settled failures. */
@@ -86,7 +85,6 @@ export type AdvisorTurnTools = {
   activeToolNames: string[];
   requiredToolNames: string[];
   requireToolsBeforeText: string[];
-  requiredReadPaths?: string[];
   requiredReadOneOfPaths?: string[];
   requireAssistantText: boolean;
   atomicTerminalToolName?: string;
@@ -106,6 +104,96 @@ export type AdvisorTurnFlowEvent =
     }
   | { type: "tool_start"; toolName: string }
   | { type: "tool_end"; toolName: string; isError: boolean };
+
+export type AdvisorTurnFlowDiagnostics = {
+  textEvents: number;
+  readEvents: number;
+  toolStarts: number;
+  toolEnds: number;
+  toolFailures: number;
+  failedToolNames: string[];
+  unmatchedToolEndNames: string[];
+  unsettledToolNames: string[];
+  missingRequiredToolNames: string[];
+};
+
+export class AdvisorTurnFlowDiagnosticAccumulator {
+  readonly #availableToolNames: ReadonlySet<string>;
+  readonly #failedToolNames = new Set<string>();
+  readonly #openCalls = new Map<string, number>();
+  readonly #successfulToolNames = new Set<string>();
+  readonly #unmatchedToolEndNames = new Set<string>();
+  #readEvents = 0;
+  #textEvents = 0;
+  #toolEnds = 0;
+  #toolFailures = 0;
+  #toolStarts = 0;
+
+  constructor(availableToolNames: ReadonlySet<string>) {
+    this.#availableToolNames = availableToolNames;
+  }
+
+  record(event: AdvisorTurnFlowEvent): void {
+    if (event.type === "text") {
+      this.#textEvents += 1;
+      return;
+    }
+    if (event.type === "read") {
+      this.#readEvents += 1;
+      return;
+    }
+    const toolName = this.#availableToolNames.has(event.toolName) ? event.toolName : "<unknown>";
+    if (event.type === "tool_start") {
+      this.#toolStarts += 1;
+      this.#openCalls.set(toolName, (this.#openCalls.get(toolName) ?? 0) + 1);
+      return;
+    }
+    this.#toolEnds += 1;
+    if (event.isError) {
+      this.#toolFailures += 1;
+      this.#failedToolNames.add(toolName);
+    } else if (this.#availableToolNames.has(event.toolName)) {
+      this.#successfulToolNames.add(event.toolName);
+    }
+    const openCount = this.#openCalls.get(toolName) ?? 0;
+    if (openCount === 0) {
+      this.#unmatchedToolEndNames.add(toolName);
+      return;
+    }
+    this.#openCalls.set(toolName, openCount - 1);
+  }
+
+  snapshot(requiredToolNames: string[]): AdvisorTurnFlowDiagnostics {
+    const unsettledToolNames = [...this.#openCalls]
+      .filter(([, count]) => count > 0)
+      .map(([toolName]) => toolName)
+      .sort();
+    return {
+      textEvents: this.#textEvents,
+      readEvents: this.#readEvents,
+      toolStarts: this.#toolStarts,
+      toolEnds: this.#toolEnds,
+      toolFailures: this.#toolFailures,
+      failedToolNames: [...this.#failedToolNames].sort(),
+      unmatchedToolEndNames: [...this.#unmatchedToolEndNames].sort(),
+      unsettledToolNames,
+      missingRequiredToolNames: missingRequiredAdvisorToolNames(
+        requiredToolNames,
+        this.#successfulToolNames,
+      ).sort(),
+    };
+  }
+}
+
+export function advisorTurnFlowDiagnostics(
+  events: AdvisorTurnFlowEvent[],
+  requiredToolNames: string[],
+  availableToolNames: ReadonlySet<string>,
+): AdvisorTurnFlowDiagnostics {
+  const accumulator = new AdvisorTurnFlowDiagnosticAccumulator(availableToolNames);
+  for (const event of events) accumulator.record(event);
+  return accumulator.snapshot(requiredToolNames);
+}
 
 export function resolveAdvisorTurnTools(
   turn: AdvisorPromptTurn,
@@ -171,7 +259,6 @@ export function resolveAdvisorTurnTools(
     activeToolNames,
     requiredToolNames,
     requireToolsBeforeText,
-    requiredReadPaths: [...new Set(turn.requiredReadPaths ?? [])],
     requiredReadOneOfPaths: [...new Set(turn.requiredReadOneOfPaths ?? [])],
     requireAssistantText: turn.requireAssistantText === true,
     atomicTerminalToolName,
@@ -339,37 +426,6 @@ function atomicTerminalToolErrors(
   return errors;
 }
 
-export function requiredReadPreparationPrompt(turn: AdvisorPromptTurn): string {
-  const paths = [...new Set(turn.requiredReadPaths ?? [])];
-  return `Prepare ${turn.name} by reading every required file with ordinary \`read\` calls. Read each file contiguously from line 1 through EOF. If a read is truncated, continue at the next unread line until that file reaches EOF. Emit only \`read\` calls and no text. Do not use any other tool.\n\nRequired files:\n${paths.map((requiredPath) => `- ${requiredPath}`).join("\n")}`;
-}
-
-export function requiredReadPreparationErrors(
-  turnName: string,
-  events: AdvisorTurnFlowEvent[],
-  tools: AdvisorTurnTools,
-): string[] {
-  const errors = advisorTurnFlowErrors(turnName, events, {
-    ...tools,
-    requireAssistantText: false,
-    atomicTerminalToolName: undefined,
-    terminalSubmitToolName: undefined,
-  });
-  if (events.some((event) => event.type === "text" && event.text.trim())) {
-    errors.push(`${turnName} required-read preparation emitted text`);
-  }
-  const requiredPaths = new Set(tools.requiredReadPaths ?? []);
-  for (const event of events) {
-    if (event.type === "read" && !requiredPaths.has(event.path)) {
-      errors.push(`${turnName} required-read preparation read unexpected path: ${event.path}`);
-    }
-    if (event.type !== "text" && event.type !== "read" && event.toolName !== "read") {
-      errors.push(`${turnName} required-read preparation called ${event.toolName}`);
-    }
-  }
-  return [...new Set(errors)];
-}
-
 export function advisorTurnFlowErrors(
   turnName: string,
   events: AdvisorTurnFlowEvent[],
@@ -397,7 +453,10 @@ export function advisorTurnFlowErrors(
     }
   }
   const oneOfReads = events.flatMap((event, index) =>
-    event.type === "read" && tools.requiredReadOneOfPaths?.includes(event.path)
+    event.type === "read" &&
+    tools.requiredReadOneOfPaths?.includes(event.path) &&
+    event.fileSize > 0 &&
+    (event.endOffset === null || event.endOffset >= event.offset)
       ? [{ event, index }]
       : [],
   );
@@ -410,60 +469,6 @@ export function advisorTurnFlowErrors(
     oneOfReads.every(({ index }) => index > firstText)
   ) {
     errors.push(`${turnName} emitted text before specialist evidence read`);
-  }
-  const requiredReadCompletionIndexes = new Map<string, number>();
-  for (const requiredPath of tools.requiredReadPaths ?? []) {
-    const reads = events.flatMap((event, index) =>
-      event.type === "read" && event.path === requiredPath ? [{ event, index }] : [],
-    );
-    if (reads.length === 0) {
-      errors.push(`${turnName} omitted required read: ${requiredPath}`);
-      continue;
-    }
-    const fileSizes = new Set(reads.map(({ event }) => event.fileSize));
-    const ranges: Array<{ start: number; end: number }> = [];
-    const endOffsets: number[] = [];
-    let completedAt: number | undefined;
-    for (const { event, index } of reads) {
-      if (event.endOffset !== null) {
-        ranges.push({ start: event.offset, end: event.endOffset });
-        ranges.sort((left, right) => left.start - right.start);
-      }
-      // An empty required file is complete when the first read reaches EOF.
-      if (event.reachesEnd) endOffsets.push(event.offset);
-      let coveredThrough = 0;
-      for (const range of ranges) {
-        if (range.start > coveredThrough + 1) break;
-        coveredThrough = Math.max(coveredThrough, range.end);
-      }
-      if (fileSizes.size === 1 && endOffsets.some((offset) => offset <= coveredThrough + 1)) {
-        completedAt ??= index;
-      }
-    }
-    if (completedAt === undefined) {
-      errors.push(`${turnName} incompletely read required path: ${requiredPath}`);
-    } else {
-      requiredReadCompletionIndexes.set(requiredPath, completedAt);
-    }
-    if (firstText >= 0 && (completedAt === undefined || completedAt > firstText)) {
-      errors.push(`${turnName} emitted text before required read completed: ${requiredPath}`);
-    }
-  }
-  if ((tools.requiredReadPaths?.length ?? 0) > 0) {
-    const allReadsCompletedAt =
-      requiredReadCompletionIndexes.size === tools.requiredReadPaths!.length
-        ? Math.max(...requiredReadCompletionIndexes.values())
-        : Number.POSITIVE_INFINITY;
-    const earlyTool = events.find(
-      (event, index) =>
-        index < allReadsCompletedAt &&
-        event.type !== "text" &&
-        event.type !== "read" &&
-        event.toolName !== "read",
-    );
-    if (earlyTool && earlyTool.type !== "text" && earlyTool.type !== "read") {
-      errors.push(`${turnName} called ${earlyTool.toolName} before required reads completed`);
-    }
   }
   if (tools.atomicTerminalToolName) {
     errors.push(...atomicTerminalToolErrors(turnName, events, tools.atomicTerminalToolName));
@@ -641,8 +646,27 @@ export function sanitizeToolName(name: string): string {
   );
 }
 
-export function promptWithRequiredContextTools(prompt: string, toolNames: string[]): string {
-  if (toolNames.length === 0) return prompt;
-  const tools = toolNames.map((name) => `\`${name}\``).join(", ");
-  return `${prompt.trimEnd()}\n\nRequired context tools: ${tools}. Their results are not preloaded; call each before answering.`;
+export function promptWithRequiredContextTools(
+  prompt: string,
+  toolNames: string[],
+  requiredReadOneOfPaths: string[] = [],
+): string {
+  const requirements: string[] = [];
+  if (toolNames.length > 0) {
+    const tools = toolNames.map((name) => `\`${name}\``).join(", ");
+    requirements.push(
+      `Required context tools: ${tools}. Their results are not preloaded; call each before answering.`,
+    );
+  }
+  if (requiredReadOneOfPaths.length > 0) {
+    for (const requiredPath of requiredReadOneOfPaths) {
+      if (/[\r\n\0]/u.test(requiredPath)) {
+        throw new Error("Advisor required-read paths cannot contain line breaks or NUL bytes");
+      }
+    }
+    requirements.push(
+      `Required files:\n${requiredReadOneOfPaths.map((requiredPath) => `- ${requiredPath}`).join("\n")}\nRead at least one exact path above with \`read\` before writing analysis.`,
+    );
+  }
+  return requirements.length > 0 ? `${prompt.trimEnd()}\n\n${requirements.join("\n\n")}` : prompt;
 }

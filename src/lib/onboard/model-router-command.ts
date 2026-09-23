@@ -228,7 +228,9 @@ export function createModelRouterCommandProvisioner(
       );
       return;
     }
-    const reclaimableBytes = reclaimableVenvDir ? deps.measureDirectorySize(reclaimableVenvDir) : 0n;
+    const reclaimableBytes = reclaimableVenvDir
+      ? deps.measureDirectorySize(reclaimableVenvDir)
+      : 0n;
     const availableBytes = probe.capacity.availableBytes + reclaimableBytes;
     if (availableBytes >= MODEL_ROUTER_VENV_REQUIRED_BYTES) return;
     // State the shortfall in MiB: near the threshold both sides round to the

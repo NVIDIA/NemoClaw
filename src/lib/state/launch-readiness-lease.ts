@@ -1523,6 +1523,7 @@ export function publishLaunchReadinessLease(
   expectedEpochId: string,
   identity: LaunchReadinessIdentity,
   options: LaunchReadinessStoreOptions = {},
+  assertBeforeCommit?: () => void,
 ): LaunchReadinessLease {
   let directory: SecureDirectory | null = null;
   let authorityDirectory: SecureDirectory | null = null;
@@ -1600,6 +1601,7 @@ export function publishLaunchReadinessLease(
       preservedLeaseExpiresWallMs: leaseExpiresWallMs,
       preservedLeaseElapsedMs: elapsedAtPublicationMs,
     };
+    assertBeforeCommit?.();
     writeAuthority(authorityContext, authorityDirectory, leaseAuthority);
     writeRecord(context, directory, lease);
     const finalAuthority = readAuthorityAtPath(authorityContext, authorityDirectory);

@@ -26,7 +26,7 @@ async function makeHelpers(driverName: string) {
   // resolve from TS source. Same pattern as `vm-dns-monkeypatch.test.ts`.
   const metadata = await import("./sandbox-registry-metadata");
   return metadata.createSandboxRegistryMetadataHelpers({
-    getOpenShellComputeDriverName: () => driverName,
+    getCurrentRuntimeProviderId: () => driverName,
     getInstalledOpenshellVersion: () => "0.0.42",
     runCaptureOpenshell: () => null,
   });
@@ -133,7 +133,7 @@ describe("sandbox registry metadata", () => {
     });
 
     const helpers = metadata.createSandboxRegistryMetadataHelpers({
-      getOpenShellComputeDriverName: () => "docker",
+      getCurrentRuntimeProviderId: () => "docker",
       getInstalledOpenshellVersion: () => "0.0.44",
       runCaptureOpenshell: () => "openshell 0.0.44",
     });
@@ -188,7 +188,7 @@ describe("sandbox registry metadata", () => {
     const registry = await import("../state/registry");
     const authority = await import("./workload/authority");
     const helpers = metadata.createSandboxRegistryMetadataHelpers({
-      getOpenShellComputeDriverName: () => "docker",
+      getCurrentRuntimeProviderId: () => "docker",
       getInstalledOpenshellVersion: () => "0.0.44",
       runCaptureOpenshell: () => "openshell 0.0.44",
     });
@@ -314,7 +314,7 @@ describe("sandbox registry metadata", () => {
     const dashboardPorts = await import("./dashboard-port");
     const gatewayRegistry = await import("../state/gateway-registry");
     const helpers = metadata.createSandboxRegistryMetadataHelpers({
-      getOpenShellComputeDriverName: () => "docker",
+      getCurrentRuntimeProviderId: () => "docker",
       getInstalledOpenshellVersion: () => "0.0.44",
       runCaptureOpenshell: () => "openshell 0.0.44",
     });
@@ -337,11 +337,22 @@ describe("sandbox registry metadata", () => {
     const occupied = dashboardPorts.getRegistryOccupiedDashboardPorts("other-sandbox");
     expect(occupied.size).toBe(0);
     expect(
-      dashboardPorts.findAvailableDashboardPort(
+      dashboardPorts.findAvailableDashboardPortFromObservations(
         "other-sandbox",
         18789,
-        null,
-        () => false,
+        [
+          {
+            state: "absent",
+            forward: {
+              gatewayEndpoint: "https://127.0.0.1:8080",
+              gatewayName: "nemoclaw",
+              workspace: "default",
+              sandboxName: "other-sandbox",
+              localHost: "127.0.0.1",
+              port: 18789,
+            },
+          },
+        ],
         occupied,
       ),
     ).toBe(18789);
@@ -380,7 +391,7 @@ describe("getSandboxRuntimeRegistryFields openshellDriver", () => {
     const metadata = await import("./sandbox-registry-metadata");
     let driverName = "docker";
     const helpers = metadata.createSandboxRegistryMetadataHelpers({
-      getOpenShellComputeDriverName: () => driverName,
+      getCurrentRuntimeProviderId: () => driverName,
       getInstalledOpenshellVersion: () => "0.0.42",
       runCaptureOpenshell: () => null,
     });

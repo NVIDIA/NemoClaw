@@ -435,7 +435,7 @@ function runCli(): void {
   const [rootDir, ...extra] = process.argv.slice(2);
   if (!rootDir || extra.length > 0) {
     throw new Error(
-      "Usage: node --experimental-strip-types tools/e2e/openshell-gateway-auth-artifact-safety.mts <artifact-root>",
+      "Usage: node tools/e2e/openshell-gateway-auth-artifact-safety.mts <artifact-root>",
     );
   }
   const approvedRoot = scanAndApproveOpenShellGatewayAuthArtifacts(rootDir);

@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { GpuDetection } from "../../../inference/nim";
 import { createSession, type Session } from "../../../state/onboard-session";
+import { persistedProviderNameToSelectionKey } from "../../inference-providers/provider-selection-keys";
 import { resolveSandboxGpuConfig } from "../../sandbox-gpu-mode";
 import { handlePreflightState, type PreflightStateOptions } from "./preflight";
 
@@ -54,6 +55,10 @@ function createDeps(
       detectGpu: () => ({ type: "nvidia" }) as Gpu,
       runPreflight: async () => ({ type: "nvidia" }) as Gpu,
       assessHost: () => ({ cdiNvidiaGpuSpecMissing: false }),
+      providerNameToOptionKey: (
+        name: string | null | undefined,
+        options?: { hasNimContainer?: boolean },
+      ) => persistedProviderNameToSelectionKey(name, options),
       assertOnboardHostReadiness: vi.fn(),
       assertGatewayReadiness: vi.fn(async () => undefined),
       resolveSandboxGpuConfig: (
@@ -212,27 +217,114 @@ describe("handlePreflightState", () => {
       1,
       expect.anything(),
       expect.anything(),
-      expect.objectContaining({ allowDeferredN1xManagedVllm: true }),
+      expect.objectContaining({ allowDeferredN1xOnboarding: true }),
     );
     expect(assertOnboardHostReadiness).toHaveBeenNthCalledWith(
       2,
       expect.anything(),
       expect.anything(),
-      expect.objectContaining({ allowDeferredN1xManagedVllm: true }),
+      expect.objectContaining({ allowDeferredN1xOnboarding: true }),
     );
   });
+
+  it("reuses a recorded standard provider for Deferred N1x resume (#11041)", async () => {
+    const session = createSession({ provider: "ollama-local" });
+    session.steps.preflight.status = "complete";
+    const assertOnboardHostReadiness = vi.fn();
+    const harness = createDeps({ assertOnboardHostReadiness });
+
+    await handlePreflightState({ ...baseOptions(harness.deps, session), resume: true });
+
+    expect(assertOnboardHostReadiness).toHaveBeenCalledTimes(2);
+    expect(assertOnboardHostReadiness).toHaveBeenNthCalledWith(
+      1,
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ allowDeferredN1xOnboarding: true }),
+    );
+    expect(assertOnboardHostReadiness).toHaveBeenNthCalledWith(
+      2,
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ allowDeferredN1xOnboarding: true }),
+    );
+  });
+
+  it.each([
+    ["a declined preview before provider selection", { NEMOCLAW_NO_EXPRESS: "1" }, true],
+    [
+      "an excluded NIM provider",
+      { NEMOCLAW_NO_EXPRESS: "1", NEMOCLAW_PROVIDER: "nim-local" },
+      false,
+    ],
+  ] as const)("classifies %s during Deferred N1x resume (#11041)", async (_case, env, expected) => {
+    const session = createSession({ provider: null });
+    session.steps.preflight.status = "complete";
+    const assertOnboardHostReadiness = vi.fn();
+    const harness = createDeps({ assertOnboardHostReadiness });
+
+    await handlePreflightState({ ...baseOptions(harness.deps, session), resume: true, env });
+
+    expect(assertOnboardHostReadiness).toHaveBeenCalledTimes(2);
+    expect(assertOnboardHostReadiness).toHaveBeenNthCalledWith(
+      1,
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ allowDeferredN1xOnboarding: expected }),
+    );
+    expect(assertOnboardHostReadiness).toHaveBeenNthCalledWith(
+      2,
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ allowDeferredN1xOnboarding: expected }),
+    );
+  });
+
+  it.each([
+    ["persisted Local NIM", "vllm-local", "nemoclaw-nim", undefined, false],
+    ["an unknown persisted provider", "obsolete-provider", null, undefined, false],
+    ["legacy NVIDIA Endpoints", "nvidia-nim", null, undefined, true],
+    ["an explicit rebuild denial", "ollama-local", null, false, false],
+  ] as const)(
+    "classifies %s for Deferred N1x resume (#11041)",
+    async (_case, provider, nimContainer, authority, expected) => {
+      const session = createSession({ provider, nimContainer });
+      session.steps.preflight.status = "complete";
+      const assertOnboardHostReadiness = vi.fn();
+      const harness = createDeps({ assertOnboardHostReadiness });
+
+      await handlePreflightState({
+        ...baseOptions(harness.deps, session),
+        resume: true,
+        ...(authority === undefined ? {} : { allowDeferredN1xManagedVllm: authority }),
+      });
+
+      expect(assertOnboardHostReadiness).toHaveBeenNthCalledWith(
+        1,
+        expect.anything(),
+        expect.anything(),
+        expect.objectContaining({ allowDeferredN1xOnboarding: expected }),
+      );
+      expect(assertOnboardHostReadiness).toHaveBeenNthCalledWith(
+        2,
+        expect.anything(),
+        expect.anything(),
+        expect.objectContaining({ allowDeferredN1xOnboarding: expected }),
+      );
+    },
+  );
 
   it("rejects changed gateway ownership before cached resume probe effects (#7411)", async () => {
     const session = createSession();
     session.steps.preflight.status = "complete";
-    const assertDockerBridgeAndContainerDnsHealthy = vi.fn();
+    const assertRuntimeProviderHealthy = vi.fn();
     const detectGpu = vi.fn(() => ({ type: "nvidia" }) as Gpu);
     const harness = createDeps({
       assertGatewayReadiness: vi.fn(async () => {
         throw new Error("gateway ownership changed");
       }),
       detectGpu,
-      assertDockerBridgeAndContainerDnsHealthy,
+      assertRuntimeProviderHealthy,
     });
 
     await expect(
@@ -242,7 +334,7 @@ describe("handlePreflightState", () => {
       }),
     ).rejects.toThrow("gateway ownership changed");
     expect(detectGpu).not.toHaveBeenCalled();
-    expect(assertDockerBridgeAndContainerDnsHealthy).not.toHaveBeenCalled();
+    expect(assertRuntimeProviderHealthy).not.toHaveBeenCalled();
   });
 
   it("admits live host and gateway facts and presents advisories before a cached resume GPU proof (#7411)", async () => {
@@ -271,10 +363,8 @@ describe("handlePreflightState", () => {
         calls.push("gpu-runtime-proof");
         return { type: "nvidia" } as Gpu;
       },
-      validateSandboxGpuPreflight: () => {
+      assertRuntimeProviderHealthy: () => {
         calls.push("gpu-validation");
-      },
-      assertDockerBridgeAndContainerDnsHealthy: () => {
         calls.push("bridge-dns");
       },
     });
@@ -354,7 +444,6 @@ describe("handlePreflightState", () => {
       null,
       expect.objectContaining({
         explicitlyOptedOutGpuPassthrough: false,
-        wslDockerDesktopGpuProofPassed: false,
         resuming: true,
       }),
     );
@@ -406,34 +495,101 @@ describe("handlePreflightState", () => {
     );
   });
 
-  it("rejects a cached resume when host collection exceeds the freshness window (#7411)", async () => {
+  it("closes the cached resume host collection before the gateway wait (#10670)", async () => {
     const session = createSession();
     session.steps.preflight.status = "complete";
-    let currentTime = Date.parse("2026-08-07T12:00:00.000Z");
-    const detectGpu = vi.fn(() => ({ type: "nvidia" }) as Gpu);
-    const bridge = vi.fn();
+    const startedAt = Date.parse("2026-08-07T12:00:00.000Z");
+    let currentTime = startedAt;
+    const stamps: { observedAt?: string; collectedAt?: string; admittedAt: number }[] = [];
     const harness = createDeps({
       now: () => new Date(currentTime),
       assessHost: () => {
-        currentTime += 30_001;
+        currentTime += 20_000;
         return { cdiNvidiaGpuSpecMissing: false };
       },
-      assertOnboardHostReadiness: (_host, _gpu, options) => {
-        expect(options.observedAt).toBe("2026-08-07T12:00:00.000Z");
-        const age = currentTime - Date.parse(options.observedAt as string);
-        expect(age).toBeGreaterThan(30_000);
-        throw new Error("host observations are stale");
+      detectGpuForReadiness: () => {
+        currentTime += 10_001;
+        return { type: "nvidia" } as Gpu;
       },
-      detectGpu,
-      assertDockerBridgeAndContainerDnsHealthy: bridge,
+      detectGpu: () => {
+        currentTime += 10_001;
+        return { type: "nvidia" } as Gpu;
+      },
+      assertGatewayReadiness: async () => {
+        currentTime += 10_000;
+      },
+      assertOnboardHostReadiness: (_host, _gpu, options) => {
+        expect(currentTime - Date.parse(options.collectedAt ?? "")).toBeLessThanOrEqual(30_000);
+        stamps.push({
+          observedAt: options.observedAt,
+          collectedAt: options.collectedAt,
+          admittedAt: currentTime,
+        });
+      },
     });
 
-    await expect(
-      handlePreflightState({ ...baseOptions(harness.deps, session), resume: true }),
-    ).rejects.toThrow("host observations are stale");
-    expect(detectGpu).not.toHaveBeenCalled();
-    expect(bridge).not.toHaveBeenCalled();
+    await handlePreflightState({ ...baseOptions(harness.deps, session), resume: true });
+
+    const [first, second] = stamps;
+    expect(stamps).toHaveLength(2);
+    expect(first?.observedAt).toBe("2026-08-07T12:00:00.000Z");
+    // The host probes ran for longer than the reuse window. Their duration is
+    // provenance, not age: `collectedAt` closes the collection after them.
+    expect(Date.parse(first?.collectedAt ?? "")).toBe(startedAt + 30_001);
+    // The gateway wait falls after that stamp, so the window still charges it.
+    expect((first?.admittedAt ?? 0) - Date.parse(first?.collectedAt ?? "")).toBe(10_000);
+    expect(Date.parse(second?.collectedAt ?? "") - Date.parse(second?.observedAt ?? "")).toBe(
+      30_001,
+    );
+    expect((second?.admittedAt ?? 0) - Date.parse(second?.collectedAt ?? "")).toBe(10_000);
   });
+
+  it.each([
+    { checkpoint: "first", firstWait: 45_000, secondWait: 0, gpuEffects: 0 },
+    { checkpoint: "second", firstWait: 0, secondWait: 45_000, gpuEffects: 1 },
+  ])(
+    "stops cached resume effects after the $checkpoint gateway wait expires host facts (#10670)",
+    async ({ firstWait, secondWait, gpuEffects }) => {
+      const session = createSession();
+      session.steps.preflight.status = "complete";
+      let currentTime = Date.parse("2026-08-07T12:00:00.000Z");
+      const gatewayDelay = vi.fn().mockReturnValueOnce(firstWait).mockReturnValueOnce(secondWait);
+      const detectGpu = vi.fn(() => ({ type: "nvidia" }) as Gpu);
+      const assertRuntimeProviderHealthy = vi.fn();
+      const validateSandboxGpuPreflight = vi.fn();
+      const assertOnboardHostReadiness = vi.fn<
+        ReturnType<typeof baseOptions>["deps"]["assertOnboardHostReadiness"]
+      >((_host, _gpu, options) => {
+        expect(currentTime - Date.parse(options.collectedAt ?? "")).toBeLessThanOrEqual(30_000);
+      });
+      const harness = createDeps({
+        now: () => new Date(currentTime),
+        assessHost: () => {
+          currentTime += 20_000;
+          return { cdiNvidiaGpuSpecMissing: false };
+        },
+        detectGpuForReadiness: () => {
+          currentTime += 10_001;
+          return { type: "nvidia" } as Gpu;
+        },
+        detectGpu,
+        assertGatewayReadiness: async () => {
+          currentTime += gatewayDelay();
+        },
+        assertOnboardHostReadiness,
+        assertRuntimeProviderHealthy,
+        validateSandboxGpuPreflight,
+      });
+
+      await expect(
+        handlePreflightState({ ...baseOptions(harness.deps, session), resume: true }),
+      ).rejects.toThrow();
+      expect(assertOnboardHostReadiness).toHaveBeenCalledTimes(gpuEffects + 1);
+      expect(detectGpu).toHaveBeenCalledTimes(gpuEffects);
+      expect(assertRuntimeProviderHealthy).not.toHaveBeenCalled();
+      expect(validateSandboxGpuPreflight).not.toHaveBeenCalled();
+    },
+  );
 
   it("restores saved sandbox GPU intent only when resume has no explicit override", async () => {
     const session = createSession();

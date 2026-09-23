@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -9,6 +13,11 @@ const mocks = vi.hoisted(() => ({
   help: vi.fn(),
   recoverNamedGatewayRuntime: vi.fn().mockResolvedValue({ recovered: true }),
   runOnboardAction: vi.fn().mockResolvedValue(undefined),
+  retireRegisteredLegacyDashboardForwards: vi.fn().mockResolvedValue({
+    retired: 1,
+    unchanged: 0,
+    skipped: 0,
+  }),
   version: vi.fn(),
 }));
 
@@ -22,10 +31,12 @@ vi.mock("./maintenance", () => ({
 vi.mock("./onboard", () => ({
   runOnboardAction: mocks.runOnboardAction,
 }));
+vi.mock("./sandbox/forward-recovery", () => ({
+  retireRegisteredLegacyDashboardForwards: mocks.retireRegisteredLegacyDashboardForwards,
+}));
 vi.mock("./root-help", () => ({ help: mocks.help, version: mocks.version }));
 
 import {
-  listManagedMcpCredentialReservations,
   recoverNamedGatewayRuntime,
   runBackupAllAction,
   runGarbageCollectImagesAction,
@@ -38,6 +49,7 @@ import {
 
 describe("global cli action facade", () => {
   beforeEach(() => {
+    vi.unstubAllEnvs();
     vi.clearAllMocks();
     setGlobalCliActionRuntimeHooksForTest({});
   });
@@ -52,9 +64,63 @@ describe("global cli action facade", () => {
 
     expect(mocks.runOnboardAction).toHaveBeenCalledWith({ resume: true }, onboardRuntimeDeps);
     expect(mocks.backupAll).toHaveBeenCalledWith();
+    expect(mocks.retireRegisteredLegacyDashboardForwards).not.toHaveBeenCalled();
     expect(mocks.garbageCollectImages).toHaveBeenCalledWith({ dryRun: true });
     expect(mocks.help).toHaveBeenCalledWith();
     expect(mocks.version).toHaveBeenCalledWith();
+  });
+
+  it("retires legacy forwards only after a successful installer backup", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await runBackupAllAction({ retireLegacyForwards: true });
+
+    expect(mocks.backupAll).toHaveBeenCalledOnce();
+    expect(mocks.retireRegisteredLegacyDashboardForwards).toHaveBeenCalledOnce();
+    expect(mocks.backupAll.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.retireRegisteredLegacyDashboardForwards.mock.invocationCallOrder[0]!,
+    );
+    expect(log).toHaveBeenCalledWith(
+      "Legacy dashboard forwards: 1 retired, 0 unchanged, 0 skipped.",
+    );
+  });
+
+  it("does not retire legacy forwards after a failed backup", async () => {
+    mocks.backupAll.mockRejectedValueOnce(new Error("backup failed"));
+
+    await expect(runBackupAllAction({ retireLegacyForwards: true })).rejects.toThrow(
+      "backup failed",
+    );
+
+    expect(mocks.retireRegisteredLegacyDashboardForwards).not.toHaveBeenCalled();
+  });
+
+  it("completes automatic port state at the shared onboard alias boundary (#10824)", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-action-port-"));
+    const root = path.join(home, ".nemoclaw");
+    const gateways = path.join(root, "gateways");
+    const stateDir = path.join(gateways, "8990");
+    const pending = path.join(stateDir, "automatic-gateway-port.pending");
+    const completed = path.join(stateDir, "automatic-gateway-port");
+    try {
+      fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+      fs.chmodSync(root, 0o700);
+      fs.chmodSync(gateways, 0o700);
+      fs.chmodSync(stateDir, 0o700);
+      fs.writeFileSync(pending, "8990\n", { mode: 0o600 });
+      vi.stubEnv("HOME", home);
+      vi.stubEnv("NEMOCLAW_GATEWAY_PORT", "8990");
+      vi.stubEnv("_NEMOCLAW_AUTOMATIC_GATEWAY_PORT", "1");
+
+      await runOnboardAction({ "non-interactive": true });
+
+      expect(mocks.runOnboardAction).toHaveBeenCalledWith({ "non-interactive": true }, {});
+      expect(fs.existsSync(pending)).toBe(false);
+      expect(fs.readFileSync(completed, "utf8")).toBe("8990\n");
+    } finally {
+      vi.unstubAllEnvs();
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it("uses injected runtime hooks for gateway recovery and upgrades", async () => {
@@ -76,27 +142,5 @@ describe("global cli action facade", () => {
     await expect(recoverNamedGatewayRuntime()).resolves.toEqual({ recovered: true });
 
     expect(mocks.recoverNamedGatewayRuntime).toHaveBeenCalledWith();
-  });
-
-  it("uses an injected managed MCP credential reservation query (#9388)", () => {
-    const listReservations = vi.fn(() => [
-      {
-        sandboxName: "hermes",
-        server: "maas-glean",
-        credentialKeys: ["MAAS_GLEAN_TOKEN"],
-      },
-    ]);
-    setGlobalCliActionRuntimeHooksForTest({
-      listManagedMcpCredentialReservations: listReservations,
-    });
-
-    expect(listManagedMcpCredentialReservations()).toEqual([
-      {
-        sandboxName: "hermes",
-        server: "maas-glean",
-        credentialKeys: ["MAAS_GLEAN_TOKEN"],
-      },
-    ]);
-    expect(listReservations).toHaveBeenCalledWith();
   });
 });

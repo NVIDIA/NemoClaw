@@ -3,16 +3,20 @@
 
 import { describe, expect, it } from "vitest";
 
+import { openshellMainProcessSpecEnvValue } from "../../../src/lib/onboard/docker-startup-command-env.ts";
 import type { ManagedWorkloadAuthority } from "../../../src/lib/onboard/workload/authority.ts";
 import {
   assertHermesContainerImageAuthority,
   assertHermesGpuStartupOutputContract,
   assertHermesManagedWorkloadAuthority,
   HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS,
+  hermesRuntimeIntendedCommand,
+  normalizeImmutableImageContentId,
 } from "../live/hermes-gpu-startup-proof.ts";
 
 const HEALTHY_NEW_GATEWAY = [
-  "Starting OpenShell Docker-driver gateway...",
+  "Container runtime: docker",
+  "  Starting OpenShell gateway...",
   "Docker-driver gateway is healthy",
 ].join("\n");
 const NON_FALLBACK_DISCLOSURE_CASES = [
@@ -28,6 +32,7 @@ const NON_FALLBACK_DISCLOSURE_CASES = [
   ["compatibility-only", HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS[4]],
 ] as const;
 const MANAGED_IMAGE_REFERENCE = `ghcr.io/nvidia/test@sha256:${"a".repeat(64)}`;
+const MANAGED_IMAGE_CONTENT_ID = `sha256:${"c".repeat(64)}`;
 const OTHER_MANAGED_IMAGE_REFERENCE = `ghcr.io/nvidia/test@sha256:${"b".repeat(64)}`;
 const VALID_MANAGED_AUTHORITY = {
   agent: "hermes",
@@ -40,7 +45,9 @@ describe("Hermes GPU startup output contract", () => {
   it.each(["native-success", "compatibility-only"] as const)(
     "accepts %s output without legacy Docker container progress text (#9362)",
     (route) => {
-      expect(() => assertHermesGpuStartupOutputContract(route, HEALTHY_NEW_GATEWAY)).not.toThrow();
+      expect(() =>
+        assertHermesGpuStartupOutputContract(route, "docker", HEALTHY_NEW_GATEWAY),
+      ).not.toThrow();
     },
   );
 
@@ -52,7 +59,7 @@ describe("Hermes GPU startup output contract", () => {
     ].join("\n");
 
     expect(() =>
-      assertHermesGpuStartupOutputContract("compatibility-fallback", output),
+      assertHermesGpuStartupOutputContract("compatibility-fallback", "docker", output),
     ).not.toThrow();
   });
 
@@ -68,7 +75,7 @@ describe("Hermes GPU startup output contract", () => {
       ].join("\n");
 
       expect(() =>
-        assertHermesGpuStartupOutputContract("compatibility-fallback", output),
+        assertHermesGpuStartupOutputContract("compatibility-fallback", "docker", output),
       ).toThrow();
     },
   );
@@ -77,13 +84,45 @@ describe("Hermes GPU startup output contract", () => {
     "rejects fallback disclosure in %s output: %s (#9362)",
     (route, fragment) => {
       expect(() =>
-        assertHermesGpuStartupOutputContract(route, `${HEALTHY_NEW_GATEWAY}\n${fragment}`),
+        assertHermesGpuStartupOutputContract(
+          route,
+          "docker",
+          `${HEALTHY_NEW_GATEWAY}\n${fragment}`,
+        ),
       ).toThrow();
     },
   );
 });
 
 describe("Hermes GPU managed-image authority proof", () => {
+  it("reads the OpenShell 0.0.116 structured main-process command", () => {
+    const command = ["env", "CHAT_UI_URL=http://127.0.0.1:18789", "/usr/local/bin/nemoclaw-start"];
+
+    expect(
+      hermesRuntimeIntendedCommand({
+        OPENSHELL_MAIN_PROCESS_SPEC: openshellMainProcessSpecEnvValue(command, false),
+      }),
+    ).toEqual(command);
+    expect(command).not.toContain("/usr/local/bin/nemoclaw-managed-bootstrap");
+  });
+
+  it("retains the legacy OpenShell sandbox-command fallback", () => {
+    expect(
+      hermesRuntimeIntendedCommand({
+        OPENSHELL_SANDBOX_COMMAND:
+          "env CHAT_UI_URL=http://127.0.0.1:18789 /usr/local/bin/nemoclaw-start",
+      }),
+    ).toEqual(["env", "CHAT_UI_URL=http://127.0.0.1:18789", "/usr/local/bin/nemoclaw-start"]);
+  });
+
+  it("canonicalizes a Podman bare image content ID without changing canonical Docker IDs", () => {
+    expect(normalizeImmutableImageContentId("c".repeat(64))).toBe(MANAGED_IMAGE_CONTENT_ID);
+    expect(normalizeImmutableImageContentId(MANAGED_IMAGE_CONTENT_ID)).toBe(
+      MANAGED_IMAGE_CONTENT_ID,
+    );
+    expect(normalizeImmutableImageContentId("not-an-image-id")).toBe("not-an-image-id");
+  });
+
   it("accepts one immutable authority shared by the registry, contract, and receipt (#9362)", () => {
     expect(
       assertHermesManagedWorkloadAuthority(
@@ -166,6 +205,26 @@ describe("Hermes GPU managed-image authority proof", () => {
   it("accepts the running container's exact digest-backed authority (#9362)", () => {
     expect(() =>
       assertHermesContainerImageAuthority(MANAGED_IMAGE_REFERENCE, MANAGED_IMAGE_REFERENCE),
+    ).not.toThrow();
+  });
+
+  it("accepts the provider content ID resolved from the exact digest-backed authority", () => {
+    expect(() =>
+      assertHermesContainerImageAuthority(
+        MANAGED_IMAGE_CONTENT_ID,
+        MANAGED_IMAGE_REFERENCE,
+        MANAGED_IMAGE_CONTENT_ID,
+      ),
+    ).not.toThrow();
+  });
+
+  it("accepts Podman's bare running-container content ID for the recorded authority", () => {
+    expect(() =>
+      assertHermesContainerImageAuthority(
+        "c".repeat(64),
+        MANAGED_IMAGE_REFERENCE,
+        MANAGED_IMAGE_CONTENT_ID,
+      ),
     ).not.toThrow();
   });
 

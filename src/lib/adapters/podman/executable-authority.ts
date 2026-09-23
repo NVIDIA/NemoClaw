@@ -5,7 +5,33 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
+import { redactCredentialText } from "../../security/credential-filter";
+
 const MAX_EXECUTABLE_BYTES = 512n * 1024n * 1024n;
+const UNSAFE_TERMINAL_CONTROL_PATTERN =
+  /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/gu;
+
+/** Render the repository terminal-control set as inert JSON-compatible escapes. */
+function terminalSafeJsonString(value: string): string {
+  return JSON.stringify(value).replace(
+    UNSAFE_TERMINAL_CONTROL_PATTERN,
+    (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`,
+  );
+}
+
+/** Identify a writable executable path without exposing unrelated filesystem failures. */
+export class PodmanExecutablePermissionError extends Error {
+  /** Redact before escaping so every caller receives a credential-free error message and stack. */
+  constructor(rejectedPath: string, mode: bigint) {
+    const displayPath = terminalSafeJsonString(redactCredentialText(rejectedPath));
+    const permissions = (mode & 0o7777n).toString(8).padStart(4, "0");
+    super(
+      `Executable path ${displayPath} has mode ${permissions} and is writable by another user or group.\n` +
+        "Remove group and other write permission from this path, then retry.",
+    );
+    this.name = "PodmanExecutablePermissionError";
+  }
+}
 
 // Root and the current Unix UID are the trusted pathname-control principals.
 // The before/after guards reject observable replacement but do not claim
@@ -47,11 +73,32 @@ export interface PodmanExecutableAuthority {
 
 type PodmanExecutableMetadataAuthority = Omit<PodmanExecutableAuthority, "sha256">;
 
+export type PodmanExecutableAuthorityTimingStage =
+  | "podmanCanonicalRealpath"
+  | "podmanDirectoryChain"
+  | "podmanExecutableMetadata"
+  | "podmanContentRead"
+  | "podmanContentHash"
+  | "podmanAuthorityCompare";
+
+export interface PodmanExecutableAuthorityTiming {
+  readonly measure: <T>(stage: PodmanExecutableAuthorityTimingStage, operation: () => T) => T;
+}
+
 export interface PodmanExecutableAuthorityDeps {
   readonly lstat?: (filePath: string) => PodmanExecutableStat;
   readonly readFile?: (filePath: string) => Uint8Array;
   readonly realpath?: (filePath: string) => string;
+  readonly timing?: PodmanExecutableAuthorityTiming;
   readonly uid?: number;
+}
+
+function measure<T>(
+  deps: PodmanExecutableAuthorityDeps,
+  stage: PodmanExecutableAuthorityTimingStage,
+  operation: () => T,
+): T {
+  return deps.timing?.measure(stage, operation) ?? operation();
 }
 
 function integerIdentity(value: bigint | number, label: string): string {
@@ -106,9 +153,11 @@ function canonicalExecutablePath(
   return executablePath;
 }
 
+/** Reject unsafe files before retaining metadata for replacement checks. */
 function immutableMetadata(
   stat: PodmanExecutableStat,
   uid: number,
+  executablePath: string,
 ): Omit<PodmanExecutableAuthority, "directoryChain" | "executablePath" | "sha256"> {
   if (stat.isSymbolicLink() || !stat.isFile()) {
     throw new Error("Podman executable authority path is a symlink or is not a regular file.");
@@ -121,7 +170,7 @@ function immutableMetadata(
   }
   const mode = integerValue(stat.mode, "mode");
   if ((mode & 0o022n) !== 0n) {
-    throw new Error("Podman executable authority is writable by another user or group.");
+    throw new PodmanExecutablePermissionError(executablePath, mode);
   }
   if ((mode & 0o111n) === 0n) {
     throw new Error("Podman executable authority path is not executable.");
@@ -156,6 +205,7 @@ function sameMetadata(
   );
 }
 
+/** Require every parent directory to remain controlled by root or the current user. */
 function captureDirectoryChain(
   executablePath: string,
   uid: number,
@@ -183,9 +233,7 @@ function captureDirectoryChain(
       }
       const mode = integerValue(stat.mode, "directory mode");
       if ((mode & 0o022n) !== 0n) {
-        throw new Error(
-          `Podman executable path component '${directory}' is writable by another user or group.`,
-        );
+        throw new PodmanExecutablePermissionError(directory, mode);
       }
       return Object.freeze({
         device: integerIdentity(stat.dev, "directory device"),
@@ -218,6 +266,7 @@ function sameDirectoryChain(
   );
 }
 
+/** Check metadata twice to reject observable replacement without reading executable bytes. */
 function capturePodmanExecutableMetadataAuthority(
   executablePath: string,
   deps: PodmanExecutableAuthorityDeps = {},
@@ -227,18 +276,30 @@ function capturePodmanExecutableMetadataAuthority(
     ((filePath: string): PodmanExecutableStat => fs.lstatSync(filePath, { bigint: true }));
   const realpath = deps.realpath ?? ((filePath: string): string => fs.realpathSync(filePath));
   const uid = currentUid(deps.uid);
-  const canonicalPath = canonicalExecutablePath(executablePath, realpath);
-  const directoryChainBefore = captureDirectoryChain(canonicalPath, uid, lstat);
-  const before = immutableMetadata(lstat(canonicalPath), uid);
-  const after = immutableMetadata(lstat(canonicalPath), uid);
-  const directoryChainAfter = captureDirectoryChain(canonicalPath, uid, lstat);
-  canonicalExecutablePath(canonicalPath, realpath);
-  if (
-    !sameMetadata(before, after) ||
-    !sameDirectoryChain(directoryChainBefore, directoryChainAfter)
-  ) {
-    throw new Error("Podman executable authority changed while it was checked.");
-  }
+  const canonicalPath = measure(deps, "podmanCanonicalRealpath", () =>
+    canonicalExecutablePath(executablePath, realpath),
+  );
+  const directoryChainBefore = measure(deps, "podmanDirectoryChain", () =>
+    captureDirectoryChain(canonicalPath, uid, lstat),
+  );
+  const before = measure(deps, "podmanExecutableMetadata", () =>
+    immutableMetadata(lstat(canonicalPath), uid, canonicalPath),
+  );
+  const after = measure(deps, "podmanExecutableMetadata", () =>
+    immutableMetadata(lstat(canonicalPath), uid, canonicalPath),
+  );
+  const directoryChainAfter = measure(deps, "podmanDirectoryChain", () =>
+    captureDirectoryChain(canonicalPath, uid, lstat),
+  );
+  measure(deps, "podmanCanonicalRealpath", () => canonicalExecutablePath(canonicalPath, realpath));
+  measure(deps, "podmanAuthorityCompare", () => {
+    if (
+      !sameMetadata(before, after) ||
+      !sameDirectoryChain(directoryChainBefore, directoryChainAfter)
+    ) {
+      throw new Error("Podman executable authority changed while it was checked.");
+    }
+  });
   return Object.freeze({
     ...after,
     directoryChain: directoryChainAfter,
@@ -263,6 +324,7 @@ function sameExecutableMetadataAuthority(
   );
 }
 
+/** Bind executable bytes to a stable, trusted path before permitting execution. */
 export function capturePodmanExecutableAuthority(
   executablePath: string,
   deps: PodmanExecutableAuthorityDeps = {},
@@ -273,32 +335,48 @@ export function capturePodmanExecutableAuthority(
   const readFile = deps.readFile ?? ((filePath: string): Uint8Array => fs.readFileSync(filePath));
   const realpath = deps.realpath ?? ((filePath: string): string => fs.realpathSync(filePath));
   const uid = currentUid(deps.uid);
-  const canonicalPath = canonicalExecutablePath(executablePath, realpath);
-  const directoryChainBefore = captureDirectoryChain(canonicalPath, uid, lstat);
-  const before = immutableMetadata(lstat(canonicalPath), uid);
-  let contents: Uint8Array;
-  try {
-    contents = readFile(canonicalPath);
-  } catch {
-    throw new Error("Podman executable authority could not read the executable.");
-  }
+  const canonicalPath = measure(deps, "podmanCanonicalRealpath", () =>
+    canonicalExecutablePath(executablePath, realpath),
+  );
+  const directoryChainBefore = measure(deps, "podmanDirectoryChain", () =>
+    captureDirectoryChain(canonicalPath, uid, lstat),
+  );
+  const before = measure(deps, "podmanExecutableMetadata", () =>
+    immutableMetadata(lstat(canonicalPath), uid, canonicalPath),
+  );
+  const contents = measure(deps, "podmanContentRead", () => {
+    try {
+      return readFile(canonicalPath);
+    } catch {
+      throw new Error("Podman executable authority could not read the executable.");
+    }
+  });
   if (!(contents instanceof Uint8Array) || contents.byteLength !== Number(before.size)) {
     throw new Error("Podman executable authority read returned inconsistent executable bytes.");
   }
-  const after = immutableMetadata(lstat(canonicalPath), uid);
-  const directoryChainAfter = captureDirectoryChain(canonicalPath, uid, lstat);
-  canonicalExecutablePath(canonicalPath, realpath);
-  if (
-    !sameMetadata(before, after) ||
-    !sameDirectoryChain(directoryChainBefore, directoryChainAfter)
-  ) {
-    throw new Error("Podman executable authority changed while it was captured.");
-  }
+  const after = measure(deps, "podmanExecutableMetadata", () =>
+    immutableMetadata(lstat(canonicalPath), uid, canonicalPath),
+  );
+  const directoryChainAfter = measure(deps, "podmanDirectoryChain", () =>
+    captureDirectoryChain(canonicalPath, uid, lstat),
+  );
+  measure(deps, "podmanCanonicalRealpath", () => canonicalExecutablePath(canonicalPath, realpath));
+  measure(deps, "podmanAuthorityCompare", () => {
+    if (
+      !sameMetadata(before, after) ||
+      !sameDirectoryChain(directoryChainBefore, directoryChainAfter)
+    ) {
+      throw new Error("Podman executable authority changed while it was captured.");
+    }
+  });
+  const sha256 = measure(deps, "podmanContentHash", () =>
+    createHash("sha256").update(contents).digest("hex"),
+  );
   return Object.freeze({
     ...after,
     directoryChain: directoryChainAfter,
     executablePath: canonicalPath,
-    sha256: createHash("sha256").update(contents).digest("hex"),
+    sha256,
   });
 }
 
@@ -307,9 +385,11 @@ export function assertPodmanExecutableAuthority(
   deps: PodmanExecutableAuthorityDeps = {},
 ): void {
   const actual = capturePodmanExecutableAuthority(expected.executablePath, deps);
-  if (!sameExecutableMetadataAuthority(actual, expected) || actual.sha256 !== expected.sha256) {
-    throw new Error("Podman executable authority changed after it was qualified.");
-  }
+  measure(deps, "podmanAuthorityCompare", () => {
+    if (!sameExecutableMetadataAuthority(actual, expected) || actual.sha256 !== expected.sha256) {
+      throw new Error("Podman executable authority changed after it was qualified.");
+    }
+  });
 }
 
 export function assertPodmanExecutableMetadataAuthority(
@@ -317,7 +397,9 @@ export function assertPodmanExecutableMetadataAuthority(
   deps: PodmanExecutableAuthorityDeps = {},
 ): void {
   const actual = capturePodmanExecutableMetadataAuthority(expected.executablePath, deps);
-  if (!sameExecutableMetadataAuthority(actual, expected)) {
-    throw new Error("Podman executable authority changed after it was qualified.");
-  }
+  measure(deps, "podmanAuthorityCompare", () => {
+    if (!sameExecutableMetadataAuthority(actual, expected)) {
+      throw new Error("Podman executable authority changed after it was qualified.");
+    }
+  });
 }

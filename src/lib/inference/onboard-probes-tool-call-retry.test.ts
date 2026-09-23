@@ -3,7 +3,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { HARNESS_COUNTER, HARNESS_TMPDIR, withFakeCurlProbe } from "./onboard-probes-curl-harness";
 
@@ -85,6 +85,57 @@ exit 0
         expect(connectTimeouts[2]).toBe(connectTimeouts[0]);
       },
     );
+  });
+
+  it("caps the legacy strict-tool reasoning retry and watchdog", () => {
+    vi.stubEnv("NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS", "600");
+    const calls: Array<{ args: readonly string[]; timeout?: number }> = [];
+    const reasoningReply =
+      '{"choices":[{"finish_reason":"length","message":{"content":"","reasoning":"Planning the tool call.","tool_calls":null}}]}';
+    const toolCallReply =
+      '{"choices":[{"finish_reason":"tool_calls","message":{"content":"","tool_calls":[{"type":"function","function":{"name":"sessions_send","arguments":"{\\"message\\":\\"hello\\"}"}}]}}]}';
+    const replies = [reasoningReply, reasoningReply, toolCallReply];
+    const spawnSyncImpl = vi.fn(
+      (_command: string, args: readonly string[], options: { timeout?: number }) => {
+        const outputPath = args[args.indexOf("-o") + 1];
+        fs.writeFileSync(outputPath, replies[calls.length]);
+        calls.push({ args, timeout: options.timeout });
+        return { pid: 1, output: [], stdout: "200", stderr: "", status: 0, signal: null };
+      },
+    );
+
+    try {
+      const result = probeOpenAiLikeEndpoint(
+        "http://127.0.0.1:11434/v1",
+        "nemotron-3-nano:30b",
+        "",
+        {
+          skipResponsesProbe: true,
+          requireChatCompletionsToolCalling: true,
+          isWsl: false,
+          spawnSyncImpl,
+        },
+      );
+      const argValues = (flag: string) =>
+        calls.map(({ args }) => Number(args[args.indexOf(flag) + 1]));
+      const payloads = calls.map(({ args }) => JSON.parse(args[args.indexOf("-d") + 1]));
+
+      expect({
+        result,
+        replyBudgets: payloads.map((payload) => payload.max_tokens),
+        connectTimes: argValues("--connect-timeout"),
+        maxTimes: argValues("--max-time"),
+        processTimeouts: calls.map(({ timeout }) => timeout),
+      }).toEqual({
+        result: expect.objectContaining({ ok: true, api: "openai-completions" }),
+        replyBudgets: [256, 1024, 4096],
+        connectTimes: [600, 600, 600],
+        maxTimes: [600, 600, 600],
+        processTimeouts: [605_000, 605_000, 605_000],
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("reports a reasoning-budget diagnostic when the full retry ladder is exhausted (#8714)", () => {

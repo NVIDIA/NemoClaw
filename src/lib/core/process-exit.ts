@@ -5,6 +5,17 @@ import os from "node:os";
 
 const SANDBOX_LIFECYCLE_DEFERRED_EXIT = Symbol.for("nemoclaw.sandbox-lifecycle.deferred-exit");
 
+/** Normalize Node exit values while failing closed for present malformed values. */
+export function normalizeProcessExitCode(
+  value: number | string | null | undefined,
+  absentExitCode = 0,
+): number {
+  if (value === null || value === undefined) return absentExitCode;
+  if (value === "") return 1;
+  const exitCode = Number(value);
+  return Number.isInteger(exitCode) ? exitCode : 1;
+}
+
 export class SandboxLifecycleDeferredExit extends Error {
   readonly [SANDBOX_LIFECYCLE_DEFERRED_EXIT] = true;
   readonly exitCode: number;
@@ -58,6 +69,10 @@ export function spawnExitCode(result: {
 }): number {
   if (result.status !== null) return result.status;
   if (!result.signal) return 1;
-  const signalNumber = os.constants.signals[result.signal];
+  return signalExitCode(result.signal);
+}
+
+export function signalExitCode(signal: NodeJS.Signals): number {
+  const signalNumber = os.constants.signals[signal];
   return signalNumber ? 128 + signalNumber : 1;
 }

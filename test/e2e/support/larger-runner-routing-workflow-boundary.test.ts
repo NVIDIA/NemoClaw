@@ -75,12 +75,9 @@ const standardRouting = {
   "hermes-discord": "ubuntu-latest",
   "hermes-e2e": "ubuntu-latest",
   "hermes-inference-switch": "ubuntu-latest",
-  "hermes-shields-config": "ubuntu-latest",
   "mcp-bridge-deepagents": "ubuntu-latest",
   "mcp-bridge-hermes": "ubuntu-latest",
   "mcp-bridge-openclaw": "ubuntu-latest",
-  "rebuild-hermes": "ubuntu-latest",
-  "rebuild-hermes-stale-base": "ubuntu-latest",
   "security-posture-hermes": "ubuntu-latest",
 };
 
@@ -142,11 +139,8 @@ describe("larger-runner workflow routing boundary", () => {
       "hermes-discord": largerRunner,
       "hermes-e2e": largerRunner,
       "hermes-inference-switch": largerRunner,
-      "hermes-shields-config": largerRunner,
       "mcp-bridge-deepagents": largerRunner,
       "mcp-bridge-hermes": largerRunner,
-      "rebuild-hermes": largerRunner,
-      "rebuild-hermes-stale-base": largerRunner,
       "security-posture-hermes": largerRunner,
     });
   });

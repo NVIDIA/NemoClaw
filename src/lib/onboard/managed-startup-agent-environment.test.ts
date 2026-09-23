@@ -36,6 +36,7 @@ const UNSUPPORTED_AGENT_RUNTIME_UNSETS = [
   "NEMOCLAW_DASHBOARD_BIND",
   "NEMOCLAW_MINIMAL_BOOTSTRAP",
 ] as const;
+const HERMES_FIXED_RUNTIME_NAMES = ["HERMES_HOME", "HERMES_LAZY_INSTALL_TARGET"] as const;
 
 function messagingPlan(agent: "openclaw" | "hermes"): ManagedStartupJsonObject {
   return {
@@ -86,7 +87,6 @@ function openClawProfile(): ManagedStartupProfile {
         defaults: { subagents: { maxSpawnDepth: 3 } },
         main: { tools: { profile: "minimal", allow: ["read"], deny: ["exec"] } },
       },
-      deviceAuth: { disabled: true, optOutSource: "managed-onboard" },
       minimalBootstrap: true,
     },
     inference: {
@@ -160,6 +160,7 @@ function hermesProfile(): ManagedStartupProfile {
       agent: "hermes",
       mode: "loopback-forwarded",
       url: "http://127.0.0.1:19189",
+      browserUrl: "https://hermes.example.test:19189",
       publicPort: 19_189,
       internalPort: 29_189,
       tuiEnabled: true,
@@ -299,7 +300,7 @@ describe("managed startup agent environment", () => {
       NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "6e2",
     });
 
-    expect(result.schemaVersion).toBe(1);
+    expect(result.schemaVersion).toBe(MANAGED_STARTUP_PROFILE_SCHEMA_VERSION);
     expect(result.agent).toBe("openclaw");
     expect(result.configurationEnvironment).toEqual({
       CHAT_UI_URL: "https://dashboard.example.test:18789",
@@ -307,8 +308,6 @@ describe("managed startup agent environment", () => {
       NEMOCLAW_AGENT_TIMEOUT: "900",
       NEMOCLAW_CONTEXT_WINDOW: "131072",
       NEMOCLAW_DASHBOARD_BIND: "0.0.0.0",
-      NEMOCLAW_DISABLE_DEVICE_AUTH: "1",
-      NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE: "managed-onboard",
       NEMOCLAW_EXTRA_AGENTS_JSON_B64: expect.any(String),
       NEMOCLAW_INFERENCE_API: "openai-responses",
       NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
@@ -327,6 +326,7 @@ describe("managed startup agent environment", () => {
       NEMOCLAW_PROXY_PORT: "3128",
       NEMOCLAW_REASONING: "true",
       NEMOCLAW_REASONING_EFFORT: "high",
+      NEMOCLAW_SERVING_PRESET: "",
       NEMOCLAW_TOOL_DISCLOSURE: "progressive",
       NEMOCLAW_UPSTREAM_PROVIDER: "nvidia-prod",
       NEMOCLAW_WEB_SEARCH_ENABLED: "1",
@@ -455,10 +455,16 @@ describe("managed startup agent environment", () => {
         NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "600",
       });
       const unsets = new Set(result.applicationRuntime.unsetEnvironment);
-      expect(MANAGED_STARTUP_RUNTIME_CLEANUP_OBLIGATIONS.every((obligation) =>
-          Object.is(unsets.has(obligation.input), !obligation.supportedFor.includes(agent)))).toBe(true);
-      expect(OPENCLAW_APPLICATION_RUNTIME_NAMES.every((name) =>
-          Object.is(unsets.has(name), agent !== "openclaw"))).toBe(true);
+      expect(
+        MANAGED_STARTUP_RUNTIME_CLEANUP_OBLIGATIONS.every((obligation) =>
+          Object.is(unsets.has(obligation.input), !obligation.supportedFor.includes(agent)),
+        ),
+      ).toBe(true);
+      expect(
+        OPENCLAW_APPLICATION_RUNTIME_NAMES.every((name) =>
+          Object.is(unsets.has(name), agent !== "openclaw"),
+        ),
+      ).toBe(true);
     },
   );
 
@@ -485,7 +491,7 @@ describe("managed startup agent environment", () => {
     });
 
     expect(result.configurationEnvironment).toEqual({
-      CHAT_UI_URL: "http://127.0.0.1:19189",
+      CHAT_UI_URL: "https://hermes.example.test:19189",
       NEMOCLAW_CONTEXT_WINDOW: "65536",
       NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER: "1",
       NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64: expect.any(String),
@@ -505,7 +511,7 @@ describe("managed startup agent environment", () => {
       ),
     ).toEqual(["nous-audio", "nous-browser", "nous-code", "nous-image", "nous-web"]);
     expect(result.runtimeEnvironment).toEqual({
-      CHAT_UI_URL: "http://127.0.0.1:19189",
+      CHAT_UI_URL: "https://hermes.example.test:19189",
       HTTP_PROXY: "http://proxy.example.test:8080",
       HTTPS_PROXY: "http://proxy.example.test:3128",
       NO_PROXY: "127.0.0.1,localhost",
@@ -522,6 +528,8 @@ describe("managed startup agent environment", () => {
       NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
       NEMOCLAW_INFERENCE_PROVIDER_ID: "custom",
       NEMOCLAW_MODEL: "claude-sonnet-4-5",
+      HERMES_HOME: "/sandbox/.hermes",
+      HERMES_LAZY_INSTALL_TARGET: "/sandbox/.hermes/lazy-packages",
       NEMOCLAW_PROXY_HOST: "proxy_name",
       NEMOCLAW_PROXY_PORT: "43128",
       NEMOCLAW_TOOL_DISCLOSURE: "direct",
@@ -556,6 +564,21 @@ describe("managed startup agent environment", () => {
     });
   });
 
+  it("refuses to start a legacy Hermes dashboard without its browser URL (#10651)", () => {
+    const profile = hermesProfile();
+    assert.equal(profile.dashboard.agent, "hermes");
+    const { browserUrl: _browserUrl, ...legacyDashboard } = profile.dashboard;
+
+    expect(() =>
+      mapManagedStartupProfileToAgentEnvironment({
+        ...profile,
+        dashboard: legacyDashboard,
+      }),
+    ).toThrow(
+      "Cannot start the Hermes dashboard because its managed startup profile has no recorded browser URL. Rerun onboarding before starting the sandbox.",
+    );
+  });
+
   it("keeps DCode routing, provider identity, and auto-approval in root-owned files", () => {
     const result = mapManagedStartupProfileToAgentEnvironment(dcodeProfile(), {
       NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: "not-a-number",
@@ -581,16 +604,11 @@ describe("managed startup agent environment", () => {
     delete expectedDcodeRuntime.NEMOCLAW_INFERENCE_BASE_URL;
     delete expectedDcodeRuntime.NEMOCLAW_REASONING_EFFORT;
     delete expectedDcodeRuntime.NEMOCLAW_UPSTREAM_PROVIDER;
-    [
-      "HTTP_PROXY",
-      "HTTPS_PROXY",
-      "NO_PROXY",
-      "http_proxy",
-      "https_proxy",
-      "no_proxy",
-    ].forEach((name) => {
-      delete expectedDcodeRuntime[name];
-    });
+    ["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"].forEach(
+      (name) => {
+        delete expectedDcodeRuntime[name];
+      },
+    );
     expect(result.runtimeEnvironment).toEqual({
       ...expectedDcodeRuntime,
       NEMOCLAW_OBSERVABILITY: "1",
@@ -778,17 +796,17 @@ describe("managed startup agent environment", () => {
     const after = mapManagedStartupProfileToAgentEnvironment({
       ...base,
       inference: {
-        ...base.inference,
+        ...base.inference!,
         routeProvider: "rebuilt-inference",
         upstreamProvider: "openrouter",
         model: "openai/gpt-5.4",
-        routedBaseUrl: "https://rebuilt.inference.local/v1",
+        routedBaseUrl: "https://rebuilt.inference!.local/v1",
       },
       proxy: { ...base.proxy, managedHost: "10.200.0.9", managedPort: 3129 },
     });
 
     expect(after.configurationEnvironment).toMatchObject({
-      NEMOCLAW_INFERENCE_BASE_URL: "https://rebuilt.inference.local/v1",
+      NEMOCLAW_INFERENCE_BASE_URL: "https://rebuilt.inference!.local/v1",
       NEMOCLAW_INFERENCE_PROVIDER_ID: "rebuilt-inference",
       NEMOCLAW_MODEL: "openai/gpt-5.4",
       NEMOCLAW_UPSTREAM_PROVIDER: "openrouter",
@@ -815,11 +833,14 @@ describe("managed startup agent environment", () => {
     expect(openclawConfig).toMatchObject({
       agents: {
         defaults: {
-          heartbeat: { every: "30m" },
+          heartbeat: { every: "30m", isolatedSession: true },
           subagents: { maxSpawnDepth: 3 },
           timeoutSeconds: 900,
         },
-        list: [{ default: true, id: "main" }, { id: "reviewer" }],
+        entries: {
+          main: { default: true },
+          reviewer: {},
+        },
       },
       models: {
         providers: {
@@ -857,7 +878,7 @@ describe("managed startup agent environment", () => {
     const upstreamProvider = "a".repeat(64);
     const result = mapManagedStartupProfileToAgentEnvironment({
       ...profile,
-      inference: { ...profile.inference, upstreamProvider },
+      inference: { ...profile.inference!, upstreamProvider },
     });
 
     expect(
@@ -870,9 +891,12 @@ describe("managed startup agent environment", () => {
     (agent) => {
       const result = mapManagedStartupProfileToAgentEnvironment(PROFILES[agent]());
       expect(representedLegacyInputs(result)).toEqual(
-        MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY[agent]
-          .map((affordance) => affordance.input)
-          .sort(),
+        [
+          ...MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY[agent].map(
+            (affordance) => affordance.input,
+          ),
+          ...(agent === "hermes" ? HERMES_FIXED_RUNTIME_NAMES : []),
+        ].sort(),
       );
       const messagingActions = result.actions.filter(
         (action) => action.kind === "apply-messaging-plan",
@@ -923,16 +947,11 @@ describe("managed startup agent environment", () => {
       expect(openclawResult.configurationEnvironment.NEMOCLAW_AGENT_HEARTBEAT_EVERY).toBe("");
       expect(openclawResult.configurationEnvironment.NEMOCLAW_DASHBOARD_BIND).toBe("");
       expect(openclawResult.runtimeEnvironment.NEMOCLAW_MINIMAL_BOOTSTRAP).toBe("0");
-      [
-        "HTTP_PROXY",
-        "HTTPS_PROXY",
-        "NO_PROXY",
-        "http_proxy",
-        "https_proxy",
-        "no_proxy",
-      ].forEach((name) => {
-        expect(openclawResult.runtimeEnvironment).not.toHaveProperty(name);
-      });
+      ["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"].forEach(
+        (name) => {
+          expect(openclawResult.runtimeEnvironment).not.toHaveProperty(name);
+        },
+      );
       expect(openclawResult.configurationEnvironment).not.toHaveProperty(
         "NEMOCLAW_MESSAGING_PLAN_B64",
       );
@@ -984,21 +1003,16 @@ describe("managed startup agent environment", () => {
         NEMOCLAW_HERMES_DASHBOARD_PORT: "",
         NEMOCLAW_HERMES_DASHBOARD_TUI: "0",
       });
-      [
-        "HTTP_PROXY",
-        "HTTPS_PROXY",
-        "NO_PROXY",
-        "http_proxy",
-        "https_proxy",
-        "no_proxy",
-      ].forEach((name) => {
-        expect(hermesResult.runtimeEnvironment).not.toHaveProperty(name);
-      });
+      ["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"].forEach(
+        (name) => {
+          expect(hermesResult.runtimeEnvironment).not.toHaveProperty(name);
+        },
+      );
 
       const dcodeBase = dcodeProfile();
       const dcode: ManagedStartupProfile = {
         ...dcodeBase,
-        inference: { ...dcodeBase.inference, upstreamEndpointUrl: null },
+        inference: { ...dcodeBase.inference!, upstreamEndpointUrl: null },
       };
       const dcodeResult = mapManagedStartupProfileToAgentEnvironment(dcode);
       expect(dcodeResult.configurationEnvironment.NEMOCLAW_UPSTREAM_ENDPOINT_URL).toBe("");
@@ -1014,15 +1028,15 @@ describe("managed startup agent environment", () => {
     const reordered: ManagedStartupProfile = {
       ...cloned,
       inference: {
-        api: profile.inference.api,
-        upstreamEndpointUrl: profile.inference.upstreamEndpointUrl,
-        compatibility: profile.inference.compatibility,
-        inputModalities: profile.inference.inputModalities,
-        routeProvider: profile.inference.routeProvider,
-        upstreamProvider: profile.inference.upstreamProvider,
-        primaryModelRef: profile.inference.primaryModelRef,
-        routedBaseUrl: profile.inference.routedBaseUrl,
-        model: profile.inference.model,
+        api: profile.inference!.api,
+        upstreamEndpointUrl: profile.inference!.upstreamEndpointUrl,
+        compatibility: profile.inference!.compatibility,
+        inputModalities: profile.inference!.inputModalities,
+        routeProvider: profile.inference!.routeProvider,
+        upstreamProvider: profile.inference!.upstreamProvider,
+        primaryModelRef: profile.inference!.primaryModelRef,
+        routedBaseUrl: profile.inference!.routedBaseUrl,
+        model: profile.inference!.model,
       },
     };
     const first = mapManagedStartupProfileToAgentEnvironment(profile);
@@ -1060,7 +1074,7 @@ describe("managed startup agent environment", () => {
       const base = dcodeProfile();
       const profile: ManagedStartupProfile = {
         ...base,
-        inference: { ...base.inference, upstreamProvider },
+        inference: { ...base.inference!, upstreamProvider },
       };
 
       expect(() => mapManagedStartupProfileToAgentEnvironment(profile)).toThrow(
@@ -1085,7 +1099,7 @@ describe("managed startup agent environment", () => {
     const credentialBearing: ManagedStartupProfile = {
       ...openclawBase,
       inference: {
-        ...openclawBase.inference,
+        ...openclawBase.inference!,
         routedBaseUrl: "https://user:password@inference.local/v1",
       },
     };

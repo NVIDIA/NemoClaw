@@ -17,8 +17,9 @@ import {
   PODMAN_SANDBOX_WORKSPACE_LABEL,
 } from "../../../src/lib/onboard/runtime-provider/podman-lifecycle";
 import { redactFull } from "../../../src/lib/security/redact";
+import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { expect } from "../fixtures/e2e-test.ts";
-import { OPENSHELL_V0106_QUALIFICATION } from "../fixtures/openshell-v0106-qualification.ts";
+import { OPENSHELL_V0116_QUALIFICATION } from "../fixtures/openshell-v0116-qualification.ts";
 import { spawnObservedChild } from "../fixtures/observed-child-process.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 import {
@@ -33,8 +34,8 @@ import {
 } from "./podman-cpu-lifecycle-artifacts.ts";
 
 export const ARTIFACT_DIR = process.env.E2E_ARTIFACT_DIR ?? "";
-export const GATEWAY_NAME = "podman-proof";
-export const OPENSHELL_VERSION = OPENSHELL_V0106_QUALIFICATION.version;
+export const GATEWAY_NAME = "nemoclaw-18080";
+export const OPENSHELL_VERSION = OPENSHELL_V0116_QUALIFICATION.version;
 export const SOCKET_PATH = process.env.E2E_PODMAN_SOCKET ?? "";
 
 const FULL_CONTAINER_ID = /^[0-9a-f]{64}$/u;
@@ -110,7 +111,7 @@ export async function runCommand(
       }),
       {
         artifactName: options.artifactName,
-        env: options.env ?? process.env,
+        env: options.env ?? buildAvailabilityProbeEnv(),
         timeoutMs: options.timeoutMs ?? 60_000,
       },
     );
@@ -138,7 +139,7 @@ export async function startPinnedGateway(
   artifactDir = ARTIFACT_DIR,
 ): Promise<ChildProcess> {
   const child = spawnObservedChild(gatewayBin, [], {
-    activityLabel: "command: pinned OpenShell 0.0.106 Podman gateway",
+    activityLabel: "command: pinned OpenShell 0.0.116 Podman gateway",
     progress,
     spawn: {
       env: { ...process.env, ...gatewayEnv },

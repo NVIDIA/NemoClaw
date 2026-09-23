@@ -28,7 +28,6 @@ describe("fresh-agent gateway snapshot artifacts", () => {
   it("reports paired scope state without device identity, key, or token values (#4462)", () => {
     const fixtureRoot = mkdtempSync(path.join(tmpdir(), "nemoclaw-issue-4462-snapshot-"));
     const stateRoot = path.join(fixtureRoot, "state");
-    const gatewayLog = path.join(fixtureRoot, "gateway.log");
     mkdirSync(path.join(stateRoot, "identity"), { recursive: true });
     mkdirSync(path.join(stateRoot, "devices"), { recursive: true });
     writeJson(path.join(stateRoot, "identity", "device.json"), {
@@ -53,14 +52,11 @@ describe("fresh-agent gateway snapshot artifacts", () => {
         },
       },
     });
-    writeFileSync(gatewayLog, "[agent] run fixture ended with stopReason=stop\n", "utf8");
-
     try {
-      const result = spawnSync(
-        "python3",
-        [SNAPSHOT_SCRIPT, "1", "snapshot", "30", stateRoot, gatewayLog],
-        { encoding: "utf8", timeout: 10_000 },
-      );
+      const result = spawnSync("python3", [SNAPSHOT_SCRIPT, "30", stateRoot], {
+        encoding: "utf8",
+        timeout: 10_000,
+      });
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
       const snapshot = JSON.parse(result.stdout) as Record<string, unknown>;
       expect(snapshot).toEqual({
@@ -68,7 +64,6 @@ describe("fresh-agent gateway snapshot artifacts", () => {
         activeOperatorTokenScopes: ["operator.pairing", "operator.read", "operator.write"],
         approvedScopes: ["operator.pairing", "operator.write"],
         deviceScopes: ["operator.pairing", "operator.write"],
-        gatewayCompletedRuns: 1,
         matchingPairedCount: 1,
         pairedCliCount: 1,
         pendingCount: 0,
@@ -83,28 +78,9 @@ describe("fresh-agent gateway snapshot artifacts", () => {
     }
   });
 
-  it("reports the completed gateway-run count after reaching the requested minimum (#4462)", () => {
-    const fixtureRoot = mkdtempSync(path.join(tmpdir(), "nemoclaw-issue-4462-runs-"));
-    const gatewayLog = path.join(fixtureRoot, "gateway.log");
-    writeFileSync(gatewayLog, "[agent] run fixture ended with stopReason=stop\n", "utf8");
-
-    try {
-      const result = spawnSync(
-        "python3",
-        [SNAPSHOT_SCRIPT, "1", "gateway-runs", "30", fixtureRoot, gatewayLog],
-        { encoding: "utf8", timeout: 10_000 },
-      );
-      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-      expect(JSON.parse(result.stdout)).toEqual({ gatewayCompletedRuns: 1 });
-    } finally {
-      rmSync(fixtureRoot, { force: true, recursive: true });
-    }
-  });
-
   it("rejects a local CLI identity whose device ID is not bound to its public key (#4462)", () => {
     const fixtureRoot = mkdtempSync(path.join(tmpdir(), "nemoclaw-issue-4462-binding-"));
     const stateRoot = path.join(fixtureRoot, "state");
-    const gatewayLog = path.join(fixtureRoot, "gateway.log");
     const mismatchedDeviceId = "0".repeat(64);
     mkdirSync(path.join(stateRoot, "identity"), { recursive: true });
     mkdirSync(path.join(stateRoot, "devices"), { recursive: true });
@@ -121,14 +97,11 @@ describe("fresh-agent gateway snapshot artifacts", () => {
         publicKey: PUBLIC_KEY,
       },
     });
-    writeFileSync(gatewayLog, "[agent] run fixture ended with stopReason=stop\n", "utf8");
-
     try {
-      const result = spawnSync(
-        "python3",
-        [SNAPSHOT_SCRIPT, "1", "snapshot", "30", stateRoot, gatewayLog],
-        { encoding: "utf8", timeout: 10_000 },
-      );
+      const result = spawnSync("python3", [SNAPSHOT_SCRIPT, "30", stateRoot], {
+        encoding: "utf8",
+        timeout: 10_000,
+      });
       expect(result.status).not.toBe(0);
       expect(result.stdout).toBe("");
       expect(result.stderr).toContain("CLI identity binding is invalid");

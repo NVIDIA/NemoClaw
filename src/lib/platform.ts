@@ -6,6 +6,8 @@ import os from "node:os";
 import path from "node:path";
 
 import { dockerSpawnSync } from "./adapters/docker/exec";
+import { isSupportedDockerContextName, isSupportedGatewayDockerHost } from "./domain/docker-host";
+import { buildDockerSubprocessEnv } from "./subprocess-env";
 
 export type ContainerRuntime = "podman" | "colima" | "docker-desktop" | "docker" | "unknown";
 
@@ -27,26 +29,78 @@ export interface DockerHostDetectionOptions extends PlatformLookupOptions, WslDe
   env?: NodeJS.ProcessEnv;
   existsSync?: (filePath: string) => boolean;
   probeDockerHost?: DockerHostProbe;
+  resolveDockerContextHost?: DockerContextHostResolver;
 }
 
 export interface DockerHostDetection {
   dockerHost: string;
-  source: "env" | "socket";
+  source: "env" | "context" | "socket";
   socketPath: string | null;
 }
+
+/** Resolve a Docker context name to the endpoint it selects, or null. */
+export type DockerContextHostResolver = (context: string) => string | null;
 
 export type DockerVersionIdentity = "docker" | "podman" | "unknown";
 
 export interface DockerHostProbeResult {
   reachable: boolean;
   identity: DockerVersionIdentity;
+  /**
+   * The probe never reached a verdict: no process result was returned, the
+   * result contained an error, or the process had no exit status.
+   * Unreachability was not observed, so this must not license a redirect.
+   * A timeout keeps the host default because the probe has no verdict.
+   * A longer timeout can produce a verdict and permit fallback selection.
+   */
+  inconclusive?: boolean;
 }
 
 export type DockerHostProbe = (dockerHost: string | undefined) => DockerHostProbeResult;
 
+type WindowsInteropCapture = (
+  command: readonly string[],
+  options?: { ignoreError?: boolean; timeout?: number },
+) => string;
+
+export interface WindowsProcessTcpListenerProbe {
+  processName: string;
+  port: number;
+  timeoutMs: number;
+}
+
+/** Require every matching Windows process listener on a TCP port to use loopback. */
+export function windowsProcessListensOnlyOnLoopback(
+  runCaptureImpl: WindowsInteropCapture,
+  probe: WindowsProcessTcpListenerProbe,
+): boolean {
+  const processName = probe.processName.trim();
+  if (!processName || !Number.isInteger(probe.port) || probe.port < 1 || probe.port > 65_535) {
+    return false;
+  }
+  const quotedProcessName = `'${processName.replace(/'/g, "''")}'`;
+  const script =
+    `$processPids = @(Get-Process ${quotedProcessName} -ErrorAction SilentlyContinue | ` +
+    "Select-Object -ExpandProperty Id); " +
+    "if ($processPids.Count -gt 0) { " +
+    `Get-NetTCPConnection -LocalPort ${probe.port} -State Listen -ErrorAction SilentlyContinue | ` +
+    "Where-Object { $processPids -contains $_.OwningProcess } | " +
+    "Select-Object -ExpandProperty LocalAddress }";
+  const addresses = runCaptureImpl(["powershell.exe", "-Command", script], {
+    ignoreError: true,
+    timeout: probe.timeoutMs,
+  })
+    .split(/\r?\n/)
+    .map((address) => address.trim())
+    .filter(Boolean);
+  return (
+    addresses.length > 0 &&
+    addresses.every((address) => address === "127.0.0.1" || address === "::1")
+  );
+}
+
 const DOCKER_PROBE_TIMEOUT_MS = 3_000;
 const DOCKER_PROBE_MAX_BUFFER_BYTES = 1024 * 1024;
-const DOCKER_PROBE_ENV_NAMES = ["HOME", "USER", "LOGNAME", "PATH"] as const;
 
 function isWsl(opts: WslDetectionOptions = {}): boolean {
   // Explicit override — lets tests pin behavior regardless of the host kernel.
@@ -124,23 +178,49 @@ function classifyDockerVersionIdentity(versionOutput = ""): DockerVersionIdentit
   return "unknown";
 }
 
+/**
+ * Probe the Docker CLI in the same environment the CLI's real Docker
+ * commands run in (`buildSubprocessEnv`), minus the authority under test.
+ *
+ * The probe predicts whether those commands will reach a daemon, so any
+ * name they get and it does not can flip its verdict: `SSH_AUTH_SOCK`
+ * authenticates an `ssh://` Docker context, and the proxy names decide how
+ * a `tcp://` one is routed. A verdict from a narrower environment can call
+ * a daemon unreachable that every later command talks to, which sends
+ * detection to a fallback socket the host never meant to use (#10367).
+ */
 function buildDockerProbeEnv(
   source: NodeJS.ProcessEnv,
   dockerHost: string | undefined,
-): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = {};
-  for (const name of DOCKER_PROBE_ENV_NAMES) {
-    const value = source[name];
-    if (value !== undefined) env[name] = value;
-  }
-  if (dockerHost === undefined) {
-    if (source.DOCKER_CONFIG !== undefined) env.DOCKER_CONFIG = source.DOCKER_CONFIG;
-    if (source.DOCKER_CONTEXT !== undefined) env.DOCKER_CONTEXT = source.DOCKER_CONTEXT;
-  }
-  if (dockerHost) {
-    env.DOCKER_HOST = dockerHost;
-  }
-  return env;
+): Record<string, string> {
+  return buildDockerSubprocessEnv(source, dockerHost);
+}
+
+const DOCKER_CONTEXT_HOST_FORMAT = "{{.Endpoints.docker.Host}}";
+
+/**
+ * Resolve the endpoint an explicitly selected Docker context names.
+ *
+ * `docker context inspect` reads the local context store and never contacts a
+ * daemon, so the endpoint is known before any reachability verdict exists. A
+ * context that cannot be resolved has no endpoint to redirect to either, so
+ * the caller keeps the host default and lets the real command report why.
+ */
+function resolveDockerContextHost(context: string, source: NodeJS.ProcessEnv): string | null {
+  if (!isSupportedDockerContextName(context)) return null;
+  const result = dockerSpawnSync(
+    ["context", "inspect", context, "--format", DOCKER_CONTEXT_HOST_FORMAT],
+    {
+      encoding: "utf-8",
+      env: buildDockerProbeEnv(source, undefined),
+      timeout: DOCKER_PROBE_TIMEOUT_MS,
+      maxBuffer: DOCKER_PROBE_MAX_BUFFER_BYTES,
+    },
+  );
+  if (!result || result.error || result.status !== 0) return null;
+  const host = String(result.stdout ?? "").trim();
+  if (!host || /[\0\r\n]/u.test(host)) return null;
+  return host;
 }
 
 function probeDockerHost(
@@ -153,7 +233,10 @@ function probeDockerHost(
     timeout: DOCKER_PROBE_TIMEOUT_MS,
     maxBuffer: DOCKER_PROBE_MAX_BUFFER_BYTES,
   });
-  if (!result || result.status !== 0) return { reachable: false, identity: "unknown" };
+  if (!result || result.error || result.status === null) {
+    return { reachable: false, identity: "unknown", inconclusive: true };
+  }
+  if (result.status !== 0) return { reachable: false, identity: "unknown" };
   return {
     reachable: true,
     identity: classifyDockerVersionIdentity(String(result.stdout ?? "")),
@@ -240,45 +323,128 @@ function getDockerSocketCandidates(opts: PlatformLookupOptions = {}): string[] {
   }
 
   if (platform === "linux") {
+    const uid = opts.uid ?? process.getuid?.() ?? 1000;
+    // The rootless Docker daemon puts its socket in the same runtime
+    // directory as Podman's, and was never a candidate here (#10367).
+    // Order decides only between candidates that identify as the same
+    // engine; two engines that both answer still abort the selection below.
     return [
-      ...getPodmanSocketCandidates({ home, platform, uid: opts.uid }),
       "/run/docker.sock",
       "/var/run/docker.sock",
+      `/run/user/${String(uid)}/docker.sock`,
+      ...getPodmanSocketCandidates({ home, platform, uid: opts.uid }),
     ];
   }
 
   return [];
 }
 
-function detectDockerHost(opts: DockerHostDetectionOptions = {}): DockerHostDetection | null {
+/** One reachable fallback socket that identified itself as a known engine. */
+export interface DockerAuthorityCandidate {
+  readonly socketPath: string;
+  readonly identity: "docker" | "podman";
+}
+
+/**
+ * Two reachable fallback sockets that identify as different engines while the
+ * host default authority refuses to answer. NemoClaw does not choose between
+ * them (#8816, #10253); this record lets preflight explain why (#10622).
+ */
+export interface DockerAuthorityConflict {
+  /** [the candidate selected first, the differing candidate], in probe order. */
+  readonly candidates: readonly [DockerAuthorityCandidate, DockerAuthorityCandidate];
+}
+
+interface DockerAuthoritySelection {
+  selection: DockerHostDetection | null;
+  conflict: DockerAuthorityConflict | null;
+}
+
+/**
+ * Probe the ambient Docker authority and the fallback sockets once, returning
+ * the selection detectDockerHost makes and the engine conflict, if any, that
+ * made it decline. The policy stays fail-closed (#8816, #10253).
+ */
+function selectDockerAuthority(opts: DockerHostDetectionOptions = {}): DockerAuthoritySelection {
   const env = opts.env ?? process.env;
+  // DOCKER_CONTEXT overrides DOCKER_HOST in the Docker CLI. It selects the
+  // daemon authority exactly as DOCKER_HOST does, so
+  // a discovered fallback socket must never replace it: redirecting a host that
+  // named its own authority runs NemoClaw against a daemon the operator did not
+  // choose, and reports readiness for that other daemon (#11719). Resolving the
+  // context to its endpoint keeps every later consumer — readiness probes,
+  // preflight, and the container-engine authority — measuring the same daemon.
+  const context = String(env.DOCKER_CONTEXT ?? "").trim();
+  if (context) {
+    const resolveContextHost =
+      opts.resolveDockerContextHost ?? ((name: string) => resolveDockerContextHost(name, env));
+    const contextHost = resolveContextHost(context);
+    // Only a supported local socket is recorded as the endpoint. Any other
+    // endpoint, and a context that does not resolve, keeps the host default so
+    // this selection never widens what a later consumer is allowed to contact.
+    return {
+      selection:
+        contextHost && isSupportedGatewayDockerHost(contextHost)
+          ? { dockerHost: contextHost, source: "context", socketPath: null }
+          : null,
+      conflict: null,
+    };
+  }
+
   if (env.DOCKER_HOST) {
     return {
-      dockerHost: env.DOCKER_HOST,
-      source: "env",
-      socketPath: null,
+      selection: {
+        dockerHost: env.DOCKER_HOST,
+        source: "env",
+        socketPath: null,
+      },
+      conflict: null,
     };
   }
 
   const probe = opts.probeDockerHost ?? ((dockerHost) => probeDockerHost(dockerHost, env));
-  if (probe(undefined).reachable) return null;
+  const ambient = probe(undefined);
+  // Redirect the CLI away from the host's own default authority only after
+  // observing that the default refuses to answer. A probe that timed out or
+  // never ran is no evidence at all (#10367).
+  if (ambient.reachable || ambient.inconclusive) return { selection: null, conflict: null };
 
   const fileExists = opts.existsSync ?? defaultExistsSync;
   let selection: DockerHostDetection | null = null;
-  let selectedIdentity: Exclude<DockerVersionIdentity, "unknown"> | null = null;
+  let selected: DockerAuthorityCandidate | null = null;
   for (const socketPath of getDockerSocketCandidates(opts)) {
     if (!fileExists(socketPath)) continue;
     const dockerHost = `unix://${socketPath}`;
     const observation = probe(dockerHost);
     if (!observation.reachable) continue;
     if (observation.identity === "unknown") continue;
-    if (selectedIdentity && observation.identity !== selectedIdentity) return null;
+    if (selected && observation.identity !== selected.identity) {
+      return {
+        selection: null,
+        conflict: { candidates: [selected, { socketPath, identity: observation.identity }] },
+      };
+    }
     if (selection) continue;
+    selected = { socketPath, identity: observation.identity };
     selection = { dockerHost, source: "socket", socketPath };
-    selectedIdentity = observation.identity;
   }
 
-  return selection;
+  return { selection, conflict: null };
+}
+
+/** Select the Docker authority the CLI should use, or null to keep the host default. */
+function detectDockerHost(opts: DockerHostDetectionOptions = {}): DockerHostDetection | null {
+  return selectDockerAuthority(opts).selection;
+}
+
+/**
+ * Report the engine conflict that made detectDockerHost decline to select a
+ * fallback socket, or null when no such conflict was observed.
+ */
+function observeDockerAuthorityConflict(
+  opts: DockerHostDetectionOptions = {},
+): DockerAuthorityConflict | null {
+  return selectDockerAuthority(opts).conflict;
 }
 
 export {
@@ -291,5 +457,6 @@ export {
   getPodmanSocketCandidates,
   inferContainerRuntime,
   isWsl,
+  observeDockerAuthorityConflict,
   shouldPatchCoredns,
 };

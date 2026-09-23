@@ -330,6 +330,8 @@ function inspectPortableNetworkSnapshot(
 
 export interface PreparedPortableRegistryRecovery {
   readonly started: boolean;
+  readonly assertRetainedCurrent: () => void;
+  readonly assertTransactionCurrent: () => void;
   readonly assertCurrent: () => void;
   readonly rollback: () => void;
   readonly release: () => void;
@@ -531,6 +533,13 @@ export function preparePortableRegistryRecovery(
   assertEngineCurrent: () => void,
   assertCallerCurrent: () => void,
   timing: Partial<PortableRegistryRecoveryTiming> = {},
+  transactionCurrent: {
+    readonly assertEngineCurrent: () => void;
+    readonly assertCallerCurrent: () => void;
+  } = Object.freeze({
+    assertEngineCurrent,
+    assertCallerCurrent,
+  }),
 ): PreparedPortableRegistryRecovery {
   if (!NETWORK_ID.test(expectedAuthoritySha256)) {
     throw new Error("Hermes Portable inference registry recovery digest is malformed.");
@@ -565,8 +574,21 @@ export function preparePortableRegistryRecovery(
       assertRecoveryCurrent();
       authority.assertCurrent();
     };
+    const assertTransactionCurrent = () => {
+      if (released) throw new Error("Hermes Portable inference registry recovery was released.");
+      transactionCurrent.assertCallerCurrent();
+      transactionCurrent.assertEngineCurrent();
+      authority.assertCurrent();
+    };
+    const assertRetainedCurrent = () => {
+      if (released) throw new Error("Hermes Portable inference registry recovery was released.");
+      transactionCurrent.assertCallerCurrent();
+      transactionCurrent.assertEngineCurrent();
+    };
     return Object.freeze({
       started: false,
+      assertRetainedCurrent,
+      assertTransactionCurrent,
       assertCurrent,
       rollback: assertCurrent,
       release: () => {
@@ -616,6 +638,17 @@ export function preparePortableRegistryRecovery(
     assertRecoveryCurrent();
     authority.assertCurrent();
   };
+  const assertTransactionCurrent = () => {
+    if (released) throw new Error("Hermes Portable inference registry recovery was released.");
+    transactionCurrent.assertCallerCurrent();
+    transactionCurrent.assertEngineCurrent();
+    authority.assertCurrent();
+  };
+  const assertRetainedCurrent = () => {
+    if (released) throw new Error("Hermes Portable inference registry recovery was released.");
+    transactionCurrent.assertCallerCurrent();
+    transactionCurrent.assertEngineCurrent();
+  };
   const rollback = () => {
     if (released) throw new Error("Hermes Portable inference registry recovery was released.");
     assertEngineCurrent();
@@ -634,6 +667,8 @@ export function preparePortableRegistryRecovery(
   };
   return Object.freeze({
     started: true,
+    assertRetainedCurrent,
+    assertTransactionCurrent,
     assertCurrent,
     rollback,
     release: () => {

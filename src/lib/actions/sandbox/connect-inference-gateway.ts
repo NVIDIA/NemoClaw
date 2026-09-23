@@ -4,11 +4,21 @@
 import {
   checkGatewayRouteCompatibility,
   GatewayRouteConflictError,
-  isAdvisoryProviderModelRouteConflict,
+  isAdvisoryGatewayRouteConflict,
 } from "../../inference/gateway-route-compatibility";
 import { LOCAL_INFERENCE_TIMEOUT_SECS } from "../../onboard/env";
+import { resolveRegisteredRuntimeProvider } from "../../onboard/runtime-provider/selection";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
+
+/** Identify the legacy cluster gateway without branching on managed provider IDs. */
+export function sandboxUsesLegacyClusterGateway(sandbox: SandboxEntry | null): boolean {
+  const driver = sandbox?.openshellDriver;
+  if (!driver) return true;
+  const provider = resolveRegisteredRuntimeProvider(driver);
+  if (provider) return provider.gateway.launcher !== "nemoclaw";
+  return driver !== "vm";
+}
 
 function sandboxGatewayRouteCompatibility(
   sandboxName: string,
@@ -31,11 +41,7 @@ export function canSandboxGatewayRouteRealign(
   sandboxes: readonly SandboxEntry[] = registry.listSandboxes().sandboxes,
 ): boolean {
   const result = sandboxGatewayRouteCompatibility(sandboxName, sb, gatewayName, sandboxes);
-  return result.ok || isAdvisoryProviderModelRouteConflict(result);
-}
-
-export function buildGatewayInferenceGetArgs(gatewayName: string): string[] {
-  return ["inference", "get", "-g", gatewayName];
+  return result.ok || isAdvisoryGatewayRouteConflict(result);
 }
 
 export function buildGatewayInferenceSetArgs(
@@ -71,7 +77,7 @@ export function assertSandboxGatewayRouteCompatible(
     gatewayName,
     registry.listSandboxes().sandboxes,
   );
-  if (!result.ok && !isAdvisoryProviderModelRouteConflict(result)) {
+  if (!result.ok && !isAdvisoryGatewayRouteConflict(result)) {
     throw new GatewayRouteConflictError(result);
   }
 }
