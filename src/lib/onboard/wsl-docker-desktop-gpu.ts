@@ -10,7 +10,7 @@ import {
 } from "../container-gpu-proof";
 
 const WSL_DOCKER_DESKTOP_DETECTION_TIMEOUT_MS = 30_000;
-export const WSL_DOCKER_DESKTOP_GPU_PROOF_COMMAND = `docker run --rm --gpus all --entrypoint /bin/sh ${NVIDIA_CONTAINER_GPU_PROOF_IMAGE} -c '${NVIDIA_CONTAINER_GPU_PROOF_SCRIPT}'`;
+export const WSL_DOCKER_DESKTOP_GPU_PROOF_COMMAND = `docker run --rm --gpus all --entrypoint /bin/sh ${NVIDIA_CONTAINER_GPU_PROOF_IMAGE} -c '${NVIDIA_CONTAINER_GPU_PROOF_SCRIPT.replaceAll("'", `'\\''`)}'`;
 
 // Source-of-truth for this compatibility branch: Docker Desktop-backed WSL can
 // advertise Docker CDI directories while the WSL distro cannot see a usable

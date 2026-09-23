@@ -101,25 +101,8 @@ For each selected agent, confirm that `embeddingProbe.ok` and `status.vector.sem
 Confirm that `status.model` is `qwen3-embedding:0.6b` and `status.vector.index.state` is `complete` for a nonempty corpus.
 An empty memory corpus produces no search results; add a memory before testing retrieval.
 
-<Note>
-  Older images can omit `SQLITE_TMPDIR` from standalone commands.
-
-This can cause an FTS5 `unable to open database file` error.
-
-Use the private directory prepared by startup:
-
-```bash
-nemoclaw my-assistant exec -- env SQLITE_TMPDIR=/sandbox/.openclaw/tmp \
-  openclaw memory index --agent main --force
-```
-
-Use the same environment prefix for `memory status` and `memory search`.
-
-</Note>
-
+Managed startup exports `SQLITE_TMPDIR` to standalone OpenClaw commands.
 Search for a fact from an existing memory, using different wording to check semantic retrieval.
-The command below applies to images that export `SQLITE_TMPDIR`.
-On older images, add the environment prefix from the preceding note.
 
 ```bash
 nemoclaw my-assistant exec -- openclaw memory search --agent main \

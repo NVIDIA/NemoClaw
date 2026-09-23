@@ -680,6 +680,7 @@ describe("runSandboxSnapshot", () => {
       gatewayName: "nemoclaw",
       gatewayPort: 8080,
       openshellDriver: "docker",
+      reservationSessionId: expect.stringMatching(/^[0-9a-f]{62}$/u),
       hostLocalInferenceReceipt,
       hostLocalInferenceProvenance,
     });

@@ -694,6 +694,13 @@ export function promptSecret(question: string, maskCap?: number): Promise<string
   });
 }
 
+export function isSecureCredentialPromptAvailable(
+  stdinIsTty: boolean = Boolean(process.stdin.isTTY),
+  stderrIsTty: boolean = Boolean(process.stderr.isTTY),
+): boolean {
+  return stdinIsTty && stderrIsTty;
+}
+
 /**
  * Prompt the user on stderr and resolve to their trimmed answer. Pass
  * `{ secret: true }` to mask input on a TTY (falls back to plain readline
@@ -712,7 +719,7 @@ export function prompt(
     if (typeof process.stdin.ref === "function") {
       process.stdin.ref();
     }
-    const silent = opts.secret === true && process.stdin.isTTY && process.stderr.isTTY;
+    const silent = opts.secret === true && isSecureCredentialPromptAvailable();
     if (silent) {
       promptSecret(question, opts.maskCap)
         .then(resolve)

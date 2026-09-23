@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import ts from "typescript";
 
 import { parseE2eAssertionBudget } from "../../scripts/checks/e2e-assertion-census.mts";
@@ -9,6 +10,7 @@ import type { GrowthGuardrailDiff, PullRequestFile } from "./growth-guardrail-di
 const BUDGET_FILE = "ci/test-file-size-budget.json";
 const DOCKERFILE_GROWTH_EXCEPTIONS_FILE = "ci/dockerfile-growth-exceptions.json";
 const E2E_ASSERTION_BUDGET_FILE = "ci/e2e-assertion-budget.json";
+const E2E_GROWTH_EXCEPTIONS_FILE = "ci/e2e-assertion-growth-exceptions.json";
 const FALLBACK_BUDGET = '{"defaultMaxLines":1500,"legacyMaxLines":{}}';
 const JAVASCRIPT_FILE_RE = /\.(?:cjs|js|mjs)$/;
 const TEST_FILE_RE = /^(?:test|src|nemoclaw\/src)\/.*\.(?:test|spec)\.(?:[cm]?[jt]s)$/;
@@ -488,6 +490,49 @@ export async function testSizeViolations(diff: GrowthGuardrailDiff): Promise<str
   return violations;
 }
 
+/** Match only the exact reviewed budget transition from the selected policy. */
+function hasApprovedE2eBudgetTransition(
+  policySource: string | null | undefined,
+  pullRequestNumber: number | null,
+  baseSource: string,
+  headSource: string,
+): boolean {
+  if (policySource === null || policySource === undefined) return false;
+  const policy = JSON.parse(policySource) as {
+    schemaVersion?: unknown;
+    exceptions?: unknown;
+  };
+  if (policy.schemaVersion !== 1 || !Array.isArray(policy.exceptions)) {
+    throw new Error(`${E2E_GROWTH_EXCEPTIONS_FILE}: invalid exception policy`);
+  }
+  const transitions = policy.exceptions.map((value: unknown) => {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+      throw new Error(`${E2E_GROWTH_EXCEPTIONS_FILE}: exception must be an object`);
+    }
+    const entry = value as Record<string, unknown>;
+    const pullRequest = positiveInteger(entry.pullRequest, "E2E exception pullRequest");
+    const { baseBudgetSha256, headBudgetSha256 } = entry;
+    if (
+      typeof baseBudgetSha256 !== "string" ||
+      !/^[a-f0-9]{64}$/.test(baseBudgetSha256) ||
+      typeof headBudgetSha256 !== "string" ||
+      !/^[a-f0-9]{64}$/.test(headBudgetSha256)
+    ) {
+      throw new Error(`${E2E_GROWTH_EXCEPTIONS_FILE}: budget digests must be SHA-256 values`);
+    }
+    return { pullRequest, baseBudgetSha256, headBudgetSha256 };
+  });
+  const baseDigest = createHash("sha256").update(baseSource).digest("hex");
+  const headDigest = createHash("sha256").update(headSource).digest("hex");
+  // Local hooks have no PR identity. CI additionally requires the actual event PR.
+  return transitions.some(
+    (entry) =>
+      (pullRequestNumber === null || entry.pullRequest === pullRequestNumber) &&
+      entry.baseBudgetSha256 === baseDigest &&
+      entry.headBudgetSha256 === headDigest,
+  );
+}
+
 export async function e2eAssertionBudgetGrowthViolations(
   diff: GrowthGuardrailDiff,
 ): Promise<string[]> {
@@ -497,8 +542,12 @@ export async function e2eAssertionBudgetGrowthViolations(
   );
   if (!changed) return [];
   const [baseBlob, headBlob] = await Promise.all([
-    diff.readBase([E2E_ASSERTION_BUDGET_FILE]),
-    diff.readHead([E2E_ASSERTION_BUDGET_FILE]),
+    diff.readBase([E2E_ASSERTION_BUDGET_FILE, E2E_GROWTH_EXCEPTIONS_FILE]),
+    diff.readHead(
+      diff.exceptionPolicySource === "head"
+        ? [E2E_ASSERTION_BUDGET_FILE, E2E_GROWTH_EXCEPTIONS_FILE]
+        : [E2E_ASSERTION_BUDGET_FILE],
+    ),
   ]);
   const baseSource = baseBlob.get(E2E_ASSERTION_BUDGET_FILE);
   const headSource = headBlob.get(E2E_ASSERTION_BUDGET_FILE);
@@ -509,6 +558,18 @@ export async function e2eAssertionBudgetGrowthViolations(
 
   const base = parseE2eAssertionBudget(baseSource);
   const head = parseE2eAssertionBudget(headSource);
+  if (
+    hasApprovedE2eBudgetTransition(
+      // Local and candidate CI checks are advisory; independent enforcement reads base policy.
+      diff.exceptionPolicySource === "head"
+        ? headBlob.get(E2E_GROWTH_EXCEPTIONS_FILE)
+        : baseBlob.get(E2E_GROWTH_EXCEPTIONS_FILE),
+      diff.pullRequestNumber,
+      baseSource,
+      headSource,
+    )
+  )
+    return [];
   const violations: string[] = [];
   if (JSON.stringify(head.reference) !== JSON.stringify(base.reference)) {
     violations.push("live E2E assertion reference metadata changed");
