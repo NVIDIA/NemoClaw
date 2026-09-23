@@ -32,11 +32,7 @@ function consumerEnvironment(values: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv 
   return { ...environment, ...values };
 }
 
-/** Parse one raw export and verify its generated native OpenClaw configuration. */
-export function validateOpenClawExportWithPinnedV1(raw: string): {
-  revision: typeof V1ALPHA1_RUNTIME_DEFAULTS_REVISION;
-  contextWindow: number;
-} {
+function validateExportWithPinnedV1(raw: string): unknown {
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-v1-consumer-"));
   const consumer = path.join(temporaryRoot, "consumer");
   const archive = path.join(temporaryRoot, "consumer.tar");
@@ -79,7 +75,7 @@ export function validateOpenClawExportWithPinnedV1(raw: string): {
     );
     const output = execFileSync(
       "python3",
-      [path.join(FIXTURE_ROOT, "validate-openclaw-settings.py"), consumer, settings],
+      [path.join(FIXTURE_ROOT, "validate-native-settings.py"), consumer, settings],
       {
         encoding: "utf8",
         env: consumerEnvironment(),
@@ -87,9 +83,22 @@ export function validateOpenClawExportWithPinnedV1(raw: string): {
         timeout: 30_000,
       },
     );
-    const evidence = JSON.parse(output) as { contextWindow: number };
+    const evidence = JSON.parse(output) as Record<string, unknown>;
     return { revision: V1ALPHA1_RUNTIME_DEFAULTS_REVISION, ...evidence };
   } finally {
     fs.rmSync(temporaryRoot, { force: true, recursive: true });
   }
+}
+
+/** Verify generated OpenClaw and Hermes settings with the pinned v1 consumer. */
+export function validateAgentExportsWithPinnedV1(raw: string): {
+  revision: typeof V1ALPHA1_RUNTIME_DEFAULTS_REVISION;
+  contextWindow: number;
+  hermesInterfacesVerified: boolean;
+} {
+  return validateExportWithPinnedV1(raw) as {
+    revision: typeof V1ALPHA1_RUNTIME_DEFAULTS_REVISION;
+    contextWindow: number;
+    hermesInterfacesVerified: boolean;
+  };
 }

@@ -1085,6 +1085,9 @@ export class ConfigExportValidationPhaseFixture {
         if (!internalTransportsAbsent) {
           throw new Error("config export exposed an internal credential transport");
         }
+        if (this.artifacts.redact(raw) !== raw) {
+          throw new Error("config export contains secret-shaped material");
+        }
         failureStage = "verification";
         const document = this.dependencies.parseConfig(raw);
         observed = semanticsFromDocument(document);
@@ -1127,7 +1130,7 @@ export class ConfigExportValidationPhaseFixture {
     }
 
     const passed = classification === "success" || classification === "expected-refusal";
-    const publishedRaw = passed && cleanupSucceeded && raw ? this.artifacts.redact(raw) : undefined;
+    const publishedRaw = passed && cleanupSucceeded && raw ? raw : undefined;
     const evidence: ConfigExportEvidenceEnvelope = {
       contract: CONFIG_EXPORT_EVIDENCE_CONTRACT,
       scenarioId: target.id,

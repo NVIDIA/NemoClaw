@@ -5,9 +5,42 @@ import YAML from "yaml";
 import { describe, expect, it } from "vitest";
 import { exportSnapshots } from "../../actions/config/export-test-fixture";
 import { asExportedConfig } from "../../../../test/support/config-export-document";
-import { validateOpenClawExportWithPinnedV1 } from "../../../../test/support/v1-config-consumer";
+import { validateAgentExportsWithPinnedV1 } from "../../../../test/support/v1-config-consumer";
 import { testTimeoutOptions } from "../../../../test/helpers/timeouts";
-import { snapshot, tunedSnapshot } from "./export-source-test-fixture";
+import {
+  hermesImageRef,
+  hermesProfileInput,
+  hermesSnapshot,
+  managedWorkload,
+  snapshot,
+  tunedSnapshot,
+} from "./export-source-test-fixture";
+
+function enabledHermesSnapshot(port: number, internalPort: number, tui: boolean, apiPort: number) {
+  return hermesSnapshot({
+    dashboardPort: port,
+    hermesApiPort: apiPort,
+    hermesDashboardEnabled: true,
+    hermesDashboardPort: port,
+    hermesDashboardInternalPort: internalPort,
+    hermesDashboardTui: tui,
+    workload: managedWorkload(
+      {
+        ...hermesProfileInput(),
+        dashboard: {
+          agent: "hermes",
+          mode: "loopback-forwarded",
+          url: `http://127.0.0.1:${port}`,
+          browserUrl: `http://127.0.0.1:${port}`,
+          publicPort: port,
+          internalPort,
+          tuiEnabled: tui,
+        },
+      },
+      hermesImageRef,
+    ),
+  });
+}
 
 describe("effective v1alpha1 export defaults (#12132)", () => {
   it("preserves source values whether their startup inputs were explicit or omitted", async () => {
@@ -37,14 +70,39 @@ describe("effective v1alpha1 export defaults (#12132)", () => {
   });
 
   it.runIf(process.env.NEMOCLAW_RUN_V1_CONFIG_COMPATIBILITY === "1")(
-    "preserves defaults through the pinned v1 parser and native OpenClaw generation (#12132)",
+    "preserves defaults through the pinned v1 parser and native agent generation (#12132)",
     testTimeoutOptions(12 * 60_000),
     async () => {
-      const exported = await exportSnapshots([snapshot()]);
-      expect(exported.outcome.ok).toBe(true);
-      expect(validateOpenClawExportWithPinnedV1(exported.writeStdout.mock.calls[0]![0])).toEqual({
+      const sources = [
+        { name: "openclaw", source: snapshot() },
+        { name: "hermes-disabled", source: hermesSnapshot() },
+        {
+          name: "hermes-defaults",
+          source: enabledHermesSnapshot(18_789, 19_119, true, 8642),
+        },
+        {
+          name: "hermes-explicit",
+          source: enabledHermesSnapshot(19_000, 19_120, false, 8643),
+        },
+      ] as const;
+      const exports = await Promise.all(sources.map(({ source }) => exportSnapshots([source])));
+      expect(exports.every((result) => result.outcome.ok)).toBe(true);
+      const document = asExportedConfig(YAML.parse(exports[0]!.writeStdout.mock.calls[0]![0]));
+      const combined = {
+        ...document,
+        spec: {
+          ...document.spec,
+          sandboxes: exports.map((result, index) => ({
+            ...asExportedConfig(YAML.parse(result.writeStdout.mock.calls[0]![0])).spec
+              .sandboxes[0]!,
+            name: sources[index]!.name,
+          })),
+        },
+      };
+      expect(validateAgentExportsWithPinnedV1(YAML.stringify(combined))).toEqual({
         revision: "88c6600c06b0937907290362eef86912052c4ad0",
         contextWindow: 131072,
+        hermesInterfacesVerified: true,
       });
     },
   );

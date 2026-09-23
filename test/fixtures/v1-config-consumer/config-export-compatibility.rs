@@ -5,7 +5,8 @@ use nemoclaw_sdk::{
     compile::{Generations, targets},
     config::Document,
 };
-use std::{env, fs};
+use serde_json::{Value, json};
+use std::{collections::BTreeMap, env, fs};
 
 #[test]
 fn parses_export_and_generates_runtime_settings() {
@@ -17,10 +18,24 @@ fn parses_export_and_generates_runtime_settings() {
         .map(|kind| (kind.into(), "a".repeat(32)))
         .into();
     let compiled = targets(&document, &generations).expect("export must compile");
-    let sandbox = compiled
+    let sandboxes: BTreeMap<String, Value> = compiled
         .iter()
-        .find(|target| target.kind == "sandbox")
-        .expect("compiled export must contain a sandbox");
-    fs::write(output, &sandbox.values["inference_json"])
+        .filter(|target| target.kind == "sandbox")
+        .map(|target| {
+            (
+                target.values["name"].clone(),
+                json!({
+                    "runtime": target.values["agent_runtime"].clone(),
+                    "settings": serde_json::from_str::<Value>(&target.values["inference_json"])
+                        .expect("sandbox inference settings must be JSON"),
+                }),
+            )
+        })
+        .collect();
+    assert!(!sandboxes.is_empty(), "compiled export must contain a sandbox");
+    fs::write(
+        output,
+        serde_json::to_vec(&sandboxes).expect("cannot serialize runtime settings"),
+    )
         .expect("cannot write runtime settings");
 }

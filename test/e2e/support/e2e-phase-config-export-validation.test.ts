@@ -511,15 +511,14 @@ if (process.argv.includes("--output")) {
       }
     },
   );
-  it("publishes the redacted validated bytes and matching digest after cleanup passes (#11485)", async () => {
+  it("publishes the exact validated bytes and matching digest after cleanup passes (#11485)", async () => {
     const raw = `${JSON.stringify(
-      document({ gatewayEndpoint: "http://127.0.0.1:8080/nvapi-secret-shaped-value" }),
+      document({ gatewayEndpoint: "http://127.0.0.1:8080/export-evidence" }),
     )}\n`;
-    const publishedRaw = raw.replace("nvapi-secret-shaped-value", "<REDACTED>");
     const publishedExport = {
-      bytes: publishedRaw,
-      byteLength: Buffer.byteLength(publishedRaw, "utf8"),
-      sha256: sha256(publishedRaw),
+      bytes: raw,
+      byteLength: Buffer.byteLength(raw, "utf8"),
+      sha256: sha256(raw),
     };
     const artifactRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-config-export-evidence-"));
     artifactDirectories.push(artifactRoot);
@@ -543,9 +542,7 @@ if (process.argv.includes("--output")) {
       export: publishedExport,
       security: { knownSecretsAbsent: true, internalTransportsAbsent: true },
     });
-    expect(fs.readFileSync(path.join(artifactRoot, "config-export.yaml"), "utf8")).toBe(
-      publishedRaw,
-    );
+    expect(fs.readFileSync(path.join(artifactRoot, "config-export.yaml"), "utf8")).toBe(raw);
     expect(persistedEvidence.export).toEqual(publishedExport);
     expect(persistedEvidence.verifications.map((entry) => entry.id)).toEqual(
       expect.arrayContaining([
