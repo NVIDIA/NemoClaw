@@ -50,6 +50,8 @@ const CONFIG_EXPORT_REQUIREMENT_SCRIPT =
     'case "$(jq -er \'.classification\' "$evidence")" in',
     "  success)",
     '    test -f "$yaml"',
+    "    jq -e '.consumer.passed == true' \"$evidence\" >/dev/null",
+    '    jq -er \'.consumer.revision | strings | select(test("^[0-9a-f]{40}$"))\' "$evidence" >/dev/null',
     '    expected_sha="$(jq -er \'.export.sha256 | strings | select(test("^[0-9a-f]{64}$"))\' "$evidence")"',
     '    actual_sha="$(sha256sum -- "$yaml")"',
     '    actual_sha="${actual_sha%% *}"',

@@ -291,6 +291,9 @@ function dependencies(
     removeDirectory:
       options.removeDirectory ??
       ((directory) => fs.rmSync(directory, { force: true, recursive: true })),
+    validateWithPinnedV1: () => ({
+      revision: "88c6600c06b0937907290362eef86912052c4ad0",
+    }),
   };
 }
 

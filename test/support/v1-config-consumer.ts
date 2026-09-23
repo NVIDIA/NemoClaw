@@ -32,7 +32,16 @@ function consumerEnvironment(values: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv 
   return { ...environment, ...values };
 }
 
-function validateExportWithPinnedV1(raw: string): unknown {
+export interface PinnedV1ConsumerEvidence {
+  revision: typeof V1ALPHA1_RUNTIME_DEFAULTS_REVISION;
+  compiledSandboxes?: number;
+  contextWindows?: number[];
+  openclawNativeSettingsVerified?: number;
+  hermesNativeSettingsVerified?: number;
+}
+
+/** Parse an exact export and generate its native settings with the pinned v1 consumer. */
+export function validateConfigExportWithPinnedV1(raw: string): PinnedV1ConsumerEvidence {
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-v1-consumer-"));
   const consumer = path.join(temporaryRoot, "consumer");
   const archive = path.join(temporaryRoot, "consumer.tar");
@@ -84,7 +93,10 @@ function validateExportWithPinnedV1(raw: string): unknown {
       },
     );
     const evidence = JSON.parse(output) as Record<string, unknown>;
-    return { revision: V1ALPHA1_RUNTIME_DEFAULTS_REVISION, ...evidence };
+    return {
+      revision: V1ALPHA1_RUNTIME_DEFAULTS_REVISION,
+      ...evidence,
+    } as unknown as PinnedV1ConsumerEvidence;
   } finally {
     fs.rmSync(temporaryRoot, { force: true, recursive: true });
   }
@@ -96,9 +108,18 @@ export function validateAgentExportsWithPinnedV1(raw: string): {
   contextWindow: number;
   hermesInterfacesVerified: boolean;
 } {
-  return validateExportWithPinnedV1(raw) as {
-    revision: typeof V1ALPHA1_RUNTIME_DEFAULTS_REVISION;
-    contextWindow: number;
-    hermesInterfacesVerified: boolean;
+  const evidence = validateConfigExportWithPinnedV1(raw);
+  if (
+    evidence.compiledSandboxes !== 4 ||
+    evidence.openclawNativeSettingsVerified !== 1 ||
+    evidence.hermesNativeSettingsVerified !== 3 ||
+    evidence.contextWindows?.length !== 1
+  ) {
+    throw new Error("pinned v1 agent fixture did not generate every expected native setting");
+  }
+  return {
+    revision: evidence.revision,
+    contextWindow: evidence.contextWindows[0]!,
+    hermesInterfacesVerified: true,
   };
 }

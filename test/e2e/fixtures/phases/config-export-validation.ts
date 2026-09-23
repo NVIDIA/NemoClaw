@@ -15,7 +15,12 @@ import {
   type V1Alpha1Export,
 } from "../../../../src/lib/config/v1alpha1-export.ts";
 import { unsafeEndpointUrlViolation } from "../../../../src/lib/core/endpoint-url-safety.ts";
+import { V1ALPHA1_RUNTIME_DEFAULTS_REVISION } from "../../../../src/lib/domain/config/v1alpha1-runtime-defaults.ts";
 import type { SandboxEntry } from "../../../../src/lib/state/registry/types.ts";
+import {
+  type PinnedV1ConsumerEvidence,
+  validateConfigExportWithPinnedV1,
+} from "../../../support/v1-config-consumer.ts";
 import {
   CONFIG_EXPORT_COMMAND_TIMEOUT_MS,
   CONFIG_EXPORT_POLICY_TIMEOUT_MS,
@@ -365,6 +370,7 @@ export interface ConfigExportEvidenceEnvelope {
   observed?: ConfigExportSemantics;
   verifications: ConfigExportVerification[];
   command?: ConfigExportCommandOutcome;
+  consumer?: PinnedV1ConsumerEvidence & { passed: boolean };
   export?: {
     bytes: string;
     byteLength: number;
@@ -435,6 +441,7 @@ export interface ConfigExportValidationDependencies {
   producer(): ConfigExportProducer;
   readOpenFile(file: number, limitBytes: number): string;
   removeDirectory(directory: string): void;
+  validateWithPinnedV1(raw: string): PinnedV1ConsumerEvidence;
 }
 
 const DEFAULT_DEPENDENCIES: ConfigExportValidationDependencies = {
@@ -478,6 +485,7 @@ const DEFAULT_DEPENDENCIES: ConfigExportValidationDependencies = {
     return buffer.subarray(0, offset).toString("utf8");
   },
   removeDirectory: (directory) => fs.rmSync(directory, { force: true, recursive: true }),
+  validateWithPinnedV1: validateConfigExportWithPinnedV1,
 };
 
 function requiredRecord(value: unknown, field: string): Record<string, unknown> {
@@ -980,6 +988,7 @@ export class ConfigExportValidationPhaseFixture {
       expectation === "required" ? "observation" : "transport";
     let observedRefusalCategory: string | undefined;
     let command: ConfigExportCommandOutcome | undefined;
+    let consumer: ConfigExportEvidenceEnvelope["consumer"];
     let registryBeforeExport: ConfigExportRegistry["sandboxes"] | undefined;
 
     try {
@@ -1107,6 +1116,12 @@ export class ConfigExportValidationPhaseFixture {
             `config export omitted or changed expected semantics: ${failed.map((entry) => entry.id).join(", ")}`,
           );
         }
+        consumer = {
+          revision: V1ALPHA1_RUNTIME_DEFAULTS_REVISION,
+          passed: false,
+        } as ConfigExportEvidenceEnvelope["consumer"];
+        const consumerEvidence = this.dependencies.validateWithPinnedV1(raw);
+        consumer = { ...consumerEvidence, passed: true };
         classification = "success";
       }
     } catch (error) {
@@ -1146,6 +1161,7 @@ export class ConfigExportValidationPhaseFixture {
       ...(observed ? { observed } : {}),
       verifications,
       ...(command ? { command } : {}),
+      ...(consumer ? { consumer } : {}),
       ...(publishedRaw
         ? {
             export: {
