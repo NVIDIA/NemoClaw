@@ -166,6 +166,7 @@ export class MessagingBuildApplierError extends Error {}
 
 type OfficialPluginProvenanceCondition =
   | "inspection failed"
+  | "inspection timed out"
   | "inspection did not return JSON"
   | "did not retain trusted exact registry provenance";
 
@@ -181,6 +182,7 @@ class OfficialPluginProvenanceError extends MessagingBuildApplierError {
 }
 
 class MessagingBuildCommandError extends MessagingBuildApplierError {}
+class MessagingBuildCommandTimeoutError extends MessagingBuildCommandError {}
 
 export const DEFAULT_MESSAGING_RUNTIME_PLAN_PATH =
   "/usr/local/share/nemoclaw/messaging-runtime-plan.json";
@@ -808,10 +810,15 @@ function installOpenClawPluginPackages(installs: readonly OpenClawPluginInstall[
           inspection = runCommand(
             ["openclaw", "plugins", "inspect", officialPluginId, "--json"],
             commandEnv,
-            { emitOutput: false },
+            { emitOutput: false, timeoutMs: 60_000 },
           );
-        } catch {
-          throw new OfficialPluginProvenanceError(officialPluginId, "inspection failed");
+        } catch (error) {
+          throw new OfficialPluginProvenanceError(
+            officialPluginId,
+            error instanceof MessagingBuildCommandTimeoutError
+              ? "inspection timed out"
+              : "inspection failed",
+          );
         }
         verifyTrustedOfficialNpmInstall(install, officialPluginId, inspection);
       }
@@ -1369,15 +1376,18 @@ function requireExactNpmPackageSpec(
 function runCommand(
   args: readonly string[],
   env: Env,
-  options: { readonly emitOutput?: boolean } = {},
+  options: { readonly emitOutput?: boolean; readonly timeoutMs?: number } = {},
 ): string {
   console.log(`+ ${args.join(" ")}`);
   const result = spawnSync(args[0] as string, args.slice(1), {
+    ...(options.timeoutMs ? { timeout: options.timeoutMs, killSignal: "SIGKILL" as const } : {}),
     encoding: "utf8",
     env: env as NodeJS.ProcessEnv,
     maxBuffer: 64 * 1024 * 1024,
     stdio: ["ignore", "pipe", "pipe"],
   });
+  if ((result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT")
+    throw new MessagingBuildCommandTimeoutError();
   if (result.error) throw new MessagingBuildCommandError();
   if (result.status !== 0) {
     throw new MessagingBuildCommandError();
@@ -1457,6 +1467,9 @@ function packVerifiedOpenClawPluginArchive(
     packageSpec: install.npmPackageSpec,
     tarballUrl: install.tarballUrl,
   });
+  if (officialPluginIdFromManifest(install.spec, env)) {
+    return { archivePath: archive.archivePath, rootDir: archive.rootDirectory };
+  }
   const exactPackage = requireExactNpmPackageSpec(install.spec, install.npmPackageSpec);
   const remediated = remediateReviewedOpenClawPluginArchive({
     archivePath: archive.archivePath,

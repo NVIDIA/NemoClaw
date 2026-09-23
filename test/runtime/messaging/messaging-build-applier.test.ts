@@ -758,9 +758,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
         "openclaw|plugins|install|--force|--accept-capabilities|npm:@openclaw/",
       );
       expect(trace).toContain("msteams@2026.9.1");
-      expect(remediateReviewedArchive).toHaveBeenCalledWith(
-        expect.objectContaining({ packageSpec: "@openclaw/msteams@2026.9.1" }),
-      );
+      expect(remediateReviewedArchive).not.toHaveBeenCalled();
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -1049,9 +1047,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
         "openclaw|plugins|install|--force|--accept-capabilities|npm:@openclaw/",
       );
       expect(trace).toContain("slack@2026.9.1");
-      expect(remediateReviewedArchive).toHaveBeenCalledWith(
-        expect.objectContaining({ packageSpec: "@openclaw/slack@2026.9.1" }),
-      );
+      expect(remediateReviewedArchive).not.toHaveBeenCalled();
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
