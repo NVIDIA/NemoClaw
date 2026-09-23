@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { readLegacyMcpRegistryProjection } from "../../state/registry/legacy-mcp";
@@ -414,13 +415,19 @@ async function inspectAgentMcpSourcesForAgent(
 ): Promise<AgentMcpSourceSnapshot> {
   const adapter = agent.mcpCapability.adapter;
   if (agent.mcpCapability.support !== "bridge" || !adapter) return { native: {}, legacy: {} };
-  const result = await executeSandboxCommand(
-    sandbox.name,
-    sourceCommand(adapter, agent.configPaths.dir),
-    {
-      runtimeSelection,
-    },
-  );
+  let result: Awaited<ReturnType<typeof executeSandboxCommand>>;
+  try {
+    result = await executeSandboxCommand(
+      sandbox.name,
+      sourceCommand(adapter, agent.configPaths.dir),
+      {
+        runtimeSelection,
+      },
+    );
+  } catch (error) {
+    if (!(error instanceof SandboxCommandTransportError)) throw error;
+    result = null;
+  }
   if (!result) throw new McpBridgeError(`Sandbox '${sandbox.name}' is unreachable.`);
   if (result.status !== 0) {
     const detail = redactBridgeFailureForDisplay(result.stderr.trim() || "source read failed");
@@ -701,7 +708,13 @@ export async function removeLegacyAgentMcpEntry(
   } else {
     return;
   }
-  const result = await executeSandboxCommand(sandbox.name, command, { runtimeSelection });
+  let result: Awaited<ReturnType<typeof executeSandboxCommand>>;
+  try {
+    result = await executeSandboxCommand(sandbox.name, command, { runtimeSelection });
+  } catch (error) {
+    if (!(error instanceof SandboxCommandTransportError)) throw error;
+    result = null;
+  }
   if (!result || result.status !== 0) {
     throw new McpBridgeError(
       `Native MCP migration succeeded for '${entry.server}', but legacy source cleanup failed. Rerun migration after inspecting the legacy agent configuration.`,

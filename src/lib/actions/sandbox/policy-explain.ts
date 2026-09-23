@@ -16,6 +16,7 @@
  * surface in those e2e jobs before merge.
  */
 
+import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import {
   buildPolicyContext,
   type PolicyContext,
@@ -181,7 +182,13 @@ export async function writePolicyContextToSandbox(
   const ctx = await build(sandboxName);
   const markdown = render(ctx);
   const command = buildWriteCommand(markdown, POLICY_CONTEXT_SANDBOX_PATH);
-  const result = await exec(sandboxName, command);
+  let result: Awaited<ReturnType<SandboxExec>>;
+  try {
+    result = await exec(sandboxName, command);
+  } catch (error) {
+    if (!(error instanceof SandboxCommandTransportError)) throw error;
+    result = null;
+  }
   if (result === null) {
     return { written: false, reason: "sandbox unreachable", failure: "sandbox-unreachable" };
   }

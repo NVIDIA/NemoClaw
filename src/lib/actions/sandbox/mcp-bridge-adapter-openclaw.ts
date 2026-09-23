@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import path from "node:path";
 
 import { readSandboxConfig, resolveAgentConfig, writeSandboxConfig } from "../../sandbox/config";
@@ -173,11 +174,17 @@ export async function registerOpenClawAdapter(
   // Re-read the native definition before reporting success so a raced or
   // normalized write cannot commit an entry that differs from the URL and
   // opaque OpenShell placeholder NemoClaw intended.
-  const verification = await executeSandboxCommand(
-    sandboxName,
-    buildStrictOpenClawMcpInspectCommand(entry, true, root, credentialRevision),
-    { runtimeSelection },
-  );
+  let verification: Awaited<ReturnType<typeof executeSandboxCommand>>;
+  try {
+    verification = await executeSandboxCommand(
+      sandboxName,
+      buildStrictOpenClawMcpInspectCommand(entry, true, root, credentialRevision),
+      { runtimeSelection },
+    );
+  } catch (error) {
+    if (!(error instanceof SandboxCommandTransportError)) throw error;
+    verification = null;
+  }
   const verificationOutput = redactBridgeSecretsForDisplay(
     [verification?.stdout, verification?.stderr].filter(Boolean).join("\n").trim(),
     entry,
