@@ -23,10 +23,16 @@ vi.mock("../rebuild-mcp-phase", () => ({
   observeMcpStateForRebuild: mocks.observeMcpStateForRebuild,
 }));
 
-import { retainStrictPreUpgradeRecoveryState } from "./strict-pre-upgrade-recovery";
+import {
+  discardIncompleteStrictBackup,
+  retainStrictPreUpgradeRecoveryState,
+} from "./strict-pre-upgrade-recovery";
 
 const sandbox = { name: "alpha", gatewayName: "recorded-gateway" };
-const runtimeSelection = { gatewayName: "recorded-gateway", workspace: "default" };
+const runtimeSelection = {
+  gatewayName: "recorded-gateway",
+  workspace: "default",
+};
 
 describe("strict pre-upgrade recovery retention", () => {
   beforeEach(() => {
@@ -61,7 +67,10 @@ describe("strict pre-upgrade recovery retention", () => {
         rebuildPolicyHandoff: expect.any(Object),
         rebuildMcpHandoff: {
           entries: [],
-          runtimeSelection: { gatewayName: "recorded-gateway", workspace: "default" },
+          runtimeSelection: {
+            gatewayName: "recorded-gateway",
+            workspace: "default",
+          },
         },
       },
     });
@@ -97,7 +106,7 @@ describe("strict pre-upgrade recovery retention", () => {
     );
   });
 
-  it("removes a failed strict backup before returning the failure", async () => {
+  it("returns a failed strict backup for lifecycle-safe caller cleanup", async () => {
     const result = {
       success: false,
       backedUpDirs: [],
@@ -109,14 +118,11 @@ describe("strict pre-upgrade recovery retention", () => {
 
     await expect(
       retainStrictPreUpgradeRecoveryState(sandbox as never, result as never, runtimeSelection),
-    ).resolves.not.toHaveProperty("manifest");
-    expect(mocks.removeSandboxStateBackup).toHaveBeenCalledWith(
-      "alpha",
-      "/backups/alpha/timestamp",
-    );
+    ).resolves.toHaveProperty("manifest.backupPath", "/backups/alpha/timestamp");
+    expect(mocks.removeSandboxStateBackup).not.toHaveBeenCalled();
   });
 
-  it("reports cleanup failure without hiding the original backup failure", async () => {
+  it("reports deferred cleanup failure without hiding the original backup failure", () => {
     mocks.removeSandboxStateBackup.mockReturnValue(false);
     const result = {
       success: false,
@@ -128,9 +134,7 @@ describe("strict pre-upgrade recovery retention", () => {
       manifest: { backupPath: "/backups/alpha/timestamp" },
     };
 
-    await expect(
-      retainStrictPreUpgradeRecoveryState(sandbox as never, result as never, runtimeSelection),
-    ).resolves.toMatchObject({
+    expect(discardIncompleteStrictBackup(sandbox as never, result as never)).toMatchObject({
       error:
         "backup failed. Failed strict pre-upgrade backup at '/backups/alpha/timestamp' could not be removed",
     });
@@ -178,10 +182,7 @@ describe("strict pre-upgrade recovery retention", () => {
     });
     expect(mocks.captureRecordedSandboxBasePolicy).not.toHaveBeenCalled();
     expect(mocks.observeMcpStateForRebuild).not.toHaveBeenCalled();
-    expect(mocks.removeSandboxStateBackup).toHaveBeenCalledWith(
-      "alpha",
-      "/backups/alpha/timestamp",
-    );
+    expect(mocks.removeSandboxStateBackup).not.toHaveBeenCalled();
   });
 
   it("waits for a timed-out policy capture to terminate before cleanup (#11936)", async () => {
@@ -219,10 +220,7 @@ describe("strict pre-upgrade recovery retention", () => {
     expect(observationSettled).toBe(true);
     expect(mocks.observeMcpStateForRebuild).not.toHaveBeenCalled();
     expect(mocks.writeRebuildPolicyHandoff).not.toHaveBeenCalled();
-    expect(mocks.removeSandboxStateBackup).toHaveBeenCalledWith(
-      "alpha",
-      "/backups/alpha/timestamp",
-    );
+    expect(mocks.removeSandboxStateBackup).not.toHaveBeenCalled();
   });
 
   it("waits for a timed-out MCP observation to terminate before cleanup (#11936)", async () => {
@@ -260,10 +258,7 @@ describe("strict pre-upgrade recovery retention", () => {
     expect(observationSettled).toBe(true);
     expect(mocks.writeRebuildPolicyHandoff).not.toHaveBeenCalled();
     expect(mocks.writeRebuildMcpHandoff).not.toHaveBeenCalled();
-    expect(mocks.removeSandboxStateBackup).toHaveBeenCalledWith(
-      "alpha",
-      "/backups/alpha/timestamp",
-    );
+    expect(mocks.removeSandboxStateBackup).not.toHaveBeenCalled();
   });
 
   it("rejects a policy capture that reaches the deadline before MCP observation (#11936)", async () => {
@@ -325,7 +320,7 @@ describe("strict pre-upgrade recovery retention", () => {
     expect(mocks.removeSandboxStateBackup).not.toHaveBeenCalled();
   });
 
-  it("does not publish either handoff when MCP observation fails", async () => {
+  it("returns a failed result without publishing either handoff when MCP observation fails", async () => {
     mocks.observeMcpStateForRebuild.mockRejectedValue(new Error("MCP observation unavailable"));
     const result = {
       success: true,
@@ -338,8 +333,35 @@ describe("strict pre-upgrade recovery retention", () => {
 
     await expect(
       retainStrictPreUpgradeRecoveryState(sandbox as never, result as never, runtimeSelection),
-    ).rejects.toThrow("MCP observation unavailable");
+    ).resolves.toMatchObject({
+      success: false,
+      error: expect.stringContaining("MCP observation unavailable"),
+      manifest: { backupPath: "/backups/alpha/timestamp" },
+    });
     expect(mocks.writeRebuildPolicyHandoff).not.toHaveBeenCalled();
     expect(mocks.writeRebuildMcpHandoff).not.toHaveBeenCalled();
+    expect(mocks.removeSandboxStateBackup).not.toHaveBeenCalled();
+  });
+
+  it("returns a failed result for a non-timeout policy error", async () => {
+    mocks.captureRecordedSandboxBasePolicy.mockRejectedValue(new Error("policy unavailable"));
+    const result = {
+      success: true,
+      backedUpDirs: ["workspace"],
+      failedDirs: [],
+      backedUpFiles: [],
+      failedFiles: [],
+      manifest: { backupPath: "/backups/alpha/timestamp" },
+    };
+
+    await expect(
+      retainStrictPreUpgradeRecoveryState(sandbox as never, result as never, runtimeSelection),
+    ).resolves.toMatchObject({
+      success: false,
+      error: expect.stringContaining("policy unavailable"),
+      manifest: { backupPath: "/backups/alpha/timestamp" },
+    });
+    expect(mocks.observeMcpStateForRebuild).not.toHaveBeenCalled();
+    expect(mocks.removeSandboxStateBackup).not.toHaveBeenCalled();
   });
 });

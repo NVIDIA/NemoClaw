@@ -8,7 +8,7 @@ import { observeMcpStateForRebuild } from "../rebuild-mcp-phase";
 
 /** Discard a strict pre-upgrade snapshot that cannot carry complete recovery
  * authority, keeping the original failure visible. */
-function discardIncompleteStrictBackup(
+export function discardIncompleteStrictBackup(
   sandbox: SandboxEntry,
   result: sandboxState.BackupResult,
 ): sandboxState.BackupResult {
@@ -22,6 +22,20 @@ function discardIncompleteStrictBackup(
   return {
     ...result,
     error: result.error ? `${result.error}. ${cleanupError}` : cleanupError,
+  };
+}
+
+function failedRetentionResult(
+  result: sandboxState.BackupResult,
+  observation: string,
+  error: unknown,
+): sandboxState.BackupResult {
+  const detail = error instanceof Error ? error.message : String(error);
+  const retentionError = `Strict pre-upgrade recovery retention could not complete the ${observation}: ${detail}`;
+  return {
+    ...result,
+    success: false,
+    error: result.error ? `${result.error}. ${retentionError}` : retentionError,
   };
 }
 
@@ -86,7 +100,10 @@ export async function retainStrictPreUpgradeRecoveryState(
   deadlineMs?: number,
   now: () => number = Date.now,
 ): Promise<sandboxState.BackupResult> {
-  if (!result.success) return discardIncompleteStrictBackup(sandbox, result);
+  // The caller owns incomplete-snapshot removal after it has restored a
+  // temporarily started sandbox to Stopped. Recursive filesystem cleanup must
+  // not consume the lifecycle stop reserve while the container is still up.
+  if (!result.success) return result;
   if (!result.manifest) {
     throw new Error(
       `Strict pre-upgrade backup for '${sandbox.name}' completed without a published manifest`,
@@ -110,9 +127,11 @@ export async function retainStrictPreUpgradeRecoveryState(
     deadlineMs,
     now,
   );
-  if (policyOutcome.kind === "error") throw policyOutcome.error;
+  if (policyOutcome.kind === "error") {
+    return failedRetentionResult(result, "policy capture", policyOutcome.error);
+  }
   if (policyOutcome.kind === "timeout") {
-    return discardIncompleteStrictBackup(sandbox, expiredRetentionResult(result, "policy capture"));
+    return expiredRetentionResult(result, "policy capture");
   }
   const mcpOutcome = await observeWithinBudget(
     (observationDeadlineMs) =>
@@ -126,12 +145,11 @@ export async function retainStrictPreUpgradeRecoveryState(
     deadlineMs,
     now,
   );
-  if (mcpOutcome.kind === "error") throw mcpOutcome.error;
+  if (mcpOutcome.kind === "error") {
+    return failedRetentionResult(result, "MCP observation", mcpOutcome.error);
+  }
   if (mcpOutcome.kind === "timeout") {
-    return discardIncompleteStrictBackup(
-      sandbox,
-      expiredRetentionResult(result, "MCP observation"),
-    );
+    return expiredRetentionResult(result, "MCP observation");
   }
   const mcpObservation = mcpOutcome.value;
   result.manifest = sandboxState.writeRebuildPolicyHandoff(result.manifest, policyOutcome.value);

@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   backupStartedSandboxState: vi.fn(),
   returnSandboxContainerToStopped: vi.fn(),
   retainStrictPreUpgradeRecoveryState: vi.fn(),
+  discardIncompleteStrictBackup: vi.fn(),
   isSandboxContainerDefinitivelyAbsent: vi.fn(),
   withSandboxMutationLock: vi.fn(),
   enforceRemovedImmutabilityMigrationBoundary: vi.fn(),
@@ -104,13 +105,11 @@ vi.mock("./sandbox/stopped-sandbox-backup", () => ({
 }));
 vi.mock("./sandbox/snapshot/strict-pre-upgrade-recovery", () => ({
   retainStrictPreUpgradeRecoveryState: mocks.retainStrictPreUpgradeRecoveryState,
+  discardIncompleteStrictBackup: mocks.discardIncompleteStrictBackup,
 }));
 vi.mock("../domain/lifecycle/options", () => ({
   normalizeGarbageCollectImagesOptions: (o: unknown) => o || {},
 }));
-
-// ../domain/maintenance/images is left unmocked so the gc tests run the real
-// orphan-detection helpers and can assert on gc's actual output.
 
 import {
   backupAll,
@@ -845,8 +844,6 @@ describe("backupAll", () => {
       requireAll: true,
     });
 
-    // Retention is bounded by the backup share of the transaction, and
-    // cleanup still ran on the reserve that share cannot consume.
     expect(mocks.retainStrictPreUpgradeRecoveryState).toHaveBeenCalledWith(
       expect.anything(),
       expect.anything(),
@@ -882,6 +879,7 @@ describe("backupAll", () => {
       backedUpFiles: [],
       failedFiles: [],
     });
+    mocks.discardIncompleteStrictBackup.mockImplementation((_sandbox, result) => result);
     process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS = "1";
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -899,6 +897,9 @@ describe("backupAll", () => {
       {
         deadlineMs: 330_000,
       },
+    );
+    expect(mocks.returnSandboxContainerToStopped.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.discardIncompleteStrictBackup.mock.invocationCallOrder[0],
     );
     expect(logSpy.mock.calls.flat().join("\n")).toContain("0 backed up, 1 failed, 0 skipped");
     expect(errorSpy.mock.calls.flat().join("\n")).toContain(

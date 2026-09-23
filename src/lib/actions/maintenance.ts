@@ -41,7 +41,10 @@ import {
   type StartedForBackup,
   startStoppedSandboxContainerForBackup,
 } from "./sandbox/stopped-sandbox-backup";
-import { retainStrictPreUpgradeRecoveryState } from "./sandbox/snapshot/strict-pre-upgrade-recovery";
+import {
+  discardIncompleteStrictBackup,
+  retainStrictPreUpgradeRecoveryState,
+} from "./sandbox/snapshot/strict-pre-upgrade-recovery";
 
 const useColor = !process.env.NO_COLOR && !!process.stdout.isTTY;
 const trueColor =
@@ -128,6 +131,7 @@ async function returnStartedSandboxToStopped(
 async function backupSandboxWithinMutationLock(
   sandboxName: string,
   shouldStartStoppedContainer: boolean,
+  discardFailedBackup: ((result: sandboxState.BackupResult) => sandboxState.BackupResult) | null,
   backup: (
     startedForBackup: StartedForBackup | null,
     transactionDeadlineMs: number | null,
@@ -137,7 +141,9 @@ async function backupSandboxWithinMutationLock(
   try {
     return await withSandboxMutationLock(sandboxName, async () => {
       enteredTransactionLock = true;
-      enforceRemovedImmutabilityMigrationBoundary(sandboxName, { allowStateRecord: true });
+      enforceRemovedImmutabilityMigrationBoundary(sandboxName, {
+        allowStateRecord: true,
+      });
       const transactionDeadlineMs = shouldStartStoppedContainer
         ? startedSandboxBackupTransactionDeadline()
         : null;
@@ -182,6 +188,12 @@ async function backupSandboxWithinMutationLock(
             transactionDeadlineMs,
           );
         }
+      }
+      // A strict snapshot can be large. Remove it only after a temporarily
+      // started container has been returned to Stopped, so synchronous
+      // filesystem cleanup cannot consume the lifecycle stop reserve.
+      if (result && !result.success && discardFailedBackup) {
+        result = discardFailedBackup(result);
       }
       if (stoppedContainerCleanupError && hasBackupError) {
         throw new AggregateError(
@@ -318,6 +330,9 @@ export async function backupAllUnderPortableHostFence(
     const attempt = await backupSandboxWithinMutationLock(
       sb.name,
       !readyNames.has(sb.name),
+      retainPreUpgradePolicy
+        ? (failedResult) => discardIncompleteStrictBackup(sb, failedResult)
+        : null,
       async (startedForBackup, transactionDeadlineMs) => {
         const backupResult = await (startedForBackup
           ? backupStartedSandboxState(sb.name, {
