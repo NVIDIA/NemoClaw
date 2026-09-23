@@ -9,6 +9,7 @@ const ARITHMETIC_PROMPT = "What is 6 multiplied by 7? Reply with only the intege
 export const FULL_E2E_INFERENCE_REPLY_BUDGETS = [512, 1024] as const;
 export const FULL_E2E_INFERENCE_CAPTURE_LIMIT_BYTES = 256 * 1024;
 export const FULL_E2E_INFERENCE_EVIDENCE_LIMIT_BYTES = 32 * 1024;
+export const FULL_E2E_INFERENCE_TRANSIENT_RETRY_DELAY_MS = 5_000;
 
 const EVIDENCE_TEXT_LIMIT_BYTES = 4 * 1024;
 const EVIDENCE_PARSE_ERROR_LIMIT_BYTES = 2 * 1024;
@@ -65,6 +66,10 @@ export interface FullE2eInferenceAttemptInput {
   attempt: number;
   maxTokens: number;
   requestBody: string;
+}
+
+export interface FullE2eInferenceProbeOptions {
+  sleep?: (delayMs: number) => Promise<void>;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -171,11 +176,16 @@ export function parseFullE2eInferenceResponse(body: string): FullE2eInferenceRes
 export async function runFullE2eInferenceProbe<Result extends InferenceCommandResult>(
   model: string,
   execute: (input: FullE2eInferenceAttemptInput) => Promise<Result>,
+  options: FullE2eInferenceProbeOptions = {},
 ): Promise<FullE2eInferenceProbeResult<Result>> {
   const attempts: FullE2eInferenceAttempt<Result>[] = [];
+  const sleep =
+    options.sleep ?? ((delayMs: number) => new Promise((resolve) => setTimeout(resolve, delayMs)));
+  let transientRetryUsed = false;
 
-  for (const [index, maxTokens] of FULL_E2E_INFERENCE_REPLY_BUDGETS.entries()) {
-    const attempt = index + 1;
+  for (let budgetIndex = 0; budgetIndex < FULL_E2E_INFERENCE_REPLY_BUDGETS.length;) {
+    const maxTokens = FULL_E2E_INFERENCE_REPLY_BUDGETS[budgetIndex]!;
+    const attempt = attempts.length + 1;
     const result = await execute({
       artifactName: `phase-4-sandbox-inference-local-attempt-${String(attempt).padStart(2, "0")}`,
       attempt,
@@ -184,6 +194,11 @@ export async function runFullE2eInferenceProbe<Result extends InferenceCommandRe
     });
     if (result.exitCode !== 0) {
       attempts.push({ answerMatched: false, attempt, maxTokens, result });
+      if (!transientRetryUsed && isRetryableInferenceCommandFailure(result)) {
+        transientRetryUsed = true;
+        await sleep(FULL_E2E_INFERENCE_TRANSIENT_RETRY_DELAY_MS);
+        continue;
+      }
       return { attempts, outcome: "command-failure" };
     }
 
@@ -217,9 +232,19 @@ export async function runFullE2eInferenceProbe<Result extends InferenceCommandRe
     const answerMatched = containsAnswer(response.answer, "42");
     attempts.push({ answerMatched, attempt, maxTokens, response, result });
     if (answerMatched) return { attempts, outcome: "passed" };
+    budgetIndex += 1;
   }
 
   return { attempts, outcome: "semantic-mismatch" };
+}
+
+function isRetryableInferenceCommandFailure(result: InferenceCommandResult): boolean {
+  return (
+    result.exitCode === 22 &&
+    /(?:requested URL returned error:|HTTP(?: response)?(?: status)?[ :]*)\s*(?:429|502|503|504)\b/iu.test(
+      result.stderr,
+    )
+  );
 }
 
 export function fullE2eInferenceProbeEvidence<Result extends InferenceCommandResult>(

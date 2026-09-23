@@ -227,11 +227,61 @@ describe("full E2E sandbox inference probe", () => {
     expect(calls).toBe(1);
   });
 
-  it("does not retry command, HTTP, or transport failures", async () => {
+  it("retries one transient HTTP command failure with the same reply budget", async () => {
+    const requests: FullE2eInferenceAttemptInput[] = [];
+    const delays: number[] = [];
+    const probe = await runFullE2eInferenceProbe(
+      "nvidia/nvidia/nemotron-3-ultra",
+      async (input) => {
+        requests.push(input);
+        return input.attempt === 1
+          ? commandResult("", 22, "curl: (22) The requested URL returned error: 503")
+          : commandResult(completion("42"));
+      },
+      { sleep: async (delayMs) => void delays.push(delayMs) },
+    );
+
+    expect(probe.outcome).toBe("passed");
+    expect(requests.map(({ attempt, maxTokens }) => ({ attempt, maxTokens }))).toEqual([
+      { attempt: 1, maxTokens: 512 },
+      { attempt: 2, maxTokens: 512 },
+    ]);
+    expect(requests.map(({ artifactName }) => artifactName)).toEqual([
+      "phase-4-sandbox-inference-local-attempt-01",
+      "phase-4-sandbox-inference-local-attempt-02",
+    ]);
+    expect(delays).toEqual([5_000]);
+  });
+
+  it.each([429, 502, 503, 504])(
+    "retries HTTP %i once, then preserves the command failure",
+    async (status) => {
+      let calls = 0;
+      const probe = await runFullE2eInferenceProbe(
+        "nvidia/nvidia/nemotron-3-ultra",
+        async () => {
+          calls += 1;
+          return commandResult("", 22, `curl: (22) The requested URL returned error: ${status}`);
+        },
+        { sleep: async () => undefined },
+      );
+
+      expect(probe.outcome).toBe("command-failure");
+      expect(probe.attempts).toHaveLength(2);
+      expect(calls).toBe(2);
+    },
+  );
+
+  it.each([
+    [22, "curl: (22) The requested URL returned error: 401"],
+    [22, "curl: (22) The requested URL returned error: 403"],
+    [7, "curl: (7) Failed to connect"],
+    [28, "curl: (28) Operation timed out"],
+  ])("does not retry non-transient command failure exit=%i", async (exitCode, stderr) => {
     let calls = 0;
     const probe = await runFullE2eInferenceProbe("nvidia/nvidia/nemotron-3-ultra", async () => {
       calls += 1;
-      return commandResult("", 22, "curl: (22) HTTP 403");
+      return commandResult("", exitCode, stderr);
     });
 
     expect(probe.outcome).toBe("command-failure");
