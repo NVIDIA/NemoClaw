@@ -37,7 +37,6 @@ interface RunReconcileOptions {
   configWritable?: boolean;
   hashFailure?: boolean;
   env?: Record<string, string>;
-  routedModelReceipt?: "valid" | "symlink";
 }
 
 describe("agent identity reconciliation with provider (#3175)", () => {
@@ -62,17 +61,6 @@ describe("agent identity reconciliation with provider (#3175)", () => {
     fs.chmodSync(openclawDir, 0o2770);
     fs.chmodSync(configPath, options.configWritable === false ? 0o440 : 0o660);
     fs.chmodSync(hashPath, 0o660);
-    const routedModelReceiptPath = path.join(openclawDir, ".nemoclaw-routed-model-applied");
-    const prepareRoutedModelReceipt = {
-      valid: () => {
-        fs.writeFileSync(routedModelReceiptPath, "nemoclaw-routed-model-applied-v1\n");
-        fs.chmodSync(routedModelReceiptPath, options.configWritable === false ? 0o440 : 0o660);
-      },
-      symlink: () => fs.symlinkSync(configPath, routedModelReceiptPath),
-      none: () => undefined,
-    }[options.routedModelReceipt ?? "none"];
-    prepareRoutedModelReceipt();
-
     const prepareSymlink = {
       config: () => {
         const target = path.join(openclawDir, "openclaw.real.json");
@@ -122,7 +110,6 @@ describe("agent identity reconciliation with provider (#3175)", () => {
         ? "ensure_mutable_openclaw_config_hash() { return 19; }"
         : `ensure_mutable_openclaw_config_hash() { (cd ${JSON.stringify(openclawDir)} && sha256sum openclaw.json >.config-hash); }`,
     ].join("\n");
-    const receiptFn = extractShellFunction("routed_model_receipt").replaceAll("/sandbox", root);
     const fn = extractShellFunction("reconcile_agent_model_with_provider").replaceAll(
       "/sandbox",
       root,
@@ -132,7 +119,6 @@ describe("agent identity reconciliation with provider (#3175)", () => {
       "set -euo pipefail",
       ...(options.useActualUser ? [] : [`id() { echo ${options.userId ?? 0}; }`]),
       helperFns,
-      receiptFn,
       fn,
       "reconcile_agent_model_with_provider",
     ].join("\n");
@@ -161,11 +147,8 @@ describe("agent identity reconciliation with provider (#3175)", () => {
     });
     const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
     const hash = fs.readFileSync(hashPath, "utf-8");
-    const routedModelReceipt = fs.existsSync(routedModelReceiptPath)
-      ? fs.readFileSync(routedModelReceiptPath, "utf-8")
-      : null;
     fs.rmSync(root, { recursive: true, force: true });
-    return { result, config, hash, routedModelReceipt };
+    return { result, config, hash };
   }
 
   it("aligns agents.defaults.model.primary to inference provider's first model when they drift", () => {
@@ -279,7 +262,7 @@ describe("agent identity reconciliation with provider (#3175)", () => {
   it.runIf(typeof process.getuid === "function" && process.getuid() !== 0)(
     "reconciles an actually owned config as the current non-root user (#12033)",
     () => {
-      const { result, config, hash, routedModelReceipt } = runReconcile(
+      const { result, config, hash } = runReconcile(
         {
           agents: { defaults: { model: { primary: "inference/nvidia-routed" } } },
           models: {
@@ -299,7 +282,7 @@ describe("agent identity reconciliation with provider (#3175)", () => {
           },
         },
         {
-          env: { NEMOCLAW_ROUTED_MODEL: "nvidia/nemotron-3-super-120b-a12b" },
+          gatewayModel: "nvidia/nemotron-3-super-120b-a12b",
           useActualUser: true,
         },
       );
@@ -318,11 +301,10 @@ describe("agent identity reconciliation with provider (#3175)", () => {
       expect(config.models.providers.inference.models[0]).not.toHaveProperty("maxTokens");
       expect(hash).not.toBe("oldhash\n");
       expect(hash).toContain("openclaw.json");
-      expect(routedModelReceipt).toBe("nemoclaw-routed-model-applied-v1\n");
     },
   );
 
-  it("does not replay the create-time routed model after a later model switch", () => {
+  it("preserves a later model switch when the live gateway probe is unavailable", () => {
     const switched = {
       agents: { defaults: { model: { primary: "inference/nvidia/switched-model" } } },
       models: {
@@ -340,58 +322,11 @@ describe("agent identity reconciliation with provider (#3175)", () => {
         },
       },
     };
-    const { result, config, hash } = runReconcile(switched, {
-      env: { NEMOCLAW_ROUTED_MODEL: "nvidia/create-time-model" },
-      routedModelReceipt: "valid",
-    });
+    const { result, config, hash } = runReconcile(switched);
 
     expect(result.status, result.stderr || result.stdout).toBe(0);
     expect(config).toEqual(switched);
     expect(hash).toBe("oldhash\n");
-  });
-
-  it("fails closed when the routed-model receipt is a symlink", () => {
-    const initial = {
-      agents: { defaults: { model: { primary: "inference/nvidia/baked-model" } } },
-      models: {
-        providers: {
-          inference: {
-            models: [{ id: "nvidia/baked-model", name: "inference/nvidia/baked-model" }],
-          },
-        },
-      },
-    };
-    const { result, config, hash } = runReconcile(initial, {
-      env: { NEMOCLAW_ROUTED_MODEL: "nvidia/create-time-model" },
-      routedModelReceipt: "symlink",
-    });
-
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("Routed-model receipt check failed");
-    expect(config).toEqual(initial);
-    expect(hash).toBe("oldhash\n");
-  });
-
-  it("rejects an unsafe host-routed model without changing the config", () => {
-    const initial = {
-      agents: { defaults: { model: { primary: "inference/safe-file-model" } } },
-      models: {
-        providers: {
-          inference: {
-            models: [{ id: "safe-file-model", name: "inference/safe-file-model" }],
-          },
-        },
-      },
-    };
-    const { result, config, hash } = runReconcile(initial, {
-      env: { NEMOCLAW_ROUTED_MODEL: "model;unsafe" },
-    });
-
-    expect(result.status).toBe(1);
-    expect(config).toEqual(initial);
-    expect(hash).toBe("oldhash\n");
-    expect(result.stderr).toContain("Routed model rejected an unsafe model identifier");
-    expect(result.stderr).not.toContain("model;unsafe");
   });
 
   it.runIf(typeof process.getuid === "function" && process.getuid() !== 0)(

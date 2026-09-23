@@ -46,11 +46,11 @@ If the route metadata is incomplete, NemoClaw stops and tells you to re-run onbo
 <AgentOnly variant="openclaw">
 
 At runtime, NemoClaw replaces `contextWindow` only when it resolves a value for the selected model and can retain an existing `maxTokens` value.
-During custom-image startup, NemoClaw reconciles a stale model ID with the host-selected route only when the sandbox user can write `/sandbox/.openclaw/openclaw.json`.
-That reconciliation removes both inherited limits when the model ID changes.
-If the configuration is not writable, NemoClaw reports that reconciliation was skipped and preserves the existing configuration.
-That preserved configuration can still contain the image's inherited model ID and limits.
-Make the configuration writable by the sandbox user in the custom image, then recreate the sandbox.
+For an OpenClaw custom image built with `--from`, onboarding patches an inherited model ID to the selected route during the image build.
+It removes both inherited limits when the model ID changes and refreshes `.config-hash` before restoring the custom image's final user.
+On later starts, NemoClaw can also reconcile drift from the live gateway when the sandbox user can write `/sandbox/.openclaw/openclaw.json`.
+If that runtime configuration is not writable, NemoClaw reports that reconciliation was skipped and preserves the existing configuration.
+Make the configuration writable by the sandbox user if later runtime route changes must update the file, then recreate the sandbox.
 To keep explicit limits for the new model, set `NEMOCLAW_CONTEXT_WINDOW` and `NEMOCLAW_MAX_TOKENS` to values supported by that model before you recreate the sandbox.
 Refer to [Configure Model Limits](configure-model-limits) for the environment variable requirements.
 

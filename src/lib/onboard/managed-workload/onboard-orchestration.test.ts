@@ -747,20 +747,6 @@ describe("managed workload onboard orchestration", () => {
 
   it.each([
     {
-      behavior: "passes the selected routed model through the production custom OpenClaw launch",
-      agentName: "openclaw",
-      fromDockerfile: "/custom/Dockerfile",
-      preparedBuildContext: {
-        ...preparedHermesContext,
-        origin: "custom" as const,
-        rebuildTarget: { agentName: "openclaw", fromDockerfile: "/custom/Dockerfile" },
-      },
-      expectedFromDockerfile: "/custom/Dockerfile",
-      expectedStageCalls: 0,
-      expectedRawCreate: false,
-      expectedRoutedModel: "nvidia/selected-model",
-    },
-    {
       behavior: "stages a fresh LangChain Deep Agents Code build before resolving patch metadata",
       agentName: "langchain-deepagents-code",
       fromDockerfile: dcodeDockerfile,
@@ -896,11 +882,6 @@ describe("managed workload onboard orchestration", () => {
       },
     } as unknown as Parameters<typeof prepareOnboardSandboxWorkloadLaunch>[0]);
 
-    expect(
-      preparedLaunch.launch.envArgs.filter((value) => value.startsWith("NEMOCLAW_ROUTED_MODEL=")),
-    ).toEqual(
-      testCase.expectedRoutedModel ? [`NEMOCLAW_ROUTED_MODEL=${testCase.expectedRoutedModel}`] : [],
-    );
     expect(resolvePatchInput).toHaveBeenCalledOnce();
     expect(resolveSandboxBuildPatch).toHaveBeenCalledOnce();
     expect(materializeSandboxCreatePlan).toHaveBeenCalledWith(

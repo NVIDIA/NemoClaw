@@ -228,6 +228,9 @@ export async function prepareSandboxDockerfilePatch({
         ...(compatibleEndpointReasoning ? { compatibleEndpointReasoning } : {}),
         ...(dcodeAutoApprovalMode ? { dcodeAutoApprovalMode } : {}),
         requireToolDisclosureContract: Boolean(fromDockerfile),
+        ...(fromDockerfile && managedAgentName === "openclaw"
+          ? { reconcileCustomOpenClawModel: true }
+          : {}),
         ...(metadata ? { baseImageResolutionMetadata: metadata } : {}),
       };
     })(),

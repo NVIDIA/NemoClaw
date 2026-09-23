@@ -592,11 +592,6 @@ export async function prepareOnboardSandboxWorkloadLaunch(
     const runtimeLaunch = prepareSandboxRuntimeLaunch({
       ...launchInput,
       policyAttached: Boolean(createPlan.createRequest.policyPath),
-      openClawRoutedModel:
-        buildContext.origin === "custom" &&
-        (!launchInput.agent || launchInput.agent.name === "openclaw")
-          ? patchInput.model || undefined
-          : undefined,
     });
     const { createArgs: _portableArgs, ...prebuild } = await prebuildSandboxImageIfEligible({
       buildCtx: buildContext.buildCtx,

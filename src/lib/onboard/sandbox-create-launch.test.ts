@@ -677,62 +677,6 @@ describe("prepareSandboxCreateLaunch", () => {
 });
 
 describe("prepareSandboxCreateLaunchWithPrebuild", () => {
-  it("passes the selected route model to a custom non-root OpenClaw image", async () => {
-    const buildCtx = createTrustedBuildContext();
-    const dockerfile = path.join(buildCtx, "Dockerfile");
-    const result = await prepareSandboxCreateLaunchWithPrebuild({
-      agent: { name: "openclaw" } as any,
-      chatUiUrl: "",
-      createArgs: ["--from", dockerfile, "--name", "demo"],
-      env: { NEMOCLAW_MODEL: "provider/selected-model" },
-      extraPlaceholderKeys: [],
-      getDashboardForwardPort: () => "0",
-      hermesDashboardState: disabledHermesDashboardState,
-      manageDashboard: false,
-      openshellShellCommand: (args) => args.join(" "),
-      sandboxName: "demo",
-      buildEnv: () => ({}),
-      prebuild: {
-        buildCtx,
-        buildId: "build-123",
-        dockerDriverGateway: true,
-        env: { NEMOCLAW_SANDBOX_PREBUILD: "1" },
-        origin: "custom",
-      },
-    });
-
-    expect(result.envArgs).toContain("NEMOCLAW_ROUTED_MODEL=provider/selected-model");
-    expect(result.createCommand).toContain("NEMOCLAW_ROUTED_MODEL=provider/selected-model");
-  });
-
-  it("rejects an unsafe selected route model before sandbox creation", async () => {
-    const buildCtx = createTrustedBuildContext();
-    const dockerfile = path.join(buildCtx, "Dockerfile");
-
-    await expect(
-      prepareSandboxCreateLaunchWithPrebuild({
-        agent: { name: "openclaw" } as any,
-        chatUiUrl: "",
-        createArgs: ["--from", dockerfile, "--name", "demo"],
-        env: { NEMOCLAW_MODEL: "model;unsafe" },
-        extraPlaceholderKeys: [],
-        getDashboardForwardPort: () => "0",
-        hermesDashboardState: disabledHermesDashboardState,
-        manageDashboard: false,
-        openshellShellCommand: (args) => args.join(" "),
-        sandboxName: "demo",
-        buildEnv: () => ({}),
-        prebuild: {
-          buildCtx,
-          buildId: "build-123",
-          dockerDriverGateway: true,
-          env: { NEMOCLAW_SANDBOX_PREBUILD: "1" },
-          origin: "custom",
-        },
-      }),
-    ).rejects.toThrow("selected OpenClaw route model has an invalid identifier");
-  });
-
   it("hands the build-qualified image to the canonical launch renderer", async () => {
     const buildCtx = createTrustedBuildContext();
     const dockerfile = path.join(buildCtx, "Dockerfile");
@@ -770,7 +714,6 @@ describe("prepareSandboxCreateLaunchWithPrebuild", () => {
     expect(result.createCommand).toContain(
       "sandbox create --from nemoclaw-sandbox-local:demo-build-123 --name demo",
     );
-    expect(result.envArgs.some((arg) => arg.startsWith("NEMOCLAW_ROUTED_MODEL="))).toBe(false);
     expect(buildImage).toHaveBeenCalledOnce();
   });
 
