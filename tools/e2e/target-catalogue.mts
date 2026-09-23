@@ -753,6 +753,41 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       },
     }),
   ),
+  ...(
+    [
+      ["hermes", "Hermes", "e2e-defer-hermes"],
+      ["langchain-deepagents-code", "Deep Agents Code", "e2e-defer-dcode"],
+    ] as const
+  ).map(([agent, displayName, sandboxName]) =>
+    managedRuntimeTarget(`deferred-onboarding-${agent}`, {
+      targetId: "deferred-onboarding",
+      displayName: `Installation: ${displayName} onboards after credentials arrive`,
+      agentRuntime: agent,
+      environmentOrInferenceEndpoint: "Ubuntu; deferred NVIDIA hosted inference onboarding",
+      profile: "nvidia-api",
+      prAdvisorSelectable: true,
+      testFile: "test/e2e/live/deferred-onboarding.test.ts",
+      timeoutMinutes: 60,
+      installMode: "credential-free",
+      installNonInteractive: true,
+      restoreCli: true,
+      exposeCliBin: true,
+      shard: agent,
+      owningPaths: [
+        "install.sh",
+        "scripts/install.sh",
+        "src/lib/actions/installer/",
+        "src/commands/internal/installer/plan.ts",
+        "src/lib/inference/provider-key/contract.ts",
+        `agents/${agent}/manifest.yaml`,
+      ],
+      environment: {
+        ...nonInteractive,
+        NEMOCLAW_AGENT: agent,
+        NEMOCLAW_SANDBOX_NAME: sandboxName,
+      },
+    }),
+  ),
   managedRuntimeTarget("gpu-double-onboard", {
     displayName: "Onboarding: preserves Ollama authentication after GPU re-onboarding",
     agentRuntime: "openclaw",

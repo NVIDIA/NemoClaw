@@ -14,6 +14,14 @@ import { assertBraveConfig, assertBraveExport } from "../live/brave-search-helpe
 
 const VERSIONED_PLACEHOLDER = "openshell:resolve:env:v12590243949725316565_BRAVE_API_KEY";
 const UNVERSIONED_PLACEHOLDER = "openshell:resolve:env:BRAVE_API_KEY";
+const SYNTHETIC_SECRET = "synthetic-brave-secret";
+const INTERNAL_TRANSPORT = "openshell:resolve:env";
+
+function unicodeEscape(value: string): string {
+  return [...value]
+    .map((character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`)
+    .join("");
+}
 
 function openClawConfig(apiKey?: unknown, retiredApiKey?: unknown): string {
   return JSON.stringify({
@@ -96,19 +104,22 @@ describe("Brave Search E2E export assertion", () => {
     );
   });
 
-  it.each(["synthetic-brave-secret", "synthetic-inference-secret"])(
-    "rejects leaked %s before parsing without echoing it (#10904)",
-    (secret) => {
-      let error: unknown;
-      try {
-        assertBraveExport(`invalid: [${secret}`, [secret]);
-      } catch (caught) {
-        error = caught;
-      }
-      expect(error).toBeInstanceOf(Error);
-      expect(String(error)).not.toContain(secret);
-    },
-  );
+  it.each([
+    ["base64 credential", Buffer.from(SYNTHETIC_SECRET, "utf8").toString("base64")],
+    ["escaped credential", unicodeEscape(SYNTHETIC_SECRET)],
+    ["base64 transport", Buffer.from(INTERNAL_TRANSPORT, "utf8").toString("base64")],
+    ["escaped transport", unicodeEscape(INTERNAL_TRANSPORT)],
+  ])("rejects %s material without echoing it (#10904)", (_case, value) => {
+    const validExport = YAML.stringify(exportedBraveConfig());
+    let error: unknown;
+    try {
+      assertBraveExport(`${validExport}\n# ${value}\n`, [SYNTHETIC_SECRET]);
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toBeInstanceOf(Error);
+    expect(String(error)).not.toContain(SYNTHETIC_SECRET);
+  });
 
   it("requires the expected Brave integration for this live scenario (#10904)", () => {
     const document = exportedBraveConfig();
