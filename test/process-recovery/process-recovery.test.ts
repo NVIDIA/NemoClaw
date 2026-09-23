@@ -193,8 +193,8 @@ describe("native gateway inspection failure", () => {
       const execute = arrangeFailure(new transport.SandboxCommandTransportError(kind));
       const privileged = requireSource("../../src/lib/sandbox/privileged-exec.ts");
       const executePrivileged = vi.spyOn(privileged, "executePrivilegedSandboxCommand");
-      const ssh = requireSource("../../src/lib/adapters/openshell/sandbox-ssh-cli.ts");
-      const createSsh = vi.spyOn(ssh, "createCliOpenShellSandboxSshExecutor");
+      const commandCli = requireSource("../../src/lib/adapters/openshell/sandbox-command-cli.ts");
+      const runCommand = vi.spyOn(commandCli, "runCliOpenShellBufferedCommand");
       await expect(checkAndRecoverSandboxProcesses("alpha", { quiet: true })).resolves.toEqual({
         checked: false,
         wasRunning: null,
@@ -204,7 +204,7 @@ describe("native gateway inspection failure", () => {
       expect(execute).toHaveBeenCalledOnce();
       expect(startForward).not.toHaveBeenCalled();
       expect(executePrivileged).not.toHaveBeenCalled();
-      expect(createSsh).not.toHaveBeenCalled();
+      expect(runCommand).not.toHaveBeenCalled();
     },
   );
 

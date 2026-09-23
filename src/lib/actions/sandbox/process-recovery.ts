@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { randomBytes } from "node:crypto";
-import { createCliOpenShellSandboxSshExecutor } from "../../adapters/openshell/sandbox-ssh-cli";
 import { stripAnsi } from "../../adapters/openshell/client";
 import { createCliOpenShellSandboxCommandExecutor } from "../../adapters/openshell/sandbox-command-cli";
 import {
@@ -202,44 +201,6 @@ export async function executeSandboxCommand(
   return executeSandboxExecCommand(sandboxName, command, options.timeout, {
     runtimeSelection: options.runtimeSelection,
   });
-}
-
-class CustomAgentRecoveryTransportError extends Error {
-  constructor(
-    sandboxName: string,
-    readonly operation: "inspection" | "recovery",
-    reason: string,
-  ) {
-    super(
-      `Custom-agent ${operation} for sandbox "${sandboxName}" failed: SSH ${reason}. ` +
-        "Check sandbox connectivity and gateway state before trying recovery again.",
-    );
-    this.name = "CustomAgentRecoveryTransportError";
-  }
-}
-
-/** Custom manifests require the login user until they declare a native recovery contract. */
-async function executeCustomAgentRecoveryCommand(
-  sandboxName: string,
-  command: string,
-  operation: "inspection" | "recovery",
-  runtimeSelection?: OpenShellRuntimeSelection,
-): Promise<SandboxCommandResult> {
-  const result = await createCliOpenShellSandboxSshExecutor().run({
-    sandboxName,
-    command,
-    target: runtimeSelection
-      ? namedOpenShellGateway(runtimeSelection.gatewayName)
-      : selectedOpenShellGateway(),
-    environment: runtimeSelection
-      ? buildOpenShellRuntimeSelectionEnv(buildSubprocessEnv(), runtimeSelection)
-      : buildSubprocessEnv(),
-    timeoutMilliseconds: DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
-  });
-  if (result.kind === "failed") {
-    throw new CustomAgentRecoveryTransportError(sandboxName, operation, result.reason);
-  }
-  return { status: result.exitCode, stdout: result.stdout.trim(), stderr: result.stderr.trim() };
 }
 
 /** Run one root controller argv against the registry-pinned direct container. */
@@ -1378,16 +1339,9 @@ async function isSandboxGatewayRunning(
   const command = sandboxGatewayRecoveryProbeCommand(probeUrl);
   try {
     return parseSandboxGatewayRecoveryProbe(
-      agent && agent.name !== "openclaw" && agent.name !== "hermes"
-        ? await executeCustomAgentRecoveryCommand(
-            sandboxName,
-            command,
-            "inspection",
-            runtimeSelection,
-          )
-        : await executeSandboxExecCommand(sandboxName, command, DEFAULT_SANDBOX_EXEC_TIMEOUT_MS, {
-            runtimeSelection,
-          }),
+      await executeSandboxExecCommand(sandboxName, command, DEFAULT_SANDBOX_EXEC_TIMEOUT_MS, {
+        runtimeSelection,
+      }),
     );
   } catch (error) {
     if (!(error instanceof SandboxCommandTransportError)) throw error;
@@ -1771,10 +1725,8 @@ export async function isSandboxGatewayHttpReachableForStatus(
 
 /**
  * Recover a gateway through the registered agent's managed control boundary.
- * Legacy custom agents retain their SSH-owned compatibility path.
  */
 type SandboxProcessRecovery =
-  | { kind: "custom" }
   | { kind: "provider" }
   | { kind: "unsupported-provider"; failureDetail: string };
 
@@ -1789,7 +1741,6 @@ async function recoverSandboxProcesses(
   } = {},
 ): Promise<SandboxProcessRecovery | null> {
   const agent = agentRuntime.getSessionAgent(sandboxName);
-  const dashboardPort = resolveSandboxDashboardPort(sandboxName);
   let persistedAgent: string | null;
   try {
     persistedAgent = sandboxAgentName(sandboxName, registry.getSandbox);
@@ -1825,10 +1776,6 @@ async function recoverSandboxProcesses(
       };
     }
   }
-  const recoveredCustomAgent = (
-    result: SandboxCommandResult | null,
-  ): SandboxProcessRecovery | null =>
-    result && result.status === 0 && hasGatewayRecoveryMarker(result) ? { kind: "custom" } : null;
 
   if (
     persistedAgent === "hermes" ||
@@ -1852,23 +1799,13 @@ async function recoverSandboxProcesses(
     return null;
   }
 
-  const agentScript = agentRuntime.buildRecoveryScript(agent, dashboardPort);
-  if (agentRuntime.isTerminalAgentRecoveryScript(agentScript)) return null;
-  if (agentScript) {
-    // Non-Hermes custom manifests do not yet declare a supported host-side
-    // runtime user. Recover them over SSH so the launch inherits the sandbox
-    // login user instead of creating root-owned agent state under /sandbox.
-    return recoveredCustomAgent(
-      await executeCustomAgentRecoveryCommand(
-        sandboxName,
-        agentScript,
-        "recovery",
-        runtimeSelection,
-      ),
-    );
-  }
-
-  return null;
+  if (agent && !agentRuntime.hasGatewayRuntime(agent)) return null;
+  return {
+    kind: "unsupported-provider",
+    failureDetail:
+      `Agent '${persistedAgent ?? agent?.name ?? "unknown"}' does not declare a supported gateway recovery contract. ` +
+      "Restart it through its owning agent or runtime provider; NemoClaw will not launch a custom gateway over SSH.",
+  };
 }
 
 export async function restartSandboxGateway(
@@ -2881,20 +2818,7 @@ export async function checkAndRecoverSandboxProcesses(
   } = {},
 ) {
   const { withLifecycleLock = withSandboxLifecycleLock, ...recoveryOptions } = options;
-  return withLifecycleLock(sandboxName, async () => {
-    try {
-      return await checkAndRecoverSandboxProcessesWithoutHostLock(sandboxName, recoveryOptions);
-    } catch (error) {
-      if (!(error instanceof CustomAgentRecoveryTransportError)) throw error;
-      recoveryOptions.onRecoveryFailureLayer?.(null, error.message);
-      if (!recoveryOptions.quiet) console.error(`  ${error.message}`);
-      return {
-        checked: error.operation === "recovery",
-        wasRunning: error.operation === "recovery" ? false : null,
-        recovered: false,
-        forwardRecovered: false,
-        recoveryFailureDetail: error.message,
-      };
-    }
-  });
+  return withLifecycleLock(sandboxName, () =>
+    checkAndRecoverSandboxProcessesWithoutHostLock(sandboxName, recoveryOptions),
+  );
 }

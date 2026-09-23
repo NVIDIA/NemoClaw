@@ -18,13 +18,7 @@ import {
 
 type RegisteredAgentSource = { agent?: string | null } | null | undefined;
 
-export {
-  type AgentRecoveryScript,
-  buildRecoveryScript,
-  getTerminalCommand,
-  isTerminalAgentRecoveryScript,
-  TERMINAL_AGENT_RECOVERY_SCRIPT,
-} from "./gateway-restart-scripts";
+export { getTerminalCommand } from "./gateway-restart-scripts";
 
 /**
  * Resolve the agent for a sandbox. Checks the per-sandbox registry first
