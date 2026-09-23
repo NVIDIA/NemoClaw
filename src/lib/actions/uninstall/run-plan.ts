@@ -3749,6 +3749,10 @@ async function executePlan(
       interruptedOnboardLock,
     );
   } catch (error) {
+    if (error instanceof RetainedSandboxInventoryError) {
+      runtime.warn(error.message);
+      return { ok: false, scopedToSelectedGateway };
+    }
     if (error instanceof InterruptedPreGatewayStateChangedError) {
       return {
         ok: false,

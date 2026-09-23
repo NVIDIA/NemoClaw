@@ -422,6 +422,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
     destroyUserData: false,
     dockerInventory: null as RunResult | null,
     dockerAvailable: true,
+    inventorySuccessesBeforeFailure: 0,
     expectedDockerCalls: [] as string[][],
     expectedNativeCalls: [] as string[][],
     probeResults: {} as Record<string, RunResult>,
@@ -455,7 +456,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
   const retainedFailure = (message: string) => (errors: string) => {
     expect(errors).toContain(message);
     expect(errors).toContain("Keep NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR unset");
-    expect(errors).not.toContain("set to its original resolved directory");
+    expect(errors).not.toMatch(/set to its original resolved directory|portable host authority/u);
   };
   const siblingContainer = "b".repeat(64);
   const siblingInspect = [
@@ -529,14 +530,15 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
       expectedDockerCalls: [],
       scenario: "preserves retained data when Docker is unavailable",
     },
-    {
+    ...[0, 4, 6].map((inventorySuccessesBeforeFailure) => ({
       ...retainedUninstallBase,
       dockerInventory: { status: 1, stdout: "", stderr: "inventory unavailable" },
+      inventorySuccessesBeforeFailure,
       expectedExit: 1,
       stateKept: true,
       assertErrors: retainedFailure("Docker inventory could not be read"),
-      scenario: "preserves retained uninstall data when container inventory fails",
-    },
+      scenario: `preserves retained data when inventory fails after ${inventorySuccessesBeforeFailure} checks`,
+    })),
     {
       ...interruptedPreGatewayBase,
       assertErrors: (errors: string) =>
@@ -662,6 +664,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
       destroyUserData,
       dockerInventory,
       dockerAvailable,
+      inventorySuccessesBeforeFailure,
       expectedDockerCalls,
       expectedNativeCalls,
       probeResults,
@@ -704,6 +707,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
         let interruptedPreGatewayAdmissionObserved = false;
         let postAdmissionPortChecks = 0;
         let portAvailabilityIndex = 0;
+        let inventoryCount = 0;
         const commandResults: Record<string, RunResult> = {
           pgrep: { ...ok(), status: 1 },
         };
@@ -761,7 +765,9 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
             runDocker: (args) => {
               calls.push(["docker", ...args]);
               return args.join("\0") === inventoryArgs.join("\0")
-                ? (dockerInventory ?? ok())
+                ? inventoryCount++ < inventorySuccessesBeforeFailure
+                  ? ok()
+                  : (dockerInventory ?? ok())
                 : (probeResults[["docker", ...args].join(" ")] ?? ok());
             },
             withSandboxMutationLock,
