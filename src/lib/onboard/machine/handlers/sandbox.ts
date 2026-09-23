@@ -378,19 +378,7 @@ export interface SandboxStateOptions<
       runVerifiedSandboxCreateEffects?: import("../../types").VerifiedSandboxCreateEffects,
     ): Promise<string>;
     finalizeSandboxRouteReservation(sandboxName: string, sessionId: string): boolean;
-    reserveSandboxInferenceRoute(
-      sandboxName: string,
-      route: {
-        provider: string | null;
-        model: string | null;
-        endpointUrl: string | null;
-        endpointSource: InferenceEndpointSource | null;
-        credentialEnv: string | null;
-        preferredInferenceApi: string | null;
-        gatewayName: string;
-        reservationSessionId?: string;
-      },
-    ): boolean;
+    reserveSandboxInferenceRoute: typeof import("../../../state/registry").reserveSandboxInferenceRoute;
     updateSandboxRegistry(sandboxName: string, updates: Record<string, unknown>): void;
     getSandboxAgentRegistryFields(
       agent: Agent,
@@ -1191,6 +1179,42 @@ class SandboxStateFlow<
     this.deps.error(message);
     this.deps.exitProcess(1);
     throw new Error("exitProcess returned while aborting an incompatible gateway route");
+  }
+
+  private reserveHostLocalCreateRoute(sandboxName: string): void {
+    const sessionId = this.options.session?.sessionId;
+    const entry = this.deps.getSandboxRegistryEntry(sandboxName);
+    if (!sessionId || entry?.hostLocalInferenceProvenance === undefined) {
+      return;
+    }
+    // Preserve the receipt's exact runtime authority. The registry rejects any
+    // changed selection rather than replacing an explicit host-local lifecycle.
+    try {
+      const reserved = this.deps.reserveSandboxInferenceRoute(sandboxName, {
+        provider: this.options.provider,
+        model: this.options.model,
+        endpointUrl: this.options.endpointUrl,
+        endpointSource: this.options.endpointSource ?? null,
+        credentialEnv: this.options.credentialEnv,
+        preferredInferenceApi: this.options.preferredInferenceApi,
+        gatewayName: this.options.gatewayName,
+        gatewayPort: entry.gatewayPort ?? undefined,
+        openshellDriver: entry.openshellDriver ?? undefined,
+        hostLocalInferenceReceipt: entry.hostLocalInferenceReceipt,
+        hostLocalInferenceProvenance: entry.hostLocalInferenceProvenance,
+        reservationSessionId: sessionId,
+      });
+      if (!reserved) {
+        throw new Error(`Failed to reserve the inference route for sandbox '${sandboxName}'.`);
+      }
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `Cannot reserve host-local inference for sandbox '${sandboxName}': ${detail}\n` +
+          `Run '${this.deps.cliName()} ${sandboxName} doctor' to inspect runtime and gateway authority before retrying.`,
+        { cause: error },
+      );
+    }
   }
 
   // Sandbox creation admits only a pending route reservation owned by this
@@ -2237,6 +2261,7 @@ class SandboxStateFlow<
 
       let sandboxName: string;
       try {
+        this.reserveHostLocalCreateRoute(requestedSandboxName);
         this.reserveCreateRouteForSession(requestedSandboxName);
         sandboxName = await withSandboxPhaseTrace(
           requestedSandboxName,
