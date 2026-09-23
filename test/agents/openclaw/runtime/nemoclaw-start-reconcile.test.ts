@@ -306,28 +306,31 @@ describe("agent identity reconciliation with provider (#3175)", () => {
     },
   );
 
-  it("explains why a non-root user cannot reconcile a sealed config (#12033)", () => {
-    const initial = {
-      agents: { defaults: { model: { primary: "inference/old-model" } } },
-      models: {
-        providers: {
-          inference: {
-            models: [{ id: "old-model", name: "inference/old-model" }],
+  it.runIf(typeof process.getuid === "function" && process.getuid() !== 0)(
+    "explains why an actual non-root user cannot reconcile a sealed config (#12033)",
+    () => {
+      const initial = {
+        agents: { defaults: { model: { primary: "inference/old-model" } } },
+        models: {
+          providers: {
+            inference: {
+              models: [{ id: "old-model", name: "inference/old-model" }],
+            },
           },
         },
-      },
-    };
-    const { result, config, hash } = runReconcile(initial, {
-      gatewayModel: "new-model",
-      userId: 1000,
-      configWritable: false,
-    });
+      };
+      const { result, config, hash } = runReconcile(initial, {
+        gatewayModel: "new-model",
+        useActualUser: true,
+        configWritable: false,
+      });
 
-    expect(result.status).toBe(0);
-    expect(config).toEqual(initial);
-    expect(hash).toBe("oldhash\n");
-    expect(result.stderr).toContain("OpenClaw config is not writable by the sandbox user");
-  });
+      expect(result.status).toBe(0);
+      expect(config).toEqual(initial);
+      expect(hash).toBe("oldhash\n");
+      expect(result.stderr).toContain("OpenClaw config is not writable by the sandbox user");
+    },
+  );
 
   it("patches primary AND models[0] to the live gateway model when both file fields are stale", () => {
     const { result, config, hash } = runReconcile(

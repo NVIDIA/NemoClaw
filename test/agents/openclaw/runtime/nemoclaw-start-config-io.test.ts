@@ -57,10 +57,12 @@ describe("runtime model override (#759)", () => {
     fs.chmodSync(openclawDir, 0o2770);
     fs.chmodSync(configPath, 0o660);
     fs.chmodSync(hashPath, 0o660);
+    const configFd = fs.openSync(configPath, "r");
+    const hashFd = fs.openSync(hashPath, "r");
     const initialModes = {
       dir: fs.statSync(openclawDir).mode & 0o7777,
-      config: fs.statSync(configPath).mode & 0o777,
-      hash: fs.statSync(hashPath).mode & 0o777,
+      config: fs.fstatSync(configFd).mode & 0o777,
+      hash: fs.fstatSync(hashFd).mode & 0o777,
     };
 
     const helperFns = [extractShellFunction("openclaw_config_dir_owner")]
@@ -81,8 +83,6 @@ describe("runtime model override (#759)", () => {
     ].join("\n");
     const script = path.join(root, "run.sh");
     fs.writeFileSync(script, wrapper, { mode: 0o700 });
-    const configFd = fs.openSync(configPath, "r");
-    const hashFd = fs.openSync(hashPath, "r");
     try {
       const result = spawnSync("bash", [script], {
         encoding: "utf-8",
