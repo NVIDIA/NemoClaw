@@ -615,6 +615,7 @@
       "live": "test/e2e/live/mcp-bridge.test.ts",
       "liveSources": [
         "test/e2e/fixtures/owned-sandbox-cleanup.ts",
+        "test/e2e/fixtures/routed-private-relay.ts",
         "test/e2e/live/dns-rebinding-hosts-fixture.ts",
         "test/e2e/live/mcp-bridge-cleanup.ts",
         "test/e2e/live/mcp-bridge-deepagents-config.ts",
@@ -644,6 +645,7 @@
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/e2e-redaction-entry.test.ts",
         "test/e2e/support/owned-sandbox-cleanup.test.ts",
+        "test/e2e/support/routed-private-relay.test.ts",
         "test/e2e/support/mcp-bridge-hermes-lifecycle.test.ts",
         "test/e2e/support/mcp-bridge-hermes-http.test.ts",
         "test/e2e/support/mcp-bridge-onboard-env.test.ts",

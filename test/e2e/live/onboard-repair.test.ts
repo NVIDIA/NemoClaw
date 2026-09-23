@@ -79,54 +79,6 @@ function onboardEnv(sandboxName: string, fakeBaseUrl: string, extra: NodeJS.Proc
   });
 }
 
-async function cleanupRepairSandbox(
-  host: HostCliClient,
-  sandbox: SandboxClient,
-  name: string,
-): Promise<void> {
-  await nemoclaw(host, [name, "destroy", "--yes"], `cleanup-destroy-${name}`).catch(
-    () => undefined,
-  );
-  await sandbox
-    .openshell(["sandbox", "delete", name], {
-      artifactName: `cleanup-openshell-delete-${name}`,
-      env: env(),
-      timeoutMs: 60_000,
-    })
-    .catch(() => undefined);
-}
-
-async function cleanup(host: HostCliClient, sandbox: SandboxClient): Promise<void> {
-  await cleanupRepairSandbox(host, sandbox, SANDBOX_NAME);
-  await cleanupRepairSandbox(host, sandbox, OTHER_SANDBOX_NAME);
-  await sandbox
-    .openshell(["forward", "stop", "18789"], {
-      artifactName: "cleanup-forward-stop-18789",
-      env: env(),
-      timeoutMs: 30_000,
-    })
-    .catch(() => undefined);
-  await sandbox
-    .openshell(["provider", "delete", "-g", "nemoclaw", LIVE_EXTRA_PROVIDER], {
-      artifactName: "cleanup-live-extra-provider-delete",
-      env: env({ [EXTRA_PROVIDER_TOKEN_ENV]: EXTRA_PROVIDER_TOKEN }),
-      timeoutMs: 60_000,
-    })
-    .catch(() => undefined);
-  await sandbox
-    .openshell(["gateway", "destroy", "-g", "nemoclaw"], {
-      artifactName: "cleanup-gateway-destroy",
-      env: env(),
-      timeoutMs: 60_000,
-    })
-    .catch(() => undefined);
-  updateExtraProviders((providers) => {
-    providers.delete(STALE_EXTRA_PROVIDER);
-    providers.delete(LIVE_EXTRA_PROVIDER);
-  });
-  fs.rmSync(SESSION_FILE, { force: true });
-}
-
 async function waitSandboxAbsent(sandbox: SandboxClient, name: string): Promise<void> {
   for (let attempt = 1; attempt <= 60; attempt += 1) {
     const result = await sandbox.openshell(["sandbox", "get", name], {
@@ -197,6 +149,7 @@ test(
         providers.delete(LIVE_EXTRA_PROVIDER);
       });
       fs.rmSync(SESSION_FILE, { force: true });
+      expect(fs.existsSync(SESSION_FILE)).toBe(false);
     });
     const cleanupWhenInstalled = (artifactName: string, run: () => Promise<void>): Promise<void> =>
       cleanupWhenOpenShellAvailable(
@@ -420,8 +373,6 @@ test(
     expect(resultText(providerConflict)).toContain("not 'gpt-5.4'");
 
     progress.phase("clear the repaired onboarding state");
-    await cleanup(host, sandbox);
-    expect(fs.existsSync(SESSION_FILE)).toBe(false);
     await artifacts.target.complete({ id: "onboard-repair", status: "passed" });
   },
 );

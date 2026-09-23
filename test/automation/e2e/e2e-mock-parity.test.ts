@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   filterMockParityRelevantChangedFiles,
@@ -173,6 +174,25 @@ describe("changed live E2E mock parity", () => {
         manifest: manifest([{ live, fast: [fast] }]),
         changedFiles: ["test/e2e/fixtures/unrelated.ts"],
         fileExists: exists,
+      }),
+    ).toEqual([]);
+  });
+
+  it("requires mapped relay evidence through the checked-in MCP bridge owner", () => {
+    const relay = "test/e2e/fixtures/routed-private-relay.ts";
+    const relayTest = "test/e2e/support/routed-private-relay.test.ts";
+    const bridge = "test/e2e/live/mcp-bridge.test.ts";
+    const checkedIn = JSON.parse(
+      fs.readFileSync(new URL("../../e2e/mock-parity.json", import.meta.url), "utf8"),
+    ) as MockParityManifest;
+    expect(
+      validateMockParity({ manifest: checkedIn, changedFiles: [relay], fileExists: fs.existsSync }),
+    ).toEqual([`${relay}: change at least one fast PR test mapped from ${bridge}`]);
+    expect(
+      validateMockParity({
+        manifest: checkedIn,
+        changedFiles: [relay, relayTest],
+        fileExists: fs.existsSync,
       }),
     ).toEqual([]);
   });
