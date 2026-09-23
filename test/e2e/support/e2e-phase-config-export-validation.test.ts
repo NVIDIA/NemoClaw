@@ -1016,7 +1016,6 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
       throw new Error("revision-matched v1 consumer rejected the live export");
     };
     const test = fixture({ dependencies: invalid });
-
     await captureFailure(test.phase.from(target("required"), instance()));
 
     expect(test.writes.at(-1)).toMatchObject({

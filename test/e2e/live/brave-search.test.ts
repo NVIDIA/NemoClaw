@@ -59,7 +59,6 @@ test(
         "onboard succeeds with BRAVE_API_KEY present",
         "config export validates the live managed Brave profile and produces schema-valid configuration",
         "repeated export preserves the same spec and references BRAVE_API_KEY without credential values or internal transports",
-        "config export preserves the default OpenClaw context window and loopback dashboard",
         "OpenClaw web search config is enabled and selects provider=brave",
         "OpenClaw stores a BRAVE_API_KEY placeholder rather than the raw key",
         "OpenClaw agent can perform a Brave-backed web search",
@@ -127,13 +126,10 @@ test(
       "Export must omit internal environment transports and credential placeholders",
     ).toBe(false);
     expect(repeatSpec).toEqual(firstSpec);
-    await artifacts.writeText("brave-config-export.yaml", firstRaw);
     await artifacts.writeJson("brave-config-export-evidence.json", {
       sandboxName: SANDBOX_NAME,
       provider: "brave",
       credentialReference: "BRAVE_API_KEY",
-      contextWindow: 131072,
-      dashboard: { port: 18789 },
       expectedShapeObserved: true,
       repeatedSpecMatches: true,
       credentialValuesAbsent: true,
