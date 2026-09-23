@@ -713,6 +713,9 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
     expect(agent).toContain('OPENCLAW_SKIP_PROVIDERS: "1"');
     expect(agent).toContain("OPENCLAW_CONFIG_PATH: openClawConfigPath");
     expect(agent).toContain("OPENCLAW_STATE_DIR: openClawStateDirectory");
+    expect(agent).toContain("LOCALAPPDATA: localAppData");
+    expect(agent).toContain("TEMP: temp");
+    expect(agent).toContain("TMP: temp");
     expect(agent).toContain('NODE_OPTIONS: "--import=" + compatibilityPreloadUrl');
     expect(agent).toContain('"--import",\n    compatibilityPreloadUrl');
     expect(agent).not.toContain("execFile");
@@ -933,6 +936,7 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
         NEMOCLAW_MXC_E2E_ENTRY: missingEntryPath,
         NEMOCLAW_MXC_E2E_HEARTBEAT_PATH: path.join(root, "heartbeat.txt"),
         NEMOCLAW_MXC_E2E_HOME: home,
+        NEMOCLAW_MXC_E2E_LOCAL_APP_DATA: path.join(root, "local-app-data"),
         NEMOCLAW_MXC_E2E_MOCK_PORT: "0",
         NEMOCLAW_MXC_E2E_NODE: missingNodePath,
         NEMOCLAW_MXC_E2E_OPENCLAW_PID_PATH: path.join(root, "openclaw.pid"),
@@ -942,6 +946,7 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
         NEMOCLAW_MXC_E2E_READY_PATH: path.join(root, "ready.json"),
         NEMOCLAW_MXC_E2E_RESULT_PATH: resultPath,
         NEMOCLAW_MXC_E2E_STOP_PATH: path.join(root, "stop.txt"),
+        NEMOCLAW_MXC_E2E_TEMP: path.join(root, "temp"),
         NEMOCLAW_MXC_E2E_TOKEN: token,
       },
       timeout: 15_000,
@@ -1017,6 +1022,7 @@ setInterval(() => {}, 1000);
           NEMOCLAW_MXC_E2E_ENTRY: entryPath,
           NEMOCLAW_MXC_E2E_HEARTBEAT_PATH: path.join(root, "heartbeat.txt"),
           NEMOCLAW_MXC_E2E_HOME: path.join(root, "probe-home"),
+          NEMOCLAW_MXC_E2E_LOCAL_APP_DATA: path.join(root, "local-app-data"),
           NEMOCLAW_MXC_E2E_MOCK_PORT: "0",
           NEMOCLAW_MXC_E2E_NODE: process.execPath,
           NEMOCLAW_MXC_E2E_OPENCLAW_PID_PATH: path.join(root, "openclaw.pid"),
@@ -1026,6 +1032,7 @@ setInterval(() => {}, 1000);
           NEMOCLAW_MXC_E2E_READY_PATH: path.join(root, "ready.json"),
           NEMOCLAW_MXC_E2E_RESULT_PATH: path.join(root, "result.json"),
           NEMOCLAW_MXC_E2E_STOP_PATH: stopPath,
+          NEMOCLAW_MXC_E2E_TEMP: path.join(root, "temp"),
           NEMOCLAW_MXC_E2E_TOKEN: "fixture-token",
         },
         timeout: 15_000,

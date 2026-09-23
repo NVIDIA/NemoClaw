@@ -93,6 +93,7 @@ const AGENT_ENVIRONMENT_NAMES = [
   "NEMOCLAW_MXC_E2E_ENTRY",
   "NEMOCLAW_MXC_E2E_HEARTBEAT_PATH",
   "NEMOCLAW_MXC_E2E_HOME",
+  "NEMOCLAW_MXC_E2E_LOCAL_APP_DATA",
   "NEMOCLAW_MXC_E2E_MOCK_PORT",
   "NEMOCLAW_MXC_E2E_NODE",
   "NEMOCLAW_MXC_E2E_OPENCLAW_PORT",
@@ -102,6 +103,7 @@ const AGENT_ENVIRONMENT_NAMES = [
   "NEMOCLAW_MXC_E2E_READY_PATH",
   "NEMOCLAW_MXC_E2E_RESULT_PATH",
   "NEMOCLAW_MXC_E2E_STOP_PATH",
+  "NEMOCLAW_MXC_E2E_TEMP",
   "NEMOCLAW_MXC_E2E_TOKEN",
   "PATH",
   "SYSTEMROOT",
@@ -1053,12 +1055,14 @@ const node = required("NEMOCLAW_MXC_E2E_NODE");
 const compatibilityPreload = required("NEMOCLAW_MXC_E2E_COMPAT_PRELOAD");
 const entry = required("NEMOCLAW_MXC_E2E_ENTRY");
 const home = required("NEMOCLAW_MXC_E2E_HOME");
+const localAppData = required("NEMOCLAW_MXC_E2E_LOCAL_APP_DATA");
 const token = required("NEMOCLAW_MXC_E2E_TOKEN");
 const readyPath = required("NEMOCLAW_MXC_E2E_READY_PATH");
 const resultPath = required("NEMOCLAW_MXC_E2E_RESULT_PATH");
 const outcomePath = required("NEMOCLAW_MXC_E2E_OUTCOME_PATH");
 const heartbeatPath = required("NEMOCLAW_MXC_E2E_HEARTBEAT_PATH");
 const stopPath = required("NEMOCLAW_MXC_E2E_STOP_PATH");
+const temp = required("NEMOCLAW_MXC_E2E_TEMP");
 const denyPath = required("NEMOCLAW_MXC_E2E_DENY_PATH");
 const mockPort = required("NEMOCLAW_MXC_E2E_MOCK_PORT");
 const port = required("NEMOCLAW_MXC_E2E_OPENCLAW_PORT");
@@ -1069,6 +1073,7 @@ const compatibilityPreloadUrl = pathToFileURL(compatibilityPreload).href;
 const env = {
   ...process.env,
   HOME: home,
+  LOCALAPPDATA: localAppData,
   NODE_OPTIONS: "--import=" + compatibilityPreloadUrl,
   OPENCLAW_CONFIG_PATH: openClawConfigPath,
   OPENCLAW_DISABLE_BUNDLED_PLUGINS: "1",
@@ -1078,6 +1083,8 @@ const env = {
   OPENCLAW_SKIP_CHANNELS: "1",
   OPENCLAW_SKIP_PROVIDERS: "1",
   OPENCLAW_STATE_DIR: openClawStateDirectory,
+  TEMP: temp,
+  TMP: temp,
   USERPROFILE: home,
 };
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -2384,6 +2391,7 @@ async function prepareWindowsMxcOpenClawLocalSetup(input: {
         NEMOCLAW_MXC_E2E_ENTRY: stagedOpenClaw.entryPath,
         NEMOCLAW_MXC_E2E_HEARTBEAT_PATH: heartbeatPath,
         NEMOCLAW_MXC_E2E_HOME: homeDirectory,
+        NEMOCLAW_MXC_E2E_LOCAL_APP_DATA: localAppDataDirectory,
         NEMOCLAW_MXC_E2E_MOCK_PORT: String(mockPort),
         NEMOCLAW_MXC_E2E_NODE: stagedOpenClaw.nodePath,
         NEMOCLAW_MXC_E2E_OPENCLAW_PORT: String(openClawPort),
@@ -2393,6 +2401,7 @@ async function prepareWindowsMxcOpenClawLocalSetup(input: {
         NEMOCLAW_MXC_E2E_READY_PATH: readyPath,
         NEMOCLAW_MXC_E2E_RESULT_PATH: resultPath,
         NEMOCLAW_MXC_E2E_STOP_PATH: stopPath,
+        NEMOCLAW_MXC_E2E_TEMP: tempDirectory,
         NEMOCLAW_MXC_E2E_TOKEN: token,
         OPENSHELL_DRIVERS: "mxc",
         OPENSHELL_GATEWAY_CONFIG: gatewayConfigPath,
