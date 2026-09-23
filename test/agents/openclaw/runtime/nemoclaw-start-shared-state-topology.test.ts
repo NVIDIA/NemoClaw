@@ -5,6 +5,9 @@ import { type SpawnSyncReturns, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { wrapExecCommandWithRuntimeEnv } from "../../../../src/lib/actions/sandbox/runtime-env";
+import { shellQuote } from "../../../../src/lib/core/shell-quote";
+import { extractShellFunctionFromSource } from "../../../helpers/shell-source";
 
 const START_SCRIPT = path.join(process.cwd(), "scripts", "nemoclaw-start.sh");
 
@@ -73,6 +76,82 @@ describe("nemoclaw-start native SQLite topology (#7280)", () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
+
+  it.each(["exec", "connect"])(
+    "shares the validated SQLite directory with a fresh %s process",
+    (mode) => {
+      const tmp = fs.mkdtempSync(path.join(process.cwd(), ".tmp-openclaw-sqlite-env-"));
+      const sqliteTmp = path.join(tmp, "state with 'quote", "tmp");
+      const envFile = path.join(tmp, "runtime-env.sh");
+      fs.mkdirSync(path.dirname(sqliteTmp));
+      try {
+        const writer = runBash([
+          "set +u",
+          extractShellFunctionFromSource(source, "prepare_openshell_sqlite_tmpdir").replaceAll(
+            "/sandbox/.openclaw/tmp",
+            sqliteTmp,
+          ),
+          extractShellFunctionFromSource(source, "write_runtime_shell_env").replaceAll(
+            "/tmp/nemoclaw-proxy-env.sh",
+            envFile,
+          ),
+          'emit_sandbox_sourced_file() { cat > "$1"; }',
+          '_PROXY_URL="http://10.200.0.1:3128"',
+          '_NO_PROXY_VAL="localhost,127.0.0.1"',
+          "_TOOL_REDIRECTS=()",
+          'OPENCLAW_GATEWAY_TOKEN="fixture-gateway-token"',
+          "prepare_openshell_sqlite_tmpdir",
+          "write_runtime_shell_env",
+        ]);
+        expect(writer.status, writer.stderr).toBe(0);
+
+        const probe = [
+          "/usr/bin/env",
+          "-u",
+          "NODE_OPTIONS",
+          process.execPath,
+          "-e",
+          `
+const fs = require("node:fs");
+const path = require("node:path");
+const dir = process.env.SQLITE_TMPDIR;
+fs.writeFileSync(path.join(dir, "fresh-child.txt"), "temporary data");
+console.log(JSON.stringify({ dir, token: process.env.OPENCLAW_GATEWAY_TOKEN ?? null }));
+`,
+        ];
+        const command =
+          mode === "exec"
+            ? wrapExecCommandWithRuntimeEnv(probe).map((arg) =>
+                arg.replaceAll("/tmp/nemoclaw-proxy-env.sh", envFile),
+              )
+            : [
+                "/bin/bash",
+                "--noprofile",
+                "--norc",
+                "-c",
+                `source ${shellQuote(envFile)}; exec "$@"`,
+                "connect-sqlite-probe",
+                ...probe,
+              ];
+        const childEnv = { ...process.env };
+        delete childEnv.SQLITE_TMPDIR;
+        delete childEnv.OPENCLAW_GATEWAY_TOKEN;
+        const child = spawnSync(command[0]!, command.slice(1), {
+          encoding: "utf8",
+          env: childEnv,
+          timeout: 5000,
+        });
+        expect(child.status, child.stderr).toBe(0);
+        expect(JSON.parse(child.stdout)).toEqual({
+          dir: sqliteTmp,
+          token: mode === "exec" ? null : "fixture-gateway-token",
+        });
+        expect(fs.statSync(sqliteTmp).mode & 0o777).toBe(0o700);
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  );
 
   it.each([
     { initial: "caller-disabled", uid: 0 },
