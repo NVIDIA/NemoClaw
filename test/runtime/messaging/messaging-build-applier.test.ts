@@ -17,6 +17,11 @@ import {
 import { execTimeout, testTimeout } from "../../helpers/timeouts";
 import { withLegacyMessagingPlanEnvDirect } from "../../messaging-plan-test-helper";
 
+import {
+  officialPluginInspectionShell,
+  officialPluginInspections,
+} from "./official-plugin-inspection-fixture";
+
 const { remediateReviewedArchive } = vi.hoisted(() => ({
   remediateReviewedArchive: vi.fn(({ archivePath }: { archivePath: string }) => ({
     archivePath,
@@ -621,6 +626,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
       [
         "#!/usr/bin/env node",
         "require('node:fs').appendFileSync(process.env.OPENCLAW_TRACE, `${process.argv.slice(2).join('|')}|ignore-scripts=${process.env.NPM_CONFIG_IGNORE_SCRIPTS || ''}/${process.env.npm_config_ignore_scripts || ''}\\n`);",
+        `if (process.argv[2] === "plugins" && process.argv[3] === "inspect") process.stdout.write(JSON.stringify(${JSON.stringify(officialPluginInspections)}[process.argv[4]]));`,
         "process.exit(0);",
         "",
       ].join("\n"),
@@ -679,8 +685,8 @@ describe("messaging-build-applier.mts: agent-install", () => {
       const trace = fs.readFileSync(tracePath, "utf-8");
       expect(trace).toContain("npm|view|@openclaw/discord@2026.9.1|dist.integrity");
       expect(trace).toContain("npm|pack|@openclaw/discord@2026.9.1|--pack-destination");
-      expect(trace).toContain("plugins|install|--force|--accept-capabilities|npm-pack:");
-      expect(trace).toContain("discord-2026.9.1.tgz|ignore-scripts=true/true");
+      expect(trace).toContain("plugins|install|--force|--accept-capabilities|npm:@openclaw/");
+      expect(trace).toContain("discord@2026.9.1|ignore-scripts=true/true");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -722,6 +728,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
       [
         "#!/bin/sh",
         'printf \'openclaw|%s|%s|%s|%s|%s\\n\' "$1" "$2" "$3" "$4" "$5" >> "$OPENCLAW_TRACE"',
+        ...officialPluginInspectionShell(),
         "exit 0",
         "",
       ].join("\n"),
@@ -747,8 +754,10 @@ describe("messaging-build-applier.mts: agent-install", () => {
       expect(trace).toContain("npm|view|@openclaw/msteams@2026.9.1|dist.integrity");
       expect(trace).toContain("npm|view|@openclaw/msteams@2026.9.1|dist.tarball");
       expect(trace).toContain("npm|pack|@openclaw/msteams@2026.9.1|--pack-destination");
-      expect(trace).toContain("openclaw|plugins|install|--force|--accept-capabilities|npm-pack:");
-      expect(trace).toContain("msteams-2026.9.1.tgz");
+      expect(trace).toContain(
+        "openclaw|plugins|install|--force|--accept-capabilities|npm:@openclaw/",
+      );
+      expect(trace).toContain("msteams@2026.9.1");
       expect(remediateReviewedArchive).toHaveBeenCalledWith(
         expect.objectContaining({ packageSpec: "@openclaw/msteams@2026.9.1" }),
       );
@@ -765,6 +774,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
       [
         "#!/usr/bin/env node",
         "require('node:fs').appendFileSync(process.env.OPENCLAW_TRACE, `${process.argv.slice(2).join('|')}\\n`);",
+        `if (process.argv[2] === "plugins" && process.argv[3] === "inspect") process.stdout.write(JSON.stringify(${JSON.stringify(officialPluginInspections)}[process.argv[4]]));`,
         "process.exit(0);",
         "",
       ].join("\n"),
@@ -820,6 +830,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
       [
         "#!/usr/bin/env node",
         "require('node:fs').appendFileSync(process.env.OPENCLAW_TRACE, `${process.argv.slice(2).join('|')}\\n`);",
+        `if (process.argv[2] === "plugins" && process.argv[3] === "inspect") process.stdout.write(JSON.stringify(${JSON.stringify(officialPluginInspections)}[process.argv[4]]));`,
         "process.exit(0);",
         "",
       ].join("\n"),
@@ -905,6 +916,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
         [
           "#!/bin/sh",
           'printf \'%s|%s|%s|%s|%s|%s|%s|%s\\n\' "$1" "$2" "$3" "$4" "$5" "${TELEGRAM_BOT_TOKEN:-}" "${DISCORD_BOT_TOKEN:-}" "${SLACK_BOT_TOKEN:-}" >> "$OPENCLAW_TRACE"',
+          ...officialPluginInspectionShell(),
           "exit 0",
           "",
         ].join("\n"),
@@ -974,7 +986,9 @@ describe("messaging-build-applier.mts: agent-install", () => {
         expect(trace).toContain(`npm|view|${packageSpec}|dist.tarball`);
         expect(trace).toContain(`npm|pack|${packageSpec}|--pack-destination`);
         expect(trace).toContain("plugins|install|--force|--accept-capabilities");
-        expect(trace).toContain(`${archiveName}|||`);
+        expect(trace).toContain(
+          `${packageSpec.startsWith("@openclaw/") ? `npm:${packageSpec}` : archiveName}|||`,
+        );
 
         expect(trace).toContain(
           "verify|/usr/local/lib/nemoclaw/wechat-runtime/package-lock.json|/sandbox/.openclaw/npm/projects",
@@ -1006,6 +1020,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
       [
         "#!/bin/sh",
         'printf \'openclaw|%s|%s|%s|%s|%s\\n\' "$1" "$2" "$3" "$4" "$5" >> "$OPENCLAW_TRACE"',
+        ...officialPluginInspectionShell(),
         "exit 0",
         "",
       ].join("\n"),
@@ -1030,8 +1045,10 @@ describe("messaging-build-applier.mts: agent-install", () => {
       expect(trace).toContain("npm|view|@openclaw/slack@2026.9.1|dist.integrity");
       expect(trace).toContain("npm|view|@openclaw/slack@2026.9.1|dist.tarball");
       expect(trace).toContain("npm|pack|@openclaw/slack@2026.9.1|--pack-destination");
-      expect(trace).toContain("openclaw|plugins|install|--force|--accept-capabilities|npm-pack:");
-      expect(trace).toContain("slack-2026.9.1.tgz");
+      expect(trace).toContain(
+        "openclaw|plugins|install|--force|--accept-capabilities|npm:@openclaw/",
+      );
+      expect(trace).toContain("slack@2026.9.1");
       expect(remediateReviewedArchive).toHaveBeenCalledWith(
         expect.objectContaining({ packageSpec: "@openclaw/slack@2026.9.1" }),
       );
@@ -1059,6 +1076,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
       [
         "#!/bin/sh",
         'printf \'openclaw|%s|%s|%s|%s|%s\\n\' "$1" "$2" "$3" "$4" "$5" >> "$OPENCLAW_TRACE"',
+        ...officialPluginInspectionShell(),
         "exit 0",
         "",
       ].join("\n"),

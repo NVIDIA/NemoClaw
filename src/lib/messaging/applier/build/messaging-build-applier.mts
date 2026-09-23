@@ -146,7 +146,11 @@ type OpenClawPluginInstall = {
 // list narrow: these packages require the privileged API and must be installed
 // through their exact `npm:` spec after the reviewed archive proof succeeds.
 const OPENCLAW_OFFICIAL_NPM_PLUGIN_IDS: Readonly<Record<string, string>> = Object.freeze({
+  "@openclaw/discord": "discord",
   "@openclaw/googlechat": "googlechat",
+  "@openclaw/msteams": "msteams",
+  "@openclaw/slack": "slack",
+  "@openclaw/whatsapp": "whatsapp",
 });
 
 // Every trusted messaging plugin binds exact package identity, registry SRI,
@@ -787,12 +791,9 @@ function installOpenClawPluginPackages(installs: readonly OpenClawPluginInstall[
       const officialPluginId = packageName
         ? OPENCLAW_OFFICIAL_NPM_PLUGIN_IDS[packageName]
         : undefined;
-      // Most reviewed plugins install through `npm-pack:` so OpenClaw records
-      // exact resolved identity/integrity for the already-verified archive.
-      // Google Chat is the narrow exception above: 2026.9.1's ingress queue
-      // requires an official npm record with no sourcePath/artifactKind. npm
-      // pack has already verified and warmed the exact pinned artifact; prefer
-      // that cache while OpenClaw performs its registry-shaped install.
+      // Official channels need registry provenance for the ingress queue.
+      // The verified archive warms the cache before the exact npm install.
+      // Third-party plugins retain their reviewed local archive installation.
       const installTarget = officialPluginId ? install.spec : `npm-pack:${packed.archivePath}`;
       const commandEnv = officialPluginId
         ? { ...installEnv, NPM_CONFIG_PREFER_OFFLINE: "true" }

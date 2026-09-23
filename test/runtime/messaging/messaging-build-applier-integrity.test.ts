@@ -16,6 +16,8 @@ import {
 import { testTimeout } from "../../helpers/timeouts";
 import { withLegacyMessagingPlanEnvDirect } from "../../messaging-plan-test-helper";
 
+import { officialPluginInspectionShell } from "./official-plugin-inspection-fixture";
+
 vi.mock("../../../scripts/lib/openclaw-npm-remediation.mts", async (importOriginal) => {
   const original =
     await importOriginal<typeof import("../../../scripts/lib/openclaw-npm-remediation.mts")>();
@@ -145,6 +147,7 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
         [
           "#!/bin/sh",
           'printf \'openclaw|%s|%s|%s|%s|%s\\n\' "$1" "$2" "$3" "$4" "$5" >> "$OPENCLAW_TRACE"',
+          ...officialPluginInspectionShell(),
           "exit 0",
           "",
         ].join("\n"),
@@ -170,8 +173,10 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
         expect(trace).toContain("npm|view|@openclaw/slack@2026.9.1|dist.integrity");
         expect(trace).toContain("npm|view|@openclaw/slack@2026.9.1|dist.tarball");
         expect(trace).toContain("npm|pack|@openclaw/slack@2026.9.1|--pack-destination");
-        expect(trace).toContain("openclaw|plugins|install|--force|--accept-capabilities|npm-pack:");
-        expect(trace).toContain("slack-2026.9.1.tgz");
+        expect(trace).toContain(
+          "openclaw|plugins|install|--force|--accept-capabilities|npm:@openclaw/",
+        );
+        expect(trace).toContain("slack@2026.9.1");
       } finally {
         fs.rmSync(tmp, { recursive: true, force: true });
       }
@@ -212,6 +217,7 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
         [
           "#!/bin/sh",
           'printf \'openclaw|%s|%s|%s|%s|%s\\n\' "$1" "$2" "$3" "$4" "$5" >> "$OPENCLAW_TRACE"',
+          ...officialPluginInspectionShell(),
           "exit 0",
           "",
         ].join("\n"),
@@ -266,6 +272,7 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
         [
           "#!/bin/sh",
           'printf \'openclaw|%s|%s|%s|%s|%s\\n\' "$1" "$2" "$3" "$4" "$5" >> "$OPENCLAW_TRACE"',
+          ...officialPluginInspectionShell(),
           "exit 0",
           "",
         ].join("\n"),
@@ -316,6 +323,7 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
         [
           "#!/bin/sh",
           'printf \'openclaw|%s|%s|%s|%s|%s\\n\' "$1" "$2" "$3" "$4" "$5" >> "$OPENCLAW_TRACE"',
+          ...officialPluginInspectionShell(),
           "exit 0",
           "",
         ].join("\n"),
