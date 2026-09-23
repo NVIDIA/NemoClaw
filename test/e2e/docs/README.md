@@ -102,9 +102,7 @@ it invokes the CLI, and removes the directory before it writes retained evidence
 
 For `required` coverage, the fixture checks the producer-owned v1alpha1 envelope
 and all fields used in its semantic comparison. Cross-branch import
-compatibility remains a separate contract. The `config-export-v1-consumer` test
-checks deterministic exports with the recorded v1 parser and native adapters.
-Semantic expectations remain
+compatibility remains a separate contract. Semantic expectations remain
 independent of the exporter. The fixture reads the target manifest and host
 registry directly, then queries the effective policy through the OpenShell CLI.
 It captures these expectations before it invokes config export, so exporter-side
@@ -120,12 +118,11 @@ references must still be declared by the manifest.
 
 The typed live-target timeout contract budgets a two-minute config export
 ceiling for `required` and `expected-refusal`. A `required` target also budgets
-a one-minute effective-policy read and 5.5 minutes for the revision-matched v1
-consumer. A `no-usable-sandbox` target adds none of these ceilings because it
-does not invoke config export. The
+a one-minute effective-policy read. A `no-usable-sandbox` target adds neither
+ceiling because it does not invoke config export. The
 `dcode-rebuild-invalid-credential` target has a 130-minute base budget for its
 lifecycle and ordered cloud checks. With required export, its default test
-timeout is 138.5 minutes and its job ceiling is 159 minutes.
+timeout is 133 minutes and its job ceiling is 153 minutes.
 `NEMOCLAW_TEST_TIMEOUT`, in milliseconds, can raise but cannot
 lower the derived test timeout. The derived job ceiling keeps at least 20
 minutes of headroom and rounds up to a whole minute.

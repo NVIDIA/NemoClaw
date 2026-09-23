@@ -1322,7 +1322,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     profile: "nvidia-inference",
     prAdvisorSelectable: true,
     testFile: "test/e2e/live/hermes-e2e.test.ts",
-    timeoutMinutes: 81,
+    timeoutMinutes: 75,
     installMode: "credential-free",
     installNonInteractive: true,
     restoreCli: true,

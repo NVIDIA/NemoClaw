@@ -5090,7 +5090,7 @@ jobs:
     needs: [base-image-publication, generate-matrix, package-openshell-sdk]
     if: ${{ needs.generate-matrix.outputs.hermes_selected == 'true' }}
     runs-on: ${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['hermes-e2e'] }}
-    timeout-minutes: 91
+    timeout-minutes: 85
     strategy:
       fail-fast: false
       matrix:
