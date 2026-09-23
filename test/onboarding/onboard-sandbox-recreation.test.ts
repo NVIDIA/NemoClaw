@@ -314,7 +314,9 @@ const { createSandbox } = require(${onboardPath});
       const sandboxStatePath = JSON.stringify(
         path.join(repoRoot, "src", "lib", "state", "sandbox.ts"),
       );
-
+      const processRecoveryPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "actions", "sandbox", "process-recovery.ts"),
+      );
       fs.mkdirSync(fakeBin, { recursive: true });
       writeOkOpenshell(fakeBin);
 
@@ -326,10 +328,14 @@ const { createSandbox } = require(${onboardPath});
 	const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const sandboxState = require(${sandboxStatePath});
+const processRecovery = require(${processRecoveryPath});
 const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 
 const events = [];
+processRecovery.beginUnregisteredOpenClawPostRestoreDoctor = async (sandboxName) => ({ ok: true, window: { sandboxName } });
+processRecovery.finishUnregisteredOpenClawPostRestoreDoctor = async () => ({ ok: true });
+processRecovery.abortUnregisteredOpenClawPostRestoreDoctor = async () => ({ ok: true });
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({ lifecycleState: "created" });
 runner.run = (command) => {
   const cmd = _n(command);
@@ -499,7 +505,6 @@ const { createSandbox } = require(${onboardPath});
       const sandboxStatePath = JSON.stringify(
         path.join(repoRoot, "src", "lib", "state", "sandbox.ts"),
       );
-
       fs.mkdirSync(fakeBin, { recursive: true });
       writeOkOpenshell(fakeBin);
 
@@ -650,6 +655,9 @@ const { createSandbox } = require(${onboardPath});
       const sandboxStatePath = JSON.stringify(
         path.join(repoRoot, "src", "lib", "state", "sandbox.ts"),
       );
+      const processRecoveryPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "actions", "sandbox", "process-recovery.ts"),
+      );
 
       fs.mkdirSync(fakeBin, { recursive: true });
       writeOkOpenshell(fakeBin);
@@ -662,10 +670,14 @@ const { createSandbox } = require(${onboardPath});
 	const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const sandboxState = require(${sandboxStatePath});
+const processRecovery = require(${processRecoveryPath});
 const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 
 const events = [];
+processRecovery.beginUnregisteredOpenClawPostRestoreDoctor = async (sandboxName) => ({ ok: true, window: { sandboxName } });
+processRecovery.finishUnregisteredOpenClawPostRestoreDoctor = async () => ({ ok: true });
+processRecovery.abortUnregisteredOpenClawPostRestoreDoctor = async () => ({ ok: true });
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
   lifecycleState: "created",
   phase: "NotReady",

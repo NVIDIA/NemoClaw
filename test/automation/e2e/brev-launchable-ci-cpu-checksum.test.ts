@@ -327,6 +327,8 @@ describe("brev-launchable-ci-cpu.sh OpenShell checksum gate", { timeout: 30_000 
     expect(source).toContain(
       "bash .github/actions/setup-reviewed-npm/verify-and-install-npm.sh ci/reviewed-npm-audit.json",
     );
+    expect(source).toContain("npm install --ignore-scripts 2>&1 | tail -3");
+    expect(source).not.toContain("${RUNNER_TEMP}/openshell-sdk");
     expect(source).toContain(`[[ "$(npm --version)" == "${REVIEWED_NPM_VERSION}" ]]`);
     expect(source).not.toContain("deb.nodesource.com");
   });

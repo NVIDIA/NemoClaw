@@ -514,7 +514,7 @@ type WhatsappStateLookup =
   | { readonly kind: "invalid" };
 
 /**
- * OpenClaw 2026.7.1 exposes live per-account state under
+ * OpenClaw 2026.9.1 exposes live per-account state under
  * `channelAccounts.whatsapp` and names the authoritative account through
  * `channelDefaultAccountId.whatsapp`. Select that exact account rather than
  * trusting array order or the channel-level summary. Every supported OpenClaw

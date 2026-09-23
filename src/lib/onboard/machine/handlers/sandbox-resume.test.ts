@@ -7,6 +7,7 @@ import {
   decideSandboxResume,
   hasCompatibleEndpointReasoningDrift,
   hasHermesCompatibleAnthropicInferenceRouteDrift,
+  hasMessagingChannelConfigDrift,
   type SandboxResumeSignals,
 } from "./sandbox-resume";
 
@@ -411,6 +412,39 @@ describe("hasCompatibleEndpointReasoningDrift", () => {
         compatibleEndpointReasoning: "true",
         registryEntry: { name: "saved", compatibleEndpointReasoning: "false" },
       }),
+    ).toBe(false);
+  });
+});
+
+describe("hasMessagingChannelConfigDrift", () => {
+  const configsEqual = (
+    left: Record<string, string> | null,
+    right: Record<string, string> | null,
+  ) => JSON.stringify(left) === JSON.stringify(right);
+
+  it("ignores process-environment channel values when the sandbox recorded no channel configuration", () => {
+    expect(
+      hasMessagingChannelConfigDrift({ TELEGRAM_REQUIRE_MENTION: "0" }, null, configsEqual),
+    ).toBe(false);
+  });
+
+  it("reports a recorded channel value that the process environment overrides", () => {
+    expect(
+      hasMessagingChannelConfigDrift(
+        { TELEGRAM_REQUIRE_MENTION: "0" },
+        { TELEGRAM_REQUIRE_MENTION: "1" },
+        configsEqual,
+      ),
+    ).toBe(true);
+  });
+
+  it("reports no drift when the effective configuration matches the recorded configuration", () => {
+    expect(
+      hasMessagingChannelConfigDrift(
+        { TELEGRAM_REQUIRE_MENTION: "1" },
+        { TELEGRAM_REQUIRE_MENTION: "1" },
+        configsEqual,
+      ),
     ).toBe(false);
   });
 });

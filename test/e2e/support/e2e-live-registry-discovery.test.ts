@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 
 import { DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS } from "../live/cloud-experimental-check-list.ts";
-import { buildLiveTargetRunPlan } from "../live/run-plan.ts";
+import { buildLiveTargetRunPlan, liveTargetProgressPhases } from "../live/run-plan.ts";
 import { buildTargetRegistry, listTargets } from "../registry/registry.ts";
 import type { TargetDefinition, TargetEnvironment } from "../registry/types.ts";
 
@@ -64,20 +64,33 @@ describe("live target registry discovery", () => {
     const target = listTargets().find(
       (entry) => entry.id === "ubuntu-repo-cloud-langchain-deepagents-code",
     )!;
-    expect(buildLiveTargetRunPlan(target)).toMatchObject({
+    const runPlan = buildLiveTargetRunPlan(target);
+    expect(runPlan).toMatchObject({
       targetId: target.id,
       manifestPath: target.manifestPath,
       expectedStateId: target.expectedStateId,
-      configExportExpectation: "expected-refusal",
+      configExportExpectation: "required",
       suiteIds: target.suiteIds,
       phases: [
         "environment",
         "onboarding",
         "lifecycle",
-        "state-validation",
+        "cloud-experimental-checks",
         "config-export-validation",
+        "state-validation",
       ],
       e2eCloudExperimentalChecks: DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS,
     });
+    expect(liveTargetProgressPhases(runPlan)).toEqual([
+      "resolve the target contract and run plan",
+      "confirm the target environment is ready",
+      "prepare the target lifecycle prerequisites",
+      "onboard the registry-selected sandbox",
+      "execute the target lifecycle boundary",
+      "run target-specific cloud checks",
+      "validate the exported sandbox configuration",
+      "verify the expected sandbox state",
+      "record target completion evidence",
+    ]);
   });
 });

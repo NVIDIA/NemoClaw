@@ -258,11 +258,14 @@ async function runInteractiveTask(
     ],
     env,
     progress,
-    rules: [{ trigger: token, response: "\u0004", settleMs: 2_000 }],
+    rules: [
+      { trigger: token, response: "/session\r", settleMs: 2_000 },
+      { trigger: "Session Info", response: "\u0004" },
+    ],
     timeoutMs: PI_COMMAND_TIMEOUT_MS,
   });
   await artifacts.writeText("pi-interactive-terminal.txt", result.output);
-  expect(result.firedTriggers).toContain(token);
+  expect(result.firedTriggers).toContain("Session Info");
   expect(result.exitCode).toBe(0);
 }
 

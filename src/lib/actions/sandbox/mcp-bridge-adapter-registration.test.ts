@@ -65,6 +65,10 @@ vi.mock("./mcp-bridge/timing", () => ({
 import {
   buildDeepAgentsMcpStatusCommand,
   buildHermesMcpStatusCommand,
+  HermesMcpReloadRelayLossError,
+  inspectAgentAdapterRegistration,
+  inspectHermesMcpReloadFinality,
+  observeStableMcpCredentialRevision,
   registerAgentAdapter,
   registerAgentAdapterAtCurrentCredentialRevision,
   reloadOpenClawGatewayAfterMcpMutation,
@@ -94,6 +98,7 @@ const registered = { status: 0, stdout: "registered\n", stderr: "" };
 const mismatch = { status: 0, stdout: "mismatch\n", stderr: "" };
 const sandbox = { name: "alpha", agent: "hermes", gatewayName: "nemoclaw-8091" };
 const runtimeSelection = { gatewayName: "nemoclaw-8091", workspace: "default" };
+const hermesReloadRelayLoss = `Error:   × code: 'The service is currently unavailable', message: "exec relay closed before the command reported an exit status"\n`;
 
 function resetOpenClawConfigMocks(): void {
   mocks.readSandboxConfig.mockReset().mockReturnValue({
@@ -233,6 +238,268 @@ describe.each(adapterCases)("$name MCP adapter registration", (adapterCase) => {
     ).rejects.toThrow(
       `${adapterCase.adapter} config verification failed after adding 'github': mismatch.`,
     );
+  });
+});
+
+describe("Hermes MCP reload finality", () => {
+  beforeEach(() => {
+    mocks.executeSandboxCommand.mockReset();
+    mocks.runOpenshellProviderCommand.mockReset();
+    mocks.getSandbox.mockReset().mockReturnValue(sandbox);
+  });
+
+  it("forwards a caller deadline to the adapter inspection transport", async () => {
+    mocks.executeSandboxCommand.mockReturnValue(registered);
+
+    await inspectAgentAdapterRegistration(
+      "alpha",
+      "hermes-config",
+      baseEntry,
+      runtimeSelection,
+      undefined,
+      4_321,
+    );
+
+    expect(mocks.executeSandboxCommand).toHaveBeenLastCalledWith(
+      "alpha",
+      buildHermesMcpStatusCommand(baseEntry),
+      { runtimeSelection, timeout: 4_321 },
+    );
+  });
+
+  it("classifies only the exact status-1 reload relay loss and retains its credential revision", async () => {
+    mocks.runOpenshellProviderCommand.mockReturnValue({
+      status: 1,
+      stdout: "",
+      stderr: `\u001b[31m${hermesReloadRelayLoss}\u001b[0m`,
+    });
+
+    let failure: unknown;
+    try {
+      await registerAgentAdapter(
+        "alpha",
+        "hermes-config",
+        baseEntry,
+        runtimeSelection,
+        { GITHUB_TOKEN: "host-only-secret" },
+        { credentialRevision: "v12" },
+      );
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(HermesMcpReloadRelayLossError);
+    expect(failure).toMatchObject({ credentialRevision: "v12" });
+    expect(String(failure)).not.toContain("host-only-secret");
+  });
+
+  it("retains relay-loss finality when a credential overlaps the diagnostic text", async () => {
+    mocks.runOpenshellProviderCommand.mockReturnValue({
+      status: 1,
+      stdout: "",
+      stderr: hermesReloadRelayLoss,
+    });
+
+    let failure: unknown;
+    try {
+      await registerAgentAdapter(
+        "alpha",
+        "hermes-config",
+        baseEntry,
+        runtimeSelection,
+        { GITHUB_TOKEN: "exec relay" },
+        { credentialRevision: "v12" },
+      );
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(HermesMcpReloadRelayLossError);
+    expect(failure).toMatchObject({ credentialRevision: "v12" });
+    expect(String(failure)).not.toContain("exec relay");
+  });
+
+  it.each([
+    ["another exit status", { status: 2, stdout: "", stderr: hermesReloadRelayLoss }],
+    [
+      "a spawn error",
+      {
+        status: 1,
+        stdout: "",
+        stderr: hermesReloadRelayLoss,
+        error: new Error("spawn failed"),
+      },
+    ],
+    [
+      "another service-unavailable message",
+      {
+        status: 1,
+        stdout: "",
+        stderr: hermesReloadRelayLoss.replace(
+          "exec relay closed before the command reported an exit status",
+          "supervisor session disconnected",
+        ),
+      },
+    ],
+    [
+      "an exact message with unrelated output",
+      {
+        status: 1,
+        stdout: "",
+        stderr: `unrelated diagnostic\n${hermesReloadRelayLoss}`,
+      },
+    ],
+    [
+      "a multiplication sign inside semantic text",
+      {
+        status: 1,
+        stdout: "",
+        stderr: hermesReloadRelayLoss.replace("exec relay", "e×ec relay"),
+      },
+    ],
+  ])("does not classify %s as a reload relay loss", async (_label, result) => {
+    mocks.runOpenshellProviderCommand.mockReturnValue(result);
+
+    await expect(
+      registerAgentAdapter(
+        "alpha",
+        "hermes-config",
+        baseEntry,
+        runtimeSelection,
+        {},
+        { credentialRevision: "v12" },
+      ),
+    ).rejects.not.toBeInstanceOf(HermesMcpReloadRelayLossError);
+  });
+
+  it("proves committed state with one read-only helper observation", () => {
+    mocks.runOpenshellProviderCommand.mockReturnValue({
+      status: 0,
+      stdout: '{"ok":true,"state":"committed"}\n',
+      stderr: "",
+    });
+
+    expect(inspectHermesMcpReloadFinality("alpha", baseEntry, "v12", runtimeSelection)).toEqual({
+      state: "committed",
+    });
+    expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledOnce();
+    const [args, options] = mocks.runOpenshellProviderCommand.mock.calls[0] ?? [];
+    expect(args).toEqual(expect.arrayContaining(["--timeout", "650", "reconcile"]));
+    expect(options).toMatchObject({ timeout: 675_000 });
+    expect(JSON.stringify(mocks.runOpenshellProviderCommand.mock.calls)).not.toContain(
+      "host-only-secret",
+    );
+  });
+
+  it("proves absence only after committed-state reconciliation fails", () => {
+    mocks.runOpenshellProviderCommand
+      .mockReturnValueOnce({ status: 2, stdout: "", stderr: "config mismatch" })
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: '{"ok":true,"state":"absent"}\n',
+        stderr: "",
+      });
+
+    expect(inspectHermesMcpReloadFinality("alpha", baseEntry, "v12", runtimeSelection)).toEqual({
+      state: "absent",
+    });
+    expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledTimes(2);
+  });
+
+  it("shares one bounded deadline across committed and absent reconciliation", () => {
+    const now = vi.spyOn(performance, "now").mockReturnValueOnce(1_000).mockReturnValueOnce(11_001);
+    mocks.runOpenshellProviderCommand
+      .mockReturnValueOnce({ status: 2, stdout: "", stderr: "config mismatch" })
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: '{"ok":true,"state":"absent"}\n',
+        stderr: "",
+      });
+
+    expect(
+      inspectHermesMcpReloadFinality("alpha", baseEntry, "v12", runtimeSelection, {
+        deadlineMs: 676_000,
+        readinessDeadlineMs: 621_000,
+      }),
+    ).toEqual({ state: "absent" });
+    const [args, options] = mocks.runOpenshellProviderCommand.mock.calls[1] ?? [];
+    expect(args).toEqual(expect.arrayContaining(["--timeout", "639", "reconcile"]));
+    expect(options).toMatchObject({ timeout: 664_999 });
+    expect(639_000 + 25_000).toBeLessThanOrEqual(664_999);
+    now.mockRestore();
+  });
+
+  it("returns unknown without a second probe when the finality deadline is exhausted", () => {
+    const now = vi
+      .spyOn(performance, "now")
+      .mockReturnValueOnce(1_000)
+      .mockReturnValueOnce(676_001);
+    mocks.runOpenshellProviderCommand.mockReturnValueOnce({
+      status: 2,
+      stdout: "",
+      stderr: "reconciliation timed out",
+    });
+
+    expect(
+      inspectHermesMcpReloadFinality("alpha", baseEntry, "v12", runtimeSelection, {
+        deadlineMs: 676_000,
+        readinessDeadlineMs: 621_000,
+      }),
+    ).toEqual({
+      state: "unknown",
+      detail: "Hermes MCP reconciliation exhausted its finality deadline.",
+    });
+    expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledOnce();
+    now.mockRestore();
+  });
+
+  it("does not start reconciliation without the reserved thirty-second proof budget", () => {
+    const now = vi.spyOn(performance, "now").mockReturnValue(621_001);
+
+    expect(
+      inspectHermesMcpReloadFinality("alpha", baseEntry, "v12", runtimeSelection, {
+        deadlineMs: 676_000,
+        readinessDeadlineMs: 621_000,
+      }),
+    ).toEqual({
+      state: "unknown",
+      detail: "Hermes MCP reconciliation exhausted its finality deadline.",
+    });
+    expect(mocks.runOpenshellProviderCommand).not.toHaveBeenCalled();
+    now.mockRestore();
+  });
+
+  it("uses the exact proof reserve at the readiness boundary", () => {
+    const now = vi.spyOn(performance, "now").mockReturnValue(621_000);
+    mocks.runOpenshellProviderCommand.mockReturnValue({
+      status: 0,
+      stdout: '{"ok":true,"state":"committed"}\n',
+      stderr: "",
+    });
+
+    expect(
+      inspectHermesMcpReloadFinality("alpha", baseEntry, "v12", runtimeSelection, {
+        deadlineMs: 676_000,
+        readinessDeadlineMs: 621_000,
+      }),
+    ).toEqual({ state: "committed" });
+    const [args, options] = mocks.runOpenshellProviderCommand.mock.calls[0] ?? [];
+    expect(args).toEqual(expect.arrayContaining(["--timeout", "30", "reconcile"]));
+    expect(options).toMatchObject({ timeout: 55_000 });
+    now.mockRestore();
+  });
+
+  it("returns unknown when neither helper observation proves finality", () => {
+    mocks.runOpenshellProviderCommand.mockReturnValue({
+      status: 2,
+      stdout: "",
+      stderr: "config mismatch",
+    });
+
+    expect(inspectHermesMcpReloadFinality("alpha", baseEntry, "v12", runtimeSelection)).toEqual({
+      state: "unknown",
+      detail: "Hermes MCP reconciliation proved neither committed state nor absence.",
+    });
   });
 });
 
@@ -611,6 +878,43 @@ describe("MCP adapter credential revision reconciliation failures", () => {
         "v10",
       ),
     ).rejects.toThrow("credential revision did not stabilize");
+  });
+
+  it("rejects v7, v7, v8 while proving an attempted v7 revision", async () => {
+    mocks.observeMcpCredentialRevision
+      .mockResolvedValueOnce("v7")
+      .mockResolvedValueOnce("v7")
+      .mockResolvedValueOnce("v8");
+
+    await expect(
+      observeStableMcpCredentialRevision("alpha", baseEntry, runtimeSelection, 30, "v7"),
+    ).rejects.toThrow("credential revision did not stabilize");
+    expect(mocks.observeMcpCredentialRevision).toHaveBeenCalledTimes(3);
+  });
+
+  it("bounds every stable revision observation by the shared finality deadline", async () => {
+    mocks.observeMcpCredentialRevision.mockResolvedValue("v7");
+    const now = vi.fn(() => 10_000);
+
+    await expect(
+      observeStableMcpCredentialRevision("alpha", baseEntry, runtimeSelection, 30, "v7", {
+        deadlineMs: 40_000,
+        now,
+      }),
+    ).resolves.toBe("v7");
+
+    expect(mocks.waitForMcpBridgeConditionAsync).toHaveBeenCalledWith(
+      expect.any(Function),
+      expect.objectContaining({ deadlineMs: 40_000, now }),
+    );
+    expect(mocks.observeMcpCredentialRevision).toHaveBeenCalledTimes(3);
+    expect(mocks.observeMcpCredentialRevision).toHaveBeenNthCalledWith(
+      1,
+      "alpha",
+      baseEntry,
+      runtimeSelection,
+      30_000,
+    );
   });
 
   it("fails closed when both bounded registrations advance the revision", async () => {

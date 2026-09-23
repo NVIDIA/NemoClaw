@@ -1032,8 +1032,8 @@ describe("onboard provider selection UX", { timeout: PROVIDER_SELECTION_TEST_TIM
     assert.doesNotMatch(buildOption?.label || "", /recommended/i);
   });
 
-  it("filters retired Kimi K2.6 from the NVIDIA Endpoints featured model list", async () => {
-    const answers = ["3"];
+  it("filters retired routes from the NVIDIA Endpoints featured model list (#11364)", async () => {
+    const answers = ["2"];
     const messages: string[] = [];
     const lines: string[] = [];
     const model = await promptCloudModel({
@@ -1081,17 +1081,16 @@ describe("onboard provider selection UX", { timeout: PROVIDER_SELECTION_TEST_TIM
       }),
     );
 
-    assert.equal(model, "minimaxai/minimax-m3");
+    assert.equal(model, "nvidia/nemotron-3-super-120b-a12b");
     assert.equal(validated.result, "selected");
     assert.equal(state.provider, "nvidia-prod");
     assert.equal(state.preferredInferenceApi, "openai-completions");
     assert.match(messages[0], /Choose model \[2\]/);
-    assert.ok(!lines.some((line) => line.includes("Kimi K2.6")));
-    assert.ok(!lines.some((line) => line.includes("GLM 5.1")));
+    assert.ok(!lines.some((line) => /Kimi K2\.6|GLM 5\.1|Minimax M3/.test(line)));
     assert.ok(validated.lines.some((line) => line.includes("Chat Completions API available")));
     expect(probeOpenAiLikeEndpoint).toHaveBeenCalledWith(
       "https://integrate.api.nvidia.com/v1",
-      "minimaxai/minimax-m3",
+      "nvidia/nemotron-3-super-120b-a12b",
       "nvapi-test",
       expect.any(Object),
     );
@@ -4079,6 +4078,10 @@ if (args[0] === "inference" && args[1] === "set") {
   fs.writeFileSync(stateFile, JSON.stringify(state));
   process.exit(0);
 }
+if (args[0] === "inference" && args[1] === "get") {
+  process.stdout.write("Gateway inference:\\n  Provider: compatible-endpoint\\n  Model: qwen3.6:35b\\n");
+  process.exit(0);
+}
 if (args[0] === "provider" && args[1] === "profile" && args.includes("export")) { process.stdout.write(JSON.stringify({ id: "openai", credentials: [], endpoints: [], binaries: [], inference_capable: true })); process.exit(0); }
 if (args[0] === "provider" && args[1] === "get") { process.stderr.write("provider 'compatible-endpoint' not found"); process.exit(1); } // Force provider creation.
 process.exit(0);
@@ -4088,15 +4091,6 @@ process.exit(0);
 
     const script = String.raw`
 ${onboardChildRuntimeSource}
-const runner = require(${runnerPath});
-// Mock runCapture before onboard.js is required so the destructured reference picks up the mock.
-runner.runCapture = (cmd) => {
-  const args = Array.isArray(cmd) ? cmd : [];
-  if (args[1] === "inference" && args[2] === "get") {
-    return "Gateway inference:\n  Provider: compatible-endpoint\n  Model: qwen3.6:35b\n";
-  }
-  return "";
-};
 process.env.COMPATIBLE_API_KEY = "test-key";
 const { setupInference } = require(${onboardPath});
 (async () => {

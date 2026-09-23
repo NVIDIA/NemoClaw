@@ -624,7 +624,9 @@ function hostLocalInferenceSetupOptions(
         : selected.request.service === "ollama"
           ? input.allowPublishedResume
             ? hasPublishedResume && !hasInterruptedRecovery
-            : !hasPublishedResume && !hasInterruptedRecovery
+            : !hasPublishedResume &&
+              (!hasInterruptedRecovery ||
+                (application === "hermes" && selected.runtimeProviderId === "podman"))
           : input.allowPublishedResume
             ? !(hasPublishedResume && hasInterruptedRecovery)
             : !hasPublishedResume && !hasInterruptedRecovery;

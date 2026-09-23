@@ -66,7 +66,7 @@ Merge or rebase the base branch into the candidate only for one of these reasons
 
 - resolve a current merge conflict;
 - consume a required dependency that has merged;
-- satisfy the final merge gate after every other candidate-owned finding has settled.
+- satisfy an active up-to-date rule after every other candidate-owned finding has settled.
 
 Do not integrate the base branch only because it moved during candidate evaluation. Integrate it at
 most once in one evaluation cycle. A base integration creates a new candidate, invalidates approval

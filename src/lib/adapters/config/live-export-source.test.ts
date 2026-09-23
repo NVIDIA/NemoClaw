@@ -18,7 +18,6 @@ import {
 } from "../../config/model";
 import { asExportedConfig } from "../../../../test/support/config-export-document";
 
-import { getLiveGatewayInference } from "../../inference/live";
 import { resolveGatewayStateDirForPort } from "../../onboard/gateway/state-dir";
 import { buildManagedStartupProfile } from "../../onboard/managed-startup/profile-builder";
 import { encodeManagedStartupProfile } from "../../onboard/managed-startup/profile";
@@ -258,7 +257,7 @@ describe("live export snapshot reader", () => {
     {
       stage: "inference-route",
       fail: () =>
-        vi.mocked(getLiveGatewayInference).mockImplementationOnce(() => {
+        vi.mocked(captureSanitizedResolvedOpenshell).mockImplementationOnce(() => {
           throw new Error(readFailureCanary);
         }),
     },
@@ -288,9 +287,6 @@ describe("live export snapshot reader", () => {
 
   it("does not fall back to the selected gateway after an inference read failure", async () => {
     mockSupportedLiveSource();
-    const actual =
-      await vi.importActual<typeof import("../../inference/live")>("../../inference/live");
-    vi.mocked(getLiveGatewayInference).mockImplementationOnce(actual.getLiveGatewayInference);
     vi.mocked(captureSanitizedResolvedOpenshell).mockReturnValue({
       status: 1,
       output: "unreachable",
@@ -351,7 +347,14 @@ describe("live export snapshot reader", () => {
     });
     expect(result).not.toHaveProperty("registry.createdAt");
     expect(result).not.toHaveProperty("inference.credential");
-    expect(captureSanitizedResolvedOpenshell).not.toHaveBeenCalled();
+    expect(captureSanitizedResolvedOpenshell).toHaveBeenCalledExactlyOnceWith(
+      ["inference", "get", "-g", "nemoclaw"],
+      expect.objectContaining({
+        ignoreError: true,
+        maxBuffer: 1024 * 1024,
+        timeout: 30_000,
+      }),
+    );
     expect(JSON.stringify(result)).not.toContain(readFailureCanary);
   });
 
@@ -444,11 +447,9 @@ describe("live export snapshot reader", () => {
     });
 
     mockSupportedLiveSource();
-    vi.mocked(getLiveGatewayInference).mockReturnValue({
-      failure: null,
-      inference: { provider: "nvidia-prod", model: "model-b" },
-      output: "",
+    vi.mocked(captureSanitizedResolvedOpenshell).mockReturnValue({
       status: 0,
+      output: "Gateway inference:\n  Provider: nvidia-prod\n  Model: model-b\n",
     });
     await expect(createLiveExportSnapshotReader().read("alpha")).resolves.toEqual({
       kind: "read-failed",
@@ -750,7 +751,7 @@ describe("live export snapshot reader", () => {
     expect(JSON.stringify(result)).not.toContain(readFailureCanary);
   });
 
-  it("exports an ordered agent roster through SDK observations without provider credentials (#11854)", async () => {
+  it("refuses an observed agent roster before publishing singular v1alpha1 output (#12131)", async () => {
     const built = buildManagedStartupProfile({
       ...startupInput,
       environment: {
@@ -769,25 +770,16 @@ describe("live export snapshot reader", () => {
       },
     });
     const { result, writeStdout } = await exportLiveSource();
-    expect(result.ok).toBe(true);
-    const yaml = writeStdout.mock.calls[0]![0];
-    const config = asExportedConfig(YAML.parse(yaml));
-    const [primary, ...additional] = config.spec.sandboxes[0]!.agents;
-    expect(primary!.name).toBe("primary");
-    expect(additional).toEqual([
-      {
-        name: "researcher",
-        tools: { allow: ["read"] },
-        inference: primary!.inference,
+    expect(result).toMatchObject({
+      ok: false,
+      failure: {
+        kind: "observation",
+        findings: expect.arrayContaining([
+          expect.objectContaining({ field: "spec.sandboxes[].agent", category: "unsupported" }),
+        ]),
       },
-      {
-        name: "reviewer",
-        tools: { allow: ["read"] },
-        inference: primary!.inference,
-      },
-    ]);
-    expect(config.spec.inferenceProviders).toHaveLength(1);
-    expect(yaml).not.toContain(readFailureCanary);
+    });
+    expect(writeStdout).not.toHaveBeenCalled();
     expect(raw.getSandboxConfig).toHaveBeenCalledTimes(2);
   });
 
@@ -882,7 +874,6 @@ describe("live export snapshot reader", () => {
     expect(JSON.stringify(result)).not.toContain(canary);
   });
 });
-
 describe("dashboard export observation", () => {
   it("projects registered dashboard and direct tools through complete live observation (#10904)", async () => {
     const sourceEntry = dashboardSource();
@@ -921,7 +912,7 @@ describe("dashboard export observation", () => {
       kind: "openclaw",
       interfaces: { dashboard: { port: 19000, bind: "0.0.0.0" } },
     });
-    expect(document.spec.sandboxes[0]?.agents[0]).toMatchObject({
+    expect(document.spec.sandboxes[0]!.agent).toMatchObject({
       tools: { disclosure: "direct" },
     });
   });
