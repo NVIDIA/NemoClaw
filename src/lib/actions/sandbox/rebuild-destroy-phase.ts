@@ -234,7 +234,7 @@ export async function runRebuildDestroyPhase(
         bail,
         input.runtimeSelection,
         input.mcpEntries ?? [],
-        input.capturedOpenClawState,
+        ...(input.capturedOpenClawState ? ([input.capturedOpenClawState] as const) : ([] as const)),
       );
       return preparation;
     },

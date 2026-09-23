@@ -183,7 +183,7 @@ export async function runRebuildBackupPhase(
         input.staleRecovery,
         input.log,
         input.bail,
-        input.capturedOpenClawState,
+        ...(input.capturedOpenClawState ? ([input.capturedOpenClawState] as const) : ([] as const)),
       ));
     if (backupManifest === undefined) return null;
     const retainedPolicy = backupManifest ? readRebuildPolicyHandoff(backupManifest) : null;

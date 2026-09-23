@@ -82,7 +82,7 @@ describe("stopped Docker recovery capture", () => {
       path.join(root, ".openclaw", "identity", "machine-key"),
       "NEVER-PERSIST-MACHINE-KEY",
     );
-    const descriptor = fs.openSync(archive, "wx", 0o600);
+    const descriptor = fs.openSync(archive, "wx+", 0o600);
     const inspect = vi.fn(() => inspectResult(observation()));
     const read = vi.fn(() =>
       spawn("tar", ["-cf", "-", "-C", root, ".openclaw"], {
@@ -98,9 +98,9 @@ describe("stopped Docker recovery capture", () => {
       expect(
         execFileSync("tar", ["-xOf", archive, "workspace/retained.txt"], { encoding: "utf8" }),
       ).toBe("captured bytes");
-      expect(fs.readFileSync(archive).includes(Buffer.from("NEVER-PERSIST-MACHINE-KEY"))).toBe(
-        false,
-      );
+      const capturedBytes = Buffer.alloc(fs.fstatSync(descriptor).size);
+      fs.readSync(descriptor, capturedBytes, 0, capturedBytes.length, 0);
+      expect(capturedBytes.includes(Buffer.from("NEVER-PERSIST-MACHINE-KEY"))).toBe(false);
       expect(execFileSync("tar", ["-tf", archive], { encoding: "utf8" })).not.toContain("identity");
       expect(read).toHaveBeenCalledWith(["cp", `${containerId}:/sandbox/.openclaw`, "-"], {
         stdio: ["ignore", "pipe", "pipe"],

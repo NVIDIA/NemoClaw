@@ -353,7 +353,7 @@ async function rebuildSandboxUnlocked(
           recreateOptions.runtimeSelection,
           (recoveryManifest === null && activeRecoveryTransaction?.sandboxName !== sandboxName) ||
             canRecapturePreparedRecoveryMcp,
-          stoppedSource ?? undefined,
+          ...(stoppedSource ? ([stoppedSource] as const) : ([] as const)),
         ));
       const mcpEntries = observedMcp.entries;
       const mcpRuntimeSelectionRequired = mcpEntries.length > 0;
