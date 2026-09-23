@@ -5,7 +5,11 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { writePreGatewaySession } from "../../../../test/support/uninstall-pre-gateway-session";
+import {
+  writePreGatewaySession,
+  writeSelectedSandboxRegistry,
+  writeRetainedUninstallState,
+} from "../../../../test/support/uninstall-pre-gateway-session";
 import {
   withProvenManagedGatewayProcess,
   withSuccessfulPreUninstallBackup,
@@ -74,25 +78,6 @@ function expectOnboardLockContention(stateRoot: string): void {
     const descriptor = fs.openSync(lockPath, "wx", 0o600);
     fs.closeSync(descriptor);
   }).toThrow(expect.objectContaining({ code: "EEXIST" }));
-}
-
-function writeSelectedSandboxRegistry(stateRoot: string, port: number): void {
-  fs.writeFileSync(
-    path.join(stateRoot, "sandboxes.json"),
-    `${JSON.stringify({
-      defaultSandbox: "a4-test",
-      sandboxes: {
-        "a4-test": {
-          gatewayName: `nemoclaw-${String(port)}`,
-          gatewayPort: port,
-          name: "a4-test",
-          openshellDriver: "docker",
-          createdAt: "2026-09-23T00:00:00.000Z",
-        },
-      },
-    })}\n`,
-    { mode: 0o600 },
-  );
 }
 
 function withManagedGatewayAuthority(deps: UninstallRunDeps): UninstallRunDeps {
@@ -430,13 +415,15 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
     }
   });
 
-  const noErrorAssertions = (_errors: string): void => undefined;
   const interruptedPreGatewayBase = {
-    assertErrors: noErrorAssertions,
+    assertErrors: (_errors: string): void => undefined,
     childRun: false,
     destroyUserData: false,
     dockerInventory: null as RunResult | null,
     expectedDockerCalls: [] as string[][],
+    expectedNativeCalls: [] as string[][],
+    probeResults: {} as Record<string, RunResult>,
+    assertSiblingState: (_root: string) => undefined,
     expectedExit: 0,
     gatewayStateCreated: false,
     liveGatewayNames: ["nemoclaw"],
@@ -446,12 +433,6 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
     prepareState: (stateRoot: string, port: number) =>
       writePreGatewaySession(stateRoot, port, "interrupted"),
     stateKept: false,
-  };
-
-  const preservedUninstallState = (stateRoot: string, port: number) => {
-    writeSelectedSandboxRegistry(stateRoot, port);
-    fs.mkdirSync(path.join(stateRoot, "backups"));
-    fs.writeFileSync(path.join(stateRoot, "backups", "retained.txt"), "retained user data");
   };
 
   const inventoryArgs = [
@@ -466,15 +447,56 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
   const retainedUninstallBase = {
     ...interruptedPreGatewayBase,
     destroyUserData: true,
-    prepareState: preservedUninstallState,
+    prepareState: writeRetainedUninstallState,
     expectedDockerCalls: [["docker", ...inventoryArgs]],
   };
 
+  const siblingContainer = "b".repeat(64);
+  const siblingInspect = [
+    "inspect",
+    "--type",
+    "container",
+    "--format",
+    "[{{json .Id}},{{json .Config.Labels}}]",
+    siblingContainer,
+  ];
+  const siblingGet = ["openshell", "sandbox", "get", "-g", "nemoclaw", "a4-test", "-o", "json"];
   it.each([
     {
       ...retainedUninstallBase,
       dockerInventory: ok(),
       scenario: "purges retained user data after runtime cleanup",
+    },
+    {
+      ...retainedUninstallBase,
+      scenario: "purges retained data while preserving a proven live same-name sibling",
+      dockerInventory: ok(siblingContainer + "\n"),
+      prepareState: (root: string, port: number) => writeRetainedUninstallState(root, port, true),
+      expectedDockerCalls: [
+        ["docker", ...inventoryArgs],
+        ["docker", ...siblingInspect],
+      ],
+      expectedNativeCalls: [siblingGet],
+      probeResults: {
+        [siblingGet.join(" ")]: ok(JSON.stringify({ name: "a4-test", id: "sibling-native" })),
+        ["docker " + siblingInspect.join(" ")]: ok(
+          JSON.stringify([
+            siblingContainer,
+            {
+              "openshell.ai/managed-by": "openshell",
+              "openshell.ai/sandbox-name": "a4-test",
+              "openshell.ai/sandbox-id": "sibling-native",
+              "openshell.ai/sandbox-namespace": "sibling-namespace",
+            },
+          ]),
+        ),
+      },
+      assertSiblingState: (root: string) =>
+        expect(
+          JSON.parse(fs.readFileSync(path.resolve(root, "../../sandboxes.json"), "utf8")).sandboxes[
+            "a4-test"
+          ].gatewayName,
+        ).toBe("nemoclaw"),
     },
     {
       ...retainedUninstallBase,
@@ -647,6 +669,9 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
       destroyUserData,
       dockerInventory,
       expectedDockerCalls,
+      expectedNativeCalls,
+      probeResults,
+      assertSiblingState,
       expectedExit,
       gatewayStateCreated,
       liveGatewayNames,
@@ -734,13 +759,16 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
               const commandKey = `${command} ${args[0] ?? ""} ${args[1] ?? ""}`.trim();
               return commandKey === "openshell gateway list"
                 ? ok(JSON.stringify(observedGatewayNames.map((name) => ({ name }))))
-                : (commandResults[command] ?? commandResults[commandKey] ?? ok());
+                : (probeResults[[command, ...args].join(" ")] ??
+                    commandResults[command] ??
+                    commandResults[commandKey] ??
+                    ok());
             },
             runDocker: (args) => {
               calls.push(["docker", ...args]);
               return args.join("\0") === inventoryArgs.join("\0")
                 ? (dockerInventory ?? ok())
-                : ok();
+                : (probeResults[["docker", ...args].join(" ")] ?? ok());
             },
             withSandboxMutationLock,
           },
@@ -749,12 +777,14 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
         expect(result.exitCode, errors.join("\n")).toBe(expectedExit);
         expect(fs.existsSync(selectedStateRoot)).toBe(stateKept);
         expect(fs.existsSync(selectedGatewayState)).toBe(gatewayStateCreated);
-        expect(
-          calls.filter(
-            ([command, resource, action]) =>
-              command === "openshell" && !(resource === "gateway" && action === "list"),
-          ),
-        ).toEqual([]);
+        const nativeCalls = calls.filter(
+          ([command, resource, action]) =>
+            command === "openshell" && !(resource === "gateway" && action === "list"),
+        );
+        expect(new Set(nativeCalls.map((args) => JSON.stringify(args)))).toEqual(
+          new Set(expectedNativeCalls.map((args) => JSON.stringify(args))),
+        );
+        assertSiblingState(selectedStateRoot);
         assertErrors(errors.join("\n"));
         expect(calls).toEqual(expect.arrayContaining(expectedDockerCalls));
       } finally {

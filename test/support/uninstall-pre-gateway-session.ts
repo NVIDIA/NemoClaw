@@ -3,6 +3,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { fingerprintOpenShellSandboxId } from "../../src/lib/domain/sandbox/openshell-identity";
 
 import { bindGatewayAuthorityToCheckpoint } from "../../src/lib/onboard/gateway-authority-checkpoint";
 import { createSession } from "../../src/lib/state/onboard-session";
@@ -95,4 +96,42 @@ export function writePreGatewaySession(
   kind: PreGatewaySessionKind,
 ): void {
   PRE_GATEWAY_SESSION_WRITERS[kind](stateRoot, port);
+}
+
+export function writeSelectedSandboxRegistry(
+  stateRoot: string,
+  port: number,
+  nativeId?: string,
+): void {
+  fs.writeFileSync(
+    path.join(stateRoot, "sandboxes.json"),
+    `${JSON.stringify({
+      defaultSandbox: "a4-test",
+      sandboxes: {
+        "a4-test": {
+          gatewayName: port === 8080 ? "nemoclaw" : `nemoclaw-${String(port)}`,
+          gatewayPort: port,
+          name: "a4-test",
+          openshellDriver: "docker",
+          ...(nativeId
+            ? { lifecycleLiveIdentityFingerprint: fingerprintOpenShellSandboxId(nativeId) }
+            : {}),
+          createdAt: "2026-09-23T00:00:00.000Z",
+        },
+      },
+    })}\n`,
+    { mode: 0o600 },
+  );
+}
+
+export function writeRetainedUninstallState(
+  stateRoot: string,
+  port: number,
+  withSibling = false,
+): void {
+  writeSelectedSandboxRegistry(stateRoot, port, withSibling ? "selected-native" : undefined);
+  fs.mkdirSync(path.join(stateRoot, "backups"));
+  fs.writeFileSync(path.join(stateRoot, "backups", "retained.txt"), "retained user data");
+  if (withSibling)
+    writeSelectedSandboxRegistry(path.resolve(stateRoot, "../.."), 8080, "sibling-native");
 }
