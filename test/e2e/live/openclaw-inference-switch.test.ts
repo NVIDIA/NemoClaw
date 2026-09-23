@@ -55,6 +55,8 @@ import {
 import {
   agentReplyContainsToken,
   anthropicToolCount,
+  BAKED_STALE_CONTEXT_WINDOW,
+  BAKED_STALE_MAX_TOKENS,
   classifyOpenClawPostSwitchInferenceAttempt,
   MOCK_BASELINE_API_KEY,
   MOCK_BASELINE_MODEL,
@@ -946,7 +948,7 @@ test(
       contracts: [
         "the selected runtime is available and an authenticated compatible baseline endpoint is staged",
         "install.sh --non-interactive onboards an OpenClaw sandbox",
-        "Docker execution also proves non-root custom-image startup reconciles a divergent baked model and removes its stale limits",
+        "Docker execution also proves non-root custom-image startup reconciles a divergent baked model and resolves new effective limits",
         "when selected, the mock baseline route completes one explicit authenticated fixture request",
         "nemoclaw inference set switches the running sandbox route",
         "OpenClaw gateway is supervisor-restarted after every changed inference configuration",
@@ -1084,8 +1086,52 @@ test(
       const startupModel = startupConfig.models?.providers?.inference?.models?.[0];
       expect(startupConfig.agents?.defaults?.model?.primary).toBe(`inference/${baselineModel}`);
       expect(startupModel?.id).toBe(baselineModel);
-      expect(startupModel).not.toHaveProperty("contextWindow");
-      expect(startupModel).not.toHaveProperty("maxTokens");
+
+      const effectiveModelResult = await sandbox.exec(
+        SANDBOX_NAME,
+        [
+          "openclaw",
+          "infer",
+          "model",
+          "inspect",
+          "--model",
+          `inference/${baselineModel}`,
+          "--json",
+        ],
+        {
+          artifactName: "inspect-effective-model-after-custom-image-startup",
+          env: commandEnv(home),
+          timeoutMs: COMMAND_TIMEOUT_MS,
+        },
+      );
+      expect(effectiveModelResult.exitCode, resultText(effectiveModelResult)).toBe(0);
+      const effectiveModel = JSON.parse(effectiveModelResult.stdout) as Record<string, unknown>;
+      const {
+        contextWindow: effectiveContextWindow,
+        id,
+        maxTokens: effectiveMaxTokens,
+        provider,
+      } = effectiveModel;
+      const effectiveModelMatches =
+        provider === "inference" &&
+        id === baselineModel &&
+        typeof effectiveContextWindow === "number" &&
+        effectiveContextWindow > 0 &&
+        effectiveContextWindow !== BAKED_STALE_CONTEXT_WINDOW &&
+        typeof effectiveMaxTokens === "number" &&
+        effectiveMaxTokens > 0 &&
+        effectiveMaxTokens !== BAKED_STALE_MAX_TOKENS;
+      expect(
+        effectiveModelMatches,
+        `OpenClaw retained stale or invalid custom-image model metadata: ${JSON.stringify(effectiveModel)}`,
+      ).toBe(true);
+      await artifacts.writeJson("custom-image-effective-model.json", {
+        contextWindow: effectiveContextWindow,
+        maximumOutputTokens: effectiveMaxTokens,
+        modelId: id,
+        modelRef: `${String(provider)}/${String(id)}`,
+        provider,
+      });
 
       const runtimeUser = await sandbox.exec(SANDBOX_NAME, ["id", "-u"], {
         artifactName: "read-custom-image-runtime-user",
