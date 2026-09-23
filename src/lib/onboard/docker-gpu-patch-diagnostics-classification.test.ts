@@ -163,6 +163,47 @@ describe("Docker GPU patch diagnostics", () => {
     expect(result.summaryLines.join("\n")).not.toContain("selected agent");
   });
 
+  it("reports the host memory pool when the supervisor bails out on its own (#12255)", () => {
+    const result = classifyDockerGpuPatchFailure(
+      failureSnapshot("Error", { Status: "exited", ExitCode: 1 }, "alpha   Error   1m ago"),
+      GPU_MODE,
+      { readHostMemory: () => ({ totalMiB: 124607, availableMiB: 2048 }) },
+    );
+
+    expect(result.kind).toBe("patched_container_failed");
+    const flat = result.summaryLines.join("\n");
+    expect(flat).toContain("host_memory_total_mib=124607");
+    expect(flat).toContain("host_memory_available_mib=2048");
+    const hints = (result.hints ?? []).join("\n");
+    expect(hints).toContain("Host memory available: 2048 MiB of 124607 MiB.");
+    expect(hints).toContain("unified-memory platforms");
+    expect(hints).toContain("--no-sandbox-gpu");
+  });
+
+  it("keeps memory advice off failures Docker already explained (#12255)", () => {
+    const result = classifyDockerGpuPatchFailure(
+      failureSnapshot("Error", { Status: "exited", ExitCode: 125 }, "alpha   Error   1m ago"),
+      GPU_MODE,
+      { readHostMemory: () => ({ totalMiB: 124607, availableMiB: 2048 }) },
+    );
+
+    expect(result.kind).toBe("patched_container_failed");
+    expect(result.hints ?? []).toEqual([]);
+    // The machine-readable facts stay, only the prose is withheld.
+    expect(result.summaryLines.join("\n")).toContain("host_memory_available_mib=2048");
+  });
+
+  it("omits memory lines when the host pool cannot be read (#12255)", () => {
+    const result = classifyDockerGpuPatchFailure(
+      failureSnapshot("Error", { Status: "exited", ExitCode: 1 }, "alpha   Error   1m ago"),
+      GPU_MODE,
+      { readHostMemory: () => null },
+    );
+
+    expect(result.summaryLines.join("\n")).not.toContain("host_memory_");
+    expect((result.hints ?? []).join("\n")).toContain("Host memory could not be read");
+  });
+
   it("does not infer a missing startup command when its child process returns 127 (#7996)", () => {
     const result = classify(
       failureSnapshot("Error", { Status: "exited", ExitCode: 127 }, "alpha   Error   1m ago"),

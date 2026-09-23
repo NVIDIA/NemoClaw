@@ -28,6 +28,12 @@ export {
 } from "./docker-gpu-patch-clone";
 
 import { collectDockerGpuPatchDiagnostics } from "./docker-gpu-patch-diagnostics";
+import {
+  gpuSandboxMemoryPressureHints,
+  type HostMemorySnapshot,
+  hostMemoryDiagnosticLines,
+  readHostMemorySnapshot,
+} from "./sandbox-gpu-notes";
 import { formatDockerContainerState } from "./compute/docker-container-failure-evidence";
 import {
   getDockerGpuPatchFailureContext,
@@ -505,7 +511,11 @@ function patchedContainerIsHealthyAndRunning(state: DockerContainerState | null)
 export function classifyDockerGpuPatchFailure(
   snapshot: DockerGpuPatchSandboxSnapshot,
   selectedMode: DockerGpuPatchMode | null,
-  options: { proofError?: unknown; managedStartupCommandMissing?: boolean } = {},
+  options: {
+    proofError?: unknown;
+    managedStartupCommandMissing?: boolean;
+    readHostMemory?: () => HostMemorySnapshot | null;
+  } = {},
 ): DockerGpuPatchFailureClassification {
   const lines: string[] = [];
   if (snapshot.sandboxPhase) lines.push(`sandbox_phase=${snapshot.sandboxPhase}`);
@@ -576,6 +586,20 @@ export function classifyDockerGpuPatchFailure(
       options.proofError instanceof Error ? options.proofError.message : String(options.proofError);
     if (proofText) lines.push(`proof_error=${proofText}`);
   }
+  // Every failure here belongs to a sandbox that asked for GPU passthrough,
+  // and on a unified-memory host that request competes with whatever already
+  // holds the pool. Report the pool with the failure so the operator does not
+  // have to reach for the kernel log to learn why the container died (#12255).
+  const hostMemory = (options.readHostMemory ?? readHostMemorySnapshot)();
+  lines.push(...hostMemoryDiagnosticLines(hostMemory));
+  // Exit 1 is the sandbox supervisor bailing out on its own, which is the
+  // shape a refused GPU allocation produces; Docker's own rejections (125)
+  // and a missing startup command (127) have their own explanations and must
+  // not collect memory advice they cannot act on.
+  const supervisorBailedOut =
+    kind === "supervisor_unreachable" ||
+    (kind === "patched_container_failed" && snapshot.patchedContainerState?.ExitCode === 1);
+  if (supervisorBailedOut) hints.push(...gpuSandboxMemoryPressureHints(hostMemory));
   const classification = {
     kind,
     headline,
