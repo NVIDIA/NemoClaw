@@ -173,8 +173,8 @@ export function gatewaySource() {
 import { startNativeUiTunnel } from "./native-ui-tunnel.mts";
 import { startNativeBrokerTunnel } from "./native-broker-tunnel.mts";
 import { createServer } from "node:http";
-import { syncBuiltinESMExports } from "node:module";
-import { join, resolve } from "node:path";
+import { createRequire } from "node:module";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 function createNativeOpenClawShutdown(timeoutMilliseconds = 30000) {
@@ -315,60 +315,6 @@ const configDirectory = join(home, ".openclaw");
 mkdirSync(configDirectory, { recursive: true });
 const agentDirectory = join(configDirectory, "agents", "main", "agent");
 mkdirSync(agentDirectory, { recursive: true });
-const canonicalAgentDirectory = resolve(agentDirectory);
-const canUseAgentDirectoryFallback = (target, error) => {
-  if (error?.code !== "EPERM" || typeof target !== "string") return false;
-  if (resolve(target).toLowerCase() !== canonicalAgentDirectory.toLowerCase()) return false;
-  const entry = fs.lstatSync(canonicalAgentDirectory);
-  return entry.isDirectory() && !entry.isSymbolicLink();
-};
-const encodedAgentDirectory = (options) =>
-  options === "buffer" || options?.encoding === "buffer"
-    ? Buffer.from(canonicalAgentDirectory)
-    : canonicalAgentDirectory;
-const originalPromiseRealpath = fs.promises.realpath.bind(fs.promises);
-fs.promises.realpath = async (target, options) => {
-  try {
-    return await originalPromiseRealpath(target, options);
-  } catch (error) {
-    if (!canUseAgentDirectoryFallback(target, error)) throw error;
-    return encodedAgentDirectory(options);
-  }
-};
-const originalRealpath = fs.realpath.bind(fs);
-const patchedRealpath = (target, options, callback) => {
-  const resolvedCallback = typeof options === "function" ? options : callback;
-  const resolvedOptions = typeof options === "function" ? undefined : options;
-  return originalRealpath(target, resolvedOptions, (error, value) => {
-    if (error && canUseAgentDirectoryFallback(target, error)) {
-      resolvedCallback(null, encodedAgentDirectory(resolvedOptions));
-      return;
-    }
-    resolvedCallback(error, value);
-  });
-};
-const originalRealpathSync = fs.realpathSync.bind(fs);
-const originalNativeRealpathSync = fs.realpathSync.native.bind(fs.realpathSync);
-const patchedRealpathSync = (target, options) => {
-  try {
-    return originalRealpathSync(target, options);
-  } catch (error) {
-    if (!canUseAgentDirectoryFallback(target, error)) throw error;
-    return encodedAgentDirectory(options);
-  }
-};
-patchedRealpathSync.native = (target, options) => {
-  try {
-    return originalNativeRealpathSync(target, options);
-  } catch (error) {
-    if (!canUseAgentDirectoryFallback(target, error)) throw error;
-    return encodedAgentDirectory(options);
-  }
-};
-patchedRealpath.native = patchedRealpath;
-fs.realpath = patchedRealpath;
-fs.realpathSync = patchedRealpathSync;
-syncBuiltinESMExports();
 let serviceConfiguration = {};
 if (configured) {
   const response = await fetch("http://127.0.0.1:" + modelPort + "/native/bootstrap", {
@@ -432,6 +378,9 @@ Object.assign(process.env, {
   OPENCLAW_NO_AUTO_UPDATE: "1",
   USERPROFILE: home,
 });
+// NODE_OPTIONS covers child processes, not this already-running gateway worker.
+// Load the same guarded compatibility layer before upstream startup migrations.
+createRequire(launcher)(sqliteRealpathPreload);
 // Register sealed paths directly through the canonical guest-state record API
 // before CLI/loader initialization. No plugin installer or package manager runs.
 process.argv = [process.execPath, launcher, "gateway", "run", "--allow-unconfigured", "--port", String(uiPort), "--bind", "loopback", "--auth", "none"];

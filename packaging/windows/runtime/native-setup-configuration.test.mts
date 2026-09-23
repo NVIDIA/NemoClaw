@@ -75,6 +75,74 @@ test("native OpenClaw uses a bounded tool surface and adds only selected capabil
   assert.deepEqual(selected.tools.alsoAllow, ["web_search", "web_fetch", "message"]);
 });
 
+test("gateway loads the guarded realpath adapter before upstream state migration", async () => {
+  const source = gatewaySource();
+  const assets = new Map<string, string>();
+  staticWorkerSource("openclaw-web", source, assets);
+  const preload = assets.get("openclaw-sqlite-realpath-preload.cjs")!;
+  const start = source.indexOf("Object.assign(process.env, {\n  HOME: home,");
+  const end = source.indexOf("// Register sealed paths", start);
+  assert(start > 0 && end > start);
+  const home = path.resolve("owned-gateway-state");
+  const denied = Object.assign(new Error("realpath denied"), { code: "EPERM" });
+  let symlink = false;
+  const originalSync = Object.assign(
+    () => {
+      throw denied;
+    },
+    {
+      native: () => {
+        throw denied;
+      },
+    },
+  );
+  const mockFs = {
+    lstatSync: () => ({ isSymbolicLink: () => symlink }),
+    realpathSync: originalSync,
+    realpath: (_target: string, _options: unknown, callback: (error: Error) => void) =>
+      callback(denied),
+    promises: {
+      realpath: async () => {
+        throw denied;
+      },
+    },
+  };
+  const environment: Record<string, string> = {};
+  let loaded = false;
+  runInNewContext(source.slice(start, end), {
+    process: { env: environment },
+    home,
+    launcher: path.resolve("sealed", "openclaw-app.cjs"),
+    sqliteRealpathPreload: "sealed-preload.cjs",
+    sqliteRealpathPreloadOption: "sealed-preload.cjs",
+    createRequire: () => (filename: string) => {
+      assert.equal(filename, "sealed-preload.cjs");
+      assert.equal(environment.OPENCLAW_HOME, home);
+      runInNewContext(preload, {
+        process: { env: environment },
+        Buffer,
+        require: (name: string) => {
+          if (name === "node:fs") return mockFs;
+          if (name === "node:path") return path;
+          assert.equal(name, "node:module");
+          return { syncBuiltinESMExports() {} };
+        },
+      });
+      loaded = true;
+    },
+  });
+  assert(loaded, "NODE_OPTIONS alone does not initialize the running gateway");
+  const target = path.join(home, ".openclaw", "state", "openclaw.sqlite");
+  const sync = mockFs.realpathSync as unknown as typeof fs.realpathSync;
+  assert.equal(sync(target), target);
+  assert.equal(sync.native(target), target);
+  assert.equal(await (mockFs.promises.realpath as typeof fs.promises.realpath)(target), target);
+  assert.throws(() => sync(path.resolve("other-state", "openclaw.sqlite")), { code: "EPERM" });
+  symlink = true;
+  assert.throws(() => sync(target), { code: "EPERM" });
+  assert.equal(environment.NODE_OPTIONS, '--require="sealed-preload.cjs"');
+});
+
 test("native OpenClaw advertises the actual model context and opens a fresh chat", () => {
   const source = gatewaySource();
   assert(source.includes('required("NEMOCLAW_MXC_MODEL_CONTEXT")'));
