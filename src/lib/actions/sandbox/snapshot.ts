@@ -18,6 +18,7 @@ import {
 import {
   createCliOpenShellSandboxLifecycleFromRunner,
   createCliOpenShellSandboxLookupFromRunner,
+  sleepOpenShellLifecycleMs,
   waitForSandboxDeleteAbsence,
 } from "../../adapters/openshell/sandbox-lifecycle-cli";
 import {
@@ -123,18 +124,6 @@ const G = useColor ? (trueColor ? "\x1b[38;2;118;185;0m" : "\x1b[38;5;148m") : "
 const B = useColor ? "\x1b[1m" : "";
 const D = useColor ? "\x1b[2m" : "";
 const R = useColor ? "\x1b[0m" : "";
-const CREATED_IDENTITY_SETTLEMENT_SLEEP = new Int32Array(new SharedArrayBuffer(4));
-
-function sleepForCreatedIdentitySettlement(milliseconds: number): void {
-  if (!Number.isFinite(milliseconds) || milliseconds <= 0) return;
-  Atomics.wait(
-    CREATED_IDENTITY_SETTLEMENT_SLEEP,
-    0,
-    0,
-    Math.min(milliseconds, OPENSHELL_PROBE_TIMEOUT_MS),
-  );
-}
-
 export type SnapshotRequest =
   | { kind: "help" }
   | { kind: "create"; name?: string }
@@ -433,7 +422,7 @@ async function autoCreateSandboxFromSource(
         createAttemptNonce,
         runCaptureOpenshell: captureCreatedIdentity,
         priorSandboxId: createdSandboxId,
-        sleep: sleepForCreatedIdentitySettlement,
+        sleep: sleepOpenShellLifecycleMs,
       }),
     );
   const observeCreatedClone = () => {

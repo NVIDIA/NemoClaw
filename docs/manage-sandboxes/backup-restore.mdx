@@ -170,7 +170,8 @@ If NemoClaw cannot confirm the same valid destination identity after a clone cre
 NemoClaw also keeps the clone's exact route and create-attempt record.
 Run the printed selector command.
 Do not retry the restore while the selector reports a sandbox or OpenShell cannot confirm the result.
-If the selector and destination name are both absent, rerun the original restore command.
+Retry only when the selector and destination name are absent and the retained route reservation still matches the snapshot source.
+If NemoClaw reports a route mismatch, preserve the recovery record and stop.
 NemoClaw removes only the matching retained route reservation before it starts a new create attempt.
 If the selector identifies a sandbox, resolve that retained sandbox through its owning gateway before you retry.
 
