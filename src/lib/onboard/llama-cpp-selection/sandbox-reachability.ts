@@ -44,7 +44,8 @@ export function formatLlamaCppSandboxUnreachableMessage(
     return [
       `  ✗ Sandbox containers cannot reach the ${SERVICE_LABEL} at ${HOST_INTERNAL_NAME}:${port}.`,
       `    Host-side 127.0.0.1:${port} passed. The sandbox route uses ${sandboxHost}.`,
-      `    Bind or publish the llama.cpp listener so ${sandboxHost}:${port} is reachable from the sandbox.`,
+      `    Keep 127.0.0.1:${port} reachable. Restrict non-loopback ingress to the sandbox network.`,
+      `    Also bind, publish, or forward the service so ${sandboxHost}:${port} is reachable from the sandbox. A firewall rule alone cannot make a loopback-only listener reachable.`,
       `    Then rerun \`${cliName()} onboard\`.`,
     ].join("\n");
   }
@@ -52,7 +53,8 @@ export function formatLlamaCppSandboxUnreachableMessage(
     return [
       `  ✗ Sandbox containers cannot reach the ${SERVICE_LABEL} at ${HOST_INTERNAL_NAME}:${port}.`,
       `    Host-side 127.0.0.1:${port} passed. The sandbox route uses the runtime host-gateway mapping.`,
-      "    Bind or publish the llama.cpp listener on an address that containers can reach through that mapping.",
+      `    Keep 127.0.0.1:${port} reachable. Restrict non-loopback ingress to the sandbox network.`,
+      "    Also bind, publish, or forward the service through that mapping. A firewall rule alone cannot make a loopback-only listener reachable.",
       `    Then rerun \`${cliName()} onboard\`.`,
     ].join("\n");
   }
@@ -68,7 +70,9 @@ export function formatLlamaCppSandboxUnreachableMessage(
       `    A loopback-only Docker publish (-p 127.0.0.1:${port}:${port}) or a 127.0.0.1-only host bind can make this sandbox route unreachable.`,
       "    If the server runs in Docker, publish the port on the Docker gateway IP as well, for example:",
       `      docker run ... ${gatewayBind} ...`,
-      `    If you run llama-server on the host, bind it on ${result.gatewayIp ?? "the Docker gateway IP"}:${port} or allow the sandbox subnet. A 127.0.0.1-only host bind is not enough.`,
+      `    If you run llama-server on the host, keep 127.0.0.1:${port} reachable.`,
+      `    Restrict non-loopback ingress to the sandbox subnet before you add a listener or forwarder on ${result.gatewayIp ?? "the Docker gateway IP"}:${port}.`,
+      "    A firewall rule alone cannot make a loopback-only listener reachable.",
     ],
   });
 }

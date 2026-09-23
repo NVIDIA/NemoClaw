@@ -117,6 +117,8 @@ describe("formatLlamaCppSandboxUnreachableMessage", () => {
     );
     expect(message).toContain("If the server runs in Docker");
     expect(message).toContain("If you run llama-server on the host");
+    expect(message).toContain("keep 127.0.0.1:8081 reachable");
+    expect(message).toContain("firewall rule alone cannot make a loopback-only listener reachable");
     expect(message).not.toContain("0.0.0.0");
   });
 
@@ -143,6 +145,8 @@ describe("formatLlamaCppSandboxUnreachableMessage", () => {
     });
     expect(message).toContain("host.openshell.internal:8081");
     expect(message).toContain("10.88.0.1:8081");
+    expect(message).toContain("Keep 127.0.0.1:8081 reachable");
+    expect(message).toContain("firewall rule alone cannot make a loopback-only listener reachable");
     expect(message).not.toContain("docker");
     expect(message).not.toContain("Docker");
     expect(message).not.toContain("-p 127.0.0.1:8081:8081");
@@ -159,6 +163,8 @@ describe("formatLlamaCppSandboxUnreachableMessage", () => {
       runtimeProviderId: "docker",
     });
     expect(message).toContain(`${PORTABLE_HOST_GATEWAY_IP}:8081`);
+    expect(message).toContain("Keep 127.0.0.1:8081 reachable");
+    expect(message).toContain("firewall rule alone cannot make a loopback-only listener reachable");
     expect(message).not.toContain("docker run");
     expect(message).not.toContain("-p 127.0.0.1:8081:8081");
   });
@@ -176,6 +182,8 @@ describe("formatLlamaCppSandboxUnreachableMessage", () => {
     });
 
     expect(message).toContain("runtime host-gateway mapping");
+    expect(message).toContain("Keep 127.0.0.1:8081 reachable");
+    expect(message).toContain("firewall rule alone cannot make a loopback-only listener reachable");
     expect(message).not.toContain("ufw");
     expect(message).not.toContain("Docker bridge IP");
     expect(message).not.toContain("-p 127.0.0.1:8081:8081");
