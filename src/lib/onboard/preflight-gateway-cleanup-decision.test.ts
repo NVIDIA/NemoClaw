@@ -99,13 +99,16 @@ describe("applyPreflightGatewayCleanup", () => {
   }) {
     const log = vi.fn();
     const warn = vi.fn();
-    const runOpenshell = vi.fn(() => ({ status: 0 }));
     const stopAllDashboardForwards = vi.fn();
     const destroyGateway = vi.fn(() => true);
     const destroyGatewayForReuse = vi.fn<
-      (destroy: () => boolean, success: string, failure: string) => GatewayReuseState
-    >((destroy) => {
-      destroy();
+      (
+        destroy: () => boolean | Promise<boolean>,
+        success: string,
+        failure: string,
+      ) => Promise<GatewayReuseState>
+    >(async (destroy) => {
+      await destroy();
       return "missing";
     });
     return {
@@ -117,24 +120,22 @@ describe("applyPreflightGatewayCleanup", () => {
         dashboardPort: 8081,
         log,
         warn,
-        runOpenshell,
         stopAllDashboardForwards,
         destroyGateway,
         destroyGatewayForReuse,
       },
       log,
       warn,
-      runOpenshell,
       stopAllDashboardForwards,
       destroyGateway,
       destroyGatewayForReuse,
     };
   }
 
-  it("warns in yellow without invoking destroy on the Docker-driver path", () => {
+  it("warns in yellow without invoking destroy on the Docker-driver path", async () => {
     stubStderrColorDepth(24);
     const ctx = makeDeps({ gatewayReuseState: "stale", isDockerDriverGatewayEnabled: true });
-    const next = applyPreflightGatewayCleanup(ctx.deps);
+    const next = await applyPreflightGatewayCleanup(ctx.deps);
     expect(next).toBe("stale");
     expect(ctx.warn).toHaveBeenCalledWith(
       `  \x1b[33m⚠ ${PREFLIGHT_DEFERRED_RECREATE_MESSAGE}\x1b[39m`,
@@ -142,57 +143,53 @@ describe("applyPreflightGatewayCleanup", () => {
     expect(ctx.log).not.toHaveBeenCalled();
     expect(ctx.destroyGateway).not.toHaveBeenCalled();
     expect(ctx.destroyGatewayForReuse).not.toHaveBeenCalled();
-    expect(ctx.runOpenshell).not.toHaveBeenCalled();
   });
 
-  it("performs no destroy for an externally supervised gateway on the legacy path (#6576)", () => {
+  it("performs no destroy for an externally supervised gateway on the legacy path (#6576)", async () => {
     const ctx = makeDeps({
       gatewayReuseState: "stale",
       isDockerDriverGatewayEnabled: false,
       externallySupervised: true,
     });
 
-    const next = applyPreflightGatewayCleanup(ctx.deps);
+    const next = await applyPreflightGatewayCleanup(ctx.deps);
 
     expect(next).toBe("stale");
     expect(ctx.destroyGateway).not.toHaveBeenCalled();
     expect(ctx.destroyGatewayForReuse).not.toHaveBeenCalled();
-    expect(ctx.runOpenshell).not.toHaveBeenCalled();
   });
 
-  it("prints the deferral warning without ANSI when NO_COLOR is set", () => {
+  it("prints the deferral warning without ANSI when NO_COLOR is set", async () => {
     stubStderrColorDepth(24);
     vi.stubEnv("NO_COLOR", "1");
     const ctx = makeDeps({ gatewayReuseState: "stale", isDockerDriverGatewayEnabled: true });
 
-    applyPreflightGatewayCleanup(ctx.deps);
+    await applyPreflightGatewayCleanup(ctx.deps);
 
     expect(ctx.warn).toHaveBeenCalledWith(`  ⚠ ${PREFLIGHT_DEFERRED_RECREATE_MESSAGE}`);
     expect(String(ctx.warn.mock.calls[0]?.[0])).not.toContain("\x1b[");
   });
 
-  it("destroys the legacy gateway and stops the dashboard forward on the non-Docker-driver path", () => {
+  it("destroys the legacy gateway and stops the dashboard forward on the non-Docker-driver path", async () => {
     const ctx = makeDeps({ gatewayReuseState: "stale", isDockerDriverGatewayEnabled: false });
-    const next = applyPreflightGatewayCleanup(ctx.deps);
+    const next = await applyPreflightGatewayCleanup(ctx.deps);
     expect(next).toBe("missing");
     expect(ctx.log).toHaveBeenCalledWith("  Cleaning up previous NemoClaw session...");
     expect(ctx.stopAllDashboardForwards).toHaveBeenCalledOnce();
-    expect(ctx.runOpenshell).not.toHaveBeenCalled();
     expect(ctx.destroyGatewayForReuse).toHaveBeenCalledTimes(1);
     expect(ctx.destroyGateway).toHaveBeenCalledTimes(1);
   });
 
   it.each(["healthy", "missing", "foreign-active"] as const)(
     "is a no-op for healthy / missing / foreign-active states [case %#]",
-    (state) => {
+    async (state) => {
       const ctx = makeDeps({ gatewayReuseState: state, isDockerDriverGatewayEnabled: true });
-      const next = applyPreflightGatewayCleanup(ctx.deps);
+      const next = await applyPreflightGatewayCleanup(ctx.deps);
       expect(next).toBe(state);
       expect(ctx.log).not.toHaveBeenCalled();
       expect(ctx.warn).not.toHaveBeenCalled();
       expect(ctx.destroyGateway).not.toHaveBeenCalled();
       expect(ctx.destroyGatewayForReuse).not.toHaveBeenCalled();
-      expect(ctx.runOpenshell).not.toHaveBeenCalled();
     },
   );
 });

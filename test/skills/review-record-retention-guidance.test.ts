@@ -29,6 +29,15 @@ describe("dependency review record retention guidance", () => {
     expect(retentionSection).toMatch(/historical executable fixtures.*current test/i);
   });
 
+  it("distinguishes point-in-time dependency reports from maintained contracts", () => {
+    expect(retentionSection).toMatch(
+      /do not commit or update point-in-time.*dependency-review reports/i,
+    );
+    expect(retentionSection).toMatch(
+      /does not apply.*durable.*code-synchronized dependency contract documents/i,
+    );
+  });
+
   it("does not track the retired review-ledger directory", () => {
     const retiredDirectory = ["internal", "security-reviews", "**"].join("/");
     const tracked = execFileSync("git", ["ls-files", retiredDirectory], {

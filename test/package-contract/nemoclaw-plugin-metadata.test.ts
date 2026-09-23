@@ -7,6 +7,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { describe, expect, it } from "vitest";
+import { npmPackFilePaths } from "../helpers/npm-pack-result";
 import {
   createMinimumOpenClawPluginApi,
   MINIMUM_OPENCLAW_PLUGIN_API_VERSION,
@@ -119,10 +120,11 @@ describe("packed NemoClaw plugin metadata", () => {
       timeout: 30_000,
     });
     expect(packed.status, `${packed.stdout}${packed.stderr}`).toBe(0);
-    const report = JSON.parse(packed.stdout) as Array<{ files?: Array<{ path?: string }> }>;
-    const packedPaths = new Set((report[0]?.files ?? []).map((entry) => entry.path));
+    const packedPaths = new Set(npmPackFilePaths(packed.stdout));
 
     expect(packedPaths).toContain("openclaw.plugin.json");
-    expect(extensions.every((extension) => packedPaths.has(extension.replace(/^\.\//, "")))).toBe(true);
+    expect(extensions.every((extension) => packedPaths.has(extension.replace(/^\.\//, "")))).toBe(
+      true,
+    );
   });
 });

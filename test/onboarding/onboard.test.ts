@@ -54,7 +54,7 @@ type OnboardTestInternals = {
     session: T,
     selectedAgentName: string,
   ) => T;
-  arePolicyPresetsApplied: (sandboxName: string, selectedPresets?: string[]) => boolean;
+  arePolicyPresetsApplied: (sandboxName: string, selectedPresets?: string[]) => Promise<boolean>;
   pullAndResolveBaseImageDigest: () => { digest: string | null; ref: string } | null;
   createSetupInference: (overrides?: Partial<SetupInferenceDeps>) => SetupInference;
   SANDBOX_BASE_IMAGE: string;
@@ -101,12 +101,8 @@ const createDirectSetupInferenceHarness =
   createDirectSetupInferenceHarnessFactory(createSetupInference);
 
 describe("onboard helpers", () => {
-  it("does not expose the removed provider argument builder", () => {
-    expect(loadedOnboardInternals).not.toHaveProperty("buildProviderArgs");
-  });
-
-  it("does not treat an empty policy preset selection as already applied (#6042)", () => {
-    expect(arePolicyPresetsApplied("unused", [])).toBe(false);
+  it("does not treat an empty policy preset selection as already applied (#6042)", async () => {
+    expect(await arePolicyPresetsApplied("unused", [])).toBe(false);
   });
 
   it("adds host proxy variables to sandbox startup env args", () => {
@@ -239,6 +235,8 @@ describe("onboard helpers", () => {
       fs.writeFileSync(
         path.join(fakeBin, "openshell"),
         `#!/usr/bin/env bash
+if [ "\${1:-}" = gateway ] && [ "\${2:-}" = list ]; then printf '[]\n'; exit 0; fi
+printf 'No gateway configured\n'
 exit 1
 `,
         { mode: 0o755 },
@@ -611,6 +609,9 @@ startGateway(null).catch((error) => {
       expect(fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-tool-catalog.mts"))).toBe(
         true,
       );
+      expect(
+        fs.existsSync(path.join(buildCtx, "scripts", "lib", "patch-openclaw-npm12-pack-json.mts")),
+      ).toBe(true);
       expect(fs.existsSync(path.join(buildCtx, "scripts", "setup.sh"))).toBe(false);
       expect(fs.existsSync(path.join(buildCtx, "nemoclaw", "node_modules"))).toBe(false);
     } finally {
@@ -667,6 +668,35 @@ startGateway(null).catch((error) => {
     assert.equal(evidence.parentCredentialUnchanged, true);
   });
 
+  it("uses the OpenShell 0.0.116 provider path without a compatibility-profile mutation", () => {
+    const { commands } = runProductionSetupInferenceCredentialBoundary({
+      credentialEnv: "OPENAI_API_KEY",
+      credentialValue: "sk-TEST-NOT-A-REAL-VALUE",
+      endpointUrl: "https://api.openai.com/v1",
+      model: "gpt-5.4",
+      provider: "openai-api",
+    });
+    const commandSequence = commands.map(({ argv }) => argv.join(" "));
+
+    assert.match(commandSequence[0] ?? "", /^provider get -g nemoclaw openai-api$/);
+    assert.ok(
+      commandSequence.some((command) =>
+        /^provider update -g nemoclaw openai-api(?: |$)/.test(command),
+      ),
+    );
+    assert.ok(
+      commandSequence.some((command) =>
+        /^inference set -g nemoclaw --no-verify --provider openai-api --model gpt-5\.4(?: |$)/.test(
+          command,
+        ),
+      ),
+    );
+    assert.ok(
+      commands.every(({ argv }) => !(argv[0] === "provider" && argv[1] === "profile")),
+      `unexpected compatibility-profile command: ${commandSequence.join(" | ")}`,
+    );
+  });
+
   it("restores the dashboard forward when onboarding reuses an existing ready sandbox", async () => {
     const repoRoot = path.join(import.meta.dirname, "../..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-reuse-forward-"));
@@ -719,11 +749,14 @@ childProcess.spawn = (...args) => {
   child.stderr = new EventEmitter();
   child.unref = () => {};
   child.pid = 4242;
+  child.exitCode = null;
+  child.signalCode = null;
   commands.push({ command: _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]), env: args[2]?.env || null });
   process.nextTick(() => child.emit("close", 0));
   return child;
 };
 
+require(${JSON.stringify(path.join(repoRoot, "src", "lib", "platform.ts"))}).isWsl = () => false;
 const { createSandbox } = require(${onboardPath});
 
 (async () => {
@@ -760,7 +793,7 @@ const { createSandbox } = require(${onboardPath});
         (entry: CommandEntry) =>
           entry.command.includes("forward service my-assistant") &&
           entry.command.includes("--target-port 18789") &&
-          entry.command.includes("--local 0.0.0.0:18789"),
+          entry.command.includes("--local 127.0.0.1:18789"),
       ),
       "expected dashboard forward restore on sandbox reuse",
     );
@@ -772,66 +805,18 @@ const { createSandbox } = require(${onboardPath});
       result.stdout,
       /Existing provider\/model selection is unreadable; reusing sandbox\./,
     );
-  });
+  }, 30_000);
 
-  it("accepts gateway inference when system inference is separately not configured", async () => {
-    const output = [
-      "Gateway inference:",
-      "",
-      "  Route: inference.local",
-      "  Provider: openai-api",
-      "  Model: gpt-5.4",
-      "  Version: 1",
-      "",
-      "System inference:",
-      "",
-      "  Not configured",
-    ].join("\n");
-    const route = createInferenceRouteHelpers(() => output);
-
-    await withProcessEnv({ OPENAI_API_KEY: "sk-TEST-NOT-A-REAL-VALUE" }, async () => {
-      const harness = createDirectSetupInferenceHarness({
-        runOpenshell: (args) =>
-          args.slice(0, 2).join(" ") === "provider get"
-            ? {
-                status: 0,
-                stdout:
-                  "Name: openai-api\nType: openai\nCredential keys: OPENAI_API_KEY\nConfig keys: OPENAI_BASE_URL\n",
-                stderr: "",
-              }
-            : undefined,
-        overrides: { verifyInferenceRoute: route.verifyInferenceRoute },
-      });
-
-      await harness.setupInference(
-        "test-box",
-        "gpt-5.4",
-        "openai-api",
-        "https://api.openai.com/v1",
-        "OPENAI_API_KEY",
-      );
-
-      // openai provider profile validation + provider get + provider update + inference set
-      assert.equal(
-        harness.commands[0].command,
-        "provider profile -g nemoclaw export openai --output json",
-      );
-      assert.equal(harness.commands.length, 4);
+  it("accepts a complete configured route from the typed observer", async () => {
+    const route = createInferenceRouteHelpers({
+      observeInferenceRoute: () => ({
+        ok: true,
+        value: {
+          state: "configured",
+          route: { provider: "openai-api", model: "gpt-5.4" },
+        },
+      }),
     });
-  });
-  it("accepts gateway inference output that omits the Route line", async () => {
-    const output = [
-      "Gateway inference:",
-      "",
-      "  Provider: openai-api",
-      "  Model: gpt-5.4",
-      "  Version: 1",
-      "",
-      "System inference:",
-      "",
-      "  Not configured",
-    ].join("\n");
-    const route = createInferenceRouteHelpers(() => output);
 
     await withProcessEnv({ OPENAI_API_KEY: "sk-TEST-NOT-A-REAL-VALUE" }, async () => {
       const harness = createDirectSetupInferenceHarness({
@@ -855,12 +840,8 @@ const { createSandbox } = require(${onboardPath});
         "OPENAI_API_KEY",
       );
 
-      // openai provider profile validation + provider get + provider update + inference set
-      assert.equal(
-        harness.commands[0].command,
-        "provider profile -g nemoclaw export openai --output json",
-      );
-      assert.equal(harness.commands.length, 4);
+      assert.equal(harness.commands[0].command, "provider get -g nemoclaw openai-api");
+      assert.equal(harness.commands.length, 3);
     });
   });
   it("uses the sandbox-base registry in pullAndResolveBaseImageDigest (#1904)", () => {
@@ -1001,7 +982,9 @@ const { createSandbox } = require(${onboardPath});
 
     const script = String.raw`
 const runner = require(${runnerPath});
-require(${scriptMocksPath}).mockStandaloneGatewayTeardownAuthority();
+const fixtureMocks = require(${scriptMocksPath});
+fixtureMocks.mockStandaloneGatewayTeardownAuthority();
+fixtureMocks.installForwardServiceReachabilityFixture();
 const onboardSession = require(${onboardSessionPath});
 onboardSession.loadSession = () => ({
   checkpoint: {

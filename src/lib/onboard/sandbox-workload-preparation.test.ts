@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 import { createInMemoryRuntimeProviderBundle } from "../../../test/helpers/runtime-provider-bundle";
+import { LEAF_PEM, tmpDir, writeCa } from "./__test-helpers__/corporate-ca-fixtures";
 import {
   ManagedImageCatalogError,
   ManagedImageCatalogUnavailableError,
@@ -282,7 +283,9 @@ describe("sandbox workload preparation", () => {
       expect(
         readLiveE2eManagedImageCatalogContracts({ path: catalogPath, revision: REVISION }),
       ).toEqual(
-        new Map(SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, index) => [agent, contract(agent, index)])),
+        new Map(
+          SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, index) => [agent, contract(agent, index)]),
+        ),
       );
       expect(() =>
         readLiveE2eManagedImageCatalogContracts({ path: symlinkPath, revision: REVISION }),
@@ -564,7 +567,8 @@ describe("sandbox workload preparation", () => {
         ...input("openclaw"),
         customDockerfilePath: "/workspace/CustomDockerfile",
         environment: {
-          NEMOCLAW_SANDBOX_BASE_IMAGE_REF: "ghcr.io/nvidia/nemoclaw/sandbox-base:local-only-no-push",
+          NEMOCLAW_SANDBOX_BASE_IMAGE_REF:
+            "ghcr.io/nvidia/nemoclaw/sandbox-base:local-only-no-push",
         },
       },
       { resolveCatalog },
@@ -732,6 +736,51 @@ describe("sandbox workload preparation", () => {
         { resolveCatalog },
       ),
     ).rejects.toThrow("managed image catalog 'v0.0.97' failed validation");
+  });
+
+  it("names an invalid explicit corporate CA before registry access (#12059)", async () => {
+    const bundlePath = writeCa(tmpDir(), LEAF_PEM);
+    let rejection: Error | null = null;
+
+    try {
+      await prepareSandboxWorkloadSource({
+        ...input("openclaw"),
+        environment: { NEMOCLAW_CORPORATE_CA_BUNDLE: bundlePath },
+      });
+    } catch (error) {
+      rejection = error as Error;
+    }
+
+    expect(rejection).toMatchObject({
+      name: "SandboxWorkloadPreparationError",
+      message: expect.stringMatching(
+        /NEMOCLAW_CORPORATE_CA_BUNDLE was rejected:.*not a CA \(basicConstraints CA:TRUE required\)/u,
+      ),
+    });
+    expect(rejection?.message).not.toContain("BEGIN CERTIFICATE");
+    expect(rejection?.message).not.toContain(LEAF_PEM);
+  });
+
+  it("omits an operator-controlled corporate CA path from the rejection (#12059)", async () => {
+    const sentinel = "registry-password-secret";
+    const bundlePath = path.join(tmpDir(), `${sentinel}\n\u001b[31m.pem`);
+    let rejection: Error | null = null;
+
+    try {
+      await prepareSandboxWorkloadSource({
+        ...input("openclaw"),
+        environment: { NEMOCLAW_CORPORATE_CA_BUNDLE: bundlePath },
+      });
+    } catch (error) {
+      rejection = error as Error;
+    }
+
+    expect(rejection?.message).toBe(
+      "Sandbox workload preparation failed: NEMOCLAW_CORPORATE_CA_BUNDLE was rejected: corporate CA bundle not found or unreadable",
+    );
+    expect(rejection?.message).not.toContain(bundlePath);
+    expect(rejection?.message).not.toContain(sentinel);
+    expect(rejection?.message).not.toMatch(/[\u0000-\u001f\u007f]/u);
   });
 
   it("rejects an invalid release before preferred-policy catalog fallback (#7744)", async () => {

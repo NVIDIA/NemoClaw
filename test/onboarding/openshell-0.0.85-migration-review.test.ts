@@ -8,7 +8,6 @@ import { describe, expect, it } from "vitest";
 const repoRoot = path.resolve(import.meta.dirname, "../..");
 describe("OpenShell migration executable contracts", () => {
   it("keeps exact-main runtime proofs separate from upstream-only fault injection", () => {
-
     const helper = fs.readFileSync(
       path.join(repoRoot, "test", "e2e", "live", "openshell-exact-main-runtime-contracts.ts"),
       "utf8",
@@ -32,7 +31,6 @@ describe("OpenShell migration executable contracts", () => {
   });
 
   it("binds selected-driver and tmpfs claims to the stable release runtime", () => {
-
     const helper = fs.readFileSync(
       path.join(repoRoot, "test/e2e/live/openshell-exact-main-driver-config.ts"),
       "utf8",
@@ -73,18 +71,17 @@ describe("OpenShell migration executable contracts", () => {
           "lib",
           "actions",
           "sandbox",
-          "openshell-child-visible-credentials.v0.0.106.json",
+          "openshell-child-visible-credentials.v0.0.116.json",
         ),
         "utf8",
       ),
     ) as { openshellVersion: string };
 
-    expect(blueprint).toContain('min_openshell_version: "0.0.106"');
-    expect(blueprint).toContain('max_openshell_version: "0.0.106"');
-    expect(manifest.openshellVersion).toBe("0.0.106");
+    expect(blueprint).toContain('min_openshell_version: "0.0.116"');
+    expect(blueprint).toContain('max_openshell_version: "0.0.116"');
+    expect(manifest.openshellVersion).toBe("0.0.116");
   });
   it("does not reintroduce newline-only code transports at migrated consumers", () => {
-
     const migratedConsumers = [
       ["test/e2e/live/brave-search-helpers.ts", ["singleLineShell", "base64 -d"]],
       ["test/e2e/live/network-policy.test.ts", ["shellEvalArg", "nemoclaw-web-fetch-e2e.mjs"]],
@@ -99,14 +96,6 @@ describe("OpenShell migration executable contracts", () => {
       ["test/e2e/live/openclaw-inference-switch.test.ts", ["singleLineSandboxShellScript"]],
       ["test/e2e/live/openclaw-skill-cli.test.ts", ["singleLineSandboxScript"]],
       ["test/e2e/live/phase6-messaging-helpers.ts", ["sandboxEncodedSh", "base64(script)"]],
-      [
-        "test/e2e/live/gateway-guard-recovery.test.ts",
-        ["SUPERVISOR_TOPOLOGY_COMMAND", "b64decode"],
-      ],
-      [
-        "test/e2e/live/openclaw-plugin-runtime-exdev.test.ts",
-        ["data:text/javascript;base64", "nemoclaw-exdev-guard.sh"],
-      ],
       [
         "test/e2e/live/mcp-bridge.test.ts",
         ["mcpCallScriptB64", "nemoclaw-mcp-provider-rewrite-proof.cjs"],
@@ -133,7 +122,9 @@ describe("OpenShell migration executable contracts", () => {
 
     migratedConsumers.forEach(([relativePath, forbidden]) => {
       const source = fs.readFileSync(path.join(repoRoot, relativePath), "utf8");
-      expect(forbidden.every((obsoleteTransport) => !source.includes(obsoleteTransport))).toBe(true);
+      expect(forbidden.every((obsoleteTransport) => !source.includes(obsoleteTransport))).toBe(
+        true,
+      );
     });
 
     const phase6 = fs.readFileSync(
@@ -153,30 +144,31 @@ describe("OpenShell migration executable contracts", () => {
     expect(pythonEgress).toContain("NATIVE_MULTILINE_ARGV");
   });
 
-  it.each(
-    ["OPENSHELL_TLS_CA", "OPENSHELL_TLS_CERT", "OPENSHELL_TLS_KEY"],
-  )("treats OpenShell TLS identity as supervisor-only in every managed agent [%s]", (name) => {
-    const hermesBoundary = fs.readFileSync(
-      path.join(repoRoot, "agents", "hermes", "validate-env-secret-boundary.py"),
-      "utf8",
-    );
-    const dcodeWrapper = fs.readFileSync(
-      path.join(repoRoot, "agents", "langchain-deepagents-code", "dcode-wrapper.sh"),
-      "utf8",
-    );
-    const dcodeRuntime = fs.readFileSync(
-      path.join(repoRoot, "agents", "langchain-deepagents-code", "managed-dcode-runtime.py"),
-      "utf8",
-    );
-    const boundaries = [hermesBoundary, dcodeWrapper, dcodeRuntime];
+  it.each(["OPENSHELL_TLS_CA", "OPENSHELL_TLS_CERT", "OPENSHELL_TLS_KEY"])(
+    "treats OpenShell TLS identity as supervisor-only in every managed agent [%s]",
+    (name) => {
+      const hermesBoundary = fs.readFileSync(
+        path.join(repoRoot, "agents", "hermes", "validate-env-secret-boundary.py"),
+        "utf8",
+      );
+      const dcodeWrapper = fs.readFileSync(
+        path.join(repoRoot, "agents", "langchain-deepagents-code", "dcode-wrapper.sh"),
+        "utf8",
+      );
+      const dcodeRuntime = fs.readFileSync(
+        path.join(repoRoot, "agents", "langchain-deepagents-code", "managed-dcode-runtime.py"),
+        "utf8",
+      );
+      const boundaries = [hermesBoundary, dcodeWrapper, dcodeRuntime];
 
-    expect(
-      boundaries.every((source) => source.includes(name)),
-      name,
-    ).toBe(true);
+      expect(
+        boundaries.every((source) => source.includes(name)),
+        name,
+      ).toBe(true);
 
-    expect(hermesBoundary).not.toContain("RUNTIME_ALLOWED_PLATFORM_PATH_VALUES");
-    expect(dcodeWrapper).not.toContain("is_allowed_openshell_runtime_value");
-    expect(dcodeRuntime).not.toContain("/etc/openshell/tls/client/tls.key");
-  });
+      expect(hermesBoundary).not.toContain("RUNTIME_ALLOWED_PLATFORM_PATH_VALUES");
+      expect(dcodeWrapper).not.toContain("is_allowed_openshell_runtime_value");
+      expect(dcodeRuntime).not.toContain("/etc/openshell/tls/client/tls.key");
+    },
+  );
 });

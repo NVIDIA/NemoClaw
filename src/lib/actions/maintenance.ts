@@ -39,6 +39,7 @@ import {
   type StartedForBackup,
   startStoppedSandboxContainerForBackup,
 } from "./sandbox/stopped-sandbox-backup";
+import { retainStrictPreUpgradeRecoveryState } from "./sandbox/snapshot/strict-pre-upgrade-recovery";
 
 const useColor = !process.env.NO_COLOR && !!process.stdout.isTTY;
 const trueColor =
@@ -86,15 +87,24 @@ interface BackupAllSandboxAttempt {
   mutationLockError?: unknown;
 }
 
-function returnStartedSandboxToStopped(
+async function returnStartedSandboxToStopped(
   sandboxName: string,
   startedForBackup: StartedForBackup,
-): Error | null {
+): Promise<Error | null> {
   const failureDetail =
     "could not return its container to the stopped state; the container was left running";
   const failureMessage = `Backup cleanup failed for '${sandboxName}': ${failureDetail}.`;
   try {
-    if (returnSandboxContainerToStopped(startedForBackup)) {
+    if (await returnSandboxContainerToStopped(startedForBackup)) {
+      if (!registry.recordSandboxStopIntent(sandboxName, true, registry.updateSandbox)) {
+        const error = new Error(
+          `Backup cleanup failed for '${sandboxName}': the container returned to the stopped state, but NemoClaw could not retain that lifecycle intent.`,
+        );
+        console.error(
+          `  ${RD}✗${R} ${sandboxName}: backup cleanup failed (could not retain its stopped-state intent)`,
+        );
+        return error;
+      }
       console.log(`  ${D}Returned '${sandboxName}' to its stopped state.${R}`);
       return null;
     }
@@ -121,7 +131,7 @@ async function backupSandboxWithinMutationLock(
       enteredTransactionLock = true;
       enforceRemovedImmutabilityMigrationBoundary(sandboxName, { allowStateRecord: true });
       const startedForBackup = shouldStartStoppedContainer
-        ? startStoppedSandboxContainerForBackup(sandboxName)
+        ? await startStoppedSandboxContainerForBackup(sandboxName)
         : null;
       if (shouldStartStoppedContainer && !startedForBackup) {
         return {
@@ -153,7 +163,7 @@ async function backupSandboxWithinMutationLock(
         }
       } finally {
         if (startedForBackup) {
-          stoppedContainerCleanupError = returnStartedSandboxToStopped(
+          stoppedContainerCleanupError = await returnStartedSandboxToStopped(
             sandboxName,
             startedForBackup,
           );
@@ -266,6 +276,7 @@ export async function backupAllUnderPortableHostFence(
   const skipUnreachable =
     options.skipUnreachable ?? shouldSkipUnreachableSandboxBackup(process.env);
   const requireAll = options.requireAll ?? process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS === "1";
+  const retainPreUpgradePolicy = purpose === "pre-upgrade" && requireAll;
   let backed = 0;
   let failed = 0;
   let skipped = 0;
@@ -293,8 +304,8 @@ export async function backupAllUnderPortableHostFence(
     const attempt = await backupSandboxWithinMutationLock(
       sb.name,
       !readyNames.has(sb.name),
-      (startedForBackup) =>
-        startedForBackup
+      async (startedForBackup) => {
+        const backupResult = await (startedForBackup
           ? backupStartedSandboxState(sb.name)
           : snapshotBackup.backupSandboxStateWithManagedAuthority(
               sb.name,
@@ -302,7 +313,14 @@ export async function backupAllUnderPortableHostFence(
               {
                 getSandbox: registry.getSandbox,
               },
-            ),
+            ));
+        return retainPreUpgradePolicy
+          ? retainStrictPreUpgradeRecoveryState(sb, backupResult, {
+              gatewayName: resolveSandboxGatewayName(sb),
+              workspace: "default",
+            })
+          : backupResult;
+      },
     );
     if (attempt.stoppedContainerUnavailable) {
       if (orphanNames.has(sb.name) && isSandboxContainerDefinitivelyAbsent(sb.name)) {
@@ -355,7 +373,8 @@ export async function backupAllUnderPortableHostFence(
         [...result.failedDirs, ...result.failedFiles],
         result.failedDirReasons,
       );
-      console.error(`  ${RD}✗${R} ${sb.name}: backup failed (${failedItems})`);
+      const failureDetail = [failedItems, result.error].filter(Boolean).join("; ");
+      console.error(`  ${RD}✗${R} ${sb.name}: backup failed (${failureDetail})`);
       failed++;
     }
   };

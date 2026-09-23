@@ -10,9 +10,15 @@ import {
   resolveGatewayStateDirForPort,
 } from "../../onboard/gateway/state-dir";
 import type { OpenShellGatewayTarget } from "./sandbox-observer";
+import { importOpenShellSdk } from "./sdk-import.mjs";
 
 const MAX_PEM_BYTES = 1024 * 1024;
-export class OpenShellSdkPreflightUnavailableError extends Error {}
+export class OpenShellSdkPreflightUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "OpenShellSdkPreflightUnavailableError";
+  }
+}
 
 type OpenShellSdkModule = Readonly<{
   OpenShellClient: Readonly<{
@@ -31,7 +37,14 @@ export type OpenShellSdkConnectionDeps = Readonly<{
   env?: NodeJS.ProcessEnv;
   homeDir?: string;
   loadSdk?: () => Promise<OpenShellSdkModule>;
+  signal?: AbortSignal;
 }>;
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) {
+    throw Object.assign(new Error("OpenShell SDK connection timed out."), { code: "4" });
+  }
+}
 
 function readPem(target: string): Buffer {
   const file = openRegularFileNoFollow(target);
@@ -61,17 +74,16 @@ export function gatewayPort(target: OpenShellGatewayTarget): number {
 }
 
 async function loadOpenShellSdk(): Promise<OpenShellSdkModule> {
-  // Keep the optional reviewed package load lazy so source-only development can
-  // still compile before CI stages the private SDK artifact.
-  const packageName = "@nvidia/openshell-sdk";
-  return (await import(packageName)) as OpenShellSdkModule;
+  // Load the SDK lazily through native ESM so the CommonJS CLI uses its import exports.
+  return (await importOpenShellSdk()) as OpenShellSdkModule;
 }
 
 /** Connect the SDK directly to one managed gateway, independent of compute provider. */
 export async function connectManagedOpenShellSdk(
   target: OpenShellGatewayTarget,
-  deps: Pick<OpenShellSdkConnectionDeps, "env" | "homeDir" | "loadSdk"> = {},
+  deps: Pick<OpenShellSdkConnectionDeps, "env" | "homeDir" | "loadSdk" | "signal"> = {},
 ): Promise<unknown> {
+  throwIfAborted(deps.signal);
   const port = gatewayPort(target);
   const environment = deps.env ?? process.env;
   const configuredStateDir = environment.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR?.trim();
@@ -81,11 +93,17 @@ export async function connectManagedOpenShellSdk(
     port,
   });
   const gatewayName = target.kind === "named" ? target.gatewayName : "";
-  const ownershipFailure = managedGatewayStateRootOwnershipFailure({
-    gatewayName,
-    gatewayPort: port,
-    stateDir,
-  });
+  const ownershipFailure = managedGatewayStateRootOwnershipFailure(
+    {
+      gatewayName,
+      gatewayPort: port,
+      stateDir,
+    },
+    // The canonical default root predates the explicit marker. Its fixed path,
+    // owner-only directory checks, and local mTLS identity remain the legacy
+    // authority boundary. Explicit overrides must always carry the marker.
+    { allowLegacyManagedState: !configuredStateDir },
+  );
   if (ownershipFailure) {
     const message = `Unsafe OpenShell gateway state directory: ${ownershipFailure}.`;
     if (configuredStateDir) throw new Error(message);
@@ -93,10 +111,13 @@ export async function connectManagedOpenShellSdk(
   }
   const tlsDirectory = path.join(stateDir, "tls");
   const sdk = await (deps.loadSdk ?? loadOpenShellSdk)();
-  return sdk.OpenShellClient.connect({
+  throwIfAborted(deps.signal);
+  const client = await sdk.OpenShellClient.connect({
     gateway: `https://127.0.0.1:${String(port)}`,
     caCert: readPem(path.join(tlsDirectory, "ca.crt")),
     clientCert: readPem(path.join(tlsDirectory, "client", "tls.crt")),
     clientKey: readPem(path.join(tlsDirectory, "client", "tls.key")),
   });
+  throwIfAborted(deps.signal);
+  return client;
 }

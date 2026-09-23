@@ -1,20 +1,25 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { SpawnSyncReturns } from "node:child_process";
+import type { OpenShellGatewayLifecycle } from "../../adapters/openshell/gateway-lifecycle";
+import { type GatewayOwner, isExternallySupervised } from "../gateway-ownership";
 import type { Buffer } from "node:buffer";
+import type { SpawnSyncReturns } from "node:child_process";
 
-type CommandResult = Pick<SpawnSyncReturns<Buffer>, "status">;
-type CommandOptions = {
-  ignoreError?: boolean;
-  stdio?: ["ignore", "pipe", "pipe"];
-  suppressOutput?: boolean;
+import {
+  resolveGatewayTeardownAuthority,
+  removeGatewayRegistrationThroughAdapter,
+} from "../gateway-teardown-authority";
+
+type CommandResult = Pick<SpawnSyncReturns<Buffer>, "status"> & {
+  stdout?: string | Buffer;
+  stderr?: string | Buffer;
 };
-
 export interface GatewayProcessLifecycleDeps {
+  lifecycle: OpenShellGatewayLifecycle;
+  resolveAuthority?: () => GatewayOwner;
   gatewayName(): string;
-  runOpenshell(args: string[], options?: CommandOptions): CommandResult;
-  runCaptureOpenshell(args: string[], options?: { ignoreError?: boolean }): string;
+  gatewayPort?: () => number;
   dockerInspect(
     args: string[],
     options?: { ignoreError?: boolean; suppressOutput?: boolean },
@@ -33,37 +38,29 @@ export interface GatewayProcessLifecycleDeps {
   clearRegistry(): void;
   killProcess(pid: number, signal: NodeJS.Signals): void;
   log(message: string): void;
-  gatewayCliSupportsLifecycleCommands(
-    capture: GatewayProcessLifecycleDeps["runCaptureOpenshell"],
-  ): boolean;
-  destroyGatewayWithVolumeCleanup(input: {
-    clearRegistry(): void;
-    dockerRemoveVolumesByPrefix: GatewayProcessLifecycleDeps["dockerRemoveVolumesByPrefix"];
-    gatewayName: string;
-    hasLifecycleCommands(): boolean;
-    isDockerDriverGatewayEnabled(): boolean;
-    removeDockerDriverGatewayRegistration(): boolean;
-    runOpenshell: GatewayProcessLifecycleDeps["runOpenshell"];
-    stopDockerDriverGatewayProcess(): void;
-  }): boolean;
+  destroyGatewayWithVolumeCleanup: typeof import("../gateway-destroy").destroyGatewayWithVolumeCleanup;
 }
 
 export function createGatewayProcessLifecycle(deps: GatewayProcessLifecycleDeps) {
-  function runQuietOpenshell(args: string[]): CommandResult {
-    return deps.runOpenshell(args, {
-      ignoreError: true,
-      stdio: ["ignore", "pipe", "pipe"],
-      suppressOutput: true,
+  const resolveAuthority =
+    deps.resolveAuthority ??
+    (() => {
+      const gatewayName = deps.gatewayName();
+      const gatewayPort = deps.gatewayPort?.();
+      if (gatewayPort === undefined)
+        throw new Error("Cannot establish gateway teardown authority.");
+      return resolveGatewayTeardownAuthority({ gatewayName, gatewayPort });
     });
-  }
-
-  function removeDockerDriverGatewayRegistration(): boolean {
-    const removeResult = runQuietOpenshell(["gateway", "remove", deps.gatewayName()]);
-    if (removeResult.status === 0) return true;
-
-    // OpenShell builds before NVIDIA/OpenShell#1221 used `gateway destroy` for metadata cleanup.
-    const destroyResult = runQuietOpenshell(["gateway", "destroy", "-g", deps.gatewayName()]);
-    return destroyResult.status === 0;
+  async function removeDockerDriverGatewayRegistration(): Promise<boolean> {
+    const owner = resolveAuthority();
+    return (
+      await removeGatewayRegistrationThroughAdapter({
+        allowLegacyDestroy: !isExternallySupervised(owner),
+        gatewayName: deps.gatewayName(),
+        lifecycle: deps.lifecycle,
+        revalidateAuthority: resolveAuthority,
+      })
+    ).ok;
   }
 
   function terminateDockerDriverGatewayProcess(pid: number): boolean {
@@ -117,28 +114,32 @@ export function createGatewayProcessLifecycle(deps: GatewayProcessLifecycleDeps)
     );
   }
 
-  function retireLegacyGatewayForDockerDriverUpgrade(): void {
+  async function retireLegacyGatewayForDockerDriverUpgrade(): Promise<void> {
     stopDockerDriverGatewayProcess();
     const stoppedLegacyContainer = stopLegacyGatewayClusterContainer();
-    removeDockerDriverGatewayRegistration();
+    if (!(await removeDockerDriverGatewayRegistration()))
+      throw new Error("Gateway registration cleanup failed; ownership evidence was retained.");
     if (stoppedLegacyContainer) {
       deps.log("  ✓ Legacy OpenShell gateway container stopped for Docker-driver upgrade");
     }
   }
 
-  function destroyGateway(
+  async function destroyGateway(
     clearRegistry: () => void = deps.clearRegistry,
     isDockerDriverGatewayEnabled: () => boolean = deps.isDockerDriverGatewayEnabled,
-  ): boolean {
+  ): Promise<boolean> {
     return deps.destroyGatewayWithVolumeCleanup({
       clearRegistry,
       dockerRemoveVolumesByPrefix: deps.dockerRemoveVolumesByPrefix,
       gatewayName: deps.gatewayName(),
       hasLifecycleCommands: () =>
-        deps.gatewayCliSupportsLifecycleCommands(deps.runCaptureOpenshell),
+        deps.lifecycle.supportsLegacyLifecycle({
+          target: { kind: "named", gatewayName: deps.gatewayName() },
+        }),
       isDockerDriverGatewayEnabled,
       removeDockerDriverGatewayRegistration,
-      runOpenshell: deps.runOpenshell,
+      lifecycle: deps.lifecycle,
+      resolveAuthority,
       stopDockerDriverGatewayProcess,
     });
   }
@@ -147,7 +148,6 @@ export function createGatewayProcessLifecycle(deps: GatewayProcessLifecycleDeps)
     destroyGateway,
     removeDockerDriverGatewayRegistration,
     retireLegacyGatewayForDockerDriverUpgrade,
-    runQuietOpenshell,
     stopDockerDriverGatewayProcess,
   };
 }

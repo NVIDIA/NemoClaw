@@ -63,7 +63,7 @@ export type DockerDriverGatewayLog = {
 
 export function openDockerDriverGatewayLog(
   logPath: string,
-  options: { exitOnFailure?: boolean } = {},
+  options: { exitOnFailure?: boolean; printError?: (message: string) => void } = {},
 ): DockerDriverGatewayLog {
   const appendNoFollow =
     fs.constants.O_APPEND | fs.constants.O_CREAT | fs.constants.O_WRONLY | fs.constants.O_NOFOLLOW;
@@ -76,7 +76,7 @@ export function openDockerDriverGatewayLog(
       throw error;
     }
   } catch (error) {
-    console.error(
+    (options.printError ?? console.error)(
       `  Failed to open OpenShell Docker-driver gateway log '${logPath}': ${String(error)}`,
     );
     if (options.exitOnFailure) process.exit(1);

@@ -19,10 +19,7 @@ import {
   type InstallerRefEnv,
 } from "../../domain/installer/ref";
 import { checkInstallerRuntime, type RuntimeCheckResult } from "../../domain/installer/version";
-import {
-  buildDeferredOnboardingPlan,
-  type DeferredOnboardingPlan,
-} from "./deferred-onboarding";
+import { buildDeferredOnboardingPlan, type DeferredOnboardingPlan } from "./deferred-onboarding";
 
 export interface InstallerPlanEnv extends NodeJS.ProcessEnv, InstallerRefEnv {
   NEMOCLAW_PROVIDER?: string | undefined;

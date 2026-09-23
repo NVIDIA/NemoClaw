@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   createHermesAuthHelpers,
+  getRequestedHermesAuthMethod,
   HERMES_AUTH_METHOD_API_KEY,
   HERMES_AUTH_METHOD_OAUTH,
   HERMES_NOUS_API_KEY_CREDENTIAL_ENV,
@@ -122,6 +123,28 @@ describe("Hermes provider store availability", () => {
 });
 
 describe("Hermes authentication selection", () => {
+  it.each([
+    ["NEMOCLAW_HERMES_AUTH_METHOD", "api-key"],
+    ["NEMOCLAW_HERMES_AUTH", "api-key"],
+    ["NEMOCLAW_NOUS_AUTH_METHOD", "nous-api-key"],
+  ])("maps %s to retained API-key authentication (#11432)", (name, value) => {
+    clearHermesAuthEnvironment();
+    vi.stubEnv(name, value);
+    const deps = createDeps();
+
+    expect(getRequestedHermesAuthMethod(deps)).toBe(HERMES_AUTH_METHOD_API_KEY);
+  });
+
+  it("preserves Hermes auth selector precedence (#11432)", () => {
+    clearHermesAuthEnvironment();
+    vi.stubEnv("NEMOCLAW_HERMES_AUTH_METHOD", "api-key");
+    vi.stubEnv("NEMOCLAW_HERMES_AUTH", "oauth");
+    vi.stubEnv("NEMOCLAW_NOUS_AUTH_METHOD", "oauth");
+    const deps = createDeps();
+
+    expect(getRequestedHermesAuthMethod(deps)).toBe(HERMES_AUTH_METHOD_API_KEY);
+  });
+
   it("selects API key authentication non-interactively when a key already exists", async () => {
     clearHermesAuthEnvironment();
     vi.stubEnv(HERMES_NOUS_API_KEY_CREDENTIAL_ENV, "nous-key");

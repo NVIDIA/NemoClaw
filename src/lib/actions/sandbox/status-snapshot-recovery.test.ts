@@ -34,6 +34,12 @@ const clearPreflight: SandboxStatusPreflightResult = {
   exitCode: 0,
 };
 
+const intentionalStopPreflight: SandboxStatusPreflightResult = {
+  ...clearPreflight,
+  intentionalStopConfirmed: true,
+  suppressInferenceProbe: true,
+};
+
 const conflictPreflight: SandboxStatusPreflightResult = {
   failure: {
     layer: "sandbox_dashboard_port_conflict",
@@ -68,18 +74,20 @@ function snapshotDeps(recoveryResult: unknown) {
     getSandbox: () => sandbox,
     listSandboxes: () => ({ sandboxes: [sandbox], defaultSandbox: sandbox.name }),
     reconcile: recoveredLookup,
-    captureOpenshellForStatusImpl: async () => {
-      throw new Error("live route lookup not needed");
+    inferenceRouteObserver: {
+      observeInferenceRoute: async () => {
+        throw new Error("live route lookup not needed");
+      },
     },
     probeProviderHealthImpl,
     probeSandboxInferenceGatewayHealthImpl,
-    probeSandboxInferenceInvocationImpl: vi.fn(() => ({ ok: true }) as const),
-    recoverSandboxProcesses: vi.fn(() => recoveryResult) as never,
+    probeSandboxInferenceInvocationImpl: vi.fn(async () => ({ ok: true }) as const),
+    recoverSandboxProcesses: vi.fn(async () => recoveryResult) as never,
   };
 }
 
 describe("collectSandboxStatusSnapshot Docker recovery", () => {
-  it("recovers the delivery chain when OpenShell already reports the restarted container (#7824)", async () => {
+  it("leaves agent delivery recovery to the native image runtime", async () => {
     const deps = {
       ...snapshotDeps({
         checked: true,
@@ -97,11 +105,11 @@ describe("collectSandboxStatusSnapshot Docker recovery", () => {
 
     const snapshot = await collectSandboxStatusSnapshot("alpha", { deps });
 
-    expect(deps.recoverSandboxProcesses).toHaveBeenCalledWith("alpha", { quiet: true });
+    expect(deps.recoverSandboxProcesses).not.toHaveBeenCalled();
     expect(snapshot.lookup.state).toBe("present");
   });
 
-  it("fails closed when the visible restarted container cannot recover OpenClaw (#7824)", async () => {
+  it("does not reinterpret a ready sandbox when native recovery is unavailable", async () => {
     const deps = {
       ...snapshotDeps({
         checked: true,
@@ -119,11 +127,8 @@ describe("collectSandboxStatusSnapshot Docker recovery", () => {
 
     const snapshot = await collectSandboxStatusSnapshot("alpha", { deps });
 
-    expect(snapshot.lookup.state).toBe("sandbox_recovery_failed");
-    expect(snapshot.lookup.output).toContain(
-      "Sandbox 'alpha' is present, but its agent delivery chain could not be proven",
-    );
-    expect(deps.probeSandboxInferenceGatewayHealthImpl).not.toHaveBeenCalled();
+    expect(deps.recoverSandboxProcesses).not.toHaveBeenCalled();
+    expect(snapshot.lookup.state).toBe("present");
   });
 
   it.each(["Provisioning", "Failed"])(
@@ -174,6 +179,33 @@ describe("collectSandboxStatusSnapshot Docker recovery", () => {
 
     expect(deps.recoverSandboxProcesses).not.toHaveBeenCalled();
     expect(snapshot.lookup.state).toBe("present");
+  });
+
+  it("does not recover delivery after provider-confirmed intentional stop (#11025)", async () => {
+    const deps = {
+      ...snapshotDeps({
+        checked: true,
+        wasRunning: false,
+        recovered: true,
+        forwardRecovered: true,
+      }),
+      reconcile: () =>
+        Promise.resolve({
+          state: "present" as const,
+          phase: "Ready",
+          output: "Phase: Ready",
+        }),
+    };
+
+    const snapshot = await collectSandboxStatusSnapshot("alpha", {
+      deps,
+      preflight: intentionalStopPreflight,
+    });
+
+    expect(deps.recoverSandboxProcesses).not.toHaveBeenCalled();
+    expect(snapshot.lookup.state).toBe("present");
+    expect(snapshot.inferenceHealth).toBeNull();
+    expect(deps.probeSandboxInferenceGatewayHealthImpl).not.toHaveBeenCalled();
   });
 
   it.each([

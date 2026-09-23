@@ -12,7 +12,7 @@ export default class GatewayRestartCliCommand extends NemoClawCommand {
   static strict = true;
   static summary = "Restart the sandbox agent gateway";
   static description =
-    "Restart the sandbox agent gateway through its privileged lifecycle controller, wait for health, and check or recover host forwards.";
+    "Ask the native agent to restart its gateway, wait for health, and check or recover host forwards.";
   static usage = ["<name> [--quiet|-q]"];
   static examples = [
     "<%= config.bin %> sandbox gateway restart alpha",
@@ -31,7 +31,7 @@ export default class GatewayRestartCliCommand extends NemoClawCommand {
 
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(GatewayRestartCliCommand);
-    const result = restartSandboxGateway(args.sandboxName, { quiet: flags.quiet === true });
+    const result = await restartSandboxGateway(args.sandboxName, { quiet: flags.quiet === true });
     if (!result.ok) {
       this.setExitCode(1);
     }

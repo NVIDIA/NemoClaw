@@ -14,8 +14,7 @@ export default class UpdateCommand extends NemoClawCommand {
   static id = "update";
   static strict = true;
   static summary = `Run the maintained ${CLI_DISPLAY_NAME} installer update flow`;
-  static description =
-    `Check for a ${CLI_DISPLAY_NAME} CLI update and run the maintained installer flow.`;
+  static description = `Check for a ${CLI_DISPLAY_NAME} CLI update and run the maintained installer flow.`;
   static usage = ["update [--check] [--fresh] [--allow-downgrade] [--yes|-y]"];
   static examples = [
     "<%= config.bin %> update --check",

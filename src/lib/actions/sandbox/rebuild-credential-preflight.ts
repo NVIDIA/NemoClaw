@@ -156,7 +156,9 @@ export async function preflightRebuildCredentials(
   const rebuildProvider = sb.provider;
 
   if (rebuildProvider === hermesProviderAuth.HERMES_PROVIDER_NAME) {
-    if (!(await preflightHermesProviderCredentials(sb.hermesAuthMethod, rebuildCredentialEnv, log))) {
+    if (
+      !(await preflightHermesProviderCredentials(sb.hermesAuthMethod, rebuildCredentialEnv, log))
+    ) {
       bail("Missing Hermes Provider credentials");
       return false;
     }
@@ -164,7 +166,9 @@ export async function preflightRebuildCredentials(
   }
 
   if (!rebuildCredentialEnv) {
-    if (!checkRebuildGatewayProviderOrBail(rebuildProvider, rebuildCredentialEnv, log, bail)) {
+    if (
+      !(await checkRebuildGatewayProviderOrBail(rebuildProvider, rebuildCredentialEnv, log, bail))
+    ) {
       return false;
     }
     log(
@@ -178,11 +182,11 @@ export async function preflightRebuildCredentials(
     `Preflight credential check: ${rebuildCredentialEnv} → ${credentialValue ? "present" : "MISSING"}`,
   );
   if (
-    !checkRebuildGatewayProviderOrBail(rebuildProvider, rebuildCredentialEnv, log, bail, {
+    !(await checkRebuildGatewayProviderOrBail(rebuildProvider, rebuildCredentialEnv, log, bail, {
       allowProviderReconfigure: options.allowMissingGatewayProviderWithHostCredential,
       hostCredentialAvailable: Boolean(credentialValue),
       onProviderReconfigureRequired: options.onGatewayProviderReconfigureRequired,
-    })
+    }))
   ) {
     return false;
   }

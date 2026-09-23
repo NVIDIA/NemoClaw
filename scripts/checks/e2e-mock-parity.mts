@@ -26,7 +26,7 @@ export type MockParityManifest = {
 };
 
 const LIVE_TEST = /^test\/e2e\/live\/.+\.test\.ts$/u;
-const LIVE_HELPER = /^test\/e2e\/live\/(?!.*\.test\.ts$).+\.ts$/u;
+const LIVE_HELPER = /^test\/e2e\/live\/(?!.*\.test\.ts$).+\.(?:py|ts)$/u;
 const FAST_TESTS = [
   /^src\/.+\.test\.ts$/u,
   /^nemoclaw\/src\/.+\.test\.ts$/u,
@@ -51,7 +51,23 @@ function sourceTokens(source: string): string {
       }
       return;
     }
-    for (const child of children) visit(child);
+    // Ignore only optional list punctuation; runtime operators and array holes remain.
+    for (const child of children) {
+      if (
+        node.kind === ts.SyntaxKind.SyntaxList &&
+        child.kind === ts.SyntaxKind.CommaToken &&
+        child === children.at(-1)
+      )
+        continue;
+      if (
+        child === children[0] &&
+        ((node.parent?.kind === ts.SyntaxKind.UnionType && child.kind === ts.SyntaxKind.BarToken) ||
+          (node.parent?.kind === ts.SyntaxKind.IntersectionType &&
+            child.kind === ts.SyntaxKind.AmpersandToken))
+      )
+        continue;
+      visit(child);
+    }
   };
   visit(sourceFile);
   return JSON.stringify({
@@ -144,7 +160,9 @@ export function validateMockParity(options: {
     if (!fileExists(entry.live)) errors.push(`${entry.live}: live test does not exist`);
     for (const sourceFile of new Set(entry.liveSources ?? [])) {
       if (!isSafeRepoPath(sourceFile) || !LIVE_HELPER.test(sourceFile)) {
-        errors.push(`${entry.live}: ${sourceFile} is not a test/e2e/live/**/*.ts helper file`);
+        errors.push(
+          `${entry.live}: ${sourceFile} is not a test/e2e/live/**/*.py or *.ts helper file`,
+        );
         continue;
       }
       if (!fileExists(sourceFile)) {
@@ -228,6 +246,9 @@ export function filterMockParityRelevantChangedFiles(
 ): string[] {
   return files.filter((file) => {
     if (!LIVE_TEST.test(file) && !LIVE_HELPER.test(file) && !isFastPrTest(file)) return true;
+    // Python indentation is executable syntax, so the TypeScript token filter
+    // cannot safely classify any Python helper change as metadata-only.
+    if (LIVE_HELPER.test(file) && file.endsWith(".py")) return true;
     return isMockParityRelevantSourceChange(sourceAtBase(file), sourceAtHead(file));
   });
 }

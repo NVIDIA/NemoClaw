@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import type { OpenShellSandboxBufferedCommandRequest } from "../adapters/openshell/sandbox-command";
 import {
   runSmokeScript,
   writeFakeCurl,
@@ -25,6 +26,41 @@ import {
   spawnOutputToString,
   verifyCompatibleEndpointSandboxSmoke,
 } from "./compatible-endpoint-smoke";
+
+type CompatibleSmokeOptions = Parameters<typeof verifyCompatibleEndpointSandboxSmoke>[0];
+
+function bufferedExecutorThrough(runOpenshell: CompatibleSmokeOptions["runOpenshell"]) {
+  return {
+    runBuffered: vi.fn(async (request: OpenShellSandboxBufferedCommandRequest) => {
+      const targetArgs = request.target.kind === "named" ? ["-g", request.target.gatewayName] : [];
+      const ttyArgs = request.tty === false ? ["--no-tty"] : [];
+      const args = ["sandbox", "exec", "-n", request.sandboxName, ...targetArgs, ...ttyArgs];
+      for (const [key, value] of Object.entries(request.sandboxEnvironment ?? {})) {
+        args.push("--env", `${key}=${value}`);
+      }
+      const result = runOpenshell([...args, "--", ...request.command], {
+        ignoreError: true,
+        suppressOutput: true,
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: request.timeoutMilliseconds,
+      });
+      return result.status === null
+        ? {
+            outcome: {
+              kind: "failed" as const,
+              error: { kind: "invocation" as const, message: "unobservable" },
+            },
+            stdout: spawnOutputToString(result.stdout),
+            stderr: spawnOutputToString(result.stderr),
+          }
+        : {
+            outcome: { kind: "completed" as const, exitCode: result.status },
+            stdout: spawnOutputToString(result.stdout),
+            stderr: spawnOutputToString(result.stderr),
+          };
+    }),
+  };
+}
 
 const providerNeutralCases = ["openclaw", "hermes", "langchain-deepagents-code"].flatMap(
   (agentName) => [
@@ -275,6 +311,7 @@ describe("compatible endpoint sandbox smoke helpers", () => {
       provider,
       model: "nvidia/nemotron-3-ultra",
       runOpenshell,
+      sandboxCommandExecutor: bufferedExecutorThrough(runOpenshell),
       redact: (value) => value,
       agent,
     });
@@ -306,6 +343,7 @@ describe("compatible endpoint sandbox smoke helpers", () => {
       provider: "compatible-endpoint",
       model: "nvidia/nemotron-3-ultra",
       runOpenshell,
+      sandboxCommandExecutor: bufferedExecutorThrough(runOpenshell),
       redact: (value) => value,
       messagingChannels: ["telegram"],
     });
@@ -315,6 +353,41 @@ describe("compatible endpoint sandbox smoke helpers", () => {
       expect.any(Array),
       expect.objectContaining({ timeout: 225_000 }),
     );
+  });
+
+  it("fails closed on a typed sandbox transport failure", async () => {
+    const runOpenshell = vi.fn().mockImplementation((args: string[]) => ({
+      status: 0,
+      stdout: providerMetadata(args.at(-1) ?? ""),
+    }));
+    const exit = vi.spyOn(process, "exit").mockImplementation((code) => {
+      throw new Error(`process.exit(${code})`);
+    });
+
+    try {
+      await expect(
+        verifyCompatibleEndpointSandboxSmoke({
+          sandboxName: "smoke-sandbox",
+          provider: "compatible-endpoint",
+          model: "nvidia/nemotron-3-ultra",
+          runOpenshell,
+          sandboxCommandExecutor: {
+            runBuffered: async () => ({
+              outcome: {
+                kind: "failed",
+                error: { kind: "timeout", message: "smoke timed out" },
+              },
+              stdout: "",
+              stderr: "",
+            }),
+          },
+          redact: (value) => value,
+        }),
+      ).rejects.toThrow("process.exit(1)");
+      expect(exit).toHaveBeenCalledWith(1);
+    } finally {
+      exit.mockRestore();
+    }
   });
 
   it("withholds sandbox-route success output when sandbox identity changes during proof (#9833)", async () => {
@@ -333,6 +406,7 @@ describe("compatible endpoint sandbox smoke helpers", () => {
         provider: "compatible-endpoint",
         model: "nvidia/nemotron-3-ultra",
         runOpenshell,
+        sandboxCommandExecutor: bufferedExecutorThrough(runOpenshell),
         redact: (value) => value,
         messagingChannels: ["telegram"],
         beforeSuccess: () => {
@@ -362,6 +436,7 @@ describe("compatible endpoint sandbox smoke helpers", () => {
       provider: "vllm-local",
       model: "qwen3.5-9b",
       runOpenshell,
+      sandboxCommandExecutor: bufferedExecutorThrough(runOpenshell),
       redact: (value) => value,
       forceCanonicalRoute: true,
       hostLocalInferenceProofAuthority: {
@@ -412,6 +487,10 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     const exit = vi.spyOn(process, "exit").mockImplementation((code) => {
       throw new Error(`process.exit(${code})`);
     });
+    const runOpenshell = vi.fn().mockReturnValue({
+      status: 1,
+      stderr: "provider query failed",
+    });
 
     try {
       await expect(
@@ -419,7 +498,8 @@ describe("compatible endpoint sandbox smoke helpers", () => {
           sandboxName: "provider-lookup-failure-sandbox",
           provider: testCase.provider,
           model: "qwen3.5-9b",
-          runOpenshell: vi.fn().mockReturnValue({ status: 1, stderr: "provider query failed" }),
+          runOpenshell,
+          sandboxCommandExecutor: bufferedExecutorThrough(runOpenshell),
           redact: (value) => value,
           messagingChannels: testCase.messagingChannels,
           forceCanonicalRoute: testCase.forceCanonicalRoute,
@@ -466,6 +546,7 @@ describe("compatible endpoint sandbox smoke helpers", () => {
             provider: "compatible-endpoint",
             model: "issue-10405-model",
             runOpenshell,
+            sandboxCommandExecutor: bufferedExecutorThrough(runOpenshell),
             redact: (value) => value,
             messagingChannels,
           }),
@@ -503,6 +584,7 @@ describe("compatible endpoint sandbox smoke helpers", () => {
         model: "qwen3.5-9b",
         endpointUrl: "https://inference.local/v1",
         runOpenshell,
+        sandboxCommandExecutor: bufferedExecutorThrough(runOpenshell),
         redact: (value) => value,
         messagingChannels: [],
         agent: { name: agentName },
@@ -565,6 +647,7 @@ describe("compatible endpoint sandbox smoke helpers", () => {
         provider: "ollama-local",
         model: "qwen3.5-9b",
         runOpenshell,
+        sandboxCommandExecutor: bufferedExecutorThrough(runOpenshell),
         redact: (value) => value,
         agent: { name: "hermes" },
         forceCanonicalRoute: true,
@@ -675,6 +758,7 @@ describe("compatible endpoint sandbox smoke helpers", () => {
         provider: "ollama-local",
         model,
         runOpenshell,
+        sandboxCommandExecutor: bufferedExecutorThrough(runOpenshell),
         redact: (value) => value,
         forceCanonicalRoute: true,
         hostLocalInferenceProofAuthority: authority,

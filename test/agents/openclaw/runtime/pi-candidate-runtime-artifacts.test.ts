@@ -11,6 +11,11 @@ import {
   SHIPPED_MANAGED_IMAGE_AGENTS,
 } from "../../../../src/lib/onboard/managed-image/contract.ts";
 import { validateCandidateContract } from "../../../../tools/managed-images/validate-candidate-contract.mts";
+import {
+  readWorkflow,
+  required,
+  step,
+} from "../../../helpers/managed-image-publication-workflow.ts";
 
 const root = path.resolve(import.meta.dirname, "../../../..");
 
@@ -44,6 +49,26 @@ describe("Pi release cohort separation", () => {
 });
 
 describe("Pi candidate contract validation", () => {
+  it.each([
+    "Validate the Pi candidate runtime contract",
+    "Validate the published Pi candidate digest",
+  ])("%s requires the direct startup runtime", (stepName) => {
+    const workflow = readWorkflow("managed-images.yaml");
+    const piCandidate = required(
+      workflow.jobs?.["pi-candidate"],
+      "managed-image workflow is missing its Pi candidate job",
+    );
+    const validation = step(piCandidate, stepName).run ?? "";
+
+    expect(validation).toContain("managed-startup-image-runtime.cjs");
+    expect(validation).toContain("nemoclaw-managed-startup-hold");
+    expect(validation).toContain("test ! -e /usr/local/bin/nemoclaw-managed-bootstrap");
+    expect(validation).toContain(
+      "test ! -e /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh",
+    );
+    expect(validation).not.toContain("test -x /usr/local/bin/nemoclaw-managed-bootstrap");
+  });
+
   it("accepts an exact candidate contract", () => {
     const contract = validateCandidateContract(candidateContract(), "linux/amd64");
     expect(contract.agent).toBe("pi");
@@ -79,15 +104,11 @@ describe("Pi managed model catalog generation", () => {
     stderr: string;
   } {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pi-config-"));
-    const result = spawnSync(
-      process.execPath,
-      ["--experimental-strip-types", path.join(root, "agents/pi/generate-config.ts")],
-      {
-        cwd: root,
-        encoding: "utf8",
-        env: { PATH: process.env.PATH ?? "", HOME: home, ...env },
-      },
-    );
+    const result = spawnSync(process.execPath, [path.join(root, "agents/pi/generate-config.ts")], {
+      cwd: root,
+      encoding: "utf8",
+      env: { PATH: process.env.PATH ?? "", HOME: home, ...env },
+    });
     return { home, status: result.status, stderr: result.stderr };
   }
 

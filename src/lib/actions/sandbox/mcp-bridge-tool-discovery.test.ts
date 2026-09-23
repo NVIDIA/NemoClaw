@@ -8,7 +8,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import type { AgentMcpAdapter } from "../../agent/defs";
-import type { McpBridgeEntry } from "../../state/registry";
+import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import {
   buildMcpToolDiscoveryCommand,
   classifyMcpToolDiscoveryResult,
@@ -23,8 +23,8 @@ const entry = {
   server: "github",
   url: "https://api.githubcopilot.com/mcp/",
   env: ["GITHUB_TOKEN"],
-} as McpBridgeEntry;
-const unauthenticatedEntry = { ...entry, env: [] } as McpBridgeEntry;
+} as McpSourceEntry;
+const unauthenticatedEntry = { ...entry, env: [] } as McpSourceEntry;
 
 function framedResult(value: unknown) {
   return {
@@ -39,7 +39,7 @@ describe("MCP tool discovery host boundary (#6901)", () => {
     "launches the same shared runtime below every adapter policy ancestor [%s]",
     (preserved) => {
       const expectedAncestor: Record<AgentMcpAdapter, string> = {
-        mcporter: "nemoclaw-start node -e",
+        "openclaw-config": "nemoclaw-start node -e",
         "hermes-config": "/opt/hermes/.venv/bin/python -I -c",
         "deepagents-config": "/opt/venv/bin/python3 -I -c",
       };
@@ -92,16 +92,36 @@ describe("MCP tool discovery host boundary (#6901)", () => {
   });
 
   it("passes only the credential key name and rejects missing or non-canonical inputs", () => {
-    const authenticated = buildMcpToolDiscoveryCommand(entry, "mcporter");
+    const authenticated = buildMcpToolDiscoveryCommand(entry, "openclaw-config");
     expect(authenticated).not.toBeNull();
     expect(authenticated?.command).not.toContain("Authorization");
-    expect(buildMcpToolDiscoveryCommand(unauthenticatedEntry, "mcporter")).toBeNull();
+    expect(buildMcpToolDiscoveryCommand(unauthenticatedEntry, "openclaw-config")).toBeNull();
     expect(
       buildMcpToolDiscoveryCommand(
         { ...unauthenticatedEntry, url: "https://api.githubcopilot.com:443/mcp/" },
-        "mcporter",
+        "openclaw-config",
       ),
     ).toBeNull();
+  });
+
+  it("builds discovery for a recorded trusted private endpoint and still refuses an unrecorded one (#11377)", () => {
+    const unrecordedPrivateEntry = {
+      server: "local-mcp",
+      url: "https://172.17.0.2:8443/mcp",
+      env: ["MCP_KEY"],
+    } as McpSourceEntry;
+    const trustedPrivateEntry = {
+      ...unrecordedPrivateEntry,
+      trustedPrivateHost: "172.17.0.2",
+      allowedIps: ["172.17.0.2"],
+    } as McpSourceEntry;
+
+    const built = buildMcpToolDiscoveryCommand(trustedPrivateEntry, "openclaw-config");
+    expect(built).not.toBeNull();
+    expect(built?.command).toContain("https://172.17.0.2:8443/mcp");
+    expect(built?.command).toContain("--credential-env");
+    expect(built?.command).toContain("MCP_KEY");
+    expect(buildMcpToolDiscoveryCommand(unrecordedPrivateEntry, "openclaw-config")).toBeNull();
   });
 
   it("accepts one framed, deterministic, names-only runtime result", () => {
@@ -213,7 +233,8 @@ describe("MCP tool discovery host boundary (#6901)", () => {
           count: 0,
           tools: [],
           truncated: false,
-          detail: "sandbox image does not include the MCP tool discovery runtime; rebuild the sandbox",
+          detail:
+            "sandbox image does not include the MCP tool discovery runtime; rebuild the sandbox",
           failedStage: "runtime",
           failureClass: "runtime",
         }),

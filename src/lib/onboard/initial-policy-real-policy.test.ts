@@ -99,16 +99,12 @@ describe("initial sandbox policy real preset merge", () => {
   const shippingPolicyCases = managedImagePolicyCases.filter(
     ({ agent }) => agent !== "langchain-deepagents-code",
   );
-  const managedStartupReadOnlyPaths = [
-    { path: MANAGED_STARTUP_MERGED_CA_FILE, issue: "#9360", purpose: "CA bundle" },
-    {
-      path: MANAGED_STARTUP_RUNTIME_ENV_FILE,
-      issue: "#9357",
-      purpose: "runtime environment",
-    },
+  const managedStartupExchangePaths = [
+    MANAGED_STARTUP_MERGED_CA_FILE,
+    MANAGED_STARTUP_RUNTIME_ENV_FILE,
+    MANAGED_STARTUP_COMPLETION_FILE,
   ] as const;
   const protectedManagedStartupPaths = [
-    MANAGED_STARTUP_COMPLETION_FILE,
     "/run/nemoclaw/openclaw-config-guard",
     MANAGED_STARTUP_SHARED_ROLLBACK_RECEIPT_DIRECTORY,
     MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY,
@@ -122,39 +118,38 @@ describe("initial sandbox policy real preset merge", () => {
     expect(Object.keys(managedImagePolicyPathsByAgent)).toEqual([...SHIPPED_MANAGED_IMAGE_AGENTS]);
     expect(policyIdentities).toHaveLength(3);
     expect(new Set(policyIdentities).size).toBe(policyIdentities.length);
-    expect(managedStartupReadOnlyPaths.map(({ path: trustedPath }) => trustedPath)).toEqual([
-      MANAGED_STARTUP_MERGED_CA_FILE,
-      MANAGED_STARTUP_RUNTIME_ENV_FILE,
+    expect(managedStartupExchangePaths.map((exchangePath) => path.dirname(exchangePath))).toEqual([
+      "/tmp",
+      "/tmp",
+      "/tmp",
     ]);
   });
 
-  it.each(
-    managedImagePolicyCases.flatMap((policyCase) =>
-      managedStartupReadOnlyPaths.map((trustedPath) => ({ policyCase, trustedPath })),
-    ),
-  )(
-    "grants $policyCase.agent policy $policyCase.path exact read-only access to the managed startup $trustedPath.purpose ($trustedPath.issue)",
-    ({ policyCase, trustedPath }) => {
+  it("lets the Hermes supervisor read the root-issued expected-exit lease", () => {
+    const prepared = prepareInitialSandboxCreatePolicy(
+      repoPath("agents", "hermes", "policy-additions.yaml"),
+      [],
+      { agentName: "hermes" },
+    );
+    const policy = readPreparedPolicy(prepared);
+
+    expect(policy.filesystem_policy?.read_only).toContain(
+      "/run/nemoclaw/managed-gateway-expected-exit",
+    );
+    expect(policy.filesystem_policy?.read_write).not.toContain(
+      "/run/nemoclaw/managed-gateway-expected-exit",
+    );
+  });
+
+  it.each(managedImagePolicyCases)(
+    "uses the existing sticky temporary exchange for $agent managed startup handoff (#11905)",
+    (policyCase) => {
       const prepared = prepareInitialSandboxCreatePolicy(repoPath(...policyCase.path), [], {
         agentName: policyCase.agent,
       });
       const policy = readPreparedPolicy(prepared);
-      const readOnly = policy.filesystem_policy?.read_only ?? [];
-      const readWrite = policy.filesystem_policy?.read_write ?? [];
-      const normalizedReadOnly = readOnly.map(normalizeFilesystemPolicyPath);
-      const normalizedReadWrite = readWrite.map(normalizeFilesystemPolicyPath);
-      const trustedPathAncestors = filesystemPolicyAncestors(trustedPath.path);
 
-      expect(readOnly, policyCase.path.join("/")).toContain(trustedPath.path);
-      expect(normalizedReadWrite, policyCase.path.join("/")).not.toContain(trustedPath.path);
-      expect(
-        normalizedReadOnly.filter((candidate) => trustedPathAncestors.includes(candidate)),
-        policyCase.path.join("/"),
-      ).toEqual([]);
-      expect(
-        normalizedReadWrite.filter((candidate) => trustedPathAncestors.includes(candidate)),
-        policyCase.path.join("/"),
-      ).toEqual([]);
+      expect(policy.filesystem_policy?.read_write, policyCase.path.join("/")).toContain("/tmp");
     },
   );
 
@@ -230,7 +225,7 @@ describe("initial sandbox policy real preset merge", () => {
 
     const managedInference = effective.network_policies?.managed_inference;
 
-    expect(effective.filesystem_policy?.read_only).toContain(MANAGED_STARTUP_MERGED_CA_FILE);
+    expect(effective.filesystem_policy?.read_write).toContain("/tmp");
     expect(managedInference).toEqual({
       name: "managed_inference",
       endpoints: [

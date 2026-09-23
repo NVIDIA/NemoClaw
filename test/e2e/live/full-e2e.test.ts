@@ -4,8 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { setTimeout as sleep } from "node:timers/promises";
-import { GATEWAY_STOP_SCRIPT } from "../../../src/lib/tunnel/gateway-stop-script.ts";
+import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -40,7 +39,11 @@ import {
 } from "../fixtures/security-posture.ts";
 import type { ShellProbeOutputEvent, ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { containsAnswer } from "../../helpers/e2e-answer-assertions.ts";
-import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
+import {
+  nativeStateDoctorReportIsValid,
+  nativeStateProcessIdentitiesAreValid,
+  parseOpenClawAgentText,
+} from "../fixtures/openclaw-agent-output.ts";
 import { buildOpenClawFirstTurnLatencyEvidence } from "./agent-turn-latency-helpers.ts";
 import {
   FULL_E2E_INFERENCE_CAPTURE_LIMIT_BYTES,
@@ -50,8 +53,15 @@ import {
 import { readFullE2eColdWorkloadEvidence } from "./full-e2e-workload-evidence.ts";
 import { runOpenClawLaunchReadinessLeaseTurns } from "./launch-agent-turn.ts";
 import { bindApprovedPrBaseForBaseImageComparison } from "./pr-base-comparison.ts";
+import { buildSandboxCredentialScanCommand } from "./sandbox-credential-boundary.ts";
 import { FULL_E2E_TEST_TIMEOUT_MS } from "../../../tools/e2e/full-e2e-timeout-contract.mts";
 import { parseOpenClawJsonDocuments } from "../../../src/lib/openclaw/agent-json-provenance.ts";
+import { fullE2eGateway, withOwnedFullE2eGateway } from "../fixtures/full-e2e-gateway.ts";
+import {
+  cleanupAcquiredResource,
+  cleanupWhenOpenShellAvailable,
+} from "../fixtures/cleanup-resources.ts";
+import { getSandbox } from "../../../src/lib/state/registry.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-full";
 const FULL_E2E_TARGET_ID = process.env.E2E_TARGET_ID ?? "full-e2e";
@@ -69,6 +79,7 @@ const AUTHORITATIVE_LOCAL_BASE_BUILD_OUTPUT =
   "Building OpenClaw sandbox base image locally because no compatible published base image was found.";
 const MEASURE_COLD_ONBOARD =
   !USE_PREINSTALLED_LAUNCHABLE && process.env.E2E_TARGET_ID === "full-e2e";
+let gateway: ReturnType<typeof fullE2eGateway>;
 
 interface ColdOnboardCapture {
   outputEvents: ShellProbeOutputEvent[];
@@ -91,7 +102,7 @@ function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     NEMOCLAW_NON_INTERACTIVE: "1",
     NEMOCLAW_RECREATE_SANDBOX: "1",
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
-    OPENSHELL_GATEWAY: "nemoclaw",
+    ...gateway.env,
     ...securityPostureModeEnv(),
     ...extra,
   };
@@ -113,6 +124,21 @@ async function repoNemoclaw(
   });
 }
 
+async function readNativeStateDoctor(sandbox: SandboxClient, artifactName: string) {
+  return sandbox.exec(
+    SANDBOX_NAME,
+    [
+      "/usr/local/bin/openclaw",
+      "doctor",
+      "--lint",
+      "--json",
+      "--only",
+      "core/doctor/state-integrity",
+    ],
+    { artifactName, env: env(), timeoutMs: 180_000 },
+  );
+}
+
 async function waitForSandboxStatus(host: HostCliClient): Promise<ShellProbeResult> {
   const status = await pollUntil({
     artifactPrefix: "phase-3-nemoclaw-status",
@@ -125,38 +151,253 @@ async function waitForSandboxStatus(host: HostCliClient): Promise<ShellProbeResu
   return status.value;
 }
 
-async function runOpenClawLaunchTurnAfterRecovery(input: {
+type NativePluginVersion = "v1" | "v2";
+
+function nativeWeatherPluginWriteScript(version: NativePluginVersion): string {
+  const packageJson = JSON.stringify({
+    name: "@nemoclaw/e2e-native-weather",
+    version: version === "v1" ? "1.0.0" : "2.0.0",
+    type: "module",
+    main: "index.js",
+    files: ["index.js", "openclaw.plugin.json"],
+    openclaw: { extensions: ["./index.js"] },
+    peerDependencies: { openclaw: ">=2026.7.1" },
+  });
+  const manifest = JSON.stringify({
+    id: "weather",
+    name: "NemoClaw Native Weather",
+    version: version === "v1" ? "1.0.0" : "2.0.0",
+    description: "Dependency-free native plugin lifecycle fixture",
+    activation: { onStartup: true },
+    contracts: { tools: ["get_weather"] },
+    configSchema: { type: "object", properties: {}, additionalProperties: false },
+  });
+  const entrypoint = `const plugin = {
+  id: "weather",
+  name: "NemoClaw Native Weather",
+  version: ${JSON.stringify(version === "v1" ? "1.0.0" : "2.0.0")},
+  description: "Dependency-free native plugin lifecycle fixture",
+  register(api) {
+    api.registerTool({
+      name: "get_weather",
+      label: "Get Weather",
+      description: "Return deterministic weather data.",
+      parameters: {
+        type: "object",
+        properties: { location: { type: "string" } },
+        required: ["location"],
+        additionalProperties: false,
+      },
+      async execute(_toolCallId, params) {
+        const details = {
+          location: String(params.location),
+          condition: "clear",
+          fixtureVersion: ${JSON.stringify(version)},
+        };
+        return { content: [{ type: "text", text: JSON.stringify(details) }], details };
+      },
+    });
+  },
+};
+export default plugin;
+`;
+  return [
+    "set -eu",
+    "source_dir=/sandbox/e2e-native-weather",
+    'rm -rf -- "$source_dir"',
+    'mkdir -p -- "$source_dir"',
+    `printf '%s' ${shellQuote(packageJson)} > "$source_dir/package.json"`,
+    `printf '%s' ${shellQuote(manifest)} > "$source_dir/openclaw.plugin.json"`,
+    `printf '%s' ${shellQuote(entrypoint)} > "$source_dir/index.js"`,
+    'HOME=/sandbox openclaw plugins install --force --accept-capabilities "$source_dir"',
+  ].join("\n");
+}
+
+/** Invoke the installed native weather plugin and verify its versioned response. */
+async function invokeNativeWeatherPlugin(
+  sandbox: SandboxClient,
+  version: NativePluginVersion,
+  artifactName: string,
+): Promise<void> {
+  const result = await sandbox.execShell(
+    SANDBOX_NAME,
+    trustedSandboxShellScript(
+      `. /tmp/nemoclaw-proxy-env.sh && printf 'header = "Authorization: Bearer %s"\\n' "$OPENCLAW_GATEWAY_TOKEN" | curl --noproxy '*' --max-time 30 --silent --show-error --fail-with-body --config - -H 'Content-Type: application/json' --data '{"agentId":"main","tool":"get_weather","args":{"location":"Santa Clara"}}' "http://127.0.0.1:\${OPENCLAW_GATEWAY_PORT:-18789}/tools/invoke"`,
+    ),
+    { artifactName, env: env(), timeoutMs: 60_000 },
+  );
+  const document = parseOpenClawJsonDocuments(result.stdout)[0] as
+    | {
+        ok?: boolean;
+        result?: { details?: { fixtureVersion?: string; location?: string } };
+      }
+    | undefined;
+  expect(
+    result.exitCode === 0 &&
+      document?.ok === true &&
+      document.result?.details?.fixtureVersion === version &&
+      document.result.details.location === "Santa Clara",
+    resultText(result),
+  ).toBe(true);
+}
+
+async function exerciseNativeOpenClawPluginVersion(
+  host: HostCliClient,
+  sandbox: SandboxClient,
+  version: NativePluginVersion,
+): Promise<void> {
+  const install = await sandbox.execShell(
+    SANDBOX_NAME,
+    trustedSandboxShellScript(nativeWeatherPluginWriteScript(version)),
+    { artifactName: `phase-4-native-plugin-install-${version}`, env: env(), timeoutMs: 120_000 },
+  );
+  expect(install.exitCode, resultText(install)).toBe(0);
+  const restart = await repoNemoclaw(
+    host,
+    [SANDBOX_NAME, "gateway", "restart"],
+    `phase-4-native-plugin-gateway-restart-${version}`,
+    {},
+    180_000,
+  );
+  expect(restart.exitCode, resultText(restart)).toBe(0);
+  await invokeNativeWeatherPlugin(sandbox, version, `phase-4-native-plugin-invoke-${version}`);
+}
+
+async function exerciseNativeOpenClawPluginLifecycle(
+  host: HostCliClient,
+  sandbox: SandboxClient,
+): Promise<void> {
+  await exerciseNativeOpenClawPluginVersion(host, sandbox, "v1");
+  await exerciseNativeOpenClawPluginVersion(host, sandbox, "v2");
+
+  const updateDryRun = await sandbox.exec(
+    SANDBOX_NAME,
+    ["/usr/local/bin/openclaw", "plugins", "update", "weather", "--dry-run"],
+    { artifactName: "phase-4-native-plugin-update-dry-run", env: env(), timeoutMs: 120_000 },
+  );
+  expect(updateDryRun.exitCode, resultText(updateDryRun)).toBe(0);
+
+  const selfUpdateDryRun = await sandbox.exec(
+    SANDBOX_NAME,
+    [
+      "/usr/local/bin/openclaw",
+      "update",
+      "--dry-run",
+      "--yes",
+      "--no-restart",
+      "--tag",
+      "2026.7.1",
+    ],
+    { artifactName: "phase-4-native-self-update-dry-run", env: env(), timeoutMs: 120_000 },
+  );
+  expect(selfUpdateDryRun.exitCode, resultText(selfUpdateDryRun)).toBe(0);
+
+  const uninstall = await sandbox.exec(
+    SANDBOX_NAME,
+    ["/usr/local/bin/openclaw", "plugins", "uninstall", "weather", "--force"],
+    { artifactName: "phase-4-native-plugin-uninstall", env: env(), timeoutMs: 120_000 },
+  );
+  expect(uninstall.exitCode, resultText(uninstall)).toBe(0);
+  const absent = await sandbox.exec(
+    SANDBOX_NAME,
+    ["/usr/local/bin/openclaw", "plugins", "inspect", "weather", "--json"],
+    { artifactName: "phase-4-native-plugin-absent", env: env(), timeoutMs: 30_000 },
+  );
+  expect(`exit=${absent.exitCode}\n${resultText(absent)}`).toMatch(
+    /^exit=1\n[\s\S]*(?:weather.*(?:not found|unknown)|(?:not found|unknown).*weather)/iu,
+  );
+}
+
+async function inspectNativeNetwork(sandbox: SandboxClient, artifactName: string) {
+  return sandbox.exec(
+    SANDBOX_NAME,
+    [
+      "/usr/bin/env",
+      "-u",
+      "NODE_OPTIONS",
+      "-u",
+      "NODE_PATH",
+      "/usr/local/bin/node",
+      "-e",
+      `
+const fs = require("node:fs");
+console.log(JSON.stringify({
+  interfaces: require("node:os").networkInterfaces(),
+  nodeOptions: process.env.NODE_OPTIONS ?? null,
+  nodePath: process.env.NODE_PATH ?? null,
+  guardPresent: [
+    "/usr/local/lib/nemoclaw/preloads/ciao-network-guard.js",
+    "/tmp/nemoclaw-ciao-network-guard.js",
+  ].some(file => fs.lstatSync(file, { throwIfNoEntry: false })),
+  guardRequired: fs.readFileSync("/tmp/nemoclaw-proxy-env.sh", "utf8").includes("ciao-network-guard"),
+  interfaceError: fs.readFileSync("/tmp/gateway.log", "utf8").includes("uv_interface_addresses"),
+}));`,
+    ],
+    { artifactName, env: env(), timeoutMs: 30_000 },
+  );
+}
+
+async function runOpenClawLaunchTurns(input: {
   host: HostCliClient;
   redactionValues: string[];
   sandbox: SandboxClient;
 }): Promise<void> {
-  const stopGateway = await input.sandbox.execShell(
+  // OpenClaw 2026.9.1 requires exclusive gateway-lifecycle ownership for
+  // doctor repairs. The rebuild qualification lane owns that offline
+  // maintenance boundary; this security lane retains the live lint evidence
+  // above and limits its running-gateway mutation to config set/validate.
+  const prepareLaunch = await input.sandbox.execShell(
     SANDBOX_NAME,
     trustedSandboxShellScript(`set -eu
 /usr/local/bin/openclaw completion --shell bash --write-state --install --yes
 for f in /sandbox/.bashrc /sandbox/.profile; do
   printf '%s\\n' 'export NEMOCLAW_E2E_PERSONAL_PROFILE=loaded' '[ "$(id -u)" -ne 0 ] || touch /tmp/nemoclaw-e2e-root-profile-loaded' >> "$f"
 done
-sha256sum /sandbox/.bashrc /sandbox/.profile > /tmp/nemoclaw-e2e-profiles.sha256
-${GATEWAY_STOP_SCRIPT}`),
+${
+  securityPostureEnabled()
+    ? "bash -lc '/usr/local/bin/openclaw config set agents.defaults.timeoutSeconds 119 && openclaw config validate'"
+    : ""
+}
+sha256sum /sandbox/.bashrc /sandbox/.profile > /tmp/nemoclaw-e2e-profiles.sha256`),
     {
-      artifactName: "phase-4-stop-openclaw-gateway-before-launch",
+      artifactName: "phase-4-prepare-launch",
       env: env(),
       redactionValues: input.redactionValues,
       timeoutMs: 120_000,
     },
   );
-  expect(stopGateway.exitCode, resultText(stopGateway)).toBe(0);
-  await sleep(3_000);
-
-  const recovery = await repoNemoclaw(
-    input.host,
-    [SANDBOX_NAME, "status"],
-    "phase-4-status-recover-before-launch",
-    {},
-    120_000,
-  );
-  expect(recovery.exitCode, resultText(recovery)).toBe(0);
+  const afterNativeFix = securityPostureEnabled()
+    ? await readNativeStateDoctor(input.sandbox, "phase-4-native-state-after-fix")
+    : null;
+  expect(
+    !prepareLaunch.timedOut &&
+      prepareLaunch.exitCode === 0 &&
+      (!afterNativeFix || nativeStateDoctorReportIsValid(afterNativeFix)),
+    [prepareLaunch, afterNativeFix]
+      .filter((result) => result !== null)
+      .map(resultText)
+      .join("\n"),
+  ).toBe(true);
+  const configEdit = securityPostureEnabled()
+    ? await repoNemoclaw(
+        input.host,
+        [
+          SANDBOX_NAME,
+          "config",
+          "set",
+          "--key",
+          "agents.defaults.timeoutSeconds",
+          "--value",
+          "120",
+          "--restart",
+        ],
+        "phase-4-host-config-edit-private-state",
+      )
+    : null;
+  expect(
+    !configEdit || (!configEdit.timedOut && configEdit.exitCode === 0),
+    configEdit ? resultText(configEdit) : "launch preparation passed",
+  ).toBe(true);
 
   await runOpenClawLaunchReadinessLeaseTurns({
     artifactName: "phase-4-openclaw-launch-turn",
@@ -169,11 +410,15 @@ ${GATEWAY_STOP_SCRIPT}`),
     sandboxName: SANDBOX_NAME,
   });
 
+  const nativeNetwork = await inspectNativeNetwork(
+    input.sandbox,
+    "phase-4-native-network-after-launch",
+  );
+  const network = nativeNetwork.exitCode === 0 ? JSON.parse(nativeNetwork.stdout) : null;
   const permissions = await input.sandbox.execShell(
     SANDBOX_NAME,
     trustedSandboxShellScript(
-      "test \"$(stat -c '%a %U:%G' /sandbox/.openclaw)\" = '2770 sandbox:sandbox' && " +
-        "test \"$(stat -c '%a %U:%G' /sandbox/.openclaw/openclaw.json)\" = '660 sandbox:sandbox' && " +
+      "test -w /sandbox/.openclaw && test -w /sandbox/.openclaw/openclaw.json && " +
         "/usr/bin/env -u NEMOCLAW_E2E_PERSONAL_PROFILE bash -lc 'test \"$NEMOCLAW_E2E_PERSONAL_PROFILE\" = loaded' && " +
         "/usr/bin/env -u NEMOCLAW_E2E_PERSONAL_PROFILE bash -ic 'test \"$NEMOCLAW_E2E_PERSONAL_PROFILE\" = loaded' && " +
         "/usr/bin/sha256sum -c /tmp/nemoclaw-e2e-profiles.sha256 && " +
@@ -186,27 +431,66 @@ ${GATEWAY_STOP_SCRIPT}`),
       timeoutMs: 30_000,
     },
   );
-  expect(permissions.exitCode, resultText(permissions)).toBe(0);
+  const afterLaunch = securityPostureEnabled()
+    ? await readNativeStateDoctor(input.sandbox, "phase-4-native-state-after-launch")
+    : null;
+  expect(
+    !permissions.timedOut &&
+      permissions.exitCode === 0 &&
+      nativeNetwork.exitCode === 0 &&
+      !nativeNetwork.timedOut &&
+      network.nodeOptions === null &&
+      network.nodePath === null &&
+      !network.guardPresent &&
+      !network.guardRequired &&
+      !network.interfaceError &&
+      Object.values(network.interfaces)
+        .flat()
+        .some((entry) => (entry as os.NetworkInterfaceInfo).internal) &&
+      (!afterLaunch || nativeStateDoctorReportIsValid(afterLaunch)),
+    [permissions, nativeNetwork, afterLaunch]
+      .filter((result) => result !== null)
+      .map(resultText)
+      .join("\n"),
+  ).toBe(true);
 }
 
-async function cleanup(host: HostCliClient, sandbox: SandboxClient): Promise<void> {
-  await repoNemoclaw(host, [SANDBOX_NAME, "destroy", "--yes"], "cleanup-nemoclaw-destroy").catch(
-    () => undefined,
+function cleanupRegisteredSandbox(cleanup: () => Promise<void>): Promise<void> {
+  // Check when cleanup runs: CLI recovery for a missing source-install entry
+  // can start a default gateway, including after a failed install or teardown.
+  return cleanupAcquiredResource(
+    USE_PREINSTALLED_LAUNCHABLE || getSandbox(SANDBOX_NAME) !== null,
+    cleanup,
   );
+}
+
+async function preCleanup(host: HostCliClient, sandbox: SandboxClient): Promise<void> {
+  await cleanupRegisteredSandbox(async () => {
+    await repoNemoclaw(
+      host,
+      [SANDBOX_NAME, "destroy", "--yes"],
+      "pre-cleanup-nemoclaw-destroy",
+    ).catch(() => undefined);
+  });
   await sandbox
     .openshell(["sandbox", "delete", SANDBOX_NAME], {
-      artifactName: "cleanup-openshell-sandbox-delete",
+      artifactName: "pre-cleanup-openshell-sandbox-delete",
       env: env(),
       timeoutMs: 60_000,
     })
     .catch(() => undefined);
-  await sandbox
-    .openshell(["gateway", "destroy", "-g", "nemoclaw"], {
-      artifactName: "cleanup-openshell-gateway-destroy",
-      env: env(),
-      timeoutMs: 60_000,
-    })
-    .catch(() => undefined);
+  await withOwnedFullE2eGateway(gateway, () =>
+    cleanupWhenOpenShellAvailable(
+      host,
+      { artifactName: "pre-cleanup-openshell-available", env: env(), timeoutMs: 15_000 },
+      () =>
+        host.cleanupGatewayRegistration(gateway.env.OPENSHELL_GATEWAY, {
+          artifactName: "pre-cleanup-openshell-gateway-destroy",
+          env: env(),
+          timeoutMs: 60_000,
+        }),
+    ),
+  );
 }
 
 function readAndDeleteTraceWindow(traceFile: string, traceDirectory: string): OnboardTraceWindow {
@@ -365,16 +649,16 @@ async function assertColdOnboardPerformance(input: {
     responseChars,
   });
 
-  expect(plain, "expected literal wizard step [1/8] in installer output").toContain("[1/8]");
-  expect(buildKitFallback, "expected no fallback from BuildKit to the gateway builder").toBe(false);
-  expect(classicBuildSteps, "expected no classic per-instruction build steps").toBe(0);
+  expect(
+    plain.includes("[1/8]") && !buildKitFallback && classicBuildSteps === 0,
+    "expected wizard progress without BuildKit fallback or classic build steps",
+  ).toBe(true);
   expect(
     maxSilenceSecs,
     `longest silent gap ${maxSilenceSecs}s exceeds the ${MAX_SILENCE_SECS}s guarantee`,
   ).toBeLessThanOrEqual(MAX_SILENCE_SECS);
-  expect(turn.exitCode, turnText).toBe(0);
   expect(
-    firstTurnSentinelMatched,
+    turn.exitCode === 0 && firstTurnSentinelMatched,
     `expected the sentinel first agent reply, got: ${turnText}`,
   ).toBe(true);
   for (const anomaly of performanceEvaluation.anomalies) {
@@ -392,268 +676,361 @@ async function assertColdOnboardPerformance(input: {
   ).toBe(true);
 }
 
-test("full e2e: install, onboard, inference, cli operations, and cleanup", {
-  timeout: LIVE_TIMEOUT_MS,
-  meta: {
-    e2ePhases: [
-      "check full E2E prerequisites",
-      "install and onboard OpenClaw sandbox",
-      "validate CLI sandbox and policy state",
-      "exercise hosted, sandbox, and post-recovery launch inference",
-      "inspect runtime logs and security posture",
-      "remove full-E2E sandbox",
-    ],
+test(
+  "full e2e: install, onboard, inference, cli operations, and cleanup",
+  {
+    timeout: LIVE_TIMEOUT_MS,
+    meta: {
+      e2ePhases: [
+        "check full E2E prerequisites",
+        "install and onboard OpenClaw sandbox",
+        "validate CLI sandbox and policy state",
+        "exercise hosted, sandbox, and launch inference",
+        "scan sandbox state for credentials",
+        "exercise native plugin package and update lifecycle",
+        "inspect runtime logs and security posture",
+        "remove full-E2E sandbox",
+      ],
+    },
   },
-}, async ({ artifacts, cleanup: cleanupRegistry, host, lifecycle, progress, sandbox, secrets, skip }) => {
-  const hosted = requireHostedInferenceConfig(secrets);
-  const portableHostedDescriptor =
-    PORTABLE_PROFILE && !USE_PREINSTALLED_LAUNCHABLE
-      ? stagePortableHostedInferenceDescriptor(hosted)
-      : null;
-  portableHostedDescriptor &&
-    cleanupRegistry.trackDisposable(
-      "remove unconsumed Portable hosted inference descriptor",
-      portableHostedDescriptor.dispose,
-    );
-  const coldOnboardBudget = USE_PREINSTALLED_LAUNCHABLE ? null : readFullE2eColdPathBudget();
-  const redactionValues = [hosted.apiKey];
-  await artifacts.target.declare({
-    id: FULL_E2E_TARGET_ID,
-    sandboxName: SANDBOX_NAME,
-    endpointUrl: hosted.endpointUrl,
-    model: hosted.model,
-    contracts: [
-      USE_PREINSTALLED_LAUNCHABLE
-        ? "the baked Launchable completes onboarding without installing from source"
-        : "install.sh --non-interactive completes onboarding",
-      "cold onboarding stays within the checked-in full-E2E performance budgets",
-      "nemoclaw and openshell are installed and usable",
-      "sandbox appears in list/status and has policy/inference configuration",
-      "direct hosted inference and sandbox inference.local both respond",
-      ...(process.platform === "linux"
-        ? [
-            "each of two PTY launches records two ordered structured turns and restores the mutable config permission contract",
-          ]
-        : []),
-      "nemoclaw logs produces output and cleanup removes registry state",
-      ...(securityPostureEnabled()
-        ? [
-            "non-root host, editable personal profiles, protected proxy files, configure guard, and clean startup log",
-          ]
-        : []),
-    ],
-  });
-
-  await ensureConfiguredRuntimeProviderAvailable({
-    artifactName: "phase-0-runtime-provider-info",
+  async ({
+    artifacts,
+    cleanup: cleanupRegistry,
     host,
-    scenarioLabel: FULL_E2E_TARGET_ID,
+    lifecycle,
+    progress,
+    sandbox,
+    secrets,
     skip,
-  });
-
-  !USE_PREINSTALLED_LAUNCHABLE && lifecycle.trackInstallerGatewayUserService();
-  cleanupRegistry.trackGateway(host, "nemoclaw", {
-    artifactName: "cleanup-openshell-gateway-destroy",
-    env: env(),
-    redactionValues: [hosted.apiKey],
-    timeoutMs: 60_000,
-  });
-  cleanupRegistry.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
-    sandbox.cleanupSandbox(SANDBOX_NAME, {
-      artifactName: "cleanup-openshell-sandbox-delete",
-      env: env(),
-      redactionValues: [hosted.apiKey],
-      timeoutMs: 60_000,
-    }),
-  );
-  cleanupRegistry.trackSandbox(host, SANDBOX_NAME, {
-    artifactName: "cleanup-nemoclaw-destroy",
-    env: env(),
-    redactionValues: [hosted.apiKey],
-    timeoutMs: 120_000,
-  });
-  await cleanup(host, sandbox);
-  await bindApprovedPrBaseForBaseImageComparison(host, MEASURE_COLD_ONBOARD);
-
-  const coldOnboard = createColdOnboardCapture();
-  coldOnboard &&
-    cleanupRegistry.trackDisposable("remove raw full-e2e trace", async () => {
-      fs.rmSync(coldOnboard.traceDirectory, { recursive: true, force: true });
+  }) => {
+    gateway = fullE2eGateway(USE_PREINSTALLED_LAUNCHABLE);
+    const hosted = requireHostedInferenceConfig(
+      secrets,
+      process.env,
+      USE_PREINSTALLED_LAUNCHABLE ? { provider: "build" } : {},
+    );
+    const portableHostedDescriptor =
+      PORTABLE_PROFILE && !USE_PREINSTALLED_LAUNCHABLE
+        ? stagePortableHostedInferenceDescriptor(hosted)
+        : null;
+    portableHostedDescriptor &&
+      cleanupRegistry.trackDisposable(
+        "remove unconsumed Portable hosted inference descriptor",
+        portableHostedDescriptor.dispose,
+      );
+    const coldOnboardBudget = USE_PREINSTALLED_LAUNCHABLE ? null : readFullE2eColdPathBudget();
+    const redactionValues = [hosted.apiKey];
+    await artifacts.target.declare({
+      id: FULL_E2E_TARGET_ID,
+      sandboxName: SANDBOX_NAME,
+      endpointUrl: hosted.endpointUrl,
+      model: hosted.model,
+      contracts: [
+        USE_PREINSTALLED_LAUNCHABLE
+          ? "the baked Launchable completes onboarding without installing from source"
+          : "install.sh --non-interactive completes onboarding",
+        ...(MEASURE_COLD_ONBOARD
+          ? ["cold onboarding stays within the checked-in full-E2E performance budgets"]
+          : []),
+        "nemoclaw and openshell are installed and usable",
+        "sandbox appears in list/status and has policy/inference configuration",
+        "native OpenClaw install, invoke, update, self-update, restart, discovery, and removal are not intercepted",
+        "direct hosted inference and sandbox inference.local both respond",
+        "sandbox state contains neither auth-profiles.json nor secret-shaped credential values",
+        ...(process.platform === "linux"
+          ? [
+              "each of two PTY launches records two ordered structured turns and restores the mutable config permission contract",
+            ]
+          : []),
+        "nemoclaw logs produces output and cleanup removes registry state",
+        ...(securityPostureEnabled()
+          ? [
+              "non-root host, native private state through doctor/fix/config edit, editable profiles, protected proxy files, and clean startup log",
+            ]
+          : []),
+      ],
     });
 
-  progress.phase("install and onboard OpenClaw sandbox");
-  const install = USE_PREINSTALLED_LAUNCHABLE
-    ? await host.command("brev-quickstart", [SANDBOX_NAME], {
-        artifactName: "phase-1-brev-launchable-quickstart",
-        env: env({
-          ...hosted.env,
-          NEMOCLAW_AGENT: "openclaw",
-        }),
-        redactionValues,
-        timeoutMs: INSTALL_TIMEOUT_MS,
-      })
-    : await host.command("bash", ["install.sh", "--non-interactive", "--fresh"], {
-        artifactName: "phase-1-install-sh",
-        cwd: REPO_ROOT,
-        env: env({
-          ...hosted.env,
-          NVIDIA_INFERENCE_API_KEY: hosted.apiKey,
-          ...(coldOnboard ? { NEMOCLAW_TRACE_FILE: coldOnboard.traceFile } : {}),
-        }),
-        ...(coldOnboard
-          ? { onOutput: (event: ShellProbeOutputEvent) => coldOnboard.outputEvents.push(event) }
-          : {}),
-        redactionValues,
-        timeoutMs: INSTALL_TIMEOUT_MS,
-      });
-  const installCompletedAtMs = Date.now();
-  expect(install.exitCode, resultText(install)).toBe(0);
-  await host.resolveOpenShellCommandPath({
-    artifactName: "phase-2-resolve-openshell-command",
-    env: env(),
-    redactionValues,
-    timeoutMs: 60_000,
-  });
-  await (coldOnboard
-    ? assertColdOnboardPerformance({
-        apiKey: hosted.apiKey,
-        artifacts,
-        budget: coldOnboardBudget!,
-        install,
-        installCompletedAtMs,
-        model: hosted.model,
-        outputEvents: coldOnboard.outputEvents,
-        providerName: hosted.providerName,
-        sandbox,
-        traceDirectory: coldOnboard.traceDirectory,
-        traceFile: coldOnboard.traceFile,
-      })
-    : Promise.resolve());
+    await ensureConfiguredRuntimeProviderAvailable({
+      artifactName: "phase-0-runtime-provider-info",
+      host,
+      scenarioLabel: FULL_E2E_TARGET_ID,
+      skip,
+    });
 
-  progress.phase("validate CLI sandbox and policy state");
-  const nativeDoctor = await sandbox.exec(
-    SANDBOX_NAME,
-    ["/usr/local/bin/openclaw", "doctor", "--lint", "--json"],
-    { artifactName: "phase-2-first-native-openclaw-doctor", env: env(), timeoutMs: 180_000 },
-  );
-  const doctorReports = parseOpenClawJsonDocuments(nativeDoctor.stdout);
-  const doctorReport = doctorReports[0] as Record<string, unknown> | undefined;
-  // Exit 1 is a completed diagnostic with findings, including the state modes
-  // tracked separately in #11257. Preserve those findings in the raw artifact.
-  expect(
-    doctorReports.length === 1 &&
-      (nativeDoctor.exitCode === 0 || nativeDoctor.exitCode === 1) &&
-      doctorReport?.ok === (nativeDoctor.exitCode === 0) &&
-      Number.isInteger(doctorReport?.checksRun) &&
-      Number(doctorReport?.checksRun) > 0 &&
-      Array.isArray(doctorReport?.findings),
-    resultText(nativeDoctor),
-  ).toBe(true);
-  const pathProbe = await host.command(
-    "bash",
-    [
-      "-lc",
-      'export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"; command -v nemoclaw; command -v openshell; nemoclaw --help >/dev/null',
-    ],
-    { artifactName: "phase-2-path-probe", env: env(), timeoutMs: 60_000 },
-  );
-  expect(pathProbe.exitCode, resultText(pathProbe)).toBe(0);
-  expect(pathProbe.stdout).toContain("openshell");
-
-  const list = await repoNemoclaw(host, ["list"], "phase-3-nemoclaw-list");
-  expect(list.exitCode, resultText(list)).toBe(0);
-  expect(list.stdout).toContain(SANDBOX_NAME);
-  const status = await waitForSandboxStatus(host);
-  expect(status.exitCode, resultText(status)).toBe(0);
-
-  const inference = await sandbox.openshell(["inference", "get"], {
-    artifactName: "phase-3-openshell-inference-get",
-    env: env(),
-    timeoutMs: 60_000,
-  });
-  expect(inference.exitCode, resultText(inference)).toBe(0);
-  expect(resultText(inference)).toContain(hosted.model);
-
-  const policy = await sandbox.openshell(["policy", "get", "--full", SANDBOX_NAME], {
-    artifactName: "phase-3-openshell-policy-get",
-    env: env(),
-    timeoutMs: 60_000,
-  });
-  expect(policy.exitCode, resultText(policy)).toBe(0);
-  expect(resultText(policy)).toMatch(/network_policies|egress/i);
-
-  progress.phase("exercise hosted, sandbox, and post-recovery launch inference");
-  const directProbe = buildHostedInferenceModelsProbe(hosted.apiKey, hosted.endpointUrl);
-  const direct = await host.command(directProbe.command, directProbe.args, {
-    artifactName: "phase-4-direct-hosted-inference-models",
-    env: env(directProbe.env),
-    redactionValues,
-    timeoutMs: 90_000,
-  });
-  expect(direct.exitCode, resultText(direct)).toBe(0);
-  expect(resultText(direct)).toContain("data");
-
-  const sandboxInference = await runFullE2eInferenceProbe(hosted.model, async (attempt) =>
-    sandbox.exec(
-      SANDBOX_NAME,
-      [
-        "curl",
-        "-fsS",
-        "--max-time",
-        "90",
-        "https://inference.local/v1/chat/completions",
-        "-H",
-        "Content-Type: application/json",
-        "--data-raw",
-        attempt.requestBody,
-      ],
-      {
-        artifactName: attempt.artifactName,
-        captureLimitBytes: FULL_E2E_INFERENCE_CAPTURE_LIMIT_BYTES,
+    !USE_PREINSTALLED_LAUNCHABLE && lifecycle.trackInstallerGatewayUserService();
+    await withOwnedFullE2eGateway(gateway, () =>
+      cleanupRegistry.trackGateway(host, gateway.env.OPENSHELL_GATEWAY, {
+        artifactName: "cleanup-openshell-gateway-destroy",
         env: env(),
-        redactionValues,
+        redactionValues: [hosted.apiKey],
+        timeoutMs: 60_000,
+      }),
+    );
+    cleanupRegistry.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
+      sandbox.cleanupSandbox(SANDBOX_NAME, {
+        artifactName: "cleanup-openshell-sandbox-delete",
+        env: env(),
+        redactionValues: [hosted.apiKey],
+        timeoutMs: 60_000,
+      }),
+    );
+    cleanupRegistry.trackDisposable(`destroy sandbox ${SANDBOX_NAME}`, () =>
+      cleanupRegisteredSandbox(() =>
+        host.cleanupSandbox(SANDBOX_NAME, {
+          artifactName: "cleanup-nemoclaw-destroy",
+          env: env(),
+          redactionValues: [hosted.apiKey],
+          timeoutMs: 120_000,
+        }),
+      ),
+    );
+    await preCleanup(host, sandbox);
+    await bindApprovedPrBaseForBaseImageComparison(host, MEASURE_COLD_ONBOARD);
+
+    const coldOnboard = createColdOnboardCapture();
+    coldOnboard &&
+      cleanupRegistry.trackDisposable("remove raw full-e2e trace", async () => {
+        fs.rmSync(coldOnboard.traceDirectory, { recursive: true, force: true });
+      });
+
+    progress.phase("install and onboard OpenClaw sandbox");
+    const install = USE_PREINSTALLED_LAUNCHABLE
+      ? await host.command("brev-quickstart", [SANDBOX_NAME], {
+          artifactName: "phase-1-brev-launchable-quickstart",
+          env: env({
+            ...hosted.env,
+            NEMOCLAW_AGENT: "openclaw",
+          }),
+          redactionValues,
+          timeoutMs: INSTALL_TIMEOUT_MS,
+        })
+      : await host.command("bash", ["install.sh", "--non-interactive", "--fresh"], {
+          artifactName: "phase-1-install-sh",
+          cwd: REPO_ROOT,
+          env: env({
+            ...hosted.env,
+            NVIDIA_INFERENCE_API_KEY: hosted.apiKey,
+            ...(coldOnboard ? { NEMOCLAW_TRACE_FILE: coldOnboard.traceFile } : {}),
+          }),
+          ...(coldOnboard
+            ? { onOutput: (event: ShellProbeOutputEvent) => coldOnboard.outputEvents.push(event) }
+            : {}),
+          redactionValues,
+          timeoutMs: INSTALL_TIMEOUT_MS,
+        });
+    const installCompletedAtMs = Date.now();
+    expect(install.exitCode, resultText(install)).toBe(0);
+    await host.resolveOpenShellCommandPath({
+      artifactName: "phase-2-resolve-openshell-command",
+      env: env(),
+      redactionValues,
+      timeoutMs: 60_000,
+    });
+    await (coldOnboard
+      ? assertColdOnboardPerformance({
+          apiKey: hosted.apiKey,
+          artifacts,
+          budget: coldOnboardBudget!,
+          install,
+          installCompletedAtMs,
+          model: hosted.model,
+          outputEvents: coldOnboard.outputEvents,
+          providerName: hosted.providerName,
+          sandbox,
+          traceDirectory: coldOnboard.traceDirectory,
+          traceFile: coldOnboard.traceFile,
+        })
+      : Promise.resolve());
+
+    progress.phase("validate CLI sandbox and policy state");
+    const nativeNetwork = await inspectNativeNetwork(sandbox, "phase-2-first-native-network");
+    const network = nativeNetwork.exitCode === 0 ? JSON.parse(nativeNetwork.stdout) : null;
+    const nativeDoctor = await sandbox.exec(
+      SANDBOX_NAME,
+      ["/usr/local/bin/openclaw", "doctor", "--lint", "--json"],
+      { artifactName: "phase-2-first-native-openclaw-doctor", env: env(), timeoutMs: 180_000 },
+    );
+    // State-integrity is opt-in upstream; run it before repair and retain all findings.
+    const nativeStateDoctor = securityPostureEnabled()
+      ? await readNativeStateDoctor(sandbox, "phase-2-first-native-state-doctor")
+      : null;
+    const identities = securityPostureEnabled()
+      ? await sandbox.exec(SANDBOX_NAME, ["/usr/bin/ps", "-eo", "euid,egid,pid,ppid,comm"], {
+          artifactName: "phase-2-native-state-identities",
+          env: env(),
+          timeoutMs: 30_000,
+        })
+      : null;
+    const doctorReports = parseOpenClawJsonDocuments(nativeDoctor.stdout);
+    const doctorReport = doctorReports[0] as Record<string, unknown> | undefined;
+    expect(
+      nativeNetwork.exitCode === 0 &&
+        !nativeNetwork.timedOut &&
+        network.nodeOptions === null &&
+        network.nodePath === null &&
+        !network.guardPresent &&
+        !network.guardRequired &&
+        !network.interfaceError &&
+        Object.values(network.interfaces)
+          .flat()
+          .some((entry) => (entry as os.NetworkInterfaceInfo).internal) &&
+        doctorReports.length === 1 &&
+        !nativeDoctor.timedOut &&
+        (nativeDoctor.exitCode === 0 || nativeDoctor.exitCode === 1) &&
+        doctorReport?.ok === (nativeDoctor.exitCode === 0) &&
+        Number.isInteger(doctorReport?.checksRun) &&
+        Number(doctorReport?.checksRun) > 0 &&
+        Array.isArray(doctorReport?.findings) &&
+        (!nativeStateDoctor || nativeStateDoctorReportIsValid(nativeStateDoctor)) &&
+        (!identities || nativeStateProcessIdentitiesAreValid(identities)),
+      [nativeNetwork, nativeDoctor, nativeStateDoctor, identities]
+        .filter((result) => result !== null)
+        .map(resultText)
+        .join("\n"),
+    ).toBe(true);
+    const pathProbe = await host.command(
+      "bash",
+      [
+        "-lc",
+        'export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"; command -v nemoclaw; command -v openshell; nemoclaw --help >/dev/null',
+      ],
+      { artifactName: "phase-2-path-probe", env: env(), timeoutMs: 60_000 },
+    );
+    expect(
+      pathProbe.exitCode === 0 && pathProbe.stdout.includes("openshell"),
+      resultText(pathProbe),
+    ).toBe(true);
+
+    const list = await repoNemoclaw(host, ["list"], "phase-3-nemoclaw-list");
+    expect(list.exitCode === 0 && list.stdout.includes(SANDBOX_NAME), resultText(list)).toBe(true);
+    const status = await waitForSandboxStatus(host);
+    expect(status.exitCode, resultText(status)).toBe(0);
+
+    const inference = await sandbox.openshell(["inference", "get"], {
+      artifactName: "phase-3-openshell-inference-get",
+      env: env(),
+      timeoutMs: 60_000,
+    });
+    expect(
+      inference.exitCode === 0 && resultText(inference).includes(hosted.model),
+      resultText(inference),
+    ).toBe(true);
+
+    const policy = await sandbox.openshell(["policy", "get", "--full", SANDBOX_NAME], {
+      artifactName: "phase-3-openshell-policy-get",
+      env: env(),
+      timeoutMs: 60_000,
+    });
+    expect(
+      policy.exitCode === 0 && /network_policies|egress/iu.test(resultText(policy)),
+      resultText(policy),
+    ).toBe(true);
+
+    progress.phase("exercise hosted, sandbox, and launch inference");
+    const directProbe = buildHostedInferenceModelsProbe(hosted.apiKey, hosted.endpointUrl);
+    const direct = await host.command(directProbe.command, directProbe.args, {
+      artifactName: "phase-4-direct-hosted-inference-models",
+      env: env(directProbe.env),
+      redactionValues,
+      timeoutMs: 90_000,
+    });
+    expect(direct.exitCode === 0 && resultText(direct).includes("data"), resultText(direct)).toBe(
+      true,
+    );
+
+    const sandboxInference = await runFullE2eInferenceProbe(hosted.model, async (attempt) =>
+      sandbox.exec(
+        SANDBOX_NAME,
+        [
+          "curl",
+          "-fsS",
+          "--max-time",
+          "90",
+          "https://inference.local/v1/chat/completions",
+          "-H",
+          "Content-Type: application/json",
+          "--data-raw",
+          attempt.requestBody,
+        ],
+        {
+          artifactName: attempt.artifactName,
+          captureLimitBytes: FULL_E2E_INFERENCE_CAPTURE_LIMIT_BYTES,
+          env: env(),
+          redactionValues,
+          timeoutMs: 120_000,
+        },
+      ),
+    );
+    const sandboxInferenceEvidence = fullE2eInferenceProbeEvidence(sandboxInference);
+    await artifacts.writeJson(
+      "phase-4-sandbox-inference-local-attempts.json",
+      sandboxInferenceEvidence,
+    );
+    const finalInferenceAttempt = sandboxInference.attempts.at(-1)!;
+    const sandboxInferenceDiagnostic = `${resultText(finalInferenceAttempt.result)}\n${JSON.stringify(sandboxInferenceEvidence, null, 2)}`;
+    expect(
+      finalInferenceAttempt.result.exitCode === 0 && sandboxInference.outcome === "passed",
+      sandboxInferenceDiagnostic,
+    ).toBe(true);
+
+    progress.phase("scan sandbox state for credentials");
+    const credentialBoundary = await sandbox.execShell(
+      SANDBOX_NAME,
+      trustedSandboxShellScript(
+        [
+          "find /sandbox -name auth-profiles.json -not -path '*/node_modules/*' -not -path '*/dist/*' -print",
+          buildSandboxCredentialScanCommand(),
+        ].join("\n"),
+      ),
+      {
+        artifactName: "phase-4-sandbox-credential-boundary",
+        env: env(),
+        redactionValues: [hosted.apiKey],
         timeoutMs: 120_000,
       },
-    ),
-  );
-  const sandboxInferenceEvidence = fullE2eInferenceProbeEvidence(sandboxInference);
-  await artifacts.writeJson(
-    "phase-4-sandbox-inference-local-attempts.json",
-    sandboxInferenceEvidence,
-  );
-  const finalInferenceAttempt = sandboxInference.attempts.at(-1)!;
-  const sandboxInferenceDiagnostic = `${resultText(finalInferenceAttempt.result)}\n${JSON.stringify(sandboxInferenceEvidence, null, 2)}`;
-  expect(finalInferenceAttempt.result.exitCode, sandboxInferenceDiagnostic).toBe(0);
-  expect(sandboxInference.outcome, sandboxInferenceDiagnostic).toBe("passed");
+    );
+    expect(
+      credentialBoundary.exitCode === 0 && credentialBoundary.stdout.trim() === "",
+      `sandbox state must contain neither auth-profiles.json nor secret-shaped credentials\n${resultText(credentialBoundary)}`,
+    ).toBe(true);
 
-  await (process.platform === "linux"
-    ? runOpenClawLaunchTurnAfterRecovery({ host, redactionValues, sandbox })
-    : Promise.resolve());
+    await (process.platform === "linux"
+      ? runOpenClawLaunchTurns({ host, redactionValues, sandbox })
+      : Promise.resolve());
 
-  progress.phase("inspect runtime logs and security posture");
-  const logs = await repoNemoclaw(
-    host,
-    [SANDBOX_NAME, "logs"],
-    "phase-5-nemoclaw-logs",
-    {},
-    90_000,
-  );
-  expect(logs.exitCode, resultText(logs)).toBe(0);
-  expect(resultText(logs).trim().length, resultText(logs)).toBeGreaterThan(0);
+    progress.phase("exercise native plugin package and update lifecycle");
+    await exerciseNativeOpenClawPluginLifecycle(host, sandbox);
 
-  const securityPosture = securityPostureEnabled()
-    ? await assertSecurityPosture(host, sandbox, SANDBOX_NAME, "openclaw")
-    : null;
+    progress.phase("inspect runtime logs and security posture");
+    const logs = await repoNemoclaw(
+      host,
+      [SANDBOX_NAME, "logs"],
+      "phase-5-nemoclaw-logs",
+      {},
+      90_000,
+    );
+    expect(logs.exitCode === 0 && resultText(logs).trim().length > 0, resultText(logs)).toBe(true);
 
-  progress.phase("remove full-E2E sandbox");
-  await cleanup(host, sandbox);
-  const registry = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
-  const registryText = fs.existsSync(registry) ? fs.readFileSync(registry, "utf8") : "";
-  expect(registryText).not.toContain(SANDBOX_NAME);
+    const securityPosture = securityPostureEnabled()
+      ? await assertSecurityPosture(host, sandbox, SANDBOX_NAME, "openclaw")
+      : null;
 
-  await artifacts.target.complete({
-    id: FULL_E2E_TARGET_ID,
-    securityPosture,
-    status: "passed",
-  });
-});
+    progress.phase("remove full-E2E sandbox");
+    await host.cleanupSandbox(SANDBOX_NAME, {
+      artifactName: "verify-cleanup-nemoclaw-destroy",
+      env: env(),
+      redactionValues,
+      timeoutMs: 120_000,
+    });
+    const registry = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
+    const registryText = fs.existsSync(registry) ? fs.readFileSync(registry, "utf8") : "";
+    expect(registryText).not.toContain(SANDBOX_NAME);
+
+    await artifacts.target.complete({
+      id: FULL_E2E_TARGET_ID,
+      securityPosture,
+      status: "passed",
+    });
+  },
+);

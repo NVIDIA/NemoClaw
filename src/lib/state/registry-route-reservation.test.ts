@@ -984,9 +984,9 @@ describe("sandbox inference route reservation", () => {
       expect(registry.isCurrentSandboxInferenceRouteReservation(admittedCheckpoint, rotated)).toBe(
         false,
       );
-      expect(() =>
-        registry.requireCurrentPendingSandboxCreateIdentity(create, initial),
-      ).toThrow(/verified checkpoint changed/u);
+      expect(() => registry.requireCurrentPendingSandboxCreateIdentity(create, initial)).toThrow(
+        /verified checkpoint changed/u,
+      );
       expect(
         registry.recordPendingSandboxCreateIdentity(create, replacement, {
           expected: initial,

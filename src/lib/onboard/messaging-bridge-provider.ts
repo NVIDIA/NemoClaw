@@ -47,7 +47,6 @@ type RunOpenshell = (
   // The runner accepts a wider options shape; we only set ignoreError + stdio
   // here, so erase the type at the boundary to keep this module free of the
   // runner.ts internals.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   opts: any,
 ) => { status: number | null; stderr?: string | Buffer | null; stdout?: string | Buffer | null };
 

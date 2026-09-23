@@ -26,6 +26,7 @@ export interface AgentConfigPaths {
 
 interface AgentStateDirectoryBehavior {
   backup: boolean;
+  clearWhenAbsent: boolean;
 }
 
 export interface AgentStateDirectoryPath extends AgentStateDirectoryBehavior {
@@ -101,7 +102,7 @@ export interface AgentInference {
 }
 
 export type AgentMcpSupport = "bridge" | "disabled";
-export type AgentMcpAdapter = "mcporter" | "hermes-config" | "deepagents-config";
+export type AgentMcpAdapter = "openclaw-config" | "hermes-config" | "deepagents-config";
 
 export interface AgentMcpCapability {
   support: AgentMcpSupport;

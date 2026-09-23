@@ -274,7 +274,7 @@ describe("llama.cpp image PR workflow", () => {
       ),
     ).toBe(true);
     expect(namedStep(config, "Compile image manifest").run).toBe(
-      "node --experimental-strip-types --no-warnings scripts/checks/export-llama-cpp-image-config.mts",
+      "node --no-warnings scripts/checks/export-llama-cpp-image-config.mts",
     );
     expect(build.needs).toBe("config");
     expect(build["runs-on"]).toBe("${{ matrix.runner }}");
@@ -677,9 +677,14 @@ describe("llama.cpp image PR workflow", () => {
       .flatMap((job) => job.steps ?? [])
       .map((step) => step.uses)
       .filter((uses): uses is string => uses !== undefined);
-    actions.forEach((action) => {
-      expect(action).toMatch(fullShaAction);
-    });
+    expect(actions.filter((action) => action.startsWith("./"))).toEqual([
+      "./.github/actions/setup-reviewed-npm",
+    ]);
+    actions
+      .filter((action) => !action.startsWith("./"))
+      .forEach((action) => {
+        expect(action).toMatch(fullShaAction);
+      });
 
     expect(buildStep.with?.platforms).toBe("${{ matrix.platform }}");
     expect(buildStep.with?.provenance).toBe(false);

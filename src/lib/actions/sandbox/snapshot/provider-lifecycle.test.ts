@@ -315,40 +315,40 @@ describe("snapshot provider lifecycle", () => {
   it.each([
     { field: "lifecycle state", lifecycleState: "stopped", lifecycleGeneration: "generation-1" },
     { field: "lifecycle generation", lifecycleState: "running", lifecycleGeneration: "changed" },
-  ] as const)("rejects restore proof with changed $field", ({
-    lifecycleState,
-    lifecycleGeneration,
-  }) => {
-    const { bundle, restore } = provider();
-    const target = sandbox("target");
-    const prepared = prepareSandboxRuntimeRestore(
-      bundle,
-      target,
-      {
+  ] as const)(
+    "rejects restore proof with changed $field",
+    ({ lifecycleState, lifecycleGeneration }) => {
+      const { bundle, restore } = provider();
+      const target = sandbox("target");
+      const prepared = prepareSandboxRuntimeRestore(
+        bundle,
+        target,
+        {
+          schemaVersion: 1,
+          providerId: "mxc",
+          providerHandle: "opaque-source",
+          lifecycleState: "running",
+          lifecycleGeneration: "source-generation",
+          runtime: runtime(),
+        },
+        managedProfile,
+      );
+      restore.mockReturnValueOnce({
         schemaVersion: 1,
         providerId: "mxc",
-        providerHandle: "opaque-source",
-        lifecycleState: "running",
-        lifecycleGeneration: "source-generation",
+        sandboxName: "target",
+        providerHandle: "provider-owned-restore-handle",
+        lifecycleState,
+        lifecycleGeneration,
         runtime: runtime(),
-      },
-      managedProfile,
-    );
-    restore.mockReturnValueOnce({
-      schemaVersion: 1,
-      providerId: "mxc",
-      sandboxName: "target",
-      providerHandle: "provider-owned-restore-handle",
-      lifecycleState,
-      lifecycleGeneration,
-      runtime: runtime(),
-      managedProfile,
-    });
+        managedProfile,
+      });
 
-    expect(() => confirmSandboxRuntimeRestore(bundle, target, prepared)).toThrow(
-      /invalid managed restore proof/u,
-    );
-  });
+      expect(() => confirmSandboxRuntimeRestore(bundle, target, prepared)).toThrow(
+        /invalid managed restore proof/u,
+      );
+    },
+  );
 
   it("rejects restore proof that changes acceleration authority", () => {
     const { bundle } = provider();
@@ -372,6 +372,45 @@ describe("snapshot provider lifecycle", () => {
 
     expect(() => confirmSandboxRuntimeRestore(bundle, target, prepared)).toThrow(
       /invalid managed restore proof/u,
+    );
+  });
+
+  it("accepts a provider-verified canonical acceleration receipt for a legacy source", () => {
+    const legacyAcceleration = {
+      kind: "gpu" as const,
+      vendor: "nvidia",
+      devices: ["docker-device-id:nvidia.com/gpu=all"],
+    };
+    const canonicalAcceleration = {
+      kind: "gpu" as const,
+      vendor: "nvidia",
+      devices: ["nvidia.com/gpu=all"],
+    };
+    const canRepresentAcceleration = vi.fn((source: object, target: object) => {
+      expect(Object.isFrozen(source)).toBe(true);
+      expect(Object.isFrozen(target)).toBe(true);
+      return true;
+    });
+    const { bundle, restore } = provider();
+    Object.assign(bundle.snapshot, { canRepresentAcceleration });
+    const target = sandbox("target");
+    const source = {
+      ...captureSandboxRuntimeSnapshot(bundle, target),
+      runtime: { ...runtime(), acceleration: legacyAcceleration },
+    };
+    const prepared = prepareSandboxRuntimeRestore(bundle, target, source, managedProfile);
+    restore.mockReturnValueOnce({
+      ...prepared.preflight,
+      runtime: { ...runtime(), acceleration: canonicalAcceleration },
+      managedProfile,
+    });
+
+    expect(confirmSandboxRuntimeRestore(bundle, target, prepared)).toMatchObject({
+      restoreReceipt: { runtime: { acceleration: canonicalAcceleration } },
+    });
+    expect(canRepresentAcceleration).toHaveBeenCalledWith(
+      legacyAcceleration,
+      canonicalAcceleration,
     );
   });
 

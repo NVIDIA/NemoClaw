@@ -36,12 +36,14 @@ function snapshotDeps(
       // The live-route RPC lookup is independent of the authoritative
       // inference.local gateway probe under test; throwing here just leaves
       // liveRoute/routeDrift null without needing a fabricated exec transcript.
-      captureOpenshellForStatusImpl: async () => {
-        throw new Error("live route lookup not needed for this test");
+      inferenceRouteObserver: {
+        observeInferenceRoute: async () => {
+          throw new Error("live route lookup not needed for this test");
+        },
       },
       probeProviderHealthImpl: () => providerHealth,
       probeSandboxInferenceGatewayHealthImpl: async () => gateway,
-      probeSandboxInferenceInvocationImpl: () => invocation,
+      probeSandboxInferenceInvocationImpl: async () => invocation,
       reportInferenceProbeRetry: vi.fn(),
     },
   };
@@ -66,7 +68,7 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
         recoverySandboxVia: "started-stopped-original",
       };
     };
-    const recoverSandboxProcesses = vi.fn(() => {
+    const recoverSandboxProcesses = vi.fn(async () => {
       order.push("recover-agent-and-forward");
       return {
         checked: true,
@@ -114,7 +116,7 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
       .mockResolvedValueOnce(unreachable)
       .mockResolvedValueOnce(healthy);
     const delayInferenceRecoveryProbe = vi.fn(async () => undefined);
-    const recoverSandboxProcesses = vi.fn(() => ({
+    const recoverSandboxProcesses = vi.fn(async () => ({
       checked: true,
       wasRunning: false,
       recovered: true,
@@ -154,14 +156,14 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
     const probeSandboxInferenceGatewayHealthImpl = vi.fn(async () => healthy);
     const probeSandboxInferenceInvocationImpl = vi
       .fn()
-      .mockReturnValueOnce({
+      .mockResolvedValueOnce({
         ok: false,
         detail: "sandbox inference invocation failed with status 6",
         httpStatus: null,
       })
-      .mockReturnValueOnce({ ok: true });
+      .mockResolvedValueOnce({ ok: true });
     const delayInferenceRecoveryProbe = vi.fn(async () => undefined);
-    const recoverSandboxProcesses = vi.fn(() => ({
+    const recoverSandboxProcesses = vi.fn(async () => ({
       checked: true,
       wasRunning: false,
       recovered: true,
@@ -205,9 +207,9 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
       recoverySandboxVia: "started-stopped-original",
     });
     const probeSandboxInferenceGatewayHealthImpl = vi.fn(async () => healthy);
-    const probeSandboxInferenceInvocationImpl = vi.fn(() => failedInvocation);
+    const probeSandboxInferenceInvocationImpl = vi.fn(async () => failedInvocation);
     const delayInferenceRecoveryProbe = vi.fn(async () => undefined);
-    const recoverSandboxProcesses = vi.fn(() => ({
+    const recoverSandboxProcesses = vi.fn(async () => ({
       checked: true,
       wasRunning: false,
       recovered: true,
@@ -248,7 +250,7 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
     });
     const probeSandboxInferenceGatewayHealthImpl = vi.fn(async () => unreachable);
     const delayInferenceRecoveryProbe = vi.fn(async () => undefined);
-    const recoverSandboxProcesses = vi.fn(() => ({
+    const recoverSandboxProcesses = vi.fn(async () => ({
       checked: true,
       wasRunning: false,
       recovered: true,
@@ -272,7 +274,9 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
 
   it("does not mutate the agent or host forward during an ordinary present status lookup", async () => {
     const options = snapshotDeps(null);
-    const recoverSandboxProcesses = vi.fn();
+    const recoverSandboxProcesses = vi.fn(async () => {
+      throw new Error("unexpected recovery");
+    });
     const delayInferenceRecoveryProbe = vi.fn(async () => undefined);
     const probeSandboxInferenceGatewayHealthImpl = vi.fn(
       options.deps.probeSandboxInferenceGatewayHealthImpl,
@@ -575,7 +579,7 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
         "Inference gateway unreachable on https://inference.local/v1/models from inside the sandbox.",
     };
     const options = snapshotDeps(gateway);
-    const probeSandboxInferenceInvocationImpl = vi.fn(() => ({ ok: true }) as const);
+    const probeSandboxInferenceInvocationImpl = vi.fn(async () => ({ ok: true }) as const);
 
     const snapshot = await collectSandboxStatusSnapshot("alpha", {
       ...options,
@@ -621,7 +625,7 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
         model: "openai/gpt-4o-mini",
       },
     );
-    const probeSandboxInferenceInvocationImpl = vi.fn(() => ({ ok: true }) as const);
+    const probeSandboxInferenceInvocationImpl = vi.fn(async () => ({ ok: true }) as const);
     const probeSandboxInferenceGatewayHealthImpl = vi.fn(async () => gateway);
     const snapshot = await collectSandboxStatusSnapshot("alpha", {
       ...options,
@@ -642,7 +646,7 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
         preferredInferenceApi: null,
       },
       {},
-      30_000,
+      95_000,
     );
     expect(probeSandboxInferenceGatewayHealthImpl).toHaveBeenCalledWith("alpha", {
       gatewayName: "nemoclaw-19080",
@@ -671,7 +675,7 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
       },
     );
     const probeSandboxInferenceGatewayHealthImpl = vi.fn(async () => gateway);
-    const probeSandboxInferenceInvocationImpl = vi.fn(() => ({ ok: true }) as const);
+    const probeSandboxInferenceInvocationImpl = vi.fn(async () => ({ ok: true }) as const);
 
     const snapshot = await collectSandboxStatusSnapshot("alpha", {
       ...options,
@@ -695,7 +699,7 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
         preferredInferenceApi: "openai-completions",
       },
       {},
-      30_000,
+      95_000,
     );
     expect(probeSandboxInferenceInvocationImpl).toHaveBeenCalledOnce();
     expect(snapshot.inferenceHealth).toMatchObject({ ok: true });
@@ -753,15 +757,15 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
       const probeSandboxInferenceGatewayHealthImpl = vi.fn(async () => healthy);
       const probeSandboxInferenceInvocationImpl = vi
         .fn()
-        .mockReturnValueOnce({
+        .mockResolvedValueOnce({
           ok: false,
           detail: `sandbox inference invocation probe returned HTTP ${httpStatus}`,
           httpStatus,
         })
-        .mockReturnValueOnce({ ok: true });
+        .mockResolvedValueOnce({ ok: true });
       const delayInferenceRecoveryProbe = vi.fn(async () => undefined);
       const reportInferenceProbeRetry = vi.fn();
-      const recoverSandboxProcesses = vi.fn(() => ({
+      const recoverSandboxProcesses = vi.fn(async () => ({
         checked: true,
         wasRunning: true,
         recovered: false,
@@ -818,14 +822,14 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
       .fn()
       .mockResolvedValueOnce(healthy)
       .mockResolvedValueOnce(brokenRoute);
-    const probeSandboxInferenceInvocationImpl = vi.fn(() => ({
+    const probeSandboxInferenceInvocationImpl = vi.fn(async () => ({
       ok: false as const,
       detail: "sandbox inference invocation probe returned HTTP 503",
       httpStatus: 503,
     }));
     const delayInferenceRecoveryProbe = vi.fn(async () => undefined);
     const reportInferenceProbeRetry = vi.fn();
-    const recoverSandboxProcesses = vi.fn(() => ({
+    const recoverSandboxProcesses = vi.fn(async () => ({
       checked: true,
       wasRunning: true,
       recovered: false,
@@ -872,10 +876,10 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
       output: "Phase: Ready",
     });
     const probeSandboxInferenceGatewayHealthImpl = vi.fn(async () => healthy);
-    const probeSandboxInferenceInvocationImpl = vi.fn(() => refused);
+    const probeSandboxInferenceInvocationImpl = vi.fn(async () => refused);
     const delayInferenceRecoveryProbe = vi.fn(async () => undefined);
     const reportInferenceProbeRetry = vi.fn();
-    const recoverSandboxProcesses = vi.fn(() => ({
+    const recoverSandboxProcesses = vi.fn(async () => ({
       checked: true,
       wasRunning: true,
       recovered: false,
@@ -975,10 +979,10 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
       phase: "Ready",
       output: "Phase: Ready",
     });
-    const probeSandboxInferenceInvocationImpl = vi.fn(() => testCase.invocation);
+    const probeSandboxInferenceInvocationImpl = vi.fn(async () => testCase.invocation);
     const delayInferenceRecoveryProbe = vi.fn(async () => undefined);
     const reportInferenceProbeRetry = vi.fn();
-    const recoverSandboxProcesses = vi.fn(() => ({
+    const recoverSandboxProcesses = vi.fn(async () => ({
       checked: true,
       wasRunning: true,
       recovered: false,
@@ -1019,9 +1023,9 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
       output: "Phase: Ready",
     });
     const probeSandboxInferenceGatewayHealthImpl = vi.fn(async () => brokenRoute);
-    const probeSandboxInferenceInvocationImpl = vi.fn(() => ({ ok: true }) as const);
+    const probeSandboxInferenceInvocationImpl = vi.fn(async () => ({ ok: true }) as const);
     const delayInferenceRecoveryProbe = vi.fn(async () => undefined);
-    const recoverSandboxProcesses = vi.fn(() => ({
+    const recoverSandboxProcesses = vi.fn(async () => ({
       checked: true,
       wasRunning: true,
       recovered: false,
