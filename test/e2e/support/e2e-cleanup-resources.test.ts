@@ -109,7 +109,8 @@ describe("cleanup resources", () => {
     expect(calls).toBe(1);
   });
 
-  it.each(["full-e2e.test.ts", "hermes-e2e.test.ts"])(
+  // full-e2e-gateway.test.ts exercises OpenClaw's actual setup and teardown callbacks.
+  it.each(["hermes-e2e.test.ts"])(
     "registers sandbox cleanup before installer side effects [case %#] (#7146)",
     (fileName) => {
       const source = fs.readFileSync(
