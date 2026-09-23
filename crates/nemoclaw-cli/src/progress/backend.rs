@@ -2,14 +2,21 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use ratatui::{
-    backend::{Backend, ClearType, CrosstermBackend, WindowSize},
+    backend::{Backend, ClearType, CrosstermBackend, IntoCrossterm, WindowSize},
     buffer::Cell,
+    crossterm::{
+        cursor::{MoveDown, MoveToColumn, MoveUp},
+        queue,
+        style::{Attribute, Print, SetAttribute, SetStyle},
+    },
     layout::{Position, Size},
+    text::Span,
 };
 use std::io;
 
-/// Crossterm's cursor query writes to stdout and temporarily enables raw input. Track the
-/// cursor instead: this renderer never reads input and all terminal writes stay on stderr.
+/// Ratatui uses virtual rows ending at the current output line. Relative cursor movement
+/// keeps inline output beside the shell prompt without querying or consuming terminal input.
+/// Appended lines advance that origin naturally, including when the physical screen scrolls.
 pub(super) struct OutputBackend {
     inner: CrosstermBackend<io::Stderr>,
     cursor: Position,
@@ -23,8 +30,7 @@ impl OutputBackend {
         if size.width == 0 || size.height == 0 {
             return Err(io::Error::other("terminal has no drawable area"));
         }
-        inner.set_cursor_position(cursor)?;
-        inner.append_lines(1)?;
+        queue!(inner, MoveToColumn(0))?;
         inner.flush()?;
         Ok(Self {
             inner,
@@ -42,7 +48,31 @@ impl Backend for OutputBackend {
     where
         I: Iterator<Item = (u16, u16, &'a Cell)>,
     {
-        self.inner.draw(content)
+        let mut style = None;
+        let mut covered = None;
+        for (x, y, cell) in content {
+            // insert_before supplies the whole buffer, including wide-glyph continuation cells.
+            if covered.is_some_and(|(row, end)| row == y && x < end) {
+                continue;
+            }
+            if self.cursor != Position::new(x, y) {
+                self.set_cursor_position((x, y))?;
+            }
+            if style != Some(cell.style()) {
+                queue!(
+                    self.inner,
+                    SetAttribute(Attribute::Reset),
+                    SetStyle(cell.style().into_crossterm())
+                )?;
+                style = Some(cell.style());
+            }
+            queue!(self.inner, Print(cell.symbol()))?;
+            self.cursor =
+                Position::new(x.saturating_add(Span::raw(cell.symbol()).width() as u16), y);
+            covered = Some((y, self.cursor.x));
+        }
+        queue!(self.inner, SetAttribute(Attribute::Reset))?;
+        Ok(())
     }
     fn append_lines(&mut self, n: u16) -> io::Result<()> {
         self.inner.append_lines(n)?;
@@ -63,8 +93,15 @@ impl Backend for OutputBackend {
         Ok(self.cursor)
     }
     fn set_cursor_position<P: Into<Position>>(&mut self, position: P) -> io::Result<()> {
-        self.cursor = position.into();
-        self.inner.set_cursor_position(self.cursor)
+        let next = position.into();
+        if next.y < self.cursor.y {
+            queue!(self.inner, MoveUp(self.cursor.y - next.y))?;
+        } else if next.y > self.cursor.y {
+            queue!(self.inner, MoveDown(next.y - self.cursor.y))?;
+        }
+        queue!(self.inner, MoveToColumn(next.x))?;
+        self.cursor = next;
+        Ok(())
     }
     fn clear(&mut self) -> io::Result<()> {
         self.inner.clear()

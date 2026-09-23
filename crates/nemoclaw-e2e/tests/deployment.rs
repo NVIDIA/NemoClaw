@@ -77,7 +77,10 @@ async fn cli_terminal_outputs_preserve_lifecycle_and_json_contract() {
     let summary = String::from_utf8(destroyed.stdout).unwrap();
     assert!(summary.contains("Destroy complete"), "{summary}");
     assert!(summary.contains("Sandbox files and conversation history deleted"));
-    assert!(summary.contains("OpenShell workspace (does not preserve sandbox files)"));
+    assert!(summary.contains("OpenShell workspace"));
+    assert!(summary.contains(
+        "Retaining the workspace does not preserve sandbox files or conversation history."
+    ));
     let repeated = invoke("destroy", "json");
     let result: serde_json::Value = serde_json::from_slice(&repeated.stdout).unwrap();
     assert_eq!(result["outcome"], "destroyed");

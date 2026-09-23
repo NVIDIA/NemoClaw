@@ -75,9 +75,11 @@ See [apply health](../usage.md#fabric-health-during-apply) and [retention](../st
 
 Progress goes to stderr independently of the result format.
 The default inline Ratatui display uses the normal terminal screen, preserving completed milestones in scrollback.
-It shows active resource operations and elapsed time without taking keyboard input or entering fullscreen mode.
+It uses a compact panel for active resource operations and elapsed time without taking keyboard input or entering fullscreen mode.
+Interactive operation starts stay in the panel; completed milestones and errors remain in scrollback.
 Interactive progress starts with a compact NVIDIA / NemoClaw wordmark.
-Color accents identify completion, incomplete or destructive results, and failures; labels carry the same meaning without color.
+Successful completion headings are green, including destroy; destructive actions and retention warnings remain amber, and failures use red.
+Labels carry the same meaning without color.
 A nonempty `NO_COLOR` disables styling while preserving inline progress.
 Redirected streams and JSON/YAML results have no added styling; `--progress plain` also disables styling and the wordmark.
 Plain output reports stage changes and throttled waiting updates without cursor movement; use `--progress plain` for a terminal transcript or accessibility.
@@ -88,7 +90,8 @@ Resource operations come from OpenTofu's machine-readable events.
 Download progress shows bytes and a percentage only when a valid total is known; it is not overall deployment completion.
 Elapsed time is a heartbeat, not evidence that the runtime advanced to another startup stage.
 Model-loading details unavailable from the existing event stream remain generic readiness or infrastructure waits.
-Verbose output adds internal step timings and outcomes.
+Default progress omits known implementation steps; unrecognized resources and errors remain visible.
+Verbose output adds implementation steps, internal addresses, timings, and outcomes.
 Progress is best-effort and never determines the operation's success.
 
 The CLI preserves the [SDK result fields](../../crates/nemoclaw-sdk/src/deployment/mod.rs) and adds plan completeness for scripts:

@@ -124,12 +124,8 @@ pub(crate) fn resource_label(address: &str) -> String {
         "docker_container.managed_gateway_runtime" | "nemoclaw_managed_gateway.runtime" => {
             "gateway".to_owned()
         }
-        "nemoclaw_gateway_storage.runtime" => {
-            "gateway storage (database, keys, retained network)".to_owned()
-        }
-        "nemoclaw_workspace.deployment" => {
-            "OpenShell workspace (does not preserve sandbox files)".to_owned()
-        }
+        "nemoclaw_gateway_storage.runtime" => "gateway storage".to_owned(),
+        "nemoclaw_workspace.deployment" => "OpenShell workspace".to_owned(),
         _ => {
             let mappings = [
                 (
@@ -213,7 +209,7 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
         }
         summary
     };
-    let tone = if !result.deferred.is_empty() || result.outcome == Outcome::Destroyed {
+    let tone = if !result.deferred.is_empty() {
         Tone::Warning
     } else if planned {
         Tone::Accent
@@ -244,16 +240,26 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
             if change.resource.starts_with("nemoclaw_sandbox.")
                 && change.actions.iter().any(|action| action == "delete")
             {
-                output.push_str(if planned {
-                    "    Deletes sandbox files and conversation history.\n"
+                let warning = if planned {
+                    "Deletes sandbox files and conversation history."
                 } else {
-                    "    Sandbox files and conversation history deleted.\n"
-                });
+                    "Sandbox files and conversation history deleted."
+                };
+                output.push_str(&format!(
+                    "    {}\n",
+                    context.output_palette.paint(warning, Tone::Warning)
+                ));
             }
             if change.actions.iter().any(|action| action == "delete")
                 && change.actions.iter().any(|action| action == "create")
             {
-                output.push_str("    Replacement; service interruption may occur.\n");
+                output.push_str(&format!(
+                    "    {}\n",
+                    context.output_palette.paint(
+                        "Replacement; service interruption may occur.",
+                        Tone::Warning
+                    )
+                ));
             }
         }
         for (actions, count) in images {
@@ -269,6 +275,15 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
         for resource in &result.retained {
             let label = resource_label(resource);
             output.push_str(&format!("  {label}\n"));
+            if resource == "nemoclaw_workspace.deployment" {
+                output.push_str(&format!(
+                    "    {}\n",
+                    context.output_palette.paint(
+                        "Retaining the workspace does not preserve sandbox files or conversation history.",
+                        Tone::Warning
+                    )
+                ));
+            }
             if context.verbose && label != *resource {
                 output.push_str(&format!("    {}\n", terminal_text(resource)));
             }
@@ -521,7 +536,8 @@ mod tests {
         context.output_palette = Palette { enabled: true };
         let value = json!({
             "outcome": "destroyed",
-            "changes": [{"resource": "nemoclaw_sandbox.assistant", "actions": ["delete"]}]
+            "changes": [{"resource": "nemoclaw_sandbox.assistant", "actions": ["delete"]}],
+            "retained": ["nemoclaw_workspace.deployment"]
         });
         let colored = super::render(
             CommandResult::Operation(serde_json::from_value(value.clone()).unwrap()),
@@ -529,9 +545,10 @@ mod tests {
             &context,
         )
         .unwrap();
-        assert!(colored.contains("\x1b[33mDestroy complete"));
+        assert!(colored.contains("\x1b[38;2;118;185;0mDestroy complete"));
         assert!(colored.contains("\x1b[33mdelete\x1b[0m  sandbox/assistant"));
-        assert!(colored.contains("Sandbox files and conversation history deleted."));
+        assert!(colored.contains("\x1b[33mSandbox files and conversation history deleted.\x1b[0m"));
+        assert!(colored.contains("\x1b[33mRetaining the workspace does not preserve sandbox files or conversation history.\x1b[0m"));
         let machine = super::render(
             CommandResult::Operation(serde_json::from_value(value).unwrap()),
             OutputFormat::Json,
@@ -543,6 +560,19 @@ mod tests {
             serde_json::from_str::<Value>(&machine).unwrap()["outcome"],
             "destroyed"
         );
+    }
+
+    #[test]
+    fn creation_labels_do_not_imply_sandbox_deletion_or_retention() {
+        let result = json!({"outcome":"planned","changes":[
+            {"resource":"nemoclaw_workspace.deployment","actions":["create"]},
+            {"resource":"nemoclaw_gateway_storage.runtime","actions":["create"]}
+        ]});
+        let text = render(&["nemoclaw", "plan", "spark.yaml"], result);
+        assert!(text.contains("create  OpenShell workspace\n"), "{text}");
+        assert!(text.contains("create  gateway storage\n"), "{text}");
+        assert!(!text.contains("sandbox files"), "{text}");
+        assert!(!text.contains("retained"), "{text}");
     }
 
     #[test]
@@ -610,7 +640,10 @@ mod tests {
         );
         let (remove, keep) = text.split_once("Retained resources:").unwrap();
         assert!(remove.contains("Deletes sandbox files"));
-        assert!(keep.contains("OpenShell workspace (does not preserve sandbox files)"));
+        assert!(keep.contains("OpenShell workspace\n"));
+        assert!(keep.contains(
+            "Retaining the workspace does not preserve sandbox files or conversation history."
+        ));
         assert!(keep.contains("model cache/qwen"));
     }
 

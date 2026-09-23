@@ -86,12 +86,18 @@ struct Active {
 struct Model {
     active: BTreeMap<String, Active>,
     palette: Palette,
+    phase: Option<&'static str>,
 }
 
 impl Model {
     /// Return durable observations only when the stage changes. Byte/elapsed updates remain
     /// visible in the panel and periodic plain heartbeat without flooding redirected logs.
     fn observe(&mut self, event: Progress, verbose: bool, now: Instant) -> Option<String> {
+        if let Some(phase) = phase_label(&event) {
+            let changed = self.phase != Some(phase);
+            self.phase = Some(phase);
+            return changed.then(|| phase.to_owned());
+        }
         let text = render(event.clone(), verbose);
         let (key, stage, elapsed, complete) = match &event {
             Progress::Waiting { operation, elapsed } => (
@@ -183,6 +189,9 @@ impl Model {
     }
 
     fn lines(&self, now: Instant) -> Vec<String> {
+        if self.active.is_empty() {
+            return self.phase.map(str::to_owned).into_iter().collect();
+        }
         self.active
             .values()
             .map(|entry| {
@@ -209,7 +218,7 @@ fn run(receiver: mpsc::Receiver<Option<Progress>>, inline: bool, verbose: bool, 
                     Terminal::with_options(
                         backend,
                         TerminalOptions {
-                            viewport: Viewport::Inline(PANEL_HEIGHT),
+                            viewport: Viewport::Inline(1),
                         },
                     )
                 })
@@ -235,38 +244,44 @@ fn run(receiver: mpsc::Receiver<Option<Progress>>, inline: bool, verbose: bool, 
     let mut next = Some(first);
     loop {
         let now = Instant::now();
-        // Ratatui's built-in horizontal shrink clears the whole display. Reanchor instead,
-        // keeping earlier output as history, and let the new viewport wrap to the new width.
-        if terminal
-            .as_ref()
-            .is_some_and(|display| display.backend().current_size().ok() != terminal_size)
-        {
-            if let Some(mut display) = terminal.take() {
-                let _ = display.show_cursor();
-            }
-            terminal = OutputBackend::new()
-                .and_then(|backend| {
-                    Terminal::with_options(
-                        backend,
-                        TerminalOptions {
-                            viewport: Viewport::Inline(PANEL_HEIGHT),
-                        },
-                    )
-                })
-                .ok();
-            terminal_size = terminal.as_ref().and_then(|display| display.size().ok());
-        }
-        if let Some(event) = next.take() {
+        let milestone = next.take().and_then(|event| {
             let tone = event_tone(&event);
-            if let Some(line) = model.observe(event, verbose, now) {
-                if let Some(display) = terminal.as_mut() {
-                    if insert_line(display, &line, palette, tone).is_err() {
-                        finish_terminal(&mut terminal);
-                        let _ = writeln!(output, "{line}");
-                    }
-                } else {
+            let durable = verbose || durable_event(&event);
+            model
+                .observe(event, verbose, now)
+                .map(|line| (line, tone, durable))
+        });
+        // Recreate only the owned viewport on size/height changes; Ratatui's automatic
+        // horizontal shrink would otherwise clear unrelated screen contents.
+        if let Some(display) = terminal.as_mut() {
+            let size = display.backend().current_size().ok();
+            let height = size.map(|size| panel_height(&model, now, size.width, size.height));
+            if size != terminal_size || height != Some(display.get_frame().area().height) {
+                finish_terminal(&mut terminal);
+                terminal = OutputBackend::new()
+                    .and_then(|backend| {
+                        Terminal::with_options(
+                            backend,
+                            TerminalOptions {
+                                viewport: Viewport::Inline(height.unwrap_or(1)),
+                            },
+                        )
+                    })
+                    .ok();
+                terminal_size = terminal.as_ref().and_then(|display| display.size().ok());
+                next_frame = now;
+            }
+        }
+        if let Some((line, tone, durable)) = milestone
+            && (terminal.is_none() || durable)
+        {
+            if let Some(display) = terminal.as_mut() {
+                if insert_line(display, &line, palette, tone).is_err() {
+                    finish_terminal(&mut terminal);
                     let _ = writeln!(output, "{line}");
                 }
+            } else {
+                let _ = writeln!(output, "{line}");
             }
         }
         if let Some(display) = terminal.as_mut() {
@@ -308,10 +323,75 @@ fn run(receiver: mpsc::Receiver<Option<Progress>>, inline: bool, verbose: bool, 
 
 fn finish_terminal(terminal: &mut Option<Terminal<OutputBackend>>) {
     if let Some(mut terminal) = terminal.take() {
-        // Every frame keeps the cursor at the panel origin; clear preserves it for final output.
-        let _ = terminal.clear();
+        let _ = clear_panel(&mut terminal);
         let _ = terminal.show_cursor();
     }
+}
+
+fn clear_panel<B: Backend>(terminal: &mut Terminal<B>) -> Result<(), B::Error> {
+    // insert_before can leave the backend cursor below the panel between capped frames.
+    let origin = terminal.get_frame().area().as_position();
+    terminal.set_cursor_position(origin)?;
+    terminal.clear()?;
+    terminal.backend_mut().flush()
+}
+
+fn panel_height(model: &Model, now: Instant, width: u16, height: u16) -> u16 {
+    let lines: usize = model
+        .lines(now)
+        .iter()
+        .map(|line| {
+            Paragraph::new(format!("› {line}"))
+                .wrap(Wrap { trim: false })
+                .line_count(width.max(1))
+        })
+        .sum();
+    (lines.saturating_add(1).min(PANEL_HEIGHT as usize) as u16)
+        .min(height)
+        .max(1)
+}
+
+fn phase_label(event: &Progress) -> Option<&'static str> {
+    match event {
+        Progress::Validating => Some("Checking configuration"),
+        Progress::Planning => Some("Planning deployment"),
+        Progress::Applying => Some("Applying deployment"),
+        Progress::Readiness => Some("Checking readiness"),
+        Progress::Exporting => Some("Reading deployed configuration"),
+        Progress::Destroying => Some("Destroying owned workloads"),
+        _ => None,
+    }
+}
+
+fn durable_event(event: &Progress) -> bool {
+    match event {
+        Progress::Waiting { .. } => false,
+        Progress::Resource {
+            status: "started" | "in_progress",
+            ..
+        } => false,
+        Progress::Download(download) => {
+            download.layer.is_none() && download.phase == DownloadPhase::Complete
+        }
+        _ => phase_label(event).is_none(),
+    }
+}
+
+fn supporting_resource(address: &str) -> bool {
+    matches!(
+        address,
+        "nemoclaw_workspace.deployment"
+            | "nemoclaw_gateway_storage.runtime"
+            | "data.nemoclaw_gateway_capabilities.current"
+            | "data.nemoclaw_gateway_capabilities.apply"
+    ) || [
+        "data.docker_image.image_",
+        "docker_image.image_",
+        "nemoclaw_provider_profile.inference_",
+        "nemoclaw_provider.inference_",
+    ]
+    .iter()
+    .any(|prefix| address.starts_with(prefix))
 }
 
 fn event_tone(event: &Progress) -> Tone {
@@ -384,7 +464,11 @@ fn insert_paragraph<B: Backend>(
     let height = paragraph.line_count(width).min(u16::MAX as usize) as u16;
     terminal.insert_before(height.max(1), |buffer| {
         paragraph.render(buffer.area, buffer)
-    })
+    })?;
+    // Leave a stable origin even when the next frame is throttled or the terminal resizes.
+    let origin = terminal.get_frame().area().as_position();
+    terminal.set_cursor_position(origin)?;
+    terminal.backend_mut().flush()
 }
 
 fn draw_due<B: Backend>(
@@ -488,6 +572,31 @@ fn byte_count(bytes: u64) -> String {
 }
 
 pub(crate) fn render(event: Progress, verbose: bool) -> Option<String> {
+    if !verbose {
+        match &event {
+            Progress::Resource {
+                address: Some(address),
+                action,
+                status,
+                ..
+            } if (supporting_resource(address)
+                || (*action == "refresh" && resource_label(address) != *address))
+                && matches!(*status, "started" | "complete" | "in_progress") =>
+            {
+                return None;
+            }
+            Progress::Waiting {
+                operation: "tofu.init" | "tofu.plan" | "tofu.apply",
+                ..
+            }
+            | Progress::Completed {
+                operation: "tofu.init" | "tofu.plan" | "tofu.apply",
+                outcome: StepOutcome::Succeeded,
+                ..
+            } => return None,
+            _ => {}
+        }
+    }
     let text = match event {
         Progress::Download(event) => {
             let phase = match event.phase {
