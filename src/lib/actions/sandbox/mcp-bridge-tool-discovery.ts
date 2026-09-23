@@ -19,7 +19,7 @@ import {
   wrapMcpRuntimeCommand,
 } from "./mcp-bridge-runtime-command";
 import { normalizeRecordedMcpServerUrl } from "./mcp-bridge/recorded-url";
-import { executeSandboxCommand, type SandboxCommandResult } from "./process-recovery";
+import { executeSandboxExecCommand, type SandboxCommandResult } from "./process-recovery";
 import {
   buildSandboxExecMarkedCommand,
   createSandboxExecMarker,
@@ -340,7 +340,9 @@ export async function discoverMcpTools(
   }
   try {
     return classifyMcpToolDiscoveryResult(
-      await executeSandboxCommand(sandboxName, discoveryCommand.command, { runtimeSelection }),
+      await executeSandboxExecCommand(sandboxName, discoveryCommand.command, undefined, {
+        runtimeSelection,
+      }),
       entry,
       discoveryCommand.resultMarker,
     );

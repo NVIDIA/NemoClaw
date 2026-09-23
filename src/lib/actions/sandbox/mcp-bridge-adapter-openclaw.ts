@@ -26,7 +26,7 @@ import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
 import type { McpAttachedCredentialRevision } from "./mcp-bridge-provider-readiness";
 import { getAgentConfigDir } from "./mcp-bridge-state";
-import { executeSandboxCommand, restartSandboxGateway } from "./process-recovery";
+import { executeSandboxExecCommand, restartSandboxGateway } from "./process-recovery";
 
 export const MCPORTER_VERSION = "0.7.3";
 const OPENCLAW_NATIVE_MCP_PLUGIN_ID = "bundle-mcp";
@@ -174,11 +174,12 @@ export async function registerOpenClawAdapter(
   // Re-read the native definition before reporting success so a raced or
   // normalized write cannot commit an entry that differs from the URL and
   // opaque OpenShell placeholder NemoClaw intended.
-  let verification: Awaited<ReturnType<typeof executeSandboxCommand>>;
+  let verification: Awaited<ReturnType<typeof executeSandboxExecCommand>>;
   try {
-    verification = await executeSandboxCommand(
+    verification = await executeSandboxExecCommand(
       sandboxName,
       buildStrictOpenClawMcpInspectCommand(entry, true, root, credentialRevision),
+      undefined,
       { runtimeSelection },
     );
   } catch (error) {

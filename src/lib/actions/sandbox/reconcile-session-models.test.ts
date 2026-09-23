@@ -20,7 +20,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { executeSandboxCommand } from "./process-recovery";
+import { executeSandboxExecCommand } from "./process-recovery";
 import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import {
   buildSessionStoreReplaceCommand,
@@ -28,9 +28,9 @@ import {
   reconcileStalePinnedSessionModelsAfterRebuild,
 } from "./reconcile-session-models";
 
-vi.mock("./process-recovery", () => ({ executeSandboxCommand: vi.fn() }));
+vi.mock("./process-recovery", () => ({ executeSandboxExecCommand: vi.fn() }));
 
-const executeSandboxCommandMock = vi.mocked(executeSandboxCommand);
+const executeSandboxCommandMock = vi.mocked(executeSandboxExecCommand);
 
 beforeEach(() => {
   executeSandboxCommandMock.mockReset();
@@ -310,7 +310,7 @@ describe("reconcileStalePinnedSessionModelsAfterRebuild", () => {
     await reconcileStalePinnedSessionModelsAfterRebuild("alpha", vi.fn(), runtimeSelection);
 
     expect(executeSandboxCommandMock).toHaveBeenCalledTimes(3);
-    expect(executeSandboxCommandMock.mock.calls.map((call) => call[2])).toEqual([
+    expect(executeSandboxCommandMock.mock.calls.map((call) => call[3])).toEqual([
       { runtimeSelection },
       { runtimeSelection },
       { runtimeSelection },

@@ -55,7 +55,7 @@ import {
   validateSandboxName,
 } from "./mcp-bridge-validation";
 import { normalizeRecordedMcpServerUrl } from "./mcp-bridge/recorded-url";
-import { executeSandboxCommand } from "./process-recovery";
+import { executeSandboxExecCommand } from "./process-recovery";
 
 export interface McpBridgeJsonSummary {
   sandbox: string;
@@ -164,9 +164,11 @@ async function getAdapterRegistration(
       : adapter === "hermes-config"
         ? buildHermesMcpStatusCommand(entry, credentialRevision)
         : buildDeepAgentsMcpStatusCommand(entry, credentialRevision);
-  let result: Awaited<ReturnType<typeof executeSandboxCommand>>;
+  let result: Awaited<ReturnType<typeof executeSandboxExecCommand>>;
   try {
-    result = await executeSandboxCommand(sandboxName, command, { runtimeSelection });
+    result = await executeSandboxExecCommand(sandboxName, command, undefined, {
+      runtimeSelection,
+    });
   } catch (error) {
     if (!(error instanceof SandboxCommandTransportError)) throw error;
     return credentialInspectionFailure ?? { registered: null, detail: error.message };

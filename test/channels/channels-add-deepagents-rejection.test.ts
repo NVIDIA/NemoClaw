@@ -65,7 +65,7 @@ openshellRuntime.runOpenshell = (...args) => {
 
 const processRecovery = require(${d("actions/sandbox/process-recovery.js")});
 processRecovery.executeSandboxExecCommand = () => null;
-processRecovery.executeSandboxCommand = () => null;
+processRecovery.executeSandboxExecCommand = () => null;
 
 const gatewayRuntime = require(${d("gateway-runtime-action.js")});
 gatewayRuntime.recoverNamedGatewayRuntime = async () => ({ recovered: true });

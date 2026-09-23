@@ -7,9 +7,9 @@ import { McpBridgeError, type McpSourceEntry } from "./mcp-bridge-contracts";
 import { inspectAgentMcpSources, removeLegacyAgentMcpEntry } from "./mcp-bridge-source";
 import { assertDeepAgentsMcpMutationRuntimeCapability } from "./mcp-bridge-adapter-deepagents-capability";
 import { registerOpenClawAdapter } from "./mcp-bridge-adapter-openclaw";
-import { executeSandboxCommand } from "./process-recovery";
+import { executeSandboxExecCommand } from "./process-recovery";
 
-vi.mock("./process-recovery", () => ({ executeSandboxCommand: vi.fn() }));
+vi.mock("./process-recovery", () => ({ executeSandboxExecCommand: vi.fn() }));
 vi.mock("../../sandbox/config", () => ({
   resolveAgentConfig: () => ({
     agentName: "openclaw",
@@ -19,7 +19,7 @@ vi.mock("../../sandbox/config", () => ({
   writeSandboxConfig: vi.fn(),
 }));
 
-const execute = vi.mocked(executeSandboxCommand);
+const execute = vi.mocked(executeSandboxExecCommand);
 const sandbox = { name: "alpha", agent: "openclaw" };
 const runtimeSelection = { gatewayName: "nemoclaw-8091", workspace: "default" };
 const entry: McpSourceEntry = {
@@ -46,7 +46,8 @@ const operations = [
   {
     name: "capability inspection",
     run: () => assertDeepAgentsMcpMutationRuntimeCapability("alpha", runtimeSelection),
-    unavailable: "does not contain native MCP capability v3",
+    unavailable:
+      "native MCP capability could not be verified because the probe failed in transport",
     remote: "does not contain native MCP capability v3",
   },
   {

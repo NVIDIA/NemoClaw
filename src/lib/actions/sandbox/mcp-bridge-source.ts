@@ -22,7 +22,7 @@ import {
   inspectMcpProvider,
   type McpProviderInspectionRuntimeSelection,
 } from "./mcp-bridge-provider-inspection";
-import { executeSandboxCommand } from "./process-recovery";
+import { executeSandboxExecCommand } from "./process-recovery";
 import { quoteMcpBridgeShellArg } from "./mcp-bridge-runtime-command";
 import { redactBridgeFailureForDisplay } from "./mcp-bridge-output";
 import { buildMcpBridgeProviderName, normalizeMcpDenyTools } from "./mcp-bridge-validation";
@@ -415,14 +415,13 @@ async function inspectAgentMcpSourcesForAgent(
 ): Promise<AgentMcpSourceSnapshot> {
   const adapter = agent.mcpCapability.adapter;
   if (agent.mcpCapability.support !== "bridge" || !adapter) return { native: {}, legacy: {} };
-  let result: Awaited<ReturnType<typeof executeSandboxCommand>>;
+  let result: Awaited<ReturnType<typeof executeSandboxExecCommand>>;
   try {
-    result = await executeSandboxCommand(
+    result = await executeSandboxExecCommand(
       sandbox.name,
       sourceCommand(adapter, agent.configPaths.dir),
-      {
-        runtimeSelection,
-      },
+      undefined,
+      { runtimeSelection },
     );
   } catch (error) {
     if (!(error instanceof SandboxCommandTransportError)) throw error;
@@ -708,9 +707,11 @@ export async function removeLegacyAgentMcpEntry(
   } else {
     return;
   }
-  let result: Awaited<ReturnType<typeof executeSandboxCommand>>;
+  let result: Awaited<ReturnType<typeof executeSandboxExecCommand>>;
   try {
-    result = await executeSandboxCommand(sandbox.name, command, { runtimeSelection });
+    result = await executeSandboxExecCommand(sandbox.name, command, undefined, {
+      runtimeSelection,
+    });
   } catch (error) {
     if (!(error instanceof SandboxCommandTransportError)) throw error;
     result = null;

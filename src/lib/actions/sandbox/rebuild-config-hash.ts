@@ -5,7 +5,7 @@ import { SandboxCommandTransportError } from "../../adapters/sandbox/command-tra
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime";
 import { R, YW } from "../../cli/terminal-style";
 import { redact } from "../../security/redact";
-import { executeSandboxCommand } from "./process-recovery";
+import { executeSandboxExecCommand } from "./process-recovery";
 import {
   buildRefreshMutableOpenClawConfigHashCommand,
   buildVerifyMutableOpenClawConfigHashCommand,
@@ -25,10 +25,13 @@ export async function refreshMutableOpenClawConfigHashAfterPostRestoreWrites(
 ): Promise<boolean> {
   const result = await (
     runtimeSelection
-      ? executeSandboxCommand(sandboxName, buildRefreshMutableOpenClawConfigHashCommand(), {
-          runtimeSelection,
-        })
-      : executeSandboxCommand(sandboxName, buildRefreshMutableOpenClawConfigHashCommand())
+      ? executeSandboxExecCommand(
+          sandboxName,
+          buildRefreshMutableOpenClawConfigHashCommand(),
+          undefined,
+          { runtimeSelection },
+        )
+      : executeSandboxExecCommand(sandboxName, buildRefreshMutableOpenClawConfigHashCommand())
   ).catch(transportFailureResult);
   if (result && result.status === 0) {
     log("Mutable OpenClaw config hash refreshed after post-restore config writes");
@@ -49,10 +52,13 @@ export async function verifyFinalMutableOpenClawConfigHash(
 ): Promise<boolean> {
   const result = await (
     runtimeSelection
-      ? executeSandboxCommand(sandboxName, buildVerifyMutableOpenClawConfigHashCommand(), {
-          runtimeSelection,
-        })
-      : executeSandboxCommand(sandboxName, buildVerifyMutableOpenClawConfigHashCommand())
+      ? executeSandboxExecCommand(
+          sandboxName,
+          buildVerifyMutableOpenClawConfigHashCommand(),
+          undefined,
+          { runtimeSelection },
+        )
+      : executeSandboxExecCommand(sandboxName, buildVerifyMutableOpenClawConfigHashCommand())
   ).catch(transportFailureResult);
   if (result && result.status === 0) {
     log("Final mutable OpenClaw config hash verified after post-restore finalization");

@@ -40,7 +40,7 @@ describe("OpenClaw rebuild config hash target selection", () => {
   });
 
   it("refreshes the config hash on the selected target instead of the ambient target (#10514)", async () => {
-    const execute = vi.spyOn(processRecovery, "executeSandboxCommand").mockResolvedValue({
+    const execute = vi.spyOn(processRecovery, "executeSandboxExecCommand").mockResolvedValue({
       status: 0,
       stdout: "",
       stderr: "",
@@ -56,13 +56,14 @@ describe("OpenClaw rebuild config hash target selection", () => {
     expect(execute).toHaveBeenCalledExactlyOnceWith(
       "alpha",
       buildRefreshMutableOpenClawConfigHashCommand(),
+      undefined,
       { runtimeSelection },
     );
     expect(process.env.OPENSHELL_GATEWAY).toBe("hostile-gateway");
   });
 
   it("verifies the config hash on the selected target instead of the ambient target (#10514)", async () => {
-    const execute = vi.spyOn(processRecovery, "executeSandboxCommand").mockResolvedValue({
+    const execute = vi.spyOn(processRecovery, "executeSandboxExecCommand").mockResolvedValue({
       status: 0,
       stdout: "",
       stderr: "",
@@ -74,6 +75,7 @@ describe("OpenClaw rebuild config hash target selection", () => {
     expect(execute).toHaveBeenCalledExactlyOnceWith(
       "alpha",
       buildVerifyMutableOpenClawConfigHashCommand(),
+      undefined,
       { runtimeSelection },
     );
     expect(process.env.OPENSHELL_GATEWAY).toBe("hostile-gateway");
@@ -90,7 +92,7 @@ describe.each([
     "records %s as unverified without retrying",
     async (kind) => {
       const execute = vi
-        .spyOn(processRecovery, "executeSandboxCommand")
+        .spyOn(processRecovery, "executeSandboxExecCommand")
         .mockRejectedValue(new SandboxCommandTransportError(kind));
       const error = vi.spyOn(console, "error").mockImplementation(() => {});
       const log = vi.fn();
@@ -104,7 +106,7 @@ describe.each([
 
   it("preserves unexpected authority errors", async () => {
     const refusal = new Error("gateway authority refused");
-    vi.spyOn(processRecovery, "executeSandboxCommand").mockRejectedValue(refusal);
+    vi.spyOn(processRecovery, "executeSandboxExecCommand").mockRejectedValue(refusal);
     await expect(run("alpha", vi.fn(), runtimeSelection)).rejects.toBe(refusal);
   });
 });

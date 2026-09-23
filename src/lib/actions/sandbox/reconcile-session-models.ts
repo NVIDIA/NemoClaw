@@ -8,7 +8,7 @@ import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime
 import { shellQuote } from "../../core/shell-quote";
 import { MANAGED_PROVIDER_ID } from "../../inference/config";
 import { isSafeModelId } from "../../validation";
-import { executeSandboxCommand } from "./process-recovery";
+import { executeSandboxExecCommand } from "./process-recovery";
 import type { RebuildLog } from "./rebuild-credential-preflight";
 import { DEFAULT_AGENT_ID } from "./sessions/paths";
 
@@ -230,8 +230,10 @@ async function executeReconcileCommand(
   runtimeSelection?: OpenShellRuntimeSelection,
 ) {
   return runtimeSelection
-    ? await executeSandboxCommand(sandboxName, command, { runtimeSelection })
-    : await executeSandboxCommand(sandboxName, command);
+    ? await executeSandboxExecCommand(sandboxName, command, undefined, {
+        runtimeSelection,
+      })
+    : await executeSandboxExecCommand(sandboxName, command);
 }
 
 async function readPrimaryModelRef(

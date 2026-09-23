@@ -132,7 +132,8 @@ processRecovery.executeSandboxExecCommand = (sandboxName, command) => {
   sandboxExecCalls.push({ sandboxName, command });
   return ${JSON.stringify(sandboxExecResult)};
 };
-processRecovery.executeSandboxCommand = (sandboxName, command) => {
+const sandboxCommandCli = require(${j("adapters/openshell/sandbox-command-cli.js")});
+sandboxCommandCli.runCliOpenShellBufferedCommand = (sandboxName, command) => {
   sandboxSshCalls.push({ sandboxName, command });
   return ${JSON.stringify(sshFallbackResult)};
 };

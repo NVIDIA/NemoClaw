@@ -205,7 +205,7 @@ replace(provider, "attachProvider", () => {});
 replace(provider, "refreshMcpProviderEnvironment", () => {});
 replace(provider, "observeMcpCredentialRevision", () => "v1");
 replace(provider, "waitForAttachedMcpCredential", () => "v1");
-replace(processRecovery, "executeSandboxCommand", (_sandbox, command) => ({
+replace(processRecovery, "executeSandboxExecCommand", (_sandbox, command) => ({
   status: 0,
   stdout: command === "command -v mcporter" ? "/usr/bin/mcporter\\n" : command.includes('"config", "get"') ? "registered\\n" : "",
   stderr: "",

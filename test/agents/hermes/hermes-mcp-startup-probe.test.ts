@@ -18,7 +18,7 @@ vi.mock("../../../src/lib/adapters/openshell/provider-command", () => ({
 
 vi.mock("../../../src/lib/actions/sandbox/process-recovery", () => ({
   executeGatewaySupervisorAction: mocks.executeGatewaySupervisorAction,
-  executeSandboxCommand: vi.fn(),
+  executeSandboxExecCommand: vi.fn(),
 }));
 
 vi.mock("../../../src/lib/core/wait", () => ({

@@ -9,8 +9,10 @@ import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import { probeCredentialResolution } from "./mcp-bridge-resolution-probe";
 import { discoverMcpTools } from "./mcp-bridge-tool-discovery";
 
-const mocks = vi.hoisted(() => ({ executeSandboxCommand: vi.fn() }));
-vi.mock("./process-recovery", () => ({ executeSandboxCommand: mocks.executeSandboxCommand }));
+const mocks = vi.hoisted(() => ({ executeSandboxExecCommand: vi.fn() }));
+vi.mock("./process-recovery", () => ({
+  executeSandboxExecCommand: mocks.executeSandboxExecCommand,
+}));
 
 const entry: McpSourceEntry = {
   server: "github",
@@ -62,37 +64,37 @@ describe.each([
 ] as const)("MCP native transport failure: %s", (kind) => {
   it.each(operations)("reports $name without retrying", async ({ run, result }) => {
     const error = new SandboxCommandTransportError(kind);
-    mocks.executeSandboxCommand.mockRejectedValue(error);
+    mocks.executeSandboxExecCommand.mockRejectedValue(error);
     await expect(run()).resolves.toMatchObject({ ...result, detail: error.message });
-    expect(mocks.executeSandboxCommand).toHaveBeenCalledOnce();
+    expect(mocks.executeSandboxExecCommand).toHaveBeenCalledOnce();
   });
   it("preserves best-effort cleanup but fails strict mutations", async () => {
     const error = new SandboxCommandTransportError(kind);
-    mocks.executeSandboxCommand.mockRejectedValue(error);
+    mocks.executeSandboxExecCommand.mockRejectedValue(error);
     await expect(
       runDeepAgentsAdapterCommand("alpha", entry, "remove", "failed", runtime, {
         bestEffort: true,
       }),
     ).resolves.toBe("");
-    expect(mocks.executeSandboxCommand).toHaveBeenCalledOnce();
-    mocks.executeSandboxCommand.mockClear();
+    expect(mocks.executeSandboxExecCommand).toHaveBeenCalledOnce();
+    mocks.executeSandboxExecCommand.mockClear();
     await expect(
       runDeepAgentsAdapterCommand("alpha", entry, "add", "failed", runtime),
     ).rejects.toBe(error);
-    expect(mocks.executeSandboxCommand).toHaveBeenCalledOnce();
+    expect(mocks.executeSandboxExecCommand).toHaveBeenCalledOnce();
   });
 });
 
 it.each(operations)("propagates unexpected authority errors from $name", async ({ run }) => {
   const error = new Error("runtime authority rejected");
-  mocks.executeSandboxCommand.mockRejectedValue(error);
+  mocks.executeSandboxExecCommand.mockRejectedValue(error);
   await expect(run()).rejects.toBe(error);
-  expect(mocks.executeSandboxCommand).toHaveBeenCalledOnce();
+  expect(mocks.executeSandboxExecCommand).toHaveBeenCalledOnce();
 });
 
 it("does not suppress unexpected authority errors during best-effort cleanup", async () => {
   const error = new Error("runtime authority rejected");
-  mocks.executeSandboxCommand.mockRejectedValue(error);
+  mocks.executeSandboxExecCommand.mockRejectedValue(error);
   await expect(
     runDeepAgentsAdapterCommand("alpha", entry, "remove", "failed", runtime, { bestEffort: true }),
   ).rejects.toBe(error);

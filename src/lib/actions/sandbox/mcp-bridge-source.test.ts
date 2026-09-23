@@ -9,7 +9,7 @@ import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  executeSandboxCommand: vi.fn(),
+  executeSandboxExecCommand: vi.fn(),
   capturePolicy: vi.fn(),
   inspectProvider: vi.fn(),
   configRoot: "/sandbox",
@@ -45,7 +45,7 @@ vi.mock("./mcp-bridge-provider-inspection", () => ({
   inspectMcpProvider: mocks.inspectProvider,
 }));
 vi.mock("./process-recovery", () => ({
-  executeSandboxCommand: mocks.executeSandboxCommand,
+  executeSandboxExecCommand: mocks.executeSandboxExecCommand,
 }));
 
 import {
@@ -142,7 +142,7 @@ network_policies:
           JSON.stringify(agent === "openclaw" ? { mcp: { servers } } : { [serverMap]: servers }),
           { mode: 0o600 },
         );
-        mocks.executeSandboxCommand.mockImplementation((_name: string, command: string) => {
+        mocks.executeSandboxExecCommand.mockImplementation((_name: string, command: string) => {
           const marker = command.includes("<<'NODE'") ? "NODE" : "PY";
           const program = command.split(`<<'${marker}'\n`)[1].split(`\n${marker}`)[0];
           const result = spawnSync(
@@ -168,7 +168,7 @@ network_policies:
   );
 
   it("joins native agent configuration with live policy and provider state", async () => {
-    mocks.executeSandboxCommand.mockReturnValue({
+    mocks.executeSandboxExecCommand.mockReturnValue({
       status: 0,
       stdout: JSON.stringify([
         {
@@ -197,7 +197,7 @@ network_policies:
   });
 
   it("keeps legacy configuration separate for explicit migration", async () => {
-    mocks.executeSandboxCommand.mockReturnValue({
+    mocks.executeSandboxExecCommand.mockReturnValue({
       status: 0,
       stdout: JSON.stringify([
         {
@@ -220,7 +220,7 @@ network_policies:
 
   it("recovers the deterministic live provider when the policy route is missing", async () => {
     mocks.capturePolicy.mockResolvedValue("network_policies: {}\n");
-    mocks.executeSandboxCommand.mockReturnValue({
+    mocks.executeSandboxExecCommand.mockReturnValue({
       status: 0,
       stdout: JSON.stringify([
         {
@@ -244,7 +244,7 @@ network_policies:
 
   it("detects the owning agent from native MCP state after local registry loss", async () => {
     const recovered = { ...sandbox, agent: null };
-    mocks.executeSandboxCommand.mockImplementation((_name: string, command: string) => ({
+    mocks.executeSandboxExecCommand.mockImplementation((_name: string, command: string) => ({
       status: 0,
       stdout: command.includes("/sandbox/.hermes/config.yaml")
         ? "mcp_servers:\n  github:\n    url: https://api.githubcopilot.com/mcp/\n    headers:\n      Authorization: Bearer openshell:resolve:env:GITHUB_TOKEN\n"
@@ -259,7 +259,9 @@ network_policies:
       adapter: "hermes-config",
       source: "native",
     });
-    const commands = mocks.executeSandboxCommand.mock.calls.map(([, command]) => String(command));
+    const commands = mocks.executeSandboxExecCommand.mock.calls.map(([, command]) =>
+      String(command),
+    );
     expect(commands.find((command) => command.includes("/sandbox/.hermes/config.yaml"))).toContain(
       "if [ ! -e '/sandbox/.hermes/config.yaml' ]",
     );
@@ -292,7 +294,7 @@ network_policies:
         path: /mcp/
         protocol: mcp
 `);
-    mocks.executeSandboxCommand.mockReturnValue({
+    mocks.executeSandboxExecCommand.mockReturnValue({
       status: 0,
       stdout: JSON.stringify([
         {
@@ -311,7 +313,7 @@ network_policies:
   });
 
   it("redacts credentials and strips terminal controls from source-read failures", async () => {
-    mocks.executeSandboxCommand.mockReturnValue({
+    mocks.executeSandboxExecCommand.mockReturnValue({
       status: 2,
       stdout: "",
       stderr: "Authorization: Bearer source-secret\u001b[31m\n\u0007forged",

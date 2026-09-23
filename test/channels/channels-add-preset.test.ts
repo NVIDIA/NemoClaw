@@ -302,7 +302,6 @@ beforeEach(() => {
           ? { status: 0, stdout: testLog, stderr: "" }
           : { status: 0, stdout: "", stderr: "" };
     });
-  vi.spyOn(processRecovery, "executeSandboxCommand").mockResolvedValue(null);
 
   buildPlanSpy = vi
     .spyOn(MessagingWorkflowPlanner.prototype, "buildPlan")

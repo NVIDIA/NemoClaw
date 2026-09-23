@@ -15,7 +15,7 @@ vi.mock("../../sandbox/privileged-exec", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../sandbox/privileged-exec")>()),
   executePrivilegedSandboxCommand,
 }));
-import { executeSandboxCommand, executeSandboxExecCommand } from "./process-recovery";
+import { executeSandboxExecCommand } from "./process-recovery";
 
 describe("ordinary sandbox command execution", () => {
   beforeEach(() => {
@@ -28,61 +28,51 @@ describe("ordinary sandbox command execution", () => {
   });
   afterEach(() => vi.unstubAllEnvs());
 
-  it.each(["command", "exec"])(
-    "pins %s to the selected gateway and mTLS authority",
-    async (entry) => {
-      vi.stubEnv("OPENSHELL_GATEWAY", "ambient");
-      vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://ambient.invalid");
-      vi.stubEnv("OPENSHELL_GATEWAY_INSECURE", "true");
-      vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/ambient/tls");
-      vi.stubEnv("OPENSHELL_TOKEN", "ambient-token");
-      const runtimeSelection = {
-        gatewayName: "recorded-gateway",
-        localTlsDir: "/authority/tls",
-        workspace: "default",
-      };
-      const result =
-        entry === "command"
-          ? await executeSandboxCommand("alpha", "echo ok", { runtimeSelection, timeout: 2000 })
-          : await executeSandboxExecCommand("alpha", "echo ok", 2000, { runtimeSelection });
-      expect(result).toEqual({ status: 0, stdout: "ok", stderr: "" });
-      expect(runBuffered).toHaveBeenCalledOnce();
-      const request = runBuffered.mock.calls[0][0];
-      expect(request).toMatchObject({
-        sandboxName: "alpha",
-        target: { kind: "named", gatewayName: "recorded-gateway" },
-        timeoutMilliseconds: 2000,
-      });
-      expect(request.environment).toMatchObject({
-        OPENSHELL_GATEWAY: "recorded-gateway",
-        OPENSHELL_LOCAL_TLS_DIR: "/authority/tls",
-        OPENSHELL_WORKSPACE: "default",
-      });
-      expect(request.environment).not.toHaveProperty("OPENSHELL_GATEWAY_ENDPOINT");
-      expect(request.environment).not.toHaveProperty("OPENSHELL_GATEWAY_INSECURE");
-      expect(request.environment).not.toHaveProperty("OPENSHELL_TOKEN");
-      expect(request.command.slice(0, 5)).toEqual([
-        "/bin/bash",
-        "--noprofile",
-        "--norc",
-        "-p",
-        "-c",
-      ]);
-      expect(request.command[5]).toContain('builtin source "/tmp/nemoclaw-proxy-env.sh"');
-      expect(request.command[5]).toContain("builtin unset OPENCLAW_GATEWAY_TOKEN");
-      expect(request.command.slice(7)).toEqual([
-        "sh",
-        "-c",
-        "printf '%s\\n' '__NEMOCLAW_SANDBOX_EXEC_STARTED__'; echo ok",
-      ]);
-      expect(runSshBuffered).not.toHaveBeenCalled();
-      expect(executePrivilegedSandboxCommand).not.toHaveBeenCalled();
-    },
-  );
+  it("pins execution to the selected gateway and mTLS authority", async () => {
+    vi.stubEnv("OPENSHELL_GATEWAY", "ambient");
+    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://ambient.invalid");
+    vi.stubEnv("OPENSHELL_GATEWAY_INSECURE", "true");
+    vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/ambient/tls");
+    vi.stubEnv("OPENSHELL_TOKEN", "ambient-token");
+    const runtimeSelection = {
+      gatewayName: "recorded-gateway",
+      localTlsDir: "/authority/tls",
+      workspace: "default",
+    };
+    const result = await executeSandboxExecCommand("alpha", "echo ok", 2000, {
+      runtimeSelection,
+    });
+    expect(result).toEqual({ status: 0, stdout: "ok", stderr: "" });
+    expect(runBuffered).toHaveBeenCalledOnce();
+    const request = runBuffered.mock.calls[0][0];
+    expect(request).toMatchObject({
+      sandboxName: "alpha",
+      target: { kind: "named", gatewayName: "recorded-gateway" },
+      timeoutMilliseconds: 2000,
+    });
+    expect(request.environment).toMatchObject({
+      OPENSHELL_GATEWAY: "recorded-gateway",
+      OPENSHELL_LOCAL_TLS_DIR: "/authority/tls",
+      OPENSHELL_WORKSPACE: "default",
+    });
+    expect(request.environment).not.toHaveProperty("OPENSHELL_GATEWAY_ENDPOINT");
+    expect(request.environment).not.toHaveProperty("OPENSHELL_GATEWAY_INSECURE");
+    expect(request.environment).not.toHaveProperty("OPENSHELL_TOKEN");
+    expect(request.command.slice(0, 5)).toEqual(["/bin/bash", "--noprofile", "--norc", "-p", "-c"]);
+    expect(request.command[5]).toContain('builtin source "/tmp/nemoclaw-proxy-env.sh"');
+    expect(request.command[5]).toContain("builtin unset OPENCLAW_GATEWAY_TOKEN");
+    expect(request.command.slice(7)).toEqual([
+      "sh",
+      "-c",
+      "printf '%s\\n' '__NEMOCLAW_SANDBOX_EXEC_STARTED__'; echo ok",
+    ]);
+    expect(runSshBuffered).not.toHaveBeenCalled();
+    expect(executePrivilegedSandboxCommand).not.toHaveBeenCalled();
+  });
 
   it("removes ambient mTLS when the selected gateway does not use it", async () => {
     vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/ambient/tls");
-    await executeSandboxCommand("alpha", "echo ok", {
+    await executeSandboxExecCommand("alpha", "echo ok", undefined, {
       runtimeSelection: { gatewayName: "external-http", workspace: "default" },
     });
     expect(runBuffered.mock.calls[0][0].environment).not.toHaveProperty("OPENSHELL_LOCAL_TLS_DIR");
@@ -99,7 +89,7 @@ describe("ordinary sandbox command execution", () => {
         stdout: "untrusted partial output",
         stderr: "",
       });
-      await expect(executeSandboxCommand("alpha", "mutate")).rejects.toMatchObject({ kind });
+      await expect(executeSandboxExecCommand("alpha", "mutate")).rejects.toMatchObject({ kind });
       expect(runBuffered).toHaveBeenCalledOnce();
       expect(runSshBuffered).not.toHaveBeenCalled();
       expect(executePrivilegedSandboxCommand).not.toHaveBeenCalled();

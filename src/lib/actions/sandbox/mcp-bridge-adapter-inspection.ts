@@ -7,7 +7,7 @@ import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
 import {
-  executeSandboxCommand,
+  executeSandboxExecCommand,
   restartSandboxGateway,
   type SandboxCommandResult,
 } from "./process-recovery";
@@ -61,9 +61,8 @@ export async function inspectAdapterRegistrationCommand(
   timeoutMs?: number,
 ): Promise<AdapterRegistrationInspection> {
   try {
-    const result = await executeSandboxCommand(sandboxName, command, {
+    const result = await executeSandboxExecCommand(sandboxName, command, timeoutMs, {
       runtimeSelection,
-      ...(timeoutMs === undefined ? {} : { timeout: timeoutMs }),
     });
     if (!result) return { state: "error", detail: "sandbox unreachable" };
     return parseAdapterRegistrationInspection(result, entry);

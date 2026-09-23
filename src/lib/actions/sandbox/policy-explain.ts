@@ -91,10 +91,8 @@ type ExecutorLoad =
  *   is not silently treated as `sandbox unreachable`.
  *
  * Once the loader returns `ok`, ownership of the actual subprocess call
- * lives in `process-recovery`'s {@link executeSandboxCommand}, which is
- * the single native OpenShell command path. Custom-agent recovery retains
- * its separate explicit SSH operation. This function does not invent a
- * parallel spawn pipeline.
+ * lives in `process-recovery`'s {@link executeSandboxExecCommand}, which is
+ * the single native OpenShell command path.
  */
 function loadExecutor(): ExecutorLoad {
   if (process.env.VITEST === "true") return { kind: "vitest" };
@@ -105,9 +103,9 @@ function loadExecutor(): ExecutorLoad {
     const resolved = resolve.resolveOpenshell ? resolve.resolveOpenshell() : null;
     if (!resolved) return { kind: "no-runtime" };
     const recovery = require("./process-recovery") as {
-      executeSandboxCommand: SandboxExec;
+      executeSandboxExecCommand: SandboxExec;
     };
-    return { kind: "ok", exec: recovery.executeSandboxCommand };
+    return { kind: "ok", exec: recovery.executeSandboxExecCommand };
   } catch (error: unknown) {
     return {
       kind: "crashed",

@@ -927,13 +927,6 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       if (removed) policyRemovalObserved = true;
       return removed;
     });
-  const executeSandboxCommandSpy = vi
-    .spyOn(processRecovery, "executeSandboxCommand")
-    .mockImplementation(async () =>
-      (
-        overrides.executeSandboxCommand ?? (() => ({ status: 0, stdout: "doctor ok", stderr: "" }))
-      )(),
-    );
   const executeSandboxExecCommandSpy = vi
     .spyOn(processRecovery, "executeSandboxExecCommand")
     .mockImplementation(async () =>
@@ -1139,7 +1132,6 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     checkAndRecoverSandboxProcessesSpy,
     restartSandboxGatewaySpy,
     errorSpy,
-    executeSandboxCommandSpy,
     executeSandboxExecCommandSpy,
     runOpenClawPostRestoreDoctorSpy,
     ensureMessagingHostForwardAfterRebuildSpy,

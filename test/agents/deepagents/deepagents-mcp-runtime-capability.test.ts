@@ -5,13 +5,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   executeGatewaySupervisorAction: vi.fn(),
-  executeSandboxCommand: vi.fn(),
+  executeSandboxExecCommand: vi.fn(),
   getSandbox: vi.fn(),
 }));
 
 vi.mock("../../../src/lib/actions/sandbox/process-recovery", () => ({
   executeGatewaySupervisorAction: mocks.executeGatewaySupervisorAction,
-  executeSandboxCommand: mocks.executeSandboxCommand,
+  executeSandboxExecCommand: mocks.executeSandboxExecCommand,
 }));
 
 vi.mock("../../../src/lib/state/registry", async (importOriginal) => ({
@@ -32,7 +32,7 @@ beforeEach(() => {
 type ProbeResult = { status: number; stdout: string; stderr: string } | null;
 
 async function runDeepAgentsProbe(result: ProbeResult) {
-  mocks.executeSandboxCommand.mockReset().mockResolvedValue(result);
+  mocks.executeSandboxExecCommand.mockReset().mockResolvedValue(result);
   const runtimeSelection = {
     gatewayName: "nemoclaw-8091",
     workspace: "default",
@@ -50,11 +50,13 @@ async function runDeepAgentsProbe(result: ProbeResult) {
   }
 
   return {
-    calls: mocks.executeSandboxCommand.mock.calls.map(([sandboxName, command, options]) => ({
-      sandboxName,
-      command,
-      runtimeSelection: options?.runtimeSelection,
-    })),
+    calls: mocks.executeSandboxExecCommand.mock.calls.map(
+      ([sandboxName, command, _timeout, options]) => ({
+        sandboxName,
+        command,
+        runtimeSelection: options?.runtimeSelection,
+      }),
+    ),
     message,
   };
 }

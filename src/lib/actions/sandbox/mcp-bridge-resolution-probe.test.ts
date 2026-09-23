@@ -6,12 +6,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
 
 const mocks = vi.hoisted(() => ({
-  executeSandboxCommand: vi.fn(),
+  executeSandboxExecCommand: vi.fn(),
   observeMcpCredentialRevision: vi.fn(),
 }));
 
 vi.mock("./process-recovery", () => ({
-  executeSandboxCommand: mocks.executeSandboxCommand,
+  executeSandboxExecCommand: mocks.executeSandboxExecCommand,
 }));
 
 vi.mock("./mcp-bridge-provider", () => ({
@@ -77,7 +77,7 @@ function probeStdout(
 }
 
 beforeEach(() => {
-  mocks.executeSandboxCommand.mockReset();
+  mocks.executeSandboxExecCommand.mockReset();
   mocks.observeMcpCredentialRevision.mockReset();
   mocks.observeMcpCredentialRevision.mockReturnValue("v11");
 });
@@ -318,7 +318,7 @@ describe("MCP credential-resolution probe execution gates", () => {
       );
       expect(probe).toMatchObject({ ok: null });
       expect(probe.detail).toContain(expectedDetail);
-      expect(mocks.executeSandboxCommand).not.toHaveBeenCalled();
+      expect(mocks.executeSandboxExecCommand).not.toHaveBeenCalled();
     },
   );
 
@@ -331,7 +331,7 @@ describe("MCP credential-resolution probe execution gates", () => {
       runtimeSelection,
     );
     expect(probe).toEqual({ ok: null, detail: "MCP adapter is not declared" });
-    expect(mocks.executeSandboxCommand).not.toHaveBeenCalled();
+    expect(mocks.executeSandboxExecCommand).not.toHaveBeenCalled();
   });
 
   it("skips without contacting the sandbox when the stored URL is unsafe (#6379)", async () => {
@@ -343,11 +343,11 @@ describe("MCP credential-resolution probe execution gates", () => {
       runtimeSelection,
     );
     expect(probe).toEqual({ ok: null, detail: "no credential binding or safe endpoint to probe" });
-    expect(mocks.executeSandboxCommand).not.toHaveBeenCalled();
+    expect(mocks.executeSandboxExecCommand).not.toHaveBeenCalled();
   });
 
   it("probes a recorded trusted private endpoint instead of skipping it as unsafe (#11377)", async () => {
-    mocks.executeSandboxCommand.mockImplementation((_sandboxName: string, command: string) => {
+    mocks.executeSandboxExecCommand.mockImplementation((_sandboxName: string, command: string) => {
       const resultMarker = command.match(/__NEMOCLAW_SANDBOX_EXEC_STARTED___[0-9a-f]{32}/)?.[0];
       return {
         status: 0,
@@ -374,12 +374,14 @@ describe("MCP credential-resolution probe execution gates", () => {
       runtimeSelection,
     );
     expect(probe).toEqual({ ok: true, httpStatus: 200, controlHttpStatus: 401 });
-    expect(mocks.executeSandboxCommand).toHaveBeenCalledTimes(1);
-    expect(mocks.executeSandboxCommand.mock.calls[0]?.[1]).toContain("https://172.17.0.2:8443/mcp");
+    expect(mocks.executeSandboxExecCommand).toHaveBeenCalledTimes(1);
+    expect(mocks.executeSandboxExecCommand.mock.calls[0]?.[1]).toContain(
+      "https://172.17.0.2:8443/mcp",
+    );
   });
 
   it("executes the probe in the sandbox and classifies the outcome (#6379)", async () => {
-    mocks.executeSandboxCommand.mockImplementation((_sandboxName: string, command: string) => {
+    mocks.executeSandboxExecCommand.mockImplementation((_sandboxName: string, command: string) => {
       const resultMarker = command.match(/__NEMOCLAW_SANDBOX_EXEC_STARTED___[0-9a-f]{32}/)?.[0];
       return {
         status: 0,
@@ -401,16 +403,18 @@ describe("MCP credential-resolution probe execution gates", () => {
       runtimeSelection,
     );
     expect(probe).toEqual({ ok: true, httpStatus: 200, controlHttpStatus: 401 });
-    expect(mocks.executeSandboxCommand).toHaveBeenCalledTimes(1);
-    const [, command] = mocks.executeSandboxCommand.mock.calls[0];
+    expect(mocks.executeSandboxExecCommand).toHaveBeenCalledTimes(1);
+    const [, command] = mocks.executeSandboxExecCommand.mock.calls[0];
     expect(command).toContain("openshell:resolve:env:v11_GITHUB_TOKEN");
     expect(command).not.toContain("authorization: Bearer openshell:resolve:env:GITHUB_TOKEN");
     expect(command).toContain(MCP_PROBE_CONTROL_BEARER);
-    expect(mocks.executeSandboxCommand.mock.calls[0]?.[2]).toEqual({ runtimeSelection });
+    expect(mocks.executeSandboxExecCommand.mock.calls[0]?.[3]).toEqual({
+      runtimeSelection,
+    });
   });
 
   it("reuses a status observation instead of starting a second revision check (#10079)", async () => {
-    mocks.executeSandboxCommand.mockImplementation((_sandboxName: string, command: string) => {
+    mocks.executeSandboxExecCommand.mockImplementation((_sandboxName: string, command: string) => {
       const resultMarker = command.match(/__NEMOCLAW_SANDBOX_EXEC_STARTED___[0-9a-f]{32}/)?.[0];
       return {
         status: 0,
@@ -436,7 +440,7 @@ describe("MCP credential-resolution probe execution gates", () => {
 
     expect(probe).toEqual({ ok: true, httpStatus: 200, controlHttpStatus: 401 });
     expect(mocks.observeMcpCredentialRevision).not.toHaveBeenCalled();
-    expect(mocks.executeSandboxCommand.mock.calls[0]?.[1]).toContain(
+    expect(mocks.executeSandboxExecCommand.mock.calls[0]?.[1]).toContain(
       "openshell:resolve:env:v12_GITHUB_TOKEN",
     );
   });
@@ -457,7 +461,7 @@ describe("MCP credential-resolution probe execution gates", () => {
       detail:
         "probe skipped: a fresh OpenShell exec exposed an identityless credential placeholder instead of a generation-scoped placeholder",
     });
-    expect(mocks.executeSandboxCommand).not.toHaveBeenCalled();
+    expect(mocks.executeSandboxExecCommand).not.toHaveBeenCalled();
   });
 });
 

@@ -36,7 +36,6 @@ describe("policy channel remove/enable flows", () => {
       stdout: "NEMOCLAW_CHANNEL_CLEAR_OK\n",
       stderr: "",
     });
-    vi.spyOn(processRecovery, "executeSandboxCommand").mockResolvedValue(null);
   });
 
   afterEach(() => {
@@ -159,7 +158,6 @@ describe("policy channel remove/enable flows", () => {
     await expect(removeChannelNonInteractive("wechat")).rejects.toThrow("process.exit(1)");
     expect(stoppedCleanup).toHaveBeenCalledOnce();
     expect(processRecovery.executeSandboxExecCommand).toHaveBeenCalledOnce();
-    expect(processRecovery.executeSandboxCommand).not.toHaveBeenCalled();
     expect(updateSandbox).not.toHaveBeenCalled();
     expect(removePreset).not.toHaveBeenCalled();
     expect(rebuildSandbox).not.toHaveBeenCalled();
@@ -203,7 +201,6 @@ describe("policy channel remove/enable flows", () => {
     );
 
     expect(processRecovery.executeSandboxExecCommand).not.toHaveBeenCalled();
-    expect(processRecovery.executeSandboxCommand).not.toHaveBeenCalled();
   });
 
   it("clears Hermes WhatsApp default, profile, and legacy sessions before removal", async () => {
@@ -239,7 +236,6 @@ describe("policy channel remove/enable flows", () => {
         expect.stringContaining("Restore sandbox lifecycle access"),
       );
       expect(processRecovery.executeSandboxExecCommand).toHaveBeenCalledOnce();
-      expect(processRecovery.executeSandboxCommand).not.toHaveBeenCalled();
       expect(updateSandbox).not.toHaveBeenCalled();
       expect(removePreset).not.toHaveBeenCalled();
       expect(rebuildSandbox).not.toHaveBeenCalled();
@@ -306,18 +302,13 @@ describe("policy channel remove/enable flows", () => {
         stdout,
         stderr: "exec unavailable",
       });
-      vi.mocked(processRecovery.executeSandboxCommand).mockResolvedValue({
-        status: 1,
-        stdout: "",
-        stderr: "ssh unavailable",
-      });
 
       await expect(removeChannelNonInteractive()).rejects.toThrow("process.exit(1)");
 
       expectHermesSessionCleanup(
         vi.mocked(processRecovery.executeSandboxExecCommand).mock.calls[0]?.[1],
       );
-      expect(processRecovery.executeSandboxCommand).not.toHaveBeenCalled();
+      expect(processRecovery.executeSandboxExecCommand).toHaveBeenCalledOnce();
 
       expect(runOpenshell).not.toHaveBeenCalled();
       expect(updateSandbox).not.toHaveBeenCalled();

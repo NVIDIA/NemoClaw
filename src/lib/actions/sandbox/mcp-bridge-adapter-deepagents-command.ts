@@ -8,7 +8,7 @@ import type { AdapterMutationOptions } from "./mcp-bridge-adapter-inspection";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
-import { executeSandboxCommand } from "./process-recovery";
+import { executeSandboxExecCommand } from "./process-recovery";
 
 export async function runDeepAgentsAdapterCommand(
   sandboxName: string,
@@ -18,9 +18,11 @@ export async function runDeepAgentsAdapterCommand(
   runtimeSelection: McpProviderInspectionRuntimeSelection,
   options: AdapterMutationOptions = {},
 ): Promise<string> {
-  let result: Awaited<ReturnType<typeof executeSandboxCommand>>;
+  let result: Awaited<ReturnType<typeof executeSandboxExecCommand>>;
   try {
-    result = await executeSandboxCommand(sandboxName, command, { runtimeSelection });
+    result = await executeSandboxExecCommand(sandboxName, command, undefined, {
+      runtimeSelection,
+    });
   } catch (error) {
     if (!(error instanceof SandboxCommandTransportError) || !options.bestEffort) throw error;
     return "";

@@ -70,7 +70,7 @@ import {
   MCP_RUNTIME_SANITIZED_ENV_VARS,
 } from "./mcp-bridge-runtime-command";
 import { normalizeRecordedMcpServerUrl } from "./mcp-bridge/recorded-url";
-import { executeSandboxCommand, type SandboxCommandResult } from "./process-recovery";
+import { executeSandboxExecCommand, type SandboxCommandResult } from "./process-recovery";
 import {
   buildSandboxExecMarkedCommand,
   createSandboxExecMarker,
@@ -90,7 +90,7 @@ export const MCP_PROBE_CONTROL_EXIT_MARKER = "NEMOCLAW_MCP_CONTROL_CURL_EXIT=";
  */
 export const MCP_PROBE_CONTROL_BEARER = "nemoclaw-mcp-probe-control-unresolvable";
 
-// executeSandboxCommand enforces a 15s native command timeout; two sequential
+// executeSandboxExecCommand enforces a 15s native command timeout; two sequential
 // adapter HTTP probes must both fit comfortably below it so a slow endpoint
 // classifies as a probe timeout instead of an ambiguous command transport failure.
 const PROBE_HTTP_MAX_TIME_SECONDS = 6;
@@ -451,7 +451,7 @@ export async function probeCredentialResolution(
   const probeCommand = buildCredentialResolutionProbeCommand(entry, adapter, credentialRevision);
   if (!probeCommand) return { ok: null, detail: "no credential binding or safe endpoint to probe" };
   try {
-    const result = await executeSandboxCommand(sandboxName, probeCommand.command, {
+    const result = await executeSandboxExecCommand(sandboxName, probeCommand.command, undefined, {
       runtimeSelection,
     });
     return classifyCredentialResolutionProbe(result, entry, probeCommand.resultMarker);

@@ -16,7 +16,6 @@ const { DirectSandboxContainerNotFoundError, DirectSandboxFallbackUnavailableErr
   ) as typeof import("../../src/lib/onboard/runtime-provider/privileged-sandbox-control-errors.js");
 const {
   executeGatewaySupervisorAction,
-  executeSandboxCommand,
   executeSandboxExecCommand,
   resolveSandboxDashboardPort,
   waitForManagedGatewaySupervisor,
@@ -665,7 +664,7 @@ describe("executeSandboxExecCommand", () => {
   });
 });
 
-describe("executeSandboxCommand", () => {
+describe("executeSandboxExecCommand", () => {
   it("uses one native execution with a sanitized host environment", async () => {
     const privilegedExec = requireSource("../../src/lib/sandbox/privileged-exec.ts");
     const executePrivileged = vi.spyOn(privilegedExec, "executePrivilegedSandboxCommand");
@@ -679,7 +678,7 @@ describe("executeSandboxCommand", () => {
             'test "$1 $2" = "sandbox exec" || exit 91',
             "printf '%s\\n' '__NEMOCLAW_SANDBOX_EXEC_STARTED__' 'registered'",
           ].join("\n"),
-          () => executeSandboxCommand("alpha", "mcporter config get fake --json"),
+          () => executeSandboxExecCommand("alpha", "mcporter config get fake --json"),
         ),
       ).resolves.toEqual({ status: 0, stdout: "registered", stderr: "" });
       expect(executePrivileged).not.toHaveBeenCalled();

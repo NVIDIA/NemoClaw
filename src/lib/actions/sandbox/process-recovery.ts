@@ -124,11 +124,6 @@ export type RestartSandboxGatewayOptions = BaseRestartSandboxGatewayOptions & {
 
 export type { SandboxCommandResult, SandboxExecCommandOptions };
 
-export type SandboxCommandExecutionOptions = {
-  runtimeSelection?: OpenShellRuntimeSelection;
-  timeout?: number;
-};
-
 export type SandboxExecCommandExecutionOptions = SandboxExecCommandOptions & {
   runtimeSelection?: OpenShellRuntimeSelection;
 };
@@ -188,19 +183,6 @@ function anyAuxiliaryRecovered(results: AuxiliaryRecoveryResult[]): boolean {
 
 function getSandboxHealthProbeUrl(sandboxName: string): string {
   return resolveSandboxHealthProbeUrl(sandboxName);
-}
-
-/** Run an ordinary command through the native OpenShell execution contract. */
-export async function executeSandboxCommand(
-  sandboxName: string,
-  command: string,
-  timeoutOrOptions: number | SandboxCommandExecutionOptions = DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
-): Promise<SandboxCommandResult | null> {
-  const options =
-    typeof timeoutOrOptions === "number" ? { timeout: timeoutOrOptions } : timeoutOrOptions;
-  return executeSandboxExecCommand(sandboxName, command, options.timeout, {
-    runtimeSelection: options.runtimeSelection,
-  });
 }
 
 /** Run one root controller argv against the registry-pinned direct container. */
