@@ -536,7 +536,10 @@ describe("legacy credentials.json migration (two-phase: stage then remove)", () 
     { label: "malformed JSON", raw: "credential-canary-not-json" },
     { label: "an array", raw: "[]" },
     { label: "null", raw: "null" },
-    { label: "an oversized file", raw: " ".repeat(64 * 1024 + 1) },
+    {
+      label: "an oversized file",
+      raw: JSON.stringify({ NVIDIA_API_KEY: "migrated", pad: "x".repeat(1024 * 1024) }),
+    },
   ])("preserves $label instead of applying an unverified cleanup", async ({ raw }) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-legacy-refusal-"));
     onTestFinished(() => fs.rmSync(home, { recursive: true, force: true }));
@@ -604,6 +607,9 @@ describe("legacy credentials.json migration (two-phase: stage then remove)", () 
       JSON.stringify({ NVIDIA_API_KEY: "migrated", CUSTOM_TOKEN: "preserved" }),
       { mode: 0o600 },
     );
+    const originalBytes = fs.readFileSync(file, "utf8");
+    const originalFd = fs.openSync(file, "r");
+    onTestFinished(() => fs.closeSync(originalFd));
     const sync = fs.fsyncSync;
     vi.spyOn(fs, "fsyncSync")
       .mockImplementationOnce(sync)
@@ -615,6 +621,8 @@ describe("legacy credentials.json migration (two-phase: stage then remove)", () 
     expect(JSON.parse(fs.readFileSync(file, "utf8"))).toEqual({ CUSTOM_TOKEN: "preserved" });
     expect(fs.readdirSync(path.dirname(file))).toEqual(["credentials.json"]);
     expect(warning).toHaveBeenCalled();
+    // A failed directory sync must not wipe the old copy before retained data is durable.
+    expect(fs.readFileSync(originalFd, "utf8")).toBe(originalBytes);
   });
 
   it("survives a crash between stage and remove (interrupted-onboard regression)", async () => {
