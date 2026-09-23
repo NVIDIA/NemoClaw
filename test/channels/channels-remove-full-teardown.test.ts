@@ -70,7 +70,6 @@ function buildPreamble({
   sandboxAgent = "openclaw",
   channelInRegistry = "whatsapp",
   sandboxExecResult = { status: 0, stdout: "NEMOCLAW_CHANNEL_CLEAR_OK", stderr: "" },
-  sshFallbackResult = null as { status: number; stdout: string; stderr: string } | null,
   stoppedDockerCleanupResult = {
     cleared: false,
     failure: "runtime-not-stopped",
@@ -80,7 +79,6 @@ function buildPreamble({
   sandboxAgent?: MessagingAgentId;
   channelInRegistry?: string;
   sandboxExecResult?: { status: number; stdout: string; stderr: string } | null;
-  sshFallbackResult?: { status: number; stdout: string; stderr: string } | null;
   stoppedDockerCleanupResult?:
     | { cleared: true }
     | { cleared: false; failure: string; cleanupHelperName?: string };
@@ -115,27 +113,44 @@ function buildPreamble({
     });
   };
   return String.raw`
+const childProcess = require("node:child_process");
+const sandboxSshCalls = [];
+function rejectSsh(command, args) {
+  const executable = Array.isArray(command) ? command[0] : String(command).trim().split(/\s+/)[0];
+  if (require("node:path").basename(executable) !== "ssh") return;
+  sandboxSshCalls.push({ command, args });
+  throw new Error("unexpected SSH execution during channel removal");
+}
+for (const method of ["spawn", "spawnSync", "execFile", "execFileSync"]) {
+  const original = childProcess[method];
+  childProcess[method] = (command, ...args) => {
+    rejectSsh(command, args);
+    return original(command, ...args);
+  };
+}
+require("node:module").syncBuiltinESMExports();
+
 const resolver = require(${j("adapters/openshell/resolve.js")});
 resolver.resolveOpenshell = () => "/fake/openshell";
 
 const runner = require(${j("runner.js")});
-runner.run = () => ({ status: 0, stdout: "", stderr: "" });
-runner.runCapture = () => "";
+runner.run = (command) => {
+  rejectSsh(command);
+  return { status: 0, stdout: "", stderr: "" };
+};
+runner.runCapture = (command) => {
+  rejectSsh(command);
+  return "";
+};
 
 const adapterRuntime = require(${j("adapters/openshell/runtime.js")});
 adapterRuntime.runOpenshell = () => ({ status: 0, stdout: "", stderr: "" });
 
 const processRecovery = require(${j("actions/sandbox/process-recovery.js")});
 const sandboxExecCalls = [];
-const sandboxSshCalls = [];
 processRecovery.executeSandboxExecCommand = (sandboxName, command) => {
   sandboxExecCalls.push({ sandboxName, command });
   return ${JSON.stringify(sandboxExecResult)};
-};
-const sandboxCommandCli = require(${j("adapters/openshell/sandbox-command-cli.js")});
-sandboxCommandCli.runCliOpenShellBufferedCommand = (sandboxName, command) => {
-  sandboxSshCalls.push({ sandboxName, command });
-  return ${JSON.stringify(sshFallbackResult)};
 };
 
 const gatewayRuntime = require(${j("gateway-runtime-action.js")});
@@ -283,7 +298,6 @@ const ctx = module.exports;
       sandboxAgent: "openclaw",
       channelInRegistry: "wechat",
       sandboxExecResult: { status: 1, stdout: "", stderr: "startup failed" },
-      sshFallbackResult: { status: 255, stdout: "", stderr: "sandbox stopped" },
       stoppedDockerCleanupResult: { cleared: true },
     })}
 const ctx = module.exports;
@@ -335,7 +349,6 @@ const ctx = module.exports;
       sandboxAgent: "openclaw",
       channelInRegistry: "telegram",
       sandboxExecResult: { status: 1, stdout: "", stderr: "sandbox stopped" },
-      sshFallbackResult: { status: 255, stdout: "", stderr: "sandbox stopped" },
       stoppedDockerCleanupResult: { cleared: true },
     })}
 const ctx = module.exports;
@@ -407,7 +420,6 @@ const ctx = module.exports;
         sandboxAgent: "openclaw",
         channelInRegistry: "wechat",
         sandboxExecResult: { status: 1, stdout: "", stderr: "sandbox stopped" },
-        sshFallbackResult: { status: 255, stdout: "", stderr: "sandbox stopped" },
         stoppedDockerCleanupResult: cleanup,
       })}
 const ctx = module.exports;
@@ -526,7 +538,6 @@ const ctx = module.exports;
     const script = `${buildPreamble({
       sandboxAgent: "openclaw",
       sandboxExecResult: { status: 1, stdout: "", stderr: "sandbox is not running" },
-      sshFallbackResult: { status: 255, stdout: "", stderr: "ssh: connect to host ... failed" },
     })}
 const ctx = module.exports;
 (async () => {
@@ -589,7 +600,6 @@ const ctx = module.exports;
       sandboxAgent: "openclaw",
       channelInRegistry: "telegram",
       sandboxExecResult: { status: 1, stdout: "", stderr: "sandbox is not running" },
-      sshFallbackResult: { status: 255, stdout: "", stderr: "ssh: connect to host ... failed" },
     })}
 const ctx = module.exports;
 (async () => {

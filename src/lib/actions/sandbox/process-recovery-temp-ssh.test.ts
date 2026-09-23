@@ -59,8 +59,7 @@ describe("ordinary sandbox command execution", () => {
     expect(request.environment).not.toHaveProperty("OPENSHELL_GATEWAY_INSECURE");
     expect(request.environment).not.toHaveProperty("OPENSHELL_TOKEN");
     expect(request.command.slice(0, 5)).toEqual(["/bin/bash", "--noprofile", "--norc", "-p", "-c"]);
-    expect(request.command[5]).toContain('builtin source "/tmp/nemoclaw-proxy-env.sh"');
-    expect(request.command[5]).toContain("builtin unset OPENCLAW_GATEWAY_TOKEN");
+    expect(request.command[5]).toBe('builtin unset OPENCLAW_GATEWAY_TOKEN; builtin exec -- "$@"');
     expect(request.command.slice(7)).toEqual([
       "sh",
       "-c",

@@ -87,7 +87,7 @@ import {
   printGatewayWedgeDiagnostics,
   sanitizeWedgeLogLine,
 } from "./gateway-wedge-diagnostics";
-import { wrapExecCommandWithRuntimeEnv } from "./runtime-env";
+import { wrapOrdinarySandboxCommand } from "./runtime-env";
 import {
   buildSandboxExecMarkedCommand,
   extractSandboxExecCommandStdout,
@@ -145,7 +145,7 @@ function commandTransportDependencies(): CommandTransportDependencies {
       runBuffered: (request) =>
         createCliOpenShellSandboxCommandExecutor({ hostCwd: ROOT }).runBuffered({
           ...request,
-          command: wrapExecCommandWithRuntimeEnv(request.command),
+          command: wrapOrdinarySandboxCommand(request.command),
         }),
     },
   };
