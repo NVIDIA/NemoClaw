@@ -14,6 +14,7 @@ import {
 } from "../../../src/lib/adapters/podman/index.ts";
 import { captureHermesPortableOpenShellExecutableAuthority } from "../../../src/lib/adapters/openshell/resolve-shared.ts";
 import { loadAgent } from "../../../src/lib/agent/defs.ts";
+import type { DoctorReport } from "../../../src/lib/actions/sandbox/doctor-report.ts";
 import {
   handleFinalizationState,
   handlePostVerifyState,
@@ -459,7 +460,7 @@ export async function runPortableHermesFinalization(
     });
 
     phases.confirmDoctor();
-    await runCommand(
+    const doctorJson = await runCommand(
       shellProbe,
       process.execPath,
       [CLI_ENTRYPOINT, SANDBOX_NAME, "doctor", "--json"],
@@ -469,6 +470,28 @@ export async function runPortableHermesFinalization(
         timeoutMs: 240_000,
       },
     );
+    const doctorReport = JSON.parse(doctorJson) as DoctorReport;
+    assert.deepEqual(doctorReport, {
+      schemaVersion: 1,
+      sandbox: SANDBOX_NAME,
+      status: "ok",
+      failed: 0,
+      warnings: 0,
+      checks: [
+        {
+          group: "Sandbox",
+          label: "Portable lifecycle",
+          status: "ok",
+          detail: "agent=Hermes; phase=active",
+        },
+        {
+          group: "Sandbox",
+          label: "Hermes gateway",
+          status: "ok",
+          detail: "receipt-qualified gateway readiness is confirmed",
+        },
+      ],
+    });
 
     phases.recordEvidence();
     completed = true;

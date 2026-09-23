@@ -621,7 +621,7 @@ describe("E2E workflow plan", () => {
     expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-standard"]);
   });
 
-  it("runs Portable Hermes finalization only when explicitly selected with Podman", () => {
+  it("excludes Portable Hermes from defaults and selects it explicitly or for owning changes", () => {
     const target = catalogueTarget("portable-hermes-finalization");
     expect(target).toMatchObject({
       gatewayRuntimes: ["podman"],
@@ -648,6 +648,22 @@ describe("E2E workflow plan", () => {
       }),
     ]);
     expect(selectedWorkflowJobs(explicitPlan)).toEqual(["catalogue-standard"]);
+
+    const changedFilePlan = buildE2eWorkflowPlan(
+      {},
+      {
+        changedFiles: ["src/lib/onboard/machine/finalization-deps.ts"],
+        gatewayRuntimes: ["podman"],
+      },
+    );
+    expect(changedFilePlan.catalogueMatrices.standard).toContainEqual(
+      expect.objectContaining({
+        id: target.id,
+        runtime_provider: "podman",
+        runner: target.runner,
+      }),
+    );
+    expect(selectedWorkflowJobs(changedFilePlan)).toContain("catalogue-standard");
   });
 
   it("selects the complete GPU reply target when its Hermes helper changes", () => {

@@ -388,9 +388,11 @@ This preserves the locked dependency versions and avoids npm resolving a new pee
 Both jobs verify that the SDK connection API loads before running tests.
 This keeps the private optional dependency available for SDK-backed commands such as configuration export.
 
-The `portable-hermes-finalization` target owns the live readiness handoff for Issue #11892. It runs
-only when explicitly selected with `gateway_runtimes=podman`; it is not part of default or
-release-required selections. The current trusted x86-64 NVIDIA GPU lane uses RTX PRO 6000 hardware,
+The `portable-hermes-finalization` target owns the live readiness handoff for Issue #11892. The
+planner selects it when a changed source file matches the target's `owningPaths`. It is not part of
+default or release-required selections. For a manual PR run, select it with
+`targets=portable-hermes-finalization` and `gateway_runtimes=podman`. The current trusted x86-64
+NVIDIA GPU lane uses RTX PRO 6000 hardware,
 while the issue's A100 environment remains the original reproducer. The target removes Docker from
 the execution boundary, starts the candidate Hermes image through the pinned rootless Podman
 gateway, publishes the exact receipt and registry authority, and requires onboarding finalization
