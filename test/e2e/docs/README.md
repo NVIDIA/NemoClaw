@@ -409,6 +409,8 @@ When you add or make a non-comment source change to a live E2E test or a
 helper under `liveSources` for its owning live test. Also list each explicitly
 owned `test/e2e/fixtures/` source under `liveSources` for every owning live test.
 The same mapped fast-test rule applies to changes in those shared fixtures.
+Removing an owner in the same PR does not remove its base-manifest fast-test
+requirement for a changed fixture.
 Unrelated fixtures do not need an owner. If the entry has mapped
 fast tests, make a non-comment source change to at least one mapped fast test
 in the same PR. Use

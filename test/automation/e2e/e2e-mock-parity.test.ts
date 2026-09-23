@@ -197,6 +197,25 @@ describe("changed live E2E mock parity", () => {
     ).toEqual([]);
   });
 
+  it.each([{ changedTests: [] }, { changedTests: [fast] }])(
+    "retains base fixture coverage when ownership is removed with changed tests %j",
+    ({ changedTests }) => {
+      const shared = "test/e2e/fixtures/owned-sandbox-cleanup.ts";
+      expect(
+        validateMockParity({
+          manifest: manifest([{ live, fast: [fast] }]),
+          baseManifest: manifest([{ live, liveSources: [shared], fast: [fast] }]),
+          changedFiles: [shared, ...changedTests],
+          fileExists: (file) => exists(file) || file === shared,
+        }),
+      ).toEqual(
+        changedTests.length
+          ? []
+          : [`${shared}: change at least one fast PR test mapped from ${live}`],
+      );
+    },
+  );
+
   it("ignores comment-only shared fixture changes without hiding behavioral changes", () => {
     const shared = "test/e2e/fixtures/owned-sandbox-cleanup.ts";
     expect(

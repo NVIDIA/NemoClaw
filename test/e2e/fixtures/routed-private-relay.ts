@@ -129,28 +129,27 @@ export async function startRoutedPrivateRelay(options: {
       assertExitZero(removal, "remove owned routed-private relay");
     }
   };
-  const start = await runtime.command(
-    [
-      "run",
-      "--detach",
-      "--rm",
-      "--name",
-      relayName,
-      "--network",
-      networkName,
-      "node:22-bookworm-slim",
-      "node",
-      "-e",
-      ROUTED_PRIVATE_RELAY_SOURCE,
-      options.upstreamHost,
-      String(options.upstreamPort),
-      String(RELAY_PORT),
-      SUMMARY_PATH,
-    ],
-    { artifactName: "start-routed-private-relay", timeoutMs: 120_000 },
-  );
-  assert.equal(start.exitCode, 0, `${start.stdout}\n${start.stderr}`);
   try {
+    const start = await runtime.command(
+      [
+        "run",
+        "--detach",
+        "--name",
+        relayName,
+        "--network",
+        networkName,
+        "node:22-bookworm-slim",
+        "node",
+        "-e",
+        ROUTED_PRIVATE_RELAY_SOURCE,
+        options.upstreamHost,
+        String(options.upstreamPort),
+        String(RELAY_PORT),
+        SUMMARY_PATH,
+      ],
+      { artifactName: "start-routed-private-relay", timeoutMs: 120_000 },
+    );
+    assert.equal(start.exitCode, 0, `${start.stdout}\n${start.stderr}`);
     const addressResult = await runtime.command(
       [
         "container",

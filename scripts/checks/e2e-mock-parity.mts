@@ -101,11 +101,13 @@ function isFastPrTest(file: string): boolean {
 
 export function validateMockParity(options: {
   manifest: MockParityManifest;
+  baseManifest?: MockParityManifest;
   changedFiles: readonly string[];
   fileExists?: (file: string) => boolean;
 }): string[] {
   const {
     manifest,
+    baseManifest,
     changedFiles,
     fileExists = (file) => fs.existsSync(path.join(REPO_ROOT, file)),
   } = options;
@@ -212,6 +214,16 @@ export function validateMockParity(options: {
     requireChangedFastTest(entry, liveFile);
   }
 
+  // Removing an explicit owner must not exempt a changed fixture from its
+  // established fast-test obligation in the same PR.
+  for (const entry of baseManifest?.entries ?? []) {
+    for (const source of entry.liveSources ?? []) {
+      if (SHARED_FIXTURE.test(source) && changedFileSet.has(source)) {
+        requireChangedFastTest(entry, source);
+      }
+    }
+  }
+
   // Existing live helpers require ownership; shared fixtures opt in explicitly
   // through liveSources so unrelated fixture contracts are not broadened.
   for (const helperFile of [...changedFileSet].filter(
@@ -227,7 +239,7 @@ export function validateMockParity(options: {
     for (const owner of owners) requireChangedFastTest(owner, helperFile);
   }
 
-  return errors.sort();
+  return [...new Set(errors)].sort();
 }
 
 function argument(name: string): string | undefined {
@@ -293,7 +305,18 @@ function main(): void {
 
   const manifestPath = path.join(REPO_ROOT, DEFAULT_PARITY_MANIFEST);
   const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as MockParityManifest;
-  const errors = validateMockParity({ manifest, changedFiles: changedFiles(base, head) });
+  const baseManifest = JSON.parse(
+    execFileSync("git", ["show", `${base}:${DEFAULT_PARITY_MANIFEST}`], {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+      maxBuffer: 10 * 1024 * 1024,
+    }),
+  ) as MockParityManifest;
+  const errors = validateMockParity({
+    manifest,
+    baseManifest,
+    changedFiles: changedFiles(base, head),
+  });
   if (errors.length > 0) {
     console.error(
       ["E2E mock/live parity check failed:", ...errors.map((error) => `- ${error}`)].join("\n"),

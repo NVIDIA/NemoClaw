@@ -45,10 +45,10 @@ function fixture() {
     ...patch,
   });
   const presentGateway = {
-    stdout: JSON.stringify({ gateway: process.env.OPENSHELL_GATEWAY?.trim() || "nemoclaw" }),
+    stdout: JSON.stringify({ gateway: "nemoclaw" }),
   };
   const gateway = {
-    name: process.env.OPENSHELL_GATEWAY?.trim() || "nemoclaw",
+    name: "nemoclaw",
     response: {
       exitCode: 1,
       stderr: "No gateway configured.\n│ Register a gateway with: openshell gateway add <endpoint>",
@@ -73,6 +73,8 @@ function fixture() {
 
 describe("owned-sandbox cleanup", () => {
   beforeEach(() => {
+    vi.unstubAllEnvs();
+    vi.stubEnv("OPENSHELL_GATEWAY", "nemoclaw");
     state.registered = false;
     state.gatewayPort = undefined;
   });

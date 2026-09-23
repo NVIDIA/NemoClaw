@@ -187,6 +187,7 @@ it.each([true, false])(
 
 function runtimeFixture(
   options: {
+    startNonzero?: boolean;
     snapshotThrows?: boolean;
     snapshotNonzero?: boolean;
     inspectThrows?: boolean;
@@ -210,6 +211,7 @@ function runtimeFixture(
       return {
         command: [],
         exitCode:
+          (args[0] === "run" && options.startNonzero) ||
           (args[0] === "exec" && options.snapshotNonzero) ||
           (key === "container rm" && options.removalNonzero)
             ? 1
@@ -245,6 +247,30 @@ describe("relay diagnostic cleanup ownership", () => {
       expect(calls.at(-1)?.[0][3]).toBe(calls.at(-2)?.[0][1]);
     },
   );
+  it("retains an exited relay for its registered cleanup owner", async () => {
+    const f = runtimeFixture({ snapshotNonzero: true });
+    const relay = await f.start();
+    const startArgs = f.command.mock.calls.find(([args]) => args[0] === "run")![0];
+    expect(startArgs).not.toContain("--rm");
+    await relay.close();
+    expect(f.command.mock.calls.at(-1)?.[0]).toEqual([
+      "container",
+      "rm",
+      "--force",
+      startArgs[startArgs.indexOf("--name") + 1],
+    ]);
+  });
+  it("removes an owned relay after the runtime creates it but fails to start it", async () => {
+    const f = runtimeFixture({ startNonzero: true, snapshotNonzero: true });
+    await expect(f.start()).rejects.toThrow();
+    const startArgs = f.command.mock.calls.find(([args]) => args[0] === "run")![0];
+    expect(f.command.mock.calls.at(-1)?.[0]).toEqual([
+      "container",
+      "rm",
+      "--force",
+      startArgs[startArgs.indexOf("--name") + 1],
+    ]);
+  });
   it("cleans up after post-start inspection fails and preserves that failure", async () => {
     const f = runtimeFixture({ inspectThrows: true, snapshotThrows: true });
     await expect(f.start()).rejects.toThrow("inspect failed");
