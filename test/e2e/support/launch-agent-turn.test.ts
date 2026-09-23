@@ -492,7 +492,12 @@ exec "$@"
       NEMOCLAW_FIXTURE_PTY_MONITOR_ROOT: ptyMonitorRoot,
       NEMOCLAW_FIXTURE_PTY_PATH_UNREADABLE_MARKER: ptyPathUnreadableMarker,
       NEMOCLAW_FIXTURE_PTY_SOCKET_RECEIPT: ptySocketReceiptPath,
-      NEMOCLAW_FIXTURE_SESSION_FILE: join(sessionRoot, "session-a.jsonl"),
+      NEMOCLAW_FIXTURE_SESSION_FILE: join(
+        sessionRoot,
+        mode === "provider-empty-message"
+          ? "ed80ef8e-a026-424f-8ca4-669f6060e046.jsonl"
+          : "session-a.jsonl",
+      ),
       NEMOCLAW_FIXTURE_TERMINAL_COPY: terminalCopy,
       NEMOCLAW_FIXTURE_RUN_ID: runId,
       NEMOCLAW_FIXTURE_TUI_PIDS: tuiPidsPath,
@@ -1072,6 +1077,7 @@ it.runIf(process.platform === "linux").concurrent(
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("nemoclaw.e2e.launch-failure=provider-unavailable");
   },
+  testTimeout(30_000),
 );
 
 it.runIf(process.platform === "linux").each([
