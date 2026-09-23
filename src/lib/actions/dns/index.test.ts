@@ -33,8 +33,9 @@ const NOTHING_ANSWERS = probeAnswers({});
 
 const PODMAN_SOCKET = "/run/user/1000/podman/podman.sock";
 
-/** A clean Linux environment, so an ambient `DOCKER_HOST` cannot leak in. */
+/** A clean Linux environment, so ambient `DOCKER_CONTEXT` and `DOCKER_HOST` cannot leak in. */
 const LINUX_ENV = {
+  DOCKER_CONTEXT: undefined,
   DOCKER_HOST: undefined,
   HOME: "/home/test",
   XDG_RUNTIME_DIR: undefined,
@@ -78,7 +79,7 @@ describe("runFixCoreDns", () => {
     const result = runFixCoreDns(
       {},
       {
-        env: { DOCKER_HOST: "unix:///var/run/docker.sock" },
+        env: { ...LINUX_ENV, DOCKER_HOST: "unix:///var/run/docker.sock" },
         log,
         runDocker: vi.fn(),
       },
@@ -255,7 +256,7 @@ describe("runFixCoreDns", () => {
     const result = runFixCoreDns(
       { gatewayName: "nemoclaw" },
       {
-        env: { DOCKER_HOST: "unix:///run/user/1000/podman/podman.sock" },
+        env: { ...LINUX_ENV, DOCKER_HOST: "unix:///run/user/1000/podman/podman.sock" },
         log,
         readFile: () => "nameserver 1.1.1.1\n",
         runDocker,
@@ -298,7 +299,7 @@ describe("runFixCoreDns", () => {
     const result = runFixCoreDns(
       { gatewayName: "nemoclaw" },
       {
-        env: { DOCKER_HOST: "unix:///run/user/1000/podman/podman.sock" },
+        env: { ...LINUX_ENV, DOCKER_HOST: "unix:///run/user/1000/podman/podman.sock" },
         readFile: () => "nameserver 1.1.1.1\n",
         runDocker: (args) => {
           calls.push(["docker", args]);
@@ -318,7 +319,7 @@ describe("runFixCoreDns", () => {
     const result = runFixCoreDns(
       { gatewayName: "nemoclaw" },
       {
-        env: { DOCKER_HOST: "unix:///run/user/1000/podman/podman.sock" },
+        env: { ...LINUX_ENV, DOCKER_HOST: "unix:///run/user/1000/podman/podman.sock" },
         readFile: () => "nameserver 1.1.1.1\n",
         log: vi.fn(),
         runDocker: (args) => {
