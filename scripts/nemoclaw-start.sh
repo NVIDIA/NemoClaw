@@ -2478,7 +2478,7 @@ try:
     try:
         profile_fd = os.open(
             profile_name,
-            os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0),
+            os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_NONBLOCK', 0),
             dir_fd=directory_fd,
         )
     except FileNotFoundError:

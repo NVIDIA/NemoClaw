@@ -42,6 +42,8 @@ function runBashAuthFixture(
     input: `${AUTH_FUNCTIONS}\n${commands}`,
     env: { PATH: process.env.PATH, HOME: home, ...env },
     encoding: "utf-8",
+    timeout: 15_000,
+    killSignal: "SIGKILL",
   });
   return { authPath, ...result };
 }
@@ -264,6 +266,20 @@ describe("OpenClaw auth-profile boundary", () => {
       expect(result.stdout).not.toContain("command");
     },
   );
+
+  it("rejects a FIFO profile without waiting for a writer", () => {
+    const fixture = runBashAuthFixture(
+      managedEnv,
+      (authPath) => {
+        fs.mkdirSync(path.dirname(authPath), { recursive: true });
+        expect(spawnSync("mkfifo", [authPath]).status).toBe(0);
+      },
+      'python3() { exec python3 "$@"; }; write_auth_profile',
+    );
+    expect(fixture.error).toBeUndefined();
+    expect(fixture.status).toBe(1);
+    expect(fixture.stderr).toContain("auth-profiles.json is not a regular file");
+  });
 
   it("rejects a symlinked parent without changing its target", () => {
     const externalContents = JSON.stringify({ "inference:manual": legacyManagedProfile });
