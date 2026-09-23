@@ -25,6 +25,9 @@ const OPENCLAW_AUTO_PAIR_RUNTIME_ENV_KEYS = [
 ] as const;
 const OPENCLAW_DIAGNOSTIC_RUNTIME_ENV_KEYS = ["NEMOCLAW_MCP_SHADOW_DIAGNOSTICS"] as const;
 const OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_ENV = "NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS";
+const OPENCLAW_ROUTED_MODEL_ENV = "NEMOCLAW_ROUTED_MODEL";
+const OPENCLAW_ROUTED_MODEL_MAX_LENGTH = 512;
+const OPENCLAW_ROUTED_MODEL_PATTERN = /^[A-Za-z0-9._:/-]+$/;
 const OPENCLAW_GATEWAY_URL_ENV = "OPENCLAW_GATEWAY_URL";
 const OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_MIN_MS = 1500;
 const OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_MAX_MS = 10_000;
@@ -99,6 +102,7 @@ export interface SandboxRuntimeEnvArgsInput {
   extraPlaceholderKeys: readonly string[];
   allowHermesApiPortOverride?: boolean;
   observabilityEnabled?: boolean;
+  openClawRoutedModel?: string;
   sandboxName?: string;
   env: NodeJS.ProcessEnv;
   omitCredentialEnv?: boolean;
@@ -125,6 +129,15 @@ export function buildSandboxRuntimeEnvArgs(input: SandboxRuntimeEnvArgsInput): {
   appendOpenClawAutoPairRuntimeEnvArgs(envArgs, agent, env);
   appendOpenClawDiagnosticRuntimeEnvArgs(envArgs, agent, env);
   appendOpenClawMcpToolsListTimeoutRuntimeEnvArg(envArgs, agent, env);
+  if ((!agent || agent.name === "openclaw") && input.openClawRoutedModel) {
+    if (
+      input.openClawRoutedModel.length > OPENCLAW_ROUTED_MODEL_MAX_LENGTH ||
+      !OPENCLAW_ROUTED_MODEL_PATTERN.test(input.openClawRoutedModel)
+    ) {
+      throw new Error("The selected OpenClaw route model has an invalid identifier.");
+    }
+    envArgs.push(formatEnvAssignment(OPENCLAW_ROUTED_MODEL_ENV, input.openClawRoutedModel));
+  }
   appendHermesDashboardEnvArgs(envArgs, input.hermesDashboardState, formatEnvAssignment);
   if (agent?.name === "hermes" && input.sandboxName) {
     const apiPort =

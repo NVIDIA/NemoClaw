@@ -45,8 +45,9 @@ If the route metadata is incomplete, NemoClaw stops and tells you to re-run onbo
 
 <AgentOnly variant="openclaw">
 
-When the selected model ID changes, NemoClaw removes `contextWindow` and `maxTokens` values inherited from the previous model entry.
-OpenClaw then uses the new model's catalog values or defaults.
+At runtime, NemoClaw replaces `contextWindow` only when it resolves a value for the selected model and can retain an existing `maxTokens` value.
+During custom-image startup, if the OpenClaw configuration still names a different model ID than the host-selected route, NemoClaw removes both inherited values while it reconciles that stale configuration.
+OpenClaw then uses the selected model's catalog values or defaults.
 To keep explicit limits for the new model, recreate the sandbox after you set `NEMOCLAW_CONTEXT_WINDOW` and `NEMOCLAW_MAX_TOKENS` to values supported by that model.
 Refer to [Configure Model Limits](configure-model-limits) for the environment variable requirements.
 

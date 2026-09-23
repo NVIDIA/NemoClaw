@@ -283,8 +283,7 @@ describe("agent identity reconciliation with provider (#3175)", () => {
           },
         },
         {
-          gatewayRawOutput:
-            "\\x1b[32mGateway Inference:\\x1b[0m\n  Provider: nvidia-prod\n  Model: nvidia/nemotron-3-super-120b-a12b\n",
+          env: { NEMOCLAW_ROUTED_MODEL: "nvidia/nemotron-3-super-120b-a12b" },
           useActualUser: true,
         },
       );
@@ -305,6 +304,28 @@ describe("agent identity reconciliation with provider (#3175)", () => {
       expect(hash).toContain("openclaw.json");
     },
   );
+
+  it("rejects an unsafe host-routed model without changing the config", () => {
+    const initial = {
+      agents: { defaults: { model: { primary: "inference/safe-file-model" } } },
+      models: {
+        providers: {
+          inference: {
+            models: [{ id: "safe-file-model", name: "inference/safe-file-model" }],
+          },
+        },
+      },
+    };
+    const { result, config, hash } = runReconcile(initial, {
+      env: { NEMOCLAW_ROUTED_MODEL: "model;unsafe" },
+    });
+
+    expect(result.status).toBe(1);
+    expect(config).toEqual(initial);
+    expect(hash).toBe("oldhash\n");
+    expect(result.stderr).toContain("Routed model rejected an unsafe model identifier");
+    expect(result.stderr).not.toContain("model;unsafe");
+  });
 
   it.runIf(typeof process.getuid === "function" && process.getuid() !== 0)(
     "explains why an actual non-root user cannot reconcile a sealed config (#12033)",

@@ -33,6 +33,8 @@ export const OPENSHELL_SANDBOX_SUPERVISOR_ARGV = Object.freeze([
 export interface SandboxCreateLaunchInput {
   agent: AgentDefinition | null | undefined;
   observabilityEnabled?: boolean;
+  /** Selected route model injected only for a custom OpenClaw image. */
+  openClawRoutedModel?: string;
   chatUiUrl: string;
   createArgs: readonly string[];
   sandboxName?: string;
@@ -122,6 +124,7 @@ export function prepareSandboxRuntimeLaunch(
     hermesApiPort: input.hermesApiPort,
     extraPlaceholderKeys: input.extraPlaceholderKeys,
     observabilityEnabled: input.observabilityEnabled,
+    openClawRoutedModel: input.openClawRoutedModel,
     sandboxName: input.sandboxName,
     allowHermesApiPortOverride: true,
     env,
@@ -215,7 +218,15 @@ export async function prepareSandboxCreateLaunchWithPrebuild(
     sandboxName: input.sandboxName,
   });
   return {
-    ...prepareSandboxCreateLaunch({ ...launchInput, createArgs: prebuild.createArgs }),
+    ...prepareSandboxCreateLaunch({
+      ...launchInput,
+      createArgs: prebuild.createArgs,
+      openClawRoutedModel:
+        prebuildInput.origin === "custom" &&
+        (!launchInput.agent || launchInput.agent.name === "openclaw")
+          ? (launchInput.env ?? process.env).NEMOCLAW_MODEL?.trim()
+          : undefined,
+    }),
     prebuild,
   };
 }

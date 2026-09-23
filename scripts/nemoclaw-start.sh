@@ -17,6 +17,7 @@
 #   NEMOCLAW_MODEL_OVERRIDE       Override the primary model at startup without rebuilding
 #                                 the sandbox image. Must match the model configured on
 #                                 the gateway via `openshell inference set`.
+#   NEMOCLAW_ROUTED_MODEL         Host-selected route model for custom-image startup.
 #   NEMOCLAW_INFERENCE_API_OVERRIDE  Override the inference API type when switching between
 #                                 provider families (e.g., "anthropic-messages" or
 #                                 "openai-completions"). Only needed for cross-provider switches.
@@ -1106,9 +1107,10 @@ PYOVERRIDE
 # reconciliation the file's stale entry can be pushed back, reverting
 # the route.
 #
-# Probe the live gateway via `openshell inference get` and treat its
-# inference section as the source of truth: when the gateway model differs
-# from the file, align both primary and the inference provider's
+# A custom-image launch passes the host-selected route model through
+# NEMOCLAW_ROUTED_MODEL. Otherwise, probe the live gateway via
+# `openshell inference get`. When either route model differs from the file,
+# align both primary and the inference provider's
 # first model entry so the agent identity and the gateway route stay
 # consistent across the next reconcile cycle.
 #
@@ -1140,8 +1142,16 @@ reconcile_agent_model_with_provider() {
     return 0
   fi
 
-  local gateway_model=""
-  if command -v openshell >/dev/null 2>&1; then
+  local gateway_model="${NEMOCLAW_ROUTED_MODEL:-}"
+  local model_source="route"
+  if [ -n "$gateway_model" ]; then
+    if [ "${#gateway_model}" -gt 512 ] \
+      || ! printf '%s' "$gateway_model" | grep -qE '^[A-Za-z0-9._:/-]+$'; then
+      printf '[SECURITY] Routed model rejected an unsafe model identifier\n' >&2
+      return 1
+    fi
+  elif command -v openshell >/dev/null 2>&1; then
+    model_source="gateway"
     gateway_model="$(
       /usr/bin/python3 -I - <<'PYPROBE'
 import re
@@ -1214,7 +1224,7 @@ PYPROBE
 
   local provider_model_ref
   provider_model_ref="$(
-    run_openclaw_config_as_owner /usr/bin/env GATEWAY_MODEL="${gateway_model:-}" \
+    run_openclaw_config_as_owner /usr/bin/env GATEWAY_MODEL="${gateway_model:-}" MODEL_SOURCE="$model_source" \
       /usr/bin/python3 -I - "$config_file" <<'PYRECONCILE_READ'
 import json, os, sys
 
@@ -1250,7 +1260,7 @@ if gateway_target is not None:
     first_id_ok = isinstance(first_id, str) and (first_id == bare or first_id == gateway_target)
     if primary_ok and first_name_ok and first_id_ok:
         sys.exit(0)
-    print(f"gateway\t{gateway_target}")
+    print(f"{os.environ.get('MODEL_SOURCE', 'gateway')}\t{gateway_target}")
     sys.exit(0)
 
 # Legacy fallback: gateway probe is unavailable. Align primary with
@@ -1288,7 +1298,7 @@ config_file, provider_model = sys.argv[1], sys.argv[2]
 with open(config_file) as f:
     cfg = json.load(f)
 cfg.setdefault("agents", {}).setdefault("defaults", {}).setdefault("model", {})["primary"] = provider_model
-if os.environ.get("RECONCILE_SOURCE") == "gateway":
+if os.environ.get("RECONCILE_SOURCE") != "legacy":
     bare = (
         provider_model[len("inference/"):]
         if provider_model.startswith("inference/")
