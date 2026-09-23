@@ -212,8 +212,7 @@ describe("OpenClaw auth-profile boundary", () => {
     expect(fs.readFileSync(fixture.authPath, "utf-8")).toBe(JSON.stringify(profiles));
   });
 
-  // This component fixture observes the profiles passed to Doctor. Native Doctor/agent
-  // compatibility belongs to full-e2e; rebuild-openclaw owns offline Doctor repairs.
+  // This component fixture observes the profiles passed to Doctor.
   it.each([
     ["root", "managed"],
     ["root", "direct"],

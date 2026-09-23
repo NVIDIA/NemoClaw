@@ -855,7 +855,7 @@ supported outcomes now have these owners:
 The fresh-sandbox check starts without user-managed profiles. Existing-state cleanup preserves
 unrelated profiles, as covered by `test/agents/openclaw/runtime/auth-profile-boundary.test.ts`.
 That component fixture also observes which profiles reach Doctor in root and non-root startup.
-`full-e2e` owns native Doctor lint and agent turns; `rebuild-openclaw` owns offline Doctor repairs.
+`full-e2e` exercises native Doctor lint and agent turns.
 
 The optional `/sandbox/.openclaw/skills` directory had no pass or fail state.
 The deleted provider retry classifier and sandbox-layout wrapper served only the

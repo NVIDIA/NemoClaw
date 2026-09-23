@@ -2425,10 +2425,10 @@ prepare_gateway_token_for_current_command() {
   fi
 }
 
-# Reconcile the legacy OpenClaw auth profile used by direct inference routes.
-# Managed OpenShell routes authenticate at the inference.local proxy, so the
-# sandbox must not retain even an environment-variable reference to the host
-# credential. Direct inference routes still need the profile for OpenClaw.
+# Reconcile this function's legacy generated auth profile for the selected provider.
+# OpenShell authenticates managed inference.local routes on the host, so remove
+# that generated credential reference. Preserve other user-managed profiles.
+# Direct routes retain their existing profile-writing behavior.
 write_auth_profile() {
   local provider_key="${NEMOCLAW_INFERENCE_PROVIDER_ID:-${NEMOCLAW_PROVIDER_KEY:-inference}}"
 
