@@ -3213,7 +3213,8 @@ Pass `--to <dst>` to restore the snapshot into a different sandbox instead of th
 `--to <dst>` is not available for a snapshot of a sandbox that uses a NemoClaw-managed image.
 NemoClaw stops before it creates, deletes, or changes `dst`.
 When `dst` does not exist, it is auto-created from the source image.
-For a Docker- or VM-driver source, the source can be stopped when its registry entry records both the sandbox image and a complete inference route.
+Every source registry entry must record a complete durable inference route.
+For a Docker- or VM-driver source, the source can be stopped when its registry entry also records the sandbox image.
 For a Kubernetes-driver source, the pod image must remain resolvable through its gateway.
 No re-onboarding is needed when those prerequisites are present.
 For a new destination, NemoClaw requires its owning gateway to report Ready state and a valid live identity.
