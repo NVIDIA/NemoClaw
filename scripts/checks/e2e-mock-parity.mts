@@ -103,6 +103,7 @@ export function validateMockParity(options: {
   manifest: MockParityManifest;
   baseManifest?: MockParityManifest;
   changedFastTestRenames?: ReadonlyMap<string, string>;
+  renamedLiveOwners?: ReadonlyMap<string, string>;
   changedFiles: readonly string[];
   fileExists?: (file: string) => boolean;
 }): string[] {
@@ -110,6 +111,7 @@ export function validateMockParity(options: {
     manifest,
     baseManifest,
     changedFastTestRenames = new Map<string, string>(),
+    renamedLiveOwners = new Map<string, string>(),
     changedFiles,
     fileExists = (file) => fs.existsSync(path.join(REPO_ROOT, file)),
   } = options;
@@ -213,7 +215,7 @@ export function validateMockParity(options: {
           isFastPrTest(replacement) &&
           fileExists(replacement) &&
           changedFileSet.has(replacement) &&
-          entries.get(entry.live)?.fast?.includes(replacement)
+          entries.get(renamedLiveOwners.get(entry.live) ?? entry.live)?.fast?.includes(replacement)
         );
       })
     ) {
@@ -330,12 +332,12 @@ export function collectMockParityChangedFiles(
   );
 }
 
-/** Only semantically changed fast tests with Git-proven rename lineage can replace base obligations. */
-export function collectChangedFastTestRenames(
+/** Preserve base ownership only through Git-proven live-owner and changed fast-test renames. */
+export function collectMockParityRenames(
   base: string,
   head: string,
   repoRoot = REPO_ROOT,
-): Map<string, string> {
+): { changedFastTestRenames: Map<string, string>; renamedLiveOwners: Map<string, string> } {
   const fields = execFileSync(
     "git",
     ["diff", "--name-status", "-z", "--find-renames", "--diff-filter=R", `${base}...${head}`],
@@ -344,18 +346,24 @@ export function collectChangedFastTestRenames(
       encoding: "utf8",
     },
   ).split("\0");
-  const renames = new Map<string, string>();
+  const changedFastTestRenames = new Map<string, string>();
+  const renamedLiveOwners = new Map<string, string>();
   for (let index = 0; index + 2 < fields.length; index += 3) {
     const oldPath = fields[index + 1]!;
     const newPath = fields[index + 2]!;
-    if (!isFastPrTest(oldPath) || !isFastPrTest(newPath)) continue;
     const before = sourceAtRef(base, oldPath, repoRoot);
     const after = sourceAtRef(head, newPath, repoRoot);
-    if (before !== null && after !== null && isMockParityRelevantSourceChange(before, after)) {
-      renames.set(oldPath, newPath);
+    if (before === null || after === null) continue;
+    if (LIVE_TEST.test(oldPath) && LIVE_TEST.test(newPath)) renamedLiveOwners.set(oldPath, newPath);
+    if (
+      isFastPrTest(oldPath) &&
+      isFastPrTest(newPath) &&
+      isMockParityRelevantSourceChange(before, after)
+    ) {
+      changedFastTestRenames.set(oldPath, newPath);
     }
   }
-  return renames;
+  return { changedFastTestRenames, renamedLiveOwners };
 }
 
 function main(): void {
@@ -376,7 +384,7 @@ function main(): void {
     manifest,
     baseManifest,
     changedFiles: collectMockParityChangedFiles(base, head),
-    changedFastTestRenames: collectChangedFastTestRenames(base, head),
+    ...collectMockParityRenames(base, head),
   });
   if (errors.length > 0) {
     console.error(

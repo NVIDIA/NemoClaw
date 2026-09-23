@@ -8,7 +8,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   collectMockParityChangedFiles,
-  collectChangedFastTestRenames,
+  collectMockParityRenames,
   filterMockParityRelevantChangedFiles,
   isMockParityRelevantSourceChange,
   type MockParityManifest,
@@ -469,6 +469,7 @@ it("describes both supported liveSources kinds in invalid-entry diagnostics", ()
 });
 
 const renameFixture = "test/e2e/fixtures/owned.ts";
+const renamedLive = "test/e2e/live/renamed.test.ts";
 const replacementTest = "test/e2e/support/replacement.test.ts";
 const renameSource = Array.from({ length: 20 }, (_, i) => `export const case${i}=${i};\n`).join("");
 const replacementEntry = { live, liveSources: [renameFixture], fast: [replacementTest] };
@@ -476,36 +477,56 @@ const missingChangedTest = `${renameFixture}: change at least one fast PR test m
 it.each([
   {
     kind: "changed rename",
-    operation: ["mv", fast, replacementTest],
+    operations: [["mv", fast, replacementTest]],
     source: `${renameSource}export const regression = 21;\n`,
     entries: [replacementEntry],
     expected: [],
   },
   {
     kind: "unchanged rename",
-    operation: ["mv", fast, replacementTest],
+    operations: [["mv", fast, replacementTest]],
     source: renameSource,
     entries: [replacementEntry],
     expected: [missingChangedTest],
   },
   {
     kind: "unrelated deletion",
-    operation: ["rm", fast],
+    operations: [["rm", fast]],
     source: "export const unrelated = true;\n",
     entries: [replacementEntry],
     expected: [missingChangedTest],
   },
   {
     kind: "wrong owner",
-    operation: ["mv", fast, replacementTest],
+    operations: [["mv", fast, replacementTest]],
     source: `${renameSource}export const regression = 21;\n`,
     entries: [
-      { ...replacementEntry, fast: [fast] },
+      { live, fast: [fast] },
       { live: "test/e2e/live/other.test.ts", fast: [replacementTest] },
     ],
     expected: [missingChangedTest],
   },
-])("preserves base fast-test obligations for $kind", ({ operation, source, entries, expected }) => {
+  {
+    kind: "co-renamed live owner and changed fast test",
+    operations: [
+      ["mv", fast, replacementTest],
+      ["mv", live, renamedLive],
+    ],
+    source: `${renameSource}export const regression = 21;\n`,
+    entries: [{ ...replacementEntry, live: renamedLive }],
+    expected: [],
+  },
+  {
+    kind: "co-renamed live owner and unchanged fast test",
+    operations: [
+      ["mv", fast, replacementTest],
+      ["mv", live, renamedLive],
+    ],
+    source: renameSource,
+    entries: [{ ...replacementEntry, live: renamedLive }],
+    expected: [missingChangedTest],
+  },
+])("checks base fast-test obligations for $kind", ({ operations, source, entries, expected }) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "parity-fast-rename-"));
   const git = (...args: string[]) =>
     execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
@@ -531,9 +552,10 @@ it.each([
     git("init", "-q");
     write(renameFixture, "export const value = 1;\n");
     write(fast, renameSource);
+    write(live, "export const liveScenario = true;\n");
     commit();
     const base = git("rev-parse", "HEAD");
-    git(...operation);
+    operations.forEach((operation) => git(...operation));
     write(replacementTest, source);
     write(renameFixture, "export const value = 2;\n");
     commit();
@@ -542,7 +564,7 @@ it.each([
         manifest: manifest(entries),
         baseManifest: manifest([{ ...replacementEntry, fast: [fast] }]),
         changedFiles: collectMockParityChangedFiles(base, "HEAD", root),
-        changedFastTestRenames: collectChangedFastTestRenames(base, "HEAD", root),
+        ...collectMockParityRenames(base, "HEAD", root),
         fileExists: () => true,
       }),
     ).toEqual(expected);

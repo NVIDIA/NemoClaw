@@ -28,6 +28,8 @@ function snapshot(file: string) {
   return JSON.parse(
     execFileSync(process.execPath, ["-e", ROUTED_PRIVATE_RELAY_SNAPSHOT_SOURCE, file], {
       encoding: "utf8",
+      timeout: 10_000,
+      killSignal: "SIGKILL",
     }),
   );
 }
@@ -232,15 +234,21 @@ function runtimeFixture(
         artifacts: { stdout: "", stderr: "", result: "" },
       };
     });
-  const hostCommand = vi.fn(async (command: string, args: string[]) => ({
-    command: [],
-    exitCode: 0,
-    signal: null,
-    timedOut: false,
-    stdout: execFileSync(command, args, { encoding: "utf8" }),
-    stderr: "",
-    artifacts: { stdout: "", stderr: "", result: "" },
-  }));
+  const hostCommand = vi.fn(
+    async (command: string, args: string[], options?: { timeoutMs?: number }) => ({
+      command: [],
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      stdout: execFileSync(command, args, {
+        encoding: "utf8",
+        timeout: options?.timeoutMs ?? 10_000,
+        killSignal: "SIGKILL",
+      }),
+      stderr: "",
+      artifacts: { stdout: "", stderr: "", result: "" },
+    }),
+  );
   return {
     command,
     hostCommand,
@@ -350,4 +358,11 @@ describe("relay diagnostic cleanup ownership", () => {
     expect(error.errors[0].message).toBe("inspect failed");
     expect(error.errors[1].message).toContain("remove owned routed-private relay");
   });
+});
+
+it("bounds the real snapshot-reader adapter by its supplied timeout", async () => {
+  const f = runtimeFixture();
+  await expect(
+    f.hostCommand(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { timeoutMs: 25 }),
+  ).rejects.toMatchObject({ code: "ETIMEDOUT", signal: "SIGKILL" });
 });
