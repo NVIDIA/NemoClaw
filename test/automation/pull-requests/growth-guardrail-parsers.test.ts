@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -334,6 +335,69 @@ function defineCodebaseGrowthGuardrailTestSupport(): void {
     expect(violations).toContain(
       "test/e2e/live/example.test.ts directExpectCalls increased from 1 to 2",
     );
+  });
+
+  it.each([
+    { label: "approved PR", pr: 10341, policyAtHead: false, change: "none", approved: true },
+    { label: "local hook", pr: null, policyAtHead: false, change: "none", approved: true },
+    {
+      label: "local candidate policy",
+      pr: null,
+      policyAtHead: true,
+      change: "none",
+      approved: true,
+    },
+    { label: "another PR", pr: 10342, policyAtHead: false, change: "none", approved: false },
+    { label: "candidate policy", pr: 10341, policyAtHead: true, change: "none", approved: false },
+    { label: "changed base", pr: 10341, policyAtHead: false, change: "base", approved: false },
+    { label: "changed candidate", pr: 10341, policyAtHead: false, change: "head", approved: false },
+  ])("matches an approved E2E budget transition: $label", async (scenario) => {
+    const base = e2eAssertionBudget(1);
+    const head = e2eAssertionBudget(2);
+    const policy = JSON.stringify({
+      schemaVersion: 1,
+      exceptions: [
+        {
+          pullRequest: 10341,
+          baseBudgetSha256: createHash("sha256").update(base).digest("hex"),
+          headBudgetSha256: createHash("sha256").update(head).digest("hex"),
+        },
+      ],
+    });
+    const policyPath = "ci/e2e-assertion-growth-exceptions.json";
+    const diff = fixtureDiff(
+      [{ filename: "ci/e2e-assertion-budget.json", status: "modified" }],
+      {
+        "ci/e2e-assertion-budget.json": scenario.change === "base" ? `${base}\n` : base,
+        ...(!scenario.policyAtHead ? { [policyPath]: policy } : {}),
+      },
+      {
+        "ci/e2e-assertion-budget.json": scenario.change === "head" ? e2eAssertionBudget(3) : head,
+        [policyPath]: policy,
+      },
+      scenario.pr,
+    );
+    const violations = await e2eAssertionBudgetGrowthViolations(diff);
+    expect(violations.length === 0).toBe(scenario.approved);
+  });
+
+  it.each([
+    { schemaVersion: 2, exceptions: [] },
+    { schemaVersion: 1, exceptions: null },
+    { schemaVersion: 1, exceptions: [null] },
+    { schemaVersion: 1, exceptions: [{ pullRequest: 0 }] },
+    { schemaVersion: 1, exceptions: [{ pullRequest: 10341, baseBudgetSha256: "invalid" }] },
+  ])("rejects malformed trusted E2E exception policy: %j", async (policy) => {
+    const diff = fixtureDiff(
+      [{ filename: "ci/e2e-assertion-budget.json", status: "modified" }],
+      {
+        "ci/e2e-assertion-budget.json": e2eAssertionBudget(1),
+        "ci/e2e-assertion-growth-exceptions.json": JSON.stringify(policy),
+      },
+      { "ci/e2e-assertion-budget.json": e2eAssertionBudget(2) },
+      10341,
+    );
+    await expect(e2eAssertionBudgetGrowthViolations(diff)).rejects.toThrow();
   });
 
   it("rejects an omitted live E2E assertion budget unless its test was removed", async () => {
