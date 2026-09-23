@@ -50,6 +50,9 @@ describe("host memory diagnostics (#12255)", () => {
     expect(hints).toContain("unified-memory platforms");
     expect(hints).toContain("NV_ERR_NO_MEMORY");
     expect(hints).toContain("--no-sandbox-gpu");
+    // `--sandbox-gpu` beats NEMOCLAW_SANDBOX_GPU in resolveSandboxGpuMode(), so
+    // the environment variable alone is not a reliable way out.
+    expect(hints).toContain("works only when no `--sandbox-gpu` flag is passed");
   });
 
   it("still explains itself when the pool could not be read", () => {

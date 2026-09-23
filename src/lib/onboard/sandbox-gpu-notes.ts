@@ -68,7 +68,7 @@ export function gpuSandboxMemoryPressureHints(snapshot: HostMemorySnapshot | nul
       : "Host memory could not be read for this failure.",
     "On unified-memory platforms (DGX Spark, Jetson) the GPU allocates from that same pool, so a managed inference server serving on this host holds part of it.",
     "Check `sudo dmesg -T | grep NVRM` for `Out of memory [NV_ERR_NO_MEMORY]` entries at the time of this failure.",
-    "If this sandbox uses GPU passthrough, recreate it without (`--no-sandbox-gpu`, or `NEMOCLAW_SANDBOX_GPU=0`), or free the pool before retrying.",
+    "If this sandbox uses GPU passthrough, recreate it with `--no-sandbox-gpu`, or free the pool before retrying. `NEMOCLAW_SANDBOX_GPU=0` works only when no `--sandbox-gpu` flag is passed, because the flag overrides it.",
   ];
 }
 
