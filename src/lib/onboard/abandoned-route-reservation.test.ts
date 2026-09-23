@@ -44,11 +44,17 @@ async function isolatedOnboardHome(): Promise<string> {
  * `vi.resetModules()` would otherwise strand the held descriptor in a module
  * copy no later test can reach.
  */
-async function onboardingSessionUnderLock(sessionId: string, command: string): Promise<void> {
+async function onboardingSessionUnderLock(
+  sessionId: string,
+  command: string,
+  gatewayName = GATEWAY,
+): Promise<void> {
   const onboardSession = await import("../state/onboard-session");
   heldLockModules.push(onboardSession);
   onboardSession.acquireOnboardLock(command);
-  onboardSession.saveSession(onboardSession.createSession({ sessionId }));
+  const session = onboardSession.createSession({ sessionId });
+  session.metadata.gatewayName = gatewayName;
+  onboardSession.saveSession(session);
 }
 
 /** Reserve a route under `sessionId`, then abandon the run without releasing it. */
@@ -131,6 +137,19 @@ describe("abandoned inference route reservation (#11051)", () => {
       dashboardPort: 18790,
       reservationSessionId: "session-of-this-fresh-run",
     });
+  });
+
+  it("preserves a registered reservation belonging to another gateway", async () => {
+    await isolatedOnboardHome();
+    const registry = await import("../state/registry");
+    const { releaseAbandonedRouteReservation } = await import("./sandbox-lifecycle");
+    registry.registerSandbox({ name: SANDBOX, ...ROUTE, agent: "openclaw" });
+    await seedAbandonedReservation("session-from-another-gateway");
+    const reserved = registry.getSandbox(SANDBOX);
+    await onboardingSessionUnderLock("current-session", "onboard --fresh", "different-gateway");
+
+    expect(releaseAbandonedRouteReservation(SANDBOX)).toBe(false);
+    expect(registry.getSandbox(SANDBOX)).toEqual(reserved);
   });
 
   it("keeps a reservation the running onboarding session already owns", async () => {

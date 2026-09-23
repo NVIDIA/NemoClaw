@@ -56,7 +56,12 @@ export function releaseAbandonedRouteReservation(sandboxName: string): boolean {
   if (!session || !onboardSession.isOnboardLockHeldByCurrentProcess()) return false;
   if (registry.isPendingReservationForSession(entry, session.sessionId)) return false;
   if (!registry.isRouteOnlySandboxReservation(entry)) {
-    if (typeof entry.createdAt !== "string" || !Number.isFinite(Date.parse(entry.createdAt))) {
+    if (
+      typeof entry.createdAt !== "string" ||
+      !Number.isFinite(Date.parse(entry.createdAt)) ||
+      !entry.gatewayName ||
+      entry.gatewayName !== session.metadata.gatewayName
+    ) {
       return false;
     }
     return registry.finalizeSandboxRouteReservation(
