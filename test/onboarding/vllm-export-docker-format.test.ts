@@ -29,7 +29,7 @@ describe.skipIf(!dockerClientAvailable)("managed vLLM Docker format boundary", (
     Object.assign(fixture.objects.container.HostConfig, {
       Devices: null,
       CapAdd: null,
-      SecurityOpt: ["label=disable"],
+      SecurityOpt: null,
       Ulimits: null,
       ShmSize: 64 * 1024 * 1024,
     });
@@ -52,6 +52,11 @@ describe.skipIf(!dockerClientAvailable)("managed vLLM Docker format boundary", (
     [
       "malformed optional settings",
       (f: Fixture) => Object.assign(f.objects.container.HostConfig, { CapAdd: false }),
+    ],
+    [
+      "disabled SELinux labeling",
+      (f: Fixture) =>
+        Object.assign(f.objects.container.HostConfig, { SecurityOpt: ["label=disable"] }),
     ],
     ["command", (f: Fixture) => f.objects.container.Config.Cmd.push("--unrepresented")],
     [
