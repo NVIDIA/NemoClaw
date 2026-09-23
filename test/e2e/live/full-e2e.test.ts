@@ -57,6 +57,11 @@ import { buildSandboxCredentialScanCommand } from "./sandbox-credential-boundary
 import { FULL_E2E_TEST_TIMEOUT_MS } from "../../../tools/e2e/full-e2e-timeout-contract.mts";
 import { parseOpenClawJsonDocuments } from "../../../src/lib/openclaw/agent-json-provenance.ts";
 import { fullE2eGateway, withOwnedFullE2eGateway } from "../fixtures/full-e2e-gateway.ts";
+import {
+  cleanupAcquiredResource,
+  cleanupWhenOpenShellAvailable,
+} from "../fixtures/cleanup-resources.ts";
+import { getSandbox } from "../../../src/lib/state/registry.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-full";
 const FULL_E2E_TARGET_ID = process.env.E2E_TARGET_ID ?? "full-e2e";
@@ -450,12 +455,23 @@ sha256sum /sandbox/.bashrc /sandbox/.profile > /tmp/nemoclaw-e2e-profiles.sha256
   ).toBe(true);
 }
 
+function cleanupRegisteredSandbox(cleanup: () => Promise<void>): Promise<void> {
+  // Check when cleanup runs: CLI recovery for a missing source-install entry
+  // can start a default gateway, including after a failed install or teardown.
+  return cleanupAcquiredResource(
+    USE_PREINSTALLED_LAUNCHABLE || getSandbox(SANDBOX_NAME) !== null,
+    cleanup,
+  );
+}
+
 async function preCleanup(host: HostCliClient, sandbox: SandboxClient): Promise<void> {
-  await repoNemoclaw(
-    host,
-    [SANDBOX_NAME, "destroy", "--yes"],
-    "pre-cleanup-nemoclaw-destroy",
-  ).catch(() => undefined);
+  await cleanupRegisteredSandbox(async () => {
+    await repoNemoclaw(
+      host,
+      [SANDBOX_NAME, "destroy", "--yes"],
+      "pre-cleanup-nemoclaw-destroy",
+    ).catch(() => undefined);
+  });
   await sandbox
     .openshell(["sandbox", "delete", SANDBOX_NAME], {
       artifactName: "pre-cleanup-openshell-sandbox-delete",
@@ -464,13 +480,16 @@ async function preCleanup(host: HostCliClient, sandbox: SandboxClient): Promise<
     })
     .catch(() => undefined);
   await withOwnedFullE2eGateway(gateway, () =>
-    sandbox
-      .openshell(["gateway", "destroy", "-g", gateway.env.OPENSHELL_GATEWAY], {
-        artifactName: "pre-cleanup-openshell-gateway-destroy",
-        env: env(),
-        timeoutMs: 60_000,
-      })
-      .catch(() => undefined),
+    cleanupWhenOpenShellAvailable(
+      host,
+      { artifactName: "pre-cleanup-openshell-available", env: env(), timeoutMs: 15_000 },
+      () =>
+        host.cleanupGatewayRegistration(gateway.env.OPENSHELL_GATEWAY, {
+          artifactName: "pre-cleanup-openshell-gateway-destroy",
+          env: env(),
+          timeoutMs: 60_000,
+        }),
+    ),
   );
 }
 
@@ -756,12 +775,16 @@ test(
         timeoutMs: 60_000,
       }),
     );
-    cleanupRegistry.trackSandbox(host, SANDBOX_NAME, {
-      artifactName: "cleanup-nemoclaw-destroy",
-      env: env(),
-      redactionValues: [hosted.apiKey],
-      timeoutMs: 120_000,
-    });
+    cleanupRegistry.trackDisposable(`destroy sandbox ${SANDBOX_NAME}`, () =>
+      cleanupRegisteredSandbox(() =>
+        host.cleanupSandbox(SANDBOX_NAME, {
+          artifactName: "cleanup-nemoclaw-destroy",
+          env: env(),
+          redactionValues: [hosted.apiKey],
+          timeoutMs: 120_000,
+        }),
+      ),
+    );
     await preCleanup(host, sandbox);
     await bindApprovedPrBaseForBaseImageComparison(host, MEASURE_COLD_ONBOARD);
 
