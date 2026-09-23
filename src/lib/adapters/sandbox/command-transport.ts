@@ -130,7 +130,7 @@ export async function executeSandboxExecCommand(
   command: string,
   timeout = DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
   options: SandboxExecCommandExecutionOptions = {},
-): Promise<SandboxCommandResult | null> {
+): Promise<SandboxCommandResult> {
   const { runtimeSelection, commandExecutor, ...transportOptions } = options;
   const runtimeEnv = buildSandboxCommandEnvironment(runtimeSelection, options.runtimeEnv);
   return executeSandboxExecCommandTransport(

@@ -28,7 +28,7 @@ export async function assertDeepAgentsMcpMutationRuntimeCapability(
       `LangChain Deep Agents Code sandbox '${sandboxName}' native MCP capability could not be verified because the probe failed in transport.`,
     );
   }
-  if (result?.status !== 0 || result.stdout.trim() !== DEEPAGENTS_MCP_CAPABILITY_MARKER) {
+  if (result.status !== 0 || result.stdout.trim() !== DEEPAGENTS_MCP_CAPABILITY_MARKER) {
     throw new McpBridgeError(
       `LangChain Deep Agents Code sandbox '${sandboxName}' does not contain native MCP capability v3. Rebuild the sandbox before changing authenticated MCP state.`,
     );

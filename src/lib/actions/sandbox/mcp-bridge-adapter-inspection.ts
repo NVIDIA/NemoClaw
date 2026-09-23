@@ -64,7 +64,6 @@ export async function inspectAdapterRegistrationCommand(
     const result = await executeSandboxExecCommand(sandboxName, command, timeoutMs, {
       runtimeSelection,
     });
-    if (!result) return { state: "error", detail: "sandbox unreachable" };
     return parseAdapterRegistrationInspection(result, entry);
   } catch (error) {
     if (!(error instanceof SandboxCommandTransportError)) throw error;

@@ -28,11 +28,11 @@ export async function runDeepAgentsAdapterCommand(
     return "";
   }
   const output = redactBridgeSecretsForDisplay(
-    [result?.stdout, result?.stderr].filter(Boolean).join("\n").trim(),
+    [result.stdout, result.stderr].filter(Boolean).join("\n").trim(),
     entry,
     options.envValues ?? {},
   );
-  if (!result || result.status !== 0) {
+  if (result.status !== 0) {
     if (options.bestEffort) return "";
     throw new McpBridgeError(output || failureMessage);
   }

@@ -279,11 +279,10 @@ function transportDetail(probeExit: number, stderr: string): string | undefined 
 }
 
 export function classifyCredentialResolutionProbe(
-  result: SandboxCommandResult | null,
+  result: SandboxCommandResult,
   entry: Pick<McpSourceEntry, "env">,
   resultMarker?: string,
 ): CredentialResolutionProbe {
-  if (result === null) return { ok: null, detail: "sandbox unreachable" };
   if (result.status !== 0) {
     const detail = redactedProbeText(result.stderr || result.stdout, entry);
     return { ok: null, detail: detail || "probe transport failed" };

@@ -3,6 +3,8 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
+
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
 
 const mocks = vi.hoisted(() => ({
@@ -278,11 +280,18 @@ describe("MCP credential-resolution probe classification", () => {
     expect(probe.detail).toContain("timed out");
   });
 
-  it("classifies a missing command result as sandbox unreachable (#6379)", () => {
-    expect(classifyCredentialResolutionProbe(null, baseEntry)).toEqual({
-      ok: null,
-      detail: "sandbox unreachable",
-    });
+  it("classifies a transport failure as an unavailable probe without retry (#6379)", async () => {
+    const failure = new SandboxCommandTransportError("timeout");
+    mocks.executeSandboxExecCommand.mockRejectedValue(failure);
+    const result = await probeCredentialResolution(
+      "alpha",
+      baseEntry,
+      "openclaw-config",
+      readyProbe,
+      runtimeSelection,
+    );
+    expect(result).toEqual({ ok: null, detail: failure.message });
+    expect(mocks.executeSandboxExecCommand).toHaveBeenCalledOnce();
   });
 
   it("never includes endpoint response text in the verdict (#6379)", () => {

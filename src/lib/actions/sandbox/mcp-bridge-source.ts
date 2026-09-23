@@ -415,7 +415,7 @@ async function inspectAgentMcpSourcesForAgent(
 ): Promise<AgentMcpSourceSnapshot> {
   const adapter = agent.mcpCapability.adapter;
   if (agent.mcpCapability.support !== "bridge" || !adapter) return { native: {}, legacy: {} };
-  let result: Awaited<ReturnType<typeof executeSandboxExecCommand>>;
+  let result: Awaited<ReturnType<typeof executeSandboxExecCommand>> | null;
   try {
     result = await executeSandboxExecCommand(
       sandbox.name,
@@ -707,7 +707,7 @@ export async function removeLegacyAgentMcpEntry(
   } else {
     return;
   }
-  let result: Awaited<ReturnType<typeof executeSandboxExecCommand>>;
+  let result: Awaited<ReturnType<typeof executeSandboxExecCommand>> | null;
   try {
     result = await executeSandboxExecCommand(sandbox.name, command, undefined, {
       runtimeSelection,

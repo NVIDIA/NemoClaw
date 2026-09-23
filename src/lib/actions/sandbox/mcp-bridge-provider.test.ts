@@ -764,7 +764,6 @@ describe("OpenShell MCP provider state", () => {
   });
 
   it.each([
-    ["unavailable", () => Promise.resolve(null), "transport-unavailable"],
     [
       "transport rejection",
       () => Promise.reject(new SandboxCommandTransportError("unavailable")),
@@ -878,7 +877,7 @@ describe("OpenShell MCP provider state", () => {
   });
 
   it.each([
-    ["missing output", () => Promise.resolve(null)],
+    ["malformed output", () => Promise.reject(new SandboxCommandTransportError("malformed"))],
     ["transport rejection", () => Promise.reject(new SandboxCommandTransportError("unavailable"))],
   ] as const)(
     "fails detach verification on unavailable exec (rejection: %s)",

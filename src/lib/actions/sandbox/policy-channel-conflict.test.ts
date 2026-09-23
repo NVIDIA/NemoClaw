@@ -427,7 +427,9 @@ beforeEach(() => {
   // unit-test runner; locally it is installed, so this only bites in CI). Stub
   // the exec path so the post-add verification never shells out and never trips
   // the exit spy unless a test explicitly overrides it.
-  vi.spyOn(commandTransport, "executeSandboxExecCommand").mockResolvedValue(null);
+  vi.spyOn(commandTransport, "executeSandboxExecCommand").mockRejectedValue(
+    new commandTransport.SandboxCommandTransportError("unavailable"),
+  );
 
   process.env.NEMOCLAW_SKIP_TELEGRAM_REACHABILITY = "1";
   process.env.NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION = "1";
@@ -1488,7 +1490,7 @@ function mockBridgeHealthExec(options: { config: unknown; log: string }): void {
       if (command.includes("tail -n 400") && command.includes("gateway.log")) {
         return { status: 0, stdout: options.log, stderr: "" };
       }
-      return null;
+      throw new commandTransport.SandboxCommandTransportError("unavailable");
     },
   );
 }

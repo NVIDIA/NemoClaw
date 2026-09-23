@@ -175,7 +175,7 @@ export async function registerOpenClawAdapter(
   // Re-read the native definition before reporting success so a raced or
   // normalized write cannot commit an entry that differs from the URL and
   // opaque OpenShell placeholder NemoClaw intended.
-  let verification: Awaited<ReturnType<typeof executeSandboxExecCommand>>;
+  let verification: Awaited<ReturnType<typeof executeSandboxExecCommand>> | null;
   try {
     verification = await executeSandboxExecCommand(
       sandboxName,

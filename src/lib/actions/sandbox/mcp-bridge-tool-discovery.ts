@@ -175,11 +175,10 @@ function compareNames(left: string, right: string): number {
 }
 
 export function classifyMcpToolDiscoveryResult(
-  result: SandboxCommandResult | null,
+  result: SandboxCommandResult,
   entry: Pick<McpSourceEntry, "env">,
   resultMarker: string,
 ): NonNullable<McpBridgeStatus["toolDiscovery"]> {
-  if (result === null) return failure("sandbox unreachable", "runtime", "runtime", null);
   if (result.status !== 0) {
     const safeFailure = `${result.stderr}\n${result.stdout}`
       .split(/\r?\n/u)

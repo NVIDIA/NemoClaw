@@ -33,14 +33,13 @@ export async function refreshMutableOpenClawConfigHashAfterPostRestoreWrites(
         )
       : executeSandboxExecCommand(sandboxName, buildRefreshMutableOpenClawConfigHashCommand())
   ).catch(transportFailureResult);
-  if (result && result.status === 0) {
+  if (result.status === 0) {
     log("Mutable OpenClaw config hash refreshed after post-restore config writes");
     return true;
   }
 
-  const detail = result
-    ? [result.stderr, result.stdout].filter(Boolean).join("; ") || `exit ${result.status}`
-    : "could not execute sandbox command";
+  const detail =
+    [result.stderr, result.stdout].filter(Boolean).join("; ") || `exit ${result.status}`;
   console.error(`  ${YW}⚠${R} Mutable OpenClaw config hash was not refreshed: ${redact(detail)}`);
   return false;
 }
@@ -60,14 +59,13 @@ export async function verifyFinalMutableOpenClawConfigHash(
         )
       : executeSandboxExecCommand(sandboxName, buildVerifyMutableOpenClawConfigHashCommand())
   ).catch(transportFailureResult);
-  if (result && result.status === 0) {
+  if (result.status === 0) {
     log("Final mutable OpenClaw config hash verified after post-restore finalization");
     return true;
   }
 
-  const detail = result
-    ? [result.stderr, result.stdout].filter(Boolean).join("; ") || `exit ${result.status}`
-    : "could not execute sandbox command";
+  const detail =
+    [result.stderr, result.stdout].filter(Boolean).join("; ") || `exit ${result.status}`;
   console.error(
     `  ${YW}⚠${R} Final mutable OpenClaw config hash was not verified: ${redact(detail)}`,
   );

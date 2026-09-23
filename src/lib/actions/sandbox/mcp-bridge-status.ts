@@ -173,8 +173,6 @@ async function getAdapterRegistration(
     if (!(error instanceof SandboxCommandTransportError)) throw error;
     return credentialInspectionFailure ?? { registered: null, detail: error.message };
   }
-  if (!result)
-    return credentialInspectionFailure ?? { registered: null, detail: "sandbox unreachable" };
   const unsafeProjection =
     adapter === "deepagents-config" ? parseUnsafeDeepAgentsMcpConfigResult(result) : null;
   if (unsafeProjection) {

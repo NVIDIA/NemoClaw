@@ -245,7 +245,7 @@ async function readPrimaryModelRef(
     `cat ${OPENCLAW_CONFIG_PATH} 2>/dev/null`,
     runtimeSelection,
   );
-  if (!res || res.status !== 0 || !res.stdout.trim()) return null;
+  if (res.status !== 0 || !res.stdout.trim()) return null;
   try {
     const config = JSON.parse(res.stdout) as {
       agents?: { defaults?: { model?: { primary?: unknown } } };
@@ -288,7 +288,7 @@ export async function reconcileStalePinnedSessionModelsAfterRebuild(
       `cat ${sessionsPath} 2>/dev/null`,
       runtimeSelection,
     );
-    if (!readResult || readResult.status !== 0 || !readResult.stdout.trim()) {
+    if (readResult.status !== 0 || !readResult.stdout.trim()) {
       log(`Session model reconcile skipped: no session store at ${sessionsPath}`);
       return;
     }
@@ -302,9 +302,9 @@ export async function reconcileStalePinnedSessionModelsAfterRebuild(
       buildSessionStoreReplaceCommand(sessionsPath, reconciled.content, readResult.stdout),
       runtimeSelection,
     );
-    if (!writeResult || writeResult.status !== 0) {
+    if (writeResult.status !== 0) {
       log(
-        `Session model reconcile: failed to write ${sessionsPath} (status=${writeResult?.status ?? "null"})`,
+        `Session model reconcile: failed to write ${sessionsPath} (status=${writeResult.status})`,
       );
       return;
     }

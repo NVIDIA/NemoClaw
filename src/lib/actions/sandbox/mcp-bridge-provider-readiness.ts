@@ -50,7 +50,7 @@ function executeMcpCredentialProofCommand(
   command: string,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
   timeoutMs?: number,
-): ReturnType<typeof executeSandboxExecCommand> {
+): Promise<Awaited<ReturnType<typeof executeSandboxExecCommand>> | null> {
   // OpenShell preserves the proof as one multiline command argument. The
   // script classifies placeholder shape/revision only and never prints a raw
   // credential value or writes sandbox state.

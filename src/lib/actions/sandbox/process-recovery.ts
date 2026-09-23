@@ -717,7 +717,7 @@ export async function beginOpenClawPostRestoreDoctor(
     maintenanceKind === "backup"
       ? OPENCLAW_BACKUP_QUIESCE_MARKER_CONTENT
       : OPENCLAW_POST_UPGRADE_DOCTOR_MARKER_CONTENT;
-  let markerResult: SandboxCommandResult | null;
+  let markerResult: SandboxCommandResult;
   try {
     markerResult = await deps.executeSandboxExecCommand(
       sandboxName,
@@ -729,7 +729,7 @@ export async function beginOpenClawPostRestoreDoctor(
     if (!(error instanceof SandboxCommandTransportError)) throw error;
     return { ok: false, stage: "mark", detail: error.message };
   }
-  if (!markerResult || markerResult.status !== 0) {
+  if (markerResult.status !== 0) {
     return {
       ok: false,
       stage: "mark",

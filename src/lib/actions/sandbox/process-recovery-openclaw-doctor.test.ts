@@ -513,7 +513,11 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
     await expect(
       beginOpenClawPostRestoreDoctor("alpha", undefined, {
         captureOpenshell: capture as never,
-        executeSandboxExecCommand: vi.fn(async () => null),
+        executeSandboxExecCommand: vi.fn(async () => ({
+          status: 1,
+          stdout: "",
+          stderr: "marker write failed",
+        })),
         now: () => 0,
         sleep: vi.fn(async () => undefined),
       }),
