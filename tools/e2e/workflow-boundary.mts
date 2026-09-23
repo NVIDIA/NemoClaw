@@ -1718,18 +1718,27 @@ function validateDockerHubAuthBoundary(errors: string[], jobs: WorkflowRecord): 
       jobName === "managed-image-multiarch-startup"
         ? workflowSteps.findIndex((step) => step.name === "Build shared policy boundary")
         : -1;
+    const pinnedV1ToolchainIndex =
+      jobName === "live" || jobName === "hermes-e2e"
+        ? workflowSteps.findIndex(
+            (step) => step.name === "Set up pinned v1 compatibility toolchain",
+          )
+        : -1;
     const authIndex = workflowSteps.indexOf(auth);
     const cleanupIndex = workflowSteps.indexOf(cleanup);
     const expectedAuthIndex =
-      jobName === "hermes-gpu-startup"
-        ? checkoutIndex + 3
-        : jobName === "managed-image-protected-runtime"
-          ? protectedCacheDownloadIndex + 1
-          : jobName === "managed-image-multiarch-startup"
-            ? sharedBoundaryBuildIndex + 1
-            : checkoutIndex + 1;
+      jobName === "live" || jobName === "hermes-e2e"
+        ? pinnedV1ToolchainIndex + 1
+        : jobName === "hermes-gpu-startup"
+          ? checkoutIndex + 3
+          : jobName === "managed-image-protected-runtime"
+            ? protectedCacheDownloadIndex + 1
+            : jobName === "managed-image-multiarch-startup"
+              ? sharedBoundaryBuildIndex + 1
+              : checkoutIndex + 1;
     if (
       checkoutIndex < 0 ||
+      ((jobName === "live" || jobName === "hermes-e2e") && pinnedV1ToolchainIndex < 0) ||
       (jobName === "managed-image-protected-runtime" && protectedCacheDownloadIndex < 0) ||
       (jobName === "managed-image-multiarch-startup" && sharedBoundaryBuildIndex < 0) ||
       authIndex !== expectedAuthIndex
@@ -1739,7 +1748,9 @@ function validateDockerHubAuthBoundary(errors: string[], jobs: WorkflowRecord): 
           ? `${jobName} Docker Hub auth must run immediately after the protected cache download`
           : jobName === "managed-image-multiarch-startup"
             ? `${jobName} Docker Hub auth must run immediately after the shared boundary build`
-            : `${jobName} Docker Hub auth must run immediately after checkout`,
+            : jobName === "live" || jobName === "hermes-e2e"
+              ? `${jobName} Docker Hub auth must run immediately after the pinned v1 toolchain setup`
+              : `${jobName} Docker Hub auth must run immediately after checkout`,
       );
     }
     if (authIndex < 0 || cleanupIndex <= authIndex) {
@@ -3365,6 +3376,11 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     errors,
     uploadPath,
     "e2e-artifacts/live/${{ matrix.id }}/config-export-evidence.v1.json",
+  );
+  requireUploadPathContains(
+    errors,
+    uploadPath,
+    "e2e-artifacts/live/${{ matrix.id }}/config-export.yaml",
   );
   requireUploadPathContains(
     errors,

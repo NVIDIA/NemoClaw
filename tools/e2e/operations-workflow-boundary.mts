@@ -44,6 +44,28 @@ const COLD_ONBOARD_PERFORMANCE_EVIDENCE_PATH =
   "e2e-artifacts/live/${{ matrix.id }}/onboard-progress-budget.json";
 const CONFIG_EXPORT_EVIDENCE_PATH =
   "e2e-artifacts/live/${{ matrix.id }}/config-export-evidence.v1.json";
+const CONFIG_EXPORT_YAML_PATH = "e2e-artifacts/live/${{ matrix.id }}/config-export.yaml";
+const CONFIG_EXPORT_REQUIREMENT_SCRIPT =
+  [
+    "set -euo pipefail",
+    `evidence="${CONFIG_EXPORT_EVIDENCE_PATH}"`,
+    `yaml="${CONFIG_EXPORT_YAML_PATH}"`,
+    'test -f "$evidence"',
+    "jq -e '.passed == true' \"$evidence\" >/dev/null",
+    'case "$(jq -er \'.classification\' "$evidence")" in',
+    "  success)",
+    '    test -f "$yaml"',
+    "    jq -e '.consumer.passed == true' \"$evidence\" >/dev/null",
+    '    jq -er \'.consumer.revision | strings | select(test("^[0-9a-f]{40}$"))\' "$evidence" >/dev/null',
+    '    expected_sha="$(jq -er \'.export.sha256 | strings | select(test("^[0-9a-f]{64}$"))\' "$evidence")"',
+    '    actual_sha="$(sha256sum -- "$yaml")"',
+    '    actual_sha="${actual_sha%% *}"',
+    '    test "$actual_sha" = "$expected_sha"',
+    "    ;;",
+    "  expected-refusal|no-usable-sandbox) ;;",
+    "  *) exit 1 ;;",
+    "esac",
+  ].join("\n") + "\n";
 const MANAGED_SOURCE_CONDITION =
   "${{ inputs.pr_number == '' || steps.select_pr_source.outputs.selection == 'base-cohort' }}";
 const BASE_PUBLICATION_CONDITION =
@@ -211,6 +233,24 @@ function permissionMap(permissions: WorkflowPermissions | undefined): Record<str
 
 function findStep(job: WorkflowJob, name: string): WorkflowStep {
   return job.steps?.find((step) => step.name === name) ?? {};
+}
+
+function hasPinnedV1ToolchainBeforeDockerAuthentication(job: WorkflowJob): boolean {
+  const steps = job.steps ?? [];
+  const checkoutIndex = steps.indexOf(
+    steps.find((step) => step.uses?.startsWith("actions/checkout@")) ?? {},
+  );
+  const compatibilityToolchain = findStep(job, "Set up pinned v1 compatibility toolchain");
+  const compatibilityToolchainIndex = steps.indexOf(compatibilityToolchain);
+  const dockerAuthenticationIndex = steps.indexOf(findStep(job, "Authenticate to Docker Hub"));
+  return (
+    compatibilityToolchain.uses ===
+      "actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659" &&
+    compatibilityToolchain.with?.toolchain === "1.98.1" &&
+    checkoutIndex >= 0 &&
+    checkoutIndex < compatibilityToolchainIndex &&
+    compatibilityToolchainIndex < dockerAuthenticationIndex
+  );
 }
 
 function executableSource(job: WorkflowJob): string {
@@ -865,6 +905,13 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
     );
   }
   const sdkSteps = live.steps ?? [];
+  if (!hasPinnedV1ToolchainBeforeDockerAuthentication(live)) {
+    errors.push("live E2E must set up the pinned v1 toolchain before Docker authentication");
+  }
+  const hermesE2e = workflow.jobs["hermes-e2e"] ?? {};
+  if (!hasPinnedV1ToolchainBeforeDockerAuthentication(hermesE2e)) {
+    errors.push("Hermes E2E must set up the pinned v1 toolchain before Docker authentication");
+  }
   const sdkDownload = findStep(live, "Download reviewed OpenShell SDK archive");
   const sdkInstall = findStep(live, REVIEWED_OPEN_SHELL_SDK_INSTALL_STEP);
   const prepareIndex = sdkSteps.indexOf(findStep(live, "Prepare E2E workspace"));
@@ -1009,11 +1056,13 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
   if (!uploadPaths.includes(CONFIG_EXPORT_EVIDENCE_PATH)) {
     errors.push("live E2E must upload automatic config export evidence");
   }
+  if (!uploadPaths.includes(CONFIG_EXPORT_YAML_PATH)) {
+    errors.push("live E2E must upload the validated config export YAML");
+  }
   if (
     requireConfigExportEvidence.if !== "${{ success() }}" ||
     requireConfigExportEvidence.shell !== "bash" ||
-    String(requireConfigExportEvidence.run ?? "").trim() !==
-      `test -f "${CONFIG_EXPORT_EVIDENCE_PATH}"` ||
+    String(requireConfigExportEvidence.run ?? "") !== CONFIG_EXPORT_REQUIREMENT_SCRIPT ||
     (requireConfigExportEvidence["continue-on-error"] !== undefined &&
       requireConfigExportEvidence["continue-on-error"] !== false) ||
     liveSteps.indexOf(requireConfigExportEvidence) <=
