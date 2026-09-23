@@ -1065,9 +1065,11 @@ const port = required("NEMOCLAW_MXC_E2E_OPENCLAW_PORT");
 const openClawPidPath = required("NEMOCLAW_MXC_E2E_OPENCLAW_PID_PATH");
 const openClawStateDirectory = required("NEMOCLAW_MXC_E2E_OPENCLAW_STATE_DIR");
 const openClawConfigPath = join(home, ".openclaw", "openclaw.json");
+const compatibilityPreloadUrl = pathToFileURL(compatibilityPreload).href;
 const env = {
   ...process.env,
   HOME: home,
+  NODE_OPTIONS: "--import=" + compatibilityPreloadUrl,
   OPENCLAW_CONFIG_PATH: openClawConfigPath,
   OPENCLAW_DISABLE_BUNDLED_PLUGINS: "1",
   OPENCLAW_GATEWAY_URL: "ws://127.0.0.1:" + port,
@@ -1216,7 +1218,7 @@ const gateway = spawn(
   node,
   [
     "--import",
-    pathToFileURL(compatibilityPreload).href,
+    compatibilityPreloadUrl,
     entry,
     "gateway",
     "run",
@@ -1288,11 +1290,12 @@ export function renderWindowsMxcOpenClawCompatibilityPreload(): string {
 import { syncBuiltinESMExports } from "node:module";
 import { promisify } from "node:util";
 
-// fs.promises.realpath uses Node's native Windows binding. AppContainer
-// tokens do not carry the privileges that binding requests, while the
-// callback implementation preserves realpath semantics without requesting
-// those privileges. Install the compatibility binding before OpenClaw loads.
+// Node's native Windows realpath bindings request privileges unavailable to
+// AppContainer tokens. Route every variant through the compatible bindings;
+// the trusted launcher propagates this preload to Node worker processes.
 fs.promises.realpath = promisify(fs.realpath);
+fs.realpath.native = fs.realpath;
+fs.realpathSync.native = fs.realpathSync;
 syncBuiltinESMExports();
 `;
 }

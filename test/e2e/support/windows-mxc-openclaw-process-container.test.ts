@@ -713,6 +713,8 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
     expect(agent).toContain('OPENCLAW_SKIP_PROVIDERS: "1"');
     expect(agent).toContain("OPENCLAW_CONFIG_PATH: openClawConfigPath");
     expect(agent).toContain("OPENCLAW_STATE_DIR: openClawStateDirectory");
+    expect(agent).toContain('NODE_OPTIONS: "--import=" + compatibilityPreloadUrl');
+    expect(agent).toContain('"--import",\n    compatibilityPreloadUrl');
     expect(agent).not.toContain("execFile");
     expect(agent).not.toContain('"--dev"');
     expect(agent).not.toContain('"--allow-unconfigured"');
@@ -724,6 +726,8 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
     const preload = renderWindowsMxcOpenClawCompatibilityPreload();
 
     expect(preload).toContain("fs.promises.realpath = promisify(fs.realpath)");
+    expect(preload).toContain("fs.realpath.native = fs.realpath");
+    expect(preload).toContain("fs.realpathSync.native = fs.realpathSync");
     expect(preload).toContain("syncBuiltinESMExports()");
     expect(preload).not.toContain("NODE_OPTIONS");
   });
