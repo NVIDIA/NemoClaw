@@ -109,11 +109,12 @@ describe("unified-memory GPU sandbox warning (#12255)", () => {
     expect(unifiedMemoryGpuSandboxWarningLines(SPARK, () => null)).toEqual([]);
   });
 
-  it("covers every unified-memory platform", () => {
-    for (const hostGpuPlatform of ["spark", "jetson", "n1x"]) {
-      expect(
-        unifiedMemoryGpuSandboxWarningLines({ sandboxGpuEnabled: true, hostGpuPlatform }, CONSTRAINED),
-      ).not.toEqual([]);
-    }
+  it.each(["spark", "jetson", "n1x"])("covers the %s unified-memory platform", (platform) => {
+    expect(
+      unifiedMemoryGpuSandboxWarningLines(
+        { sandboxGpuEnabled: true, hostGpuPlatform: platform },
+        CONSTRAINED,
+      ),
+    ).not.toEqual([]);
   });
 });
