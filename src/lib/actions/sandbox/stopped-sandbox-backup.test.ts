@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const adapterMocks = vi.hoisted(() => ({
   providerCapture: vi.fn(),
   backupWithAuthority: vi.fn(),
+  probeSsh: vi.fn(),
   startSandbox: vi.fn(),
   stopSandbox: vi.fn(),
 }));
@@ -44,9 +45,11 @@ vi.mock("../../state/registry", () => ({
 }));
 vi.mock("../../state/sandbox", () => ({
   backupSandboxState: vi.fn(),
+  probeSandboxSshReachable: (...args: unknown[]) => adapterMocks.probeSsh(...args),
 }));
 vi.mock("./snapshot/backup-authority", () => ({
-  backupSandboxStateWithManagedAuthority: (name: string) => adapterMocks.backupWithAuthority(name),
+  backupSandboxStateWithManagedAuthority: (name: string, options: unknown) =>
+    adapterMocks.backupWithAuthority(name, options),
 }));
 
 import * as registry from "../../state/registry";
@@ -54,6 +57,7 @@ import {
   backupStartedSandboxState,
   isSandboxContainerDefinitivelyAbsent,
   returnSandboxContainerToStopped,
+  startedSandboxBackupTransactionDeadline,
   startStoppedSandboxContainerForBackup,
 } from "./stopped-sandbox-backup";
 
@@ -108,6 +112,21 @@ describe("startStoppedSandboxContainerForBackup", () => {
     expect(d.resolveLifecycleEngine().capture).not.toHaveBeenCalledWith(
       expect.arrayContaining(["start"]),
       expect.anything(),
+    );
+  });
+
+  it("bounds the start operation by the shared transaction deadline", async () => {
+    const d = deps({
+      deadlineMs: 20_000,
+      now: () => 5_000,
+    });
+
+    await expect(startStoppedSandboxContainerForBackup("my-sb", d)).resolves.not.toBeNull();
+
+    expect(d.createOpenShellLifecycle().startSandbox).toHaveBeenCalledWith(
+      expect.objectContaining({
+        timeoutMs: 15_000,
+      }),
     );
   });
 
@@ -411,75 +430,93 @@ describe("backupStartedSandboxState", () => {
     backedUpFiles: [],
     failedFiles: [],
   };
-  const unreachable = { ...ok, success: false, unreachable: true };
   const denied = { ...ok, success: false };
 
+  beforeEach(() => {
+    adapterMocks.backupWithAuthority.mockReset();
+    adapterMocks.probeSsh.mockReset();
+  });
+
   it("uses managed provider authority through the default stopped-backup path", async () => {
+    adapterMocks.probeSsh.mockReturnValueOnce(true);
     adapterMocks.backupWithAuthority.mockReturnValueOnce(ok);
 
     await expect(backupStartedSandboxState("my-sb")).resolves.toEqual(ok);
 
-    expect(adapterMocks.backupWithAuthority).toHaveBeenCalledWith("my-sb");
+    expect(adapterMocks.backupWithAuthority).toHaveBeenCalledWith("my-sb", {
+      deadlineMs: expect.any(Number),
+    });
   });
 
   it("retries while the just-started container's SSH endpoint is unreachable (#6500)", async () => {
-    const backup = vi
+    let now = 0;
+    const probe = vi
       .fn()
-      .mockReturnValueOnce(unreachable)
-      .mockReturnValueOnce(unreachable)
-      .mockReturnValueOnce(ok);
-    const sleep = vi.fn().mockResolvedValue(undefined);
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(false)
+      .mockReturnValue(true);
+    const backup = vi.fn().mockReturnValue(ok);
+    const sleep = vi.fn(async (ms: number) => {
+      now += ms;
+    });
     const result = await backupStartedSandboxState("my-sb", {
       backup,
+      probe,
       sleep,
-      attempts: 5,
       delayMs: 1,
+      now: () => now,
     });
     expect(result.success).toBe(true);
-    expect(backup).toHaveBeenCalledTimes(3);
+    expect(probe).toHaveBeenCalledTimes(3);
+    expect(backup).toHaveBeenCalledTimes(1);
     expect(sleep).toHaveBeenCalledTimes(2);
   });
 
   it("allows managed startup to exceed the legacy eight-second readiness window (#9356)", async () => {
     vi.useFakeTimers();
-    adapterMocks.backupWithAuthority
-      .mockReturnValueOnce(unreachable)
-      .mockReturnValueOnce(unreachable)
-      .mockReturnValueOnce(unreachable)
-      .mockReturnValueOnce(unreachable)
-      .mockReturnValueOnce(unreachable)
-      .mockReturnValueOnce(unreachable)
-      .mockReturnValueOnce(ok);
+    vi.setSystemTime(0);
+    adapterMocks.probeSsh
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(true);
+    adapterMocks.backupWithAuthority.mockReturnValueOnce(ok);
 
     const pending = backupStartedSandboxState("my-sb");
     await vi.runAllTimersAsync();
 
     await expect(pending).resolves.toEqual(ok);
-    expect(adapterMocks.backupWithAuthority).toHaveBeenCalledTimes(7);
+    expect(adapterMocks.probeSsh).toHaveBeenCalledTimes(7);
+    expect(adapterMocks.backupWithAuthority).toHaveBeenCalledTimes(1);
     vi.useRealTimers();
   });
 
   it("waits beyond the former ninety-second SSH readiness boundary (#11936)", async () => {
     vi.useFakeTimers();
-    adapterMocks.backupWithAuthority.mockImplementation(() =>
-      adapterMocks.backupWithAuthority.mock.calls.length <= 46 ? unreachable : ok,
-    );
+    vi.setSystemTime(0);
+    adapterMocks.probeSsh.mockImplementation(() => adapterMocks.probeSsh.mock.calls.length > 46);
+    adapterMocks.backupWithAuthority.mockReturnValueOnce(ok);
 
     const pending = backupStartedSandboxState("my-sb");
     await vi.runAllTimersAsync();
 
     await expect(pending).resolves.toEqual(ok);
-    expect(adapterMocks.backupWithAuthority).toHaveBeenCalledTimes(47);
+    expect(adapterMocks.probeSsh).toHaveBeenCalledTimes(47);
+    expect(adapterMocks.backupWithAuthority).toHaveBeenCalledTimes(1);
     vi.useRealTimers();
   });
 
   it("returns a non-transport failure without retrying", async () => {
+    const probe = vi.fn().mockReturnValue(true);
     const backup = vi.fn().mockReturnValue(denied);
     const sleep = vi.fn().mockResolvedValue(undefined);
     const result = await backupStartedSandboxState("my-sb", {
       backup,
+      probe,
       sleep,
-      attempts: 5,
       delayMs: 1,
     });
     expect(result.success).toBe(false);
@@ -487,16 +524,67 @@ describe("backupStartedSandboxState", () => {
     expect(sleep).not.toHaveBeenCalled();
   });
 
-  it("gives up after the attempt budget while still unreachable", async () => {
-    const backup = vi.fn().mockReturnValue(unreachable);
-    const sleep = vi.fn().mockResolvedValue(undefined);
-    const result = await backupStartedSandboxState("my-sb", {
-      backup,
-      sleep,
-      attempts: 3,
-      delayMs: 1,
+  it("stops the default readiness probes at the transaction bound (#11936)", async () => {
+    let now = 0;
+    adapterMocks.probeSsh.mockReturnValue(false);
+    const sleep = vi.fn(async (ms: number) => {
+      now += ms;
     });
+    const result = await backupStartedSandboxState("my-sb", {
+      sleep,
+      now: () => now,
+    });
+
     expect(result.unreachable).toBe(true);
-    expect(backup).toHaveBeenCalledTimes(3);
+    expect(adapterMocks.probeSsh).toHaveBeenCalledTimes(90);
+    expect(sleep).toHaveBeenCalledTimes(90);
+    expect(adapterMocks.backupWithAuthority).not.toHaveBeenCalled();
+  });
+
+  it("reserves final backup and stopped-state cleanup near the readiness deadline (#11936)", async () => {
+    let now = 179_999;
+    const transactionDeadlineMs = startedSandboxBackupTransactionDeadline(() => 0);
+    const backup = vi.fn((_name: string, deadlineMs: number) => {
+      expect(deadlineMs).toBe(300_000);
+      now = deadlineMs;
+      return ok;
+    });
+
+    await expect(
+      backupStartedSandboxState("my-sb", {
+        backup,
+        probe: vi.fn().mockReturnValue(true),
+        deadlineMs: transactionDeadlineMs,
+        now: () => now,
+      }),
+    ).resolves.toEqual(ok);
+
+    const stopSandbox = vi.fn().mockImplementation(async ({ timeoutMs }: { timeoutMs: number }) => {
+      now += timeoutMs;
+      return { kind: "accepted" };
+    });
+    await expect(
+      returnSandboxContainerToStopped(
+        {
+          containerName: "openshell-my-sb-abc123",
+          gatewayName: "nemoclaw",
+          mutationTimeoutMs: 75_000,
+          runtimeProviderId: "podman",
+          sandboxIdentityFingerprint: "a".repeat(64),
+          sandboxName: "my-sb",
+        },
+        {
+          createOpenShellLifecycle: () => ({ startSandbox: vi.fn(), stopSandbox }),
+          deadlineMs: transactionDeadlineMs,
+          now: () => now,
+        },
+      ),
+    ).resolves.toBe(true);
+    expect(stopSandbox).toHaveBeenCalledWith(
+      expect.objectContaining({
+        timeoutMs: 30_000,
+      }),
+    );
+    expect(now).toBe(transactionDeadlineMs);
   });
 });

@@ -189,6 +189,8 @@ export type SnapshotEntry = RebuildManifest & { snapshotVersion: number };
 
 export interface BackupOptions {
   name?: string | null;
+  /** Absolute wall-clock deadline for all backup subprocesses and publication. */
+  deadlineMs?: number;
   runtimeSnapshot?: SandboxRuntimeSnapshot;
   workload?: SandboxWorkloadReceipt;
   hostLocalInferenceReceipt?: string;
@@ -232,6 +234,7 @@ export interface StateFileCaptureRequest {
   sandboxName: string;
   dir: string;
   spec: StateFileSpec;
+  deadlineMs?: number;
 }
 
 export type StateFileCaptureResult =
@@ -243,6 +246,7 @@ export interface StateDirectoryCaptureRequest {
   sandboxName: string;
   dir: string;
   dirs: readonly string[];
+  deadlineMs?: number;
   /** Maximum archive bytes the privileged producer may write to the owned fd. */
   maxArchiveBytes: number;
 }
@@ -837,21 +841,32 @@ export function safeTarExtract(tarArchive: TarArchiveSource, targetDir: string):
 
 // ── Helpers ────────────────────────────────────────────────────────
 
+function remainingBackupTimeoutMs(
+  deadlineMs: number | undefined,
+  maximumMs: number,
+): number | null {
+  if (deadlineMs === undefined) return maximumMs;
+  const remainingMs = Math.floor(deadlineMs - Date.now());
+  return remainingMs > 0 ? Math.min(maximumMs, remainingMs) : null;
+}
+
 export function getSshConfig(
   sandboxName: string,
   runtimeOptions: {
     env?: NodeJS.ProcessEnv;
     gatewayName?: string;
     replaceEnv?: boolean;
+    timeoutMs?: number;
   } = {},
 ): string | null {
   const openshellBinary = resolveOpenshell();
   if (!openshellBinary) return null;
 
+  const { timeoutMs = OPENSHELL_PROBE_TIMEOUT_MS, ...captureOptions } = runtimeOptions;
   const result = captureSandboxSshConfigCommand(openshellBinary, sandboxName, {
-    ...runtimeOptions,
+    ...captureOptions,
     ignoreError: true,
-    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+    timeout: timeoutMs,
   });
   if (result.status !== 0) return null;
   return result.output;
@@ -889,6 +904,27 @@ export function sshArgs(configFile: string, sandboxName: string): string[] {
     "LogLevel=ERROR",
     sshHost,
   ];
+}
+
+/** Probe only the SSH transport, bounded by one absolute deadline. */
+export function probeSandboxSshReachable(sandboxName: string, deadlineMs: number): boolean {
+  const configTimeoutMs = remainingBackupTimeoutMs(deadlineMs, OPENSHELL_PROBE_TIMEOUT_MS);
+  if (configTimeoutMs === null) return false;
+  const sshConfig = getSshConfig(sandboxName, { timeoutMs: configTimeoutMs });
+  if (!sshConfig) return false;
+
+  const tempSshConfig = createTempSshConfig(sshConfig, "nemoclaw-readiness-");
+  try {
+    const probeTimeoutMs = remainingBackupTimeoutMs(deadlineMs, OPENSHELL_PROBE_TIMEOUT_MS);
+    if (probeTimeoutMs === null) return false;
+    const result = spawnSync("ssh", [...sshArgs(tempSshConfig.file, sandboxName), ":"], {
+      stdio: ["ignore", "ignore", "pipe"],
+      timeout: probeTimeoutMs,
+    });
+    return result.status === 0 && !result.error && !result.signal;
+  } finally {
+    tempSshConfig.cleanup();
+  }
 }
 
 function computeBlueprintDigest(): string | null {
@@ -1212,6 +1248,7 @@ function capturePreservedEnvFile(
   sandboxName: string,
   dir: string,
   inventory: PreservedEnvInventory,
+  deadlineMs: number | undefined,
   captureFallback?: StateFileCapture,
 ): {
   outcome: StateFileBackupOutcome;
@@ -1223,9 +1260,11 @@ function capturePreservedEnvFile(
     strategy: "copy",
   });
   _log(`Capturing preserved environment assignments from ${inventory.path}`);
+  const timeoutMs = remainingBackupTimeoutMs(deadlineMs, 30_000);
+  if (timeoutMs === null) return { outcome: "failed", unreachable: true };
   const result = spawnSync("ssh", [...sshArgs(configFile, sandboxName), command], {
     stdio: ["ignore", "pipe", "pipe"],
-    timeout: 30000,
+    timeout: timeoutMs,
     maxBuffer: 1024 * 1024,
   });
   if (result.status === 2) return { outcome: "missing", unreachable: false };
@@ -1242,6 +1281,7 @@ function capturePreservedEnvFile(
         sandboxName,
         dir,
         spec: { path: inventory.path, strategy: "copy" },
+        deadlineMs,
       });
     } catch (error) {
       captured = {
@@ -1292,6 +1332,7 @@ function capturePreservedEnvFiles(
   sandboxName: string,
   dir: string,
   inventories: readonly PreservedEnvInventory[],
+  deadlineMs: number | undefined,
   captureFallback?: StateFileCapture,
 ): { files: PreservedEnvFile[]; failedPaths: string[]; unreachable: boolean } {
   const files: PreservedEnvFile[] = [];
@@ -1303,6 +1344,7 @@ function capturePreservedEnvFiles(
       sandboxName,
       dir,
       inventory,
+      deadlineMs,
       captureFallback,
     );
     if (result.outcome === "backed_up" && result.file) {
@@ -1322,6 +1364,7 @@ function captureAgentPreservedEnvFiles(
   dir: string,
   manifest: RebuildManifest,
   failedFiles: string[],
+  deadlineMs: number | undefined,
   captureFallback?: StateFileCapture,
 ): boolean {
   if (agentName !== "hermes") return false;
@@ -1330,6 +1373,7 @@ function captureAgentPreservedEnvFiles(
     sandboxName,
     dir,
     HERMES_PRESERVED_ENV_INVENTORY,
+    deadlineMs,
     captureFallback,
   );
   manifest.preservedEnv = preserved.files;
@@ -1343,13 +1387,16 @@ function backupStateFile(
   dir: string,
   spec: StateFileSpec,
   backupPath: string,
+  deadlineMs: number | undefined,
   captureFallback?: StateFileCapture,
 ): StateFileBackupResult {
   const command = buildStateFileBackupCommand(dir, spec);
   _log(`Backing up state file ${spec.path} (${spec.strategy})`);
+  const timeoutMs = remainingBackupTimeoutMs(deadlineMs, 120_000);
+  if (timeoutMs === null) return { outcome: "failed", unreachable: true };
   const result = spawnSync("ssh", [...sshArgs(configFile, sandboxName), command], {
     stdio: ["ignore", "pipe", "pipe"],
-    timeout: 120000,
+    timeout: timeoutMs,
     maxBuffer: 256 * 1024 * 1024,
   });
 
@@ -1364,7 +1411,7 @@ function backupStateFile(
     captureFallback !== undefined
   ) {
     try {
-      captured = captureFallback({ sandboxName, dir, spec });
+      captured = captureFallback({ sandboxName, dir, spec, deadlineMs });
     } catch (error) {
       captured = {
         outcome: "failed",
@@ -1414,6 +1461,7 @@ function retryPermissionDeniedDirectories(
   failedDirs: string[],
   backedUpDirs: string[],
   failedDirReasons: Record<string, string>,
+  deadlineMs: number | undefined,
 ): void {
   if (!captureFallback) return;
   const denied = failedDirs.filter(
@@ -1433,6 +1481,7 @@ function retryPermissionDeniedDirectories(
         dir,
         dirs: denied,
         maxArchiveBytes: STATE_DIRECTORY_CAPTURE_MAX_BYTES,
+        deadlineMs,
       },
       archiveFd,
     );
@@ -1618,6 +1667,20 @@ function classifyPreBackupAuditEntry(
 }
 
 export function backupSandboxState(sandboxName: string, options: BackupOptions = {}): BackupResult {
+  if (
+    options.deadlineMs !== undefined &&
+    (!Number.isFinite(options.deadlineMs) || options.deadlineMs <= Date.now())
+  ) {
+    return {
+      success: false,
+      backedUpDirs: [],
+      failedDirs: [],
+      backedUpFiles: [],
+      failedFiles: [],
+      unreachable: true,
+      error: "Sandbox backup deadline expired before backup started.",
+    };
+  }
   const sb = registry.getSandbox(sandboxName);
   const agentName = sb?.agent || "openclaw";
   const agent = loadAgent(agentName);
@@ -1725,7 +1788,12 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
 
   if (!hasBackupDirectories && stateFiles.length === 0) {
     _log("WARNING: Agent manifest declares no state_dirs or state_files — nothing to back up");
-    const publicationError = validateSnapshotPublication(backupPath, options.validateBeforePublish);
+    const publicationError = validateSnapshotPublication(backupPath, () => {
+      if (options.deadlineMs !== undefined && Date.now() >= options.deadlineMs) {
+        throw new Error("sandbox backup deadline expired");
+      }
+      options.validateBeforePublish?.();
+    });
     if (publicationError) {
       return {
         success: false,
@@ -1750,7 +1818,14 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
 
   // SSH+tar single-roundtrip download
   _log("Getting SSH config via openshell sandbox ssh-config");
-  const sshConfig = getSshConfig(sandboxName);
+  const sshConfigTimeoutMs = remainingBackupTimeoutMs(
+    options.deadlineMs,
+    OPENSHELL_PROBE_TIMEOUT_MS,
+  );
+  const sshConfig =
+    sshConfigTimeoutMs === null
+      ? null
+      : getSshConfig(sandboxName, { timeoutMs: sshConfigTimeoutMs });
   if (!sshConfig) {
     _log("FAILED: Could not get SSH config");
     // For a sandbox the registry reported as running, an unreachable
@@ -1799,7 +1874,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
       const existResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), fullCheckCmd], {
         encoding: "utf-8",
         stdio: ["ignore", "pipe", "pipe"],
-        timeout: 30000,
+        timeout: remainingBackupTimeoutMs(options.deadlineMs, 30_000) ?? 1,
       });
       _log(
         `Dir check: exit=${existResult.status}, stdout=${(existResult.stdout || "").trim().substring(0, 200)}, stderr=${(existResult.stderr || "").trim().substring(0, 200)}`,
@@ -1872,7 +1947,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         const auditResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), auditCmd], {
           encoding: "utf-8",
           stdio: ["ignore", "pipe", "pipe"],
-          timeout: 30000,
+          timeout: remainingBackupTimeoutMs(options.deadlineMs, 30_000) ?? 1,
         });
         if (auditResult.status !== 0) {
           const stderr = (auditResult.stderr || "").trim();
@@ -1986,7 +2061,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         try {
           result = spawnSync("ssh", [...sshArgs(configFile, sandboxName), tarCmd], {
             stdio: ["ignore", downloadedTarFd, "pipe"],
-            timeout: 120000,
+            timeout: remainingBackupTimeoutMs(options.deadlineMs, 120_000) ?? 1,
             maxBuffer: 256 * 1024 * 1024,
           });
         } finally {
@@ -2088,6 +2163,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
       failedDirs,
       backedUpDirs,
       failedDirReasons,
+      options.deadlineMs,
     );
 
     for (const spec of stateFiles) {
@@ -2097,6 +2173,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         dir,
         spec,
         backupPath,
+        options.deadlineMs,
         options.captureStateFile,
       );
       if (result.outcome === "backed_up") {
@@ -2118,6 +2195,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         dir,
         manifest,
         failedFiles,
+        options.deadlineMs,
         options.captureStateFile,
       ) || unreachable;
   } finally {
@@ -2148,7 +2226,12 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
   );
   manifest.backupComplete = failedDirs.length === 0 && failedFiles.length === 0;
 
-  const publicationError = validateSnapshotPublication(backupPath, options.validateBeforePublish);
+  const publicationError = validateSnapshotPublication(backupPath, () => {
+    if (options.deadlineMs !== undefined && Date.now() >= options.deadlineMs) {
+      throw new Error("sandbox backup deadline expired");
+    }
+    options.validateBeforePublish?.();
+  });
   if (publicationError) {
     return {
       success: false,

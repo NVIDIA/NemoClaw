@@ -1064,9 +1064,15 @@ describe("backupSandboxStateForRebuild stopped-container recovery (#11137)", () 
     );
 
     expect(result).toEqual(makeBackupResult().manifest);
-    expect(startSpy).toHaveBeenCalledWith("alpha");
-    expect(backupStartedSpy).toHaveBeenCalledWith("alpha");
-    expect(returnStoppedSpy).toHaveBeenCalledWith(startedForBackup);
+    expect(startSpy).toHaveBeenCalledWith("alpha", {
+      deadlineMs: expect.any(Number),
+    });
+    expect(backupStartedSpy).toHaveBeenCalledWith("alpha", {
+      deadlineMs: expect.any(Number),
+    });
+    expect(returnStoppedSpy).toHaveBeenCalledWith(startedForBackup, {
+      deadlineMs: expect.any(Number),
+    });
   });
 
   it("does not attempt recovery for a non-transport backup failure", async () => {
@@ -1129,7 +1135,9 @@ describe("backupSandboxStateForRebuild stopped-container recovery (#11137)", () 
     await expect(
       backupSandboxStateForRebuild("alpha", makeSandboxEntry(), false, () => undefined, makeBail()),
     ).rejects.toThrow("bail: Failed to back up sandbox state.");
-    expect(returnStoppedSpy).toHaveBeenCalledWith(startedForBackup);
+    expect(returnStoppedSpy).toHaveBeenCalledWith(startedForBackup, {
+      deadlineMs: expect.any(Number),
+    });
   });
 
   it("reports the still-running container when the retry and the return to stopped both fail", async () => {
@@ -1187,6 +1195,8 @@ describe("backupSandboxStateForRebuild stopped-container recovery (#11137)", () 
     ).rejects.toThrow(
       "bail: Could not return the sandbox's recovered container to its stopped state.",
     );
-    expect(returnStoppedSpy).toHaveBeenCalledWith(startedForBackup);
+    expect(returnStoppedSpy).toHaveBeenCalledWith(startedForBackup, {
+      deadlineMs: expect.any(Number),
+    });
   });
 });

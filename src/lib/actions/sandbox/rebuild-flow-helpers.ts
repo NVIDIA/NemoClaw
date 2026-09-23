@@ -57,6 +57,7 @@ import {
   backupStartedSandboxState,
   returnSandboxContainerToStopped,
   startStoppedSandboxContainerForBackup,
+  startedSandboxBackupTransactionDeadline,
 } from "./stopped-sandbox-backup";
 
 export { removeStaleRebuildDockerOrphan };
@@ -513,18 +514,25 @@ export async function backupSandboxStateForRebuild(
   // it to stopped. Any other failure (permission denied, absent state, audit
   // rejection) is not a transport problem and must not attempt this recovery.
   if (!backup.success && backup.unreachable) {
-    const started = await startStoppedSandboxContainerForBackup(sandboxName);
+    const transactionDeadlineMs = startedSandboxBackupTransactionDeadline();
+    const started = await startStoppedSandboxContainerForBackup(sandboxName, {
+      deadlineMs: transactionDeadlineMs,
+    });
     if (started) {
       console.log("  Sandbox container is stopped; starting it to back up state before rebuild...");
       log(`Started stopped container '${started.containerName}' to retry backup`);
       let returnedToStopped = false;
       try {
-        backup = await backupStartedSandboxState(sandboxName);
+        backup = await backupStartedSandboxState(sandboxName, {
+          deadlineMs: transactionDeadlineMs,
+        });
         log(
           `Retry backup result: success=${backup.success}, backed=${backup.backedUpDirs.join(",")}; files=${backup.backedUpFiles.join(",")}, failed=${backup.failedDirs.join(",")}; failedFiles=${backup.failedFiles.join(",")}`,
         );
       } finally {
-        returnedToStopped = await returnSandboxContainerToStopped(started);
+        returnedToStopped = await returnSandboxContainerToStopped(started, {
+          deadlineMs: transactionDeadlineMs,
+        });
         if (!returnedToStopped) {
           log(
             `Could not return '${sandboxName}' container to its stopped state after backup retry`,

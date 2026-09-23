@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { retryUntilAsync } from "../../core/retry";
 import {
   createSdkOpenShellSandboxStateLifecycle,
   type OpenShellSandboxStateLifecycle,
@@ -136,6 +135,8 @@ interface StartDeps {
   ) => string[] | null;
   inspectStatus: (engine: SandboxLifecycleEngine, containerName: string) => string | null;
   createOpenShellLifecycle: () => OpenShellSandboxStateLifecycle;
+  deadlineMs?: number;
+  now: () => number;
 }
 
 const defaultStartDeps: StartDeps = {
@@ -149,6 +150,7 @@ const defaultStartDeps: StartDeps = {
   listLabeledContainerNames,
   inspectStatus: inspectContainerStatus,
   createOpenShellLifecycle: () => createSdkOpenShellSandboxStateLifecycle({ env: process.env }),
+  now: Date.now,
 };
 
 export async function startStoppedSandboxContainerForBackup(
@@ -178,11 +180,15 @@ export async function startStoppedSandboxContainerForBackup(
   const status = deps.inspectStatus(engine, containerName);
   if (status !== "exited" && status !== "created") return null;
   const gatewayName = sandbox.gatewayName ?? "nemoclaw";
+  const remainingMs =
+    deps.deadlineMs === undefined
+      ? engine.mutationTimeoutMs
+      : Math.max(1, Math.floor(deps.deadlineMs - deps.now()));
   const result = await deps.createOpenShellLifecycle().startSandbox({
     sandboxName,
     sandboxIdentityFingerprint,
     target: { kind: "named", gatewayName },
-    timeoutMs: engine.mutationTimeoutMs,
+    timeoutMs: Math.min(engine.mutationTimeoutMs, remainingMs),
   });
   if (result.kind === "failed") return null;
   return {
@@ -234,10 +240,13 @@ export function isSandboxContainerDefinitivelyAbsent(
 
 interface StopDeps {
   createOpenShellLifecycle: () => OpenShellSandboxStateLifecycle;
+  deadlineMs?: number;
+  now: () => number;
 }
 
 const defaultStopDeps: StopDeps = {
   createOpenShellLifecycle: () => createSdkOpenShellSandboxStateLifecycle({ env: process.env }),
+  now: Date.now,
 };
 
 /** Return a sandbox started by {@link startStoppedSandboxContainerForBackup}
@@ -247,60 +256,92 @@ export async function returnSandboxContainerToStopped(
   depsOverride: Partial<StopDeps> = {},
 ): Promise<boolean> {
   const deps: StopDeps = { ...defaultStopDeps, ...depsOverride };
+  const remainingMs =
+    deps.deadlineMs === undefined
+      ? started.mutationTimeoutMs
+      : Math.max(1, Math.floor(deps.deadlineMs - deps.now()));
   const result = await deps.createOpenShellLifecycle().stopSandbox({
     sandboxName: started.sandboxName,
     sandboxIdentityFingerprint: started.sandboxIdentityFingerprint,
     target: { kind: "named", gatewayName: started.gatewayName },
-    timeoutMs: started.mutationTimeoutMs,
+    timeoutMs: Math.min(started.mutationTimeoutMs, remainingMs),
   });
   return result.kind === "accepted";
 }
 
 interface BackupRetryDeps {
-  backup: (name: string) => sandboxState.BackupResult;
+  backup: (name: string, deadlineMs: number) => sandboxState.BackupResult;
+  probe: (name: string, deadlineMs: number) => boolean;
   sleep: (ms: number) => Promise<void>;
-  attempts: number;
+  deadlineMs?: number;
   delayMs: number;
+  now: () => number;
 }
 
-const STARTED_BACKUP_READY_TIMEOUT_MS = 180_000;
+const STARTED_BACKUP_TRANSACTION_TIMEOUT_MS = 330_000;
+const STARTED_BACKUP_FINAL_BACKUP_RESERVE_MS = 120_000;
+const STARTED_BACKUP_STOP_RESERVE_MS = 30_000;
 const STARTED_BACKUP_RETRY_DELAY_MS = 2_000;
 
 const defaultBackupRetryDeps: BackupRetryDeps = {
-  backup: (name) =>
+  backup: (name, deadlineMs) =>
     snapshotBackup.backupSandboxStateWithManagedAuthority(
       name,
-      {},
+      { deadlineMs },
       {
         getSandbox: registry.getSandbox,
       },
     ),
+  probe: sandboxState.probeSandboxSshReachable,
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-  // Managed-profile containers run their provider-owned startup before the
-  // OpenShell SSH transport becomes reachable. Keep this inside backup-all's
-  // 180-second command budget while allowing a cold managed restart to finish.
-  attempts: Math.floor(STARTED_BACKUP_READY_TIMEOUT_MS / STARTED_BACKUP_RETRY_DELAY_MS) + 1,
   delayMs: STARTED_BACKUP_RETRY_DELAY_MS,
+  now: Date.now,
 };
 
+/** Create the deadline shared by readiness, backup, and stopped-state cleanup. */
+export function startedSandboxBackupTransactionDeadline(now: () => number = Date.now): number {
+  return now() + STARTED_BACKUP_TRANSACTION_TIMEOUT_MS;
+}
+
+function unreachableBackupResult(error: string): sandboxState.BackupResult {
+  return {
+    success: false,
+    backedUpDirs: [],
+    failedDirs: [],
+    backedUpFiles: [],
+    failedFiles: [],
+    unreachable: true,
+    error,
+  };
+}
+
 /**
- * Back up a sandbox that OpenShell just started. Its SSH endpoint can take up
- * to the managed cold-start window to become reachable, so retry while — and
- * only while — the result is a transport-level `unreachable`
- * failure. Every other outcome (success, permission failure, precondition)
- * is returned as-is on first sight.
+ * Wait up to 180 seconds for a started sandbox's SSH transport, then run one
+ * backup with a 120-second reserve. The shared transaction deadline retains a
+ * final 30 seconds for restoring the sandbox's stopped state.
  */
 export async function backupStartedSandboxState(
   sandboxName: string,
   depsOverride: Partial<BackupRetryDeps> = {},
 ): Promise<sandboxState.BackupResult> {
   const deps: BackupRetryDeps = { ...defaultBackupRetryDeps, ...depsOverride };
-  return retryUntilAsync(() => deps.backup(sandboxName), {
-    accept: (result) => result.success || !result.unreachable,
-    retryDelaysMs: Array.from(
-      { length: Math.max(0, Math.ceil(deps.attempts) - 1) },
-      () => deps.delayMs,
-    ),
-    sleep: deps.sleep,
-  });
+  const transactionDeadlineMs =
+    deps.deadlineMs ?? startedSandboxBackupTransactionDeadline(deps.now);
+  const backupDeadlineMs = transactionDeadlineMs - STARTED_BACKUP_STOP_RESERVE_MS;
+  const readinessDeadlineMs = backupDeadlineMs - STARTED_BACKUP_FINAL_BACKUP_RESERVE_MS;
+
+  while (deps.now() < readinessDeadlineMs) {
+    const probeDeadlineMs = Math.min(readinessDeadlineMs, deps.now() + Math.max(1, deps.delayMs));
+    if (deps.probe(sandboxName, probeDeadlineMs)) {
+      const result = deps.backup(sandboxName, backupDeadlineMs);
+      return deps.now() <= backupDeadlineMs
+        ? result
+        : unreachableBackupResult("Sandbox backup exceeded its transaction deadline.");
+    }
+    const remainingReadinessMs = Math.floor(readinessDeadlineMs - deps.now());
+    if (remainingReadinessMs <= 0) break;
+    await deps.sleep(Math.min(Math.max(1, deps.delayMs), remainingReadinessMs));
+  }
+
+  return unreachableBackupResult("Sandbox SSH did not become ready before the backup deadline.");
 }

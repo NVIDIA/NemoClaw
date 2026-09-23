@@ -53,6 +53,12 @@ const OPENCLAW_CONFIG_DIRECTORY = "/sandbox/.openclaw";
 const OPENCLAW_CONFIG_NAME = "openclaw.json";
 const HERMES_CAPTURE_TIMEOUT_MS = 120_000;
 const HERMES_CAPTURE_MAX_BUFFER = 256 * 1024 * 1024;
+
+function captureTimeoutMs(deadlineMs: number | undefined, maximumMs: number): number {
+  if (deadlineMs === undefined) return maximumMs;
+  return Math.max(1, Math.min(maximumMs, Math.floor(deadlineMs - Date.now())));
+}
+
 export const OPENCLAW_CONFIG_CAPTURE_SCRIPT = `import os, stat, sys
 maximum = ${MAX_OPENCLAW_CONFIG_BYTES}
 directory = sys.argv[1]
@@ -188,7 +194,7 @@ export function captureOpenClawStateFile(
           ],
           {
             sanitizeEnvironment: true,
-            timeout: OPENCLAW_CONFIG_CAPTURE_TIMEOUT_MS,
+            timeout: captureTimeoutMs(request.deadlineMs, OPENCLAW_CONFIG_CAPTURE_TIMEOUT_MS),
             maxOutputBytes: OPENCLAW_CONFIG_CAPTURE_MAX_BUFFER,
           },
         );
@@ -439,7 +445,7 @@ export function captureHermesStateFile(
         {
           encoding: null,
           stdio: ["ignore", "pipe", "pipe"],
-          timeout: HERMES_CAPTURE_TIMEOUT_MS,
+          timeout: captureTimeoutMs(request.deadlineMs, HERMES_CAPTURE_TIMEOUT_MS),
           maxBuffer: HERMES_CAPTURE_MAX_BUFFER,
         },
       );
@@ -496,7 +502,7 @@ export function captureHermesStateDirectories(
           {
             encoding: null,
             stdio: ["ignore", archiveFd, "pipe"],
-            timeout: HERMES_CAPTURE_TIMEOUT_MS,
+            timeout: captureTimeoutMs(request.deadlineMs, HERMES_CAPTURE_TIMEOUT_MS),
             maxBuffer: 1024 * 1024,
           },
         );
@@ -692,7 +698,7 @@ function captureSnapshotAuthority(
  */
 export function backupSandboxStateWithManagedAuthority(
   sandboxName: string,
-  options: Pick<sandboxState.BackupOptions, "name"> = {},
+  options: Pick<sandboxState.BackupOptions, "name" | "deadlineMs"> = {},
   overrides: Pick<SnapshotBackupAuthorityDependencies, "getSandbox"> &
     Partial<Omit<SnapshotBackupAuthorityDependencies, "getSandbox">>,
 ): sandboxState.BackupResult {

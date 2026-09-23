@@ -98,6 +98,7 @@ vi.mock("./sandbox/stopped-sandbox-backup", () => ({
   backupStartedSandboxState: mocks.backupStartedSandboxState,
   returnSandboxContainerToStopped: mocks.returnSandboxContainerToStopped,
   isSandboxContainerDefinitivelyAbsent: mocks.isSandboxContainerDefinitivelyAbsent,
+  startedSandboxBackupTransactionDeadline: () => 330_000,
 }));
 vi.mock("./sandbox/snapshot/strict-pre-upgrade-recovery", () => ({
   retainStrictPreUpgradeRecoveryState: mocks.retainStrictPreUpgradeRecoveryState,
@@ -549,12 +550,22 @@ describe("backupAll", () => {
     await backupAll();
 
     expect(exitSpy).not.toHaveBeenCalled();
-    expect(mocks.backupStartedSandboxState).toHaveBeenCalledWith("sb-stopped");
-    expect(mocks.backupSandboxState).toHaveBeenCalledWith("sb-good");
-    expect(mocks.returnSandboxContainerToStopped).toHaveBeenCalledWith({
-      containerName: "openshell-sb-stopped-abc",
-      runtimeProviderId: "docker",
+    expect(mocks.startStoppedSandboxContainerForBackup).toHaveBeenCalledWith("sb-stopped", {
+      deadlineMs: 330_000,
     });
+    expect(mocks.backupStartedSandboxState).toHaveBeenCalledWith("sb-stopped", {
+      deadlineMs: 330_000,
+    });
+    expect(mocks.backupSandboxState).toHaveBeenCalledWith("sb-good");
+    expect(mocks.returnSandboxContainerToStopped).toHaveBeenCalledWith(
+      {
+        containerName: "openshell-sb-stopped-abc",
+        runtimeProviderId: "docker",
+      },
+      {
+        deadlineMs: 330_000,
+      },
+    );
     const logOutput = logSpy.mock.calls.flat().join("\n");
     expect(logOutput).toContain("Starting stopped sandbox 'sb-stopped' to back it up");
     expect(logOutput).toContain("Returned 'sb-stopped' to its stopped state");
@@ -767,10 +778,15 @@ describe("backupAll", () => {
       backupAllUnderPortableHostFence({ purpose: "pre-upgrade", requireAll: true }),
     ).rejects.toThrow("recorded gateway is unavailable");
 
-    expect(mocks.returnSandboxContainerToStopped).toHaveBeenCalledWith({
-      containerName: "openshell-sb-stopped-abc",
-      runtimeProviderId: "docker",
-    });
+    expect(mocks.returnSandboxContainerToStopped).toHaveBeenCalledWith(
+      {
+        containerName: "openshell-sb-stopped-abc",
+        runtimeProviderId: "docker",
+      },
+      {
+        deadlineMs: 330_000,
+      },
+    );
     expect(mocks.retainStrictPreUpgradeRecoveryState).toHaveBeenCalledOnce();
   });
 
@@ -801,10 +817,15 @@ describe("backupAll", () => {
 
     await expect(backupAll()).rejects.toThrow("exit:1");
 
-    expect(mocks.returnSandboxContainerToStopped).toHaveBeenCalledWith({
-      containerName: "openshell-sb-stopped-abc",
-      runtimeProviderId: "docker",
-    });
+    expect(mocks.returnSandboxContainerToStopped).toHaveBeenCalledWith(
+      {
+        containerName: "openshell-sb-stopped-abc",
+        runtimeProviderId: "docker",
+      },
+      {
+        deadlineMs: 330_000,
+      },
+    );
     expect(logSpy.mock.calls.flat().join("\n")).toContain("0 backed up, 1 failed, 0 skipped");
     expect(errorSpy.mock.calls.flat().join("\n")).toContain(
       "backup failed (identity (permission denied))",
@@ -859,10 +880,15 @@ describe("backupAll", () => {
 
     await backupAll();
 
-    expect(mocks.returnSandboxContainerToStopped).toHaveBeenCalledWith({
-      containerName: "openshell-sb-stopped-abc",
-      runtimeProviderId: "docker",
-    });
+    expect(mocks.returnSandboxContainerToStopped).toHaveBeenCalledWith(
+      {
+        containerName: "openshell-sb-stopped-abc",
+        runtimeProviderId: "docker",
+      },
+      {
+        deadlineMs: 330_000,
+      },
+    );
     const output = logSpy.mock.calls.flat().join("\n");
     expect(output).toContain("Returned 'sb-stopped' to its stopped state");
     expect(output).toContain("Skipped 'sb-stopped' (orphan manifest)");
