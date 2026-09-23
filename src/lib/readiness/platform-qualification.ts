@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import path from "node:path";
 import type { ContainerGpuProofStatus } from "../container-gpu-proof.js";
 import {
   classifyNvidiaFirmwareProducts,
@@ -94,6 +95,10 @@ export interface CollectPlatformIdentityOptions extends N1xIdentityOptions {
   memInfoPath?: string;
   stationReleasePath?: string;
   osReleasePath?: string;
+  /** Alternate OS release path used only when the default descriptor-backed primary is absent. */
+  osReleaseFallbackPath?: string;
+  /** Test seam for an already bounded OS release read. */
+  readBoundedOsRelease?: (filePath: string, maxBytes: number) => string | undefined;
   isWsl?: boolean;
   /** Pre-collected boundary observation; null means the probe was inconclusive. */
   n1xWslProductObservation?: boolean | null;
@@ -105,7 +110,74 @@ export interface CollectPlatformIdentityOptions extends N1xIdentityOptions {
 
 const STATION_HOST_INFO_MAX_BYTES = 64 * 1024;
 const MAX_REPORTED_CPU_COUNT = 4096;
+const OS_RELEASE_MAX_BYTES = 4096;
 
+/** Read a regular file through a descriptor without ever buffering past the limit. */
+function readBoundedRegularFile(filePath: string, maxBytes: number): string | undefined {
+  let fileDescriptor: number | undefined;
+  try {
+    const flags =
+      fs.constants.O_RDONLY |
+      (typeof fs.constants.O_NOFOLLOW === "number" ? fs.constants.O_NOFOLLOW : 0);
+    fileDescriptor = fs.openSync(filePath, flags);
+    const metadata = fs.fstatSync(fileDescriptor);
+    if (!metadata.isFile() || metadata.size > maxBytes) return undefined;
+    const contents = Buffer.alloc(maxBytes + 1);
+    const bytesRead = fs.readSync(fileDescriptor, contents, 0, contents.length, 0);
+    if (bytesRead > maxBytes) return undefined;
+    const decoded = contents.toString("utf8", 0, bytesRead);
+    return decoded.trim() ? decoded : undefined;
+  } catch {
+    return undefined;
+  } finally {
+    if (fileDescriptor !== undefined) fs.closeSync(fileDescriptor);
+  }
+}
+
+/** Read OS release identity from the standard primary or fallback without following other links. */
+export function readBoundedLocalOsRelease(
+  primaryPath: string,
+  fallbackPath: string,
+  maxBytes: number,
+): string | undefined {
+  let candidatePath = primaryPath;
+  try {
+    const metadata = fs.lstatSync(primaryPath);
+    if (metadata.isSymbolicLink()) {
+      const target = fs.readlinkSync(primaryPath);
+      if (
+        path.isAbsolute(target) ||
+        path.resolve(path.dirname(primaryPath), target) !== path.resolve(fallbackPath)
+      ) {
+        return undefined;
+      }
+      candidatePath = fallbackPath;
+    } else if (!metadata.isFile()) {
+      return undefined;
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") return undefined;
+    candidatePath = fallbackPath;
+  }
+  return readBoundedRegularFile(candidatePath, maxBytes);
+}
+
+/** Keep dependency-injected fixture reads subject to the same accepted-size contract. */
+function readInjectedOsRelease(
+  readFile: (filePath: string) => string,
+  filePath: string,
+  maxBytes: number,
+): string | undefined {
+  try {
+    const contents = readFile(filePath);
+    if (Buffer.byteLength(contents) > maxBytes) return undefined;
+    return contents.trim() ? contents : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Read optional injected fixture text while applying the shared diagnostic sanitization bound. */
 function readOptional(
   readFile: (filePath: string) => string,
   filePath: string,
@@ -120,17 +192,20 @@ function readOptional(
   }
 }
 
+/** Parse selected os-release fields as inert text and reject ambiguous control bytes. */
 function parseOsRelease(contents: string): {
   osId?: string;
   osVersionId?: string;
   osPrettyName?: string;
 } {
+  if (contents.includes("\0") || contents.includes("\r")) return {};
   const values = new Map<string, string>();
   for (const line of contents.split("\n")) {
     const match = /^(ID|VERSION_ID|PRETTY_NAME)=(?:"([^"\0]*)"|([A-Za-z0-9._-]+))$/.exec(line);
+    if (/^(?:ID|VERSION_ID|PRETTY_NAME)=/.test(line) && !match) return {};
     if (!match) continue;
     const [, key, quotedValue, plainValue] = match;
-    if (!key || values.has(key)) continue;
+    if (!key || values.has(key)) return {};
     values.set(key, quotedValue ?? plainValue ?? "");
   }
   return {
@@ -271,6 +346,7 @@ function parseStationRelease(contents: string): StationProfile {
   return "unsupported-dgx-os";
 }
 
+/** Read bounded text from an already validated file descriptor. */
 function readOpenedFile(fileDescriptor: number, maxBytes: number): string {
   const contents = Buffer.alloc(maxBytes + 1);
   const bytesRead = fs.readSync(fileDescriptor, contents, 0, contents.length, 0);
@@ -278,6 +354,7 @@ function readOpenedFile(fileDescriptor: number, maxBytes: number): string {
   return contents.toString("utf8", 0, bytesRead);
 }
 
+/** Collect bounded public host identity without changing the observed system. */
 export function collectPlatformIdentity(
   options: CollectPlatformIdentityOptions = {},
 ): PlatformIdentity {
@@ -317,6 +394,21 @@ export function collectPlatformIdentity(
     ? options.n1xWslProductObservation
     : collectN1xWslProduct(options);
   const wslIdentity = options.isWsl ? { n1xWslProduct } : {};
+  const osReleasePath = options.osReleasePath ?? "/etc/os-release";
+  const osReleaseFallbackPath =
+    options.osReleaseFallbackPath ??
+    (options.osReleasePath === undefined ? "/usr/lib/os-release" : osReleasePath);
+  const osRelease = options.readBoundedOsRelease
+    ? options.readBoundedOsRelease(osReleasePath, OS_RELEASE_MAX_BYTES)
+    : options.readFile
+      ? readInjectedOsRelease(options.readFile, osReleasePath, OS_RELEASE_MAX_BYTES)
+      : readBoundedLocalOsRelease(osReleasePath, osReleaseFallbackPath, OS_RELEASE_MAX_BYTES);
+  const { osId, osVersionId, osPrettyName } = osRelease ? parseOsRelease(osRelease) : {};
+  const osIdentity = {
+    ...(osId === undefined ? {} : { osId }),
+    ...(osVersionId === undefined ? {} : { osVersionId }),
+    ...(osPrettyName === undefined ? {} : { osPrettyName }),
+  };
   if (firmwareIdentity.platformIdentityConflict) {
     return {
       productName,
@@ -325,6 +417,7 @@ export function collectPlatformIdentity(
       ...(deviceTreeModel === undefined ? {} : { deviceTreeModel }),
       platformIdentityConflict: true,
       ...wslIdentity,
+      ...osIdentity,
     };
   }
   let nvidiaPlatform: NvidiaPlatform | undefined = firmwareIdentity.nvidiaPlatform;
@@ -346,15 +439,15 @@ export function collectPlatformIdentity(
         nvidiaPlatform,
         productName,
         ...wslIdentity,
+        ...osIdentity,
         n1xCandidate: true,
         n1xFastOsMarker: n1xIdentity.fastOsMarker,
         n1xPciGpu: n1xIdentity.pciGpu,
       };
     }
   }
-  if (nvidiaPlatform !== "station") return { nvidiaPlatform, productName, ...wslIdentity };
-  const osRelease = readOptional(readFile, options.osReleasePath ?? "/etc/os-release");
-  const { osId, osVersionId, osPrettyName } = osRelease ? parseOsRelease(osRelease) : {};
+  if (nvidiaPlatform !== "station")
+    return { nvidiaPlatform, productName, ...wslIdentity, ...osIdentity };
   const stationCpuCoreCount = parseCpuPossibleCount(
     readOptional(
       readFile,
@@ -413,9 +506,7 @@ export function collectPlatformIdentity(
       readdir,
       options.pciDevicesPath ?? "/sys/bus/pci/devices",
     ),
-    osId,
-    osVersionId,
-    ...(osPrettyName === undefined ? {} : { osPrettyName }),
+    ...osIdentity,
   };
 }
 

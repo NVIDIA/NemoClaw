@@ -102,7 +102,6 @@ describe("inference selection config", () => {
     expect(CLOUD_MODEL_OPTIONS).toEqual([
       { id: "nvidia/nemotron-3-ultra-550b-a55b", label: "Nemotron 3 Ultra 550B" },
       { id: "nvidia/nemotron-3-super-120b-a12b", label: "Nemotron 3 Super 120B" },
-      { id: "minimaxai/minimax-m3", label: "Minimax M3" },
     ]);
     expect(CLOUD_MODEL_OPTIONS.map((option: { id: string }) => option.id)).not.toContain(
       "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
@@ -115,6 +114,9 @@ describe("inference selection config", () => {
     );
     expect(CLOUD_MODEL_OPTIONS.map((option: { id: string }) => option.id)).not.toContain(
       "z-ai/glm-5.2",
+    );
+    expect(CLOUD_MODEL_OPTIONS.map((option: { id: string }) => option.id)).not.toContain(
+      "minimaxai/minimax-m3",
     );
   });
 

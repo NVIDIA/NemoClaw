@@ -39,13 +39,13 @@ runs:
                  END { exit found ? 0 : 1 }'
         }
         verify_artifact \
-          9701949732 \
+          10385514729 \
           native-runtime-podman-toolchain-amd64 \
-          sha256:79df1953e5963113b74ee335c8889dcbefafbb865745ce79e310858b7cd23d58
+          sha256:1f73b66ef2a70862e860b0897e191ed05b8976d3b10b0f84b41e76d8f1cb58ba
         verify_artifact \
-          9701918188 \
+          10386378988 \
           native-runtime-podman-toolchain-arm64 \
-          sha256:4f311eb5a64157e7baf9d7851c9a6432204cdeb0983d4fa03fffdc7db4cb1e39
+          sha256:470487563f801c77b95f1665510fe1a11894c913e2787ebfb9994f56bac8cf56
 
     - name: Download immutable native Podman amd64 toolchain
       if: ${{ inputs.enabled == 'true' }}
@@ -54,7 +54,7 @@ runs:
         github-token: ${{ inputs.github-token }}
         repository: NVIDIA/NemoClaw
         run-id: "33211526093"
-        name: native-runtime-podman-toolchain-amd64
+        artifact-ids: "10385514729"
         path: ${{ runner.temp }}/native-podman-e2e-toolchain-amd64
 
     - name: Download immutable native Podman arm64 toolchain
@@ -64,7 +64,7 @@ runs:
         github-token: ${{ inputs.github-token }}
         repository: NVIDIA/NemoClaw
         run-id: "33211526093"
-        name: native-runtime-podman-toolchain-arm64
+        artifact-ids: "10386378988"
         path: ${{ runner.temp }}/native-podman-e2e-toolchain-arm64
 
     - name: Publish native Podman amd64 toolchain for this run

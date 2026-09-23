@@ -238,4 +238,139 @@ describe("export config builder", () => {
       endpoint: "https://api.openai.com/v1",
     });
   });
+
+  it.each([
+    { label: "default ports", daemonPort: 11_434, proxyPort: 11_435 },
+    { label: "custom ports", daemonPort: 21_434, proxyPort: 21_435 },
+  ])(
+    "maps attached Ollama with $label into the accepted v1alpha1 shape (#12012)",
+    ({ daemonPort, proxyPort }) => {
+      const model = "qwen3.5:9b";
+      const result = buildExportConfig(
+        {
+          ...source,
+          inference: {
+            provider: "ollama-local",
+            model,
+            api: "openai-completions",
+            overrides: { contextWindow: 32_768, maxTokens: 4096 },
+            serving: {
+              backend: "ollama",
+              daemon: { management: "external", hostPort: daemonPort },
+              proxy: { management: "nemoclaw", hostPort: proxyPort },
+              model: { servedName: model, digest },
+            },
+          },
+        } as unknown as VerifiedExportSource,
+        {
+          documentName: alphaDocumentName,
+          documentUid: firstUid,
+        },
+      );
+
+      expect(result.spec.inferenceProviders).toEqual([
+        {
+          name: "local",
+          provider: "openai",
+          api: "openai-completions",
+          serviceRef: "ollama-auth",
+        },
+      ]);
+      expect(result.spec.services).toEqual({
+        "ollama-auth": {
+          kind: "ollamaProxy",
+          image: null,
+          endpoint: `http://172.30.154.1:${proxyPort}/v1`,
+          upstream: {
+            endpoint: `http://127.0.0.1:${daemonPort}/v1`,
+            model: {
+              name: model,
+              digest: "a".repeat(64),
+            },
+          },
+        },
+      });
+      expect(result.spec.inferenceProviders[0]).not.toHaveProperty("credential");
+      const sandbox = result.spec.sandboxes[0]!;
+      expect(sandbox.agent.inference.routes[0]).toEqual({
+        name: "primary",
+        providerRef: "local",
+        overrides: { model, contextWindow: 32_768, maxTokens: 4096 },
+      });
+    },
+  );
+
+  it("maps fixed managed vLLM into a human-completable current-v1 service (#12012)", () => {
+    const servedName = "nvidia-nemotron-3.5-lightning-30b-a3b-nvfp4";
+    const result = buildExportConfig(
+      {
+        ...source,
+        inference: {
+          provider: "vllm-local",
+          model: servedName,
+          api: "openai-completions",
+          serving: {
+            backend: "vllm",
+            catalogDigest: digest,
+            profile: {
+              id: "vllm.linux-amd64-nvidia.single.nemotron-3.5-lightning-30b-a3b-nvfp4",
+              digest,
+            },
+            recipe: {
+              id: "vllm.nemotron-3.5-lightning-30b-a3b-nvfp4.linux-amd64-single.v1",
+              digest,
+            },
+            model: {
+              id: "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4",
+              revision: "0dcd680e5585c791728c83342b311d0a0026dbeb",
+              servedName,
+            },
+            runtime: { image: { ref: `vllm/vllm-openai@${digest}` } },
+            hostPort: 18_000,
+          },
+        },
+      } as unknown as VerifiedExportSource,
+      { documentName: alphaDocumentName, documentUid: firstUid },
+    );
+
+    expect(result.spec.inferenceProviders).toEqual([
+      {
+        name: "managed-vllm",
+        provider: "openai",
+        api: "openai-completions",
+        serviceRef: "vllm",
+      },
+    ]);
+    expect(result.spec.services).toEqual({
+      vllm: {
+        kind: "vllm",
+        authentication: "bearer",
+        hardware: {
+          architecture: "amd64",
+          minComputeCapability: 90,
+          minGpuMemoryBytes: 96_000_000_000,
+          minDriverMajor: 580,
+        },
+        container: { ipc: "host", sharedMemoryGiB: 32 },
+        image: null,
+        model: {
+          repository: "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4",
+          revision: "0dcd680e5585c791728c83342b311d0a0026dbeb",
+        },
+        serving: {
+          modelName: servedName,
+          mambaBackend: "flashinfer",
+          enforceEager: false,
+          toolParser: "qwen3_coder",
+          reasoningParser: "nemotron_v3",
+          port: 18_000,
+          contextTokens: 65_536,
+          maxSequences: 1,
+          batchTokens: 4096,
+          startupTimeoutSeconds: 1800,
+        },
+        memory: { gpuMemoryUtilization: 0.75 },
+      },
+    });
+  });
 });
