@@ -172,6 +172,97 @@ const AgentExportSandboxSchema = Type.Object(
   },
   { additionalProperties: false },
 );
+const HostedInferenceProviderSchema = Type.Object(
+  {
+    name: LocalNameSchema,
+    provider: Type.Union([Type.Literal("anthropic"), Type.Literal("openai")]),
+    api: Type.Union([
+      Type.Literal("anthropic-messages"),
+      Type.Literal("openai-completions"),
+      Type.Literal("openai-responses"),
+    ]),
+    endpoint: NonEmptyStringSchema,
+    credential: Type.Optional(CredentialSchema),
+  },
+  { additionalProperties: false },
+);
+const ServiceInferenceProviderSchema = Type.Object(
+  {
+    name: LocalNameSchema,
+    provider: Type.Literal("openai"),
+    api: Type.Literal("openai-completions"),
+    serviceRef: LocalNameSchema,
+  },
+  { additionalProperties: false },
+);
+const OllamaProxyServiceSchema = Type.Object(
+  {
+    kind: Type.Literal("ollamaProxy"),
+    image: Type.Null(),
+    endpoint: NonEmptyStringSchema,
+    upstream: Type.Object(
+      {
+        endpoint: NonEmptyStringSchema,
+        model: Type.Object(
+          {
+            name: NonEmptyStringSchema,
+            digest: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+          },
+          { additionalProperties: false },
+        ),
+      },
+      { additionalProperties: false },
+    ),
+  },
+  { additionalProperties: false },
+);
+const VllmServiceSchema = Type.Object(
+  {
+    kind: Type.Literal("vllm"),
+    authentication: Type.Literal("bearer"),
+    hardware: Type.Object(
+      {
+        architecture: Type.Literal("amd64"),
+        minComputeCapability: Type.Literal(90),
+        minGpuMemoryBytes: Type.Literal(96_000_000_000),
+        minDriverMajor: Type.Literal(580),
+      },
+      { additionalProperties: false },
+    ),
+    container: Type.Object(
+      { ipc: Type.Literal("host"), sharedMemoryGiB: Type.Literal(32) },
+      { additionalProperties: false },
+    ),
+    image: Type.Null(),
+    model: Type.Object(
+      {
+        repository: Type.Literal("nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4"),
+        revision: Type.Literal("0dcd680e5585c791728c83342b311d0a0026dbeb"),
+      },
+      { additionalProperties: false },
+    ),
+    serving: Type.Object(
+      {
+        modelName: Type.Literal("nvidia-nemotron-3.5-lightning-30b-a3b-nvfp4"),
+        mambaBackend: Type.Literal("flashinfer"),
+        enforceEager: Type.Literal(false),
+        toolParser: Type.Literal("qwen3_coder"),
+        reasoningParser: Type.Literal("nemotron_v3"),
+        port: Type.Integer({ minimum: 1, maximum: 65_535 }),
+        contextTokens: Type.Literal(65_536),
+        maxSequences: Type.Literal(1),
+        batchTokens: Type.Literal(4096),
+        startupTimeoutSeconds: Type.Literal(1800),
+      },
+      { additionalProperties: false },
+    ),
+    memory: Type.Object(
+      { gpuMemoryUtilization: Type.Literal(0.75) },
+      { additionalProperties: false },
+    ),
+  },
+  { additionalProperties: false },
+);
 const ConfigExportDocumentSchema = Type.Object(
   {
     apiVersion: Type.Literal(V1ALPHA1_EXPORT_API_VERSION),
@@ -192,21 +283,11 @@ const ConfigExportDocumentSchema = Type.Object(
           },
           { additionalProperties: false },
         ),
+        services: Type.Optional(
+          Type.Record(LocalNameSchema, Type.Union([OllamaProxyServiceSchema, VllmServiceSchema])),
+        ),
         inferenceProviders: Type.Array(
-          Type.Object(
-            {
-              name: LocalNameSchema,
-              provider: Type.Union([Type.Literal("anthropic"), Type.Literal("openai")]),
-              api: Type.Union([
-                Type.Literal("anthropic-messages"),
-                Type.Literal("openai-completions"),
-                Type.Literal("openai-responses"),
-              ]),
-              endpoint: NonEmptyStringSchema,
-              credential: Type.Optional(CredentialSchema),
-            },
-            { additionalProperties: false },
-          ),
+          Type.Union([HostedInferenceProviderSchema, ServiceInferenceProviderSchema]),
           { minItems: 1 },
         ),
         sandboxes: Type.Array(
@@ -585,7 +666,7 @@ function semanticsFromDocument(document: ConfigExportDocument): ConfigExportSema
     inferenceProviderName: provider?.name ?? null,
     inferenceProvider: provider?.provider ?? null,
     inferenceApi: provider?.api ?? null,
-    inferenceEndpoint: provider && "endpoint" in provider ? provider.endpoint : null,
+    inferenceEndpoint: provider?.endpoint ?? null,
     model: route?.overrides?.model ?? null,
     credentialReference:
       provider && "credential" in provider ? (provider.credential?.env ?? null) : null,

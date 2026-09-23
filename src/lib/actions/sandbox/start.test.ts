@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import * as sandboxCommandCli from "../../adapters/openshell/sandbox-command-cli";
@@ -139,6 +143,44 @@ function providerRegistry(providerId: "docker" | "podman") {
 }
 
 describe("startSandbox native lifecycle", () => {
+  it("starts a sandbox from its sibling gateway registry and clears stop intent there", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-start-cross-root-"));
+    const registryDir = path.join(home, ".nemoclaw", "gateways", "8245");
+    const registryFile = path.join(registryDir, "sandboxes.json");
+    fs.mkdirSync(registryDir, { recursive: true });
+    fs.writeFileSync(
+      registryFile,
+      JSON.stringify({
+        defaultSandbox: "my-sandbox",
+        defaultSelectionRevision: 1,
+        sandboxes: {
+          "my-sandbox": {
+            name: "my-sandbox",
+            gatewayName: "nemoclaw-8245",
+            gatewayPort: 8245,
+            lifecycleLiveIdentityFingerprint: fingerprintOpenShellSandboxId("sandbox-alpha"),
+            openshellDriver: "docker",
+            stopped: true,
+          },
+        },
+      }),
+    );
+    vi.stubEnv("HOME", home);
+    try {
+      const h = harness();
+      const { getSandbox: _getSandbox, updateSandbox: _updateSandbox, ...deps } = h.deps;
+
+      await expect(startSandbox("my-sandbox", deps)).resolves.toEqual({ exitCode: 0 });
+
+      expect(
+        JSON.parse(fs.readFileSync(registryFile, "utf8")).sandboxes["my-sandbox"],
+      ).toMatchObject({ gatewayPort: 8245, stopped: false });
+    } finally {
+      vi.unstubAllEnvs();
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it.each(["docker", "podman"] as const)(
     "dispatches standard %s lifecycle through the shared OpenShell adapter",
     async (providerId) => {
