@@ -3229,13 +3229,19 @@ The selector accepts any of:
 Pass `--to <dst>` to restore the snapshot into a different sandbox instead of the source.
 `--to <dst>` is not available for a snapshot of a sandbox that uses a NemoClaw-managed image.
 NemoClaw stops before it creates, deletes, or changes `dst`.
-When `dst` does not exist, it is auto-created from the source image. For a Docker- or VM-driver source, the source can be stopped when its registry entry records both the sandbox image and a complete inference route. For a Kubernetes-driver source, the pod image must remain resolvable through its gateway. No re-onboarding is needed when those prerequisites are present. For a new destination, NemoClaw requires its owning gateway to report Ready state and a valid live identity. It revalidates that identity immediately before registration. The destination receives a new lifecycle generation and does not inherit the source sandbox's generation. If the destination is not Ready with the same valid identity, the command exits nonzero before registration or state restore. The created destination remains unregistered, so `--force` cannot select it for deletion. Run the exact owner-scoped deletion command printed by the failure:
+When `dst` does not exist, it is auto-created from the source image.
+Every source registry entry must record a complete durable inference route.
+For a Docker- or VM-driver source, the source can be stopped when its registry entry also records the sandbox image.
+For a Kubernetes-driver source, the pod image must remain resolvable through its gateway.
+No re-onboarding is needed when those prerequisites are present.
+For a new destination, NemoClaw requires its owning gateway to report Ready state and a valid live identity.
+It revalidates that identity immediately before registration.
+The destination receives a new lifecycle generation and does not inherit the source sandbox's generation.
 
-```bash
-openshell sandbox delete -g '<owning-gateway>' '<destination>'
-```
-
-After OpenShell deletes the destination, rerun the original `snapshot restore --to` command.
+If NemoClaw cannot confirm the same valid destination identity after a clone create-attempt, it prints a create-attempt label.
+If NemoClaw confirms the destination identity but cannot register or publish it, the command exits nonzero before state restore.
+If the failure reports that the pending clone changed during registration, NemoClaw preserves the current registry row.
+Recovery depends on the reported state. Follow [Recover a Failed Cross-Sandbox Clone](../manage-sandboxes/state-and-backups/create-and-restore-snapshots#recover-a-failed-cross-sandbox-clone) for every failed cross-sandbox clone before retrying or deleting a destination.
 
 <AgentOnly variant="openclaw">
 After NemoClaw creates the destination, it waits for the managed OpenClaw supervisor to pass a bounded readiness check before it applies snapshot state.
