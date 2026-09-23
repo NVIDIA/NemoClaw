@@ -21,7 +21,9 @@ use std::{collections::BTreeMap, sync::Arc, time::Duration};
 const DATA_PATH: &str = "/var/lib/voiceclaw";
 const SANDBOX_DATA_PATH: &str = "/sandbox";
 const SANDBOX_GRANT_PATH: &str = ".nemoclaw/agent-access/voice.json";
-const AGENT_PORT: u16 = 18_800;
+// OpenClaw dashboards cannot select the Hermes-reserved range, so the
+// sandbox-local VoiceClaw ingress cannot collide with a declared interface.
+const AGENT_PORT: u16 = 8_652;
 const VOICECLAW_UID: u64 = 65_532;
 const SANDBOX_UID: u64 = 1_000;
 const GRANT_LIFETIME_SECONDS: i64 = 30 * 24 * 60 * 60;

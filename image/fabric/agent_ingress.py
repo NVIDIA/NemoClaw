@@ -17,7 +17,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 GRANT_PATH = Path("/sandbox/.nemoclaw/agent-access/voice.json")
-LISTEN_PORT = 18800
+# OpenClaw dashboards reject the Hermes-reserved range. Reusing its upper port
+# keeps this internal listener disjoint from every declared OpenClaw interface.
+LISTEN_PORT = 8652
 MAX_HEADER_BYTES = 16 * 1024
 MAX_REQUEST_BYTES = 64 * 1024
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024

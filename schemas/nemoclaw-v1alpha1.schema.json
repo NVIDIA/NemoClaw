@@ -3139,7 +3139,7 @@
               }
             }
           ],
-          "description": "Experimental VoiceClaw installer; credential projection and revocable agent access are not yet implemented.",
+          "description": "Experimental VoiceClaw installer with protected credentials and scoped agent access.",
           "properties": {
             "image": {
               "description": "Immutable local Docker image ID. VoiceClaw does not pull or build images.",
@@ -3163,7 +3163,7 @@
             },
             "speech": {
               "$ref": "#/$defs/VoiceclawSpeech",
-              "description": "Speech provider and caller credential reference reserved for future projection."
+              "description": "Speech provider and host credential reference projected into the owned volume."
             }
           },
           "required": [
@@ -3725,10 +3725,10 @@
       "description": "VoiceClaw listener and readiness deadline.",
       "properties": {
         "port": {
-          "description": "Single HTTP and streaming service port.",
+          "description": "Fixed HTTP and streaming service port exposed by the managed runtime image.",
           "format": "int64",
-          "maximum": 65535,
-          "minimum": 1024,
+          "maximum": 18790,
+          "minimum": 18790,
           "type": "integer"
         },
         "startupTimeoutSeconds": {
@@ -3747,7 +3747,7 @@
       "properties": {
         "credential": {
           "$ref": "#/$defs/Credential",
-          "description": "Host credential reference. Projection into runtime storage is not yet implemented."
+          "description": "Host credential reference. The value is never serialized into deployment state."
         },
         "provider": {
           "$ref": "#/$defs/SpeechProvider",
