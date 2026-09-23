@@ -8,6 +8,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { sourceLoaderNodeOptions } from "../helpers/source-loader-options";
 import { TEST_SYSTEM_PATH, writeExecutable } from "../helpers/installer-sourced-env";
 
 const INSTALLER = path.join(import.meta.dirname, "../..", "install.sh");
@@ -538,6 +539,7 @@ describe("install.sh OpenShell gateway service", () => {
 
   it("retains an automatic port across deferred Hermes onboarding (#10824)", () => {
     const home = makeTempRoot();
+    const cli = path.join(import.meta.dirname, "../../bin/nemoclaw.js");
     const fixture = writeQualifiedDefaultPortActivation(home);
     const systemctl = writeUnavailableUserManagerStub(home);
 
@@ -545,11 +547,13 @@ describe("install.sh OpenShell gateway service", () => {
       home,
       qualifiedInstallBody(fixture, [
         "install_nemoclaw_openshell_gateway_user_service",
-        "DEFER_ONBOARDING=1 NEMOCLAW_AGENT=hermes should_defer_hermes_onboarding 0",
+        `DEFER_ONBOARDING=1 NEMOCLAW_AGENT=hermes should_defer_onboarding ${JSON.stringify(cli)} 0`,
         'printf "DEFERRED_PORT=%s\\n" "$NEMOCLAW_GATEWAY_PORT"',
       ]),
       {
         PATH: `${systemctl.bin}:${fixture.probeBin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}`,
+        NODE_OPTIONS: sourceLoaderNodeOptions(undefined),
+        NEMOCLAW_PROVIDER_KEY: "",
         NVIDIA_API_KEY: "",
         NVIDIA_INFERENCE_API_KEY: "",
       },

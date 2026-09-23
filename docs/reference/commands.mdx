@@ -108,6 +108,38 @@ The global `$$nemoclaw doctor` command remains available without a sandbox name.
 
 The hosted installer accepts options after `bash -s --`. These options control installation and the onboarding run that follows it.
 
+### `--defer-onboarding`
+
+Use this option only with `NEMOCLAW_AGENT=hermes` or `NEMOCLAW_AGENT=langchain-deepagents-code`.
+Leave `NEMOCLAW_PROVIDER` unset, or select the `build`, `cloud`, or `routed` NVIDIA hosted provider.
+Do not combine this option with a local model profile.
+
+If NVIDIA inference credentials are absent and no sandbox is registered, the installer installs NemoClaw and skips onboarding.
+It does not create an OpenShell provider or sandbox, and it does not report onboarding as complete.
+If a supported credential or registered sandbox exists, the installer follows the normal onboarding or recovery path.
+An invalid credential fails validation and does not select deferred onboarding.
+
+After the runtime process supplies one of these credentials, run the onboarding command for the selected agent:
+
+- Non-empty `NVIDIA_INFERENCE_API_KEY`
+- Non-empty `NVIDIA_API_KEY`
+- `NEMOCLAW_PROVIDER_KEY` containing a credential value, rather than a provider selector such as `build` or `routed`
+
+Credential presence selects normal onboarding; that path still validates the value.
+
+For the selected agent, run:
+
+- Hermes: `nemohermes onboard`
+- LangChain Deep Agents Code: `nemo-deepagents onboard`
+
+Set `NEMOCLAW_DEFER_ONBOARDING=1` to select the same installer behavior without the command-line option.
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
+  NEMOCLAW_AGENT=hermes \
+  bash -s -- --defer-onboarding
+```
+
 ### `--force-fresh-install`
 
 On Apple silicon macOS, remove every NemoClaw- and OpenShell-managed sandbox, gateway, credential, configuration file, and recovery record before reinstalling and starting fresh onboarding. This destructive reset keeps downloaded model caches, but the removed state cannot be recovered without an external backup. Unlike `--fresh`, it removes the existing managed installation instead of only requesting fresh onboarding state.
@@ -144,28 +176,6 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
 The profile selects a fixed catalog model and serving command from the managed-inference catalog. The hosted installer rejects `NEMOCLAW_PROVIDER` and `NEMOCLAW_MODEL` before onboarding. The dedicated vLLM onboarder accepts `NEMOCLAW_VLLM_MODEL` only when the catalog resolves it to the matching fixed recipe. It rejects a model that does not resolve to that recipe and all `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` values before it installs vLLM. Set `NEMOCLAW_VLLM_PORT` before installation to publish the fixed serving recipe on another host port.
 
 The hosted installer's equivalent environment-variable form requires both `NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE=1` and `NEMOCLAW_LOCAL_MODEL_RUNTIME`. Use the installer flag unless an automation boundary cannot pass installer arguments. For prerequisites, effects, verification, and recovery, refer to [Choose a Local Inference Server](../inference/local-inference/choose-local-inference-server#install-a-fixed-vllm-profile).
-
-### `--defer-onboarding`
-
-Install Hermes without starting onboarding when NVIDIA hosted inference credentials are not yet available.
-The equivalent environment variable is `NEMOCLAW_DEFER_ONBOARDING=1`.
-The installer defers onboarding only when all these conditions apply:
-
-- `NEMOCLAW_AGENT=hermes` is set.
-- No sandbox is registered.
-- No supported NVIDIA inference credential is available.
-- No local model profile is selected.
-- `NEMOCLAW_PROVIDER` is unset or selects `build`, `cloud`, or `routed`.
-
-If a supported credential or registered sandbox exists, the installer follows the normal onboarding or recovery path.
-When onboarding is deferred, the installer completes the software installation and reports that Hermes onboarding did not run.
-After credentials are available, run `nemohermes onboard` to create the sandbox.
-
-```bash
-curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
-  NEMOCLAW_AGENT=hermes \
-  bash -s -- --defer-onboarding
-```
 
 ## Hosted Installer Exit Statuses
 
@@ -269,15 +279,14 @@ $$nemoclaw config export my-assistant --output -
 | `--force` | Replace an existing regular file. The command refuses symbolic links and other file types. |
 | `--json` | Return a machine-readable result when writing a file. It cannot be combined with `--output -`. |
 
-The export contains credential environment-variable references, not credential values. File output uses mode `0600`. Without `--force`, an existing destination is preserved and the command fails. With `--force`, publication checks that the existing destination is a regular file before ordinary atomic replacement.
+Exports never contain credential values. They include credential environment-variable references only when the target configuration requires one. File output uses mode `0600`. Without `--force`, an existing destination is preserved and the command fails. With `--force`, publication checks that the existing destination is a regular file before ordinary atomic replacement.
 With `--json` and file output, the version 1 result includes `sourceSandbox`, `outputPath`, `documentDigest`, and `specDigest`.
 
 Export validates retained corporate certificate authority (CA) state but omits the CA bundle and digest from YAML.
 Configure destination CA trust separately during onboarding; export does not change the source sandbox's trust.
 
 The v0 command projects verified source state into the pre-release v1alpha1 YAML shape.
-Managed OpenClaw and Hermes exports use `image: null` until v1 supplies the value.
-The unreleased v1 parser is not an acceptance gate for this staged output.
+Managed OpenClaw and Hermes exports omit `image` so v1 applies its managed image default.
 
 If staging cleanup fails, the diagnostic identifies the temporary file and its original directory by device and inode when that evidence is available.
 The directory can have moved from the requested output location.
@@ -287,25 +296,27 @@ Do not remove the requested output file to clean up a temporary link.
 
 Version 1 exports Docker-managed OpenClaw sandboxes and canonical managed Hermes or LangChain Deep Agents Code sandboxes in the default workspace.
 Supported sandboxes use hosted external inference or the native NVIDIA hosted provider with its default endpoint, an immutable managed image, a NemoClaw-owned gateway, and an explicit representable policy.
-Managed vLLM, local Ollama, and Podman exports are deferred. The command reports these sources as unsupported instead of producing a partial document.
+OpenClaw exports for attached Ollama with a managed proxy and the fixed managed vLLM profile include a named service with `image: null`.
+Replace only that value with an official, immutable, compatible v1 runtime image before v1 parsing or planning.
+Other local inference and Podman exports remain deferred.
 Deep Agents export requires hosted OpenAI Completions inference and explicitly disabled automatic approval, observability, and web search.
 It emits the immutable image as `image.ref`, the `deepagents` harness, and one `agent`.
 The command rejects other Deep Agents settings instead of omitting them.
 When a managed OpenClaw sandbox uses Brave Search, the export includes its `webSearch` integration and the `BRAVE_API_KEY` environment-variable reference, never the key.
 When retained managed proxy settings differ from the default, the export includes the validated host and port under `network.proxy`.
-For hosted OpenClaw inference, the export preserves nondefault managed context-window, maximum-token, reasoning, and reasoning-effort settings as route overrides.
+For hosted OpenClaw inference, the export preserves context-window, maximum-token, reasoning, and reasoning-effort settings when omitting them would change the target's effective behavior.
 It preserves nondefault agent timeout and heartbeat settings under `execution`.
 The command rejects a managed OpenClaw sandbox with secondary agents and produces no document.
 Secondary-agent export remains deferred until the v1 schema defines that representation.
-For OpenClaw, it preserves a nondefault managed dashboard port or bind address under `interfaces.dashboard`.
+For OpenClaw, it retains the managed dashboard marker because omitting it disables the target dashboard; the default marker includes port `18789` while the loopback bind remains implicit.
 When managed OpenClaw uses direct tool disclosure, the export includes `tools.disclosure: direct`.
 It omits the default progressive disclosure setting.
 When OpenClaw conversation diagnostics are enabled, the export includes the fixed local OTLP endpoint, service name, and sample rate under agent observability.
 It never includes collector credentials.
-It omits settings that equal the managed defaults.
+It omits settings only when the v1 target has the same effective behavior without them.
 Hermes export fails when Hermes tool gateways are enabled.
-It preserves an enabled Hermes dashboard, nondefault dashboard or internal ports, enabled browser terminal UI, and a nondefault allocated API port under `interfaces`.
-A disabled dashboard and default API port are omitted.
+It preserves Hermes dashboard and browser terminal UI behavior, including explicit disabled values when omission would enable them, plus nondefault interface ports.
+The default API port is omitted.
 It exports Hermes API-key authentication only when the retained authentication proof matches the managed Hermes provider, OpenAI-compatible API, endpoint, and `NOUS_API_KEY` credential reference.
 The exporter validates that source binding, then emits API-key authentication without a provider reference because v1 derives the association from the provider configuration.
 OAuth authentication and other unsupported profiles fail with a diagnostic instead of producing an incomplete document.
@@ -4076,6 +4087,7 @@ The following variables let you tune onboarding without editing the Dockerfile o
 
 | Variable | Format | Effect |
 | --- | --- | --- |
+| `NEMOCLAW_DEFER_ONBOARDING` | `1` to enable | Hosted installer only. Selects the same behavior as `--defer-onboarding` for Hermes or LangChain Deep Agents Code with NVIDIA hosted inference. When none of the accepted credentials (`NVIDIA_INFERENCE_API_KEY`, `NVIDIA_API_KEY`, or a credential value in `NEMOCLAW_PROVIDER_KEY`) is present and no sandbox is registered, the installer installs NemoClaw without creating a provider, sandbox, or completed onboarding state. |
 | `NEMOCLAW_PROVIDER` | provider key (e.g. `build`, `openrouter`, `openai`, `anthropic`, `anthropicCompatible`, `gemini`, `ollama`, `custom`, `vllm`, `nim-local`, `routed`, `hermes-provider`, `llama-cpp`, `install-llama-cpp`, `install-vllm`, `install-ollama`, `install-windows-ollama`, `start-windows-ollama`) | Selects the inference provider during onboarding. The wizard skips the provider menu in both interactive and non-interactive runs when this is set. On a qualified N1x host, `install-vllm` supplies Deferred preview intent, while another provider supplies standard-onboarding intent and retains its existing requirements. Local NVIDIA NIM remains unavailable on N1x. `llama-cpp` selects attachment of an authenticated, operator-managed llama.cpp server on loopback port `8081`. Set `NEMOCLAW_LLAMACPP_LOCAL_TOKEN`; set `NEMOCLAW_MODEL` to the served alias when the server exposes multiple models. `install-llama-cpp` selects the compatible experimental managed path on DGX Spark, generic NVIDIA GPU, or Windows WSL N1x hosts and rejects `NEMOCLAW_MODEL`; use `NEMOCLAW_LLAMACPP_RECIPE` for an explicit declarative selection. A qualifying Windows WSL N1x host automatically selects this provider and its Qwen 3.6 recipe when no provider is requested or recorded. If an operator-managed server does not provide consistent native llama.cpp evidence, select `custom`. Aliases: `cloud` → `build`, `open-router` / `openrouterai` → `openrouter`, `nim` → `nim-local`, `hermes` / `nous` / `nous-portal` → `hermes-provider`, `anthropiccompatible` → `anthropicCompatible`. Invalid values fail fast with the list of accepted keys. |
 | `NEMOCLAW_LLAMACPP_RECIPE` | repository-owned managed-inference recipe ID | Selects the managed llama.cpp recipe when `NEMOCLAW_PROVIDER=install-llama-cpp`, including a compatible lower-priority profile. When unset, NemoClaw selects the unique highest-priority compatible automatic profile. An unknown recipe, an ambiguous selection, or a stale or incompatible readiness report fails before image, model, or runtime effects. |
 | `NEMOCLAW_MODEL` | model ID | Selects an explicit model for a non-interactive onboarding run. For NVIDIA Endpoints, NemoClaw ignores a retired configured model and uses the agent default. Otherwise, NemoClaw preserves the explicit model across a detected provider switch, even when it matches the recorded provider's default. When this variable is unset during such a switch, NemoClaw ignores the `NEMOCLAW_PROVIDER_MODEL` compatibility fallback and uses normal provider model selection. |
@@ -4087,6 +4099,7 @@ The following variables let you tune onboarding without editing the Dockerfile o
 | `NEMOCLAW_PREFERRED_API` | `completions` (currently the only honored value) | Forces the validation probe to use the `/v1/chat/completions` API path instead of the newer `/v1/responses` API. |
 | `NEMOCLAW_OLLAMA_REQUIRE_TOOLS` | `0` to disable, anything else to keep the default | When set to `0`, skips the Ollama tool-calling capability check during local-inference onboarding. |
 | `NEMOCLAW_OLLAMA_INSTALL_MODE` | `system`, `user`, or empty/unset | Pins the Linux Ollama install location. Refer to the Linux Ollama install mode details below. |
+| `NEMOCLAW_OLLAMA_PROXY_SKIP_BIND_PROBE` | exactly `1` to enable | Starts the Ollama auth proxy even when the selected Ollama daemon or unauthenticated compatible endpoint answers on a non-loopback interface. The proxy otherwise refuses to start, because any host that can reach that backend can bypass the proxy's token. Binding the selected backend to loopback is the supported fix; use this override only when you accept that exposure. Export the variable rather than setting it for one command: a later NemoClaw command that respawns the proxy without it refuses to start again. |
 | `NEMOCLAW_PROXY_HOST` | hostname or IP | Overrides the sandbox-side outbound HTTP proxy host. Defaults to `10.200.0.1`. |
 | `NEMOCLAW_PROXY_PORT` | integer port | Overrides the sandbox-side outbound HTTP proxy port. Defaults to `3128`. |
 
