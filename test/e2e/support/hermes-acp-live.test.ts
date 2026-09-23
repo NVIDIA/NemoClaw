@@ -103,11 +103,12 @@ describe("Hermes ACP live evidence boundary", () => {
   });
 
   it.each([
-    ["installed", "initialize", 0],
-    ["checkout", "client-disconnect", 1],
+    ["installed", "initialize", 0, {}],
+    ["checkout", "client-disconnect", 1, {}],
+    ["checkout", "exchange", 0, { stderrObserved: true }],
   ] as const)(
     "%s adapter initializes and completes %s",
-    async (installation, scenario, exitCode) => {
+    async (installation, scenario, exitCode, scenarioEvidence) => {
       const artifactDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-acp-launch-"));
       const adapterEntrypoint = path.join(artifactDir, "nemoclaw-acp");
       fs.writeFileSync(
@@ -120,7 +121,12 @@ process.stdout.on("error", () => {
 });
 readline.createInterface({ input: process.stdin }).on("line", line => {
   const request = JSON.parse(line);
-  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: {} }) + "\\n");
+  if (request.method === "session/new") process.stderr.write("later agent stderr\\n");
+  if (request.method === "session/prompt") process.stdout.write(JSON.stringify({
+    jsonrpc: "2.0", method: "session/update", params: { sessionId: "session-a", update: { text: "PONG" } }
+  }) + "\\n");
+  const result = request.method === "session/new" ? { sessionId: "session-a" } : {};
+  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }) + "\\n");
 });
 `,
         { mode: 0o700 },
@@ -154,6 +160,7 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
       expect(
         JSON.parse(fs.readFileSync(path.join(artifactDir, `hermes-acp-${scenario}.json`), "utf8")),
       ).toMatchObject({
+        ...scenarioEvidence,
         passed: true,
         initialized: true,
         exitCode,
@@ -161,9 +168,74 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
         remoteProcessAbsent: true,
         timedOut: false,
       });
+      expect(
+        fs.readFileSync(path.join(artifactDir, `hermes-acp-${scenario}.stderr.txt`), "utf8"),
+      ).not.toContain("later agent stderr");
     },
     2_000,
   );
+
+  it("retains redacted child stderr without persisting ACP stdout", async () => {
+    const artifactDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-acp-diagnostics-"));
+    const adapterEntrypoint = path.join(artifactDir, "adapter.cjs");
+    fs.writeFileSync(
+      adapterEntrypoint,
+      `
+process.stdin.resume();
+process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: 99, result: "private ACP payload" }) + "\\n");
+process.stderr.write("gateway recovery failed: explicit-");
+setTimeout(() => {
+  process.stderr.write("secret Authorization: Bearer bearer-secret\\nhttps://host.invalid/?token=query-secret\\n");
+  process.stderr.write("x".repeat(5000) + "oversized-secret\\n");
+  process.stderr.write("incomplete-secret");
+  process.exitCode = 1;
+  process.stdin.destroy();
+}, 20);
+`,
+    );
+    const progress = startTestProgress(
+      "ACP diagnostics",
+      ["launch adapter", "verify diagnostics"],
+      {
+        logLine: () => undefined,
+      },
+    );
+    onTestFinished(() => {
+      progress.stop();
+      fs.rmSync(artifactDir, { force: true, recursive: true });
+    });
+    await expect(
+      runHermesAcpLiveScenario({
+        adapterEntrypoint,
+        artifacts: new ArtifactSink(artifactDir, ["explicit-secret"]),
+        env: {},
+        progress,
+        sandbox: new SandboxClient({
+          run: vi.fn().mockResolvedValue({ exitCode: 1, stdout: "", stderr: "" }),
+        }),
+        sandboxName: "e2e-hermes",
+        scenario: "initialize",
+      }),
+    ).resolves.toBe(false);
+    const diagnostics = fs.readFileSync(
+      path.join(artifactDir, "hermes-acp-initialize.stderr.txt"),
+      "utf8",
+    );
+    expect(diagnostics).toContain("gateway recovery failed:");
+    expect(diagnostics).toContain("diagnostics discarded");
+    expect(diagnostics).not.toMatch(
+      /explicit-secret|bearer-secret|query-secret|oversized-secret|incomplete-secret|private ACP payload/u,
+    );
+    expect(
+      JSON.parse(fs.readFileSync(path.join(artifactDir, "hermes-acp-initialize.json"), "utf8")),
+    ).toMatchObject({
+      passed: false,
+      stderrObserved: true,
+      rawAcpPayloadRetained: false,
+      adapterProcessAbsent: true,
+      remoteProcessAbsent: true,
+    });
+  });
 
   it("records a failed scenario when the adapter executable is missing", async () => {
     const artifactDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-acp-missing-"));
