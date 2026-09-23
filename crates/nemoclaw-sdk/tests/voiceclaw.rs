@@ -84,6 +84,7 @@ fn selected_voiceclaw_integration_compiles_one_package_neutral_runtime() {
     assert_eq!(container["ports"][0]["internal"], 18790);
     assert_eq!(container["mounts"][0]["target"], "/var/lib/voiceclaw");
     assert!(graph["resource"].get("docker_image").is_none());
+    assert_eq!(document.credential_names(), vec!["NVIDIA_API_KEY"]);
 }
 
 #[test]
@@ -173,6 +174,11 @@ fn voiceclaw_schema_rejects_untrusted_integration_metadata() {
     };
     assert_eq!(service.serving.port, 18790);
     assert_eq!(service.serving.startup_timeout_seconds, 180);
+
+    let mut unsupported_port = input();
+    unsupported_port["spec"]["services"]["voice-server"]["serving"]["port"] = json!(18791);
+    assert!(Document::parse(unsupported_port.to_string().as_bytes()).is_err());
+    assert!(!validator.is_valid(&unsupported_port));
 }
 
 #[test]
@@ -186,5 +192,34 @@ fn voiceclaw_readiness_is_an_apply_time_provider_observation() {
     );
     assert_eq!(readiness["read_trigger"], "${timestamp() != \"\"}");
     assert_eq!(readiness["wait_timeout_seconds"], 180);
-    nemoclaw_sdk::services::validate_readiness_spec(readiness["spec"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        readiness["depends_on"],
+        json!(["data.nemoclaw_sandbox_readiness.assistant"])
+    );
+    let encoded = readiness["spec"].as_str().unwrap();
+    assert!(encoded.contains("${nemoclaw_sandbox.assistant.id}"));
+    let resolved = encoded.replace(
+        "${nemoclaw_sandbox.assistant.id}",
+        "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+    );
+    nemoclaw_sdk::services::validate_readiness_spec(&resolved).unwrap();
+    let projection: Value = serde_json::from_str(&resolved).unwrap();
+    assert_eq!(projection["projection"]["workspace"], document.workspace());
+    assert_eq!(projection["projection"]["integration"], "voice");
+    assert_eq!(projection["projection"]["sandbox"], "assistant");
+    assert_eq!(
+        projection["projection"]["sandboxId"],
+        "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+    );
+    assert_eq!(projection["projection"]["agent"], "main");
+    assert_eq!(
+        projection["projection"]["speechCredentialEnv"],
+        "NVIDIA_API_KEY"
+    );
+    assert_eq!(projection["projection"]["generation"], "a".repeat(32));
+    assert!(
+        !encoded.contains("agentEndpoint"),
+        "the private sandbox address is resolved only after Docker creates it"
+    );
+    assert!(!encoded.contains("PRIVATE_SENTINEL"));
 }

@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 #[schemars(rename = "VoiceclawService")]
 #[serde(deny_unknown_fields)]
 /// Experimental VoiceClaw installer backed by one immutable local Docker image.
-/// Credential projection and revocable agent access are not yet implemented.
+/// The installer projects protected speech and scoped-agent credentials at apply time.
 pub struct Service {
     /// Immutable local Docker image ID. VoiceClaw does not pull or build images.
     #[schemars(regex(pattern = r"^sha256:[a-f0-9]{64}$"))]
@@ -16,7 +16,7 @@ pub struct Service {
     /// Must be Never for the preloaded PoC image.
     #[serde(rename = "imagePullPolicy")]
     pub image_pull_policy: PullPolicy,
-    /// Speech provider and caller credential reference reserved for future projection.
+    /// Speech provider and host credential reference projected into the owned volume.
     pub speech: Speech,
     /// VoiceClaw listener and bounded startup settings.
     #[serde(default)]
@@ -31,7 +31,7 @@ pub struct Service {
 pub struct Speech {
     /// Supported speech provider.
     pub provider: SpeechProvider,
-    /// Host credential reference. Projection into runtime storage is not yet implemented.
+    /// Host credential reference. The value is never serialized into deployment state.
     pub credential: Credential,
 }
 
@@ -53,9 +53,9 @@ pub enum PullPolicy {
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 /// VoiceClaw listener and readiness deadline.
 pub struct Serving {
-    /// Single HTTP and streaming service port.
+    /// Fixed HTTP and streaming service port exposed by the managed runtime image.
     #[serde(default = "default_port")]
-    #[schemars(range(min = 1024, max = 65535))]
+    #[schemars(range(min = 18790, max = 18790))]
     pub port: i64,
     /// Seconds allowed for content-free service readiness.
     #[serde(default = "default_startup_timeout")]

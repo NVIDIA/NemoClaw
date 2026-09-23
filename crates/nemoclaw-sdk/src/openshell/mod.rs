@@ -10,6 +10,7 @@ pub(crate) use agent::runtime_read_requirements;
 mod native_profile;
 mod network;
 mod profile;
+mod service;
 pub use native_profile::definition as inference_profile;
 pub use network::policy_json;
 mod inference;

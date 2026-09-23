@@ -40,7 +40,7 @@ pub enum ServiceDefinition {
     OllamaProxy(OllamaProxy),
     /// Managed vLLM runtime and immutable model snapshot.
     Vllm(Box<installers::vllm::Service>),
-    /// Experimental VoiceClaw installer; credential projection and revocable agent access are not yet implemented.
+    /// Experimental VoiceClaw installer with protected credentials and scoped agent access.
     Voiceclaw(Box<installers::voiceclaw::Service>),
 }
 

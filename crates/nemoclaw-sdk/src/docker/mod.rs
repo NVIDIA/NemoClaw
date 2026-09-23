@@ -9,7 +9,7 @@ use bollard::{
     query_parameters::{DownloadFromContainerOptions, UploadToContainerOptions},
 };
 use futures_util::StreamExt;
-use std::{io::Read, time::Duration};
+use std::{collections::HashMap, io::Read, time::Duration};
 
 #[derive(Clone)]
 pub struct Engine {
@@ -143,6 +143,102 @@ impl Engine {
     ) -> Result<(), Error> {
         self.write_archive(id, path, archive(files)?).await
     }
+    pub(crate) async fn write_protected_files(
+        &self,
+        id: &str,
+        path: &str,
+        directories: &[&str],
+        files: &[(&str, &[u8])],
+        uid: u64,
+        gid: u64,
+    ) -> Result<(), Error> {
+        self.write_archive(id, path, protected_archive(directories, files, uid, gid)?)
+            .await
+    }
+    pub(crate) async fn unique_running_container_id(
+        &self,
+        labels: &[(&str, &str)],
+    ) -> Result<String, Error> {
+        let filters = HashMap::from([(
+            "label".to_string(),
+            labels
+                .iter()
+                .map(|(name, value)| format!("{name}={value}"))
+                .collect::<Vec<_>>(),
+        )]);
+        let containers = self
+            .api
+            .list_containers(Some(
+                bollard::query_parameters::ListContainersOptionsBuilder::default()
+                    .all(true)
+                    .filters(&filters)
+                    .build(),
+            ))
+            .await
+            .map_err(|error| remote(&error))?;
+        let mut matches = containers.into_iter().filter(|container| {
+            labels.iter().all(|(name, value)| {
+                container
+                    .labels
+                    .as_ref()
+                    .and_then(|values| values.get(*name))
+                    .is_some_and(|observed| observed == value)
+            })
+        });
+        let selected = matches
+            .next()
+            .ok_or(Error::State("bound sandbox container is absent"))?;
+        if matches.next().is_some() {
+            return Err(Error::State("bound sandbox container is ambiguous"));
+        }
+        let id = selected
+            .id
+            .filter(|id| !id.is_empty())
+            .ok_or(ObservationError::Incomplete)?;
+        let observed = self
+            .container(&id)
+            .await?
+            .ok_or(Error::State("bound container is absent"))?;
+        if observed.id.as_deref() != Some(id.as_str()) {
+            return Err(ObservationError::BindingMismatch.into());
+        }
+        if !observed
+            .state
+            .and_then(|state| state.running)
+            .unwrap_or(false)
+        {
+            return Err(Error::State("bound container is not running"));
+        }
+        Ok(id)
+    }
+    pub(crate) async fn verify_running_container_attachment(
+        &self,
+        id: &str,
+        network: &str,
+    ) -> Result<(), Error> {
+        let observed = self
+            .container(id)
+            .await?
+            .ok_or(Error::State("bound container is absent"))?;
+        if observed.id.as_deref() != Some(id) {
+            return Err(ObservationError::BindingMismatch.into());
+        }
+        if !observed
+            .state
+            .and_then(|state| state.running)
+            .unwrap_or(false)
+        {
+            return Err(Error::State("bound container is not running"));
+        }
+        observed
+            .network_settings
+            .and_then(|settings| settings.networks)
+            .and_then(|mut networks| networks.remove(network))
+            .and_then(|settings| settings.ip_address)
+            .filter(|address| address.parse::<std::net::Ipv4Addr>().is_ok())
+            .ok_or(ObservationError::Incomplete)?;
+        Ok(())
+    }
     pub(crate) async fn write_archive(
         &self,
         id: &str,
@@ -226,6 +322,43 @@ pub(crate) fn archive(files: &[(&str, &[u8], u32)]) -> Result<Vec<u8>, Error> {
     builder
         .into_inner()
         .map_err(|_| Error::State("cannot finish container file write"))
+}
+
+pub(crate) fn protected_archive(
+    directories: &[&str],
+    files: &[(&str, &[u8])],
+    uid: u64,
+    gid: u64,
+) -> Result<Vec<u8>, Error> {
+    let mut builder = tar::Builder::new(Vec::new());
+    for directory in directories {
+        let mut header = tar::Header::new_gnu();
+        header.set_entry_type(tar::EntryType::Directory);
+        header.set_size(0);
+        header.set_mode(0o700);
+        header.set_uid(uid);
+        header.set_gid(gid);
+        header.set_mtime(0);
+        header.set_cksum();
+        builder
+            .append_data(&mut header, directory, std::io::empty())
+            .map_err(|_| Error::State("cannot prepare protected directory write"))?;
+    }
+    for (name, bytes) in files {
+        let mut header = tar::Header::new_gnu();
+        header.set_size(bytes.len() as u64);
+        header.set_mode(0o600);
+        header.set_uid(uid);
+        header.set_gid(gid);
+        header.set_mtime(0);
+        header.set_cksum();
+        builder
+            .append_data(&mut header, name, *bytes)
+            .map_err(|_| Error::State("cannot prepare protected file write"))?;
+    }
+    builder
+        .into_inner()
+        .map_err(|_| Error::State("cannot finish protected file write"))
 }
 
 #[cfg(all(test, unix))]

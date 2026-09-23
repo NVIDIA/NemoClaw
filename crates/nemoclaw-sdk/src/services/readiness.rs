@@ -11,7 +11,10 @@ use std::time::Duration;
 #[serde(tag = "kind", deny_unknown_fields)]
 enum ProxyReadiness {
     #[serde(rename = "voiceclaw")]
-    Voiceclaw { spec: Box<Spec> },
+    Voiceclaw {
+        spec: Box<Spec>,
+        projection: Box<voiceclaw::Projection>,
+    },
     #[serde(rename = "ollama_proxy")]
     Proxy {
         engine: String,
@@ -27,7 +30,7 @@ impl ReadinessSpec {
         match self {
             Self::Managed(spec) => spec.engine(),
             Self::Proxy(ProxyReadiness::Proxy { engine, .. }) => engine,
-            Self::Proxy(ProxyReadiness::Voiceclaw { spec }) => spec.engine(),
+            Self::Proxy(ProxyReadiness::Voiceclaw { spec, .. }) => spec.engine(),
         }
     }
 }
@@ -78,7 +81,9 @@ fn parse(encoded: &str) -> Result<ReadinessSpec, Error> {
                 crate::docker::Engine::validate_endpoint(engine)?;
                 spec.validate()?;
             }
-            ProxyReadiness::Voiceclaw { spec } => voiceclaw::validate_readiness(spec)?,
+            ProxyReadiness::Voiceclaw { spec, projection } => {
+                voiceclaw::validate_readiness(spec, projection, false)?
+            }
         }
         return Ok(ReadinessSpec::Proxy(proxy));
     }
@@ -96,9 +101,9 @@ pub fn validate_readiness_spec(encoded: &str) -> Result<(), Error> {
     parse(encoded).map(|_| ())
 }
 
-/// Observe application readiness for one explicit provider container identity.
-/// Only startup phases are polled; failed observations and protection stops fail immediately.
-/// This performs no mutations, hardware preflights, or model requests.
+/// Project package-owned protected files, then observe application readiness for one
+/// explicit provider container identity. Failed observations and protection stops fail
+/// immediately. Readiness performs no hardware preflights or model requests.
 pub async fn wait_service_ready(
     connections: &Connections,
     encoded: &str,
@@ -119,8 +124,9 @@ pub async fn wait_service_ready(
     let check = async {
         let spec = match &spec {
             ReadinessSpec::Managed(spec) => spec,
-            ReadinessSpec::Proxy(ProxyReadiness::Voiceclaw { spec }) => {
-                return voiceclaw::wait_ready(&engine, spec, container_id, timeout).await;
+            ReadinessSpec::Proxy(ProxyReadiness::Voiceclaw { spec, projection }) => {
+                return voiceclaw::wait_ready(&engine, spec, projection, container_id, timeout)
+                    .await;
             }
             ReadinessSpec::Proxy(ProxyReadiness::Proxy { proxy, .. }) => {
                 let observed = engine

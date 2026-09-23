@@ -94,7 +94,7 @@ RUN mkdir -p /opt/nemoclaw/plugins/tavily/node_modules \
     && ln -s /app /opt/nemoclaw/plugins/tavily/node_modules/openclaw && rm /tmp/tavily.tgz
 COPY image/fabric/TAVILY-LICENSE /opt/nemoclaw/plugins/tavily/LICENSE
 COPY image/fabric/TAVILY-NOTICE.md /opt/nemoclaw/plugins/tavily/NOTICE.md
-COPY image/fabric/openclaw_adapter.py image/fabric/openclaw_features.py image/fabric/openclaw.fabric-adapter.json /opt/nemoclaw/
+COPY image/fabric/agent_ingress.py image/fabric/openclaw_adapter.py image/fabric/openclaw_features.py image/fabric/openclaw.fabric-adapter.json /opt/nemoclaw/
 ENV HOME=/sandbox OPENCLAW_HOME=/sandbox OPENCLAW_STATE_DIR=/sandbox/.openclaw OPENCLAW_CONFIG_PATH=/sandbox/.openclaw/openclaw.json
 USER node
 
