@@ -33,20 +33,18 @@ before those targets run; local runners must provide it themselves.
 - `.github/workflows/sandbox-images.yaml` provides reusable sandbox-image build and test evidence.
   `.github/workflows/e2e.yaml` selects free-standing jobs, including `whatsapp-qr-compact` and `ollama-auth-proxy`.
 
-The `agent-turn-latency` target checks the configured host CLI with both text and
-JSON output, including explicit local mode and a requested timeout. For inline
-messages, the fixture keeps the host pipe open while the wrapper closes the dispatch
-child's stdin. The fixture holds its writer open until command completion, so
-inheriting that pipe blocks until the test timeout, regardless of the model-time cap.
-File-message turns use a relative symlink chain to a file with spaces in its path,
-with competing stdin, in both output formats. Each turn must return the answer
-from the selected input. Parser combinations and stdin aliases belong to the
-unit and real-child tests; this target does not repeat native file-permission errors.
-The first JSON turn also requires at most 60 seconds outside OpenClaw's reported
-agent duration. Missing or inconsistent timing fails that bound.
-These cases are selectable for both Docker and Podman through the existing runtime
-matrix. Host stdin is preserved for nonempty message-file arguments because only
-the sandbox can resolve their paths.
+The `agent-turn-latency` target makes one JSON OpenClaw hosted turn and one Hermes
+hosted API turn. The OpenClaw fixture keeps the host pipe open while the wrapper
+closes the dispatch child's stdin. The fixture holds its writer open until command
+completion, so inheriting that pipe blocks until the test timeout, regardless of
+the model-time cap. The OpenClaw turn also requires at most 60 seconds outside
+OpenClaw's reported agent duration. Missing or inconsistent timing fails that bound.
+Both turns record the selected provider, model, answer, and elapsed time. The Hermes
+turn also records the HTTP status. Parser combinations, explicit local forwarding,
+requested timeouts, message-file input, and stdin aliases belong to deterministic
+tests. The real-child input cases include a relative symbolic-link chain to a regular
+file with spaces while stdin contains competing data. This target is selectable for
+Docker and Podman through the existing runtime matrix.
 
 ## CI execution shape
 
@@ -224,7 +222,7 @@ The historical fixtures retain these version boundaries:
 
 | Fixture | Required boundary |
 | --- | --- |
-| `openshell-gateway-upgrade` | Retain the reviewed v0.0.89 x86-64 and v0.0.123 ARM64 fixtures with pinned installer commits and digests and reviewed OpenClaw archives. Prove that each historical dashboard forward is reachable before upgrade and replaced by an equivalent current-owned forward, while the same sandbox becomes Ready, preserves its workspace marker, and completes one authenticated post-upgrade agent turn. |
+| `openshell-gateway-upgrade` | Retain the reviewed v0.0.89 and v0.0.123 x86-64 fixtures with pinned installer commits, digests, and OpenClaw archives. Prove credential custody and authenticated agent turns before and after upgrade. Require the survivor to preserve workspace state. Create each fixture-declared stopped sandbox, preserve its workspace state, and restore its stopped phase after a lifecycle check. |
 | `rebuild-openclaw` | Retain the reviewed old-base build in the target. Build and create the old sandbox before testing the candidate rebuild path. |
 
 These targets may restore the shared artifact for the candidate CLI.
@@ -404,8 +402,8 @@ successful-export checks.
 The `security-posture-hermes` target owns the corresponding live Hermes export evidence for #11286.
 After canonical hosted-inference onboarding, it invokes `config export` through both the `nemoclaw`
 and `nemohermes` launchers and requires the validated documents to have identical specs. It checks
-the Hermes agent type, immutable managed image, hosted route, effective policy, and omission of
-credential values. It then changes the fixture's recorded sandbox fingerprint and requires both
+the Hermes agent type, null managed-image placeholder, hosted route, effective policy, and omission
+of credential values. It then changes the fixture's recorded sandbox fingerprint and requires both
 launchers to fail without publishing a file before restoring the registry. The assertion budget is
 unchanged because this contract replaces a redundant nonempty-log assertion in the same scenario.
 
@@ -511,20 +509,14 @@ inference through the managed route and backend, replacing two duplicate raw cha
 The GPU memory-offload assertion also rejects a missing matching process because its memory value
 is then `NaN`; a separate process-existence assertion is unnecessary. Authentication denial,
 runtime ownership, Ready state, and cleanup assertions remain unchanged.
-The `gpu-e2e` target also verifies that attached-Ollama export remains refused while v1alpha1 compatibility is deferred.
-A separate OpenClaw scenario disables direct sandbox GPU and uses normal onboarding to create the
-managed proxy on the target's shared port. It stops the installer service before starting a fixture-owned
-daemon on port 11439 and preparing the selected `qwen2.5:0.5b` model.
-It invokes the candidate CLI and real SDK once, requires an unsupported-compatibility failure, and verifies that no YAML file is published.
-The export evidence JSON records only the sandbox name, deferred compatibility, and prevented publication.
-The scenario does not qualify successful export, a secondary-agent roster, repeated-document equality, or stopped-daemon refusal.
-Those outcomes remain required for #11858 after #11928 and #12012 provide the target contract and exporter mapping.
-The existing CUDA, authentication, and inference lifecycle scenarios remain separate.
-Onboarding and model preparation each have a 20-minute limit within the 75-minute test timeout; the catalogue allows 90 minutes for the target.
+The `gpu-e2e` target also qualifies attached-Ollama and fixed managed-vLLM configuration export on
+native Linux Docker. Each scenario runs the candidate CLI, checks its named service and `image: null`,
+rejects credential disclosure, and retains the generated YAML. The existing CUDA, authentication,
+and inference lifecycle scenarios remain separate. The catalogue allows 150 minutes for this target.
 The fixture retries read-only daemon readiness checks on connection refusal or curl
 timeout, for at most 20 reads. It records each attempt and stops on any other failure; model
 preparation, onboarding, and export mutations are not retried.
-Cleanup destroys the sandbox before stopping the fixture daemon and removes the private output directory.
+Cleanup destroys each sandbox before its inference runtime and removes private output files.
 Retained workflow jobs are exceptions to the catalogue shape.
 Keep one only for a multi-job handoff, an unrepresented credential boundary, or an execution contract the reusable profile cannot represent.
 
@@ -822,6 +814,9 @@ job and the image-ownership contract it existed to verify.
 The standard `full-e2e` target now owns native OpenClaw installation,
 invocation, update command access, local-source replacement, self-update dry
 run, restart survival, credential non-exposure, and removal in one sandbox.
+After replacing plugin v1 with v2, it restarts through the native gateway
+command and invokes the updated tool through the running gateway. A separate
+CLI inspection cannot prove that the gateway discarded its cached plugin code.
 `rebuild-openclaw` proves a user-installed native plugin survives rebuild with
 no NemoClaw ownership metadata. `rebuild-hermes` proves native user-plugin and
 lazy-package state survive rebuild. Managed-image activation exercises native

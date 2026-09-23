@@ -428,7 +428,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   vi.spyOn(modelRouterProcess, "inspectModelRouterProcessForPort").mockReturnValue({
     status: "absent",
   });
-  vi.spyOn(modelRouterProcess, "isRouterHealthy").mockResolvedValue(false);
+  vi.spyOn(modelRouterProcess, "isRouterResponsive").mockResolvedValue(false);
   vi.spyOn(onboardSession, "loadSession").mockImplementation(() => ({ ...sessionState }));
   let retainedRecoveryRecords = [...(options.retainedRecoveryRecords ?? [])];
   vi.spyOn(onboardSession, "listRetainedSandboxRecoveryRecords").mockImplementation(
