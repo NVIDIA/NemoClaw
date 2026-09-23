@@ -164,7 +164,7 @@ jobs:
       - name: Verify exported defaults with the pinned v1 consumer
         env:
           NEMOCLAW_RUN_V1_CONFIG_COMPATIBILITY: "1"
-        run: npx vitest run --project cli src/lib/domain/config/verify-export-defaults.test.ts
+        run: ./node_modules/.bin/vitest run --project cli src/lib/domain/config/verify-export-defaults.test.ts
 
   hugging-face-models:
     needs: changes
