@@ -85,10 +85,10 @@
       "tarballUrl": "https://registry.npmjs.org/@openclaw/msteams/-/msteams-2026.9.1.tgz"
     },
     {
-      "label": "Tencent WeChat plugin 2.4.3",
-      "packageSpec": "@tencent-weixin/openclaw-weixin@2.4.3",
-      "integrity": "sha512-dPQbidUNWigC6V10vGW4i+GLH09x+6zUhafZRjuxkJ9GDu8o62WBsnUTojp4KqUH756hz+t2v9khiCRSi0dBDw==",
-      "tarballUrl": "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.3.tgz"
+      "label": "Tencent WeChat plugin 2.4.9",
+      "packageSpec": "@tencent-weixin/openclaw-weixin@2.4.9",
+      "integrity": "sha512-SfaYehR1Cwq2VV5HxJBp9sVilMms420VfZlMbF4YjRbWomr5+GxfXp9HkeU6y5TbnOc4Ysq0qPw1yBvJwbenBA==",
+      "tarballUrl": "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.9.tgz"
     }
   ],
   "lockedGraphs": [
@@ -112,12 +112,12 @@
     },
     {
       "id": "wechat-runtime",
-      "label": "Tencent WeChat plugin 2.4.3 locked runtime graph",
-      "packageSpec": "@tencent-weixin/openclaw-weixin@2.4.3",
-      "integrity": "sha512-dPQbidUNWigC6V10vGW4i+GLH09x+6zUhafZRjuxkJ9GDu8o62WBsnUTojp4KqUH756hz+t2v9khiCRSi0dBDw==",
-      "tarballUrl": "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.3.tgz",
+      "label": "Tencent WeChat plugin 2.4.9 locked runtime graph",
+      "packageSpec": "@tencent-weixin/openclaw-weixin@2.4.9",
+      "integrity": "sha512-SfaYehR1Cwq2VV5HxJBp9sVilMms420VfZlMbF4YjRbWomr5+GxfXp9HkeU6y5TbnOc4Ysq0qPw1yBvJwbenBA==",
+      "tarballUrl": "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.9.tgz",
       "directory": "agents/openclaw/wechat-runtime",
-      "lockSha256": "09a91cabd559ed2294fb263602009f9f79259e765281992e56961eed0e8c1ed9",
+      "lockSha256": "84f2b731e9ffe731d29c28ebbe795116217771971c729b577df1a8816296f9b8",
       "severityThreshold": "low",
       "installMode": "legacy-peer-deps",
       "inputValidation": "wechat-runtime",

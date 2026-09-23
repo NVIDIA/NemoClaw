@@ -199,8 +199,8 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
       "@openclaw/slack@2026.9.1": OPENCLAW_SLACK_2026_9_1_TARBALL,
       "@openclaw/whatsapp@2026.9.1":
         "https://registry.npmjs.org/@openclaw/whatsapp/-/whatsapp-2026.9.1.tgz",
-      "@tencent-weixin/openclaw-weixin@2.4.3":
-        "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.3.tgz",
+      "@tencent-weixin/openclaw-weixin@2.4.9":
+        "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.9.tgz",
     });
   });
 
