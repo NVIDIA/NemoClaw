@@ -16,7 +16,6 @@ import {
   managedActivationPostRestartAgentTurnScript,
   managedActivationOpenClawPluginScript,
   managedHermesBoundaryPoisonCommand,
-  managedOpenClawAdminApprovalInput,
   managedOpenClawSubagentCommand,
   ONBOARD_FAILURE_LOG_ARTIFACT_OPTIONS,
   preclean,
@@ -25,6 +24,7 @@ import {
   waitForManagedActivationSandboxAbsence,
 } from "../live/managed-image-activation-e2e-helpers.ts";
 import { pendingAdminRequestId } from "../fixtures/issue-4462-admin-approval-evidence.ts";
+import { adminApprovalConnectScript } from "../live/issue-4462-admin-approval-helper.ts";
 
 const MANAGED_ADMIN_PUBLIC_KEY_BYTES = Buffer.from(
   Array.from({ length: 32 }, (_value, index) => index),
@@ -184,10 +184,16 @@ describe("managed image activation failure diagnostics", () => {
     };
 
     expect(pendingAdminRequestId(result)).toBe(requestId);
-    const input = managedOpenClawAdminApprovalInput(requestId);
-    expect(input).toContain(`"$request_id_file" '${requestId}'`);
-    expect(input).toContain('openclaw devices approve "$canonical_request_id"');
-    expect(input).toContain("NEMOCLAW_MANAGED_ADMIN_APPROVAL_OK");
+    const input = adminApprovalConnectScript(
+      "/fixture/nemoclaw",
+      "fixture-sandbox",
+      "managed-cron",
+      requestId,
+    );
+    expect(input).toContain(`expected_request_id='${requestId}'`);
+    expect(input).toContain('"$request_id_file" "$expected_request_id"');
+    expect(input).toContain('openclaw devices approve "$request_id"');
+    expect(input).toContain("ISSUE_5324_ADMIN_APPROVAL_OK");
     expect(input).not.toContain(result.stderr);
   });
 
@@ -195,33 +201,16 @@ describe("managed image activation failure diagnostics", () => {
     const requestId = "4edc8df0-20d0-4308-b0e8-850843ae0cf4";
     const now = 1_790_145_221_718;
     const nowSpy = vi.spyOn(Date, "now").mockReturnValue(now);
-    const sandboxExec = vi
-      .fn()
-      .mockResolvedValueOnce({
-        exitCode: 1,
-        stderr: `scope upgrade pending approval (requestId: ${requestId})`,
-        stdout: "",
-        timedOut: false,
-      })
-      .mockResolvedValueOnce({
-        exitCode: 0,
-        stderr: "",
-        stdout: JSON.stringify({
-          id: "managed-admin-proof-job",
-          name: `managed-activation-admin-${now}`,
-        }),
-        timedOut: false,
-      })
-      .mockResolvedValueOnce({
-        exitCode: 0,
-        stderr: "",
-        stdout: JSON.stringify({ ok: true, ran: true }),
-        timedOut: false,
-      });
+    const sandboxExec = vi.fn().mockResolvedValueOnce({
+      exitCode: 1,
+      stderr: `scope upgrade pending approval (requestId: ${requestId})`,
+      stdout: "",
+      timedOut: false,
+    });
     const hostCommand = vi.fn(async () => ({
       exitCode: 0,
       stderr: "",
-      stdout: "NEMOCLAW_MANAGED_ADMIN_APPROVAL_OK\n",
+      stdout: "ISSUE_5324_ADMIN_APPROVAL_OK\n",
       timedOut: false,
     }));
 
@@ -234,17 +223,13 @@ describe("managed image activation failure diagnostics", () => {
       );
 
       expect(hostCommand).toHaveBeenCalledOnce();
-      expect(sandboxExec.mock.calls.map((call) => call[1].slice(0, 3))).toEqual([
-        ["openclaw", "agent", "--agent"],
-        ["openclaw", "cron", "add"],
-        ["openclaw", "cron", "run"],
-      ]);
-      expect(sandboxExec.mock.calls[2][1]).toEqual([
-        "openclaw",
-        "cron",
-        "run",
-        "managed-admin-proof-job",
-      ]);
+      expect(sandboxExec).toHaveBeenCalledOnce();
+      const [command, args] = hostCommand.mock.calls[0]!;
+      expect(command).toBe("bash");
+      expect(args.slice(0, 1)).toEqual(["-lc"]);
+      expect(args[1]).toContain(`managed-activation-admin-${now}`);
+      expect(args[1]).toContain(`expected_request_id='${requestId}'`);
+      expect(args[1]).toContain('openclaw cron run "$cron_id"');
     } finally {
       nowSpy.mockRestore();
     }
@@ -254,6 +239,7 @@ describe("managed image activation failure diagnostics", () => {
     const fixture = createHostProcessWorkspace("nemoclaw-managed-admin-approval-");
     const requestId = "4edc8df0-20d0-4308-b0e8-850843ae0cf4";
     const secret = "approval-diagnostic-secret-value";
+    fixture.writeExecutable("nemoclaw", "#!/bin/sh\nexec /bin/bash\n");
     fixture.writeExecutable(
       "openclaw",
       `#!/bin/sh
@@ -270,23 +256,23 @@ exit 91
           "-lc",
           `PATH=${JSON.stringify(fixture.binDir)}:$PATH
 export PATH
-${managedOpenClawAdminApprovalInput(requestId)}`,
+${adminApprovalConnectScript("nemoclaw", "fixture-sandbox", "managed-cron", requestId)}`,
         ],
         {
           env: fixture.environment({
             ...prepareManagedAdminState(fixture.root, requestId),
             APPROVAL_DIAGNOSTIC_SECRET: secret,
+            OPENCLAW_GATEWAY_PORT: "18789",
+            OPENCLAW_GATEWAY_TOKEN: "fixture-token",
           }),
           killSignal: "SIGKILL",
           timeout: 10_000,
         },
       );
 
-      expect(result.status).toBe(31);
-      expect(result.stderr).toContain("NEMOCLAW_MANAGED_ADMIN_APPROVAL_FAILED");
-      expect(result.stderr).toContain(
-        "NEMOCLAW_MANAGED_ADMIN_APPROVAL_DIAGNOSTIC=authorization-rejected",
-      );
+      expect(result.status).toBe(27);
+      expect(result.stderr).toContain("ADMIN_APPROVE_FAILED");
+      expect(result.stderr).toContain("ADMIN_DIAGNOSTIC=authorization-rejected");
       expect(result.stderr).not.toContain(secret);
       expect(result.stderr).not.toContain(requestId);
     } finally {
@@ -298,6 +284,7 @@ ${managedOpenClawAdminApprovalInput(requestId)}`,
     const fixture = createHostProcessWorkspace("nemoclaw-managed-admin-selection-");
     const outputRequestId = "4edc8df0-20d0-4308-b0e8-850843ae0cf4";
     const canonicalRequestId = "a96ada31-9cf9-4d99-97cc-978dcbb9fc39";
+    fixture.writeExecutable("nemoclaw", "#!/bin/sh\nexec /bin/bash\n");
     fixture.writeExecutable(
       "openclaw",
       `#!/bin/sh
@@ -314,12 +301,14 @@ printf '%s\n' "$*" >"$MANAGED_ADMIN_APPROVE_LOG"
           "-lc",
           `PATH=${JSON.stringify(fixture.binDir)}:$PATH
 export PATH
-${managedOpenClawAdminApprovalInput(outputRequestId)}`,
+${adminApprovalConnectScript("nemoclaw", "fixture-sandbox", "managed-cron", outputRequestId)}`,
         ],
         {
           env: fixture.environment({
             ...prepareManagedAdminState(fixture.root, canonicalRequestId),
             MANAGED_ADMIN_APPROVE_LOG: approveLog,
+            OPENCLAW_GATEWAY_PORT: "18789",
+            OPENCLAW_GATEWAY_TOKEN: "fixture-token",
           }),
           killSignal: "SIGKILL",
           timeout: 10_000,
@@ -327,7 +316,8 @@ ${managedOpenClawAdminApprovalInput(outputRequestId)}`,
       );
 
       expect(result.status).not.toBe(0);
-      expect(result.stderr).toContain("pending admin request does not match the triggered request");
+      expect(result.stderr).toContain("ADMIN_REQUEST_SELECTION_FAILED");
+      expect(result.stderr).toContain("ADMIN_DIAGNOSTIC=command-failed");
       expect(existsSync(approveLog)).toBe(false);
       expect(result.stderr).not.toContain(outputRequestId);
       expect(result.stderr).not.toContain(canonicalRequestId);

@@ -18,7 +18,6 @@ import {
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
-import { ADMIN_REQUEST_SELECTOR_PY } from "../fixtures/admin-request-selector.ts";
 import {
   assertExitZero,
   type HostCliClient,
@@ -44,6 +43,7 @@ import {
   pendingAdminRequestId,
   preApprovalAdminProbeEvidence,
 } from "../fixtures/issue-4462-admin-approval-evidence.ts";
+import { adminApprovalConnectScript } from "./issue-4462-admin-approval-helper.ts";
 
 const API_KEY = "nemoclaw-managed-activation-e2e-key";
 const MODEL = "nemoclaw-managed-activation-model";
@@ -54,7 +54,7 @@ const OPENCLAW_POST_RESTART_READY_TIMEOUT_SECONDS = 60;
 const OPENCLAW_POST_RESTART_READY_TIMEOUT_MS =
   (OPENCLAW_POST_RESTART_READY_TIMEOUT_SECONDS + 10) * 1_000;
 const OPENCLAW_ADMIN_APPROVAL_CAPTURE_LIMIT_BYTES = 64 * 1024;
-const OPENCLAW_ADMIN_APPROVAL_MARKER = "NEMOCLAW_MANAGED_ADMIN_APPROVAL_OK";
+const OPENCLAW_ADMIN_APPROVAL_MARKER = "ISSUE_5324_ADMIN_APPROVAL_OK";
 const HERMES_BOUNDARY_SENTINEL = "SENTINEL_MANAGED_RESTART_RAW_SECRET";
 const HERMES_BOUNDARY_BACKUP = "/tmp/nemoclaw-hermes-env-before-restart-refusal";
 const MANAGED_ACTIVATION_DELETE_SETTLEMENT_DELAYS_MS = [1_000, 1_000, 1_000] as const;
@@ -232,15 +232,19 @@ export async function approveOpenClawAdminScope(
     },
   );
   const requestId = pendingAdminRequestId(trigger);
+  const cronName = `managed-activation-admin-${Date.now()}`;
   const approval = requestId
-    ? await host.command(host.commandPath, [sandboxName, "connect"], {
-        artifactName: "openclaw-explicit-admin-approval",
-        captureLimitBytes: OPENCLAW_ADMIN_APPROVAL_CAPTURE_LIMIT_BYTES,
-        env,
-        redactionValues: [API_KEY],
-        stdin: { text: managedOpenClawAdminApprovalInput(requestId) },
-        timeoutMs: 4 * 60_000,
-      })
+    ? await host.command(
+        "bash",
+        ["-lc", adminApprovalConnectScript(host.commandPath, sandboxName, cronName, requestId)],
+        {
+          artifactName: "openclaw-explicit-admin-approval",
+          captureLimitBytes: OPENCLAW_ADMIN_APPROVAL_CAPTURE_LIMIT_BYTES,
+          env,
+          redactionValues: [API_KEY],
+          timeoutMs: 4 * 60_000,
+        },
+      )
     : null;
   const approvalSucceeded =
     requestId !== null &&
@@ -248,122 +252,14 @@ export async function approveOpenClawAdminScope(
     approval !== null &&
     approval.exitCode === 0 &&
     resultText(approval).includes(OPENCLAW_ADMIN_APPROVAL_MARKER);
-  const cronName = `managed-activation-admin-${Date.now()}`;
-  const cronAdd = approvalSucceeded
-    ? await sandbox.exec(
-        sandboxName,
-        [
-          "openclaw",
-          "cron",
-          "add",
-          "--name",
-          cronName,
-          "--every",
-          "2h",
-          "--agent",
-          "main",
-          "--session",
-          "isolated",
-          "--message",
-          "hello",
-        ],
-        {
-          artifactName: "openclaw-admin-scope-cron-add",
-          env,
-          redactionValues: [API_KEY],
-          timeoutMs: AGENT_TIMEOUT_MS,
-        },
-      )
-    : null;
-  let cronId: string | null = null;
-  if (cronAdd?.exitCode === 0) {
-    try {
-      const value: unknown = JSON.parse(cronAdd.stdout.trim());
-      if (value !== null && typeof value === "object" && !Array.isArray(value)) {
-        const record = value as Record<string, unknown>;
-        if (record.name === cronName && typeof record.id === "string" && record.id.trim() !== "") {
-          cronId = record.id;
-        }
-      }
-    } catch {
-      cronId = null;
-    }
-  }
-  const cronRun = cronId
-    ? await sandbox.exec(sandboxName, ["openclaw", "cron", "run", cronId], {
-        artifactName: "openclaw-admin-scope-cron-run",
-        env,
-        redactionValues: [API_KEY],
-        timeoutMs: AGENT_TIMEOUT_MS,
-      })
-    : null;
-  let cronRunSucceeded = false;
-  if (cronRun?.exitCode === 0) {
-    try {
-      const value: unknown = JSON.parse(cronRun.stdout.trim());
-      if (value !== null && typeof value === "object" && !Array.isArray(value)) {
-        const record = value as Record<string, unknown>;
-        cronRunSucceeded =
-          record.ok === true &&
-          (record.ran === true ||
-            (record.enqueued === true &&
-              typeof record.runId === "string" &&
-              record.runId.trim() !== ""));
-      }
-    } catch {
-      cronRunSucceeded = false;
-    }
-  }
   expect(
-    approvalSucceeded && cronAdd?.exitCode === 0 && cronId !== null && cronRunSucceeded,
+    approvalSucceeded,
     [
       "OpenClaw explicit admin approval did not authorize the cron consumer",
       resultText(trigger),
       approval ? resultText(approval) : "request ID unavailable",
-      cronAdd ? resultText(cronAdd) : "cron add unavailable",
-      cronRun ? resultText(cronRun) : "cron run unavailable",
     ].join("\n"),
   ).toBe(true);
-}
-
-export function managedOpenClawAdminApprovalInput(requestId: string): string {
-  return [
-    "set -euo pipefail",
-    'devices_json="$(mktemp)"',
-    'request_id_file="$(mktemp)"',
-    'approval_output="$(mktemp)"',
-    'trap \'rm -f -- "$devices_json" "$request_id_file" "$approval_output"\' EXIT',
-    'openclaw devices list --json >"$devices_json"',
-    `python3 - "$devices_json" "$request_id_file" ${shellQuote(requestId)} <<'PY_MANAGED_ADMIN_REQUEST'`,
-    ...ADMIN_REQUEST_SELECTOR_PY.split("\n"),
-    "PY_MANAGED_ADMIN_REQUEST",
-    'canonical_request_id="$(cat "$request_id_file")"',
-    "approval_status=0",
-    'openclaw devices approve "$canonical_request_id" >"$approval_output" 2>&1 || approval_status=$?',
-    'python3 - "$approval_output" "$approval_status" <<\'PY_ADMIN_APPROVAL_DIAGNOSTIC\'',
-    "import re, sys",
-    "from pathlib import Path",
-    "status=int(sys.argv[2])",
-    "try:",
-    "    with Path(sys.argv[1]).open('rb') as stream:",
-    "        raw=stream.read(65536).decode('utf-8', errors='replace')",
-    "except OSError: raw=''",
-    "checks=(",
-    "    ('timeout', r'timed?\\s*out|timeout'),",
-    "    ('authorization-rejected', r'denied|forbidden|unauthorized|approval.*(?:failed|rejected)'),",
-    "    ('gateway-unavailable', r'gateway|connection|econn|socket|network'),",
-    "    ('uncertain-output-delivery', r'\\bapproved\\b|approval.*(?:complete|succeeded)'),",
-    "    ('invalid-response', r'invalid|parse|json'),",
-    ")",
-    "label=next((name for name, pattern in checks if re.search(pattern, raw, re.IGNORECASE)), 'command-failed' if raw.strip() else 'no-output')",
-    "status == 0 or print('NEMOCLAW_MANAGED_ADMIN_APPROVAL_FAILED', file=sys.stderr)",
-    "status == 0 or print(f'NEMOCLAW_MANAGED_ADMIN_APPROVAL_DIAGNOSTIC={label}', file=sys.stderr)",
-    "raise SystemExit(0 if status == 0 else 31)",
-    "PY_ADMIN_APPROVAL_DIAGNOSTIC",
-    `echo ${shellQuote(OPENCLAW_ADMIN_APPROVAL_MARKER)}`,
-    "exit",
-    "",
-  ].join("\n");
 }
 
 export function managedActivationPostRestartAgentTurnScript(

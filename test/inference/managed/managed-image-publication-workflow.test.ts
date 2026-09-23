@@ -782,15 +782,25 @@ describe("complete managed-image publication workflow", () => {
         "src/lib/actions/sandbox/**",
         "src/lib/onboard/**",
         "src/lib/adapters/openshell/**",
+        "test/e2e/fixtures/admin-approval-connect.sh",
+        "test/e2e/fixtures/admin-request-selector.ts",
         "test/e2e/fixtures/gateway-runtime-start.ts",
+        "test/e2e/fixtures/issue-4462-admin-approval-evidence.ts",
         "test/e2e/fixtures/phases/lifecycle.ts",
+        "test/e2e/lib/issue-4462-admin-request-selector.py",
+        "test/e2e/live/issue-4462-admin-approval-helper.ts",
         "test/e2e/live/managed-image-activation-e2e*.ts",
       ]),
     );
     expect(readWorkflow("base-image.yaml").on?.push?.paths).toEqual(
       expect.arrayContaining([
+        "test/e2e/fixtures/admin-approval-connect.sh",
+        "test/e2e/fixtures/admin-request-selector.ts",
         "test/e2e/fixtures/gateway-runtime-start.ts",
+        "test/e2e/fixtures/issue-4462-admin-approval-evidence.ts",
         "test/e2e/fixtures/phases/lifecycle.ts",
+        "test/e2e/lib/issue-4462-admin-request-selector.py",
+        "test/e2e/live/issue-4462-admin-approval-helper.ts",
       ]),
     );
     expect(activation.needs).toBe("pr-build-and-entrypoint");
