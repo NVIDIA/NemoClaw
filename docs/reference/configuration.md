@@ -1326,7 +1326,7 @@ Managed vLLM runtime and immutable model snapshot.
 
 ### Alternative 4
 
-Experimental VoiceClaw installer; credential projection and revocable agent access are not yet implemented.
+Experimental VoiceClaw installer with protected credentials and scoped agent access.
 
 
 | Field | Input type | Required | Default | Description and constraints |
@@ -1335,7 +1335,7 @@ Experimental VoiceClaw installer; credential projection and revocable agent acce
 | `imagePullPolicy` | [PullPolicy](#pullpolicy) | Yes | — | Must be Never for the preloaded PoC image. Constraints: `"Never"`. |
 | `kind` | string | Yes | — | Supported installer selected by this service definition. Constraints: `"voiceclaw"`. |
 | `serving` | [VoiceclawServing](#voiceclawserving) | No | — | VoiceClaw listener and bounded startup settings. |
-| `speech` | [VoiceclawSpeech](#voiceclawspeech) | Yes | — | Speech provider and caller credential reference reserved for future projection. |
+| `speech` | [VoiceclawSpeech](#voiceclawspeech) | Yes | — | Speech provider and host credential reference projected into the owned volume. |
 
 ## ServiceHardware
 
@@ -1543,7 +1543,7 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `port` | integer | No | — | Single HTTP and streaming service port. Constraints: minimum 1024; maximum 65535. |
+| `port` | integer | No | — | Fixed HTTP and streaming service port exposed by the managed runtime image. Constraints: minimum 18790; maximum 18790. |
 | `startupTimeoutSeconds` | integer | No | — | Seconds allowed for content-free service readiness. Constraints: minimum 1; maximum 3600. |
 
 ## VoiceclawSpeech
@@ -1558,5 +1558,5 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `credential` | [Credential](#credential) | Yes | — | Host credential reference. Projection into runtime storage is not yet implemented. |
+| `credential` | [Credential](#credential) | Yes | — | Host credential reference. The value is never serialized into deployment state. |
 | `provider` | [SpeechProvider](#speechprovider) | Yes | — | Supported speech provider. |
