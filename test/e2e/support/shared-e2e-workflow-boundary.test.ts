@@ -25,14 +25,16 @@ vi.mock("node:fs", async (importOriginal) => {
 });
 
 type Workflow = {
+  env?: unknown;
   jobs: Record<
     string,
     {
-      env?: Record<string, unknown>;
+      env?: unknown;
       if?: unknown;
       needs?: string[];
       "continue-on-error"?: unknown;
       steps?: Array<{
+        env?: unknown;
         name?: string;
         uses?: string;
         run?: string;
@@ -404,7 +406,7 @@ describe("shared E2E workflow boundary", () => {
   it("ratchets shared setup, tagged test execution, and aggregation", () => {
     const errors = validateMutatedWorkflow((workflow) => {
       const job = workflow.jobs["shared-e2e"];
-      job.env!.CHECK_DOC_LINKS_REMOTE = "1";
+      (job.env as Record<string, unknown>).CHECK_DOC_LINKS_REMOTE = "1";
       job.steps!.find((step) => step.name === "Run tagged credential-free test")!.run =
         "echo skipped";
       workflow.jobs["report-to-pr"].needs = workflow.jobs["report-to-pr"].needs!.filter(
@@ -458,4 +460,133 @@ describe("approved pre-candidate shell body integrity", () => {
       );
     },
   );
+});
+
+describe("pre-candidate execution environment identity", () => {
+  const stepNames = [
+    "Build trusted larger-runner routing",
+    "Authenticate manual PR dispatch",
+    "Record trusted E2E dispatch receipt",
+    "Upload trusted E2E dispatch receipt",
+    "Authorize Launchable E2E maintainer dispatch",
+    "Check out trusted E2E planner",
+    "Set up Node for trusted E2E planning",
+    "Install reviewed npm for trusted E2E planning",
+    "Install trusted E2E planner dependencies",
+    "Generate E2E target matrix",
+    "Stage immutable native Podman E2E toolchains",
+  ];
+  const owners = [
+    { name: "workflow", select: (workflow: Workflow) => workflow },
+    {
+      name: "generate-matrix job",
+      select: (workflow: Workflow) => workflow.jobs["generate-matrix"]!,
+    },
+    ...stepNames.map((name) => ({
+      name: `step ${name}`,
+      select: (workflow: Workflow) =>
+        workflow.jobs["generate-matrix"]!.steps!.find((step) => step.name === name)!,
+    })),
+  ];
+  const mutations = [
+    {
+      label: "Bash initialization",
+      apply: (env: unknown) => ({
+        ...(env as Record<string, unknown>),
+        BASH_ENV: "/tmp/unapproved-inert-init",
+      }),
+    },
+    {
+      label: "Node initialization",
+      apply: (env: unknown) => ({
+        ...(env as Record<string, unknown>),
+        NODE_OPTIONS: "--require=/tmp/unapproved-inert-module",
+      }),
+    },
+    {
+      label: "expression instead of map",
+      apply: () => "${{ inputs.environment }}",
+    },
+    { label: "array instead of map", apply: () => [] },
+    { label: "null instead of map", apply: () => null },
+  ];
+  it.each(owners.flatMap((owner) => mutations.map((mutation) => ({ ...owner, ...mutation }))))(
+    "rejects $label in $name",
+    ({ name, select, apply }) => {
+      const errors = validateMutatedWorkflow((workflow) => {
+        const owner = select(workflow);
+        owner.env = apply(owner.env);
+      });
+      expect(errors).toContain(
+        `trusted pre-candidate ${name} must preserve its exact reviewed environment`,
+      );
+    },
+  );
+  const boundOwners = [
+    { owner: owners[0]!, bindingName: "NEMOCLAW_E2E_EXPECTED_SHA" },
+    { owner: owners[2]!, bindingName: "REPOSITORY" },
+    { owner: owners[3]!, bindingName: "GITHUB_TOKEN" },
+    { owner: owners[4]!, bindingName: "CANDIDATE_SHA" },
+    { owner: owners[6]!, bindingName: "GITHUB_TOKEN" },
+    { owner: owners[11]!, bindingName: "NEMOCLAW_E2E_CREDENTIALS_ALLOWED" },
+  ];
+  const bindingChanges = [
+    {
+      label: "missing",
+      apply: (env: Record<string, unknown>, bindingName: string) => {
+        delete env[bindingName];
+      },
+    },
+    {
+      label: "rebound",
+      apply: (env: Record<string, unknown>, bindingName: string) => {
+        env[bindingName] = "unapproved-binding";
+      },
+    },
+  ];
+  it.each(
+    boundOwners.flatMap(({ owner, bindingName }) =>
+      bindingChanges.map((change) => ({ ...owner, bindingName, ...change })),
+    ),
+  )("rejects $label binding in $name", ({ name, select, bindingName, apply }) => {
+    const errors = validateMutatedWorkflow((workflow) => {
+      apply(select(workflow).env as Record<string, unknown>, bindingName);
+    });
+    expect(errors).toContain(
+      `trusted pre-candidate ${name} must preserve its exact reviewed environment`,
+    );
+  });
+  it.each(boundOwners.map(({ owner }) => owner))(
+    "accepts canonical bindings for $name regardless of key order",
+    ({ select }) => {
+      const errors = validateMutatedWorkflow((workflow) => {
+        const owner = select(workflow);
+        owner.env = Object.fromEntries(
+          Object.entries((owner.env ?? {}) as Record<string, unknown>).reverse(),
+        );
+      });
+      expect(errors).toEqual([]);
+    },
+  );
+});
+
+describe("manual PR authentication execution control", () => {
+  it("rejects skipped authentication through the existing identity guard", () => {
+    const errors = validateMutatedWorkflow((workflow) => {
+      workflow.jobs["generate-matrix"]!.steps!.find(
+        (step) => step.name === "Authenticate manual PR dispatch",
+      )!.if = false;
+    });
+    expect(errors).toContain(
+      "Manual PR authentication must run when any candidate identity input is present",
+    );
+  });
+  it.each([true, false, "${{ always() }}"])("rejects continue-on-error override %s", (value) => {
+    const errors = validateMutatedWorkflow((workflow) => {
+      workflow.jobs["generate-matrix"]!.steps!.find(
+        (step) => step.name === "Authenticate manual PR dispatch",
+      )!["continue-on-error"] = value;
+    });
+    expect(errors).toContain("Manual PR authentication must not tolerate authorization failure");
+  });
 });

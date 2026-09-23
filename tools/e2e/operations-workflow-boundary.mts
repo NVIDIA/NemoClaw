@@ -397,6 +397,9 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   ) {
     errors.push("Manual PR authentication must run when any candidate identity input is present");
   }
+  if (authentication["continue-on-error"] !== undefined) {
+    errors.push("Manual PR authentication must not tolerate authorization failure");
+  }
   const authEnvironment = {
     ALLOW_JETSON_DISPATCH: "${{ inputs.allow_jetson_dispatch && 'true' || 'false' }}",
     BASE_SHA: "${{ inputs.base_sha }}",
