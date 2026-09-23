@@ -116,7 +116,7 @@ async function sleep(ms: number): Promise<void> {
 }
 
 test(
-  "bootstrap install smoke: bootstrap, onboard, sandbox health, live inference, cleanup",
+  "bootstrap install smoke: bootstrap, onboard, sandbox health, OpenClaw agent request, cleanup",
   {
     timeout: TEST_TIMEOUT_MS,
     meta: {

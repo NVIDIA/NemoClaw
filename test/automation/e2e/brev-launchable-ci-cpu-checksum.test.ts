@@ -39,8 +39,8 @@ type FakeSystemOptions = {
     | "traversal";
   checksum: "match" | "mismatch" | "unpinned";
   nodeSourceChecksumTool?: boolean;
-  npmDebugLog?: "missing" | "present";
   npmFailure?: "plugin" | "root";
+  npmFailureOutput?: "missing" | "present";
   reviewedNpmFailure?: boolean;
   openshellVersion?: string;
 };
@@ -152,20 +152,18 @@ if [ "$PWD" = ${JSON.stringify(cloneDir)} ]; then stage="root"; fi
 if [ "$PWD" = ${JSON.stringify(path.join(cloneDir, "nemoclaw"))} ]; then stage="plugin"; fi
 if [ "\${1:-}" = "install" ] && [ "$stage" = ${JSON.stringify(options.npmFailure ?? "")} ]; then
   secret="fixture-secret-token"
-  printf 'npm error Authorization: Bearer %s\\n' "$secret"
-  printf 'npm error registry=https://fixture:%s@registry.example.test/package\\n' "$secret"
-  printf 'npm error token prefix ghp_1234567890abcdef\\n'
-  printf 'npm error jwt eyJfixture1.payload.fixturepayload12345\\n'
-  printf 'npm error opaque abcdefghijklmnopqrstuvwxyz0123456789ABCD\\n'
-  printf '%s%s\\n%s\\n%s%s\\n' \\
-    '-----BEGIN PRIVATE' ' KEY-----' "$secret" '-----END PRIVATE' ' KEY-----'
-  if [ ${JSON.stringify(options.npmDebugLog ?? "present")} = "present" ]; then
-    mkdir -p "\${npm_config_logs_dir:?}"
-    debug_log="$npm_config_logs_dir/2026-09-21T00_00_00_000Z-debug-0.log"
+  if [ ${JSON.stringify(options.npmFailureOutput ?? "present")} = "present" ]; then
     for index in {1..300}; do
       printf 'verbose diagnostic line %03d xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\\n' "$index"
-    done > "$debug_log"
-    printf '_authToken=%s\\npassword=%s\\n' "$secret" "$secret" >> "$debug_log"
+    done
+    printf 'npm error Authorization: Bearer %s\\n' "$secret"
+    printf 'npm error registry=https://fixture:%s@registry.example.test/package\\n' "$secret"
+    printf 'npm error token prefix ghp_1234567890abcdef\\n'
+    printf 'npm error jwt eyJfixture1.payload.fixturepayload12345\\n'
+    printf 'npm error opaque abcdefghijklmnopqrstuvwxyz0123456789ABCD\\n'
+    printf '%s%s\\n%s\\n%s%s\\n' \\
+      '-----BEGIN PRIVATE' ' KEY-----' "$secret" '-----END PRIVATE' ' KEY-----'
+    printf '_authToken=%s\\npassword=%s\\n' "$secret" "$secret"
   fi
   if [ "$stage" = "root" ]; then exit 41; fi
   exit 42
@@ -413,6 +411,9 @@ describe("brev-launchable-ci-cpu.sh OpenShell checksum gate", { timeout: 30_000 
             .readdirSync(path.dirname(fake.cloneDir))
             .filter((entry) => entry.startsWith("nemoclaw-npm-install.")),
         ).toEqual([]);
+        const helperSource = fs.readFileSync(NPM_INSTALL_HELPER, "utf8");
+        expect(helperSource).toContain("npm_config_logs_max=0");
+        expect(helperSource).toContain('| tail -c "$MAX_CAPTURE_BYTES" >"$command_log"');
 
         const npmCalls = fs.readFileSync(fake.npmInstallLog, "utf8").trim().split("\n");
         const failedStageDirectory =
@@ -442,19 +443,17 @@ describe("brev-launchable-ci-cpu.sh OpenShell checksum gate", { timeout: 30_000 
     },
   );
 
-  it("reports an npm failure when npm does not create a debug log", () => {
+  it("reports an npm failure when npm does not emit diagnostic output", () => {
     const { fake, result } = runLaunchable({
       checksum: "match",
-      npmDebugLog: "missing",
       npmFailure: "root",
+      npmFailureOutput: "missing",
     });
     try {
       const out = combinedLaunchableOutput(result, fake.launchLog);
       expect(result.status, out).toBe(41);
       expect(out).toContain("root dependency installation (exit 41)");
-      expect(out).toContain("npm debug log unavailable");
-      expect(out).toContain("<REDACTED>");
-      expect(out).not.toContain("fixture-secret-token");
+      expect(out).toContain("npm command output unavailable");
       expect(
         fs
           .readdirSync(path.dirname(fake.cloneDir))

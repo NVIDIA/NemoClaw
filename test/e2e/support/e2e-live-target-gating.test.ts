@@ -180,7 +180,7 @@ describe("live E2E target gating", () => {
       context
         .expect(linesForFile(legacy.lines, "launchable-smoke.test.ts"))
         .toEqual([
-          "[e2e-live] test/e2e/live/launchable-smoke.test.ts > bootstrap install smoke: bootstrap, onboard, sandbox health, live inference, cleanup",
+          "[e2e-live] test/e2e/live/launchable-smoke.test.ts > bootstrap install smoke: bootstrap, onboard, sandbox health, OpenClaw agent request, cleanup",
         ]);
 
       const renamed = await listLiveTests({
@@ -193,7 +193,7 @@ describe("live E2E target gating", () => {
       context
         .expect(linesForFile(renamed.lines, "bootstrap-install-smoke.test.ts"))
         .toEqual([
-          "[e2e-live] test/e2e/live/bootstrap-install-smoke.test.ts > bootstrap install smoke: bootstrap, onboard, sandbox health, live inference, cleanup",
+          "[e2e-live] test/e2e/live/bootstrap-install-smoke.test.ts > bootstrap install smoke: bootstrap, onboard, sandbox health, OpenClaw agent request, cleanup",
         ]);
 
       const inactive = await listLiveTests({

@@ -5,6 +5,7 @@
 set -euo pipefail
 
 readonly MAX_EXCERPT_BYTES=3900
+readonly MAX_CAPTURE_BYTES=3900
 
 usage() {
   printf 'Usage: %s <root|plugin> <working-directory>\n' "$(basename "$0")" >&2
@@ -56,11 +57,8 @@ umask 077
 diagnostic_directory="$(mktemp -d "${TMPDIR:-/tmp}/nemoclaw-npm-install.XXXXXX")"
 readonly diagnostic_directory
 readonly command_log="$diagnostic_directory/npm-install.log"
-readonly npm_log_directory="$diagnostic_directory/npm-logs"
 readonly redacted_command_log="$diagnostic_directory/npm-install.redacted.log"
-readonly redacted_debug_log="$diagnostic_directory/npm-debug.redacted.log"
 trap 'if ! rm -rf -- "$diagnostic_directory"; then printf "npm diagnostic cleanup failed\n" >&2; fi' EXIT
-mkdir -p "$npm_log_directory"
 
 status=0
 (
@@ -75,10 +73,12 @@ status=0
     -u NPM_TOKEN \
     NO_COLOR=1 \
     npm_config_color=false \
-    npm_config_logs_dir="$npm_log_directory" \
-    npm_config_logs_max=1 \
-    npm install --ignore-scripts
-) >"$command_log" 2>&1 || status=$?
+    npm_config_loglevel=verbose \
+    npm_config_logs_max=0 \
+    npm install --ignore-scripts 2>&1 \
+    | tail -c "$MAX_CAPTURE_BYTES" >"$command_log"
+  exit "${PIPESTATUS[0]}"
+) || status=$?
 
 if ! sanitize_diagnostics <"$command_log" >"$redacted_command_log"; then
   : >"$redacted_command_log"
@@ -92,23 +92,10 @@ fi
 
 printf 'npm install failed during %s dependency installation (exit %s).\n' "$stage" "$status" >&2
 printf '%s\n' '--- npm command output ---' >&2
-tail -c "$MAX_EXCERPT_BYTES" "$redacted_command_log" >&2
-
-latest_debug_log=""
-for candidate in "$npm_log_directory"/*-debug-0.log; do
-  if [[ -f "$candidate" && ! -L "$candidate" ]] \
-    && [[ -z "$latest_debug_log" || "$candidate" -nt "$latest_debug_log" ]]; then
-    latest_debug_log="$candidate"
-  fi
-done
-
-if [[ -z "$latest_debug_log" ]]; then
-  printf '\nnpm debug log unavailable\n' >&2
-elif sanitize_diagnostics <"$latest_debug_log" >"$redacted_debug_log"; then
-  printf '\n%s\n' '--- npm debug log ---' >&2
-  tail -c "$MAX_EXCERPT_BYTES" "$redacted_debug_log" >&2
+if [[ -s "$redacted_command_log" ]]; then
+  tail -c "$MAX_EXCERPT_BYTES" "$redacted_command_log" >&2
 else
-  printf '\nnpm debug log sanitization failed\n' >&2
+  printf 'npm command output unavailable\n' >&2
 fi
 
 exit "$status"
