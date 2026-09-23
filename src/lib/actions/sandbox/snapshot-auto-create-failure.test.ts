@@ -88,13 +88,16 @@ const finalizePendingSandboxRegistrationMock = vi.fn((name: string) => {
 });
 const reserveSandboxInferenceRouteMock = vi.fn(
   (name: string, route: Record<string, unknown>, options: { requireAbsent?: boolean } = {}) => {
-    if (options.requireAbsent === true && harness.entries.has(name)) return false;
-    harness.entries.set(name, {
-      name,
-      pendingRouteReservation: true,
-      ...route,
-    });
-    return true;
+    const unavailable = options.requireAbsent === true && harness.entries.has(name);
+    return unavailable
+      ? false
+      : Boolean(
+          harness.entries.set(name, {
+            name,
+            pendingRouteReservation: true,
+            ...route,
+          }),
+        );
   },
 );
 const finalizeSandboxRouteReservationMock = vi.fn((name: string, sessionId: string) => {
@@ -444,36 +447,36 @@ describe("snapshot restore auto-create failures", () => {
       const selectorIndex = args.indexOf("--selector");
       const selector = args[selectorIndex + 1] ?? "";
       const separatorIndex = selector.indexOf("=");
-      if (selectorIndex >= 0) {
-        selectorReads += 1;
-        return {
-          status: 0,
-          output: JSON.stringify([
-            {
-              id: "beta-runtime-id",
-              name: "beta",
-              labels: {
-                [selector.slice(0, separatorIndex)]: selector.slice(separatorIndex + 1),
+      const isSelectorRead = selectorIndex >= 0;
+      selectorReads += Number(isSelectorRead);
+      return isSelectorRead
+        ? {
+            status: 0,
+            output: JSON.stringify([
+              {
+                id: "beta-runtime-id",
+                name: "beta",
+                labels: {
+                  [selector.slice(0, separatorIndex)]: selector.slice(separatorIndex + 1),
+                },
+                ...(selectorReads === 1
+                  ? {}
+                  : {
+                      resource_version: 1,
+                      created_at: "2026-09-22T00:00:00.000Z",
+                      phase: "Ready",
+                      current_policy_version: 1,
+                    }),
               },
-              ...(selectorReads === 1
-                ? {}
-                : {
-                    resource_version: 1,
-                    created_at: "2026-09-22T00:00:00.000Z",
-                    phase: "Ready",
-                    current_policy_version: 1,
-                  }),
-            },
-          ]),
-        };
-      }
-      return {
-        status: 0,
-        output:
-          args[0] === "policy"
-            ? "version: 1\nnetwork_policies: {}\n"
-            : "alpha Ready\nbeta Ready\nId: beta-runtime-id\n",
-      };
+            ]),
+          }
+        : {
+            status: 0,
+            output:
+              args[0] === "policy"
+                ? "version: 1\nnetwork_policies: {}\n"
+                : "alpha Ready\nbeta Ready\nId: beta-runtime-id\n",
+          };
     });
     streamSandboxCreateMock.mockResolvedValue({
       status: 0,
@@ -855,129 +858,141 @@ describe("snapshot restore auto-create failures", () => {
     expect(restoreSandboxStateMock).toHaveBeenCalledOnce();
   });
 
-  it("retains an ordinary ambiguous clone until label and name are absent", async () => {
-    captureOpenshellMock.mockImplementation((args: string[]) => ({
-      status: 0,
-      output:
-        args[0] === "policy"
-          ? "version: 1\nnetwork_policies: {}\n"
-          : args.includes("--selector")
-            ? "malformed selector output"
-            : "alpha Ready\nbeta Ready\n",
-    }));
-    streamSandboxCreateMock.mockResolvedValue({
-      status: 1,
-      output: "connection lost after submission",
-      sawProgress: true,
-      forcedReady: false,
-    });
-    vi.spyOn(console, "error").mockImplementation(() => {});
-    vi.spyOn(console, "log").mockImplementation(() => {});
-    const { runSandboxSnapshot } = await import("./snapshot");
-
-    await expect(
-      runSandboxSnapshot("alpha", { kind: "restore", to: "beta" }),
-    ).rejects.toMatchObject({ exitCode: 1 });
-
-    const retainedNonce = String(getSandboxMock("beta")?.reservationSessionId ?? "");
-    expect(getSandboxMock("beta")).toMatchObject({
-      pendingRouteReservation: true,
-      reservationSessionId: expect.stringMatching(/^[0-9a-f]{62}$/u),
-      provider: "vllm-local",
-      model: "model-a",
-    });
-    expect(getSandboxMock("beta")).not.toHaveProperty("hostLocalInferenceReceipt");
-    expect(getSandboxMock("beta")).not.toHaveProperty("hostLocalInferenceProvenance");
-    expect(reserveSandboxInferenceRouteMock).toHaveBeenCalledWith(
-      "beta",
-      expect.objectContaining({ reservationSessionId: retainedNonce }),
-      { requireAbsent: true },
-    );
-
-    streamSandboxCreateMock.mockClear();
-    const runtime = await import("../../adapters/openshell/runtime");
-    vi.mocked(runtime.runOpenshell).mockClear();
-    captureOpenshellMock.mockImplementation((args: string[]) => {
-      const selectorIndex = args.indexOf("--selector");
-      const selector = args[selectorIndex + 1] ?? "";
-      return selector.endsWith(retainedNonce)
-        ? { status: 0, output: "[]" }
-        : {
-            status: 0,
-            output:
-              args[0] === "policy"
-                ? "version: 1\nnetwork_policies: {}\n"
-                : "alpha Ready\nbeta Ready\n",
-          };
-    });
-    parseLiveSandboxNamesMock
-      .mockReturnValueOnce(new Set(["alpha"]))
-      .mockReturnValueOnce(new Set(["alpha", "beta"]));
-
-    await expect(
-      runSandboxSnapshot("alpha", { kind: "restore", to: "beta" }),
-    ).rejects.toMatchObject({
-      lines: expect.arrayContaining([
-        expect.stringContaining("OpenShell still reports the destination name"),
-      ]),
-    });
-
-    expect(streamSandboxCreateMock).not.toHaveBeenCalled();
-    expect(
-      vi
-        .mocked(runtime.runOpenshell)
-        .mock.calls.some(([args]) => args[0] === "sandbox" && args[1] === "delete"),
-    ).toBe(false);
-    expect(getSandboxMock("beta")).toMatchObject({ reservationSessionId: retainedNonce });
-
-    parseLiveSandboxNamesMock
-      .mockImplementation(() => new Set(["alpha"]))
-      .mockReturnValueOnce(new Set(["alpha"]))
-      .mockReturnValueOnce(new Set(["alpha"]));
-    let createSubmitted = false;
-    captureOpenshellMock.mockImplementation((args: string[]) => {
-      const selectorIndex = args.indexOf("--selector");
-      const selector = args[selectorIndex + 1] ?? "";
-      if (selector.endsWith(retainedNonce)) return { status: 0, output: "[]" };
-      if (selectorIndex >= 0) return defaultCaptureOpenshell(args);
-      return {
+  it.each([
+    ["a null receipt", null],
+    ["a legacy receipt without provenance", managedHostLocalReceipt()],
+  ])(
+    "retains an ordinary ambiguous clone with %s until label and name are absent",
+    async (_receiptState, sourceReceipt) => {
+      harness.entries.set("alpha", {
+        ...sourceEntry(),
+        hostLocalInferenceReceipt: sourceReceipt,
+      });
+      captureOpenshellMock.mockImplementation((args: string[]) => ({
         status: 0,
         output:
           args[0] === "policy"
             ? "version: 1\nnetwork_policies: {}\n"
-            : createSubmitted
-              ? "alpha Ready\nbeta Ready\nId: beta-runtime-id\n"
-              : "alpha Ready\n",
-      };
-    });
-    streamSandboxCreateMock.mockImplementationOnce(async () => {
-      createSubmitted = true;
-      return {
-        status: 0,
-        output: "created",
+            : args.includes("--selector")
+              ? "malformed selector output"
+              : "alpha Ready\nbeta Ready\n",
+      }));
+      streamSandboxCreateMock.mockResolvedValue({
+        status: 1,
+        output: "connection lost after submission",
         sawProgress: true,
         forcedReady: false,
-      };
-    });
-    restoreSandboxStateMock.mockReturnValue({
-      success: true,
-      restoredDirs: [],
-      restoredFiles: [],
-      failedDirs: [],
-      failedFiles: [],
-    });
+      });
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      vi.spyOn(console, "log").mockImplementation(() => {});
+      const { runSandboxSnapshot } = await import("./snapshot");
 
-    await expect(
-      runSandboxSnapshot("alpha", { kind: "restore", to: "beta" }),
-    ).resolves.toBeUndefined();
+      await expect(
+        runSandboxSnapshot("alpha", { kind: "restore", to: "beta" }),
+      ).rejects.toMatchObject({ exitCode: 1 });
 
-    expect(removeSandboxRouteReservationIfCurrentMock).toHaveBeenCalledWith(
-      expect.objectContaining({ reservationSessionId: retainedNonce }),
-    );
-    expect(streamSandboxCreateMock).toHaveBeenCalledOnce();
-    expect(registerSandboxMock).toHaveBeenCalledOnce();
-    expect(restoreSandboxStateMock).toHaveBeenCalledOnce();
-  });
+      const retainedNonce = String(getSandboxMock("beta")?.reservationSessionId ?? "");
+      expect(getSandboxMock("beta")).toMatchObject({
+        pendingRouteReservation: true,
+        reservationSessionId: expect.stringMatching(/^[0-9a-f]{62}$/u),
+        provider: "vllm-local",
+        model: "model-a",
+        hostLocalInferenceReceipt: sourceReceipt,
+      });
+      expect(getSandboxMock("beta")).not.toHaveProperty("hostLocalInferenceProvenance");
+      expect(reserveSandboxInferenceRouteMock).toHaveBeenCalledWith(
+        "beta",
+        expect.objectContaining({ reservationSessionId: retainedNonce }),
+        { requireAbsent: true },
+      );
+
+      streamSandboxCreateMock.mockClear();
+      const runtime = await import("../../adapters/openshell/runtime");
+      vi.mocked(runtime.runOpenshell).mockClear();
+      captureOpenshellMock.mockImplementation((args: string[]) => {
+        const selectorIndex = args.indexOf("--selector");
+        const selector = args[selectorIndex + 1] ?? "";
+        return selector.endsWith(retainedNonce)
+          ? { status: 0, output: "[]" }
+          : {
+              status: 0,
+              output:
+                args[0] === "policy"
+                  ? "version: 1\nnetwork_policies: {}\n"
+                  : "alpha Ready\nbeta Ready\n",
+            };
+      });
+      parseLiveSandboxNamesMock
+        .mockReturnValueOnce(new Set(["alpha"]))
+        .mockReturnValueOnce(new Set(["alpha", "beta"]));
+
+      await expect(
+        runSandboxSnapshot("alpha", { kind: "restore", to: "beta" }),
+      ).rejects.toMatchObject({
+        lines: expect.arrayContaining([
+          expect.stringContaining("OpenShell still reports the destination name"),
+        ]),
+      });
+
+      expect(streamSandboxCreateMock).not.toHaveBeenCalled();
+      expect(
+        vi
+          .mocked(runtime.runOpenshell)
+          .mock.calls.some(([args]) => args[0] === "sandbox" && args[1] === "delete"),
+      ).toBe(false);
+      expect(getSandboxMock("beta")).toMatchObject({ reservationSessionId: retainedNonce });
+
+      parseLiveSandboxNamesMock
+        .mockImplementation(() => new Set(["alpha"]))
+        .mockReturnValueOnce(new Set(["alpha"]))
+        .mockReturnValueOnce(new Set(["alpha"]));
+      let createSubmitted = false;
+      captureOpenshellMock.mockImplementation((args: string[]) => {
+        const selectorIndex = args.indexOf("--selector");
+        const selector = args[selectorIndex + 1] ?? "";
+        return selector.endsWith(retainedNonce)
+          ? { status: 0, output: "[]" }
+          : selectorIndex >= 0
+            ? defaultCaptureOpenshell(args)
+            : {
+                status: 0,
+                output:
+                  args[0] === "policy"
+                    ? "version: 1\nnetwork_policies: {}\n"
+                    : createSubmitted
+                      ? "alpha Ready\nbeta Ready\nId: beta-runtime-id\n"
+                      : "alpha Ready\n",
+              };
+      });
+      streamSandboxCreateMock.mockImplementationOnce(async () => {
+        createSubmitted = true;
+        return {
+          status: 0,
+          output: "created",
+          sawProgress: true,
+          forcedReady: false,
+        };
+      });
+      restoreSandboxStateMock.mockReturnValue({
+        success: true,
+        restoredDirs: [],
+        restoredFiles: [],
+        failedDirs: [],
+        failedFiles: [],
+      });
+
+      await expect(
+        runSandboxSnapshot("alpha", { kind: "restore", to: "beta" }),
+      ).resolves.toBeUndefined();
+
+      expect(removeSandboxRouteReservationIfCurrentMock).toHaveBeenCalledWith(
+        expect.objectContaining({ reservationSessionId: retainedNonce }),
+      );
+      expect(streamSandboxCreateMock).toHaveBeenCalledOnce();
+      expect(registerSandboxMock).toHaveBeenCalledOnce();
+      expect(restoreSandboxStateMock).toHaveBeenCalledOnce();
+    },
+  );
 
   it("releases an exact host-local clone reservation when auto-create rejects", async () => {
     const receipt = serializedLlamaCppHostLocalInferenceReceipt();

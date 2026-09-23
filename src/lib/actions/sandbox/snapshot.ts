@@ -505,9 +505,11 @@ async function autoCreateSandboxFromSource(
     gatewayPort: sourceAuthority.gatewayPort ?? undefined,
     openshellDriver: sourceAuthority.openshellDriver ?? undefined,
     reservationSessionId: createAttemptNonce,
+    ...(sourceAuthority.hostLocalInferenceReceipt !== undefined
+      ? { hostLocalInferenceReceipt: sourceAuthority.hostLocalInferenceReceipt }
+      : {}),
     ...(sourceAuthority.hostLocalInferenceProvenance
       ? {
-          hostLocalInferenceReceipt: sourceAuthority.hostLocalInferenceReceipt,
           hostLocalInferenceProvenance: sourceAuthority.hostLocalInferenceProvenance,
         }
       : {}),
