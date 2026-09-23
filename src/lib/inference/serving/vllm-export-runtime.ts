@@ -18,6 +18,7 @@ import type { ObservedManagedVllmRuntime } from "../../domain/config/export-evid
 import { buildVllmServeCommand } from "../vllm-models";
 import { buildLocalManagedVllmDockerEnv } from "../vllm-docker-env";
 import { isHostLocalInferenceServingRecipe } from "./adapter-registry";
+import { managedInferenceDigest } from "./catalog-integrity";
 import { loadManagedInferenceCatalog, loadServingCatalog } from "./catalog-loader";
 import { materializeHostLocalVllmModel } from "./host-local-vllm-selection";
 import {
@@ -151,7 +152,13 @@ function expectedRuntime(recorded: ServingProfileProvenance) {
     fail();
   const model = materializeHostLocalVllmModel(recipe, recipe.spec.serve.directInstall, "linux");
   if (model.maxModelLen !== EXPORTED_VLLM_CONTEXT_WINDOW) fail();
-  return { current, recipe, imageRef, command: buildVllmServeCommand(model, {}) };
+  return {
+    current,
+    recipe,
+    imageRef,
+    runtimeRecipeDigest: managedInferenceDigest(recipe),
+    command: buildVllmServeCommand(model, {}),
+  };
 }
 
 function containerFormat(
@@ -290,7 +297,7 @@ export function observeManagedVllmForExport(
       row.Config.Labels[HOST_LOCAL_VLLM_PRESET_LABEL] !== expected.current.preset.id ||
       row.Config.Labels[HOST_LOCAL_VLLM_PRESET_DIGEST_LABEL] !== expected.current.preset.digest ||
       row.Config.Labels[HOST_LOCAL_VLLM_RECIPE_LABEL] !== expected.current.recipe.id ||
-      row.Config.Labels[HOST_LOCAL_VLLM_RECIPE_DIGEST_LABEL] !== expected.current.recipe.digest
+      row.Config.Labels[HOST_LOCAL_VLLM_RECIPE_DIGEST_LABEL] !== expected.runtimeRecipeDigest
     )
       fail();
     const hostPort = Number(new URL(recovered.baseUrl).port);
