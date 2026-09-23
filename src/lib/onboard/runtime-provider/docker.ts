@@ -8,7 +8,10 @@ import {
   getGatewayConnectHost,
   parseGatewayBindAddress,
 } from "../../core/gateway-address";
-import { parseDockerDaemonObservation } from "../../domain/docker-host";
+import {
+  isDockerInfoResultReachable,
+  parseDockerDaemonObservation,
+} from "../../domain/docker-host";
 import {
   DOCKER_NETWORK_IPAM_INSPECT_FORMAT,
   parseDockerNetworkIpamEntries,
@@ -204,7 +207,7 @@ function oneLine(value = ""): string {
 function inspectDockerHost(deps: DockerRuntimeProviderDependencies): RuntimeProviderDoctorCheck {
   const result = deps.captureHostCommand("docker", ["info", "--format", "{{json .}}"], 8000);
   const observation = parseDockerDaemonObservation(result.stdout);
-  const reachable = result.status === 0 && observation.reachable;
+  const reachable = isDockerInfoResultReachable(result);
   return {
     group: "Host",
     label: "Docker daemon",

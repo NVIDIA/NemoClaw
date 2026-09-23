@@ -198,6 +198,30 @@ describe("startSandbox native lifecycle", () => {
     );
   });
 
+  it("retains stop intent and skips recovery after an uncertain OpenShell start (#11715)", async () => {
+    const mutation = vi.fn(async () => ({
+      kind: "failed" as const,
+      error: {
+        kind: "transport" as const,
+        reason: "unreachable" as const,
+        message: "OpenShell is unavailable.",
+      },
+    }));
+    const h = harness({ openShellLifecycle: { startSandbox: mutation, stopSandbox: vi.fn() } });
+    const before = structuredClone(h.getSandbox("my-sandbox"));
+
+    const result = await startSandbox("my-sandbox", h.deps);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.message).toContain("Sandbox state is unverified");
+    expect(mutation).toHaveBeenCalledOnce();
+    expect(h.getSandbox("my-sandbox")).toEqual(before);
+    expect(h.updateSandbox).not.toHaveBeenCalled();
+    expect(h.observer.listSandboxes).not.toHaveBeenCalled();
+    expect(h.verifyGateway).not.toHaveBeenCalled();
+    expect(h.recoverPortableSandbox).not.toHaveBeenCalled();
+  });
+
   it("uses recorded portable authority without standard OpenShell lifecycle dispatch", async () => {
     const h = harness();
     h.getSandbox.mockReturnValue(

@@ -59,6 +59,7 @@ describe("Docker runtime provider host doctor", () => {
 
   it.each([
     ["empty output", ""],
+    ["malformed JSON", "{"],
     ["zero-value JSON", JSON.stringify({ ServerVersion: "" })],
     [
       "daemon error JSON",

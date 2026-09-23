@@ -5,6 +5,7 @@ import {
   createSdkOpenShellSandboxStateLifecycle,
   type OpenShellSandboxStateLifecycle,
 } from "../../../adapters/openshell/sandbox-lifecycle-sdk";
+import { cliName } from "../../../onboard/branding";
 import type {
   RuntimeProviderLifecycleInput,
   RuntimeProviderLifecycleResult,
@@ -43,10 +44,31 @@ export async function mutateStandardSandboxLifecycle(
       ? await lifecycle.startSandbox(request)
       : await lifecycle.stopSandbox(request);
   if (result.kind === "failed") {
-    return {
-      exitCode: 1,
-      message: `  OpenShell could not ${action} sandbox '${input.sandboxName}': ${result.error.message}`,
-    };
+    const messages = [
+      `  OpenShell could not ${action} sandbox '${input.sandboxName}': ${result.error.message}`,
+    ];
+    if (
+      result.error.kind === "timeout" ||
+      (result.error.kind === "transport" && result.error.reason === "unreachable")
+    ) {
+      // A transport failure can occur after submission; never infer removal or retry a mutation.
+      messages.push(
+        "  Sandbox state is unverified; this failure does not prove the sandbox was removed.",
+        "  Preserve the sandbox; do not rebuild, destroy, or re-onboard it to resolve a connection failure.",
+      );
+      // Provider routing aliases VM to Docker; diagnostics must preserve the recorded driver.
+      const driver = input.sandbox.openshellDriver?.trim().toLowerCase();
+      if (!driver || driver === "docker") {
+        messages.push(
+          "  Run `docker info` on the owning gateway's host to inspect daemon, permission, context, or TLS errors.",
+        );
+      }
+      messages.push(
+        `  Restore access to OpenShell gateway '${request.target.gatewayName}'.`,
+        `  Then run \`${cliName()} ${input.sandboxName} status\` before retrying.`,
+      );
+    }
+    return { exitCode: 1, message: messages.join("\n") };
   }
   input.log(
     `  Sandbox '${input.sandboxName}' ${action === "start" ? "started" : "stopped"} through OpenShell.`,

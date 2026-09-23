@@ -65,6 +65,24 @@ export function isDockerDaemonReachable(rawOutput = ""): boolean {
   return parseDockerDaemonObservation(rawOutput).reachable;
 }
 
+/** Interpret the status and JSON output from `docker info --format '{{json .}}'`. */
+export function isDockerInfoResultReachable(result: {
+  readonly status: number | null;
+  readonly stdout?: unknown;
+}): boolean {
+  if (result.status !== 0) return false;
+  const stdout = Buffer.isBuffer(result.stdout)
+    ? result.stdout.toString("utf8")
+    : String(result.stdout ?? "");
+  if (!stdout.trim()) return false;
+  try {
+    JSON.parse(stdout);
+  } catch {
+    return false;
+  }
+  return parseDockerDaemonObservation(stdout).reachable;
+}
+
 /** Docker context names safe to resolve and reproduce in operator diagnostics. */
 const DOCKER_CONTEXT_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$/u;
 

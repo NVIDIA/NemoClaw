@@ -203,7 +203,7 @@ describe.concurrent("CLI sandbox status text output", () => {
       path.join(localBin, "docker"),
       [
         "#!/usr/bin/env bash",
-        'if [ "$1" = "info" ]; then echo "24.0.0"; exit 0; fi',
+        'if [ "$1" = "info" ]; then echo \'{"ServerVersion":"24.0.0"}\'; exit 0; fi',
         'if [ "$1" = "ps" ]; then echo "openshell-alpha"; exit 0; fi',
         'if [ "$1" = "exec" ]; then',
         "  echo 'oom_kill=1'",
@@ -337,7 +337,7 @@ describe.concurrent("CLI sandbox status text output", () => {
       path.join(localBin, "docker"),
       [
         "#!/usr/bin/env bash",
-        'if [ "$1" = "info" ]; then echo "Server: docker"; exit 0; fi',
+        'if [ "$1" = "info" ]; then echo \'{"ServerVersion":"24.0.0"}\'; exit 0; fi',
         'if [ "$1" = "ps" ] && [ "$2" = "-a" ]; then echo "openshell-alpha-7616dcb1"; exit 0; fi',
         'if [ "$1" = "ps" ]; then echo "openshell-cluster-nemoclaw"; exit 0; fi',
         "exit 0",
@@ -431,7 +431,7 @@ describe.concurrent("CLI sandbox status text output", () => {
         path.join(localBin, "docker"),
         [
           "#!/usr/bin/env bash",
-          'if [ "$1" = "info" ]; then echo "Server: docker"; exit 0; fi',
+          'if [ "$1" = "info" ]; then echo \'{"ServerVersion":"24.0.0"}\'; exit 0; fi',
           'if [ "$1" = "ps" ] && [ "$2" = "-a" ]; then echo "openshell-alpha-7616dcb1"; exit 0; fi',
           'if [ "$1" = "ps" ]; then echo "openshell-cluster-nemoclaw"; exit 0; fi',
           "exit 0",
@@ -645,7 +645,7 @@ describe.concurrent("CLI sandbox status text output", () => {
         path.join(localBin, "docker"),
         [
           "#!/usr/bin/env bash",
-          'if [ "$1" = "info" ]; then echo "24.0.0"; exit 0; fi',
+          'if [ "$1" = "info" ]; then echo \'{"ServerVersion":"24.0.0"}\'; exit 0; fi',
           `if [ "$1" = "stop" ]; then touch ${JSON.stringify(stoppedState)}; exit 0; fi`,
           'if [ "$1" = "ps" ]; then',
           `  if [ ! -f ${JSON.stringify(stoppedState)} ]; then echo "openshell-alpha-abc123"; exit 0; fi`,

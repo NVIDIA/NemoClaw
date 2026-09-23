@@ -1561,6 +1561,16 @@ $$nemoclaw my-assistant start
 
 `start` submits the lifecycle mutation through the owning OpenShell gateway, validates the returned immutable sandbox identity, and waits for that same sandbox to become ready. If the registered identity is missing or changed, or OpenShell no longer has the sandbox, the command fails without direct Docker or Podman fallback and points you to the appropriate recovery or rebuild action.
 
+If the OpenShell request is unreachable or times out, sandbox state remains unverified.
+The request might have reached OpenShell before the connection failed.
+This failure does not prove that Docker is stopped or the sandbox was removed.
+Preserve the sandbox; do not rebuild, destroy, or re-onboard it to resolve a connection failure.
+For a Docker-backed gateway, run `docker info` on the owning gateway's host to inspect the error before choosing a remedy.
+If Docker is stopped, follow [Docker is not running](troubleshooting#docker-is-not-running).
+If `docker info` reports a permission-denied error on Linux, follow [Docker permission denied on Linux](troubleshooting#docker-permission-denied-on-linux).
+For context or TLS errors, correct the reported Docker configuration.
+Restore access to the owning OpenShell gateway, then run `$$nemoclaw <name> status` before retrying `start`.
+
 <AgentOnly variant="openclaw,hermes">
   Before it repairs the gateway and host forwards, `start` waits for OpenShell to report the sandbox
   in the `Ready` or `Running` state, using the same `300`-second budget and
