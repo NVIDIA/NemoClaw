@@ -50,14 +50,6 @@ export function stageNonRootCustomOpenClawImageDockerfile(
   return dockerfile;
 }
 
-export async function whenCustomImage(
-  dockerfile: string | undefined,
-  verify: () => Promise<void>,
-): Promise<void> {
-  if (!dockerfile) return;
-  await verify();
-}
-
 export interface OpenClawPostSwitchInferenceAttempt {
   exitCode: number | null;
   httpStatus: string;

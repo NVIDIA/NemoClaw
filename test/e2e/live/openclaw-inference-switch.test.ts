@@ -63,7 +63,6 @@ import {
   mockBaselineInference,
   parseOpenClawGatewayModelRun,
   stageNonRootCustomOpenClawImageDockerfile,
-  whenCustomImage,
 } from "./openclaw-inference-switch-helpers.ts";
 import {
   PUBLIC_NVIDIA_SWITCH_MODEL,
@@ -470,8 +469,11 @@ async function prepareCompatibleAnthropicSwitchBinding(
   home: string,
   mockProvider: MockAnthropicProvider | undefined,
 ): Promise<CompatibleAnthropicSwitchBinding | null> {
-  if (SWITCH_PROVIDER !== "compatible-anthropic-endpoint") return null;
-  if (SWITCH_INFERENCE_API !== "anthropic-messages") return null;
+  if (
+    SWITCH_PROVIDER !== "compatible-anthropic-endpoint" ||
+    SWITCH_INFERENCE_API !== "anthropic-messages"
+  )
+    return null;
 
   const endpointUrl = process.env.NEMOCLAW_SWITCH_ENDPOINT_URL ?? mockProvider?.endpointUrl ?? "";
   const binding = compatibleAnthropicSwitchBinding(endpointUrl);
@@ -998,13 +1000,15 @@ test(
     );
 
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-switch-home-"));
-    const selectedImageCatalog = liveE2eManagedImageCatalog(process.env);
-    const customImageContract = selectedImageCatalog
-      ? readLiveE2eManagedImageCatalogContracts(selectedImageCatalog).get("openclaw")
-      : undefined;
+    const gatewayRuntime = process.env.NEMOCLAW_GATEWAY_RUNTIME ?? "docker";
     const customImageDockerfile =
-      (process.env.NEMOCLAW_GATEWAY_RUNTIME ?? "docker") === "docker" && customImageContract
-        ? stageNonRootCustomOpenClawImageDockerfile(home, customImageContract?.reference ?? "")
+      gatewayRuntime === "docker"
+        ? stageNonRootCustomOpenClawImageDockerfile(
+            home,
+            readLiveE2eManagedImageCatalogContracts(liveE2eManagedImageCatalog(process.env)!).get(
+              "openclaw",
+            )!.reference,
+          )
         : undefined;
     let mockProvider: MockAnthropicProvider | undefined;
     cleanup.trackDisposable(
@@ -1072,7 +1076,7 @@ test(
       skip("NVIDIA endpoint validation was unavailable/rate-limited during onboarding");
     }
     expect(install.exitCode, installText).toBe(0);
-    await whenCustomImage(customImageDockerfile, async () => {
+    if (customImageDockerfile) {
       const startupConfigResult = await sandbox.exec(
         SANDBOX_NAME,
         ["cat", "/sandbox/.openclaw/openclaw.json"],
@@ -1150,7 +1154,7 @@ test(
         },
       );
       expect(startupHash.exitCode, resultText(startupHash)).toBe(0);
-    });
+    }
     await proveMockBaselineAuthentication(baselineProvider, sandbox, home, artifacts);
 
     progress.phase("prepare the switched provider and endpoint");
@@ -1248,6 +1252,8 @@ test(
     await artifacts.target.complete({
       id: "openclaw-inference-switch",
       status: "passed",
+      gatewayRuntime,
+      customImageReconciliation: customImageDockerfile ? "passed" : "not-applicable",
       assertions: {
         runtimeProviderAvailable: true,
         installCompleted: install.exitCode === 0,
