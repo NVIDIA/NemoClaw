@@ -568,6 +568,10 @@ describe("sandbox inference route reservation", () => {
         reservationSessionId: "session-owner",
       });
 
+      const stale = registry.getSandbox("alpha")!;
+      registry.updateSandbox("alpha", { dashboardPort: 19876 });
+      expect(registry.finalizeSandboxRouteReservation("alpha", "session-owner", stale)).toBe(false);
+      expect(registry.getSandbox("alpha")?.dashboardPort).toBe(19876);
       expect(registry.finalizeSandboxRouteReservation("alpha", "session-other")).toBe(false);
       expect(registry.getSandbox("alpha")).toMatchObject({
         pendingRouteReservation: true,

@@ -99,6 +99,40 @@ describe("abandoned inference route reservation (#11051)", () => {
     ).toBe(true);
   });
 
+  it("releases a failed re-onboard reservation without removing the registered sandbox (#12278)", async () => {
+    await isolatedOnboardHome();
+    const registry = await import("../state/registry");
+    const { releaseAbandonedRouteReservation } = await import("./sandbox-lifecycle");
+    registry.registerSandbox({
+      name: SANDBOX,
+      ...ROUTE,
+      agent: "openclaw",
+      agentVersion: "2026.9.1",
+      dashboardPort: 18790,
+    });
+    await seedAbandonedReservation("session-from-failed-credential-validation");
+    const reserved = registry.getSandbox(SANDBOX)!;
+    const published = { ...reserved };
+    delete published.pendingRouteReservation;
+    await onboardingSessionUnderLock("session-of-this-fresh-run", "onboard --fresh");
+
+    expect(releaseAbandonedRouteReservation(SANDBOX)).toBe(true);
+    expect(registry.getSandbox(SANDBOX)).toEqual(published);
+    expect(
+      registry.reserveSandboxInferenceRoute(SANDBOX, {
+        ...ROUTE,
+        reservationSessionId: "session-of-this-fresh-run",
+      }),
+    ).toBe(true);
+    expect(registry.getSandbox(SANDBOX)).toMatchObject({
+      createdAt: reserved.createdAt,
+      agent: "openclaw",
+      agentVersion: "2026.9.1",
+      dashboardPort: 18790,
+      reservationSessionId: "session-of-this-fresh-run",
+    });
+  });
+
   it("keeps a reservation the running onboarding session already owns", async () => {
     await isolatedOnboardHome();
     await seedAbandonedReservation("session-of-this-fresh-run");

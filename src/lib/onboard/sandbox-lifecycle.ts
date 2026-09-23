@@ -29,7 +29,7 @@ export function removeSandboxUnlessSessionReservation(
 }
 
 /**
- * Release a route-only reservation that no live onboarding session owns.
+ * Release an abandoned inference reservation while retaining published sandbox data.
  *
  * `reserveSandboxInferenceRoute` refuses a pending reservation whose
  * `reservationSessionId` differs from the caller's and reports it as belonging
@@ -44,18 +44,27 @@ export function removeSandboxUnlessSessionReservation(
  * process holds it no other session can be reserving against this gateway, so
  * a foreign-session route-only row is abandoned rather than contended.
  *
- * The scope is deliberately narrow. Only a row with no `createdAt` is
- * considered, `removeSandboxRouteReservationIfCurrent` refuses one carrying a
- * verified create checkpoint, and its removal is an exact compare-and-delete of
- * the observed row, so a reservation that gains sandbox authority between the
- * read and the write survives.
+ * A failed re-onboard can also reserve an already registered sandbox. Clear
+ * only its pending marker; removing that row would lose its existing state.
+ * Both operations compare the complete observed row and reject verified create
+ * checkpoints, so a reservation that gains create authority survives.
  */
 export function releaseAbandonedRouteReservation(sandboxName: string): boolean {
   const entry = registry.getSandbox(sandboxName);
-  if (!entry || !registry.isRouteOnlySandboxReservation(entry)) return false;
+  if (!entry || entry.pendingRouteReservation !== true) return false;
   const session = onboardSession.loadSession();
   if (!session || !onboardSession.isOnboardLockHeldByCurrentProcess()) return false;
   if (registry.isPendingReservationForSession(entry, session.sessionId)) return false;
+  if (!registry.isRouteOnlySandboxReservation(entry)) {
+    if (typeof entry.createdAt !== "string" || !Number.isFinite(Date.parse(entry.createdAt))) {
+      return false;
+    }
+    return registry.finalizeSandboxRouteReservation(
+      sandboxName,
+      entry.reservationSessionId ?? "",
+      entry,
+    );
+  }
   return registry.removeSandboxRouteReservationIfCurrent(entry);
 }
 

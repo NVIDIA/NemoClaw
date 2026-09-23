@@ -832,11 +832,17 @@ export function removeSandboxRouteReservationIfCurrent(expected: SandboxEntry): 
 }
 
 /** Publish only the owning route transaction and retain its receipt for exact retries. */
-export function finalizeSandboxRouteReservation(name: string, sessionId: string): boolean {
+export function finalizeSandboxRouteReservation(
+  name: string,
+  sessionId: string,
+  expectedEntry?: SandboxEntry,
+): boolean {
+  const expectedSnapshot = expectedEntry ? structuredClone(expectedEntry) : undefined;
   return withLock(() => {
     const data = load();
     const current = data.sandboxes[name];
     if (!current || !sessionId || current.reservationSessionId !== sessionId) return false;
+    if (expectedSnapshot && !isDeepStrictEqual(current, expectedSnapshot)) return false;
     if (current.pendingRouteReservation !== true) return true;
     if (current.pendingCreateIdentity) return false;
     data.sandboxes[name] = {
