@@ -745,6 +745,32 @@ describe("Docker provider snapshot evidence", () => {
     );
   });
 
+  it("does not inspect lifecycle after runtime identity exhausts the shared deadline", () => {
+    const timeoutMs = 4_321;
+    let nowMs = 10_000;
+    const now = vi.spyOn(Date, "now").mockImplementation(() => nowMs);
+    const captureHostCommand = vi.fn();
+    const queryRuntimeSnapshot = vi.fn(() => {
+      nowMs += timeoutMs;
+      return dockerSnapshot();
+    });
+
+    try {
+      expect(() =>
+        observeDockerRuntimeSnapshot(
+          sandbox({ openshellDriver: "docker" }),
+          "docker",
+          { captureHostCommand, queryRuntimeSnapshot },
+          timeoutMs,
+        ),
+      ).toThrow(/runtime snapshot deadline expired/u);
+      expect(queryRuntimeSnapshot).toHaveBeenCalledWith("alpha", timeoutMs);
+      expect(captureHostCommand).not.toHaveBeenCalled();
+    } finally {
+      now.mockRestore();
+    }
+  });
+
   it.each([
     ["all", null],
     ["0", ["0"]],
