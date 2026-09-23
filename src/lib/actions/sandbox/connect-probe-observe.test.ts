@@ -500,6 +500,10 @@ describe("connectSandbox probe-only observe mode", () => {
       ["sandbox", "get", "-g", "nemoclaw-8245", "alpha"],
       expect.objectContaining({ ignoreError: true }),
     );
+    expect(harness.connectManagedOpenShellSdkSpy).toHaveBeenCalledWith(
+      { kind: "named", gatewayName: "nemoclaw-8245" },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
     expect(harness.captureOpenshellSpy).toHaveBeenCalledWith([
       "sandbox",
       "start",
