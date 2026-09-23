@@ -64,6 +64,7 @@ export const portableRetirementAuthority = requireDist(
 export const portableAgentLifecycle = requireDist(
   "../../onboard/experimental/portable-agent-lifecycle.js",
 );
+export const commandTransport = requireDist("../../adapters/sandbox/command-transport.js");
 export const processRecovery = requireDist("./process-recovery.js");
 export const openClawLifecycle = requireDist(
   "./runtime/openclaw-lifecycle.js",

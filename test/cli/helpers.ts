@@ -8,7 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
 
-import { SANDBOX_EXEC_STARTED_MARKER } from "../../src/lib/actions/sandbox/sandbox-exec-output";
+import { SANDBOX_EXEC_STARTED_MARKER } from "../../src/lib/adapters/sandbox/sandbox-exec-output";
 import type { OwnedTestResources } from "../helpers/owned-test-resources";
 import { execTimeout, testTimeout, testTimeoutOptions } from "../helpers/timeouts";
 

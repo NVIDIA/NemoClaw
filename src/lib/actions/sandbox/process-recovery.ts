@@ -17,19 +17,17 @@ import {
   selectedOpenShellGateway,
 } from "../../adapters/openshell/sandbox-observer";
 import {
-  buildOpenShellRuntimeSelectionEnv,
   captureOpenshell,
   OPENSHELL_PROBE_TIMEOUT_MS,
   type OpenShellRuntimeSelection,
   withSelectedOpenShellCommandOptions,
 } from "../../adapters/openshell/runtime";
 import {
-  type CommandTransportDependencies,
   DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
-  executeSandboxExecCommandTransport,
+  executeSandboxExecCommand,
+  buildSandboxCommandEnvironment,
   SandboxCommandTransportError,
   type SandboxCommandResult,
-  type SandboxExecCommandOptions,
 } from "../../adapters/sandbox/command-transport";
 import * as agentRuntime from "../../agent/runtime";
 import { G, R } from "../../cli/terminal-style";
@@ -45,7 +43,6 @@ import {
 } from "../../sandbox/privileged-exec";
 import { withSandboxLifecycleLock } from "./lifecycle/lock";
 import * as registry from "../../state/registry";
-import { buildSubprocessEnv } from "../../subprocess-env";
 import {
   ensureHermesDashboardPortForwardIfEnabled,
   ensureSandboxPortForward,
@@ -87,11 +84,6 @@ import {
   printGatewayWedgeDiagnostics,
   sanitizeWedgeLogLine,
 } from "./gateway-wedge-diagnostics";
-import { wrapOrdinarySandboxCommand } from "./runtime-env";
-import {
-  buildSandboxExecMarkedCommand,
-  extractSandboxExecCommandStdout,
-} from "./sandbox-exec-output";
 export type { SandboxForwardHealth } from "./forward-recovery";
 export { resolveSandboxDashboardPort, resolveSandboxLaunchForwardPorts } from "./forward-recovery";
 export {
@@ -122,13 +114,6 @@ export type RestartSandboxGatewayOptions = BaseRestartSandboxGatewayOptions & {
   runtimeSelection?: OpenShellRuntimeSelection;
 };
 
-export type { SandboxCommandResult, SandboxExecCommandOptions };
-
-export type SandboxExecCommandExecutionOptions = SandboxExecCommandOptions & {
-  commandExecutor?: OpenShellSandboxBufferedCommandExecutor;
-  runtimeSelection?: OpenShellRuntimeSelection;
-};
-
 type ProcessRecoveryProbeTiming = {
   measure<T>(stage: "processes" | "forward", operation: () => T): T;
   measureAsync<T>(stage: "processes" | "forward", operation: () => Promise<T>): Promise<T>;
@@ -136,25 +121,6 @@ type ProcessRecoveryProbeTiming = {
 };
 
 type Awaitable<T> = T | Promise<T>;
-
-function commandTransportDependencies(
-  commandExecutor: OpenShellSandboxBufferedCommandExecutor = createCliOpenShellSandboxCommandExecutor(
-    { hostCwd: ROOT },
-  ),
-): CommandTransportDependencies {
-  return {
-    buildSandboxExecMarkedCommand,
-    buildSubprocessEnv,
-    extractSandboxExecCommandStdout,
-    commandExecutor: {
-      runBuffered: (request) =>
-        commandExecutor.runBuffered({
-          ...request,
-          command: wrapOrdinarySandboxCommand(request.command),
-        }),
-    },
-  };
-}
 
 type AuxiliaryRecoveryResult = {
   label: string;
@@ -210,33 +176,6 @@ export function executePrivilegedSandboxCommand(
         stdout: result.stdout.toString("utf8"),
         stderr: result.stderr.toString("utf8"),
       };
-    },
-  );
-}
-
-export async function executeSandboxExecCommand(
-  sandboxName: string,
-  command: string,
-  timeout = DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
-  options: SandboxExecCommandExecutionOptions = {},
-): Promise<SandboxCommandResult | null> {
-  const { runtimeSelection, commandExecutor, ...transportOptions } = options;
-  const runtimeEnv = runtimeSelection
-    ? buildOpenShellRuntimeSelectionEnv(buildSubprocessEnv(), runtimeSelection)
-    : options.runtimeEnv;
-  return executeSandboxExecCommandTransport(
-    commandTransportDependencies(commandExecutor),
-    sandboxName,
-    command,
-    timeout,
-    {
-      ...transportOptions,
-      ...(runtimeSelection
-        ? {
-            gatewayName: runtimeSelection.gatewayName,
-          }
-        : {}),
-      ...(runtimeEnv ? { runtimeEnv } : {}),
     },
   );
 }
@@ -2065,9 +2004,7 @@ async function waitForRecreatedSandboxOpenShellReadyResult(
         ? namedOpenShellGateway(options.runtimeSelection.gatewayName)
         : selectedOpenShellGateway(),
       command: ["true"],
-      environment: options.runtimeSelection
-        ? buildOpenShellRuntimeSelectionEnv(buildSubprocessEnv(), options.runtimeSelection)
-        : buildSubprocessEnv(),
+      environment: buildSandboxCommandEnvironment(options.runtimeSelection),
       timeoutMilliseconds: Math.max(1, Math.min(OPENSHELL_PROBE_TIMEOUT_MS, remainingMs)),
     });
     if (result.outcome.kind === "completed" && result.outcome.exitCode === 0) {

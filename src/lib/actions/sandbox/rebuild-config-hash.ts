@@ -5,7 +5,7 @@ import { SandboxCommandTransportError } from "../../adapters/sandbox/command-tra
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime";
 import { R, YW } from "../../cli/terminal-style";
 import { redact } from "../../security/redact";
-import { executeSandboxExecCommand } from "./process-recovery";
+import { executeSandboxExecCommand } from "../../adapters/sandbox/command-transport";
 import {
   buildRefreshMutableOpenClawConfigHashCommand,
   buildVerifyMutableOpenClawConfigHashCommand,

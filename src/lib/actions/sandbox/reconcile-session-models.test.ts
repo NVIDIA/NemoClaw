@@ -20,7 +20,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { executeSandboxExecCommand } from "./process-recovery";
+import { executeSandboxExecCommand } from "../../adapters/sandbox/command-transport";
 import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import {
   buildSessionStoreReplaceCommand,
@@ -28,7 +28,10 @@ import {
   reconcileStalePinnedSessionModelsAfterRebuild,
 } from "./reconcile-session-models";
 
-vi.mock("./process-recovery", () => ({ executeSandboxExecCommand: vi.fn() }));
+vi.mock("../../adapters/sandbox/command-transport", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../adapters/sandbox/command-transport")>()),
+  executeSandboxExecCommand: vi.fn(),
+}));
 
 const executeSandboxCommandMock = vi.mocked(executeSandboxExecCommand);
 

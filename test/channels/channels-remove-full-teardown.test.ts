@@ -146,9 +146,9 @@ runner.runCapture = (command) => {
 const adapterRuntime = require(${j("adapters/openshell/runtime.js")});
 adapterRuntime.runOpenshell = () => ({ status: 0, stdout: "", stderr: "" });
 
-const processRecovery = require(${j("actions/sandbox/process-recovery.js")});
+const commandTransport = require(${j("adapters/sandbox/command-transport.js")});
 const sandboxExecCalls = [];
-processRecovery.executeSandboxExecCommand = (sandboxName, command) => {
+commandTransport.executeSandboxExecCommand = (sandboxName, command) => {
   sandboxExecCalls.push({ sandboxName, command });
   return ${JSON.stringify(sandboxExecResult)};
 };

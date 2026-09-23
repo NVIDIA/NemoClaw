@@ -64,8 +64,3 @@ export function wrapExecCommandWithRuntimeEnv(command: readonly string[]): strin
 export function wrapOpenClawAgentCommandWithRuntimeEnv(command: readonly string[]): string[] {
   return wrapExecCommand(command, SANDBOX_RUNTIME_ENV_OPENCLAW_AGENT_EXEC_SCRIPT);
 }
-
-/** Ordinary probes must not evaluate runtime-owned or sandbox-user-owned shell state. */
-export function wrapOrdinarySandboxCommand(command: readonly string[]): string[] {
-  return wrapExecCommand(command, `${SANDBOX_RUNTIME_ENV_UNSET_SENSITIVE}; builtin exec -- "$@"`);
-}

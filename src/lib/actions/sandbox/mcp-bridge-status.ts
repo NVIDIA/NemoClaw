@@ -55,7 +55,7 @@ import {
   validateSandboxName,
 } from "./mcp-bridge-validation";
 import { normalizeRecordedMcpServerUrl } from "./mcp-bridge/recorded-url";
-import { executeSandboxExecCommand } from "./process-recovery";
+import { executeSandboxExecCommand } from "../../adapters/sandbox/command-transport";
 
 export interface McpBridgeJsonSummary {
   sandbox: string;

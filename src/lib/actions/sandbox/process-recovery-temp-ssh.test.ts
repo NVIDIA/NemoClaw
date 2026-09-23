@@ -15,7 +15,7 @@ vi.mock("../../sandbox/privileged-exec", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../sandbox/privileged-exec")>()),
   executePrivilegedSandboxCommand,
 }));
-import { executeSandboxExecCommand } from "./process-recovery";
+import { executeSandboxExecCommand } from "../../adapters/sandbox/command-transport";
 
 describe("ordinary sandbox command execution", () => {
   beforeEach(() => {

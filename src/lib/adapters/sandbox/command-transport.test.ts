@@ -1,13 +1,21 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   OpenShellSandboxBufferedCommandCompletion,
   OpenShellSandboxBufferedCommandExecutor,
 } from "../openshell/sandbox-command";
 import { namedOpenShellGateway } from "../openshell/sandbox-observer";
-import { executeSandboxExecCommandTransport } from "./command-transport";
+import {
+  executeSandboxExecCommand,
+  wrapOrdinarySandboxCommand,
+  executeSandboxExecCommandTransport,
+} from "./command-transport";
 
 function fixture(
   completion: OpenShellSandboxBufferedCommandCompletion = {
@@ -118,5 +126,80 @@ describe("native sandbox command transport", () => {
     expect(
       deps.commandExecutor.runBuffered.mock.calls.map(([request]) => request.timeoutMilliseconds),
     ).toEqual([300, 60000]);
+  });
+});
+
+describe("wrapOrdinarySandboxCommand", () => {
+  it("does not evaluate sandbox-owned runtime state or expose the gateway token", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ordinary-env-"));
+    const runtimeEnv = path.join(root, "proxy-env.sh");
+    const executed = path.join(root, "runtime-script-executed");
+    const payload = "line one\nline two\r\nquote'and\"double";
+    fs.writeFileSync(runtimeEnv, 'printf "%s" "$OPENCLAW_GATEWAY_TOKEN" > "$ATTACK_MARKER"\n');
+    fs.chmodSync(runtimeEnv, 0o444);
+    const command = [
+      process.execPath,
+      "-e",
+      "process.stdout.write(JSON.stringify({ token: process.env.OPENCLAW_GATEWAY_TOKEN, proxy: process.env.HTTP_PROXY, argv: process.argv.slice(1) }))",
+      payload,
+    ];
+    // Map the production path into the isolated sandbox fixture. A regression
+    // that sources that path executes the hostile file and fails this test.
+    const wrapped = wrapOrdinarySandboxCommand(command).map((part) =>
+      part.replaceAll("/tmp/nemoclaw-proxy-env.sh", runtimeEnv),
+    );
+    try {
+      const result = spawnSync(wrapped[0], wrapped.slice(1), {
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          OPENCLAW_GATEWAY_TOKEN: "must-not-reach-runtime-file-or-child",
+          HTTP_PROXY: "http://10.200.0.1:3128",
+          BASH_ENV: runtimeEnv,
+          ATTACK_MARKER: executed,
+        },
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.existsSync(executed)).toBe(false);
+      expect(JSON.parse(result.stdout)).toEqual({
+        proxy: "http://10.200.0.1:3128",
+        argv: [payload],
+      });
+      expect(result.stderr).not.toContain("must-not-reach-runtime-file-or-child");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("ordinary sandbox command facade", () => {
+  it("selects the recorded runtime and wraps one execution without sourcing runtime state", async () => {
+    const runBuffered = vi.fn(async () => ({
+      outcome: { kind: "completed" as const, exitCode: 7 },
+      stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nremote output\n",
+      stderr: "diagnostic\n",
+    }));
+    await expect(
+      executeSandboxExecCommand("alpha", "printf hello", 2345, {
+        commandExecutor: { runBuffered },
+        runtimeSelection: { gatewayName: "recorded", workspace: "default" },
+        gatewayName: "conflicting",
+        runtimeEnv: { SHOULD_NOT_WIN: "yes" },
+        honorCallerTimeout: true,
+      }),
+    ).resolves.toEqual({ status: 7, stdout: "remote output", stderr: "diagnostic" });
+    expect(runBuffered).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        sandboxName: "alpha",
+        target: namedOpenShellGateway("recorded"),
+        timeoutMilliseconds: 2345,
+        command: wrapOrdinarySandboxCommand([
+          "sh",
+          "-c",
+          "printf '%s\\n' '__NEMOCLAW_SANDBOX_EXEC_STARTED__'; printf hello",
+        ]),
+        environment: expect.not.objectContaining({ SHOULD_NOT_WIN: "yes" }),
+      }),
+    );
   });
 });

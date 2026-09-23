@@ -10,9 +10,10 @@ import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import { buildDeepAgentsMcpRegisterCommand } from "./mcp-bridge-adapter-deepagents";
 import { restoreDeepAgentsNativeMcpConfig } from "./mcp-bridge-adapter-deepagents-registration";
 import { buildDeepAgentsMcpRuntimeKindCommand } from "./mcp-bridge-adapter-status";
-import { executeSandboxExecCommand } from "./process-recovery";
+import { executeSandboxExecCommand } from "../../adapters/sandbox/command-transport";
 
-vi.mock("./process-recovery", () => ({
+vi.mock("../../adapters/sandbox/command-transport", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../adapters/sandbox/command-transport")>()),
   executeSandboxExecCommand: vi.fn(),
 }));
 

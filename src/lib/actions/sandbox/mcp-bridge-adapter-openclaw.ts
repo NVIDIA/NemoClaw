@@ -26,7 +26,8 @@ import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
 import type { McpAttachedCredentialRevision } from "./mcp-bridge-provider-readiness";
 import { getAgentConfigDir } from "./mcp-bridge-state";
-import { executeSandboxExecCommand, restartSandboxGateway } from "./process-recovery";
+import { restartSandboxGateway } from "./process-recovery";
+import { executeSandboxExecCommand } from "../../adapters/sandbox/command-transport";
 
 export const MCPORTER_VERSION = "0.7.3";
 const OPENCLAW_NATIVE_MCP_PLUGIN_ID = "bundle-mcp";

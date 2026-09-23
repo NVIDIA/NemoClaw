@@ -8,7 +8,7 @@ import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime
 import { shellQuote } from "../../core/shell-quote";
 import { MANAGED_PROVIDER_ID } from "../../inference/config";
 import { isSafeModelId } from "../../validation";
-import { executeSandboxExecCommand } from "./process-recovery";
+import { executeSandboxExecCommand } from "../../adapters/sandbox/command-transport";
 import type { RebuildLog } from "./rebuild-credential-preflight";
 import { DEFAULT_AGENT_ID } from "./sessions/paths";
 

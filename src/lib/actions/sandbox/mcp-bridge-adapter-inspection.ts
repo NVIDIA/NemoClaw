@@ -6,11 +6,11 @@ import { SandboxCommandTransportError } from "../../adapters/sandbox/command-tra
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
+import { restartSandboxGateway } from "./process-recovery";
 import {
   executeSandboxExecCommand,
-  restartSandboxGateway,
   type SandboxCommandResult,
-} from "./process-recovery";
+} from "../../adapters/sandbox/command-transport";
 
 export type AdapterRegistrationInspection =
   | { state: "absent" | "registered" | "mismatch" }

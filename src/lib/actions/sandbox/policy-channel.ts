@@ -90,7 +90,7 @@ import { getSandboxTargetGatewayName } from "./gateway-target";
 import { ensureMessagingHostForwardAfterRebuild } from "./messaging-host-forward-lifecycle";
 import { policyChannelDependencies } from "./policy-channel-dependencies";
 import { refreshSandboxPolicyContextFile } from "./policy-context-refresh";
-import { executeSandboxExecCommand } from "./process-recovery";
+import { executeSandboxExecCommand } from "../../adapters/sandbox/command-transport";
 import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 
 const isNonInteractive = () => isNonInteractiveSession();

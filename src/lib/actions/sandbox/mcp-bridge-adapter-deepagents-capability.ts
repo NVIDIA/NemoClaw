@@ -4,7 +4,7 @@
 import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
-import { executeSandboxExecCommand } from "./process-recovery";
+import { executeSandboxExecCommand } from "../../adapters/sandbox/command-transport";
 
 const DEEPAGENTS_MCP_CAPABILITY_MARKER = "NEMOCLAW_DEEPAGENTS_MCP_CAPABILITY=3";
 const DEEPAGENTS_MCP_CAPABILITY_COMMAND =

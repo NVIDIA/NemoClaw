@@ -10,7 +10,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
-import * as processRecovery from "./process-recovery";
+import * as commandTransport from "../../adapters/sandbox/command-transport";
 import {
   refreshMutableOpenClawConfigHashAfterPostRestoreWrites,
   verifyFinalMutableOpenClawConfigHash,
@@ -40,7 +40,7 @@ describe("OpenClaw rebuild config hash target selection", () => {
   });
 
   it("refreshes the config hash on the selected target instead of the ambient target (#10514)", async () => {
-    const execute = vi.spyOn(processRecovery, "executeSandboxExecCommand").mockResolvedValue({
+    const execute = vi.spyOn(commandTransport, "executeSandboxExecCommand").mockResolvedValue({
       status: 0,
       stdout: "",
       stderr: "",
@@ -63,7 +63,7 @@ describe("OpenClaw rebuild config hash target selection", () => {
   });
 
   it("verifies the config hash on the selected target instead of the ambient target (#10514)", async () => {
-    const execute = vi.spyOn(processRecovery, "executeSandboxExecCommand").mockResolvedValue({
+    const execute = vi.spyOn(commandTransport, "executeSandboxExecCommand").mockResolvedValue({
       status: 0,
       stdout: "",
       stderr: "",
@@ -92,7 +92,7 @@ describe.each([
     "records %s as unverified without retrying",
     async (kind) => {
       const execute = vi
-        .spyOn(processRecovery, "executeSandboxExecCommand")
+        .spyOn(commandTransport, "executeSandboxExecCommand")
         .mockRejectedValue(new SandboxCommandTransportError(kind));
       const error = vi.spyOn(console, "error").mockImplementation(() => {});
       const log = vi.fn();
@@ -106,7 +106,7 @@ describe.each([
 
   it("preserves unexpected authority errors", async () => {
     const refusal = new Error("gateway authority refused");
-    vi.spyOn(processRecovery, "executeSandboxExecCommand").mockRejectedValue(refusal);
+    vi.spyOn(commandTransport, "executeSandboxExecCommand").mockRejectedValue(refusal);
     await expect(run("alpha", vi.fn(), runtimeSelection)).rejects.toBe(refusal);
   });
 });

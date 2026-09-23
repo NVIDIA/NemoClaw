@@ -16,12 +16,15 @@ const { DirectSandboxContainerNotFoundError, DirectSandboxFallbackUnavailableErr
   ) as typeof import("../../src/lib/onboard/runtime-provider/privileged-sandbox-control-errors.js");
 const {
   executeGatewaySupervisorAction,
-  executeSandboxExecCommand,
   resolveSandboxDashboardPort,
   waitForManagedGatewaySupervisor,
 } = requireSource(
   "../../src/lib/actions/sandbox/process-recovery.ts",
 ) as typeof import("../../src/lib/actions/sandbox/process-recovery.js");
+
+const { executeSandboxExecCommand } = requireSource(
+  "../../src/lib/adapters/sandbox/command-transport.ts",
+) as typeof import("../../src/lib/adapters/sandbox/command-transport.js");
 
 afterEach(() => {
   vi.restoreAllMocks();

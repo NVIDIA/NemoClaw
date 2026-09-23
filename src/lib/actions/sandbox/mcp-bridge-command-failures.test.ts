@@ -7,9 +7,12 @@ import { McpBridgeError, type McpSourceEntry } from "./mcp-bridge-contracts";
 import { inspectAgentMcpSources, removeLegacyAgentMcpEntry } from "./mcp-bridge-source";
 import { assertDeepAgentsMcpMutationRuntimeCapability } from "./mcp-bridge-adapter-deepagents-capability";
 import { registerOpenClawAdapter } from "./mcp-bridge-adapter-openclaw";
-import { executeSandboxExecCommand } from "./process-recovery";
+import { executeSandboxExecCommand } from "../../adapters/sandbox/command-transport";
 
-vi.mock("./process-recovery", () => ({ executeSandboxExecCommand: vi.fn() }));
+vi.mock("../../adapters/sandbox/command-transport", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../adapters/sandbox/command-transport")>()),
+  executeSandboxExecCommand: vi.fn(),
+}));
 vi.mock("../../sandbox/config", () => ({
   resolveAgentConfig: () => ({
     agentName: "openclaw",

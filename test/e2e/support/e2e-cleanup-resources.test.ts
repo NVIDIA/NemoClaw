@@ -42,6 +42,22 @@ describe("cleanup resources", () => {
     }
   });
 
+  it("disposes an installer workspace when fixture initialization fails immediately", async () => {
+    const cleanup = new CleanupRegistry();
+    let home = "";
+    try {
+      home = createPublicInstallWorkspace(cleanup);
+      throw new Error("fixture initialization failed");
+    } catch (error) {
+      expect(error).toEqual(new Error("fixture initialization failed"));
+      expect(path.dirname(home)).toBe(os.userInfo().homedir);
+      expect(fs.existsSync(home)).toBe(true);
+    } finally {
+      expect((await cleanup.runAll()).failures).toEqual([]);
+    }
+    expect(fs.existsSync(home)).toBe(false);
+  });
+
   it("tears down acquired resources in reverse order", async () => {
     const calls: string[] = [];
     const host: CleanupHost = {

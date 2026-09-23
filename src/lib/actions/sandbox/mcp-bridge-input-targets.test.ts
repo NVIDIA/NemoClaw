@@ -173,6 +173,7 @@ const adapters = require("./src/lib/actions/sandbox/mcp-bridge-adapters.js");
 const policy = require("./src/lib/actions/sandbox/mcp-bridge-policy.js");
 const provider = require("./src/lib/actions/sandbox/mcp-bridge-provider.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
+const commandTransport = require("./src/lib/adapters/sandbox/command-transport.js");
 const state = require("./src/lib/actions/sandbox/mcp-bridge-state.js");
 const sourceState = require("./src/lib/actions/sandbox/mcp-bridge-source.js");
 const validation = require("./src/lib/actions/sandbox/mcp-bridge-validation.js");
@@ -205,12 +206,12 @@ replace(provider, "attachProvider", () => {});
 replace(provider, "refreshMcpProviderEnvironment", () => {});
 replace(provider, "observeMcpCredentialRevision", () => "v1");
 replace(provider, "waitForAttachedMcpCredential", () => "v1");
-replace(processRecovery, "executeSandboxExecCommand", (_sandbox, command) => ({
+replace(commandTransport, "executeSandboxExecCommand", (_sandbox, command) => ({
   status: 0,
   stdout: command === "command -v mcporter" ? "/usr/bin/mcporter\\n" : command.includes('"config", "get"') ? "registered\\n" : "",
   stderr: "",
 }));
-replace(processRecovery, "executeSandboxExecCommand", () => ({
+replace(commandTransport, "executeSandboxExecCommand", () => ({
   status: 0,
   stdout: "v1\\n",
   stderr: "",
@@ -416,6 +417,7 @@ const sourceState = require("./src/lib/actions/sandbox/mcp-bridge-source.js");
 const bridgeState = require("./src/lib/actions/sandbox/mcp-bridge-state.js");
 const validation = require("./src/lib/actions/sandbox/mcp-bridge-validation.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
+const commandTransport = require("./src/lib/adapters/sandbox/command-transport.js");
 const entry = () => ({
   server: "github", agent: "openclaw", adapter: "openclaw-config",
   url: "https://8.8.8.8/mcp", env: ["GITHUB_TOKEN"],

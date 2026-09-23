@@ -1,5 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+
+import * as commandTransport from "../../src/lib/adapters/sandbox/command-transport";
 //
 // Bridge-provider lifecycle on the DIRECT `channels add` path (#6120): a
 // bridge-backed channel (googlechat) declares no manifest credentials, so the
@@ -18,7 +20,6 @@ import {
   stopSandboxChannel,
 } from "../../src/lib/actions/sandbox/policy-channel";
 import { policyChannelDependencies } from "../../src/lib/actions/sandbox/policy-channel-dependencies";
-import * as processRecovery from "../../src/lib/actions/sandbox/process-recovery";
 import * as runtime from "../../src/lib/adapters/openshell/runtime";
 import * as store from "../../src/lib/credentials/store";
 import * as gatewayRuntime from "../../src/lib/gateway-runtime-action";
@@ -361,12 +362,12 @@ beforeEach(() => {
     attempted: false,
   });
 
-  vi.spyOn(processRecovery, "executeSandboxExecCommand").mockResolvedValue({
+  vi.spyOn(commandTransport, "executeSandboxExecCommand").mockResolvedValue({
     status: 0,
     stdout: "",
     stderr: "",
   });
-  vi.spyOn(processRecovery, "executeSandboxExecCommand").mockResolvedValue(null);
+  vi.spyOn(commandTransport, "executeSandboxExecCommand").mockResolvedValue(null);
 });
 
 afterEach(() => {

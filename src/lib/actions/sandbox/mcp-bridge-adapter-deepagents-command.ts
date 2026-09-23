@@ -8,7 +8,7 @@ import type { AdapterMutationOptions } from "./mcp-bridge-adapter-inspection";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
-import { executeSandboxExecCommand } from "./process-recovery";
+import { executeSandboxExecCommand } from "../../adapters/sandbox/command-transport";
 
 export async function runDeepAgentsAdapterCommand(
   sandboxName: string,

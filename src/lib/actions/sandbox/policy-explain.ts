@@ -51,7 +51,7 @@ export interface WritePolicyContextResult {
   reason?: string;
   /**
    * Set to `unexpected-loader` when the executor loader caught an
-   * import/resolve error (cycle, missing module, process-recovery
+   * import/resolve error (cycle, missing module, command-transport
    * regression). Callers use this to distinguish a legitimate
    * `sandbox unreachable` from a code regression that needs surfacing.
    */
@@ -86,12 +86,12 @@ type ExecutorLoad =
  *   OpenShell; treat as `sandbox unreachable` and warn at most once per
  *   call site at the caller's discretion.
  * - `crashed`: require/resolve threw. Either an import cycle, a missing
- *   module, or a process-recovery regression. Callers must route this
+ *   module, or a command-transport regression. Callers must route this
  *   through the refresh helper's `unexpected` sink so a code regression
  *   is not silently treated as `sandbox unreachable`.
  *
  * Once the loader returns `ok`, ownership of the actual subprocess call
- * lives in `process-recovery`'s {@link executeSandboxExecCommand}, which is
+ * lives in `command-transport`'s {@link executeSandboxExecCommand}, which is
  * the single native OpenShell command path.
  */
 function loadExecutor(): ExecutorLoad {
@@ -102,10 +102,10 @@ function loadExecutor(): ExecutorLoad {
     };
     const resolved = resolve.resolveOpenshell ? resolve.resolveOpenshell() : null;
     if (!resolved) return { kind: "no-runtime" };
-    const recovery = require("./process-recovery") as {
+    const transport = require("../../adapters/sandbox/command-transport") as {
       executeSandboxExecCommand: SandboxExec;
     };
-    return { kind: "ok", exec: recovery.executeSandboxExecCommand };
+    return { kind: "ok", exec: transport.executeSandboxExecCommand };
   } catch (error: unknown) {
     return {
       kind: "crashed",

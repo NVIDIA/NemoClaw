@@ -43,6 +43,7 @@ import {
   policyState,
   portableRetirementAuthority,
   processRecovery,
+  commandTransport,
   providerCommand,
   purgeRebuildModule,
   type RebuildFlowHarness,
@@ -928,7 +929,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       return removed;
     });
   const executeSandboxExecCommandSpy = vi
-    .spyOn(processRecovery, "executeSandboxExecCommand")
+    .spyOn(commandTransport, "executeSandboxExecCommand")
     .mockImplementation(async () =>
       (
         overrides.executeSandboxExecCommand ??

@@ -12,7 +12,7 @@ import {
   assertPersistedAuthenticatedBridgeEntry,
   validateMcpCredentialEnvName,
 } from "./mcp-bridge-validation";
-import { executeSandboxExecCommand } from "./process-recovery";
+import { executeSandboxExecCommand } from "../../adapters/sandbox/command-transport";
 
 const MCP_CREDENTIAL_REVISION_OBSERVATION_RE = /^(?:absent|canonical|v[0-9]{1,20}|s[a-f0-9]{64})$/;
 

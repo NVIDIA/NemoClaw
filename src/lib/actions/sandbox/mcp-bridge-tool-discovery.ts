@@ -19,12 +19,15 @@ import {
   wrapMcpRuntimeCommand,
 } from "./mcp-bridge-runtime-command";
 import { normalizeRecordedMcpServerUrl } from "./mcp-bridge/recorded-url";
-import { executeSandboxExecCommand, type SandboxCommandResult } from "./process-recovery";
+import {
+  executeSandboxExecCommand,
+  type SandboxCommandResult,
+} from "../../adapters/sandbox/command-transport";
 import {
   buildSandboxExecMarkedCommand,
   createSandboxExecMarker,
   extractSandboxExecCommandStdoutFromStreams,
-} from "./sandbox-exec-output";
+} from "../../adapters/sandbox/sandbox-exec-output";
 import { buildTrustedProxyEnvSourceShell } from "./trusted-proxy-env";
 
 export const MCP_TOOL_DISCOVERY_RUNTIME_PATH =

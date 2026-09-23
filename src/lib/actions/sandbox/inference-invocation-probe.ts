@@ -33,7 +33,7 @@ import {
   executeSandboxExecCommand,
   type SandboxCommandResult,
   type SandboxExecCommandOptions,
-} from "./process-recovery";
+} from "../../adapters/sandbox/command-transport";
 import { DCODE_AGENT_NAME } from "./rebuild-dcode-target";
 
 export type SandboxInferenceInvocationInput = {

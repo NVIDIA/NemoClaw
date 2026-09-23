@@ -22,7 +22,7 @@ import {
   inspectMcpProvider,
   type McpProviderInspectionRuntimeSelection,
 } from "./mcp-bridge-provider-inspection";
-import { executeSandboxExecCommand } from "./process-recovery";
+import { executeSandboxExecCommand } from "../../adapters/sandbox/command-transport";
 import { quoteMcpBridgeShellArg } from "./mcp-bridge-runtime-command";
 import { redactBridgeFailureForDisplay } from "./mcp-bridge-output";
 import { buildMcpBridgeProviderName, normalizeMcpDenyTools } from "./mcp-bridge-validation";

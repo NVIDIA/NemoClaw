@@ -184,7 +184,7 @@ describe("native gateway inspection failure", () => {
     const registry = requireSource("../../src/lib/state/registry.js");
     vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue(null);
     vi.spyOn(registry, "getSandbox").mockReturnValue({ name: "alpha", agent: "openclaw" });
-    return vi.spyOn(transport, "executeSandboxExecCommandTransport").mockRejectedValue(error);
+    return vi.spyOn(transport, "executeSandboxExecCommand").mockRejectedValue(error);
   }
 
   it.each(["cancelled", "timeout", "capture", "invocation", "unavailable", "malformed"] as const)(

@@ -50,7 +50,7 @@ const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
 const providerInspection = require("./src/lib/actions/sandbox/mcp-bridge-provider-inspection.js");
 const policies = require("./src/lib/policy/index.js");
-const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
+const commandTransport = require("./src/lib/adapters/sandbox/command-transport.js");
 const sourceState = require("./src/lib/actions/sandbox/mcp-bridge-source.js");
 gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
   recovered: true,
@@ -171,7 +171,7 @@ let executeAdapterCommand = async (sandboxName, command) => {
     stderr: "",
   };
 };
-processRecovery.executeSandboxExecCommand = async (sandboxName, command) =>
+commandTransport.executeSandboxExecCommand = async (sandboxName, command) =>
   command.includes('valid_placeholder "$value" || exit 1')
     ? observeCredential()
     : executeAdapterCommand(sandboxName, command);

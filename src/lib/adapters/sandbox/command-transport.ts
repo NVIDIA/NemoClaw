@@ -7,6 +7,18 @@ import type {
 } from "../openshell/sandbox-command";
 import { namedOpenShellGateway, selectedOpenShellGateway } from "../openshell/sandbox-observer";
 
+import { createCliOpenShellSandboxCommandExecutor } from "../openshell/sandbox-command-cli";
+import {
+  buildOpenShellRuntimeSelectionEnv,
+  type OpenShellRuntimeSelection,
+} from "../openshell/runtime-selection";
+import { REPOSITORY_ROOT } from "../../core/repository-root";
+import { buildSubprocessEnv } from "../../subprocess-env";
+import {
+  buildSandboxExecMarkedCommand,
+  extractSandboxExecCommandStdout,
+} from "./sandbox-exec-output";
+
 export type SandboxCommandResult = {
   status: number;
   stdout: string;
@@ -63,4 +75,77 @@ export async function executeSandboxExecCommandTransport(
   const stdout = deps.extractSandboxExecCommandStdout(completed.stdout);
   if (stdout === null) throw new SandboxCommandTransportError("malformed");
   return { status: completed.outcome.exitCode, stdout, stderr: completed.stderr.trim() };
+}
+
+export type SandboxExecCommandExecutionOptions = SandboxExecCommandOptions & {
+  commandExecutor?: OpenShellSandboxBufferedCommandExecutor;
+  runtimeSelection?: OpenShellRuntimeSelection;
+};
+
+/** Ordinary probes must not evaluate runtime-owned or sandbox-user-owned shell state. */
+export function wrapOrdinarySandboxCommand(command: readonly string[]): string[] {
+  return [
+    "/bin/bash",
+    "--noprofile",
+    "--norc",
+    "-p",
+    "-c",
+    'builtin unset OPENCLAW_GATEWAY_TOKEN; builtin exec -- "$@"',
+    "nemoclaw-runtime-env",
+    ...command,
+  ];
+}
+
+function commandTransportDependencies(
+  commandExecutor: OpenShellSandboxBufferedCommandExecutor = createCliOpenShellSandboxCommandExecutor(
+    { hostCwd: REPOSITORY_ROOT },
+  ),
+): CommandTransportDependencies {
+  return {
+    buildSandboxExecMarkedCommand,
+    buildSubprocessEnv,
+    extractSandboxExecCommandStdout,
+    commandExecutor: {
+      runBuffered: (request) =>
+        commandExecutor.runBuffered({
+          ...request,
+          command: wrapOrdinarySandboxCommand(request.command),
+        }),
+    },
+  };
+}
+
+/** Apply the same filtered environment and recorded runtime to native sandbox probes. */
+export function buildSandboxCommandEnvironment(
+  runtimeSelection?: OpenShellRuntimeSelection,
+  runtimeEnv?: NodeJS.ProcessEnv,
+): NodeJS.ProcessEnv {
+  return runtimeSelection
+    ? buildOpenShellRuntimeSelectionEnv(buildSubprocessEnv(), runtimeSelection)
+    : (runtimeEnv ?? buildSubprocessEnv());
+}
+
+export async function executeSandboxExecCommand(
+  sandboxName: string,
+  command: string,
+  timeout = DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
+  options: SandboxExecCommandExecutionOptions = {},
+): Promise<SandboxCommandResult | null> {
+  const { runtimeSelection, commandExecutor, ...transportOptions } = options;
+  const runtimeEnv = buildSandboxCommandEnvironment(runtimeSelection, options.runtimeEnv);
+  return executeSandboxExecCommandTransport(
+    commandTransportDependencies(commandExecutor),
+    sandboxName,
+    command,
+    timeout,
+    {
+      ...transportOptions,
+      ...(runtimeSelection
+        ? {
+            gatewayName: runtimeSelection.gatewayName,
+          }
+        : {}),
+      ...(runtimeEnv ? { runtimeEnv } : {}),
+    },
+  );
 }

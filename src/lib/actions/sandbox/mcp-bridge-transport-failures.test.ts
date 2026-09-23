@@ -10,7 +10,8 @@ import { probeCredentialResolution } from "./mcp-bridge-resolution-probe";
 import { discoverMcpTools } from "./mcp-bridge-tool-discovery";
 
 const mocks = vi.hoisted(() => ({ executeSandboxExecCommand: vi.fn() }));
-vi.mock("./process-recovery", () => ({
+vi.mock("../../adapters/sandbox/command-transport", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../adapters/sandbox/command-transport")>()),
   executeSandboxExecCommand: mocks.executeSandboxExecCommand,
 }));
 
