@@ -19,6 +19,8 @@ const ROUTE = {
   gatewayName: GATEWAY,
 };
 
+const freshRoute = { ...ROUTE, reservationSessionId: "session-of-this-fresh-run" };
+
 const createdHomes: string[] = [];
 const heldLockModules: (typeof import("../state/onboard-session"))[] = [];
 
@@ -48,6 +50,7 @@ async function onboardingSessionUnderLock(
   sessionId: string,
   command: string,
   gatewayName = GATEWAY,
+  gatewayPort = gatewayName === GATEWAY ? 18789 : 18790,
 ): Promise<void> {
   const onboardSession = await import("../state/onboard-session");
   heldLockModules.push(onboardSession);
@@ -56,7 +59,7 @@ async function onboardingSessionUnderLock(
   const { bindGatewayAuthorityToCheckpoint } = await import("./gateway-authority-checkpoint");
   bindGatewayAuthorityToCheckpoint(session, {
     gatewayName,
-    gatewayPort: gatewayName === GATEWAY ? 18789 : 18790,
+    gatewayPort,
     mode: "nemoclaw-managed",
     source: "standalone",
     endpoint: null,
@@ -105,7 +108,7 @@ describe("abandoned inference route reservation (#11051)", () => {
     const { releaseAbandonedRouteReservation } = await import("./sandbox-lifecycle");
     await onboardingSessionUnderLock("session-of-this-fresh-run", "onboard --fresh");
 
-    expect(releaseAbandonedRouteReservation(SANDBOX)).toBe(true);
+    expect(releaseAbandonedRouteReservation(SANDBOX, freshRoute)).toBe(true);
     expect(registry.getSandbox(SANDBOX)).toBeNull();
     expect(
       registry.reserveSandboxInferenceRoute(SANDBOX, {
@@ -128,12 +131,12 @@ describe("abandoned inference route reservation (#11051)", () => {
     });
     await seedAbandonedReservation("session-from-failed-credential-validation");
     const reserved = registry.getSandbox(SANDBOX)!;
-    const published = { ...reserved };
-    delete published.pendingRouteReservation;
+    const reclaimed = { ...reserved, reservationSessionId: "session-of-this-fresh-run" };
     await onboardingSessionUnderLock("session-of-this-fresh-run", "onboard --fresh");
 
-    expect(releaseAbandonedRouteReservation(SANDBOX)).toBe(true);
-    expect(registry.getSandbox(SANDBOX)).toEqual(published);
+    expect(releaseAbandonedRouteReservation(SANDBOX, freshRoute)).toBe(true);
+    expect(registry.getSandbox(SANDBOX)).toEqual(reclaimed);
+    expect(registry.getDefault()).toBeNull();
     expect(
       registry.reserveSandboxInferenceRoute(SANDBOX, {
         ...ROUTE,
@@ -158,9 +161,129 @@ describe("abandoned inference route reservation (#11051)", () => {
     const reserved = registry.getSandbox(SANDBOX);
     await onboardingSessionUnderLock("current-session", "onboard --fresh", "nemoclaw-18790");
 
-    expect(releaseAbandonedRouteReservation(SANDBOX)).toBe(false);
+    expect(
+      releaseAbandonedRouteReservation(SANDBOX, {
+        ...freshRoute,
+        reservationSessionId: "current-session",
+      }),
+    ).toBe(false);
     expect(registry.getSandbox(SANDBOX)).toEqual(reserved);
   });
+
+  it.each([
+    { recordedPort: 18789, checkpointPort: 18790 },
+    { recordedPort: 18790, checkpointPort: 18789 },
+  ])(
+    "preserves mismatched recorded/checkpoint ports $recordedPort/$checkpointPort",
+    async ({ recordedPort, checkpointPort }) => {
+      await isolatedOnboardHome();
+      const registry = await import("../state/registry");
+      const { releaseAbandonedRouteReservation } = await import("./sandbox-lifecycle");
+      registry.registerSandbox({
+        name: SANDBOX,
+        ...ROUTE,
+        gatewayPort: recordedPort,
+        agent: "openclaw",
+      });
+      await seedAbandonedReservation("prior-session");
+      const reserved = registry.getSandbox(SANDBOX);
+      await onboardingSessionUnderLock(
+        "current-session",
+        "onboard --fresh",
+        GATEWAY,
+        checkpointPort,
+      );
+      expect(
+        releaseAbandonedRouteReservation(SANDBOX, {
+          ...freshRoute,
+          reservationSessionId: "current-session",
+        }),
+      ).toBe(false);
+      expect(registry.getSandbox(SANDBOX)).toEqual(reserved);
+    },
+  );
+
+  it("reclaims a published reservation through the real setup-inference caller", async () => {
+    await isolatedOnboardHome();
+    const registry = await import("../state/registry");
+    const { createSetupInference } = await import("./setup-inference");
+    const route = {
+      ...ROUTE,
+      provider: "router-test",
+      endpointUrl: "http://router.test/v1",
+      credentialEnv: "ROUTER_KEY",
+    };
+    registry.registerSandbox({
+      name: SANDBOX,
+      ...route,
+      gatewayPort: 18789,
+      agent: "openclaw",
+      dashboardPort: 18790,
+    });
+    registry.reserveSandboxInferenceRoute(SANDBOX, { ...route, reservationSessionId: "abandoned" });
+    const previous = registry.getSandbox(SANDBOX)!;
+    await onboardingSessionUnderLock("current-session", "onboard --fresh");
+    const locked = async <T>(_key: string | number, operation: () => Promise<T> | T) =>
+      await operation();
+    const setup = createSetupInference({
+      checkGatewayRouteCompatibility: () => ({ ok: true }),
+      withSandboxMutationLock: locked,
+      withGatewayRouteMutationLock: locked,
+      withModelRouterPortLifecycleLock: locked,
+      getModelRouterPort: () => 4000,
+      step: vi.fn(),
+      getGatewayName: () => GATEWAY,
+      runOpenshell: () => ({ status: 0 }),
+      updateSandbox: registry.reserveSandboxInferenceRoute,
+      upsertProvider: () => ({ ok: true }),
+      verifyInferenceRoute: vi.fn(),
+      verifyOnboardInferenceSmoke: vi.fn(),
+      isNonInteractive: () => true,
+      hermesProviderAuth: { HERMES_PROVIDER_NAME: "hermes-provider" },
+      isRoutedInferenceProvider: () => true,
+      reconcileModelRouter: async () => undefined,
+      routedInference: {
+        upsertRoutedProvider: () => ({
+          ok: true,
+          endpointUrl: route.endpointUrl,
+          result: { ok: true },
+        }),
+      },
+      hydrateCredentialEnv: () => "fixture-key",
+      redact: (value: string) => value,
+      compactText: (value: string) => value,
+      log: vi.fn(),
+      error: vi.fn(),
+      exitProcess: (code: number): never => {
+        throw new Error(`exit ${code}`);
+      },
+    } as unknown as import("./setup-inference").SetupInferenceDeps);
+    await expect(
+      setup(
+        SANDBOX,
+        route.model,
+        route.provider,
+        route.endpointUrl,
+        route.credentialEnv,
+        null,
+        [],
+        {
+          skipHostInferenceSmoke: true,
+          reservationSessionId: "current-session",
+          revalidateSandboxIdentity: () => undefined,
+        },
+      ),
+    ).resolves.toEqual({ ok: true });
+    expect(registry.getSandbox(SANDBOX)).toMatchObject({
+      createdAt: previous.createdAt,
+      agent: "openclaw",
+      dashboardPort: 18790,
+      gatewayName: GATEWAY,
+      gatewayPort: 18789,
+      reservationSessionId: "current-session",
+      pendingRouteReservation: true,
+    });
+  }, 15000);
 
   it("keeps a reservation the running onboarding session already owns", async () => {
     await isolatedOnboardHome();
@@ -169,7 +292,7 @@ describe("abandoned inference route reservation (#11051)", () => {
     const { releaseAbandonedRouteReservation } = await import("./sandbox-lifecycle");
     await onboardingSessionUnderLock("session-of-this-fresh-run", "onboard --resume");
 
-    expect(releaseAbandonedRouteReservation(SANDBOX)).toBe(false);
+    expect(releaseAbandonedRouteReservation(SANDBOX, freshRoute)).toBe(false);
     expect(registry.getSandbox(SANDBOX)).toMatchObject({
       name: SANDBOX,
       reservationSessionId: "session-of-this-fresh-run",
@@ -187,7 +310,7 @@ describe("abandoned inference route reservation (#11051)", () => {
     );
 
     expect(onboardSession.isOnboardLockHeldByCurrentProcess()).toBe(false);
-    expect(releaseAbandonedRouteReservation(SANDBOX)).toBe(false);
+    expect(releaseAbandonedRouteReservation(SANDBOX, freshRoute)).toBe(false);
     expect(registry.getSandbox(SANDBOX)).toMatchObject({
       name: SANDBOX,
       reservationSessionId: "session-from-an-abandoned-run",
@@ -202,7 +325,7 @@ describe("abandoned inference route reservation (#11051)", () => {
     registry.finalizeSandboxRouteReservation(SANDBOX, "session-from-an-abandoned-run");
     await onboardingSessionUnderLock("session-of-this-fresh-run", "onboard --fresh");
 
-    expect(releaseAbandonedRouteReservation(SANDBOX)).toBe(false);
+    expect(releaseAbandonedRouteReservation(SANDBOX, freshRoute)).toBe(false);
     expect(registry.getSandbox(SANDBOX)).toMatchObject({ name: SANDBOX });
   });
 });

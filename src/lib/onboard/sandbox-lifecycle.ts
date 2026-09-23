@@ -4,6 +4,7 @@
 import * as onboardSession from "../state/onboard-session";
 import type { SandboxEntry } from "../state/registry";
 import * as registry from "../state/registry";
+import { registryEntryGatewayPort } from "../state/gateway-registry";
 import type { SelectionDrift } from "./selection-drift";
 
 export function removeSandboxUnlessSessionReservation(
@@ -44,12 +45,16 @@ export function removeSandboxUnlessSessionReservation(
  * process holds it no other session can be reserving against this gateway, so
  * a foreign-session route-only row is abandoned rather than contended.
  *
- * A failed re-onboard can also reserve an already registered sandbox. Clear
- * only its pending marker; removing that row would lose its existing state.
+ * A failed re-onboard can also reserve an already registered sandbox. Transfer
+ * that pending row to the current session without publishing its unverified
+ * route or losing its existing data.
  * Both operations compare the complete observed row and reject verified create
  * checkpoints, so a reservation that gains create authority survives.
  */
-export function releaseAbandonedRouteReservation(sandboxName: string): boolean {
+export function releaseAbandonedRouteReservation(
+  sandboxName: string,
+  desiredRoute: Parameters<typeof registry.reserveSandboxInferenceRoute>[1],
+): boolean {
   const entry = registry.getSandbox(sandboxName);
   if (!entry || entry.pendingRouteReservation !== true) return false;
   const session = onboardSession.loadSession();
@@ -62,15 +67,29 @@ export function releaseAbandonedRouteReservation(sandboxName: string): boolean {
       !Number.isFinite(Date.parse(entry.createdAt)) ||
       !entry.gatewayName ||
       authority?.kind !== "selected" ||
-      entry.gatewayName !== authority.value.gatewayName
+      entry.gatewayName !== authority.value.gatewayName ||
+      desiredRoute.gatewayName !== authority.value.gatewayName ||
+      (desiredRoute.gatewayPort !== undefined &&
+        desiredRoute.gatewayPort !== authority.value.gatewayPort) ||
+      desiredRoute.reservationSessionId !== session.sessionId
     ) {
       return false;
     }
-    return registry.finalizeSandboxRouteReservation(
-      sandboxName,
-      entry.reservationSessionId ?? "",
-      entry,
-    );
+    try {
+      if (
+        registryEntryGatewayPort({
+          name: entry.name,
+          gatewayName: entry.gatewayName,
+          gatewayPort: entry.gatewayPort,
+        }) !== authority.value.gatewayPort
+      )
+        return false;
+    } catch {
+      return false;
+    }
+    return registry.reserveSandboxInferenceRoute(sandboxName, desiredRoute, {
+      reclaimAbandoned: entry,
+    });
   }
   return registry.removeSandboxRouteReservationIfCurrent(entry);
 }

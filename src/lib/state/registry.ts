@@ -565,6 +565,8 @@ type SandboxInferenceRouteReservation = Pick<
 interface SandboxInferenceRouteReservationOptions {
   /** Refuse instead of changing any existing registry row. */
   requireAbsent?: boolean;
+  /** Caller-qualified abandoned registered row; compare and replace without publishing it. */
+  reclaimAbandoned?: SandboxEntry;
 }
 
 /**
@@ -577,10 +579,27 @@ export function reserveSandboxInferenceRoute(
   route: SandboxInferenceRouteReservation,
   options: SandboxInferenceRouteReservationOptions = {},
 ): boolean {
+  const abandoned = options.reclaimAbandoned
+    ? structuredClone(options.reclaimAbandoned)
+    : undefined;
   return withLock(() => {
     const data = load();
     const existing = data.sandboxes[name];
     if (options.requireAbsent === true && existing !== undefined) return false;
+    if (
+      abandoned &&
+      (!isDeepStrictEqual(existing, abandoned) ||
+        abandoned.pendingRouteReservation !== true ||
+        abandoned.pendingCreateIdentity !== undefined ||
+        typeof abandoned.createdAt !== "string" ||
+        !Number.isFinite(Date.parse(abandoned.createdAt)) ||
+        !route.reservationSessionId ||
+        typeof abandoned.reservationSessionId !== "string" ||
+        !abandoned.reservationSessionId ||
+        abandoned.reservationSessionId === route.reservationSessionId ||
+        abandoned.gatewayName !== route.gatewayName)
+    )
+      return false;
     const normalized = normalizeInferenceSelection(route);
     const provenance = cloneSandboxHostLocalInferenceProvenance(route.hostLocalInferenceProvenance);
     if (
@@ -621,7 +640,7 @@ export function reserveSandboxInferenceRoute(
     if (existing?.hostLocalInferenceProvenance !== undefined && !sameExplicitHostLocalRoute) {
       throw new Error("Cannot change an explicit host-local inference lifecycle reservation");
     }
-    if (existing?.pendingRouteReservation === true) {
+    if (existing?.pendingRouteReservation === true && !abandoned) {
       const sameReservation =
         (sameExplicitHostLocalRoute &&
           existing.reservationSessionId === undefined &&
@@ -832,17 +851,11 @@ export function removeSandboxRouteReservationIfCurrent(expected: SandboxEntry): 
 }
 
 /** Publish only the owning route transaction and retain its receipt for exact retries. */
-export function finalizeSandboxRouteReservation(
-  name: string,
-  sessionId: string,
-  expectedEntry?: SandboxEntry,
-): boolean {
-  const expectedSnapshot = expectedEntry ? structuredClone(expectedEntry) : undefined;
+export function finalizeSandboxRouteReservation(name: string, sessionId: string): boolean {
   return withLock(() => {
     const data = load();
     const current = data.sandboxes[name];
     if (!current || !sessionId || current.reservationSessionId !== sessionId) return false;
-    if (expectedSnapshot && !isDeepStrictEqual(current, expectedSnapshot)) return false;
     if (current.pendingRouteReservation !== true) return true;
     if (current.pendingCreateIdentity) return false;
     data.sandboxes[name] = {
