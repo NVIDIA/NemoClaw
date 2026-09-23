@@ -572,10 +572,11 @@ function backupStateOnly(
   sandboxName: string,
   options: Pick<
     sandboxState.BackupOptions,
-    "name" | "captureStateFile" | "captureStateDirectories"
+    "name" | "deadlineMs" | "captureStateFile" | "captureStateDirectories"
   >,
 ): sandboxState.BackupResult {
   return options.name === undefined &&
+    options.deadlineMs === undefined &&
     options.captureStateFile === undefined &&
     options.captureStateDirectories === undefined
     ? dependencies.backup(sandboxName)

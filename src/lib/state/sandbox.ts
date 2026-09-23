@@ -1545,7 +1545,16 @@ function retryPermissionDeniedDirectories(
       return;
     }
     const allowedTopLevelEntries = new Set(denied);
-    const archiveValidation = validateTarEntries({ filePath: archivePath }, backupPath);
+    const validationTimeoutMs = remainingBackupTimeoutMs(deadlineMs, 60_000);
+    if (validationTimeoutMs === null) {
+      _log("FAILED: privileged state directory capture: backup deadline expired");
+      return;
+    }
+    const archiveValidation = validateTarEntries(
+      { filePath: archivePath },
+      backupPath,
+      validationTimeoutMs,
+    );
     const undeclaredEntry = archiveValidation.entries.find((entry) => {
       const normalized = entry.replace(/^\.\/+/, "");
       const topLevel = normalized.split("/", 1)[0];
@@ -1692,6 +1701,42 @@ function parsePreBackupAuditEntries(output: string): PreBackupAuditEntry[] | nul
     entries.push([fields[index] ?? "", fields[index + 1] ?? "", fields[index + 2] ?? ""]);
   }
   return entries;
+}
+
+/**
+ * Log the accepted pre-backup audit rows and return the rejected ones.
+ * Whitelisted image symlinks and multiply-linked regular files are recorded
+ * for observability; only unsafe entries are returned to the caller.
+ */
+function reportPreBackupAuditEntries(
+  entries: readonly PreBackupAuditEntry[],
+  dirPrefix: string,
+): string[] {
+  const whitelisted: string[] = [];
+  const hardLinked: string[] = [];
+  const violations: string[] = [];
+  const rows = { whitelisted, hardLinked, violation: violations };
+  for (const entry of entries) {
+    // JSON escapes embedded controls before the entry reaches logs or the
+    // user-facing rejection detail.
+    rows[classifyPreBackupAuditEntry(entry, dirPrefix)].push(JSON.stringify(entry));
+  }
+  if (whitelisted.length > 0) {
+    _log(
+      `Pre-backup audit whitelisted ${whitelisted.length} entries (image npm symlinks): ${whitelisted.slice(0, 5).join("; ")}`,
+    );
+  }
+  if (hardLinked.length > 0) {
+    _log(
+      `Pre-backup audit accepted ${hardLinked.length} multiply-linked regular files (archived as plain files): ${hardLinked.slice(0, 5).join("; ")}`,
+    );
+  }
+  if (violations.length > 0) {
+    _log(
+      `SECURITY: Pre-backup audit found ${violations.length} unsafe entries: ${violations.slice(0, 5).join("; ")}`,
+    );
+  }
+  return violations;
 }
 
 /** Classify one strictly framed pre-backup audit entry. */
@@ -1916,10 +1961,23 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
       // this no-op can run.
       const fullCheckCmd = `{ ${discoveryCommands.join("; ")}; :; } 2>/dev/null`;
       _log(`Checking existing dirs via SSH: ${fullCheckCmd.substring(0, 100)}...`);
+      const discoveryTimeoutMs = remainingBackupTimeoutMs(options.deadlineMs, 30_000);
+      if (discoveryTimeoutMs === null) {
+        _log("FAILED: state dir discovery skipped — backup deadline expired");
+        return {
+          success: false,
+          manifest,
+          backedUpDirs,
+          failedDirs: [...stateDirs],
+          backedUpFiles,
+          failedFiles: stateFiles.map((f) => f.path),
+          error: "State dir discovery skipped: backup deadline expired",
+        };
+      }
       const existResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), fullCheckCmd], {
         encoding: "utf-8",
         stdio: ["ignore", "pipe", "pipe"],
-        timeout: remainingBackupTimeoutMs(options.deadlineMs, 30_000) ?? 1,
+        timeout: discoveryTimeoutMs,
       });
       _log(
         `Dir check: exit=${existResult.status}, stdout=${(existResult.stdout || "").trim().substring(0, 200)}, stderr=${(existResult.stderr || "").trim().substring(0, 200)}`,
@@ -1989,10 +2047,23 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
           )
           .join("; ");
         _log(`Pre-backup audit: checking for symlinks, hard links, and special files`);
+        const auditTimeoutMs = remainingBackupTimeoutMs(options.deadlineMs, 30_000);
+        if (auditTimeoutMs === null) {
+          _log("FAILED: Pre-backup audit skipped — backup deadline expired");
+          return {
+            success: false,
+            manifest,
+            backedUpDirs,
+            failedDirs: [...existingDirs],
+            backedUpFiles,
+            failedFiles: stateFiles.map((f) => f.path),
+            error: "Pre-backup audit skipped: backup deadline expired",
+          };
+        }
         const auditResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), auditCmd], {
           encoding: "utf-8",
           stdio: ["ignore", "pipe", "pipe"],
-          timeout: remainingBackupTimeoutMs(options.deadlineMs, 30_000) ?? 1,
+          timeout: auditTimeoutMs,
         });
         if (auditResult.status !== 0) {
           const stderr = (auditResult.stderr || "").trim();
@@ -2024,42 +2095,17 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
             error: "Pre-backup audit rejected malformed output",
           };
         }
-        if (allEntries.length > 0) {
-          const whitelisted: string[] = [];
-          const hardLinked: string[] = [];
-          const violations: string[] = [];
-          const dirPrefix = `${dir}/`;
-          const rows = { whitelisted, hardLinked, violation: violations };
-          for (const entry of allEntries) {
-            // JSON escapes embedded controls before the entry reaches logs or
-            // the user-facing rejection detail.
-            rows[classifyPreBackupAuditEntry(entry, dirPrefix)].push(JSON.stringify(entry));
-          }
-          if (whitelisted.length > 0) {
-            _log(
-              `Pre-backup audit whitelisted ${whitelisted.length} entries (image npm symlinks): ${whitelisted.slice(0, 5).join("; ")}`,
-            );
-          }
-          if (hardLinked.length > 0) {
-            _log(
-              `Pre-backup audit accepted ${hardLinked.length} multiply-linked regular files (archived as plain files): ${hardLinked.slice(0, 5).join("; ")}`,
-            );
-          }
-          if (violations.length > 0) {
-            // Non-whitelisted symlinks / special files — reject
-            _log(
-              `SECURITY: Pre-backup audit found ${violations.length} unsafe entries: ${violations.slice(0, 5).join("; ")}`,
-            );
-            return {
-              success: false,
-              manifest,
-              backedUpDirs,
-              failedDirs: [...existingDirs],
-              backedUpFiles,
-              failedFiles: stateFiles.map((f) => f.path),
-              error: `Pre-backup audit rejected: symlinks or special files found in state dirs: ${violations.slice(0, 3).join("; ")}`,
-            };
-          }
+        const auditViolations = reportPreBackupAuditEntries(allEntries, `${dir}/`);
+        if (auditViolations.length > 0) {
+          return {
+            success: false,
+            manifest,
+            backedUpDirs,
+            failedDirs: [...existingDirs],
+            backedUpFiles,
+            failedFiles: stateFiles.map((f) => f.path),
+            error: `Pre-backup audit rejected: symlinks or special files found in state dirs: ${auditViolations.slice(0, 3).join("; ")}`,
+          };
         }
         _log("Pre-backup audit passed — no unsafe symlinks or special files found");
 
@@ -2079,6 +2125,19 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         // linking out of its cache) already archives as a plain file.
         const tarCmd = `tar --hard-dereference -cf - -C ${shellQuote(dir)} -- ${existingDirs.map(shellQuote).join(" ")}`;
         _log(`Downloading via SSH+tar: ${tarCmd}`);
+        const downloadTimeoutMs = remainingBackupTimeoutMs(options.deadlineMs, 120_000);
+        if (downloadTimeoutMs === null) {
+          _log("FAILED: SSH+tar download skipped — backup deadline expired");
+          return {
+            success: false,
+            manifest,
+            backedUpDirs,
+            failedDirs: [...existingDirs],
+            backedUpFiles,
+            failedFiles: stateFiles.map((f) => f.path),
+            error: "State archive download skipped: backup deadline expired",
+          };
+        }
         let downloadedTarDir: string | undefined;
         let downloadedTarPath: string;
         let downloadedTarFd: number;
@@ -2106,7 +2165,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         try {
           result = spawnSync("ssh", [...sshArgs(configFile, sandboxName), tarCmd], {
             stdio: ["ignore", downloadedTarFd, "pipe"],
-            timeout: remainingBackupTimeoutMs(options.deadlineMs, 120_000) ?? 1,
+            timeout: downloadTimeoutMs,
             maxBuffer: 256 * 1024 * 1024,
           });
         } finally {

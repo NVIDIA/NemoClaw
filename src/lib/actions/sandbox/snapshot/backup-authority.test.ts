@@ -548,6 +548,22 @@ describe("managed snapshot backup authority", () => {
     expect(privilegedCaptureMocks.dockerSpawnSync).not.toHaveBeenCalled();
   });
 
+  it("keeps the shared transaction deadline on an unregistered state-only backup (#11936)", () => {
+    const backup = vi.fn((_name: string, options: BackupOptions = {}) => successfulBackup(options));
+
+    const result = backupSandboxStateWithManagedAuthority(
+      "alpha",
+      { deadlineMs: 1_700_000_300_000 },
+      { getSandbox: () => null, backup },
+    );
+
+    expect(result.success).toBe(true);
+    expect(backup).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ deadlineMs: 1_700_000_300_000 }),
+    );
+  });
+
   it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
     "captures and republishes exact %s provider authority",
     (agent) => {
