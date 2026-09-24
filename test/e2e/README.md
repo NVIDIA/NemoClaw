@@ -856,7 +856,7 @@ supported outcomes now have these owners:
 | Removed assertion | Retained owner |
 |---|---|
 | Install, PATH setup, list, status, hosted inference, and sandbox inference succeed. | `full-e2e` |
-| Sandbox state contains no `auth-profiles.json` or secret-shaped credential values. | `full-e2e` and `test/e2e/support/sandbox-credential-boundary.test.ts` |
+| Sandbox state, including `auth-profiles.json`, contains no secret-shaped credential values. | `full-e2e` and `test/e2e/support/sandbox-credential-boundary.test.ts` |
 | Repository skills contain valid frontmatter and content. | `test/repository/repo-skills-validation.test.ts` |
 | `/sandbox/.openclaw` and `openclaw.json` have the required image layout. | `test/e2e-runtime/managed-image-openclaw-security.test.ts` |
 

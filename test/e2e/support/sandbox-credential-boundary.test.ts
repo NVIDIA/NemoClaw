@@ -60,6 +60,43 @@ function scanWithoutRootPrivileges(root: string): string {
 }
 
 describe("sandbox credential scan", () => {
+  it("accepts the startup auth reference and detects a credential added to the same file", () => {
+    const root = createScanRoot();
+    const script = fs.readFileSync(
+      new URL("../../../scripts/nemoclaw-start.sh", import.meta.url),
+      "utf8",
+    );
+    const start = script.indexOf("write_auth_profile() {");
+    const end = script.indexOf("\nharden_auth_profiles()", start);
+    const canary = "nvapi-nemoclaw-auth-profile-credential-canary";
+    execFileSync("bash", ["-c", `${script.slice(start, end)}\nwrite_auth_profile`], {
+      env: {
+        PATH: process.env.PATH,
+        HOME: root,
+        NVIDIA_INFERENCE_API_KEY: canary,
+        NEMOCLAW_INFERENCE_PROVIDER_ID: "inference",
+      },
+      timeout: 10_000,
+    });
+    const file = path.join(root, ".openclaw/agents/main/agent/auth-profiles.json");
+    const profile = JSON.parse(fs.readFileSync(file, "utf8"));
+    expect(profile).toEqual({
+      "inference:manual": {
+        type: "api_key",
+        provider: "inference",
+        keyRef: { source: "env", id: "NVIDIA_INFERENCE_API_KEY" },
+        profileId: "inference:manual",
+      },
+    });
+    expect(scan(root)).toBe("");
+
+    profile["inference:manual"].key = canary;
+    fs.writeFileSync(file, JSON.stringify(profile));
+    const output = scan(root);
+    expect(output.trim()).toBe(file);
+    expect(output).not.toContain(canary);
+  });
+
   it("rejects fixture paths outside the temporary scan root", () => {
     const root = createScanRoot();
 
