@@ -25,13 +25,20 @@ describe("operation-scoped container engine command", () => {
       executable: process.execPath,
     });
 
-    engine.capture(["-e", "process.exit(0)"], 1_234);
+    const startedAt = Date.now();
+    const result = engine.capture(
+      ["-e", "process.on('SIGTERM',()=>{});setTimeout(()=>{},1500)"],
+      50,
+    );
 
     expect(vi.mocked(spawnSync)).toHaveBeenCalledWith(
       process.execPath,
-      ["-e", "process.exit(0)"],
-      expect.objectContaining({ timeout: 1_234, killSignal: "SIGKILL" }),
+      ["-e", "process.on('SIGTERM',()=>{});setTimeout(()=>{},1500)"],
+      expect.objectContaining({ timeout: 50, killSignal: "SIGKILL" }),
     );
+    expect(result.status).toBe(1);
+    expect(result.error).toMatchObject({ code: "ETIMEDOUT" });
+    expect(Date.now() - startedAt).toBeLessThan(750);
   });
 
   it("binds endpoint arguments without changing host-only commands", () => {

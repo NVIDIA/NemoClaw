@@ -331,6 +331,27 @@ function remainingHostLocalInferenceBudget(deadlineMs: number): number {
   return remainingMs;
 }
 
+/** Cap a streamed provider command to the same remaining lifecycle budget. */
+export function deadlineBoundHostLocalInferenceSpawner(
+  spawnCommand: HostLocalInferenceCommandSpawner,
+  deadlineMs?: number,
+): HostLocalInferenceCommandSpawner {
+  if (deadlineMs === undefined) return spawnCommand;
+  return (args, options) => {
+    const remainingMs = remainingHostLocalInferenceBudget(deadlineMs);
+    const requestedMs = options?.timeout;
+    const timeout =
+      requestedMs === undefined || requestedMs <= 0
+        ? remainingMs
+        : Math.min(requestedMs, remainingMs);
+    return spawnCommand(args, {
+      ...options,
+      timeout,
+      killSignal: options?.killSignal ?? "SIGKILL",
+    });
+  };
+}
+
 /** Cap every provider command to the remaining shared lifecycle budget. */
 export function deadlineBoundHostLocalInferenceEngine<T extends ContainerEngine>(
   engine: T,

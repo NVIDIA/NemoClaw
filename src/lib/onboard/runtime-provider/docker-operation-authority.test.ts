@@ -575,4 +575,36 @@ describe("managed llama.cpp operation probe strategy", () => {
     );
     expect(fs.readFileSync(invocationLog, "utf8").trim().split("\n")).toEqual(["info"]);
   });
+
+  it("bounds streamed Docker commands to the same operation deadline", () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
+    const spawn = vi.fn(() => ({}) as never);
+    const operation = createDockerLlamaCppHostLocalOperation(
+      env,
+      contextCapture("ssh://nvidia@spark.example.test"),
+      spawn,
+      undefined,
+      1_250,
+    );
+
+    operation.spawn(["pull", "example.invalid/model"], { stdio: "pipe", timeout: 5_000 });
+
+    expect(spawn).toHaveBeenCalledWith(
+      [
+        "--config",
+        "/tmp/nemoclaw-home/.docker",
+        "--context",
+        "spark",
+        "pull",
+        "example.invalid/model",
+      ],
+      { stdio: "pipe", timeout: 250, killSignal: "SIGKILL" },
+    );
+    now.mockReturnValue(1_250);
+    expect(() => operation.spawn(["pull", "example.invalid/late-model"])).toThrow(
+      "host-local inference authority deadline expired",
+    );
+    expect(spawn).toHaveBeenCalledOnce();
+    now.mockRestore();
+  });
 });

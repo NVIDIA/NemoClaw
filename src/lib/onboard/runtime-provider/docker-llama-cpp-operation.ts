@@ -21,7 +21,10 @@ import type {
   HostLocalInferenceCommandSpawner,
   HostLocalInferenceOperation,
 } from "./host-local-inference";
-import { deadlineBoundHostLocalInferenceEngine } from "./host-local-inference";
+import {
+  deadlineBoundHostLocalInferenceEngine,
+  deadlineBoundHostLocalInferenceSpawner,
+} from "./host-local-inference";
 
 export interface DockerLlamaCppOperationAuthority {
   readonly assertAuthority: () => void;
@@ -98,12 +101,13 @@ export function createDockerLlamaCppHostLocalOperation(
 ): HostLocalInferenceOperation {
   const authority = createDockerLlamaCppOperationAuthority(env, capture, spawnCommand);
   const engine = deadlineBoundHostLocalInferenceEngine(authority.engine, deadlineMs);
+  const spawn = deadlineBoundHostLocalInferenceSpawner(authority.spawn, deadlineMs);
   return Object.freeze({
     providerId: "docker",
     engine,
     bindingSha256: dockerLlamaCppBindingSha256(engine),
     assertAuthority: authority.assertAuthority,
-    spawn: authority.spawn,
+    spawn,
     // Docker Desktop WSL isolates the VM loopback from the distro loopback, so
     // the bridge loopback proof runs from this CLI process instead of a
     // host-network probe container.
