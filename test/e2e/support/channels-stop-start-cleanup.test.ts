@@ -4,7 +4,10 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { E2ETargetFixtures } from "../fixtures/e2e-test.ts";
-import { registerChannelsStopStartProviderCleanup } from "../live/channels-stop-start-helpers.ts";
+import {
+  registerChannelsStopStartCleanup,
+  registerChannelsStopStartProviderCleanup,
+} from "../live/channels-stop-start-helpers.ts";
 
 type CleanupAction = { name: string; run: () => Promise<void> | void };
 
@@ -30,6 +33,40 @@ function cleanupFixtures(result = { exitCode: 0, stderr: "", stdout: "" }) {
 }
 
 describe("channels stop/start provider cleanup", () => {
+  it("deletes the sandbox through OpenShell before providers during reverse-order cleanup", () => {
+    const registrations: string[] = [];
+    const cleanup = {
+      trackDisposable: vi.fn((name: string) => registrations.push(name)),
+      trackGateway: vi.fn((_host: unknown, name: string) =>
+        registrations.push(`remove gateway ${name}`),
+      ),
+      trackSandbox: vi.fn((_host: unknown, name: string) =>
+        registrations.push(`destroy sandbox ${name}`),
+      ),
+    } as unknown as E2ETargetFixtures["cleanup"];
+    const host = {} as E2ETargetFixtures["host"];
+    const sandbox = {} as E2ETargetFixtures["sandbox"];
+
+    registerChannelsStopStartCleanup(cleanup, host, sandbox, {
+      agent: "openclaw",
+      env: {},
+      redactions: [],
+      sandboxName: "e2e-oc-ch-cycle",
+    });
+
+    expect([...registrations].reverse()).toEqual([
+      "delete OpenShell sandbox e2e-oc-ch-cycle",
+      "delete OpenShell provider e2e-oc-ch-cycle-googlechat-bridge",
+      "delete OpenShell provider e2e-oc-ch-cycle-teams-bridge",
+      "delete OpenShell provider e2e-oc-ch-cycle-slack-app",
+      "delete OpenShell provider e2e-oc-ch-cycle-slack-bridge",
+      "delete OpenShell provider e2e-oc-ch-cycle-wechat-bridge",
+      "delete OpenShell provider e2e-oc-ch-cycle-discord-bridge",
+      "delete OpenShell provider e2e-oc-ch-cycle-telegram-bridge",
+      "remove gateway nemoclaw",
+    ]);
+  });
+
   it("registers every exact provider before the live lifecycle starts", () => {
     const fixtures = cleanupFixtures();
 
@@ -76,7 +113,11 @@ describe("channels stop/start provider cleanup", () => {
   });
 
   it("rejects an unexpected provider deletion failure", async () => {
-    const fixtures = cleanupFixtures({ exitCode: 1, stderr: "gateway unavailable", stdout: "" });
+    const fixtures = cleanupFixtures({
+      exitCode: 1,
+      stderr: "gateway unavailable",
+      stdout: "",
+    });
     registerChannelsStopStartProviderCleanup(fixtures.cleanup, fixtures.host, {
       agent: "openclaw",
       env: {},

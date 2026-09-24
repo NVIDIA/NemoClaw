@@ -4,13 +4,19 @@
 import { GATEWAY_PORT } from "../../core/ports";
 import {
   resolveGatewayName,
+  resolveGatewayPortFromName,
   resolveSandboxGatewayName,
   type SandboxGatewayBinding,
 } from "../../onboard/gateway-binding";
 import * as registry from "../../state/registry";
+import { findSandboxAcrossGatewayRoots } from "../../state/registry/cross-port";
 
 export function getKnownSandboxTarget(sandboxName: string): registry.SandboxEntry | null {
-  return registry.getSandbox(sandboxName);
+  return findSandboxAcrossGatewayRoots(sandboxName)?.entry ?? null;
+}
+
+export function listPersistedSandboxTargets(): registry.SandboxEntry[] {
+  return registry.listSandboxes().sandboxes;
 }
 
 export function getKnownSandboxTargetGatewayName(sandboxName = ""): string | null {
@@ -18,13 +24,31 @@ export function getKnownSandboxTargetGatewayName(sandboxName = ""): string | nul
   return sb ? resolveSandboxGatewayName(sb) : null;
 }
 
+export function getSelectedGatewayName(): string {
+  return resolveGatewayName(GATEWAY_PORT);
+}
+
 export function getSandboxTargetGatewayName(sandboxName = ""): string {
-  return getKnownSandboxTargetGatewayName(sandboxName) ?? resolveGatewayName(GATEWAY_PORT);
+  return getKnownSandboxTargetGatewayName(sandboxName) ?? getSelectedGatewayName();
 }
 
 /** Resolve a gateway directly from the already-authoritative persisted row. */
 export function getPersistedSandboxTargetGatewayName(sandbox: SandboxGatewayBinding): string {
   return resolveSandboxGatewayName(sandbox);
+}
+
+/** Resolve the complete canonical gateway binding from one persisted sandbox row. */
+export function getPersistedSandboxTargetGateway(sandbox: SandboxGatewayBinding): {
+  gatewayName: string;
+  gatewayPort: number;
+  selectedInProcess: boolean;
+} {
+  const gatewayName = getPersistedSandboxTargetGatewayName(sandbox);
+  const gatewayPort = resolveGatewayPortFromName(gatewayName);
+  if (gatewayPort === null) {
+    throw new Error(`Invalid persisted OpenShell gateway '${gatewayName}'.`);
+  }
+  return { gatewayName, gatewayPort, selectedInProcess: gatewayPort === GATEWAY_PORT };
 }
 
 export function gatewayNamePattern(gatewayName: string): RegExp {

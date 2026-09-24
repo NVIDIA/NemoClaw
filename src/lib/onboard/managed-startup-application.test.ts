@@ -43,7 +43,6 @@ function agentConfigFor(agent: ManagedStartupAgent): ManagedStartupAgentConfig {
         agentTimeoutSeconds: 900,
         heartbeatEvery: null,
         extraAgents: { agents: [], defaults: {}, main: {} },
-        deviceAuth: { disabled: true, optOutSource: "managed-onboard" },
         minimalBootstrap: true,
       };
     case "hermes":
@@ -125,8 +124,7 @@ function profileFor(
     },
     messaging: { plan: null },
     tuning: {
-      contextWindow:
-        agent === "langchain-deepagents-code" || agent === "pi" ? null : 65_536,
+      contextWindow: agent === "langchain-deepagents-code" || agent === "pi" ? null : 65_536,
       maxTokens: agent === "openclaw" ? 8192 : null,
       reasoning: agent === "openclaw" ? true : null,
       reasoningEffort: agent === "openclaw" ? "default" : null,
@@ -202,34 +200,33 @@ describe("managed startup application", () => {
     expect(fs.existsSync(stateDirectory)).toBe(false);
   });
 
-  it.each([
-    "openclaw",
-    "hermes",
-    "langchain-deepagents-code",
-  ] as const)("prepares and commits a root-owned envelope for %s", (agent) => {
-    const prepared = prepare(agent);
+  it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
+    "prepares and commits a root-owned envelope for %s",
+    (agent) => {
+      const prepared = prepare(agent);
 
-    expect(prepared.status).toBe("prepared");
-    expect(prepared.profile.agent).toBe(agent);
-    expect(fs.existsSync(path.join(stateDirectory, "committed.json"))).toBe(false);
-    expect(fs.existsSync(path.join(stateDirectory, "pending.json"))).toBe(true);
-    expect(fs.readFileSync(prepared.profilePath, "utf8")).toBe(
-      serializeManagedStartupProfile(profileFor(agent)),
-    );
-    expect(fs.readFileSync(prepared.corporateCaPath as string)).toEqual(Buffer.from(PEM));
+      expect(prepared.status).toBe("prepared");
+      expect(prepared.profile.agent).toBe(agent);
+      expect(fs.existsSync(path.join(stateDirectory, "committed.json"))).toBe(false);
+      expect(fs.existsSync(path.join(stateDirectory, "pending.json"))).toBe(true);
+      expect(fs.readFileSync(prepared.profilePath, "utf8")).toBe(
+        serializeManagedStartupProfile(profileFor(agent)),
+      );
+      expect(fs.readFileSync(prepared.corporateCaPath as string)).toEqual(Buffer.from(PEM));
 
-    const stateStat = fs.statSync(stateDirectory);
-    const profileStat = fs.statSync(prepared.profilePath);
-    expect(stateStat.mode & 0o777).toBe(0o700);
-    expect(profileStat.mode & 0o777).toBe(0o600);
-    expect(profileStat.uid).toBe(runtime.rootUid);
-    expect(profileStat.gid).toBe(runtime.rootGid);
+      const stateStat = fs.statSync(stateDirectory);
+      const profileStat = fs.statSync(prepared.profilePath);
+      expect(stateStat.mode & 0o777).toBe(0o700);
+      expect(profileStat.mode & 0o777).toBe(0o600);
+      expect(profileStat.uid).toBe(runtime.rootUid);
+      expect(profileStat.gid).toBe(runtime.rootGid);
 
-    const committed = commitManagedStartupApplication(prepared, runtime);
-    expect(committed.status).toBe("committed");
-    expect(fs.existsSync(path.join(stateDirectory, "committed.json"))).toBe(true);
-    expect(fs.existsSync(path.join(stateDirectory, "pending.json"))).toBe(false);
-  });
+      const committed = commitManagedStartupApplication(prepared, runtime);
+      expect(committed.status).toBe("committed");
+      expect(fs.existsSync(path.join(stateDirectory, "committed.json"))).toBe(true);
+      expect(fs.existsSync(path.join(stateDirectory, "pending.json"))).toBe(false);
+    },
+  );
 
   it("rejects a canonical profile for the wrong image agent", () => {
     expect(() =>
@@ -389,7 +386,7 @@ describe("managed startup application", () => {
     const changed = {
       ...profileFor("openclaw"),
       inference: {
-        ...profileFor("openclaw").inference,
+        ...profileFor("openclaw").inference!,
         model: "nvidia/a-different-model",
         primaryModelRef: "inference/nvidia/a-different-model",
       },
@@ -453,7 +450,7 @@ describe("managed startup application", () => {
     const changed = {
       ...profileFor("openclaw"),
       inference: {
-        ...profileFor("openclaw").inference,
+        ...profileFor("openclaw").inference!,
         model: "nvidia/a-competing-model",
         primaryModelRef: "inference/nvidia/a-competing-model",
       },
@@ -469,7 +466,7 @@ describe("managed startup application", () => {
     const changed = {
       ...profileFor("openclaw"),
       inference: {
-        ...profileFor("openclaw").inference,
+        ...profileFor("openclaw").inference!,
         model: "nvidia/a-competing-model",
         primaryModelRef: "inference/nvidia/a-competing-model",
       },
@@ -508,7 +505,7 @@ describe("managed startup application", () => {
     const changed = {
       ...profileFor("openclaw"),
       inference: {
-        ...profileFor("openclaw").inference,
+        ...profileFor("openclaw").inference!,
         model: "nvidia/a-delayed-competing-model",
         primaryModelRef: "inference/nvidia/a-delayed-competing-model",
       },
@@ -555,7 +552,7 @@ describe("managed startup application", () => {
     const changed = {
       ...profileFor("openclaw"),
       inference: {
-        ...profileFor("openclaw").inference,
+        ...profileFor("openclaw").inference!,
         model: "nvidia/a-straddling-competing-model",
         primaryModelRef: "inference/nvidia/a-straddling-competing-model",
       },

@@ -10,7 +10,10 @@ import {
   ONBOARD_NO_RECREATE_COMMAND_TIMEOUT_MS,
   ONBOARD_RESUME_TEST_TIMEOUT_MS,
 } from "../../../tools/e2e/onboard-timeout-contract.mts";
+import { parseOpenShellSandboxId } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
 import { parseSandboxPhase } from "../../../src/lib/state/gateway.ts";
+import { OPENSHELL_GATEWAY_START_LINE } from "../../helpers/openshell-gateway-start-output.ts";
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertCleanupSucceededOrAbsent } from "../fixtures/cleanup-resources.ts";
 import { resultText } from "../fixtures/clients/command.ts";
@@ -64,7 +67,7 @@ process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
 
 interface SessionStateInterrupted {
   status: "failed";
-  lastCompletedStep: "openclaw";
+  lastCompletedStep: "openclaw" | "agent_setup";
   failure: { step: "policies" };
 }
 
@@ -84,10 +87,10 @@ interface SessionStateComplete {
   >;
 }
 
-interface SessionStatePostVerify {
-  status: "in_progress";
+interface SessionStateRetryableFailure {
+  status: "failed" | "in_progress";
   resumable: true;
-  machine: { state: "post_verify" };
+  machine: { state: "failed" | "post_verify" };
 }
 
 interface MutableSessionState extends Record<string, unknown> {
@@ -104,6 +107,16 @@ function markSessionInProgress(file: string): void {
   session.status = "in_progress";
   session.resumable = true;
   fs.writeFileSync(file, JSON.stringify(session, null, 2), "utf8");
+}
+
+function registeredDashboardPort(
+  field: "dashboardPort" | "hermesApiPort" = "dashboardPort",
+): string {
+  const registry = JSON.parse(fs.readFileSync(REGISTRY_FILE, "utf8")) as {
+    sandboxes?: Record<string, { dashboardPort?: unknown; hermesApiPort?: unknown }>;
+  };
+  const port = registry.sandboxes?.[SANDBOX_NAME]?.[field];
+  return typeof port === "number" ? String(port) : "";
 }
 
 function interruptedSessionSummary(session: SessionStateInterrupted): Record<string, unknown> {
@@ -158,12 +171,12 @@ function expectHermeticCompatibleEndpointUsed(
 test(
   "onboard-resume: interrupted onboard then --resume can recreate with cached setup",
   {
-    timeout: ONBOARD_RESUME_TEST_TIMEOUT_MS,
+    timeout: testTimeout(ONBOARD_RESUME_TEST_TIMEOUT_MS),
     meta: {
       e2ePhases: [
         "confirm runtime and compatible-endpoint prerequisites",
         "clear prior resumable onboarding state",
-        "interrupt onboard after OpenClaw configuration",
+        "interrupt onboard after agent configuration",
         "resume cached setup with sandbox recreation",
         "validate resumed sandbox state and corporate trust",
         "retry final verification after route repair",
@@ -171,7 +184,7 @@ test(
       ],
     },
   },
-  async ({ artifacts, cleanup, host, progress, sandbox }) => {
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
     const corporateCa = createCorporateCaFixture("host-anchor", "nemoclaw-resume-corporate-ca-");
     cleanup.trackDisposable("remove corporate CA fixture", () =>
       cleanupCorporateCaFixture(corporateCa),
@@ -191,6 +204,7 @@ test(
         "resume proves recreated sandbox provider attachments are selectively reconciled",
         "host trust-store anchor corporate CA source is baked and merged after resume",
         "an unreachable committed route pauses at final verification and completes after repair",
+        "non-recreate resume retains the Ready sandbox, dashboard port, and exact forward listener",
         "implicit resume is detected and --fresh suppresses that auto-resume",
       ],
     });
@@ -205,18 +219,10 @@ test(
       `bin/nemoclaw.js missing — ensure the workflow runs npm ci + npm run build:cli before this test`,
     ).toBe(true);
 
-    // Assertion: docker-running — `docker info` exits 0. Pass fixture allowlist
-    // env (includes PATH, HOME, etc.) so spawn can locate `docker`.
-    // The shell-probe boundary defaults to no env inheritance; fixture spawns
-    // must opt in via buildAvailabilityProbeEnv() to keep secret-passthrough
-    // explicit (NVIDIA_INFERENCE_API_KEY is NOT in the allowlist; we layer it explicitly
-    // in Phase 2 below).
-    const dockerInfo = await host.command("docker", ["info"], {
-      artifactName: "prereq-docker-info",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 30_000,
+    await runtimeProvider.requireAvailable({
+      artifactName: "prereq-runtime-info",
+      scenarioLabel: "onboard resume",
     });
-    expect(dockerInfo.exitCode, dockerInfo.stderr).toBe(0);
 
     // Assertion: openshell-installed — openshell CLI is on PATH (installed by
     // the live validation setup before this test runs).
@@ -366,7 +372,7 @@ test(
     // ──────────────────────────────────────────────────────────────────
     // Phase 2: first onboard (forced failure at the policies step)
     // ──────────────────────────────────────────────────────────────────
-    progress.phase("interrupt onboard after OpenClaw configuration");
+    progress.phase("interrupt onboard after agent configuration");
     const firstRunEnv: NodeJS.ProcessEnv = {
       ...buildAvailabilityProbeEnv(),
       COMPATIBLE_API_KEY: FAKE_COMPATIBLE_AUTH_VALUE,
@@ -375,6 +381,8 @@ test(
       NEMOCLAW_MODEL: FAKE_COMPATIBLE_MODEL,
       NEMOCLAW_PREFERRED_API: "openai-completions",
       NEMOCLAW_PROVIDER: "custom",
+      NEMOCLAW_AGENT: process.env.NEMOCLAW_AGENT ?? "openclaw",
+      NEMOCLAW_HERMES_API_PORT: process.env.NEMOCLAW_HERMES_API_PORT,
       NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
       NEMOCLAW_RECREATE_SANDBOX: "1",
       NEMOCLAW_POLICY_MODE: "suggested",
@@ -388,7 +396,7 @@ test(
       artifactName: "phase-2-onboard-interrupted",
       env: firstRunEnv,
       redactionValues: [FAKE_COMPATIBLE_AUTH_VALUE],
-      timeoutMs: ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
+      timeoutMs: execTimeout(ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS),
     });
     const firstText = `${firstRun.stdout}\n${firstRun.stderr}`;
 
@@ -448,7 +456,9 @@ test(
       interruptedSessionSummary(interrupted),
     );
     expect(interrupted.status).toBe("failed");
-    expect(interrupted.lastCompletedStep).toBe("openclaw");
+    expect(interrupted.lastCompletedStep).toBe(
+      firstRunEnv.NEMOCLAW_AGENT === "hermes" ? "agent_setup" : "openclaw",
+    );
     expect(interrupted.failure?.step).toBe("policies");
 
     await artifacts.writeJson("phase-2-fake-openai-compatible-requests.json", fake.requests());
@@ -492,7 +502,7 @@ test(
         artifactName: "phase-3-onboard-resume",
         env: resumeEnv,
         redactionValues: [FAKE_COMPATIBLE_AUTH_VALUE],
-        timeoutMs: ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
+        timeoutMs: execTimeout(ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS),
       },
     );
     const resumeText = `${resumeRun.stdout}\n${resumeRun.stderr}`;
@@ -508,9 +518,9 @@ test(
 
     // Assertion: resume-no-{preflight,gateway}-redo. Current CLI output
     // still prints phase headings before the resume-skip decisions, so assert
-    // the skip evidence and absence of redo-only success strings instead of
+    // the skip evidence and absence of the redo-only launch marker instead of
     // rejecting headings that now frame the skipped phases.
-    expect(resumeText).not.toContain("Starting OpenShell Docker-driver gateway...");
+    expect(resumeText).not.toMatch(OPENSHELL_GATEWAY_START_LINE);
     const reconciledExtraProviders = readExtraProviders();
     expect(reconciledExtraProviders).toContain(LIVE_EXTRA_PROVIDER);
     expect(reconciledExtraProviders).not.toContain(STALE_EXTRA_PROVIDER);
@@ -524,7 +534,7 @@ test(
     });
 
     // Assertion: resume-inference-handled — first onboard completed through
-    // openclaw before failing at policies. Inference was already configured
+    // agent setup before failing at policies. Inference was already configured
     // during that run, so the resume path either re-runs it or detects
     // readiness and skips. Both are valid.
     progress.phase("validate resumed sandbox state and corporate trust");
@@ -558,7 +568,9 @@ test(
     await artifacts.writeJson("phase-3-session-summary.json", completeSessionSummary(complete));
     expect(complete.status).toBe("complete");
     expect(complete.provider).toBe("compatible-endpoint");
-    expect(([
+    expect(
+      (
+        [
           "preflight",
           "gateway",
           "sandbox",
@@ -567,7 +579,9 @@ test(
           "openclaw",
           "policies",
           "agent_setup",
-        ] as const).every((step) => ["complete", "skipped"].includes(complete.steps[step]?.status))).toBe(true);
+        ] as const
+      ).every((step) => ["complete", "skipped"].includes(complete.steps[step]?.status)),
+    ).toBe(true);
 
     // Assertion: registry-has-sandbox.
     expect(fs.existsSync(REGISTRY_FILE)).toBe(true);
@@ -580,6 +594,28 @@ test(
     // re-probe and complete without recreating the sandbox.
     // ──────────────────────────────────────────────────────────────────
     progress.phase("retry final verification after route repair");
+    const sandboxBeforeRouteFailure = await sandbox.openshell(["sandbox", "get", SANDBOX_NAME], {
+      artifactName: "phase-3-5-sandbox-before-route-failure",
+      env: probeEnv,
+      timeoutMs: 30_000,
+    });
+    const sandboxIdBeforeRouteFailure = parseOpenShellSandboxId(
+      resultText(sandboxBeforeRouteFailure),
+    );
+    const dashboardPortBeforeRouteFailure = registeredDashboardPort();
+    const listenerBeforeRouteFailure = await host.inspectOpenShellForwardListener(
+      dashboardPortBeforeRouteFailure,
+      SANDBOX_NAME,
+      { artifactName: "phase-3-5-listener-before-route-failure", env: probeEnv },
+    );
+    const apiPortBeforeRouteFailure = registeredDashboardPort("hermesApiPort");
+    const hasHermesApi = process.env.NEMOCLAW_AGENT === "hermes";
+    const apiListenerBeforeRouteFailure = hasHermesApi
+      ? await host.inspectOpenShellForwardListener(apiPortBeforeRouteFailure, SANDBOX_NAME, {
+          artifactName: "phase-3-5-api-listener-before-route-failure",
+          env: probeEnv,
+        })
+      : null;
     markSessionInProgress(SESSION_FILE);
     await fake.close();
 
@@ -594,23 +630,35 @@ test(
       },
     );
     const unavailableResumeText = `${unavailableResumeRun.stdout}\n${unavailableResumeRun.stderr}`;
-    expect(unavailableResumeRun.exitCode, unavailableResumeText).not.toBe(0);
-    expect(unavailableResumeText).toContain("is not ready");
-    expect(unavailableResumeText).toContain("inference");
+    const listenerAfterRouteFailure = await host.inspectOpenShellForwardListener(
+      dashboardPortBeforeRouteFailure,
+      SANDBOX_NAME,
+      { artifactName: "phase-3-5-listener-after-route-failure", env: probeEnv },
+    );
+    expect(
+      `${unavailableResumeRun.exitCode !== 0}:${listenerBeforeRouteFailure.valid}:${listenerAfterRouteFailure.valid}:${listenerBeforeRouteFailure.identity === listenerAfterRouteFailure.identity}`,
+      `${unavailableResumeText}\n${listenerBeforeRouteFailure.output}\n${listenerAfterRouteFailure.output}`,
+    ).toBe("true:true:true:true");
+    expect(
+      hasHermesApi ||
+        unavailableResumeText.includes("Compatible endpoint sandbox smoke check failed"),
+    ).toBe(true);
+    expect(unavailableResumeText).toContain("inference.local");
     expect(unavailableResumeText).not.toContain(
       `Deleting and recreating sandbox '${SANDBOX_NAME}'`,
     );
-    expect(unavailableResumeText).not.toContain(`Sandbox '${SANDBOX_NAME}' created`);
 
-    const paused = readSession<SessionStatePostVerify>(SESSION_FILE);
+    const paused = readSession<SessionStateRetryableFailure>(SESSION_FILE);
+    const expectedPausedStatus = hasHermesApi ? "in_progress" : "failed";
+    const expectedPausedMachineState = hasHermesApi ? "post_verify" : "failed";
     await artifacts.writeJson("phase-3-5-session-route-unavailable.json", {
       status: paused.status,
       resumable: paused.resumable,
       machineState: paused.machine.state,
     });
-    expect(paused.status).toBe("in_progress");
+    expect(paused.status).toBe(expectedPausedStatus);
     expect(paused.resumable).toBe(true);
-    expect(paused.machine.state).toBe("post_verify");
+    expect(paused.machine.state).toBe(expectedPausedMachineState);
 
     fake = await startFakeOpenAiCompatibleServer({
       apiKey: FAKE_COMPATIBLE_AUTH_VALUE,
@@ -635,12 +683,58 @@ test(
       },
     );
     const repairedResumeText = `${repairedResumeRun.stdout}\n${repairedResumeRun.stderr}`;
-    expect(repairedResumeRun.exitCode, repairedResumeText).toBe(0);
-    expect(repairedResumeText).toContain("is ready");
-    expect(repairedResumeText).not.toContain(
-      `Deleting and recreating sandbox '${SANDBOX_NAME}'`,
+    const sandboxAfterRouteRepair = await sandbox.openshell(["sandbox", "get", SANDBOX_NAME], {
+      artifactName: "phase-3-5-sandbox-after-route-repair",
+      env: probeEnv,
+      timeoutMs: 30_000,
+    });
+    const dashboardPortAfterRouteRepair = registeredDashboardPort();
+    const listenerAfterRouteRepair = await host.inspectOpenShellForwardListener(
+      dashboardPortAfterRouteRepair,
+      SANDBOX_NAME,
+      { artifactName: "phase-3-5-listener-after-route-repair", env: probeEnv },
     );
-    expect(repairedResumeText).not.toContain(`Sandbox '${SANDBOX_NAME}' created`);
+    const dashboardAfterRouteRepair = await host.command(
+      "curl",
+      [
+        "--silent",
+        "--show-error",
+        "--fail",
+        "--output",
+        "/dev/null",
+        "--max-time",
+        "5",
+        `http://127.0.0.1:${dashboardPortAfterRouteRepair}/`,
+      ],
+      {
+        artifactName: "phase-3-5-dashboard-after-route-repair",
+        env: probeEnv,
+        timeoutMs: 15_000,
+      },
+    );
+    expect(
+      `${repairedResumeRun.exitCode}:${parseOpenShellSandboxId(resultText(sandboxAfterRouteRepair)) === sandboxIdBeforeRouteFailure}:${dashboardPortAfterRouteRepair === dashboardPortBeforeRouteFailure}:${listenerAfterRouteRepair.valid}:${listenerAfterRouteRepair.identity === listenerBeforeRouteFailure.identity}:${dashboardAfterRouteRepair.exitCode}:${repairedResumeText.includes("cannot be reallocated or adopted")}`,
+      `${repairedResumeText}\n${resultText(sandboxBeforeRouteFailure)}\n${resultText(sandboxAfterRouteRepair)}\n${listenerBeforeRouteFailure.output}\n${listenerAfterRouteRepair.output}\n${resultText(dashboardAfterRouteRepair)}`,
+    ).toBe("0:true:true:true:true:0:false");
+    const apiListenerAfterRouteRepair = hasHermesApi
+      ? await host.inspectOpenShellForwardListener(
+          registeredDashboardPort("hermesApiPort"),
+          SANDBOX_NAME,
+          {
+            artifactName: "phase-3-5-api-listener-after-route-repair",
+            env: probeEnv,
+          },
+        )
+      : null;
+    expect(registeredDashboardPort("hermesApiPort")).toBe(apiPortBeforeRouteFailure);
+    expect(
+      apiListenerBeforeRouteFailure?.valid ?? false,
+      apiListenerBeforeRouteFailure?.output,
+    ).toBe(hasHermesApi);
+    expect(apiListenerAfterRouteRepair?.valid ?? false, apiListenerAfterRouteRepair?.output).toBe(
+      hasHermesApi,
+    );
+    expect(apiListenerAfterRouteRepair?.identity).toBe(apiListenerBeforeRouteFailure?.identity);
     const repaired = readSession<SessionStateComplete>(SESSION_FILE);
     expect(repaired.status).toBe("complete");
 
@@ -673,9 +767,7 @@ test(
         implicitResumeText.includes("[reuse] Skipping"),
       implicitResumeText,
     ).toBe(true);
-    expect(implicitResumeText).not.toContain(
-      `Deleting and recreating sandbox '${SANDBOX_NAME}'`,
-    );
+    expect(implicitResumeText).not.toContain(`Deleting and recreating sandbox '${SANDBOX_NAME}'`);
     expect(implicitResumeText).not.toContain(`Sandbox '${SANDBOX_NAME}' created`);
 
     markSessionInProgress(SESSION_FILE);

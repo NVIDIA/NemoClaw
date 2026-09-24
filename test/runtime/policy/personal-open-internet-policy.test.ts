@@ -206,7 +206,10 @@ describe("Personal open internet policy preset", () => {
     ).toThrow(/does not match the reviewed built-in preset/);
   });
 
-  it("reserves the Personal network-policy key for the reviewed built-in preset", () => {
+  it("rejects direct custom Personal key ownership before reading live state", async () => {
+    const registryLookup = vi.spyOn(registry, "getSandbox").mockImplementation(() => {
+      throw new Error("registry must not be read");
+    });
     const errors: string[] = [];
     const errorSpy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
       errors.push(args.map(String).join(" "));
@@ -214,7 +217,7 @@ describe("Personal open internet policy preset", () => {
 
     try {
       expect(
-        policies.applyPresetContent(
+        await policies.applyPresetContent(
           "personal-key-guard",
           "spoofed-personal",
           YAML.stringify({
@@ -230,9 +233,11 @@ describe("Personal open internet policy preset", () => {
           { custom: { sourcePath: "/tmp/spoofed-personal.yaml" } },
         ),
       ).toBe(false);
+      expect(registryLookup).not.toHaveBeenCalled();
       expect(errors.join("\n")).toContain("reserved network policy key 'personal_open_internet'");
     } finally {
       errorSpy.mockRestore();
+      registryLookup.mockRestore();
     }
   });
 
@@ -268,7 +273,7 @@ describe("Personal open internet policy preset", () => {
     },
   );
 
-  it("refuses direct Personal removal before reading registry or gateway state", () => {
+  it("refuses direct Personal removal before reading registry or gateway state", async () => {
     const registryLookup = vi.spyOn(registry, "getSandbox").mockImplementation(() => {
       throw new Error("registry must not be read");
     });
@@ -277,7 +282,7 @@ describe("Personal open internet policy preset", () => {
       errors.push(args.map(String).join(" "));
     });
 
-    expect(policies.removePreset("personal-guard", "personal-open-internet")).toBe(false);
+    expect(await policies.removePreset("personal-guard", "personal-open-internet")).toBe(false);
     expect(registryLookup).not.toHaveBeenCalled();
     expect(errors.join("\n")).toContain("cannot be removed in place");
 

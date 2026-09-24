@@ -10,8 +10,10 @@
  * window kept for a cloud model → silent under-utilization).
  */
 
+import { getScopedCredentialOverride } from "../credentials/scoped-overrides";
 import { DEFAULT_CONTEXT_WINDOW } from "./config";
 import {
+  createOllamaApiCaptureEx,
   getLocalProviderHealthEndpoint,
   getManagedVllmProviderBinding,
   getOllamaProbeCommand,
@@ -35,6 +37,8 @@ export interface ContextWindowDeps {
   probeOllamaContextWindow: (model: string) => number | null;
   /** Read the running vLLM server's max_model_len for the model; null when unavailable. */
   probeVllmContextWindow: (model: string) => number | null;
+  /** Read the authenticated llama.cpp server's served context size. */
+  probeLlamaCppContextWindow?: (model: string) => number | null;
   /** Fallback window for providers without a per-model runtime signal (cloud). */
   defaultCloudContextWindow: () => number;
 }
@@ -44,6 +48,7 @@ const defaultContextWindowDeps: ContextWindowDeps = {
     // Lazy require: ../runner is CJS and a top-level require fails to resolve
     // under the test runner. Runs only for the real (non-injected) deps.
     const { runCaptureEx } = require("../runner") as { runCaptureEx: RunCaptureExFn };
+    const captureEx = createOllamaApiCaptureEx(runCaptureEx);
     console.log(`  Priming Ollama model: ${model}`);
     // Blocking probe, the command onboarding also waits for. A backgrounded
     // warm-up returns before the daemon has the model resident, and `/api/ps`
@@ -51,8 +56,8 @@ const defaultContextWindowDeps: ContextWindowDeps = {
     // model can exceed the 120 s default on unified-memory and tight-VRAM
     // hosts, so retry once at 300 s as onboarding does.
     // A connection-refused result keeps `timedOut` false and skips the retry.
-    if (runCaptureEx(getOllamaProbeCommand(model)).timedOut) {
-      runCaptureEx(getOllamaProbeCommand(model, 300));
+    if (captureEx(getOllamaProbeCommand(model)).timedOut) {
+      captureEx(getOllamaProbeCommand(model, 300));
     }
   },
   // currentContextWindow = null → always probe (we recompute on every switch
@@ -88,6 +93,23 @@ const defaultContextWindowDeps: ContextWindowDeps = {
     return resolveVllmContextWindowFromModels(parsed, model);
   },
   defaultCloudContextWindow: (): number => DEFAULT_CONTEXT_WINDOW,
+  /** Read the selected model's served context using the scoped or staged credential. */
+  probeLlamaCppContextWindow: (model: string): number | null => {
+    const { LLAMA_CPP_CREDENTIAL_ENV, probeLlamaCppAttachment } = require("./llama-cpp") as {
+      LLAMA_CPP_CREDENTIAL_ENV: string;
+      probeLlamaCppAttachment: (
+        apiKey: string,
+        options?: { requestedModel?: string | null },
+      ) => { ok: boolean; contextWindow?: number };
+    };
+    const apiKey =
+      getScopedCredentialOverride(LLAMA_CPP_CREDENTIAL_ENV) ??
+      process.env[LLAMA_CPP_CREDENTIAL_ENV]?.replace(/\r/g, "").trim() ??
+      null;
+    if (!apiKey) return null;
+    const result = probeLlamaCppAttachment(apiKey, { requestedModel: model });
+    return result.ok ? (result.contextWindow ?? null) : null;
+  },
 };
 
 /**
@@ -99,6 +121,8 @@ const defaultContextWindowDeps: ContextWindowDeps = {
  *   returns null if the load has not finished.
  * - vllm-local: read the running server's max_model_len from /v1/models (the
  *   same source onboard uses); null when the server is unreachable.
+ * - llama-cpp-local: read authenticated native metadata for the served model;
+ *   null when the server or its served context is unavailable.
  * - cloud providers: the onboard default. Accuracy is bounded by the missing
  *   per-model cloud context metadata (tracked as a separate issue).
  */
@@ -113,6 +137,9 @@ export function resolveContextWindowForModel(
   }
   if (provider === "vllm-local") {
     return deps.probeVllmContextWindow(model);
+  }
+  if (provider === "llama-cpp-local") {
+    return deps.probeLlamaCppContextWindow?.(model) ?? null;
   }
   return deps.defaultCloudContextWindow();
 }

@@ -10,7 +10,7 @@ import { type SpawnSyncReturns, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, it, type MockInstance, vi } from "vitest";
+import { afterEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
 import { parsePolicyPresetEnv } from "../../../src/lib/core/url-utils";
 import {
@@ -94,7 +94,6 @@ type SetupHarnessOptions = {
   currentApplied?: string[];
   customPresets?: TestPreset[];
   customOwnsObservability?: boolean;
-  recordedPolicyTier?: string | null;
   nonInteractive?: boolean;
   env?: NodeJS.ProcessEnv;
 };
@@ -106,7 +105,6 @@ function createSetupHarness({
   currentApplied = [],
   customPresets = [],
   customOwnsObservability = false,
-  recordedPolicyTier = null,
   nonInteractive = true,
   env = {},
 }: SetupHarnessOptions = {}) {
@@ -119,8 +117,6 @@ function createSetupHarness({
   }> = [];
   const appliedCalls: string[] = [];
   const removedCalls: string[] = [];
-  const tierUpdates: Array<{ sandboxName: string; policyTier: string }> = [];
-  const removedBuiltinAttributions: string[] = [];
 
   const deps: SetupPolicySelectionDeps = {
     policies: {
@@ -134,9 +130,6 @@ function createSetupHarness({
       ],
       listCustomPresets: () => customPresets,
       customPresetOwnsNetworkPolicyKey: () => customOwnsObservability,
-      removeBuiltinPresetAttribution: (_sandboxName, presetName) => {
-        removedBuiltinAttributions.push(presetName);
-      },
       getAppliedPresets: () => [...currentApplied],
       clampSetupPolicyPresetNames: policy.clampSetupPolicyPresetNames,
     },
@@ -145,8 +138,8 @@ function createSetupHarness({
     step: () => undefined,
     note: (message) => notes.push(message),
     isNonInteractive: () => nonInteractive,
-    waitForSandboxReady: () => true,
-    waitForSandboxControlPlaneReady: () => true,
+    waitForSandboxReady: async () => ({ ready: true, reason: "ready", error: null }),
+    waitForSandboxControlPlaneReady: async () => true,
     syncPresetSelection: (sandboxName, current, selected, accessByName) => {
       syncCalls.push({
         sandboxName,
@@ -160,10 +153,6 @@ function createSetupHarness({
       appliedCalls.push(...selected.filter((name) => !currentSet.has(name)));
     },
     selectPolicyTier: async () => tierName,
-    setPolicyTier: (sandboxName, policyTier) => {
-      tierUpdates.push({ sandboxName, policyTier });
-    },
-    getRecordedPolicyTier: () => recordedPolicyTier,
     selectTierPresetsAndAccess: async (selectedTier, presets, initialSelected) => {
       const promptHarness = createPromptHarness();
       return promptHarness.helpers.selectTierPresetsAndAccess(
@@ -184,10 +173,8 @@ function createSetupHarness({
     appliedCalls,
     deps,
     notes,
-    removedBuiltinAttributions,
     removedCalls,
     syncCalls,
-    tierUpdates,
   };
 }
 
@@ -314,51 +301,6 @@ process.exit = (code = 0) => {
     assert.match(result.stderr, /Interactive onboarding requires a TTY/);
     assert.ok(!result.stdout.includes("UNEXPECTED_SUCCESS"));
   });
-
-  it("persists the selected tier through the onboard registry adapter", () => {
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const policyPath = JSON.stringify(path.join(repoRoot, "src", "lib", "policy", "index.ts"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
-    const refreshPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "actions", "sandbox", "policy-context-refresh.ts"),
-    );
-    const script = String.raw`
-const registry = require(${registryPath});
-const updates = [];
-registry.getSandbox = () => ({ name: "test-sb", model: null, provider: null });
-registry.updateSandbox = (_name, fields) => { updates.push(fields); return true; };
-
-process.env.NEMOCLAW_NON_INTERACTIVE = "1";
-process.env.NEMOCLAW_POLICY_TIER = "open";
-process.env.NEMOCLAW_POLICY_MODE = "skip";
-process.env.NEMOCLAW_POLICY_PRESETS = "";
-
-const { setupPoliciesWithSelection } = require(${onboardPath});
-const policies = require(${policyPath});
-policies.getAppliedPresets = () => [];
-require(${refreshPath}).refreshSandboxPolicyContextFile = () => ({ status: "ok" });
-console.log = () => {};
-
-(async () => {
-  try {
-    const applied = await setupPoliciesWithSelection("test-sb", {});
-    process.stdout.write(JSON.stringify({ applied, updates }) + "\n");
-  } catch (err) {
-    process.stdout.write(JSON.stringify({ error: err.message, stack: err.stack, updates }) + "\n");
-  }
-})();
-`;
-    const result = runAdapterScript(script);
-    assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim().split(/\n/).at(-1) || "{}");
-    assert.ok(!payload.error, `unexpected error: ${payload.error}`);
-    assert.deepEqual(payload.applied, []);
-    assert.equal(
-      payload.updates.find((update: { policyTier?: string }) => update.policyTier !== undefined)
-        ?.policyTier,
-      "open",
-    );
-  });
 });
 
 describe("policy tier selection", () => {
@@ -456,17 +398,41 @@ describe("policy tier selection", () => {
 });
 
 describe("policy tier setup", () => {
+  it.each([true, false])(
+    "requests Open-tier messaging defaults for fresh OpenClaw without channels (nonInteractive=%s) (#11058)",
+    async (nonInteractive) => {
+      const expectedMessagingPresets = [
+        "slack",
+        "discord",
+        "telegram",
+        "wechat",
+        "whatsapp",
+        "teams",
+      ];
+      const result = await runPolicySetup(
+        { tierName: "open", currentApplied: [], nonInteractive },
+        { agent: "openclaw", enabledChannels: [] },
+      );
+
+      expect(result.applied).toEqual(expect.arrayContaining(expectedMessagingPresets));
+      assert.equal(result.syncCalls.length, 1);
+      assert.deepEqual(result.syncCalls[0]?.current, []);
+      assert.deepEqual(result.syncCalls[0]?.selected, result.applied);
+      assert.deepEqual(result.appliedCalls, result.applied);
+      assert.deepEqual(result.removedCalls, []);
+    },
+  );
+
   it("persists the selected tier through setPolicyTier", async () => {
     const result = await runPolicySetup({ tierName: "open", policyMode: "skip" });
 
-    assert.deepEqual(result.tierUpdates, [{ sandboxName: "test-sb", policyTier: "open" }]);
     assert.deepEqual(result.applied, []);
   });
 
   it("repairs a resumed Personal selection before recording or syncing it", async () => {
     const harness = createSetupHarness({
       currentApplied: ["personal-open-internet"],
-      recordedPolicyTier: "personal",
+      tierName: "personal",
     });
     const onSelection = vi.fn();
 
@@ -477,7 +443,6 @@ describe("policy tier setup", () => {
     });
 
     assert.deepEqual(selected, ["personal-open-internet", "weather"]);
-    assert.deepEqual(harness.tierUpdates, []);
     assert.deepEqual(harness.syncCalls, [
       {
         sandboxName: "test-sb",
@@ -491,7 +456,7 @@ describe("policy tier setup", () => {
   it("repairs missing Personal attribution when the tier is recorded", async () => {
     const harness = createSetupHarness({
       currentApplied: [],
-      recordedPolicyTier: "personal",
+      tierName: "personal",
     });
     const onSelection = vi.fn();
 
@@ -502,7 +467,6 @@ describe("policy tier setup", () => {
     });
 
     assert.deepEqual(selected, ["personal-open-internet", "weather"]);
-    assert.deepEqual(harness.tierUpdates, []);
     assert.deepEqual(harness.syncCalls, [
       {
         sandboxName: "test-sb",
@@ -566,7 +530,6 @@ describe("policy tier setup", () => {
     }) as never);
 
     await assert.rejects(setupPoliciesWithSelection(harness.deps, "test-sb"), /process\.exit\(1\)/);
-    assert.deepEqual(harness.tierUpdates, []);
     assert.deepEqual(harness.syncCalls, []);
   });
 
@@ -626,7 +589,6 @@ describe("policy tier setup", () => {
       const result = await runPolicySetup(
         {
           tierName: tier,
-          recordedPolicyTier: tier,
           nonInteractive,
           currentApplied: ["npm", "pypi", "huggingface", "brew", "brave", "openclaw-pricing"],
         },
@@ -710,12 +672,11 @@ describe("policy tier setup", () => {
     assert.deepEqual(result.syncCalls[0]?.selected, expectedPresets);
   });
 
-  it("preserves a recorded Balanced tier default during resumed reapply (#6844)", async () => {
+  it("removes a stale Balanced web-search preset when live intent no longer requests it", async () => {
     const result = await runPolicySetup(
       {
-        tierName: "restricted",
         currentApplied: ["npm", "brave"],
-        recordedPolicyTier: "balanced",
+        tierName: "balanced",
       },
       {
         selectedPresets: ["npm", "brave"],
@@ -724,15 +685,15 @@ describe("policy tier setup", () => {
       },
     );
 
-    assert.deepEqual(result.applied, ["npm", "brave"]);
+    assert.deepEqual(result.applied, ["npm"]);
     assert.deepEqual(result.syncCalls, [
       {
         sandboxName: "test-sb",
         current: ["npm", "brave"],
-        selected: ["npm", "brave"],
+        selected: ["npm"],
       },
     ]);
-    assert.deepEqual(result.removedCalls, []);
+    assert.deepEqual(result.removedCalls, ["brave"]);
   });
 
   it("clamps resumed policy presets to web-search-supported presets", async () => {
@@ -832,7 +793,6 @@ describe("policy tier setup", () => {
     assert.ok(result.applied.includes("corp-otel"));
     assert.ok(!result.applied.includes("observability-otlp-local"));
     assert.ok(!result.removedCalls.includes("observability-otlp-local"));
-    assert.deepEqual(result.removedBuiltinAttributions, ["observability-otlp-local"]);
   });
 
   it("keeps exact custom OTLP ownership during selected resume without live built-in removal", async () => {
@@ -851,7 +811,6 @@ describe("policy tier setup", () => {
 
     assert.deepEqual(result.applied, ["corp-otel"]);
     assert.deepEqual(result.removedCalls, []);
-    assert.deepEqual(result.removedBuiltinAttributions, ["observability-otlp-local"]);
   });
 
   it("does not let stale declared custom OTLP content suppress the required built-in", async () => {
@@ -867,7 +826,6 @@ describe("policy tier setup", () => {
     assert.ok(result.applied.includes("corp-otel"));
     assert.ok(result.applied.includes("observability-otlp-local"));
     assert.ok(result.appliedCalls.includes("observability-otlp-local"));
-    assert.deepEqual(result.removedBuiltinAttributions, []);
   });
 
   it("falls back to tier suggestions when NEMOCLAW_POLICY_MODE is unknown (#2429)", async () => {
@@ -982,8 +940,8 @@ describe("policy tier setup", () => {
 
   it("keeps an empty restricted resume target empty", async () => {
     const result = await runPolicySetup(
-      { recordedPolicyTier: "restricted" },
-      { agent: "openclaw", selectedPresets: [] },
+      { tierName: "restricted" },
+      { agent: "openclaw", selectedPresets: [], tierName: "restricted" },
     );
 
     assert.ok(!result.applied.includes("openclaw-pricing"));
@@ -992,7 +950,7 @@ describe("policy tier setup", () => {
 
   it("never applies DCode observability while an authoritative restricted rebuild tier is pending registration", async () => {
     const result = await runPolicySetup(
-      { recordedPolicyTier: null },
+      {},
       {
         agent: "langchain-deepagents-code",
         observabilityEnabled: true,
@@ -1008,8 +966,8 @@ describe("policy tier setup", () => {
 
   it("removes previously-applied OpenClaw pricing during a restricted resume", async () => {
     const result = await runPolicySetup(
-      { recordedPolicyTier: "restricted", currentApplied: ["openclaw-pricing"] },
-      { agent: "openclaw", selectedPresets: [] },
+      { tierName: "restricted", currentApplied: ["openclaw-pricing"] },
+      { agent: "openclaw", selectedPresets: [], tierName: "restricted" },
     );
 
     assert.ok(!result.applied.includes("openclaw-pricing"));
@@ -1019,14 +977,14 @@ describe("policy tier setup", () => {
   it("excludes OpenClaw OTEL diagnostics during a restricted resume", async () => {
     const result = await runPolicySetup(
       {
-        recordedPolicyTier: "restricted",
+        tierName: "restricted",
         currentApplied: ["openclaw-diagnostics-otel-local"],
         env: {
           NEMOCLAW_OPENCLAW_OTEL: "1",
           NEMOCLAW_OPENCLAW_OTEL_ENDPOINT: undefined,
         },
       },
-      { agent: "openclaw", selectedPresets: [] },
+      { agent: "openclaw", selectedPresets: [], tierName: "restricted" },
     );
 
     assert.ok(!result.applied.includes("openclaw-diagnostics-otel-local"));

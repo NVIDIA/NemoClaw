@@ -1,13 +1,28 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { describe, expect, it } from "vitest";
 
+import { directDockerfileCopySources } from "../../../scripts/lib/dockerfile-copy-sources.mts";
 import {
-  derivePiImageSourcePaths,
+  catalogueTarget,
+  catalogueTargetsForChangedFiles,
+} from "../../../tools/e2e/target-catalogue.mts";
+import { REPO_ROOT } from "../fixtures/paths.ts";
+import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+
+import {
+  buildPiReadTask,
+  classifyPiReadTaskAttempt,
+  isTransientPiInferenceFailure,
   parsePiJsonEvents,
   parsePiInferenceEvidence,
-  parsePiRuntimePackageEvidence,
+  PiInferenceFailure,
   qualifyPiReadTask,
 } from "../live/pi-agent-qualification-events.ts";
 
@@ -45,20 +60,136 @@ function events(...values: Record<string, unknown>[]): string {
   return values.map((event) => JSON.stringify(event)).join("\n");
 }
 
-describe("Pi qualification event oracle", () => {
-  it("derives source parity paths from Dockerfile inputs", () => {
-    expect(
-      derivePiImageSourcePaths([
-        "COPY agents/pi/start.sh /usr/local/bin/start\nCOPY extra/runtime.txt /runtime.txt",
-        "COPY --from=builder /built/runtime /runtime",
-      ]),
-    ).toEqual([".dockerignore", "agents/pi", "extra/runtime.txt"]);
+function runReadTaskSeed(root: string, seedScript: string) {
+  const script = path.join(root, "seed.sh");
+  fs.writeFileSync(script, `sync() { :; }\n${seedScript}`);
+  return spawnSync("bash", ["--noprofile", "--norc", script], {
+    encoding: "utf8",
+    env: { PATH: process.env.PATH, BASH_ENV: "", ENV: "" },
+    timeout: 2_000,
+    killSignal: "SIGKILL",
+  });
+}
+
+describe("Pi qualification task construction", () => {
+  it.each(["before-rebuild", "after-rebuild", "after-recovery"])(
+    "constructs a context-free headless read for %s",
+    (phase) => {
+      const taskName = `pi-read-v2-${phase}`;
+      const task = buildPiReadTask("pi-qual", "/sandbox/task root/workspace", taskName, TOKEN);
+
+      expect(task.remotePath).toBe("/sandbox/task root/workspace/task.txt");
+      expect(task.argv).toEqual([
+        "pi-qual",
+        "exec",
+        "--workdir",
+        "/sandbox/task root/workspace",
+        "--no-tty",
+        "--timeout",
+        "300",
+        "--",
+        "pi",
+        "--no-approve",
+        "--no-context-files",
+        "--mode",
+        "json",
+        "--print",
+        "--tools",
+        "read",
+        "--name",
+        taskName,
+        "Use the read tool exactly once to read /sandbox/task root/workspace/task.txt. Reply with exactly the file contents and no other text.",
+      ]);
+    },
+  );
+
+  it("seeds quoted task contents and both private context files", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pi-read-task-"));
+    const workdir = path.join(root, "workspace 'quoted'");
+    const token = "literal 'quotes' and $HOME";
+
+    try {
+      const task = buildPiReadTask("pi-qual", workdir, "pi-read-v2-before-rebuild", token);
+      const result = runReadTaskSeed(root, task.seedScript);
+
+      expect(result.error).toBeUndefined();
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.readFileSync(task.remotePath, "utf8")).toBe(`${token}\n`);
+      const parentContext = path.join(root, "AGENTS.md");
+      const projectContext = path.join(workdir, "CLAUDE.md");
+      const context = fs.readFileSync(parentContext, "utf8");
+      expect(context).toContain("NEMOCLAW_PI_UNTRUSTED_CONTEXT");
+      expect(fs.readFileSync(projectContext, "utf8")).toBe(context);
+      expect(fs.statSync(task.remotePath).mode & 0o777).toBe(0o600);
+      expect(fs.statSync(parentContext).mode & 0o777).toBe(0o600);
+      expect(fs.statSync(projectContext).mode & 0o777).toBe(0o600);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
-  it("rejects ambiguous Dockerfile copy inputs", () => {
-    expect(() => derivePiImageSourcePaths(['COPY ["source", "/destination"]'])).toThrow(
-      "must use plain path operands",
+  it("stops seeding when the workspace cannot be created", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pi-read-task-"));
+    const workdir = path.join(root, "workspace");
+
+    try {
+      fs.writeFileSync(workdir, "occupied");
+      const task = buildPiReadTask("pi-qual", workdir, "pi-read-v2-before-rebuild", TOKEN);
+      const result = runReadTaskSeed(root, task.seedScript);
+
+      expect(result.error).toBeUndefined();
+      expect(result.status).not.toBe(0);
+      expect(fs.readFileSync(workdir, "utf8")).toBe("occupied");
+      expect(fs.existsSync(path.join(root, "AGENTS.md"))).toBe(false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+function failedProbe(): ShellProbeResult {
+  return {
+    command: ["pi"],
+    exitCode: 1,
+    signal: null,
+    timedOut: false,
+    stdout: "",
+    stderr: "",
+    artifacts: { stdout: "", stderr: "", result: "" },
+  };
+}
+describe("Pi qualification event oracle", () => {
+  it("keeps every Pi image source in the AMD64 lifecycle target ownership boundary (#7926)", () => {
+    const imageSources = new Set([
+      ".dockerignore",
+      ...["agents/pi/Dockerfile", "agents/pi/Dockerfile.base"].flatMap((dockerfile) =>
+        directDockerfileCopySources(path.join(REPO_ROOT, dockerfile), dockerfile).map(
+          ({ source }) => {
+            const normalized = source.replace(/\/+$/u, "");
+            return normalized.startsWith("agents/pi/") ? "agents/pi" : normalized;
+          },
+        ),
+      ),
+    ]);
+    const target = catalogueTarget("pi-agent-qualification-amd64");
+    const uncovered = [...imageSources].filter(
+      (source) =>
+        !target.owningPaths.some((owner) => {
+          const normalizedOwner = owner.replace(/\/$/u, "");
+          return source === normalizedOwner || source.startsWith(`${normalizedOwner}/`);
+        }),
     );
+
+    expect(uncovered, `${target.id} must own every Pi Docker COPY input`).toEqual([]);
+  });
+
+  it("selects only AMD64 lifecycle qualification for a copied Pi image source (#7926)", () => {
+    const targetIds = catalogueTargetsForChangedFiles([
+      "nemoclaw-blueprint/scripts/nemotron-inference-fix.js",
+    ]).map((target) => target.id);
+
+    expect(targetIds).toContain("pi-agent-qualification-amd64");
+    expect(targetIds).not.toContain("pi-agent-qualification-arm64");
   });
 
   it("accepts one successful read and an exact final response", () => {
@@ -88,6 +219,148 @@ describe("Pi qualification event oracle", () => {
     );
   });
 
+  it.each(["HTTP 503: Service Unavailable", "Service temporarily overloaded"])(
+    "classifies a Pi provider error as transient: %s",
+    (errorMessage) => {
+      const providerError = {
+        type: "message_end",
+        message: {
+          role: "assistant",
+          content: [],
+          stopReason: "error",
+          errorMessage,
+        },
+      };
+      const valid = parsePiJsonEvents(eventStream());
+      const exhaustedRetries = valid.flatMap((event) =>
+        event.type === "message_end" ? Array.from({ length: 4 }, () => providerError) : [event],
+      );
+      let failure: unknown;
+      try {
+        qualifyPiReadTask(exhaustedRetries, PATH, TOKEN);
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toBeInstanceOf(PiInferenceFailure);
+      expect((failure as Error).message).toBe(`Pi inference failed: ${errorMessage}`);
+      expect(isTransientPiInferenceFailure(failure)).toBe(true);
+    },
+  );
+
+  it("retries a transient provider error before the read tool starts (#11761)", () => {
+    const eventValues = parsePiJsonEvents(
+      events(
+        { type: "agent_start" },
+        {
+          type: "message_end",
+          message: {
+            role: "assistant",
+            content: [],
+            stopReason: "error",
+            errorMessage: "HTTP 503: Service Unavailable",
+          },
+        },
+        { type: "agent_end", messages: [], willRetry: false },
+      ),
+    );
+    let failure: unknown;
+    try {
+      qualifyPiReadTask(eventValues, PATH, TOKEN);
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(PiInferenceFailure);
+    expect(
+      classifyPiReadTaskAttempt({ failure, proof: undefined, result: failedProbe() }, undefined),
+    ).toEqual({ outcome: "failed", failureClass: "transient-external" });
+  });
+
+  it("accepts a valid Pi response after an earlier provider error", () => {
+    const providerError = {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [],
+        stopReason: "error",
+        errorMessage: "Service temporarily overloaded",
+      },
+    };
+    const valid = parsePiJsonEvents(eventStream());
+    const recoveredRetry = valid.flatMap((event) =>
+      event.type === "message_end" ? [providerError, event] : [event],
+    );
+    expect(qualifyPiReadTask(recoveredRetry, PATH, TOKEN).assistantText).toBe(TOKEN);
+  });
+
+  it("retries a transient provider error after an assistant response (#11761)", () => {
+    const providerError = {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [],
+        stopReason: "error",
+        errorMessage: "HTTP 503: Service Unavailable",
+      },
+    };
+    const valid = parsePiJsonEvents(eventStream());
+    const failedAfterReply = valid.flatMap((event) =>
+      event.type === "message_end" ? [event, providerError] : [event],
+    );
+    let failure: unknown;
+    try {
+      qualifyPiReadTask(failedAfterReply, PATH, TOKEN);
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(PiInferenceFailure);
+    expect(
+      classifyPiReadTaskAttempt({ failure, proof: undefined, result: failedProbe() }, undefined),
+    ).toEqual({ outcome: "failed", failureClass: "transient-external" });
+  });
+
+  it.each(["authentication failed", "HTTP 400: invalid request", "HTTP 501: unsupported"])(
+    "does not classify a deterministic Pi provider error as transient: %s",
+    (errorMessage) => {
+      expect(
+        isTransientPiInferenceFailure(
+          new PiInferenceFailure(`Pi inference failed: ${errorMessage}`),
+        ),
+      ).toBe(false);
+    },
+  );
+
+  it("redacts and bounds a provider error diagnostic (#11761)", () => {
+    const diagnosticPrefix = "Pi inference failed: ";
+    const providerError = {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [],
+        stopReason: "error",
+        errorMessage: `HTTP 503 for nvapi-secret-value-0123456789 ${"x".repeat(500)}`,
+      },
+    };
+    const valid = parsePiJsonEvents(eventStream());
+    const failed = valid.flatMap((event) =>
+      event.type === "message_end" ? [providerError] : [event],
+    );
+
+    let failure: unknown;
+    try {
+      qualifyPiReadTask(failed, PATH, TOKEN);
+    } catch (error) {
+      failure = error;
+    }
+    const message = (failure as Error).message;
+
+    expect(failure).toBeInstanceOf(PiInferenceFailure);
+    expect(message).toContain("HTTP 503");
+    expect(message).not.toMatch(/nvapi-secret/iu);
+    expect(message.length).toBeLessThanOrEqual(diagnosticPrefix.length + 200);
+  });
+
   it("rejects missing, extra, or mismatched read events", () => {
     const valid = parsePiJsonEvents(eventStream());
     expect(() =>
@@ -100,6 +373,13 @@ describe("Pi qualification event oracle", () => {
     expect(() =>
       qualifyPiReadTask([...valid, { ...valid[1], toolCallId: "second-read" }], PATH, TOKEN),
     ).toThrow("must start exactly one tool");
+    expect(() =>
+      qualifyPiReadTask(
+        [...valid, { ...valid[2], toolCallId: "unmatched-completion" }],
+        PATH,
+        TOKEN,
+      ),
+    ).toThrow("did not complete successfully");
     expect(() =>
       qualifyPiReadTask(
         parsePiJsonEvents(eventStream({ args: { path: "/sandbox/other" } })),
@@ -135,9 +415,12 @@ describe("Pi qualification event oracle", () => {
     expect(() =>
       qualifyPiReadTask(parsePiJsonEvents(events(start, success, success, reply)), PATH, TOKEN),
     ).toThrow("did not complete successfully");
+    expect(() =>
+      qualifyPiReadTask(parsePiJsonEvents(events(start, reply, success)), PATH, TOKEN),
+    ).toThrow("after the read completed");
   });
 
-  it("accepts the managed Pi inference route and runtime package evidence", () => {
+  it("accepts the managed Pi inference route", () => {
     expect(
       parsePiInferenceEvidence(
         JSON.stringify({
@@ -156,18 +439,6 @@ describe("Pi qualification event oracle", () => {
       model: "nvidia/test-model",
       route: "https://inference.local/v1",
     });
-    expect(
-      parsePiRuntimePackageEvidence(
-        JSON.stringify({
-          packages: {
-            "node_modules/@earendil-works/pi-coding-agent": {
-              integrity: "sha512-reviewed",
-              version: "0.84.1",
-            },
-          },
-        }),
-      ),
-    ).toEqual({ integrity: "sha512-reviewed", version: "0.84.1" });
   });
 
   it("rejects missing or inconsistent Pi qualification evidence", () => {
@@ -188,8 +459,5 @@ describe("Pi qualification event oracle", () => {
         "nvidia/test-model",
       ),
     ).toThrow("does not match the qualified route");
-    expect(() => parsePiRuntimePackageEvidence('{"packages":{}}')).toThrow(
-      "Pi runtime package lock entry must be an object",
-    );
   });
 });

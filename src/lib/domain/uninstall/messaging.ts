@@ -14,7 +14,7 @@ export function providerDeleteSkipMessage(provider: string): string {
 }
 
 export function gatewayDestroySkipMessage(gatewayLabel: string): string {
-  return `Gateway '${gatewayLabel}' already removed or unreachable`;
+  return `Gateway '${gatewayLabel}' is already absent`;
 }
 
 export function sandboxDeleteAbsentMessage(sandboxName: string): string {

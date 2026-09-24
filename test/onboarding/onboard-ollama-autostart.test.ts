@@ -354,283 +354,315 @@ process.exit = (code) => {
 }
 
 describe("nemoclaw onboard --no-ollama-autostart (#3751)", () => {
-  it("avoids spawning stopped Ollama, warns, and falls back to DEFAULT_OLLAMA_MODEL with the flag in scenario A", {
-    timeout: OLLAMA_AUTOSTART_TEST_TIMEOUT_MS,
-  }, () => {
-    const payload = runOllamaAutostartScenario({
-      ollamaRunning: false,
-      noAutostartEnv: true,
-    });
+  it(
+    "avoids spawning stopped Ollama, warns, and falls back to DEFAULT_OLLAMA_MODEL with the flag in scenario A",
+    {
+      timeout: OLLAMA_AUTOSTART_TEST_TIMEOUT_MS,
+    },
+    () => {
+      const payload = runOllamaAutostartScenario({
+        ollamaRunning: false,
+        noAutostartEnv: true,
+      });
 
-    // No ollama serve spawn, no waitForHttp probe to :11434.
-    assert.ok(
-      !payload.shellCommands.some((cmd) => cmd.includes("ollama serve")),
-      `runShell must not be invoked with 'ollama serve' when the gate is set; got: ${JSON.stringify(payload.shellCommands)}`,
-    );
-    assert.ok(
-      !payload.waitForHttpCalls.some((url) => url.includes("127.0.0.1:11434")),
-      `waitForHttp must not probe :11434 when the gate is set; got: ${JSON.stringify(payload.waitForHttpCalls)}`,
-    );
-    // Exact warning string from the architect contract.
-    assert.ok(
-      payload.lines.some((line) =>
-        line.includes(
-          "⚠ Ollama is not running on localhost:11434 and --no-ollama-autostart is set; skipping auto-start and falling back to the default model.",
+      // No ollama serve spawn, no waitForHttp probe to :11434.
+      assert.ok(
+        !payload.shellCommands.some((cmd) => cmd.includes("ollama serve")),
+        `runShell must not be invoked with 'ollama serve' when the gate is set; got: ${JSON.stringify(payload.shellCommands)}`,
+      );
+      assert.ok(
+        !payload.waitForHttpCalls.some((url) => url.includes("127.0.0.1:11434")),
+        `waitForHttp must not probe :11434 when the gate is set; got: ${JSON.stringify(payload.waitForHttpCalls)}`,
+      );
+      // Exact warning string from the architect contract.
+      assert.ok(
+        payload.lines.some((line) =>
+          line.includes(
+            "⚠ Ollama is not running on localhost:11434 and --no-ollama-autostart is set; skipping auto-start and falling back to the default model.",
+          ),
         ),
-      ),
-      `expected the gated warning line; got lines:\n${payload.lines.join("\n")}`,
-    );
-    // Should not have printed the success "Using Ollama on …" line.
-    assert.ok(
-      !payload.lines.some((line) => line.includes("✓ Using Ollama")),
-      "fallback branch must not log the ✓ Using Ollama line",
-    );
-    assert.ok(payload.result, "wizard should have completed");
-    assert.equal(payload.result!.provider, "ollama-local");
-    // Hard-asserted against the architect contract, but the constant is the
-    // single source of truth. Read it from the dist module the wizard uses.
-    const { DEFAULT_OLLAMA_MODEL } = require(
-      path.join(import.meta.dirname, "../..", "src", "lib", "inference", "local.ts"),
-    );
-    assert.equal(payload.result!.model, DEFAULT_OLLAMA_MODEL);
-    assert.equal(payload.result!.preferredInferenceApi, "openai-completions");
-    assert.equal(payload.result!.credentialEnv, null);
-    assert.ok(
-      payload.result!.endpointUrl && payload.result!.endpointUrl.length > 0,
-      "fallback branch must populate endpointUrl from getLocalProviderBaseUrl",
-    );
-    // selectAndValidateOllamaModel is intentionally bypassed.
-    assert.equal(payload.selectAndValidateOllamaModelCalled, false);
-    // The fallback `break` exits selectionLoop before model selection, so the
-    // sentinel must not have tripped.
-    assert.equal(payload.sentinelTripped, false, "gated fallback must not reach model selection");
-  });
+        `expected the gated warning line; got lines:\n${payload.lines.join("\n")}`,
+      );
+      // Should not have printed the success "Using Ollama on …" line.
+      assert.ok(
+        !payload.lines.some((line) => line.includes("✓ Using Ollama")),
+        "fallback branch must not log the ✓ Using Ollama line",
+      );
+      assert.ok(payload.result, "wizard should have completed");
+      assert.equal(payload.result!.provider, "ollama-local");
+      // Hard-asserted against the architect contract, but the constant is the
+      // single source of truth. Read it from the dist module the wizard uses.
+      const { DEFAULT_OLLAMA_MODEL } = require(
+        path.join(import.meta.dirname, "../..", "src", "lib", "inference", "local.ts"),
+      );
+      assert.equal(payload.result!.model, DEFAULT_OLLAMA_MODEL);
+      assert.equal(payload.result!.preferredInferenceApi, "openai-completions");
+      assert.equal(payload.result!.credentialEnv, null);
+      assert.ok(
+        payload.result!.endpointUrl && payload.result!.endpointUrl.length > 0,
+        "fallback branch must populate endpointUrl from getLocalProviderBaseUrl",
+      );
+      // selectAndValidateOllamaModel is intentionally bypassed.
+      assert.equal(payload.selectAndValidateOllamaModelCalled, false);
+      // The fallback `break` exits selectionLoop before model selection, so the
+      // sentinel must not have tripped.
+      assert.equal(payload.sentinelTripped, false, "gated fallback must not reach model selection");
+    },
+  );
 
-  it("preserves the existing spawn path for stopped Ollama without the flag in scenario B", {
-    timeout: OLLAMA_AUTOSTART_TEST_TIMEOUT_MS,
-  }, () => {
-    const payload = runOllamaAutostartScenario({
-      ollamaRunning: false,
-      noAutostartEnv: false,
-    });
+  it(
+    "preserves the existing spawn path for stopped Ollama without the flag in scenario B",
+    {
+      timeout: OLLAMA_AUTOSTART_TEST_TIMEOUT_MS,
+    },
+    () => {
+      const payload = runOllamaAutostartScenario({
+        ollamaRunning: false,
+        noAutostartEnv: false,
+      });
 
-    assert.ok(
-      payload.shellCommands.some(
-        (cmd) => cmd.includes("OLLAMA_HOST=127.0.0.1:") && cmd.includes("ollama serve"),
-      ),
-      `expected the legacy spawn to fire; got: ${JSON.stringify(payload.shellCommands)}`,
-    );
-    assert.ok(
-      payload.lines.some((line) => line.includes("Starting Ollama...")),
-      `expected the "Starting Ollama..." log; got lines:\n${payload.lines.join("\n")}`,
-    );
-    // The gated warning string must NOT be emitted on this path.
-    assert.ok(
-      !payload.lines.some((line) => line.includes("--no-ollama-autostart is set")),
-      "gate warning must not fire when the flag is unset",
-    );
-    // Sentinel tripped — proves the wizard exited the !ollamaReady block via
-    // the spawn path and reached model selection, not the gated fallback.
-    assert.equal(
-      payload.sentinelTripped,
-      true,
-      `expected wizard to reach model selection after spawning; lines:\n${payload.lines.join("\n")}`,
-    );
-  });
-
-  it("leaves running Ollama unchanged without spawning or warning when the flag is unset in scenario C", {
-    timeout: OLLAMA_AUTOSTART_TEST_TIMEOUT_MS,
-  }, () => {
-    const payload = runOllamaAutostartScenario({
-      ollamaRunning: true,
-      noAutostartEnv: false,
-    });
-
-    assert.ok(
-      !payload.shellCommands.some((cmd) => cmd.includes("ollama serve")),
-      "no spawn expected when Ollama is already reachable",
-    );
-    assert.ok(
-      !payload.waitForHttpCalls.some((url) => url.includes("127.0.0.1:11434")),
-      "no startup probe expected when Ollama is already reachable",
-    );
-    assert.ok(
-      !payload.lines.some((line) => line.includes("Starting Ollama...")),
-      "no 'Starting Ollama...' line expected when daemon is already up",
-    );
-    assert.ok(
-      !payload.lines.some((line) => line.includes("--no-ollama-autostart is set")),
-      "gate warning must not fire when daemon is already up",
-    );
-    // Wizard should have reached model selection after readiness, not the
-    // gated fallback path.
-    assert.equal(payload.sentinelTripped, true);
-  });
-
-  it("avoids warning or spawning when Ollama is running and the flag is set in scenario C", {
-    timeout: OLLAMA_AUTOSTART_TEST_TIMEOUT_MS,
-  }, () => {
-    const payload = runOllamaAutostartScenario({
-      ollamaRunning: true,
-      noAutostartEnv: true,
-    });
-
-    assert.ok(
-      !payload.shellCommands.some((cmd) => cmd.includes("ollama serve")),
-      "no spawn expected when Ollama is already reachable, regardless of flag",
-    );
-    assert.ok(
-      !payload.lines.some((line) => line.includes("--no-ollama-autostart is set")),
-      "gate warning must not fire when daemon is already up — flag is orthogonal",
-    );
-    // Flag is irrelevant here: the wizard still reaches model selection,
-    // rather than taking the fallback path.
-    assert.equal(payload.sentinelTripped, true);
-  });
-
-  it("warns and selects DEFAULT_OLLAMA_MODEL without process.exit in non-interactive scenario D", {
-    timeout: OLLAMA_AUTOSTART_TEST_TIMEOUT_MS,
-  }, () => {
-    const payload = runOllamaAutostartScenario({
-      ollamaRunning: false,
-      noAutostartEnv: true,
-      nonInteractive: true,
-      // Hard-fail waitForHttp so the test would observe a non-interactive
-      // process.exit(1) if the gate did not fire. With the gate set, this
-      // stub must not even be reached.
-      waitForHttpReturnsFalse: true,
-    });
-
-    assert.equal(
-      payload.processExitCalled,
-      0,
-      `non-interactive must not exit when the gate is honored; lines:\n${payload.lines.join("\n")}`,
-    );
-    assert.ok(
-      payload.lines.some((line) =>
-        line.includes(
-          "⚠ Ollama is not running on localhost:11434 and --no-ollama-autostart is set; skipping auto-start and falling back to the default model.",
+      assert.ok(
+        payload.shellCommands.some(
+          (cmd) => cmd.includes("OLLAMA_HOST=127.0.0.1:") && cmd.includes("ollama serve"),
         ),
-      ),
-      `expected gated warning in non-interactive mode; lines:\n${payload.lines.join("\n")}`,
-    );
-    assert.ok(
-      !payload.shellCommands.some((cmd) => cmd.includes("ollama serve")),
-      "no spawn expected with the gate set, even in non-interactive mode",
-    );
-    assert.ok(payload.result, "non-interactive wizard should still produce a result");
-    const { DEFAULT_OLLAMA_MODEL } = require(
-      path.join(import.meta.dirname, "../..", "src", "lib", "inference", "local.ts"),
-    );
-    assert.equal(payload.result!.model, DEFAULT_OLLAMA_MODEL);
-    assert.equal(payload.result!.provider, "ollama-local");
-    // Non-interactive gate path must not reach model selection either.
-    assert.equal(payload.sentinelTripped, false);
-  });
+        `expected the legacy spawn to fire; got: ${JSON.stringify(payload.shellCommands)}`,
+      );
+      assert.ok(
+        payload.lines.some((line) => line.includes("Starting Ollama...")),
+        `expected the "Starting Ollama..." log; got lines:\n${payload.lines.join("\n")}`,
+      );
+      // The gated warning string must NOT be emitted on this path.
+      assert.ok(
+        !payload.lines.some((line) => line.includes("--no-ollama-autostart is set")),
+        "gate warning must not fire when the flag is unset",
+      );
+      // Sentinel tripped — proves the wizard exited the !ollamaReady block via
+      // the spawn path and reached model selection, not the gated fallback.
+      assert.equal(
+        payload.sentinelTripped,
+        true,
+        `expected wizard to reach model selection after spawning; lines:\n${payload.lines.join("\n")}`,
+      );
+    },
+  );
 
-  it("exits instead of looping on Ollama model selection after a pinned-provider runner crash in scenario G (#4365)", {
-    timeout: OLLAMA_AUTOSTART_TEST_TIMEOUT_MS,
-  }, () => {
-    // Reporter's second-step: Ollama responds, user reaches model selection,
-    // but the model runner has unexpectedly stopped. Pre-fix the wizard would
-    // re-prompt for another Ollama model forever (or until the user finds
-    // "back"). With the fix, daemonFailure is detected and the wizard exits
-    // when NEMOCLAW_PROVIDER=ollama is pinned. The bounded subprocess
-    // timeout catches a regression: a pre-fix subprocess would loop until
-    // SIGTERM and result.status would be null.
-    const payload = runOllamaAutostartScenario({
-      ollamaRunning: true,
-      noAutostartEnv: false,
-      proceedToModelSelection: true,
-      ollamaGenerateBody: JSON.stringify({
-        error:
-          "model runner has unexpectedly stopped, this may be due to resource limitations or an internal error",
-      }),
-      subprocessTimeoutMs: 20_000,
-    });
+  it(
+    "leaves running Ollama unchanged without spawning or warning when the flag is unset in scenario C",
+    {
+      timeout: OLLAMA_AUTOSTART_TEST_TIMEOUT_MS,
+    },
+    () => {
+      const payload = runOllamaAutostartScenario({
+        ollamaRunning: true,
+        noAutostartEnv: false,
+      });
 
-    assert.ok(
-      payload.lines.some((line) => line.includes("model runner has unexpectedly stopped")),
-      `expected the runner-crash error in lines; got:\n${payload.lines.join("\n")}`,
-    );
-    assert.ok(
-      payload.lines.some((line) =>
-        line.includes(
-          "NEMOCLAW_PROVIDER pins onboarding to Ollama but the Ollama model runner is unhealthy",
+      assert.ok(
+        !payload.shellCommands.some((cmd) => cmd.includes("ollama serve")),
+        "no spawn expected when Ollama is already reachable",
+      );
+      assert.ok(
+        !payload.waitForHttpCalls.some((url) => url.includes("127.0.0.1:11434")),
+        "no startup probe expected when Ollama is already reachable",
+      );
+      assert.ok(
+        !payload.lines.some((line) => line.includes("Starting Ollama...")),
+        "no 'Starting Ollama...' line expected when daemon is already up",
+      );
+      assert.ok(
+        !payload.lines.some((line) => line.includes("--no-ollama-autostart is set")),
+        "gate warning must not fire when daemon is already up",
+      );
+      // Wizard should have reached model selection after readiness, not the
+      // gated fallback path.
+      assert.equal(payload.sentinelTripped, true);
+    },
+  );
+
+  it(
+    "avoids warning or spawning when Ollama is running and the flag is set in scenario C",
+    {
+      timeout: OLLAMA_AUTOSTART_TEST_TIMEOUT_MS,
+    },
+    () => {
+      const payload = runOllamaAutostartScenario({
+        ollamaRunning: true,
+        noAutostartEnv: true,
+      });
+
+      assert.ok(
+        !payload.shellCommands.some((cmd) => cmd.includes("ollama serve")),
+        "no spawn expected when Ollama is already reachable, regardless of flag",
+      );
+      assert.ok(
+        !payload.lines.some((line) => line.includes("--no-ollama-autostart is set")),
+        "gate warning must not fire when daemon is already up — flag is orthogonal",
+      );
+      // Flag is irrelevant here: the wizard still reaches model selection,
+      // rather than taking the fallback path.
+      assert.equal(payload.sentinelTripped, true);
+    },
+  );
+
+  it(
+    "warns and selects DEFAULT_OLLAMA_MODEL without process.exit in non-interactive scenario D",
+    {
+      timeout: OLLAMA_AUTOSTART_TEST_TIMEOUT_MS,
+    },
+    () => {
+      const payload = runOllamaAutostartScenario({
+        ollamaRunning: false,
+        noAutostartEnv: true,
+        nonInteractive: true,
+        // Hard-fail waitForHttp so the test would observe a non-interactive
+        // process.exit(1) if the gate did not fire. With the gate set, this
+        // stub must not even be reached.
+        waitForHttpReturnsFalse: true,
+      });
+
+      assert.equal(
+        payload.processExitCalled,
+        0,
+        `non-interactive must not exit when the gate is honored; lines:\n${payload.lines.join("\n")}`,
+      );
+      assert.ok(
+        payload.lines.some((line) =>
+          line.includes(
+            "⚠ Ollama is not running on localhost:11434 and --no-ollama-autostart is set; skipping auto-start and falling back to the default model.",
+          ),
         ),
-      ),
-      `expected the pinned-provider runner-crash abort message; lines:\n${payload.lines.join("\n")}`,
-    );
-    assert.ok(
-      payload.processExitCalled >= 1,
-      `expected process.exit on runner crash with pinned provider; lines:\n${payload.lines.join("\n")}`,
-    );
-  });
+        `expected gated warning in non-interactive mode; lines:\n${payload.lines.join("\n")}`,
+      );
+      assert.ok(
+        !payload.shellCommands.some((cmd) => cmd.includes("ollama serve")),
+        "no spawn expected with the gate set, even in non-interactive mode",
+      );
+      assert.ok(payload.result, "non-interactive wizard should still produce a result");
+      const { DEFAULT_OLLAMA_MODEL } = require(
+        path.join(import.meta.dirname, "../..", "src", "lib", "inference", "local.ts"),
+      );
+      assert.equal(payload.result!.model, DEFAULT_OLLAMA_MODEL);
+      assert.equal(payload.result!.provider, "ollama-local");
+      // Non-interactive gate path must not reach model selection either.
+      assert.equal(payload.sentinelTripped, false);
+    },
+  );
 
-  it("exits after a pinned-provider runner crash with a casing variant in scenario H (#4365)", {
-    timeout: OLLAMA_AUTOSTART_TEST_TIMEOUT_MS,
-  }, () => {
-    // NEMOCLAW_PROVIDER=OLLAMA is accepted by getNonInteractiveProvider's
-    // .trim().toLowerCase() normalization. The runner-crash escape must
-    // recognize the same variants — otherwise the wizard would return
-    // `back-to-selection`, re-pin Ollama on the next iteration, and loop.
-    const payload = runOllamaAutostartScenario({
-      ollamaRunning: true,
-      noAutostartEnv: false,
-      proceedToModelSelection: true,
-      providerEnv: " OLLAMA ",
-      ollamaGenerateBody: JSON.stringify({
-        error: "model runner has unexpectedly stopped",
-      }),
-      subprocessTimeoutMs: 20_000,
-    });
+  it(
+    "exits instead of looping on Ollama model selection after a pinned-provider runner crash in scenario G (#4365)",
+    {
+      timeout: OLLAMA_AUTOSTART_TEST_TIMEOUT_MS,
+    },
+    () => {
+      // Reporter's second-step: Ollama responds, user reaches model selection,
+      // but the model runner has unexpectedly stopped. Pre-fix the wizard would
+      // re-prompt for another Ollama model forever (or until the user finds
+      // "back"). With the fix, daemonFailure is detected and the wizard exits
+      // when NEMOCLAW_PROVIDER=ollama is pinned. The bounded subprocess
+      // timeout catches a regression: a pre-fix subprocess would loop until
+      // SIGTERM and result.status would be null.
+      const payload = runOllamaAutostartScenario({
+        ollamaRunning: true,
+        noAutostartEnv: false,
+        proceedToModelSelection: true,
+        ollamaGenerateBody: JSON.stringify({
+          error:
+            "model runner has unexpectedly stopped, this may be due to resource limitations or an internal error",
+        }),
+        subprocessTimeoutMs: 20_000,
+      });
 
-    assert.ok(
-      payload.lines.some((line) =>
-        line.includes(
-          "NEMOCLAW_PROVIDER pins onboarding to Ollama but the Ollama model runner is unhealthy",
+      assert.ok(
+        payload.lines.some((line) => line.includes("model runner has unexpectedly stopped")),
+        `expected the runner-crash error in lines; got:\n${payload.lines.join("\n")}`,
+      );
+      assert.ok(
+        payload.lines.some((line) =>
+          line.includes(
+            "NEMOCLAW_PROVIDER pins onboarding to Ollama but the Ollama model runner is unhealthy",
+          ),
         ),
-      ),
-      `expected the pinned-provider runner-crash abort even with a casing variant; lines:\n${payload.lines.join("\n")}`,
-    );
-    assert.ok(
-      payload.processExitCalled >= 1,
-      `expected process.exit on runner crash with casing-variant pinned provider; lines:\n${payload.lines.join("\n")}`,
-    );
-  });
+        `expected the pinned-provider runner-crash abort message; lines:\n${payload.lines.join("\n")}`,
+      );
+      assert.ok(
+        payload.processExitCalled >= 1,
+        `expected process.exit on runner crash with pinned provider; lines:\n${payload.lines.join("\n")}`,
+      );
+    },
+  );
 
-  it("exits without re-entering selectionLoop after an Ollama waitForHttp timeout in scenario E", {
-    timeout: OLLAMA_AUTOSTART_TEST_TIMEOUT_MS,
-  }, () => {
-    // Reporter scenario: provider pinned via env, gate not set, Ollama
-    // unreachable, spawn-then-wait fails. Previously `continue selectionLoop`
-    // would immediately re-enter the same Ollama branch because
-    // NEMOCLAW_PROVIDER=ollama forces the menu to keep selecting Ollama.
-    // The fix surfaces a failure (process.exit) instead of looping.
-    const payload = runOllamaAutostartScenario({
-      ollamaRunning: false,
-      noAutostartEnv: false,
-      nonInteractive: false,
-      waitForHttpReturnsFalse: true,
-    });
+  it(
+    "exits after a pinned-provider runner crash with a casing variant in scenario H (#4365)",
+    {
+      timeout: OLLAMA_AUTOSTART_TEST_TIMEOUT_MS,
+    },
+    () => {
+      // NEMOCLAW_PROVIDER=OLLAMA is accepted by getNonInteractiveProvider's
+      // .trim().toLowerCase() normalization. The runner-crash escape must
+      // recognize the same variants — otherwise the wizard would return
+      // `back-to-selection`, re-pin Ollama on the next iteration, and loop.
+      const payload = runOllamaAutostartScenario({
+        ollamaRunning: true,
+        noAutostartEnv: false,
+        proceedToModelSelection: true,
+        providerEnv: " OLLAMA ",
+        ollamaGenerateBody: JSON.stringify({
+          error: "model runner has unexpectedly stopped",
+        }),
+        subprocessTimeoutMs: 20_000,
+      });
 
-    assert.ok(
-      payload.processExitCalled >= 1,
-      `expected process.exit to be called when provider is pinned and Ollama is unreachable; lines:\n${payload.lines.join("\n")}`,
-    );
-    assert.ok(
-      payload.lines.some((line) =>
-        line.includes("NEMOCLAW_PROVIDER pins onboarding to Ollama but Ollama is unreachable"),
-      ),
-      `expected pinned-provider abort message; lines:\n${payload.lines.join("\n")}`,
-    );
-    // The sentinel guards model selection. If selectionLoop had looped and a
-    // future iteration reached it, the sentinel would have tripped. With the
-    // fix, we exit before that.
-    assert.equal(
-      payload.sentinelTripped,
-      false,
-      "abort must happen before reaching model selection",
-    );
-  });
+      assert.ok(
+        payload.lines.some((line) =>
+          line.includes(
+            "NEMOCLAW_PROVIDER pins onboarding to Ollama but the Ollama model runner is unhealthy",
+          ),
+        ),
+        `expected the pinned-provider runner-crash abort even with a casing variant; lines:\n${payload.lines.join("\n")}`,
+      );
+      assert.ok(
+        payload.processExitCalled >= 1,
+        `expected process.exit on runner crash with casing-variant pinned provider; lines:\n${payload.lines.join("\n")}`,
+      );
+    },
+  );
+
+  it(
+    "exits without re-entering selectionLoop after an Ollama waitForHttp timeout in scenario E",
+    {
+      timeout: OLLAMA_AUTOSTART_TEST_TIMEOUT_MS,
+    },
+    () => {
+      // Reporter scenario: provider pinned via env, gate not set, Ollama
+      // unreachable, spawn-then-wait fails. Previously `continue selectionLoop`
+      // would immediately re-enter the same Ollama branch because
+      // NEMOCLAW_PROVIDER=ollama forces the menu to keep selecting Ollama.
+      // The fix surfaces a failure (process.exit) instead of looping.
+      const payload = runOllamaAutostartScenario({
+        ollamaRunning: false,
+        noAutostartEnv: false,
+        nonInteractive: false,
+        waitForHttpReturnsFalse: true,
+      });
+
+      assert.ok(
+        payload.processExitCalled >= 1,
+        `expected process.exit to be called when provider is pinned and Ollama is unreachable; lines:\n${payload.lines.join("\n")}`,
+      );
+      assert.ok(
+        payload.lines.some((line) =>
+          line.includes("NEMOCLAW_PROVIDER pins onboarding to Ollama but Ollama is unreachable"),
+        ),
+        `expected pinned-provider abort message; lines:\n${payload.lines.join("\n")}`,
+      );
+      // The sentinel guards model selection. If selectionLoop had looped and a
+      // future iteration reached it, the sentinel would have tripped. With the
+      // fix, we exit before that.
+      assert.equal(
+        payload.sentinelTripped,
+        false,
+        "abort must happen before reaching model selection",
+      );
+    },
+  );
 });

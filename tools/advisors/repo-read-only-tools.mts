@@ -21,6 +21,7 @@ const PI_UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
 export const MAX_ADVISOR_TOOL_RESULT_JSON_BYTES = 16 * 1024;
 
 type RepoPathGuard = {
+  lexical(candidate: string): string;
   resolveExisting(candidate: string): Promise<string>;
 };
 
@@ -53,10 +54,9 @@ function serializedToolResultBytes(result: AgentToolResult<unknown>): number {
 }
 
 /**
- * Keep native Pi tool-result session records readable by the synthesis advisor.
- * Pi's default 50 KiB truncation details repeat the visible content, and JSON escaping
- * can expand it again. Bound the serialized result instead of assuming raw text bytes
- * predict the eventual JSONL line size.
+ * Bound native Pi tool-result session records. Pi's default truncation details repeat
+ * visible content, and JSON escaping can expand it. Bound the serialized result instead
+ * of estimating its size from raw text.
  */
 function boundAdvisorToolResult<T>(
   result: AgentToolResult<T>,
@@ -146,27 +146,39 @@ function isContainedPath(root: string, candidate: string): boolean {
   );
 }
 
-function createRepoPathGuard(cwd: string): RepoPathGuard {
+function createRepoPathGuard(cwd: string, additionalRoots: string[] = []): RepoPathGuard {
   const lexicalRoot = path.resolve(cwd);
-  const realRoot = fs.realpathSync(lexicalRoot);
+  const roots = [lexicalRoot, ...additionalRoots.map((root) => path.resolve(root))].map((root) => ({
+    lexical: root,
+    real: fs.realpathSync(root),
+  }));
+
+  const lexical = (candidate: string): string => {
+    const withoutAtPrefix = candidate.startsWith("@") ? candidate.slice(1) : candidate;
+    const normalizedCandidate = withoutAtPrefix.replace(PI_UNICODE_SPACES, " ");
+    const expandedCandidate =
+      normalizedCandidate === "~"
+        ? os.homedir()
+        : normalizedCandidate.startsWith("~/")
+          ? path.join(os.homedir(), normalizedCandidate.slice(2))
+          : normalizedCandidate;
+    return path.resolve(lexicalRoot, expandedCandidate);
+  };
 
   return {
+    lexical,
     async resolveExisting(candidate) {
-      const withoutAtPrefix = candidate.startsWith("@") ? candidate.slice(1) : candidate;
-      const normalizedCandidate = withoutAtPrefix.replace(PI_UNICODE_SPACES, " ");
-      const expandedCandidate =
-        normalizedCandidate === "~"
-          ? os.homedir()
-          : normalizedCandidate.startsWith("~/")
-            ? path.join(os.homedir(), normalizedCandidate.slice(2))
-            : normalizedCandidate;
-      const lexicalPath = path.resolve(lexicalRoot, expandedCandidate);
-      if (!isContainedPath(lexicalRoot, lexicalPath) && !isContainedPath(realRoot, lexicalPath)) {
+      const lexicalPath = lexical(candidate);
+      const matchingRoot = roots.find(
+        (root) =>
+          isContainedPath(root.lexical, lexicalPath) || isContainedPath(root.real, lexicalPath),
+      );
+      if (!matchingRoot) {
         throw new Error(`Advisor read-only path is outside the workspace: ${candidate}`);
       }
 
       const realPath = await fs.promises.realpath(lexicalPath);
-      if (!isContainedPath(realRoot, realPath)) {
+      if (!isContainedPath(matchingRoot.real, realPath)) {
         throw new Error(`Advisor read-only path resolves outside the workspace: ${candidate}`);
       }
       if (realPath.replace(PI_UNICODE_SPACES, " ") !== realPath) {
@@ -179,8 +191,12 @@ function createRepoPathGuard(cwd: string): RepoPathGuard {
   };
 }
 
-export async function canonicalRepoReadPath(cwd: string, candidate: string): Promise<string> {
-  return createRepoPathGuard(cwd).resolveExisting(candidate);
+export async function canonicalRepoReadPath(
+  cwd: string,
+  candidate: string,
+  additionalRoots: string[] = [],
+): Promise<string> {
+  return createRepoPathGuard(cwd, additionalRoots).resolveExisting(candidate);
 }
 
 function createGuardedLsOperations(guard: RepoPathGuard): LsOperations {
@@ -210,12 +226,14 @@ function createGuardedLsOperations(guard: RepoPathGuard): LsOperations {
 export function createRepoConfinedReadOnlyTools(
   cwd: string,
   onRead?: (observation: AdvisorReadObservation) => void,
+  additionalRoots: string[] = [],
 ): ToolDefinition[] {
-  const guard = createRepoPathGuard(cwd);
+  const guard = createRepoPathGuard(cwd, additionalRoots);
 
   const read = createReadToolDefinition(cwd);
   const executeRead = read.execute;
   read.execute = async (toolCallId, input, signal, onUpdate, context) => {
+    const lexicalPath = guard.lexical(input.path);
     const resolvedPath = await guard.resolveExisting(input.path);
     const result = await executeRead(
       toolCallId,
@@ -233,7 +251,11 @@ export function createRepoConfinedReadOnlyTools(
     const truncation = boundedResult.details?.truncation;
     const returnedLines = truncation?.outputLines ?? input.limit;
     onRead?.({
-      path: resolvedPath,
+      // Preserve the validated path the specialist was required to read. The
+      // real path may differ when an additional evidence root is symlinked
+      // into the sandbox, but that implementation detail must not invalidate
+      // an otherwise exact required-path read.
+      path: lexicalPath,
       offset,
       endOffset: returnedLines === undefined ? null : offset + returnedLines - 1,
       fileSize: (await fs.promises.stat(resolvedPath)).size,

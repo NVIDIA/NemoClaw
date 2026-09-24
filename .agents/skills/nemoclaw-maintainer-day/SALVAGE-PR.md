@@ -5,6 +5,10 @@
 
 Repair one narrow blocker when the PR shows the intended behavior. Defer the repair when intent or design is not clear. Stop when the repair exceeds accepted scope.
 
+Before editing, complete [PR follow-up](../_shared/pr-follow-up.md) for one unchanged latest PR
+commit. Repair the complete accepted root-cause group. Do not push a reaction to one early review
+result while other automated evidence is pending.
+
 ## Decide
 
 | Condition | Action |
@@ -42,6 +46,8 @@ Push only after validation passes. Never force-push.
 - Do not push a fork PR to `origin`.
 
 Immediately before the push, verify the worktree commit, source repository, and PR branch again. Stop if an identity changed.
+Read the remote branch SHA again. Stop if it differs from the recorded latest PR commit. Do not
+publish a competing revision. Push all accepted repairs once.
 
 ## Follow up
 

@@ -13,28 +13,29 @@ import {
   MANAGED_IMAGE_LOCAL_INFERENCE_KINDS,
   MANAGED_IMAGE_PROTECTED_SANDBOX_PREFIX,
   managedImageProtectedSandboxName,
+  managedImageFailureDetail,
   PROTECTED_MANAGED_IMAGE_AGENTS,
   resolveManagedImageLocalInferenceRoute,
   withManagedImageLocalInferenceProfile,
 } from "../../../scripts/checks/managed-image-protected-runtime-contract.ts";
 import {
-  assertExactSandboxImage,
-  assertFailedBootstrapOwnerCleanupRetention,
+  assertOpenClawHeartbeatStart,
+  createBootstrapCompletionFailureInjection,
+  managedOpenClawHeartbeatLogProbe,
   assertFailedSandboxOwnerCleanupRetention,
-  createProtectedManagedImageBootstrapInput,
-  failureInjectingAdapter,
-  MANAGED_IMAGE_OPENSHELL_SUPERVISOR_ARGV,
-  type ManagedImageCommandResult,
   type ManagedImageCommandRunner,
   managedImageLocalInferenceBaseUrl,
   managedImageOpenShellBasePolicyPath,
   managedImageOpenShellCommittedProbe,
   managedImageOpenShellProbe,
+  managedOpenClawHeartbeatProbe,
   parseManagedImageOpenShellE2eInputs,
+  protectedManagedStateRootDriverConfig,
   removeManagedImageGatewayStateIfSafe,
   resolveManagedImageOnboardModule,
 } from "../../../scripts/checks/run-managed-image-openshell-e2e.ts";
-import { resolveOnboardManagedBootstrapLaunch } from "../../../src/lib/onboard/managed-workload/onboard-orchestration.js";
+import { validateManagedStartupProfile } from "../../../src/lib/onboard/managed-startup/profile.ts";
+import type { RuntimeProviderBundle } from "../../../src/lib/onboard/runtime-provider/contract.ts";
 
 const IMAGE = `localhost:5000/nemoclaw-managed-protected/openclaw@sha256:${"a".repeat(64)}`;
 const VALID_SANDBOX = "managed-openclaw";
@@ -42,132 +43,224 @@ const MANAGED_IMAGE_ONBOARD = resolveManagedImageOnboardModule(
   await import("../../../src/lib/onboard.ts"),
 );
 
-const SUCCESS_WITHOUT_OUTPUT: ManagedImageCommandResult = {
-  status: 0,
-  stdout: "",
-  stderr: "",
-};
+function runManagedOpenClawHeartbeatProbe(
+  heartbeat: { every: string; isolatedSession: boolean },
+  postHashAppend = "",
+) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-heartbeat-'$HOME`pwd`-"));
+  const configPath = path.join(directory, "openclaw.json");
+  try {
+    fs.writeFileSync(configPath, JSON.stringify({ agents: { defaults: { heartbeat } } }));
+    const hash = spawnSync("sha256sum", ["openclaw.json"], {
+      cwd: directory,
+      encoding: "utf8",
+    });
+    expect(hash.status, hash.stderr).toBe(0);
+    fs.writeFileSync(path.join(directory, ".config-hash"), hash.stdout);
+    fs.appendFileSync(configPath, postHashAppend);
 
-function managedContainerInspectResult(
-  contentId: string,
-  running: boolean,
-): ManagedImageCommandResult {
-  return {
-    status: 0,
-    stdout: `${JSON.stringify([
-      {
-        Config: {
-          Labels: {
-            "openshell.ai/managed-by": "openshell",
-            "openshell.ai/sandbox-name": VALID_SANDBOX,
-          },
-        },
-        Image: contentId,
-        NetworkSettings: { Networks: { "managed-network": {} } },
-        State: { Paused: false, Restarting: false, Running: running },
-      },
-    ])}\n`,
-    stderr: "",
-  };
-}
-
-function createManagedImageCommandRunner(
-  contentId: string,
-  containerId: string,
-  listScope: "-q" | "-aq",
-  listOutput: string,
-  calls: string[][],
-  running = listScope === "-q",
-): ManagedImageCommandRunner {
-  const responses = new Map<string, ManagedImageCommandResult>([
-    ["docker image inspect", { status: 0, stdout: `${contentId}\n`, stderr: "" }],
-    [`docker ps ${listScope}`, { status: 0, stdout: listOutput, stderr: "" }],
-    [`docker inspect ${containerId}`, managedContainerInspectResult(contentId, running)],
-  ]);
-  return (argv) => {
-    calls.push([...argv]);
-    return responses.get(argv.slice(0, 3).join(" ")) ?? SUCCESS_WITHOUT_OUTPUT;
-  };
+    return spawnSync(
+      "/bin/sh",
+      ["-c", managedOpenClawHeartbeatProbe(configPath, process.execPath, "sha256sum")],
+      { encoding: "utf8" },
+    );
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
 }
 
 describe("protected managed-image runtime contract", () => {
-  it("binds the rollback failure adapter to the canonical managed-bootstrap state root", async () => {
-    const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-protected-rollback-"));
-    const journalRoot = path.join(stateRoot, "managed-bootstrap");
-    try {
-      const adapter = failureInjectingAdapter(
-        {
-          runCaptureOpenshell: () => "",
-          runOpenshell: () => ({ status: 0, stdout: "", stderr: "" }),
-          sleepSeconds: () => undefined,
-        } as never,
-        stateRoot,
-      );
+  it("projects declared managed state roots through the selected provider driver", () => {
+    const mount = {
+      type: "volume" as const,
+      source: "nemoclaw-hermes-state-v1-alpha",
+      target: "/sandbox/.hermes",
+      read_only: false,
+    };
+    const provider = {
+      workload: { managedStateMountDriverId: "docker" },
+    } as Pick<RuntimeProviderBundle, "workload">;
 
-      expect(adapter.awaitBootstrap).toEqual(expect.any(Function));
-      expect(fs.statSync(stateRoot).isDirectory()).toBe(true);
-      expect(fs.existsSync(journalRoot)).toBe(false);
-      await expect(adapter.recoverUnfinishedTransactions()).resolves.toEqual({
-        receipts: [],
-        failures: [],
-      });
-      expect(fs.statSync(journalRoot).isDirectory()).toBe(true);
+    expect(JSON.parse(protectedManagedStateRootDriverConfig(provider, [mount])!)).toEqual({
+      docker: { mounts: [mount] },
+    });
+    expect(protectedManagedStateRootDriverConfig(provider, [])).toBeNull();
+    expect(() =>
+      protectedManagedStateRootDriverConfig({ workload: {} } as typeof provider, [mount]),
+    ).toThrow("provider-owned mount projection");
+  });
+
+  it("reads the structured heartbeat interval without exporting log credentials", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "heartbeat-log-"));
+    try {
+      fs.mkdirSync(path.join(root, "unreadable"), { mode: 0 });
+      const log = path.join(root, "openclaw-2026-09-13.log");
+      fs.writeFileSync(
+        log,
+        JSON.stringify({
+          "0": JSON.stringify({ subsystem: "gateway/heartbeat" }),
+          "1": { intervalMs: 120000, apiKey: "fixture-secret" },
+          "2": "heartbeat: started",
+        }) + "\n",
+      );
+      const probe = managedOpenClawHeartbeatLogProbe()
+        .replace('"/tmp/openclaw"', JSON.stringify(path.join(root, "unreadable")))
+        .replace('"/tmp/openclaw-" + process.getuid()', JSON.stringify(root));
+      const result = spawnSync(process.execPath, ["-e", probe], { encoding: "utf8" });
+      expect(result.status).toBe(0);
+      expect(result.stdout).toBe("heartbeat-interval-ms=120000");
+      expect(result.stderr).toBe("");
+      fs.writeFileSync(log, "malformed fixture-secret");
+      const failed = spawnSync(process.execPath, ["-e", probe], { encoding: "utf8" });
+      expect(failed.status).toBe(1);
+      expect(failed.stdout).toBe("");
+      expect(failed.stderr).toBe("heartbeat-evidence-unavailable:parse:SyntaxError");
     } finally {
-      fs.rmSync(stateRoot, { recursive: true, force: true });
+      fs.chmodSync(path.join(root, "unreadable"), 0o700);
+      fs.rmSync(root, { recursive: true, force: true });
     }
   });
 
-  it("binds the public and protected managed-image plans to one supervisor argv (#7744)", () => {
-    const authorityStore = {};
-    const publicLaunch = resolveOnboardManagedBootstrapLaunch({
-      runtime: {
-        runtimeProvider: {
-          bootstrap: {
-            supported: true,
-            bootstrapKind: "managed-image",
-            createAuthorityStore: () => authorityStore,
-          },
-        },
-      } as never,
-      workload: {
-        source: {
-          kind: "managed-image",
-          contract: {
-            agent: "openclaw",
-            image: "registry.example/nemoclaw/openclaw",
-            digest: `sha256:${"a".repeat(64)}`,
-          },
-        },
-      } as never,
-      stateRoot: "/tmp/nemoclaw-state",
-      bootstrapIdentity: "bootstrap-identity",
-      request: {} as never,
-      intendedWorkloadArgv: ["/usr/local/bin/nemoclaw-start"],
-    })!;
-    const protectedLaunch = createProtectedManagedImageBootstrapInput(publicLaunch);
-
-    expect(protectedLaunch.expectedSupervisorArgv).toBe(publicLaunch.expectedSupervisorArgv);
-    expect(protectedLaunch.expectedSupervisorArgv).toBe(MANAGED_IMAGE_OPENSHELL_SUPERVISOR_ARGV);
-    expect(protectedLaunch.expectedSupervisorArgv).toEqual([
-      "/opt/openshell/bin/openshell-sandbox",
-      "--workdir",
-      "/sandbox",
-    ]);
-    expect(Object.isFrozen(protectedLaunch.expectedSupervisorArgv)).toBe(true);
+  it.each([
+    { reason: "unrelated subsystem", subsystem: "gateway/other", create: fs.copyFileSync },
+    { reason: "symlink log", subsystem: "gateway/heartbeat", create: fs.symlinkSync },
+  ])("rejects heartbeat evidence from a $reason", ({ subsystem, create }) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "heartbeat-denial-"));
+    try {
+      const source = path.join(root, "source.log");
+      fs.writeFileSync(
+        source,
+        JSON.stringify({
+          "0": JSON.stringify({ subsystem }),
+          "1": { intervalMs: 120000, apiKey: "fixture-secret" },
+          "2": "heartbeat: started",
+        }) + "\n",
+      );
+      create(source, path.join(root, "openclaw-2026-09-13.log"));
+      const probe = managedOpenClawHeartbeatLogProbe()
+        .replace('"/tmp/openclaw"', JSON.stringify(root))
+        .replace('"/tmp/openclaw-" + process.getuid()', JSON.stringify(root));
+      const result = spawnSync(process.execPath, ["-e", probe], { encoding: "utf8" });
+      expect(result.status).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toBe(
+        subsystem === "gateway/other"
+          ? "heartbeat-evidence-unavailable:parse:invalid"
+          : "heartbeat-evidence-unavailable:open:ELOOP",
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it.each([
-    "openshellArgv",
-    "runOpenshell",
-    "runCaptureOpenshell",
-    "sleepSeconds",
-    "startGatewayForRecovery",
-  ] as const)(
-    "loads every OpenShell operation required before protected image launch [%s] (#7744)",
-    (operation) => {
-      expect(MANAGED_IMAGE_ONBOARD[operation], operation).toBeTypeOf("function");
+    { separateLogs: false, intervals: [120000, 1800000] },
+    { separateLogs: false, intervals: [1800000, 120000] },
+    { separateLogs: true, intervals: [120000, 1800000] },
+    { separateLogs: true, intervals: [1800000, 120000] },
+  ])(
+    "rejects conflicting heartbeat intervals $intervals with separateLogs=$separateLogs",
+    ({ separateLogs, intervals }) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "heartbeat-conflict-"));
+      try {
+        intervals.forEach((intervalMs, index) => {
+          const name = separateLogs ? `openclaw-2026-09-${13 + index}.log` : "openclaw.log";
+          fs.appendFileSync(
+            path.join(root, name),
+            JSON.stringify({
+              "0": JSON.stringify({ subsystem: "gateway/heartbeat" }),
+              "1": { intervalMs, apiKey: "fixture-secret" },
+              "2": "heartbeat: started",
+            }) + "\n",
+          );
+        });
+        const probe = managedOpenClawHeartbeatLogProbe()
+          .replace('"/tmp/openclaw"', JSON.stringify(root))
+          .replace('"/tmp/openclaw-" + process.getuid()', JSON.stringify(root));
+        const result = spawnSync(process.execPath, ["-e", probe], { encoding: "utf8" });
+        expect(result.status).toBe(1);
+        expect(result.stdout).toBe("");
+        expect(result.stderr).toBe("heartbeat-evidence-unavailable:parse:invalid");
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
     },
   );
+
+  it("requires the exact managed OpenClaw heartbeat interval in startup logs (#10262)", () => {
+    const containerId = "a".repeat(64);
+    const runCommand = vi.fn<ManagedImageCommandRunner>(() => ({
+      status: 0,
+      stderr: "",
+      stdout: "heartbeat-interval-ms=120000",
+    }));
+
+    expect(() => assertOpenClawHeartbeatStart(containerId, {}, runCommand)).not.toThrow();
+    expect(runCommand).toHaveBeenCalledWith(
+      [
+        "docker",
+        "exec",
+        "--user",
+        "sandbox",
+        containerId,
+        "node",
+        "-e",
+        managedOpenClawHeartbeatLogProbe(),
+      ],
+      {},
+      15_000,
+    );
+
+    runCommand.mockReturnValue({
+      status: 0,
+      stdout: "heartbeat-interval-ms=1800000",
+      stderr: "",
+    });
+    expect(() => assertOpenClawHeartbeatStart(containerId, {}, runCommand)).toThrow(
+      "managed OpenClaw did not start with the requested 120000 ms heartbeat",
+    );
+  });
+
+  it("does not expose JSON credentials when managed OpenClaw startup logs cannot be read", () => {
+    const containerId = "a".repeat(64);
+    const secret = "json-api-key-secret";
+    const runCommand = vi.fn<ManagedImageCommandRunner>(() => ({
+      status: 1,
+      stdout: JSON.stringify({ apiKey: secret }),
+      stderr: JSON.stringify({ nested: { apiKey: secret } }),
+    }));
+
+    expect(() => assertOpenClawHeartbeatStart(containerId, {}, runCommand)).toThrow(
+      "managed OpenClaw structured heartbeat evidence unavailable",
+    );
+    expect(() => assertOpenClawHeartbeatStart(containerId, {}, runCommand)).not.toThrow(secret);
+    runCommand.mockReturnValue({
+      status: 1,
+      stdout: "",
+      stderr: "heartbeat-evidence-unavailable:list:EACCES",
+    });
+    expect(() => assertOpenClawHeartbeatStart(containerId, {}, runCommand)).toThrow(
+      "(list: EACCES)",
+    );
+    const diagnostic = managedImageFailureDetail(
+      new Error(
+        `startup failed: ${secret} https://user:password@example.test ${"x".repeat(8_000)}`,
+      ),
+      { NVIDIA_API_KEY: secret },
+    );
+    expect(diagnostic).toContain("Error: startup failed:");
+    expect(diagnostic).not.toMatch(/json-api-key-secret|user:password/);
+    expect(diagnostic).toHaveLength(8_000);
+  });
+
+  it("loads managed state-volume operations through the existing onboard boundary", () => {
+    expect(MANAGED_IMAGE_ONBOARD.managedWorkloadOnboard.prepareManagedStateVolumes).toBeTypeOf(
+      "function",
+    );
+    expect(MANAGED_IMAGE_ONBOARD.managedWorkloadOnboard.removeManagedStateVolumes).toBeTypeOf(
+      "function",
+    );
+  });
 
   it("rejects a missing protected OpenShell operation with a precise contract error (#8759)", () => {
     expect(() =>
@@ -210,82 +303,6 @@ describe("protected managed-image runtime contract", () => {
     ).toBe(true);
     expect(fs.existsSync(stateDir)).toBe(false);
   });
-
-  it("distinguishes the running image from exact quiescent rollback retention (#7744)", () => {
-    const calls: string[][] = [];
-    const contentId = `sha256:${"b".repeat(64)}`;
-    const containerId = "c".repeat(64);
-    const input = parseManagedImageOpenShellE2eInputs([
-      "--agent",
-      "openclaw",
-      "--image",
-      IMAGE,
-      "--sandbox",
-      VALID_SANDBOX,
-    ]);
-    const runningCommand = createManagedImageCommandRunner(
-      contentId,
-      containerId,
-      "-q",
-      `${containerId}\n`,
-      calls,
-    );
-    const retainedCommand = createManagedImageCommandRunner(
-      contentId,
-      containerId,
-      "-aq",
-      `${containerId}\n`,
-      calls,
-    );
-
-    expect(assertExactSandboxImage(input, "managed-network", {}, runningCommand)).toBe(containerId);
-    assertFailedBootstrapOwnerCleanupRetention(
-      input,
-      "managed-network",
-      containerId,
-      {},
-      retainedCommand,
-    );
-
-    expect(calls.filter((argv) => argv[1] === "ps").map((argv) => argv[2])).toEqual(["-q", "-aq"]);
-  });
-
-  it.each([
-    ["missing", "", false, "one exact owner-cleanup runtime"],
-    ["running", `${"c".repeat(64)}\n`, true, "quiescent owner-cleanup runtime"],
-  ] as const)(
-    "rejects a %s owner-cleanup runtime after failed bootstrap",
-    (_case, list, running, message) => {
-      const contentId = `sha256:${"b".repeat(64)}`;
-      const containerId = "c".repeat(64);
-      const input = parseManagedImageOpenShellE2eInputs([
-        "--agent",
-        "openclaw",
-        "--image",
-        IMAGE,
-        "--sandbox",
-        VALID_SANDBOX,
-      ]);
-      const runCommand = createManagedImageCommandRunner(
-        contentId,
-        containerId,
-        "-aq",
-        list,
-        [],
-        running,
-      );
-
-      expect(() =>
-        assertFailedBootstrapOwnerCleanupRetention(
-          input,
-          "managed-network",
-          containerId,
-          {},
-          runCommand,
-        ),
-      ).toThrow(message);
-    },
-  );
 
   it("accepts an exact retained OpenShell sandbox name", () => {
     const expectedSandboxId = "sandbox-id-123";
@@ -501,8 +518,37 @@ describe("protected managed-image runtime contract", () => {
     },
   );
 
-  it("rewrites only the inference route while preserving the managed agent profile", () => {
-    const profile = managedStartupE2eProfile("hermes", false, true, true);
+  it("accepts an isolated OpenClaw heartbeat with a matching configuration hash (#10262)", () => {
+    const result = runManagedOpenClawHeartbeatProbe({ every: "2m", isolatedSession: true });
+
+    expect(result.status, result.stderr).toBe(0);
+  });
+
+  it.each([
+    ["a main-session heartbeat", { every: "2m", isolatedSession: false }],
+    ["another heartbeat interval", { every: "30m", isolatedSession: true }],
+  ])("rejects %s in the managed OpenClaw probe (#10262)", (_case, heartbeat) => {
+    const result = runManagedOpenClawHeartbeatProbe(heartbeat);
+
+    expect(result.status).toBe(1);
+  });
+
+  it("rejects a stale managed OpenClaw configuration hash (#10262)", () => {
+    const result = runManagedOpenClawHeartbeatProbe({ every: "2m", isolatedSession: true }, "\n");
+
+    expect(result.status).toBe(1);
+  });
+
+  it.each([
+    ["openclaw", false],
+    ["openclaw", true],
+    ["hermes", false],
+    ["hermes", true],
+  ] as const)("supplies a valid local route for %s with providerless=%s", (agent, providerless) => {
+    const original = managedStartupE2eProfile(agent, false, true, true);
+    const profile = providerless
+      ? validateManagedStartupProfile({ ...original, inference: null })
+      : original;
     const route = resolveManagedImageLocalInferenceRoute("nim");
     const rewritten = withManagedImageLocalInferenceProfile(
       profile,
@@ -510,8 +556,9 @@ describe("protected managed-image runtime contract", () => {
       "nvidia/nemotron-3-nano",
     );
 
-    expect(rewritten).toMatchObject({
-      agent: "hermes",
+    expect(validateManagedStartupProfile(rewritten)).toEqual(rewritten);
+    expect(rewritten).toEqual({
+      ...profile,
       inference: {
         api: "openai-completions",
         model: "nvidia/nemotron-3-nano",
@@ -519,9 +566,16 @@ describe("protected managed-image runtime contract", () => {
         routeProvider: "inference",
         upstreamEndpointUrl: null,
         upstreamProvider: "vllm-local",
+        primaryModelRef: agent === "openclaw" ? "inference/nvidia/nemotron-3-nano" : null,
+        compatibility: profile.inference?.compatibility ?? (agent === "openclaw" ? {} : null),
+        inputModalities:
+          profile.inference?.inputModalities ?? (agent === "openclaw" ? ["text"] : null),
       },
     });
-    expect(rewritten.agentConfig).toEqual(profile.agentConfig);
+    expect(profile.inference).toEqual(providerless ? null : original.inference);
+    expect(() =>
+      validateManagedStartupProfile(withManagedImageLocalInferenceProfile(profile, route, "")),
+    ).toThrow();
   });
 
   it("rejects mutable images and incomplete GPU provider tuples", () => {
@@ -640,5 +694,46 @@ describe("protected managed-image runtime contract", () => {
         "--inject-bootstrap-completion-failure",
       ]),
     ).toMatchObject({ failureInjection: "bootstrap-completion" });
+  });
+
+  it("injects bootstrap completion failure only after exact owner retention is proven", () => {
+    const expectedSandboxId = "sandbox-id-rollback";
+    const managedImage = parseManagedImageOpenShellE2eInputs([
+      "--agent",
+      "openclaw",
+      "--image",
+      IMAGE,
+      "--sandbox",
+      VALID_SANDBOX,
+      "--inject-bootstrap-completion-failure",
+    ]);
+    const runOpenshell = vi.fn((argv: readonly string[]) =>
+      argv[1] === "get"
+        ? { status: 0, stdout: `Id: ${expectedSandboxId}\n`, stderr: "" }
+        : { status: 0, stdout: `NAME STATUS\n${VALID_SANDBOX} Ready\n`, stderr: "" },
+    );
+    const onQualified = vi.fn();
+    const write = vi.fn();
+    const injection = createBootstrapCompletionFailureInjection({
+      env: {},
+      managedImage,
+      onboard: { runOpenshell } as never,
+      onQualified,
+      write,
+    });
+
+    expect(() =>
+      injection.flowInput.verifyCreatedSandboxBeforeEffects!({
+        sandboxId: expectedSandboxId,
+        liveIdentityFingerprint: "fingerprint",
+        createAttemptNonce: "nonce",
+        route: "none",
+      }),
+    ).toThrow(injection.expectedError);
+    expect(onQualified).toHaveBeenCalledOnce();
+    expect(write).toHaveBeenCalledWith(
+      expect.stringContaining("retained one exact quiescent openclaw sandbox for owner cleanup"),
+    );
+    expect(injection.flowInput.persistRetainedSandboxRecovery!("retained")).toBe(true);
   });
 });

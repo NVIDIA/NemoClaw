@@ -10,10 +10,11 @@ import type {
   HermesPortablePendingReceipt,
 } from "./hermes-portable-receipt";
 import {
+  assertCurrentHermesPortableContainer,
   buildHermesPortablePodmanEnvironment,
-  configureHermesPortableRestartPolicy,
   enrollHermesPortableContainer,
   hermesPortableContainerInternals,
+  observeHermesPortableAuthenticatedHealth,
   probeHermesPortableAuthenticatedHealth,
   startHermesPortableContainer,
   stopHermesPortableContainer,
@@ -77,7 +78,7 @@ describe("Hermes portable Podman environment", () => {
 function receipt(): HermesPortablePendingReceipt {
   const uid = process.getuid!();
   return {
-    schemaVersion: 5,
+    schemaVersion: 7,
     agent: "hermes",
     phase: "pending",
     transactionId: randomUUID(),
@@ -115,6 +116,7 @@ function inspect(
   labels = LABELS,
   running = true,
   status = running ? "running" : "exited",
+  paused = false,
 ): HermesPortablePodmanResult {
   return {
     status: 0,
@@ -124,7 +126,7 @@ function inspect(
         Image: IMAGE,
         Name: `openshell-default--alpha-${SANDBOX_ID}`,
         Config: { Labels: labels },
-        State: { Running: running, Paused: false, Status: status },
+        State: { Running: running, Paused: paused, Status: status },
         HostConfig: { RestartPolicy: { Name: restartPolicy } },
       },
     ]),
@@ -133,11 +135,12 @@ function inspect(
 }
 
 function activeReceipt(running = true): HermesPortableConfiguredReceipt {
+  const pending = receipt();
+  const { policy: _policy, ...transaction } = pending;
   return {
-    ...receipt(),
+    ...transaction,
     phase: "active",
     previousPhaseSha256: "c".repeat(64),
-    verifiedLivePolicySemanticSha256: "d".repeat(64),
     startup: { health: { successStatus: 200 } } as never,
     container: {
       containerId: ID,
@@ -208,78 +211,174 @@ describe("Hermes portable container authority", () => {
     ).toThrow("disagrees with OpenShell");
   });
 
-  it("updates one exact full ID and verifies running restart authority (#9203)", () => {
-    const pending = receipt();
-    const container = {
-      containerId: ID,
-      sandboxId: SANDBOX_ID,
-      imageId: `sha256:${IMAGE}`,
-      labelsSha256: hermesPortableContainerInternals.labelsDigest(LABELS),
-      name: `openshell-default--alpha-${SANDBOX_ID}`,
-      running: true,
-      restartPolicy: "no",
-    };
-    const configuring = {
-      ...pending,
-      phase: "configuring" as const,
-      previousPhaseSha256: "c".repeat(64),
-      verifiedLivePolicySemanticSha256: "d".repeat(64),
-      container,
-    };
-    const podman = vi
-      .fn()
-      .mockReturnValueOnce(inspect())
-      .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" })
-      .mockReturnValueOnce(inspect("unless-stopped"));
+  it("reuses the latest receipt-bound observation for same-iteration authenticated health", () => {
+    const podman = vi.fn(() => inspect("unless-stopped"));
+    const authenticatedHealth = vi.fn(() => ({ status: 0, stdout: "200\n", stderr: "" }));
+    const receipt = activeReceipt();
+    const deps = { podman, authenticatedHealth, assertSocketAuthority: vi.fn() };
+    const before = assertCurrentHermesPortableContainer(receipt, deps);
 
-    expect(
-      configureHermesPortableRestartPolicy(configuring, {
-        podman,
-        assertSocketAuthority: vi.fn(),
-      }).authority.restartPolicy,
-    ).toBe("unless-stopped");
-    expect(podman.mock.calls[1]?.[0]).toEqual([
-      "container",
-      "update",
-      "--restart=unless-stopped",
-      ID,
-    ]);
+    expect(observeHermesPortableAuthenticatedHealth(receipt, deps, before)).toBe("ready");
+    expect(podman).toHaveBeenCalledTimes(2);
   });
 
-  it("preserves configuring authority when update outcome is ambiguous (#9203)", () => {
-    const pending = receipt();
-    const configuring = {
-      ...pending,
-      phase: "configuring" as const,
-      previousPhaseSha256: "c".repeat(64),
-      verifiedLivePolicySemanticSha256: "d".repeat(64),
-      container: {
-        ...enrollHermesPortableContainer(pending, SANDBOX_ID, {
-          podman: vi
-            .fn()
-            .mockReturnValueOnce({ status: 0, stdout: `${ID}\n`, stderr: "" })
-            .mockReturnValueOnce(inspect()),
-          assertSocketAuthority: vi.fn(),
-        }).authority,
-      },
-    };
-    const podman = vi
-      .fn()
-      .mockReturnValueOnce(inspect())
-      .mockReturnValueOnce({
-        status: null,
-        stdout: "",
-        stderr: "",
-        error: Object.assign(new Error("timed out"), { code: "ETIMEDOUT" }),
-      });
+  it("rejects a fabricated observation before authenticated health", () => {
+    const authenticatedHealth = vi.fn(() => ({ status: 0, stdout: "200\n", stderr: "" }));
+    const receipt = activeReceipt();
+    const fabricated = hermesPortableContainerInternals.parseInspection(
+      inspect("unless-stopped").stdout,
+      { sandboxName: receipt.sandboxName, sandboxId: receipt.container.sandboxId, containerId: ID },
+    );
 
     expect(() =>
-      configureHermesPortableRestartPolicy(configuring, {
+      observeHermesPortableAuthenticatedHealth(
+        receipt,
+        { podman: vi.fn(), authenticatedHealth, assertSocketAuthority: vi.fn() },
+        fabricated,
+      ),
+    ).toThrow("reused health observation is not current receipt authority");
+    expect(authenticatedHealth).not.toHaveBeenCalled();
+  });
+
+  it("rejects an observation that belongs to another receipt object", () => {
+    const podman = vi.fn(() => inspect("unless-stopped"));
+    const authenticatedHealth = vi.fn(() => ({ status: 0, stdout: "200\n", stderr: "" }));
+    const receipt = activeReceipt();
+    const deps = { podman, authenticatedHealth, assertSocketAuthority: vi.fn() };
+    const before = assertCurrentHermesPortableContainer(receipt, deps);
+
+    expect(() =>
+      observeHermesPortableAuthenticatedHealth(structuredClone(receipt), deps, before),
+    ).toThrow("reused health observation is not current receipt authority");
+    expect(authenticatedHealth).not.toHaveBeenCalled();
+  });
+
+  it("rejects an observation after a newer receipt-bound inspection", () => {
+    const podman = vi.fn(() => inspect("unless-stopped"));
+    const authenticatedHealth = vi.fn(() => ({ status: 0, stdout: "200\n", stderr: "" }));
+    const receipt = activeReceipt();
+    const deps = { podman, authenticatedHealth, assertSocketAuthority: vi.fn() };
+    const stale = assertCurrentHermesPortableContainer(receipt, deps);
+    assertCurrentHermesPortableContainer(receipt, deps);
+
+    expect(() => observeHermesPortableAuthenticatedHealth(receipt, deps, stale)).toThrow(
+      "reused health observation is not current receipt authority",
+    );
+    expect(authenticatedHealth).not.toHaveBeenCalled();
+  });
+
+  it("rejects an observation after authenticated health consumes it", () => {
+    const podman = vi.fn(() => inspect("unless-stopped"));
+    const authenticatedHealth = vi.fn(() => ({ status: 0, stdout: "200\n", stderr: "" }));
+    const receipt = activeReceipt();
+    const deps = { podman, authenticatedHealth, assertSocketAuthority: vi.fn() };
+    const consumed = assertCurrentHermesPortableContainer(receipt, deps);
+
+    expect(observeHermesPortableAuthenticatedHealth(receipt, deps, consumed)).toBe("ready");
+    expect(() => observeHermesPortableAuthenticatedHealth(receipt, deps, consumed)).toThrow(
+      "reused health observation is not current receipt authority",
+    );
+    expect(authenticatedHealth).toHaveBeenCalledOnce();
+  });
+
+  it("prevents changes to a receipt-bound observation before health", () => {
+    const podman = vi.fn(() => inspect("unless-stopped", LABELS, false));
+    const authenticatedHealth = vi.fn(() => ({ status: 0, stdout: "200\n", stderr: "" }));
+    const receipt = activeReceipt();
+    const deps = { podman, authenticatedHealth, assertSocketAuthority: vi.fn() };
+    const before = assertCurrentHermesPortableContainer(receipt, deps);
+
+    expect(Reflect.set(before.authority, "running", true)).toBe(false);
+    expect(Reflect.set(before, "status", "running")).toBe(false);
+    expect(() => observeHermesPortableAuthenticatedHealth(receipt, deps, before)).toThrow(
+      "running and unpaused",
+    );
+    expect(authenticatedHealth).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["status", "unless-stopped", "exited", false],
+    ["paused state", "unless-stopped", "running", true],
+  ])(
+    "rejects reused health observation with invalid %s before credentials run",
+    (_label, restartPolicy, status, paused) => {
+      const authenticatedHealth = vi.fn(() => ({ status: 0, stdout: "200\n", stderr: "" }));
+      const receipt = activeReceipt();
+      const podman = vi.fn(() => inspect(restartPolicy, LABELS, true, status, paused));
+      const deps = { podman, authenticatedHealth, assertSocketAuthority: vi.fn() };
+      const invalid = assertCurrentHermesPortableContainer(receipt, deps);
+
+      expect(() => observeHermesPortableAuthenticatedHealth(receipt, deps, invalid)).toThrow(
+        "running and unpaused",
+      );
+      expect(authenticatedHealth).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ["returns a failed result", () => ({ status: 1, stdout: "", stderr: "failed" }), "status 1"],
+    [
+      "throws a transport error",
+      () => {
+        throw new Error("health transport failed");
+      },
+      "health transport failed",
+    ],
+  ])("post-inspects when authenticated health %s", (_label, captureHealth, expectedError) => {
+    const events: string[] = [];
+    const podman = vi.fn(() => {
+      events.push("inspect");
+      return inspect("unless-stopped");
+    });
+    const authenticatedHealth = vi.fn(() => {
+      events.push("health");
+      return captureHealth();
+    });
+    const receipt = activeReceipt();
+    const deps = { podman, authenticatedHealth, assertSocketAuthority: vi.fn() };
+    const before = assertCurrentHermesPortableContainer(receipt, deps);
+
+    expect(() => observeHermesPortableAuthenticatedHealth(receipt, deps, before)).toThrow(
+      expectedError,
+    );
+    expect(events).toEqual(["inspect", "health", "inspect"]);
+  });
+
+  it("reports both health and post-inspection failures", () => {
+    const podman = vi
+      .fn()
+      .mockReturnValueOnce(inspect("unless-stopped"))
+      .mockReturnValueOnce({ status: 1, stdout: "", stderr: "inspect failed" });
+    const authenticatedHealth = vi.fn(() => ({ status: 1, stdout: "", stderr: "health failed" }));
+    const receipt = activeReceipt();
+    const deps = { podman, authenticatedHealth, assertSocketAuthority: vi.fn() };
+    const before = assertCurrentHermesPortableContainer(receipt, deps);
+
+    expect(() => observeHermesPortableAuthenticatedHealth(receipt, deps, before)).toThrow(
+      "authenticated health and post-inspection failed",
+    );
+    expect(podman).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ["running state changes", inspect("unless-stopped", LABELS, false)],
+    ["paused state changes", inspect("unless-stopped", LABELS, true, "running", true)],
+    ["status changes", inspect("unless-stopped", LABELS, true, "exited")],
+  ])("rejects health when container %s during the command", (_label, after) => {
+    const podman = vi
+      .fn()
+      .mockReturnValueOnce(inspect("unless-stopped"))
+      .mockReturnValueOnce(after);
+    const authenticatedHealth = vi.fn(() => ({ status: 0, stdout: "200\n", stderr: "" }));
+
+    expect(() =>
+      probeHermesPortableAuthenticatedHealth(activeReceipt(), {
         podman,
+        authenticatedHealth,
         assertSocketAuthority: vi.fn(),
       }),
-    ).toThrow("restart-policy update failed");
-    expect(podman).toHaveBeenCalledTimes(2);
+    ).toThrow("container authority changed during authenticated health");
+    expect(authenticatedHealth).toHaveBeenCalledOnce();
   });
 
   it("proves Bearer-authenticated health inside the exact container without host credentials (#9203)", () => {
@@ -300,17 +399,14 @@ describe("Hermes portable container authority", () => {
     });
 
     expect(podman).toHaveBeenCalledTimes(2);
-    const [script, timeout] = authenticatedHealth.mock.calls[0]!;
-    expect(timeout).toBe(40_000);
-    expect(script).toContain("API_SERVER_KEY");
-    expect(script).toContain("NoRedirect");
-    expect(script).toContain("ProxyHandler({})");
-    expect(script).toContain("redirect refused");
-    expect(script).not.toContain("Bearer test-token");
+    expect(authenticatedHealth).toHaveBeenCalledWith(
+      hermesPortableContainerInternals.authenticatedHealthScript,
+      40_000,
+    );
   });
 
   it("rejects redirected authenticated health without exposing credentials (#9203)", () => {
-    const podman = vi.fn().mockReturnValueOnce(inspect("unless-stopped"));
+    const podman = vi.fn(() => inspect("unless-stopped"));
     const authenticatedHealth = vi.fn(() => ({ status: 0, stdout: "302\n", stderr: "" }));
 
     expect(() =>
@@ -323,14 +419,10 @@ describe("Hermes portable container authority", () => {
 
     const serializedCalls = JSON.stringify(podman.mock.calls);
     expect(serializedCalls).not.toContain("Bearer " + "a".repeat(64));
-    expect(hermesPortableContainerInternals.authenticatedHealthScript).toContain("NoRedirect");
-    expect(hermesPortableContainerInternals.authenticatedHealthScript).not.toContain(
-      "urllib.request.urlopen",
-    );
   });
 
   it("does not accept unauthenticated health status (#9203)", () => {
-    const podman = vi.fn().mockReturnValueOnce(inspect("unless-stopped"));
+    const podman = vi.fn(() => inspect("unless-stopped"));
     const authenticatedHealth = vi.fn(() => ({ status: 0, stdout: "401\n", stderr: "" }));
 
     expect(() =>

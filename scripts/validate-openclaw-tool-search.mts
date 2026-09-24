@@ -1,4 +1,4 @@
-#!/usr/bin/env -S node --experimental-strip-types
+#!/usr/bin/env node
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -37,6 +37,14 @@ const RUNTIME_MODULE_FILE_PATTERNS = new Map<string, Readonly<Record<RuntimeFunc
         resolveToolSearchConfig: /^tool-search-.*\.js$/,
         createOpenClawCodingTools: /^agent-tools-.*\.js$/,
         applyToolSearchCatalog: /^tool-search-.*\.js$/,
+      },
+    ],
+    [
+      "2026.9.1",
+      {
+        resolveToolSearchConfig: /^local-model-lean-.*\.js$/,
+        createOpenClawCodingTools: /^agent-tools-.*\.js$/,
+        applyToolSearchCatalog: /^local-model-lean-.*\.js$/,
       },
     ],
   ],

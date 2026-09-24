@@ -23,7 +23,6 @@ export function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefini
       configFile: "/tmp/agent/config.yaml",
       envFile: null,
       format: "yaml",
-      shieldsFiles: [],
     },
     inferenceProviderOptions: [],
     mcpCapability: {
@@ -37,15 +36,6 @@ export function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefini
     backupStateDirPrefixes: [],
     nonBackupStateDirs: [],
     nonBackupStateDirPrefixes: [],
-    stateLockPlan: {
-      version: 1,
-      readOnlyRoots: [],
-      confidentialRoots: [],
-      readOnlyPrefixes: [],
-      confidentialPrefixes: [],
-      writableSubpaths: [],
-    },
-    stateLockPlanInImage: false,
     stateFiles: [],
     userManagedFiles: [],
     versionCommand: "test-agent --version",
@@ -56,7 +46,6 @@ export function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefini
     dockerfilePath: null,
     startScriptPath: null,
     policyAdditionsPath: null,
-    policyPermissivePath: null,
     pluginDir: null,
     legacyPaths: null,
     agentDir: "/tmp/agent",
@@ -78,6 +67,5 @@ export const hermesAgent = makeAgent({
     configFile: "/sandbox/.hermes/config.yaml",
     envFile: "/sandbox/.hermes/.env",
     format: "yaml",
-    shieldsFiles: [".env"],
   },
 });

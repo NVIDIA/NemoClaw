@@ -20,9 +20,11 @@ vi.mock("./native-host-facts", () => ({
 
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "../runtime-provider/current";
 import type { MxcNativeArtifactControlPlane } from "../runtime-provider/mxc-bootstrap-operations";
-import { mxcOpenShellAttachmentFixture } from "../runtime-provider/mxc-openshell-attachment-test-fixture";
-import { MXC_OPENSHELL_ATTACHMENT_CONTRACT_VERSION } from "../runtime-provider/mxc-openshell-attachment";
-import type { MxcOpenShellAttachmentObservationRequest } from "../runtime-provider/mxc-openshell-observer";
+import {
+  mxcOpenShellAttachmentDigestMap,
+  mxcOpenShellAttachmentObservationRequest,
+  mxcOpenShellDistributionTestFixture,
+} from "../runtime-provider/mxc-openshell-attachment-test-fixture";
 import { encodeManagedStartupProfile } from "../managed-startup/profile";
 import { nativeArtifactWorkloadReceiptFixture } from "../workload/native-artifact-test-fixture";
 import {
@@ -68,51 +70,16 @@ function controlPlane(): MxcNativeArtifactControlPlane {
   };
 }
 
-function observationRequest(): MxcOpenShellAttachmentObservationRequest {
-  const observed = mxcOpenShellAttachmentFixture("0.0.24").observation;
-  return {
-    contractVersion: MXC_OPENSHELL_ATTACHMENT_CONTRACT_VERSION,
-    providerId: "mxc",
-    mode: "attach-existing",
-    observedDistribution: {
-      version: observed.distribution.version,
-      revision: observed.distribution.revision,
-    },
-    observedGateway: { driver: "mxc", backend: "process_container" },
-    installation: {
-      distributionArtifactPath: "C:\\OpenShell\\packages\\openshell-0.0.24.zip",
-      distributionRoot: observed.distributionRoot,
-      mxcRoot: observed.mxcRoot,
-      cliPath: observed.cliPath,
-      gatewayPath: observed.gatewayPath,
-      wxcExecPath: observed.wxcExecPath,
-      gatewayConfigPath: observed.gatewayConfigPath,
-    },
-  };
-}
-
-function acceptedDigests(): Map<string, string> {
-  const observed = mxcOpenShellAttachmentFixture("0.0.24").observation;
-  return new Map([
-    ["C:\\OpenShell\\packages\\openshell-0.0.24.zip", observed.distribution.sha256],
-    [observed.cliPath, observed.components.cliSha256],
-    [observed.gatewayPath, observed.components.gatewaySha256],
-    [observed.wxcExecPath, observed.components.wxcExecSha256],
-    [observed.gatewayConfigPath, observed.gateway.configSha256],
-  ]);
-}
-
 function onboardingInput(
   bootstrapControlPlane: MxcNativeArtifactControlPlane,
 ): MxcWindowsInactiveOnboardingInput {
-  const attachment = mxcOpenShellAttachmentFixture("0.0.24");
   const workload = nativeArtifactWorkloadReceiptFixture(
     encodeManagedStartupProfile(managedStartupE2eProfile("openclaw")),
   );
   return {
     installation: {
-      openshellAttachmentAuthority: attachment.authority,
-      attachmentObservation: observationRequest(),
+      openshellDistributionAuthority: mxcOpenShellDistributionTestFixture().authority,
+      attachmentObservation: mxcOpenShellAttachmentObservationRequest(),
       bootstrapControlPlane,
     },
     bootstrap: {
@@ -136,7 +103,7 @@ describe("inactive native Windows OpenShell MXC onboarding", () => {
       nativeArchitecture: "x64",
       release: "10.0.28120.2760",
     });
-    const digests = acceptedDigests();
+    const digests = mxcOpenShellAttachmentDigestMap();
     nativeBoundary.observeFileDigest.mockImplementation(async (filePath) =>
       Promise.resolve(digests.get(filePath) ?? "0".repeat(64)),
     );
@@ -162,7 +129,7 @@ describe("inactive native Windows OpenShell MXC onboarding", () => {
 
   it("rejects attachment drift before the create operation (#8178)", async () => {
     const operations = controlPlane();
-    const digests = acceptedDigests();
+    const digests = mxcOpenShellAttachmentDigestMap();
     let observations = 0;
     nativeBoundary.observeFileDigest.mockImplementation(async (filePath) => {
       observations += 1;

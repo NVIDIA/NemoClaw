@@ -5,12 +5,12 @@ import type { InferenceEndpointSource } from "../../inference/selection";
 import type { WebSearchConfig } from "../../inference/web-search";
 import type { Session } from "../../state/onboard-session";
 import type { HostLocalInferenceSandboxProofAuthority } from "../runtime-provider/host-local-inference-routing";
+import type { PreparedExternalComponent } from "../external-component";
 import type { OnboardStateHandlerResult } from "./runner";
 
 export interface OnboardFlowContext<Agent = unknown, Gpu = unknown, SandboxGpuConfig = unknown> {
   resume: boolean;
   fresh: boolean;
-  recreateJournalHandoff?: boolean;
   session: Session | null;
   agent: Agent;
   recordedSandboxName: string | null;
@@ -37,11 +37,15 @@ export interface OnboardFlowContext<Agent = unknown, Gpu = unknown, SandboxGpuCo
   providerlessApf?: true;
   /** Process-local policy boundary for provider-owned host-local inference routes. */
   hostLocalInferenceRouteOnly?: boolean;
+  /** Explicit managed-vLLM preview choice accepted by N1x preflight. */
+  deferredN1xManagedVllmPreviewAccepted?: boolean;
   /** Exact provider-owned route and proof contract consumed after final policy sync. */
   hostLocalInferenceSandboxProofAuthority?: HostLocalInferenceSandboxProofAuthority | null;
   gpu: Gpu | null;
   sandboxGpuConfig: SandboxGpuConfig | null;
   gpuPassthrough: boolean;
+  /** Validated process-local component authority for this fresh onboarding run. */
+  externalComponent?: PreparedExternalComponent | null;
 }
 
 export type ProviderModelSelectedOnboardFlowContext<Context extends OnboardFlowContext> =
@@ -92,7 +96,6 @@ export interface ProviderModelSelectedContextUpdate {
 export interface SandboxCreatedContextUpdate {
   session: Session | null;
   sandboxName: string;
-  recreateJournalHandoff?: boolean;
   webSearchConfig: WebSearchConfig | null;
   webSearchConfigChanged: boolean;
   hermesToolGateways: string[];
@@ -119,11 +122,20 @@ export function assertProviderSelectedContext<Context extends OnboardFlowContext
   }
 }
 
+export function isProviderlessComponentOnboarding(
+  context: Pick<OnboardFlowContext, "providerlessApf" | "externalComponent">,
+): boolean {
+  return context.providerlessApf === true && Boolean(context.externalComponent);
+}
+
 export function assertSandboxCreatedContext<Context extends OnboardFlowContext>(
   context: Context,
   stepName: string,
 ): asserts context is SandboxCreatedOnboardFlowContext<Context> {
-  if (!context.sandboxName || !context.model || !context.provider) {
+  const inferenceReady = isProviderlessComponentOnboarding(context)
+    ? context.model === "" && context.provider === ""
+    : Boolean(context.model && context.provider);
+  if (!context.sandboxName || !inferenceReady) {
     throw new Error(`Onboarding state is incomplete before ${stepName}.`);
   }
 }

@@ -12,11 +12,13 @@ import * as runtime from "../../adapters/openshell/runtime";
 import * as defs from "../../agent/defs";
 import * as store from "../../credentials/store";
 import * as gatewayRuntime from "../../gateway-runtime-action";
+import { createBuiltInMessagingHookRegistry, MessagingSetupApplier } from "../../messaging";
 import * as policy from "../../policy";
 import { hashCredential } from "../../security/credential-hash";
 import * as onboardSession from "../../state/onboard-session";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
+import * as crossPortRegistry from "../../state/registry/cross-port";
 import * as messagingHostForwardLifecycle from "./messaging-host-forward-lifecycle";
 import { addSandboxChannel, startSandboxChannel } from "./policy-channel";
 import { policyChannelDependencies } from "./policy-channel-dependencies";
@@ -224,7 +226,6 @@ function makeHermesDiscordEntry(name: string): SandboxEntry {
   return {
     name,
     agent: "hermes",
-    policies: [],
     messaging: {
       schemaVersion: 1,
       plan: {
@@ -345,6 +346,14 @@ beforeEach(() => {
 
   // Registry seam.
   getSandboxMock = vi.spyOn(registry, "getSandbox").mockReturnValue(null);
+  vi.spyOn(crossPortRegistry, "findSandboxAcrossGatewayRoots").mockImplementation(
+    (name: string) => {
+      const entry = registry.getSandbox(name);
+      return entry
+        ? { entry, gatewayPort: entry.gatewayPort ?? null, registryFile: "/test/sandboxes.json" }
+        : null;
+    },
+  );
   getDisabledChannelsMock = vi.spyOn(registry, "getDisabledChannels").mockReturnValue([]);
   listSandboxesMock = vi
     .spyOn(registry, "listSandboxes")
@@ -353,17 +362,26 @@ beforeEach(() => {
 
   // Lazy legacy-provider seam: no onboarding graph is loaded for this suite.
   upsertMock = vi.spyOn(policyChannelDependencies, "upsertMessagingProviders").mockReturnValue([]);
-  vi.spyOn(policyChannelDependencies, "revalidateChannelProviderPolicyAuthority").mockImplementation(
-    () => undefined,
+  vi.spyOn(
+    policyChannelDependencies,
+    "createMessagingHostForwardPreEnableHookRegistry",
+  ).mockReturnValue(
+    createBuiltInMessagingHookRegistry({
+      teams: { hostForwardPortConflict: { checkPortAvailable: async () => ({ ok: true }) } },
+    }),
+  );
+  vi.spyOn(policyChannelDependencies, "revalidateChannelProviderPolicy").mockImplementation(
+    async () => undefined,
   );
 
   // openshell runtime + gateway recovery.
   runOpenshellMock = vi.spyOn(runtime, "runOpenshell").mockReturnValue(successfulOpenshellResult());
   const healthyGatewayState = {
     state: "healthy_named",
-    status: "",
-    gatewayInfo: "",
     activeGateway: "nemoclaw",
+    diagnostic: "",
+    recoveryBlocked: false,
+    unavailable: false,
   } as const;
   vi.spyOn(gatewayRuntime, "recoverNamedGatewayRuntime").mockResolvedValue({
     recovered: true,
@@ -388,12 +406,12 @@ beforeEach(() => {
   vi.spyOn(policy, "loadPreset").mockReturnValue("network_policies:\n  stub: {}\n");
   vi.spyOn(policy, "parsePresetPolicyKeys").mockReturnValue(["stub"]);
   vi.spyOn(policy, "listPresets").mockReturnValue([]);
-  vi.spyOn(policy, "getPresetContentGatewayState").mockReturnValue("absent");
+  vi.spyOn(policy, "getPresetContentGatewayState").mockResolvedValue("absent");
   scopeDisclosureMock = vi
     .spyOn(policy, "logPresetScopeForState")
     .mockImplementation(() => undefined);
-  applyPresetMock = vi.spyOn(policy, "applyPreset").mockReturnValue(true);
-  vi.spyOn(policy, "getAppliedPresets").mockReturnValue([]);
+  applyPresetMock = vi.spyOn(policy, "applyPreset").mockResolvedValue(true);
+  vi.spyOn(policy, "getAppliedPresets").mockResolvedValue([]);
 
   // Downstream rebuild is not under test.
   rebuildSandboxMock = vi
@@ -401,7 +419,7 @@ beforeEach(() => {
     .mockResolvedValue(undefined);
   ensureMessagingHostForwardAfterRebuildMock = vi
     .spyOn(messagingHostForwardLifecycle, "ensureMessagingHostForwardAfterRebuild")
-    .mockReturnValue(true);
+    .mockResolvedValue(true);
 
   // After a successful interactive add, channel health-check hooks can probe
   // the sandbox via executeSandboxExecCommand, which calls getOpenshellBinary()
@@ -409,8 +427,8 @@ beforeEach(() => {
   // unit-test runner; locally it is installed, so this only bites in CI). Stub
   // the exec path so the post-add verification never shells out and never trips
   // the exit spy unless a test explicitly overrides it.
-  vi.spyOn(processRecovery, "executeSandboxExecCommand").mockReturnValue(null);
-  vi.spyOn(processRecovery, "executeSandboxCommand").mockReturnValue(null);
+  vi.spyOn(processRecovery, "executeSandboxExecCommand").mockResolvedValue(null);
+  vi.spyOn(processRecovery, "executeSandboxCommand").mockResolvedValue(null);
 
   process.env.NEMOCLAW_SKIP_TELEGRAM_REACHABILITY = "1";
   process.env.NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION = "1";
@@ -550,6 +568,53 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
     expect(upsertMock).not.toHaveBeenCalled();
   });
 
+  it("does not create or attach a provider when credential-free policy fails", async () => {
+    arrangeRegistry({ current: makeEmptyEntry("alpha") });
+    getCredentialMock.mockReturnValue(TELEGRAM_TOKEN);
+    applyPresetMock.mockReturnValueOnce(false);
+
+    await expect(addSandboxChannel("alpha", { channel: "telegram" })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(applyPresetMock).toHaveBeenCalledWith(
+      "alpha",
+      "telegram",
+      expect.objectContaining({ includeMessagingCredentialBindings: false }),
+    );
+    expect(upsertMock).not.toHaveBeenCalled();
+    expect(runOpenshellMock).not.toHaveBeenCalledWith(
+      expect.arrayContaining(["provider", "attach"]),
+      expect.anything(),
+    );
+  });
+
+  // Coverage shards exercise this rollback path under aggregate process load;
+  // keep its behavior deadline bounded above the default 5 seconds.
+  it("removes credential-free policy when provider attachment fails", async () => {
+    arrangeRegistry({ current: makeEmptyEntry("alpha") });
+    getCredentialMock.mockReturnValue(TELEGRAM_TOKEN);
+    upsertMock.mockRejectedValue(
+      Object.assign(new Error("provider attachment failed"), {
+        code: "NEMOCLAW_MESSAGING_PROVIDER_MUTATION_FAILURE",
+        mutatedProviderNames: ["alpha-telegram-bridge"],
+        createdProviderNames: ["alpha-telegram-bridge"],
+      }),
+    );
+    vi.mocked(policy.listPresets).mockReturnValue([
+      { file: "telegram.yaml", name: "telegram", description: "Telegram" },
+    ]);
+    vi.mocked(policy.getAppliedPresets).mockResolvedValue(["telegram"]);
+    const removePresetMock = vi.spyOn(policy, "removePreset").mockResolvedValue(true);
+    runOpenshellMock.mockReturnValue(successfulOpenshellResult());
+
+    await expect(addSandboxChannel("alpha", { channel: "telegram" })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(removePresetMock).toHaveBeenCalledWith("alpha", "telegram");
+  }, 60_000);
+
   // Scenario 5b
   it("different hash on the other sandbox is NOT a conflict (no warning, add proceeds)", async () => {
     arrangeRegistry({
@@ -597,7 +662,12 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
         },
       ],
       "nemoclaw",
-      { bestEffort: true, requireExactBindings: true },
+      { replaceExisting: true },
+      expect.objectContaining({
+        channelName: "discord",
+        sandboxAgent: "hermes",
+        sandboxName: "alpha",
+      }),
     );
   });
 
@@ -609,13 +679,10 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
       key === "DISCORD_BOT_TOKEN" ? DISCORD_TOKEN : null,
     );
     upsertMock.mockImplementationOnce(() => {
-      throw Object.assign(
-        new Error("alpha-discord-bridge does not match the required binding"),
-        {
-          code: "NEMOCLAW_MESSAGING_PROVIDER_BINDING_CONFLICT",
-          mutatedProviderNames: [],
-        },
-      );
+      throw Object.assign(new Error("alpha-discord-bridge does not match the required binding"), {
+        code: "NEMOCLAW_MESSAGING_PROVIDER_BINDING_CONFLICT",
+        mutatedProviderNames: [],
+      });
     });
 
     await expect(addSandboxChannel("alpha", { channel: "discord" })).rejects.toThrow(
@@ -652,7 +719,16 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
 
     expect(upsertMock.mock.calls[0]?.[0]).toHaveLength(2);
     expect(saveCredentialMock).not.toHaveBeenCalled();
-    expect(applyPresetMock).not.toHaveBeenCalled();
+    expect(applyPresetMock).toHaveBeenCalledWith(
+      "alpha",
+      "slack",
+      expect.objectContaining({ includeMessagingCredentialBindings: false }),
+    );
+    expect(applyPresetMock).not.toHaveBeenCalledWith(
+      "alpha",
+      "slack",
+      expect.objectContaining({ includeMessagingCredentialBindings: true }),
+    );
     expect(updateSandboxMock).not.toHaveBeenCalled();
     expect(rebuildSandboxMock).not.toHaveBeenCalled();
     expect(registry.getSandbox("alpha")).toBe(originalEntry);
@@ -1171,6 +1247,11 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
     const execCommands = vi
       .mocked(processRecovery.executeSandboxExecCommand)
       .mock.calls.map((call: unknown[]) => String(call[1]));
+    expect(
+      vi
+        .mocked(processRecovery.executeSandboxExecCommand)
+        .mock.calls.every((call) => call[3]?.localDockerFallbackPolicy === "read-only"),
+    ).toBe(true);
     expect(execCommands.some((cmd: string) => cmd.includes("grep"))).toBe(false);
     expect(
       execCommands.some(
@@ -1224,11 +1305,73 @@ describe("Teams host-forward lifecycle (PRA-2)", () => {
     return plan?.channels?.find((channel) => channel.channelId === "teams")?.hostForward;
   }
 
+  it("rejects an occupied host port before persisting any channel state", async () => {
+    setTeamsEnv();
+    arrangeRegistry({ current: makeEmptyEntry("alpha") });
+    const preEnableHookRegistry = createBuiltInMessagingHookRegistry({
+      teams: {
+        hostForwardPortConflict: {
+          checkPortAvailable: async () => ({ ok: false, process: "nc", pid: 4321 }),
+          isCurrentSandboxForward: () => false,
+        },
+      },
+    });
+
+    vi.mocked(
+      policyChannelDependencies.createMessagingHostForwardPreEnableHookRegistry,
+    ).mockReturnValue(preEnableHookRegistry);
+    await expect(addSandboxChannel("alpha", { channel: "teams" })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(
+      policyChannelDependencies.createMessagingHostForwardPreEnableHookRegistry,
+    ).toHaveBeenCalledOnce();
+    expect(loggedText()).toContain(
+      "Microsoft Teams webhook port 3978 is already in use by nc (PID 4321)",
+    );
+    expect(loggedText()).toContain("MSTEAMS_PORT");
+    expect(upsertMock).not.toHaveBeenCalled();
+    expect(saveCredentialMock).not.toHaveBeenCalled();
+    expect(applyPresetMock).not.toHaveBeenCalled();
+    expect(updateSandboxMock).not.toHaveBeenCalled();
+    expect(rebuildSandboxMock).not.toHaveBeenCalled();
+  });
+
+  it.each(["add", "start", "add QR"])(
+    "reports incomplete channel %s when the host forward fails (#11648)",
+    async (operation) => {
+      setTeamsEnv();
+      arrangeRegistry({
+        current:
+          operation === "start"
+            ? makeTeamsEntry("alpha", { disabled: true, port: "3978" })
+            : makeEmptyEntry("alpha"),
+      });
+      getDisabledChannelsMock.mockReturnValue(operation === "start" ? ["teams"] : []);
+      ensureMessagingHostForwardAfterRebuildMock.mockResolvedValue(false);
+      const healthChecks = vi.spyOn(MessagingSetupApplier, "applyHealthChecks");
+      const action = operation === "start" ? startSandboxChannel : addSandboxChannel;
+      await expect(
+        action("alpha", { channel: operation === "add QR" ? "whatsapp" : "teams" }),
+      ).rejects.toThrow(/host forward.*incomplete/i);
+      expect(ensureMessagingHostForwardAfterRebuildMock).toHaveBeenCalledOnce();
+      expect(healthChecks).not.toHaveBeenCalled();
+    },
+  );
+
   it("channels add teams starts the MSTEAMS_PORT host forward after rebuild-now completes", async () => {
     setTeamsEnv();
     arrangeRegistry({ current: makeEmptyEntry("alpha") });
+    const preEnableHookRegistry = createBuiltInMessagingHookRegistry({
+      teams: {
+        hostForwardPortConflict: {
+          checkPortAvailable: async () => ({ ok: true }),
+        },
+      },
+    });
 
-    await addSandboxChannel("alpha", { channel: "teams" });
+    await addSandboxChannel("alpha", { channel: "teams" }, { preEnableHookRegistry });
 
     expect(rebuildSandboxMock).toHaveBeenCalledWith("alpha", ["--yes"]);
     expect(ensureMessagingHostForwardAfterRebuildMock).toHaveBeenCalledWith(
@@ -1339,7 +1482,7 @@ describe("Teams host-forward lifecycle (PRA-2)", () => {
 
 function mockBridgeHealthExec(options: { config: unknown; log: string }): void {
   vi.mocked(processRecovery.executeSandboxExecCommand).mockImplementation(
-    (_sandboxName: string, command: string) => {
+    async (_sandboxName: string, command: string) => {
       if (command.includes("cat") && command.includes("openclaw.json")) {
         return { status: 0, stdout: JSON.stringify(options.config), stderr: "" };
       }

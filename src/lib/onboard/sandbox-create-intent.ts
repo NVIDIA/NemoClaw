@@ -159,8 +159,7 @@ export function resolveSandboxCreateIntent({
   sandboxGpuLogMessage,
   extraPlaceholderKeys = [],
   agentName,
-  policyTier,
-  baselineExclusions = [],
+  policyTier = null,
 }: ResolveSandboxCreateIntentInput): SandboxCreateIntent {
   const selectedChannelNames = enabledChannels == null ? null : new Set(enabledChannels);
   const enabledMessagingProviderRequests = filterMessagingProviderRequestsByEnabledChannel(
@@ -206,7 +205,6 @@ export function resolveSandboxCreateIntent({
         ...(hostLocalInferenceRouteOnly ? { hostLocalInferenceRouteOnly: true as const } : {}),
         ...(agentName !== undefined ? { agentName } : {}),
         policyTier,
-        baselineExclusions: [...baselineExclusions].map((exclusion) => ({ ...exclusion })),
       },
     },
     sandboxGpuDevice: sandboxGpuConfig.sandboxGpuDevice?.trim() || null,

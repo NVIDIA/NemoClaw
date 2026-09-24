@@ -2,6 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { AgentDefinition } from "../agent/defs";
+import type { OpenShellSandboxObserver } from "../adapters/openshell/sandbox-observer";
+import {
+  type CreateOpenShellSandboxRequest,
+  type OpenShellSandboxLifecycle,
+  withoutOpenShellSandboxCreateGpu,
+} from "../adapters/openshell/sandbox-lifecycle";
+import { createCliOpenShellSandboxLifecycleFromRunner } from "../adapters/openshell/sandbox-lifecycle-cli";
+import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
 import { NEMOCLAW_CREATE_ATTEMPT_LABEL } from "../adapters/openshell/sandbox-identity";
 import type { StreamSandboxCreateResult } from "../sandbox/create-stream";
 import { redactFull } from "../security/redact";
@@ -10,12 +18,16 @@ import { parsePortableRuntimeAuthority } from "../state/onboard/portable-runtime
 import type { SandboxEntry, SandboxGpuProofResult } from "../state/registry";
 import * as dockerGpuLocalInference from "./docker-gpu-local-inference";
 import { collectDockerGpuPatchDiagnostics } from "./docker-gpu-patch";
-import type { DockerGpuPatchDeps, DockerUlimit } from "./docker-gpu-patch-types";
+import type {
+  DockerGpuPatchDeps,
+  DockerUlimit,
+  SandboxCreateRuntimePatch,
+} from "./docker-gpu-patch-types";
 import type { SelectedDockerGpuRoute } from "./docker-gpu-route";
-import { renderCompatibilityFallbackCreateArgs } from "./docker-gpu-route";
 import { adaptDockerGpuRouteForPatch } from "./docker-gpu-route-patch-adapter";
 import { resolveDockerStartupCommandPatch } from "./docker-startup-command-agent";
 import {
+  bindHermesPortableOnboardingLifecycleLock,
   classifyHermesPortableRegistry,
   createHermesPortableChildEnvironment,
   createHermesPortableContainerDeps,
@@ -36,26 +48,12 @@ import {
   inspectPortableAgentReceiptDisposition,
 } from "./experimental/portable-agent-lifecycle";
 import { isPortableExperimentalProfile } from "./experimental/portable-profile";
-import {
-  createManagedBootstrapIdentity,
-  type ManagedBootstrapAdapter,
-  type ManagedBootstrapAgentIdentity,
-  type ManagedBootstrapAuthorityStore,
-  type ManagedBootstrapImageIdentity,
-  ManagedBootstrapRecoveryBlockedError,
-  renderManagedBootstrapHeldCommand,
-} from "./managed-bootstrap/adapter";
-import type { ManagedBootstrapRuntimePatch } from "./managed-bootstrap/runtime-create";
-import { assertPortableManagedBootstrapNotSelected } from "./managed-workload/onboard-orchestration";
-import type { ManagedStartupRootApplyRequest } from "./managed-startup/root-apply";
 import { isImmutableDockerImageId } from "./openshell-docker-sandbox-containers";
-import type {
-  RuntimeProviderBundle,
-  RuntimeProviderManagedImageBootstrapSurface,
-} from "./runtime-provider/contract";
 import * as sandboxGpuCreateAttempt from "./sandbox-gpu-create-attempt";
-import { createSandboxGpuCreateAttemptRunner } from "./sandbox-gpu-create-run-attempt";
-import { managedBootstrapCreateArgs } from "./sandbox-create-launch";
+import {
+  createSandboxGpuCreateAttemptRunner,
+  verifySelectedSandboxBridgeReachability,
+} from "./sandbox-gpu-create-run-attempt";
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 import {
   createDirectSandboxGpuVerifier,
@@ -67,6 +65,7 @@ import { addTraceEvent } from "./tracing";
 
 export { resolveDockerStartupCommandPatch } from "./docker-startup-command-agent";
 export {
+  bindHermesPortableOnboardingLifecycleLock,
   classifyHermesPortableRegistry,
   createHermesPortableChildEnvironment,
   createHermesPortableContainerDeps,
@@ -178,31 +177,6 @@ export function resolveAgentCreateInput(
  * detail and remediation; central orchestration only renders their bounded,
  * identity-bound evidence and never branches on provider IDs or error codes.
  */
-function exitForManagedBootstrapRecovery(error: ManagedBootstrapRecoveryBlockedError): never {
-  console.error("");
-  console.error(
-    `  Managed bootstrap recovery stopped before sandbox '${error.sandboxName}' was created.`,
-  );
-  for (const failure of error.failures) {
-    const scope = failure.sandbox
-      ? `sandbox '${failure.sandbox.sandboxName}' (durable sandbox ID ${failure.sandbox.sandboxId}, provider ${failure.providerId})`
-      : "a sandbox whose durable identity could not be recovered";
-    console.error(
-      `  Transaction ${failure.bootstrapIdentity} requires ${failure.retryable ? "a provider retry after its recovery condition is resolved" : "operator recovery"} for ${scope}.`,
-    );
-    console.error(`  ${redactFull(failure.detail)}`);
-    if (failure.sandbox) {
-      console.error(
-        `  Before any provider action, query that exact name with OpenShell's sandbox get command and verify it returns durable sandbox ID ${failure.sandbox.sandboxId}.`,
-      );
-    }
-  }
-  console.error(
-    "  Preserve every durable recovery record. Act only on exact provider, sandbox, and runtime IDs from the provider guidance; never delete a runtime by mutable sandbox name.",
-  );
-  process.exit(1);
-}
-
 type RunOpenshell = NonNullable<DockerGpuPatchDeps["runOpenshell"]>;
 type RunCaptureOpenshell = NonNullable<DockerGpuPatchDeps["runCaptureOpenshell"]>;
 type Sleep = NonNullable<DockerGpuPatchDeps["sleep"]>;
@@ -215,6 +189,8 @@ export interface SandboxGpuCreateFlowInput {
     readonly route: SelectedDockerGpuRoute;
     readonly liveIdentityFingerprint: string;
     readonly createAttemptNonce?: string;
+    readonly finalHandoffCommitStarted?: true;
+    readonly finalHandoffRuntimeId?: string;
   };
   /** Reject every initial or fallback create attempt that carries a caller policy. */
   requirePolicylessCreate?: true;
@@ -233,9 +209,8 @@ export interface SandboxGpuCreateFlowInput {
   gatewayName: string;
   gatewayPort: number;
   sandboxReadyTimeoutSecs: number;
-  createArgv: string[];
-  /** Exact schema-5 build context consumed by the OpenShell create child. */
-  createWorkingDirectory?: string;
+  /** Semantic request consumed by the selected OpenShell lifecycle adapter. */
+  createRequest: CreateOpenShellSandboxRequest;
   /** Host-side runtime environment used only by the selected lifecycle provider. */
   hostEnv?: NodeJS.ProcessEnv;
   portableLifecycle?: boolean;
@@ -244,37 +219,33 @@ export interface SandboxGpuCreateFlowInput {
   sandboxStartupCommand: string[];
   lifecycleGeneration?: SandboxEntry["lifecycleGeneration"];
   portableRuntimeAuthority?: CheckpointPortableRuntimeAuthority | null;
-  prebuild: SandboxPrebuildResult;
+  prebuild: Omit<SandboxPrebuildResult, "createArgs">;
   restoreBackupPath: string | null;
   terminalAgent: boolean;
   persistStartupCommand?: boolean;
-  managedBootstrap?: {
-    readonly bootstrapIdentity: string;
-    readonly stateRoot: string;
-    readonly runtimeProvider: RuntimeProviderBundle & {
-      readonly bootstrap: RuntimeProviderManagedImageBootstrapSurface;
-    };
-    readonly authorityStore: ManagedBootstrapAuthorityStore;
-    readonly request: ManagedStartupRootApplyRequest;
-    readonly image: ManagedBootstrapImageIdentity;
-    readonly agentIdentity: ManagedBootstrapAgentIdentity;
-    readonly intendedWorkloadArgv: readonly string[];
-    readonly expectedSupervisorArgv: readonly string[];
-  } | null;
+  managedImage?: boolean;
   requiredUlimits?: readonly DockerUlimit[] | null;
   /**
    * Verify the exact sandbox created by each attempt before runtime activation,
    * readiness, GPU, service, dashboard, or registry effects continue.
    */
-  verifyCreatedSandboxBeforeEffects?: (identity: CreatedSandboxIdentity) => void | Promise<void>;
-  /** Re-read the exact durable policy checkpoint before each post-create effect. */
+  verifyCreatedSandboxBeforeEffects?: (
+    identity: CreatedSandboxIdentity,
+    beforeEffects?: () => unknown | Promise<unknown>,
+    afterEffects?: () => void | Promise<void>,
+  ) => void | Promise<void>;
+  /** Re-read the exact pending create identity before each post-create effect. */
   revalidateVerifiedSandboxBeforeEffect?: (operation: string) => void;
+  /** Persist the commit fence before the exact final handoff starts. */
+  persistFinalHandoffCommitStarted?: (replacementRuntimeId: string | null) => void;
+  /** Persist acknowledgement after resume reconfirms exact identity and Ready. */
+  persistResumedFinalHandoffAcknowledgement?: () => void;
 }
 
 export interface CreatedSandboxIdentity {
   readonly sandboxId: string;
   readonly liveIdentityFingerprint: string;
-  readonly createAttemptNonce: string;
+  readonly createAttemptNonce?: string;
   readonly route: SelectedDockerGpuRoute;
 }
 
@@ -290,11 +261,20 @@ export function refuseApfMutableNameFallbackCleanup(sandboxName: string) {
 }
 
 export interface SandboxGpuCreateFlowDeps {
+  commandExecutor: OpenShellSandboxBufferedCommandExecutor;
   runOpenshell: RunOpenshell;
   runCaptureOpenshell: RunCaptureOpenshell;
+  sandboxObserver: OpenShellSandboxObserver;
   sleep: Sleep;
   openshellArgv(args: string[]): string[];
+  createSandbox?: OpenShellSandboxLifecycle["createSandbox"];
   verifyDirectSandboxGpu(sandboxName: string): SandboxGpuProofResult;
+  /** Test seam for the exact Docker runtime proof used only during handoff resume. */
+  verifyExactFinalHandoffRuntime?: (
+    sandboxName: string,
+    replacementRuntimeId: string,
+    requireRunning: boolean,
+  ) => boolean;
   printCreateFailureDiagnostics?: (
     sandboxName: string,
     options: { readonly backupPath?: string | null },
@@ -302,11 +282,10 @@ export interface SandboxGpuCreateFlowDeps {
   /** Production callers configure the hidden portable lifecycle through the default implementation. */
   installPortableDemoLifecycle?: typeof installPortableDemoSandboxLifecycle;
   /** Production callers omit this factory and use the runtime provider's adapter. */
-  createManagedBootstrapAdapter?: (stateRoot: string) => ManagedBootstrapAdapter;
 }
 
 interface SandboxGpuCreateFlowResultCommon {
-  runtimePatch: ManagedBootstrapRuntimePatch;
+  runtimePatch: SandboxCreateRuntimePatch;
   route: SelectedDockerGpuRoute;
   /** Mutable tag/reference retained only for registry and image-GC bookkeeping. */
   registryImageRef: string | null;
@@ -384,92 +363,71 @@ export async function runSandboxGpuCreateFlow(
     throw new Error("Verified sandbox creation requires durable create-attempt recovery evidence.");
   }
   const hermesPortableLifecycle = input.hermesPortableLifecycle === true;
-  assertPortableManagedBootstrapNotSelected(
-    input.portableLifecycle === true,
-    input.managedBootstrap != null,
-  );
-  if (hermesPortableLifecycle && input.managedBootstrap != null) {
-    throw new Error(
-      "Hermes portable onboarding cannot use managed-image bootstrap because it requires Docker lifecycle operations.",
-    );
-  }
   if (hermesPortableLifecycle && (!input.lifecycleGeneration || !input.portableRuntimeAuthority)) {
     throw new Error(
       "Hermes portable onboarding requires checkpoint runtime authority and a lifecycle generation before creation.",
     );
   }
   let registryImageRef: string | null = input.prebuild.imageRef;
+  const createSandbox =
+    deps.createSandbox ??
+    (() => {
+      let selectedExecutable: string | undefined;
+      return createCliOpenShellSandboxLifecycleFromRunner(deps.runOpenshell, {
+        resolveBinary: () => {
+          selectedExecutable ??= deps.openshellArgv([])[0];
+          if (!selectedExecutable) {
+            throw new Error("OpenShell executable selection returned an empty command.");
+          }
+          return selectedExecutable;
+        },
+      }).createSandbox;
+    })();
   const attemptRunner = createSandboxGpuCreateAttemptRunner(
     hermesPortableLifecycle ? { ...input, portableLifecycle: true } : input,
     hermesPortableLifecycle
       ? {
           ...deps,
+          createSandbox,
           installPortableDemoLifecycle: () => input.lifecycleGeneration!,
         }
-      : deps,
+      : { ...deps, createSandbox },
   );
   const gpuCreateOutcome = await (input.resumeVerifiedCreate
     ? attemptRunner.runAttempt(input.resumeVerifiedCreate.route)
     : sandboxGpuCreateAttempt.executeSandboxGpuCreatePlan(input.gpuRoutePlan, {
-      runAttempt: attemptRunner.runAttempt,
-      captureNativeFailure: (failure) => {
-        const routeAdapter = adaptDockerGpuRouteForPatch(failure.route);
-        const diagnostics = collectDockerGpuPatchDiagnostics(
-          input.sandboxName,
-          {
-            error: failure.error,
-            additionalSummaryLines: routeAdapter.additionalSummaryLines,
-          },
-          { runCaptureOpenshell: deps.runCaptureOpenshell },
-        );
-        if (diagnostics) console.error(`  Native GPU diagnostics saved: ${diagnostics.dir}`);
-      },
-      cleanupNativeFailure: (failure) => {
-        if (input.requirePolicylessCreate) {
-          return refuseApfMutableNameFallbackCleanup(input.sandboxName);
-        }
-        return sandboxGpuCreateAttempt.cleanupNativeGpuFailureForFallback(
-          input.sandboxName,
-          failure,
-          {
-            runOpenshell: deps.runOpenshell,
-            sleep: deps.sleep,
-          },
-        );
-      },
-      prepareCompatibilityAttempt: async () => {
-        if (!input.compatibilityPolicyPath) {
-          throw new Error("Compatibility retry policy was not materialized.");
-        }
-        const nativeRuntimeSnapshot = attemptRunner.state.nativeRuntimeSnapshot;
-        if (attemptRunner.managedRouting) {
-          const managedBootstrap = input.managedBootstrap;
-          if (!managedBootstrap) {
-            throw new Error("Managed compatibility routing is missing bootstrap authority.");
+        runAttempt: attemptRunner.runAttempt,
+        captureNativeFailure: (failure) => {
+          const routeAdapter = adaptDockerGpuRouteForPatch(failure.route);
+          const diagnostics = collectDockerGpuPatchDiagnostics(
+            input.sandboxName,
+            {
+              error: failure.error,
+              additionalSummaryLines: routeAdapter.additionalSummaryLines,
+            },
+            { runCaptureOpenshell: deps.runCaptureOpenshell },
+          );
+          if (diagnostics) console.error(`  Native GPU diagnostics saved: ${diagnostics.dir}`);
+        },
+        cleanupNativeFailure: (failure) => {
+          if (input.requirePolicylessCreate) {
+            return refuseApfMutableNameFallbackCleanup(input.sandboxName);
           }
-          const bootstrapIdentity = createManagedBootstrapIdentity();
-          const heldWorkloadArgv = [
-            ...renderManagedBootstrapHeldCommand(
-              managedBootstrap.request,
-              bootstrapIdentity,
-              managedBootstrap.intendedWorkloadArgv,
-            ),
-          ];
-          const prepared = attemptRunner.managedRouting.prepareCompatibilityLaunch({
-            createArgs: managedBootstrapCreateArgs(input.prebuild.createArgs, bootstrapIdentity),
-            currentRegistryImageRef: registryImageRef,
-            managedImageReference: `${managedBootstrap.image.repository}@${managedBootstrap.image.manifestDigest}`,
-            prebuildImageId: input.prebuild.imageId,
-            allowUnbuiltSource: attemptRunner.state.allowUnbuiltCompatibilitySource,
-            compatibilityPolicyPath: input.compatibilityPolicyPath,
-            startupCommand: heldWorkloadArgv,
-            runtimeSnapshot: nativeRuntimeSnapshot,
-          });
-          attemptRunner.state.compatibilityArgv = [...prepared.createArgv];
-          attemptRunner.state.compatibilityBootstrapIdentity = bootstrapIdentity;
-          attemptRunner.state.compatibilityHeldWorkloadArgv = heldWorkloadArgv;
-          registryImageRef = prepared.registryImageRef;
-        } else {
+          return sandboxGpuCreateAttempt.cleanupNativeGpuFailureForFallback(
+            input.sandboxName,
+            failure,
+            {
+              gatewayName: input.gatewayName,
+              runOpenshell: deps.runOpenshell,
+              sleep: deps.sleep,
+            },
+          );
+        },
+        prepareCompatibilityAttempt: async () => {
+          if (!input.compatibilityPolicyPath) {
+            throw new Error("Compatibility retry policy was not materialized.");
+          }
+          const nativeRuntimeSnapshot = attemptRunner.state.nativeRuntimeSnapshot;
           const prebuildImageId = input.prebuild.imageId;
           const imageId =
             nativeRuntimeSnapshot?.imageId ??
@@ -483,28 +441,23 @@ export async function runSandboxGpuCreateFlow(
           ) {
             registryImageRef = nativeRuntimeSnapshot.bookkeepingImageRef;
           }
-          const compatibilityArgs = renderCompatibilityFallbackCreateArgs(
-            input.prebuild.createArgs,
+          if (!input.createRequest) {
+            throw new Error("Ordinary compatibility creation has no semantic create request.");
+          }
+          if (!imageId && !attemptRunner.state.allowUnbuiltCompatibilitySource) {
+            throw new Error(
+              "Native GPU fallback cannot reuse the completed sandbox image; refusing to rebuild it.",
+            );
+          }
+          attemptRunner.state.compatibilityRequest = withoutOpenShellSandboxCreateGpu(
+            input.createRequest,
             {
-              imageRef: imageId,
-              allowUnbuiltSource: attemptRunner.state.allowUnbuiltCompatibilitySource,
-              compatibilityPolicyPath: input.compatibilityPolicyPath,
+              ...(imageId ? { sourceReference: imageId } : {}),
+              policyPath: input.compatibilityPolicyPath,
             },
           );
-          attemptRunner.state.compatibilityArgv = deps.openshellArgv([
-            "sandbox",
-            "create",
-            ...compatibilityArgs,
-            "--",
-            ...input.sandboxStartupCommand,
-          ]);
-        }
-        if (attemptRunner.state.compatibilityArgv.length === 0) {
-          throw new Error("Compatibility sandbox create executable is missing.");
-        }
-      },
-      activateCompatibilityAttempt: async () => {
-        if (!input.managedBootstrap) {
+        },
+        activateCompatibilityAttempt: async () => {
           await dockerGpuLocalInference.enforceDockerGpuPatchPreserveNetwork(
             input.provider,
             input.sandboxGpuConfig,
@@ -513,30 +466,18 @@ export async function runSandboxGpuCreateFlow(
               selectedRoute: "compatibility",
               gatewayPort: input.gatewayPort,
               log: console.log,
+              reverifyBridgeReachability: () => verifySelectedSandboxBridgeReachability(input),
             },
           );
-        }
-        input.sandboxGpuConfig.sandboxGpuProof = null;
-      },
-      traceEvent: addTraceEvent,
-      }))
-    .catch((error: unknown) => {
-      if (error instanceof ManagedBootstrapRecoveryBlockedError) {
-        exitForManagedBootstrapRecovery(error);
-      }
-      throw error;
-    });
+          input.sandboxGpuConfig.sandboxGpuProof = null;
+        },
+        traceEvent: addTraceEvent,
+      }));
   if (!gpuCreateOutcome.ok) {
     const preparationRefused =
-      "preparationRefused" in gpuCreateOutcome
-        ? gpuCreateOutcome.preparationRefused
-        : undefined;
+      "preparationRefused" in gpuCreateOutcome ? gpuCreateOutcome.preparationRefused : undefined;
     const cleanupRefused =
       "cleanupRefused" in gpuCreateOutcome ? gpuCreateOutcome.cleanupRefused : undefined;
-    const nativeCleanupHandoff =
-      "nativeCleanupHandoff" in gpuCreateOutcome
-        ? gpuCreateOutcome.nativeCleanupHandoff
-        : undefined;
     console.error("");
     console.error("  Operator-authorized GPU fallback stopped before compatibility retry.");
     if (preparationRefused) {
@@ -546,11 +487,9 @@ export async function runSandboxGpuCreateFlow(
       console.error(`  Cleanup could not be proven safe: ${redactFull(cleanupRefused)}`);
     }
     console.error(
-      nativeCleanupHandoff
-        ? `  Managed bootstrap retained exact owner-cleanup authority for sandbox '${input.sandboxName}'. Do not delete a runtime by mutable sandbox name; preserve it for identity-bound recovery.`
-        : hermesPortableLifecycle
-          ? `  Hermes portable sandbox '${input.sandboxName}' did not complete receipt-owned creation. Preserve its lifecycle receipt and resume onboarding after correcting the reported failure.`
-          : `  Sandbox '${input.sandboxName}' may still exist. Verify its durable identity before manual cleanup; do not act by mutable name alone.`,
+      hermesPortableLifecycle
+        ? `  Hermes portable sandbox '${input.sandboxName}' did not complete receipt-owned creation. Preserve its lifecycle receipt and resume onboarding after correcting the reported failure.`
+        : `  Sandbox '${input.sandboxName}' may still exist. Recovery remains blocked while it exists; do not delete it by mutable name. Run 'nemoclaw ${input.sandboxName} destroy' to check for authoritative absence.`,
     );
     if (input.requirePolicylessCreate) {
       const persistRetainedSandboxRecovery = input.persistRetainedSandboxRecovery;
@@ -565,13 +504,13 @@ export async function runSandboxGpuCreateFlow(
       } else {
         const identityGuidance = evidence.liveIdentityFingerprint
           ? "Use that fingerprint only to compare the surviving sandbox with this create attempt."
-          : "OpenShell did not return one exact durable sandbox identity for this create attempt. Recovery is blocked until an OpenShell administrator resolves the create-attempt label to one sandbox.";
+          : "OpenShell did not return one exact durable sandbox identity for this create attempt.";
         const message =
           `Create-attempt label: ${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${evidence.createAttemptNonce}. ` +
           `${evidence.liveIdentityFingerprint ? `Durable sandbox identity fingerprint: ${evidence.liveIdentityFingerprint}. ` : ""}` +
           `APF sandbox '${input.sandboxName}' may have been retained after native GPU fallback stopped. ` +
           `Gateway '${input.gatewayName}'. ${identityGuidance} ` +
-          "Do not delete a sandbox by mutable name; use an identity-bound administrator recovery procedure.";
+          `Do not delete the sandbox by mutable name. Run 'nemoclaw ${input.sandboxName} destroy'; it can clear retained recovery only after OpenShell confirms absence.`;
         let persisted = false;
         try {
           persisted = evidence.liveIdentityFingerprint
@@ -587,7 +526,7 @@ export async function runSandboxGpuCreateFlow(
         console.error(`  ${message}`);
         if (!persisted) {
           console.error(
-            "  APF recovery is blocked because NemoClaw could not save this create-attempt evidence. Preserve the terminal output for an OpenShell administrator.",
+            "  APF recovery is blocked because NemoClaw could not save this create-attempt evidence. Preserve the registry entry and terminal output; do not delete the sandbox by mutable name.",
           );
         }
       }
@@ -595,34 +534,7 @@ export async function runSandboxGpuCreateFlow(
     process.exit(1);
   }
 
-  let portableLifecycleGeneration = attemptRunner.state.portableLifecycleGeneration;
-  if (!input.portableLifecycle && !input.hermesPortableLifecycle && !portableLifecycleGeneration) {
-    if (input.verifyCreatedSandboxBeforeEffects) {
-      const revalidate = input.revalidateVerifiedSandboxBeforeEffect;
-      if (!revalidate) {
-        throw new Error("Verified sandbox creation has no post-create effect revalidation.");
-      }
-      revalidate(`record portable lifecycle for sandbox '${input.sandboxName}'`);
-    }
-    try {
-      portableLifecycleGeneration =
-        (deps.installPortableDemoLifecycle ?? installPortableDemoSandboxLifecycle)(
-          input.sandboxName,
-          input.sandboxStartupCommand,
-          process.env,
-          {
-            ...(input.lifecycleGeneration ? { registryGeneration: input.lifecycleGeneration } : {}),
-            runtimeAuthority: input.portableRuntimeAuthority ?? null,
-          },
-        ) ?? null;
-    } catch (error) {
-      const detail = redactFull(error instanceof Error ? error.message : String(error)).slice(
-        0,
-        500,
-      );
-      console.warn(`  Portable demo lifecycle setup did not complete: ${detail}`);
-    }
-  }
+  const portableLifecycleGeneration = attemptRunner.state.portableLifecycleGeneration;
 
   const common = {
     runtimePatch: gpuCreateOutcome.value.runtimePatch,

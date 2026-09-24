@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   BRAVE_API_KEY_ENV,
   DEFAULT_WEB_SEARCH_PROVIDER,
+  isWebSearchEnabled,
   normalizeWebSearchConfig,
   parseExplicitWebSearchProvider,
   TAVILY_API_KEY_ENV,
@@ -16,6 +17,15 @@ import {
 } from "./web-search";
 
 describe("web-search module", () => {
+  it("enables web search only when fetch is explicitly enabled", () => {
+    expect(isWebSearchEnabled(null)).toBe(false);
+    expect(isWebSearchEnabled(undefined)).toBe(false);
+    expect(isWebSearchEnabled({} as never)).toBe(false);
+    expect(isWebSearchEnabled({ fetchEnabled: false })).toBe(false);
+    expect(isWebSearchEnabled({ fetchEnabled: null } as never)).toBe(false);
+    expect(isWebSearchEnabled({ fetchEnabled: true })).toBe(true);
+  });
+
   it("exports BRAVE_API_KEY_ENV constant", () => {
     expect(BRAVE_API_KEY_ENV).toBe("BRAVE_API_KEY");
   });

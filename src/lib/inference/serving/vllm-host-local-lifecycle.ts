@@ -131,6 +131,9 @@ function readRuntimeReceipt(stateDir: string): unknown {
     ) {
       throw new Error("Managed host-local vLLM runtime receipt is not owner-only.");
     }
+    if (stat.size < 2 || stat.size > 64 * 1024) {
+      throw new Error("Managed host-local vLLM runtime receipt has an unexpected size.");
+    }
     try {
       return JSON.parse(fs.readFileSync(fd, "utf8"));
     } catch {

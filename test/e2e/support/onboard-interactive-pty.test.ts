@@ -44,6 +44,58 @@ describe("interactive PTY driver", () => {
     }
   });
 
+  it("matches visible text across ANSI redraw sequences and can send Ctrl+D", async () => {
+    const progress = observedProgress("onboard-interactive-pty ANSI trigger");
+    try {
+      const result = await driveInteractiveCommand({
+        activityLabel: "command: onboard-interactive-pty-ansi-trigger",
+        cmd: [
+          "python3",
+          "-c",
+          "import sys; sys.stdout.write('NEMOCLAW_PI\\x1b[31m_INTERACTIVE_OK\\x1b[0m\\n'); sys.stdout.flush(); sys.stdin.read()",
+        ],
+        env: process.env,
+        progress,
+        rules: [{ trigger: "NEMOCLAW_PI_INTERACTIVE_OK", response: "\u0004" }],
+        timeoutMs: 10_000,
+      });
+
+      expect(result.timedOut).toBe(false);
+      expect(result.exitCode).toBe(0);
+      expect(result.firedTriggers).toContain("NEMOCLAW_PI_INTERACTIVE_OK");
+      expect(result.visibleOutput).toContain("NEMOCLAW_PI_INTERACTIVE_OK");
+    } finally {
+      progress.stop();
+    }
+  });
+
+  it("restarts the settling period when output arrives after the trigger", async () => {
+    const progress = observedProgress("onboard-interactive-pty settled trigger");
+    try {
+      const result = await driveInteractiveCommand({
+        activityLabel: "command: onboard-interactive-pty-settled-trigger",
+        cmd: [
+          "python3",
+          "-c",
+          "import sys, time\nprint('EXPECTED_ANSWER', flush=True)\ntime.sleep(0.3)\nprint('FINAL_REDRAW', flush=True)\nlast_output = time.monotonic()\nsys.stdin.read()\nprint(f'ELAPSED_AFTER_FINAL_OUTPUT={time.monotonic() - last_output}', flush=True)",
+        ],
+        env: process.env,
+        progress,
+        rules: [{ trigger: "EXPECTED_ANSWER", response: "\u0004", settleMs: 500 }],
+        timeoutMs: 10_000,
+      });
+
+      expect(result.timedOut).toBe(false);
+      expect(result.exitCode).toBe(0);
+      const elapsed = Number(
+        result.visibleOutput.match(/ELAPSED_AFTER_FINAL_OUTPUT=([\d.]+)/)?.[1],
+      );
+      expect(elapsed).toBeGreaterThanOrEqual(0.4);
+    } finally {
+      progress.stop();
+    }
+  });
+
   it("keeps every scripted response, including a secret, out of the spawned process arguments", async () => {
     spawnMock.mockClear();
     const progress = observedProgress("onboard-interactive-pty argv secrecy");

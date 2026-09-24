@@ -16,6 +16,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { parse } from "yaml";
 
 import { renderAgentVariantPage } from "../../scripts/sync-agent-variant-docs.mts";
 
@@ -303,6 +304,28 @@ Run $$nemoclaw list.
       sourcePath: "/repo/docs/reference/commands.mdx",
     });
   }
+
+  it("replaces a multiline commands frontmatter value completely", () => {
+    const source = FRONTMATTER.replace(
+      'keywords: ["nemoclaw cli commands", "nemoclaw command reference", "nemo-deepagents commands", "dcode commands"]',
+      `keywords:
+  [
+    "nemoclaw cli commands",
+    "nemoclaw command reference",
+    "nemo-deepagents commands",
+    "dcode commands",
+  ]`,
+    );
+    const rendered = renderHermesCommandsVariant(`${source}\nRun $$nemoclaw list.\n`);
+    const frontmatter = rendered.match(/^---\n([\s\S]*?)\n---\n/)?.[1] ?? "";
+
+    expect(frontmatter).not.toBe("");
+    expect(() => parse(frontmatter)).not.toThrow();
+    expect(frontmatter).toContain(
+      'keywords: ["nemohermes cli commands", "hermes command reference", "nemohermes command reference"]',
+    );
+    expect(frontmatter).not.toContain('"nemoclaw cli commands"');
+  });
 
   it("rewrites only NemoClaw CLI invocations for the NemoHermes reference", () => {
     const rendered = renderHermesCommandsVariant(`${FRONTMATTER}

@@ -43,7 +43,8 @@ vi.mock("./gateway-runtime-action.js", () => ({
   getNamedGatewayLifecycleState: vi.fn(),
 }));
 
-vi.mock("./adapters/openshell/runtime.js", () => ({
+vi.mock("./adapters/openshell/runtime.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./adapters/openshell/runtime.js")>()),
   captureOpenshell: vi.fn(),
 }));
 
@@ -65,20 +66,18 @@ import {
 import { recoverRegistryEntries } from "./registry-recovery-action.js";
 import { loadSession } from "./state/onboard-session.js";
 
-const gammaEntry = (policies: string[]): SandboxEntry => ({
+const gammaEntry = (_legacyPolicies: string[]): SandboxEntry => ({
   name: "gamma",
   provider: "nvidia-prod",
   model: "nvidia/nemotron-3-super-120b-a12b",
   gpuEnabled: false,
-  policies,
 });
 
-const completedSession = (sandboxName: string, policyPresets: string[]) =>
+const completedSession = (sandboxName: string, _legacyPolicyPresets: string[]) =>
   ({
     sandboxName,
     provider: "nvidia-prod",
     model: "nvidia/nemotron-3-super-120b-a12b",
-    policyPresets,
     nimContainer: null,
     steps: {
       sandbox: { status: "complete", startedAt: null, completedAt: null, error: null },
@@ -95,7 +94,7 @@ function resetSeededRecoveryMocks(): void {
     .mockResolvedValue({ recovered: true } as never);
   vi.mocked(getNamedGatewayLifecycleState)
     .mockReset()
-    .mockReturnValue({ state: "missing_named" } as never);
+    .mockResolvedValue({ state: "missing_named" } as never);
   vi.mocked(captureOpenshell)
     .mockReset()
     .mockReturnValue({ output: "No sandboxes found.", status: 0 } as never);
@@ -122,7 +121,7 @@ describe("recoverRegistryEntries seeded recovery paths", () => {
       "beta",
       "gamma",
     ]);
-    expect(mockRegistryState.sandboxes.alpha?.policies).toEqual(["pypi"]);
+    expect(mockRegistryState.sandboxes.alpha).not.toHaveProperty("policies");
     expect(mockRegistryState.defaultSandbox).toBe("gamma");
   });
 
@@ -153,7 +152,6 @@ describe("recoverRegistryEntries seeded recovery paths", () => {
       credentialEnv: "NVIDIA_API_KEY",
       preferredInferenceApi: null,
       gpuEnabled: false,
-      policies: [],
     };
     vi.mocked(loadSession).mockReturnValue({
       sandboxName: "alpha",
@@ -162,7 +160,6 @@ describe("recoverRegistryEntries seeded recovery paths", () => {
       endpointUrl: "https://historical.example.test/v1",
       credentialEnv: "COMPATIBLE_API_KEY",
       preferredInferenceApi: "openai-completions",
-      policyPresets: [],
       nimContainer: null,
       steps: {
         sandbox: { status: "complete", startedAt: null, completedAt: null, error: null },
@@ -207,13 +204,12 @@ describe("recoverRegistryEntries seeded recovery paths", () => {
       sandboxName: "phantom",
       provider: "nvidia",
       model: "nemotron",
-      policyPresets: [],
       nimContainer: null,
       steps: {
         sandbox: { status: "pending", startedAt: null, completedAt: null, error: null },
       },
     } as never);
-    vi.mocked(getNamedGatewayLifecycleState).mockReturnValue({ state: "healthy_named" } as never);
+    vi.mocked(getNamedGatewayLifecycleState).mockResolvedValue({ state: "healthy_named" } as never);
     vi.mocked(captureOpenshell).mockReturnValue({
       output: "dcode-station Ready",
       status: 0,
@@ -224,9 +220,7 @@ describe("recoverRegistryEntries seeded recovery paths", () => {
     // Read-only path: never invokes the mutating gateway recovery, inspects
     // lifecycle directly, and surfaces the live sandbox display-only.
     expect(recoverNamedGatewayRuntime).not.toHaveBeenCalled();
-    expect(getNamedGatewayLifecycleState).toHaveBeenCalledWith(undefined, {
-      ignoreProbeErrors: true,
-    });
+    expect(getNamedGatewayLifecycleState).toHaveBeenCalledWith();
     const recovered = result.sandboxes.find((s) => s.name === "dcode-station") as
       | { recoveredFromGateway?: boolean }
       | undefined;
@@ -332,7 +326,7 @@ describe("recoverRegistryEntries seeded recovery paths", () => {
     // The unseeded #5714 `list` path reads the same list and must be scoped as
     // well, or a plain `nemoclaw list` advertises a sibling gateway's sandbox
     // that the next sandbox-scoped command cannot act on.
-    vi.mocked(getNamedGatewayLifecycleState).mockReturnValue({ state: "healthy_named" } as never);
+    vi.mocked(getNamedGatewayLifecycleState).mockResolvedValue({ state: "healthy_named" } as never);
     vi.mocked(captureOpenshell).mockImplementation(
       (args: string[]) =>
         ({

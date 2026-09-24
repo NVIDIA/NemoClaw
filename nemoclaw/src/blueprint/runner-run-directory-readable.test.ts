@@ -14,11 +14,11 @@ vi.mock("execa", () => ({ execa: mockExeca }));
 vi.mock("node:fs", async (importOriginal) => {
   const original = await importOriginal<typeof fs>();
   const memory = inMemoryFsMethods(store, { spy: vi.fn });
-  return { ...original, readdirSync: memory.readdirSync };
+  return { ...original, readdirSync: memory.readdirSync, writeFileSync: memory.writeFileSync };
 });
 
 const { actionReconcile, actionRollback } = await import("./runner.js");
-const mockedReaddirSync = vi.mocked((await import("node:fs")).readdirSync);
+const mockedFs = vi.mocked(await import("node:fs"));
 
 const RUNS_DIR = `${FAKE_HOME}/.nemoclaw/state/runs`;
 
@@ -31,31 +31,28 @@ describe("blueprint runner run-directory readability", () => {
 
   function mockUnreadableRunDir(runDir: string): void {
     addDir(runDir);
-    mockedReaddirSync.mockImplementationOnce(() => {
+    mockedFs.readdirSync.mockImplementationOnce(() => {
       throw Object.assign(new Error(`EACCES: permission denied, scandir '${runDir}'`), {
         code: "EACCES",
       });
     });
   }
 
-  it("reports an unreadable run directory as a failure, not a missing run (#10430)", async () => {
-    const runDir = `${RUNS_DIR}/nc-run-1`;
-    mockUnreadableRunDir(runDir);
+  it.each([
+    ["rollback", actionRollback],
+    ["reconcile", actionReconcile],
+  ] as const)(
+    "reports an unreadable run directory during %s without changing state (#10430)",
+    async (_operation, action) => {
+      const runDir = `${RUNS_DIR}/nc-run-1`;
+      mockUnreadableRunDir(runDir);
 
-    await expect(actionRollback("nc-run-1")).rejects.toThrow(
-      /Cannot read run directory for run nc-run-1: EACCES: permission denied/,
-    );
+      await expect(action("nc-run-1")).rejects.toThrow(
+        /Cannot read run directory for run nc-run-1: EACCES: permission denied/,
+      );
 
-    expect(mockExeca).not.toHaveBeenCalled();
-    expect(store.has(`${runDir}/rolled_back`)).toBe(false);
-  });
-
-  it("reports an unreadable run directory from reconcile as a failure too (#10430)", async () => {
-    const runDir = `${RUNS_DIR}/nc-run-1`;
-    mockUnreadableRunDir(runDir);
-
-    await expect(actionReconcile("nc-run-1")).rejects.toThrow(
-      /Cannot read run directory for run nc-run-1: EACCES: permission denied/,
-    );
-  });
+      expect(mockExeca).not.toHaveBeenCalled();
+      expect(mockedFs.writeFileSync).not.toHaveBeenCalled();
+    },
+  );
 });

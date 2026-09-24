@@ -25,7 +25,7 @@ export type ResumeProviderRecoveryDeps = {
   remoteProviderConfig: Record<string, RemoteProviderConfigEntry>;
   defaultRouteCredentialEnv: string;
   isRoutedInferenceProvider: (provider: string) => boolean;
-  providerExistsInGateway: (name: string) => boolean;
+  providerExistsInGateway: (name: string) => boolean | Promise<boolean>;
   hydrateCredentialEnv: (envName: string) => string | null;
   getProviderLabel: (key: string) => string;
   isNonInteractive: () => boolean;
@@ -38,9 +38,9 @@ export type ResumeProviderRecoveryDeps = {
     label: string,
     helpUrl: string | null,
     validator: (value: string) => string | null,
-    revalidatePolicyRequirements?: (operation: string) => void,
+    revalidateSandboxIdentity?: (operation: string) => void,
   ) => Promise<unknown>;
-  revalidatePolicyRequirements?: (operation: string) => void;
+  revalidateSandboxIdentity?: (operation: string) => void;
   validateNvidiaApiKeyValue: (key: string, credentialEnv: string) => string | null;
 };
 
@@ -96,7 +96,7 @@ export async function ensureResumeProviderReady(
   if (!provider || (!config && !deps.isRoutedInferenceProvider(provider))) {
     return { forceInferenceSetup: false, credentialEnv: credentialEnv ?? null };
   }
-  if (deps.providerExistsInGateway(provider)) {
+  if (await deps.providerExistsInGateway(provider)) {
     return { forceInferenceSetup: false, credentialEnv: credentialEnv ?? null };
   }
 
@@ -142,7 +142,7 @@ export async function ensureResumeProviderReady(
       `${providerLabel} API key`,
       helpUrl,
       (value) => deps.validateNvidiaApiKeyValue(value, resolvedCredentialEnv),
-      deps.revalidatePolicyRequirements,
+      deps.revalidateSandboxIdentity,
     );
   } else {
     deps.note(`  [resume] Provider '${provider}' is missing from the gateway; recreating it.`);

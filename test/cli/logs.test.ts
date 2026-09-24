@@ -85,8 +85,9 @@ describe("CLI dispatch", () => {
     expect(calls).toContain("settings set alpha --key ocsf_json_enabled --value true");
     expect(calls).toContain("sandbox exec -n alpha -- tail -n 200 -f /tmp/gateway.log");
     expect(calls).toContain("logs alpha -n 200 --source all --tail");
-    expect(r.out).toContain(FAKE_OPENCLAW_LOG_LINE);
-    expect(r.out).toContain(FAKE_OPENSHELL_LOG_LINE);
+    const outputLines = r.out.split("\n");
+    expect(outputLines).toContain(`[gateway] ${FAKE_OPENCLAW_LOG_LINE}`);
+    expect(outputLines).toContain(FAKE_OPENSHELL_LOG_LINE);
   });
 
   it("starts OpenClaw logs before enabling audit logs for logs --follow", ({ resources }) => {
@@ -145,7 +146,6 @@ describe("CLI dispatch", () => {
               model: "test-model",
               provider: "nvidia-prod",
               gpuEnabled: false,
-              policies: [],
             },
           },
           defaultSandbox: "alpha",
@@ -316,7 +316,6 @@ describe("CLI dispatch", () => {
             model: "test-model",
             provider: "nvidia-prod",
             gpuEnabled: false,
-            policies: [],
             messaging: {
               schemaVersion: 1,
               plan: {
@@ -412,7 +411,6 @@ describe("CLI dispatch", () => {
             model: "test-model",
             provider: "nvidia-prod",
             gpuEnabled: false,
-            policies: [],
           },
         },
         defaultSandbox: "alpha",

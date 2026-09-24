@@ -13,6 +13,8 @@ export type PullRequestFile = {
 
 export type GrowthGuardrailDiff = {
   readonly files: readonly PullRequestFile[];
+  readonly pullRequestNumber: number | null;
+  readonly exceptionPolicySource: "base" | "head";
   readBase(paths: readonly string[]): Promise<ReadonlyMap<string, string | null>>;
   readHead(paths: readonly string[]): Promise<ReadonlyMap<string, string | null>>;
 };
@@ -61,11 +63,14 @@ function readWorktreeFile(file: string): string | null {
   return existsSync(absolute) ? readFileSync(absolute, "utf8") : null;
 }
 
-function readFiles(
+function readFilesCached(
   paths: readonly string[],
+  cache: Map<string, string | null>,
   read: (file: string) => string | null,
 ): ReadonlyMap<string, string | null> {
-  return new Map([...new Set(paths)].map((file) => [file, read(file)]));
+  const uniquePaths = [...new Set(paths)];
+  uniquePaths.filter((file) => !cache.has(file)).forEach((file) => cache.set(file, read(file)));
+  return new Map(uniquePaths.map((file) => [file, cache.get(file) ?? null]));
 }
 
 function selectLocalComparisonBase(
@@ -130,14 +135,18 @@ function loadLocalDiff(): GrowthGuardrailDiff {
   for (const filename of untracked.split("\0").filter(Boolean)) {
     if (!known.has(filename)) files.push({ filename, status: "added" });
   }
+  const baseCache = new Map<string, string | null>();
+  const headCache = new Map<string, string | null>();
 
   return {
     files,
+    pullRequestNumber: null,
+    exceptionPolicySource: "head",
     async readBase(paths) {
-      return readFiles(paths, (file) => readGitFile(comparisonBase, file));
+      return readFilesCached(paths, baseCache, (file) => readGitFile(comparisonBase, file));
     },
     async readHead(paths) {
-      return readFiles(paths, readWorktreeFile);
+      return readFilesCached(paths, headCache, readWorktreeFile);
     },
   };
 }
@@ -168,6 +177,11 @@ function fetchPullHead(prNumber: string, expectedHeadSha: string): void {
   if (fetchedHead !== expectedHeadSha) throw new Error("Fetched PR head does not match HEAD_SHA");
 }
 
+/** Independent pull_request_target enforcement must never consume candidate policy. */
+function pullRequestExceptionPolicySource(eventName: string | undefined): "base" | "head" {
+  return eventName === "pull_request" ? "head" : "base";
+}
+
 function loadPullRequestDiff(): GrowthGuardrailDiff {
   const prNumber = requiredEnvironment("PR_NUMBER");
   const baseSha = requiredEnvironment("BASE_SHA");
@@ -176,18 +190,26 @@ function loadPullRequestDiff(): GrowthGuardrailDiff {
   assertCommitSha(baseSha, "BASE_SHA");
   assertCommitSha(headSha, "HEAD_SHA");
   fetchPullHead(prNumber, headSha);
-  const changed = execFileSync("git", ["diff", "--name-status", "-z", "-M", baseSha, headSha, "--"], {
-    cwd: REPO_ROOT,
-    encoding: "utf8",
-  });
+  const changed = execFileSync(
+    "git",
+    ["diff", "--name-status", "-z", "-M", baseSha, headSha, "--"],
+    {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+    },
+  );
+  const baseCache = new Map<string, string | null>();
+  const headCache = new Map<string, string | null>();
 
   return {
     files: parseChangedFiles(changed),
+    pullRequestNumber: Number(prNumber),
+    exceptionPolicySource: pullRequestExceptionPolicySource(process.env.GITHUB_EVENT_NAME),
     async readBase(paths) {
-      return readFiles(paths, (file) => readGitFile(baseSha, file));
+      return readFilesCached(paths, baseCache, (file) => readGitFile(baseSha, file));
     },
     async readHead(paths) {
-      return readFiles(paths, (file) => readGitFile(headSha, file));
+      return readFilesCached(paths, headCache, (file) => readGitFile(headSha, file));
     },
   };
 }
@@ -197,7 +219,9 @@ export function loadGrowthGuardrailDiff(): Promise<GrowthGuardrailDiff> {
 }
 
 export const testOnly = {
+  pullRequestExceptionPolicySource,
   parseAncestorProbe,
   parseChangedFiles,
+  readFilesCached,
   selectLocalComparisonBase,
 };

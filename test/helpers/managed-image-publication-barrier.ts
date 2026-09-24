@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -39,10 +40,16 @@ type PromotionResult = {
 type PromotionOptions = {
   mutate?: CandidateMutation;
   publicationCohort?: string;
+  retainStalePointerAliases?: boolean;
 };
 
 function imageFor(agent: (typeof publicationAgents)[number]): string {
   return `ghcr.io/nvidia/nemoclaw/${agent}-sandbox`;
+}
+
+function referenceStatePath(root: string, reference: string): string {
+  const digest = createHash("sha256").update(reference).digest("hex");
+  return path.join(root, "references", `${digest}.raw`);
 }
 
 function digestFor(agentIndex: number, platformIndex: number, offset: number): string {
@@ -301,19 +308,29 @@ agent_for_reference() {
     *) return 1 ;;
   esac
 }
+reference_path() {
+  reference_digest="$(printf '%s' "$1" | sha256sum | awk '{print $1}')"
+  printf '%s/references/%s.raw\n' "$STATE_ROOT" "$reference_digest"
+}
+store_reference() {
+  install -d -m 0700 "$STATE_ROOT/references"
+  cp "$2" "$(reference_path "$1")"
+}
 if [ "\${1:-} \${2:-} \${3:-}" = "buildx imagetools create" ]; then
   shift 3
-  tag=""
+  tags=()
   metadata=""
   files=()
+  source_reference=""
   while [ "$#" -gt 0 ]; do
     case "$1" in
-      --tag) tag="$2"; shift 2 ;;
+      --tag) tags+=("$2"); shift 2 ;;
       --metadata-file) metadata="$2"; shift 2 ;;
       --file) files+=("$2"); shift 2 ;;
-      *) shift ;;
+      *) source_reference="$1"; shift ;;
     esac
   done
+  tag="\${tags[0]:-}"
   if [[ "$tag" == *':cohort-'* ]]; then
     agent="$(agent_for_reference "$tag")"
     if [ -n "\${FAIL_COHORT_AGENT:-}" ] && [ "$agent" = "$FAIL_COHORT_AGENT" ]; then
@@ -334,11 +351,24 @@ if [ "\${1:-} \${2:-} \${3:-}" = "buildx imagetools create" ]; then
         size: $size
       }
     }' > "$metadata"
+    for alias in "\${tags[@]}"; do
+      store_reference "$alias" "$raw"
+    done
+    store_reference "\${tag%:*}@$digest" "$raw"
+  elif [ -n "$source_reference" ]; then
+    source_path="$(reference_path "$source_reference")"
+    if [ ! -f "$source_path" ]; then
+      exit 92
+    fi
+    if [ "\${RETAIN_STALE_POINTER_ALIASES:-}" != "1" ]; then
+      for alias in "\${tags[@]}"; do
+        store_reference "$alias" "$source_path"
+      done
+    fi
   fi
 elif [ "\${1:-} \${2:-} \${3:-}" = "buildx imagetools inspect" ] &&
      [ "\${5:-}" = "--raw" ]; then
-  agent="$(agent_for_reference "$4")"
-  cat "$STATE_ROOT/$agent.raw"
+  cat "$(reference_path "$4")"
 fi
 `,
   );
@@ -348,6 +378,11 @@ fi
     candidateSet,
     `${JSON.stringify(candidateValues.map(({ contract }) => contract))}\n`,
   );
+  if (options.retainStalePointerAliases) {
+    const stalePointer = referenceStatePath(root, `${imageFor("openclaw")}:${revision}`);
+    fs.mkdirSync(path.dirname(stalePointer));
+    fs.writeFileSync(stalePointer, '{"stale":true}\n');
+  }
 
   try {
     const result = spawnSync("bash", ["-c", `${script}\n${pointerScript}`], {
@@ -364,6 +399,7 @@ fi
         GITHUB_SHA: revision,
         PATH: `${bin}:${process.env.PATH ?? ""}`,
         PUBLICATION_COHORT: options.publicationCohort ?? cohort,
+        RETAIN_STALE_POINTER_ALIASES: options.retainStalePointerAliases ? "1" : "",
         RUNNER_TEMP: root,
         STATE_ROOT: root,
       },

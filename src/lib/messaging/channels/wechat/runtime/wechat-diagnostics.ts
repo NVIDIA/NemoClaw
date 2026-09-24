@@ -54,7 +54,7 @@ type WechatHttpRequestLike = (this: unknown, ...args: unknown[]) => WechatReques
     // visible so an operator can still see the request shape.
     text = text.replace(/(bot_token=)[^&\s"']+/gi, "$1<redacted>");
     text = text.replace(/("bot_token"\s*:\s*")[^"]+/gi, "$1<redacted>");
-    text = text.replace(/Bearer\s+[A-Za-z0-9._~+\/=-]+/g, "Bearer <redacted>");
+    text = text.replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/g, "Bearer <redacted>");
     text = text.replace(
       /\b(api[_-]?key|token|authorization|wechat[_-]?bot[_-]?token)\b(["']?\s*[:=]\s*["']?)[^"'\s,)]+/gi,
       "$1$2<redacted>",

@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isDeepStrictEqual } from "node:util";
-
 import type { AgentDefinition } from "../agent/defs";
+import { isDeferredN1xManagedVllmAcceptanceRoute } from "../domain/sandbox/n1x-managed-vllm-rebuild";
 import type {
   InferenceEndpointSource,
   InferenceSelection,
@@ -15,30 +15,28 @@ import {
 } from "../inference/selection";
 import { type WebSearchConfig, webSearchProviderForConfig } from "../inference/web-search";
 import * as onboardSession from "../state/onboard-session";
-import type { OpenClawImagePluginInstall } from "../state/openclaw-plugin-restore";
-import type {
-  BaselineExclusionEntry,
-  SandboxEntry,
-  SandboxMcpState,
-  SandboxMessagingState,
-} from "../state/registry";
+import type { SandboxEntry, SandboxMessagingState } from "../state/registry";
 import * as registry from "../state/registry";
 import {
   cloneSandboxHostLocalInferenceProvenance,
   cloneSandboxHostLocalInferenceReceipt,
   requireSandboxHostLocalInferenceProvenance,
 } from "../state/registry/host-local-inference";
+import { cloneSandboxHostMounts } from "../state/registry/host-mount";
 import type { QualifiedSandboxInferenceRouteReservation } from "../state/registry/route-reservation";
 import { cloneSandboxWorkloadReceipt } from "../state/registry/workload";
 import { DEFAULT_TOOL_DISCLOSURE, type ToolDisclosure } from "../tool-disclosure";
 import type { DcodeAutoApprovalMode } from "./dcode-auto-approval";
-import { cloneSandboxHostMounts } from "../state/registry/host-mount";
+import {
+  classifyPortableLifecycleReceipt,
+  portableLifecycleReceiptMatchesGeneration,
+} from "./experimental/portable-runtime-receipt-readiness";
 import { resolveOnboardHermesApiPort } from "./hermes-api-port";
-import { isManagedImageAgent, MANAGED_IMAGE_REPOSITORIES } from "./managed-image/contract";
 import {
   getHermesDashboardRegistryFields,
   type HermesDashboardOnboardState,
 } from "./hermes-dashboard";
+import { isManagedImageAgent, MANAGED_IMAGE_REPOSITORIES } from "./managed-image/contract";
 import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   RuntimeProviderBundleRegistry,
@@ -47,10 +45,6 @@ import {
   requireRuntimeProviderMutationAuthority,
 } from "./runtime-provider/access";
 import { getRequestedSandboxAgentName, getSandboxAgentRegistryFields } from "./sandbox-agent";
-import {
-  classifyPortableLifecycleReceipt,
-  portableLifecycleReceiptMatchesGeneration,
-} from "./experimental/portable-runtime-receipt-readiness";
 
 export type CreatedSandboxRuntimeFields = Pick<
   SandboxEntry,
@@ -74,23 +68,15 @@ export interface CreatedSandboxRegistryEntryInput {
   workload?: SandboxEntry["workload"];
   hostLocalInferenceReceipt?: SandboxEntry["hostLocalInferenceReceipt"];
   hostLocalInferenceProvenance?: SandboxEntry["hostLocalInferenceProvenance"];
-  openclawImagePluginInstalls?: readonly OpenClawImagePluginInstall[];
-  appliedPolicies: string[];
+  deferredN1xManagedVllmPreviewIntent?: true;
   toolDisclosure?: ToolDisclosure;
   observabilityEnabled?: boolean;
   dcodeAutoApprovalMode?: DcodeAutoApprovalMode;
-  policyTier?: SandboxEntry["policyTier"];
-  baselineExclusions?: readonly BaselineExclusionEntry[];
   webSearchEnabled?: boolean;
   webSearchProvider?: SandboxEntry["webSearchProvider"];
   fromDockerfile?: string | null;
   hermesAuthMethod?: "oauth" | "api_key" | null;
   plannedMessagingState: SandboxMessagingState | undefined;
-  /**
-   * Durable MCP rebuild manifest carried across an already-absent sandbox.
-   * The caller must only supply state captured from the same sandbox name.
-   */
-  preservedMcpState?: SandboxMcpState;
   hermesToolGateways: string[];
   hermesDashboardState: HermesDashboardOnboardState;
   /** Host port this sandbox exposes its OpenAI-compatible API on. */
@@ -103,8 +89,6 @@ export interface CreatedSandboxRegistryEntryInput {
   lifecycleLiveIdentityFingerprint?: string;
   gatewayName: string;
   gatewayPort: number;
-  policyAuthority?: SandboxEntry["policyAuthority"];
-  policyCreationReceipt?: SandboxEntry["policyCreationReceipt"];
   hostMounts?: readonly import("../state/registry/types").SandboxHostMount[];
 }
 
@@ -130,7 +114,6 @@ export function creationFidelity(
   fromDockerfile: string | null,
   hermesAuthMethod: "oauth" | "api_key" | null,
   dashboardRemoteBindPrepared?: boolean,
-  baselineExclusions?: readonly BaselineExclusionEntry[],
 ): Pick<
   SandboxEntry,
   | "webSearchEnabled"
@@ -138,7 +121,6 @@ export function creationFidelity(
   | "fromDockerfile"
   | "hermesAuthMethod"
   | "dashboardRemoteBindPrepared"
-  | "baselineExclusions"
 > {
   return {
     webSearchEnabled: webSearchConfig?.fetchEnabled === true,
@@ -146,39 +128,7 @@ export function creationFidelity(
     fromDockerfile,
     hermesAuthMethod,
     dashboardRemoteBindPrepared: dashboardRemoteBindPrepared === true,
-    baselineExclusions: baselineExclusions?.map((exclusion) => ({ ...exclusion })),
   };
-}
-
-/** Snapshot complete exclusion records before a destructive create removes registry state. */
-export function baselineExclusionsForCreate(sandboxName: string): BaselineExclusionEntry[] {
-  const transition = registry.getBaselineExclusionTransition(sandboxName);
-  if (transition) {
-    const key = transition.exclusion.key;
-    throw new Error(
-      `Baseline policy ${transition.operation} for '${key}' needs repair before sandbox creation. Re-run 'policy ${transition.operation} ${key}' first.`,
-    );
-  }
-  return registry.getBaselineExclusions(sandboxName).map((exclusion) => ({ ...exclusion }));
-}
-
-/**
- * Re-read exclusion intent at the destructive create edge and prove it still
- * matches the already-resolved policy plan. The sandbox mutation lock is the
- * caller's serialization boundary; this comparison catches stale plans and
- * any direct registry writer that bypassed that lock.
- */
-export function assertBaselineExclusionsMatchCreateIntent(
-  sandboxName: string,
-  planned: readonly BaselineExclusionEntry[],
-): BaselineExclusionEntry[] {
-  const current = baselineExclusionsForCreate(sandboxName);
-  if (!isDeepStrictEqual(current, [...planned])) {
-    throw new Error(
-      `Baseline policy exclusions for '${sandboxName}' changed while sandbox creation was being prepared. Retry so the replacement policy uses current registry intent.`,
-    );
-  }
-  return current;
 }
 
 export function selection(
@@ -225,10 +175,13 @@ export function buildCreatedSandboxRegistryEntry(
     session?.sandboxName === input.sandboxName
       ? (session.servingProfileProvenance ?? undefined)
       : undefined;
-  const messagingState =
+  const plannedMessagingState =
     input.plannedMessagingState?.plan.sandboxName === input.sandboxName
       ? input.plannedMessagingState
       : undefined;
+  // A pending removal is command-owned recovery state. Registration must
+  // preserve it until post-restore config cleanup and the registry update both succeed.
+  const messagingState = plannedMessagingState;
   const workload = cloneSandboxWorkloadReceipt(input.workload);
   if (input.workload !== undefined && workload === undefined) {
     throw new RuntimeProviderSelectionError(
@@ -260,6 +213,17 @@ export function buildCreatedSandboxRegistryEntry(
       hostLocalInferenceReceipt,
     );
   }
+  const deferredN1xManagedVllmAccepted =
+    input.deferredN1xManagedVllmPreviewIntent === true &&
+    isDeferredN1xManagedVllmAcceptanceRoute({
+      ...input.inferenceSelection,
+      openshellDriver: input.runtimeFields.openshellDriver,
+    });
+  if (input.deferredN1xManagedVllmPreviewIntent !== undefined && !deferredN1xManagedVllmAccepted) {
+    throw new RuntimeProviderSelectionError(
+      "Sandbox Deferred N1x preview acceptance failed closed validation.",
+    );
+  }
   const agentFields = getSandboxAgentRegistryFields(input.agent, input.agentVersionKnown);
   if (workload?.kind === "managed-image") {
     const requestedAgent = getRequestedSandboxAgentName(input.agent);
@@ -284,33 +248,18 @@ export function buildCreatedSandboxRegistryEntry(
     workload,
     ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),
     ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
-    ...(input.openclawImagePluginInstalls !== undefined
-      ? {
-          openclawImagePluginInstalls: input.openclawImagePluginInstalls.map((install) => ({
-            ...install,
-            ...(install.loadPaths !== undefined ? { loadPaths: [...install.loadPaths] } : {}),
-          })),
-        }
-      : {}),
-    policies: input.appliedPolicies,
-    ...(input.policyAuthority !== undefined ? { policyAuthority: input.policyAuthority } : {}),
-    ...(input.policyCreationReceipt !== undefined
-      ? { policyCreationReceipt: input.policyCreationReceipt }
-      : {}),
-    baselineExclusions: input.baselineExclusions?.map((exclusion) => ({ ...exclusion })),
+    ...(deferredN1xManagedVllmAccepted ? { deferredN1xManagedVllmAccepted: true as const } : {}),
     toolDisclosure: input.toolDisclosure ?? DEFAULT_TOOL_DISCLOSURE,
     observabilityEnabled: input.observabilityEnabled === true,
     ...(input.dcodeAutoApprovalMode !== undefined
       ? { dcodeAutoApprovalMode: input.dcodeAutoApprovalMode }
       : {}),
-    ...(input.policyTier !== undefined ? { policyTier: input.policyTier } : {}),
     webSearchEnabled: input.webSearchEnabled === true,
     webSearchProvider:
       input.webSearchEnabled === true ? (input.webSearchProvider ?? "brave") : null,
     fromDockerfile: input.fromDockerfile ?? null,
     hermesAuthMethod: input.hermesAuthMethod ?? null,
     messaging: messagingState,
-    mcp: input.preservedMcpState,
     hermesToolGateways:
       input.hermesToolGateways.length > 0 ? [...input.hermesToolGateways] : undefined,
     ...getHermesDashboardRegistryFields(input.hermesDashboardState),
@@ -328,6 +277,9 @@ export function buildCreatedSandboxRegistryEntry(
     dashboardRemoteBindPrepared: input.dashboardRemoteBindPrepared === true,
     lifecycleGeneration: input.lifecycleGeneration,
     lifecycleLiveIdentityFingerprint: input.lifecycleLiveIdentityFingerprint,
+    ...(input.hermesPortableLifecycle === true
+      ? { portableLifecycleProfile: "hermes" as const }
+      : {}),
     gatewayName: input.gatewayName,
     gatewayPort: input.gatewayPort,
     ...(input.hostMounts && input.hostMounts.length > 0
@@ -350,7 +302,10 @@ export function loadOnboardCommandResumeSession(): {
     : null;
 }
 
-export function registerCreatedSandbox(input: CreatedSandboxRegistrationInput): SandboxEntry {
+/** Build and validate the exact registry row without publishing it. */
+export function prepareCreatedSandboxRegistration(
+  input: CreatedSandboxRegistrationInput,
+): SandboxEntry {
   const pending = input.inferenceRouteReservation?.entry ?? registry.getSandbox(input.sandboxName);
   const pendingRoute =
     input.reservationSessionId && pending
@@ -392,6 +347,7 @@ export function registerCreatedSandbox(input: CreatedSandboxRegistrationInput): 
       );
     }
     entry.agent = "openclaw";
+    entry.portableLifecycleProfile = "openclaw";
   }
   const provider = requireRuntimeProviderBundleForSandbox(
     entry,
@@ -403,6 +359,27 @@ export function registerCreatedSandbox(input: CreatedSandboxRegistrationInput): 
       `Runtime provider '${provider.identity.id}' does not accept the registered workload receipt.`,
     );
   }
+  return structuredClone(entry);
+}
+
+/** Prove that a prepared row still matches every source used to derive it. */
+export function revalidatePreparedCreatedSandboxRegistration(
+  input: CreatedSandboxRegistrationInput,
+  prepared: SandboxEntry,
+): SandboxEntry {
+  const current = prepareCreatedSandboxRegistration(input);
+  if (!isDeepStrictEqual(current, prepared)) {
+    throw new RuntimeProviderSelectionError(
+      `Sandbox registration authority for '${input.sandboxName}' changed before publication.`,
+    );
+  }
+  return prepared;
+}
+
+function publishCreatedSandboxRegistration(
+  input: CreatedSandboxRegistrationInput,
+  entry: SandboxEntry,
+): SandboxEntry {
   const writeRegistry = input.registerSandbox ?? registry.registerSandbox;
   const pendingOptions =
     input.reservationSessionId && !input.verifiedCreate
@@ -419,4 +396,17 @@ export function registerCreatedSandbox(input: CreatedSandboxRegistrationInput): 
       ? writeRegistry(entry, input.inferenceRouteReservation, registrationOptions)
       : writeRegistry(entry);
   return registered ?? entry;
+}
+
+/** Publish one previously prepared row after revalidating its source authority. */
+export function registerPreparedCreatedSandbox(
+  input: CreatedSandboxRegistrationInput,
+  prepared: SandboxEntry,
+): SandboxEntry {
+  revalidatePreparedCreatedSandboxRegistration(input, prepared);
+  return publishCreatedSandboxRegistration(input, prepared);
+}
+
+export function registerCreatedSandbox(input: CreatedSandboxRegistrationInput): SandboxEntry {
+  return publishCreatedSandboxRegistration(input, prepareCreatedSandboxRegistration(input));
 }

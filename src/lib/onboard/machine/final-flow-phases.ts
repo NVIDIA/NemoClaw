@@ -2,7 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { WebSearchConfig, WebSearchProvider } from "../../inference/web-search";
-import { assertSandboxCreatedContext, type OnboardFlowContext } from "./flow-context";
+import {
+  assertSandboxCreatedContext,
+  isProviderlessComponentOnboarding,
+  type OnboardFlowContext,
+} from "./flow-context";
 import {
   createAgentSetupPhase,
   createFinalizationPhase,
@@ -20,7 +24,12 @@ import {
 } from "./handlers/finalization";
 import { handlePoliciesState, type PoliciesStateOptions } from "./handlers/policies";
 import { createPhaseProgressReporter } from "./phase-progress";
-import type { OnboardStateResult } from "./result";
+import {
+  advanceTo,
+  completeOnboardMachine,
+  type OnboardStateResult,
+  type OnboardStatePauseResult,
+} from "./result";
 import type { OnboardMachineRunnerRuntime, OnboardStateHandlerResult } from "./runner";
 import type { OnboardSequencePhase } from "./sequence-runner";
 import type { OnboardMachineEventType, OnboardMachineState } from "./types";
@@ -31,8 +40,8 @@ export interface FinalOnboardFlowPhaseOptions<
   VerificationResult = unknown,
 > {
   branchState: "agent_setup" | "openclaw";
-  authoritativePolicyTier?: string | null;
-  revalidatePolicyRequirements?(context: Context, operation: string): void;
+  managedOpenclawStartup?: boolean;
+  preserveRebuildLivePolicy?: boolean;
   agentSetupDeps: AgentSetupStateOptions<Context["agent"]>["deps"];
   policiesDeps: PoliciesStateOptions<Context["agent"], WebSearchConfig>["deps"];
   finalization: {
@@ -41,10 +50,11 @@ export interface FinalOnboardFlowPhaseOptions<
     webSearchEnabled(webSearchConfig: WebSearchConfig | null): boolean;
     webSearchProvider(webSearchConfig: WebSearchConfig): WebSearchProvider;
   };
-  finalizationDeps: Omit<
-    FinalizationStateOptions<Context["agent"], VerifyChain, VerificationResult>["deps"],
-    "persistDashboardPort"
-  >;
+  finalizationDeps: FinalizationStateOptions<
+    Context["agent"],
+    VerifyChain,
+    VerificationResult
+  >["deps"];
 }
 
 export function createFinalOnboardFlowPhases<
@@ -59,17 +69,15 @@ export function createFinalOnboardFlowPhases<
   OnboardSequencePhase<Context>,
   OnboardSequencePhase<Context>,
 ] {
-  const finalizationDeps = {
-    ...options.finalizationDeps,
-    persistDashboardPort: options.agentSetupDeps.persistDashboardPort,
-  };
-  const revalidationFor = (context: Context) =>
-    options.revalidatePolicyRequirements?.bind(null, context) ??
-    finalizationDeps.revalidatePolicyRequirements;
+  const finalizationDeps = options.finalizationDeps;
+  let activatedProviderlessSandbox: string | null = null;
   const createBranchPhase =
     options.branchState === "agent_setup" ? createAgentSetupPhase : createOpenclawSetupPhase;
   const branchSetupPhase = createBranchPhase<Context>(async (context) => {
     assertSandboxCreatedContext(context, "agent setup");
+    if (isProviderlessComponentOnboarding(context)) {
+      return { result: advanceTo("policies", { metadata: { state: options.branchState } }) };
+    }
     const agentSetupResult = await handleAgentSetupState({
       agent: context.agent,
       sandboxName: context.sandboxName,
@@ -80,7 +88,7 @@ export function createFinalOnboardFlowPhases<
       session: context.session,
       hermesAuthMethod: context.hermesAuthMethod,
       hermesToolGateways: context.hermesToolGateways,
-      revalidatePolicyRequirements: revalidationFor(context),
+      managedOpenclawStartup: options.managedOpenclawStartup === true,
       deps: options.agentSetupDeps,
     });
     return {
@@ -91,9 +99,13 @@ export function createFinalOnboardFlowPhases<
 
   const policiesPhase = createPoliciesPhase<Context>(async (context) => {
     assertSandboxCreatedContext(context, "policies");
+    if (isProviderlessComponentOnboarding(context)) {
+      // OpenShell already verified the interceptor-supplied policy during creation.
+      return { result: advanceTo("finalizing", { metadata: { state: "policies" } }) };
+    }
     const policiesResult = await handlePoliciesState({
       resume: context.resume,
-      authoritativePolicyTier: options.authoritativePolicyTier,
+      preserveRebuildLivePolicy: options.preserveRebuildLivePolicy,
       sandboxName: context.sandboxName,
       provider: context.provider,
       hostLocalInferenceRouteOnly: context.hostLocalInferenceRouteOnly === true,
@@ -108,7 +120,6 @@ export function createFinalOnboardFlowPhases<
       webSearchSupported: context.webSearchSupported,
       hermesToolGateways: context.hermesToolGateways,
       agent: context.agent,
-      revalidatePolicyRequirements: revalidationFor(context),
       deps: options.policiesDeps,
     });
     return {
@@ -123,7 +134,6 @@ export function createFinalOnboardFlowPhases<
   const finalizationPhase = createFinalizationPhase<Context>(async (context) => {
     assertSandboxCreatedContext(context, "finalization");
     const webSearchEnabled = options.finalization.webSearchEnabled(context.webSearchConfig);
-    const revalidatePolicyRequirements = revalidationFor(context);
     const finalizationResult = await handleFinalizationState({
       sandboxName: context.sandboxName,
       model: context.model,
@@ -140,14 +150,30 @@ export function createFinalOnboardFlowPhases<
           ? options.finalization.webSearchProvider(context.webSearchConfig)
           : null,
       portableProfileSelected: context.session?.checkpoint?.profile.value === "portable",
-      recreateJournalHandoff: context.recreateJournalHandoff,
-      deps: { ...finalizationDeps, revalidatePolicyRequirements },
+      externalComponent: context.externalComponent,
+      providerless: isProviderlessComponentOnboarding(context),
+      deferRuntimeVerification: options.preserveRebuildLivePolicy === true,
+      deps: finalizationDeps,
     });
+    if (
+      isProviderlessComponentOnboarding(context) &&
+      finalizationResult.stateResult.type === "transition"
+    ) {
+      activatedProviderlessSandbox = context.sandboxName;
+    }
     return { result: finalizationResult.stateResult };
   });
 
   const postVerifyPhase = createPostVerifyPhase<Context>(async (context) => {
     assertSandboxCreatedContext(context, "post verification");
+    if (isProviderlessComponentOnboarding(context)) {
+      if (activatedProviderlessSandbox !== context.sandboxName) {
+        throw new Error(
+          "Providerless component activation has not completed in this onboarding run.",
+        );
+      }
+      return { result: completeOnboardMachine({}, { state: "post_verify" }) };
+    }
     const webSearchEnabled = options.finalization.webSearchEnabled(context.webSearchConfig);
     const postVerifyResult = await handlePostVerifyState({
       sandboxName: context.sandboxName,
@@ -165,11 +191,9 @@ export function createFinalOnboardFlowPhases<
           ? options.finalization.webSearchProvider(context.webSearchConfig)
           : null,
       portableProfileSelected: context.session?.checkpoint?.profile.value === "portable",
-      recreateJournalHandoff: context.recreateJournalHandoff,
-      deps: {
-        ...finalizationDeps,
-        revalidatePolicyRequirements: revalidationFor(context),
-      },
+      externalComponent: null,
+      deferRuntimeVerification: options.preserveRebuildLivePolicy === true,
+      deps: finalizationDeps,
     });
     return { result: postVerifyResult.stateResult };
   });
@@ -307,7 +331,7 @@ async function runFinalFlowPrerequisiteRepairs<Context extends OnboardFlowContex
   recordRepairEvent: FinalFlowRepairEventRecorder;
   afterPoliciesReady?(): void;
   onContextUpdated?(context: Context): void;
-}): Promise<Context> {
+}): Promise<{ context: Context; pause?: OnboardStatePauseResult }> {
   const entryIndex = options.phases.findIndex((phase) => phase.state === options.entryState);
   const repairPhases = options.phases.slice(0, entryIndex);
   const phaseProgress = createPhaseProgressReporter();
@@ -328,13 +352,35 @@ async function runFinalFlowPrerequisiteRepairs<Context extends OnboardFlowContex
       });
       const phaseResult = await phase.run(nextContext);
       const result = singleRepairResult(phaseResult.result, phase.state);
-      assertValidRepairResult(result, phase.state, nextState);
       const current = await options.runtime.session();
       if (current.machine.state !== options.entryState) {
         throw new Error(
           `Final onboarding prerequisite repair for '${phase.state}' changed durable entry state from '${options.entryState}' to '${current.machine.state}'`,
         );
       }
+      // A refused prerequisite must stop a resumed flow without advancing its durable state.
+      if (
+        result.type === "pause" &&
+        result.metadata?.state === phase.state &&
+        Object.keys(result.updates ?? {}).length === 0
+      ) {
+        await options.recordRepairEvent("state.repair.failed", {
+          state: phase.state,
+          metadata: { ...metadata, reason: result.metadata.reason },
+        });
+        return {
+          context: phaseResult.context,
+          pause: {
+            ...result,
+            metadata: {
+              ...result.metadata,
+              state: options.entryState,
+              prerequisiteState: phase.state,
+            },
+          },
+        };
+      }
+      assertValidRepairResult(result, phase.state, nextState);
       await options.recordRepairEvent("state.repair.completed", {
         state: phase.state,
         metadata,
@@ -352,7 +398,7 @@ async function runFinalFlowPrerequisiteRepairs<Context extends OnboardFlowContex
     }
   }
 
-  return nextContext;
+  return { context: nextContext };
 }
 
 export async function runFinalOnboardFlowSlice<Context extends OnboardFlowContext>(options: {
@@ -375,7 +421,7 @@ export async function runFinalOnboardFlowSlice<Context extends OnboardFlowContex
     );
   }
 
-  const context = FINAL_FLOW_DOWNSTREAM_STATES.includes(
+  const repaired = FINAL_FLOW_DOWNSTREAM_STATES.includes(
     durableEntry.machine.state as (typeof FINAL_FLOW_DOWNSTREAM_STATES)[number],
   )
     ? await runFinalFlowPrerequisiteRepairs({
@@ -387,10 +433,14 @@ export async function runFinalOnboardFlowSlice<Context extends OnboardFlowContex
         afterPoliciesReady: options.afterPoliciesReady,
         onContextUpdated: options.onContextUpdated,
       })
-    : options.context;
+    : { context: options.context };
 
+  if (repaired.pause) {
+    const session = await options.runtime.applyResult(repaired.pause);
+    return { context: repaired.context, session };
+  }
   return runFinalOnboardFlowSequence({
-    context,
+    context: repaired.context,
     runtime: withAfterPoliciesReady(options.runtime, options.afterPoliciesReady),
     phases: withContextObserver(phases, options.onContextUpdated),
   });

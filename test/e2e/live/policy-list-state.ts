@@ -25,6 +25,7 @@ const POLICY_LIST_ROW_PATTERN = new RegExp(
 export function parsePolicyPresetState(output: string, presetName: string): PolicyPresetState {
   if (
     output.includes("Could not query gateway") ||
+    output.includes("Could not query OpenShell") ||
     output.includes("cannot be verified or started")
   ) {
     return "unverified";

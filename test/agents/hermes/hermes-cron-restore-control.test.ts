@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -27,6 +28,10 @@ const LIFECYCLE_HARNESS = String.raw`
 import importlib.util
 import os
 import sys
+import threading
+import time
+import types
+from datetime import datetime, timezone
 from pathlib import Path
 
 spec = importlib.util.spec_from_file_location("cron_restore_control", sys.argv[1])
@@ -37,12 +42,24 @@ module.HERMES_HOME = Path(sys.argv[3])
 module.SANDBOX_HOME = module.HERMES_HOME.parent
 module.NEMOCLAW_HOME = module.SANDBOX_HOME / ".nemoclaw"
 module.CONTROL_LOCK_PATH = module.SANDBOX_HOME / "run" / "cron-restore.lock"
+module.GATEWAY_RECOVERY_REQUEST_PATH = (
+    module.SANDBOX_HOME / "recovery-run" / "hermes-gateway-recovery-request"
+)
+module.GATEWAY_RECOVERY_WAITING_PATH = (
+    module.SANDBOX_HOME / "run" / "hermes-gateway-recovery-waiting"
+)
+module._self_process_identity = lambda: (321, 654)
 module.ROOT_UID = os.geteuid()
 module.ROOT_GID = os.getegid()
 module.NEMOCLAW_HOME.mkdir(mode=0o755)
 module.CONTROL_LOCK_PATH.parent.mkdir(mode=0o755)
 os.chmod(module.NEMOCLAW_HOME, 0o755)
 os.chmod(module.CONTROL_LOCK_PATH.parent, 0o755)
+module.GATEWAY_RECOVERY_WAITING_PATH.write_text(
+    "v1 " + "c" * 64 + "\n",
+    encoding="ascii",
+)
+os.chmod(module.GATEWAY_RECOVERY_WAITING_PATH, 0o600)
 cron_validations = 0
 def validate_cron_tree():
     global cron_validations
@@ -133,6 +150,24 @@ class Status:
 drain = DrainControl()
 status = Status()
 module._load_gateway_modules = lambda: (drain, status)
+rearm_calls = []
+delayed_one_shot_due_at = None
+cron_package = types.ModuleType("cron")
+cron_jobs = types.ModuleType("cron.jobs")
+def rearm_nemoclaw_drained_oneshots(not_before, profile_homes):
+    if not module._marker_path().exists():
+        raise AssertionError("one-shot re-arm ran without the NemoClaw drain")
+    if not profile_homes or profile_homes[0] != module.HERMES_HOME:
+        raise AssertionError("one-shot re-arm did not include the default Hermes profile")
+    rearm_calls.append(not_before.isoformat())
+    if delayed_one_shot_due_at is not None and not_before > delayed_one_shot_due_at:
+        return 0
+    return 1
+cron_jobs.rearm_nemoclaw_drained_oneshots = rearm_nemoclaw_drained_oneshots
+cron_package.jobs = cron_jobs
+sys.modules["cron"] = cron_package
+sys.modules["cron.jobs"] = cron_jobs
+RECOVERY_STARTED_AT_NS = 1_600_000_000_000_000_000
 
 try:
     if scenario == "success":
@@ -289,9 +324,9 @@ try:
         release_events = []
         original_write_release_recovery = module._write_release_recovery
         original_remove_owned_drain = module._remove_owned_drain
-        def write_release_recovery(drain_token):
+        def write_release_recovery(drain_token, drain_started_at_ns):
             release_events.append("recovery-write-started")
-            original_write_release_recovery(drain_token)
+            original_write_release_recovery(drain_token, drain_started_at_ns)
             release_events.append("recovery-write-durable")
         def remove_owned_drain(drain_token):
             release_events.append("drain-delete-started")
@@ -309,13 +344,20 @@ try:
         module.observe_replacement(41, 902, token)
         fail_directory_sync_on(1)
         module.complete_replacement(41, 902, 77, 903, token)
+    elif scenario == "rearm-failure":
+        token = module.begin_drain()
+        module.validate_restore(41, 902, token)
+        def fail_rearm(_not_before, _profile_homes):
+            raise RuntimeError("simulated re-arm failure")
+        cron_jobs.rearm_nemoclaw_drained_oneshots = fail_rearm
+        module.recover_drain()
     elif scenario == "existing-recovery-sync-failure":
         token = module.begin_drain()
         module.validate_restore(41, 902, token)
         status.payload["pid"] = 77
         status.payload["start_time"] = 903
         module.observe_replacement(41, 902, token)
-        module._write_release_recovery(token)
+        module._write_release_recovery(token, module._owned_drain_started_at_ns(token))
         fail_directory_sync_on(1)
         module.complete_replacement(41, 902, 77, 903, token)
     elif scenario == "drain-unlink-sync-failure":
@@ -345,20 +387,35 @@ try:
         module._wait_for_release_disposition = fail_release
         fail_directory_sync_on(3)
         module.complete_replacement(41, 902, 77, 903, token)
+    elif scenario == "prepare-handoff-world-writable":
+        module._write_release_recovery("a" * 32, RECOVERY_STARTED_AT_NS)
+        handoff = module.GATEWAY_RECOVERY_REQUEST_PATH.parent
+        handoff.mkdir()
+        os.chmod(handoff, 0o777)
+        module.prepare_recovery()
+    elif scenario == "prepare-handoff-symlink":
+        module._write_release_recovery("a" * 32, RECOVERY_STARTED_AT_NS)
+        target = module.SANDBOX_HOME / "recovery-run-target"
+        target.mkdir()
+        module.GATEWAY_RECOVERY_REQUEST_PATH.parent.symlink_to(
+            target,
+            target_is_directory=True,
+        )
+        module.prepare_recovery()
     elif scenario == "prepare-recovery-only":
-        module._write_release_recovery("a" * 32)
+        module._write_release_recovery("a" * 32, RECOVERY_STARTED_AT_NS)
         module._load_gateway_modules = forbid_gateway_or_validation
         module.validate_cron_tree = forbid_gateway_or_validation
         module.prepare_recovery()
     elif scenario == "prepare-matching":
-        module._write_owned_drain("a" * 32)
-        module._write_release_recovery("a" * 32)
+        module._write_owned_drain("a" * 32, started_at_ns=RECOVERY_STARTED_AT_NS)
+        module._write_release_recovery("a" * 32, RECOVERY_STARTED_AT_NS)
         module._load_gateway_modules = forbid_gateway_or_validation
         module.validate_cron_tree = forbid_gateway_or_validation
         module.prepare_recovery()
     elif scenario == "prepare-matching-sync-failure":
-        module._write_owned_drain("a" * 32)
-        module._write_release_recovery("a" * 32)
+        module._write_owned_drain("a" * 32, started_at_ns=RECOVERY_STARTED_AT_NS)
+        module._write_release_recovery("a" * 32, RECOVERY_STARTED_AT_NS)
         module._load_gateway_modules = forbid_gateway_or_validation
         module.validate_cron_tree = forbid_gateway_or_validation
         fail_directory_sync_on(1)
@@ -367,40 +424,59 @@ try:
         module._load_gateway_modules = forbid_gateway_or_validation
         module.validate_cron_tree = forbid_gateway_or_validation
         module.prepare_recovery()
+    elif scenario == "prepare-before-generation":
+        module.GATEWAY_RECOVERY_WAITING_PATH.unlink()
+        def publish_generation():
+            time.sleep(0.05)
+            staged = module.GATEWAY_RECOVERY_WAITING_PATH.with_suffix(".staged")
+            staged.write_text(
+                "v1 " + "e" * 64 + "\n",
+                encoding="ascii",
+            )
+            os.chmod(staged, 0o600)
+            staged.replace(module.GATEWAY_RECOVERY_WAITING_PATH)
+        publisher = threading.Thread(target=publish_generation)
+        publisher.start()
+        module.prepare_recovery()
+        publisher.join()
+    elif scenario == "prepare-without-generation":
+        module.GATEWAY_RECOVERY_WAIT_SECONDS = 0.01
+        module.GATEWAY_RECOVERY_WAITING_PATH.unlink()
+        module.prepare_recovery()
     elif scenario == "prepare-existing-sync-failure":
         module._write_owned_drain("a" * 32)
         fail_directory_sync_on(1)
         module.prepare_recovery()
     elif scenario == "prepare-mismatch":
-        module._write_owned_drain("a" * 32)
-        module._write_release_recovery("b" * 32)
+        module._write_owned_drain("a" * 32, started_at_ns=RECOVERY_STARTED_AT_NS)
+        module._write_release_recovery("b" * 32, RECOVERY_STARTED_AT_NS)
         module._load_gateway_modules = forbid_gateway_or_validation
         module.validate_cron_tree = forbid_gateway_or_validation
         module.prepare_recovery()
     elif scenario == "prepare-recovery-unsafe-mode":
-        module._write_release_recovery("a" * 32)
+        module._write_release_recovery("a" * 32, RECOVERY_STARTED_AT_NS)
         os.chmod(module._release_recovery_path(), 0o600)
         module.prepare_recovery()
     elif scenario == "prepare-recovery-symlink":
-        module._write_release_recovery("a" * 32)
+        module._write_release_recovery("a" * 32, RECOVERY_STARTED_AT_NS)
         recovery = module._release_recovery_path()
         held = module.NEMOCLAW_HOME / "held-recovery.json"
         recovery.rename(held)
         recovery.symlink_to(held.name)
         module.prepare_recovery()
     elif scenario == "prepare-recovery-hardlink":
-        module._write_release_recovery("a" * 32)
+        module._write_release_recovery("a" * 32, RECOVERY_STARTED_AT_NS)
         os.link(
             module._release_recovery_path(),
             module.NEMOCLAW_HOME / "held-recovery.json",
         )
         module.prepare_recovery()
     elif scenario == "pending-release-recovery":
-        module._write_release_recovery("a" * 32)
+        module._write_release_recovery("a" * 32, RECOVERY_STARTED_AT_NS)
         module.begin_drain()
     elif scenario == "mismatched-release-recovery":
         module.begin_drain()
-        module._write_release_recovery("b" * 32)
+        module._write_release_recovery("b" * 32, RECOVERY_STARTED_AT_NS)
         module.recover_drain()
     elif scenario == "recover-release-rollback":
         token = module.begin_drain()
@@ -428,6 +504,38 @@ try:
             module._wait_for_release_disposition = original_wait_for_release
             module._write_owned_drain = original_write_owned_drain
         module.recover_drain()
+    elif scenario == "recover-preserves-gate-start":
+        token = module.begin_drain()
+        original_started_at = module._owned_drain_started_at(token)
+        module.validate_restore(41, 902, token)
+        status.payload["pid"] = 77
+        status.payload["start_time"] = 903
+        module.observe_replacement(41, 902, token)
+        original_wait_for_release = module._wait_for_release_disposition
+        original_write_owned_drain = module._write_owned_drain
+        def fail_release(*_args, **_kwargs):
+            raise module.ControlError("simulated replacement release failure")
+        def fail_rollback(*_args, **_kwargs):
+            raise module.ControlError("simulated marker rollback failure")
+        module._wait_for_release_disposition = fail_release
+        module._write_owned_drain = fail_rollback
+        try:
+            module.complete_replacement(41, 902, 77, 903, token)
+        except module.ControlError as error:
+            if error.code != module.DRAIN_MARKER_ROLLBACK_FAILED_CODE:
+                raise
+            module._emit_control_error(error)
+        else:
+            raise AssertionError("release rollback unexpectedly succeeded")
+        finally:
+            module._wait_for_release_disposition = original_wait_for_release
+            module._write_owned_drain = original_write_owned_drain
+        delayed_one_shot_due_at = datetime.now(timezone.utc)
+        if delayed_one_shot_due_at <= original_started_at:
+            raise AssertionError("delayed one-shot time did not follow gate acquisition")
+        module.recover_drain()
+        print("ORIGINAL_GATE_START:" + original_started_at.isoformat())
+        print("DELAYED_ONESHOT_DUE:" + delayed_one_shot_due_at.isoformat())
     elif scenario == "recover":
         module.begin_drain()
         status.payload["pid"] = 77
@@ -456,8 +564,13 @@ finally:
         "RECOVERY_STATE:"
         + ("present" if module._release_recovery_path().exists() else "absent")
     )
+    print(
+        "RECOVERY_REQUEST:"
+        + ("present" if module.GATEWAY_RECOVERY_REQUEST_PATH.exists() else "absent")
+    )
     print(f"CRON_VALIDATIONS:{cron_validations}")
     print(f"DURABILITY_SYNCS:{durability_sync_calls}")
+    print("REARM_CALLS:" + ",".join(rearm_calls))
     if drain.marker is not None:
         print("FINAL_MARKER:" + drain.marker["principal"])
 `;
@@ -530,14 +643,19 @@ describe("Hermes in-sandbox cron restore validator", () => {
       | "complete-release-rollback-failure"
       | "complete-durable-order"
       | "release-recovery-sync-failure"
+      | "rearm-failure"
       | "existing-recovery-sync-failure"
       | "drain-unlink-sync-failure"
       | "recovery-unlink-sync-failure"
       | "rollback-publication-sync-failure"
+      | "prepare-handoff-world-writable"
+      | "prepare-handoff-symlink"
       | "prepare-recovery-only"
       | "prepare-matching"
       | "prepare-matching-sync-failure"
       | "prepare-noop"
+      | "prepare-before-generation"
+      | "prepare-without-generation"
       | "prepare-existing-sync-failure"
       | "prepare-mismatch"
       | "prepare-recovery-unsafe-mode"
@@ -546,6 +664,7 @@ describe("Hermes in-sandbox cron restore validator", () => {
       | "pending-release-recovery"
       | "mismatched-release-recovery"
       | "recover-release-rollback"
+      | "recover-preserves-gate-start"
       | "recover"
       | "recover-operator"
       | "recover-noop",
@@ -664,6 +783,8 @@ describe("Hermes in-sandbox cron restore validator", () => {
     );
     expect(result.stdout).toContain("OPERATOR_MUTATIONS:0:0");
     expect(result.stdout).toContain("OWN_MARKER:absent");
+    expect(result.stdout).toMatch(/REARM_CALLS:[^\n]+/u);
+    expect(receipts.at(-1)).toMatchObject({ rearmed_oneshots: 1 });
   });
 
   it("rejects validation against a different gateway identity", () => {
@@ -895,6 +1016,16 @@ describe("Hermes in-sandbox cron restore validator", () => {
     expect(result.stdout).not.toContain('"action":"complete"');
   });
 
+  it("keeps dispatch drained when delayed one-shots cannot be re-armed (#8472)", () => {
+    const result = runLifecycle("rearm-failure");
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Hermes cron restore could not re-arm delayed one-shots");
+    expect(result.stdout).toContain("OWN_MARKER:present");
+    expect(result.stdout).toContain("RECOVERY_STATE:present");
+    expect(result.stdout).not.toContain('"action":"recover"');
+  });
+
   it("rechecks existing recovery-record durability before marker deletion (#8472)", () => {
     const result = runLifecycle("existing-recovery-sync-failure");
 
@@ -950,8 +1081,30 @@ describe("Hermes in-sandbox cron restore validator", () => {
     expect(result.stdout).toContain('"action":"prepare-recover"');
     expect(result.stdout).toContain('"disposition":"gate-prepared"');
     expect(result.stdout).toContain('"drain_acquired":true');
+    expect(result.stdout).toContain('"gateway_recovery_requested":true');
     expect(result.stdout).toContain("OWN_MARKER:present");
     expect(result.stdout).toContain("RECOVERY_STATE:present");
+    expect(result.stdout).toContain("CRON_VALIDATIONS:0");
+    expect(result.stdout).toContain("RECOVERY_REQUEST:present");
+    const requestRoot = path.join(root, "recovery-run");
+    const requestPath = path.join(requestRoot, "hermes-gateway-recovery-request");
+    expect(readFileSync(requestPath, "utf8")).toBe(`v2 ${"c".repeat(64)} 321 654\n`);
+    expect(lstatSync(requestRoot).mode & 0o777).toBe(0o755);
+    expect(lstatSync(requestPath).mode & 0o777).toBe(0o444);
+  });
+
+  it.each([
+    ["prepare-handoff-world-writable", "gateway recovery runtime metadata is unsafe"],
+    ["prepare-handoff-symlink", "gateway recovery runtime is unavailable"],
+  ] as const)("rejects an unsafe recovery handoff in %s", (scenario, message) => {
+    const result = runLifecycle(scenario);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(message);
+    expect(result.stdout).not.toContain('"action":"prepare-recover"');
+    expect(result.stdout).toContain("OWN_MARKER:present");
+    expect(result.stdout).toContain("RECOVERY_STATE:present");
+    expect(result.stdout).toContain("RECOVERY_REQUEST:absent");
     expect(result.stdout).toContain("CRON_VALIDATIONS:0");
   });
 
@@ -964,6 +1117,7 @@ describe("Hermes in-sandbox cron restore validator", () => {
     expect(result.stdout).toContain("OWN_MARKER:present");
     expect(result.stdout).toContain("RECOVERY_STATE:present");
     expect(result.stdout).toContain("CRON_VALIDATIONS:0");
+    expect(result.stdout).toContain("RECOVERY_REQUEST:present");
   });
 
   it("blocks gateway preparation when matching recovery authority durability is unproved (#8472)", () => {
@@ -976,6 +1130,7 @@ describe("Hermes in-sandbox cron restore validator", () => {
     expect(result.stdout).toContain("RECOVERY_STATE:present");
     expect(result.stdout).toContain("DURABILITY_SYNCS:1");
     expect(result.stdout).toContain("CRON_VALIDATIONS:0");
+    expect(result.stdout).toContain("RECOVERY_REQUEST:absent");
   });
 
   it("returns a typed no-op when no recovery authority exists (#8472)", () => {
@@ -986,9 +1141,29 @@ describe("Hermes in-sandbox cron restore validator", () => {
     expect(result.stdout).toContain('"action":"prepare-recover"');
     expect(result.stdout).toContain('"disposition":"not-required"');
     expect(result.stdout).toContain('"drain_acquired":false');
+    expect(result.stdout).toContain('"gateway_recovery_requested":true');
     expect(result.stdout).toContain("OWN_MARKER:absent");
     expect(result.stdout).toContain("RECOVERY_STATE:absent");
     expect(result.stdout).toContain("CRON_VALIDATIONS:0");
+    expect(result.stdout).toContain("RECOVERY_REQUEST:present");
+  });
+
+  it("publishes a matching request when recovery starts before the supervisor generation", () => {
+    const result = runLifecycle("prepare-before-generation");
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain('"disposition":"not-required"');
+    const requestPath = path.join(root, "recovery-run", "hermes-gateway-recovery-request");
+    expect(readFileSync(requestPath, "utf8")).toBe(`v2 ${"e".repeat(64)} 321 654\n`);
+  });
+
+  it("reports false when no gateway recovery generation appears", () => {
+    const result = runLifecycle("prepare-without-generation");
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain('"disposition":"not-required"');
+    expect(result.stdout).toContain('"gateway_recovery_requested":false');
+    expect(result.stdout).toContain("RECOVERY_REQUEST:absent");
   });
 
   it("blocks gateway preparation when existing marker durability is unproved (#8472)", () => {
@@ -1073,6 +1248,34 @@ describe("Hermes in-sandbox cron restore validator", () => {
       }),
     );
     expect(result.stdout).toContain("CRON_VALIDATIONS:3");
+    expect(result.stdout).toContain("OWN_MARKER:absent");
+    expect(result.stdout).toContain("RECOVERY_STATE:absent");
+  });
+
+  it("retains the original gate time when recovery recreates the drain marker (#8472)", () => {
+    const result = runLifecycle("recover-preserves-gate-start");
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain(
+      "Hermes cron restore drain release failed and its marker could not be restored",
+    );
+    const originalGateStart = result.stdout.match(/^ORIGINAL_GATE_START:(.+)$/mu)?.[1];
+    const rearmCalls = result.stdout.match(/^REARM_CALLS:(.+)$/mu)?.[1].split(",");
+    expect(originalGateStart).toBeTruthy();
+    expect(rearmCalls).toEqual([originalGateStart, originalGateStart]);
+    const receipts = result.stdout
+      .split("\n")
+      .filter((line) => line.startsWith(RECEIPT_PREFIX))
+      .map((line) => JSON.parse(line.slice(RECEIPT_PREFIX.length)));
+    expect(receipts.at(-1)).toEqual(
+      expect.objectContaining({
+        action: "recover",
+        disposition: "dispatch-reactivated",
+        rearmed_oneshots: 1,
+      }),
+    );
+    expect(result.stdout).toContain("ORIGINAL_GATE_START:");
+    expect(result.stdout).toContain("DELAYED_ONESHOT_DUE:");
     expect(result.stdout).toContain("OWN_MARKER:absent");
     expect(result.stdout).toContain("RECOVERY_STATE:absent");
   });

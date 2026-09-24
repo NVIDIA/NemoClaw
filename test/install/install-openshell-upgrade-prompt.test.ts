@@ -1,28 +1,42 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { execFile, type ExecFileOptionsWithStringEncoding } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 const INSTALLER_PAYLOAD = path.join(import.meta.dirname, "../..", "scripts", "install.sh");
-const UPDATE_SANDBOXES_DOCS = path.join(
-  import.meta.dirname,
-  "../..",
-  "docs",
-  "manage-sandboxes",
-  "update-sandboxes.mdx",
-);
-const COMMANDS_DOCS = path.join(import.meta.dirname, "../..", "docs", "reference", "commands.mdx");
+const execFileAsync = promisify(execFile);
+
+vi.setConfig({ maxConcurrency: 4 });
+
+async function runCommand(
+  command: string,
+  args: string[],
+  options: ExecFileOptionsWithStringEncoding,
+) {
+  try {
+    const { stderr, stdout } = await execFileAsync(command, args, options);
+    return { status: 0, stderr, stdout };
+  } catch (error) {
+    const result = error as { code?: unknown; stderr?: string; stdout?: string };
+    return {
+      status: typeof result.code === "number" ? result.code : null,
+      stderr: result.stderr ?? "",
+      stdout: result.stdout ?? "",
+    };
+  }
+}
 
 function writeExecutable(target: string, contents: string): void {
   fs.writeFileSync(target, contents, { mode: 0o755 });
 }
 
-function runInstallerOpenshellVersionFlow(
+async function runInstallerOpenshellVersionFlow(
   setupOpenshell: (bin: string) => void,
   installedOpenshellBody = '#!/usr/bin/env bash\n[ "$1" = "--version" ] && echo "openshell 0.0.85"\nexit 0\n',
 ) {
@@ -52,7 +66,7 @@ consume_station_local_vllm_resume() { return 1; }
   writeExecutable(healthyOpenshell, installedOpenshellBody);
   setupOpenshell(bin);
 
-  const result = spawnSync(
+  const result = await runCommand(
     "bash",
     [
       "-c",
@@ -107,16 +121,19 @@ main --non-interactive --yes-i-accept-third-party-software`,
   };
 }
 
-function runPreinstallUpgradeGuard(
+async function runPreinstallUpgradeGuard(
   env: Record<string, string> = {},
   options: {
     currentBackupSucceeds?: boolean;
     currentCliAvailable?: boolean;
+    currentForwardRetirementSucceeds?: boolean;
     currentMaxOpenshellVersion?: string;
     currentMinOpenshellVersion?: string;
     finishDeferAsPlain?: boolean;
     finishGatewayPort?: string;
+    finishGatewayServiceRestartSucceeds?: boolean;
     finishInstallMode?: "managed" | "source" | "unset";
+    finishLinuxSystemdUserManager?: boolean;
     finishPreparedInstallSucceeds?: boolean;
     gatewayDestroySucceeds?: boolean;
     gatewayProcessStopSucceeds?: boolean;
@@ -151,6 +168,8 @@ function runPreinstallUpgradeGuard(
   fs.writeFileSync(registry, options.registryJson ?? '{"sandboxes":{"alpha":{"name":"alpha"}}}');
   const currentCliAvailable = options.currentCliAvailable === false ? "0" : "1";
   const currentBackupSucceeds = options.currentBackupSucceeds === false ? "0" : "1";
+  const currentForwardRetirementSucceeds =
+    options.currentForwardRetirementSucceeds === false ? "0" : "1";
   const openshellVersion = options.openshellVersion ?? "0.0.36";
   const gatewayDestroySucceeds = options.gatewayDestroySucceeds === true ? "1" : "0";
   const gatewayProcessStopSucceeds = options.gatewayProcessStopSucceeds === false ? "0" : "1";
@@ -158,7 +177,10 @@ function runPreinstallUpgradeGuard(
   const gatewayServiceStopSucceeds = options.gatewayServiceStopSucceeds === true ? "1" : "0";
   const finishDeferAsPlain = options.finishDeferAsPlain === true ? "1" : "0";
   const finishGatewayPort = options.finishGatewayPort ?? "";
+  const finishGatewayServiceRestartSucceeds =
+    options.finishGatewayServiceRestartSucceeds === false ? "0" : "1";
   const finishInstallMode = options.finishInstallMode ?? "";
+  const finishLinuxSystemdUserManager = options.finishLinuxSystemdUserManager === true ? "1" : "0";
   const finishPreparedInstallSucceeds = options.finishPreparedInstallSucceeds === false ? "0" : "1";
   const openshellVersionCommandFails = options.openshellVersionCommandFails === true ? "1" : "0";
   const installedOpenshellVersionOverride =
@@ -185,6 +207,9 @@ if [ "\${1:-}" = "--version" ]; then
 fi
 if [ "\${1:-}" = "backup-all" ] && [ "${currentBackupSucceeds}" != "1" ]; then
   exit 4
+fi
+if [ "\${1:-} \${2:-}" = "backup-all --retire-legacy-forwards" ] && [ "${currentForwardRetirementSucceeds}" != "1" ]; then
+  exit 5
 fi
 exit 0
 `,
@@ -254,6 +279,18 @@ exit 0
         printf 'openshell install-mode %s defer=%s\n' "$1" "\${NEMOCLAW_DEFER_OPENSHELL_INSTALL:-}" >> "${openshellLog}"
         [ "${finishPreparedInstallSucceeds}" = "1" ]
       }
+      command_exists() {
+        [ "$1" != "systemctl" ] && command -v "$1" >/dev/null 2>&1 && return 0
+        [ "$1" = "systemctl" ] && [ "${finishLinuxSystemdUserManager}" = "1" ]
+      }
+      if [ "${finishLinuxSystemdUserManager}" = "1" ]; then
+        uname() { printf 'Linux\n'; }
+        systemctl() { [ "$*" = "--user show-environment" ]; }
+        restart_selected_openshell_gateway_user_service() {
+          printf 'gateway service-restart %s\n' "$1" >> "${openshellLog}"
+          [ "${finishGatewayServiceRestartSucceeds}" = "1" ]
+        }
+      fi
       refresh_path() { :; }
       ensure_nemoclaw_shim() { :; }
       [ -z "${finishGatewayPort}" ] || NEMOCLAW_GATEWAY_PORT="${finishGatewayPort}"
@@ -285,7 +322,7 @@ exit 0
     "XDG_BIN_HOME",
   ].filter((key) => !(key in env));
   for (const key of inheritedControlKeys) delete childEnv[key];
-  const result = spawnSync("bash", ["-c", snippet], {
+  const result = await runCommand("bash", ["-c", snippet], {
     encoding: "utf-8",
     env: childEnv,
   });
@@ -298,24 +335,24 @@ exit 0
   };
 }
 
-describe("install.sh OpenShell gateway upgrade guard", () => {
+describe.concurrent("install.sh OpenShell gateway upgrade guard", () => {
   it.skipIf(process.platform !== "linux")(
     "stops only the verified gateway process recorded in the owned runtime PID file",
-    () => {
+    async () => {
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-legacy-gateway-stop-"));
       const runtimeDir = path.join(tmp, "runtime");
       const gatewayBin = path.join(tmp, "openshell-gateway");
       fs.mkdirSync(runtimeDir, { recursive: true });
-      fs.copyFileSync("/bin/sleep", gatewayBin);
+      fs.copyFileSync(process.execPath, gatewayBin);
       fs.chmodSync(gatewayBin, 0o755);
 
-      const result = spawnSync(
+      const result = await runCommand(
         "bash",
         [
           "-c",
           `source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1
 NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR="${runtimeDir}"
-"${gatewayBin}" 60 &
+"${gatewayBin}" -e 'setTimeout(() => {}, 60000)' &
 gateway_pid=$!
 printf '%s\\n' "$gateway_pid" >"${runtimeDir}/openshell-gateway.pid"
 stop_legacy_openshell_gateway_process
@@ -332,12 +369,12 @@ test ! -e "${runtimeDir}/openshell-gateway.pid"`,
 
   it.skipIf(process.platform !== "linux")(
     "clears a stale owned gateway PID file and continues retirement",
-    () => {
+    async () => {
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-stale-gateway-pid-"));
       const pidFile = path.join(tmp, "openshell-gateway.pid");
       fs.writeFileSync(pidFile, "999999999\n");
 
-      const result = spawnSync(
+      const result = await runCommand(
         "bash",
         [
           "-c",
@@ -353,12 +390,12 @@ test ! -e "${pidFile}"`,
     },
   );
 
-  function runOpenshellVersionGate(openshellBody: string, extraSetup = "") {
+  async function runOpenshellVersionGate(openshellBody: string, extraSetup = "") {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-version-gate-"));
     const bin = path.join(tmp, "bin");
     fs.mkdirSync(bin, { recursive: true });
     writeExecutable(path.join(bin, "openshell"), openshellBody);
-    return spawnSync(
+    return runCommand(
       "bash",
       [
         "-c",
@@ -378,9 +415,9 @@ require_reportable_openshell_version`,
   const versionPrintingBrokenOpenshell =
     '#!/usr/bin/env bash\n[ "$1" = "--version" ] && echo "openshell 0.0.85"\nexit 1\n';
 
-  it("backs up before rejecting a broken OpenShell without gateway or sandbox mutation (#7300)", () => {
+  it("backs up before rejecting a broken OpenShell without gateway or sandbox mutation (#7300)", async () => {
     const { result, backupLog, gatewayState, registry, installLog } =
-      runInstallerOpenshellVersionFlow((bin) => {
+      await runInstallerOpenshellVersionFlow((bin) => {
         writeExecutable(path.join(bin, "openshell"), brokenOpenshell);
       });
 
@@ -392,9 +429,9 @@ require_reportable_openshell_version`,
     expect(installLog).toBe("");
   });
 
-  it("backs up before rejecting a failed OpenShell version command without mutation (#7300)", () => {
+  it("backs up before rejecting a failed OpenShell version command without mutation (#7300)", async () => {
     const { result, backupLog, gatewayState, registry, installLog } =
-      runInstallerOpenshellVersionFlow((bin) => {
+      await runInstallerOpenshellVersionFlow((bin) => {
         writeExecutable(path.join(bin, "openshell"), versionPrintingBrokenOpenshell);
       });
 
@@ -406,9 +443,9 @@ require_reportable_openshell_version`,
     expect(installLog).toBe("");
   });
 
-  it("backs up before rejecting invalid OpenShell version output without mutation (#7300)", () => {
+  it("backs up before rejecting invalid OpenShell version output without mutation (#7300)", async () => {
     const { result, backupLog, gatewayState, registry, installLog } =
-      runInstallerOpenshellVersionFlow((bin) => {
+      await runInstallerOpenshellVersionFlow((bin) => {
         writeExecutable(path.join(bin, "openshell"), invalidVersionOpenshell);
       });
 
@@ -420,8 +457,8 @@ require_reportable_openshell_version`,
     expect(installLog).toBe("");
   });
 
-  it("preserves a reportable OpenShell through the installer flow (#7300)", () => {
-    const { result, openshellBody } = runInstallerOpenshellVersionFlow((bin) => {
+  it("preserves a reportable OpenShell through the installer flow (#7300)", async () => {
+    const { result, openshellBody } = await runInstallerOpenshellVersionFlow((bin) => {
       writeExecutable(path.join(bin, "openshell"), healthyOpenshell);
     });
 
@@ -429,15 +466,15 @@ require_reportable_openshell_version`,
     expect(openshellBody).toBe(healthyOpenshell);
   });
 
-  it("installs OpenShell when no binary is present (#7300)", () => {
-    const { result, installLog } = runInstallerOpenshellVersionFlow(() => undefined);
+  it("installs OpenShell when no binary is present (#7300)", async () => {
+    const { result, installLog } = await runInstallerOpenshellVersionFlow(() => undefined);
 
     expect(result.status, result.stdout + result.stderr).toBe(0);
     expect(installLog).toBe("install\n");
   });
 
-  it("rejects an installed OpenShell whose version command fails before onboarding (#7300)", () => {
-    const { result, installLog, openshellBody } = runInstallerOpenshellVersionFlow(
+  it("rejects an installed OpenShell whose version command fails before onboarding (#7300)", async () => {
+    const { result, installLog, openshellBody } = await runInstallerOpenshellVersionFlow(
       () => undefined,
       versionPrintingBrokenOpenshell,
     );
@@ -450,8 +487,8 @@ require_reportable_openshell_version`,
 
   it.skipIf(process.platform !== "linux")(
     "fails closed before onboarding when a present openshell cannot report its version (#7300)",
-    () => {
-      const result = runOpenshellVersionGate(brokenOpenshell);
+    async () => {
+      const result = await runOpenshellVersionGate(brokenOpenshell);
 
       expect(result.status, result.stdout + result.stderr).not.toBe(0);
       expect(result.stderr + result.stdout).toContain("could not report its version");
@@ -460,8 +497,8 @@ require_reportable_openshell_version`,
 
   it.skipIf(process.platform !== "linux")(
     "cannot be bypassed by NEMOCLAW_DEFER_OPENSHELL_INSTALL (#7300)",
-    () => {
-      const result = runOpenshellVersionGate(
+    async () => {
+      const result = await runOpenshellVersionGate(
         brokenOpenshell,
         "export NEMOCLAW_DEFER_OPENSHELL_INSTALL=1",
       );
@@ -473,18 +510,18 @@ require_reportable_openshell_version`,
 
   it.skipIf(process.platform !== "linux")(
     "passes when the present openshell reports a version (#7300)",
-    () => {
-      const result = runOpenshellVersionGate(healthyOpenshell);
+    async () => {
+      const result = await runOpenshellVersionGate(healthyOpenshell);
 
       expect(result.status, result.stdout + result.stderr).toBe(0);
       expect(result.stderr + result.stdout).not.toContain("could not report its version");
     },
   );
 
-  it("does not stage the gateway service after a forced OpenShell install fails (#8800)", () => {
+  it("does not stage the gateway service after a forced OpenShell install fails (#8800)", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-install-failure-"));
     const sideEffectLog = path.join(tmp, "side-effects.log");
-    const result = spawnSync(
+    const result = await runCommand(
       "bash",
       [
         "-c",
@@ -527,17 +564,14 @@ maybe_install_openshell_during_install force`,
       initialState: "exported",
       setup: "export NEMOCLAW_DEFER_OPENSHELL_INSTALL=exported",
     },
-  ])("restores an $initialState deferral variable after CLI backup preparation (#8800)", ({
-    expectedExported,
-    expectedSet,
-    expectedValue,
-    setup,
-  }) => {
-    const result = spawnSync(
-      "bash",
-      [
-        "-c",
-        `source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1
+  ])(
+    "restores an $initialState deferral variable after CLI backup preparation (#8800)",
+    async ({ expectedExported, expectedSet, expectedValue, setup }) => {
+      const result = await runCommand(
+        "bash",
+        [
+          "-c",
+          `source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1
 info() { :; }
 install_nemoclaw() { [ "\${NEMOCLAW_DEFER_OPENSHELL_INSTALL:-}" = "1" ]; }
 verify_nemoclaw() { :; }
@@ -550,18 +584,19 @@ case "$(declare -p NEMOCLAW_DEFER_OPENSHELL_INSTALL 2>/dev/null || true)" in
   "declare -x "*) printf 'DEFER_EXPORTED=1\\n' ;;
   *) printf 'DEFER_EXPORTED=0\\n' ;;
 esac`,
-      ],
-      { encoding: "utf-8", env: process.env },
-    );
+        ],
+        { encoding: "utf-8", env: process.env },
+      );
 
-    expect(result.status, result.stdout + result.stderr).toBe(0);
-    expect(result.stdout).toContain(`DEFER_SET=${expectedSet}\n`);
-    expect(result.stdout).toContain(`DEFER_VALUE=${expectedValue}\n`);
-    expect(result.stdout).toContain(`DEFER_EXPORTED=${expectedExported}\n`);
-  });
+      expect(result.status, result.stdout + result.stderr).toBe(0);
+      expect(result.stdout).toContain(`DEFER_SET=${expectedSet}\n`);
+      expect(result.stdout).toContain(`DEFER_VALUE=${expectedValue}\n`);
+      expect(result.stdout).toContain(`DEFER_EXPORTED=${expectedExported}\n`);
+    },
+  );
 
-  it("aborts non-interactive legacy gateway upgrades without explicit opt-in", () => {
-    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard({
+  it("aborts non-interactive legacy gateway upgrades without explicit opt-in", async () => {
+    const { result, cliLog, openshellLog } = await runPreinstallUpgradeGuard({
       NON_INTERACTIVE: "1",
     });
 
@@ -574,12 +609,14 @@ esac`,
     expect(output).not.toContain(
       "NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE=1",
     );
+    expect(output).toContain("openshell gateway destroy -g nemoclaw || openshell gateway destroy");
+    expect(output).not.toContain("openshell gateway remove nemoclaw");
     expect(cliLog).toBe("");
     expect(openshellLog).toBe("");
   });
 
-  it("scopes non-default manual upgrade commands to the selected gateway", () => {
-    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
+  it("scopes non-default manual upgrade commands to the selected gateway", async () => {
+    const { result, cliLog, openshellLog } = await runPreinstallUpgradeGuard(
       {
         NON_INTERACTIVE: "1",
         NEMOCLAW_GATEWAY_PORT: "9123",
@@ -595,34 +632,20 @@ esac`,
     expect(output).toContain(
       "NEMOCLAW_GATEWAY_PORT=9123 NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS=1 nemoclaw backup-all",
     );
-    expect(output).toContain(
-      "openshell gateway remove nemoclaw-9123 || openshell gateway destroy -g nemoclaw-9123",
-    );
+    expect(output).toContain("openshell gateway destroy -g nemoclaw-9123");
     expect(output).toContain(
       "curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_GATEWAY_PORT=9123 NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 bash",
     );
     expect(output).toContain("NEMOCLAW_GATEWAY_PORT=9123 nemoclaw upgrade-sandboxes --check");
-    expect(output).not.toContain("openshell gateway remove nemoclaw ||");
+    expect(output).not.toContain("openshell gateway remove");
     expect(output).not.toContain("|| openshell gateway destroy\n");
     expect(output).not.toContain("pkill -f openshell-gateway");
     expect(cliLog).toBe("");
     expect(openshellLog).toBe("");
   });
 
-  it("documents the selected gateway port for a manually prepared upgrade", () => {
-    const preparedUpgradeCommand =
-      "curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_GATEWAY_PORT=<selected-port> NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 bash";
-    const retryInstruction =
-      "If the installation fails, rerun the same install-pipeline command to preserve `NEMOCLAW_GATEWAY_PORT` and `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED`.";
-
-    expect(fs.readFileSync(UPDATE_SANDBOXES_DOCS, "utf-8")).toContain(preparedUpgradeCommand);
-    expect(fs.readFileSync(COMMANDS_DOCS, "utf-8")).toContain(preparedUpgradeCommand);
-    expect(fs.readFileSync(UPDATE_SANDBOXES_DOCS, "utf-8")).toContain(retryInstruction);
-    expect(fs.readFileSync(COMMANDS_DOCS, "utf-8")).toContain(retryInstruction);
-  });
-
-  it("requires separate managed-image confirmation before preparing a backup (#6114)", () => {
-    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard({
+  it("requires separate managed-image confirmation before preparing a backup (#6114)", async () => {
+    const { result, cliLog, openshellLog } = await runPreinstallUpgradeGuard({
       NON_INTERACTIVE: "1",
       NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE: "1",
     });
@@ -636,8 +659,8 @@ esac`,
     expect(openshellLog).toBe("");
   });
 
-  it("uses only the current CLI for strict backup before legacy gateway retirement (#6114)", () => {
-    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard({
+  it("uses only the current CLI for strict backup before legacy gateway retirement (#6114)", async () => {
+    const { result, cliLog, openshellLog } = await runPreinstallUpgradeGuard({
       NON_INTERACTIVE: "1",
       NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE: "1",
       NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE: '["alpha"]',
@@ -648,14 +671,14 @@ esac`,
     expect(result.stdout).toContain('CONFIRMED_NAMES=["alpha"]');
     expect(result.stdout).toContain('"alpha"');
     expect(cliLog.split(/\r?\n/)).toContain("prepare-current");
-    expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
+    expect(cliLog).toContain("current:backup-all");
     expect(cliLog).toContain("require-all-env=1");
     expect(cliLog).not.toContain("old:");
     expect(openshellLog).toContain("gateway remove nemoclaw");
   });
 
-  it("aborts before gateway retirement when the current CLI cannot be prepared", () => {
-    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
+  it("aborts before gateway retirement when the current CLI cannot be prepared", async () => {
+    const { result, cliLog, openshellLog } = await runPreinstallUpgradeGuard(
       {
         NON_INTERACTIVE: "1",
         NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE: "1",
@@ -671,8 +694,8 @@ esac`,
     expect(openshellLog).toBe("");
   });
 
-  it("aborts before gateway retirement when the current backup fails", () => {
-    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
+  it("aborts before gateway retirement when the current backup fails", async () => {
+    const { result, cliLog, openshellLog } = await runPreinstallUpgradeGuard(
       {
         NON_INTERACTIVE: "1",
         NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE: "1",
@@ -683,14 +706,14 @@ esac`,
 
     expect(result.status).not.toBe(0);
     expect(result.stdout + result.stderr).toContain("Pre-upgrade backup failed");
-    expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
+    expect(cliLog).toContain("current:backup-all");
     expect(cliLog).toContain("require-all-env=1");
     expect(cliLog).not.toContain("old:");
     expect(openshellLog).toBe("");
   });
 
-  it("uses generic backup remediation outside the legacy gateway path (#6114)", () => {
-    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
+  it("keeps the gateway when backup or forward retirement fails for an unsupported version", async () => {
+    const { result, cliLog, openshellLog } = await runPreinstallUpgradeGuard(
       {
         NON_INTERACTIVE: "1",
         NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE: '["alpha"]',
@@ -700,16 +723,15 @@ esac`,
 
     const output = result.stdout + result.stderr;
     expect(result.status).not.toBe(0);
-    expect(output).toContain(
-      "Resolve every reported sandbox backup failure or skipped sandbox using the CLI output above",
-    );
+    expect(output).toContain("exact legacy dashboard forward retirement could not be proved");
+    expect(output).toContain("gateway was not retired");
     expect(output).not.toContain("NEMOCLAW_OPENSHELL_UPGRADE_PREPARED");
-    expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
+    expect(cliLog).toContain("current:backup-all");
     expect(openshellLog).toBe("");
   });
 
-  it("handles the v0.0.55 OpenShell 0.0.44 shape without an old CLI (#6114)", () => {
-    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
+  it("handles the v0.0.55 OpenShell 0.0.44 shape without an old CLI (#6114)", async () => {
+    const { result, cliLog, openshellLog } = await runPreinstallUpgradeGuard(
       {
         NON_INTERACTIVE: "1",
         NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE: '["alpha"]',
@@ -721,14 +743,14 @@ esac`,
     expect(result.stdout).toContain("RESTORE=1");
     expect(result.stdout).toContain('CONFIRMED_NAMES=["alpha"]');
     expect(cliLog.split(/\r?\n/)).toContain("prepare-current");
-    expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
+    expect(cliLog).toContain("current:backup-all");
     expect(cliLog).toContain("require-all-env=1");
     expect(cliLog).not.toContain("old:");
     expect(openshellLog).toContain("gateway remove nemoclaw");
   });
 
-  it("discovers a v0.0.55 user-local OpenShell before preparing recovery (#6114)", () => {
-    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
+  it("discovers a v0.0.55 user-local OpenShell before preparing recovery (#6114)", async () => {
+    const { result, cliLog, openshellLog } = await runPreinstallUpgradeGuard(
       {
         NON_INTERACTIVE: "1",
         NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE: '["alpha"]',
@@ -745,15 +767,15 @@ esac`,
     expect(result.stdout).toContain("RESTORE=1");
     expect(result.stdout).toContain('CONFIRMED_NAMES=["alpha"]');
     expect(cliLog.split(/\r?\n/)).toContain("prepare-current");
-    expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
+    expect(cliLog).toContain("current:backup-all");
     expect(cliLog).toContain("require-all-env=1");
     expect(openshellLog).toContain("gateway remove nemoclaw");
   });
 
-  it("backs up before rejecting a broken user-local OpenShell without retiring the gateway (#7300)", () => {
+  it("backs up before rejecting a broken user-local OpenShell without retiring the gateway (#7300)", async () => {
     const registryJson =
       '{"sandboxes":{"alpha":{"name":"alpha","nemoclawVersion":"0.0.85","fromDockerfile":false}}}';
-    const { result, cliLog, openshellLog, registry } = runPreinstallUpgradeGuard(
+    const { result, cliLog, openshellLog, registry } = await runPreinstallUpgradeGuard(
       { NON_INTERACTIVE: "1" },
       {
         hasOldCli: false,
@@ -766,14 +788,14 @@ esac`,
 
     expect(result.status).not.toBe(0);
     expect(result.stdout + result.stderr).toContain("stopped after backup");
-    expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
+    expect(cliLog).toContain("current:backup-all");
     expect(openshellLog.split(/\r?\n/)).toContain("--version");
     expect(openshellLog).not.toContain("gateway");
     expect(registry).toBe(registryJson);
   });
 
-  it("leaves recovery preparation untouched when OpenShell is not installed (#6114)", () => {
-    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
+  it("leaves recovery preparation untouched when OpenShell is not installed (#6114)", async () => {
+    const { result, cliLog, openshellLog } = await runPreinstallUpgradeGuard(
       { NON_INTERACTIVE: "1" },
       { hasOldCli: false, openshellOnPath: false, openshellVersion: "0.0.44" },
     );
@@ -785,8 +807,8 @@ esac`,
     expect(openshellLog).toBe("");
   });
 
-  it("confirms a normalized legacy row whose custom-image marker is null (#6114)", () => {
-    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
+  it("confirms a normalized legacy row whose custom-image marker is null (#6114)", async () => {
+    const { result, cliLog, openshellLog } = await runPreinstallUpgradeGuard(
       {
         NON_INTERACTIVE: "1",
         NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE: '["alpha"]',
@@ -801,12 +823,12 @@ esac`,
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('CONFIRMED_NAMES=["alpha"]');
-    expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
+    expect(cliLog).toContain("current:backup-all");
     expect(openshellLog).toContain("gateway remove nemoclaw");
   });
 
-  it("keeps a backed-up gateway whose OpenShell version is already supported", () => {
-    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
+  it("keeps a backed-up gateway whose OpenShell version is already supported", async () => {
+    const { result, cliLog, openshellLog } = await runPreinstallUpgradeGuard(
       { NON_INTERACTIVE: "1" },
       {
         finishInstallMode: "source",
@@ -818,12 +840,12 @@ esac`,
     );
 
     expect(result.status).toBe(0);
-    expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
+    expect(cliLog).toContain("current:backup-all");
     expect(openshellLog).toBe("openshell install-mode if-missing defer=\n");
   });
 
-  it("forces OpenShell installation for a managed CLI install mode (#8800)", () => {
-    const { result, openshellLog } = runPreinstallUpgradeGuard(
+  it("forces OpenShell installation for a managed CLI install mode (#8800)", async () => {
+    const { result, openshellLog } = await runPreinstallUpgradeGuard(
       { NON_INTERACTIVE: "1" },
       {
         finishInstallMode: "managed",
@@ -835,8 +857,8 @@ esac`,
     expect(openshellLog).toBe("openshell install-mode force defer=\n");
   });
 
-  it("rejects a prepared CLI that has no install mode (#8800)", () => {
-    const { result, openshellLog } = runPreinstallUpgradeGuard(
+  it("rejects a prepared CLI that has no install mode (#8800)", async () => {
+    const { result, openshellLog } = await runPreinstallUpgradeGuard(
       { NON_INTERACTIVE: "1" },
       {
         finishInstallMode: "unset",
@@ -849,8 +871,8 @@ esac`,
     expect(openshellLog).toBe("");
   });
 
-  it("retires a backed-up gateway whose OpenShell version is above the supported range", () => {
-    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
+  it("retires a backed-up gateway whose OpenShell version is above the supported range", async () => {
+    const { result, cliLog, openshellLog } = await runPreinstallUpgradeGuard(
       { NON_INTERACTIVE: "1" },
       {
         hasOldCli: false,
@@ -861,12 +883,35 @@ esac`,
     );
 
     expect(result.status).toBe(0);
-    expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
+    expect(cliLog.split(/\r?\n/)).toContain("current:backup-all --retire-legacy-forwards");
     expect(openshellLog).toContain("gateway remove nemoclaw");
   });
 
-  it("retires an OpenShell 0.0.85 user-service gateway without a PID file before installing 0.0.101 (#8800)", () => {
-    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
+  it("preserves the gateway and backup when legacy forward retirement is unproved (#11898)", async () => {
+    const { result, cliLog, openshellLog } = await runPreinstallUpgradeGuard(
+      { NON_INTERACTIVE: "1" },
+      {
+        currentForwardRetirementSucceeds: false,
+        hasOldCli: false,
+        openshellVersion: "0.0.86",
+        registryJson:
+          '{"sandboxes":{"alpha":{"name":"alpha","dashboardPort":18789,"nemoclawVersion":"0.0.85","fromDockerfile":false}}}',
+      },
+    );
+
+    expect(result.status).not.toBe(0);
+    expect(result.stdout + result.stderr).toContain(
+      "exact legacy dashboard forward retirement could not be proved",
+    );
+    expect(result.stdout + result.stderr).toContain("sandbox backups were preserved");
+    expect(cliLog.split(/\r?\n/)).toEqual(
+      expect.arrayContaining(["current:backup-all --retire-legacy-forwards"]),
+    );
+    expect(openshellLog).toBe("");
+  });
+
+  it("retires an OpenShell 0.0.85 user-service gateway without a PID file before installing 0.0.101 (#8800)", async () => {
+    const { result, cliLog, openshellLog } = await runPreinstallUpgradeGuard(
       { NEMOCLAW_DEFER_OPENSHELL_INSTALL: "1", NON_INTERACTIVE: "1" },
       {
         currentMaxOpenshellVersion: "0.0.101",
@@ -883,7 +928,7 @@ esac`,
     );
 
     expect(result.status).toBe(0);
-    expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
+    expect(cliLog).toContain("current:backup-all");
     expect(openshellLog.split(/\r?\n/)).toEqual(
       expect.arrayContaining([
         "gateway destroy -g nemoclaw",
@@ -901,8 +946,8 @@ esac`,
     expect(openshellLog).not.toContain("gateway process-stop");
   });
 
-  it("restores a plain OpenShell installation deferral as a plain variable (#8800)", () => {
-    const { result, openshellLog } = runPreinstallUpgradeGuard(
+  it("restores a plain OpenShell installation deferral as a plain variable (#8800)", async () => {
+    const { result, openshellLog } = await runPreinstallUpgradeGuard(
       {
         NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE: '["alpha"]',
         NEMOCLAW_DEFER_OPENSHELL_INSTALL: "1",
@@ -936,36 +981,39 @@ esac`,
       forbiddenRetry: "NEMOCLAW_GATEWAY_PORT=8080",
       name: "a selected non-default gateway port",
     },
-  ])("preserves prepared backups and $name when OpenShell installation fails (#8800)", (testCase) => {
-    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
-      { NON_INTERACTIVE: "1" },
-      {
-        currentMaxOpenshellVersion: "0.0.101",
-        currentMinOpenshellVersion: "0.0.101",
-        finishPreparedInstallSucceeds: false,
-        finishGatewayPort: testCase.finishGatewayPort,
-        finishInstallMode: "source",
-        gatewayDestroySucceeds: false,
-        gatewayProcessStopSucceeds: false,
-        gatewayServiceStopSucceeds: true,
-        hasOldCli: false,
-        openshellVersion: "0.0.85",
-        registryJson:
-          '{"sandboxes":{"alpha":{"name":"alpha","nemoclawVersion":"0.0.105","fromDockerfile":false}}}',
-      },
-    );
+  ])(
+    "preserves prepared backups and $name when OpenShell installation fails (#8800)",
+    async (testCase) => {
+      const { result, cliLog, openshellLog } = await runPreinstallUpgradeGuard(
+        { NON_INTERACTIVE: "1" },
+        {
+          currentMaxOpenshellVersion: "0.0.101",
+          currentMinOpenshellVersion: "0.0.101",
+          finishPreparedInstallSucceeds: false,
+          finishGatewayPort: testCase.finishGatewayPort,
+          finishInstallMode: "source",
+          gatewayDestroySucceeds: false,
+          gatewayProcessStopSucceeds: false,
+          gatewayServiceStopSucceeds: true,
+          hasOldCli: false,
+          openshellVersion: "0.0.85",
+          registryJson:
+            '{"sandboxes":{"alpha":{"name":"alpha","nemoclawVersion":"0.0.105","fromDockerfile":false}}}',
+        },
+      );
 
-    expect(result.status).not.toBe(0);
-    expect(result.stdout + result.stderr).toContain("preserved the sandbox backups");
-    expect(result.stdout + result.stderr).toContain("did not start recovery");
-    expect(result.stdout + result.stderr).toContain(testCase.expectedRetry);
-    expect(result.stdout + result.stderr).not.toContain(testCase.forbiddenRetry);
-    expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
-    expect(openshellLog).toContain("openshell install-mode force defer=");
-  });
+      expect(result.status).not.toBe(0);
+      expect(result.stdout + result.stderr).toContain("preserved the sandbox backups");
+      expect(result.stdout + result.stderr).toContain("did not start recovery");
+      expect(result.stdout + result.stderr).toContain(testCase.expectedRetry);
+      expect(result.stdout + result.stderr).not.toContain(testCase.forbiddenRetry);
+      expect(cliLog).toContain("current:backup-all");
+      expect(openshellLog).toContain("openshell install-mode force defer=");
+    },
+  );
 
-  it("fails closed before gateway retirement when the supported range is invalid", () => {
-    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
+  it("fails closed before gateway retirement when the supported range is invalid", async () => {
+    const { result, cliLog, openshellLog } = await runPreinstallUpgradeGuard(
       {
         NON_INTERACTIVE: "1",
         NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE: '["alpha"]',
@@ -981,14 +1029,14 @@ esac`,
     expect(result.stdout + result.stderr).toContain(
       "Could not resolve the current OpenShell version range",
     );
-    expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
+    expect(cliLog).toContain("current:backup-all");
     expect(openshellLog).toBe("");
   });
 
-  it("fails closed after backup when the installed OpenShell version is unknown", () => {
+  it("fails closed after backup when the installed OpenShell version is unknown", async () => {
     const registryJson =
       '{"sandboxes":{"alpha":{"name":"alpha","nemoclawVersion":"0.0.85","fromDockerfile":false}}}';
-    const { result, cliLog, openshellLog, registry } = runPreinstallUpgradeGuard(
+    const { result, cliLog, openshellLog, registry } = await runPreinstallUpgradeGuard(
       { NON_INTERACTIVE: "1" },
       {
         hasOldCli: false,
@@ -1001,13 +1049,13 @@ esac`,
     expect(result.stdout + result.stderr).toContain(
       "Could not determine the installed OpenShell version",
     );
-    expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
+    expect(cliLog).toContain("current:backup-all");
     expect(openshellLog).toBe("");
     expect(registry).toBe(registryJson);
   });
 
-  it("uses a supported legacy destroy verb without stopping a recorded host process", () => {
-    const { result, openshellLog } = runPreinstallUpgradeGuard(
+  it("uses a supported legacy destroy verb without stopping a recorded host process", async () => {
+    const { result, openshellLog } = await runPreinstallUpgradeGuard(
       { NON_INTERACTIVE: "1" },
       {
         gatewayDestroySucceeds: true,
@@ -1025,8 +1073,8 @@ esac`,
     expect(openshellLog).not.toContain("gateway remove nemoclaw");
   });
 
-  it("preserves the backup when neither a trusted service nor a PID can retire the gateway (#8800)", () => {
-    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
+  it("preserves the backup when neither a trusted service nor a PID can retire the gateway (#8800)", async () => {
+    const { result, cliLog, openshellLog } = await runPreinstallUpgradeGuard(
       { NON_INTERACTIVE: "1" },
       {
         gatewayDestroySucceeds: false,
@@ -1043,7 +1091,7 @@ esac`,
     expect(result.stdout + result.stderr).toContain(
       "Could not retire the legacy OpenShell gateway after backup",
     );
-    expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
+    expect(cliLog).toContain("current:backup-all");
     expect(openshellLog.split(/\r?\n/)).toEqual(
       expect.arrayContaining([
         "gateway destroy -g nemoclaw",
@@ -1055,8 +1103,8 @@ esac`,
     expect(openshellLog).not.toContain("gateway remove nemoclaw");
   });
 
-  it("rejects a managed-image confirmation that is not a JSON name array (#6114)", () => {
-    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
+  it("rejects a managed-image confirmation that is not a JSON name array (#6114)", async () => {
+    const { result, cliLog, openshellLog } = await runPreinstallUpgradeGuard(
       {
         NON_INTERACTIVE: "1",
         NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE: "true",
@@ -1072,8 +1120,8 @@ esac`,
     expect(openshellLog).toBe("");
   });
 
-  it("rejects a managed-image confirmation that does not match the listed names (#6114)", () => {
-    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
+  it("rejects a managed-image confirmation that does not match the listed names (#6114)", async () => {
+    const { result, cliLog, openshellLog } = await runPreinstallUpgradeGuard(
       {
         NON_INTERACTIVE: "1",
         NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE: '["beta"]',
@@ -1097,8 +1145,8 @@ esac`,
       "a sandbox row whose name differs from its registry key",
       '{"sandboxes":{"alpha":{"name":"beta"}}}',
     ],
-  ])("fails closed when the registry contains %s (#6114)", (_case, registryJson) => {
-    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
+  ])("fails closed when the registry contains %s (#6114)", async (_case, registryJson) => {
+    const { result, cliLog, openshellLog } = await runPreinstallUpgradeGuard(
       {
         NON_INTERACTIVE: "1",
         NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE: "1",
@@ -1115,8 +1163,8 @@ esac`,
     expect(openshellLog).toBe("");
   });
 
-  it("accepts a validated empty sandbox registry without requiring Python (#6114)", () => {
-    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
+  it("accepts a validated empty sandbox registry without requiring Python (#6114)", async () => {
+    const { result, cliLog, openshellLog } = await runPreinstallUpgradeGuard(
       { NON_INTERACTIVE: "1" },
       { registryJson: '{"sandboxes":{}}' },
     );
@@ -1127,7 +1175,7 @@ esac`,
     expect(openshellLog).toBe("");
   });
 
-  it("stops before upgrade mutations when a legacy sandbox name exceeds the OpenShell 0.0.99 limit (#8497)", () => {
+  it("stops before upgrade mutations when a legacy sandbox name exceeds the OpenShell 0.0.99 limit (#8497)", async () => {
     const incompatibleName = "abcdefghijklmnopqrst";
     const registryJson = JSON.stringify({
       sandboxes: {
@@ -1138,7 +1186,7 @@ esac`,
         },
       },
     });
-    const { result, cliLog, openshellLog, registry } = runPreinstallUpgradeGuard(
+    const { result, cliLog, openshellLog, registry } = await runPreinstallUpgradeGuard(
       { NON_INTERACTIVE: "1" },
       {
         currentMaxOpenshellVersion: "0.0.99",
@@ -1160,9 +1208,9 @@ esac`,
     expect(registry).toBe(registryJson);
   });
 
-  it("continues the OpenShell 0.0.99 upgrade when an existing sandbox name is exactly 19 characters (#8497)", () => {
+  it("continues the OpenShell 0.0.99 upgrade when an existing sandbox name is exactly 19 characters (#8497)", async () => {
     const compatibleName = "abcdefghij123456789";
-    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
+    const { result, cliLog, openshellLog } = await runPreinstallUpgradeGuard(
       { NON_INTERACTIVE: "1" },
       {
         currentMaxOpenshellVersion: "0.0.99",
@@ -1182,13 +1230,13 @@ esac`,
     );
 
     expect(result.status).toBe(0);
-    expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
+    expect(cliLog).toContain("current:backup-all");
     expect(openshellLog).toContain("gateway remove nemoclaw");
   });
 
-  it("escapes an incompatible legacy sandbox name before printing the OpenShell upgrade diagnostic (#8497)", () => {
+  it("escapes an incompatible legacy sandbox name before printing the OpenShell upgrade diagnostic (#8497)", async () => {
     const incompatibleName = "bad\u202e::error::forged";
-    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
+    const { result, cliLog, openshellLog } = await runPreinstallUpgradeGuard(
       { NON_INTERACTIVE: "1" },
       {
         currentMaxOpenshellVersion: "0.0.99",
@@ -1215,7 +1263,7 @@ esac`,
     expect(openshellLog).toBe("");
   });
 
-  it("stops before upgrade mutations when a legacy sandbox name contains OpenShell's reserved double hyphen (#8497)", () => {
+  it("stops before upgrade mutations when a legacy sandbox name contains OpenShell's reserved double hyphen (#8497)", async () => {
     const incompatibleName = "legacy--box";
     const registryJson = JSON.stringify({
       sandboxes: {
@@ -1226,7 +1274,7 @@ esac`,
         },
       },
     });
-    const { result, cliLog, openshellLog, registry } = runPreinstallUpgradeGuard(
+    const { result, cliLog, openshellLog, registry } = await runPreinstallUpgradeGuard(
       { NON_INTERACTIVE: "1" },
       {
         currentMaxOpenshellVersion: "0.0.99",
@@ -1246,9 +1294,9 @@ esac`,
     expect(registry).toBe(registryJson);
   });
 
-  it("ignores an incompatible route-only reservation during the OpenShell name preflight (#8497)", () => {
+  it("ignores an incompatible route-only reservation during the OpenShell name preflight (#8497)", async () => {
     const routeOnlyName = "route-only-reservation-name";
-    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
+    const { result, cliLog, openshellLog } = await runPreinstallUpgradeGuard(
       { NON_INTERACTIVE: "1" },
       {
         currentMaxOpenshellVersion: "0.0.99",
@@ -1271,8 +1319,8 @@ esac`,
     expect(openshellLog).toBe("");
   });
 
-  it("ignores an incompatible legacy name owned by a different gateway during the OpenShell preflight (#8497)", () => {
-    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
+  it("ignores an incompatible legacy name owned by a different gateway during the OpenShell preflight (#8497)", async () => {
+    const { result, cliLog, openshellLog } = await runPreinstallUpgradeGuard(
       {
         NEMOCLAW_GATEWAY_PORT: "9123",
         NON_INTERACTIVE: "1",
@@ -1305,12 +1353,12 @@ esac`,
 
     expect(result.status).toBe(0);
     expect(result.stdout + result.stderr).not.toContain("incompatible-sibling-name");
-    expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
+    expect(cliLog).toContain("current:backup-all");
     expect(openshellLog).toContain("gateway remove nemoclaw-9123");
   });
 
-  it("ignores a route-only reservation during pre-upgrade backup (#6500)", () => {
-    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
+  it("ignores a route-only reservation during pre-upgrade backup (#6500)", async () => {
+    const { result, cliLog, openshellLog } = await runPreinstallUpgradeGuard(
       {
         NON_INTERACTIVE: "1",
         NEMOCLAW_SINGLE_SESSION: "1",
@@ -1329,8 +1377,8 @@ esac`,
     expect(openshellLog).toBe("");
   });
 
-  it("backs up only real sandboxes in a mixed reservation registry (#6500)", () => {
-    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
+  it("backs up only real sandboxes in a mixed reservation registry (#6500)", async () => {
+    const { result, cliLog, openshellLog } = await runPreinstallUpgradeGuard(
       {
         NON_INTERACTIVE: "1",
         NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE: '["alpha","beta"]',
@@ -1347,13 +1395,13 @@ esac`,
     expect(result.stdout).toContain("Backing up 2 sandbox(es)");
     expect(result.stdout).toContain('CONFIRMED_NAMES=["alpha","beta"]');
     expect(result.stdout + result.stderr).not.toContain('"tm"');
-    expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
+    expect(cliLog).toContain("current:backup-all");
     expect(cliLog).toContain("require-all-env=1");
     expect(openshellLog).toContain("gateway remove nemoclaw");
   });
 
-  it("forces OpenShell installation from a manually prepared gateway upgrade state (#8800)", () => {
-    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
+  it("forces OpenShell installation from a manually prepared gateway upgrade state (#8800)", async () => {
+    const { result, cliLog, openshellLog } = await runPreinstallUpgradeGuard(
       {
         NON_INTERACTIVE: "1",
         NEMOCLAW_OPENSHELL_UPGRADE_PREPARED: "1",
@@ -1376,8 +1424,8 @@ esac`,
     expect(openshellLog).toBe("openshell install-mode force defer=\n");
   });
 
-  it("reuses prepared backups when a failed install left no OpenShell executable (#8800)", () => {
-    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
+  it("reuses prepared backups when a failed install left no OpenShell executable (#8800)", async () => {
+    const { result, cliLog, openshellLog } = await runPreinstallUpgradeGuard(
       {
         NON_INTERACTIVE: "1",
         NEMOCLAW_OPENSHELL_UPGRADE_PREPARED: "1",
@@ -1397,5 +1445,55 @@ esac`,
     expect(result.stdout).toContain("RESTORE=1");
     expect(cliLog).toBe("");
     expect(openshellLog).toBe("openshell install-mode force defer=\n");
+  });
+
+  it("starts the replacement gateway service before recovering a retired legacy gateway (#11905)", async () => {
+    const { result, openshellLog } = await runPreinstallUpgradeGuard(
+      {
+        NON_INTERACTIVE: "1",
+        NEMOCLAW_OPENSHELL_UPGRADE_PREPARED: "1",
+        NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE: '["alpha"]',
+      },
+      {
+        finishInstallMode: "source",
+        finishLinuxSystemdUserManager: true,
+        hasOldCli: false,
+        openshellOnPath: false,
+      },
+    );
+
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(openshellLog.split(/\r?\n/u).filter(Boolean)).toEqual([
+      "openshell install-mode force defer=",
+      "gateway service-restart systemd:nemoclaw-openshell-gateway.service",
+    ]);
+    expect(result.stdout).toContain(
+      "Starting the current OpenShell gateway before sandbox recovery",
+    );
+  });
+
+  it("preserves prepared recovery state when the replacement gateway service cannot start (#11905)", async () => {
+    const { result, openshellLog } = await runPreinstallUpgradeGuard(
+      {
+        NON_INTERACTIVE: "1",
+        NEMOCLAW_OPENSHELL_UPGRADE_PREPARED: "1",
+        NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE: '["alpha"]',
+      },
+      {
+        finishGatewayServiceRestartSucceeds: false,
+        finishInstallMode: "source",
+        finishLinuxSystemdUserManager: true,
+        hasOldCli: false,
+        openshellOnPath: false,
+      },
+    );
+
+    expect(result.status).not.toBe(0);
+    expect(openshellLog).toContain(
+      "gateway service-restart systemd:nemoclaw-openshell-gateway.service",
+    );
+    expect(result.stderr).toContain(
+      "Sandbox backups were preserved; fix the user service and rerun with NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1",
+    );
   });
 });

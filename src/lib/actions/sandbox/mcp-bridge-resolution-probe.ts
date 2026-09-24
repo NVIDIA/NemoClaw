@@ -8,7 +8,7 @@
  * rewrites the `openshell:resolve:env:` placeholder on egress, so every agent
  * request fails with the literal placeholder as the bearer token (see
  * NVIDIA/OpenShell#2161). Identity-bound provider credentials require the
- * revision-scoped placeholder observed through a fresh OpenShell exec.
+ * generation-scoped placeholder observed through a fresh OpenShell exec.
  *
  * The probe is differential: it sends the same idempotent MCP `initialize`
  * request twice from inside the sandbox — once with the placeholder
@@ -27,7 +27,7 @@
  * Response bodies are never captured or printed: they are untrusted
  * authenticated endpoint output, and redaction cannot be guaranteed once the
  * credential's host environment variable is absent. Classification uses HTTP
- * status codes and curl exit codes only.
+ * status codes and probe exit codes only.
  *
  * Probing is gated on the stored URL still satisfying the current
  * authenticated-endpoint boundary, so a persisted legacy, private-alias, or
@@ -50,10 +50,11 @@
  */
 
 import type { AgentMcpAdapter } from "../../agent/defs";
-import type { McpBridgeEntry } from "../../state/registry";
+import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import { authorizationValue } from "./mcp-bridge-adapter-status";
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import { observeMcpCredentialRevision } from "./mcp-bridge-provider";
+import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
 import type {
   McpAttachedCredentialRevision,
   McpCredentialRevisionObservation,
@@ -63,10 +64,10 @@ import {
   credentialResolutionReadinessSkipDetail,
 } from "./mcp-bridge-resolution-readiness";
 import {
+  buildMcpAdapterHttpProbeCommand,
   MCP_RUNTIME_SANITIZED_ENV_VARS,
-  wrapMcpRuntimeCommand,
 } from "./mcp-bridge-runtime-command";
-import { normalizeMcpServerUrl } from "./mcp-bridge-validation";
+import { normalizeRecordedMcpServerUrl } from "./mcp-bridge/recorded-url";
 import { executeSandboxCommand, type SandboxCommandResult } from "./process-recovery";
 import {
   buildSandboxExecMarkedCommand,
@@ -87,17 +88,17 @@ export const MCP_PROBE_CONTROL_EXIT_MARKER = "NEMOCLAW_MCP_CONTROL_CURL_EXIT=";
  */
 export const MCP_PROBE_CONTROL_BEARER = "nemoclaw-mcp-probe-control-unresolvable";
 
-// executeSandboxCommand enforces a 15s spawnSync timeout; two sequential curls
-// must both fit comfortably below it so a slow endpoint classifies as a probe
-// timeout instead of an ambiguous SSH failure.
-const PROBE_CURL_MAX_TIME_SECONDS = 6;
+// executeSandboxCommand enforces a 15s spawnSync timeout; two sequential
+// adapter HTTP probes must both fit comfortably below it so a slow endpoint
+// classifies as a probe timeout instead of an ambiguous SSH failure.
+const PROBE_HTTP_MAX_TIME_SECONDS = 6;
 
 /**
  * Sourcing /tmp/nemoclaw-proxy-env.sh can export the OpenClaw gateway
  * credentials and break-glass toggles alongside the proxy variables the probe
  * actually needs. These are unset immediately after sourcing, before the
- * first child process, so neither the adapter runtime nor curl inherits them
- * (same sanitize set nemoclaw-start uses for un-managed openclaw children).
+ * first child process, so the adapter runtime does not inherit them (same
+ * sanitize set nemoclaw-start uses for un-managed openclaw children).
  */
 export const PROBE_SANITIZED_ENV_VARS = MCP_RUNTIME_SANITIZED_ENV_VARS;
 
@@ -150,39 +151,34 @@ const MCP_INITIALIZE_BODY = JSON.stringify({
 });
 
 /**
- * OpenShell binds the generated MCP policy to /proc/<pid>/exe and ancestors,
- * so the curl child must keep the adapter's runtime binary as an ancestor.
- * Same construction as the live E2E DNS-rebinding probe.
+ * OpenShell attributes CONNECT to `/proc/<pid>/exe` of the socket owner.
+ * Issue the initialize request from the selected adapter runtime so the
+ * credential-bound route stays limited to that runtime. Interactive curl
+ * remains denied by the generated policy.
  */
-function curlCommand(url: string, authorization: string, httpMarker: string): string[] {
-  return [
-    "curl",
-    "-sS",
-    "--max-time",
-    String(PROBE_CURL_MAX_TIME_SECONDS),
-    // The response body is untrusted authenticated endpoint output and is
-    // never captured; classification uses status and exit codes only.
-    "-o",
-    "/dev/null",
-    "-w",
-    `\\n${httpMarker}%{http_code}\\n`,
-    "-X",
-    "POST",
+function adapterHttpProbeCommand(
+  adapter: AgentMcpAdapter,
+  url: string,
+  authorization: string,
+  httpMarker: string,
+): string {
+  return buildMcpAdapterHttpProbeCommand(adapter, {
+    authorization,
+    body: MCP_INITIALIZE_BODY,
+    httpMarker,
+    timeoutSeconds: PROBE_HTTP_MAX_TIME_SECONDS,
     url,
-    "-H",
-    "content-type: application/json",
-    "-H",
-    // mcporter itself synthesizes this accept header on every HTTP definition.
-    "accept: application/json, text/event-stream",
-    "-H",
-    `authorization: ${authorization}`,
-    "--data-binary",
-    MCP_INITIALIZE_BODY,
-  ];
+  });
 }
 
+/**
+ * Build the in-sandbox wire probe that checks whether the gateway resolves the
+ * recorded credential placeholder for a persisted MCP entry. Returns null when
+ * the entry has no credential binding or its stored URL fails the current
+ * authenticated-endpoint boundary under the entry's recorded trust.
+ */
 export function buildCredentialResolutionProbeCommand(
-  entry: Pick<McpBridgeEntry, "server" | "url" | "env">,
+  entry: Pick<McpSourceEntry, "server" | "url" | "env" | "trustedPrivateHost">,
   adapter: AgentMcpAdapter,
   credentialRevision: McpAttachedCredentialRevision,
 ): CredentialResolutionProbeCommand | null {
@@ -192,23 +188,31 @@ export function buildCredentialResolutionProbeCommand(
   // authenticated-endpoint boundary: the gateway could rewrite the placeholder
   // header into a live credential bound for a legacy or private endpoint.
   try {
-    if (normalizeMcpServerUrl(entry.url) !== entry.url) return null;
+    if (normalizeRecordedMcpServerUrl(entry) !== entry.url) {
+      return null;
+    }
   } catch {
     return null;
   }
   const resultMarker = createSandboxExecMarker();
   const markers = probeOutputMarkers(resultMarker);
-  const placeholderCurl = curlCommand(entry.url, authorization, markers.placeholderHttp);
-  const controlCurl = curlCommand(
+  const placeholderProbe = adapterHttpProbeCommand(
+    adapter,
+    entry.url,
+    authorization,
+    markers.placeholderHttp,
+  );
+  const controlProbe = adapterHttpProbeCommand(
+    adapter,
     entry.url,
     `Bearer ${MCP_PROBE_CONTROL_BEARER}`,
     markers.controlHttp,
   );
   const probeBody = [
-    wrapMcpRuntimeCommand(adapter, placeholderCurl),
+    placeholderProbe,
     "rc=$?",
     `printf '\\n${markers.placeholderExit}%s\\n' "$rc"`,
-    wrapMcpRuntimeCommand(adapter, controlCurl),
+    controlProbe,
     "crc=$?",
     `printf '\\n${markers.controlExit}%s\\n' "$crc"`,
     // Always exit 0 so a nonzero SSH status unambiguously means transport
@@ -229,7 +233,7 @@ export function buildCredentialResolutionProbeCommand(
   };
 }
 
-function redactedProbeText(text: string, entry: Pick<McpBridgeEntry, "env">): string {
+function redactedProbeText(text: string, entry: Pick<McpSourceEntry, "env">): string {
   return redactBridgeSecretsForDisplay(text, entry).trim();
 }
 
@@ -248,20 +252,30 @@ function markerValue(stdout: string, marker: string): ProbeMarkerValue | undefin
   return { index: matches[0].index, value: Number(matches[0][1]) };
 }
 
-function transportDetail(curlExit: number, stderr: string): string | undefined {
-  if (curlExit === 56 && /CONNECT tunnel failed,\s*response 403/i.test(stderr)) {
+function transportDetail(probeExit: number, stderr: string): string | undefined {
+  if (
+    probeExit === 56 &&
+    /(?:CONNECT tunnel failed,\s*response 403|tunneling socket could not be established,\s*statusCode=403|Tunnel connection failed:\s*403)/i.test(
+      stderr,
+    )
+  ) {
     return "OpenShell denied the probe connection (CONNECT 403); check the generated MCP policy";
   }
-  if (curlExit === 56 && /CONNECT tunnel failed,\s*response 503/i.test(stderr)) {
+  if (
+    probeExit === 56 &&
+    /(?:CONNECT tunnel failed,\s*response 503|tunneling socket could not be established,\s*statusCode=503|Tunnel connection failed:\s*503)/i.test(
+      stderr,
+    )
+  ) {
     return "OpenShell denied the probe before TLS setup (CONNECT 503); check gateway ephemeral CA initialization and TLS termination readiness";
   }
-  if (curlExit === 28) return `probe timed out after ${PROBE_CURL_MAX_TIME_SECONDS}s`;
+  if (probeExit === 28) return `probe timed out after ${PROBE_HTTP_MAX_TIME_SECONDS}s`;
   return undefined;
 }
 
 export function classifyCredentialResolutionProbe(
   result: SandboxCommandResult | null,
-  entry: Pick<McpBridgeEntry, "env">,
+  entry: Pick<McpSourceEntry, "env">,
   resultMarker?: string,
 ): CredentialResolutionProbe {
   if (result === null) return { ok: null, detail: "sandbox unreachable" };
@@ -285,7 +299,7 @@ export function classifyCredentialResolutionProbe(
   }
   if (placeholderExit.value !== 0) {
     const detail = transportDetail(placeholderExit.value, result.stderr);
-    return { ok: null, detail: detail ?? `probe curl exited ${placeholderExit.value}` };
+    return { ok: null, detail: detail ?? `probe exited ${placeholderExit.value}` };
   }
   const httpStatus = markerValue(framedStdout, markers.placeholderHttp);
   if (httpStatus === undefined) return { ok: null, detail: "probe output missing HTTP status" };
@@ -374,8 +388,8 @@ export function credentialResolutionWarning(
     return undefined;
   if (probe.httpStatus < 400 || probe.httpStatus >= 500) return undefined;
   const placeholder = envName
-    ? `openshell:resolve:env:vN_${envName}`
-    : "openshell:resolve:env:vN_<KEY>";
+    ? `openshell:resolve:env:<generation>_${envName}`
+    : "openshell:resolve:env:<generation>_<KEY>";
   if (probe.httpStatus === 400) {
     return `Credential resolution could not be verified: a placeholder-bearing MCP initialize probe and a deliberately-unresolvable control probe were rejected identically (HTTP 400). This is inconclusive even with a valid stored credential — the endpoint may reject the probe's initialize request itself (request validation), the '${placeholder}' placeholder may have been forwarded verbatim, or the credential may be expired or revoked. Rotate the credential with mcp restart if in doubt, and compare mcp status for the same server on a known-good host; if that host verifies, suspect this host's OpenShell placeholder rewrite (see NVIDIA/OpenShell issue 2161).`;
   }
@@ -383,21 +397,26 @@ export function credentialResolutionWarning(
   return `Credential resolution could not be verified: a placeholder-bearing MCP initialize probe and a deliberately-unresolvable control probe were rejected identically (HTTP ${probe.httpStatus}). If the stored credential is confirmed valid, the OpenShell host is not rewriting the '${placeholder}' placeholder on egress and agent runtimes will hit the same auth failure and skip this MCP server (see NVIDIA/OpenShell issue 2161). Otherwise, rotate the credential with mcp restart and re-run mcp status.`;
 }
 
-export function probeCredentialResolution(
+/**
+ * Run the credential-resolution probe for one persisted MCP entry and classify
+ * the framed result. Readiness gates and the stored-URL boundary check run
+ * before any credential observation or sandbox traffic.
+ */
+export async function probeCredentialResolution(
   sandboxName: string,
-  entry: McpBridgeEntry,
+  entry: McpSourceEntry,
   adapter: AgentMcpAdapter | undefined,
   readiness: CredentialResolutionProbeReadiness,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
   observedCredentialRevision?: McpCredentialRevisionObservation,
-): CredentialResolutionProbe {
+): Promise<CredentialResolutionProbe> {
   if (!adapter) return { ok: null, detail: "MCP adapter is not declared" };
-  if (entry.addState) return { ok: null, detail: "add transaction incomplete" };
   const readinessSkipDetail = credentialResolutionReadinessSkipDetail(readiness);
   if (readinessSkipDetail) return { ok: null, detail: readinessSkipDetail };
   // Reject the entry before the fresh credential observation so an unsafe
   // persisted URL cannot trigger either sandbox or endpoint traffic.
   try {
-    if (!entry.env[0] || normalizeMcpServerUrl(entry.url) !== entry.url) {
+    if (!entry.env[0] || normalizeRecordedMcpServerUrl(entry) !== entry.url) {
       return { ok: null, detail: "no credential binding or safe endpoint to probe" };
     }
   } catch {
@@ -406,7 +425,7 @@ export function probeCredentialResolution(
   let credentialRevision = observedCredentialRevision;
   if (credentialRevision === undefined) {
     try {
-      credentialRevision = observeMcpCredentialRevision(sandboxName, entry);
+      credentialRevision = await observeMcpCredentialRevision(sandboxName, entry, runtimeSelection);
     } catch {
       return {
         ok: null,
@@ -424,11 +443,13 @@ export function probeCredentialResolution(
     return {
       ok: null,
       detail:
-        "probe skipped: a fresh OpenShell exec exposed an identityless credential placeholder instead of a revision-scoped placeholder",
+        "probe skipped: a fresh OpenShell exec exposed an identityless credential placeholder instead of a generation-scoped placeholder",
     };
   }
   const probeCommand = buildCredentialResolutionProbeCommand(entry, adapter, credentialRevision);
   if (!probeCommand) return { ok: null, detail: "no credential binding or safe endpoint to probe" };
-  const result = executeSandboxCommand(sandboxName, probeCommand.command);
+  const result = await executeSandboxCommand(sandboxName, probeCommand.command, {
+    runtimeSelection,
+  });
   return classifyCredentialResolutionProbe(result, entry, probeCommand.resultMarker);
 }

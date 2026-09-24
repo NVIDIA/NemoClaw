@@ -44,7 +44,6 @@ function buildDepsWithThrowingRecovery(): ListSandboxesCommandDeps {
         model: "stored-model",
         provider: "stored-provider",
         gpuEnabled: false,
-        policies: ["pypi"],
         agent: "openclaw",
       },
     ],
@@ -128,7 +127,6 @@ describe("list-command-deps resilience wrapper (#2666)", () => {
           model: "test-model",
           provider: "test-provider",
           gpuEnabled: false,
-          policies: [],
         },
       ],
       defaultSandbox: "my-assist",
@@ -279,24 +277,28 @@ describe("simulated container-stopped and foreign-port-holder subprocess regress
     fs.writeFileSync(path.join(binDir, "openshell"), lines.join("\n"), { mode: 0o755 });
   }
 
-  function seedRegistry(stateDir: string, model = "test-model", gatewayPort?: number): void {
+  function seedRegistry(
+    stateDir: string,
+    model = "test-model",
+    gatewayPort?: number,
+    sandboxName = "my-assist",
+  ): void {
     fs.mkdirSync(stateDir, { recursive: true });
     fs.writeFileSync(
       path.join(stateDir, "sandboxes.json"),
       JSON.stringify({
         sandboxes: {
-          "my-assist": {
-            name: "my-assist",
+          [sandboxName]: {
+            name: sandboxName,
             model,
             provider: "nvidia-prod",
             gpuEnabled: false,
-            policies: [],
             ...(gatewayPort === undefined
               ? {}
               : { gatewayName: resolveGatewayName(gatewayPort), gatewayPort }),
           },
         },
-        defaultSandbox: "my-assist",
+        defaultSandbox: sandboxName,
       }),
       { mode: 0o600 },
     );
@@ -348,7 +350,7 @@ describe("simulated container-stopped and foreign-port-holder subprocess regress
     testTimeoutOptions(30_000),
     () => {
       const port = 9123;
-      seedRegistry(path.join(home, ".nemoclaw"), "default-root-model");
+      seedRegistry(path.join(home, ".nemoclaw"), "default-root-model", undefined, "default-assist");
       seedRegistry(nemoclawStateRoot(home, port), "selected-port-model", port);
 
       const result = runCli(["my-assist", "status"], {

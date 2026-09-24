@@ -73,13 +73,8 @@ export function materializeManagedWorkloadReplacementEntry(
   plan: ManagedWorkloadRebuildPlan,
   replacement: ReboundManagedWorkloadReplacement,
 ): SandboxEntry {
-  const {
-    policyAuthority: _previousPolicyAuthority,
-    policyCreationReceipt: _previousPolicyCreationReceipt,
-    ...retainedPreviousEntry
-  } = previousEntry;
   return structuredClone({
-    ...retainedPreviousEntry,
+    ...previousEntry,
     ...plan.replacementMetadata,
     name: plan.sandboxName,
     pendingRouteReservation: undefined,

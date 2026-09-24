@@ -39,7 +39,7 @@ sequence. Re-read the exported constants before authoring the declaration.
 
 ## Complete Activated Bundle
 
-Activation requires all 14 surfaces to report `supported: true`. It also requires:
+Activation requires all 13 surfaces to report `supported: true`. It also requires:
 
 - host-local inference, direct lifecycle, and workload cleanup capabilities;
 - exact-digest managed images for Linux AMD64 and ARM64;
@@ -47,9 +47,8 @@ Activation requires all 14 surfaces to report `supported: true`. It also require
 - accepted current managed-image startup and capability contract versions;
 - Ollama, NVIDIA NIM, and vLLM services in canonical order;
 - the complete canonical mutation-operation sequence;
-- state mutation contract version 2;
 - backup, restore, and managed-profile restore;
-- operation-scoped identities for all six engine scopes; and
+- operation-scoped identities for all five engine scopes; and
 - release-installer qualification with Docker unavailable.
 
 If a provider cannot truthfully meet this profile, keep it as a candidate. When a real provider

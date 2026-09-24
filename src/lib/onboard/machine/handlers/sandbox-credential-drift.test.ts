@@ -7,7 +7,6 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 
 import { MessagingSetupApplier } from "../../../messaging/applier/setup-applier";
 import { hashCredential } from "../../../security/credential-hash";
-import { decisionSelected } from "../../../state/onboard-checkpoint-decision";
 import { createSession } from "../../../state/onboard-session";
 import {
   recordCheckpointEffectGroup,
@@ -73,124 +72,6 @@ describe("sandbox messaging credential drift", () => {
   beforeEach(() => {
     registry.clearAll();
     detectMessagingChannelsFromEnvMock.mockReturnValue([]);
-  });
-
-  it("validates a changed credential before reusing a ready sandbox (#3631)", async () => {
-    const previousToken = "123456:previous-telegram-token";
-    const replacementToken = "123456:replacement-telegram-token";
-    const previousPlan = withTelegramCredentialHash(
-      makeMinimalPlan("saved", "openclaw", ["telegram"]),
-      hashCredential(previousToken),
-    );
-    const replacementPlan = withTelegramCredentialHash(
-      makeMinimalPlan("saved", "openclaw", ["telegram"]),
-      hashCredential(replacementToken),
-    );
-    const session = createSession({ sandboxName: "saved", messagingPlan: previousPlan });
-    session.steps.sandbox.status = "complete";
-    session.machine = { ...session.machine, state: "agent_setup" };
-    recordCheckpointSandboxIdentity(session, "saved", "openclaw");
-    recordCheckpointMessaging(session, previousPlan);
-    recordCheckpointEffectGroup(
-      session,
-      "sandbox_create",
-      [
-        "saved",
-        "default",
-        "provider",
-        "model",
-        "openai-completions",
-        "",
-        JSON.stringify({ sandboxGpuEnabled: false, mode: "0" }),
-        "",
-      ].join("|"),
-    );
-    recordCheckpointEffectGroup(session, "sandbox_register", "saved");
-    expect(session.checkpoint).not.toBeNull();
-    session.checkpoint = {
-      ...session.checkpoint!,
-      gatewayAuthority: decisionSelected({
-        gatewayName: "nemoclaw",
-        gatewayPort: 18789,
-        mode: "nemoclaw-managed",
-        source: "standalone",
-        endpoint: null,
-        stateDir: null,
-        supervisor: null,
-        requiredCapabilities: [],
-      }),
-    };
-    registry.registerSandbox({
-      name: "saved",
-      messaging: { schemaVersion: 1, plan: previousPlan },
-    });
-    detectMessagingChannelsFromEnvMock.mockReturnValue(["telegram"]);
-    const messagingEnv: NodeJS.ProcessEnv = {};
-    const readMessagingPlanFromEnv = () =>
-      MessagingSetupApplier.readPlanFromEnv({ env: messagingEnv });
-    const writePlanToEnv = (plan: typeof replacementPlan) =>
-      MessagingSetupApplier.writePlanToEnv(plan, { env: messagingEnv });
-    const { deps, calls, getSession } = createDeps(
-      {
-        getSandboxReuseState: () => "ready",
-        getRegistrySandboxMessagingAuthority: (name) => ({
-          authoritative: true,
-          plan: registry.getHydratedMessagingPlanFromEntry(registry.getSandbox(name)),
-        }),
-        getRecordedMessagingChannelsForResume: () => null,
-        readMessagingPlanFromEnv,
-        writePlanToEnv,
-        listRegistrySandboxes: registry.listSandboxes,
-      },
-      session,
-    );
-    calls.removeSandbox.mockImplementation(() => registry.removeSandboxWithReceipt("saved"));
-    calls.setupMessaging.mockImplementation(async () => {
-      writePlanToEnv(replacementPlan);
-      return ["telegram"];
-    });
-    calls.createSandbox.mockImplementation(async () => {
-      const plan = readMessagingPlanFromEnv();
-      registry.registerSandbox({
-        name: "saved",
-        messaging: plan ? { schemaVersion: 1, plan } : undefined,
-      });
-      return "saved";
-    });
-
-    await withEnv("TELEGRAM_BOT_TOKEN", replacementToken, async () => {
-      await handleSandboxState({
-        ...baseOptions(deps, session),
-        resume: true,
-        sandboxName: "saved",
-        env: { TELEGRAM_BOT_TOKEN: replacementToken },
-      });
-    });
-
-    expect(calls.note).toHaveBeenCalledWith(
-      "  [resume] Messaging credential changed; recreating sandbox after configured checks.",
-    );
-    expect(calls.setupMessaging).toHaveBeenCalled();
-    expect(calls.removeSandbox).not.toHaveBeenCalled();
-    expect(calls.createSandbox).toHaveBeenCalled();
-    expect(calls.setupMessaging.mock.invocationCallOrder[0]).toBeLessThan(
-      calls.createSandbox.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
-    );
-    expect(getSession().messagingPlan?.credentialBindings[0]?.credentialHash).toBe(
-      hashCredential(replacementToken),
-    );
-    const registryState = registry.listSandboxes();
-    expect(registryState.sandboxes).toHaveLength(1);
-    expect(registryState.sandboxes[0]?.name).toBe("saved");
-    expect(
-      registryState.sandboxes[0]?.messaging?.plan.credentialBindings.map(
-        (binding) => binding.credentialHash,
-      ),
-    ).toEqual([hashCredential(replacementToken)]);
-    const serializedRegistry = JSON.stringify(registryState);
-    expect(serializedRegistry).not.toContain(hashCredential(previousToken));
-    expect(serializedRegistry).not.toContain(previousToken);
-    expect(serializedRegistry).not.toContain(replacementToken);
   });
 
   it("restages a validated replacement credential despite a live provider receipt (#3631)", async () => {

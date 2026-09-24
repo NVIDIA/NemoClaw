@@ -10,11 +10,11 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
+import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 import {
   buildOpenClawToolEvidenceReducerScript,
   classifyOpenClawAgentAssertion,
-  parseOpenClawAgentText,
   projectOpenClawAgentFailureArtifact,
   projectPersonalPublicFetchToolEvidenceArtifact,
   runOpenClawAgentAssertionRetry,
@@ -26,6 +26,7 @@ import {
 
 const AGENT_TURN_TIMEOUT_MS = 3 * 60_000;
 const OPENCLAW_AGENT_ATTEMPTS = 3;
+const OPENCLAW_MAIN_AGENT_DATABASE = "/sandbox/.openclaw/agents/main/agent/openclaw-agent.sqlite";
 
 export interface OpenClawAgentAssertionEvidence {
   reply: string;
@@ -86,15 +87,9 @@ export async function runOpenClawAgentAssertion(
     },
     run: async (attempt) => {
       const sessionId = `e2e-common-egress-${Date.now()}-${process.pid}-${attempt}`;
-      const sessionRoot = "/sandbox/.openclaw/agents/main/sessions";
-      const remoteCommand = [
-        `rm -f ${shellQuote(`${sessionRoot}/${sessionId}.jsonl`)} ${shellQuote(
-          `${sessionRoot}/${sessionId}.jsonl.lock`,
-        )} ${shellQuote(`${sessionRoot}/${sessionId}.trajectory.jsonl`)} 2>/dev/null || true`,
-        `openclaw agent --agent main --json --thinking off --session-id ${shellQuote(
-          sessionId,
-        )} -m ${shellQuote(args.prompt)}`,
-      ].join("; ");
+      const remoteCommand = `openclaw agent --agent main --json --thinking off --session-id ${shellQuote(
+        sessionId,
+      )} -m ${shellQuote(args.prompt)}`;
       const agent = await host.command(
         "ssh",
         [
@@ -161,8 +156,8 @@ export async function runOpenClawAgentAssertion(
               "node",
               "-e",
               buildOpenClawToolEvidenceReducerScript(args.publicFetchExpectation),
-              `${sessionRoot}/${sessionId}.jsonl`,
-              `${sessionRoot}/${sessionId}.trajectory.jsonl`,
+              OPENCLAW_MAIN_AGENT_DATABASE,
+              sessionId,
             ],
             {
               env: commandEnv(),

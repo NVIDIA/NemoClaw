@@ -17,7 +17,7 @@ import {
   createMutableSandboxPolicyResult,
   minimalBlueprint,
   resultForCommandFailure,
-  resultWithBlueprintPolicyAuthority,
+  resultWithBlueprintPolicy,
   routedBlueprint,
   TEST_SANDBOX_POLICY,
   TEST_SANDBOX_POLICY_PATH,
@@ -48,6 +48,7 @@ vi.mock("node:fs", async (importOriginal) => {
     openSync: memory.openSync,
     readFileSync: vi.fn(memory.readFileSync),
     renameSync: memory.renameSync,
+    unlinkSync: memory.unlinkSync,
     writeFileSync: memory.writeFileSync,
     readdirSync: memory.readdirSync,
   };
@@ -65,6 +66,10 @@ vi.mock("./ssrf.js", async (importOriginal) => {
     validateEndpointUrl: vi.fn(async (url: string) => resolvedEndpointFor(url)),
   };
 });
+vi.mock("./private-networks.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./private-networks.js")>()),
+  isPrivateHostname: () => false,
+}));
 
 const { validateEndpointUrl } = await import("./ssrf.js");
 const mockedValidateEndpoint = vi.mocked(validateEndpointUrl);
@@ -93,7 +98,7 @@ function mockCurrentPolicy(stdout: string): void {
     if (args.join(" ") === "policy get -g test-gateway --base test-sandbox") {
       return { exitCode: 0, stdout, stderr: "" };
     }
-    return resultWithBlueprintPolicyAuthority(args, {
+    return resultWithBlueprintPolicy(args, {
       exitCode: 0,
       stdout: "",
       stderr: "",
@@ -546,7 +551,7 @@ describe("runner", () => {
     beforeEach(() => {
       captureStdout();
       mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
-        resultWithBlueprintPolicyAuthority(args, {
+        resultWithBlueprintPolicy(args, {
           exitCode: 0,
           stdout: "",
           stderr: "",
@@ -581,18 +586,10 @@ describe("runner", () => {
       vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://ambient-gateway.invalid");
       vi.stubEnv("OPENSHELL_GATEWAY_INSECURE", "true");
       const commandResult = createMutableSandboxPolicyResult(() => {
-        const merged = [...store.entries()].find(([path]) => path.endsWith("merged-policy.yaml"));
+        const merged = [...store.entries()].find(([path]) => path.endsWith("policy-update.yaml"));
         return YAML.parse(merged?.[1].content ?? TEST_SANDBOX_POLICY);
       });
-      mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
-        args.join(" ") === "policy get -g test-gateway --base test-sandbox"
-          ? {
-              exitCode: 0,
-              stdout: ["Version: 1", "Hash: sha256:test", "---", TEST_SANDBOX_POLICY].join("\n"),
-              stderr: "",
-            }
-          : commandResult(args),
-      );
+      mockExeca.mockImplementation(async (_cmd: string, args: string[]) => commandResult(args));
 
       await actionApply(
         "default",
@@ -659,7 +656,7 @@ describe("runner", () => {
           /Failed to create inference provider 'my-provider'.*provider setup failed/i,
         );
         expect((error as Error).message).toContain("OPENAI_API_KEY=<REDACTED>");
-        expect((error as Error).message).toContain("Authorization: Bearer <REDACTED>");
+        expect((error as Error).message).toContain("Authorization: <REDACTED>");
         expect((error as Error).message).not.toContain(credential);
         expect((error as Error).message).not.toContain("opaque-bearer");
         expect(hasPlanJson()).toBe(true);
@@ -808,17 +805,6 @@ describe("runner", () => {
       expect(policyCalls.some((call) => call[1][1] === "set")).toBe(false);
     });
 
-    it("refuses to claim policy ownership when sandbox already exists", async () => {
-      mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
-        resultForCommandFailure(args, ["sandbox", "create"], "already exists"),
-      );
-
-      await expect(actionApply("default", minimalBlueprint())).rejects.toThrow(
-        /already exists.*cannot establish NemoClaw policy ownership/u,
-      );
-      expect(stdoutText()).not.toContain("Apply complete");
-    });
-
     it("throws when sandbox creation fails with other error", async () => {
       mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
         resultForCommandFailure(args, ["sandbox", "create"], "disk full"),
@@ -911,8 +897,7 @@ describe("runner", () => {
         [
           "inference",
           "inference_provider_created_by_apply",
-          "policy_additions",
-          "policy_authority",
+          "gateway",
           "profile",
           "run_id",
           "sandbox_created_by_apply",
@@ -1082,7 +1067,7 @@ describe("runner", () => {
       expect(mockedValidateEndpoint).toHaveBeenCalledWith("https://93.184.216.34/v1");
     });
 
-    it("fails closed before provider creation for DNS-backed HTTPS endpoint overrides", async () => {
+    it("fails closed before OpenShell handoff for DNS-backed HTTPS endpoint overrides (#10517)", async () => {
       mockedValidateEndpoint.mockResolvedValueOnce({
         url: "https://override.example.com/v1",
         pinnedUrl: "https://93.184.216.34/v1",
@@ -1096,9 +1081,7 @@ describe("runner", () => {
           endpointUrl: "https://override.example.com/v1",
         }),
       ).rejects.toThrow(/DNS-backed HTTPS endpoint/);
-      expect(
-        mockExeca.mock.calls.some((c) => Array.isArray(c[1]) && c[1].includes("provider")),
-      ).toBe(false);
+      expect(mockExeca).not.toHaveBeenCalled();
     });
 
     it("passes --timeout when timeout_secs is set in profile", async () => {
@@ -1267,7 +1250,6 @@ describe("runner", () => {
         },
         sandbox_name: "sb",
         sandbox_created_by_apply: true,
-        policy_additions: {},
         inference: {
           provider_type: "openai",
           provider_name: "secret-provider",
@@ -1423,7 +1405,7 @@ describe("runner", () => {
     beforeEach(() => {
       captureStdout();
       mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
-        resultWithBlueprintPolicyAuthority(args, {
+        resultWithBlueprintPolicy(args, {
           exitCode: 0,
           stdout: "",
           stderr: "",
@@ -1432,14 +1414,14 @@ describe("runner", () => {
       seedBlueprintFile();
     });
 
-    it("throws on unknown action with the raw invalid token", async () => {
+    it("throws a fixed diagnostic on an unknown action", async () => {
       store.clear();
-      await expect(main(["bogus"])).rejects.toThrow(/Unknown action 'bogus'/);
+      await expect(main(["bogus"])).rejects.toThrow(/Unknown action\. Use:/);
     });
 
-    it("throws on missing action with a clear marker", async () => {
+    it("throws on missing action", async () => {
       store.clear();
-      await expect(main([])).rejects.toThrow(/Unknown action '\(missing\)'/);
+      await expect(main([])).rejects.toThrow(/Unknown action\. Use:/);
     });
 
     it("parses plan with --profile and --dry-run", async () => {
@@ -1474,6 +1456,23 @@ describe("runner", () => {
       await main(["apply", "--profile", "default", "--endpoint-url", "https://override.test/v1"]);
       expect(mockedValidateEndpoint).toHaveBeenCalledWith("https://override.test/v1");
       expect(stdoutText()).toContain("PROGRESS:100:Apply complete");
+    });
+
+    it("fails closed before OpenShell handoff for a DNS-backed HTTPS blueprint endpoint (#10517)", async () => {
+      const blueprint = minimalBlueprint();
+      const components = blueprint.components as {
+        inference: { profiles: { default: { endpoint: string } } };
+      };
+      components.inference.profiles.default.endpoint = "https://profile.example.com/v1";
+      seedBlueprintFile(blueprint);
+      mockedValidateEndpoint.mockResolvedValueOnce({
+        ...resolvedEndpointFor("https://profile.example.com/v1"),
+        dnsResolved: true,
+      });
+
+      await expect(main(["apply", "--profile", "default"])).rejects.toThrow(/DNS-backed HTTPS/);
+      expect(mockedValidateEndpoint).toHaveBeenCalledWith("https://profile.example.com/v1");
+      expect(mockExeca).not.toHaveBeenCalled();
     });
 
     it("rejects --plan flag (not yet implemented)", async () => {

@@ -7,7 +7,6 @@ import * as store from "../../credentials/store";
 import * as policies from "../../policy";
 import { digestBaselineEntry } from "../../policy/baseline-exclusion";
 import type { PolicyObject } from "../../policy/preset-parsing";
-import * as registry from "../../state/registry";
 
 vi.mock("../../state/mcp-lifecycle-lock", () => ({
   withSandboxMutationLock: <T>(_name: string, action: () => Promise<T>) => action(),
@@ -44,11 +43,9 @@ const NOUS_ENTRY: PolicyObject = {
   endpoints: [{ host: "nousresearch.com", port: 443 }],
 };
 
-let exitSpy: MockInstance;
 let promptMock: MockInstance;
 let excludeBaselineEntryMock: MockInstance;
 let restoreBaselineEntryMock: MockInstance;
-let getBaselineExclusionsMock: MockInstance;
 
 async function captureExit(action: () => Promise<void>): Promise<number | undefined> {
   try {
@@ -75,14 +72,10 @@ beforeEach(() => {
   arrangeTerminal(true);
   vi.spyOn(console, "log").mockImplementation(() => undefined);
   vi.spyOn(console, "error").mockImplementation(() => undefined);
-  exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+  vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
     throw new ExitError(code);
   }) as never);
   promptMock = vi.spyOn(store, "prompt").mockResolvedValue("y");
-
-  vi.spyOn(registry, "getSandbox").mockReturnValue({ name: "alpha", agent: "hermes" });
-  getBaselineExclusionsMock = vi.spyOn(registry, "getBaselineExclusions").mockReturnValue([]);
-  vi.spyOn(registry, "getBaselineExclusionTransition").mockReturnValue(null);
 
   vi.spyOn(policies, "resolveSandboxBaselinePolicy").mockReturnValue({
     agent: "hermes",
@@ -93,8 +86,8 @@ beforeEach(() => {
     key === "nous_research" ? NOUS_ENTRY : null,
   );
   vi.spyOn(policies, "getSandboxBaselineEntryDigest").mockReturnValue("digest-1");
-  excludeBaselineEntryMock = vi.spyOn(policies, "excludeBaselineEntry").mockReturnValue(true);
-  restoreBaselineEntryMock = vi.spyOn(policies, "restoreBaselineEntry").mockReturnValue(true);
+  excludeBaselineEntryMock = vi.spyOn(policies, "excludeBaselineEntry").mockResolvedValue(true);
+  restoreBaselineEntryMock = vi.spyOn(policies, "restoreBaselineEntry").mockResolvedValue(true);
 });
 
 afterEach(() => {
@@ -209,15 +202,7 @@ describe("excludeSandboxBaseline (#7178)", () => {
 });
 
 describe("restoreSandboxBaseline (#7178)", () => {
-  it("exits when the key is not excluded", async () => {
-    getBaselineExclusionsMock.mockReturnValue([]);
-    const code = await captureExit(() => restoreSandboxBaseline("alpha", { key: "nous_research" }));
-    expect(code).toBe(1);
-    expect(restoreBaselineEntryMock).not.toHaveBeenCalled();
-  });
-
-  it("restores a recorded exclusion after interactive acknowledgement", async () => {
-    getBaselineExclusionsMock.mockReturnValue([{ key: "nous_research", digest: "digest-1" }]);
+  it("restores a live missing baseline entry after interactive acknowledgement", async () => {
     await restoreSandboxBaseline("alpha", { key: "nous_research" });
     expect(promptMock).toHaveBeenCalledOnce();
     expect(restoreBaselineEntryMock).toHaveBeenCalledWith("alpha", "nous_research", {
@@ -226,7 +211,6 @@ describe("restoreSandboxBaseline (#7178)", () => {
   });
 
   it("requires explicit acknowledgement in non-interactive mode (#8114)", async () => {
-    getBaselineExclusionsMock.mockReturnValue([{ key: "nous_research", digest: "digest-1" }]);
     process.env.NEMOCLAW_NON_INTERACTIVE = "1";
     const code = await captureExit(() => restoreSandboxBaseline("alpha", { key: "nous_research" }));
     expect(code).toBe(1);
@@ -241,7 +225,6 @@ describe("restoreSandboxBaseline (#7178)", () => {
   });
 
   it("requires explicit restore acknowledgement when standard input has no terminal (#8877)", async () => {
-    getBaselineExclusionsMock.mockReturnValue([{ key: "nous_research", digest: "digest-1" }]);
     arrangeTerminal(false);
 
     const code = await captureExit(() => restoreSandboxBaseline("alpha", { key: "nous_research" }));
@@ -252,7 +235,6 @@ describe("restoreSandboxBaseline (#7178)", () => {
   });
 
   it("does not restore when standard input closes before acknowledgement (#8114)", async () => {
-    getBaselineExclusionsMock.mockReturnValue([{ key: "nous_research", digest: "digest-1" }]);
     promptMock.mockRejectedValue(
       Object.assign(new Error("Prompt closed before input"), { code: "EOF" }),
     );
@@ -267,7 +249,6 @@ describe("restoreSandboxBaseline (#7178)", () => {
   });
 
   it("restores without prompting when acknowledged via --yes (#8114)", async () => {
-    getBaselineExclusionsMock.mockReturnValue([{ key: "nous_research", digest: "digest-1" }]);
     process.env.NEMOCLAW_NON_INTERACTIVE = "1";
     await restoreSandboxBaseline("alpha", { key: "nous_research", yes: true });
     expect(promptMock).not.toHaveBeenCalled();
@@ -277,7 +258,6 @@ describe("restoreSandboxBaseline (#7178)", () => {
   });
 
   it("restores without prompting when acknowledged via --force (#8114)", async () => {
-    getBaselineExclusionsMock.mockReturnValue([{ key: "nous_research", digest: "digest-1" }]);
     await restoreSandboxBaseline("alpha", { key: "nous_research", force: true });
     expect(promptMock).not.toHaveBeenCalled();
     expect(restoreBaselineEntryMock).toHaveBeenCalledWith("alpha", "nous_research", {
@@ -286,7 +266,6 @@ describe("restoreSandboxBaseline (#7178)", () => {
   });
 
   it("binds stale exclusion cleanup to an absent preview", async () => {
-    getBaselineExclusionsMock.mockReturnValue([{ key: "legacy_entry", digest: "digest-1" }]);
     vi.mocked(policies.getSandboxBaselineEntry).mockReturnValue(null);
 
     await restoreSandboxBaseline("alpha", { key: "legacy_entry", force: true });
@@ -297,7 +276,6 @@ describe("restoreSandboxBaseline (#7178)", () => {
   });
 
   it("discloses the restored egress before interactive acknowledgement (#8114)", async () => {
-    getBaselineExclusionsMock.mockReturnValue([{ key: "nous_research", digest: "digest-1" }]);
     promptMock.mockImplementation(async () => {
       expect(console.log).toHaveBeenCalledWith(expect.stringContaining("re-allows:"));
       return "n";
@@ -310,14 +288,12 @@ describe("restoreSandboxBaseline (#7178)", () => {
   });
 
   it("aborts when the interactive confirmation is declined (#8114)", async () => {
-    getBaselineExclusionsMock.mockReturnValue([{ key: "nous_research", digest: "digest-1" }]);
     promptMock.mockResolvedValue("n");
     await restoreSandboxBaseline("alpha", { key: "nous_research" });
     expect(restoreBaselineEntryMock).not.toHaveBeenCalled();
   });
 
   it("reports the cancellation when the interactive confirmation is declined", async () => {
-    getBaselineExclusionsMock.mockReturnValue([{ key: "nous_research", digest: "digest-1" }]);
     promptMock.mockResolvedValue("n");
     await restoreSandboxBaseline("alpha", { key: "nous_research" });
     expect(console.log).toHaveBeenCalledWith("  Cancelled.");
@@ -325,14 +301,12 @@ describe("restoreSandboxBaseline (#7178)", () => {
   });
 
   it("does not mutate on --dry-run", async () => {
-    getBaselineExclusionsMock.mockReturnValue([{ key: "nous_research", digest: "digest-1" }]);
     await restoreSandboxBaseline("alpha", { key: "nous_research", dryRun: true });
     expect(promptMock).not.toHaveBeenCalled();
     expect(restoreBaselineEntryMock).not.toHaveBeenCalled();
   });
 
   it("does not mutate when a recorded agent baseline cannot be resolved (#7194)", async () => {
-    getBaselineExclusionsMock.mockReturnValue([{ key: "nous_research", digest: "digest-1" }]);
     vi.mocked(policies.resolveSandboxBaselinePolicy).mockImplementation(() => {
       throw new Error("Refusing to substitute the OpenClaw baseline");
     });

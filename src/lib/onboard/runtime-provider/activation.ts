@@ -2,17 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
-  MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
-  MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
-} from "../managed-image/contract";
-import {
   NATIVE_RUNTIME_QUALIFICATION_PRODUCER_WORKFLOW,
   NATIVE_RUNTIME_QUALIFICATION_PROTECTED_REPOSITORY,
   type NativeRuntimeQualificationAuthority,
   type NativeRuntimeQualificationExpectedSource,
 } from "./native-qualification-authority";
 import {
-  RUNTIME_PROVIDER_STATE_MUTATION_CONTRACT_VERSION,
+  MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
+  MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
   type RuntimeProviderBundle,
   type RuntimeProviderBundleRegistry,
   type RuntimeProviderContainerEngineOperation,
@@ -53,8 +50,6 @@ const ARTIFACT_NAME = /^[A-Za-z0-9._-]{1,128}$/u;
 
 const REQUIRED_MUTATIONS = [
   "registration",
-  "start",
-  "stop",
   "inference-set",
   "rebuild",
   "clone",
@@ -68,7 +63,6 @@ export const RUNTIME_PROVIDER_ACTIVATION_ENGINE_SCOPES = [
   "gateway-inspection",
   "host-local-inference",
   "sandbox-lifecycle",
-  "state-mutation",
   "workload-cleanup",
 ] as const satisfies readonly RuntimeProviderContainerEngineOperation[];
 
@@ -407,8 +401,6 @@ function validateCompleteBundle(bundle: RuntimeProviderBundle): void {
     "hostLocalInference",
     "lifecycle",
     "mutationAuthority",
-    "stateMutation",
-    "bootstrap",
     "snapshot",
     "recovery",
     "cleanup",
@@ -418,16 +410,10 @@ function validateCompleteBundle(bundle: RuntimeProviderBundle): void {
   }
   if (
     bundle.capabilities.hostLocalInference !== true ||
-    bundle.capabilities.directLifecycle !== true ||
     bundle.capabilities.workloadImageCleanup !== true
   ) {
     throw new RuntimeProviderActivationError(
       `provider '${providerId}' does not declare the complete lifecycle capability set`,
-    );
-  }
-  if (bundle.bootstrap.supported !== true || bundle.bootstrap.bootstrapKind !== "managed-image") {
-    throw new RuntimeProviderActivationError(
-      `provider '${providerId}' does not provide managed-image bootstrap authority`,
     );
   }
   const workload = bundle.workload.profile;
@@ -482,14 +468,6 @@ function validateCompleteBundle(bundle: RuntimeProviderBundle): void {
     REQUIRED_MUTATIONS,
     `provider '${providerId}' mutation authority`,
   );
-  if (
-    bundle.stateMutation.supported !== true ||
-    bundle.stateMutation.contractVersion !== RUNTIME_PROVIDER_STATE_MUTATION_CONTRACT_VERSION
-  ) {
-    throw new RuntimeProviderActivationError(
-      `provider '${providerId}' has incomplete state-mutation authority`,
-    );
-  }
   if (
     bundle.snapshot.supported !== true ||
     bundle.snapshot.capabilities.backup !== true ||

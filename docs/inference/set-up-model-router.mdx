@@ -25,8 +25,10 @@ NemoClaw creates or reopens the log with owner-only permissions.
 Each Model Router start appends to the same file.
 NemoClaw does not truncate or rotate the file.
 If output capture fails, router startup continues without captured output.
-If the router does not pass its health check, NemoClaw tries one final health read.
-When that read returns an unhealthy-endpoint error, the startup error includes a redacted excerpt.
+NemoClaw sends one semantic health request at a time so slow upstream checks do not overlap.
+Each request uses only the time that remains in the 10-minute startup limit.
+If a semantic health response completed before startup failed, the error identifies the last request outcome, HTTP status, duration, and captured body size.
+When a completed response returns an unhealthy-endpoint error, the startup error includes a redacted excerpt.
 When output capture succeeded, the startup error also includes the log path.
 When the log contains readable output from this run, the error includes a redacted excerpt.
 The owner-only log contains unredacted router output.
@@ -45,12 +47,12 @@ If another onboarding run owns the session lock, or the identity changed, `destr
 It leaves the Model Router process and current onboarding session unchanged.
 When `destroy` removes a Model Router sandbox, it checks the bounded set of NemoClaw gateway registries under the host state directory for a same-port peer.
 If no same-port peer remains, NemoClaw stops only a process whose command line still identifies the Model Router on that port.
-NemoClaw clears the matching Model Router process and credential recovery identity only after the stop succeeds or a complete process scan and health probe confirm that the router is absent.
+NemoClaw clears the matching Model Router process and credential recovery identity only after the stop succeeds or a complete process scan and liveness probe confirm that the router is absent.
 The final sandbox-name cleanup also checks the captured session identity.
 Other sandbox destroy paths use a non-blocking session update.
 If onboarding owns the lock or the captured session identity changed, `destroy` leaves the current session unchanged.
 If the captured session still names the destroyed sandbox but uses another router port, `destroy` clears only the sandbox association and preserves the router process and credential recovery identity.
-If the process inventory is unavailable, the completed scan finds no matching process while the port remains healthy, or the stop fails, `destroy` still completes and keeps the recovery identity.
+If the process inventory is unavailable, the completed scan finds no matching process while the port remains responsive, or the stop fails, `destroy` still completes and keeps the recovery identity.
 If `destroy` warns that it could not identify or stop a listener for the deleted sandbox, follow these steps:
 
 1. Inspect the current listener process immediately before you stop anything.
@@ -75,7 +77,7 @@ The sandbox never sees raw API keys.
 The router model pool lives in `nemoclaw-blueprint/router/pool-config.yaml`.
 Edit that file to define the model names that the router can select.
 
-The default pool routes between NVIDIA-hosted Nemotron models.
+The default pool routes between models available through NVIDIA Endpoints.
 It uses `tolerance` to select the lowest-cost model whose predicted quality stays within the configured threshold.
 
 ```yaml
@@ -84,17 +86,22 @@ routing:
   checkpoint: llm-router/checkpoints/prefill_router_qwen08b.pt
   tolerance: 0.20
   encoder: Qwen/Qwen3.5-0.8B
+  encoder_backend: transformers
 
 models:
-  - name: nano
-    litellm_model: "openai/nvidia/Nemotron-3-Nano-30B-A3B"
-    cost_per_m_input_tokens: 0.05
-    api_base: "https://integrate.api.nvidia.com"
+  - name: gpt-oss-20b-high
+    display_name: "GPT-OSS 20B High"
+    litellm_model: "openai/openai/gpt-oss-20b"
+    cost_per_m_input_tokens: 0.052
+    cost_per_m_output_tokens: 0.245
+    api_base: "https://integrate.api.nvidia.com/v1"
 
-  - name: super
+  - name: nemotron-3-super
+    display_name: "Nemotron 3 Super 120B"
     litellm_model: "openai/nvidia/nemotron-3-super-120b-a12b"
     cost_per_m_input_tokens: 0.10
-    api_base: "https://integrate.api.nvidia.com"
+    cost_per_m_output_tokens: 0.40
+    api_base: "https://integrate.api.nvidia.com/v1"
 ```
 
 Use these values to tune the accuracy and cost tradeoff.

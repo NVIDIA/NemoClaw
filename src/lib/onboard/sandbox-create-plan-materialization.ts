@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { InitialSandboxPolicy } from "./initial-policy";
-import type { SandboxPolicyAuthority } from "../adapters/openshell/policy-authority";
+import {
+  type CreateOpenShellSandboxRequest,
+  withoutOpenShellSandboxCreateGpu,
+} from "../adapters/openshell/sandbox-lifecycle";
 import { hasConfiguredMessagingCredential, type MessagingTokenDef } from "./messaging-prep";
 import { filterMessagingProvidersForSandboxCreate } from "./sandbox-create-intent";
 import type {
@@ -17,6 +20,58 @@ import { prepareSandboxGpuRoutePolicies } from "./sandbox-gpu-route-policy";
 type PrepareInitialSandboxCreatePolicy =
   typeof import("./initial-policy").prepareInitialSandboxCreatePolicy;
 
+export type PlannedOpenShellSandboxCreateRequest = Omit<
+  CreateOpenShellSandboxRequest,
+  "target" | "startupCommand" | "environment" | "workingDirectory"
+>;
+
+/** Bind runtime-only fields to the final typed ordinary create plan. */
+export function finalizeOpenShellSandboxCreateRequest(input: {
+  readonly plan: PlannedOpenShellSandboxCreateRequest;
+  readonly gatewayName: string;
+  readonly startupCommand: readonly string[];
+  readonly environment: NodeJS.ProcessEnv;
+  readonly workingDirectory?: string;
+  readonly compatibilityPolicyPath?: string | null;
+}): CreateOpenShellSandboxRequest {
+  const request: CreateOpenShellSandboxRequest = Object.freeze({
+    ...input.plan,
+    target: Object.freeze({ kind: "named" as const, gatewayName: input.gatewayName }),
+    startupCommand: Object.freeze([...input.startupCommand]),
+    environment: Object.freeze({ ...input.environment }),
+    ...(input.workingDirectory ? { workingDirectory: input.workingDirectory } : {}),
+  });
+  if (input.compatibilityPolicyPath === undefined) return request;
+  if (!input.compatibilityPolicyPath) {
+    throw new Error("Compatibility GPU route requires its route-specific sandbox policy.");
+  }
+  return withoutOpenShellSandboxCreateGpu(request, {
+    policyPath: input.compatibilityPolicyPath,
+  });
+}
+
+function materializeCreateResources(
+  args: readonly string[],
+): CreateOpenShellSandboxRequest["resources"] {
+  const resources: { cpu?: string; memory?: string } = {};
+  for (let index = 0; index < args.length; index += 2) {
+    const option = args[index];
+    const value = args[index + 1];
+    if (!value || (option !== "--cpu" && option !== "--memory")) {
+      throw new Error("Resource profile produced an unsupported sandbox create option.");
+    }
+    if (option === "--cpu") resources.cpu = value;
+    else resources.memory = value;
+  }
+  return Object.keys(resources).length > 0 ? Object.freeze(resources) : undefined;
+}
+
+function materializeCreateGpu(args: readonly string[]): CreateOpenShellSandboxRequest["gpu"] {
+  if (args.length === 0) return undefined;
+  if (args.length === 1 && args[0] === "--gpu") return Object.freeze({});
+  throw new Error("GPU selection produced an unsupported sandbox create option.");
+}
+
 const DCODE_MCP_SNAPSHOT_TMPFS_MOUNT = {
   type: "tmpfs",
   target: "/run/nemoclaw-dcode-mcp",
@@ -29,7 +84,8 @@ const DCODE_MCP_SNAPSHOT_TMPFS_MOUNT = {
 
 function buildSandboxDriverConfig(
   intent: SandboxCreateIntent,
-  managedStateMount: MaterializeSandboxCreatePlanInput["managedStateMount"],
+  managedStateMounts: MaterializeSandboxCreatePlanInput["managedStateMounts"],
+  managedStateMountDriverId: MaterializeSandboxCreatePlanInput["managedStateMountDriverId"],
 ): string | null {
   const cdiDevice = normalizeSandboxGpuDeviceForCdi(intent.sandboxGpuDevice);
   if (cdiDevice && (!intent.policy.options.directGpu || !intent.gpuCreateArgs.includes("--gpu"))) {
@@ -38,53 +94,70 @@ function buildSandboxDriverConfig(
   const dockerMounts: Array<Record<string, unknown>> = (intent.hostMounts ?? []).map(
     ({ source, target }) => ({ type: "bind", source, target, read_only: true }),
   );
-  if (managedStateMount) {
-    const conflictingHostMount = intent.hostMounts?.find(({ target }) =>
-      containerPathsOverlap(target, managedStateMount.target),
-    );
-    if (conflictingHostMount) {
-      throw new Error(
-        `Host mount target '${conflictingHostMount.target}' conflicts with the managed Hermes state root '${managedStateMount.target}'.`,
-      );
-    }
-    dockerMounts.unshift({ ...managedStateMount });
-  }
   const podmanMounts: Array<Record<string, unknown>> = [];
+  const mountsByDriver = new Map<string, Array<Record<string, unknown>>>([
+    ["docker", dockerMounts],
+    ["podman", podmanMounts],
+  ]);
+  if ((managedStateMounts?.length ?? 0) > 0) {
+    if (!managedStateMountDriverId) {
+      throw new Error("Managed state mounts are missing their provider-owned driver config.");
+    }
+    const providerMounts = mountsByDriver.get(managedStateMountDriverId) ?? [];
+    for (const managedStateMount of managedStateMounts ?? []) {
+      const conflictingHostMount = intent.hostMounts?.find(({ target }) =>
+        containerPathsOverlap(target, managedStateMount.target),
+      );
+      if (conflictingHostMount) {
+        throw new Error(
+          `Host mount target '${conflictingHostMount.target}' conflicts with the managed state root '${managedStateMount.target}'.`,
+        );
+      }
+      if (
+        providerMounts.some(
+          ({ target }) =>
+            typeof target === "string" && containerPathsOverlap(target, managedStateMount.target),
+        )
+      ) {
+        throw new Error(`Managed state root '${managedStateMount.target}' overlaps another root.`);
+      }
+      providerMounts.push({ ...managedStateMount });
+    }
+    mountsByDriver.set(managedStateMountDriverId, providerMounts);
+  }
   if (intent.policy.options.agentName === "langchain-deepagents-code") {
     dockerMounts.unshift(DCODE_MCP_SNAPSHOT_TMPFS_MOUNT);
     podmanMounts.push(DCODE_MCP_SNAPSHOT_TMPFS_MOUNT);
   }
-  if (dockerMounts.length === 0 && !cdiDevice) return null;
-  return JSON.stringify({
-    docker: {
-      ...(cdiDevice ? { cdi_devices: [cdiDevice] } : {}),
-      ...(dockerMounts.length > 0 ? { mounts: dockerMounts } : {}),
-    },
-    ...(podmanMounts.length > 0 || cdiDevice
-      ? {
-          podman: {
-            ...(cdiDevice ? { cdi_devices: [cdiDevice] } : {}),
-            ...(podmanMounts.length > 0 ? { mounts: podmanMounts } : {}),
-          },
-        }
-      : {}),
-  });
+  const driverConfig = Object.fromEntries(
+    [...mountsByDriver].flatMap(([driverId, mounts]) =>
+      mounts.length > 0 || cdiDevice
+        ? [
+            [
+              driverId,
+              {
+                ...(cdiDevice ? { cdi_devices: [cdiDevice] } : {}),
+                ...(mounts.length > 0 ? { mounts } : {}),
+              },
+            ],
+          ]
+        : [],
+    ),
+  );
+  return Object.keys(driverConfig).length > 0 ? JSON.stringify(driverConfig) : null;
 }
 
 export type SandboxCreatePlan = {
   activeMessagingChannels: string[];
   initialSandboxPolicy: InitialSandboxPolicy;
-  /** Tier resolved before create, persisted with the registry entry for safe resume. */
-  policyTier: string | null;
-  policyAuthority: SandboxPolicyAuthority;
-  createArgs: string[];
+  createRequest: PlannedOpenShellSandboxCreateRequest;
   messagingProviders: string[];
   gpuRoutePlan: SandboxCreateIntent["gpuRoutePlan"];
   compatibilityPolicyPath: string | null;
   sandboxGpuLogMessage: string | null;
   /** One-shot provider activation owned by the post-create verification boundary. */
   activateDeferredProviderEffects:
-    | ((revalidatePolicyRequirements: (operation: string) => void) => readonly string[])
+    | ((revalidateSandboxIdentity: (operation: string) => void) => Promise<readonly string[]>)
     | null;
 };
 
@@ -150,6 +223,7 @@ function getHermesPortableInitialSandboxPolicy(
 export function prepareSandboxCreatePolicy(
   intent: SandboxCreateIntent,
   prepareInitialSandboxCreatePolicy: PrepareInitialSandboxCreatePolicy = getInitialSandboxCreatePolicy,
+  messagingConfig?: MaterializeSandboxCreatePlanInput["messagingConfig"],
 ): {
   readonly initialSandboxPolicy: InitialSandboxPolicy;
   readonly compatibilityPolicyPath: string | null;
@@ -168,9 +242,7 @@ export function prepareSandboxCreatePolicy(
       // composing them throws.
       sandboxName: intent.sandboxName,
       policyTier: intent.policy.options.policyTier,
-      baselineExclusions: intent.policy.options.baselineExclusions.map((exclusion) => ({
-        ...exclusion,
-      })),
+      messagingConfig,
     },
     intent.gpuRoutePlan,
     prepareInitialSandboxCreatePolicy,
@@ -284,52 +356,34 @@ function assertDeferredProviderPlanSupported(
 }
 
 /** Materialize policy, route metadata, resources, and providers from a secretless intent. */
-export function materializeSandboxCreatePlan({
+export async function materializeSandboxCreatePlan({
   intent,
   fromRef,
-  policyAuthority,
-  deferSandboxEffectsUntilPolicyVerification = false,
-  managedStateMount,
+  managedStateMounts,
+  managedStateMountDriverId,
+  policylessCreate = false,
+  deferSandboxEffectsUntilIdentityVerification = false,
+  skipProviderEffects = false,
   messagingTokenDefs,
+  messagingConfig,
   runProviderPreDeleteCleanup,
   upsertMessagingProviders,
   getHermesToolGatewayProviderName,
   discloseInitialSandboxPolicy,
   prepareInitialSandboxCreatePolicy = getInitialSandboxCreatePolicy,
-}: MaterializeSandboxCreatePlanInput): SandboxCreatePlan {
+}: MaterializeSandboxCreatePlanInput): Promise<SandboxCreatePlan> {
   const enabledMessagingTokenDefs = validateSandboxCreateIntentBindings(intent, messagingTokenDefs);
-  const driverConfig = buildSandboxDriverConfig(intent, managedStateMount);
-  const { initialSandboxPolicy, compatibilityPolicyPath } = prepareSandboxGpuRoutePolicies(
-    intent.policy.basePolicyPath,
-    [...intent.policy.activeMessagingChannels],
-    {
-      directGpu: intent.policy.options.directGpu,
-      hostGpuAvailable: intent.policy.options.hostGpuAvailable,
-      additionalPresets: intent.policy.options.hostLocalInferenceRouteOnly
-        ? intent.policy.options.additionalPresets.filter((name) => name !== "local-inference")
-        : [...intent.policy.options.additionalPresets],
-      agentName: intent.policy.options.agentName,
-      sandboxName: intent.sandboxName,
-      policyTier: intent.policy.options.policyTier,
-      baselineExclusions: intent.policy.options.baselineExclusions.map((exclusion) => ({
-        ...exclusion,
-      })),
-    },
-    intent.gpuRoutePlan,
-    prepareInitialSandboxCreatePolicy,
+  const driverConfig = buildSandboxDriverConfig(
+    intent,
+    managedStateMounts,
+    managedStateMountDriverId,
   );
-  const createArgs = [
-    "--from",
-    fromRef,
-    "--name",
-    intent.sandboxName,
-    ...(policyAuthority === "nemoclaw-managed"
-      ? ["--policy", initialSandboxPolicy.policyPath]
-      : []),
-    ...(driverConfig ? ["--driver-config-json", driverConfig] : []),
-    ...intent.gpuCreateArgs,
-    ...intent.resourceCreateArgs,
-  ];
+  const { initialSandboxPolicy, compatibilityPolicyPath } = prepareSandboxCreatePolicy(
+    intent,
+    prepareInitialSandboxCreatePolicy,
+    messagingConfig,
+  );
+  const createProviders: string[] = [];
 
   let hermesToolGatewayProvider: string | null | undefined;
   const resolveHermesToolGatewayProvider = (): string | null => {
@@ -349,10 +403,10 @@ export function materializeSandboxCreatePlan({
     intent.policy.activeMessagingChannels,
     intent.disabledChannelNames,
   );
-  if (deferSandboxEffectsUntilPolicyVerification) {
+  if (deferSandboxEffectsUntilIdentityVerification) {
     assertDeferredProviderPlanSupported(intent, plannedMessagingProviders, initialSandboxPolicy);
   }
-  if (policyAuthority === "nemoclaw-managed") {
+  if (!policylessCreate) {
     assertCredentialBindingProvidersAttached(
       initialSandboxPolicy,
       buildCreateProviderSet(intent, plannedMessagingProviders, resolveHermesToolGatewayProvider()),
@@ -365,17 +419,17 @@ export function materializeSandboxCreatePlan({
     }
   }
 
-  const activateProviderEffects = (
-    revalidatePolicyRequirements?: (operation: string) => void,
-  ): readonly string[] => {
-    runProviderPreDeleteCleanup(revalidatePolicyRequirements);
+  const activateProviderEffects = async (
+    revalidateSandboxIdentity?: (operation: string) => void,
+  ): Promise<readonly string[]> => {
+    await runProviderPreDeleteCleanup(revalidateSandboxIdentity);
     const activatedMessagingProviders = filterMessagingProvidersForSandboxCreate(
       [
-        ...upsertMessagingProviders(enabledMessagingTokenDefs, {
+        ...(await upsertMessagingProviders(enabledMessagingTokenDefs, {
           replaceExisting: true,
           allowedSandboxes: [intent.sandboxName],
-          ...(revalidatePolicyRequirements ? { revalidatePolicyRequirements } : {}),
-        }),
+          ...(revalidateSandboxIdentity ? { revalidateSandboxIdentity } : {}),
+        })),
         ...intent.reusableMessagingProviders,
       ],
       intent.messagingProviderRequests,
@@ -387,7 +441,7 @@ export function materializeSandboxCreatePlan({
       activatedMessagingProviders,
       resolveHermesToolGatewayProvider(),
     );
-    if (policyAuthority === "nemoclaw-managed") {
+    if (!policylessCreate) {
       assertCredentialBindingProvidersAttached(initialSandboxPolicy, createProviders);
     }
     if (!sameProviderNames(activatedMessagingProviders, plannedMessagingProviders)) {
@@ -397,25 +451,38 @@ export function materializeSandboxCreatePlan({
     }
     return [...createProviders];
   };
-  if (!deferSandboxEffectsUntilPolicyVerification) {
-    for (const provider of activateProviderEffects()) {
-      createArgs.push("--provider", provider);
+  if (!deferSandboxEffectsUntilIdentityVerification && !skipProviderEffects) {
+    try {
+      createProviders.push(...(await activateProviderEffects()));
+    } catch (error) {
+      initialSandboxPolicy.cleanup?.();
+      throw error;
     }
   }
-
-  return {
+  const sharedPlan = {
     activeMessagingChannels: [...intent.policy.activeMessagingChannels],
     initialSandboxPolicy,
-    policyTier: intent.policy.options.policyTier,
-    policyAuthority,
-    createArgs,
     messagingProviders: plannedMessagingProviders,
     gpuRoutePlan: intent.gpuRoutePlan,
     compatibilityPolicyPath,
     sandboxGpuLogMessage: intent.sandboxGpuLogMessage,
-    activateDeferredProviderEffects: deferSandboxEffectsUntilPolicyVerification
+    activateDeferredProviderEffects: deferSandboxEffectsUntilIdentityVerification
       ? activateProviderEffects
       : null,
+  };
+  const resources = materializeCreateResources(intent.resourceCreateArgs);
+  const gpu = materializeCreateGpu(intent.gpuCreateArgs);
+  return {
+    ...sharedPlan,
+    createRequest: Object.freeze({
+      sandboxName: intent.sandboxName,
+      source: Object.freeze({ reference: fromRef }),
+      ...(!policylessCreate ? { policyPath: initialSandboxPolicy.policyPath } : {}),
+      ...(driverConfig ? { driverConfigJson: driverConfig } : {}),
+      ...(gpu ? { gpu } : {}),
+      ...(resources ? { resources } : {}),
+      ...(createProviders.length > 0 ? { providers: Object.freeze(createProviders) } : {}),
+    }),
   };
 }
 
@@ -423,12 +490,8 @@ export function materializeSandboxCreatePlan({
 export function materializeHermesPortableCreatePlan(input: {
   readonly intent: SandboxCreateIntent;
   readonly fromRef: string;
-  readonly policyAuthority: SandboxPolicyAuthority;
 }): SandboxCreatePlan {
-  const { intent, fromRef, policyAuthority } = input;
-  if (policyAuthority !== "nemoclaw-managed") {
-    throw new Error("Hermes portable sandbox creation requires NemoClaw-managed policy authority.");
-  }
+  const { intent, fromRef } = input;
   if (
     intent.policy.options.agentName !== "hermes" ||
     !["none", "native-only"].includes(intent.gpuRoutePlan) ||
@@ -455,28 +518,23 @@ export function materializeHermesPortableCreatePlan(input: {
         : [...intent.policy.options.additionalPresets],
       agentName: "hermes",
       policyTier: intent.policy.options.policyTier,
-      baselineExclusions: intent.policy.options.baselineExclusions.map((entry) => ({ ...entry })),
     },
   );
-  const driverConfig = buildSandboxDriverConfig(intent, null);
-  const createArgs = [
-    "--from",
-    fromRef,
-    "--name",
-    intent.sandboxName,
-    "--policy",
-    initialSandboxPolicy.policyPath,
-    ...(driverConfig ? ["--driver-config-json", driverConfig] : []),
-    ...intent.gpuCreateArgs,
-    ...intent.resourceCreateArgs,
-  ];
-  if (intent.inferenceProvider) createArgs.push("--provider", intent.inferenceProvider);
+  const driverConfig = buildSandboxDriverConfig(intent, undefined, null);
+  const resources = materializeCreateResources(intent.resourceCreateArgs);
+  const gpu = materializeCreateGpu(intent.gpuCreateArgs);
   return {
     activeMessagingChannels: [],
     initialSandboxPolicy,
-    policyTier: intent.policy.options.policyTier,
-    policyAuthority,
-    createArgs,
+    createRequest: Object.freeze({
+      sandboxName: intent.sandboxName,
+      source: Object.freeze({ reference: fromRef }),
+      policyPath: initialSandboxPolicy.policyPath,
+      ...(driverConfig ? { driverConfigJson: driverConfig } : {}),
+      ...(gpu ? { gpu } : {}),
+      ...(resources ? { resources } : {}),
+      ...(intent.inferenceProvider ? { providers: Object.freeze([intent.inferenceProvider]) } : {}),
+    }),
     messagingProviders: [],
     gpuRoutePlan: intent.gpuRoutePlan,
     compatibilityPolicyPath: null,

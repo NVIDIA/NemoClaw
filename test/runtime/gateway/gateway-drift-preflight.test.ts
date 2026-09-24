@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -64,7 +64,6 @@ function writeRegistry(home: string): void {
             model: "test-model",
             provider: "nvidia-prod",
             gpuEnabled: false,
-            policies: [],
             agent: "openclaw",
             agentVersion: "test-version",
           },
@@ -97,6 +96,10 @@ case "\${1:-}" in
   gateway)
     if [ "\${2:-}" = "info" ]; then
       printf 'Gateway Info\n\n  Gateway: nemoclaw\n  Gateway endpoint: http://127.0.0.1:8080\n'
+      exit 0
+    fi
+    if [ "\${2:-}" = "list" ] && [ "\${3:-}" = "-o" ] && [ "\${4:-}" = "json" ]; then
+      printf '%s\n' '[{"name":"nemoclaw","endpoint":"http://127.0.0.1:8080","active":true}]'
       exit 0
     fi
     ;;

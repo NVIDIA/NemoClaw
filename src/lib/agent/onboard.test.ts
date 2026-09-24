@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
+import type {
+  OpenShellSandboxBufferedCommandExecutor,
+  OpenShellSandboxBufferedCommandRequest,
+} from "../adapters/openshell/sandbox-command";
 
 // The ready summary resolves the sandbox's API port from the registry. Stub the
 // lookup so these unit tests never read the developer's real state file.
@@ -10,16 +14,6 @@ const getSandboxMock = vi.hoisted(() =>
 );
 vi.mock("../state/registry", () => ({ getSandbox: getSandboxMock }));
 
-const mocks = vi.hoisted(() => ({
-  run: vi.fn(),
-}));
-
-vi.mock("../runner", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../runner")>()),
-  run: mocks.run,
-}));
-
-import { sandboxConfigSyncArgs } from "../onboard/config-sync";
 import type { AgentDefinition } from "./defs";
 // Import source directly so tests cannot pass against a stale build.
 import {
@@ -29,6 +23,11 @@ import {
   printDashboardUi,
   verifyAgentBinaryAvailable,
 } from "./onboard";
+
+type LegacyCapture = (
+  args: string[],
+  options?: { ignoreError?: boolean; includeStderr?: boolean; timeout?: number },
+) => string | null;
 
 function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
   return {
@@ -43,7 +42,6 @@ function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
       configFile: "/tmp/agent/config.yaml",
       envFile: null,
       format: "yaml",
-      shieldsFiles: [],
     },
     inferenceProviderOptions: [],
     mcpCapability: {
@@ -57,15 +55,6 @@ function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
     backupStateDirPrefixes: [],
     nonBackupStateDirs: [],
     nonBackupStateDirPrefixes: [],
-    stateLockPlan: {
-      version: 1,
-      readOnlyRoots: [],
-      confidentialRoots: [],
-      readOnlyPrefixes: [],
-      confidentialPrefixes: [],
-      writableSubpaths: [],
-    },
-    stateLockPlanInImage: false,
     stateFiles: [],
     userManagedFiles: [],
     versionCommand: "agent --version",
@@ -76,12 +65,50 @@ function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
     dockerfilePath: null,
     startScriptPath: null,
     policyAdditionsPath: null,
-    policyPermissivePath: null,
     pluginDir: null,
     legacyPaths: null,
     agentDir: "/tmp/agent",
     manifestPath: "/tmp/agent/manifest.yaml",
     ...overrides,
+  };
+}
+
+function requestAsLegacyArgs(request: OpenShellSandboxBufferedCommandRequest): string[] {
+  const targetArgs = request.target.kind === "named" ? ["-g", request.target.gatewayName] : [];
+  const ttyArgs = request.tty === false ? ["--no-tty"] : [];
+  const args = ["sandbox", "exec", "-n", request.sandboxName, ...targetArgs, ...ttyArgs];
+  for (const [key, value] of Object.entries(request.sandboxEnvironment ?? {})) {
+    args.push("--env", `${key}=${value}`);
+  }
+  return [...args, "--", ...request.command];
+}
+
+function legacyBufferedExecutor(
+  capture: LegacyCapture,
+): OpenShellSandboxBufferedCommandExecutor & { runBuffered: ReturnType<typeof vi.fn> } {
+  return {
+    runBuffered: vi.fn(async (request: OpenShellSandboxBufferedCommandRequest) => {
+      const isScript = request.command[0] === "/bin/bash" && request.command[1] === "-s";
+      const output = capture(requestAsLegacyArgs(request), { ignoreError: true });
+      const capturedCompletion =
+        output === null
+          ? {
+              outcome: {
+                kind: "failed" as const,
+                error: { kind: "invocation" as const, message: "unobservable" },
+              },
+              stdout: "",
+              stderr: "",
+            }
+          : {
+              outcome: { kind: "completed" as const, exitCode: 0 },
+              stdout: output,
+              stderr: "",
+            };
+      return isScript
+        ? { outcome: { kind: "completed" as const, exitCode: 0 }, stdout: "", stderr: "" }
+        : capturedCompletion;
+    }),
   };
 }
 
@@ -305,23 +332,23 @@ describe("printDashboardUi with port 8642 outside the chat UI (#2078)", () => {
 
 describe("agent setup session boundaries", () => {
   function createAgentSetupContext(
-    runCaptureOpenshell: OnboardContext["runCaptureOpenshell"] = vi.fn(() => ""),
+    runCaptureOpenshell: LegacyCapture = vi.fn(() => ""),
     timing: Pick<OnboardContext, "now" | "sleepSeconds"> = {},
-    policyRequirements: Pick<OnboardContext, "revalidatePolicyRequirements"> = {},
+    identityBoundary: Pick<OnboardContext, "revalidateSandboxIdentity"> = {},
   ) {
+    const sandboxCommandExecutor = legacyBufferedExecutor(runCaptureOpenshell);
     return {
       context: {
         step: vi.fn(),
-        runCaptureOpenshell,
-        openshellShellCommand: vi.fn(() => "openshell sandbox connect sandbox-x"),
-        openshellBinary: "/usr/bin/openshell",
+        sandboxCommandExecutor,
         startRecordedStep: vi.fn(async () => undefined),
         recordStepComplete: vi.fn(async () => undefined),
         recordStepFailed: vi.fn(async () => undefined),
         skippedStepMessage: vi.fn(),
         ...timing,
-        ...policyRequirements,
+        ...identityBoundary,
       },
+      runBuffered: sandboxCommandExecutor.runBuffered,
     };
   }
 
@@ -331,7 +358,6 @@ describe("agent setup session boundaries", () => {
   });
 
   afterEach(() => {
-    mocks.run.mockReset();
     vi.restoreAllMocks();
   });
 
@@ -374,7 +400,7 @@ describe("agent setup session boundaries", () => {
 
   it("writes non-default agent configuration through noninteractive sandbox exec", async () => {
     const runCaptureOpenshell = vi.fn(() => "NEMOCLAW_AGENT_BINARY_CHECK:ok");
-    const { context } = createAgentSetupContext(runCaptureOpenshell);
+    const { context, runBuffered } = createAgentSetupContext(runCaptureOpenshell);
     const agent = makeAgent({
       name: "hermes",
       healthProbe: { url: "", port: 0, timeout_seconds: 0 },
@@ -382,16 +408,19 @@ describe("agent setup session boundaries", () => {
 
     await handleAgentSetup("sandbox-x", "meta-llama", "vllm-local", agent, false, null, context);
 
-    expect(mocks.run).toHaveBeenCalledTimes(1);
-    const [args, options] = mocks.run.mock.calls[0];
-    expect(args).toEqual(["/usr/bin/openshell", ...sandboxConfigSyncArgs("sandbox-x")]);
-    expect(options).toMatchObject({
+    const configRequest = runBuffered.mock.calls
+      .map(([request]) => request)
+      .find((request) => request.command[0] === "/bin/bash" && request.command[1] === "-s");
+    expect(configRequest).toMatchObject({
+      sandboxName: "sandbox-x",
+      target: { kind: "selected" },
+      command: ["/bin/bash", "-s"],
+      tty: false,
       input: expect.any(String),
-      stdio: ["pipe", "ignore", "inherit"],
     });
-    expect(options.input).toContain('"provider": "vllm-local"');
-    expect(options.input).toContain('"model": "meta-llama"');
-    expect(options.input).toContain('"agent": "hermes"');
+    expect(configRequest?.input).toContain('"provider": "vllm-local"');
+    expect(configRequest?.input).toContain('"model": "meta-llama"');
+    expect(configRequest?.input).toContain('"agent": "hermes"');
   });
 
   it("retries a configured gateway probe through the supplied scheduler", async () => {
@@ -400,7 +429,7 @@ describe("agent setup session boundaries", () => {
       nowMs += seconds * 1000;
     });
     const runCaptureOpenshell = vi
-      .fn<OnboardContext["runCaptureOpenshell"]>(() => "ok")
+      .fn<LegacyCapture>(() => "ok")
       .mockReturnValueOnce("NEMOCLAW_AGENT_BINARY_CHECK:ok")
       .mockReturnValueOnce("");
     const { context } = createAgentSetupContext(runCaptureOpenshell, {
@@ -432,28 +461,26 @@ describe("agent setup session boundaries", () => {
     expect(context.recordStepFailed).not.toHaveBeenCalled();
   });
 
-  it("refuses completion when policy authority changes during the gateway wait (#9833)", async () => {
+  it("refuses completion when sandbox identity changes during the gateway wait (#9833)", async () => {
     let nowMs = 0;
     const sleepSeconds = vi.fn((seconds: number) => {
       nowMs += seconds * 1000;
     });
     const runCaptureOpenshell = vi
-      .fn<OnboardContext["runCaptureOpenshell"]>(() => "ok")
+      .fn<LegacyCapture>(() => "ok")
       .mockReturnValueOnce("NEMOCLAW_AGENT_BINARY_CHECK:ok")
       .mockReturnValueOnce("");
     const refuseCompletion = () => {
-      throw new Error("policy authority changed");
+      throw new Error("sandbox identity changed");
     };
     const policyChecks = new Map([
       ["record completed agent setup for sandbox 'sandbox-x'", refuseCompletion],
     ]);
-    const revalidatePolicyRequirements = vi.fn((operation: string) =>
-      policyChecks.get(operation)?.(),
-    );
+    const revalidateSandboxIdentity = vi.fn((operation: string) => policyChecks.get(operation)?.());
     const { context } = createAgentSetupContext(
       runCaptureOpenshell,
       { now: () => nowMs, sleepSeconds },
-      { revalidatePolicyRequirements },
+      { revalidateSandboxIdentity },
     );
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
 
@@ -469,7 +496,7 @@ describe("agent setup session boundaries", () => {
         null,
         context,
       ),
-    ).rejects.toThrow("policy authority changed");
+    ).rejects.toThrow("sandbox identity changed");
 
     expect(sleepSeconds).toHaveBeenCalledWith(0.25);
     expect(context.recordStepComplete).not.toHaveBeenCalled();
@@ -482,7 +509,7 @@ describe("agent setup session boundaries", () => {
       nowMs += seconds * 1000;
     });
     const runCaptureOpenshell = vi
-      .fn<OnboardContext["runCaptureOpenshell"]>(() => "")
+      .fn<LegacyCapture>(() => "")
       .mockReturnValueOnce("NEMOCLAW_AGENT_BINARY_CHECK:ok");
     const { context } = createAgentSetupContext(runCaptureOpenshell, {
       now: () => nowMs,
@@ -525,9 +552,7 @@ describe("agent setup session boundaries", () => {
     healthProbe: { url: "http://localhost:8642/health", port: 8642, timeout_seconds: 1 },
   });
 
-  function probeUrlsFrom(
-    runCaptureOpenshell: ReturnType<typeof vi.fn<OnboardContext["runCaptureOpenshell"]>>,
-  ): string[] {
+  function probeUrlsFrom(runCaptureOpenshell: ReturnType<typeof vi.fn<LegacyCapture>>): string[] {
     return runCaptureOpenshell.mock.calls
       .map(([args]) => args)
       .filter((args) => args.includes("curl"))
@@ -537,7 +562,7 @@ describe("agent setup session boundaries", () => {
   it("probes the sandbox's own Hermes API port instead of the manifest default (#9739)", async () => {
     getSandboxMock.mockReturnValue({ hermesApiPort: 8643 });
     const runCaptureOpenshell = vi
-      .fn<OnboardContext["runCaptureOpenshell"]>(() => "ok")
+      .fn<LegacyCapture>(() => "ok")
       .mockReturnValueOnce("NEMOCLAW_AGENT_BINARY_CHECK:ok");
     const { context } = createAgentSetupContext(runCaptureOpenshell);
 
@@ -563,7 +588,7 @@ describe("agent setup session boundaries", () => {
   it("keeps the manifest probe port for a sandbox that owns the default API port (#9739)", async () => {
     getSandboxMock.mockReturnValue({ hermesApiPort: 8642 });
     const runCaptureOpenshell = vi
-      .fn<OnboardContext["runCaptureOpenshell"]>(() => "ok")
+      .fn<LegacyCapture>(() => "ok")
       .mockReturnValueOnce("NEMOCLAW_AGENT_BINARY_CHECK:ok");
     const { context } = createAgentSetupContext(runCaptureOpenshell);
 
@@ -584,7 +609,7 @@ describe("agent setup session boundaries", () => {
   it("leaves a non-Hermes probe URL on its manifest port when the registry records a Hermes API port (#9739)", async () => {
     getSandboxMock.mockReturnValue({ hermesApiPort: 8643 });
     const runCaptureOpenshell = vi
-      .fn<OnboardContext["runCaptureOpenshell"]>(() => "ok")
+      .fn<LegacyCapture>(() => "ok")
       .mockReturnValueOnce("NEMOCLAW_AGENT_BINARY_CHECK:ok");
     const { context } = createAgentSetupContext(runCaptureOpenshell);
 
@@ -606,7 +631,7 @@ describe("agent setup session boundaries", () => {
 
   it("retargets the resume health probe at the sandbox's own API port (#9739)", async () => {
     getSandboxMock.mockReturnValue({ hermesApiPort: 8643 });
-    const runCaptureOpenshell = vi.fn<OnboardContext["runCaptureOpenshell"]>(() => "ok");
+    const runCaptureOpenshell = vi.fn<LegacyCapture>(() => "ok");
     const { context } = createAgentSetupContext(runCaptureOpenshell);
 
     await handleAgentSetup(
@@ -626,46 +651,30 @@ describe("agent setup session boundaries", () => {
 });
 
 describe("handleAgentSetup guards", () => {
-  it("accepts an executable configured binary path when PATH lookup is empty", () => {
-    let script = "";
-    const result = verifyAgentBinaryAvailable(
+  it("accepts an executable configured binary path when PATH lookup is empty", async () => {
+    const executor = legacyBufferedExecutor(
+      () => "openshell noise\nNEMOCLAW_AGENT_BINARY_CHECK:ok",
+    );
+    const result = await verifyAgentBinaryAvailable(
       "alpha",
       makeAgent({ name: "hermes", binary_path: "/usr/local/bin/hermes" }),
-      (args) => {
-        script = String(args[7] || "");
-        return "openshell noise\nNEMOCLAW_AGENT_BINARY_CHECK:ok";
-      },
+      executor,
     );
 
     expect(result).toEqual({ available: true });
+    const script = String(executor.runBuffered.mock.calls[0]?.[0].command.at(-1) ?? "");
     expect(script).toContain("if [ -x '/usr/local/bin/hermes' ]; then");
     expect(script).toContain("NEMOCLAW_AGENT_BINARY_CHECK:ok");
   });
 
-  it("does not reject a configured binary when PATH resolves the symlink target", () => {
-    let script = "";
-    const result = verifyAgentBinaryAvailable(
-      "alpha",
-      makeAgent({ name: "hermes", binary_path: "/usr/local/bin/hermes" }),
-      (args) => {
-        script = String(args[7] || "");
-        return "openshell noise\nNEMOCLAW_AGENT_BINARY_CHECK:ok";
-      },
+  it("reports a configured binary path that exists but is not executable", async () => {
+    const executor = legacyBufferedExecutor(
+      () => "openshell noise\nNEMOCLAW_AGENT_BINARY_CHECK:not_executable",
     );
-
-    expect(result).toEqual({ available: true });
-    expect(script).toContain("NEMOCLAW_AGENT_BINARY_CHECK:ok");
-  });
-
-  it("reports a configured binary path that exists but is not executable", () => {
-    let script = "";
-    const result = verifyAgentBinaryAvailable(
+    const result = await verifyAgentBinaryAvailable(
       "alpha",
       makeAgent({ name: "hermes", binary_path: "/usr/local/bin/hermes" }),
-      (args) => {
-        script = String(args[7] || "");
-        return "openshell noise\nNEMOCLAW_AGENT_BINARY_CHECK:not_executable";
-      },
+      executor,
     );
 
     expect(result).toEqual({
@@ -673,12 +682,77 @@ describe("handleAgentSetup guards", () => {
       reason: "not_executable",
       binaryPath: "/usr/local/bin/hermes",
     });
+    const script = String(executor.runBuffered.mock.calls[0]?.[0].command.at(-1) ?? "");
     expect(script).toContain("[ -e '/usr/local/bin/hermes' ] && [ ! -x '/usr/local/bin/hermes' ]");
+  });
+
+  it("distinguishes an unobservable sandbox exec from a missing binary", async () => {
+    const result = await verifyAgentBinaryAvailable(
+      "alpha",
+      makeAgent({ name: "pi", binary_path: "/usr/local/bin/pi" }),
+      legacyBufferedExecutor(() => null),
+    );
+
+    expect(result).toEqual({
+      available: false,
+      reason: "unobservable",
+      binaryPath: "/usr/local/bin/pi",
+    });
+  });
+
+  it("accepts a marker from a successful buffered OpenShell completion", async () => {
+    await expect(
+      verifyAgentBinaryAvailable(
+        "alpha",
+        makeAgent({ name: "pi", binary_path: "/usr/local/bin/pi" }),
+        legacyBufferedExecutor(() => "NEMOCLAW_AGENT_BINARY_CHECK:ok"),
+      ),
+    ).resolves.toEqual({ available: true });
+  });
+
+  it("rejects marker text when the buffered command exits unsuccessfully", async () => {
+    await expect(
+      verifyAgentBinaryAvailable(
+        "alpha",
+        makeAgent({ name: "pi", binary_path: "/usr/local/bin/pi" }),
+        {
+          runBuffered: async () => ({
+            outcome: { kind: "completed", exitCode: 1 },
+            stdout: "NEMOCLAW_AGENT_BINARY_CHECK:ok",
+            stderr: "",
+          }),
+        },
+      ),
+    ).resolves.toEqual({
+      available: false,
+      reason: "unobservable",
+      binaryPath: "/usr/local/bin/pi",
+      transportStatus: 1,
+    });
+  });
+
+  it("targets the owning gateway and disables TTY allocation for the binary probe", async () => {
+    const executor = legacyBufferedExecutor(() => "NEMOCLAW_AGENT_BINARY_CHECK:ok");
+
+    await expect(
+      verifyAgentBinaryAvailable(
+        "alpha",
+        makeAgent({ name: "pi", binary_path: "/usr/local/bin/pi" }),
+        executor,
+        "nemoclaw",
+      ),
+    ).resolves.toEqual({ available: true });
+    expect(executor.runBuffered).toHaveBeenCalledWith({
+      sandboxName: "alpha",
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      tty: false,
+      command: ["/bin/bash", "-lc", expect.stringContaining("NEMOCLAW_AGENT_BINARY_CHECK")],
+    });
   });
 });
 
 describe("collectHermesStartupDiagnostics", () => {
-  it("includes Tirith marker content and binary state when the marker is present", () => {
+  it("includes Tirith marker content and binary state when the marker is present", async () => {
     const runCapture = vi.fn(() =>
       [
         "tirith marker: download_failed",
@@ -688,21 +762,14 @@ describe("collectHermesStartupDiagnostics", () => {
       ].join("\n"),
     );
 
-    const diagnostics = collectHermesStartupDiagnostics("alpha", runCapture);
+    const executor = legacyBufferedExecutor(runCapture);
+    const diagnostics = await collectHermesStartupDiagnostics("alpha", executor);
 
-    expect(runCapture).toHaveBeenCalledWith(
-      [
-        "sandbox",
-        "exec",
-        "-n",
-        "alpha",
-        "--",
-        "sh",
-        "-lc",
-        expect.stringContaining("/sandbox/.hermes/.tirith-install-failed"),
-      ],
-      { ignoreError: true },
-    );
+    expect(executor.runBuffered).toHaveBeenCalledWith({
+      sandboxName: "alpha",
+      target: { kind: "selected" },
+      command: ["sh", "-lc", expect.stringContaining("/sandbox/.hermes/.tirith-install-failed")],
+    });
     expect(diagnostics.join("\n")).toContain("Hermes startup diagnostics:");
     expect(diagnostics.join("\n")).toContain("tirith marker: download_failed");
     expect(diagnostics.join("\n")).toContain(
@@ -710,13 +777,15 @@ describe("collectHermesStartupDiagnostics", () => {
     );
   });
 
-  it("returns no extra lines when the Tirith marker is absent", () => {
+  it("returns no extra lines when the Tirith marker is absent", async () => {
     const runCapture = vi.fn(() => "tirith marker: absent\n");
 
-    expect(collectHermesStartupDiagnostics("alpha", runCapture)).toEqual([]);
+    await expect(
+      collectHermesStartupDiagnostics("alpha", legacyBufferedExecutor(runCapture)),
+    ).resolves.toEqual([]);
   });
 
-  it("redacts sensitive values from log tails", () => {
+  it("redacts sensitive values from log tails", async () => {
     const slackToken = ["xoxb", "123456789012", "abcdefghijkl"].join("-");
     const runCapture = vi.fn(() =>
       [
@@ -727,7 +796,9 @@ describe("collectHermesStartupDiagnostics", () => {
       ].join("\n"),
     );
 
-    const output = collectHermesStartupDiagnostics("alpha", runCapture).join("\n");
+    const output = (
+      await collectHermesStartupDiagnostics("alpha", legacyBufferedExecutor(runCapture))
+    ).join("\n");
 
     expect(output).toContain("SLACK_BOT_TOKEN=");
     expect(output).not.toContain(slackToken);

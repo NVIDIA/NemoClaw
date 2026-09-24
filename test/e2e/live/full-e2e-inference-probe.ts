@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { resolveMaxTokensField } from "../../../src/lib/inference/max-tokens-field.ts";
-import { containsInteger42Answer } from "../../helpers/e2e-answer-assertions.ts";
+import { containsAnswer, containsToolCallStructure } from "../../helpers/e2e-answer-assertions.ts";
 
 const ARITHMETIC_PROMPT = "What is 6 multiplied by 7? Reply with only the integer, no extra words.";
 
@@ -149,6 +149,9 @@ export function parseFullE2eInferenceResponse(body: string): FullE2eInferenceRes
   if (!isRecord(choice.message)) {
     throw new Error("inference.local response must contain choices[0].message");
   }
+  if (containsToolCallStructure(parsed)) {
+    throw new Error("inference.local response must not contain tool-call structure");
+  }
 
   const content = optionalString(choice.message.content)?.trim() ?? "";
   const reasoningContent =
@@ -211,7 +214,7 @@ export async function runFullE2eInferenceProbe<Result extends InferenceCommandRe
       return { attempts, outcome: "response-failure" };
     }
 
-    const answerMatched = containsInteger42Answer(response.answer);
+    const answerMatched = containsAnswer(response.answer, "42");
     attempts.push({ answerMatched, attempt, maxTokens, response, result });
     if (answerMatched) return { attempts, outcome: "passed" };
   }

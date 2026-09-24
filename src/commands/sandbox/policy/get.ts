@@ -10,9 +10,9 @@ import { sandboxNameArg } from "../../../lib/sandbox/command-support";
 export default class SandboxPolicyGetCommand extends NemoClawCommand {
   static id = "sandbox:policy:get";
   static strict = true;
-  static summary = "Export the round-trippable sandbox base policy";
+  static summary = "Export the sandbox base policy with literal credentials redacted";
   static description =
-    "Retrieve the OpenShell base policy for a sandbox. By default, strips the OpenShell metadata header and outputs YAML suitable for review, editing, and policy set. Use --raw to emit the unparsed --base response.";
+    "Retrieve the OpenShell base policy for a sandbox with literal credentials redacted. By default, strips the OpenShell metadata header and outputs YAML suitable for review and editing. Replace redaction markers with supported credential bindings. Apply the edited file with `openshell policy set --policy <policy-file> --wait <sandbox-name>`. Use --raw to retain the OpenShell metadata header.";
   static usage = ["<name> [--raw]"];
   static examples = [
     "<%= config.bin %> sandbox policy get alpha",
@@ -23,7 +23,7 @@ export default class SandboxPolicyGetCommand extends NemoClawCommand {
   };
   static flags = {
     raw: Flags.boolean({
-      description: "Output the unparsed OpenShell --base response, including its metadata header",
+      description: "Output the credential-redacted OpenShell response with its metadata header",
       default: false,
     }),
   };
@@ -31,7 +31,7 @@ export default class SandboxPolicyGetCommand extends NemoClawCommand {
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(SandboxPolicyGetCommand);
 
-    const { raw, yaml } = getSandboxPolicy(args.sandboxName);
+    const { raw, yaml } = await getSandboxPolicy(args.sandboxName);
 
     if (!raw) {
       this.error("Failed to retrieve base policy from sandbox.");

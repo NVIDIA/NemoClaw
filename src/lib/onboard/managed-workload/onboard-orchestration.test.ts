@@ -5,9 +5,31 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 
 import { createHermesStateVolumeDockerHarness } from "../__test-helpers__/hermes-state-volume";
+import type { PreparedSandboxBuildContext } from "../build-context-stage";
+import {
+  managedStartupStateRoots,
+  managedStartupWorkspaceRoot,
+} from "../managed-startup/state-roots";
+
+describe("managed workspace-root declarations", () => {
+  it("preserves the DCode sticky root-owned login-profile boundary generically", () => {
+    expect(
+      managedStartupWorkspaceRoot({
+        agent: "langchain-deepagents-code",
+        agentIdentity: { uid: 999, gid: 999 },
+      }),
+    ).toEqual({ uid: 0, gid: 999, mode: 0o1775 });
+    expect(
+      managedStartupWorkspaceRoot({
+        agent: "openclaw",
+        agentIdentity: { uid: 998, gid: 998 },
+      }),
+    ).toEqual({ uid: 998, gid: 998, mode: 0o755 });
+  });
+});
 
 const preparationState = vi.hoisted(() => ({
   prepared: undefined as unknown,
@@ -38,19 +60,28 @@ vi.mock("../../core/version", () => ({
   getVersion: () => "v0.0.0",
 }));
 
+import { mapManagedStartupProfileToAgentEnvironment } from "../managed-startup/agent-environment";
+import { buildManagedStartupOnboardProfile } from "../managed-startup/onboard-profile";
 import {
-  createManagedHermesStateVolumeOnboardLifecycle,
+  createManagedStateVolumeOnboardLifecycle,
   createManagedWorkloadOnboardRuntime,
+  prepareHermesPortableOnboardSandboxLaunch,
   prepareHermesPortableSandboxWorkloadForLifecycle,
   prepareOnboardSandboxWorkloadLaunch,
+  prepareSandboxWorkloadForPortableLifecycle,
+  resolveOnboardSandboxWorkloadReceipt,
   shouldActivateStockManagedRuntime,
+  shouldUseManagedOpenclawStartup,
 } from "./onboard-orchestration";
+
+afterEach(() => vi.unstubAllEnvs());
 
 function createFreshOnboardingRuntime(
   environment: Readonly<Record<string, string>>,
   options: {
     readonly stockManagedRuntime?: boolean;
     readonly tempManagedRuntime?: boolean;
+    readonly tempManagedRuntimeCatalog?: string | null;
     readonly unavailableCatalog?: boolean;
   } = {},
 ) {
@@ -73,7 +104,7 @@ function createFreshOnboardingRuntime(
       managedWorkloadRebuild: null,
       tempManagedRuntime: options.tempManagedRuntime ?? false,
       stockManagedRuntime: options.stockManagedRuntime ?? false,
-      tempManagedRuntimeCatalog: null,
+      tempManagedRuntimeCatalog: options.tempManagedRuntimeCatalog ?? null,
       agentName: "openclaw",
       legacyDockerfilePath: "agents/openclaw/Dockerfile",
       customDockerfilePath: null,
@@ -124,6 +155,25 @@ async function expectUnsupportedHermesPortableSources(
 }
 
 describe("managed workload onboard orchestration", () => {
+  it.each([
+    [true, "identity-bound", true],
+    [true, "legacy-unbound", false],
+    [false, "identity-bound", false],
+  ] as const)(
+    "selects managed OpenClaw finalization default=%s protocol=%s",
+    (defaultOpenclawSelected, managedStartupProtocol, expected) => {
+      expect(
+        shouldUseManagedOpenclawStartup(defaultOpenclawSelected, {
+          managedStartupProtocol,
+          workload: {
+            schemaVersion: 1,
+            kind: "managed-image",
+          } as never,
+        }),
+      ).toBe(expected);
+    },
+  );
+
   afterAll(() => {
     fs.rmSync(releaseRoot, { force: true, recursive: true });
   });
@@ -183,23 +233,102 @@ describe("managed workload onboard orchestration", () => {
     ).toBe(false);
   });
 
-  it("keeps stock managed images required during providerless interceptor creation (#9833)", () => {
+  it("keeps the Hermes browser URL separate from its loopback managed forward", () => {
+    const runtime = createManagedWorkloadOnboardRuntime(
+      {
+        computePlan: { driverName: "docker" },
+        managedWorkloadRebuild: null,
+        tempManagedRuntime: false,
+        stockManagedRuntime: true,
+        tempManagedRuntimeCatalog: null,
+        agentName: "hermes",
+        legacyDockerfilePath: "agents/hermes/Dockerfile",
+        customDockerfilePath: null,
+        rootDir: releaseRoot,
+        model: "moonshotai/kimi-k2.6",
+        provider: "nvidia",
+        preferredInferenceApi: null,
+        endpointUrl: null,
+        startupProfile: {
+          chatUiUrl: "https://hermes.example.test:19189",
+          effectiveDashboardPort: 19_189,
+          manageDashboard: true,
+          dashboardBindAddress: undefined,
+          wslExposure: false,
+          hermesDashboardState: {
+            config: {
+              enabled: true,
+              port: 19_189,
+              internalPort: 29_189,
+              tuiEnabled: false,
+            },
+            enabled: true,
+          },
+          webSearch: null,
+          toolDisclosure: "progressive",
+          hermesToolGateways: [],
+          messagingPlan: null,
+          dcodeAutoApprovalMode: "disabled",
+          observabilityEnabled: false,
+          environment: {},
+        },
+        note: vi.fn(),
+        fallbackBuildEstimate: () => null,
+      } as unknown as Parameters<typeof createManagedWorkloadOnboardRuntime>[0],
+      {
+        resolveAgentInferenceApi: vi.fn(() => "openai-completions"),
+        getSandboxInferenceConfig: vi.fn(() => ({
+          providerKey: "inference",
+          inferenceBaseUrl: "https://inference.local/v1",
+          inferenceApi: "openai-completions",
+          primaryModelRef: "inference/moonshotai/kimi-k2.6",
+          inferenceCompat: {},
+        })),
+      },
+    );
+
+    const built = runtime.ensurePreparedProfile({
+      source: { kind: "managed-image" },
+    } as never);
+
+    expect(built?.profile.dashboard).toEqual({
+      agent: "hermes",
+      mode: "loopback-forwarded",
+      url: "http://127.0.0.1:19189",
+      browserUrl: "https://hermes.example.test:19189",
+      publicPort: 19_189,
+      internalPort: 29_189,
+      tuiEnabled: false,
+    });
     expect(
-      shouldActivateStockManagedRuntime({
-        portableLifecycle: false,
-        hermesPortableLifecycle: false,
-        agentName: "openclaw",
-      }),
-    ).toBe(true);
+      mapManagedStartupProfileToAgentEnvironment(built!.profile).runtimeEnvironment.CHAT_UI_URL,
+    ).toBe("https://hermes.example.test:19189");
   });
 
-  it("rejects an unavailable catalog for stock managed-image onboarding", async () => {
+  it("uses the Dockerfile when the stock managed-image catalog is unavailable", async () => {
     const { runtime } = createFreshOnboardingRuntime(
       {},
       { stockManagedRuntime: true, unavailableCatalog: true },
     );
 
-    await expect(runtime.ensurePreparedWorkload()).rejects.toThrow("registry offline");
+    await expect(runtime.ensurePreparedWorkload()).resolves.toMatchObject({
+      source: { kind: "legacy-dockerfile" },
+    });
+  });
+
+  it("transfers the onboarding environment to override rejection before catalog fallback (#11138)", async () => {
+    const environment = { NEMOCLAW_SANDBOX_BASE_IMAGE_REF: "credential-bearing-value" };
+    const { runtime } = createFreshOnboardingRuntime(environment, {
+      stockManagedRuntime: true,
+      unavailableCatalog: true,
+    });
+
+    await expect(runtime.ensurePreparedWorkload()).rejects.toThrow(
+      "'NEMOCLAW_SANDBOX_BASE_IMAGE_REF' is set",
+    );
+    expect(prepareSandboxWorkloadSource).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ environment }),
+    );
   });
 
   it("rejects an unavailable catalog for explicit temporary managed-image onboarding", async () => {
@@ -209,6 +338,26 @@ describe("managed workload onboard orchestration", () => {
     );
 
     await expect(runtime.ensurePreparedWorkload()).rejects.toThrow("registry offline");
+  });
+
+  it("treats an explicit temporary catalog as strict managed-image selection", async () => {
+    const { prepared, runtime } = createFreshOnboardingRuntime(
+      {},
+      { tempManagedRuntimeCatalog: "/tmp/pi-candidate-catalog.json" },
+    );
+
+    await expect(runtime.ensurePreparedWorkload()).resolves.toBe(prepared);
+    expect(prepareSandboxWorkloadSource).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        catalogPath: "/tmp/pi-candidate-catalog.json",
+        runtime: expect.objectContaining({
+          driverName: "docker",
+          managedImages: expect.objectContaining({
+            exactDigestReferences: true,
+          }),
+        }),
+      }),
+    );
   });
 
   it("selects only the shipped Hermes Dockerfile fallback without profile or prebuild work", async () => {
@@ -237,19 +386,64 @@ describe("managed workload onboard orchestration", () => {
     await expectUnsupportedHermesPortableSources(runtime, prepared, expectedDockerfilePath);
   });
 
+  it("keeps a portable image contract inert before lifecycle activation (#11079)", async () => {
+    const workload = {
+      source: { kind: "portable-image" },
+      release: null,
+      fallbackDiagnostic: null,
+    } as never;
+    const ensurePreparedProfile = vi.fn();
+    const runtime = {
+      runtimeProvider: null,
+      ensurePreparedWorkload: vi.fn(async () => workload),
+      ensurePreparedProfile,
+    } as never;
+
+    await expect(
+      prepareHermesPortableSandboxWorkloadForLifecycle(
+        runtime,
+        "/workspace/agents/hermes/Dockerfile",
+      ),
+    ).rejects.toThrow("Portable image workload activation is not enabled");
+    await expect(prepareSandboxWorkloadForPortableLifecycle(runtime, false)).rejects.toThrow(
+      "Portable image workload activation is not enabled",
+    );
+    await expect(prepareOnboardSandboxWorkloadLaunch({ workload } as never)).rejects.toThrow(
+      "Portable image workload activation is not enabled",
+    );
+    expect(() =>
+      resolveOnboardSandboxWorkloadReceipt({
+        workload,
+        registryImageRef: "qualified@example.invalid",
+      } as never),
+    ).toThrow("Portable image workload activation is not enabled");
+    expect(ensurePreparedProfile).not.toHaveBeenCalled();
+  });
+
   it("keeps failure cleanup armed until the caller commits registration", () => {
     const docker = createHermesStateVolumeDockerHarness();
     let exitCleanup: (() => void) | null = null;
 
-    const lifecycle = createManagedHermesStateVolumeOnboardLifecycle(
+    const lifecycle = createManagedStateVolumeOnboardLifecycle(
       {
-        agentName: "hermes",
-        runtimeProvider: { identity: { id: "docker" } } as never,
-        sandboxName: "alpha",
-        workloadKind: "managed-image",
+        roots: managedStartupStateRoots({
+          agent: "hermes",
+          sandboxName: "alpha",
+          agentIdentity: { uid: 1000, gid: 1000 },
+        }),
+        runtimeProvider: {
+          identity: { id: "docker" },
+          workload: { managedStateMountDriverId: "docker" },
+          containerEngine: {
+            supported: true,
+            identities: [
+              { operation: "sandbox-lifecycle", engineId: "docker", displayName: "Docker" },
+            ],
+          },
+        } as never,
       },
       {
-        runDocker: docker.runDocker as never,
+        runContainerEngine: docker.runDocker as never,
         registerExitCleanup: (cleanup) => {
           exitCleanup = cleanup;
           return vi.fn();
@@ -257,14 +451,183 @@ describe("managed workload onboard orchestration", () => {
       },
     );
 
-    lifecycle!.materializeSandboxCreatePlan({} as never, (input) => {
-      expect(input.managedStateMount).toMatchObject({ target: "/sandbox/.hermes" });
+    lifecycle.materializeSandboxCreatePlan({} as never, (input) => {
+      expect(input.managedStateMounts).toEqual([
+        expect.objectContaining({ target: "/sandbox/.hermes" }),
+      ]);
+      expect(input.managedStateMountDriverId).toBe("docker");
       return {} as never;
     });
     exitCleanup!();
 
     expect(docker.volume).toBeNull();
     expect(docker.calls.some((args) => args[0] === "rm")).toBe(true);
+  });
+
+  it("keeps deferred Hermes Portable launch on a semantic create request", () => {
+    vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
+    const preparedLaunch = prepareHermesPortableOnboardSandboxLaunch({
+      intent: {
+        sandboxName: "portable-hermes",
+        inferenceProvider: null,
+        activeMessagingChannels: [],
+        messagingProviderRequests: [],
+        reusableMessagingProviders: [],
+        extraProviders: [],
+        staleExtraProviders: [],
+        hermesToolGateways: [],
+        policy: {
+          basePolicyPath: "nemoclaw-blueprint/policies/openclaw-sandbox.yaml",
+          activeMessagingChannels: [],
+          options: {
+            directGpu: false,
+            additionalPresets: [],
+            agentName: "hermes",
+            policyTier: null,
+          },
+        },
+        gpuCreateArgs: [],
+        resourceCreateArgs: [],
+        gpuRoutePlan: "none",
+        sandboxGpuLogMessage: null,
+        disabledChannelNames: [],
+        extraPlaceholderKeys: [],
+      },
+      fromRef: "ghcr.io/nvidia/nemoclaw/hermes:test",
+      launchInput: {
+        agent: null,
+        chatUiUrl: "",
+        sandboxName: "portable-hermes",
+        extraPlaceholderKeys: [],
+        getDashboardForwardPort: () => "0",
+        hermesDashboardState: { enabled: false, config: null },
+        manageDashboard: false,
+        openshellShellCommand: (args) => args.join(" "),
+        openshellArgv: (args) => ["openshell", ...args],
+      },
+      gpuConfig: {
+        mode: "0",
+        hostGpuDetected: false,
+        hostGpuPlatform: null,
+        sandboxGpuEnabled: false,
+        sandboxGpuDevice: null,
+        errors: [],
+      },
+    });
+
+    expect(preparedLaunch.createRequestPlan).toMatchObject({
+      sandboxName: "portable-hermes",
+      source: { reference: "ghcr.io/nvidia/nemoclaw/hermes:test" },
+    });
+    expect(preparedLaunch.launch).toMatchObject({
+      prebuild: {
+        sourceReference: "ghcr.io/nvidia/nemoclaw/hermes:test",
+        imageRef: null,
+        imageId: null,
+      },
+    });
+  });
+
+  it("returns a typed managed-image launch without raw create placeholders", async () => {
+    const profile = buildManagedStartupOnboardProfile({
+      agentName: "openclaw",
+      inference: {
+        routeProvider: "openai",
+        upstreamProvider: "openai-api",
+        model: "gpt-5.4",
+        routedBaseUrl: "https://inference.local/v1",
+        upstreamEndpointUrl: null,
+        api: "openai-responses",
+        primaryModelRef: "openai/gpt-5.4",
+        compatibility: {},
+      },
+      chatUiUrl: "http://127.0.0.1:18789",
+      effectiveDashboardPort: 18_789,
+      manageDashboard: true,
+      dashboardBindAddress: undefined,
+      wslExposure: false,
+      hermesDashboardState: { config: null, enabled: false },
+      webSearch: null,
+      toolDisclosure: "progressive",
+      hermesToolGateways: [],
+      messagingPlan: null,
+      dcodeAutoApprovalMode: "disabled",
+      observabilityEnabled: false,
+      environment: {},
+      corporateCa: null,
+    });
+    const preparedLaunch = await prepareOnboardSandboxWorkloadLaunch({
+      runtime: {
+        runtimeProvider: {
+          gateway: { prepareHostRuntime: () => ({}) },
+        },
+        ensurePreparedWorkload: vi.fn(),
+        ensurePreparedProfile: () => profile,
+      },
+      workload: {
+        source: { kind: "managed-image", reference: "managed@example.invalid" },
+      },
+      legacy: {},
+      plan: {
+        intent: { sandboxGpuLogMessage: null },
+        rebindMessagingTokenDefs: async () => [],
+        runProviderPreDeleteCleanup: vi.fn(async () => {}),
+        upsertMessagingProviders: vi.fn(() => []),
+        getHermesToolGatewayProviderName: vi.fn(() => "unused"),
+        discloseInitialSandboxPolicy: vi.fn(),
+      },
+      launchInput: {
+        agent: null,
+        chatUiUrl: "http://127.0.0.1:18789",
+        sandboxName: "managed-openclaw",
+        env: {},
+        extraPlaceholderKeys: [],
+        getDashboardForwardPort: () => "18789",
+        hermesDashboardState: { enabled: false, config: null },
+        manageDashboard: true,
+        openshellShellCommand: (args: string[]) => args.join(" "),
+      },
+      plannedMessagingPlan: null,
+      gpu: {
+        provider: "openai",
+        config: {
+          mode: "0",
+          hostGpuDetected: false,
+          hostGpuPlatform: null,
+          sandboxGpuEnabled: false,
+          sandboxGpuDevice: null,
+          errors: [],
+        },
+        dockerDriverGateway: false,
+        gatewayPort: 8080,
+      },
+      dependencies: {
+        materializeSandboxCreatePlan: vi.fn(async () => ({
+          activeMessagingChannels: [],
+          compatibilityPolicyPath: null,
+          createArgs: null,
+          createRequest: {
+            sandboxName: "managed-openclaw",
+            source: { reference: "managed@example.invalid" },
+            policyPath: "/tmp/nemoclaw-policy.yaml",
+          },
+          gpuRoutePlan: "none",
+          initialSandboxPolicy: {
+            appliedPresets: [],
+            policyPath: "/tmp/nemoclaw-policy.yaml",
+          },
+          messagingProviders: [],
+          sandboxGpuLogMessage: null,
+          activateDeferredProviderEffects: null,
+        })),
+        prepareSandboxBuildPatchConfig: vi.fn(),
+      },
+    } as never);
+
+    expect(preparedLaunch.createRequestPlan).not.toBeNull();
+    expect(preparedLaunch.launch).not.toHaveProperty("createCommand");
+    expect(preparedLaunch.launch).not.toHaveProperty("createArgv");
+    expect(preparedLaunch.launch.prebuild).not.toHaveProperty("createArgs");
   });
 
   it("retains the live qualification catalog revision during fresh onboarding (#9385)", async () => {
@@ -319,6 +682,33 @@ describe("managed workload onboard orchestration", () => {
     }
   });
 
+  it("retains reused managed-image publication identity for live PR onboarding", async () => {
+    const candidateRevision = "b".repeat(40);
+    const publicationRevision = "a".repeat(40);
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-live-e2e-catalog-"));
+    const catalogPath = path.join(fixtureRoot, "catalog.json");
+    fs.writeFileSync(catalogPath, "{}\n", { mode: 0o600 });
+    try {
+      const { prepared, runtime } = createFreshOnboardingRuntime({
+        GITHUB_ACTIONS: "true",
+        NEMOCLAW_RUN_LIVE_E2E: "1",
+        NEMOCLAW_E2E_EXPECTED_SHA: candidateRevision,
+        NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: catalogPath,
+        NEMOCLAW_E2E_MANAGED_IMAGE_REVISION: publicationRevision,
+      });
+
+      await expect(runtime.ensurePreparedWorkload()).resolves.toBe(prepared);
+      expect(prepareSandboxWorkloadSource).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          catalogPath,
+          expectedCatalogRevision: publicationRevision,
+        }),
+      );
+    } finally {
+      fs.rmSync(fixtureRoot, { force: true, recursive: true });
+    }
+  });
+
   it("omits the qualification catalog revision outside GitHub Actions (#9385)", async () => {
     const { prepared, runtime } = createFreshOnboardingRuntime({
       E2E_MANAGED_IMAGE_REVISION: "a".repeat(40),
@@ -340,50 +730,92 @@ describe("managed workload onboard orchestration", () => {
     );
   });
 
-  it("resolves final-image patch metadata after managed build-context staging", async () => {
-    const resolutionMetadata = { key: "published-dcode-base" };
-    const trustedDockerfile = path.join(
-      process.cwd(),
-      "agents",
-      "langchain-deepagents-code",
-      "Dockerfile",
-    );
-    let staged = false;
+  const stagedContext = {
+    buildCtx: path.join(releaseRoot, "staged"),
+    stagedDockerfile: path.join(releaseRoot, "staged", "Dockerfile"),
+  };
+  const dcodeDockerfile = path.join(process.cwd(), "agents/langchain-deepagents-code/Dockerfile");
+  const hermesDockerfile = path.join(process.cwd(), "agents/hermes/Dockerfile");
+  const preparedHermesContext: PreparedSandboxBuildContext = {
+    ...stagedContext,
+    origin: "generated",
+    buildId: "prepared-hermes-build",
+    cleanupBuildCtx: () => true,
+    verifyBuildCtx: () => true,
+    rebuildTarget: { agentName: "hermes", fromDockerfile: hermesDockerfile },
+  };
+
+  it.each([
+    {
+      behavior: "stages a fresh LangChain Deep Agents Code build before resolving patch metadata",
+      agentName: "langchain-deepagents-code",
+      fromDockerfile: dcodeDockerfile,
+      preparedBuildContext: null,
+      expectedFromDockerfile: null,
+      expectedStageCalls: 1,
+      expectedRawCreate: false,
+    },
+    {
+      behavior: "passes the original Dockerfile to patch resolution for a prepared Hermes rebuild",
+      agentName: "hermes",
+      fromDockerfile: hermesDockerfile,
+      preparedBuildContext: preparedHermesContext,
+      expectedFromDockerfile: hermesDockerfile,
+      expectedStageCalls: 0,
+      expectedRawCreate: false,
+    },
+    {
+      behavior: "keeps Portable OpenClaw on the typed create launch",
+      agentName: "openclaw",
+      fromDockerfile: path.join(process.cwd(), "Dockerfile"),
+      preparedBuildContext: null,
+      expectedFromDockerfile: null,
+      expectedStageCalls: 1,
+      portableLifecycle: true,
+      expectedRawCreate: false,
+    },
+  ])("$behavior", async (testCase) => {
+    const { agentName, fromDockerfile, preparedBuildContext } = testCase;
+    const resolutionMetadata = { key: "published-agent-base" };
+    const createAgentSandbox = vi.fn(() => ({
+      ...stagedContext,
+      baseImageResolutionMetadata: resolutionMetadata,
+    }));
     const resolvePatchInput = vi.fn(() => {
-      expect(staged).toBe(true);
+      expect(createAgentSandbox).toHaveBeenCalledTimes(testCase.expectedStageCalls);
       return {
-        fromDockerfile: trustedDockerfile,
+        fromDockerfile,
+        preparedBuildContext,
         preResolvedBaseImageMetadata: resolutionMetadata,
       } as never;
     });
     const resolveSandboxBuildPatch = vi.fn(async (input: Record<string, unknown>) => {
-      expect(input.fromDockerfile).toBeNull();
+      expect(input.fromDockerfile).toBe(testCase.expectedFromDockerfile);
+      expect(input.preparedBuildContext).toBe(preparedBuildContext);
       expect(input.preResolvedBaseImageMetadata).toBe(resolutionMetadata);
-      expect(input.stagedDockerfile).toBe("/tmp/nemoclaw-staged-context/Dockerfile");
-      return { buildId: "dcode-build", dashboardRemoteBindPrepared: false };
+      expect(input.stagedDockerfile).toBe(stagedContext.stagedDockerfile);
+      return { buildId: "image-build", dashboardRemoteBindPrepared: false };
     });
-    const materializeSandboxCreatePlan = vi.fn(() => ({
-      activeMessagingChannels: [],
-      compatibilityPolicyPath: null,
-      createArgs: [
-        "--from",
-        "/tmp/nemoclaw-staged-context/Dockerfile",
-        "--name",
-        "dcode",
-        "--policy",
-        "/tmp/nemoclaw-policy.yaml",
-      ],
-      gpuRoutePlan: "none",
-      initialSandboxPolicy: {
-        appliedPresets: [],
-        policyPath: "/tmp/nemoclaw-policy.yaml",
-      },
-      messagingProviders: [],
-      policyTier: null,
-      sandboxGpuLogMessage: null,
-    }));
+    const materializeSandboxCreatePlan = vi.fn(
+      (_input: { readonly portableLifecycle?: boolean }) => ({
+        activeMessagingChannels: [],
+        compatibilityPolicyPath: null,
+        createRequest: {
+          sandboxName: "dcode",
+          source: { reference: stagedContext.stagedDockerfile },
+          policyPath: "/tmp/nemoclaw-policy.yaml",
+        },
+        gpuRoutePlan: "none",
+        initialSandboxPolicy: {
+          appliedPresets: [],
+          policyPath: "/tmp/nemoclaw-policy.yaml",
+        },
+        messagingProviders: [],
+        sandboxGpuLogMessage: null,
+      }),
+    );
 
-    await prepareOnboardSandboxWorkloadLaunch({
+    const preparedLaunch = await prepareOnboardSandboxWorkloadLaunch({
       runtime: {
         runtimeProvider: null,
         ensurePreparedWorkload: vi.fn(),
@@ -392,34 +824,24 @@ describe("managed workload onboard orchestration", () => {
       workload: {
         source: {
           kind: "legacy-dockerfile",
-          dockerfilePath: "agents/langchain-deepagents-code/Dockerfile",
+          dockerfilePath: fromDockerfile,
           reason: "runtime-unsupported",
         },
         release: "v0.0.0",
         fallbackDiagnostic: null,
       },
       legacy: {
-        preparedBuildContext: null,
-        agent: {
-          name: "langchain-deepagents-code",
-          displayName: "LangChain Deep Agents Code",
-          dockerfilePath: trustedDockerfile,
-        },
-        fromDockerfile: trustedDockerfile,
-        createAgentSandbox: () => {
-          staged = true;
-          return {
-            buildCtx: "/tmp/nemoclaw-staged-context",
-            stagedDockerfile: "/tmp/nemoclaw-staged-context/Dockerfile",
-            baseImageResolutionMetadata: resolutionMetadata,
-          };
-        },
+        preparedBuildContext,
+        agent: { name: agentName, displayName: agentName, dockerfilePath: fromDockerfile },
+        fromDockerfile,
+        createAgentSandbox,
         resolvePatchInput,
       },
       plan: {
         intent: {},
+        portableLifecycle: testCase.portableLifecycle === true,
         rebindMessagingTokenDefs: async () => [],
-        runProviderPreDeleteCleanup: vi.fn(),
+        runProviderPreDeleteCleanup: vi.fn(async () => {}),
         upsertMessagingProviders: vi.fn(() => []),
         getHermesToolGatewayProviderName: vi.fn(() => "unused"),
         discloseInitialSandboxPolicy: vi.fn(),
@@ -434,6 +856,7 @@ describe("managed workload onboard orchestration", () => {
         hermesDashboardState: {},
         manageDashboard: false,
         openshellShellCommand: () => "openshell sandbox create",
+        openshellArgv: (args: string[]) => ["openshell", ...args],
       },
       plannedMessagingPlan: null,
       gpu: {
@@ -460,5 +883,17 @@ describe("managed workload onboard orchestration", () => {
 
     expect(resolvePatchInput).toHaveBeenCalledOnce();
     expect(resolveSandboxBuildPatch).toHaveBeenCalledOnce();
+    expect(materializeSandboxCreatePlan).toHaveBeenCalledWith(
+      expect.objectContaining({ portableLifecycle: testCase.portableLifecycle === true }),
+    );
+    expect(preparedLaunch.createRequestPlan === null).toBe(testCase.expectedRawCreate);
+    expect(Object.hasOwn(preparedLaunch.launch, "createCommand")).toBe(testCase.expectedRawCreate);
+    expect(Object.hasOwn(preparedLaunch.launch, "createArgv")).toBe(testCase.expectedRawCreate);
+    expect(Object.hasOwn(preparedLaunch.launch.prebuild, "createArgs")).toBe(
+      testCase.expectedRawCreate,
+    );
+    expect("createArgv" in preparedLaunch.launch ? preparedLaunch.launch.createArgv : []).toEqual(
+      testCase.expectedRawCreate ? expect.arrayContaining(["openshell", "sandbox", "create"]) : [],
+    );
   });
 });

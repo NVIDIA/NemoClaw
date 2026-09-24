@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { testTimeoutOptions } from "../../helpers/timeouts";
+import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import { type ShellProbe, trustedShellCommand } from "../fixtures/shell-probe.ts";
@@ -137,7 +138,7 @@ async function runCommand(
     {
       artifactName: options.artifactName,
       cwd: options.cwd,
-      env: { ...process.env, ...(options.env ?? {}) },
+      env: { ...buildAvailabilityProbeEnv(), ...(options.env ?? {}) },
       timeoutMs: options.timeoutMs,
     },
   );

@@ -69,7 +69,10 @@ export const wechatManifest = {
       placeholder: "openshell:resolve:env:WECHAT_BOT_TOKEN",
     },
   ],
-  // The Hermes policy binds the endpointless provider. Apply it before boot
+  state: {
+    openclaw: ["wechat", "openclaw-weixin"],
+  },
+  // Both agent policies bind the endpointless provider. Apply it before boot
   // so OpenShell injects WECHAT_BOT_TOKEN into the agent process environment.
   policyPresets: [{ name: "wechat", policyKeys: ["wechat_bridge"], requiredAtCreate: true }],
   render: [
@@ -128,6 +131,11 @@ export const wechatManifest = {
       },
       nodePreloads: [
         {
+          module: "wechat-account-placeholder",
+          injectInto: ["boot"],
+          optional: false,
+        },
+        {
           module: "wechat-diagnostics",
           injectInto: ["boot", "connect"],
           optional: false,
@@ -142,7 +150,7 @@ export const wechatManifest = {
         {
           envKey: "WECHAT_BOT_TOKEN",
           targetEnvKey: "WEIXIN_TOKEN",
-          match: "^openshell:resolve:env:v[0-9]+_WECHAT_BOT_TOKEN$",
+          match: "^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_WECHAT_BOT_TOKEN$",
           value: "openshell:resolve:env:WECHAT_BOT_TOKEN",
         },
       ],

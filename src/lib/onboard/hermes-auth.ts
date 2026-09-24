@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { normalizeCredentialValue } from "../credentials/store";
+import { createCliOpenShellProviderAdapter } from "../adapters/openshell/provider-adapter-cli";
 import type { HermesAuthMethod } from "../hermes-provider-auth";
 import * as hermesProviderAuth from "../hermes-provider-auth";
 
@@ -93,7 +94,7 @@ export interface HermesAuthHelpers {
   }): string;
   checkHermesProviderStoreReachable(
     runOpenshellImpl?: HermesAuthFlowDeps["runOpenshell"],
-  ): { ok: true } | { ok: false; message: string };
+  ): Promise<{ ok: true } | { ok: false; message: string }>;
 }
 
 export function createHermesAuthHelpers(deps: HermesAuthFlowDeps): HermesAuthHelpers {
@@ -182,20 +183,27 @@ export function createHermesAuthHelpers(deps: HermesAuthFlowDeps): HermesAuthHel
     return deps.compactText(deps.redact(`${result.stderr || ""} ${result.stdout || ""}`));
   }
 
-  function checkHermesProviderStoreReachable(
+  async function checkHermesProviderStoreReachable(
     runOpenshellImpl: HermesAuthFlowDeps["runOpenshell"] = deps.runOpenshell,
-  ): { ok: true } | { ok: false; message: string } {
-    const result = runOpenshellImpl(["provider", "list"], {
-      ignoreError: true,
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: 10_000,
+  ): Promise<{ ok: true } | { ok: false; message: string }> {
+    const adapter = createCliOpenShellProviderAdapter({
+      run: (args, options) => {
+        const result = runOpenshellImpl(args, options);
+        return {
+          status: result.status ?? null,
+          stdout: result.stdout,
+          stderr: result.stderr,
+        };
+      },
     });
-    if (result.status === 0) return { ok: true };
+    const result = await adapter.listProviders({
+      target: { kind: "selected" },
+      timeoutMs: 10_000,
+    });
+    if (result.ok) return { ok: true };
     return {
       ok: false,
-      message:
-        openshellResultMessage(result) ||
-        "OpenShell provider storage is unreachable; the gateway may be stopped or refusing connections.",
+      message: result.error.message,
     };
   }
 

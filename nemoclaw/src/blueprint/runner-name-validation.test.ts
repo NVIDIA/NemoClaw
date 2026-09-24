@@ -18,7 +18,7 @@ import {
 } from "./runner-mock-fixtures.js";
 import {
   minimalBlueprint,
-  resultWithBlueprintPolicyAuthority,
+  resultWithBlueprintPolicy,
   successResult,
   TEST_SANDBOX_POLICY,
   TEST_SANDBOX_POLICY_PATH,
@@ -47,6 +47,7 @@ vi.mock("node:fs", async (importOriginal) => {
     openSync: memory.openSync,
     readFileSync: memory.readFileSync,
     renameSync: memory.renameSync,
+    unlinkSync: memory.unlinkSync,
     writeFileSync: memory.writeFileSync,
     readdirSync: memory.readdirSync,
   };
@@ -128,7 +129,7 @@ describe("blueprint name validation (fail-closed integration)", () => {
     vi.clearAllMocks();
     vi.spyOn(process.stdout, "write").mockImplementation(stdout.write);
     mockExeca.mockImplementation(async (_command: string, args: string[]) =>
-      resultWithBlueprintPolicyAuthority(args, successResult()),
+      resultWithBlueprintPolicy(args, successResult()),
     );
   });
 

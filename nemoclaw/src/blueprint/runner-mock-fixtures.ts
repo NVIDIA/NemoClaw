@@ -49,7 +49,7 @@ function missingEntry(path: string): never {
 export interface InMemoryFsOptions {
   /** Canonical-path overrides consulted by realpathSync before the store. */
   realpaths?: Map<string, string>;
-  /** Wrapper applied to mutating methods so tests can track calls (pass vi.fn). */
+  /** Wrapper for mutations and directory reads so tests can track calls (pass vi.fn). */
   spy?: <T extends (...args: never[]) => unknown>(fn: T) => T;
 }
 
@@ -88,6 +88,9 @@ export function inMemoryFsMethods(store: Map<string, RunnerFsEntry>, options?: I
       if (!entry) return missingEntry(source);
       store.set(destination, entry);
       store.delete(source);
+    }),
+    unlinkSync: spy((target: string) => {
+      if (!store.delete(target)) return missingEntry(target);
     }),
     readdirSync: spy((p: string) => {
       const prefix = p.endsWith("/") ? p : `${p}/`;

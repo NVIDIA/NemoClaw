@@ -46,7 +46,7 @@ function checkout(job: Record<string, unknown>): Record<string, unknown> {
 }
 
 function resolverInvocation(command: string): string {
-  return `node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-merge-conflict-fixer/resolve.mts" ${command}`;
+  return `node --no-warnings "$TRUSTED_CHECKOUT/tools/pr-merge-conflict-fixer/resolve.mts" ${command}`;
 }
 
 describe("PR merge conflict fixer workflow boundary", () => {
@@ -85,8 +85,24 @@ describe("PR merge conflict fixer workflow boundary", () => {
       .map((step) => step.uses)
       .filter((reference): reference is string => typeof reference === "string");
     expect(actionReferences).not.toHaveLength(0);
+    expect(actionReferences.filter((reference) => reference.startsWith("./"))).toEqual([
+      "./.github/actions/setup-reviewed-npm",
+      "./trusted/.github/actions/setup-reviewed-npm",
+      "./trusted/.github/actions/setup-reviewed-npm",
+    ]);
+    expect(namedStep(scan, "Install reviewed npm").uses).toBe(
+      "./.github/actions/setup-reviewed-npm",
+    );
+    expect(namedStep(resolve, "Install reviewed npm").uses).toBe(
+      "./trusted/.github/actions/setup-reviewed-npm",
+    );
+    expect(namedStep(publish, "Install reviewed npm").uses).toBe(
+      "./trusted/.github/actions/setup-reviewed-npm",
+    );
     expect(
-      actionReferences.every((reference) => /^[^@\s]+\/[^@\s]+@[0-9a-f]{40}$/u.test(reference)),
+      actionReferences
+        .filter((reference) => !reference.startsWith("./"))
+        .every((reference) => /^[^@\s]+\/[^@\s]+@[0-9a-f]{40}$/u.test(reference)),
     ).toBe(true);
 
     [scan, resolve, publish].forEach((job) => {

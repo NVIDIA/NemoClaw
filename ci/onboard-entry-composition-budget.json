@@ -11,14 +11,13 @@
     "runOnboard.finalizationDeps.verifyDeployment.getMessagingChannels": 1
   },
   "policy": {
-    "createOnboardPolicyApplication.getRecordedPolicyTier": 1,
     "preflightAuthoritativeRebuildTarget": 1,
-    "runOnboard": 5,
+    "runOnboard": 4,
     "sandboxCreateIntentResolver.getAgentPolicyPath": 1
   },
   "provider": {
     "handleNimLocalSelection": 36,
-    "handleRemoteProviderSelection": 84,
+    "handleRemoteProviderSelection": 82,
     "handleRemoteProviderSelection.providerExistsInGateway": 1,
     "handleRemoteProviderSelection.readGatewayProviderMetadata": 1,
     "handleVllmSelection.queryVllmModels": 1,

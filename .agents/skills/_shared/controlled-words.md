@@ -163,7 +163,6 @@ other literal identifiers.
 | `OpenShell gateway` | Technical noun | The host service that owns credentials, coordinates sandbox lifecycle, and proxies approved traffic. | agent gateway, gateway when the type is unclear |
 | `port forward` | Technical noun or verb | A connection that maps a host port to a service inside a sandbox, or the act of creating that connection. | tunnel when no general tunnel exists |
 | `provider profile` | Technical noun | An OpenShell declaration of one service provider's credentials, endpoints, allowed binaries, and access policy. | inference profile, provider settings |
-| `runtime provider state mutation` | Technical noun | A bounded, provider-mediated protection transition or restore operation whose selected state, projection digest, active fence, and recovery contract are explicit. | state mutation without the runtime provider modifier, lifecycle mutation |
 | `runtime setting` | Technical noun | A value applied when a process or sandbox runs. | build-time setting, runtime config |
 | `sandbox image` | Technical noun | The built image used to create an agent sandbox. | base image, container |
 | `sandbox registry` | Technical noun | NemoClaw state that records managed sandboxes and their selected agent types. | image registry, container registry |
@@ -229,7 +228,6 @@ other literal identifiers.
 | `filesystem policy` | Technical noun | Rules that control sandbox access to filesystem paths. | file permissions when the complete policy is intended |
 | `least privilege` | Technical noun | Grant only the access required for the stated operation. | minimal permissions, locked down |
 | `link-local address` | Technical noun | An IP address valid only on the directly connected network segment. | local address, private IP address |
-| `lockdown` | Technical noun | The protected filesystem, process, and restrictive network-policy posture restored by Shields up. | hardening, shields when the resulting posture is intended |
 | `loopback address` | Technical noun | An IP address that refers to the same network host. | localhost when an address is intended, local address |
 | `network namespace` | Technical noun | The operating-system isolation boundary for network devices, routes, and sockets. | network sandbox, container network |
 | `policy` | Technical noun | Enforceable rules that allow, deny, or constrain an operation. Name the policy type at first use. | configuration, settings |
@@ -245,9 +243,6 @@ other literal identifiers.
 | `sandbox boundary` | Technical noun | The isolation boundary between sandbox processes and host or external resources. | container boundary, security boundary without naming the sandbox |
 | `seccomp` | Technical noun or adjective | Linux system-call filtering enforced for sandbox processes. | syscall sandbox, seccomp-BPF in general prose |
 | `secret` | Technical noun or adjective | Sensitive authentication or cryptographic material that must not be exposed. | credential when the value is not used for authentication |
-| `Shields down` | Product state or command name | The temporary state that relaxes selected NemoClaw lockdown controls. | permissive state, unlocked mode |
-| `shields-down window` | Technical noun | The bounded time during which Shields down remains active before automatic restoration. | maintenance window, unlock period |
-| `Shields up` | Product state or command name | The state that enforces NemoClaw lockdown controls. | secure mode, locked state |
 | `trust boundary` | Technical noun | A boundary across which data or control changes its trust assumptions. | security boundary without naming the trust change |
 | `trusted` | Adjective | Explicitly accepted as an input, identity, or component within a named trust boundary. | safe, secure |
 | `untrusted` | Adjective | Not accepted as authoritative or safe without validation at a named trust boundary. | unsafe, external |

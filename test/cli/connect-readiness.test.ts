@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { LAUNCH_READINESS_FIXTURE_POLICY } from "../helpers/launch-readiness-fixture";
 import {
   execTimeout,
   runWithEnv,
@@ -32,7 +33,6 @@ describe("CLI connect readiness", () => {
             model: "test-model",
             provider: "nvidia-prod",
             gpuEnabled: false,
-            policies: [],
           },
         },
         defaultSandbox: "alpha",
@@ -46,6 +46,16 @@ describe("CLI connect readiness", () => {
         `marker_file=${JSON.stringify(markerFile)}`,
         `state_file=${JSON.stringify(stateFile)}`,
         'printf \'%s\\n\' "$*" >> "$marker_file"',
+        'if [ "$1" = "inference" ] && [ "$2" = "get" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw" ]; then',
+        "  echo 'Gateway inference:'",
+        "  echo '  Provider: nvidia-prod'",
+        "  echo '  Model: test-model'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "policy" ] && [ "$2" = "get" ]; then',
+        `  printf '%b' ${JSON.stringify(LAUNCH_READINESS_FIXTURE_POLICY)}`,
+        "  exit 0",
+        "fi",
         'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw" ] && [ "$5" = "alpha" ]; then',
         "  echo 'Sandbox:'",
         "  echo",
@@ -97,11 +107,12 @@ describe("CLI connect readiness", () => {
     expect(r.out.includes("Waiting for sandbox 'alpha' to be ready")).toBeTruthy();
     expect(r.out.includes("Sandbox is ready. Connecting")).toBeTruthy();
     const calls = fs.readFileSync(markerFile, "utf8").trim().split("\n").filter(Boolean);
+    expect(calls).toContain("inference get -g nemoclaw");
     expect(calls).toContain("sandbox get -g nemoclaw alpha");
     expect(
       calls.filter((call) => call === "sandbox list -g nemoclaw").length,
     ).toBeGreaterThanOrEqual(2);
-    expect(calls).toContain("sandbox connect alpha");
+    expect(calls).toContain("sandbox exec --name alpha --tty -- /bin/bash -i");
   });
 
   it(
@@ -122,7 +133,6 @@ describe("CLI connect readiness", () => {
               model: "test-model",
               provider: "nvidia-prod",
               gpuEnabled: false,
-              policies: [],
             },
           },
           defaultSandbox: "alpha",
@@ -136,6 +146,10 @@ describe("CLI connect readiness", () => {
           "#!/usr/bin/env bash",
           `marker_file=${JSON.stringify(markerFile)}`,
           'printf \'%s\\n\' "$*" >> "$marker_file"',
+          'if [ "$1" = "policy" ] && [ "$2" = "get" ]; then',
+          `  printf '%b' ${JSON.stringify(LAUNCH_READINESS_FIXTURE_POLICY)}`,
+          "  exit 0",
+          "fi",
           'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw" ] && [ "$5" = "alpha" ]; then',
           "  echo 'Sandbox:'",
           "  echo",
@@ -209,7 +223,6 @@ describe("CLI connect readiness", () => {
             model: "test-model",
             provider: "nvidia-prod",
             gpuEnabled: false,
-            policies: [],
           },
         },
         defaultSandbox: "alpha",
@@ -222,6 +235,10 @@ describe("CLI connect readiness", () => {
         "#!/usr/bin/env bash",
         `marker_file=${JSON.stringify(markerFile)}`,
         'printf \'%s\\n\' "$*" >> "$marker_file"',
+        'if [ "$1" = "policy" ] && [ "$2" = "get" ]; then',
+        `  printf '%b' ${JSON.stringify(LAUNCH_READINESS_FIXTURE_POLICY)}`,
+        "  exit 0",
+        "fi",
         'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw" ] && [ "$5" = "alpha" ]; then',
         "  echo 'Sandbox:'",
         "  echo",

@@ -7,7 +7,7 @@ import {
   createRebuildFlowHarness,
   installRebuildFlowTestHooks,
   makePreparedRecoveryManifest,
-} from "../../../../test/helpers/rebuild-flow-dcode-harness";
+} from "../../../../test/helpers/rebuild-flow-generic-harness";
 
 describe("prepared rebuild recovery", () => {
   installRebuildFlowTestHooks({ acceptThirdPartySoftware: true });
@@ -179,7 +179,6 @@ describe("prepared rebuild recovery", () => {
         name: "alpha",
         provider: "compatible-endpoint",
         model: "new-model",
-        policies: ["npm", "github"],
         agent: null,
         agentVersion: "0.1.0",
         nemoclawVersion: "0.0.71",

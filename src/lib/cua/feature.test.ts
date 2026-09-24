@@ -3,11 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import {
-  isCuaEnabled,
-  requireCuaEnabled,
-  requireCuaSandboxImageRef,
-} from "./feature";
+import { isCuaEnabled, requireCuaEnabled, requireCuaSandboxImageRef } from "./feature";
 
 describe("NemoCUA feature gate", () => {
   it.each([undefined, "", "0", "01", " 1", "1 ", "true", "yes"])(

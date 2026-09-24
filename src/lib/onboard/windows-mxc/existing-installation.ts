@@ -7,9 +7,10 @@ import {
   type MxcExistingInstallationRuntimeProviderAttachment,
 } from "../runtime-provider/mxc";
 import type { MxcNativeArtifactControlPlane } from "../runtime-provider/mxc-bootstrap-operations";
-import type {
-  MxcOpenShellAttachmentAuthority,
-  MxcOpenShellAttachmentReceipt,
+import {
+  resolveMxcOpenShellDistributionAuthority,
+  type MxcOpenShellAttachmentReceipt,
+  type MxcOpenShellDistributionAuthority,
 } from "../runtime-provider/mxc-openshell-attachment";
 import type {
   MxcOpenShellAttachmentObservationRequest,
@@ -23,7 +24,7 @@ import {
 import { observeWindowsMxcNativeHostFacts } from "./native-host-facts";
 
 export interface MxcWindowsExistingInstallationInput {
-  readonly openshellAttachmentAuthority: MxcOpenShellAttachmentAuthority;
+  readonly openshellDistributionAuthority: MxcOpenShellDistributionAuthority;
   readonly attachmentObservation: MxcOpenShellAttachmentObservationRequest;
   readonly bootstrapControlPlane: MxcNativeArtifactControlPlane;
 }
@@ -54,7 +55,7 @@ function defaultBoundary(): MxcWindowsExistingInstallationBoundary {
 }
 
 /**
- * Compose the inactive native Windows provider from one accepted existing installation.
+ * Compose the inactive native Windows provider from one provider-owned distribution authority.
  *
  * This function observes and qualifies host artifacts only. It does not register,
  * select, install, or activate MXC and does not call the OpenShell control plane.
@@ -62,6 +63,9 @@ function defaultBoundary(): MxcWindowsExistingInstallationBoundary {
 export async function attachMxcWindowsExistingInstallation(
   input: MxcWindowsExistingInstallationInput,
 ): Promise<MxcWindowsExistingInstallationComposition> {
+  const openshellAttachmentAuthority = resolveMxcOpenShellDistributionAuthority(
+    input.openshellDistributionAuthority,
+  );
   const boundary = defaultBoundary();
   const hostFacts = boundary.observeHostFacts();
   const assessment = assessWindowsMxcProcessContainerCandidate(hostFacts);
@@ -71,7 +75,7 @@ export async function attachMxcWindowsExistingInstallation(
 
   const attachment = await attachMxcRuntimeProviderBundleFromExistingInstallation({
     hostFacts,
-    openshellAttachmentAuthority: input.openshellAttachmentAuthority,
+    openshellAttachmentAuthority,
     attachmentObservation: input.attachmentObservation,
     bootstrapControlPlane: input.bootstrapControlPlane,
     observeFileDigest: boundary.observeFileDigest,

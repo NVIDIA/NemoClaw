@@ -182,7 +182,7 @@ describe("onboard Hermes dashboard helpers", () => {
     );
   });
 
-  it("rolls back and fails when an opted-in dashboard forward cannot start", () => {
+  it("rolls back and fails when an opted-in dashboard forward cannot start", async () => {
     const rollback = vi.fn();
     const fail = vi.fn((message: string): never => {
       throw new Error(message);
@@ -200,7 +200,9 @@ describe("onboard Hermes dashboard helpers", () => {
       fail,
     });
 
-    expect(() => ensure("my-hermes", true)).toThrow(/Failed to start Hermes dashboard forward/);
+    await expect(ensure("my-hermes", true)).rejects.toThrow(
+      /Failed to start Hermes dashboard forward/,
+    );
     expect(rollback).toHaveBeenCalledWith("my-hermes");
     expect(fail).toHaveBeenCalledWith(
       expect.stringMatching(/set NEMOCLAW_DASHBOARD_PORT, or pass --control-ui-port <N>/i),
@@ -208,13 +210,13 @@ describe("onboard Hermes dashboard helpers", () => {
     expect(fail.mock.calls[0]?.[0]).not.toContain("NEMOCLAW_HERMES_DASHBOARD_PORT");
   });
 
-  it("stops Hermes dashboard forwarding when authority changes between retries (#9833)", () => {
+  it("stops Hermes dashboard forwarding when authority changes between retries (#9833)", async () => {
     const starts: string[] = [];
-    const revalidatePolicyAuthority = vi
+    const revalidateSandboxIdentity = vi
       .fn<(operation: string) => void>()
       .mockImplementationOnce(() => undefined)
       .mockImplementationOnce(() => {
-        throw new Error("policy authority changed");
+        throw new Error("sandbox identity changed");
       });
     const ensureForward = vi.fn(
       (
@@ -244,54 +246,15 @@ describe("onboard Hermes dashboard helpers", () => {
       },
     });
 
-    expect(() => ensure("my-hermes", false, revalidatePolicyAuthority)).toThrow(
-      "policy authority changed",
+    await expect(ensure("my-hermes", false, revalidateSandboxIdentity)).rejects.toThrow(
+      "sandbox identity changed",
     );
 
     expect(starts).toEqual(["attempt 1"]);
-    expect(revalidatePolicyAuthority).toHaveBeenCalledTimes(2);
+    expect(revalidateSandboxIdentity).toHaveBeenCalledTimes(2);
   });
 
-  it("stops Hermes dashboard rollback when authority changes between commands (#9833)", () => {
-    const runOpenshell = vi.fn();
-    const revalidatePolicyAuthority = vi
-      .fn<(operation: string) => void>()
-      .mockImplementationOnce(() => undefined)
-      .mockImplementationOnce(() => {
-        throw new Error("policy authority changed");
-      });
-    const forwarding = createHermesDashboardOnboardForwarding({
-      agentName: "hermes",
-      env: { NEMOCLAW_HERMES_DASHBOARD: "1" },
-      ensureForward: vi.fn(() => false),
-      note: vi.fn(),
-      runOpenshell,
-      getApiForwardPort: () => "8642",
-      fail: (message): never => {
-        throw new Error(message);
-      },
-    });
-    const state = forwarding.resolveStateForPort(18789);
-
-    expect(() =>
-      forwarding.ensureForState(state, "my-hermes", true, revalidatePolicyAuthority),
-    ).toThrow("policy authority changed");
-
-    expect(runOpenshell).toHaveBeenCalledTimes(1);
-    expect(runOpenshell).toHaveBeenCalledWith(["forward", "stop", "8642", "my-hermes"], {
-      ignoreError: true,
-    });
-    expect(runOpenshell).not.toHaveBeenCalledWith(
-      ["forward", "stop", "18789", "my-hermes"],
-      expect.anything(),
-    );
-    expect(runOpenshell).not.toHaveBeenCalledWith(
-      ["sandbox", "delete", "my-hermes"],
-      expect.anything(),
-    );
-  });
-
-  it("leaves the sandbox running after Hermes dashboard rollback (#9833)", () => {
+  it("leaves the sandbox running after Hermes dashboard rollback (#9833)", async () => {
     const runOpenshell = vi.fn();
     const forwarding = createHermesDashboardOnboardForwarding({
       agentName: "hermes",
@@ -306,19 +269,30 @@ describe("onboard Hermes dashboard helpers", () => {
     });
     const state = forwarding.resolveStateForPort(18789);
 
-    expect(() => forwarding.ensureForState(state, "my-hermes", true)).toThrow(
-      /left the sandbox running/u,
+    await expect(forwarding.ensureForState(state, "my-hermes", true)).rejects.toThrow(
+      /left the sandbox and any established OpenShell service forwards running/u,
     );
-    expect(runOpenshell).toHaveBeenCalledWith(["forward", "stop", "8642", "my-hermes"], {
-      ignoreError: true,
+    expect(runOpenshell).not.toHaveBeenCalled();
+  });
+
+  it("does not signal a ForwardTcp process during dashboard rollback", async () => {
+    const runOpenshell = vi.fn();
+    const ensureForward = vi.fn(() => false);
+    const forwarding = createHermesDashboardOnboardForwarding({
+      agentName: "hermes",
+      env: { NEMOCLAW_HERMES_DASHBOARD: "1" },
+      ensureForward,
+      note: vi.fn(),
+      runOpenshell,
+      getApiForwardPort: () => "8642",
+      fail: (message): never => {
+        throw new Error(message);
+      },
     });
-    expect(runOpenshell).toHaveBeenCalledWith(
-      ["forward", "stop", "18789", "my-hermes"],
-      { ignoreError: true },
-    );
-    expect(runOpenshell).not.toHaveBeenCalledWith(
-      ["sandbox", "delete", "my-hermes"],
-      expect.anything(),
-    );
+
+    await expect(
+      forwarding.ensureForState(forwarding.resolveStateForPort(18789), "hm", true),
+    ).rejects.toThrow(/left the sandbox and any established OpenShell service forwards running/u);
+    expect(runOpenshell).not.toHaveBeenCalled();
   });
 });

@@ -1,17 +1,40 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const adapterMocks = vi.hoisted(() => ({
-  dockerRun: vi.fn(),
-  dockerCapture: vi.fn(),
+  providerCapture: vi.fn(),
   backupWithAuthority: vi.fn(),
+  startSandbox: vi.fn(),
+  stopSandbox: vi.fn(),
 }));
 
-vi.mock("../../adapters/docker/run", () => ({
-  dockerRun: adapterMocks.dockerRun,
-  dockerCapture: adapterMocks.dockerCapture,
+vi.mock("../../adapters/openshell/sandbox-lifecycle-sdk", () => ({
+  createSdkOpenShellSandboxStateLifecycle: () => ({
+    startSandbox: adapterMocks.startSandbox,
+    stopSandbox: adapterMocks.stopSandbox,
+  }),
+}));
+
+vi.mock("../../onboard/runtime-provider/selection", () => ({
+  resolveRegisteredRuntimeProvider: (providerId: string | null | undefined) => {
+    const normalized = String(providerId).trim().toLowerCase();
+    return {
+      identity: { id: normalized },
+      lifecycle: {
+        supported: true,
+        containerMutationTimeoutMs: normalized === "podman" ? 75_000 : 30_000,
+      },
+      containerEngine: {
+        supported: true,
+        identities: [
+          { operation: "sandbox-lifecycle", engineId: normalized, displayName: normalized },
+        ],
+        capture: adapterMocks.providerCapture,
+      },
+    };
+  },
 }));
 vi.mock("../../state/registry", () => ({
   getSandbox: vi.fn(),
@@ -34,25 +57,127 @@ import {
   startStoppedSandboxContainerForBackup,
 } from "./stopped-sandbox-backup";
 
+function lifecycleEngine(runtimeProviderId = "docker") {
+  return { runtimeProviderId, mutationTimeoutMs: 30_000, capture: vi.fn() };
+}
+
 describe("startStoppedSandboxContainerForBackup", () => {
-  const deps = (over: Record<string, unknown> = {}) => ({
-    getSandboxDriver: vi.fn().mockReturnValue("docker"),
-    listSandboxNames: vi.fn().mockReturnValue(["my-sb"]),
-    listLabeledContainerNames: vi.fn().mockReturnValue(["openshell-my-sb-abc123"]),
-    dockerInspectStatus: vi.fn().mockReturnValue("exited"),
-    dockerStart: vi.fn().mockReturnValue("openshell-my-sb-abc123"),
-    ...over,
+  beforeEach(() => {
+    adapterMocks.providerCapture.mockReset();
+    adapterMocks.startSandbox.mockReset();
+    vi.mocked(registry.getSandbox).mockReset();
+    vi.mocked(registry.listSandboxes).mockReset();
   });
 
-  it("starts an exited docker-driver container and reports its name", () => {
+  const deps = (over: Record<string, unknown> = {}) => {
+    const engine = lifecycleEngine();
+    return {
+      getSandbox: vi.fn().mockReturnValue({
+        gatewayName: "nemoclaw",
+        lifecycleLiveIdentityFingerprint: "a".repeat(64),
+        openshellDriver: "docker",
+      }),
+      listSandboxNames: vi.fn().mockReturnValue(["my-sb"]),
+      resolveLifecycleEngine: vi.fn().mockReturnValue(engine),
+      listLabeledContainerNames: vi.fn().mockReturnValue(["openshell-my-sb-abc123"]),
+      inspectStatus: vi.fn().mockReturnValue("exited"),
+      createOpenShellLifecycle: vi.fn().mockReturnValue({
+        startSandbox: vi.fn().mockResolvedValue({ kind: "accepted" }),
+        stopSandbox: vi.fn(),
+      }),
+      ...over,
+    };
+  };
+
+  it("starts an exited provider-owned container through exact-identity OpenShell", async () => {
     const d = deps();
-    expect(startStoppedSandboxContainerForBackup("my-sb", d)).toEqual({
+    await expect(startStoppedSandboxContainerForBackup("my-sb", d)).resolves.toEqual({
       containerName: "openshell-my-sb-abc123",
+      gatewayName: "nemoclaw",
+      mutationTimeoutMs: 30_000,
+      runtimeProviderId: "docker",
+      sandboxIdentityFingerprint: "a".repeat(64),
+      sandboxName: "my-sb",
     });
-    expect(d.dockerStart).toHaveBeenCalledWith("openshell-my-sb-abc123");
+    expect(d.createOpenShellLifecycle().startSandbox).toHaveBeenCalledWith({
+      sandboxName: "my-sb",
+      sandboxIdentityFingerprint: "a".repeat(64),
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      timeoutMs: 30_000,
+    });
+    expect(d.resolveLifecycleEngine().capture).not.toHaveBeenCalledWith(
+      expect.arrayContaining(["start"]),
+      expect.anything(),
+    );
   });
 
-  it("excludes created pending registrations from container ownership (#9733)", () => {
+  it("uses the same OpenShell lifecycle path for a registered Podman provider", async () => {
+    const podmanEngine = lifecycleEngine("podman");
+    const d = deps({
+      getSandbox: vi.fn().mockReturnValue({
+        gatewayName: "nemoclaw",
+        lifecycleLiveIdentityFingerprint: "a".repeat(64),
+        openshellDriver: "podman",
+      }),
+      resolveLifecycleEngine: vi.fn().mockReturnValue(podmanEngine),
+    });
+
+    await expect(startStoppedSandboxContainerForBackup("my-sb", d)).resolves.toEqual({
+      containerName: "openshell-my-sb-abc123",
+      gatewayName: "nemoclaw",
+      mutationTimeoutMs: 30_000,
+      runtimeProviderId: "podman",
+      sandboxIdentityFingerprint: "a".repeat(64),
+      sandboxName: "my-sb",
+    });
+  });
+
+  it("uses the default OpenShell lifecycle adapter without container start mutation", async () => {
+    vi.mocked(registry.getSandbox).mockReturnValue({
+      gatewayName: "nemoclaw",
+      lifecycleLiveIdentityFingerprint: "a".repeat(64),
+      openshellDriver: "docker",
+    } as ReturnType<typeof registry.getSandbox>);
+    vi.mocked(registry.listSandboxes).mockReturnValue({
+      sandboxes: [{ name: "my-sb" }],
+      defaultSandbox: null,
+    });
+    adapterMocks.providerCapture.mockImplementation(
+      (_operation: string, args: readonly string[]) => ({
+        status: 0,
+        stdout: args[0] === "ps" ? "openshell-my-sb-abc123\n" : "exited\n",
+        stderr: "",
+      }),
+    );
+    adapterMocks.startSandbox.mockResolvedValueOnce({ kind: "accepted" });
+
+    await expect(startStoppedSandboxContainerForBackup("my-sb")).resolves.toMatchObject({
+      containerName: "openshell-my-sb-abc123",
+      sandboxName: "my-sb",
+    });
+    expect(adapterMocks.startSandbox).toHaveBeenCalledOnce();
+    expect(
+      adapterMocks.providerCapture.mock.calls.some(
+        ([, args]) => Array.isArray(args) && (args[0] === "start" || args[0] === "stop"),
+      ),
+    ).toBe(false);
+  });
+
+  it("refuses lifecycle mutation without immutable sandbox identity", async () => {
+    const d = deps({
+      getSandbox: vi.fn().mockReturnValue({
+        gatewayName: "nemoclaw",
+        lifecycleLiveIdentityFingerprint: null,
+        openshellDriver: "docker",
+      }),
+    });
+
+    await expect(startStoppedSandboxContainerForBackup("my-sb", d)).resolves.toBeNull();
+    expect(d.resolveLifecycleEngine).not.toHaveBeenCalled();
+    expect(d.createOpenShellLifecycle).not.toHaveBeenCalled();
+  });
+
+  it("excludes created pending registrations from container ownership (#9733)", async () => {
     vi.mocked(registry.listSandboxes).mockReturnValue({
       sandboxes: [
         { name: "my" },
@@ -66,82 +191,104 @@ describe("startStoppedSandboxContainerForBackup", () => {
     });
     const { listSandboxNames: _listSandboxNames, ...d } = deps({
       listLabeledContainerNames: vi.fn().mockReturnValue(["openshell-my-assistant-12ab"]),
-      dockerInspectStatus: vi.fn().mockReturnValue("exited"),
+      inspectStatus: vi.fn().mockReturnValue("exited"),
     });
 
-    expect(startStoppedSandboxContainerForBackup("my", d)).toEqual({
+    await expect(startStoppedSandboxContainerForBackup("my", d)).resolves.toEqual({
       containerName: "openshell-my-assistant-12ab",
+      gatewayName: "nemoclaw",
+      mutationTimeoutMs: 30_000,
+      runtimeProviderId: "docker",
+      sandboxIdentityFingerprint: "a".repeat(64),
+      sandboxName: "my",
     });
   });
 
-  it("starts a created container (onboarded but never run)", () => {
-    const d = deps({ dockerInspectStatus: vi.fn().mockReturnValue("created") });
-    expect(startStoppedSandboxContainerForBackup("my-sb", d)).not.toBeNull();
+  it("starts a created container (onboarded but never run)", async () => {
+    const d = deps({ inspectStatus: vi.fn().mockReturnValue("created") });
+    await expect(startStoppedSandboxContainerForBackup("my-sb", d)).resolves.not.toBeNull();
   });
 
-  it("leaves non-docker-driver sandboxes alone", () => {
-    const d = deps({ getSandboxDriver: vi.fn().mockReturnValue("kubernetes") });
-    expect(startStoppedSandboxContainerForBackup("my-sb", d)).toBeNull();
+  it("leaves providers without a container lifecycle engine alone", async () => {
+    const d = deps({ resolveLifecycleEngine: vi.fn().mockReturnValue(null) });
+    await expect(startStoppedSandboxContainerForBackup("my-sb", d)).resolves.toBeNull();
     expect(d.listLabeledContainerNames).not.toHaveBeenCalled();
   });
 
-  it("returns null when no labeled container owns the sandbox name", () => {
+  it("returns null when no labeled container owns the sandbox name", async () => {
     const d = deps({ listLabeledContainerNames: vi.fn().mockReturnValue([]) });
-    expect(startStoppedSandboxContainerForBackup("my-sb", d)).toBeNull();
-    expect(d.dockerStart).not.toHaveBeenCalled();
+    await expect(startStoppedSandboxContainerForBackup("my-sb", d)).resolves.toBeNull();
+    expect(d.createOpenShellLifecycle).not.toHaveBeenCalled();
   });
 
-  it("refuses ambiguous labeled containers", () => {
+  it("refuses ambiguous labeled containers", async () => {
     const d = deps({
       listLabeledContainerNames: vi
         .fn()
         .mockReturnValue(["openshell-my-sb-old", "openshell-my-sb-new"]),
     });
-    expect(startStoppedSandboxContainerForBackup("my-sb", d)).toBeNull();
-    expect(d.dockerInspectStatus).not.toHaveBeenCalled();
-    expect(d.dockerStart).not.toHaveBeenCalled();
+    await expect(startStoppedSandboxContainerForBackup("my-sb", d)).resolves.toBeNull();
+    expect(d.inspectStatus).not.toHaveBeenCalled();
+    expect(d.createOpenShellLifecycle).not.toHaveBeenCalled();
   });
 
-  it("refuses a labeled container whose name does not belong to the sandbox", () => {
+  it("refuses a labeled container whose name does not belong to the sandbox", async () => {
     const d = deps({ listLabeledContainerNames: vi.fn().mockReturnValue(["openshell-other-x"]) });
-    expect(startStoppedSandboxContainerForBackup("my-sb", d)).toBeNull();
-    expect(d.dockerStart).not.toHaveBeenCalled();
+    await expect(startStoppedSandboxContainerForBackup("my-sb", d)).resolves.toBeNull();
+    expect(d.createOpenShellLifecycle).not.toHaveBeenCalled();
   });
 
-  it("leaves GPU recovery backup siblings to the dedicated recovery flow", () => {
+  it("leaves GPU recovery backup siblings to the dedicated recovery flow", async () => {
     const d = deps({
       listLabeledContainerNames: vi
         .fn()
         .mockReturnValue(["openshell-my-sb-nemoclaw-gpu-backup-123"]),
     });
-    expect(startStoppedSandboxContainerForBackup("my-sb", d)).toBeNull();
-    expect(d.dockerStart).not.toHaveBeenCalled();
+    await expect(startStoppedSandboxContainerForBackup("my-sb", d)).resolves.toBeNull();
+    expect(d.createOpenShellLifecycle).not.toHaveBeenCalled();
   });
 
-  it("leaves a running-but-not-Ready container alone (crash loop, gateway drift)", () => {
-    const d = deps({ dockerInspectStatus: vi.fn().mockReturnValue("running") });
-    expect(startStoppedSandboxContainerForBackup("my-sb", d)).toBeNull();
-    expect(d.dockerStart).not.toHaveBeenCalled();
+  it("leaves a running-but-not-Ready container alone (crash loop, gateway drift)", async () => {
+    const d = deps({ inspectStatus: vi.fn().mockReturnValue("running") });
+    await expect(startStoppedSandboxContainerForBackup("my-sb", d)).resolves.toBeNull();
+    expect(d.createOpenShellLifecycle).not.toHaveBeenCalled();
   });
 
-  it("leaves a paused container alone (#4495)", () => {
-    const d = deps({ dockerInspectStatus: vi.fn().mockReturnValue("paused") });
-    expect(startStoppedSandboxContainerForBackup("my-sb", d)).toBeNull();
-    expect(d.dockerStart).not.toHaveBeenCalled();
+  it("leaves a paused container alone (#4495)", async () => {
+    const d = deps({ inspectStatus: vi.fn().mockReturnValue("paused") });
+    await expect(startStoppedSandboxContainerForBackup("my-sb", d)).resolves.toBeNull();
+    expect(d.createOpenShellLifecycle).not.toHaveBeenCalled();
   });
 
-  it("returns null when docker start fails", () => {
-    const d = deps({ dockerStart: vi.fn().mockReturnValue("") });
-    expect(startStoppedSandboxContainerForBackup("my-sb", d)).toBeNull();
+  it("returns null when the OpenShell start operation fails", async () => {
+    const d = deps({
+      createOpenShellLifecycle: vi.fn().mockReturnValue({
+        startSandbox: vi.fn().mockResolvedValue({
+          kind: "failed",
+          error: { kind: "timeout", message: "OpenShell timed out." },
+        }),
+        stopSandbox: vi.fn(),
+      }),
+    });
+    await expect(startStoppedSandboxContainerForBackup("my-sb", d)).resolves.toBeNull();
   });
 });
 
 describe("isSandboxContainerDefinitivelyAbsent (#6520)", () => {
-  const deps = (over: Record<string, unknown> = {}) => ({
-    getSandboxDriver: vi.fn().mockReturnValue("docker"),
-    listLabeledContainerNames: vi.fn().mockReturnValue([]),
-    ...over,
+  beforeEach(() => {
+    adapterMocks.providerCapture.mockReset();
+    vi.mocked(registry.getSandbox).mockReset();
   });
+
+  const deps = (over: Record<string, unknown> = {}) => {
+    const engine = lifecycleEngine();
+    return {
+      getSandboxDriver: vi.fn().mockReturnValue("docker"),
+      resolveLifecycleEngine: vi.fn().mockReturnValue(engine),
+      listLabeledContainerNames: vi.fn().mockReturnValue([]),
+      ...over,
+    };
+  };
 
   it("reports absent when a successful labeled listing shows zero containers", () => {
     expect(isSandboxContainerDefinitivelyAbsent("my-sb", deps())).toBe(true);
@@ -152,8 +299,8 @@ describe("isSandboxContainerDefinitivelyAbsent (#6520)", () => {
     expect(isSandboxContainerDefinitivelyAbsent("my-sb", d)).toBe(false);
   });
 
-  it("fails closed for non-docker-driver sandboxes", () => {
-    const d = deps({ getSandboxDriver: vi.fn().mockReturnValue("kubernetes") });
+  it("fails closed for providers without a container lifecycle engine", () => {
+    const d = deps({ resolveLifecycleEngine: vi.fn().mockReturnValue(null) });
     expect(isSandboxContainerDefinitivelyAbsent("my-sb", d)).toBe(false);
     expect(d.listLabeledContainerNames).not.toHaveBeenCalled();
   });
@@ -168,22 +315,19 @@ describe("isSandboxContainerDefinitivelyAbsent (#6520)", () => {
       throw new Error("corrupt sandboxes.json");
     });
     expect(isSandboxContainerDefinitivelyAbsent("my-sb")).toBe(false);
-    expect(adapterMocks.dockerRun).not.toHaveBeenCalled();
+    expect(adapterMocks.providerCapture).not.toHaveBeenCalled();
   });
 
-  it("status-checks the default listing with ignoreError so a dead daemon fails closed, not the process", () => {
-    // runner.run() calls process.exit on a non-zero status unless ignoreError
-    // is set, and a swallowed listing error must never read as "absent": a
-    // failed `docker ps` has to surface as false, not as an exit and not as
-    // an empty listing.
+  it("fails closed when the provider listing command fails", () => {
     vi.mocked(registry.getSandbox).mockReturnValue({
       openshellDriver: "docker",
     } as unknown as ReturnType<typeof registry.getSandbox>);
-    adapterMocks.dockerRun.mockReturnValue({ status: 1, stdout: "" });
+    adapterMocks.providerCapture.mockReturnValue({ status: 1, stdout: "", stderr: "down" });
     expect(isSandboxContainerDefinitivelyAbsent("my-sb")).toBe(false);
-    expect(adapterMocks.dockerRun).toHaveBeenCalledWith(
+    expect(adapterMocks.providerCapture).toHaveBeenCalledWith(
+      "sandbox-lifecycle",
       expect.arrayContaining(["ps", "-a", "--filter", "label=openshell.ai/sandbox-name=my-sb"]),
-      expect.objectContaining({ ignoreError: true }),
+      5_000,
     );
   });
 
@@ -191,7 +335,7 @@ describe("isSandboxContainerDefinitivelyAbsent (#6520)", () => {
     vi.mocked(registry.getSandbox).mockReturnValue({
       openshellDriver: "docker",
     } as unknown as ReturnType<typeof registry.getSandbox>);
-    adapterMocks.dockerRun.mockReturnValue({ status: 0, stdout: "\n" });
+    adapterMocks.providerCapture.mockReturnValue({ status: 0, stdout: "\n", stderr: "" });
     expect(isSandboxContainerDefinitivelyAbsent("my-sb")).toBe(true);
   });
 
@@ -199,46 +343,63 @@ describe("isSandboxContainerDefinitivelyAbsent (#6520)", () => {
     vi.mocked(registry.getSandbox).mockReturnValue({
       openshellDriver: "docker",
     } as unknown as ReturnType<typeof registry.getSandbox>);
-    adapterMocks.dockerRun.mockReturnValue({ status: 0, stdout: "openshell-my-sb-abc\n" });
+    adapterMocks.providerCapture.mockReturnValue({
+      status: 0,
+      stdout: "openshell-my-sb-abc\n",
+      stderr: "",
+    });
     expect(isSandboxContainerDefinitivelyAbsent("my-sb")).toBe(false);
   });
 });
 
 describe("returnSandboxContainerToStopped", () => {
-  it("reports success when docker stop echoes the name and inspect confirms exited", () => {
-    const dockerStop = vi.fn().mockReturnValue("openshell-my-sb-abc123");
-    const dockerInspectStatus = vi.fn().mockReturnValue("exited");
-    expect(
-      returnSandboxContainerToStopped("openshell-my-sb-abc123", {
-        dockerStop,
-        dockerInspectStatus,
-      }),
-    ).toBe(true);
-    expect(dockerStop).toHaveBeenCalledWith("openshell-my-sb-abc123");
-    expect(dockerInspectStatus).toHaveBeenCalledWith("openshell-my-sb-abc123");
+  beforeEach(() => {
+    adapterMocks.providerCapture.mockReset();
+    adapterMocks.stopSandbox.mockReset();
   });
 
-  it("reports failure when docker stop produces no output", () => {
-    const dockerStop = vi.fn().mockReturnValue("");
-    const dockerInspectStatus = vi.fn();
-    expect(
-      returnSandboxContainerToStopped("openshell-my-sb-abc123", {
-        dockerStop,
-        dockerInspectStatus,
+  const started = {
+    containerName: "openshell-my-sb-abc123",
+    gatewayName: "nemoclaw",
+    mutationTimeoutMs: 75_000,
+    runtimeProviderId: "podman",
+    sandboxIdentityFingerprint: "a".repeat(64),
+    sandboxName: "my-sb",
+  };
+
+  it("uses the recorded exact identity and confirms OpenShell stopped the sandbox", async () => {
+    const stopSandbox = vi.fn().mockResolvedValue({ kind: "accepted" });
+    await expect(
+      returnSandboxContainerToStopped(started, {
+        createOpenShellLifecycle: () => ({ startSandbox: vi.fn(), stopSandbox }),
       }),
-    ).toBe(false);
-    expect(dockerInspectStatus).not.toHaveBeenCalled();
+    ).resolves.toBe(true);
+    expect(stopSandbox).toHaveBeenCalledWith({
+      sandboxName: "my-sb",
+      sandboxIdentityFingerprint: "a".repeat(64),
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      timeoutMs: 75_000,
+    });
   });
 
-  it("reports failure when the container is still running after docker stop", () => {
-    const dockerStop = vi.fn().mockReturnValue("openshell-my-sb-abc123");
-    const dockerInspectStatus = vi.fn().mockReturnValue("running");
-    expect(
-      returnSandboxContainerToStopped("openshell-my-sb-abc123", {
-        dockerStop,
-        dockerInspectStatus,
+  it("uses the OpenShell lifecycle adapter without direct container mutation", async () => {
+    adapterMocks.stopSandbox.mockResolvedValueOnce({ kind: "accepted" });
+
+    await expect(returnSandboxContainerToStopped(started)).resolves.toBe(true);
+    expect(adapterMocks.stopSandbox).toHaveBeenCalledOnce();
+    expect(adapterMocks.providerCapture).not.toHaveBeenCalled();
+  });
+
+  it("reports failure when the OpenShell stop operation fails", async () => {
+    const stopSandbox = vi.fn().mockResolvedValue({
+      kind: "failed",
+      error: { kind: "timeout", message: "OpenShell timed out." },
+    });
+    await expect(
+      returnSandboxContainerToStopped(started, {
+        createOpenShellLifecycle: () => ({ startSandbox: vi.fn(), stopSandbox }),
       }),
-    ).toBe(false);
+    ).resolves.toBe(false);
   });
 });
 

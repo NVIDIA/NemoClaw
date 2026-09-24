@@ -19,9 +19,9 @@ import { execTimeout, testTimeoutOptions } from "../helpers/timeouts";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../..");
 const NODE_BIN = path.dirname(process.execPath);
+const IS_WSL = os.release().toLowerCase().includes("microsoft");
 const DOCKER_OPERATING_SYSTEM =
-  ({ darwin: "Docker Desktop" } as Partial<Record<NodeJS.Platform, string>>)[process.platform] ??
-  "Docker Engine";
+  process.platform === "darwin" || IS_WSL ? "Docker Desktop" : "Docker Engine";
 const tmpFixtures: string[] = [];
 const gatewayProcesses: ReturnType<typeof spawn>[] = [];
 
@@ -41,6 +41,7 @@ function createFixture(opts: {
   provider?: string;
   credentialEnv?: string;
   providerRegistered?: boolean;
+  credentialExpiresAtMs?: number;
   inferenceProbeHttpStatus?: number | null;
 }) {
   const {
@@ -53,17 +54,11 @@ function createFixture(opts: {
   const sandboxName = "my-assistant";
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-2273-"));
   tmpFixtures.push(tmpDir);
-  const nemoclawDir = path.join(tmpDir, ".nemoclaw");
-  fs.mkdirSync(nemoclawDir, { recursive: true, mode: 0o700 });
 
   const gatewayReadyMarker = path.join(tmpDir, "gateway-ready");
   const gatewayProcess = spawn(
     process.execPath,
-    [
-      "--experimental-strip-types",
-      path.join(REPO_ROOT, "test", "helpers", "ephemeral-gateway-listener.ts"),
-      gatewayReadyMarker,
-    ],
+    [path.join(REPO_ROOT, "test", "helpers", "ephemeral-gateway-listener.ts"), gatewayReadyMarker],
     { stdio: "ignore" },
   );
   gatewayProcesses.push(gatewayProcess);
@@ -86,6 +81,8 @@ wait();`,
   const gatewayPort = Number(gatewayPortText);
   expect(gatewayPort).toBeLessThanOrEqual(65_535);
   const gatewayName = `nemoclaw-${gatewayPort}`;
+  const nemoclawDir = path.join(tmpDir, ".nemoclaw", "gateways", String(gatewayPort));
+  fs.mkdirSync(nemoclawDir, { recursive: true, mode: 0o700 });
 
   fs.writeFileSync(
     path.join(nemoclawDir, "sandboxes.json"),
@@ -102,7 +99,6 @@ wait();`,
           gatewayPort,
           dashboardPort: agent === "langchain-deepagents-code" ? 0 : 18789,
           fromDockerfile: null,
-          policies: [],
           agent,
           ...(agent === "langchain-deepagents-code"
             ? {
@@ -140,7 +136,6 @@ wait();`,
       preferredInferenceApi: null,
       nimContainer: null,
       webSearchConfig: null,
-      policyPresets: [],
       messagingPlan: null,
       metadata: { gatewayName, fromDockerfile: null },
       steps: {
@@ -184,7 +179,7 @@ wait();`,
 const fs = require("fs");
 const a = process.argv.slice(2);
 const requiredFeatures = "request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods";
-if (a[0] === "-V" || a[0] === "--version") { process.stdout.write("openshell 0.0.106\\n"); process.exit(0); }
+if (a[0] === "-V" || a[0] === "--version") { process.stdout.write("openshell 0.0.116\\n"); process.exit(0); }
 if (a[0] === "sandbox" && a[1] === "list") { process.stdout.write("${sandboxName} Ready\\n"); process.exit(0); }
 if (a[0] === "sandbox" && a[1] === "ssh-config") { process.stdout.write("${sshConfig}\\n"); process.exit(0); }
 if (a[0] === "sandbox" && a[1] === "get") {
@@ -214,11 +209,20 @@ if (a[0] === "sandbox" && a[1] === "exec") {
 }
 if (a[0] === "status") { process.stdout.write("Server Status\\n  Gateway: ${gatewayName}\\n  Status: Connected\\n"); process.exit(0); }
 if (a[0] === "gateway" && a[1] === "info") { process.stdout.write("Gateway Info\\n\\nGateway: ${gatewayName}\\nGateway endpoint: https://127.0.0.1:${gatewayPort}\\n"); process.exit(0); }
+if (a[0] === "gateway" && a[1] === "list") { process.stdout.write(JSON.stringify([{name:"${gatewayName}",endpoint:"https://127.0.0.1:${gatewayPort}",active:true}]) + "\\n"); process.exit(0); }
 if (a[0] === "gateway" && a[1] === "select") process.exit(0);
 if (a[0] === "inference" && a[1] === "get") { process.stdout.write("Gateway inference:\\n  Provider: ${provider}\\n  Model: meta/llama-3.3-70b-instruct\\n"); process.exit(0); }
 if (a[0] === "inference" && a[1] === "set") process.exit(0);
 if (a[0] === "provider" && a[1] === "get") {
-  if (!${providerRegistered ? "true" : "false"}) process.exit(1);
+  if (!${providerRegistered ? "true" : "false"}) {
+    process.stderr.write("Error: provider '${provider}' not found\\n");
+    process.exit(1);
+  }
+  process.stdout.write("Name: ${provider}\\nType: openai\\nCredential keys: ${credentialEnv}\\nConfig keys: OPENAI_BASE_URL\\n");
+  process.exit(0);
+}
+if (a[0] === "provider" && a[1] === "list") {
+  process.stdout.write(${JSON.stringify(JSON.stringify(providerRegistered ? [{ name: provider, credential_keys: [credentialEnv], credential_expires_at_ms: { [credentialEnv]: opts.credentialExpiresAtMs } }] : []) + "\n")});
   process.exit(0);
 }
 if (a[0] === "provider") process.exit(0);
@@ -234,7 +238,7 @@ process.exit(0);
       path.join(tmpDir, component),
       `#!/usr/bin/env node
 const requiredFeatures = "request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods";
-if (process.argv[2] === "-V" || process.argv[2] === "--version") process.stdout.write("${component} 0.0.106\\n");
+if (process.argv[2] === "-V" || process.argv[2] === "--version") process.stdout.write("${component} 0.0.116\\n");
 process.exit(0);
 `,
       { mode: 0o755 },
@@ -303,7 +307,7 @@ if (a[0] === "inspect") {
   const format = formatIndex >= 0 ? a[formatIndex + 1] : "";
   if (format === "{{.State.Running}}") process.stdout.write("true\\n");
   if (format === "{{json .NetworkSettings.Ports}}") process.stdout.write(JSON.stringify({"${gatewayPort}/tcp":[{HostPort:"${gatewayPort}"}]}) + "\\n");
-  if (format === "{{.Config.Image}}") process.stdout.write("nvcr.io/nvidia/openshell/cluster:0.0.106\\n");
+  if (format === "{{.Config.Image}}") process.stdout.write("nvcr.io/nvidia/openshell/cluster:0.0.116\\n");
   process.exit(0);
 }
 if (a[0] === "ps") process.exit(0);
@@ -330,7 +334,7 @@ process.exit(0);
     { mode: 0o755 },
   );
 
-  return { tmpDir, nemoclawDir, sandboxName, deleteMarker };
+  return { tmpDir, nemoclawDir, sandboxName, deleteMarker, gatewayPort };
 }
 
 function runCli(
@@ -345,6 +349,7 @@ function runCli(
     input,
     env: {
       HOME: fixture.tmpDir,
+      NEMOCLAW_GATEWAY_PORT: String(fixture.gatewayPort),
       PATH: fixture.tmpDir + ":" + NODE_BIN + ":/usr/bin:/bin",
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
       NEMOCLAW_SKIP_HOST_DNS_PREFLIGHT: "1",
@@ -374,19 +379,59 @@ function registryHasSandbox(fixture: ReturnType<typeof createFixture>): boolean 
 }
 
 describe("atomic rebuild process contracts (#2273)", () => {
-  it("cancels interactive rebuild through stdin without entering preflight or backup", () => {
-    const fixture = createFixture({ providerRegistered: false });
+  it(
+    "rejects expired credentials through the CLI before backup or deletion (#10394)",
+    testTimeoutOptions(30_000),
+    () => {
+      const fixture = createFixture({
+        agent: "langchain-deepagents-code",
+        credentialExpiresAtMs: 1,
+      });
+      const result = runCli(fixture, [fixture.sandboxName, "rebuild", "--yes", "--force"]);
+      const output = `${result.stderr || ""}${result.stdout || ""}`;
+      expect(result.status, output).not.toBe(0);
+      expect(output).toContain("expired");
+      expect(output).not.toContain("Backing up sandbox state");
+      expect(output).not.toContain("Deleting old sandbox");
+      expect(fs.existsSync(fixture.deleteMarker)).toBe(false);
+      expect(registryHasSandbox(fixture)).toBe(true);
+      const marker = runCli(fixture, [
+        fixture.sandboxName,
+        "exec",
+        "--",
+        "cat",
+        "/sandbox/rebuild-atomicity-marker.txt",
+      ]);
+      expect(marker.status, marker.stderr).toBe(0);
+      expect(marker.stdout).toContain("dcode-atomicity-marker");
+    },
+  );
 
-    const result = runRebuild(fixture, {}, { yes: false, input: "n\n" });
-    const output = `${result.stderr || ""}${result.stdout || ""}`;
+  it(
+    "cancels interactive rebuild through stdin without entering preflight or backup",
+    testTimeoutOptions(30_000),
+    () => {
+      const fixture = createFixture({ providerRegistered: false });
+      const providerGet = spawnSync(
+        process.execPath,
+        [path.join(fixture.tmpDir, "openshell"), "provider", "get", "nvidia-prod"],
+        { encoding: "utf-8", timeout: execTimeout(5_000) },
+      );
 
-    expect(result.status, output).toBe(0);
-    expect(output).toContain("Proceed? [y/N]:");
-    expect(output).toContain("Cancelled.");
-    expect(output).not.toContain("preflight failed");
-    expect(output).not.toContain("Backing up sandbox state");
-    expect(registryHasSandbox(fixture)).toBe(true);
-  });
+      expect(providerGet.status, providerGet.stderr).toBe(1);
+      expect(providerGet.stderr).toBe("Error: provider 'nvidia-prod' not found\n");
+
+      const result = runRebuild(fixture, {}, { yes: false, input: "n\n" });
+      const output = `${result.stderr || ""}${result.stdout || ""}`;
+
+      expect(result.status, output).toBe(0);
+      expect(output).toContain("Proceed? [y/N]:");
+      expect(output).toContain("Cancelled.");
+      expect(output).not.toContain("preflight failed");
+      expect(output).not.toContain("Backing up sandbox state");
+      expect(registryHasSandbox(fixture)).toBe(true);
+    },
+  );
 
   it(
     "keeps a Ready DCode sandbox usable when its stored route returns 401 (#6195)",

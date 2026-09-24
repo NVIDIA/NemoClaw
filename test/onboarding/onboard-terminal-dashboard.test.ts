@@ -14,10 +14,6 @@ type CommandEntry = {
   env?: Record<string, string | undefined> | null;
 };
 
-function writeExecutable(target: string, contents: string) {
-  fs.writeFileSync(target, contents, { mode: 0o755 });
-}
-
 function parseStdoutJson<T>(stdout: string): T {
   const line = stdout
     .trim()
@@ -45,6 +41,9 @@ function runTerminalDashboardScenario(scenario: "create" | "reuse") {
   const sandboxCreateStreamPath = JSON.stringify(
     path.join(repoRoot, "src", "lib", "sandbox", "create-stream.ts"),
   );
+  const sandboxCommandCliPath = JSON.stringify(
+    path.join(repoRoot, "src", "lib", "adapters", "openshell", "sandbox-command-cli.ts"),
+  );
   const onboardScriptMocksPath = JSON.stringify(
     path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"),
   );
@@ -59,6 +58,8 @@ const path = require("node:path");
 const runner = require(${runnerPath});
 const registry = require(${registryPath});
 const fixtureMocks = require(${onboardScriptMocksPath});
+fixtureMocks.mockStandaloneGatewayTeardownAuthority();
+fixtureMocks.mockManagedStateVolumeOnboardLifecycle();
 const agentDefs = require(${agentDefsPath});
 const agentOnboard = require(${agentOnboardPath});
 const dockerGpuSandboxCreate = require(${dockerGpuSandboxCreatePath});
@@ -132,6 +133,8 @@ runner.run = (command, opts = {}) => {
   if (profileResult !== null) return profileResult;
   const providerResult = managedProviderResult(normalized);
   if (providerResult !== null) return providerResult;
+  const inferenceProviderResult = fixtureMocks.mockNvidiaProviderGetRun(command, "nemoclaw");
+  if (inferenceProviderResult !== null) return inferenceProviderResult;
   const sandboxResult = createdSandbox.run(command);
   return sandboxResult ?? { status: 0 };
 };
@@ -144,13 +147,7 @@ runner.runCapture = (command) => {
   const sandboxCapture = createdSandbox.capture(command);
   if (sandboxCapture !== null) return sandboxCapture;
   commands.push({ command: normalized, env: null });
-  if (
-    normalized.includes(
-      "sandbox exec --name " +
-        sandboxName +
-        " --gateway nemoclaw -- /usr/local/bin/dcode identity",
-    )
-  ) {
+  if (normalized.includes("sandbox exec") && normalized.includes("dcode identity")) {
     return [
       "Route:    inference",
       "Provider: nvidia-prod",
@@ -158,13 +155,36 @@ runner.runCapture = (command) => {
       "Endpoint: https://inference.local/v1",
     ].join("\n");
   }
-  if (normalized.includes("forward list")) return sandboxName + " 127.0.0.1 18789 12345 running";
+  if (normalized.includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   return "";
+};
+
+const sandboxCommandCli = require(${sandboxCommandCliPath});
+const createCommandExecutor = sandboxCommandCli.createCliOpenShellSandboxCommandExecutor;
+sandboxCommandCli.createCliOpenShellSandboxCommandExecutor = (deps) => {
+  const executor = createCommandExecutor(deps);
+  return {
+    ...executor,
+    runBuffered: async (request) => {
+      const gatewayArgs = request.target.kind === "named" ? ["-g", request.target.gatewayName] : [];
+      const stdout = runner.runCapture([
+        "openshell",
+        "sandbox",
+        "exec",
+        "--name",
+        request.sandboxName,
+        ...gatewayArgs,
+        "--",
+        ...request.command,
+      ]);
+      return { outcome: { kind: "completed", exitCode: 0 }, stdout: String(stdout || ""), stderr: "" };
+    },
+  };
 };
 
 registry.getSandbox = () =>
   scenario === "reuse"
-    ? fixtureMocks.managedSandboxPolicyReceiptFixture({
+    ? fixtureMocks.sandboxLifecycleFixture({
         name: sandboxName,
         gpuEnabled: false,
         agent: "langchain-deepagents-code",

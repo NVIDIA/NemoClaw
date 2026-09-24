@@ -4,12 +4,11 @@
 import { spawnSync } from "node:child_process";
 import type { CaptureOpenshellResult } from "./adapters/openshell/client";
 import { captureOpenshellCommand } from "./adapters/openshell/client";
+import { createSynchronousCliOpenShellInferenceRouteObserver } from "./adapters/openshell/inference-route-cli";
 import { resolveOpenshell } from "./adapters/openshell/resolve";
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "./adapters/openshell/timeouts";
 import { isObjectRecord } from "./core/json-types";
 import { GATEWAY_PORT } from "./core/ports";
 import { getNamedGatewayLifecycleState } from "./gateway-runtime-action";
-import { getLiveGatewayInference } from "./inference/live";
 import type {
   GatewayHealth,
   MessagingBridgeHealth,
@@ -27,16 +26,19 @@ import { resolveGatewayName } from "./onboard/gateway-binding";
 import { classifyHermesPortableRegistry } from "./onboard/experimental/hermes-portable-onboarding";
 import { inspectPortableAgentReceiptAuthorityForClassification } from "./onboard/experimental/hermes-portable-receipt";
 import { defaultPortableDemoStateDir } from "./onboard/experimental/portable-runtime-receipt-readiness";
+import * as policy from "./policy";
 import { summarizeForDebug } from "./state/onboard-session";
 import * as registry from "./state/registry";
 import { getHermesPortableHostAuthorityEntryCount } from "./state/portable-uninstall-retirement";
 import { createSystemDeps, parseSshProcesses } from "./state/sandbox-session";
 import { getServiceStatuses, showStatus as showServiceStatus } from "./tunnel/services";
 
+const INVENTORY_POLICY_PROBE_TIMEOUT_MS = 2_000;
+
 function captureOpenshell(
   rootDir: string,
   args: string[],
-  opts: { timeout?: number } = {},
+  opts: { maxBuffer?: number; timeout?: number } = {},
 ): CaptureOpenshellResult {
   const openshell = resolveOpenshell();
   if (!openshell) {
@@ -45,6 +47,7 @@ function captureOpenshell(
   return captureOpenshellCommand(openshell, args, {
     cwd: rootDir,
     ignoreError: true,
+    maxBuffer: opts.maxBuffer,
     timeout: opts.timeout,
   });
 }
@@ -220,10 +223,10 @@ function readGatewayLog(rootDir: string, sandboxName: string): string | null {
   }
 }
 
-function probeGatewayHealth(): GatewayHealth {
+async function probeGatewayHealth(): Promise<GatewayHealth> {
   try {
     const expectedGateway = resolveGatewayName(GATEWAY_PORT);
-    const lifecycle = getNamedGatewayLifecycleState(expectedGateway);
+    const lifecycle = await getNamedGatewayLifecycleState(expectedGateway);
     if (lifecycle.state === "healthy_named") {
       return { healthy: true, state: lifecycle.state };
     }
@@ -236,7 +239,7 @@ function probeGatewayHealth(): GatewayHealth {
     return {
       healthy: false,
       state: lifecycle.state,
-      reason: reasonByState[lifecycle.state],
+      reason: lifecycle.error?.message ?? reasonByState[lifecycle.state],
     };
   } catch {
     // A transient probe failure must not mask a real gateway problem, but
@@ -253,6 +256,9 @@ export function buildStatusCommandDeps(rootDir: string): ShowStatusCommandDeps {
   // Cache the SSH process probe once per command invocation — avoids
   // spawning ps per sandbox row. #2604; mirrors buildListCommandDeps.
   let cachedSshOutput: string | null | undefined;
+  const inferenceRouteObserver = createSynchronousCliOpenShellInferenceRouteObserver((args, opts) =>
+    captureOpenshell(rootDir, args, { maxBuffer: opts.maxBuffer, timeout: opts.timeout }),
+  );
 
   // Resolving a sandbox ID costs one OpenShell call, so only pay it when the
   // process list actually contains a proxied connection that needs one (#9316).
@@ -272,14 +278,19 @@ export function buildStatusCommandDeps(rootDir: string): ShowStatusCommandDeps {
 
   return {
     listSandboxes: () => registry.listSandboxes(),
-    getLiveInference: () =>
-      getLiveGatewayInference(
-        (args, opts) =>
-          captureOpenshell(rootDir, args, {
-            timeout: opts?.timeout,
-          }),
-        { timeout: OPENSHELL_PROBE_TIMEOUT_MS },
-      ).inference,
+    getPolicyPresets: async (sandboxName) => {
+      try {
+        return await policy.getAppliedPresets(sandboxName, INVENTORY_POLICY_PROBE_TIMEOUT_MS);
+      } catch {
+        return [];
+      }
+    },
+    getLiveInference: async () => {
+      const result = await inferenceRouteObserver.observeInferenceRoute({
+        target: { kind: "named", gatewayName: resolveGatewayName(GATEWAY_PORT) },
+      });
+      return result.ok && result.value.state === "configured" ? result.value.route : null;
+    },
     showServiceStatus,
     getServiceStatuses,
     getGatewayHealth: probeGatewayHealth,

@@ -11,7 +11,9 @@ import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../name-validation";
 import { resolveGatewayName, resolveGatewayPortFromName } from "../onboard/gateway-binding";
 import { GATEWAYS_SUBDIR, nemoclawStateRoot } from "./state-root";
 
-export { GATEWAYS_SUBDIR } from "./state-root";
+export { GATEWAYS_SUBDIR, resolveHome } from "./state-root";
+export { DEFAULT_GATEWAY_PORT } from "../core/ports";
+export { isValidName } from "../name-validation";
 export {
   releaseManagedGatewayStateLifecycleLock,
   tryAcquireManagedGatewayStateLifecycleLock,
@@ -34,6 +36,7 @@ export interface GatewayRegistryEntry extends Record<string, unknown> {
 
 export interface GatewayRegistryDocument extends Record<string, unknown> {
   defaultSandbox: string | null;
+  defaultSelectionRevision?: number;
   sandboxes: Record<string, GatewayRegistryEntry>;
 }
 
@@ -91,6 +94,14 @@ function parseRegistry(filePath: string, raw: string): GatewayRegistryDocument {
     typeof parsed.defaultSandbox !== "string"
   ) {
     throw stateError(`${filePath} has an invalid defaultSandbox`);
+  }
+  if (
+    parsed.defaultSelectionRevision !== undefined &&
+    (typeof parsed.defaultSelectionRevision !== "number" ||
+      !Number.isSafeInteger(parsed.defaultSelectionRevision) ||
+      parsed.defaultSelectionRevision < 0)
+  ) {
+    throw stateError(`${filePath} has an invalid defaultSelectionRevision`);
   }
 
   const sandboxes: Record<string, GatewayRegistryEntry> = {};

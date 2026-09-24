@@ -17,7 +17,7 @@ import {
   mergeRequiredObservabilityPolicyPresets,
 } from "./observability-policy-presets";
 import { mergeRequiredOpenclawOtelPolicyPresets } from "./openclaw-otel-policy-presets";
-import { getTier, type TierDefinition } from "../policy/tiers";
+import { getTier } from "../policy/tiers";
 import {
   ensureRequiredTierPolicyPresets,
   filterSuppressedAgentRequiredPresets,
@@ -52,11 +52,22 @@ export function mergeRequiredSetupPolicyPresets(
         customOwnsObservability: options.customOwnsObservability,
       }),
   );
-  const activeAgentPresets = pruneInactiveMessagingPolicyPresets(
-    agentFilteredPresets,
-    options.enabledChannels,
-    options.customPresetNames,
-  );
+  // A tier's own messaging presets (e.g. Open's slack/discord/telegram/wechat/
+  // whatsapp/teams) are tier egress defaults, not per-channel opt-ins, so they
+  // must survive a merge just because no channel is enabled -- matching the
+  // agent-conditional exemption `createUnavailablePolicyPresetPruner` already
+  // applies for OpenClaw. Only Hermes, whose recovery records the full enabled
+  // channel set, prunes down to that set here; OpenClaw relies solely on
+  // `disabledChannels` (applied downstream) to retire a channel's preset. (#11058)
+  const isHermesAgent =
+    typeof options.agent === "string" && options.agent.trim().toLowerCase() === "hermes";
+  const activeAgentPresets = isHermesAgent
+    ? pruneInactiveMessagingPolicyPresets(
+        agentFilteredPresets,
+        options.enabledChannels,
+        options.customPresetNames,
+      )
+    : agentFilteredPresets;
   const effectiveHermesToolGateways = (options.hermesToolGateways ?? []).filter(
     (name) =>
       !isStaleBuiltinWebSearchPolicyPreset(name, {
@@ -100,16 +111,20 @@ export function isStaleBuiltinWebSearchPolicyPreset(
   options: {
     webSearchConfig?: WebSearchConfig | null;
     customPresetNames?: ReadonlySet<string> | null;
-    tier?: TierDefinition | null;
-    agent?: string | null;
+    tierName?: string | null;
+    agentName?: string | null;
   } = {},
 ): boolean {
   if (options.customPresetNames?.has(name)) return false;
-  // A preset in the recorded tier is tier egress, not stale provider state.
-  // Unknown tiers fail closed because the canonical tier lookup returns no match.
+  // brave/tavily double as a tier's default egress preset (e.g. Brave Search API
+  // host access on the Balanced/Open tiers) AND the built-in web-search provider
+  // preset. When the preset is a default of the applied tier it is a tier egress
+  // default, not a stale web-search leftover — keep it regardless of the web-search
+  // provider choice. A tier supplied by the active selection flow can exempt
+  // its own default, but no tier is read from durable sandbox state.
   if (
-    setupPolicyPresetAppliesToAgent(name, options.agent) &&
-    options.tier?.presets.some(
+    setupPolicyPresetAppliesToAgent(name, options.agentName) &&
+    getTier(options.tierName ?? "")?.presets.some(
       (preset) => preset.name.trim().toLowerCase() === name.trim().toLowerCase(),
     )
   ) {
@@ -143,8 +158,6 @@ export function createUnavailablePolicyPresetPruner(options: {
   // Custom and interactive selections may explicitly opt into a built-in web-search
   // preset without storing provider config. Inactive observability remains ineligible.
   return (presetNames, pruning = {}) => {
-    const tierName = pruning.tierName?.trim().toLowerCase();
-    const tier = tierName ? getTier(tierName) : null;
     // OpenClaw keeps an already-applied channel preset until disabledChannels
     // explicitly retires it. Hermes recovery records the full enabled set, so
     // it can also prune repository defaults that are absent from that set.
@@ -162,8 +175,8 @@ export function createUnavailablePolicyPresetPruner(options: {
           !isStaleBuiltinWebSearchPolicyPreset(name, {
             webSearchConfig: options.webSearchConfig,
             customPresetNames: options.customPresetNames,
-            tier,
-            agent: options.agent,
+            tierName: pruning.tierName,
+            agentName: options.agent,
           })) &&
         !isInactiveObservabilityPolicyPreset(name, options),
     );

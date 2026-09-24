@@ -280,7 +280,7 @@ export function applyOpenShellVmDnsMonkeypatch(
     env?: NodeJS.ProcessEnv;
     homeDir?: string;
     platform?: NodeJS.Platform;
-    revalidatePolicyAuthority?: (operation: string) => void;
+    revalidateSandboxIdentity?: (operation: string) => void;
     stateDir?: string;
   } = {},
 ): VmDnsMonkeypatchResult {
@@ -312,12 +312,12 @@ export function applyOpenShellVmDnsMonkeypatch(
 
   let changed = false;
   let rootfsContext: string | undefined;
-  let policyAuthorityError: unknown;
-  const revalidatePolicyAuthority = (operation: string): void => {
+  let policyObservationError: unknown;
+  const revalidateSandboxIdentity = (operation: string): void => {
     try {
-      deps.revalidatePolicyAuthority?.(operation);
+      deps.revalidateSandboxIdentity?.(operation);
     } catch (error) {
-      policyAuthorityError = error;
+      policyObservationError = error;
       throw error;
     }
   };
@@ -368,13 +368,13 @@ export function applyOpenShellVmDnsMonkeypatch(
     const currentResolver = readTextFileIfPresent(resolvConf.path) ?? "";
     const desiredResolver = normalizeResolver(currentResolver);
     if (currentResolver !== desiredResolver) {
-      revalidatePolicyAuthority(`write VM resolver for sandbox '${sandboxName}'`);
+      revalidateSandboxIdentity(`write VM resolver for sandbox '${sandboxName}'`);
       fs.writeFileSync(resolvConf.path, desiredResolver);
       changed = true;
     }
 
     if (initPatch.changed && initPatch.content !== undefined) {
-      revalidatePolicyAuthority(`write VM init script for sandbox '${sandboxName}'`);
+      revalidateSandboxIdentity(`write VM init script for sandbox '${sandboxName}'`);
       fs.writeFileSync(initScript.path, initPatch.content);
       changed = true;
     }
@@ -388,7 +388,7 @@ export function applyOpenShellVmDnsMonkeypatch(
       );
     }
 
-    revalidatePolicyAuthority(`report successful VM DNS repair for sandbox '${sandboxName}'`);
+    revalidateSandboxIdentity(`report successful VM DNS repair for sandbox '${sandboxName}'`);
 
     return {
       attempted: true,
@@ -398,7 +398,7 @@ export function applyOpenShellVmDnsMonkeypatch(
       status: changed ? "applied" : "already-present",
     };
   } catch (error) {
-    if (error === policyAuthorityError) throw error;
+    if (error === policyObservationError) throw error;
     return {
       attempted: true,
       changed,

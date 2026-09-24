@@ -301,8 +301,8 @@ function isDynamicFunctionConstructorFactory(expression: ts.Expression): boolean
   const candidate = prototypeCall.arguments[0];
   return Boolean(
     candidate &&
-      (ts.isArrowFunction(candidate) || ts.isFunctionExpression(candidate)) &&
-      candidate.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword),
+    (ts.isArrowFunction(candidate) || ts.isFunctionExpression(candidate)) &&
+    candidate.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword),
   );
 }
 
@@ -1491,9 +1491,9 @@ function assertionFromAssertCall(
   const firstRoot = firstArgument ? rootIdentifier(firstArgument) : null;
   const firstIsBehavior = Boolean(
     firstArgument &&
-      (isProductionBehaviorDerivation(firstArgument, productionConsumerNames) ||
-        isExecutionResultDerivation(sourceFile, firstArgument) ||
-        (firstRoot && executionResultVars.has(firstRoot))),
+    (isProductionBehaviorDerivation(firstArgument, productionConsumerNames) ||
+      isExecutionResultDerivation(sourceFile, firstArgument) ||
+      (firstRoot && executionResultVars.has(firstRoot))),
   );
   const argumentCount = ASSERT_TWO_ARGUMENT_MATCHERS.has(method) && !firstIsBehavior ? 2 : 1;
   for (const argument of node.arguments.slice(0, argumentCount)) {
@@ -1823,6 +1823,7 @@ function scanSourceTextReport(fileName: string, relPath: string, text: string): 
         const productionConsumerNames = collectProductionConsumerNames(scopedImports);
         const declarativeImports = collectDeclarativeImports(scopedImports);
         const rawConfigAccessors = collectRawConfigAccessors(scopedImports);
+        for (const name of rawConfigAccessors.keys()) productionConsumerNames.delete(name);
         const variables = [
           ...scopedVariableDecls(sourceFile, allVariables, node, body),
           ...collectSetupHookAssignments(sourceFile, node),
@@ -2132,7 +2133,7 @@ function isDirectInvocation(): boolean {
   const invoked = process.argv[1];
   return Boolean(
     invoked &&
-      (import.meta.url === `file://${invoked}` || invoked.endsWith("find-source-shape-tests.mts")),
+    (import.meta.url === `file://${invoked}` || invoked.endsWith("find-source-shape-tests.mts")),
   );
 }
 

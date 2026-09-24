@@ -7,20 +7,60 @@ import { redact } from "../../security/redact";
 import * as onboardSession from "../../state/onboard-session";
 import * as sandboxSession from "../../state/sandbox-session";
 import {
+  confirmDelegatedRebuildIntent,
   confirmSandboxRebuildIfNeeded,
   countActiveSandboxSessionsForRebuild,
   createRebuildCommandContext,
 } from "./rebuild-preflight-confirmation";
 import {
   acquireRebuildOnboardLock,
+  blockRebuildOnRetainedSandboxRecovery,
   isSingleAgentRebuildSupported,
 } from "./rebuild-preflight-guards";
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
 });
 
 describe("rebuild confirmation", () => {
+  it("declines delegated confirmation when stdin is not interactive", async () => {
+    const originalStdinIsTty = process.stdin.isTTY;
+    Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: false });
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const resolveOpenshell = vi.spyOn(openshellResolve, "resolveOpenshell");
+
+    try {
+      await expect(confirmDelegatedRebuildIntent("alpha")).resolves.toBe(false);
+      expect(error.mock.calls.flat().join("\n")).toContain("Re-run with --yes or --force");
+      expect(resolveOpenshell).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(process.stdin, "isTTY", {
+        configurable: true,
+        value: originalStdinIsTty,
+      });
+    }
+  });
+
+  it("declines delegated confirmation in CI with interactive stdin", async () => {
+    const originalStdinIsTty = process.stdin.isTTY;
+    vi.stubEnv("CI", "true");
+    Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const resolveOpenshell = vi.spyOn(openshellResolve, "resolveOpenshell");
+
+    try {
+      await expect(confirmDelegatedRebuildIntent("alpha")).resolves.toBe(false);
+      expect(error.mock.calls.flat().join("\n")).toContain("Re-run with --yes or --force");
+      expect(resolveOpenshell).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(process.stdin, "isTTY", {
+        configurable: true,
+        value: originalStdinIsTty,
+      });
+    }
+  });
+
   it("accepts trimmed case-insensitive affirmative input", async () => {
     const prompt = vi.fn(async () => " YES ");
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
@@ -163,12 +203,82 @@ describe("createRebuildCommandContext bail behaviour (#6376)", () => {
     // What reached stderr is the redacted form, with the two-space prefix ...
     expect(errorSpy).toHaveBeenCalledWith(`  ${redacted}`);
     // ... and the raw secret never surfaced.
-    expect(errorSpy.mock.calls.every((call) => !String(call[0]).includes("SUPERSECRETTOKEN123"))).toBe(true);
+    expect(
+      errorSpy.mock.calls.flat().every((value) => !String(value).includes("SUPERSECRETTOKEN123")),
+    ).toBe(true);
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 });
 
 describe("rebuild preflight guards", () => {
+  it("reconstructs registry-only recovery before rebuild can probe live state (#11096)", () => {
+    const fingerprint = "b".repeat(64);
+    const createAttemptNonce = "c".repeat(62);
+    const lifecycleGeneration = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const recoveryRecord: onboardSession.RetainedSandboxRecoveryRecord = {
+      schemaVersion: 1,
+      sandboxName: "alpha",
+      recordId: "a".repeat(64),
+      sandboxIdentityFingerprint: fingerprint,
+      identityWasUnavailable: false,
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      lifecycleGeneration,
+      createAttemptNonce,
+      resources: {
+        sharedInferenceProviders: [],
+        sandboxScopedProviders: [],
+        credentialEnvironmentVariables: [],
+      },
+      reason: "retained_after_sandbox_creation_failure",
+      recordedAt: "2026-09-07T00:00:00.000Z",
+    };
+    let retainedRecoveryRecords: onboardSession.RetainedSandboxRecoveryRecord[] = [];
+    const reconstruct = vi
+      .spyOn(onboardSession, "reconstructRetainedSandboxRecoveryFromPendingCreate")
+      .mockImplementation(() => {
+        retainedRecoveryRecords = [recoveryRecord];
+        return recoveryRecord;
+      });
+    const listRecovery = vi
+      .spyOn(onboardSession, "listRetainedSandboxRecoveryRecords")
+      .mockImplementation(() => retainedRecoveryRecords);
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const bail = vi.fn() as unknown as (message: string, code?: number) => never;
+    const sandbox = {
+      name: "alpha",
+      pendingRouteReservation: true,
+      reservationSessionId: "failed-create-session",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      lifecycleGeneration,
+      lifecycleLiveIdentityFingerprint: fingerprint,
+      pendingCreateIdentity: {
+        schemaVersion: 1,
+        state: "verified-create",
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        sandboxName: "alpha",
+        lifecycleGeneration,
+        sandboxIdentityFingerprint: fingerprint,
+        createAttemptNonce,
+        route: "native",
+      },
+    } satisfies import("./rebuild-flow-helpers").RebuildSandboxEntry;
+
+    expect(blockRebuildOnRetainedSandboxRecovery(sandbox, bail)).toBe(true);
+
+    expect(reconstruct).toHaveBeenCalledExactlyOnceWith(sandbox);
+    expect(reconstruct.mock.invocationCallOrder[0]).toBeLessThan(
+      listRecovery.mock.invocationCallOrder[0]!,
+    );
+    expect(bail).toHaveBeenCalledWith("Retained sandbox recovery blocks rebuild for 'alpha'.", 1);
+    const output = error.mock.calls.flat().join("\n");
+    expect(output).toContain("nemoclaw alpha destroy --yes");
+    expect(output).toContain("reports the sandbox present or cannot determine presence");
+    expect(output).not.toContain("administrator");
+  });
+
   it("stops after a failed onboard-lock acquisition without releasing another run's lock (#7794)", () => {
     vi.spyOn(onboardSession, "acquireOnboardLock").mockReturnValue({
       acquired: false,

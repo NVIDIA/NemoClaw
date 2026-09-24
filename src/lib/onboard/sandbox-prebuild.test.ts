@@ -17,6 +17,7 @@ vi.mock("../adapters/docker/exec", async (importOriginal) => ({
 
 import {
   dockerBuildSubprocessEnv,
+  dockerContextIsDefaultFromBuild,
   mergeIsolatedDockerClientEnv,
   prepareDockerBuildEnvironment,
 } from "../adapters/docker/client-isolation";
@@ -48,6 +49,49 @@ function createBuildContext(
 }
 
 describe("sandbox BuildKit prebuild", () => {
+  it("rejects every explicit Docker host before resolving a context", () => {
+    const showContext = vi.fn(() => "default");
+
+    expect(
+      dockerContextIsDefaultFromBuild(
+        { DOCKER_HOST: "unix:///run/user/1001/docker.sock" },
+        showContext,
+      ),
+    ).toBe(false);
+    expect(showContext).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["remote-builder", false],
+    ["default", true],
+  ] as const)("classifies an explicit %s context without invoking Docker", (context, expected) => {
+    const showContext = vi.fn(() => "default");
+
+    expect(dockerContextIsDefaultFromBuild({ DOCKER_CONTEXT: context }, showContext)).toBe(
+      expected,
+    );
+    expect(showContext).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["persisted remote context", {}, "remote-builder", false],
+    ["unreadable context", {}, null, false],
+    ["default context", {}, "default", true],
+  ] as const)(
+    "classifies the %s at the Docker client boundary",
+    (_case, env, context, expected) => {
+      expect(dockerContextIsDefaultFromBuild(env, () => context)).toBe(expected);
+    },
+  );
+
+  it("lets an explicit context override DOCKER_HOST", () => {
+    const env = { DOCKER_HOST: "unix:///alternate.sock", DOCKER_CONTEXT: "default" };
+
+    expect(dockerContextIsDefaultFromBuild(env)).toBe(true);
+    expect(dockerBuildSubprocessEnv(env)).toMatchObject({ DOCKER_CONTEXT: "default" });
+    expect(dockerBuildSubprocessEnv(env)).not.toHaveProperty("DOCKER_HOST");
+  });
+
   afterEach(() => {
     mocks.dockerSpawn.mockReset();
     vi.unstubAllEnvs();
@@ -97,17 +141,17 @@ describe("sandbox BuildKit prebuild", () => {
     expect(env).not.toHaveProperty("BUILDX_BUILDER");
   });
 
-  it("keeps Docker host precedence over an ambient Docker context", () => {
+  it("keeps Docker context precedence over an ambient Docker host", () => {
     vi.stubEnv("DOCKER_HOST", "unix:///selected-docker.sock");
     vi.stubEnv("DOCKER_CONTEXT", "ambient-remote");
     vi.stubEnv("DOCKER_CONFIG", "/home/user/.docker-ambient");
 
     const env = dockerBuildSubprocessEnv();
     expect(env).toMatchObject({
-      DOCKER_HOST: "unix:///selected-docker.sock",
+      DOCKER_CONTEXT: "ambient-remote",
       DOCKER_CONFIG: "/home/user/.docker-ambient",
     });
-    expect(env).not.toHaveProperty("DOCKER_CONTEXT");
+    expect(env).not.toHaveProperty("DOCKER_HOST");
   });
 
   it("never enables a local-image handoff for a remote gateway", () => {
@@ -374,6 +418,29 @@ describe("sandbox BuildKit prebuild", () => {
     );
     expect(result).toEqual({
       createArgs: ["--from", "nemoclaw-sandbox-local:alpha-1234567890", "--name", "alpha"],
+      imageRef: "nemoclaw-sandbox-local:alpha-1234567890",
+      imageId: IMAGE_ID,
+    });
+  });
+
+  it("rebinds the typed ordinary source without constructing create arguments", async () => {
+    const { buildCtx, dockerfile } = createBuildContext();
+    const result = await prebuildSandboxImageIfEligible({
+      buildCtx,
+      buildId: BUILD_ID,
+      origin: "generated",
+      sourceReference: dockerfile,
+      sandboxName: "alpha",
+      dockerDriverGateway: true,
+      env: {},
+      buildImage: vi.fn(async () => 0),
+      inspectImageId: () => IMAGE_ID,
+      log: () => {},
+    });
+
+    expect(result).toEqual({
+      createArgs: [],
+      sourceReference: "nemoclaw-sandbox-local:alpha-1234567890",
       imageRef: "nemoclaw-sandbox-local:alpha-1234567890",
       imageId: IMAGE_ID,
     });

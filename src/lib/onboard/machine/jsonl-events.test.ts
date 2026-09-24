@@ -212,12 +212,12 @@ describe("onboard JSONL events", () => {
     });
   });
 
-  it.each([
-    CURRENT_SESSION_ID,
-    LEGACY_SESSION_ID,
-  ])("emits a supported persisted session ID (%s)", (sessionId) => {
-    expect(toOnboardJsonlEvent(sampleEvent({ sessionId })).session).toBe(sessionId);
-  });
+  it.each([CURRENT_SESSION_ID, LEGACY_SESSION_ID])(
+    "emits a supported persisted session ID (%s)",
+    (sessionId) => {
+      expect(toOnboardJsonlEvent(sampleEvent({ sessionId })).session).toBe(sessionId);
+    },
+  );
 
   it("emits a structurally valid POSIX credential environment name", () => {
     const credentialEnv = "Compatible_Api_Key";
@@ -231,18 +231,21 @@ describe("onboard JSONL events", () => {
   it.each([
     ["high", "high"],
     [null, "endpoint-default"],
-  ] as const)("reports the effective non-secret reasoning effort (%s) (#7659)", (stored, expected) => {
-    const context = buildOnboardMachineContext(
-      createSession({
-        provider: "compatible-endpoint",
-        preferredInferenceApi: "openai-completions",
-        compatibleEndpointReasoningEffort: stored,
-      }),
-    );
-    const event = toOnboardJsonlEvent(sampleEvent({ context }));
+  ] as const)(
+    "reports the effective non-secret reasoning effort (%s) (#7659)",
+    (stored, expected) => {
+      const context = buildOnboardMachineContext(
+        createSession({
+          provider: "compatible-endpoint",
+          preferredInferenceApi: "openai-completions",
+          compatibleEndpointReasoningEffort: stored,
+        }),
+      );
+      const event = toOnboardJsonlEvent(sampleEvent({ context }));
 
-    expect(event.payload.context).toMatchObject({ reasoningEffort: expected });
-  });
+      expect(event.payload.context).toMatchObject({ reasoningEffort: expected });
+    },
+  );
 
   it("omits reasoning effort outside compatible OpenAI Completions routes", () => {
     const context = buildOnboardMachineContext(createSession({ provider: "nvidia-prod" }));
@@ -291,17 +294,17 @@ describe("onboard JSONL events", () => {
     expect(JSON.stringify(event)).not.toContain(invalidCredentialEnv);
   });
 
-  it.each([
-    "1API_KEY",
-    "API-KEY",
-  ])("does not emit an invalid credential environment name (%s)", (credentialEnv) => {
-    const event = toOnboardJsonlEvent(
-      sampleEvent({ context: { ...sampleEvent().context, credentialEnv } }),
-    );
+  it.each(["1API_KEY", "API-KEY"])(
+    "does not emit an invalid credential environment name (%s)",
+    (credentialEnv) => {
+      const event = toOnboardJsonlEvent(
+        sampleEvent({ context: { ...sampleEvent().context, credentialEnv } }),
+      );
 
-    expect(event.payload.context).toMatchObject({ credentialEnv: null });
-    expect(JSON.stringify(event)).not.toContain(credentialEnv);
-  });
+      expect(event.payload.context).toMatchObject({ credentialEnv: null });
+      expect(JSON.stringify(event)).not.toContain(credentialEnv);
+    },
+  );
 
   it("writes exactly one parseable JSON object per observed event line", () => {
     const lines: string[] = [];

@@ -1,268 +1,268 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { type WebSearchConfig, webSearchProviderForConfig } from "../../inference/web-search";
+import { randomUUID } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+
+import {
+  isPolicyObservationError,
+  PolicyObservationError,
+} from "../../adapters/openshell/policy-state";
+import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
+import { formatOpenShellPolicyRecoveryAction } from "../../gateway-start-guidance";
+import type { WebSearchConfig } from "../../inference/web-search";
 import type { SandboxMessagingPlan } from "../../messaging";
-import {
-  mergeRebuildMessagingPolicyPresets,
-  pruneInactiveMessagingPolicyPresets,
-} from "../../onboard/messaging-policy-presets";
-import {
-  isDcodeAgent,
-  isInactiveObservabilityPolicyPreset,
-  OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET,
-  requiredObservabilityPolicyPresets,
-} from "../../onboard/observability-policy-presets";
-import { isStaleBuiltinWebSearchPolicyPreset } from "../../onboard/policy-preset-reconciliation";
-import { resolveRecreatePolicyPresets } from "../../onboard/policy-preset-persistence";
-import {
-  ensureRequiredTierPolicyPresets,
-  filterSuppressedAgentRequiredPresets,
-} from "../../onboard/policy-tier-suppression";
-import { parsePresetPolicyKeys } from "../../policy";
-import { getTier } from "../../policy/tiers";
-import { hasCompleteOpenClawImagePluginProvenance } from "../../state/openclaw-plugin-restore";
-import { hasAuthoritativeOpenClawImagePluginProvenance } from "../../state/sandbox";
+import { resolveDockerSnapshotRecreateGpuDevice } from "../../onboard/runtime-provider/snapshot";
+import { secureTempFile } from "../../onboard/temp-files";
+import { readRebuildPolicyHandoff, writeRebuildPolicyHandoff } from "../../state/sandbox";
+import { captureRecordedSandboxBasePolicy } from "../../policy";
+import { isSandboxPolicyCredentialFree } from "../../policy/sandbox-policy-validation";
 import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
 import { backupSandboxStateForRebuild, type RebuildSandboxEntry } from "./rebuild-flow-helpers";
+import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
+import { recordRebuildRecoveryBackup } from "./rebuild-recreate-journal";
+import {
+  abortOpenClawPostRestoreDoctor,
+  beginOpenClawBackupQuiesce,
+  finishOpenClawPostRestoreDoctor,
+  retireOpenClawPostRestoreDoctorForDelete,
+  type OpenClawPostRestoreDoctorWindow,
+} from "./runtime/openclaw-lifecycle";
+
+export {
+  clearRebuildMcpHandoff,
+  clearRebuildPolicyHandoff,
+  readRebuildPolicyHandoff,
+  readRebuildMcpHandoff,
+  writeRebuildMcpHandoff,
+  clearHermesOperatorConfigHandoff,
+  writeHermesOperatorConfigHandoff,
+  writeRebuildPolicyHandoff,
+} from "../../state/sandbox";
 
 export type RebuildBackupManifest = Exclude<
-  ReturnType<typeof backupSandboxStateForRebuild>,
+  Awaited<ReturnType<typeof backupSandboxStateForRebuild>>,
   undefined
 >;
 
+/** Bind replacement creation to the provider-observed GPU selected by the source runtime. */
+export function bindRebuildSnapshotGpuAuthority(
+  options: RebuildRecreateOnboardOpts,
+  manifest: RebuildBackupManifest,
+): RebuildRecreateOnboardOpts {
+  const sandboxGpuDevice = manifest?.runtimeSnapshot
+    ? resolveDockerSnapshotRecreateGpuDevice(manifest.runtimeSnapshot)
+    : null;
+  if (!sandboxGpuDevice) return options;
+  if (options.noGpu === true || options.sandboxGpu === "disable") {
+    throw new Error("Captured GPU runtime authority conflicts with the recorded GPU opt-out.");
+  }
+  return { ...options, sandboxGpu: "enable", sandboxGpuDevice };
+}
+
 export interface RebuildBackupPhaseInput {
   sandboxName: string;
+  gatewayName: string;
+  gatewayPort: number;
   sandboxEntry: RebuildSandboxEntry;
   staleRecovery: boolean;
   preparedRecoveryManifest: RebuildBackupManifest;
+  recoveryTransactionId?: string;
   messagingPlan: SandboxMessagingPlan | null;
   webSearchConfig: WebSearchConfig | null;
-  force?: boolean;
   log: RebuildLog;
   bail: RebuildBail;
-  relockShieldsIfNeeded: (sandboxStillExists: boolean) => boolean;
+  runtimeSelection?: OpenShellRuntimeSelection;
 }
 
 export interface RebuildBackupPhaseResult {
   backupManifest: RebuildBackupManifest;
-  backupWasForceSkipped: boolean;
-  policyPresets: string[];
-  sessionPolicyPresets: string[] | null;
+  policySourcePath: string;
+  sourceOpenClawDoctorWindow?: OpenClawPostRestoreDoctorWindow;
 }
 
-export function excludePolicyPresetsByName(
-  presets: readonly string[],
-  excludedNames: readonly (string | undefined)[],
-): string[] {
-  const excluded = new Set(
-    excludedNames.filter((name): name is string => typeof name === "string" && name.length > 0),
-  );
-  return presets.filter((name) => !excluded.has(name));
+export async function releaseRebuildSourceOpenClawWindow(window: OpenClawPostRestoreDoctorWindow) {
+  const finished = await finishOpenClawPostRestoreDoctor(window);
+  if (!finished.ok) await abortOpenClawPostRestoreDoctor(window);
+  return finished;
 }
 
-function bailForUnsafeOpenClawPluginProvenance(input: RebuildBackupPhaseInput): never {
-  console.error(
-    "  Custom-image OpenClaw plugin provenance is missing or invalid; rebuild cannot safely distinguish image-owned plugins from user state.",
-  );
-  console.error("  The sandbox is untouched — no data was lost.");
-  console.error(
-    "  To preserve state, onboard the custom image under a new sandbox name and manually migrate only user-owned state.",
-  );
-  input.relockShieldsIfNeeded(!input.staleRecovery);
-  return input.bail("Custom-image OpenClaw plugin provenance is unavailable.");
+export function retireRebuildSourceOpenClawWindowForDelete(
+  window: OpenClawPostRestoreDoctorWindow,
+) {
+  return retireOpenClawPostRestoreDoctorForDelete(window);
 }
 
-/** Align built-in web-search egress with the durable provider selection. */
-export function normalizeRebuildWebSearchPolicyPresets(
-  presets: readonly string[],
-  sandboxEntry: RebuildSandboxEntry,
-  webSearchConfig: WebSearchConfig | null,
-): string[] {
-  const customPresetNames = new Set(
-    (sandboxEntry.customPolicies ?? []).map((policy) => policy.name),
-  );
-  const selectedProvider = webSearchConfig ? webSearchProviderForConfig(webSearchConfig) : null;
-  const preserveStandaloneDcodeTavily =
-    selectedProvider === null && sandboxEntry.agent === "langchain-deepagents-code";
-  const normalizedTierName = sandboxEntry.policyTier?.trim().toLowerCase();
-  const tier = normalizedTierName ? getTier(normalizedTierName) : null;
-  const normalized = presets.filter((name) => {
-    // Exact custom content is replayed from backupManifest.customPolicies.
-    // Never substitute a same-name built-in during onboard or restore.
-    if (customPresetNames.has(name)) return false;
-    if (preserveStandaloneDcodeTavily && name === "tavily") return true;
-    // Same provenance exemption the onboard reuse path applies: a tier's own
-    // egress default (`brave` on Balanced/Open) is not a stale web-search
-    // leftover, so rebuilding a sandbox with web search declined must not
-    // narrow it. (#10404)
-    return !isStaleBuiltinWebSearchPolicyPreset(name, {
-      webSearchConfig,
-      customPresetNames,
-      tier,
-      agent: sandboxEntry.agent,
-    });
-  });
-  if (
-    selectedProvider &&
-    !customPresetNames.has(selectedProvider) &&
-    !normalized.includes(selectedProvider)
-  ) {
-    normalized.push(selectedProvider);
-  }
-  return [...new Set(normalized)];
-}
-
-/** Align built-in observability egress with the durable opt-in and policy tier. */
-export function normalizeRebuildObservabilityPolicyPresets(
-  presets: readonly string[],
-  sandboxEntry: RebuildSandboxEntry,
-): string[] {
-  const customPresetNames = new Set(
-    (sandboxEntry.customPolicies ?? []).map((policy) => policy.name.trim().toLowerCase()),
-  );
-  const customOwnsObservabilityPolicy = (sandboxEntry.customPolicies ?? []).some((policy) =>
-    parsePresetPolicyKeys(policy.content).includes(OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET),
-  );
-  const customOwnsObservability =
-    customPresetNames.has(OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET) || customOwnsObservabilityPolicy;
-  const activePresets = presets.filter((name) => {
-    const normalizedName = name.trim().toLowerCase();
-    if (normalizedName !== OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET) return true;
-    // Custom content is replayed separately from the captured manifest. Its
-    // registry name may differ from the network-policy key it owns, so neither
-    // form may be substituted with the built-in preset.
-    if (customOwnsObservability) return false;
-    return (
-      isDcodeAgent(sandboxEntry.agent) &&
-      !isInactiveObservabilityPolicyPreset(name, {
-        agent: sandboxEntry.agent,
-        observabilityEnabled: sandboxEntry.observabilityEnabled,
-        customPresetNames,
-      })
+export async function captureRebuildPolicyDocument(
+  sandboxName: string,
+  gatewayName: string,
+  runtimeSelection?: OpenShellRuntimeSelection,
+): Promise<string> {
+  let policy: string;
+  try {
+    policy = await captureRecordedSandboxBasePolicy(
+      sandboxName,
+      "capture the live policy before sandbox replacement",
+      runtimeSelection,
     );
-  });
-  if (!customOwnsObservability) {
-    for (const requiredPreset of requiredObservabilityPolicyPresets(
-      sandboxEntry.agent,
-      sandboxEntry.observabilityEnabled,
-    )) {
-      if (!activePresets.includes(requiredPreset)) activePresets.push(requiredPreset);
-    }
+  } catch (error) {
+    if (!isPolicyObservationError(error)) throw error;
+    const retryCommand = `nemoclaw ${sandboxName} rebuild`;
+    const recovery = error.policyReadError
+      ? formatOpenShellPolicyRecoveryAction(error.policyReadError, retryCommand, gatewayName)
+      : `Inspect \`openshell status\`, correct the policy-read failure, then retry \`${retryCommand}\`.`;
+    throw new PolicyObservationError(
+      [
+        `Cannot read the current OpenShell policy before rebuilding sandbox '${sandboxName}' through recorded gateway '${gatewayName}'.`,
+        error.message,
+        recovery,
+      ].join(" "),
+      {
+        cause: error,
+        ...(error.policyReadError === undefined ? {} : { policyReadError: error.policyReadError }),
+      },
+    );
   }
-  return filterSuppressedAgentRequiredPresets(
-    [...new Set(activePresets)],
-    sandboxEntry.policyTier,
-    sandboxEntry.agent,
-  );
+  if (!isSandboxPolicyCredentialFree(policy)) {
+    throw new Error(
+      `Cannot prepare a rebuild policy handoff for sandbox '${sandboxName}' because its live OpenShell policy contains a literal credential value. Replace literal credentials with supported OpenShell credential bindings or resolver placeholders, then retry the rebuild.`,
+    );
+  }
+  return policy;
 }
 
-/** Normalize the complete replacement target, including fresh inner-onboard additions. */
-export function normalizeRebuildTargetPolicyPresets(
-  presets: readonly string[],
-  sandboxEntry: RebuildSandboxEntry,
-  webSearchConfig: WebSearchConfig | null,
-): string[] {
-  return ensureRequiredTierPolicyPresets(
-    sandboxEntry.policyTier,
-    normalizeRebuildObservabilityPolicyPresets(
-      normalizeRebuildWebSearchPolicyPresets([...new Set(presets)], sandboxEntry, webSearchConfig),
-      sandboxEntry,
-    ),
-  );
+function writeRebuildPolicySource(policy: string, policySourcePath?: string): string {
+  const resolvedPolicySourcePath =
+    policySourcePath ?? secureTempFile("nemoclaw-rebuild-policy", ".yaml");
+  fs.writeFileSync(resolvedPolicySourcePath, policy, { mode: 0o600 });
+  return resolvedPolicySourcePath;
 }
 
-export function runRebuildBackupPhase(
+export async function runRebuildBackupPhase(
   input: RebuildBackupPhaseInput,
   backupStateForRebuild: typeof backupSandboxStateForRebuild = backupSandboxStateForRebuild,
-): RebuildBackupPhaseResult | null {
-  const customOpenClaw =
-    Boolean(input.sandboxEntry.fromDockerfile) &&
-    (!input.sandboxEntry.agent || input.sandboxEntry.agent === "openclaw");
+): Promise<RebuildBackupPhaseResult | null> {
   const preparedRecoveryManifest = input.preparedRecoveryManifest;
-  const hasPreparedRecovery = preparedRecoveryManifest !== null;
-  const preparedRecoveryIsAuthoritative =
-    preparedRecoveryManifest !== null &&
-    hasAuthoritativeOpenClawImagePluginProvenance(preparedRecoveryManifest);
-  const restoresCustomOpenClawState =
-    customOpenClaw && (!input.staleRecovery || hasPreparedRecovery);
+  const preparedRetainedPolicy = preparedRecoveryManifest
+    ? readRebuildPolicyHandoff(preparedRecoveryManifest)
+    : null;
+  const capturedPolicy =
+    input.staleRecovery || preparedRetainedPolicy
+      ? null
+      : await captureRebuildPolicyDocument(
+          input.sandboxName,
+          input.gatewayName,
+          input.runtimeSelection,
+        );
+  let sourceBackupWindow: OpenClawPostRestoreDoctorWindow | null = null;
   if (
-    (hasPreparedRecovery &&
-      preparedRecoveryManifest?.reconcileOpenClawImagePluginProvenance === true &&
-      !preparedRecoveryIsAuthoritative) ||
-    (restoresCustomOpenClawState &&
-      !preparedRecoveryIsAuthoritative &&
-      (hasPreparedRecovery ||
-        !hasCompleteOpenClawImagePluginProvenance(
-          input.sandboxEntry.openclawImagePluginInstalls,
-          "/sandbox/.openclaw",
-        )))
+    !preparedRecoveryManifest &&
+    !input.staleRecovery &&
+    (input.sandboxEntry.agent ?? "openclaw") === "openclaw"
   ) {
-    return bailForUnsafeOpenClawPluginProvenance(input);
+    input.log("Entering verified OpenClaw gateway-quiesce window before state backup");
+    const begun = await beginOpenClawBackupQuiesce(input.sandboxName, input.runtimeSelection);
+    if (!begun.ok) {
+      return input.bail(
+        `OpenClaw state backup could not enter its gateway-down maintenance window (${begun.stage}: ${begun.detail}).`,
+      );
+    }
+    sourceBackupWindow = begun.window;
   }
-  const backupManifest =
-    preparedRecoveryManifest ??
-    backupStateForRebuild(
-      input.sandboxName,
-      input.sandboxEntry,
-      input.staleRecovery,
-      input.log,
-      input.relockShieldsIfNeeded,
-      input.bail,
-      { force: input.force },
-    );
-  if (backupManifest === undefined) return null;
-  if (
-    backupManifest &&
-    (backupManifest.reconcileOpenClawImagePluginProvenance === true ||
-      restoresCustomOpenClawState) &&
-    !hasAuthoritativeOpenClawImagePluginProvenance(backupManifest)
-  ) {
-    return bailForUnsafeOpenClawPluginProvenance(input);
-  }
-  const backupWasForceSkipped =
-    input.force === true && !input.staleRecovery && backupManifest === null;
-
-  const registryPolicyPresets = Array.isArray(input.sandboxEntry.policies)
-    ? input.sandboxEntry.policies.filter(
-        (value: unknown): value is string => typeof value === "string",
-      )
-    : [];
-  const disabledChannels = [...(input.messagingPlan?.disabledChannels ?? [])];
-  const enabledChannelIds = (input.messagingPlan?.channels ?? [])
-    .filter((channel) => !channel.disabled)
-    .map((channel) => channel.channelId);
-  const mergedPolicyPresets = mergeRebuildMessagingPolicyPresets(
-    backupManifest?.policyPresets,
-    registryPolicyPresets,
-    enabledChannelIds,
-    disabledChannels,
-  );
-  const activeMessagingPolicyPresets = input.messagingPlan
-    ? pruneInactiveMessagingPolicyPresets(
-        mergedPolicyPresets,
-        enabledChannelIds,
-        new Set(
-          (input.sandboxEntry.customPolicies ?? []).map((policy) =>
-            policy.name.trim().toLowerCase(),
-          ),
+  let transferSourceWindow = false;
+  try {
+    let backupManifest: RebuildBackupManifest | undefined =
+      preparedRecoveryManifest ??
+      (await backupStateForRebuild(
+        input.sandboxName,
+        input.sandboxEntry,
+        input.staleRecovery,
+        input.log,
+        input.bail,
+      ));
+    if (backupManifest === undefined) return null;
+    const retainedPolicy = backupManifest ? readRebuildPolicyHandoff(backupManifest) : null;
+    if (input.staleRecovery && !retainedPolicy) {
+      return input.bail(
+        "The live OpenShell policy and its verified rebuild handoff are unavailable. Rebuild will not reconstruct policy from NemoClaw state.",
+      );
+    }
+    const retainedHandoff = backupManifest?.rebuildPolicyHandoff;
+    if (
+      retainedPolicy &&
+      backupManifest &&
+      retainedHandoff &&
+      !isSandboxPolicyCredentialFree(retainedPolicy)
+    ) {
+      const retainedHandoffPath = path.join(backupManifest.backupPath, retainedHandoff.file);
+      const recoveryTransactionId = input.recoveryTransactionId ?? randomUUID();
+      try {
+        recordRebuildRecoveryBackup({
+          sandboxName: input.sandboxName,
+          agentName: backupManifest.agentType,
+          transactionId: recoveryTransactionId,
+          gatewayName: input.gatewayName,
+          gatewayPort: input.gatewayPort,
+          backupManifest,
+        });
+      } catch (error) {
+        return input.bail(
+          `Cannot bind the retained credential-bearing policy handoff to a bounded recovery transaction: ${error instanceof Error ? error.message : String(error)} Recovery remains at '${backupManifest.backupPath}'.`,
+        );
+      }
+      return input.bail(
+        `The retained rebuild policy handoff for sandbox '${input.sandboxName}' contains a literal credential value and cannot restore the deleted sandbox. Recovery:\n` +
+          `  1. Recover any required data from the backup before deletion. Keep the backup and policy handoff until that recovery is complete.\n` +
+          `  2. Restore access to recorded gateway '${input.gatewayName}', select it with \`openshell gateway select ${input.gatewayName}\`, and confirm \`openshell status\` is healthy.\n` +
+          `  3. Only then run \`nemoclaw ${input.sandboxName} destroy --yes\` and confirm OpenShell reports the sandbox deleted. Do not use \`--force\` for this recovery. If deletion is unconfirmed, preserve the recovery state and restore gateway access before retrying cleanup.\n` +
+          "  4. Create a fresh sandbox under a new name by replacing `<new-sandbox>` in `nemoclaw onboard --name <new-sandbox>`. Do not retry rebuild with the unsafe handoff.\n" +
+          `  5. After required data is recovered and old-sandbox deletion is confirmed, retire only this failed transaction with \`nemoclaw ${input.sandboxName} rebuild --retire-recovery ${recoveryTransactionId} --yes\`. This removes the credential-bearing policy handoff at '${retainedHandoffPath}' while retaining the remaining backup.`,
+      );
+    }
+    if (retainedPolicy && backupManifest && retainedHandoff) {
+      transferSourceWindow = true;
+      return {
+        backupManifest,
+        policySourcePath: fs.realpathSync(
+          path.join(backupManifest.backupPath, retainedHandoff.file),
         ),
-      )
-    : mergedPolicyPresets;
-  const policyPresets = normalizeRebuildTargetPolicyPresets(
-    activeMessagingPolicyPresets,
-    input.sandboxEntry,
-    input.webSearchConfig,
-  );
-  const sessionPolicyPresets = resolveRecreatePolicyPresets(
-    policyPresets,
-    input.sandboxEntry.policyPresetsFinalized === true,
-    // Rebuild now replays exact custom policy content after recreate, so the
-    // built-in selection can independently preserve an intentional empty set.
-    false,
-    {},
-    true,
-  ).policyPresets;
-
-  return { backupManifest, backupWasForceSkipped, policyPresets, sessionPolicyPresets };
+        ...(sourceBackupWindow ? { sourceOpenClawDoctorWindow: sourceBackupWindow } : {}),
+      };
+    }
+    const policy =
+      capturedPolicy ??
+      (await captureRebuildPolicyDocument(
+        input.sandboxName,
+        input.gatewayName,
+        input.runtimeSelection,
+      ));
+    if (backupManifest && !retainedPolicy) {
+      try {
+        backupManifest = writeRebuildPolicyHandoff(backupManifest, policy);
+        const handoff = backupManifest.rebuildPolicyHandoff;
+        if (!handoff) throw new Error("rebuild policy handoff was not published");
+        transferSourceWindow = true;
+        return {
+          backupManifest,
+          policySourcePath: fs.realpathSync(path.join(backupManifest.backupPath, handoff.file)),
+          ...(sourceBackupWindow ? { sourceOpenClawDoctorWindow: sourceBackupWindow } : {}),
+        };
+      } catch (error) {
+        return input.bail(
+          `The current OpenShell policy could not be retained for rebuild recovery: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+    transferSourceWindow = true;
+    return {
+      backupManifest,
+      policySourcePath: writeRebuildPolicySource(policy),
+      ...(sourceBackupWindow ? { sourceOpenClawDoctorWindow: sourceBackupWindow } : {}),
+    };
+  } finally {
+    if (sourceBackupWindow && !transferSourceWindow) {
+      await releaseRebuildSourceOpenClawWindow(sourceBackupWindow);
+    }
+  }
 }

@@ -6,7 +6,10 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 
-import { launchReadinessRegistryFixture } from "../helpers/launch-readiness-fixture";
+import {
+  LAUNCH_READINESS_FIXTURE_POLICY,
+  launchReadinessRegistryFixture,
+} from "../helpers/launch-readiness-fixture";
 import { run, runWithEnv, testTimeoutOptions, writeSandboxRegistry } from "./helpers";
 
 const CALL_SEPARATOR = "--- openshell call ---";
@@ -73,6 +76,12 @@ function createLaunchHarness(prefix: string, agent: string): LaunchHarness {
       "  echo '  Gateway: nemoclaw'",
       "  exit 0",
       "fi",
+      'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
+      "  echo 'Gateway inference:'",
+      "  echo '  Provider: nvidia-prod'",
+      "  echo '  Model: test-model'",
+      "  exit 0",
+      "fi",
       'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
       "  echo 'NAME           STATUS     AGE'",
       "  echo 'alpha          Ready      2m ago'",
@@ -95,6 +104,10 @@ function createLaunchHarness(prefix: string, agent: string): LaunchHarness {
       "  echo 'sandbox not found' >&2",
       "  exit 1",
       "fi",
+      'if [ "$1" = "policy" ] && [ "$2" = "get" ]; then',
+      `  printf '%b' ${JSON.stringify(LAUNCH_READINESS_FIXTURE_POLICY)}`,
+      "  exit 0",
+      "fi",
       'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ]; then',
       // The interactive agent exec is the only exec that requests a TTY.
       '  for arg in "$@"; do',
@@ -103,6 +116,10 @@ function createLaunchHarness(prefix: string, agent: string): LaunchHarness {
       "      exit 0",
       "    fi",
       "  done",
+      '  if [[ "$*" == *"inference.local/v1/chat/completions"* ]]; then',
+      `    printf '%s\\n' '200' '{"choices":[{"message":{"content":"OK"}}]}'`,
+      "    exit 0",
+      "  fi",
       // Preflight probes: gateway health and the inference.local route.
       "  echo 'OK 200'",
       "  exit 0",

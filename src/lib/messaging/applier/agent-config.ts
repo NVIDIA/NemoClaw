@@ -26,7 +26,6 @@ import {
   readEnvLineKey,
   staleCredentialEnvKeys,
 } from "./credential-env-cleanup";
-import { allowRenderedOpenClawPlugins } from "./openclaw-plugin-allow";
 import { enabledPlanChannels, filterEnabledPlanEntries } from "./plan-filter";
 import type {
   MessagingHookApplyRequest,
@@ -129,6 +128,56 @@ export async function applyAgentConfigAtOpenShell(
   };
 }
 
+/** Remove only one disabled channel's manifest-owned config before plan retirement. */
+export function removeDisabledChannelAgentConfigAtOpenShell(
+  plan: SandboxMessagingPlan,
+  channelId: string,
+  options: { readonly runOpenshell: MessagingOpenShellRunner },
+): { readonly appliedTargets: readonly string[] } {
+  if (!plan.disabledChannels.includes(channelId)) {
+    throw new Error(`Cannot remove active messaging channel config '${channelId}'.`);
+  }
+  const disabledRender = plan.agentRender.filter((entry) => entry.channelId === channelId);
+  const appliedTargets: string[] = [];
+  for (const [target, render] of groupRenderByTarget(disabledRender)) {
+    const resolvedTarget = resolveSandboxAgentConfigTarget(target, plan.agent);
+    const kind = render[0]?.kind;
+    if (!kind || render.some((entry) => entry.kind !== kind)) {
+      throw new Error(`Cannot remove mixed messaging render kinds from ${target}.`);
+    }
+    const existing = readSandboxFileForRemoval(
+      plan.sandboxName,
+      resolvedTarget,
+      options.runOpenshell,
+    );
+    if (existing === undefined) continue;
+    const contents =
+      kind === "json-fragment"
+        ? applyJsonFragments(plan, existing, [], render.filter(isJsonRender), resolvedTarget)
+        : removeOwnedEnvLines(existing, render.filter(isEnvLinesRender));
+    writeSandboxFile(plan.sandboxName, resolvedTarget, contents, options.runOpenshell);
+    appliedTargets.push(resolvedTarget);
+  }
+  return { appliedTargets: uniqueStrings(appliedTargets) };
+}
+
+function removeOwnedEnvLines(
+  existing: string,
+  render: readonly SandboxMessagingEnvLinesRenderPlan[],
+): string {
+  const ownedKeys = new Set(
+    render.flatMap((entry) => entry.lines.map(readEnvLineKey).filter((key) => key !== null)),
+  );
+  const output = existing
+    .split(/\n/u)
+    .filter((line, index, lines) => line.length > 0 || index < lines.length - 1)
+    .filter((line) => {
+      const key = readEnvLineKey(line);
+      return key === null || !ownedKeys.has(key);
+    });
+  return output.length > 0 ? `${output.join("\n")}\n` : "";
+}
+
 /**
  * Repair the Hermes env file after starting an image built with an older
  * applier. This deliberately touches only the manifest-owned credential key
@@ -150,10 +199,72 @@ export function reconcileCredentialEnvAtOpenShell(
   const existing = readSandboxFile(plan.sandboxName, target, options.runOpenshell);
   if (existing === undefined) return { changed: false };
 
-  const contents = applyEnvLines(plan, existing, render);
+  const runtimeAliasRender = readHermesRuntimeAliasRender(plan, options.runOpenshell);
+  const contents = applyEnvLines(plan, existing, [...render, ...runtimeAliasRender], [], {
+    preserveResolverCredentialLines: true,
+  });
   if (contents === existing) return { changed: false };
   writeSandboxFile(plan.sandboxName, target, contents, options.runOpenshell);
   return { changed: true, target };
+}
+
+const ENV_KEY_PATTERN = /^[A-Z][A-Z0-9_]*$/u;
+
+/**
+ * Resolve only manifest-derived cross-key aliases from OpenShell's injected,
+ * generation-scoped placeholders. The exact placeholder grammar prevents a raw
+ * provider credential or arbitrary sandbox value from entering Hermes state.
+ */
+function readHermesRuntimeAliasRender(
+  plan: SandboxMessagingPlan,
+  runOpenshell: MessagingOpenShellRunner,
+): SandboxMessagingEnvLinesRenderPlan[] {
+  return filterEnabledPlanEntries(plan, plan.runtimeSetup?.envAliases ?? []).flatMap((alias) => {
+    const sourceKey = alias.envKey;
+    const targetKey = alias.targetEnvKey;
+    if (
+      !targetKey ||
+      sourceKey === targetKey ||
+      !ENV_KEY_PATTERN.test(sourceKey) ||
+      !ENV_KEY_PATTERN.test(targetKey)
+    ) {
+      return [];
+    }
+    const expectedPattern = `^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_${sourceKey}$`;
+    const expectedValue = `openshell:resolve:env:${sourceKey}`;
+    if (alias.match !== expectedPattern || alias.value !== expectedValue) return [];
+    const result = runOpenshell(
+      [
+        "sandbox",
+        "exec",
+        "--name",
+        plan.sandboxName,
+        "--",
+        "sh",
+        "-c",
+        'printenv "$1"',
+        "sh",
+        sourceKey,
+      ],
+      {
+        ignoreError: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    if ((result.status ?? 0) !== 0) return [];
+    const placeholder = String(result.stdout ?? "").replace(/\r?\n$/u, "");
+    if (!new RegExp(expectedPattern, "u").test(placeholder)) return [];
+    return [
+      {
+        agent: "hermes",
+        channelId: alias.channelId,
+        kind: "env-lines",
+        lines: [`${targetKey}=${placeholder}`],
+        target: HERMES_ENV_RENDER_TARGET,
+        templateRefs: [],
+      },
+    ];
+  });
 }
 
 function hookRequestsForPhases(
@@ -279,7 +390,6 @@ function applyJsonFragments(
       preserveCredentialPlaceholders(entry.value, getJsonPath(root, entry.path), rules),
     );
   }
-  if (plan.agent === "openclaw") allowRenderedOpenClawPlugins(root, render);
   return format === "yaml" ? YAML.stringify(root) : JSON.stringify(root, null, 2) + "\n";
 }
 
@@ -418,6 +528,8 @@ function applyEnvLines(
   plan: SandboxMessagingPlan,
   existing: string | undefined,
   render: readonly SandboxMessagingEnvLinesRenderPlan[],
+  additionalLines: readonly string[] = [],
+  options: { readonly preserveResolverCredentialLines?: boolean } = {},
 ): string {
   const desired = new Map<string, string>();
   const rawDesiredLines: string[] = [];
@@ -431,7 +543,22 @@ function applyEnvLines(
       }
     }
   }
-  const stale = staleCredentialEnvKeys(plan, new Set(desired.keys()));
+  for (const line of additionalLines) {
+    const key = readEnvLineKey(line);
+    if (!key) throw new Error("Messaging runtime credential alias line is invalid.");
+    desired.set(key, line);
+  }
+  const stale = new Set(staleCredentialEnvKeys(plan, new Set(desired.keys())));
+  if (options.preserveResolverCredentialLines) {
+    const allowedResolvers = activeResolverEnvAssignments(plan);
+    for (const line of (existing ?? "").split(/\n/u)) {
+      const key = readEnvLineKey(line);
+      const sourceKey = readOpenShellResolverSourceKey(line);
+      if (key && sourceKey && stale.has(key) && allowedResolvers.has(`${key}\0${sourceKey}`)) {
+        stale.delete(key);
+      }
+    }
+  }
 
   const written = new Set<string>();
   const output = (existing ?? "")
@@ -451,6 +578,47 @@ function applyEnvLines(
   }
   output.push(...rawDesiredLines);
   return output.length > 0 ? `${output.join("\n")}\n` : "";
+}
+
+function activeResolverEnvAssignments(plan: SandboxMessagingPlan): ReadonlySet<string> {
+  const assignments = new Set<string>();
+  for (const binding of activeCredentialBindings(plan)) {
+    if (ENV_KEY_PATTERN.test(binding.providerEnvKey)) {
+      assignments.add(`${binding.providerEnvKey}\0${binding.providerEnvKey}`);
+    }
+  }
+  for (const alias of filterEnabledPlanEntries(plan, plan.runtimeSetup?.envAliases ?? [])) {
+    if (
+      alias.targetEnvKey &&
+      ENV_KEY_PATTERN.test(alias.targetEnvKey) &&
+      ENV_KEY_PATTERN.test(alias.envKey)
+    ) {
+      assignments.add(`${alias.targetEnvKey}\0${alias.envKey}`);
+    }
+  }
+  return assignments;
+}
+
+function readOpenShellResolverSourceKey(line: string): string | null {
+  const assignment = line.trim().replace(/^export\s+/u, "");
+  const separator = assignment.indexOf("=");
+  if (separator < 1) return null;
+  const rawValue = assignment.slice(separator + 1).trim();
+  const value =
+    rawValue.length >= 2 &&
+    ((rawValue.startsWith('"') && rawValue.endsWith('"')) ||
+      (rawValue.startsWith("'") && rawValue.endsWith("'")))
+      ? rawValue.slice(1, -1)
+      : rawValue;
+  return (
+    value.match(
+      /^openshell:resolve:env:(?:(?:v[0-9]{1,20}|s[a-f0-9]{64})_)?([A-Z][A-Z0-9_]{0,127})$/u,
+    )?.[1] ??
+    value.match(
+      /^(?:xoxb|xapp)-OPENSHELL-RESOLVE-ENV-(?:(?:v[0-9]{1,20}|s[a-f0-9]{64})_)?([A-Z][A-Z0-9_]{0,127})$/u,
+    )?.[1] ??
+    null
+  );
 }
 
 function applyHookBuildFileOutputs(
@@ -693,6 +861,24 @@ function readSandboxFile(
   });
   const status = result.status ?? 0;
   return status === 0 ? String(result.stdout ?? "") : undefined;
+}
+
+function readSandboxFileForRemoval(
+  sandboxName: string,
+  target: string,
+  runOpenshell: MessagingOpenShellRunner,
+): string | undefined {
+  const result = runOpenshell(["sandbox", "exec", "--name", sandboxName, "--", "cat", target], {
+    ignoreError: true,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if ((result.status ?? 0) === 0) return String(result.stdout ?? "");
+  const missing = runOpenshell(
+    ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-c", 'test ! -e "$1"', "sh", target],
+    { ignoreError: true, stdio: ["ignore", "pipe", "pipe"] },
+  );
+  if ((missing.status ?? 0) === 0) return undefined;
+  throw new Error(`Failed to read messaging agent config '${target}': ${compactOutput(result)}`);
 }
 
 function writeSandboxFile(

@@ -1,6 +1,33 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
+import type { SandboxGpuProofResult } from "../state/registry";
+
+export interface SandboxCreateRuntimePatch {
+  maybeApplyDuringCreate(): void | Promise<void>;
+  replacementRuntimeId?(): string | null;
+  createFailureMessage(): string | null;
+  exitOnPatchError(): void | Promise<void>;
+  rollbackManagedStartupAfterCreateFailure(): void | Promise<void>;
+  ensureApplied(): void | Promise<void>;
+  waitForSupervisorReconnectIfNeeded(): void | Promise<void>;
+  commitAfterReady(options?: {
+    readonly beforeFinalHandoff?: (replacementRuntimeId: string | null) => void;
+  }): void | Promise<void>;
+  allowsNotReadyLifecycleRevalidation?(): boolean;
+  selectedMode(): {
+    readonly kind: string;
+    readonly label: string;
+    readonly device: string;
+    readonly args: readonly string[];
+  } | null;
+  printReadinessFailureIfEnabled(): void;
+  verifyGpuOrExit(
+    verifyDirectSandboxGpu: (sandboxName: string) => SandboxGpuProofResult,
+  ): Promise<SandboxGpuProofResult>;
+}
+
 type DockerRunResult = {
   status?: number | null;
   stdout?: string | Buffer | null;
@@ -23,6 +50,7 @@ type ContainerDnsProbeFn = (
 ) => import("./preflight").DnsProbeResult;
 
 export type DockerGpuPatchDeps = {
+  commandExecutor?: OpenShellSandboxBufferedCommandExecutor;
   dockerCapture?: DockerCaptureFn;
   dockerRun?: DockerRunFn;
   dockerRunDetached?: DockerRunFn;
@@ -125,6 +153,8 @@ export type DockerGpuCloneRunOptions = {
   containerCommand?: readonly string[] | null;
   /** Stopped staging name used before exact-name cutover. */
   containerName?: string | null;
+  /** Preserve managed-bootstrap-only launch fields during stopped replacement. */
+  preserveManagedLaunchSpec?: boolean;
   /**
    * Extra supplementary group IDs to add to the recreated container via
    * `--group-add`. On Jetson these are the host group(s) owning the Tegra GPU
@@ -209,6 +239,15 @@ export type DockerContainerInspect = {
     AttachStderr?: boolean;
     Env?: string[] | null;
     Labels?: Record<string, string> | null;
+    ExposedPorts?: Record<string, Record<string, never>> | null;
+    Healthcheck?: {
+      Test?: string[] | null;
+      Interval?: number;
+      Timeout?: number;
+      StartPeriod?: number;
+      StartInterval?: number;
+      Retries?: number;
+    } | null;
     Entrypoint?: string[] | string | null;
     Cmd?: string[] | string | null;
     User?: string;
@@ -225,7 +264,14 @@ export type DockerContainerInspect = {
     Restarting?: boolean;
     Dead?: boolean;
   } | null;
+  Mounts?: Array<{
+    Type?: string;
+    Source?: string;
+    Destination?: string;
+    RW?: boolean;
+  }> | null;
   HostConfig?: {
+    Annotations?: Record<string, string> | null;
     Binds?: string[] | null;
     Mounts?: Array<{
       Type?: string;
@@ -248,6 +294,7 @@ export type DockerContainerInspect = {
     }> | null;
     NetworkMode?: string;
     PortBindings?: Record<string, Array<{ HostIp?: string; HostPort?: string }> | null> | null;
+    Tmpfs?: Record<string, string> | null;
     RestartPolicy?: { Name?: string; MaximumRetryCount?: number } | null;
     CapAdd?: string[] | null;
     CapDrop?: string[] | null;
@@ -263,6 +310,7 @@ export type DockerContainerInspect = {
     CpusetCpus?: string;
     CpusetMems?: string;
     PidsLimit?: number | null;
+    OomScoreAdj?: number | null;
     ConsoleSize?: number[] | null;
     Privileged?: boolean;
     Init?: boolean;

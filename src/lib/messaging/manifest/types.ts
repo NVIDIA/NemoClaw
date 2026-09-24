@@ -39,6 +39,8 @@ export interface ChannelManifest {
   readonly auth: ChannelAuthSpec;
   readonly inputs: readonly ChannelInputSpec[];
   readonly credentials: readonly ChannelCredentialSpec[];
+  /** Agent config-relative durable state directories cleared during channel removal. */
+  readonly state?: Partial<Record<MessagingAgentId, readonly string[]>>;
   /** Policy presets needed when this channel is active. */
   readonly policyPresets?: readonly ChannelPolicyPresetReference[];
   readonly render: readonly ChannelRenderSpec[];
@@ -65,6 +67,7 @@ export interface ChannelPolicyPresetSpec {
   readonly agentPolicyKeys?: Partial<Record<MessagingAgentId, readonly string[]>>;
   readonly requiredAtCreate?: boolean;
   readonly validationWarningLines?: readonly string[];
+  readonly validationWarningLinesByAgent?: Partial<Record<MessagingAgentId, readonly string[]>>;
 }
 
 /** How a channel obtains credential or session material. */
@@ -91,6 +94,14 @@ interface ChannelInputBaseSpec {
   readonly validValues?: readonly string[];
   readonly formatPattern?: string;
   readonly formatHint?: string;
+  /**
+   * Allow a raw \r/\n in this input's value. Default false rejects line
+   * breaks because most inputs render into a single env-file line or JSON
+   * string where an embedded newline would corrupt the target. Set this only
+   * for a value that is never rendered into such a target (e.g. a JSON blob
+   * consumed solely as gateway-side credential material).
+   */
+  readonly allowLineBreaks?: boolean;
 }
 
 /** Secret input metadata; values must be referenced, not stored in manifests or plans. */
@@ -323,6 +334,8 @@ export interface SandboxMessagingChannelPlan {
   readonly selected: boolean;
   readonly configured: boolean;
   readonly disabled: boolean;
+  /** Exact command-owned removal transaction retained until post-restore config cleanup succeeds. */
+  readonly pendingRemoval?: boolean;
   readonly inputs: readonly SandboxMessagingInputReference[];
   readonly hostForward?: SandboxMessagingHostForwardPlan;
   readonly hooks: readonly SandboxMessagingHookReferencePlan[];

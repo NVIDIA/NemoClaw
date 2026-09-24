@@ -7,34 +7,39 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
-  managedPolicyInspection,
+  livePolicyInspection,
   managedSandboxEntry,
   SANDBOX_IDENTITY,
-} from "../../helpers/managed-policy-receipt-fixture";
+} from "../../helpers/live-policy-fixture";
 
 const {
   getSandbox,
   inspectOpenShellSandboxIdentityFingerprint,
-  inspectSandboxPolicyAuthority,
-  runCapture,
+  inspectSandboxPolicy,
+  readSandboxPolicy,
 } = vi.hoisted(() => ({
   getSandbox: vi.fn(),
   inspectOpenShellSandboxIdentityFingerprint: vi.fn(),
-  inspectSandboxPolicyAuthority: vi.fn(),
-  runCapture: vi.fn(),
+  inspectSandboxPolicy: vi.fn(),
+  readSandboxPolicy: vi.fn(),
 }));
 
-vi.mock("../../../src/lib/adapters/openshell/policy-authority", async (importOriginal) => ({
+vi.mock("../../../src/lib/adapters/openshell/sandbox-identity-cli", async (importOriginal) => ({
   ...(await importOriginal<
-    typeof import("../../../src/lib/adapters/openshell/policy-authority")
+    typeof import("../../../src/lib/adapters/openshell/sandbox-identity-cli")
   >()),
   inspectOpenShellSandboxIdentityFingerprint,
-  inspectSandboxPolicyAuthority,
 }));
 
-vi.mock("../../../src/lib/runner", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../../src/lib/runner")>()),
-  runCapture,
+vi.mock("../../../src/lib/adapters/openshell/sandbox-policy-cli", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("../../../src/lib/adapters/openshell/sandbox-policy-cli")
+  >()),
+  cliOpenShellSandboxPolicyReader: {
+    inspectSandboxPolicy,
+    readSandboxPolicy,
+    readSandboxPolicyRevision: vi.fn(),
+  },
 }));
 
 vi.mock("../../../src/lib/state/registry", async (importOriginal) => ({
@@ -59,11 +64,11 @@ network_policies:
 beforeEach(() => {
   getSandbox.mockReset();
   getSandbox.mockImplementation((name: string) => managedSandboxEntry(name));
-  inspectSandboxPolicyAuthority.mockReset();
-  inspectSandboxPolicyAuthority.mockReturnValue(managedPolicyInspection());
+  inspectSandboxPolicy.mockReset();
+  inspectSandboxPolicy.mockReturnValue({ ok: true, value: livePolicyInspection() });
   inspectOpenShellSandboxIdentityFingerprint.mockReset();
   inspectOpenShellSandboxIdentityFingerprint.mockReturnValue(SANDBOX_IDENTITY);
-  runCapture.mockReset();
+  readSandboxPolicy.mockReset();
 });
 
 afterEach(() => {
@@ -71,11 +76,11 @@ afterEach(() => {
 });
 
 describe("custom policy semantic validation", () => {
-  it("rejects unsafe in-memory content before reading the sandbox policy", () => {
+  it("rejects unsafe in-memory content before reading the sandbox policy", async () => {
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
       expect(
-        applyPresetContent(
+        await applyPresetContent(
           "alpha",
           "unsafe-egress",
           [
@@ -91,7 +96,7 @@ describe("custom policy semantic validation", () => {
         ),
       ).toBe(false);
       expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("*:443"));
-      expect(runCapture).not.toHaveBeenCalled();
+      expect(readSandboxPolicy).not.toHaveBeenCalled();
     } finally {
       errSpy.mockRestore();
     }
@@ -126,15 +131,18 @@ describe("custom policy semantic validation", () => {
 });
 
 describe("Personal policy mutation validation", () => {
-  it("returns false for non-fatal application when the reserved Personal entry drifts", () => {
-    runCapture.mockReturnValue(DRIFTED_PERSONAL_POLICY);
+  it("returns false for non-fatal application when the reserved Personal entry drifts", async () => {
+    readSandboxPolicy.mockReturnValue({
+      ok: true,
+      value: { document: DRIFTED_PERSONAL_POLICY, appliedRevision: 1 },
+    });
     const weatherPreset = loadPreset("weather");
     expect(weatherPreset).not.toBeNull();
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     try {
       expect(
-        applyPresetContent("personal-drift", "weather", weatherPreset!, {
+        await applyPresetContent("personal-drift", "weather", weatherPreset!, {
           nonFatal: true,
         }),
       ).toBe(false);
@@ -146,13 +154,16 @@ describe("Personal policy mutation validation", () => {
     }
   });
 
-  it("throws for ordinary application when the reserved Personal entry drifts", () => {
-    runCapture.mockReturnValue(DRIFTED_PERSONAL_POLICY);
+  it("throws for ordinary application when the reserved Personal entry drifts", async () => {
+    readSandboxPolicy.mockReturnValue({
+      ok: true,
+      value: { document: DRIFTED_PERSONAL_POLICY, appliedRevision: 1 },
+    });
     const weatherPreset = loadPreset("weather");
     expect(weatherPreset).not.toBeNull();
 
-    expect(() => applyPresetContent("personal-drift", "weather", weatherPreset!)).toThrow(
-      "does not match the reviewed built-in preset",
-    );
+    await expect(
+      (async () => await applyPresetContent("personal-drift", "weather", weatherPreset!))(),
+    ).rejects.toThrow("does not match the reviewed built-in preset");
   });
 });

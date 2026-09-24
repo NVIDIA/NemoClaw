@@ -9,9 +9,41 @@ import { describe, expect, it } from "vitest";
 import { runWithEnv, testTimeoutOptions } from "./helpers";
 
 const LIVE_DOCKER_IDENTITY = `#!/bin/sh
-case "$*" in *'.Label '*) printf 'aaaaaaaaaaaa\topenshell\tdefault\tsb-alpha\n' ;; esac
+removed_marker="$0.removed"
+case "$1" in
+  ps)
+    if [ ! -e "$removed_marker" ]; then
+      last_arg=""
+      for arg do last_arg="$arg"; done
+      case "$last_arg" in
+        '{{.ID}}') printf 'aaaaaaaaaaaa\n' ;;
+        *) printf 'aaaaaaaaaaaa\topenshell\tdefault\tsb-alpha\n' ;;
+      esac
+    fi
+    ;;
+  rm)
+    if [ "$2" = "-f" ] && [ "$3" = "aaaaaaaaaaaa" ]; then
+      : > "$removed_marker"
+    fi
+    ;;
+esac
 exit 0
 `;
+
+function confirmSandboxMissingAfterDelete(markerPath: string, logPath: string): string[] {
+  return [
+    `deleted_marker=${JSON.stringify(markerPath)}`,
+    `delete_log_file=${JSON.stringify(logPath)}`,
+    'if [ "$1" = "sandbox" ] && [ "$2" = "delete" ]; then',
+    '  : > "$deleted_marker"',
+    "fi",
+    'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ -e "$deleted_marker" ]; then',
+    '  printf \'%s\\n\' "$*" >> "$delete_log_file"',
+    '  printf "Error: code: \'Some requested entity was not found\', message: \\"sandbox not found\\"\\n" >&2',
+    "  exit 1",
+    "fi",
+  ];
+}
 
 describe("CLI dispatch", () => {
   it(
@@ -34,7 +66,7 @@ describe("CLI dispatch", () => {
               model: "test-model",
               provider: "nvidia-prod",
               gpuEnabled: false,
-              policies: [],
+              agent: "langchain-deepagents-code",
             },
           },
           defaultSandbox: "alpha",
@@ -45,6 +77,7 @@ describe("CLI dispatch", () => {
         path.join(localBin, "openshell"),
         [
           "#!/bin/sh",
+          ...confirmSandboxMissingAfterDelete(path.join(home, "sandbox-deleted"), openshellLog),
           `log_file=${JSON.stringify(openshellLog)}`,
           'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
           '  printf "NAME STATUS\\n" >> "$log_file"',
@@ -71,13 +104,13 @@ describe("CLI dispatch", () => {
         PATH: `${localBin}:${process.env.PATH || ""}`,
       });
 
-      expect(r.code).toBe(0);
+      expect(r.code, r.out).toBe(0);
       const openshellOutput = fs.readFileSync(openshellLog, "utf8");
       const dockerOutput = fs.readFileSync(bashLog, "utf8");
       const shouldCleanupGateway = process.platform === "darwin";
-      expect(openshellOutput).toContain("sandbox delete alpha");
+      expect(openshellOutput).toContain("sandbox delete -g nemoclaw alpha");
       expect(openshellOutput).toContain("NAME STATUS");
-      expect(openshellOutput.includes("forward stop 18789")).toBe(shouldCleanupGateway);
+      expect(openshellOutput).not.toContain("forward stop 18789");
       expect(openshellOutput.includes("gateway remove nemoclaw")).toBe(shouldCleanupGateway);
       expect(dockerOutput.includes("volume ls -q --filter name=openshell-cluster-nemoclaw")).toBe(
         shouldCleanupGateway,
@@ -88,7 +121,7 @@ describe("CLI dispatch", () => {
   );
 
   it(
-    "falls back to legacy gateway destroy and still cleans volumes when remove fails (#6569)",
+    "falls back to legacy gateway destroy when remove is unsupported (#6569)",
     testTimeoutOptions(30_000),
     () => {
       const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-destroy-last-cleanup-"));
@@ -107,7 +140,7 @@ describe("CLI dispatch", () => {
               model: "test-model",
               provider: "nvidia-prod",
               gpuEnabled: false,
-              policies: [],
+              agent: "langchain-deepagents-code",
               gatewayName: "nemoclaw-8081",
               gatewayPort: 8081,
             },
@@ -120,6 +153,7 @@ describe("CLI dispatch", () => {
         path.join(localBin, "openshell"),
         [
           "#!/bin/sh",
+          ...confirmSandboxMissingAfterDelete(path.join(home, "sandbox-deleted"), openshellLog),
           `log_file=${JSON.stringify(openshellLog)}`,
           'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
           '  printf "NAME STATUS\\n" >> "$log_file"',
@@ -127,6 +161,7 @@ describe("CLI dispatch", () => {
           "fi",
           'printf \'%s\\n\' "$*" >> "$log_file"',
           'if [ "$1" = "gateway" ] && [ "$2" = "remove" ]; then',
+          "  printf '%s\n' \"unrecognized subcommand 'remove'\" >&2",
           "  exit 1",
           "fi",
           "exit 0",
@@ -157,8 +192,8 @@ describe("CLI dispatch", () => {
 
       expect(r.code, r.out).toBe(0);
       const openshellOutput = fs.readFileSync(openshellLog, "utf8");
-      expect(openshellOutput).toContain("sandbox delete alpha");
-      expect(openshellOutput).toContain("forward stop 18789");
+      expect(openshellOutput).toContain("sandbox delete -g nemoclaw-8081 alpha");
+      expect(openshellOutput).not.toContain("forward stop 18789");
       // `gateway remove` is the modern subcommand on every platform (#6569).
       expect(openshellOutput).toContain("gateway remove nemoclaw-8081");
       expect(openshellOutput).toContain("gateway destroy -g nemoclaw-8081");
@@ -191,7 +226,7 @@ describe("CLI dispatch", () => {
               model: "test-model",
               provider: "nvidia-prod",
               gpuEnabled: false,
-              policies: [],
+              agent: "langchain-deepagents-code",
             },
           },
           defaultSandbox: "alpha",
@@ -202,6 +237,7 @@ describe("CLI dispatch", () => {
         path.join(localBin, "openshell"),
         [
           "#!/bin/sh",
+          ...confirmSandboxMissingAfterDelete(path.join(home, "sandbox-deleted"), openshellLog),
           `log_file=${JSON.stringify(openshellLog)}`,
           'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
           '  printf "NAME STATUS\\n" >> "$log_file"',
@@ -237,7 +273,7 @@ describe("CLI dispatch", () => {
 
       expect(r.code, r.out).toBe(0);
       const openshellOutput = fs.readFileSync(openshellLog, "utf8");
-      expect(openshellOutput).toContain("forward stop 18789");
+      expect(openshellOutput).not.toContain("forward stop 18789");
       // `gateway remove` is the modern subcommand on every platform (#6569).
       expect(openshellOutput).toContain("gateway remove nemoclaw");
       expect(openshellOutput).not.toContain("gateway destroy -g nemoclaw");
@@ -259,6 +295,7 @@ describe("CLI dispatch", () => {
       const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-destroy-perport-pid-"));
       const localBin = path.join(home, "bin");
       const registryDir = path.join(home, ".nemoclaw");
+      const openshellLog = path.join(home, "openshell.log");
       const defaultStateDir = path.join(home, ".local/state/nemoclaw/openshell-docker-gateway");
       const perPortStateDir = path.join(
         home,
@@ -283,7 +320,7 @@ describe("CLI dispatch", () => {
               model: "test-model",
               provider: "nvidia-prod",
               gpuEnabled: false,
-              policies: [],
+              agent: "langchain-deepagents-code",
               gatewayName: "nemoclaw-8081",
               gatewayPort: 8081,
             },
@@ -296,6 +333,7 @@ describe("CLI dispatch", () => {
         path.join(localBin, "openshell"),
         [
           "#!/bin/sh",
+          ...confirmSandboxMissingAfterDelete(path.join(home, "sandbox-deleted"), openshellLog),
           'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
           '  printf "NAME STATUS\\n"',
           "  exit 0",
@@ -354,7 +392,7 @@ describe("CLI dispatch", () => {
               model: "test-model",
               provider: "nvidia-prod",
               gpuEnabled: false,
-              policies: [],
+              agent: "langchain-deepagents-code",
             },
           },
           defaultSandbox: "alpha",
@@ -365,6 +403,7 @@ describe("CLI dispatch", () => {
         path.join(localBin, "openshell"),
         [
           "#!/bin/sh",
+          ...confirmSandboxMissingAfterDelete(path.join(home, "sandbox-deleted"), openshellLog),
           `log_file=${JSON.stringify(openshellLog)}`,
           'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
           '  printf "NAME STATUS\\n" >> "$log_file"',
@@ -429,7 +468,7 @@ describe("CLI dispatch", () => {
             model: "test-model",
             provider: "nvidia-prod",
             gpuEnabled: false,
-            policies: [],
+            agent: "langchain-deepagents-code",
             gatewayName: "nemoclaw-8081",
             gatewayPort: 8081,
           },
@@ -438,7 +477,7 @@ describe("CLI dispatch", () => {
             model: "test-model",
             provider: "nvidia-prod",
             gpuEnabled: false,
-            policies: [],
+            agent: "langchain-deepagents-code",
           },
         },
         defaultSandbox: "alpha",
@@ -449,6 +488,7 @@ describe("CLI dispatch", () => {
       path.join(localBin, "openshell"),
       [
         "#!/bin/sh",
+        ...confirmSandboxMissingAfterDelete(path.join(home, "sandbox-deleted"), openshellLog),
         `log_file=${JSON.stringify(openshellLog)}`,
         'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
         '  printf "NAME STATUS\\nbeta Ready\\n" >> "$log_file"',
@@ -477,7 +517,9 @@ describe("CLI dispatch", () => {
     });
 
     expect(r.code).toBe(0);
-    expect(fs.readFileSync(openshellLog, "utf8")).toContain("sandbox delete alpha");
+    expect(fs.readFileSync(openshellLog, "utf8")).toContain(
+      "sandbox delete -g nemoclaw-8081 alpha",
+    );
     expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("forward stop 18789");
     expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("gateway destroy -g nemoclaw");
     expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("gateway remove nemoclaw");
@@ -492,6 +534,21 @@ describe("CLI dispatch", () => {
     const registryDir = path.join(home, ".nemoclaw");
     const openshellLog = path.join(home, "openshell.log");
     const bashLog = path.join(home, "docker.log");
+    const deletedMarker = path.join(home, "alpha-deleted");
+    const sandboxListJson = (names: string[]) =>
+      JSON.stringify(
+        names.map((name) => ({
+          id: `sandbox-${name}`,
+          name,
+          labels: {},
+          resource_version: 1,
+          created_at: "2026-09-16T00:00:00Z",
+          phase: "Ready",
+          current_policy_version: 1,
+        })),
+      );
+    const beforeDeleteListJson = sandboxListJson(["alpha", "beta"]);
+    const afterDeleteListJson = sandboxListJson(["beta"]);
     fs.mkdirSync(localBin, { recursive: true });
     fs.mkdirSync(registryDir, { recursive: true });
     fs.writeFileSync(
@@ -503,7 +560,7 @@ describe("CLI dispatch", () => {
             model: "test-model",
             provider: "nvidia-prod",
             gpuEnabled: false,
-            policies: [],
+            agent: "langchain-deepagents-code",
           },
         },
         defaultSandbox: "alpha",
@@ -514,11 +571,32 @@ describe("CLI dispatch", () => {
       path.join(localBin, "openshell"),
       [
         "#!/bin/sh",
+        ...confirmSandboxMissingAfterDelete(path.join(home, "sandbox-deleted"), openshellLog),
         `log_file=${JSON.stringify(openshellLog)}`,
+        `deleted_marker=${JSON.stringify(deletedMarker)}`,
         'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
-        '  printf "NAME STATUS\\nbeta Ready\\n" >> "$log_file"',
-        '  printf "NAME STATUS\\nbeta Ready\\n"',
+        '  case " $* " in',
+        '    *" -o json "*)',
+        '      if [ -e "$deleted_marker" ]; then',
+        `        output=${JSON.stringify(afterDeleteListJson)}`,
+        "      else",
+        `        output=${JSON.stringify(beforeDeleteListJson)}`,
+        "      fi",
+        "      ;;",
+        "    *)",
+        '      if [ -e "$deleted_marker" ]; then',
+        '        output="NAME STATUS\\nbeta Ready"',
+        "      else",
+        '        output="NAME STATUS\\nalpha Ready\\nbeta Ready"',
+        "      fi",
+        "      ;;",
+        "  esac",
+        '  printf "%b\\n" "$output" >> "$log_file"',
+        '  printf "%b\\n" "$output"',
         "  exit 0",
+        "fi",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "delete" ]; then',
+        '  : > "$deleted_marker"',
         "fi",
         'printf \'%s\\n\' "$*" >> "$log_file"',
         "exit 0",
@@ -536,13 +614,16 @@ describe("CLI dispatch", () => {
       { mode: 0o755 },
     );
 
-    const r = runWithEnv("alpha destroy --yes", {
+    const r = runWithEnv("alpha destroy --yes --cleanup-gateway 2>&1", {
       HOME: home,
       PATH: `${localBin}:${process.env.PATH || ""}`,
     });
 
-    expect(r.code).toBe(0);
-    expect(fs.readFileSync(openshellLog, "utf8")).toContain("sandbox delete alpha");
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("Shared NemoClaw gateway left running");
+    expect(r.out).toContain("--cleanup-gateway was not applied");
+    expect(r.out).toContain("'beta'");
+    expect(fs.readFileSync(openshellLog, "utf8")).toContain("sandbox delete -g nemoclaw alpha");
     expect(fs.readFileSync(openshellLog, "utf8")).toContain("beta Ready");
     expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("forward stop 18789");
     expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("gateway destroy -g nemoclaw");
@@ -570,7 +651,7 @@ describe("CLI dispatch", () => {
             model: "test-model",
             provider: "nvidia-prod",
             gpuEnabled: false,
-            policies: [],
+            agent: "langchain-deepagents-code",
             gatewayName: "nemoclaw-8081",
             gatewayPort: 8081,
           },
@@ -583,6 +664,7 @@ describe("CLI dispatch", () => {
       path.join(localBin, "openshell"),
       [
         "#!/bin/sh",
+        ...confirmSandboxMissingAfterDelete(path.join(home, "sandbox-deleted"), openshellLog),
         `log_file=${JSON.stringify(openshellLog)}`,
         `active_gateway=${JSON.stringify(activeGateway)}`,
         'printf \'%s\\n\' "$*" >> "$log_file"',
@@ -615,16 +697,17 @@ describe("CLI dispatch", () => {
 
     const r = runWithEnv("alpha destroy --yes", {
       HOME: home,
+      NEMOCLAW_CLEANUP_GATEWAY: "0",
       PATH: `${localBin}:${process.env.PATH || ""}`,
     });
 
     expect(r.code, r.out).toBe(0);
     const lines = fs.readFileSync(openshellLog, "utf8").trim().split("\n");
     const selectIndex = lines.indexOf("gateway select nemoclaw-8081");
-    const deleteIndex = lines.indexOf("sandbox delete alpha");
+    const deleteIndex = lines.indexOf("sandbox delete -g nemoclaw-8081 alpha");
     expect(selectIndex).toBeGreaterThanOrEqual(0);
     expect(deleteIndex).toBeGreaterThan(selectIndex);
-    expect(lines.slice(deleteIndex + 1)).toContain("sandbox list");
+    expect(lines.slice(deleteIndex + 1)).toContain("sandbox get -g nemoclaw-8081 alpha");
 
     // #5455 PRA-2: the persistent-state wipe (`sandbox exec --name alpha ...`)
     // MUST come after gateway select and before sandbox delete. Running the
@@ -664,7 +747,7 @@ describe("CLI dispatch", () => {
               model: "test-model",
               provider: "nvidia-prod",
               gpuEnabled: false,
-              policies: [],
+              agent: "langchain-deepagents-code",
               gatewayName: "nemoclaw-8081",
               gatewayPort: 8081,
             },
@@ -677,6 +760,7 @@ describe("CLI dispatch", () => {
         path.join(localBin, "openshell"),
         [
           "#!/bin/sh",
+          ...confirmSandboxMissingAfterDelete(path.join(home, "sandbox-deleted"), openshellLog),
           `log_file=${JSON.stringify(openshellLog)}`,
           'printf \'%s\\n\' "$*" >> "$log_file"',
           'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
@@ -700,7 +784,7 @@ describe("CLI dispatch", () => {
       const lines = fs.readFileSync(openshellLog, "utf8").trim().split("\n");
       const selectIndex = lines.indexOf("gateway select nemoclaw-8081");
       const wipeIndex = lines.findIndex((line) => line.startsWith("sandbox exec --name alpha"));
-      const deleteIndex = lines.indexOf("sandbox delete alpha");
+      const deleteIndex = lines.indexOf("sandbox delete -g nemoclaw-8081 alpha");
       const gatewayDestroyIndex = lines.findIndex(
         (line) =>
           line === "gateway remove nemoclaw-8081" || line === "gateway destroy -g nemoclaw-8081",
@@ -729,7 +813,7 @@ describe("CLI dispatch", () => {
             model: "test-model",
             provider: "nvidia-prod",
             gpuEnabled: false,
-            policies: [],
+            agent: "langchain-deepagents-code",
           },
         },
         defaultSandbox: "alpha",
@@ -743,21 +827,27 @@ describe("CLI dispatch", () => {
         `log_file=${JSON.stringify(openshellLog)}`,
         'printf \'%s\\n\' "$*" >> "$log_file"',
         'if [ "$1" = "sandbox" ] && [ "$2" = "delete" ]; then',
-        '  echo "transport error: gateway unavailable" >&2',
+        '  echo "transport error: no active gateway configured" >&2',
         "  exit 1",
+        "fi",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
+        '  printf "NAME STATUS\\nalpha Ready\\n"',
+        "  exit 0",
         "fi",
         "exit 0",
       ].join("\n"),
       { mode: 0o755 },
     );
+    fs.writeFileSync(path.join(localBin, "docker"), LIVE_DOCKER_IDENTITY, { mode: 0o755 });
 
     const r = runWithEnv("alpha destroy --yes", {
       HOME: home,
       PATH: `${localBin}:${process.env.PATH || ""}`,
     });
 
-    expect(r.code).toBe(1);
-    expect(r.out).toContain("transport error: gateway unavailable");
+    const openshellFailureLog = fs.readFileSync(openshellLog, "utf8");
+    expect(r.code, r.out).toBe(1);
+    expect(r.out).toContain("transport error: no active gateway configured");
     expect(r.out).toContain("Failed to destroy sandbox 'alpha'.");
     expect(r.out).not.toContain("Sandbox 'alpha' destroyed");
 
@@ -765,9 +855,9 @@ describe("CLI dispatch", () => {
       fs.readFileSync(path.join(registryDir, "sandboxes.json"), "utf8"),
     );
     expect(registryAfter.sandboxes.alpha).toBeTruthy();
-    expect(fs.readFileSync(openshellLog, "utf8")).toContain("sandbox delete alpha");
-    expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("gateway destroy -g nemoclaw");
-    expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("gateway remove nemoclaw");
+    expect(openshellFailureLog).toContain("sandbox delete -g nemoclaw alpha");
+    expect(openshellFailureLog).not.toContain("gateway destroy -g nemoclaw");
+    expect(openshellFailureLog).not.toContain("gateway remove nemoclaw");
   });
 
   it(
@@ -790,7 +880,7 @@ describe("CLI dispatch", () => {
               model: "test-model",
               provider: "nvidia-prod",
               gpuEnabled: false,
-              policies: [],
+              agent: "langchain-deepagents-code",
             },
           },
           defaultSandbox: "alpha",
@@ -833,7 +923,7 @@ describe("CLI dispatch", () => {
         PATH: `${localBin}:${process.env.PATH || ""}`,
       });
 
-      expect(r.code).toBe(0);
+      expect(r.code, r.out).toBe(0);
       expect(r.out).toContain("already absent from the live gateway");
       expect(r.out).toContain("Sandbox 'alpha' destroyed");
 
@@ -841,11 +931,11 @@ describe("CLI dispatch", () => {
         fs.readFileSync(path.join(registryDir, "sandboxes.json"), "utf8"),
       );
       expect(registryAfter.sandboxes.alpha).toBeFalsy();
-      expect(fs.readFileSync(openshellLog, "utf8")).toContain("sandbox delete alpha");
+      expect(fs.readFileSync(openshellLog, "utf8")).toContain("sandbox delete -g nemoclaw alpha");
       const openshellOutput = fs.readFileSync(openshellLog, "utf8");
       const dockerOutput = fs.readFileSync(bashLog, "utf8");
       const shouldCleanupGateway = process.platform === "darwin";
-      expect(openshellOutput.includes("forward stop 18789")).toBe(shouldCleanupGateway);
+      expect(openshellOutput).not.toContain("forward stop 18789");
       expect(openshellOutput.includes("gateway remove nemoclaw")).toBe(shouldCleanupGateway);
       expect(dockerOutput.includes("volume ls -q --filter name=openshell-cluster-nemoclaw")).toBe(
         shouldCleanupGateway,
@@ -871,7 +961,7 @@ describe("CLI dispatch", () => {
             model: "test-model",
             provider: "nvidia-prod",
             gpuEnabled: false,
-            policies: [],
+            agent: "langchain-deepagents-code",
           },
         },
         defaultSandbox: "alpha",
@@ -882,6 +972,7 @@ describe("CLI dispatch", () => {
       path.join(localBin, "openshell"),
       [
         "#!/bin/sh",
+        ...confirmSandboxMissingAfterDelete(path.join(home, "sandbox-deleted"), openshellLog),
         `log_file=${JSON.stringify(openshellLog)}`,
         'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
         '  printf "NAME STATUS\\n" >> "$log_file"',
@@ -908,7 +999,7 @@ describe("CLI dispatch", () => {
       PATH: `${localBin}:${process.env.PATH || ""}`,
     });
 
-    expect(r.code).toBe(0);
+    expect(r.code, r.out).toBe(0);
     const log = fs.readFileSync(openshellLog, "utf8");
     expect(log).toContain("provider delete alpha-telegram-bridge");
     expect(log).toContain("provider delete alpha-discord-bridge");

@@ -5,9 +5,12 @@ import {
   type GarbageCollectImagesOptions,
   type UpgradeSandboxesOptions,
 } from "../domain/lifecycle/options";
-import { recoverNamedGatewayRuntime as recoverNamedGatewayRuntimeAction } from "../gateway-runtime-action";
+import {
+  type NamedGatewayLifecycleState,
+  recoverNamedGatewayRuntime as recoverNamedGatewayRuntimeAction,
+} from "../gateway-runtime-action";
 import type { OnboardFlags } from "../onboard/command-support";
-import { runDeployAction as executeDeployAction } from "./deploy";
+import { completeAutomaticGatewayPortAfterOnboard } from "../onboard/gateway/automatic-port-completion";
 import {
   backupAll as executeBackupAllAction,
   garbageCollectImages as executeGarbageCollectImagesAction,
@@ -15,12 +18,11 @@ import {
 import { runOnboardAction as executeOnboardAction, type OnboardActionRuntimeDeps } from "./onboard";
 import { help, version } from "./root-help";
 
-type GatewayRecovery = { recovered: boolean };
-
-export type ManagedMcpCredentialReservation = {
-  sandboxName: string;
-  server: string;
-  credentialKeys: readonly string[];
+export type GatewayRecovery = {
+  recovered: boolean;
+  attempted?: boolean;
+  before?: NamedGatewayLifecycleState;
+  after?: NamedGatewayLifecycleState;
 };
 
 type GlobalCliActionRuntimeHooks = {
@@ -28,7 +30,6 @@ type GlobalCliActionRuntimeHooks = {
   upgradeSandboxes?: (options?: string[] | UpgradeSandboxesOptions) => Promise<void>;
   recordExtraProvider?: (name: string) => boolean;
   forgetExtraProvider?: (name: string) => boolean;
-  listManagedMcpCredentialReservations?: () => readonly ManagedMcpCredentialReservation[];
 };
 
 let runtimeHooks: GlobalCliActionRuntimeHooks = {};
@@ -42,14 +43,20 @@ export async function runOnboardAction(
   runtimeDeps: OnboardActionRuntimeDeps = {},
 ): Promise<void> {
   await executeOnboardAction(flags, runtimeDeps);
+  completeAutomaticGatewayPortAfterOnboard();
 }
 
-export async function runDeployAction(instanceName?: string): Promise<void> {
-  await executeDeployAction(instanceName);
-}
-
-export async function runBackupAllAction(): Promise<void> {
+export async function runBackupAllAction(
+  options: { retireLegacyForwards?: boolean } = {},
+): Promise<void> {
   await executeBackupAllAction();
+  if (options.retireLegacyForwards) {
+    const { retireRegisteredLegacyDashboardForwards } = await import("./sandbox/forward-recovery");
+    const result = await retireRegisteredLegacyDashboardForwards();
+    console.log(
+      `Legacy dashboard forwards: ${result.retired} retired, ${result.unchanged} unchanged, ${result.skipped} skipped.`,
+    );
+  }
 }
 
 export async function runUpgradeSandboxesAction(
@@ -104,15 +111,4 @@ export function forgetExtraProvider(name: string): boolean {
     removeExtraProvider: (name: string) => boolean;
   };
   return removeExtraProvider(name);
-}
-
-export function listManagedMcpCredentialReservations(): readonly ManagedMcpCredentialReservation[] {
-  if (typeof runtimeHooks.listManagedMcpCredentialReservations === "function") {
-    return runtimeHooks.listManagedMcpCredentialReservations();
-  }
-  const { listManagedMcpCredentialReservations: queryReservations } =
-    require("../state/registry/mcp-credential-reservations") as {
-      listManagedMcpCredentialReservations: () => readonly ManagedMcpCredentialReservation[];
-    };
-  return queryReservations();
 }

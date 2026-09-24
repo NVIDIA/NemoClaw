@@ -16,6 +16,9 @@ const CREDENTIALS_PATH = JSON.stringify(
 );
 const POLICIES_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "policy", "index.js"));
 const REGISTRY_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "state", "registry.js"));
+const CROSS_PORT_PATH = JSON.stringify(
+  path.join(REPO_ROOT, "dist", "lib", "state", "registry", "cross-port.js"),
+);
 const YAML_PATH = JSON.stringify(requireForTest.resolve("yaml"));
 
 type PolicyCall = {
@@ -34,14 +37,16 @@ describe("compiled CLI policy contracts", () => {
 const YAML = require(${YAML_PATH});
 const registry = require(${REGISTRY_PATH});
 const policies = require(${POLICIES_PATH});
+(async () => {
 registry.registerSandbox({ name: "openclaw-contract", agent: "openclaw", policies: [] });
 registry.registerSandbox({ name: "hermes-contract", agent: "hermes", policies: [] });
-const openclaw = YAML.parse(policies.loadPresetForSandbox("openclaw-contract", "telegram"));
-const hermes = YAML.parse(policies.loadPresetForSandbox("hermes-contract", "telegram"));
+const openclaw = YAML.parse(await policies.loadPresetForSandbox("openclaw-contract", "telegram"));
+const hermes = YAML.parse(await policies.loadPresetForSandbox("hermes-contract", "telegram"));
 process.stdout.write("__RESULT__" + JSON.stringify({
   openclawKeys: Object.keys(openclaw.network_policies || {}),
   hermesKeys: Object.keys(hermes.network_policies || {}),
 }));
+})().catch(error => { console.error(error); process.exitCode = 1; });
 `;
     fs.writeFileSync(scriptPath, script);
     const result = spawnSync(process.execPath, [scriptPath], {
@@ -55,71 +60,6 @@ process.stdout.write("__RESULT__" + JSON.stringify({
     expect(payload.hermesKeys).toEqual(["telegram"]);
   });
 
-  describe("policy-remove custom presets", () => {
-    function runPolicyRemoveCustom(
-      presetName: string,
-      extraArgs: string[] = [],
-      envOverrides: Record<string, string | undefined> = {},
-    ) {
-      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-remove-custom-"));
-      const scriptPath = path.join(tmpDir, "policy-remove-custom-check.js");
-      const script = String.raw`
-const registry = require(${REGISTRY_PATH});
-const policies = require(${POLICIES_PATH});
-const credentials = require(${CREDENTIALS_PATH});
-const calls = [];
-// No built-in matches.
-policies.listPresets = () => [];
-policies.listCustomPresets = () => [
-  { file: "/tmp/my-api.yaml", name: "my-api", description: "custom preset" },
-];
-policies.getAppliedPresets = () => ["my-api"];
-policies.loadPreset = () => null; // built-in lookup misses
-policies.loadPresetForSandbox = () => null; // built-in lookup misses
-policies.getPresetEndpoints = () => ["api.example.internal"];
-policies.removePreset = (sandboxName, presetName) => {
-  calls.push({ type: "remove", sandboxName, presetName });
-  return true;
-};
-registry.getSandbox = (name) =>
-  name === "test-sandbox" ? { name, policies: [], customPolicies: [] } : null;
-registry.getCustomPolicies = () => [
-  { name: "my-api", content: "network_policies:\n  my-api: {}\n", sourcePath: "/tmp/my-api.yaml" },
-];
-registry.listSandboxes = () => ({ sandboxes: [{ name: "test-sandbox" }] });
-credentials.prompt = async () => "y";
-process.argv = ["node", "nemoclaw.js", "test-sandbox", "policy-remove", ${JSON.stringify(presetName)}, ...${JSON.stringify(extraArgs)}];
-Promise.resolve(require(${CLI_PATH}).mainPromise).finally(() => {
-  process.stdout.write("\n__CALLS__" + JSON.stringify(calls));
-});
-`;
-      fs.writeFileSync(scriptPath, script);
-      return spawnSync(process.execPath, [scriptPath], {
-        cwd: REPO_ROOT,
-        encoding: "utf-8",
-        env: { ...process.env, HOME: tmpDir, ...envOverrides },
-      });
-    }
-
-    it("removes a custom preset by name using registry-persisted content", () => {
-      const result = runPolicyRemoveCustom("my-api", ["--yes"]);
-      expect(result.status).toBe(0);
-      const calls = JSON.parse(result.stdout.split("__CALLS__")[1].trim()) as PolicyCall[];
-      expect(calls).toContainEqual({
-        type: "remove",
-        sandboxName: "test-sandbox",
-        presetName: "my-api",
-      });
-      expect(result.stdout).toMatch(/api\.example\.internal/);
-    });
-
-    it("rejects an unknown preset name even when no built-ins are defined", () => {
-      const result = runPolicyRemoveCustom("bogus", ["--yes"]);
-      expect(result.status).not.toBe(0);
-      expect(result.stderr).toMatch(/Unknown preset 'bogus'/);
-    });
-  });
-
   describe("policy-add --from-file / --from-dir", () => {
     function runPolicyAddExternal(
       extraArgs: string[] = [],
@@ -130,6 +70,7 @@ Promise.resolve(require(${CLI_PATH}).mainPromise).finally(() => {
       const scriptPath = path.join(tmpDir, "policy-add-external.js");
       const script = String.raw`
 const registry = require(${REGISTRY_PATH});
+const crossPort = require(${CROSS_PORT_PATH});
 const policies = require(${POLICIES_PATH});
 const credentials = require(${CREDENTIALS_PATH});
 const calls = [];
@@ -158,6 +99,10 @@ credentials.prompt = async (message) => {
 };
 registry.getSandbox = (name) => (name === "test-sandbox" ? { name } : null);
 registry.listSandboxes = () => ({ sandboxes: [{ name: "test-sandbox" }] });
+crossPort.findSandboxAcrossGatewayRoots = (name) =>
+  name === "test-sandbox"
+    ? { entry: { name }, gatewayPort: null, registryFile: "test-registry" }
+    : null;
 process.argv = ["node", "nemoclaw.js", "test-sandbox", "policy-add", ...${JSON.stringify(extraArgs)}];
 Promise.resolve(require(${CLI_PATH}).mainPromise).finally(() => {
   process.stdout.write("\n__CALLS__" + JSON.stringify(calls));

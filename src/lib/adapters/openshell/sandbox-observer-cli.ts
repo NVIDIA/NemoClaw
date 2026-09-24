@@ -10,9 +10,11 @@ import {
   type OpenShellSandboxLookup,
   type OpenShellSandboxObservation,
   type OpenShellSandboxObserver,
+  type OpenShellSandboxReadinessProbe,
   type OpenShellSandboxResult,
 } from "./sandbox-observer";
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "./timeouts";
+import { observeOpenShellSandboxIdentity } from "./sandbox-presence";
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "./command-execution";
 
 const ANSI_RE = /\x1b\[[0-9;]*m/gu;
 
@@ -33,6 +35,7 @@ const KNOWN_PHASES = new Set([
   "NotReady",
   "Pending",
   "Provisioning",
+  "Stopped",
   "Terminating",
 ]);
 const CANONICAL_PHASES = new Map(
@@ -45,27 +48,53 @@ function isOpenShellSandboxSchemaMismatch(output: string): boolean {
   );
 }
 
-export type CapturedSandboxCommandResult = Readonly<{
+export type CapturedOpenShellCommandResult = Readonly<{
   status: number | null;
   output: string;
   stdout?: string;
   stderr?: string;
   error?: Error;
+  signal?: NodeJS.Signals | null;
 }>;
 
-export type CaptureSandboxCommand = (
+export type CapturedSandboxCommandResult = CapturedOpenShellCommandResult;
+
+export type CaptureOpenShellCommand = (
   args: string[],
   options: {
+    env?: Record<string, string>;
     ignoreError: true;
     includeStderr: true;
     includeStreams: true;
+    replaceEnv?: true;
     timeout: number;
   },
-) => CapturedSandboxCommandResult | Promise<CapturedSandboxCommandResult>;
+) => CapturedOpenShellCommandResult | Promise<CapturedOpenShellCommandResult>;
+
+export type CaptureSandboxCommand = CaptureOpenShellCommand;
 
 export type CliOpenShellSandboxObserverDeps = Readonly<{
   capture: CaptureSandboxCommand;
   defaultTimeoutMs?: number;
+  now?: () => number;
+}>;
+
+export type RunSandboxCommand = (
+  args: string[],
+  options: {
+    ignoreError: true;
+    killProcessTreeOnTimeout: true;
+    killSignal: "SIGKILL";
+    stdio: ["ignore", "pipe", "pipe"];
+    suppressOutput: true;
+    timeout: number;
+  },
+) => Readonly<{
+  status?: number | null;
+  stdout?: string | Buffer | null;
+  stderr?: string | Buffer | null;
+  error?: Error | null;
+  signal?: NodeJS.Signals | null;
 }>;
 
 export type CliOpenShellSandboxLookupResult = Readonly<{
@@ -135,26 +164,49 @@ function targetArgs(
   return args;
 }
 
-function commandOutput(result: CapturedSandboxCommandResult): string {
-  return `${result.stderr ?? ""}\n${result.stdout ?? result.output ?? ""}`.trim();
+function commandOutput(result: CapturedOpenShellCommandResult): string {
+  const streams = `${result.stderr ?? ""}\n${result.stdout ?? ""}`.trim();
+  return streams || result.output.trim();
 }
 
-function successfulCommandOutput(result: CapturedSandboxCommandResult): string {
+function successfulCommandOutput(result: CapturedOpenShellCommandResult): string {
   return stripOpenShellCliAnsi(result.stdout ?? result.output);
 }
 
 export function classifyCliOpenShellCommandError(
-  result: CapturedSandboxCommandResult,
+  result: CapturedOpenShellCommandResult,
+  messages: Readonly<{
+    authentication: string;
+    command: string;
+    schema: string;
+    timeout: string;
+    unavailable?: string | (() => string);
+  }> = {
+    authentication: "OpenShell could not authenticate the sandbox observation.",
+    command: "The OpenShell sandbox observation failed.",
+    schema: "The OpenShell CLI and gateway sandbox schemas do not match.",
+    timeout: "OpenShell sandbox observation timed out.",
+  },
 ): OpenShellSandboxError | null {
   const output = stripOpenShellCliAnsi(commandOutput(result));
   const errorCode = (result.error as NodeJS.ErrnoException | undefined)?.code;
-  if (errorCode === "ETIMEDOUT") {
-    return { kind: "timeout", message: "OpenShell sandbox observation timed out." };
+  if (errorCode === "ENOENT" && messages.unavailable) {
+    return {
+      kind: "command",
+      reason: "failed",
+      message:
+        typeof messages.unavailable === "function" ? messages.unavailable() : messages.unavailable,
+    };
   }
+  if (errorCode === "ETIMEDOUT") {
+    return { kind: "timeout", message: messages.timeout };
+  }
+  const printedError = /^\s*Error:/imu.test(output);
+  if (result.status === 0 && !result.error && !printedError) return null;
   if (isOpenShellSandboxSchemaMismatch(output)) {
     return {
       kind: "schema",
-      message: "The OpenShell CLI and gateway sandbox schemas do not match.",
+      message: messages.schema,
     };
   }
   if (
@@ -164,7 +216,7 @@ export function classifyCliOpenShellCommandError(
   ) {
     return {
       kind: "authentication",
-      message: "OpenShell could not authenticate the sandbox observation.",
+      message: messages.authentication,
     };
   }
   if (/\bhandshake verification failed\b/iu.test(output)) {
@@ -185,19 +237,58 @@ export function classifyCliOpenShellCommandError(
       message: "OpenShell could not reach the selected gateway.",
     };
   }
-  if (result.status !== 0) {
+  if (result.status !== 0 || result.error || printedError) {
     return {
       kind: "command",
       reason: result.status === 2 ? "invalid_request" : "failed",
-      message: "The OpenShell sandbox observation failed.",
+      message: messages.command,
     };
   }
   return null;
 }
 
-function isMissingSandboxOutput(output: string): boolean {
-  return /\bNotFound\b|\bNot Found\b|sandbox not found|sandbox has no spec/iu.test(
-    stripOpenShellCliAnsi(output),
+/** Match only legacy failures that can leave a sandbox present but unreadable. */
+export function isLegacyOpenShellSandboxConfigUnavailableOutput(output: string): boolean {
+  const clean = stripOpenShellCliAnsi(String(output)).replace(/\r/g, "").trim();
+  const structured = clean.replace(/\n\s*│\s*/g, " ");
+  return (
+    /^(?:error:\s*)?status:\s*Internal,\s*message:\s*["']sandbox has no spec["'](?:,\s*details:\s*\[\])?(?:,\s*metadata:\s*MetadataMap\s*\{\s*\})?$/iu.test(
+      clean,
+    ) ||
+    /^(?:error:\s*)?(?:×\s*)?code:\s*["']Internal error["']\s*,\s*message:\s*["']sandbox has no spec["']$/iu.test(
+      structured,
+    ) ||
+    /^(?:error:\s*)?(?:×\s*)?code:\s*'The system is not in a state required for the operation's execution'\s*,\s*message:\s*"provider '[a-z0-9][a-z0-9._-]*' not found"$/iu.test(
+      structured,
+    )
+  );
+}
+
+/** Match only sandbox-specific absence from an owner-scoped lookup. */
+export function isExplicitMissingOpenShellSandboxOutput(
+  output: string,
+  sandboxName: string,
+): boolean {
+  const clean = stripOpenShellCliAnsi(String(output)).replace(/\r/g, "").trim();
+  const structured = clean.replace(/\n\s*│\s*/g, " ");
+  const exactStructuredNotFound =
+    /^(?:error:\s*)?(?:×\s*)?code:\s*["']Some requested entity was not found["']\s*,\s*message:\s*["']sandbox not found["']$/iu;
+  const exactStatusNotFound =
+    /^(?:error:\s*)?(?:×\s*)?status:\s*["']?Not\s+Found["']?\s*,\s*message:\s*["']sandbox not found["']$/iu;
+  if (exactStructuredNotFound.test(structured) || exactStatusNotFound.test(structured)) return true;
+
+  const escapedName = sandboxName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const namedSandbox = `(?:['"]${escapedName}['"]|${escapedName})`;
+  return (
+    new RegExp(
+      `^(?:error:\\s*)?status:\\s*NotFound,\\s*sandbox\\s+${namedSandbox}\\s+not\\s+found[.!]?$`,
+      "iu",
+    ).test(clean) ||
+    new RegExp(
+      `^(?:error:\\s*)?sandbox\\s+${namedSandbox}\\s+(?:(?:is\\s+)?not\\s+(?:found|present)|does\\s+not\\s+exist)[.!]?$`,
+      "iu",
+    ).test(clean) ||
+    new RegExp(`^(?:error:\\s*)?no\\s+such\\s+sandbox\\s+${namedSandbox}[.!]?$`, "iu").test(clean)
   );
 }
 
@@ -209,27 +300,162 @@ function failure<T>(error: OpenShellSandboxError): OpenShellSandboxResult<T> {
   return { ok: false, error };
 }
 
+function streamText(value: string | Buffer | null | undefined): string {
+  return String(value ?? "");
+}
+
+function captureOpenShellCommandFromRunner(run: RunSandboxCommand): CaptureOpenShellCommand {
+  return (args, options) => {
+    const result = run(args, {
+      ignoreError: true,
+      killProcessTreeOnTimeout: true,
+      killSignal: "SIGKILL",
+      stdio: ["ignore", "pipe", "pipe"],
+      suppressOutput: true,
+      timeout: options.timeout,
+    });
+    const stdout = streamText(result.stdout);
+    const stderr = streamText(result.stderr);
+    return {
+      status: result.status ?? null,
+      output: `${stdout}\n${stderr}`.trim(),
+      stdout,
+      stderr,
+      ...(result.error ? { error: result.error } : {}),
+      ...(result.signal ? { signal: result.signal } : {}),
+    };
+  };
+}
+
+/** Normalize structured runner results inside the CLI implementation. */
+export function createCliOpenShellSandboxObserverFromRunner(
+  run: RunSandboxCommand,
+  defaultTimeoutMs?: number,
+): OpenShellSandboxObserver {
+  return createCliOpenShellSandboxObserver({
+    capture: captureOpenShellCommandFromRunner(run),
+    ...(defaultTimeoutMs === undefined ? {} : { defaultTimeoutMs }),
+  });
+}
+
+export function createCliOpenShellSandboxLookupFromRunner(
+  run: RunSandboxCommand,
+  defaultTimeoutMs?: number,
+): CliOpenShellSandboxLookup {
+  return createCliOpenShellSandboxLookup({
+    capture: captureOpenShellCommandFromRunner(run),
+    ...(defaultTimeoutMs === undefined ? {} : { defaultTimeoutMs }),
+  });
+}
+
+/** CLI-only fallback for legacy gateways that publish readiness through Kubernetes pod phase. */
+export function createCliOpenShellLegacyPodReadinessProbe(
+  deps: CliOpenShellSandboxObserverDeps,
+): OpenShellSandboxReadinessProbe {
+  return async (request) => {
+    const gatewayArgs = request.target.kind === "named" ? ["-g", request.target.gatewayName] : [];
+    const result = await deps.capture(
+      [
+        "doctor",
+        "exec",
+        ...gatewayArgs,
+        "--",
+        "kubectl",
+        "-n",
+        "openshell",
+        "get",
+        "pod",
+        request.sandboxName,
+        "-o",
+        "jsonpath={.status.phase}",
+      ],
+      {
+        ignoreError: true,
+        includeStderr: true,
+        includeStreams: true,
+        timeout: request.timeoutMs ?? deps.defaultTimeoutMs ?? OPENSHELL_PROBE_TIMEOUT_MS,
+      },
+    );
+    const error = classifyCliOpenShellCommandError(result);
+    if (error) return failure(error);
+    return success(successfulCommandOutput(result).trim() === "Running" ? "ready" : "not_ready");
+  };
+}
+
 /**
  * CLI-only compatibility lookup for the legacy status display. Presence and
  * phase decisions must use `result`; `displayOutput` remains a CLI-only
  * presentation compatibility path.
  */
 export function createCliOpenShellSandboxLookup(
-  deps: Pick<CliOpenShellSandboxObserverDeps, "capture" | "defaultTimeoutMs">,
+  deps: Pick<CliOpenShellSandboxObserverDeps, "capture" | "defaultTimeoutMs" | "now">,
 ): CliOpenShellSandboxLookup {
   return async (request) => {
-    const result = await deps.capture(targetArgs("get", request.target, request.sandboxName), {
+    const timeout = request.timeoutMs ?? deps.defaultTimeoutMs ?? OPENSHELL_PROBE_TIMEOUT_MS;
+    const now = deps.now ?? Date.now;
+    const deadlineMs = now() + timeout;
+    const captureOptions = {
       ignoreError: true,
       includeStderr: true,
       includeStreams: true,
-      timeout: request.timeoutMs ?? deps.defaultTimeoutMs ?? OPENSHELL_PROBE_TIMEOUT_MS,
-    });
+      timeout,
+    } as const;
+    const result = await deps.capture(
+      targetArgs("get", request.target, request.sandboxName),
+      captureOptions,
+    );
     const output = commandOutput(result);
     const error = classifyCliOpenShellCommandError(result);
     if (error && error.kind !== "command") {
       return { result: failure(error), displayOutput: "" };
     }
-    if (result.status !== 0 && isMissingSandboxOutput(output)) {
+    if (
+      !result.error &&
+      result.status !== null &&
+      result.status !== 0 &&
+      isLegacyOpenShellSandboxConfigUnavailableOutput(output)
+    ) {
+      const remainingTimeoutMs = Math.ceil(deadlineMs - now());
+      if (remainingTimeoutMs <= 0) {
+        return {
+          result: failure({
+            kind: "timeout",
+            message: "OpenShell sandbox observation timed out.",
+          }),
+          displayOutput: "",
+        };
+      }
+      const inventory = await deps.capture([...targetArgs("list", request.target), "-o", "json"], {
+        ...captureOptions,
+        timeout: remainingTimeoutMs,
+      });
+      const listed = observeOpenShellSandboxIdentity(request.sandboxName, inventory);
+      if (listed.kind === "present") {
+        return {
+          result: success({
+            state: "present",
+            sandbox: observation(request.sandboxName, listed.phase),
+          }),
+          displayOutput: "",
+        };
+      }
+      return {
+        result: failure({
+          kind: "command",
+          reason: "failed",
+          message:
+            "OpenShell could not confirm the unreadable legacy sandbox in gateway inventory.",
+        }),
+        displayOutput: "",
+      };
+    }
+    if (
+      !result.error &&
+      !result.signal &&
+      result.status !== null &&
+      result.status !== 0 &&
+      isExplicitMissingOpenShellSandboxOutput(output, request.sandboxName)
+    ) {
       return { result: success({ state: "missing" }), displayOutput: "" };
     }
     if (error) return { result: failure(error), displayOutput: "" };

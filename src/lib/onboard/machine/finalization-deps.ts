@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
-  OPENCLAW_ONBOARDING_PAIRING_FINAL_OBSERVATION_TIMEOUT_MS,
   OPENCLAW_ONBOARDING_PAIRING_POLL_MS,
   OPENCLAW_ONBOARDING_PAIRING_SETTLEMENT_TIMEOUT_MS,
   OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS,
@@ -26,7 +25,13 @@ export {
 // process-recovery.ts both import onboarding helpers.
 type ProcessRecoveryDeps = Pick<
   typeof import("../../actions/sandbox/process-recovery"),
-  "checkAndRecoverSandboxProcesses" | "waitForRecreatedSandboxOpenShellReady"
+  | "checkAndRecoverSandboxProcesses"
+  | "waitForRecreatedSandboxOpenShellReady"
+  | "waitForStartedNativeGatewayProcess"
+>;
+type GatewayRestartDeps = Pick<
+  typeof import("../../actions/sandbox/process-recovery"),
+  "restartSandboxGateway"
 >;
 type SandboxLifecycleLock = typeof import("../../state/mcp-lifecycle-lock").withMcpLifecycleLock;
 type GatewayRouteLock =
@@ -87,7 +92,6 @@ interface OrdinaryOpenClawPairingSettlementDeps {
   readWatcherStatus(name: string, gatewayName: string): AutoPairWatcherStatus | null;
   withSandboxLock: SandboxLifecycleLock;
   withGatewayLock: GatewayRouteLock;
-  revalidatePolicyRequirements?(operation: string): void;
   now(): number;
   sleep(milliseconds: number): Promise<void>;
 }
@@ -95,6 +99,7 @@ interface OrdinaryOpenClawPairingSettlementDeps {
 export const finalizationHandlerRuntime = {
   loadProcessRecovery: () =>
     require("../../actions/sandbox/process-recovery") as ProcessRecoveryDeps,
+  loadGatewayRestart: () => require("../../actions/sandbox/process-recovery") as GatewayRestartDeps,
   loadRegistryPersistence: () =>
     require("../../state/registry/persistence") as typeof import("../../state/registry/persistence"),
   loadLaunchReadiness: () =>
@@ -108,6 +113,14 @@ export const finalizationHandlerRuntime = {
   loadGatewayRouteLock: () =>
     require("../../inference/gateway-route-mutation-lock") as typeof import("../../inference/gateway-route-mutation-lock"),
 };
+
+export async function restartNativeGatewayForInitialSetup(
+  sandboxName: string,
+): ReturnType<GatewayRestartDeps["restartSandboxGateway"]> {
+  return await finalizationHandlerRuntime
+    .loadGatewayRestart()
+    .restartSandboxGateway(sandboxName, { quiet: true });
+}
 
 function samePairingTarget(
   left: OpenClawPairingSettlementTarget,
@@ -255,9 +268,6 @@ export async function settleOrdinaryOpenClawPairing(
             return { kind: "incomplete", reason: "pairing-unavailable" };
           }
           if (initial?.state === "settled") {
-            deps.revalidatePolicyRequirements?.(
-              `publish settled OpenClaw pairing for sandbox '${name}'`,
-            );
             return { kind: "settled" };
           }
 
@@ -281,18 +291,12 @@ export async function settleOrdinaryOpenClawPairing(
             initial = pairingAppearance.value;
           }
           if (initial.state === "settled") {
-            deps.revalidatePolicyRequirements?.(
-              `publish settled OpenClaw pairing for sandbox '${name}'`,
-            );
             return { kind: "settled" };
           }
 
           const deviceIdentitySha256 = initial.deviceIdentitySha256;
           let warmupResult: SandboxScopeWarmupResult | null = null;
           if (initial.state === "pairing-only") {
-            deps.revalidatePolicyRequirements?.(
-              `run OpenClaw pairing warm-up for sandbox '${name}'`,
-            );
             try {
               warmupResult = await deps.runWarmup(name, target.gatewayName);
             } catch {
@@ -314,9 +318,6 @@ export async function settleOrdinaryOpenClawPairing(
             return { kind: "incomplete", reason: "runtime-identity-invalid" };
           }
           if (final.kind === "observed") {
-            deps.revalidatePolicyRequirements?.(
-              `publish settled OpenClaw pairing for sandbox '${name}'`,
-            );
             return { kind: "settled" };
           }
 
@@ -365,24 +366,46 @@ export function ordinaryOpenClawPairingIncompleteMessage(
 }
 
 export const finalizationHandlerDeps = {
-  waitForSandboxControlPlaneReady(name: string): boolean {
+  async waitForSandboxControlPlaneReady(name: string): Promise<boolean> {
     return finalizationHandlerRuntime
       .loadProcessRecovery()
       .waitForRecreatedSandboxOpenShellReady(name);
   },
-  checkAndRecoverSandboxProcesses(name: string, options: { quiet: boolean }): void {
-    const processRecovery = finalizationHandlerRuntime.loadProcessRecovery();
-    processRecovery.checkAndRecoverSandboxProcesses(name, options);
-  },
-  settleOrdinaryOpenClawPairing(
+  async checkAndRecoverSandboxProcesses(
     name: string,
-    revalidatePolicyRequirements?: (operation: string) => void,
-  ): Promise<OrdinaryOpenClawPairingSettlementResult> {
-    const deps = defaultPairingSettlementDeps();
-    return settleOrdinaryOpenClawPairing(
-      name,
-      revalidatePolicyRequirements ? { ...deps, revalidatePolicyRequirements } : deps,
+    options: { quiet: boolean },
+    portableSupervisorEnvironment?: NodeJS.ProcessEnv,
+  ): Promise<boolean> {
+    const processRecovery = finalizationHandlerRuntime.loadProcessRecovery();
+    const target = finalizationHandlerRuntime
+      .loadLaunchReadiness()
+      .resolveOrdinaryOpenClawPairingTarget(name);
+    if (target) {
+      const startup = await processRecovery.waitForStartedNativeGatewayProcess(
+        name,
+        "openclaw",
+        target.gatewayName,
+      );
+      if (startup === false) return false;
+    }
+    const recover = () =>
+      processRecovery.checkAndRecoverSandboxProcesses(name, {
+        ...options,
+        ...(portableSupervisorEnvironment ? { portableSupervisorEnvironment } : {}),
+      });
+    let result = await recover();
+    if (result.checked !== true) {
+      const controlPlaneReady = await processRecovery.waitForRecreatedSandboxOpenShellReady(name);
+      if (controlPlaneReady) result = await recover();
+    }
+    return (
+      result.checked === true &&
+      (result.wasRunning !== false || result.recovered === true) &&
+      !("secretBoundaryRefused" in result && result.secretBoundaryRefused === true)
     );
+  },
+  settleOrdinaryOpenClawPairing(name: string): Promise<OrdinaryOpenClawPairingSettlementResult> {
+    return settleOrdinaryOpenClawPairing(name, defaultPairingSettlementDeps());
   },
   ordinaryOpenClawPairingIncompleteMessage,
   readRegistryAgent(name: string): string | null {
@@ -397,10 +420,7 @@ export const finalizationHandlerDeps = {
   },
   settlePortablePairing(
     name: string,
-    options: {
-      readonly portableRequired: true;
-      readonly revalidatePolicyRequirements?: (operation: string) => void;
-    },
+    options: { readonly portableRequired: true },
   ): ReturnType<
     (typeof import("../../actions/sandbox/launch-readiness"))["settlePortableOpenClawPairing"]
   > {

@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
+import { FULL_E2E_STANDARD_PROFILE_JOB_TIMEOUT_MINUTES } from "../../../tools/e2e/full-e2e-timeout-contract.mts";
 import {
   catalogueTarget,
   E2E_TARGET_CATALOGUE,
@@ -33,12 +34,14 @@ describe("security-posture catalogue boundary", () => {
       expect(openclaw).toMatchObject({
         shard: "openclaw",
         testFile: "test/e2e/live/full-e2e.test.ts",
+        timeoutMinutes: FULL_E2E_STANDARD_PROFILE_JOB_TIMEOUT_MINUTES,
       });
       expect(hermes).toMatchObject({
         shard: "hermes",
         testFile: "test/e2e/live/hermes-e2e.test.ts",
         hostPreparation: "hermes-swap",
         runnerComparison: true,
+        environment: { NEMOCLAW_E2E_INFERENCE_MODE: "internal-nvidia" },
       });
     },
   );

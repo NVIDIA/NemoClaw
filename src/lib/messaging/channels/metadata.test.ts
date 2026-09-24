@@ -1,9 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { readFileSync } from "node:fs";
+
+import YAML from "yaml";
+
 import { describe, expect, it } from "vitest";
 
+import { loadAgent } from "../../agent/defs";
 import type { ChannelManifest, ChannelPolicyPresetReference } from "../manifest";
+import { resolveMessagingChannelPolicyPresetPath } from "./policy";
 import {
   getMessagingChannelForCredentialEnvKey,
   getMessagingConfigEnvAliases,
@@ -18,6 +24,7 @@ import {
   listMessagingConfigEnvKeys,
   listMessagingCredentialEnvAssignments,
   listMessagingPackageInstallSpecs,
+  listMessagingPolicyPresetMetadata,
   listMessagingProviderNamesForChannel,
   listOpenClawManagedChannelNames,
   listOpenClawPluginExtensionIds,
@@ -183,8 +190,22 @@ describe("built-in messaging channel metadata", () => {
       "teams",
     ]);
     expect(getMessagingPolicyPresetValidationWarnings().discord).toContain(
-      "https://discord.com/api/v10/gateway or validate the configured",
+      "Any HTTP response confirms reachability. A transport error or OpenShell policy",
     );
+    const openClawDiscordWarning = getMessagingPolicyPresetValidationWarnings({
+      agent: "openclaw",
+    }).discord;
+    expect(openClawDiscordWarning).toContain("OpenClaw validation uses its Node runtime:");
+    expect(openClawDiscordWarning).not.toContain(
+      "Hermes validation uses its virtual-environment Python runtime:",
+    );
+    const hermesDiscordWarning = getMessagingPolicyPresetValidationWarnings({
+      agent: "hermes",
+    }).discord;
+    expect(hermesDiscordWarning).toContain(
+      "Hermes validation uses its virtual-environment Python runtime:",
+    );
+    expect(hermesDiscordWarning).not.toContain("OpenClaw validation uses its Node runtime:");
     expect(listOpenClawManagedChannelNames()).toEqual([
       "telegram",
       "discord",
@@ -261,6 +282,8 @@ describe("built-in messaging channel metadata", () => {
   });
 
   it("requires committed npm integrity pins for built-in OpenClaw plugin installs", () => {
+    const openClawVersion = loadAgent("openclaw").expectedVersion ?? "";
+    expect(openClawVersion, "OpenClaw manifest must declare an expected version").not.toBe("");
     const npmPluginInstalls = listBuiltInMessagingChannelManifests({ agent: "openclaw" }).flatMap(
       (manifest) =>
         (manifest.agentPackages ?? [])
@@ -273,7 +296,7 @@ describe("built-in messaging channel metadata", () => {
           .map((agentPackage) => ({
             packageKey: `${manifest.id}/${agentPackage.id}`,
             committedIntegrity:
-              agentPackage.integrity ?? agentPackage.integrityByVersion?.["2026.7.1"],
+              agentPackage.integrity ?? agentPackage.integrityByVersion?.[openClawVersion],
           })),
     );
 
@@ -281,7 +304,7 @@ describe("built-in messaging channel metadata", () => {
       {
         packageKey: "discord/openclawPluginPackage",
         committedIntegrity:
-          "sha512-tZfdC1YA8oVLvc2BK1w0F6rUljS5ugCOp2uWe0vPsbG1fbzVVIO4V32RoqZznGHe5u2R9u4n1aV5Z/qa1m2oFg==",
+          "sha512-qNmN2a8A9dET4igPp0RML171sEn8PDMyNCYNp/DqcJ4tn3XTHpacSOTkqBmv5yXTycJRC9rfFP8FT/SdW0Rldg==",
       },
       {
         packageKey: "wechat/openclawPluginPackage",
@@ -291,22 +314,22 @@ describe("built-in messaging channel metadata", () => {
       {
         packageKey: "slack/openclawPluginPackage",
         committedIntegrity:
-          "sha512-dwVGEVCmoTQrOIeZaSCIOPg8pT7hB883QQEXdp9EZUDzTGuvSc+KxH2iERSOV/59hROQctYdcobGn/vdB1H4XA==",
+          "sha512-tU372jE40nnPcKQ6oxmDHf2/UhGtdz8ysi4JKsRZIO1QBAEkZd2YfsOw8aucmb2r0B0vjcFD3OmIV/Qzb57COg==",
       },
       {
         packageKey: "whatsapp/openclawPluginPackage",
         committedIntegrity:
-          "sha512-wLY/Omc5fleRpl2lKGN8sxt/8hYfHGwLRezmWsk8oCbea5pRKUPE6ZX+wJO1O52NOJkAGCuiXvS7x0qIeKxXbQ==",
+          "sha512-llIcoMa6FM4SgYn7GG1FQIeTTA5JDdcHW5D7PT+3aGYT3/E2eLFutKwDvD/w7G0hvDwSftzZgLi3iA8dzK7a3A==",
       },
       {
         packageKey: "teams/openclawPluginPackage",
         committedIntegrity:
-          "sha512-gG/Yk6HZAguHwrmKjsqdONbFz5WNy126PEAXQWNW/TulO1kIifQ6tktM16BQPNLnkmWqLbj+TrrO55Cjas1aFg==",
+          "sha512-seRGr9/X6Vk9xU5elLVpDwq8R+TO0QFvUmxPEitqkngqDnMoXW0LEEXkriG6jgue74w2YLcNnAv/Rjf0a9jong==",
       },
       {
         packageKey: "googlechat/openclawPluginPackage",
         committedIntegrity:
-          "sha512-Dv0xOmcxAThEr6hoK+ioofHNu18hfbIceQrEHX3AHZPpOUiTJvToVpA5eX87NQINewwfSJf0gVhE6kSbSk2Aew==",
+          "sha512-Q5VTAJpfcrI7BSEw5Ugq3wf7JEg5QhTBwpi+BByGbfZsTTVjwZc7OIvNbKsVTh16I5/EWqHEnD+0WNeHqsteqw==",
       },
     ]);
   });
@@ -318,11 +341,13 @@ describe("built-in messaging channel metadata", () => {
         policyKeys: ["alpha_key"],
         agentPolicyKeys: { hermes: ["alpha_hermes"] },
         validationWarningLines: ["alpha warning"],
+        validationWarningLinesByAgent: { hermes: ["alpha Hermes warning"] },
       }),
       manifestWithPreset("beta", {
         name: "shared",
         policyKeys: ["beta_key"],
         validationWarningLines: ["beta warning"],
+        validationWarningLinesByAgent: { openclaw: ["beta OpenClaw warning"] },
       }),
     ];
 
@@ -333,8 +358,13 @@ describe("built-in messaging channel metadata", () => {
     ]);
     expect(getMessagingPolicyPresetValidationWarnings({ manifests }).shared).toEqual([
       "alpha warning",
+      "alpha Hermes warning",
       "beta warning",
+      "beta OpenClaw warning",
     ]);
+    expect(
+      getMessagingPolicyPresetValidationWarnings({ agent: "hermes", manifests }).shared,
+    ).toEqual(["alpha warning", "alpha Hermes warning", "beta warning"]);
   });
 
   it("derives OpenClaw managed channel names from explicit runtime metadata", () => {
@@ -439,3 +469,77 @@ function manifestWithPreset(id: string, preset: ChannelPolicyPresetReference): C
     hooks: [],
   };
 }
+
+describe("messaging policy credential bindings", () => {
+  const AGENTS = ["openclaw", "hermes"] as const;
+
+  type PresetPolicyFile = {
+    readonly label: string;
+    readonly requiredAtCreate: boolean;
+    readonly path: string;
+  };
+
+  function policyFiles(): PresetPolicyFile[] {
+    return listMessagingPolicyPresetMetadata()
+      .flatMap((preset) =>
+        AGENTS.map((agent) => ({
+          label: `${preset.channelId}/${agent}`,
+          requiredAtCreate: preset.requiredAtCreate,
+          path: resolveMessagingChannelPolicyPresetPath(preset.presetName, agent) ?? "",
+        })),
+      )
+      .filter((entry: PresetPolicyFile) => entry.path.length > 0);
+  }
+
+  function presetsBindingACredentialWithoutCreateTimeApply(): string[] {
+    return policyFiles()
+      .filter((entry: PresetPolicyFile) => !entry.requiredAtCreate)
+      .filter((entry: PresetPolicyFile) =>
+        readFileSync(entry.path, "utf8").includes("credential_binding:"),
+      )
+      .map((entry: PresetPolicyFile) => entry.label);
+  }
+
+  type PolicyEndpoint = { readonly host?: string; readonly port?: number; readonly path?: string };
+
+  function endpointsSharingAHostPortWithoutDistinctPaths(): string[] {
+    return policyFiles()
+      .flatMap((entry: PresetPolicyFile) => {
+        const parsed = YAML.parse(readFileSync(entry.path, "utf8")) as {
+          network_policies?: Record<string, { endpoints?: PolicyEndpoint[] }>;
+        };
+        return Object.entries(parsed.network_policies ?? {}).flatMap(([policyKey, policy]) => {
+          const declared = (policy.endpoints ?? []).map((endpoint: PolicyEndpoint) => ({
+            hostPort: `${endpoint.host}:${endpoint.port}`,
+            selector: endpoint.path ?? "",
+          }));
+          const selectorsFor = (hostPort: string) =>
+            declared.filter((endpoint) => endpoint.hostPort === hostPort).map((e) => e.selector);
+          return [...new Set(declared.map((endpoint) => endpoint.hostPort))]
+            .filter(
+              (hostPort) => new Set(selectorsFor(hostPort)).size !== selectorsFor(hostPort).length,
+            )
+            .map((hostPort) => `${entry.label} ${policyKey} ${hostPort}`);
+        });
+      })
+      .sort();
+  }
+
+  it("gives every repeated host and port a distinct path selector", () => {
+    // A channel with two credentials on one host declares that host twice:
+    // - OpenShell picks the endpoint by path specificity.
+    // - Two entries scoring the same are rejected as ambiguous, which fails
+    //   sandbox creation outright rather than degrading.
+    expect(endpointsSharingAHostPortWithoutDistinctPaths()).toEqual([]);
+  });
+
+  it("keeps every preset that binds a credential create-time required", () => {
+    // The binding is what makes the credential injectable:
+    // - The sandbox reads the provider environment once, at boot; the agent
+    //   inherits that read for the life of the container.
+    // - A preset applied after boot leaves the agent with no credential at all.
+    // - Slack was already create-time required. Discord and Teams were not,
+    //   which is how their tokens went missing on OpenClaw.
+    expect(presetsBindingACredentialWithoutCreateTimeApply()).toEqual([]);
+  });
+});

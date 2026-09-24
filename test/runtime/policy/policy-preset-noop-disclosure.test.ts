@@ -14,7 +14,7 @@ import {
   POLICY_HASH,
   POLICY_VERSION,
   SANDBOX_ID,
-} from "../../helpers/managed-policy-receipt-fixture";
+} from "../../helpers/live-policy-fixture";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 const POLICY_MODULE = JSON.stringify(path.join(REPO_ROOT, "src/lib/policy/index.ts"));
@@ -94,16 +94,19 @@ exit 1
     ? `policies.applyPresets("alpha", ${JSON.stringify(presetNames)})`
     : `policies.applyPreset("alpha", ${JSON.stringify(presetNames[0])}, ${JSON.stringify({ suppressDisclosure, disclosedPresetState })})`;
   const script = `
+(async () => {
 const fs = require("node:fs");
 const policies = require(${POLICY_MODULE});
 const registry = require(${REGISTRY_MODULE});
 ${managedRegistrationSource("alpha")}
-const result = ${invocation};
+const result = await ${invocation};
 process.stdout.write("\\n__RESULT__" + JSON.stringify({
   result,
   calls: fs.readFileSync(process.env.CALLS_PATH, "utf8").trim().split("\\n").filter(Boolean),
   registry: registry.getSandbox("alpha"),
 }));
+
+})().catch((error) => { console.error(error); process.exitCode = 1; });
 `;
   const result = spawnSync(process.execPath, [...SOURCE_NODE_ARGS, "-e", script], {
     cwd: REPO_ROOT,
@@ -144,7 +147,7 @@ describe("preset no-op egress disclosure (#7179)", () => {
     expect(output).toContain("Preset 'npm' is already effective; no new egress would be opened.");
     expect(output).not.toContain("Effective egress that would be opened:");
     expect(payload.calls).toEqual([]);
-    expect(payload.registry.policies).toEqual(["npm"]);
+    expect(payload.registry).not.toHaveProperty("policies");
   });
 
   it("skips the gateway set when every batch preset already matches", () => {
@@ -157,7 +160,7 @@ describe("preset no-op egress disclosure (#7179)", () => {
     expect(output).toContain("Preset 'npm' is already effective");
     expect(output).toContain("Preset 'pypi' is already effective");
     expect(payload.calls).toEqual([]);
-    expect(payload.registry.policies).toEqual(["npm", "pypi"]);
+    expect(payload.registry).not.toHaveProperty("policies");
   });
 
   it("discloses and submits only the absent part of a mixed batch", () => {
@@ -194,7 +197,7 @@ describe("preset no-op egress disclosure (#7179)", () => {
     expect(output).not.toContain("Effective egress");
     expect(output).not.toContain("Preset 'npm' is already effective");
     expect(payload.calls).toEqual(["policy set"]);
-    expect(payload.registry.policies).toEqual(["npm"]);
+    expect(payload.registry).not.toHaveProperty("policies");
   });
 
   it("discloses again when the live policy changed after an earlier no-op preview (#7179)", () => {
