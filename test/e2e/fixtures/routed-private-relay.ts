@@ -14,15 +14,24 @@ const RELAY_SOURCE = String.raw`
 const net = require("node:net");
 const [host, portText] = process.argv.slice(1);
 const port = Number(portText);
+const report = (event, detail = {}) => console.log(JSON.stringify({ event, ...detail }));
 const server = net.createServer((client) => {
+  report("client-connected");
   const upstream = net.connect({ host, port });
+  upstream.on("connect", () => report("upstream-connected"));
+  upstream.on("close", () => report("upstream-closed", {
+    bytesRead: upstream.bytesRead, bytesWritten: upstream.bytesWritten,
+  }));
   client.pipe(upstream);
   upstream.pipe(client);
-  const close = () => { client.destroy(); upstream.destroy(); };
-  client.on("error", close);
-  upstream.on("error", close);
+  const close = (side, error) => {
+    report("connection-error", { side, code: error.code ?? "UNKNOWN" });
+    client.destroy(); upstream.destroy();
+  };
+  client.on("error", (error) => close("client", error));
+  upstream.on("error", (error) => close("upstream", error));
 });
-server.listen(${String(RELAY_PORT)}, "0.0.0.0");
+server.listen(${String(RELAY_PORT)}, "0.0.0.0", () => report("listening"));
 `;
 
 export interface RoutedPrivateRelay {
@@ -54,6 +63,15 @@ export async function startRoutedPrivateRelay(options: {
   const networkName = networkNames[0] as string;
   const relayName = `nemoclaw-private-relay-${process.pid}-${randomBytes(4).toString("hex")}`;
   const close = async (): Promise<void> => {
+    // This fixture logs connection metadata only, never TLS payloads or headers.
+    // Diagnostic acquisition errors must not prevent removal of the owned relay.
+    await runtime
+      .command(["container", "logs", "--tail", "50", relayName], {
+        artifactName: "routed-private-relay-connections",
+        captureLimitBytes: 8 * 1024,
+        timeoutMs: 10_000,
+      })
+      .catch(() => undefined);
     await runtime.command(["container", "rm", "--force", relayName], {
       artifactName: "cleanup-routed-private-relay",
       timeoutMs: 60_000,
