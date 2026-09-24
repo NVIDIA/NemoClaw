@@ -443,7 +443,7 @@ describe("registry lock exhaustion remediation", () => {
     ["dead", "Recorded owner PID 4242 is no longer running"],
     ["recycled", "PID 4242 now belongs to an unrelated process"],
     ["unverifiable", "PID 4242 exists but cannot be confirmed as the recorded owner"],
-  ])("reports %s ownership and leaves removal to verified retry", (kind, diagnostic) => {
+  ])("reports %s ownership and directs the operator to retry acquisition", (kind, diagnostic) => {
     const test = fixture("nemoclaw-lock-remediation-");
     writeExactGeneration(test, 4242, PROCESS_IDENTITY);
     markStale(test.lockDir);
@@ -479,7 +479,7 @@ describe("registry lock exhaustion remediation", () => {
     expect(message).toContain(test.lockDir);
     expect(message).toContain("after 1 retries.");
     expect(message).toContain(diagnostic);
-    expect(message).toContain("Rerun this command; NemoClaw verifies stale ownership");
+    expect(message).toContain("Rerun this command to retry lock acquisition.");
     expect(message).not.toMatch(/rm -|stop it|stopping/u);
     expect(operation).not.toHaveBeenCalled();
     expect(fs.existsSync(test.lockDir)).toBe(true);

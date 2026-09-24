@@ -304,7 +304,7 @@ describe("cross-process onboard lock", () => {
       });
       const message = errorSpy.mock.calls.flat().join("\n");
       expect(message).toContain(diagnostic);
-      expect(message).toContain("rerun this command");
+      expect(message).toContain("Rerun this command to retry lock acquisition.");
       expect(message).not.toMatch(/already in progress|Wait for the active|Lock holder PID|rm -f/u);
     } finally {
       errorSpy.mockRestore();
@@ -354,12 +354,12 @@ describe("cross-process onboard lock", () => {
     },
   );
 
-  it("points at verified stale-lock cleanup when the recorded lock is stale (#11052)", () => {
+  it("directs stale-lock contention to retry acquisition (#11052)", () => {
     fs.mkdirSync(path.dirname(session.LOCK_FILE), { recursive: true });
     fs.writeFileSync(session.LOCK_FILE, "not-a-lock-record", { mode: 0o600 });
 
     expect(() => session.listRetainedSandboxRecoveryRecords()).toThrow(
-      "Wait briefly, then rerun so verified stale-lock cleanup can finish.",
+      "Wait briefly, then rerun to retry lock acquisition.",
     );
     expect(() => session.listRetainedSandboxRecoveryRecords()).not.toThrow(/Recorded lock PID/u);
   });

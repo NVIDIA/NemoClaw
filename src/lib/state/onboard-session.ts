@@ -1444,7 +1444,7 @@ function onboardLockContentionGuidance(
     lock.holderCommand ? `Recorded lock command: ${lock.holderCommand}.` : "",
   ].filter((detail) => detail.length > 0);
   const remediation = lock.stale
-    ? "Wait briefly, then rerun so verified stale-lock cleanup can finish."
+    ? "Wait briefly, then rerun to retry lock acquisition."
     : "Wait for any active onboarding run to finish, then rerun.";
   return [lead, ...holderDetails, remediation].join(" ");
 }

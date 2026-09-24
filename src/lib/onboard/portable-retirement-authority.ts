@@ -602,9 +602,7 @@ export function printPortableOnboardLockContention(
       ? "  Wait for any active onboarding run to finish before retrying."
       : "  The lock has no verified owner. Wait briefly before retrying.",
   );
-  console.error(
-    "  If the recorded process is no longer running, rerun this command; NemoClaw verifies stale ownership before removing its lock.",
-  );
+  console.error("  Rerun this command to retry lock acquisition.");
 }
 
 export function beginPortableOnboardRetirementEntry(

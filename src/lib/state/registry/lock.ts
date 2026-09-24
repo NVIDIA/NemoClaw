@@ -352,7 +352,7 @@ function lockHolderRemediation(
   alive: (pid: number) => boolean,
   readIdentity: (pid: number) => string | null,
 ): string {
-  const retry = "Rerun this command; NemoClaw verifies stale ownership before removing its lock.";
+  const retry = "Rerun this command to retry lock acquisition.";
   const pid = ownerPid(paths.owner);
   if (pid === null) return `The lock has no verifiable owner record. Wait briefly. ${retry}`;
   const live = alive(pid);
