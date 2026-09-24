@@ -89,11 +89,18 @@ Plan refreshes the relevant observations; apply retains its readiness checks.
 
 ## Guided choices
 
-Harness candidates come from a generated catalog tied to the pinned Fabric source revision, including NemoClaw's local adapters.
+When discovery returns a catalog for the current engine and image, its advertised harnesses and protocols determine the offered choices.
+The questionnaire keeps a currently selected value visible but disabled if that image does not advertise it; discovery does not silently replace an accepted answer.
+Observations from another engine or image do not constrain the current choices.
+Without a usable current image catalog, the questionnaire uses the bundled catalog generated from the pinned Fabric source and NemoClaw's local adapters, and keeps target compatibility unverified.
 Authoring reads catalog identifiers, orders them alphabetically, and combines advertised capabilities with the SDK's configuration contract.
 Onboarding and authoring contain no harness-specific allowlist, labels, ordering, or inference rules.
 The default selection comes from the bundled YAML template.
-The SDK still defines the harness identifiers and native configuration forms it can represent; catalog identifiers outside that contract are not offered.
+A discovered identifier can be offered without adding a named SDK variant or a frontend branch.
+The SDK validates identifier syntax and the document structure; Fabric owns adapter availability and native settings validation.
+Custom adapters require an explicit immutable image containing their descriptor and implementation.
+The guided flow preserves opaque `harness.settings` from a template, but does not generate questions from arbitrary settings schemas.
+See [Fabric harness configuration](../../docs/sdk.md#configure-a-discovered-fabric-harness) for that boundary.
 This does not qualify a harness image for the current host or establish deployment readiness.
 
 The questionnaire also offers:

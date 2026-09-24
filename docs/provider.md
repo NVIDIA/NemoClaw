@@ -129,6 +129,8 @@ The SDK bundles the broader catalog for offline authoring and rejects stale sour
 Image checks verify generated contents against the pinned archive.
 See [source notices and regeneration](../image/NOTICE.md).
 Older images and builds that bypass the Bake labels remain unverified.
+Catalog identifiers are not restricted to a compiled SDK list.
+Runtime dispatch separately resolves installed descriptors and validates their native settings; see [discovered harness configuration](sdk.md#configure-a-discovered-fabric-harness).
 
 For a managed gateway, generated graphs observe each sandbox image independently of resource creation or image acquisition.
 Lifecycle postconditions reject known engine incompatibility or conflicting image/adapter metadata.

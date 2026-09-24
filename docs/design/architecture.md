@@ -77,7 +77,10 @@ Configuration retains credential references, not values.
 The [authoring library](../../crates/nemoclaw-authoring/src/lib.rs) owns an SDK `Document` while a frontend edits or reviews it.
 It has no terminal or deployment operations.
 Its guided API intersects a generated, revision-matched Fabric descriptor catalog with the configurations the frontend can preserve.
-Provider suggestions, presentation ordering, and native configuration constraints remain authoring policy.
+Provider suggestions and presentation ordering remain authoring policy.
+The SDK validates the generic document contract and retains explicit native integration constraints; Fabric owns adapter descriptors and their settings schemas.
+Harness identifiers are open validated strings, so discovered adapters can pass through authoring, compilation, and runtime dispatch without a new name allowlist.
+Opaque adapter settings survive that path; the questionnaire does not invent native configuration questions.
 It refuses a guided edit when the document has V1 configuration that the guided flow cannot show, which prevents data loss.
 The [onboarding TUI](../../examples/onboarding-tui/README.md) renders these fields for `nemoclaw onboard` and the standalone example.
 Neither entrypoint applies resources.

@@ -108,6 +108,30 @@ Deployment planning already refreshes selected resources and gateway metadata th
 Reuse those observations and retained bindings for ownership, drift, and storage decisions; a separate unowned-resource scan cannot authorize adoption.
 The [provider reference](provider.md#discovery-ownership) defines data-source inputs, sources, limitations, and unknown results for each category.
 
+## Configure a Discovered Fabric Harness
+
+`HarnessKind` accepts Fabric identifiers matching `^[a-z][a-z0-9-]{0,62}$`.
+Named Rust variants preserve existing native integrations; a new identifier does not require an SDK release or a frontend allowlist.
+Parser acceptance does not establish that an adapter is packaged, compatible, or ready.
+
+For a custom adapter, supply an explicit immutable sandbox image containing the Fabric launcher, descriptor, and adapter implementation.
+The SDK has no default image pin for a previously unknown identifier.
+Set `harness.kind` to the descriptor filename without `.fabric-adapter.json`.
+For the generic adapter path, optional `harness.settings` carries an opaque JSON object, including nested nulls, to Fabric's `harness.settings` unchanged.
+Native integrations also preserve additional settings, but reject conflicts with fields owned by the bridge, such as its agent name or inference connection.
+These settings are ordinary configuration, not a secret-storage mechanism.
+Fabric validates them against the selected adapter's canonical settings schema when it plans the runtime.
+Existing typed options for tools, interfaces, execution, and native integrations retain their own constraints; accepting an identifier does not add those integrations.
+
+The authoring library can consume a supplied `FabricCatalog` and preserve generic settings from an input document.
+The questionnaire offers catalog identifiers and protocol-compatible choices, but does not synthesize arbitrary native-setting questions.
+The [onboarding guide](../examples/onboarding-tui/README.md#guided-choices) describes its editable subset.
+
+At runtime, the launcher resolves the selected identifier against installed Fabric descriptor files and uses their exact `adapter_id`.
+Missing or ambiguous descriptors stop configuration; malformed metadata does not become a guessed adapter name.
+Image labels support passive planning observations, while installed descriptors govern runtime dispatch.
+The bundled catalog supplies offline candidates only; it cannot establish that a selected image contains an adapter.
+
 ## Read Plan Discovery and Resource Inventory
 
 `plan(&document, &cancel)` returns `OperationResult.discovery` when observations or inventory are available.
