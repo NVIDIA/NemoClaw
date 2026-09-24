@@ -445,6 +445,52 @@ describe("rebuild backup credential sanitization", () => {
     expect(existsSync(backupPath)).toBe(true);
   });
 
+  it("preserves a cleanup failure when sanitization reaches its deadline", () => {
+    const backupPath = createBackup();
+    const deadlineError = new Error("snapshot sanitization deadline expired");
+    const cleanupError = new Error("injected deadline cleanup failure");
+    let received: unknown;
+
+    try {
+      sanitizeBackupDirectory(backupPath, {
+        sanitizeDirectory: () => {
+          throw deadlineError;
+        },
+        removeBackup: () => {
+          throw cleanupError;
+        },
+      });
+    } catch (error) {
+      received = error;
+    }
+
+    expect(received).toBeInstanceOf(Error);
+    expect((received as Error).message).toBe(
+      "Credential sanitization failed and backup cleanup failed",
+    );
+    expect((received as Error).cause).toBeInstanceOf(AggregateError);
+    expect(((received as Error).cause as AggregateError).errors).toEqual([
+      deadlineError,
+      cleanupError,
+    ]);
+    expect(existsSync(backupPath)).toBe(true);
+  });
+
+  it("reports a retained backup when deadline cleanup does not remove it", () => {
+    const backupPath = createBackup();
+
+    expect(() =>
+      sanitizeBackupDirectory(backupPath, {
+        sanitizeDirectory: () => {
+          throw new Error("snapshot sanitization deadline expired");
+        },
+        removeBackup: () => undefined,
+        backupExists: () => true,
+      }),
+    ).toThrow("Credential sanitization failed and the incomplete backup remains");
+    expect(existsSync(backupPath)).toBe(true);
+  });
+
   it("fails closed when a scanned parent directory is swapped before apply", () => {
     const backupPath = createBackup();
     const nestedPath = join(backupPath, "state", "nested");

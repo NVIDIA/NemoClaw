@@ -993,6 +993,22 @@ const DEFAULT_BACKUP_SANITIZATION_OPERATIONS: BackupSanitizationOperations = {
   backupExists: existsSync,
 };
 
+class SnapshotSanitizationDeadlineError extends Error {
+  constructor(cause: unknown) {
+    super("Credential sanitization failed; removed the incomplete backup", { cause });
+    this.name = "SnapshotSanitizationDeadlineError";
+  }
+}
+
+function containsSnapshotSanitizationDeadlineError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  if (error.message === "snapshot sanitization deadline expired") return true;
+  if (error.cause instanceof AggregateError) {
+    return error.cause.errors.some(containsSnapshotSanitizationDeadlineError);
+  }
+  return containsSnapshotSanitizationDeadlineError(error.cause);
+}
+
 /** @visibleForTesting */
 export function sanitizeBackupDirectory(
   dirPath: string,
@@ -1043,6 +1059,9 @@ export function sanitizeBackupDirectory(
         { cause: error },
       );
     }
+    if (containsSnapshotSanitizationDeadlineError(error)) {
+      throw new SnapshotSanitizationDeadlineError(error);
+    }
     throw new Error(
       `${prerequisite}Credential sanitization failed; removed the incomplete backup`,
       {
@@ -1053,12 +1072,7 @@ export function sanitizeBackupDirectory(
 }
 
 function isSnapshotSanitizationDeadlineError(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-  if (error.message === "snapshot sanitization deadline expired") return true;
-  if (error.cause instanceof AggregateError) {
-    return error.cause.errors.some(isSnapshotSanitizationDeadlineError);
-  }
-  return isSnapshotSanitizationDeadlineError(error.cause);
+  return error instanceof SnapshotSanitizationDeadlineError;
 }
 
 // ── Logging ────────────────────────────────────────────────────────
