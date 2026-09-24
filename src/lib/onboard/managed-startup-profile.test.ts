@@ -6,7 +6,6 @@ import { createHash } from "node:crypto";
 
 import { describe, expect, it } from "vitest";
 
-import { makeMessagingPlan } from "../../../test/helpers/messaging-plan-fixtures";
 import { HERMES_API_PORT_RANGE_END, HERMES_API_PORT_RANGE_START } from "../core/ports";
 import { listMessagingCredentialEnvAssignments } from "../messaging/channels/metadata.ts";
 import {
@@ -32,7 +31,12 @@ const HERMES_RESERVED_API_PORTS = [
 ];
 
 const MESSAGING_PLAN = {
-  ...makeMessagingPlan({ sandboxName: "demo", agent: "portable" }),
+  schemaVersion: 1,
+  sandboxName: "demo",
+  agent: "portable",
+  workflow: "onboard",
+  channels: [],
+  disabledChannels: [],
   credentialBindings: [
     {
       credentialId: "slackBotToken",
@@ -41,6 +45,7 @@ const MESSAGING_PLAN = {
       credentialAvailable: true,
     },
   ],
+  networkPolicy: { presets: [], entries: [] },
   agentRender: [
     {
       channelId: "discord",
@@ -61,6 +66,9 @@ const MESSAGING_PLAN = {
       templateRefs: ["credential.slackBotToken.placeholder"],
     },
   ],
+  buildSteps: [],
+  stateUpdates: [],
+  healthChecks: [],
 } as const;
 
 const OPENCLAW_PROFILE = {

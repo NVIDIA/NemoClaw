@@ -368,13 +368,6 @@ describe("createSetupNim vLLM resume", () => {
         abortNonInteractive: (message) => {
           throw new Error(message);
         },
-        discoverManagedLlamaCppSelections: () => ({
-          choices: [],
-          resolution: {
-            kind: "rejected",
-            reason: "the vLLM profile test does not select llama.cpp",
-          },
-        }),
         detectInferenceProviderHostState: () =>
           makeHostState({ vllmProfile: profile, hasVllmImage: true }),
         installVllm,

@@ -108,6 +108,14 @@ export function makeDeps(overrides: Partial<SetupNimFlowDeps> = {}): SetupNimFlo
       select: async () => unexpected("featured model selection"),
     }),
     detectInferenceProviderHostState: () => makeHostState(),
+    // Keep provider-selection fixtures independent of the contributor's host inventory.
+    discoverManagedLlamaCppSelections: () => ({
+      choices: [],
+      resolution: {
+        kind: "rejected",
+        reason: "this test does not select a managed llama.cpp profile",
+      },
+    }),
     getAgentInferenceProviderOptions: () => [],
     loadRoutedProfile: () => null,
     readRecordedProvider: () => null,
