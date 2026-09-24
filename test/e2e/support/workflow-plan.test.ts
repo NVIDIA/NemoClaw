@@ -673,6 +673,17 @@ describe("E2E workflow plan", () => {
     expect(selectedWorkflowJobs(plan)).toContain("hermes-gpu-startup");
   });
 
+  it("selects both stopped-recovery consumers when the shared proof changes", () => {
+    const plan = buildE2eWorkflowPlan(
+      {},
+      { changedFiles: ["test/e2e/live/openclaw-stopped-recovery.ts"] },
+    );
+    expect(plan.catalogueMatrices["nvidia-inference"].map((row) => row.id)).toContain(
+      "rebuild-openclaw",
+    );
+    expect(selectedWorkflowJobs(plan)).toContain("mcp-bridge");
+  });
+
   it("selects only catalogue targets that own changed files", () => {
     const changedFile = "test/e2e/live/snapshot-commands.test.ts";
     const plan = buildE2eWorkflowPlan({}, { changedFiles: [changedFile] });
