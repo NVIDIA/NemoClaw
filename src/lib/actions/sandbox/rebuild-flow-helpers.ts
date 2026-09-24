@@ -92,6 +92,8 @@ export type RebuildAgentBaseImagePreflight = {
   trustedRemoteOverride?: import("../../agent/base-image").TrustedRemoteBaseImageOverride;
 };
 
+const INCOMPLETE_REBUILD_BACKUP_CLEANUP_TIMEOUT_MS = 30_000;
+
 function discardIncompleteRebuildBackup(
   sandboxName: string,
   result: sandboxState.BackupResult,
@@ -562,7 +564,8 @@ export async function backupSandboxStateForRebuild(
       // Recursive snapshot cleanup can consume the lifecycle reserve. Defer it
       // until the container this recovery started is observably Stopped again.
       if (returnedToStopped && !backup.success) {
-        backup = discardIncompleteRebuildBackup(sandboxName, backup, transactionDeadlineMs);
+        const cleanupDeadlineMs = Date.now() + INCOMPLETE_REBUILD_BACKUP_CLEANUP_TIMEOUT_MS;
+        backup = discardIncompleteRebuildBackup(sandboxName, backup, cleanupDeadlineMs);
       }
       // A container this recovery started must be reported whenever it cannot
       // be returned to stopped, whether or not the retried backup succeeded.
