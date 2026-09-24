@@ -439,6 +439,7 @@ function timedOutPhase(meta: UnknownRecord): string | null {
 
 const REPLAY_INVALID_MARKER = "replayInvalid=true";
 
+/** The incomplete-turn markers present in the run metadata. */
 function turnMetaMarkers(meta: UnknownRecord): string[] {
   const markers: string[] = [];
   if (meta.replayInvalid === true) markers.push(REPLAY_INVALID_MARKER);
