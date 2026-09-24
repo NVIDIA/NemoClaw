@@ -11,6 +11,7 @@ import {
   dockerDriverGatewayLocalTlsBundleIsComplete,
   ensureDockerDriverGatewayLocalTlsBundle,
   getDockerDriverGatewayLocalTlsBundle,
+  resolveCompleteDockerDriverGatewayLocalTlsDir,
 } from "./docker-driver-gateway-local-tls";
 import { PORTABLE_HOST_GATEWAY_IP } from "./experimental/portable-profile";
 
@@ -215,6 +216,7 @@ describe("docker-driver-gateway-local-tls", () => {
       });
 
       expect(bundle.localTlsDir).toBe(path.join(stateDir, "tls"));
+      expect(resolveCompleteDockerDriverGatewayLocalTlsDir(stateDir)).toBe(bundle.localTlsDir);
       expect(calls).toHaveLength(1);
       expect(calls[0]).toMatchObject({
         command: "/opt/openshell/openshell-gateway",
@@ -326,6 +328,7 @@ describe("docker-driver-gateway-local-tls", () => {
     useTestCertificateClock();
     try {
       expect(dockerDriverGatewayLocalTlsBundleIsComplete(stateDir)).toBe(false);
+      expect(resolveCompleteDockerDriverGatewayLocalTlsDir(stateDir)).toBeUndefined();
 
       ensureDockerDriverGatewayLocalTlsBundle({
         env: { PATH: "/usr/bin" },

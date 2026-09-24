@@ -85,6 +85,15 @@ export function dockerDriverGatewayLocalTlsBundleIsComplete(
   );
 }
 
+/** Return only a complete, cryptographically valid client TLS authority rooted in this state. */
+export function resolveCompleteDockerDriverGatewayLocalTlsDir(
+  stateDir: string,
+): string | undefined {
+  return dockerDriverGatewayLocalTlsBundleIsComplete(stateDir)
+    ? getDockerDriverGatewayLocalTlsDir(stateDir)
+    : undefined;
+}
+
 export function buildDockerDriverGatewayLocalTlsEnv(stateDir: string): Record<string, string> {
   return {
     OPENSHELL_LOCAL_TLS_DIR: getDockerDriverGatewayLocalTlsDir(stateDir),

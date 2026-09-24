@@ -8,6 +8,7 @@ import {
   createUninstallSandboxObserver,
   type RunResult,
 } from "../../adapters/uninstall/commands";
+import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import { OPENSHELL_DEFAULT_WORKSPACE } from "../../adapters/openshell/sandbox-ssh-host";
 import {
   OPENSHELL_SANDBOXES_DELETE_SKIP_MESSAGE,
@@ -17,6 +18,7 @@ import {
 import { isOllamaAuthProxyCommandLine } from "../../inference/ollama/process";
 import { isModelRouterCommandLineForPort } from "../../onboard/model-router-process";
 import { MANAGED_STARTUP_RECEIPT_VOLUME_PREFIX } from "../../onboard/managed-startup/docker-receipt-transfer";
+import { resolveCompleteDockerDriverGatewayLocalTlsDir } from "../../onboard/docker-driver-gateway-local-tls";
 
 interface UninstallRuntimeCommands {
   env: NodeJS.ProcessEnv;
@@ -39,6 +41,18 @@ const MANAGED_STARTUP_RECEIPT_VOLUME_PATTERN = new RegExp(
 );
 const BULK_DELETE_MAX_OBSERVATIONS = 5;
 const BULK_DELETE_REQUIRED_EMPTY_OBSERVATIONS = 2;
+
+export function selectedGatewayCleanupRuntimeSelection(
+  gatewayName: string,
+  gatewayStateDir: string,
+): OpenShellRuntimeSelection {
+  const localTlsDir = resolveCompleteDockerDriverGatewayLocalTlsDir(gatewayStateDir);
+  return {
+    gatewayName,
+    workspace: OPENSHELL_DEFAULT_WORKSPACE,
+    ...(localTlsDir ? { localTlsDir } : {}),
+  };
+}
 
 function nonEmptyLines(output: string): string[] {
   return output
@@ -109,9 +123,8 @@ export async function deleteSelectedGatewaySandbox(
 
 export async function deleteAllSelectedGatewaySandboxes(
   runtime: UninstallRuntimeCommands,
-  gatewayName: string,
+  runtimeSelection: OpenShellRuntimeSelection,
 ): Promise<boolean> {
-  const runtimeSelection = { gatewayName, workspace: OPENSHELL_DEFAULT_WORKSPACE };
   const result = await createUninstallSandboxLifecycle(runtime.run, runtime.env).deleteAllSandboxes(
     { target: { kind: "selected" }, runtimeSelection },
   );

@@ -30,7 +30,13 @@ describe("uninstall bulk sandbox cleanup", () => {
       warn: vi.fn(),
     };
 
-    await expect(deleteAllSelectedGatewaySandboxes(runtime, "nemoclaw-8091")).resolves.toBe(true);
+    await expect(
+      deleteAllSelectedGatewaySandboxes(runtime, {
+        gatewayName: "nemoclaw-8091",
+        workspace: "default",
+        localTlsDir: "/authority/tls",
+      }),
+    ).resolves.toBe(true);
 
     expect(calls.map(({ args }) => args)).toEqual([
       ["sandbox", "delete", "--all"],
@@ -40,6 +46,7 @@ describe("uninstall bulk sandbox cleanup", () => {
     expect(calls.every(({ env }) => env?.NVIDIA_API_KEY === undefined)).toBe(true);
     expect(calls.every(({ env }) => env?.OPENSHELL_GATEWAY === "nemoclaw-8091")).toBe(true);
     expect(calls.every(({ env }) => env?.OPENSHELL_WORKSPACE === "default")).toBe(true);
+    expect(calls.every(({ env }) => env?.OPENSHELL_LOCAL_TLS_DIR === "/authority/tls")).toBe(true);
     expect(calls.every(({ env }) => env?.OPENSHELL_GATEWAY_ENDPOINT === undefined)).toBe(true);
     expect(runtime.sleep).toHaveBeenCalledOnce();
     expect(logs).toContain("Deleted all OpenShell sandboxes");
@@ -61,7 +68,12 @@ describe("uninstall bulk sandbox cleanup", () => {
       warn: (message: string) => warnings.push(message),
     };
 
-    await expect(deleteAllSelectedGatewaySandboxes(runtime, "nemoclaw-8091")).resolves.toBe(true);
+    await expect(
+      deleteAllSelectedGatewaySandboxes(runtime, {
+        gatewayName: "nemoclaw-8091",
+        workspace: "default",
+      }),
+    ).resolves.toBe(true);
 
     expect(calls.filter((args) => args[1] === "delete")).toHaveLength(1);
     expect(calls.filter((args) => args[1] === "list")).toHaveLength(2);
@@ -89,7 +101,12 @@ describe("uninstall bulk sandbox cleanup", () => {
       warn: (message: string) => warnings.push(message),
     };
 
-    await expect(deleteAllSelectedGatewaySandboxes(runtime, "nemoclaw-8091")).resolves.toBe(false);
+    await expect(
+      deleteAllSelectedGatewaySandboxes(runtime, {
+        gatewayName: "nemoclaw-8091",
+        workspace: "default",
+      }),
+    ).resolves.toBe(false);
 
     expect(calls.filter((args) => args[1] === "delete")).toHaveLength(1);
     expect(calls.filter((args) => args[1] === "list")).toHaveLength(5);
@@ -112,7 +129,12 @@ describe("uninstall bulk sandbox cleanup", () => {
       warn: (message: string) => warnings.push(message),
     };
 
-    await expect(deleteAllSelectedGatewaySandboxes(runtime, "nemoclaw-8091")).resolves.toBe(false);
+    await expect(
+      deleteAllSelectedGatewaySandboxes(runtime, {
+        gatewayName: "nemoclaw-8091",
+        workspace: "default",
+      }),
+    ).resolves.toBe(false);
 
     expect(calls.filter((args) => args[1] === "delete")).toHaveLength(1);
     expect(calls.filter((args) => args[1] === "list")).toHaveLength(5);
