@@ -530,7 +530,10 @@ An active same-name replacement is separate from ordinary onboarding-step resume
 Use `--fresh` to discard the saved onboarding session and start the wizard from the beginning. This clears stale or failed session state before NemoClaw creates a new session record. It also bypasses locally recorded sandbox base-image resolution metadata and reruns normal candidate resolution. `--fresh` takes precedence over a base-image hint carried from a rebuild, so NemoClaw does not use that recorded hint. The installer also accepts `--fresh` and forwards it to `$$nemoclaw onboard`, which skips automatic resume detection. `--resume` and `--fresh` are mutually exclusive. For an existing completed sandbox, use `--fresh --name <sandbox-name> --recreate-sandbox` when you intentionally want onboarding to replace that sandbox with a new provider, model, agent, or startup setting. Use `$$nemoclaw <sandbox-name> rebuild` when you want NemoClaw to recreate the sandbox from its recorded registry metadata without changing those selections.
 
 Before reserving an inference route, onboarding can release a foreign-session route-only reservation while it holds the onboarding lock.
-It preserves the current session's reservation, any row that is no longer route-only, and any row that has gained verified sandbox-create authority.
+For an already published sandbox on the gateway selected in the current session's checkpoint, it can transfer a foreign pending reservation to the new session while retaining the sandbox data.
+The row remains pending until normal onboarding finalization, so reclaiming it does not publish an unverified inference route.
+It preserves the current session's reservation and any row that has gained verified sandbox-create authority.
+A published row remains unchanged when its gateway differs from the selected authority or that authority is unavailable.
 Without the lock, it preserves the foreign reservation.
 
 <AgentOnly variant="openclaw,hermes">
