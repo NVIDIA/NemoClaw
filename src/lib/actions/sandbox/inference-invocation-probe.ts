@@ -11,7 +11,6 @@ import {
   namedOpenShellGateway,
   selectedOpenShellGateway,
 } from "../../adapters/openshell/sandbox-observer";
-import { buildOpenShellRuntimeSelectionEnv } from "../../adapters/openshell/runtime-selection";
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import { getSandboxInferenceConfig } from "../../inference/config";
 import { validateInferenceResponseBody } from "../../inference/health";
@@ -29,7 +28,7 @@ import {
 import { ROOT, shellQuote } from "../../runner";
 import { DCODE_MANAGED_EXEC_LAUNCHER } from "./connect-inference-route-probe";
 import {
-  buildSandboxSubprocessEnv,
+  buildSandboxCommandEnvironment,
   executeSandboxExecCommand,
   type SandboxCommandResult,
   type SandboxExecCommandOptions,
@@ -164,9 +163,7 @@ export function buildDcodeSandboxInferenceInvocationRequest(
       ENV: "",
       HOME: "/usr/local/lib/nemoclaw",
     },
-    environment: input.runtimeSelection
-      ? buildOpenShellRuntimeSelectionEnv(buildSandboxSubprocessEnv(), input.runtimeSelection)
-      : buildSandboxSubprocessEnv(),
+    environment: buildSandboxCommandEnvironment(input.runtimeSelection),
     tty: false,
     timeoutMilliseconds,
   };

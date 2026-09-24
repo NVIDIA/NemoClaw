@@ -367,6 +367,35 @@ describe("sandbox inference invocation probe", () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
+  it.each([false, true])(
+    "preserves filtered runtime authority for Deep Agents Code (selected=%s)",
+    (selected) => {
+      vi.stubEnv("OPENSHELL_GATEWAY", "ambient-gateway");
+      vi.stubEnv("OPENSHELL_WORKSPACE", "/ambient-workspace");
+      vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/ambient-tls");
+      vi.stubEnv("GITHUB_TOKEN", "fixture-private-token");
+      try {
+        const runtimeSelection = selected
+          ? { gatewayName: "recorded-gateway", workspace: "/recorded-workspace" }
+          : undefined;
+        const request = buildDcodeSandboxInferenceInvocationRequest(
+          { ...input, runtimeSelection },
+          100_000,
+        );
+        expect(request.environment).toMatchObject({
+          OPENSHELL_GATEWAY: selected ? "recorded-gateway" : "ambient-gateway",
+          OPENSHELL_WORKSPACE: selected ? "/recorded-workspace" : "/ambient-workspace",
+        });
+        expect(request.environment?.OPENSHELL_LOCAL_TLS_DIR).toBe(
+          selected ? undefined : "/ambient-tls",
+        );
+        expect(request.environment).not.toHaveProperty("GITHUB_TOKEN");
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    },
+  );
+
   it("rejects startup output before Deep Agents Code invocation evidence (#10080)", async () => {
     const runBuffered = vi.fn(async () =>
       bufferedResult(

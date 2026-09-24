@@ -88,7 +88,6 @@ describe("export config builder", () => {
         sandboxes: [
           {
             name: "alpha",
-            image: null,
             runtime: {
               provider: "docker",
             },
@@ -182,7 +181,7 @@ describe("export config builder", () => {
     );
 
     expect(result.spec.sandboxes[0]?.harness.kind).toBe("hermes");
-    expect(result.spec.sandboxes[0]?.image).toBeNull();
+    expect(result.spec.sandboxes[0]).not.toHaveProperty("image");
     expect(result.spec.sandboxes[0]?.harness).not.toHaveProperty("observability");
     expect(result.spec.sandboxes[0]?.network.policy.explicit).toMatchObject({
       process: { run_as_user: "1000", run_as_group: "1000" },

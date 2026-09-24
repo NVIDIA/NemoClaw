@@ -130,9 +130,6 @@ export type RestartSandboxGatewayOptions = BaseRestartSandboxGatewayOptions & {
   runtimeSelection?: OpenShellRuntimeSelection;
 };
 
-export { buildSandboxExecMarkedCommand } from "./sandbox-exec-output";
-export { buildSubprocessEnv as buildSandboxSubprocessEnv };
-
 export type { SandboxCommandResult, SandboxExecCommandOptions };
 
 export type SandboxCommandExecutionOptions = {

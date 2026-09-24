@@ -303,7 +303,8 @@ sudo ufw --force delete allow from <subnet> to <gateway-ip> port 8081 proto tcp
 
 Use the same subnet and gateway IP address that appeared in the original command.
 
-If onboarding stops, rerun the same provider and recipe selection.
+If resumed onboarding reports that it cannot reserve host-local inference, run `$$nemoclaw <sandbox-name> doctor`.
+Correct the reported runtime or gateway-authority condition before you rerun the same provider and recipe selection.
 NemoClaw resumes only the persisted Docker authority, image, recipe, model digest, network, and runtime identity.
 It reconciles an unfinished create journal before it starts a new runtime.
 Phases before `receipt-prepared` are rolled back and retired, while `receipt-prepared` is finalized.

@@ -2888,7 +2888,7 @@ async function prepareConnectSandboxWithinLifecycleFence(
               ? false
               : await probeTiming!.measureAsync("lifecycle", () =>
                   startStoppedSandboxContainerForProbeRecovery(sandboxName, {
-                    getSandbox: registry.getSandbox,
+                    getSandbox: readConnectSandbox,
                   }),
                 );
             if (

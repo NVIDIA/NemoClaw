@@ -303,6 +303,7 @@ describe("managed vLLM export pipeline", () => {
       const document = asExportedConfig(YAML.parse(writeStdout.mock.calls[0]![0]));
       expect(document.spec.sandboxes[0]!.harness.execution).toEqual(execution);
       expect(document.spec.sandboxes[0]!.agent.inference.routes[0]!.overrides).toEqual({
+        contextWindow: 65536,
         model: "nvidia-nemotron-3.5-lightning-30b-a3b-nvfp4",
         ...overrides,
       });
