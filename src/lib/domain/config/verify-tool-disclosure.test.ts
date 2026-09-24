@@ -95,7 +95,7 @@ describe("managed tool-disclosure export", () => {
   });
 
   it.each([undefined, "progressive"] as const)(
-    "omits canonical progressive tools for registry selection %s",
+    "omits target-default progressive tools for registry selection %s (#12132)",
     async (toolDisclosure) => {
       const result = await exportSnapshots([snapshot({ registry: entry({ toolDisclosure }) })]);
       expect(result.outcome.ok).toBe(true);

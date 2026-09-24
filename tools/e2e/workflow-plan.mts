@@ -763,6 +763,7 @@ export function buildE2eWorkflowPlan(
       return withCoverageMatrix(
         {
           ...planWithoutCoverage,
+          catalogueMatrices: catalogueMatrices(E2E_TARGET_CATALOGUE, gatewayRuntimes),
           selectedJobs,
           runtimeProvidersByJob: {
             ...plan.runtimeProvidersByJob,
@@ -813,9 +814,7 @@ export function buildE2eWorkflowPlan(
       ...riskJobIds,
     ]);
     const selectedCatalogueTargets = E2E_TARGET_CATALOGUE.filter(
-      (target) =>
-        target.releaseRequired &&
-        (selectedCatalogueIds.has(target.id) || selectedCatalogueIds.has(target.targetId)),
+      (target) => selectedCatalogueIds.has(target.id) || selectedCatalogueIds.has(target.targetId),
     );
     const riskTargetIds = riskPlan.requiredTargets.map((target) => target.id);
     const registryMatrix = [

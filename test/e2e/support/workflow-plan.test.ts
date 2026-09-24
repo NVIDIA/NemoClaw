@@ -101,7 +101,7 @@ describe("E2E workflow plan", () => {
       }),
     ]);
     expect(plan.hermesSelected).toBe(true);
-    expect(plan.coverageMatrix).toHaveLength(76);
+    expect(plan.coverageMatrix).toHaveLength(78);
     expect(selectedWorkflowJobs(plan)).toEqual([
       "catalogue-brave-nvidia-inference",
       "catalogue-github-read",
@@ -132,6 +132,23 @@ describe("E2E workflow plan", () => {
     expect(releaseRequiredWorkflowJobs()).not.toContain("llama-cpp-dgx-spark-qualification");
   });
 
+  it("runs deferred onboarding for both accepted agents on both managed runtimes", () => {
+    const plan = buildE2eWorkflowPlan(
+      { jobs: "deferred-onboarding-hermes,deferred-onboarding-langchain-deepagents-code" },
+      { gatewayRuntimes: ["docker", "podman"] },
+    );
+    expect(
+      plan.catalogueMatrices["nvidia-api"].map((row) => [row.id, row.runtime_provider]),
+    ).toEqual([
+      ["deferred-onboarding-hermes", "docker"],
+      ["deferred-onboarding-hermes", "podman"],
+      ["deferred-onboarding-langchain-deepagents-code", "docker"],
+      ["deferred-onboarding-langchain-deepagents-code", "podman"],
+    ]);
+    expect(plan.matrix).toEqual([]);
+    expect(plan.testMatrix).toEqual([]);
+  });
+
   it("selects only native Podman-eligible executions when explicitly requested", () => {
     const plan = buildE2eWorkflowPlan({}, { gatewayRuntimes: ["podman"] });
     const catalogueIds = Object.values(plan.catalogueMatrices)
@@ -143,9 +160,14 @@ describe("E2E workflow plan", () => {
       "ubuntu-repo-cloud-openclaw",
     ]);
     expect(plan.testMatrix).toEqual([]);
-    expect(catalogueIds).toHaveLength(46);
+    expect(catalogueIds).toHaveLength(47);
     expect(catalogueIds).not.toEqual(
-      expect.arrayContaining(["bootstrap-install-smoke", "rebuild-hermes", "rebuild-openclaw"]),
+      expect.arrayContaining([
+        "bootstrap-install-smoke",
+        "gpu-e2e",
+        "rebuild-hermes",
+        "rebuild-openclaw",
+      ]),
     );
     expect(catalogueIds.some((id) => id.startsWith("openshell-gateway-upgrade-"))).toBe(false);
     expect(selectedWorkflowJobs(plan)).toEqual([
@@ -182,7 +204,7 @@ describe("E2E workflow plan", () => {
   });
 
   it.each(["openclaw", "hermes"])(
-    "selects the %s Tavily exporter only through an explicit Docker target (#12138)",
+    "selects the explicit %s Tavily Docker target without requiring it for release (#12138)",
     (agent) => {
       const id = `tavily-export-${agent}`;
       const plan = buildE2eWorkflowPlan({ jobs: id });
@@ -191,10 +213,6 @@ describe("E2E workflow plan", () => {
       ]);
       expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-tavily-nvidia-inference"]);
       expect(buildE2eWorkflowPlan().catalogueMatrices["tavily-nvidia-inference"]).toEqual([]);
-      expect(
-        buildE2eWorkflowPlan({}, { changedFiles: ["test/e2e/live/brave-search.test.ts"] })
-          .catalogueMatrices["tavily-nvidia-inference"],
-      ).toEqual([]);
       expect(releaseRequiredWorkflowJobs()).not.toContain("catalogue-tavily-nvidia-inference");
       expect(() => buildE2eWorkflowPlan({ jobs: id }, { gatewayRuntimes: ["podman"] })).toThrow(
         "does not support requested gateway runtimes",
@@ -207,17 +225,84 @@ describe("E2E workflow plan", () => {
     },
   );
 
-  it("keeps Tavily credential availability separate from Brave (#12138)", () => {
-    const selected = buildE2eWorkflowPlan({ jobs: "tavily-export-openclaw,tavily-export-hermes" });
+  it.each([
+    "src/lib/domain/config/export-document.ts",
+    "src/lib/domain/config/v1alpha1-runtime-defaults.ts",
+    "src/lib/adapters/config/live-export-source.ts",
+    "src/lib/adapters/openshell/sdk-read-schema.ts",
+    "test/support/v1-config-consumer.ts",
+    "test/e2e/live/brave-search.test.ts",
+    "test/e2e/fixtures/tavily-export-source.ts",
+    "test/e2e/fixtures/phases/config-export-validation.ts",
+    ".github/workflows/e2e.yaml",
+  ])("selects both Tavily exporters when %s changes (#12138)", (changedFile) => {
+    const plan = buildE2eWorkflowPlan({}, { changedFiles: [changedFile] });
+    expect(plan.catalogueMatrices["tavily-nvidia-inference"].map((row) => row.id)).toEqual([
+      "tavily-export-openclaw",
+      "tavily-export-hermes",
+    ]);
+    expect(selectedWorkflowJobs(plan)).toContain("catalogue-tavily-nvidia-inference");
+    expect(() => validateE2eWorkflowPlan(plan)).not.toThrow();
     expect(
-      withoutUnavailableOptionalCredentialTargets(selected, new Set(["BRAVE_API_KEY"]))
+      withoutUnavailableOptionalCredentialTargets(plan, new Set(["BRAVE_API_KEY"]))
+        .catalogueMatrices["tavily-nvidia-inference"],
+    ).toEqual([]);
+  });
+
+  it.each(["openclaw", "hermes"])(
+    "selects only the %s Tavily exporter when its manifest changes (#12138)",
+    (agent) => {
+      const plan = buildE2eWorkflowPlan(
+        {},
+        { changedFiles: [`test/e2e/manifests/${agent}-nvidia-tavily.yaml`] },
+      );
+      expect(plan.catalogueMatrices["tavily-nvidia-inference"].map((row) => row.id)).toEqual([
+        `tavily-export-${agent}`,
+      ]);
+    },
+  );
+
+  it("does not select Tavily for unrelated changes or Podman-only planning (#12138)", () => {
+    expect(
+      buildE2eWorkflowPlan({}, { changedFiles: ["test/e2e/live/snapshot-commands.test.ts"] })
         .catalogueMatrices["tavily-nvidia-inference"],
     ).toEqual([]);
     expect(
-      withoutUnavailableOptionalCredentialTargets(selected, new Set(["TAVILY_API_KEY"]))
-        .catalogueMatrices["tavily-nvidia-inference"],
-    ).toHaveLength(2);
+      buildE2eWorkflowPlan(
+        {},
+        {
+          changedFiles: ["test/e2e/live/brave-search.test.ts"],
+          gatewayRuntimes: ["podman"],
+        },
+      ).catalogueMatrices["tavily-nvidia-inference"],
+    ).toEqual([]);
   });
+
+  it.for([
+    ["automatic without a key", {}, "false", 0],
+    ["automatic with a key", {}, "true", 2],
+    ["explicit without a key", { jobs: "tavily-export-openclaw" }, "false", 1],
+  ] as const)(
+    "preserves Tavily credential rules for %s selection (#12138)",
+    ([_name, selectors, available, count], { onTestFinished }) => {
+      const directory = mkdtempSync(path.join(tmpdir(), "tavily-plan-"));
+      onTestFinished(() => rmSync(directory, { recursive: true, force: true }));
+      const output = path.join(directory, "output");
+      writeE2eWorkflowPlanCiOutput(selectors, {
+        EVENT_NAME: "push",
+        CHANGED_FILES: "test/e2e/live/brave-search.test.ts",
+        INFERENCE_MODE: "mock",
+        NEMOCLAW_E2E_BRAVE_API_KEY_AVAILABLE: "true",
+        NEMOCLAW_E2E_TAVILY_API_KEY_AVAILABLE: available,
+        GITHUB_OUTPUT: output,
+        GITHUB_STEP_SUMMARY: path.join(directory, "summary"),
+      });
+      const matrix = readFileSync(output, "utf8")
+        .split("\n")
+        .find((line) => line.startsWith("catalogue_tavily_nvidia_inference_matrix="))!;
+      expect(JSON.parse(matrix.slice(matrix.indexOf("=") + 1))).toHaveLength(count);
+    },
+  );
 
   it("keeps the Brave job from selecting the Tavily cases in its shared test file (#12138)", () => {
     const brave = catalogueTarget("brave-search");
@@ -719,6 +804,9 @@ describe("E2E workflow plan", () => {
     "src/lib/actions/upgrade-sandboxes.ts",
   ])("selects both gateway-upgrade fixtures when %s changes", (changedFile) => {
     expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toEqual([
+      ...(changedFile === "scripts/install.sh"
+        ? ["deferred-onboarding-hermes", "deferred-onboarding-langchain-deepagents-code"]
+        : []),
       "openshell-gateway-upgrade-v0-0-89-x86-64",
       "openshell-gateway-upgrade-v0-0-123-x86-64",
     ]);
@@ -896,12 +984,25 @@ describe("E2E workflow plan", () => {
 
     expect(plan).toEqual({
       ...fullPlan,
+      catalogueMatrices: {
+        ...fullPlan.catalogueMatrices,
+        "tavily-nvidia-inference": [
+          expect.objectContaining({ id: "tavily-export-openclaw" }),
+          expect.objectContaining({ id: "tavily-export-hermes" }),
+        ],
+      },
+      coverageMatrix: expect.arrayContaining([
+        ...fullPlan.coverageMatrix,
+        expect.objectContaining({ id: "tavily-export-openclaw", source: "catalogue" }),
+        expect.objectContaining({ id: "tavily-export-hermes", source: "catalogue" }),
+      ]),
       selectedJobs: [...fullPlan.selectedJobs, "jetson-nvmap-gpu"],
       runtimeProvidersByJob: {
         ...fullPlan.runtimeProvidersByJob,
         "jetson-nvmap-gpu": ["none"],
       },
     });
+    expect(plan.coverageMatrix).toHaveLength(fullPlan.coverageMatrix.length + 2);
   });
 
   it("selects catalogue targets without unrelated jobs when their profile changes", () => {
@@ -910,9 +1011,7 @@ describe("E2E workflow plan", () => {
       { changedFiles: [".github/workflows/e2e-standard-profile.yaml"] },
     );
 
-    expect(Object.values(plan.catalogueMatrices).flat()).toHaveLength(
-      E2E_TARGET_CATALOGUE.filter((target) => target.releaseRequired).length,
-    );
+    expect(Object.values(plan.catalogueMatrices).flat()).toHaveLength(E2E_TARGET_CATALOGUE.length);
     expect(plan.selectedJobs).toEqual(["jetson-nvmap-gpu"]);
     expect(plan.matrix).toEqual([]);
     expect(plan.testMatrix).toEqual([]);

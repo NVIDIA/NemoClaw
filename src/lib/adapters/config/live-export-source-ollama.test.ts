@@ -8,7 +8,9 @@ import {
   expectExportRefusal,
 } from "../../../../test/support/config-export-harness";
 import os from "node:os";
+import YAML from "yaml";
 import { describe, expect, it, vi } from "vitest";
+import { asExportedConfig } from "../../../../test/support/config-export-document";
 import { createOllamaExportProbe } from "../../inference/ollama/proxy";
 import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../inference/ollama/contract";
 import type { ObservedOllamaProxy } from "../../inference/ollama/proxy-observation";
@@ -134,34 +136,60 @@ describe("attached Ollama export pipeline", () => {
       readProfile: () => Promise.reject({ code: 5 }),
     },
   ])(
-    "exports the $name binding without reading gateway credentials (#11857)",
+    "exports the $name binding without reading gateway credentials (#11857, #12012)",
     async ({ workspace, credentialEnv, readProfile, model = "qwen3.5:9b" }) => {
       const { source, probe, readCredential, localProvider } = mockOllamaSource(model);
       source.credentialEnv = credentialEnv;
       localProvider.profileWorkspace = workspace;
       raw.getProviderProfile.mockImplementation(readProfile);
       const { result, writeStdout, publish } = await exportLiveSource();
-      expect(result).toMatchObject({
-        ok: false,
-        failure: {
-          kind: "observation",
-          findings: [
-            {
-              field: "spec.inferenceProviders",
-              category: "unsupported",
-              diagnostic:
-                "V1alpha1 export currently supports hosted inference; managed vLLM and Ollama compatibility are deferred.",
+      expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
+      const document = asExportedConfig(YAML.parse(writeStdout.mock.calls[0]![0]));
+      expect(document.spec.inferenceProviders).toEqual([
+        {
+          name: "local",
+          provider: "openai",
+          api: "openai-completions",
+          serviceRef: "ollama-auth",
+        },
+      ]);
+      expect(document.spec.services).toEqual({
+        "ollama-auth": {
+          kind: "ollamaProxy",
+          image: null,
+          endpoint: "http://172.30.48.1:11440/v1",
+          upstream: {
+            endpoint: "http://127.0.0.1:11439/v1",
+            model: {
+              name: model,
+              digest: "a".repeat(64),
             },
-          ],
+          },
         },
       });
+      const sandbox = document.spec.sandboxes[0]!;
+      expect(sandbox.agent.inference.routes[0]).toMatchObject({
+        providerRef: "local",
+        overrides: { model },
+      });
+      expect(writeStdout.mock.calls[0]![0]).not.toContain("credential");
+      expect(writeStdout.mock.calls[0]![0]).toContain("image: null");
       expect(probe.readActiveConfig).toHaveBeenCalledWith(11440);
       expect(probe.readDaemonModels).toHaveBeenCalledWith(11439);
       expect(readCredential).not.toHaveBeenCalled();
-      expect(writeStdout).not.toHaveBeenCalled();
       expect(publish).not.toHaveBeenCalled();
     },
   );
+
+  it("refuses a stable proxy-port drift without publication (#12012)", async () => {
+    const { observed } = mockOllamaSource();
+    observed.serving.proxy.hostPort = 21_435;
+    vi.mocked(createOllamaExportProbe).mockReturnValue(ollamaProbe(observed));
+    expectExportRefusal(await exportLiveSource(), {
+      field: "spec.services[].upstream",
+      category: "drifted",
+    });
+  });
 
   it.each([
     {

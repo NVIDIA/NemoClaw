@@ -429,6 +429,14 @@ sandbox,
 requires the bounded command to finish, and proves both the sandbox and gateway runtime are absent.
 Deterministic destroy tests own the exact 30-second retry schedule and delayed-list sequence.
 
+`deferred-onboarding-hermes` and `deferred-onboarding-langchain-deepagents-code` exercise the
+public installer and the installed `nemohermes` or `nemo-deepagents` command on Docker and Podman. The installer child receives
+none of the three accepted inference credential variables. The test verifies that installation does
+not create a sandbox, complete onboarding, or register a gateway, then supplies the public NVIDIA
+credential and completes onboarding in the same home. The `nvidia-api` profile owns that credential;
+the test uses it only for the continuation command. Installer-plan and installer integration tests
+own provider classification, invalid inputs, and the deterministic decision matrix.
+
 `tools/e2e/target-catalogue.mts` declares live E2E targets that share one execution shape.
 Each entry owns these target properties:
 
@@ -515,20 +523,14 @@ inference through the managed route and backend, replacing two duplicate raw cha
 The GPU memory-offload assertion also rejects a missing matching process because its memory value
 is then `NaN`; a separate process-existence assertion is unnecessary. Authentication denial,
 runtime ownership, Ready state, and cleanup assertions remain unchanged.
-The `gpu-e2e` target also verifies that attached-Ollama export remains refused while v1alpha1 compatibility is deferred.
-A separate OpenClaw scenario disables direct sandbox GPU and uses normal onboarding to create the
-managed proxy on the target's shared port. It stops the installer service before starting a fixture-owned
-daemon on port 11439 and preparing the selected `qwen2.5:0.5b` model.
-It invokes the candidate CLI and real SDK once, requires an unsupported-compatibility failure, and verifies that no YAML file is published.
-The export evidence JSON records only the sandbox name, deferred compatibility, and prevented publication.
-The scenario does not qualify successful export, a secondary-agent roster, repeated-document equality, or stopped-daemon refusal.
-Those outcomes remain required for #11858 after #11928 and #12012 provide the target contract and exporter mapping.
-The existing CUDA, authentication, and inference lifecycle scenarios remain separate.
-Onboarding and model preparation each have a 20-minute limit within the 75-minute test timeout; the catalogue allows 90 minutes for the target.
+The `gpu-e2e` target also qualifies attached-Ollama and fixed managed-vLLM configuration export on
+native Linux Docker. Each scenario runs the candidate CLI, checks its named service and `image: null`,
+rejects credential disclosure, and retains the generated YAML. The existing CUDA, authentication,
+and inference lifecycle scenarios remain separate. The catalogue allows 150 minutes for this target.
 The fixture retries read-only daemon readiness checks on connection refusal or curl
 timeout, for at most 20 reads. It records each attempt and stops on any other failure; model
 preparation, onboarding, and export mutations are not retried.
-Cleanup destroys the sandbox before stopping the fixture daemon and removes the private output directory.
+Cleanup destroys each sandbox before its inference runtime and removes private output files.
 Retained workflow jobs are exceptions to the catalogue shape.
 Keep one only for a multi-job handoff, an unrepresented credential boundary, or an execution contract the reusable profile cannot represent.
 
@@ -551,8 +553,12 @@ Changes to `brave-search-helpers.ts` select the target through its catalogue own
 
 The Docker-only `tavily-export-openclaw` and `tavily-export-hermes` targets own the
 Tavily source-to-exporter boundary for #12138. Select either target explicitly with
-`jobs=<target-id>`; neither is selected by the default release plan or changed-file
-selection. Each target needs `TAVILY_API_KEY` and `NVIDIA_INFERENCE_API_KEY`. The
+`jobs=<target-id>`. Changes to their exporter, consumer, fixtures or shared runner
+also select them; each manifest selects its owning agent. They remain outside the
+default release plan and release-required gate. Each target needs `TAVILY_API_KEY`
+and `NVIDIA_INFERENCE_API_KEY`. For changed-file selection, unavailable Tavily credentials
+remove these targets from the plan. Explicit selections remain scheduled and require
+both credentials. The
 dedicated Tavily execution profile passes these only through the existing trusted
 workflow credential guard. Untrusted calls receive no provider credentials.
 
@@ -573,7 +579,10 @@ The shared phase owns the smallest live assertion: a required export must match 
 observed source and pass artifact security validation. No equivalent assertions are
 copied into a second exporter harness. Onboarding, catalog and provider-reader
 failures remain failures; the scenario does not edit source state to bypass them.
-This covers staged output with `image: null`, not a v1 deployment or parser gate.
+Managed-agent exports omit `image`. The shared phase requires the raw YAML to pass
+the pinned v1 consumer and compares its native settings with the observed source
+before retaining export bytes. This includes the compiled search provider,
+credential reference, agent grant and native provider selection. These targets do not deploy v1.
 Live qualification has not been run for these targets.
 
 ### Catalogue Execution Evidence
@@ -853,6 +862,9 @@ job and the image-ownership contract it existed to verify.
 The standard `full-e2e` target now owns native OpenClaw installation,
 invocation, update command access, local-source replacement, self-update dry
 run, restart survival, credential non-exposure, and removal in one sandbox.
+After replacing plugin v1 with v2, it restarts through the native gateway
+command and invokes the updated tool through the running gateway. A separate
+CLI inspection cannot prove that the gateway discarded its cached plugin code.
 `rebuild-openclaw` proves a user-installed native plugin survives rebuild with
 no NemoClaw ownership metadata. `rebuild-hermes` proves native user-plugin and
 lazy-package state survive rebuild. Managed-image activation exercises native
@@ -884,9 +896,14 @@ supported outcomes now have these owners:
 | Removed assertion | Retained owner |
 |---|---|
 | Install, PATH setup, list, status, hosted inference, and sandbox inference succeed. | `full-e2e` |
-| Sandbox state contains no `auth-profiles.json` or secret-shaped credential values. | `full-e2e` and `test/e2e/support/sandbox-credential-boundary.test.ts` |
+| Fresh managed sandbox state contains no `auth-profiles.json` or secret-shaped credential values. | `full-e2e` and `test/e2e/support/sandbox-credential-boundary.test.ts` |
 | Repository skills contain valid frontmatter and content. | `test/repository/repo-skills-validation.test.ts` |
 | `/sandbox/.openclaw` and `openclaw.json` have the required image layout. | `test/e2e-runtime/managed-image-openclaw-security.test.ts` |
+
+The fresh-sandbox check starts without user-managed profiles. Existing-state cleanup preserves
+unrelated profiles, as covered by `test/agents/openclaw/runtime/auth-profile-boundary.test.ts`.
+That component fixture also observes which profiles reach Doctor in root and non-root startup.
+`full-e2e` exercises native Doctor lint and agent turns.
 
 The optional `/sandbox/.openclaw/skills` directory had no pass or fail state.
 The deleted provider retry classifier and sandbox-layout wrapper served only the

@@ -1084,7 +1084,7 @@ describe("connectSandbox flow", () => {
     expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
   });
 
-  it("keeps active Hermes interactive setup inside receipt-owned recovery (#9203)", async () => {
+  it("keeps sibling-root Hermes interactive setup inside receipt-owned recovery (#9203)", async () => {
     vi.stubEnv("NVIDIA_INFERENCE_API_KEY", "do-not-forward");
     vi.stubEnv("GITHUB_TOKEN", "do-not-forward");
     vi.stubEnv("AWS_SECRET_ACCESS_KEY", "do-not-forward");
@@ -1103,13 +1103,16 @@ describe("connectSandbox flow", () => {
       sessionAgent: { name: "hermes" },
       registryEntry: {
         openshellDriver: "docker",
-        gatewayName: "nemoclaw",
+        gatewayName: "nemoclaw-8245",
+        gatewayPort: 8245,
         lifecycleGeneration: "generation-1",
         hermesToolGateways: ["tool-gateway"],
       },
       portableReceiptDisposition: { kind: "hermes", phase: "active" },
       portableRecoveryResult: { kind: "already-running" },
     });
+    const selectedRegistry = requireDist("../../src/lib/state/registry.js");
+    selectedRegistry.getSandbox.mockReturnValue(null);
     const captureResolved = harness.captureResolvedOpenshellSpy.getMockImplementation()!;
     const forwardRecovery = requireDist("../../src/lib/actions/sandbox/forward-recovery.js");
     let forwardsRestored = false;
@@ -1154,7 +1157,7 @@ describe("connectSandbox flow", () => {
     expect(harness.recoverHermesPortableOllamaInferenceSpy).not.toHaveBeenCalled();
     expect(harness.forwardAdapterStartSpy).toHaveBeenCalledOnce();
     await expect(
-      forwardRecovery.areSandboxLaunchForwardsHealthy("alpha", "nemoclaw"),
+      forwardRecovery.areSandboxLaunchForwardsHealthy("alpha", "nemoclaw-8245"),
     ).resolves.toBe(true);
     expect(harness.forwardAdapterStartSpy.mock.invocationCallOrder[0]!).toBeLessThan(
       harness.startSandboxSessionSpy.mock.invocationCallOrder[0]!,
@@ -1164,7 +1167,7 @@ describe("connectSandbox flow", () => {
     expect(harness.startSandboxSessionSpy).toHaveBeenCalledWith({
       kind: "connect",
       sandboxName: "alpha",
-      target: { kind: "named", gatewayName: "nemoclaw" },
+      target: { kind: "named", gatewayName: "nemoclaw-8245" },
     });
     expect(harness.createSessionExecutorSpy.mock.calls[0]?.[0]).toMatchObject({
       environment: expect.not.objectContaining({

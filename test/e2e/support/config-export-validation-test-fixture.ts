@@ -8,6 +8,10 @@ import path from "node:path";
 
 import { afterEach, expect, vi } from "vitest";
 
+import { managedStartupE2eProfile } from "../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
+import { encodeManagedStartupProfile } from "../../../src/lib/onboard/managed-startup/profile.ts";
+import { expectedPinnedV1HermesNativeSettings } from "../../support/v1-config-consumer.ts";
+import { PINNED_CONSUMER_EVIDENCE } from "./config-export-consumer-evidence-fixture.ts";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import { CleanupRegistry } from "../fixtures/cleanup.ts";
 import { HostCliClient } from "../fixtures/clients/host.ts";
@@ -126,6 +130,7 @@ export function document(
     model?: string;
     observability?: boolean;
     credentialReference?: string;
+    gatewayEndpoint?: string;
   } = {},
 ): ConfigExportDocument {
   return {
@@ -136,7 +141,10 @@ export function document(
       uid: "123e4567-e89b-42d3-a456-426614174000",
     },
     spec: {
-      gateway: { management: "managed", endpoint: "http://127.0.0.1:8080" },
+      gateway: {
+        management: "managed",
+        endpoint: overrides.gatewayEndpoint ?? "http://127.0.0.1:8080",
+      },
       inferenceProviders: [
         {
           name: "hosted-compatible-endpoint",
@@ -149,7 +157,6 @@ export function document(
       sandboxes: [
         {
           name: "sandbox",
-          image: null,
           runtime: { provider: "docker" },
           network: { policy: { explicit: POLICY } },
           harness: {
@@ -218,8 +225,9 @@ export function searchDocument(
       ...value.spec,
       sandboxes: [
         {
-          ...sandbox,
-          image: null,
+          name: sandbox.name,
+          runtime: sandbox.runtime,
+          network: sandbox.network,
           harness: { kind: agent },
           integrations: {
             [name]: {
@@ -296,7 +304,9 @@ export function dependencies(
             sourceCohort: "test",
             capabilityContractVersion: 1,
             startupProfileContractVersion: 1,
-            encodedProfile: "profile",
+            encodedProfile: encodeManagedStartupProfile(
+              managedStartupE2eProfile(options.agent ?? "openclaw"),
+            ),
             startupProfileSha256: `sha256:${"c".repeat(64)}`,
             credentialProxyReplayRequired: true,
             shared: true,
@@ -326,6 +336,30 @@ export function dependencies(
     removeDirectory:
       options.removeDirectory ??
       ((directory) => fs.rmSync(directory, { force: true, recursive: true })),
+    validateWithPinnedV1: () => ({
+      ...(options.agent === "hermes"
+        ? {
+            revision: PINNED_CONSUMER_EVIDENCE.revision,
+            compiledSandboxes: 1,
+            hermesNativeSettings: { sandbox: expectedPinnedV1HermesNativeSettings({}) },
+            openclawNativeSettingsVerified: 0,
+            hermesNativeSettingsVerified: 1,
+          }
+        : PINNED_CONSUMER_EVIDENCE),
+      ...(options.searchProvider
+        ? {
+            webSearch: {
+              sandbox: {
+                provider: options.searchProvider,
+                credentialReference:
+                  options.searchProvider === "brave" ? "BRAVE_API_KEY" : "TAVILY_API_KEY",
+                agentRefs: ["primary"],
+                nativeProvider: options.searchProvider,
+              },
+            },
+          }
+        : {}),
+    }),
   };
 }
 
@@ -389,6 +423,8 @@ export function fixture(
         writes.push(value);
         return "evidence.json";
       }),
+      writeText: vi.fn(async () => "config-export.yaml"),
+      redact: (text: string) => text,
     } as unknown as ArtifactSink);
   const cleanup = new CleanupRegistry();
   const host = options.host ?? successfulHost(JSON.stringify(document()));
