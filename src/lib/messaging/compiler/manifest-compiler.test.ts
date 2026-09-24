@@ -1016,36 +1016,41 @@ describe("ManifestCompiler", () => {
   });
 
   it.each([
-    ["openclaw", "onboard", "\n"],
-    ["openclaw", "add-channel", "\r\n"],
-    ["hermes", "onboard", "\r\n"],
-    ["hermes", "add-channel", "\n"],
+    ["openclaw", "onboard", true, true, "\n"],
+    ["openclaw", "add-channel", true, true, "\r\n"],
+    ["hermes", "onboard", false, true, "\r\n"],
+    ["hermes", "add-channel", false, true, "\n"],
+    ["openclaw", "onboard", false, false, "\n"],
   ] as const)(
-    "accepts formatted Google Chat JSON for %s %s (#10383)",
-    async (agent, workflow, eol) => {
+    "accepts formatted Google Chat JSON for %s %s interactive=%s (#10383)",
+    async (agent, workflow, isInteractive, active, eol) => {
       const secret = "synthetic-googlechat-private-key";
-      const serviceAccountJson = JSON.stringify(
-        { client_email: "bot@example.test", private_key: `${secret}\nkey-material` },
-        null,
-        2,
-      ).replaceAll("\n", eol);
-      await withEnv({ GOOGLECHAT_SERVICE_ACCOUNT: serviceAccountJson }, async () => {
-        const plan = await compiler().compile({
-          sandboxName: "demo",
-          agent,
-          workflow,
-          isInteractive: false,
-          configuredChannels: ["googlechat"],
-        });
-        expect(plan.channels[0]?.inputs).toContainEqual(
-          expect.objectContaining({
-            inputId: "serviceAccount",
-            kind: "secret",
-            credentialAvailable: true,
-          }),
-        );
-        expect(JSON.stringify(plan)).not.toContain(secret);
-      });
+      const account = { client_email: "bot@example.test", private_key: `${secret}\nkey-material` };
+      const serviceAccountJson = JSON.stringify(account, null, 2).replaceAll("\n", eol);
+      await withEnv(
+        {
+          GOOGLECHAT_SERVICE_ACCOUNT: serviceAccountJson,
+          GOOGLECHAT_AUDIENCE: "https://chat.test/googlechat",
+        },
+        async () => {
+          const plan = await compiler().compile({
+            sandboxName: "demo",
+            agent,
+            workflow,
+            isInteractive,
+            configuredChannels: ["googlechat"],
+          });
+          expect(plan.channels[0]?.active).toBe(active);
+          expect(plan.channels[0]?.inputs).toContainEqual(
+            expect.objectContaining({
+              inputId: "serviceAccount",
+              kind: "secret",
+              credentialAvailable: true,
+            }),
+          );
+          expect(JSON.stringify(plan)).not.toContain(secret);
+        },
+      );
     },
   );
 
