@@ -70,7 +70,7 @@ COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-di
 # amd64 build cache, while every package-materialization RUN remains offline.
 FROM scratch AS wechat-npm-archives
 
-ADD --checksum=sha256:422ee96c2fca294d6d80c193c2797d2a046cb8b512b84b0705c85865f0251bb7 https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.3.tgz /openclaw-weixin-2.4.3.tgz
+ADD --checksum=sha256:467e8047f7114e45944961fcd3eda9421843c9c65db61ea24176e252ab800ee4 https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.9.tgz /openclaw-weixin-2.4.9.tgz
 ADD --checksum=sha256:3a6260c4e0d80bd527a3f930e90ea2348c03646621f25aa0bd960ee205a0a706 https://registry.npmjs.org/qrcode-terminal/-/qrcode-terminal-0.12.0.tgz /qrcode-terminal-0.12.0.tgz
 ADD --checksum=sha256:ee38f17f533fd500610685a483ae2f413c26f4eb33a51684314563c8d60f279c https://registry.npmjs.org/zod/-/zod-4.4.3.tgz /zod-4.4.3.tgz
 
@@ -129,7 +129,7 @@ RUN --network=none install -d -o root -g root -m 0755 /out/wechat-npm-cache \
         --lockfile /opt/wechat-runtime/package-lock.json \
         --cache /out/wechat-npm-cache \
         --registry-origin https://registry.npmjs.org/ \
-        --archive @tencent-weixin/openclaw-weixin@2.4.3=/opt/wechat-npm-archives/openclaw-weixin-2.4.3.tgz \
+        --archive @tencent-weixin/openclaw-weixin@2.4.9=/opt/wechat-npm-archives/openclaw-weixin-2.4.9.tgz \
         --archive qrcode-terminal@0.12.0=/opt/wechat-npm-archives/qrcode-terminal-0.12.0.tgz \
         --archive zod@4.4.3=/opt/wechat-npm-archives/zod-4.4.3.tgz \
     && NPM_CONFIG_OFFLINE=true npm ci --prefix /opt/wechat-runtime \
@@ -408,7 +408,7 @@ ADD --chmod=0444 --checksum=sha256:cf51460ba370c698f68b976e514d113497339ba018b60
 ADD --chmod=0444 --checksum=sha256:b5b60d1271802682a5c8e0ed1cc8e825d3be7fd610afaaf3d4d8ce799e825be9 https://registry.npmjs.org/open/-/open-10.2.0.tgz /open-10.2.0.tgz
 ADD --chmod=0444 --checksum=sha256:8d1b89c7bdb749d834c502e94d0ece4909aaac213dab2bc53bbd16119f23f6dd https://registry.npmjs.org/openai/-/openai-7.5.0.tgz /openai-7.5.0.tgz
 ADD --chmod=0444 --checksum=sha256:1bfcac877d53f1e41b69d15c24e081895b2f07d6ff2ffdfe0bf8a7336ab00e59 https://registry.npmjs.org/openclaw/-/openclaw-2026.9.1.tgz /openclaw-2026.9.1.tgz
-ADD --chmod=0444 --checksum=sha256:422ee96c2fca294d6d80c193c2797d2a046cb8b512b84b0705c85865f0251bb7 https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.3.tgz /openclaw-weixin-2.4.3.tgz
+ADD --chmod=0444 --checksum=sha256:467e8047f7114e45944961fcd3eda9421843c9c65db61ea24176e252ab800ee4 https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.9.tgz /openclaw-weixin-2.4.9.tgz
 ADD --chmod=0444 --checksum=sha256:384b452409cfeb5c6fa82dc68ebfa498b24717b74fb8d3fe6eb2bb89908db295 https://registry.npmjs.org/p-limit/-/p-limit-2.3.0.tgz /p-limit-2.3.0.tgz
 ADD --chmod=0444 --checksum=sha256:284dcc4cc5b485b5793be28d0716f0a1270fb0eeb9f1f4c7cff7f320cfe8e21e https://registry.npmjs.org/p-limit/-/p-limit-7.3.1.tgz /p-limit-7.3.1.tgz
 ADD --chmod=0444 --checksum=sha256:d95a6ae462e3d967deb0c250bda1c3bbebfe86a58832d27b204c7b74a76fa5f0 https://registry.npmjs.org/p-locate/-/p-locate-4.1.0.tgz /p-locate-4.1.0.tgz
