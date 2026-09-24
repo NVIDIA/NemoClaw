@@ -3,6 +3,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { OpenShellInferenceRouteResult } from "../adapters/openshell/inference-route";
 import * as onboardSession from "../state/onboard-session";
 import * as registry from "../state/registry";
 import { persistedProviderNameToSelectionKey } from "./inference-providers/provider-selection-keys";
@@ -14,6 +15,8 @@ import {
   shouldRecoverRecordedProvider,
   validateLiveGatewayInference,
 } from "./provider-recovery";
+import { resolveRequestedProviderSelection } from "./provider-selection";
+import { prepareProviderDiscovery } from "./setup-nim-provider-discovery";
 
 const { REMOTE_PROVIDER_CONFIG } = require("./providers") as {
   REMOTE_PROVIDER_CONFIG: Record<string, { providerName?: string }>;
@@ -23,28 +26,38 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+function routeObserver(result: OpenShellInferenceRouteResult) {
+  const observeInferenceRoute = vi.fn(() => result);
+  return { inferenceRouteObserver: { observeInferenceRoute }, observeInferenceRoute };
+}
+
 describe("persisted provider selection", () => {
   it.each([
-    ["Model Router", "nvidia-router", false],
-    ["Ollama", "ollama-local", false],
-    ["vLLM", "vllm-local", false],
-    ["Local NVIDIA NIM", "vllm-local", true],
-    ["legacy NVIDIA Endpoints", "nvidia-nim", false],
-    ["OpenAI", "openai-api", false],
-    ["OpenRouter", "openrouter-api", false],
-    ["Anthropic", "anthropic-prod", false],
-    ["Anthropic-compatible", "compatible-anthropic-endpoint", false],
-    ["Gemini", "gemini-api", false],
-    ["OpenAI-compatible", "compatible-endpoint", false],
-    ["llama.cpp", "llama-cpp-local", false],
-    ["Hermes Provider", "hermes-provider", false],
-    ["an unknown provider", "unknown-provider", false],
-  ] as const)("uses the shared mapping for %s (#11041)", (_label, provider, hasNimContainer) => {
-    const options = { hasNimContainer };
-    expect(providerNameToOptionKey(REMOTE_PROVIDER_CONFIG, provider, options)).toBe(
-      persistedProviderNameToSelectionKey(provider, options, REMOTE_PROVIDER_CONFIG),
-    );
-  });
+    ["Model Router", "nvidia-router", false, false, "routed"],
+    ["Ollama", "ollama-local", false, false, "ollama"],
+    ["vLLM", "vllm-local", false, false, "vllm"],
+    ["Local NVIDIA NIM", "vllm-local", true, false, "nim-local"],
+    ["legacy NVIDIA Endpoints", "nvidia-nim", false, false, "build"],
+    ["OpenAI", "openai-api", false, false, "openai"],
+    ["OpenRouter", "openrouter-api", false, false, "openrouter"],
+    ["Anthropic", "anthropic-prod", false, false, "anthropic"],
+    ["Anthropic-compatible", "compatible-anthropic-endpoint", false, false, "anthropicCompatible"],
+    ["Gemini", "gemini-api", false, false, "gemini"],
+    ["OpenAI-compatible", "compatible-endpoint", false, false, "custom"],
+    ["operator llama.cpp", "llama-cpp-local", false, false, "llama-cpp"],
+    ["managed llama.cpp", "llama-cpp-local", false, true, "install-llama-cpp"],
+    ["Hermes Provider", "hermes-provider", false, false, "hermesProvider"],
+    ["an unknown provider", "unknown-provider", false, false, null],
+  ] as const)(
+    "uses the expected shared mapping for %s (#11041)",
+    (_label, provider, hasNimContainer, hasManagedLlamaCpp, expected) => {
+      const options = { hasManagedLlamaCpp, hasNimContainer };
+      expect(persistedProviderNameToSelectionKey(provider, options, REMOTE_PROVIDER_CONFIG)).toBe(
+        expected,
+      );
+      expect(providerNameToOptionKey(REMOTE_PROVIDER_CONFIG, provider, options)).toBe(expected);
+    },
+  );
 });
 
 describe("validateLiveGatewayInference", () => {
@@ -210,10 +223,141 @@ describe("sandbox recovery authority", () => {
 describe("provider recovery persisted routing state", () => {
   function helpers() {
     return createProviderRecoveryHelpers({
-      captureOpenshell: () => ({ status: 0, output: "Gateway inference:" }),
+      inferenceRouteObserver: routeObserver({
+        ok: false,
+        error: { kind: "schema", reason: "partial_route", message: "partial" },
+      }).inferenceRouteObserver,
       selectedGatewayName: () => "nemoclaw",
     });
   }
+
+  it.each([
+    [
+      "managed",
+      { recipe: { backend: "install-llama-cpp", id: "llama-cpp.alternate.v1" } },
+      "install-llama-cpp",
+    ],
+    ["operator-attached", null, "llama-cpp"],
+  ] as const)(
+    "routes a %s llama.cpp registry record through its exact recovery key",
+    (_label, recipeProvenance, expectedKey) => {
+      vi.spyOn(registry, "getSandbox").mockReturnValue({
+        name: "alpha",
+        provider: "llama-cpp-local",
+        model: "recorded-model",
+        ...(recipeProvenance
+          ? { servingProfileProvenance: { recipe: recipeProvenance.recipe } as never }
+          : {}),
+      });
+      const recovery = helpers();
+      const remoteProviderConfig = REMOTE_PROVIDER_CONFIG as Record<
+        string,
+        { providerName: string }
+      >;
+      const discovery = prepareProviderDiscovery({
+        deps: {
+          remoteProviderConfig,
+          isNonInteractive: () => true,
+          getNonInteractiveProvider: () => null,
+          getNonInteractiveModel: () => null,
+          ...recovery.providerSelectionReaders,
+        },
+        sandboxName: "alpha",
+        recoverProvider: true,
+        rebuildRegistryInferenceRoute: null,
+        recoverySessionId: null,
+      });
+      const result = resolveRequestedProviderSelection({
+        options: [
+          { key: "build", label: "NVIDIA Endpoints" },
+          { key: "llama-cpp", label: "Local llama.cpp" },
+          {
+            key: "install-llama-cpp",
+            label: "Managed llama.cpp",
+            managedLlamaCppRecipeId: "llama-cpp.alternate.v1",
+          },
+        ],
+        requestedProvider: discovery.requestedProvider,
+        sandboxName: "alpha",
+        remoteProviderConfig,
+        isWsl: false,
+        isWindowsHostOllama: false,
+        windowsHostOllamaSupported: false,
+        windowsHostOllamaReachable: false,
+        hermesProviderAvailable: false,
+        ollamaRunning: false,
+        ...discovery.recordedProviderReaders,
+      });
+
+      expect(result).toMatchObject({
+        kind: "selected",
+        selected: { key: expectedKey },
+        recoveredFromSandbox: true,
+        recoveredModel: "recorded-model",
+      });
+      expect(discovery.recordedProviderReaders.readRecordedManagedLlamaCppRecipeId("alpha")).toBe(
+        recipeProvenance ? "llama-cpp.alternate.v1" : null,
+      );
+    },
+  );
+
+  it("fails closed for managed lifecycle provenance without an exact recipe", () => {
+    vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: "alpha",
+      provider: "llama-cpp-local",
+      model: "recorded-model",
+      hostLocalInferenceProvenance: {},
+    } as never);
+    const recovery = helpers();
+    const discovery = prepareProviderDiscovery({
+      deps: {
+        remoteProviderConfig: REMOTE_PROVIDER_CONFIG as Record<string, { providerName: string }>,
+        isNonInteractive: () => true,
+        getNonInteractiveProvider: () => null,
+        getNonInteractiveModel: () => null,
+        ...recovery.providerSelectionReaders,
+      },
+      sandboxName: "alpha",
+      recoverProvider: true,
+      rebuildRegistryInferenceRoute: null,
+      recoverySessionId: null,
+    });
+    const result = resolveRequestedProviderSelection({
+      options: [
+        { key: "build", label: "NVIDIA Endpoints" },
+        {
+          key: "install-llama-cpp",
+          label: "Managed recommended",
+          managedLlamaCppRecipeId: "llama-cpp.recommended.v1",
+        },
+        {
+          key: "install-llama-cpp",
+          label: "Managed alternate",
+          managedLlamaCppRecipeId: "llama-cpp.alternate.v1",
+        },
+      ],
+      requestedProvider: discovery.requestedProvider,
+      sandboxName: "alpha",
+      remoteProviderConfig: REMOTE_PROVIDER_CONFIG,
+      isWsl: false,
+      isWindowsHostOllama: false,
+      windowsHostOllamaSupported: false,
+      hermesProviderAvailable: false,
+      ...discovery.recordedProviderReaders,
+    });
+
+    expect(discovery.recordedProviderReaders.readRecordedManagedLlamaCpp("alpha")).toBe(true);
+    expect(
+      discovery.recordedProviderReaders.readRecordedManagedLlamaCppRecipeId("alpha"),
+    ).toBeNull();
+    expect(result).toMatchObject({
+      kind: "failure",
+      reason: {
+        kind: "recorded-provider-unavailable",
+        recoveredKey: "install-llama-cpp",
+      },
+    });
+  });
 
   it("rejects partial live gateway output", () => {
     vi.spyOn(registry, "listSandboxes").mockReturnValue({
@@ -229,12 +373,15 @@ describe("provider recovery persisted routing state", () => {
       defaultSandbox: "alpha",
       sandboxes: [{ name: "alpha", gatewayPort: 19_090, gatewayName: "nemoclaw-19090" }],
     });
-    const captureOpenshell = vi.fn(() => ({
-      status: 0,
-      output: "Gateway inference:\n  Provider: nvidia-prod\n  Model: selected-model\n",
-    }));
+    const observed = routeObserver({
+      ok: true,
+      value: {
+        state: "configured",
+        route: { provider: "nvidia-prod", model: "selected-model" },
+      },
+    });
     const recovery = createProviderRecoveryHelpers({
-      captureOpenshell,
+      inferenceRouteObserver: observed.inferenceRouteObserver,
       selectedGatewayName: () => "nemoclaw",
     });
 
@@ -242,10 +389,9 @@ describe("provider recovery persisted routing state", () => {
       provider: "nvidia-prod",
       model: "selected-model",
     });
-    expect(captureOpenshell).toHaveBeenCalledExactlyOnceWith(
-      ["inference", "get", "-g", "nemoclaw-19090"],
-      { ignoreError: true, timeout: undefined },
-    );
+    expect(observed.observeInferenceRoute).toHaveBeenCalledExactlyOnceWith({
+      target: { kind: "named", gatewayName: "nemoclaw-19090" },
+    });
   });
 
   it("reads the current selected gateway when rebuilding an empty registry (#10671)", () => {
@@ -254,12 +400,15 @@ describe("provider recovery persisted routing state", () => {
       sandboxes: [],
     });
     let selectedGatewayName = "nemoclaw";
-    const captureOpenshell = vi.fn(() => ({
-      status: 0,
-      output: "Gateway inference:\n  Provider: nvidia-prod\n  Model: selected-model\n",
-    }));
+    const observed = routeObserver({
+      ok: true,
+      value: {
+        state: "configured",
+        route: { provider: "nvidia-prod", model: "selected-model" },
+      },
+    });
     const recovery = createProviderRecoveryHelpers({
-      captureOpenshell,
+      inferenceRouteObserver: observed.inferenceRouteObserver,
       selectedGatewayName: () => selectedGatewayName,
     });
 
@@ -269,10 +418,9 @@ describe("provider recovery persisted routing state", () => {
       provider: "nvidia-prod",
       model: "selected-model",
     });
-    expect(captureOpenshell).toHaveBeenCalledExactlyOnceWith(
-      ["inference", "get", "-g", "nemoclaw-19090"],
-      { ignoreError: true, timeout: undefined },
-    );
+    expect(observed.observeInferenceRoute).toHaveBeenCalledExactlyOnceWith({
+      target: { kind: "named", gatewayName: "nemoclaw-19090" },
+    });
   });
 
   it("prefers the selected sandbox registry endpoint over session state", () => {
@@ -430,7 +578,10 @@ describe("provider recovery persisted routing state", () => {
     );
     const warn = vi.fn();
     const recovery = createProviderRecoveryHelpers({
-      captureOpenshell: () => ({ status: 0, output: "Gateway inference:" }),
+      inferenceRouteObserver: routeObserver({
+        ok: false,
+        error: { kind: "schema", reason: "partial_route", message: "partial" },
+      }).inferenceRouteObserver,
       selectedGatewayName: () => "nemoclaw",
       warn,
     });
@@ -476,17 +627,20 @@ describe("provider recovery persisted routing state", () => {
       defaultSandbox: "alpha",
       sandboxes: [{ name: "alpha", provider: "compatible-endpoint" }],
     });
-    const captureOpenshell = vi.fn(() => ({
-      status: 0,
-      output: "Gateway inference:\n  Provider: compatible-endpoint\n  Model: gateway-model\n",
-    }));
+    const observed = routeObserver({
+      ok: true,
+      value: {
+        state: "configured",
+        route: { provider: "compatible-endpoint", model: "gateway-model" },
+      },
+    });
     const recovery = createProviderRecoveryHelpers({
-      captureOpenshell,
+      inferenceRouteObserver: observed.inferenceRouteObserver,
       selectedGatewayName: () => "nemoclaw",
     });
 
     expect(recovery.readRecordedInferenceRoute("alpha")).toBeNull();
-    expect(captureOpenshell).not.toHaveBeenCalled();
+    expect(observed.observeInferenceRoute).not.toHaveBeenCalled();
   });
 
   it("reports every other recorded endpoint for the same global provider", () => {

@@ -4,18 +4,14 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  SUBPROCESS_ENV_ALLOWED_NAMES,
-  SUBPROCESS_ENV_ALLOWED_PREFIXES,
-} from "../../subprocess-env";
-import {
-  buildMcpBridgeProviderArgs,
   MCP_SERVER_URL_MAX_LENGTH,
   normalizeMcpServerUrl,
   parseMcpAddArgs,
   parseMcpUpdateArgs,
   resolveCredentialEnv,
+  validateMcpCredentialEnvName,
 } from "./mcp-bridge";
-import childVisibleCredentialManifest from "./openshell-child-visible-credentials.v0.0.106.json";
+import childVisibleCredentialManifest from "./openshell-child-visible-credentials.v0.0.116.json";
 
 const CHILD_VISIBLE_CREDENTIAL_CASES = [
   {
@@ -207,11 +203,6 @@ describe("MCP CLI input validation", () => {
       expect(() => resolveCredentialEnv([{ name, value: "host-only-secret" }])).toThrow(
         /would be skipped instead of attached/,
       );
-      expect(() =>
-        buildMcpBridgeProviderArgs("create", "provider", [{ name }], {
-          [name]: "host-only-secret",
-        }),
-      ).toThrow(/reserved for OpenShell credential revisions/);
     },
   );
 
@@ -224,6 +215,16 @@ describe("MCP CLI input validation", () => {
     },
   );
 
+  it("rejects OpenShell stable-handle placeholder names as MCP credentials", () => {
+    const name = `s${"a".repeat(64)}_TOKEN`;
+    expect(() =>
+      parseMcpAddArgs(["github", "--url", "https://mcp.example.test/mcp", "--env", name]),
+    ).toThrow(/reserved for OpenShell stable credential handles/);
+    expect(() => validateMcpCredentialEnvName(name)).toThrow(
+      /would be skipped instead of attached/,
+    );
+  });
+
   it.each(CHILD_VISIBLE_CREDENTIAL_CASES)(
     "rejects $name from $form at every MCP credential boundary",
     ({ name, envArgs, error }) => {
@@ -231,11 +232,6 @@ describe("MCP CLI input validation", () => {
         parseMcpAddArgs(["github", "--url", "https://mcp.example.test/mcp", ...envArgs]),
       ).toThrow(error);
       expect(() => resolveCredentialEnv([{ name, value: "host-only-secret" }])).toThrow(error);
-      expect(() =>
-        buildMcpBridgeProviderArgs("create", "provider", [{ name }], {
-          [name]: "host-only-secret",
-        }),
-      ).toThrow(error);
     },
   );
 
@@ -273,11 +269,6 @@ describe("MCP CLI input validation", () => {
     expect(() => resolveCredentialEnv([{ name, value: "host-only-secret" }])).toThrow(
       /could alter or prevent agent commands/,
     );
-    expect(() =>
-      buildMcpBridgeProviderArgs("create", "provider", [{ name }], {
-        [name]: "host-only-secret",
-      }),
-    ).toThrow(/reserved for sandbox runtime control/);
   });
 
   it("rejects host stdio commands", () => {

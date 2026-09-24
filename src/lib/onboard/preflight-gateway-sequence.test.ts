@@ -28,7 +28,6 @@ function harness(overrides: {
   const destroyGatewayForReuse = vi.fn(
     (): GatewayReuseState => overrides.destroyedReuseState ?? "missing",
   );
-  const runOpenshell = vi.fn();
   const dockerStop = vi.fn();
   const dockerRm = vi.fn();
   const dockerRemoveVolumesByPrefix = vi.fn();
@@ -57,7 +56,6 @@ function harness(overrides: {
     exitProcess: exitProcess as unknown as (code: number) => never,
     destroyGateway,
     destroyGatewayForReuse,
-    runOpenshell,
     dockerInspect: () => {
       inspectCalls += 1;
       // Only the first inspect finds the orphan; the post-removal inspect
@@ -81,7 +79,6 @@ function harness(overrides: {
       dockerRm,
       dockerRemoveVolumesByPrefix,
       clearRegistry,
-      runOpenshell,
       stopDashboardForward,
       stopAllDashboardForwards,
     },
@@ -127,6 +124,20 @@ describe("full preflight gateway sequence under external supervision (#6576)", (
 });
 
 describe("full preflight gateway sequence when NemoClaw owns the gateway (#6576)", () => {
+  it("skips Docker reuse and cleanup when the selected provider owns readiness (#10984)", async () => {
+    const h = harness({
+      gatewayReuseState: "healthy",
+      externallySupervised: false,
+      containerState: "missing",
+      orphanContainerPresent: true,
+      httpReady: false,
+    });
+    h.deps.managedGatewayObservationAuthoritative = true;
+
+    await expect(runPreflightGatewaySequence(h.deps)).resolves.toBe("healthy");
+    expectNoDestructiveEffect(h);
+  });
+
   it("still removes a genuinely orphaned container end-to-end", async () => {
     const h = harness({
       gatewayReuseState: "missing",
@@ -152,7 +163,6 @@ describe("full preflight gateway sequence when NemoClaw owns the gateway (#6576)
     await runPreflightGatewaySequence(h.deps);
     expect(h.destructive.destroyGatewayForReuse).toHaveBeenCalledTimes(1);
     expect(h.destructive.stopAllDashboardForwards).toHaveBeenCalledOnce();
-    expect(h.destructive.runOpenshell).not.toHaveBeenCalled();
   });
 
   it("feeds each stage the reuse state the previous stage produced", async () => {

@@ -131,11 +131,11 @@ describe("sandbox inference oclif command adapters (#5977)", () => {
     expect(mocks.runInferenceSet).not.toHaveBeenCalled();
   });
 
-  it("maps the sandbox inference get --json output into oclif JSON handling", async () => {
+  it("preserves a compatible endpoint in sandbox inference get JSON output", async () => {
     mocks.runInferenceGet.mockResolvedValueOnce({
-      provider: "llama-cpp-local",
-      model: "muse-glimmer",
-      llamaCpp: { kind: "attached", endpointUrl: "http://127.0.0.1:8081/v1" },
+      provider: "compatible-endpoint",
+      model: "nvidia/model-a",
+      endpointUrl: "https://example.test/v1",
     });
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     try {
@@ -147,10 +147,27 @@ describe("sandbox inference oclif command adapters (#5977)", () => {
         sandboxName: "alpha",
       });
       expect(JSON.parse(String(log.mock.calls.at(-1)?.[0]))).toEqual({
-        provider: "llama-cpp-local",
-        model: "muse-glimmer",
-        llamaCpp: { kind: "attached", endpointUrl: "http://127.0.0.1:8081/v1" },
+        provider: "compatible-endpoint",
+        model: "nvidia/model-a",
+        endpointUrl: "https://example.test/v1",
       });
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("preserves llama.cpp details in sandbox inference get JSON output", async () => {
+    const expected = {
+      provider: "llama-cpp-local",
+      model: "muse-glimmer",
+      llamaCpp: { kind: "attached", endpointUrl: "http://127.0.0.1:8081/v1" },
+    };
+    mocks.runInferenceGet.mockResolvedValueOnce(expected);
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    try {
+      await SandboxInferenceGetCommand.run(["alpha", "--json"], rootDir);
+
+      expect(JSON.parse(String(log.mock.calls.at(-1)?.[0]))).toEqual(expected);
     } finally {
       log.mockRestore();
     }

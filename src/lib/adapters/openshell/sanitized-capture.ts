@@ -3,6 +3,10 @@
 
 import path from "node:path";
 
+import {
+  resolveSandboxGatewayName,
+  type SandboxGatewayBinding,
+} from "../../onboard/gateway-binding";
 import { buildOpenShellSubprocessEnv, resolveOpenshellBinaryOrNull } from "./resolve-shared";
 import * as openshellRuntime from "./runtime";
 import type { CapturedOpenShellCommandResult } from "./sandbox-observer-cli";
@@ -17,11 +21,26 @@ type SanitizedCaptureOptions = Readonly<{
   replaceEnv?: true;
 }>;
 
-/** Capture a bounded OpenShell read with a credential-minimizing environment. */
-export function captureSanitizedResolvedOpenshell(
-  args: string[],
-  opts: SanitizedCaptureOptions,
-): CapturedOpenShellCommandResult {
+type SanitizedAsyncCaptureOptions = Omit<SanitizedCaptureOptions, "maxBuffer" | "env"> &
+  Readonly<{ outputLimitBytes: number }> &
+  (
+    | Readonly<{ openshellBinary?: never; env?: Record<string, string> }>
+    | Readonly<{ openshellBinary: string; env: NodeJS.ProcessEnv }>
+  );
+
+export function buildGatewayScopedSandboxCommand(
+  sandbox: SandboxGatewayBinding & { readonly name: string },
+  subcommand: string,
+): { readonly args: string[]; readonly gatewayName: string } {
+  const gatewayName = resolveSandboxGatewayName(sandbox);
+  return {
+    args: ["sandbox", subcommand, "-g", gatewayName, sandbox.name],
+    gatewayName,
+  };
+}
+
+/** Capture a bounded OpenShell command with a credential-minimizing environment. */
+function resolveCapture(args: string[]) {
   const env = buildOpenShellSubprocessEnv();
   for (const name of ["XDG_CONFIG_HOME", "OPENSHELL_WORKSPACE"] as const) {
     const value = process.env[name];
@@ -32,17 +51,47 @@ export function captureSanitizedResolvedOpenshell(
 
   const openshell = resolveOpenshellBinaryOrNull();
   if (!openshell) {
-    return {
-      status: null,
-      output: "",
-      error: Object.assign(new Error("OpenShell binary not found"), { code: "ENOENT" }),
-    };
+    return null;
   }
   if (!path.isAbsolute(openshell)) throw new Error("OpenShell executable must be absolute");
+  return { openshell, env };
+}
+
+function missingBinary(): CapturedOpenShellCommandResult {
+  return {
+    status: null,
+    output: "",
+    error: Object.assign(new Error("OpenShell binary not found"), { code: "ENOENT" }),
+  };
+}
+
+export function captureSanitizedResolvedOpenshell(
+  args: string[],
+  opts: SanitizedCaptureOptions,
+): CapturedOpenShellCommandResult {
+  const resolved = resolveCapture(args);
+  if (!resolved) return missingBinary();
   return openshellRuntime.captureOpenshell(args, {
-    openshellBinary: openshell,
-    env,
+    openshellBinary: resolved.openshell,
+    env: resolved.env,
     replaceEnv: true,
     ...opts,
+  });
+}
+
+export async function captureSanitizedResolvedOpenshellAsync(
+  args: string[],
+  opts: SanitizedAsyncCaptureOptions,
+): Promise<CapturedOpenShellCommandResult> {
+  const resolved =
+    opts.openshellBinary !== undefined
+      ? { openshell: opts.openshellBinary, env: opts.env }
+      : resolveCapture(args);
+  if (!resolved) return missingBinary();
+  return openshellRuntime.captureResolvedOpenshellAsync(args, {
+    ...opts,
+    openshellBinary: resolved.openshell,
+    env: opts.env ?? resolved.env,
+    replaceEnv: true,
   });
 }

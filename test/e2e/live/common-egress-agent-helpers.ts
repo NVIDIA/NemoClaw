@@ -681,13 +681,19 @@ export function buildOpenClawToolEvidenceReducerScript(
 ): string {
   return [
     '"use strict"',
-    'const fs = require("node:fs")',
+    'const { DatabaseSync } = require("node:sqlite")',
     `const reduce = ${reduceOpenClawToolEvidence.toString()}`,
     `const expectedFetch = ${JSON.stringify(expectedFetch)}`,
-    "const [sessionPath, trajectoryPath] = process.argv.slice(1)",
+    "const [databasePath, sessionId] = process.argv.slice(1)",
     "const readErrors = []",
-    'const read = (filePath, label) => { try { return fs.readFileSync(filePath, "utf8"); } catch (error) { readErrors.push(label + " read failed: " + String(error && error.code || "unknown")); return ""; } }',
-    'const evidence = reduce(read(sessionPath, "session"), read(trajectoryPath, "trajectory"), expectedFetch)',
+    "const database = new DatabaseSync(databasePath, { allowExtension: false, open: true, readOnly: true, timeout: 2000 })",
+    'database.exec("PRAGMA query_only = ON; BEGIN")',
+    'const readRows = (sql, label) => { try { return database.prepare(sql).all(sessionId).map((row) => String(row.eventJson)).join("\\n"); } catch (error) { readErrors.push(label + " read failed: " + String(error && error.code || "unknown")); return ""; } }',
+    'const sessionJsonLines = readRows("SELECT event_json AS eventJson FROM transcript_events WHERE session_id = ? ORDER BY seq", "session")',
+    'const trajectoryJsonLines = readRows("SELECT event_json AS eventJson FROM trajectory_runtime_events WHERE session_id = ? ORDER BY seq", "trajectory")',
+    'database.exec("COMMIT")',
+    "database.close()",
+    "const evidence = reduce(sessionJsonLines, trajectoryJsonLines, expectedFetch)",
     "evidence.errors.unshift(...readErrors)",
     `process.stdout.write(${JSON.stringify(OPENCLAW_TOOL_EVIDENCE_MARKER)} + JSON.stringify(evidence) + "\\n")`,
   ].join("; ");

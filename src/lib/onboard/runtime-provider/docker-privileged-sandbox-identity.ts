@@ -61,7 +61,7 @@ export function selectDockerPrivilegedSandboxTarget(
   }
   if (candidates.length > 1) {
     throw new Error(
-      `Multiple running OpenShell containers are labeled for sandbox '${sandboxName}'; ` +
+      `Multiple OpenShell containers are labeled for sandbox '${sandboxName}'; ` +
         "refusing ambiguous lifecycle execution.",
     );
   }

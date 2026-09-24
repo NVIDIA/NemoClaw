@@ -36,7 +36,7 @@ describe("createSetupNim vLLM resume", () => {
           makeHostState({
             vllmProfile: profile,
             vllmEntries: [{ key: "install-vllm", label: "Install vLLM (N1x)" }],
-        }),
+          }),
         installVllm,
         exitProcess,
         abortNonInteractive,
@@ -368,11 +368,13 @@ describe("createSetupNim vLLM resume", () => {
         abortNonInteractive: (message) => {
           throw new Error(message);
         },
-        resolveManagedLlamaCppSelection: () => ({
-          kind: "rejected",
-          reason: "the vLLM profile test does not select llama.cpp",
+        discoverManagedLlamaCppSelections: () => ({
+          choices: [],
+          resolution: {
+            kind: "rejected",
+            reason: "the vLLM profile test does not select llama.cpp",
+          },
         }),
-        listManagedLlamaCppSelectionChoices: () => [],
         detectInferenceProviderHostState: () =>
           makeHostState({ vllmProfile: profile, hasVllmImage: true }),
         installVllm,

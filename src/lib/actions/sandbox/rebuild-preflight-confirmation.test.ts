@@ -7,6 +7,7 @@ import { redact } from "../../security/redact";
 import * as onboardSession from "../../state/onboard-session";
 import * as sandboxSession from "../../state/sandbox-session";
 import {
+  confirmDelegatedRebuildIntent,
   confirmSandboxRebuildIfNeeded,
   countActiveSandboxSessionsForRebuild,
   createRebuildCommandContext,
@@ -19,9 +20,47 @@ import {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
 });
 
 describe("rebuild confirmation", () => {
+  it("declines delegated confirmation when stdin is not interactive", async () => {
+    const originalStdinIsTty = process.stdin.isTTY;
+    Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: false });
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const resolveOpenshell = vi.spyOn(openshellResolve, "resolveOpenshell");
+
+    try {
+      await expect(confirmDelegatedRebuildIntent("alpha")).resolves.toBe(false);
+      expect(error.mock.calls.flat().join("\n")).toContain("Re-run with --yes or --force");
+      expect(resolveOpenshell).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(process.stdin, "isTTY", {
+        configurable: true,
+        value: originalStdinIsTty,
+      });
+    }
+  });
+
+  it("declines delegated confirmation in CI with interactive stdin", async () => {
+    const originalStdinIsTty = process.stdin.isTTY;
+    vi.stubEnv("CI", "true");
+    Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const resolveOpenshell = vi.spyOn(openshellResolve, "resolveOpenshell");
+
+    try {
+      await expect(confirmDelegatedRebuildIntent("alpha")).resolves.toBe(false);
+      expect(error.mock.calls.flat().join("\n")).toContain("Re-run with --yes or --force");
+      expect(resolveOpenshell).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(process.stdin, "isTTY", {
+        configurable: true,
+        value: originalStdinIsTty,
+      });
+    }
+  });
+
   it("accepts trimmed case-insensitive affirmative input", async () => {
     const prompt = vi.fn(async () => " YES ");
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);

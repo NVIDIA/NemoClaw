@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { discoverStationGb300SysfsReadOnlyPaths } from "../onboard/initial-policy";
 import {
@@ -48,7 +51,12 @@ function unexpectedFixturePath(filePath: string): never {
 function stationFixtureReadFile(path: string): string {
   const values = new Map([
     ["product_name", "NVIDIA DGX Station GB300\n"],
-    ["os-release", 'ID=ubuntu\nVERSION_ID="24.04"\n'],
+    ["product_family", "DGX Station GB300 family\n"],
+    ["board_name", "NVIDIA Station GB300 board\n"],
+    ["sys_vendor", "NVIDIA\n"],
+    ["possible", "0-71\n"],
+    ["meminfo", "MemTotal:       761441000 kB\nMemFree:         1024 kB\n"],
+    ["os-release", 'ID=ubuntu\nVERSION_ID="24.04"\nPRETTY_NAME="Ubuntu 24.04.4 LTS"\n'],
     ["vendor", "0x10DE\n"],
     ["device", "0x31c2\n"],
     ["class", "0x030000\n"],
@@ -132,6 +140,162 @@ describe("platform readiness qualification (#7410)", () => {
     expect(result.evidence).toEqual([]);
   });
 
+  it("collects OS release identity for a generic Linux host (#11026)", () => {
+    const missing = (): never => {
+      const error = new Error("missing fixture") as NodeJS.ErrnoException;
+      error.code = "ENOENT";
+      throw error;
+    };
+    const files = new Map([
+      ["/fixtures/os-release", 'ID=ubuntu\nVERSION_ID="24.04"\nPRETTY_NAME="Ubuntu 24.04.4 LTS"\n'],
+    ]);
+    const identity = collectPlatformIdentity({
+      osReleasePath: "/fixtures/os-release",
+      readFile: (filePath) => files.get(filePath) ?? missing(),
+      readdir: missing,
+      openFile: missing,
+    });
+
+    expect(identity).toMatchObject({
+      osId: "ubuntu",
+      osVersionId: "24.04",
+      osPrettyName: "Ubuntu 24.04.4 LTS",
+    });
+  });
+
+  it("collects OS release identity through the descriptor-backed reader (#11026)", () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-os-release-"));
+    const osReleasePath = path.join(fixtureRoot, "os-release");
+    try {
+      fs.writeFileSync(
+        osReleasePath,
+        'ID=ubuntu\nVERSION_ID="24.04"\nPRETTY_NAME="Ubuntu 24.04.4 LTS"\n',
+      );
+      const identity = collectPlatformIdentity({ osReleasePath });
+
+      expect(identity).toMatchObject({
+        osId: "ubuntu",
+        osVersionId: "24.04",
+        osPrettyName: "Ubuntu 24.04.4 LTS",
+      });
+    } finally {
+      fs.rmSync(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("uses the standard OS release fallback when the primary file is absent (#11026)", () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-os-release-"));
+    const primaryPath = path.join(fixtureRoot, "etc", "os-release");
+    const fallbackPath = path.join(fixtureRoot, "usr", "lib", "os-release");
+    try {
+      fs.mkdirSync(path.dirname(fallbackPath), { recursive: true });
+      fs.writeFileSync(fallbackPath, 'ID=ubuntu\nVERSION_ID="24.04"\n');
+
+      expect(
+        collectPlatformIdentity({
+          osReleasePath: primaryPath,
+          osReleaseFallbackPath: fallbackPath,
+        }),
+      ).toMatchObject({ osId: "ubuntu", osVersionId: "24.04" });
+    } finally {
+      fs.rmSync(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts only the standard relative OS release symlink (#11026)", () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-os-release-"));
+    const primaryPath = path.join(fixtureRoot, "etc", "os-release");
+    const fallbackPath = path.join(fixtureRoot, "usr", "lib", "os-release");
+    const outsidePath = path.join(fixtureRoot, "outside");
+    try {
+      fs.mkdirSync(path.dirname(primaryPath), { recursive: true });
+      fs.mkdirSync(path.dirname(fallbackPath), { recursive: true });
+      fs.writeFileSync(fallbackPath, 'ID=ubuntu\nVERSION_ID="24.04"\n');
+      fs.writeFileSync(outsidePath, 'ID=ubuntu\nVERSION_ID="24.04"\n');
+      fs.symlinkSync("../usr/lib/os-release", primaryPath);
+
+      expect(
+        collectPlatformIdentity({
+          osReleasePath: primaryPath,
+          osReleaseFallbackPath: fallbackPath,
+        }),
+      ).toMatchObject({ osId: "ubuntu", osVersionId: "24.04" });
+
+      fs.unlinkSync(primaryPath);
+      fs.symlinkSync("../outside", primaryPath);
+      const rejected = collectPlatformIdentity({
+        osReleasePath: primaryPath,
+        osReleaseFallbackPath: fallbackPath,
+      });
+      expect(rejected.osId).toBeUndefined();
+      expect(rejected.osVersionId).toBeUndefined();
+    } finally {
+      fs.rmSync(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects oversized descriptor-backed OS release evidence (#11026)", () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-os-release-"));
+    const osReleasePath = path.join(fixtureRoot, "os-release");
+    try {
+      fs.writeFileSync(osReleasePath, `ID=ubuntu\nVERSION_ID="24.04"\n${"#".repeat(4096)}`);
+      const identity = collectPlatformIdentity({ osReleasePath });
+
+      expect(identity.osId).toBeUndefined();
+      expect(identity.osVersionId).toBeUndefined();
+    } finally {
+      fs.rmSync(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects NUL-bearing OS release evidence as malformed (#11026)", () => {
+    const missing = (): never => {
+      const error = new Error("missing fixture") as NodeJS.ErrnoException;
+      error.code = "ENOENT";
+      throw error;
+    };
+    const identity = collectPlatformIdentity({
+      readFile: () => "",
+      readdir: () => [],
+      openFile: missing,
+      readBoundedOsRelease: () => 'ID=ubu\0ntu\nVERSION_ID="24.04"\n',
+    });
+
+    expect(identity.osId).toBeUndefined();
+    expect(identity.osVersionId).toBeUndefined();
+  });
+
+  it("rejects carriage-return OS release evidence from an injected reader (#11026)", () => {
+    const identity = collectPlatformIdentity({
+      readFile: (filePath) =>
+        filePath === "/fixtures/os-release"
+          ? 'ID=ubuntu\nVERSION_ID="24.04"\r'
+          : unexpectedFixturePath(filePath),
+      osReleasePath: "/fixtures/os-release",
+      readdir: () => [],
+      openFile: () => {
+        throw Object.assign(new Error("missing fixture"), { code: "ENOENT" });
+      },
+    });
+
+    expect(identity.osId).toBeUndefined();
+    expect(identity.osVersionId).toBeUndefined();
+  });
+
+  it("rejects carriage-return OS release evidence from the descriptor-backed reader (#11026)", () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-os-release-"));
+    const osReleasePath = path.join(fixtureRoot, "os-release");
+    try {
+      fs.writeFileSync(osReleasePath, 'ID=ubuntu\nVERSION_ID="24.04"\r');
+      const identity = collectPlatformIdentity({ osReleasePath });
+
+      expect(identity.osId).toBeUndefined();
+      expect(identity.osVersionId).toBeUndefined();
+    } finally {
+      fs.rmSync(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
   it.each([
     ["Docker Desktop integration", true, true, "docker-desktop", "present", "absent", "present"],
     ["native Docker", true, true, "docker", "absent", "present", "present"],
@@ -162,6 +326,7 @@ describe("platform readiness qualification (#7410)", () => {
         runtimeProviderId: "podman",
         runtimeProviderOwnsHostReadiness: true,
         containerGpuProof: { providerId: "podman", passed: true },
+        n1xWslGpu: true,
         n1xWslProduct: true,
       }),
     );
@@ -189,6 +354,7 @@ describe("platform readiness qualification (#7410)", () => {
         runtimeProviderId: "podman",
         runtimeProviderOwnsHostReadiness: true,
         containerGpuProof: { providerId: "docker", passed: true },
+        n1xWslGpu: true,
         n1xWslProduct: true,
       }),
     );
@@ -232,33 +398,22 @@ describe("platform readiness qualification (#7410)", () => {
     expect(capability(result, "host.platform.wsl_gpu_passthrough")).toBe(expected);
   });
 
-  it("collects and qualifies the N1x WSL product identity (#10102)", () => {
-    const missingFastOs = Object.assign(new Error("missing FastOS marker"), { code: "ENOENT" });
-    const runCaptureImpl = vi.fn(() => "RTX Spark N1X\r\n");
-    const identity = collectPlatformIdentity({
-      isWsl: true,
-      runCaptureImpl,
-      productNamePath: "/fixtures/product_name",
-      readFile: () => "Virtual Machine\n",
-      openFile: () => {
-        throw missingFastOs;
-      },
-    });
+  it("qualifies an OEM N1x WSL host from its proof-backed GPU identity (#10962)", () => {
     const result = projectPlatformQualification(
       input({
         architecture: "arm64",
         isWsl: true,
         runtime: "docker-desktop",
         hasNvidiaGpu: true,
+        productName: "83N7",
+        n1xWslGpu: true,
         containerGpuProof: { providerId: "docker", passed: true },
-        ...identity,
       }),
     );
 
-    expect(identity).toMatchObject({ n1xWslProduct: true });
     expect(capability(result, "host.platform.n1x_wsl")).toBe("present");
     expect(qualification(result, "host.platform.n1x_wsl")).toBe("qualified");
-    expect(result.evidence[0]?.details).toMatchObject({ n1xWslProduct: true });
+    expect(result.evidence[0]?.details).toMatchObject({ product: "83N7", n1xWslGpu: true });
   });
 
   it("reuses a pre-collected N1x WSL product observation without probing again", () => {
@@ -282,15 +437,15 @@ describe("platform readiness qualification (#7410)", () => {
     [false, "absent"],
     [undefined, "absent"],
   ] as const)(
-    "fails closed for N1x WSL product evidence %s (#10102)",
-    (n1xWslProduct, expectedCapability) => {
+    "fails closed for N1x WSL GPU identity %s (#10962)",
+    (n1xWslGpu, expectedCapability) => {
       const result = projectPlatformQualification(
         input({
           architecture: "arm64",
           isWsl: true,
           runtime: "docker-desktop",
           hasNvidiaGpu: true,
-          n1xWslProduct,
+          n1xWslGpu,
         }),
       );
 
@@ -298,6 +453,22 @@ describe("platform readiness qualification (#7410)", () => {
       expect(qualification(result, "host.platform.n1x_wsl")).toBeUndefined();
     },
   );
+
+  it("rejects N1x WSL identity when the Docker Desktop GPU proof fails (#10962)", () => {
+    const result = projectPlatformQualification(
+      input({
+        architecture: "arm64",
+        isWsl: true,
+        runtime: "docker-desktop",
+        hasNvidiaGpu: true,
+        n1xWslGpu: true,
+        containerGpuProof: { providerId: "docker", passed: false },
+      }),
+    );
+
+    expect(capability(result, "host.platform.n1x_wsl")).toBe("absent");
+    expect(qualification(result, "host.platform.n1x_wsl")).toBe("unqualified");
+  });
 
   it.each([
     ["arm64", "docker-desktop", true],
@@ -526,6 +697,8 @@ describe("platform readiness qualification (#7410)", () => {
     expect(capability(result, "host.platform.dgx_station")).toBe(
       expected === "qualified" ? "present" : expected === "unqualified" ? "absent" : "unknown",
     );
+    expect(capability(result, "host.platform.dgx_station_hardware")).toBe("present");
+    expect(capability(result, "host.platform.dgx_station_runtime")).toBe("present");
   });
 
   it.each([
@@ -567,6 +740,60 @@ describe("platform readiness qualification (#7410)", () => {
 
     expect(isStationGb300ProductName(productName)).toBe(true);
     expect(qualification(result, "host.platform.dgx_station")).toBe("qualified");
+  });
+
+  it("uses a bounded firmware-family value when the product name is generic (#10928)", () => {
+    const identity = collectPlatformIdentity({
+      productNamePath: "/fixtures/product_name",
+      productFamilyPath: "/fixtures/product_family",
+      boardNamePath: "/fixtures/board_name",
+      osReleasePath: "/fixtures/os-release",
+      stationReleasePath: "/fixtures/dgx-release",
+      pciDevicesPath: "/fixtures/pci",
+      cpuPossiblePath: "/fixtures/possible",
+      memInfoPath: "/fixtures/meminfo",
+      readFile: (filePath) =>
+        filePath.endsWith("product_name")
+          ? "Generic ARM workstation\n"
+          : stationFixtureReadFile(filePath),
+      readdir: () => ["0000:01:00.0"],
+      openFile: () => {
+        throw Object.assign(new Error("marker is absent"), { code: "ENOENT" });
+      },
+      statFileDescriptor: () => trustedMarkerStat(),
+      closeFileDescriptor: () => undefined,
+    });
+
+    expect(identity).toMatchObject({
+      nvidiaPlatform: "station",
+      productName: "Generic ARM workstation",
+      stationFirmwareProduct: "DGX Station GB300 family",
+      stationCpuCoreCount: 72,
+      stationHostMemoryBytes: 761_441_000 * 1024,
+      stationProfile: "generic-ubuntu",
+      stationGb300PciGpu: true,
+      osPrettyName: "Ubuntu 24.04.4 LTS",
+    });
+  });
+
+  it("blocks conflicting NVIDIA platform firmware identities (#10928)", () => {
+    const identity = collectPlatformIdentity({
+      productNamePath: "/fixtures/product_name",
+      productFamilyPath: "/fixtures/product_family",
+      boardNamePath: "/fixtures/board_name",
+      readFile: (filePath) =>
+        new Map([
+          ["/fixtures/product_name", "NVIDIA DGX Spark"],
+          ["/fixtures/product_family", "NVIDIA DGX Station GB300"],
+          ["/fixtures/board_name", "Generic board"],
+        ]).get(filePath) ?? unexpectedFixturePath(filePath),
+    });
+    const result = projectPlatformQualification(input({ architecture: "arm64", ...identity }));
+
+    expect(identity).toMatchObject({ platformIdentityConflict: true });
+    expect(capability(result, "host.platform.identity_consistent")).toBe("absent");
+    expect(capability(result, "host.platform.supported")).toBe("absent");
+    expect(result.findings.map(({ id }) => id)).toContain("host.platform.identity_conflict");
   });
 
   it("marks Station unqualified when no exact GB300 PCI device is present", () => {
@@ -673,8 +900,9 @@ describe("platform readiness qualification (#7410)", () => {
     ["7.6.0", "NVIDIA DGX Server"],
     ["7.6.1", "NVIDIA DGX GB300WS"],
     ["7.6.1", "NVIDIA DGX Server"],
+    ["7.6.1", "NVIDIA DGX GB300 Workstation"],
   ])(
-    "accepts no-OTA DGX OS %s with the %s display name without binding its build date (#9898)",
+    "accepts no-OTA DGX OS %s without binding the %s display name or build date (#9898, #10928)",
     (version, prettyName) => {
       expect(
         collectStationIdentity(
@@ -686,6 +914,24 @@ describe("platform readiness qualification (#7410)", () => {
         ),
       ).toMatchObject({
         stationProfile: "supported-dgx-os",
+        stationGb300PciGpu: true,
+      });
+    },
+  );
+
+  it.each(["NVIDIA DGX Server", "NVIDIA DGX GB300WS"])(
+    "classifies the exact Colossus BaseOS profile with the %s display name (#10906)",
+    (prettyName) => {
+      expect(
+        collectStationIdentity(
+          noOtaStationRelease({
+            prettyName,
+            version: "7.5.0-GB300ws-GB200ws",
+            buildDate: "2026-04-02-08-20-16",
+          }),
+        ),
+      ).toMatchObject({
+        stationProfile: "supported-colossus-baseos",
         stationGb300PciGpu: true,
       });
     },
@@ -703,16 +949,20 @@ describe("platform readiness qualification (#7410)", () => {
   });
 
   it.each([
-    ["different lineage", { prettyName: "Unrecognized DGX Station" }],
     ["older no-OTA version", { version: "7.5.0" }],
     ["future release family", { version: "7.7.0" }],
     ["non-numeric patch", { version: "7.6.rc1" }],
-    ["partial OTA identity", { otaMetadata: 'DGX_OTA_PRETTY_NAME="DGX OS"' }],
-  ] as const)("keeps no-OTA Station metadata fail-closed with %s", (_scenario, overrides) => {
+  ] as const)("keeps unrecognized Station metadata unqualified with %s", (_scenario, overrides) => {
     expect(collectStationIdentity(noOtaStationRelease(overrides))).toMatchObject({
       stationProfile: "unsupported-dgx-os",
       stationGb300PciGpu: true,
     });
+  });
+
+  it("rejects partial no-OTA identity", () => {
+    expect(
+      collectStationIdentity(noOtaStationRelease({ otaMetadata: 'DGX_OTA_PRETTY_NAME="DGX OS"' })),
+    ).toMatchObject({ stationProfile: "unsupported-dgx-os", stationGb300PciGpu: true });
   });
 
   it.each([
@@ -753,6 +1003,12 @@ describe("platform readiness qualification (#7410)", () => {
     expect(
       collectPlatformIdentity({
         productNamePath: "/fixtures/product_name",
+        productFamilyPath: "/fixtures/product_family",
+        boardNamePath: "/fixtures/board_name",
+        deviceTreeModelPath: "/fixtures/model",
+        systemVendorPath: "/fixtures/sys_vendor",
+        cpuPossiblePath: "/fixtures/possible",
+        memInfoPath: "/fixtures/meminfo",
         osReleasePath: "/fixtures/os-release",
         stationReleasePath: "/fixtures/dgx-release",
         pciDevicesPath: "/fixtures/pci",
@@ -779,6 +1035,12 @@ describe("platform readiness qualification (#7410)", () => {
     expect(
       collectPlatformIdentity({
         productNamePath: "/fixtures/product_name",
+        productFamilyPath: "/fixtures/product_family",
+        boardNamePath: "/fixtures/board_name",
+        deviceTreeModelPath: "/fixtures/model",
+        systemVendorPath: "/fixtures/sys_vendor",
+        cpuPossiblePath: "/fixtures/possible",
+        memInfoPath: "/fixtures/meminfo",
         osReleasePath: "/fixtures/os-release",
         stationReleasePath: "/fixtures/dgx-release",
         pciDevicesPath: "/fixtures/pci",
@@ -791,11 +1053,18 @@ describe("platform readiness qualification (#7410)", () => {
       }),
     ).toEqual({
       productName: "NVIDIA DGX Station GB300",
+      productFamily: "DGX Station GB300 family",
+      boardName: "NVIDIA Station GB300 board",
       nvidiaPlatform: "station",
+      stationFirmwareProduct: "NVIDIA DGX Station GB300",
+      stationSystemVendor: "NVIDIA",
+      stationCpuCoreCount: 72,
+      stationHostMemoryBytes: 761_441_000 * 1024,
       stationProfile: "unsupported-dgx-os",
       stationGb300PciGpu: true,
       osId: "ubuntu",
       osVersionId: "24.04",
+      osPrettyName: "Ubuntu 24.04.4 LTS",
     });
     expect(openFile).toHaveBeenCalledWith("/fixtures/dgx-release", expect.any(Number));
     expect(statFileDescriptor).toHaveBeenCalledWith(17);
@@ -841,6 +1110,7 @@ describe("platform readiness qualification (#7410)", () => {
     (stationProfile) => {
       const readiness = projectPlatformQualification(
         input({
+          architecture: "arm64",
           nvidiaPlatform: "station",
           productName: "NVIDIA DGX Station GB300",
           stationProfile,
@@ -933,5 +1203,20 @@ describe("platform readiness qualification (#7410)", () => {
       n1xFastOsMarker: false,
       n1xPciGpu: undefined,
     });
+  });
+
+  it("removes control characters from Station diagnostic evidence (#10928)", () => {
+    const result = projectPlatformQualification(
+      input({
+        architecture: "arm64",
+        hasNvidiaGpu: true,
+        nvidiaPlatform: "station",
+        productName: "NVIDIA DGX Station GB300\u001b[31m",
+        stationProfile: "supported-dgx-os",
+        stationGb300PciGpu: true,
+      }),
+    );
+
+    expect(result.evidence[0]?.details?.product).toBe("NVIDIA DGX Station GB300\\u001b[31m");
   });
 });

@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { dockerLogs } from "../adapters/docker/container";
+import { dockerCapture } from "../adapters/docker/run";
 import { getSandboxFailurePhase } from "../state/gateway";
 import type { SandboxGpuProofResult } from "../state/registry";
 import {
@@ -29,12 +31,8 @@ import {
   type RecreateGpuPatchFn,
   type RecreateStartupPatchFn,
 } from "./docker-startup-command-sandbox-create";
-import { ManagedBootstrapOwnerCleanupRequiredError } from "./managed-bootstrap/adapter";
-import type {
-  ManagedBootstrapNativeGpuFallbackRollbackOutcome,
-  ManagedBootstrapNativeGpuFallbackRollbackRequest,
-} from "./managed-bootstrap/runtime-create";
 import { findOpenShellDockerSandboxContainerIds } from "./openshell-docker-sandbox-containers";
+import { attachRuntimeRollbackError } from "./diagnostics/runtime-rollback-error";
 
 export type { DockerGpuRoutePlan, SelectedDockerGpuRoute } from "./docker-gpu-route";
 export {
@@ -46,6 +44,7 @@ export {
 
 type DockerGpuSandboxCreateDeps = Pick<
   DockerGpuPatchDeps,
+  | "commandExecutor"
   | "runOpenshell"
   | "runCaptureOpenshell"
   | "sleep"
@@ -60,10 +59,24 @@ type DockerGpuSandboxCreateDeps = Pick<
   | "now"
 >;
 
-type WaitSupervisorFn = typeof waitForOpenShellSupervisorReconnect;
+type WaitSupervisorFn = (
+  sandboxName: string,
+  timeoutSecs: number,
+  deps: DockerGpuPatchDeps,
+) => Promise<boolean>;
 type FindContainerIdsFn = typeof findOpenShellDockerSandboxContainerIds;
-type FinalizeBackupFn = typeof finalizeDockerGpuPatchBackup;
+type FinalizeBackupFn = (
+  ...args: Parameters<typeof finalizeDockerGpuPatchBackup>
+) => ReturnType<typeof finalizeDockerGpuPatchBackup>;
 type CapturePreRollbackDiagnosticsFn = typeof captureDockerGpuPreRollbackDiagnostics;
+type DeferredRecreateGpuPatchFn = (
+  options: Parameters<RecreateGpuPatchFn>[0] & { waitForSupervisor: false },
+  deps?: Parameters<RecreateGpuPatchFn>[1],
+) => DockerGpuPatchResult;
+type DeferredRecreateStartupPatchFn = (
+  options: Parameters<RecreateStartupPatchFn>[0] & { waitForSupervisor: false },
+  deps?: Parameters<RecreateStartupPatchFn>[1],
+) => DockerGpuPatchResult;
 // Loosen the override return type from `never` to `void` so tests can pass a
 // plain `vi.fn()` mock. Production wires `printDockerGpuPatchFailureAndExit`
 // which has return type `never`; that is assignable to `void`.
@@ -73,12 +86,77 @@ type PatchFailureExitFn = (
   deps: Parameters<typeof printDockerGpuPatchFailureAndExit>[2],
 ) => void;
 
+const SUPERVISOR_RECONNECT_RECOVERY_TIMEOUT_MS = 60_000;
+const SUPERVISOR_INSTALL_SUCCESS = "OpenShell Sandbox Supervisor success";
+
+/**
+ * Reconcile OpenShell's lifecycle row after the exact recreated container has
+ * already proved that its supervisor installed successfully. Docker evidence
+ * only admits this bounded recovery attempt; the caller must still require a
+ * successful OpenShell exec, Ready settlement, exact final handoff, and GPU
+ * proof before accepting the replacement.
+ */
+function recoverInstalledReplacementSupervisor(
+  sandboxName: string,
+  result: DockerGpuPatchResult,
+  deps: DockerGpuSandboxCreateDeps,
+): boolean {
+  if (!deps.runOpenshell) return false;
+  const capture = deps.dockerCapture ?? dockerCapture;
+  const readLogs = deps.dockerLogs ?? dockerLogs;
+  try {
+    const state = JSON.parse(
+      capture(["inspect", "--format", "{{json .State}}", result.newContainerId], {
+        ignoreError: true,
+        timeout: SUPERVISOR_RECONNECT_RECOVERY_TIMEOUT_MS,
+      }),
+    ) as { Running?: unknown; Status?: unknown };
+    const name = capture(["inspect", "--format", "{{.Name}}", result.newContainerId], {
+      ignoreError: true,
+      timeout: SUPERVISOR_RECONNECT_RECOVERY_TIMEOUT_MS,
+    })
+      .trim()
+      .replace(/^\//u, "");
+    const logs = readLogs(result.newContainerId, {
+      tail: 256,
+      timeout: SUPERVISOR_RECONNECT_RECOVERY_TIMEOUT_MS,
+    });
+    if (
+      state.Running !== true ||
+      state.Status !== "running" ||
+      name !== result.originalName ||
+      !logs.includes(SUPERVISOR_INSTALL_SUCCESS)
+    ) {
+      return false;
+    }
+
+    console.log(
+      "  The exact replacement supervisor is installed, but OpenShell still reports a stale lifecycle phase; reconciling once through OpenShell...",
+    );
+    const commandOptions = {
+      ignoreError: true,
+      killProcessTreeOnTimeout: true,
+      killSignal: "SIGKILL",
+      suppressOutput: true,
+      timeout: SUPERVISOR_RECONNECT_RECOVERY_TIMEOUT_MS,
+    } as const;
+    // Either command may return nonzero after applying its mutation, and an
+    // Error-phase row can reject stop before start repairs the stale phase. The
+    // subsequent identity-bound reconnect waiter is the only acceptance proof.
+    deps.runOpenshell(["sandbox", "stop", sandboxName], commandOptions);
+    deps.runOpenshell(["sandbox", "start", sandboxName], commandOptions);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 type DockerGpuSandboxCreatePatchOptions = {
   route: SelectedDockerGpuRoute;
   persistStartupCommand?: boolean;
   /**
-   * A managed bootstrap owns the one permitted recreation after Ready. Keep
-   * route diagnostics/proof active without running the legacy recreator.
+   * The selected lifecycle already owns the exact runtime OpenShell created.
+   * Keep route diagnostics/proof active without running the legacy recreator.
    */
   externalRecreation?: boolean;
   sandboxName: string;
@@ -102,8 +180,8 @@ type DockerGpuSandboxCreatePatchOptions = {
    */
   overrides?: {
     findContainerIds?: FindContainerIdsFn;
-    recreatePatch?: RecreateGpuPatchFn;
-    recreateStartupPatch?: RecreateStartupPatchFn;
+    recreatePatch?: DeferredRecreateGpuPatchFn;
+    recreateStartupPatch?: DeferredRecreateStartupPatchFn;
     waitForSupervisor?: WaitSupervisorFn;
     finalizeBackup?: FinalizeBackupFn;
     capturePreRollbackDiagnostics?: CapturePreRollbackDiagnosticsFn;
@@ -113,6 +191,7 @@ type DockerGpuSandboxCreatePatchOptions = {
 
 export interface DockerManagedBootstrapDeferredCutover {
   readonly selectedMode: DockerGpuPatchMode;
+  readonly replacementRuntimeId: string;
   readonly failureContext: DockerGpuPatchFailureContext;
   rollback(): Promise<void>;
   commit(): Promise<void>;
@@ -125,17 +204,19 @@ export type DockerGpuSandboxCreatePatch = {
   createFailureMessage: () => string | null;
   exitOnPatchError: () => Promise<void>;
   attachManagedBootstrapCutover: (cutover: DockerManagedBootstrapDeferredCutover) => void;
-  rollbackManagedStartupAfterCreateFailure: (
-    request?: ManagedBootstrapNativeGpuFallbackRollbackRequest,
-  ) => Promise<void | ManagedBootstrapNativeGpuFallbackRollbackOutcome>;
+  rollbackManagedStartupAfterCreateFailure: () => Promise<void>;
   ensureApplied: () => Promise<void>;
-  waitForSupervisorReconnectIfNeeded: () => void;
+  waitForSupervisorReconnectIfNeeded: () => Promise<void>;
   /**
    * Commit an attached managed cutover or remove a legacy recreation backup.
    * Call only after authoritative Ready and the required GPU and applicable
    * local-inference checks pass.
    */
-  commitAfterReady: () => Promise<void>;
+  commitAfterReady: (options?: {
+    readonly beforeFinalHandoff?: (replacementRuntimeId: string | null) => void;
+  }) => Promise<void>;
+  /** True only after OpenShell acknowledged the exact replacement's final handoff. */
+  allowsNotReadyLifecycleRevalidation: () => boolean;
   selectedMode: () => DockerGpuPatchMode | null;
   /**
    * Print the Docker GPU readiness-failure block (including the Error-phase
@@ -167,13 +248,23 @@ export function createDockerGpuSandboxCreatePatch(
   let cutoverFinalization: Promise<void> | null = null;
   let cutoverFinalizationOutcome: "commit" | "rollback" | null = null;
   let cutoverFinalizationFailure: Error | null = null;
+  let exactFinalHandoffAcknowledged = false;
 
   const findContainerIds =
     options.overrides?.findContainerIds ?? findOpenShellDockerSandboxContainerIds;
   const recreatePatch = options.overrides?.recreatePatch ?? recreateOpenShellDockerSandboxWithGpu;
   const recreateStartupPatch = options.overrides?.recreateStartupPatch;
-  const waitForSupervisor =
-    options.overrides?.waitForSupervisor ?? waitForOpenShellSupervisorReconnect;
+  const waitForSupervisor: WaitSupervisorFn =
+    options.overrides?.waitForSupervisor ??
+    ((sandboxName, timeoutSecs, deps) => {
+      if (!deps.commandExecutor) {
+        throw new Error("OpenShell buffered command execution is unavailable.");
+      }
+      return waitForOpenShellSupervisorReconnect(sandboxName, timeoutSecs, {
+        ...deps,
+        commandExecutor: deps.commandExecutor,
+      });
+    });
   const finalizeBackup = options.overrides?.finalizeBackup ?? finalizeDockerGpuPatchBackup;
   const captureFailedClone =
     options.overrides?.capturePreRollbackDiagnostics ?? captureDockerGpuPreRollbackDiagnostics;
@@ -206,8 +297,8 @@ export function createDockerGpuSandboxCreatePatch(
     gpuOptions: applyOptions,
     startupCommand: options.openshellSandboxCommand,
     requiredUlimits: options.requiredUlimits,
-    recreateGpu: recreatePatch,
-    recreateStartup: recreateStartupPatch,
+    recreateGpu: recreatePatch as RecreateGpuPatchFn,
+    recreateStartup: recreateStartupPatch as RecreateStartupPatchFn | undefined,
   });
 
   const applyPatch = (deps: DockerGpuPatchDeps): void => {
@@ -233,7 +324,7 @@ export function createDockerGpuSandboxCreatePatch(
     const finalization = (async () => {
       await managedBootstrapCutover?.rollback();
       const finalizeOutcome = result
-        ? finalizeBackup({ result, supervisorReady: false }, options.deps)
+        ? await finalizeBackup({ result, supervisorReady: false }, options.deps)
         : null;
       cutoverFinalized = true;
       needsSupervisorWait = false;
@@ -260,13 +351,12 @@ export function createDockerGpuSandboxCreatePatch(
 
   const reportPatchErrorAndExit = async (): Promise<void> => {
     if (!patchError) return;
+    const failure = patchError instanceof Error ? patchError : new Error(String(patchError));
     const rollbackError = await rollbackAfterFailure();
     if (rollbackError) {
-      patchError = new Error(
-        `${patchError instanceof Error ? patchError.message : String(patchError)}; managed startup rollback failed: ${rollbackError.message}`,
-      );
+      attachRuntimeRollbackError(failure, rollbackError);
     }
-    onPatchFailureExit(options.sandboxName, patchError, {
+    onPatchFailureExit(options.sandboxName, failure, {
       runCaptureOpenshell: options.deps.runCaptureOpenshell,
       dockerCapture: options.deps.dockerCapture,
       additionalSummaryLines: routeAdapter.additionalSummaryLines,
@@ -293,6 +383,7 @@ export function createDockerGpuSandboxCreatePatch(
       );
       try {
         applyPatch({
+          commandExecutor: options.deps.commandExecutor,
           runCaptureOpenshell: options.deps.runCaptureOpenshell,
           sleep: options.deps.sleep,
         });
@@ -302,7 +393,7 @@ export function createDockerGpuSandboxCreatePatch(
     },
 
     replacementRuntimeId() {
-      return result?.newContainerId ?? null;
+      return managedBootstrapCutover?.replacementRuntimeId ?? result?.newContainerId ?? null;
     },
 
     createFailureMessage() {
@@ -323,23 +414,9 @@ export function createDockerGpuSandboxCreatePatch(
       managedBootstrapCutover = cutover;
     },
 
-    async rollbackManagedStartupAfterCreateFailure(request) {
+    async rollbackManagedStartupAfterCreateFailure() {
       const rollbackError = await rollbackAfterFailure();
-      if (!rollbackError) return request ? { kind: "rolled-back" } : undefined;
-      if (
-        request?.ownerCleanupHandoff === "native-gpu-fallback" &&
-        options.route === "native" &&
-        options.externalRecreation === true &&
-        rollbackError instanceof ManagedBootstrapOwnerCleanupRequiredError &&
-        rollbackError.sandboxName === options.sandboxName
-      ) {
-        return Object.freeze({
-          kind: "openshell-owner-cleanup-required",
-          sandboxName: rollbackError.sandboxName,
-          sandboxId: rollbackError.sandboxId,
-          runtimeId: rollbackError.runtimeId,
-        });
-      }
+      if (!rollbackError) return;
       onPatchFailureExit(options.sandboxName, rollbackError, {
         ...failureDiagnosticDeps,
         additionalSummaryLines: routeAdapter.additionalSummaryLines,
@@ -348,7 +425,7 @@ export function createDockerGpuSandboxCreatePatch(
           rolledBack: false,
         },
       });
-      if (request) throw rollbackError;
+      throw rollbackError;
     },
 
     async ensureApplied() {
@@ -362,7 +439,7 @@ export function createDockerGpuSandboxCreatePatch(
       }
     },
 
-    waitForSupervisorReconnectIfNeeded() {
+    async waitForSupervisorReconnectIfNeeded() {
       if (!needsSupervisorWait || cutoverFinalized) return;
       const supervisorReconnectTimeoutSecs = getDockerGpuSupervisorReconnectTimeoutSecs(
         options.timeoutSecs,
@@ -370,15 +447,30 @@ export function createDockerGpuSandboxCreatePatch(
       console.log(
         `  Waiting for OpenShell supervisor to reconnect to the recreated container (up to ${supervisorReconnectTimeoutSecs}s)...`,
       );
-      const supervisorReady = waitForSupervisor(
+      let supervisorReady = await waitForSupervisor(
         options.sandboxName,
         supervisorReconnectTimeoutSecs,
         {
-          runOpenshell: options.deps.runOpenshell,
+          commandExecutor: options.deps.commandExecutor,
           runCaptureOpenshell: options.deps.runCaptureOpenshell,
           sleep: options.deps.sleep,
         },
       );
+      if (
+        !supervisorReady &&
+        result &&
+        recoverInstalledReplacementSupervisor(options.sandboxName, result, options.deps)
+      ) {
+        supervisorReady = await waitForSupervisor(
+          options.sandboxName,
+          supervisorReconnectTimeoutSecs,
+          {
+            commandExecutor: options.deps.commandExecutor,
+            runCaptureOpenshell: options.deps.runCaptureOpenshell,
+            sleep: options.deps.sleep,
+          },
+        );
+      }
       if (supervisorReady) {
         // Reconnect completes the legacy recreation check. Keep its rollback
         // backup until the caller accepts authoritative Ready and the required
@@ -402,7 +494,7 @@ export function createDockerGpuSandboxCreatePatch(
         }
       }
       const finalizeOutcome = result
-        ? finalizeBackup({ result, supervisorReady: false }, options.deps)
+        ? await finalizeBackup({ result, supervisorReady: false }, options.deps)
         : null;
       cutoverFinalized = true;
       needsSupervisorWait = false;
@@ -431,7 +523,7 @@ export function createDockerGpuSandboxCreatePatch(
       });
     },
 
-    async commitAfterReady() {
+    async commitAfterReady(commitOptions) {
       if (cutoverFinalizationFailure) throw cutoverFinalizationFailure;
       if (cutoverFinalized || (!managedBootstrapCutover && !result)) return;
       if (needsSupervisorWait) {
@@ -439,9 +531,10 @@ export function createDockerGpuSandboxCreatePatch(
           "Managed startup cannot commit before the recreated OpenShell supervisor reconnects.",
         );
         const rollbackError = await rollbackAfterFailure();
-        const failure = rollbackError
-          ? new Error(`${error.message} Rollback failed: ${rollbackError.message}`)
-          : error;
+        if (rollbackError) {
+          attachRuntimeRollbackError(error, rollbackError);
+        }
+        const failure = error;
         cutoverFinalizationFailure = failure;
         onPatchFailureExit(options.sandboxName, failure, {
           runCaptureOpenshell: options.deps.runCaptureOpenshell,
@@ -458,9 +551,13 @@ export function createDockerGpuSandboxCreatePatch(
         return;
       }
       const finalization = (async () => {
+        commitOptions?.beforeFinalHandoff?.(
+          managedBootstrapCutover?.replacementRuntimeId ?? result?.newContainerId ?? null,
+        );
         if (managedBootstrapCutover) {
           try {
             await managedBootstrapCutover.commit();
+            exactFinalHandoffAcknowledged = true;
           } catch (error) {
             const failure = error instanceof Error ? error : new Error(String(error));
             let rollbackError: Error | null = null;
@@ -473,9 +570,7 @@ export function createDockerGpuSandboxCreatePatch(
                 rollbackFailure instanceof Error
                   ? rollbackFailure
                   : new Error(String(rollbackFailure));
-              (
-                failure as Error & { managedBootstrapRollbackError?: unknown }
-              ).managedBootstrapRollbackError = rollbackError;
+              attachRuntimeRollbackError(failure, rollbackError);
             }
             cutoverFinalizationFailure = failure;
             onPatchFailureExit(options.sandboxName, failure, {
@@ -494,7 +589,7 @@ export function createDockerGpuSandboxCreatePatch(
           options.timeoutSecs,
         );
         const finalizeOutcome = result
-          ? finalizeBackup(
+          ? await finalizeBackup(
               {
                 result,
                 supervisorReady: true,
@@ -514,6 +609,7 @@ export function createDockerGpuSandboxCreatePatch(
           finalizeOutcome.replacementRestarted &&
           finalizeOutcome.finalHandoffAcknowledged === true
         ) {
+          exactFinalHandoffAcknowledged = true;
           return;
         }
         const failure = new Error(
@@ -550,6 +646,10 @@ export function createDockerGpuSandboxCreatePatch(
           cutoverFinalizationOutcome = null;
         }
       }
+    },
+
+    allowsNotReadyLifecycleRevalidation() {
+      return exactFinalHandoffAcknowledged;
     },
 
     selectedMode() {
@@ -596,10 +696,8 @@ export function createDockerGpuSandboxCreatePatch(
           });
           const rollbackError = await rollbackAfterFailure();
           if (rollbackError) {
-            console.error(`  ${rollbackError.message}`);
-            (
-              failure as Error & { managedBootstrapRollbackError?: unknown }
-            ).managedBootstrapRollbackError = rollbackError;
+            const sanitizedRollbackError = attachRuntimeRollbackError(failure, rollbackError);
+            console.error(`  ${sanitizedRollbackError.message}`);
           }
           throw failure;
         }
@@ -622,10 +720,8 @@ export function createDockerGpuSandboxCreatePatch(
         });
         const rollbackError = await rollbackAfterFailure();
         if (rollbackError) {
-          console.error(`  ${rollbackError.message}`);
-          (
-            failure as Error & { managedBootstrapRollbackError?: unknown }
-          ).managedBootstrapRollbackError = rollbackError;
+          const sanitizedRollbackError = attachRuntimeRollbackError(failure, rollbackError);
+          console.error(`  ${sanitizedRollbackError.message}`);
         }
         throw failure;
       }

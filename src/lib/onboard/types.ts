@@ -102,6 +102,7 @@ export interface VerifiedSandboxCreateBoundary {
   readonly lifecycleGeneration: string;
   readonly lifecycleLiveIdentityFingerprint: string;
   readonly createAttemptNonce?: string;
+  readonly managedBootstrapIdentity?: string;
   readonly route: import("./docker-gpu-route").SelectedDockerGpuRoute;
 }
 
@@ -160,6 +161,8 @@ export type OnboardOptions = {
   providerRecoveryReceipt?: import("./rebuild-route-handoff").ProviderRecoveryReceipt;
   /** Internal rebuild handoff for a recorded provider admitted by Deferred N1x readiness. */
   allowDeferredN1xManagedVllm?: true;
+  /** Internal legacy Hermes rebuild handoff for the pre-v0.0.97 Station admission rule. */
+  allowLegacyDgxStationQualification?: true;
   /** Internal one-shot handoff for the exact image context validated before rebuild deletion. */
   preparedImageRebuild?: import("./prepared-dcode-rebuild").PreparedImageRebuildHandoff;
   /** Internal immutable managed-image/profile handoff validated before rebuild deletion. */

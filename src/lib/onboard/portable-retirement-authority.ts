@@ -594,10 +594,14 @@ export function printPortableOnboardLockContention(
   displayName: string,
   lockResult: LockResult,
 ): void {
-  console.error(`  Another ${displayName} onboarding run is already in progress.`);
+  console.error(`  Could not acquire the ${displayName} onboarding lock.`);
   if (lockResult.holderPid) console.error(`  Lock holder PID: ${lockResult.holderPid}`);
   if (lockResult.holderStartedAt) console.error(`  Started: ${lockResult.holderStartedAt}`);
-  console.error("  Wait for the active onboarding run to finish.");
+  console.error(
+    lockResult.holderPid
+      ? "  Wait for the active onboarding run to finish."
+      : "  The lock has no verified owner. Wait briefly before retrying.",
+  );
   console.error(
     "  If the recorded process is no longer running, rerun this command; NemoClaw verifies stale ownership before removing its lock.",
   );

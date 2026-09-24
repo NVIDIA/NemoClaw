@@ -222,9 +222,8 @@ describe("managed cluster vLLM runtime receipt", () => {
   it("uses the host-global default gateway state root", async () => {
     vi.stubEnv("NEMOCLAW_GATEWAY_PORT", "18080");
     vi.resetModules();
-    const { managedClusterVllmRuntimeReceiptPath: selectedReceiptPath } = await import(
-      "./serving/managed-cluster-runtime-receipt"
-    );
+    const { managedClusterVllmRuntimeReceiptPath: selectedReceiptPath } =
+      await import("./serving/managed-cluster-runtime-receipt");
     expect(selectedReceiptPath()).toBe(
       path.join(os.homedir(), ".nemoclaw", "managed-cluster-vllm-runtime.json"),
     );
@@ -294,9 +293,8 @@ describe("managed cluster vLLM runtime receipt", () => {
         changedCatalog.recipes.find(({ metadata }) => metadata.id === id),
     }));
     vi.resetModules();
-    const { loadManagedClusterVllmRuntimeReceipt: loadAgainstChangedCatalog } = await import(
-      "./serving/managed-cluster-runtime-receipt"
-    );
+    const { loadManagedClusterVllmRuntimeReceipt: loadAgainstChangedCatalog } =
+      await import("./serving/managed-cluster-runtime-receipt");
     const loaded = loadAgainstChangedCatalog({ stateDir });
     const currentPreset = changedCatalog.presets.find(
       ({ metadata }) => metadata.id === source.plan.presetId,

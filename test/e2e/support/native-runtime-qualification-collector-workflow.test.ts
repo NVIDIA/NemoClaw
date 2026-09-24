@@ -112,13 +112,18 @@ describe("native runtime qualification collector workflow", () => {
       "sparse-checkout-cone-mode": false,
     });
     expect(String(checkout.with?.["sparse-checkout"]).trim().split(/\s+/u).sort()).toEqual(
-      localImportClosure(COLLECTOR_ENTRYPOINT),
+      [
+        ".github/actions/setup-reviewed-npm",
+        "ci/reviewed-npm-audit.json",
+        "scripts/lib/reviewed-npm-audit.mts",
+        ...localImportClosure(COLLECTOR_ENTRYPOINT),
+      ].sort(),
     );
     expect(
       (collect as WorkflowStep & { readonly "working-directory"?: string })["working-directory"],
     ).toBe("trusted");
     expect(collect.run).toContain(
-      "node --experimental-strip-types --no-warnings tools/e2e/native-runtime-qualification-collector.mts",
+      "node --no-warnings tools/e2e/native-runtime-qualification-collector.mts",
     );
     expect(tokenSteps.map((step) => step.name)).toEqual([
       "Authenticate and consume protected qualification evidence",

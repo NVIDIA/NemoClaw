@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import { gatewayAdaptersForTest } from "../../../test/helpers/openshell-gateway-adapters";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -39,6 +40,7 @@ afterEach(() => {
 
 function createDeps(): GatewayHostRuntimeDeps {
   return {
+    ...gatewayAdaptersForTest(),
     applyOverlayfsAutoFix: () => null,
     checkGatewayPortAvailable: async () => ({ ok: false }) as PortProbeResult,
     gatewayName: () => "nemoclaw",
@@ -46,12 +48,9 @@ function createDeps(): GatewayHostRuntimeDeps {
     getGatewayPortListenerRawScan: () => ({ pids: [4242], complete: true }),
     getInstalledOpenshellVersion: () => "0.0.90",
     hasOpenShellGatewayUserService: () => false,
-    isGatewayHealthy: () => true,
     readProcCgroup: () => `0::/system.slice/${SERVICE_NAME}\n`,
     readProcExe: () => EXEC_PATH,
     resolveOpenShellGatewayBinary: () => EXEC_PATH,
-    runCaptureOpenshell: () => "healthy",
-    runOpenshell: () => ({ status: 0 }),
     spawnSyncImpl: (() => ({ status: 0, stdout: "active\n", stderr: "" })) as never,
     waitForGatewayHttpReady: async () => false,
   };
@@ -96,6 +95,18 @@ describe("externally supervised HTTPS gateway readiness", () => {
     );
     expect(readiness.wait).toHaveBeenCalledWith(expect.objectContaining({ recordTrace: true }));
     expect(process.env.OPENSHELL_LOCAL_TLS_DIR).toBe(originalTlsDir);
+    expect(fs.statSync).toHaveBeenCalledTimes(3);
+    expect(fs.accessSync).toHaveBeenCalledTimes(3);
+  });
+
+  it("exposes the authority-selected endpoint and TLS bundle for direct forwards", () => {
+    declareHttpsExternalSupervision();
+    const runtime = createGatewayHostRuntime(createDeps());
+
+    expect(runtime.getGatewayForwardRuntimeAuthority()).toEqual({
+      gatewayEndpoint: "https://127.0.0.1:8080",
+      localTlsDir: `${STATE_DIR}/tls`,
+    });
     expect(fs.statSync).toHaveBeenCalledTimes(3);
     expect(fs.accessSync).toHaveBeenCalledTimes(3);
   });

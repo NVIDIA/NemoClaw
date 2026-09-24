@@ -26,7 +26,7 @@ import {
   redactFullWithUrls,
   writeRedactedResult,
 } from "./security/redact";
-import { buildSubprocessEnv } from "./subprocess-env";
+import { buildDockerSubprocessEnv, buildSubprocessEnv } from "./subprocess-env";
 
 const ROOT = REPOSITORY_ROOT;
 const SCRIPTS = path.join(ROOT, "scripts");
@@ -51,12 +51,12 @@ type CaptureOptions = Omit<SpawnSyncOptionsWithStringEncoding, "encoding"> & {
 
 type SpawnResult = SpawnSyncReturns<string | Buffer>;
 
-const dockerHost = detectDockerHost();
-if (dockerHost) {
-  process.env.DOCKER_HOST = dockerHost.dockerHost;
-  if (dockerHost.source === "socket") {
-    delete process.env.DOCKER_CONTEXT;
-  }
+const dockerAuthority = detectDockerHost();
+if (dockerAuthority) {
+  process.env.DOCKER_HOST = dockerAuthority.dockerHost;
+  // The selected authority is now explicit. Keep no context selector that can
+  // override it if the process environment changes after initialization.
+  delete process.env.DOCKER_CONTEXT;
 }
 
 function buildRunnerEnv(
@@ -71,18 +71,18 @@ function buildRunnerEnv(
     }
   }
   if (replaceEnv) return normalizedExtra;
-  const usesDockerDefaultAuthority =
-    executable !== undefined &&
-    path.basename(executable) === "docker" &&
-    normalizedExtra.DOCKER_HOST === undefined &&
-    process.env.DOCKER_HOST === undefined;
-  if (usesDockerDefaultAuthority) {
-    if (normalizedExtra.DOCKER_CONFIG === undefined && process.env.DOCKER_CONFIG !== undefined) {
-      normalizedExtra.DOCKER_CONFIG = process.env.DOCKER_CONFIG;
-    }
-    if (normalizedExtra.DOCKER_CONTEXT === undefined && process.env.DOCKER_CONTEXT !== undefined) {
-      normalizedExtra.DOCKER_CONTEXT = process.env.DOCKER_CONTEXT;
-    }
+  if (executable !== undefined && path.basename(executable) === "docker") {
+    const selectedDockerContext = String(
+      normalizedExtra.DOCKER_CONTEXT ?? process.env.DOCKER_CONTEXT ?? "",
+    ).trim();
+    const selectedDockerHost =
+      normalizedExtra.DOCKER_HOST ?? (selectedDockerContext ? undefined : process.env.DOCKER_HOST);
+    return buildDockerSubprocessEnv(process.env, selectedDockerHost, normalizedExtra, {
+      preserveDockerConfig:
+        normalizedExtra.DOCKER_HOST === undefined &&
+        dockerAuthority?.source === "context" &&
+        selectedDockerHost === dockerAuthority.dockerHost,
+    });
   }
   return buildSubprocessEnv(normalizedExtra);
 }

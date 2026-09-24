@@ -83,7 +83,7 @@ export type DcodeReplacementPreflightInput = {
   gatewayPort?: number;
   log(message: string): void;
   bail: DcodeRebuildPreflightBail;
-  checkGatewaySchema(runtimeSelection?: OpenShellRuntimeSelection): boolean;
+  checkGatewaySchema(runtimeSelection?: OpenShellRuntimeSelection): boolean | Promise<boolean>;
   runtimeSelection?: OpenShellRuntimeSelection;
 };
 
@@ -196,13 +196,13 @@ function resolveTarget(
   }
 }
 
-function requireInferenceRoute(
+async function requireInferenceRoute(
   sandboxName: string,
   target: ResolvedDcodeRebuildTarget,
   bail: DcodeRebuildPreflightBail,
   runtimeSelection?: OpenShellRuntimeSelection,
-): void {
-  const result = probeSandboxInferenceInvocation({
+): Promise<void> {
+  const result = await probeSandboxInferenceInvocation({
     sandboxName,
     agentName: target.agent,
     ...target,
@@ -354,7 +354,7 @@ function resolvePinnedDcodeBaseImage(
   if (!result) {
     try {
       result = ensureAgentBaseImage(agent, { forceBaseImageRefresh: true });
-    } catch (error) {
+    } catch {
       try {
         result = ensureAgentBaseImage(agent, { forceBaseImageRebuild: true });
       } catch (buildError) {
@@ -515,7 +515,7 @@ export async function prepareDcodeReplacementBeforeMutation(
 
     const session = loadMatchingDcodeSession(sandboxName);
     const target = resolveTarget(entry, resumeConfig, bail, gatewayPort);
-    if (!skipLiveRoute) requireInferenceRoute(sandboxName, target, bail, runtimeSelection);
+    if (!skipLiveRoute) await requireInferenceRoute(sandboxName, target, bail, runtimeSelection);
 
     pinnedBase = resolvePinnedDcodeBaseImage(bail, input.baseImageOptions);
     const sandboxGpuConfig = getRecordedGpuConfig(sandboxName, entry, session);
@@ -551,8 +551,8 @@ export async function prepareDcodeReplacementBeforeMutation(
     ) {
       return null;
     }
-    if (!input.checkGatewaySchema(runtimeSelection)) return null;
-    if (!skipLiveRoute) requireInferenceRoute(sandboxName, target, bail, runtimeSelection);
+    if (!(await input.checkGatewaySchema(runtimeSelection))) return null;
+    if (!skipLiveRoute) await requireInferenceRoute(sandboxName, target, bail, runtimeSelection);
     requireCurrentTarget(sandboxName, entry, target, resumeConfig, bail, gatewayPort);
     if (!verifyPreparedDcodeRebuildImage(buildContext) || !pinnedBase.verify()) {
       fail("the prepared DCode replacement inputs changed during preflight", bail);
@@ -611,8 +611,8 @@ export async function revalidateDcodeReplacementAtMutationEdge(
   ) {
     return false;
   }
-  if (!input.checkGatewaySchema(runtimeSelection)) return false;
-  if (!skipLiveRoute) requireInferenceRoute(sandboxName, target, bail, runtimeSelection);
+  if (!(await input.checkGatewaySchema(runtimeSelection))) return false;
+  if (!skipLiveRoute) await requireInferenceRoute(sandboxName, target, bail, runtimeSelection);
   requireCurrentTarget(sandboxName, entry, target, resumeConfig, bail, gatewayPort);
   if (!replacement.verify()) {
     fail("the prepared DCode replacement inputs changed before deletion", bail);
@@ -650,8 +650,8 @@ export async function revalidateManagedDcodeWorkloadAtMutationEdge(
   ) {
     return false;
   }
-  if (!input.checkGatewaySchema(runtimeSelection)) return false;
-  if (!skipLiveRoute) requireInferenceRoute(sandboxName, target, bail, runtimeSelection);
+  if (!(await input.checkGatewaySchema(runtimeSelection))) return false;
+  if (!skipLiveRoute) await requireInferenceRoute(sandboxName, target, bail, runtimeSelection);
   requireCurrentTarget(sandboxName, entry, target, resumeConfig, bail, gatewayPort);
   return true;
 }

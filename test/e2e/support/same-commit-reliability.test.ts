@@ -84,16 +84,12 @@ function controllerRun(id: number, overrides: Record<string, unknown> = {}) {
 
 describe("same-commit reliability reporter entrypoint", () => {
   it("loads with the raw Node strip-types runtime used by CI", () => {
-    const result = spawnSync(
-      process.execPath,
-      ["--experimental-strip-types", "--no-warnings", REPORTER_PATH],
-      {
-        encoding: "utf8",
-        env: { ...process.env, GITHUB_TOKEN: "", SOURCE_RUN_ID: "" },
-        killSignal: "SIGKILL",
-        timeout: 20_000,
-      },
-    );
+    const result = spawnSync(process.execPath, ["--no-warnings", REPORTER_PATH], {
+      encoding: "utf8",
+      env: { ...process.env, GITHUB_TOKEN: "", SOURCE_RUN_ID: "" },
+      killSignal: "SIGKILL",
+      timeout: 20_000,
+    });
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("GITHUB_TOKEN is required");
@@ -455,11 +451,11 @@ describe("same-commit E2E reliability", () => {
           'E2E_TERMINAL_CLASSIFICATION {"v":1,"classification":"timeout","reason":"phase timed out"}\n',
       },
       {
-        name: "e2e-artifacts/live/example/retry/provider.json",
+        name: "e2e-artifacts/live/pi-agent-qualification-amd64/retry/pi-after-rebuild-provider-retry.json",
         contents: JSON.stringify({
           schemaVersion: 1,
-          operation: "provider.readiness",
-          owner: "provider",
+          operation: "pi-agent-qualification.read-after-rebuild",
+          owner: "inference-provider",
           idempotence: "read-only",
           maxAttempts: 2,
           outcome: "exhausted",

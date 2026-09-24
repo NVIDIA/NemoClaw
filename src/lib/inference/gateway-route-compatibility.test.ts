@@ -9,7 +9,6 @@ import {
   formatGatewayRouteImpactWarning,
   type GatewayInferenceRoute,
   isAdvisoryGatewayRouteConflict,
-  isAdvisoryProviderModelRouteConflict,
   preflightGatewayRouteDiscovery,
 } from "./gateway-route-compatibility";
 
@@ -116,6 +115,48 @@ describe("shared gateway inference route compatibility", () => {
       conflicts: [{ sandboxName: "reserved-peer", reason: "provider-model" }],
     });
   });
+
+  it.each([
+    {
+      label: "providerless",
+      peers: [
+        sandbox("create-only", {
+          provider: null,
+          model: null,
+          pendingRouteReservation: true,
+        }),
+      ],
+      requiredModel: null,
+    },
+    {
+      label: "complete",
+      peers: [sandbox("reserved-peer", { pendingRouteReservation: true })],
+      requiredModel: "nvidia/model-a",
+    },
+    {
+      label: "mixed providerless and complete",
+      peers: [
+        sandbox("create-only", {
+          provider: null,
+          model: null,
+          pendingRouteReservation: true,
+        }),
+        sandbox("reserved-peer", { pendingRouteReservation: true }),
+      ],
+      requiredModel: "nvidia/model-a",
+    },
+  ])(
+    "handles $label create reservations consistently in discovery and compatibility",
+    ({ peers, requiredModel }) => {
+      expect(discover(discoveryRoute("nvidia-prod"), peers)).toEqual({
+        ok: true,
+        requiredModel,
+        requiredEndpointUrl: null,
+        requiredInferenceApi: null,
+      });
+      expect(check(route("nvidia-prod", "nvidia/model-a"), peers)).toEqual({ ok: true });
+    },
+  );
 
   it("constrains custom discovery to the durable endpoint and API family (#6315)", () => {
     expect(
@@ -232,13 +273,16 @@ describe("shared gateway inference route compatibility", () => {
     expect(isAdvisoryGatewayRouteConflict(result as Exclude<typeof result, { ok: true }>)).toBe(
       true,
     );
-    expect(
-      isAdvisoryProviderModelRouteConflict(result as Exclude<typeof result, { ok: true }>),
-    ).toBe(true);
     const warning = formatGatewayRouteImpactWarning(result as Exclude<typeof result, { ok: true }>);
     expect(warning).toContain("will re-point the one shared inference route");
     expect(warning).toContain("'stopped-peer' (nvidia-prod / nvidia/model-a)");
     expect(warning).toContain("not per sandbox");
+    expect(
+      formatGatewayRouteImpactWarning(
+        result as Exclude<typeof result, { ok: true }>,
+        "inference-set",
+      ),
+    ).toContain("Changing inference for 'target'");
   });
 
   it("allows different routes on different gateways (#6315)", () => {
@@ -374,9 +418,6 @@ describe("shared gateway inference route compatibility", () => {
     expect(isAdvisoryGatewayRouteConflict(result as Exclude<typeof result, { ok: true }>)).toBe(
       false,
     );
-    expect(
-      isAdvisoryProviderModelRouteConflict(result as Exclude<typeof result, { ok: true }>),
-    ).toBe(false);
   });
 
   it("does not let a model difference hide a custom endpoint conflict (#6315)", () => {
@@ -399,47 +440,47 @@ describe("shared gateway inference route compatibility", () => {
       ok: false,
       conflicts: [{ sandboxName: "custom-peer", reason: "custom-endpoint" }],
     });
-    expect(
-      isAdvisoryProviderModelRouteConflict(result as Exclude<typeof result, { ok: true }>),
-    ).toBe(false);
   });
 
   it.each([
     ["endpoint", null, "openai-completions"],
     ["API family", "https://example.test/v1", null],
-  ] as const)("fails closed when legacy custom route %s metadata is missing (#6315)", (_label, endpointUrl, preferredInferenceApi) => {
-    const result = check(
-      route("compatible-endpoint", "custom/model", {
-        endpointUrl: "https://example.test/v1",
-        preferredInferenceApi: "openai-completions",
-      }),
-      [
-        sandbox("legacy-custom", {
-          provider: "compatible-endpoint",
-          model: "custom/model",
-          endpointUrl,
-          preferredInferenceApi,
+  ] as const)(
+    "fails closed when legacy custom route %s metadata is missing (#6315)",
+    (_label, endpointUrl, preferredInferenceApi) => {
+      const result = check(
+        route("compatible-endpoint", "custom/model", {
+          endpointUrl: "https://example.test/v1",
+          preferredInferenceApi: "openai-completions",
         }),
-      ],
-    );
+        [
+          sandbox("legacy-custom", {
+            provider: "compatible-endpoint",
+            model: "custom/model",
+            endpointUrl,
+            preferredInferenceApi,
+          }),
+        ],
+      );
 
-    expect(result).toMatchObject({
-      ok: false,
-      conflicts: [
-        {
-          sandboxName: "legacy-custom",
-          reason: "incomplete-custom-route",
-          scope: "registered",
-        },
-      ],
-    });
-    expect(formatGatewayRouteConflict(result as Exclude<typeof result, { ok: true }>)).toContain(
-      "remove and re-onboard that sandbox with complete custom-route metadata",
-    );
-    expect(isAdvisoryGatewayRouteConflict(result as Exclude<typeof result, { ok: true }>)).toBe(
-      false,
-    );
-  });
+      expect(result).toMatchObject({
+        ok: false,
+        conflicts: [
+          {
+            sandboxName: "legacy-custom",
+            reason: "incomplete-custom-route",
+            scope: "registered",
+          },
+        ],
+      });
+      expect(formatGatewayRouteConflict(result as Exclude<typeof result, { ok: true }>)).toContain(
+        "remove and re-onboard that sandbox with complete custom-route metadata",
+      );
+      expect(isAdvisoryGatewayRouteConflict(result as Exclude<typeof result, { ok: true }>)).toBe(
+        false,
+      );
+    },
+  );
 
   it("fails closed when a different provider encounters an incomplete custom peer (#6315)", () => {
     const result = check(route("anthropic-prod", "claude-new"), [
@@ -497,25 +538,28 @@ describe("shared gateway inference route compatibility", () => {
     ["provider and model", null, null],
     ["model", "nvidia-prod", null],
     ["provider", null, "nvidia/model-a"],
-  ] as const)("fails closed when a same-gateway registry row lacks %s metadata (#6315)", (_missing, provider, model) => {
-    const result = check(route("nvidia-prod", "nvidia/model-a"), [
-      sandbox("recovered-live", { provider, model }),
-    ]);
+  ] as const)(
+    "fails closed when a same-gateway registry row lacks %s metadata (#6315)",
+    (_missing, provider, model) => {
+      const result = check(route("nvidia-prod", "nvidia/model-a"), [
+        sandbox("recovered-live", { provider, model }),
+      ]);
 
-    expect(result).toMatchObject({
-      ok: false,
-      conflicts: [
-        {
-          sandboxName: "recovered-live",
-          reason: "incomplete-route",
-          scope: "registered",
-        },
-      ],
-    });
-    expect(formatGatewayRouteConflict(result as Exclude<typeof result, { ok: true }>)).toContain(
-      "lacks durable provider or model metadata",
-    );
-  });
+      expect(result).toMatchObject({
+        ok: false,
+        conflicts: [
+          {
+            sandboxName: "recovered-live",
+            reason: "incomplete-route",
+            scope: "registered",
+          },
+        ],
+      });
+      expect(formatGatewayRouteConflict(result as Exclude<typeof result, { ok: true }>)).toContain(
+        "lacks durable provider or model metadata",
+      );
+    },
+  );
 
   it("fails closed when a registry row has an invalid gateway binding (#6315)", () => {
     const result = check(route("nvidia-prod", "nvidia/model-a"), [

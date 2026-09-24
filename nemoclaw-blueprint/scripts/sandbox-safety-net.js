@@ -64,19 +64,9 @@
 
   // KNOWN-BENIGN ERROR PATTERNS
   //
-  // ciao / @homebridge/ciao — mDNS service-discovery library used by the
-  // OpenClaw bonjour plugin (introduced in 2026.4.15). Sandboxes have
-  // restricted network namespaces with no multicast. Two failure modes:
-  //   - sync: os.networkInterfaces() throws ERR_SYSTEM_ERROR
-  //     uv_interface_addresses. Pre-empted by ciao-network-guard.js,
-  //     which monkey-patches os.networkInterfaces() to return {}.
-  //   - async: the probe state machine cancels itself during gateway
-  //     startup/reload and emits "CIAO PROBING CANCELLED" as an unhandled
-  //     rejection. This is the path we catch here.
-  // Upstream fix: bonjour is disabled via plugins.entries.bonjour.enabled
-  // = false in the sandbox openclaw.json. This pattern is a backstop in
-  // case the disable is bypassed or a future release introduces another
-  // mDNS code path.
+  // Bonjour is disabled via plugins.entries.bonjour.enabled = false.
+  // This retained backstop logs its probe cancellations and interface
+  // discovery errors if that setting is bypassed or another mDNS path appears.
   function classifyBenignRejection(reason) {
     if (!reason) return null;
     var msg = String((reason && reason.message) || reason);
@@ -95,11 +85,7 @@
   }
 
   process.on('uncaughtException', function (err, origin) {
-    // Sync error paths are pre-empted by the targeted guards
-    // (ciao-network-guard.js, slack-channel-guard.js when Slack is
-    // configured). If we get here it's an error those guards didn't
-    // recognize. Log full stack and stay alive — registering this
-    // listener is what tells Node "don't crash on uncaughtException".
+    // Log the full stack and stay alive for unmatched gateway errors.
     try {
       process.stderr.write(
         '[sandbox-safety-net] uncaughtException [unhandled by upstream guards \u2014 please diagnose]: ' +

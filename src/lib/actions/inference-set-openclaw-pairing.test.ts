@@ -171,7 +171,7 @@ describe("settleInferenceSetOpenClawPairing", () => {
     expect(deps.approveScopeRequest).toHaveBeenCalledOnce();
   });
 
-  it("fails closed when required convergence has no pairing target (#9527)", () => {
+  it("fails closed when required convergence has no pairing target (#9527)", async () => {
     const appendAuditEntry = vi.fn();
     const log = vi.fn();
     const settleOpenClawPairing = vi.fn(() => ({ ok: true }) as const);
@@ -179,8 +179,6 @@ describe("settleInferenceSetOpenClawPairing", () => {
       {
         agentName: "openclaw",
         configChanged: true,
-        nextApi: "openai-completions",
-        previousApi: "openai-completions",
         result: {
           sandboxName: "alpha",
           provider: "nvidia-prod",
@@ -192,12 +190,12 @@ describe("settleInferenceSetOpenClawPairing", () => {
       { appendAuditEntry, log },
     );
 
-    expect(() =>
+    await expect(
       completeInferencePostCommit(mutation, {
         appendAuditEntry,
         log,
         restartSandboxGateway: vi.fn(
-          () =>
+          async () =>
             ({
               ok: true,
               restarted: true,
@@ -207,14 +205,15 @@ describe("settleInferenceSetOpenClawPairing", () => {
         ),
         settleOpenClawPairing,
       }),
-    ).toThrow("OpenClaw gateway pairing did not converge (pairing-target-unavailable)");
+    ).rejects.toThrow("OpenClaw gateway pairing did not converge (pairing-target-unavailable)");
     expect(settleOpenClawPairing).not.toHaveBeenCalled();
     expect(log.mock.calls.flat().join("\n")).not.toContain("Inference route synced");
     expect(appendAuditEntry).toHaveBeenCalledWith(
       expect.objectContaining({
         action: "inference_set",
         sandbox: "alpha",
-        reason: "inference set openclaw:nvidia-prod:nvidia/model-b (pairing convergence pending)",
+        reason:
+          "inference set openclaw:nvidia-prod:nvidia/model-b (gateway restart and pairing convergence pending)",
       }),
     );
     expect(JSON.stringify(appendAuditEntry.mock.calls)).not.toContain("credential=");

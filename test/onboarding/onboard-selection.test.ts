@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -61,17 +60,14 @@ import { onboardChildRuntimeSource } from "../helpers/onboard-child-runtime.js";
 import { testTimeout } from "../helpers/timeouts";
 import {
   createWindowsHostOllamaRunCapture,
-  requireFailedProviderResolution,
   requirePresent,
   requireSelectedProviderResolution,
   restoreProcessEnvValue,
   runOllamaPullScenario,
 } from "../support/onboard-selection-test-helpers.js";
 
-const CREDENTIAL_RETRY_PROMPT =
-  "  Options: retry (re-enter key), back (change provider), exit [retry]: ";
-const CREDENTIAL_RETRY_PROMPT_RE =
-  /Options: retry \(re-enter key\), back \(change provider\), exit \[retry\]: /;
+const CREDENTIAL_RETRY_PROMPT = "  Options: retry, back, exit [retry]: ";
+const CREDENTIAL_RETRY_PROMPT_RE = /Options: retry, back, exit \[retry\]: /;
 const OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE =
   '{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"type":"function","function":{"name":"emit_ok","arguments":"{\\"ok\\":true}"}}]}}]}';
 const PROVIDER_SELECTION_TEST_TIMEOUT_MS = testTimeout(60_000);
@@ -357,6 +353,7 @@ function makeRemoteModelValidatorDeps(
 function makeInteractiveValidationRecovery() {
   return createValidationRecoveryPromptHelpers({
     isNonInteractive: () => false,
+    isSecretPromptAvailable: () => true,
     prompt: async () => "",
     validateNvidiaApiKeyValue: () => null,
     getTransportRecoveryMessage: () => "  Validation hit a network or transport error.",
@@ -916,6 +913,7 @@ async function runCredentialRetryScenario(scenario: CredentialRetryScenario) {
   };
   const recovery = createValidationRecoveryPromptHelpers({
     isNonInteractive: () => false,
+    isSecretPromptAvailable: () => true,
     prompt,
     validateNvidiaApiKeyValue: (value, credentialEnv) =>
       credentialEnv === "NVIDIA_INFERENCE_API_KEY" && !value.startsWith("nvapi-")
@@ -1034,8 +1032,8 @@ describe("onboard provider selection UX", { timeout: PROVIDER_SELECTION_TEST_TIM
     assert.doesNotMatch(buildOption?.label || "", /recommended/i);
   });
 
-  it("filters retired Kimi K2.6 from the NVIDIA Endpoints featured model list", async () => {
-    const answers = ["3"];
+  it("filters retired routes from the NVIDIA Endpoints featured model list (#11364)", async () => {
+    const answers = ["2"];
     const messages: string[] = [];
     const lines: string[] = [];
     const model = await promptCloudModel({
@@ -1083,17 +1081,16 @@ describe("onboard provider selection UX", { timeout: PROVIDER_SELECTION_TEST_TIM
       }),
     );
 
-    assert.equal(model, "minimaxai/minimax-m3");
+    assert.equal(model, "nvidia/nemotron-3-super-120b-a12b");
     assert.equal(validated.result, "selected");
     assert.equal(state.provider, "nvidia-prod");
     assert.equal(state.preferredInferenceApi, "openai-completions");
     assert.match(messages[0], /Choose model \[2\]/);
-    assert.ok(!lines.some((line) => line.includes("Kimi K2.6")));
-    assert.ok(!lines.some((line) => line.includes("GLM 5.1")));
+    assert.ok(!lines.some((line) => /Kimi K2\.6|GLM 5\.1|Minimax M3/.test(line)));
     assert.ok(validated.lines.some((line) => line.includes("Chat Completions API available")));
     expect(probeOpenAiLikeEndpoint).toHaveBeenCalledWith(
       "https://integrate.api.nvidia.com/v1",
-      "minimaxai/minimax-m3",
+      "nvidia/nemotron-3-super-120b-a12b",
       "nvapi-test",
       expect.any(Object),
     );
@@ -3012,7 +3009,7 @@ reportChildScenario(async () => {
     try {
       const { result, lines } = await captureConsoleOutput(async () => {
         try {
-          resolveNonInteractiveBuildCredential({
+          await resolveNonInteractiveBuildCredential({
             provider: "nvidia-prod",
             helpUrl: "https://build.nvidia.com/settings/api-keys",
             recoveredFromSandbox: false,
@@ -3059,7 +3056,7 @@ reportChildScenario(async () => {
     try {
       const { result, lines } = await captureConsoleOutput(async () => {
         try {
-          resolveNonInteractiveBuildCredential({
+          await resolveNonInteractiveBuildCredential({
             provider: "nvidia-prod",
             helpUrl: "https://build.nvidia.com/settings/api-keys",
             recoveredFromSandbox: false,
@@ -3127,7 +3124,7 @@ done
 if echo "$auth" | grep -q 'nvapi-good' && echo "$url" | grep -q '/responses$'; then
   body='{"id":"resp_123"}'
   status="200"
-elif echo "$auth" | grep -q 'nvapi-good' && echo "$url" | grep -q '/chat/completions$' && echo "$data" | grep -q '"temperature":1' && echo "$data" | grep -q '"top_p":0.95' && echo "$data" | grep -q '"enable_thinking":false'; then
+elif echo "$auth" | grep -q 'nvapi-good' && echo "$url" | grep -q '/chat/completions$' && echo "$data" | grep -q '"temperature":1' && echo "$data" | grep -q '"top_p":0.95' && echo "$data" | grep -q '"reasoning_effort":"none"'; then
   body='{"id":"chatcmpl-123"}'
   status="200"
 fi
@@ -3144,7 +3141,7 @@ const runner = require(${runnerPath});
 
 const { messages, prompts } = installPromptQueue(credentials, ["", "", "retry", "nvapi-good"]);
 runner.runCapture = () => "";
-
+[process.stdin, process.stderr].forEach((stream) => Object.assign(stream, { isTTY: true }));
 const { setupNim } = require(${onboardPath});
 
 reportChildScenario(async () => {
@@ -3278,7 +3275,7 @@ const runner = require(${runnerPath});
 
 const { messages } = installPromptQueue(credentials, ["4", "https://proxy.example.com/v1/chat/completions", "custom-model", "retry", "proxy-good", "custom-model"]);
 runner.runCapture = () => "";
-
+[process.stdin, process.stderr].forEach((stream) => Object.assign(stream, { isTTY: true }));
 const { setupNim } = require(${onboardPath});
 
 reportChildScenario(async () => {
@@ -4081,8 +4078,12 @@ if (args[0] === "inference" && args[1] === "set") {
   fs.writeFileSync(stateFile, JSON.stringify(state));
   process.exit(0);
 }
+if (args[0] === "inference" && args[1] === "get") {
+  process.stdout.write("Gateway inference:\\n  Provider: compatible-endpoint\\n  Model: qwen3.6:35b\\n");
+  process.exit(0);
+}
 if (args[0] === "provider" && args[1] === "profile" && args.includes("export")) { process.stdout.write(JSON.stringify({ id: "openai", credentials: [], endpoints: [], binaries: [], inference_capable: true })); process.exit(0); }
-if (args[0] === "provider" && args[1] === "get") { process.exit(1); } // Force provider creation.
+if (args[0] === "provider" && args[1] === "get") { process.stderr.write("provider 'compatible-endpoint' not found"); process.exit(1); } // Force provider creation.
 process.exit(0);
 `,
       { mode: 0o755 },
@@ -4090,15 +4091,6 @@ process.exit(0);
 
     const script = String.raw`
 ${onboardChildRuntimeSource}
-const runner = require(${runnerPath});
-// Mock runCapture before onboard.js is required so the destructured reference picks up the mock.
-runner.runCapture = (cmd) => {
-  const args = Array.isArray(cmd) ? cmd : [];
-  if (args[1] === "inference" && args[2] === "get") {
-    return "Gateway inference:\n  Provider: compatible-endpoint\n  Model: qwen3.6:35b\n";
-  }
-  return "";
-};
 process.env.COMPATIBLE_API_KEY = "test-key";
 const { setupInference } = require(${onboardPath});
 (async () => {

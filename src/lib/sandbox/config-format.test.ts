@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
 const { parseConfig, serializeConfig } =
@@ -38,6 +39,32 @@ describe("sandbox config formats", () => {
       model: { id: "nemotron" },
     });
   });
+
+  it.each(["values = [1 #", "value = { nested = 1 #"])(
+    "rejects an unfinished TOML structure ending in a comment: %s",
+    (source) => {
+      // Bound the child process because a parser regression can block the event loop.
+      const result = spawnSync(
+        process.execPath,
+        [
+          "--require",
+          require.resolve("tsx/cjs"),
+          "--eval",
+          `const assert = require("node:assert/strict");
+           const { parseConfig } = require(process.argv[1]);
+           assert.throws(() => parseConfig(process.argv[2], "toml"), {
+             message: "Invalid TOML configuration syntax.",
+           });`,
+          require.resolve("./config-format"),
+          source,
+        ],
+        { encoding: "utf8", timeout: 2000, killSignal: "SIGKILL" },
+      );
+
+      expect(result.error).toBeUndefined();
+      expect(result.status, result.stderr).toBe(0);
+    },
+  );
 
   it("rejects excessive TOML nesting with a generic source-safe error", () => {
     const secret = "credential-canary-must-not-escape";

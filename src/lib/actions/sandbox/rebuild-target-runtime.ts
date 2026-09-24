@@ -144,22 +144,6 @@ export async function preflightRebuildTargetRuntime(
     );
     return { ok: false };
   }
-  if (webSearchProvider) {
-    const credentialEnv = webSearchEnvFor(webSearchProvider);
-    const collidingBridge = Object.values(sb.mcp?.bridges ?? {}).find((entry) =>
-      entry.env.includes(credentialEnv),
-    );
-    if (collidingBridge) {
-      printRebuildPreflightFailure(
-        `the recorded ${webSearchLabelFor(webSearchProvider)} credential is also owned by MCP server '${collidingBridge.server}'.`,
-        `Use a distinct credential name; ${credentialEnv} cannot be shared across managed providers.`,
-        "Web Search and MCP credential ownership conflict",
-        bail,
-      );
-      return { ok: false };
-    }
-  }
-
   const managesDashboard = shouldManageDashboardForAgent(target.agentDefinition);
   const gpuEnv = { ...process.env };
   delete gpuEnv.NEMOCLAW_SANDBOX_GPU;
@@ -251,7 +235,7 @@ export async function preflightRebuildTargetRuntime(
     // rows may recover provider/model from their own matching onboard session;
     // checking the raw row first would miss that remote credential requirement.
     if (
-      !preflightRebuildCredentials(
+      !(await preflightRebuildCredentials(
         {
           ...sb,
           provider: target.resumeConfig.provider,
@@ -268,7 +252,7 @@ export async function preflightRebuildTargetRuntime(
             requiresGatewayProviderReconfigure = true;
           },
         },
-      )
+      ))
     ) {
       return { ok: false };
     }

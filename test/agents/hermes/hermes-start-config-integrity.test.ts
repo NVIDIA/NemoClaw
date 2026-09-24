@@ -22,7 +22,7 @@ function extractShellFunctionFromSource(src: string, name: string): string {
   return `${name}() {${match?.[1] ?? ""}\n}`;
 }
 
-function runHermesConfigIntegrityVerifierAsRoot(inspectStatus: 0 | 1) {
+function runHermesConfigIntegrityVerifierAsRoot() {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-integrity-"));
   const scriptPath = path.join(tmpDir, "run.sh");
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
@@ -37,7 +37,6 @@ function runHermesConfigIntegrityVerifierAsRoot(inspectStatus: 0 | 1) {
       "set -euo pipefail",
       'id() { if [ "${1:-}" = "-u" ]; then printf "0\\n"; else command id "$@"; fi; }',
       'verify_config_integrity() { printf "verify:%s:%s:stepped=%s\\n" "$1" "$2" "${NEMOCLAW_TEST_STEPPED_DOWN:-0}"; }',
-      `inspect_hermes_mcp_integrity() { return ${inspectStatus}; }`,
       extractShellFunctionFromSource(src, "verify_hermes_config_integrity"),
       `HERMES_DIR=${shellQuote(hermesHome)}`,
       `HERMES_HASH_FILE=${shellQuote(hashFile)}`,
@@ -137,19 +136,11 @@ function runHermesDashboardHomePrepAsRoot() {
 
 describe("agents/hermes/start.sh config integrity", () => {
   it("verifies the strict Hermes hash through the sandbox identity in root mode", () => {
-    const result = runHermesConfigIntegrityVerifierAsRoot(0);
+    const result = runHermesConfigIntegrityVerifierAsRoot();
     expect(result.status).toBe(0);
     expect(result.stderr).toBe("");
     expect(result.stdout).toMatch(/:stepped=1$/m);
     expect(result.stdout).toContain("result=success failure-code=internal");
-  });
-
-  it("classifies failed MCP integrity inspection as an MCP restart failure", () => {
-    const result = runHermesConfigIntegrityVerifierAsRoot(1);
-    expect(result.status).toBe(0);
-    expect(result.stderr).toBe("");
-    expect(result.stdout).toMatch(/:stepped=1$/m);
-    expect(result.stdout).toContain("result=failure failure-code=mcp-integrity");
   });
 
   it(

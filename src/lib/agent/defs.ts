@@ -37,6 +37,7 @@ import {
   loadManifestRecord,
   readBoolean,
   readDashboard,
+  readDeferredOnboarding,
   readHealthProbe,
   readInference,
   readMcpCapability,
@@ -49,9 +50,13 @@ import {
   readUserManagedFiles,
   readVersionScheme,
 } from "./manifest-readers";
-import { type AgentRuntime, readAgentRuntime } from "./runtime-manifest";
+import { readAgentRuntime } from "./runtime-manifest";
 import { type AgentSkillIntegration, readAgentSkillIntegration } from "./skill-integration";
-import { readStateDirectories, stateDirectoryPaths, stateDirectoryPrefixes } from "./state-directory-contract";
+import {
+  readStateDirectories,
+  stateDirectoryPaths,
+  stateDirectoryPrefixes,
+} from "./state-directory-contract";
 import { type AgentWebAuth, readWebAuth } from "./web-auth";
 
 export type {
@@ -119,7 +124,9 @@ export function listAgents(env: NodeJS.ProcessEnv = process.env): string[] {
         .readdirSync(AGENTS_DIR, { withFileTypes: true })
         .filter((entry) => entry.isDirectory())
         .filter((entry) => entry.name !== "nemocua" || isCuaEnabled(env))
-        .filter((entry) => !isCandidateAgent(entry.name) || isCandidateAgentSelectable(entry.name, env))
+        .filter(
+          (entry) => !isCandidateAgent(entry.name) || isCandidateAgentSelectable(entry.name, env),
+        )
         .filter((entry) => fs.existsSync(path.join(AGENTS_DIR, entry.name, "manifest.yaml")))
         .map((entry) => entry.name)
     : [];
@@ -192,6 +199,7 @@ export function loadAgent(name: string, env: NodeJS.ProcessEnv = process.env): A
   const phoneHomeHosts = readStringArray(raw, "phone_home_hosts");
   const legacyPathConfig = readStringMap(raw, "_legacy_paths");
   const dashboardUi = readDashboardUi(raw);
+  const deferredOnboarding = readDeferredOnboarding(raw);
 
   const agent: AgentDefinition = {
     ...raw,
@@ -209,6 +217,7 @@ export function loadAgent(name: string, env: NodeJS.ProcessEnv = process.env): A
     forward_ports: forwardPorts,
     health_probe: healthProbe,
     config,
+    deferred_onboarding: deferredOnboarding,
     inference,
     mcp,
     state_files: stateFiles,

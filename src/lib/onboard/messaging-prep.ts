@@ -4,7 +4,7 @@
 import type { WebSearchConfig } from "../inference/web-search";
 import * as webSearch from "../inference/web-search";
 import { listMessagingCredentialMetadata } from "../messaging/channels";
-import { HERMES_TAVILY_PROVIDER_PROFILE_ID } from "../messaging/applier/web-search-provider-profile";
+import { webSearchProviderProfileId } from "../messaging/applier/web-search-provider-profile";
 import { MESSAGING_CREDENTIAL_PROVIDER_TYPE } from "../messaging/provider-profile";
 import { type ChannelDef, getChannelTokenKeys } from "../sandbox/channels";
 import type { ExtraPlaceholderCredentialSources } from "./extra-placeholder-keys";
@@ -58,8 +58,12 @@ export interface CreateSandboxMessagingPrepInput {
     sources?: ExtraPlaceholderCredentialSources,
   ): string[];
   getMessagingChannelForEnvKey(envKey: string): string | null;
-  providerExistsInGateway(name: string): boolean;
-  providerMatchesGatewayCredential(name: string, type: string, credentialEnv: string): boolean;
+  providerExistsInGateway(name: string): boolean | Promise<boolean>;
+  providerMatchesGatewayCredential(
+    name: string,
+    type: string,
+    credentialEnv: string,
+  ): boolean | Promise<boolean>;
 }
 
 export interface CreateSandboxMessagingPrepResult {
@@ -74,9 +78,9 @@ export interface CreateSandboxMessagingPrepResult {
   missingWebSearchCredentialEnv: string | null;
 }
 
-export function prepareCreateSandboxMessaging(
+export async function prepareCreateSandboxMessaging(
   input: CreateSandboxMessagingPrepInput,
-): CreateSandboxMessagingPrepResult {
+): Promise<CreateSandboxMessagingPrepResult> {
   const requiresExactOpenClawProviderBinding =
     input.requireExactProviderBinding === true &&
     (!input.agentName || input.agentName.trim().toLowerCase() === "openclaw");
@@ -128,10 +132,7 @@ export function prepareCreateSandboxMessaging(
   const webSearchEnabled = webSearch.isWebSearchEnabled(input.webSearchConfig);
   const webSearchProvider = webSearch.webSearchProviderForConfig(input.webSearchConfig);
   const webSearchCredentialEnv = webSearch.webSearchEnvFor(webSearchProvider);
-  const webSearchProviderType =
-    webSearchProvider === "tavily" && input.agentName?.trim().toLowerCase() === "hermes"
-      ? HERMES_TAVILY_PROVIDER_PROFILE_ID
-      : webSearchProvider;
+  const webSearchProviderType = webSearchProviderProfileId(webSearchProvider, input.agentName);
   const webSearchProviderName = `${input.sandboxName}-${webSearchProvider}-search`;
   const webSearchApiKey = webSearchEnabled
     ? input.getCredential(webSearchCredentialEnv) ||
@@ -142,11 +143,11 @@ export function prepareCreateSandboxMessaging(
     requiresExactOpenClawProviderBinding &&
     webSearchEnabled &&
     !webSearchApiKey &&
-    input.providerMatchesGatewayCredential(
+    (await input.providerMatchesGatewayCredential(
       webSearchProviderName,
       webSearchProviderType,
       webSearchCredentialEnv,
-    );
+    ));
   const missingWebSearchCredentialEnv =
     webSearchEnabled && !webSearchApiKey && !reusableWebSearchProvider
       ? webSearchCredentialEnv
@@ -235,10 +236,10 @@ export function prepareCreateSandboxMessaging(
       // provider already holding that authority.
       if (token && !channelDisabled) continue;
       const providerReusable = providerType
-        ? input.providerMatchesGatewayCredential(name, providerType, envKey)
+        ? await input.providerMatchesGatewayCredential(name, providerType, envKey)
         : requiresExactOpenClawProviderBinding
-          ? input.providerMatchesGatewayCredential(name, "generic", envKey)
-          : input.providerExistsInGateway(name);
+          ? await input.providerMatchesGatewayCredential(name, "generic", envKey)
+          : await input.providerExistsInGateway(name);
       if (!providerReusable) continue;
       reusableMessagingProviders.push(name);
       if (!channelDisabled && !reusableMessagingChannels.includes(channel)) {
@@ -261,7 +262,13 @@ export function prepareCreateSandboxMessaging(
       for (const name of bridgeProviderNamesForChannel(input.sandboxName, channel, [profile])) {
         if (messagingTokenDefs.some((def) => def.name === name && def.token)) continue;
         if (reusableMessagingProviders.includes(name)) continue;
-        if (!input.providerMatchesGatewayCredential(name, profile.profileId, profile.credentialKey))
+        if (
+          !(await input.providerMatchesGatewayCredential(
+            name,
+            profile.profileId,
+            profile.credentialKey,
+          ))
+        )
           continue;
         reusableMessagingProviders.push(name);
         if (!reusableMessagingChannels.includes(channel)) {

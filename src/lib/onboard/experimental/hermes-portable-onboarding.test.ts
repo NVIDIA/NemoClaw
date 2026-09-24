@@ -25,9 +25,8 @@ import {
   createHermesPortableOpenShellCapture,
   createHermesPortableReadyCapture,
   observeHermesPortableSandbox,
-  rewriteHermesPortableCreatePolicyArgv,
+  rewriteHermesPortableCreatePolicyRequest,
   runHermesPortableOnboardingTransaction,
-  scopeHermesPortableCreateGatewayArgv,
   shouldManageHermesPortableDashboard,
   type HermesPortableOnboardingInput,
 } from "./hermes-portable-onboarding";
@@ -39,8 +38,6 @@ import {
   hermesPortableReservationForOnboarding,
   hermesPortableTestOpenShellAuthority as openshellExecutableAuthority,
   hermesPortableTestPodmanAuthority as podmanExecutableAuthority,
-  createHermesPortableContainerInspectResult,
-  unexpectedHermesPortablePodmanArgs as unexpectedPodmanArgs,
   type HermesPortableTransactionFixtureOptions,
 } from "../../../../test/helpers/hermes-portable-onboarding-fixture";
 
@@ -291,13 +288,9 @@ describe("Hermes portable onboarding transaction", () => {
     expect(spawn).not.toHaveBeenCalled();
   });
 
-  it("adds exactly one create gateway and rejects existing gateway selection (#9203)", () => {
+  it("carries one typed create gateway authority (#9203)", () => {
     const current = input();
-    const unscoped = current.createArgv.filter((value) => !["-g", "nemoclaw"].includes(value));
-    expect(scopeHermesPortableCreateGatewayArgv(unscoped, "nemoclaw")).toEqual(current.createArgv);
-    expect(() => scopeHermesPortableCreateGatewayArgv(current.createArgv, "nemoclaw")).toThrow(
-      "already contains gateway selection authority",
-    );
+    expect(current.createRequest.target).toEqual({ kind: "named", gatewayName: "nemoclaw" });
   });
 
   it("does not enroll dashboard/TUI forward authority for schema-7 Hermes (#9203)", () => {
@@ -545,17 +538,14 @@ describe("Hermes portable onboarding transaction", () => {
 
   it("accepts selected GPU CDI devices in the portable create intent", async () => {
     const current = input();
-    const separator = current.createArgv.indexOf("--");
-    current.createArgv.splice(
-      separator,
-      0,
-      "--driver-config-json",
-      JSON.stringify({
+    current.createRequest = {
+      ...current.createRequest,
+      driverConfigJson: JSON.stringify({
         docker: { cdi_devices: ["nvidia.com/gpu=0"] },
         podman: { cdi_devices: ["nvidia.com/gpu=0"] },
       }),
-      "--gpu",
-    );
+      gpu: {},
+    };
     const fixture = createHermesPortableTransactionFixture(current);
 
     const completed = await runHermesPortableOnboardingTransaction(current, fixture.value);
@@ -615,9 +605,9 @@ describe("Hermes portable onboarding transaction", () => {
   });
 
   it("resumes identical pending authority with effects without a duplicate create (#9203)", async () => {
-    const first = deps({ updateFails: true });
+    const first = deps({ cleanupFails: true });
     await expect(runHermesPortableOnboardingTransaction(input(), first.value)).rejects.toThrow(
-      "restart-policy update failed",
+      "temporary policy cleanup did not complete",
     );
     fs.writeFileSync(policyPath, POLICY, { mode: 0o600 });
     const second = deps({ existingSandbox: true });
@@ -679,7 +669,7 @@ network_policies:
     expect(JSON.parse(pendingBytes).createIntentSha256).toMatch(/^[a-f0-9]{64}$/u);
     expect(pendingBytes).not.toContain("ghcr.io/nvidia/nemoclaw/hermes");
     const changed = input();
-    changed.createArgv.splice(changed.createArgv.indexOf("--"), 0, "--gpu");
+    changed.createRequest = { ...changed.createRequest, gpu: {} };
     const second = deps();
 
     await expect(runHermesPortableOnboardingTransaction(changed, second.value)).rejects.toThrow(
@@ -734,7 +724,13 @@ network_policies:
       "temporary policy cleanup did not complete",
     );
     const changed = input();
-    changed.createArgv[0] = "/other/openshell";
+    changed.openshellExecutableAuthority = {
+      ...changed.openshellExecutableAuthority,
+      executable: {
+        ...changed.openshellExecutableAuthority.executable,
+        executablePath: "/other/openshell",
+      },
+    };
     const second = deps();
 
     await expect(runHermesPortableOnboardingTransaction(changed, second.value)).rejects.toThrow(
@@ -840,7 +836,10 @@ network_policies:
     );
     const changed = input();
     changed.gatewayName = "other-gateway";
-    changed.createArgv[changed.createArgv.indexOf("-g") + 1] = "other-gateway";
+    changed.createRequest = {
+      ...changed.createRequest,
+      target: { kind: "named", gatewayName: "other-gateway" },
+    };
     const second = deps({ registryEntry: reservationForOnboarding(changed) });
 
     await expect(runHermesPortableOnboardingTransaction(changed, second.value)).rejects.toThrow(
@@ -849,16 +848,17 @@ network_policies:
     expect(second.events).not.toContain("create");
   });
 
-  it("rejects credential-bearing create env before durable reservation (#9203)", async () => {
+  it("keeps credential-bearing create environment out of durable authority (#9203)", async () => {
     const current = input();
-    current.createArgv.splice(current.createArgv.indexOf("--"), 0, "--env", "API_KEY=do-not-log");
+    current.createRequest = {
+      ...current.createRequest,
+      environment: { API_KEY: "do-not-log" },
+    };
     const fixture = deps();
 
-    await expect(runHermesPortableOnboardingTransaction(current, fixture.value)).rejects.toThrow(
-      "unsupported effect-bearing option",
-    );
-    expect(fs.existsSync(hermesPortableReceiptDirectory("alpha", stateDir))).toBe(false);
-    expect(fixture.events).not.toContain("create");
+    const completed = await runHermesPortableOnboardingTransaction(current, fixture.value);
+    expect(completed.active.receipt.phase).toBe("active");
+    expect(JSON.stringify(completed.active.receipt)).not.toContain("do-not-log");
   });
 
   it("resumes an exact interrupted pending receipt prefix after process-style reentry (#9203)", async () => {
@@ -884,7 +884,7 @@ network_policies:
     "resumes an exact interrupted %s receipt prefix after process-style reentry (#9203)",
     async (phase) => {
       interruptReceiptWrite(
-        Buffer.from(`\"phase\":\"${phase}\"`),
+        Buffer.from(`"phase":"${phase}"`),
         `simulated process exit during ${phase} write`,
         () => 1,
       );
@@ -926,18 +926,6 @@ network_policies:
     },
   );
 
-  it("preserves configuring after an ambiguous update and completes registry on retry (#9203)", async () => {
-    const first = deps({ updateFails: true });
-    await expect(runHermesPortableOnboardingTransaction(input(), first.value)).rejects.toThrow();
-    fs.writeFileSync(policyPath, POLICY, { mode: 0o600 });
-    const second = deps({ existingSandbox: true });
-
-    const resumed = await runHermesPortableOnboardingTransaction(input(), second.value);
-
-    expect(resumed.active.receipt.phase).toBe("active");
-    expect(second.events).toContain("registry");
-  });
-
   it("resumes an exact durable-policy publication that crashed before pending (#9203)", async () => {
     const transactionId = createHermesPortableTransactionId();
     const currentInput = input();
@@ -966,21 +954,6 @@ network_policies:
 
     expect(resumed.active.receipt.transactionId).toBe(transactionId);
     expect(resumed.active.receipt.phase).toBe("active");
-  });
-
-  it("rejects active authority when the live restart policy drifts (#9203)", async () => {
-    const fixture = deps();
-    await runHermesPortableOnboardingTransaction(input(), fixture.value);
-    fs.writeFileSync(policyPath, POLICY, { mode: 0o600 });
-    fixture.podman.mockImplementation((args: readonly string[]) =>
-      args[0] === "container" && args[1] === "inspect"
-        ? createHermesPortableContainerInspectResult("no")
-        : unexpectedPodmanArgs(args),
-    );
-
-    await expect(runHermesPortableOnboardingTransaction(input(), fixture.value)).rejects.toThrow(
-      "committed restart policy",
-    );
   });
 
   it("resumes configuring after registry commit but before active publication (#9203)", async () => {
@@ -1142,11 +1115,11 @@ network_policies:
 
   it("accepts a host-edited live policy after configuring publication (#10121)", async () => {
     fs.writeFileSync(policyPath, NATIVE_GPU_CREATE, { mode: 0o600 });
-    const first = deps({ updateFails: true, policySource: NATIVE_GPU_LIVE });
+    const first = deps({ failAfterRegistry: true, policySource: NATIVE_GPU_LIVE });
     await expect(runHermesPortableOnboardingTransaction(input(), first.value)).rejects.toThrow(
-      "restart-policy update failed",
+      "registry-to-active exit",
     );
-    expect(first.events).not.toContain("registry");
+    expect(first.events).toContain("registry");
     fs.writeFileSync(policyPath, NATIVE_GPU_CREATE, { mode: 0o600 });
     const second = deps({
       existingSandbox: true,
@@ -1225,40 +1198,21 @@ network_policies:
     expect(ambiguous.events).not.toContain("create");
   });
 
-  it.each([
-    [
-      "duplicate pair",
-      (sourcePath: string) => ["--policy", sourcePath, "--policy", sourcePath],
-      /exactly one canonical policy option/,
-    ],
-    [
-      "equals form",
-      (sourcePath: string) => [`--policy=${sourcePath}`],
-      /one canonical '--policy <path>' option/,
-    ],
-    ["wrong path", () => ["--policy", "/tmp/other.yaml"], /does not name the captured source/],
-  ])("rejects %s before policy argv rewriting (#9203)", (_label, buildArgv, error) => {
-    const argv = buildArgv(policyPath);
-    expect(() => rewriteHermesPortableCreatePolicyArgv(argv, policyPath, "/durable.yaml")).toThrow(
-      error,
-    );
+  it("rejects a mismatched policy before semantic request rewriting (#9203)", () => {
+    const request = { ...input().createRequest, policyPath: "/tmp/other.yaml" };
+    expect(() =>
+      rewriteHermesPortableCreatePolicyRequest(request, policyPath, "/durable.yaml"),
+    ).toThrow("does not name the captured source");
   });
 
-  it("rejects a noncanonical policy option before durable policy or create effects (#9203)", async () => {
+  it("rejects a missing typed policy before durable policy or create effects (#9203)", async () => {
     const fixture = deps();
     const invalid = input();
-    invalid.createArgv = [
-      "openshell",
-      "sandbox",
-      "create",
-      "--policy",
-      policyPath,
-      `--policy=${policyPath}`,
-      "alpha",
-    ];
+    const { policyPath: _policyPath, ...requestWithoutPolicy } = invalid.createRequest;
+    invalid.createRequest = requestWithoutPolicy;
 
     await expect(runHermesPortableOnboardingTransaction(invalid, fixture.value)).rejects.toThrow(
-      "one canonical '--policy <path>' option",
+      "does not name the captured source",
     );
     expect(fs.existsSync(hermesPortableReceiptDirectory("alpha", stateDir))).toBe(false);
     expect(fixture.events).not.toContain("create");
@@ -1434,7 +1388,7 @@ network_policies:
       gatewayPort: 8080,
       lifecycleGeneration: "generation-1",
       openshellDriver: "docker",
-      openshellVersion: "0.0.106",
+      openshellVersion: "0.0.116",
     };
 
     expect(classifyHermesPortableRegistry(receipt, null)).toEqual({ kind: "missing" });

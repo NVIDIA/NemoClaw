@@ -4,36 +4,12 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createDockerRuntimeProviderBundle } from "./docker";
-import type { RuntimeProviderLifecycleInput } from "./contract";
+import * as dockerCommands from "../../adapters/docker/run";
 
 const GPU_PROOF_RESOURCE = {
   name: "nemoclaw-gpu-proof-1234",
   ownership: { label: "com.nvidia.nemoclaw.gpu-proof", value: "true" },
 } as const;
-
-function lifecycleInput(): RuntimeProviderLifecycleInput {
-  return {
-    environment: {},
-    log: vi.fn(),
-    sandboxName: "alpha",
-    sandbox: {
-      name: "alpha",
-      agent: "hermes",
-      openshellDriver: "docker",
-      gatewayName: "nemoclaw",
-      lifecycleGeneration: "generation-1",
-    } as RuntimeProviderLifecycleInput["sandbox"],
-  };
-}
-
-function poison(): never {
-  throw new Error("Docker dependency must not be called");
-}
-
-function supportedLifecycle(provider: ReturnType<typeof createDockerRuntimeProviderBundle>) {
-  expect(provider.lifecycle.supported).toBe(true);
-  return provider.lifecycle as Extract<typeof provider.lifecycle, { supported: true }>;
-}
 
 function supportedContainerEngine(provider: ReturnType<typeof createDockerRuntimeProviderBundle>) {
   expect(provider.containerEngine.supported).toBe(true);
@@ -207,45 +183,40 @@ describe("Docker runtime provider NVIDIA container capture", () => {
   });
 });
 
-describe("Docker provider portable lifecycle dispatch", () => {
-  it("routes active Hermes start before every Docker dependency (#9203)", () => {
-    const recoverPortableSandbox = vi.fn(() => ({ kind: "already-running" as const }));
-    const provider = createDockerRuntimeProviderBundle({
-      hasPortableLifecycleReceipt: () => true,
-      recoverPortableSandbox,
-      findLabeledSandboxContainers: poison,
-      recoverSandbox: poison,
-      unpauseContainer: poison,
-      withLifecycleLockSync: (_sandboxName, operation) => operation(),
+describe("Docker network command bounds", () => {
+  it("uses the selected socket, output limit, and forced timeout for provisioning (#11606)", () => {
+    const dockerRun = vi.spyOn(dockerCommands, "dockerRun").mockReturnValue({
+      status: null,
+      signal: "SIGKILL",
+      stdout: Buffer.alloc(0),
+      stderr: Buffer.alloc(0),
+      error: Object.assign(new Error("deadline"), { code: "ETIMEDOUT" }),
+      pid: 1,
+      output: [],
     });
-    const lifecycle = supportedLifecycle(provider);
-
-    expect(lifecycle.start(lifecycleInput())).toEqual({
-      exitCode: 0,
-      hermesPortableVerified: true,
+    const gateway = createDockerRuntimeProviderBundle().gateway as Extract<
+      ReturnType<typeof createDockerRuntimeProviderBundle>["gateway"],
+      { supported: true }
+    >;
+    const runtime = gateway.observeHostRuntime({ environment: {}, platform: "linux" });
+    const args = ["network", "create", "--driver", "bridge", "--attachable", "generic-network"];
+    const result = runtime.network.run(args, 30_000, {
+      maxOutputBytes: 16 * 1024,
+      environment: { DOCKER_HOST: "unix:///run/user/1000/docker.sock" },
     });
-    expect(recoverPortableSandbox).toHaveBeenCalledOnce();
-  });
-
-  it("routes active Hermes stop before Docker capture or mutation (#9203)", () => {
-    const stopPortableSandbox = vi.fn(() => ({
-      kind: "stopped" as const,
-      portableAgent: "hermes" as const,
-    }));
-    const provider = createDockerRuntimeProviderBundle({
-      hasPortableLifecycleReceipt: () => true,
-      stopPortableSandbox,
-      findLabeledSandboxContainers: poison,
-      stopContainer: poison,
-      withLifecycleLockSync: (_sandboxName, operation) => operation(),
+    expect(dockerRun).toHaveBeenCalledWith(args, {
+      timeout: 30_000,
+      maxBuffer: 16 * 1024,
+      killSignal: "SIGKILL",
+      env: { DOCKER_HOST: "unix:///run/user/1000/docker.sock" },
+      ignoreError: true,
+      suppressOutput: true,
     });
-    const lifecycle = supportedLifecycle(provider);
-
-    expect(lifecycle.stop(lifecycleInput(), { beforeStop: poison })).toEqual({
-      exitCode: 0,
-      state: "stopped",
-      hermesPortableVerified: true,
+    expect(result).toMatchObject({
+      status: null,
+      signal: "SIGKILL",
+      timedOut: true,
+      errorCode: "ETIMEDOUT",
     });
-    expect(stopPortableSandbox).toHaveBeenCalledOnce();
   });
 });

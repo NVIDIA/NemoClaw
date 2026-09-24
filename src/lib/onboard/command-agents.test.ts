@@ -105,4 +105,88 @@ describe("onboard --agents", () => {
       restoreEnvironment();
     }
   });
+
+  it.each([
+    [
+      "secondary-agent",
+      ["agents:", "  - id: alpha", "    subagents:", "      maxSpawnDepth: 2", ""].join("\n"),
+      "NEMOCLAW_EXTRA_AGENTS_JSON.agents[0].subagents.maxSpawnDepth",
+    ],
+    [
+      "main-agent",
+      ["main:", "  subagents:", "    maxSpawnDepth: 2", ""].join("\n"),
+      "NEMOCLAW_EXTRA_AGENTS_JSON.main.subagents.maxSpawnDepth",
+    ],
+  ])("rejects %s maxSpawnDepth before invoking onboard", async (_label, manifest, message) => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-agents-invalid-"));
+    const manifestPath = path.join(tmpDir, "agents.yaml");
+    fs.writeFileSync(manifestPath, manifest);
+    const runOnboard = vi.fn();
+
+    await expect(
+      runOnboardCommand({
+        flags: { agents: manifestPath },
+        env: {},
+        exit: exitWithCode,
+        runOnboard,
+      }),
+    ).rejects.toThrow(`${message} is not accepted per-agent`);
+
+    expect(runOnboard).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      "secondary-agent",
+      [{ id: "alpha", subagents: { maxSpawnDepth: 2 } }],
+      "NEMOCLAW_EXTRA_AGENTS_JSON.agents[0].subagents.maxSpawnDepth",
+    ],
+    [
+      "main-agent",
+      { agents: [], main: { subagents: { maxSpawnDepth: 2 } } },
+      "NEMOCLAW_EXTRA_AGENTS_JSON.main.subagents.maxSpawnDepth",
+    ],
+  ])("rejects raw %s maxSpawnDepth before invoking onboard", async (_label, payload, message) => {
+    const runOnboard = vi.fn();
+
+    await expect(
+      runOnboardCommand({
+        flags: {},
+        env: {
+          NEMOCLAW_EXTRA_AGENTS_JSON: JSON.stringify(payload),
+        },
+        exit: exitWithCode,
+        runOnboard,
+      }),
+    ).rejects.toThrow(`${message} is not accepted per-agent`);
+
+    expect(runOnboard).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["--agent", "nemoclaw"],
+    ["--agent", "nemo-claw"],
+    ["NEMOCLAW_AGENT", "nemoclaw"],
+    ["NEMOCLAW_AGENT", "nemo-claw"],
+  ])("rejects raw maxSpawnDepth for the %s %s alias", async (source, agent) => {
+    const runOnboard = vi.fn();
+    const raw = JSON.stringify([{ id: "alpha", subagents: { maxSpawnDepth: 2 } }]);
+
+    await expect(
+      runOnboardCommand({
+        flags: source === "--agent" ? { agent } : {},
+        env:
+          source === "NEMOCLAW_AGENT"
+            ? { NEMOCLAW_AGENT: agent, NEMOCLAW_EXTRA_AGENTS_JSON: raw }
+            : { NEMOCLAW_EXTRA_AGENTS_JSON: raw },
+        listAgents: () => ["openclaw", "hermes"],
+        exit: exitWithCode,
+        runOnboard,
+      }),
+    ).rejects.toThrow(
+      "NEMOCLAW_EXTRA_AGENTS_JSON.agents[0].subagents.maxSpawnDepth is not accepted per-agent",
+    );
+
+    expect(runOnboard).not.toHaveBeenCalled();
+  });
 });

@@ -3,7 +3,7 @@
     "id": "nemoclaw-user-guide-install-openclaw-001",
     "question": "Help me install NemoClaw with OpenClaw from my coding assistant. I need the official docs and I do not want to paste secrets into chat.",
     "expected_skill": "nemoclaw-user-guide",
-    "ground_truth": "A NemoClaw-specific answer that uses the user guide skill to route the assistant to `llms.txt` and the OpenClaw Markdown prerequisites and quickstart pages, asks one setup question at a time, and handles credentials with redacted placeholders instead of chat-transcribed secrets.",
+    "ground_truth": "A NemoClaw-specific answer that uses the user guide skill to route the assistant to `llms.txt` and the OpenClaw Markdown prerequisites and quickstart pages, uses supplied setup choices and asks only for missing material choices, and handles credentials with redacted placeholders instead of chat-transcribed secrets.",
     "expected_behavior": [
       "Uses `nemoclaw-user-guide`.",
       "Starts from `https://docs.nvidia.com/nemoclaw/llms.txt` and the OpenClaw `.md` docs.",
@@ -36,7 +36,7 @@
     "id": "nemoclaw-user-guide-local-inference-001",
     "question": "Switch my NemoClaw sandbox to local Ollama and use the Markdown docs instead of guessing.",
     "expected_skill": "nemoclaw-user-guide",
-    "ground_truth": "A NemoClaw-specific answer that routes through `llms.txt` to the inference Markdown pages, gathers provider and model choices one at a time, and recommends verification after the switch.",
+    "ground_truth": "A NemoClaw-specific answer that routes through `llms.txt` to the inference Markdown pages, uses supplied provider and model choices, and recommends verification after the switch.",
     "expected_behavior": [
       "Uses `nemoclaw-user-guide`.",
       "Fetches inference pages from the Markdown docs.",
@@ -52,6 +52,17 @@
       "Uses `nemoclaw-user-guide`.",
       "Fetches network policy and troubleshooting Markdown docs.",
       "Frames approval as a least-privilege workflow."
+    ]
+  },
+  {
+    "id": "docs-question-without-mcp",
+    "question": "Find the official NemoClaw Hermes backup instructions. MCP is not configured; do not change my assistant settings.",
+    "expected_skill": "nemoclaw-user-guide",
+    "ground_truth": "Ordinary docs lookup uses the Markdown index without configuring MCP or asking again which agent to use.",
+    "expected_behavior": [
+      "Fetches the canonical index and relevant Hermes documentation.",
+      "Does not install or configure MCP.",
+      "Preserves the supplied Hermes choice and cites the fetched sources."
     ]
   }
 ]

@@ -245,7 +245,8 @@ export function ingestPolicyOverhead(artifact: unknown): BenchMetric {
   if (!inspected.ok) return invalidTraceMetric("policy-application-overhead", inspected.reason);
   const policy = readMetricSpan(inspected.trace, POLICY_APPLICATION_SPAN);
   const base = traceMetricBase("policy-application-overhead");
-  if (policy.kind === "error") return invalidTraceMetric("policy-application-overhead", policy.reason);
+  if (policy.kind === "error")
+    return invalidTraceMetric("policy-application-overhead", policy.reason);
   if (policy.kind === "missing") {
     return {
       ...base,

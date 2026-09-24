@@ -161,7 +161,10 @@ export interface DirectSandboxGpuVerifierDeps extends WslDockerDesktopDetectionD
     args: string[],
     opts?: Record<string, unknown>,
   ): { status?: number | null; stdout?: unknown; stderr?: unknown };
-  buildDirectSandboxGpuProofCommands?: (sandboxName: string, gatewayName?: string) => Array<{
+  buildDirectSandboxGpuProofCommands?: (
+    sandboxName: string,
+    gatewayName?: string,
+  ) => Array<{
     id?: string;
     args: string[];
     label: string;
@@ -365,7 +368,6 @@ export function createDirectSandboxGpuVerifier(
   };
 }
 
-
 export function validateSandboxGpuPreflight(
   config: SandboxGpuConfig,
   deps: SandboxGpuPreflightDeps = {},
@@ -416,9 +418,9 @@ export function validatePodmanSandboxGpuPreflight(
 ): void {
   exitOnSandboxGpuConfigErrors(config, exitProcess);
   if (!config.sandboxGpuEnabled || (deps.platform ?? process.platform) !== "linux") return;
-  const cdiSpecFiles = (
-    deps.findReadableNvidiaCdiSpecFiles ?? findReadableNvidiaCdiSpecFiles
-  )([...DEFAULT_DOCKER_CDI_SPEC_DIRS]);
+  const cdiSpecFiles = (deps.findReadableNvidiaCdiSpecFiles ?? findReadableNvidiaCdiSpecFiles)([
+    ...DEFAULT_DOCKER_CDI_SPEC_DIRS,
+  ]);
   if (cdiSpecFiles.length === 0) {
     console.error("");
     console.error(failLine("Podman CDI GPU support was not detected."));

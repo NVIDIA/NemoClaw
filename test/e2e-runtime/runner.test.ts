@@ -15,14 +15,14 @@ const require = createRequire(import.meta.url);
 const runnerPath = path.join(import.meta.dirname, "..", "..", "src", "lib", "runner.ts");
 const platformPath = path.join(import.meta.dirname, "..", "..", "src", "lib", "platform.ts");
 const PINNED_OPEN_SHELL_SHA256 = {
-  cliDarwinArm64: "969493205e3d3462226ff613eaba0b9cde0f582e3026294169d533d41e87c905",
-  cliLinuxArm64: "ce981904ae8febd9cd6b3fbceb04e1dcfb48da6042bac08eadf0c2211f83fe55",
-  cliLinuxX64: "d1a885a91b3e5aaa006c36aca95dc78bed0638c1ba1a79b55f1da93211b8a0a0",
-  gatewayDarwinArm64: "de8f90db9dd0d3b47855b2b6d2542660730917bd1249e53140300990a8690b94",
-  gatewayLinuxArm64: "22b7781249e3487085694d0f0f3797a0e549018b81144cd24b2f1118c730d1c7",
-  gatewayLinuxX64: "b7760cb752a4363c2f21d32298dd0c683dc438f6edfd16c2e4242bc0baefbb7c",
-  sandboxLinuxArm64: "5e5d758d53c6abc6d7a936be907dafa9dfce10423289536f39b50abe294dfafd",
-  sandboxLinuxX64: "559b8aaad3a8eeab45c511e7de531d9baa98a311282dcb0c2c5f38cc2d4ca355",
+  cliDarwinArm64: "e582f2374053bebac8e6aaeb4a369931b7d4bb97bd55055e2c02e85502627e22",
+  cliLinuxArm64: "7a949c48d1e000cd280869eea1e203e24816b9cfefc575b68a8b72b939cb3f43",
+  cliLinuxX64: "4fb4476d80a1875a0b83547ec3aba999cf0a2e2d75f95f2f709b622e2103520e",
+  gatewayDarwinArm64: "f192d3d737c125264e13ef73458541df2ca6a9eb2fa599736a7f2587d5d2ce8d",
+  gatewayLinuxArm64: "292c379193a339220234ffea585350901468bb8f4076e2076bc074e8ed18974b",
+  gatewayLinuxX64: "59c6da724eae7a00c28826f9191efbdf4fbaa5c768afdc8dea6a80a949ebcc89",
+  sandboxLinuxArm64: "959d9a88270e0336f04342560df750591da603424d0a9bfb481ee29670342557",
+  sandboxLinuxX64: "0bb160f73e5007338b94e3c868f66f50c71cd65c27c932ed9a4fa67c49e6d423",
 };
 
 type SpawnCallOptions = {
@@ -56,14 +56,18 @@ function requireCall(calls: SpawnCall[], index: number): SpawnCall {
   return call;
 }
 
+/**
+ * Authority detection probes Docker before the runner serves any caller: it
+ * reads the daemon banner, and resolves an ambient `DOCKER_CONTEXT` to the
+ * endpoint that context names (#11719). Neither is a runner command.
+ */
 function withoutDockerAuthorityProbe(calls: SpawnCall[]): SpawnCall[] {
-  return calls.filter(
-    ([command, args]) =>
-      command !== "docker" ||
-      args?.[0] !== "version" ||
-      args?.[1] !== "--format" ||
-      args?.[2] !== "{{json .}}",
-  );
+  return calls.filter(([command, args]) => {
+    const isVersionProbe =
+      args?.[0] === "version" && args?.[1] === "--format" && args?.[2] === "{{json .}}";
+    const isContextProbe = args?.[0] === "context" && args?.[1] === "inspect";
+    return command !== "docker" || !(isVersionProbe || isContextProbe);
+  });
 }
 
 describe("runner helpers", () => {
@@ -239,7 +243,7 @@ describe("runner env merging", () => {
     expect(initializedContext).toBeUndefined();
   });
 
-  it("keeps a named context when initialization uses an explicit Docker host (#8816)", () => {
+  it("clears a named context when initialization selects an explicit Docker host (#8816)", () => {
     const platform = require(platformPath);
     const detectDockerHostSpy = vi.spyOn(platform, "detectDockerHost").mockReturnValue({
       dockerHost: "unix:///explicit.sock",
@@ -263,7 +267,138 @@ describe("runner env merging", () => {
     }
 
     expect(initializedHost).toBe("unix:///explicit.sock");
-    expect(initializedContext).toBe("ambient-context");
+    expect(initializedContext).toBeUndefined();
+  });
+
+  it("carries a resolved context host and its Docker config into Docker children (#11719)", () => {
+    const calls: SpawnCall[] = [];
+    const originalSpawnSync = childProcess.spawnSync;
+    const platform = require(platformPath);
+    const detectDockerHostSpy = vi.spyOn(platform, "detectDockerHost").mockReturnValue({
+      dockerHost: "unix:///context.sock",
+      source: "context",
+      socketPath: null,
+    });
+    // @ts-expect-error — intentional partial mock for testing
+    childProcess.spawnSync = captureSpawnCall(calls, {
+      status: 0,
+      stdout: "",
+      stderr: "",
+    });
+
+    try {
+      vi.stubEnv("DOCKER_CONTEXT", "selected-context");
+      vi.stubEnv("DOCKER_CONFIG", "/tmp/context-docker-config");
+      vi.stubEnv("DOCKER_HOST", "unix:///ignored-host.sock");
+      delete require.cache[require.resolve(runnerPath)];
+      const { run } = require(runnerPath);
+      run(["docker", "ps"]);
+    } finally {
+      detectDockerHostSpy.mockRestore();
+      vi.unstubAllEnvs();
+      childProcess.spawnSync = originalSpawnSync;
+      delete require.cache[require.resolve(runnerPath)];
+    }
+
+    const dockerEnv = requireCall(withoutDockerAuthorityProbe(calls), 0)[2]?.env;
+    expect(dockerEnv).toMatchObject({
+      DOCKER_HOST: "unix:///context.sock",
+      DOCKER_CONFIG: "/tmp/context-docker-config",
+    });
+    expect(dockerEnv?.DOCKER_CONTEXT).toBeUndefined();
+  });
+
+  it("carries the production context resolver result into Docker children (#11719)", () => {
+    const calls: SpawnCall[] = [];
+    const originalSpawnSync = childProcess.spawnSync;
+    // @ts-expect-error — intentional partial mock for testing
+    childProcess.spawnSync = (
+      command: string,
+      args?: readonly string[],
+      options?: SpawnCallOptions,
+    ) => {
+      calls.push([command, args, options]);
+      const isContextInspect =
+        command === "docker" && args?.[0] === "context" && args?.[1] === "inspect";
+      return {
+        status: 0,
+        stdout: isContextInspect ? "unix:///context.sock\n" : "",
+        stderr: "",
+      };
+    };
+
+    try {
+      vi.stubEnv("DOCKER_CONTEXT", "selected-context");
+      vi.stubEnv("DOCKER_CONFIG", "/tmp/context-docker-config");
+      vi.stubEnv("DOCKER_HOST", "unix:///ignored-host.sock");
+      delete require.cache[require.resolve(runnerPath)];
+      const { run } = require(runnerPath);
+      run(["docker", "ps"]);
+    } finally {
+      vi.unstubAllEnvs();
+      childProcess.spawnSync = originalSpawnSync;
+      delete require.cache[require.resolve(runnerPath)];
+    }
+
+    const inspectCall = calls.find(
+      ([command, args]) =>
+        command === "docker" && args?.[0] === "context" && args?.[1] === "inspect",
+    );
+    expect(inspectCall?.[1]).toEqual([
+      "context",
+      "inspect",
+      "selected-context",
+      "--format",
+      "{{.Endpoints.docker.Host}}",
+    ]);
+    expect(inspectCall?.[2]?.env).toMatchObject({
+      DOCKER_CONTEXT: "selected-context",
+      DOCKER_CONFIG: "/tmp/context-docker-config",
+    });
+    expect(inspectCall?.[2]?.env?.DOCKER_HOST).toBeUndefined();
+
+    const dockerEnv = calls.find(
+      ([command, args]) => command === "docker" && args?.[0] === "ps",
+    )?.[2]?.env;
+    expect(dockerEnv).toMatchObject({
+      DOCKER_HOST: "unix:///context.sock",
+      DOCKER_CONFIG: "/tmp/context-docker-config",
+    });
+    expect(dockerEnv?.DOCKER_CONTEXT).toBeUndefined();
+  });
+
+  it("keeps an unresolved context authoritative over the ambient Docker host (#11719)", () => {
+    const calls: SpawnCall[] = [];
+    const originalSpawnSync = childProcess.spawnSync;
+    const platform = require(platformPath);
+    const detectDockerHostSpy = vi.spyOn(platform, "detectDockerHost").mockReturnValue(null);
+    // @ts-expect-error — intentional partial mock for testing
+    childProcess.spawnSync = captureSpawnCall(calls, {
+      status: 0,
+      stdout: "",
+      stderr: "",
+    });
+
+    try {
+      vi.stubEnv("DOCKER_CONTEXT", "unresolved-context");
+      vi.stubEnv("DOCKER_CONFIG", "/tmp/context-docker-config");
+      vi.stubEnv("DOCKER_HOST", "unix:///ignored-host.sock");
+      delete require.cache[require.resolve(runnerPath)];
+      const { run } = require(runnerPath);
+      run(["docker", "ps"]);
+    } finally {
+      detectDockerHostSpy.mockRestore();
+      vi.unstubAllEnvs();
+      childProcess.spawnSync = originalSpawnSync;
+      delete require.cache[require.resolve(runnerPath)];
+    }
+
+    const dockerEnv = requireCall(withoutDockerAuthorityProbe(calls), 0)[2]?.env;
+    expect(dockerEnv).toMatchObject({
+      DOCKER_CONTEXT: "unresolved-context",
+      DOCKER_CONFIG: "/tmp/context-docker-config",
+    });
+    expect(dockerEnv?.DOCKER_HOST).toBeUndefined();
   });
 
   it("preserves Docker context and config only for Docker subprocesses (#8816)", () => {
@@ -280,6 +415,8 @@ describe("runner env merging", () => {
       vi.stubEnv("DOCKER_CONTEXT", "healthy-context");
       vi.stubEnv("DOCKER_CONFIG", "/tmp/docker-config");
       vi.stubEnv("DOCKER_HOST", undefined);
+      vi.stubEnv("HTTP_PROXY", "http://proxy.example");
+      vi.stubEnv("NO_PROXY", "internal.example");
       vi.stubEnv("NVIDIA_INFERENCE_API_KEY", "test-secret-must-not-cross-runner-boundary");
       delete require.cache[require.resolve(runnerPath)];
       const { run } = require(runnerPath);
@@ -300,6 +437,8 @@ describe("runner env merging", () => {
     const configSelectedDockerEnv = requireCall(runnerCalls, 2)[2]?.env;
     expect(dockerEnv?.DOCKER_CONTEXT).toBe("healthy-context");
     expect(dockerEnv?.DOCKER_CONFIG).toBe("/tmp/docker-config");
+    expect(dockerEnv?.NO_PROXY).toContain("internal.example");
+    expect(dockerEnv?.NO_PROXY).toContain("localhost");
     expect(dockerEnv?.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
     expect(nonDockerEnv?.DOCKER_CONTEXT).toBeUndefined();
     expect(nonDockerEnv?.DOCKER_CONFIG).toBeUndefined();
@@ -308,7 +447,7 @@ describe("runner env merging", () => {
     expect(configSelectedDockerEnv?.DOCKER_CONFIG).toBe("/tmp/docker-config");
   });
 
-  it("keeps Docker host precedence over an ambient Docker context (#8816)", () => {
+  it("keeps explicit host overrides while ambient context outranks ambient host (#11719)", () => {
     const calls: SpawnCall[] = [];
     const originalSpawnSync = childProcess.spawnSync;
     // @ts-expect-error — intentional partial mock for testing
@@ -341,10 +480,10 @@ describe("runner env merging", () => {
     expect(requireCall(runnerCalls, 0)[2]?.env?.DOCKER_CONTEXT).toBeUndefined();
     expect(requireCall(runnerCalls, 0)[2]?.env?.DOCKER_CONFIG).toBeUndefined();
     expect(requireCall(runnerCalls, 1)[2]?.env).toMatchObject({
-      DOCKER_HOST: "unix:///selected-fallback.sock",
+      DOCKER_CONTEXT: "ambient-context",
+      DOCKER_CONFIG: "/tmp/ambient-docker-config",
     });
-    expect(requireCall(runnerCalls, 1)[2]?.env?.DOCKER_CONTEXT).toBeUndefined();
-    expect(requireCall(runnerCalls, 1)[2]?.env?.DOCKER_CONFIG).toBeUndefined();
+    expect(requireCall(runnerCalls, 1)[2]?.env?.DOCKER_HOST).toBeUndefined();
   });
 
   it("preserves process env when opts.env is provided to runCapture", () => {
@@ -925,7 +1064,13 @@ describe("regression guards", () => {
 
   describe("credential exposure guards (#429)", () => {
     it("install-openshell.sh gh-absent path uses curl directly", () => {
-      const scriptPath = path.join(import.meta.dirname, "..", "..", "scripts", "install-openshell.sh");
+      const scriptPath = path.join(
+        import.meta.dirname,
+        "..",
+        "..",
+        "scripts",
+        "install-openshell.sh",
+      );
       const tmpBin = fs.mkdtempSync(path.join(os.tmpdir(), "gh-absent-"));
       const stub = `
         #!/usr/bin/env bash
@@ -959,8 +1104,8 @@ describe("regression guards", () => {
               ;;
             openshell-sandbox-checksums-sha256.txt)
               printf '%s\n' \
-                '${PINNED_OPEN_SHELL_SHA256.sandboxLinuxX64}  openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz' \
-                '${PINNED_OPEN_SHELL_SHA256.sandboxLinuxArm64}  openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz' > "$out"
+                '${PINNED_OPEN_SHELL_SHA256.sandboxLinuxX64}  openshell-sandbox-x86_64-unknown-linux-musl.tar.gz' \
+                '${PINNED_OPEN_SHELL_SHA256.sandboxLinuxArm64}  openshell-sandbox-aarch64-unknown-linux-musl.tar.gz' > "$out"
               ;;
             *)
               : > "$out"
@@ -999,7 +1144,7 @@ describe("regression guards", () => {
               shift || true
             done
             [ -n "$destination" ] || return 2
-            printf '%s\n' '#!/bin/sh' 'echo "0.0.106"' > "$destination/$expected"
+            printf '%s\n' '#!/bin/sh' 'echo "0.0.116"' > "$destination/$expected"
             chmod +x "$destination/$expected"
             ;;
           *) return 2 ;;
@@ -1023,7 +1168,13 @@ describe("regression guards", () => {
     });
 
     it("install-openshell.sh gh-present-but-fails path falls back to curl", () => {
-      const scriptPath = path.join(import.meta.dirname, "..", "..", "scripts", "install-openshell.sh");
+      const scriptPath = path.join(
+        import.meta.dirname,
+        "..",
+        "..",
+        "scripts",
+        "install-openshell.sh",
+      );
       const tmpBin = fs.mkdtempSync(path.join(os.tmpdir(), "gh-stub-"));
       const checksumLog = path.join(tmpBin, "sha256sum.log");
       const ghStub = path.join(tmpBin, "gh");
@@ -1061,8 +1212,8 @@ describe("regression guards", () => {
               ;;
             openshell-sandbox-checksums-sha256.txt)
               printf '%s\n' \
-                '${PINNED_OPEN_SHELL_SHA256.sandboxLinuxX64}  openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz' \
-                '${PINNED_OPEN_SHELL_SHA256.sandboxLinuxArm64}  openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz' > "$out"
+                '${PINNED_OPEN_SHELL_SHA256.sandboxLinuxX64}  openshell-sandbox-x86_64-unknown-linux-musl.tar.gz' \
+                '${PINNED_OPEN_SHELL_SHA256.sandboxLinuxArm64}  openshell-sandbox-aarch64-unknown-linux-musl.tar.gz' > "$out"
               ;;
             *)
               : > "$out"
@@ -1101,7 +1252,7 @@ describe("regression guards", () => {
               shift || true
             done
             [ -n "$destination" ] || return 2
-            printf '%s\n' '#!/bin/sh' 'echo "0.0.106"' > "$destination/$expected"
+            printf '%s\n' '#!/bin/sh' 'echo "0.0.116"' > "$destination/$expected"
             chmod +x "$destination/$expected"
             ;;
           *) return 2 ;;
@@ -1285,30 +1436,18 @@ describe("regression guards", () => {
       expect(runtimeVersion).toBeDefined();
       expect(runtimeVersion).toBe(baseVersion);
     });
+  });
 
-    it("the e2e sandbox suite exercises the tmux-session flow", () => {
-      const src = fs.readFileSync(
-        path.join(repoRoot, "test", "e2e", "live", "sandbox-operations.test.ts"),
-        "utf-8",
-      );
-      expect(src).toContain("assertTmuxPtyFlow");
-      expect(src).toContain("command -v tmux");
-      // The smoke must be wired into the run, not just defined.
-      expect(src).toContain("await assertTmuxPtyFlow(sandbox, SANDBOX_A)");
-    });
+  describe("OpenClaw external restart verification", () => {
+    const repoRoot = path.join(import.meta.dirname, "..", "..");
 
-    it("e2e TC-SBX-09 hard-asserts the tmux lifecycle and no longer skips on fork failure", () => {
-      const src = fs.readFileSync(
-        path.join(repoRoot, "test", "e2e", "live", "sandbox-operations.test.ts"),
-        "utf-8",
-      );
-      // The PTY root cause is pinned with an explicit openpty() probe.
-      expect(src).toContain("os.openpty()");
-      // The #4640 soft-skip-on-fork-failure branch must be gone — a fork
-      // failure now means the devpts grant regressed and must fail loudly.
-      const tc09 = src.slice(src.indexOf("async function assertTmuxPtyFlow"));
-      const tc09Body = tc09.slice(0, tc09.indexOf("\n}\n") + 3);
-      expect(tc09Body).not.toMatch(/skip "TC-SBX-09"/);
+    it("ships pinned lsof in both fresh and stale-base managed images", () => {
+      const baseSrc = fs.readFileSync(path.join(repoRoot, "Dockerfile.base"), "utf-8");
+      const runtimeSrc = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf-8");
+      expect(baseSrc).toContain("lsof=4.99.4+dfsg-2");
+      expect(runtimeSrc).toContain("needs_lsof=1");
+      expect(runtimeSrc).toContain("apt-get install -y --no-install-recommends lsof=4.99.4+dfsg-2");
+      expect(runtimeSrc).toContain("command -v lsof >/dev/null");
     });
   });
 });

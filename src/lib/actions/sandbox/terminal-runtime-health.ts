@@ -3,7 +3,7 @@
 
 import { dockerSpawnSync } from "../../adapters/docker/exec";
 import { resolveSandboxContainerOwner } from "../../domain/sandbox/container-owner";
-import { findLabeledSandboxContainers } from "../../onboard/docker-driver-sandbox-recovery";
+import { findLabeledSandboxContainers } from "../../onboard/docker-driver-container-observation";
 import {
   registeredRuntimeProviderSupportsContainerEngineOperation,
   resolveRegisteredRuntimeProvider,
@@ -130,7 +130,7 @@ function hasLegacyContainerHealthProbe(driverName: string | null | undefined): b
   }
   try {
     return (
-      provider.gateway.prepareHostRuntime({
+      provider.gateway.observeHostRuntime({
         environment: process.env,
         platform: process.platform,
       }).socketPath === null
@@ -171,7 +171,7 @@ export function probeTerminalRuntimeCgroupOom(
   );
   if (!containerName) return { kind: "unavailable", detail: "sandbox container owner unresolved" };
 
-  const result = deps.run(["exec", containerName, "sh", "-lc", CGROUP_OOM_PROBE_SCRIPT]);
+  const result = deps.run(["exec", containerName, "sh", "-c", CGROUP_OOM_PROBE_SCRIPT]);
   if (result.error) return { kind: "unavailable", detail: result.error.message };
   if (result.status !== 0) {
     const stderr = Buffer.isBuffer(result.stderr)

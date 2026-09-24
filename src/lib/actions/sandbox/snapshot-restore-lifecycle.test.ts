@@ -1,17 +1,20 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { withSandboxMutationLock } from "../../state/mcp-lifecycle-lock";
 import * as f from "./snapshot-restore-test-fixture";
+import * as providerAdapters from "../../adapters/openshell/managed-provider-adapter";
 
 const tempHomes: string[] = [];
+beforeAll(async () => {
+  await import("./snapshot");
+}, 60_000);
 beforeEach(() => {
   f.resetSnapshotRestoreMocks();
   const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-snapshot-restore-home-"));
@@ -100,236 +103,46 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     expect(output).toContain("Restored 1 directories, 1 files");
   });
 
-  it("repairs an empty managed projection but leaves custom-image MCP state to the image (#10756)", async () => {
-    f.getLatestBackupMock.mockReturnValue({
-      snapshotVersion: 4,
-      name: "stable",
-      timestamp: "2026-06-15T00:00:00.000Z",
-      backupPath: "/tmp/backup-alpha",
-    });
-    const { runSandboxSnapshot } = await import("./snapshot");
+  it.each([
+    { label: "managed", fromDockerfile: undefined },
+    { label: "custom-image", fromDockerfile: "/tmp/Dockerfile" },
+  ])(
+    "leaves user-managed Deep Agents MCP config untouched for $label restores",
+    async ({ fromDockerfile }) => {
+      f.getLatestBackupMock.mockReturnValue({
+        snapshotVersion: 4,
+        name: "stable",
+        timestamp: "2026-06-15T00:00:00.000Z",
+        backupPath: "/tmp/backup-alpha",
+      });
+      f.getSandboxMock.mockReturnValue({
+        name: "alpha",
+        agent: "langchain-deepagents-code",
+        ...(fromDockerfile ? { fromDockerfile } : {}),
+      });
+      f.restoreDeepAgentsNativeMcpConfigMock.mockImplementation(() => {
+        throw new Error("Snapshot restore must not rewrite user-managed native MCP config");
+      });
+      f.restoreSandboxStateMock.mockImplementation(() => {
+        f.lifecycleMock.events.push("restore-snapshot-state");
+        return {
+          success: true,
+          restoredDirs: [".state"],
+          restoredFiles: ["config.toml"],
+          failedDirs: [],
+          failedFiles: [],
+        };
+      });
+      const { runSandboxSnapshot } = await import("./snapshot");
 
-    f.getSandboxMock.mockReturnValue({ name: "alpha", agent: "langchain-deepagents-code" });
-    await runSandboxSnapshot("alpha", { kind: "restore" });
-    expect(f.restoreDeepAgentsManagedMcpProjectionMock).toHaveBeenCalledWith("alpha", [], {
-      gatewayName: "nemoclaw-8091",
-      workspace: "default",
-    });
-    expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/backup-alpha");
+      await runSandboxSnapshot("alpha", { kind: "restore" });
 
-    f.restoreDeepAgentsManagedMcpProjectionMock.mockClear();
-    f.getSandboxMock.mockReturnValue({
-      name: "alpha",
-      agent: "langchain-deepagents-code",
-      fromDockerfile: "/tmp/Dockerfile",
-      mcp: {
-        bridges: {
-          github: {
-            server: "github",
-            agent: "langchain-deepagents-code",
-            adapter: "deepagents-config",
-            url: "https://api.githubcopilot.com/mcp/",
-            env: ["GITHUB_TOKEN"],
-            providerName: "alpha-mcp-github",
-            policyName: "mcp-bridge-github",
-            addedAt: "2026-06-01T00:00:00.000Z",
-          },
-        },
-      },
-    });
-    await runSandboxSnapshot("alpha", { kind: "restore" });
-    expect(f.restoreDeepAgentsManagedMcpProjectionMock).not.toHaveBeenCalled();
-    expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/backup-alpha");
-    expect(f.restoreSandboxStateMock).toHaveBeenCalledTimes(2);
-  });
-
-  it("repairs the managed Deep Agents MCP projection before restoring snapshot files (#10756)", async () => {
-    f.getLatestBackupMock.mockReturnValue({
-      snapshotVersion: 4,
-      name: "stable",
-      timestamp: "2026-06-15T00:00:00.000Z",
-      backupPath: "/tmp/backup-alpha",
-    });
-    f.getSandboxMock.mockReturnValue({
-      name: "alpha",
-      agent: "langchain-deepagents-code",
-      mcp: {
-        bridges: {
-          github: {
-            server: "github",
-            agent: "langchain-deepagents-code",
-            adapter: "deepagents-config",
-            url: "https://api.githubcopilot.com/mcp/",
-            env: ["GITHUB_TOKEN"],
-            providerName: "alpha-mcp-github",
-            policyName: "mcp-bridge-github",
-            addedAt: "2026-06-01T00:00:00.000Z",
-          },
-          jira: {
-            server: "jira",
-            agent: "langchain-deepagents-code",
-            adapter: "deepagents-config",
-            url: "https://mcp.atlassian.com/v1/",
-            env: ["JIRA_MCP_TOKEN"],
-            providerName: "alpha-mcp-jira",
-            policyName: "mcp-bridge-jira",
-            addedAt: "2026-06-01T00:00:00.000Z",
-          },
-          slack: {
-            server: "slack",
-            agent: "openclaw",
-            adapter: "mcporter",
-            url: "https://mcp.slack.com/v1/",
-            env: ["SLACK_MCP_TOKEN"],
-            providerName: "alpha-mcp-slack",
-            policyName: "mcp-bridge-slack",
-            addedAt: "2026-06-01T00:00:00.000Z",
-          },
-        },
-      },
-    });
-    f.restoreDeepAgentsManagedMcpProjectionMock.mockImplementation(() => {
-      f.lifecycleMock.events.push("restore-mcp-projection");
-    });
-    f.restoreSandboxStateMock.mockImplementation(() => {
-      f.lifecycleMock.events.push("restore-snapshot-state");
-      return {
-        success: true,
-        restoredDirs: [".state"],
-        restoredFiles: ["config.toml"],
-        failedDirs: [],
-        failedFiles: [],
-      };
-    });
-    const { runSandboxSnapshot } = await import("./snapshot");
-
-    await runSandboxSnapshot("alpha", { kind: "restore" });
-
-    expect(f.restoreDeepAgentsManagedMcpProjectionMock).toHaveBeenCalledWith(
-      "alpha",
-      [expect.objectContaining({ server: "github" }), expect.objectContaining({ server: "jira" })],
-      { gatewayName: "nemoclaw-8091", workspace: "default" },
-    );
-    expect(f.lifecycleMock.events).toEqual(["restore-mcp-projection", "restore-snapshot-state"]);
-  });
-
-  it("preserves an occupied recovery path and reports an unused location before retry (#10756)", async () => {
-    const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-snapshot-recovery-"));
-    tempHomes.push(sandboxRoot);
-    const occupiedRecoveryPath = path.join(sandboxRoot, ".nemoclaw-mcp.json.recovery");
-    const projectionPath = path.join(sandboxRoot, ".deepagents", ".nemoclaw-mcp.json");
-    const sandboxName = "alpha $(printf injected)";
-    fs.mkdirSync(occupiedRecoveryPath, { recursive: true });
-    fs.writeFileSync(path.join(occupiedRecoveryPath, "keep.txt"), "existing recovery\n");
-    fs.mkdirSync(projectionPath, { recursive: true });
-    fs.writeFileSync(path.join(projectionPath, "managed.json"), '{"managed":true}\n');
-    f.parseLiveSandboxNamesMock.mockReturnValue(new Set([sandboxName]));
-    f.getLatestBackupMock.mockReturnValue({
-      snapshotVersion: 4,
-      name: "stable",
-      timestamp: "2026-06-15T00:00:00.000Z",
-      backupPath: "/tmp/backup-alpha",
-    });
-    f.getSandboxMock.mockReturnValue({
-      name: sandboxName,
-      agent: "langchain-deepagents-code",
-      mcp: {
-        bridges: {
-          github: {
-            server: "github",
-            agent: "langchain-deepagents-code",
-            adapter: "deepagents-config",
-            url: "https://api.githubcopilot.com/mcp/",
-            env: ["GITHUB_TOKEN"],
-            providerName: "alpha-mcp-github",
-            policyName: "mcp-bridge-github",
-            addedAt: "2026-06-01T00:00:00.000Z",
-          },
-        },
-      },
-    });
-    f.restoreDeepAgentsManagedMcpProjectionMock
-      .mockImplementationOnce(() => {
-        throw new Error("managed MCP projection path is a directory");
-      })
-      .mockImplementationOnce(() => {});
-    const { runSandboxSnapshot, SnapshotCommandError } = await import("./snapshot");
-
-    const failure = await runSandboxSnapshot(sandboxName, { kind: "restore" }).catch(
-      (error: unknown) => error,
-    );
-    expect(failure).toBeInstanceOf(SnapshotCommandError);
-    expect(failure).toMatchObject({
-      exitCode: 1,
-      lines: [
-        `Snapshot files were not restored into '${sandboxName}'.`,
-        expect.stringContaining("managed MCP projection path is a directory"),
-        expect.any(String),
-      ],
-    });
-    const recoveryGuidance = (failure as InstanceType<typeof SnapshotCommandError>).lines[2];
-    const recoveryAction = recoveryGuidance.match(/run `([^`]+)`/)?.[1] ?? "";
-    expect(recoveryAction).not.toBe("");
-    const recoveryActionPath = path.join(sandboxRoot, "run-recovery-action.sh");
-    fs.writeFileSync(
-      recoveryActionPath,
-      `nemoclaw() { printf "%s\\0" "$@"; }\n${recoveryAction}\n`,
-    );
-    const parsedRecoveryAction = spawnSync("sh", [recoveryActionPath]);
-    expect(parsedRecoveryAction.status, parsedRecoveryAction.stderr.toString()).toBe(0);
-    const recoveryArguments = parsedRecoveryAction.stdout.toString().split("\0").filter(Boolean);
-    expect(recoveryArguments).toEqual([sandboxName, "exec", "--", "sh", "-c", expect.any(String)]);
-
-    const recoveryScript = recoveryArguments[5].replaceAll("/sandbox", sandboxRoot);
-    const recoveryScriptPath = path.join(sandboxRoot, "run-recovery-script.sh");
-    fs.writeFileSync(recoveryScriptPath, recoveryScript);
-    fs.rmSync(projectionPath, { recursive: true });
-    const validProjection = '{"mcpServers":{}}\n';
-    fs.writeFileSync(projectionPath, validProjection, { mode: 0o600 });
-    const staleRecoveryResult = spawnSync("sh", [recoveryScriptPath], { encoding: "utf8" });
-    expect(staleRecoveryResult.status).toBe(1);
-    expect(staleRecoveryResult.stderr).toContain("is no longer a directory");
-    expect(fs.readFileSync(projectionPath, "utf8")).toBe(validProjection);
-    expect(
-      fs
-        .readdirSync(sandboxRoot)
-        .filter((entry) => entry.startsWith(".nemoclaw-mcp.json.recovery.")),
-    ).toEqual([]);
-
-    fs.rmSync(projectionPath);
-    fs.mkdirSync(projectionPath);
-    fs.writeFileSync(path.join(projectionPath, "managed.json"), '{"managed":true}\n');
-    const recoveryResult = spawnSync("sh", [recoveryScriptPath], { encoding: "utf8" });
-    expect(recoveryResult.status, recoveryResult.stderr).toBe(0);
-    expect(fs.existsSync(projectionPath)).toBe(false);
-    expect(fs.readFileSync(path.join(occupiedRecoveryPath, "keep.txt"), "utf8")).toBe(
-      "existing recovery\n",
-    );
-    const recoveryDirectories = fs
-      .readdirSync(sandboxRoot)
-      .filter((entry) => entry.startsWith(".nemoclaw-mcp.json.recovery."));
-    expect(recoveryDirectories).toHaveLength(1);
-    const recoveredProjectionPath = path.join(sandboxRoot, recoveryDirectories[0], "projection");
-    expect(fs.readFileSync(path.join(recoveredProjectionPath, "managed.json"), "utf8")).toBe(
-      '{"managed":true}\n',
-    );
-    expect(recoveryResult.stdout).toBe(
-      `Moved managed MCP projection to ${recoveredProjectionPath}\n`,
-    );
-    expect(recoveryScript).toContain(`recovery_dir=$(mktemp -d ${occupiedRecoveryPath}.XXXXXX)`);
-    expect(recoveryGuidance).toContain('mv -- "$projection" "$recovery_dir/projection"');
-    expect(recoveryGuidance).toContain(
-      'printf "Moved managed MCP projection to %s\\n" "$recovery_dir/projection"',
-    );
-    expect(recoveryGuidance).not.toContain(
-      "mv -- /sandbox/.deepagents/.nemoclaw-mcp.json /sandbox/.nemoclaw-mcp.json.recovery",
-    );
-    expect(f.restoreSandboxStateMock).not.toHaveBeenCalled();
-
-    await runSandboxSnapshot(sandboxName, { kind: "restore" });
-
-    expect(f.restoreSandboxStateMock).toHaveBeenCalledWith(sandboxName, "/tmp/backup-alpha");
-  });
+      expect(f.restoreDeepAgentsNativeMcpConfigMock).not.toHaveBeenCalled();
+      expect(f.getMcpProviderInspectionRuntimeSelectionMock).not.toHaveBeenCalled();
+      expect(f.lifecycleMock.events).toEqual(["restore-snapshot-state"]);
+      expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/backup-alpha");
+    },
+  );
 
   it("repairs mutable permissions after restoring OpenClaw config", async () => {
     const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -423,7 +236,7 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     );
   });
 
-  it("force-deletes a restore destination before creating its replacement", async () => {
+  it("finishes destination messaging cleanup before creating a forced-restore replacement (#9806)", async () => {
     f.getSandboxMock.mockImplementation((name) =>
       name === "alpha"
         ? {
@@ -458,16 +271,75 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
       failedDirs: [],
       failedFiles: [],
     });
+    const createAdapter = providerAdapters.createManagedProviderAdapter;
+    let releaseCleanup!: () => void;
+    let signalCleanupStarted!: () => void;
+    const cleanupPending = new Promise<void>((resolve) => {
+      releaseCleanup = resolve;
+    });
+    const cleanupStarted = new Promise<void>((resolve) => {
+      signalCleanupStarted = resolve;
+    });
+    vi.spyOn(providerAdapters, "createManagedProviderAdapter").mockImplementation((run) => {
+      const adapter = createAdapter(run);
+      return {
+        ...adapter,
+        async deleteProvider(request) {
+          const result = await adapter.deleteProvider(request);
+          signalCleanupStarted();
+          await cleanupPending;
+          return result;
+        },
+      };
+    });
+    const providerDeletes = () =>
+      f.runOpenshellMock.mock.calls
+        .map(([args]) => args)
+        .filter((args) => args[0] === "provider" && args[1] === "delete");
+    let providerDeletesAtCreation: string[][] = [];
+    f.streamSandboxCreateMock.mockImplementation(async () => {
+      providerDeletesAtCreation = providerDeletes();
+      return { status: 0, output: "", sawProgress: false, forcedReady: false };
+    });
     const { runSandboxSnapshot } = await import("./snapshot");
 
-    await runSandboxSnapshot("alpha", {
+    const restore = runSandboxSnapshot("alpha", {
       kind: "restore",
       to: "beta",
       force: true,
       yes: true,
     });
+    try {
+      await Promise.race([
+        cleanupStarted,
+        restore.then(() => {
+          throw new Error("Restore finished without awaiting provider cleanup.");
+        }),
+      ]);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(
+        f.runOpenshellMock.mock.calls.map(([args]) => args).filter((args) => args[1] === "delete"),
+      ).toEqual([
+        ["sandbox", "delete", "-g", "nemoclaw", "beta"],
+        ["provider", "delete", expect.stringMatching(/^beta-/u)],
+      ]);
+      expect(providerDeletes()).toHaveLength(1);
+      expect(f.streamSandboxCreateMock).not.toHaveBeenCalled();
+      expect(f.restoreSandboxStateMock).not.toHaveBeenCalled();
+    } finally {
+      releaseCleanup();
+      await restore;
+    }
 
-    expect(f.lifecycleMock.events).toContain("delete");
+    expect(providerDeletesAtCreation.map((args) => args[2]).sort()).toEqual([
+      "beta-discord-bridge",
+      "beta-slack-app",
+      "beta-slack-bridge",
+      "beta-teams-bridge",
+      "beta-telegram-bridge",
+      "beta-wechat-bridge",
+    ]);
+    expect(providerDeletes()).toEqual(providerDeletesAtCreation);
     expect(f.streamSandboxCreateMock).toHaveBeenCalled();
     expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("beta", "/tmp/backup-alpha");
   });
@@ -812,10 +684,6 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
       sawProgress: true,
       forcedReady: true,
     });
-    f.waitForRestoredSandboxGatewaySupervisorMock.mockImplementation(() => {
-      events.push("supervisor-ready");
-      return true;
-    });
     f.restoreSandboxStateMock.mockImplementation(() => {
       events.push("snapshot-restored");
       return {
@@ -830,11 +698,11 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
 
     await runSandboxSnapshot("alpha", { kind: "restore", to: "beta" });
 
-    expect(f.waitForRestoredSandboxGatewaySupervisorMock).toHaveBeenCalledWith("beta");
-    expect(events).toEqual(["supervisor-ready", "snapshot-restored"]);
+    expect(f.waitForRestoredSandboxGatewaySupervisorMock).not.toHaveBeenCalled();
+    expect(events).toEqual(["snapshot-restored"]);
   });
 
-  it("leaves snapshot state untouched when the clone supervisor never becomes ready (#7818)", async () => {
+  it("restores snapshot state without a NemoClaw supervisor gate", async () => {
     f.getSandboxMock.mockImplementation((name) =>
       name === "alpha"
         ? {
@@ -859,13 +727,13 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
 
     await expect(
       runSandboxSnapshot("alpha", { kind: "restore", to: "beta" }),
-    ).rejects.toMatchObject({ exitCode: 1 });
+    ).resolves.toBeUndefined();
 
-    expect(f.restoreSandboxStateMock).not.toHaveBeenCalled();
-    expect(f.establishRestoredSandboxGatewayPairingMock).not.toHaveBeenCalled();
+    expect(f.waitForRestoredSandboxGatewaySupervisorMock).not.toHaveBeenCalled();
+    expect(f.restoreSandboxStateMock).toHaveBeenCalled();
   });
 
-  it("removes a pending clone registration when finalization fails before snapshot restore", async () => {
+  it("preserves a changed destination row when clone finalization fails", async () => {
     const entries = new Map<string, f.SandboxRecord>([
       [
         "alpha",
@@ -880,9 +748,21 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
       ],
     ]);
     f.getSandboxMock.mockImplementation((name) => entries.get(name ?? "") ?? null);
-    f.registerSandboxMock.mockImplementation((entry) => entries.set(entry.name, entry));
-    f.removeSandboxMock.mockImplementation((name) => entries.delete(name));
-    f.finalizePendingSandboxRegistrationMock.mockReturnValue(false);
+    f.registerSandboxMock.mockImplementation((entry) => {
+      const registered = { ...entry, pendingRouteReservation: true };
+      entries.set(entry.name, registered);
+      return registered;
+    });
+    let replacement: f.SandboxRecord | null = null;
+    f.finalizePendingSandboxRegistrationIfCurrentMock.mockImplementation((expected) => {
+      const next = {
+        ...expected,
+        lifecycleGeneration: "replacement-generation",
+      };
+      replacement = next;
+      entries.set("beta", next);
+      return false;
+    });
     f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
     f.captureOpenshellMock.mockImplementation((args) =>
       f.openshellResponses(args, {
@@ -897,7 +777,7 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     ).rejects.toMatchObject({
       exitCode: 1,
       lines: expect.arrayContaining([
-        "  Snapshot state was not restored and the clone was not registered.",
+        "Snapshot state was not restored. The current registry row was preserved.",
       ]),
     });
 
@@ -906,15 +786,14 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
       undefined,
       { pending: true },
     );
-    expect(f.finalizePendingSandboxRegistrationMock).toHaveBeenCalledWith("beta");
-    expect(f.removeSandboxMock).toHaveBeenCalledWith("beta");
+    expect(f.finalizePendingSandboxRegistrationIfCurrentMock).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "beta" }),
+    );
+    expect(f.removeSandboxMock).not.toHaveBeenCalled();
     expect(f.registerSandboxMock.mock.invocationCallOrder[0]).toBeLessThan(
-      f.finalizePendingSandboxRegistrationMock.mock.invocationCallOrder[0],
+      f.finalizePendingSandboxRegistrationIfCurrentMock.mock.invocationCallOrder[0],
     );
-    expect(f.finalizePendingSandboxRegistrationMock.mock.invocationCallOrder[0]).toBeLessThan(
-      f.removeSandboxMock.mock.invocationCallOrder[0],
-    );
-    expect(entries.has("beta")).toBe(false);
+    expect(entries.get("beta")).toEqual(replacement);
     expect(f.restoreSandboxStateMock).not.toHaveBeenCalled();
     expect(f.establishRestoredSandboxGatewayPairingMock).not.toHaveBeenCalled();
   });
@@ -952,10 +831,9 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     ]);
     f.getSandboxMock.mockImplementation((name) => entries.get(name ?? "") ?? null);
     f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
-    f.finalizePendingSandboxRegistrationMock.mockImplementation((name) => {
-      const current = entries.get(name);
-      expect(current?.pendingRouteReservation).toBe(true);
-      entries.set(name, { ...current!, pendingRouteReservation: undefined });
+    f.finalizePendingSandboxRegistrationIfCurrentMock.mockImplementation((expected) => {
+      expect(expected.pendingRouteReservation).toBe(true);
+      entries.set(expected.name, { ...expected, pendingRouteReservation: undefined });
       return true;
     });
     f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
@@ -969,7 +847,9 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
 
     await runSandboxSnapshot("alpha", { kind: "restore", to: "beta" });
 
-    expect(f.finalizePendingSandboxRegistrationMock).toHaveBeenCalledWith("beta");
+    expect(f.finalizePendingSandboxRegistrationIfCurrentMock).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "beta" }),
+    );
     expect(f.streamSandboxCreateMock).not.toHaveBeenCalled();
     expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("beta", "/tmp/backup-alpha");
     expect(entries.get("beta")?.pendingRouteReservation).toBeUndefined();
@@ -1009,14 +889,6 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     ]);
     f.getSandboxMock.mockImplementation((name) => entries.get(name ?? "") ?? null);
     f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
-    f.finalizePendingSandboxRegistrationMock.mockImplementation((name) => {
-      const current = entries.get(name);
-      expect(current).toMatchObject({
-        pendingRouteReservation: true,
-        reservationSessionId: "onboard-session",
-      });
-      return false;
-    });
     f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
     f.captureOpenshellMock.mockImplementation((args) =>
       f.openshellResponses(args, {
@@ -1030,7 +902,7 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
       runSandboxSnapshot("alpha", { kind: "restore", to: "beta" }),
     ).rejects.toMatchObject({ exitCode: 1 });
 
-    expect(f.finalizePendingSandboxRegistrationMock).toHaveBeenCalledWith("beta");
+    expect(f.finalizePendingSandboxRegistrationIfCurrentMock).not.toHaveBeenCalled();
     expect(f.restoreSandboxStateMock).not.toHaveBeenCalled();
     expect(entries.get("beta")).toMatchObject({
       pendingRouteReservation: true,
@@ -1080,13 +952,14 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
         entries.delete(name);
         return { status: "complete", removed: true };
       });
-      f.registerSandboxMock.mockImplementation((entry) =>
-        entries.set(entry.name, { ...entry, pendingRouteReservation: true }),
-      );
-      f.finalizePendingSandboxRegistrationMock.mockImplementation((name) => {
-        const current = entries.get(name);
-        expect(current?.pendingRouteReservation).toBe(true);
-        entries.set(name, { ...current!, pendingRouteReservation: undefined });
+      f.registerSandboxMock.mockImplementation((entry) => {
+        const registered = { ...entry, pendingRouteReservation: true };
+        entries.set(entry.name, registered);
+        return registered;
+      });
+      f.finalizePendingSandboxRegistrationIfCurrentMock.mockImplementation((expected) => {
+        expect(expected.pendingRouteReservation).toBe(true);
+        entries.set(expected.name, { ...expected, pendingRouteReservation: undefined });
         return true;
       });
       f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });

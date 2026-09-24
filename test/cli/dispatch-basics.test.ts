@@ -370,6 +370,160 @@ describe("CLI dispatch", () => {
 
   it.each([
     {
+      form: "space-separated",
+      argv: [
+        "gw1-sb",
+        "rebuild",
+        "--retire-recovery",
+        "11111111-1111-4111-8111-111111111111",
+        "--yes",
+      ],
+      oclifArgs: ["gw1-sb", "--retire-recovery", "11111111-1111-4111-8111-111111111111", "--yes"],
+    },
+    {
+      form: "equals-joined",
+      argv: [
+        "gw1-sb",
+        "rebuild",
+        "--retire-recovery=11111111-1111-4111-8111-111111111111",
+        "--yes",
+      ],
+      oclifArgs: ["gw1-sb", "--retire-recovery=11111111-1111-4111-8111-111111111111", "--yes"],
+    },
+  ])(
+    "routes a $form rebuild recovery retirement for an unregistered sandbox to oclif (#11394)",
+    async (testCase) => {
+      // The rebuild guidance runs step 3 `destroy --yes` before step 5
+      // `rebuild --retire-recovery <id> --yes`, so the registry row is gone by
+      // design. Retirement binds to the backup record and its recorded
+      // gateway, so the registry-aware "does not exist" gate must not block it.
+      await withDirectPublicDispatch(
+        async ({
+          dispatchCli,
+          exitSpy,
+          migrateLegacyPortState,
+          recoverRegistryEntries,
+          runOclifCommandById,
+          stderr,
+        }) => {
+          await dispatchCli(testCase.argv);
+
+          expect(runOclifCommandById).toHaveBeenCalledWith(
+            "sandbox:rebuild",
+            testCase.oclifArgs,
+            expect.anything(),
+          );
+          // Legacy state migration still runs first; only registry recovery is skipped.
+          expect(migrateLegacyPortState).toHaveBeenCalledTimes(1);
+          expect(recoverRegistryEntries).not.toHaveBeenCalled();
+          expect(stderr.join("\n")).not.toContain("does not exist");
+          expect(exitSpy).not.toHaveBeenCalled();
+        },
+      );
+    },
+  );
+
+  it("routes recovery retirement when the unregistered sandbox name matches an OpenShell hint (#11394)", async () => {
+    await withDirectPublicDispatch(
+      async ({ dispatchCli, exitSpy, recoverRegistryEntries, runOclifCommandById, stderr }) => {
+        await dispatchCli([
+          "term",
+          "rebuild",
+          "--retire-recovery",
+          "11111111-1111-4111-8111-111111111111",
+          "--yes",
+        ]);
+
+        expect(runOclifCommandById).toHaveBeenCalledWith(
+          "sandbox:rebuild",
+          ["term", "--retire-recovery", "11111111-1111-4111-8111-111111111111", "--yes"],
+          expect.anything(),
+        );
+        expect(recoverRegistryEntries).not.toHaveBeenCalled();
+        expect(stderr.join("\n")).not.toContain("Unknown nemoclaw command");
+        expect(exitSpy).not.toHaveBeenCalled();
+      },
+    );
+  });
+
+  it("keeps the missing-sandbox gate when the retirement flag follows the option separator (#11394)", async () => {
+    // oclif treats tokens after `--` as positional, so this is an ordinary
+    // rebuild of an unregistered sandbox and must keep the registry gate.
+    await withDirectPublicDispatch(
+      async ({ dispatchCli, exitSpy, recoverRegistryEntries, runOclifCommandById, stderr }) => {
+        await expect(
+          dispatchCli([
+            "gw1-sb",
+            "rebuild",
+            "--",
+            "--retire-recovery",
+            "11111111-1111-4111-8111-111111111111",
+          ]),
+        ).rejects.toThrow("process.exit:1");
+
+        expect(recoverRegistryEntries).toHaveBeenCalledWith({ requestedSandboxName: "gw1-sb" });
+        expect(stderr.join("\n")).toContain("Sandbox 'gw1-sb' does not exist");
+        expect(runOclifCommandById).not.toHaveBeenCalled();
+        expect(exitSpy).toHaveBeenCalledWith(1);
+      },
+    );
+  });
+
+  it("keeps the missing-sandbox gate for a plain rebuild of an unregistered sandbox (#11394)", async () => {
+    await withDirectPublicDispatch(
+      async ({ dispatchCli, exitSpy, recoverRegistryEntries, runOclifCommandById, stderr }) => {
+        await expect(dispatchCli(["gw1-sb", "rebuild", "--yes"])).rejects.toThrow("process.exit:1");
+
+        expect(recoverRegistryEntries).toHaveBeenCalledWith({ requestedSandboxName: "gw1-sb" });
+        expect(stderr.join("\n")).toContain("Sandbox 'gw1-sb' does not exist");
+        expect(runOclifCommandById).not.toHaveBeenCalled();
+        expect(exitSpy).toHaveBeenCalledWith(1);
+      },
+    );
+  });
+
+  it(
+    "reports the retire-specific record error, not a missing sandbox, for an unregistered name through the real CLI (#11394)",
+    testTimeoutOptions(35_000),
+    () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-retire-recovery-"));
+      try {
+        const localBin = path.join(home, "bin");
+        fs.mkdirSync(localBin, { recursive: true });
+        // Every OpenShell invocation is logged so the test can prove that
+        // retirement never selected or started a gateway for the missing row.
+        const openshellLog = path.join(home, "openshell-calls.log");
+        fs.writeFileSync(
+          path.join(localBin, "openshell"),
+          [
+            "#!/usr/bin/env bash",
+            `printf "%s\\n" "$*" >> ${JSON.stringify(openshellLog)}`,
+            "exit 1",
+          ].join("\n"),
+          { mode: 0o755 },
+        );
+
+        const r = runWithEnv(
+          "gw1-sb rebuild --retire-recovery 11111111-1111-4111-8111-111111111111 --yes",
+          { HOME: home, PATH: `${localBin}:${process.env.PATH || ""}` },
+        );
+
+        expect(r.code).toBe(1);
+        expect(fs.existsSync(openshellLog)).toBe(false);
+        expect(r.out).not.toContain("Starting OpenShell gateway");
+        expect(r.out).toContain(
+          "No exact rebuild recovery record exists for sandbox 'gw1-sb' and transaction '11111111-1111-4111-8111-111111111111'",
+        );
+        expect(r.out).not.toContain("Sandbox 'gw1-sb' does not exist");
+        expect(r.out).not.toContain("Run 'nemoclaw onboard' to create one");
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each([
+    {
       argv: ["term"],
       entered: "term",
       command: "Run: openshell term",
@@ -432,7 +586,7 @@ describe("CLI dispatch", () => {
         '  "sandbox get liost") printf "Name: liost\\nPhase: Ready\\nPolicy:\\n"; exit 0 ;;',
         `  "policy get"*) printf '%b' ${JSON.stringify(LAUNCH_READINESS_FIXTURE_POLICY)}; exit 0 ;;`,
         '  "inference get") exit 1 ;;',
-        '  "sandbox connect liost") echo "CONNECTED_LIOST"; exit 0 ;;',
+        '  "sandbox exec --name liost --tty -- /bin/bash -i") echo "CONNECTED_LIOST"; exit 0 ;;',
         "  *) exit 0 ;;",
         "esac",
       ].join("\n"),
@@ -455,6 +609,7 @@ describe("CLI dispatch", () => {
     // selected gateway (#7105).
     expect(calls).not.toContain("sandbox list");
     expect(calls).toContain("sandbox list -g nemoclaw");
+    expect(calls).toContain("sandbox exec --name liost --tty -- /bin/bash -i");
   });
 
   it("fails fast on gated NEMOCLAW_VLLM_MODEL without HF token before sandbox side effects", () => {
@@ -649,7 +804,7 @@ describe("CLI dispatch", () => {
     );
   });
 
-  it("dispatches the global doctor without a sandbox name (#10212)", async () => {
+  it("dispatches bare doctor globally despite a same-named sandbox (#11159)", async () => {
     await withDirectPublicDispatch(
       async ({
         dispatchCli,
@@ -669,6 +824,7 @@ describe("CLI dispatch", () => {
         expect(recoverRegistryEntries).not.toHaveBeenCalled();
         expect(stderr).toEqual([]);
       },
+      { sandboxNames: ["doctor"] },
     );
   });
 
@@ -944,7 +1100,6 @@ describe("CLI dispatch", () => {
   });
 
   it.each([
-    { label: "bare", args: [] as string[], migrationCalls: 1, helpCalls: 0 },
     { label: "help", args: ["--help"], migrationCalls: 0, helpCalls: 1 },
     { label: "probe-only", args: ["--probe-only"], migrationCalls: 1, helpCalls: 0 },
   ])("keeps $label connect for a sandbox literally named doctor (#10212)", async (testCase) => {
@@ -967,9 +1122,7 @@ describe("CLI dispatch", () => {
           migrationCalls: testCase.migrationCalls,
           helpCalls: testCase.helpCalls,
           oclifCall:
-            testCase.helpCalls > 0
-              ? null
-              : ["sandbox:connect", ["doctor", ...testCase.args]],
+            testCase.helpCalls > 0 ? null : ["sandbox:connect", ["doctor", ...testCase.args]],
           stderr: [],
         });
       },
@@ -977,42 +1130,58 @@ describe("CLI dispatch", () => {
     );
   });
 
-  it.each([
-    { label: "bare", args: [] as string[] },
-    { label: "probe-only", args: ["--probe-only"] },
-  ])("migrates a legacy sandbox named doctor before $label connect (#10212)", async (testCase) => {
-    await withDirectPublicDispatch(
-      async ({ dispatchCli, migrateLegacyPortState, runOclifCommandById, sandboxes, stderr }) => {
-        migrateLegacyPortState.mockImplementation(() => {
-          sandboxes.set("doctor", { name: "doctor" });
-          return {
-            migratedSandboxNames: ["doctor"],
-            migratedSession: false,
-            warnings: [],
-          };
-        });
-
-        await dispatchCli(["doctor", ...testCase.args]);
-
-        expect({
-          migrationCalls: migrateLegacyPortState.mock.calls.length,
-          oclifCall: runOclifCommandById.mock.calls[0]?.slice(0, 2) ?? null,
+  it.each([{ label: "probe-only", args: ["--probe-only"] }])(
+    "migrates a legacy sandbox named doctor before $label connect (#10212)",
+    async (testCase) => {
+      await withDirectPublicDispatch(
+        async ({
+          dispatchCli,
+          crossPortSandboxes,
+          migrateLegacyPortState,
+          runOclifCommandById,
+          sandboxes,
           stderr,
-        }).toEqual({
-          migrationCalls: 1,
-          oclifCall: ["sandbox:connect", ["doctor", ...testCase.args]],
-          stderr: [expect.stringContaining("Migrated legacy state")],
-        });
-      },
-      { connectFlags: ["--probe-only"], migratableSandboxNames: ["doctor"] },
-    );
-  });
+        }) => {
+          migrateLegacyPortState.mockImplementation(() => {
+            sandboxes.set("doctor", { name: "doctor" });
+            crossPortSandboxes.set("doctor", { name: "doctor" });
+            return {
+              migratedSandboxNames: ["doctor"],
+              migratedSession: false,
+              warnings: [],
+            };
+          });
+
+          await dispatchCli(["doctor", ...testCase.args]);
+
+          expect({
+            migrationCalls: migrateLegacyPortState.mock.calls.length,
+            oclifCall: runOclifCommandById.mock.calls[0]?.slice(0, 2) ?? null,
+            stderr,
+          }).toEqual({
+            migrationCalls: 1,
+            oclifCall: ["sandbox:connect", ["doctor", ...testCase.args]],
+            stderr: [expect.stringContaining("Migrated legacy state")],
+          });
+        },
+        { connectFlags: ["--probe-only"], migratableSandboxNames: ["doctor"] },
+      );
+    },
+  );
 
   it("recovers a live sandbox named after an action before reporting scope (#10212)", async () => {
     await withDirectPublicDispatch(
-      async ({ dispatchCli, recoverRegistryEntries, runOclifCommandById, sandboxes, stderr }) => {
+      async ({
+        dispatchCli,
+        crossPortSandboxes,
+        recoverRegistryEntries,
+        runOclifCommandById,
+        sandboxes,
+        stderr,
+      }) => {
         recoverRegistryEntries.mockImplementation(async () => {
           sandboxes.set("doctor", { name: "doctor" });
+          crossPortSandboxes.set("doctor", { name: "doctor" });
           return { sandboxes: [...sandboxes.values()], defaultSandbox: null };
         });
 
@@ -1149,5 +1318,163 @@ describe("CLI dispatch", () => {
       },
       { sandboxNames: ["alpha"] },
     );
+  });
+
+  function withSiblingGatewayRegistry(
+    entries: Array<{ port: number; name: string }>,
+    runBody: () => Promise<void>,
+  ): Promise<void> {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dispatch-cross-port-"));
+    for (const { port, name } of entries) {
+      const dir = path.join(home, ".nemoclaw", "gateways", String(port));
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(
+        path.join(dir, "sandboxes.json"),
+        JSON.stringify({
+          defaultSandbox: null,
+          defaultSelectionRevision: 1,
+          sandboxes: { [name]: { name, gatewayPort: port, agent: "openclaw" } },
+        }),
+      );
+    }
+    vi.stubEnv("HOME", home);
+    return runBody().finally(() => {
+      vi.unstubAllEnvs();
+      fs.rmSync(home, { recursive: true, force: true });
+    });
+  }
+
+  it("dispatches a sandbox registered under a sibling gateway-port root without failing or mutating registries", async () => {
+    // The sandbox lives only in ~/.nemoclaw/gateways/8245; the in-memory
+    // registry stub stands in for the current gateway-port root, which knows
+    // only owner-b. The name-first grammar must route owner-a through its
+    // recorded binding instead of reporting it as missing.
+    await withSiblingGatewayRegistry([{ port: 8245, name: "owner-a" }], async () => {
+      await withDirectPublicDispatch(
+        async ({ dispatchCli, recoverRegistryEntries, runOclifCommandById, stderr }) => {
+          await dispatchCli(["owner-a", "exec", "--", "echo", "hi"]);
+
+          const output = stderr.join("\n");
+          expect(output).not.toContain("does not exist");
+          expect(recoverRegistryEntries).not.toHaveBeenCalled();
+          expect(runOclifCommandById).toHaveBeenCalledWith(
+            "sandbox:exec",
+            ["owner-a", "--", "echo", "hi"],
+            expect.anything(),
+          );
+        },
+        { sandboxNames: ["owner-b"], preserveHome: true },
+      );
+    });
+  });
+
+  it("routes a status command for a sibling-port sandbox", async () => {
+    await withSiblingGatewayRegistry([{ port: 8245, name: "owner-a" }], async () => {
+      await withDirectPublicDispatch(
+        async ({ dispatchCli, recoverRegistryEntries, runOclifCommandById, stderr }) => {
+          await dispatchCli(["owner-a", "status"]);
+
+          const output = stderr.join("\n");
+          expect(output).not.toContain("does not exist");
+          expect(recoverRegistryEntries).not.toHaveBeenCalled();
+          expect(runOclifCommandById).toHaveBeenCalledWith(
+            "sandbox:status",
+            ["owner-a"],
+            expect.anything(),
+          );
+        },
+        { sandboxNames: ["owner-b"], preserveHome: true },
+      );
+    });
+  });
+
+  it("public exec selects the gateway recorded by a sibling-port sandbox (#11410)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sibling-exec-"));
+    const localBin = path.join(home, "bin");
+    const openshellLog = path.join(home, "openshell-calls.log");
+    fs.mkdirSync(localBin, { recursive: true });
+
+    const ownerARegistryDir = path.join(home, ".nemoclaw", "gateways", "8245");
+    fs.mkdirSync(ownerARegistryDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(ownerARegistryDir, "sandboxes.json"),
+      JSON.stringify({
+        defaultSandbox: "owner-a",
+        defaultSelectionRevision: 1,
+        sandboxes: {
+          "owner-a": {
+            name: "owner-a",
+            agent: "openclaw",
+            gatewayPort: 8245,
+            gpuEnabled: false,
+            model: "test-model",
+            policies: [],
+            provider: "nvidia-prod",
+          },
+        },
+      }),
+      { mode: 0o600 },
+    );
+    const ownerBRegistryDir = path.join(home, ".nemoclaw", "gateways", "8246");
+    fs.mkdirSync(ownerBRegistryDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(ownerBRegistryDir, "sandboxes.json"),
+      JSON.stringify({
+        defaultSandbox: "owner-b",
+        defaultSelectionRevision: 1,
+        sandboxes: {
+          "owner-b": {
+            name: "owner-b",
+            agent: "openclaw",
+            gatewayPort: 8246,
+            gpuEnabled: false,
+            model: "test-model",
+            policies: [],
+            provider: "nvidia-prod",
+          },
+        },
+      }),
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        "printf '%s\\n' \"$*\" >> " + JSON.stringify(openshellLog),
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    try {
+      const result = runWithEnv("owner-a exec -- echo hi", {
+        HOME: home,
+        PATH: localBin + ":" + (process.env.PATH || ""),
+        NEMOCLAW_GATEWAY_PORT: "8246",
+      });
+      const calls = fs.existsSync(openshellLog) ? fs.readFileSync(openshellLog, "utf8") : "";
+      expect(result, result.out + "\nOpenShell calls:\n" + calls).toMatchObject({ code: 0 });
+      expect(result.out).not.toContain("does not exist");
+      expect(calls).toContain("gateway select nemoclaw-8245");
+      expect(calls).not.toContain("gateway select nemoclaw-8246");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("lists sibling-port registrations in missing-sandbox diagnostics", async () => {
+    await withSiblingGatewayRegistry([{ port: 8245, name: "owner-a" }], async () => {
+      await withDirectPublicDispatch(
+        async ({ dispatchCli, exitSpy, stderr }) => {
+          await expect(dispatchCli(["ghost-x9", "status"])).rejects.toThrow("process.exit:1");
+
+          const output = stderr.join("\n");
+          expect(output).toContain("Sandbox 'ghost-x9' does not exist");
+          expect(output).toContain("Registered sandboxes: owner-b, owner-a");
+          expect(exitSpy).toHaveBeenCalledWith(1);
+        },
+        { sandboxNames: ["owner-b"], preserveHome: true },
+      );
+    });
   });
 });

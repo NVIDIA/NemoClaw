@@ -121,10 +121,10 @@ export class EnvironmentPhaseFixture {
             timeoutMs: 30_000,
           })
         : await this.host.command("docker", ["info"], {
-        artifactName: `runtime-docker-info-${artifactLabel(runtime)}`,
-        env: buildAvailabilityProbeEnv(),
-        timeoutMs: 30_000,
-      });
+            artifactName: `runtime-docker-info-${artifactLabel(runtime)}`,
+            env: buildAvailabilityProbeEnv(),
+            timeoutMs: 30_000,
+          });
       return {
         id: runtime,
         expectation,

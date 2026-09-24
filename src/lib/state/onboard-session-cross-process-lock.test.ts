@@ -207,7 +207,105 @@ describe("cross-process onboard lock", () => {
     expect(session.loadSession()?.sessionId).toBe("original");
   });
 
-  it("reports the holder without acquiring a competing lock", async () => {
+  it("preserves a live owner and resumes both lock paths after SIGKILL (#10461)", async () => {
+    const hostLock = path.join(tempHome, ".nemoclaw-portable-host.lock");
+    const childScript = `
+      const session = require(process.argv[1]);
+      const { acquireProcessBoundLockAt } = require(process.argv[2]);
+      acquireProcessBoundLockAt(process.argv[3]);
+      if (!session.acquireOnboardLock("separate nemoclaw onboard process").acquired)
+        throw new Error("child could not acquire onboarding lock");
+      process.stdout.write("locked\\n");
+      setInterval(() => {}, 1000);
+    `;
+    const child = spawn(
+      process.execPath,
+      [
+        "--require",
+        "tsx/cjs",
+        "-e",
+        childScript,
+        sessionPath,
+        require.resolve("./registry/lock"),
+        hostLock,
+      ],
+      { stdio: ["ignore", "pipe", "inherit"] },
+    );
+    const exited = once(child, "exit");
+    try {
+      await Promise.race([
+        once(child.stdout, "data"),
+        exited.then(() => {
+          throw new Error("lock owner exited before acquiring");
+        }),
+      ]);
+      const { acquireProcessBoundLockAt, releaseProcessBoundLock } =
+        await import("./registry/lock");
+      expect(() =>
+        acquireProcessBoundLockAt(hostLock, { maxRetries: 1, wait: () => undefined }),
+      ).toThrow(/after 1 retries/);
+      const acquired = session.acquireOnboardLock("competing nemoclaw onboard");
+      expect(acquired.acquired).toBe(false);
+      expect(acquired.holderPid).toBe(child.pid);
+      expect(acquired.holderCommand).toBe("separate nemoclaw onboard process");
+      expect(fs.readFileSync(path.join(hostLock, "owner"), "utf8")).toBe(String(child.pid));
+      expect(fs.existsSync(path.join(hostLock, "process-start"))).toBe(
+        process.platform === "linux",
+      );
+
+      const authority = await import("../onboard/portable-retirement-authority");
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      try {
+        authority.printPortableOnboardLockContention("NemoClaw", acquired);
+        expect(errorSpy.mock.calls.flat().join("\n")).toContain(
+          "Wait for the active onboarding run to finish",
+        );
+        expect(errorSpy.mock.calls.flat().join("\n")).not.toContain("rm -f");
+      } finally {
+        errorSpy.mockRestore();
+      }
+
+      child.kill("SIGKILL");
+      await exited;
+      expect(fs.existsSync(session.LOCK_FILE)).toBe(true);
+      expect(fs.existsSync(hostLock)).toBe(true);
+      const hostHandle = acquireProcessBoundLockAt(hostLock, { maxRetries: 2 });
+      try {
+        expect(session.acquireOnboardLock("nemoclaw onboard --resume").acquired).toBe(true);
+        expect(JSON.parse(fs.readFileSync(session.LOCK_FILE, "utf8")).pid).toBe(process.pid);
+        expect(fs.readFileSync(path.join(hostLock, "owner"), "utf8")).toBe(String(process.pid));
+        session.releaseOnboardLock();
+      } finally {
+        releaseProcessBoundLock(hostHandle);
+      }
+      expect(fs.existsSync(session.LOCK_FILE)).toBe(false);
+      expect(fs.existsSync(hostLock)).toBe(false);
+    } finally {
+      child.kill("SIGKILL");
+      await exited;
+    }
+  });
+
+  it("does not invent an active onboarding owner for an unverified lock", async () => {
+    const authority = await import("../onboard/portable-retirement-authority");
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      authority.printPortableOnboardLockContention("NemoClaw", {
+        acquired: false,
+        lockFile: session.LOCK_FILE,
+        stale: true,
+      });
+      const message = errorSpy.mock.calls.flat().join("\n");
+      expect(message).toContain("no verified owner");
+      expect(message).toContain("rerun this command");
+      expect(message).not.toMatch(/already in progress|rm -f/u);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("reports the live holder identity when a competing write is blocked by lock contention (#11052)", async () => {
+    const holderStartedAt = new Date().toISOString();
     const childScript = `
       const fs = require("node:fs");
       const path = require("node:path");
@@ -216,7 +314,7 @@ describe("cross-process onboard lock", () => {
       const fd = fs.openSync(lockFile, "wx", 0o600);
       fs.writeSync(fd, JSON.stringify({
         pid: process.pid,
-        startedAt: new Date().toISOString(),
+        startedAt: ${JSON.stringify(holderStartedAt)},
         command: "separate nemoclaw onboard process",
       }));
       process.stdout.write("locked\\n");
@@ -228,28 +326,41 @@ describe("cross-process onboard lock", () => {
     await once(child.stdout, "data");
 
     try {
-      const acquired = session.acquireOnboardLock("competing nemoclaw onboard");
-      expect(acquired.acquired).toBe(false);
-      expect(acquired.holderPid).toBe(child.pid);
-      expect(acquired.holderCommand).toBe("separate nemoclaw onboard process");
-
-      const authority = await import("../onboard/portable-retirement-authority");
-      const messages: string[] = [];
-      const errorSpy = vi
-        .spyOn(console, "error")
-        .mockImplementation((message) => messages.push(String(message)));
-      try {
-        authority.printPortableOnboardLockContention("NemoClaw", acquired);
-        expect(messages.join("\n")).toContain("Wait for the active onboarding run to finish");
-        expect(messages.join("\n")).not.toContain("rm -f");
-      } finally {
-        errorSpy.mockRestore();
-      }
+      const contend = () => session.listRetainedSandboxRecoveryRecords();
+      expect(contend).toThrow(
+        "Cannot update onboarding recovery while another onboarding run owns the lock.",
+      );
+      expect(contend).toThrow(`Lock holder PID: ${String(child.pid)}.`);
+      expect(contend).toThrow(`Started: ${holderStartedAt}.`);
+      expect(contend).toThrow("Lock holder command: separate nemoclaw onboard process.");
+      expect(contend).toThrow("Wait for the other run to finish, then rerun.");
     } finally {
       const exited = once(child, "exit");
       child.kill();
       await exited;
     }
+  });
+
+  it("points at verified stale-lock cleanup when the recorded lock is stale (#11052)", () => {
+    fs.mkdirSync(path.dirname(session.LOCK_FILE), { recursive: true });
+    fs.writeFileSync(session.LOCK_FILE, "not-a-lock-record", { mode: 0o600 });
+
+    expect(() => session.listRetainedSandboxRecoveryRecords()).toThrow(
+      "Wait briefly, then rerun so verified stale-lock cleanup can finish.",
+    );
+    expect(() => session.listRetainedSandboxRecoveryRecords()).not.toThrow(/Lock holder PID/u);
+  });
+
+  it("omits holder details when live lock contention records none (#11052)", () => {
+    const migrationLock = path.join(tempHome, ".nemoclaw", ".gateway-state-migration.lock");
+    fs.mkdirSync(migrationLock, { recursive: true });
+
+    expect(() => session.listRetainedSandboxRecoveryRecords()).toThrow(
+      "Wait for the other run to finish, then rerun.",
+    );
+    expect(() => session.listRetainedSandboxRecoveryRecords()).not.toThrow(
+      /Lock holder PID|Started:|Lock holder command/u,
+    );
   });
 
   it("does not replace a session written by the process that owns the onboard lock", async () => {

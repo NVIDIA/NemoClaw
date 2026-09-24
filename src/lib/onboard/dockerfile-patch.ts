@@ -57,8 +57,6 @@ const NODE_RUNTIME_REFRESH_INSTRUCTION =
 const PROXY_HOST_RE = /^[A-Za-z0-9._-]+$/;
 const POSITIVE_INT_RE = /^[1-9][0-9]*$/;
 
-type LooseObject = Record<string, unknown>;
-
 export function encodeDockerJsonArg(value: unknown): string {
   return Buffer.from(JSON.stringify(value ?? {}), "utf8").toString("base64");
 }
@@ -68,6 +66,7 @@ function sanitizeDockerArg(value: unknown): string {
 }
 
 export interface HermesPortableDockerfileBuildSettings {
+  readonly baseImageRef?: string;
   readonly model: string;
   readonly provider: string | null;
   readonly preferredInferenceApi: string | null;
@@ -136,10 +135,19 @@ export function renderHermesPortableDockerfileBuildSettings(
     ["NEMOCLAW_TOOL_DISCLOSURE", toolDisclosure],
     ["CHAT_UI_URL", ""],
   ] as const;
-  return replacements.reduce(
+  const rendered = replacements.reduce(
     (rendered, [name, value]) => replaceExactHermesPortableDockerArg(rendered, name, value),
     pinHermesPortableTargetArchitecture(source),
   );
+  if (input.baseImageRef === undefined) return rendered;
+  if (
+    !/^[A-Za-z0-9][A-Za-z0-9._/-]*(?::[A-Za-z0-9][A-Za-z0-9._-]{0,127}|@sha256:[a-f0-9]{64})$/u.test(
+      input.baseImageRef,
+    )
+  ) {
+    throw new Error("Hermes portable base image reference is invalid.");
+  }
+  return replaceExactHermesPortableDockerArg(rendered, "BASE_IMAGE", input.baseImageRef);
 }
 
 function encodeSanitizedDockerJsonArg(value: unknown): string {
@@ -186,7 +194,7 @@ export interface PatchStagedDockerfileOptions {
   rebuildPreservedEnv?: readonly PreservedEnvFile[];
 }
 
-function openClawRootStartupArg(dockerfile: string): DockerfileInstruction | null {
+function openClawRuntimeUserArg(dockerfile: string): DockerfileInstruction | null {
   const instructions = dockerfileInstructions(dockerfile);
   const finalFromIndex = instructions.reduce(
     (last, instruction, index) => (/^FROM(?:\s|$)/i.test(instruction.text) ? index : last),
@@ -221,7 +229,7 @@ function openClawRootStartupArg(dockerfile: string): DockerfileInstruction | nul
       entrypoint.length === 1 &&
       entrypoint[0] === "/usr/local/bin/nemoclaw-start";
   } catch {
-    // Root startup requires the trusted exec-form entrypoint.
+    // The managed startup contract requires the trusted exec-form entrypoint.
   }
   const runtimeUserControlsStartup =
     runtimeUserArgIndex < finalUserIndex &&
@@ -311,14 +319,19 @@ export function patchStagedDockerfile(
   options: PatchStagedDockerfileOptions = {},
 ): PatchedDockerfileMetadata {
   const sanitizedModel = sanitizeDockerArg(model);
+  const providerless =
+    model === "" && !provider && !preferredInferenceApi && !inferenceBaseUrlOverride;
   const sandboxInference = getSandboxInferenceConfig(
     sanitizedModel,
     provider,
     preferredInferenceApi,
   );
-  const { providerKey, primaryModelRef, inferenceApi, inferenceCompat } = sandboxInference;
-  const inferenceBaseUrl =
-    inferenceBaseUrlOverride && inferenceBaseUrlOverride.trim()
+  const { providerKey, primaryModelRef, inferenceApi, inferenceCompat } = providerless
+    ? { providerKey: "", primaryModelRef: "", inferenceApi: "", inferenceCompat: null }
+    : sandboxInference;
+  const inferenceBaseUrl = providerless
+    ? ""
+    : inferenceBaseUrlOverride && inferenceBaseUrlOverride.trim()
       ? inferenceBaseUrlOverride
       : sandboxInference.inferenceBaseUrl;
   const patchSnapshot = readDockerfilePatchSnapshot(dockerfilePath);
@@ -619,14 +632,6 @@ export function patchStagedDockerfile(
   if (baseResolutionLabels) {
     dockerfile = `${dockerfile.trimEnd()}\n\n# NemoClaw sandbox-base warm-resolution metadata\n${baseResolutionLabels}\n`;
   }
-  // NEMOCLAW_EXTRA_AGENTS_JSON — bake secondary OpenClaw agents into
-  // agents.list[] alongside the canonical "main" entry. Pass the raw operator
-  // payload through to the build-time validator in
-  // scripts/generate-openclaw-config.mts. The host-side encode does not
-  // parse or shape-check the JSON: that would duplicate validation logic and
-  // could silently drop a malformed payload here while the docs/contract
-  // promise an image-build failure. Encoding the raw bytes makes the build
-  // the single source of truth for validation errors.
   const extraAgentsRaw = process.env.NEMOCLAW_EXTRA_AGENTS_JSON;
   if (extraAgentsRaw && extraAgentsRaw.trim()) {
     const encoded = sanitizeDockerArg(Buffer.from(extraAgentsRaw, "utf8").toString("base64"));
@@ -648,16 +653,17 @@ export function patchStagedDockerfile(
       );
     }
     const corporateCaArgPattern = /^ARG NEMOCLAW_CORPORATE_CA_B64=.*$/m;
-    const openClawRootStartup = options.agentName === "openclaw";
-    const runtimeUserArg = openClawRootStartup ? openClawRootStartupArg(dockerfile) : null;
+    const openClawManagedStartup = options.agentName === "openclaw";
+    const runtimeUserArg = openClawManagedStartup ? openClawRuntimeUserArg(dockerfile) : null;
     if (
       corporateCaArgPattern.test(dockerfile) &&
-      (!openClawRootStartup || runtimeUserArg !== null)
+      (!openClawManagedStartup || runtimeUserArg !== null)
     ) {
       if (runtimeUserArg) {
-        // Root startup creates the merged runtime trust bundle before the
-        // entrypoint starts the sandbox user's agent process (#8803).
-        dockerfile = `${dockerfile.slice(0, runtimeUserArg.start)}ARG NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root${dockerfile.slice(runtimeUserArg.end)}`;
+        // OpenShell 0.0.116 rejects a root OCI image user. Managed startup
+        // applies the root-owned runtime trust bundle before releasing this
+        // sandbox-user entrypoint.
+        dockerfile = `${dockerfile.slice(0, runtimeUserArg.start)}ARG NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox${dockerfile.slice(runtimeUserArg.end)}`;
       }
       dockerfile = dockerfile.replace(
         corporateCaArgPattern,
@@ -684,7 +690,7 @@ export function patchStagedDockerfile(
       );
     } else {
       // A fallback source stays a no-op when a custom Dockerfile lacks either
-      // build argument required for root-owned runtime trust. Onboarding still
+      // build argument required for the managed startup contract. Onboarding still
       // exits 0 and the sandbox still reaches Ready, so report the dropped
       // anchor here; otherwise the missing trust is invisible until external
       // TLS through the corporate proxy fails at runtime (#8454).

@@ -28,7 +28,8 @@ import {
   isDockerDaemonReachable,
   isSupportedGatewayDockerHost,
 } from "../domain/docker-host";
-import { classifyDockerVersionIdentity } from "../platform";
+import type { DockerAuthorityConflict } from "../platform";
+import { classifyDockerVersionIdentity, observeDockerAuthorityConflict } from "../platform";
 import { resolveOpenshell } from "../readiness/openshell-resolver";
 import {
   MIN_RECOMMENDED_DOCKER_CPUS,
@@ -37,7 +38,6 @@ import {
 import { assessNvidiaCdiHost } from "./docker-cdi";
 import { printUnderProvisionedRuntimeWarning } from "./preflight-messages";
 import { isSshSession } from "./ssh-forward-hint";
-import { isWslDockerDesktopRuntime } from "./wsl-docker-desktop-gpu";
 
 export {
   MIN_RECOMMENDED_DOCKER_CPUS,
@@ -48,10 +48,11 @@ export { getNvidiaCdiSpecPath, parseDockerCdiSpecDirs } from "./docker-cdi";
 export { isWslDockerDesktopRuntime } from "./wsl-docker-desktop-gpu";
 
 // runner.ts still uses CommonJS-style exports — use require here.
-const { run, runCapture } = require("../runner");
+const { run, runCapture, runCaptureEx } = require("../runner");
 const DOCKER_HOST_ADVISORY_IDS = new Set(DOCKER_HOST_ADVISORY_CHECKS.map(({ id }) => id));
 
 type RunCaptureFn = typeof import("../runner").runCapture;
+type RunCaptureExFn = typeof import("../runner").runCaptureEx;
 type RunFn = typeof import("../runner").run;
 type RunCaptureOpts = Parameters<RunCaptureFn>[1];
 type NullableRunCaptureFn = (
@@ -59,6 +60,26 @@ type NullableRunCaptureFn = (
   options?: RunCaptureOpts,
 ) => string | null;
 type ProbeRunOpts = { timeout?: number };
+
+const DOCKER_PREFLIGHT_TIMEOUT_MS = 15_000;
+
+/** The only endpoint scheme onboarding supports; see `isSupportedGatewayDockerHost`. */
+const DOCKER_UNIX_SCHEME = "unix://";
+
+type UnixSocketInspection = "socket" | "missing" | "unknown";
+
+/** Classify a selected endpoint without treating permission failures as absence. */
+function inspectUnixSocket(
+  socketPath: string,
+  statSyncImpl: (filePath: string) => { isSocket(): boolean } = fs.statSync,
+): UnixSocketInspection {
+  try {
+    return statSyncImpl(socketPath).isSocket() ? "socket" : "missing";
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    return code === "ENOENT" || code === "ENOTDIR" ? "missing" : "unknown";
+  }
+}
 
 // ── Types ────────────────────────────────────────────────────────
 
@@ -129,9 +150,34 @@ export interface HostAssessment {
   dockerServiceActive?: boolean | null;
   dockerServiceEnabled?: boolean | null;
   dockerHostInvalid?: boolean;
+  /**
+   * The DOCKER_CONTEXT selector that still owns the endpoint choice, i.e. one
+   * authority detection could not reduce to a supported local socket. It makes
+   * `dockerHostInvalid` true, and names the variable the remedy must fix
+   * (#11719).
+   */
+  dockerContextInvalid?: string;
+  /**
+   * The explicitly selected `unix://` endpoint that has no Unix socket at its
+   * path while the daemon is unreachable. Nothing can be listening there, so
+   * the docker-group and start-Docker remedies both misdiagnose it (#11719).
+   */
+  dockerEndpointSocketMissing?: string;
   dockerInstalled: boolean;
   dockerRunning: boolean;
   dockerReachable: boolean;
+  dockerProbeIssue?:
+    | "info_timeout"
+    | "info_unavailable"
+    | "version_timeout"
+    | "version_unavailable";
+  /**
+   * Set when DOCKER_HOST is unset, the default Docker authority is
+   * unreachable, and the socket fallback met two reachable engines of
+   * different known identities. Detection deliberately selects neither
+   * engine and keeps the unreachable default (#8816, #10253, #10622).
+   */
+  dockerAuthorityConflict?: DockerAuthorityConflict;
   nodeInstalled: boolean;
   openshellInstalled: boolean;
   dockerInfoSummary?: string;
@@ -187,9 +233,15 @@ export interface AssessHostOpts {
   readFileImpl?: (filePath: string, encoding: BufferEncoding) => string;
   readdirImpl?: (dir: string) => string[];
   runCaptureImpl?: RunCaptureFn;
+  runCaptureExImpl?: RunCaptureExFn;
   resolveOpenshellImpl?: () => string | null;
   commandExistsImpl?: (commandName: string) => boolean;
   gpuProbeImpl?: () => boolean;
+  statSyncImpl?: (filePath: string) => { isSocket(): boolean };
+  observeDockerAuthorityConflictImpl?: (opts: {
+    env: NodeJS.ProcessEnv;
+    platform: NodeJS.Platform;
+  }) => DockerAuthorityConflict | null;
 }
 
 function buildCommandVArgv(commandName: string): readonly string[] {
@@ -541,6 +593,7 @@ function parseSystemctlState(value = ""): boolean | null {
   return null;
 }
 
+/** Assess the host: Docker, GPU, OpenShell, and the advisories they imply. */
 export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   const platform = opts.platform ?? process.platform;
   const env = opts.env ?? process.env;
@@ -551,6 +604,8 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
         ignoreError: options?.ignoreError ?? false,
         timeout: options?.timeout,
       }));
+  const runCaptureExImpl =
+    opts.runCaptureExImpl ?? (opts.runCaptureImpl === undefined ? runCaptureEx : undefined);
   const readFileImpl = opts.readFileImpl ?? fs.readFileSync;
   const readdirImpl = opts.readdirImpl ?? ((dir: string) => fs.readdirSync(dir));
   const dockerInstalled =
@@ -563,29 +618,107 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   const packageManager = detectPackageManager(runCaptureImpl);
   const systemctlAvailable =
     opts.commandExistsImpl?.("systemctl") ?? commandExists("systemctl", runCaptureImpl);
-  const dockerHostInvalid = !isSupportedGatewayDockerHost(env.DOCKER_HOST);
+  // DOCKER_CONTEXT overrides DOCKER_HOST in the Docker CLI. Authority detection
+  // reduces a context naming a supported local socket to DOCKER_HOST, so a
+  // selector that survives to here names an endpoint onboarding cannot use --
+  // and probing the default socket instead would certify a daemon the operator
+  // did not select (#11719).
+  const dockerContextInvalid = String(env.DOCKER_CONTEXT ?? "").trim() || undefined;
+  const dockerHostInvalid =
+    !isSupportedGatewayDockerHost(env.DOCKER_HOST) || dockerContextInvalid !== undefined;
 
   let dockerInfoOutput = opts.dockerInfoOutput;
+  let dockerProbeIssue: HostAssessment["dockerProbeIssue"];
   let dockerReachable = false;
   let dockerRunning = false;
   if (dockerInstalled && !dockerHostInvalid && dockerInfoOutput === undefined) {
-    dockerInfoOutput = runCaptureImpl(["docker", "info", "--format", "{{json .}}"], {
-      ignoreError: true,
-    });
+    if (runCaptureExImpl) {
+      try {
+        const result = runCaptureExImpl(["docker", "info", "--format", "{{json .}}"], {
+          timeout: DOCKER_PREFLIGHT_TIMEOUT_MS,
+        });
+        if (result.timedOut) dockerProbeIssue = "info_timeout";
+        else if (result.exitCode === null) dockerProbeIssue = "info_unavailable";
+        else dockerInfoOutput = result.exitCode === 0 ? result.stdout : "";
+      } catch {
+        dockerProbeIssue = "info_unavailable";
+      }
+    } else {
+      dockerInfoOutput = runCaptureImpl(["docker", "info", "--format", "{{json .}}"], {
+        ignoreError: true,
+        timeout: DOCKER_PREFLIGHT_TIMEOUT_MS,
+      });
+    }
   }
   if (dockerInstalled && isDockerDaemonReachable(dockerInfoOutput)) {
     dockerReachable = true;
     dockerRunning = true;
   }
 
+  // An endpoint the operator selected explicitly cannot be a docker-group or
+  // stopped-daemon problem when no Unix socket sits at its path: nothing is
+  // listening there, and both of those remedies -- one of them a root-level
+  // group grant -- would act on a false premise. The default endpoint is
+  // deliberately excluded, because a missing default socket is exactly the
+  // stopped-daemon case `start_docker` exists for (#11719).
+  const selectedDockerEndpoint = String(env.DOCKER_HOST ?? "").trim();
+  const selectedDockerSocketPath = selectedDockerEndpoint.startsWith(DOCKER_UNIX_SCHEME)
+    ? selectedDockerEndpoint.slice(DOCKER_UNIX_SCHEME.length)
+    : "";
+  const dockerEndpointSocketMissing =
+    dockerInstalled &&
+    !dockerReachable &&
+    !dockerHostInvalid &&
+    selectedDockerSocketPath &&
+    inspectUnixSocket(selectedDockerSocketPath, opts.statSyncImpl) === "missing"
+      ? selectedDockerEndpoint
+      : undefined;
+
+  // An unreachable default authority with two reachable engines of different
+  // identities is an authority conflict (#10622). It is observed only when
+  // DOCKER_HOST is unset, because a set DOCKER_HOST is honoured before any
+  // socket probe.
+  // Injected evidence or transports can describe a remote host. Only the local
+  // assessment defaults to local socket probes; repeat them after remediation.
+  const observeConflict =
+    opts.observeDockerAuthorityConflictImpl ??
+    (opts.dockerInfoOutput === undefined &&
+    opts.runCaptureImpl === undefined &&
+    opts.runCaptureExImpl === undefined
+      ? observeDockerAuthorityConflict
+      : undefined);
+  const dockerAuthorityConflict =
+    observeConflict !== undefined &&
+    dockerInstalled &&
+    !dockerHostInvalid &&
+    !dockerReachable &&
+    dockerProbeIssue === undefined &&
+    !env.DOCKER_HOST
+      ? (observeConflict({ env, platform }) ?? undefined)
+      : undefined;
+
   // Capture the docker-compat engine banner so Podman fronting the Docker CLI
   // socket is reclassified below. Only probed when the daemon is reachable so a
   // down/absent Docker never pays for the extra call (#7320).
   let dockerVersionOutput = opts.dockerVersionOutput;
   if (dockerReachable && !dockerHostInvalid && dockerVersionOutput === undefined) {
-    dockerVersionOutput = runCaptureImpl(["docker", "version", "--format", "{{json .}}"], {
-      ignoreError: true,
-    });
+    if (runCaptureExImpl) {
+      try {
+        const result = runCaptureExImpl(["docker", "version", "--format", "{{json .}}"], {
+          timeout: DOCKER_PREFLIGHT_TIMEOUT_MS,
+        });
+        if (result.timedOut) dockerProbeIssue = "version_timeout";
+        else if (result.exitCode === null) dockerProbeIssue = "version_unavailable";
+        else dockerVersionOutput = result.exitCode === 0 ? result.stdout : "";
+      } catch {
+        dockerProbeIssue = "version_unavailable";
+      }
+    } else {
+      dockerVersionOutput = runCaptureImpl(["docker", "version", "--format", "{{json .}}"], {
+        ignoreError: true,
+        timeout: DOCKER_PREFLIGHT_TIMEOUT_MS,
+      });
+    }
   }
 
   const release = opts.release ?? os.release();
@@ -701,9 +834,13 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
     dockerServiceActive,
     dockerServiceEnabled,
     dockerHostInvalid,
+    dockerContextInvalid,
+    dockerEndpointSocketMissing,
     dockerInstalled,
     dockerRunning,
     dockerReachable,
+    dockerProbeIssue,
+    dockerAuthorityConflict,
     nodeInstalled,
     openshellInstalled,
     dockerInfoSummary: parseDockerInfoSummary(dockerInfoOutput),

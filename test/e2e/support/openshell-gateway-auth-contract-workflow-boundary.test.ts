@@ -70,10 +70,10 @@ describe("OpenShell gateway auth contract workflow boundary", () => {
         "openshell-gateway-auth-contract must use the trusted execution plan",
         "openshell-gateway-auth-contract must run on ubuntu-latest",
         "openshell-gateway-auth-contract must retain its 20 minute resource budget",
-        "openshell-gateway-auth-contract must set DOCKER_GRPC_PROBE_IMAGE=node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c",
+        "openshell-gateway-auth-contract must set DOCKER_GRPC_PROBE_IMAGE=node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc",
         "openshell-gateway-auth-contract must set E2E_ARTIFACT_DIR=${{ github.workspace }}/e2e-artifacts/live/openshell-gateway-auth-contract",
-        "openshell-gateway-auth-contract must set NEMOCLAW_CANDIDATE_VERSION=0.0.106",
-        "openshell-gateway-auth-contract must set NEMOCLAW_OPENSHELL_PIN_VERSION=0.0.106",
+        "openshell-gateway-auth-contract must set NEMOCLAW_CANDIDATE_VERSION=0.0.116",
+        "openshell-gateway-auth-contract must set NEMOCLAW_OPENSHELL_PIN_VERSION=0.0.116",
         "openshell-gateway-auth-contract must not expose NVIDIA_API_KEY at job scope",
         "openshell-gateway-auth-contract action 'actions/checkout@v6' must pin a full SHA",
         "openshell-gateway-auth-contract checkout must disable persisted credentials",
@@ -82,7 +82,7 @@ describe("OpenShell gateway auth contract workflow boundary", () => {
         "openshell-gateway-auth-contract step 'Pre-pull pinned gateway auth probe image' must run: docker pull \"$DOCKER_GRPC_PROBE_IMAGE\"",
         "openshell-gateway-auth-contract live test must not receive workflow credentials",
         "openshell-gateway-auth-contract final artifact safety scan must run unconditionally with a stable id",
-        "openshell-gateway-auth-contract step 'Validate final OpenShell gateway auth contract artifacts' must run exactly: node --experimental-strip-types --no-warnings tools/e2e/openshell-gateway-auth-artifact-safety.mts \"$E2E_ARTIFACT_DIR\"",
+        "openshell-gateway-auth-contract step 'Validate final OpenShell gateway auth contract artifacts' must run exactly: node --no-warnings tools/e2e/openshell-gateway-auth-artifact-safety.mts \"$E2E_ARTIFACT_DIR\"",
         "openshell-gateway-auth-contract must use the reviewed artifact uploader",
         "openshell-gateway-auth-contract must upload artifacts only after this run attempt passes safety scan",
         "openshell-gateway-auth-contract must upload only the immutable approved artifact payload",
@@ -100,7 +100,7 @@ describe("OpenShell gateway auth contract workflow boundary", () => {
     artifactSafety.run = `${artifactSafety.run} || true`;
 
     expect(validateOpenShellGatewayAuthContractWorkflow(workflow)).toContain(
-      "openshell-gateway-auth-contract step 'Validate final OpenShell gateway auth contract artifacts' must run exactly: node --experimental-strip-types --no-warnings tools/e2e/openshell-gateway-auth-artifact-safety.mts \"$E2E_ARTIFACT_DIR\"",
+      "openshell-gateway-auth-contract step 'Validate final OpenShell gateway auth contract artifacts' must run exactly: node --no-warnings tools/e2e/openshell-gateway-auth-artifact-safety.mts \"$E2E_ARTIFACT_DIR\"",
     );
   });
 });

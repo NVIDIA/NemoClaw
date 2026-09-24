@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   listSandboxes: vi.fn(),
   getSandbox: vi.fn(),
+  recordSandboxStopIntent: vi.fn(),
+  updateSandbox: vi.fn(),
   backupSandboxState: vi.fn(),
   captureSandboxListWithGatewayPreflightOrExit: vi.fn(),
   dockerListImagesFormat: vi.fn().mockReturnValue(""),
@@ -14,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   startStoppedSandboxContainerForBackup: vi.fn(),
   backupStartedSandboxState: vi.fn(),
   returnSandboxContainerToStopped: vi.fn(),
+  retainStrictPreUpgradeRecoveryState: vi.fn(),
   isSandboxContainerDefinitivelyAbsent: vi.fn(),
   withSandboxMutationLock: vi.fn(),
   enforceRemovedImmutabilityMigrationBoundary: vi.fn(),
@@ -48,6 +51,8 @@ vi.mock("../state/registry", () => ({
     entry.pendingRouteReservation !== true,
   listSandboxes: mocks.listSandboxes,
   getSandbox: mocks.getSandbox,
+  recordSandboxStopIntent: mocks.recordSandboxStopIntent,
+  updateSandbox: mocks.updateSandbox,
 }));
 vi.mock("../state/sandbox", () => ({
   backupSandboxState: mocks.backupSandboxState,
@@ -94,6 +99,9 @@ vi.mock("./sandbox/stopped-sandbox-backup", () => ({
   returnSandboxContainerToStopped: mocks.returnSandboxContainerToStopped,
   isSandboxContainerDefinitivelyAbsent: mocks.isSandboxContainerDefinitivelyAbsent,
 }));
+vi.mock("./sandbox/snapshot/strict-pre-upgrade-recovery", () => ({
+  retainStrictPreUpgradeRecoveryState: mocks.retainStrictPreUpgradeRecoveryState,
+}));
 vi.mock("../domain/lifecycle/options", () => ({
   normalizeGarbageCollectImagesOptions: (o: unknown) => o || {},
 }));
@@ -113,6 +121,9 @@ describe("backupAll", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.backupStartedSandboxState.mockReset();
+    mocks.retainStrictPreUpgradeRecoveryState.mockImplementation(
+      async (_sandbox, result) => result,
+    );
     delete process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS;
     readySandboxNames = new Set(["sb-good", "sb-bad"]);
     liveSandboxNames = new Set();
@@ -125,6 +136,7 @@ describe("backupAll", () => {
     mocks.isSandboxContainerDefinitivelyAbsent.mockReturnValue(false);
     mocks.startStoppedSandboxContainerForBackup.mockReturnValue(null);
     mocks.returnSandboxContainerToStopped.mockReturnValue(true);
+    mocks.recordSandboxStopIntent.mockReturnValue(true);
     mocks.withSandboxMutationLock.mockImplementation(runSandboxMutationAction);
     mocks.enforceRemovedImmutabilityMigrationBoundary.mockReset();
     mocks.assertNoHermesPortableHostAuthority.mockReset();
@@ -593,6 +605,11 @@ describe("backupAll", () => {
       events.push("stop:sb-stopped");
       return true;
     });
+    mocks.recordSandboxStopIntent.mockImplementation(() => {
+      expect(lockActive).toBe(true);
+      events.push("retain-stop:sb-stopped");
+      return true;
+    });
     vi.spyOn(console, "log").mockImplementation(() => undefined);
 
     await backupAll();
@@ -602,11 +619,159 @@ describe("backupAll", () => {
       "start:sb-stopped",
       "backup:sb-stopped",
       "stop:sb-stopped",
+      "retain-stop:sb-stopped",
       "lock:end:sb-stopped",
     ]);
     expect(lockActive).toBe(false);
     expect(mocks.withSandboxMutationLock).toHaveBeenCalledOnce();
     expect(mocks.withSandboxMutationLock).toHaveBeenCalledWith("sb-stopped", expect.any(Function));
+  });
+
+  it("fails strict backup when stopped-state intent cannot be retained", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "sb-stopped" }],
+      defaultSandbox: null,
+    });
+    readySandboxNames = new Set();
+    mocks.startStoppedSandboxContainerForBackup.mockReturnValue({
+      containerName: "openshell-sb-stopped-abc",
+      runtimeProviderId: "docker",
+    });
+    mocks.backupStartedSandboxState.mockResolvedValue({
+      success: true,
+      backedUpDirs: ["workspace"],
+      failedDirs: [],
+      backedUpFiles: [],
+      failedFiles: [],
+      manifest: { backupPath: "/backups/sb-stopped/timestamp" },
+    });
+    mocks.recordSandboxStopIntent.mockReturnValue(false);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await expect(backupAll()).rejects.toThrow("could not retain that lifecycle intent");
+
+    expect(mocks.recordSandboxStopIntent).toHaveBeenCalledWith(
+      "sb-stopped",
+      true,
+      mocks.updateSandbox,
+    );
+  });
+
+  it("retains strict pre-upgrade recovery state inside the sandbox mutation lock", async () => {
+    const sandbox = { name: "sb-good", gatewayName: "nemoclaw" };
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [sandbox],
+      defaultSandbox: "sb-good",
+    });
+    readySandboxNames = new Set(["sb-good"]);
+    const manifest = { backupPath: "/backups/sb-good/timestamp" };
+    const events: string[] = [];
+    let lockActive = false;
+    mocks.withSandboxMutationLock.mockImplementation(
+      async (name: string, action: () => unknown) => {
+        events.push(`lock:start:${name}`);
+        lockActive = true;
+        try {
+          return await action();
+        } finally {
+          lockActive = false;
+          events.push(`lock:end:${name}`);
+        }
+      },
+    );
+    mocks.backupSandboxState.mockImplementation(() => {
+      expect(lockActive).toBe(true);
+      events.push("backup");
+      return {
+        success: true,
+        backedUpDirs: ["workspace"],
+        failedDirs: [],
+        backedUpFiles: [],
+        failedFiles: [],
+        manifest,
+      };
+    });
+    mocks.retainStrictPreUpgradeRecoveryState.mockImplementation(
+      async (receivedSandbox, receivedResult) => {
+        expect(lockActive).toBe(true);
+        expect(receivedSandbox).toBe(sandbox);
+        expect(receivedResult.manifest).toBe(manifest);
+        events.push("retain-recovery");
+        return receivedResult;
+      },
+    );
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await backupAllUnderPortableHostFence({ purpose: "pre-upgrade", requireAll: true });
+
+    expect(events).toEqual(["lock:start:sb-good", "backup", "retain-recovery", "lock:end:sb-good"]);
+    expect(mocks.retainStrictPreUpgradeRecoveryState).toHaveBeenCalledWith(
+      sandbox,
+      expect.objectContaining({ manifest }),
+      { gatewayName: "nemoclaw", workspace: "default" },
+    );
+  });
+
+  it.each([
+    { purpose: "pre-upgrade" as const, requireAll: false },
+    { purpose: "pre-uninstall" as const, requireAll: true },
+  ])(
+    "does not retain policy for $purpose when requireAll=$requireAll",
+    async ({ purpose, requireAll }) => {
+      mocks.listSandboxes.mockReturnValue({
+        sandboxes: [{ name: "sb-good" }],
+        defaultSandbox: "sb-good",
+      });
+      readySandboxNames = new Set(["sb-good"]);
+      mocks.backupSandboxState.mockReturnValue({
+        success: true,
+        backedUpDirs: ["workspace"],
+        failedDirs: [],
+        backedUpFiles: [],
+        failedFiles: [],
+        manifest: { backupPath: "/backups/sb-good/timestamp" },
+      });
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await backupAllUnderPortableHostFence({ purpose, requireAll });
+
+      expect(mocks.retainStrictPreUpgradeRecoveryState).not.toHaveBeenCalled();
+    },
+  );
+
+  it("returns a started container to stopped when strict recovery retention fails", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "sb-stopped" }],
+      defaultSandbox: "sb-stopped",
+    });
+    readySandboxNames = new Set();
+    mocks.startStoppedSandboxContainerForBackup.mockReturnValue({
+      containerName: "openshell-sb-stopped-abc",
+      runtimeProviderId: "docker",
+    });
+    mocks.backupStartedSandboxState.mockResolvedValue({
+      success: true,
+      backedUpDirs: ["workspace"],
+      failedDirs: [],
+      backedUpFiles: [],
+      failedFiles: [],
+      manifest: { backupPath: "/backups/sb-stopped/timestamp" },
+    });
+    mocks.retainStrictPreUpgradeRecoveryState.mockRejectedValue(
+      new Error("recorded gateway is unavailable"),
+    );
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await expect(
+      backupAllUnderPortableHostFence({ purpose: "pre-upgrade", requireAll: true }),
+    ).rejects.toThrow("recorded gateway is unavailable");
+
+    expect(mocks.returnSandboxContainerToStopped).toHaveBeenCalledWith({
+      containerName: "openshell-sb-stopped-abc",
+      runtimeProviderId: "docker",
+    });
+    expect(mocks.retainStrictPreUpgradeRecoveryState).toHaveBeenCalledOnce();
   });
 
   it("returns the container to stopped and counts a failure when the started backup fails (#6500)", async () => {

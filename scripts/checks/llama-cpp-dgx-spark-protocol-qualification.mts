@@ -782,12 +782,7 @@ export async function runLlamaCppDgxSparkProtocolQualification(options: {
       timeoutMilliseconds,
     ),
   );
-  await expectStatus(
-    acceptedResponse,
-    200,
-    bounds.maxResponseBytes,
-    "request-body boundary probe",
-  );
+  await expectStatus(acceptedResponse, 200, bounds.maxResponseBytes, "request-body boundary probe");
 
   const rejectedResponse = await fetchImpl(
     chatUrl,
@@ -798,12 +793,7 @@ export async function runLlamaCppDgxSparkProtocolQualification(options: {
     ),
   );
   validateRequestBodyLimitError(
-    await readJson(
-      rejectedResponse,
-      413,
-      bounds.maxResponseBytes,
-      "oversized request-body probe",
-    ),
+    await readJson(rejectedResponse, 413, bounds.maxResponseBytes, "oversized request-body probe"),
   );
 
   const continuationHealthResponse = await fetchImpl(`${baseUrl}/health`, {

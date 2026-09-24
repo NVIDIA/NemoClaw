@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { legacyCredentialAliases } from "../credentials/legacy-env-aliases";
 import type { WebSearchConfig } from "../inference/web-search";
 import { createCliOpenShellProviderAdapter } from "../adapters/openshell/provider-adapter-cli";
 import { namedOpenShellGateway } from "../adapters/openshell/sandbox-observer";
@@ -56,6 +57,11 @@ export interface CredentialProviderRegistrationDeps {
   persistMigratedLegacyKeys(): void;
 }
 
+/** Credential identity comes from the declared alias relationship, not shared values. */
+function stagedMigrationKeys(envKey: string, stagedValues: ReadonlyMap<string, string>): string[] {
+  return [envKey, ...legacyCredentialAliases(envKey)].filter((key) => stagedValues.has(key));
+}
+
 function recordMigratedLegacyMessagingCredentials(
   tokenDefs: readonly MessagingTokenDef[],
   registeredProviderNames: readonly string[],
@@ -66,9 +72,9 @@ function recordMigratedLegacyMessagingCredentials(
   const migrations: Array<{ envKey: string; migrated: boolean }> = [];
   for (const def of tokenDefs) {
     if (!registeredProviders.has(def.name) || !def.token || !def.envKey) continue;
-    const stagedValue = deps.stagedLegacyValues.get(def.envKey);
-    if (stagedValue === undefined) continue;
-    migrations.push({ envKey: def.envKey, migrated: def.token === stagedValue });
+    for (const envKey of stagedMigrationKeys(def.envKey, deps.stagedLegacyValues)) {
+      migrations.push({ envKey, migrated: def.token === deps.stagedLegacyValues.get(envKey) });
+    }
   }
   if (migrations.length === 0) return;
   revalidateSandboxIdentity?.("record migrated messaging provider credentials");
@@ -232,9 +238,10 @@ function validatePlannedCredentialProviderBindings(
 }
 
 export function createCredentialProviderRegistration(deps: CredentialProviderRegistrationDeps) {
+  const refreshReceipts = new Map<string, string>();
   const gatewayRunner = (gatewayName = deps.getGatewayName()) =>
     createGatewayScopedOpenshellRunner(deps.runOpenshell, gatewayName);
-  function upsertProvider(
+  async function upsertProvider(
     name: string,
     type: string,
     credentialEnv: string,
@@ -243,7 +250,7 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
     gatewayName = deps.getGatewayName(),
     options: MessagingProviderRegistrationOptions = {},
   ) {
-    const result = providers.upsertProvider(
+    const result = await providers.upsertProvider(
       name,
       type,
       credentialEnv,
@@ -253,16 +260,23 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
       options,
     );
     if (result.ok && credentialEnv) {
-      const stagedValue = deps.stagedLegacyValues.get(credentialEnv);
-      if (stagedValue !== undefined) {
+      // The legacy file can carry the value under an alias of the canonical
+      // credential env (NVIDIA_API_KEY for NVIDIA_INFERENCE_API_KEY), which
+      // resolveProviderCredential resolves transparently. Account the alias
+      // too, or the staged key never looks migrated and the plaintext file
+      // survives an onboard that used it (#10373).
+      const migrationKeys = stagedMigrationKeys(credentialEnv, deps.stagedLegacyValues);
+      if (migrationKeys.length > 0) {
         options.revalidateSandboxIdentity?.(
           `record migrated credential for provider ${JSON.stringify(name)}`,
         );
         const upsertedValue = env[credentialEnv] ?? deps.getCredential(credentialEnv);
-        if (upsertedValue === stagedValue) {
-          deps.migratedLegacyKeys.add(credentialEnv);
-        } else {
-          deps.migratedLegacyKeys.delete(credentialEnv);
+        for (const key of migrationKeys) {
+          if (upsertedValue === deps.stagedLegacyValues.get(key)) {
+            deps.migratedLegacyKeys.add(key);
+          } else {
+            deps.migratedLegacyKeys.delete(key);
+          }
         }
         deps.persistMigratedLegacyKeys();
       }
@@ -293,6 +307,7 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
       target: namedOpenShellGateway(gatewayName),
       definitions: application.definitions,
       refreshes: application.refreshes,
+      refreshReceipts,
       requireCompleteBindings: true,
       replaceExisting: options.replaceExisting,
       allowedSandboxes: options.allowedSandboxes,
@@ -332,45 +347,53 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
     }
   }
 
-  function credentialBindingMatchesGateway(
+  async function credentialBindingMatchesGateway(
     binding: CheckpointProviderBinding,
     runOpenshell: OpenshellCliHelpers["runOpenshell"],
-  ): boolean {
-    return inspectGatewayCredentialBinding(binding, runOpenshell).kind === "exact";
+  ): Promise<boolean> {
+    return (await inspectGatewayCredentialBinding(binding, runOpenshell)).kind === "exact";
   }
 
-  function inspectGatewayCredentialBinding(
+  async function inspectGatewayCredentialBinding(
     binding: CheckpointProviderBinding,
     runOpenshell: OpenshellCliHelpers["runOpenshell"],
-  ): gatewayProviderMetadata.GatewayCredentialOnlyProviderInspection {
+  ): Promise<gatewayProviderMetadata.GatewayCredentialOnlyProviderInspection> {
     const profileMatches = messagingBridgeProvider.matchesRegisteredMessagingBridgeProfile(
       binding.type,
       { root: deps.root, runOpenshell },
     );
     if (profileMatches === false) return { kind: "indeterminate" };
-    return gatewayProviderMetadata.inspectGatewayCredentialFamilyProviderBinding(
-      {
-        name: binding.name,
-        type: binding.type,
-        credentialKey: binding.credentialEnv,
-      },
-      runOpenshell,
-    );
+    const observed = await createCliOpenShellProviderAdapter({ run: runOpenshell }).getProvider({
+      target: { kind: "selected" },
+      providerName: binding.name,
+    });
+    if (!observed.ok) {
+      return observed.error.kind === "command" && observed.error.reason === "not_found"
+        ? { kind: "missing" }
+        : { kind: "indeterminate" };
+    }
+    return gatewayProviderMetadata.matchesGatewayCredentialFamilyProviderBinding(observed.value, {
+      name: binding.name,
+      type: binding.type,
+      credentialKey: binding.credentialEnv,
+    })
+      ? { kind: "exact" }
+      : { kind: "collision" };
   }
 
-  function inspectGatewayCredential(
+  async function inspectGatewayCredential(
     name: string,
     type: string,
     credentialEnv: string,
-  ): gatewayProviderMetadata.GatewayCredentialOnlyProviderInspection {
+  ): Promise<gatewayProviderMetadata.GatewayCredentialOnlyProviderInspection> {
     return inspectGatewayCredentialBinding({ name, type, credentialEnv }, gatewayRunner());
   }
 
-  function providerMatchesGatewayCredential(
+  async function providerMatchesGatewayCredential(
     name: string,
     type: string,
     credentialEnv: string,
-  ): boolean {
+  ): Promise<boolean> {
     return credentialBindingMatchesGateway({ name, type, credentialEnv }, gatewayRunner());
   }
 

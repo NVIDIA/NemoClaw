@@ -7,6 +7,7 @@ import {
   OPENSHELL_DOWNLOAD_TIMEOUT_MS,
   OPENSHELL_HEAVY_TIMEOUT_MS,
   OPENSHELL_OPERATION_TIMEOUT_MS,
+  OPENSHELL_POLICY_ACTIVATION_TIMEOUT_MS,
   OPENSHELL_PROBE_TIMEOUT_MS,
 } from "./timeouts";
 
@@ -15,6 +16,7 @@ describe("openshell-timeouts", () => {
     { name: "probe timeout", value: OPENSHELL_PROBE_TIMEOUT_MS },
     { name: "operation timeout", value: OPENSHELL_OPERATION_TIMEOUT_MS },
     { name: "heavy timeout", value: OPENSHELL_HEAVY_TIMEOUT_MS },
+    { name: "policy activation timeout", value: OPENSHELL_POLICY_ACTIVATION_TIMEOUT_MS },
     { name: "download timeout", value: OPENSHELL_DOWNLOAD_TIMEOUT_MS },
   ])("exports a positive integer $name", ({ value }) => {
     expect(value).toBeTypeOf("number");
@@ -22,10 +24,15 @@ describe("openshell-timeouts", () => {
     expect(Number.isInteger(value)).toBe(true);
   });
 
-  it("maintains expected ordering: PROBE < OPERATION <= DOWNLOAD < HEAVY", () => {
+  it("maintains expected ordering: PROBE < OPERATION <= DOWNLOAD < HEAVY < POLICY_ACTIVATION", () => {
     expect(OPENSHELL_PROBE_TIMEOUT_MS).toBeLessThan(OPENSHELL_OPERATION_TIMEOUT_MS);
     expect(OPENSHELL_OPERATION_TIMEOUT_MS).toBeLessThanOrEqual(OPENSHELL_DOWNLOAD_TIMEOUT_MS);
     expect(OPENSHELL_DOWNLOAD_TIMEOUT_MS).toBeLessThan(OPENSHELL_HEAVY_TIMEOUT_MS);
+    expect(OPENSHELL_HEAVY_TIMEOUT_MS).toBeLessThan(OPENSHELL_POLICY_ACTIVATION_TIMEOUT_MS);
+  });
+
+  it("allows policy activation to outlast the OpenShell wait window (#11798)", () => {
+    expect(OPENSHELL_POLICY_ACTIVATION_TIMEOUT_MS).toBe(65_000);
   });
 
   it("uses the same probe constant name for forward compatibility (#2454)", () => {

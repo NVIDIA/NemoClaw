@@ -129,7 +129,7 @@ describe("connectSandbox route lifecycle", () => {
     expect(harness.probeOllamaAuthProxyHealthSpy).toHaveBeenCalled();
   });
 
-  it("shell-quotes hostile route values in drift recovery commands (#3726)", async () => {
+  it("rejects hostile observed route values before drift recovery (#3726)", async () => {
     const sandboxName = "alpha's-box";
     const harness = createConnectHarness({
       inferenceGetOutput:
@@ -141,11 +141,16 @@ describe("connectSandbox route lifecycle", () => {
       },
     });
 
-    await expect(harness.connectSandbox(sandboxName, { probeOnly: true })).resolves.toBeUndefined();
+    await expect(harness.connectSandbox(sandboxName, { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
 
     const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
-    expect(errorOutput).toContain(
-      "nemoclaw inference set --provider 'openai; touch /tmp/pwn' --model '$(id) model' --sandbox 'alpha'\\''s-box'",
+    expect(errorOutput).not.toContain("openai; touch /tmp/pwn");
+    expect(errorOutput).not.toContain("$(id) model");
+    expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+      expect.arrayContaining(["inference", "set"]),
+      expect.any(Object),
     );
   });
 
@@ -171,7 +176,7 @@ describe("connectSandbox route lifecycle", () => {
       );
       expect(harness.runSetupDnsProxySpy).not.toHaveBeenCalled();
       expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
-      const routeProbeCalls = harness.captureOpenshellSpy.mock.calls.filter((call) =>
+      const routeProbeCalls = harness.sandboxRunBufferedSpy.mock.calls.filter((call) =>
         JSON.stringify(call[0]).includes("inference.local/v1/models"),
       );
       expect(routeProbeCalls).toHaveLength(2);
@@ -186,17 +191,20 @@ describe("connectSandbox route lifecycle", () => {
     ["model-only", null, "nvidia/test"],
     ["blank-provider", "   ", "nvidia/test"],
     ["blank-model", "nvidia-prod", "   "],
-  ] as const)("skips inference reconciliation for %s registry entries (#5937)", async (_description, provider, model) => {
-    const harness = createConnectHarness({ registryEntry: { model, provider } });
+  ] as const)(
+    "skips inference reconciliation for %s registry entries (#5937)",
+    async (_description, provider, model) => {
+      const harness = createConnectHarness({ registryEntry: { model, provider } });
 
-    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+      await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
 
-    expect(harness.captureOpenshellSpy).not.toHaveBeenCalledWith(
-      ["inference", "get", "-g", "nemoclaw"],
-      expect.any(Object),
-    );
-    expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
-  });
+      expect(harness.captureOpenshellSpy).not.toHaveBeenCalledWith(
+        ["inference", "get", "-g", "nemoclaw"],
+        expect.any(Object),
+      );
+      expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
+    },
+  );
 
   it("does not reset an inference route that already matches the sandbox", async () => {
     const harness = createConnectHarness({

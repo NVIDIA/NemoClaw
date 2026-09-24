@@ -1,17 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { randomUUID } from "node:crypto";
 import { Flags } from "@oclif/core";
-import { renderCanonicalNemoClawConfig } from "../../lib/config/canonical";
-import { ConfigExportInputError, runConfigExport } from "../../lib/config/export";
-import { buildExportConfig } from "../../lib/config/export-builder";
-import {
-  LiveExportObservationError,
-  observeLiveExportSource,
-} from "../../lib/config/export-live-adapters";
-import { publishExportFile, YamlExportOutputError } from "../../lib/config/output";
+import { formatConfigExportFailure } from "../../lib/cli/config-export-diagnostics";
+import type { ConfigExportTarget } from "../../lib/actions/config/export";
 import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
-import { isValidName } from "../../lib/sandbox-name-contract";
 import { sandboxNameArg } from "../../lib/sandbox/command-support";
 
 export default class ConfigExportCommand extends NemoClawCommand {
@@ -20,7 +14,7 @@ export default class ConfigExportCommand extends NemoClawCommand {
   static enableJsonFlag = true;
   static summary = "Export a sandbox to a NemoClaw configuration file";
   static description =
-    "Export a secret-free configuration from the registered sandbox and its current state. The command does not change the sandbox.";
+    "Export a secret-free v1alpha1 configuration from the registered sandbox and its current state. The command does not change the sandbox.";
   static usage = ["config export <sandbox> --output <path|-> [--name <name>] [--force] [--json]"];
   static examples = [
     "<%= config.bin %> config export alpha --output nemoclaw.yaml",
@@ -33,13 +27,12 @@ export default class ConfigExportCommand extends NemoClawCommand {
       description: "Write YAML to this path on Linux. Use - on any supported host.",
       required: true,
     }),
-    name: Flags.string({ description: "Set metadata.name in the exported document" }),
+    name: Flags.string({
+      description:
+        "Set metadata.name (lowercase, starts with a letter, up to 40 letters, digits, or hyphens)",
+    }),
     force: Flags.boolean({
       description: "Replace an existing regular file; refuse symlinks and other file types",
-      default: false,
-    }),
-    json: Flags.boolean({
-      description: "Print the versioned JSON export result after writing the file",
       default: false,
     }),
   };
@@ -54,44 +47,65 @@ export default class ConfigExportCommand extends NemoClawCommand {
     },
   ] as const;
 
-  public async run(): Promise<unknown> {
-    const { args, flags } = await this.parse(ConfigExportCommand);
-    const json = flags.json ?? false;
-    const documentName = flags.name ?? args.sandboxName;
-    if (!isValidName(documentName)) this.error("The config name is invalid.");
-    if (flags.output !== "-" && process.platform !== "linux") {
+  private exportTarget(output: string, force: boolean, json: boolean): ConfigExportTarget {
+    if (json && output === "-") {
+      this.error("--json cannot be used when --output is stdout (-).");
+    }
+    if (force && output === "-") {
+      this.error("--force cannot be used when --output is stdout (-).");
+    }
+    if (output !== "-" && process.platform !== "linux") {
       this.error("Config export file output currently requires Linux. Use --output - instead.");
     }
-    try {
-      return await runConfigExport(
-        {
-          sandboxName: args.sandboxName,
-          documentName,
-          output: flags.output,
-          force: flags.force,
-          json,
-        },
-        {
-          observe: observeLiveExportSource,
-          buildConfig: buildExportConfig,
-          render: renderCanonicalNemoClawConfig,
-          publish: publishExportFile,
-          writeStdout: (yaml) => process.stdout.write(yaml),
-        },
+    return output === "-" ? { kind: "stdout" } : { kind: "file", outputPath: output, force };
+  }
+
+  public async run(): Promise<unknown> {
+    const { args, flags } = await this.parse(ConfigExportCommand);
+    const json = this.jsonEnabled();
+    const documentName = flags.name ?? args.sandboxName;
+    const [
+      { isValidNemoClawConfigDocumentName, parseNemoClawConfigDocumentUid },
+      { isV1Alpha1ExportName },
+    ] = await Promise.all([
+      import("../../lib/config/model"),
+      import("../../lib/config/v1alpha1-export"),
+    ]);
+    if (!isValidNemoClawConfigDocumentName(documentName) || !isV1Alpha1ExportName(documentName))
+      this.error(
+        "The config name must be a lowercase v1 name of at most 40 letters, digits, or hyphens, starting with a letter.",
       );
-    } catch (error) {
-      if (error instanceof LiveExportObservationError) {
-        this.error(
-          [
-            `Config export failed (${error.category}).`,
-            ...error.findings.map((finding) => finding.diagnostic),
-          ].join("\n"),
-        );
-      }
-      if (error instanceof ConfigExportInputError || error instanceof YamlExportOutputError) {
-        this.error(`Config export failed (${error.category}): ${error.message}`);
-      }
-      throw error;
-    }
+    const target = this.exportTarget(flags.output, flags.force, json);
+    const [
+      { runConfigExport },
+      { observeStableExportSource },
+      { createLiveExportSnapshotReader },
+      { publishExportFile },
+    ] = await Promise.all([
+      import("../../lib/actions/config/export"),
+      import("../../lib/actions/config/observe-export-source"),
+      import("../../lib/adapters/config/live-export-source"),
+      import("../../lib/adapters/fs/config-export-file"),
+    ]);
+    const snapshotReader = createLiveExportSnapshotReader();
+    const outcome = await runConfigExport(
+      {
+        sandboxName: args.sandboxName,
+        documentName,
+        target,
+      },
+      {
+        observe: (sandboxName) => observeStableExportSource(sandboxName, snapshotReader),
+        createDocumentUid: () => parseNemoClawConfigDocumentUid(randomUUID()),
+        publish: publishExportFile,
+        writeStdout: (yaml) =>
+          new Promise<void>((resolve, reject) => {
+            process.stdout.write(yaml, (error) => (error ? reject(error) : resolve()));
+          }),
+      },
+    );
+    if (!outcome.ok) this.error(formatConfigExportFailure(outcome.failure));
+    const { completion } = outcome;
+    return completion.kind === "file" ? completion.result : undefined;
   }
 }

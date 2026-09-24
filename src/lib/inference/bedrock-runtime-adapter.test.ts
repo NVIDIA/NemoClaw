@@ -354,7 +354,11 @@ describe("Bedrock Runtime OpenAI adapter", () => {
     const health = await fetch(`${baseUrl}/health`);
     expect(health.status).toBe(200);
     const body = (await health.json()) as any;
-    expect(body.ok).toBe(true);
+    expect(body).toMatchObject({
+      ok: true,
+      endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+      region: "us-east-1",
+    });
     expect(body.tokenHash).toMatch(/^[a-f0-9]{64}$/);
     expect(JSON.stringify(body)).not.toContain("local-token");
 
@@ -648,7 +652,7 @@ describe("Bedrock Runtime OpenAI adapter", () => {
     });
     vi.mocked(readLocalAdapterTextFile).mockReturnValueOnce(token).mockReturnValueOnce("4242");
     runCaptureMock.mockReturnValueOnce(
-      `${process.execPath} --experimental-strip-types --no-warnings ${__test.getAdapterScriptPath()}`,
+      `${process.execPath} --no-warnings ${__test.getAdapterScriptPath()}`,
     );
 
     await expect(
@@ -683,7 +687,7 @@ describe("Bedrock Runtime OpenAI adapter", () => {
     });
     vi.mocked(readLocalAdapterTextFile).mockReturnValueOnce(token).mockReturnValueOnce("4242");
     runCaptureMock.mockReturnValueOnce(
-      `${process.execPath} --experimental-strip-types --no-warnings ${__test.getAdapterScriptPath()}`,
+      `${process.execPath} --no-warnings ${__test.getAdapterScriptPath()}`,
     );
 
     await expect(
@@ -719,7 +723,7 @@ describe("Bedrock Runtime OpenAI adapter", () => {
     vi.mocked(readLocalAdapterJsonFile).mockReturnValueOnce(priorState);
     vi.mocked(readLocalAdapterTextFile).mockReturnValueOnce(token).mockReturnValueOnce("4242");
     runCaptureMock.mockReturnValueOnce(
-      `${process.execPath} --experimental-strip-types --no-warnings ${__test.getAdapterScriptPath()}`,
+      `${process.execPath} --no-warnings ${__test.getAdapterScriptPath()}`,
     );
     vi.mocked(probeLocalAdapterHealth).mockResolvedValueOnce(false).mockResolvedValueOnce(true);
     vi.mocked(waitForLocalAdapterHealth).mockImplementationOnce(async (probe, options) => {
@@ -764,7 +768,7 @@ describe("Bedrock Runtime OpenAI adapter", () => {
     });
     vi.mocked(readLocalAdapterTextFile).mockReturnValueOnce(token).mockReturnValueOnce("4242");
     runCaptureMock.mockReturnValueOnce(
-      `${process.execPath} --experimental-strip-types --no-warnings ${__test.getAdapterScriptPath()}`,
+      `${process.execPath} --no-warnings ${__test.getAdapterScriptPath()}`,
     );
     vi.mocked(waitForLocalAdapterHealth).mockResolvedValueOnce(true);
     vi.mocked(observeBedrockRuntimeAdapterProcess).mockReturnValueOnce(null);

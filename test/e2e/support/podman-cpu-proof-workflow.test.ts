@@ -48,20 +48,9 @@ function proofJob(): WorkflowJob {
   return job!;
 }
 
-function delegationJob(): WorkflowJob {
-  const job = workflow().jobs["portable-cpu-delegation"];
-  expect(job).toBeDefined();
-  return job!;
-}
-
 function namedStep(name: string): WorkflowStep {
   const step = proofJob().steps?.find((candidate) => candidate.name === name);
   expect(step, `missing Podman CPU proof step '${name}'`).toBeDefined();
-  return step!;
-}
-function namedDelegationStep(name: string): WorkflowStep {
-  const step = delegationJob().steps?.find((candidate) => candidate.name === name);
-  expect(step, `missing CPU delegation proof step '${name}'`).toBeDefined();
   return step!;
 }
 type RecordedCommand = {
@@ -361,6 +350,30 @@ function withProofFixture(run: (fixture: ProofFixture) => void): void {
   }
 }
 describe("native Podman CPU proof workflow", () => {
+  it.each([
+    "src/lib/adapters/openshell/sandbox-lifecycle-sdk.ts",
+    "src/lib/adapters/openshell/sdk.ts",
+    "src/lib/onboard/managed-startup/**",
+    "src/lib/onboard/sandbox-create/**",
+    "src/lib/onboard/sandbox-create-launch.ts",
+    "src/lib/onboard/sandbox-create-step.ts",
+    "src/lib/onboard/sandbox-gpu-create-flow.ts",
+    "src/lib/onboard/sandbox-gpu-create-run-attempt.ts",
+    "src/lib/onboard/runtime-provider/contract.ts",
+  ])("selects the proof when %s changes", (adapterPath) => {
+    const selectedPath = workflow().on.pull_request.paths.find(
+      (candidate) => candidate === adapterPath,
+    );
+    expect(selectedPath).toBe(adapterPath);
+  });
+
+  it("installs the reviewed OpenShell SDK before the lifecycle proof", () => {
+    const install = namedStep("Install locked test dependencies");
+    expect(install.run).toContain("openshell-sdk-install.mts prepare");
+    expect(install.run).toContain("--include=optional");
+    expect(install.run).toContain("openshell-sdk-install.mts check");
+  });
+
   it("selects the rootless proof when the Portable gateway authority changes (#9587)", () => {
     const authorityPath = "src/lib/onboard/experimental/portable-profile.ts";
     const selectedPath = workflow().on.pull_request.paths.find(
@@ -760,7 +773,6 @@ describe("native Podman CPU proof workflow", () => {
       const imported = spawnSync(
         process.execPath,
         [
-          "--experimental-strip-types",
           "--no-warnings",
           "--input-type=module",
           "-e",
@@ -773,29 +785,29 @@ describe("native Podman CPU proof workflow", () => {
       expect(() => portableCpuDelegationProofCli(["cleanup", "extra"], fixture)).toThrow(
         /Expected exactly one mode/u,
       );
-      const rejected = spawnSync(
-        process.execPath,
-        ["--experimental-strip-types", "--no-warnings", scriptPath, "unknown"],
-        { cwd: path.resolve("."), encoding: "utf8", env },
-      );
+      const rejected = spawnSync(process.execPath, ["--no-warnings", scriptPath, "unknown"], {
+        cwd: path.resolve("."),
+        encoding: "utf8",
+        env,
+      });
       expect(rejected.status).toBe(1);
       expect(rejected.stderr).toContain("Expected exactly one mode");
-      const cleaned = spawnSync(
-        process.execPath,
-        ["--experimental-strip-types", "--no-warnings", scriptPath, "cleanup"],
-        { cwd: path.resolve("."), encoding: "utf8", env },
-      );
+      const cleaned = spawnSync(process.execPath, ["--no-warnings", scriptPath, "cleanup"], {
+        cwd: path.resolve("."),
+        encoding: "utf8",
+        env,
+      });
       expect(cleaned.status).toBe(0);
       fs.writeFileSync(
         path.join(bin, "sudo"),
         "#!/usr/bin/env node\nprocess.kill(process.pid, 'SIGTERM');\n",
         { mode: 0o755 },
       );
-      const signaled = spawnSync(
-        process.execPath,
-        ["--experimental-strip-types", "--no-warnings", scriptPath, "cleanup"],
-        { cwd: path.resolve("."), encoding: "utf8", env },
-      );
+      const signaled = spawnSync(process.execPath, ["--no-warnings", scriptPath, "cleanup"], {
+        cwd: path.resolve("."),
+        encoding: "utf8",
+        env,
+      });
       expect(signaled.status).toBe(1);
       expect(signaled.stderr).toContain("sudo terminated by SIGTERM");
     });

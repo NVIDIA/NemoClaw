@@ -168,13 +168,12 @@ describe("runInferenceSet failure handling", () => {
       ...baseDeps,
       providerAdapter: { ...baseDeps.providerAdapter, listProviders },
     };
-    deps.calls.captureOpenshell
-      .mockReturnValueOnce({
-        status: 1,
-        output: "",
-        stdout: "",
-        stderr: "error: provider 'openai-api' not found in gateway",
-      });
+    deps.calls.captureOpenshell.mockReturnValueOnce({
+      status: 1,
+      output: "",
+      stdout: "",
+      stderr: "error: provider 'openai-api' not found in gateway",
+    });
 
     const err = await runInferenceSet(
       { provider: "openai-api", model: "openai/gpt-5.4-mini" },

@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { McpBridgeEntry, SandboxEntry } from "../../src/lib/state/registry";
+import type { SandboxEntry } from "../../src/lib/state/registry";
+import type { McpSourceEntry } from "../../src/lib/actions/sandbox/mcp-bridge-contracts";
 
 const testState = vi.hoisted(() => ({
   observeCredentialRevision: vi.fn(),
@@ -31,16 +32,15 @@ vi.mock("../../src/lib/actions/sandbox/mcp-bridge-adapters", async (importOrigin
 
 import { rollbackScrubbedMcpAdapters } from "../../src/lib/actions/sandbox/mcp-bridge-adapter-teardown";
 
-const entry: McpBridgeEntry = {
+const entry: McpSourceEntry = {
   server: "github",
   agent: "openclaw",
-  adapter: "mcporter",
+  adapter: "openclaw-config",
   url: "https://8.8.8.8/github",
   env: ["GITHUB_TOKEN"],
   providerName: "alpha-mcp-github",
   providerId: "11111111-2222-4333-8444-555555555555",
   policyName: "mcp-bridge-github",
-  addedAt: "2026-06-27T00:00:00.000Z",
 };
 const sandbox: SandboxEntry = { name: "alpha" };
 const runtimeSelection = { gatewayName: "nemoclaw-8091", workspace: "default" } as const;
@@ -48,14 +48,14 @@ const runtimeSelection = { gatewayName: "nemoclaw-8091", workspace: "default" } 
 describe("MCP adapter teardown rollback", () => {
   beforeEach(() => {
     testState.observeCredentialRevision.mockReset();
-    testState.registerAdapter.mockReset();
+    testState.registerAdapter.mockReset().mockResolvedValue("v1");
   });
 
-  it("restores the adapter with the fresh opaque credential revision (#10300)", () => {
+  it("restores the adapter with the fresh opaque credential revision (#10300)", async () => {
     const opaqueRevision = "v4067750153477477215";
-    testState.observeCredentialRevision.mockReturnValue(opaqueRevision);
+    testState.observeCredentialRevision.mockResolvedValue(opaqueRevision);
 
-    const failures = rollbackScrubbedMcpAdapters(
+    const failures = await rollbackScrubbedMcpAdapters(
       "alpha",
       sandbox,
       [{ ...entry, credentialRevision: "v1" }],
@@ -65,7 +65,7 @@ describe("MCP adapter teardown rollback", () => {
     expect(failures).toEqual([]);
     expect(testState.registerAdapter).toHaveBeenCalledWith(
       "alpha",
-      "mcporter",
+      "openclaw-config",
       expect.objectContaining({ server: "github" }),
       runtimeSelection,
       {},
@@ -76,10 +76,10 @@ describe("MCP adapter teardown rollback", () => {
 
   it.each(["absent", "canonical"] as const)(
     "reports rollback failure when fresh credential authority is %s (#10300)",
-    (observation) => {
-      testState.observeCredentialRevision.mockReturnValue(observation);
+    async (observation) => {
+      testState.observeCredentialRevision.mockResolvedValue(observation);
 
-      const failures = rollbackScrubbedMcpAdapters(
+      const failures = await rollbackScrubbedMcpAdapters(
         "alpha",
         sandbox,
         [{ ...entry, credentialRevision: "v4067750153477477215" }],

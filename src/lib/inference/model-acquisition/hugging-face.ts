@@ -343,9 +343,10 @@ export function acquireHuggingFaceModel(
         );
         finalizeOutputDecoders();
         void cleanupStalledDownload().then(({ containerRemoved, clientExited }) => {
-          const cleanup = containerRemoved && clientExited
-            ? ""
-            : `; cleanup unconfirmed for container ${containerName} on Docker endpoint ${dockerEndpointIdentity(request.dockerEnv)}; select that endpoint, run docker rm --force ${containerName}, and resume onboarding only after removal is confirmed`;
+          const cleanup =
+            containerRemoved && clientExited
+              ? ""
+              : `; cleanup unconfirmed for container ${containerName} on Docker endpoint ${dockerEndpointIdentity(request.dockerEnv)}; select that endpoint, run docker rm --force ${containerName}, and resume onboarding only after removal is confirmed`;
           done({
             ok: false,
             reason: `hf download stalled: no output for ${formatElapsed(idleMs)}${cleanup}`,

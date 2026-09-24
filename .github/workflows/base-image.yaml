@@ -6,6 +6,7 @@
 # Triggers:
 #   - Push to main when a base- or managed-image input changes
 #   - Manual dispatch for ad-hoc rebuilds
+# Trusted manual publications require complete managed-image promotion.
 #
 # Base images contain the expensive, rarely-changing layers. Complete image
 # publication consumes exact base digests from the same trusted workflow run.
@@ -26,10 +27,13 @@ on:
       - "test/e2e/live/managed-image-activation-e2e.test.ts"
       - "test/e2e/live/managed-image-activation-e2e-helpers.ts"
       - ".github/actions/ci-reviewed-npm-audit/**"
+      - ".github/actions/setup-reviewed-npm/**"
       - ".github/actions/publish-managed-image-digest/**"
       - ".github/actions/build-base-image-platform/**"
       - ".github/actions/publish-base-image-manifest/**"
       - ".dockerignore"
+      - "package.json"
+      - "package-lock.json"
       # Complete managed-image inputs. Keep these reviewed families synchronized
       # with tools/e2e/base-image-publication.mts.
       - "Dockerfile"
@@ -38,12 +42,16 @@ on:
       - "nemoclaw/**"
       - "nemoclaw-blueprint/**"
       - "scripts/**"
+      - "test/e2e/fixtures/gateway-runtime-start.ts"
+      - "test/e2e/fixtures/phases/lifecycle.ts"
       - "test/e2e/live/managed-image-activation-e2e*.ts"
       - "test/e2e/live/mcp-bridge*.ts"
+      - "test/e2e/support/mcp-bridge-portable-lock-barrier.ts"
       - "src/lib/actions/sandbox/mcp-bridge-*.ts"
       - "src/lib/actions/sandbox/openshell-child-visible-credentials.v*.json"
       - "src/lib/actions/sandbox/rebuild-post-restore-phase.ts"
       - "src/lib/agent/candidate-authority.ts"
+      - "src/lib/extra-agents-validation.ts"
       - "src/lib/core/json-types.ts"
       - "src/lib/core/ports.ts"
       - "src/lib/messaging/**"
