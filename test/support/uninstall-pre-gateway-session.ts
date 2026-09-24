@@ -151,3 +151,23 @@ export function writeRetainedUninstallStateWithStaleLock(stateRoot: string, port
     { mode: 0o600 },
   );
 }
+
+export function writeRetainedUninstallStateWithSelectedIdentity(
+  stateRoot: string,
+  port: number,
+): void {
+  writeRetainedUninstallState(stateRoot, port);
+  writeSelectedSandboxRegistry(stateRoot, port, "selected-native");
+}
+
+export function dockerSandboxInspection(containerId: string, nativeId: string): string {
+  return JSON.stringify([
+    containerId,
+    {
+      "openshell.ai/managed-by": "openshell",
+      "openshell.ai/sandbox-name": "a4-test",
+      "openshell.ai/sandbox-id": nativeId,
+      "openshell.ai/sandbox-namespace": "retained-uninstall",
+    },
+  ]);
+}

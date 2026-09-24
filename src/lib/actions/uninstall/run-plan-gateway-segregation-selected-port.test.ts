@@ -6,10 +6,12 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  dockerSandboxInspection,
   writePreGatewaySession,
   writeSelectedSandboxRegistry,
   writeRetainedUninstallState,
   writeRetainedUninstallStateWithStaleLock,
+  writeRetainedUninstallStateWithSelectedIdentity,
 } from "../../../../test/support/uninstall-pre-gateway-session";
 import {
   withProvenManagedGatewayProcess,
@@ -468,6 +470,11 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
     siblingContainer,
   ];
   const siblingGet = ["openshell", "sandbox", "get", "-g", "nemoclaw", "a4-test", "-o", "json"];
+  const inspectionKey = "docker " + siblingInspect.join(" ");
+  const inventoryAndInspectCalls = [
+    ["docker", ...inventoryArgs],
+    ["docker", ...siblingInspect],
+  ];
   it.each([
     {
       ...retainedUninstallBase,
@@ -480,24 +487,11 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
       scenario: "purges retained data while preserving a proven live same-name sibling",
       dockerInventory: ok(siblingContainer + "\n"),
       prepareState: (root: string, port: number) => writeRetainedUninstallState(root, port, true),
-      expectedDockerCalls: [
-        ["docker", ...inventoryArgs],
-        ["docker", ...siblingInspect],
-      ],
+      expectedDockerCalls: inventoryAndInspectCalls,
       expectedNativeCalls: [siblingGet],
       probeResults: {
         [siblingGet.join(" ")]: ok(JSON.stringify({ name: "a4-test", id: "sibling-native" })),
-        ["docker " + siblingInspect.join(" ")]: ok(
-          JSON.stringify([
-            siblingContainer,
-            {
-              "openshell.ai/managed-by": "openshell",
-              "openshell.ai/sandbox-name": "a4-test",
-              "openshell.ai/sandbox-id": "sibling-native",
-              "openshell.ai/sandbox-namespace": "sibling-namespace",
-            },
-          ]),
-        ),
+        [inspectionKey]: ok(dockerSandboxInspection(siblingContainer, "sibling-native")),
       },
       assertSiblingState: (root: string) =>
         expect(
@@ -514,10 +508,15 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
     },
     {
       ...retainedUninstallBase,
-      dockerInventory: ok("existing-container\n"),
+      dockerInventory: ok(siblingContainer + "\n"),
       expectedExit: 1,
       stateKept: true,
-      assertErrors: retainedFailure("container ownership could not be confirmed"),
+      prepareState: writeRetainedUninstallStateWithSelectedIdentity,
+      expectedDockerCalls: inventoryAndInspectCalls,
+      probeResults: {
+        [inspectionKey]: ok(dockerSandboxInspection(siblingContainer, "selected-native")),
+      },
+      assertErrors: retainedFailure("A selected sandbox container remains"),
       scenario: "preserves retained uninstall data while a sandbox container remains",
     },
     {
