@@ -745,6 +745,7 @@ export function backupSandboxStateWithManagedAuthority(
 }
 
 export interface PreparedStoppedOpenClawState extends CapturedOpenClawState {
+  readonly cleanupDirectory: string;
   dispose(): void;
 }
 
@@ -846,7 +847,7 @@ export async function prepareStoppedOpenClawState(
     fs.rmSync(raw, { recursive: true, force: true });
     fs.unlinkSync(archivePath);
     assertCurrent();
-    return { sandboxName, directory, assertCurrent, dispose };
+    return { sandboxName, directory, cleanupDirectory: temporary, assertCurrent, dispose };
   } catch (error) {
     dispose();
     throw error;

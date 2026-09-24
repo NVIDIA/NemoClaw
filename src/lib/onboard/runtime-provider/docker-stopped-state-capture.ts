@@ -61,7 +61,7 @@ function observeManagedStateMounts(
   containerId: string,
   readDocker: (args: readonly string[]) => string | null,
 ): readonly unknown[] | null {
-  const observations: unknown[] = [];
+  const observations: Array<readonly [string, ...unknown[]]> = [];
   const seen = new Set<string>();
   for (const value of mounts) {
     if (!value || typeof value !== "object" || Array.isArray(value)) return null;
@@ -137,7 +137,7 @@ function observeManagedStateMounts(
     ]);
     if (users?.trim() !== containerId) return null;
     observations.push([
-      volume.Name,
+      root.resourceIdentity,
       volume.Driver,
       volume.Scope,
       volume.CreatedAt,
@@ -146,7 +146,7 @@ function observeManagedStateMounts(
       labels,
     ]);
   }
-  return observations;
+  return observations.sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
 }
 
 /**
@@ -253,6 +253,11 @@ export function prepareStoppedDockerStateCapture(
     );
     if (!ownedVolumes)
       throw new Error("The source container is no longer the stopped registered sandbox.");
+    // Docker enumerates mounts from a map. Their order is not source identity;
+    // retain every validated mount and field while comparing them by destination.
+    const orderedMounts = [...mounts].sort((left, right) =>
+      left.Destination < right.Destination ? -1 : left.Destination > right.Destination ? 1 : 0,
+    );
     return [
       id,
       state.Status,
@@ -261,7 +266,7 @@ export function prepareStoppedDockerStateCapture(
       labels,
       restarts,
       image,
-      mounts,
+      orderedMounts,
       ownedVolumes,
     ];
   };

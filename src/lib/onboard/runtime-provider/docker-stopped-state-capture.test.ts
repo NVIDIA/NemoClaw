@@ -251,6 +251,24 @@ describe("stopped Docker recovery capture", () => {
     expect(read).not.toHaveBeenCalled();
   });
 
+  it("accepts reordered mounts while refusing changed mount metadata", () => {
+    const source: unknown[] = observation();
+    const bind = {
+      Type: "bind",
+      Destination: "/etc/openshell",
+      Source: "/owned/gateway/config",
+      RW: false,
+    };
+    source[5] = [bind, managedMount];
+    const capture = prepareStoppedDockerStateCapture(sandbox, runtime, projection, {
+      inspect: (args) => inspectStorage(args, source),
+    });
+    source[5] = [managedMount, bind];
+    expect(() => capture.assertCurrent()).not.toThrow();
+    bind.Source = "/another/gateway/config";
+    expect(() => capture.assertCurrent()).toThrow("changed during recovery capture");
+  });
+
   it("rejects replacement of the owned state volume during recovery", () => {
     const source: unknown[] = observation();
     source[5] = [managedMount];

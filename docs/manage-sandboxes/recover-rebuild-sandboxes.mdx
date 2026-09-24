@@ -269,6 +269,7 @@ NemoClaw accepts its local managed state volume only when ownership metadata mat
 It refuses other mounts within or above `/sandbox/.openclaw`, unsupported filesystem entries, or a source archive larger than 1 GiB.
 A capture or ownership failure preserves the original sandbox and stops replacement.
 The snapshot records the source as stopped even though the verified replacement runs.
+If temporary capture cleanup fails, the warning names the private directory to remove before retrying.
 
 </AgentOnly>
 

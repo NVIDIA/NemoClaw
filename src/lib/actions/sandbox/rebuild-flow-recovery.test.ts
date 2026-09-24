@@ -33,6 +33,7 @@ describe("rebuildSandbox flow: recovery", () => {
     const captured = {
       sandboxName: "alpha",
       directory,
+      cleanupDirectory: directory,
       assertCurrent: vi.fn(),
       dispose: vi.fn(() => fs.rmSync(directory, { recursive: true, force: true })),
     };
@@ -64,6 +65,10 @@ describe("rebuildSandbox flow: recovery", () => {
 
   it("preserves a changed stopped source instead of deleting it", async () => {
     const { captured, harness } = stoppedRecoveryHarness();
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    captured.dispose.mockImplementation(() => {
+      throw new Error("cleanup refused");
+    });
     captured.assertCurrent.mockImplementation(() => {
       throw new Error("stopped source changed");
     });
@@ -73,6 +78,9 @@ describe("rebuildSandbox flow: recovery", () => {
       ).rejects.toThrow("stopped source changed");
       expectNoSandboxDelete(harness.runOpenshellSpy);
       expect(captured.dispose).toHaveBeenCalledOnce();
+      expect(warning).toHaveBeenCalledWith(
+        expect.stringContaining(JSON.stringify(captured.cleanupDirectory)),
+      );
     } finally {
       fs.rmSync(captured.directory, { recursive: true, force: true });
     }

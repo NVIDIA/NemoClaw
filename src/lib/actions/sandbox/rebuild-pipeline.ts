@@ -1144,7 +1144,7 @@ async function rebuildSandboxUnlocked(
     if (stoppedSource)
       runBestEffortRebuildCleanup(
         stoppedSource.dispose,
-        "  Warning: private stopped-state capture files could not be fully removed.",
+        `  Warning: private stopped-state capture files could not be fully removed. Remove ${JSON.stringify(stoppedSource.cleanupDirectory)} before retrying.`,
       );
     runBestEffortRebuildCleanup(
       dcodePreflight.cleanup,
