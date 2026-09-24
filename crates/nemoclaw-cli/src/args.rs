@@ -42,6 +42,15 @@ pub(crate) struct Cli {
 }
 #[derive(Subcommand)]
 pub(crate) enum Command {
+    /// Author deployment YAML using a template's choices as questionnaire defaults.
+    Onboard {
+        /// Complete YAML supported by guided authoring; omission uses built-in defaults.
+        #[arg(value_name = "FILE")]
+        file: Option<PathBuf>,
+        /// Save to a new file, preserving the input template.
+        #[arg(short, long, default_value = "deployment.yaml", value_name = "FILE")]
+        output: PathBuf,
+    },
     /// Preview configuration changes without changing runtime resources.
     #[command(after_help = "Examples:\n  nemoclaw plan spark.yaml\n  nemoclaw plan --destroy")]
     Plan {
@@ -94,7 +103,7 @@ impl Command {
             Self::Plan { output, .. } | Self::Apply { output, .. } | Self::Destroy { output } => {
                 *output
             }
-            Self::Export { .. } => OutputFormat::Text,
+            Self::Export { .. } | Self::Onboard { .. } => OutputFormat::Text,
         }
     }
 }
@@ -102,6 +111,22 @@ impl Command {
 mod tests {
     use super::*;
     use clap::{CommandFactory, error::ErrorKind};
+
+    #[test]
+    fn onboard_accepts_template_and_output_without_deployment_inputs() {
+        let cli = Cli::try_parse_from([
+            "nemoclaw",
+            "onboard",
+            "example.yaml",
+            "--output",
+            "mine.yaml",
+        ]);
+        assert!(
+            cli.is_ok(),
+            "onboard must accept a YAML template: {:?}",
+            cli.err()
+        );
+    }
 
     #[test]
     fn lifecycle_commands_default_to_text_and_accept_json() {

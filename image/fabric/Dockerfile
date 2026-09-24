@@ -32,8 +32,8 @@ COPY --from=rust /usr/local/rustup /usr/local/rustup
 COPY --from=uv /uv /usr/local/bin/uv
 ENV CARGO_HOME=/usr/local/cargo RUSTUP_HOME=/usr/local/rustup PATH=/usr/local/cargo/bin:$PATH
 ARG SOURCE_DATE_EPOCH=1789516800
-ARG FABRIC_REVISION=6c08337bcb11d6c0f2d5118f8f0c98a5b2a1a421
-ARG FABRIC_SHA256=d3d75f7292e35e948db7fe3b2b11613e52cb42b8947f2bbda373d8e0b8f3d576
+ARG FABRIC_REVISION=24f068c895e5cbc30286bc743498be4e5014d658
+ARG FABRIC_SHA256=77f78f66a24a8cd8e6f33f9cf49f3db8c5de39e12e095f5599cb63909a05865f
 ADD --checksum=sha256:${FABRIC_SHA256} https://codeload.github.com/NVIDIA/NeMo-Fabric/tar.gz/${FABRIC_REVISION} /sources/fabric.tar.gz
 RUN apt-get update && apt-get install -y --no-install-recommends build-essential pkg-config libssl-dev \
     && rm -rf /var/lib/apt/lists/* \
@@ -51,13 +51,11 @@ ARG LOCKFILE
 COPY image/fabric/ /build/
 COPY image/NOTICE.md docker-bake.hcl .dockerignore /build/
 RUN --mount=type=cache,target=/root/.cache/uv \
-    if [ "$HARNESS" = hermes ]; then python3 -c 'import sys; from pathlib import Path; sys.path.insert(0,"/build"); from patch_hermes import patch_hermes; patch_hermes(Path("/src/fabric"))'; fi \
-    && if [ -n "$ADAPTER" ]; then uv build --python /usr/local/bin/python3 --wheel --out-dir /wheels "/src/fabric/adapters/python/$ADAPTER"; fi \
+    if [ -n "$ADAPTER" ]; then uv build --python /usr/local/bin/python3 --wheel --out-dir /wheels "/src/fabric/adapters/python/$ADAPTER"; fi \
     && python3 /build/wheel_lock.py /wheels > /own-requirements.txt \
     && cat "/build/$LOCKFILE" /own-requirements.txt > /requirements.txt \
     && uv pip install --python /opt/fabric/bin/python --require-hashes --find-links /wheels -r /requirements.txt \
     && python3 /build/provenance.py > /provenance.json
-RUN --network=none if [ "$HARNESS" = deepagents ]; then /opt/fabric/bin/python -m unittest discover -s /build -p test_brave_search.py; fi
 
 FROM base AS runtime-base
 COPY --from=harness-wheels /opt/fabric /opt/fabric
@@ -65,19 +63,14 @@ COPY --from=harness-wheels /requirements.txt /opt/nemoclaw/source/requirements.t
 COPY --from=harness-wheels --chmod=0644 /sources/fabric.tar.gz /opt/nemoclaw/source/
 COPY --from=harness-wheels /build /opt/nemoclaw/source/local/
 COPY --from=harness-wheels /provenance.json /opt/nemoclaw/provenance.json
-COPY image/fabric/fabric.py image/fabric/health.py image/fabric/brave_search.py image/fabric/inference-probe.mts /opt/nemoclaw/
+COPY image/fabric/fabric.py image/fabric/health.py image/fabric/catalog.py /opt/nemoclaw/
 ENV PYTHONPATH=/opt/nemoclaw ADAPTER_PYTHON=/opt/fabric/bin/python
 
 FROM runtime-base AS generic
 USER node
 
-FROM generic AS mini-swe-agent
-# OpenShell's route alias has no public token price.
-ENV MSWEA_COST_TRACKING=ignore_errors
-
 FROM runtime-base AS interactive
 RUN apt-get update && apt-get install -y --no-install-recommends git ripgrep && rm -rf /var/lib/apt/lists/*
-COPY image/fabric/interfaces.py /opt/nemoclaw/
 
 FROM interactive AS openclaw
 COPY --from=openclaw-upstream /app /app
@@ -94,8 +87,6 @@ RUN mkdir -p /opt/nemoclaw/plugins/tavily/node_modules \
     && ln -s /app /opt/nemoclaw/plugins/tavily/node_modules/openclaw && rm /tmp/tavily.tgz
 COPY image/fabric/TAVILY-LICENSE /opt/nemoclaw/plugins/tavily/LICENSE
 COPY image/fabric/TAVILY-NOTICE.md /opt/nemoclaw/plugins/tavily/NOTICE.md
-COPY image/fabric/openclaw_adapter.py image/fabric/openclaw_features.py image/fabric/openclaw.fabric-adapter.json /opt/nemoclaw/
-ENV HOME=/sandbox OPENCLAW_HOME=/sandbox OPENCLAW_STATE_DIR=/sandbox/.openclaw OPENCLAW_CONFIG_PATH=/sandbox/.openclaw/openclaw.json
 USER node
 
 FROM base AS hermes-assets
@@ -113,59 +104,38 @@ COPY --from=hermes-assets /opt/hermes /opt/hermes
 COPY --from=hermes-assets --chmod=0644 /sources/hermes.tar.gz /opt/nemoclaw/source/
 # Hermes resolves bundled assets relative to its source checkout.
 RUN /opt/fabric/bin/pip install --no-index --no-deps --no-build-isolation -e /opt/hermes --config-settings editable_mode=compat
-COPY image/fabric/hermes_adapter.py image/fabric/openclaw_features.py image/fabric/hermes.fabric-adapter.json /opt/nemoclaw/
-COPY image/fabric/hermes_tavily.py /opt/hermes/plugins/web/tavily/__init__.py
-COPY image/fabric/hermes-tavily.plugin.yaml /opt/hermes/plugins/web/tavily/plugin.yaml
+COPY --from=common-wheels /src/fabric/adapters/python/hermes/src/nemo_fabric_adapters/hermes/plugins/tavily/ /opt/hermes/plugins/web/tavily/
 ENV HERMES_DISABLE_LAZY_INSTALLS=1
-RUN --network=none --mount=type=bind,source=image/fabric/test_hermes_tavily.py,target=/tmp/test_hermes_tavily.py \
-    NEMOCLAW_TEST_NATIVE_TAVILY=1 /opt/fabric/bin/python -B /tmp/test_hermes_tavily.py
 USER node
 
-FROM base AS node-check-tools
-WORKDIR /checks
-COPY image/package.json image/package-lock.json ./
-RUN --mount=type=cache,target=/root/.npm npm ci --ignore-scripts --no-audit --no-fund
-
 FROM common-wheels AS pi-build
-COPY image/fabric/patch_pi.py image/fabric/pi-model.ts image/fabric/pi-probe.ts /build/
 RUN mkdir -p /opt/fabric-source/adapter-contract /opt/fabric-source/adapters \
     && cp -a /src/fabric/adapter-contract/typescript /opt/fabric-source/adapter-contract/ \
-    && cp -a /src/fabric/adapters/typescript /opt/fabric-source/adapters/ \
-    && python3 -c 'import sys; from pathlib import Path; sys.path.insert(0,"/build"); from patch_pi import patch_pi; patch_pi(Path("/opt/fabric-source"))'
+    && cp -a /src/fabric/adapters/typescript /opt/fabric-source/adapters/
 RUN --mount=type=cache,target=/root/.npm \
     cd /opt/fabric-source/adapter-contract/typescript && npm ci --no-audit --no-fund && npm run build \
     && cd /opt/fabric-source/adapters/typescript && npm ci --no-audit --no-fund && npm run build
-COPY --from=node-check-tools /checks/node_modules /checks/node_modules
-COPY image/tsconfig.json image/tsconfig.pi.json /checks/
-COPY image/fabric/test_pi_model.mts /checks/fabric/
-RUN --network=none /checks/node_modules/.bin/tsc -p /checks/tsconfig.pi.json \
-    && node /checks/fabric/test_pi_model.mts \
-    && node --test /opt/fabric-source/adapters/typescript/pi/test/pi-sdk.test.mjs \
+RUN --network=none node --test /opt/fabric-source/adapters/typescript/pi/test/pi-sdk.test.mjs \
         /opt/fabric-source/adapters/typescript/pi/test/runtime.test.mjs
 
 FROM runtime-base AS pi
 COPY --from=pi-build /opt/fabric-source /opt/fabric-source
-COPY image/fabric/pi_host.py /opt/nemoclaw/
+RUN mkdir -p /opt/fabric/share/nemo-fabric/adapters \
+    && ln -s /opt/fabric-source/adapters/typescript/pi /opt/fabric/share/nemo-fabric/adapters/pi
 USER node
 
-FROM node-check-tools AS lint
+FROM base AS lint
 COPY --from=uv /uv /usr/local/bin/uv
 WORKDIR /repo/image
-COPY --from=node-check-tools /checks/node_modules /repo/image/node_modules
 COPY ruff.toml /repo/
 COPY image/ /repo/image/
-COPY test/ /repo/test/
-COPY tools/fabric-adapter-experiment.py /repo/tools/
-COPY tools/fabric_management/ /repo/tools/fabric_management/
 RUN --mount=type=cache,target=/root/.cache/uv uv tool run --from ruff==0.16.7 ruff check /repo \
-    && uv tool run --from ruff==0.16.7 ruff format --check /repo \
-    && npm run lint && npm run format:check && npm run typecheck
+    && uv tool run --from ruff==0.16.7 ruff format --check /repo
 
 FROM common-wheels AS unit-tests
-RUN uv pip install --python /opt/fabric/bin/python --no-deps /wheels/nemo_fabric_adapter_contract-*.whl /wheels/nemo_fabric_adapters_common-*.whl \
+COPY image/fabric/ /catalog/image/fabric/
+RUN uv pip install --python /opt/fabric/bin/python /wheels/nemo_fabric_runtime-*.whl /wheels/nemo_fabric_adapter_contract-*.whl /wheels/nemo_fabric_adapters_common-*.whl /src/fabric/tests/fixtures/discovery \
     && uv pip install --python /opt/fabric/bin/python PyYAML==6.0.3
 COPY image/fabric/ /tests/
-COPY tools/fabric_management/ /management/
-RUN --network=none /opt/fabric/bin/python -B -m unittest discover -s /management -p 'test_*.py'
-ENV NEMOCLAW_FABRIC_SOURCE=/src/fabric
+ENV ADAPTER_PYTHON=/opt/fabric/bin/python NEMOCLAW_FABRIC_SOURCE=/src/fabric NEMOCLAW_TEST_FABRIC_DESCRIPTOR=/src/fabric/tests/fixtures/discovery/future.fabric-adapter.json
 RUN --network=none /opt/fabric/bin/python -B -m unittest discover -s /tests -p 'test_*.py'

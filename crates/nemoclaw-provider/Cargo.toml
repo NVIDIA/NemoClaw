@@ -15,6 +15,9 @@ tf-provider.workspace = true
 tokio.workspace = true
 rustls.workspace = true
 
+[dev-dependencies]
+tempfile.workspace = true
+
 [lints]
 workspace = true
 

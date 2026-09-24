@@ -24,7 +24,7 @@ impl Definition {
             kind,
             fields: fields.to_vec(),
             mutable: mutable.to_vec(),
-            observed_running: matches!(kind, "managed_gateway" | "pi_configuration"),
+            observed_running: matches!(kind, "managed_gateway" | "agent_configuration"),
         }
     }
 }
@@ -91,7 +91,10 @@ mod resource;
 pub use nemoclaw_sdk::backend::{Backend, Mutation, Row};
 pub use resource::ResourceAdapter;
 mod capacity;
+mod discovery;
 mod gateway;
+mod hardware;
+mod inference_discovery;
 mod provider;
 mod readiness;
 mod sandbox_readiness;

@@ -9,8 +9,8 @@ A shared inference, provider, harness, or integration definition becomes active 
 Managed services have a separate rule: every entry in `spec.services` is installed and checked, even without a consumer.
 
 The authoring library and its [example TUI](../examples/onboarding-tui/README.md) can generate a validated starter document without resolving credentials, planning, or applying.
-The example exposes a curated scenario, not the complete schema.
-Fields outside that scenario remain available through hand-authored YAML according to the [field reference](reference/configuration.md).
+The questionnaire edits a single-sandbox deployment and derives native settings questions from Fabric schemas.
+Other deployment shapes remain available through hand-authored YAML according to the [field reference](reference/configuration.md).
 Generated and hand-authored files use the same lifecycle CLI `plan` and `apply` implementations.
 
 ## The Authoring Rule
@@ -39,9 +39,9 @@ Paths below are relative to `spec`; `agent` is inside `sandboxes[]` and `routes[
 | Family | Enclosing definitions | Consumer selection | Current runtime limit |
 |---|---|---|---|
 | Inference provider | `inferenceProviders[]` or `sandboxes[].inferenceProviders[]`, each with a `name` | Route `provider` or `providerRef` | Up to 32 selected providers; each uses an external endpoint or references a named service |
-| Inference | `inferences.<name>` or `sandboxes[].inferences.<name>` | Agent `inference` or `inferenceRef` | OpenClaw and Pi support named choices with an explicit default; other harnesses require one choice |
+| Inference | `inferences.<name>` or `sandboxes[].inferences.<name>` | Agent `inference` or `inferenceRef` | An explicit default selects a Fabric model role; Fabric validates the adapter's supported roles |
 | Harness | `harnesses.<name>` or `sandboxes[].harnesses.<name>` | Sandbox `harness` or `harnessRef` | Exactly one configuration and one agent per sandbox |
-| Integration | `integrations.<name>` or `sandboxes[].integrations.<name>` | Agent `integrations.<name>` and/or `integrationRefs` | Only Brave `webSearch` is implemented; one attached search definition per sandbox |
+| Integration | `integrations.<name>` or `sandboxes[].integrations.<name>` | Agent `integrations.<name>` and/or `integrationRefs` | Brave or Tavily `webSearch` credentials and grants; one attached search definition per sandbox |
 
 Inference providers are list entries with a `name`; inferences, harnesses, and integrations are maps keyed by name.
 Inline providers also require `name`.
@@ -51,7 +51,7 @@ A document supports one to 32 named sandboxes; OpenClaw agents can select models
 See [multiple model choices](inference.md#give-an-agent-multiple-model-choices) for defaults and current service limits.
 Multiple OpenClaw agents can reference the same provider and integration; distinct inline instances are not shared implicitly.
 
-Hermes `auth.method` uses the provider selected by its primary route.
+Agent `auth.method` requires credentials from every selected routed provider.
 See [Hermes authentication](inference.md#authenticate-hermes-through-the-provider) for credential handling and migration from `auth.providerRef`.
 
 ## Reference a Harness Configuration
@@ -62,12 +62,17 @@ Define runtime settings once and select them from the sandbox:
 spec:
   harnesses:
     assistant:
-      kind: openclaw
+      kind: nvidia.fabric.openclaw
       execution:
         timeoutSeconds: 900
-      interfaces:
-        dashboard:
-          port: 18800
+      settings:
+        native_config:
+          gateway:
+            port: 18800
+            bind: loopback
+            controlUi:
+              enabled: true
+              allowedOrigins: [http://127.0.0.1:18800]
   sandboxes:
     - name: researcher
       harnessRef: assistant
@@ -83,8 +88,8 @@ spec:
 
 This fragment assumes a `chat` inference definition and omits other required deployment fields.
 Put `harnesses` under the sandbox to keep the definitions local to that sandbox.
-Use `harness: {kind: openclaw}` for an inline configuration without additional settings.
-Execution defaults, observability, and interfaces belong inside the harness configuration.
+Use `harness: {kind: nvidia.fabric.openclaw}` for an inline configuration without additional settings.
+Generic execution timeouts belong in `execution`; native observability and interfaces belong in Fabric-owned `settings` or public `config`.
 Each sandbox requires exactly one of `harness` or `harnessRef`; agents cannot select a harness.
 Each sandbox’s agent uses the selected implementation in its own Fabric runtime.
 Sharing a definition reuses configuration; each sandbox owns its runtime process.
@@ -108,12 +113,12 @@ spec:
             model: qwen3:4b
   sandboxes:
     - name: researcher
-      harness: {kind: openclaw}
+      harness: {kind: nvidia.fabric.openclaw}
       agent:
         name: researcher
         inferenceRef: chat
     - name: writer
-      harness: {kind: openclaw}
+      harness: {kind: nvidia.fabric.openclaw}
       agent:
         name: writer
         inferenceRef: chat
@@ -137,7 +142,7 @@ spec:
       endpoint: http://172.20.0.1:11446/v1
   sandboxes:
     - name: assistant
-      harness: {kind: openclaw}
+      harness: {kind: nvidia.fabric.openclaw}
       agent:
         name: researcher
         inference:
@@ -185,7 +190,7 @@ No single active configuration exercises every schema branch:
 | Managed Ollama or an existing endpoint | [Managed Ollama](../examples/managed-ollama.yaml), [external endpoint](../examples/inference-tuning.yaml) | Each provider selects one service connection; see the [Ollama deployment limits](inference.md#combine-local-and-hosted-providers) |
 | Existing Ollama through an authenticated proxy | [Proxy guide](inference.md#use-external-ollama-through-a-managed-proxy) | Alternative provider mode to managed vLLM |
 | Hermes authentication, interfaces, or Relay | [Authentication](../examples/hermes-auth.yaml), [interfaces](../examples/hermes-interfaces.yaml), [Relay](agents.md#hermes-relay-tracing) | Explicit Hermes interfaces can include Relay tracing |
-| Pi model metadata | [Pi example](../examples/fabric-pi.yaml) | Specific to Pi; other harnesses reject it |
+| Pi model metadata | [Pi example](../examples/fabric-pi.yaml) | Accepted fields depend on the selected Fabric model settings schema |
 | Model preparation recipe | [Spark recipe](../examples/spark/spark-inline.yaml) | Separate model, image, and hardware contract |
 | External gateway credentials and mTLS | [Gateway fields](reference/configuration.md#gateway) | Managed gateways use local HTTP and reject these fields |
 

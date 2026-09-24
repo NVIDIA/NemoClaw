@@ -56,10 +56,16 @@ impl Session {
         Ok(Self { uid: uid.into() })
     }
 
+    /// Starts a new deployment from the complete template without changing its desired state.
+    pub fn draft_from_template(&self, mut document: Document) -> Result<crate::Draft, Diagnostics> {
+        document.metadata.uid = self.uid.clone();
+        crate::Draft::from_document(document)
+    }
+
     /// Builds YAML and validates it with the SDK parser without deploying resources.
     pub fn project(
         &self,
-        capabilities: &Capabilities,
+        _capabilities: &Capabilities,
         answers: &Answers,
     ) -> Result<AuthoredDocument, Diagnostics> {
         let mut items = Vec::new();
@@ -76,42 +82,22 @@ impl Session {
                 });
             }
         }
-        if !valid_environment_name(&answers.credential_env) {
+        if !answers.credential_env.is_empty() && !valid_environment_name(&answers.credential_env) {
             items.push(Diagnostic {
                 field: "credential-env",
                 message: "must be an uppercase environment variable name".into(),
             });
         }
-        let scenario = capabilities.scenario(
-            answers.harness,
-            answers.runtime,
-            answers.inference,
-            answers.api,
-        );
-        match scenario {
-            Some(scenario)
-                if scenario.default_model != Some(answers.model.as_str())
-                    && !(scenario.custom_model && valid_model(&answers.model)) =>
-            {
-                items.push(Diagnostic {
-                    field: "model",
-                    message: "is not available for the selected harness, runtime, inference provider, and API"
-                        .into(),
-                });
-            }
-            None => items.push(Diagnostic {
-                field: capabilities.unavailable_field(answers),
-                message:
-                    "the selected harness, runtime, inference provider, and API are not available"
-                        .into(),
-            }),
-            Some(_) => {}
+        if !answers.inference.apis().contains(&answers.api) {
+            items.push(Diagnostic {
+                field: "api",
+                message: "the selected API does not match this endpoint preset".into(),
+            });
         }
         if !items.is_empty() {
             return Err(Diagnostics { items });
         }
-        let scenario = scenario.expect("validated scenario capability");
-        let gateway = if answers.runtime == ComputeDriver::Podman {
+        let mut gateway = if answers.runtime == ComputeDriver::Podman {
             Gateway::Managed(ManagedGateway {
                 endpoint: "http://127.0.0.1:17681".into(),
                 engine: "unix:///run/user/1000/podman/podman.sock".into(),
@@ -120,6 +106,9 @@ impl Session {
         } else {
             Gateway::Managed(ManagedGateway::default())
         };
+        if let Some(engine) = &answers.engine {
+            gateway.as_managed_mut().unwrap().engine = engine.clone();
+        }
         let source = Document {
             api_version: API_VERSION.into(),
             kind: "NemoClawConfig".into(),
@@ -131,25 +120,24 @@ impl Session {
                 gateway,
                 inference_providers: vec![InferenceProvider {
                     name: answers.provider_name.clone(),
-                    provider: scenario.provider_kind,
-                    api: scenario.provider_api,
-                    endpoint: if scenario.custom_endpoint {
-                        answers.endpoint.clone()
-                    } else {
-                        scenario.endpoint.into()
-                    },
-                    credential: Some(Credential {
+                    provider: answers.inference.profile().kind,
+                    api: answers.provider_api.map(|_| answers.api),
+                    endpoint: answers.endpoint.clone(),
+                    credential: (!answers.credential_env.is_empty()).then(|| Credential {
                         env: answers.credential_env.clone(),
                     }),
                     service_ref: None,
                 }],
                 sandboxes: vec![Sandbox {
                     harness: Some(Harness {
-                        kind: scenario.harness,
-                        observability: None,
+                        kind: answers.harness.clone(),
+                        settings: answers.harness_settings.clone(),
+                        config: answers.harness_config.clone(),
                         execution: None,
-                        interfaces: None,
                     }),
+                    image: nemoclaw_sdk::config::Image {
+                        ref_: answers.image.clone(),
+                    },
                     name: answers.sandbox_name.clone(),
                     runtime: Runtime {
                         provider: answers.runtime,
@@ -165,6 +153,7 @@ impl Session {
                                 provider: None,
                                 overrides: Overrides {
                                     model: answers.model.clone(),
+                                    settings: answers.model_settings.clone(),
                                     ..Overrides::default()
                                 },
                             }],
@@ -194,13 +183,6 @@ fn valid_slug(value: &str) -> bool {
         && value
             .bytes()
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
-}
-
-fn valid_model(value: &str) -> bool {
-    (1..=256).contains(&value.len())
-        && value.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'/' | b'-')
-        })
 }
 
 fn valid_environment_name(value: &str) -> bool {

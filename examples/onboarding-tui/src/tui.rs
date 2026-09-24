@@ -3,6 +3,8 @@
 
 mod app;
 mod labels;
+#[cfg(test)]
+mod template_tests;
 mod terminal;
 #[cfg(test)]
 mod tests;

@@ -8,7 +8,13 @@ pub const SOURCE_ROOTS: &[&str] = &[
     "versions.json",
     "LICENSE",
     "crates",
+    "examples/onboarding-tui",
+    "examples/onboarding/openclaw.yaml",
     "runtimes",
+    "image/fabric/catalog.json",
+    "image/fabric/Dockerfile",
+    "image/fabric/FABRIC-LICENSE",
+    "image/NOTICE.md",
 ];
 pub fn source_version(files: &[(String, Vec<u8>)]) -> String {
     let mut files: Vec<_> = files.iter().collect();

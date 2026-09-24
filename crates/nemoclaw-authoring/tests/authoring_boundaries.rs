@@ -40,7 +40,7 @@ fn accepting_the_openclaw_suggestion_builds_its_hosted_inference_boundary() {
 fn choosing_hermes_keeps_the_safe_isolated_network_default() {
     let capabilities = Capabilities::available();
     let answers = Answers {
-        harness: HarnessKind::Hermes,
+        harness: "nvidia.fabric.hermes".parse::<HarnessKind>().unwrap(),
         ..Answers::onboarding_defaults()
     };
     let authored = Session::with_uid(UID)
@@ -55,22 +55,17 @@ fn choosing_hermes_keeps_the_safe_isolated_network_default() {
 fn every_choice_the_guide_advertises_leads_to_a_document_that_can_be_reopened() {
     let capabilities = Capabilities::available();
 
-    for scenario in capabilities.scenarios() {
-        let suggested = Answers::onboarding_defaults().for_scenario(scenario);
-        let models = vec![scenario.default_model().unwrap_or(&suggested.model)];
-        for model in models {
-            let answers = Answers {
-                model: model.into(),
-                ..suggested.clone()
-            };
-            let authored = Session::with_uid(UID)
-                .unwrap()
-                .project(&capabilities, &answers)
-                .unwrap();
-
-            let reopened = Draft::from_yaml(authored.yaml().as_bytes()).unwrap();
-            assert_eq!(reopened.review().unwrap().document(), authored.document());
-        }
+    for harness in capabilities.harnesses() {
+        let suggested = Answers {
+            harness: harness.clone(),
+            ..Answers::onboarding_defaults()
+        };
+        let authored = Session::with_uid(UID)
+            .unwrap()
+            .project(&capabilities, &suggested)
+            .unwrap();
+        let reopened = Draft::from_yaml(authored.yaml().as_bytes()).unwrap();
+        assert_eq!(reopened.review().unwrap().document(), authored.document());
     }
 }
 
@@ -88,20 +83,23 @@ fn a_custom_v1_document_remains_owned_even_when_it_is_not_a_guided_preset() {
 }
 
 #[test]
-fn an_imported_document_with_extra_v1_configuration_stays_safe_from_guided_rewrites() {
+fn an_imported_provider_endpoint_remains_owned_through_guided_rewrites() {
     let capabilities = Capabilities::available();
     let original = begin_onboarding(&capabilities);
     let mut customized = original.document().clone();
     customized.spec.inference_providers[0].endpoint = "https://example.com/v1".into();
     let draft = Draft::from_document(customized.clone()).unwrap();
 
-    let diagnostics = draft.guided_answers(&capabilities).unwrap_err();
-
+    let answers = draft.guided_answers(&capabilities).unwrap();
+    assert_eq!(answers.endpoint, "https://example.com/v1");
     assert_eq!(draft.document(), &customized);
-    assert!(
-        diagnostics.items()[0]
-            .message()
-            .contains("guided onboarding preset")
+    assert_eq!(
+        Session::with_uid(&customized.metadata.uid)
+            .unwrap()
+            .project(&capabilities, &answers)
+            .unwrap()
+            .document(),
+        &customized
     );
 }
 
@@ -112,7 +110,7 @@ fn automation_can_override_every_suggestion_before_authoring_begins() {
         deployment_name: Some("automated-deployment".into()),
         sandbox_name: Some("automated-sandbox".into()),
         agent_name: Some("automated-agent".into()),
-        harness: Some(HarnessKind::OpenClaw),
+        harness: Some("nvidia.fabric.openclaw".parse::<HarnessKind>().unwrap()),
         runtime: Some(ComputeDriver::Docker),
         inference: Some(ProviderPreset::NvidiaEndpoints),
         api: Some(InferenceApi::OpenaiResponses),
@@ -144,26 +142,26 @@ fn automation_can_override_every_suggestion_before_authoring_begins() {
 }
 
 #[test]
-fn direct_authoring_reports_the_first_unavailable_choice_in_the_journey() {
+fn direct_authoring_preserves_unobserved_harness_intent_but_checks_endpoint_protocol() {
     let capabilities = Capabilities::available();
     let session = Session::with_uid(UID).unwrap();
 
     let unsupported_harness = Answers {
-        harness: HarnessKind::Claude,
+        harness: "nvidia.fabric.claude".parse::<HarnessKind>().unwrap(),
         ..Answers::onboarding_defaults()
     };
-    assert_eq!(
-        session
-            .project(&capabilities, &unsupported_harness)
-            .unwrap_err()
-            .items()[0]
-            .field(),
-        "harness"
-    );
+    let offline = Capabilities::from_harnesses([]);
+    let authored = session.project(&offline, &unsupported_harness).unwrap();
+    let draft = Draft::from_yaml(authored.yaml().as_bytes()).unwrap();
+    assert_eq!(draft.guided_answers(&offline).unwrap(), unsupported_harness);
+    assert!(!offline.offers(
+        &unsupported_harness,
+        nemoclaw_authoring::EditableField::Harness,
+        &nemoclaw_authoring::FieldValue::Harness(unsupported_harness.harness.clone())
+    ));
 
     let unsupported_api = Answers {
-        harness: HarnessKind::DeepAgents,
-        api: InferenceApi::OpenaiResponses,
+        api: InferenceApi::AnthropicMessages,
         ..Answers::onboarding_defaults()
     };
     assert_eq!(
@@ -173,5 +171,49 @@ fn direct_authoring_reports_the_first_unavailable_choice_in_the_journey() {
             .items()[0]
             .field(),
         "api"
+    );
+}
+
+#[test]
+fn arbitrary_provider_identity_is_preserved_without_matching_a_branded_preset() {
+    let capabilities = Capabilities::available();
+    let authored = Session::with_uid(UID)
+        .unwrap()
+        .project(&capabilities, &Answers::onboarding_defaults())
+        .unwrap();
+    let mut document = authored.document().clone();
+    let provider = &mut document.spec.inference_providers[0];
+    provider.name = "my-private-service".into();
+    provider.endpoint = "https://models.private.example/v1".into();
+    provider.credential.as_mut().unwrap().env = "PRIVATE_MODEL_TOKEN".into();
+    document.spec.sandboxes[0]
+        .agent
+        .inference
+        .as_mut()
+        .unwrap()
+        .routes[0]
+        .provider_ref = Some("my-private-service".into());
+    let draft = Draft::from_document(document.clone()).unwrap();
+    let retained = capabilities.preserving_draft(&draft).unwrap();
+    let answers = draft.guided_answers(&retained).unwrap();
+    let projected = Session::with_uid(UID)
+        .unwrap()
+        .project(&retained, &answers)
+        .unwrap();
+    assert_eq!(projected.document(), &document);
+    let mut edited = draft;
+    edited
+        .set_guided_field(
+            &retained,
+            nemoclaw_authoring::EditableField::Model,
+            nemoclaw_authoring::FieldValue::Model("custom/new-model".into()),
+        )
+        .unwrap();
+    let provider = &edited.document().spec.inference_providers[0];
+    assert_eq!(provider.name, "my-private-service");
+    assert_eq!(provider.endpoint, "https://models.private.example/v1");
+    assert_eq!(
+        provider.credential.as_ref().unwrap().env,
+        "PRIVATE_MODEL_TOKEN"
     );
 }

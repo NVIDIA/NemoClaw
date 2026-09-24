@@ -1,8 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# Replace the fixture endpoint/model with your own compatible service.
-# See docs/reference/fabric-harnesses.md for protocol requirements and test commands.
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata:
@@ -13,24 +11,24 @@ spec:
     management: external
     endpoint: http://127.0.0.1:17681
   inferenceProviders:
-    - name: local
-      provider: anthropic
-      endpoint: http://172.20.0.1:11446/v1
+  - name: local
+    provider: anthropic
+    endpoint: http://172.20.0.1:11446/v1
   sandboxes:
-    - name: assistant
-      image:
-        ref: nc-prototype-fabric@sha256:ad0f0a9bdef6b1d1efd77b850cff8137d257fee03aa29e3b6980d81cd52fb3fb
-      runtime:
-        provider: docker
-      network:
-        tier: isolated
-      harness:
-        kind: claude
-      agent:
-        name: main
-        inference:
-          routes:
-            - name: primary
-              providerRef: local
-              overrides:
-                model: fixture-model
+  - name: assistant
+    image:
+      ref: nc-prototype-fabric@sha256:ad0f0a9bdef6b1d1efd77b850cff8137d257fee03aa29e3b6980d81cd52fb3fb
+    runtime:
+      provider: docker
+    network:
+      tier: isolated
+    harness:
+      kind: nvidia.fabric.claude
+    agent:
+      name: main
+      inference:
+        routes:
+        - name: primary
+          providerRef: local
+          overrides:
+            model: fixture-model

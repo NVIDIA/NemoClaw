@@ -65,11 +65,18 @@ fn bundle_rejects_a_builder_compiled_from_different_source_inputs() {
         "rust-toolchain.toml",
         "versions.json",
         "LICENSE",
+        "examples/onboarding/openclaw.yaml",
+        "image/fabric/catalog.json",
+        "image/fabric/Dockerfile",
+        "image/fabric/FABRIC-LICENSE",
+        "image/NOTICE.md",
     ] {
+        fs::create_dir_all(root.path().join(name).parent().unwrap()).unwrap();
         fs::copy(repository.join(name), root.path().join(name)).unwrap();
     }
     fs::create_dir(root.path().join("crates")).unwrap();
     fs::create_dir(root.path().join("runtimes")).unwrap();
+    fs::create_dir_all(root.path().join("examples/onboarding-tui")).unwrap();
     fs::write(root.path().join("crates/changed.rs"), "changed source\n").unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_nemoclaw-build"))
         .current_dir(root.path())

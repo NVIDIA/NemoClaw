@@ -39,11 +39,11 @@ variable "HARNESSES" {
     deepagents     = { stage = "generic", adapter = "deepagents" }
     claude         = { stage = "generic", adapter = "claude" }
     codex          = { stage = "generic", adapter = "codex" }
-    mini-swe-agent = { stage = "mini-swe-agent", adapter = "mini-swe-agent" }
+    mini-swe-agent = { stage = "generic", adapter = "mini-swe-agent" }
     nooa           = { stage = "generic", adapter = "nooa" }
     nooa-bench     = { stage = "generic", adapter = "nooa" }
     remote-agent   = { stage = "generic", adapter = "remote-agent" }
-    openclaw       = { stage = "openclaw", adapter = "" }
+    openclaw       = { stage = "openclaw", adapter = "openclaw" }
     hermes         = { stage = "hermes", adapter = "hermes" }
     pi             = { stage = "pi", adapter = "" }
   }

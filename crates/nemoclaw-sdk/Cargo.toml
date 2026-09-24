@@ -11,12 +11,14 @@ workspace = true
 
 [build-dependencies]
 serde_json.workspace = true
+toml = { version = "1.1", default-features = false, features = ["parse", "serde"] }
 
 [dev-dependencies]
 toml = { version = "1.1", default-features = false, features = ["parse", "serde"] }
 tokio = { workspace = true, features = ["test-util"] }
 
 [dependencies]
+nemo-fabric-core = { git = "https://github.com/NVIDIA/NeMo-Fabric", rev = "24f068c895e5cbc30286bc743498be4e5014d658" }
 jsonschema.workspace = true
 thiserror.workspace = true
 schemars.workspace = true

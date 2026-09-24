@@ -71,9 +71,3 @@ fn an_author_can_choose_sandbox_gpu_access_and_read_only_host_mounts() {
 fn an_author_can_trust_a_private_compatible_endpoint_after_validation() {
     panic!("missing V1 trusted-private-endpoint contract");
 }
-
-#[test]
-#[ignore = "offline authoring has no credential-bearing provider catalog discovery or model validation boundary"]
-fn an_author_can_discover_and_validate_the_providers_current_model_catalog() {
-    panic!("missing live provider model-catalog contract");
-}

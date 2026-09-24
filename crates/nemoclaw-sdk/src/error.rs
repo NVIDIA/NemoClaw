@@ -40,3 +40,21 @@ pub enum Error {
     #[error("managed container is absent but owned persistent resources remain")]
     PartialRuntime,
 }
+
+impl Error {
+    pub(crate) fn into_observation(self) -> crate::ObservationError {
+        match self {
+            Self::Observation(error) => error,
+            Self::SandboxStartup {
+                phase,
+                reason,
+                exit_code,
+            } => crate::ObservationError::SandboxStartup {
+                phase,
+                reason,
+                exit_code: exit_code.parse().ok(),
+            },
+            _ => crate::ObservationError::Query,
+        }
+    }
+}

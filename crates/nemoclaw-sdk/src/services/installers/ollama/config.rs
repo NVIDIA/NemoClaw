@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use super::super::vllm::{MemoryArchitecture, ServiceContainer, ServiceHardware};
+use crate::config::InferenceProviderKind;
 use crate::config::{ConfigError, ImagePullPolicy, InferenceApi, InferenceProvider};
-use crate::config::{HarnessKind, InferenceProviderKind};
 use crate::services::placement::{ServicePlacement, ServicePublication};
 use serde::{Deserialize, Serialize};
 
@@ -252,7 +252,6 @@ impl OllamaProxy {
         &self,
         provider: &InferenceProvider,
         model: &str,
-        harness: HarnessKind,
     ) -> Result<(), ConfigError> {
         self.validate_definition()?;
         if provider.provider != InferenceProviderKind::Openai
@@ -262,17 +261,10 @@ impl OllamaProxy {
             || provider
                 .api
                 .is_some_and(|api| api != InferenceApi::OpenaiCompletions)
-            || !matches!(
-                harness,
-                HarnessKind::OpenClaw
-                    | HarnessKind::Hermes
-                    | HarnessKind::DeepAgents
-                    | HarnessKind::Pi
-            )
             || self.upstream.model.name != model
         {
             return Err(ConfigError::new(
-                "Ollama proxy requires a local external daemon, pinned installed model, private endpoint, and OpenClaw, Hermes, Deep Agents, or Pi completions",
+                "Ollama proxy requires a local external daemon, pinned installed model, private endpoint, and the OpenAI completions protocol",
             ));
         }
         Ok(())

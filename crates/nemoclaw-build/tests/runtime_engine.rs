@@ -10,10 +10,21 @@ fn executable(path: &Path, script: &str) {
 fn unsupported_image_stores_fail_before_compilation_or_downloads() {
     for info in [r#"[["Backing Filesystem","extfs"]]"#, "null", "invalid"] {
         let root = tempfile::tempdir().unwrap();
-        for name in ["crates", "runtimes", "bin"] {
-            fs::create_dir(root.path().join(name)).unwrap();
+        for name in ["crates", "runtimes", "bin", "examples/onboarding-tui"] {
+            fs::create_dir_all(root.path().join(name)).unwrap();
         }
-        for name in ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "LICENSE"] {
+        for name in [
+            "Cargo.toml",
+            "Cargo.lock",
+            "rust-toolchain.toml",
+            "LICENSE",
+            "examples/onboarding/openclaw.yaml",
+            "image/fabric/catalog.json",
+            "image/fabric/Dockerfile",
+            "image/fabric/FABRIC-LICENSE",
+            "image/NOTICE.md",
+        ] {
+            fs::create_dir_all(root.path().join(name).parent().unwrap()).unwrap();
             fs::write(root.path().join(name), "fixture").unwrap();
         }
         fs::write(

@@ -228,3 +228,90 @@ fn missing_ownership_generations_stop_compilation() {
         );
     }
 }
+
+#[test]
+fn managed_plans_query_selected_engine_and_image_without_probe_resources() {
+    let document =
+        Document::parse(include_str!("../../../examples/onboarding/openclaw.yaml").as_bytes())
+            .unwrap();
+    let generations = ["workspace", "provider", "sandbox", "managed_gateway"]
+        .map(|kind| (kind.into(), "a".repeat(32)))
+        .into();
+    for graph in [
+        compile(&document, &generations, "0.1.0").unwrap(),
+        nemoclaw_sdk::compile::compile_runtime(&document, &generations, "0.1.0").unwrap(),
+    ] {
+        let engine = &graph["data"]["nemoclaw_engine_capabilities"]["current"];
+        assert_eq!(
+            engine["engine"],
+            document.spec.gateway.as_managed().unwrap().engine
+        );
+        assert_eq!(engine["compute_driver"], "docker");
+        assert!(
+            engine.get("depends_on").is_none(),
+            "read existing capabilities during plan"
+        );
+        let image = &graph["data"]["nemoclaw_fabric_capabilities"]["sandbox_0"];
+        assert_eq!(image["image"], document.spec.sandboxes[0].image.ref_);
+        assert!(
+            image.get("depends_on").is_none(),
+            "metadata inspection must not depend on image acquisition"
+        );
+        assert!(
+            image["lifecycle"]["postcondition"][0]["condition"]
+                .as_str()
+                .unwrap()
+                .contains("compatibility_status")
+        );
+        let requirements: serde_json::Value =
+            serde_json::from_str(image["requirements_json"].as_str().unwrap()).unwrap();
+        assert_eq!(
+            requirements["configuration"]["harness"]["adapter_id"],
+            document
+                .sandbox_harness(&document.spec.sandboxes[0])
+                .unwrap()
+                .kind
+                .as_str()
+        );
+        assert_eq!(
+            requirements["configuration"]["models"]["default"]["api"],
+            "openai-completions"
+        );
+        assert!(graph["output"]["discovery"]["value"].is_object());
+    }
+}
+
+#[test]
+fn arbitrary_fabric_harness_identifier_survives_runtime_compilation() {
+    let mut value: serde_json::Value =
+        serde_saphyr::from_str(include_str!("fixtures/config/local.yaml")).unwrap();
+    value["spec"]["sandboxes"][0]["harness"]["kind"] = "org.fixture.custom-adapter".into();
+    value["spec"]["sandboxes"][0]["harness"]["settings"] =
+        serde_json::json!({"custom_option":"fixture-value"});
+    value["spec"]["inferenceProviders"][0]["api"] = "openai-responses".into();
+    let document = Document::parse(value.to_string().as_bytes()).unwrap();
+    let targets = nemoclaw_sdk::compile::targets(&document, &ownership_generations()).unwrap();
+    let sandbox = targets
+        .iter()
+        .find(|target| target.kind == "sandbox")
+        .unwrap();
+    assert_eq!(sandbox.values["agent_runtime"], "fabric");
+    let settings: serde_json::Value = serde_json::from_str(
+        &targets
+            .iter()
+            .find(|target| target.kind == "agent_configuration")
+            .unwrap()
+            .values["config_json"],
+    )
+    .unwrap();
+    assert!(settings.to_string().contains("openai-responses"));
+    assert_eq!(
+        settings["harness"]["settings"]["custom_option"],
+        "fixture-value"
+    );
+    let graph = compile(&document, &ownership_generations(), "0.1.0").unwrap();
+    assert_eq!(
+        graph["resource"]["nemoclaw_sandbox"]["assistant"]["agent_runtime"],
+        "fabric"
+    );
+}

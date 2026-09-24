@@ -26,7 +26,7 @@ spec:
       network:
         tier: isolated
       harness:
-        kind: openclaw
+        kind: nvidia.fabric.openclaw
       agent:
         name: main
         inference:
@@ -35,7 +35,9 @@ spec:
               providerRef: local
               overrides:
                 model: example-reasoning-model
-                contextWindow: 65536
                 maxTokens: 8192
-                reasoning: true
-                reasoningEffort: high
+                settings:
+                  model_metadata:
+                    contextWindow: 65536
+                    reasoning: true
+                  reasoning_effort: high

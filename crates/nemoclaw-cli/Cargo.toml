@@ -7,6 +7,7 @@ license.workspace = true
 publish = false
 
 [dependencies]
+nemoclaw-onboarding = { path = "../../examples/onboarding-tui" }
 nemoclaw-sdk = { path = "../nemoclaw-sdk" }
 clap.workspace = true
 ratatui.workspace = true

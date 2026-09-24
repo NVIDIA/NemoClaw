@@ -41,50 +41,50 @@ spec:
         freeGateGiB: 12
         consecutiveSamples: 5
   inferenceProviders:
-  - name: local
-    provider: openai
-    serviceRef: local
+    - name: local
+      provider: openai
+      serviceRef: local
   sandboxes:
-  - name: researcher
-    image:
-      ref: nc-fabric@sha256:f4a2f7068525f55f1dc25e77dfcc07998a32bd19f44ad75a61e304e255440f56
-    runtime:
-      provider: docker
-    network:
-      tier: isolated
-    harness:
-      kind: deepagents
-      execution:
-        timeoutSeconds: 300
-    agent:
-      name: researcher
-      inference:
-        routes:
-        - name: primary
-          providerRef: local
-          overrides:
-            model: nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4
-            maxTokens: 1024
-      tools:
-        allow:
-        - read
-  - name: writer
-    image:
-      ref: nc-fabric@sha256:f4a2f7068525f55f1dc25e77dfcc07998a32bd19f44ad75a61e304e255440f56
-    runtime:
-      provider: docker
-    network:
-      tier: isolated
-    harness:
-      kind: deepagents
-      execution:
-        timeoutSeconds: 300
-    agent:
-      name: writer
-      inference:
-        routes:
-        - name: primary
-          providerRef: local
-          overrides:
-            model: nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4
-            maxTokens: 1024
+    - name: researcher
+      image:
+        ref: nc-fabric@sha256:f4a2f7068525f55f1dc25e77dfcc07998a32bd19f44ad75a61e304e255440f56
+      runtime:
+        provider: docker
+      network:
+        tier: isolated
+      harness:
+        kind: nvidia.fabric.langchain.deepagents
+        execution:
+          timeoutSeconds: 300
+      agent:
+        name: researcher
+        inference:
+          routes:
+            - name: primary
+              providerRef: local
+              overrides:
+                model: nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4
+                maxTokens: 1024
+        tools:
+          allow:
+            - read
+    - name: writer
+      image:
+        ref: nc-fabric@sha256:f4a2f7068525f55f1dc25e77dfcc07998a32bd19f44ad75a61e304e255440f56
+      runtime:
+        provider: docker
+      network:
+        tier: isolated
+      harness:
+        kind: nvidia.fabric.langchain.deepagents
+        execution:
+          timeoutSeconds: 300
+      agent:
+        name: writer
+        inference:
+          routes:
+            - name: primary
+              providerRef: local
+              overrides:
+                model: nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4
+                maxTokens: 1024

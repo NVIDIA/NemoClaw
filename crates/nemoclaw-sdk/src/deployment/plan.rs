@@ -8,6 +8,8 @@ pub(super) struct Plan {
     pub resource_changes: Vec<ResourceChange>,
     #[serde(default)]
     pub resource_drift: Vec<ResourceChange>,
+    #[serde(default)]
+    pub planned_values: Value,
 }
 #[derive(Deserialize)]
 pub(super) struct ResourceChange {
@@ -35,6 +37,7 @@ fn observation(
     let expected = (change.address.starts_with("data.docker_image.")
         && allowed.contains_key(&change.address))
         || crate::compile::is_gateway_observation(&change.address)
+        || crate::discovery_graph::is_observation(&change.address)
         || allowed.keys().any(|address| {
             address
                 .strip_prefix("nemoclaw_sandbox.")
@@ -328,4 +331,117 @@ pub(super) fn check_destroy_plan(
         ));
     }
     Ok(changes)
+}
+
+impl Plan {
+    pub(super) fn discovery_deferred(&self) -> Vec<String> {
+        let observations = self.discovery_values();
+        if observations.is_empty()
+            && self.planned_values.pointer("/outputs/discovery").is_some()
+            && self
+                .planned_values
+                .pointer("/outputs/discovery/value")
+                .is_none()
+        {
+            return vec![
+                "Target discovery remains unknown until its provider inputs can be resolved."
+                    .into(),
+            ];
+        }
+        observations
+            .iter()
+            .filter_map(|(name, value)| {
+                let observation = value
+                    .as_str()
+                    .and_then(|encoded| serde_json::from_str::<Value>(encoded).ok());
+                let resolved = observation.as_ref().is_some_and(|value| {
+                    value["status"] == "available"
+                        && (name != "gateway" || value["compatible"] == true)
+                        && (!name.starts_with("sandbox_")
+                            || value["compatibility"]["status"] == "supported")
+                });
+                if resolved || (name.starts_with("service_") && value["ready"] == true) {
+                    return None;
+                }
+                Some(super::reporting::unverified_message(name))
+            })
+            .collect()
+    }
+}
+
+#[cfg(test)]
+mod discovery_tests {
+    use super::*;
+
+    #[test]
+    fn an_unknown_discovery_output_cannot_make_the_plan_complete() {
+        let plan: Plan = serde_json::from_value(json!({
+            "planned_values": {"outputs": {"discovery": {"sensitive": false}}}
+        }))
+        .unwrap();
+        assert!(!plan.discovery_deferred().is_empty());
+    }
+
+    #[test]
+    fn unknown_and_absent_image_evidence_remain_unresolved_without_exposing_raw_diagnostics() {
+        let plan: Plan = serde_json::from_value(json!({
+            "planned_values": {"outputs": {"discovery": {"value": {
+                "engine": "{\"status\":\"available\"}",
+                "sandbox_0": "{\"status\":\"unknown\",\"reason\":\"secret-sentinel\"}",
+                "sandbox_1": "{\"status\":\"unavailable\"}"
+            }}}}
+        }))
+        .unwrap();
+        let deferred = plan.discovery_deferred();
+        assert_eq!(deferred.len(), 2);
+        assert!(deferred.iter().all(|message| message.contains("Fabric")));
+        assert!(!format!("{deferred:?}").contains("secret-sentinel"));
+    }
+}
+
+#[cfg(test)]
+mod reporting_tests {
+    use super::*;
+    #[test]
+    fn inventory_reports_validated_actions_and_retention_without_copying_private_state() {
+        let plan:Plan=serde_json::from_value(json!({"resource_changes":[{"mode":"managed","address":"nemoclaw_gateway_storage.runtime","change":{"actions":["no-op"],"before":{"id":"PRIVATE_SENTINEL","spec":"PRIVATE_SENTINEL"},"after":{"id":"PRIVATE_SENTINEL"}}}],"resource_drift":[{"mode":"managed","address":"nemoclaw_gateway_storage.runtime","change":{"actions":["update"],"before":{},"after":{}}}]})).unwrap();
+        let report = plan
+            .discovery_report(
+                super::super::DiscoveryScope::Runtime,
+                &BTreeMap::new(),
+                &BTreeSet::from(["nemoclaw_gateway_storage.runtime".into()]),
+            )
+            .unwrap();
+        assert_eq!(report.resources.len(), 1);
+        assert!(report.resources[0].existed);
+        assert!(report.resources[0].drifted);
+        assert!(report.resources[0].retained);
+        assert!(!report.resources[0].reuse_planned);
+        assert!(
+            !serde_json::to_string(&report)
+                .unwrap()
+                .contains("PRIVATE_SENTINEL")
+        );
+    }
+    #[test]
+    fn unknown_gateway_does_not_hide_already_observed_endpoint_and_hardware_categories() {
+        let plan:Plan=serde_json::from_value(json!({"planned_values":{"outputs":{"discovery":{"sensitive":false}},"root_module":{"resources":[{"address":"data.nemoclaw_inference_capabilities.endpoint_0","values":{"observation_json":"{\"status\":\"unknown\"}"}},{"address":"data.nemoclaw_target_hardware.target_0","values":{"observation_json":"{\"status\":\"unknown\"}"}},{"address":"data.nemoclaw_gateway_capabilities.current","values":{"observation_json":null}}]}}})).unwrap();
+        let messages = plan.discovery_deferred();
+        assert!(messages.iter().any(|message| message.contains("Inference")));
+        assert!(messages.iter().any(|message| message.contains("hardware")));
+        assert!(messages.iter().any(|message| message.contains("Gateway")));
+    }
+}
+
+#[cfg(test)]
+mod nested_discovery_tests {
+    use super::*;
+    #[test]
+    fn a_readable_image_is_not_a_verified_fabric_configuration() {
+        let plan:Plan=serde_json::from_value(json!({"planned_values":{"outputs":{"discovery":{"value":{"sandbox_0":"{\"status\":\"available\",\"compatibility\":{\"status\":\"unknown\"}}","gateway":"{\"status\":\"available\",\"compatible\":false}"}}}}})).unwrap();
+        let deferred = plan.discovery_deferred();
+        assert_eq!(deferred.len(), 2);
+        assert!(deferred.iter().any(|message| message.contains("Fabric")));
+        assert!(deferred.iter().any(|message| message.contains("Gateway")));
+    }
 }

@@ -26,7 +26,7 @@ spec:
       network:
         tier: isolated
       harness:
-        kind: pi
+        kind: nvidia.fabric.pi
       agent:
         name: main
         inference:
@@ -35,9 +35,10 @@ spec:
               providerRef: local
               overrides:
                 model: qwen3:4b
-                piModel:
-                  api: openai-completions
-                  contextWindow: 8192
-                  maxTokens: 2048
-                  reasoning: false
-                  input: [text]
+                settings:
+                  model_metadata:
+                    api: openai-completions
+                    contextWindow: 8192
+                    maxTokens: 2048
+                    reasoning: false
+                    input: [text]

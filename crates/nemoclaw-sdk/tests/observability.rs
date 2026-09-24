@@ -2,157 +2,52 @@
 // SPDX-License-Identifier: Apache-2.0
 use nemoclaw_sdk::{
     compile::{Generations, compile, targets},
-    config::{Document, schema::input_schema},
+    config::Document,
 };
 use serde_json::{Value, json};
 
-fn input() -> Value {
-    serde_saphyr::from_str(include_str!("../../../examples/fabric-openclaw.yaml")).unwrap()
-}
-fn telemetry() -> Value {
-    json!({"otlp":{"enabled":true,"endpoint":"http://host.openshell.internal:4318","serviceName":"agent ${fixture} %{literal}","sampleRate":0.5}})
-}
-fn relay() -> Value {
-    json!({"relay":{"enabled":true}})
-}
 #[test]
-fn telemetry_preserves_intent_and_adds_only_collector_egress() {
-    let mut value = input();
-    value["spec"]["sandboxes"][0]["harness"]["observability"] = telemetry();
-    let doc = Document::parse(value.to_string().as_bytes()).expect("OTLP settings must parse");
-    assert!(
-        jsonschema::validator_for(&input_schema())
-            .unwrap()
-            .is_valid(&value)
-    );
-    assert_eq!(
-        Document::parse(doc.yaml().unwrap().as_bytes()).unwrap(),
-        doc
-    );
+fn native_telemetry_settings_are_opaque_and_do_not_implicitly_grant_network_access() {
+    let mut input: Value =
+        serde_saphyr::from_str(include_str!("fixtures/config/local.yaml")).unwrap();
+    let settings = json!({"telemetry":{"future":null,"service":"agent ${fixture} %{literal}"}});
+    input["spec"]["sandboxes"][0]["harness"]["settings"] = settings.clone();
+    let document = Document::parse(input.to_string().as_bytes()).unwrap();
     let generations: Generations = ["workspace", "provider", "sandbox"]
         .map(|key| (key.into(), "a".repeat(32)))
         .into();
-    let rows = targets(&doc, &generations).unwrap();
-    let runtime: Value = serde_json::from_str(&rows[3].values["inference_json"]).unwrap();
-    assert_eq!(runtime["observability"], telemetry());
-    let graph = compile(&doc, &generations, "0.1.0").unwrap();
-    assert!(
-        graph["resource"]["nemoclaw_sandbox"]["assistant"]["inference_json"]
-            .as_str()
+    let rows = targets(&document, &generations).unwrap();
+    let config: Value = serde_json::from_str(
+        &rows
+            .iter()
+            .find(|row| row.kind == "agent_configuration")
             .unwrap()
-            .contains("agent $${fixture} %%{literal}"),
-        "OpenTofu must receive literal service names"
+            .values["config_json"],
+    )
+    .unwrap();
+    assert_eq!(config["harness"]["settings"], settings);
+    let policy: Value = serde_json::from_str(
+        &rows
+            .iter()
+            .find(|row| row.kind == "sandbox")
+            .unwrap()
+            .values["policy_json"],
+    )
+    .unwrap();
+    assert!(
+        !policy["network_policies"]
+            .as_object()
+            .unwrap()
+            .contains_key("nemoclaw-otlp")
     );
-    let policy: Value = serde_json::from_str(&rows[3].values["policy_json"]).unwrap();
-    let rules = policy["network_policies"].as_object().unwrap();
-    assert_eq!(rules.len(), 2);
-    let endpoint = &rules["nemoclaw-otlp"]["endpoints"][0];
-    assert_eq!(endpoint["host"], "host.openshell.internal");
-    assert_eq!(endpoint["port"], 4318);
+    let graph = compile(&document, &generations, "0.1.0").unwrap();
+    let encoded = graph["resource"]["nemoclaw_agent_configuration"]
+        [&document.spec.sandboxes[0].name]["config_json"]
+        .as_str()
+        .unwrap();
+    assert!(encoded.contains("agent $${fixture} %%{literal}"));
     assert_eq!(
-        endpoint["rules"],
-        json!([{"allow":{"method":"POST","path":"/v1/traces"}}])
+        Document::parse(document.yaml().unwrap().as_bytes()).unwrap(),
+        document
     );
-    value["spec"]["sandboxes"][0]["network"] = json!({"policy":{"explicit":policy}});
-    assert!(
-        Document::parse(value.to_string().as_bytes()).is_err(),
-        "reserved egress rules must not override explicit policy"
-    );
-}
-#[test]
-fn invalid_telemetry_is_rejected_before_planning() {
-    let schema = jsonschema::validator_for(&input_schema()).unwrap();
-    for (field, invalid) in [
-        ("enabled", json!(false)),
-        ("endpoint", json!("https://collector.example")),
-        ("sampleRate", json!(-0.1)),
-        ("sampleRate", json!(1.1)),
-        ("serviceName", json!("")),
-        ("serviceName", json!("with\nnewline")),
-        ("serviceName", json!(" leading")),
-    ] {
-        let mut value = input();
-        let mut otlp = telemetry();
-        otlp["otlp"][field] = invalid;
-        value["spec"]["sandboxes"][0]["harness"]["observability"] = otlp;
-        assert!(Document::parse(value.to_string().as_bytes()).is_err());
-        assert!(!schema.is_valid(&value));
-    }
-    let mut value = input();
-    value["spec"]["sandboxes"][0]["agent"]["harness"]["observability"] = telemetry();
-    assert!(Document::parse(value.to_string().as_bytes()).is_err());
-    assert!(
-        !schema.is_valid(&value),
-        "the schema rejects agent-level harness settings"
-    );
-}
-
-#[test]
-fn hermes_relay_tracing_selects_in_process_runtime_without_new_egress() {
-    let mut value: Value =
-        serde_saphyr::from_str(include_str!("../../../examples/fabric-hermes.yaml")).unwrap();
-    value["spec"]["sandboxes"][0]["harness"]["observability"] = relay();
-    let doc = Document::parse(value.to_string().as_bytes()).expect("Relay settings must parse");
-    assert!(
-        jsonschema::validator_for(&input_schema())
-            .unwrap()
-            .is_valid(&value)
-    );
-    let generations: Generations = ["workspace", "provider", "sandbox"]
-        .map(|key| (key.into(), "a".repeat(32)))
-        .into();
-    let rows = targets(&doc, &generations).unwrap();
-    let runtime: Value = serde_json::from_str(&rows[3].values["inference_json"]).unwrap();
-    assert_eq!(runtime["observability"], relay());
-    let policy: Value = serde_json::from_str(&rows[3].values["policy_json"]).unwrap();
-    let rules = policy["network_policies"].as_object().unwrap();
-    assert_eq!(rules.len(), 1);
-    assert!(
-        rules
-            .keys()
-            .all(|key| key.starts_with("nemoclaw-inference-"))
-    );
-}
-
-#[test]
-fn relay_tracing_rejects_unsupported_combinations() {
-    let schema = jsonschema::validator_for(&input_schema()).unwrap();
-    let hermes: Value =
-        serde_saphyr::from_str(include_str!("../../../examples/fabric-hermes.yaml")).unwrap();
-    for observability in [
-        json!({"relay":{"enabled":false}}),
-        json!({"relay":{"enabled":true},"otlp":{"enabled":true,"endpoint":"http://host.openshell.internal:4318","serviceName":"fixture","sampleRate":1}}),
-    ] {
-        let mut value = hermes.clone();
-        value["spec"]["sandboxes"][0]["harness"]["observability"] = observability;
-        assert!(Document::parse(value.to_string().as_bytes()).is_err());
-        assert!(!schema.is_valid(&value));
-    }
-    let mut with_interfaces = hermes;
-    with_interfaces["spec"]["sandboxes"][0]["harness"]["observability"] = relay();
-    with_interfaces["spec"]["sandboxes"][0]["harness"]["interfaces"] =
-        json!({"dashboard":{"enabled":false}});
-    assert!(Document::parse(with_interfaces.to_string().as_bytes()).is_ok());
-    assert!(schema.is_valid(&with_interfaces));
-}
-
-#[test]
-fn tracing_choice_is_enforced_when_deserializing_the_sdk_type() {
-    use nemoclaw_sdk::config::AgentObservability;
-
-    for value in [
-        json!({}),
-        json!({"otlp": telemetry()["otlp"], "relay": {"enabled": true}}),
-    ] {
-        assert!(
-            serde_json::from_value::<AgentObservability>(value.clone()).is_err(),
-            "{value}"
-        );
-    }
-    for value in [telemetry(), relay()] {
-        let tracing: AgentObservability = serde_json::from_value(value.clone()).unwrap();
-        assert_eq!(serde_json::to_value(&tracing).unwrap(), value);
-        let yaml = serde_saphyr::to_string(&tracing).unwrap();
-        assert_eq!(serde_saphyr::from_str::<Value>(&yaml).unwrap(), value);
-    }
 }

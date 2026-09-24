@@ -25,6 +25,8 @@ pub(crate) struct GatewayState {
     compute_drivers: Value<BTreeSet<String>>,
     compute_driver_count: Value<u64>,
     compatible: Value<bool>,
+    observation_json: Value<String>,
+    status: Value<String>,
     incompatibility: Value<String>,
 }
 
@@ -107,6 +109,16 @@ impl DataSource for GatewayDataSource {
                         "required_compute_drivers",
                         AttributeType::Set(Box::new(AttributeType::String)),
                         AttributeConstraint::Required,
+                    ),
+                    (
+                        "observation_json",
+                        AttributeType::String,
+                        AttributeConstraint::Computed,
+                    ),
+                    (
+                        "status",
+                        AttributeType::String,
+                        AttributeConstraint::Computed,
                     ),
                     (
                         "gateway_version",
@@ -199,6 +211,24 @@ impl DataSource for GatewayDataSource {
         };
         match observed {
             Ok(observed) => {
+                let required = drivers
+                    .iter()
+                    .map(|driver| driver.parse())
+                    .collect::<Result<Vec<_>, _>>()
+                    .ok()?;
+                let observation = nemoclaw_sdk::openshell::GatewayObservation::from_result(
+                    Ok(observed.clone()),
+                    &required,
+                );
+                config.status = Value::Value(
+                    if observation.compatible == Some(true) {
+                        "available"
+                    } else {
+                        "unavailable"
+                    }
+                    .into(),
+                );
+                config.observation_json = Value::Value(serde_json::to_string(&observation).ok()?);
                 let incompatibility = observed.incompatibility(drivers.iter().copied());
                 config.compatible = Value::Value(incompatibility.is_none());
                 // OpenTofu formats condition messages even when the condition holds.
@@ -244,6 +274,8 @@ mod tests {
                 compute_drivers: Value::Null,
                 compute_driver_count: Value::Null,
                 compatible: Value::Null,
+                observation_json: Value::Null,
+                status: Value::Null,
                 incompatibility: Value::Null,
             };
             let mut diagnostics = Diagnostics::default();
@@ -278,6 +310,8 @@ mod wait_tests {
                 compute_drivers: Value::Null,
                 compute_driver_count: Value::Null,
                 compatible: Value::Null,
+                observation_json: Value::Null,
+                status: Value::Null,
                 incompatibility: Value::Null,
             };
             let mut diagnostics = Diagnostics::default();

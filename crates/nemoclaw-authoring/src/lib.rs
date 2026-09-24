@@ -11,18 +11,31 @@
 
 mod answers;
 mod capabilities;
+mod delegation;
+mod deployment;
 mod diagnostics;
 mod draft;
+mod evidence;
+mod facts;
+mod graph;
 mod guided;
 mod projection;
 
 pub use answers::{
     AnswerOverrides, Answers, ApiChoice, HarnessChoice, ProviderPreset, RuntimeChoice,
 };
-pub use capabilities::{Capabilities, Scenario};
+pub use capabilities::Capabilities;
 pub use diagnostics::{Diagnostic, Diagnostics};
 pub use draft::{
     AuthoredDocument, CompletionBoundary, Draft, IdentityEdits, InferenceEdits, Review,
 };
-pub use guided::{EditableField, FieldValue, GuidedField};
+pub use evidence::{
+    CompatibilityStatus, DiscoveryAssessment, DiscoveryEvidence, DiscoveryKey, DiscoveryQuery,
+};
+pub use facts::{AuthoringFacts, EndpointEvidence, GatewayEvidence, HardwareEvidence};
+pub use graph::{AnswerStatus, DependencyGraph};
+pub use guided::{AnswerChange, EditableField, FieldValue, GuidedEdit, GuidedField};
 pub use projection::Session;
+
+mod settings;
+pub use settings::SettingQuestion;

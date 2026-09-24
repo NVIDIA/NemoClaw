@@ -78,6 +78,40 @@ fn verify_initializer(
     Ok(())
 }
 impl Engine {
+    /// Read the engine and check existing gateway prerequisites without changing resources.
+    /// Passing this check does not establish image, GPU, or deployment readiness.
+    pub async fn gateway_engine_info(
+        &self,
+        driver: ComputeDriver,
+    ) -> Result<bollard::models::SystemInfo, Error> {
+        if driver == ComputeDriver::Podman {
+            #[cfg(unix)]
+            {
+                let native = self.podman_json("info").await?;
+                let rootless = native["host"]["security"]["rootless"]
+                    .as_bool()
+                    .ok_or(ObservationError::Incomplete)?;
+                if rootless && native["host"]["rootlessNetworkCmd"] != serde_json::json!("pasta") {
+                    return Err(Error::Conflict(
+                        "managed rootless Podman requires an API that reports pasta networking for OpenShell callbacks",
+                    ));
+                }
+            }
+            let version = self.api.version().await.map_err(|error| remote(&error))?;
+            if !version
+                .components
+                .unwrap_or_default()
+                .iter()
+                .any(|part| part.name == "Podman Engine")
+            {
+                return Err(Error::Conflict(
+                    "Podman sandbox driver requires a Podman engine socket",
+                ));
+            }
+        }
+        self.info().await
+    }
+
     pub async fn gateway_storage(
         &self,
         spec: &Spec,
@@ -104,32 +138,7 @@ impl Engine {
                 "invalid gateway storage specification or engine",
             ));
         }
-        if spec.compute_driver == ComputeDriver::Podman {
-            #[cfg(unix)]
-            {
-                let native = self.podman_json("info").await?;
-                let rootless = native["host"]["security"]["rootless"]
-                    .as_bool()
-                    .ok_or(ObservationError::Incomplete)?;
-                if rootless && native["host"]["rootlessNetworkCmd"] != serde_json::json!("pasta") {
-                    return Err(Error::Conflict(
-                        "managed rootless Podman requires an API that reports pasta networking for OpenShell callbacks",
-                    ));
-                }
-            }
-            let version = self.api.version().await.map_err(|error| remote(&error))?;
-            if !version
-                .components
-                .unwrap_or_default()
-                .iter()
-                .any(|part| part.name == "Podman Engine")
-            {
-                return Err(Error::Conflict(
-                    "Podman sandbox driver requires a Podman engine socket",
-                ));
-            }
-        }
-        let info = self.info().await?;
+        let info = self.gateway_engine_info(spec.compute_driver).await?;
         let mut volume = self.volume(&spec.volume()).await?;
         let network = self.network(&spec.network()).await?;
         let helper = self

@@ -132,8 +132,8 @@ fn shared_inline_provider_is_one_instance_and_edits_stay_in_its_definition() {
 fn shared_pi_metadata_accepts_opaque_nulls_only_inside_the_model() {
     let mut value: Value =
         serde_saphyr::from_str(include_str!("../../../examples/fabric-pi.yaml")).unwrap();
-    value["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]["piModel"]["custom"] =
-        Value::Null;
+    value["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]["settings"]["model_metadata"]
+        ["custom"] = Value::Null;
     let mut value = shared(value, false);
     assert!(Document::parse(value.to_string().as_bytes()).is_ok());
     value["spec"]["inferences"]["chat"]["routes"][0]["overrides"]["model"] = Value::Null;

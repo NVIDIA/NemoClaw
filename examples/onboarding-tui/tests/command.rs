@@ -36,7 +36,30 @@ fn help_describes_a_generation_only_example() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("example terminal frontend"));
     assert!(stdout.contains("does not resolve credentials, plan, or apply"));
-    for unsupported in ["--state-dir", "--bundle", "--apply"] {
+    for unsupported in ["--state-dir", "--bundle", "--apply", "--edit"] {
         assert!(!stdout.contains(unsupported));
     }
+}
+
+#[test]
+fn edit_mode_is_rejected_without_touching_input_or_creating_output() {
+    let directory = tempfile::tempdir().unwrap();
+    let input = directory.path().join("template.yaml");
+    let output = directory.path().join("new.yaml");
+    fs::write(&input, "original template").unwrap();
+    let result = Command::new(env!("CARGO_BIN_EXE_nemoclaw-onboarding"))
+        .arg("--edit")
+        .arg(&input)
+        .arg("--output")
+        .arg(&output)
+        .output()
+        .unwrap();
+    assert_eq!(result.status.code(), Some(2));
+    assert!(
+        String::from_utf8(result.stderr)
+            .unwrap()
+            .contains("unexpected argument '--edit'")
+    );
+    assert_eq!(fs::read_to_string(&input).unwrap(), "original template");
+    assert!(!output.exists());
 }

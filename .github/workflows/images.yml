@@ -8,10 +8,6 @@ on:
     branches: [v1]
     paths:
       - image/**
-      - test/**
-      - tools/ci/image_fixtures.py
-      - tools/fabric-adapter-experiment.py
-      - tools/fabric_management/**
       - docker-bake.hcl
       - .dockerignore
       - ruff.toml
@@ -24,11 +20,21 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   images:
-    name: Build / linux_arm64
-    runs-on: ubuntu-24.04-arm
+    name: Build / ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux_arm64
+            docker_platform: linux/arm64
+            runner: ubuntu-24.04-arm
+          - platform: linux_amd64
+            docker_platform: linux/amd64
+            runner: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     env:
-      AGENT_PLATFORM: linux/arm64
+      AGENT_PLATFORM: ${{ matrix.docker_platform }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -37,79 +43,38 @@ jobs:
         run: |
           python3 -B -m unittest discover -s image -p test_builds.py
           docker buildx bake --check agents ollama-proxy
-      - name: Lint, format, compile TypeScript, and run unit tests
+      - name: Check packaging and generic Fabric lifecycle
         run: docker buildx bake check
-      - name: Build all supported agent images locally
-        run: docker buildx bake agents ollama-proxy --load
-      - name: Verify assembled images and retained source hashes
+      - name: Build local images with installed Fabric metadata
         run: |
-          for harness in deepagents claude codex mini-swe-agent nooa nooa-bench remote-agent pi openclaw hermes; do
+          python3 image/build_fabric.py --platform "$AGENT_PLATFORM" agents
+          docker buildx bake ollama-proxy --load
+      - name: Verify installed discovery and retained source hashes
+        run: |
+          docker buildx bake --print agents | jq -er '.target | to_entries[] | [.key, .value.tags[0]] | @tsv' > .build-image-list
+          test -s .build-image-list
+          while read -r harness image; do
+            catalog=$(docker image inspect "$image" --format '{{index .Config.Labels "io.nemoclaw.fabric.catalog"}}')
             docker run --rm --runtime=runc --network none \
-              -e NEMOCLAW_TEST_HARNESS="$harness" -v "$PWD/image/test_image.py:/test.py:ro" \
-              --entrypoint /opt/fabric/bin/python "nc-fabric:$harness" -B /test.py
-          done
-      - name: Exercise native adapters against isolated protocol fixtures
-        run: python3 tools/ci/image_fixtures.py linux_arm64
-      - name: Qualify the experimental Fabric management contract
+              -e NEMOCLAW_TEST_HARNESS="$harness" -e NEMOCLAW_TEST_CATALOG="$catalog" \
+              -v "$PWD/image/test_image.py:/test.py:ro" \
+              --entrypoint /opt/fabric/bin/python "$image" -B /test.py
+          done < .build-image-list
+      - name: Qualify native adapters through Fabric-owned tests
         run: |
-          for harness in pi deepagents; do
-            python3 tools/fabric_management/run.py --image "nc-fabric:$harness" \
-              --config "tools/fabric_management/fixtures/$harness.json"
-          done
-      - name: Exercise OpenClaw tools, execution, search, and tracing
-        run: |
-          docker run --rm --runtime=runc --network none --user 0 \
-            --add-host host.openshell.internal:127.0.0.1 \
-            -e PYTHONPATH=/opt/nemoclaw \
-            -e NEMOCLAW_TEST_NATIVE_TOOLS=1 -e NEMOCLAW_TEST_NATIVE_FEATURES=1 -e NEMOCLAW_TEST_NATIVE_EXECUTION=1 \
-            -v "$PWD/image/fabric:/tests:ro" -w /tests \
-            --entrypoint /opt/fabric/bin/python nc-fabric:openclaw \
-            -B -m unittest test_openclaw_adapter test_inference test_interfaces \
-            test_execution test_observability test_web_search test_openclaw_tools_gateway
-          for test in test_inference_probe.mts test_openclaw_tools.mts test_openclaw_disclosure.mts test_web_search.mts; do
-            docker run --rm --runtime=runc --network none --user 0 \
-              -e PYTHONPATH=/opt/nemoclaw -v "$PWD/image/fabric:/tests:ro" \
-              --entrypoint node nc-fabric:openclaw "/tests/$test"
-          done
-  agents-amd64:
-    name: Build / linux_amd64
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    env:
-      AGENT_PLATFORM: linux/amd64
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Validate AMD64 agent builds
-        run: |
-          python3 -B -m unittest discover -s image -p test_builds.py
-          docker buildx bake --check agents ollama-proxy
-      - name: Build qualified AMD64 agent images locally
-        run: |
-          docker buildx bake proxy-tests
-          docker buildx bake agents ollama-proxy --load
-      - name: Verify assembled AMD64 images and retained source hashes
-        run: |
-          for harness in deepagents openclaw; do
-            docker run --rm --runtime=runc --network none \
-              -e NEMOCLAW_TEST_HARNESS="$harness" -v "$PWD/image/test_image.py:/test.py:ro" \
-              --entrypoint /opt/fabric/bin/python "nc-fabric:$harness" -B /test.py
-          done
-      - name: Exercise AMD64 native adapters against isolated protocol fixtures
-        run: python3 tools/ci/image_fixtures.py linux_amd64
-      - name: Exercise AMD64 OpenClaw tools, execution, search, and tracing
-        run: |
-          docker run --rm --runtime=runc --network none --user 0 \
-            --add-host host.openshell.internal:127.0.0.1 \
-            -e PYTHONPATH=/opt/nemoclaw \
-            -e NEMOCLAW_TEST_NATIVE_TOOLS=1 -e NEMOCLAW_TEST_NATIVE_FEATURES=1 -e NEMOCLAW_TEST_NATIVE_EXECUTION=1 \
-            -v "$PWD/image/fabric:/tests:ro" -w /tests \
-            --entrypoint /opt/fabric/bin/python nc-fabric:openclaw \
-            -B -m unittest test_openclaw_adapter test_inference test_interfaces \
-            test_execution test_observability test_web_search test_openclaw_tools_gateway
-          for test in test_inference_probe.mts test_openclaw_tools.mts test_openclaw_disclosure.mts test_web_search.mts; do
-            docker run --rm --runtime=runc --network none --user 0 \
-              -e PYTHONPATH=/opt/nemoclaw -v "$PWD/image/fabric:/tests:ro" \
-              --entrypoint node nc-fabric:openclaw "/tests/$test"
-          done
+          qualify() {
+            docker run --rm --runtime=runc --network none --entrypoint /bin/sh "$1" -ec '
+              fixture=$(mktemp -d)
+              tar -xzf /opt/nemoclaw/source/fabric.tar.gz -C "$fixture" --strip-components=1
+              /opt/fabric/bin/python "$fixture/tests/native/qualify.py" "$1" --settings "$2"
+            ' sh "$2" "$3"
+          }
+          qualify nc-fabric:openclaw nvidia.fabric.openclaw '{"cli":"/app/openclaw.mjs"}'
+          if [ "$AGENT_PLATFORM" = linux/arm64 ]; then
+            qualify nc-fabric:hermes nvidia.fabric.hermes '{"mode":"service"}'
+            docker run --rm --runtime=runc --network none --entrypoint /bin/sh nc-fabric:hermes -ec '
+              fixture=$(mktemp -d)
+              tar -xzf /opt/nemoclaw/source/fabric.tar.gz -C "$fixture" --strip-components=1
+              /opt/fabric/bin/python "$fixture/tests/native/hermes_security.py"
+            '
+          fi

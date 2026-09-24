@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+//! Historical intent and deployment lifecycle parity; native inference is not qualified here.
+
 use nemoclaw_sdk::config::{ComputeDriver, Document, Gateway, HarnessKind, InferenceProviderKind};
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -40,6 +42,32 @@ fn authored_document(raw: &[u8], current: &[u8]) -> Document {
     assert_eq!(agents.as_array().unwrap().len(), 1);
     assert!(!sandbox.contains_key("agent"));
     sandbox.insert("agent".into(), agents[0].clone());
+    // Migration is explicit test-only authoring, never production alias dispatch.
+    let harness = sandbox["harness"].as_object_mut().unwrap();
+    harness["kind"] = match harness["kind"].as_str().unwrap() {
+        "openclaw" => json!("nvidia.fabric.openclaw"),
+        "hermes" => json!("nvidia.fabric.hermes"),
+        other => panic!("unexpected historical fixture adapter {other}"),
+    };
+    if let Some(interfaces) = harness.remove("interfaces") {
+        harness.insert(
+            "settings".into(),
+            json!({"mode":"service","interfaces":interfaces}),
+        );
+    }
+    if !sandbox.contains_key("image") {
+        let image = match sandbox["harness"]["kind"].as_str().unwrap() {
+            "nvidia.fabric.hermes" => {
+                "nc-fabric@sha256:f7a96a028a031048e6b3919b85cad253ec584e0df86011a5937ae8ff5c1125d8"
+            }
+            "nvidia.fabric.openclaw" => {
+                "nc-multi-models@sha256:3ab70ded67440e838a37d6c9f0e3b08b95e2acf416c6076f8817bac190525cf0"
+            }
+            other => panic!("unexpected fixture image {other}"),
+        };
+        sandbox.insert("image".into(), json!({"ref":image}));
+    }
+
     assert_eq!(
         Document::parse(projected.to_string().as_bytes()).unwrap(),
         document,
@@ -90,12 +118,8 @@ fn assert_hosted_document(document: &Document, harness: HarnessKind, runtime_roo
     assert!(provider.service_ref.is_none());
 
     let sandbox = &document.spec.sandboxes[0];
-    let expected_image = if harness == HarnessKind::Hermes {
-        nemoclaw_sdk::config::DEFAULT_HERMES_IMAGE
-    } else {
-        nemoclaw_sdk::config::DEFAULT_AGENT_IMAGE
-    };
-    assert_eq!(sandbox.image.ref_, expected_image);
+    assert!(sandbox.image.ref_.contains("@sha256:"));
+    assert_eq!(sandbox.image.ref_.rsplit(':').next().unwrap().len(), 64);
     assert_eq!(sandbox.runtime.provider, ComputeDriver::Docker);
     let nemoclaw_sdk::config::NetworkPolicy::Explicit(explicit) = &sandbox.network.policy else {
         panic!("expected explicit policy");
@@ -144,7 +168,7 @@ fn hosted_openclaw_scenario_rejects_legacy_export_and_preserves_authored_intent(
         raw,
         include_bytes!("../fixtures/openclaw-nvidia-hosted/v1.yaml"),
     );
-    assert_hosted_document(&v1, HarnessKind::OpenClaw, "/app");
+    assert_hosted_document(&v1, "nvidia.fabric.openclaw".parse().unwrap(), "/app");
 }
 
 #[test]
@@ -168,10 +192,10 @@ fn hosted_hermes_scenario_rejects_legacy_export_and_preserves_authored_intent() 
         export,
         include_bytes!("../fixtures/hermes-nvidia-hosted/v1.yaml"),
     );
-    assert_hosted_document(&v1, HarnessKind::Hermes, "/opt/hermes");
+    assert_hosted_document(&v1, "nvidia.fabric.hermes".parse().unwrap(), "/opt/hermes");
     let harness = v1.sandbox_harness(&v1.spec.sandboxes[0]).unwrap();
     assert_eq!(
-        serde_json::to_value(harness.interfaces.as_ref().unwrap()).unwrap(),
+        harness.settings.as_ref().unwrap()["interfaces"],
         json!({"api":{"port":8643}})
     );
 }
@@ -267,12 +291,14 @@ mod live {
             deferred: vec!["OpenShell registration and sandbox require the managed gateway".into()],
             retained: vec![],
             health: vec![],
+            discovery: Default::default(),
         }
     }
 
     fn removed_resources(document: &Document) -> Vec<Change> {
         let mut removed = changes(
             &[
+                "nemoclaw_agent_configuration.assistant",
                 "nemoclaw_provider.inference_hosted-nvidia-prod",
                 "nemoclaw_provider_profile.inference_hosted-nvidia-prod",
                 "nemoclaw_sandbox.assistant",
@@ -303,10 +329,18 @@ mod live {
         document: &Document,
         cancel: &CancellationToken,
     ) {
-        assert_eq!(
-            deployment.plan(document, cancel).await.unwrap(),
-            initial_plan(document)
+        let plan = deployment.plan(document, cancel).await.unwrap();
+        assert!(!plan.discovery.resources.is_empty());
+        let mut expected = initial_plan(document);
+        expected.discovery = plan.discovery.clone();
+        // Optional capability observations may remain unresolved before deployment.
+        assert!(
+            plan.deferred
+                .iter()
+                .any(|message| message == &expected.deferred[0])
         );
+        expected.deferred = plan.deferred.clone();
+        assert_eq!(plan, expected);
         let applied = deployment.apply(document, cancel).await.unwrap();
         assert_eq!(applied.outcome, Outcome::Succeeded);
         let runtime = runtime_resources(document);
@@ -316,6 +350,7 @@ mod live {
         );
         expected.extend(changes(
             &[
+                "nemoclaw_agent_configuration.assistant",
                 "nemoclaw_provider.inference_hosted-nvidia-prod",
                 "nemoclaw_provider_profile.inference_hosted-nvidia-prod",
                 "nemoclaw_sandbox.assistant",
@@ -347,6 +382,7 @@ mod live {
                 deferred: vec![],
                 retained: retained.clone(),
                 health: vec![],
+                discovery: Default::default(),
             }
         );
         assert_eq!(
@@ -357,6 +393,7 @@ mod live {
                 deferred: vec![],
                 retained: retained.clone(),
                 health: vec![],
+                discovery: Default::default(),
             }
         );
         retained
@@ -375,16 +412,12 @@ mod live {
         let cancel = CancellationToken::new();
 
         apply_initial(&deployment, &document, &cancel).await;
-        assert_eq!(
-            deployment.plan(&document, &cancel).await.unwrap(),
-            OperationResult {
-                outcome: Outcome::Planned,
-                changes: vec![],
-                deferred: vec![],
-                retained: vec![],
-                health: vec![],
-            }
-        );
+        let plan = deployment.plan(&document, &cancel).await.unwrap();
+        assert_eq!(plan.outcome, Outcome::Planned);
+        assert!(plan.changes.is_empty());
+        assert!(plan.retained.is_empty());
+        assert!(plan.health.is_empty());
+        assert!(!plan.discovery.resources.is_empty());
         let exported = deployment.export(&cancel).await.unwrap();
         assert_eq!(exported, document);
         let reapplied = deployment.apply(&exported, &cancel).await.unwrap();
@@ -400,7 +433,11 @@ mod live {
         let raw = fs::read(explicit_path("NEMOCLAW_LIVE_V0_EXPORT")).unwrap();
         let yaml = fs::read(explicit_path("NEMOCLAW_LIVE_V1_CONFIG")).unwrap();
         let document = super::authored_document(&raw, &yaml);
-        super::assert_hosted_document(&document, super::HarnessKind::Hermes, "/opt/hermes");
+        super::assert_hosted_document(
+            &document,
+            "nvidia.fabric.hermes".parse().unwrap(),
+            "/opt/hermes",
+        );
         let directory = explicit_path("NEMOCLAW_LIVE_HOSTED_STATE");
         let bundle = explicit_path("NEMOCLAW_TEST_BUNDLE");
         fs::create_dir(&directory).expect("test requires a new state directory");
@@ -412,6 +449,7 @@ mod live {
         let mut expected = runtime_resources(&document);
         expected.extend(
             [
+                "nemoclaw_agent_configuration.assistant",
                 "nemoclaw_provider.inference_hosted-nvidia-prod",
                 "nemoclaw_provider_profile.inference_hosted-nvidia-prod",
                 "nemoclaw_sandbox.assistant",
@@ -426,19 +464,19 @@ mod live {
         );
         let client =
             OpenShell::connect(&document.spec.gateway, Arc::new(EnvironmentSecrets)).unwrap();
-        let reply = client.agent_response(&sandbox.unwrap()).await.unwrap();
-        assert!(reply.trim_matches(['.', '!']).eq_ignore_ascii_case("FOUR"));
+        assert!(matches!(
+            client.agent_response(&sandbox.unwrap()).await,
+            Err(nemoclaw_sdk::Error::Conflict(
+                "Fabric does not expose a normalized text probe contract; resources retained"
+            ))
+        ));
 
-        assert_eq!(
-            deployment.plan(&document, &cancel).await.unwrap(),
-            OperationResult {
-                outcome: Outcome::Planned,
-                changes: vec![],
-                deferred: vec![],
-                retained: vec![],
-                health: vec![],
-            }
-        );
+        let plan = deployment.plan(&document, &cancel).await.unwrap();
+        assert_eq!(plan.outcome, Outcome::Planned);
+        assert!(plan.changes.is_empty());
+        assert!(plan.retained.is_empty());
+        assert!(plan.health.is_empty());
+        assert!(!plan.discovery.resources.is_empty());
         let unchanged = deployment.apply(&document, &cancel).await.unwrap();
         assert_eq!(unchanged.outcome, Outcome::Succeeded);
         assert!(unchanged.changes.is_empty());

@@ -23,18 +23,19 @@ async fn health_reads_the_owned_host_without_generation_and_preserves_busy_readi
         .map(|k| (k.into(), format!("{k}-generation")))
         .collect::<BTreeMap<_, _>>();
     let targets = compile::targets(&doc, &generations).unwrap();
-    for target in &targets[..3] {
-        let kind = target
-            .address
-            .split('.')
-            .next()
-            .unwrap()
-            .strip_prefix("nemoclaw_")
-            .unwrap();
-        let result = client.ensure(kind, &target.values).await;
+    for target in targets.iter().filter(|target| {
+        matches!(
+            target.kind.as_str(),
+            "workspace" | "provider_profile" | "provider"
+        )
+    }) {
+        let result = client.ensure(&target.kind, &target.values).await;
         assert!(result.error().is_none(), "{:?}", result.error());
     }
-    let target = &targets[3];
+    let target = targets
+        .iter()
+        .find(|target| target.kind == "sandbox")
+        .unwrap();
     let mutation = client.ensure("sandbox", &target.values).await;
     assert!(mutation.error().is_none(), "{:?}", mutation.error());
     let binding = mutation.into_parts().0.unwrap();

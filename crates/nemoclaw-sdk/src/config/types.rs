@@ -69,7 +69,7 @@ pub struct Spec {
     /// Named inference definitions available to sandbox routes. Unselected definitions create no resources or credential requirements.
     pub inference_providers: Vec<InferenceProvider>,
     #[serde(rename = "sandboxes")]
-    /// One to 32 uniquely named sandboxes. Each selects one harness: one or more OpenClaw or Deep Agents instances, or one agent of another harness. Declaration order does not select a default sandbox or agent.
+    /// One to 32 uniquely named sandboxes. Each runs one agent through its selected Fabric adapter. Declaration order does not select a default sandbox or agent.
     pub sandboxes: Vec<Sandbox>,
 }
 
@@ -179,7 +179,7 @@ pub struct InferenceProvider {
     pub provider: super::InferenceProviderKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "super::InferenceApi")]
-    /// Request API. Omission selects anthropic-messages for Claude, openai-responses for Codex, and openai-completions for other non-Pi harnesses. Pi requires omission and selects its API through native model metadata.
+    /// Request API. Omission selects anthropic-messages for Anthropic providers and openai-completions for OpenAI providers; explicit values are preserved for Fabric validation.
     pub api: Option<super::InferenceApi>,
     #[serde(default, rename = "endpoint", skip_serializing_if = "String::is_empty")]
     #[schemars(default)]
@@ -203,7 +203,7 @@ pub struct InferenceProvider {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[schemars(!default)]
 #[serde(default, deny_unknown_fields)]
-/// The gateway owns sandbox creation. OpenClaw and Hermes accept managed gateway or inference dependencies.
+/// The gateway owns sandbox creation and dependency placement.
 pub struct Sandbox {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "Harness")]
@@ -313,11 +313,11 @@ pub struct Agent {
     pub inference_ref: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "super::AgentAuth")]
-    /// Hermes API-key authentication through the routed provider. The provider must declare a credential reference.
+    /// Require API-key authentication through the selected routed provider. The provider must supply a credential.
     pub auth: Option<super::AgentAuth>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "super::AgentTools")]
-    /// Read-only tools for OpenClaw, Deep Agents, or Pi, or OpenClaw disclosure mode. Omission preserves native defaults. allow: [read] restricts tools, not OS-level filesystem access.
+    /// Explicit native tool identifiers projected into public Fabric configuration. Fabric validates adapter support; this does not change OS-level filesystem permissions.
     pub tools: Option<super::AgentTools>,
 }
 
@@ -331,7 +331,7 @@ pub struct Inference {
     /// Initial model choice by route name. Required with multiple routes; omission selects the sole route.
     pub default: Option<String>,
     #[serde(rename = "routes")]
-    /// One or more uniquely named model choices. Multiple choices require OpenClaw or Pi.
+    /// One or more uniquely named model choices. Fabric validates native multiple-model support.
     pub routes: Vec<Route>,
 }
 
@@ -356,7 +356,7 @@ pub struct Route {
     /// Inline inference definition owned by this route. Excludes providerRef and must not shadow an enclosing definition.
     pub provider: Option<InferenceProvider>,
     #[serde(rename = "overrides")]
-    /// Model selection, optional OpenClaw tuning, and optional Pi model metadata.
+    /// Model selection, optional native tuning, and optional legacy model metadata.
     pub overrides: Overrides,
 }
 
@@ -369,30 +369,31 @@ pub struct Overrides {
     /// Model identifier. For a managed service, match its recipe serving.modelName or, without a recipe, model.repository.
     pub model: String,
     #[serde(flatten)]
-    /// OpenClaw native model limits and reasoning defaults.
+    /// Shared public model limits. Native model settings belong in settings.
     pub tuning: super::RouteTuning,
-    #[serde(rename = "piModel", skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "serde_json::Map<String, serde_json::Value>")]
-    /// Opaque custom model metadata for the pi harness. Its object may contain nested null values; the piModel value itself must be an object.
-    pub pi_model: Option<serde_json::Map<String, serde_json::Value>>,
+    /// Opaque native model settings validated by Fabric's selected model schema.
+    pub settings: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 /// One harness runtime configuration. Every sandbox runs its own instance for its configured agent.
 pub struct Harness {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "serde_json::Map<String, serde_json::Value>")]
+    /// Public Fabric configuration. Deployment-owned identities and model connections cannot be overridden.
+    pub config: Option<serde_json::Map<String, serde_json::Value>>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "serde_json::Map<String, serde_json::Value>")]
+    /// Opaque native settings validated by the selected Fabric adapter.
+    pub settings: Option<serde_json::Map<String, serde_json::Value>>,
     /// Fabric harness implementation for the sandbox agent.
     pub kind: super::HarnessKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(default, with = "super::AgentObservability")]
-    /// Harness-native tracing shared by the sandbox.
-    pub observability: Option<super::AgentObservability>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "super::AgentExecution")]
-    /// OpenClaw timeout and heartbeat defaults shared by the sandbox.
+    /// Public Fabric runtime execution settings.
     pub execution: Option<super::AgentExecution>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(default, with = "super::AgentInterfaces")]
-    /// Native dashboard access for this sandbox runtime.
-    pub interfaces: Option<super::AgentInterfaces>,
 }

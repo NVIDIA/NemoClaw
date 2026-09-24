@@ -85,7 +85,7 @@ pub(crate) fn runtime_graph(
         generations,
         crate::services::InstallStage::Runtime,
     )?;
-    let mut graph = graph_base(document, version);
+    let mut graph = graph_base(document, version)?;
     // Readiness follows gateway reconciliation, including restart or replacement.
     // Keeping it in this stage allows recovery before OpenShell resource refresh.
     let readiness = &mut graph["data"]["nemoclaw_gateway_capabilities"]["current"];

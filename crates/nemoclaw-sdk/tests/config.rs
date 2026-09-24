@@ -74,7 +74,7 @@ fn unsafe_yaml_and_secret_values_are_rejected_without_echoing_input() {
             "model: '${file(\"secret-do-not-print\")}'",
         ),
         ("provider: docker", "provider: unsupported"),
-        ("kind: openclaw", "kind: unknown"),
+        ("kind: nvidia.fabric.openclaw", "kind: ' '"),
     ];
     for (from, to) in changes {
         let error = Document::parse(base.replace(from, to).as_bytes()).unwrap_err();
@@ -109,7 +109,9 @@ fn endpoint_policy_rejects_credentials_metadata_and_remote_plaintext() {
 
 #[test]
 fn managed_defaults_and_safety_bounds_match_the_qualified_recipe() {
-    let original = Document::parse(include_str!("fixtures/config/spark.yaml").as_bytes()).unwrap();
+    let mut original =
+        Document::parse(include_str!("fixtures/config/spark.yaml").as_bytes()).unwrap();
+    original.spec.sandboxes[0].image.ref_ = nemoclaw_sdk::config::DEFAULT_AGENT_IMAGE.into();
     let mut defaulted = original.clone();
     defaulted.spec.gateway.endpoint_mut().clear();
     defaulted
@@ -184,12 +186,13 @@ fn fabric_protocol_and_managed_ollama_constraints_survive_the_port() {
                 .sandbox_harness(&document.spec.sandboxes[0])
                 .unwrap()
                 .runtime(),
-            format!("fabric-{harness}")
+            "fabric"
         );
     }
     let mut wrong = original;
-    wrong.spec.sandboxes[0].harness.as_mut().unwrap().kind = HarnessKind::Claude;
-    assert!(wrong.validate().is_err());
+    wrong.spec.sandboxes[0].harness.as_mut().unwrap().kind =
+        "nvidia.fabric.claude".parse().unwrap();
+    assert!(wrong.validate().is_ok());
     let base = include_str!("fixtures/config/managed-ollama.yaml");
     for (from, to) in [
         ("unix:///var/run/docker.sock", "tcp://127.0.0.1:2375"),
@@ -215,22 +218,21 @@ fn openclaw_uses_only_fabric_with_external_or_managed_dependencies() {
         include_str!("fixtures/config/managed-ollama.yaml"),
     ] {
         let mut document = Document::parse(input.as_bytes()).unwrap();
-        document.spec.sandboxes[0].harness.as_mut().unwrap().kind = HarnessKind::OpenClaw;
+        document.spec.sandboxes[0].harness.as_mut().unwrap().kind =
+            "nvidia.fabric.openclaw".parse().unwrap();
         document.spec.sandboxes[0].image.ref_.clear();
         document.defaults();
         document.validate().unwrap();
-        assert!(
-            document.spec.sandboxes[0]
-                .image
-                .ref_
-                .starts_with("nc-multi-models@sha256:")
+        assert_eq!(
+            document.spec.sandboxes[0].image.ref_,
+            nemoclaw_sdk::config::DEFAULT_AGENT_IMAGE
         );
         assert_eq!(
             document
                 .sandbox_harness(&document.spec.sandboxes[0])
                 .unwrap()
                 .runtime(),
-            "fabric-openclaw"
+            "fabric"
         );
         let mut input = serde_json::to_value(&document).unwrap();
         input["spec"]["sandboxes"][0]["harness"]["kind"] = serde_json::json!("");
@@ -250,18 +252,21 @@ fn sandbox_harness_is_the_only_implementation_selector() {
             .sandbox_harness(&document.spec.sandboxes[0])
             .unwrap()
             .runtime(),
-        "fabric-openclaw"
+        "fabric"
     );
     assert!(!document.yaml().unwrap().contains("type:"));
     for field in ["type: fabric", "type: openclaw"] {
         let legacy = input.replace(
-            "kind: openclaw",
+            "kind: nvidia.fabric.openclaw",
             &format!("{field}\n          kind: openclaw"),
         );
         assert!(Document::parse(legacy.as_bytes()).is_err());
     }
-    for invalid in ["", "unknown"] {
-        let changed = input.replace("kind: openclaw", &format!("kind: '{invalid}'"));
+    for invalid in ["", " "] {
+        let changed = input.replace(
+            "kind: nvidia.fabric.openclaw",
+            &format!("kind: '{invalid}'"),
+        );
         assert!(Document::parse(changed.as_bytes()).is_err());
     }
 }
@@ -292,9 +297,9 @@ fn pi_preserves_yaml_model_ids_and_explicit_custom_metadata() {
         .unwrap()
         .routes[0];
     route.overrides.model = "gpt-4o-mini".into();
-    route.overrides.pi_model = None;
+    route.overrides.settings = None;
     catalog.validate().unwrap();
-    assert!(Document::parse(input.replace("kind: pi", "kind: codex").as_bytes()).is_err());
+    assert!(Document::parse(input.replace("kind: pi", "kind: codex").as_bytes()).is_ok());
 }
 
 #[test]
@@ -304,12 +309,12 @@ fn pi_model_is_an_optional_opaque_object() {
     )
     .unwrap();
     let opaque = serde_json::json!({"contextWindow": "Pi validates this", "futureOption": {"nested": [null, 7, true]}, "thinkingLevelMap": {"off": null}});
-    tree["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]["piModel"] =
+    tree["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]["settings"]["model_metadata"] =
         opaque.clone();
     let parsed = Document::parse(tree.to_string().as_bytes()).unwrap();
     assert_eq!(
         serde_json::to_value(&parsed).unwrap()["spec"]["sandboxes"][0]["agent"]["inference"]["routes"]
-            [0]["overrides"]["piModel"],
+            [0]["overrides"]["settings"]["model_metadata"],
         opaque
     );
     assert_eq!(
@@ -322,7 +327,7 @@ fn pi_model_is_an_optional_opaque_object() {
         serde_json::json!(7),
         Value::Null,
     ] {
-        tree["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]["piModel"] =
+        tree["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]["settings"] =
             invalid;
         assert!(Document::parse(tree.to_string().as_bytes()).is_err());
     }
@@ -348,17 +353,17 @@ fn pi_model_updates_leave_the_sandbox_connection_unchanged() {
     let mut after = targets(&document, &generations).unwrap();
     let configuration = after
         .iter_mut()
-        .find(|target| target.kind == "pi_configuration")
+        .find(|target| target.kind == "agent_configuration")
         .unwrap();
-    let model: Value = serde_json::from_str(&configuration.values["model_json"]).unwrap();
-    assert_eq!(model["model"], "another-custom-model");
+    let model: Value = serde_json::from_str(&configuration.values["config_json"]).unwrap();
+    assert_eq!(model["models"]["default"]["model"], "another-custom-model");
     let prior = before
         .iter()
         .find(|target| target.address == configuration.address)
         .unwrap();
     configuration
         .values
-        .insert("model_json".into(), prior.values["model_json"].clone());
+        .insert("config_json".into(), prior.values["config_json"].clone());
     assert_eq!(after, before);
 }
 
@@ -390,10 +395,11 @@ fn harness_selection_does_not_determine_service_ownership() {
     }
     let mut claude =
         Document::parse(include_str!("../../../examples/spark/vllm.yaml").as_bytes()).unwrap();
-    claude.spec.sandboxes[0].harness.as_mut().unwrap().kind = HarnessKind::Claude;
+    claude.spec.sandboxes[0].harness.as_mut().unwrap().kind =
+        "nvidia.fabric.claude".parse().unwrap();
     assert!(
-        claude.validate().is_err(),
-        "managed vLLM still requires a compatible API"
+        claude.validate().is_ok(),
+        "harness identity does not change the provider's protocol default"
     );
     claude.spec.inference_providers[0].provider = InferenceProviderKind::Anthropic;
     assert!(
@@ -421,5 +427,143 @@ fn external_gateways_reject_installation_fields_even_when_empty() {
             Document::parse(input.as_bytes()).is_err(),
             "external gateway accepted {field}"
         );
+    }
+}
+
+#[test]
+fn fabric_harness_identifiers_are_extensible_and_validated() {
+    let baseline = include_str!("fixtures/config/local.yaml");
+    let source = baseline.replace("kind: nvidia.fabric.openclaw", "kind: fixture-new-agent");
+    let mut document = Document::parse(source.as_bytes()).unwrap();
+    document.spec.sandboxes[0]
+        .harness
+        .as_mut()
+        .unwrap()
+        .settings = Some(
+        serde_json::json!({"custom": {"nested": [null, true, 42, "value"]}})
+            .as_object()
+            .unwrap()
+            .clone(),
+    );
+    document.validate().unwrap();
+    let schema = nemoclaw_sdk::config::schema::input_schema();
+    assert_eq!(
+        schema["$defs"]["Harness"]["properties"]["kind"]["type"],
+        "string"
+    );
+    assert!(
+        schema["$defs"]["Harness"]["properties"]["kind"]
+            .get("enum")
+            .is_none()
+    );
+    for api in [
+        nemoclaw_sdk::config::InferenceApi::OpenaiCompletions,
+        nemoclaw_sdk::config::InferenceApi::OpenaiResponses,
+        nemoclaw_sdk::config::InferenceApi::AnthropicMessages,
+    ] {
+        document.spec.inference_providers[0].api = Some(api);
+        document.spec.inference_providers[0].provider =
+            if api == nemoclaw_sdk::config::InferenceApi::AnthropicMessages {
+                InferenceProviderKind::Anthropic
+            } else {
+                InferenceProviderKind::Openai
+            };
+        document.validate().unwrap();
+    }
+    assert_eq!(
+        document.spec.sandboxes[0]
+            .harness
+            .as_ref()
+            .unwrap()
+            .kind
+            .as_str(),
+        "fixture-new-agent"
+    );
+    assert_eq!(
+        Document::parse(document.yaml().unwrap().as_bytes()).unwrap(),
+        document
+    );
+    for value in [
+        "org.fabric.fixture.discoverable",
+        "Uppercase",
+        "space name",
+        "with_underscore",
+        "../opaque-id",
+        "line\nbreak",
+        "tab\tname",
+    ] {
+        assert_eq!(value.parse::<HarnessKind>().unwrap().as_str(), value);
+    }
+    for invalid in ["", " "] {
+        assert!(invalid.parse::<HarnessKind>().is_err());
+    }
+}
+
+#[test]
+fn default_image_is_deployment_policy_independent_of_adapter_identity() {
+    let mut value: Value =
+        serde_saphyr::from_str(include_str!("fixtures/config/local.yaml")).unwrap();
+    value["spec"]["sandboxes"][0]["harness"]["kind"] = "fixture-new-agent".into();
+    value["spec"]["sandboxes"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("image");
+    assert_eq!(
+        Document::parse(serde_json::to_vec(&value).unwrap().as_slice())
+            .unwrap()
+            .spec
+            .sandboxes[0]
+            .image
+            .ref_,
+        nemoclaw_sdk::config::DEFAULT_AGENT_IMAGE
+    );
+}
+
+#[test]
+fn arbitrary_adapter_features_are_preserved_for_fabric_validation() {
+    let mut tree: Value = serde_saphyr::from_str(include_str!(
+        "../../../examples/full-featured-openclaw.yaml"
+    ))
+    .unwrap();
+    // The selected image's Fabric schema, not a compiled name list, owns these
+    // native feature combinations. Deployment policy and reference checks remain.
+    tree["spec"]["harnesses"]["assistant"]["kind"] = "fixture-featureful-agent".into();
+    let document = Document::parse(serde_json::to_vec(&tree).unwrap().as_slice()).unwrap();
+    assert_eq!(
+        Document::parse(document.yaml().unwrap().as_bytes()).unwrap(),
+        document
+    );
+}
+
+#[test]
+fn native_identifiers_and_model_metadata_do_not_require_sdk_registration() {
+    let mut tree: Value =
+        serde_saphyr::from_str(include_str!("fixtures/config/local.yaml")).unwrap();
+    let sandbox = &mut tree["spec"]["sandboxes"][0];
+    sandbox["harness"]["kind"] = "fixture-featureful-agent".into();
+    sandbox["agent"]["tools"] = serde_json::json!({"allow":["lookup","custom_search"]});
+    let inference = &mut sandbox["agent"]["inference"];
+    inference["default"] = "primary".into();
+    let mut second = inference["routes"][0].clone();
+    second["name"] = "secondary".into();
+    second["overrides"]["settings"]["reasoning_effort"] = "adaptive".into();
+    second["overrides"]["settings"]["contextWindow"] = 65536.into();
+    second["overrides"]["settings"]["model_metadata"] = serde_json::json!({"custom":null});
+    inference["routes"].as_array_mut().unwrap().push(second);
+    let parsed = Document::parse(serde_json::to_vec(&tree).unwrap().as_slice()).unwrap();
+    assert_eq!(
+        Document::parse(parsed.yaml().unwrap().as_bytes()).unwrap(),
+        parsed
+    );
+    tree["spec"]["sandboxes"][0]["harness"]["settings"] =
+        serde_json::json!({"disclosure":"adapter-defined-mode"});
+    Document::parse(serde_json::to_vec(&tree).unwrap().as_slice()).unwrap();
+    for invalid in [
+        serde_json::json!({"allow":[]}),
+        serde_json::json!({"allow":["read","read"]}),
+        serde_json::json!({"disclosure":""}),
+    ] {
+        tree["spec"]["sandboxes"][0]["agent"]["tools"] = invalid;
+        assert!(Document::parse(serde_json::to_vec(&tree).unwrap().as_slice()).is_err());
     }
 }

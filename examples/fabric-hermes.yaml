@@ -24,7 +24,7 @@ spec:
       network:
         tier: isolated
       harness:
-        kind: hermes
+        kind: nvidia.fabric.hermes
       agent:
         name: main
         inference:

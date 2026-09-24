@@ -13,6 +13,7 @@ use tokio::io::{AsyncBufReadExt, AsyncRead};
 
 pub(crate) enum CommandResult {
     Export(Box<Document>),
+    Authored(Option<std::path::PathBuf>),
     Operation(OperationResult),
 }
 
@@ -28,6 +29,20 @@ pub(crate) async fn run<R: AsyncRead + Unpin>(
         command,
         ..
     } = cli;
+    if let Command::Onboard { file, output } = &command {
+        let source = file.as_deref().map_or(
+            nemoclaw_onboarding::Source::Defaults,
+            nemoclaw_onboarding::Source::Template,
+        );
+        let inferred_bundle = std::env::current_exe().ok().and_then(|path| {
+            path.parent()
+                .and_then(|parent| parent.parent())
+                .map(Path::to_owned)
+        });
+        let bundle = bundle_dir.as_deref().or(inferred_bundle.as_deref());
+        let saved = nemoclaw_onboarding::author_with_bundle(source, output, bundle, cancel).await?;
+        return Ok(CommandResult::Authored(saved.then(|| output.clone())));
+    }
     let mut deployment = deployment(&state_dir, bundle_dir.as_deref(), progress)?;
     let result = match command {
         Command::Plan { destroy: true, .. } => deployment.plan_destroy(cancel).await?,
@@ -78,6 +93,7 @@ pub(crate) async fn run<R: AsyncRead + Unpin>(
             )));
         }
         Command::Destroy { .. } => deployment.destroy(cancel).await?,
+        Command::Onboard { .. } => unreachable!("onboarding returns before deployment setup"),
     };
     Ok(CommandResult::Operation(result))
 }

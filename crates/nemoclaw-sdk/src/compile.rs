@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use crate::config::{HarnessKind, InferenceProviderKind};
+use crate::config::InferenceProviderKind;
 
 use crate::{
     backend::Row,
@@ -20,6 +20,7 @@ pub struct Target {
     pub address: String,
     pub values: Row,
 }
+
 fn generation<'a>(generations: &'a Generations, kind: &str) -> Result<&'a str, ConfigError> {
     generations
         .get(kind)
@@ -80,14 +81,20 @@ fn targets_with_plans(
     sandboxes.sort_by_key(|sandbox| &sandbox.name);
     for sandbox in sandboxes {
         let harness = document.sandbox_harness(sandbox)?;
-        let settings = document.sandbox_runtime_settings(sandbox)?;
-        // OpenClaw's hosted runtime identity remains the sandbox name; its native agent
-        // identity is carried separately in the runtime settings.
-        let agent_name = if harness.kind == HarnessKind::OpenClaw {
-            &sandbox.name
-        } else {
-            &sandbox.agent.name
-        };
+        let web_search = document.web_search(sandbox)?;
+        let agent_name = &sandbox.agent.name;
+        let mut provider_names = document
+            .sandbox_inference_providers(sandbox)?
+            .iter()
+            .map(|provider| provider.key.clone())
+            .collect::<Vec<_>>();
+        if let Some(search) = &web_search {
+            provider_names.push(crate::config::search_provider_name(
+                search.provider,
+                &search.credential.env,
+            ));
+        }
+
         let mut values: Row = [
             ("name".into(), sandbox.name.clone()),
             ("workspace".into(), workspace.clone()),
@@ -100,15 +107,12 @@ fn targets_with_plans(
             ("agent_name".into(), agent_name.clone()),
             ("agent_runtime".into(), harness.runtime()),
             (
-                "inference_json".into(),
-                serde_json::to_string(&settings).expect("typed sandbox settings"),
+                "provider_names_json".into(),
+                serde_json::to_string(&provider_names).expect("provider names"),
             ),
         ]
         .into();
-        let mut policy = sandbox.policy_proto(
-            settings.web_search.as_ref().map(|search| search.provider),
-            harness.observability.as_ref(),
-        )?;
+        let mut policy = sandbox.policy_proto(web_search.as_ref().map(|search| search.provider))?;
         for provider in document.sandbox_inference_providers(sandbox)? {
             let connection = document.provider_connection(provider.definition)?;
             let profile = crate::openshell::inference_profile(
@@ -139,10 +143,10 @@ fn targets_with_plans(
             values.insert("proxy_host".into(), proxy.host.clone());
             values.insert("proxy_port".into(), proxy.port.to_string());
         }
-        if harness.kind == HarnessKind::Pi {
+        {
             result.push(Target {
-                kind: "pi_configuration".into(),
-                address: format!("nemoclaw_pi_configuration.{}", sandbox.name),
+                kind: "agent_configuration".into(),
+                address: format!("nemoclaw_agent_configuration.{}", sandbox.name),
                 values: [
                     ("workspace".into(), workspace.clone()),
                     ("name".into(), sandbox.name.clone()),
@@ -156,14 +160,8 @@ fn targets_with_plans(
                         format!("${{nemoclaw_sandbox.{}.id}}", sandbox.name),
                     ),
                     (
-                        "model_json".into(),
-                        serde_json::to_string(
-                            &document
-                                .sandbox_inference(sandbox)?
-                                .default_route()?
-                                .overrides,
-                        )
-                        .expect("typed Pi model settings"),
+                        "config_json".into(),
+                        crate::fabric_config::for_sandbox(document, sandbox)?.to_string(),
                     ),
                 ]
                 .into(),
@@ -174,7 +172,7 @@ fn targets_with_plans(
             address: format!("nemoclaw_sandbox.{}", sandbox.name),
             values,
         });
-        if let Some(search) = settings.web_search {
+        if let Some(search) = web_search {
             let provider_name =
                 crate::config::search_provider_name(search.provider, &search.credential.env);
             for (kind, name) in [
@@ -351,8 +349,7 @@ pub(super) fn gateway_error_message(reference: &str) -> String {
     )
 }
 
-fn graph_base(document: &Document, version: &str) -> Value {
-    let gateway = &document.spec.gateway;
+pub(crate) fn gateway_provider(gateway: &crate::config::Gateway) -> Value {
     let mut provider = json!({"endpoint":gateway.endpoint()});
     if let Some(c) = gateway.credential() {
         provider["credential_env"] = json!(c.env);
@@ -362,17 +359,24 @@ fn graph_base(document: &Document, version: &str) -> Value {
         provider["tls_certificate_env"] = json!(tls.certificate.env);
         provider["tls_key_env"] = json!(tls.key.env);
     }
+    provider
+}
+
+fn graph_base(document: &Document, version: &str) -> Result<Value, ConfigError> {
+    let provider = gateway_provider(&document.spec.gateway);
     let drivers: std::collections::BTreeSet<_> = document
         .spec
         .sandboxes
         .iter()
         .map(|sandbox| &sandbox.runtime.provider)
         .collect();
-    json!({
+    let mut graph = json!({
         "terraform":{"required_version":format!("= {OPENTOFU_VERSION}"),"required_providers":{"nemoclaw":{"source":PROVIDER_ADDRESS,"version":format!("= {version}")}}},
         "provider":{"nemoclaw":provider}, "resource":{},
         "data":{"nemoclaw_gateway_capabilities":{"current":{"required_compute_drivers":drivers}}}
-    })
+    });
+    crate::discovery_graph::populate(&mut graph, document)?;
+    Ok(graph)
 }
 
 fn compile_with_plans(
@@ -382,7 +386,7 @@ fn compile_with_plans(
     targets: &[Target],
 ) -> Result<Value, ConfigError> {
     let providers = document.selected_providers()?;
-    let mut graph = graph_base(document, version);
+    let mut graph = graph_base(document, version)?;
     let mut resources = json!({});
     let provider_dependencies: BTreeMap<_, _> = targets
         .iter()
@@ -398,14 +402,16 @@ fn compile_with_plans(
             attributes["credential_source"] =
                 json!(value.replace("${", "$${").replace("%{", "%%{"));
         }
-        if target.kind == "pi_configuration" {
-            let model = attributes["model_json"].as_str().expect("Pi model JSON");
-            attributes["model_json"] = json!(model.replace("${", "$${").replace("%{", "%%{"));
+        if target.kind == "agent_configuration" {
+            let model = attributes["config_json"]
+                .as_str()
+                .expect("Fabric configuration JSON");
+            attributes["config_json"] = json!(model.replace("${", "$${").replace("%{", "%%{"));
         }
         if target.kind == "sandbox" {
             // JSON configuration strings are still OpenTofu templates. Preserve
             // literal policy paths and matchers across that interpretation layer.
-            for field in ["policy_json", "inference_json"] {
+            for field in ["policy_json", "provider_names_json"] {
                 if let Some(value) = attributes[field].as_str() {
                     attributes[field] = json!(value.replace("${", "$${").replace("%{", "%%{"));
                 }
@@ -416,7 +422,7 @@ fn compile_with_plans(
                 .into_iter()
                 .map(|provider| provider_dependencies[&provider.key].clone())
                 .collect();
-            if let Some(search) = document.sandbox_runtime_settings(sandbox)?.web_search {
+            if let Some(search) = document.web_search(sandbox)? {
                 let name =
                     crate::config::search_provider_name(search.provider, &search.credential.env);
                 dependencies.push(provider_dependencies[&name].clone());
@@ -490,11 +496,7 @@ fn compile_with_plans(
     });
     let sandbox_readiness: BTreeMap<_, _> = document.spec.sandboxes.iter().map(|sandbox| {
         let reference = format!("nemoclaw_sandbox.{}", sandbox.name);
-        let binding = if document.sandbox_harness(sandbox)?.kind == HarnessKind::Pi {
-            format!("${{merge({reference}, {{pi_model_config = nemoclaw_pi_configuration.{}.model_json}})}}", sandbox.name)
-        } else {
-            format!("${{{reference}}}")
-        };
+        let binding = format!("${{merge({reference}, {{config_json = nemoclaw_agent_configuration.{}.config_json}})}}", sandbox.name);
         Ok((sandbox.name.clone(), json!({
             "sandbox":binding,
             // uuid() is unknown in a saved plan and records a unique observation

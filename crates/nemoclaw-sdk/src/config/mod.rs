@@ -7,17 +7,13 @@ mod execution;
 pub(crate) mod integration_policy;
 mod integrations;
 pub use integrations::*;
-mod observability;
-pub use observability::*;
 mod inference;
-mod interfaces;
 mod providers;
 pub(crate) mod references;
 mod source;
 pub use crate::services::ServiceDefinition;
 pub use agent_inference::*;
 pub use execution::*;
-pub use interfaces::*;
 mod image_pull_policy;
 pub use image_pull_policy::ImagePullPolicy;
 mod network;
@@ -38,7 +34,6 @@ pub const API_VERSION: &str = "nemoclaw.nvidia.com/v1alpha1";
 pub const MAX_DOCUMENT_BYTES: u64 = 1 << 20;
 pub use crate::artifact_pins::DEFAULT_AGENT_IMAGE;
 pub use crate::artifact_pins::DEFAULT_GATEWAY_IMAGE;
-pub use crate::artifact_pins::DEFAULT_HERMES_IMAGE;
 
 /// Configuration diagnostics omit credentials and arbitrary source values.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -194,16 +189,8 @@ impl Document {
         for service in self.spec.services.values_mut() {
             crate::services::defaults(service);
         }
-        let harnesses = &self.spec.harnesses;
         for sandbox in &mut self.spec.sandboxes {
-            let harness = sandbox.resolve_harness(harnesses).ok();
-            let default_image =
-                if harness.is_some_and(|harness| harness.kind == HarnessKind::Hermes) {
-                    DEFAULT_HERMES_IMAGE
-                } else {
-                    DEFAULT_AGENT_IMAGE
-                };
-            default_string(&mut sandbox.image.ref_, default_image);
+            default_string(&mut sandbox.image.ref_, DEFAULT_AGENT_IMAGE);
         }
     }
 }

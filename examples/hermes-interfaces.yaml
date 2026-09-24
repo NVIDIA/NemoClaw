@@ -25,16 +25,18 @@ spec:
       network:
         tier: isolated
       harness:
-        kind: hermes
-        interfaces:
-          api:
-            port: 8643
-          dashboard:
-            enabled: true
-            port: 18800
-            internalPort: 19120
-            tui:
+        kind: nvidia.fabric.hermes
+        settings:
+          mode: service
+          interfaces:
+            api:
+              port: 8643
+            dashboard:
               enabled: true
+              port: 18800
+              internalPort: 19120
+              tui:
+                enabled: true
       agent:
         name: main
         inference:

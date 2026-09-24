@@ -40,7 +40,8 @@ fn extract_entry(bytes: &[u8], name: &str, limit: u64) -> Result<Vec<u8>, String
     Ok(output)
 }
 
-/// Retain supervisor build inputs without any image recipes or preparation tools.
+/// Retain supervisor build inputs without hosted-inference recipes or preparation tools.
+/// The Fabric recipe supplies source pins checked when compiling the embedded catalog.
 pub fn supervisor_source_files(
     root: &std::path::Path,
 ) -> Result<Vec<(String, std::path::PathBuf)>, String> {

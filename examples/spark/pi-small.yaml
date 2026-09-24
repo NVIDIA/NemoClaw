@@ -40,33 +40,34 @@ spec:
         freeGateGiB: 12
         consecutiveSamples: 5
   inferenceProviders:
-  - name: local
-    provider: openai
-    serviceRef: local
+    - name: local
+      provider: openai
+      serviceRef: local
   sandboxes:
-  - name: assistant
-    image:
-      ref: nc-fabric@sha256:ac526ed31206c90557c7ac313400586e5347bee2c142efa4708256b122a81284
-    runtime:
-      provider: docker
-    network:
-      tier: isolated
-    harness:
-      kind: pi
-      execution:
-        timeoutSeconds: 300
-    agent:
-      name: assistant
-      inference:
-        routes:
-        - name: primary
-          providerRef: local
-          overrides:
-            model: Qwen/Qwen3-4B
-            piModel:
-              api: openai-completions
-              contextWindow: 32768
-              maxTokens: 2048
-              reasoning: false
-              input:
-              - text
+    - name: assistant
+      image:
+        ref: nc-fabric@sha256:ac526ed31206c90557c7ac313400586e5347bee2c142efa4708256b122a81284
+      runtime:
+        provider: docker
+      network:
+        tier: isolated
+      harness:
+        kind: nvidia.fabric.pi
+        execution:
+          timeoutSeconds: 300
+      agent:
+        name: assistant
+        inference:
+          routes:
+            - name: primary
+              providerRef: local
+              overrides:
+                model: Qwen/Qwen3-4B
+                settings:
+                  model_metadata:
+                    api: openai-completions
+                    contextWindow: 32768
+                    maxTokens: 2048
+                    reasoning: false
+                    input:
+                      - text

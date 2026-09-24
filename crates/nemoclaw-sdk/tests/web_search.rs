@@ -31,7 +31,7 @@ fn search_uses_owned_profile_and_provider_without_exporting_secrets() {
         .map(|key| (key.into(), "a".repeat(32)))
         .into();
     let rows = targets(&doc, &generations).unwrap();
-    assert_eq!(rows.len(), 6);
+    assert_eq!(rows.len(), 7);
     let search = rows
         .iter()
         .find(|r| {
@@ -59,7 +59,7 @@ fn search_uses_owned_profile_and_provider_without_exporting_secrets() {
     );
 }
 #[test]
-fn search_rejects_unknown_or_restricted_agents() {
+fn search_rejects_unknown_and_duplicate_references() {
     for refs in [json!(["missing"]), json!(["search", "search"])] {
         let mut value = input();
         value["spec"]["sandboxes"][0]["agent"]["integrationRefs"] = refs;
@@ -67,7 +67,7 @@ fn search_rejects_unknown_or_restricted_agents() {
     }
     let mut value = input();
     value["spec"]["sandboxes"][0]["agent"]["tools"] = json!({"allow":["read"]});
-    assert!(Document::parse(value.to_string().as_bytes()).is_err());
+    assert!(Document::parse(value.to_string().as_bytes()).is_ok());
 }
 
 #[test]
@@ -122,16 +122,23 @@ fn shared_integration_references_grant_only_the_selected_agents() {
         1
     );
     for row in rows.iter().filter(|row| row.kind == "sandbox") {
-        let settings: Value = serde_json::from_str(&row.values["inference_json"]).unwrap();
-        match row.values["name"].as_str() {
-            "assistant" => assert_eq!(settings["webSearch"]["agentRefs"], json!(["main"])),
-            "writer" => assert_eq!(settings["webSearch"]["agentRefs"], json!(["writer"])),
-            "reader" => {
-                assert!(settings["webSearch"].is_null());
-                let policy: Value = serde_json::from_str(&row.values["policy_json"]).unwrap();
-                assert!(policy["network_policies"]["nemoclaw-brave"].is_null());
-            }
-            name => panic!("unexpected sandbox {name}"),
+        let policy: Value = serde_json::from_str(&row.values["policy_json"]).unwrap();
+        let providers: Vec<String> =
+            serde_json::from_str(&row.values["provider_names_json"]).unwrap();
+        if row.values["name"] == "reader" {
+            assert!(policy["network_policies"]["nemoclaw-brave"].is_null());
+            assert!(
+                !providers
+                    .iter()
+                    .any(|name| name.starts_with("brave-search-"))
+            );
+        } else {
+            assert!(policy["network_policies"]["nemoclaw-brave"].is_object());
+            assert!(
+                providers
+                    .iter()
+                    .any(|name| name.starts_with("brave-search-"))
+            );
         }
     }
     assert_eq!(
@@ -198,7 +205,7 @@ fn unused_definitions_create_no_search_resources_policy_or_secret_requirements()
         .map(|key| (key.into(), "a".repeat(32)))
         .into();
     let rows = targets(&doc, &generations).unwrap();
-    assert_eq!(rows.len(), 4);
+    assert_eq!(rows.len(), 5);
     assert!(!serde_json::to_string(&rows).unwrap().contains("brave"));
     assert!(!doc.credential_names().contains(&"SEARCH_KEY"));
     assert!(doc.yaml().unwrap().contains("SEARCH_KEY"));
@@ -343,30 +350,29 @@ fn sandboxes_share_search_registration_only_for_the_same_credential() {
 }
 
 #[test]
-fn deep_agents_search_preserves_explicit_grants_and_rejects_read_only_agents() {
+fn native_search_preserves_explicit_grants_and_tool_configuration() {
     let mut value = input();
-    value["spec"]["sandboxes"][0]["harness"]["kind"] = json!("deepagents");
+    value["spec"]["sandboxes"][0]["harness"]["kind"] = json!("nvidia.fabric.langchain.deepagents");
     let document = Document::parse(value.to_string().as_bytes()).expect("Deep Agents search");
     let generations = ["workspace", "provider", "sandbox"]
         .map(|key| (key.into(), "a".repeat(32)))
         .into();
     let rows = targets(&document, &generations).unwrap();
-    let settings: Value = serde_json::from_str(
-        &rows
+    let sandbox = rows.iter().find(|row| row.kind == "sandbox").unwrap();
+    let providers: Vec<String> =
+        serde_json::from_str(&sandbox.values["provider_names_json"]).unwrap();
+    assert!(
+        providers
             .iter()
-            .find(|row| row.kind == "sandbox")
-            .unwrap()
-            .values["inference_json"],
-    )
-    .unwrap();
-    assert_eq!(settings["webSearch"]["agentRefs"], json!(["main"]));
+            .any(|name| name.starts_with("brave-search-"))
+    );
     value["spec"]["sandboxes"][0]["agent"]["tools"] = json!({"allow":["read"]});
-    assert!(Document::parse(value.to_string().as_bytes()).is_err());
+    assert!(Document::parse(value.to_string().as_bytes()).is_ok());
 }
 
 #[test]
 fn tavily_preserves_openclaw_and_hermes_intent_and_credential_references() {
-    for harness in ["openclaw", "hermes"] {
+    for harness in ["nvidia.fabric.openclaw", "nvidia.fabric.hermes"] {
         let mut value = input();
         value["spec"]["sandboxes"][0]["harness"]["kind"] = json!(harness);
         value["spec"]["sandboxes"][0]["integrations"]["search"]["provider"] = json!("tavily");
@@ -405,12 +411,9 @@ fn tavily_preserves_openclaw_and_hermes_intent_and_credential_references() {
             .unwrap();
         assert_eq!(profile.values["name"], "nemoclaw-tavily");
         let sandbox = rows.iter().find(|row| row.kind == "sandbox").unwrap();
-        let settings: Value = serde_json::from_str(&sandbox.values["inference_json"]).unwrap();
-        assert_eq!(settings["webSearch"]["provider"], "tavily");
-        assert_eq!(
-            settings["webSearch"]["credential"],
-            json!({"env":"SEARCH_KEY"})
-        );
+        let providers: Vec<String> =
+            serde_json::from_str(&sandbox.values["provider_names_json"]).unwrap();
+        assert!(providers.contains(&provider.values["name"]));
         let policy: Value = serde_json::from_str(&sandbox.values["policy_json"]).unwrap();
         assert!(policy["network_policies"]["nemoclaw-brave"].is_null());
         assert_eq!(
@@ -477,6 +480,19 @@ fn tavily_example_shares_one_registration_between_openclaw_and_hermes() {
         .map(|key| (key.into(), "a".repeat(32)))
         .into();
     let rows = targets(&document, &generations).unwrap();
+    for sandbox in &document.spec.sandboxes {
+        let authored = document
+            .sandbox_harness(sandbox)
+            .unwrap()
+            .settings
+            .as_ref()
+            .unwrap();
+        let configuration = nemoclaw_sdk::fabric_config::for_sandbox(&document, sandbox).unwrap();
+        assert_eq!(
+            configuration["harness"]["settings"],
+            serde_json::to_value(authored).unwrap()
+        );
+    }
     assert_eq!(
         rows.iter()
             .filter(|row| row
@@ -487,11 +503,12 @@ fn tavily_example_shares_one_registration_between_openclaw_and_hermes() {
         1
     );
     for row in rows.iter().filter(|row| row.kind == "sandbox") {
-        let settings: Value = serde_json::from_str(&row.values["inference_json"]).unwrap();
-        assert_eq!(settings["webSearch"]["provider"], "tavily");
-        assert_eq!(
-            settings["webSearch"]["agentRefs"],
-            json!([row.values["agent_name"]])
+        let providers: Vec<String> =
+            serde_json::from_str(&row.values["provider_names_json"]).unwrap();
+        assert!(
+            providers
+                .iter()
+                .any(|name| name.starts_with("tavily-search-"))
         );
     }
 }
@@ -540,17 +557,17 @@ fn different_search_providers_keep_distinct_bindings_for_the_same_credential_ref
 }
 
 #[test]
-fn tavily_rejects_unsupported_harnesses_and_restricted_agents() {
+fn native_search_constraints_are_forwarded_for_fabric_validation() {
     for harness in ["deepagents", "pi"] {
         let mut value = input();
         value["spec"]["sandboxes"][0]["harness"]["kind"] = json!(harness);
         value["spec"]["sandboxes"][0]["integrations"]["search"]["provider"] = json!("tavily");
-        assert!(Document::parse(value.to_string().as_bytes()).is_err());
+        assert!(Document::parse(value.to_string().as_bytes()).is_ok());
     }
     let mut value = input();
     value["spec"]["sandboxes"][0]["integrations"]["search"]["provider"] = json!("tavily");
     value["spec"]["sandboxes"][0]["agent"]["tools"] = json!({"allow":["read"]});
-    assert!(Document::parse(value.to_string().as_bytes()).is_err());
+    assert!(Document::parse(value.to_string().as_bytes()).is_ok());
 }
 
 #[test]

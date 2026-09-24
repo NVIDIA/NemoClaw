@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! Offline validators compiled once from the SDK contract, never from a deployment file.
-use crate::config::{ConfigError, Document, HarnessKind, RouteTuning};
+use crate::config::{ConfigError, Document, RouteTuning};
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::{
@@ -127,16 +127,6 @@ pub(crate) fn validate_service(
     let mut object = value(service)?;
     object["kind"] = json!(kind);
     validate_definition("ServiceDefinition", &object)
-}
-
-pub(crate) fn validate_harness_field(
-    field: &'static str,
-    option: &impl Serialize,
-    harness: HarnessKind,
-) -> Result<(), ConfigError> {
-    let mut object = json!({"kind": harness});
-    object[field] = value(option)?;
-    validate_definition("Harness", &object)
 }
 
 pub(crate) fn validate_tuning(tuning: &RouteTuning) -> Result<(), ConfigError> {

@@ -1,0 +1,2148 @@
+{
+  "adapters": [
+    {
+      "descriptor": {
+        "adapter_id": "nvidia.fabric.claude",
+        "adapter_kind": "python",
+        "capabilities": {
+          "cancellation": false,
+          "service": false,
+          "streaming": false,
+          "updates": false
+        },
+        "config": {
+          "accepts": [
+            "models",
+            "models.base_url",
+            "instructions.system",
+            "runtime.max_turns",
+            "tools.enabled",
+            "tools.blocked",
+            "mcp",
+            "skills"
+          ],
+          "system_instruction_modes": [
+            "replace",
+            "append"
+          ]
+        },
+        "contract_version": "fabric.adapter/v1alpha2",
+        "extension_schemas": {
+          "model": {
+            "additionalProperties": false,
+            "properties": {
+              "api": {
+                "enum": [
+                  "anthropic-messages"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "run_error": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "additionalProperties": false,
+            "properties": {
+              "api_error_status": {
+                "type": "integer"
+              },
+              "exit_code": {
+                "type": "integer"
+              },
+              "subtype": {
+                "type": "string"
+              },
+              "timeout_seconds": {
+                "minimum": 0,
+                "type": "number"
+              }
+            },
+            "type": "object"
+          }
+        },
+        "model_schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false,
+          "else": {
+            "required": [
+              "base_url",
+              "api_key_env"
+            ]
+          },
+          "if": {
+            "properties": {
+              "provider": {
+                "const": "anthropic"
+              }
+            },
+            "required": [
+              "provider"
+            ]
+          },
+          "properties": {
+            "api": {
+              "enum": [
+                "anthropic-messages"
+              ],
+              "type": "string"
+            },
+            "api_key_env": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "base_url": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "model": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "provider": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "settings": {
+              "additionalProperties": false,
+              "properties": {},
+              "type": "object"
+            },
+            "temperature": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "provider",
+            "model"
+          ],
+          "type": "object"
+        },
+        "requirements": {},
+        "runner": {
+          "module": "nemo_fabric_adapters.claude.adapter"
+        },
+        "settings_schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false,
+          "properties": {
+            "max_budget_usd": {
+              "description": "Maximum amount in US dollars that Claude may spend during one invocation.",
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            "permission_mode": {
+              "description": "Claude permission handling mode.",
+              "enum": [
+                "default",
+                "acceptEdits",
+                "bypassPermissions",
+                "plan",
+                "dontAsk",
+                "auto"
+              ],
+              "type": "string"
+            },
+            "setting_sources": {
+              "default": [],
+              "description": "Claude settings scopes to load.",
+              "items": {
+                "enum": [
+                  "user",
+                  "project",
+                  "local"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [],
+          "type": "object"
+        },
+        "telemetry": {
+          "providers": {
+            "relay": {
+              "integration_modes": [
+                "hooks",
+                "gateway"
+              ],
+              "outputs": [
+                "atif",
+                "otel",
+                "openinference"
+              ]
+            }
+          }
+        }
+      },
+      "provenance": [
+        {
+          "path": "/tmp/nemoclaw-fabric-discovery/adapters/python/claude/claude.fabric-adapter.json",
+          "root": "/tmp/nemoclaw-fabric-discovery/adapters/python/claude",
+          "source": "bundled"
+        }
+      ]
+    },
+    {
+      "descriptor": {
+        "adapter_id": "nvidia.fabric.codex",
+        "adapter_kind": "python",
+        "capabilities": {
+          "cancellation": false,
+          "service": false,
+          "streaming": false,
+          "updates": false
+        },
+        "config": {
+          "accepts": [
+            "models",
+            "models.base_url",
+            "instructions.system",
+            "mcp",
+            "mcp.auth.oauth2",
+            "skills"
+          ],
+          "system_instruction_modes": [
+            "replace"
+          ]
+        },
+        "contract_version": "fabric.adapter/v1alpha2",
+        "extension_schemas": {
+          "model": {
+            "additionalProperties": false,
+            "properties": {
+              "api": {
+                "enum": [
+                  "openai-responses"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "run_error": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "additionalProperties": false,
+            "properties": {
+              "jsonrpc_code": {
+                "type": "integer"
+              },
+              "sdk_error": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              },
+              "timeout_seconds": {
+                "minimum": 0,
+                "type": "number"
+              }
+            },
+            "type": "object"
+          }
+        },
+        "model_schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false,
+          "else": {
+            "required": [
+              "base_url",
+              "api_key_env"
+            ]
+          },
+          "if": {
+            "properties": {
+              "provider": {
+                "const": "openai"
+              }
+            },
+            "required": [
+              "provider"
+            ]
+          },
+          "properties": {
+            "api": {
+              "enum": [
+                "openai-responses"
+              ],
+              "type": "string"
+            },
+            "api_key_env": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "base_url": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "model": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "provider": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "settings": {
+              "additionalProperties": false,
+              "properties": {},
+              "type": "object"
+            },
+            "temperature": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "provider",
+            "model"
+          ],
+          "type": "object"
+        },
+        "requirements": {},
+        "runner": {
+          "module": "nemo_fabric_adapters.codex.adapter"
+        },
+        "settings_schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false,
+          "properties": {
+            "approval_mode": {
+              "default": "auto_review",
+              "description": "Codex approval handling mode for escalated permission requests.",
+              "enum": [
+                "auto_review",
+                "deny_all"
+              ],
+              "type": "string"
+            },
+            "config_overrides": {
+              "additionalProperties": {},
+              "default": {},
+              "description": "Dotted Codex configuration keys mapped to JSON-compatible values.",
+              "propertyNames": {
+                "pattern": "^[^.]+(?:\\.[^.]+)*$"
+              },
+              "type": "object"
+            },
+            "developer_instructions": {
+              "description": "Additional developer instructions for the Codex thread.",
+              "minLength": 1,
+              "type": "string"
+            },
+            "output_schema": {
+              "description": "JSON Schema that constrains the final assistant message for each turn.",
+              "type": "object"
+            },
+            "personality": {
+              "description": "Codex response personality.",
+              "enum": [
+                "none",
+                "friendly",
+                "pragmatic"
+              ],
+              "type": "string"
+            },
+            "reasoning_effort": {
+              "description": "Codex reasoning effort for each turn.",
+              "enum": [
+                "none",
+                "minimal",
+                "low",
+                "medium",
+                "high",
+                "xhigh"
+              ],
+              "type": "string"
+            },
+            "sandbox": {
+              "default": "read-only",
+              "description": "Codex filesystem access level.",
+              "enum": [
+                "read-only",
+                "workspace-write",
+                "danger-full-access"
+              ],
+              "type": "string"
+            },
+            "service_tier": {
+              "description": "Codex service tier for the thread.",
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [],
+          "type": "object"
+        },
+        "telemetry": {
+          "providers": {
+            "native": {
+              "outputs": [
+                "otel"
+              ]
+            },
+            "relay": {
+              "integration_modes": [
+                "hooks",
+                "gateway"
+              ],
+              "outputs": [
+                "atif",
+                "otel",
+                "openinference"
+              ]
+            }
+          }
+        }
+      },
+      "provenance": [
+        {
+          "path": "/tmp/nemoclaw-fabric-discovery/adapters/python/codex/codex.fabric-adapter.json",
+          "root": "/tmp/nemoclaw-fabric-discovery/adapters/python/codex",
+          "source": "bundled"
+        }
+      ]
+    },
+    {
+      "descriptor": {
+        "adapter_id": "nvidia.fabric.hermes",
+        "adapter_kind": "python",
+        "capabilities": {
+          "cancellation": false,
+          "service": false,
+          "streaming": false,
+          "updates": false
+        },
+        "config": {
+          "accepts": [
+            "models",
+            "models.base_url",
+            "models.temperature",
+            "models.top_p",
+            "models.max_tokens",
+            "instructions.system",
+            "runtime.max_turns",
+            "tools.enabled",
+            "tools.blocked",
+            "mcp",
+            "mcp.auth.oauth2",
+            "skills"
+          ],
+          "system_instruction_modes": [
+            "replace"
+          ]
+        },
+        "contract_version": "fabric.adapter/v1alpha2",
+        "extension_schemas": {
+          "model": {
+            "additionalProperties": false,
+            "properties": {
+              "api": {
+                "enum": [
+                  "openai-completions",
+                  "openai-responses",
+                  "anthropic-messages"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "run_error": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "additionalProperties": false,
+            "properties": {
+              "provider": {
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        },
+        "requirements": {},
+        "runner": {
+          "module": "nemo_fabric_adapters.hermes.adapter"
+        },
+        "settings_schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false,
+          "properties": {
+            "api_mode": {
+              "description": "Explicit native Hermes wire protocol.",
+              "enum": [
+                "chat_completions",
+                "codex_responses",
+                "anthropic_messages"
+              ],
+              "type": "string"
+            },
+            "home": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "interfaces": {
+              "additionalProperties": false,
+              "properties": {
+                "api": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "port": {
+                      "maximum": 65535,
+                      "minimum": 1,
+                      "type": "integer"
+                    }
+                  },
+                  "type": "object"
+                },
+                "dashboard": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "internalPort": {
+                      "maximum": 65535,
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "port": {
+                      "maximum": 65535,
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "tui": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                }
+              },
+              "type": "object"
+            },
+            "max_tokens": {
+              "default": 512,
+              "description": "Maximum number of tokens in each Hermes model response.",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "mode": {
+              "default": "sdk",
+              "enum": [
+                "sdk",
+                "service"
+              ],
+              "type": "string"
+            },
+            "native_config": {
+              "additionalProperties": false,
+              "properties": {
+                "approvals": {
+                  "type": "object"
+                },
+                "display": {
+                  "type": "object"
+                },
+                "plugins": {
+                  "type": "object"
+                },
+                "web": {
+                  "type": "object"
+                }
+              },
+              "type": "object"
+            },
+            "plugins_enabled": {
+              "default": [],
+              "description": "Hermes plugin identifiers to enable.",
+              "items": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "reasoning_config": {
+              "additionalProperties": false,
+              "default": {
+                "effort": "none"
+              },
+              "description": "Hermes model reasoning configuration.",
+              "properties": {
+                "effort": {
+                  "description": "Hermes model reasoning effort.",
+                  "enum": [
+                    "none",
+                    "minimal",
+                    "low",
+                    "medium",
+                    "high",
+                    "xhigh"
+                  ],
+                  "type": "string"
+                },
+                "enabled": {
+                  "description": "Whether Hermes model reasoning is enabled.",
+                  "type": "boolean"
+                }
+              },
+              "required": [],
+              "type": "object"
+            },
+            "save_trajectories": {
+              "default": false,
+              "description": "Whether Hermes saves its native conversation trajectories as JSONL.",
+              "type": "boolean"
+            },
+            "terminal_timeout": {
+              "default": 60,
+              "description": "Maximum number of seconds for a Hermes terminal operation.",
+              "exclusiveMinimum": 0,
+              "type": "number"
+            }
+          },
+          "required": [],
+          "type": "object"
+        },
+        "telemetry": {
+          "providers": {
+            "relay": {
+              "outputs": [
+                "atif",
+                "otel",
+                "openinference"
+              ]
+            }
+          }
+        }
+      },
+      "provenance": [
+        {
+          "path": "/tmp/nemoclaw-fabric-discovery/adapters/python/hermes/hermes.fabric-adapter.json",
+          "root": "/tmp/nemoclaw-fabric-discovery/adapters/python/hermes",
+          "source": "bundled"
+        }
+      ]
+    },
+    {
+      "descriptor": {
+        "adapter_id": "nvidia.fabric.langchain.deepagents",
+        "adapter_kind": "python",
+        "capabilities": {
+          "cancellation": false,
+          "service": false,
+          "streaming": false,
+          "updates": false
+        },
+        "config": {
+          "accepts": [
+            "models",
+            "models.base_url",
+            "models.temperature",
+            "models.top_p",
+            "models.max_tokens",
+            "instructions.system",
+            "runtime.max_turns",
+            "tools.enabled",
+            "tools.blocked",
+            "mcp",
+            "skills"
+          ],
+          "system_instruction_modes": [
+            "replace"
+          ]
+        },
+        "contract_version": "fabric.adapter/v1alpha2",
+        "extension_schemas": {
+          "model": {
+            "additionalProperties": false,
+            "properties": {
+              "api": {
+                "enum": [
+                  "openai-completions",
+                  "anthropic-messages"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        },
+        "model_schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "required": [
+                  "api"
+                ]
+              },
+              "then": {
+                "anyOf": [
+                  {
+                    "properties": {
+                      "api": {
+                        "const": "openai-completions"
+                      },
+                      "provider": {
+                        "enum": [
+                          "openai",
+                          "nvidia",
+                          "openai-compatible"
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "properties": {
+                      "api": {
+                        "const": "anthropic-messages"
+                      },
+                      "provider": {
+                        "const": "anthropic"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          ],
+          "properties": {
+            "api": {
+              "enum": [
+                "openai-completions",
+                "anthropic-messages"
+              ],
+              "type": "string"
+            },
+            "api_key_env": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "base_url": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "max_tokens": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "model": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "provider": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "settings": {
+              "additionalProperties": false,
+              "properties": {},
+              "type": "object"
+            },
+            "temperature": {
+              "type": "number"
+            },
+            "top_p": {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            }
+          },
+          "required": [
+            "provider",
+            "model"
+          ],
+          "type": "object"
+        },
+        "requirements": {},
+        "runner": {
+          "module": "nemo_fabric_adapters.deepagents.adapter"
+        },
+        "settings_schema": {
+          "$defs": {
+            "async_subagent": {
+              "additionalProperties": false,
+              "properties": {
+                "description": {
+                  "description": "Description the main agent uses to select this asynchronous subagent.",
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "graph_id": {
+                  "description": "Graph or assistant identifier on the Agent Protocol server.",
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "headers": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "description": "Additional string-valued HTTP headers sent to the Agent Protocol server.",
+                  "propertyNames": {
+                    "minLength": 1
+                  },
+                  "type": "object"
+                },
+                "name": {
+                  "description": "Unique asynchronous subagent identifier exposed to the main agent.",
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "url": {
+                  "description": "Optional Agent Protocol server URL; omit it to use the SDK's default endpoint.",
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name",
+                "description",
+                "graph_id"
+              ],
+              "type": "object"
+            },
+            "declarative_subagent": {
+              "additionalProperties": false,
+              "properties": {
+                "description": {
+                  "description": "Description the main agent uses to select this subagent.",
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "interrupt_on": {
+                  "$ref": "#/$defs/interrupt_on",
+                  "description": "Subagent-specific tool interrupt policy; the main agent policy is inherited when omitted."
+                },
+                "model": {
+                  "description": "Optional provider:model override; the main agent model is inherited when omitted.",
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "name": {
+                  "description": "Unique subagent identifier exposed to the main agent.",
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "response_format": {
+                  "description": "JSON Schema for this subagent's structured response.",
+                  "type": "object"
+                },
+                "skills": {
+                  "description": "Skill source paths loaded only for this subagent.",
+                  "items": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "system_prompt": {
+                  "description": "Instructions for the subagent.",
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name",
+                "description",
+                "system_prompt"
+              ],
+              "type": "object"
+            },
+            "interrupt_on": {
+              "additionalProperties": {
+                "oneOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "allowed_decisions": {
+                        "description": "Human decisions allowed for this tool call.",
+                        "items": {
+                          "enum": [
+                            "approve",
+                            "edit",
+                            "reject",
+                            "respond"
+                          ],
+                          "type": "string"
+                        },
+                        "minItems": 1,
+                        "type": "array"
+                      },
+                      "args_schema": {
+                        "description": "JSON Schema for editable tool arguments.",
+                        "type": "object"
+                      },
+                      "description": {
+                        "description": "Static description shown with the approval request.",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "allowed_decisions"
+                    ],
+                    "type": "object"
+                  }
+                ]
+              },
+              "propertyNames": {
+                "minLength": 1
+              },
+              "type": "object"
+            }
+          },
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false,
+          "properties": {
+            "deepagents": {
+              "additionalProperties": false,
+              "default": {},
+              "description": "JSON-serializable adapter and Deep Agents options.",
+              "properties": {
+                "backend": {
+                  "additionalProperties": false,
+                  "description": "Optional backend selection. Local shell execution runs directly on the adapter host without process isolation.",
+                  "properties": {
+                    "type": {
+                      "const": "local_shell",
+                      "description": "Selects the adapter-owned LocalShellBackend.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ],
+                  "type": "object"
+                },
+                "interrupt_on": {
+                  "$ref": "#/$defs/interrupt_on",
+                  "default": {},
+                  "description": "Mapping of Deep Agents tool names to human-in-the-loop interrupt policies; omitted tools run without an interrupt."
+                },
+                "subagents": {
+                  "default": [],
+                  "description": "Caller-defined declarative or asynchronous subagents; the built-in general-purpose subagent remains available by default.",
+                  "items": {
+                    "oneOf": [
+                      {
+                        "$ref": "#/$defs/declarative_subagent"
+                      },
+                      {
+                        "$ref": "#/$defs/async_subagent"
+                      }
+                    ]
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [],
+              "type": "object"
+            }
+          },
+          "required": [],
+          "type": "object"
+        },
+        "telemetry": {
+          "providers": {
+            "native": {
+              "outputs": [
+                "otel",
+                "openinference"
+              ]
+            },
+            "relay": {
+              "outputs": [
+                "atif",
+                "otel",
+                "openinference"
+              ]
+            }
+          }
+        }
+      },
+      "provenance": [
+        {
+          "path": "/tmp/nemoclaw-fabric-discovery/adapters/python/deepagents/deepagents.fabric-adapter.json",
+          "root": "/tmp/nemoclaw-fabric-discovery/adapters/python/deepagents",
+          "source": "bundled"
+        }
+      ]
+    },
+    {
+      "descriptor": {
+        "adapter_id": "nvidia.fabric.mini-swe-agent",
+        "adapter_kind": "python",
+        "capabilities": {
+          "cancellation": false,
+          "service": false,
+          "streaming": false,
+          "updates": false
+        },
+        "config": {
+          "accepts": [
+            "models",
+            "models.base_url",
+            "models.temperature",
+            "models.top_p",
+            "models.max_tokens",
+            "instructions.system",
+            "runtime.max_turns"
+          ],
+          "system_instruction_modes": [
+            "replace"
+          ]
+        },
+        "contract_version": "fabric.adapter/v1alpha2",
+        "extension_schemas": {
+          "model": {
+            "additionalProperties": false,
+            "properties": {
+              "api": {
+                "enum": [
+                  "openai-completions"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        },
+        "model_schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "required": [
+                  "api"
+                ]
+              },
+              "then": {
+                "properties": {
+                  "provider": {
+                    "const": "openai"
+                  }
+                }
+              }
+            }
+          ],
+          "properties": {
+            "api": {
+              "enum": [
+                "openai-completions"
+              ],
+              "type": "string"
+            },
+            "api_key_env": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "base_url": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "max_tokens": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "model": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "provider": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "settings": {
+              "additionalProperties": false,
+              "properties": {},
+              "type": "object"
+            },
+            "temperature": {
+              "type": "number"
+            },
+            "top_p": {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            }
+          },
+          "required": [
+            "provider",
+            "model"
+          ],
+          "type": "object"
+        },
+        "requirements": {},
+        "runner": {
+          "module": "nemo_fabric_adapters.mini_swe_agent.adapter"
+        },
+        "settings_schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false,
+          "properties": {
+            "timeout": {
+              "default": 30,
+              "description": "Maximum duration of one shell command.",
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "telemetry": {
+          "providers": {
+            "relay": {
+              "outputs": [
+                "atif",
+                "otel",
+                "openinference"
+              ]
+            }
+          }
+        }
+      },
+      "provenance": [
+        {
+          "path": "/tmp/nemoclaw-fabric-discovery/adapters/python/mini-swe-agent/mini-swe-agent.fabric-adapter.json",
+          "root": "/tmp/nemoclaw-fabric-discovery/adapters/python/mini-swe-agent",
+          "source": "bundled"
+        }
+      ]
+    },
+    {
+      "descriptor": {
+        "adapter_id": "nvidia.fabric.nooa",
+        "adapter_kind": "python",
+        "capabilities": {
+          "cancellation": false,
+          "service": false,
+          "streaming": false,
+          "updates": false
+        },
+        "config": {
+          "accepts": [
+            "models",
+            "models.base_url",
+            "models.temperature",
+            "instructions.system",
+            "skills",
+            "mcp"
+          ],
+          "schema": {
+            "required": [
+              "workflow"
+            ],
+            "type": "object"
+          }
+        },
+        "contract_version": "fabric.adapter/v1alpha2",
+        "extension_schemas": {
+          "model": {
+            "additionalProperties": false,
+            "properties": {
+              "api": {
+                "enum": [
+                  "openai-completions",
+                  "openai-responses"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        },
+        "model_schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "api": {
+                    "const": "openai-completions"
+                  }
+                },
+                "required": [
+                  "api"
+                ]
+              },
+              "then": {
+                "properties": {
+                  "provider": {
+                    "enum": [
+                      "openai",
+                      "nvidia"
+                    ]
+                  }
+                }
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "api": {
+                    "const": "openai-responses"
+                  }
+                },
+                "required": [
+                  "api"
+                ]
+              },
+              "then": {
+                "properties": {
+                  "provider": {
+                    "enum": [
+                      "openai"
+                    ]
+                  }
+                }
+              }
+            }
+          ],
+          "properties": {
+            "api": {
+              "enum": [
+                "openai-completions",
+                "openai-responses"
+              ],
+              "type": "string"
+            },
+            "api_key_env": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "base_url": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "model": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "provider": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "settings": {
+              "additionalProperties": false,
+              "properties": {
+                "client_type": {
+                  "enum": [
+                    "completion",
+                    "responses"
+                  ],
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "temperature": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "provider",
+            "model"
+          ],
+          "type": "object"
+        },
+        "requirements": {},
+        "runner": {
+          "module": "nemo_fabric_adapters.nooa.adapter"
+        },
+        "settings_schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false,
+          "properties": {},
+          "type": "object"
+        },
+        "target_types": [
+          "workflow"
+        ],
+        "telemetry": {
+          "providers": {
+            "relay": {
+              "outputs": [
+                "atif",
+                "otel",
+                "openinference"
+              ]
+            }
+          }
+        }
+      },
+      "provenance": [
+        {
+          "path": "/tmp/nemoclaw-fabric-discovery/adapters/python/nooa/nooa.fabric-adapter.json",
+          "root": "/tmp/nemoclaw-fabric-discovery/adapters/python/nooa",
+          "source": "bundled"
+        }
+      ]
+    },
+    {
+      "descriptor": {
+        "adapter_id": "nvidia.fabric.nooa.bench-agent",
+        "adapter_kind": "python",
+        "capabilities": {
+          "cancellation": false,
+          "service": false,
+          "streaming": false,
+          "updates": false
+        },
+        "config": {
+          "accepts": [
+            "models",
+            "models.base_url",
+            "models.temperature",
+            "instructions.system"
+          ]
+        },
+        "contract_version": "fabric.adapter/v1alpha2",
+        "extension_schemas": {
+          "model": {
+            "additionalProperties": false,
+            "properties": {
+              "api": {
+                "enum": [
+                  "openai-completions",
+                  "openai-responses"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        },
+        "model_schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "api": {
+                    "const": "openai-completions"
+                  }
+                },
+                "required": [
+                  "api"
+                ]
+              },
+              "then": {
+                "properties": {
+                  "provider": {
+                    "enum": [
+                      "openai",
+                      "nvidia"
+                    ]
+                  }
+                }
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "api": {
+                    "const": "openai-responses"
+                  }
+                },
+                "required": [
+                  "api"
+                ]
+              },
+              "then": {
+                "properties": {
+                  "provider": {
+                    "enum": [
+                      "openai"
+                    ]
+                  }
+                }
+              }
+            }
+          ],
+          "properties": {
+            "api": {
+              "enum": [
+                "openai-completions",
+                "openai-responses"
+              ],
+              "type": "string"
+            },
+            "api_key_env": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "base_url": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "model": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "provider": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "settings": {
+              "additionalProperties": false,
+              "properties": {
+                "client_type": {
+                  "enum": [
+                    "completion",
+                    "responses"
+                  ],
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "temperature": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "provider",
+            "model"
+          ],
+          "type": "object"
+        },
+        "requirements": {},
+        "runner": {
+          "module": "nemo_fabric_adapters.nooa.bench_adapter"
+        },
+        "settings_schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false,
+          "properties": {},
+          "type": "object"
+        },
+        "telemetry": {
+          "providers": {
+            "relay": {
+              "outputs": [
+                "atif",
+                "otel",
+                "openinference"
+              ]
+            }
+          }
+        }
+      },
+      "provenance": [
+        {
+          "path": "/tmp/nemoclaw-fabric-discovery/adapters/python/nooa/nooa-bench.fabric-adapter.json",
+          "root": "/tmp/nemoclaw-fabric-discovery/adapters/python/nooa",
+          "source": "bundled"
+        }
+      ]
+    },
+    {
+      "descriptor": {
+        "adapter_id": "nvidia.fabric.openclaw",
+        "adapter_kind": "python",
+        "capabilities": {
+          "cancellation": false,
+          "service": false,
+          "streaming": false,
+          "updates": false
+        },
+        "config": {
+          "accepts": [
+            "models",
+            "models.base_url",
+            "models.max_tokens",
+            "tools.enabled",
+            "tools.blocked"
+          ],
+          "generates": [
+            ".openclaw/openclaw.json"
+          ]
+        },
+        "contract_version": "fabric.adapter/v1alpha2",
+        "extension_schemas": {
+          "model": {
+            "additionalProperties": false,
+            "properties": {
+              "api": {
+                "enum": [
+                  "openai-completions",
+                  "openai-responses",
+                  "anthropic-messages"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        },
+        "model_schema": {
+          "additionalProperties": false,
+          "anyOf": [
+            {
+              "required": [
+                "api"
+              ]
+            },
+            {
+              "properties": {
+                "settings": {
+                  "required": [
+                    "api"
+                  ]
+                }
+              },
+              "required": [
+                "settings"
+              ]
+            }
+          ],
+          "properties": {
+            "api": {
+              "enum": [
+                "openai-completions",
+                "openai-responses",
+                "anthropic-messages"
+              ],
+              "type": "string"
+            },
+            "api_key_env": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "base_url": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "max_tokens": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "model": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "provider": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "settings": {
+              "additionalProperties": false,
+              "properties": {
+                "api": {
+                  "enum": [
+                    "openai-completions",
+                    "openai-responses",
+                    "anthropic-messages"
+                  ],
+                  "type": "string"
+                },
+                "model_metadata": {
+                  "type": "object"
+                },
+                "reasoning_effort": {
+                  "enum": [
+                    "off",
+                    "minimal",
+                    "low",
+                    "medium",
+                    "high",
+                    "xhigh",
+                    "adaptive"
+                  ],
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "required": [
+            "provider",
+            "model",
+            "base_url"
+          ],
+          "type": "object"
+        },
+        "requirements": {
+          "binaries": [
+            "node"
+          ]
+        },
+        "runner": {
+          "module": "nemo_fabric_adapters.openclaw.adapter"
+        },
+        "settings_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "agent_name": {
+              "default": "main",
+              "pattern": "^[a-z][a-z0-9-]{0,39}$",
+              "type": "string"
+            },
+            "cli": {
+              "default": "/app/openclaw.mjs",
+              "minLength": 1,
+              "type": "string"
+            },
+            "home": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "native_config": {
+              "additionalProperties": false,
+              "properties": {
+                "agents": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "defaults": {
+                      "not": {
+                        "anyOf": [
+                          {
+                            "required": [
+                              "model"
+                            ]
+                          },
+                          {
+                            "required": [
+                              "workspace"
+                            ]
+                          },
+                          {
+                            "required": [
+                              "timeoutSeconds"
+                            ]
+                          }
+                        ]
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                },
+                "cron": {
+                  "type": "object"
+                },
+                "diagnostics": {
+                  "type": "object"
+                },
+                "gateway": {
+                  "type": "object"
+                },
+                "memory": {
+                  "type": "object"
+                },
+                "plugins": {
+                  "type": "object"
+                },
+                "tools": {
+                  "type": "object"
+                },
+                "update": {
+                  "type": "object"
+                }
+              },
+              "type": "object"
+            },
+            "timeout_seconds": {
+              "default": 260,
+              "maximum": 86400,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "telemetry": {}
+      },
+      "provenance": [
+        {
+          "path": "/tmp/nemoclaw-fabric-discovery/adapters/python/openclaw/openclaw.fabric-adapter.json",
+          "root": "/tmp/nemoclaw-fabric-discovery/adapters/python/openclaw",
+          "source": "bundled"
+        }
+      ]
+    },
+    {
+      "descriptor": {
+        "adapter_id": "nvidia.fabric.opencode",
+        "adapter_kind": "process",
+        "capabilities": {
+          "cancellation": false,
+          "service": false,
+          "streaming": false,
+          "updates": false
+        },
+        "config": {
+          "accepts": [
+            "models",
+            "models.base_url"
+          ]
+        },
+        "contract_version": "fabric.adapter/v1alpha2",
+        "model_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "api_key_env": {
+              "minLength": 1,
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+              "type": "string"
+            },
+            "base_url": {
+              "format": "uri",
+              "pattern": "^https?://",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "model": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "provider": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "provider",
+            "model",
+            "api_key_env"
+          ],
+          "type": "object"
+        },
+        "requirements": {
+          "binaries": [
+            "bun"
+          ]
+        },
+        "runner": {
+          "command": "bun",
+          "script": "dist/cli.js"
+        },
+        "telemetry": {}
+      },
+      "provenance": [
+        {
+          "path": "/tmp/nemoclaw-fabric-discovery/adapters/typescript/opencode/opencode.fabric-adapter.json",
+          "root": "/tmp/nemoclaw-fabric-discovery/adapters/typescript/opencode",
+          "source": "bundled"
+        }
+      ]
+    },
+    {
+      "descriptor": {
+        "adapter_id": "nvidia.fabric.pi",
+        "adapter_kind": "process",
+        "capabilities": {
+          "cancellation": false,
+          "service": false,
+          "streaming": false,
+          "updates": false
+        },
+        "config": {
+          "accepts": [
+            "models",
+            "models.base_url",
+            "instructions.system",
+            "tools.definitions",
+            "tools.enabled",
+            "tools.blocked",
+            "skills"
+          ],
+          "system_instruction_modes": [
+            "replace"
+          ]
+        },
+        "contract_version": "fabric.adapter/v1alpha2",
+        "extension_schemas": {
+          "model": {
+            "additionalProperties": false,
+            "properties": {
+              "api": {
+                "enum": [
+                  "openai-completions",
+                  "openai-responses",
+                  "anthropic-messages"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        },
+        "model_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "api": {
+              "enum": [
+                "openai-completions",
+                "openai-responses",
+                "anthropic-messages"
+              ],
+              "type": "string"
+            },
+            "api_key_env": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "base_url": {
+              "format": "uri",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "model": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "provider": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "settings": {
+              "properties": {
+                "model_metadata": {
+                  "type": "object"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "required": [
+            "provider",
+            "model",
+            "api_key_env"
+          ],
+          "type": "object"
+        },
+        "requirements": {
+          "binaries": [
+            "node"
+          ]
+        },
+        "runner": {
+          "command": "node",
+          "script": "dist/cli.js"
+        },
+        "settings_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "extensions": {
+              "items": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "type": "array",
+              "uniqueItems": true
+            },
+            "relay_extension_path": {
+              "description": "Absolute path or environment.workspace-relative path to the NeMo Relay 0.9 Pi extension",
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "telemetry": {
+          "providers": {
+            "relay": {
+              "outputs": [
+                "atif",
+                "otel",
+                "openinference"
+              ]
+            }
+          }
+        },
+        "tool_definition_schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "module"
+            },
+            "ref": {
+              "minLength": 1,
+              "pattern": "^[^#]+(?:#[A-Za-z_$][A-Za-z0-9_$]*)?$",
+              "type": "string"
+            },
+            "settings": {
+              "type": "object"
+            }
+          },
+          "required": [
+            "kind",
+            "ref"
+          ],
+          "type": "object"
+        }
+      },
+      "provenance": [
+        {
+          "path": "/tmp/nemoclaw-fabric-discovery/adapters/typescript/pi/pi.fabric-adapter.json",
+          "root": "/tmp/nemoclaw-fabric-discovery/adapters/typescript/pi",
+          "source": "bundled"
+        }
+      ]
+    },
+    {
+      "descriptor": {
+        "adapter_id": "nvidia.fabric.remote-agent",
+        "adapter_kind": "python",
+        "capabilities": {
+          "cancellation": false,
+          "service": false,
+          "streaming": true,
+          "updates": false
+        },
+        "config": {
+          "accepts": [
+            "models",
+            "models.temperature",
+            "models.top_p",
+            "models.max_tokens",
+            "instructions.system",
+            "models.base_url"
+          ],
+          "system_instruction_modes": [
+            "replace"
+          ]
+        },
+        "contract_version": "fabric.adapter/v1alpha2",
+        "extension_schemas": {
+          "model": {
+            "additionalProperties": false,
+            "properties": {
+              "api": {
+                "enum": [
+                  "openai-completions",
+                  "openai-responses",
+                  "anthropic-messages"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        },
+        "model_schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false,
+          "properties": {
+            "api": {
+              "enum": [
+                "openai-completions",
+                "openai-responses",
+                "anthropic-messages"
+              ],
+              "type": "string"
+            },
+            "api_key_env": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "base_url": {
+              "minLength": 1,
+              "pattern": "^https?://",
+              "type": "string"
+            },
+            "max_tokens": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "model": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "provider": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "settings": {
+              "additionalProperties": false,
+              "properties": {
+                "max_tokens": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "type": "object"
+            },
+            "temperature": {
+              "type": "number"
+            },
+            "top_p": {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            }
+          },
+          "required": [
+            "provider",
+            "model"
+          ],
+          "type": "object"
+        },
+        "requirements": {},
+        "runner": {
+          "module": "nemo_fabric_adapters.remote_agent.adapter"
+        },
+        "settings_schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false,
+          "properties": {
+            "api_type": {
+              "default": "openai-responses",
+              "description": "Remote agent API protocol.",
+              "enum": [
+                "openai-responses",
+                "openai-completions",
+                "anthropic-messages"
+              ],
+              "type": "string"
+            },
+            "base_url": {
+              "description": "Remote agent API root, including the /v1 path segment.",
+              "format": "uri",
+              "minLength": 1,
+              "pattern": "^https?://",
+              "type": "string"
+            },
+            "connect_timeout_seconds": {
+              "default": 10,
+              "description": "Timeout in seconds for connecting to the remote agent.",
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            "read_timeout_seconds": {
+              "default": 600,
+              "description": "Timeout in seconds between response bytes from the remote agent.",
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            "relay_streaming": {
+              "default": false,
+              "description": "Whether the remote service accepts NeMo Fabric request correlation metadata and publishes ATOF to the configured Relay stream sink.",
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        },
+        "telemetry": {
+          "providers": {
+            "relay": {
+              "integration_modes": [
+                "remote_service"
+              ],
+              "outputs": [
+                "atof"
+              ]
+            }
+          }
+        }
+      },
+      "provenance": [
+        {
+          "path": "/tmp/nemoclaw-fabric-discovery/adapters/python/remote-agent/remote-agent.fabric-adapter.json",
+          "root": "/tmp/nemoclaw-fabric-discovery/adapters/python/remote-agent",
+          "source": "bundled"
+        }
+      ]
+    }
+  ],
+  "fabric_revision": "24f068c895e5cbc30286bc743498be4e5014d658",
+  "schema_version": 2,
+  "source_sha256": "77f78f66a24a8cd8e6f33f9cf49f3db8c5de39e12e095f5599cb63909a05865f",
+  "targets": [
+    {
+      "descriptor": {
+        "adapter_id": "nvidia.fabric.nooa",
+        "contract_version": "fabric.adapter/v1alpha2",
+        "id": "nvidia.nooa.arc-solver",
+        "spec": {
+          "entrypoint": {
+            "kind": "interactive_agent_factory",
+            "ref": "nemo_fabric_adapters.nooa.targets.arc_solver:create_agent"
+          },
+          "settings_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "additionalProperties": false,
+            "properties": {
+              "max_actions_per_turn": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "png_scale": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "reflect_every": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "visual": {
+                "enum": [
+                  "off",
+                  "only",
+                  "additive"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        },
+        "type": "workflow"
+      },
+      "provenance": [
+        {
+          "path": "/tmp/nemoclaw-fabric-discovery/adapters/python/nooa/targets/arc-solver.fabric-target.json",
+          "root": "/tmp/nemoclaw-fabric-discovery/adapters/python/nooa/targets",
+          "source": "bundled"
+        }
+      ]
+    },
+    {
+      "descriptor": {
+        "adapter_id": "nvidia.fabric.nooa",
+        "contract_version": "fabric.adapter/v1alpha2",
+        "id": "nvidia.nooa.coding-agent",
+        "spec": {
+          "entrypoint": {
+            "kind": "interactive_agent_factory",
+            "ref": "nemo_fabric_adapters.nooa.targets.coding_agent:create_agent"
+          },
+          "settings_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "additionalProperties": false,
+            "properties": {},
+            "type": "object"
+          }
+        },
+        "type": "workflow"
+      },
+      "provenance": [
+        {
+          "path": "/tmp/nemoclaw-fabric-discovery/adapters/python/nooa/targets/coding-agent.fabric-target.json",
+          "root": "/tmp/nemoclaw-fabric-discovery/adapters/python/nooa/targets",
+          "source": "bundled"
+        }
+      ]
+    }
+  ]
+}

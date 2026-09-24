@@ -28,10 +28,10 @@ The generated graphs manage these objects and observations:
 
 | Owner | Managed objects and observations |
 |---|---|
-| NemoClaw provider | OpenShell workspace, provider, profile, sandbox, and Pi runtime configuration |
+| NemoClaw provider | OpenShell workspace, provider, profile, sandbox, and Fabric runtime configuration |
 | NemoClaw provider | Podman gateway process (`nemoclaw_managed_gateway`); gateway storage, initialization, and retained bridge (`nemoclaw_gateway_storage`) |
 | NemoClaw provider | Retained inference credentials and proxy storage; external Ollama model observation |
-| NemoClaw provider data source | Gateway capabilities, vLLM/Ollama service or proxy readiness, and sandbox completion |
+| NemoClaw provider data source | Engine and Fabric image capabilities, gateway capabilities, vLLM/Ollama service or proxy readiness, and sandbox completion |
 | Docker provider | Docker gateway, inference, and proxy containers; model-cache volumes, service-owned networks and acquired images |
 | Docker provider data source | Local images selected with `imagePullPolicy: Never` |
 
@@ -49,7 +49,7 @@ For reconstructible resources, OpenTofu and the provider own confirmed absence, 
 | Resource | Ordinary reconciliation | Protection |
 |---|---|---|
 | Provider profile and registration | Update supported fields, replace immutable configuration, remove unused declarations, and recreate after confirmed absence | Verify ownership and established identity before mutation; preserve bindings on failed observation |
-| Pi runtime configuration | Update model configuration and reconcile its resource lifecycle | Verify the parent sandbox identity; a model change can restart Pi and lose its in-memory conversation |
+| Fabric runtime configuration | Apply the public Fabric document and reconcile its resource lifecycle | Verify the parent sandbox identity; a changed configuration can restart its runtime and lose native session state |
 | Sandbox | Create and observe the declared sandbox | Refuse ordinary deletion, replacement, or recreation of a missing binding because deletion loses native files and history |
 | Workspace | Create, observe, and retain | Refuse replacement, deletion, or automatic recreation of a missing binding |
 
@@ -65,7 +65,7 @@ Endpoint and policy changes that also change a sandbox's launch specification re
 
 The provider's `destroy` setting authorizes explicit sandbox teardown; reconstructible registrations and configuration do not require it.
 It never authorizes deleting the workspace or bypassing identity checks.
-Removing Pi configuration releases its resource binding without deleting or stopping the sandbox-owned runtime.
+Removing Fabric configuration releases its resource binding without deleting or stopping the sandbox-owned runtime.
 The SDK's destroy operation still retains durable storage and the workspace.
 See [deletion and retention](state.md#deletion-and-retention) before removing workloads.
 
@@ -76,6 +76,96 @@ Creation readback must match the physical ID, owner, and generation established 
 If readback fails or identifies a substituted object, the provider returns the original established binding together with the error.
 OpenTofu retains that failed creation as tainted state; automatic untainting is not a recovery guarantee.
 OpenShell deletion is name-addressed without a conditional ID/version check; an immediate identity check does not make the API operation atomic.
+
+## Discovery Ownership
+
+Onboarding and planning consume observations from the owners below.
+Each observation keeps its source and distinguishes a successful read, confirmed unavailability, and unknown results.
+An observation describes the selected target at the time of its read; it is not a reservation or a promise of successful inference.
+
+| Question | Owner and source | When it runs |
+|---|---|---|
+| Engine prerequisites | `nemoclaw_engine_capabilities`; selected Docker/Podman API | Onboarding target changes and managed deployment planning |
+| Engine features, CPU, memory, and advertised GPU inventory | `nemoclaw_target_hardware`; selected engine API | Onboarding and planning for selected gateway/service engines |
+| GPU memory, driver, compute capability, and disk measurements | Direct SDK `observe_host_hardware` with a selected `HostObserver` | Explicit direct calls or existing configured service-capacity checks; the new passive hardware source does not run collectors |
+| Packaged adapters, APIs, settings, and runtime requirements | `nemoclaw_fabric_capabilities`; selected image metadata containing Fabric discovery results | Onboarding image changes and managed deployment planning |
+| Advertised models and catalog authentication | `nemoclaw_inference_capabilities`; HTTP model-list endpoint from the control host | Onboarding endpoint changes and planning for selected inference routes |
+| Credential-reference availability | Direct SDK `observe_credentials`; application's secret resolver | Onboarding, SDK calls, and plan-result discovery; values and local availability do not enter provider state |
+| Gateway version and compute drivers | Existing `nemoclaw_gateway_capabilities`; authenticated OpenShell API | Onboarding review and required deployment lifecycle checks |
+| Existing resources, ownership, drift, and retained storage | Existing OpenTofu resource refresh and SDK retained bindings | Deployment planning; no separate scan adopts unowned resources |
+
+## Engine and Fabric Discovery
+
+`nemoclaw_engine_capabilities` and `nemoclaw_fabric_capabilities` require `engine`, the selected container-engine endpoint, without requiring an OpenShell connection.
+The engine source also requires `compute_driver` (`docker` or `podman`); the Fabric source requires `image`.
+Both return `status`, `available`, and structured JSON in `observation_json`.
+
+The engine observation checks gateway prerequisites and reports available server version, architecture, operating system, CPU count, and memory fields.
+These describe the selected engine, which may differ from the CLI host.
+The image observation retains its configuration ID, repository manifest digests, platform, and size even when it lacks Fabric metadata.
+Neither source pulls images or starts containers.
+Each backend observation is bounded to five seconds; OpenTofu initialization and execution add overhead.
+
+`available` means the requested metadata was observed successfully.
+`unavailable` records a confirmed engine prerequisite mismatch or an image absent from the selected engine.
+`unknown` records an unreachable target, missing image labels, invalid metadata, or a timed-out observation.
+A missing image does not establish that the harness is unsupported.
+
+Fabric observations retain the original `catalog`: Fabric adapter and workflow target descriptors and their discovery provenance.
+Native schemas and declared requirements are consumed directly, without a second capability projection.
+Missing declarations remain unknown; an advertised setting does not prove that the selected inference model supports it.
+
+Optional `requirements_json` supplies an SDK `FabricRequirements` containing the canonical public Fabric `configuration` and deployment filesystem grants.
+Optional `architecture` and `operating_system` supply the execution engine's platform.
+The computed `compatibility_status` is `supported`, `unsupported`, or `unknown`, with details in `observation_json.compatibility`.
+The SDK checks image identity, source revision and platform, then calls Fabric's pure planner with the selected image's descriptors.
+Fabric owns settings, model, extension and workflow validation.
+Missing native capability contracts and mismatched Fabric revisions remain unknown; explicit schema violations are unsupported.
+Omitting requirements preserves metadata-only discovery.
+
+The [agent image builder](build.md#build-agent-images) reads `Fabric.discover()` inside each assembled image and stores the result in `io.nemoclaw.fabric.catalog`.
+It selects installed-package records using Fabric's provenance, without editing their descriptors.
+The bundled snapshot supports offline authoring and carries the same pinned Fabric revision and source checksum.
+See [source notices and regeneration](../image/NOTICE.md).
+Older images and direct Bake builds without labels remain unverified.
+Catalog identifiers are not restricted to a compiled SDK list.
+The runtime consumes the same canonical public configuration through Fabric; see [discovered harness configuration](sdk.md#configure-a-discovered-fabric-harness).
+
+For a managed gateway, generated graphs observe each sandbox image independently of resource creation or image acquisition.
+Lifecycle postconditions reject known engine incompatibility or conflicting image/adapter metadata.
+Unknown evidence is reported as deferred work; it does not relax required resource-refresh or gateway checks.
+An image observation is scoped to the selected engine, not every possible execution host.
+
+## Target Hardware
+
+`nemoclaw_target_hardware` requires `engine` and returns `status` and `observation_json`.
+The passive read reports the daemon identity, architecture, CPU/memory fields, and available engine features such as rootless mode, runtimes, networking, cgroups, and memory-limit support.
+GPU IDs advertised as engine generic resources are retained without inventing names, VRAM, driver versions, or compute capability.
+No GPU advertisement means unknown inventory, not zero GPUs.
+
+For complete host measurements, explicitly call the SDK's `hardware_discovery::observe_host_hardware` with the selected engine and a `HostObserver`.
+The operation checks the collector's daemon identity before accepting measurements and has a 30-second bound.
+It reports unsupported GPU memory counters separately from unobserved counters.
+Collector failure never falls back to the client's hardware.
+The new `nemoclaw_target_hardware` source uses passive engine information and does not execute a collector or launch a probe container.
+Existing configured service-capacity checks retain their daemon-bound `HostObserver` collectors; this passive source neither replaces nor disables those checks.
+
+## Inference Endpoint Metadata
+
+`nemoclaw_inference_capabilities` requires `endpoint` and `api`; optional `credential_env` names a credential reference.
+The provider resolves that reference in memory for the selected endpoint and returns `status` and `observation_json`, never the credential value.
+It issues bounded GET requests to the OpenAI-compatible or Anthropic model-list API, with no generation request and no redirects.
+Reads have a five-second total bound and limits on response size, models, and pagination.
+
+The observation identifies control-host reachability, catalog authentication, and advertised model identifiers.
+It does not establish sandbox reachability or generation, streaming, tool-calling, or model-loading behavior; `api_verified` remains false.
+Authentication denial is distinguished from a missing or unsupported model-list endpoint.
+Shared endpoint/API/credential-reference requests are deduplicated.
+Onboarding adds observed identifiers to model suggestions while preserving manual model entry and accepted choices.
+
+Credentials remain a direct SDK concern: `observe_credentials` reports whether each selected reference resolves, separately from remote authentication.
+Gateway and resource discovery reuse their existing strict lifecycle reads below, preserving bindings when refresh fails.
+See [SDK discovery](sdk.md#discover-before-authoring-or-planning) and [onboarding target checks](../examples/onboarding-tui/README.md#target-checks).
 
 ## Gateway Capabilities
 
@@ -105,8 +195,9 @@ After correcting compatibility or access, reapply the same configuration with it
 Teardown omits the capability gates so a version or driver mismatch alone does not prevent cleanup.
 
 [Gateway protocol tests](../crates/nemoclaw-e2e/tests/opentofu_openshell.rs) exercise the production provider and pinned OpenTofu without SDK orchestration: early planning errors, saved-plan drift, unchanged apply, failed observation, recovery, and teardown.
-[Deployment fixtures](../crates/nemoclaw-e2e/tests/deployment.rs) and [Pi lifecycle fixtures](../crates/nemoclaw-e2e/tests/fabric_deployment.rs) verify that the SDK uses the same apply-time protection.
-Pi configuration writes are owned by `nemoclaw_pi_configuration`; unchanged apply does not rewrite the hosted runtime.
+[Deployment fixtures](../crates/nemoclaw-e2e/tests/deployment.rs) and [Fabric lifecycle fixtures](../crates/nemoclaw-e2e/tests/fabric_deployment.rs) verify that the SDK uses the same apply-time protection.
+Fabric configuration writes are owned by `nemoclaw_agent_configuration`; unchanged apply preserves the active runtime handle.
+Its `config_json` is the canonical public Fabric configuration, separate from immutable sandbox identity.
 
 ## Runtime Capacity and Readiness
 
@@ -154,7 +245,7 @@ Standalone configurations with known inputs may read during planning unless the 
 Existing sandbox resource refresh still verifies configuration.
 
 The [standalone sandbox fixture](testing/fixtures.md#standalone-sandbox-completion) checks this contract through the production provider without SDK deployment orchestration.
-The shared backend still contains harness-specific configuration checks; this observation does not implement the broader [Fabric management contract](design/fabric-management.md#result-and-adoption-gates).
+The shared backend compares public Fabric configuration and runtime handle state; fresh native configuration and health remain subject to [Fabric observation limits](design/fabric-management.md#observation-limits).
 
 ## Combined Service Capacity
 

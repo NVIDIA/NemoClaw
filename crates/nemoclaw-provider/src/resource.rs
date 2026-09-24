@@ -46,7 +46,7 @@ impl ResourceAdapter {
                     | "policy_json"
                     | "proxy_host"
                     | "proxy_port"
-                    | "inference_json"
+                    | "provider_names_json"
             )
     }
     fn observed_running(&self) -> bool {

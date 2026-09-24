@@ -11,7 +11,7 @@ See [schema maintenance](../configuration-schema.md) for generation and validati
 Paths use `[]` for an array element and `{key}` for a map entry.
 Required fields must appear when their containing object is present; conditional requirements are stated in the table or description.
 An optional object can contain required fields if you choose to declare it.
-Omit optional fields instead of assigning `null`; only nested values inside a Pi `piModel` object may be null.
+Omit optional deployment fields instead of assigning `null`; nested Fabric settings and configuration follow the selected owner schema.
 Defaults describe SDK normalization or backend behavior; JSON Schema validation does not insert values.
 Empty or zero selects a default only where stated.
 
@@ -20,13 +20,13 @@ Empty or zero selects a default only where stated.
 - Document::parse rejects YAML aliases, anchors, merge keys, unsupported tags, duplicate keys, multiple documents, and input larger than 1 MiB. It applies the compiled input schema before defaulting; Document::validate applies the normalized schema and semantic checks, including for directly constructed Rust values.
 - The parser checks endpoint transport and address policy, managed gateway port bounds, canonical private IPv4 /24 networks, local engine socket syntax, and publication address/port/network agreement.
 - Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.
-- Explicit filesystem grants must permit reads of the selected harness runtime directories; parent and read-write grants count. This parser check does not inspect images, resolve symlinks, or establish runtime permissions.
-- The schema requires an explicit default for multiple model choices. Rust checks unique route names, that the default names a route, and that the resolved harness supports the selected model count, tuning, and tools; omitted disclosure means progressive.
-- The parser resolves integrationRefs only from enclosing deployment or sandbox definitions, rejects name shadowing and incompatible agent grants, and permits at most one attached web search definition per sandbox. Brave supports OpenClaw and Deep Agents; Tavily supports OpenClaw and Hermes. Agent-inline definitions attach directly; unused enclosing definitions grant no access.
+- Explicit filesystem grants must permit reads of the packaged Fabric runtime and NemoClaw bridge directories; parent and read-write grants count. This parser check does not inspect images, resolve symlinks, or establish runtime permissions.
+- The schema requires an explicit default for multiple model choices. Rust checks unique route names, that the default names a route, and that native model and tool fields have valid structural shapes. Fabric validates adapter-specific combinations.
+- The parser resolves integrationRefs only from enclosing deployment or sandbox definitions, rejects name shadowing and missing agent references, and permits at most one attached web search definition per sandbox. Native search must be authored separately through public Fabric configuration and validated by Fabric. Agent-inline definitions attach directly; unused enclosing definitions grant no access.
 - The schema requires exactly one sandbox harness or harnessRef and rejects agent-level harness selection. Rust resolves visible harnesses without shadowing. Each sandbox requires one agent and hosts one Fabric runtime using the sandbox-selected implementation. Shared definitions reuse configuration across sandboxes.
-- The parser permits non-default reasoningEffort values only on the initial default choice. Managed inference services may constrain routes to their declared served model.
+- Native reasoning-effort identifiers are preserved for Fabric validation. Managed inference services may constrain routes to their declared served model.
 - Rust resolves inferenceRef from enclosing inferences, preserves declaration scope for nested provider references, and rejects missing names and shadowing. The schema rejects inline/reference ambiguity.
-- The parser resolves providerRef from enclosing inferenceProviders, rejects shadowing, conflicting selected names, more than 32 selected providers, incompatible managed-service combinations, and compares route models and authentication with the selected provider. Provider/agent compatibility is checked after reference resolution for both inline and shared definitions. Unselected definitions create no resources. Snapshot identity must match the service model.
+- The parser resolves providerRef from enclosing inferenceProviders, rejects shadowing, conflicting selected names, more than 32 selected providers, incompatible managed-service combinations, and compares route models and authentication with the selected provider. Provider transport and reference consistency are checked after reference resolution for both inline and shared definitions. Unselected definitions create no resources. Snapshot identity must match the service model.
 - The parser checks memory threshold ordering and GPU/KV budget relationships; recipe path safety, byte-length limits, environment-map conflicts, snapshot file uniqueness, directory conflicts, and total-size overflow.
 - Schema validation does not observe hardware, image labels, model weights, credentials, ownership, connectivity, or inference readiness. Those checks run during the relevant SDK operation.
 
@@ -59,17 +59,17 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `auth` | [AgentAuth](#agentauth) | No | — | Hermes API-key authentication through the routed provider. The provider must declare a credential reference. |
+| `auth` | [AgentAuth](#agentauth) | No | — | Require API-key authentication through the selected routed provider. The provider must supply a credential. |
 | `inference` | [Inference](#inference) | No | — | Inline inference configuration. Exactly one of inference or inferenceRef is required. |
 | `inferenceRef` | string | No | — | Name of an enclosing inference configuration. Excludes inline inference. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `integrationRefs` | array of string | No | — | Unique integration names selected from spec.integrations or this sandbox's integrations. Omission selects no enclosing definitions. Constraints: items: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `integrations` | map of [Integration](#integration) | No | — | Named integration definitions attached directly to this agent. Names must not collide with definitions in enclosing scopes. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `name` | string | Yes | — | Lowercase agent name. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
-| `tools` | [AgentTools](#agenttools) | No | — | Read-only tools for OpenClaw, Deep Agents, or Pi, or OpenClaw disclosure mode. Omission preserves native defaults. allow: [read] restricts tools, not OS-level filesystem access. |
+| `tools` | [AgentTools](#agenttools) | No | — | Explicit native tool identifiers projected into public Fabric configuration. Fabric validates adapter support; this does not change OS-level filesystem permissions. |
 
 ## AgentAuth
 
-Authenticate Hermes inference using the primary route's credential-bearing provider.
+Authenticate inference using the primary route's credential-bearing provider.
 
 Guide: [Inference configuration](../inference.md).
 
@@ -83,7 +83,7 @@ Paths:
 
 ## AgentExecution
 
-Execution timeout shared by the sandbox; native heartbeat settings are OpenClaw-only.
+Execution timeout shared by the sandbox; Fabric owns native execution settings.
 
 Guide: [Agent runtimes](../agents.md).
 
@@ -95,58 +95,11 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `heartbeatEvery` | string | No | — | Heartbeat duration in seconds, minutes, or hours, such as 30m. Zero disables heartbeat. Omission leaves native defaults; an explicit interval uses an isolated heartbeat session. Constraints: pattern `^[0-9]+[smh]$(?![\s\S])`; maximum characters 256. |
-| `timeoutSeconds` | integer | No | — | Agent-turn timeout in seconds. Omission selects 600 for OpenClaw and 300 for other harnesses. OpenClaw adds 60 seconds to the enclosing Fabric timeout; readiness and health checks use separate budgets. Constraints: minimum 1; maximum 1000000000. |
-
-## AgentInterfaces
-
-Harness-specific native interfaces; OpenClaw uses gateway settings, Hermes uses separate services.
-
-Guide: [Agent interfaces](../interfaces.md).
-
-Paths:
-
-- `spec.harnesses.{key}.interfaces`
-- `spec.sandboxes[].harness.interfaces`
-- `spec.sandboxes[].harnesses.{key}.interfaces`
-
-Accepted input: [OpenClawInterfaces](#openclawinterfaces) or [HermesInterfaces](#hermesinterfaces).
-
-## AgentObservability
-
-Harness-native telemetry shared by the sandbox.
-
-Guide: [Agent runtimes](../agents.md).
-
-Paths:
-
-- `spec.harnesses.{key}.observability`
-- `spec.sandboxes[].harness.observability`
-- `spec.sandboxes[].harnesses.{key}.observability`
-
-Accepted input: object.
-
-### Alternative 1
-
-Export OpenClaw traces to an externally operated local OTLP/HTTP collector.
-
-
-| Field | Input type | Required | Default | Description and constraints |
-|---|---|---|---|---|
-| `otlp` | [OtlpTracing](#otlptracing) | Yes | — | Collector and sampling settings. |
-
-### Alternative 2
-
-Emit Hermes ATOF and ATIF traces through its in-process NeMo Relay integration.
-
-
-| Field | Input type | Required | Default | Description and constraints |
-|---|---|---|---|---|
-| `relay` | [RelayTracing](#relaytracing) | Yes | — | In-process Relay tracing settings. |
+| `timeoutSeconds` | integer | No | — | Invocation timeout in seconds passed to Fabric. Readiness has its own deployment deadline. Constraints: minimum 1; maximum 1000000000. |
 
 ## AgentTools
 
-Native read-only tool restriction or OpenClaw discovery mode. These forms are mutually exclusive.
+Explicit native tool identifiers forwarded to Fabric.
 
 Guide: [Agent runtimes](../agents.md).
 
@@ -154,43 +107,13 @@ Paths:
 
 - `spec.sandboxes[].agent.tools`
 
-Accepted input: object.
-
-### Alternative 1
-
-Expose only the read tool, independently of the gateway's discovery mode.
-
-
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `allow` | array of [AllowedTool](#allowedtool) | Yes | — | Exactly the read tool. Empty lists, wildcards, and other tool names are rejected. Constraints: minimum items 1; maximum items 1. |
-
-### Alternative 2
-
-Select the gateway's tool discovery mode without granting additional tools.
-
-
-| Field | Input type | Required | Default | Description and constraints |
-|---|---|---|---|---|
-| `disclosure` | [ToolDisclosure](#tooldisclosure) | Yes | — | Progressive uses structured tool search; direct exposes tools directly. Omission means progressive. |
-
-## AllowedTool
-
-Tool supported by the native read-only policy.
-
-Guide: [Agent runtimes](../agents.md).
-
-Paths:
-
-- `spec.sandboxes[].agent.tools.allow[]`
-
-Accepted input: string.
-
-Constraints: `"read"`.
+| `allow` | array of string | Yes | — | Native tool identifiers. Fabric validates availability and semantics. Constraints: minimum items 1; maximum items 128; items: pattern `^[^\u0000-\u001f\u007f]+$(?![\s\S])`; minimum characters 1; maximum characters 256. |
 
 ## AuthMethod
 
-Hermes authentication method supported through the OpenShell provider.
+Authentication method supported through the OpenShell provider.
 
 Guide: [Inference configuration](../inference.md).
 
@@ -260,22 +183,6 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `env` | string | Yes | — | Uppercase environment variable name. For TLS fields, its value is a local certificate or key file path; otherwise it is a bearer/API credential. Constraints: pattern `^[A-Z_][A-Z0-9_]{0,127}$`. |
-
-## DashboardBind
-
-Address on which the native dashboard listens inside the sandbox.
-
-Guide: [Agent interfaces](../interfaces.md).
-
-Paths:
-
-- `spec.harnesses.{key}.interfaces.dashboard.bind`
-- `spec.sandboxes[].harness.interfaces.dashboard.bind`
-- `spec.sandboxes[].harnesses.{key}.interfaces.dashboard.bind`
-
-Accepted input: string.
-
-Constraints: `"127.0.0.1"` or `"0.0.0.0"`.
 
 ## DedicatedHardware
 
@@ -439,78 +346,10 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `execution` | [AgentExecution](#agentexecution) | No | — | OpenClaw timeout and heartbeat defaults shared by the sandbox. |
-| `interfaces` | [AgentInterfaces](#agentinterfaces) | No | — | Native dashboard access for this sandbox runtime. |
-| `kind` | string | Yes | — | Fabric harness implementation for the sandbox agent. Constraints: `"deepagents"` or `"hermes"` or `"openclaw"` or `"claude"` or `"codex"` or `"mini-swe-agent"` or `"nooa"` or `"nooa-bench"` or `"remote-agent"` or `"pi"`. |
-| `observability` | [AgentObservability](#agentobservability) | No | — | Harness-native tracing shared by the sandbox. |
-
-## HermesApi
-
-Hermes HTTP API listener inside the sandbox; host access requires OpenShell forwarding.
-
-Guide: [Agent interfaces](../interfaces.md).
-
-Paths:
-
-- `spec.harnesses.{key}.interfaces.api`
-- `spec.sandboxes[].harness.interfaces.api`
-- `spec.sandboxes[].harnesses.{key}.interfaces.api`
-
-| Field | Input type | Required | Default | Description and constraints |
-|---|---|---|---|---|
-| `port` | integer | Yes | — | Sandbox-local API port, from 8642 through 8652. Constraints: minimum 8642; maximum 8652. |
-
-## HermesDashboard
-
-Native Hermes dashboard, either disabled or enabled with service settings.
-
-Guide: [Agent interfaces](../interfaces.md).
-
-Paths:
-
-- `spec.harnesses.{key}.interfaces.dashboard`
-- `spec.sandboxes[].harness.interfaces.dashboard`
-- `spec.sandboxes[].harnesses.{key}.interfaces.dashboard`
-
-| Field | Input type | Required | Default | Description and constraints |
-|---|---|---|---|---|
-| `enabled` | boolean | Yes | — | Start the dashboard. When false, all other dashboard fields must be omitted. |
-| `internalPort` | integer | No | — | Native dashboard listener behind the local forwarder; defaults to 19119 and must differ from port. Constraints: minimum 1024; maximum 65535. |
-| `port` | integer | No | — | Sandbox dashboard access port; defaults to 18789. Must differ from internalPort and reserved API ports. Constraints: minimum 1024; maximum 65535. |
-| `tui` | [HermesTui](#hermestui) | No | — | Enable native browser chat/TUI; omitted settings preserve the pinned Hermes default of enabled. |
-
-## HermesInterfaces
-
-Native Hermes services. Declare at least one override; defaults enable the dashboard and browser chat.
-
-Guide: [Agent interfaces](../interfaces.md).
-
-Paths:
-
-- `spec.harnesses.{key}.interfaces`
-- `spec.sandboxes[].harness.interfaces`
-- `spec.sandboxes[].harnesses.{key}.interfaces`
-
-| Field | Input type | Required | Default | Description and constraints |
-|---|---|---|---|---|
-| `api` | [HermesApi](#hermesapi) | No | — | Authenticated HTTP API settings. Omitting api selects port 8642; declaring api requires port. |
-| `dashboard` | [HermesDashboard](#hermesdashboard) | No | — | Dashboard service settings; omitted settings enable port 18789 with internal port 19119. |
-
-## HermesTui
-
-Browser chat/TUI availability; standalone terminal access remains native Hermes behavior.
-
-Guide: [Agent interfaces](../interfaces.md).
-
-Paths:
-
-- `spec.harnesses.{key}.interfaces.dashboard.tui`
-- `spec.sandboxes[].harness.interfaces.dashboard.tui`
-- `spec.sandboxes[].harnesses.{key}.interfaces.dashboard.tui`
-
-| Field | Input type | Required | Default | Description and constraints |
-|---|---|---|---|---|
-| `enabled` | boolean | Yes | — | Permit browser chat and its WebSocket session endpoints. |
+| `config` | object | No | — | Public Fabric configuration. Deployment-owned identities and model connections cannot be overridden. |
+| `execution` | [AgentExecution](#agentexecution) | No | — | Public Fabric runtime execution settings. |
+| `kind` | string | Yes | — | Fabric harness implementation for the sandbox agent. Constraints: pattern `\S`; minimum characters 1. |
+| `settings` | object | No | — | Opaque native settings validated by the selected Fabric adapter. |
 
 ## Image
 
@@ -524,7 +363,7 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `ref` | string | No | — | Immutable image reference. Omitted or empty selects the SDK pin for the selected harness. Constraints: `""` or pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. Omitted or empty selects the SDK pin for the selected harness. |
+| `ref` | string | No | — | Immutable image reference. Omitted or empty selects the SDK pin for the selected harness. Constraints: `""` or pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. Omitted or empty selects the generic SDK agent image pin; verify that it contains the selected Fabric adapter. |
 
 ## ImagePullPolicy
 
@@ -556,7 +395,7 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `default` | string | No | — | Initial model choice by route name. Required with multiple routes; omission selects the sole route. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
-| `routes` | array of [Route](#route) | Yes | — | One or more uniquely named model choices. Multiple choices require OpenClaw or Pi. Constraints: minimum items 1; maximum items 32. |
+| `routes` | array of [Route](#route) | Yes | — | One or more uniquely named model choices. Fabric validates native multiple-model support. Constraints: minimum items 1; maximum items 32. |
 
 ## InferenceApi
 
@@ -592,7 +431,7 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `api` | [InferenceApi](#inferenceapi) | No | — | Request API. Omission selects anthropic-messages for Claude, openai-responses for Codex, and openai-completions for other non-Pi harnesses. Pi requires omission and selects its API through native model metadata. |
+| `api` | [InferenceApi](#inferenceapi) | No | — | Request API. Omission selects anthropic-messages for Anthropic providers and openai-completions for OpenAI providers; explicit values are preserved for Fabric validation. |
 | `credential` | [Credential](#credential) | No | — | Optional API credential reference for an external HTTPS endpoint. Excluded by serviceRef. |
 | `endpoint` | string | Without serviceRef | — | Inference HTTP(S) URL owned outside the deployment. Required without serviceRef and excluded with serviceRef. |
 | `name` | string | Yes | — | Provider name referenced by model choices. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
@@ -782,58 +621,6 @@ Paths:
 | `port` | integer | No | `18888` | Inference listening port. Constraints: `0` or minimum 1024; maximum 65535. Omitted or zero selects the default. |
 | `startupTimeoutSeconds` | integer | No | `1800` | Seconds allowed for model loading and readiness. Constraints: `0` or minimum 60; maximum 3600. Omitted or zero selects the default. |
 
-## OpenClawDashboard
-
-OpenClaw gateway settings. At least one field is required; omitted fields use native deployment defaults.
-
-Guide: [Agent interfaces](../interfaces.md).
-
-Paths:
-
-- `spec.harnesses.{key}.interfaces.dashboard`
-- `spec.sandboxes[].harness.interfaces.dashboard`
-- `spec.sandboxes[].harnesses.{key}.interfaces.dashboard`
-
-| Field | Input type | Required | Default | Description and constraints |
-|---|---|---|---|---|
-| `bind` | [DashboardBind](#dashboardbind) | No | — | Sandbox bind address; defaults to loopback. Host publication still requires OpenShell forwarding. |
-| `port` | integer | No | — | Sandbox gateway port; defaults to 18789. Ports 8642 through 8652 are reserved for Hermes. Constraints: minimum 1024; maximum 65535. |
-
-## OpenClawInterfaces
-
-Native interfaces belonging to the sandbox harness runtime.
-
-Guide: [Agent interfaces](../interfaces.md).
-
-Paths:
-
-- `spec.harnesses.{key}.interfaces`
-- `spec.sandboxes[].harness.interfaces`
-- `spec.sandboxes[].harnesses.{key}.interfaces`
-
-| Field | Input type | Required | Default | Description and constraints |
-|---|---|---|---|---|
-| `dashboard` | [OpenClawDashboard](#openclawdashboard) | Yes | — | Enable the OpenClaw dashboard with sandbox-local token authentication. |
-
-## OtlpTracing
-
-Explicitly enabled HTTP/protobuf tracing. The collector is not managed by NemoClaw.
-
-Guide: [Agent runtimes](../agents.md).
-
-Paths:
-
-- `spec.harnesses.{key}.observability.otlp`
-- `spec.sandboxes[].harness.observability.otlp`
-- `spec.sandboxes[].harnesses.{key}.observability.otlp`
-
-| Field | Input type | Required | Default | Description and constraints |
-|---|---|---|---|---|
-| `enabled` | boolean | Yes | — | Must be true. Omit observability to leave native telemetry unconfigured. Constraints: `true`. |
-| `endpoint` | string | Yes | — | Local collector base URL; currently http://host.openshell.internal:4318. Constraints: `"http://host.openshell.internal:4318"`. |
-| `sampleRate` | number | Yes | — | Fraction of traces sampled, from 0 through 1 inclusive. Constraints: minimum 0; maximum 1. |
-| `serviceName` | string | Yes | — | Nonempty printable ASCII service name, without leading or trailing spaces, at most 256 characters. Constraints: pattern `^[!-~](?:[ -~]*[!-~])?$(?![\s\S])`; minimum characters 1; maximum characters 256. |
-
 ## Overrides
 
 Model settings for one named inference choice.
@@ -848,12 +635,9 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `contextWindow` | integer | No | — | Model context capacity in tokens. Does not resize the inference server. Constraints: minimum 1; maximum 4194304. |
-| `maxTokens` | integer | No | — | Maximum output tokens for OpenClaw, Deep Agents, mini-swe-agent, or remote-agent. Constraints: minimum 1; maximum 1000000000. |
+| `maxTokens` | integer | No | — | Maximum output tokens requested from the native adapter. Constraints: minimum 1; maximum 4294967295. |
 | `model` | string | Yes | — | Model identifier. For a managed service, match its recipe serving.modelName or, without a recipe, model.repository. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}$`. |
-| `piModel` | object | No | — | Opaque custom model metadata for the pi harness. Its object may contain nested null values; the piModel value itself must be an object. |
-| `reasoning` | boolean | No | — | Whether the model supports reasoning. |
-| `reasoningEffort` | [ReasoningEffort](#reasoningeffort) | No | — | Default reasoning effort. The value default leaves the native choice in place. |
+| `settings` | object | No | — | Opaque native model settings validated by Fabric's selected model schema. |
 
 ## PolicyAllowRule
 
@@ -1069,38 +853,6 @@ Paths:
 | `host` | string | Yes | — | Proxy hostname or IPv4 address, without scheme, path, or credentials. Constraints: pattern `^[A-Za-z0-9._-]+$`; minimum characters 1; maximum characters 256. |
 | `port` | integer | Yes | — | Proxy TCP port, from 1 through 65535. Constraints: minimum 1; maximum 65535. |
 
-## ReasoningEffort
-
-Native reasoning effort; default leaves the harness choice in place.
-
-Guide: [Inference configuration](../inference.md).
-
-Paths:
-
-- `spec.inferences.{key}.routes[].overrides.reasoningEffort`
-- `spec.sandboxes[].agent.inference.routes[].overrides.reasoningEffort`
-- `spec.sandboxes[].inferences.{key}.routes[].overrides.reasoningEffort`
-
-Accepted input: string.
-
-Constraints: `"default"` or `"low"` or `"medium"` or `"high"`.
-
-## RelayTracing
-
-Explicitly enabled in-process NeMo Relay tracing.
-
-Guide: [Agent runtimes](../agents.md).
-
-Paths:
-
-- `spec.harnesses.{key}.observability.relay`
-- `spec.sandboxes[].harness.observability.relay`
-- `spec.sandboxes[].harnesses.{key}.observability.relay`
-
-| Field | Input type | Required | Default | Description and constraints |
-|---|---|---|---|---|
-| `enabled` | boolean | Yes | — | Must be true. Omit observability to leave Relay tracing disabled. Constraints: `true`. |
-
 ## Resources
 
 Resource declarations checked against host observations and produced data.
@@ -1148,7 +900,7 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `name` | string | Yes | — | Unique lowercase name for this model choice. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
-| `overrides` | [Overrides](#overrides) | Yes | — | Model selection, optional OpenClaw tuning, and optional Pi model metadata. |
+| `overrides` | [Overrides](#overrides) | Yes | — | Model selection, optional native tuning, and optional legacy model metadata. |
 | `provider` | [InferenceProvider](#inferenceprovider) | No | — | Inline inference definition owned by this route. Excludes providerRef and must not shadow an enclosing definition. |
 | `providerRef` | string | No | — | Name of an enclosing inference provider. Exactly one of providerRef or provider is required. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 
@@ -1168,7 +920,7 @@ Paths:
 
 ## Sandbox
 
-The gateway owns sandbox creation. OpenClaw and Hermes accept managed gateway or inference dependencies.
+The gateway owns sandbox creation and dependency placement.
 
 Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
 
@@ -1430,7 +1182,7 @@ Paths:
 | `inferenceProviders` | array of [InferenceProvider](#inferenceprovider) | No | — | Named inference definitions available to sandbox routes. Unselected definitions create no resources or credential requirements. |
 | `inferences` | map of [Inference](#inference) | No | — | Named inference configurations available through inferenceRef. Definitions resolve providers in their own scope and create no resources until selected. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `integrations` | map of [Integration](#integration) | No | — | Named integration definitions shared by agents through integrationRefs. Definitions alone grant no access. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
-| `sandboxes` | array of [Sandbox](#sandbox) | Yes | — | One to 32 uniquely named sandboxes. Each selects one harness: one or more OpenClaw or Deep Agents instances, or one agent of another harness. Declaration order does not select a default sandbox or agent. Constraints: minimum items 1; maximum items 32. |
+| `sandboxes` | array of [Sandbox](#sandbox) | Yes | — | One to 32 uniquely named sandboxes. Each runs one agent through its selected Fabric adapter. Declaration order does not select a default sandbox or agent. Constraints: minimum items 1; maximum items 32. |
 | `services` | map of [ServiceDefinition](#servicedefinition) | No | — | Named managed container services to install, verify once, and remove during destroy. Inference providers may consume their connection through serviceRef. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 
 ## TLS
@@ -1464,17 +1216,3 @@ Paths:
 |---|---|---|---|---|
 | `executable` | string | Yes | — | Absolute path to the executable inside the image. Traversal and empty path components are rejected. Constraints: pattern `^/`; maximum characters 4096. |
 | `sha256` | string | Yes | — | Lowercase SHA-256 of the executable file. Constraints: pattern `^[a-f0-9]{64}$`. |
-
-## ToolDisclosure
-
-OpenClaw tool presentation; this does not change tool permissions.
-
-Guide: [Agent runtimes](../agents.md).
-
-Paths:
-
-- `spec.sandboxes[].agent.tools.disclosure`
-
-Accepted input: string.
-
-Constraints: `"progressive"` or `"direct"`.

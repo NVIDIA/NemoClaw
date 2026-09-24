@@ -28,6 +28,7 @@ unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 allow-git = [
     "https://github.com/NVIDIA/OpenShell",
+    "https://github.com/NVIDIA/NeMo-Fabric",
     "https://github.com/aneoconsulting/tf-provider",
 ]
 

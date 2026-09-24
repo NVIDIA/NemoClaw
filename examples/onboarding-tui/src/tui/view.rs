@@ -5,7 +5,6 @@ use super::{
     app::{Step, Wizard},
     labels,
 };
-use nemoclaw_authoring::ProviderPreset;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
@@ -61,16 +60,25 @@ impl Wizard {
             area.width.saturating_sub(margin * 2),
             area.height,
         );
-        let content_height = if self.step == Step::Review { 14 } else { 12 };
+        let content_height = 10;
         let rows = Layout::vertical([
             Constraint::Length(8),
             Constraint::Min(content_height),
-            Constraint::Length(2),
+            Constraint::Length(if self.target_status.is_some() { 4 } else { 0 }),
+            Constraint::Length(if self.can_offer_delegation() { 3 } else { 2 }),
         ])
         .split(body);
         self.render_logo(frame, rows[0]);
         self.render_question(frame, rows[1]);
-        self.render_footer(frame, rows[2]);
+        if let Some(status) = &self.target_status {
+            frame.render_widget(
+                Paragraph::new(status.as_str())
+                    .style(Style::new().fg(MUTED))
+                    .wrap(Wrap { trim: true }),
+                rows[2],
+            );
+        }
+        self.render_footer(frame, rows[3]);
     }
 
     fn render_logo(&self, frame: &mut Frame<'_>, area: Rect) {
@@ -97,7 +105,14 @@ impl Wizard {
             area.width,
             area.height.saturating_sub(1),
         );
-        if self.step == Step::Welcome {
+        if self.pending_edit.is_some() {
+            frame.render_widget(
+                Paragraph::new(self.conflict_message())
+                    .style(Style::new().fg(WHITE))
+                    .wrap(Wrap { trim: true }),
+                area,
+            );
+        } else if self.step == Step::Welcome {
             self.render_welcome(frame, area);
         } else if self.step == Step::Review {
             self.render_review(frame, area);
@@ -148,21 +163,18 @@ impl Wizard {
                     "NemoClaw runs an AI agent inside an isolated sandbox.",
                     Style::new().fg(MUTED),
                 )),
+                Line::from(""),
                 Line::from(Span::styled(
-                    "The sandbox limits what the agent can reach on your computer.",
+                    "Choose your agent, inference, and deployment settings.",
+                    Style::new().fg(MUTED),
+                )),
+                Line::from(Span::styled(
+                    "Press Enter to keep each suggested answer.",
                     Style::new().fg(MUTED),
                 )),
                 Line::from(""),
                 Line::from(Span::styled(
-                    "This setup will help you choose:",
-                    Style::new().fg(WHITE),
-                )),
-                welcome_choice("which agent to use"),
-                welcome_choice("Docker or Podman for the sandbox"),
-                welcome_choice("a model provider and model"),
-                Line::from(""),
-                Line::from(Span::styled(
-                    "It writes a deployment YAML file for you to review.",
+                    "Review your choices and save a deployment YAML file.",
                     Style::new().fg(MUTED),
                 )),
                 Line::from(Span::styled(
@@ -175,6 +187,18 @@ impl Wizard {
     }
 
     fn render_choices(&self, frame: &mut Frame<'_>, area: Rect) {
+        let area = if let Some(error) = &self.error {
+            let rows = Layout::vertical([Constraint::Min(1), Constraint::Length(3)]).split(area);
+            frame.render_widget(
+                Paragraph::new(error.as_str())
+                    .style(Style::new().fg(Color::Rgb(255, 170, 70)))
+                    .wrap(Wrap { trim: true }),
+                rows[1],
+            );
+            rows[0]
+        } else {
+            area
+        };
         let labels = self.choice_labels();
         let visible = area.height as usize;
         let start = self
@@ -188,15 +212,30 @@ impl Wizard {
             .take(visible)
             .map(|(index, label)| {
                 let active = index == self.selected;
+                let unavailable = self.choice_unavailable_reason(index);
+                let label = match unavailable {
+                    Some(reason) => format!("{label} (unavailable: {reason})"),
+                    None => label,
+                };
                 Line::from(vec![
                     Span::styled(
-                        if active { "  ●  " } else { "  ○  " },
+                        if unavailable.is_some() {
+                            "  ×  "
+                        } else if active {
+                            "  ●  "
+                        } else {
+                            "  ○  "
+                        },
                         Style::new().fg(if active { BRIGHT_GREEN } else { MUTED }),
                     ),
                     Span::styled(
-                        label,
+                        terminal_text(&label),
                         Style::new()
-                            .fg(if active { WHITE } else { MUTED })
+                            .fg(if active && unavailable.is_none() {
+                                WHITE
+                            } else {
+                                MUTED
+                            })
                             .add_modifier(if active {
                                 Modifier::BOLD
                             } else {
@@ -247,38 +286,113 @@ impl Wizard {
             .guided_answers(&self.capabilities)
             .expect("wizard retains a guided document");
         let mut lines = Vec::new();
-        lines.extend(review_field("Deployment", &answers.deployment_name));
-        lines.extend(review_field("Harness", labels::harness(answers.harness)));
-        lines.extend(review_field("Runtime", labels::runtime(answers.runtime)));
-        lines.extend(review_field(
-            "Provider",
-            labels::inference(answers.inference),
-        ));
-        lines.extend(review_field("API", labels::api(answers.api)));
-        lines.extend(review_field("Model", &answers.model));
-        if matches!(
-            answers.inference,
-            ProviderPreset::OpenAiCompatible | ProviderPreset::AnthropicCompatible
-        ) {
-            lines.extend(review_field("Endpoint", &answers.endpoint));
+        if self.draft.has_delegated_answers() {
+            lines.push(Line::from(
+                "Remaining suggestions chosen with your permission.",
+            ));
         }
-        frame.render_widget(Paragraph::new(lines), area);
+        for credential in &self.facts.credentials {
+            if credential.status == nemoclaw_sdk::discovery::ObservationStatus::Unavailable {
+                lines.push(Line::from(Span::styled(
+                    format!(
+                        "Set {} before applying.",
+                        terminal_text(&credential.reference)
+                    ),
+                    Style::new().fg(Color::Rgb(255, 170, 70)),
+                )));
+            }
+        }
+        lines.extend(review_field("Deployment", &answers.deployment_name));
+        lines.extend(review_field("Harness", labels::harness(&answers.harness)));
+        if let Some(settings) = &answers.harness_settings {
+            for (name, value) in settings {
+                lines.push(Line::from(format!("{name}: {value}")));
+            }
+        }
+
+        lines.extend(review_field("Runtime", labels::runtime(answers.runtime)));
+        let document = self.draft.document();
+        let sandbox = &document.spec.sandboxes[0];
+        let inference = document
+            .sandbox_inference(sandbox)
+            .expect("validated inference");
+        for route in &inference.routes {
+            if inference.routes.len() > 1 {
+                lines.extend(review_field("Route", &route.name));
+            }
+            let provider = document
+                .sandbox_route_provider(sandbox, route)
+                .expect("validated provider");
+            if provider.service_ref.is_none() && inference.routes.len() == 1 {
+                lines.extend(review_field(
+                    "Provider",
+                    labels::inference(answers.inference),
+                ));
+            } else {
+                lines.extend(review_field("Provider", &provider.name));
+            }
+            if let Some(service) = &provider.service_ref {
+                lines.extend(review_field("Managed service", service));
+            }
+            lines.extend(review_field(
+                "API",
+                labels::api(provider.api.unwrap_or_else(|| {
+                    nemoclaw_sdk::config::InferenceApi::for_provider(provider.provider)
+                })),
+            ));
+            lines.extend(review_field("Model", &route.overrides.model));
+            if provider.service_ref.is_none() {
+                lines.extend(review_field("Endpoint", &provider.endpoint));
+            }
+        }
+        lines.extend(review_field("Gateway", document.spec.gateway.endpoint()));
+        if let Some(error) = &self.error {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                error.as_str(),
+                Style::new().fg(Color::Rgb(255, 170, 70)),
+            )));
+        }
+        frame.render_widget(
+            Paragraph::new(lines)
+                .wrap(Wrap { trim: true })
+                .scroll((self.review_scroll, 0)),
+            area,
+        );
     }
 
     fn render_footer(&self, frame: &mut Frame<'_>, area: Rect) {
-        let controls = match self.step {
-            Step::Welcome => "Enter  begin     Esc  exit",
-            Step::Review => "Enter  author YAML     ←  back     Esc  exit",
-            _ if self.is_choice() => "↑/↓  choose     Enter  continue     ←  back     Esc  exit",
-            _ => "Type to replace     Enter  continue     ←  back     Esc  exit",
+        let controls = if self.pending_edit.is_some() {
+            "Enter  revise affected answers     ←  keep current answers     Esc  exit"
+        } else {
+            match self.step {
+                Step::Welcome => "Enter  begin     Esc  exit",
+                Step::Review => "Enter  author YAML     ↑/↓  scroll     ←  back     Esc  exit",
+                _ if self.is_choice() => {
+                    "↑/↓  choose     Enter  continue     ←  back     Esc  exit"
+                }
+                _ => "Type to replace     Enter  continue     ←  back     Esc exit",
+            }
         };
-        let rows = Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).split(area);
+        let rows = Layout::vertical([
+            Constraint::Length(1),
+            Constraint::Length(u16::from(self.can_offer_delegation())),
+            Constraint::Length(1),
+        ])
+        .split(area);
         frame.render_widget(
             Paragraph::new(controls).style(Style::new().fg(MUTED)),
             rows[0],
         );
+        if self.can_offer_delegation() {
+            frame.render_widget(
+                Paragraph::new("Ctrl+D  choose remaining settings and review")
+                    .style(Style::new().fg(MUTED)),
+                rows[1],
+            );
+        }
         if let Some((position, total)) = self.progress() {
-            let width = rows[1].width as usize;
+            let width = rows[2].width as usize;
             let filled = width.saturating_mul(position) / total;
             frame.render_widget(
                 Paragraph::new(Line::from(vec![
@@ -288,7 +402,7 @@ impl Wizard {
                         Style::new().fg(DEEP_GREEN),
                     ),
                 ])),
-                rows[1],
+                rows[2],
             );
         }
     }
@@ -302,9 +416,13 @@ impl Wizard {
         Some((position, steps.len()))
     }
 
-    fn title(&self) -> &'static str {
+    fn title(&self) -> String {
+        if let Some(question) = self.setting_question() {
+            return question.title;
+        }
         match self.step {
             Step::Harness => "Choose your agent harness",
+            Step::Route => "Choose a model route to configure",
             Step::Runtime => "Where should the sandbox run?",
             Step::Inference => "How should your agent reach its model?",
             Step::Api => "Which inference API should the harness speak?",
@@ -313,11 +431,37 @@ impl Wizard {
             Step::Model => "Choose the model",
             _ => "",
         }
+        .into()
     }
 
-    fn help(&self) -> &'static str {
+    fn help(&self) -> String {
+        if matches!(
+            self.step,
+            Step::Inference | Step::Api | Step::Endpoint | Step::Model
+        ) && self
+            .draft
+            .route_names()
+            .is_ok_and(|routes| routes.len() > 1)
+        {
+            return format!(
+                "Settings for route {}. Press Enter to keep its current value.",
+                terminal_text(self.draft.current_route().unwrap_or_default())
+            );
+        }
+        if let Some(question) = self.setting_question() {
+            return format!(
+                "{}{}",
+                question.description,
+                if question.required {
+                    " Required."
+                } else {
+                    " Optional; leave empty to skip."
+                }
+            );
+        }
         match self.step {
             Step::Harness => "The harness is the agent environment NemoClaw installs and isolates.",
+            Step::Route => "Each route keeps its own provider, model, and settings.",
             Step::Runtime => "The runtime owns the gateway and local sandbox resources.",
             Step::Inference => "Hosted inference keeps model compute outside the sandbox.",
             Step::Api => "Only APIs compatible with the selected harness are shown.",
@@ -326,24 +470,31 @@ impl Wizard {
             Step::Model => "Choose a suggestion or enter another model identifier.",
             _ => "",
         }
+        .into()
     }
 }
 
-fn welcome_choice(label: &'static str) -> Line<'static> {
-    Line::from(vec![
-        Span::styled("  • ", Style::new().fg(BRIGHT_GREEN)),
-        Span::styled(label, Style::new().fg(WHITE)),
-    ])
+// External labels are text; escaping must not alter the selected identity.
+fn terminal_text(value: &str) -> String {
+    value
+        .chars()
+        .flat_map(|character| {
+            if character.is_control()
+                || matches!(character, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+            {
+                character.escape_default().collect::<Vec<_>>()
+            } else {
+                vec![character]
+            }
+        })
+        .collect()
 }
 
-fn review_field<'a>(label: &'a str, value: &'a str) -> [Line<'a>; 2] {
-    [
-        Line::from(Span::styled(label, Style::new().fg(MUTED))),
-        Line::from(vec![
-            Span::raw("  "),
-            Span::styled(value, Style::new().fg(WHITE)),
-        ]),
-    ]
+fn review_field<'a>(label: &'a str, value: &'a str) -> [Line<'a>; 1] {
+    [Line::from(vec![
+        Span::styled(format!("{label}: "), Style::new().fg(MUTED)),
+        Span::styled(terminal_text(value), Style::new().fg(WHITE)),
+    ])]
 }
 
 fn texture_line(width: usize) -> Line<'static> {
@@ -359,4 +510,16 @@ fn texture_line(width: usize) -> Line<'static> {
             })
             .collect::<Vec<_>>(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn discovered_identifiers_are_escaped_only_for_terminal_display() {
+        let identifier = "org.fixture.\u{1b}[31m\n\u{202e}agent";
+        let line = super::review_field("Harness", identifier);
+        let displayed = line[0].spans[1].content.as_ref();
+        assert_eq!(displayed, "org.fixture.\\u{1b}[31m\\n\\u{202e}agent");
+        assert_eq!(identifier, "org.fixture.\u{1b}[31m\n\u{202e}agent");
+    }
 }

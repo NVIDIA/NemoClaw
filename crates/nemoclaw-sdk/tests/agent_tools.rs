@@ -40,13 +40,16 @@ fn separate_sandboxes_preserve_each_agents_restrictions_in_launch_and_yaml() {
             .map(|k| (k.into(), format!("{k}-generation")))
             .into();
         let rows = targets(&d, &g).unwrap();
-        let sandboxes: Vec<_> = rows.iter().filter(|row| row.kind == "sandbox").collect();
+        let sandboxes: Vec<_> = rows
+            .iter()
+            .filter(|row| row.kind == "agent_configuration")
+            .collect();
         assert_eq!(sandboxes.len(), count);
         for sandbox in sandboxes {
-            let settings: Value = serde_json::from_str(&sandbox.values["inference_json"]).unwrap();
-            assert_eq!(settings["agents"].as_array().unwrap().len(), 1);
+            let settings: Value = serde_json::from_str(&sandbox.values["config_json"]).unwrap();
+            assert!(!settings["metadata"]["name"].as_str().unwrap().is_empty());
             if sandbox.values["name"] != "sandbox-0" {
-                assert_eq!(settings["agents"][0]["tools"], json!({"allow":["read"]}));
+                assert_eq!(settings["tools"], json!({"enabled":["read"]}));
             }
         }
     }
@@ -63,7 +66,6 @@ fn invalid_sandboxes_and_permissions_fail_before_planning() {
     for tools in [
         json!({}),
         json!({"allow":[]}),
-        json!({"allow":["exec"]}),
         json!({"allow":["read","read"]}),
         json!({"allow":["read"],"alsoAllow":["exec"]}),
         json!(null),
@@ -83,60 +85,23 @@ fn invalid_sandboxes_and_permissions_fail_before_planning() {
 }
 
 #[test]
-fn disclosure_round_trips_and_is_independent_between_gateways() {
-    let schema = jsonschema::validator_for(&input_schema()).unwrap();
-    for mode in ["progressive", "direct"] {
-        let mut v = input(3);
-        v["spec"]["sandboxes"][0]["agent"]["tools"] = json!({"disclosure":mode});
-        let d = parse(&v).expect("disclosure must parse");
-        assert!(schema.is_valid(&v));
-        assert_eq!(Document::parse(d.yaml().unwrap().as_bytes()).unwrap(), d);
-        let g: Generations = ["workspace", "provider", "sandbox"]
-            .map(|k| (k.into(), format!("{k}-generation")))
-            .into();
-        let rows = targets(&d, &g).unwrap();
-        let settings: Value = serde_json::from_str(&rows[3].values["inference_json"]).unwrap();
-        assert_eq!(settings["agents"][0]["tools"]["disclosure"], mode);
+fn disclosure_belongs_to_opaque_native_settings() {
+    let mut value = input(2);
+    for (i, mode) in ["progressive", "direct"].iter().enumerate() {
+        value["spec"]["sandboxes"][i]["harness"]["settings"] = json!({"disclosure":mode});
     }
-    for tools in [
-        json!({"disclosure":"DIRECT"}),
-        json!({"disclosure":null}),
-        json!({"disclosure":"other"}),
-        json!({"allow":["read"],"disclosure":"direct"}),
-    ] {
-        let mut v = input(1);
-        v["spec"]["sandboxes"][0]["agent"]["tools"] = tools;
-        assert!(parse(&v).is_err());
-        assert!(!schema.is_valid(&v));
+    let doc = parse(&value).unwrap();
+    for (i, mode) in ["progressive", "direct"].iter().enumerate() {
+        let config =
+            nemoclaw_sdk::fabric_config::for_sandbox(&doc, &doc.spec.sandboxes[i]).unwrap();
+        assert_eq!(config["harness"]["settings"]["disclosure"], *mode);
     }
-    let mut v = input(3);
-    v["spec"]["sandboxes"][0]["agent"]["tools"] = json!({"disclosure":"direct"});
-    v["spec"]["sandboxes"][1]["agent"]["tools"] = json!({"disclosure":"progressive"});
-    let doc = parse(&v).expect("separate gateways accept independent disclosure modes");
-    let generations = ["workspace", "provider", "sandbox"]
-        .map(|key| (key.into(), "a".repeat(32)))
-        .into();
-    let rows = targets(&doc, &generations).unwrap();
-    for (name, mode) in [("sandbox-0", "direct"), ("sandbox-1", "progressive")] {
-        let row = rows
-            .iter()
-            .find(|row| row.kind == "sandbox" && row.values["name"] == name)
-            .unwrap();
-        let settings: Value = serde_json::from_str(&row.values["inference_json"]).unwrap();
-        assert_eq!(settings["agents"][0]["tools"]["disclosure"], mode);
-    }
-    v["spec"]["sandboxes"][1]["agent"]
-        .as_object_mut()
-        .unwrap()
-        .remove("tools");
-    assert!(
-        parse(&v).is_ok(),
-        "omitted disclosure is independent of the other gateway"
-    );
+    value["spec"]["sandboxes"][0]["agent"]["tools"] = json!({"disclosure":"direct"});
+    assert!(parse(&value).is_err());
 }
 
 #[test]
-fn native_read_only_policies_reach_deep_agents_and_pi_without_disclosure_modes() {
+fn tool_choices_are_preserved_independently_of_harness_identity() {
     let schema = jsonschema::validator_for(&input_schema()).unwrap();
     for harness in ["deepagents", "pi"] {
         let mut value = input(1);
@@ -151,17 +116,17 @@ fn native_read_only_policies_reach_deep_agents_and_pi_without_disclosure_modes()
         let settings: Value = serde_json::from_str(
             &rows
                 .iter()
-                .find(|row| row.kind == "sandbox")
+                .find(|row| row.kind == "agent_configuration")
                 .unwrap()
-                .values["inference_json"],
+                .values["config_json"],
         )
         .unwrap();
-        assert_eq!(settings["agents"][0]["tools"], json!({"allow":["read"]}));
+        assert_eq!(settings["tools"], json!({"enabled":["read"]}));
         for disclosure in ["direct", "progressive"] {
             value["spec"]["sandboxes"][0]["agent"]["tools"] = json!({"disclosure":disclosure});
             assert!(parse(&value).is_err());
-            // Tool compatibility depends on the resolved harness, including harnessRef.
-            assert!(schema.is_valid(&value));
+            // Native disclosure belongs to harness.settings.
+            assert!(!schema.is_valid(&value));
         }
     }
 }
@@ -186,11 +151,12 @@ fn deep_agents_use_separate_sandboxes_with_stable_names_and_independent_models()
     let rows = targets(&doc, &generations).unwrap();
     let sandbox = rows
         .iter()
-        .find(|row| row.kind == "sandbox" && row.values["name"] == "sandbox-1")
+        .find(|row| row.kind == "agent_configuration" && row.values["name"] == "sandbox-1")
         .unwrap();
-    assert_eq!(sandbox.values["agent_name"], "agent-1");
-    let settings: Value = serde_json::from_str(&sandbox.values["inference_json"]).unwrap();
-    assert_eq!(settings["connection"]["model"], "other-model");
+    let configuration: Value = serde_json::from_str(&sandbox.values["config_json"]).unwrap();
+    assert_eq!(configuration["metadata"]["name"], "agent-1");
+    let settings: Value = serde_json::from_str(&sandbox.values["config_json"]).unwrap();
+    assert_eq!(settings["models"]["default"]["model"], "other-model");
     value["spec"]["sandboxes"].as_array_mut().unwrap().reverse();
     assert_eq!(
         targets(&parse(&value).unwrap(), &generations).unwrap(),

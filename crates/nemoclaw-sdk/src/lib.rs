@@ -5,6 +5,10 @@
 
 use std::fmt;
 
+pub mod fabric_capabilities;
+pub mod fabric_catalog;
+pub mod fabric_config;
+
 mod artifact_pins {
     include!(concat!(env!("OUT_DIR"), "/artifact_pins.rs"));
 }
@@ -141,7 +145,10 @@ pub mod bundle;
 mod process;
 pub use tokio_util::sync::CancellationToken;
 mod deployment;
-pub use deployment::{Change, Deployment, OperationResult, Outcome, Progress, StepOutcome};
+pub use deployment::{
+    Change, Deployment, DiscoveryObservation, DiscoveryReport, DiscoveryScope, DiscoveryTarget,
+    OperationResult, Outcome, Progress, ResourceInventoryEntry, StepOutcome,
+};
 
 pub mod snapshot;
 
@@ -150,6 +157,7 @@ pub mod docker;
 pub mod managed;
 
 pub mod hardware;
+pub mod hardware_discovery;
 
 mod tofu_ui;
 
@@ -160,3 +168,13 @@ pub use download::{
 };
 
 mod docker_compute;
+
+pub mod discovery_session;
+
+/// Read-only capability observations for authoring and planning.
+pub mod discovery;
+
+mod discovery_graph;
+
+/// Read-only inference metadata and direct credential availability.
+pub mod inference_discovery;

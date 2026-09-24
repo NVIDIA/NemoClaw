@@ -221,6 +221,7 @@ async fn production_provider_applies_refreshes_and_destroys_the_reference_graph(
 
     graph["provider"]["nemoclaw"]["destroy"] = json!(true);
     graph.as_object_mut().unwrap().remove("data");
+    graph.as_object_mut().unwrap().remove("output");
     graph["resource"]["nemoclaw_workspace"]["deployment"]
         .as_object_mut()
         .unwrap()
@@ -228,6 +229,7 @@ async fn production_provider_applies_refreshes_and_destroys_the_reference_graph(
     graph["resource"]["nemoclaw_workspace"]["deployment"]["lifecycle"] =
         json!({"prevent_destroy":true});
     for kind in [
+        "nemoclaw_agent_configuration",
         "nemoclaw_sandbox",
         "nemoclaw_provider_profile",
         "nemoclaw_provider",

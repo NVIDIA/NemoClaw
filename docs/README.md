@@ -76,7 +76,7 @@ The design decision defines current invariants; historical test results apply on
 | SDK ownership, durable state, staged apply, and retained storage | [Architecture](design/architecture.md) |
 | Apply stages, component handoffs, and agent harness startup | [Apply flow](design/apply-flow.md) |
 | Process lifetime, watchdog recovery, and agent ownership | [Runtime design](design/runtime.md) |
-| Proposed shared Fabric management contract and two-adapter experiment | [Fabric management](design/fabric-management.md) |
+| Fabric runtime ownership and observation limits | [Fabric management](design/fabric-management.md) |
 | Connections, engine identity, inference traffic, and host capacity | [Execution targets](design/execution-targets.md) |
 | Artifact ownership, preparation verification, and output manifests | [Recipe design](design/recipes.md) |
 | Current engine constraints and source locations | [Execution-engine assumptions](engine-assumptions.md) |

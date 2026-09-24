@@ -1,6 +1,5 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use nemoclaw_sdk::config::HarnessKind;
 
 use nemoclaw_e2e::{
     assert_same_deployment_state, assert_same_managed_resources, openshell::Fixture,
@@ -64,7 +63,13 @@ async fn cli_terminal_outputs_preserve_lifecycle_and_json_contract() {
     let effects = fixture.state.lock().unwrap().effects;
     let planned = invoke("plan", "json");
     let result: serde_json::Value = serde_json::from_slice(&planned.stdout).unwrap();
-    assert_eq!(result["complete"], true);
+    assert_eq!(result["complete"], false);
+    assert!(
+        !result["discovery"]["targets"]
+            .as_object()
+            .unwrap()
+            .is_empty()
+    );
     assert_eq!(result["changes"], serde_json::json!([]));
     let applied = invoke("apply", "text");
     let summary = String::from_utf8(applied.stdout).unwrap();
@@ -304,7 +309,7 @@ async fn interrupted_create_preserves_pending_targets_allows_unrelated_intent_an
     let effects = fixture.state.lock().unwrap().effects;
     assert_eq!(effects, 4);
     let preview = deployment.plan_destroy(&cancel).await.unwrap();
-    assert_eq!(preview.changes.len(), 3);
+    assert_eq!(preview.changes.len(), 4);
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
     let destroyed = Command::new(
         bundle
@@ -337,7 +342,7 @@ async fn interrupted_create_preserves_pending_targets_allows_unrelated_intent_an
             .unwrap()
             .changes
             .len(),
-        3
+        4
     );
 }
 
@@ -373,8 +378,8 @@ async fn separate_agent_sandboxes_cli_export_reapply_and_policy_drift() {
         let mut sandbox = primary.clone();
         sandbox.name = name.into();
         sandbox.agent.name = name.into();
-        sandbox.agent.tools = Some(nemoclaw_sdk::config::AgentTools::ReadOnly {
-            allow: [nemoclaw_sdk::config::AllowedTool::Read],
+        sandbox.agent.tools = Some(nemoclaw_sdk::config::AgentTools {
+            allow: vec!["read".into()],
         });
         document.spec.sandboxes.push(sandbox);
     }
@@ -384,15 +389,11 @@ async fn separate_agent_sandboxes_cli_export_reapply_and_policy_drift() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
 async fn tool_disclosure_cli_export_reapply_and_drift() {
-    for mode in [
-        nemoclaw_sdk::config::ToolDisclosure::Direct,
-        nemoclaw_sdk::config::ToolDisclosure::Progressive,
-    ] {
+    for mode in ["direct".to_owned(), "progressive".to_owned()] {
         let mut document =
             Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes())
                 .unwrap();
-        document.spec.sandboxes[0].agent.tools =
-            Some(nemoclaw_sdk::config::AgentTools::Disclosure { disclosure: mode });
+        document.spec.sandboxes[0].harness.as_mut().unwrap().settings = Some(serde_json::from_value(serde_json::json!({"native_config":{"tools":{"toolSearch":if mode == "direct" { serde_json::json!(false) } else { serde_json::json!({"mode":"tools","searchDefaultLimit":8,"maxSearchLimit":20}) }}}})).unwrap());
         // Exercise the existing launch-setting drift assertions as well as export/reapply.
         document.spec.inference_providers[0].api =
             Some(nemoclaw_sdk::config::InferenceApi::OpenaiCompletions);
@@ -413,8 +414,10 @@ async fn execution_settings_cli_export_reapply_and_drift() {
             .unwrap()
             .execution = Some(nemoclaw_sdk::config::AgentExecution {
             timeout_seconds: Some(900),
-            heartbeat_every: heartbeat.map(String::from),
         });
+        if let Some(every) = heartbeat {
+            document.spec.sandboxes[0].harness.as_mut().unwrap().settings = Some(serde_json::from_value(serde_json::json!({"native_config":{"agents":{"defaults":{"heartbeat":{"every":every,"isolatedSession":true}}}}})).unwrap());
+        }
         lifecycle(&document.yaml().unwrap()).await;
     }
 }
@@ -428,10 +431,10 @@ async fn observability_cli_export_reapply_and_drift() {
         .harness
         .as_mut()
         .unwrap()
-        .observability = Some(
+        .settings = Some(
         serde_json::from_value(serde_json::json!({
-        "otlp":{"enabled":true,"endpoint":"http://host.openshell.internal:4318",
-                "serviceName":"agent ${fixture} %{literal}","sampleRate":0.5}}))
+        "native_config":{"diagnostics":{"enabled":true,"otel":{"enabled":true,"endpoint":"http://host.openshell.internal:4318",
+                "serviceName":"agent ${fixture} %{literal}","sampleRate":0.5}}}}))
         .unwrap(),
     );
     lifecycle(&document.yaml().unwrap()).await;
@@ -726,7 +729,14 @@ async fn lifecycle_with_rejected_annotations(input: &str, reject_annotations: bo
         let state = fs::read(directory.path().join("terraform.tfstate")).unwrap();
         let mut broadened = document.clone();
         broadened.spec.sandboxes[1].agent.tools = None;
-        assert!(deployment.plan(&broadened, &cancel).await.is_err());
+        let plan = deployment.plan(&broadened, &cancel).await.unwrap();
+        assert_eq!(plan.changes.len(), 1);
+        assert!(
+            plan.changes[0]
+                .resource
+                .starts_with("nemoclaw_agent_configuration.")
+        );
+        assert_eq!(plan.changes[0].actions, ["update"]);
         fixture.state.lock().unwrap().exec_exit = 2;
         assert!(deployment.plan(&document, &cancel).await.is_err());
         assert!(deployment.export(&cancel).await.is_err());
@@ -750,7 +760,7 @@ async fn lifecycle_with_rejected_annotations(input: &str, reject_annotations: bo
             .harness
             .as_mut()
             .unwrap()
-            .observability
+            .settings
             .is_some()
     {
         let key = format!(
@@ -758,13 +768,19 @@ async fn lifecycle_with_rejected_annotations(input: &str, reject_annotations: bo
             document.workspace(),
             document.spec.sandboxes[0].name
         );
-        let original = fixture.state.lock().unwrap().sandboxes[&key]
-            .spec
+        let sandbox_id = fixture.state.lock().unwrap().sandboxes[&key]
+            .metadata
             .as_ref()
             .unwrap()
-            .environment["NEMOCLAW_INFERENCE_CONFIG"]
+            .id
             .clone();
-        assert!(!original.contains("fixture-only-inference-key"));
+        let original = fixture.state.lock().unwrap().fabric_configurations[&sandbox_id].clone();
+        assert_eq!(
+            original,
+            nemoclaw_sdk::fabric_config::for_sandbox(&document, &document.spec.sandboxes[0])
+                .unwrap()
+        );
+        assert!(!original.to_string().contains("fixture-only-inference-key"));
         assert!(
             fixture
                 .state
@@ -772,63 +788,40 @@ async fn lifecycle_with_rejected_annotations(input: &str, reject_annotations: bo
                 .unwrap()
                 .exec_calls
                 .iter()
-                .any(|cmd| cmd.ends_with(&["--inference".into(), original.clone()]))
+                .any(|command| {
+                    command
+                        .get(2)
+                        .is_some_and(|operation| operation == "configure")
+                        && command
+                            .get(4)
+                            .and_then(|value| serde_json::from_str::<serde_json::Value>(value).ok())
+                            .as_ref()
+                            == Some(&original)
+                })
         );
-        let mut changed = document.clone();
-        if let Some(execution) = &mut changed.spec.sandboxes[0]
-            .harness
-            .as_mut()
-            .unwrap()
-            .execution
-        {
-            execution.timeout_seconds = Some(1200);
-        } else if let Some(nemoclaw_sdk::config::AgentObservability::Otlp(otlp)) =
-            &mut changed.spec.sandboxes[0]
-                .harness
-                .as_mut()
-                .unwrap()
-                .observability
-        {
-            otlp.sample_rate = 1.into();
-        } else {
-            changed.inference_provider_mut().unwrap().api = Some(
-                if document.inference_provider().unwrap().api
-                    == Some(nemoclaw_sdk::config::InferenceApi::OpenaiCompletions)
-                {
-                    nemoclaw_sdk::config::InferenceApi::OpenaiResponses
-                } else {
-                    nemoclaw_sdk::config::InferenceApi::OpenaiCompletions
-                },
-            );
-        }
-        assert!(deployment.plan(&changed, &cancel).await.is_err());
+        // Native settings belong to the owned Fabric configuration. Refresh must
+        // detect drift without mutating either the host or durable deployment.
         fixture
             .state
             .lock()
             .unwrap()
-            .sandboxes
-            .get_mut(&key)
-            .unwrap()
-            .spec
-            .as_mut()
-            .unwrap()
-            .environment
-            .remove("NEMOCLAW_INFERENCE_CONFIG");
+            .fabric_configurations
+            .get_mut(&sandbox_id)
+            .unwrap()["models"]["default"]["model"] = serde_json::json!("foreign-model");
         assert!(deployment.export(&cancel).await.is_err());
-        assert!(deployment.plan(&document, &cancel).await.is_err());
+        let plan = deployment.plan(&document, &cancel).await.unwrap();
+        assert!(
+            plan.changes
+                .iter()
+                .any(|change| change.resource.starts_with("nemoclaw_agent_configuration."))
+        );
         assert_eq!(fixture.state.lock().unwrap().effects, effects);
         fixture
             .state
             .lock()
             .unwrap()
-            .sandboxes
-            .get_mut(&key)
-            .unwrap()
-            .spec
-            .as_mut()
-            .unwrap()
-            .environment
-            .insert("NEMOCLAW_INFERENCE_CONFIG".into(), original);
+            .fabric_configurations
+            .insert(sandbox_id, original);
     }
     if matches!(
         document.spec.sandboxes[0].network.policy,
@@ -932,7 +925,7 @@ async fn readiness_and_observation_failures_retain_bindings_and_recover_without_
         .await
         .unwrap_err()
         .to_string();
-    assert!(error.contains("ControlSupervisorExited"));
+    assert!(error.contains("ControlSupervisorExited"), "{error}");
     assert!(!error.contains("private-backend-diagnostic"));
     let state_path = directory.path().join("terraform.tfstate");
     let established = fs::read(&state_path).unwrap();
@@ -940,7 +933,7 @@ async fn readiness_and_observation_failures_retain_bindings_and_recover_without_
     assert_eq!(effects, 4);
     let intent: serde_json::Value =
         serde_json::from_slice(&fs::read(directory.path().join("intent.json")).unwrap()).unwrap();
-    assert_eq!(intent["pending"], false);
+    assert_eq!(intent["pending"], true);
     assert_eq!(intent["succeeded"], false);
     let error = deployment
         .apply(&document, &cancel)
@@ -954,17 +947,27 @@ async fn readiness_and_observation_failures_retain_bindings_and_recover_without_
     for sandbox in fixture.state.lock().unwrap().sandboxes.values_mut() {
         sandbox.status.as_mut().unwrap().phase = openshell_core::proto::SandboxPhase::Ready as i32;
     }
-    assert!(
-        deployment
-            .apply(&document, &cancel)
-            .await
-            .unwrap()
-            .changes
-            .is_empty()
-    );
+    let recovery = deployment.apply(&document, &cancel).await.unwrap();
+    assert_eq!(recovery.changes.len(), 1);
+    assert!(recovery.changes[0].resource.contains("agent_configuration"));
+    let intent: serde_json::Value =
+        serde_json::from_slice(&fs::read(directory.path().join("intent.json")).unwrap()).unwrap();
+    assert_eq!(intent["pending"], false);
+    assert_eq!(intent["succeeded"], true);
     let recovered = fs::read(&state_path).unwrap();
-    assert_same_managed_resources(&recovered, &established);
     let observed: serde_json::Value = serde_json::from_slice(&recovered).unwrap();
+    let mut existing_resources = observed.clone();
+    let resources = existing_resources["resources"].as_array_mut().unwrap();
+    let configuration_count = resources
+        .iter()
+        .filter(|resource| resource["type"] == "nemoclaw_agent_configuration")
+        .count();
+    assert_eq!(configuration_count, 1);
+    resources.retain(|resource| resource["type"] != "nemoclaw_agent_configuration");
+    assert_same_managed_resources(
+        &serde_json::to_vec(&existing_resources).unwrap(),
+        &established,
+    );
     let readiness = observed["resources"]
         .as_array()
         .unwrap()
@@ -1033,7 +1036,7 @@ async fn destroy_does_not_require_the_inference_credential_or_rewrite_its_refere
             .unwrap()
             .changes
             .len(),
-        3
+        4
     );
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
     assert_eq!(
@@ -1266,12 +1269,12 @@ async fn mixed_sandboxes_reorder_add_recover_export_and_destroy_independently() 
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
     let mut other = document.spec.sandboxes[0].clone();
     other.name = "research".into();
-    other.harness.as_mut().unwrap().kind = HarnessKind::DeepAgents;
+    other.harness.as_mut().unwrap().kind = "nvidia.fabric.langchain.deepagents".parse().unwrap();
     document.spec.sandboxes.push(other.clone());
     let deployment = Deployment::new(directory.path(), &bundle);
     let cancel = CancellationToken::new();
     let preview = deployment.plan(&document, &cancel).await.unwrap();
-    assert_eq!(preview.changes.len(), 5);
+    assert_eq!(preview.changes.len(), 7);
     assert_eq!(fixture.state.lock().unwrap().effects, 0);
     let applied = deployment.apply(&document, &cancel).await.unwrap();
     assert_eq!(applied.health.len(), 2);
@@ -1298,8 +1301,19 @@ async fn mixed_sandboxes_reorder_add_recover_export_and_destroy_independently() 
     other.name = "third".into();
     document.spec.sandboxes.push(other);
     let added = deployment.plan(&document, &cancel).await.unwrap();
-    assert_eq!(added.changes.len(), 1);
-    assert_eq!(added.changes[0].resource, "nemoclaw_sandbox.third");
+    assert_eq!(added.changes.len(), 2);
+    assert!(
+        added
+            .changes
+            .iter()
+            .any(|change| change.resource == "nemoclaw_sandbox.third")
+    );
+    assert!(
+        added
+            .changes
+            .iter()
+            .any(|change| change.resource == "nemoclaw_agent_configuration.third")
+    );
     fixture.state.lock().unwrap().sandbox_phase = Some(openshell_core::proto::SandboxPhase::Error);
     assert!(deployment.apply(&document, &cancel).await.is_err());
     {

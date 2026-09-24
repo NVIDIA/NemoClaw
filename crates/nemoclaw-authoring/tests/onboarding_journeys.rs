@@ -38,12 +38,12 @@ fn an_author_can_start_with_every_supported_agent_experience() {
 
     assert_eq!(
         choices(&draft, &capabilities, EditableField::Harness),
-        [
-            FieldValue::Harness(HarnessKind::OpenClaw),
-            FieldValue::Harness(HarnessKind::Hermes),
-            FieldValue::Harness(HarnessKind::DeepAgents),
-            FieldValue::Harness(HarnessKind::Pi),
-        ]
+        capabilities
+            .harnesses()
+            .iter()
+            .cloned()
+            .map(FieldValue::Harness)
+            .collect::<Vec<_>>()
     );
 }
 
@@ -62,6 +62,7 @@ fn an_openclaw_author_can_choose_the_complete_remote_provider_menu() {
             FieldValue::Inference(ProviderPreset::Anthropic),
             FieldValue::Inference(ProviderPreset::AnthropicCompatible),
             FieldValue::Inference(ProviderPreset::Gemini),
+            FieldValue::Inference(ProviderPreset::Nous),
         ]
     );
 }
@@ -193,7 +194,7 @@ fn a_custom_endpoint_author_enters_the_endpoint_and_model_but_not_internal_names
 }
 
 #[test]
-fn hermes_adds_the_nous_provider_to_the_shared_remote_menu() {
+fn hermes_can_use_the_shared_nous_provider() {
     let capabilities = Capabilities::available();
     let mut draft = begin(&capabilities);
 
@@ -201,16 +202,16 @@ fn hermes_adds_the_nous_provider_to_the_shared_remote_menu() {
         &mut draft,
         &capabilities,
         EditableField::Harness,
-        FieldValue::Harness(HarnessKind::Hermes),
+        FieldValue::Harness("nvidia.fabric.hermes".parse::<HarnessKind>().unwrap()),
     );
 
     let providers = choices(&draft, &capabilities, EditableField::Inference);
-    assert!(providers.contains(&FieldValue::Inference(ProviderPreset::HermesProvider)));
+    assert!(providers.contains(&FieldValue::Inference(ProviderPreset::Nous)));
     choose(
         &mut draft,
         &capabilities,
         EditableField::Inference,
-        FieldValue::Inference(ProviderPreset::HermesProvider),
+        FieldValue::Inference(ProviderPreset::Nous),
     );
     let provider = draft.document().inference_provider().unwrap();
     assert_eq!(
@@ -225,34 +226,29 @@ fn hermes_adds_the_nous_provider_to_the_shared_remote_menu() {
 }
 
 #[test]
-fn deep_agents_and_pi_receive_only_protocols_their_native_clients_support() {
+fn explicit_protocol_selection_is_preserved_without_native_omission_rules() {
     let capabilities = Capabilities::available();
     let mut draft = begin(&capabilities);
-
-    for harness in [HarnessKind::DeepAgents, HarnessKind::Pi] {
-        choose(
-            &mut draft,
-            &capabilities,
-            EditableField::Harness,
-            FieldValue::Harness(harness),
-        );
-        assert_eq!(
-            choices(&draft, &capabilities, EditableField::Api),
-            [FieldValue::Api(InferenceApi::OpenaiCompletions)]
-        );
-        assert!(
-            !choices(&draft, &capabilities, EditableField::Inference)
-                .contains(&FieldValue::Inference(ProviderPreset::Anthropic))
-        );
-        assert_eq!(
-            draft.document().spec.sandboxes[0]
-                .harness
-                .as_ref()
-                .unwrap()
-                .kind,
-            harness
-        );
-    }
+    choose(
+        &mut draft,
+        &capabilities,
+        EditableField::Harness,
+        FieldValue::Harness("nvidia.fabric.pi".parse::<HarnessKind>().unwrap()),
+    );
+    choose(
+        &mut draft,
+        &capabilities,
+        EditableField::Api,
+        FieldValue::Api(InferenceApi::OpenaiResponses),
+    );
+    assert_eq!(
+        draft.document().inference_provider().unwrap().api,
+        Some(InferenceApi::OpenaiResponses)
+    );
+    assert_eq!(
+        draft.guided_answers(&capabilities).unwrap().api,
+        InferenceApi::OpenaiResponses
+    );
 }
 
 #[test]
@@ -281,18 +277,22 @@ fn an_author_can_choose_a_rootless_podman_sandbox_without_reanswering_inference(
 }
 
 #[test]
-fn every_advertised_scenario_authors_valid_yaml_and_can_resume_the_same_journey() {
+fn endpoint_presets_author_valid_yaml_and_can_resume_the_same_journey() {
     let capabilities = Capabilities::available();
 
-    for scenario in capabilities.scenarios() {
-        let answers = Answers::onboarding_defaults().for_scenario(scenario);
-        let authored = Session::with_uid(UID)
-            .unwrap()
-            .project(&capabilities, &answers)
-            .unwrap();
-        let reopened = Draft::from_yaml(authored.yaml().as_bytes()).unwrap();
+    for provider in ProviderPreset::ALL {
+        for api in provider.apis() {
+            let mut answers = Answers::onboarding_defaults().for_provider(provider);
+            answers.api = *api;
+            answers.provider_api = Some(*api);
+            let authored = Session::with_uid(UID)
+                .unwrap()
+                .project(&capabilities, &answers)
+                .unwrap();
+            let reopened = Draft::from_yaml(authored.yaml().as_bytes()).unwrap();
 
-        assert_eq!(reopened.document(), authored.document());
-        assert_eq!(reopened.guided_answers(&capabilities).unwrap(), answers);
+            assert_eq!(reopened.document(), authored.document());
+            assert_eq!(reopened.guided_answers(&capabilities).unwrap(), answers);
+        }
     }
 }

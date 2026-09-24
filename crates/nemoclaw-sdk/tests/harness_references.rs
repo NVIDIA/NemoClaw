@@ -60,13 +60,13 @@ fn shared_harness_configuration_compiles_identically_and_survives_export() {
         let runtime: Value = serde_json::from_str(
             &rows
                 .iter()
-                .find(|row| row.kind == "sandbox")
+                .find(|row| row.kind == "agent_configuration")
                 .unwrap()
-                .values["inference_json"],
+                .values["config_json"],
         )
         .unwrap();
-        assert_eq!(runtime["execution"]["timeoutSeconds"], 900);
-        assert_eq!(runtime["agents"].as_array().unwrap().len(), 1);
+        assert_eq!(runtime["runtime"]["timeout_seconds"], 900);
+        assert_eq!(runtime["metadata"]["name"], "main");
     }
 }
 #[test]
@@ -89,7 +89,7 @@ fn sandbox_harness_selection_rejects_ambiguity_agent_selection_and_unsupported_c
     let mut limited = input();
     limited["spec"]["gateway"] =
         json!({"management":"external","endpoint":"http://127.0.0.1:8080"});
-    limited["spec"]["sandboxes"][0]["harness"] = json!({"kind":"hermes"});
+    limited["spec"]["sandboxes"][0]["harness"] = json!({"kind":"nvidia.fabric.hermes"});
     let mut other = limited["spec"]["sandboxes"][0]["agent"].clone();
     other["name"] = json!("other");
     limited["spec"]["sandboxes"][0]["agents"] = json!([other]);
@@ -105,7 +105,7 @@ fn sandbox_harness_selection_rejects_ambiguity_agent_selection_and_unsupported_c
 #[test]
 fn unused_harness_is_validated_without_granting_access() {
     let mut value = input();
-    value["spec"]["harnesses"] = json!({"unused":{"kind":"openclaw", "observability":{"otlp":{"enabled":true,"endpoint":"http://host.openshell.internal:4318","serviceName":"unused","sampleRate":1.0}}}});
+    value["spec"]["harnesses"] = json!({"unused":{"kind":"openclaw", "settings":{"observability":{"otlp":{"enabled":true,"endpoint":"http://host.openshell.internal:4318","serviceName":"unused","sampleRate":1.0}}}}});
     let doc = Document::parse(value.to_string().as_bytes()).unwrap();
     let generations: Generations = ["workspace", "provider", "sandbox"]
         .map(|k| (k.into(), "a".repeat(32)))
@@ -118,20 +118,20 @@ fn unused_harness_is_validated_without_granting_access() {
         )
         .unwrap()
     );
-    value["spec"]["harnesses"]["unused"]["kind"] = json!("invalid");
+    value["spec"]["harnesses"]["unused"]["kind"] = json!(" ");
     assert!(Document::parse(value.to_string().as_bytes()).is_err());
 }
 
 #[test]
 fn default_image_follows_the_selected_harness_and_tolerates_incomplete_selection() {
-    use nemoclaw_sdk::config::{DEFAULT_AGENT_IMAGE, DEFAULT_HERMES_IMAGE, HarnessKind};
+    use nemoclaw_sdk::config::DEFAULT_AGENT_IMAGE;
 
     let mut inline = input();
-    inline["spec"]["sandboxes"][0]["harness"] = json!({"kind":"hermes"});
+    inline["spec"]["sandboxes"][0]["harness"] = json!({"kind":"nvidia.fabric.hermes"});
     let mut missing = shared(inline.clone(), false);
     missing["spec"]["sandboxes"][0]["harnessRef"] = json!("missing");
     let mut both = shared(inline.clone(), false);
-    both["spec"]["sandboxes"][0]["harness"] = json!({"kind":"hermes"});
+    both["spec"]["sandboxes"][0]["harness"] = json!({"kind":"nvidia.fabric.hermes"});
     let mut absent = input();
     absent["spec"]["sandboxes"][0]
         .as_object_mut()
@@ -149,17 +149,15 @@ fn default_image_follows_the_selected_harness_and_tolerates_incomplete_selection
         document.spec.sandboxes[0].image.ref_.clear();
         document.defaults();
         let sandbox = &document.spec.sandboxes[0];
-        assert_eq!(
-            sandbox.image.ref_,
-            if valid {
-                DEFAULT_HERMES_IMAGE
-            } else {
-                DEFAULT_AGENT_IMAGE
-            }
-        );
+        assert_eq!(sandbox.image.ref_, DEFAULT_AGENT_IMAGE);
         let selected = document.sandbox_harness(sandbox);
         if valid {
-            assert_eq!(selected.unwrap().kind, HarnessKind::Hermes);
+            assert_eq!(
+                selected.unwrap().kind,
+                "nvidia.fabric.hermes"
+                    .parse::<nemoclaw_sdk::config::HarnessKind>()
+                    .unwrap()
+            );
         } else {
             assert!(selected.is_err());
         }

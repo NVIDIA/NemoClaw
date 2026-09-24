@@ -55,45 +55,6 @@ async fn readiness_deadline(
 fn value<'a>(row: &'a Row, key: &str) -> &'a str {
     row.get(key).map(String::as_str).unwrap_or("")
 }
-fn hermes_response_text(bytes: &[u8]) -> Result<String, Error> {
-    if bytes.len() > 1 << 20 {
-        return Err(Error::Conflict("agent response exceeds the probe limit"));
-    }
-    let response: serde_json::Value = serde_json::from_slice(bytes)
-        .map_err(|_| Error::Conflict("agent returned no confirmed response"))?;
-    let text = response["output"]["response"].as_str().unwrap_or("").trim();
-    if response["status"] != "succeeded" || text.is_empty() || text.len() > 16 << 10 {
-        return Err(Error::Conflict(
-            "agent returned no confirmed successful response",
-        ));
-    }
-    Ok(text.into())
-}
-fn response_text(bytes: &[u8]) -> Result<String, Error> {
-    if bytes.len() > 1 << 20 {
-        return Err(Error::Conflict("agent response exceeds the probe limit"));
-    }
-    let response: serde_json::Value = serde_json::from_slice(bytes)
-        .map_err(|_| Error::Conflict("agent returned no confirmed response"))?;
-    let payloads = response["result"]["payloads"]
-        .as_array()
-        .ok_or(Error::Conflict("agent returned no confirmed response"))?;
-    if response["status"] != "ok"
-        || payloads.is_empty()
-        || payloads.iter().any(|p| p["isError"] == true)
-    {
-        return Err(Error::Conflict(
-            "agent returned no confirmed successful response",
-        ));
-    }
-    let text = payloads[0]["text"].as_str().unwrap_or("").trim();
-    if text.is_empty() || text.len() > 16 << 10 {
-        return Err(Error::Conflict(
-            "agent response is empty or exceeds the probe limit",
-        ));
-    }
-    Ok(text.into())
-}
 impl OpenShell {
     async fn bound_sandbox(&self, binding: &Row) -> Result<proto::Sandbox, Error> {
         let sandbox = self
@@ -187,57 +148,24 @@ impl OpenShell {
         Ok((exit.ok_or(ObservationError::Incomplete)?, output))
     }
     fn configuration_command(&self, binding: &Row) -> Result<(Vec<String>, Row), Error> {
-        let harness = value(binding, "agent_runtime")
-            .strip_prefix("fabric-")
-            .filter(|harness| crate::config::is_fabric_harness(harness))
-            .ok_or(Error::Conflict(
-                "sandbox does not declare a supported Fabric runtime",
-            ))?;
-        let mut command = [
-            "/opt/fabric/bin/python",
-            "/opt/nemoclaw/fabric.py",
-            "check",
-            value(binding, "agent_name"),
-        ]
-        .map(String::from)
-        .to_vec();
-        if harness != "deepagents" {
-            command.push(harness.into());
+        if value(binding, "agent_runtime") != "fabric" {
+            return Err(Error::Conflict("unsupported sandbox runtime"));
         }
-        if harness == "pi" {
-            let model = match binding
-                .get("pi_model_config")
-                .filter(|value| !value.is_empty())
-            {
-                Some(model) => model.clone(),
-                None => {
-                    // Refresh observes the immutable catalog, not the separate single-model binding.
-                    let settings =
-                        inference_settings(value(binding, "inference_json"), "fabric-pi")?
-                            .ok_or(ObservationError::Incomplete)?;
-                    let selection = settings
-                        .agents
-                        .iter()
-                        .find(|agent| agent.name == value(binding, "agent_name"))
-                        .and_then(|agent| agent.inference.as_ref())
-                        .ok_or(ObservationError::Incomplete)?;
-                    let model = selection
-                        .models
-                        .get(&selection.default)
-                        .and_then(|model| model.pi.as_ref())
-                        .ok_or(ObservationError::Incomplete)?;
-                    serde_json::to_string(model).map_err(|_| ObservationError::Query)?
-                }
-            };
-            command.push(model);
-        }
-        if let Some(settings) = binding.get("inference_json").filter(|s| !s.is_empty()) {
-            inference_settings(settings, value(binding, "agent_runtime"))?;
-            command.extend(["--inference".into(), settings.clone()]);
-        }
-        Ok((command, Row::new()))
+        let config = value(binding, "config_json");
+        serde_json::from_str::<nemo_fabric_core::FabricConfig>(config)
+            .map_err(|_| ObservationError::Query)?;
+        Ok((
+            vec![
+                "/opt/fabric/bin/python".into(),
+                "/opt/nemoclaw/fabric.py".into(),
+                "check".into(),
+                value(binding, "agent_name").into(),
+                config.into(),
+            ],
+            Row::new(),
+        ))
     }
-    pub async fn configure_pi(&self, binding: &Row, prepare: bool) -> Result<(), Error> {
+    pub async fn configure_agent(&self, binding: &Row, prepare: bool) -> Result<(), Error> {
         tokio::time::timeout(Duration::from_secs(120), async {
             loop {
                 let phase = startup_phase(
@@ -253,29 +181,16 @@ impl OpenShell {
             }
         })
         .await
-        .map_err(|_| Error::Conflict("Pi sandbox startup timed out; resources retained"))??;
+        .map_err(|_| Error::Conflict("Fabric sandbox startup timed out; resources retained"))??;
         let (mut command, environment) = self.configuration_command(binding)?;
         command[2] = if prepare { "prepare" } else { "configure" }.into();
         let (exit, _) = self.exec_bound(binding, command, environment, 120).await?;
         if exit != 0 {
             return Err(Error::Conflict(
-                "Pi model configuration failed; check model ID and piModel metadata; resources retained",
+                "Fabric configuration failed; resources retained",
             ));
         }
         Ok(())
-    }
-    pub(super) async fn agent_configuration(&self, binding: &Row) -> Result<(), Error> {
-        if self
-            .bound_sandbox(binding)
-            .await?
-            .status
-            .ok_or(ObservationError::Incomplete)?
-            .phase
-            != proto::SandboxPhase::Ready as i32
-        {
-            return Err(ObservationError::Incomplete.into());
-        }
-        self.configuration(binding).await
     }
     pub async fn configuration(&self, binding: &Row) -> Result<(), Error> {
         let (command, environment) = self.configuration_command(binding)?;
@@ -331,151 +246,21 @@ impl OpenShell {
         crate::RuntimeHealth::decode(&output)
     }
 
-    pub async fn inference_ready(&self, binding: &Row) -> Result<(), Error> {
-        if value(binding, "agent_runtime") == "fabric-pi" {
-            let model = binding
-                .get("pi_model_config")
-                .ok_or(Error::Conflict("Pi requires the declared route model"))?;
-            let (exit, _) = self
-                .exec_bound(
-                    binding,
-                    vec![
-                        "node".into(),
-                        "/opt/fabric-source/adapters/typescript/pi/dist/pi-probe.js".into(),
-                        model.clone(),
-                    ],
-                    Row::new(),
-                    90,
-                )
-                .await?;
-            return if exit == 0 {
-                Ok(())
-            } else {
-                Err(Error::Conflict(
-                    "Pi inference through the configured model failed; resources retained",
-                ))
-            };
-        }
-        inference_settings(
-            value(binding, "inference_json"),
-            value(binding, "agent_runtime"),
-        )?
-        .ok_or(ObservationError::Incomplete)?;
-        let (exit, _) = self
-            .exec_bound(
-                binding,
-                vec!["node".into(), "/opt/nemoclaw/inference-probe.mts".into()],
-                Row::new(),
-                90,
-            )
-            .await?;
-        if exit != 0 {
-            return Err(Error::Conflict(
-                "inference through the sandbox failed; resources retained",
-            ));
-        }
-        Ok(())
+    pub async fn inference_ready(&self, _binding: &Row) -> Result<(), Error> {
+        Err(Error::Conflict(
+            "Fabric does not expose a model-only inference probe contract; resources retained",
+        ))
     }
-    pub async fn agent_response(&self, binding: &Row) -> Result<String, Error> {
-        let mut random = [0_u8; 16];
-        getrandom::fill(&mut random).map_err(|_| Error::State("cannot generate probe session"))?;
-        random[6] = (random[6] & 15) | 64;
-        random[8] = (random[8] & 63) | 128;
-        let hex: String = random.iter().map(|b| format!("{b:02x}")).collect();
-        let session = format!(
-            "{}-{}-{}-{}-{}",
-            &hex[..8],
-            &hex[8..12],
-            &hex[12..16],
-            &hex[16..20],
-            &hex[20..]
-        );
-        let hermes = value(binding, "agent_runtime") == "fabric-hermes";
-        let command = if hermes {
-            vec![
-                "/opt/fabric/bin/python".into(),
-                "/opt/nemoclaw/fabric.py".into(),
-                "probe".into(),
-                value(binding, "agent_name").into(),
-                "hermes".into(),
-            ]
-        } else {
-            [
-                "openclaw",
-                "agent",
-                "--agent",
-                value(binding, "agent_name"),
-                "--session-id",
-                &session,
-                "--message",
-                "Reply with the word FOUR.",
-                "--thinking",
-                "off",
-                "--json",
-                "--timeout",
-                "300",
-            ]
-            .map(String::from)
-            .to_vec()
-        };
-        let (exit, output) = self.exec_bound(binding, command, Row::new(), 360).await?;
-        if exit != 0 {
-            return Err(Error::Conflict(
-                "actual agent response failed; resources retained",
-            ));
-        }
-        let text = if hermes {
-            hermes_response_text(&output)?
-        } else {
-            response_text(&output)?
-        };
-        if !text
-            .trim_matches([' ', '\n', '\r', '\t', '.', '!', '\"', '\''])
-            .eq_ignore_ascii_case("FOUR")
-        {
-            return Err(Error::Conflict(
-                "agent did not answer the inference probe; resources retained",
-            ));
-        }
-        Ok(text)
+    pub async fn agent_response(&self, _binding: &Row) -> Result<String, Error> {
+        Err(Error::Conflict(
+            "Fabric does not expose a normalized text probe contract; resources retained",
+        ))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[tokio::test]
-    async fn observed_pi_catalog_supplies_its_declared_default_without_private_model_state() {
-        let mut value: serde_json::Value =
-            serde_saphyr::from_str(include_str!("../../../../examples/fabric-pi.yaml")).unwrap();
-        let inference = &mut value["spec"]["sandboxes"][0]["agent"]["inference"];
-        let mut fast = inference["routes"][0].clone();
-        fast["name"] = serde_json::json!("fast");
-        fast["overrides"]["model"] = serde_json::json!("fast-model");
-        inference["routes"]
-            .as_array_mut()
-            .unwrap()
-            .push(fast.clone());
-        inference["default"] = serde_json::json!("fast");
-        let doc = crate::config::Document::parse(value.to_string().as_bytes()).unwrap();
-        let generations = ["workspace", "provider", "sandbox"]
-            .map(|key| (key.into(), "a".repeat(32)))
-            .into();
-        let targets = crate::compile::targets(&doc, &generations).unwrap();
-        let mut row = targets
-            .iter()
-            .find(|row| row.kind == "sandbox")
-            .unwrap()
-            .values
-            .clone();
-        row.remove("pi_model_config");
-        let client =
-            OpenShell::connect(&doc.spec.gateway, std::sync::Arc::new(EnvironmentSecrets)).unwrap();
-        let (command, _) = client.configuration_command(&row).unwrap();
-        let model: serde_json::Value = serde_json::from_str(&command[5]).unwrap();
-        assert_eq!(model, fast["overrides"]);
-    }
-
     #[tokio::test(start_paused = true)]
     async fn readiness_uses_the_full_deadline_without_wall_clock_waiting() {
         let cancel = CancellationToken::new();
@@ -545,39 +330,12 @@ mod tests {
                 ..Default::default()
             })
             .unwrap_err()
+            .into_observation()
             .to_string();
             assert!(error.contains(&format!("reason {expected}")), "{error}");
             assert!(error.contains("exit code unknown"));
             assert!(error.contains("resources retained"));
             assert!(!error.contains("secret-sentinel"));
-        }
-    }
-
-    #[test]
-    fn hermes_reply_requires_success_before_accepting_text() {
-        assert_eq!(
-            hermes_response_text(br#"{"status":"succeeded","output":{"response":"FOUR"}}"#)
-                .unwrap(),
-            "FOUR"
-        );
-        assert!(
-            hermes_response_text(br#"{"status":"failed","output":{"response":"FOUR"}}"#).is_err()
-        );
-        assert!(hermes_response_text(br#"{"status":"succeeded","output":{}}"#).is_err());
-    }
-    #[test]
-    fn agent_reply_requires_confirmed_success_and_non_error_payloads() {
-        assert_eq!(
-            response_text(br#"{"status":"ok","result":{"payloads":[{"text":" FOUR. "}]}}"#)
-                .unwrap(),
-            "FOUR."
-        );
-        for bytes in [
-            br#"{"status":"error","result":{"payloads":[{"text":"FOUR"}]}}"#.as_slice(),
-            br#"{"status":"ok","result":{"payloads":[{"text":"FOUR"},{"isError":true}]}}"#,
-            br#"{"status":"ok","result":{"payloads":[]}}"#,
-        ] {
-            assert!(response_text(bytes).is_err());
         }
     }
 }
