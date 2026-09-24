@@ -7,6 +7,8 @@ These records describe tests of specific behaviors, revisions, and environments 
 They do not establish that every backend works on every host.
 Commit bodies retain the test-first implementation decisions.
 
+The [Fabric ownership qualification](fabric-ownership-linux-arm64.md) records schema-driven onboarding, actual provider planning, Fabric-only adapter execution and retained SDK lifecycle behavior.
+
 The [hosted NVIDIA OpenClaw Linux/Docker scenario](scenarios/openclaw-nvidia-hosted-linux-docker.md) defines the first comparison for NVIDIA/NemoClaw issue #11810 as a reviewed historical export matched to separately authored current v1 intent, followed by a new v1 lifecycle.
 Candidate exports enter the v1 fixtures through review rather than a v0-to-v1 pipeline dependency; source metadata is optional audit context.
 The scenario requires an explicitly configured live run on native Linux.
