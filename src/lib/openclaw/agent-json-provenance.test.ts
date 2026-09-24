@@ -536,10 +536,9 @@ describe("openClawAgentIncompleteTurnSignal", () => {
   });
 
   describe("completed tool turns (#11844)", () => {
-    // Trimmed from real OpenClaw 2026.9.1 output for a completed `exec` turn:
-    // a gateway envelope from a live sandbox and a local `--local` envelope.
-    // OpenClaw sets replayInvalid because the turn cannot be retried safely
-    // after a mutating tool ran, not because the turn is incomplete.
+    // Based on OpenClaw 2026.9.1 gateway and --local output for a completed exec turn.
+    const settledToolFallbackText =
+      "The tool run finished, but no final summary was produced. I did not repeat any completed actions.";
     const completedMeta = {
       stopReason: "stop",
       livenessState: "working",
@@ -615,6 +614,22 @@ describe("openClawAgentIncompleteTurnSignal", () => {
         ["a blank reply", { payloads: [{ text: " " }] }],
         ["only an error payload", { payloads: [{ text: "exec failed", isError: true }] }],
         ["only a reasoning payload", { payloads: [{ text: "thinking", isReasoning: true }] }],
+        ["an empty media URL", { payloads: [{ text: "", mediaUrls: [""] }] }],
+        ["a pending continuation", { meta: { continuationPending: true } }],
+        [
+          "the fallback reply OpenClaw writes when no final answer was produced",
+          {
+            meta: { finalAssistantVisibleText: settledToolFallbackText },
+            payloads: [{ text: settledToolFallbackText }],
+          },
+        ],
+        [
+          "the no-final-answer fallback beside tool media",
+          {
+            meta: { finalAssistantVisibleText: settledToolFallbackText },
+            payloads: [{ text: settledToolFallbackText, mediaUrl: "/tmp/plot.png" }],
+          },
+        ],
       ])("keeps replayInvalid as incomplete for %s", (_label, turn) => {
         expect(openClawAgentIncompleteTurnSignal(turnJson(turn))?.markers).toEqual([
           "replayInvalid=true",
@@ -644,8 +659,6 @@ describe("openClawAgentIncompleteTurnSignal", () => {
     });
 
     it("reports an incomplete_turn error alongside replayInvalid on a completed-looking tool turn", () => {
-      // OpenClaw does not emit a stop reason with a run error, but the other
-      // marker must still fail the turn if a response combines them.
       const raw = gatewayTurn({ meta: { error: { kind: "incomplete_turn" } } });
       expect(openClawAgentIncompleteTurnSignal(raw)?.markers.sort()).toEqual([
         "error.kind=incomplete_turn",

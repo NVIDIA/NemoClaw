@@ -377,22 +377,30 @@ function finalAgentResponse(docs: unknown[]): AgentResponse | null {
   return null;
 }
 
-// A reply payload the user receives. Error and reasoning payloads are not replies.
+const SETTLED_TOOL_FALLBACK_TEXT =
+  "The tool run finished, but no final summary was produced. I did not repeat any completed actions.";
+
+function isNonEmptyString(value: unknown): boolean {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
 function isDeliveredReply(payload: unknown): boolean {
   if (!isObjectRecord(payload) || payload.isError === true || payload.isReasoning === true) {
     return false;
   }
-  const hasText = typeof payload.text === "string" && payload.text.trim().length > 0;
-  const hasMedia =
-    (typeof payload.mediaUrl === "string" && payload.mediaUrl.length > 0) ||
-    (Array.isArray(payload.mediaUrls) && payload.mediaUrls.length > 0);
-  return hasText || hasMedia;
+  return (
+    isNonEmptyString(payload.text) ||
+    isNonEmptyString(payload.mediaUrl) ||
+    (Array.isArray(payload.mediaUrls) && payload.mediaUrls.some(isNonEmptyString))
+  );
 }
 
-// OpenClaw sets `replayInvalid` when a turn cannot be retried safely, which
-// includes a completed turn in which a mutating tool such as `exec` ran. That
-// marker alone is complete only when the envelope proves every tool call
-// succeeded and a reply was delivered (#11844).
+function isSettledToolFallback(payload: unknown): boolean {
+  return isObjectRecord(payload) && String(payload.text).trim() === SETTLED_TOOL_FALLBACK_TEXT;
+}
+
+// OpenClaw sets replayInvalid on every turn that ran a mutating tool, so it
+// alone does not mean the turn is incomplete (#11844).
 function isCompletedToolTurn({ doc, response, meta }: AgentResponse): boolean {
   if (
     doc !== response &&
@@ -406,12 +414,14 @@ function isCompletedToolTurn({ doc, response, meta }: AgentResponse): boolean {
     meta.stopReason === "stop" &&
     meta.aborted !== true &&
     meta.error === undefined &&
+    meta.continuationPending !== true &&
     isObjectRecord(tools) &&
     typeof tools.calls === "number" &&
     tools.calls > 0 &&
     tools.failures === 0 &&
     Array.isArray(response.payloads) &&
-    response.payloads.some(isDeliveredReply)
+    response.payloads.some(isDeliveredReply) &&
+    !response.payloads.some(isSettledToolFallback)
   );
 }
 
@@ -443,8 +453,7 @@ function turnMetaMarkers(meta: UnknownRecord): string[] {
 /**
  * Detect a turn the run metadata itself marks incomplete, abandoned, or timed
  * out. Returns null when no marker is present, so a healthy turn is never
- * reclassified, and for a completed tool turn whose only marker is
- * `replayInvalid`. A timed-out run also carries its declared phase, which the
+ * reclassified. A timed-out run also carries its declared phase, which the
  * caller uses to pick deadline-specific recovery guidance.
  */
 export function openClawAgentIncompleteTurnSignal(
