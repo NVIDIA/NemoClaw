@@ -1,13 +1,20 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { spawnSync } from "node:child_process";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   captureHostCommand,
   captureOpenShellHostCommand,
   openShellSandboxNeedsLifecycleStart,
   readOpenShellSandboxPhase,
 } from "./doctor-host-command";
+
+vi.mock("node:child_process", { spy: true });
+
+beforeEach(() => {
+  vi.mocked(spawnSync).mockClear();
+});
 
 describe("captureHostCommand", () => {
   it("treats signal-terminated processes as failed", () => {
@@ -17,6 +24,16 @@ describe("captureHostCommand", () => {
     ]);
 
     expect(result.status).not.toBe(0);
+  });
+
+  it("hard-kills commands that exceed their deadline", () => {
+    captureHostCommand(process.execPath, ["-e", "process.exit(0)"], 1_234);
+
+    expect(vi.mocked(spawnSync)).toHaveBeenCalledWith(
+      process.execPath,
+      ["-e", "process.exit(0)"],
+      expect.objectContaining({ timeout: 1_234, killSignal: "SIGKILL" }),
+    );
   });
 });
 
