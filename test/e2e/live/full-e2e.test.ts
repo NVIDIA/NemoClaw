@@ -736,7 +736,7 @@ test(
         "sandbox appears in list/status and has policy/inference configuration",
         "native OpenClaw install, invoke, update, self-update, restart, discovery, and removal are not intercepted",
         "direct hosted inference and sandbox inference.local both respond",
-        "sandbox state, including auth profiles, contains no secret-shaped credential values",
+        "sandbox state contains neither auth-profiles.json nor secret-shaped credential values",
         ...(process.platform === "linux"
           ? [
               "each of two PTY launches records two ordered structured turns and restores the mutable config permission contract",
@@ -977,7 +977,12 @@ test(
     progress.phase("scan sandbox state for credentials");
     const credentialBoundary = await sandbox.execShell(
       SANDBOX_NAME,
-      trustedSandboxShellScript(buildSandboxCredentialScanCommand()),
+      trustedSandboxShellScript(
+        [
+          "find /sandbox -name auth-profiles.json -not -path '*/node_modules/*' -not -path '*/dist/*' -print",
+          buildSandboxCredentialScanCommand(),
+        ].join("\n"),
+      ),
       {
         artifactName: "phase-4-sandbox-credential-boundary",
         env: env(),
@@ -987,7 +992,7 @@ test(
     );
     expect(
       credentialBoundary.exitCode === 0 && credentialBoundary.stdout.trim() === "",
-      `sandbox state, including auth profiles, must contain no secret-shaped credentials\n${resultText(credentialBoundary)}`,
+      `sandbox state must contain neither auth-profiles.json nor secret-shaped credentials\n${resultText(credentialBoundary)}`,
     ).toBe(true);
 
     await (process.platform === "linux"
