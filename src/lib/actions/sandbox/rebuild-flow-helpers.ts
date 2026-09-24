@@ -92,6 +92,23 @@ export type RebuildAgentBaseImagePreflight = {
   trustedRemoteOverride?: import("../../agent/base-image").TrustedRemoteBaseImageOverride;
 };
 
+function discardIncompleteRebuildBackup(
+  sandboxName: string,
+  result: sandboxState.BackupResult,
+): sandboxState.BackupResult {
+  const backupPath = result.manifest?.backupPath;
+  if (!backupPath) return result;
+  if (sandboxState.removeSandboxStateBackup(sandboxName, backupPath)) {
+    const { manifest: _removedManifest, ...withoutPartialBackup } = result;
+    return withoutPartialBackup;
+  }
+  const cleanupError = `Failed rebuild backup at '${backupPath}' could not be removed`;
+  return {
+    ...result,
+    error: result.error ? `${result.error}. ${cleanupError}` : cleanupError,
+  };
+}
+
 const rebuildAgentBaseImageDisposalResults = new WeakMap<RebuildAgentBaseImagePreflight, boolean>();
 
 function isCanonicalLocalBaseImageRef(agentName: string, imageRef: string): boolean {
@@ -526,6 +543,7 @@ export async function backupSandboxStateForRebuild(
       try {
         backup = await backupStartedSandboxState(sandboxName, {
           deadlineMs: transactionDeadlineMs,
+          deferSanitizationDeadlineCleanup: true,
         });
         log(
           `Retry backup result: success=${backup.success}, backed=${backup.backedUpDirs.join(",")}; files=${backup.backedUpFiles.join(",")}, failed=${backup.failedDirs.join(",")}; failedFiles=${backup.failedFiles.join(",")}`,
@@ -539,6 +557,11 @@ export async function backupSandboxStateForRebuild(
             `Could not return '${sandboxName}' container to its stopped state after backup retry`,
           );
         }
+      }
+      // Recursive snapshot cleanup can consume the lifecycle reserve. Defer it
+      // until the container this recovery started is observably Stopped again.
+      if (returnedToStopped && !backup.success) {
+        backup = discardIncompleteRebuildBackup(sandboxName, backup);
       }
       // A container this recovery started must be reported whenever it cannot
       // be returned to stopped, whether or not the retried backup succeeded.

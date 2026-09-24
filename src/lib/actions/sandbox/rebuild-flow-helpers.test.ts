@@ -1023,6 +1023,7 @@ describe("backupSandboxStateForRebuild stopped-container recovery (#11137)", () 
   let startSpy: MockInstance;
   let backupStartedSpy: MockInstance;
   let returnStoppedSpy: MockInstance;
+  let removeBackupSpy: MockInstance;
 
   beforeEach(() => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
@@ -1033,6 +1034,7 @@ describe("backupSandboxStateForRebuild stopped-container recovery (#11137)", () 
     startSpy = vi.spyOn(stoppedSandboxBackup, "startStoppedSandboxContainerForBackup");
     backupStartedSpy = vi.spyOn(stoppedSandboxBackup, "backupStartedSandboxState");
     returnStoppedSpy = vi.spyOn(stoppedSandboxBackup, "returnSandboxContainerToStopped");
+    removeBackupSpy = vi.spyOn(sandboxState, "removeSandboxStateBackup");
   });
 
   afterEach(() => {
@@ -1069,6 +1071,7 @@ describe("backupSandboxStateForRebuild stopped-container recovery (#11137)", () 
     });
     expect(backupStartedSpy).toHaveBeenCalledWith("alpha", {
       deadlineMs: expect.any(Number),
+      deferSanitizationDeadlineCleanup: true,
     });
     expect(returnStoppedSpy).toHaveBeenCalledWith(startedForBackup, {
       deadlineMs: expect.any(Number),
@@ -1138,6 +1141,77 @@ describe("backupSandboxStateForRebuild stopped-container recovery (#11137)", () 
     expect(returnStoppedSpy).toHaveBeenCalledWith(startedForBackup, {
       deadlineMs: expect.any(Number),
     });
+  });
+
+  it("restores stopped state before removing a deadline-expired retry snapshot (#11936)", async () => {
+    const order: string[] = [];
+    const failedBackup = {
+      success: false,
+      error: "Snapshot sanitization skipped: backup deadline expired",
+      backedUpDirs: [],
+      backedUpFiles: [],
+      failedDirs: [],
+      failedFiles: [],
+      manifest: { ...makeBackupResult().manifest!, backupPath: "/backups/alpha/incomplete" },
+    };
+    backupSpy.mockReturnValue({
+      ...failedBackup,
+      manifest: null,
+      unreachable: true,
+    });
+    startSpy.mockReturnValue(startedForBackup);
+    backupStartedSpy.mockImplementation(async () => {
+      order.push("backup");
+      return failedBackup;
+    });
+    returnStoppedSpy.mockImplementation(() => {
+      order.push("stop");
+      return true;
+    });
+    removeBackupSpy.mockImplementation(() => {
+      order.push("cleanup");
+      return true;
+    });
+
+    await expect(
+      backupSandboxStateForRebuild("alpha", makeSandboxEntry(), false, () => undefined, makeBail()),
+    ).rejects.toThrow("bail: Failed to back up sandbox state.");
+
+    expect(backupStartedSpy).toHaveBeenCalledWith("alpha", {
+      deadlineMs: expect.any(Number),
+      deferSanitizationDeadlineCleanup: true,
+    });
+    expect(order).toEqual(["backup", "stop", "cleanup"]);
+    expect(removeBackupSpy).toHaveBeenCalledWith("alpha", "/backups/alpha/incomplete");
+  });
+
+  it("reports deferred snapshot cleanup failure after restoring stopped state (#11936)", async () => {
+    const failedBackup = {
+      success: false,
+      error: "Snapshot sanitization skipped: backup deadline expired",
+      backedUpDirs: [],
+      backedUpFiles: [],
+      failedDirs: [],
+      failedFiles: [],
+      manifest: { ...makeBackupResult().manifest!, backupPath: "/backups/alpha/incomplete" },
+    };
+    backupSpy.mockReturnValue({
+      ...failedBackup,
+      manifest: null,
+      unreachable: true,
+    });
+    startSpy.mockReturnValue(startedForBackup);
+    backupStartedSpy.mockResolvedValue(failedBackup);
+    returnStoppedSpy.mockReturnValue(true);
+    removeBackupSpy.mockReturnValue(false);
+
+    await expect(
+      backupSandboxStateForRebuild("alpha", makeSandboxEntry(), false, () => undefined, makeBail()),
+    ).rejects.toThrow("bail: Failed to back up sandbox state.");
+
+    const reported = vi.mocked(console.error).mock.calls.flat().join("\n");
+    expect(reported).toContain("could not be removed");
+    expect(reported).toContain("Incomplete snapshot retained for manual recovery");
   });
 
   it("reports the still-running container when the retry and the return to stopped both fail", async () => {
