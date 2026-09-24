@@ -48,10 +48,19 @@ export function defaultRunDocker(args: string[], options: SpawnSyncOptions = {})
   return toRunResult(dockerSpawnSync(args, { encoding: "utf-8", ...options }));
 }
 
-export function createUninstallProviderAdapter(run: typeof defaultRun, env: NodeJS.ProcessEnv) {
+export function createUninstallProviderAdapter(
+  run: typeof defaultRun,
+  env: NodeJS.ProcessEnv,
+  runtimeSelection?: OpenShellRuntimeSelection,
+) {
+  const filteredEnv = buildSubprocessEnvFrom(env);
+  const childEnv = runtimeSelection
+    ? buildOpenShellRuntimeSelectionEnv(filteredEnv, runtimeSelection)
+    : filteredEnv;
   return createCliOpenShellProviderAdapter({
-    environment: env,
-    run: (args, options) => run("openshell", args, { ...options, env }),
+    environment: childEnv,
+    run: (args, options) =>
+      run("openshell", args, { ...options, env: { ...childEnv, ...options.env } }),
   });
 }
 

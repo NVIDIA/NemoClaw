@@ -1606,15 +1606,18 @@ async function removeOpenShellResources(
     runtime.log("Sibling gateways remain; kept shared OpenShell provider registrations.");
     return true;
   }
-  if (
-    !(await deleteAllSelectedGatewaySandboxes(
-      runtime,
-      selectedGatewayCleanupRuntimeSelection(gatewayLabel, paths.selectedGatewayLocalStateDir),
-    ))
-  ) {
+  const runtimeSelection = selectedGatewayCleanupRuntimeSelection(
+    gatewayLabel,
+    paths.selectedGatewayLocalStateDir,
+  );
+  if (!(await deleteAllSelectedGatewaySandboxes(runtime, runtimeSelection))) {
     return false;
   }
-  const providerAdapter = createUninstallProviderAdapter(runtime.run, runtime.env);
+  const providerAdapter = createUninstallProviderAdapter(
+    runtime.run,
+    runtime.env,
+    runtimeSelection,
+  );
   for (const providerName of NEMOCLAW_PROVIDERS) {
     const result = await providerAdapter.deleteProvider({
       target: { kind: "selected" },

@@ -13,6 +13,8 @@ import {
   ensureDockerDriverGatewayJwtBundle,
   gatewayIdForStateDir,
 } from "../../onboard/docker-driver-gateway-config";
+import { writeCompleteDockerDriverGatewayLocalTlsBundle } from "../../onboard/__test-helpers__/docker-driver-gateway-local-tls";
+import { getDockerDriverGatewayLocalTlsBundle } from "../../onboard/docker-driver-gateway-local-tls";
 import { resolveGatewayStateDirName } from "../../onboard/gateway-binding";
 import {
   type RunResult,
@@ -45,6 +47,7 @@ function writeFullCleanupState(home: string): string {
     "nemoclaw",
     resolveGatewayStateDirName(8080),
   );
+  writeCompleteDockerDriverGatewayLocalTlsBundle(gatewayStateDir);
   const jwtBundle = ensureDockerDriverGatewayJwtBundle(gatewayStateDir);
   const configPath = path.join(gatewayStateDir, "openshell-gateway.toml");
   fs.writeFileSync(
@@ -86,22 +89,35 @@ function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRunDeps) 
   );
 }
 
-function fullCleanupDeps(home: string, calls: string[][], sandboxInventory: string) {
+function fullCleanupDeps(
+  home: string,
+  calls: string[][],
+  sandboxInventory: string,
+  commandInvocations?: Array<{ args: string[]; env?: NodeJS.ProcessEnv }>,
+) {
   const responses = new Map<string, RunResult>([
     ["gateway list -o json", ok(JSON.stringify([{ name: "nemoclaw" }]))],
     ["sandbox list", ok(sandboxInventory)],
   ]);
   return {
     commandExists: (command: string) => command === "openshell",
-    env: { HOME: home, NEMOCLAW_NON_INTERACTIVE: "1" } as NodeJS.ProcessEnv,
+    env: {
+      HOME: home,
+      NEMOCLAW_NON_INTERACTIVE: "1",
+      OPENSHELL_GATEWAY: "foreign-gateway",
+      OPENSHELL_GATEWAY_ENDPOINT: "https://foreign.invalid",
+      OPENSHELL_LOCAL_TLS_DIR: "/foreign/tls",
+      OPENSHELL_WORKSPACE: "foreign-workspace",
+    } as NodeJS.ProcessEnv,
     error: vi.fn(),
     existsSync: (target: string) => target.startsWith(home) && fs.existsSync(target),
     hasPortableRuntimeCleanup: () => false,
     isTty: false,
     log: vi.fn(),
     rmSync: fs.rmSync,
-    run: (_command: string, args: string[]) => {
+    run: (_command: string, args: string[], options?: { env?: NodeJS.ProcessEnv }) => {
       calls.push(args);
+      commandInvocations?.push({ args, env: options?.env });
       return responses.get(args.join(" ")) ?? ok();
     },
     runDocker: () => ok(),
@@ -115,9 +131,10 @@ describe("full-uninstall bulk sandbox cleanup", () => {
     try {
       writeFullCleanupState(home);
       const calls: string[][] = [];
+      const commandInvocations: Array<{ args: string[]; env?: NodeJS.ProcessEnv }> = [];
       const result = await runUninstallPlan(
         { assumeYes: true, deleteModels: false, destroyUserData: true, keepOpenShell: false },
-        fullCleanupDeps(home, calls, "No sandboxes found.\n"),
+        fullCleanupDeps(home, calls, "No sandboxes found.\n", commandInvocations),
       );
 
       expect(result.exitCode).toBe(0);
@@ -131,6 +148,22 @@ describe("full-uninstall bulk sandbox cleanup", () => {
       expect(inventoryIndexes).toHaveLength(2);
       expect(inventoryIndexes[0]).toBeGreaterThan(deleteIndex);
       expect(providerIndex).toBeGreaterThan(inventoryIndexes[1]!);
+      const selectedGatewayTlsDir = getDockerDriverGatewayLocalTlsBundle(
+        path.join(home, ".local", "state", "nemoclaw", resolveGatewayStateDirName(8080)),
+      ).localTlsDir;
+      const providerEnvironments = commandInvocations
+        .filter(({ args }) => args[0] === "provider" && args[1] === "delete")
+        .map(({ env }) => env);
+      expect(providerEnvironments.length).toBeGreaterThan(0);
+      expect(
+        providerEnvironments.every(
+          (env) =>
+            env?.OPENSHELL_GATEWAY === "nemoclaw" &&
+            env.OPENSHELL_WORKSPACE === "default" &&
+            env.OPENSHELL_LOCAL_TLS_DIR === selectedGatewayTlsDir &&
+            env.OPENSHELL_GATEWAY_ENDPOINT === undefined,
+        ),
+      ).toBe(true);
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }
