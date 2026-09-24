@@ -2955,6 +2955,7 @@ describe("Telegram diagnostics (#2766)", () => {
         "seed_default_workspace_templates() { :; }",
         "seed_default_workspace_templates_as_sandbox() { seed_default_workspace_templates; }",
         "write_auth_profile() { :; }",
+        "clear_managed_inference_credentials() { :; }",
         "harden_auth_profiles() { :; }",
         "run_step_down_as_sandbox() { :; }",
         "setup_auth_profile_as_sandbox() { :; }",
@@ -3365,6 +3366,370 @@ describe("write_auth_profile (#1332)", () => {
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }
+// Recover truncated config from native last-good state or the protected baseline (#3118).
+describe("openclaw.json baseline + recovery (#3118)", () => {
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+  const normalizerSource = fs
+    .readFileSync(
+      path.join(path.dirname(START_SCRIPT), "lib/normalize_mutable_config_perms.py"),
+      "utf-8",
+    )
+    .replace(
+      'if __name__ == "__main__":',
+      'runtime_config_modes = lambda: (0o2770, 0o660)\n\nif __name__ == "__main__":',
+    );
+
+  function extractShellFunction(name: string): string {
+    const match = src.match(new RegExp(`${name}\\(\\) \\{([\\s\\S]*?)^\\}`, "m"));
+    if (!match) {
+      throw new Error(`Expected ${name} in scripts/nemoclaw-start.sh`);
+    }
+    return `${name}() {${match[1]}\n}`;
+  }
+
+  type RecoveryFixture = {
+    configContent: string;
+    baselineContent?: string;
+    lastGoodContent?: string;
+    hashContent?: string;
+  };
+
+  function runRecoverIfEmpty(fixture: RecoveryFixture, modes = [0o2770, 0o660]) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-recover-"));
+    const openclawDir = path.join(root, ".openclaw");
+    fs.mkdirSync(openclawDir, { recursive: true });
+    const configPath = path.join(openclawDir, "openclaw.json");
+    const hashPath = path.join(openclawDir, ".config-hash");
+    const baselinePath = path.join(openclawDir, "openclaw.json.nemoclaw-baseline");
+    const lastGoodPath = path.join(openclawDir, "openclaw.json.last-good");
+
+    fs.writeFileSync(configPath, fixture.configContent);
+    if (fixture.hashContent !== undefined) fs.writeFileSync(hashPath, fixture.hashContent);
+    if (fixture.baselineContent !== undefined) {
+      fs.writeFileSync(baselinePath, fixture.baselineContent);
+    }
+    if (fixture.lastGoodContent !== undefined) {
+      fs.writeFileSync(lastGoodPath, fixture.lastGoodContent);
+    }
+
+    const helperPath = path.join(root, "normalizer.py");
+    fs.writeFileSync(
+      helperPath,
+      normalizerSource.replace("lambda: (0o2770, 0o660)", `lambda: (${modes.join(", ")})`),
+    );
+    const helperFns = extractShellFunction("normalize_mutable_config_perms").replace(
+      'local config_dir="/sandbox/.openclaw"',
+      `local config_dir=${JSON.stringify(openclawDir)}`,
+    );
+    const fn = extractShellFunction("recover_openclaw_config_if_empty").replaceAll(
+      "/sandbox",
+      root,
+    );
+    const wrapper = [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      `${extractShellFunction("resolve_mutable_config_normalizer").replaceAll("/usr/local/lib/nemoclaw/normalize_mutable_config_perms.py", helperPath)}\n${helperFns}`,
+      fn,
+      "recover_openclaw_config_if_empty",
+    ]
+      .filter(Boolean)
+      .join("\n");
+    const script = path.join(root, "run.sh");
+    fs.writeFileSync(script, wrapper, { mode: 0o700 });
+    const result = spawnSync("bash", [script], { encoding: "utf-8" });
+    const config = fs.readFileSync(configPath, "utf-8");
+    const hash = fs.existsSync(hashPath) ? fs.readFileSync(hashPath, "utf-8") : "";
+    const actualModes = [openclawDir, configPath, hashPath].map((file) =>
+      fs.existsSync(file) ? fs.statSync(file).mode & 0o7777 : undefined,
+    );
+    fs.rmSync(root, { recursive: true, force: true });
+    return { result, config, hash, actualModes };
+  }
+
+  it.each([
+    [0o2770, 0o660],
+    [0o700, 0o600],
+  ])("restores empty config with owner-selected modes [case %#]", (directoryMode, fileMode) => {
+    const baseline = JSON.stringify({ ok: true, source: "baseline" });
+    const { result, config, actualModes } = runRecoverIfEmpty(
+      {
+        configContent: "",
+        baselineContent: baseline,
+      },
+      [directoryMode, fileMode],
+    );
+    expect(result.status).toBe(0);
+    expect(config).toBe(baseline);
+    expect(actualModes).toEqual([directoryMode, fileMode, fileMode]);
+    expect(`${result.stdout}${result.stderr}`).toContain("restored");
+  });
+
+  it("restores from openclaw.json.last-good when present (preferred over baseline)", () => {
+    const lastGood = JSON.stringify({ ok: true, source: "last-good" });
+    const baseline = JSON.stringify({ ok: true, source: "baseline" });
+    const { result, config } = runRecoverIfEmpty({
+      configContent: "",
+      baselineContent: baseline,
+      lastGoodContent: lastGood,
+    });
+    expect(result.status).toBe(0);
+    expect(config).toBe(lastGood);
+  });
+
+  it("treats whitespace-only config as empty and restores from baseline", () => {
+    const baseline = JSON.stringify({ ok: true });
+    const { result, config } = runRecoverIfEmpty({
+      configContent: "   \n\t  \n",
+      baselineContent: baseline,
+    });
+    expect(result.status).toBe(0);
+    expect(config).toBe(baseline);
+  });
+
+  it("is a no-op when openclaw.json is non-empty", () => {
+    const original = JSON.stringify({ ok: true, source: "original" });
+    const baseline = JSON.stringify({ ok: true, source: "baseline" });
+    const { result, config } = runRecoverIfEmpty({
+      configContent: original,
+      baselineContent: baseline,
+    });
+    expect(result.status).toBe(0);
+    expect(config).toBe(original);
+  });
+
+  it("fails loudly and leaves file empty when no recovery source exists", () => {
+    // Missing recovery data must stop startup before it reads an empty config.
+    const { result, config } = runRecoverIfEmpty({ configContent: "" });
+    expect(result.status).not.toBe(0);
+    expect(config).toBe("");
+    expect(result.stderr).toContain("#3118");
+    expect(result.stderr).toContain("No baseline available");
+  });
+
+  it("recomputes .config-hash after restoring from baseline", () => {
+    const baseline = JSON.stringify({ ok: true });
+    const { result, hash } = runRecoverIfEmpty({
+      configContent: "",
+      baselineContent: baseline,
+      hashContent: "stale-hash\n",
+    });
+    expect(result.status).toBe(0);
+    expect(hash).toContain("openclaw.json");
+    expect(hash).not.toContain("stale-hash");
+  });
+
+  // ── write_openclaw_config_baseline ────────────────────────────────────────
+  function runNormalizeMutableConfigPermsWithBaseline(fixture: { symlinkBaseline?: boolean } = {}) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-baseline-lock-"));
+    const helperPath = path.join(root, "normalizer.py");
+    fs.writeFileSync(helperPath, normalizerSource);
+    const openclawDir = path.join(root, ".openclaw");
+    fs.mkdirSync(openclawDir, { recursive: true });
+    const configPath = path.join(openclawDir, "openclaw.json");
+    const hashPath = path.join(openclawDir, ".config-hash");
+    const baselinePath = path.join(openclawDir, "openclaw.json.nemoclaw-baseline");
+    fs.writeFileSync(configPath, "{}");
+    fs.writeFileSync(hashPath, "oldhash\n");
+    fs.writeFileSync(baselinePath, JSON.stringify({ source: "baseline" }));
+    fs.chmodSync(openclawDir, 0o2770);
+    fs.chmodSync(configPath, 0o660);
+    fs.chmodSync(hashPath, 0o660);
+    fs.chmodSync(baselinePath, 0o460);
+    const protectedTarget = path.join(root, "protected-target");
+    fs.writeFileSync(protectedTarget, "protected", { mode: 0o640 });
+    fs.chmodSync(protectedTarget, 0o640);
+    switch (fixture.symlinkBaseline) {
+      case true:
+        fs.rmSync(baselinePath);
+        fs.symlinkSync(protectedTarget, baselinePath);
+        break;
+    }
+
+    const wrapper = [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      `${extractShellFunction("resolve_mutable_config_normalizer").replaceAll("/usr/local/lib/nemoclaw/normalize_mutable_config_perms.py", helperPath)}\n${extractShellFunction("normalize_mutable_config_perms").replaceAll("/sandbox", root)}`,
+      "normalize_mutable_config_perms",
+    ]
+      .filter(Boolean)
+      .join("\n");
+    const script = path.join(root, "run.sh");
+    fs.writeFileSync(script, wrapper, { mode: 0o700 });
+    const result = spawnSync("bash", [script], { encoding: "utf-8" });
+    const baselineIsSymlink = fs.lstatSync(baselinePath).isSymbolicLink();
+    const baselineMode = baselineIsSymlink ? undefined : fs.statSync(baselinePath).mode & 0o777;
+    const protectedMode = fs.statSync(protectedTarget).mode & 0o777;
+    fs.rmSync(root, { recursive: true, force: true });
+    return { result, baselineIsSymlink, baselineMode, protectedMode };
+  }
+  it("keeps the baseline read-only after mutable permission normalization", () => {
+    const { result, baselineMode } = runNormalizeMutableConfigPermsWithBaseline();
+    expect(result.status).toBe(0);
+    expect(baselineMode).toBe(0o440);
+  });
+
+  it("fails closed when mutable permission normalization sees a symlinked baseline", () => {
+    const outcome = runNormalizeMutableConfigPermsWithBaseline({
+      symlinkBaseline: true,
+    });
+    const { result, baselineIsSymlink, protectedMode } = outcome;
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("descriptor-safe repair detected an unsafe link");
+    expect(baselineIsSymlink).toBe(true);
+    expect(protectedMode).toBe(0o640);
+  });
+  function runCaptureCandidate(
+    configContent: string,
+    options: {
+      baselineContent?: string;
+      json5Module?: string;
+      modes?: number[];
+    } = {},
+  ) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-baseline-capture-"));
+    const openclawDir = path.join(root, ".openclaw");
+    const baselinePath = path.join(openclawDir, "openclaw.json.nemoclaw-baseline");
+    fs.mkdirSync(openclawDir);
+    fs.writeFileSync(path.join(openclawDir, "openclaw.json"), configContent);
+    fs.writeFileSync(path.join(openclawDir, ".config-hash"), "hash\n");
+    if (options.baselineContent !== undefined) {
+      fs.writeFileSync(baselinePath, options.baselineContent, { mode: 0o460 });
+    }
+    fs.chmodSync(openclawDir, 0o2770);
+    fs.chmodSync(path.join(openclawDir, "openclaw.json"), 0o660);
+    fs.chmodSync(path.join(openclawDir, ".config-hash"), 0o660);
+    const helper = path.join(
+      import.meta.dirname,
+      "../../../..",
+      "scripts",
+      "lib",
+      "normalize_mutable_config_perms.py",
+    );
+    const harness = [
+      "import importlib.util, os, sys",
+      "spec = importlib.util.spec_from_file_location('normalizer', sys.argv[1])",
+      "module = importlib.util.module_from_spec(spec)",
+      "spec.loader.exec_module(module)",
+      "root_fd, source_fd = module.normalize_owner_tree(sys.argv[2], os.geteuid(), os.getegid(), capture_baseline=True, node_binary=sys.argv[3], json5_module=sys.argv[4], modes=tuple(map(int, sys.argv[5:7])))",
+      "try:",
+      "    if source_fd is None:",
+      "        print('NONE')",
+      "    else:",
+      "        os.lseek(source_fd, 0, os.SEEK_SET)",
+      "        sys.stdout.buffer.write(b'SOURCE\\n' + os.read(source_fd, 16 * 1024 * 1024 + 1))",
+      "finally:",
+      "    if source_fd is not None: os.close(source_fd)",
+      "    os.close(root_fd)",
+    ].join("\n");
+    const result = spawnSync(
+      "python3",
+      [
+        "-I",
+        "-c",
+        harness,
+        helper,
+        openclawDir,
+        process.execPath,
+        options.json5Module ?? JSON5_MODULE,
+        ...(options.modes ?? [0o2770, 0o660]).map(String),
+      ],
+      { encoding: "utf-8" },
+    );
+    const baselineExists = fs.existsSync(baselinePath);
+    const baselineContent = baselineExists ? fs.readFileSync(baselinePath, "utf-8") : "";
+    const baselineMode = baselineExists ? fs.statSync(baselinePath).mode & 0o777 : undefined;
+    const actualModes = [
+      openclawDir,
+      path.join(openclawDir, "openclaw.json"),
+      path.join(openclawDir, ".config-hash"),
+    ].map((file) => fs.statSync(file).mode & 0o7777);
+    fs.rmSync(root, { recursive: true, force: true });
+    const sourceContent = result.stdout.startsWith("SOURCE\n")
+      ? result.stdout.slice("SOURCE\n".length)
+      : undefined;
+    return {
+      result,
+      baselineExists,
+      baselineContent,
+      baselineMode,
+      actualModes,
+      sourceContent,
+    };
+  }
+
+  it.each([
+    [0o2770, 0o660],
+    [0o700, 0o600],
+  ])("captures valid config with owner-selected modes [case %#]", (directoryMode, fileMode) => {
+    const config = JSON.stringify({
+      agents: { defaults: { model: { primary: "x" } } },
+    });
+    const captured = runCaptureCandidate(config, {
+      modes: [directoryMode, fileMode],
+    });
+    expect(captured.result.status).toBe(0);
+    expect(captured.sourceContent).toBe(config);
+    expect(captured.actualModes).toEqual([directoryMode, fileMode, fileMode]);
+    expect(captured.baselineExists).toBe(false);
+  });
+
+  it("selects current config to replace a sandbox-owned baseline", () => {
+    const stale = JSON.stringify({ stale: true });
+    const captured = runCaptureCandidate(JSON.stringify({ current: true }), {
+      baselineContent: stale,
+    });
+    expect(captured.result.status).toBe(0);
+    expect(captured.sourceContent).toBe(JSON.stringify({ current: true }));
+    expect(captured.baselineContent).toBe(stale);
+    expect(captured.baselineMode).toBe(0o440);
+  });
+
+  it.each(["", "   \n\t", "not json"])("does not capture invalid content %j", (content) => {
+    const captured = runCaptureCandidate(content);
+    expect(captured.result.status).toBe(0);
+    expect(captured.sourceContent).toBeUndefined();
+    expect(captured.baselineExists).toBe(false);
+  });
+
+  it("captures JSON5 comments and trailing commas", () => {
+    const config = "{ // model\n agents: { defaults: { model: { primary: 'x' } } },\n}";
+    const captured = runCaptureCandidate(config);
+    expect(captured.result.status).toBe(0);
+    expect(captured.sourceContent).toBe(config);
+  });
+
+  it("fails closed when the packaged JSON5 parser is unavailable", () => {
+    const captured = runCaptureCandidate(JSON.stringify({ ok: true }), {
+      json5Module: "/does/not/exist/json5",
+    });
+    expect(captured.result.status).not.toBe(0);
+    expect(captured.result.stderr).toContain("JSON5 baseline validator failed");
+    expect(captured.baselineExists).toBe(false);
+  });
+
+  it("delegates root baseline capture to the descriptor-safe normalizer", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-baseline-delegate-"));
+    const openclawDir = path.join(root, ".openclaw");
+    fs.mkdirSync(openclawDir);
+    fs.writeFileSync(path.join(openclawDir, "openclaw.json"), "{}\n");
+    const fn = extractShellFunction("write_openclaw_config_baseline").replaceAll("/sandbox", root);
+    const result = spawnSync(
+      "bash",
+      [
+        "-c",
+        [
+          "set -euo pipefail",
+          "id() { echo 0; }",
+          "normalize_mutable_config_perms() { printf 'operation=%s\\n' \"$1\"; }",
+          fn,
+          "write_openclaw_config_baseline",
+        ].join("\n"),
+      ],
+      { encoding: "utf-8" },
+    );
+    fs.rmSync(root, { recursive: true, force: true });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("operation=capture");
   });
 });
 
@@ -3572,17 +3937,13 @@ describe("run_step_down_as_sandbox", () => {
 describe("setup_auth_profile_as_sandbox", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
   const helper = [
+    extractShellFunctionFromSource(src, "is_managed_inference_route"),
     extractShellFunctionFromSource(src, "_step_down_extract_function"),
     extractShellFunctionFromSource(src, "run_step_down_as_sandbox"),
   ].join("\n");
   const setup = extractShellFunctionFromSource(src, "setup_auth_profile_as_sandbox");
   it("runs the auth-profile setup under HOME=/sandbox even when the parent env has HOME=/root", () => {
-    // setpriv preserves the parent shell's environment, so the root
-    // entrypoint's HOME=/root would otherwise leak into the step-down
-    // shell and `write_auth_profile`'s `~/.openclaw/...` expansion
-    // would target /root. Stub `write_auth_profile` to record the
-    // HOME the step-down shell actually observed and assert it was
-    // overridden to /sandbox.
+    // setpriv preserves HOME; profile setup must replace /root with /sandbox.
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-setup-auth-profile-"));
     const observedHome = path.join(tmpDir, "observed-home");
     const scriptPath = path.join(tmpDir, "run.sh");
@@ -3609,6 +3970,285 @@ describe("setup_auth_profile_as_sandbox", () => {
       });
       expect(result.status, result.stderr || result.stdout).toBe(0);
       expect(fs.readFileSync(observedHome, "utf-8").trim()).toBe("/sandbox");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("ensure_mutable_openclaw_config_hash root-mode step-down", () => {
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+
+  function runHashRefresh(opts: { asRoot: boolean; preexistingHash?: string }) {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hash-refresh-"));
+    const configDir = path.join(tmpDir, "openclaw");
+    fs.mkdirSync(configDir, { recursive: true });
+    const configPath = path.join(configDir, "openclaw.json");
+    const hashPath = path.join(configDir, ".config-hash");
+    fs.writeFileSync(configPath, "{}\n");
+    if (opts.preexistingHash !== undefined) {
+      fs.writeFileSync(hashPath, opts.preexistingHash);
+    }
+    const stepDownLog = path.join(tmpDir, "step-down.log");
+    const scriptPath = path.join(tmpDir, "run.sh");
+    const helperFn = extractShellFunctionFromSource(src, "ensure_mutable_openclaw_config_hash")
+      .replaceAll("/sandbox/.openclaw", configDir)
+      .replaceAll("/usr/bin/sha256sum", SHA256SUM);
+    fs.writeFileSync(
+      scriptPath,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        opts.asRoot
+          ? 'id() { if [ "${1:-}" = "-u" ]; then printf "0"; else command id "$@"; fi; }'
+          : 'id() { if [ "${1:-}" = "-u" ]; then printf "1000"; else command id "$@"; fi; }',
+        'openclaw_config_dir_owner() { printf "sandbox"; }',
+        "normalize_mutable_config_perms() { :; }",
+        `STEP_DOWN_PREFIX_SANDBOX=(bash -c 'printf "step-down\\n" >>${JSON.stringify(stepDownLog)}; exec "$@"' sandbox-step-down)`,
+        helperFn,
+        "ensure_mutable_openclaw_config_hash",
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+    const result = spawnSync("bash", [scriptPath], {
+      encoding: "utf-8",
+      timeout: 5000,
+    });
+    const hashAfter = fs.existsSync(hashPath) ? fs.readFileSync(hashPath, "utf-8").trim() : "";
+    const stepDownInvocations = fs.existsSync(stepDownLog)
+      ? fs.readFileSync(stepDownLog, "utf-8").trim().split("\n").filter(Boolean).length
+      : 0;
+    return { tmpDir, result, hashAfter, stepDownInvocations };
+  }
+
+  it("routes the sha256sum write through the sandbox step-down prefix when uid=0", () => {
+    const { tmpDir, result, hashAfter, stepDownInvocations } = runHashRefresh({
+      asRoot: true,
+    });
+    try {
+      expect(result.status, result.stderr || result.stdout).toBe(0);
+      expect(stepDownInvocations).toBe(1);
+      expect(hashAfter).toMatch(/^[0-9a-f]{64}\s+openclaw\.json$/);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("skips the step-down prefix when already running as non-root", () => {
+    const { tmpDir, result, hashAfter, stepDownInvocations } = runHashRefresh({
+      asRoot: false,
+    });
+    try {
+      expect(result.status, result.stderr || result.stdout).toBe(0);
+      expect(stepDownInvocations).toBe(0);
+      expect(hashAfter).toMatch(/^[0-9a-f]{64}\s+openclaw\.json$/);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("overwrites a stale hash without leaving the partial write behind", () => {
+    const { tmpDir, result, hashAfter } = runHashRefresh({
+      asRoot: true,
+      preexistingHash: "stale-content\n",
+    });
+    try {
+      expect(result.status, result.stderr || result.stdout).toBe(0);
+      expect(hashAfter).not.toContain("stale-content");
+      expect(hashAfter).toMatch(/^[0-9a-f]{64}\s+openclaw\.json$/);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  // Use owner-read-only data to exercise EACCES without changing the test process's capabilities.
+  it("the direct redirection fails on a read-only hash file but the step-down path recovers it", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hash-eacces-"));
+    try {
+      const configDir = path.join(tmpDir, "openclaw");
+      fs.mkdirSync(configDir, { recursive: true });
+      const configPath = path.join(configDir, "openclaw.json");
+      const hashPath = path.join(configDir, ".config-hash");
+      fs.writeFileSync(configPath, "{}\n");
+      fs.writeFileSync(hashPath, "placeholder\n");
+      fs.chmodSync(hashPath, 0o444);
+
+      // Establish the permission failure before exercising the owner handoff.
+      const directProbe = spawnSync(
+        "sh",
+        ["-c", `cd ${JSON.stringify(configDir)} && sha256sum openclaw.json >".config-hash"`],
+        { encoding: "utf-8", timeout: 5000 },
+      );
+      const runningAsRoot = typeof process.getuid === "function" && process.getuid() === 0;
+      if (runningAsRoot && directProbe.status === 0) {
+        // Root with DAC override cannot prove EACCES; reset for the owner-handoff check.
+        fs.writeFileSync(hashPath, "placeholder\n");
+        fs.chmodSync(hashPath, 0o444);
+      } else {
+        expect(directProbe.status).not.toBe(0);
+        expect(directProbe.stderr.toLowerCase()).toContain("permission denied");
+        expect(fs.readFileSync(hashPath, "utf-8")).toBe("placeholder\n");
+      }
+
+      // The fixture grants write access only through the existing owner handoff.
+      const stepDownLog = path.join(tmpDir, "step-down.log");
+      const scriptPath = path.join(tmpDir, "run.sh");
+      const helperFn = extractShellFunctionFromSource(src, "ensure_mutable_openclaw_config_hash")
+        .replaceAll("/sandbox/.openclaw", configDir)
+        .replaceAll("/usr/bin/sha256sum", SHA256SUM);
+      fs.writeFileSync(
+        scriptPath,
+        [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          'id() { if [ "${1:-}" = "-u" ]; then printf "0"; else command id "$@"; fi; }',
+          'openclaw_config_dir_owner() { printf "sandbox"; }',
+          "normalize_mutable_config_perms() { :; }",
+          `STEP_DOWN_PREFIX_SANDBOX=(bash -c 'printf "step-down\\n" >>${JSON.stringify(stepDownLog)}; ${CHMOD} 0660 ${JSON.stringify(hashPath)}; exec "$@"' sandbox-step-down)`,
+          helperFn,
+          "ensure_mutable_openclaw_config_hash",
+        ].join("\n"),
+        { mode: 0o700 },
+      );
+      const result = spawnSync("bash", [scriptPath], {
+        encoding: "utf-8",
+        timeout: 5000,
+      });
+      expect(result.status, result.stderr || result.stdout).toBe(0);
+      expect(fs.readFileSync(stepDownLog, "utf-8").trim().split("\n").filter(Boolean)).toHaveLength(
+        1,
+      );
+      expect(fs.readFileSync(hashPath, "utf-8").trim()).toMatch(/^[0-9a-f]{64}\s+openclaw\.json$/);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("direct-root entrypoint composition under CAP_DAC_OVERRIDE drop", () => {
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+
+  it("runs the helper chain end-to-end against a simulated root entrypoint", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-direct-root-"));
+    const configDir = path.join(tmpDir, "openclaw");
+    const proxyEnvFile = path.join(tmpDir, "nemoclaw-proxy-env.sh");
+    fs.mkdirSync(configDir, { recursive: true });
+
+    const configPath = path.join(configDir, "openclaw.json");
+    const hashPath = path.join(configDir, ".config-hash");
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({ gateway: { port: 18789, auth: {} } }, null, 2) + "\n",
+    );
+    fs.writeFileSync(hashPath, "placeholder\n");
+    fs.chmodSync(hashPath, 0o444);
+
+    const scriptPath = path.join(tmpDir, "run.sh");
+    const ensureHash = extractShellFunctionFromSource(src, "ensure_mutable_openclaw_config_hash")
+      .replaceAll("/sandbox/.openclaw", configDir)
+      .replaceAll("/usr/bin/sha256sum", SHA256SUM);
+    const readToken = extractShellFunctionFromSource(src, "_read_gateway_token")
+      .replaceAll("/sandbox/.openclaw/openclaw.json", configPath)
+      .replaceAll("/usr/local/bin/node", process.execPath);
+    const ensureToken = extractShellFunctionFromSource(src, "ensure_gateway_token")
+      .replaceAll("/sandbox/.openclaw", configDir)
+      .replaceAll("/usr/local/bin/node", process.execPath);
+    const configWriter = extractShellFunctionFromSource(src, "run_openclaw_config_as_owner");
+    const ensureTokenIfMissing = extractShellFunctionFromSource(
+      src,
+      "ensure_gateway_token_if_missing",
+    );
+    const needsToken = extractShellFunctionFromSource(
+      src,
+      "needs_gateway_token_for_current_command",
+    );
+    const prepareToken = extractShellFunctionFromSource(
+      src,
+      "prepare_gateway_token_for_current_command",
+    );
+    const exportToken = extractShellFunctionFromSource(src, "export_gateway_token");
+    const writeRuntimeStart = src.indexOf("write_runtime_shell_env() {");
+    const writeRuntimeEnd = src.indexOf("# cleanup_on_signal", writeRuntimeStart);
+    if (writeRuntimeStart === -1 || writeRuntimeEnd === -1) {
+      throw new Error("expected write_runtime_shell_env in scripts/nemoclaw-start.sh");
+    }
+    const writeRuntimeEnv = src
+      .slice(writeRuntimeStart, writeRuntimeEnd)
+      .replaceAll("/tmp/nemoclaw-proxy-env.sh", proxyEnvFile);
+    const helper = [
+      extractShellFunctionFromSource(src, "_step_down_extract_function"),
+      extractShellFunctionFromSource(src, "run_step_down_as_sandbox"),
+    ].join("\n");
+    const setupAuth = [
+      extractShellFunctionFromSource(src, "is_managed_inference_route"),
+      extractShellFunctionFromSource(src, "setup_auth_profile_as_sandbox"),
+    ].join("\n");
+    fs.writeFileSync(
+      scriptPath,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        'id() { if [ "${1:-}" = "-u" ]; then printf "0"; else command id "$@"; fi; }',
+        'openclaw_config_dir_owner() { printf "sandbox"; }',
+        "NEMOCLAW_CMD=()",
+        '_PROXY_URL=""',
+        '_NO_PROXY_VAL=""',
+        `STEP_DOWN_PREFIX_SANDBOX=(bash -c 'chmod 0660 ${JSON.stringify(hashPath)} 2>/dev/null; exec "$@"' sandbox-step-down)`,
+        'emit_sandbox_sourced_file() { local target="$1"; cat > "$target"; chmod 444 "$target"; }',
+        "write_auth_profile() { :; }",
+        "harden_auth_profiles() { :; }",
+        '_SANDBOX_SAFETY_NET=""',
+        '_PROXY_FIX_SCRIPT=""',
+        '_NEMOTRON_FIX_SCRIPT=""',
+        "emit_messaging_connect_runtime_preload_exports() { :; }",
+        '_TOOL_REDIRECTS=("NEMOCLAW_TEST_REDIRECT=/tmp/nemoclaw-test")',
+        'NODE_USE_ENV_PROXY=""',
+        "normalize_mutable_config_perms() { :; }",
+        readToken,
+        ensureHash,
+        configWriter,
+        ensureToken,
+        ensureTokenIfMissing,
+        needsToken,
+        prepareToken,
+        exportToken,
+        writeRuntimeEnv,
+        helper,
+        setupAuth,
+        "ensure_mutable_openclaw_config_hash",
+        "prepare_gateway_token_for_current_command",
+        "export_gateway_token",
+        "write_runtime_shell_env",
+        "setup_auth_profile_as_sandbox",
+        'echo "CONTINUATION_REACHED"',
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+
+    try {
+      const result = spawnSync("bash", [scriptPath], {
+        encoding: "utf-8",
+        timeout: 10000,
+      });
+
+      expect(result.status, result.stderr || result.stdout).toBe(0);
+      expect(result.stdout).toContain("CONTINUATION_REACHED");
+
+      expect(result.stderr).not.toContain("Missing gateway auth token");
+      expect(result.stderr).not.toMatch(/syntax error near unexpected token .?fi/);
+
+      const hashContents = fs.readFileSync(hashPath, "utf-8").trim();
+      expect(hashContents).toMatch(/^[0-9a-f]{64}\s+openclaw\.json$/);
+      expect((fs.statSync(hashPath).mode & 0o777).toString(8)).toBe("660");
+
+      expect(fs.existsSync(proxyEnvFile)).toBe(true);
+      const proxyEnv = fs.readFileSync(proxyEnvFile, "utf-8");
+      expect(proxyEnv).toMatch(/OPENCLAW_GATEWAY_TOKEN='[A-Za-z0-9_-]{20,}'/);
+      expect(proxyEnv).toContain("export OPENCLAW_GATEWAY_TOKEN");
+
+      const updatedConfig = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+      expect(updatedConfig.gateway?.auth?.token).toMatch(/^[A-Za-z0-9_-]{20,}$/);
+      expect(proxyEnv).toContain(`OPENCLAW_GATEWAY_TOKEN='${updatedConfig.gateway.auth.token}'`);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
