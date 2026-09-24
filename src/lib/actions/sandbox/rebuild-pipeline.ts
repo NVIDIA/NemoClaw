@@ -348,14 +348,23 @@ async function rebuildSandboxUnlocked(
       }
       const observedMcp =
         retainedMcpHandoff ??
-        (await observeMcpStateForRebuild(
-          sandboxEntry,
-          recreateOptions.runtimeSelection,
-          (recoveryManifest === null && activeRecoveryTransaction?.sandboxName !== sandboxName) ||
-            canRecapturePreparedRecoveryMcp,
-          undefined,
-          stoppedSource ?? undefined,
-        ));
+        (stoppedSource
+          ? await observeMcpStateForRebuild(
+              sandboxEntry,
+              recreateOptions.runtimeSelection,
+              (recoveryManifest === null &&
+                activeRecoveryTransaction?.sandboxName !== sandboxName) ||
+                canRecapturePreparedRecoveryMcp,
+              undefined,
+              stoppedSource,
+            )
+          : await observeMcpStateForRebuild(
+              sandboxEntry,
+              recreateOptions.runtimeSelection,
+              (recoveryManifest === null &&
+                activeRecoveryTransaction?.sandboxName !== sandboxName) ||
+                canRecapturePreparedRecoveryMcp,
+            ));
       const mcpEntries = observedMcp.entries;
       const mcpRuntimeSelectionRequired = mcpEntries.length > 0;
       const mcpRuntimeSelection = mcpRuntimeSelectionRequired
