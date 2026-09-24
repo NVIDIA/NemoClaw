@@ -54,6 +54,22 @@ const OPENCLAW_CONFIG_NAME = "openclaw.json";
 const HERMES_CAPTURE_TIMEOUT_MS = 120_000;
 const HERMES_CAPTURE_MAX_BUFFER = 256 * 1024 * 1024;
 
+export function discardIncompleteBackup(
+  sandboxName: string,
+  result: sandboxState.BackupResult,
+  cleanupDeadlineMs: number,
+  operation: string,
+): sandboxState.BackupResult {
+  const backupPath = result.manifest?.backupPath;
+  if (!backupPath) return result;
+  if (sandboxState.removeSandboxStateBackup(sandboxName, backupPath, cleanupDeadlineMs)) {
+    const { manifest: _removedManifest, ...withoutPartialBackup } = result;
+    return { ...withoutPartialBackup, backedUpDirs: [], backedUpFiles: [] };
+  }
+  const cleanupError = `Failed ${operation} backup at '${backupPath}' could not be removed`;
+  return { ...result, error: result.error ? `${result.error}. ${cleanupError}` : cleanupError };
+}
+
 function captureTimeoutMs(deadlineMs: number | undefined, maximumMs: number): number | null {
   if (deadlineMs === undefined) return maximumMs;
   const remainingMs = Math.floor(deadlineMs - Date.now());

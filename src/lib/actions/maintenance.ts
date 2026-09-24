@@ -195,7 +195,7 @@ async function backupSandboxWithinMutationLock(
       // A strict snapshot can be large. Remove it only after a temporarily
       // started container has been returned to Stopped, so synchronous
       // filesystem cleanup cannot consume the lifecycle stop reserve.
-      if (result && !result.success && discardFailedBackup) {
+      if (result && !result.success && discardFailedBackup && !stoppedContainerCleanupError) {
         result = discardFailedBackup(
           result,
           Date.now() + STRICT_BACKUP_POST_STOP_CLEANUP_TIMEOUT_MS,

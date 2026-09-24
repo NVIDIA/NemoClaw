@@ -94,24 +94,6 @@ export type RebuildAgentBaseImagePreflight = {
 
 const INCOMPLETE_REBUILD_BACKUP_CLEANUP_TIMEOUT_MS = 30_000;
 
-function discardIncompleteRebuildBackup(
-  sandboxName: string,
-  result: sandboxState.BackupResult,
-  deadlineMs: number,
-): sandboxState.BackupResult {
-  const backupPath = result.manifest?.backupPath;
-  if (!backupPath) return result;
-  if (sandboxState.removeSandboxStateBackup(sandboxName, backupPath, deadlineMs)) {
-    const { manifest: _removedManifest, ...withoutPartialBackup } = result;
-    return { ...withoutPartialBackup, backedUpDirs: [], backedUpFiles: [] };
-  }
-  const cleanupError = `Failed rebuild backup at '${backupPath}' could not be removed`;
-  return {
-    ...result,
-    error: result.error ? `${result.error}. ${cleanupError}` : cleanupError,
-  };
-}
-
 const rebuildAgentBaseImageDisposalResults = new WeakMap<RebuildAgentBaseImagePreflight, boolean>();
 
 function isCanonicalLocalBaseImageRef(agentName: string, imageRef: string): boolean {
@@ -565,7 +547,12 @@ export async function backupSandboxStateForRebuild(
       // until the container this recovery started is observably Stopped again.
       if (returnedToStopped && !backup.success) {
         const cleanupDeadlineMs = Date.now() + INCOMPLETE_REBUILD_BACKUP_CLEANUP_TIMEOUT_MS;
-        backup = discardIncompleteRebuildBackup(sandboxName, backup, cleanupDeadlineMs);
+        backup = snapshotBackup.discardIncompleteBackup(
+          sandboxName,
+          backup,
+          cleanupDeadlineMs,
+          "rebuild",
+        );
       }
       // A container this recovery started must be reported whenever it cannot
       // be returned to stopped, whether or not the retried backup succeeded.

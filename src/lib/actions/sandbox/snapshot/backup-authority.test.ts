@@ -37,14 +37,43 @@ import type { RuntimeProviderBundle } from "../../../onboard/runtime-provider/co
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../../state/registry/types";
 import { createSandboxHostLocalInferenceProvenance } from "../../../state/registry/host-local-inference";
 import type { BackupOptions, BackupResult } from "../../../state/sandbox";
+import * as sandboxState from "../../../state/sandbox";
 import {
   backupSandboxStateWithManagedAuthority,
   captureHermesStateDirectories,
   captureHermesStateFile,
   captureOpenClawStateFile,
+  discardIncompleteBackup,
   HERMES_DIRECTORY_CAPTURE_SCRIPT,
   HERMES_STATE_CAPTURE_SCRIPT,
 } from "./backup-authority";
+
+describe("incomplete backup cleanup", () => {
+  const failed = {
+    success: false,
+    backedUpDirs: ["workspace"],
+    failedDirs: [],
+    backedUpFiles: ["settings.json"],
+    failedFiles: [],
+    manifest: { backupPath: "/backups/alpha/incomplete" },
+    error: "capture failed",
+  } as unknown as BackupResult;
+
+  it("removes the unpublished manifest and clears backed-up entries", () => {
+    vi.spyOn(sandboxState, "removeSandboxStateBackup").mockReturnValue(true);
+    const result = discardIncompleteBackup("alpha", failed, 12_345, "strict pre-upgrade");
+    expect(result).toMatchObject({ backedUpDirs: [], backedUpFiles: [] });
+    expect(result).not.toHaveProperty("manifest");
+  });
+
+  it("retains the manifest and operation diagnostic when bounded removal fails", () => {
+    vi.spyOn(sandboxState, "removeSandboxStateBackup").mockReturnValue(false);
+    expect(discardIncompleteBackup("alpha", failed, 12_345, "rebuild")).toMatchObject({
+      manifest: failed.manifest,
+      error: expect.stringContaining("Failed rebuild backup"),
+    });
+  });
+});
 
 function workload(
   agent: ShippedManagedImageAgent,

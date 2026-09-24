@@ -5,6 +5,7 @@ import { captureRecordedSandboxBasePolicy } from "../../../policy";
 import type { SandboxEntry } from "../../../state/registry/types";
 import * as sandboxState from "../../../state/sandbox";
 import { observeMcpStateForRebuild } from "../rebuild-mcp-phase";
+import { discardIncompleteBackup } from "./backup-authority";
 
 /** Discard a strict pre-upgrade snapshot that cannot carry complete recovery
  * authority, keeping the original failure visible. */
@@ -13,17 +14,7 @@ export function discardIncompleteStrictBackup(
   result: sandboxState.BackupResult,
   cleanupDeadlineMs: number,
 ): sandboxState.BackupResult {
-  const backupPath = result.manifest?.backupPath;
-  if (!backupPath) return result;
-  if (sandboxState.removeSandboxStateBackup(sandbox.name, backupPath, cleanupDeadlineMs)) {
-    const { manifest: _removedManifest, ...withoutPartialBackup } = result;
-    return { ...withoutPartialBackup, backedUpDirs: [], backedUpFiles: [] };
-  }
-  const cleanupError = `Failed strict pre-upgrade backup at '${backupPath}' could not be removed`;
-  return {
-    ...result,
-    error: result.error ? `${result.error}. ${cleanupError}` : cleanupError,
-  };
+  return discardIncompleteBackup(sandbox.name, result, cleanupDeadlineMs, "strict pre-upgrade");
 }
 
 function failedRetentionResult(
