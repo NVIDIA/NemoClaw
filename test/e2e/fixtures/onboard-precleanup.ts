@@ -36,7 +36,14 @@ export async function prepareOnboardSandboxes(
     env: { ...options.env, OPENSHELL_GATEWAY: gatewayName },
   };
   for (const name of sandboxNames) {
-    await prepareOwnedSandboxForOnboard(host, sandbox, cleanup, name, gatewayName);
+    await prepareOwnedSandboxForOnboard(
+      host,
+      sandbox,
+      cleanup,
+      name,
+      gatewayName,
+      selectedOptions.env,
+    );
   }
   if (!(await sandbox.hasGatewayForInitialCleanup(gatewayName, selectedOptions))) return;
   await host.cleanupForward(18789, {

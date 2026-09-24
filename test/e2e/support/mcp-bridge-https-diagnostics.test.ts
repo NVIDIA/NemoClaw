@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import * as childProcess from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { once } from "node:events";
 import https from "node:https";
 import net from "node:net";
@@ -8,6 +12,11 @@ import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { startFakeMcpHttpsServer, type StartedHttpServer } from "../live/mcp-bridge-servers.ts";
 import { shouldRetryMcpDiscoveryAfterRestart } from "../live/mcp-bridge-tool-discovery.ts";
 import { createMcpFixtureTls } from "../fixtures/mcp-fixture-tls.ts";
+
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  return { ...actual, execFileSync: vi.fn(actual.execFileSync) };
+});
 
 const { tls: fixtureTls, close: closeFixtureTls } = createMcpFixtureTls();
 const servers: StartedHttpServer[] = [];
@@ -138,4 +147,43 @@ describe("MCP HTTPS transport diagnostics", () => {
       slowRequest.destroy();
     }
   });
+});
+
+it.each([
+  [
+    "openssl",
+    (failure: Error) =>
+      vi.mocked(childProcess.execFileSync).mockImplementationOnce(() => {
+        throw failure;
+      }),
+  ],
+  [
+    "read",
+    (failure: Error) =>
+      vi.spyOn(fs, "readFileSync").mockImplementationOnce(() => {
+        throw failure;
+      }),
+  ],
+] as const)("removes partial TLS material after %s failure", (_stage, inject) => {
+  const failure = new Error("certificate creation failed");
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), "tls-failure-test-"));
+  const directory = path.join(parent, "certificate");
+  const mkdir = vi.spyOn(fs, "mkdtempSync").mockImplementation(() => {
+    fs.mkdirSync(directory);
+    return directory;
+  });
+  const injected = inject(failure);
+  try {
+    expect(() => createMcpFixtureTls()).toThrow(failure);
+    expect(fs.existsSync(directory)).toBe(false);
+    expect(childProcess.execFileSync).toHaveBeenCalledWith(
+      "openssl",
+      expect.any(Array),
+      expect.objectContaining({ timeout: 20_000, killSignal: "SIGKILL" }),
+    );
+  } finally {
+    injected.mockRestore();
+    mkdir.mockRestore();
+    fs.rmSync(parent, { recursive: true, force: true });
+  }
 });

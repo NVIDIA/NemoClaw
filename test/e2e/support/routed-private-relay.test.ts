@@ -291,6 +291,9 @@ describe("relay diagnostic cleanup ownership", () => {
     const relay = await f.start();
     const startArgs = f.command.mock.calls.find(([args]) => args[0] === "run")![0];
     expect(startArgs).not.toContain("--rm");
+    expect(startArgs).toContain(
+      "node:22-bookworm-slim@sha256:48e4b67d85f87bd551df43704e24d252f56cc5f8e9718841aace50f19948f0f9",
+    );
     await relay.close();
     expect(f.command.mock.calls.at(-1)?.[0]).toEqual([
       "container",

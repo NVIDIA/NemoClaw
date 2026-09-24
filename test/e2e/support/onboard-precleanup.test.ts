@@ -57,7 +57,7 @@ function fixture(present = false, gatewayName = "nemoclaw") {
       calls.push(`destroy ${name}`);
       state.registered.delete(name);
     }),
-    command: vi.fn(async () => {
+    command: vi.fn(async (_command?: string, _args?: string[], _options?: unknown) => {
       calls.push("recover gateway");
       gateway.present = true;
       return response();
@@ -142,6 +142,49 @@ it("recovers a retained registration through the existing cleanup owner", async 
   ]);
   expect(f.host.cleanupForward).toHaveBeenCalledOnce();
 });
+
+it.each([0, 1, 2, 3, 4])(
+  "uses the caller runtime environment for owned cleanup call %s",
+  async (index) => {
+    vi.stubEnv("NEMOCLAW_GATEWAY_RUNTIME", "docker");
+    const f = fixture();
+    state.registered.add(names[0]!);
+    await prepareOnboardSandboxes(
+      f.host,
+      f.sandbox,
+      f.cleanup,
+      [names[0]!],
+      "e2e-live-extra-provider",
+      {
+        env: {
+          PATH: "/caller/bin",
+          OPENSHELL_GATEWAY: "nemoclaw",
+          NEMOCLAW_GATEWAY_RUNTIME: "podman",
+          OPENSHELL_PODMAN_SOCKET: "/caller/podman.sock",
+          NVIDIA_API_KEY: "excluded-test-secret",
+        },
+      },
+    );
+    await f.cleanup.runAll();
+    const ownedCalls = f.openshell.mock.calls.filter(([, options]) =>
+      options?.artifactName?.includes("delete-openshell-sandbox"),
+    );
+    expect(ownedCalls).toHaveLength(5);
+    expect(ownedCalls[index]?.[1]?.env).toEqual({
+      PATH: "/caller/bin",
+      NEMOCLAW_GATEWAY_RUNTIME: "podman",
+      OPENSHELL_PODMAN_SOCKET: "/caller/podman.sock",
+      OPENSHELL_GATEWAY: "nemoclaw",
+    });
+    expect(f.host.command).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(Array),
+      expect.objectContaining({
+        env: expect.objectContaining({ NEMOCLAW_GATEWAY_RUNTIME: "podman" }),
+      }),
+    );
+  },
+);
 
 it("refuses ambiguous gateway evidence before any resource mutation", async () => {
   const f = fixture();

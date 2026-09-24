@@ -241,7 +241,15 @@ export function validateMockParity(options: {
   for (const entry of baseManifest?.entries ?? []) {
     for (const source of entry.liveSources ?? []) {
       if (SHARED_FIXTURE.test(source) && changedFileSet.has(source)) {
-        requireChangedFastTest(entry, source, true);
+        const headEntry = entries.get(renamedLiveOwners.get(entry.live) ?? entry.live);
+        const retainsOwnership =
+          headEntry?.liveSources?.includes(source) &&
+          entry.fast?.every((fastFile) => headEntry.fast?.includes(fastFile));
+        requireChangedFastTest(
+          headEntry && retainsOwnership ? { ...entry, fast: headEntry.fast } : entry,
+          source,
+          true,
+        );
       }
     }
   }

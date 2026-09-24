@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { HostCliClient } from "./clients/host";
 import type { RuntimeProviderGatewaySurface } from "../../../src/lib/onboard/runtime-provider/contract";
 import { snapshotPodmanOwner } from "./podman-owner-snapshot";
@@ -99,10 +99,11 @@ export async function captureBoundedPodmanOwnerDiagnostic(
   phase: "before" | "after",
 ): Promise<Report> {
   const unavailable: Report = { kind: "podman-owner-observation-v1", source: "unavailable" };
-  const entry = path.resolve("test/e2e/fixtures/podman-owner-diagnostic.ts");
-  const script = `const write = process.stdout.write.bind(process.stdout); require(${JSON.stringify(entry)}).capturePodmanOwnerDiagnostic(process.env).then(report => write(JSON.stringify(report))).catch(() => write(JSON.stringify({kind:"podman-owner-observation-v1",source:"unavailable"})));`;
   try {
-    const result = await host.command(process.execPath, ["--require", "tsx/cjs", "-e", script], {
+    const entry = fileURLToPath(import.meta.url);
+    const loader = fileURLToPath(import.meta.resolve("tsx/cjs"));
+    const script = `const write = process.stdout.write.bind(process.stdout); require(${JSON.stringify(entry)}).capturePodmanOwnerDiagnostic(process.env).then(report => write(JSON.stringify(report))).catch(() => write(JSON.stringify({kind:"podman-owner-observation-v1",source:"unavailable"})));`;
+    const result = await host.command(process.execPath, ["--require", loader, "-e", script], {
       env: environment,
       artifactName: `owner-snapshot-${phase}`,
       timeoutMs: 60_000,

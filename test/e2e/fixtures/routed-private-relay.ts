@@ -157,7 +157,7 @@ export async function startRoutedPrivateRelay(options: {
         relayName,
         "--network",
         networkName,
-        "node:22-bookworm-slim",
+        "node:22-bookworm-slim@sha256:48e4b67d85f87bd551df43704e24d252f56cc5f8e9718841aace50f19948f0f9",
         "node",
         "-e",
         ROUTED_PRIVATE_RELAY_SOURCE,

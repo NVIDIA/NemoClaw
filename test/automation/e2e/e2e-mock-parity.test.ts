@@ -221,6 +221,25 @@ describe("changed live E2E mock parity", () => {
     },
   );
 
+  it.each([true, false])(
+    "credits an added same-owner test only with retained mapping: %s",
+    (retained) => {
+      const shared = "test/e2e/fixtures/owned-sandbox-cleanup.ts";
+      const added = "test/e2e/support/added.test.ts";
+      const result = validateMockParity({
+        manifest: manifest([
+          { live, liveSources: [shared], fast: retained ? [fast, added] : [added] },
+        ]),
+        baseManifest: manifest([{ live, liveSources: [shared], fast: [fast] }]),
+        changedFiles: [shared, added],
+        fileExists: (file) => exists(file) || file === shared || file === added,
+      });
+      expect(result).toEqual(
+        retained ? [] : [`${shared}: change at least one fast PR test mapped from ${live}`],
+      );
+    },
+  );
+
   it("ignores comment-only shared fixture changes without hiding behavioral changes", () => {
     const shared = "test/e2e/fixtures/owned-sandbox-cleanup.ts";
     expect(
