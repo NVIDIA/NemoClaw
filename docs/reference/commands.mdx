@@ -2362,7 +2362,11 @@ NemoClaw attempts to restore stored provider credentials, but it cannot restore 
 It flags `gateway-providers` as residual.
 Inspect the channel's gateway providers, restore the preset YAML, and correct the gateway failure.
 When the gateway is reachable, run the `$$nemoclaw <name> channels remove <channel>` command printed by the CLI, then rerun `$$nemoclaw <name> channels add <channel>`.
-For Telegram, Discord, and Slack, a rebuild triggered by `channels add` also verifies that the selected bridge starts and reports credential, startup, or plugin discovery warnings.
+After a successful rebuild, `channels add` verifies that the selected Telegram, Discord, or Slack bridge starts and reports credential, startup, or plugin discovery warnings.
+
+For OpenClaw, an official-plugin provenance failure stops the image build before those runtime checks.
+Report the failure diagnostic, plugin name and NemoClaw version to a maintainer; NemoClaw manages the package pins and build cache.
+
 
 ```bash
 $$nemoclaw my-assistant channels add telegram
