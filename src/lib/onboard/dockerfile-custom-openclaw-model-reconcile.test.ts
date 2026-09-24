@@ -6,12 +6,31 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { patchStagedDockerfile } from "./dockerfile-patch";
 
 describe("custom OpenClaw Dockerfile model reconciliation", () => {
-  it("drops stale limits for the selected model and preserves the final image user", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it.each([
+    {
+      behavior: "drops inherited limits",
+      contextWindow: "",
+      maxTokens: "",
+      expectedLimits: {},
+    },
+    {
+      behavior: "retains explicit limits",
+      contextWindow: "65536",
+      maxTokens: "8192",
+      expectedLimits: { contextWindow: 65_536, maxTokens: 8_192 },
+    },
+  ])("$behavior for the selected model and preserves the final image user", (testCase) => {
+    vi.stubEnv("NEMOCLAW_CONTEXT_WINDOW", testCase.contextWindow);
+    vi.stubEnv("NEMOCLAW_MAX_TOKENS", testCase.maxTokens);
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-custom-model-patch-"));
     try {
       const dockerfilePath = path.join(root, "Dockerfile");
@@ -40,7 +59,11 @@ describe("custom OpenClaw Dockerfile model reconciliation", () => {
       );
 
       const patched = fs.readFileSync(dockerfilePath, "utf-8");
-      expect(patched).toContain("ARG NEMOCLAW_CUSTOM_ROUTE_MODEL_B64=");
+      const encodedModel = /^ARG NEMOCLAW_CUSTOM_ROUTE_MODEL_B64=(.+)$/mu.exec(patched)?.[1] ?? "";
+      const encodedLimits =
+        /^ARG NEMOCLAW_CUSTOM_ROUTE_LIMITS_B64=(.+)$/mu.exec(patched)?.[1] ?? "";
+      expect(encodedModel).not.toBe("");
+      expect(encodedLimits).not.toBe("");
       expect(patched).toContain("sha256sum openclaw.json > .config-hash");
       expect(patched.trimEnd().endsWith("USER 1001:1001")).toBe(true);
 
@@ -77,9 +100,8 @@ describe("custom OpenClaw Dockerfile model reconciliation", () => {
         encoding: "utf-8",
         env: {
           ...process.env,
-          NEMOCLAW_CUSTOM_ROUTE_MODEL_B64: Buffer.from("provider/selected-model", "utf8").toString(
-            "base64",
-          ),
+          NEMOCLAW_CUSTOM_ROUTE_MODEL_B64: encodedModel,
+          NEMOCLAW_CUSTOM_ROUTE_LIMITS_B64: encodedLimits,
         },
       });
 
@@ -93,6 +115,7 @@ describe("custom OpenClaw Dockerfile model reconciliation", () => {
                 {
                   id: "provider/selected-model",
                   name: "inference/provider/selected-model",
+                  ...testCase.expectedLimits,
                 },
               ],
             },

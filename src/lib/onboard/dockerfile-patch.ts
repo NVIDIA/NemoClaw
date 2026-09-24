@@ -195,7 +195,11 @@ export interface PatchStagedDockerfileOptions {
   reconcileCustomOpenClawModel?: boolean;
 }
 
-function appendCustomOpenClawModelReconcile(dockerfile: string, model: string): string {
+function appendCustomOpenClawModelReconcile(
+  dockerfile: string,
+  model: string,
+  explicitLimits: { contextWindow?: string; maxTokens?: string },
+): string {
   const instructions = dockerfileInstructions(dockerfile);
   const finalFromIndex = instructions.reduce(
     (last, instruction, index) => (/^FROM(?:\s|$)/i.test(instruction.text) ? index : last),
@@ -209,13 +213,15 @@ function appendCustomOpenClawModelReconcile(dockerfile: string, model: string): 
     );
   const restoreUser = finalUser?.text ?? "USER sandbox";
   const encodedModel = Buffer.from(model, "utf8").toString("base64");
+  const encodedLimits = Buffer.from(JSON.stringify(explicitLimits), "utf8").toString("base64");
 
   return `${dockerfile.trimEnd()}
 
 # Reconcile inherited OpenClaw model metadata with this custom image's route.
 ARG NEMOCLAW_CUSTOM_ROUTE_MODEL_B64=${encodedModel}
+ARG NEMOCLAW_CUSTOM_ROUTE_LIMITS_B64=${encodedLimits}
 USER root
-RUN NEMOCLAW_CUSTOM_ROUTE_MODEL_B64="\${NEMOCLAW_CUSTOM_ROUTE_MODEL_B64}" /usr/bin/python3 - <<'PYNEMOCLAWCUSTOMROUTE'
+RUN NEMOCLAW_CUSTOM_ROUTE_MODEL_B64="\${NEMOCLAW_CUSTOM_ROUTE_MODEL_B64}" NEMOCLAW_CUSTOM_ROUTE_LIMITS_B64="\${NEMOCLAW_CUSTOM_ROUTE_LIMITS_B64}" /usr/bin/python3 - <<'PYNEMOCLAWCUSTOMROUTE'
 import base64
 import json
 import os
@@ -229,6 +235,21 @@ if os.path.exists(config_path):
     ).decode("utf-8")
     if len(model) > 512 or re.fullmatch(r"[A-Za-z0-9._:/-]+", model) is None:
         raise SystemExit("custom OpenClaw route model is invalid")
+    explicit_limits = json.loads(
+        base64.b64decode(
+            os.environ["NEMOCLAW_CUSTOM_ROUTE_LIMITS_B64"], validate=True
+        ).decode("utf-8")
+    )
+    if not isinstance(explicit_limits, dict) or set(explicit_limits) - {
+        "contextWindow",
+        "maxTokens",
+    }:
+        raise SystemExit("custom OpenClaw route limits are invalid")
+    for field, value in explicit_limits.items():
+        if not isinstance(value, str) or re.fullmatch(r"[1-9][0-9]*", value) is None:
+            raise SystemExit("custom OpenClaw route limits are invalid")
+        if field == "contextWindow" and int(value) > ${MAX_AUTODETECTED_OLLAMA_CONTEXT_WINDOW}:
+            raise SystemExit("custom OpenClaw route context window is too large")
     flags = os.O_RDWR | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0)
     config_fd = os.open(config_path, flags)
     try:
@@ -262,8 +283,11 @@ if os.path.exists(config_path):
             first["id"] = bare_model
             first["name"] = provider_model
             if model_changed:
-                first.pop("contextWindow", None)
-                first.pop("maxTokens", None)
+                for field in ("contextWindow", "maxTokens"):
+                    if field in explicit_limits:
+                        first[field] = int(explicit_limits[field])
+                    else:
+                        first.pop(field, None)
             config_file.seek(0)
             json.dump(config, config_file, indent=2)
             config_file.write("\\n")
@@ -795,7 +819,14 @@ export function patchStagedDockerfile(
     }
   }
   if (options.reconcileCustomOpenClawModel) {
-    dockerfile = appendCustomOpenClawModelReconcile(dockerfile, sanitizedModel);
+    dockerfile = appendCustomOpenClawModelReconcile(dockerfile, sanitizedModel, {
+      ...(contextWindow &&
+      POSITIVE_INT_RE.test(contextWindow) &&
+      Number(contextWindow) <= MAX_AUTODETECTED_OLLAMA_CONTEXT_WINDOW
+        ? { contextWindow }
+        : {}),
+      ...(maxTokens && POSITIVE_INT_RE.test(maxTokens) ? { maxTokens } : {}),
+    });
   }
 
   replaceDockerfilePatchSnapshot(dockerfilePath, patchSnapshot, dockerfile);

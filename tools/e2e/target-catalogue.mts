@@ -1150,8 +1150,10 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     owningPaths: [
       "scripts/nemoclaw-start.sh",
       "src/lib/onboard/docker-startup-command-env.ts",
+      "src/lib/onboard/dockerfile-patch.ts",
       "src/lib/onboard/managed-workload/onboard-orchestration.ts",
       "src/lib/onboard/sandbox-create-launch.ts",
+      "src/lib/onboard/sandbox-dockerfile-patch-flow.ts",
       "test/e2e/live/openclaw-inference-switch-helpers.ts",
     ],
     environment: {
