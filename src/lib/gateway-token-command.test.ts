@@ -3,11 +3,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import {
-  GatewayTokenCommandError,
-  parseGatewayTokenArgs,
-  runGatewayTokenCommand,
-} from "./gateway-token-command";
+import { GatewayTokenCommandError, runGatewayTokenCommand } from "./gateway-token-command";
 
 function makeSinks() {
   const out: string[] = [];
@@ -19,32 +15,6 @@ function makeSinks() {
     error: (m: string) => err.push(m),
   };
 }
-
-describe("parseGatewayTokenArgs", () => {
-  it("defaults quiet to false when no flags are given", () => {
-    expect(parseGatewayTokenArgs([])).toEqual({ options: { quiet: false }, unknown: [] });
-  });
-
-  it("parses --quiet", () => {
-    expect(parseGatewayTokenArgs(["--quiet"])).toEqual({
-      options: { quiet: true },
-      unknown: [],
-    });
-  });
-
-  it("parses -q", () => {
-    expect(parseGatewayTokenArgs(["-q"])).toEqual({
-      options: { quiet: true },
-      unknown: [],
-    });
-  });
-
-  it("collects unknown flags without throwing", () => {
-    const { options, unknown } = parseGatewayTokenArgs(["--bogus", "-q", "extra"]);
-    expect(options).toEqual({ quiet: true });
-    expect(unknown).toEqual(["--bogus", "extra"]);
-  });
-});
 
 describe("runGatewayTokenCommand", () => {
   it("prints the token to stdout and warns on stderr", async () => {

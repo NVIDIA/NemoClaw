@@ -34,8 +34,7 @@ function isSandboxStateModule(value: SandboxStateModuleCandidate): value is Sand
     value !== null &&
     typeof value.listBackups === "function" &&
     typeof value.findBackup === "function" &&
-    typeof value.validateSnapshotName === "function" &&
-    typeof value.parseRestoreArgs === "function"
+    typeof value.validateSnapshotName === "function"
   );
 }
 const loadedSandboxState = await import(
@@ -45,7 +44,6 @@ if (!isSandboxStateModule(loadedSandboxState)) {
   throw new Error("Expected sandbox-state module exports to be available");
 }
 const sandboxState = loadedSandboxState;
-const { parseRestoreArgs } = sandboxState;
 const BACKUPS_ROOT = path.join(TMP_HOME, ".nemoclaw", "rebuild-backups");
 type BackupManifestOverrides = { [key: string]: BackupValue };
 function writeBackup(
@@ -483,107 +481,6 @@ describe("findBackup", () => {
 
   it("returns no match when the sandbox has no snapshots", () => {
     expect(sandboxState.findBackup("unknown-sandbox", "v1").match).toBeNull();
-  });
-});
-
-// Argv parser for `snapshot restore [selector] [--to <dst>]`. Added alongside
-// the cross-sandbox restore flag: covers positional selectors, --to extraction,
-// ordering permutations, and error cases for a missing or flag-shaped value.
-describe("parseRestoreArgs", () => {
-  it("defaults to self-restore when --to is absent", () => {
-    expect(parseRestoreArgs("src", ["restore"])).toEqual({
-      ok: true,
-      targetSandbox: "src",
-      selector: null,
-    });
-  });
-
-  it("carries a positional selector through without --to", () => {
-    expect(parseRestoreArgs("src", ["restore", "v3"])).toEqual({
-      ok: true,
-      targetSandbox: "src",
-      selector: "v3",
-    });
-  });
-
-  it("accepts a user-assigned snapshot name as selector", () => {
-    expect(parseRestoreArgs("src", ["restore", "before-upgrade"])).toEqual({
-      ok: true,
-      targetSandbox: "src",
-      selector: "before-upgrade",
-    });
-  });
-
-  it("extracts --to and redirects the restore target", () => {
-    expect(parseRestoreArgs("src", ["restore", "--to", "dst"])).toEqual({
-      ok: true,
-      targetSandbox: "dst",
-      selector: null,
-    });
-  });
-
-  it("combines selector + --to with selector first", () => {
-    expect(parseRestoreArgs("src", ["restore", "v3", "--to", "dst"])).toEqual({
-      ok: true,
-      targetSandbox: "dst",
-      selector: "v3",
-    });
-  });
-
-  it("combines selector + --to with --to first", () => {
-    expect(parseRestoreArgs("src", ["restore", "--to", "dst", "v3"])).toEqual({
-      ok: true,
-      targetSandbox: "dst",
-      selector: "v3",
-    });
-  });
-
-  it("preserves timestamp-shaped selectors alongside --to", () => {
-    expect(parseRestoreArgs("src", ["restore", "2026-04-21T14-00-00-000Z", "--to", "dst"])).toEqual(
-      {
-        ok: true,
-        targetSandbox: "dst",
-        selector: "2026-04-21T14-00-00-000Z",
-      },
-    );
-  });
-
-  it("rejects --to at end-of-args with no value", () => {
-    const result = parseRestoreArgs("src", ["restore", "--to"]);
-    expect(result.ok).toBe(false);
-    if (result.ok) {
-      throw new Error("Expected parseRestoreArgs() to reject a trailing --to flag");
-    }
-    expect(result.error).toMatch(/--to requires a target sandbox name/);
-  });
-
-  it("rejects --to when followed immediately by another flag", () => {
-    // Without this guard, `--to --other` would swallow the flag as the dst
-    // name and confuse validateName with an error about a weird name.
-    const result = parseRestoreArgs("src", ["restore", "--to", "--other"]);
-    expect(result.ok).toBe(false);
-    if (result.ok) {
-      throw new Error("Expected parseRestoreArgs() to reject --to without a target name");
-    }
-    expect(result.error).toMatch(/--to requires a target sandbox name/);
-  });
-
-  it("returns self-restore when target equals source explicitly", () => {
-    expect(parseRestoreArgs("src", ["restore", "--to", "src"])).toEqual({
-      ok: true,
-      targetSandbox: "src",
-      selector: null,
-    });
-  });
-
-  it("uses only the first positional as selector; ignores trailing positionals", () => {
-    // Trailing positionals are silently accepted today — pin that behavior so
-    // future changes notice if it shifts.
-    expect(parseRestoreArgs("src", ["restore", "v1", "v2"])).toEqual({
-      ok: true,
-      targetSandbox: "src",
-      selector: "v1",
-    });
   });
 });
 

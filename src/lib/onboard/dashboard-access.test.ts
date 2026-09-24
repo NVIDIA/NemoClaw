@@ -7,10 +7,8 @@ import {
   buildAuthenticatedDashboardUrl,
   buildDashboardChain,
   dashboardUrlForDisplay,
-  getDashboardAccessInfo,
   getDashboardForwardPort,
   getDashboardForwardTarget,
-  getDashboardGuidanceLines,
   resolveDashboardPlatformHints,
 } from "./dashboard-access";
 
@@ -41,33 +39,6 @@ describe("dashboard access helpers", () => {
       isWsl: false,
       wslHostAddress: null,
     });
-  });
-
-  it("builds dashboard access entries including a WSL URL", () => {
-    const access = getDashboardAccessInfo("alpha", {
-      token: "secret",
-      chatUiUrl: "http://127.0.0.1:18789",
-      isWsl: true,
-      wslHostAddress: "172.22.1.1",
-    });
-
-    expect(access).toContainEqual({
-      label: "WSL fallback",
-      url: "http://172.22.1.1:18789/#token=secret",
-    });
-  });
-
-  it("builds dashboard guidance for WSL and empty access lists", () => {
-    expect(
-      getDashboardGuidanceLines([], {
-        chatUiUrl: "http://127.0.0.1:18789",
-        isWsl: true,
-      }),
-    ).toEqual([
-      "Port 18789 must be forwarded before opening these URLs.",
-      "WSL detected: if localhost fails in Windows, use the WSL host IP shown by `hostname -I`.",
-      "No dashboard URLs were generated.",
-    ]);
   });
 });
 

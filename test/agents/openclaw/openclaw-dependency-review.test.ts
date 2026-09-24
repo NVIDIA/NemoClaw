@@ -43,14 +43,6 @@ const MCP_TOOLS_LIST_TIMEOUT_PATCH = path.join(
   "scripts",
   "patch-openclaw-mcp-tools-list-timeout.mts",
 );
-const REBUILD_RESUME_SESSION = path.join(
-  REPO_ROOT,
-  "src",
-  "lib",
-  "actions",
-  "sandbox",
-  "rebuild-resume-session.ts",
-);
 
 type Workflow = {
   permissions?: Record<string, string>;
@@ -319,14 +311,6 @@ check_not_contains "$optional_plugin_block" 'pack_reviewed_npm_tarball' "optiona
 
     expect(result.stderr).toBe("");
     expect(result.status, result.stdout).toBe(0);
-  });
-
-  it("keeps the rebuild-resume compatibility shim tied to its removal tracker", () => {
-    const source = readFileSync(REBUILD_RESUME_SESSION, "utf-8");
-
-    expect(source).toContain("Invalid legacy shape");
-    expect(source).toContain("Removal condition");
-    expect(source).toContain("#4533");
   });
 
   it.each([

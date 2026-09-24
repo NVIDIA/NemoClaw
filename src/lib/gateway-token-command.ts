@@ -149,20 +149,3 @@ export async function runGatewayTokenCommand(
     error(SECURITY_WARNING);
   }
 }
-
-/** Parse the raw `gateway-token` action arguments. */
-export function parseGatewayTokenArgs(actionArgs: readonly string[]): {
-  options: GatewayTokenCommandOptions;
-  unknown: string[];
-} {
-  const options: GatewayTokenCommandOptions = { quiet: false };
-  const unknown: string[] = [];
-  for (const arg of actionArgs) {
-    if (arg === "--quiet" || arg === "-q") {
-      options.quiet = true;
-    } else {
-      unknown.push(arg);
-    }
-  }
-  return { options, unknown };
-}

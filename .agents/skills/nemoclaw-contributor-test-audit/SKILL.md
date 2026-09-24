@@ -38,6 +38,8 @@ Follow the regression-evidence requirements in `test/README.md` when fixing a de
 Start with read-only inspection of the requested area. Read each candidate test, its behavior owner,
 callers, shared fixtures, overlapping tests, project routing, and relevant Git history.
 Inspect dependency source or types when a claim depends on dependency behavior.
+Search module basenames in tests that read files, as well as symbol imports. Paths may be assembled
+from separate directory and filename strings.
 
 For a whole-suite request, map each subsystem's production entrypoints and test layers before
 calling the audit complete. Duplicate-body and assertion scans are discovery tools, not a semantic

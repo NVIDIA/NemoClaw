@@ -8,7 +8,6 @@ import {
   type OpenShellSandboxObserver,
   type OpenShellSandboxReadinessProbe,
 } from "../adapters/openshell/sandbox-observer";
-import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
 import {
   pendingSandboxFrame,
   readySandboxFrame,
@@ -23,8 +22,6 @@ import {
   getSandboxReadyErrorDebouncePolls,
   SANDBOX_READY_ERROR_DEBOUNCE_ENV,
   waitForCreatedSandboxReadyWithTrace,
-  waitForDashboardReadyWithTrace,
-  waitForSandboxReadyWithTrace,
 } from "./sandbox-readiness-tracing";
 
 const NAME = "my-sandbox";
@@ -37,16 +34,6 @@ const REJECTED_OBSERVATION_ERROR = {
 
 function replay(frames: readonly SandboxObservationFrame[]) {
   return replaySandboxObservations(NAME, frames);
-}
-
-function dashboardExecutorThrough(run: () => string): OpenShellSandboxBufferedCommandExecutor {
-  return {
-    runBuffered: vi.fn(async () => ({
-      outcome: { kind: "completed" as const, exitCode: 0 },
-      stdout: run(),
-      stderr: "",
-    })),
-  };
 }
 
 describe("createSandboxReadyWaiter", () => {
@@ -157,7 +144,7 @@ describe("createSandboxReadyWaiter", () => {
     expect(totalSleepSeconds).toBeLessThanOrEqual(2);
   });
 
-  it("keeps the traced waiter within its deadline without an extra final delay", async () => {
+  it("keeps the waiter within its deadline without an extra final delay", async () => {
     const { observer } = replay([pendingSandboxFrame("Provisioning")]);
     const fallbackReadinessProbe = vi.fn(async () => ({
       ok: true as const,
@@ -166,16 +153,13 @@ describe("createSandboxReadyWaiter", () => {
     const sleep = vi.fn();
 
     await expect(
-      waitForSandboxReadyWithTrace({
-        sandboxName: NAME,
-        attempts: 1,
-        delaySeconds: 2,
+      createSandboxReadyWaiter({
         observer,
         target: TARGET,
         fallbackReadinessProbe,
         isLinuxDockerDriverGatewayEnabled: () => false,
         sleep,
-      }),
+      })(NAME, 1, 2),
     ).resolves.toEqual({ ready: false, reason: "timeout", error: null });
     expect(sleep).toHaveBeenCalledTimes(4);
     expect(sleep.mock.calls.reduce((total, [seconds]) => total + seconds, 0)).toBeCloseTo(2, 2);
@@ -194,17 +178,14 @@ describe("createSandboxReadyWaiter", () => {
     const sleep = vi.fn();
 
     await expect(
-      waitForSandboxReadyWithTrace({
-        sandboxName: NAME,
-        attempts: 10,
-        delaySeconds: 2,
+      createSandboxReadyWaiter({
         observer: { listSandboxes },
         target: TARGET,
         fallbackReadinessProbe,
         isLinuxDockerDriverGatewayEnabled: () => false,
         sleep,
         now: () => 1_000,
-      }),
+      })(NAME, 10, 2),
     ).resolves.toEqual({ ready: false, reason: "observation_failed", error });
     expect(listSandboxes).toHaveBeenCalledOnce();
     expect(listSandboxes).toHaveBeenCalledWith({ target: TARGET, timeoutMs: 20_000 });
@@ -217,15 +198,12 @@ describe("createSandboxReadyWaiter", () => {
       .fn<OpenShellSandboxObserver["listSandboxes"]>()
       .mockRejectedValue(new Error("untrusted observer diagnostic"));
 
-    const result = await waitForSandboxReadyWithTrace({
-      sandboxName: NAME,
-      attempts: 1,
-      delaySeconds: 2,
+    const result = await createSandboxReadyWaiter({
       observer: { listSandboxes },
       target: TARGET,
       isLinuxDockerDriverGatewayEnabled: () => true,
       sleep: vi.fn(),
-    });
+    })(NAME, 1, 2);
 
     expect(result).toEqual({
       ready: false,
@@ -241,16 +219,13 @@ describe("createSandboxReadyWaiter", () => {
       .fn<OpenShellSandboxReadinessProbe>()
       .mockRejectedValue(new Error("untrusted legacy probe diagnostic"));
 
-    const result = await waitForSandboxReadyWithTrace({
-      sandboxName: NAME,
-      attempts: 1,
-      delaySeconds: 2,
+    const result = await createSandboxReadyWaiter({
       observer,
       target: TARGET,
       fallbackReadinessProbe,
       isLinuxDockerDriverGatewayEnabled: () => false,
       sleep: vi.fn(),
-    });
+    })(NAME, 1, 2);
 
     expect(result).toEqual({
       ready: false,
@@ -278,15 +253,12 @@ describe("createSandboxReadyWaiter", () => {
     const sleep = vi.fn();
 
     await expect(
-      waitForSandboxReadyWithTrace({
-        sandboxName: NAME,
-        attempts: 2,
-        delaySeconds: 1,
+      createSandboxReadyWaiter({
         observer: { listSandboxes },
         target: TARGET,
         isLinuxDockerDriverGatewayEnabled: () => true,
         sleep,
-      }),
+      })(NAME, 2, 1),
     ).resolves.toEqual({ ready: true, reason: "ready", error: null });
     expect(listSandboxes).toHaveBeenCalledTimes(2);
     expect(sleep).toHaveBeenCalledOnce();
@@ -669,88 +641,6 @@ describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
   });
 });
 
-describe("waitForDashboardReadyWithTrace", () => {
-  it("traces a zero-budget deadline without probing", async () => {
-    const runCaptureOpenshell = vi.fn(() => "200");
-    const sleep = vi.fn();
-    const trace = vi.fn();
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-
-    await expect(
-      waitForDashboardReadyWithTrace({
-        sandboxName: NAME,
-        port: 18789,
-        commandExecutor: dashboardExecutorThrough(runCaptureOpenshell),
-        sleep,
-        timeoutSecs: 0,
-        trace,
-      }),
-    ).resolves.toBe(false);
-    expect(trace).toHaveBeenCalledWith("not_ready", { attempts: 0, deadline_ms: 0 });
-    expect(runCaptureOpenshell).not.toHaveBeenCalled();
-    expect(sleep).not.toHaveBeenCalled();
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("0ms deadline"));
-  });
-
-  it("returns immediately when the dashboard is ready", async () => {
-    const runCaptureOpenshell = vi.fn(() => "200");
-    const sleep = vi.fn();
-
-    await expect(
-      waitForDashboardReadyWithTrace({
-        sandboxName: NAME,
-        port: 18789,
-        commandExecutor: dashboardExecutorThrough(runCaptureOpenshell),
-        sleep,
-      }),
-    ).resolves.toBe(true);
-    expect(runCaptureOpenshell).toHaveBeenCalledOnce();
-    expect(sleep).not.toHaveBeenCalled();
-  });
-
-  it("retries with fast polling and accepts an authenticated dashboard", async () => {
-    let nowMs = 1_000;
-    const runCaptureOpenshell = vi.fn().mockReturnValueOnce("503").mockReturnValue("401");
-    const sleep = vi.fn((seconds: number) => {
-      nowMs += seconds * 1000;
-    });
-
-    await expect(
-      waitForDashboardReadyWithTrace({
-        sandboxName: NAME,
-        port: 18789,
-        commandExecutor: dashboardExecutorThrough(runCaptureOpenshell),
-        sleep,
-        now: () => nowMs,
-      }),
-    ).resolves.toBe(true);
-    expect(runCaptureOpenshell).toHaveBeenCalledTimes(2);
-    expect(sleep).toHaveBeenCalledWith(0.25);
-  });
-
-  it("reports the actual short deadline on timeout", async () => {
-    let nowMs = 1_000;
-    const runCaptureOpenshell = vi.fn(() => "503");
-    const sleep = vi.fn((seconds: number) => {
-      nowMs += seconds * 1000;
-    });
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-
-    await expect(
-      waitForDashboardReadyWithTrace({
-        sandboxName: NAME,
-        port: 18789,
-        commandExecutor: dashboardExecutorThrough(runCaptureOpenshell),
-        sleep,
-        timeoutSecs: 0.1,
-        now: () => nowMs,
-      }),
-    ).resolves.toBe(false);
-    expect(sleep.mock.calls.reduce((total, [seconds]) => total + seconds, 0)).toBe(0.1);
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("100ms deadline"));
-  });
-});
-
 describe("getSandboxReadyErrorDebouncePolls env contract", () => {
   it("defaults to 30 when the env var is unset", () => {
     expect(getSandboxReadyErrorDebouncePolls({})).toBe(30);
@@ -861,17 +751,7 @@ describe("DGX Spark fresh-onboard readiness replay (#6043)", () => {
   // non-DGX host was validated for the happy path, but cannot force the
   // transient Error branch this replay exercises.
 
-  // Removal signal for the debounce workaround (see the source-of-truth block
-  // in sandbox-readiness-tracing.ts). Removal is tracked on NemoClaw #6043
-  // (https://github.com/NVIDIA/NemoClaw/issues/6043), which owns the pending
-  // upstream OpenShell `sandbox list` fix. A maintainer
-  // enables this once OpenShell guarantees `sandbox list` no longer reports a
-  // transient Error while the gateway re-registers a just-created sandbox: if
-  // the typed upstream sequence contains no Error phase, the debounce in
-  // waitForCreatedSandboxReadyWithTrace can be deleted.
-  it.skip("upstream_openshell_sandbox_list_error_transient_fixed", () => {
-    // Replace `reporterPhaseSequence` with phases from a fixed OpenShell trace.
-    const hasTransientError = reporterPhaseSequence.some((frame) => frame?.phase === "Error");
-    expect(hasTransientError).toBe(false);
-  });
+  // Retiring the debounce requires a live OpenShell trace without transient Error
+  // phases, tracked in #6043 and the source-of-truth block in the implementation.
+  // This static replay proves the workaround; it cannot establish an upstream fix.
 });

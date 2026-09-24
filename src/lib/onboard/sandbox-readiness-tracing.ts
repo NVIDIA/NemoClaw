@@ -9,8 +9,6 @@ import type {
   OpenShellSandboxReadinessProbe,
   OpenShellSandboxResult,
 } from "../adapters/openshell/sandbox-observer";
-import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
-import { selectedOpenShellGateway } from "../adapters/openshell/sandbox-observer";
 import { namedOpenShellGateway } from "../adapters/openshell/sandbox-observer";
 import {
   createCliOpenShellLegacyPodReadinessProbe,
@@ -20,11 +18,10 @@ import {
 import { envInt } from "./env";
 import {
   createReadinessWaitOptions,
-  formatReadinessDeadline,
   getLegacyPollDeadlineBudgetMs,
   waitUntilAsync,
 } from "./readiness-wait";
-import { addTraceEvent, withDashboardReadinessTrace, withSandboxReadinessTrace } from "./tracing";
+import { addTraceEvent, withSandboxReadinessTrace } from "./tracing";
 
 export const SANDBOX_READY_ERROR_DEBOUNCE_ENV = "NEMOCLAW_SANDBOX_READY_ERROR_DEBOUNCE";
 
@@ -173,11 +170,7 @@ async function settleSandboxObservation<T>(
   }
 }
 
-async function pollSandboxReady(
-  options: SandboxReadyWaitOptions & {
-    trace?: (event: string, attributes: Record<string, unknown>) => void;
-  },
-): Promise<SandboxReadyWaitResult> {
+async function pollSandboxReady(options: SandboxReadyWaitOptions): Promise<SandboxReadyWaitResult> {
   const {
     sandboxName,
     attempts,
@@ -188,7 +181,6 @@ async function pollSandboxReady(
     isLinuxDockerDriverGatewayEnabled,
     sleep,
   } = options;
-  let attempt = 0;
   const budgetMs = getLegacyPollDeadlineBudgetMs(attempts, delaySeconds);
   const waitOptions = createReadinessWaitOptions({
     budgetMs,
@@ -198,13 +190,11 @@ async function pollSandboxReady(
     sleep: (ms) => sleep(ms / 1000),
   });
   if (!waitOptions) {
-    options.trace?.("not_ready", { attempts: 0, deadline_ms: budgetMs });
     return { ready: false, reason: "timeout", error: null };
   }
   let result: SandboxReadyWaitResult | null = null;
   const transient = { error: null as OpenShellSandboxError | null };
   await waitUntilAsync(async () => {
-    attempt += 1;
     const observation = await settleSandboxObservation(() =>
       observeOpenShellSandbox(
         observer,
@@ -216,24 +206,13 @@ async function pollSandboxReady(
     if (!observation.ok) {
       if (isTransientObservationError(observation.error)) {
         transient.error = observation.error;
-        options.trace?.("observation_retry", {
-          attempt,
-          error_kind: observation.error.kind,
-          error_reason: "reason" in observation.error ? observation.error.reason : null,
-        });
         return false;
       }
       result = { ready: false, reason: "observation_failed", error: observation.error };
-      options.trace?.("observation_failed", {
-        attempt,
-        error_kind: observation.error.kind,
-        error_reason: "reason" in observation.error ? observation.error.reason : null,
-      });
       return true;
     }
     transient.error = null;
     if (observation.value.state === "present" && observation.value.sandbox.readiness === "ready") {
-      options.trace?.("ready", { attempt, source: "sandbox_list" });
       result = { ready: true, reason: "ready", error: null };
       return true;
     }
@@ -257,23 +236,12 @@ async function pollSandboxReady(
     if (fallback && !fallback.ok) {
       if (isTransientObservationError(fallback.error)) {
         transient.error = fallback.error;
-        options.trace?.("observation_retry", {
-          attempt,
-          error_kind: fallback.error.kind,
-          error_reason: "reason" in fallback.error ? fallback.error.reason : null,
-        });
         return false;
       }
       result = { ready: false, reason: "observation_failed", error: fallback.error };
-      options.trace?.("observation_failed", {
-        attempt,
-        error_kind: fallback.error.kind,
-        error_reason: "reason" in fallback.error ? fallback.error.reason : null,
-      });
       return true;
     }
     if (fallback?.ok && fallback.value === "ready") {
-      options.trace?.("ready", { attempt, source: "pod_phase" });
       result = { ready: true, reason: "ready", error: null };
       return true;
     }
@@ -281,26 +249,9 @@ async function pollSandboxReady(
   }, waitOptions);
   if (result) return result;
   if (transient.error) {
-    options.trace?.("observation_failed", {
-      attempts: attempt,
-      error_kind: transient.error.kind,
-      error_reason: "reason" in transient.error ? transient.error.reason : null,
-      note: "readiness_deadline_exhausted",
-    });
     return { ready: false, reason: "observation_failed", error: transient.error };
   }
-  options.trace?.("not_ready", { attempts: attempt, deadline_ms: budgetMs });
   return { ready: false, reason: "timeout", error: null };
-}
-
-export function waitForSandboxReadyWithTrace(
-  options: SandboxReadyWaitOptions,
-): Promise<SandboxReadyWaitResult> {
-  return withSandboxReadinessTrace(
-    options.sandboxName,
-    { attempts: options.attempts, delay_seconds: options.delaySeconds },
-    () => pollSandboxReady({ ...options, trace: addTraceEvent }),
-  );
 }
 
 export function createSandboxReadyWaiter(
@@ -624,62 +575,4 @@ export function printReadinessFailure(
   logError: (message: string) => void = (message) => console.error(message),
 ): void {
   logError(formatCreatedSandboxReadinessFailureMessage(sandboxName, readiness, timeoutSecs));
-}
-
-export function waitForDashboardReadyWithTrace(options: {
-  sandboxName: string;
-  port: string | number;
-  commandExecutor: OpenShellSandboxBufferedCommandExecutor;
-  sleep: (seconds: number) => void;
-  timeoutSecs?: number;
-  now?: () => number;
-  trace?: typeof addTraceEvent;
-}): Promise<boolean> {
-  const { sandboxName, port, commandExecutor, sleep } = options;
-  const timeoutSecs = options.timeoutSecs ?? 30;
-  const budgetMs = Math.max(0, timeoutSecs * 1000);
-  return withDashboardReadinessTrace(sandboxName, port, timeoutSecs, async () => {
-    let attempt = 0;
-    const waitOptions = createReadinessWaitOptions({
-      budgetMs,
-      maxIntervalMs: 2_000,
-      now: options.now,
-      sleep: (ms) => sleep(ms / 1000),
-    });
-    const traceEvent = options.trace ?? addTraceEvent;
-    if (!waitOptions) {
-      traceEvent("not_ready", { attempts: 0, deadline_ms: budgetMs });
-    }
-    const ready =
-      waitOptions !== null &&
-      (await waitUntilAsync(async () => {
-        attempt += 1;
-        const result = await commandExecutor.runBuffered({
-          sandboxName,
-          target: selectedOpenShellGateway(),
-          command: [
-            "curl",
-            "-so",
-            "/dev/null",
-            "-w",
-            "%{http_code}",
-            "--max-time",
-            "3",
-            `http://localhost:${port}/health`,
-          ],
-        });
-        const readyOutput = result.outcome.kind === "completed" ? result.stdout : "";
-        const readyCode = parseInt((readyOutput || "").trim(), 10) || 0;
-        traceEvent("dashboard_probe", { attempt, http_status: readyCode });
-        return readyCode === 200 || readyCode === 401;
-      }, waitOptions));
-    if (ready) {
-      console.log("  ✓ Dashboard is live");
-      return true;
-    }
-    console.warn(
-      `  Dashboard did not become ready within the configured ${formatReadinessDeadline(budgetMs)} deadline. Continuing...`,
-    );
-    return false;
-  });
 }

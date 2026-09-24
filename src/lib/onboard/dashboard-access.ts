@@ -4,7 +4,7 @@
 import type { WslDetectionOptions } from "../platform";
 import { isWsl } from "../platform";
 import { DASHBOARD_PORT } from "../core/ports";
-import { buildChain, buildControlUiUrls } from "../dashboard/contract";
+import { buildChain } from "../dashboard/contract";
 
 type RunCapture = (args: string[], options: { ignoreError: true }) => string;
 
@@ -15,11 +15,6 @@ export type DashboardAccessOptions = WslDetectionOptions & {
   runCapture?: RunCapture;
   fetchGatewayAuthToken?: (sandboxName: string) => string | null;
   env?: NodeJS.ProcessEnv;
-};
-
-export type DashboardAccessEntry = {
-  label: string;
-  url: string;
 };
 
 const CONTROL_UI_PORT = DASHBOARD_PORT;
@@ -124,51 +119,4 @@ export function dashboardUrlForDisplay(
   redact: (value: string) => string = (value) => value,
 ): string {
   return redact(url.replace(/#token=[^\s'"]*$/i, ""));
-}
-
-export function getDashboardAccessInfo(
-  sandboxName: string,
-  options: DashboardAccessOptions = {},
-): DashboardAccessEntry[] {
-  const token = Object.prototype.hasOwnProperty.call(options, "token")
-    ? options.token
-    : (options.fetchGatewayAuthToken?.(sandboxName) ?? null);
-  const chatUiUrl = defaultChatUiUrl(options);
-  const chain = buildDashboardChain(chatUiUrl, options);
-  const dashboardAccess = buildControlUiUrls(token ?? null, chain.port, chain.accessUrl).map(
-    (url, index) => ({
-      label: index === 0 ? "Dashboard" : `Alt ${index}`,
-      url: buildAuthenticatedDashboardUrl(url, null),
-    }),
-  );
-
-  for (const fallback of chain.fallbackUrls) {
-    const wslUrl = buildAuthenticatedDashboardUrl(`${fallback.replace(/\/$/, "")}/`, token ?? null);
-    const existing = dashboardAccess.find((access) => access.url === wslUrl);
-    if (existing) {
-      existing.label = "WSL fallback";
-    } else {
-      dashboardAccess.push({ label: "WSL fallback", url: wslUrl });
-    }
-  }
-
-  return dashboardAccess;
-}
-
-export function getDashboardGuidanceLines(
-  dashboardAccess: DashboardAccessEntry[] = [],
-  options: DashboardAccessOptions = {},
-): string[] {
-  const chatUiUrl = defaultChatUiUrl(options);
-  const chain = buildDashboardChain(chatUiUrl, options);
-  const guidance = [`Port ${String(chain.port)} must be forwarded before opening these URLs.`];
-  if (isWsl(options)) {
-    guidance.push(
-      "WSL detected: if localhost fails in Windows, use the WSL host IP shown by `hostname -I`.",
-    );
-  }
-  if (dashboardAccess.length === 0) {
-    guidance.push("No dashboard URLs were generated.");
-  }
-  return guidance;
 }
