@@ -65,15 +65,11 @@ export const SANDBOX_READY_ERROR_DEBOUNCE_ENV = "NEMOCLAW_SANDBOX_READY_ERROR_DE
  * owns the captured table layout, and sandbox-readiness-tracing.test.ts owns
  * the typed phase replay.
  *
- * Tracking mechanism: removal is tracked on NemoClaw #6043
- * (https://github.com/NVIDIA/NemoClaw/issues/6043), which owns the pending
- * OpenShell `sandbox list` fix. The maintainer-enabled removal-signal
- * test `upstream_openshell_sandbox_list_error_transient_fixed`
- * (sandbox-readiness-tracing.test.ts, currently `it.skip`) is the executable
- * checkpoint — point it at a captured `sandbox list` trace from a fixed
- * OpenShell and, once it passes (no transient Error), this debounce can be
- * removed. Escalate to a dedicated OpenShell-fix tracking issue (referenced
- * here and in the test) if the workaround outlives a release cycle.
+ * Track the fixed OpenShell release and its captured runtime trace on NemoClaw
+ * #6043 (https://github.com/NVIDIA/NemoClaw/issues/6043). A static replay alone
+ * cannot establish that the upstream bug is fixed. Escalate to a dedicated
+ * OpenShell-fix tracking issue, referenced here and in the test, if the
+ * workaround outlives a release cycle.
  *
  * The readiness loop starts at 250ms and backs off to 2 seconds. The default
  * of 30 therefore tolerates a substantial transient window while the overall
