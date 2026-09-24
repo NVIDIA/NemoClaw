@@ -3246,7 +3246,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           ...component.finalDeps(GATEWAY_NAME, onboardSession, registry, runCaptureOpenshell),
           verifyWebSearchInsideSandbox,
           toSessionUpdates,
-          removeLegacyCredentialsFile,
+          removeLegacyCredentialsFile: () => removeLegacyCredentialsFile(stagedLegacyValues),
           cleanupStaleHostFiles,
           getChatUiUrl: () => process.env.CHAT_UI_URL || `http://127.0.0.1:${DASHBOARD_PORT}`,
           buildVerifyChain: (chatUiUrl, name) => buildAgentVerifyChain(chatUiUrl, name, agent),
