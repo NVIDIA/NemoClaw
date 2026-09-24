@@ -134,6 +134,12 @@ const removeSandboxRouteReservationIfCurrentMock = vi.fn((expected: Record<strin
 });
 const removeSandboxMock = vi.fn((name: string) => harness.entries.delete(name));
 const restoreSandboxStateMock = vi.fn();
+const beginOpenClawBackupQuiesceMock = vi.fn(async (sandboxName: string) => ({
+  ok: true as const,
+  window: { sandboxName, kind: "backup" as const },
+}));
+const finishOpenClawPostRestoreDoctorMock = vi.fn(async () => ({ ok: true as const }));
+const abortOpenClawPostRestoreDoctorMock = vi.fn(async () => ({ ok: true as const }));
 const captureSnapshotRestoreAuthorityMock = vi.fn();
 const streamSandboxCreateMock = vi.fn<StreamSandboxCreateCommand>(async () => ({
   status: 7,
@@ -360,6 +366,9 @@ vi.mock("./sandbox-gateway-routing", () => ({
 }));
 vi.mock("./snapshot/dependencies", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./snapshot/dependencies")>()),
+  beginOpenClawBackupQuiesce: beginOpenClawBackupQuiesceMock,
+  finishOpenClawPostRestoreDoctor: finishOpenClawPostRestoreDoctorMock,
+  abortOpenClawPostRestoreDoctor: abortOpenClawPostRestoreDoctorMock,
   requireCurrentSnapshotRuntimeProvider: vi.fn(() => runtimeProvider),
 }));
 vi.mock("./snapshot/forward-port-allocation", async (importOriginal) => ({
@@ -410,6 +419,7 @@ describe("snapshot restore auto-create failures", () => {
     );
     expect(registerSandboxMock).not.toHaveBeenCalled();
     expect(restoreSandboxStateMock).not.toHaveBeenCalled();
+    expect(beginOpenClawBackupQuiesceMock).not.toHaveBeenCalled();
   });
 
   it("reconciles one ambiguous create by exact create-attempt identity without retrying", async () => {
@@ -454,6 +464,9 @@ describe("snapshot restore auto-create failures", () => {
       { pending: true },
     );
     expect(restoreSandboxStateMock).toHaveBeenCalledOnce();
+    expect(beginOpenClawBackupQuiesceMock).toHaveBeenCalledWith("beta", expect.any(Object));
+    expect(finishOpenClawPostRestoreDoctorMock).toHaveBeenCalledOnce();
+    expect(abortOpenClawPostRestoreDoctorMock).not.toHaveBeenCalled();
   });
 
   it("settles incomplete identity metadata after a successful create", async () => {
