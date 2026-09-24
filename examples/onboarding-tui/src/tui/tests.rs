@@ -200,7 +200,7 @@ fn welcome_uses_the_same_spacer_after_the_logo() {
     );
     for expected in [
         "isolated sandbox",
-        "Docker or Podman",
+        "deployment settings",
         "deployment YAML",
         "Nothing is installed or started yet.",
     ] {
@@ -244,7 +244,11 @@ fn invalid_answer_stays_focused_and_explains_the_authoring_rule() {
     wizard.handle(Input::Continue);
 
     assert_eq!(wizard.step(), Step::DeploymentName);
-    assert!(wizard.error().unwrap().contains("must be a lowercase name"));
+    assert!(
+        wizard.error().unwrap().contains("Metadata/properties/name"),
+        "{:?}",
+        wizard.error()
+    );
 }
 
 #[test]
@@ -1469,6 +1473,7 @@ fn wizard_interviews_new_conditional_adapter_settings_and_preserves_them() {
     );
     select_label(&mut wizard, "west");
     wizard.handle(Input::Continue);
+    navigate(&mut wizard, Step::Review, Input::Continue);
     assert_eq!(wizard.step(), Step::Review);
     let review = wizard.draft.review().unwrap();
     let reopened = Draft::from_yaml(review.yaml().as_bytes()).unwrap();
@@ -1725,6 +1730,7 @@ fn optional_enum_without_owner_default_starts_unset() {
     assert_eq!(wizard.setting_question().unwrap().path, "/mode");
     assert_eq!(wizard.choice_labels()[wizard.selected], "Leave unset");
     wizard.handle(Input::Continue);
+    navigate(&mut wizard, Step::Review, Input::Continue);
     assert_eq!(wizard.step(), Step::Review);
     assert!(
         wizard.draft.document().spec.sandboxes[0]
@@ -1733,8 +1739,130 @@ fn optional_enum_without_owner_default_starts_unset() {
             .unwrap()
             .settings
             .as_ref()
-            .unwrap()
-            .get("mode")
+            .and_then(|settings| settings.get("mode"))
             .is_none()
     );
+}
+
+#[test]
+fn remote_service_defaults_are_questions_in_the_real_wizard() {
+    let capabilities = Capabilities::available();
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spark/remote-vllm.yaml");
+    let draft = crate::load(crate::Source::Template(&path), &capabilities).unwrap();
+    let original = draft.document().clone();
+    let mut wizard = Wizard::new(capabilities, draft);
+    let wanted = "/spec/services/qwen/placement/engine";
+    let mut changed = false;
+    for _ in 0..512 {
+        if wizard
+            .setting_question()
+            .is_some_and(|question| question.path == wanted)
+        {
+            wizard.handle(Input::SelectAll);
+            for character in "ssh://replacement-gpu".chars() {
+                wizard.handle(Input::Character(character));
+            }
+            changed = true;
+        }
+        wizard.handle(Input::Continue);
+        assert!(
+            wizard.error().is_none(),
+            "{:?}: {:?}",
+            wizard.step(),
+            wizard.error()
+        );
+        if wizard.accepted() {
+            break;
+        }
+    }
+    assert!(changed, "remote service engine was never offered");
+    assert!(wizard.accepted());
+    let mut expected = serde_json::to_value(original).unwrap();
+    *expected.pointer_mut(wanted).unwrap() = serde_json::json!("ssh://replacement-gpu");
+    assert_eq!(
+        serde_json::to_value(wizard.draft().document()).unwrap(),
+        expected
+    );
+}
+
+#[test]
+fn every_route_can_be_configured_without_replacing_other_routes_or_services() {
+    let capabilities = Capabilities::available();
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spark/two-models.yaml");
+    let draft = crate::load(crate::Source::Template(&path), &capabilities).unwrap();
+    let original = draft.document().clone();
+    let mut wizard = Wizard::new(capabilities, draft);
+    let mut models = Vec::new();
+    for _ in 0..512 {
+        if wizard.step() == Step::Model {
+            models.push(wizard.input_value().to_owned());
+        }
+        wizard.handle(Input::Continue);
+        assert!(
+            wizard.error().is_none(),
+            "{:?}: {:?}",
+            wizard.step(),
+            wizard.error()
+        );
+        if wizard.accepted() {
+            break;
+        }
+    }
+    assert_eq!(models, vec!["Qwen/Qwen3-4B", "nvidia/Qwen3.6-27B-NVFP4"]);
+    assert!(wizard.accepted());
+    assert_eq!(wizard.draft().document(), &original);
+}
+
+#[test]
+fn delegating_from_a_deployment_question_does_not_discard_a_typed_answer() {
+    let mut wizard = wizard();
+    navigate(&mut wizard, Step::Deployment(0), Input::Continue);
+    establish_observed_discovery(&mut wizard);
+    wizard.handle(Input::SelectAll);
+    for character in "http://127.0.0.1:19099".chars() {
+        wizard.handle(Input::Character(character));
+    }
+    wizard.handle(Input::DelegateRemaining);
+    assert_eq!(wizard.step(), Step::Deployment(0));
+    assert_eq!(wizard.input_value(), "http://127.0.0.1:19099");
+    assert!(
+        wizard
+            .error()
+            .is_some_and(|error| error.contains("accept this answer"))
+    );
+}
+
+#[test]
+fn revising_harness_reopens_every_model_route() {
+    let mut document = wizard().draft.document().clone();
+    let inference = document.spec.sandboxes[0].agent.inference.as_mut().unwrap();
+    let mut second = inference.routes[0].clone();
+    second.name = "second".into();
+    inference.routes.push(second);
+    inference.default = Some(inference.routes[0].name.clone());
+    let mut wizard = Wizard::new(
+        Capabilities::available(),
+        Draft::from_document(document).unwrap(),
+    );
+    navigate(&mut wizard, Step::Review, Input::Continue);
+    navigate(&mut wizard, Step::Harness, Input::Back);
+    select_label(&mut wizard, "nvidia.fabric.pi");
+    wizard.handle(Input::Continue);
+    let mut visited = std::collections::BTreeSet::new();
+    for _ in 0..512 {
+        if wizard.step() == Step::Review {
+            break;
+        }
+        if wizard.step() == Step::Model {
+            visited.insert(wizard.draft.current_route().unwrap().to_owned());
+        }
+        wizard.handle(Input::Continue);
+        assert!(wizard.error().is_none(), "{:?}", wizard.error());
+    }
+    assert_eq!(
+        visited.len(),
+        2,
+        "every route must be reconsidered for the new harness"
+    );
+    assert_eq!(wizard.step(), Step::Review);
 }

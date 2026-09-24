@@ -31,7 +31,8 @@ Accept the revision to revisit affected questions, or go back to keep the curren
 Unrelated accepted answers are preserved and skipped when continuing forward.
 
 After accepting a harness, **Ctrl+D** requests delegation of the remaining suggested settings.
-When complete compatible evidence is available, delegation takes the author directly to review.
+When complete compatible evidence is available, delegation accepts the remaining suggestions for the selected route and retains the existing deployment fields.
+With one route this reaches review; with multiple routes the questionnaire still offers the other routes.
 Fabric validates the proposed public configuration against the observed canonical descriptors; missing contracts leave compatibility unverified and prevent delegation.
 The authoring library checks the suggestions together: engine and image compatibility must be established, the matching endpoint must advertise the selected model, and required credential references must be available.
 A required adapter setting without a suggested value prevents delegation until answered.
@@ -56,14 +57,16 @@ cargo run -p nemoclaw-onboarding -- examples/onboarding/openclaw.yaml --output m
 
 Both entrypoints treat input YAML only as defaults for a new deployment.
 There is no mode for editing an existing deployment or retaining the template's UID.
-Both entrypoints reject configuration the guided authoring library cannot preserve, including managed inference services and multiple sandboxes.
-The other deployment examples are not all supported questionnaire inputs.
+Both entrypoints accept the single-sandbox deployment examples as templates, including existing managed inference services and multiple model routes.
+Multiple-sandbox templates remain outside this questionnaire.
+Loading a template preserves its deployment fields, references, and native settings; accepting defaults changes only the deployment UID.
 
 ## Target checks
 
-The Podman preset requires local Linux and is disabled on macOS and other hosts.
-If a template selects Podman there, choose Docker to continue; Enter cannot accept the unavailable runtime.
-This preset does not configure Podman Machine or a remote Linux host.
+For a managed gateway, the Podman preset requires local Linux and is disabled on macOS and other hosts.
+Choose Docker to continue on those hosts.
+An external gateway runs on its own host, so its Podman selection is preserved without applying the local host restriction.
+The preset does not configure Podman Machine or a remote Linux host.
 
 The CLI uses its installed verified bundle for discovery, or a bundle selected with `--bundle`:
 
@@ -114,8 +117,8 @@ For adapters with discovered workflow targets, the questionnaire offers their ex
 Fabric's public configuration schema determines whether a workflow is required; accepted target settings are saved under `harness.config.workflow`.
 The selected adapter's model schema supplies native model-setting questions for the current route; answers are preserved under `overrides.settings`.
 The complete public model configuration remains subject to Fabric's planner, including conditions involving provider or protocol.
-Optional settings can be left unset; a required setting without a default needs an answer.
-Schema defaults remain suggestions until accepted or explicitly delegated.
+Omitted optional settings remain unset, even when their schema declares a default.
+Existing values and required schema defaults are suggestions until accepted or explicitly delegated; a required setting without a default needs an answer.
 Review checks the complete settings object against the current schema, including constraints spanning multiple fields.
 Saved YAML can supply settings and arbitrary harness identifiers as defaults for a new deployment, without requiring an entry in the bundled catalog.
 When no settings schema is advertised, existing opaque settings remain preserved but there are no schema-derived questions.
@@ -123,6 +126,25 @@ If one harness identifier matches distinct adapter schemas, authoring reports th
 NemoClaw does not remove native fields from a descriptor or maintain a separate adapter manifest; native mapping and missing discovery contracts belong to Fabric.
 See [Fabric harness configuration](../../docs/sdk.md#configure-a-discovered-fabric-harness) for the runtime contract.
 This does not qualify a harness image for the current host or establish deployment readiness.
+
+## Deployment template questions
+
+Deployment questions come from the SDK input schema and use the template's current values as suggestions.
+They cover gateway connections, agent images, network policy, authentication, execution timeout, and model token limits when present.
+Managed-service templates expose their existing image, model, serving, hardware, memory, authentication, placement, and publication fields.
+Remote placement retains the authored SSH engine; an external gateway does not imply a local engine.
+Inline recipes and explicit policies are edited as complete JSON values using the SDK schema.
+The questionnaire does not invent missing service definitions or discover a qualified image/model revision catalog.
+
+Each answer must satisfy the field schema and the complete SDK document before replacing the previous configuration.
+Invalid answers leave the document unchanged.
+Unedited fields and reference scopes remain intact, including inline providers, named inference definitions, and public Fabric configuration.
+For multiple routes, choose the route to edit; other routes remain unchanged.
+Managed inference retains its service connection instead of being replaced by a hosted endpoint preset.
+
+Template authoring does not install or adopt a service, qualify its image, or establish that the target can run it.
+Missing credentials and target observations retain their separate discovery status.
+Plan and apply perform the deployment's resource, capacity, ownership, and readiness checks.
 
 The questionnaire also offers:
 
@@ -140,15 +162,18 @@ An explicitly authored engine endpoint is also preserved through guided edits.
 Anonymous endpoints retain the absence of a credential reference; the SDK schema determines when an endpoint cannot carry one.
 The wizard asks for an endpoint when using a custom compatible provider; it does not ask users to name internal provider, sandbox, or agent records.
 
-Some onboarding journeys cannot yet be represented faithfully. They remain ignored failing behavioral tests in `crates/nemoclaw-authoring/tests/unsupported_onboarding_journeys.rs`:
+Further guided journeys remain outside the current template editor.
+The backlog is recorded in `crates/nemoclaw-authoring/tests/unsupported_onboarding_journeys.rs`:
 
-- NemoCUA, llama.cpp, NVIDIA NIM, and model-router lifecycle contracts are absent from V1.
-- Managed Ollama and vLLM exist in the schema, but offline onboarding lacks a qualified catalog of immutable images, model revisions, and hardware profiles.
-- V1 has no sandbox CPU and RAM sizing, sandbox GPU selection, host mounts, or messaging-channel configuration.
+- Installing managed llama.cpp, NVIDIA NIM, or model-router services requires SDK lifecycle contracts.
+- Offering a new native agent requires its canonical Fabric contract and a qualified image.
+- Creating a managed Ollama or vLLM installation from discovered suggestions requires a qualified catalog of immutable images, model revisions, and hardware profiles; existing service templates can already be edited.
+- Guided sandbox CPU/RAM sizing, GPU selection, and host mounts require SDK resource contracts.
+- Native messaging-channel questions require a contract exposed by the selected Fabric adapter.
 - Desired-state policy does not preserve policy-tier and composable-preset intent.
 - V1 cannot preserve trusted-private-endpoint qualification intent.
 
-The questionnaire omits these choices.
+These gaps do not prevent preserving existing SDK configuration or opaque Fabric settings in a template.
 
 Plan and apply require a [verified native bundle and the CLI on PATH](../../docs/build.md#build-a-native-bundle); onboarding alone does not.
 After reviewing the generated YAML, follow the [deployment guide](../../docs/usage.md) and use the lifecycle commands when ready:

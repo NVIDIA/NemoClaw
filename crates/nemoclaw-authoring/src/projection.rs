@@ -56,6 +56,12 @@ impl Session {
         Ok(Self { uid: uid.into() })
     }
 
+    /// Starts a new deployment from the complete template without changing its desired state.
+    pub fn draft_from_template(&self, mut document: Document) -> Result<crate::Draft, Diagnostics> {
+        document.metadata.uid = self.uid.clone();
+        crate::Draft::from_document(document)
+    }
+
     /// Builds YAML and validates it with the SDK parser without deploying resources.
     pub fn project(
         &self,

@@ -105,7 +105,15 @@ impl Draft {
         Ok(EditableField::GUIDED
             .into_iter()
             .filter(|field| {
-                *field != EditableField::Endpoint || answers.inference.profile().custom_endpoint
+                (!self.selected_provider_is_managed().unwrap_or(false)
+                    || !matches!(
+                        field,
+                        EditableField::Inference
+                            | EditableField::Endpoint
+                            | EditableField::CredentialEnv
+                    ))
+                    && (*field != EditableField::Endpoint
+                        || answers.inference.profile().custom_endpoint)
             })
             .map(|field| field_state(capabilities, &answers, field))
             .collect())
@@ -120,13 +128,18 @@ impl Draft {
         if field != EditableField::Endpoint || answers.credential_env.is_empty() {
             return Ok(());
         }
-        let session = crate::Session::with_uid(&self.document().metadata.uid)?;
-        if session.project(capabilities, answers).is_err() {
+        let mut candidate = self.clone();
+        if candidate
+            .replace_answers(capabilities, answers.clone())
+            .is_err()
+        {
             let mut anonymous = answers.clone();
             anonymous.credential_env.clear();
-            // The SDK's actual schema determines whether this endpoint permits
-            // credential binding. Do not maintain another endpoint rule here.
-            if session.project(capabilities, &anonymous).is_ok() {
+            // The SDK's actual schema determines whether this endpoint permits credentials.
+            if candidate
+                .replace_answers(capabilities, anonymous.clone())
+                .is_ok()
+            {
                 *answers = anonymous;
             }
         }
@@ -160,7 +173,7 @@ fn field_state(
     }
 }
 
-fn current_value(answers: &Answers, field: EditableField) -> FieldValue {
+pub(crate) fn current_value(answers: &Answers, field: EditableField) -> FieldValue {
     match field {
         EditableField::Harness => FieldValue::Harness(answers.harness.clone()),
         EditableField::Runtime => FieldValue::Runtime(answers.runtime),
@@ -242,8 +255,10 @@ fn set_value(
             }
         }
         (EditableField::Api, FieldValue::Api(value)) => {
+            if answers.api != value {
+                answers.provider_api = Some(value);
+            }
             answers.api = value;
-            answers.provider_api = Some(value);
         }
         (EditableField::Model, FieldValue::Model(value)) => answers.model = value,
         (EditableField::DeploymentName, FieldValue::Text(value)) => answers.deployment_name = value,

@@ -80,10 +80,14 @@ impl Draft {
         capabilities: &Capabilities,
     ) -> Result<EndpointRequest, Diagnostics> {
         let answers = self.guided_answers(capabilities)?;
+        let connection = self
+            .document()
+            .provider_connection(self.provider()?)
+            .map_err(|error| crate::diagnostics::diagnostic("provider", &error.to_string()))?;
         Ok(EndpointRequest {
-            endpoint: answers.endpoint,
+            endpoint: connection.endpoint,
             api: answers.api,
-            credential_env: (!answers.credential_env.is_empty()).then_some(answers.credential_env),
+            credential_env: connection.credential.map(|credential| credential.env),
         })
     }
 

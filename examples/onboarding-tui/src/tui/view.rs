@@ -5,7 +5,6 @@ use super::{
     app::{Step, Wizard},
     labels,
 };
-use nemoclaw_authoring::ProviderPreset;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
@@ -166,7 +165,7 @@ impl Wizard {
                 )),
                 Line::from(""),
                 Line::from(Span::styled(
-                    "Choose an agent, Docker or Podman, and hosted inference.",
+                    "Choose your agent, inference, and deployment settings.",
                     Style::new().fg(MUTED),
                 )),
                 Line::from(Span::styled(
@@ -312,18 +311,41 @@ impl Wizard {
         }
 
         lines.extend(review_field("Runtime", labels::runtime(answers.runtime)));
-        lines.extend(review_field(
-            "Provider",
-            labels::inference(answers.inference),
-        ));
-        lines.extend(review_field("API", labels::api(answers.api)));
-        lines.extend(review_field("Model", &answers.model));
-        if matches!(
-            answers.inference,
-            ProviderPreset::OpenAiCompatible | ProviderPreset::AnthropicCompatible
-        ) {
-            lines.extend(review_field("Endpoint", &answers.endpoint));
+        let document = self.draft.document();
+        let sandbox = &document.spec.sandboxes[0];
+        let inference = document
+            .sandbox_inference(sandbox)
+            .expect("validated inference");
+        for route in &inference.routes {
+            if inference.routes.len() > 1 {
+                lines.extend(review_field("Route", &route.name));
+            }
+            let provider = document
+                .sandbox_route_provider(sandbox, route)
+                .expect("validated provider");
+            if provider.service_ref.is_none() && inference.routes.len() == 1 {
+                lines.extend(review_field(
+                    "Provider",
+                    labels::inference(answers.inference),
+                ));
+            } else {
+                lines.extend(review_field("Provider", &provider.name));
+            }
+            if let Some(service) = &provider.service_ref {
+                lines.extend(review_field("Managed service", service));
+            }
+            lines.extend(review_field(
+                "API",
+                labels::api(provider.api.unwrap_or_else(|| {
+                    nemoclaw_sdk::config::InferenceApi::for_provider(provider.provider)
+                })),
+            ));
+            lines.extend(review_field("Model", &route.overrides.model));
+            if provider.service_ref.is_none() {
+                lines.extend(review_field("Endpoint", &provider.endpoint));
+            }
         }
+        lines.extend(review_field("Gateway", document.spec.gateway.endpoint()));
         if let Some(error) = &self.error {
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled(
@@ -331,7 +353,12 @@ impl Wizard {
                 Style::new().fg(Color::Rgb(255, 170, 70)),
             )));
         }
-        frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), area);
+        frame.render_widget(
+            Paragraph::new(lines)
+                .wrap(Wrap { trim: true })
+                .scroll((self.review_scroll, 0)),
+            area,
+        );
     }
 
     fn render_footer(&self, frame: &mut Frame<'_>, area: Rect) {
@@ -340,7 +367,7 @@ impl Wizard {
         } else {
             match self.step {
                 Step::Welcome => "Enter  begin     Esc  exit",
-                Step::Review => "Enter  author YAML     ←  back     Esc  exit",
+                Step::Review => "Enter  author YAML     ↑/↓  scroll     ←  back     Esc  exit",
                 _ if self.is_choice() => {
                     "↑/↓  choose     Enter  continue     ←  back     Esc  exit"
                 }
@@ -395,6 +422,7 @@ impl Wizard {
         }
         match self.step {
             Step::Harness => "Choose your agent harness",
+            Step::Route => "Choose a model route to configure",
             Step::Runtime => "Where should the sandbox run?",
             Step::Inference => "How should your agent reach its model?",
             Step::Api => "Which inference API should the harness speak?",
@@ -407,6 +435,19 @@ impl Wizard {
     }
 
     fn help(&self) -> String {
+        if matches!(
+            self.step,
+            Step::Inference | Step::Api | Step::Endpoint | Step::Model
+        ) && self
+            .draft
+            .route_names()
+            .is_ok_and(|routes| routes.len() > 1)
+        {
+            return format!(
+                "Settings for route {}. Press Enter to keep its current value.",
+                terminal_text(self.draft.current_route().unwrap_or_default())
+            );
+        }
         if let Some(question) = self.setting_question() {
             return format!(
                 "{}{}",
@@ -420,6 +461,7 @@ impl Wizard {
         }
         match self.step {
             Step::Harness => "The harness is the agent environment NemoClaw installs and isolates.",
+            Step::Route => "Each route keeps its own provider, model, and settings.",
             Step::Runtime => "The runtime owns the gateway and local sandbox resources.",
             Step::Inference => "Hosted inference keeps model compute outside the sandbox.",
             Step::Api => "Only APIs compatible with the selected harness are shown.",

@@ -261,12 +261,13 @@ fn a_rejected_identity_edit_leaves_the_authors_draft_exactly_as_it_was() {
             .iter()
             .map(|diagnostic| diagnostic.field())
             .collect::<Vec<_>>(),
-        ["deployment-name"]
+        ["document"]
     );
     assert_eq!(draft.review().unwrap().yaml(), before);
-    assert_eq!(
-        diagnostics.to_string(),
-        "deployment-name: must be a lowercase name of at most 40 characters"
+    assert!(
+        diagnostics
+            .to_string()
+            .contains("configuration violates schema")
     );
 }
 

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::diagnostics::diagnostic;
-use crate::{Answers, Capabilities, Diagnostics, Session};
+use crate::{Answers, Capabilities, Diagnostics};
 use nemoclaw_sdk::config::Document;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -51,6 +51,7 @@ pub struct InferenceEdits {
 #[derive(Clone, Debug)]
 pub struct Draft {
     pub(crate) document: Document,
+    selected_route: Option<String>,
     pub(crate) decisions: std::collections::BTreeMap<crate::EditableField, crate::AnswerStatus>,
     pub(crate) skipped_settings: std::collections::BTreeMap<String, serde_json::Value>,
     pub(crate) delegated_settings: Vec<String>,
@@ -64,6 +65,7 @@ impl Draft {
             .map_err(|error| diagnostic("document", &error.to_string()))?;
         Ok(Self {
             document,
+            selected_route: None,
             decisions: Default::default(),
             skipped_settings: Default::default(),
             delegated_settings: Vec::new(),
@@ -77,7 +79,7 @@ impl Draft {
 
     /// Returns the guided-onboarding view when this document matches a preset.
     pub fn guided_answers(&self, capabilities: &Capabilities) -> Result<Answers, Diagnostics> {
-        guided_answers(&self.document, capabilities)
+        guided_answers(self, capabilities)
     }
 
     /// Replaces the guided preset while retaining the deployment UID.
@@ -86,23 +88,249 @@ impl Draft {
         capabilities: &Capabilities,
         answers: Answers,
     ) -> Result<(), Diagnostics> {
-        let authored =
-            Session::with_uid(&self.document.metadata.uid)?.project(capabilities, &answers)?;
-        if self.document.spec.sandboxes[0]
-            .harness
-            .as_ref()
-            .map(|harness| &harness.kind)
-            != authored.document.spec.sandboxes[0]
-                .harness
-                .as_ref()
-                .map(|harness| &harness.kind)
+        let before = self.guided_answers(capabilities)?;
+        let mut candidate = self.clone();
+        candidate.document.metadata.name = answers.deployment_name.clone();
+        candidate.document.spec.sandboxes[0].name = answers.sandbox_name.clone();
+        candidate.document.spec.sandboxes[0].agent.name = answers.agent_name.clone();
+        candidate.document.spec.sandboxes[0].image.ref_ = answers.image.clone();
+        candidate.document.spec.sandboxes[0].runtime.provider = answers.runtime;
+        if let Some(gateway) = candidate.document.spec.gateway.as_managed_mut()
+            && (before.engine != answers.engine
+                || (before.runtime != answers.runtime && before.engine.is_none()))
         {
-            self.skipped_settings.clear();
-            self.delegated_settings.clear();
+            gateway.engine = answers
+                .engine
+                .clone()
+                .unwrap_or_else(|| match answers.runtime {
+                    nemoclaw_sdk::config::ComputeDriver::Podman => {
+                        "unix:///run/user/1000/podman/podman.sock".into()
+                    }
+                    _ => "unix:///var/run/docker.sock".into(),
+                });
         }
-        self.document = authored.document;
-        self.decisions.clear();
+        let harness = candidate.harness_mut()?;
+        harness.kind = answers.harness.clone();
+        harness.settings = answers.harness_settings.clone();
+        harness.config = answers.harness_config.clone();
+        let route = candidate.route_mut()?;
+        route.overrides.model = answers.model.clone();
+        route.overrides.settings = answers.model_settings.clone();
+        let sandbox_name = candidate.document.spec.sandboxes[0].name.clone();
+        let route_name = candidate.current_route()?.to_owned();
+        let provider = candidate
+            .document
+            .sandbox_route_provider_mut(&sandbox_name, &route_name)
+            .map_err(|error| diagnostic("provider", &error.to_string()))?;
+        if before.provider_name != answers.provider_name {
+            // Renaming a shared definition requires updating its references too.
+            provider.name = answers.provider_name.clone();
+        }
+        provider.api = answers.provider_api;
+        if before.inference != answers.inference {
+            provider.provider = answers.inference.profile().kind;
+        }
+        if provider.service_ref.is_none() {
+            provider.endpoint = answers.endpoint.clone();
+            provider.credential =
+                (!answers.credential_env.is_empty()).then(|| nemoclaw_sdk::config::Credential {
+                    env: answers.credential_env.clone(),
+                });
+        } else if before.endpoint != answers.endpoint
+            || before.credential_env != answers.credential_env
+            || before.inference != answers.inference
+        {
+            return Err(diagnostic(
+                "provider",
+                "Managed inference connections come from the selected service. Change the service configuration instead.",
+            ));
+        }
+        if before.provider_name != answers.provider_name {
+            let inference = candidate.inference_mut()?;
+            for route in &mut inference.routes {
+                if route.provider_ref.as_deref() == Some(&before.provider_name) {
+                    route.provider_ref = Some(answers.provider_name.clone());
+                }
+            }
+        }
+        candidate
+            .document
+            .validate()
+            .map_err(|error| diagnostic("document", &error.to_string()))?;
+        if before.harness != answers.harness {
+            candidate.skipped_settings.clear();
+            candidate.delegated_settings.clear();
+        }
+        candidate.decisions.clear();
+        *self = candidate;
         Ok(())
+    }
+
+    /// Apply a fully validated SDK document without losing unrelated defaults.
+    pub(crate) fn replace_document(&mut self, document: Document) -> Result<(), Diagnostics> {
+        document
+            .validate()
+            .map_err(|error| diagnostic("document", &error.to_string()))?;
+        let capabilities = Capabilities::available();
+        let before = self.guided_answers(&capabilities)?;
+        let mut candidate = self.clone();
+        candidate.document = document;
+        if candidate.current_route().is_err() {
+            candidate.selected_route = None;
+        }
+        let after = candidate.guided_answers(&capabilities)?;
+        let target_unchanged = before.image == after.image
+            && self.document.spec.gateway == candidate.document.spec.gateway;
+        candidate.decisions.retain(|field, status| {
+            crate::guided::current_value(&before, *field)
+                == crate::guided::current_value(&after, *field)
+                && !crate::EditableField::GUIDED.iter().any(|dependency| {
+                    crate::DependencyGraph.depends_on(*field, *dependency)
+                        && crate::guided::current_value(&before, *dependency)
+                            != crate::guided::current_value(&after, *dependency)
+                })
+                && (*status != crate::AnswerStatus::Delegated || target_unchanged)
+        });
+        if before.harness != after.harness {
+            candidate.skipped_settings.clear();
+            candidate.delegated_settings.clear();
+        }
+        *self = candidate;
+        Ok(())
+    }
+
+    pub fn route_names(&self) -> Result<Vec<String>, Diagnostics> {
+        Ok(self
+            .inference()?
+            .routes
+            .iter()
+            .map(|route| route.name.clone())
+            .collect())
+    }
+    pub fn current_route(&self) -> Result<&str, Diagnostics> {
+        let inference = self.inference()?;
+        let name = self
+            .selected_route
+            .as_deref()
+            .or(inference.default.as_deref())
+            .or_else(|| inference.routes.first().map(|route| route.name.as_str()))
+            .ok_or_else(|| diagnostic("route", "An inference route is required."))?;
+        if !inference.routes.iter().any(|route| route.name == name) {
+            return Err(diagnostic("route", "The selected route no longer exists."));
+        }
+        Ok(name)
+    }
+    pub fn select_route(&mut self, name: &str) -> Result<(), Diagnostics> {
+        if !self.route_names()?.iter().any(|route| route == name) {
+            return Err(diagnostic("route", "Unknown inference route."));
+        }
+        if self.current_route()? != name {
+            self.selected_route = Some(name.into());
+            self.decisions.retain(|field, _| {
+                matches!(
+                    field,
+                    crate::EditableField::Harness
+                        | crate::EditableField::Runtime
+                        | crate::EditableField::DeploymentName
+                        | crate::EditableField::SandboxName
+                        | crate::EditableField::AgentName
+                )
+            });
+            self.skipped_settings
+                .retain(|path, _| !path.starts_with("model:"));
+            self.delegated_settings
+                .retain(|path| !path.starts_with("model:"));
+        }
+        Ok(())
+    }
+    pub fn selected_provider_is_managed(&self) -> Result<bool, Diagnostics> {
+        Ok(self.provider()?.service_ref.is_some())
+    }
+    pub(crate) fn inference(&self) -> Result<&nemoclaw_sdk::config::Inference, Diagnostics> {
+        let [sandbox] = self.document.spec.sandboxes.as_slice() else {
+            return Err(diagnostic("sandbox", "Authoring requires one sandbox."));
+        };
+        self.document
+            .sandbox_inference(sandbox)
+            .map_err(|error| diagnostic("inference", &error.to_string()))
+    }
+    pub(crate) fn route(&self) -> Result<&nemoclaw_sdk::config::Route, Diagnostics> {
+        let name = self.current_route()?;
+        self.inference()?
+            .routes
+            .iter()
+            .find(|route| route.name == name)
+            .ok_or_else(|| diagnostic("route", "Unknown route."))
+    }
+    pub(crate) fn provider(&self) -> Result<&nemoclaw_sdk::config::InferenceProvider, Diagnostics> {
+        self.document
+            .sandbox_route_provider(&self.document.spec.sandboxes[0], self.route()?)
+            .map_err(|error| diagnostic("provider", &error.to_string()))
+    }
+    pub(crate) fn inference_mut(
+        &mut self,
+    ) -> Result<&mut nemoclaw_sdk::config::Inference, Diagnostics> {
+        let selected = self.inference()? as *const _;
+        if let Some(name) = self
+            .document
+            .spec
+            .inferences
+            .iter()
+            .find_map(|(name, value)| std::ptr::eq(value, selected).then(|| name.clone()))
+        {
+            return Ok(self.document.spec.inferences.get_mut(&name).unwrap());
+        }
+        let sandbox = &mut self.document.spec.sandboxes[0];
+        if let Some(name) = sandbox
+            .inferences
+            .iter()
+            .find_map(|(name, value)| std::ptr::eq(value, selected).then(|| name.clone()))
+        {
+            return Ok(sandbox.inferences.get_mut(&name).unwrap());
+        }
+        sandbox
+            .agent
+            .inference
+            .as_mut()
+            .ok_or_else(|| diagnostic("inference", "Missing inference definition."))
+    }
+    pub(crate) fn route_mut(&mut self) -> Result<&mut nemoclaw_sdk::config::Route, Diagnostics> {
+        let name = self.current_route()?.to_owned();
+        self.inference_mut()?
+            .routes
+            .iter_mut()
+            .find(|route| route.name == name)
+            .ok_or_else(|| diagnostic("route", "Unknown route."))
+    }
+    pub(crate) fn harness_mut(
+        &mut self,
+    ) -> Result<&mut nemoclaw_sdk::config::Harness, Diagnostics> {
+        let selected = self
+            .document
+            .sandbox_harness(&self.document.spec.sandboxes[0])
+            .map_err(|error| diagnostic("harness", &error.to_string()))?
+            as *const _;
+        if let Some(name) = self
+            .document
+            .spec
+            .harnesses
+            .iter()
+            .find_map(|(name, value)| std::ptr::eq(value, selected).then(|| name.clone()))
+        {
+            return Ok(self.document.spec.harnesses.get_mut(&name).unwrap());
+        }
+        let sandbox = &mut self.document.spec.sandboxes[0];
+        if let Some(name) = sandbox
+            .harnesses
+            .iter()
+            .find_map(|(name, value)| std::ptr::eq(value, selected).then(|| name.clone()))
+        {
+            return Ok(sandbox.harnesses.get_mut(&name).unwrap());
+        }
+        sandbox
+            .harness
+            .as_mut()
+            .ok_or_else(|| diagnostic("harness", "Missing harness definition."))
     }
 
     /// Reopens any valid V1 document. Comments and formatting are not retained.
@@ -175,16 +403,8 @@ impl Draft {
     }
 }
 
-fn guided_answers(
-    document: &Document,
-    capabilities: &Capabilities,
-) -> Result<Answers, Diagnostics> {
-    if !document.spec.services.is_empty() {
-        return Err(diagnostic(
-            "document",
-            "guided onboarding does not support managed inference services yet; use a hosted-endpoint template or edit this YAML directly. No hardware check was performed",
-        ));
-    }
+fn guided_answers(draft: &Draft, _capabilities: &Capabilities) -> Result<Answers, Diagnostics> {
+    let document = draft.document();
     let [sandbox] = document.spec.sandboxes.as_slice() else {
         return Err(diagnostic(
             "document",
@@ -195,18 +415,8 @@ fn guided_answers(
     let harness = document
         .sandbox_harness(sandbox)
         .map_err(|_| diagnostic("document", "guided editing requires a harness"))?;
-    let provider = document
-        .inference_provider()
-        .map_err(|_| diagnostic("document", "guided editing requires one selected provider"))?;
-    let inference = document
-        .sandbox_inference(sandbox)
-        .map_err(|_| diagnostic("document", "guided editing requires inline agent inference"))?;
-    let [route] = inference.routes.as_slice() else {
-        return Err(diagnostic(
-            "document",
-            "guided editing requires one model route",
-        ));
-    };
+    let provider = draft.provider()?;
+    let route = draft.route()?;
     let credential_env = provider
         .credential
         .as_ref()
@@ -255,13 +465,6 @@ fn guided_answers(
         model_settings: route.overrides.settings.clone(),
         credential_env,
     };
-    let projected = Session::with_uid(&document.metadata.uid)?.project(capabilities, &answers)?;
-    if projected.document() != document {
-        return Err(diagnostic(
-            "document",
-            "guided editing is unavailable because this document contains additional V1 configuration",
-        ));
-    }
     Ok(answers)
 }
 

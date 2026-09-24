@@ -51,28 +51,25 @@ impl Draft {
         Ok(Some(schema))
     }
     fn settings_value(&self) -> Value {
-        self.document.spec.sandboxes[0]
-            .harness
-            .as_ref()
+        self.document
+            .sandbox_harness(&self.document.spec.sandboxes[0])
+            .ok()
             .and_then(|harness| harness.settings.clone())
             .map(Value::Object)
             .unwrap_or_else(|| Value::Object(Map::new()))
     }
     fn workflow_value(&self) -> Value {
-        self.document.spec.sandboxes[0]
-            .harness
-            .as_ref()
+        self.document
+            .sandbox_harness(&self.document.spec.sandboxes[0])
+            .ok()
             .and_then(|harness| harness.config.as_ref())
             .and_then(|config| config.get("workflow"))
             .cloned()
             .unwrap_or_else(|| Value::Object(Map::new()))
     }
     fn model_settings_value(&self) -> Value {
-        self.document.spec.sandboxes[0]
-            .agent
-            .inference
-            .as_ref()
-            .and_then(|inference| inference.routes.first())
+        self.route()
+            .ok()
             .and_then(|route| route.overrides.settings.clone())
             .map(Value::Object)
             .unwrap_or_else(|| serde_json::json!({}))
@@ -94,7 +91,7 @@ impl Draft {
         collect(
             schema,
             schema,
-            &config["models"]["default"],
+            &config["models"][self.current_route()?],
             "",
             false,
             &mut fields,
@@ -301,7 +298,10 @@ impl Draft {
         path: &str,
         value: Option<Value>,
     ) -> Result<(), Diagnostics> {
-        self.apply_setting(capabilities, path, value, true)
+        let mut candidate = self.clone();
+        candidate.apply_setting(capabilities, path, value, true)?;
+        *self = candidate;
+        Ok(())
     }
     fn apply_setting(
         &mut self,
@@ -343,17 +343,13 @@ impl Draft {
         Ok(())
     }
     fn write_setting(&mut self, path: &str, value: Option<Value>) -> Result<(), Diagnostics> {
+        if self.question_value(path) == value {
+            return Ok(());
+        }
         if let Some(pointer) = path.strip_prefix("model:") {
             let mut values = self.model_settings_value();
             put(&mut values, pointer, value)?;
-            let route = self.document.spec.sandboxes[0]
-                .agent
-                .inference
-                .as_mut()
-                .and_then(|inference| inference.routes.first_mut())
-                .ok_or_else(|| {
-                    diagnostic("model", "Guided model settings require one inline route.")
-                })?;
+            let route = self.route_mut()?;
             route.overrides.settings = values
                 .as_object()
                 .filter(|settings| !settings.is_empty())
@@ -367,10 +363,7 @@ impl Draft {
             self.settings_value()
         };
         put(&mut values, workflow.unwrap_or(path), value)?;
-        let harness = self.document.spec.sandboxes[0]
-            .harness
-            .as_mut()
-            .ok_or_else(|| diagnostic("settings", "Guided settings require an inline harness."))?;
+        let harness = self.harness_mut()?;
         if workflow.is_some() {
             let config = harness.config.get_or_insert_with(Map::new);
             if values.as_object().is_some_and(Map::is_empty) {
@@ -517,7 +510,13 @@ fn collect(
                     required,
                     schema: schema.clone(),
                     choices: Vec::new(),
-                    suggestion: schema.get("default").cloned(),
+                    suggestion: if !values.is_null() {
+                        Some(values.clone())
+                    } else if required {
+                        schema.get("default").cloned()
+                    } else {
+                        None
+                    },
                 });
                 return Ok(());
             } else if let Some(first) = compatible.first() {
@@ -564,7 +563,13 @@ fn collect(
                         required: true,
                         schema: schema.clone(),
                         choices: Vec::new(),
-                        suggestion: schema.get("default").cloned(),
+                        suggestion: if !values.is_null() {
+                            Some(values.clone())
+                        } else if required {
+                            schema.get("default").cloned()
+                        } else {
+                            None
+                        },
                     });
                     return Ok(());
                 }
@@ -645,11 +650,13 @@ fn collect(
         let suggestion = if !values.is_null() && schema_accepts(&field_schema, values) == Some(true)
         {
             Some(values.clone())
-        } else {
+        } else if required {
             effective
                 .get("default")
                 .filter(|value| schema_accepts(&field_schema, value) == Some(true))
                 .cloned()
+        } else {
+            None
         };
         let choices = effective["enum"]
             .as_array()

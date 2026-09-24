@@ -71,10 +71,7 @@ fn load(
         }
         Source::Template(path) => {
             let original = read_draft(path)?;
-            let capabilities = capabilities.preserving_draft(&original)?;
-            let answers = original.guided_answers(&capabilities)?;
-            let authored = Session::new()?.project(&capabilities, &answers)?;
-            Draft::from_document(authored.document().clone())?
+            Session::new()?.draft_from_template(original.document().clone())?
         }
     };
     capabilities.preserving_draft(&draft)?;
@@ -249,37 +246,5 @@ mod tests {
             draft.guided_answers(&capabilities).unwrap().model,
             "nvidia/nemotron-3-super-120b-a12b"
         );
-    }
-}
-
-#[cfg(test)]
-mod unsupported_templates {
-    use super::*;
-
-    #[test]
-    fn managed_inference_templates_explain_the_questionnaires_limit() {
-        for template in [
-            "nemotron-amd64.yaml",
-            "spark/vllm.yaml",
-            "station/vllm.yaml",
-            "spark/remote-vllm.yaml",
-        ] {
-            let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("..")
-                .join(template);
-            let original = std::fs::read(&path).unwrap();
-            let error = load(Source::Template(&path), &Capabilities::available())
-                .unwrap_err()
-                .to_string();
-            assert!(
-                error.contains("guided onboarding does not support managed inference services yet"),
-                "{template}: {error}"
-            );
-            assert!(
-                !error.contains("credential reference"),
-                "{template}: {error}"
-            );
-            assert_eq!(std::fs::read(&path).unwrap(), original);
-        }
     }
 }

@@ -285,31 +285,12 @@ pub(super) async fn check_discovery(
     let Some(session) = session else {
         return Ok((evidence, facts));
     };
-    let mut queries = Vec::new();
-    if evidence.engine.is_none() {
-        queries.push(DiscoveryQuery::Engine(DiscoveryRequest {
-            engine: key.engine.clone(),
-            compute_driver: key.compute_driver,
-        }));
-    }
-    if evidence.fabric.is_none() {
-        queries.push(DiscoveryQuery::Fabric {
-            engine: key.engine.clone(),
-            image: key.image.clone(),
-        });
-    }
-    if facts.hardware.is_none() {
-        queries.push(DiscoveryQuery::Hardware {
-            engine: key.engine.clone(),
-        });
-    }
-    if facts.endpoint.is_none() && request.validate().is_ok() {
-        queries.push(DiscoveryQuery::Inference(request));
-    }
-    if queries.is_empty() {
-        return Ok((evidence, facts));
-    }
-    let observations = match session.batch(&queries, cancel).await {
+    let queries = discovery_queries(&evidence, &facts, request);
+    let observations = match if queries.is_empty() {
+        Ok(Vec::new())
+    } else {
+        session.batch(&queries, cancel).await
+    } {
         Ok(observations) => observations,
         Err(Error::Cancelled) => return Err(Error::Cancelled),
         Err(_) => return Ok((evidence, facts)),
@@ -366,6 +347,36 @@ pub(super) async fn check_discovery(
     Ok((evidence, facts))
 }
 
+fn discovery_queries(
+    evidence: &DiscoveryEvidence,
+    facts: &AuthoringFacts,
+    request: nemoclaw_sdk::inference_discovery::EndpointRequest,
+) -> Vec<DiscoveryQuery> {
+    let key = &evidence.key;
+    let mut queries = Vec::new();
+    if !key.engine.is_empty() && evidence.engine.is_none() {
+        queries.push(DiscoveryQuery::Engine(DiscoveryRequest {
+            engine: key.engine.clone(),
+            compute_driver: key.compute_driver,
+        }));
+    }
+    if !key.engine.is_empty() && evidence.fabric.is_none() {
+        queries.push(DiscoveryQuery::Fabric {
+            engine: key.engine.clone(),
+            image: key.image.clone(),
+        });
+    }
+    if !key.engine.is_empty() && facts.hardware.is_none() {
+        queries.push(DiscoveryQuery::Hardware {
+            engine: key.engine.clone(),
+        });
+    }
+    if facts.endpoint.is_none() && request.validate().is_ok() {
+        queries.push(DiscoveryQuery::Inference(request));
+    }
+    queries
+}
+
 pub(super) fn discovery_status(evidence: &DiscoveryEvidence, draft: &Draft) -> Option<String> {
     match evidence.assessment(draft) {
         Ok(assessment) if assessment.status == CompatibilityStatus::Compatible => None,
@@ -383,6 +394,32 @@ mod target_tests {
 
     fn draft() -> Draft {
         crate::load(crate::Source::Defaults, &Capabilities::available()).unwrap()
+    }
+
+    #[test]
+    fn external_gateway_does_not_guess_a_local_engine_for_discovery() {
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spark/remote-vllm.yaml");
+        let capabilities = Capabilities::available();
+        let draft = crate::load(crate::Source::Template(&path), &capabilities).unwrap();
+        let key = draft.discovery_key().unwrap();
+        assert!(key.engine.is_empty());
+        let evidence = DiscoveryEvidence {
+            key,
+            engine: None,
+            fabric: None,
+        };
+        let queries = discovery_queries(
+            &evidence,
+            &AuthoringFacts::default(),
+            draft.inference_request(&capabilities).unwrap(),
+        );
+        assert!(
+            queries
+                .iter()
+                .all(|query| matches!(query, DiscoveryQuery::Inference(_))),
+            "unresolved engine must not target the local daemon: {queries:?}"
+        );
     }
 
     #[tokio::test]

@@ -50,12 +50,6 @@ pub struct DiscoveryAssessment {
 impl Draft {
     pub fn discovery_key(&self) -> Result<DiscoveryKey, Diagnostics> {
         let document = self.document();
-        let gateway = document.spec.gateway.as_managed().ok_or_else(|| {
-            diagnostic(
-                "gateway",
-                "guided discovery requires a managed gateway target",
-            )
-        })?;
         let [sandbox] = document.spec.sandboxes.as_slice() else {
             return Err(diagnostic(
                 "sandbox",
@@ -68,7 +62,12 @@ impl Draft {
             .kind
             .clone();
         Ok(DiscoveryKey {
-            engine: gateway.engine.clone(),
+            engine: document
+                .spec
+                .gateway
+                .as_managed()
+                .map(|gateway| gateway.engine.clone())
+                .unwrap_or_default(),
             compute_driver: sandbox.runtime.provider,
             image: sandbox.image.ref_.clone(),
             harness,

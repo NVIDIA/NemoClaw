@@ -12,6 +12,7 @@
 mod answers;
 mod capabilities;
 mod delegation;
+mod deployment;
 mod diagnostics;
 mod draft;
 mod evidence;
