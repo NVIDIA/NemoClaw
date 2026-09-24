@@ -16,6 +16,7 @@ import {
   ensureDockerDriverGatewayJwtBundle,
   gatewayIdForStateDir,
 } from "../../onboard/docker-driver-gateway-config";
+import { writeCompleteDockerDriverGatewayLocalTlsBundle } from "../../onboard/__test-helpers__/docker-driver-gateway-local-tls";
 import {
   ensureManagedGatewayStateRoot,
   resolveGatewayStateDirName,
@@ -46,6 +47,7 @@ function writeScopedGatewayState(
 ): void {
   const configPath = path.join(stateDir, "openshell-gateway.toml");
   const jwtBundle = ensureDockerDriverGatewayJwtBundle(stateDir);
+  writeCompleteDockerDriverGatewayLocalTlsBundle(stateDir);
   fs.writeFileSync(
     configPath,
     buildDockerDriverGatewayConfigToml(
