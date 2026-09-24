@@ -267,6 +267,7 @@ mod live {
             deferred: vec!["OpenShell registration and sandbox require the managed gateway".into()],
             retained: vec![],
             health: vec![],
+            discovery: Default::default(),
         }
     }
 
@@ -303,10 +304,18 @@ mod live {
         document: &Document,
         cancel: &CancellationToken,
     ) {
-        assert_eq!(
-            deployment.plan(document, cancel).await.unwrap(),
-            initial_plan(document)
+        let plan = deployment.plan(document, cancel).await.unwrap();
+        assert!(!plan.discovery.resources.is_empty());
+        let mut expected = initial_plan(document);
+        expected.discovery = plan.discovery.clone();
+        // Optional capability observations may remain unresolved before deployment.
+        assert!(
+            plan.deferred
+                .iter()
+                .any(|message| message == &expected.deferred[0])
         );
+        expected.deferred = plan.deferred.clone();
+        assert_eq!(plan, expected);
         let applied = deployment.apply(document, cancel).await.unwrap();
         assert_eq!(applied.outcome, Outcome::Succeeded);
         let runtime = runtime_resources(document);
@@ -347,6 +356,7 @@ mod live {
                 deferred: vec![],
                 retained: retained.clone(),
                 health: vec![],
+                discovery: Default::default(),
             }
         );
         assert_eq!(
@@ -357,6 +367,7 @@ mod live {
                 deferred: vec![],
                 retained: retained.clone(),
                 health: vec![],
+                discovery: Default::default(),
             }
         );
         retained
@@ -375,16 +386,12 @@ mod live {
         let cancel = CancellationToken::new();
 
         apply_initial(&deployment, &document, &cancel).await;
-        assert_eq!(
-            deployment.plan(&document, &cancel).await.unwrap(),
-            OperationResult {
-                outcome: Outcome::Planned,
-                changes: vec![],
-                deferred: vec![],
-                retained: vec![],
-                health: vec![],
-            }
-        );
+        let plan = deployment.plan(&document, &cancel).await.unwrap();
+        assert_eq!(plan.outcome, Outcome::Planned);
+        assert!(plan.changes.is_empty());
+        assert!(plan.retained.is_empty());
+        assert!(plan.health.is_empty());
+        assert!(!plan.discovery.resources.is_empty());
         let exported = deployment.export(&cancel).await.unwrap();
         assert_eq!(exported, document);
         let reapplied = deployment.apply(&exported, &cancel).await.unwrap();
@@ -429,16 +436,12 @@ mod live {
         let reply = client.agent_response(&sandbox.unwrap()).await.unwrap();
         assert!(reply.trim_matches(['.', '!']).eq_ignore_ascii_case("FOUR"));
 
-        assert_eq!(
-            deployment.plan(&document, &cancel).await.unwrap(),
-            OperationResult {
-                outcome: Outcome::Planned,
-                changes: vec![],
-                deferred: vec![],
-                retained: vec![],
-                health: vec![],
-            }
-        );
+        let plan = deployment.plan(&document, &cancel).await.unwrap();
+        assert_eq!(plan.outcome, Outcome::Planned);
+        assert!(plan.changes.is_empty());
+        assert!(plan.retained.is_empty());
+        assert!(plan.health.is_empty());
+        assert!(!plan.discovery.resources.is_empty());
         let unchanged = deployment.apply(&document, &cancel).await.unwrap();
         assert_eq!(unchanged.outcome, Outcome::Succeeded);
         assert!(unchanged.changes.is_empty());

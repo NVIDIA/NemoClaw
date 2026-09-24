@@ -144,7 +144,10 @@ pub mod bundle;
 mod process;
 pub use tokio_util::sync::CancellationToken;
 mod deployment;
-pub use deployment::{Change, Deployment, OperationResult, Outcome, Progress, StepOutcome};
+pub use deployment::{
+    Change, Deployment, DiscoveryObservation, DiscoveryReport, DiscoveryScope, DiscoveryTarget,
+    OperationResult, Outcome, Progress, ResourceInventoryEntry, StepOutcome,
+};
 
 pub mod snapshot;
 

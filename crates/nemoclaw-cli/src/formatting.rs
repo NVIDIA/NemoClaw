@@ -272,6 +272,82 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
             ));
         }
     }
+    if planned && !result.discovery.is_empty() {
+        output.push_str("\nDiscovery:\n");
+        if !result.discovery.resources.is_empty() {
+            let resources = &result.discovery.resources;
+            output.push_str(&format!(
+                "  Resources: {} established; {} unchanged; {} with drift.\n",
+                resources.iter().filter(|resource| resource.existed).count(),
+                resources
+                    .iter()
+                    .filter(|resource| resource.reuse_planned)
+                    .count(),
+                resources.iter().filter(|resource| resource.drifted).count()
+            ));
+        }
+        let catalogs: Vec<_> = result
+            .discovery
+            .observations
+            .values()
+            .filter_map(|observation| {
+                if let nemoclaw_sdk::DiscoveryObservation::Inference(observation) = observation {
+                    Some(observation)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        if !catalogs.is_empty() {
+            let models: usize = catalogs.iter().map(|catalog| catalog.models.len()).sum();
+            output.push_str(&format!(
+                "  Model catalogs: {models} advertised model{}; inference unverified.\n",
+                if models == 1 { "" } else { "s" }
+            ));
+        }
+        if !result.discovery.credentials.is_empty() {
+            let available = result
+                .discovery
+                .credentials
+                .iter()
+                .filter(|credential| {
+                    credential.status == nemoclaw_sdk::discovery::ObservationStatus::Available
+                })
+                .count();
+            output.push_str(&format!(
+                "  Credential references: {available}/{} available.\n",
+                result.discovery.credentials.len()
+            ));
+        }
+        if context.verbose {
+            for (name, observation) in &result.discovery.observations {
+                use nemoclaw_sdk::{
+                    DiscoveryObservation as Observation, discovery::ObservationStatus,
+                };
+                let status = match observation {
+                    Observation::Engine(value) => Some(value.status),
+                    Observation::Hardware(value) => Some(value.status),
+                    Observation::Fabric(value) => Some(value.status),
+                    Observation::Inference(value) => Some(value.status),
+                    Observation::Gateway(value) => Some(value.status),
+                    Observation::Service { ready, .. } => ready.map(|value| {
+                        if value {
+                            ObservationStatus::Available
+                        } else {
+                            ObservationStatus::Unavailable
+                        }
+                    }),
+                    Observation::Unresolved { .. } => None,
+                };
+                let label = match status {
+                    Some(ObservationStatus::Available) => "observed",
+                    Some(ObservationStatus::Unavailable) => "unavailable",
+                    Some(ObservationStatus::Unknown) | None => "unverified",
+                };
+                output.push_str(&format!("  {}: {label}\n", terminal_text(name)));
+            }
+        }
+    }
     if !result.retained.is_empty() {
         output.push_str("\nRetained resources:\n");
         for resource in &result.retained {
@@ -575,6 +651,35 @@ mod tests {
         assert!(text.contains("create  gateway storage\n"), "{text}");
         assert!(!text.contains("sandbox files"), "{text}");
         assert!(!text.contains("retained"), "{text}");
+    }
+
+    #[test]
+    fn plan_discovery_shows_reuse_and_metadata_without_claiming_inference_readiness() {
+        let result = json!({"outcome":"planned","changes":[],"discovery":{
+            "observations":{"endpoint_0":{"kind":"inference","observation":{"status":"available","reason":null,"source":"control_host_http_models","reachable":true,"authentication":"not_required","models":["advertised-model"],"api_verified":false}}},
+            "credentials":[{"reference":"MODEL_KEY","status":"available","reason":null}],
+            "resources":[{"address":"docker_volume.example","scope":"runtime","existed":true,"plannedActions":["no-op"],"drifted":false,"retained":true,"reusePlanned":true}]
+        }});
+        let text = render(&["nemoclaw", "plan", "spark.yaml"], result.clone());
+        assert!(
+            text.contains("Resources: 1 established; 1 unchanged; 0 with drift"),
+            "{text}"
+        );
+        assert!(
+            text.contains("1 advertised model; inference unverified"),
+            "{text}"
+        );
+        assert!(!text.contains("inference ready"));
+        let json: Value = serde_json::from_str(&render(
+            &["nemoclaw", "plan", "spark.yaml", "-o", "json"],
+            result,
+        ))
+        .unwrap();
+        assert_eq!(json["discovery"]["resources"][0]["reusePlanned"], true);
+        assert_eq!(
+            json["discovery"]["observations"]["endpoint_0"]["observation"]["api_verified"],
+            false
+        );
     }
 
     #[test]

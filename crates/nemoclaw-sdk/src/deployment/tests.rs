@@ -502,7 +502,7 @@ async fn managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu(
         "nemoclaw_managed_gateway.runtime"
     };
     assert_eq!(first.len(), if docker { 3 } else { 2 });
-    let (changes, deferred, _) = deployment
+    let (changes, deferred, _, _) = deployment
         .runtime_stage(&bundle, &store, &document, &mut record, true, &cancel)
         .await
         .unwrap();

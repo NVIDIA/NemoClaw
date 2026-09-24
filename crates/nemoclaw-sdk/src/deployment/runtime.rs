@@ -120,7 +120,7 @@ impl Deployment {
         record: &mut Record,
         apply: bool,
         cancel: &CancellationToken,
-    ) -> Result<(Vec<Change>, bool, Vec<String>), Error> {
+    ) -> Result<(Vec<Change>, bool, Vec<String>, DiscoveryReport), Error> {
         if !document.has_runtime() {
             let directory = store.directory.join("runtime");
             if directory.exists()
@@ -140,7 +140,7 @@ impl Deployment {
                     "a configuration without runtime requires a new state directory; retain the existing runtime configuration and state for recovery or destroy",
                 ));
             }
-            return Ok((Vec::new(), false, Vec::new()));
+            return Ok((Vec::new(), false, Vec::new(), DiscoveryReport::default()));
         }
         let generated = Record::new(document.clone())?;
         for (kind, generation) in generated.generations {
@@ -171,7 +171,21 @@ impl Deployment {
                 ));
             }
             store.save(record)?;
-            return Ok((changes, !checked.gateway_running, plan.discovery_deferred()));
+            let retained = compile::compile_teardown(
+                document,
+                &record.generations,
+                &bundle.manifest.version,
+                &bindings.keys().cloned().collect(),
+                true,
+            )?
+            .retained;
+            let discovery = plan.discovery_report(DiscoveryScope::Runtime, &bindings, &retained)?;
+            return Ok((
+                changes,
+                !checked.gateway_running,
+                plan.discovery_deferred(),
+                discovery,
+            ));
         }
         record.begin_runtime_apply(document);
         store.save(record)?;
@@ -185,7 +199,7 @@ impl Deployment {
         .await?;
         record.finish_runtime_apply();
         store.save(record)?;
-        Ok((changes, false, Vec::new()))
+        Ok((changes, false, Vec::new(), DiscoveryReport::default()))
     }
     pub(super) async fn export_runtime(
         &self,

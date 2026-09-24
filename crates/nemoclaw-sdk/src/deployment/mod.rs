@@ -7,6 +7,10 @@ mod tests;
 mod apply;
 mod export;
 mod plan;
+mod reporting;
+pub use reporting::{
+    DiscoveryObservation, DiscoveryReport, DiscoveryScope, DiscoveryTarget, ResourceInventoryEntry,
+};
 mod runtime;
 mod timing;
 use crate::{
@@ -84,6 +88,8 @@ pub struct OperationResult {
     pub retained: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub health: Vec<crate::SandboxHealth>,
+    #[serde(default, skip_serializing_if = "DiscoveryReport::is_empty")]
+    pub discovery: DiscoveryReport,
 }
 impl OperationResult {
     fn planned(changes: Vec<Change>) -> Self {
@@ -93,6 +99,7 @@ impl OperationResult {
             deferred: Vec::new(),
             retained: Vec::new(),
             health: Vec::new(),
+            discovery: DiscoveryReport::default(),
         }
     }
 }
@@ -189,12 +196,17 @@ impl Deployment {
             }
         }
         record.validate_pending_intent(&document)?;
-        let (runtime_changes, deferred, runtime_discovery) = self
+        let (runtime_changes, deferred, runtime_discovery, mut discovery) = self
             .runtime_stage(&bundle, &store, &document, &mut record, apply, cancel)
             .await?;
         if deferred {
             let mut result = OperationResult::planned(runtime_changes);
             result.deferred = runtime_discovery;
+            discovery.credentials =
+                crate::inference_discovery::observe_credentials(&document, self.secrets.as_ref())?;
+            append_credential_deferrals(&mut result.deferred, &discovery.credentials);
+            discovery.gateway_target(&document);
+            result.discovery = discovery;
             result
                 .deferred
                 .push("OpenShell registration and sandbox require the managed gateway".into());
@@ -233,8 +245,31 @@ impl Deployment {
         changes.extend(root_changes);
         let mut result = OperationResult::planned(changes);
         if !apply {
-            result.deferred = runtime_discovery;
-            result.deferred.extend(plan.discovery_deferred());
+            let retained = compile::compile_teardown(
+                &document,
+                &record.generations,
+                &bundle.manifest.version,
+                &bindings.keys().cloned().collect(),
+                false,
+            )?
+            .retained;
+            discovery.extend(plan.discovery_report(
+                DiscoveryScope::Deployment,
+                &bindings,
+                &retained,
+            )?);
+            discovery.credentials =
+                crate::inference_discovery::observe_credentials(&document, self.secrets.as_ref())?;
+            result.deferred = if discovery.observations.is_empty() {
+                let mut deferred = runtime_discovery;
+                deferred.extend(plan.discovery_deferred());
+                deferred
+            } else {
+                discovery.deferred()
+            };
+            append_credential_deferrals(&mut result.deferred, &discovery.credentials);
+            discovery.gateway_target(&document);
+            result.discovery = discovery;
             result.deferred.sort();
             result.deferred.dedup();
             if fresh {
@@ -500,4 +535,18 @@ fn credential_environment<'a>(
         env.insert(name.into(), secrets.resolve(name)?);
     }
     Ok(env)
+}
+
+fn append_credential_deferrals(
+    deferred: &mut Vec<String>,
+    credentials: &[crate::inference_discovery::CredentialObservation],
+) {
+    for credential in credentials {
+        if credential.status != crate::discovery::ObservationStatus::Available {
+            deferred.push(format!(
+                "Credential reference {} is unavailable or unverified; resolve it before apply.",
+                credential.reference
+            ));
+        }
+    }
 }
