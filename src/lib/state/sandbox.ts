@@ -2093,7 +2093,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         backedUpFiles: [],
         failedFiles: [...failedFiles, ...backedUpFiles],
         error: "Snapshot sanitization skipped: backup deadline expired",
-        manifest,
+        ...(options.deferSanitizationDeadlineCleanup ? { manifest } : {}),
       };
     }
 

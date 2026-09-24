@@ -244,6 +244,7 @@ describe("shared backup deadline boundaries (#11936)", () => {
         success: false,
         error: "Snapshot sanitization skipped: backup deadline expired",
       });
+      expect(backup).not.toHaveProperty("manifest");
       expect(backup).not.toHaveProperty("unreachable");
       expect(captured).toHaveBeenCalledOnce();
       expect(prepared.logs.join("\n")).toContain(
