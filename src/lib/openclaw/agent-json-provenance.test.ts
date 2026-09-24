@@ -534,4 +534,123 @@ describe("openClawAgentIncompleteTurnSignal", () => {
       "timeoutPhase=post_turn",
     ]);
   });
+
+  describe("completed tool turns (#11844)", () => {
+    // Trimmed from real OpenClaw 2026.9.1 output for a completed `exec` turn:
+    // a gateway envelope from a live sandbox and a local `--local` envelope.
+    // OpenClaw sets replayInvalid because the turn cannot be retried safely
+    // after a mutating tool ran, not because the turn is incomplete.
+    const completedMeta = {
+      stopReason: "stop",
+      livenessState: "working",
+      replayInvalid: true,
+      finalAssistantVisibleText: "56",
+      toolSummary: { calls: 1, tools: ["exec"], failures: 0 },
+    };
+    type Turn = {
+      meta?: Record<string, unknown>;
+      wrapper?: Record<string, unknown>;
+      payloads?: unknown[] | null;
+    };
+    const gatewayTurn = ({ meta = {}, wrapper = {}, payloads = [{ text: "56" }] }: Turn = {}) =>
+      JSON.stringify({
+        runId: "run-1",
+        status: "ok",
+        summary: "completed",
+        ...wrapper,
+        result: {
+          ...(payloads === null ? {} : { payloads }),
+          meta: { ...completedMeta, ...meta },
+        },
+      });
+    const localTurn = ({ meta = {}, payloads = [{ text: "56", mediaUrl: null }] }: Turn = {}) =>
+      JSON.stringify({
+        ...(payloads === null ? {} : { payloads }),
+        meta: { ...completedMeta, aborted: false, ...meta },
+      });
+    describe.each([
+      ["gateway", gatewayTurn],
+      ["local", localTurn],
+    ])("%s envelope", (_shape, turnJson) => {
+      it("accepts a completed tool turn", () => {
+        expect(openClawAgentIncompleteTurnSignal(turnJson())).toBeNull();
+      });
+
+      it.each<[string, Turn]>([
+        [
+          "a reply directive in the visible text",
+          { meta: { finalAssistantVisibleText: "[[reply_to_current]] 56" } },
+        ],
+        ["a trailing newline in the reply", { payloads: [{ text: "56\n" }] }],
+        [
+          "a media-only reply",
+          {
+            meta: { finalAssistantVisibleText: "MEDIA:/tmp/plot.png" },
+            payloads: [{ text: "", mediaUrl: "/tmp/plot.png" }],
+          },
+        ],
+        [
+          "a reply after a reasoning payload",
+          { payloads: [{ text: "thinking", isReasoning: true }, { text: "56" }] },
+        ],
+      ])("accepts a completed tool turn with %s", (_label, turn) => {
+        expect(openClawAgentIncompleteTurnSignal(turnJson(turn))).toBeNull();
+      });
+
+      it.each<[string, Turn]>([
+        ["a paused compaction turn", { meta: { livenessState: "paused" } }],
+        ["a blocked turn", { meta: { livenessState: "blocked" } }],
+        ["an undeclared liveness state", { meta: { livenessState: undefined } }],
+        ["an error stop reason", { meta: { stopReason: "error" } }],
+        ["an aborted turn", { meta: { aborted: true } }],
+        ["a run error", { meta: { error: { kind: "provider_error" } } }],
+        ["a failed tool", { meta: { toolSummary: { calls: 1, tools: ["exec"], failures: 1 } } }],
+        [
+          "a turn without tool calls",
+          { meta: { toolSummary: { calls: 0, tools: [], failures: 0 } } },
+        ],
+        ["a non-numeric tool count", { meta: { toolSummary: { calls: "1", failures: 0 } } }],
+        ["no reply payloads", { payloads: [] }],
+        ["a missing payloads field", { payloads: null }],
+        ["a blank reply", { payloads: [{ text: " " }] }],
+        ["only an error payload", { payloads: [{ text: "exec failed", isError: true }] }],
+        ["only a reasoning payload", { payloads: [{ text: "thinking", isReasoning: true }] }],
+      ])("keeps replayInvalid as incomplete for %s", (_label, turn) => {
+        expect(openClawAgentIncompleteTurnSignal(turnJson(turn))?.markers).toEqual([
+          "replayInvalid=true",
+        ]);
+      });
+
+      it.each<[string, Record<string, unknown>, string]>([
+        ["a timeout phase", { timeoutPhase: "post_turn" }, "timeoutPhase=post_turn"],
+        ["an abandoned liveness state", { livenessState: "abandoned" }, "livenessState=abandoned"],
+      ])(
+        "reports %s alongside replayInvalid on a completed-looking tool turn",
+        (_label, meta, marker) => {
+          expect(openClawAgentIncompleteTurnSignal(turnJson({ meta }))?.markers.sort()).toEqual(
+            [marker, "replayInvalid=true"].sort(),
+          );
+        },
+      );
+    });
+
+    it.each([
+      ["a non-ok status", { status: "error" }],
+      ["an incomplete summary", { summary: "aborted" }],
+    ])("keeps replayInvalid as incomplete for a gateway envelope with %s", (_label, wrapper) => {
+      expect(openClawAgentIncompleteTurnSignal(gatewayTurn({ wrapper }))?.markers).toEqual([
+        "replayInvalid=true",
+      ]);
+    });
+
+    it("reports an incomplete_turn error alongside replayInvalid on a completed-looking tool turn", () => {
+      // OpenClaw does not emit a stop reason with a run error, but the other
+      // marker must still fail the turn if a response combines them.
+      const raw = gatewayTurn({ meta: { error: { kind: "incomplete_turn" } } });
+      expect(openClawAgentIncompleteTurnSignal(raw)?.markers.sort()).toEqual([
+        "error.kind=incomplete_turn",
+        "replayInvalid=true",
+      ]);
+    });
+  });
 });

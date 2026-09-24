@@ -365,19 +365,54 @@ export function openClawAgentResponseRecord(doc: unknown): UnknownRecord | null 
   return null;
 }
 
-/** The declared run-metadata record from an agent response envelope. */
-function agentResponseMetaRecord(doc: unknown): UnknownRecord | null {
-  const response = openClawAgentResponseRecord(doc);
-  return response && isObjectRecord(response.meta) ? response.meta : null;
-}
+type AgentResponse = { doc: unknown; response: UnknownRecord; meta: UnknownRecord };
 
 /** Select the final agent response without treating JSON log records as responses. */
-function finalAgentResponseMetaRecord(docs: unknown[]): UnknownRecord | null {
+function finalAgentResponse(docs: unknown[]): AgentResponse | null {
   for (let index = docs.length - 1; index >= 0; index -= 1) {
-    const meta = agentResponseMetaRecord(docs[index]);
-    if (meta) return meta;
+    const doc = docs[index];
+    const response = openClawAgentResponseRecord(doc);
+    if (response && isObjectRecord(response.meta)) return { doc, response, meta: response.meta };
   }
   return null;
+}
+
+// A reply payload the user receives. Error and reasoning payloads are not replies.
+function isDeliveredReply(payload: unknown): boolean {
+  if (!isObjectRecord(payload) || payload.isError === true || payload.isReasoning === true) {
+    return false;
+  }
+  const hasText = typeof payload.text === "string" && payload.text.trim().length > 0;
+  const hasMedia =
+    (typeof payload.mediaUrl === "string" && payload.mediaUrl.length > 0) ||
+    (Array.isArray(payload.mediaUrls) && payload.mediaUrls.length > 0);
+  return hasText || hasMedia;
+}
+
+// OpenClaw sets `replayInvalid` when a turn cannot be retried safely, which
+// includes a completed turn in which a mutating tool such as `exec` ran. That
+// marker alone is complete only when the envelope proves every tool call
+// succeeded and a reply was delivered (#11844).
+function isCompletedToolTurn({ doc, response, meta }: AgentResponse): boolean {
+  if (
+    doc !== response &&
+    (!isObjectRecord(doc) || doc.status !== "ok" || doc.summary !== "completed")
+  ) {
+    return false;
+  }
+  const tools = meta.toolSummary;
+  return (
+    meta.livenessState === "working" &&
+    meta.stopReason === "stop" &&
+    meta.aborted !== true &&
+    meta.error === undefined &&
+    isObjectRecord(tools) &&
+    typeof tools.calls === "number" &&
+    tools.calls > 0 &&
+    tools.failures === 0 &&
+    Array.isArray(response.payloads) &&
+    response.payloads.some(isDeliveredReply)
+  );
 }
 
 /** The phase the run's deadline fired in, or null when the run did not time out. */
@@ -388,9 +423,11 @@ function timedOutPhase(meta: UnknownRecord): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+const REPLAY_INVALID_MARKER = "replayInvalid=true";
+
 function turnMetaMarkers(meta: UnknownRecord): string[] {
   const markers: string[] = [];
-  if (meta.replayInvalid === true) markers.push("replayInvalid=true");
+  if (meta.replayInvalid === true) markers.push(REPLAY_INVALID_MARKER);
   if (normalized(meta.livenessState) === ABANDONED_LIVENESS_VALUE) {
     markers.push(`livenessState=${String(meta.livenessState)}`);
   }
@@ -406,7 +443,8 @@ function turnMetaMarkers(meta: UnknownRecord): string[] {
 /**
  * Detect a turn the run metadata itself marks incomplete, abandoned, or timed
  * out. Returns null when no marker is present, so a healthy turn is never
- * reclassified. A timed-out run also carries its declared phase, which the
+ * reclassified, and for a completed tool turn whose only marker is
+ * `replayInvalid`. A timed-out run also carries its declared phase, which the
  * caller uses to pick deadline-specific recovery guidance.
  */
 export function openClawAgentIncompleteTurnSignal(
@@ -414,10 +452,14 @@ export function openClawAgentIncompleteTurnSignal(
 ): OpenClawIncompleteTurnSignal | null {
   const docs = parseOpenClawJsonDocuments(raw);
   if (docs.length === 0) return null;
-  const meta = finalAgentResponseMetaRecord(docs);
-  if (!meta) return null;
+  const final = finalAgentResponse(docs);
+  if (!final) return null;
+  const { meta } = final;
   const markers = dedupe(turnMetaMarkers(meta));
   if (markers.length === 0) return null;
+  if (markers.length === 1 && markers[0] === REPLAY_INVALID_MARKER && isCompletedToolTurn(final)) {
+    return null;
+  }
   const timeoutPhase = timedOutPhase(meta);
   return timeoutPhase ? { markers, timeoutPhase } : { markers };
 }
