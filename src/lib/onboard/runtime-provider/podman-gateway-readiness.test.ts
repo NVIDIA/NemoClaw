@@ -5,6 +5,7 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
+import { classifyManagedGatewayPortConflict } from "../../readiness/gateway-production";
 import {
   buildDockerDriverGatewayRuntimeMarker,
   getDockerDriverGatewayRuntimeMarkerPath,
@@ -34,8 +35,8 @@ function input() {
     gatewayPort: GATEWAY_PORT,
     expectedEndpoint: `https://169.254.2.2:${String(GATEWAY_PORT)}`,
     managedGatewayEndpoints: [
-      `https://169.254.2.2:${String(GATEWAY_PORT)}`,
-      `https://169.254.2.2:${String(GATEWAY_PORT)}`,
+      `https://127.0.0.1:${String(GATEWAY_PORT)}`,
+      `https://127.0.0.1:${String(GATEWAY_PORT)}`,
     ],
     portAvailable: false,
     installedOpenShellVersion: "0.0.116",
@@ -106,6 +107,35 @@ describe("native Podman gateway readiness", () => {
     });
   });
 
+  it("admits the host registration while retaining sandbox-facing marker authority", () => {
+    const observed = observeNativePodmanGatewayReadiness(input(), readinessDeps());
+    expect(
+      classifyManagedGatewayPortConflict(
+        false,
+        observed.listenerScan,
+        "healthy",
+        false,
+        observed.endpointBinding,
+        observed.targetBoundListenerPids.includes(PID),
+      ),
+    ).toBe("none");
+    const wrongMarker = observeNativePodmanGatewayReadiness(
+      input(),
+      readinessDeps({ endpoint: "https://127.0.0.1:8080" }),
+    );
+    expect(wrongMarker.endpointBinding).toBe("match");
+    expect(
+      classifyManagedGatewayPortConflict(
+        false,
+        wrongMarker.listenerScan,
+        "healthy",
+        false,
+        wrongMarker.endpointBinding,
+        wrongMarker.targetBoundListenerPids.includes(PID),
+      ),
+    ).toBe("owner-mismatch");
+  });
+
   it.each([
     ["another provider", { driver: "docker" }],
     ["another endpoint", { endpoint: "https://169.254.2.2:8990" }],
@@ -136,16 +166,28 @@ describe("native Podman gateway readiness", () => {
     });
   });
 
-  it("rejects managed endpoint output outside the provider endpoint (#10984)", () => {
+  it.each([
+    ["sandbox-facing address", ["https://169.254.2.2:8080"]],
+    ["wrong port", ["https://127.0.0.1:8990"]],
+    ["wrong scheme", ["http://127.0.0.1:8080"]],
+    ["foreign host", ["https://foreign.example:8080"]],
+    ["unverified endpoint", [null]],
+    ["mixed origins", ["https://127.0.0.1:8080", "https://foreign.example:8080"]],
+  ] as const)("rejects host registration with %s", (_label, endpoints) => {
     const observation = observeNativePodmanGatewayReadiness(
-      {
-        ...input(),
-        managedGatewayEndpoints: [`https://169.254.2.2:8990`],
-      },
+      { ...input(), managedGatewayEndpoints: endpoints },
       readinessDeps(),
     );
-
     expect(observation.endpointBinding).toBe("mismatch");
+    expect(observation.listenerScan.pids).toEqual([PID]);
+  });
+
+  it("keeps missing host registration unknown even with a verified listener", () => {
+    const observation = observeNativePodmanGatewayReadiness(
+      { ...input(), managedGatewayEndpoints: [] },
+      readinessDeps(),
+    );
+    expect(observation.endpointBinding).toBe("unknown");
     expect(observation.listenerScan.pids).toEqual([PID]);
   });
 

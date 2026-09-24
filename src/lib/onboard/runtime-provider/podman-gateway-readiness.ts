@@ -6,6 +6,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { getGatewayHttpsEndpoint } from "../../core/gateway-address";
+
 import {
   getDockerDriverGatewayRuntimeMarkerPath,
   parseDockerDriverGatewayRuntimeMarker,
@@ -206,7 +208,11 @@ export function observeNativePodmanGatewayReadiness(
         ? "compatible"
         : "drift";
   return Object.freeze({
-    endpointBinding: classifyEndpointBinding(input.managedGatewayEndpoints, input.expectedEndpoint),
+    // Host CLI registration uses loopback; the runtime marker above records the sandbox-facing endpoint.
+    endpointBinding: classifyEndpointBinding(
+      input.managedGatewayEndpoints,
+      getGatewayHttpsEndpoint(input.gatewayPort),
+    ),
     listenerScan: Object.freeze({
       pids: Object.freeze(pids),
       unverifiedPids: Object.freeze(unverifiedPids),
