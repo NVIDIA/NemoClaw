@@ -191,6 +191,12 @@ export interface BackupOptions {
   name?: string | null;
   /** Absolute wall-clock deadline for all backup subprocesses and publication. */
   deadlineMs?: number;
+  /**
+   * Internal lifecycle fence for strict stopped-sandbox backups. When
+   * sanitization exhausts the work deadline, the caller removes the partial
+   * snapshot only after restoring the temporarily started container.
+   */
+  deferSanitizationDeadlineCleanup?: boolean;
   runtimeSnapshot?: SandboxRuntimeSnapshot;
   workload?: SandboxWorkloadReceipt;
   hostLocalInferenceReceipt?: string;
@@ -994,8 +1000,13 @@ const DEFAULT_BACKUP_SANITIZATION_OPERATIONS: BackupSanitizationOperations = {
 };
 
 class SnapshotSanitizationDeadlineError extends Error {
-  constructor(cause: unknown) {
-    super("Credential sanitization failed; removed the incomplete backup", { cause });
+  constructor(cause: unknown, cleanupDeferred = false) {
+    super(
+      cleanupDeferred
+        ? "Credential sanitization exceeded the backup deadline; deferred incomplete backup cleanup"
+        : "Credential sanitization failed; removed the incomplete backup",
+      { cause },
+    );
     this.name = "SnapshotSanitizationDeadlineError";
   }
 }
@@ -1014,6 +1025,7 @@ export function sanitizeBackupDirectory(
   dirPath: string,
   overrides: Partial<BackupSanitizationOperations> = {},
   deadlineMs?: number,
+  deferDeadlineCleanup = false,
 ): void {
   const operations = {
     ...DEFAULT_BACKUP_SANITIZATION_OPERATIONS,
@@ -1035,6 +1047,9 @@ export function sanitizeBackupDirectory(
       error instanceof SnapshotSanitizerPrerequisiteError ? `${error.message}. ` : "";
     const validatedSnapshotPath =
       error instanceof SnapshotSanitizerPrerequisiteError ? error.snapshotPath : null;
+    if (deferDeadlineCleanup && containsSnapshotSanitizationDeadlineError(error)) {
+      throw new SnapshotSanitizationDeadlineError(error, true);
+    }
     try {
       operations.removeBackup(dirPath);
     } catch (cleanupError) {
@@ -2339,17 +2354,22 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
 
   // SECURITY: Strip credentials from the local backup
   try {
-    sanitizeBackupDirectory(backupPath, {}, options.deadlineMs);
+    sanitizeBackupDirectory(
+      backupPath,
+      {},
+      options.deadlineMs,
+      options.deferSanitizationDeadlineCleanup,
+    );
   } catch (error) {
     if (!isSnapshotSanitizationDeadlineError(error)) throw error;
     return {
       success: false,
-      unreachable: true,
       backedUpDirs: [],
       failedDirs: [...failedDirs, ...backedUpDirs],
       backedUpFiles: [],
       failedFiles: [...failedFiles, ...backedUpFiles],
       error: "Snapshot sanitization skipped: backup deadline expired",
+      manifest,
     };
   }
 

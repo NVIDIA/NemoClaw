@@ -83,6 +83,7 @@ function prepareBackup(
       ? Capture
       : never
     : never,
+  deferSanitizationDeadlineCleanup = false,
 ): DeadlineRun {
   const binDir = path.join(fixture, "bin");
   const stageLog = path.join(fixture, "stages.log");
@@ -147,6 +148,7 @@ process.exit(stage === "download" ? 2 : 0);
       sandboxState.backupSandboxState("alpha", {
         deadlineMs: DEADLINE_MS,
         captureStateDirectories,
+        deferSanitizationDeadlineCleanup,
       }),
   };
 }
@@ -228,13 +230,30 @@ describe("shared backup deadline boundaries (#11936)", () => {
       const backup = prepared.run();
       expect(backup).toMatchObject({
         success: false,
-        unreachable: true,
         error: "Snapshot sanitization skipped: backup deadline expired",
       });
+      expect(backup).not.toHaveProperty("unreachable");
       expect(captured).toHaveBeenCalledOnce();
       expect(prepared.logs.join("\n")).toContain(
         "privileged state directory capture: backup deadline expired",
       );
+    });
+  });
+
+  it("preserves a deadline-expired snapshot for lifecycle-safe caller cleanup", () => {
+    withFixture((fixture) => {
+      const captured = vi.fn((_request: unknown, archiveFd: number) => {
+        fs.writeSync(archiveFd, Buffer.alloc(1024));
+        return { outcome: "backed_up" as const };
+      });
+      const backup = prepareBackup(fixture, "download", captured, true).run();
+
+      expect(backup).toMatchObject({
+        success: false,
+        error: "Snapshot sanitization skipped: backup deadline expired",
+        manifest: { backupPath: expect.any(String) },
+      });
+      expect(fs.existsSync(backup.manifest?.backupPath ?? "")).toBe(true);
     });
   });
 });

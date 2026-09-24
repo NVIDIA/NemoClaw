@@ -587,11 +587,16 @@ function backupStateOnly(
   sandboxName: string,
   options: Pick<
     sandboxState.BackupOptions,
-    "name" | "deadlineMs" | "captureStateFile" | "captureStateDirectories"
+    | "name"
+    | "deadlineMs"
+    | "deferSanitizationDeadlineCleanup"
+    | "captureStateFile"
+    | "captureStateDirectories"
   >,
 ): sandboxState.BackupResult {
   return options.name === undefined &&
     options.deadlineMs === undefined &&
+    options.deferSanitizationDeadlineCleanup === undefined &&
     options.captureStateFile === undefined &&
     options.captureStateDirectories === undefined
     ? dependencies.backup(sandboxName)
@@ -623,6 +628,7 @@ function captureManagedAuthority(
     );
   }
   const runtimeSnapshot = dependencies.captureRuntime(provider, entry, deadlineMs);
+  requireAuthorityBudget(deadlineMs);
   const workload = authority.receipt;
 
   return {
@@ -646,6 +652,7 @@ function captureManagedAuthority(
         throw new Error(`sandbox '${entry.name}' runtime provider changed during backup`);
       }
       const currentRuntime = dependencies.captureRuntime(currentProvider, current, deadlineMs);
+      requireAuthorityBudget(deadlineMs);
       if (!isDeepStrictEqual(currentRuntime, runtimeSnapshot)) {
         throw new Error(`sandbox '${entry.name}' runtime changed during backup`);
       }
@@ -743,7 +750,10 @@ function captureSnapshotAuthority(
  */
 export function backupSandboxStateWithManagedAuthority(
   sandboxName: string,
-  options: Pick<sandboxState.BackupOptions, "name" | "deadlineMs"> = {},
+  options: Pick<
+    sandboxState.BackupOptions,
+    "name" | "deadlineMs" | "deferSanitizationDeadlineCleanup"
+  > = {},
   overrides: Pick<SnapshotBackupAuthorityDependencies, "getSandbox"> &
     Partial<Omit<SnapshotBackupAuthorityDependencies, "getSandbox">>,
 ): sandboxState.BackupResult {

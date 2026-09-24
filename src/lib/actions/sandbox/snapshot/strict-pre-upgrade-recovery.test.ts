@@ -343,6 +343,38 @@ describe("strict pre-upgrade recovery retention", () => {
     expect(mocks.removeSandboxStateBackup).not.toHaveBeenCalled();
   });
 
+  it("fails safely for caller cleanup when MCP handoff publication fails", async () => {
+    mocks.writeRebuildMcpHandoff.mockImplementation(() => {
+      throw new Error("MCP handoff write failed");
+    });
+    const result = {
+      success: true,
+      backedUpDirs: ["workspace"],
+      failedDirs: [],
+      backedUpFiles: [],
+      failedFiles: [],
+      manifest: { backupPath: "/backups/alpha/timestamp" },
+    };
+
+    const failed = await retainStrictPreUpgradeRecoveryState(
+      sandbox as never,
+      result as never,
+      runtimeSelection,
+    );
+
+    expect(failed).toMatchObject({
+      success: false,
+      error: expect.stringContaining("MCP handoff write failed"),
+      manifest: { backupPath: "/backups/alpha/timestamp" },
+    });
+    expect(mocks.writeRebuildPolicyHandoff).toHaveBeenCalledOnce();
+    expect(discardIncompleteStrictBackup(sandbox as never, failed)).not.toHaveProperty("manifest");
+    expect(mocks.removeSandboxStateBackup).toHaveBeenCalledWith(
+      "alpha",
+      "/backups/alpha/timestamp",
+    );
+  });
+
   it("returns a failed result for a non-timeout policy error", async () => {
     mocks.captureRecordedSandboxBasePolicy.mockRejectedValue(new Error("policy unavailable"));
     const result = {

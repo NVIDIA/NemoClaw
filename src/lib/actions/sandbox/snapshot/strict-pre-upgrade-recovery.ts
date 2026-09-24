@@ -152,11 +152,15 @@ export async function retainStrictPreUpgradeRecoveryState(
     return expiredRetentionResult(result, "MCP observation");
   }
   const mcpObservation = mcpOutcome.value;
-  result.manifest = sandboxState.writeRebuildPolicyHandoff(result.manifest, policyOutcome.value);
-  result.manifest = sandboxState.writeRebuildMcpHandoff(
-    result.manifest,
-    mcpObservation.entries,
-    mcpObservation.runtimeSelection ?? runtimeSelection,
-  );
+  try {
+    result.manifest = sandboxState.writeRebuildPolicyHandoff(result.manifest, policyOutcome.value);
+    result.manifest = sandboxState.writeRebuildMcpHandoff(
+      result.manifest,
+      mcpObservation.entries,
+      mcpObservation.runtimeSelection ?? runtimeSelection,
+    );
+  } catch (error) {
+    return failedRetentionResult(result, "recovery handoff publication", error);
+  }
   return result;
 }

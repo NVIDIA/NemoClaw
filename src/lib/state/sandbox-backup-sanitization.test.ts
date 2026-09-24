@@ -503,6 +503,31 @@ describe("rebuild backup credential sanitization", () => {
     expect(existsSync(backupPath)).toBe(true);
   });
 
+  it("defers deadline cleanup for a caller that owns lifecycle restoration", () => {
+    const backupPath = createBackup();
+    const removeBackup = vi.fn();
+    const backupExists = vi.fn(() => true);
+    vi.spyOn(Date, "now").mockReturnValue(3_001);
+
+    expect(() =>
+      sanitizeBackupDirectory(
+        backupPath,
+        {
+          sanitizeDirectory: vi.fn(),
+          removeBackup,
+          backupExists,
+        },
+        3_000,
+        true,
+      ),
+    ).toThrow(
+      "Credential sanitization exceeded the backup deadline; deferred incomplete backup cleanup",
+    );
+    expect(removeBackup).not.toHaveBeenCalled();
+    expect(backupExists).not.toHaveBeenCalled();
+    expect(existsSync(backupPath)).toBe(true);
+  });
+
   it("fails closed when a scanned parent directory is swapped before apply", () => {
     const backupPath = createBackup();
     const nestedPath = join(backupPath, "state", "nested");

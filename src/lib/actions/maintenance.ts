@@ -337,6 +337,7 @@ export async function backupAllUnderPortableHostFence(
         const backupResult = await (startedForBackup
           ? backupStartedSandboxState(sb.name, {
               deadlineMs: transactionDeadlineMs ?? undefined,
+              deferSanitizationDeadlineCleanup: retainPreUpgradePolicy,
             })
           : snapshotBackup.backupSandboxStateWithManagedAuthority(
               sb.name,

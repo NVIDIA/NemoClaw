@@ -562,6 +562,7 @@ describe("backupAll", () => {
     });
     expect(mocks.backupStartedSandboxState).toHaveBeenCalledWith("sb-stopped", {
       deadlineMs: 330_000,
+      deferSanitizationDeadlineCleanup: true,
     });
     expect(mocks.backupSandboxState).toHaveBeenCalledWith("sb-good");
     expect(mocks.returnSandboxContainerToStopped).toHaveBeenCalledWith(
@@ -861,7 +862,7 @@ describe("backupAll", () => {
     );
   });
 
-  it("returns the container to stopped and counts a failure when the started backup fails (#6500)", async () => {
+  it("restores stopped state before removing a deadline-expired strict snapshot (#11936)", async () => {
     mocks.listSandboxes.mockReturnValue({
       sandboxes: [{ name: "sb-stopped" }],
       defaultSandbox: null,
@@ -873,16 +874,17 @@ describe("backupAll", () => {
     });
     mocks.backupStartedSandboxState.mockResolvedValue({
       success: false,
+      error: "Snapshot sanitization skipped: backup deadline expired",
       backedUpDirs: [],
-      failedDirs: ["identity"],
-      failedDirReasons: { identity: "permission denied" },
+      failedDirs: [],
       backedUpFiles: [],
       failedFiles: [],
+      manifest: { backupPath: "/backups/sb-stopped/incomplete" },
     });
     mocks.discardIncompleteStrictBackup.mockImplementation((_sandbox, result) => result);
     process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS = "1";
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
       throw new Error(`exit:${code}`);
     }) as never);
@@ -902,9 +904,6 @@ describe("backupAll", () => {
       mocks.discardIncompleteStrictBackup.mock.invocationCallOrder[0],
     );
     expect(logSpy.mock.calls.flat().join("\n")).toContain("0 backed up, 1 failed, 0 skipped");
-    expect(errorSpy.mock.calls.flat().join("\n")).toContain(
-      "backup failed (identity (permission denied))",
-    );
   });
 
   it("fails when the started container cannot be returned to its stopped state (#6500)", async () => {

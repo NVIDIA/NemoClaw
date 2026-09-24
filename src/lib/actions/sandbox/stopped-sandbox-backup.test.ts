@@ -535,6 +535,7 @@ describe("backupStartedSandboxState", () => {
 
     expect(adapterMocks.backupWithAuthority).toHaveBeenCalledWith("my-sb", {
       deadlineMs: expect.any(Number),
+      deferSanitizationDeadlineCleanup: false,
     });
   });
 
@@ -649,10 +650,10 @@ describe("backupStartedSandboxState", () => {
 
     expect(result).toMatchObject({
       success: false,
-      unreachable: true,
       error: "capture failed Sandbox backup exceeded its transaction deadline.",
       manifest: { backupPath: "/backups/alpha/v1" },
     });
+    expect(result).not.toHaveProperty("unreachable");
   });
 
   it("stops the default readiness probes at the transaction bound (#11936)", async () => {
@@ -689,6 +690,8 @@ describe("backupStartedSandboxState", () => {
         now: () => now,
       }),
     ).resolves.toEqual(ok);
+
+    expect(backup).toHaveBeenCalledWith("my-sb", 300_000, false);
 
     const stopSandbox = vi.fn().mockImplementation(async ({ timeoutMs }: { timeoutMs: number }) => {
       now += timeoutMs;

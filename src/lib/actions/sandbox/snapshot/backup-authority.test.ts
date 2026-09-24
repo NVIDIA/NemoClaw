@@ -625,6 +625,56 @@ describe("managed snapshot backup authority", () => {
     expect(backup).not.toHaveBeenCalled();
   });
 
+  it("rejects managed authority capture that finishes after the shared deadline", () => {
+    let now = 9_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    const entry = sandbox("openclaw");
+    const captureRuntime = vi.fn(() => {
+      now = 10_000;
+      return runtime();
+    });
+    const backup = vi.fn();
+
+    const result = backupSandboxStateWithManagedAuthority(
+      entry.name,
+      { deadlineMs: 10_000 },
+      { getSandbox: () => entry, requireProvider: () => provider(), captureRuntime, backup },
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+      error: expect.stringContaining("provider snapshot authority deadline expired"),
+    });
+    expect(captureRuntime).toHaveBeenCalledOnce();
+    expect(backup).not.toHaveBeenCalled();
+  });
+
+  it("rejects managed authority revalidation that finishes after the shared deadline", () => {
+    let now = 9_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    const entry = sandbox("openclaw");
+    const captureRuntime = vi
+      .fn(() => runtime())
+      .mockImplementationOnce(() => runtime())
+      .mockImplementationOnce(() => {
+        now = 10_000;
+        return runtime();
+      });
+    const backup = vi.fn((_name: string, options: BackupOptions = {}) => successfulBackup(options));
+
+    const result = backupSandboxStateWithManagedAuthority(
+      entry.name,
+      { deadlineMs: 10_000 },
+      { getSandbox: () => entry, requireProvider: () => provider(), captureRuntime, backup },
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+      error: expect.stringContaining("provider snapshot authority deadline expired"),
+    });
+    expect(captureRuntime).toHaveBeenCalledTimes(2);
+  });
+
   it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
     "carries exact explicit llama.cpp authority through %s backup",
     (agent) => {
