@@ -64,6 +64,17 @@ describe("prepared rebuild backup recovery validation (#6114)", () => {
     expect(fs.existsSync(outsidePath)).toBe(true);
   });
 
+  it("retains an incomplete backup when its cleanup deadline has expired (#11936)", () => {
+    const manifest = writeBackup("alpha", "2026-07-01T06-50-42-044Z");
+    const backupPath = String(manifest.backupPath);
+
+    expect(sandboxState.removeSandboxStateBackup("alpha", backupPath, Date.now())).toBe(false);
+    expect(fs.existsSync(backupPath)).toBe(true);
+    expect(sandboxState.removeSandboxStateBackup("alpha", backupPath, Date.now() + 5_000)).toBe(
+      true,
+    );
+  });
+
   it("refuses to remove a backup path that is a symbolic link (#10639)", () => {
     const sandboxBackupRoot = path.join(BACKUPS_ROOT, "alpha");
     const backupPath = path.join(sandboxBackupRoot, "2026-07-01T06-50-42-043Z");

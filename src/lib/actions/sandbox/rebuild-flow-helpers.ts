@@ -95,12 +95,13 @@ export type RebuildAgentBaseImagePreflight = {
 function discardIncompleteRebuildBackup(
   sandboxName: string,
   result: sandboxState.BackupResult,
+  deadlineMs: number,
 ): sandboxState.BackupResult {
   const backupPath = result.manifest?.backupPath;
   if (!backupPath) return result;
-  if (sandboxState.removeSandboxStateBackup(sandboxName, backupPath)) {
+  if (sandboxState.removeSandboxStateBackup(sandboxName, backupPath, deadlineMs)) {
     const { manifest: _removedManifest, ...withoutPartialBackup } = result;
-    return withoutPartialBackup;
+    return { ...withoutPartialBackup, backedUpDirs: [], backedUpFiles: [] };
   }
   const cleanupError = `Failed rebuild backup at '${backupPath}' could not be removed`;
   return {
@@ -561,7 +562,7 @@ export async function backupSandboxStateForRebuild(
       // Recursive snapshot cleanup can consume the lifecycle reserve. Defer it
       // until the container this recovery started is observably Stopped again.
       if (returnedToStopped && !backup.success) {
-        backup = discardIncompleteRebuildBackup(sandboxName, backup);
+        backup = discardIncompleteRebuildBackup(sandboxName, backup, transactionDeadlineMs);
       }
       // A container this recovery started must be reported whenever it cannot
       // be returned to stopped, whether or not the retried backup succeeded.

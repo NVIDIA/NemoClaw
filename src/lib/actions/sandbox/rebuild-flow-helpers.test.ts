@@ -1148,9 +1148,9 @@ describe("backupSandboxStateForRebuild stopped-container recovery (#11137)", () 
     const failedBackup = {
       success: false,
       error: "Snapshot sanitization skipped: backup deadline expired",
-      backedUpDirs: [],
-      backedUpFiles: [],
-      failedDirs: [],
+      backedUpDirs: ["memories"],
+      backedUpFiles: ["SOUL.md"],
+      failedDirs: [".state"],
       failedFiles: [],
       manifest: { ...makeBackupResult().manifest!, backupPath: "/backups/alpha/incomplete" },
     };
@@ -1182,7 +1182,12 @@ describe("backupSandboxStateForRebuild stopped-container recovery (#11137)", () 
       deferSanitizationDeadlineCleanup: true,
     });
     expect(order).toEqual(["backup", "stop", "cleanup"]);
-    expect(removeBackupSpy).toHaveBeenCalledWith("alpha", "/backups/alpha/incomplete");
+    expect(removeBackupSpy).toHaveBeenCalledWith(
+      "alpha",
+      "/backups/alpha/incomplete",
+      expect.any(Number),
+    );
+    expect(vi.mocked(console.error).mock.calls.flat().join("\n")).not.toContain("loose file");
   });
 
   it("reports deferred snapshot cleanup failure after restoring stopped state (#11936)", async () => {

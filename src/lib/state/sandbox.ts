@@ -3454,7 +3454,11 @@ function legacyStateFilesArePresent(backupPath: string, manifest: RebuildManifes
  * Remove one completed rebuild backup without allowing a caller-controlled
  * path to escape the sandbox's timestamped backup directory.
  */
-export function removeSandboxStateBackup(sandboxName: string, backupPath: string): boolean {
+export function removeSandboxStateBackup(
+  sandboxName: string,
+  backupPath: string,
+  deadlineMs?: number,
+): boolean {
   const rebuildBackupsRoot = path.resolve(REBUILD_BACKUPS_DIR);
   const sandboxBackupRoot = path.resolve(rebuildBackupsRoot, sandboxName);
   const candidateBackupPath = path.resolve(backupPath);
@@ -3469,7 +3473,28 @@ export function removeSandboxStateBackup(sandboxName: string, backupPath: string
 
   try {
     rejectSymlinksOnPath(candidateBackupPath);
-    rmSync(candidateBackupPath, { recursive: true, force: true });
+    if (deadlineMs === undefined) {
+      rmSync(candidateBackupPath, { recursive: true, force: true });
+    } else {
+      const timeout = Math.floor(deadlineMs - Date.now());
+      if (timeout <= 0) return false;
+      const removal = spawnSync(
+        process.execPath,
+        [
+          "-e",
+          "require('node:fs').rmSync(process.argv[1],{recursive:true,force:true})",
+          candidateBackupPath,
+        ],
+        {
+          timeout,
+          killSignal: "SIGKILL",
+          stdio: "ignore",
+          windowsHide: true,
+          env: { ...process.env, NODE_OPTIONS: undefined, NODE_PATH: undefined },
+        },
+      );
+      if (removal.status !== 0 || removal.error) return false;
+    }
     return !existsSync(candidateBackupPath);
   } catch {
     return false;
