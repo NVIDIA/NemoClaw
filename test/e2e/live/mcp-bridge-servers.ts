@@ -51,7 +51,21 @@ export interface FakeMcpRequest {
   rpcId?: string | number | null;
 }
 
+export interface FakeMcpHttpsDiagnostics {
+  secureConnections: number;
+  requestHeaders: number;
+  requestBodiesComplete: number;
+  tlsClientErrors: {
+    ERR_SSL_HTTP_REQUEST: number;
+    ERR_SSL_WRONG_VERSION_NUMBER: number;
+    ERR_SSL_UNEXPECTED_EOF_WHILE_READING: number;
+    ECONNRESET: number;
+    OTHER: number;
+  };
+}
+
 export interface FakeMcpHttpsServer extends StartedHttpServer {
+  diagnostics(): FakeMcpHttpsDiagnostics;
   setSecret(secret: string): void;
   observations: FakeMcpRequest[];
   requests: FakeMcpRequest[];
@@ -1051,6 +1065,7 @@ export async function startFakeMcpHttpsServer(options: {
   challenge?: string;
   resultToken?: string;
   tls?: { cert: Buffer; key: Buffer };
+  onCloseDiagnostics?: (diagnostics: FakeMcpHttpsDiagnostics) => Promise<void>;
 }): Promise<FakeMcpHttpsServer> {
   let expectedSecret = options.secret;
   let nextSessionId = 1;
@@ -1071,7 +1086,25 @@ export async function startFakeMcpHttpsServer(options: {
     })();
   const requests: FakeMcpRequest[] = [];
   const observations: FakeMcpRequest[] = [];
+  const diagnostics: FakeMcpHttpsDiagnostics = {
+    secureConnections: 0,
+    requestHeaders: 0,
+    requestBodiesComplete: 0,
+    tlsClientErrors: {
+      ERR_SSL_HTTP_REQUEST: 0,
+      ERR_SSL_WRONG_VERSION_NUMBER: 0,
+      ERR_SSL_UNEXPECTED_EOF_WHILE_READING: 0,
+      ECONNRESET: 0,
+      OTHER: 0,
+    },
+  };
+  const increment = (value: number): number => Math.min(value + 1, 65_535);
+  const snapshot = (): FakeMcpHttpsDiagnostics => ({
+    ...diagnostics,
+    tlsClientErrors: { ...diagnostics.tlsClientErrors },
+  });
   const server = https.createServer(tls, async (req, res) => {
+    diagnostics.requestHeaders = increment(diagnostics.requestHeaders);
     const requestUrl = new URL(req.url ?? "/", "https://fake-mcp.local");
     const requestPath = requestUrl.pathname;
     const legacySessionId = requestUrl.searchParams.get("legacySessionId") ?? "";
@@ -1097,6 +1130,7 @@ export async function startFakeMcpHttpsServer(options: {
     };
     observations.push(recordedObservation);
     const body = await readRequestBody(req);
+    diagnostics.requestBodiesComplete = increment(diagnostics.requestBodiesComplete);
     recordedObservation.body = body;
     let parsedPayload: McpRequestPayload | null = null;
     try {
@@ -1442,8 +1476,20 @@ export async function startFakeMcpHttpsServer(options: {
     });
   });
 
+  server.on("secureConnection", () => {
+    diagnostics.secureConnections = increment(diagnostics.secureConnections);
+  });
+  server.on("tlsClientError", (error: NodeJS.ErrnoException) => {
+    const code = error.code;
+    const bucket =
+      code && Object.hasOwn(diagnostics.tlsClientErrors, code)
+        ? (code as keyof FakeMcpHttpsDiagnostics["tlsClientErrors"])
+        : "OTHER";
+    diagnostics.tlsClientErrors[bucket] = increment(diagnostics.tlsClientErrors[bucket]);
+  });
   await listenOnRandomPort(server);
   return {
+    diagnostics: snapshot,
     port: requireTcpPort(server, "fake MCP endpoint"),
     observations,
     requests,
@@ -1452,10 +1498,14 @@ export async function startFakeMcpHttpsServer(options: {
       expectedSecret = secret;
     },
     close: async () => {
-      for (const response of serverEventStreams) response.destroy();
-      await closeServer(server);
-      for (const session of legacySessions.values()) session.phase = "closed";
-      legacySessions.clear();
+      try {
+        await options.onCloseDiagnostics?.(snapshot());
+      } finally {
+        for (const response of serverEventStreams) response.destroy();
+        await closeServer(server);
+        for (const session of legacySessions.values()) session.phase = "closed";
+        legacySessions.clear();
+      }
     },
   };
 }

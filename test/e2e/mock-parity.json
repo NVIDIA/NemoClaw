@@ -658,7 +658,8 @@
         "test/e2e/support/openshell-exact-main-driver-config.test.ts",
         "test/e2e/support/openshell-exact-main-child-contracts.test.ts",
         "test/e2e/support/openshell-exact-main-runtime-contracts.test.ts",
-        "test/mcp/mcp-bridge-servers.test.ts"
+        "test/mcp/mcp-bridge-servers.test.ts",
+        "test/mcp/mcp-bridge-https-diagnostics.test.ts"
       ]
     },
     {
