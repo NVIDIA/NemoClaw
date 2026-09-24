@@ -5,7 +5,7 @@
 
 This crate provides the terminal questionnaire used by `nemoclaw onboard` and the standalone example.
 It is a trial authoring flow over `nemoclaw-authoring`.
-It writes validated YAML and makes read-only checks against the configured container engine.
+It writes validated YAML and can read target observations through a verified native bundle.
 It does not read credential values, create deployment state, or apply resources.
 
 With the [build prerequisites](../../docs/build.md) available, run from the repository root in a terminal:
@@ -22,7 +22,8 @@ nemoclaw onboard examples/onboarding/openclaw.yaml --output my-deployment.yaml
 
 Omit the template to use the built-in defaults.
 The template's choices are preselected; Enter accepts an answer.
-The questionnaire skips inapplicable fields, such as API selection for a harness with only one supported API.
+The questionnaire chooses an unresolved question whose dependencies are resolved, preferring questions that constrain more remaining choices.
+It skips inactive fields and choices with only one supported answer.
 You can go back to change an answer.
 If a change affects answers you already accepted, the questionnaire shows them before making the change.
 Accept the revision to revisit affected questions, or go back to keep the current configuration.
@@ -51,21 +52,33 @@ The Podman preset requires local Linux and is disabled on macOS and other hosts.
 If a template selects Podman there, choose Docker to continue; Enter cannot accept the unavailable runtime.
 This preset does not configure Podman Machine or a remote Linux host.
 
-The questionnaire calls the same engine prerequisite check used by gateway setup.
-It checks the configured engine when the questionnaire starts, after changing runtime, and when entering review.
-A check has a five-second timeout and supports cancellation.
-An observed mismatch is shown as an unmet engine requirement.
-When the engine cannot be checked, its status is unverified.
-Saving the YAML remains available after selecting a runtime offered on this host.
-Nothing is installed or started to repair the target.
+The CLI uses its installed verified bundle for discovery, or a bundle selected with `--bundle`:
 
-A passing engine check does not establish deployment readiness.
-This trial does not check GPU capacity, image compatibility, provider credentials, or model availability.
-Plan/apply retain their own checks and obtain fresh observations.
+```sh
+nemoclaw onboard examples/onboarding/openclaw.yaml --bundle /path/to/bundle --output my-deployment.yaml
+```
+
+With a bundle, onboarding runs isolated OpenTofu data-source plans for the engine and selected Fabric image.
+It re-evaluates evidence when selections change, refreshes observations whose inputs changed, and refreshes both observations when entering review.
+Each backend observation has a five-second timeout; each OpenTofu discovery query, including initialization when needed, has a thirty-second limit.
+Discovery supports cancellation and does not pull images or start containers.
+The [provider reference](../../docs/provider.md#engine-and-fabric-discovery) defines the observations and image metadata contract.
+
+Without a usable bundle, onboarding uses bundled Fabric metadata and marks the target unverified.
+The standalone example currently has no bundle option and uses this offline path.
+An unreachable engine or missing image metadata remains unverified; neither establishes that a harness is unsupported.
+A known engine mismatch or an image catalog that omits the selected harness blocks review and saving until the selection is corrected.
+Unknown observations still allow saving after selecting a runtime offered on this host, including when authoring for a target to prepare later.
+
+These checks do not establish deployment readiness, GPU capacity, provider credentials, or model availability.
+Plan refreshes the relevant observations; apply retains its readiness checks.
 
 ## Guided choices
 
-The example supports these guided authoring choices when they map to complete native desired state:
+Harness candidates come from a generated catalog tied to the pinned Fabric source revision, including NemoClaw's local adapters.
+The authoring library intersects those candidates with the configurations it can preserve.
+It retains presentation ordering, provider suggestions, and native configuration constraints; upstream support alone does not make a harness authorable.
+The current guided subset is:
 
 - OpenClaw, Hermes, Deep Agents Code, and Pi agent harnesses
 - Docker and rootless Podman runtimes

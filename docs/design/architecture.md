@@ -11,7 +11,7 @@ The [accepted scope](scope.md) defines the invariants; this page explains the re
 | Component | Responsibility |
 |---|---|
 | CLI | Arguments, prompts, credential acquisition, and output |
-| Authoring library | Guided presets, validated draft edits, and review data |
+| Authoring library | Configuration constraints, question dependencies, validated draft edits, and review data |
 | SDK | Configuration validation, graph compilation, deployment locking, plan policy, and recovery across stages |
 | OpenTofu | Dependency ordering, concurrent resource reconciliation, and resource state |
 | Docker provider | Docker containers, images, model-cache volumes, and service networks |
@@ -76,10 +76,34 @@ Configuration retains credential references, not values.
 
 The [authoring library](../../crates/nemoclaw-authoring/src/lib.rs) owns an SDK `Document` while a frontend edits or reviews it.
 It has no terminal or deployment operations.
-Its guided API derives current values and compatible choices from a curated scenario table.
+Its guided API intersects a generated, revision-matched Fabric descriptor catalog with the configurations the frontend can preserve.
+Provider suggestions, presentation ordering, and native configuration constraints remain authoring policy.
 It refuses a guided edit when the document has V1 configuration that the guided flow cannot show, which prevents data loss.
-The [example onboarding TUI](../../examples/onboarding-tui/README.md) renders these fields and sends typed changes back to the library.
-It is a separate generation-only binary, not a prescribed onboarding flow or a lifecycle CLI command.
+The [onboarding TUI](../../examples/onboarding-tui/README.md) renders these fields for `nemoclaw onboard` and the standalone example.
+Neither entrypoint applies resources.
+
+The authoring dependency graph relates fields independently of their screen order.
+The next-question heuristic considers unresolved fields whose active prerequisites are resolved, then prefers the field that constrains the most remaining decisions.
+Ties retain presentation order; inactive fields and choices with only one valid answer do not require a question.
+The authoring API distinguishes suggested, accepted, delegated, implied, and inactive answers.
+Delegation accepts the current suggestion; later dependency changes can reopen it.
+Changes to accepted dependent answers still require confirmation, while unrelated accepted answers remain intact.
+These answer states describe user intent, separately from evidence about a target.
+
+With a verified native bundle, the CLI reads discovery through the same provider data sources used by planning.
+An SDK discovery session initializes a disposable OpenTofu directory once and runs fresh read-only plans as selections change.
+It does not create deployment state.
+Discovery evidence is keyed by engine endpoint, compute driver, image, and selected harness.
+Changing the engine invalidates target observations; changing the compute driver invalidates the engine check, and changing the image invalidates its catalog observation.
+Changing only the harness re-evaluates the existing image catalog; unrelated identity or inference edits preserve those observations.
+The discovery graph requests the engine observation before inspecting the image.
+Known engine incompatibility or an advertised harness mismatch blocks review and saving.
+Engine or image uncertainty remains explicit and permits offline authoring; the bundled catalog supplies provisional choices when target inspection is unavailable.
+The initial discovery scope covers engine prerequisites and metadata advertised by existing Fabric images, not GPU feasibility or inference endpoint qualification.
+See [provider discovery](../provider.md#engine-and-fabric-discovery) for observation status and planning policy.
+
+The authoring dependency graph and OpenTofu execution graph have different jobs.
+The former chooses questions and invalidates dependent answers; the latter schedules provider reads and resource operations for concrete desired state.
 
 The native [bundle](../build.md#build-a-native-bundle) ships the matching CLI, schema, OpenTofu, and providers; source-derived provider versions prevent stale installations from being reused.
 
