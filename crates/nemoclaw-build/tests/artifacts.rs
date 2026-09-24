@@ -100,13 +100,17 @@ fn extracted_sources_build_without_git_and_ignore_generated_outputs() {
         "crates/sdk/src/lib.rs",
         "examples/onboarding-tui/src/lib.rs",
         "runtimes/example/Dockerfile",
+        "image/fabric/catalog.json",
+        "image/fabric/Dockerfile",
+        "image/fabric/FABRIC-LICENSE",
+        "image/NOTICE.md",
     ] {
         let file = root.path().join(name);
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
         std::fs::write(file, name).unwrap();
     }
     let first = nemoclaw_build::source_inputs(root.path()).unwrap();
-    assert_eq!(first.len(), 8);
+    assert_eq!(first.len(), 12);
     for name in [
         "target/output",
         ".local/secret",
@@ -191,7 +195,7 @@ fn runtime_manifest_errors_distinguish_json_identity_paths_and_downloads() {
 }
 
 #[test]
-fn supervisor_archive_excludes_every_recipe_and_retains_rust_sources_and_notices() {
+fn supervisor_archive_excludes_inference_recipes_and_retains_catalog_build_inputs() {
     let root = tempfile::tempdir().unwrap();
     let retained = [
         "Cargo.toml",
@@ -201,6 +205,10 @@ fn supervisor_archive_excludes_every_recipe_and_retains_rust_sources_and_notices
         "LICENSE",
         "crates/runtime/src/main.rs",
         "crates/sdk/NOTICE.md",
+        "image/fabric/catalog.json",
+        "image/fabric/Dockerfile",
+        "image/fabric/FABRIC-LICENSE",
+        "image/NOTICE.md",
         "examples/onboarding-tui/src/lib.rs",
     ];
     for name in retained.into_iter().chain([

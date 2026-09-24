@@ -65,7 +65,12 @@ fn bundle_rejects_a_builder_compiled_from_different_source_inputs() {
         "rust-toolchain.toml",
         "versions.json",
         "LICENSE",
+        "image/fabric/catalog.json",
+        "image/fabric/Dockerfile",
+        "image/fabric/FABRIC-LICENSE",
+        "image/NOTICE.md",
     ] {
+        fs::create_dir_all(root.path().join(name).parent().unwrap()).unwrap();
         fs::copy(repository.join(name), root.path().join(name)).unwrap();
     }
     fs::create_dir(root.path().join("crates")).unwrap();

@@ -12,6 +12,7 @@
 !tools/fabric_management/**
 !ruff.toml
 !docker-bake.hcl
+!docker-bake.override.json
 **/node_modules
 **/__pycache__
 **/.ruff_cache

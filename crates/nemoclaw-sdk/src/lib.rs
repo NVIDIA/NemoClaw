@@ -5,6 +5,8 @@
 
 use std::fmt;
 
+pub mod fabric_catalog;
+
 mod artifact_pins {
     include!(concat!(env!("OUT_DIR"), "/artifact_pins.rs"));
 }

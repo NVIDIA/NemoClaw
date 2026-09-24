@@ -162,6 +162,9 @@ RUN --mount=type=cache,target=/root/.cache/uv uv tool run --from ruff==0.16.7 ru
     && npm run lint && npm run format:check && npm run typecheck
 
 FROM common-wheels AS unit-tests
+COPY image/fabric/ /catalog/image/fabric/
+COPY docker-bake.hcl docker-bake.override.json /catalog/
+RUN --network=none python3 /catalog/image/fabric/catalog.py /sources/fabric.tar.gz --check
 RUN uv pip install --python /opt/fabric/bin/python --no-deps /wheels/nemo_fabric_adapter_contract-*.whl /wheels/nemo_fabric_adapters_common-*.whl \
     && uv pip install --python /opt/fabric/bin/python PyYAML==6.0.3
 COPY image/fabric/ /tests/

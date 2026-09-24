@@ -28,10 +28,15 @@ def patch_hermes(source):
     )
     manifest = root / "hermes.fabric-adapter.json"
     value = json.loads(manifest.read_text())
+    patch_descriptor(value)
+    manifest.write_text(json.dumps(value, indent=2) + "\n")
+    (root / "NEMOCLAW-MODIFICATIONS.md").write_text(__doc__ + "\n")
+
+
+def patch_descriptor(value):
+    """Apply the packaged schema extension to discovery metadata as well."""
     value["settings_schema"]["properties"]["api_mode"] = {
         "type": "string",
         "enum": ["chat_completions", "codex_responses", "anthropic_messages"],
         "description": "Explicit Hermes wire API through the OpenShell primary route.",
     }
-    manifest.write_text(json.dumps(value, indent=2) + "\n")
-    (root / "NEMOCLAW-MODIFICATIONS.md").write_text(__doc__ + "\n")

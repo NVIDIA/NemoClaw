@@ -118,8 +118,13 @@ def patch_pi(source):
 
     descriptor = source / "adapters/typescript/pi/pi.fabric-adapter.json"
     value = json.loads(descriptor.read_text())
+    patch_descriptor(value)
+    descriptor.write_text(json.dumps(value, indent=2) + "\n")
+
+
+def patch_descriptor(value):
+    """Apply the same descriptor extension to image discovery metadata."""
     value["model_schema"]["properties"]["settings"] = {
         "type": "object",
         "properties": {"model_metadata": {"type": "object"}},
     }
-    descriptor.write_text(json.dumps(value, indent=2) + "\n")
