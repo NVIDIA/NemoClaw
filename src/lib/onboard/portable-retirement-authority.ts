@@ -595,11 +595,11 @@ export function printPortableOnboardLockContention(
   lockResult: LockResult,
 ): void {
   console.error(`  Could not acquire the ${displayName} onboarding lock.`);
-  if (lockResult.holderPid) console.error(`  Lock holder PID: ${lockResult.holderPid}`);
+  if (lockResult.holderPid) console.error(`  Recorded lock PID: ${lockResult.holderPid}`);
   if (lockResult.holderStartedAt) console.error(`  Started: ${lockResult.holderStartedAt}`);
   console.error(
     lockResult.holderPid
-      ? "  Wait for the active onboarding run to finish."
+      ? "  Wait for any active onboarding run to finish before retrying."
       : "  The lock has no verified owner. Wait briefly before retrying.",
   );
   console.error(
