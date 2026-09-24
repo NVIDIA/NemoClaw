@@ -15,6 +15,8 @@ pub enum Error {
     Health { health: Box<crate::SandboxHealth> },
     #[error("{0}")]
     Conflict(&'static str),
+    #[error("gateway is incompatible with this configuration: {0}")]
+    GatewayIncompatible(String),
     #[error(
         "sandbox unavailable: {phase}, reason {reason}, exit code {exit_code}; resources retained"
     )]

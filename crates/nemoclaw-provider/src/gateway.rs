@@ -27,6 +27,7 @@ pub(crate) struct GatewayState {
     compatible: Value<bool>,
     observation_json: Value<String>,
     status: Value<String>,
+    incompatibility: Value<String>,
 }
 
 fn requirements(diags: &mut Diagnostics, config: &GatewayState) -> Option<()> {
@@ -139,6 +140,11 @@ impl DataSource for GatewayDataSource {
                         AttributeType::Bool,
                         AttributeConstraint::Computed,
                     ),
+                    (
+                        "incompatibility",
+                        AttributeType::String,
+                        AttributeConstraint::Computed,
+                    ),
                 ]
                 .into_iter()
                 .map(|(name, attr_type, constraint)| {
@@ -223,8 +229,10 @@ impl DataSource for GatewayDataSource {
                     .into(),
                 );
                 config.observation_json = Value::Value(serde_json::to_string(&observation).ok()?);
-                config.compatible =
-                    Value::Value(drivers.iter().all(|driver| observed.supports(driver)));
+                let incompatibility = observed.incompatibility(drivers.iter().copied());
+                config.compatible = Value::Value(incompatibility.is_none());
+                // OpenTofu formats condition messages even when the condition holds.
+                config.incompatibility = Value::Value(incompatibility.unwrap_or_default());
                 config.compute_driver_count = Value::Value(observed.compute_drivers.len() as u64);
                 config.gateway_version = Value::Value(observed.gateway_version);
                 config.compute_drivers =
@@ -268,6 +276,7 @@ mod tests {
                 compatible: Value::Null,
                 observation_json: Value::Null,
                 status: Value::Null,
+                incompatibility: Value::Null,
             };
             let mut diagnostics = Diagnostics::default();
             assert_eq!(
@@ -303,6 +312,7 @@ mod wait_tests {
                 compatible: Value::Null,
                 observation_json: Value::Null,
                 status: Value::Null,
+                incompatibility: Value::Null,
             };
             let mut diagnostics = Diagnostics::default();
             assert_eq!(

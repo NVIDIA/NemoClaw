@@ -46,7 +46,12 @@ fn gateway_capabilities_are_exposed_as_read_only_data() {
         schema.block.attributes["required_compute_drivers"].constraint,
         AttributeConstraint::Required
     ));
-    for field in ["gateway_version", "compute_drivers", "compatible"] {
+    for field in [
+        "gateway_version",
+        "compute_drivers",
+        "compatible",
+        "incompatibility",
+    ] {
         assert!(matches!(
             schema.block.attributes[field].constraint,
             AttributeConstraint::Computed
