@@ -13,7 +13,7 @@
   },
   "limits": {
     "testFileCount": 79,
-    "liveFileCount": 189,
+    "liveFileCount": 190,
     "direct": {
       "expectCalls": 1392,
       "matcherAssertions": 1371,
@@ -98,7 +98,7 @@
       "test/e2e/live/openclaw-skill-cli.test.ts": [10,14,10,14,1],
       "test/e2e/live/openclaw-slack-pairing.test.ts": [11,18,26,84,10],
       "test/e2e/live/openclaw-tui-chat-correlation.test.ts": [40,46,40,52,4],
-      "test/e2e/live/openshell-credential-generation-window.test.ts": [43,93,43,131,18],
+      "test/e2e/live/openshell-credential-generation-window.test.ts": [43,93,43,112,18],
       "test/e2e/live/openshell-gateway-auth-source-contract.test.ts": [0,0,16,28,2],
       "test/e2e/live/openshell-gateway-upgrade.test.ts": [7,16,7,26,6],
       "test/e2e/live/overlayfs-autofix.test.ts": [22,25,22,28,2],
@@ -108,7 +108,7 @@
       "test/e2e/live/portable-cpu-delegation-proof.test.ts": [0,22,0,22,0],
       "test/e2e/live/portable-profile-rootless-linux.test.ts": [0,72,0,78,2],
       "test/e2e/live/rebuild-hermes.test.ts": [2,8,9,47,6],
-      "test/e2e/live/rebuild-openclaw.test.ts": [2,7,2,7,0],
+      "test/e2e/live/rebuild-openclaw.test.ts": [2,7,2,26,0],
       "test/e2e/live/registry-targets.test.ts": [2,4,5,24,0],
       "test/e2e/live/runtime-overrides.test.ts": [34,46,34,46,1],
       "test/e2e/live/sandbox-operations.test.ts": [2,11,9,50,6],

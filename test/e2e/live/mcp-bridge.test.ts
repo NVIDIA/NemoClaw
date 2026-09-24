@@ -77,7 +77,6 @@ import {
   expectExitNonZero,
   hostAddressForSandbox,
   isExpectedMcpCurlPolicyDenial,
-  proveKilledDockerMcpRecovery,
   type McpDnsRebindingAdapter,
 } from "./mcp-bridge-sandbox.ts";
 import {
@@ -92,6 +91,7 @@ import {
   assertAuthenticatedMcpToolDiscovery,
   runHermesInitialMcpReadiness,
 } from "./mcp-bridge-tool-discovery.ts";
+import { proveKilledDockerOpenClawRecovery } from "./openclaw-stopped-recovery.ts";
 import { assertTrustedPrivateMcpRebindingDenied } from "./mcp-bridge-trusted-private.ts";
 import {
   buildMcpCredentialHandleAuthorizationPattern,
@@ -1073,7 +1073,7 @@ test(
     };
     await rebuildWithoutMcpHostSecret(host, OPENCLAW_SANDBOX_NAME, "openclaw");
     await proveRestoredBridge("openclaw");
-    await proveKilledDockerMcpRecovery(
+    await proveKilledDockerOpenClawRecovery(
       sandbox,
       runtimeProvider,
       artifacts,
@@ -1082,6 +1082,7 @@ test(
         await rebuildWithoutMcpHostSecret(host, OPENCLAW_SANDBOX_NAME, "openclaw-stopped");
         await proveRestoredBridge("openclaw-stopped");
       },
+      "provider-backed-mcp",
     );
     await removeBridgeAndAssertEmpty(host, sandbox, {
       ...bridge,
