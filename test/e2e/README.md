@@ -856,9 +856,14 @@ supported outcomes now have these owners:
 | Removed assertion | Retained owner |
 |---|---|
 | Install, PATH setup, list, status, hosted inference, and sandbox inference succeed. | `full-e2e` |
-| Sandbox state contains no `auth-profiles.json` or secret-shaped credential values. | `full-e2e` and `test/e2e/support/sandbox-credential-boundary.test.ts` |
+| Fresh managed sandbox state contains no `auth-profiles.json` or secret-shaped credential values. | `full-e2e` and `test/e2e/support/sandbox-credential-boundary.test.ts` |
 | Repository skills contain valid frontmatter and content. | `test/repository/repo-skills-validation.test.ts` |
 | `/sandbox/.openclaw` and `openclaw.json` have the required image layout. | `test/e2e-runtime/managed-image-openclaw-security.test.ts` |
+
+The fresh-sandbox check starts without user-managed profiles. Existing-state cleanup preserves
+unrelated profiles, as covered by `test/agents/openclaw/runtime/auth-profile-boundary.test.ts`.
+That component fixture also observes which profiles reach Doctor in root and non-root startup.
+`full-e2e` exercises native Doctor lint and agent turns.
 
 The optional `/sandbox/.openclaw/skills` directory had no pass or fail state.
 The deleted provider retry classifier and sandbox-layout wrapper served only the
