@@ -90,15 +90,20 @@ Plan refreshes the relevant observations; apply retains its readiness checks.
 ## Guided choices
 
 Harness candidates come from a generated catalog tied to the pinned Fabric source revision, including NemoClaw's local adapters.
-The authoring library intersects those candidates with the configurations it can preserve.
-It retains presentation ordering, provider suggestions, and native configuration constraints; upstream support alone does not make a harness authorable.
-The current guided subset is:
+Authoring reads catalog identifiers, orders them alphabetically, and combines advertised capabilities with the SDK's configuration contract.
+Onboarding and authoring contain no harness-specific allowlist, labels, ordering, or inference rules.
+The default selection comes from the bundled YAML template.
+The SDK still defines the harness identifiers and native configuration forms it can represent; catalog identifiers outside that contract are not offered.
+This does not qualify a harness image for the current host or establish deployment readiness.
 
-- OpenClaw, Hermes, Deep Agents Code, and Pi agent harnesses
+The questionnaire also offers:
+
 - Docker and rootless Podman runtimes
-- NVIDIA Endpoints, OpenRouter, OpenAI, Anthropic, Google Gemini, and custom OpenAI- or Anthropic-compatible endpoints
-- Hermes Provider for the Hermes harness
-- compatible APIs for each harness, a default model suggestion, and manual model identifiers
+- NVIDIA Endpoints, OpenRouter, OpenAI, Anthropic, Google Gemini, Nous Research, and custom OpenAI- or Anthropic-compatible endpoints
+- APIs compatible with the selected harness and provider, model suggestions, and manual model identifiers
+
+Inference services are offered by protocol compatibility, without tying a service to a particular harness.
+An Anthropic-compatible endpoint uses the Anthropic protocol; it is not offered to a harness that only supports an OpenAI protocol.
 
 Endpoint URLs, provider identities, API protocols, and credential environment-variable references are derived from the selected provider. The wizard asks for an endpoint only for a custom compatible provider. It does not ask users to name internal provider, sandbox, or agent records.
 
