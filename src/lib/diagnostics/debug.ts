@@ -10,6 +10,7 @@ import { dockerExecFileSync } from "../adapters/docker/exec";
 import { createCliOpenShellSandboxCommandExecutor } from "../adapters/openshell/sandbox-command-cli";
 import { wrapExecCommandWithRuntimeEnv } from "../actions/sandbox/runtime-env";
 import { SandboxCommandTransportError } from "../adapters/sandbox/command-transport";
+import { OpenShellGatewayEndpointOverrideError } from "../openshell-gateway-endpoint-guard";
 import { DASHBOARD_PORT } from "../core/ports";
 import { redactFullWithUrls } from "../security/redact";
 import { createTarball as createDiagnosticsTarball } from "./tarball";
@@ -373,12 +374,19 @@ async function collectSandboxInternals(
       : []),
   ] as [string, string[]][];
   for (const [label, command] of commands) {
-    const result = await executor.runBuffered({
-      sandboxName,
-      target,
-      command: wrapExecCommandWithRuntimeEnv(command),
-      timeoutMilliseconds: TIMEOUT_MS,
-    });
+    let result: Awaited<ReturnType<typeof executor.runBuffered>>;
+    try {
+      result = await executor.runBuffered({
+        sandboxName,
+        target,
+        command: wrapExecCommandWithRuntimeEnv(command),
+        timeoutMilliseconds: TIMEOUT_MS,
+      });
+    } catch (error) {
+      if (!(error instanceof OpenShellGatewayEndpointOverrideError)) throw error;
+      warn(`Sandbox internals skipped: ${redact(error.message)}`);
+      return;
+    }
     if (result.outcome.kind === "failed" && result.outcome.error.kind === "cancelled") {
       throw new SandboxCommandTransportError("cancelled");
     }
