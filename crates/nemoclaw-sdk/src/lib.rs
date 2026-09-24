@@ -5,6 +5,7 @@
 
 use std::fmt;
 
+pub mod fabric_capabilities;
 pub mod fabric_catalog;
 
 mod artifact_pins {
@@ -152,6 +153,7 @@ pub mod docker;
 pub mod managed;
 
 pub mod hardware;
+pub mod hardware_discovery;
 
 mod tofu_ui;
 
@@ -169,3 +171,6 @@ pub mod discovery_session;
 pub mod discovery;
 
 mod discovery_graph;
+
+/// Read-only inference metadata and direct credential availability.
+pub mod inference_discovery;

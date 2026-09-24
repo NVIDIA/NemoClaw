@@ -352,8 +352,7 @@ pub(super) fn gateway_error_message(reference: &str) -> String {
     )
 }
 
-fn graph_base(document: &Document, version: &str) -> Value {
-    let gateway = &document.spec.gateway;
+pub(crate) fn gateway_provider(gateway: &crate::config::Gateway) -> Value {
     let mut provider = json!({"endpoint":gateway.endpoint()});
     if let Some(c) = gateway.credential() {
         provider["credential_env"] = json!(c.env);
@@ -363,6 +362,11 @@ fn graph_base(document: &Document, version: &str) -> Value {
         provider["tls_certificate_env"] = json!(tls.certificate.env);
         provider["tls_key_env"] = json!(tls.key.env);
     }
+    provider
+}
+
+fn graph_base(document: &Document, version: &str) -> Result<Value, ConfigError> {
+    let provider = gateway_provider(&document.spec.gateway);
     let drivers: std::collections::BTreeSet<_> = document
         .spec
         .sandboxes
@@ -374,8 +378,8 @@ fn graph_base(document: &Document, version: &str) -> Value {
         "provider":{"nemoclaw":provider}, "resource":{},
         "data":{"nemoclaw_gateway_capabilities":{"current":{"required_compute_drivers":drivers}}}
     });
-    crate::discovery_graph::populate(&mut graph, document);
-    graph
+    crate::discovery_graph::populate(&mut graph, document)?;
+    Ok(graph)
 }
 
 fn compile_with_plans(
@@ -385,7 +389,7 @@ fn compile_with_plans(
     targets: &[Target],
 ) -> Result<Value, ConfigError> {
     let providers = document.selected_providers()?;
-    let mut graph = graph_base(document, version);
+    let mut graph = graph_base(document, version)?;
     let mut resources = json!({});
     let provider_dependencies: BTreeMap<_, _> = targets
         .iter()

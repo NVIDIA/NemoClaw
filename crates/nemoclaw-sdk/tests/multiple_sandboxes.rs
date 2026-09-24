@@ -201,3 +201,19 @@ fn five_agent_example_compiles_to_five_independent_sandboxes_sharing_inference()
         [("openclaw", 2), ("deepagents", 2), ("pi", 1)].into()
     );
 }
+
+#[test]
+fn managed_discovery_preserves_request_identity_when_sandboxes_are_reordered() {
+    let mut value: Value =
+        serde_saphyr::from_str(include_str!("../../../examples/onboarding/openclaw.yaml")).unwrap();
+    let mut other = value["spec"]["sandboxes"][0].clone();
+    other["name"] = json!("research");
+    other["harness"] = json!({"kind":"deepagents"});
+    value["spec"]["sandboxes"]
+        .as_array_mut()
+        .unwrap()
+        .push(other);
+    let before = graph(&value);
+    value["spec"]["sandboxes"].as_array_mut().unwrap().reverse();
+    assert_eq!(before, graph(&value));
+}

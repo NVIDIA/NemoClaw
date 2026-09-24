@@ -133,6 +133,16 @@ impl Provider for NemoClawProvider {
     ) -> Option<HashMap<String, Box<dyn DynamicDataSource>>> {
         Some(HashMap::from([
             (
+                "inference_capabilities".into(),
+                Box::new(crate::inference_discovery::InferenceDataSource)
+                    as Box<dyn DynamicDataSource>,
+            ),
+            (
+                "target_hardware".into(),
+                Box::new(crate::hardware::HardwareDataSource(self.backend.clone()))
+                    as Box<dyn DynamicDataSource>,
+            ),
+            (
                 "engine_capabilities".into(),
                 Box::new(crate::discovery::DiscoveryDataSource {
                     backend: self.backend.clone(),

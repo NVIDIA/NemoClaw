@@ -2,15 +2,63 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::{OpenShell, proto, remote_error};
-use crate::{Error, ObservationError};
+use crate::{Error, ObservationError, discovery::ObservationStatus};
+use serde::{Deserialize, Serialize};
 use std::{collections::BTreeSet, time::Duration};
 
 /// Gateway metadata used by deployment checks and the provider data source.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GatewayCapabilities {
     pub gateway_version: String,
     /// Each entry contains the routing name and any driver-reported alias.
     pub compute_drivers: Vec<BTreeSet<String>>,
+}
+
+/// Typed metadata shared by onboarding and planning. A read failure remains
+/// unknown; provider lifecycle reads still fail rather than publishing it as absence.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GatewayObservation {
+    pub status: ObservationStatus,
+    pub reason: Option<String>,
+    pub source: String,
+    pub capabilities: Option<GatewayCapabilities>,
+    pub compatible: Option<bool>,
+}
+impl GatewayObservation {
+    pub fn from_result(
+        result: Result<GatewayCapabilities, ObservationError>,
+        required: &[crate::config::ComputeDriver],
+    ) -> Self {
+        match result {
+            Ok(capabilities) => {
+                let compatible = !required.is_empty()
+                    && required
+                        .iter()
+                        .all(|driver| capabilities.supports(driver.as_str()));
+                Self {
+                    status: if compatible {
+                        ObservationStatus::Available
+                    } else {
+                        ObservationStatus::Unavailable
+                    },
+                    reason: (!compatible).then(|| {
+                        "gateway version or compute driver does not satisfy the configuration"
+                            .into()
+                    }),
+                    source: "openshell_gateway_info".into(),
+                    capabilities: Some(capabilities),
+                    compatible: Some(compatible),
+                }
+            }
+            Err(error) => Self {
+                status: ObservationStatus::Unknown,
+                reason: Some(error.to_string()),
+                source: "openshell_gateway_info".into(),
+                capabilities: None,
+                compatible: None,
+            },
+        }
+    }
 }
 
 impl GatewayCapabilities {
@@ -134,5 +182,37 @@ mod tests {
                 Err(ObservationError::Incomplete)
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod discovery_tests {
+    use super::*;
+    #[test]
+    fn typed_gateway_observation_roundtrips_without_turning_failure_into_absence() {
+        let required = [crate::config::ComputeDriver::Docker];
+        let capabilities = GatewayCapabilities {
+            gateway_version: crate::artifact_pins::OPENSHELL_VERSION.into(),
+            compute_drivers: vec![BTreeSet::from(["docker".into()])],
+        };
+        let observation = GatewayObservation::from_result(Ok(capabilities.clone()), &required);
+        assert_eq!(observation.status, ObservationStatus::Available);
+        assert_eq!(observation.compatible, Some(true));
+        assert_eq!(
+            serde_json::from_str::<GatewayObservation>(
+                &serde_json::to_string(&observation).unwrap()
+            )
+            .unwrap(),
+            observation
+        );
+        let mismatch = GatewayObservation::from_result(
+            Ok(capabilities),
+            &[crate::config::ComputeDriver::Podman],
+        );
+        assert_eq!(mismatch.status, ObservationStatus::Unavailable);
+        let unknown = GatewayObservation::from_result(Err(ObservationError::Transport), &required);
+        assert_eq!(unknown.status, ObservationStatus::Unknown);
+        assert!(unknown.capabilities.is_none());
+        assert!(unknown.compatible.is_none());
     }
 }

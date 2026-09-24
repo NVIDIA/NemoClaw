@@ -652,13 +652,16 @@ fn observed_adapter_conflict_blocks_review_until_the_selection_changes() {
             source: "fixture".into(),
             image_id: Some("sha256:fixture".into()),
             catalog: Some(catalog),
+            image: Default::default(),
+            compatibility: None,
+            adapters: Vec::new(),
         }),
     });
     navigate(&mut wizard, Step::Review, Input::Continue);
     wizard.handle(Input::Continue);
     assert!(!wizard.accepted());
-    assert!(wizard.error().unwrap().contains("adapter"));
+    assert!(wizard.error().unwrap().contains("harness:openclaw"));
     let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
     terminal.draw(|frame| wizard.render(frame)).unwrap();
-    assert!(terminal.backend().to_string().contains("adapter"));
+    assert!(terminal.backend().to_string().contains("harness:openclaw"));
 }

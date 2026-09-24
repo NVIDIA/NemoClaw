@@ -319,6 +319,34 @@ struct NetworkAllocation {
     port: i64,
 }
 
+/// Execution engines selected by service owners, without inferring the caller's host.
+pub(crate) fn discovery_engines(document: &Document) -> Result<BTreeSet<String>, ConfigError> {
+    document
+        .spec
+        .services
+        .values()
+        .map(|service| {
+            if let Some(allocation) = service.allocation(&document.spec.gateway)? {
+                return Ok(allocation.engine);
+            }
+            let ServiceDefinition::OllamaProxy(proxy) = service else {
+                unreachable!()
+            };
+            proxy
+                .engine
+                .clone()
+                .or_else(|| {
+                    document
+                        .spec
+                        .gateway
+                        .as_managed()
+                        .map(|gateway| gateway.engine.clone())
+                })
+                .ok_or(ConfigError::new("service engine is not configured"))
+        })
+        .collect()
+}
+
 pub(crate) fn defaults(definition: &mut ServiceDefinition) {
     match definition {
         ServiceDefinition::Ollama(service) => {

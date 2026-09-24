@@ -5,6 +5,7 @@ use crate::{Diagnostics, Draft, diagnostics::diagnostic};
 use nemoclaw_sdk::{
     config::{ComputeDriver, HarnessKind},
     discovery::{EngineObservation, FabricObservation, ObservationStatus},
+    fabric_capabilities::{FabricRequirements, Support, assess_image},
 };
 
 /// Inputs determining which target facts can constrain the current document.
@@ -120,30 +121,35 @@ impl DiscoveryEvidence {
             }
         };
         let fabric_supported = match fabric {
-            Some(observed) if observed.status == ObservationStatus::Available => match observed
-                .catalog
-                .as_ref()
-                .filter(|_| observed.image_id.as_ref().is_some_and(|id| !id.is_empty()))
+            Some(observed)
+                if observed.image_id.as_ref().is_some_and(|id| !id.is_empty())
+                    && observed.status != ObservationStatus::Unavailable =>
             {
-                Some(catalog) => {
-                    let supported = catalog
-                        .adapters
-                        .iter()
-                        .any(|adapter| adapter.harness == key.harness.as_str());
-                    if !supported {
+                let sandbox = &draft.document().spec.sandboxes[0];
+                let requirements = FabricRequirements::for_sandbox(draft.document(), sandbox)
+                    .map_err(|error| diagnostic("discovery", &error.to_string()))?;
+                let capability = assess_image(
+                    observed.catalog.as_ref(),
+                    &requirements,
+                    &observed.image,
+                    &key.image,
+                    engine
+                        .filter(|_| engine_available)
+                        .and_then(|engine| engine.architecture.as_deref()),
+                    engine
+                        .filter(|_| engine_available)
+                        .and_then(|engine| engine.operating_system.as_deref()),
+                );
+                for check in &capability.checks {
+                    if check.status == Support::Unsupported {
                         conflict = true;
-                        reasons.push(format!(
-                            "The selected image does not advertise the {} Fabric adapter.",
-                            key.harness
-                        ));
                     }
-                    supported
+                    if check.status != Support::Supported {
+                        reasons.push(format!("{}: {}.", check.requirement, check.reason));
+                    }
                 }
-                None => {
-                    reasons.push("The selected image has incomplete Fabric metadata.".into());
-                    false
-                }
-            },
+                capability.status == Support::Supported
+            }
             Some(observed) => {
                 reasons.push(if observed.status == ObservationStatus::Unavailable {
                     "The selected image is not present; its Fabric capabilities remain unverified."

@@ -230,6 +230,9 @@ async fn check_target(
                             source: "opentofu".into(),
                             image_id: None,
                             catalog: None,
+                            image: Default::default(),
+                            compatibility: None,
+                            adapters: Vec::new(),
                         },
                     },
                 );

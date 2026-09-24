@@ -38,6 +38,14 @@ fn evidence(draft: &Draft) -> DiscoveryEvidence {
             source: "engine_image_inspect".into(),
             image_id: Some("sha256:observed".into()),
             catalog: Some(FabricCatalog::bundled()),
+            image: nemoclaw_sdk::fabric_capabilities::ImageMetadata {
+                architecture: Some("arm64".into()),
+                operating_system: Some("linux".into()),
+                repo_digests: vec![draft.discovery_key().unwrap().image],
+                ..Default::default()
+            },
+            compatibility: None,
+            adapters: Vec::new(),
         }),
     }
 }
@@ -179,4 +187,58 @@ fn retarget_preserves_unaffected_observations_and_invalidates_their_dependents()
     observed.retarget(key);
     assert!(observed.engine.is_none());
     assert!(observed.fabric.is_none());
+}
+
+#[test]
+fn selected_api_is_checked_against_the_observed_descriptor_not_only_the_harness_name() {
+    let draft = draft();
+    let mut observed = evidence(&draft);
+    let catalog = observed.fabric.as_mut().unwrap().catalog.as_mut().unwrap();
+    let adapter = catalog
+        .adapters
+        .iter_mut()
+        .find(|a| a.harness == "openclaw")
+        .unwrap();
+    adapter.descriptor["settings_schema"]["$defs"]["api"]["enum"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|value| value.as_str() == Some("openai-responses"));
+    let assessment = observed.assessment(&draft).unwrap();
+    assert_eq!(assessment.status, CompatibilityStatus::Conflict);
+    assert!(
+        assessment
+            .reasons
+            .iter()
+            .any(|reason| reason.contains("api:openai-completions"))
+    );
+}
+
+#[test]
+fn image_platform_conflict_blocks_while_missing_platform_stays_unverified() {
+    let draft = draft();
+    let mut observed = evidence(&draft);
+    observed.fabric.as_mut().unwrap().image.architecture = Some("amd64".into());
+    assert_eq!(
+        observed.assessment(&draft).unwrap().status,
+        CompatibilityStatus::Conflict
+    );
+    observed.fabric.as_mut().unwrap().image.architecture = None;
+    assert_eq!(
+        observed.assessment(&draft).unwrap().status,
+        CompatibilityStatus::Unverified
+    );
+}
+
+#[test]
+fn missing_adapter_label_does_not_hide_a_proven_image_platform_mismatch() {
+    let draft = draft();
+    let mut observed = evidence(&draft);
+    let image = observed.fabric.as_mut().unwrap();
+    image.status = ObservationStatus::Unknown;
+    image.catalog = None;
+    image.image.architecture = Some("amd64".into());
+    assert_eq!(
+        observed.assessment(&draft).unwrap().status,
+        CompatibilityStatus::Conflict
+    );
 }

@@ -261,8 +261,12 @@ fn managed_plans_query_selected_engine_and_image_without_probe_resources() {
             image["lifecycle"]["postcondition"][0]["condition"]
                 .as_str()
                 .unwrap()
-                .contains("openclaw")
+                .contains("compatibility_status")
         );
+        let requirements: serde_json::Value =
+            serde_json::from_str(image["requirements_json"].as_str().unwrap()).unwrap();
+        assert_eq!(requirements["harness"], "openclaw");
+        assert_eq!(requirements["api"], "openai-completions");
         assert!(graph["output"]["discovery"]["value"].is_object());
     }
 }

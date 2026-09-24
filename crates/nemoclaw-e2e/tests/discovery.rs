@@ -186,7 +186,38 @@ async fn sdk_discovery_session_uses_verified_bundle_and_reuses_offline_initializ
     eprintln!("SDK discovery warm Fabric plan/show: {:?}", start.elapsed());
     assert_eq!(observed.status, ObservationStatus::Available);
     assert_eq!(observed.catalog, Some(catalog));
-    assert_eq!(requests.load(Ordering::SeqCst), 2);
+    use nemoclaw_sdk::discovery_session::{DiscoveryObservation, DiscoveryQuery};
+    let query = DiscoveryQuery::Engine(DiscoveryRequest {
+        engine: fixture.endpoint.clone(),
+        compute_driver: ComputeDriver::Docker,
+    });
+    let start = std::time::Instant::now();
+    let batched = session
+        .batch(
+            &[
+                query.clone(),
+                DiscoveryQuery::Hardware {
+                    engine: fixture.endpoint.clone(),
+                },
+                DiscoveryQuery::Fabric {
+                    engine: fixture.endpoint.clone(),
+                    image: "labeled:image".into(),
+                },
+                query,
+            ],
+            &cancel,
+        )
+        .await
+        .unwrap();
+    eprintln!(
+        "SDK discovery warm engine/hardware/Fabric batch plan/show: {:?}",
+        start.elapsed()
+    );
+    assert_eq!(batched[0], batched[3]);
+    assert!(
+        matches!(&batched[1],DiscoveryObservation::Hardware(value) if value.architecture.as_deref()==Some("arm64") && !value.gpu_inventory_complete)
+    );
+    assert_eq!(requests.load(Ordering::SeqCst), 5);
     assert!(!bundle.path().join("terraform.tfstate").exists());
 }
 
@@ -239,16 +270,22 @@ async fn compiled_discovery_conditions_reject_known_mismatch_and_allow_unknown_m
     .map(|kind| (kind.into(), "a".repeat(32)))
     .into();
     let compiled = compile(&document, &generations, "0.1.0").unwrap();
-    // Keep the compiler's exact discovery input, postconditions and output;
-    // remove deployment resources and gateway reads from this isolated plan.
+    // Keep the compiler's target inputs and conditions; isolate remote endpoint
+    // and gateway reads so this test touches only its owned engine fixture.
+    let mut output = compiled["output"].clone();
+    output["discovery"]["value"]
+        .as_object_mut()
+        .unwrap()
+        .retain(|name, _| name != "gateway" && !name.starts_with("endpoint_"));
     let graph = json!({
         "terraform":{"required_version":"= 1.12.6","required_providers":{"nemoclaw":{"source":"nvidia/nemoclaw"}}},
         "provider":{"nemoclaw":{}},
         "data":{
             "nemoclaw_engine_capabilities":compiled["data"]["nemoclaw_engine_capabilities"],
-            "nemoclaw_fabric_capabilities":compiled["data"]["nemoclaw_fabric_capabilities"]
+            "nemoclaw_fabric_capabilities":compiled["data"]["nemoclaw_fabric_capabilities"],
+            "nemoclaw_target_hardware":compiled["data"]["nemoclaw_target_hardware"]
         },
-        "output":compiled["output"]
+        "output":output
     });
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
@@ -277,11 +314,11 @@ async fn compiled_discovery_conditions_reject_known_mismatch_and_allow_unknown_m
                 "{diagnostics}"
             );
             assert!(
-                diagnostics.contains("does not include the configured harness"),
+                diagnostics.contains("contradicts the configured platform"),
                 "{diagnostics}"
             );
         }
     }
-    assert_eq!(requests.load(Ordering::SeqCst), 8);
+    assert_eq!(requests.load(Ordering::SeqCst), 12);
     assert!(!root.join("terraform.tfstate").exists());
 }

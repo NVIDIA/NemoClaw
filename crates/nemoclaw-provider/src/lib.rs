@@ -93,6 +93,8 @@ pub use resource::ResourceAdapter;
 mod capacity;
 mod discovery;
 mod gateway;
+mod hardware;
+mod inference_discovery;
 mod provider;
 mod readiness;
 mod sandbox_readiness;

@@ -83,7 +83,23 @@ impl Capabilities {
             HarnessKind::Pi => 3,
             _ => 4,
         });
-        Self::from_harnesses(harnesses)
+        let mut capabilities = Self::from_harnesses(harnesses);
+        capabilities.scenarios.retain(|scenario| {
+            use nemoclaw_sdk::fabric_capabilities::{
+                FabricRequirements, Support, api_name, assess_fabric,
+            };
+            assess_fabric(
+                catalog,
+                &FabricRequirements {
+                    harness: scenario.harness.as_str().into(),
+                    api: Some(api_name(scenario.api).into()),
+                    ..Default::default()
+                },
+            )
+            .status
+                != Support::Unsupported
+        });
+        capabilities
     }
 
     /// Intersect Fabric observations with the configurations this frontend can

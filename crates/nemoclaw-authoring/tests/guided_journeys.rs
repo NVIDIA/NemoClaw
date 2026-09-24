@@ -651,3 +651,23 @@ fn singleton_protocol_is_implied_and_hidden_endpoint_does_not_block_completion()
     assert!(!asked.contains(&EditableField::Endpoint));
     assert!(asked.contains(&EditableField::Model));
 }
+
+#[test]
+fn advertised_api_constraints_remove_incompatible_onboarding_choices() {
+    let mut catalog = nemoclaw_sdk::fabric_catalog::FabricCatalog::bundled();
+    catalog
+        .adapters
+        .retain(|adapter| adapter.harness == "openclaw");
+    catalog.adapters[0].descriptor["settings_schema"]["$defs"]["api"]["enum"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|value| value.as_str() == Some("openai-responses"));
+    let choices = nemoclaw_authoring::Capabilities::from_catalog(&catalog);
+    assert!(!choices.scenarios().is_empty());
+    assert!(
+        choices
+            .scenarios()
+            .iter()
+            .all(|scenario| scenario.api() == nemoclaw_sdk::config::InferenceApi::OpenaiResponses)
+    );
+}

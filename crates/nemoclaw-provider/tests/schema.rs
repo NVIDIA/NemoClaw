@@ -176,3 +176,39 @@ fn engine_discovery_is_available_without_a_gateway() {
         AttributeConstraint::Optional
     ));
 }
+
+#[test]
+fn inference_discovery_keeps_credentials_as_optional_references() {
+    use tf_provider::schema::AttributeConstraint;
+    let mut diagnostics = Diagnostics::default();
+    let sources = NemoClawProvider::default()
+        .get_data_sources(&mut diagnostics)
+        .unwrap();
+    let schema = sources
+        .get("inference_capabilities")
+        .expect("inference model catalog data source")
+        .schema(&mut diagnostics)
+        .unwrap();
+    assert!(matches!(
+        schema.block.attributes["credential_env"].constraint,
+        AttributeConstraint::Optional
+    ));
+    assert!(matches!(
+        schema.block.attributes["observation_json"].constraint,
+        AttributeConstraint::Computed
+    ));
+    assert!(!schema.block.attributes.contains_key("credential"));
+}
+
+#[test]
+fn gateway_capabilities_include_typed_discovery_output() {
+    let mut diagnostics = Diagnostics::default();
+    let sources = NemoClawProvider::default()
+        .get_data_sources(&mut diagnostics)
+        .unwrap();
+    let schema = sources["gateway_capabilities"]
+        .schema(&mut diagnostics)
+        .unwrap();
+    assert!(schema.block.attributes.contains_key("observation_json"));
+    assert!(schema.block.attributes.contains_key("status"));
+}

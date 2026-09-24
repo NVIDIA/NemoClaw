@@ -19,7 +19,7 @@ mod gateway;
 mod transport;
 use crate::{ObservationError, backend::Row};
 pub use agent::{command, environment, policy, policy_matches};
-pub use gateway::GatewayCapabilities;
+pub use gateway::{GatewayCapabilities, GatewayObservation};
 use openshell_sdk::raw::proto;
 pub use transport::{EnvironmentSecrets, OpenShell, Secrets};
 

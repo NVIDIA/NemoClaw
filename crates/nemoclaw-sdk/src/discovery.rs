@@ -14,6 +14,19 @@ pub enum ObservationStatus {
     Unknown,
 }
 
+/// Typed facts shared by discovery sessions, authoring, and plan reports.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "observation", rename_all = "snake_case")]
+pub enum DiscoveryObservation {
+    Engine(crate::discovery::EngineObservation),
+    Hardware(crate::hardware_discovery::HardwareObservation),
+    Fabric(crate::discovery::FabricObservation),
+    Inference(crate::inference_discovery::EndpointObservation),
+    Gateway(crate::openshell::GatewayObservation),
+    Service { ready: Option<bool>, source: String },
+    Unresolved { category: String },
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DiscoveryRequest {
     pub engine: String,
@@ -89,6 +102,12 @@ pub struct FabricObservation {
     pub source: String,
     pub image_id: Option<String>,
     pub catalog: Option<FabricCatalog>,
+    #[serde(default)]
+    pub adapters: Vec<crate::fabric_capabilities::AdapterCapabilities>,
+    #[serde(default)]
+    pub image: crate::fabric_capabilities::ImageMetadata,
+    #[serde(default)]
+    pub compatibility: Option<crate::fabric_capabilities::CompatibilityReport>,
 }
 
 /// Inspect metadata on an existing image. This never pulls an image or starts a container.
@@ -103,11 +122,20 @@ pub async fn observe_fabric(
         source: "engine_image_inspect".into(),
         image_id: None,
         catalog: None,
+        adapters: Vec::new(),
+        image: Default::default(),
+        compatibility: None,
     };
     let work = async { connections.resolve(endpoint)?.image(image).await };
     match tokio::time::timeout(Duration::from_secs(5), work).await {
         Ok(Ok(Some(info))) => {
             observed.image_id = info.id;
+            observed.image = crate::fabric_capabilities::ImageMetadata {
+                architecture: info.architecture,
+                operating_system: info.os,
+                repo_digests: info.repo_digests.unwrap_or_default(),
+                size_bytes: info.size,
+            };
             let label = info
                 .config
                 .and_then(|config| config.labels)
@@ -120,6 +148,11 @@ pub async fn observe_fabric(
                 Some(Ok(catalog))
                     if observed.image_id.as_ref().is_some_and(|id| !id.is_empty()) =>
                 {
+                    observed.adapters = catalog
+                        .adapters
+                        .iter()
+                        .map(crate::fabric_capabilities::project_adapter)
+                        .collect();
                     observed.catalog = Some(catalog);
                     observed.status = ObservationStatus::Available;
                 }

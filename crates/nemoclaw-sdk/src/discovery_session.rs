@@ -6,6 +6,52 @@ use crate::{CancellationToken, Error, bundle::Bundle};
 use serde_json::{Value, json};
 use std::path::Path;
 
+/// Independent provider reads which OpenTofu may schedule concurrently.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DiscoveryQuery {
+    Engine(crate::discovery::DiscoveryRequest),
+    Hardware { engine: String },
+    Fabric { engine: String, image: String },
+    Inference(crate::inference_discovery::EndpointRequest),
+}
+
+pub use crate::discovery::DiscoveryObservation;
+impl DiscoveryQuery {
+    fn data(&self) -> Result<(&'static str, Value), Error> {
+        Ok(match self {
+            Self::Engine(request) => (
+                "engine_capabilities",
+                json!({"engine":literal(&request.engine),"compute_driver":request.compute_driver}),
+            ),
+            Self::Hardware { engine } => ("target_hardware", json!({"engine":literal(engine)})),
+            Self::Fabric { engine, image } => (
+                "fabric_capabilities",
+                json!({"engine":literal(engine),"image":literal(image)}),
+            ),
+            Self::Inference(request) => {
+                request.validate()?;
+                (
+                    "inference_capabilities",
+                    json!({"endpoint":literal(&request.endpoint),"api":request.api,"credential_env":request.credential_env}),
+                )
+            }
+        })
+    }
+    fn decode(&self, value: Value) -> Result<DiscoveryObservation, Error> {
+        match self {
+            Self::Engine(_) => serde_json::from_value(value).map(DiscoveryObservation::Engine),
+            Self::Hardware { .. } => {
+                serde_json::from_value(value).map(DiscoveryObservation::Hardware)
+            }
+            Self::Fabric { .. } => serde_json::from_value(value).map(DiscoveryObservation::Fabric),
+            Self::Inference(_) => {
+                serde_json::from_value(value).map(DiscoveryObservation::Inference)
+            }
+        }
+        .map_err(|_| Error::State("invalid discovery observation"))
+    }
+}
+
 pub struct DiscoverySession {
     bundle: Bundle,
     directory: tempfile::TempDir,
@@ -32,16 +78,8 @@ impl DiscoverySession {
         request: &crate::discovery::DiscoveryRequest,
         cancel: &CancellationToken,
     ) -> Result<crate::discovery::EngineObservation, Error> {
-        let value = self
-            .query(
-                "engine_capabilities",
-                json!({
-                    "engine": literal(&request.engine), "compute_driver": request.compute_driver
-                }),
-                cancel,
-            )
-            .await?;
-        serde_json::from_value(value).map_err(|_| Error::State("invalid engine observation"))
+        self.read(DiscoveryQuery::Engine(request.clone()), cancel)
+            .await
     }
 
     /// Refresh metadata from an existing image without pulling or running it.
@@ -51,16 +89,126 @@ impl DiscoverySession {
         image: &str,
         cancel: &CancellationToken,
     ) -> Result<crate::discovery::FabricObservation, Error> {
-        let value = self
-            .query(
-                "fabric_capabilities",
-                json!({
-                    "engine": literal(engine), "image": literal(image)
-                }),
+        self.read(
+            DiscoveryQuery::Fabric {
+                engine: engine.into(),
+                image: image.into(),
+            },
+            cancel,
+        )
+        .await
+    }
+
+    /// Read target hardware advertisements without executing a host collector.
+    pub async fn hardware(
+        &mut self,
+        engine: &str,
+        cancel: &CancellationToken,
+    ) -> Result<crate::hardware_discovery::HardwareObservation, Error> {
+        self.read(
+            DiscoveryQuery::Hardware {
+                engine: engine.into(),
+            },
+            cancel,
+        )
+        .await
+    }
+
+    /// Read advertised models from the control host; credentials remain references.
+    pub async fn inference(
+        &mut self,
+        request: &crate::inference_discovery::EndpointRequest,
+        cancel: &CancellationToken,
+    ) -> Result<crate::inference_discovery::EndpointObservation, Error> {
+        self.read(DiscoveryQuery::Inference(request.clone()), cancel)
+            .await
+    }
+
+    async fn read<T: serde::de::DeserializeOwned>(
+        &mut self,
+        query: DiscoveryQuery,
+        cancel: &CancellationToken,
+    ) -> Result<T, Error> {
+        let (kind, inputs) = query.data()?;
+        serde_json::from_value(self.query(kind, inputs, cancel).await?)
+            .map_err(|_| Error::State("invalid discovery observation"))
+    }
+
+    /// Reuse the strict gateway metadata source through its authenticated channel.
+    /// A failure is returned to authoring as unverified evidence, never absence.
+    pub async fn gateway(
+        &mut self,
+        gateway: &crate::config::Gateway,
+        required: &[crate::config::ComputeDriver],
+        cancel: &CancellationToken,
+    ) -> Result<crate::openshell::GatewayObservation, Error> {
+        let value = tokio::time::timeout(
+            std::time::Duration::from_secs(35),
+            self.query_configured(
+                "gateway_capabilities",
+                json!({"required_compute_drivers":required}),
+                crate::compile::gateway_provider(gateway),
                 cancel,
-            )
-            .await?;
-        serde_json::from_value(value).map_err(|_| Error::State("invalid Fabric observation"))
+            ),
+        )
+        .await
+        .map_err(|_| Error::State("gateway discovery timed out"))??;
+        serde_json::from_value(value).map_err(|_| Error::State("invalid gateway observation"))
+    }
+
+    /// Deduplicate identical reads and execute independent observations in one plan.
+    /// Results retain the caller's order, including repeated requests.
+    pub async fn batch(
+        &mut self,
+        queries: &[DiscoveryQuery],
+        cancel: &CancellationToken,
+    ) -> Result<Vec<DiscoveryObservation>, Error> {
+        if cancel.is_cancelled() {
+            return Err(Error::Cancelled);
+        }
+        if queries.is_empty() {
+            return Ok(Vec::new());
+        }
+        if queries.len() > 128 {
+            return Err(Error::State("too many discovery queries"));
+        }
+        let mut graph = self.graph(json!({}));
+        let mut unique = std::collections::BTreeMap::new();
+        let mut names = Vec::new();
+        for query in queries {
+            let (kind, inputs) = query.data()?;
+            let key = format!("{kind}:{inputs}");
+            let next = format!("query_{}", unique.len());
+            let name = unique.entry(key).or_insert(next).clone();
+            let source = format!("nemoclaw_{kind}");
+            graph["data"][&source][&name] = inputs;
+            graph["output"]["observation"]["value"][&name] =
+                json!(format!("${{data.{source}.{name}.observation_json}}"));
+            names.push(name);
+        }
+        let plan = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            self.execute_graph(&graph, cancel),
+        )
+        .await
+        .map_err(|_| Error::State("provider discovery timed out"))??;
+        queries
+            .iter()
+            .zip(names)
+            .map(|(query, name)| {
+                let encoded = plan["planned_values"]["outputs"]["observation"]["value"][&name]
+                    .as_str()
+                    .ok_or(Error::State("discovery observation is unknown"))?;
+                query.decode(
+                    serde_json::from_str(encoded)
+                        .map_err(|_| Error::State("invalid discovery observation"))?,
+                )
+            })
+            .collect()
+    }
+
+    fn graph(&self, provider: Value) -> Value {
+        json!({"terraform": {"required_version": format!("= {}",crate::compile::OPENTOFU_VERSION), "required_providers":{"nemoclaw":{"source":crate::compile::PROVIDER_ADDRESS,"version":format!("= {}",self.bundle.manifest.version)}}},"provider":{"nemoclaw":provider}})
     }
 
     async fn query(
@@ -71,35 +219,40 @@ impl DiscoverySession {
     ) -> Result<Value, Error> {
         tokio::time::timeout(
             std::time::Duration::from_secs(30),
-            self.query_inner(kind, inputs, cancel),
+            self.query_configured(kind, inputs, json!({}), cancel),
         )
         .await
         .map_err(|_| Error::State("provider discovery timed out"))?
     }
 
-    async fn query_inner(
+    async fn query_configured(
         &mut self,
         kind: &str,
         inputs: Value,
+        provider: Value,
         cancel: &CancellationToken,
     ) -> Result<Value, Error> {
         if cancel.is_cancelled() {
             return Err(Error::Cancelled);
         }
-        let directory = self.directory.path();
         let source = format!("nemoclaw_{kind}");
-        let graph = json!({
-            "terraform": {
-                "required_version": format!("= {}", crate::compile::OPENTOFU_VERSION),
-                "required_providers": { "nemoclaw": {
-                    "source": crate::compile::PROVIDER_ADDRESS,
-                    "version": format!("= {}", self.bundle.manifest.version)
-                }}
-            },
-            "provider": { "nemoclaw": {} },
-            "data": { source.clone(): { "current": inputs } },
-            "output": { "observation": { "value": format!("${{data.{source}.current.observation_json}}") } }
-        });
+        let mut graph = self.graph(provider);
+        graph["data"][&source]["current"] = inputs;
+        graph["output"]["observation"]["value"] =
+            json!(format!("${{data.{source}.current.observation_json}}"));
+        let plan = self.execute_graph(&graph, cancel).await?;
+        let observed = plan
+            .pointer("/planned_values/outputs/observation/value")
+            .and_then(Value::as_str)
+            .ok_or(Error::State("discovery observation is unknown"))?;
+        serde_json::from_str(observed).map_err(|_| Error::State("invalid discovery observation"))
+    }
+    async fn execute_graph(
+        &mut self,
+        graph: &Value,
+        cancel: &CancellationToken,
+    ) -> Result<Value, Error> {
+        let directory = self.directory.path();
         crate::state::save_json(&directory.join("main.tf.json"), &graph)?;
         let mirror = self
             .bundle
@@ -141,13 +294,7 @@ impl DiscoverySession {
             cancel,
         )
         .await?;
-        let plan: Value =
-            serde_json::from_slice(&bytes).map_err(|_| Error::State("invalid discovery plan"))?;
-        let observed = plan
-            .pointer("/planned_values/outputs/observation/value")
-            .and_then(Value::as_str)
-            .ok_or(Error::State("discovery observation is unknown"))?;
-        serde_json::from_str(observed).map_err(|_| Error::State("invalid discovery observation"))
+        serde_json::from_slice(&bytes).map_err(|_| Error::State("invalid discovery plan"))
     }
 }
 
@@ -185,6 +332,42 @@ esac
         })
         .unwrap();
         (bundle, session)
+    }
+
+    #[tokio::test]
+    async fn batch_deduplicates_reads_in_one_plan_and_preserves_input_order() {
+        let (_bundle, mut session) = fixture();
+        let result = json!({"status":"unknown", "reason":null, "source":"fixture", "reachable":null, "authentication":"unknown", "models":[], "api_verified":false});
+        let plan = json!({"planned_values":{"outputs":{"observation":{"value":{"query_0":result.to_string()}}}}});
+        let executable = session.bundle.tofu();
+        fs::write(&executable, format!("#!/bin/sh\nprintf '%s\\n' \"$1\" >> calls\nif [ \"$1\" = show ]; then cat <<'RESULT'\n{plan}\nRESULT\nfi\n")).unwrap();
+        let query = DiscoveryQuery::Inference(crate::inference_discovery::EndpointRequest {
+            endpoint: "https://example.test/v1".into(),
+            api: crate::config::InferenceApi::OpenaiCompletions,
+            credential_env: None,
+        });
+        let results = session
+            .batch(&[query.clone(), query], &CancellationToken::new())
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0], results[1]);
+        let graph: Value = serde_json::from_slice(
+            &fs::read(session.directory.path().join("main.tf.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            graph["data"]["nemoclaw_inference_capabilities"]
+                .as_object()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            fs::read_to_string(session.directory.path().join("calls")).unwrap(),
+            "init\nplan\nshow\n"
+        );
+        assert!(graph.get("resource").is_none());
     }
 
     #[tokio::test]
