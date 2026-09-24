@@ -259,6 +259,8 @@ If the sandbox is stopped, rebuild asks OpenShell to start that exact sandbox fo
 <AgentOnly variant="openclaw">
 On OpenShell 0.0.116, `start` cannot restart a sandbox in `Phase: Error`.
 For a managed Docker OpenClaw sandbox whose container is stopped, `rebuild` can capture its declared state without starting or executing in that container.
+User-managed `.env` and `.mcp.json` files are not captured or restored by this path.
+Keep secure host copies of any needed values or configuration before rebuilding, then re-add those files after recovery.
 It verifies the recorded sandbox and container identities, preserves MCP configuration and the live policy, sanitizes the backup, and then creates and verifies a replacement.
 OpenClaw's machine identity and gateway pairing state stay outside the backup.
 
