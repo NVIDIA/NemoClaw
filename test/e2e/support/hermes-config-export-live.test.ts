@@ -252,7 +252,15 @@ describe("Hermes config export live evidence", () => {
     mocks.command.mockResolvedValue({ exitCode: 2, stdout: "", stderr: diagnostics });
     await expect(runEnabledFixture()).resolves.toEqual({ checked: true, passed: true });
     expect(mocks.save).not.toHaveBeenCalled();
-    expect(mocks.asExportedConfig).not.toHaveBeenCalled();
+    expect(mocks.writeJson).toHaveBeenCalledWith("hermes-config-export-live-evidence.json", {
+      outcome: "expected-refusal",
+      aliasesEquivalent: true,
+      checked: true,
+      credentialValuesOmitted: true,
+      outputFilesAbsent: true,
+      refusalCategory: "unsupported",
+      refusalDiagnosticMatches: true,
+    });
   });
 
   it.each([
