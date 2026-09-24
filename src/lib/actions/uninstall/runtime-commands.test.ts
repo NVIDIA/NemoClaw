@@ -15,7 +15,12 @@ describe("uninstall bulk sandbox cleanup", () => {
     const calls: Array<{ args: string[]; env: NodeJS.ProcessEnv | undefined }> = [];
     const logs: string[] = [];
     const runtime = {
-      env: { PATH: "/usr/bin", NVIDIA_API_KEY: "must-not-leak" },
+      env: {
+        PATH: "/usr/bin",
+        NVIDIA_API_KEY: "must-not-leak",
+        OPENSHELL_GATEWAY: "foreign",
+        OPENSHELL_GATEWAY_ENDPOINT: "https://foreign.invalid",
+      },
       log: (message: string) => logs.push(message),
       run: (_command: string, args: string[], options?: { env?: NodeJS.ProcessEnv }) => {
         calls.push({ args, env: options?.env });
@@ -25,7 +30,7 @@ describe("uninstall bulk sandbox cleanup", () => {
       warn: vi.fn(),
     };
 
-    await expect(deleteAllSelectedGatewaySandboxes(runtime)).resolves.toBe(true);
+    await expect(deleteAllSelectedGatewaySandboxes(runtime, "nemoclaw-8091")).resolves.toBe(true);
 
     expect(calls.map(({ args }) => args)).toEqual([
       ["sandbox", "delete", "--all"],
@@ -33,6 +38,9 @@ describe("uninstall bulk sandbox cleanup", () => {
       ["sandbox", "list"],
     ]);
     expect(calls.every(({ env }) => env?.NVIDIA_API_KEY === undefined)).toBe(true);
+    expect(calls.every(({ env }) => env?.OPENSHELL_GATEWAY === "nemoclaw-8091")).toBe(true);
+    expect(calls.every(({ env }) => env?.OPENSHELL_WORKSPACE === "default")).toBe(true);
+    expect(calls.every(({ env }) => env?.OPENSHELL_GATEWAY_ENDPOINT === undefined)).toBe(true);
     expect(runtime.sleep).toHaveBeenCalledOnce();
     expect(logs).toContain("Deleted all OpenShell sandboxes");
   });
@@ -53,7 +61,7 @@ describe("uninstall bulk sandbox cleanup", () => {
       warn: (message: string) => warnings.push(message),
     };
 
-    await expect(deleteAllSelectedGatewaySandboxes(runtime)).resolves.toBe(true);
+    await expect(deleteAllSelectedGatewaySandboxes(runtime, "nemoclaw-8091")).resolves.toBe(true);
 
     expect(calls.filter((args) => args[1] === "delete")).toHaveLength(1);
     expect(calls.filter((args) => args[1] === "list")).toHaveLength(2);
@@ -81,7 +89,7 @@ describe("uninstall bulk sandbox cleanup", () => {
       warn: (message: string) => warnings.push(message),
     };
 
-    await expect(deleteAllSelectedGatewaySandboxes(runtime)).resolves.toBe(false);
+    await expect(deleteAllSelectedGatewaySandboxes(runtime, "nemoclaw-8091")).resolves.toBe(false);
 
     expect(calls.filter((args) => args[1] === "delete")).toHaveLength(1);
     expect(calls.filter((args) => args[1] === "list")).toHaveLength(5);
@@ -92,6 +100,7 @@ describe("uninstall bulk sandbox cleanup", () => {
 
   it("preserves cleanup authority when inventory cannot be verified (#11831)", async () => {
     const calls: string[][] = [];
+    const warnings: string[] = [];
     const runtime = {
       env: { PATH: "/usr/bin" },
       log: vi.fn(),
@@ -100,12 +109,17 @@ describe("uninstall bulk sandbox cleanup", () => {
         return args[1] === "list" ? result(1, "", "permission denied") : result(0, "accepted");
       },
       sleep: vi.fn(),
-      warn: vi.fn(),
+      warn: (message: string) => warnings.push(message),
     };
 
-    await expect(deleteAllSelectedGatewaySandboxes(runtime)).resolves.toBe(false);
+    await expect(deleteAllSelectedGatewaySandboxes(runtime, "nemoclaw-8091")).resolves.toBe(false);
 
     expect(calls.filter((args) => args[1] === "delete")).toHaveLength(1);
     expect(calls.filter((args) => args[1] === "list")).toHaveLength(5);
+    expect(warnings).toEqual([
+      expect.stringContaining(
+        "inventory could not be verified: OpenShell could not authenticate the sandbox observation.",
+      ),
+    ]);
   });
 });

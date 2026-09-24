@@ -11,6 +11,10 @@ import {
   createCliOpenShellSandboxLookupFromRunner,
   createCliOpenShellSandboxObserverFromRunner,
 } from "../openshell/sandbox-lifecycle-cli";
+import {
+  buildOpenShellRuntimeSelectionEnv,
+  type OpenShellRuntimeSelection,
+} from "../openshell/runtime-selection";
 import { dockerSpawnSync } from "../docker/exec";
 import { buildSubprocessEnvFrom } from "../../subprocess-env";
 
@@ -72,8 +76,15 @@ export function createUninstallSandboxLookup(run: typeof defaultRun, env: NodeJS
   );
 }
 
-export function createUninstallSandboxObserver(run: typeof defaultRun, env: NodeJS.ProcessEnv) {
-  const childEnv = buildSubprocessEnvFrom(env);
+export function createUninstallSandboxObserver(
+  run: typeof defaultRun,
+  env: NodeJS.ProcessEnv,
+  runtimeSelection?: OpenShellRuntimeSelection,
+) {
+  const filteredEnv = buildSubprocessEnvFrom(env);
+  const childEnv = runtimeSelection
+    ? buildOpenShellRuntimeSelectionEnv(filteredEnv, runtimeSelection)
+    : filteredEnv;
   return createCliOpenShellSandboxObserverFromRunner((args, options) =>
     run("openshell", args, { env: childEnv, ...options }),
   );

@@ -73,6 +73,7 @@ export type DeleteOpenShellSandboxRequest = Readonly<{
 
 export type DeleteAllOpenShellSandboxesRequest = Readonly<{
   target: Extract<OpenShellGatewayTarget, { kind: "selected" }>;
+  runtimeSelection: OpenShellRuntimeSelection;
   timeoutMs?: number;
 }>;
 

@@ -8,6 +8,7 @@ import {
   createUninstallSandboxObserver,
   type RunResult,
 } from "../../adapters/uninstall/commands";
+import { OPENSHELL_DEFAULT_WORKSPACE } from "../../adapters/openshell/sandbox-ssh-host";
 import {
   OPENSHELL_SANDBOXES_DELETE_SKIP_MESSAGE,
   sandboxDeleteAbsentMessage,
@@ -108,9 +109,11 @@ export async function deleteSelectedGatewaySandbox(
 
 export async function deleteAllSelectedGatewaySandboxes(
   runtime: UninstallRuntimeCommands,
+  gatewayName: string,
 ): Promise<boolean> {
+  const runtimeSelection = { gatewayName, workspace: OPENSHELL_DEFAULT_WORKSPACE };
   const result = await createUninstallSandboxLifecycle(runtime.run, runtime.env).deleteAllSandboxes(
-    { target: { kind: "selected" } },
+    { target: { kind: "selected" }, runtimeSelection },
   );
   if (
     result.kind === "failed" &&
@@ -121,10 +124,12 @@ export async function deleteAllSelectedGatewaySandboxes(
     return false;
   }
 
-  const observer = createUninstallSandboxObserver(runtime.run, runtime.env);
+  const observer = createUninstallSandboxObserver(runtime.run, runtime.env, runtimeSelection);
   let consecutiveEmptyObservations = 0;
+  let lastObservationError: string | null = null;
   for (let attempt = 0; attempt < BULK_DELETE_MAX_OBSERVATIONS; attempt += 1) {
     const observed = await observer.listSandboxes({ target: { kind: "selected" } });
+    lastObservationError = observed.ok ? null : observed.error.message;
     consecutiveEmptyObservations =
       observed.ok && observed.value.sandboxes.length === 0 ? consecutiveEmptyObservations + 1 : 0;
     if (consecutiveEmptyObservations >= BULK_DELETE_REQUIRED_EMPTY_OBSERVATIONS) {
@@ -134,7 +139,11 @@ export async function deleteAllSelectedGatewaySandboxes(
     }
     if (attempt < BULK_DELETE_MAX_OBSERVATIONS - 1) runtime.sleep?.(200);
   }
-  runtime.warn("OpenShell sandbox cleanup was incomplete; preserving its state for retry.");
+  runtime.warn(
+    lastObservationError
+      ? `OpenShell sandbox cleanup was incomplete because inventory could not be verified: ${lastObservationError} Preserving its state for retry.`
+      : "OpenShell sandbox cleanup was incomplete; preserving its state for retry.",
+  );
   return false;
 }
 

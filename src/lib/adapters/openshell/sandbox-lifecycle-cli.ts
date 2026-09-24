@@ -194,6 +194,8 @@ function validDeleteRequest(request: DeleteOpenShellSandboxRequest): boolean {
 function validDeleteAllRequest(request: DeleteAllOpenShellSandboxesRequest): boolean {
   return (
     request.target.kind === "selected" &&
+    Boolean(request.runtimeSelection) &&
+    isValidName(request.runtimeSelection?.gatewayName ?? "") &&
     (request.timeoutMs === undefined ||
       (Number.isFinite(request.timeoutMs) && request.timeoutMs > 0))
   );
@@ -505,13 +507,16 @@ export function createCliOpenShellSandboxLifecycle(input: {
     },
     async deleteAllSandboxes(request): Promise<OpenShellSandboxDeleteAllSubmission> {
       if (!validDeleteAllRequest(request)) return failedDelete(invalidDeleteError);
-      try {
-        assertNoOpenShellGatewayEndpointOverride(input.environment ?? process.env);
-      } catch {
-        return failedDelete(invalidDeleteError);
-      }
       const timeoutMs = request.timeoutMs ?? input.defaultTimeoutMs ?? OPENSHELL_HEAVY_TIMEOUT_MS;
-      return submitSandboxDelete(input.capture, ["sandbox", "delete", "--all"], timeoutMs);
+      return submitSandboxDelete(
+        (args, options) =>
+          input.capture(
+            args,
+            withSelectedOpenShellCommandOptions(options, request.runtimeSelection),
+          ),
+        ["sandbox", "delete", "--all"],
+        timeoutMs,
+      );
     },
     async deleteSandbox(request) {
       if (!validDeleteRequest(request)) return failedDelete(invalidDeleteError);

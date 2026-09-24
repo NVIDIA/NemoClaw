@@ -1605,7 +1605,7 @@ async function removeOpenShellResources(
     runtime.log("Sibling gateways remain; kept shared OpenShell provider registrations.");
     return true;
   }
-  if (!(await deleteAllSelectedGatewaySandboxes(runtime))) return false;
+  if (!(await deleteAllSelectedGatewaySandboxes(runtime, gatewayLabel))) return false;
   const providerAdapter = createUninstallProviderAdapter(runtime.run, runtime.env);
   for (const providerName of NEMOCLAW_PROVIDERS) {
     const result = await providerAdapter.deleteProvider({
