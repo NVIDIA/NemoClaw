@@ -2177,7 +2177,7 @@ Fix the streaming layer on the endpoint or gateway, or onboard with a different 
 
 This is expected behavior. OpenClaw 2026.9.1 retired the device-auth bypass. NemoClaw accepts `NEMOCLAW_DISABLE_DEVICE_AUTH` and its provenance input only while managed Dockerfile callers transition, but it does not emit an OpenClaw device-auth bypass key. Changing the input before or after a build does not skip device pairing.
 
-Complete the normal pairing flow for each browser or CLI device. For the security model, refer to [Gateway Authentication Controls](../security/gateway-authentication-controls).
+Complete the normal pairing flow for each browser or CLI device. For the security model, refer to [Gateway Authentication Controls](../security/security-controls/gateway-authentication-controls).
 
 ### `openclaw.json` is empty after changing inference
 
