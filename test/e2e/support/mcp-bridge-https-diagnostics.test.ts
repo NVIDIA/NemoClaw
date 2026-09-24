@@ -5,9 +5,9 @@ import { once } from "node:events";
 import https from "node:https";
 import net from "node:net";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
-import { startFakeMcpHttpsServer, type StartedHttpServer } from "../e2e/live/mcp-bridge-servers.ts";
-import { shouldRetryMcpDiscoveryAfterRestart } from "../e2e/live/mcp-bridge-tool-discovery.ts";
-import { createMcpFixtureTls } from "./mcp-fixture-tls.ts";
+import { startFakeMcpHttpsServer, type StartedHttpServer } from "../live/mcp-bridge-servers.ts";
+import { shouldRetryMcpDiscoveryAfterRestart } from "../live/mcp-bridge-tool-discovery.ts";
+import { createMcpFixtureTls } from "../fixtures/mcp-fixture-tls.ts";
 
 const { tls: fixtureTls, close: closeFixtureTls } = createMcpFixtureTls();
 const servers: StartedHttpServer[] = [];
@@ -97,41 +97,45 @@ describe("MCP HTTPS transport diagnostics", () => {
       },
     );
     slowRequest.on("error", rejectResponse);
-    slowRequest.write(body.slice(0, 1));
+    try {
+      slowRequest.write(body.slice(0, 1));
 
-    await expect.poll(() => server.observations.length).toBe(observationOffset + 1);
-    const arrival = server.observations[observationOffset];
-    expect(server.requests).toHaveLength(0);
-    expect(server.diagnostics()).toMatchObject({
-      secureConnections: 1,
-      requestHeaders: 1,
-      requestBodiesComplete: 0,
-    });
-    expect(arrival).toMatchObject({
-      method: "POST",
-      path: "/mcp",
-      auth: `Bearer ${secret}`,
-      body: "",
-    });
-    expect(shouldRetryMcpDiscoveryAfterRestart(server.observations.slice(observationOffset))).toBe(
-      false,
-    );
+      await expect.poll(() => server.observations.length).toBe(observationOffset + 1);
+      const arrival = server.observations[observationOffset];
+      expect(server.requests).toHaveLength(0);
+      expect(server.diagnostics()).toMatchObject({
+        secureConnections: 1,
+        requestHeaders: 1,
+        requestBodiesComplete: 0,
+      });
+      expect(arrival).toMatchObject({
+        method: "POST",
+        path: "/mcp",
+        auth: `Bearer ${secret}`,
+        body: "",
+      });
+      expect(
+        shouldRetryMcpDiscoveryAfterRestart(server.observations.slice(observationOffset)),
+      ).toBe(false);
 
-    slowRequest.end(body.slice(1));
-    expect(await observedStatus).toEqual({ ok: true, status: 200 });
-    expect(server.requests).toHaveLength(1);
-    expect(server.observations[observationOffset]).toBe(arrival);
-    expect(server.requests[0]).toBe(arrival);
-    expect(arrival).toMatchObject({ body, rpcMethod: "initialize" });
-    expect(server.diagnostics()).toMatchObject({
-      secureConnections: 1,
-      requestHeaders: 1,
-      requestBodiesComplete: 1,
-    });
-    const copied = server.diagnostics();
-    copied.requestHeaders = 99;
-    copied.tlsClientErrors.OTHER = 99;
-    expect(server.diagnostics().requestHeaders).toBe(1);
-    expect(server.diagnostics().tlsClientErrors.OTHER).toBe(0);
+      slowRequest.end(body.slice(1));
+      expect(await observedStatus).toEqual({ ok: true, status: 200 });
+      expect(server.requests).toHaveLength(1);
+      expect(server.observations[observationOffset]).toBe(arrival);
+      expect(server.requests[0]).toBe(arrival);
+      expect(arrival).toMatchObject({ body, rpcMethod: "initialize" });
+      expect(server.diagnostics()).toMatchObject({
+        secureConnections: 1,
+        requestHeaders: 1,
+        requestBodiesComplete: 1,
+      });
+      const copied = server.diagnostics();
+      copied.requestHeaders = 99;
+      copied.tlsClientErrors.OTHER = 99;
+      expect(server.diagnostics().requestHeaders).toBe(1);
+      expect(server.diagnostics().tlsClientErrors.OTHER).toBe(0);
+    } finally {
+      slowRequest.destroy();
+    }
   });
 });

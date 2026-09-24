@@ -327,10 +327,14 @@
     {
       "live": "test/e2e/live/onboard-repair.test.ts",
       "liveSources": [
+        "test/e2e/fixtures/podman-owner-diagnostic.ts",
+        "test/e2e/fixtures/podman-owner-snapshot.ts",
         "test/e2e/fixtures/onboard-precleanup.ts",
         "test/e2e/fixtures/owned-sandbox-cleanup.ts"
       ],
       "fast": [
+        "test/e2e/support/podman-owner-diagnostic.test.ts",
+        "test/e2e/support/podman-owner-snapshot.test.ts",
         "test/e2e/support/onboard-precleanup.test.ts",
         "test/e2e/support/owned-sandbox-cleanup.test.ts",
         "src/lib/onboard/extra-provider-reconciliation-diagnostics.test.ts",
@@ -349,10 +353,14 @@
     {
       "live": "test/e2e/live/onboard-resume.test.ts",
       "liveSources": [
+        "test/e2e/fixtures/podman-owner-diagnostic.ts",
+        "test/e2e/fixtures/podman-owner-snapshot.ts",
         "test/e2e/fixtures/onboard-precleanup.ts",
         "test/e2e/fixtures/owned-sandbox-cleanup.ts"
       ],
       "fast": [
+        "test/e2e/support/podman-owner-diagnostic.test.ts",
+        "test/e2e/support/podman-owner-snapshot.test.ts",
         "test/e2e/support/onboard-precleanup.test.ts",
         "test/e2e/support/owned-sandbox-cleanup.test.ts",
         "src/lib/onboard/extra-provider-reconciliation-diagnostics.test.ts",
@@ -623,6 +631,7 @@
         "test/e2e/live/mcp-bridge-onboard-env.ts",
         "test/e2e/live/mcp-bridge-reliability.ts",
         "test/e2e/live/mcp-bridge-servers.ts",
+        "test/e2e/fixtures/mcp-fixture-tls.ts",
         "test/e2e/live/mcp-bridge-hermes-lifecycle.ts",
         "test/e2e/live/mcp-bridge-phases.ts",
         "test/e2e/live/mcp-bridge-sandbox.ts",
@@ -659,7 +668,7 @@
         "test/e2e/support/openshell-exact-main-child-contracts.test.ts",
         "test/e2e/support/openshell-exact-main-runtime-contracts.test.ts",
         "test/mcp/mcp-bridge-servers.test.ts",
-        "test/mcp/mcp-bridge-https-diagnostics.test.ts"
+        "test/e2e/support/mcp-bridge-https-diagnostics.test.ts"
       ]
     },
     {

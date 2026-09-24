@@ -176,6 +176,10 @@ The trusted-private HTTPS fixture records bounded TLS, request-header, and compl
 before the status assertion and during final cleanup. TLS errors use fixed code buckets; these
 diagnostics contain no raw errors, request data, or credentials and do not establish successful
 authenticated discovery. The server still closes if writing its final diagnostic artifact fails.
+Onboarding repair and resume fixtures capture bounded, read-only Podman ownership observations
+before and after the resumed command. They retain only validated fixed-schema facts and never raw
+child output. These separate observations do not replace the production ownership decision or prove
+which predicate rejected an earlier invocation; command results and cleanup remain authoritative.
 
 The same workflow publishes each Pi pull-request candidate by immutable digest after validating the
 local image, removes registry credentials, validates the anonymously pullable digest, and uploads a

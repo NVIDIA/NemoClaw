@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  withPodmanOwnerDiagnostic,
+  captureBoundedPodmanOwnerDiagnostic,
+} from "../fixtures/podman-owner-diagnostic";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -285,15 +289,22 @@ test(
     });
     await waitSandboxAbsent(sandbox, SANDBOX_NAME);
 
-    const repair = await nemoclaw(
-      host,
-      ["onboard", "--resume", "--non-interactive"],
-      "phase-2-resume-repair",
-      onboardEnv(SANDBOX_NAME, fake.baseUrl, {
-        NEMOCLAW_POLICY_MODE: "skip",
-        ...corporateCa.env,
-      }),
-      execTimeout(20 * 60_000),
+    const repairEnv = onboardEnv(SANDBOX_NAME, fake.baseUrl, {
+      NEMOCLAW_POLICY_MODE: "skip",
+      ...corporateCa.env,
+    });
+    const repair = await withPodmanOwnerDiagnostic(
+      repairEnv,
+      (phase, report) => artifacts.writeJson(`owner-resume-${phase}.json`, report),
+      () =>
+        nemoclaw(
+          host,
+          ["onboard", "--resume", "--non-interactive"],
+          "phase-2-resume-repair",
+          repairEnv,
+          execTimeout(20 * 60_000),
+        ),
+      (environment, phase) => captureBoundedPodmanOwnerDiagnostic(host, environment, phase),
     );
     expect(repair.exitCode, resultText(repair)).toBe(0);
     expect(resultText(repair)).toContain("[resume] Skipping preflight (cached)");

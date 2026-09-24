@@ -23,7 +23,7 @@ import {
   startPublicMcpHttpsTunnel,
 } from "../e2e/live/mcp-bridge-servers";
 
-import { createMcpFixtureTls } from "./mcp-fixture-tls.ts";
+import { createMcpFixtureTls } from "../e2e/fixtures/mcp-fixture-tls.ts";
 
 const servers: StartedHttpServer[] = [];
 function progressProbe() {

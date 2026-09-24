@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  withPodmanOwnerDiagnostic,
+  captureBoundedPodmanOwnerDiagnostic,
+} from "../fixtures/podman-owner-diagnostic";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -466,15 +470,21 @@ test(
     };
     expect(resumeEnv.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
     expect(resumeEnv.COMPATIBLE_API_KEY).toBeUndefined();
-    const resumeRun = await host.command(
-      "node",
-      [CLI_ENTRYPOINT, "onboard", "--resume", "--recreate-sandbox", "--non-interactive"],
-      {
-        artifactName: "phase-3-onboard-resume",
-        env: resumeEnv,
-        redactionValues: [FAKE_COMPATIBLE_AUTH_VALUE],
-        timeoutMs: execTimeout(ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS),
-      },
+    const resumeRun = await withPodmanOwnerDiagnostic(
+      resumeEnv,
+      (phase, report) => artifacts.writeJson(`owner-resume-${phase}.json`, report),
+      () =>
+        host.command(
+          "node",
+          [CLI_ENTRYPOINT, "onboard", "--resume", "--recreate-sandbox", "--non-interactive"],
+          {
+            artifactName: "phase-3-onboard-resume",
+            env: resumeEnv,
+            redactionValues: [FAKE_COMPATIBLE_AUTH_VALUE],
+            timeoutMs: execTimeout(ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS),
+          },
+        ),
+      (environment, phase) => captureBoundedPodmanOwnerDiagnostic(host, environment, phase),
     );
     const resumeText = `${resumeRun.stdout}\n${resumeRun.stderr}`;
 
