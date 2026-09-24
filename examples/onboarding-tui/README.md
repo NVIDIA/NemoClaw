@@ -29,6 +29,15 @@ If a change affects answers you already accepted, the questionnaire shows them b
 Accept the revision to revisit affected questions, or go back to keep the current configuration.
 Unrelated accepted answers are preserved and skipped when continuing forward.
 
+After accepting a harness, press **Ctrl+D** on an answer screen to authorize the remaining suggested settings and go directly to review.
+The authoring library checks the suggestions together: engine and image compatibility must be established, the matching endpoint must advertise the selected model, and required credential references must be available.
+This shortcut preserves accepted answers and uses the current suggestions; it does not search for another engine, provider, image, or model.
+If you have edited the current answer, press Enter to accept it before delegating.
+If discovery is missing, stale, conflicting, or incomplete, the shortcut explains why it cannot proceed; continue answering individually or correct the configuration.
+The review refreshes discovery and checks delegated settings again before allowing a save.
+Going back from review reopens delegated questions while preserving explicit answers.
+These checks do not establish working inference or authorize a deployment.
+
 The template starts a new deployment with a fresh UID.
 The output defaults to `deployment.yaml` and must be a new file; an existing file is never overwritten.
 Escape cancels without saving.
@@ -70,7 +79,7 @@ Without a usable bundle, onboarding uses bundled Fabric metadata and marks the t
 The standalone example currently has no bundle option and uses this offline path, with local credential-availability checks.
 An unreachable engine or missing image metadata remains unverified; neither establishes that a harness is unsupported.
 A known engine mismatch or conflicting image platform, digest, API, tool, or interface metadata blocks review and saving until the selection is corrected.
-Unknown observations still allow saving after selecting a runtime offered on this host, including when authoring for a target to prepare later.
+Unknown observations still allow saving after answering individually and selecting a runtime offered on this host, including when authoring for a target to prepare later.
 
 Observed models supplement suggestions; you can still enter an identifier manually.
 The target summary distinguishes advertised hardware, unverified GPU inventory, credential-reference availability, and gateway status.
