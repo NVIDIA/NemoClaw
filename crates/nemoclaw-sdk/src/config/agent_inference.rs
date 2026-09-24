@@ -15,7 +15,7 @@ impl InferenceApi {
     /// Whether to write an explicit provider API for this harness.
     ///
     /// Pi selects its API through native model metadata and requires omission.
-    /// This does not check protocol support; use [`Self::supported`] for that.
+    /// This is a wire-format requirement, not an assertion of adapter support.
     pub fn provider_override(self, harness: HarnessKind) -> Option<Self> {
         (harness != HarnessKind::Pi).then_some(self)
     }
@@ -24,19 +24,8 @@ impl InferenceApi {
         match harness {
             HarnessKind::Claude => Self::AnthropicMessages,
             HarnessKind::Codex => Self::OpenaiResponses,
-            HarnessKind::DeepAgents
-            | HarnessKind::Hermes
-            | HarnessKind::OpenClaw
-            | HarnessKind::MiniSweAgent
-            | HarnessKind::Nooa
-            | HarnessKind::NooaBench
-            | HarnessKind::RemoteAgent
-            | HarnessKind::Pi => Self::OpenaiCompletions,
+            _ => Self::OpenaiCompletions,
         }
-    }
-    pub fn supported(self, harness: HarnessKind) -> bool {
-        matches!(harness, HarnessKind::OpenClaw | HarnessKind::Hermes)
-            || self == Self::for_harness(harness)
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -74,7 +63,7 @@ impl RouteTuning {
         super::schema::validate_tuning(self)?;
         let supported = harness == HarnessKind::OpenClaw
             || (matches!(
-                harness,
+                harness.clone(),
                 HarnessKind::DeepAgents | HarnessKind::MiniSweAgent | HarnessKind::RemoteAgent
             ) && self.context_window.is_none()
                 && self.reasoning.is_none()
@@ -160,6 +149,8 @@ pub(crate) struct RuntimeAgent {
 // This is the pinned Fabric adapter wire format. Its top-level model mirrors the
 // first agent for single-agent adapters; retain the encoding until images change.
 pub(crate) struct SandboxRuntimeSettings {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settings: Option<serde_json::Map<String, serde_json::Value>>,
     pub provider: String,
     pub connection: RuntimeConnection,
     #[serde(rename = "webSearch", default, skip_serializing_if = "Option::is_none")]
@@ -246,33 +237,33 @@ impl RuntimeConnection {
 
 impl SandboxRuntimeSettings {
     pub fn validate(&self, harness: HarnessKind) -> Result<(), ConfigError> {
-        self.connection.validate(&self.provider, harness)?;
-        self.tuning.validate(harness)?;
+        self.connection.validate(&self.provider, harness.clone())?;
+        self.tuning.validate(harness.clone())?;
         if let Some(search) = &self.web_search {
             search.validate(
-                harness,
+                harness.clone(),
                 self.agents
                     .iter()
                     .map(|a| (a.name.as_str(), a.tools.as_ref())),
             )?;
         }
         if let Some(observability) = &self.observability {
-            observability.validate(harness)?;
+            observability.validate(harness.clone())?;
         }
         if let Some(execution) = &self.execution {
-            execution.validate(harness)?;
+            execution.validate(harness.clone())?;
         }
         if let Some(interfaces) = &self.interfaces {
-            interfaces.validate(harness)?;
+            interfaces.validate(harness.clone())?;
         }
         for agent in &self.agents {
             if let Some(tools) = &agent.tools {
-                tools.validate(harness)?;
+                tools.validate(harness.clone())?;
             }
         }
         if !self.agents.is_empty()
             && (!matches!(
-                harness,
+                harness.clone(),
                 HarnessKind::OpenClaw
                     | HarnessKind::Pi
                     | HarnessKind::DeepAgents
@@ -298,11 +289,13 @@ impl SandboxRuntimeSettings {
                 return Err(ConfigError::new("invalid default model choice"));
             }
             for (name, model) in &selection.models {
-                if !super::validation::valid_name(name) || !model.api.supported(harness) {
+                if !super::validation::valid_name(name) {
                     return Err(ConfigError::new("invalid native model choice"));
                 }
-                model.connection.validate(&model.provider, harness)?;
-                model.tuning.validate(harness)?;
+                model
+                    .connection
+                    .validate(&model.provider, harness.clone())?;
+                model.tuning.validate(harness.clone())?;
                 if (harness == HarnessKind::Pi) != model.pi.is_some()
                     || model
                         .pi
@@ -323,11 +316,10 @@ impl SandboxRuntimeSettings {
                 ));
             }
         }
-        if !self.api.supported(harness)
-            || self
-                .auth
-                .as_ref()
-                .is_some_and(|a| harness != HarnessKind::Hermes || a.provider_ref.is_empty())
+        if self
+            .auth
+            .as_ref()
+            .is_some_and(|a| harness != HarnessKind::Hermes || a.provider_ref.is_empty())
         {
             return Err(ConfigError::new("unsupported agent inference settings"));
         }
@@ -383,7 +375,7 @@ impl Document {
                 let provider = self.route_provider(route, &selection)?;
                 Ok((
                     route.name.clone(),
-                    self.runtime_model(harness.kind, &provider, route)?,
+                    self.runtime_model(harness.kind.clone(), &provider, route)?,
                 ))
             })
             .collect::<Result<_, ConfigError>>()?;
@@ -413,6 +405,7 @@ impl Document {
             Vec::new()
         };
         Ok(SandboxRuntimeSettings {
+            settings: harness.settings.clone(),
             provider: primary.provider,
             connection: primary.connection,
             api: primary.api,

@@ -65,7 +65,8 @@ impl Draft {
         let harness = document
             .sandbox_harness(sandbox)
             .map_err(|error| diagnostic("harness", &error.to_string()))?
-            .kind;
+            .kind
+            .clone();
         Ok(DiscoveryKey {
             engine: gateway.engine.clone(),
             compute_driver: sandbox.runtime.provider,

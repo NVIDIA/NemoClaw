@@ -293,7 +293,7 @@ impl Wizard {
             ));
         }
         lines.extend(review_field("Deployment", &answers.deployment_name));
-        lines.extend(review_field("Harness", labels::harness(answers.harness)));
+        lines.extend(review_field("Harness", labels::harness(&answers.harness)));
         lines.extend(review_field("Runtime", labels::runtime(answers.runtime)));
         lines.extend(review_field(
             "Provider",

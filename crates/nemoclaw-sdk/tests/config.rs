@@ -74,7 +74,7 @@ fn unsafe_yaml_and_secret_values_are_rejected_without_echoing_input() {
             "model: '${file(\"secret-do-not-print\")}'",
         ),
         ("provider: docker", "provider: unsupported"),
-        ("kind: openclaw", "kind: unknown"),
+        ("kind: openclaw", "kind: ../escape"),
     ];
     for (from, to) in changes {
         let error = Document::parse(base.replace(from, to).as_bytes()).unwrap_err();
@@ -260,7 +260,7 @@ fn sandbox_harness_is_the_only_implementation_selector() {
         );
         assert!(Document::parse(legacy.as_bytes()).is_err());
     }
-    for invalid in ["", "unknown"] {
+    for invalid in ["", "../escape"] {
         let changed = input.replace("kind: openclaw", &format!("kind: '{invalid}'"));
         assert!(Document::parse(changed.as_bytes()).is_err());
     }
@@ -422,4 +422,82 @@ fn external_gateways_reject_installation_fields_even_when_empty() {
             "external gateway accepted {field}"
         );
     }
+}
+
+#[test]
+fn fabric_harness_identifiers_are_extensible_and_validated() {
+    let baseline = include_str!("fixtures/config/local.yaml");
+    let source = baseline.replace("kind: openclaw", "kind: fixture-new-agent");
+    let mut document = Document::parse(source.as_bytes()).unwrap();
+    document.spec.sandboxes[0]
+        .harness
+        .as_mut()
+        .unwrap()
+        .settings = Some(
+        serde_json::json!({"custom": {"nested": [null, true, 42, "value"]}})
+            .as_object()
+            .unwrap()
+            .clone(),
+    );
+    document.validate().unwrap();
+    let schema = nemoclaw_sdk::config::schema::input_schema();
+    assert_eq!(
+        schema["$defs"]["Harness"]["properties"]["kind"]["type"],
+        "string"
+    );
+    assert!(
+        schema["$defs"]["Harness"]["properties"]["kind"]
+            .get("enum")
+            .is_none()
+    );
+    for api in [
+        nemoclaw_sdk::config::InferenceApi::OpenaiCompletions,
+        nemoclaw_sdk::config::InferenceApi::OpenaiResponses,
+        nemoclaw_sdk::config::InferenceApi::AnthropicMessages,
+    ] {
+        document.spec.inference_providers[0].api = Some(api);
+        document.spec.inference_providers[0].provider =
+            if api == nemoclaw_sdk::config::InferenceApi::AnthropicMessages {
+                InferenceProviderKind::Anthropic
+            } else {
+                InferenceProviderKind::Openai
+            };
+        document.validate().unwrap();
+    }
+    assert_eq!(
+        document.spec.sandboxes[0]
+            .harness
+            .as_ref()
+            .unwrap()
+            .kind
+            .as_str(),
+        "fixture-new-agent"
+    );
+    assert_eq!(
+        Document::parse(document.yaml().unwrap().as_bytes()).unwrap(),
+        document
+    );
+    for invalid in [
+        "../escape",
+        "Uppercase",
+        "-prefix",
+        "space name",
+        "",
+        "with_underscore",
+    ] {
+        assert!(invalid.parse::<HarnessKind>().is_err(), "{invalid}");
+    }
+    assert!("a".repeat(64).parse::<HarnessKind>().is_err());
+}
+
+#[test]
+fn an_unregistered_harness_requires_an_explicit_image() {
+    let mut value: Value =
+        serde_saphyr::from_str(include_str!("fixtures/config/local.yaml")).unwrap();
+    value["spec"]["sandboxes"][0]["harness"]["kind"] = "fixture-new-agent".into();
+    value["spec"]["sandboxes"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("image");
+    assert!(Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).is_err());
 }

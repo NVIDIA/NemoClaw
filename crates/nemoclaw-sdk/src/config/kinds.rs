@@ -3,35 +3,24 @@
 use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr};
 
-/// Fabric harness implementation selected for a sandbox.
-#[derive(
-    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
-)]
-#[schemars(inline)]
+/// Fabric harness identifier. Named variants retain existing native integrations;
+/// other validated identifiers are dispatched through Fabric's generic contract.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum HarnessKind {
-    #[serde(rename = "deepagents")]
     DeepAgents,
-    #[serde(rename = "hermes")]
     Hermes,
-    #[serde(rename = "openclaw")]
     OpenClaw,
-    #[serde(rename = "claude")]
     Claude,
-    #[serde(rename = "codex")]
     Codex,
-    #[serde(rename = "mini-swe-agent")]
     MiniSweAgent,
-    #[serde(rename = "nooa")]
     Nooa,
-    #[serde(rename = "nooa-bench")]
     NooaBench,
-    #[serde(rename = "remote-agent")]
     RemoteAgent,
-    #[serde(rename = "pi")]
     Pi,
+    Other(String),
 }
 impl HarnessKind {
-    pub const fn as_str(self) -> &'static str {
+    pub fn as_str(&self) -> &str {
         match self {
             Self::DeepAgents => "deepagents",
             Self::Hermes => "hermes",
@@ -43,6 +32,7 @@ impl HarnessKind {
             Self::NooaBench => "nooa-bench",
             Self::RemoteAgent => "remote-agent",
             Self::Pi => "pi",
+            Self::Other(value) => value,
         }
     }
 }
@@ -54,19 +44,51 @@ impl fmt::Display for HarnessKind {
 impl FromStr for HarnessKind {
     type Err = super::ConfigError;
     fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "deepagents" => Ok(Self::DeepAgents),
-            "hermes" => Ok(Self::Hermes),
-            "openclaw" => Ok(Self::OpenClaw),
-            "claude" => Ok(Self::Claude),
-            "codex" => Ok(Self::Codex),
-            "mini-swe-agent" => Ok(Self::MiniSweAgent),
-            "nooa" => Ok(Self::Nooa),
-            "nooa-bench" => Ok(Self::NooaBench),
-            "remote-agent" => Ok(Self::RemoteAgent),
-            "pi" => Ok(Self::Pi),
-            _ => Err(super::ConfigError::new("unsupported harness kind")),
+        if value.is_empty()
+            || value.len() > 63
+            || !value.as_bytes()[0].is_ascii_lowercase()
+            || !value
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+        {
+            return Err(super::ConfigError::new("invalid Fabric harness identifier"));
         }
+        Ok(match value {
+            "deepagents" => Self::DeepAgents,
+            "hermes" => Self::Hermes,
+            "openclaw" => Self::OpenClaw,
+            "claude" => Self::Claude,
+            "codex" => Self::Codex,
+            "mini-swe-agent" => Self::MiniSweAgent,
+            "nooa" => Self::Nooa,
+            "nooa-bench" => Self::NooaBench,
+            "remote-agent" => Self::RemoteAgent,
+            "pi" => Self::Pi,
+            _ => Self::Other(value.to_owned()),
+        })
+    }
+}
+impl Serialize for HarnessKind {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+impl<'de> Deserialize<'de> for HarnessKind {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer)?
+            .parse()
+            .map_err(serde::de::Error::custom)
+    }
+}
+impl schemars::JsonSchema for HarnessKind {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "HarnessKind".into()
+    }
+    fn inline_schema() -> bool {
+        true
+    }
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({"type":"string", "pattern":"^[a-z][a-z0-9-]{0,62}$(?![\\s\\S])", "minLength":1, "maxLength":63})
     }
 }
 

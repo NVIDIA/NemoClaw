@@ -175,8 +175,7 @@ fn guided_answers(
     let agent = &sandbox.agent;
     let harness = document
         .sandbox_harness(sandbox)
-        .map_err(|_| diagnostic("document", "guided editing requires a supported harness"))?
-        .kind;
+        .map_err(|_| diagnostic("document", "guided editing requires a harness"))?;
     let provider = document
         .inference_provider()
         .map_err(|_| diagnostic("document", "guided editing requires one selected provider"))?;
@@ -196,7 +195,7 @@ fn guided_answers(
         .env
         .clone();
     let Some(scenario) = capabilities.scenarios().iter().find(|scenario| {
-        scenario.harness == harness
+        scenario.harness == harness.kind
             && scenario.runtime == sandbox.runtime.provider
             && scenario.provider_kind == provider.provider
             && scenario.provider_api == provider.api
@@ -215,7 +214,9 @@ fn guided_answers(
         deployment_name: document.metadata.name.clone(),
         sandbox_name: sandbox.name.clone(),
         agent_name: agent.name.clone(),
-        harness,
+        harness: harness.kind.clone(),
+        image: sandbox.image.ref_.clone(),
+        harness_settings: harness.settings.clone(),
         runtime: sandbox.runtime.provider,
         inference: scenario.inference,
         api: scenario.api,

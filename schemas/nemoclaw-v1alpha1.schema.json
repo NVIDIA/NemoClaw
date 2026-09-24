@@ -767,23 +767,19 @@
         },
         "kind": {
           "description": "Fabric harness implementation for the sandbox agent.",
-          "enum": [
-            "deepagents",
-            "hermes",
-            "openclaw",
-            "claude",
-            "codex",
-            "mini-swe-agent",
-            "nooa",
-            "nooa-bench",
-            "remote-agent",
-            "pi"
-          ],
+          "maxLength": 63,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9-]{0,62}$(?![\\s\\S])",
           "type": "string"
         },
         "observability": {
           "$ref": "#/$defs/AgentObservability",
           "description": "Harness-native tracing shared by the sandbox."
+        },
+        "settings": {
+          "additionalProperties": true,
+          "description": "Opaque native settings validated by the selected Fabric adapter.",
+          "type": "object"
         }
       },
       "required": [

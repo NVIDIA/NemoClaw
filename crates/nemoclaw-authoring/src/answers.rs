@@ -49,6 +49,8 @@ pub struct Answers {
     pub sandbox_name: String,
     pub agent_name: String,
     pub harness: HarnessChoice,
+    pub image: String,
+    pub harness_settings: Option<serde_json::Map<String, serde_json::Value>>,
     pub runtime: RuntimeChoice,
     pub inference: ProviderPreset,
     pub api: ApiChoice,
@@ -102,6 +104,9 @@ impl Answers {
 
     /// Adopts one advertised scenario while preserving user-facing identity.
     pub fn for_scenario(mut self, scenario: &crate::Scenario) -> Self {
+        if self.harness != scenario.harness() {
+            self.harness_settings = None;
+        }
         self.harness = scenario.harness();
         self.runtime = scenario.runtime();
         self.inference = scenario.inference();

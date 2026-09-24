@@ -4,8 +4,8 @@ use nemoclaw_sdk::config::{Harness, InferenceProvider, Runtime};
 use serde_json::json;
 
 #[test]
-fn selectors_reject_unknown_values_at_deserialization() {
-    assert!(serde_json::from_value::<Harness>(json!({"kind":"unknown"})).is_err());
+fn closed_selectors_reject_unknown_values_and_harnesses_reject_malformed_identifiers() {
+    assert!(serde_json::from_value::<Harness>(json!({"kind":"../escape"})).is_err());
     assert!(serde_json::from_value::<Runtime>(json!({"provider":"unknown"})).is_err());
     assert!(
         serde_json::from_value::<InferenceProvider>(json!({"name":"model", "provider":"unknown"}))
@@ -38,7 +38,7 @@ fn selector_names_round_trip_without_changing_wire_values() {
             assert_eq!(&name.parse::<T>().unwrap(), kind);
             assert_eq!(kind.to_string(), *name);
         }
-        for name in ["", "unknown", "Docker", "OPENAI", "open-claw"] {
+        for name in ["", "../escape", "Docker", "OPENAI"] {
             assert!(name.parse::<T>().is_err());
             assert!(serde_json::from_value::<T>(json!(name)).is_err());
         }
@@ -54,6 +54,10 @@ fn selector_names_round_trip_without_changing_wire_values() {
         (HarnessKind::NooaBench, "nooa-bench"),
         (HarnessKind::RemoteAgent, "remote-agent"),
         (HarnessKind::Pi, "pi"),
+        (
+            HarnessKind::Other("fixture-new-agent".into()),
+            "fixture-new-agent",
+        ),
     ]);
     round_trip(&[
         (ComputeDriver::Docker, "docker"),
@@ -85,4 +89,11 @@ fn omitted_and_empty_runtime_select_docker_without_changing_intent_digest() {
         assert_eq!(parsed.digest(), document.digest());
         assert_eq!(parsed.yaml().unwrap(), document.yaml().unwrap());
     }
+}
+
+#[test]
+fn programmatic_harness_identifiers_cannot_bypass_native_variant_semantics() {
+    let mut harness: Harness = serde_json::from_value(json!({"kind":"openclaw"})).unwrap();
+    harness.kind = nemoclaw_sdk::config::HarnessKind::Other("openclaw".into());
+    assert!(harness.validate().is_err());
 }

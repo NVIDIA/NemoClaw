@@ -2003,6 +2003,7 @@ dependencies = [
  "getrandom 0.4.3",
  "nemoclaw-sdk",
  "serde-saphyr",
+ "serde_json",
 ]
 
 [[package]]

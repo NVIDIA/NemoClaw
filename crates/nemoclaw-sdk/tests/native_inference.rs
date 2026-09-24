@@ -53,10 +53,10 @@ fn provider_api_override_preserves_native_harness_selection() {
     ] {
         let mut document =
             Document::parse(include_str!("fixtures/config/local.yaml").as_bytes()).unwrap();
-        document.spec.sandboxes[0].harness.as_mut().unwrap().kind = harness;
-        let api = InferenceApi::for_harness(harness);
+        document.spec.sandboxes[0].harness.as_mut().unwrap().kind = harness.clone();
+        let api = InferenceApi::for_harness(harness.clone());
         let provider = &mut document.spec.inference_providers[0];
-        provider.api = api.provider_override(harness);
+        provider.api = api.provider_override(harness.clone());
         provider.provider = if api == InferenceApi::AnthropicMessages {
             nemoclaw_sdk::config::InferenceProviderKind::Anthropic
         } else {
@@ -80,4 +80,26 @@ fn provider_api_override_preserves_native_harness_selection() {
 
 fn provider_api(document: &Document) -> Option<nemoclaw_sdk::config::InferenceApi> {
     document.spec.inference_providers[0].api
+}
+
+#[test]
+fn explicit_protocol_is_preserved_for_selected_image_validation() {
+    use nemoclaw_sdk::config::{HarnessKind, InferenceApi, InferenceProviderKind};
+    let mut document =
+        Document::parse(include_str!("fixtures/config/local.yaml").as_bytes()).unwrap();
+    document.spec.sandboxes[0].harness.as_mut().unwrap().kind = HarnessKind::Codex;
+    document.spec.inference_providers[0].api = Some(InferenceApi::AnthropicMessages);
+    document.spec.inference_providers[0].provider = InferenceProviderKind::Anthropic;
+    document.validate().unwrap();
+    let generations: Generations = ["workspace", "provider", "sandbox"]
+        .map(|key| (key.into(), "a".repeat(32)))
+        .into();
+    let resources = targets(&document, &generations).unwrap();
+    let sandbox = resources
+        .iter()
+        .find(|resource| resource.kind == "sandbox")
+        .unwrap();
+    let settings: serde_json::Value =
+        serde_json::from_str(&sandbox.values["inference_json"]).unwrap();
+    assert_eq!(settings["api"], "anthropic-messages");
 }

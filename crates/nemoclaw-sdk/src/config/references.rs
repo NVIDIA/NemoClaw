@@ -171,8 +171,13 @@ impl Harness {
 
     pub fn validate(&self) -> Result<(), ConfigError> {
         super::schema::validate_definition("Harness", self)?;
+        if self.kind.as_str().parse::<super::HarnessKind>()? != self.kind {
+            return Err(ConfigError::new(
+                "harness identifier must use its canonical representation",
+            ));
+        }
         if let Some(interfaces) = &self.interfaces {
-            interfaces.validate(self.kind)?;
+            interfaces.validate(self.kind.clone())?;
         }
         Ok(())
     }

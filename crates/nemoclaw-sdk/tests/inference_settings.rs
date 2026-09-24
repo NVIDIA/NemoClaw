@@ -68,12 +68,12 @@ fn unsupported_or_out_of_range_options_fail_before_deployment() {
         );
     }
     let mut v = input("deepagents");
-    v["spec"]["inferenceProviders"][0]["api"] = json!("openai-responses");
+    v["spec"]["inferenceProviders"][0]["api"] = json!("unrecognized-protocol");
     assert!(parse(&v).is_err());
 }
 
 #[test]
-fn schema_checks_explicit_api_families_and_rust_checks_resolved_harness_limits() {
+fn explicit_apis_validate_transport_families_and_native_wire_requirements() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
     for harness in ["openclaw", "hermes", "claude", "codex", "deepagents", "pi"] {
         for api in [
@@ -89,13 +89,8 @@ fn schema_checks_explicit_api_families_and_rust_checks_resolved_harness_limits()
                 } else {
                     "openai"
                 });
-            let accepted = matches!(harness, "openclaw" | "hermes")
-                || matches!(
-                    (harness, api),
-                    ("claude", "anthropic-messages")
-                        | ("codex", "openai-responses")
-                        | ("deepagents", "openai-completions")
-                );
+            // Pi's native model metadata requires provider API omission.
+            let accepted = harness != "pi";
             assert_eq!(parse(&v).is_ok(), accepted, "{harness}/{api}");
             assert!(validator.is_valid(&v), "structural schema {harness}/{api}");
             v["spec"]["inferenceProviders"][0]["provider"] =

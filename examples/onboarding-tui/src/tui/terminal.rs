@@ -120,6 +120,7 @@ pub(crate) async fn run(
             wizard.target_status = Some(status);
             wizard.discovery = Some(evidence);
             wizard.facts = facts;
+            wizard.refresh_catalog();
             last_inputs = Some(inputs);
         }
         was_review = is_review;

@@ -53,9 +53,7 @@ pub fn environment(name: &str, runtime: &str) -> Row {
         .into_iter()
         .map(|(k, v)| (k.into(), v.into()))
         .collect();
-        if harness != HarnessKind::DeepAgents {
-            env.insert("NEMOCLAW_FABRIC_HARNESS".into(), harness.to_string());
-        }
+        env.insert("NEMOCLAW_FABRIC_HARNESS".into(), harness.to_string());
         if harness == HarnessKind::OpenClaw {
             env.insert("PYTHONPATH".into(), "/opt/nemoclaw".into());
         }
@@ -114,4 +112,23 @@ pub fn policy_matches(actual: &proto::SandboxPolicy) -> bool {
         && filesystem == expected_filesystem
         && actual.network_policies.is_empty()
         && actual.network_middlewares.is_empty()
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn arbitrary_fabric_adapter_is_forwarded_to_the_runtime_bridge() {
+        let runtime = "fabric-fixture-custom-adapter";
+        let environment = super::environment("agent", runtime);
+        assert_eq!(
+            environment
+                .get("NEMOCLAW_FABRIC_HARNESS")
+                .map(String::as_str),
+            Some("fixture-custom-adapter")
+        );
+        assert_eq!(
+            super::command(runtime),
+            ["/opt/fabric/bin/python", "/opt/nemoclaw/fabric.py", "serve"]
+        );
+    }
 }

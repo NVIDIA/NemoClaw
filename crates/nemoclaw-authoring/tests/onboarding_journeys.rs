@@ -230,34 +230,33 @@ fn hermes_can_use_the_shared_nous_provider() {
 }
 
 #[test]
-fn deep_agents_and_pi_receive_only_protocols_their_native_clients_support() {
+fn native_api_omission_preserves_the_effective_protocol() {
     let capabilities = Capabilities::available();
     let mut draft = begin(&capabilities);
 
-    for harness in [HarnessKind::DeepAgents, HarnessKind::Pi] {
-        choose(
-            &mut draft,
-            &capabilities,
-            EditableField::Harness,
-            FieldValue::Harness(harness),
-        );
-        assert_eq!(
-            choices(&draft, &capabilities, EditableField::Api),
-            [FieldValue::Api(InferenceApi::OpenaiCompletions)]
-        );
-        assert!(
-            !choices(&draft, &capabilities, EditableField::Inference)
-                .contains(&FieldValue::Inference(ProviderPreset::Anthropic))
-        );
-        assert_eq!(
-            draft.document().spec.sandboxes[0]
-                .harness
-                .as_ref()
-                .unwrap()
-                .kind,
-            harness
-        );
-    }
+    let harness = HarnessKind::Pi;
+    choose(
+        &mut draft,
+        &capabilities,
+        EditableField::Harness,
+        FieldValue::Harness(harness.clone()),
+    );
+    assert_eq!(
+        choices(&draft, &capabilities, EditableField::Api),
+        [FieldValue::Api(InferenceApi::OpenaiCompletions)]
+    );
+    assert!(
+        !choices(&draft, &capabilities, EditableField::Inference)
+            .contains(&FieldValue::Inference(ProviderPreset::Anthropic))
+    );
+    assert_eq!(
+        draft.document().spec.sandboxes[0]
+            .harness
+            .as_ref()
+            .unwrap()
+            .kind,
+        harness
+    );
 }
 
 #[test]

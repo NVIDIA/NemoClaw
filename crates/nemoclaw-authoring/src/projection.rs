@@ -83,7 +83,7 @@ impl Session {
             });
         }
         let scenario = capabilities.scenario(
-            answers.harness,
+            answers.harness.clone(),
             answers.runtime,
             answers.inference,
             answers.api,
@@ -145,11 +145,15 @@ impl Session {
                 }],
                 sandboxes: vec![Sandbox {
                     harness: Some(Harness {
-                        kind: scenario.harness,
+                        kind: scenario.harness.clone(),
+                        settings: answers.harness_settings.clone(),
                         observability: None,
                         execution: None,
                         interfaces: None,
                     }),
+                    image: nemoclaw_sdk::config::Image {
+                        ref_: answers.image.clone(),
+                    },
                     name: answers.sandbox_name.clone(),
                     runtime: Runtime {
                         provider: answers.runtime,

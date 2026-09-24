@@ -9,6 +9,7 @@ import os
 import re
 import signal
 import sys
+import sysconfig
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -149,6 +150,56 @@ def configured_agent(name, inference, *, match_name=True):
     return agent
 
 
+def descriptor_paths():
+    """Read installed Fabric metadata without importing adapter code."""
+    roots = [
+        Path(sysconfig.get_path("data")) / "share/nemo-fabric/adapters",
+        Path("/opt/fabric-source/adapters/typescript"),
+    ]
+    installed = {path for root in roots for path in root.rglob("*.fabric-adapter.json")}
+    installed.update(Path("/opt/nemoclaw").glob("*.fabric-adapter.json"))
+    return sorted(installed)
+
+
+def discover_adapter(harness, preferred=None):
+    candidates = []
+    paths = descriptor_paths()
+    for path in paths:
+        if path.name.removesuffix(".fabric-adapter.json") != harness:
+            continue
+        try:
+            descriptor = json.loads(path.read_text())
+        except (OSError, ValueError) as error:
+            raise ValueError(f"invalid adapter descriptor: {path}") from error
+        candidates.append((descriptor, str(path)))
+    # Source-checkout configuration tests use the generated upstream descriptors.
+    # Runtime images deliberately have no adjacent catalog: installed metadata wins.
+    source_catalog = Path(__file__).with_name("catalog.json")
+    if not paths and source_catalog.is_file():
+        candidates = [
+            (entry["descriptor"], None)
+            for entry in json.loads(source_catalog.read_text())["adapters"]
+            if entry["harness"] == harness
+        ]
+    for descriptor, path in candidates:
+        if (
+            not isinstance(descriptor, dict)
+            or descriptor.get("contract_version") != "fabric.adapter/v1alpha2"
+            or not isinstance(descriptor.get("adapter_id"), str)
+            or not descriptor["adapter_id"]
+            or not isinstance(descriptor.get("adapter_kind"), str)
+            or not descriptor["adapter_kind"]
+        ):
+            raise ValueError(f"invalid adapter descriptor: {path or harness}")
+    if preferred:
+        candidates = [item for item in candidates if item[0]["adapter_id"] == preferred]
+    if not candidates:
+        raise ValueError(f"Fabric adapter unavailable for harness {harness}")
+    if len(candidates) != 1:
+        raise ValueError(f"ambiguous Fabric adapter metadata for harness {harness}")
+    return candidates[0]
+
+
 def configuration(name, harness="deepagents", model=None, inference=None):
     if inference is None and os.environ.get("NEMOCLAW_INFERENCE_CONFIG"):
         inference = json.loads(os.environ["NEMOCLAW_INFERENCE_CONFIG"])
@@ -171,46 +222,17 @@ def configuration(name, harness="deepagents", model=None, inference=None):
         ):
             raise ValueError("Pi requires a valid configured route model")
     relay = harness == "hermes" and hermes_relay_enabled(inference)
-    adapter = {
-        "deepagents": "nvidia.fabric.langchain.deepagents",
-        "hermes": "nemoclaw.local.hermes",
-        "openclaw": "nemoclaw.local.openclaw",
-        "claude": "nvidia.fabric.claude",
-        "codex": "nvidia.fabric.codex",
-        "mini-swe-agent": "nvidia.fabric.mini-swe-agent",
-        "nooa": "nvidia.fabric.nooa",
-        "nooa-bench": "nvidia.fabric.nooa.bench-agent",
-        "remote-agent": "nvidia.fabric.remote-agent",
-        "pi": "nvidia.fabric.pi",
-    }[harness]
     native_interfaces = harness == "hermes" and (
         (inference or {}).get("interfaces") is not None
         or (inference or {}).get("webSearch") is not None
     )
-    if relay and not native_interfaces:
-        adapter = "nvidia.fabric.hermes"
+    preferred = None
+    if harness == "hermes":
+        preferred = "nvidia.fabric.hermes" if relay and not native_interfaces else "nemoclaw.local.hermes"
+    descriptor, descriptor_path = discover_adapter(harness, preferred)
+    adapter = descriptor["adapter_id"]
     config = {
-        **(
-            {"discovery": {"local_paths": ["/opt/nemoclaw/openclaw.fabric-adapter.json"]}}
-            if harness == "openclaw"
-            else {}
-        ),
-        **(
-            {"discovery": {"local_paths": ["/opt/nemoclaw/hermes.fabric-adapter.json"]}}
-            if harness == "hermes" and (not relay or native_interfaces)
-            else {}
-        ),
-        **(
-            {
-                "discovery": {
-                    "local_paths": [
-                        "/opt/fabric-source/adapters/typescript/pi/pi.fabric-adapter.json"
-                    ]
-                }
-            }
-            if harness == "pi"
-            else {}
-        ),
+        **({"discovery": {"local_paths": [descriptor_path]}} if descriptor_path else {}),
         "metadata": {"name": name},
         **({"workflow": {"target_id": "nvidia.nooa.coding-agent"}} if harness == "nooa" else {}),
         "harness": {
@@ -338,6 +360,15 @@ def configuration(name, harness="deepagents", model=None, inference=None):
         if choices["models"][choices["default"]]["pi"] != model:
             raise ValueError("Pi configured default differs from the declared choice")
         config["models"]["default"] = dict(config["models"][f"route_{choices['default']}"])
+    if (inference or {}).get("settings") is not None:
+        supplied = inference["settings"]
+        if not isinstance(supplied, dict):
+            raise ValueError("adapter settings must be an object")
+        settings = config["harness"].setdefault("settings", {})
+        for key, value in supplied.items():
+            if key in settings and settings[key] != value:
+                raise ValueError("adapter setting conflicts with bridge-owned configuration")
+            settings[key] = copy.deepcopy(value)
     return config
 
 

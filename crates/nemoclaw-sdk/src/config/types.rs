@@ -381,6 +381,10 @@ pub struct Overrides {
 #[serde(deny_unknown_fields)]
 /// One harness runtime configuration. Every sandbox runs its own instance for its configured agent.
 pub struct Harness {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "serde_json::Map<String, serde_json::Value>")]
+    /// Opaque native settings validated by the selected Fabric adapter.
+    pub settings: Option<serde_json::Map<String, serde_json::Value>>,
     /// Fabric harness implementation for the sandbox agent.
     pub kind: super::HarnessKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]

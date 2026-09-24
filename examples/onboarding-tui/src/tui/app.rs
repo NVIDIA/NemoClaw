@@ -34,6 +34,9 @@ pub(crate) enum Input {
 
 pub(crate) struct Wizard {
     pub(super) capabilities: Capabilities,
+    base_capabilities: Capabilities,
+    catalog_capabilities: Option<Capabilities>,
+    catalog_snapshot: Option<nemoclaw_sdk::fabric_catalog::FabricCatalog>,
     pub(super) draft: Draft,
     pub(super) step: Step,
     pub(super) selected: usize,
@@ -57,7 +60,13 @@ impl Wizard {
     }
 
     pub(super) fn for_host(capabilities: Capabilities, draft: Draft, host_os: &str) -> Self {
+        let capabilities = capabilities
+            .preserving_draft(&draft)
+            .expect("wizard receives a losslessly representable guided draft");
         Self {
+            base_capabilities: capabilities.clone(),
+            catalog_capabilities: None,
+            catalog_snapshot: None,
             capabilities,
             draft,
             step: Step::Welcome,
@@ -105,6 +114,7 @@ impl Wizard {
     }
 
     pub(crate) fn handle(&mut self, input: Input) {
+        self.refresh_catalog();
         if matches!(input, Input::Cancel) {
             self.cancelled = true;
             return;
@@ -148,6 +158,49 @@ impl Wizard {
             Input::Continue => self.advance(),
             _ => {}
         }
+    }
+
+    fn current_catalog(&self) -> Option<&nemoclaw_sdk::fabric_catalog::FabricCatalog> {
+        let key = self.draft.discovery_key().ok()?;
+        let evidence = self.discovery.as_ref()?;
+        if evidence.key.engine != key.engine || evidence.key.image != key.image {
+            return None;
+        }
+        let observed = evidence.fabric.as_ref()?;
+        if observed.status == nemoclaw_sdk::discovery::ObservationStatus::Unavailable {
+            return None;
+        }
+        observed.catalog.as_ref()
+    }
+
+    pub(super) fn refresh_catalog(&mut self) {
+        let catalog = self.current_catalog().cloned();
+        if catalog == self.catalog_snapshot {
+            return;
+        }
+        let custom_selection =
+            self.step == Step::Model && self.selected == self.choice_values().len();
+        let selected = self.choice_values().get(self.selected).cloned();
+        self.catalog_capabilities = self.current_catalog().map(Capabilities::from_catalog);
+        let mut capabilities = self.base_capabilities.clone();
+        if let Some(catalog) = self.current_catalog() {
+            capabilities = capabilities.with_catalog(catalog);
+        }
+        self.capabilities = capabilities
+            .preserving_draft(&self.draft)
+            .expect("discovery preserves the existing guided draft");
+        self.catalog_snapshot = catalog;
+        if custom_selection {
+            self.selected = self.choice_values().len();
+            return;
+        }
+        self.selected = selected
+            .and_then(|value| {
+                self.choice_values()
+                    .iter()
+                    .position(|choice| choice == &value)
+            })
+            .unwrap_or_else(|| self.current_choice_index());
     }
 
     pub(super) fn can_offer_delegation(&self) -> bool {
@@ -399,9 +452,19 @@ impl Wizard {
     }
 
     fn choice_values(&self) -> Vec<FieldValue> {
-        self.field_state()
-            .map(|field| field.choices().to_vec())
-            .unwrap_or_default()
+        let Some(field) = self.field_state() else {
+            return Vec::new();
+        };
+        let mut choices = field.choices().to_vec();
+        if self.current_catalog().is_some()
+            && let Some(offered) = &self.catalog_capabilities
+            && let Ok(answers) = self.draft.guided_answers(&self.capabilities)
+        {
+            choices.retain(|choice| {
+                choice == field.value() || offered.offers(&answers, field.id(), choice)
+            });
+        }
+        choices
     }
 
     pub(super) fn runtime_unavailable_reason(
@@ -415,6 +478,18 @@ impl Wizard {
 
     pub(super) fn choice_unavailable_reason(&self, index: usize) -> Option<&'static str> {
         match self.choice_values().get(index) {
+            Some(choice)
+                if self.current_catalog().is_some()
+                    && self.catalog_capabilities.as_ref().is_some_and(|offered| {
+                        self.field()
+                            .zip(self.draft.guided_answers(&self.capabilities).ok())
+                            .is_some_and(|(field, answers)| {
+                                !offered.offers(&answers, field, choice)
+                            })
+                    }) =>
+            {
+                Some("not advertised by the selected image")
+            }
             Some(FieldValue::Runtime(runtime)) => self.runtime_unavailable_reason(*runtime),
             _ => None,
         }
@@ -473,11 +548,11 @@ impl Wizard {
         let Some(field) = self.field_state() else {
             return 0;
         };
-        field
-            .choices()
+        let choices = self.choice_values();
+        choices
             .iter()
             .position(|choice| choice == field.value())
-            .unwrap_or(field.choices().len())
+            .unwrap_or(choices.len())
     }
 
     fn commit_choice(&mut self) -> Result<GuidedEdit, nemoclaw_authoring::Diagnostics> {

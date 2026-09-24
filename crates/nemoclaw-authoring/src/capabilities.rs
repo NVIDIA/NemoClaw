@@ -32,7 +32,7 @@ pub struct Capabilities {
 
 impl Scenario {
     pub fn harness(&self) -> HarnessChoice {
-        self.harness
+        self.harness.clone()
     }
     pub fn runtime(&self) -> RuntimeChoice {
         self.runtime
@@ -76,7 +76,7 @@ impl Capabilities {
             .iter()
             .filter_map(|adapter| adapter.harness.parse().ok())
             .collect();
-        harnesses.sort_by_key(|harness| harness.as_str());
+        harnesses.sort_by(|a, b| a.as_str().cmp(b.as_str()));
         let mut capabilities = Self::from_harnesses(harnesses);
         capabilities.scenarios.retain(|scenario| {
             use nemoclaw_sdk::fabric_capabilities::{
@@ -105,7 +105,7 @@ impl Capabilities {
             if seen.contains(&harness) {
                 continue;
             }
-            seen.push(harness);
+            seen.push(harness.clone());
             for runtime in [RuntimeChoice::Docker, RuntimeChoice::Podman] {
                 for inference in [
                     ProviderPreset::NvidiaEndpoints,
@@ -117,11 +117,68 @@ impl Capabilities {
                     ProviderPreset::Gemini,
                     ProviderPreset::Nous,
                 ] {
-                    append_provider_scenarios(&mut scenarios, harness, runtime, inference);
+                    append_provider_scenarios(&mut scenarios, harness.clone(), runtime, inference);
                 }
             }
         }
         Self { scenarios }
+    }
+
+    /// Retain only the document's selected scenario so an unobserved or changed
+    /// catalog cannot prevent reopening intent. This does not establish support.
+    pub fn preserving_draft(&self, draft: &crate::Draft) -> Result<Self, crate::Diagnostics> {
+        let document = draft.document();
+        let [sandbox] = document.spec.sandboxes.as_slice() else {
+            return Err(crate::diagnostics::diagnostic(
+                "document",
+                "guided editing requires one onboarding sandbox",
+            ));
+        };
+        let harness = document
+            .sandbox_harness(sandbox)
+            .map_err(|error| crate::diagnostics::diagnostic("document", &error.to_string()))?
+            .kind
+            .clone();
+        let mut candidates = self.clone();
+        candidates.extend(Self::from_harnesses([harness]).scenarios);
+        // Reuse the projection's full roundtrip check before retaining any scenario.
+        let answers = draft.guided_answers(&candidates)?;
+        let scenario = candidates
+            .scenario(
+                answers.harness,
+                answers.runtime,
+                answers.inference,
+                answers.api,
+            )
+            .expect("guided answers identify a representable scenario")
+            .clone();
+        let mut result = self.clone();
+        result.extend([scenario]);
+        Ok(result)
+    }
+
+    /// Add observed scenarios without losing the draft's existing representation.
+    /// Consumers still scope offered choices to the catalog's image and engine.
+    pub fn with_catalog(&self, catalog: &nemoclaw_sdk::fabric_catalog::FabricCatalog) -> Self {
+        let mut result = self.clone();
+        result.extend(Self::from_catalog(catalog).scenarios);
+        result
+    }
+
+    fn extend(&mut self, scenarios: impl IntoIterator<Item = Scenario>) {
+        for scenario in scenarios {
+            if self
+                .scenario(
+                    scenario.harness.clone(),
+                    scenario.runtime,
+                    scenario.inference,
+                    scenario.api,
+                )
+                .is_none()
+            {
+                self.scenarios.push(scenario);
+            }
+        }
     }
 
     pub(crate) fn scenario(
@@ -182,14 +239,17 @@ fn append_provider_scenarios(
     };
     let (provider_kind, name, endpoint, credential, custom_endpoint, custom_model, default_model) =
         provider_profile(inference);
-    for api in apis.iter().copied().filter(|api| api.supported(harness)) {
+    for api in apis.iter().copied().filter(|api| {
+        api.provider_override(harness.clone()).is_some()
+            || *api == InferenceApi::for_harness(harness.clone())
+    }) {
         scenarios.push(Scenario {
-            harness,
+            harness: harness.clone(),
             runtime,
             inference,
             api,
             provider_kind,
-            provider_api: api.provider_override(harness),
+            provider_api: api.provider_override(harness.clone()),
             provider_name: name,
             endpoint,
             credential_env: credential,

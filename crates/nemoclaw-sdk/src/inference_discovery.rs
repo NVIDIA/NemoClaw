@@ -117,7 +117,7 @@ pub fn endpoint_requests(document: &Document) -> Result<Vec<EndpointRequest>, Er
     document.validate()?;
     let mut requests = Vec::new();
     for sandbox in &document.spec.sandboxes {
-        let harness = document.sandbox_harness(sandbox)?.kind;
+        let harness = document.sandbox_harness(sandbox)?.kind.clone();
         for provider in document.sandbox_inference_providers(sandbox)? {
             if provider.definition.service_ref.is_some() {
                 continue;
@@ -128,7 +128,7 @@ pub fn endpoint_requests(document: &Document) -> Result<Vec<EndpointRequest>, Er
                 api: provider
                     .definition
                     .api
-                    .unwrap_or(InferenceApi::for_harness(harness)),
+                    .unwrap_or(InferenceApi::for_harness(harness.clone())),
                 credential_env: connection.credential.map(|credential| credential.env),
             };
             request.validate()?;

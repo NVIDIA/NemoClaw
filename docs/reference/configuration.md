@@ -441,8 +441,9 @@ Paths:
 |---|---|---|---|---|
 | `execution` | [AgentExecution](#agentexecution) | No | — | OpenClaw timeout and heartbeat defaults shared by the sandbox. |
 | `interfaces` | [AgentInterfaces](#agentinterfaces) | No | — | Native dashboard access for this sandbox runtime. |
-| `kind` | string | Yes | — | Fabric harness implementation for the sandbox agent. Constraints: `"deepagents"` or `"hermes"` or `"openclaw"` or `"claude"` or `"codex"` or `"mini-swe-agent"` or `"nooa"` or `"nooa-bench"` or `"remote-agent"` or `"pi"`. |
+| `kind` | string | Yes | — | Fabric harness implementation for the sandbox agent. Constraints: pattern `^[a-z][a-z0-9-]{0,62}$(?![\s\S])`; minimum characters 1; maximum characters 63. |
 | `observability` | [AgentObservability](#agentobservability) | No | — | Harness-native tracing shared by the sandbox. |
+| `settings` | object | No | — | Opaque native settings validated by the selected Fabric adapter. |
 
 ## HermesApi
 

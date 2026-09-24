@@ -197,6 +197,9 @@ impl Document {
         let harnesses = &self.spec.harnesses;
         for sandbox in &mut self.spec.sandboxes {
             let harness = sandbox.resolve_harness(harnesses).ok();
+            if harness.is_some_and(|harness| matches!(harness.kind, HarnessKind::Other(_))) {
+                continue;
+            }
             let default_image =
                 if harness.is_some_and(|harness| harness.kind == HarnessKind::Hermes) {
                     DEFAULT_HERMES_IMAGE

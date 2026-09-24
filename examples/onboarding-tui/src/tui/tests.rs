@@ -384,7 +384,7 @@ fn a_conflicting_choice_can_be_cancelled_or_explicitly_accepted() {
         .unwrap()
         .accept();
     wizard.handle(Input::Continue);
-    select_label(&mut wizard, HarnessChoice::DeepAgents.as_str());
+    select_label(&mut wizard, HarnessChoice::Pi.as_str());
     let original = wizard.draft().review().unwrap().yaml().to_owned();
     wizard.handle(Input::Continue);
     assert!(wizard.pending_edit.is_some());
@@ -407,7 +407,7 @@ fn a_conflicting_choice_can_be_cancelled_or_explicitly_accepted() {
             .guided_answers(&wizard.capabilities)
             .unwrap()
             .harness,
-        HarnessChoice::DeepAgents
+        HarnessChoice::Pi
     );
 }
 
@@ -666,6 +666,7 @@ fn observed_adapter_conflict_blocks_review_until_the_selection_changes() {
     use nemoclaw_authoring::DiscoveryEvidence;
     use nemoclaw_sdk::discovery::{EngineObservation, FabricObservation, ObservationStatus};
     let mut wizard = wizard();
+    navigate(&mut wizard, Step::Review, Input::Continue);
     let key = wizard.draft.discovery_key().unwrap();
     let mut catalog = nemoclaw_sdk::fabric_catalog::FabricCatalog::bundled();
     catalog
@@ -1178,4 +1179,112 @@ fn bulk_delegation_requires_an_explicit_harness_choice_even_for_other_frontends(
             )
             .is_err()
     );
+}
+
+#[test]
+fn live_image_catalog_adds_an_unknown_harness_to_the_actual_wizard() {
+    let mut wizard = wizard();
+    let before = wizard.draft.document().clone();
+    install_live_fixture_catalog(&mut wizard);
+    wizard.handle(Input::Continue);
+    assert!(
+        wizard
+            .choice_labels()
+            .contains(&"fixture-live-adapter".into())
+    );
+    assert_eq!(
+        wizard.draft.document(),
+        &before,
+        "observations cannot rewrite intent"
+    );
+    select_label(&mut wizard, "fixture-live-adapter");
+    wizard.handle(Input::Continue);
+    assert_eq!(
+        wizard
+            .draft
+            .document()
+            .sandbox_harness(&wizard.draft.document().spec.sandboxes[0])
+            .unwrap()
+            .kind
+            .as_str(),
+        "fixture-live-adapter"
+    );
+    assert_eq!(
+        wizard.draft.document().spec.sandboxes[0].image,
+        before.spec.sandboxes[0].image
+    );
+    navigate(&mut wizard, Step::Review, Input::Continue);
+}
+
+fn install_live_fixture_catalog(wizard: &mut Wizard) {
+    establish_compatible_discovery(wizard);
+    let catalog = wizard
+        .discovery
+        .as_mut()
+        .unwrap()
+        .fabric
+        .as_mut()
+        .unwrap()
+        .catalog
+        .as_mut()
+        .unwrap();
+    let mut adapter = catalog.adapters[0].clone();
+    adapter.harness = "fixture-live-adapter".into();
+    adapter.adapter_id = "fixture-live-adapter".into();
+    adapter.descriptor["adapter_id"] = "fixture-live-adapter".into();
+    catalog.adapters = vec![adapter];
+}
+
+#[test]
+fn image_catalog_choices_expire_with_their_target_without_erasing_selected_intent() {
+    let mut wizard = wizard();
+    install_live_fixture_catalog(&mut wizard);
+    wizard.handle(Input::Continue);
+    assert!(!wizard.choice_labels().contains(&"claude".into()));
+    wizard
+        .discovery
+        .as_mut()
+        .unwrap()
+        .key
+        .engine
+        .push_str("-stale");
+    wizard.refresh_catalog();
+    assert!(
+        !wizard
+            .choice_labels()
+            .contains(&"fixture-live-adapter".into())
+    );
+    assert!(wizard.choice_labels().contains(&"claude".into()));
+
+    install_live_fixture_catalog(&mut wizard);
+    wizard.refresh_catalog();
+    select_label(&mut wizard, "fixture-live-adapter");
+    wizard.handle(Input::Continue);
+    let selected = wizard.draft.document().clone();
+    wizard.discovery.as_mut().unwrap().fabric = None;
+    wizard.refresh_catalog();
+    assert_eq!(wizard.draft.document(), &selected);
+    assert_eq!(
+        wizard
+            .draft
+            .guided_answers(&wizard.capabilities)
+            .unwrap()
+            .harness
+            .as_str(),
+        "fixture-live-adapter"
+    );
+    navigate(&mut wizard, Step::Review, Input::Continue);
+}
+
+#[test]
+fn reopened_unknown_harness_is_reviewable_before_discovery() {
+    let mut document = wizard().draft.document().clone();
+    document.spec.sandboxes[0].harness.as_mut().unwrap().kind =
+        "fixture-reopen-adapter".parse().unwrap();
+    let draft = Draft::from_document(document.clone()).unwrap();
+    let mut wizard = Wizard::new(Capabilities::available(), draft);
+    navigate(&mut wizard, Step::Review, Input::Continue);
+    assert_eq!(wizard.draft.document(), &document);
+    wizard.handle(Input::Continue);
+    assert!(wizard.accepted());
 }

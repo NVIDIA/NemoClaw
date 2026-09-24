@@ -112,7 +112,7 @@ impl Draft {
                 *field != EditableField::Endpoint
                     || capabilities
                         .scenario(
-                            answers.harness,
+                            answers.harness.clone(),
                             answers.runtime,
                             answers.inference,
                             answers.api,
@@ -147,7 +147,7 @@ fn field_state(
         choices: choices(capabilities, answers, field),
         accepts_custom: capabilities
             .scenario(
-                answers.harness,
+                answers.harness.clone(),
                 answers.runtime,
                 answers.inference,
                 answers.api,
@@ -162,7 +162,7 @@ fn field_state(
 
 fn current_value(answers: &Answers, field: EditableField) -> FieldValue {
     match field {
-        EditableField::Harness => FieldValue::Harness(answers.harness),
+        EditableField::Harness => FieldValue::Harness(answers.harness.clone()),
         EditableField::Runtime => FieldValue::Runtime(answers.runtime),
         EditableField::Inference => FieldValue::Inference(answers.inference),
         EditableField::Api => FieldValue::Api(answers.api),
@@ -233,7 +233,7 @@ fn set_value(
     if field == EditableField::Model
         && let FieldValue::Model(model) = &value
         && let Some(scenario) = capabilities.scenario(
-            answers.harness,
+            answers.harness.clone(),
             answers.runtime,
             answers.inference,
             answers.api,
@@ -306,7 +306,7 @@ fn compatibility_score(scenario: &Scenario, answers: &Answers, changed: Editable
     [
         (
             EditableField::Harness,
-            scenario.harness() == answers.harness,
+            scenario.harness() == answers.harness.clone(),
         ),
         (
             EditableField::Runtime,
@@ -435,5 +435,13 @@ impl Draft {
             .filter(|other| *other != field && draft.accepted.contains(other))
             .collect();
         Ok(GuidedEdit { draft, conflicts })
+    }
+}
+
+impl Capabilities {
+    /// Whether the active scenario domain offers this value, including free text.
+    pub fn offers(&self, answers: &Answers, field: EditableField, value: &FieldValue) -> bool {
+        let state = field_state(self, answers, field);
+        state.accepts_custom() || !state.is_choice() || state.choices().contains(value)
     }
 }

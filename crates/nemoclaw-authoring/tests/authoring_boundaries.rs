@@ -165,8 +165,7 @@ fn direct_authoring_reports_the_first_unavailable_choice_in_the_journey() {
     );
 
     let unsupported_api = Answers {
-        harness: HarnessKind::DeepAgents,
-        api: InferenceApi::OpenaiResponses,
+        api: InferenceApi::AnthropicMessages,
         ..Answers::onboarding_defaults()
     };
     assert_eq!(

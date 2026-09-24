@@ -337,7 +337,7 @@ fn the_guide_rejects_a_choice_that_is_not_available_at_that_point_in_the_journey
         &mut draft,
         &capabilities,
         EditableField::Harness,
-        FieldValue::Harness(HarnessKind::DeepAgents),
+        FieldValue::Harness(HarnessKind::Pi),
     );
 
     let diagnostics = draft
@@ -397,7 +397,7 @@ fn accepted_answers_are_preserved_until_a_conflicting_edit_is_confirmed() {
         .propose_guided_edit(
             &capabilities,
             EditableField::Harness,
-            FieldValue::Harness(HarnessKind::DeepAgents),
+            FieldValue::Harness(HarnessKind::Pi),
         )
         .unwrap();
     assert!(
@@ -430,7 +430,7 @@ fn untouched_template_defaults_can_change_without_an_accepted_answer_conflict() 
         .propose_guided_edit(
             &capabilities,
             EditableField::Harness,
-            FieldValue::Harness(HarnessKind::DeepAgents),
+            FieldValue::Harness(HarnessKind::Pi),
         )
         .unwrap();
     assert!(edit.conflicts().is_empty());
@@ -616,8 +616,7 @@ fn observed_harnesses_bound_authoring_choices_without_inventing_support() {
         Capabilities::from_harnesses([HarnessKind::Codex])
             .scenarios()
             .iter()
-            .all(|scenario| scenario.harness() == HarnessKind::Codex
-                && scenario.api() == InferenceApi::OpenaiResponses)
+            .all(|scenario| scenario.harness() == HarnessKind::Codex)
     );
 }
 
@@ -697,11 +696,16 @@ fn every_sdk_known_catalog_harness_can_be_authored_and_roundtripped() {
             &mut draft,
             &capabilities,
             EditableField::Harness,
-            FieldValue::Harness(harness),
+            FieldValue::Harness(harness.clone()),
         );
         let answers = draft.guided_answers(&capabilities).unwrap();
         assert_eq!(answers.harness, harness);
-        assert!(answers.api.supported(harness));
+        assert!(
+            capabilities
+                .scenarios()
+                .iter()
+                .any(|scenario| scenario.harness() == harness && scenario.api() == answers.api)
+        );
         assert_eq!(scenario.harness(), harness);
         let review = draft.review().unwrap();
         let parsed = nemoclaw_sdk::config::Document::parse(review.yaml().as_bytes()).unwrap();
@@ -731,5 +735,96 @@ fn inference_profiles_follow_protocols_without_harness_brand_restrictions() {
             .iter()
             .filter(|scenario| scenario.inference() == ProviderPreset::AnthropicCompatible)
             .all(|scenario| scenario.api() == InferenceApi::AnthropicMessages)
+    );
+}
+
+#[test]
+fn a_previously_unknown_fabric_harness_is_authorable_without_a_code_registration() {
+    let mut catalog = nemoclaw_sdk::fabric_catalog::FabricCatalog::bundled();
+    let mut descriptor = catalog
+        .adapters
+        .iter()
+        .find(|adapter| adapter.harness == "openclaw")
+        .unwrap()
+        .clone();
+    descriptor.harness = "fixture-new-agent".into();
+    descriptor.adapter_id = "test.fixture.new-agent".into();
+    descriptor.descriptor["adapter_id"] = descriptor.adapter_id.clone().into();
+    catalog.adapters.push(descriptor);
+    let capabilities = Capabilities::from_catalog(&catalog);
+    let scenario = capabilities
+        .scenarios()
+        .iter()
+        .find(|scenario| scenario.harness().as_str() == "fixture-new-agent")
+        .expect("a descriptor-provided harness must not require SDK registration");
+    let mut answers = Answers::onboarding_defaults().for_scenario(scenario);
+    answers.image = "registry.example.test/custom-fabric@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into();
+    answers.harness_settings = Some(
+        serde_json::from_value(serde_json::json!({
+            "custom_option": { "limit": 7, "optional": null },
+            "flags": [true, "fixture"]
+        }))
+        .unwrap(),
+    );
+    let authored = Session::new()
+        .unwrap()
+        .project(&capabilities, &answers)
+        .unwrap();
+    let restored = Draft::from_yaml(authored.yaml().as_bytes()).unwrap();
+    assert_eq!(restored.guided_answers(&capabilities).unwrap(), answers);
+    assert!(authored.yaml().contains("fixture-new-agent"));
+    let generations = [
+        "workspace",
+        "provider",
+        "sandbox",
+        "managed_gateway",
+        "inference_service",
+    ]
+    .map(|kind| (kind.into(), "a".repeat(32)))
+    .into();
+    let graph = nemoclaw_sdk::compile::compile(restored.document(), &generations, "0.1.0").unwrap();
+    let sandbox = &graph["resource"]["nemoclaw_sandbox"][&answers.sandbox_name];
+    assert_eq!(sandbox["agent_runtime"], "fabric-fixture-new-agent");
+    let runtime: serde_json::Value =
+        serde_json::from_str(sandbox["inference_json"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        runtime["settings"],
+        serde_json::to_value(&answers.harness_settings).unwrap()
+    );
+}
+
+#[test]
+fn updated_metadata_can_offer_a_new_protocol_for_an_existing_harness() {
+    let mut catalog = nemoclaw_sdk::fabric_catalog::FabricCatalog::bundled();
+    catalog
+        .adapters
+        .retain(|adapter| adapter.harness == "codex");
+    catalog.adapters[0].descriptor["settings_schema"] = serde_json::json!({
+        "type": "object", "properties": {"api_type": {"enum": ["anthropic-messages"]}}
+    });
+    let capabilities = Capabilities::from_catalog(&catalog);
+    let scenario = capabilities
+        .scenarios()
+        .iter()
+        .find(|scenario| {
+            scenario.harness() == HarnessKind::Codex
+                && scenario.inference() == ProviderPreset::Anthropic
+        })
+        .expect("updated descriptor must override the old protocol assumption");
+    let answers = Answers::onboarding_defaults().for_scenario(scenario);
+    let authored = Session::new()
+        .unwrap()
+        .project(&capabilities, &answers)
+        .unwrap();
+    assert_eq!(
+        authored.document().inference_provider().unwrap().api,
+        Some(InferenceApi::AnthropicMessages)
+    );
+    assert_eq!(
+        Draft::from_yaml(authored.yaml().as_bytes())
+            .unwrap()
+            .guided_answers(&capabilities)
+            .unwrap(),
+        answers
     );
 }

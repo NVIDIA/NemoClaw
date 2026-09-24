@@ -270,3 +270,29 @@ fn managed_plans_query_selected_engine_and_image_without_probe_resources() {
         assert!(graph["output"]["discovery"]["value"].is_object());
     }
 }
+
+#[test]
+fn arbitrary_fabric_harness_identifier_survives_runtime_compilation() {
+    let yaml = include_str!("fixtures/config/local.yaml")
+        .replace("kind: openclaw", "kind: fixture-custom-adapter\n        settings:\n          custom_option: fixture-value")
+        .replace("provider: openai", "provider: openai\n      api: openai-responses");
+    let document = Document::parse(yaml.as_bytes()).unwrap();
+    let targets = nemoclaw_sdk::compile::targets(&document, &ownership_generations()).unwrap();
+    let sandbox = targets
+        .iter()
+        .find(|target| target.kind == "sandbox")
+        .unwrap();
+    assert_eq!(
+        sandbox.values["agent_runtime"],
+        "fabric-fixture-custom-adapter"
+    );
+    let settings: serde_json::Value =
+        serde_json::from_str(&sandbox.values["inference_json"]).unwrap();
+    assert!(settings.to_string().contains("openai-responses"));
+    assert_eq!(settings["settings"]["custom_option"], "fixture-value");
+    let graph = compile(&document, &ownership_generations(), "0.1.0").unwrap();
+    assert_eq!(
+        graph["resource"]["nemoclaw_sandbox"]["assistant"]["agent_runtime"],
+        "fabric-fixture-custom-adapter"
+    );
+}

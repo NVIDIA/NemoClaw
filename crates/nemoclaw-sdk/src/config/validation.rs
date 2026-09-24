@@ -117,7 +117,9 @@ impl Document {
             )?;
             sandbox.network.validate()?;
             let harness = self.sandbox_harness(sandbox)?;
-            sandbox.network.validate_runtime_access(harness.kind)?;
+            sandbox
+                .network
+                .validate_runtime_access(harness.kind.clone())?;
             let web_search = self.web_search(sandbox)?;
             sandbox.policy_proto(
                 web_search.as_ref().map(|search| search.provider),
@@ -134,14 +136,14 @@ impl Document {
                     "brave-search and tavily-search names are reserved for web search",
                 )?;
                 search.validate(
-                    harness.kind,
+                    harness.kind.clone(),
                     std::iter::once((sandbox.agent.name.as_str(), sandbox.agent.tools.as_ref())),
                 )?;
             }
             let agent = &sandbox.agent;
 
             if let Some(tools) = &agent.tools {
-                tools.validate(harness.kind)?;
+                tools.validate(harness.kind.clone())?;
             }
             require(
                 self.sandbox_inference(sandbox)?.routes.len() == 1
@@ -155,18 +157,17 @@ impl Document {
                 require(
                     provider
                         .api
-                        .is_none_or(|api| api.provider_override(harness.kind).is_some()),
+                        .is_none_or(|api| api.provider_override(harness.kind.clone()).is_some()),
                     "Pi selects its API through model metadata; omit provider api",
                 )?;
                 let api = provider
                     .api
-                    .unwrap_or(InferenceApi::for_harness(harness.kind));
+                    .unwrap_or(InferenceApi::for_harness(harness.kind.clone()));
                 require(
-                    api.supported(harness.kind)
-                        && (provider.api.is_some()
-                            || (api == InferenceApi::AnthropicMessages)
-                                == (provider.provider == InferenceProviderKind::Anthropic)),
-                    "API must match the provider implementation and be supported by the harness",
+                    provider.api.is_some()
+                        || (api == InferenceApi::AnthropicMessages)
+                            == (provider.provider == InferenceProviderKind::Anthropic),
+                    "default API must match the provider implementation",
                 )?;
                 if agent.auth.is_some() {
                     require(
@@ -175,7 +176,7 @@ impl Document {
                         "Hermes API-key auth must reference the routed provider with a credential",
                     )?;
                 }
-                route.overrides.tuning.validate(harness.kind)?;
+                route.overrides.tuning.validate(harness.kind.clone())?;
                 require(
                     route.overrides.pi_model.is_none() || harness.kind == HarnessKind::Pi,
                     "piModel is supported only by the Pi harness",
@@ -184,7 +185,7 @@ impl Document {
                     self,
                     provider,
                     sandbox.runtime.provider,
-                    harness.kind,
+                    harness.kind.clone(),
                     &route.overrides.model,
                 )?;
             }

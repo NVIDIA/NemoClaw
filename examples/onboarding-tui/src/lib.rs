@@ -73,12 +73,13 @@ fn load(
         Source::Edit(path) => read_draft(path)?,
         Source::Template(path) => {
             let original = read_draft(path)?;
-            let answers = original.guided_answers(capabilities)?;
-            let authored = Session::new()?.project(capabilities, &answers)?;
+            let capabilities = capabilities.preserving_draft(&original)?;
+            let answers = original.guided_answers(&capabilities)?;
+            let authored = Session::new()?.project(&capabilities, &answers)?;
             Draft::from_document(authored.document().clone())?
         }
     };
-    draft.guided_answers(capabilities)?;
+    capabilities.preserving_draft(&draft)?;
     Ok(draft)
 }
 
@@ -110,6 +111,49 @@ fn write_path(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn saved_unknown_harness_reopens_as_edit_and_template_without_losing_settings() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("unknown.yaml");
+        let defaults = load(Source::Defaults, &Capabilities::available()).unwrap();
+        let mut document = defaults.document().clone();
+        let harness = document.spec.sandboxes[0].harness.as_mut().unwrap();
+        harness.kind = "fixture-reopen-adapter".parse().unwrap();
+        harness.settings = Some(
+            [("custom_option".into(), "retained".into())]
+                .into_iter()
+                .collect(),
+        );
+        let yaml = serde_saphyr::to_string(&document).unwrap();
+        std::fs::write(&path, &yaml).unwrap();
+        let original = Draft::from_yaml(yaml.as_bytes()).unwrap();
+        let capabilities = Capabilities::available();
+        let edited = load(Source::Edit(&path), &capabilities).unwrap();
+        assert_eq!(edited.document(), original.document());
+        let retained = capabilities.preserving_draft(&edited).unwrap();
+        assert_eq!(
+            retained
+                .scenarios()
+                .iter()
+                .filter(|scenario| scenario.harness().as_str() == "fixture-reopen-adapter")
+                .count(),
+            1
+        );
+        let template = load(Source::Template(&path), &capabilities).unwrap();
+        assert_ne!(
+            template.document().metadata.uid,
+            original.document().metadata.uid
+        );
+        assert_eq!(
+            template.document().spec.sandboxes,
+            original.document().spec.sandboxes
+        );
+        assert_eq!(
+            template.guided_answers(&retained).unwrap(),
+            original.guided_answers(&retained).unwrap()
+        );
+    }
+
     #[test]
     fn generated_output_is_atomically_parseable() {
         let directory = tempfile::tempdir().unwrap();

@@ -4,7 +4,13 @@ use nemoclaw_sdk::openshell::{command, environment, policy, policy_matches};
 
 #[test]
 fn fabric_launch_selects_the_harness_and_caller_identity_without_invoking_an_agent() {
-    for harness in ["deepagents", "openclaw", "mini-swe-agent", "pi"] {
+    for harness in [
+        "deepagents",
+        "openclaw",
+        "mini-swe-agent",
+        "pi",
+        "fixture-new-agent",
+    ] {
         let runtime = format!("fabric-{harness}");
         let launch = command(&runtime);
         assert_eq!(launch.last().map(String::as_str), Some("serve"));
@@ -23,11 +29,7 @@ fn fabric_launch_selects_the_harness_and_caller_identity_without_invoking_an_age
             for secret in ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "NVIDIA_API_KEY"] {
                 assert!(!env.contains_key(secret));
             }
-            if harness == "deepagents" {
-                assert!(!env.contains_key("NEMOCLAW_FABRIC_HARNESS"));
-            } else {
-                assert_eq!(env["NEMOCLAW_FABRIC_HARNESS"], harness);
-            }
+            assert_eq!(env["NEMOCLAW_FABRIC_HARNESS"], harness);
         }
     }
     assert!(command("").is_empty());
