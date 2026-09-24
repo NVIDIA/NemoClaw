@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
+import path from "path";
 
 const executorMocks = vi.hoisted(() => ({
   spawnSync: vi.fn(),
@@ -84,6 +87,24 @@ describe("sandbox backup finalization deadline", () => {
       error: "tar entry validation skipped: backup deadline expired",
     });
     expect(executorMocks.spawnSync).not.toHaveBeenCalled();
+  });
+
+  it("stops the post-extraction audit when the backup deadline expires", () => {
+    const targetDir = mkdtempSync(path.join(tmpdir(), "nemoclaw-backup-audit-"));
+    onTestFinished(() => rmSync(targetDir, { recursive: true, force: true }));
+    writeFileSync(path.join(targetDir, "state.json"), "{}");
+    vi.spyOn(Date, "now")
+      .mockReturnValueOnce(10_000)
+      .mockReturnValueOnce(10_000)
+      .mockReturnValueOnce(10_000)
+      .mockReturnValueOnce(10_000)
+      .mockReturnValueOnce(10_000)
+      .mockReturnValue(12_345);
+
+    expect(safeTarExtract(Buffer.from("archive"), targetDir, 12_345)).toEqual({
+      success: false,
+      error: "post-extraction audit exceeded backup deadline",
+    });
   });
 
   it("passes the remaining deadline to the sanitizer executor", () => {

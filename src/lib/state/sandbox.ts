@@ -690,12 +690,25 @@ export function validateTarEntries(
  * like "escapes" relative to the extraction temp dir on the host, but
  * are intra-sandbox once the backup is restored. See issue #2268.
  */
-function auditExtractedSymlinks(dirPath: string, allowedRoots: string[]): string[] {
+function auditExtractedSymlinks(
+  dirPath: string,
+  allowedRoots: string[],
+  deadlineMs?: number,
+): { violations: string[]; deadlineExpired: boolean } {
   const violations: string[] = [];
-  if (!existsSync(dirPath)) return violations;
+  let deadlineExpired = false;
+  if (!existsSync(dirPath)) return { violations, deadlineExpired };
 
   const walk = (current: string): void => {
+    if (remainingBackupTimeoutMs(deadlineMs, 60_000) === null) {
+      deadlineExpired = true;
+      return;
+    }
     for (const entry of readdirSync(current, { withFileTypes: true })) {
+      if (remainingBackupTimeoutMs(deadlineMs, 60_000) === null) {
+        deadlineExpired = true;
+        return;
+      }
       const fullPath = path.join(current, entry.name);
       try {
         const stat = lstatSync(fullPath);
@@ -748,6 +761,7 @@ function auditExtractedSymlinks(dirPath: string, allowedRoots: string[]): string
           }
         } else if (stat.isDirectory()) {
           walk(fullPath);
+          if (deadlineExpired) return;
         }
       } catch {
         /* skip unreadable entries */
@@ -755,7 +769,7 @@ function auditExtractedSymlinks(dirPath: string, allowedRoots: string[]): string
     }
   };
   walk(dirPath);
-  return violations;
+  return { violations, deadlineExpired };
 }
 
 /**
@@ -859,7 +873,8 @@ export function safeTarExtract(
   // Allow targets inside either the host extraction dir OR the canonical
   // sandbox root (/sandbox) — the latter covers legitimate intra-sandbox
   // symlinks baked into the base image (see #2268).
-  const symlinkViolations = auditExtractedSymlinks(targetDir, [targetDir, "/sandbox"]);
+  const symlinkAudit = auditExtractedSymlinks(targetDir, [targetDir, "/sandbox"], deadlineMs);
+  const symlinkViolations = symlinkAudit.violations;
   if (symlinkViolations.length > 0) {
     // Nuke the extraction — do not leave attacker-controlled symlinks on host
     try {
@@ -873,7 +888,7 @@ export function safeTarExtract(
       error: `post-extraction symlink audit failed: ${symlinkViolations.join("; ")}`,
     };
   }
-  if (remainingBackupTimeoutMs(deadlineMs, 60_000) === null) {
+  if (symlinkAudit.deadlineExpired || remainingBackupTimeoutMs(deadlineMs, 60_000) === null) {
     return { success: false, error: "post-extraction audit exceeded backup deadline" };
   }
 
