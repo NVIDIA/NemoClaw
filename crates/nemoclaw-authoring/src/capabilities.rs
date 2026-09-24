@@ -24,7 +24,7 @@ pub struct Scenario {
     pub(crate) default_model: Option<&'static str>,
 }
 
-/// Curated authoring choices, not runtime discovery or the full SDK schema.
+/// Fabric-derived harness choices intersected with local projection constraints.
 #[derive(Clone, Debug)]
 pub struct Capabilities {
     scenarios: Vec<Scenario>,
@@ -66,13 +66,44 @@ impl Capabilities {
     }
 
     pub fn available() -> Self {
+        Self::from_catalog(&nemoclaw_sdk::fabric_catalog::FabricCatalog::bundled())
+    }
+
+    /// Consume canonical Fabric metadata; ordering is presentation policy.
+    pub fn from_catalog(catalog: &nemoclaw_sdk::fabric_catalog::FabricCatalog) -> Self {
+        let mut harnesses: Vec<HarnessKind> = catalog
+            .adapters
+            .iter()
+            .filter_map(|adapter| adapter.harness.parse().ok())
+            .collect();
+        harnesses.sort_by_key(|harness| match harness {
+            HarnessKind::OpenClaw => 0,
+            HarnessKind::Hermes => 1,
+            HarnessKind::DeepAgents => 2,
+            HarnessKind::Pi => 3,
+            _ => 4,
+        });
+        Self::from_harnesses(harnesses)
+    }
+
+    /// Intersect Fabric observations with the configurations this frontend can
+    /// project. An empty observation remains empty, never an offline fallback.
+    pub fn from_harnesses(harnesses: impl IntoIterator<Item = HarnessKind>) -> Self {
         let mut scenarios = Vec::new();
-        for harness in [
-            HarnessKind::OpenClaw,
-            HarnessKind::Hermes,
-            HarnessKind::DeepAgents,
-            HarnessKind::Pi,
-        ] {
+        let mut seen = Vec::new();
+        for harness in harnesses {
+            if seen.contains(&harness)
+                || !matches!(
+                    harness,
+                    HarnessKind::OpenClaw
+                        | HarnessKind::Hermes
+                        | HarnessKind::DeepAgents
+                        | HarnessKind::Pi
+                )
+            {
+                continue;
+            }
+            seen.push(harness);
             for runtime in [RuntimeChoice::Docker, RuntimeChoice::Podman] {
                 for inference in [
                     ProviderPreset::NvidiaEndpoints,

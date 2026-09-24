@@ -52,6 +52,7 @@ pub struct InferenceEdits {
 pub struct Draft {
     document: Document,
     pub(crate) accepted: Vec<crate::EditableField>,
+    pub(crate) delegated: Vec<crate::EditableField>,
 }
 
 impl Draft {
@@ -63,6 +64,7 @@ impl Draft {
         Ok(Self {
             document,
             accepted: Vec::new(),
+            delegated: Vec::new(),
         })
     }
 
@@ -86,6 +88,7 @@ impl Draft {
             Session::with_uid(&self.document.metadata.uid)?.project(capabilities, &answers)?;
         self.document = authored.document;
         self.accepted.clear();
+        self.delegated.clear();
         Ok(())
     }
 

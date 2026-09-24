@@ -15,6 +15,20 @@ fn wizard() -> Wizard {
     Wizard::new(capabilities, draft)
 }
 
+fn navigate(wizard: &mut Wizard, wanted: Step, input: Input) {
+    for _ in 0..24 {
+        if wizard.step() == wanted {
+            return;
+        }
+        wizard.handle(input);
+    }
+    panic!(
+        "did not reach {wanted:?}; at {:?}: {:?}",
+        wizard.step(),
+        wizard.error()
+    );
+}
+
 #[test]
 fn wizard_guides_every_authoring_choice_and_filters_invalid_apis() {
     let mut wizard = wizard();
@@ -33,11 +47,8 @@ fn wizard_guides_every_authoring_choice_and_filters_invalid_apis() {
             .harness,
         HarnessChoice::DeepAgents
     );
-    assert_eq!(wizard.step(), Step::Runtime);
-
-    wizard.handle(Input::Continue);
-    wizard.handle(Input::Continue);
-    assert_eq!(wizard.step(), Step::DeploymentName);
+    assert_eq!(wizard.step(), Step::Inference);
+    navigate(&mut wizard, Step::DeploymentName, Input::Continue);
     assert_eq!(
         wizard
             .draft()
@@ -170,9 +181,7 @@ fn welcome_uses_the_same_spacer_after_the_logo() {
 #[test]
 fn text_entry_is_local_to_the_active_question_and_back_preserves_it() {
     let mut wizard = wizard();
-    for _ in 0..5 {
-        wizard.handle(Input::Continue);
-    }
+    navigate(&mut wizard, Step::DeploymentName, Input::Continue);
     assert_eq!(wizard.step(), Step::DeploymentName);
     wizard.handle(Input::SelectAll);
     for character in "demo-fleet".chars() {
@@ -194,9 +203,7 @@ fn text_entry_is_local_to_the_active_question_and_back_preserves_it() {
 #[test]
 fn invalid_answer_stays_focused_and_explains_the_authoring_rule() {
     let mut wizard = wizard();
-    for _ in 0..5 {
-        wizard.handle(Input::Continue);
-    }
+    navigate(&mut wizard, Step::DeploymentName, Input::Continue);
     wizard.handle(Input::SelectAll);
     for character in "Not a DNS name".chars() {
         wizard.handle(Input::Character(character));
@@ -210,23 +217,18 @@ fn invalid_answer_stays_focused_and_explains_the_authoring_rule() {
 #[test]
 fn compatible_provider_prompts_for_endpoint_and_manual_model() {
     let mut wizard = wizard();
-    wizard.handle(Input::Continue);
-    wizard.handle(Input::Continue);
-    wizard.handle(Input::Continue);
+    navigate(&mut wizard, Step::Inference, Input::Continue);
     for _ in 0..3 {
         wizard.handle(Input::Next);
     }
     wizard.handle(Input::Continue);
-    wizard.handle(Input::Continue);
-    wizard.handle(Input::Continue);
-
-    assert_eq!(wizard.step(), Step::Endpoint);
+    navigate(&mut wizard, Step::Endpoint, Input::Continue);
     wizard.handle(Input::SelectAll);
     for character in "https://models.example.test/v1".chars() {
         wizard.handle(Input::Character(character));
     }
     wizard.handle(Input::Continue);
-    assert_eq!(wizard.step(), Step::Model);
+    navigate(&mut wizard, Step::Model, Input::Continue);
     for character in "acme/custom-model".chars() {
         wizard.handle(Input::Character(character));
     }
@@ -241,9 +243,7 @@ fn compatible_provider_prompts_for_endpoint_and_manual_model() {
 #[test]
 fn provider_default_allows_an_unlisted_model() {
     let mut wizard = wizard();
-    for _ in 0..6 {
-        wizard.handle(Input::Continue);
-    }
+    navigate(&mut wizard, Step::Model, Input::Continue);
     assert_eq!(wizard.step(), Step::Model);
     wizard.handle(Input::Next);
     wizard.handle(Input::Continue);
@@ -265,9 +265,7 @@ fn provider_default_allows_an_unlisted_model() {
 #[test]
 fn review_shows_only_the_choices_the_author_made() {
     let mut wizard = wizard();
-    for _ in 0..11 {
-        wizard.handle(Input::Continue);
-    }
+    navigate(&mut wizard, Step::Review, Input::Continue);
     assert_eq!(wizard.step(), Step::Review);
     let backend = TestBackend::new(80, 24);
     let mut terminal = Terminal::new(backend).unwrap();
@@ -368,7 +366,7 @@ fn a_conflicting_choice_can_be_cancelled_or_explicitly_accepted() {
     assert_eq!(wizard.draft().review().unwrap().yaml(), original);
     wizard.handle(Input::Continue);
     wizard.handle(Input::Continue);
-    assert_eq!(wizard.step(), Step::Runtime);
+    assert_eq!(wizard.step(), Step::Inference);
     assert_eq!(
         wizard
             .draft()
@@ -382,12 +380,8 @@ fn a_conflicting_choice_can_be_cancelled_or_explicitly_accepted() {
 #[test]
 fn changing_provider_reasks_the_model_without_reasking_an_accepted_name() {
     let mut wizard = wizard();
-    while wizard.step() != Step::Review {
-        wizard.handle(Input::Continue);
-    }
-    while wizard.step() != Step::Inference {
-        wizard.handle(Input::Back);
-    }
+    navigate(&mut wizard, Step::Review, Input::Continue);
+    navigate(&mut wizard, Step::Inference, Input::Back);
     wizard.handle(Input::Next);
     wizard.handle(Input::Continue);
     assert!(wizard.pending_edit.is_some());
@@ -403,9 +397,7 @@ fn changing_provider_reasks_the_model_without_reasking_an_accepted_name() {
 #[test]
 fn engine_status_and_review_fit_in_the_minimum_terminal() {
     let mut wizard = wizard();
-    while wizard.step() != Step::Review {
-        wizard.handle(Input::Continue);
-    }
+    navigate(&mut wizard, Step::Review, Input::Continue);
     wizard.target_status = Some("Engine unverified. You can save for later.".into());
     let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
     terminal.draw(|frame| wizard.render(frame)).unwrap();
@@ -530,9 +522,7 @@ fn a_podman_template_is_disabled_on_mac_and_requires_a_runtime_change() {
         Draft::from_yaml(authored.yaml().as_bytes()).unwrap(),
         "macos",
     );
-    wizard.handle(Input::Continue);
-    wizard.handle(Input::Continue);
-    assert_eq!(wizard.step(), Step::Runtime);
+    navigate(&mut wizard, Step::Runtime, Input::Continue);
     let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
     terminal.draw(|frame| wizard.render(frame)).unwrap();
     let rendered = terminal.backend().to_string();
@@ -548,7 +538,7 @@ fn a_podman_template_is_disabled_on_mac_and_requires_a_runtime_change() {
     );
     wizard.handle(Input::Previous);
     wizard.handle(Input::Continue);
-    assert_eq!(wizard.step(), Step::Inference);
+    assert_eq!(wizard.step(), Step::DeploymentName);
     assert_eq!(
         wizard
             .draft()
@@ -564,15 +554,7 @@ fn mac_navigation_skips_podman_and_keeps_large_hosted_models_available() {
     let mut wizard = wizard();
     // Use an explicit platform so this regression also runs on Linux CI.
     wizard = Wizard::for_host(wizard.capabilities.clone(), wizard.draft().clone(), "macos");
-    wizard.handle(Input::Continue);
-    wizard.handle(Input::Continue);
-    assert_eq!(wizard.step(), Step::Runtime);
-    wizard.handle(Input::Next);
-    assert_eq!(wizard.choice_labels()[wizard.selected], "Docker");
-    wizard.handle(Input::Previous);
-    assert_eq!(wizard.choice_labels()[wizard.selected], "Docker");
-    wizard.handle(Input::Continue);
-    assert_eq!(wizard.step(), Step::Inference);
+    navigate(&mut wizard, Step::Inference, Input::Continue);
     assert!(wizard.choice_labels().contains(&"NVIDIA Endpoints".into()));
     assert!(
         wizard
@@ -580,12 +562,13 @@ fn mac_navigation_skips_podman_and_keeps_large_hosted_models_available() {
             .iter()
             .all(|choice| !choice.to_lowercase().contains("vllm"))
     );
-    for _ in 0..8 {
-        if wizard.step() == Step::Model {
-            break;
-        }
-        wizard.handle(Input::Continue);
-    }
+    navigate(&mut wizard, Step::Runtime, Input::Continue);
+    wizard.handle(Input::Next);
+    assert_eq!(wizard.choice_labels()[wizard.selected], "Docker");
+    wizard.handle(Input::Previous);
+    assert_eq!(wizard.choice_labels()[wizard.selected], "Docker");
+    wizard.handle(Input::Continue);
+    navigate(&mut wizard, Step::Model, Input::Continue);
     assert_eq!(wizard.step(), Step::Model);
     assert_eq!(
         wizard.choice_labels()[wizard.selected],
@@ -594,4 +577,88 @@ fn mac_navigation_skips_podman_and_keeps_large_hosted_models_available() {
     wizard.handle(Input::Continue);
     wizard.handle(Input::Continue);
     assert!(wizard.accepted());
+}
+
+#[test]
+fn interview_prioritizes_dependent_choices_and_back_follows_actual_history() {
+    let mut wizard = wizard();
+    wizard.handle(Input::Continue);
+    wizard.handle(Input::Continue);
+    assert_eq!(wizard.step(), Step::Inference);
+    let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+    terminal.draw(|frame| wizard.render(frame)).unwrap();
+    assert!(terminal.backend().to_string().contains("⟦ 2/7 ⟧"));
+    wizard.handle(Input::Continue);
+    assert_eq!(wizard.step(), Step::Api);
+    wizard.handle(Input::Back);
+    assert_eq!(wizard.step(), Step::Inference);
+    wizard.handle(Input::Back);
+    assert_eq!(wizard.step(), Step::Harness);
+}
+
+#[test]
+fn review_revisits_a_reopened_requirement_before_allowing_save() {
+    let mut wizard = wizard();
+    for _ in 0..12 {
+        if wizard.step() == Step::Review {
+            break;
+        }
+        wizard.handle(Input::Continue);
+    }
+    assert_eq!(wizard.step(), Step::Review);
+    wizard.draft = wizard
+        .draft
+        .propose_guided_edit(
+            &wizard.capabilities,
+            nemoclaw_authoring::EditableField::Api,
+            nemoclaw_authoring::FieldValue::Api(ApiChoice::OpenaiResponses),
+        )
+        .unwrap()
+        .accept();
+    wizard.handle(Input::Continue);
+    assert!(!wizard.accepted());
+    assert_eq!(wizard.step(), Step::Model);
+    wizard.handle(Input::Continue);
+    assert_eq!(wizard.step(), Step::Review);
+    wizard.handle(Input::Continue);
+    assert!(wizard.accepted());
+}
+
+#[test]
+fn observed_adapter_conflict_blocks_review_until_the_selection_changes() {
+    use nemoclaw_authoring::DiscoveryEvidence;
+    use nemoclaw_sdk::discovery::{EngineObservation, FabricObservation, ObservationStatus};
+    let mut wizard = wizard();
+    let key = wizard.draft.discovery_key().unwrap();
+    let mut catalog = nemoclaw_sdk::fabric_catalog::FabricCatalog::bundled();
+    catalog
+        .adapters
+        .retain(|adapter| adapter.harness == "hermes");
+    wizard.discovery = Some(DiscoveryEvidence {
+        key,
+        engine: Some(EngineObservation {
+            status: ObservationStatus::Available,
+            reason: None,
+            source: "fixture".into(),
+            server_version: None,
+            architecture: None,
+            operating_system: None,
+            memory_bytes: None,
+            cpus: None,
+        }),
+        fabric: Some(FabricObservation {
+            status: ObservationStatus::Available,
+            reason: None,
+            source: "fixture".into(),
+            image_id: Some("sha256:fixture".into()),
+            catalog: Some(catalog),
+        }),
+    });
+    navigate(&mut wizard, Step::Review, Input::Continue);
+    wizard.handle(Input::Continue);
+    assert!(!wizard.accepted());
+    assert!(wizard.error().unwrap().contains("adapter"));
+    let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+    terminal.draw(|frame| wizard.render(frame)).unwrap();
+    assert!(terminal.backend().to_string().contains("adapter"));
 }

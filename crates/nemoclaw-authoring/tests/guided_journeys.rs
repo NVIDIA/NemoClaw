@@ -508,3 +508,146 @@ fn rejected_answer_preserves_both_the_document_and_accepted_answers() {
     assert!(draft.is_accepted(EditableField::DeploymentName));
     assert_eq!(draft.review().unwrap().yaml(), before);
 }
+
+#[test]
+fn interview_resolves_dependencies_before_unrelated_identity_and_skips_accepted_answers() {
+    let capabilities = Capabilities::available();
+    let mut draft = begin_onboarding(&capabilities);
+    assert_eq!(
+        draft.next_question(&capabilities).unwrap().unwrap().id(),
+        EditableField::Harness
+    );
+    let edit = draft
+        .propose_guided_edit(
+            &capabilities,
+            EditableField::Harness,
+            FieldValue::Harness(HarnessKind::OpenClaw),
+        )
+        .unwrap();
+    draft = edit.accept();
+    assert_eq!(
+        draft.next_question(&capabilities).unwrap().unwrap().id(),
+        EditableField::Inference
+    );
+    assert_eq!(
+        draft.answer_status(EditableField::Harness),
+        nemoclaw_authoring::AnswerStatus::Accepted
+    );
+    assert_eq!(
+        draft.answer_status(EditableField::Model),
+        nemoclaw_authoring::AnswerStatus::Suggested
+    );
+}
+
+#[test]
+fn changing_api_reconfirms_model_even_when_identifier_is_unchanged() {
+    let capabilities = Capabilities::available();
+    let draft = begin_onboarding(&capabilities)
+        .propose_guided_edit(
+            &capabilities,
+            EditableField::Model,
+            FieldValue::Model(NVIDIA_MODEL.into()),
+        )
+        .unwrap()
+        .accept()
+        .propose_guided_edit(
+            &capabilities,
+            EditableField::DeploymentName,
+            FieldValue::Text("my-project".into()),
+        )
+        .unwrap()
+        .accept();
+    let edit = draft
+        .propose_guided_edit(
+            &capabilities,
+            EditableField::Api,
+            FieldValue::Api(InferenceApi::OpenaiResponses),
+        )
+        .unwrap();
+    assert_eq!(
+        edit.conflicts()
+            .iter()
+            .map(|change| change.field)
+            .collect::<Vec<_>>(),
+        vec![EditableField::Model]
+    );
+    let changed = edit.accept();
+    assert!(!changed.is_accepted(EditableField::Model));
+    assert!(changed.is_accepted(EditableField::DeploymentName));
+}
+
+#[test]
+fn explicit_delegation_resolves_a_suggestion_and_context_changes_reopen_it() {
+    let capabilities = Capabilities::available();
+    let mut draft = begin_onboarding(&capabilities);
+    draft.delegate(&capabilities, EditableField::Model).unwrap();
+    assert_eq!(
+        draft.answer_status(EditableField::Model),
+        nemoclaw_authoring::AnswerStatus::Delegated
+    );
+    let revised = draft
+        .propose_guided_edit(
+            &capabilities,
+            EditableField::Api,
+            FieldValue::Api(InferenceApi::OpenaiResponses),
+        )
+        .unwrap()
+        .accept();
+    assert_eq!(
+        revised.answer_status(EditableField::Model),
+        nemoclaw_authoring::AnswerStatus::Suggested
+    );
+}
+
+#[test]
+fn observed_harnesses_bound_authoring_choices_without_inventing_support() {
+    let capabilities = Capabilities::from_harnesses([HarnessKind::OpenClaw]);
+    let draft = begin_onboarding(&capabilities);
+    assert_eq!(
+        choices_for(&draft, &capabilities, EditableField::Harness),
+        vec![FieldValue::Harness(HarnessKind::OpenClaw)]
+    );
+    assert!(Capabilities::from_harnesses([]).scenarios().is_empty());
+    assert!(
+        Capabilities::from_harnesses([HarnessKind::Codex])
+            .scenarios()
+            .is_empty()
+    );
+}
+
+#[test]
+fn singleton_protocol_is_implied_and_hidden_endpoint_does_not_block_completion() {
+    let capabilities = Capabilities::available();
+    let mut draft = begin_onboarding(&capabilities)
+        .propose_guided_edit(
+            &capabilities,
+            EditableField::Inference,
+            FieldValue::Inference(ProviderPreset::Anthropic),
+        )
+        .unwrap()
+        .accept();
+    assert_eq!(
+        draft
+            .field_status(&capabilities, EditableField::Api)
+            .unwrap(),
+        nemoclaw_authoring::AnswerStatus::Implied
+    );
+    assert_eq!(
+        draft
+            .field_status(&capabilities, EditableField::Endpoint)
+            .unwrap(),
+        nemoclaw_authoring::AnswerStatus::Inactive
+    );
+    let mut asked = Vec::new();
+    while let Some(question) = draft.next_question(&capabilities).unwrap() {
+        assert!(asked.len() < 7);
+        asked.push(question.id());
+        draft = draft
+            .propose_guided_edit(&capabilities, question.id(), question.value().clone())
+            .unwrap()
+            .accept();
+    }
+    assert!(!asked.contains(&EditableField::Api));
+    assert!(!asked.contains(&EditableField::Endpoint));
+    assert!(asked.contains(&EditableField::Model));
+}

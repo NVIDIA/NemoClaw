@@ -13,6 +13,8 @@ mod answers;
 mod capabilities;
 mod diagnostics;
 mod draft;
+mod evidence;
+mod graph;
 mod guided;
 mod projection;
 
@@ -24,5 +26,9 @@ pub use diagnostics::{Diagnostic, Diagnostics};
 pub use draft::{
     AuthoredDocument, CompletionBoundary, Draft, IdentityEdits, InferenceEdits, Review,
 };
+pub use evidence::{
+    CompatibilityStatus, DiscoveryAssessment, DiscoveryEvidence, DiscoveryKey, DiscoveryQuery,
+};
+pub use graph::{AnswerStatus, DependencyGraph};
 pub use guided::{AnswerChange, EditableField, FieldValue, GuidedEdit, GuidedField};
 pub use projection::Session;

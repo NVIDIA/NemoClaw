@@ -27,6 +27,17 @@ pub async fn author(
     output: &Path,
     cancel: &CancellationToken,
 ) -> Result<bool, Box<dyn std::error::Error>> {
+    author_with_bundle(source, output, None, cancel).await
+}
+
+/// Author using read-only provider discovery when a verified bundle is available.
+/// Without a bundle, target capabilities remain explicitly unverified.
+pub async fn author_with_bundle(
+    source: Source<'_>,
+    output: &Path,
+    bundle: Option<&Path>,
+    cancel: &CancellationToken,
+) -> Result<bool, Box<dyn std::error::Error>> {
     if cancel.is_cancelled() {
         return Err(Error::Cancelled.into());
     }
@@ -38,7 +49,7 @@ pub async fn author(
     if !std::io::stdin().is_terminal() || !std::io::stderr().is_terminal() {
         return Err("onboarding requires a terminal on stdin and stderr".into());
     }
-    let Some(draft) = tui::run(capabilities, draft, cancel).await? else {
+    let Some(draft) = tui::run(capabilities, draft, cancel, bundle).await? else {
         return Ok(false);
     };
     if cancel.is_cancelled() {

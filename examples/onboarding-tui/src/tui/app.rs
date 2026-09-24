@@ -44,7 +44,9 @@ pub(crate) struct Wizard {
     pub(super) error: Option<String>,
     pub(super) pending_edit: Option<GuidedEdit>,
     pub(super) target_status: Option<String>,
+    pub(super) discovery: Option<nemoclaw_authoring::DiscoveryEvidence>,
     local_podman: bool,
+    history: Vec<Step>,
 }
 
 impl Wizard {
@@ -66,7 +68,9 @@ impl Wizard {
             error: None,
             pending_edit: None,
             target_status: None,
+            discovery: None,
             local_podman: host_os == "linux",
+            history: Vec::new(),
         }
     }
 
@@ -144,11 +148,31 @@ impl Wizard {
 
     fn advance(&mut self) {
         if self.step == Step::Welcome {
-            self.set_step(self.flow_steps()[0]);
+            self.advance_step();
             return;
         }
         if self.step == Step::Review {
-            self.accepted = true;
+            if let Some(evidence) = &self.discovery {
+                match evidence.assessment(&self.draft) {
+                    Ok(assessment)
+                        if assessment.status
+                            == nemoclaw_authoring::CompatibilityStatus::Conflict =>
+                    {
+                        self.error = Some(assessment.reasons.join(" "));
+                        return;
+                    }
+                    Err(error) => {
+                        self.error = Some(error.to_string());
+                        return;
+                    }
+                    _ => {}
+                }
+            }
+            match self.draft.next_question(&self.capabilities) {
+                Ok(None) => self.accepted = true,
+                Ok(Some(_)) => self.advance_step(),
+                Err(error) => self.error = Some(error.to_string()),
+            }
             return;
         }
         if self.step == Step::Model
@@ -197,14 +221,18 @@ impl Wizard {
     }
 
     fn advance_step(&mut self) {
-        let steps = self.flow_steps();
-        let index = steps.iter().position(|step| *step == self.step).unwrap();
-        let next = steps[index + 1..]
-            .iter()
-            .copied()
-            .find(|step| field_for_step(*step).is_none_or(|field| !self.draft.is_accepted(field)))
-            .unwrap_or(Step::Review);
-        self.set_step(next);
+        match self.draft.next_question(&self.capabilities) {
+            Ok(question) => {
+                let next = question
+                    .and_then(|field| step_for_field(field.id()))
+                    .unwrap_or(Step::Review);
+                if self.step != next {
+                    self.history.push(self.step);
+                }
+                self.set_step(next);
+            }
+            Err(error) => self.error = Some(error.to_string()),
+        }
     }
 
     fn go_back(&mut self) {
@@ -217,13 +245,8 @@ impl Wizard {
             self.selected = self.current_choice_index();
             return;
         }
-        let steps = self.flow_steps();
-        let index = steps.iter().position(|step| *step == self.step).unwrap();
-        self.set_step(if index == 0 {
-            Step::Welcome
-        } else {
-            steps[index - 1]
-        });
+        let previous = self.history.pop().unwrap_or(Step::Welcome);
+        self.set_step(previous);
     }
 
     fn set_step(&mut self, step: Step) {
@@ -269,17 +292,21 @@ impl Wizard {
                     || field.id() == EditableField::Model
                     || field.choices().len() > 1
             })
-            .filter_map(|field| match field.id() {
-                EditableField::Harness => Some(Step::Harness),
-                EditableField::Runtime => Some(Step::Runtime),
-                EditableField::Inference => Some(Step::Inference),
-                EditableField::Api => Some(Step::Api),
-                EditableField::DeploymentName => Some(Step::DeploymentName),
-                EditableField::Endpoint => Some(Step::Endpoint),
-                EditableField::Model => Some(Step::Model),
-                _ => None,
-            })
+            .filter_map(|field| step_for_field(field.id()))
             .collect::<Vec<_>>();
+        // Progress follows the questions actually visited, not the old field order.
+        let mut visited = Vec::new();
+        for step in self.history.iter().chain(std::iter::once(&self.step)) {
+            if steps.contains(step) && !visited.contains(step) {
+                visited.push(*step);
+            }
+        }
+        steps.sort_by_key(|step| {
+            visited
+                .iter()
+                .position(|seen| seen == step)
+                .unwrap_or(visited.len())
+        });
         steps.push(Step::Review);
         steps
     }
@@ -363,7 +390,7 @@ impl Wizard {
             };
             if change.before == change.after {
                 message.push_str(&format!(
-                    "{name}: {} (confirm for the changed provider or endpoint)\n",
+                    "{name}: {} (confirm for the changed harness, API, provider, or endpoint)\n",
                     labels::field_value(&change.before)
                 ));
             } else {
@@ -418,5 +445,18 @@ fn field_for_step(step: Step) -> Option<EditableField> {
         Step::Endpoint => EditableField::Endpoint,
         Step::Model => EditableField::Model,
         Step::Welcome | Step::Review => return None,
+    })
+}
+
+fn step_for_field(field: EditableField) -> Option<Step> {
+    Some(match field {
+        EditableField::Harness => Step::Harness,
+        EditableField::Runtime => Step::Runtime,
+        EditableField::Inference => Step::Inference,
+        EditableField::Api => Step::Api,
+        EditableField::DeploymentName => Step::DeploymentName,
+        EditableField::Endpoint => Step::Endpoint,
+        EditableField::Model => Step::Model,
+        _ => return None,
     })
 }

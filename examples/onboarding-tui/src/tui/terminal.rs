@@ -2,8 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::app::{Input, Wizard};
-use nemoclaw_authoring::{Capabilities, Draft};
-use nemoclaw_sdk::{CancellationToken, Error};
+use nemoclaw_authoring::{
+    Capabilities, CompatibilityStatus, DiscoveryEvidence, DiscoveryQuery, Draft,
+};
+use nemoclaw_sdk::{
+    CancellationToken, Error,
+    discovery::{DiscoveryRequest, ObservationStatus},
+    discovery_session::DiscoverySession,
+};
 use ratatui::{Terminal, TerminalOptions, Viewport, backend::CrosstermBackend, layout::Rect};
 use std::{io, time::Duration};
 
@@ -39,6 +45,7 @@ pub(crate) async fn run(
     capabilities: Capabilities,
     draft: Draft,
     cancel: &CancellationToken,
+    bundle: Option<&std::path::Path>,
 ) -> Result<Option<Draft>, Box<dyn std::error::Error>> {
     let _guard = TerminalGuard::enter()?;
     let area = terminal_area();
@@ -49,31 +56,38 @@ pub(crate) async fn run(
         },
     )?;
     let mut wizard = Wizard::new(capabilities, draft);
+    let mut discovery = bundle.and_then(|path| DiscoverySession::new(path).ok());
     let mut last_target = None;
     let mut was_review = false;
     loop {
         if cancel.is_cancelled() {
             return Err(Error::Cancelled.into());
         }
-        let gateway = wizard
-            .draft()
-            .document()
-            .spec
-            .gateway
-            .as_managed()
-            .expect("guided managed gateway");
-        let driver = wizard.draft().document().spec.sandboxes[0].runtime.provider;
-        let target = (gateway.engine.clone(), driver);
+        let target = wizard.draft().discovery_key()?;
         let is_review = wizard.step == super::app::Step::Review;
         if last_target.as_ref() != Some(&target) || (is_review && !was_review) {
-            if let Some(reason) = wizard.runtime_unavailable_reason(driver) {
+            if let Some(reason) = wizard.runtime_unavailable_reason(target.compute_driver) {
                 wizard.target_status = Some(format!(
                     "The template's Podman preset {reason}. Choose Docker to continue on this host."
                 ));
             } else {
-                wizard.target_status = Some("Checking the configured container engine…".into());
+                wizard.target_status =
+                    Some("Discovering the selected engine and Fabric image…".into());
                 terminal.draw(|frame| wizard.render(frame))?;
-                wizard.target_status = Some(check_target(&target.0, target.1, cancel).await?);
+                let evidence = check_target(
+                    discovery.as_mut(),
+                    wizard.draft(),
+                    wizard.discovery.clone(),
+                    is_review,
+                    cancel,
+                )
+                .await?;
+                wizard.target_status = Some(discovery_status(
+                    &evidence,
+                    wizard.draft(),
+                    discovery.is_some(),
+                ));
+                wizard.discovery = Some(evidence);
             }
             last_target = Some(target);
         }
@@ -143,51 +157,131 @@ const fn nonzero_or(value: u16, fallback: u16) -> u16 {
 }
 
 async fn check_target(
-    endpoint: &str,
-    driver: nemoclaw_sdk::config::ComputeDriver,
+    session: Option<&mut DiscoverySession>,
+    draft: &Draft,
+    prior: Option<DiscoveryEvidence>,
+    refresh: bool,
     cancel: &CancellationToken,
-) -> Result<String, Error> {
-    let check = async {
-        let engine = nemoclaw_sdk::docker::Engine::connect(endpoint)?;
-        engine.gateway_engine_info(driver).await?;
-        Ok::<_, Error>(())
+) -> Result<DiscoveryEvidence, Error> {
+    if cancel.is_cancelled() {
+        return Err(Error::Cancelled);
+    }
+    let key = draft
+        .discovery_key()
+        .map_err(|_| Error::State("invalid discovery selection"))?;
+    let mut evidence = prior.unwrap_or_else(|| DiscoveryEvidence {
+        key: key.clone(),
+        engine: None,
+        fabric: None,
+    });
+    evidence.retarget(key);
+    if refresh {
+        evidence.engine = None;
+        evidence.fabric = None;
+    }
+    let Some(session) = session else {
+        return Ok(evidence);
     };
-    let observed = tokio::select! {
-        biased;
-        () = cancel.cancelled() => return Err(Error::Cancelled),
-        result = tokio::time::timeout(Duration::from_secs(5), check) => result,
-    };
-    Ok(match observed {
-        Ok(Ok(())) => "Engine check passed. Deployment readiness still needs plan/apply.".into(),
-        Ok(Err(Error::Conflict(reason))) => format!("Engine requirement not met: {reason}. Change the runtime or save for later."),
-        Ok(Err(error)) => format!("Engine unverified: {error}. You can save for later; plan/apply will check again."),
-        Err(_) => "Engine unverified: check timed out. You can save for later; plan/apply will check again.".into(),
-    })
+    // The dependency graph schedules the engine first and the image only when
+    // engine evidence permits it. Completed unknown reads are not retried here.
+    for _ in 0..2 {
+        let assessment = evidence
+            .assessment(draft)
+            .map_err(|_| Error::State("invalid discovery selection"))?;
+        match assessment.pending.first() {
+            Some(DiscoveryQuery::Engine) => {
+                evidence.engine = Some(
+                    match session
+                        .engine(
+                            &DiscoveryRequest {
+                                engine: evidence.key.engine.clone(),
+                                compute_driver: evidence.key.compute_driver,
+                            },
+                            cancel,
+                        )
+                        .await
+                    {
+                        Ok(observed) => observed,
+                        Err(Error::Cancelled) => return Err(Error::Cancelled),
+                        Err(_) => nemoclaw_sdk::discovery::EngineObservation {
+                            status: ObservationStatus::Unknown,
+                            reason: Some("provider discovery failed".into()),
+                            source: "opentofu".into(),
+                            server_version: None,
+                            architecture: None,
+                            operating_system: None,
+                            memory_bytes: None,
+                            cpus: None,
+                        },
+                    },
+                );
+            }
+            Some(DiscoveryQuery::Fabric) => {
+                evidence.fabric = Some(
+                    match session
+                        .fabric(&evidence.key.engine, &evidence.key.image, cancel)
+                        .await
+                    {
+                        Ok(observed) => observed,
+                        Err(Error::Cancelled) => return Err(Error::Cancelled),
+                        Err(_) => nemoclaw_sdk::discovery::FabricObservation {
+                            status: ObservationStatus::Unknown,
+                            reason: Some("provider discovery failed".into()),
+                            source: "opentofu".into(),
+                            image_id: None,
+                            catalog: None,
+                        },
+                    },
+                );
+            }
+            None => break,
+        }
+    }
+    Ok(evidence)
+}
+
+fn discovery_status(evidence: &DiscoveryEvidence, draft: &Draft, has_bundle: bool) -> String {
+    if !has_bundle {
+        return "Target unverified: a verified native bundle is needed for discovery. Choices use bundled Fabric metadata; you can save for later.".into();
+    }
+    match evidence.assessment(draft) {
+        Ok(assessment) if assessment.status == CompatibilityStatus::Compatible =>
+            "Engine prerequisites and advertised Fabric adapter match. Deployment readiness still needs plan/apply.".into(),
+        Ok(assessment) if assessment.status == CompatibilityStatus::Conflict =>
+            format!("{} Go back to revise the configuration before saving.", assessment.reasons.join(" ")),
+        _ => "Target unverified. Choices use bundled Fabric metadata; you can save for later and plan will check again.".into(),
+    }
 }
 
 #[cfg(test)]
 mod target_tests {
     use super::*;
-    use nemoclaw_sdk::config::ComputeDriver;
 
-    #[tokio::test]
-    async fn an_unreachable_engine_remains_unverified_and_does_not_block_authoring() {
-        let directory = tempfile::tempdir().unwrap();
-        let endpoint = format!("unix://{}", directory.path().join("missing.sock").display());
-        let result = check_target(&endpoint, ComputeDriver::Docker, &CancellationToken::new())
-            .await
-            .unwrap();
-        assert!(result.contains("unverified"));
-        assert!(result.contains("save for later"));
-        assert!(!result.contains("passed"));
+    fn draft() -> Draft {
+        crate::load(crate::Source::Defaults, &Capabilities::available()).unwrap()
     }
 
     #[tokio::test]
-    async fn cancelling_an_engine_check_stops_authoring() {
+    async fn no_bundle_keeps_target_unknown_and_allows_offline_authoring() {
+        let draft = draft();
+        let evidence = check_target(None, &draft, None, false, &CancellationToken::new())
+            .await
+            .unwrap();
+        let result = discovery_status(&evidence, &draft, false);
+        assert!(result.contains("unverified"));
+        assert!(result.contains("bundled Fabric"));
+        assert_eq!(
+            evidence.assessment(&draft).unwrap().status,
+            CompatibilityStatus::Unverified
+        );
+    }
+
+    #[tokio::test]
+    async fn cancelling_discovery_stops_authoring_even_without_a_bundle() {
         let cancel = CancellationToken::new();
         cancel.cancel();
         assert!(matches!(
-            check_target("unix:///unavailable.sock", ComputeDriver::Docker, &cancel).await,
+            check_target(None, &draft(), None, false, &cancel).await,
             Err(Error::Cancelled)
         ));
     }

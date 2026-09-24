@@ -398,9 +398,13 @@ impl Draft {
             .filter_map(|other| {
                 let old = current_value(&before, other);
                 let new = current_value(&after, other);
-                // The same model string at another provider or endpoint is unconfirmed.
+                // A model identifier must be reconfirmed when its interpretation changes.
                 let needs_confirmation = other == EditableField::Model
-                    && (before.inference != after.inference || before.endpoint != after.endpoint);
+                    && EditableField::GUIDED.iter().any(|dependency| {
+                        crate::DependencyGraph.depends_on(other, *dependency)
+                            && current_value(&before, *dependency)
+                                != current_value(&after, *dependency)
+                    });
                 (old != new || needs_confirmation).then_some(AnswerChange {
                     field: other,
                     before: old,
@@ -419,6 +423,12 @@ impl Draft {
             })
             .collect();
         draft.accepted.push(field);
+        draft.delegated = self
+            .delegated
+            .iter()
+            .copied()
+            .filter(|other| *other != field && draft.accepted.contains(other))
+            .collect();
         Ok(GuidedEdit { draft, conflicts })
     }
 }

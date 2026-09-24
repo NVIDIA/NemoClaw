@@ -290,7 +290,14 @@ impl Wizard {
         ) {
             lines.extend(review_field("Endpoint", &answers.endpoint));
         }
-        frame.render_widget(Paragraph::new(lines), area);
+        if let Some(error) = &self.error {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                error.as_str(),
+                Style::new().fg(Color::Rgb(255, 170, 70)),
+            )));
+        }
+        frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), area);
     }
 
     fn render_footer(&self, frame: &mut Frame<'_>, area: Rect) {

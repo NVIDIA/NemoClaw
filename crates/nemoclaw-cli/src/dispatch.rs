@@ -34,7 +34,13 @@ pub(crate) async fn run<R: AsyncRead + Unpin>(
             nemoclaw_onboarding::Source::Defaults,
             nemoclaw_onboarding::Source::Template,
         );
-        let saved = nemoclaw_onboarding::author(source, output, cancel).await?;
+        let inferred_bundle = std::env::current_exe().ok().and_then(|path| {
+            path.parent()
+                .and_then(|parent| parent.parent())
+                .map(Path::to_owned)
+        });
+        let bundle = bundle_dir.as_deref().or(inferred_bundle.as_deref());
+        let saved = nemoclaw_onboarding::author_with_bundle(source, output, bundle, cancel).await?;
         return Ok(CommandResult::Authored(saved.then(|| output.clone())));
     }
     let mut deployment = deployment(&state_dir, bundle_dir.as_deref(), progress)?;
