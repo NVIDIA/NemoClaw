@@ -69,7 +69,25 @@ export type RebuildSandboxEntry = SandboxEntry & { agents?: unknown[] };
 export type RebuildLiveState = {
   staleRecovery: boolean;
   staleRegistrySnapshot: ReturnType<typeof loadRegistry> | null;
+  terminalPhase?: boolean;
 };
+
+/** Select the stopped-source backup path only for a fresh terminal-state rebuild. */
+export async function prepareRebuildStoppedOpenClawState(
+  entry: RebuildSandboxEntry,
+  liveState: RebuildLiveState,
+  hasRecoveryManifest: boolean,
+  getSandbox: Parameters<typeof snapshotBackup.prepareStoppedOpenClawState>[1],
+): Promise<snapshotBackup.PreparedStoppedOpenClawState | null> {
+  if (
+    !liveState.terminalPhase ||
+    liveState.staleRecovery ||
+    hasRecoveryManifest ||
+    (entry.agent ?? "openclaw") !== "openclaw"
+  )
+    return null;
+  return snapshotBackup.prepareStoppedOpenClawState(entry.name, getSandbox, loadAgent("openclaw"));
+}
 
 export type RebuildLiveStateOptions = {
   /** A digest-verified policy handoff bound to the prepared recovery manifest. */
@@ -213,7 +231,13 @@ export async function resolveRebuildLiveState(
 
   const liveNames = new Set(observed.value.sandboxes.map((sandbox) => sandbox.name));
   log(`Live sandboxes: ${Array.from(liveNames).join(", ") || "(none)"}`);
-  if (liveNames.has(sandboxName)) return { staleRecovery: false, staleRegistrySnapshot: null };
+  const liveSource = observed.value.sandboxes.find((sandbox) => sandbox.name === sandboxName);
+  if (liveSource)
+    return {
+      staleRecovery: false,
+      staleRegistrySnapshot: null,
+      ...(liveSource.readiness === "terminal" ? { terminalPhase: true } : {}),
+    };
 
   const reconciled = await getReconciledSandboxGatewayState(sandboxName);
   if (reconciled.state === "present") {
@@ -493,6 +517,7 @@ export async function backupSandboxStateForRebuild(
   staleRecovery: boolean,
   log: (msg: string) => void,
   bail: (msg: string, code?: number) => never,
+  capturedOpenClawState?: sandboxState.BackupOptions["capturedOpenClawState"],
 ): Promise<sandboxState.RebuildManifest | null | undefined> {
   if (staleRecovery) return null;
 
@@ -500,7 +525,7 @@ export async function backupSandboxStateForRebuild(
   log(`Agent type: ${sb.agent || "openclaw"}, stateDirs from manifest`);
   let backup = snapshotBackup.backupSandboxStateWithManagedAuthority(
     sandboxName,
-    {},
+    capturedOpenClawState ? { capturedOpenClawState } : {},
     {
       getSandbox: (name) => loadRegistry().sandboxes[name] ?? null,
     },

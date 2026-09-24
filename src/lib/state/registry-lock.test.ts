@@ -437,6 +437,88 @@ describe("process-bound registry locking", () => {
   });
 });
 
+describe("registry lock exhaustion remediation", () => {
+  it.each([
+    ["live", "Recorded owner PID 4242 is still running"],
+    ["dead", "Recorded owner PID 4242 is no longer running"],
+    ["recycled", "PID 4242 now belongs to an unrelated process"],
+    ["unverifiable", "PID 4242 exists but cannot be confirmed as the recorded owner"],
+  ])("reports %s ownership and directs the operator to retry acquisition", (kind, diagnostic) => {
+    const test = fixture("nemoclaw-lock-remediation-");
+    writeExactGeneration(test, 4242, PROCESS_IDENTITY);
+    markStale(test.lockDir);
+    let waited = false;
+    const operation = vi.fn();
+    const acquire = () =>
+      withRegistryLockAt(
+        test.registryFile,
+        operation,
+        exactDeps({
+          maxRetries: 1,
+          now: () => LOCK_MTIME,
+          wait: () => {
+            waited = true;
+          },
+          isProcessAlive: () => !(waited && kind === "dead"),
+          readProcessIdentity: () =>
+            kind === "unverifiable"
+              ? null
+              : waited && kind === "recycled"
+                ? RECYCLED_IDENTITY
+                : PROCESS_IDENTITY,
+        }),
+      );
+    let caught: unknown;
+    try {
+      acquire();
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(ProcessBoundLockContentionError);
+    const message = (caught as Error).message;
+    expect(message).toContain(test.lockDir);
+    expect(message).toContain("after 1 retries.");
+    expect(message).toContain(diagnostic);
+    expect(message).toContain("Rerun this command to retry lock acquisition.");
+    expect(message).not.toMatch(/rm -|stop it|stopping/u);
+    expect(operation).not.toHaveBeenCalled();
+    expect(fs.existsSync(test.lockDir)).toBe(true);
+    expect(fs.readFileSync(test.ownerFile, "utf8")).toBe("4242");
+  });
+
+  it("does not confirm a live PID without its recorded process identity", () => {
+    const test = fixture("nemoclaw-legacy-owner-remediation-");
+    writeOrdinaryGeneration(test, 4242);
+    markStale(test.lockDir);
+    expect(() =>
+      withRegistryLockAt(
+        test.registryFile,
+        () => undefined,
+        exactDeps({ now: () => LOCK_MTIME, maxRetries: 1 }),
+      ),
+    ).toThrow("PID 4242 exists but cannot be confirmed as the recorded owner");
+    expect(fs.readFileSync(test.ownerFile, "utf8")).toBe("4242");
+  });
+
+  it("preserves a fresh incomplete claim and reclaims abandoned debris on retry", () => {
+    const test = fixture("nemoclaw-ownerless-remediation-");
+    fs.mkdirSync(test.lockDir, { recursive: true, mode: 0o700 });
+    markStale(test.lockDir);
+    expect(() =>
+      withRegistryLockAt(
+        test.registryFile,
+        () => undefined,
+        exactDeps({ now: () => LOCK_MTIME, maxRetries: 1 }),
+      ),
+    ).toThrow("The lock has no verifiable owner record. Wait briefly. Rerun this command");
+    expect(fs.existsSync(test.lockDir)).toBe(true);
+    expect(
+      withRegistryLockAt(test.registryFile, () => "resumed", exactDeps({ maxRetries: 2 })),
+    ).toBe("resumed");
+    expect(fs.existsSync(test.lockDir)).toBe(false);
+  });
+});
+
 describe("generation-safe registry lock removal", () => {
   it("holds and releases one opaque process-bound generation", () => {
     const test = fixture("nemoclaw-opaque-handle-");

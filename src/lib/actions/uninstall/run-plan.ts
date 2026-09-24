@@ -45,7 +45,6 @@ import {
   isManagedClusterRuntimeBindingStateEntry,
   MANAGED_CLUSTER_VLLM_RUNTIME_RECEIPT_FILE,
   MANAGED_VLLM_API_KEY_FILE,
-  MCP_LIFECYCLE_LOCK_DIRNAME,
 } from "../../inference/serving/managed-runtime-receipts";
 import { buildDockerGatewayDebEnvFile } from "../../onboard/docker-driver-gateway-env";
 import {
@@ -65,6 +64,9 @@ import {
 } from "../../onboard/gateway-binding";
 import { type GatewayOwner, isExternallySupervised } from "../../onboard/gateway-ownership";
 import {
+  gatewayLifecycleStateContainsOnlyOwnedLocks,
+  retainedDockerSandboxIsAbsent,
+  RetainedSandboxInventoryError,
   type GatewayCleanupRuntime,
   type GatewayTeardownAuthorityResolver,
   isInterruptedPreGatewaySession,
@@ -441,22 +443,6 @@ function scopedStatePreservationEntries(
     MANAGED_VLLM_API_KEY_FILE,
     "portable-demo-lifecycle",
   ];
-}
-
-function dormantHostGlobalLifecycleState(sharedRoot: string): boolean {
-  const stateDir = path.join(sharedRoot, "state");
-  try {
-    const state = fs.lstatSync(stateDir);
-    if (state.isSymbolicLink() || !state.isDirectory()) return false;
-    const entries = fs.readdirSync(stateDir);
-    if (entries.length === 0) return true;
-    if (entries.length !== 1 || entries[0] !== MCP_LIFECYCLE_LOCK_DIRNAME) return false;
-    const locksDir = path.join(stateDir, MCP_LIFECYCLE_LOCK_DIRNAME);
-    const locks = fs.lstatSync(locksDir);
-    return !locks.isSymbolicLink() && locks.isDirectory() && fs.readdirSync(locksDir).length === 0;
-  } catch {
-    return false;
-  }
 }
 
 function removePathExcept(
@@ -2847,7 +2833,7 @@ async function discoverOtherGatewayEnvironments(
             (entry) =>
               !isSharedHostStateEntry(entry) &&
               !ignoredSharedRootEntries.has(entry) &&
-              !(entry === "state" && dormantHostGlobalLifecycleState(sharedRoot)),
+              !(entry === "state" && gatewayLifecycleStateContainsOnlyOwnedLocks(sharedRoot)),
           )
       ) {
         return otherGatewaysRemain([DEFAULT_GATEWAY_PORT]);
@@ -3082,9 +3068,7 @@ async function executeOpenShellResourceCleanup(
         interruptedOnboardLock,
       ))
     ) {
-      runtime.warn(
-        "The interrupted pre-gateway state changed during uninstall; preserving it for retry.",
-      );
+      runtime.warn("The local gateway state changed during uninstall; preserving it for retry.");
       return false;
     }
     return true;
@@ -3251,12 +3235,62 @@ async function interruptedPreGatewayStateIsStable(
     teardownAuthority.mode === "nemoclaw-managed" &&
     !runtime.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR?.trim() &&
     pathEntryExists(paths.nemoclawStateDir, runtime) &&
-    hasInterruptedPreGatewaySession(paths, options, runtime, teardownAuthority) &&
     onboardLockIsStable &&
     !pathEntryExists(paths.selectedGatewayLocalStateDir, runtime) &&
-    selectedGatewayRegistryIsEmpty(paths, runtime) &&
-    (await selectedGatewayRegistrationIsAbsent(options, runtime))
+    (await selectedGatewayRegistrationIsAbsent(options, runtime)) &&
+    ((hasInterruptedPreGatewaySession(paths, options, runtime, teardownAuthority) &&
+      selectedGatewayRegistryIsEmpty(paths, runtime)) ||
+      (options.destroyUserData === true &&
+        preservedUninstallDataHasNoContainers(paths, runtime, onboardLock)))
   );
+}
+
+/** A previous uninstall can leave its registry and backups after removing runtime authority. */
+function preservedUninstallDataHasNoContainers(
+  paths: UninstallPaths,
+  runtime: UninstallRuntime,
+  onboardLock?: OnboardStateLockHandle,
+): boolean {
+  try {
+    assertGatewayStatePathSafe(runtime.env.HOME || os.homedir(), paths.nemoclawStateDir);
+    const state = selectedRegistrySandboxState(paths, runtime);
+    const entries = fs.readdirSync(paths.nemoclawStateDir, { withFileTypes: true });
+    if (
+      !entries.every(
+        (entry) =>
+          (onboardLock && entry.name === "onboard.lock" && entry.isFile()) ||
+          (entry.name === "state" &&
+            entry.isDirectory() &&
+            gatewayLifecycleStateContainsOnlyOwnedLocks(paths.nemoclawStateDir, state.names)) ||
+          (PRESERVED_USER_DATA_ENTRIES.includes(entry.name) &&
+            (entry.name === "sandboxes.json" ? entry.isFile() : entry.isDirectory())),
+      )
+    )
+      return false;
+    return Object.entries(state.registrations).every(([name, entry]) => {
+      if (
+        entry.openshellDriver !== "docker" ||
+        entry.pendingRouteReservation !== undefined ||
+        entry.pendingCreateIdentity !== undefined
+      )
+        return false;
+      if (!runtime.commandExists("docker")) throw new RetainedSandboxInventoryError("inventory");
+      return retainedDockerSandboxIsAbsent(
+        runtime.env.HOME || os.homedir(),
+        GATEWAY_PORT,
+        name,
+        entry,
+        (args) => runtime.runDocker(args, { env: runtime.env, timeout: 5_000 }),
+        (args) => runtime.run("openshell", args, { env: runtime.env, timeout: 10_000 }),
+        (reason) => {
+          throw new RetainedSandboxInventoryError(reason);
+        },
+      );
+    });
+  } catch (error) {
+    if (error instanceof RetainedSandboxInventoryError) throw error;
+    return false;
+  }
 }
 
 function selectedGatewayRegistryIsEmpty(paths: UninstallPaths, runtime: UninstallRuntime): boolean {
@@ -3464,9 +3498,7 @@ async function assertInterruptedPreGatewayStateRemovalAllowed(
   ) {
     return;
   }
-  runtime.warn(
-    "The interrupted pre-gateway state changed during uninstall; preserving it for retry.",
-  );
+  runtime.warn("The local gateway state changed during uninstall; preserving it for retry.");
   throw new InterruptedPreGatewayStateChangedError();
 }
 
@@ -3554,12 +3586,14 @@ async function prepareOpenShellCleanup(
           ))
         ) {
           runtime.warn(
-            "The interrupted pre-gateway state changed during uninstall; preserving it for retry.",
+            "The local gateway state changed during uninstall; preserving it for retry.",
           );
           return retainStateLifecycleLock("blocked");
         }
         runtime.log(
-          "No sandbox or gateway process was created; continuing cleanup of the interrupted onboarding state.",
+          hasInterruptedPreGatewaySession(paths, options, runtime, teardownAuthority)
+            ? "No sandbox or gateway process was created; continuing cleanup of the interrupted onboarding state."
+            : "No registered sandbox containers or gateway resources remain; purging retained uninstall data.",
         );
         return retainStateLifecycleLock("interrupted-pre-gateway");
       }
@@ -3606,6 +3640,10 @@ async function prepareOpenShellCleanup(
       "Removed the unused configured gateway state reservation; no gateway resources were created.",
     );
     return retainStateLifecycleLock("reservation-removed");
+  } catch (error) {
+    if (!(error instanceof RetainedSandboxInventoryError)) throw error;
+    runtime.warn(error.message);
+    return retainStateLifecycleLock("blocked");
   } finally {
     if (!cleanupLocksTransferred && interruptedOnboardLock) {
       releaseOnboardStateLock(interruptedOnboardLock);
@@ -3711,6 +3749,10 @@ async function executePlan(
       interruptedOnboardLock,
     );
   } catch (error) {
+    if (error instanceof RetainedSandboxInventoryError) {
+      runtime.warn(error.message);
+      return { ok: false, scopedToSelectedGateway };
+    }
     if (error instanceof InterruptedPreGatewayStateChangedError) {
       return {
         ok: false,
