@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
+import { makeMessagingPlan } from "../../../../test/helpers/messaging-plan-fixtures";
 import { expectNoSandboxDelete } from "../../../../test/helpers/rebuild-delete-assertions";
 import {
   createRebuildFlowHarness,
@@ -224,20 +225,8 @@ describe("rebuildSandbox flow: target image", () => {
     const harness = createRebuildFlowHarness({
       sandboxEntry: { agent: "hermes" },
       backupPreservedEnv: [{ path: ".env", assignments: ["SLACK_HOME_CHANNEL=C0123"] }],
-      buildMessagingRebuildPlan: () => ({
-        schemaVersion: 1,
-        sandboxName: "alpha",
-        agent: "hermes",
-        workflow: "rebuild",
-        channels: [],
-        disabledChannels: [],
-        credentialBindings: [],
-        networkPolicy: { presets: [], entries: [] },
-        agentRender: [],
-        buildSteps: [],
-        stateUpdates: [],
-        healthChecks: [],
-      }),
+      buildMessagingRebuildPlan: () =>
+        makeMessagingPlan({ sandboxName: "alpha", agent: "hermes", workflow: "rebuild" }),
       finalizePreparedImage: () => ({
         ok: false,
         detail: "final image build failed",

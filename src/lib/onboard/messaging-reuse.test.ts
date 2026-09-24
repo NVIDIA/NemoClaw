@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { makeMessagingPlan } from "../../../test/helpers/messaging-plan-fixtures";
 import type { MessagingChannelId, SandboxMessagingPlan } from "../messaging/manifest";
 import type { RegistryMessagingAuthority } from "../messaging/plan-authority";
 import {
@@ -22,10 +23,7 @@ function authoritativeRegistry(
 ): RegistryMessagingAuthority {
   const disabled = new Set(disabledChannelIds);
   const plan: SandboxMessagingPlan = {
-    schemaVersion: 1,
-    sandboxName: "assistant",
-    agent: "openclaw",
-    workflow: "onboard",
+    ...makeMessagingPlan({ sandboxName: "assistant" }),
     channels: channelIds.map((channelId) => ({
       channelId,
       displayName: channelId,
@@ -38,12 +36,6 @@ function authoritativeRegistry(
       hooks: [],
     })),
     disabledChannels: disabledChannelIds,
-    credentialBindings: [],
-    networkPolicy: { presets: [], entries: [] },
-    agentRender: [],
-    buildSteps: [],
-    stateUpdates: [],
-    healthChecks: [],
   };
   return { authoritative: true, plan };
 }

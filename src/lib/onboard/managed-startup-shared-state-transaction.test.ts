@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { makeMessagingPlan } from "../../../test/helpers/messaging-plan-fixtures";
 import { managedStartupE2eProfile } from "../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import type { SandboxMessagingPlan } from "../messaging/manifest";
 import type { ManagedStartupAgent, ManagedStartupProfile } from "./managed-startup/profile";
@@ -267,10 +268,7 @@ describe("managed startup shared-state transaction", () => {
     const nestedOutputDirectory = path.join(root, "channels");
     fs.mkdirSync(nestedOutputDirectory, { recursive: true });
     const plan: SandboxMessagingPlan = {
-      schemaVersion: 1,
-      sandboxName: "managed",
-      agent: "hermes",
-      workflow: "onboard",
+      ...makeMessagingPlan({ sandboxName: "managed", agent: "hermes" }),
       channels: [
         {
           channelId: "wechat",
@@ -284,9 +282,6 @@ describe("managed startup shared-state transaction", () => {
           hooks: [],
         },
       ],
-      disabledChannels: [],
-      credentialBindings: [],
-      networkPolicy: { presets: [], entries: [] },
       agentRender: [
         {
           channelId: "wechat",
@@ -298,9 +293,6 @@ describe("managed startup shared-state transaction", () => {
           templateRefs: [],
         },
       ],
-      buildSteps: [],
-      stateUpdates: [],
-      healthChecks: [],
     };
     const profile = {
       ...managedStartupE2eProfile("hermes"),
@@ -341,10 +333,7 @@ describe("managed startup shared-state transaction", () => {
     fs.mkdirSync(root);
     fs.writeFileSync(path.join(root, "openclaw.json"), "{}\n");
     const plan: SandboxMessagingPlan = {
-      schemaVersion: 1,
-      sandboxName: "managed",
-      agent: "openclaw",
-      workflow: "onboard",
+      ...makeMessagingPlan({ sandboxName: "managed" }),
       channels: [
         {
           channelId: "wechat",
@@ -377,8 +366,6 @@ describe("managed startup shared-state transaction", () => {
         },
       ],
       disabledChannels: ["telegram"],
-      credentialBindings: [],
-      networkPolicy: { presets: [], entries: [] },
       agentRender: [
         {
           channelId: "wechat",
@@ -419,8 +406,6 @@ describe("managed startup shared-state transaction", () => {
           value: { path: "disabled/new.json", content: {} },
         },
       ],
-      stateUpdates: [],
-      healthChecks: [],
     };
     const profile = {
       ...managedStartupE2eProfile("openclaw"),

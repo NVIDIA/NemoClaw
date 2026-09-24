@@ -30,7 +30,7 @@
       "src/lib/sandbox-name-contract.ts": 21,
       "src/lib/security/redact.ts": 51,
       "src/lib/state/mcp-lifecycle-lock.ts": 20,
-      "src/lib/state/onboard-session.ts": 35,
+      "src/lib/state/onboard-session.ts": 34,
       "src/lib/state/registry.ts": 87,
       "src/lib/state/state-root.ts": 21,
       "src/lib/subprocess-env.ts": 26,
@@ -64,9 +64,9 @@
   },
   "allowedCycles": [],
   "maxRootFiles": {
-    "src/lib/onboard": 299,
+    "src/lib/onboard": 297,
     "src/lib/actions": 18,
-    "src/lib/actions/sandbox": 174,
+    "src/lib/actions/sandbox": 173,
     "src/lib/state": 36,
     "src/lib/inference": 63,
     "scripts": 42

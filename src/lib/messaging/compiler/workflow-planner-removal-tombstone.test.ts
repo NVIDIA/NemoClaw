@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
+import { makeMessagingPlan } from "../../../../test/helpers/messaging-plan-fixtures";
 import type { SandboxMessagingPlan } from "../manifest";
 import {
   compactSandboxMessagingPlanForPersistence,
@@ -15,10 +16,7 @@ import {
 
 function existingPlan(): SandboxMessagingPlan {
   return {
-    schemaVersion: 1,
-    sandboxName: "demo",
-    agent: "openclaw",
-    workflow: "onboard",
+    ...makeMessagingPlan({ sandboxName: "demo" }),
     channels: [
       {
         channelId: "telegram",
@@ -43,7 +41,6 @@ function existingPlan(): SandboxMessagingPlan {
         hooks: [],
       },
     ],
-    disabledChannels: [],
     credentialBindings: [
       {
         channelId: "telegram",
@@ -86,9 +83,6 @@ function existingPlan(): SandboxMessagingPlan {
         templateRefs: [],
       },
     ],
-    buildSteps: [],
-    stateUpdates: [],
-    healthChecks: [],
   };
 }
 

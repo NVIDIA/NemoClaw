@@ -8,26 +8,17 @@
 //
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { makeMessagingPlan } from "../../../../test/helpers/messaging-plan-fixtures";
 import * as defs from "../../agent/defs";
 import { MessagingSetupApplier } from "../../messaging/applier/setup-applier";
 import type { SandboxMessagingPlan } from "../../messaging/manifest";
 import type { SandboxEntry } from "../../state/registry";
 import { stageMessagingManifestPlanForRebuild } from "./rebuild-messaging-stage";
 
-const emptyStoredMessagingPlan = {
-  schemaVersion: 1,
+const emptyStoredMessagingPlan = makeMessagingPlan({
   sandboxName: "openclaw-sandbox",
-  agent: "openclaw",
   workflow: "remove-channel",
-  channels: [],
-  disabledChannels: [],
-  credentialBindings: [],
-  networkPolicy: { presets: [], entries: [] },
-  agentRender: [],
-  buildSteps: [],
-  stateUpdates: [],
-  healthChecks: [],
-} satisfies SandboxMessagingPlan;
+}) satisfies SandboxMessagingPlan;
 
 describe("stageMessagingManifestPlanForRebuild non-messaging agent guard", () => {
   afterEach(() => {
@@ -96,10 +87,7 @@ describe("stageMessagingManifestPlanForRebuild non-messaging agent guard", () =>
       messaging: {
         schemaVersion: 1,
         plan: {
-          schemaVersion: 1,
-          sandboxName: "openclaw-sandbox",
-          agent: "openclaw",
-          workflow: "rebuild",
+          ...makeMessagingPlan({ sandboxName: "openclaw-sandbox", workflow: "rebuild" }),
           channels: [
             {
               channelId: "telegram",
@@ -113,13 +101,6 @@ describe("stageMessagingManifestPlanForRebuild non-messaging agent guard", () =>
               hooks: [],
             },
           ],
-          disabledChannels: [],
-          credentialBindings: [],
-          networkPolicy: { presets: [], entries: [] },
-          agentRender: [],
-          buildSteps: [],
-          stateUpdates: [],
-          healthChecks: [],
         },
       },
     } satisfies SandboxEntry;

@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { makeMessagingPlan } from "../../../../test/helpers/messaging-plan-fixtures";
 import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
 import { namedOpenShellGateway } from "../../adapters/openshell/sandbox-observer";
 import {
@@ -25,20 +26,7 @@ import type {
 } from "./types";
 
 const target = namedOpenShellGateway("nemoclaw");
-const plan: SandboxMessagingPlan = {
-  schemaVersion: 1,
-  sandboxName: "alpha",
-  agent: "openclaw",
-  workflow: "onboard",
-  channels: [],
-  disabledChannels: [],
-  credentialBindings: [],
-  networkPolicy: { presets: [], entries: [] },
-  agentRender: [],
-  buildSteps: [],
-  stateUpdates: [],
-  healthChecks: [],
-};
+const plan: SandboxMessagingPlan = makeMessagingPlan({ sandboxName: "alpha" });
 
 function definition(
   overrides: Partial<MessagingCredentialProviderEphemeralInput> = {},

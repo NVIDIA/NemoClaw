@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { makeMessagingPlan } from "../../../test/helpers/messaging-plan-fixtures";
 import type { SandboxMessagingPlan } from "../messaging/manifest";
 import {
   createMessagingHostForwardPortConflictHookOptions,
@@ -27,10 +28,7 @@ function makePlan(
   channel: Partial<SandboxMessagingPlan["channels"][number]> = {},
 ): SandboxMessagingPlan {
   return {
-    schemaVersion: 1,
-    sandboxName: "demo",
-    agent: "openclaw",
-    workflow: "onboard",
+    ...makeMessagingPlan({ sandboxName: "demo" }),
     channels: [
       {
         channelId: "teams",
@@ -50,13 +48,6 @@ function makePlan(
         ...channel,
       },
     ],
-    disabledChannels: [],
-    credentialBindings: [],
-    networkPolicy: { presets: [], entries: [] },
-    agentRender: [],
-    buildSteps: [],
-    stateUpdates: [],
-    healthChecks: [],
   };
 }
 

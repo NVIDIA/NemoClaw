@@ -39,6 +39,13 @@ Start with read-only inspection of the requested area. Read each candidate test,
 callers, shared fixtures, overlapping tests, project routing, and relevant Git history.
 Inspect dependency source or types when a claim depends on dependency behavior.
 
+For a whole-suite request, map each subsystem's production entrypoints and test layers before
+calling the audit complete. Duplicate-body and assertion scans are discovery tools, not a semantic
+audit. Review obsolete implementations, mocked wiring, repeated fixtures, and cross-layer ownership;
+record both removal decisions and the reason superficially similar tests remain independent.
+An unimported module may still be a packaged API, a manifest-loaded asset, a subprocess entrypoint,
+or an intentionally dormant implementation. Check those consumers and the feature's history.
+
 Look for:
 
 - Tests without assertions, self-comparisons, or expected results calculated by the subject under test.

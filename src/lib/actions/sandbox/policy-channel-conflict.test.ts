@@ -8,6 +8,7 @@
 //
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
+import { makeMessagingPlan } from "../../../../test/helpers/messaging-plan-fixtures";
 import * as runtime from "../../adapters/openshell/runtime";
 import * as defs from "../../agent/defs";
 import * as store from "../../credentials/store";
@@ -55,10 +56,7 @@ function makePlanEntry(
     messaging: {
       schemaVersion: 1,
       plan: {
-        schemaVersion: 1,
-        sandboxName: name,
-        agent: "openclaw",
-        workflow: "onboard",
+        ...makeMessagingPlan({ sandboxName: name }),
         channels: [
           {
             channelId,
@@ -72,7 +70,6 @@ function makePlanEntry(
             hooks: [],
           },
         ],
-        disabledChannels: [],
         credentialBindings: bindings.map((b) => ({
           channelId,
           credentialId: b.providerEnvKey.toLowerCase(),
@@ -83,11 +80,6 @@ function makePlanEntry(
           credentialAvailable: true,
           ...(b.credentialHash ? { credentialHash: b.credentialHash } : {}),
         })),
-        networkPolicy: { presets: [], entries: [] },
-        agentRender: [],
-        buildSteps: [],
-        stateUpdates: [],
-        healthChecks: [],
       },
     },
   } as unknown as SandboxEntry;
@@ -108,10 +100,7 @@ function makeTeamsEntry(
     messaging: {
       schemaVersion: 1,
       plan: {
-        schemaVersion: 1,
-        sandboxName: name,
-        agent: "openclaw",
-        workflow: "onboard",
+        ...makeMessagingPlan({ sandboxName: name }),
         channels: [
           {
             channelId: "teams",
@@ -213,10 +202,6 @@ function makeTeamsEntry(
               ]
             : [],
         },
-        agentRender: [],
-        buildSteps: [],
-        stateUpdates: [],
-        healthChecks: [],
       },
     },
   } as unknown as SandboxEntry;
@@ -229,10 +214,7 @@ function makeHermesDiscordEntry(name: string): SandboxEntry {
     messaging: {
       schemaVersion: 1,
       plan: {
-        schemaVersion: 1,
-        sandboxName: name,
-        agent: "hermes",
-        workflow: "stop-channel",
+        ...makeMessagingPlan({ sandboxName: name, agent: "hermes", workflow: "stop-channel" }),
         channels: [
           {
             channelId: "discord",
@@ -258,11 +240,6 @@ function makeHermesDiscordEntry(name: string): SandboxEntry {
             credentialAvailable: true,
           },
         ],
-        networkPolicy: { presets: [], entries: [] },
-        agentRender: [],
-        buildSteps: [],
-        stateUpdates: [],
-        healthChecks: [],
       },
     },
   } as unknown as SandboxEntry;

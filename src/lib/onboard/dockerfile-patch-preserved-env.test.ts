@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, beforeEach, expect, it } from "vitest";
+import { makeMessagingPlan } from "../../../test/helpers/messaging-plan-fixtures";
 import { patchStagedDockerfile } from "./dockerfile-patch";
 
 let tmpRoot: string;
@@ -23,12 +24,7 @@ afterEach(() => {
 it("adds preserved Hermes home channels at the Dockerfile patch boundary (#7803)", () => {
   process.env.NEMOCLAW_MESSAGING_PLAN_B64 = Buffer.from(
     JSON.stringify({
-      schemaVersion: 1,
-      sandboxName: "my-assistant",
-      agent: "hermes",
-      // Inner onboarding can refresh the ordinary plan before Dockerfile
-      // patching. The separately scoped rebuild carrier remains authoritative.
-      workflow: "onboard",
+      ...makeMessagingPlan({ sandboxName: "my-assistant", agent: "hermes" }),
       channels: [
         {
           channelId: "slack",
@@ -42,13 +38,6 @@ it("adds preserved Hermes home channels at the Dockerfile patch boundary (#7803)
           hooks: [],
         },
       ],
-      disabledChannels: [],
-      credentialBindings: [],
-      networkPolicy: { presets: [], entries: [] },
-      agentRender: [],
-      buildSteps: [],
-      stateUpdates: [],
-      healthChecks: [],
     }),
     "utf8",
   ).toString("base64");

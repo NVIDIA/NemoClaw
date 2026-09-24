@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { makeMessagingPlan } from "../../../../../test/helpers/messaging-plan-fixtures";
 import { decisionSelected, decisionUnset } from "../../../state/onboard-checkpoint-decision";
 import { deriveCheckpointFromSession } from "../../../state/onboard-checkpoint-migrate";
 import type { CheckpointSandboxIdentity } from "../../../state/onboard-checkpoint-types";
@@ -997,10 +998,7 @@ describe("handleProviderInferenceState", () => {
       endpointUrl: "https://integrate.api.nvidia.com/v1",
       credentialEnv: "COMPATIBLE_API_KEY",
       messagingPlan: {
-        schemaVersion: 1,
-        sandboxName: "my-assistant",
-        agent: "openclaw",
-        workflow: "rebuild",
+        ...makeMessagingPlan({ sandboxName: "my-assistant", workflow: "rebuild" }),
         channels: [
           {
             channelId: "telegram",
@@ -1014,13 +1012,6 @@ describe("handleProviderInferenceState", () => {
             hooks: [],
           },
         ],
-        disabledChannels: [],
-        credentialBindings: [],
-        networkPolicy: { presets: [], entries: [] },
-        agentRender: [],
-        buildSteps: [],
-        stateUpdates: [],
-        healthChecks: [],
       },
     });
     const setupNim = vi.fn(async () => ({

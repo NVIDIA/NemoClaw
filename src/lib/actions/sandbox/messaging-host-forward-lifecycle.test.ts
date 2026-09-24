@@ -3,6 +3,7 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { makeMessagingPlan } from "../../../../test/helpers/messaging-plan-fixtures";
 import { captureOpenshell, runOpenshell } from "../../adapters/openshell/runtime";
 import type { SandboxMessagingPlan } from "../../messaging/manifest";
 import { ensureMessagingHostForwardAfterRebuild } from "./messaging-host-forward-lifecycle";
@@ -16,10 +17,7 @@ vi.mock("../../adapters/openshell/runtime", () => ({
 
 function makePlan(): SandboxMessagingPlan {
   return {
-    schemaVersion: 1,
-    sandboxName: "demo",
-    agent: "openclaw",
-    workflow: "onboard",
+    ...makeMessagingPlan({ sandboxName: "demo" }),
     channels: [
       {
         channelId: "teams",
@@ -38,13 +36,6 @@ function makePlan(): SandboxMessagingPlan {
         },
       },
     ],
-    disabledChannels: [],
-    credentialBindings: [],
-    networkPolicy: { presets: [], entries: [] },
-    agentRender: [],
-    buildSteps: [],
-    stateUpdates: [],
-    healthChecks: [],
   };
 }
 

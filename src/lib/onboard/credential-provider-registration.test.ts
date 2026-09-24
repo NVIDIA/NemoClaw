@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { makeMessagingPlan } from "../../../test/helpers/messaging-plan-fixtures";
 import { MessagingProviderApplyError } from "../messaging/applier/openshell-provider";
 import { MessagingSetupApplier } from "../messaging/applier/setup-applier";
 import type { SandboxMessagingPlan } from "../messaging/manifest";
@@ -1029,10 +1030,7 @@ describe("credential provider registration", () => {
     deps.root = process.cwd();
     const registration = createCredentialProviderRegistration(deps);
     const plan: SandboxMessagingPlan = {
-      schemaVersion: 1,
-      sandboxName: "alpha",
-      agent: "hermes",
-      workflow: "onboard",
+      ...makeMessagingPlan({ sandboxName: "alpha", agent: "hermes" }),
       channels: [
         {
           channelId: "discord",
@@ -1046,7 +1044,6 @@ describe("credential provider registration", () => {
           hooks: [],
         },
       ],
-      disabledChannels: [],
       credentialBindings: [
         {
           channelId: "discord",
@@ -1058,11 +1055,6 @@ describe("credential provider registration", () => {
           credentialAvailable: true,
         },
       ],
-      networkPolicy: { presets: [], entries: [] },
-      agentRender: [],
-      buildSteps: [],
-      stateUpdates: [],
-      healthChecks: [],
     };
     const required = requiredMessagingProviderBindings("alpha", plan);
     const tokenDefs: MessagingTokenDef[] = [

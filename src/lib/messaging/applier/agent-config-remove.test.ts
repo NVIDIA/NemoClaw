@@ -4,15 +4,13 @@
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
+import { makeMessagingPlan } from "../../../../test/helpers/messaging-plan-fixtures";
 import type { SandboxMessagingPlan } from "../manifest";
 import { MessagingSetupApplier } from "./setup-applier";
 
 function disabledWechatPlan(): SandboxMessagingPlan {
   return {
-    schemaVersion: 1,
-    sandboxName: "demo",
-    agent: "hermes",
-    workflow: "remove-channel",
+    ...makeMessagingPlan({ sandboxName: "demo", agent: "hermes", workflow: "remove-channel" }),
     channels: [
       {
         channelId: "wechat",
@@ -27,8 +25,6 @@ function disabledWechatPlan(): SandboxMessagingPlan {
       },
     ],
     disabledChannels: ["wechat"],
-    credentialBindings: [],
-    networkPolicy: { presets: [], entries: [] },
     agentRender: [
       {
         agent: "hermes",
@@ -48,9 +44,6 @@ function disabledWechatPlan(): SandboxMessagingPlan {
         templateRefs: [],
       },
     ],
-    buildSteps: [],
-    stateUpdates: [],
-    healthChecks: [],
   };
 }
 

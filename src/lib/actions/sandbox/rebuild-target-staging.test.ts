@@ -3,6 +3,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { makeMessagingPlan } from "../../../../test/helpers/messaging-plan-fixtures";
 import type { SandboxMessagingPlan } from "../../messaging/manifest";
 import {
   createRebuildProviderReconfigureHandoff,
@@ -56,10 +57,7 @@ const bail = (message: string): never => {
 
 function messagingConfigPlan(requireMention: "0" | "1"): SandboxMessagingPlan {
   return {
-    schemaVersion: 1,
-    sandboxName: "alpha",
-    agent: "openclaw",
-    workflow: "rebuild",
+    ...makeMessagingPlan({ sandboxName: "alpha", workflow: "rebuild" }),
     channels: [
       {
         channelId: "telegram",
@@ -83,13 +81,6 @@ function messagingConfigPlan(requireMention: "0" | "1"): SandboxMessagingPlan {
         hooks: [],
       },
     ],
-    disabledChannels: [],
-    credentialBindings: [],
-    networkPolicy: { presets: [], entries: [] },
-    agentRender: [],
-    buildSteps: [],
-    stateUpdates: [],
-    healthChecks: [],
   };
 }
 

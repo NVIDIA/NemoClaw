@@ -4,6 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 
+import { makeMessagingPlan } from "../../../../test/helpers/messaging-plan-fixtures";
 import type { SandboxMessagingPlan } from "../../messaging/manifest";
 
 const mocks = vi.hoisted(() => ({ runOpenshell: vi.fn() }));
@@ -17,10 +18,7 @@ import { finalizePendingMessagingRemovalsAfterRestore } from "./rebuild-messagin
 
 function removalPlan(): SandboxMessagingPlan {
   return {
-    schemaVersion: 1,
-    sandboxName: "demo",
-    agent: "hermes",
-    workflow: "rebuild",
+    ...makeMessagingPlan({ sandboxName: "demo", agent: "hermes", workflow: "rebuild" }),
     channels: [
       {
         channelId: "wechat",
@@ -36,8 +34,6 @@ function removalPlan(): SandboxMessagingPlan {
       },
     ],
     disabledChannels: ["wechat"],
-    credentialBindings: [],
-    networkPolicy: { presets: [], entries: [] },
     agentRender: [
       {
         agent: "hermes",
@@ -49,9 +45,6 @@ function removalPlan(): SandboxMessagingPlan {
         templateRefs: [],
       },
     ],
-    buildSteps: [],
-    stateUpdates: [],
-    healthChecks: [],
   };
 }
 

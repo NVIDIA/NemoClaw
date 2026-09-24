@@ -3,6 +3,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { makeMessagingPlan } from "../../../../test/helpers/messaging-plan-fixtures";
 import * as store from "../../credentials/store";
 import { MessagingSetupApplier } from "../../messaging/applier/setup-applier";
 import type { SandboxMessagingPlan } from "../../messaging/manifest";
@@ -11,20 +12,7 @@ import { policyChannelDependencies } from "./policy-channel-dependencies";
 const providerName = "alpha-googlechat-bridge";
 
 function googleChatPlan(): SandboxMessagingPlan {
-  return {
-    schemaVersion: 1,
-    sandboxName: "alpha",
-    agent: "openclaw",
-    workflow: "onboard",
-    channels: [],
-    disabledChannels: [],
-    credentialBindings: [],
-    networkPolicy: { presets: [], entries: [] },
-    agentRender: [],
-    buildSteps: [],
-    stateUpdates: [],
-    healthChecks: [],
-  };
+  return makeMessagingPlan({ sandboxName: "alpha" });
 }
 
 describe("policy channel provider refresh", () => {
