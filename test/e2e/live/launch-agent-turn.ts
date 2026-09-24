@@ -1146,6 +1146,21 @@ function hasStructuredContent(message) {
   return Array.isArray(message.content) && message.content.length > 0;
 }
 
+function messageFailureMetadata(message) {
+  const errorMessage = typeof message.errorMessage === "string" ? message.errorMessage.trim() : "";
+  const errorType = /^(?:litellm\.)?(AuthenticationError|PermissionDeniedError|BadRequestError|NotFoundError|RateLimitError|APIConnectionError|APITimeoutError|InternalServerError|ServiceUnavailableError)(?::|$)/.exec(errorMessage)?.[1];
+  const errorCode = ["string", "number"].includes(typeof message.errorCode) ? String(message.errorCode).trim() : "";
+  return {
+    role: message.role,
+    stopReason: ["stop", "length", "toolUse", "error", "aborted"].includes(message.stopReason) ? message.stopReason : "other",
+    errorCode: /^[1-5][0-9]{2}$/.test(errorCode) ? errorCode : null,
+    errorCodeType: typeof message.errorCode,
+    errorType: errorType ?? (errorMessage ? "unclassified" : null),
+    api: ["openai-completions", "openai-responses", "anthropic-messages"].includes(message.api) ? message.api : "other",
+    managedProvider: message.provider === "inference",
+  };
+}
+
 function structuredContentText(message) {
   return [message.content]
     .flat()
@@ -1212,6 +1227,7 @@ function appendedMessages(fileName, baseline) {
       contentText: structuredContentText(record.message),
       hasStructuredContent: hasStructuredContent(record.message),
       providerUnavailable: isStructuredProviderUnavailable(record.message),
+      failureMetadata: messageFailureMetadata(record.message),
     });
   }
   return messages;
@@ -1234,6 +1250,7 @@ function structuredMessages(events, sessionId) {
             contentText: structuredContentText(message),
             hasStructuredContent: hasStructuredContent(message),
             providerUnavailable: isStructuredProviderUnavailable(message),
+            failureMetadata: messageFailureMetadata(message),
           },
         ]
       : [];
@@ -1327,7 +1344,7 @@ function qualifyStructuredTurns(changedSessions, expectedTurns) {
       { sessionId },
     );
     if (!message.hasStructuredContent && !message.providerUnavailable) {
-      finish(2, "message_content_empty", { sessionId });
+      finish(2, "message_content_empty", { sessionId, messageIndex: index, ...message.failureMetadata });
     }
   }
   const providerUnavailable = providerUnavailableIndex !== -1;

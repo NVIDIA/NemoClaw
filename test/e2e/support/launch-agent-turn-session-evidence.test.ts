@@ -623,6 +623,59 @@ it.each<{ after: SessionRecords; status: number }>([
   },
 );
 
+it.each([
+  ["jsonl", false],
+  ["sqlite", false],
+  ["jsonl", true],
+  ["sqlite", true],
+] as const)(
+  "reports safe empty-message metadata from %s with unknown fields %s",
+  (format, unknownFields) => {
+    const secret = "nvapi-private-diagnostic-canary";
+    const records = [
+      message("user"),
+      providerUnavailableMessage({
+        errorCode: 401,
+        errorMessage: `AuthenticationError: ${secret}`,
+        ...(unknownFields
+          ? {
+              errorCode: secret,
+              errorMessage: secret,
+              stopReason: secret,
+              api: secret,
+              provider: secret,
+            }
+          : {}),
+      }),
+    ];
+    const { qualification } =
+      format === "jsonl"
+        ? runEvidenceFixture({ after: { "session-a": records }, expectedTurns: 1 })
+        : runSqliteEvidenceFixture({
+            after: records.map((eventJson, index) => ({
+              eventJson,
+              seq: index + 1,
+              sessionId: "session-a",
+            })),
+            expectedTurns: 1,
+          });
+    expect(qualification.status).toBe(2);
+    expect(JSON.parse(qualification.stderr)).toEqual({
+      reason: "message_content_empty",
+      sessionId: "session-a",
+      messageIndex: 1,
+      role: "assistant",
+      stopReason: unknownFields ? "other" : "error",
+      errorCode: unknownFields ? null : "401",
+      errorCodeType: unknownFields ? "string" : "number",
+      errorType: unknownFields ? "unclassified" : "AuthenticationError",
+      api: unknownFields ? "other" : "openai-completions",
+      managedProvider: !unknownFields,
+    });
+    expect(qualification.stderr).not.toContain(secret);
+  },
+);
+
 it("rejects an unterminated appended session record (#9160)", () => {
   const { baseline, qualification } = runEvidenceFixture({
     after: {
