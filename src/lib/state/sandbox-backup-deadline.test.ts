@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "fs";
+import { existsSync, lstatSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
 
@@ -27,7 +27,11 @@ vi.mock("../../../nemoclaw/dist/shared/snapshot-sanitizer-boundary.cjs", () => (
 }));
 
 import { sanitizeSnapshotDirectory } from "../security/snapshot-sanitizer";
-import { safeTarExtract } from "./sandbox";
+import {
+  removeBackupEntryWithinDeadline,
+  safeTarExtract,
+  sanitizeBackupDirectory,
+} from "./sandbox";
 
 const snapshotRoot = {
   canonicalPath: "/backup",
@@ -130,5 +134,54 @@ describe("sandbox backup finalization deadline", () => {
     );
     expect(executorMocks.inspectDescriptorSnapshotRoot).not.toHaveBeenCalled();
     expect(executorMocks.scanDescriptorSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("defers cleanup when the bounded sanitizer executor times out", () => {
+    const backupPath = mkdtempSync(path.join(tmpdir(), "nemoclaw-sanitizer-timeout-"));
+    onTestFinished(() => rmSync(backupPath, { recursive: true, force: true }));
+    executorMocks.scanDescriptorSnapshot.mockImplementation(() => {
+      throw new Error("snapshot sanitization deadline expired");
+    });
+
+    expect(() => sanitizeBackupDirectory(backupPath, {}, Date.now() + 10_000, true)).toThrow(
+      "deferred incomplete backup cleanup",
+    );
+    expect(existsSync(backupPath)).toBe(true);
+  });
+
+  it("leaves a rejected extracted tree for post-lifecycle bounded cleanup", () => {
+    const targetDir = mkdtempSync(path.join(tmpdir(), "nemoclaw-symlink-audit-"));
+    onTestFinished(() => rmSync(targetDir, { recursive: true, force: true }));
+    const outsideDir = mkdtempSync(path.join(tmpdir(), "nemoclaw-symlink-outside-"));
+    onTestFinished(() => rmSync(outsideDir, { recursive: true, force: true }));
+    const symlinkPath = path.join(targetDir, "escape");
+    symlinkSync(outsideDir, symlinkPath);
+
+    expect(safeTarExtract(Buffer.from("archive"), targetDir, Date.now() + 10_000, true)).toEqual({
+      success: false,
+      error: expect.stringContaining("post-extraction symlink audit failed"),
+      cleanupDeferred: true,
+    });
+    expect(lstatSync(symlinkPath).isSymbolicLink()).toBe(true);
+  });
+
+  it("retains a partial permission-denied tree when bounded removal times out", () => {
+    const targetDir = mkdtempSync(path.join(tmpdir(), "nemoclaw-partial-permission-tree-"));
+    onTestFinished(() => rmSync(targetDir, { recursive: true, force: true }));
+    writeFileSync(path.join(targetDir, "large-partial-state"), "retained");
+    executorMocks.spawnSync.mockReturnValueOnce({
+      status: null,
+      signal: "SIGKILL",
+      error: Object.assign(new Error("timed out"), { code: "ETIMEDOUT" }),
+      stdout: "",
+      stderr: "",
+    });
+
+    expect(removeBackupEntryWithinDeadline(targetDir, Date.now() + 10_000)).toBe(false);
+    expect(existsSync(path.join(targetDir, "large-partial-state"))).toBe(true);
+    expect(executorMocks.spawnSync.mock.calls[0]?.[2]).toMatchObject({
+      timeout: expect.any(Number),
+      killSignal: "SIGKILL",
+    });
   });
 });

@@ -344,6 +344,7 @@ export interface TarValidationResult {
 export interface SafeExtractResult {
   success: boolean;
   error?: string;
+  cleanupDeferred?: true;
 }
 
 function isStringArray(value: unknown): value is string[] {
@@ -806,6 +807,7 @@ export function safeTarExtract(
   tarArchive: TarArchiveSource,
   targetDir: string,
   deadlineMs?: number,
+  deferViolationCleanup = false,
 ): SafeExtractResult {
   // Phase 1a: Validate entry paths before extraction
   const validationTimeoutMs = remainingBackupTimeoutMs(deadlineMs, 60_000);
@@ -876,6 +878,13 @@ export function safeTarExtract(
   const symlinkAudit = auditExtractedSymlinks(targetDir, [targetDir, "/sandbox"], deadlineMs);
   const symlinkViolations = symlinkAudit.violations;
   if (symlinkViolations.length > 0) {
+    if (deferViolationCleanup) {
+      return {
+        success: false,
+        error: `post-extraction symlink audit failed: ${symlinkViolations.join("; ")}`,
+        cleanupDeferred: true,
+      };
+    }
     // Nuke the extraction — do not leave attacker-controlled symlinks on host
     try {
       rmSync(targetDir, { recursive: true, force: true });
@@ -1557,12 +1566,13 @@ function retryPermissionDeniedDirectories(
   backedUpDirs: string[],
   failedDirReasons: Record<string, string>,
   deadlineMs: number | undefined,
-): void {
-  if (!captureFallback) return;
+  deferViolationCleanup: boolean,
+): string | null {
+  if (!captureFallback) return null;
   const denied = failedDirs.filter(
     (name) => failedDirReasons[name] === BACKUP_FAILURE_PERMISSION_DENIED,
   );
-  if (denied.length === 0) return;
+  if (denied.length === 0) return null;
   let stagingDir: string | undefined;
   let archivePath = "";
   let archiveFd: number | undefined;
@@ -1595,13 +1605,13 @@ function retryPermissionDeniedDirectories(
             ? (capture.error ?? "failed")
             : "no archive";
       _log(`FAILED: privileged state directory capture: ${detail}`);
-      return;
+      return null;
     }
     const allowedTopLevelEntries = new Set(denied);
     const validationTimeoutMs = remainingBackupTimeoutMs(deadlineMs, 60_000);
     if (validationTimeoutMs === null) {
       _log("FAILED: privileged state directory capture: backup deadline expired");
-      return;
+      return null;
     }
     const archiveValidation = validateTarEntries(
       { filePath: archivePath },
@@ -1618,17 +1628,25 @@ function retryPermissionDeniedDirectories(
         ? `undeclared archive entry: ${undeclaredEntry}`
         : archiveValidation.violations.join("; ");
       _log(`FAILED: privileged state directory capture: ${detail}`);
-      return;
+      return null;
     }
     for (const name of denied) {
       const target = path.join(backupPath, name);
-      rejectSymlinksOnPath(target);
-      rmSync(target, { recursive: true, force: true });
+      if (!removeBackupEntryWithinDeadline(target, deadlineMs)) {
+        const detail = `bounded cleanup did not remove partial directory '${name}'`;
+        _log(`FAILED: privileged state directory capture: ${detail}`);
+        return detail;
+      }
     }
-    const extracted = safeTarExtract({ filePath: archivePath }, backupPath, deadlineMs);
+    const extracted = safeTarExtract(
+      { filePath: archivePath },
+      backupPath,
+      deadlineMs,
+      deferViolationCleanup,
+    );
     if (!extracted.success) {
       _log(`FAILED: privileged state directory capture: ${extracted.error}`);
-      return;
+      return extracted.cleanupDeferred ? (extracted.error ?? "unsafe extracted backup tree") : null;
     }
     const recovered = new Set(existingBackupDirs(backupPath, denied));
     for (const name of denied) {
@@ -1646,6 +1664,39 @@ function retryPermissionDeniedDirectories(
     if (archiveFd !== undefined) closeSync(archiveFd);
     if (stagingDir) rmSync(stagingDir, { recursive: true, force: true });
   }
+  return null;
+}
+
+/** @visibleForTesting Remove one unpublished backup entry within the caller's work deadline. */
+export function removeBackupEntryWithinDeadline(targetPath: string, deadlineMs?: number): boolean {
+  try {
+    rejectSymlinksOnPath(targetPath);
+    return removePathWithinDeadline(targetPath, deadlineMs);
+  } catch {
+    return false;
+  }
+}
+
+function removePathWithinDeadline(targetPath: string, deadlineMs?: number): boolean {
+  if (deadlineMs === undefined) {
+    rmSync(targetPath, { recursive: true, force: true });
+  } else {
+    const timeout = remainingBackupTimeoutMs(deadlineMs, 60_000);
+    if (timeout === null) return false;
+    const removal = spawnSync(
+      process.execPath,
+      ["-e", "require('node:fs').rmSync(process.argv[1],{recursive:true,force:true})", targetPath],
+      {
+        timeout,
+        killSignal: "SIGKILL",
+        stdio: "ignore",
+        windowsHide: true,
+        env: { ...process.env, NODE_OPTIONS: undefined, NODE_PATH: undefined },
+      },
+    );
+    if (removal.status !== 0 || removal.error) return false;
+  }
+  return !existsSync(targetPath);
 }
 
 // ── Backup ─────────────────────────────────────────────────────────
@@ -1809,11 +1860,12 @@ function classifyPreBackupAuditEntry(
   return "violation";
 }
 
+function backupDeadlineExpired(deadlineMs: number | undefined): boolean {
+  return deadlineMs !== undefined && (!Number.isFinite(deadlineMs) || deadlineMs <= Date.now());
+}
+
 export function backupSandboxState(sandboxName: string, options: BackupOptions = {}): BackupResult {
-  if (
-    options.deadlineMs !== undefined &&
-    (!Number.isFinite(options.deadlineMs) || options.deadlineMs <= Date.now())
-  ) {
+  if (backupDeadlineExpired(options.deadlineMs)) {
     return {
       success: false,
       backedUpDirs: [],
@@ -2260,6 +2312,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
               { filePath: downloadedTarPath },
               backupPath,
               options.deadlineMs,
+              options.deferSanitizationDeadlineCleanup,
             );
           }
         } finally {
@@ -2267,6 +2320,17 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         }
 
         if (tarExitedWithData) {
+          if (extractResult?.cleanupDeferred) {
+            return {
+              success: false,
+              manifest,
+              backedUpDirs: [],
+              failedDirs: [...existingDirs],
+              backedUpFiles: [],
+              failedFiles: stateFiles.map((file) => file.path),
+              error: extractResult.error ?? "Unsafe extracted backup tree requires cleanup",
+            };
+          }
           if (extractResult?.success) {
             const extractedDirs = new Set(existingBackupDirs(backupPath, existingDirs));
             if (result.status === 0) {
@@ -2324,7 +2388,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
       }
     }
 
-    retryPermissionDeniedDirectories(
+    const deferredExtractionError = retryPermissionDeniedDirectories(
       options.captureStateDirectories,
       sandboxName,
       dir,
@@ -2333,7 +2397,19 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
       backedUpDirs,
       failedDirReasons,
       options.deadlineMs,
+      options.deferSanitizationDeadlineCleanup ?? false,
     );
+    if (deferredExtractionError) {
+      return {
+        success: false,
+        manifest,
+        backedUpDirs: [],
+        failedDirs: [...failedDirs],
+        backedUpFiles: [],
+        failedFiles: stateFiles.map((file) => file.path),
+        error: deferredExtractionError,
+      };
+    }
 
     for (const spec of stateFiles) {
       const result = backupStateFile(
@@ -3473,29 +3549,7 @@ export function removeSandboxStateBackup(
 
   try {
     rejectSymlinksOnPath(candidateBackupPath);
-    if (deadlineMs === undefined) {
-      rmSync(candidateBackupPath, { recursive: true, force: true });
-    } else {
-      const timeout = Math.floor(deadlineMs - Date.now());
-      if (timeout <= 0) return false;
-      const removal = spawnSync(
-        process.execPath,
-        [
-          "-e",
-          "require('node:fs').rmSync(process.argv[1],{recursive:true,force:true})",
-          candidateBackupPath,
-        ],
-        {
-          timeout,
-          killSignal: "SIGKILL",
-          stdio: "ignore",
-          windowsHide: true,
-          env: { ...process.env, NODE_OPTIONS: undefined, NODE_PATH: undefined },
-        },
-      );
-      if (removal.status !== 0 || removal.error) return false;
-    }
-    return !existsSync(candidateBackupPath);
+    return removePathWithinDeadline(candidateBackupPath, deadlineMs);
   } catch {
     return false;
   }

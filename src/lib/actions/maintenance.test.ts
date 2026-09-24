@@ -861,8 +861,7 @@ describe("backupAll", () => {
       expect.anything(),
     );
   });
-
-  it("restores stopped state before removing a deadline-expired strict snapshot (#11936)", async () => {
+  it("restores stopped state before removing a rejected partial strict snapshot (#11936)", async () => {
     mocks.listSandboxes.mockReturnValue({
       sandboxes: [{ name: "sb-stopped" }],
       defaultSandbox: null,
@@ -874,7 +873,7 @@ describe("backupAll", () => {
     });
     mocks.backupStartedSandboxState.mockResolvedValue({
       success: false,
-      error: "Snapshot sanitization skipped: backup deadline expired",
+      error: "symlink audit failed; partial permission cleanup timed out",
       backedUpDirs: [],
       failedDirs: [],
       backedUpFiles: [],

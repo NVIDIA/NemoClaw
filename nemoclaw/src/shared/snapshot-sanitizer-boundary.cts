@@ -751,6 +751,9 @@ export function scanDescriptorSnapshot(
       timeout: timeoutMs,
     },
   );
+  if ((result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT") {
+    throw new Error("snapshot sanitization deadline expired", { cause: result.error });
+  }
   if (result.status !== 0 || result.error) return null;
   return parseScanResult(result.stdout);
 }
@@ -776,6 +779,9 @@ export function applyDescriptorSnapshotActions(
       timeout: timeoutMs,
     },
   );
+  if ((result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT") {
+    throw new Error("snapshot sanitization deadline expired", { cause: result.error });
+  }
   return result.status === 0 && !result.error;
 }
 
