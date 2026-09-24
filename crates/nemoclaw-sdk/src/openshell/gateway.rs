@@ -31,10 +31,9 @@ impl GatewayObservation {
     ) -> Self {
         match result {
             Ok(capabilities) => {
-                let compatible = !required.is_empty()
-                    && required
-                        .iter()
-                        .all(|driver| capabilities.supports(driver.as_str()));
+                let incompatibility =
+                    capabilities.incompatibility(required.iter().map(|driver| driver.as_str()));
+                let compatible = !required.is_empty() && incompatibility.is_none();
                 Self {
                     status: if compatible {
                         ObservationStatus::Available
@@ -42,8 +41,9 @@ impl GatewayObservation {
                         ObservationStatus::Unavailable
                     },
                     reason: (!compatible).then(|| {
-                        "gateway version or compute driver does not satisfy the configuration"
-                            .into()
+                        incompatibility.unwrap_or_else(|| {
+                            "the configuration requires no compute driver".into()
+                        })
                     }),
                     source: "openshell_gateway_info".into(),
                     capabilities: Some(capabilities),
@@ -307,6 +307,28 @@ mod discovery_tests {
             &[crate::config::ComputeDriver::Podman],
         );
         assert_eq!(mismatch.status, ObservationStatus::Unavailable);
+        assert_eq!(
+            mismatch.reason.as_deref(),
+            Some("gateway compute driver is docker, but runtime.provider is podman")
+        );
+        let old_version = GatewayObservation::from_result(
+            Ok(GatewayCapabilities {
+                gateway_version: "0.0.1".into(),
+                compute_drivers: vec![BTreeSet::from(["docker".into()])],
+            }),
+            &[
+                crate::config::ComputeDriver::Docker,
+                crate::config::ComputeDriver::Podman,
+            ],
+        );
+        assert_eq!(
+            old_version.reason,
+            Some(format!(
+                "gateway runs OpenShell 0.0.1, but this build requires {}; gateway compute \
+                 driver is docker, but runtime.provider is podman",
+                crate::artifact_pins::OPENSHELL_VERSION
+            ))
+        );
         let unknown = GatewayObservation::from_result(Err(ObservationError::Transport), &required);
         assert_eq!(unknown.status, ObservationStatus::Unknown);
         assert!(unknown.capabilities.is_none());
