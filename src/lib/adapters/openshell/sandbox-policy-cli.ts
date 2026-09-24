@@ -28,13 +28,13 @@ import {
 } from "./command-argv";
 import { captureSanitizedResolvedOpenshellAsync } from "./sanitized-capture";
 import type { OpenShellSandboxResult } from "./sandbox-observer";
+import { OPENSHELL_POLICY_ACTIVATION_TIMEOUT_MS } from "./timeouts";
 import {
   classifyCliOpenShellCommandError,
   type CapturedOpenShellCommandResult,
   type CaptureOpenShellCommand,
 } from "./sandbox-observer-cli";
 import type {
-  SyncOpenShellSandboxPolicyReader,
   InspectOpenShellSandboxPolicyRequest,
   OpenShellSandboxPolicyRead,
   OpenShellSandboxPolicyReader,
@@ -60,10 +60,6 @@ export { openshellNotFoundDiagnosticLines, tryResolveOpenshellBinary };
 type CapturePolicyOptions = Omit<Parameters<CaptureOpenShellCommand>[1], "maxBuffer"> & {
   readonly outputLimitBytes: number;
 };
-type SyncCapturePolicyCommand = (
-  args: string[],
-  options: Parameters<CaptureOpenShellCommand>[1] & { readonly maxBuffer: number },
-) => CapturedOpenShellCommandResult;
 type CapturePolicyCommand = (
   args: string[],
   options: CapturePolicyOptions,
@@ -312,7 +308,10 @@ export function createCliOpenShellSandboxPolicyWriter(
         submission = parsePolicySet(
           await deps.capture(
             policySetArgs(request, policyPath),
-            captureOptions(request, deps.defaultTimeoutMs),
+            captureOptions(
+              request,
+              deps.defaultTimeoutMs ?? OPENSHELL_POLICY_ACTIVATION_TIMEOUT_MS,
+            ),
           ),
         );
       } catch (error) {
@@ -344,17 +343,3 @@ export const cliOpenShellSandboxPolicyReader = createCliOpenShellSandboxPolicyRe
 export const cliOpenShellSandboxPolicyWriter = createCliOpenShellSandboxPolicyWriter({
   capture: captureSanitizedResolvedOpenshellAsync,
 });
-
-/** Portable lifecycle retains synchronous lock ownership until its consumer migration. */
-export function createSyncCliOpenShellSandboxPolicyReader(
-  deps: PolicyReaderDeps<SyncCapturePolicyCommand>,
-): SyncOpenShellSandboxPolicyReader {
-  return {
-    readSandboxPolicy: (request) => {
-      const { outputLimitBytes, ...options } = captureOptions(request, deps.defaultTimeoutMs);
-      return parsePolicyRead(
-        deps.capture(policyReadArgs(request), { ...options, maxBuffer: outputLimitBytes }),
-      );
-    },
-  };
-}

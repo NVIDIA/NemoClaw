@@ -12,7 +12,6 @@ import YAML from "yaml";
 import {
   PREPARE_E2E_ACTION,
   PREPARE_COMPILED_ARTIFACT_ACTION,
-  PREPARE_E2E_STEP,
   validatePrepareE2eAction,
   validatePrepareE2eInvocations,
 } from "../../../tools/e2e/prepare-e2e-workflow-boundary.mts";
@@ -39,7 +38,7 @@ describe("prepare-e2e workflow boundary", () => {
     const checkout = workflow.jobs["generate-matrix"].steps!.find(
       (step) => step.name === "Check out trusted compiled artifact action",
     )!;
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "trusted-build-action-"));
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "trusted-build-action-")));
     try {
       const included = String(checkout.with!["sparse-checkout"]).trim().split("\n");
       fs.cpSync(process.cwd(), root, {
@@ -104,7 +103,29 @@ describe("prepare-e2e workflow boundary", () => {
 
     try {
       expect(validatePrepareE2eAction(actionPath)).toContain(
-        "prepare-e2e must pin Node 22, run npm ci, and conditionally build the CLI",
+        "prepare-e2e must pin reviewed Node and npm, run npm ci, and conditionally build the CLI",
+      );
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("rejects reviewed npm loaded from the candidate checkout", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "prepare-e2e-reviewed-npm-"));
+    const actionPath = path.join(directory, "action.yaml");
+    const source = fs.readFileSync(
+      path.join(process.cwd(), ".github/actions/prepare-e2e/action.yaml"),
+      "utf8",
+    );
+    const action = YAML.parse(source) as Record<string, unknown>;
+    const runs = action.runs as { steps: WorkflowStep[] };
+    runs.steps.find((step) => step.name === "Install reviewed npm")!.uses =
+      "./.github/actions/setup-reviewed-npm";
+    fs.writeFileSync(actionPath, YAML.stringify(action));
+
+    try {
+      expect(validatePrepareE2eAction(actionPath)).toContain(
+        "prepare-e2e must pin reviewed Node and npm, run npm ci, and conditionally build the CLI",
       );
     } finally {
       fs.rmSync(directory, { force: true, recursive: true });
@@ -155,13 +176,6 @@ describe("prepare-e2e workflow boundary", () => {
     const untrustedPrepare = untrustedJob.steps!.find((step) => step.uses === PREPARE_E2E_ACTION)!;
     untrustedPrepare.uses = "./.github/actions/prepare-e2e";
 
-    const orderedJob = workflow.jobs["openclaw-plugin-runtime-exdev"];
-    const orderedPrepareIndex = orderedJob.steps!.findIndex(
-      (step) => step.name === PREPARE_E2E_STEP,
-    );
-    const [orderedPrepare] = orderedJob.steps!.splice(orderedPrepareIndex, 1);
-    orderedJob.steps!.unshift(orderedPrepare);
-
     expect(validatePrepareE2eInvocations(workflow)).toEqual(
       expect.arrayContaining([
         "generate-matrix prepare-e2e must own the only default CLI build",
@@ -175,9 +189,20 @@ describe("prepare-e2e workflow boundary", () => {
         "shared-e2e prepare-e2e invocation must not override its canonical contract",
         "cloud-onboard must not load prepare-e2e from the target checkout",
         "cloud-onboard must use prepare-e2e exactly once",
-        "openclaw-plugin-runtime-exdev must check out the repository before prepare-e2e",
-        "openclaw-plugin-runtime-exdev must authenticate to Docker Hub before prepare-e2e",
       ]),
+    );
+  });
+
+  it("rejects inverted authentication order for messaging-providers", () => {
+    const workflow = readWorkflow() as Workflow;
+    const jobName = "messaging-providers";
+    const steps = workflow.jobs[jobName].steps!;
+    const prepareIndex = steps.findIndex((step) => step.uses === PREPARE_E2E_ACTION);
+    const authIndex = steps.findIndex((step) => step.name === "Authenticate to Docker Hub");
+    [steps[prepareIndex], steps[authIndex]] = [steps[authIndex], steps[prepareIndex]];
+
+    expect(validatePrepareE2eInvocations(workflow)).toContain(
+      `${jobName} must authenticate to Docker Hub before prepare-e2e`,
     );
   });
 });

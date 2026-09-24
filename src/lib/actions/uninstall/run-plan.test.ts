@@ -117,7 +117,7 @@ describe("uninstall run plan", () => {
     const dockerCalls: string[][] = [];
     const runDocker = vi.fn((args: string[]) => {
       dockerCalls.push(args);
-      if (args[0] === "ps") return ok("abc openclaw:latest openshell-cluster-nemoclaw\n");
+      if (args[0] === "ps") return ok("abc openclaw:latest my-openclaw\n");
       if (args[0] === "images") return ok("img1 ghcr.io/nvidia/nemoclaw:test\n");
       return ok();
     });
@@ -147,12 +147,8 @@ describe("uninstall run plan", () => {
     expect(logs).toContain("[3/6] NemoClaw CLI");
     expect(logs).toContain("Removed global NemoClaw CLI package");
     expect(logs).toContain("Claws retracted. Until next time.");
-    expect(dockerCalls).toEqual(
-      expect.arrayContaining([
-        ["rm", "-f", "abc"],
-        ["rmi", "-f", "img1"],
-      ]),
-    );
+    expect(dockerCalls).not.toContainEqual(["rm", "-f", "abc"]);
+    expect(dockerCalls).toContainEqual(["rmi", "-f", "img1"]);
     expect(
       dockerCalls.some((args) => args.join(" ") === "volume rm -f openshell-cluster-nemoclaw"),
     ).toBe(true);

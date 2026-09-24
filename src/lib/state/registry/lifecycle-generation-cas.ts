@@ -28,3 +28,42 @@ export function compareAndSetSandboxLifecycleGeneration(
     return true;
   });
 }
+
+export function compareAndSetSandboxLifecycleIdentity(
+  expected: SandboxEntry,
+  registration: Required<
+    Pick<SandboxEntry, "lifecycleGeneration" | "lifecycleLiveIdentityFingerprint">
+  >,
+  revalidate: () => void,
+): boolean {
+  const snapshot = structuredClone(expected);
+  const { lifecycleGeneration, lifecycleLiveIdentityFingerprint } = registration;
+  if (
+    snapshot.pendingRouteReservation ||
+    snapshot.pendingCreateIdentity ||
+    (snapshot.lifecycleGeneration !== undefined &&
+      snapshot.lifecycleLiveIdentityFingerprint !== undefined) ||
+    !lifecycleGeneration ||
+    lifecycleGeneration.length > 256 ||
+    /[\u0000-\u001f\u007f-\u009f]/u.test(lifecycleGeneration) ||
+    !/^[0-9a-f]{64}$/u.test(lifecycleLiveIdentityFingerprint) ||
+    (snapshot.lifecycleGeneration !== undefined &&
+      snapshot.lifecycleGeneration !== lifecycleGeneration) ||
+    (snapshot.lifecycleLiveIdentityFingerprint !== undefined &&
+      snapshot.lifecycleLiveIdentityFingerprint !== lifecycleLiveIdentityFingerprint)
+  )
+    return false;
+  return withLock(() => {
+    if (!isDeepStrictEqual(load().sandboxes[snapshot.name], snapshot)) return false;
+    revalidate();
+    const data = load();
+    if (!isDeepStrictEqual(data.sandboxes[snapshot.name], snapshot)) return false;
+    data.sandboxes[snapshot.name] = {
+      ...snapshot,
+      lifecycleGeneration,
+      lifecycleLiveIdentityFingerprint,
+    };
+    save(data);
+    return true;
+  });
+}

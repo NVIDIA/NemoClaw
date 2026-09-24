@@ -578,9 +578,7 @@ describe("uninstall OpenShell gateway user service", () => {
         },
         runDocker: (args) => {
           dockerCalls.push(args);
-          return args[0] === "ps"
-            ? ok("sandbox-id openshell/sandbox openshell-cluster-nemoclaw\n")
-            : ok();
+          return ok();
         },
       },
       [{ name: "nemoclaw" }, { name: "nemoclaw-8081" }],
@@ -596,7 +594,7 @@ describe("uninstall OpenShell gateway user service", () => {
     expect(result.exitCode).toBe(0);
     expect(deletedAt).toBeGreaterThanOrEqual(0);
     expect(disabledAt).toBeGreaterThan(deletedAt);
-    expect(dockerCalls).toContainEqual(["rm", "-f", "sandbox-id"]);
+    expect(dockerCalls.some((args) => args[0] === "rm")).toBe(false);
     expect(fs.existsSync(servicePath)).toBe(false);
   });
 
@@ -709,6 +707,40 @@ describe("uninstall OpenShell gateway user service", () => {
     expect(calls.some((call) => call[0] === "systemctl" && call.includes("disable"))).toBe(false);
   });
 
+  it("preserves scoped registry rows and the gateway service when Docker inventory fails", async () => {
+    const test = fixture(true);
+    const servicePath = writeManagedService(test);
+    const registryPath = writeSelectedSandboxRegistry(test, "my-assistant");
+    const registryBefore = fs.readFileSync(registryPath, "utf8");
+    const calls: string[][] = [];
+    const result = await uninstall(
+      test,
+      false,
+      {
+        commandExists: () => true,
+        run: (command, args) => {
+          calls.push([command, ...args]);
+          return ok();
+        },
+        runDocker: () => ({ status: 1, stdout: "", stderr: "Docker unreachable" }),
+      },
+      [{ name: "nemoclaw" }, { name: "nemoclaw-8081" }],
+    );
+    expect(result.exitCode).toBe(1);
+    expect(calls).toContainEqual([
+      "openshell",
+      "sandbox",
+      "delete",
+      "-g",
+      "nemoclaw",
+      "my-assistant",
+    ]);
+    expect(calls.some((call) => call[1] === "gateway" && call[2] === "remove")).toBe(false);
+    expect(calls.some((call) => call[0] === "systemctl" && call.includes("disable"))).toBe(false);
+    expect(fs.readFileSync(registryPath, "utf8")).toBe(registryBefore);
+    expect(fs.existsSync(servicePath)).toBe(true);
+  });
+
   /** Verify failed registration removal retains the unit and reports unavailable Docker. */
   async function verifyDockerRecovery({
     dockerInstalled,
@@ -724,7 +756,10 @@ describe("uninstall OpenShell gateway user service", () => {
     writeSelectedSandboxRegistry(test, "my-assistant");
     const calls: string[][] = [];
     const warnings: string[] = [];
-    const runDocker = vi.fn(() => ({ ...ok(), status: dockerStatus }));
+    const runDocker = vi.fn((args: string[]) => ({
+      ...ok(),
+      status: args[0] === "info" ? dockerStatus : 0,
+    }));
 
     const result = await uninstall(
       test,
@@ -762,8 +797,8 @@ describe("uninstall OpenShell gateway user service", () => {
         guidance,
       ),
     ).toBe(recovery);
-    expect(runDocker.mock.calls).toEqual(
-      dockerInstalled ? [[["info"], expect.objectContaining({ timeout: 10_000 })]] : [],
+    expect(runDocker.mock.calls.map(([args]) => args)).toEqual(
+      dockerInstalled ? [["ps", "-a", "--format", "{{.ID}} {{.Image}} {{.Names}}"], ["info"]] : [],
     );
     expect(fs.existsSync(servicePath)).toBe(true);
     expect(calls.some((call) => call[0] === "systemctl" && call.includes("disable"))).toBe(false);
@@ -786,7 +821,7 @@ describe("uninstall OpenShell gateway user service", () => {
     const registryPath = writeSelectedSandboxRegistry(test, "my-assistant");
     const calls: string[][] = [];
     const kill = vi.fn();
-    const runDocker = vi.fn(() => ok());
+    const runDocker = vi.fn((_args: string[]) => ok());
     const disableService = vi
       .fn<() => RunResult>()
       .mockReturnValueOnce({ status: 1, stdout: "", stderr: "service is busy" })
@@ -813,7 +848,9 @@ describe("uninstall OpenShell gateway user service", () => {
     expect(calls.some((call) => call[0] === "systemctl" && call.includes("disable"))).toBe(true);
     expect(calls.some((call) => call[0] === "pgrep")).toBe(false);
     expect(kill).not.toHaveBeenCalled();
-    expect(runDocker).not.toHaveBeenCalled();
+    expect(runDocker.mock.calls.map(([args]) => args)).toEqual([
+      ["ps", "-a", "--format", "{{.ID}} {{.Image}} {{.Names}}"],
+    ]);
     expect(JSON.parse(fs.readFileSync(registryPath, "utf-8")).sandboxes).toEqual({});
 
     const retry = await uninstall(test, false, deps, [

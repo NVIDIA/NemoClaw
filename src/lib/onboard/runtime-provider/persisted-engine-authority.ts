@@ -24,7 +24,6 @@ const OPERATIONS = new Set<ContainerEngineOperationScope>([
   "host-doctor",
   "host-local-inference",
   "gateway-inspection",
-  "managed-bootstrap",
   "sandbox-lifecycle",
   "workload-cleanup",
 ]);

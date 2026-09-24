@@ -8,7 +8,9 @@ import { reconcileModelRouter } from "./model-router";
 const RECORDED_ROUTER_PID = 4321;
 
 const holder = vi.hoisted(() => ({
+  responsive: true,
   snapshotBody: null as string | null,
+  snapshotCalls: 0,
   stopped: [] as Array<[number, number]>,
   reachabilityProbes: 0,
 }));
@@ -18,10 +20,20 @@ const holder = vi.hoisted(() => ({
 // is covered by `test/onboarding/onboard-model-router.test.ts`.
 vi.mock("./model-router-process", () => ({
   ROUTER_HEALTH_TIMEOUT_MS: 3_000,
-  getRouterHealthSnapshot: vi.fn(async () => ({ healthy: true, body: holder.snapshotBody })),
-  isRouterHealthy: vi.fn(async () => true),
+  getRouterHealthSnapshot: vi.fn(async () => {
+    holder.snapshotCalls += 1;
+    return {
+      healthy: true,
+      body: holder.snapshotBody,
+      capturedBodyBytes: Buffer.byteLength(holder.snapshotBody ?? ""),
+      elapsedMs: 45_000,
+      outcome: "complete",
+      statusCode: 200,
+    };
+  }),
+  isRouterResponsive: vi.fn(async () => holder.responsive),
   doesModelRouterProcessOwnPort: vi.fn(() => true),
-  inspectModelRouterProcessForPort: vi.fn(() => ({ status: "missing" as const })),
+  inspectModelRouterProcessForPort: vi.fn(() => ({ status: "absent" as const })),
   stopModelRouterProcess: vi.fn(async (pid: number, port: number) => {
     holder.stopped.push([pid, port]);
     throw new Error("router restart reached");
@@ -58,7 +70,9 @@ vi.mock("./host-service-reachability", () => ({
 
 describe("model router reconciliation", () => {
   beforeEach(() => {
+    holder.responsive = true;
     holder.snapshotBody = null;
+    holder.snapshotCalls = 0;
     holder.stopped = [];
     holder.reachabilityProbes = 0;
   });
@@ -85,5 +99,14 @@ describe("model router reconciliation", () => {
 
     expect(holder.stopped).toEqual([[RECORDED_ROUTER_PID, expect.any(Number)]]);
     expect(holder.reachabilityProbes).toBe(0);
+  });
+
+  it("restarts the recorded router when liveness fails without starting a duplicate (#12089)", async () => {
+    holder.responsive = false;
+
+    await expect(reconcileModelRouter()).rejects.toThrow("router restart reached");
+
+    expect(holder.snapshotCalls).toBe(0);
+    expect(holder.stopped).toEqual([[RECORDED_ROUTER_PID, expect.any(Number)]]);
   });
 });

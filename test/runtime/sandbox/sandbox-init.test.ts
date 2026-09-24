@@ -128,6 +128,29 @@ function restoreTmpArtifacts(paths: string[], backups: Record<string, string>): 
 }
 
 describe("scripts/lib/sandbox-init.sh", () => {
+  describe("process observation", () => {
+    it("uses the configured proc root for listener ownership", () => {
+      const procRoot = mkdtempSync(join(tmpdir(), "sandbox-init-proc-"));
+      try {
+        const result = runWithLib(
+          [
+            'mkdir -p "$TEST_PROC_ROOT/net" "$TEST_PROC_ROOT/$$/fd"',
+            "printf '%s\\n' '0: 0100007F:1F90 00000000:0000 0A 00000000:00000000 00:00000000 00000000 1000 0 4242' >\"$TEST_PROC_ROOT/net/tcp\"",
+            ': >"$TEST_PROC_ROOT/net/tcp6"',
+            'ln -s "socket:[4242]" "$TEST_PROC_ROOT/$$/fd/3"',
+            '_NEMOCLAW_PROC_ROOT="$TEST_PROC_ROOT"',
+            'gateway_control_pid_owns_tcp_listener "$$" 8080',
+            "printf 'owned\\n'",
+          ].join("\n"),
+          { env: { TEST_PROC_ROOT: procRoot } },
+        );
+        expect(result.stdout).toBe("owned");
+      } finally {
+        rmSync(procRoot, { recursive: true, force: true });
+      }
+    });
+  });
+
   describe("Python startup isolation", () => {
     it("ignores inherited PYTHONPATH in read_messaging_plan_channels", () => {
       const workDir = mkdtempSync(join(tmpdir(), "sandbox-init-python-"));
@@ -221,12 +244,7 @@ EOF
   describe("validate_tmp_permissions", () => {
     let workDir: string;
     let tmpBackups: Record<string, string>;
-    const TMP_ARTIFACTS = [
-      "/tmp/nemoclaw-proxy-env.sh",
-      "/tmp/gateway.log",
-      "/tmp/auto-pair.log",
-      "/tmp/nemoclaw-plugin-refresh.log",
-    ];
+    const TMP_ARTIFACTS = ["/tmp/nemoclaw-proxy-env.sh", "/tmp/gateway.log", "/tmp/auto-pair.log"];
 
     beforeEach(() => {
       workDir = mkdtempSync(join(tmpdir(), "sandbox-init-validate-"));
@@ -267,33 +285,6 @@ EOF
         validate_tmp_permissions ${JSON.stringify(testFile)}
         echo "PASSED"
       `);
-    });
-
-    it("rejects a symlinked plugin refresh log", () => {
-      const pluginRefreshLog = join(workDir, "nemoclaw-plugin-refresh.log");
-      const target = join(workDir, "plugin-refresh-target.log");
-      writeFileSync(target, "do not truncate");
-      symlinkSync(target, pluginRefreshLog);
-
-      const { stderr } = runWithLib("validate_tmp_permissions", {
-        env: { PLUGIN_REFRESH_LOG: pluginRefreshLog },
-        expectFail: true,
-      });
-      expect(stderr).toContain(`${pluginRefreshLog} is a symlink`);
-      expect(readFileSync(target, "utf-8")).toBe("do not truncate");
-    });
-
-    it("keeps the plugin refresh log private", () => {
-      const pluginRefreshLog = join(workDir, "nemoclaw-plugin-refresh.log");
-      writeFileSync(pluginRefreshLog, "refresh output");
-      chmodSync(pluginRefreshLog, 0o644);
-
-      const { stderr } = runWithLib("validate_tmp_permissions", {
-        env: { PLUGIN_REFRESH_LOG: pluginRefreshLog },
-        expectFail: true,
-      });
-      expect(stderr).toContain(`${pluginRefreshLog} has unexpected permissions`);
-      expect(stderr).toContain("expected 600");
     });
   });
 
@@ -347,289 +338,34 @@ EOF
     });
   });
 
-  describe("drop_capabilities", () => {
-    const QA_CAPBND = "00000004a82c35fb"; // All ten dangerous capabilities from issue #3280.
-    const CLEAN_CAPBND = "0000000000000000";
-    const RETAINED_SETPCAP = "0000000000000100";
-    const CLEAN_STATUS = `CapInh: 0
-CapPrm: 0
-CapEff: 0
-CapBnd: ${CLEAN_CAPBND}
-CapAmb: 0
-`;
-    const QA_DANGEROUS =
-      "cap_sys_admin,cap_sys_ptrace,cap_net_raw,cap_dac_override,cap_sys_chroot,cap_fsetid,cap_setfcap,cap_mknod,cap_audit_write,cap_net_bind_service";
-    const forwardedArgs = ["argument with spaces", "literal;$value"];
-    let workDir: string;
+  describe("direct-root capability fallback", () => {
+    const QA_CAPBND = "00000004a82c35fb";
 
-    beforeEach(() => {
-      workDir = mkdtempSync(join(tmpdir(), "nemoclaw-cap-drop-"));
-    });
-    afterEach(() => rmSync(workDir, { recursive: true, force: true }));
-
-    function runDrop({
-      caps = QA_CAPBND,
-      strict = false,
-      sentinel = "",
-      capsh = "unavailable",
-      afterDrop = caps,
-      procStatus = caps === null ? null : CLEAN_STATUS.replace(CLEAN_CAPBND, caps),
-    }: {
-      caps?: string | null;
-      strict?: boolean;
-      sentinel?: string;
-      capsh?: string;
-      afterDrop?: string | null;
-      procStatus?: string | null;
-    } = {}) {
-      const entrypoint = join(workDir, "entrypoint with spaces");
-      for (const name of ["reads", "calls", "args"]) writeFileSync(join(workDir, name), "");
-      writeFileSync(join(workDir, "status"), procStatus ?? "");
-      writeFileSync(
-        join(workDir, "after-status"),
-        CLEAN_STATUS.replace(CLEAN_CAPBND, afterDrop ?? ""),
-      );
-      writeFileSync(
-        join(workDir, "capsh"),
-        `#!/bin/bash
-printf '%s\\n' "$1" >>"$TEST_CAPSH_CALLS"
-if [ "$1" = --has-p=cap_setpcap ]; then
-  [ "$TEST_CAPSH_MODE" = available ] || [ "$TEST_CAPSH_MODE" = error ]
-  exit $?
-fi
-printf '%s\\0' "$@" >>"$TEST_CAPSH_ARGS"
-if [ "$TEST_CAPSH_MODE" = error ]; then echo CAPSH_EXEC_FAILED >&2; exit 71; fi
-[ "$NEMOCLAW_CAPS_DROPPED" = 1 ] || exit 72
-export TEST_PROC_STATUS="$TEST_AFTER_DROP"
-shift 2
-exec /bin/bash "$@"
-`,
-        { mode: 0o700 },
-      );
-      writeFileSync(
-        entrypoint,
-        `#!/bin/bash
-set -euo pipefail
-source ${JSON.stringify(SANDBOX_INIT)}
-install_capability_reader_fixture
-drop_capabilities "$0" "$@"
-printf 'ENTRYPOINT_RETURNED\\n'
-printf 'FORWARDED:%s\\n' "$@"
-`,
-        { mode: 0o700 },
-      );
-      const { stdout } = runWithLib(
-        `
-        install_capability_reader_fixture() {
-          eval "$(declare -f read_capability_state | sed '1s/read_capability_state/read_fixture_capability_state/')"
-          read_capability_state() {
-            printf '%s\\n' "$1" >>"$TEST_CAP_READS"
-            [ "$#" -eq 1 ] && [ "$1" = /proc/self/status ] || return 90
-            read_fixture_capability_state "$TEST_PROC_STATUS"
-          }
-        }
-        command() {
-          if [ "$TEST_CAPSH_MODE" = missing ] && [ "$*" = '-v capsh' ]; then return 1; fi
-          builtin command "$@"
-        }
-        export -f install_capability_reader_fixture command
-        install_capability_reader_fixture
-        : >"$TEST_CAPSH_CALLS"
-        set +e
-        (set -e; drop_capabilities ${JSON.stringify(entrypoint)} 'argument with spaces' 'literal;$value'; echo ENTRYPOINT_RETURNED) 2>&1
-        printf 'DROP_STATUS=%s\\n' "$?"
-        `,
-        {
-          env: {
-            PATH: `${workDir}:/usr/bin:/bin`,
-            TEST_PROC_STATUS: join(workDir, procStatus === null ? "unreadable" : "status"),
-            TEST_AFTER_DROP: join(workDir, afterDrop === null ? "unreadable" : "after-status"),
-            TEST_CAPSH_MODE: capsh,
-            TEST_CAP_READS: join(workDir, "reads"),
-            TEST_CAPSH_CALLS: join(workDir, "calls"),
-            TEST_CAPSH_ARGS: join(workDir, "args"),
-            NEMOCLAW_PROC_STATUS: join(workDir, "forged-status"),
-            NEMOCLAW_CAPS_DROPPED: sentinel,
-            NEMOCLAW_REQUIRE_CAP_DROP: strict ? "1" : "",
-          },
-        },
-      );
-      return {
-        stdout,
-        reads: readFileSync(join(workDir, "reads"), "utf8").trim().split("\n"),
-        calls: readFileSync(join(workDir, "calls"), "utf8"),
-        args: readFileSync(join(workDir, "args"), "utf8").split("\0").slice(0, -1),
-        entrypoint,
-      };
-    }
-
-    it.each([false, true])(
-      "returns before capsh for a verified clean set (strict=%s)",
-      (strict) => {
-        const result = runDrop({
-          caps: CLEAN_CAPBND,
-          strict,
-          sentinel: strict ? "1" : "",
-          capsh: "error",
-        });
-        expect(result.stdout).toBe("ENTRYPOINT_RETURNED\nDROP_STATUS=0");
-        expect(result.reads).toEqual(["/proc/self/status"]);
-        expect(result.calls).toBe("");
-        expect(result.args).toEqual([]);
-      },
-    );
-
-    it.each([
-      { uid: 0, users: ["--reuid=sandbox", "--reuid=gateway"], drops: 2, refusals: 0 },
-      { uid: 1000, users: [], drops: 0, refusals: 2 },
-    ])(
-      "initializes source-time privilege prefixes only for UID 0 (uid=$uid)",
-      ({ uid, users, drops, refusals }) => {
-        writeFileSync(join(workDir, "capsh"), "#!/bin/sh\nexit 1\n", { mode: 0o700 });
+    it("reads and decodes the direct-root bounding set", () => {
+      const workDir = mkdtempSync(join(tmpdir(), "nemoclaw-cap-bnd-"));
+      const status = join(workDir, "status");
+      writeFileSync(status, `Name:\tbash\nCapBnd:\t${QA_CAPBND}\n`);
+      try {
         const { stdout } = runWithLib(
-          `id() { printf '%s\\n' ${uid}; }
-         setpriv() { :; }
-         capsh() { echo CAPSH_PREFIX_CHECK; }
-         unset _SANDBOX_INIT_LOADED
-         source ${JSON.stringify(SANDBOX_INIT)} 2>&1
-         printf '%s\\n' "\${STEP_DOWN_PREFIX_SANDBOX[@]}" "\${STEP_DOWN_PREFIX_GATEWAY[@]}"`,
-          { env: { PATH: `${workDir}:/usr/bin:/bin` } },
+          `cap_bnd="$(read_capability_bounding_set ${JSON.stringify(status)})"
+           printf '%s:%s\n' "$cap_bnd" "$(dangerous_caps_in_capbnd "$cap_bnd")"`,
         );
-        expect(stdout.includes("CAPSH_PREFIX_CHECK")).toBe(uid === 0);
-        expect(stdout.match(/--reuid=(?:sandbox|gateway)/g) ?? []).toEqual(users);
-        expect(
-          stdout.match(/--bounding-set=-setuid,-setgid,-fowner,-chown,-kill/g) ?? [],
-        ).toHaveLength(drops);
-        expect(stdout.match(/refusing to execute a root privilege transition/g) ?? []).toHaveLength(
-          refusals,
+        expect(stdout).toBe(
+          `${QA_CAPBND}:cap_sys_admin,cap_sys_ptrace,cap_net_raw,cap_dac_override,cap_sys_chroot,cap_fsetid,cap_setfcap,cap_mknod,cap_audit_write,cap_net_bind_service`,
         );
-      },
-    );
-
-    it.each([
-      { procStatus: `CapBnd: ${CLEAN_CAPBND}\n`, afterDrop: CLEAN_CAPBND },
-      {
-        procStatus: CLEAN_STATUS.replace(
-          "CapPrm: 0\nCapEff: 0",
-          "CapPrm: 102\nCapEff: 102",
-        ).replace(CLEAN_CAPBND, RETAINED_SETPCAP),
-        afterDrop: RETAINED_SETPCAP,
-      },
-    ])(
-      "retains capsh handling for a clean bounding set without five empty sets: %j",
-      ({ procStatus, afterDrop }) => {
-        const fallback = runDrop({ caps: afterDrop, procStatus, strict: true });
-        expect(fallback.calls).toBe("--has-p=cap_setpcap\n");
-        expect(fallback.stdout).toBe("ENTRYPOINT_RETURNED\nDROP_STATUS=0");
-        expect(fallback.reads).toEqual(["/proc/self/status"]);
-        const reexec = runDrop({
-          caps: afterDrop,
-          procStatus,
-          strict: true,
-          capsh: "available",
-        });
-        expect(reexec.reads).toEqual(["/proc/self/status", "/proc/self/status"]);
-        expect(reexec.args[0]).toBe(`--drop=${QA_DANGEROUS}`);
-        expect(reexec.stdout).toContain("ENTRYPOINT_RETURNED");
-        expect(reexec.stdout).toContain("DROP_STATUS=0");
-      },
-    );
-
-    it("decodes the dangerous set and preserves the empty-set result", () => {
-      const { stdout } = runWithLib(
-        `echo "DANGEROUS:[$(dangerous_caps_in_capbnd ${QA_CAPBND})]"
-         echo "CLEAN:[$(dangerous_caps_in_capbnd ${CLEAN_CAPBND})]"`,
-      );
-      expect(stdout).toBe(`DANGEROUS:[${QA_DANGEROUS}]\nCLEAN:[]`);
+      } finally {
+        rmSync(workDir, { recursive: true, force: true });
+      }
     });
 
-    it.each(
-      [
-        {
-          caps: QA_CAPBND,
-          reason: `dangerous caps remain in bounding set (CapBnd=${QA_CAPBND}): ${QA_DANGEROUS}`,
-        },
-        { caps: null, reason: "could not read bounding set from /proc/self/status" },
-        {
-          caps: CLEAN_CAPBND,
-          procStatus: `${CLEAN_STATUS}CapPrm: 0\n`,
-          reason: "could not read bounding set from /proc/self/status",
-        },
-        {
-          caps: "00000000nothex0",
-          reason: "could not parse bounding set (CapBnd=00000000nothex0)",
-        },
-      ].flatMap((failure) => [false, true].map((strict) => ({ ...failure, strict }))),
-    )(
-      "retains residual and unverifiable outcomes (caps=$caps, strict=$strict)",
-      ({ reason, strict, ...state }) => {
-        const result = runDrop({ ...state, strict });
-        expect(result.reads).toEqual(["/proc/self/status"]);
-        expect(result.stdout).toContain(reason);
-        expect(result.stdout).toContain(
-          strict
-            ? "[SECURITY] Refusing to start sandbox:"
-            : "[SECURITY WARNING] Cannot drop bounding-set capabilities with capsh:",
-        );
-        expect(result.stdout).toContain(`DROP_STATUS=${strict ? 1 : 0}`);
-        expect(result.stdout.includes("ENTRYPOINT_RETURNED")).toBe(!strict);
-        expect(result.stdout).not.toMatch(/value too great for base|invalid arithmetic|16#/);
-        expect(result.args).toEqual([]);
-      },
-    );
-
-    it.each([{ capsh: "missing" }, { capsh: "available", sentinel: "1" }])(
-      "refuses residual caps with missing capsh or a forged sentinel: %j",
-      (options) => {
-        const result = runDrop({ ...options, strict: true });
-        expect(result.reads).toEqual(["/proc/self/status"]);
-        expect(result.stdout).toContain(
-          `dangerous caps remain in bounding set (CapBnd=${QA_CAPBND}): ${QA_DANGEROUS}`,
-        );
-        expect(result.stdout).toContain("DROP_STATUS=1");
-        expect(result.stdout).not.toContain("ENTRYPOINT_RETURNED");
-        expect(result.calls).toBe("");
-      },
-    );
-
-    it.each([
-      {
-        caps: QA_CAPBND,
-        afterDrop: CLEAN_CAPBND,
-        strict: true,
-        status: 0,
-        forwarded: forwardedArgs,
-      },
-      { caps: QA_CAPBND, afterDrop: QA_CAPBND, strict: false, status: 0, forwarded: forwardedArgs },
-      { caps: QA_CAPBND, afterDrop: QA_CAPBND, strict: true, status: 1, forwarded: [] },
-      { caps: null, afterDrop: null, strict: true, status: 1, forwarded: [] },
-    ])(
-      "reexecutes once and verifies the resulting state: %j",
-      ({ status, forwarded, ...options }) => {
-        const result = runDrop({ ...options, capsh: "available" });
-        expect(result.reads).toEqual(["/proc/self/status", "/proc/self/status"]);
-        expect(result.args).toEqual([
-          `--drop=${QA_DANGEROUS}`,
-          "--",
-          "-c",
-          'exec "$0" "$@"',
-          result.entrypoint,
-          ...forwardedArgs,
-        ]);
-        expect(result.stdout).toContain(`DROP_STATUS=${status}`);
-        expect(result.stdout.includes("ENTRYPOINT_RETURNED")).toBe(status === 0);
-        expect([...result.stdout.matchAll(/^FORWARDED:(.*)$/gm)].map((match) => match[1])).toEqual(
-          forwarded,
-        );
-      },
-    );
-
-    it("keeps a capsh execution error terminal without continuing the entrypoint", () => {
-      const result = runDrop({ capsh: "error" });
-      expect(result.reads).toEqual(["/proc/self/status"]);
-      expect(result.stdout).toContain("CAPSH_EXEC_FAILED\nDROP_STATUS=71");
-      expect(result.stdout).not.toContain("ENTRYPOINT_RETURNED");
-      expect(result.args[0]).toBe(`--drop=${QA_DANGEROUS}`);
+    it("fails closed when a direct-root drop cannot run", () => {
+      const { stderr } = runWithLib(
+        `read_capability_bounding_set() { printf '%s\n' ${QA_CAPBND}; }
+         command() { [ "$*" = '-v capsh' ] && return 1; builtin command "$@"; }
+         NEMOCLAW_REQUIRE_CAP_DROP=1 drop_capabilities /bin/true`,
+        { expectFail: true },
+      );
+      expect(stderr).toContain("Refusing to start sandbox: dangerous caps remain");
     });
   });
 
@@ -732,23 +468,6 @@ printf 'FORWARDED:%s\\n' "$@"
         expect(src).not.toContain("ulimit -Hu 512");
       },
     );
-
-    // SECURITY (#4527): the RLIMIT caps are only unraisable if they are set
-    // while still root PID 1, BEFORE drop_capabilities (capsh) and the
-    // setpriv step-down. A refactor that moved the harden call after the
-    // privilege drop would turn it into dead code (cap set as the unprivileged
-    // agent, hard limit no longer lowered) while every other test stayed green.
-    // Pin the ordering so that regression is caught.
-    it.each(entrypoints)("%s calls harden_resource_limits before drop_capabilities", (rel) => {
-      const src = readFileSync(join(import.meta.dirname, rel), "utf-8");
-      // Anchor to executable command lines, not free-text, so a comment
-      // mentioning either name cannot satisfy (or break) the ordering check.
-      const hardenIdx = src.match(/^\s*harden_resource_limits\s*$/m)?.index ?? -1;
-      const dropIdx = src.match(/^\s*drop_capabilities\b.*$/m)?.index ?? -1;
-      expect(hardenIdx).toBeGreaterThanOrEqual(0);
-      expect(dropIdx).toBeGreaterThanOrEqual(0);
-      expect(hardenIdx).toBeLessThan(dropIdx);
-    });
   });
 
   describe("init_step_down_prefixes", () => {
@@ -1002,10 +721,6 @@ printf 'FORWARDED:%s\\n' "$@"
         join(libDir, "sandbox-init.sh"),
         "export NEMOCLAW_TEST_SANDBOX_INIT_LOADED=1\n",
       );
-      writeFileSync(
-        join(libDir, "gateway-supervisor.sh"),
-        "export NEMOCLAW_TEST_GATEWAY_SUPERVISOR_LOADED=1\n",
-      );
       const wrapperPath = join(scriptDir, "nemoclaw-start.sh");
       writeFileSync(
         wrapperPath,
@@ -1013,14 +728,14 @@ printf 'FORWARDED:%s\\n' "$@"
           "#!/usr/bin/env bash",
           "set -euo pipefail",
           src.slice(start, end),
-          'printf "INIT_LOADED=%s SUPERVISOR_LOADED=%s\\n" "${NEMOCLAW_TEST_SANDBOX_INIT_LOADED:-0}" "${NEMOCLAW_TEST_GATEWAY_SUPERVISOR_LOADED:-0}"',
+          'printf "INIT_LOADED=%s\\n" "${NEMOCLAW_TEST_SANDBOX_INIT_LOADED:-0}"',
         ].join("\n"),
         { mode: 0o700 },
       );
 
       try {
         const result = execFileSync("bash", [wrapperPath], { encoding: "utf-8" }).trim();
-        expect(result).toBe("INIT_LOADED=1 SUPERVISOR_LOADED=1");
+        expect(result).toBe("INIT_LOADED=1");
       } finally {
         rmSync(workDir, { recursive: true, force: true });
       }

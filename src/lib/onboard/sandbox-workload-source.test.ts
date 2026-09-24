@@ -77,14 +77,16 @@ function managedRuntime(driverName: string): SandboxWorkloadRuntimeCapabilities 
 }
 
 function portableHermesContract(): PortableAgentRuntimeContractV1 {
+  const agent = loadAgent("hermes");
+  expect(agent.expectedVersion).not.toBeNull();
   const repository = "ghcr.io/nvidia/nemoclaw-fixtures/hermes-portable";
   const digest = `sha256:${"8d".repeat(32)}` as const;
   return {
     contractVersion: 1,
     capabilityContractVersion: 1,
     agent: "hermes",
-    agentVersion: "0.20.6",
-    agentDefinitionSha256: portableAgentDefinitionSha256(loadAgent("hermes")),
+    agentVersion: agent.expectedVersion as string,
+    agentDefinitionSha256: portableAgentDefinitionSha256(agent),
     platform: MANAGED_IMAGE_PLATFORM,
     image: {
       repository,

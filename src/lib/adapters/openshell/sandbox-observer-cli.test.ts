@@ -35,6 +35,21 @@ function captured(
   };
 }
 
+function sandboxListJson(overrides: Record<string, unknown> = {}): string {
+  return JSON.stringify([
+    {
+      id: "sandbox-alpha",
+      name: "alpha",
+      labels: {},
+      resource_version: 1,
+      created_at: "2026-09-14T00:00:00Z",
+      phase: "Provisioning",
+      current_policy_version: 1,
+      ...overrides,
+    },
+  ]);
+}
+
 describe("CLI OpenShell sandbox observer", () => {
   it("targets a named gateway and returns typed list observations (#9803)", async () => {
     const capture = vi.fn(() =>
@@ -129,6 +144,21 @@ describe("CLI OpenShell sandbox observer", () => {
     });
   });
 
+  it("does not turn a zero-exit OpenShell error into an empty inventory", async () => {
+    const observer = createCliOpenShellSandboxObserver({
+      capture: () => captured(0, "Error: gateway observation failed"),
+    });
+
+    await expect(observer.listSandboxes({ target: selectedOpenShellGateway() })).resolves.toEqual({
+      ok: false,
+      error: {
+        kind: "command",
+        reason: "failed",
+        message: "The OpenShell sandbox observation failed.",
+      },
+    });
+  });
+
   it("keeps formatted get output on an explicit CLI-only compatibility path (#9803)", async () => {
     const capture = vi.fn(() => captured(0, "\u001b[1mName:\u001b[0m alpha\nPhase: Running\n"));
     const lookup = createCliOpenShellSandboxLookup({ capture });
@@ -176,10 +206,108 @@ describe("CLI OpenShell sandbox observer", () => {
     });
   });
 
+  it.each([
+    'status: Internal, message: "sandbox has no spec", details: []',
+    `Error: code: 'The system is not in a state required for the operation's execution', message: "provider 'compatible-endpoint' not found"`,
+  ])("uses structured inventory for an unreadable legacy sandbox", async (diagnostic) => {
+    const capture = vi
+      .fn()
+      .mockResolvedValueOnce(captured(1, "", diagnostic))
+      .mockResolvedValueOnce(captured(0, sandboxListJson()));
+    const now = vi.fn().mockReturnValueOnce(1_000).mockReturnValueOnce(1_234);
+    const lookup = createCliOpenShellSandboxLookup({ capture, now });
+
+    await expect(
+      lookup({
+        sandboxName: "alpha",
+        target: namedOpenShellGateway("nemoclaw"),
+        timeoutMs: 1_234,
+      }),
+    ).resolves.toEqual({
+      result: {
+        ok: true,
+        value: {
+          state: "present",
+          sandbox: { name: "alpha", phase: "Provisioning", readiness: "not_ready" },
+        },
+      },
+      displayOutput: "",
+    });
+    expect(capture).toHaveBeenNthCalledWith(
+      2,
+      ["sandbox", "list", "-g", "nemoclaw", "-o", "json"],
+      {
+        ignoreError: true,
+        includeStderr: true,
+        includeStreams: true,
+        timeout: 1_000,
+      },
+    );
+  });
+
+  it("does not start legacy inventory fallback after the lookup deadline", async () => {
+    const capture = vi
+      .fn()
+      .mockResolvedValueOnce(
+        captured(1, "", 'status: Internal, message: "sandbox has no spec", details: []'),
+      );
+    const now = vi.fn().mockReturnValueOnce(1_000).mockReturnValueOnce(2_234);
+    const lookup = createCliOpenShellSandboxLookup({ capture, now });
+
+    await expect(
+      lookup({
+        sandboxName: "alpha",
+        target: namedOpenShellGateway("nemoclaw"),
+        timeoutMs: 1_234,
+      }),
+    ).resolves.toEqual({
+      result: {
+        ok: false,
+        error: {
+          kind: "timeout",
+          message: "OpenShell sandbox observation timed out.",
+        },
+      },
+      displayOutput: "",
+    });
+    expect(capture).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not report deletion when legacy inventory lacks the sandbox", async () => {
+    const capture = vi
+      .fn()
+      .mockResolvedValueOnce(
+        captured(1, "", 'status: Internal, message: "sandbox has no spec", details: []'),
+      )
+      .mockResolvedValueOnce(captured(0, "[]"));
+    const lookup = createCliOpenShellSandboxLookup({ capture });
+
+    await expect(
+      lookup({ sandboxName: "alpha", target: selectedOpenShellGateway() }),
+    ).resolves.toEqual({
+      result: {
+        ok: false,
+        error: {
+          kind: "command",
+          reason: "failed",
+          message:
+            "OpenShell could not confirm the unreadable legacy sandbox in gateway inventory.",
+        },
+      },
+      displayOutput: "",
+    });
+  });
+
   it("keeps a missing sandbox distinct from authentication failure (#9803)", async () => {
     const capture = vi
       .fn()
-      .mockReturnValueOnce(captured(1, "", "sandbox has no spec: NotFound"))
+      .mockReturnValueOnce(
+        captured(
+          1,
+          "",
+          `Error: code: 'Some requested entity was not found', message: "sandbox not found"`,
+        ),
+      )
       .mockReturnValueOnce(
         captured(1, "", "Error: authentication failed: sandbox not found: bearer value"),
       );
@@ -196,6 +324,29 @@ describe("CLI OpenShell sandbox observer", () => {
         error: {
           kind: "authentication",
           message: "OpenShell could not authenticate the sandbox observation.",
+        },
+      },
+      displayOutput: "",
+    });
+  });
+
+  it("does not treat missing-looking output from an interrupted lookup as absence (#11941)", async () => {
+    const lookup = createCliOpenShellSandboxLookup({
+      capture: () => ({
+        ...captured(1, "", "Error: sandbox alpha not found"),
+        signal: "SIGTERM",
+      }),
+    });
+
+    await expect(
+      lookup({ sandboxName: "alpha", target: namedOpenShellGateway("nemoclaw") }),
+    ).resolves.toEqual({
+      result: {
+        ok: false,
+        error: {
+          kind: "command",
+          reason: "failed",
+          message: "The OpenShell sandbox observation failed.",
         },
       },
       displayOutput: "",
@@ -262,6 +413,7 @@ describe("CLI OpenShell sandbox observer", () => {
       ignoreError: true,
       killProcessTreeOnTimeout: true,
       killSignal: "SIGKILL",
+      stdio: ["ignore", "pipe", "pipe"],
       suppressOutput: true,
       timeout: 9_000,
     });

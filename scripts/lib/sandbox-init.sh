@@ -39,7 +39,6 @@ source "${_SANDBOX_INIT_DIR}/sandbox-rlimits.sh"
 # /tmp/nemoclaw-proxy-env.sh   root       444   root     sandbox   YES (/etc shell hooks)
 # /tmp/gateway.log             gateway    644   gateway  all       no (world-readable for diagnostics)
 # /tmp/auto-pair.log           root*      600   root*    inherited no
-# /tmp/nemoclaw-plugin-refresh.log sandbox 600   sandbox  sandbox   no (OpenClaw refresh output)
 # /tmp/.npm-cache/             sandbox    755   sandbox  sandbox   no (tool data)
 # /tmp/.cache/                 sandbox    755   sandbox  sandbox   no (tool data)
 # /tmp/.gnupg/                 sandbox    700   sandbox  sandbox   no (key data)
@@ -134,13 +133,8 @@ validate_tmp_permissions() {
   done
 
   # Restricted log files — gateway.log may be 600 (Hermes) or 644 (OpenClaw,
-  # world-readable for diagnostics). auto-pair.log is 600. The plugin-refresh
-  # log is written after privilege drop as sandbox, so keep it private and
-  # reject symlinks/non-regular files before launching services. OpenClaw's
-  # entrypoint sets PLUGIN_REFRESH_LOG; shared tests can override it while
-  # production keeps the fixed /tmp path.
-  local plugin_refresh_log="${PLUGIN_REFRESH_LOG:-/tmp/nemoclaw-plugin-refresh.log}"
-  for f in /tmp/gateway.log /tmp/auto-pair.log "$plugin_refresh_log"; do
+  # world-readable for diagnostics). auto-pair.log is 600.
+  for f in /tmp/gateway.log /tmp/auto-pair.log; do
     [ -e "$f" ] || [ -L "$f" ] || continue
     if [ -L "$f" ]; then
       echo "[SECURITY] $f is a symlink (expected regular log file)" >&2
@@ -162,16 +156,6 @@ validate_tmp_permissions() {
           failed=1
         fi
         ;;
-      */nemoclaw-plugin-refresh.log)
-        if [ "$perms" != "600" ]; then
-          echo "[SECURITY] $f has unexpected permissions: mode=$perms (expected 600)" >&2
-          failed=1
-        fi
-        if [ "$(id -u)" -eq 0 ] && [ "$owner" != "sandbox" ]; then
-          echo "[SECURITY] $f has unsafe owner: owner=$owner (expected sandbox)" >&2
-          failed=1
-        fi
-        ;;
       *)
         if [ "$perms" != "600" ]; then
           echo "[SECURITY] $f has unexpected permissions: mode=$perms (expected 600)" >&2
@@ -185,11 +169,8 @@ validate_tmp_permissions() {
 }
 
 # ── Capability dropping ──────────────────────────────────────────
-# OpenShell full enforcement clears the child bounding set before launch.
-# Skip compatibility handling only when all five capability sets are empty.
-# Do not infer enforcement from runtime environment values.
-#
-# Direct-root entrypoints can still need capsh. Their retained bounding caps
+# OpenShell-managed entrypoints do not call this section. Direct-root
+# entrypoints can still need capsh. Their retained bounding caps
 # (chown, fowner, setuid, setgid, kill) support initialization and supervised
 # shutdown; init_step_down_prefixes can remove them when changing user.
 # NEMOCLAW_REQUIRE_CAP_DROP=1 retains fail-closed verification for unavailable
@@ -218,31 +199,20 @@ dangerous_caps_drop_list() {
   printf '%s' "$out"
 }
 
-# Use built-ins: exec'ing a reader can lower its permitted/effective set and
-# hide capabilities still held by this shell. The caller supplies the fixed
-# procfs path; an explicit file argument also permits deterministic fixtures.
-read_capability_state() {
-  local key value rest bit seen=0 all_zero=1 cap_bnd_hex=""
+# Use built-ins so verification observes the calling shell rather than an
+# exec'd reader whose capability state can differ. An explicit file argument
+# permits deterministic direct-root fixtures.
+read_capability_bounding_set() {
+  local key value rest seen=0 cap_bnd_hex=""
   while IFS=$' \t' read -r key value rest; do
-    case "$key" in
-      CapInh:) bit=1 ;;
-      CapPrm:) bit=2 ;;
-      CapEff:) bit=4 ;;
-      CapBnd:)
-        bit=8
-        cap_bnd_hex="$value"
-        ;;
-      CapAmb:) bit=16 ;;
-      *) continue ;;
-    esac
-    [ $((seen & bit)) -eq 0 ] || return 1
-    seen=$((seen | bit))
-    case "$value" in
-      "" | *[!0]*) all_zero=0 ;;
-    esac
-    [ -z "$rest" ] || all_zero=0
+    [ "$key" = CapBnd: ] || continue
+    [ "$seen" -eq 0 ] || return 1
+    seen=1
+    cap_bnd_hex="$value"
+    [ -z "$rest" ] || return 1
   done <"$1" || return 1
-  printf '%s:%s\n' "$cap_bnd_hex" "$((seen == 31 && all_zero == 1))"
+  [ "$seen" -eq 1 ] && [ -n "$cap_bnd_hex" ] || return 1
+  printf '%s\n' "$cap_bnd_hex"
 }
 
 # The first argument is the absolute entrypoint path; remaining args are forwarded.
@@ -250,15 +220,11 @@ drop_capabilities() {
   local entrypoint="$1"
   shift
 
-  local cap_state cap_bnd_hex present reason=""
-  if ! cap_state="$(read_capability_state /proc/self/status 2>/dev/null)"; then
+  local cap_bnd_hex present reason=""
+  if ! cap_bnd_hex="$(read_capability_bounding_set /proc/self/status 2>/dev/null)"; then
     reason="could not read bounding set from /proc/self/status"
   else
-    cap_bnd_hex="${cap_state%:*}"
-    [ "${cap_state##*:}" = 1 ] && return 0
-    if [ -z "$cap_bnd_hex" ]; then
-      reason="could not read bounding set from /proc/self/status"
-    elif ! present="$(dangerous_caps_in_capbnd "$cap_bnd_hex")"; then
+    if ! present="$(dangerous_caps_in_capbnd "$cap_bnd_hex")"; then
       reason="could not parse bounding set (CapBnd=${cap_bnd_hex})"
     elif [ -n "$present" ]; then
       reason="dangerous caps remain in bounding set (CapBnd=${cap_bnd_hex}): ${present}"
@@ -573,4 +539,224 @@ for item in plan.get("channels", []):
         seen.add(channel)
         print(channel)
 PY
+}
+
+# Process observation helpers used for launch health and signal cleanup.
+
+gateway_control_pid_is_live() {
+  local pid="$1"
+  local state
+  case "$pid" in
+    '' | 0 | 1 | *[!0-9]*) return 1 ;;
+  esac
+  kill -0 "$pid" 2>/dev/null || return 1
+  # kill -0 succeeds for an unreaped zombie. Do not record or trust a process
+  # that can no longer own a listener or handle a termination signal.
+  if command -v ps >/dev/null 2>&1; then
+    state="$(ps -o stat= -p "$pid" 2>/dev/null | awk 'NR == 1 { print $1 }')"
+    [ -n "$state" ] || return 1
+    case "$state" in
+      Z*) return 1 ;;
+    esac
+  elif [ -r "/proc/${pid}/stat" ]; then
+    state="$(sed -E 's/^[0-9]+ \(.*\) ([^ ]).*/\1/' "/proc/${pid}/stat" 2>/dev/null || true)"
+    [ "$state" != "Z" ] || return 1
+  fi
+  return 0
+}
+
+gateway_control_proc_root() {
+  if [ "${_NEMOCLAW_PROC_ROOT+x}" = x ]; then
+    printf '%s\n' "$_NEMOCLAW_PROC_ROOT"
+  elif [ "${_HERMES_PROC_ROOT+x}" = x ]; then
+    printf '%s\n' "$_HERMES_PROC_ROOT"
+  else
+    printf '/proc\n'
+  fi
+}
+
+gateway_control_proc_root_is_explicit() {
+  [ "${_NEMOCLAW_PROC_ROOT+x}" = x ] || [ "${_HERMES_PROC_ROOT+x}" = x ]
+}
+
+gateway_control_pid_start_identity() {
+  local pid="$1"
+  local proc_root stat_line stat_suffix started
+  case "$pid" in
+    '' | 0 | 1 | *[!0-9]*) return 1 ;;
+  esac
+  proc_root="$(gateway_control_proc_root)" || return 1
+  if [ -r "${proc_root}/${pid}/stat" ]; then
+    IFS= read -r stat_line <"${proc_root}/${pid}/stat" || return 1
+    stat_suffix="${stat_line##*) }"
+    [ "$stat_suffix" != "$stat_line" ] || return 1
+    # shellcheck disable=SC2086  # intentional field split of proc stat suffix
+    set -- $stat_suffix
+    [ "$#" -ge 20 ] || return 1
+    case "${20}" in
+      '' | *[!0-9]*) return 1 ;;
+    esac
+    printf '%s\n' "${20}"
+    return 0
+  fi
+  gateway_control_proc_root_is_explicit && return 1
+  command -v ps >/dev/null 2>&1 || return 1
+  started="$(LC_ALL=C ps -o lstart= -p "$pid" 2>/dev/null | awk 'NR == 1 { sub(/^[[:space:]]+/, ""); sub(/[[:space:]]+$/, ""); print; exit }')"
+  [ -n "$started" ] || return 1
+  printf 'ps:%s\n' "${started//[[:space:]]/_}"
+}
+
+gateway_control_pid_state() {
+  local pid="$1"
+  local proc_root stat_line stat_suffix state
+  case "$pid" in
+    '' | 0 | 1 | *[!0-9]*) return 1 ;;
+  esac
+  proc_root="$(gateway_control_proc_root)" || return 1
+  if [ -r "${proc_root}/${pid}/stat" ]; then
+    IFS= read -r stat_line <"${proc_root}/${pid}/stat" || return 1
+    stat_suffix="${stat_line##*) }"
+    [ "$stat_suffix" != "$stat_line" ] || return 1
+    # shellcheck disable=SC2086  # intentional field split of proc stat suffix
+    set -- $stat_suffix
+    [ "$#" -ge 1 ] || return 1
+    state="$1"
+  else
+    gateway_control_proc_root_is_explicit && return 1
+    command -v ps >/dev/null 2>&1 || return 1
+    state="$(ps -o stat= -p "$pid" 2>/dev/null | awk 'NR == 1 { print $1; exit }')"
+  fi
+  [ -n "$state" ] || return 1
+  printf '%s\n' "$state"
+}
+
+gateway_control_pid_matches_start_identity() {
+  local pid="$1"
+  local expected_start_identity="$2"
+  local current_start_identity
+  [ -n "$expected_start_identity" ] || return 1
+  current_start_identity="$(gateway_control_pid_start_identity "$pid")" || return 1
+  [ "$current_start_identity" = "$expected_start_identity" ]
+}
+
+gateway_control_pid_owns_tcp_listener() {
+  local pid="$1"
+  local port="$2"
+  local proc_root
+  local port_hex listener_inodes inode fd_path target listener_inode
+  if [ "$#" -ge 3 ]; then
+    proc_root="$3"
+  else
+    proc_root="$(gateway_control_proc_root)" || return 1
+  fi
+  case "$port" in
+    '' | *[!0-9]*) return 1 ;;
+  esac
+  [ "$port" -ge 1 ] && [ "$port" -le 65535 ] || return 1
+  gateway_control_pid_is_live "$pid" || return 1
+
+  # Match the listener socket inode to an fd owned by the exact tracked child.
+  # Callers cross a UID boundary before invoking this helper when PID 1 cannot
+  # inspect the gateway/dashboard fd directory after dropping CAP_SYS_PTRACE
+  # and CAP_DAC_OVERRIDE.
+  port_hex="$(printf '%04X' "$port")"
+  listener_inodes="$(awk -v expected_port="$port_hex" '
+    {
+      split($2, local_address, ":")
+      if (toupper(local_address[2]) == expected_port && $4 == "0A") {
+        print $10
+      }
+    }
+  ' "${proc_root}/net/tcp" "${proc_root}/net/tcp6" 2>/dev/null || true)"
+  [ -n "$listener_inodes" ] || return 1
+
+  for fd_path in "${proc_root}/${pid}"/fd/*; do
+    [ -L "$fd_path" ] || continue
+    target="$(readlink "$fd_path" 2>/dev/null || true)"
+    case "$target" in
+      'socket:['*']')
+        inode="${target#socket:[}"
+        inode="${inode%]}"
+        ;;
+      *) continue ;;
+    esac
+    while IFS= read -r listener_inode; do
+      [ "$inode" = "$listener_inode" ] && return 0
+    done <<EOF
+$listener_inodes
+EOF
+  done
+  return 1
+}
+
+gateway_control_stop_tracked_pid() {
+  local pid="$1"
+  local expected_start_identity="${2:-}"
+  local state
+  local attempts=0
+  case "$pid" in
+    '' | 0 | 1 | *[!0-9]*) return 0 ;;
+  esac
+  [ -n "$expected_start_identity" ] || return 1
+
+  # A missing or different identity means the tracked child is already gone.
+  # Never signal or wait for the process currently occupying a reused PID.
+  gateway_control_pid_matches_start_identity "$pid" "$expected_start_identity" || return 0
+  state="$(gateway_control_pid_state "$pid")" || return 0
+  case "$state" in
+    Z*)
+      if gateway_control_pid_matches_start_identity "$pid" "$expected_start_identity"; then
+        wait "$pid" 2>/dev/null || true
+      fi
+      return 0
+      ;;
+  esac
+
+  # Revalidate immediately before every signal. A numeric PID alone is never
+  # authority to terminate a process.
+  gateway_control_pid_matches_start_identity "$pid" "$expected_start_identity" || return 0
+  kill -TERM "$pid" 2>/dev/null || true
+  while [ "$attempts" -lt 50 ]; do
+    gateway_control_pid_matches_start_identity "$pid" "$expected_start_identity" || return 0
+    state="$(gateway_control_pid_state "$pid")" || return 0
+    case "$state" in
+      Z*)
+        if gateway_control_pid_matches_start_identity "$pid" "$expected_start_identity"; then
+          wait "$pid" 2>/dev/null || true
+        fi
+        return 0
+        ;;
+    esac
+    sleep 0.1
+    attempts=$((attempts + 1))
+  done
+  gateway_control_pid_matches_start_identity "$pid" "$expected_start_identity" || return 0
+  state="$(gateway_control_pid_state "$pid")" || return 0
+  case "$state" in
+    Z*)
+      if gateway_control_pid_matches_start_identity "$pid" "$expected_start_identity"; then
+        wait "$pid" 2>/dev/null || true
+      fi
+      return 0
+      ;;
+  esac
+  gateway_control_pid_matches_start_identity "$pid" "$expected_start_identity" || return 0
+  kill -KILL "$pid" 2>/dev/null || true
+
+  attempts=0
+  while [ "$attempts" -lt 50 ]; do
+    gateway_control_pid_matches_start_identity "$pid" "$expected_start_identity" || return 0
+    state="$(gateway_control_pid_state "$pid")" || return 0
+    case "$state" in
+      Z*)
+        if gateway_control_pid_matches_start_identity "$pid" "$expected_start_identity"; then
+          wait "$pid" 2>/dev/null || true
+        fi
+        return 0
+        ;;
+    esac
+    sleep 0.1
+    attempts=$((attempts + 1))
+  done
+  return 1
 }

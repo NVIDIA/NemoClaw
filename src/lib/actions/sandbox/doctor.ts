@@ -3,6 +3,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { createSynchronousCliOpenShellInferenceRouteObserver } from "../../adapters/openshell/inference-route-cli";
 import { createCliOpenShellSandboxObserver } from "../../adapters/openshell/sandbox-observer-cli";
 import { createCliOpenShellSandboxCommandExecutor } from "../../adapters/openshell/sandbox-command-cli";
 import {
@@ -20,7 +21,6 @@ import {
   getNamedGatewayLifecycleState,
   recoverNamedGatewayRuntime,
 } from "../../gateway-runtime-action";
-import { buildGatewayInferenceGetArgs, parseGatewayInference } from "../../inference/config";
 import { shouldManageDashboardForAgent } from "../../onboard/dashboard-runtime";
 import { resolveGatewayName, resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import {
@@ -390,21 +390,22 @@ async function collectSandboxReadinessChecks(
   };
 }
 
-function resolveInferenceRoute(
+async function resolveInferenceRoute(
   sb: SandboxEntry | null | undefined,
   openshellBin: string | null,
   openshellConnected: boolean,
   gatewayName: string | null,
-): DoctorInferenceRoute {
-  const live =
-    openshellBin && openshellConnected && gatewayName
-      ? parseGatewayInference(
-          captureOpenshell(buildGatewayInferenceGetArgs(gatewayName), {
-            ignoreError: true,
-            timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-          }).output,
-        )
-      : null;
+): Promise<DoctorInferenceRoute> {
+  let live: { provider: string; model: string } | null = null;
+  if (openshellBin && openshellConnected && gatewayName) {
+    const result = await createSynchronousCliOpenShellInferenceRouteObserver(
+      captureOpenshell,
+    ).observeInferenceRoute({
+      target: namedOpenShellGateway(gatewayName),
+      timeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
+    });
+    live = result.ok && result.value.state === "configured" ? result.value.route : null;
+  }
   return {
     model: live?.model || sb?.model || "unknown",
     provider: live?.provider || sb?.provider || "unknown",
@@ -534,7 +535,7 @@ async function collectDoctorChecks(
     host.openshellBin,
     gateway.connected,
   );
-  const route = resolveInferenceRoute(sb, host.openshellBin, gateway.connected, gatewayName);
+  const route = await resolveInferenceRoute(sb, host.openshellBin, gateway.connected, gatewayName);
   return [
     ...host.checks,
     ...gateway.checks,

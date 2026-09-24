@@ -267,6 +267,7 @@ Refer to [CLI Commands](../../reference/commands) for complete command behavior.
 During managed installation, NemoClaw first checks internal runtime readiness and host-loopback health.
 It repeats these checks when onboarding resumes.
 It then runs the authoritative OpenShell Docker bridge probe on fixed port `8081`.
+On Docker Desktop in WSL, NemoClaw runs the loopback health probe from the WSL CLI process because a host-network container cannot reach the WSL loopback listener.
 If that bridge probe cannot connect or times out after the earlier checks pass, onboarding stops without changing UFW.
 When the bridge reports a valid narrow subnet and a gateway IP address inside that subnet, the error reports these values:
 
@@ -302,7 +303,8 @@ sudo ufw --force delete allow from <subnet> to <gateway-ip> port 8081 proto tcp
 
 Use the same subnet and gateway IP address that appeared in the original command.
 
-If onboarding stops, rerun the same provider and recipe selection.
+If resumed onboarding reports that it cannot reserve host-local inference, run `$$nemoclaw <sandbox-name> doctor`.
+Correct the reported runtime or gateway-authority condition before you rerun the same provider and recipe selection.
 NemoClaw resumes only the persisted Docker authority, image, recipe, model digest, network, and runtime identity.
 It reconciles an unfinished create journal before it starts a new runtime.
 Phases before `receipt-prepared` are rolled back and retired, while `receipt-prepared` is finalized.

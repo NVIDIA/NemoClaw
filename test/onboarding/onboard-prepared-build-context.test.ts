@@ -331,8 +331,10 @@ describe("onboard prepared DCode build context", () => {
       assert.deepEqual(result.resolvedBuildIds, [result.buildId]);
       assert.equal(result.cleanupCalls, 1);
       assert.ok(
-        result.commands.some((command) =>
-          command.includes(`sandbox create --from ${result.buildCtx}/Dockerfile`),
+        result.commands.some(
+          (command) =>
+            command.includes("sandbox create ") &&
+            command.includes(` --from ${result.buildCtx}/Dockerfile `),
         ),
         `expected create command to use prepared context; commands:\n${result.commands.join("\n")}`,
       );

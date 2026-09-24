@@ -26,7 +26,7 @@ import {
   hasExplicitDeferredN1xOnboardingIntent,
 } from "../readiness/onboard-admission";
 import { composeSystemReadinessReport } from "../readiness/system";
-import type { SystemReadinessReport } from "../readiness/types";
+import type { ReadinessEvidence, SystemReadinessReport } from "../readiness/types";
 import {
   isLinuxDockerDriverGatewayEnabled,
   isPortableExperimentalProfile,
@@ -38,6 +38,7 @@ import { assessHost, type HostAssessment, planHostAdvisories } from "./preflight
 import {
   printCdiSpecUnavailableError,
   printDockerNotReachableError,
+  printOnboardOsReleaseWarnings,
   printUnsupportedRuntimeError,
 } from "./preflight-messages";
 import { printRemediationActions } from "./remediation";
@@ -122,7 +123,6 @@ const JETSON_INAPPLICABLE_CDI_ADVISORY_IDS = new Set([
   "refresh_nvidia_cdi_spec",
   "install_nvidia_container_toolkit",
 ]);
-
 export interface OnboardHostReadinessOptions {
   explicitlyOptedOutGpuPassthrough: boolean;
   /** Preserve provider-bound proof state across readiness collection phases. */
@@ -135,10 +135,18 @@ export interface OnboardHostReadinessOptions {
   allowDeferredN1xOnboarding?: boolean;
   /** Verified legacy rebuild authority; never inferred from ambient process state. */
   allowLegacyDgxStationQualification?: boolean;
-  /** Print warning-severity host advisories before returning an admitted report. */
+  /** Print OS-release warnings and host advisories before returning an admitted report. */
   presentAdvisories?: boolean;
   exitProcess?: (code: number) => never;
+  /** When the caller began observing the host, before it ran its own probes. Provenance only. */
   observedAt?: string;
+  /**
+   * When the caller's own host and GPU probes finished. The reuse window runs
+   * from here, so a delay between those probes and this gate — the resume
+   * path's gateway collection, for example — is still charged against it,
+   * while the probes' own duration is not (#10670).
+   */
+  collectedAt?: string;
   now?: () => Date;
 }
 
@@ -204,14 +212,23 @@ function printReadinessFailure(
   }
 }
 
-function printGatewayReadinessEvidence(gateway: GatewayReadinessProjection): void {
-  const actionableEvidenceIds = new Set([
-    "gateway.attachment.failure",
-    "gateway.port.conflict",
-    "gateway.probe.failure",
-    "gateway.probe.stale",
-  ]);
-  for (const entry of gateway.evidence) {
+// An inconclusive host projection records its cause as evidence and as a
+// warning finding. Admission reports only blocking findings, so neither reaches
+// the operator. Print the actionable evidence too, and the capability list
+// always carries its cause (#10670).
+const ACTIONABLE_HOST_EVIDENCE_IDS = new Set(["host.probe.failure", "host.probe.stale"]);
+const ACTIONABLE_GATEWAY_EVIDENCE_IDS = new Set([
+  "gateway.attachment.failure",
+  "gateway.port.conflict",
+  "gateway.probe.failure",
+  "gateway.probe.stale",
+]);
+
+function printReadinessEvidence(
+  evidence: readonly ReadinessEvidence[],
+  actionableEvidenceIds: ReadonlySet<string>,
+): void {
+  for (const entry of evidence) {
     if (actionableEvidenceIds.has(entry.id)) console.error(`  ${entry.summary}`);
   }
 }
@@ -241,6 +258,9 @@ export function assertOnboardSystemReadiness(
     providerOwnsHostReadiness: selectedRuntimeOwnsHostReadiness,
     resuming: options.resuming,
   });
+  if (!admission.admitted || options.presentAdvisories !== false) {
+    printOnboardOsReleaseWarnings(readinessReport);
+  }
   if (admission.admitted) {
     if (options.presentAdvisories !== false) {
       printRemediationActions(advisories.filter(({ severity }) => severity === "warning"));
@@ -265,6 +285,7 @@ export function assertOnboardSystemReadiness(
     printJetsonNvidiaRuntimeUnavailableError();
   } else {
     printReadinessFailure(readinessReport, admission.findingIds, admission.capabilityIds);
+    printReadinessEvidence(readinessReport.evidence, ACTIONABLE_HOST_EVIDENCE_IDS);
   }
   printRemediationActions(
     jetsonRuntimeMissing
@@ -283,7 +304,7 @@ export function assertOnboardGatewayReadiness(
   const admission = evaluateOnboardGatewayReadinessAdmission(gateway);
   if (admission.admitted) return;
   printReadinessFailure(gateway, admission.findingIds, admission.capabilityIds);
-  printGatewayReadinessEvidence(gateway);
+  printReadinessEvidence(gateway.evidence, ACTIONABLE_GATEWAY_EVIDENCE_IDS);
   exitProcess(1);
   throw new Error("Onboarding continued after an unsafe gateway readiness result.");
 }
@@ -534,14 +555,13 @@ export function assertOnboardHostReadiness(
   options: OnboardHostReadinessOptions,
 ): SystemReadinessReport {
   const now = options.now ?? (() => new Date());
-  const observedAt = options.observedAt;
   const hasN1xWslProductObservation =
     Object.prototype.hasOwnProperty.call(options, "n1xWslProduct") ||
     Boolean(gpu && Object.prototype.hasOwnProperty.call(gpu, "n1xWslProduct"));
   const n1xWslProductObservation = Object.prototype.hasOwnProperty.call(options, "n1xWslProduct")
     ? (options.n1xWslProduct ?? null)
     : (gpu?.n1xWslProduct ?? null);
-  const snapshot = collectHostObservations({
+  const collected = collectHostObservations({
     assess: () => host,
     detectGpu: () => gpu,
     runtimeProvider: runtimeProviderReadinessAuthority(host) ?? undefined,
@@ -549,12 +569,44 @@ export function assertOnboardHostReadiness(
     ...(hasN1xWslProductObservation
       ? { platformIdentityOptions: { n1xWslProductObservation } }
       : {}),
-    now: observedAt ? () => new Date(observedAt) : now,
-  });
-  const readinessReport = projectHostReadiness(snapshot, {
-    ...getBuildIdentity(),
     now,
   });
+  // Driving the collection clock with `observedAt` also stamped `completedAt`,
+  // so the reuse window measured the caller's own probe duration and a host
+  // slower than the window aged out facts it had just gathered successfully.
+  // The window is anchored to collection completion, as #9325 established.
+  // `collectedAt` is when the caller's probes finished, so any later delay
+  // before this gate is still charged; `observedAt` is provenance (#10670).
+  const observedAt = options.observedAt ?? options.collectedAt ?? collected.observedAt;
+  const completedAt = options.collectedAt ?? collected.completedAt;
+  const observedAtMs = Date.parse(observedAt);
+  const completedAtMs = Date.parse(completedAt);
+  const hasOrderedCollectionTimes =
+    Number.isFinite(observedAtMs) &&
+    Number.isFinite(completedAtMs) &&
+    completedAtMs >= observedAtMs;
+  const snapshot = hasOrderedCollectionTimes
+    ? { ...collected, observedAt, completedAt }
+    : {
+        ...collected,
+        failure: collected.failure ?? "Host collection timestamps are invalid or out of order.",
+      };
+  const identity = getBuildIdentity();
+  // Reject caller facts that were already stale before metadata collection.
+  // Only that collection's own duration is excluded from the reuse window.
+  const reusedReport =
+    options.collectedAt === undefined
+      ? undefined
+      : projectHostReadiness(snapshot, {
+          ...identity,
+          now: () => new Date(collected.observedAt),
+        });
+  const readinessReport = reusedReport?.evidence.some(({ id }) => id === "host.probe.stale")
+    ? reusedReport
+    : projectHostReadiness(
+        { ...snapshot, completedAt: collected.completedAt },
+        { ...identity, now },
+      );
   return assertOnboardSystemReadiness(readinessReport, host, options);
 }
 
@@ -677,14 +729,15 @@ export function runFatalOnboardRuntimePreflight(
   const assess = context.assessHost ?? assessHost;
   const detect = context.detectGpu ?? detectGpu;
   const now = context.now ?? (() => new Date());
-  let observedAt = now().toISOString();
-  let host = assess();
+  const observedAt = now().toISOString();
+  const host = assess();
   const n1xWslProduct = collectN1xWslProductObservation(host.isWsl, context.collectN1xWslProduct);
-  let gpu = detect({
+  const gpu = detect({
     proveArm64ContainerGpu: null,
     n1xWslProduct,
     runCaptureImpl: context.runCaptureImpl,
   });
+  const collectedAt = now().toISOString();
   let sandboxGpuConfig = resolveSandboxGpuConfig(gpu, {
     flag: resolveSandboxGpuFlagFromOptions(options),
     device: options.sandboxGpuDevice ?? null,
@@ -700,6 +753,7 @@ export function runFatalOnboardRuntimePreflight(
     allowLegacyDgxStationQualification: options.allowLegacyDgxStationQualification,
     exitProcess,
     observedAt,
+    collectedAt,
     now,
     n1xWslProduct,
   });

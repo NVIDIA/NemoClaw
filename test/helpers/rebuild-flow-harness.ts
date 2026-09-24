@@ -58,13 +58,20 @@ export const providerCommand = requireDist("../../adapters/openshell/provider-co
 export const policies = requireDist("../../policy/index.js");
 export const policyState = requireDist("../../adapters/openshell/policy-state.js");
 export const policyGet = requireDist("./policy-get.js");
+export const portableRetirementAuthority = requireDist(
+  "../../onboard/portable-retirement-authority.js",
+);
 export const portableAgentLifecycle = requireDist(
   "../../onboard/experimental/portable-agent-lifecycle.js",
 );
 export const processRecovery = requireDist("./process-recovery.js");
+export const openClawLifecycle = requireDist(
+  "./runtime/openclaw-lifecycle.js",
+) as typeof import("../../src/lib/actions/sandbox/runtime/openclaw-lifecycle");
 export const { rebuildOnboardDependencies } = requireDist("./rebuild-onboard-dependencies.js");
 export const rebuildCustomImagePreflight = requireDist("./rebuild-custom-image-preflight.js");
 export const rebuildFlowHelpers = requireDist("./rebuild-flow-helpers.js");
+export const snapshotBackup = requireDist("./snapshot/backup-authority.js");
 export const rebuildInference = requireDist("./inference-invocation-probe.js");
 export const rebuildManagedImage = requireDist("./rebuild-managed-image-preflight.js");
 export const rebuildMessagingConflict = requireDist("./rebuild-messaging-conflict-preflight.js");

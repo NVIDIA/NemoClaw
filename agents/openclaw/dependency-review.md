@@ -31,13 +31,13 @@ The reviewed audit wrapper reports lower-severity production findings and blocks
 
 ## WeChat plugin runtime graph
 
-- Package: `@tencent-weixin/openclaw-weixin@2.4.3`.
+- Package: `@tencent-weixin/openclaw-weixin@2.4.9`. This version uses the supported channel SDK and binds inbound replies to the OpenClaw 2026.9.x model runtime. The locked production dependencies remain `qrcode-terminal@0.12.0` and `zod@4.4.3`.
 - Locked graph: `agents/openclaw/wechat-runtime/package-lock.json` (npm lockfile version 3).
 - Lock regeneration: `npm install --package-lock-only --legacy-peer-deps --ignore-scripts --omit=dev --prefix agents/openclaw/wechat-runtime`.
 - Installation boundary: the image materializes the reviewed lock into a root-owned dedicated npm cache and adds the exact package metadata needed by npm's offline resolver. Before that cache becomes immutable, the shared `scripts/lib/reviewed-npm-archive.mts` implementation re-packs every locked archive offline from the final cache and rejects registry-origin drift, metadata or packed-byte SRI drift, unsafe filenames, missing archives, and symlinks. The sandbox user copies that verified immutable source into a writable cache used for registry metadata lookup, archive packing, and the OpenClaw plugin install; no retrieval step falls back to `HOME/.npm`. The copy is deleted in the same image layer, and the trusted cache is never writable. The installer runs in offline, legacy-peer mode, then `verify-wechat-runtime-lock.mts` rejects integrity, version, dependency-set, or peer-range drift and refuses an image OpenClaw version below the plugin's locked peer minimum.
 - Default CI gate: `reviewed-npm-audit` in `.github/workflows/pr.yaml` and `.github/workflows/main.yaml` audits the WeChat locked graph with the shared reviewed npm implementation.
   The pull request workflow resolves the implementation and policy from the PR base SHA and applies them to the proposed manifest and lockfile.
-  The shared gate uses Node.js `22.23.2` and verified `npm@10.9.4`.
+  The shared gate uses Node.js `24.18.1` and verified `npm@12.0.2`.
   It installs the exact lock with lifecycle scripts disabled and legacy peer resolution, rejects any low-or-higher production advisory, and verifies registry signatures.
   It also exercises the reviewed archive through a copied writable cache while the trusted source remains read-only.
   Signature verification makes at most three attempts and retries only `npm error Failed to download`; all other failures stop immediately.
@@ -45,8 +45,8 @@ The reviewed audit wrapper reports lower-severity production findings and blocks
   Its mcporter receipt, raw report, and trusted policy result cross into image builds; the other graph receipts remain CI evidence.
   The archive graph also retains the generated manifest and lock bytes authenticated by its receipt.
 - Advisory command: `npm ci --ignore-scripts --omit=dev --legacy-peer-deps --prefix agents/openclaw/wechat-runtime && npm audit --registry=https://registry.yarnpkg.com --omit=dev --audit-level=low --json --prefix agents/openclaw/wechat-runtime && npm audit signatures --registry=https://registry.yarnpkg.com --omit=dev --prefix agents/openclaw/wechat-runtime`.
-- Advisory review: `2026-07-12`; result: `0` known vulnerabilities across the resolved production graph.
-- Regression tests: `test/install/wechat-locked-install.test.ts` keeps the manifest runtime-lock paths and installer verification dispatch synchronized; `test/install/verify-wechat-runtime-lock.test.ts` proves that the installed graph and OpenClaw peer range fail closed; `test/automation/releases/reviewed-npm-audit-workflow.test.ts` keeps the cache lifecycle, audit threshold, bounded signature retry, invalid-signature denial, and npm-pack boundary synchronized.
+- Advisory review: `2026-09-23`; result: `0` known vulnerabilities across the resolved production graph. Registry signatures verified for all three packages; one package has a verified attestation.
+- Regression tests: `test/install/wechat-locked-install.test.ts` keeps the manifest runtime-lock paths and installer verification dispatch synchronized; `test/install/verify-wechat-runtime-lock.test.ts` proves that the installed graph, OpenClaw peer range, and lazy inbound-handler imports fail closed; `test/automation/releases/reviewed-npm-audit-workflow.test.ts` keeps the cache lifecycle, audit threshold, bounded signature retry, invalid-signature denial, and npm-pack boundary synchronized.
 
 The dedicated graph intentionally omits the plugin's `openclaw` peer dependency. The image already installs and integrity-verifies the reviewed OpenClaw runtime separately; auto-installing another OpenClaw copy would create a second unreviewed runtime graph.
 Disabling scripts also prevents transitive packages from executing lifecycle code during the trusted image build.

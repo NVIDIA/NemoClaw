@@ -167,20 +167,24 @@ test(
     const apiKey = loadManagedLlamaCppApiKey(managedLlamaCppStatePaths(os.homedir()));
     assert(apiKey, "managed llama.cpp API key is missing");
     artifacts.addRedactionValues([apiKey]);
+    const runtimeId = receipt.runtime.runtimeId;
     const runtimeOperation = runtimeProvider.hostLocalInference.createOperation({ env: env() });
     runtimeOperation.assertAuthority();
-    const runtimeLogs = runtimeOperation.engine.capture(
-      ["container", "logs", "--tail", "20000", receipt.runtime.runtimeId],
-      30_000,
-    );
-    await artifacts.writeJson("managed-runtime-logs.json", {
-      providerId: receipt.providerId,
-      runtimeId: receipt.runtime.runtimeId,
-      status: runtimeLogs.status,
-      error: runtimeLogs.error?.message ?? null,
-      stdout: runtimeLogs.stdout,
-      stderr: runtimeLogs.stderr,
-    });
+    const captureManagedRuntimeLogs = async (phase: "setup" | "post-agent") => {
+      const runtimeLogs = runtimeOperation.engine.capture(
+        ["container", "logs", "--tail", "20000", runtimeId],
+        30_000,
+      );
+      await artifacts.writeJson(`managed-runtime-logs-${phase}.json`, {
+        providerId: receipt.providerId,
+        runtimeId,
+        status: runtimeLogs.status,
+        error: runtimeLogs.error?.message ?? null,
+        stdout: runtimeLogs.stdout,
+        stderr: runtimeLogs.stderr,
+      });
+    };
+    await captureManagedRuntimeLogs("setup");
     const runtimeInspection = runtimeOperation.engine.capture(
       ["container", "inspect", receipt.runtime.runtimeId],
       30_000,
@@ -313,7 +317,11 @@ const id = model.slice(separator + 1);
 const selected = config.models.providers[provider].models.find((entry) => entry.id === id);
 process.stdout.write(JSON.stringify({ model, contextWindow: selected?.contextWindow }));
 NODE`),
-      { artifactName: "openclaw-served-context", env: env(), timeoutMs: 30_000 },
+      {
+        artifactName: "openclaw-served-context",
+        env: env(),
+        timeoutMs: 30_000,
+      },
     );
     expect(runtimeContext.exitCode, resultText(runtimeContext)).toBe(0);
     expect(JSON.parse(runtimeContext.stdout)).toEqual({
@@ -340,6 +348,7 @@ NODE`),
         timeoutMs: 12 * 60_000,
       },
     );
+    await captureManagedRuntimeLogs("post-agent");
     expect(agent.exitCode, resultText(agent)).toBe(0);
     assertAgentExecutionSucceeded(agent.stdout, "inference", recipe.spec.model.servedName);
 
@@ -401,7 +410,9 @@ NODE`),
       gatewayPort: recipe.spec.serve.port,
       homeDir: os.homedir(),
       environment: destroyEnv,
-      operation: runtimeProvider.hostLocalInference.createOperation({ env: destroyEnv }),
+      operation: runtimeProvider.hostLocalInference.createOperation({
+        env: destroyEnv,
+      }),
     }).runtime.destroy(receipt);
     expect(cleanupProof.status).toBe("already-absent");
 

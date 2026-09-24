@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { finalizationHandlerDeps, finalizationHandlerRuntime } from "../finalization-deps";
 
 import type { SessionUpdates } from "../../../state/onboard-session";
 import type { PreparedExternalComponent } from "../../external-component";
@@ -62,7 +64,7 @@ function createDeps(
     setDefaultSandbox: vi.fn(),
     removeLegacy: vi.fn(),
     cleanupHost: vi.fn(),
-    recoverProcesses: vi.fn(async () => undefined),
+    recoverProcesses: vi.fn(async () => true),
     settleOrdinaryPairing: vi.fn(async () => ({ kind: "settled" as const })),
     ordinaryPairingIncompleteMessage: vi.fn(
       () => "OpenClaw onboarding is incomplete; resume onboarding.",
@@ -77,7 +79,7 @@ function createDeps(
     verify: vi.fn(async () => ({ ok: true })),
     diagnostics: vi.fn(() => ["  ✓ verified"]),
     verifyWebSearch: vi.fn(async () => true),
-    dashboard: vi.fn(),
+    dashboard: vi.fn(async () => undefined),
     isHealthy: vi.fn(() => true),
     reportReadiness: vi.fn(),
     createExternalComponentActivationProof: vi.fn(() => activationProof),
@@ -150,6 +152,39 @@ async function runFinalizationHandlers(
 }
 
 describe("finalization handlers", () => {
+  it("defers registry-bound runtime verification to the outer rebuild transaction", async () => {
+    const { deps, calls } = createDeps();
+
+    const result = await handleFinalizationPhase({
+      ...baseOptions(deps),
+      deferRuntimeVerification: true,
+    });
+
+    expect(result.stateResult).toEqual({
+      type: "transition",
+      next: "post_verify",
+      transitionKind: "advance",
+      updates: undefined,
+      metadata: { state: "finalizing" },
+    });
+    expect(calls.setDefaultSandbox).toHaveBeenCalledExactlyOnceWith("my-assistant");
+    expect(calls.cleanupHost).toHaveBeenCalledOnce();
+    expect(calls.recoverProcesses).not.toHaveBeenCalled();
+    expect(calls.verify).not.toHaveBeenCalled();
+
+    const postVerify = await handlePostVerifyState({
+      ...baseOptions(deps),
+      deferRuntimeVerification: true,
+    });
+    expect(postVerify).toEqual({
+      stateResult: { type: "complete", updates: {}, metadata: { state: "post_verify" } },
+      verificationDiagnostics: [],
+      deploymentHealthy: true,
+    });
+    expect(calls.recoverProcesses).not.toHaveBeenCalled();
+    expect(calls.verify).not.toHaveBeenCalled();
+  });
+
   it("completes providerless component activation without ordinary setup (#11486)", async () => {
     const { deps, calls } = createDeps();
     const result = await handleFinalizationPhase({
@@ -318,6 +353,30 @@ describe("finalization handlers", () => {
     expect(result.verificationDiagnostics).toEqual(["  ✓ verified"]);
   });
 
+  it("waits for dashboard completion before reporting readiness", async () => {
+    let resolveDashboard!: () => void;
+    const dashboardPending = new Promise<void>((resolve) => {
+      resolveDashboard = resolve;
+    });
+    const printDashboard = vi.fn(() => dashboardPending);
+    const { deps, calls } = createDeps({ printDashboard });
+    const settled = vi.fn();
+
+    const pending = handlePostVerifyState(baseOptions(deps));
+    void pending.then(settled);
+    await vi.waitFor(() => expect(printDashboard).toHaveBeenCalledOnce());
+
+    expect(calls.reportReadiness).not.toHaveBeenCalled();
+    expect(settled).not.toHaveBeenCalled();
+
+    resolveDashboard();
+    const result = await pending;
+
+    expect(calls.reportReadiness).toHaveBeenCalledExactlyOnceWith(true);
+    expect(settled).toHaveBeenCalledOnce();
+    expect(result.stateResult).toMatchObject({ type: "complete" });
+  });
+
   it("uses strict Portable settlement instead of ordinary pairing settlement (#9207)", async () => {
     const { deps, calls } = createDeps();
     const options = {
@@ -454,6 +513,7 @@ describe("finalization handlers", () => {
     let forwardLive = false;
     const recoverProcesses = vi.fn(async () => {
       forwardLive = true;
+      return true;
     });
     const verify = vi.fn(async () => ({ ok: forwardLive }));
     const { deps } = createDeps({
@@ -723,4 +783,56 @@ describe("finalization handlers", () => {
       "  OpenClaw onboarding is incomplete; resume onboarding.",
     );
   });
+});
+
+describe("secret-boundary refusal during finalization", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it.each([
+    { phase: "finalizing", run: handleFinalizationPhase },
+    { phase: "post_verify", run: handlePostVerifyState },
+  ])(
+    "pauses $phase before successful handoff on a recovery refusal (#11758)",
+    async ({ phase, run }) => {
+      vi.spyOn(finalizationHandlerRuntime, "loadLaunchReadiness").mockReturnValue({
+        resolveOrdinaryOpenClawPairingTarget: () => null,
+      } as never);
+      vi.spyOn(finalizationHandlerRuntime, "loadProcessRecovery").mockReturnValue({
+        checkAndRecoverSandboxProcesses: vi.fn(async () => ({
+          checked: true,
+          wasRunning: true,
+          recovered: false,
+          forwardRecovered: false,
+          secretBoundaryRefused: true,
+          secretBoundaryReason: "unexpected-marker" as const,
+        })),
+        waitForRecreatedSandboxOpenShellReady: vi.fn(async () => true),
+        waitForStartedNativeGatewayProcess: vi.fn(async () => true),
+      });
+      const { deps, calls } = createDeps({
+        checkAndRecoverSandboxProcesses: finalizationHandlerDeps.checkAndRecoverSandboxProcesses,
+        readRegistryAgent: () => "hermes",
+      });
+      const result = await run({
+        ...baseOptions(deps),
+        agent: { name: "hermes" },
+        portableProfileSelected: true,
+      });
+      expect(result.stateResult).toMatchObject({
+        type: "pause",
+        metadata: { state: phase, reason: "recovery_check_incomplete" },
+      });
+      expect(calls.reportReadiness).toHaveBeenCalledExactlyOnceWith(false);
+      expect(calls.error).toHaveBeenCalledWith(expect.stringContaining("secret-boundary"));
+      expect(calls.error).toHaveBeenCalledWith(
+        expect.stringContaining("nemoclaw my-assistant doctor"),
+      );
+      expect(calls.error).toHaveBeenCalledWith(
+        expect.stringContaining("nemoclaw onboard --resume"),
+      );
+      expect(calls.verify).not.toHaveBeenCalled();
+      expect(calls.dashboard).not.toHaveBeenCalled();
+      expect(calls.log).not.toHaveBeenCalledWith(expect.stringContaining("ready"));
+    },
+  );
 });

@@ -6,6 +6,7 @@ import http from "node:http";
 import { generateKeyPairSync } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
+import { gatewayAdaptersForTest } from "../../../../../test/helpers/openshell-gateway-adapters";
 import { describe, expect, it, vi } from "vitest";
 import type { GatewayReuseState } from "../../../state/gateway";
 import { createSession, type Session } from "../../../state/onboard-session";
@@ -102,6 +103,7 @@ function createDeps(overrides: Partial<GatewayStateOptions<Gpu>["deps"]> = {}) {
     stopForwards: vi.fn(),
     reconcileGpu: vi.fn((opts: { gatewayReuseState: GatewayReuseState }) => opts.gatewayReuseState),
     dockerDriver: vi.fn(() => false),
+    verifyReusableGatewayReachability: vi.fn(async () => undefined),
     retireLegacy: vi.fn(),
     destroyGpuRuntime: vi.fn(() => true),
     skipped: vi.fn(),
@@ -155,6 +157,7 @@ function createDeps(overrides: Partial<GatewayStateOptions<Gpu>["deps"]> = {}) {
       stopAllDashboardForwards: calls.stopForwards,
       reconcileGatewayGpuReuseForGpuIntent: calls.reconcileGpu,
       isLinuxDockerDriverGatewayEnabled: calls.dockerDriver,
+      verifyReusableDockerDriverGatewaySandboxReachability: calls.verifyReusableGatewayReachability,
       retireLegacyGatewayForDockerDriverUpgrade: calls.retireLegacy,
       destroyGatewayRuntimeForGpuReuse: calls.destroyGpuRuntime,
       skippedStepMessage: calls.skipped,
@@ -291,7 +294,7 @@ describe("handleGatewayState", () => {
   });
 
   it("starts the gateway after component preparation succeeds (#11507)", async () => {
-    const directory = fs.mkdtempSync(path.join(path.dirname(process.cwd()), "nc-prepare-"));
+    const directory = fs.mkdtempSync(path.join(fs.realpathSync(os.homedir()), "nc-prepare-"));
     const socketPath = path.join(directory, "activate.sock");
     const component = preparedConnectionComponent(socketPath);
     const preparation: componentActivation.ExternalComponentGatewayPreparation = {
@@ -474,19 +477,14 @@ describe("handleGatewayState", () => {
     });
   });
 
-  it("starts the gateway when stderr-only status marks the selected gateway stale (#7087)", async () => {
-    const statusOutput = [
-      "Server Status",
-      "",
-      "Gateway: nemoclaw",
-      "Error: Connection refused",
-    ].join("\n");
-    const gatewayReuseSnapshot = createGatewayReuseHelpers({
+  it("starts a verified stale gateway with named metadata (#7087)", async () => {
+    const gatewayReuseSnapshot = await createGatewayReuseHelpers({
+      ...gatewayAdaptersForTest({
+        healthy: false,
+        namedMetadata: true,
+        gatewayReuseState: "stale",
+      }),
       gatewayName: "nemoclaw",
-      runCaptureOpenshell: vi.fn((args: string[], opts?: Record<string, unknown>) =>
-        args[0] === "status" && opts?.includeStderr === true ? statusOutput : "",
-      ),
-      runOpenshell: vi.fn(() => ({ status: 0 })),
       cliDisplayName: () => "NemoClaw",
     }).getGatewayReuseSnapshot();
     const { deps, calls } = createDeps();
@@ -555,6 +553,39 @@ describe("handleGatewayState", () => {
     expect(calls.note).toHaveBeenCalledWith("  Reusing healthy NemoClaw gateway.");
     expect(calls.startGateway).not.toHaveBeenCalled();
     expect(calls.complete).toHaveBeenCalledWith("gateway");
+  });
+
+  it("proves sandbox bridge reachability before reusing a Docker-driver gateway", async () => {
+    const { deps, calls } = createDeps({
+      isLinuxDockerDriverGatewayEnabled: vi.fn(() => true),
+    });
+
+    await handleGatewayState(baseOptions(deps, "healthy"));
+
+    expect(calls.verifyReusableGatewayReachability).toHaveBeenCalledWith(
+      { type: "nvidia" },
+      { gpuPassthrough: true },
+    );
+    expect(calls.verifyReusableGatewayReachability).toHaveBeenCalledBefore(calls.recordSkip);
+    expect(calls.startGateway).not.toHaveBeenCalled();
+  });
+
+  it("stops before recording reuse when sandbox bridge reachability fails", async () => {
+    const verifyReusableDockerDriverGatewaySandboxReachability = vi.fn(async () => {
+      throw new Error("sandbox bridge cannot reach gateway");
+    });
+    const { deps, calls } = createDeps({
+      isLinuxDockerDriverGatewayEnabled: vi.fn(() => true),
+      verifyReusableDockerDriverGatewaySandboxReachability,
+    });
+
+    await expect(handleGatewayState(baseOptions(deps, "healthy"))).rejects.toThrow(
+      "sandbox bridge cannot reach gateway",
+    );
+
+    expect(calls.recordSkip).not.toHaveBeenCalled();
+    expect(calls.complete).not.toHaveBeenCalled();
+    expect(calls.startGateway).not.toHaveBeenCalled();
   });
 
   it("stops before gateway or sandbox state mutation when reuse verification fails (#9594)", async () => {

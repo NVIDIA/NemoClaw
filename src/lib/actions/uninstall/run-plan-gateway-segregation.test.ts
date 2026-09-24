@@ -323,13 +323,13 @@ describe("uninstall gateway-port segregation (#3053)", () => {
     {
       name: "a connection refusal",
       diagnostic: "",
-      expectedCause: "connection refused; exit 1).",
+      expectedCause: "OpenShell could not reach the selected gateway.",
       stdoutDiagnostic: "connection refused; OPENAI_API_KEY=must-not-be-logged",
     },
     {
       name: "a permission error",
       diagnostic: "permission denied; ACCESS_TOKEN=must-not-be-logged",
-      expectedCause: "permission denied; exit 1).",
+      expectedCause: "OpenShell could not authorize the gateway operation.",
     },
     { name: "an unverified generic absence", diagnostic: "gateway not found" },
     { name: "a named absence while still registered", diagnostic: NAMED_GATEWAY_ABSENCE },
@@ -344,10 +344,12 @@ describe("uninstall gateway-port segregation (#3053)", () => {
     {
       name: "a generic absence plus another failure",
       diagnostic: "gateway not found\nconnection refused",
+      expectedCause: "OpenShell could not reach the selected gateway.",
     },
     {
       name: "a named absence plus another failure",
       diagnostic: "No gateway metadata found for nemoclaw.\nconnection refused",
+      expectedCause: "OpenShell could not reach the selected gateway.",
     },
     {
       name: "a different gateway absence",
@@ -356,7 +358,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
     {
       name: "a legacy destroy failure",
       diagnostic: REMOVE_UNSUPPORTED,
-      expectedCause: "permission denied; exit 1).",
+      expectedCause: "OpenShell could not authorize the gateway operation.",
       legacyDestroyDiagnostic: "permission denied",
     },
     {
@@ -368,7 +370,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
     "preserves state when gateway cleanup reports $name (#9859)",
     async ({
       diagnostic,
-      expectedCause = "exit 1).",
+      expectedCause = "The OpenShell gateway operation failed.",
       legacyDestroyDiagnostic,
       postcondition,
       stdoutDiagnostic = "",
@@ -426,10 +428,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       expect(openshellCalls).toContainEqual(["gateway", "remove", "nemoclaw"]);
       const usedLegacyDestroy = legacyDestroyDiagnostic !== undefined;
       expect(openshellCalls.some((args) => args[1] === "destroy")).toBe(usedLegacyDestroy);
-      const failedOperation = usedLegacyDestroy ? "destroy" : "remove";
-      expect(warnings.join("\n")).toContain(
-        `Could not remove gateway registration 'nemoclaw': openshell gateway ${failedOperation} failed (`,
-      );
+      expect(warnings.join("\n")).toContain("Could not remove gateway registration 'nemoclaw':");
       expect(warnings.join("\n")).toContain(expectedCause);
       expect(warnings.join("\n")).not.toContain("must-not-be-logged");
       expect(warnings).not.toContain("Gateway 'nemoclaw' is already absent");
@@ -1033,10 +1032,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       const kill = vi.fn((_pid: number, _signal?: NodeJS.Signals | number) => true);
       const dockerOutputByCommand: Record<string, string> = {
         images: "shared-image nemoclaw:latest",
-        ps: [
-          "default-id image openshell-cluster-nemoclaw",
-          `selected-id image openshell-cluster-nemoclaw-${String(port)}`,
-        ].join("\n"),
+        ps: ["default-id image openshell-cluster-nemoclaw"].join("\n"),
       };
       const result = await runPortUninstall(
         {
@@ -1076,7 +1072,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       expect(openshellCalls).not.toContainEqual(["sandbox", "delete", "--all"]);
       expect(openshellCalls.some((args) => args[0] === "provider")).toBe(false);
       expect(runCalls.some(({ command }) => command === "npm" || command === "ollama")).toBe(false);
-      expect(dockerCalls).toContainEqual(["rm", "-f", "selected-id"]);
+      expect(dockerCalls.some((args) => args[0] === "rm")).toBe(false);
       expect(dockerCalls).not.toContainEqual(["rm", "-f", "default-id"]);
       expect(dockerCalls.some((args) => args[0] === "rmi")).toBe(false);
       expect(fs.existsSync(selected)).toBe(false);

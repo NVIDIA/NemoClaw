@@ -133,7 +133,7 @@ export function cleanupFailureMessage(commandCode: number, detail: string): stri
   return `  OpenClaw permission cleanup failed (command exit ${commandCode}; cleanup exit 1): ${detail}`;
 }
 
-function defaultSelectGateway(sandboxName: string): GatewaySelectResult {
+function defaultSelectGateway(sandboxName: string): Promise<GatewaySelectResult> {
   return (
     require("./gateway-select") as typeof import("./gateway-select")
   ).selectSandboxOwningGateway(sandboxName);
@@ -155,7 +155,7 @@ export type ExecSandboxDeps = {
   /** Resolve the sandbox's recorded agent before applying agent-specific post-exec effects. */
   resolveSandboxAgent?: SandboxExecAgentResolver;
   /** Select the sandbox's owning gateway before the exec talks to OpenShell. */
-  selectGateway?: (sandboxName: string) => GatewaySelectResult;
+  selectGateway?: (sandboxName: string) => GatewaySelectResult | Promise<GatewaySelectResult>;
   /** Defer terminal process exit until an outer lifecycle lock is released. */
   exit?: (code: number) => never;
 };
@@ -224,6 +224,15 @@ export function isGoogleChatPairingApproval(command: readonly string[]): boolean
   );
 }
 
+export function isOpenClawAgentRosterMutation(command: readonly string[]): boolean {
+  return (
+    command.length >= 3 &&
+    command[0] === "openclaw" &&
+    command[1] === "agents" &&
+    (command[2] === "add" || command[2] === "delete")
+  );
+}
+
 function defaultRestartGateway(sandboxName: string): Promise<{ ok: boolean }> {
   const { defaultInferenceGatewayRestart } =
     require("../inference-set-gateway-restart") as typeof import("../inference-set-gateway-restart");
@@ -249,6 +258,20 @@ function googleChatPairingUnmanagedCleanupFailureMessage(sandboxName: string): s
   return (
     `  Google Chat pairing approval committed for '${sandboxName}', but post-command cleanup failed. ` +
     "The approval was not rolled back. No owning managed gateway is registered, so NemoClaw did not attempt gateway activation."
+  );
+}
+
+function agentRosterActivationFailureMessage(cliName: string, sandboxName: string): string {
+  return (
+    `  OpenClaw agent roster update committed for '${sandboxName}', but managed gateway activation failed. ` +
+    `The config change was not rolled back. Run '${cliName} ${sandboxName} gateway restart' before dispatching to the changed roster.`
+  );
+}
+
+function agentRosterUnmanagedCleanupFailureMessage(sandboxName: string): string {
+  return (
+    `  OpenClaw agent roster update committed for '${sandboxName}', but post-command cleanup failed. ` +
+    "The config change was not rolled back. No owning managed gateway is registered, so NemoClaw did not attempt gateway activation."
   );
 }
 
@@ -288,7 +311,7 @@ export async function startSandboxExec(
     console.error(`  Error: ${error instanceof Error ? error.message : String(error)}`);
     exit(1);
   }
-  const gatewaySelection = (deps.selectGateway ?? defaultSelectGateway)(sandboxName);
+  const gatewaySelection = await (deps.selectGateway ?? defaultSelectGateway)(sandboxName);
   if (gatewaySelection.outcome === "failed") {
     console.error(
       `  Failed to select gateway '${gatewaySelection.gatewayName}' for sandbox '${sandboxName}'.`,
@@ -366,21 +389,29 @@ export async function startSandboxExec(
     let exitCode = completion.code;
     const googleChatApprovalCommitted =
       completion.commandCode === 0 && isGoogleChatPairingApproval(command);
-    const managedGoogleChatApproval =
-      googleChatApprovalCommitted && gatewaySelection.outcome === "selected";
-    if (googleChatApprovalCommitted && completion.cleanupError) {
+    const agentRosterUpdateCommitted =
+      completion.commandCode === 0 && isOpenClawAgentRosterMutation(command);
+    const activationCommitted = googleChatApprovalCommitted || agentRosterUpdateCommitted;
+    const managedActivation = activationCommitted && gatewaySelection.outcome === "selected";
+    const activationFailureMessage = () =>
+      googleChatApprovalCommitted
+        ? googleChatPairingActivationFailureMessage(CLI_NAME, sandboxName)
+        : agentRosterActivationFailureMessage(CLI_NAME, sandboxName);
+    if (activationCommitted && completion.cleanupError) {
       console.error(
-        managedGoogleChatApproval
-          ? googleChatPairingActivationFailureMessage(CLI_NAME, sandboxName)
-          : googleChatPairingUnmanagedCleanupFailureMessage(sandboxName),
+        managedActivation
+          ? activationFailureMessage()
+          : googleChatApprovalCommitted
+            ? googleChatPairingUnmanagedCleanupFailureMessage(sandboxName)
+            : agentRosterUnmanagedCleanupFailureMessage(sandboxName),
       );
     }
-    if (exitCode === 0 && managedGoogleChatApproval) {
+    if (exitCode === 0 && managedActivation) {
       let recordedAgent: string | null = null;
       try {
         recordedAgent = (deps.resolveSandboxAgent ?? defaultResolveSandboxAgent)(sandboxName);
       } catch {
-        console.error(googleChatPairingActivationFailureMessage(CLI_NAME, sandboxName));
+        console.error(activationFailureMessage());
         exit(1);
       }
       if (recordedAgent === "openclaw") {
@@ -388,11 +419,11 @@ export async function startSandboxExec(
         try {
           restartSucceeded = (await (deps.restartGateway ?? defaultRestartGateway)(sandboxName)).ok;
         } catch {
-          // The approval already committed inside OpenClaw. Convert restart
-          // exceptions into the same explicit partial-commit recovery contract.
+          // The config mutation already committed inside OpenClaw. Convert
+          // restart exceptions into the same explicit partial-commit recovery contract.
         }
         if (!restartSucceeded) {
-          console.error(googleChatPairingActivationFailureMessage(CLI_NAME, sandboxName));
+          console.error(activationFailureMessage());
           exitCode = 1;
         }
       }

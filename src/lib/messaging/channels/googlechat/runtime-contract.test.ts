@@ -30,11 +30,17 @@ describe("googlechat runtime security contract", () => {
     expect(googlechatManifest.credentials).toEqual([]);
   });
 
-  it("renders a non-existent serviceAccountFile sentinel, not a real key path", () => {
+  it("renders an available non-secret serviceAccount sentinel for OpenClaw 2026.9.1", () => {
     const channel = renderFragmentValue("channels.googlechat");
-    expect(channel.serviceAccountFile).toBe(
-      "/nonexistent/googlechat-gateway-minted-no-service-account-file",
-    );
+    expect(channel.serviceAccount).toEqual({});
+    expect(channel.serviceAccountFile).toBeUndefined();
+  });
+
+  it("renders the OpenClaw 2026.9.1 top-level DM access-policy shape", () => {
+    const channel = renderFragmentValue("channels.googlechat");
+    expect(channel.dmPolicy).toBe("{{allowedIds.googlechat.dmPolicy}}");
+    expect(channel.allowFrom).toBe("{{allowedIds.googlechat.values}}");
+    expect(channel.dm).toBeUndefined();
   });
 
   it("suppresses gateway hot-reload so the webhook route survives self-writes", () => {

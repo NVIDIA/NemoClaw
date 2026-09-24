@@ -3,6 +3,43 @@
 
 # Publish the Branch and PR
 
+## Select the source repository
+
+Choose the source repository before declaring the immutable publication inputs or writing a branch.
+Do not default to a fork merely because it is the usual contributor location.
+
+Read the canonical base copies of the pull-request workflows. Treat manual PR E2E applicability and
+selector choice as immutable publication inputs owned by the explicit authorized task. Do not infer
+that manual E2E is required from advisory recommendations, an implementation handoff, or the
+publication skill itself. When the authorized task does not require manual PR E2E, it is not a
+publication requirement. For required manual PR E2E, read its canonical contract. Use the trusted
+diff, the task-owned applicability input, and those canonical rules to determine whether every
+required CI and E2E path supports a fork head. In particular:
+
+- a candidate whose required reviewed OpenShell SDK package job rejects a non-canonical head must use
+  a branch in `NVIDIA/NemoClaw`;
+- a PR that requires the manual PR E2E workflow must use a branch in `NVIDIA/NemoClaw` unless the
+  canonical contract explicitly supports another source repository.
+
+Treat this as a pre-publication hard stop. If any required path is same-repository-only:
+
+1. Read `viewerPermission` for `NVIDIA/NemoClaw`. Use a same-repository source branch only when the
+   authenticated actor has `WRITE`, `MAINTAIN`, or `ADMIN` and the requested task authorizes the
+   repository branch write.
+2. Otherwise stop before pushing or creating a PR. Name the exact required path and request adoption
+   or publication by a maintainer with repository branch-write authority. Name an individual only when
+   the task or checked-in repository evidence identifies that maintainer. Do not create a fork PR that
+   cannot complete its required gates and do not describe its known failure as pending evidence.
+
+When all required paths support fork heads, use the declared authorized fork. Record the selected
+source repository, the canonical rule that permits it, and the permission observation with the other
+publication inputs. Re-read the relevant source-repository identity immediately before the branch
+write and PR creation.
+
+An existing PR cannot change its head repository. If this gate discovers that an open fork PR must be
+same-repository, do not rerun the impossible check or silently create a duplicate. Report the invalid
+source choice and obtain explicit authorization before closing and replacing the PR.
+
 ## Guarded publication
 
 Use a configured GitHub method allowed by the access hard stop. This skill owns the publication
@@ -138,20 +175,8 @@ Only `TRIAGE`, `WRITE`, `MAINTAIN`, or `ADMIN` permits assignment. Otherwise omi
 
 Open every code-changing PR as a draft. A draft requires the same DCO and verification evidence.
 Keep it draft while automated evaluation or a candidate-owned repair is pending.
-
-Before marking a PR ready, record its number, reviewed `headRefOid`, and expected draft state. Read the
-PR immediately before the write. Continue only when its identity and commit are unchanged, it is still
-draft, and the latest commit completed the shared follow-up cycle with no unresolved candidate-owned
-finding or failure. Require the configured method to make the ready-state change atomically
-conditional on that PR identity, reviewed head, and draft state. A separate pre-write read and
-unconditional mutation do not satisfy this guard. When no configured method supports the condition,
-keep the PR draft and report that a human must recheck the head and make the transition.
-
-When the conditional operation is available, request it once. After a successful or inconclusive
-response, read the PR again. Continue only when the same PR and commit are no longer draft. Treat every
-other result as unknown state, stop, and do not repeat the write. Report the prepared PR number, head,
-and draft state; the observed PR identity and relevant state; every differing field; whether the
-response was successful or inconclusive; and the no-retry recovery boundary.
+Use `prepare_pr_for_human_review` only after the latest PR commit completes the shared follow-up cycle
+with no unresolved candidate-owned finding or failure.
 
 Do not select or add labels during PR publication. Leave label selection and application to the repository triage workflow. Do not request reviews from maintainers.
 

@@ -3,6 +3,14 @@
   "version": 1,
   "entries": [
     {
+      "live": "test/e2e/live/deferred-onboarding.test.ts",
+      "fast": [
+        "src/lib/actions/installer/deferred-onboarding.test.ts",
+        "test/install/install-onboard-yes.test.ts",
+        "test/e2e/support/workflow-plan.test.ts"
+      ]
+    },
+    {
       "live": "test/e2e/live/portable-cpu-delegation-proof.test.ts",
       "fast": [
         "src/lib/onboard/experimental/portable-cpu-delegation-preflight.test.ts",
@@ -13,6 +21,8 @@
     {
       "live": "test/e2e/live/portable-profile-rootless-linux.test.ts",
       "fast": [
+        "src/lib/onboard/experimental/hermes-portable-container.test.ts",
+        "src/lib/onboard/experimental/hermes-portable-lifecycle.test.ts",
         "src/lib/onboard/command.test.ts",
         "src/lib/onboard/docker-driver-gateway-env.test.ts",
         "src/lib/onboard/experimental/portable-host-preparation.test.ts",
@@ -35,6 +45,7 @@
     },
     {
       "live": "test/e2e/live/managed-image-multiarch-startup.test.ts",
+      "liveSources": ["test/e2e/live/managed-image-multiarch-startup-helpers.ts"],
       "fast": [
         "test/e2e/support/base-image-publication.test.ts",
         "test/e2e/support/managed-image-multiarch-startup-helpers.test.ts",
@@ -60,8 +71,7 @@
         "src/lib/onboard/command.test.ts",
         "src/lib/onboard/sandbox-workload-preparation.test.ts",
         "test/e2e/support/managed-image-activation-diagnostics.test.ts",
-        "test/inference/managed/managed-image-publication-workflow.test.ts",
-        "test/onboarding/onboard-managed-image-buildless-e2e.test.ts"
+        "test/inference/managed/managed-image-publication-workflow.test.ts"
       ]
     },
     {
@@ -74,6 +84,7 @@
         "src/lib/agent/candidate.test.ts",
         "src/lib/agent/pi-lifecycle.test.ts",
         "src/lib/onboard/pi-candidate-rebuild.test.ts",
+        "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/onboard-interactive-pty.test.ts",
         "test/e2e/support/pi-agent-qualification-events.test.ts",
         "test/agents/openclaw/runtime/pi-candidate-runtime-artifacts.test.ts"
@@ -87,7 +98,8 @@
         "src/lib/adapters/podman/index.test.ts",
         "src/lib/adapters/podman/socket-authority.test.ts",
         "src/lib/onboard/docker-driver-gateway-runtime.test.ts",
-        "src/lib/onboard/runtime-provider/podman-lifecycle.test.ts",
+        "src/lib/adapters/openshell/sandbox-lifecycle-sdk.test.ts",
+        "src/lib/onboard/runtime-provider/podman.test.ts",
         "src/lib/onboard/runtime-provider/podman-preflight.test.ts",
         "src/lib/onboard/runtime-provider/podman.test.ts",
         "test/e2e/support/podman-cpu-proof-workflow.test.ts"
@@ -97,6 +109,7 @@
       "live": "test/e2e/live/native-runtime-qualification-case.test.ts",
       "liveSources": ["test/e2e/live/native-runtime-qualification-case-executor.ts"],
       "fast": [
+        "src/lib/onboard/runtime-provider/docker.test.ts",
         "test/e2e/support/native-runtime-qualification-case-helpers.test.ts",
         "test/e2e/support/native-runtime-qualification-producer-workflow.test.ts",
         "test/e2e/support/native-runtime-qualification.test.ts",
@@ -136,6 +149,7 @@
       "liveSources": ["test/e2e/live/inference-routing-helpers.ts"],
       "fast": [
         "nemoclaw/src/shared/openshell-gateway-health-sdk.test.ts",
+        "nemoclaw/src/blueprint/runner.test.ts",
         "nemoclaw/src/blueprint/runner-identity.test.ts",
         "nemoclaw/src/blueprint/runtime-identity.test.ts",
         "src/lib/onboard/inference-providers/compatible-endpoint-gateway-route.test.ts",
@@ -156,10 +170,14 @@
         "test/e2e/live/full-e2e-inference-probe.ts",
         "test/e2e/live/full-e2e-workload-evidence.ts",
         "test/e2e/live/launch-agent-turn.ts",
-        "test/e2e/live/pr-base-comparison.ts"
+        "test/e2e/live/pr-base-comparison.ts",
+        "test/e2e/live/sandbox-credential-boundary.ts"
       ],
       "fast": [
+        "src/lib/onboard/machine/finalization-deps.test.ts",
+        "test/agents/openclaw/openclaw-container-restart-patch.test.ts",
         "test/agents/openclaw/runtime/nemoclaw-start-preload-gateway.test.ts",
+        "src/lib/state/native-agent-state-restore.test.ts",
         "test/runtime/sandbox/sandbox-provisioning.test.ts",
         "test/e2e/support/hosted-inference.test.ts",
         "test/e2e/support/full-e2e-inference-probe.test.ts",
@@ -168,6 +186,7 @@
         "test/e2e/support/launch-agent-turn.test.ts",
         "test/e2e/support/openclaw-agent-output.test.ts",
         "test/e2e/support/pr-base-comparison.test.ts",
+        "test/e2e/support/sandbox-credential-boundary.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/managed-image-receipt.test.ts",
@@ -218,26 +237,6 @@
       ]
     },
     {
-      "live": "test/e2e/live/gateway-guard-recovery.test.ts",
-      "liveSources": ["test/e2e/live/gateway-guard-legacy-keepalive-fixture.ts"],
-      "fast": [
-        "src/lib/actions/sandbox/supervisor-relaunch.test.ts",
-        "src/lib/onboard/docker-gpu-patch-finalize.test.ts",
-        "src/lib/onboard/docker-gpu-supervisor-reconnect.test.ts",
-        "src/lib/onboard/docker-startup-command-patch.test.ts",
-        "src/lib/sandbox/privileged-exec.test.ts",
-        "test/inference/managed/managed-gateway-control.test.ts",
-        "test/agents/openclaw/runtime/nemoclaw-start-guard-recovery.test.ts",
-        "test/e2e/support/gateway-guard-legacy-keepalive-fixture.test.ts",
-        "test/e2e/support/managed-image-cohort-contract.test.ts",
-        "test/e2e/support/managed-image-receipt.test.ts",
-        "test/e2e/support/stock-managed-image-workflow-boundary.test.ts",
-        "test/helpers/e2e-answer-assertions.test.ts",
-        "test/process-recovery/process-recovery-supervisor-relaunch.test.ts",
-        "test/onboarding/docker-final-handoff-lifecycle.test.ts"
-      ]
-    },
-    {
       "live": "test/e2e/live/network-policy.test.ts",
       "liveSources": ["test/e2e/live/restricted-onboard-helpers.ts"],
       "fast": [
@@ -265,6 +264,7 @@
     {
       "live": "test/e2e/live/openshell-gateway-auth-source-contract.test.ts",
       "liveSources": [
+        "test/e2e/live/openshell-gateway-auth-probe.ts",
         "test/e2e/live/openshell-gateway-auth-source-contract-helpers.ts",
         "test/e2e/live/openshell-v0116-tls-server-name-source.ts"
       ],
@@ -297,6 +297,7 @@
     },
     {
       "live": "test/e2e/live/openclaw-tui-chat-correlation.test.ts",
+      "liveSources": ["test/e2e/live/openclaw-tui-ref-fidelity.ts"],
       "fast": [
         "test/e2e/support/openclaw-tui-ref-fidelity.test.ts",
         "test/e2e/support/openclaw-tui-run-classification.test.ts",
@@ -310,6 +311,10 @@
         "test/e2e/live/json-envelope.ts"
       ],
       "fast": [
+        "src/lib/actions/sandbox/forward-recovery-declared-ports.test.ts",
+        "src/lib/actions/sandbox/start.test.ts",
+        "src/lib/actions/sandbox/process-recovery.test.ts",
+        "src/lib/actions/sandbox/launch-readiness-gateway-health.test.ts",
         "test/e2e/support/json-envelope.test.ts",
         "test/e2e/support/dashboard-connect-handoff.test.ts",
         "test/e2e/support/runtime-provider-fixture.test.ts"
@@ -396,8 +401,13 @@
     },
     {
       "live": "test/e2e/live/bedrock-runtime-compatible-anthropic.test.ts",
-      "liveSources": ["test/e2e/live/bedrock-runtime-compatible-anthropic-raw-command.ts"],
+      "liveSources": [
+        "test/e2e/live/bedrock-runtime-compatible-anthropic-leak-probe.py",
+        "test/e2e/live/bedrock-runtime-compatible-anthropic-leaks.ts",
+        "test/e2e/live/bedrock-runtime-compatible-anthropic-raw-command.ts"
+      ],
       "fast": [
+        "test/e2e/support/bedrock-runtime-compatible-anthropic-leaks.test.ts",
         "test/e2e/support/bedrock-runtime-compatible-anthropic-progress.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
@@ -429,15 +439,6 @@
         "test/channels/channels-remove-full-teardown.test.ts",
         "test/e2e/support/channels-add-remove-helpers.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
-      ]
-    },
-    {
-      "live": "test/e2e/live/cloud-inference.test.ts",
-      "liveSources": ["test/e2e/live/cloud-inference-provider-skip.ts"],
-      "fast": [
-        "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/retry-policy.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
     },
@@ -481,27 +482,23 @@
       "live": "test/e2e/live/cron-preflight-inference-local.test.ts",
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
-      ]
-    },
-    {
-      "live": "test/e2e/live/device-auth-health.test.ts",
-      "liveSources": ["test/e2e/live/device-auth-health-helpers.ts"],
-      "fast": [
-        "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/native-lifecycle-migration-contract.test.ts"
       ]
     },
     {
       "live": "test/e2e/live/double-onboard.test.ts",
       "fast": [
+        "test/cli/sandbox-status-text.test.ts",
         "src/lib/onboard/created-sandbox-finalization.test.ts",
+        "src/lib/onboard/gateway-reuse.test.ts",
         "src/lib/onboard/machine/core-flow-phases.test.ts",
         "src/lib/onboard/machine/handlers/sandbox-route-publication.test.ts",
         "src/lib/onboard/sandbox-registration.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
-        "test/onboarding/onboard-finalization-dashboard-forward.test.ts"
+        "test/onboarding/onboard-finalization-dashboard-forward.test.ts",
+        "test/onboarding/onboard-sandbox-recreation.test.ts"
       ]
     },
     {
@@ -519,6 +516,11 @@
         "test/e2e/live/hermes-cli-adapter-live.ts"
       ],
       "fast": [
+        "src/lib/adapters/config/live-export-source-ollama.test.ts",
+        "src/lib/adapters/config/live-export-source-vllm.test.ts",
+        "src/lib/domain/config/export-document.test.ts",
+        "src/lib/inference/local-model-profile/cleanup.test.ts",
+        "src/lib/inference/serving/vllm-export-runtime.test.ts",
         "test/e2e/support/gpu-e2e-helpers.test.ts",
         "test/e2e/support/hermes-cli-adapter-live.test.ts",
         "test/e2e/support/runtime-provider-fixture.test.ts",
@@ -585,17 +587,11 @@
       ]
     },
     {
-      "live": "test/e2e/live/issue-2478-crash-loop-recovery.test.ts",
-      "fast": [
-        "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
-      ]
-    },
-    {
       "live": "test/e2e/live/issue-4462-scope-upgrade-approval.test.ts",
       "liveSources": ["test/e2e/live/issue-4462-admin-approval-helper.ts"],
       "fast": [
         "test/e2e/support/issue-4462-fixture-boundary.test.ts",
+        "test/e2e/support/issue-4462-gateway-snapshot.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
@@ -606,14 +602,6 @@
         "test/e2e/support/managed-image-cohort-contract.test.ts",
         "test/e2e/support/managed-image-receipt.test.ts",
         "test/e2e/support/stock-managed-image-workflow-boundary.test.ts",
-        "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
-      ]
-    },
-    {
-      "live": "test/e2e/live/kimi-inference-compat.test.ts",
-      "fast": [
-        "test/e2e/support/openclaw-agent-output.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
@@ -635,10 +623,13 @@
         "test/e2e/live/mcp-bridge-trusted-private.ts",
         "test/e2e/live/mcp-provider-rewrite-probe.ts",
         "test/e2e/live/openshell-allowed-ips-rebinding.ts",
+        "test/e2e/live/openshell-driver-config-test-wrapper.ts",
         "test/e2e/live/openshell-exact-main-exec.ts",
-        "test/e2e/live/openshell-exact-main-runtime-contracts.ts"
+        "test/e2e/live/openshell-exact-main-runtime-contracts.ts",
+        "test/e2e/live/openclaw-stopped-recovery.ts"
       ],
       "fast": [
+        "src/lib/actions/sandbox/mcp-bridge-state.test.ts",
         "src/lib/actions/sandbox/mcp-bridge-policy.test.ts",
         "src/lib/actions/sandbox/mcp-bridge-adapter-registration.test.ts",
         "src/lib/actions/sandbox/mcp-bridge-adapter-teardown.test.ts",
@@ -657,9 +648,12 @@
         "test/e2e/support/mcp-bridge-tool-discovery.test.ts",
         "test/e2e/support/mcp-provider-rewrite-probe.test.ts",
         "test/e2e/support/mcp-workflow-boundary.test.ts",
+        "test/e2e/support/openshell-exact-main-driver-config.test.ts",
         "test/e2e/support/openshell-exact-main-child-contracts.test.ts",
         "test/e2e/support/openshell-exact-main-runtime-contracts.test.ts",
-        "test/mcp/mcp-bridge-servers.test.ts"
+        "test/mcp/mcp-bridge-servers.test.ts",
+        "src/lib/onboard/runtime-provider/docker-stopped-state-capture.test.ts",
+        "test/state/snapshot-stopped-openclaw.test.ts"
       ]
     },
     {
@@ -687,6 +681,7 @@
         "src/lib/onboard/messaging-policy-presets.test.ts",
         "src/lib/onboard/providers.test.ts",
         "test/channels/channels-add-bridge-lifecycle.test.ts",
+        "test/e2e/support/messaging-providers-installed-runtime-paths.test.ts",
         "test/e2e/support/messaging-providers-runtime-proofs.test.ts",
         "test/onboarding/onboard-messaging.test.ts",
         "test/runtime/messaging/messaging-build-applier.test.ts",
@@ -737,23 +732,7 @@
         "test/e2e/support/compatible-anthropic-switch.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
-        "test/e2e/support/openclaw-agent-output.test.ts"
-      ]
-    },
-    {
-      "live": "test/e2e/live/openclaw-plugin-runtime-exdev.test.ts",
-      "liveSources": [
-        "test/e2e/live/openclaw-plugin-runtime-exdev-trusted-prebuild.ts",
-        "test/e2e/live/openshell-driver-config-test-wrapper.ts",
-        "test/e2e/live/json-envelope.ts"
-      ],
-      "fast": [
-        "test/e2e/support/json-envelope.test.ts",
-        "test/e2e/support/openclaw-plugin-runtime-exdev-trusted-prebuild.test.ts",
-        "test/e2e/support/openclaw-plugin-runtime-exdev-workflow-boundary.test.ts",
-        "test/automation/pull-requests/pr-risk-plan.test.ts",
-        "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/openclaw-inference-switch-helpers.test.ts"
       ]
     },
     {
@@ -791,8 +770,7 @@
         "src/lib/actions/sandbox/rebuild-flow-target-image.test.ts",
         "src/lib/actions/upgrade-sandboxes-recovery.test.ts",
         "src/lib/onboard/dockerfile-patch.test.ts",
-        "src/lib/state/openclaw-plugin-restore.test.ts",
-        "test/agents/openclaw/openclaw-2026-7-startup-compat.test.ts",
+        "src/lib/state/native-agent-state-restore.test.ts",
         "test/agents/openclaw/openclaw-shared-state-permissions-patch.test.ts",
         "test/install/install-preexisting-sandbox-recovery.test.ts",
         "test/e2e/support/e2e-live-target-gating.test.ts",
@@ -808,20 +786,6 @@
       ]
     },
     {
-      "live": "test/e2e/live/shields-retirement-upgrade.test.ts",
-      "liveSources": [
-        "test/e2e/live/openshell-gateway-upgrade-helpers.ts",
-        "test/e2e/live/openshell-gateway-upgrade-old-installer.ts"
-      ],
-      "fast": [
-        "src/lib/actions/sandbox/rebuild-flow-lifecycle.test.ts",
-        "src/lib/state/migrations/removed-immutability.test.ts",
-        "test/e2e/support/openshell-gateway-upgrade-old-installer.test.ts",
-        "test/e2e/support/openshell-gateway-upgrade-workflow-boundary.test.ts",
-        "test/e2e/support/shields-retirement-workflow-plan.test.ts"
-      ]
-    },
-    {
       "live": "test/e2e/live/overlayfs-autofix.test.ts",
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
@@ -831,24 +795,15 @@
     },
     {
       "live": "test/e2e/live/rebuild-hermes.test.ts",
-      "liveSources": [
-        "test/e2e/live/rebuild-hermes-base-identity.ts",
-        "test/e2e/live/rebuild-hermes-cron-restore.ts",
-        "test/e2e/live/rebuild-hermes-env.ts",
-        "test/e2e/live/rebuild-hermes-host-policy.ts"
-      ],
       "fast": [
-        "src/lib/sandbox-base-image-resolution.test.ts",
+        "src/lib/actions/sandbox/gateway-restart.test.ts",
         "src/lib/actions/sandbox/rebuild-flow-lifecycle.test.ts",
+        "src/lib/state/native-agent-state-restore.test.ts",
+        "test/agents/hermes/hermes-gateway-wrapper.test.ts",
+        "test/agents/hermes/hermes-image-build-probes.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
-        "test/e2e/support/hermes-acp-live.test.ts",
-        "test/e2e/support/rebuild-hermes-bootstrap.test.ts",
-        "test/e2e/support/rebuild-hermes-env.test.ts",
-        "test/e2e/support/rebuild-hermes-base-identity.test.ts",
-        "test/e2e/support/rebuild-hermes-image-state.test.ts",
-        "test/e2e/support/rebuild-hermes-old-base-fixture.test.ts",
-        "test/e2e/support/rebuild-hermes-progress.test.ts"
+        "test/e2e/support/native-lifecycle-migration-contract.test.ts"
       ]
     },
     {
@@ -856,14 +811,26 @@
       "fast": [
         "src/lib/actions/sandbox/rebuild-flow-lifecycle.test.ts",
         "src/lib/onboard/machine/handlers/finalization.test.ts",
+        "src/lib/state/native-agent-state-restore.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/native-lifecycle-migration-contract.test.ts",
+        "src/lib/onboard/runtime-provider/docker-stopped-state-capture.test.ts",
+        "test/state/snapshot-stopped-openclaw.test.ts"
+      ],
+      "liveSources": [
+        "test/e2e/live/openclaw-stopped-recovery.ts"
       ]
     },
     {
       "live": "test/e2e/live/sandbox-survival.test.ts",
       "fast": [
+        "src/lib/onboard/machine/finalization-deps.test.ts",
+        "test/agents/native-gateway-lifecycle.test.ts",
+        "src/lib/actions/sandbox/gateway-state-probe-recovery-start.test.ts",
+        "src/lib/onboard/runtime-provider/docker.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-phase-lifecycle.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
     },
@@ -955,6 +922,7 @@
     {
       "live": "test/e2e/live/hermes-root-entrypoint-smoke.test.ts",
       "fast": [
+        "test/agents/hermes/hermes-runtime-api-key.test.ts",
         "test/agents/hermes/hermes-start.test.ts",
         "test/runtime/sandbox/sandbox-init.test.ts",
         "test/e2e/support/e2e-progress-fixture.test.ts",
@@ -966,6 +934,8 @@
     {
       "live": "test/e2e/live/hermes-sandbox-secret-boundary.test.ts",
       "fast": [
+        "test/agents/native-gateway-lifecycle.test.ts",
+        "test/agents/hermes/hermes-runtime-api-key.test.ts",
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",
         "test/e2e/support/e2e-semantic-phase-check.test.ts",
@@ -1002,13 +972,17 @@
     {
       "live": "test/e2e/live/registry-targets.test.ts",
       "liveSources": [
+        "test/e2e/live/cloud-experimental-check-list.ts",
         "test/e2e/live/cloud-experimental-checks.ts",
         "test/e2e/live/deepagents-observability-contract.ts",
         "test/e2e/live/deepagents-otlp-capture-server.ts",
-        "test/e2e/live/dcode-base-image-runtime-evidence.ts"
+        "test/e2e/live/dcode-base-image-runtime-evidence.ts",
+        "test/e2e/live/run-plan.ts"
       ],
       "fast": [
+        "test/e2e/support/e2e-live-registry-discovery.test.ts",
         "test/e2e/support/e2e-matrix.test.ts",
+        "test/e2e/support/e2e-phase-config-export-validation.test.ts",
         "test/e2e/support/e2e-phase-onboarding.test.ts",
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",
@@ -1023,6 +997,7 @@
     {
       "live": "test/e2e/live/runtime-overrides.test.ts",
       "fast": [
+        "test/generation/generate-openclaw-config.test.ts",
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",
         "test/e2e/support/e2e-semantic-phase-check.test.ts",
