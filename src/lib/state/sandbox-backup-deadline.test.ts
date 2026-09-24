@@ -93,7 +93,9 @@ describe("sandbox backup finalization deadline", () => {
     const targetDir = mkdtempSync(path.join(tmpdir(), "nemoclaw-backup-audit-"));
     onTestFinished(() => rmSync(targetDir, { recursive: true, force: true }));
     writeFileSync(path.join(targetDir, "state.json"), "{}");
+    writeFileSync(path.join(targetDir, "state-2.json"), "{}");
     vi.spyOn(Date, "now")
+      .mockReturnValueOnce(10_000)
       .mockReturnValueOnce(10_000)
       .mockReturnValueOnce(10_000)
       .mockReturnValueOnce(10_000)
