@@ -436,7 +436,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
         "Uninstall completed with errors. Some state may remain on disk; see warnings above.",
       );
       expect(rmSync).not.toHaveBeenCalled();
-      expect(logs).not.toContain("[3/6] NemoClaw CLI");
+      expect(logs).not.toContain("[4/6] NemoClaw CLI");
       expect(logs).not.toContain("Claws retracted. Until next time.");
     },
   );

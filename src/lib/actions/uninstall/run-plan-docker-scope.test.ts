@@ -194,6 +194,7 @@ describe("uninstall Docker resource scope", () => {
     expect(commands.some((args) => args[1] === "gateway" && args[2] === "destroy")).toBe(true);
     expect(remaining).toEqual(FOREIGN_ROWS.map((row) => row.split(" ")[0]));
     expect(calls.filter((args) => args[0] === "rm")).toEqual([]);
+    expect(commands).toContainEqual(["npm", "uninstall", "-g", "--loglevel=error", "nemoclaw"]);
     expect(calls.filter((args) => args[0] === "rmi").map((args) => args[2])).toEqual([
       "i-nemoclaw",
       "i-managed",
@@ -331,7 +332,7 @@ describe("uninstall Docker resource scope", () => {
         "second redis:7 openshell-my-assistant-runtime-b",
       ],
     ],
-  ])("preserves %s name collisions and their recovery state", async (_kind, leftovers) => {
+  ])("preserves %s name collisions, recovery state, and the CLI", async (_kind, leftovers) => {
     const result = await runWithDockerInventory({ leftovers });
     expect(result.calls).toContainEqual(["ps", "-a", "--format", CONTAINER_FORMAT]);
     expect(result.result.exitCode).toBe(1);
@@ -342,17 +343,27 @@ describe("uninstall Docker resource scope", () => {
     );
     expect(result.retainedRegistry).toBe(result.registry);
     expect(result.rmSync.mock.calls.some(([target]) => target === result.stateDir)).toBe(false);
+    expect(
+      result.commands.some(
+        ([command, action]) => command === "npm" && ["unlink", "uninstall"].includes(action!),
+      ),
+    ).toBe(false);
   });
 
   it.each([
     { status: 42, stdout: "", stderr: "inventory unavailable" },
     { status: 0, stdout: "incomplete", stderr: "" },
-  ])("preserves state when Docker inventory is inconclusive: %j", async (inventory) => {
+  ])("preserves state and the CLI when Docker inventory is inconclusive: %j", async (inventory) => {
     const result = await runWithDockerInventory({ inventory });
     expect(result.result.exitCode).toBe(1);
     expect(result.errors.join("\n")).toContain("preserved for retry");
     expect(result.calls.filter((args) => args[0] === "rm" || args[0] === "images")).toEqual([]);
     expect(result.retainedRegistry).toBe(result.registry);
+    expect(
+      result.commands.some(
+        ([command, action]) => command === "npm" && ["unlink", "uninstall"].includes(action!),
+      ),
+    ).toBe(false);
   });
 
   it("retains state when Docker is unreachable after runtime cleanup", async () => {
@@ -369,6 +380,11 @@ describe("uninstall Docker resource scope", () => {
     expect(result.result.exitCode).toBe(1);
     expect(result.retainedRegistry).toBe(result.registry);
     expect(result.calls.filter((args) => args[0] === "rm" || args[0] === "images")).toEqual([]);
+    expect(
+      result.commands.some(
+        ([command, action]) => command === "npm" && ["unlink", "uninstall"].includes(action!),
+      ),
+    ).toBe(false);
   });
 
   it("uses the selected non-default gateway and preserves default gateway containers", async () => {

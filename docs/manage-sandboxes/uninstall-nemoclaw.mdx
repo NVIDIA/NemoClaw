@@ -25,8 +25,10 @@ During `--all-gateway-ports`, the sweep continues with later ports and reports t
 An explicit user-data purge skips eligible fresh backups and attempts to remove both current sandbox state and existing host-side backups.
 
 Uninstall delegates sandbox and gateway container removal to OpenShell and the selected runtime.
+When removing a managed gateway, sandbox cleanup runs before the gateway service is stopped.
 Its Docker cleanup does not force-remove containers based on names, `nemoclaw-` or `openshell-` prefixes, or NemoClaw image references.
 If Docker inventory fails or cannot confirm cleanup of a selected sandbox or gateway, uninstall exits nonzero and preserves the remaining state for retry.
+Docker verification runs before CLI removal, so you can retry with the installed command.
 This includes stopped legacy containers whose ownership cannot be established.
 Complete their cleanup through the owning runtime, then retry uninstall with the same gateway port.
 It preserves resources from a separate OpenClaw installation and does not remove a Docker image only because its name or image reference contains `openclaw`.

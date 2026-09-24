@@ -19,8 +19,8 @@ describe("uninstall plan", () => {
     expect(plan.steps.map((step) => step.name)).toEqual([
       "Stopping services",
       "OpenShell resources",
-      "NemoClaw CLI",
       "Docker resources",
+      "NemoClaw CLI",
       "Model stores",
       "State and binaries",
     ]);
@@ -29,7 +29,7 @@ describe("uninstall plan", () => {
         { kind: "delete-openshell-provider", name: "nvidia-nim" },
         { kind: "destroy-openshell-gateway", name: "nemoclaw" },
         { kind: "delete-shim", reason: "installer-managed wrapper contents" },
-        { kind: "delete-related-docker-containers" },
+        { kind: "verify-docker-container-cleanup" },
         { kind: "delete-related-docker-images" },
         { kind: "delete-docker-volume", name: "openshell-cluster-nemoclaw" },
         { kind: "preserve-ollama-models" },

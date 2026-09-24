@@ -121,7 +121,6 @@ import {
   type ManagedHermesStateVolumeRuntime,
   type ManagedHermesStateVolumeContext,
   removeManagedHermesStateVolumes,
-  requiresManagedHermesStateVolume,
 } from "./hermes-uninstall-cleanup";
 import {
   stopBedrockRuntimeAdapter,
@@ -3115,13 +3114,7 @@ async function executeOpenShellResourceCleanup(
   ) {
     return false;
   }
-  if (
-    !portableRuntimeCleanup &&
-    !externallySupervised &&
-    (scopedToSelectedGateway ||
-      managedHermesStateVolumes.some((context) => requiresManagedHermesStateVolume(context))) &&
-    runtime.commandExists("docker")
-  ) {
+  if (!portableRuntimeCleanup && !externallySupervised && runtime.commandExists("docker")) {
     // Preserve both a leftover container and its ownership state if runtime cleanup was incomplete.
     if (!verifyDockerContainerCleanup(runtime, null, sandboxNames, sandboxRegistrations))
       return false;
@@ -4285,17 +4278,7 @@ async function executePreparedPlan(
       ) {
         return { ok: false, scopedToSelectedGateway };
       }
-      // #8220: a gateway-scoped uninstall still needs the selected OpenShell
-      // gateway service running to delete its sandbox, so "OpenShell resources"
-      // removes that unit after the sandbox delete succeeds.
-      if (
-        !scopedToSelectedGateway &&
-        !portableRuntimeCleanup &&
-        openShellCleanup !== "reservation-removed" &&
-        !removeManagedDefaultGatewayUserService(runtime, options, externallySupervised)
-      ) {
-        ok = false;
-      }
+      // Keep the gateway available until its runtime has removed the sandboxes.
       if (!scopedToSelectedGateway) {
         stopHelperServices(paths, runtime);
         removeGlob(paths.helperServiceGlob, runtime);
@@ -4303,21 +4286,6 @@ async function executePreparedPlan(
           runtime.log(serviceKeepMessage);
         } else {
           stopOrphanedOpenShell(runtime);
-          if (!externallySupervised && openShellCleanup !== "reservation-removed") {
-            stopHostGatewayProcessesForUninstall(
-              runtime,
-              GATEWAY_PORT === DEFAULT_GATEWAY_PORT
-                ? { logNoProcesses: true }
-                : {
-                    gatewayBin: runtime.env.NEMOCLAW_OPENSHELL_GATEWAY_BIN,
-                    logNoProcesses: true,
-                    openShellGatewayName: options.gatewayName || resolveGatewayName(GATEWAY_PORT),
-                    openShellGatewayPort: GATEWAY_PORT,
-                    preserveRuntimeFilesOnNonMatching: true,
-                    stateDir: paths.selectedGatewayLocalStateDir,
-                  },
-            );
-          }
         }
       } else {
         runtime.log("Sibling gateways remain; kept shared helper services and sibling forwards.");
@@ -4354,6 +4322,29 @@ async function executePreparedPlan(
         ))
       ) {
         return { ok: false, scopedToSelectedGateway };
+      }
+      if (
+        !scopedToSelectedGateway &&
+        !portableRuntimeCleanup &&
+        !options.keepOpenShell &&
+        !externallySupervised &&
+        openShellCleanup !== "reservation-removed"
+      ) {
+        if (!removeManagedDefaultGatewayUserService(runtime, options, externallySupervised))
+          ok = false;
+        stopHostGatewayProcessesForUninstall(
+          runtime,
+          GATEWAY_PORT === DEFAULT_GATEWAY_PORT
+            ? { logNoProcesses: true }
+            : {
+                gatewayBin: runtime.env.NEMOCLAW_OPENSHELL_GATEWAY_BIN,
+                logNoProcesses: true,
+                openShellGatewayName: options.gatewayName || resolveGatewayName(GATEWAY_PORT),
+                openShellGatewayPort: GATEWAY_PORT,
+                preserveRuntimeFilesOnNonMatching: true,
+                stateDir: paths.selectedGatewayLocalStateDir,
+              },
+        );
       }
     } else if (step.name === "NemoClaw CLI") {
       const completion = await completePortablePlan(

@@ -554,49 +554,68 @@ describe("uninstall OpenShell gateway user service", () => {
     expect(fs.readFileSync(registryPath, "utf-8")).toBe(registryBefore);
   });
 
-  it("deletes the selected sandbox before it disables the marked Linux unit on scoped uninstall (#8220)", async () => {
-    const test = fixture(true);
-    const servicePath = writeManagedService(test);
-    writeSelectedSandboxRegistry(test, "my-assistant");
-    const calls: string[][] = [];
-    const dockerCalls: string[][] = [];
-    let gatewayStopped = false;
+  it.each([
+    { mode: "full", gateways: [{ name: "nemoclaw" }] },
+    { mode: "scoped", gateways: [{ name: "nemoclaw" }, { name: "nemoclaw-8081" }] },
+  ])(
+    "deletes sandboxes before disabling the marked Linux unit on $mode uninstall",
+    async ({ gateways }) => {
+      const test = fixture(true);
+      const servicePath = writeManagedService(test);
+      writeSelectedSandboxRegistry(test, "my-assistant");
+      const calls: string[][] = [];
+      const dockerCalls: string[][] = [];
+      let gatewayStopped = false;
+      let sandboxPresent = true;
 
-    const result = await uninstall(
-      test,
-      false,
-      {
-        commandExists: (command) => command === "systemctl" || command === "docker",
-        run: (command, args) => {
-          calls.push([command, ...args]);
-          gatewayStopped ||= command === "systemctl" && args.includes("disable");
-          // `systemctl disable --now` also stops the OpenShell gateway service,
-          // so every scoped `openshell` call fails once the unit is disabled.
-          return command === "openshell" && gatewayStopped
-            ? { status: 1, stdout: "", stderr: "gateway unreachable" }
-            : ok();
+      const result = await uninstall(
+        test,
+        false,
+        {
+          commandExists: (command) => command === "systemctl" || command === "docker",
+          kill: () => true,
+          run: (command, args) => {
+            calls.push([command, ...args]);
+            gatewayStopped ||= command === "systemctl" && args.includes("disable");
+            sandboxPresent &&= !(
+              command === "openshell" &&
+              args[0] === "sandbox" &&
+              args[1] === "delete" &&
+              !gatewayStopped
+            );
+            // `systemctl disable --now` also stops the OpenShell gateway service,
+            // so every scoped `openshell` call fails once the unit is disabled.
+            return command === "openshell" && gatewayStopped
+              ? { status: 1, stdout: "", stderr: "gateway unreachable" }
+              : ok();
+          },
+          runDocker: (args) => {
+            dockerCalls.push(args);
+            return ok(
+              args[0] === "ps" && sandboxPresent
+                ? "sandbox-id nemoclaw-sandbox openshell-my-assistant"
+                : "",
+            );
+          },
         },
-        runDocker: (args) => {
-          dockerCalls.push(args);
-          return ok();
-        },
-      },
-      [{ name: "nemoclaw" }, { name: "nemoclaw-8081" }],
-    );
+        gateways,
+      );
 
-    const deletedAt = calls.findIndex(
-      (call) => call[0] === "openshell" && call[1] === "sandbox" && call[2] === "delete",
-    );
-    const disabledAt = calls.findIndex(
-      (call) => call[0] === "systemctl" && call.includes("disable"),
-    );
+      const deletedAt = calls.findIndex(
+        (call) => call[0] === "openshell" && call[1] === "sandbox" && call[2] === "delete",
+      );
+      const disabledAt = calls.findIndex(
+        (call) => call[0] === "systemctl" && call.includes("disable"),
+      );
 
-    expect(result.exitCode).toBe(0);
-    expect(deletedAt).toBeGreaterThanOrEqual(0);
-    expect(disabledAt).toBeGreaterThan(deletedAt);
-    expect(dockerCalls.some((args) => args[0] === "rm")).toBe(false);
-    expect(fs.existsSync(servicePath)).toBe(false);
-  });
+      expect(result.exitCode).toBe(0);
+      expect(sandboxPresent).toBe(false);
+      expect(deletedAt).toBeGreaterThanOrEqual(0);
+      expect(disabledAt).toBeGreaterThan(deletedAt);
+      expect(dockerCalls.some((args) => args[0] === "rm")).toBe(false);
+      expect(fs.existsSync(servicePath)).toBe(false);
+    },
+  );
 
   it.each([
     { externallySupervised: false, keepOpenShell: false, mode: "managed cleanup" },
