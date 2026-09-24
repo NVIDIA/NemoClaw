@@ -101,6 +101,40 @@ impl Document {
         }
     }
 
+    /// Resolve a route using the declaration scope of the sandbox's selected inference.
+    pub fn sandbox_route_provider<'a>(
+        &'a self,
+        sandbox: &'a Sandbox,
+        route: &'a Route,
+    ) -> Result<&'a InferenceProvider, ConfigError> {
+        let inference = self.scoped_inference(sandbox)?;
+        let selected = inference
+            .inference
+            .routes
+            .iter()
+            .find(|candidate| candidate.name == route.name)
+            .ok_or(ConfigError::new("route is not selected by this sandbox"))?;
+        Ok(self.route_provider(selected, &inference)?.definition)
+    }
+
+    /// Mutate the authored provider definition selected by a sandbox route.
+    pub fn sandbox_route_provider_mut(
+        &mut self,
+        sandbox_name: &str,
+        route_name: &str,
+    ) -> Result<&mut InferenceProvider, ConfigError> {
+        let sandbox = self.sandbox(sandbox_name)?;
+        let inference = self.scoped_inference(sandbox)?;
+        let route = inference
+            .inference
+            .routes
+            .iter()
+            .find(|route| route.name == route_name)
+            .ok_or(ConfigError::new("route is not selected by this sandbox"))?;
+        let path = self.route_provider(route, &inference)?.path.clone();
+        self.provider_at_mut(&path)
+    }
+
     /// Resolve an unambiguous deployment provider. Multi-provider callers must select by identity.
     pub fn inference_provider(&self) -> Result<&InferenceProvider, ConfigError> {
         let providers = self.selected_inference_providers()?;

@@ -25,7 +25,9 @@ impl Document {
         self.provider_connection(self.inference_provider()?)
     }
 
-    pub(crate) fn provider_connection(
+    /// Resolve one selected provider using the same publication rules as deployment.
+    /// This reads configuration only; runtime credentials and reachability remain unverified.
+    pub fn provider_connection(
         &self,
         provider: &InferenceProvider,
     ) -> Result<InferenceConnection, ConfigError> {
