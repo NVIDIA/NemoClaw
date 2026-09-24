@@ -34,6 +34,7 @@ function createBackup(): string {
 
 afterEach(() => {
   setSnapshotSanitizerPythonPathForTest(undefined);
+  vi.restoreAllMocks();
   vi.unstubAllEnvs();
   for (const testDirectory of testDirectories.splice(0)) {
     rmSync(testDirectory, { recursive: true, force: true });
@@ -447,19 +448,22 @@ describe("rebuild backup credential sanitization", () => {
 
   it("preserves a cleanup failure when sanitization reaches its deadline", () => {
     const backupPath = createBackup();
-    const deadlineError = new Error("snapshot sanitization deadline expired");
     const cleanupError = new Error("injected deadline cleanup failure");
+    const sanitizeDirectory = vi.fn();
+    vi.spyOn(Date, "now").mockReturnValue(1_001);
     let received: unknown;
 
     try {
-      sanitizeBackupDirectory(backupPath, {
-        sanitizeDirectory: () => {
-          throw deadlineError;
+      sanitizeBackupDirectory(
+        backupPath,
+        {
+          sanitizeDirectory,
+          removeBackup: () => {
+            throw cleanupError;
+          },
         },
-        removeBackup: () => {
-          throw cleanupError;
-        },
-      });
+        1_000,
+      );
     } catch (error) {
       received = error;
     }
@@ -469,25 +473,33 @@ describe("rebuild backup credential sanitization", () => {
       "Credential sanitization failed and backup cleanup failed",
     );
     expect((received as Error).cause).toBeInstanceOf(AggregateError);
-    expect(((received as Error).cause as AggregateError).errors).toEqual([
-      deadlineError,
-      cleanupError,
-    ]);
+    const errors = ((received as Error).cause as AggregateError).errors;
+    expect(errors).toHaveLength(2);
+    expect(errors[0]).toMatchObject({
+      message: "snapshot sanitization deadline expired",
+    });
+    expect(errors[1]).toBe(cleanupError);
+    expect(sanitizeDirectory).not.toHaveBeenCalled();
     expect(existsSync(backupPath)).toBe(true);
   });
 
   it("reports a retained backup when deadline cleanup does not remove it", () => {
     const backupPath = createBackup();
+    const sanitizeDirectory = vi.fn();
+    vi.spyOn(Date, "now").mockReturnValue(2_001);
 
     expect(() =>
-      sanitizeBackupDirectory(backupPath, {
-        sanitizeDirectory: () => {
-          throw new Error("snapshot sanitization deadline expired");
+      sanitizeBackupDirectory(
+        backupPath,
+        {
+          sanitizeDirectory,
+          removeBackup: () => undefined,
+          backupExists: () => true,
         },
-        removeBackup: () => undefined,
-        backupExists: () => true,
-      }),
+        2_000,
+      ),
     ).toThrow("Credential sanitization failed and the incomplete backup remains");
+    expect(sanitizeDirectory).not.toHaveBeenCalled();
     expect(existsSync(backupPath)).toBe(true);
   });
 
