@@ -14,6 +14,7 @@
  */
 
 import fs from "node:fs";
+import { spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -85,6 +86,7 @@ function prepareBackup(
     : never,
   deferSanitizationDeadlineCleanup = false,
   validateBeforePublish?: () => void,
+  downloadArchiveRoot?: string,
 ): DeadlineRun {
   const binDir = path.join(fixture, "bin");
   const stageLog = path.join(fixture, "stages.log");
@@ -110,6 +112,7 @@ process.exit(0);
     path.join(binDir, "ssh"),
     `#!/usr/bin/env node
 const fs = require("node:fs");
+const { spawnSync } = require("node:child_process");
 const command = process.argv[process.argv.length - 1] || "";
 const stage = command.includes("[ -d ")
   ? "discovery"
@@ -119,7 +122,11 @@ const stage = command.includes("[ -d ")
       ? "download"
       : "state-file";
 fs.appendFileSync(${JSON.stringify(stageLog)}, stage + "\\n");
-process.stdout.write(stage === "discovery" ? "workspace\\n" : "");
+if (stage === "discovery") process.stdout.write("workspace\\n");
+if (stage === "download" && ${JSON.stringify(downloadArchiveRoot ?? "")}) {
+  const archive = spawnSync("tar", ["-cf", "-", "-C", ${JSON.stringify(downloadArchiveRoot ?? "")}, "workspace"]);
+  if (archive.stdout) fs.writeSync(1, archive.stdout);
+}
 process.stderr.write(
   stage === "download" ? "tar: workspace: Cannot open: Permission denied\\n" : "",
 );
@@ -275,6 +282,30 @@ describe("shared backup deadline boundaries (#11936)", () => {
         manifest: { backupPath: expect.any(String) },
       });
       expect(fs.existsSync(backup.manifest?.backupPath ?? "")).toBe(true);
+    });
+  });
+
+  it("synchronously replaces a partial permission-denied tree outside lifecycle deferral", () => {
+    withFixture((fixture) => {
+      const partialRoot = path.join(fixture, "partial");
+      const privilegedRoot = path.join(fixture, "privileged");
+      fs.mkdirSync(path.join(partialRoot, "workspace"), { recursive: true });
+      fs.mkdirSync(path.join(privilegedRoot, "workspace"), { recursive: true });
+      fs.writeFileSync(path.join(partialRoot, "workspace", "marker.txt"), "partial");
+      fs.writeFileSync(path.join(privilegedRoot, "workspace", "marker.txt"), "privileged");
+      const captured = vi.fn((_request: unknown, archiveFd: number) => {
+        const archive = spawnSync("tar", ["-cf", "-", "-C", privilegedRoot, "workspace"]);
+        expect(archive.status, String(archive.stderr)).toBe(0);
+        fs.writeSync(archiveFd, archive.stdout);
+        return { outcome: "backed_up" as const };
+      });
+
+      const backup = prepareBackup(fixture, "never", captured, false, undefined, partialRoot).run();
+
+      expect(backup.success).toBe(true);
+      expect(
+        fs.readFileSync(path.join(backup.manifest!.backupPath, "workspace", "marker.txt"), "utf8"),
+      ).toBe("privileged");
     });
   });
 });

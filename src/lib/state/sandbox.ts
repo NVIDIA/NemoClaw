@@ -1632,6 +1632,11 @@ function retryPermissionDeniedDirectories(
     }
     for (const name of denied) {
       const target = path.join(backupPath, name);
+      if (!deferViolationCleanup) {
+        rejectSymlinksOnPath(target);
+        rmSync(target, { recursive: true, force: true });
+        continue;
+      }
       if (!removeBackupEntryWithinDeadline(target, deadlineMs)) {
         const detail = `bounded cleanup did not remove partial directory '${name}'`;
         _log(`FAILED: privileged state directory capture: ${detail}`);
@@ -2325,9 +2330,15 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
               success: false,
               manifest,
               backedUpDirs: [],
-              failedDirs: [...existingDirs],
+              failedDirs: [...new Set([...failedDirs, ...backedUpDirs, ...existingDirs])],
               backedUpFiles: [],
-              failedFiles: stateFiles.map((file) => file.path),
+              failedFiles: [
+                ...new Set([
+                  ...failedFiles,
+                  ...backedUpFiles,
+                  ...stateFiles.map((file) => file.path),
+                ]),
+              ],
               error: extractResult.error ?? "Unsafe extracted backup tree requires cleanup",
             };
           }
@@ -2404,9 +2415,11 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         success: false,
         manifest,
         backedUpDirs: [],
-        failedDirs: [...failedDirs],
+        failedDirs: [...new Set([...failedDirs, ...backedUpDirs])],
         backedUpFiles: [],
-        failedFiles: stateFiles.map((file) => file.path),
+        failedFiles: [
+          ...new Set([...failedFiles, ...backedUpFiles, ...stateFiles.map((file) => file.path)]),
+        ],
         error: deferredExtractionError,
       };
     }
