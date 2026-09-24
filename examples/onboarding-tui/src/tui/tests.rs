@@ -29,6 +29,41 @@ fn navigate(wizard: &mut Wizard, wanted: Step, input: Input) {
     );
 }
 
+fn select_label(wizard: &mut Wizard, label: &str) {
+    let choices = wizard.choice_labels();
+    assert!(
+        choices.iter().any(|choice| choice == label),
+        "missing {label}: {choices:?}"
+    );
+    for _ in 0..choices.len() {
+        if wizard.choice_labels()[wizard.selected] == label {
+            return;
+        }
+        wizard.handle(Input::Next);
+    }
+    panic!("choice unavailable: {label}");
+}
+
+#[test]
+fn catalog_harness_outside_original_menu_authors_valid_yaml() {
+    let mut wizard = wizard();
+    wizard.handle(Input::Continue);
+    select_label(&mut wizard, "claude");
+    wizard.handle(Input::Continue);
+    navigate(&mut wizard, Step::Review, Input::Continue);
+    let reviewed = wizard.draft().review().unwrap();
+    assert!(reviewed.yaml().contains("claude"));
+    assert_eq!(
+        wizard
+            .draft()
+            .guided_answers(&wizard.capabilities)
+            .unwrap()
+            .harness
+            .as_str(),
+        "claude"
+    );
+}
+
 #[test]
 fn wizard_guides_every_authoring_choice_and_filters_invalid_apis() {
     let mut wizard = wizard();
@@ -36,8 +71,7 @@ fn wizard_guides_every_authoring_choice_and_filters_invalid_apis() {
     wizard.handle(Input::Continue);
     assert_eq!(wizard.step(), Step::Harness);
 
-    wizard.handle(Input::Next);
-    wizard.handle(Input::Next);
+    select_label(&mut wizard, HarnessChoice::DeepAgents.as_str());
     wizard.handle(Input::Continue);
     assert_eq!(
         wizard
@@ -79,8 +113,8 @@ fn focused_screen_uses_a_static_texture_inline_step_and_thin_footer_progress() {
     for expected in [
         "███╗",
         "Choose your agent harness",
-        "OpenClaw",
-        "Hermes",
+        "openclaw",
+        "hermes",
         "⟦ 1/7 ⟧",
         "Enter",
     ] {
@@ -218,9 +252,10 @@ fn invalid_answer_stays_focused_and_explains_the_authoring_rule() {
 fn compatible_provider_prompts_for_endpoint_and_manual_model() {
     let mut wizard = wizard();
     navigate(&mut wizard, Step::Inference, Input::Continue);
-    for _ in 0..3 {
-        wizard.handle(Input::Next);
-    }
+    select_label(
+        &mut wizard,
+        nemoclaw_authoring::ProviderPreset::OpenAiCompatible.label(),
+    );
     wizard.handle(Input::Continue);
     navigate(&mut wizard, Step::Endpoint, Input::Continue);
     wizard.handle(Input::SelectAll);
@@ -349,8 +384,7 @@ fn a_conflicting_choice_can_be_cancelled_or_explicitly_accepted() {
         .unwrap()
         .accept();
     wizard.handle(Input::Continue);
-    wizard.handle(Input::Next);
-    wizard.handle(Input::Next);
+    select_label(&mut wizard, HarnessChoice::DeepAgents.as_str());
     let original = wizard.draft().review().unwrap().yaml().to_owned();
     wizard.handle(Input::Continue);
     assert!(wizard.pending_edit.is_some());
@@ -382,7 +416,10 @@ fn changing_provider_reasks_the_model_without_reasking_an_accepted_name() {
     let mut wizard = wizard();
     navigate(&mut wizard, Step::Review, Input::Continue);
     navigate(&mut wizard, Step::Inference, Input::Back);
-    wizard.handle(Input::Next);
+    select_label(
+        &mut wizard,
+        nemoclaw_authoring::ProviderPreset::OpenRouter.label(),
+    );
     wizard.handle(Input::Continue);
     assert!(wizard.pending_edit.is_some());
     wizard.handle(Input::Continue);
@@ -1042,7 +1079,7 @@ fn delegation_preserves_a_nondefault_harness_and_an_explicit_deployment_name() {
     use nemoclaw_authoring::{AnswerStatus, EditableField};
     let mut wizard = wizard();
     wizard.handle(Input::Continue);
-    wizard.handle(Input::Next);
+    select_label(&mut wizard, HarnessChoice::Hermes.as_str());
     wizard.handle(Input::Continue);
     navigate(&mut wizard, Step::DeploymentName, Input::Continue);
     wizard.handle(Input::SelectAll);

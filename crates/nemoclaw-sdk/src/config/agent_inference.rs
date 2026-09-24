@@ -12,6 +12,14 @@ pub enum InferenceApi {
     AnthropicMessages,
 }
 impl InferenceApi {
+    /// Whether to write an explicit provider API for this harness.
+    ///
+    /// Pi selects its API through native model metadata and requires omission.
+    /// This does not check protocol support; use [`Self::supported`] for that.
+    pub fn provider_override(self, harness: HarnessKind) -> Option<Self> {
+        (harness != HarnessKind::Pi).then_some(self)
+    }
+
     pub fn for_harness(harness: HarnessKind) -> Self {
         match harness {
             HarnessKind::Claude => Self::AnthropicMessages,

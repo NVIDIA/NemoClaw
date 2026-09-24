@@ -44,12 +44,16 @@ fn a_new_author_can_accept_the_openclaw_defaults_and_review_safe_desired_state()
 
     assert_eq!(
         choices_for(&draft, &capabilities, EditableField::Harness),
-        [
-            FieldValue::Harness(HarnessKind::OpenClaw),
-            FieldValue::Harness(HarnessKind::Hermes),
-            FieldValue::Harness(HarnessKind::DeepAgents),
-            FieldValue::Harness(HarnessKind::Pi),
-        ]
+        capabilities
+            .scenarios()
+            .iter()
+            .map(|scenario| FieldValue::Harness(scenario.harness()))
+            .fold(Vec::new(), |mut choices, value| {
+                if !choices.contains(&value) {
+                    choices.push(value);
+                }
+                choices
+            })
     );
     assert_eq!(
         choices_for(&draft, &capabilities, EditableField::Api),
@@ -130,7 +134,7 @@ fn an_author_can_follow_the_available_choices_from_openclaw_to_hermes() {
     );
     assert!(
         choices_for(&draft, &capabilities, EditableField::Inference)
-            .contains(&FieldValue::Inference(ProviderPreset::HermesProvider))
+            .contains(&FieldValue::Inference(ProviderPreset::Nous))
     );
     assert_eq!(
         choices_for(&draft, &capabilities, EditableField::Api),
@@ -611,7 +615,9 @@ fn observed_harnesses_bound_authoring_choices_without_inventing_support() {
     assert!(
         Capabilities::from_harnesses([HarnessKind::Codex])
             .scenarios()
-            .is_empty()
+            .iter()
+            .all(|scenario| scenario.harness() == HarnessKind::Codex
+                && scenario.api() == InferenceApi::OpenaiResponses)
     );
 }
 
@@ -669,5 +675,61 @@ fn advertised_api_constraints_remove_incompatible_onboarding_choices() {
             .scenarios()
             .iter()
             .all(|scenario| scenario.api() == nemoclaw_sdk::config::InferenceApi::OpenaiResponses)
+    );
+}
+
+#[test]
+fn every_sdk_known_catalog_harness_can_be_authored_and_roundtripped() {
+    let catalog = nemoclaw_sdk::fabric_catalog::FabricCatalog::bundled();
+    let capabilities = Capabilities::from_catalog(&catalog);
+    for harness in catalog
+        .adapters
+        .iter()
+        .filter_map(|adapter| adapter.harness.parse::<HarnessKind>().ok())
+    {
+        let scenario = capabilities
+            .scenarios()
+            .iter()
+            .find(|scenario| scenario.harness() == harness)
+            .unwrap_or_else(|| panic!("catalog harness {harness:?} excluded"));
+        let mut draft = begin_onboarding(&capabilities);
+        choose(
+            &mut draft,
+            &capabilities,
+            EditableField::Harness,
+            FieldValue::Harness(harness),
+        );
+        let answers = draft.guided_answers(&capabilities).unwrap();
+        assert_eq!(answers.harness, harness);
+        assert!(answers.api.supported(harness));
+        assert_eq!(scenario.harness(), harness);
+        let review = draft.review().unwrap();
+        let parsed = nemoclaw_sdk::config::Document::parse(review.yaml().as_bytes()).unwrap();
+        assert_eq!(
+            Draft::from_document(parsed)
+                .unwrap()
+                .guided_answers(&capabilities)
+                .unwrap(),
+            answers
+        );
+    }
+}
+
+#[test]
+fn inference_profiles_follow_protocols_without_harness_brand_restrictions() {
+    let capabilities = Capabilities::available();
+    assert!(
+        capabilities
+            .scenarios()
+            .iter()
+            .any(|scenario| scenario.harness() == HarnessKind::OpenClaw
+                && scenario.inference() == ProviderPreset::Nous)
+    );
+    assert!(
+        capabilities
+            .scenarios()
+            .iter()
+            .filter(|scenario| scenario.inference() == ProviderPreset::AnthropicCompatible)
+            .all(|scenario| scenario.api() == InferenceApi::AnthropicMessages)
     );
 }

@@ -65,6 +65,7 @@ fn bundle_rejects_a_builder_compiled_from_different_source_inputs() {
         "rust-toolchain.toml",
         "versions.json",
         "LICENSE",
+        "examples/onboarding/openclaw.yaml",
         "image/fabric/catalog.json",
         "image/fabric/Dockerfile",
         "image/fabric/FABRIC-LICENSE",

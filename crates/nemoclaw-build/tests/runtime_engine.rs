@@ -18,6 +18,7 @@ fn unsupported_image_stores_fail_before_compilation_or_downloads() {
             "Cargo.lock",
             "rust-toolchain.toml",
             "LICENSE",
+            "examples/onboarding/openclaw.yaml",
             "image/fabric/catalog.json",
             "image/fabric/Dockerfile",
             "image/fabric/FABRIC-LICENSE",

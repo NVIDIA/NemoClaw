@@ -53,15 +53,16 @@ fn evidence(draft: &Draft) -> DiscoveryEvidence {
 #[test]
 fn available_engine_and_selected_adapter_establish_compatibility_without_changing_choices() {
     let draft = draft();
+    let choices = draft.guided_fields(&Capabilities::available()).unwrap()[0]
+        .choices()
+        .to_vec();
     let observed = evidence(&draft);
     let assessment = observed.assessment(&draft).unwrap();
     assert_eq!(assessment.status, CompatibilityStatus::Compatible);
     assert!(assessment.pending.is_empty());
     assert_eq!(
-        draft.guided_fields(&Capabilities::available()).unwrap()[0]
-            .choices()
-            .len(),
-        4
+        draft.guided_fields(&Capabilities::available()).unwrap()[0].choices(),
+        choices
     );
 }
 

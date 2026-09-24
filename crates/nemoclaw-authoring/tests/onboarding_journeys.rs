@@ -38,12 +38,16 @@ fn an_author_can_start_with_every_supported_agent_experience() {
 
     assert_eq!(
         choices(&draft, &capabilities, EditableField::Harness),
-        [
-            FieldValue::Harness(HarnessKind::OpenClaw),
-            FieldValue::Harness(HarnessKind::Hermes),
-            FieldValue::Harness(HarnessKind::DeepAgents),
-            FieldValue::Harness(HarnessKind::Pi),
-        ]
+        capabilities
+            .scenarios()
+            .iter()
+            .map(|scenario| FieldValue::Harness(scenario.harness()))
+            .fold(Vec::new(), |mut choices, value| {
+                if !choices.contains(&value) {
+                    choices.push(value);
+                }
+                choices
+            })
     );
 }
 
@@ -62,6 +66,7 @@ fn an_openclaw_author_can_choose_the_complete_remote_provider_menu() {
             FieldValue::Inference(ProviderPreset::Anthropic),
             FieldValue::Inference(ProviderPreset::AnthropicCompatible),
             FieldValue::Inference(ProviderPreset::Gemini),
+            FieldValue::Inference(ProviderPreset::Nous),
         ]
     );
 }
@@ -193,7 +198,7 @@ fn a_custom_endpoint_author_enters_the_endpoint_and_model_but_not_internal_names
 }
 
 #[test]
-fn hermes_adds_the_nous_provider_to_the_shared_remote_menu() {
+fn hermes_can_use_the_shared_nous_provider() {
     let capabilities = Capabilities::available();
     let mut draft = begin(&capabilities);
 
@@ -205,12 +210,12 @@ fn hermes_adds_the_nous_provider_to_the_shared_remote_menu() {
     );
 
     let providers = choices(&draft, &capabilities, EditableField::Inference);
-    assert!(providers.contains(&FieldValue::Inference(ProviderPreset::HermesProvider)));
+    assert!(providers.contains(&FieldValue::Inference(ProviderPreset::Nous)));
     choose(
         &mut draft,
         &capabilities,
         EditableField::Inference,
-        FieldValue::Inference(ProviderPreset::HermesProvider),
+        FieldValue::Inference(ProviderPreset::Nous),
     );
     let provider = draft.document().inference_provider().unwrap();
     assert_eq!(

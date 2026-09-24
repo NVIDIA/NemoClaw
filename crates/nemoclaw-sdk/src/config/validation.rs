@@ -153,7 +153,9 @@ impl Document {
                 let selected = self.route_provider(route, &inference)?;
                 let provider = selected.definition;
                 require(
-                    harness.kind != HarnessKind::Pi || provider.api.is_none(),
+                    provider
+                        .api
+                        .is_none_or(|api| api.provider_override(harness.kind).is_some()),
                     "Pi selects its API through model metadata; omit provider api",
                 )?;
                 let api = provider

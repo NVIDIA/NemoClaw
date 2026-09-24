@@ -99,6 +99,7 @@ fn extracted_sources_build_without_git_and_ignore_generated_outputs() {
         "LICENSE",
         "crates/sdk/src/lib.rs",
         "examples/onboarding-tui/src/lib.rs",
+        "examples/onboarding/openclaw.yaml",
         "runtimes/example/Dockerfile",
         "image/fabric/catalog.json",
         "image/fabric/Dockerfile",
@@ -110,7 +111,7 @@ fn extracted_sources_build_without_git_and_ignore_generated_outputs() {
         std::fs::write(file, name).unwrap();
     }
     let first = nemoclaw_build::source_inputs(root.path()).unwrap();
-    assert_eq!(first.len(), 12);
+    assert_eq!(first.len(), 13);
     for name in [
         "target/output",
         ".local/secret",
@@ -121,6 +122,16 @@ fn extracted_sources_build_without_git_and_ignore_generated_outputs() {
         std::fs::write(file, b"ignored").unwrap();
     }
     assert_eq!(first, nemoclaw_build::source_inputs(root.path()).unwrap());
+    std::fs::write(
+        root.path().join("examples/onboarding/openclaw.yaml"),
+        "changed onboarding defaults",
+    )
+    .unwrap();
+    let changed_defaults = nemoclaw_build::source_inputs(root.path()).unwrap();
+    assert_ne!(
+        nemoclaw_build::source_version(&first),
+        nemoclaw_build::source_version(&changed_defaults)
+    );
     std::fs::write(
         root.path().join("examples/onboarding-tui/src/lib.rs"),
         "changed questionnaire",
@@ -210,6 +221,7 @@ fn supervisor_archive_excludes_inference_recipes_and_retains_catalog_build_input
         "image/fabric/FABRIC-LICENSE",
         "image/NOTICE.md",
         "examples/onboarding-tui/src/lib.rs",
+        "examples/onboarding/openclaw.yaml",
     ];
     for name in retained.into_iter().chain([
         "runtimes/qwen38/verify_packed.py",

@@ -4,11 +4,7 @@
 use nemoclaw_authoring::{ApiChoice, FieldValue, HarnessChoice, ProviderPreset, RuntimeChoice};
 
 pub(super) fn harness(choice: HarnessChoice) -> &'static str {
-    match choice {
-        HarnessChoice::OpenClaw => "OpenClaw",
-        HarnessChoice::Hermes => "Hermes",
-        _ => choice.as_str(),
-    }
+    choice.as_str()
 }
 
 pub(super) fn runtime(choice: RuntimeChoice) -> &'static str {

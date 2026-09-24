@@ -3,7 +3,7 @@
 
 use crate::diagnostics::diagnostic;
 use crate::{Answers, Capabilities, Diagnostics, Session};
-use nemoclaw_sdk::config::{Document, HarnessKind};
+use nemoclaw_sdk::config::Document;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CompletionBoundary {
@@ -173,20 +173,10 @@ fn guided_answers(
         ));
     };
     let agent = &sandbox.agent;
-    let harness = match document.sandbox_harness(sandbox).map(|value| value.kind) {
-        Ok(
-            kind @ (HarnessKind::OpenClaw
-            | HarnessKind::Hermes
-            | HarnessKind::DeepAgents
-            | HarnessKind::Pi),
-        ) => kind,
-        _ => {
-            return Err(diagnostic(
-                "document",
-                "guided editing requires a supported harness",
-            ));
-        }
-    };
+    let harness = document
+        .sandbox_harness(sandbox)
+        .map_err(|_| diagnostic("document", "guided editing requires a supported harness"))?
+        .kind;
     let provider = document
         .inference_provider()
         .map_err(|_| diagnostic("document", "guided editing requires one selected provider"))?;

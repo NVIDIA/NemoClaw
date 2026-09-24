@@ -9,6 +9,7 @@ pub const SOURCE_ROOTS: &[&str] = &[
     "LICENSE",
     "crates",
     "examples/onboarding-tui",
+    "examples/onboarding/openclaw.yaml",
     "runtimes",
     "image/fabric/catalog.json",
     "image/fabric/Dockerfile",

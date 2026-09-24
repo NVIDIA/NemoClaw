@@ -76,13 +76,7 @@ impl Capabilities {
             .iter()
             .filter_map(|adapter| adapter.harness.parse().ok())
             .collect();
-        harnesses.sort_by_key(|harness| match harness {
-            HarnessKind::OpenClaw => 0,
-            HarnessKind::Hermes => 1,
-            HarnessKind::DeepAgents => 2,
-            HarnessKind::Pi => 3,
-            _ => 4,
-        });
+        harnesses.sort_by_key(|harness| harness.as_str());
         let mut capabilities = Self::from_harnesses(harnesses);
         capabilities.scenarios.retain(|scenario| {
             use nemoclaw_sdk::fabric_capabilities::{
@@ -108,15 +102,7 @@ impl Capabilities {
         let mut scenarios = Vec::new();
         let mut seen = Vec::new();
         for harness in harnesses {
-            if seen.contains(&harness)
-                || !matches!(
-                    harness,
-                    HarnessKind::OpenClaw
-                        | HarnessKind::Hermes
-                        | HarnessKind::DeepAgents
-                        | HarnessKind::Pi
-                )
-            {
+            if seen.contains(&harness) {
                 continue;
             }
             seen.push(harness);
@@ -129,7 +115,7 @@ impl Capabilities {
                     ProviderPreset::Anthropic,
                     ProviderPreset::AnthropicCompatible,
                     ProviderPreset::Gemini,
-                    ProviderPreset::HermesProvider,
+                    ProviderPreset::Nous,
                 ] {
                     append_provider_scenarios(&mut scenarios, harness, runtime, inference);
                 }
@@ -185,40 +171,25 @@ fn append_provider_scenarios(
     runtime: RuntimeChoice,
     inference: ProviderPreset,
 ) {
-    if inference == ProviderPreset::HermesProvider && harness != HarnessKind::Hermes {
-        return;
-    }
-    if inference == ProviderPreset::Anthropic
-        && !matches!(harness, HarnessKind::OpenClaw | HarnessKind::Hermes)
-    {
-        return;
-    }
-
-    let anthropic_native = matches!(
-        inference,
-        ProviderPreset::Anthropic | ProviderPreset::AnthropicCompatible
-    ) && matches!(harness, HarnessKind::OpenClaw | HarnessKind::Hermes);
-    let apis: &[InferenceApi] = if anthropic_native {
-        &[InferenceApi::AnthropicMessages]
-    } else if matches!(harness, HarnessKind::OpenClaw | HarnessKind::Hermes) {
-        &[
+    let apis: &[InferenceApi] = match inference {
+        ProviderPreset::Anthropic | ProviderPreset::AnthropicCompatible => {
+            &[InferenceApi::AnthropicMessages]
+        }
+        _ => &[
             InferenceApi::OpenaiCompletions,
             InferenceApi::OpenaiResponses,
-        ]
-    } else {
-        &[InferenceApi::OpenaiCompletions]
+        ],
     };
-
     let (provider_kind, name, endpoint, credential, custom_endpoint, custom_model, default_model) =
-        provider_profile(inference, anthropic_native);
-    for api in apis {
+        provider_profile(inference);
+    for api in apis.iter().copied().filter(|api| api.supported(harness)) {
         scenarios.push(Scenario {
             harness,
             runtime,
             inference,
-            api: *api,
+            api,
             provider_kind,
-            provider_api: (harness != HarnessKind::Pi).then_some(*api),
+            provider_api: api.provider_override(harness),
             provider_name: name,
             endpoint,
             credential_env: credential,
@@ -239,7 +210,7 @@ type ProviderProfile = (
     Option<&'static str>,
 );
 
-fn provider_profile(inference: ProviderPreset, anthropic_native: bool) -> ProviderProfile {
+fn provider_profile(inference: ProviderPreset) -> ProviderProfile {
     match inference {
         ProviderPreset::NvidiaEndpoints => (
             InferenceProviderKind::Openai,
@@ -286,19 +257,10 @@ fn provider_profile(inference: ProviderPreset, anthropic_native: bool) -> Provid
             true,
             Some("claude-sonnet-4-6"),
         ),
-        ProviderPreset::AnthropicCompatible if anthropic_native => (
+        ProviderPreset::AnthropicCompatible => (
             InferenceProviderKind::Anthropic,
             "compatible-anthropic-endpoint",
             "https://anthropic.example.com",
-            "COMPATIBLE_ANTHROPIC_API_KEY",
-            true,
-            true,
-            None,
-        ),
-        ProviderPreset::AnthropicCompatible => (
-            InferenceProviderKind::Openai,
-            "compatible-anthropic-endpoint",
-            "https://anthropic.example.com/v1",
             "COMPATIBLE_ANTHROPIC_API_KEY",
             true,
             true,
@@ -313,7 +275,7 @@ fn provider_profile(inference: ProviderPreset, anthropic_native: bool) -> Provid
             true,
             Some("gemini-3.6-flash"),
         ),
-        ProviderPreset::HermesProvider => (
+        ProviderPreset::Nous => (
             InferenceProviderKind::Openai,
             "hermes-provider",
             "https://inference-api.nousresearch.com/v1",

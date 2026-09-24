@@ -154,7 +154,10 @@ fn direct_authoring_reports_the_first_unavailable_choice_in_the_journey() {
     };
     assert_eq!(
         session
-            .project(&capabilities, &unsupported_harness)
+            .project(
+                &Capabilities::from_harnesses([HarnessKind::OpenClaw]),
+                &unsupported_harness
+            )
             .unwrap_err()
             .items()[0]
             .field(),

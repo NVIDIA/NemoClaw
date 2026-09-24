@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::capabilities::NVIDIA_MODEL;
 use nemoclaw_sdk::config::{ComputeDriver, HarnessKind, InferenceApi};
 
 pub type HarnessChoice = HarnessKind;
@@ -20,7 +19,7 @@ pub enum ProviderPreset {
     Anthropic,
     AnthropicCompatible,
     Gemini,
-    HermesProvider,
+    Nous,
 }
 
 impl ProviderPreset {
@@ -33,7 +32,7 @@ impl ProviderPreset {
             Self::Anthropic => "Anthropic",
             Self::AnthropicCompatible => "Other Anthropic-compatible endpoint",
             Self::Gemini => "Google Gemini",
-            Self::HermesProvider => "Hermes Provider (Nous)",
+            Self::Nous => "Nous Research",
         }
     }
 }
@@ -76,21 +75,13 @@ pub struct AnswerOverrides {
 }
 
 impl Answers {
-    /// Returns the CLI's OpenClaw, Docker, and NVIDIA-hosted inference preset.
+    /// Read the default preset as configuration data using the same projection
+    /// as any other template. Harness behavior remains owned by the SDK/Fabric.
     pub fn onboarding_defaults() -> Self {
-        Self {
-            deployment_name: "openclaw-nvidia-hosted".into(),
-            sandbox_name: "assistant".into(),
-            agent_name: "primary".into(),
-            harness: HarnessChoice::OpenClaw,
-            runtime: RuntimeChoice::Docker,
-            inference: ProviderPreset::NvidiaEndpoints,
-            api: ApiChoice::OpenaiCompletions,
-            provider_name: "nvidia-prod".into(),
-            endpoint: "https://integrate.api.nvidia.com/v1".into(),
-            model: NVIDIA_MODEL.into(),
-            credential_env: "NVIDIA_INFERENCE_API_KEY".into(),
-        }
+        crate::Draft::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .expect("bundled onboarding template is valid")
+            .guided_answers(&crate::Capabilities::available())
+            .expect("bundled onboarding template can be authored")
     }
 
     /// Replaces supplied fields without validating; projection checks the result.
