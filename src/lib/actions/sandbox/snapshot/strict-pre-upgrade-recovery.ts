@@ -5,17 +5,6 @@ import { captureRecordedSandboxBasePolicy } from "../../../policy";
 import type { SandboxEntry } from "../../../state/registry/types";
 import * as sandboxState from "../../../state/sandbox";
 import { observeMcpStateForRebuild } from "../rebuild-mcp-phase";
-import { discardIncompleteBackup } from "./backup-authority";
-
-/** Discard a strict pre-upgrade snapshot that cannot carry complete recovery
- * authority, keeping the original failure visible. */
-export function discardIncompleteStrictBackup(
-  sandbox: SandboxEntry,
-  result: sandboxState.BackupResult,
-  cleanupDeadlineMs: number,
-): sandboxState.BackupResult {
-  return discardIncompleteBackup(sandbox.name, result, cleanupDeadlineMs, "strict pre-upgrade");
-}
 
 function failedRetentionResult(
   result: sandboxState.BackupResult,

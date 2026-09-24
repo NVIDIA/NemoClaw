@@ -41,10 +41,7 @@ import {
   type StartedForBackup,
   startStoppedSandboxContainerForBackup,
 } from "./sandbox/stopped-sandbox-backup";
-import {
-  discardIncompleteStrictBackup,
-  retainStrictPreUpgradeRecoveryState,
-} from "./sandbox/snapshot/strict-pre-upgrade-recovery";
+import { retainStrictPreUpgradeRecoveryState } from "./sandbox/snapshot/strict-pre-upgrade-recovery";
 
 const useColor = !process.env.NO_COLOR && !!process.stdout.isTTY;
 const trueColor =
@@ -338,7 +335,12 @@ export async function backupAllUnderPortableHostFence(
       !readyNames.has(sb.name),
       retainPreUpgradePolicy
         ? (failedResult, cleanupDeadlineMs) =>
-            discardIncompleteStrictBackup(sb, failedResult, cleanupDeadlineMs)
+            snapshotBackup.discardIncompleteBackup(
+              sb.name,
+              failedResult,
+              cleanupDeadlineMs,
+              "strict pre-upgrade",
+            )
         : null,
       async (startedForBackup, transactionDeadlineMs) => {
         const backupResult = await (startedForBackup

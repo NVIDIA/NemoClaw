@@ -17,7 +17,7 @@ const mocks = vi.hoisted(() => ({
   backupStartedSandboxState: vi.fn(),
   returnSandboxContainerToStopped: vi.fn(),
   retainStrictPreUpgradeRecoveryState: vi.fn(),
-  discardIncompleteStrictBackup: vi.fn(),
+  discardIncompleteBackup: vi.fn(),
   isSandboxContainerDefinitivelyAbsent: vi.fn(),
   withSandboxMutationLock: vi.fn(),
   enforceRemovedImmutabilityMigrationBoundary: vi.fn(),
@@ -72,6 +72,7 @@ vi.mock("../state/portable-uninstall-retirement", () => ({
 }));
 vi.mock("./sandbox/snapshot/backup-authority", () => ({
   backupSandboxStateWithManagedAuthority: (name: string) => mocks.backupSandboxState(name),
+  discardIncompleteBackup: mocks.discardIncompleteBackup,
 }));
 vi.mock("../openshell-sandbox-list", () => ({
   captureSandboxListWithGatewayPreflightOrExit: mocks.captureSandboxListWithGatewayPreflightOrExit,
@@ -105,7 +106,6 @@ vi.mock("./sandbox/stopped-sandbox-backup", () => ({
 }));
 vi.mock("./sandbox/snapshot/strict-pre-upgrade-recovery", () => ({
   retainStrictPreUpgradeRecoveryState: mocks.retainStrictPreUpgradeRecoveryState,
-  discardIncompleteStrictBackup: mocks.discardIncompleteStrictBackup,
 }));
 vi.mock("../domain/lifecycle/options", () => ({
   normalizeGarbageCollectImagesOptions: (o: unknown) => o || {},
@@ -880,7 +880,7 @@ describe("backupAll", () => {
       failedFiles: [],
       manifest: { backupPath: "/backups/sb-stopped/incomplete" },
     });
-    mocks.discardIncompleteStrictBackup.mockImplementation((_sandbox, result) => result);
+    mocks.discardIncompleteBackup.mockImplementation((_sandbox, result) => result);
     process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS = "1";
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -900,9 +900,9 @@ describe("backupAll", () => {
       },
     );
     expect(mocks.returnSandboxContainerToStopped.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.discardIncompleteStrictBackup.mock.invocationCallOrder[0],
+      mocks.discardIncompleteBackup.mock.invocationCallOrder[0],
     );
-    expect(mocks.discardIncompleteStrictBackup.mock.calls[0]?.[2]).toBeGreaterThan(Date.now());
+    expect(mocks.discardIncompleteBackup.mock.calls[0]?.[2]).toBeGreaterThan(Date.now());
     expect(logSpy.mock.calls.flat().join("\n")).toContain("0 backed up, 1 failed, 0 skipped");
   });
 
