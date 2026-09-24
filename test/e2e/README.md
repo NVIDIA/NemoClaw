@@ -661,8 +661,8 @@ Each successful real pseudo-terminal attempt sends two distinct messages and
 `/exit`, then requires process exit status `0`. The OpenClaw session store must
 append two nonempty `user` and `assistant` record pairs in one session. The helper
 does not compare message content. Terminal output is a bounded failure diagnostic only.
-Empty-message failures include the message index, role, and allowlisted provider
-error metadata from JSONL or SQLite. Provider error text and unknown field values
+`message_content_empty` diagnostics include the message index, role, and allowlisted
+provider error metadata from JSONL or SQLite. Provider error text and unknown field values
 are omitted. These diagnostics do not change failure classification or retries.
 Deterministic unit tests separately prove selection of the complete preflight
 and lease paths, stale-producer exclusion, the fixed time-unsafe quarantine,
