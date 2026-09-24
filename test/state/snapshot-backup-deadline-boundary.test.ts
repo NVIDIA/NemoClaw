@@ -84,6 +84,7 @@ function prepareBackup(
       : never
     : never,
   deferSanitizationDeadlineCleanup = false,
+  validateBeforePublish?: () => void,
 ): DeadlineRun {
   const binDir = path.join(fixture, "bin");
   const stageLog = path.join(fixture, "stages.log");
@@ -149,6 +150,7 @@ process.exit(stage === "download" ? 2 : 0);
         deadlineMs: DEADLINE_MS,
         captureStateDirectories,
         deferSanitizationDeadlineCleanup,
+        validateBeforePublish,
       }),
   };
 }
@@ -251,6 +253,25 @@ describe("shared backup deadline boundaries (#11936)", () => {
       expect(backup).toMatchObject({
         success: false,
         error: "Snapshot sanitization skipped: backup deadline expired",
+        manifest: { backupPath: expect.any(String) },
+      });
+      expect(fs.existsSync(backup.manifest?.backupPath ?? "")).toBe(true);
+    });
+  });
+
+  it("defers publication-fence cleanup for lifecycle-safe caller cleanup", () => {
+    withFixture((fixture) => {
+      const captured = vi.fn((_request: unknown, archiveFd: number) => {
+        fs.writeSync(archiveFd, Buffer.alloc(1024));
+        return { outcome: "backed_up" as const };
+      });
+      const backup = prepareBackup(fixture, "never", captured, true, () => {
+        throw new Error("runtime generation changed");
+      }).run();
+
+      expect(backup).toMatchObject({
+        success: false,
+        error: "Snapshot authority changed during backup: runtime generation changed",
         manifest: { backupPath: expect.any(String) },
       });
       expect(fs.existsSync(backup.manifest?.backupPath ?? "")).toBe(true);

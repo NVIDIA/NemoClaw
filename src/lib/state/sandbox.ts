@@ -1706,6 +1706,7 @@ function normalizeSnapshotBackupAuthority(options: BackupOptions): {
 function validateSnapshotPublication(
   backupPath: string,
   validateBeforePublish: BackupOptions["validateBeforePublish"],
+  deferIncompleteBackupCleanup = false,
 ): string | null {
   if (!validateBeforePublish) return null;
   try {
@@ -1713,9 +1714,11 @@ function validateSnapshotPublication(
     return null;
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
+    const publicationError = `Snapshot authority changed during backup: ${detail}`;
+    if (deferIncompleteBackupCleanup) return publicationError;
     try {
       rmSync(backupPath, { recursive: true, force: true });
-      return `Snapshot authority changed during backup: ${detail}`;
+      return publicationError;
     } catch (cleanupError) {
       const cleanupDetail =
         cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
@@ -1913,15 +1916,19 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
 
   if (!hasBackupDirectories && stateFiles.length === 0) {
     _log("WARNING: Agent manifest declares no state_dirs or state_files — nothing to back up");
-    const publicationError = validateSnapshotPublication(backupPath, () => {
-      if (options.deadlineMs !== undefined && Date.now() >= options.deadlineMs) {
-        throw new Error("sandbox backup deadline expired");
-      }
-      options.validateBeforePublish?.();
-      if (options.deadlineMs !== undefined && Date.now() >= options.deadlineMs) {
-        throw new Error("sandbox backup deadline expired");
-      }
-    });
+    const publicationError = validateSnapshotPublication(
+      backupPath,
+      () => {
+        if (options.deadlineMs !== undefined && Date.now() >= options.deadlineMs) {
+          throw new Error("sandbox backup deadline expired");
+        }
+        options.validateBeforePublish?.();
+        if (options.deadlineMs !== undefined && Date.now() >= options.deadlineMs) {
+          throw new Error("sandbox backup deadline expired");
+        }
+      },
+      options.deferSanitizationDeadlineCleanup,
+    );
     if (publicationError) {
       return {
         success: false,
@@ -1930,6 +1937,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         backedUpFiles: [],
         failedFiles: [],
         error: publicationError,
+        ...(options.deferSanitizationDeadlineCleanup ? { manifest } : {}),
       };
     }
     manifest.backupComplete = true;
@@ -2390,15 +2398,19 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
   );
   manifest.backupComplete = failedDirs.length === 0 && failedFiles.length === 0;
 
-  const publicationError = validateSnapshotPublication(backupPath, () => {
-    if (options.deadlineMs !== undefined && Date.now() >= options.deadlineMs) {
-      throw new Error("sandbox backup deadline expired");
-    }
-    options.validateBeforePublish?.();
-    if (options.deadlineMs !== undefined && Date.now() >= options.deadlineMs) {
-      throw new Error("sandbox backup deadline expired");
-    }
-  });
+  const publicationError = validateSnapshotPublication(
+    backupPath,
+    () => {
+      if (options.deadlineMs !== undefined && Date.now() >= options.deadlineMs) {
+        throw new Error("sandbox backup deadline expired");
+      }
+      options.validateBeforePublish?.();
+      if (options.deadlineMs !== undefined && Date.now() >= options.deadlineMs) {
+        throw new Error("sandbox backup deadline expired");
+      }
+    },
+    options.deferSanitizationDeadlineCleanup,
+  );
   if (publicationError) {
     return {
       success: false,
@@ -2407,6 +2419,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
       backedUpFiles: [],
       failedFiles: [],
       error: publicationError,
+      ...(options.deferSanitizationDeadlineCleanup ? { manifest } : {}),
     };
   }
   writeManifest(backupPath, manifest);
