@@ -94,6 +94,31 @@ export function resolveCompleteDockerDriverGatewayLocalTlsDir(
     : undefined;
 }
 
+/** Return whether persisted gateway state declares or contains local TLS authority. */
+export function dockerDriverGatewayLocalTlsAuthorityIsConfigured(stateDir: string): boolean {
+  const bundle = getDockerDriverGatewayLocalTlsBundle(stateDir);
+  if (
+    [
+      bundle.caPath,
+      bundle.serverCertPath,
+      bundle.serverKeyPath,
+      bundle.clientCertPath,
+      bundle.clientKeyPath,
+    ].some((filePath) => fs.existsSync(filePath))
+  ) {
+    return true;
+  }
+  try {
+    const config = fs.readFileSync(path.join(stateDir, "openshell-gateway.toml"), "utf-8");
+    return (
+      config.includes("[openshell.gateway.mtls_auth]") ||
+      config.includes("require_client_auth = true")
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function buildDockerDriverGatewayLocalTlsEnv(stateDir: string): Record<string, string> {
   return {
     OPENSHELL_LOCAL_TLS_DIR: getDockerDriverGatewayLocalTlsDir(stateDir),

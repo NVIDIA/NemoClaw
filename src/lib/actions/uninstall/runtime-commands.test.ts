@@ -52,7 +52,24 @@ describe("uninstall bulk sandbox cleanup", () => {
     }
   });
 
-  it("omits selected-gateway TLS authority when its state bundle is incomplete (#11831)", async () => {
+  it.each([
+    [
+      "one bundle file is missing",
+      (stateDir: string) => {
+        writeCompleteDockerDriverGatewayLocalTlsBundle(stateDir);
+        fs.rmSync(getDockerDriverGatewayLocalTlsBundle(stateDir).clientKeyPath);
+      },
+    ],
+    [
+      "the gateway declares mTLS but its bundle is absent",
+      (stateDir: string) => {
+        fs.writeFileSync(
+          path.join(stateDir, "openshell-gateway.toml"),
+          "[openshell.gateway.mtls_auth]\nenabled = true\n",
+        );
+      },
+    ],
+  ])("rejects selected-gateway cleanup when %s (#11831)", async (_case, arrangeState) => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-tls-"));
     const calls: Array<{ args: string[]; env: NodeJS.ProcessEnv | undefined }> = [];
     const runtime = {
@@ -67,15 +84,16 @@ describe("uninstall bulk sandbox cleanup", () => {
     };
 
     try {
-      writeCompleteDockerDriverGatewayLocalTlsBundle(stateDir);
-      fs.rmSync(getDockerDriverGatewayLocalTlsBundle(stateDir).clientKeyPath);
+      arrangeState(stateDir);
       const selection = selectedGatewayCleanupRuntimeSelection("nemoclaw-8091", stateDir);
 
-      await expect(deleteAllSelectedGatewaySandboxes(runtime, selection)).resolves.toBe(true);
+      await expect(deleteAllSelectedGatewaySandboxes(runtime, selection)).resolves.toBe(false);
 
-      expect(selection.localTlsDir).toBeUndefined();
-      expect(calls).toHaveLength(3);
-      expect(calls.every(({ env }) => env?.OPENSHELL_LOCAL_TLS_DIR === undefined)).toBe(true);
+      expect(selection).toBeNull();
+      expect(calls).toHaveLength(0);
+      expect(runtime.warn).toHaveBeenCalledWith(
+        "OpenShell selected-gateway cleanup authority is incomplete; preserving its state for retry.",
+      );
     } finally {
       fs.rmSync(stateDir, { recursive: true, force: true });
     }

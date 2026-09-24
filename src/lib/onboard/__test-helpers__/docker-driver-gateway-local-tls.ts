@@ -6,7 +6,7 @@ import path from "node:path";
 
 import { getDockerDriverGatewayLocalTlsBundle } from "../docker-driver-gateway-local-tls";
 
-const TEST_CERT_PEM = `-----BEGIN CERTIFICATE-----
+export const TEST_DOCKER_DRIVER_GATEWAY_CERT_PEM = `-----BEGIN CERTIFICATE-----
 MIIDSDCCAjCgAwIBAgIUBpjeCY46iq7RCJIJJRARHcI2jUkwDQYJKoZIhvcNAQEL
 BQAwGDEWMBQGA1UEAwwNbmVtb2NsYXctdGVzdDAeFw0yNjA2MjYyMDQzNDdaFw0z
 NjA2MjMyMDQzNDdaMBgxFjAUBgNVBAMMDW5lbW9jbGF3LXRlc3QwggEiMA0GCSqG
@@ -29,7 +29,7 @@ vTUDCPebEbi9VRlMpX9j7ti+yqqFitz/42+JeA==
 `;
 
 const TEST_KEY_LABEL = "PRIVATE " + "KEY";
-const TEST_KEY_PEM = [
+export const TEST_DOCKER_DRIVER_GATEWAY_KEY_PEM = [
   `-----BEGIN ${TEST_KEY_LABEL}-----`,
   "MIIEvwIBADANBgkqhkiG9w0BAQEFAASCBKkwggSlAgEAAoIBAQCNNYxZ+eNXrah+",
   "l9KkvH+frUAZFA+WY5MpEM2ghtxP5r9CE4izEdKRdk+bq85mVW17M9u+vLA0F0Fm",
@@ -61,17 +61,30 @@ const TEST_KEY_PEM = [
   "",
 ].join("\n");
 
-export function writeCompleteDockerDriverGatewayLocalTlsBundle(stateDir: string): void {
+export function writeDockerDriverGatewayLocalTlsBundle(
+  stateDir: string,
+  certContent: string,
+  keyContent: string,
+): Record<string, string> {
   const bundle = getDockerDriverGatewayLocalTlsBundle(stateDir);
   const contents = {
-    [bundle.caPath]: TEST_CERT_PEM,
-    [bundle.serverCertPath]: TEST_CERT_PEM,
-    [bundle.serverKeyPath]: TEST_KEY_PEM,
-    [bundle.clientCertPath]: TEST_CERT_PEM,
-    [bundle.clientKeyPath]: TEST_KEY_PEM,
+    [bundle.caPath]: certContent,
+    [bundle.serverCertPath]: certContent,
+    [bundle.serverKeyPath]: keyContent,
+    [bundle.clientCertPath]: certContent,
+    [bundle.clientKeyPath]: keyContent,
   };
   for (const [filePath, content] of Object.entries(contents)) {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, content);
   }
+  return contents;
+}
+
+export function writeCompleteDockerDriverGatewayLocalTlsBundle(stateDir: string): void {
+  writeDockerDriverGatewayLocalTlsBundle(
+    stateDir,
+    TEST_DOCKER_DRIVER_GATEWAY_CERT_PEM,
+    TEST_DOCKER_DRIVER_GATEWAY_KEY_PEM,
+  );
 }

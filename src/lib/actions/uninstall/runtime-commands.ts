@@ -18,7 +18,10 @@ import {
 import { isOllamaAuthProxyCommandLine } from "../../inference/ollama/process";
 import { isModelRouterCommandLineForPort } from "../../onboard/model-router-process";
 import { MANAGED_STARTUP_RECEIPT_VOLUME_PREFIX } from "../../onboard/managed-startup/docker-receipt-transfer";
-import { resolveCompleteDockerDriverGatewayLocalTlsDir } from "../../onboard/docker-driver-gateway-local-tls";
+import {
+  dockerDriverGatewayLocalTlsAuthorityIsConfigured,
+  resolveCompleteDockerDriverGatewayLocalTlsDir,
+} from "../../onboard/docker-driver-gateway-local-tls";
 
 interface UninstallRuntimeCommands {
   env: NodeJS.ProcessEnv;
@@ -45,8 +48,10 @@ const BULK_DELETE_REQUIRED_EMPTY_OBSERVATIONS = 2;
 export function selectedGatewayCleanupRuntimeSelection(
   gatewayName: string,
   gatewayStateDir: string,
-): OpenShellRuntimeSelection {
+): OpenShellRuntimeSelection | null {
   const localTlsDir = resolveCompleteDockerDriverGatewayLocalTlsDir(gatewayStateDir);
+  if (!localTlsDir && dockerDriverGatewayLocalTlsAuthorityIsConfigured(gatewayStateDir))
+    return null;
   return {
     gatewayName,
     workspace: OPENSHELL_DEFAULT_WORKSPACE,
@@ -123,8 +128,14 @@ export async function deleteSelectedGatewaySandbox(
 
 export async function deleteAllSelectedGatewaySandboxes(
   runtime: UninstallRuntimeCommands,
-  runtimeSelection: OpenShellRuntimeSelection,
+  runtimeSelection: OpenShellRuntimeSelection | null,
 ): Promise<boolean> {
+  if (!runtimeSelection) {
+    runtime.warn(
+      "OpenShell selected-gateway cleanup authority is incomplete; preserving its state for retry.",
+    );
+    return false;
+  }
   const result = await createUninstallSandboxLifecycle(runtime.run, runtime.env).deleteAllSandboxes(
     { target: { kind: "selected" }, runtimeSelection },
   );

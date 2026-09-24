@@ -1610,7 +1610,8 @@ async function removeOpenShellResources(
     gatewayLabel,
     paths.selectedGatewayLocalStateDir,
   );
-  if (!(await deleteAllSelectedGatewaySandboxes(runtime, runtimeSelection))) {
+  const sandboxesDeleted = await deleteAllSelectedGatewaySandboxes(runtime, runtimeSelection);
+  if (!sandboxesDeleted || !runtimeSelection) {
     return false;
   }
   const providerAdapter = createUninstallProviderAdapter(
