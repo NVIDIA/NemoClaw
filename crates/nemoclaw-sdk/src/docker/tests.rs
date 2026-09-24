@@ -47,6 +47,45 @@ fn archive_observation_requires_one_complete_regular_file_within_limit() {
     assert!(read_archive(&duplicate, 128).is_err());
     assert!(read_archive(b"", 128).is_err());
 }
+
+#[test]
+fn protected_archive_sets_owner_only_directories_and_files() {
+    let bytes = protected_archive(
+        &["runtime", "credentials"],
+        &[
+            ("runtime/config.json", b"{}"),
+            ("credentials/token", b"secret"),
+        ],
+        65532,
+        65532,
+    )
+    .unwrap();
+    let mut archive = tar::Archive::new(bytes.as_slice());
+    let entries = archive.entries().unwrap();
+    let observed: Vec<_> = entries
+        .map(|entry| {
+            let entry = entry.unwrap();
+            (
+                entry.path().unwrap().to_string_lossy().into_owned(),
+                entry.header().entry_type(),
+                entry.header().mode().unwrap(),
+                entry.header().uid().unwrap(),
+                entry.header().gid().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(observed.len(), 4);
+    for (path, kind, mode, uid, gid) in observed {
+        assert_eq!(uid, 65532, "{path}");
+        assert_eq!(gid, 65532, "{path}");
+        if kind.is_dir() {
+            assert_eq!(mode, 0o700, "{path}");
+        } else {
+            assert!(kind.is_file(), "{path}");
+            assert_eq!(mode, 0o600, "{path}");
+        }
+    }
+}
 #[test]
 fn managed_engine_requires_explicit_local_socket() {
     for endpoint in [

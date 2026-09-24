@@ -19,7 +19,7 @@ pub struct ManagedOllama {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "ServiceContainer")]
     pub container: Option<ServiceContainer>,
-    /// Immutable runtime image containing Ollama and the NemoClaw supervisor.
+    /// Registry image pinned by digest, or a local Docker image ID with imagePullPolicy Never and no placement.
     pub image: String,
     /// Image acquisition before container creation. Omission means IfNotPresent.
     #[serde(
@@ -213,7 +213,7 @@ pub struct OllamaProxy {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "String", regex(pattern = r"^unix:///[^?#\x00]*$"))]
     pub engine: Option<String>,
-    /// Immutable NemoClaw proxy image. The external daemon runs on the selected Docker host.
+    /// Registry image pinned by digest, or a local Docker image ID with imagePullPolicy Never. The external daemon runs on the selected Docker host.
     pub image: String,
     /// Image acquisition before container creation. Omission means IfNotPresent.
     #[serde(

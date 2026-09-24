@@ -16,6 +16,7 @@ import subprocess
 import urllib.request
 from pathlib import Path
 
+from agent_ingress import AgentIngress
 from fabric import configured_agent, model_connection, openclaw_execution
 from interfaces import dashboard, gateway_settings, token
 from nemo_fabric_adapter_contract.models import AgentRunError, AgentRunResult, AgentRunStatus
@@ -325,6 +326,7 @@ class OpenClawRuntime:
         self.runtime_id = None
         self.failed = False
         self.lock = asyncio.Lock()
+        self.ingress = None
         self.state_lock = None
 
     async def start(self, payload):
@@ -360,6 +362,13 @@ class OpenClawRuntime:
             self.env["OPENCLAW_GATEWAY_TOKEN"] = self.env["NEMOCLAW_INTERFACE_TOKEN"]
         self.session_key = f"agent:{self.name}:fabric-{self.runtime_id}"
         await self.start_gateway()
+        try:
+            self.ingress = AgentIngress(self)
+            await self.ingress.start()
+        except BaseException:
+            self.ingress = None
+            await self.stop_gateway()
+            raise
 
     def initialize_configuration(self):
         path = self.home / "openclaw.json"
@@ -509,6 +518,9 @@ class OpenClawRuntime:
             )
 
     async def stop(self):
+        if self.ingress is not None:
+            await self.ingress.stop()
+            self.ingress = None
         await self.stop_gateway()
         if self.state_lock is not None:
             self.state_lock.close()

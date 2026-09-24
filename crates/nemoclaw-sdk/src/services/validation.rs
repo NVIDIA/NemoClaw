@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use super::installers::{ollama, vllm};
+use super::{
+    contract::{MANAGED_SERVICE_KIND, MANAGED_SERVICE_STORAGE_KIND},
+    installers::{ollama, vllm},
+};
 use crate::{
     Error,
     managed::{GATEWAY_KIND, GATEWAY_STORAGE_KIND, Spec, Storage},
@@ -10,14 +13,21 @@ use crate::{
 /// Validate a compiled resource without opening connections or reading secrets.
 /// Parse errors deliberately omit serialized source values.
 pub fn validate_resource_spec(kind: &str, encoded: &str) -> Result<(), Error> {
-    if matches!(kind, vllm::STORAGE_KIND | ollama::STORAGE_KIND) {
+    if matches!(
+        kind,
+        vllm::STORAGE_KIND | ollama::STORAGE_KIND | MANAGED_SERVICE_STORAGE_KIND
+    ) {
         let storage: Storage = serde_json::from_str(encoded)
             .map_err(|_| Error::State("invalid managed storage specification"))?;
         return storage.validate();
     }
     if !matches!(
         kind,
-        GATEWAY_KIND | GATEWAY_STORAGE_KIND | vllm::SERVICE_KIND | ollama::SERVICE_KIND
+        GATEWAY_KIND
+            | GATEWAY_STORAGE_KIND
+            | vllm::SERVICE_KIND
+            | ollama::SERVICE_KIND
+            | MANAGED_SERVICE_KIND
     ) {
         return Ok(());
     }

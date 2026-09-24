@@ -256,6 +256,7 @@ Paths:
 - `spec.sandboxes[].inferenceProviders[].credential`
 - `spec.sandboxes[].inferences.{key}.routes[].provider.credential`
 - `spec.sandboxes[].integrations.{key}.credential`
+- `spec.services.{key}.speech.credential`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -647,6 +648,16 @@ Web search with gateway-held credentials and explicit agent grants.
 | `credential` | [Credential](#credential) | Yes | — | Host environment reference. OpenShell supplies the search provider's placeholder to the sandbox. |
 | `kind` | string | Yes | — | Integration implementation selected by this definition. Constraints: `"webSearch"`. |
 | `provider` | [SearchProvider](#searchprovider) | Yes | — | Supported search service. |
+
+### Alternative 2
+
+One managed VoiceClaw service bound to one selected sandboxed agent.
+
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `kind` | string | Yes | — | Integration implementation selected by this definition. Constraints: `"voiceclaw"`. |
+| `serviceRef` | string | Yes | — | Name of a VoiceClaw service in spec.services. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 
 ## Manifest
 
@@ -1070,6 +1081,20 @@ Paths:
 | `host` | string | Yes | — | Proxy hostname or IPv4 address, without scheme, path, or credentials. Constraints: pattern `^[A-Za-z0-9._-]+$`; minimum characters 1; maximum characters 256. |
 | `port` | integer | Yes | — | Proxy TCP port, from 1 through 65535. Constraints: minimum 1; maximum 65535. |
 
+## PullPolicy
+
+Image acquisition policy supported by VoiceClaw.
+
+Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.services.{key}.imagePullPolicy`
+
+Accepted input: string.
+
+Constraints: `"Never"`.
+
 ## ReasoningEffort
 
 Native reasoning effort; default leaves the harness choice in place.
@@ -1257,7 +1282,7 @@ Managed Ollama daemon and selected model.
 |---|---|---|---|---|
 | `container` | [ServiceContainer](#servicecontainer) | No | — | Optional IPC and shared-memory settings for the runtime container. |
 | `hardware` | [ServiceHardware](#servicehardware) | Yes | — | Explicit supported GPU or system profile. |
-| `image` | string | Yes | — | Immutable runtime image containing Ollama and the NemoClaw supervisor. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
+| `image` | string | Yes | — | Registry image pinned by digest, or a local Docker image ID with imagePullPolicy Never and no placement. Constraints: pattern `^(?:[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}\|sha256:[a-f0-9]{64})$`. |
 | `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before container creation. Omission means IfNotPresent. Constraints: `"IfNotPresent"` or `"Never"`. |
 | `kind` | string | Yes | — | Supported installer selected by this service definition. Constraints: `"ollama"`. |
 | `memory` | [OllamaMemory](#ollamamemory) | No | — | GPU budget and resident memory-protection thresholds. |
@@ -1275,7 +1300,7 @@ Managed authentication proxy for an external Ollama daemon and model.
 |---|---|---|---|---|
 | `endpoint` | string | Yes | — | Private or loopback HTTP IPv4:port/v1 published by the proxy and reachable by OpenShell. |
 | `engine` | string | No | — | Local Docker Unix socket. Omission uses the managed gateway engine. Constraints: pattern `^unix:///[^?#\x00]*$`. |
-| `image` | string | Yes | — | Immutable NemoClaw proxy image. The external daemon runs on the selected Docker host. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
+| `image` | string | Yes | — | Registry image pinned by digest, or a local Docker image ID with imagePullPolicy Never. The external daemon runs on the selected Docker host. Constraints: pattern `^(?:[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}\|sha256:[a-f0-9]{64})$`. |
 | `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before container creation. Omission means IfNotPresent. Constraints: `"IfNotPresent"` or `"Never"`. |
 | `kind` | string | Yes | — | Supported installer selected by this service definition. Constraints: `"ollamaProxy"`. |
 | `upstream` | [ExternalOllama](#externalollama) | Yes | — | External loopback-only daemon and already-installed model. |
@@ -1290,7 +1315,7 @@ Managed vLLM runtime and immutable model snapshot.
 | `authentication` | [ServiceAuthentication](#serviceauthentication) | No | — | Optional native bearer authentication. The runtime generates and retains the key; omission preserves unauthenticated serving. |
 | `container` | [ServiceContainer](#servicecontainer) | No | — | Optional managed container IPC and shared-memory settings. Omission uses private IPC and 8 GiB of shared memory. |
 | `hardware` | [ServiceHardware](#servicehardware) | Without recipe | — | Explicit hardware contract: a named GPU or system profile, or dedicated GPU requirements for Linux AMD64. Required without an inline recipe; excludes recipe. |
-| `image` | string | Yes | — | Immutable runtime image containing vLLM, the NemoClaw supervisor, and any declared recipe tools. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
+| `image` | string | Yes | — | Registry image pinned by digest, or a local Docker image ID with imagePullPolicy Never and no placement. Constraints: pattern `^(?:[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}\|sha256:[a-f0-9]{64})$`. |
 | `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before container creation. Omission means IfNotPresent. Constraints: `"IfNotPresent"` or `"Never"`. |
 | `kind` | string | Yes | — | Supported installer selected by this service definition. Constraints: `"vllm"`. |
 | `memory` | [Memory](#memory) | No | — | GPU budget and resident watchdog thresholds. Omission selects the SDK defaults. |
@@ -1299,6 +1324,19 @@ Managed vLLM runtime and immutable model snapshot.
 | `publication` | [ServicePublication](#servicepublication) | With placement | — | Private inference address reachable by OpenShell. Required with placement. |
 | `recipe` | [InlineRecipe](#inlinerecipe) | Without hardware | — | Inline preparation and serving contract supplied by the pinned runtime image. Required without hardware; excludes hardware. |
 | `serving` | [Serving](#serving) | No | — | Service limits. Omission selects the SDK defaults; recipe serving settings select recipe-specific parsers and execution options. |
+
+### Alternative 4
+
+Experimental VoiceClaw installer with protected credentials and scoped agent access.
+
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `image` | string | Yes | — | Immutable local Docker image ID. VoiceClaw does not pull or build images. Constraints: pattern `^sha256:[a-f0-9]{64}$`. |
+| `imagePullPolicy` | [PullPolicy](#pullpolicy) | Yes | — | Must be Never for the preloaded PoC image. Constraints: `"Never"`. |
+| `kind` | string | Yes | — | Supported installer selected by this service definition. Constraints: `"voiceclaw"`. |
+| `serving` | [VoiceclawServing](#voiceclawserving) | No | — | VoiceClaw listener and bounded startup settings. |
+| `speech` | [VoiceclawSpeech](#voiceclawspeech) | Yes | — | Speech provider and host credential reference projected into the owned volume. |
 
 ## ServiceHardware
 
@@ -1434,6 +1472,20 @@ Paths:
 | `sandboxes` | array of [Sandbox](#sandbox) | Yes | — | One to 32 uniquely named sandboxes. Each selects one harness: one or more OpenClaw or Deep Agents instances, or one agent of another harness. Declaration order does not select a default sandbox or agent. Constraints: minimum items 1; maximum items 32. |
 | `services` | map of [ServiceDefinition](#servicedefinition) | No | — | Named managed container services to install, verify once, and remove during destroy. Inference providers may consume their connection through serviceRef. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 
+## SpeechProvider
+
+Speech provider supported by the initial VoiceClaw package.
+
+Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.services.{key}.speech.provider`
+
+Accepted input: string.
+
+Constraints: `"nvidia"`.
+
 ## TLS
 
 Gateway mutual TLS file references. All three references are required when TLS is declared.
@@ -1479,3 +1531,33 @@ Paths:
 Accepted input: string.
 
 Constraints: `"progressive"` or `"direct"`.
+
+## VoiceclawServing
+
+VoiceClaw listener and readiness deadline.
+
+Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.services.{key}.serving`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `port` | integer | No | — | Fixed HTTP and streaming service port exposed by the managed runtime image. Constraints: minimum 18790; maximum 18790. |
+| `startupTimeoutSeconds` | integer | No | — | Seconds allowed for content-free service readiness. Constraints: minimum 1; maximum 3600. |
+
+## VoiceclawSpeech
+
+Speech adapter selected for VoiceClaw.
+
+Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.services.{key}.speech`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `credential` | [Credential](#credential) | Yes | — | Host credential reference. The value is never serialized into deployment state. |
+| `provider` | [SpeechProvider](#speechprovider) | Yes | — | Supported speech provider. |

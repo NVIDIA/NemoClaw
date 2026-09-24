@@ -191,3 +191,45 @@ fn service_image_error_identifies_the_required_digest_pin() {
     }
     parse(&original).unwrap();
 }
+
+#[test]
+fn local_service_image_ids_require_never_and_local_placement() {
+    let image = format!("sha256:{}", "a".repeat(64));
+    let mut local = input("spark/spark-inline.yaml");
+    local["spec"]["services"]["qwen"]["image"] = json!(image);
+    local["spec"]["services"]["qwen"]["imagePullPolicy"] = json!("Never");
+    parse(&local).expect("preloaded local image ID");
+
+    for policy in [None, Some("IfNotPresent")] {
+        let mut invalid = local.clone();
+        match policy {
+            Some(policy) => {
+                invalid["spec"]["services"]["qwen"]["imagePullPolicy"] = json!(policy);
+            }
+            None => {
+                invalid["spec"]["services"]["qwen"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("imagePullPolicy");
+            }
+        }
+        assert_eq!(
+            parse(&invalid).unwrap_err().to_string(),
+            "local Docker image ID requires imagePullPolicy Never on a local engine"
+        );
+    }
+
+    let mut remote = local;
+    remote["spec"]["services"]["qwen"]["placement"] = json!({
+        "engine": "ssh://gpu-box",
+        "networkCidr": "172.21.0.0/24"
+    });
+    remote["spec"]["services"]["qwen"]["publication"] = json!({
+        "endpoint": "http://10.0.0.2:18888/v1",
+        "bindAddress": "10.0.0.2"
+    });
+    assert_eq!(
+        parse(&remote).unwrap_err().to_string(),
+        "local Docker image ID requires imagePullPolicy Never on a local engine"
+    );
+}

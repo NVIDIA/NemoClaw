@@ -323,8 +323,8 @@ pub(crate) fn deployment_graph(
     let mut graph = compile_with_plans(document, version, &service_plans, &raw)?;
     crate::docker_compute::configure(&mut graph, &raw)
         .map_err(|_| ConfigError::new("invalid Docker compute graph"))?;
-    crate::services::configure_proxy_readiness(&mut graph, &raw)
-        .map_err(|_| ConfigError::new("invalid proxy readiness graph"))?;
+    crate::services::configure_service_readiness(&mut graph, &raw, document)
+        .map_err(|_| ConfigError::new("invalid service readiness graph"))?;
     let targets = crate::docker_compute::targets(&raw)
         .map_err(|_| ConfigError::new("invalid Docker compute plan"))?;
     Ok((graph, targets))

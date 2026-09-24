@@ -39,3 +39,6 @@ pub(crate) trait Installer {
         generations: &crate::compile::Generations,
     ) -> Result<RemovePlan, crate::Error>;
 }
+
+pub(crate) const MANAGED_SERVICE_KIND: &str = "managed_service";
+pub(crate) const MANAGED_SERVICE_STORAGE_KIND: &str = "managed_service_storage";

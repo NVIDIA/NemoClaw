@@ -32,5 +32,8 @@ pub(super) async fn run(cancel: &CancellationToken, trip: &CancellationToken) ->
         super::ServiceDefinition::OllamaProxy(_) => Err(Error::State(
             "proxy service cannot use the managed runtime entry point",
         )),
+        super::ServiceDefinition::Voiceclaw(_) => Err(Error::State(
+            "VoiceClaw does not use the managed runtime entry point",
+        )),
     }
 }

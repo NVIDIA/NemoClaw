@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use super::installers::{ollama, vllm};
+use super::installers::{ollama, vllm, voiceclaw};
 use crate::{CancellationToken, Error, docker::Connections, managed::Spec};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -10,6 +10,11 @@ use std::time::Duration;
 #[derive(Deserialize)]
 #[serde(tag = "kind", deny_unknown_fields)]
 enum ProxyReadiness {
+    #[serde(rename = "voiceclaw")]
+    Voiceclaw {
+        spec: Box<Spec>,
+        projection: Box<voiceclaw::Projection>,
+    },
     #[serde(rename = "ollama_proxy")]
     Proxy {
         engine: String,
@@ -25,14 +30,17 @@ impl ReadinessSpec {
         match self {
             Self::Managed(spec) => spec.engine(),
             Self::Proxy(ProxyReadiness::Proxy { engine, .. }) => engine,
+            Self::Proxy(ProxyReadiness::Voiceclaw { spec, .. }) => spec.engine(),
         }
     }
 }
 
-pub(crate) fn configure_proxy_readiness(
+pub(crate) fn configure_service_readiness(
     graph: &mut Value,
     targets: &[crate::compile::Target],
+    document: &crate::config::Document,
 ) -> Result<(), Error> {
+    voiceclaw::configure_readiness(graph, targets, document)?;
     for target in targets
         .iter()
         .filter(|target| target.kind == ollama::proxy::PROXY)
@@ -65,12 +73,18 @@ pub(crate) fn configure_proxy_readiness(
 
 fn parse(encoded: &str) -> Result<ReadinessSpec, Error> {
     if let Ok(proxy) = serde_json::from_str::<ProxyReadiness>(encoded) {
-        let ProxyReadiness::Proxy {
-            engine,
-            proxy: spec,
-        } = &proxy;
-        crate::docker::Engine::validate_endpoint(engine)?;
-        spec.validate()?;
+        match &proxy {
+            ProxyReadiness::Proxy {
+                engine,
+                proxy: spec,
+            } => {
+                crate::docker::Engine::validate_endpoint(engine)?;
+                spec.validate()?;
+            }
+            ProxyReadiness::Voiceclaw { spec, projection } => {
+                voiceclaw::validate_readiness(spec, projection, false)?
+            }
+        }
         return Ok(ReadinessSpec::Proxy(proxy));
     }
     let spec: Spec = serde_json::from_str(encoded)
@@ -87,9 +101,9 @@ pub fn validate_readiness_spec(encoded: &str) -> Result<(), Error> {
     parse(encoded).map(|_| ())
 }
 
-/// Observe application readiness for one explicit provider container identity.
-/// Only startup phases are polled; failed observations and protection stops fail immediately.
-/// This performs no mutations, hardware preflights, or model requests.
+/// Project package-owned protected files, then observe application readiness for one
+/// explicit provider container identity. Failed observations and protection stops fail
+/// immediately. Readiness performs no hardware preflights or model requests.
 pub async fn wait_service_ready(
     connections: &Connections,
     encoded: &str,
@@ -110,6 +124,10 @@ pub async fn wait_service_ready(
     let check = async {
         let spec = match &spec {
             ReadinessSpec::Managed(spec) => spec,
+            ReadinessSpec::Proxy(ProxyReadiness::Voiceclaw { spec, projection }) => {
+                return voiceclaw::wait_ready(&engine, spec, projection, container_id, timeout)
+                    .await;
+            }
             ReadinessSpec::Proxy(ProxyReadiness::Proxy { proxy, .. }) => {
                 let observed = engine
                     .container(container_id)

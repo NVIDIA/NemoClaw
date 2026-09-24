@@ -170,6 +170,14 @@ impl Document {
             {
                 match binding.definition {
                     Integration::WebSearch(search) => names.push(&search.credential.env),
+                    Integration::Voiceclaw(voiceclaw) => {
+                        let crate::services::ServiceDefinition::Voiceclaw(service) =
+                            &self.spec.services[&voiceclaw.service_ref]
+                        else {
+                            unreachable!("validated VoiceClaw service reference")
+                        };
+                        names.push(&service.speech.credential.env);
+                    }
                 }
             }
         }

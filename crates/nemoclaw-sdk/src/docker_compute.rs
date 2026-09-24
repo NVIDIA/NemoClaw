@@ -13,11 +13,15 @@ fn process(target: &Target) -> bool {
         && spec(target).is_ok_and(|spec| spec.compute_driver == ComputeDriver::Docker))
         || matches!(
             target.kind.as_str(),
-            "inference_service" | "ollama_service" | "ollama_proxy"
+            "inference_service" | "ollama_service" | "ollama_proxy" | "managed_service"
         )
 }
 pub(crate) fn address(logical: &str) -> String {
-    for kind in ["inference_storage", "ollama_service_storage"] {
+    for kind in [
+        "inference_storage",
+        "ollama_service_storage",
+        "managed_service_storage",
+    ] {
         if let Some(name) = logical.strip_prefix(&format!("nemoclaw_{kind}."))
             && !name.ends_with("_auth")
         {
@@ -28,6 +32,7 @@ pub(crate) fn address(logical: &str) -> String {
         "inference_service",
         "ollama_service",
         "ollama_proxy",
+        "managed_service",
         "managed_gateway",
     ] {
         if let Some(name) = logical.strip_prefix(&format!("nemoclaw_{kind}.")) {
@@ -135,12 +140,14 @@ pub(crate) fn targets(raw: &[Target]) -> Result<Vec<Target>, Error> {
         if address(&target.address).starts_with("docker_volume.") {
             let storage: crate::managed::Storage = serde_json::from_str(&target.values["spec"])
                 .map_err(|_| Error::State("invalid cache specification"))?;
+            let retained = target.kind != "managed_service_storage";
             target.address = address(&target.address);
             target.kind = "docker_volume".into();
             target.values = Row::from([
                 ("engine".into(), storage.engine),
                 ("name".into(), storage.name),
                 ("owner".into(), storage.owner),
+                ("retained".into(), retained.to_string()),
             ]);
         }
     }
@@ -252,7 +259,15 @@ pub(crate) fn configure(graph: &mut Value, raw: &[Target]) -> Result<(), Error> 
         providers.insert(alias.clone(), engine.clone());
         let mut attrs = match target.kind.as_str() {
             "docker_volume" => {
-                json!({"name":target.values["name"],"driver":"local","labels":[{"label":crate::managed::OWNER_LABEL,"value":target.values["owner"]}],"lifecycle":{"prevent_destroy":true}})
+                let mut value = json!({"name":target.values["name"],"driver":"local","labels":[{"label":crate::managed::OWNER_LABEL,"value":target.values["owner"]}]});
+                if target
+                    .values
+                    .get("retained")
+                    .is_none_or(|retained| retained == "true")
+                {
+                    value["lifecycle"] = json!({"prevent_destroy":true});
+                }
+                value
             }
             "docker_network" => {
                 json!({"name":target.values["name"],"labels":[{"label":crate::managed::OWNER_LABEL,"value":target.values["owner"]}],"driver":"bridge","ipam_config":[{"subnet":target.values["cidr"],"gateway":crate::config::bridge_address(&target.values["cidr"])?}]})
@@ -318,9 +333,14 @@ pub(crate) fn configure(graph: &mut Value, raw: &[Target]) -> Result<(), Error> 
             }
             storage_path(&mut attrs);
         }
-        if matches!(target.kind.as_str(), "inference_service" | "ollama_service") {
+        if matches!(
+            target.kind.as_str(),
+            "inference_service" | "ollama_service" | "managed_service"
+        ) {
             let cache_kind = if target.kind == "inference_service" {
                 "inference_storage"
+            } else if target.kind == "managed_service" {
+                "managed_service_storage"
             } else {
                 "ollama_service_storage"
             };
@@ -619,6 +639,100 @@ mod tests {
             .values
             .insert("image_pull_policy".into(), "Never".into());
         assert_eq!(image(&service).unwrap().kind, "docker_image_data");
+    }
+    #[test]
+    fn generic_managed_service_compiles_to_disposable_docker_resources() {
+        let document =
+            Document::parse(include_bytes!("../tests/fixtures/config/spark.yaml").as_slice())
+                .unwrap();
+        let generations: Generations = [
+            "workspace",
+            "provider",
+            "sandbox",
+            "managed_gateway",
+            "inference_service",
+        ]
+        .map(|kind| (kind.into(), "b".repeat(32)))
+        .into();
+        let (_, raw) = runtime_graph(&document, &generations, "0.1.0").unwrap();
+        let source = raw
+            .iter()
+            .find(|target| target.kind == "inference_service")
+            .unwrap();
+        let mut spec = spec(source).unwrap();
+        spec.kind = "managed_service".into();
+        spec.name = format!("{}-voice-server", document.workspace());
+        let process = spec.process.as_mut().unwrap();
+        process.image = format!("sha256:{}", "a".repeat(64));
+        process.configuration = "{}".into();
+        process.entrypoint = vec!["/usr/local/bin/service-runtime".into()];
+        process.command = vec!["serve".into()];
+        process.mount_target = "/var/lib/service".into();
+        process.gpu = false;
+        process.host_ipc = false;
+        process.shared_memory_bytes = 0;
+
+        let storage = crate::managed::Storage {
+            name: format!("{}-data", spec.name),
+            owner: spec.owner.clone(),
+            generation: spec.generation.clone(),
+            engine: spec.engine().into(),
+        };
+        let service = Target {
+            kind: "managed_service".into(),
+            address: "nemoclaw_managed_service.voice-server".into(),
+            values: Row::from([
+                ("spec".into(), spec.json().unwrap()),
+                ("image_pull_policy".into(), "Never".into()),
+            ]),
+        };
+        let storage = Target {
+            kind: "managed_service_storage".into(),
+            address: "nemoclaw_managed_service_storage.voice-server".into(),
+            values: Row::from([("spec".into(), storage.json().unwrap())]),
+        };
+        let raw = vec![storage, service];
+        let compiled = targets(&raw).unwrap();
+        assert!(compiled.iter().any(|target| {
+            target.address == "docker_container.managed_service_voice-server"
+                && target.kind == "managed_service"
+        }));
+        assert!(compiled.iter().any(|target| {
+            target.address == "docker_volume.managed_service_storage_voice-server"
+                && target.kind == "docker_volume"
+        }));
+        assert!(compiled.iter().any(|target| {
+            target.address.starts_with("data.docker_image.")
+                && target.values["name"].starts_with("sha256:")
+        }));
+
+        let mut graph = json!({
+            "terraform":{"required_providers":{}},
+            "provider":{},
+            "resource":{
+                "nemoclaw_managed_service":{
+                    "voice-server":{"spec":raw[1].values["spec"],"depends_on":["nemoclaw_managed_service_storage.voice-server"]}
+                },
+                "nemoclaw_managed_service_storage":{
+                    "voice-server":{"spec":raw[0].values["spec"]}
+                }
+            }
+        });
+        configure(&mut graph, &raw).unwrap();
+        let container = &graph["resource"]["docker_container"]["managed_service_voice-server"];
+        assert!(container["image"].as_str().unwrap().ends_with(".id}"));
+        assert_eq!(container["ipc_mode"], "private");
+        assert_eq!(container["env"], json!([]));
+        assert!(container.get("gpus").is_none());
+        assert_eq!(
+            container["mounts"][0]["source"],
+            "${docker_volume.managed_service_storage_voice-server.name}"
+        );
+        assert!(
+            graph["resource"]["docker_volume"]["managed_service_storage_voice-server"]
+                .get("lifecycle")
+                .is_none()
+        );
     }
     #[test]
     fn shared_image_rejects_incompatible_target_architectures() {

@@ -988,3 +988,22 @@ fn replacement_cleanup_reports_opentofu_objects_within_deployment_scope() {
         );
     }
 }
+
+#[test]
+fn managed_service_readiness_plans_require_the_declared_container() {
+    let allowed = [("docker_container.managed_service_voice".into(), Row::new())].into();
+    for (name, action, accepted) in [
+        ("voice", "read", true),
+        ("foreign", "read", false),
+        ("voice", "create", false),
+    ] {
+        let plan: Plan = serde_json::from_value(json!({"resource_changes":[{
+            "mode":"data", "address":format!("data.nemoclaw_service_readiness.managed_service_{name}"),
+            "change":{"actions":[action]}
+        }, {"address":"docker_container.managed_service_voice", "change":{"actions":["no-op"]}}]})).unwrap();
+        assert_eq!(
+            check_plan(&plan, &allowed, &BTreeMap::new()).is_ok(),
+            accepted
+        );
+    }
+}

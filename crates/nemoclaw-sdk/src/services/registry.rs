@@ -40,6 +40,8 @@ pub enum ServiceDefinition {
     OllamaProxy(OllamaProxy),
     /// Managed vLLM runtime and immutable model snapshot.
     Vllm(Box<installers::vllm::Service>),
+    /// Experimental VoiceClaw installer with protected credentials and scoped agent access.
+    Voiceclaw(Box<installers::voiceclaw::Service>),
 }
 
 /// Retention and process roles of a service installer resource.
@@ -98,7 +100,9 @@ pub fn resource_behavior(kind: &str) -> ResourceBehavior {
         ),
         runtime_process: matches!(
             kind,
-            installers::ollama::SERVICE_KIND | installers::vllm::SERVICE_KIND
+            installers::ollama::SERVICE_KIND
+                | installers::vllm::SERVICE_KIND
+                | super::contract::MANAGED_SERVICE_KIND
         ),
     }
 }
@@ -108,6 +112,7 @@ pub(crate) fn resource_label(kind: &str) -> Option<&'static str> {
         installers::vllm::SERVICE_KIND => Some("inference service"),
         installers::ollama::SERVICE_KIND => Some("Ollama service"),
         "ollama_proxy" => Some("Ollama proxy"),
+        super::contract::MANAGED_SERVICE_KIND => Some("managed service"),
         _ => None,
     }
 }
@@ -131,14 +136,54 @@ pub(crate) fn constrain_schema(
             "imagePullPolicy",
             serde_json::json!({"enum":["IfNotPresent", "Never"]}),
         );
+        crate::config::schema::validation::property(
+            service,
+            "image",
+            serde_json::json!({"pattern":crate::config::constraints::SERVICE_IMAGE}),
+        );
+        let local_image = serde_json::json!({
+            "if": {
+                "properties": {
+                    "image": {"pattern": crate::config::constraints::LOCAL_IMAGE_ID}
+                },
+                "required": ["image"]
+            },
+            "then": {
+                "properties": {"imagePullPolicy": {"const": "Never", "x-nemoclaw-error": "local Docker image ID requires imagePullPolicy Never on a local engine"}},
+                "x-nemoclaw-error": "local Docker image ID requires imagePullPolicy Never on a local engine",
+                "required": ["imagePullPolicy"],
+                "not": {"required": ["placement"]}
+            }
+        });
+        service
+            .as_object_mut()
+            .unwrap()
+            .entry("allOf")
+            .or_insert_with(|| serde_json::json!([]))
+            .as_array_mut()
+            .unwrap()
+            .push(local_image);
     }
+    installers::voiceclaw::constrain_schema(defs);
+}
+
+fn active_service_names(document: &Document) -> Result<BTreeSet<String>, ConfigError> {
+    let mut active: BTreeSet<_> = document
+        .spec
+        .services
+        .iter()
+        .filter(|(_, service)| !matches!(service, ServiceDefinition::Voiceclaw(_)))
+        .map(|(name, _)| name.clone())
+        .collect();
+    active.extend(document.active_voiceclaw_services()?);
+    Ok(active)
 }
 
 impl ServiceDefinition {
     fn stage(&self) -> InstallStage {
         match self {
             Self::Ollama(_) | Self::Vllm(_) => InstallStage::Runtime,
-            Self::OllamaProxy(_) => InstallStage::Deployment,
+            Self::OllamaProxy(_) | Self::Voiceclaw(_) => InstallStage::Deployment,
         }
     }
 
@@ -147,6 +192,7 @@ impl ServiceDefinition {
             Self::Ollama(service) => service.validate(),
             Self::OllamaProxy(service) => service.validate_definition(),
             Self::Vllm(service) => service.validate(),
+            Self::Voiceclaw(service) => service.validate(),
         }
     }
 
@@ -169,6 +215,12 @@ impl ServiceDefinition {
                     "Ollama proxy requires a managed local Docker gateway or explicit local engine",
                 );
             }
+            Self::Voiceclaw(_) => {
+                return crate::config::validation::require(
+                    local_docker,
+                    "VoiceClaw requires a managed local Docker gateway and Docker sandboxes",
+                );
+            }
         };
         crate::config::validation::require(
             placement.is_some() || local_docker,
@@ -182,10 +234,19 @@ impl ServiceDefinition {
     }
 
     fn allocation(&self, gateway: &Gateway) -> Result<Option<NetworkAllocation>, ConfigError> {
+        if let Self::Voiceclaw(service) = self {
+            return Ok(Some(NetworkAllocation {
+                engine: gateway.managed()?.engine.clone(),
+                network_cidr: gateway.managed()?.network_cidr.clone(),
+                bind_address: gateway.managed()?.bridge()?,
+                port: service.serving.port,
+            }));
+        }
         let (placement, port) = match self {
             Self::Ollama(service) => (service.published_placement()?, service.serving.port),
             Self::Vllm(service) => (service.published_placement()?, service.serving.port),
             Self::OllamaProxy(_) => return Ok(None),
+            Self::Voiceclaw(_) => unreachable!("VoiceClaw allocation returned above"),
         };
         let (engine, network_cidr, bind_address) = match placement {
             Some(explicit) => (
@@ -218,6 +279,7 @@ impl Installer for ServiceDefinition {
             Self::Ollama(service) => service.install(document, name, generations),
             Self::OllamaProxy(service) => service.install(document, name, generations),
             Self::Vllm(service) => service.install(document, name, generations),
+            Self::Voiceclaw(service) => service.install(document, name, generations),
         }
     }
 
@@ -231,6 +293,7 @@ impl Installer for ServiceDefinition {
             Self::Ollama(service) => service.remove(document, name, generations),
             Self::OllamaProxy(service) => service.remove(document, name, generations),
             Self::Vllm(service) => service.remove(document, name, generations),
+            Self::Voiceclaw(service) => service.remove(document, name, generations),
         }
     }
 }
@@ -270,6 +333,11 @@ impl ServiceDefinition {
                 requires_authentication: service.authentication.is_some(),
                 resource_dependencies: Vec::new(),
             },
+            ServiceDefinition::Voiceclaw(_) => {
+                return Err(ConfigError::new(
+                    "VoiceClaw is not an inference-capable service",
+                ));
+            }
         })
     }
 
@@ -291,6 +359,9 @@ impl ServiceDefinition {
                 sandbox_runtime == ComputeDriver::Docker || service.placement.is_some(),
                 "vLLM service requires compatible sandbox placement",
             ),
+            ServiceDefinition::Voiceclaw(_) => Err(ConfigError::new(
+                "VoiceClaw is not an inference-capable service",
+            )),
         }
     }
 
@@ -308,6 +379,7 @@ impl ServiceDefinition {
             ServiceDefinition::Vllm(service) => {
                 service.credential_source(document, name, generations)
             }
+            ServiceDefinition::Voiceclaw(_) => Ok(None),
         }
     }
 }
@@ -356,6 +428,7 @@ pub(crate) fn defaults(definition: &mut ServiceDefinition) {
         ServiceDefinition::Vllm(service) => {
             service.defaults();
         }
+        ServiceDefinition::Voiceclaw(_) => {}
     }
 }
 
@@ -425,22 +498,23 @@ pub(crate) fn install_plans(
     generations: &Generations,
     stage: InstallStage,
 ) -> Result<InstallPlans, crate::Error> {
+    let active = active_service_names(document)?;
     let plans = document
         .spec
         .services
         .iter()
-        .filter(|(_, definition)| definition.stage() == stage)
+        .filter(|(name, definition)| active.contains(name.as_str()) && definition.stage() == stage)
         .map(|(name, definition)| definition.install(document, name, generations))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(InstallPlans { plans })
 }
 
 pub(crate) fn has_runtime(document: &Document) -> bool {
-    document
-        .spec
-        .services
-        .values()
-        .any(|definition| definition.stage() == InstallStage::Runtime)
+    let active = active_service_names(document)
+        .unwrap_or_else(|_| document.spec.services.keys().cloned().collect());
+    document.spec.services.iter().any(|(name, definition)| {
+        active.contains(name.as_str()) && definition.stage() == InstallStage::Runtime
+    })
 }
 
 pub(crate) fn validate(document: &Document) -> Result<(), ConfigError> {
@@ -449,6 +523,7 @@ pub(crate) fn validate(document: &Document) -> Result<(), ConfigError> {
         definition.validate_definition()?;
         definition.validate_installation(document)?;
     }
+    document.validate_voiceclaw_integrations()?;
     let gateway = &document.spec.gateway;
     let mut publications = BTreeSet::new();
     let mut networks = BTreeMap::new();
@@ -514,7 +589,11 @@ pub(crate) fn credential_source_json(
 
 pub(crate) fn generation_kinds(document: &Document) -> Result<Vec<&'static str>, ConfigError> {
     let mut kinds = BTreeSet::new();
-    for definition in document.spec.services.values() {
+    let active = active_service_names(document)?;
+    for (name, definition) in &document.spec.services {
+        if !active.contains(name.as_str()) {
+            continue;
+        }
         match definition {
             ServiceDefinition::Ollama(_) => {
                 kinds.insert(installers::ollama::SERVICE_KIND);
@@ -525,6 +604,9 @@ pub(crate) fn generation_kinds(document: &Document) -> Result<Vec<&'static str>,
             ServiceDefinition::Vllm(_) => {
                 kinds.insert(installers::vllm::SERVICE_KIND);
             }
+            ServiceDefinition::Voiceclaw(_) => {
+                kinds.insert(super::contract::MANAGED_SERVICE_KIND);
+            }
         }
     }
     Ok(kinds.into_iter().collect())
@@ -534,10 +616,12 @@ pub(crate) fn remove_plans(
     document: &Document,
     generations: &Generations,
 ) -> Result<Vec<RemovePlan>, crate::Error> {
+    let active = active_service_names(document)?;
     document
         .spec
         .services
         .iter()
+        .filter(|(name, _)| active.contains(name.as_str()))
         .map(|(name, definition)| (name.as_str(), definition))
         .map(|(name, definition)| definition.remove(document, name, generations))
         .collect()
@@ -576,7 +660,9 @@ impl<'a> BackendRegistry<'a> {
             kind,
             installers::vllm::SERVICE_KIND
                 | installers::ollama::SERVICE_KIND
+                | super::contract::MANAGED_SERVICE_STORAGE_KIND
                 | installers::ollama::proxy::PROXY
+                | super::contract::MANAGED_SERVICE_KIND
         ) {
             return Err(ObservationError::Backend(
                 "service lifecycle belongs to the Docker provider",
@@ -586,10 +672,10 @@ impl<'a> BackendRegistry<'a> {
             kind,
             installers::vllm::STORAGE_KIND | installers::ollama::STORAGE_KIND
         ) {
-            let storage_kind = if kind == installers::vllm::STORAGE_KIND {
-                installers::vllm::STORAGE_KIND
-            } else {
-                installers::ollama::STORAGE_KIND
+            let storage_kind = match kind {
+                installers::vllm::STORAGE_KIND => installers::vllm::STORAGE_KIND,
+                installers::ollama::STORAGE_KIND => installers::ollama::STORAGE_KIND,
+                _ => unreachable!("storage kind was checked above"),
             };
             let engine = crate::managed::runtime_engine(self.connections, kind, row)
                 .map_err(|_| ObservationError::Backend("engine connection unavailable"))?;
@@ -629,7 +715,13 @@ mod lifecycle_tests {
         let schemas = resource_schemas();
         let connections = crate::docker::Connections::default();
         let registry = BackendRegistry::new(&connections);
-        for kind in ["inference_service", "ollama_service", "ollama_proxy"] {
+        for kind in [
+            "inference_service",
+            "ollama_service",
+            "ollama_proxy",
+            "managed_service",
+            "managed_service_storage",
+        ] {
             assert!(!schemas.iter().any(|schema| schema.kind == kind));
             assert!(matches!(
                 registry.resolve(kind, &Row::new()),

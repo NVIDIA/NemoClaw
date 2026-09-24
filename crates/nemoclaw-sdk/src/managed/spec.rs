@@ -119,7 +119,12 @@ impl Spec {
                 .all(|byte| byte.is_ascii_lowercase() || byte == b'_')
                 && crate::docker::Engine::validate_endpoint(&process.engine).is_ok()
                 && (process.engine.starts_with("unix://") || process.engine.starts_with("ssh://"))
-                && process.image.contains("@sha256:")
+                && (regex::Regex::new(crate::config::constraints::IMAGE)
+                    .unwrap()
+                    .is_match(&process.image)
+                    || regex::Regex::new(crate::config::constraints::LOCAL_IMAGE_ID)
+                        .unwrap()
+                        .is_match(&process.image))
                 && valid_token(&process.configuration)
                 && !process.entrypoint.is_empty()
                 && process.entrypoint.iter().all(|value| valid_token(value))
@@ -307,10 +312,14 @@ impl Spec {
             ))?;
             config["Entrypoint"] = json!(process.entrypoint);
             config["Cmd"] = json!(process.command);
-            config["Env"] = json!([format!(
-                "NEMOCLAW_RUNTIME_SPEC={}",
-                self.runtime_configuration()?
-            )]);
+            config["Env"] = if self.kind == crate::services::MANAGED_SERVICE_KIND {
+                json!([])
+            } else {
+                json!([format!(
+                    "NEMOCLAW_RUNTIME_SPEC={}",
+                    self.runtime_configuration()?
+                )])
+            };
             host["NetworkMode"] = json!(self.network());
             host["Mounts"] =
                 json!([{"Type":"volume","Source":self.volume(),"Target":process.mount_target}]);

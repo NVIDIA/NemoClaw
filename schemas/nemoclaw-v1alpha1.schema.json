@@ -1241,6 +1241,27 @@
             "credential"
           ],
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "One managed VoiceClaw service bound to one selected sandboxed agent.",
+          "properties": {
+            "kind": {
+              "const": "voiceclaw",
+              "description": "Integration implementation selected by this definition.",
+              "type": "string"
+            },
+            "serviceRef": {
+              "description": "Name of a VoiceClaw service in spec.services.",
+              "pattern": "^[a-z][a-z0-9-]{0,39}$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "serviceRef"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -2230,6 +2251,13 @@
       ],
       "type": "object"
     },
+    "PullPolicy": {
+      "description": "Image acquisition policy supported by VoiceClaw.",
+      "enum": [
+        "Never"
+      ],
+      "type": "string"
+    },
     "ReasoningEffort": {
       "description": "Native reasoning effort; default leaves the harness choice in place.",
       "enum": [
@@ -2596,6 +2624,35 @@
                   }
                 ]
               }
+            },
+            {
+              "if": {
+                "properties": {
+                  "image": {
+                    "pattern": "^sha256:[a-f0-9]{64}$"
+                  }
+                },
+                "required": [
+                  "image"
+                ]
+              },
+              "then": {
+                "not": {
+                  "required": [
+                    "placement"
+                  ]
+                },
+                "properties": {
+                  "imagePullPolicy": {
+                    "const": "Never",
+                    "x-nemoclaw-error": "local Docker image ID requires imagePullPolicy Never on a local engine"
+                  }
+                },
+                "required": [
+                  "imagePullPolicy"
+                ],
+                "x-nemoclaw-error": "local Docker image ID requires imagePullPolicy Never on a local engine"
+              }
             }
           ],
           "dependentRequired": {
@@ -2617,8 +2674,8 @@
               "description": "Explicit supported GPU or system profile."
             },
             "image": {
-              "description": "Immutable runtime image containing Ollama and the NemoClaw supervisor.",
-              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$",
+              "description": "Registry image pinned by digest, or a local Docker image ID with imagePullPolicy Never and no placement.",
+              "pattern": "^(?:[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}|sha256:[a-f0-9]{64})$",
               "type": "string",
               "x-nemoclaw-error": "service image must be pinned by a SHA-256 digest"
             },
@@ -2666,6 +2723,37 @@
         },
         {
           "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "image": {
+                    "pattern": "^sha256:[a-f0-9]{64}$"
+                  }
+                },
+                "required": [
+                  "image"
+                ]
+              },
+              "then": {
+                "not": {
+                  "required": [
+                    "placement"
+                  ]
+                },
+                "properties": {
+                  "imagePullPolicy": {
+                    "const": "Never",
+                    "x-nemoclaw-error": "local Docker image ID requires imagePullPolicy Never on a local engine"
+                  }
+                },
+                "required": [
+                  "imagePullPolicy"
+                ],
+                "x-nemoclaw-error": "local Docker image ID requires imagePullPolicy Never on a local engine"
+              }
+            }
+          ],
           "description": "Managed authentication proxy for an external Ollama daemon and model.",
           "properties": {
             "endpoint": {
@@ -2679,8 +2767,8 @@
               "x-nemoclaw-error": "proxy engine must be a local Unix socket"
             },
             "image": {
-              "description": "Immutable NemoClaw proxy image. The external daemon runs on the selected Docker host.",
-              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$",
+              "description": "Registry image pinned by digest, or a local Docker image ID with imagePullPolicy Never. The external daemon runs on the selected Docker host.",
+              "pattern": "^(?:[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}|sha256:[a-f0-9]{64})$",
               "type": "string",
               "x-nemoclaw-error": "service image must be pinned by a SHA-256 digest"
             },
@@ -2879,6 +2967,35 @@
                   }
                 ]
               }
+            },
+            {
+              "if": {
+                "properties": {
+                  "image": {
+                    "pattern": "^sha256:[a-f0-9]{64}$"
+                  }
+                },
+                "required": [
+                  "image"
+                ]
+              },
+              "then": {
+                "not": {
+                  "required": [
+                    "placement"
+                  ]
+                },
+                "properties": {
+                  "imagePullPolicy": {
+                    "const": "Never",
+                    "x-nemoclaw-error": "local Docker image ID requires imagePullPolicy Never on a local engine"
+                  }
+                },
+                "required": [
+                  "imagePullPolicy"
+                ],
+                "x-nemoclaw-error": "local Docker image ID requires imagePullPolicy Never on a local engine"
+              }
             }
           ],
           "dependentRequired": {
@@ -2921,8 +3038,8 @@
               "x-nemoclaw-required": "Without recipe"
             },
             "image": {
-              "description": "Immutable runtime image containing vLLM, the NemoClaw supervisor, and any declared recipe tools.",
-              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$",
+              "description": "Registry image pinned by digest, or a local Docker image ID with imagePullPolicy Never and no placement.",
+              "pattern": "^(?:[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}|sha256:[a-f0-9]{64})$",
               "type": "string",
               "x-nemoclaw-error": "service image must be pinned by a SHA-256 digest"
             },
@@ -2983,6 +3100,74 @@
               }
             }
           },
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "image": {
+                    "pattern": "^sha256:[a-f0-9]{64}$"
+                  }
+                },
+                "required": [
+                  "image"
+                ]
+              },
+              "then": {
+                "not": {
+                  "required": [
+                    "placement"
+                  ]
+                },
+                "properties": {
+                  "imagePullPolicy": {
+                    "const": "Never",
+                    "x-nemoclaw-error": "local Docker image ID requires imagePullPolicy Never on a local engine"
+                  }
+                },
+                "required": [
+                  "imagePullPolicy"
+                ],
+                "x-nemoclaw-error": "local Docker image ID requires imagePullPolicy Never on a local engine"
+              }
+            }
+          ],
+          "description": "Experimental VoiceClaw installer with protected credentials and scoped agent access.",
+          "properties": {
+            "image": {
+              "description": "Immutable local Docker image ID. VoiceClaw does not pull or build images.",
+              "pattern": "^sha256:[a-f0-9]{64}$",
+              "type": "string",
+              "x-nemoclaw-error": "service image must be pinned by a SHA-256 digest"
+            },
+            "imagePullPolicy": {
+              "$ref": "#/$defs/PullPolicy",
+              "const": "Never",
+              "description": "Must be Never for the preloaded PoC image."
+            },
+            "kind": {
+              "const": "voiceclaw",
+              "description": "Supported installer selected by this service definition.",
+              "type": "string"
+            },
+            "serving": {
+              "$ref": "#/$defs/VoiceclawServing",
+              "description": "VoiceClaw listener and bounded startup settings."
+            },
+            "speech": {
+              "$ref": "#/$defs/VoiceclawSpeech",
+              "description": "Speech provider and host credential reference projected into the owned volume."
+            }
+          },
+          "required": [
+            "kind",
+            "image",
+            "imagePullPolicy",
+            "speech"
+          ],
           "type": "object"
         }
       ]
@@ -3463,6 +3648,13 @@
       ],
       "type": "object"
     },
+    "SpeechProvider": {
+      "description": "Speech provider supported by the initial VoiceClaw package.",
+      "enum": [
+        "nvidia"
+      ],
+      "type": "string"
+    },
     "TLS": {
       "additionalProperties": false,
       "description": "Gateway mutual TLS file references. All three references are required when TLS is declared.",
@@ -3523,6 +3715,46 @@
           "type": "string"
         }
       ]
+    },
+    "VoiceclawServing": {
+      "additionalProperties": false,
+      "description": "VoiceClaw listener and readiness deadline.",
+      "properties": {
+        "port": {
+          "description": "Fixed HTTP and streaming service port exposed by the managed runtime image.",
+          "format": "int64",
+          "maximum": 18790,
+          "minimum": 18790,
+          "type": "integer"
+        },
+        "startupTimeoutSeconds": {
+          "description": "Seconds allowed for content-free service readiness.",
+          "format": "int64",
+          "maximum": 3600,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "VoiceclawSpeech": {
+      "additionalProperties": false,
+      "description": "Speech adapter selected for VoiceClaw.",
+      "properties": {
+        "credential": {
+          "$ref": "#/$defs/Credential",
+          "description": "Host credential reference. The value is never serialized into deployment state."
+        },
+        "provider": {
+          "$ref": "#/$defs/SpeechProvider",
+          "description": "Supported speech provider."
+        }
+      },
+      "required": [
+        "provider",
+        "credential"
+      ],
+      "type": "object"
     }
   },
   "$id": "urn:nemoclaw:config:v1alpha1",

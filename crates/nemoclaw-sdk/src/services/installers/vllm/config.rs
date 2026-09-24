@@ -26,7 +26,7 @@ pub struct Service {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "ServiceAuthentication")]
     pub authentication: Option<ServiceAuthentication>,
-    /// Immutable runtime image containing vLLM, the NemoClaw supervisor, and any declared recipe tools.
+    /// Registry image pinned by digest, or a local Docker image ID with imagePullPolicy Never and no placement.
     pub image: String,
     /// Image acquisition before container creation. Omission means IfNotPresent.
     #[serde(
