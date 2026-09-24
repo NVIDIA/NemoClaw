@@ -603,6 +603,8 @@ describe("openClawAgentIncompleteTurnSignal", () => {
         ["an error stop reason", { meta: { stopReason: "error" } }],
         ["an aborted turn", { meta: { aborted: true } }],
         ["a run error", { meta: { error: { kind: "provider_error" } } }],
+        ["a null run error", { meta: { error: null } }],
+        ["no tool summary", { meta: { toolSummary: undefined } }],
         ["a failed tool", { meta: { toolSummary: { calls: 1, tools: ["exec"], failures: 1 } } }],
         [
           "a turn without tool calls",
@@ -652,6 +654,7 @@ describe("openClawAgentIncompleteTurnSignal", () => {
     it.each([
       ["a non-ok status", { status: "error" }],
       ["an incomplete summary", { summary: "aborted" }],
+      ["no summary", { summary: undefined }],
     ])("keeps replayInvalid as incomplete for a gateway envelope with %s", (_label, wrapper) => {
       expect(openClawAgentIncompleteTurnSignal(gatewayTurn({ wrapper }))?.markers).toEqual([
         "replayInvalid=true",
