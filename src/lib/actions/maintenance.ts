@@ -54,6 +54,7 @@ const D = useColor ? "\x1b[2m" : "";
 const R = useColor ? "\x1b[0m" : "";
 const RD = useColor ? "\x1b[1;31m" : "";
 const YW = useColor ? "\x1b[1;33m" : "";
+const STRICT_BACKUP_POST_STOP_CLEANUP_TIMEOUT_MS = 30_000;
 
 export function shouldSkipUnreachableSandboxBackup(env: NodeJS.ProcessEnv): boolean {
   return env.NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP === "1";
@@ -131,7 +132,9 @@ async function returnStartedSandboxToStopped(
 async function backupSandboxWithinMutationLock(
   sandboxName: string,
   shouldStartStoppedContainer: boolean,
-  discardFailedBackup: ((result: sandboxState.BackupResult) => sandboxState.BackupResult) | null,
+  discardFailedBackup:
+    | ((result: sandboxState.BackupResult, cleanupDeadlineMs: number) => sandboxState.BackupResult)
+    | null,
   backup: (
     startedForBackup: StartedForBackup | null,
     transactionDeadlineMs: number | null,
@@ -193,7 +196,10 @@ async function backupSandboxWithinMutationLock(
       // started container has been returned to Stopped, so synchronous
       // filesystem cleanup cannot consume the lifecycle stop reserve.
       if (result && !result.success && discardFailedBackup) {
-        result = discardFailedBackup(result);
+        result = discardFailedBackup(
+          result,
+          Date.now() + STRICT_BACKUP_POST_STOP_CLEANUP_TIMEOUT_MS,
+        );
       }
       if (stoppedContainerCleanupError && hasBackupError) {
         throw new AggregateError(
@@ -331,7 +337,8 @@ export async function backupAllUnderPortableHostFence(
       sb.name,
       !readyNames.has(sb.name),
       retainPreUpgradePolicy
-        ? (failedResult) => discardIncompleteStrictBackup(sb, failedResult)
+        ? (failedResult, cleanupDeadlineMs) =>
+            discardIncompleteStrictBackup(sb, failedResult, cleanupDeadlineMs)
         : null,
       async (startedForBackup, transactionDeadlineMs) => {
         const backupResult = await (startedForBackup

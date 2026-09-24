@@ -903,6 +903,7 @@ describe("backupAll", () => {
     expect(mocks.returnSandboxContainerToStopped.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.discardIncompleteStrictBackup.mock.invocationCallOrder[0],
     );
+    expect(mocks.discardIncompleteStrictBackup.mock.calls[0]?.[2]).toBeGreaterThan(Date.now());
     expect(logSpy.mock.calls.flat().join("\n")).toContain("0 backed up, 1 failed, 0 skipped");
   });
 

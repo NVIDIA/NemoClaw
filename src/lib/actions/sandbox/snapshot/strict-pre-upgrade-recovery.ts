@@ -11,12 +11,13 @@ import { observeMcpStateForRebuild } from "../rebuild-mcp-phase";
 export function discardIncompleteStrictBackup(
   sandbox: SandboxEntry,
   result: sandboxState.BackupResult,
+  cleanupDeadlineMs: number,
 ): sandboxState.BackupResult {
   const backupPath = result.manifest?.backupPath;
   if (!backupPath) return result;
-  if (sandboxState.removeSandboxStateBackup(sandbox.name, backupPath)) {
+  if (sandboxState.removeSandboxStateBackup(sandbox.name, backupPath, cleanupDeadlineMs)) {
     const { manifest: _removedManifest, ...withoutPartialBackup } = result;
-    return withoutPartialBackup;
+    return { ...withoutPartialBackup, backedUpDirs: [], backedUpFiles: [] };
   }
   const cleanupError = `Failed strict pre-upgrade backup at '${backupPath}' could not be removed`;
   return {

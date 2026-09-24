@@ -134,10 +134,15 @@ describe("strict pre-upgrade recovery retention", () => {
       manifest: { backupPath: "/backups/alpha/timestamp" },
     };
 
-    expect(discardIncompleteStrictBackup(sandbox as never, result as never)).toMatchObject({
+    expect(discardIncompleteStrictBackup(sandbox as never, result as never, 12_345)).toMatchObject({
       error:
         "backup failed. Failed strict pre-upgrade backup at '/backups/alpha/timestamp' could not be removed",
     });
+    expect(mocks.removeSandboxStateBackup).toHaveBeenCalledWith(
+      "alpha",
+      "/backups/alpha/timestamp",
+      12_345,
+    );
   });
 
   it("fails closed when a successful backup has no published manifest", async () => {
@@ -368,10 +373,13 @@ describe("strict pre-upgrade recovery retention", () => {
       manifest: { backupPath: "/backups/alpha/timestamp" },
     });
     expect(mocks.writeRebuildPolicyHandoff).toHaveBeenCalledOnce();
-    expect(discardIncompleteStrictBackup(sandbox as never, failed)).not.toHaveProperty("manifest");
+    expect(discardIncompleteStrictBackup(sandbox as never, failed, 12_345)).not.toHaveProperty(
+      "manifest",
+    );
     expect(mocks.removeSandboxStateBackup).toHaveBeenCalledWith(
       "alpha",
       "/backups/alpha/timestamp",
+      12_345,
     );
   });
 
