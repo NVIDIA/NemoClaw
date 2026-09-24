@@ -14,6 +14,7 @@ mod capabilities;
 mod diagnostics;
 mod draft;
 mod evidence;
+mod facts;
 mod graph;
 mod guided;
 mod projection;
@@ -29,6 +30,7 @@ pub use draft::{
 pub use evidence::{
     CompatibilityStatus, DiscoveryAssessment, DiscoveryEvidence, DiscoveryKey, DiscoveryQuery,
 };
+pub use facts::{AuthoringFacts, EndpointEvidence, GatewayEvidence, HardwareEvidence};
 pub use graph::{AnswerStatus, DependencyGraph};
 pub use guided::{AnswerChange, EditableField, FieldValue, GuidedEdit, GuidedField};
 pub use projection::Session;

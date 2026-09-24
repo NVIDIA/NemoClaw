@@ -45,6 +45,7 @@ pub(crate) struct Wizard {
     pub(super) pending_edit: Option<GuidedEdit>,
     pub(super) target_status: Option<String>,
     pub(super) discovery: Option<nemoclaw_authoring::DiscoveryEvidence>,
+    pub(super) facts: nemoclaw_authoring::AuthoringFacts,
     local_podman: bool,
     history: Vec<Step>,
 }
@@ -69,6 +70,7 @@ impl Wizard {
             pending_edit: None,
             target_status: None,
             discovery: None,
+            facts: Default::default(),
             local_podman: host_os == "linux",
             history: Vec::new(),
         }
@@ -314,7 +316,7 @@ impl Wizard {
     fn field_state(&self) -> Option<nemoclaw_authoring::GuidedField> {
         let field = self.field()?;
         self.draft
-            .guided_fields(&self.capabilities)
+            .guided_fields_with_facts(&self.capabilities, &self.facts)
             .ok()?
             .into_iter()
             .find(|state| state.id() == field)

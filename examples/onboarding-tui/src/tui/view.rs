@@ -65,7 +65,7 @@ impl Wizard {
         let rows = Layout::vertical([
             Constraint::Length(8),
             Constraint::Min(content_height),
-            Constraint::Length(if self.target_status.is_some() { 3 } else { 0 }),
+            Constraint::Length(if self.target_status.is_some() { 4 } else { 0 }),
             Constraint::Length(2),
         ])
         .split(body);

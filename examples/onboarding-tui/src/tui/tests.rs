@@ -665,3 +665,50 @@ fn observed_adapter_conflict_blocks_review_until_the_selection_changes() {
     terminal.draw(|frame| wizard.render(frame)).unwrap();
     assert!(terminal.backend().to_string().contains("harness:openclaw"));
 }
+
+#[test]
+fn discovered_model_can_be_selected_without_overwriting_the_current_suggestion() {
+    use nemoclaw_authoring::{AuthoringFacts, EndpointEvidence};
+    use nemoclaw_sdk::{
+        discovery::ObservationStatus,
+        inference_discovery::{AuthenticationStatus, EndpointObservation},
+    };
+    let mut wizard = wizard();
+    wizard.facts = AuthoringFacts {
+        endpoint: Some(EndpointEvidence {
+            request: wizard
+                .draft
+                .inference_request(&wizard.capabilities)
+                .unwrap(),
+            observation: EndpointObservation {
+                status: ObservationStatus::Available,
+                reason: None,
+                source: "control_host_http_models".into(),
+                reachable: Some(true),
+                authentication: AuthenticationStatus::Accepted,
+                models: vec!["vendor/discovered-model".into()],
+                api_verified: false,
+            },
+        }),
+        ..Default::default()
+    };
+    navigate(&mut wizard, Step::Model, Input::Continue);
+    assert_eq!(
+        wizard.choice_labels()[wizard.selected],
+        "nvidia/nemotron-3-super-120b-a12b"
+    );
+    wizard.handle(Input::Next);
+    assert_eq!(
+        wizard.choice_labels()[wizard.selected],
+        "vendor/discovered-model"
+    );
+    wizard.handle(Input::Continue);
+    assert_eq!(
+        wizard
+            .draft
+            .guided_answers(&wizard.capabilities)
+            .unwrap()
+            .model,
+        "vendor/discovered-model"
+    );
+}

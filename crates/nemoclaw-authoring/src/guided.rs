@@ -72,7 +72,7 @@ pub enum FieldValue {
 pub struct GuidedField {
     id: EditableField,
     value: FieldValue,
-    choices: Vec<FieldValue>,
+    pub(crate) choices: Vec<FieldValue>,
     accepts_custom: bool,
 }
 
