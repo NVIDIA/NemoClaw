@@ -14,6 +14,7 @@ import {
 } from "../../../state/state-directory-restore";
 import { runTarListing } from "../../../state/tar-listing";
 import type { RuntimeProviderBundle } from "../../../onboard/runtime-provider/contract";
+import { managedStartupStateRootOwnership } from "../../../onboard/managed-startup/state-roots";
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "../../../onboard/runtime-provider/current";
 import {
   confirmHostLocalInferenceAuthority,
@@ -767,6 +768,10 @@ export async function prepareStoppedOpenClawState(
       directories: agent.backupStateDirs,
       prefixes: agent.backupStateDirPrefixes,
       files: agent.stateFiles.map((file) => (typeof file === "string" ? file : file.path)),
+      managedStateRoots:
+        authority.workload.kind === "managed-image"
+          ? managedStartupStateRootOwnership({ agent: "openclaw", sandboxName })
+          : [],
     },
   );
   if (!capture) return null;

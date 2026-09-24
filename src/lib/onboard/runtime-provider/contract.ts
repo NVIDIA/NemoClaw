@@ -562,6 +562,11 @@ export interface RuntimeProviderStoppedStateProjection {
   readonly directories: readonly string[];
   readonly prefixes: readonly string[];
   readonly files: readonly string[];
+  readonly managedStateRoots?: readonly {
+    readonly mountTarget: string;
+    readonly resourceIdentity: string;
+    readonly ownershipLabels: Readonly<Record<string, string>>;
+  }[];
 }
 
 export interface RuntimeProviderStoppedStateCapture {

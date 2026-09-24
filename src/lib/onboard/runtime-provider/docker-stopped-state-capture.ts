@@ -55,6 +55,100 @@ with tarfile.open(fileobj=sys.stdin.buffer, mode='r|') as source:
 if not root_seen: raise ValueError('state root header missing')
 `;
 
+function observeManagedStateMounts(
+  mounts: readonly unknown[],
+  roots: NonNullable<RuntimeProviderStoppedStateProjection["managedStateRoots"]>,
+  containerId: string,
+  readDocker: (args: readonly string[]) => string | null,
+): readonly unknown[] | null {
+  const observations: unknown[] = [];
+  const seen = new Set<string>();
+  for (const value of mounts) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const mount = value as Record<string, unknown>;
+    const destination = mount.Destination;
+    if (
+      typeof destination !== "string" ||
+      !path.posix.isAbsolute(destination) ||
+      path.posix.normalize(destination) !== destination
+    )
+      return null;
+    const source = "/sandbox/.openclaw";
+    if (
+      destination !== source &&
+      !destination.startsWith(`${source}/`) &&
+      !source.startsWith(destination === "/" ? "/" : `${destination}/`)
+    )
+      continue;
+    const root = roots.find((candidate) => candidate.mountTarget === destination);
+    if (
+      !root ||
+      seen.has(destination) ||
+      mount.Type !== "volume" ||
+      mount.RW !== true ||
+      mount.Name !== root.resourceIdentity ||
+      !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/u.test(root.resourceIdentity) ||
+      Object.keys(root.ownershipLabels).length === 0
+    )
+      return null;
+    seen.add(destination);
+    const raw = readDocker(["volume", "inspect", "--format", "{{json .}}", root.resourceIdentity]);
+    if (raw === null) return null;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return null;
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const volume = parsed as Record<string, unknown>;
+    const labels = volume.Labels;
+    if (
+      volume.Name !== root.resourceIdentity ||
+      volume.Driver !== "local" ||
+      volume.Scope !== "local" ||
+      mount.Driver !== "local" ||
+      typeof volume.CreatedAt !== "string" ||
+      !Number.isFinite(Date.parse(volume.CreatedAt)) ||
+      typeof volume.Mountpoint !== "string" ||
+      !path.posix.isAbsolute(volume.Mountpoint) ||
+      volume.Mountpoint !== mount.Source ||
+      (volume.Options !== null &&
+        (typeof volume.Options !== "object" ||
+          !volume.Options ||
+          Array.isArray(volume.Options) ||
+          Object.keys(volume.Options).length !== 0)) ||
+      !labels ||
+      typeof labels !== "object" ||
+      Array.isArray(labels) ||
+      !Object.entries(root.ownershipLabels).every(
+        ([key, expected]) => (labels as Record<string, unknown>)[key] === expected,
+      )
+    )
+      return null;
+    const users = readDocker([
+      "ps",
+      "-a",
+      "--no-trunc",
+      "--filter",
+      `volume=${root.resourceIdentity}`,
+      "--format",
+      "{{.ID}}",
+    ]);
+    if (users?.trim() !== containerId) return null;
+    observations.push([
+      volume.Name,
+      volume.Driver,
+      volume.Scope,
+      volume.CreatedAt,
+      volume.Mountpoint,
+      volume.Options,
+      labels,
+    ]);
+  }
+  return observations;
+}
+
 /**
  * Read the OpenClaw state tree from one stopped Docker runtime. This operation
  * never starts or executes in the container and never mutates OpenShell state.
@@ -87,26 +181,37 @@ export function prepareStoppedDockerStateCapture(
     )
   )
     throw new Error("Stopped state projection contains an invalid declared path.");
-  const encodedProjection = JSON.stringify(projection);
+  const encodedProjection = JSON.stringify({
+    directories: projection.directories,
+    prefixes: projection.prefixes,
+    files: projection.files,
+  });
+  const managedStateRoots = structuredClone(projection.managedStateRoots ?? []);
   const containerId = runtime.runtime.runtime.handle;
   const inspect = dependencies.inspect ?? dockerSpawnSync;
   const spawn = dependencies.spawn ?? dockerSpawn;
+  const readDocker = (args: readonly string[]): string | null => {
+    const result = inspect(args, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 10_000,
+      maxBuffer: 1024 * 1024,
+    });
+    return result.status === 0 && !result.error && !result.signal ? String(result.stdout) : null;
+  };
   const observe = (): unknown => {
-    const result = inspect(
-      ["inspect", "--type", "container", "--format", INSPECT_FORMAT, containerId],
-      {
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: 10_000,
-        maxBuffer: 1024 * 1024,
-      },
-    );
-    if (result.status !== 0 || result.error || result.signal) {
-      throw new Error("Could not verify the stopped source container.");
-    }
+    const raw = readDocker([
+      "inspect",
+      "--type",
+      "container",
+      "--format",
+      INSPECT_FORMAT,
+      containerId,
+    ]);
+    if (raw === null) throw new Error("Could not verify the stopped source container.");
     let fields: unknown;
     try {
-      fields = JSON.parse(String(result.stdout));
+      fields = JSON.parse(raw);
     } catch {
       throw new Error("The stopped source container returned invalid identity evidence.");
     }
@@ -136,21 +241,29 @@ export function prepareStoppedDockerStateCapture(
       restarts < 0 ||
       typeof image !== "string" ||
       !/^sha256:[a-f0-9]{64}$/u.test(image) ||
-      !Array.isArray(mounts) ||
-      mounts.some((mount) => {
-        if (!mount || typeof mount.Destination !== "string") return true;
-        const destination = path.posix.normalize(mount.Destination).replace(/\/$/u, "");
-        const source = "/sandbox/.openclaw";
-        return (
-          destination === source ||
-          destination.startsWith(`${source}/`) ||
-          source.startsWith(`${destination}/`)
-        );
-      })
+      !Array.isArray(mounts)
     ) {
       throw new Error("The source container is no longer the stopped registered sandbox.");
     }
-    return [id, state.Status, state.StartedAt, state.FinishedAt, labels, restarts, image, mounts];
+    const ownedVolumes = observeManagedStateMounts(
+      mounts,
+      managedStateRoots,
+      containerId,
+      readDocker,
+    );
+    if (!ownedVolumes)
+      throw new Error("The source container is no longer the stopped registered sandbox.");
+    return [
+      id,
+      state.Status,
+      state.StartedAt,
+      state.FinishedAt,
+      labels,
+      restarts,
+      image,
+      mounts,
+      ownedVolumes,
+    ];
   };
   const initial = observe();
   const assertCurrent = (): void => {
@@ -185,6 +298,8 @@ export function prepareStoppedDockerStateCapture(
           child.kill("SIGKILL");
           filter.kill("SIGKILL");
         };
+        const failRead = (): void =>
+          fail("Could not read and filter the stopped source container.");
         const timer = setTimeout(
           () => fail("Stopped state capture timed out."),
           CAPTURE_TIMEOUT_MS,
@@ -194,9 +309,9 @@ export function prepareStoppedDockerStateCapture(
           if (inputBytes > MAX_ARCHIVE_BYTES)
             fail("Stopped state exceeds the one GiB recovery archive limit.");
         });
-        child.stdout?.pipe(filter.stdin!);
+        child.stdout?.on("error", failRead).pipe(filter.stdin!);
         filter.stdin?.on("error", () => fail("Stopped state archive projection failed."));
-        filter.stdout?.on("data", (chunk: Buffer) => {
+        filter.stdout?.on("error", failRead).on("data", (chunk: Buffer) => {
           if (failure) return;
           outputBytes += chunk.length;
           if (outputBytes > MAX_ARCHIVE_BYTES) {
@@ -216,10 +331,8 @@ export function prepareStoppedDockerStateCapture(
         });
         // Never echo Docker or tar diagnostics: they can contain private source paths.
         for (const producer of [child, filter]) {
-          producer.stderr?.resume();
-          producer.on("error", () =>
-            fail("Could not read and filter the stopped source container."),
-          );
+          producer.stderr?.on("error", failRead).resume();
+          producer.on("error", failRead);
           producer.once("close", (code, signal) => {
             if (code !== 0 || signal) fail("Stopped state capture did not complete.");
             completed += 1;
