@@ -117,21 +117,39 @@ export function validateConfigExportWithPinnedV1(raw: string): PinnedV1ConsumerE
       path.join(FIXTURE_ROOT, "config-export-compatibility.rs"),
       path.join(consumer, "crates/nemoclaw-sdk/tests/config_export_compatibility.rs"),
     );
-    execFileSync(
-      "cargo",
-      ["test", "--locked", "-p", "nemoclaw-sdk", "--test", "config_export_compatibility"],
-      {
-        cwd: consumer,
-        env: consumerEnvironment({
-          CARGO_TARGET_DIR: path.join(temporaryRoot, "cargo-target"),
-          NEMOCLAW_V1_CONFIG_INPUT: input,
-          NEMOCLAW_V1_SETTINGS_OUTPUT: settings,
-        }),
-        maxBuffer: 10 * 1024 * 1024,
-        stdio: "pipe",
-        timeout: 8 * 60_000,
-      },
-    );
+    try {
+      execFileSync(
+        "cargo",
+        ["test", "--locked", "-p", "nemoclaw-sdk", "--test", "config_export_compatibility"],
+        {
+          cwd: consumer,
+          env: consumerEnvironment({
+            CARGO_TARGET_DIR: path.join(temporaryRoot, "cargo-target"),
+            CARGO_INCREMENTAL: "0",
+            CARGO_PROFILE_DEV_DEBUG: "0",
+            NEMOCLAW_V1_CONFIG_INPUT: input,
+            NEMOCLAW_V1_SETTINGS_OUTPUT: settings,
+          }),
+          maxBuffer: 10 * 1024 * 1024,
+          stdio: "pipe",
+          timeout: 8 * 60_000,
+        },
+      );
+    } catch (error) {
+      const failure = error as Error & {
+        status?: number | null;
+        signal?: string | null;
+        stdout?: Buffer;
+        stderr?: Buffer;
+      };
+      // E2E evidence bounds diagnostics, so retain the cause after build progress.
+      throw new Error(
+        `Pinned v1 consumer failed (status=${failure.status ?? "unknown"}, signal=${failure.signal ?? "none"}).\n` +
+          `stdout tail:\n${failure.stdout?.toString().slice(-800) ?? ""}\n` +
+          `stderr tail:\n${failure.stderr?.toString().slice(-1_000) ?? ""}`,
+        { cause: error },
+      );
+    }
     const output = execFileSync(
       "python3",
       [path.join(FIXTURE_ROOT, "validate-native-settings.py"), consumer, settings],
