@@ -137,6 +137,7 @@ export function validateConfigExportWithPinnedV1(raw: string): PinnedV1ConsumerE
       );
     } catch (error) {
       const failure = error as Error & {
+        code?: string;
         status?: number | null;
         signal?: string | null;
         stdout?: Buffer;
@@ -144,10 +145,9 @@ export function validateConfigExportWithPinnedV1(raw: string): PinnedV1ConsumerE
       };
       // E2E evidence bounds diagnostics, so retain the cause after build progress.
       throw new Error(
-        `Pinned v1 consumer failed (status=${failure.status ?? "unknown"}, signal=${failure.signal ?? "none"}).\n` +
+        `Pinned v1 consumer failed (status=${failure.status ?? "unknown"}, signal=${failure.signal ?? "none"}, code=${failure.code ?? "none"}).\n` +
           `stdout tail:\n${failure.stdout?.toString().slice(-800) ?? ""}\n` +
           `stderr tail:\n${failure.stderr?.toString().slice(-1_000) ?? ""}`,
-        { cause: error },
       );
     }
     const output = execFileSync(

@@ -24,6 +24,7 @@ it("retains terminal consumer failure output and removes its temporary workspace
         env: { CARGO_INCREMENTAL: "0", CARGO_PROFILE_DEV_DEBUG: "0" },
       });
       throw Object.assign(new Error("build progress".repeat(1_000)), {
+        code: "ERR_CHILD_PROCESS",
         status: 101,
         signal: null,
         stdout: Buffer.from("progress\n".repeat(1_000) + "export must compile: invalid route"),
@@ -35,9 +36,12 @@ it("retains terminal consumer failure output and removes its temporary workspace
   try {
     validateConfigExportWithPinnedV1("fixture export");
   } catch (error) {
+    expect(error).not.toHaveProperty("cause");
+    expect(error).not.toHaveProperty("stdout");
+    expect(error).not.toHaveProperty("stderr");
     diagnostic = (error as Error).message;
   }
-  expect(diagnostic).toContain("status=101, signal=none");
+  expect(diagnostic).toContain("status=101, signal=none, code=ERR_CHILD_PROCESS");
   expect(diagnostic).toContain("export must compile: invalid route");
   expect(diagnostic).toContain("error: test failed");
   expect(diagnostic.length).toBeLessThan(2_048);

@@ -204,6 +204,9 @@ function targetFilesystem(
 
 function targetPolicy(source: VerifiedExportSource): Record<string, unknown> {
   const policy = structuredClone(source.policy) as Record<string, unknown>;
+  const landlock = policy.landlock as Record<string, unknown> | undefined;
+  // The pinned v1 consumer names fail-closed Landlock enforcement hard_requirement.
+  if (landlock?.compatibility === "strict") landlock.compatibility = "hard_requirement";
   targetProcess(policy);
   targetFilesystem(policy, source.agent);
   return policy;
