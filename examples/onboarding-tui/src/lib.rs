@@ -13,11 +13,10 @@ use std::{
     path::Path,
 };
 
-/// A template starts a new deployment; editing retains the existing identity.
+/// Read-only defaults for a new deployment with a fresh identity.
 pub enum Source<'a> {
     Defaults,
     Template(&'a Path),
-    Edit(&'a Path),
 }
 
 /// Run the questionnaire and save to a new file. Cancellation writes nothing.
@@ -70,7 +69,6 @@ fn load(
                 Session::new()?.project(capabilities, &Answers::onboarding_defaults())?;
             Draft::from_document(authored.document().clone())?
         }
-        Source::Edit(path) => read_draft(path)?,
         Source::Template(path) => {
             let original = read_draft(path)?;
             let capabilities = capabilities.preserving_draft(&original)?;
@@ -112,7 +110,7 @@ fn write_path(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 mod tests {
     use super::*;
     #[test]
-    fn saved_unknown_harness_reopens_as_edit_and_template_without_losing_settings() {
+    fn saved_unknown_harness_is_a_template_without_losing_defaults() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("unknown.yaml");
         let defaults = load(Source::Defaults, &Capabilities::available()).unwrap();
@@ -128,11 +126,9 @@ mod tests {
         std::fs::write(&path, &yaml).unwrap();
         let original = Draft::from_yaml(yaml.as_bytes()).unwrap();
         let capabilities = Capabilities::available();
-        let edited = load(Source::Edit(&path), &capabilities).unwrap();
-        assert_eq!(edited.document(), original.document());
-        let retained = capabilities.preserving_draft(&edited).unwrap();
+        let retained = capabilities.preserving_draft(&original).unwrap();
         assert_eq!(
-            edited.guided_answers(&retained).unwrap().harness.as_str(),
+            original.guided_answers(&retained).unwrap().harness.as_str(),
             "fixture-reopen-adapter"
         );
         assert!(
@@ -173,7 +169,7 @@ mod tests {
     }
 
     #[test]
-    fn oversized_edit_input_is_rejected() {
+    fn oversized_template_input_is_rejected() {
         let directory = tempfile::tempdir().unwrap();
         let input = directory.path().join("large.yaml");
         std::fs::write(&input, vec![b' '; (MAX_DOCUMENT_BYTES + 1) as usize]).unwrap();
@@ -183,7 +179,7 @@ mod tests {
         );
     }
     #[test]
-    fn templates_get_a_new_identity_while_edits_keep_the_original() {
+    fn each_template_run_writes_a_new_deployment_without_changing_defaults() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("template.yaml");
         let capabilities = Capabilities::available();
@@ -199,10 +195,16 @@ mod tests {
             template.guided_answers(&capabilities).unwrap(),
             original.guided_answers(&capabilities).unwrap()
         );
-        assert_eq!(
-            load(Source::Edit(&path), &capabilities).unwrap().document(),
-            original.document()
+        let another = load(Source::Template(&path), &capabilities).unwrap();
+        assert_ne!(
+            another.document().metadata.uid,
+            template.document().metadata.uid
         );
+        let output = directory.path().join("new-deployment.yaml");
+        write_path(&output, template.review().unwrap().yaml().as_bytes()).unwrap();
+        let generated =
+            nemoclaw_sdk::config::Document::parse(std::fs::File::open(output).unwrap()).unwrap();
+        assert_eq!(&generated, template.document());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), yaml);
     }
 

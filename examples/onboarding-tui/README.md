@@ -54,8 +54,8 @@ The standalone example uses the same questionnaire:
 cargo run -p nemoclaw-onboarding -- examples/onboarding/openclaw.yaml --output my-deployment.yaml
 ```
 
-Use the standalone example's `--edit FILE` instead of a template to retain an existing deployment UID.
-It still saves to a new output file.
+Both entrypoints treat input YAML only as defaults for a new deployment.
+There is no mode for editing an existing deployment or retaining the template's UID.
 Both entrypoints reject configuration the guided authoring library cannot preserve, including managed inference services and multiple sandboxes.
 The other deployment examples are not all supported questionnaire inputs.
 
@@ -117,7 +117,7 @@ The complete public model configuration remains subject to Fabric's planner, inc
 Optional settings can be left unset; a required setting without a default needs an answer.
 Schema defaults remain suggestions until accepted or explicitly delegated.
 Review checks the complete settings object against the current schema, including constraints spanning multiple fields.
-Saved settings and arbitrary harness identifiers reopen without requiring an entry in the bundled catalog.
+Saved YAML can supply settings and arbitrary harness identifiers as defaults for a new deployment, without requiring an entry in the bundled catalog.
 When no settings schema is advertised, existing opaque settings remain preserved but there are no schema-derived questions.
 If one harness identifier matches distinct adapter schemas, authoring reports the adapter identities instead of choosing a schema by file order.
 NemoClaw does not remove native fields from a descriptor or maintain a separate adapter manifest; native mapping and missing discovery contracts belong to Fabric.
@@ -135,7 +135,7 @@ An Anthropic-compatible endpoint uses the Anthropic protocol; the selected Fabri
 
 Provider presets supply endpoint, model, and credential-reference suggestions.
 They do not restrict existing provider names, endpoint URLs, or credential environment-variable references.
-Reopening a configuration retains those values, and changing its model keeps the connection intact.
+Loading a template retains those values as defaults, and changing its model keeps the connection intact.
 An explicitly authored engine endpoint is also preserved through guided edits.
 Anonymous endpoints retain the absence of a credential reference; the SDK schema determines when an endpoint cannot carry one.
 The wizard asks for an endpoint when using a custom compatible provider; it does not ask users to name internal provider, sandbox, or agent records.
