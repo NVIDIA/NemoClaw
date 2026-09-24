@@ -132,12 +132,15 @@ mod tests {
         assert_eq!(edited.document(), original.document());
         let retained = capabilities.preserving_draft(&edited).unwrap();
         assert_eq!(
-            retained
-                .scenarios()
+            edited.guided_answers(&retained).unwrap().harness.as_str(),
+            "fixture-reopen-adapter"
+        );
+        assert!(
+            !retained
+                .harnesses()
                 .iter()
-                .filter(|scenario| scenario.harness().as_str() == "fixture-reopen-adapter")
-                .count(),
-            1
+                .any(|harness| harness.as_str() == "fixture-reopen-adapter"),
+            "retained intent is not advertised capability"
         );
         let template = load(Source::Template(&path), &capabilities).unwrap();
         assert_ne!(

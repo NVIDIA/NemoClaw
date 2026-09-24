@@ -3,37 +3,12 @@
 use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr};
 
-/// Fabric harness identifier. Named variants retain existing native integrations;
-/// other validated identifiers are dispatched through Fabric's generic contract.
+/// Opaque canonical Fabric adapter identifier. Fabric owns its interpretation.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum HarnessKind {
-    DeepAgents,
-    Hermes,
-    OpenClaw,
-    Claude,
-    Codex,
-    MiniSweAgent,
-    Nooa,
-    NooaBench,
-    RemoteAgent,
-    Pi,
-    Other(String),
-}
+pub struct HarnessKind(String);
 impl HarnessKind {
     pub fn as_str(&self) -> &str {
-        match self {
-            Self::DeepAgents => "deepagents",
-            Self::Hermes => "hermes",
-            Self::OpenClaw => "openclaw",
-            Self::Claude => "claude",
-            Self::Codex => "codex",
-            Self::MiniSweAgent => "mini-swe-agent",
-            Self::Nooa => "nooa",
-            Self::NooaBench => "nooa-bench",
-            Self::RemoteAgent => "remote-agent",
-            Self::Pi => "pi",
-            Self::Other(value) => value,
-        }
+        &self.0
     }
 }
 impl fmt::Display for HarnessKind {
@@ -44,28 +19,10 @@ impl fmt::Display for HarnessKind {
 impl FromStr for HarnessKind {
     type Err = super::ConfigError;
     fn from_str(value: &str) -> Result<Self, Self::Err> {
-        if value.is_empty()
-            || value.len() > 63
-            || !value.as_bytes()[0].is_ascii_lowercase()
-            || !value
-                .bytes()
-                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
-        {
+        if value.trim().is_empty() {
             return Err(super::ConfigError::new("invalid Fabric harness identifier"));
         }
-        Ok(match value {
-            "deepagents" => Self::DeepAgents,
-            "hermes" => Self::Hermes,
-            "openclaw" => Self::OpenClaw,
-            "claude" => Self::Claude,
-            "codex" => Self::Codex,
-            "mini-swe-agent" => Self::MiniSweAgent,
-            "nooa" => Self::Nooa,
-            "nooa-bench" => Self::NooaBench,
-            "remote-agent" => Self::RemoteAgent,
-            "pi" => Self::Pi,
-            _ => Self::Other(value.to_owned()),
-        })
+        Ok(Self(value.to_owned()))
     }
 }
 impl Serialize for HarnessKind {
@@ -88,7 +45,7 @@ impl schemars::JsonSchema for HarnessKind {
         true
     }
     fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
-        schemars::json_schema!({"type":"string", "pattern":"^[a-z][a-z0-9-]{0,62}$(?![\\s\\S])", "minLength":1, "maxLength":63})
+        schemars::json_schema!({"type":"string", "pattern":"\\S", "minLength":1})
     }
 }
 

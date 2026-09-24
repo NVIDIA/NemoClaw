@@ -26,7 +26,7 @@ spec:
       network:
         tier: isolated
       harness:
-        kind: nooa-bench
+        kind: nvidia.fabric.nooa.bench-agent
       agent:
         name: main
         inference:

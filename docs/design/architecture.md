@@ -17,6 +17,7 @@ The [accepted scope](scope.md) defines the invariants; this page explains the re
 | Docker provider | Docker containers, images, model-cache volumes, and service networks |
 | NemoClaw provider | OpenShell operations, Podman gateway processes, durable storage contracts, and readiness observations |
 | Hosted runtime | Model preparation, startup, application health, and protective shutdown |
+| Fabric | Adapter and target discovery, native schemas, native configuration validation and mapping, and agent execution |
 
 Operation coordination belongs in the SDK so applications and the CLI share the same recovery behavior.
 The SDK checks deployment scope and recovery constraints; providers decide resource transitions and verify remote identity before mutation.
@@ -76,14 +77,18 @@ Configuration retains credential references, not values.
 
 The [authoring library](../../crates/nemoclaw-authoring/src/lib.rs) owns an SDK `Document` while a frontend edits or reviews it.
 It has no terminal or deployment operations.
-Its guided API intersects a generated, revision-matched Fabric descriptor catalog with the configurations the frontend can preserve.
-Provider suggestions and presentation ordering remain authoring policy.
-The SDK validates the generic document contract and retains explicit native integration constraints; Fabric owns adapter descriptors and their settings schemas.
-Harness identifiers are open validated strings, so discovered adapters can pass through authoring, compilation, and runtime dispatch without a new name allowlist.
-Opaque adapter settings survive that path; the questionnaire does not invent native configuration questions.
-It refuses a guided edit when the document has V1 configuration that the guided flow cannot show, which prevents data loss.
-The [onboarding TUI](../../examples/onboarding-tui/README.md) renders these fields for `nemoclaw onboard` and the standalone example.
-Neither entrypoint applies resources.
+Its guided API consumes Fabric descriptor schemas and preserves explicit choices independently of target availability.
+Provider presets supply presentation defaults; they do not form a compatibility matrix.
+The SDK owns deployment references, credentials, security grants, and resource lifecycle.
+Fabric owns adapter identity, native capability claims, accepted settings, configuration validation, and native mapping.
+Image builds call Fabric discovery in the installed environment and attach canonical records to the image.
+The bundled snapshot is provisional offline metadata.
+Harness identifiers are opaque strings.
+Authoring derives questions, choices, defaults, and conditional requirements from the selected settings schema.
+The SDK projects deployment references into one public Fabric configuration; both planning and execution consume that configuration.
+The selected-image descriptor snapshot is validated by Fabric's planner, without starting adapters or reading their native code.
+An unavailable or incompatible metadata version leaves native validation unknown.
+Generic field validation helps the interview; Fabric's planner owns validation of the complete native configuration.
 
 The authoring dependency graph relates fields independently of their screen order.
 The next-question heuristic considers unresolved fields whose active prerequisites are resolved, then prefers the field that constrains the most remaining decisions.
@@ -107,6 +112,14 @@ Gateway checks and existing-resource refresh retain their existing owners and fa
 Credential availability and explicit host collectors remain direct operations; neither introduces a second provider-state owner.
 Observed model identifiers supplement suggestions without replacing accepted intent or proving inference behavior.
 See [provider discovery](../provider.md#engine-and-fabric-discovery) for observation status and planning policy.
+
+Native interface, tool-disclosure, and reasoning settings are authored through Fabric's configuration and adapter settings.
+Managed search credentials, endpoint protocols, and network grants remain SDK deployment behavior.
+The reconstructible `agent_configuration` resource applies canonical Fabric configuration after provider routes are established.
+It restarts the Fabric runtime inside its retained sandbox when configuration changes; it does not replace the sandbox.
+A restarted host waits for explicit apply before starting a runtime, because persisted intent does not prove that current gateway routes match.
+The host calls Fabric's public plan/start/invoke/stop APIs and transports health reports when Fabric provides them.
+Native model or agent probes with no Fabric contract remain unavailable.
 
 The authoring dependency graph and OpenTofu execution graph have different jobs.
 The former chooses questions and invalidates dependent answers; the latter schedules provider reads and resource operations for concrete desired state.
@@ -191,7 +204,8 @@ The [retention reference](../state.md#deletion-and-retention) lists what survive
 ## Readiness and Export
 
 Required service and sandbox readiness runs through provider data sources in the graph, including on unchanged applies.
-Sandbox completion checks configuration, startup, and Fabric health without invoking an agent or requesting model responses.
+Sandbox completion checks deployment configuration and runtime startup, then requests Fabric health when supported, without invoking an agent or model.
+A remembered active handle does not establish fresh native health or native file validation; see [observation limits](fabric-management.md#observation-limits).
 The SDK reports the fresh OpenTofu observations; it does not repeat those probes.
 Only failures proven to be exclusively completion observations can clear the pending-mutation guard.
 Readiness failure retains resource state and persistent data.

@@ -15,16 +15,19 @@ pub struct FabricCatalog {
     pub fabric_revision: String,
     pub source_sha256: String,
     pub adapters: Vec<FabricAdapter>,
+    #[serde(default)]
+    pub targets: Vec<serde_json::Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FabricAdapter {
-    pub harness: String,
-    pub adapter_id: String,
-    pub adapter_kind: String,
-    pub source: String,
-    /// Canonical descriptor, including settings and model schemas when provided.
     pub descriptor: serde_json::Value,
+    pub provenance: serde_json::Value,
+}
+impl FabricAdapter {
+    pub fn adapter_id(&self) -> &str {
+        self.descriptor["adapter_id"].as_str().unwrap_or_default()
+    }
 }
 
 impl FabricCatalog {
@@ -38,17 +41,23 @@ impl FabricCatalog {
         let valid_digest = |value: &str, len| {
             value.len() == len && value.bytes().all(|byte| byte.is_ascii_hexdigit())
         };
-        if catalog.schema_version != 1
+        if catalog.schema_version != 2
             || !valid_digest(&catalog.fabric_revision, 40)
             || !valid_digest(&catalog.source_sha256, 64)
             || catalog.adapters.iter().any(|adapter| {
-                adapter.harness.is_empty()
-                    || adapter.source.is_empty()
-                    || adapter.adapter_id.is_empty()
-                    || adapter.adapter_kind.is_empty()
-                    || adapter.descriptor["contract_version"] != "fabric.adapter/v1alpha2"
-                    || adapter.descriptor["adapter_id"] != adapter.adapter_id
-                    || adapter.descriptor["adapter_kind"] != adapter.adapter_kind
+                adapter.descriptor["contract_version"] != nemo_fabric_core::ADAPTER_CONTRACT_VERSION
+                    || serde_json::from_value::<nemo_fabric_core::ResolvedAdapterDescriptor>(
+                        serde_json::to_value(adapter).expect("serializable descriptor"),
+                    )
+                    .is_err()
+            })
+            || catalog.targets.iter().any(|target| {
+                target["descriptor"]["contract_version"]
+                    != nemo_fabric_core::ADAPTER_CONTRACT_VERSION
+                    || serde_json::from_value::<nemo_fabric_core::ResolvedAdapterTargetDescriptor>(
+                        target.clone(),
+                    )
+                    .is_err()
             })
         {
             return Err(<serde_json::Error as serde::de::Error>::custom(
@@ -64,26 +73,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn bundled_catalog_keeps_canonical_upstream_and_local_descriptors() {
+    fn bundled_catalog_keeps_only_canonical_descriptor_records() {
         let catalog = FabricCatalog::bundled();
-        assert!(
-            catalog
-                .adapters
-                .iter()
-                .any(|item| item.harness == "opencode")
-        );
-        assert!(
-            catalog
-                .adapters
-                .iter()
-                .any(|item| item.adapter_id == "nemoclaw.local.openclaw")
-        );
-        assert!(
-            catalog
-                .adapters
-                .iter()
-                .any(|item| item.adapter_id == "nvidia.fabric.langchain.deepagents")
-        );
+        assert!(!catalog.adapters.is_empty());
+        for adapter in catalog.adapters {
+            assert!(!adapter.adapter_id().is_empty());
+            assert!(
+                adapter
+                    .provenance
+                    .as_array()
+                    .is_some_and(|items| !items.is_empty())
+            );
+        }
     }
 
     #[test]
@@ -91,8 +92,8 @@ mod tests {
         let mut catalog = FabricCatalog::bundled();
         catalog.schema_version = 99;
         assert!(FabricCatalog::from_json(&serde_json::to_string(&catalog).unwrap()).is_err());
-        catalog.schema_version = 1;
-        catalog.adapters[0].adapter_id = "substituted".into();
+        catalog.schema_version = 2;
+        catalog.adapters[0].descriptor["contract_version"] = "substituted".into();
         assert!(FabricCatalog::from_json(&serde_json::to_string(&catalog).unwrap()).is_err());
     }
 }

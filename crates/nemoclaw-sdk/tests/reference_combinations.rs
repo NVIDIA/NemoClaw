@@ -102,22 +102,9 @@ fn declaration_scope_combinations_preserve_runtime_and_authored_intent() {
 }
 
 #[test]
-fn example_settings_satisfy_the_maintained_fabric_adapter_contracts() {
+fn example_configurations_pass_the_canonical_fabric_planner() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let contracts: std::collections::BTreeMap<_, _> = ["openclaw", "hermes"]
-        .into_iter()
-        .map(|kind| {
-            let descriptor: Value = serde_json::from_slice(
-                &std::fs::read(root.join(format!("image/fabric/{kind}.fabric-adapter.json")))
-                    .unwrap(),
-            )
-            .unwrap();
-            (
-                kind,
-                jsonschema::validator_for(&descriptor["settings_schema"]).unwrap(),
-            )
-        })
-        .collect();
+    let catalog = nemoclaw_sdk::fabric_catalog::FabricCatalog::bundled();
     let generations: Generations = [
         "workspace",
         "provider",
@@ -130,24 +117,36 @@ fn example_settings_satisfy_the_maintained_fabric_adapter_contracts() {
     .map(|key| (key.into(), "a".repeat(32)))
     .into();
     let mut checked = 0;
+    let mut failures = Vec::new();
     for path in examples::yaml_files(&root.join("examples")) {
         let document = Document::parse(std::fs::File::open(&path).unwrap()).unwrap();
-        let rows = targets(&document, &generations).unwrap();
+        let _rows = targets(&document, &generations).unwrap();
         for definition in &document.spec.sandboxes {
-            let kind = &document.sandbox_harness(definition).unwrap().kind;
-            let Some(contract) = contracts.get(kind.as_str()) else {
-                continue;
-            };
-            let sandbox = rows
+            let configuration =
+                nemoclaw_sdk::fabric_config::for_sandbox(&document, definition).unwrap();
+            let descriptors = catalog
+                .adapters
                 .iter()
-                .find(|row| row.kind == "sandbox" && row.values["name"] == definition.name)
-                .unwrap();
-            let settings = json!({"agent_name": sandbox.values["agent_name"], "inference": serde_json::from_str::<Value>(&sandbox.values["inference_json"]).unwrap()});
-            contract.validate(&settings).unwrap_or_else(|error| {
-                panic!("{} / {}: {error}", path.display(), definition.name)
-            });
+                .map(|adapter| {
+                    serde_json::from_value(serde_json::to_value(adapter).unwrap()).unwrap()
+                })
+                .collect::<Vec<_>>();
+            let targets = catalog
+                .targets
+                .iter()
+                .map(|target| serde_json::from_value(target.clone()).unwrap())
+                .collect::<Vec<_>>();
+            if let Err(error) = nemo_fabric_core::resolve_run_plan_from_descriptors(
+                serde_json::from_value(configuration).unwrap(),
+                nemo_fabric_core::ResolveContext::new("/sandbox"),
+                &descriptors,
+                &targets,
+            ) {
+                failures.push(format!("{} / {}: {error}", path.display(), definition.name));
+            }
             checked += 1;
         }
     }
     assert!(checked > 0);
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }

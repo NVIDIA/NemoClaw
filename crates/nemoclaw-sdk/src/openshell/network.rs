@@ -177,7 +177,7 @@ mod tests {
             host: "proxy.internal".into(),
             port: 3129,
         };
-        let command = launch_command("fabric-openclaw", Some(&proxy));
+        let command = launch_command("fabric", Some(&proxy));
         // BSD printenv accepts one variable name; GNU printenv also accepts several.
         for (key, expected) in [
             ("HTTP_PROXY", "http://proxy.internal:3129"),

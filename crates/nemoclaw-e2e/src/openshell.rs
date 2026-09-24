@@ -29,8 +29,8 @@ pub struct State {
     pub exec_truncated: bool,
     pub exec_stalled: bool,
     pub exec_calls: Vec<Vec<String>>,
-    pub pi_models: HashMap<String, serde_json::Value>,
-    pub pi_stopped: bool,
+    pub fabric_configurations: HashMap<String, serde_json::Value>,
+    pub fabric_stopped: bool,
     pub effects: usize,
     pub expected_bearer: Option<String>,
     pub conditional_updates: usize,
@@ -643,7 +643,10 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
             }));
         }
         if request.command.iter().any(|arg| arg == "probe")
-            && request.command.last().is_some_and(|arg| arg == "hermes")
+            && request
+                .command
+                .get(1)
+                .is_some_and(|arg| arg.ends_with("/fabric.py"))
         {
             events.push(Ok(p::ExecSandboxEvent {
                 payload: Some(p::exec_sandbox_event::Payload::Stdout(
@@ -653,34 +656,21 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
                 )),
             }));
         }
-        if request.command.get(2).is_some_and(|c| c == "configure")
-            && request.command.get(4).is_some_and(|c| c == "pi")
-            && state.exec_exit == 0
-        {
-            state.pi_models.insert(
+        if request.command.get(2).is_some_and(|c| c == "configure") && state.exec_exit == 0 {
+            state.fabric_configurations.insert(
                 request.sandbox_id.clone(),
-                serde_json::from_str(&request.command[5]).unwrap(),
+                serde_json::from_str(&request.command[4]).unwrap(),
             );
-            state.pi_stopped = false;
+            state.fabric_stopped = false;
         }
         if request
             .command
             .get(2)
-            .is_some_and(|c| c.contains("Read the existing Pi host status"))
+            .is_some_and(|c| c.contains("Read the existing Fabric host status"))
         {
-            let model = state.pi_models.get(&request.sandbox_id);
-            let sandbox = state
-                .sandboxes
-                .values()
-                .find(|s| s.metadata.as_ref().unwrap().id == request.sandbox_id)
-                .unwrap();
-            let agent = &sandbox.metadata.as_ref().unwrap().labels["nemoclaw.nvidia.com/agent"];
-            let config = model.map(|m| {
-                let mut selected = serde_json::json!({"model":m["model"]});
-                if let Some(metadata) = m.get("piModel") { selected["settings"] = serde_json::json!({"model_metadata":metadata}); }
-                serde_json::json!({"metadata":{"name":agent}, "harness":{"adapter_id":"nvidia.fabric.pi"}, "models":{"default":selected}})
-            });
-            let status = serde_json::json!({"ready":model.is_some() && !state.pi_stopped,"runtime_id":"pi-runtime","config":config});
+            let model = state.fabric_configurations.get(&request.sandbox_id);
+            let config = model.cloned();
+            let status = serde_json::json!({"ready":model.is_some() && !state.fabric_stopped,"runtime_id":"pi-runtime","config":config});
             events.push(Ok(p::ExecSandboxEvent {
                 payload: Some(p::exec_sandbox_event::Payload::Stdout(
                     p::ExecSandboxStdout {

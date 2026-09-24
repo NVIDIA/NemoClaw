@@ -45,7 +45,7 @@ Do not attach environment dumps, TLS private keys, interface tokens, or the enti
 | Plan would remove or replace a resource | Check [update constraints](usage.md#updates-and-recovery) and the relevant configuration guide before choosing a new deployment |
 | Interrupted apply | Resolve the cause and reapply the original YAML with its retained state |
 | Unfinished destroy | Resume destroy with the same state; other operations refuse unfinished teardown |
-| Native configuration or interface-token drift | Follow [agent interface diagnosis](interfaces.md#diagnose-failures); configuration checks do not overwrite conflicts |
+| Public Fabric configuration mismatch or native startup rejection | Follow [agent interface diagnosis](interfaces.md#diagnose-failures); retained public configuration checks do not audit native files or tokens |
 
 For proxy policies, the pinned OpenShell supervisor can add read-only `/var/log` access to the loaded policy.
 NemoClaw accepts that runtime addition while preserving the authored policy; other loaded-policy differences still fail observation.
@@ -134,7 +134,7 @@ OpenClaw writes gateway stdout and stderr to its retained native home:
 openshell sandbox exec -n assistant -- tail -n 100 /sandbox/.openclaw/gateway.log
 ```
 
-The default local Hermes adapter writes its Fabric-owned API process output separately from dashboard sessions:
+The Hermes service mode writes its Fabric-owned API process output separately from dashboard sessions:
 
 ```sh
 openshell sandbox exec -n assistant -- tail -n 100 /sandbox/.hermes/api.log
@@ -144,8 +144,9 @@ Expect the latest process output, which may be empty before the process emits a 
 A missing file can mean startup stopped before opening the log; it does not establish that the sandbox or its data is absent.
 Use the original apply error and the [failure table](#identify-the-failure) to choose recovery.
 Do not replay an uncertain native invocation merely to reproduce a log entry.
-The [OpenClaw](../image/fabric/openclaw_adapter.py) and [Hermes](../image/fabric/hermes_adapter.py) adapters define these paths and append behavior.
-The experimental [Hermes Relay mode](agents.md#hermes-relay-tracing) without explicit `interfaces` uses another adapter; its trace artifacts do not imply that the local API process or `api.log` exists.
+The [OpenClaw](https://github.com/NVIDIA/NeMo-Fabric/tree/24f068c895e5cbc30286bc743498be4e5014d658/adapters/python/openclaw) and [Hermes](https://github.com/NVIDIA/NeMo-Fabric/tree/24f068c895e5cbc30286bc743498be4e5014d658/adapters/python/hermes) adapters define these paths and append behavior.
+The selected Fabric settings determine Hermes' native runtime mode.
+[Relay trace artifacts](agents.md#hermes-relay-tracing) alone do not establish a native API process or `api.log`.
 
 Collection procedures for other harnesses, Hermes dashboard logs, and an inaccessible sandbox: **TBD** pending verification of each process and access path.
 

@@ -51,12 +51,16 @@ pub struct Answers {
     pub harness: HarnessChoice,
     pub image: String,
     pub harness_settings: Option<serde_json::Map<String, serde_json::Value>>,
+    pub harness_config: Option<serde_json::Map<String, serde_json::Value>>,
     pub runtime: RuntimeChoice,
+    pub engine: Option<String>,
     pub inference: ProviderPreset,
     pub api: ApiChoice,
+    pub provider_api: Option<InferenceApi>,
     pub provider_name: String,
     pub endpoint: String,
     pub model: String,
+    pub model_settings: Option<serde_json::Map<String, serde_json::Value>>,
     pub credential_env: String,
 }
 
@@ -93,8 +97,13 @@ impl Answers {
         self.agent_name = inputs.agent_name.unwrap_or(self.agent_name);
         self.harness = inputs.harness.unwrap_or(self.harness);
         self.runtime = inputs.runtime.unwrap_or(self.runtime);
-        self.inference = inputs.inference.unwrap_or(self.inference);
-        self.api = inputs.api.unwrap_or(self.api);
+        if let Some(provider) = inputs.inference {
+            self = self.for_provider(provider);
+        }
+        if let Some(api) = inputs.api {
+            self.api = api;
+            self.provider_api = Some(api);
+        }
         self.provider_name = inputs.provider_name.unwrap_or(self.provider_name);
         self.endpoint = inputs.endpoint.unwrap_or(self.endpoint);
         self.model = inputs.model.unwrap_or(self.model);
@@ -102,19 +111,18 @@ impl Answers {
         self
     }
 
-    /// Adopts one advertised scenario while preserving user-facing identity.
-    pub fn for_scenario(mut self, scenario: &crate::Scenario) -> Self {
-        if self.harness != scenario.harness() {
-            self.harness_settings = None;
+    /// Apply an endpoint preset without making a native compatibility claim.
+    pub fn for_provider(mut self, provider: ProviderPreset) -> Self {
+        let profile = provider.profile();
+        self.inference = provider;
+        if !provider.apis().contains(&self.api) {
+            self.api = provider.apis()[0];
         }
-        self.harness = scenario.harness();
-        self.runtime = scenario.runtime();
-        self.inference = scenario.inference();
-        self.api = scenario.api();
-        self.provider_name = scenario.provider_name.into();
-        self.endpoint = scenario.endpoint.into();
-        self.credential_env = scenario.credential_env.into();
-        if let Some(model) = scenario.default_model() {
+        self.provider_api = Some(self.api);
+        self.provider_name = profile.name.into();
+        self.endpoint = profile.endpoint.into();
+        self.credential_env = profile.credential.into();
+        if let Some(model) = profile.default_model {
             self.model = model.into();
         }
         self

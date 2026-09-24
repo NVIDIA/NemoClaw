@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! Dispatch for service definitions and installer-owned resource backends.
-use crate::config::{ComputeDriver, HarnessKind};
+use crate::config::ComputeDriver;
 
 use super::{
     ManagedOllama, OllamaProxy,
@@ -277,7 +277,6 @@ impl ServiceDefinition {
         &self,
         provider: &InferenceProvider,
         sandbox_runtime: ComputeDriver,
-        harness: HarnessKind,
         model: &str,
     ) -> Result<(), ConfigError> {
         match self {
@@ -286,7 +285,7 @@ impl ServiceDefinition {
                     || provider.api == Some(crate::config::InferenceApi::OpenaiCompletions),
                 "managed Ollama requires the OpenAI Completions API",
             ),
-            ServiceDefinition::OllamaProxy(service) => service.validate(provider, model, harness),
+            ServiceDefinition::OllamaProxy(service) => service.validate(provider, model),
             ServiceDefinition::Vllm(service) => crate::config::validation::require(
                 sandbox_runtime == ComputeDriver::Docker || service.placement.is_some(),
                 "vLLM service requires compatible sandbox placement",
@@ -484,7 +483,6 @@ pub(crate) fn validate_route(
     document: &Document,
     provider: &InferenceProvider,
     sandbox_runtime: ComputeDriver,
-    harness: HarnessKind,
     model: &str,
 ) -> Result<(), ConfigError> {
     use crate::config::validation::require;
@@ -496,7 +494,7 @@ pub(crate) fn validate_route(
         model == resolved.served_model,
         "service requires its declared served model",
     )?;
-    definition.validate_route(provider, sandbox_runtime, harness, model)
+    definition.validate_route(provider, sandbox_runtime, model)
 }
 
 pub(crate) fn credential_source_json(

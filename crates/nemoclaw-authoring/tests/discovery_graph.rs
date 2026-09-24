@@ -45,13 +45,12 @@ fn evidence(draft: &Draft) -> DiscoveryEvidence {
                 ..Default::default()
             },
             compatibility: None,
-            adapters: Vec::new(),
         }),
     }
 }
 
 #[test]
-fn available_engine_and_selected_adapter_establish_compatibility_without_changing_choices() {
+fn available_engine_and_owner_valid_configuration_establish_compatibility() {
     let draft = draft();
     let choices = draft.guided_fields(&Capabilities::available()).unwrap()[0]
         .choices()
@@ -78,14 +77,14 @@ fn confirmed_missing_adapter_is_a_conflict_but_missing_image_and_unknown_engine_
         .as_mut()
         .unwrap()
         .adapters
-        .retain(|adapter| adapter.harness != "openclaw");
+        .retain(|adapter| adapter.descriptor["adapter_id"] != "nvidia.fabric.openclaw");
     let assessment = observed.assessment(&draft).unwrap();
     assert_eq!(assessment.status, CompatibilityStatus::Conflict);
     assert!(
         assessment
             .reasons
             .iter()
-            .any(|reason| reason.contains("openclaw"))
+            .any(|reason| reason.contains("fabric_plan"))
     );
     observed.fabric.as_mut().unwrap().status = ObservationStatus::Unavailable;
     assert_eq!(
@@ -156,7 +155,7 @@ fn identity_edits_preserve_evidence_and_runtime_edits_recheck_engine() {
 fn harness_change_rechecks_the_catalog_without_invalidating_image_observation() {
     let draft = draft();
     let mut observed = evidence(&draft);
-    observed.key.harness = HarnessKind::Hermes;
+    observed.key.harness = "nvidia.fabric.hermes".parse::<HarnessKind>().unwrap();
     observed
         .fabric
         .as_mut()
@@ -165,7 +164,7 @@ fn harness_change_rechecks_the_catalog_without_invalidating_image_observation() 
         .as_mut()
         .unwrap()
         .adapters
-        .retain(|adapter| adapter.harness == "hermes");
+        .retain(|adapter| adapter.descriptor["adapter_id"] == "nvidia.fabric.hermes");
     let assessment = observed.assessment(&draft).unwrap();
     assert_eq!(assessment.status, CompatibilityStatus::Conflict);
     assert!(assessment.pending.is_empty());
@@ -176,7 +175,7 @@ fn retarget_preserves_unaffected_observations_and_invalidates_their_dependents()
     let draft = draft();
     let mut observed = evidence(&draft);
     let mut key = observed.key.clone();
-    key.harness = HarnessKind::Hermes;
+    key.harness = "nvidia.fabric.hermes".parse::<HarnessKind>().unwrap();
     observed.retarget(key.clone());
     assert!(observed.engine.is_some());
     assert!(observed.fabric.is_some());
@@ -191,26 +190,28 @@ fn retarget_preserves_unaffected_observations_and_invalidates_their_dependents()
 }
 
 #[test]
-fn selected_api_is_checked_against_the_observed_descriptor_not_only_the_harness_name() {
-    let draft = draft();
-    let mut observed = evidence(&draft);
-    let catalog = observed.fabric.as_mut().unwrap().catalog.as_mut().unwrap();
-    let adapter = catalog
-        .adapters
-        .iter_mut()
-        .find(|a| a.harness == "openclaw")
-        .unwrap();
-    adapter.descriptor["settings_schema"]["$defs"]["api"]["enum"]
-        .as_array_mut()
+fn native_configuration_is_checked_by_the_fabric_planner() {
+    let valid = draft();
+    assert_eq!(
+        evidence(&valid).assessment(&valid).unwrap().status,
+        CompatibilityStatus::Compatible
+    );
+    let mut document = valid.document().clone();
+    document.spec.sandboxes[0]
+        .harness
+        .as_mut()
         .unwrap()
-        .retain(|value| value.as_str() == Some("openai-responses"));
+        .settings =
+        Some(serde_json::from_value(serde_json::json!({"not_in_the_owner_schema": true})).unwrap());
+    let draft = Draft::from_document(document).unwrap();
+    let observed = evidence(&draft);
     let assessment = observed.assessment(&draft).unwrap();
     assert_eq!(assessment.status, CompatibilityStatus::Conflict);
     assert!(
         assessment
             .reasons
             .iter()
-            .any(|reason| reason.contains("api:openai-completions"))
+            .any(|reason| reason.contains("fabric_plan"))
     );
 }
 

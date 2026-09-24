@@ -95,7 +95,7 @@ fn reconstructible_recreation_uses_opentofu_state_after_refresh_only() {
 
 #[test]
 fn reconstructible_resources_support_removal_replacement_and_confirmed_absence() {
-    for kind in ["provider", "provider_profile", "pi_configuration"] {
+    for kind in ["provider", "provider_profile", "agent_configuration"] {
         let address = format!("nemoclaw_{kind}.example");
         let expected = [(address.clone(), Row::new())].into();
         let bindings = [(
@@ -169,7 +169,7 @@ fn teardown_delegates_reconstructible_and_disposable_recovery_to_opentofu() {
     for address in [
         "nemoclaw_provider.example",
         "nemoclaw_provider_profile.example",
-        "nemoclaw_pi_configuration.example",
+        "nemoclaw_agent_configuration.example",
         "docker_container.runtime",
     ] {
         let allowed = BTreeMap::from([(address.into(), Row::new())]);

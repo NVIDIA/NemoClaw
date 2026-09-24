@@ -1,8 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# Set the endpoint and model for your service. Custom models need piModel metadata.
-# See docs/agents.md for catalog models and protocol requirements.
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata:
@@ -13,30 +11,32 @@ spec:
     management: external
     endpoint: http://127.0.0.1:17681
   inferenceProviders:
-    - name: local
-      provider: openai
-      endpoint: http://172.20.0.1:11446/v1
+  - name: local
+    provider: openai
+    endpoint: http://172.20.0.1:11446/v1
   sandboxes:
-    - name: assistant
-      image:
-        ref: nc-multi-models@sha256:2ee5e33522a37d3d77bb6381a92e963cb1d5884f2dd28b353b4b7fa0d95f212e
-      runtime:
-        provider: docker
-      network:
-        tier: isolated
-      harness:
-        kind: pi
-      agent:
-        name: main
-        inference:
-          routes:
-            - name: primary
-              providerRef: local
-              overrides:
-                model: qwen3:4b
-                piModel:
-                  api: openai-completions
-                  contextWindow: 8192
-                  maxTokens: 2048
-                  reasoning: false
-                  input: [text]
+  - name: assistant
+    image:
+      ref: nc-multi-models@sha256:2ee5e33522a37d3d77bb6381a92e963cb1d5884f2dd28b353b4b7fa0d95f212e
+    runtime:
+      provider: docker
+    network:
+      tier: isolated
+    harness:
+      kind: nvidia.fabric.pi
+    agent:
+      name: main
+      inference:
+        routes:
+        - name: primary
+          providerRef: local
+          overrides:
+            model: qwen3:4b
+            settings:
+              model_metadata:
+                api: openai-completions
+                contextWindow: 8192
+                maxTokens: 2048
+                reasoning: false
+                input:
+                - text

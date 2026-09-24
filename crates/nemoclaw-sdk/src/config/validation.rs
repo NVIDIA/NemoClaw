@@ -116,15 +116,9 @@ impl Document {
                 "sandbox names must be unique",
             )?;
             sandbox.network.validate()?;
-            let harness = self.sandbox_harness(sandbox)?;
-            sandbox
-                .network
-                .validate_runtime_access(harness.kind.clone())?;
+            sandbox.network.validate_runtime_access()?;
             let web_search = self.web_search(sandbox)?;
-            sandbox.policy_proto(
-                web_search.as_ref().map(|search| search.provider),
-                harness.observability.as_ref(),
-            )?;
+            sandbox.policy_proto(web_search.as_ref().map(|search| search.provider))?;
             if let Some(search) = web_search {
                 require(
                     selected_providers.iter().all(|provider| {
@@ -135,57 +129,31 @@ impl Document {
                     }),
                     "brave-search and tavily-search names are reserved for web search",
                 )?;
-                search.validate(
-                    harness.kind.clone(),
-                    std::iter::once((sandbox.agent.name.as_str(), sandbox.agent.tools.as_ref())),
-                )?;
+                search.validate(std::iter::once((
+                    sandbox.agent.name.as_str(),
+                    sandbox.agent.tools.as_ref(),
+                )))?;
             }
             let agent = &sandbox.agent;
 
             if let Some(tools) = &agent.tools {
-                tools.validate(harness.kind.clone())?;
+                tools.validate()?;
             }
-            require(
-                self.sandbox_inference(sandbox)?.routes.len() == 1
-                    || matches!(harness.kind, HarnessKind::OpenClaw | HarnessKind::Pi),
-                "multiple model choices require OpenClaw or Pi",
-            )?;
             let inference = self.scoped_inference(sandbox)?;
             for route in &inference.inference.routes {
                 let selected = self.route_provider(route, &inference)?;
                 let provider = selected.definition;
-                require(
-                    provider
-                        .api
-                        .is_none_or(|api| api.provider_override(harness.kind.clone()).is_some()),
-                    "Pi selects its API through model metadata; omit provider api",
-                )?;
-                let api = provider
-                    .api
-                    .unwrap_or(InferenceApi::for_harness(harness.kind.clone()));
-                require(
-                    provider.api.is_some()
-                        || (api == InferenceApi::AnthropicMessages)
-                            == (provider.provider == InferenceProviderKind::Anthropic),
-                    "default API must match the provider implementation",
-                )?;
                 if agent.auth.is_some() {
                     require(
-                        harness.kind == HarnessKind::Hermes
-                            && crate::services::provider_authenticated(self, provider)?,
-                        "Hermes API-key auth must reference the routed provider with a credential",
+                        crate::services::provider_authenticated(self, provider)?,
+                        "API-key auth must reference the routed provider with a credential",
                     )?;
                 }
-                route.overrides.tuning.validate(harness.kind.clone())?;
-                require(
-                    route.overrides.pi_model.is_none() || harness.kind == HarnessKind::Pi,
-                    "piModel is supported only by the Pi harness",
-                )?;
+                route.overrides.tuning.validate()?;
                 crate::services::validate_route(
                     self,
                     provider,
                     sandbox.runtime.provider,
-                    harness.kind.clone(),
                     &route.overrides.model,
                 )?;
             }
@@ -228,10 +196,6 @@ impl Document {
         }
         Ok(())
     }
-}
-
-pub(crate) fn valid_model(model: &str) -> bool {
-    schema::validate_property("Overrides", "model", &model).is_ok()
 }
 
 pub(crate) fn valid_name(name: &str) -> bool {

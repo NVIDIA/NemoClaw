@@ -4,7 +4,7 @@
 //! Interpret advertised Fabric metadata without treating absent claims as support.
 //! Tool support here means descriptor-advertised tool configuration, not proof
 //! that an inference model can execute tool calls.
-use crate::fabric_catalog::{FabricAdapter, FabricCatalog};
+use crate::fabric_catalog::FabricCatalog;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -16,36 +16,12 @@ pub enum Support {
     Unknown,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AdapterCapabilities {
-    pub adapter_id: String,
-    pub harness: String,
-    pub apis: Option<Vec<String>>,
-    pub streaming: Support,
-    pub service: Support,
-    pub cancellation: Support,
-    pub updates: Support,
-    pub tools: Support,
-    pub interfaces: Option<Vec<String>>,
-    pub interfaces_complete: bool,
-    pub config_fields: Option<Vec<String>>,
-    pub settings_schema: Option<Value>,
-    pub model_schema: Option<Value>,
-    pub requirements: Option<Value>,
-    pub required_binaries: Option<Vec<String>>,
-}
-
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 pub struct FabricRequirements {
-    pub harness: String,
-    pub api: Option<String>,
-    #[serde(default)]
-    pub additional_apis: Vec<String>,
-    pub streaming: bool,
-    pub tools: bool,
-    pub interfaces: Vec<String>,
-    pub config_fields: Vec<String>,
+    pub configuration: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filesystem_read: Option<Vec<String>>,
 }
 
 impl FabricRequirements {
@@ -53,48 +29,23 @@ impl FabricRequirements {
         document: &crate::config::Document,
         sandbox: &crate::config::Sandbox,
     ) -> Result<Self, crate::config::ConfigError> {
-        use crate::config::{AgentInterfaces, HermesDashboard};
-        let harness = document.sandbox_harness(sandbox)?;
-        let settings = document.sandbox_runtime_settings(sandbox)?;
-        let mut apis = vec![api_name(settings.api).to_owned()];
-        for agent in &settings.agents {
-            if let Some(inference) = &agent.inference {
-                for model in inference.models.values() {
-                    let api = api_name(model.api).to_owned();
-                    if !apis.contains(&api) {
-                        apis.push(api);
-                    }
-                }
+        let filesystem_read = match &sandbox.network.policy {
+            crate::config::NetworkPolicy::Explicit(policy) => {
+                policy.filesystem_policy.as_ref().map(|fs| {
+                    fs.read_only
+                        .iter()
+                        .flatten()
+                        .chain(fs.read_write.iter().flatten())
+                        .cloned()
+                        .collect()
+                })
             }
-        }
-        let interfaces = match harness.interfaces.as_ref() {
-            Some(AgentInterfaces::OpenClaw(_)) => vec!["dashboard".into()],
-            Some(AgentInterfaces::Hermes(interfaces)) => {
-                let mut names = vec!["api".into()];
-                if !matches!(interfaces.dashboard, Some(HermesDashboard::Disabled)) {
-                    names.push("dashboard".into());
-                }
-                names
-            }
-            None => vec![],
+            _ => None,
         };
         Ok(Self {
-            harness: harness.kind.as_str().into(),
-            api: Some(apis.remove(0)),
-            additional_apis: apis,
-            tools: sandbox.agent.tools.is_some(),
-            interfaces,
-            ..Self::default()
+            configuration: crate::fabric_config::for_sandbox(document, sandbox)?,
+            filesystem_read,
         })
-    }
-}
-
-pub fn api_name(api: crate::config::InferenceApi) -> &'static str {
-    use crate::config::InferenceApi;
-    match api {
-        InferenceApi::OpenaiCompletions => "openai-completions",
-        InferenceApi::OpenaiResponses => "openai-responses",
-        InferenceApi::AnthropicMessages => "anthropic-messages",
     }
 }
 
@@ -120,95 +71,24 @@ pub struct ImageMetadata {
     pub size_bytes: Option<i64>,
 }
 
-fn strings(value: Option<&Value>) -> Option<Vec<String>> {
-    value?
-        .as_array()?
-        .iter()
-        .map(|value| value.as_str().map(str::to_owned))
-        .collect()
-}
-fn boolean(value: Option<&Value>) -> Support {
-    match value.and_then(Value::as_bool) {
-        Some(true) => Support::Supported,
-        Some(false) => Support::Unsupported,
-        None => Support::Unknown,
+struct OfflineSchemas;
+impl jsonschema::Retrieve for OfflineSchemas {
+    fn retrieve(
+        &self,
+        uri: &jsonschema::Uri<String>,
+    ) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
+        Err(format!("external schema retrieval is disabled: {uri}").into())
     }
 }
 
-/// Project explicit fields from the canonical descriptor. Unknown fields stay
-/// available in the original descriptor and schemas, without guessed defaults.
-pub fn project_adapter(adapter: &FabricAdapter) -> AdapterCapabilities {
-    let descriptor = &adapter.descriptor;
-    let settings_schema = descriptor.get("settings_schema");
-    let apis = settings_schema
-        .and_then(|schema| {
-            [
-                "/properties/inference/properties/api",
-                "/properties/api_type",
-                "/properties/api_mode",
-            ]
-            .into_iter()
-            .find_map(|path| {
-                let field = schema.pointer(path)?;
-                let field = match field.get("$ref").and_then(Value::as_str) {
-                    Some(reference) => schema.pointer(reference.strip_prefix('#')?)?,
-                    None => field,
-                };
-                strings(field.get("enum"))
-            })
-        })
-        .map(|values| {
-            values
-                .into_iter()
-                .map(|value| match value.as_str() {
-                    "chat_completions" => "openai-completions".into(),
-                    "codex_responses" => "openai-responses".into(),
-                    "anthropic_messages" => "anthropic-messages".into(),
-                    _ => value,
-                })
-                .collect()
-        });
-    let config_fields = strings(descriptor.pointer("/config/accepts"));
-    let tools = if descriptor.get("tool_definition_schema").is_some()
-        || config_fields
-            .as_ref()
-            .is_some_and(|fields| fields.iter().any(|field| field.starts_with("tools.")))
-        || descriptor
-            .pointer(
-                "/settings_schema/properties/inference/properties/agents/items/properties/tools",
-            )
-            .is_some()
-    {
-        Support::Supported
-    } else {
-        Support::Unknown
-    };
-    let interfaces = descriptor
-        .pointer("/settings_schema/properties/inference/properties/interfaces/properties")
-        .and_then(Value::as_object)
-        .map(|properties| properties.keys().cloned().collect());
-    AdapterCapabilities {
-        adapter_id: adapter.adapter_id.clone(),
-        harness: adapter.harness.clone(),
-        apis,
-        streaming: boolean(descriptor.pointer("/capabilities/streaming")),
-        service: boolean(descriptor.pointer("/capabilities/service")),
-        cancellation: boolean(descriptor.pointer("/capabilities/cancellation")),
-        updates: boolean(descriptor.pointer("/capabilities/updates")),
-        tools,
-        interfaces,
-        interfaces_complete: descriptor
-            .pointer(
-                "/settings_schema/properties/inference/properties/interfaces/additionalProperties",
-            )
-            .and_then(Value::as_bool)
-            == Some(false),
-        config_fields,
-        settings_schema: descriptor.get("settings_schema").cloned(),
-        model_schema: descriptor.get("model_schema").cloned(),
-        requirements: descriptor.get("requirements").cloned(),
-        required_binaries: strings(descriptor.pointer("/requirements/binaries")),
-    }
+/// Validate an instance against advertised metadata without network or file
+/// retrieval. Invalid or unresolved schemas provide no evidence of support.
+pub fn schema_accepts(schema: &Value, value: &Value) -> Option<bool> {
+    jsonschema::options()
+        .with_retriever(OfflineSchemas)
+        .build(schema)
+        .ok()
+        .map(|validator| validator.is_valid(value))
 }
 
 fn check(requirement: impl Into<String>, status: Support) -> CapabilityCheck {
@@ -221,13 +101,6 @@ fn check(requirement: impl Into<String>, status: Support) -> CapabilityCheck {
             Support::Unknown => "metadata does not establish this capability",
         }
         .into(),
-    }
-}
-fn membership(values: Option<&Vec<String>>, value: &str) -> Support {
-    match values {
-        Some(values) if values.iter().any(|item| item == value) => Support::Supported,
-        Some(_) => Support::Unsupported,
-        None => Support::Unknown,
     }
 }
 fn overall(checks: &[CapabilityCheck]) -> Support {
@@ -246,66 +119,101 @@ fn overall(checks: &[CapabilityCheck]) -> Support {
 /// Require one adapter to satisfy the complete request. Capabilities from
 /// different adapters are never combined into a fictitious supported adapter.
 pub fn assess_fabric(catalog: &FabricCatalog, request: &FabricRequirements) -> CompatibilityReport {
-    let mut best = CompatibilityReport {
-        status: Support::Unsupported,
-        adapter_id: None,
-        checks: vec![check(
-            format!("harness:{}", request.harness),
-            Support::Unsupported,
-        )],
+    let configuration = request.configuration.clone();
+    let result = plan_configuration(catalog, configuration);
+    let status = match &result {
+        Ok(_) => Support::Supported,
+        Err(FabricPlanningError::Unverified) => Support::Unknown,
+        Err(FabricPlanningError::Rejected) => Support::Unsupported,
     };
-    for adapter in catalog
-        .adapters
-        .iter()
-        .filter(|adapter| adapter.harness == request.harness)
+    let mut checks = vec![CapabilityCheck {
+        requirement: "fabric_plan".into(),
+        status,
+        reason: match status {
+            Support::Supported => {
+                "Fabric accepted the configuration against the selected descriptor snapshot"
+            }
+            Support::Unsupported => {
+                "Fabric rejected the configuration against the selected descriptor snapshot"
+            }
+            Support::Unknown => {
+                "The selected image does not establish compatibility with the SDK Fabric contract"
+            }
+        }
+        .into(),
+    }];
+    if let (Ok(plan), Some(grants)) = (&result, &request.filesystem_read)
+        && let Some(descriptor) = &plan.adapter_descriptor
     {
-        let projected = project_adapter(adapter);
-        let mut checks = vec![check(
-            format!("harness:{}", request.harness),
-            Support::Supported,
-        )];
-        for api in request.api.iter().chain(&request.additional_apis) {
+        for file in &descriptor.descriptor.requirements.files {
+            let allowed = file.is_absolute() && grants.iter().any(|grant| file.starts_with(grant));
             checks.push(check(
-                format!("api:{api}"),
-                membership(projected.apis.as_ref(), api),
-            ));
-        }
-        if request.streaming {
-            checks.push(check("streaming", projected.streaming));
-        }
-        if request.tools {
-            checks.push(check("tools", projected.tools));
-        }
-        for interface in &request.interfaces {
-            checks.push(check(
-                format!("interface:{interface}"),
-                match membership(projected.interfaces.as_ref(), interface) {
-                    Support::Unsupported if !projected.interfaces_complete => Support::Unknown,
-                    status => status,
+                "deployment_filesystem_grant",
+                if allowed {
+                    Support::Supported
+                } else {
+                    Support::Unsupported
                 },
             ));
         }
-        for field in &request.config_fields {
-            checks.push(check(
-                format!("config:{field}"),
-                membership(projected.config_fields.as_ref(), field),
-            ));
-        }
-        let report = CompatibilityReport {
-            status: overall(&checks),
-            adapter_id: Some(adapter.adapter_id.clone()),
-            checks,
-        };
-        if report.status == Support::Supported {
-            return report;
-        }
-        if best.adapter_id.is_none()
-            || (report.status == Support::Unknown && best.status == Support::Unsupported)
-        {
-            best = report;
-        }
     }
-    best
+    CompatibilityReport {
+        status: overall(&checks),
+        adapter_id: request
+            .configuration
+            .pointer("/harness/adapter_id")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        checks,
+    }
+}
+
+/// Secret-safe classification of canonical planning results.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum FabricPlanningError {
+    #[error("Fabric compatibility cannot be established for the selected image contract")]
+    Unverified,
+    #[error("Fabric rejected the public configuration")]
+    Rejected,
+}
+
+/// Canonical Fabric planner, restricted to the observed descriptor snapshot.
+pub fn plan_configuration(
+    catalog: &FabricCatalog,
+    configuration: Value,
+) -> Result<nemo_fabric_core::RunPlan, FabricPlanningError> {
+    if catalog.fabric_revision != FabricCatalog::bundled().fabric_revision {
+        return Err(FabricPlanningError::Unverified);
+    }
+    let config =
+        serde_json::from_value(configuration).map_err(|_| FabricPlanningError::Rejected)?;
+    let descriptors = catalog
+        .adapters
+        .iter()
+        .map(|adapter| {
+            serde_json::from_value(serde_json::to_value(adapter).expect("descriptor JSON"))
+        })
+        .collect::<Result<Vec<nemo_fabric_core::ResolvedAdapterDescriptor>, _>>()
+        .map_err(|_| FabricPlanningError::Unverified)?;
+    let targets = catalog
+        .targets
+        .iter()
+        .cloned()
+        .map(serde_json::from_value)
+        .collect::<Result<Vec<nemo_fabric_core::ResolvedAdapterTargetDescriptor>, _>>()
+        .map_err(|_| FabricPlanningError::Unverified)?;
+    nemo_fabric_core::resolve_run_plan_from_descriptors(
+        config,
+        nemo_fabric_core::ResolveContext::new("/sandbox"),
+        &descriptors,
+        &targets,
+    )
+    .map_err(|error| match error {
+        nemo_fabric_core::FabricError::UnverifiedAdapterCapability { .. } => {
+            FabricPlanningError::Unverified
+        }
+        _ => FabricPlanningError::Rejected,
+    })
 }
 
 fn architecture(value: &str) -> &str {

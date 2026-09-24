@@ -7,6 +7,7 @@ use std::fmt;
 
 pub mod fabric_capabilities;
 pub mod fabric_catalog;
+pub mod fabric_config;
 
 mod artifact_pins {
     include!(concat!(env!("OUT_DIR"), "/artifact_pins.rs"));

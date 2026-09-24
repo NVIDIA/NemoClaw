@@ -17,7 +17,7 @@ spec:
   sandboxes:
     - name: assistant
       harness:
-        kind: openclaw
+        kind: nvidia.fabric.openclaw
       agent:
         name: researcher
         inference:

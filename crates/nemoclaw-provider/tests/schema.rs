@@ -139,7 +139,7 @@ fn registered_resources_compute_only_owned_observations_and_require_model_digest
         let running = schema.block.attributes.get("running");
         assert_eq!(
             running.is_some(),
-            matches!(kind.as_str(), "managed_gateway" | "pi_configuration"),
+            matches!(kind.as_str(), "managed_gateway" | "agent_configuration"),
             "{kind}"
         );
         if let Some(running) = running {

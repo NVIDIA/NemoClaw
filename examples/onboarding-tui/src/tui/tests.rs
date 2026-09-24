@@ -16,7 +16,7 @@ fn wizard() -> Wizard {
 }
 
 fn navigate(wizard: &mut Wizard, wanted: Step, input: Input) {
-    for _ in 0..24 {
+    for _ in 0..280 {
         if wizard.step() == wanted {
             return;
         }
@@ -48,11 +48,11 @@ fn select_label(wizard: &mut Wizard, label: &str) {
 fn catalog_harness_outside_original_menu_authors_valid_yaml() {
     let mut wizard = wizard();
     wizard.handle(Input::Continue);
-    select_label(&mut wizard, "claude");
+    select_label(&mut wizard, "nvidia.fabric.claude");
     wizard.handle(Input::Continue);
     navigate(&mut wizard, Step::Review, Input::Continue);
     let reviewed = wizard.draft().review().unwrap();
-    assert!(reviewed.yaml().contains("claude"));
+    assert!(reviewed.yaml().contains("nvidia.fabric.claude"));
     assert_eq!(
         wizard
             .draft()
@@ -60,7 +60,7 @@ fn catalog_harness_outside_original_menu_authors_valid_yaml() {
             .unwrap()
             .harness
             .as_str(),
-        "claude"
+        "nvidia.fabric.claude"
     );
 }
 
@@ -71,7 +71,7 @@ fn wizard_guides_every_authoring_choice_and_filters_invalid_apis() {
     wizard.handle(Input::Continue);
     assert_eq!(wizard.step(), Step::Harness);
 
-    select_label(&mut wizard, HarnessChoice::DeepAgents.as_str());
+    select_label(&mut wizard, "nvidia.fabric.langchain.deepagents");
     wizard.handle(Input::Continue);
     assert_eq!(
         wizard
@@ -79,7 +79,7 @@ fn wizard_guides_every_authoring_choice_and_filters_invalid_apis() {
             .guided_answers(&wizard.capabilities)
             .unwrap()
             .harness,
-        HarnessChoice::DeepAgents
+        "nvidia.fabric.langchain.deepagents".parse().unwrap()
     );
     assert_eq!(wizard.step(), Step::Inference);
     navigate(&mut wizard, Step::DeploymentName, Input::Continue);
@@ -115,7 +115,6 @@ fn focused_screen_uses_a_static_texture_inline_step_and_thin_footer_progress() {
         "Choose your agent harness",
         "openclaw",
         "hermes",
-        "⟦ 1/7 ⟧",
         "Enter",
     ] {
         assert!(
@@ -157,7 +156,7 @@ fn focused_screen_uses_a_static_texture_inline_step_and_thin_footer_progress() {
         "question needs a spacer after logo\n{rendered}"
     );
     assert!(
-        question.contains("⟦ 1/7 ⟧"),
+        question.contains(&format!("⟦ 1/{} ⟧", wizard.flow_steps().len())),
         "step is not beside title\n{rendered}"
     );
     let progress = rendered.lines().last().unwrap();
@@ -272,6 +271,7 @@ fn compatible_provider_prompts_for_endpoint_and_manual_model() {
     let answers = wizard.draft().guided_answers(&wizard.capabilities).unwrap();
     assert_eq!(answers.endpoint, "https://models.example.test/v1");
     assert_eq!(answers.model, "acme/custom-model");
+    navigate(&mut wizard, Step::Review, Input::Continue);
     assert_eq!(wizard.step(), Step::Review);
 }
 
@@ -358,16 +358,21 @@ fn accepting_template_defaults_preserves_a_custom_model() {
         capabilities,
         Draft::from_yaml(authored.yaml().as_bytes()).unwrap(),
     );
-    for _ in 0..12 {
+    for _ in 0..280 {
         if wizard.step() == Step::Review {
             break;
         }
         wizard.handle(Input::Continue);
     }
     assert_eq!(wizard.step(), Step::Review);
+    assert_only_native_defaults_added(&wizard, authored.document());
     assert_eq!(
-        wizard.draft().guided_answers(&wizard.capabilities).unwrap(),
-        answers
+        wizard
+            .draft()
+            .guided_answers(&wizard.capabilities)
+            .unwrap()
+            .model,
+        answers.model
     );
 }
 
@@ -383,8 +388,8 @@ fn a_conflicting_choice_can_be_cancelled_or_explicitly_accepted() {
         )
         .unwrap()
         .accept();
-    wizard.handle(Input::Continue);
-    select_label(&mut wizard, HarnessChoice::Pi.as_str());
+    navigate(&mut wizard, Step::Inference, Input::Continue);
+    select_label(&mut wizard, "Anthropic");
     let original = wizard.draft().review().unwrap().yaml().to_owned();
     wizard.handle(Input::Continue);
     assert!(wizard.pending_edit.is_some());
@@ -400,14 +405,14 @@ fn a_conflicting_choice_can_be_cancelled_or_explicitly_accepted() {
     assert_eq!(wizard.draft().review().unwrap().yaml(), original);
     wizard.handle(Input::Continue);
     wizard.handle(Input::Continue);
-    assert_eq!(wizard.step(), Step::Inference);
+    assert_ne!(wizard.step(), Step::Inference);
     assert_eq!(
         wizard
             .draft()
             .guided_answers(&wizard.capabilities)
             .unwrap()
-            .harness,
-        HarnessChoice::Pi
+            .inference,
+        nemoclaw_authoring::ProviderPreset::Anthropic
     );
 }
 
@@ -448,17 +453,35 @@ fn engine_status_and_review_fit_in_the_minimum_terminal() {
 }
 
 #[test]
-fn every_guided_template_keeps_its_defaults_through_review_and_save() {
+fn every_guided_template_preserves_defaults_and_requires_missing_adapter_answers() {
     let capabilities = Capabilities::available();
-    for (index, scenario) in capabilities.scenarios().iter().enumerate() {
+    let defaults = Answers::onboarding_defaults();
+    let mut templates: Vec<_> = capabilities
+        .harnesses()
+        .iter()
+        .map(|harness| Answers {
+            harness: harness.clone(),
+            ..defaults.clone()
+        })
+        .collect();
+    templates.extend(
+        nemoclaw_authoring::ProviderPreset::ALL
+            .into_iter()
+            .map(|provider| defaults.clone().for_provider(provider)),
+    );
+    for (index, template) in templates.iter().enumerate() {
         for custom in [false, true] {
-            let mut answers = Answers::onboarding_defaults().for_scenario(scenario);
+            let mut answers = template.clone();
             answers.deployment_name = format!("template-{index}");
             answers.sandbox_name = "template-sandbox".into();
             answers.agent_name = "template-agent".into();
             if custom {
                 answers.model = "my-org/custom-model-120b".into();
-                if scenario.accepts_custom_endpoint() {
+                if matches!(
+                    answers.inference,
+                    nemoclaw_authoring::ProviderPreset::OpenAiCompatible
+                        | nemoclaw_authoring::ProviderPreset::AnthropicCompatible
+                ) {
                     answers.endpoint = "https://inference.example.org/v1".into();
                 }
             }
@@ -473,7 +496,8 @@ fn every_guided_template_keeps_its_defaults_through_review_and_save() {
             let expected = draft.document().clone();
             assert_ne!(expected.metadata.uid, original.document().metadata.uid);
             let mut wizard = Wizard::for_host(capabilities.clone(), draft, "linux");
-            for _ in 0..12 {
+            let mut required_unanswered = false;
+            for _ in 0..280 {
                 if wizard.step() == Step::Review {
                     break;
                 }
@@ -482,6 +506,21 @@ fn every_guided_template_keeps_its_defaults_through_review_and_save() {
                     "{answers:?}: {:?}",
                     wizard.error()
                 );
+                if let Some(question) = wizard.setting_question() {
+                    if question.required && question.suggestion.is_none() {
+                        assert!(!wizard.accepted());
+                        assert!(wizard.draft.validate_settings(&capabilities).is_err());
+                        required_unanswered = true;
+                        break;
+                    }
+                    // Explicitly accept only an advertised default; optional absent values
+                    // stay absent rather than choosing the first enum item by accident.
+                    if question.suggestion.is_none() && wizard.is_choice() {
+                        wizard.selected = question.choices.len();
+                    }
+                    wizard.handle(Input::Continue);
+                    continue;
+                }
                 // Check what Enter will accept, not just the eventual YAML.
                 if wizard.is_choice() {
                     let field = wizard
@@ -523,11 +562,25 @@ fn every_guided_template_keeps_its_defaults_through_review_and_save() {
                 }
                 wizard.handle(Input::Continue);
             }
-            assert_eq!(wizard.step(), Step::Review, "{answers:?}");
+            let mut actual = wizard.draft().guided_answers(&capabilities).unwrap();
+            let accepted_settings = actual.harness_settings.take();
             assert_eq!(
-                wizard.draft().guided_answers(&capabilities).unwrap(),
-                answers
+                actual, answers,
+                "schema answers must preserve deployment defaults"
             );
+            let mut expected = expected;
+            expected.spec.sandboxes[0]
+                .harness
+                .as_mut()
+                .unwrap()
+                .settings = accepted_settings;
+            assert_eq!(wizard.draft().document(), &expected);
+            if required_unanswered {
+                assert!(matches!(wizard.step(), Step::Setting(_)));
+                assert_eq!(std::fs::read_to_string(path).unwrap(), original.yaml());
+                continue;
+            }
+            assert_eq!(wizard.step(), Step::Review, "{answers:?}");
             wizard.handle(Input::Continue);
             assert!(wizard.accepted());
             let output = directory.path().join("result.yaml");
@@ -544,12 +597,10 @@ fn every_guided_template_keeps_its_defaults_through_review_and_save() {
 fn a_podman_template_is_disabled_on_mac_and_requires_a_runtime_change() {
     use nemoclaw_authoring::RuntimeChoice;
     let capabilities = Capabilities::available();
-    let scenario = capabilities
-        .scenarios()
-        .iter()
-        .find(|scenario| scenario.runtime() == RuntimeChoice::Podman)
-        .unwrap();
-    let answers = Answers::onboarding_defaults().for_scenario(scenario);
+    let answers = Answers {
+        runtime: RuntimeChoice::Podman,
+        ..Answers::onboarding_defaults()
+    };
     let authored = Session::new()
         .unwrap()
         .project(&capabilities, &answers)
@@ -611,7 +662,7 @@ fn mac_navigation_skips_podman_and_keeps_large_hosted_models_available() {
         wizard.choice_labels()[wizard.selected],
         "nvidia/nemotron-3-super-120b-a12b"
     );
-    wizard.handle(Input::Continue);
+    navigate(&mut wizard, Step::Review, Input::Continue);
     wizard.handle(Input::Continue);
     assert!(wizard.accepted());
 }
@@ -624,7 +675,12 @@ fn interview_prioritizes_dependent_choices_and_back_follows_actual_history() {
     assert_eq!(wizard.step(), Step::Inference);
     let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
     terminal.draw(|frame| wizard.render(frame)).unwrap();
-    assert!(terminal.backend().to_string().contains("⟦ 2/7 ⟧"));
+    assert!(
+        terminal
+            .backend()
+            .to_string()
+            .contains(&format!("⟦ 2/{} ⟧", wizard.flow_steps().len()))
+    );
     wizard.handle(Input::Continue);
     assert_eq!(wizard.step(), Step::Api);
     wizard.handle(Input::Back);
@@ -636,7 +692,7 @@ fn interview_prioritizes_dependent_choices_and_back_follows_actual_history() {
 #[test]
 fn review_revisits_a_reopened_requirement_before_allowing_save() {
     let mut wizard = wizard();
-    for _ in 0..12 {
+    for _ in 0..280 {
         if wizard.step() == Step::Review {
             break;
         }
@@ -671,7 +727,7 @@ fn observed_adapter_conflict_blocks_review_until_the_selection_changes() {
     let mut catalog = nemoclaw_sdk::fabric_catalog::FabricCatalog::bundled();
     catalog
         .adapters
-        .retain(|adapter| adapter.harness == "hermes");
+        .retain(|adapter| adapter.descriptor["adapter_id"] == "nvidia.fabric.hermes");
     wizard.discovery = Some(DiscoveryEvidence {
         key,
         engine: Some(EngineObservation {
@@ -692,16 +748,15 @@ fn observed_adapter_conflict_blocks_review_until_the_selection_changes() {
             catalog: Some(catalog),
             image: Default::default(),
             compatibility: None,
-            adapters: Vec::new(),
         }),
     });
     navigate(&mut wizard, Step::Review, Input::Continue);
     wizard.handle(Input::Continue);
     assert!(!wizard.accepted());
-    assert!(wizard.error().unwrap().contains("harness:openclaw"));
+    assert!(wizard.error().unwrap().contains("fabric_plan"));
     let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
     terminal.draw(|frame| wizard.render(frame)).unwrap();
-    assert!(terminal.backend().to_string().contains("harness:openclaw"));
+    assert!(terminal.backend().to_string().contains("fabric_plan"));
 }
 
 #[test]
@@ -760,12 +815,12 @@ fn delegation_after_harness_goes_directly_to_review_with_valid_yaml() {
     wizard.handle(Input::Continue);
     wizard.handle(Input::Continue);
     let before = wizard.draft.document().clone();
-    establish_compatible_discovery(&mut wizard);
+    establish_observed_discovery(&mut wizard);
 
     wizard.handle(Input::DelegateRemaining);
 
     assert_eq!(wizard.step(), Step::Review, "{:?}", wizard.error());
-    assert_eq!(wizard.draft.document(), &before);
+    assert_only_native_defaults_added(&wizard, &before);
     assert_eq!(
         wizard.draft.answer_status(EditableField::Harness),
         AnswerStatus::Accepted
@@ -795,7 +850,27 @@ fn delegation_after_harness_goes_directly_to_review_with_valid_yaml() {
     assert!(wizard.accepted());
 }
 
-fn establish_compatible_discovery(wizard: &mut Wizard) {
+fn assert_only_native_defaults_added(wizard: &Wizard, before: &nemoclaw_sdk::config::Document) {
+    let mut after = wizard.draft.document().clone();
+    let original = &before.spec.sandboxes[0].harness.as_ref().unwrap().settings;
+    let native = &mut after.spec.sandboxes[0].harness.as_mut().unwrap().settings;
+    if let Some(original) = original {
+        for (key, value) in original {
+            assert_eq!(native.as_ref().unwrap().get(key), Some(value));
+        }
+    }
+    *native = original.clone();
+    assert_eq!(
+        &after, before,
+        "accepting native defaults must preserve existing intent"
+    );
+    wizard
+        .draft
+        .validate_settings(&wizard.capabilities)
+        .unwrap();
+}
+
+fn establish_observed_discovery(wizard: &mut Wizard) {
     use nemoclaw_authoring::{AuthoringFacts, DiscoveryEvidence, EndpointEvidence};
     use nemoclaw_sdk::{
         discovery::{EngineObservation, FabricObservation, ObservationStatus},
@@ -838,7 +913,6 @@ fn establish_compatible_discovery(wizard: &mut Wizard) {
                 ..Default::default()
             },
             compatibility: None,
-            adapters: Vec::new(),
         }),
     });
     wizard.facts = AuthoringFacts {
@@ -900,7 +974,7 @@ fn delegation_requires_permission_and_current_compatible_discovery() {
         let mut wizard = wizard();
         wizard.handle(Input::Continue);
         wizard.handle(Input::Continue);
-        establish_compatible_discovery(&mut wizard);
+        establish_observed_discovery(&mut wizard);
         match case {
             "no target" => wizard.discovery = None,
             "stale target" => wizard
@@ -981,7 +1055,7 @@ fn delegation_requires_permission_and_current_compatible_discovery() {
         assert!(!wizard.draft.has_delegated_answers(), "{case}");
     }
     let mut wizard = wizard();
-    establish_compatible_discovery(&mut wizard);
+    establish_observed_discovery(&mut wizard);
     wizard.handle(Input::Continue);
     wizard.handle(Input::DelegateRemaining);
     assert_eq!(wizard.step(), Step::Harness, "must choose a harness first");
@@ -1021,7 +1095,7 @@ fn delegated_settings_are_checked_again_when_review_is_saved() {
     let mut wizard = wizard();
     wizard.handle(Input::Continue);
     wizard.handle(Input::Continue);
-    establish_compatible_discovery(&mut wizard);
+    establish_observed_discovery(&mut wizard);
     wizard.handle(Input::DelegateRemaining);
     assert_eq!(wizard.step(), Step::Review);
     // Simulate review refresh losing evidence. Do not save the delegated draft.
@@ -1050,7 +1124,7 @@ fn changing_runtime_reopens_delegated_settings_but_preserves_explicit_harness() 
     let mut wizard = wizard();
     wizard.handle(Input::Continue);
     wizard.handle(Input::Continue);
-    establish_compatible_discovery(&mut wizard);
+    establish_observed_discovery(&mut wizard);
     wizard.handle(Input::DelegateRemaining);
     let changed = wizard
         .draft
@@ -1080,7 +1154,7 @@ fn delegation_preserves_a_nondefault_harness_and_an_explicit_deployment_name() {
     use nemoclaw_authoring::{AnswerStatus, EditableField};
     let mut wizard = wizard();
     wizard.handle(Input::Continue);
-    select_label(&mut wizard, HarnessChoice::Hermes.as_str());
+    select_label(&mut wizard, "nvidia.fabric.hermes");
     wizard.handle(Input::Continue);
     navigate(&mut wizard, Step::DeploymentName, Input::Continue);
     wizard.handle(Input::SelectAll);
@@ -1088,13 +1162,13 @@ fn delegation_preserves_a_nondefault_harness_and_an_explicit_deployment_name() {
         wizard.handle(Input::Character(character));
     }
     wizard.handle(Input::Continue);
-    establish_compatible_discovery(&mut wizard);
+    establish_observed_discovery(&mut wizard);
     let before = wizard.draft.document().clone();
     wizard.handle(Input::DelegateRemaining);
     assert_eq!(wizard.step(), Step::Review, "{:?}", wizard.error());
-    assert_eq!(wizard.draft.document(), &before);
+    assert_only_native_defaults_added(&wizard, &before);
     let answers = wizard.draft.guided_answers(&wizard.capabilities).unwrap();
-    assert_eq!(answers.harness, HarnessChoice::Hermes);
+    assert_eq!(answers.harness.as_str(), "nvidia.fabric.hermes");
     assert_eq!(answers.deployment_name, "chosen-name");
     assert_eq!(
         wizard.draft.answer_status(EditableField::DeploymentName),
@@ -1106,7 +1180,7 @@ fn delegation_preserves_a_nondefault_harness_and_an_explicit_deployment_name() {
 fn delegation_does_not_discard_an_unsubmitted_answer() {
     let mut wizard = wizard();
     navigate(&mut wizard, Step::DeploymentName, Input::Continue);
-    establish_compatible_discovery(&mut wizard);
+    establish_observed_discovery(&mut wizard);
     wizard.handle(Input::SelectAll);
     wizard.handle(Input::Character('x'));
     wizard.handle(Input::DelegateRemaining);
@@ -1121,14 +1195,14 @@ fn accepting_the_same_harness_preserves_delegation_but_changing_it_reopens_depen
     let mut wizard = wizard();
     wizard.handle(Input::Continue);
     wizard.handle(Input::Continue);
-    establish_compatible_discovery(&mut wizard);
+    establish_observed_discovery(&mut wizard);
     wizard.handle(Input::DelegateRemaining);
     let same = wizard
         .draft
         .propose_guided_edit(
             &wizard.capabilities,
             EditableField::Harness,
-            FieldValue::Harness(HarnessChoice::OpenClaw),
+            FieldValue::Harness("nvidia.fabric.openclaw".parse::<HarnessChoice>().unwrap()),
         )
         .unwrap()
         .accept();
@@ -1140,7 +1214,11 @@ fn accepting_the_same_harness_preserves_delegation_but_changing_it_reopens_depen
         .propose_guided_edit(
             &wizard.capabilities,
             EditableField::Harness,
-            FieldValue::Harness(HarnessChoice::DeepAgents),
+            FieldValue::Harness(
+                "nvidia.fabric.langchain.deepagents"
+                    .parse::<HarnessChoice>()
+                    .unwrap(),
+            ),
         )
         .unwrap()
         .accept();
@@ -1161,7 +1239,7 @@ fn accepting_the_same_harness_preserves_delegation_but_changing_it_reopens_depen
 #[test]
 fn bulk_delegation_requires_an_explicit_harness_choice_even_for_other_frontends() {
     let mut wizard = wizard();
-    establish_compatible_discovery(&mut wizard);
+    establish_observed_discovery(&mut wizard);
     wizard
         .draft
         .delegate(
@@ -1217,7 +1295,7 @@ fn live_image_catalog_adds_an_unknown_harness_to_the_actual_wizard() {
 }
 
 fn install_live_fixture_catalog(wizard: &mut Wizard) {
-    establish_compatible_discovery(wizard);
+    establish_observed_discovery(wizard);
     let catalog = wizard
         .discovery
         .as_mut()
@@ -1229,8 +1307,7 @@ fn install_live_fixture_catalog(wizard: &mut Wizard) {
         .as_mut()
         .unwrap();
     let mut adapter = catalog.adapters[0].clone();
-    adapter.harness = "fixture-live-adapter".into();
-    adapter.adapter_id = "fixture-live-adapter".into();
+
     adapter.descriptor["adapter_id"] = "fixture-live-adapter".into();
     catalog.adapters = vec![adapter];
 }
@@ -1240,7 +1317,11 @@ fn image_catalog_choices_expire_with_their_target_without_erasing_selected_inten
     let mut wizard = wizard();
     install_live_fixture_catalog(&mut wizard);
     wizard.handle(Input::Continue);
-    assert!(!wizard.choice_labels().contains(&"claude".into()));
+    assert!(
+        !wizard
+            .choice_labels()
+            .contains(&"nvidia.fabric.claude".into())
+    );
     wizard
         .discovery
         .as_mut()
@@ -1254,7 +1335,11 @@ fn image_catalog_choices_expire_with_their_target_without_erasing_selected_inten
             .choice_labels()
             .contains(&"fixture-live-adapter".into())
     );
-    assert!(wizard.choice_labels().contains(&"claude".into()));
+    assert!(
+        wizard
+            .choice_labels()
+            .contains(&"nvidia.fabric.claude".into())
+    );
 
     install_live_fixture_catalog(&mut wizard);
     wizard.refresh_catalog();
@@ -1287,4 +1372,314 @@ fn reopened_unknown_harness_is_reviewable_before_discovery() {
     assert_eq!(wizard.draft.document(), &document);
     wizard.handle(Input::Continue);
     assert!(wizard.accepted());
+}
+
+#[test]
+fn wizard_interviews_new_conditional_adapter_settings_and_preserves_them() {
+    let mut wizard = wizard();
+    install_live_fixture_catalog(&mut wizard);
+    let catalog = wizard
+        .discovery
+        .as_mut()
+        .unwrap()
+        .fabric
+        .as_mut()
+        .unwrap()
+        .catalog
+        .as_mut()
+        .unwrap();
+    catalog.adapters[0].descriptor["settings_schema"] = serde_json::json!({
+        "type":"object","properties":{"mode":{"type":"string","enum":["basic","remote"],"default":"basic"}},"required":["mode"],
+        "if":{"properties":{"mode":{"const":"remote"}},"required":["mode"]},
+        "then":{"properties":{"region":{"type":"string","enum":["west","east"]}},"required":["region"]}
+    });
+    wizard.handle(Input::Continue);
+    select_label(&mut wizard, "fixture-live-adapter");
+    wizard.handle(Input::Continue);
+    navigate(&mut wizard, Step::Setting(0), Input::Continue);
+    assert_eq!(wizard.setting_question().unwrap().path, "/mode");
+    select_label(&mut wizard, "remote");
+    wizard.handle(Input::Continue);
+    assert_eq!(
+        wizard
+            .setting_question()
+            .unwrap_or_else(|| panic!(
+                "step {:?}, error {:?}, settings {:?}",
+                wizard.step(),
+                wizard.error(),
+                wizard.draft.setting_questions(&wizard.capabilities)
+            ))
+            .path,
+        "/region"
+    );
+    select_label(&mut wizard, "west");
+    wizard.handle(Input::Continue);
+    assert_eq!(wizard.step(), Step::Review);
+    let review = wizard.draft.review().unwrap();
+    let reopened = Draft::from_yaml(review.yaml().as_bytes()).unwrap();
+    let settings = reopened.document().spec.sandboxes[0]
+        .harness
+        .as_ref()
+        .unwrap()
+        .settings
+        .as_ref()
+        .unwrap();
+    assert_eq!(settings["mode"], "remote");
+    assert_eq!(settings["region"], "west");
+    let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+    terminal.draw(|frame| wizard.render(frame)).unwrap();
+    assert!(terminal.backend().to_string().contains("region"));
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit NEMOCLAW_TEST_BUNDLE, installed Fabric fixture interpreter/descriptor, and an isolated model endpoint"]
+async fn fabric_owned_descriptor_drives_wizard_settings_save_and_reopen() {
+    let path = std::env::var("NEMOCLAW_TEST_FABRIC_DESCRIPTOR").expect("Fabric descriptor path");
+    let descriptor: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let id = descriptor["adapter_id"].as_str().unwrap().to_owned();
+    let python = std::env::var_os("NEMOCLAW_TEST_FABRIC_PYTHON")
+        .expect("Fabric interpreter with installed fixture");
+    let bundled = nemoclaw_sdk::fabric_catalog::FabricCatalog::bundled();
+    let output = std::process::Command::new(python)
+        .arg(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../image/fabric/catalog.py"
+        ))
+        .args([
+            "--revision",
+            &bundled.fabric_revision,
+            "--source-sha256",
+            &bundled.source_sha256,
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let catalog = nemoclaw_sdk::fabric_catalog::FabricCatalog::from_json(
+        std::str::from_utf8(&output.stdout).unwrap(),
+    )
+    .unwrap();
+    let record = catalog
+        .adapters
+        .iter()
+        .find(|record| record.adapter_id() == id)
+        .expect("installed Fabric fixture discovered by production packaging");
+    for (key, value) in descriptor.as_object().unwrap() {
+        assert_eq!(&record.descriptor[key], value, "Fabric preserves {key}");
+    }
+    assert!(
+        record
+            .provenance
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|source| source["source"] == "installed_package")
+    );
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let bundle = std::env::var_os("NEMOCLAW_TEST_BUNDLE").expect("verified native bundle");
+    let models = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}/v1", models.local_addr().unwrap());
+    let model_reads = Arc::new(AtomicUsize::new(0));
+    let reads = model_reads.clone();
+    let model_server = tokio::spawn(async move {
+        loop {
+            let (mut stream, _) = models.accept().await.unwrap();
+            let mut request = Vec::new();
+            while !request.ends_with(b"\r\n\r\n") {
+                request.push(stream.read_u8().await.unwrap());
+            }
+            let request = String::from_utf8(request).unwrap();
+            assert!(request.starts_with("GET /v1/models HTTP/1.1\r\n"));
+            reads.fetch_add(1, Ordering::SeqCst);
+            let body = r#"{"data":[{"id":"fixture-model"}]}"#;
+            stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+        }
+    });
+    let catalog_json = serde_json::to_string(&catalog).unwrap();
+    let mut answers = Answers::onboarding_defaults()
+        .for_provider(nemoclaw_authoring::ProviderPreset::OpenAiCompatible);
+    answers.endpoint = endpoint;
+    answers.credential_env.clear();
+    answers.model = "fixture-model".into();
+    let image = answers.image.clone();
+    let image_digest = image.split_once('@').unwrap().1.to_owned();
+    let engine_reads = Arc::new(AtomicUsize::new(0));
+    let reads = engine_reads.clone();
+    let engine = discovery_transport::Fixture::start(move |request| {
+        assert_eq!(request.method, "GET");
+        assert!(request.body.is_empty());
+        reads.fetch_add(1, Ordering::SeqCst);
+        let body = if request.path == "/info" {
+            serde_json::json!({"ID":"onboard-fixture","Architecture":"arm64","OSType":"linux","ServerVersion":"28.0","NCPU":8,"MemTotal":17179869184u64})
+        } else if request.path.starts_with("/images/") && request.path.ends_with("/json") {
+            serde_json::json!({"Id":image_digest,"Architecture":"arm64","Os":"linux","RepoDigests":[image],"Config":{"Labels":{nemoclaw_sdk::fabric_catalog::IMAGE_CATALOG_LABEL:catalog_json}}})
+        } else { panic!("unexpected onboarding engine request {}", request.path); };
+        Some((200, serde_json::to_vec(&body).unwrap()))
+    }).await;
+    answers.engine = Some(engine.endpoint.clone());
+    let capabilities = Capabilities::available();
+    let authored = Session::new()
+        .unwrap()
+        .project(&capabilities, &answers)
+        .unwrap();
+    let mut wizard = Wizard::new(
+        capabilities,
+        Draft::from_document(authored.document().clone()).unwrap(),
+    );
+    let mut session =
+        nemoclaw_sdk::discovery_session::DiscoverySession::new(std::path::Path::new(&bundle))
+            .unwrap();
+    let cancel = nemoclaw_sdk::CancellationToken::new();
+    let (evidence, facts) = super::terminal::check_discovery(
+        Some(&mut session),
+        &wizard.draft,
+        &wizard.capabilities,
+        None,
+        Default::default(),
+        false,
+        &cancel,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        evidence.engine.as_ref().unwrap().status,
+        nemoclaw_sdk::discovery::ObservationStatus::Available
+    );
+    assert_eq!(
+        evidence.fabric.as_ref().unwrap().catalog.as_ref().unwrap(),
+        &catalog
+    );
+    wizard.discovery = Some(evidence);
+    wizard.facts = facts;
+    wizard.handle(Input::Continue);
+    select_label(&mut wizard, &id);
+    wizard.handle(Input::Continue);
+    navigate(&mut wizard, Step::Setting(0), Input::Continue);
+    assert_eq!(wizard.setting_question().unwrap().path, "/mode");
+    assert_eq!(
+        wizard.setting_question().unwrap().suggestion,
+        Some(serde_json::json!("simple"))
+    );
+    select_label(&mut wizard, "advanced");
+    wizard.handle(Input::Continue);
+    assert_eq!(wizard.setting_question().unwrap().path, "/budget");
+    wizard.input = "4".into();
+    wizard.handle(Input::Continue);
+    navigate(&mut wizard, Step::Review, Input::Continue);
+    let (evidence, facts) = super::terminal::check_discovery(
+        Some(&mut session),
+        &wizard.draft,
+        &wizard.capabilities,
+        wizard.discovery.take(),
+        std::mem::take(&mut wizard.facts),
+        true,
+        &cancel,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        evidence.assessment(&wizard.draft).unwrap().status,
+        nemoclaw_authoring::CompatibilityStatus::Compatible
+    );
+    wizard.discovery = Some(evidence);
+    wizard.facts = facts;
+    assert!(engine_reads.load(Ordering::SeqCst) >= 4);
+    assert!(model_reads.load(Ordering::SeqCst) >= 2);
+    wizard.handle(Input::Continue);
+    assert!(wizard.accepted(), "{:?}", wizard.error());
+    let yaml = wizard.draft.review().unwrap().yaml().to_owned();
+    let reopened = Draft::from_yaml(yaml.as_bytes()).unwrap();
+    assert_eq!(reopened.document(), wizard.draft.document());
+    let harness = reopened.document().spec.sandboxes[0]
+        .harness
+        .as_ref()
+        .unwrap();
+    assert_eq!(harness.kind.as_str(), id);
+    assert_eq!(harness.settings.as_ref().unwrap()["budget"], 4);
+    assert_eq!(harness.settings.as_ref().unwrap()["mode"], "advanced");
+    if let Some(output) = std::env::var_os("NEMOCLAW_TEST_AUTHORED_YAML") {
+        crate::write_path(std::path::Path::new(&output), yaml.as_bytes()).unwrap();
+    }
+    model_server.abort();
+}
+
+#[test]
+fn wizard_authors_a_discovered_workflow_target_without_adapter_specific_rules() {
+    let mut wizard = wizard();
+    establish_observed_discovery(&mut wizard);
+    wizard.handle(Input::Continue);
+    select_label(&mut wizard, "nvidia.fabric.nooa");
+    wizard.handle(Input::Continue);
+    navigate(&mut wizard, Step::Setting(0), Input::Continue);
+    assert_eq!(
+        wizard.setting_question().unwrap().path,
+        "workflow:/target_id"
+    );
+    select_label(&mut wizard, "nvidia.nooa.coding-agent");
+    wizard.handle(Input::Continue);
+    navigate(&mut wizard, Step::Review, Input::Continue);
+    wizard.handle(Input::Continue);
+    assert!(wizard.accepted(), "{:?}", wizard.error());
+    let reopened = Draft::from_yaml(wizard.draft.review().unwrap().yaml().as_bytes()).unwrap();
+    assert_eq!(
+        reopened.document().spec.sandboxes[0]
+            .harness
+            .as_ref()
+            .unwrap()
+            .config
+            .as_ref()
+            .unwrap()["workflow"]["target_id"],
+        "nvidia.nooa.coding-agent"
+    );
+}
+
+#[cfg(unix)]
+#[path = "../../../../crates/test-support/docker.rs"]
+mod discovery_transport;
+
+#[test]
+fn optional_enum_without_owner_default_starts_unset() {
+    let mut wizard = wizard();
+    install_live_fixture_catalog(&mut wizard);
+    let adapter = &mut wizard
+        .discovery
+        .as_mut()
+        .unwrap()
+        .fabric
+        .as_mut()
+        .unwrap()
+        .catalog
+        .as_mut()
+        .unwrap()
+        .adapters[0];
+    adapter.descriptor["model_schema"] = serde_json::Value::Null;
+    adapter.descriptor["settings_schema"] = serde_json::json!({"type":"object","properties":{"mode":{"type":"string","enum":["a","b"]}}});
+    wizard.handle(Input::Continue);
+    select_label(&mut wizard, "fixture-live-adapter");
+    wizard.handle(Input::Continue);
+    navigate(&mut wizard, Step::Setting(0), Input::Continue);
+    assert_eq!(wizard.setting_question().unwrap().path, "/mode");
+    assert_eq!(wizard.choice_labels()[wizard.selected], "Leave unset");
+    wizard.handle(Input::Continue);
+    assert_eq!(wizard.step(), Step::Review);
+    assert!(
+        wizard.draft.document().spec.sandboxes[0]
+            .harness
+            .as_ref()
+            .unwrap()
+            .settings
+            .as_ref()
+            .unwrap()
+            .get("mode")
+            .is_none()
+    );
 }

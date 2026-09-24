@@ -110,11 +110,11 @@ fn hermes_auth_uses_the_selected_inline_provider_without_a_second_reference() {
         .into();
     let rows = targets(&doc, &generations).unwrap();
     let settings: Value = serde_json::from_str(
-        &rows.iter().find(|r| r.kind == "sandbox").unwrap().values["inference_json"],
+        &rows.iter().find(|r| r.kind == "sandbox").unwrap().values["provider_names_json"],
     )
     .unwrap();
     assert_eq!(
-        settings["auth"]["providerRef"],
+        settings[0],
         rows.iter()
             .find(|row| row.kind == "provider")
             .unwrap()

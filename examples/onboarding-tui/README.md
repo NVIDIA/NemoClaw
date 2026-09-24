@@ -29,8 +29,11 @@ If a change affects answers you already accepted, the questionnaire shows them b
 Accept the revision to revisit affected questions, or go back to keep the current configuration.
 Unrelated accepted answers are preserved and skipped when continuing forward.
 
-After accepting a harness, press **Ctrl+D** on an answer screen to authorize the remaining suggested settings and go directly to review.
+After accepting a harness, **Ctrl+D** requests delegation of the remaining suggested settings.
+When complete compatible evidence is available, delegation takes the author directly to review.
+Fabric validates the proposed public configuration against the observed canonical descriptors; missing contracts leave compatibility unverified and prevent delegation.
 The authoring library checks the suggestions together: engine and image compatibility must be established, the matching endpoint must advertise the selected model, and required credential references must be available.
+A required adapter setting without a suggested value prevents delegation until answered.
 This shortcut preserves accepted answers and uses the current suggestions; it does not search for another engine, provider, image, or model.
 If you have edited the current answer, press Enter to accept it before delegating.
 If discovery is missing, stale, conflicting, or incomplete, the shortcut explains why it cannot proceed; continue answering individually or correct the configuration.
@@ -78,7 +81,7 @@ The [provider reference](../../docs/provider.md#engine-and-fabric-discovery) def
 Without a usable bundle, onboarding uses bundled Fabric metadata and marks the target unverified.
 The standalone example currently has no bundle option and uses this offline path, with local credential-availability checks.
 An unreachable engine or missing image metadata remains unverified; neither establishes that a harness is unsupported.
-A known engine mismatch or conflicting image platform, digest, API, tool, or interface metadata blocks review and saving until the selection is corrected.
+A known engine mismatch, conflicting image platform or digest, or rejection by Fabric's planner blocks review and saving until the selection is corrected.
 Unknown observations still allow saving after answering individually and selecting a runtime offered on this host, including when authoring for a target to prepare later.
 
 Observed models supplement suggestions; you can still enter an identifier manually.
@@ -89,30 +92,50 @@ Plan refreshes the relevant observations; apply retains its readiness checks.
 
 ## Guided choices
 
-When discovery returns a catalog for the current engine and image, its advertised harnesses and protocols determine the offered choices.
+When discovery returns a catalog for the current engine and image, its exact adapter IDs determine the offered harness choices.
+Provider presets offer their transport protocols; Fabric's planner checks the selected protocol and complete configuration against the canonical adapter contract.
 The questionnaire keeps a currently selected value visible but disabled if that image does not advertise it; discovery does not silently replace an accepted answer.
 Observations from another engine or image do not constrain the current choices.
-Without a usable current image catalog, the questionnaire uses the bundled catalog generated from the pinned Fabric source and NemoClaw's local adapters, and keeps target compatibility unverified.
-Authoring reads catalog identifiers, orders them alphabetically, and combines advertised capabilities with the SDK's configuration contract.
+Without a usable current image catalog, the questionnaire uses the bundled catalog generated through the pinned Fabric discovery API, and keeps target compatibility unverified.
+Authoring reads canonical adapter IDs, orders them alphabetically, and preserves the deployment fields owned by the SDK.
+Short aliases are not translated; use the exact adapter identifier.
 Onboarding and authoring contain no harness-specific allowlist, labels, ordering, or inference rules.
 The default selection comes from the bundled YAML template.
-A discovered identifier can be offered without adding a named SDK variant or a frontend branch.
+A discovered identifier can be offered without changing the SDK identifier type or adding a frontend branch.
 The SDK validates identifier syntax and the document structure; Fabric owns adapter availability and native settings validation.
 Custom adapters require an explicit immutable image containing their descriptor and implementation.
-The guided flow preserves opaque `harness.settings` from a template, but does not generate questions from arbitrary settings schemas.
-See [Fabric harness configuration](../../docs/sdk.md#configure-a-discovered-fabric-harness) for that boundary.
+For exact adapter IDs, Fabric's canonical descriptor `settings_schema` supplies setting questions, types, enum choices, defaults, and required fields.
+Choosing a controlling value recomputes conditional questions; a changed schema reopens answers that no longer satisfy its constraints.
+Nested settings use their schema paths, and complex values can be entered as JSON.
+For adapters with discovered workflow targets, the questionnaire offers their exact target IDs and derives further questions from the selected target's settings schema.
+Fabric's public configuration schema determines whether a workflow is required; accepted target settings are saved under `harness.config.workflow`.
+The selected adapter's model schema supplies native model-setting questions for the current route; answers are preserved under `overrides.settings`.
+The complete public model configuration remains subject to Fabric's planner, including conditions involving provider or protocol.
+Optional settings can be left unset; a required setting without a default needs an answer.
+Schema defaults remain suggestions until accepted or explicitly delegated.
+Review checks the complete settings object against the current schema, including constraints spanning multiple fields.
+Saved settings and arbitrary harness identifiers reopen without requiring an entry in the bundled catalog.
+When no settings schema is advertised, existing opaque settings remain preserved but there are no schema-derived questions.
+If one harness identifier matches distinct adapter schemas, authoring reports the adapter identities instead of choosing a schema by file order.
+NemoClaw does not remove native fields from a descriptor or maintain a separate adapter manifest; native mapping and missing discovery contracts belong to Fabric.
+See [Fabric harness configuration](../../docs/sdk.md#configure-a-discovered-fabric-harness) for the runtime contract.
 This does not qualify a harness image for the current host or establish deployment readiness.
 
 The questionnaire also offers:
 
 - Docker and rootless Podman runtimes
 - NVIDIA Endpoints, OpenRouter, OpenAI, Anthropic, Google Gemini, Nous Research, and custom OpenAI- or Anthropic-compatible endpoints
-- APIs compatible with the selected harness and provider, model suggestions, and manual model identifiers
+- Provider transport APIs, model suggestions, and manual model identifiers
 
-Inference services are offered by protocol compatibility, without tying a service to a particular harness.
-An Anthropic-compatible endpoint uses the Anthropic protocol; it is not offered to a harness that only supports an OpenAI protocol.
+Inference service presets describe provider transports, without tying a service to a particular harness.
+An Anthropic-compatible endpoint uses the Anthropic protocol; the selected Fabric descriptor determines adapter compatibility.
 
-Endpoint URLs, provider identities, API protocols, and credential environment-variable references are derived from the selected provider. The wizard asks for an endpoint only for a custom compatible provider. It does not ask users to name internal provider, sandbox, or agent records.
+Provider presets supply endpoint, model, and credential-reference suggestions.
+They do not restrict existing provider names, endpoint URLs, or credential environment-variable references.
+Reopening a configuration retains those values, and changing its model keeps the connection intact.
+An explicitly authored engine endpoint is also preserved through guided edits.
+Anonymous endpoints retain the absence of a credential reference; the SDK schema determines when an endpoint cannot carry one.
+The wizard asks for an endpoint when using a custom compatible provider; it does not ask users to name internal provider, sandbox, or agent records.
 
 Some onboarding journeys cannot yet be represented faithfully. They remain ignored failing behavioral tests in `crates/nemoclaw-authoring/tests/unsupported_onboarding_journeys.rs`:
 

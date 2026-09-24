@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use nemoclaw_sdk::config::{DEFAULT_AGENT_IMAGE, DEFAULT_HERMES_IMAGE, Document};
+use nemoclaw_sdk::config::{DEFAULT_AGENT_IMAGE, Document};
 use serde_json::{Value, json};
 
 fn input(name: &str) -> Value {
@@ -52,7 +52,7 @@ fn omitted_image_uses_the_pin_for_the_selected_harness() {
         .remove("image");
     assert_eq!(
         parse(&hermes).unwrap().spec.sandboxes[0].image.ref_,
-        DEFAULT_HERMES_IMAGE
+        DEFAULT_AGENT_IMAGE
     );
 
     let harness = hermes["spec"]["sandboxes"][0]
@@ -64,7 +64,7 @@ fn omitted_image_uses_the_pin_for_the_selected_harness() {
     hermes["spec"]["sandboxes"][0]["harnessRef"] = json!("assistant");
     assert_eq!(
         parse(&hermes).unwrap().spec.sandboxes[0].image.ref_,
-        DEFAULT_HERMES_IMAGE
+        DEFAULT_AGENT_IMAGE
     );
 }
 
@@ -171,7 +171,7 @@ fn required_fields_and_mutually_exclusive_provider_forms_are_rejected() {
 #[test]
 fn only_pi_metadata_permits_nested_null_values() {
     let mut value = input("fabric-pi.yaml");
-    let pointer = "/spec/sandboxes/0/agent/inference/routes/0/overrides/piModel";
+    let pointer = "/spec/sandboxes/0/agent/inference/routes/0/overrides/settings";
     *value.pointer_mut(pointer).unwrap() = json!({"future": [null, {"nested": null}]});
     parse(&value).unwrap();
     *value.pointer_mut(pointer).unwrap() = Value::Null;

@@ -15,32 +15,73 @@ metadata:
 spec:
   harnesses:
     assistant:
-      kind: openclaw
-      interfaces:
-        dashboard:
-          port: 18800
-          bind: 127.0.0.1
-      observability:
-        otlp:
-          enabled: true
-          endpoint: http://host.openshell.internal:4318
-          serviceName: research-team
-          sampleRate: 0.5
+      kind: nvidia.fabric.openclaw
       execution:
         timeoutSeconds: 900
-        heartbeatEvery: 30m
+      settings:
+        native_config:
+          gateway:
+            mode: local
+            bind: loopback
+            port: 18800
+            controlUi:
+              enabled: true
+              allowedOrigins:
+                - http://127.0.0.1:18800
+                - http://localhost:18800
+          agents:
+            defaults:
+              heartbeat:
+                every: 30m
+                isolatedSession: true
+          diagnostics:
+            enabled: true
+            otel:
+              enabled: true
+              endpoint: http://host.openshell.internal:4318
+              serviceName: research-team
+              sampleRate: 0.5
+              protocol: http/protobuf
+              traces: true
+              metrics: false
+              logs: false
+          plugins:
+            load:
+              paths: [/opt/nemoclaw/plugins/brave]
+            allow:
+              - brave
+              - diagnostics-otel
+            entries:
+              brave:
+                enabled: true
+                config:
+                  webSearch:
+                    apiKey: ${BRAVE_API_KEY}
+              diagnostics-otel:
+                enabled: true
+          tools:
+            web:
+              search:
+                enabled: true
+                provider: brave
+            toolSearch:
+              mode: tools
+              searchDefaultLimit: 8
+              maxSearchLimit: 20
   gateway:
     management: managed
     endpoint: http://127.0.0.1:17695
     engine: unix:///var/run/docker.sock
-    image: ghcr.io/nvidia/openshell/gateway@sha256:ec2b0efea84fff198e888e97c85befb9c908acde92e8256f9b527877ed182d66
+    image:
+      ghcr.io/nvidia/openshell/gateway@sha256:ec2b0efea84fff198e888e97c85befb9c908acde92e8256f9b527877ed182d66
     networkCIDR: 172.30.121.0/24
   services:
     nemotron:
       kind: vllm
       authentication: bearer
       # Build runtimes/vllm-amd64/build.json on the model host and select its immutable digest.
-      image: nc-prototype-vllm-amd64@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      image:
+        nc-prototype-vllm-amd64@sha256:0000000000000000000000000000000000000000000000000000000000000000
       placement:
         engine: ssh://gpu-box
         networkCidr: 172.30.119.0/24
@@ -86,7 +127,8 @@ spec:
     - name: researcher
       image:
         # Build a current Fabric OpenClaw image; the default image lacks these features.
-        ref: nc-fabric-openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
+        ref:
+          nc-fabric-openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
       runtime:
         provider: docker
       network:
@@ -99,7 +141,8 @@ spec:
             version: 1
             filesystem_policy:
               include_workdir: false
-              read_only: [/usr, /bin, /sbin, /lib, /lib64, /etc, /app, /opt, /proc]
+              read_only: [/usr, /bin, /sbin, /lib, /lib64, /etc, /app, /opt,
+                    /proc]
               read_write: [/sandbox, /tmp, /dev/null, /dev/urandom, /home/node]
             landlock:
               compatibility: best_effort
@@ -119,28 +162,46 @@ spec:
                       - allow:
                           method: GET
                           path: /docs/**
+                binaries:
+                  - path: /usr/local/bin/node
+              tracing:
+                name: tracing
+                endpoints:
+                  - host: host.openshell.internal
+                    port: 4318
+                    protocol: rest
+                    enforcement: enforce
+                    rules:
+                      - allow:
+                          method: POST
+                          path: /v1/traces
+                    allowed_ips:
+                      - 10.0.0.0/8
+                      - 172.16.0.0/12
+                      - 192.168.0.0/16
                 binaries:
                   - path: /usr/local/bin/node
       harnessRef: assistant
       agent:
         name: researcher
         integrationRefs: [search]
-        tools:
-          disclosure: progressive
         inference:
           routes:
             - name: primary
               providerRef: nemotron
               overrides:
                 model: nvidia-nemotron-3.5-lightning-30b-a3b-nvfp4
-                contextWindow: 65536
                 maxTokens: 8192
-                reasoning: true
-                reasoningEffort: high
+                settings:
+                  model_metadata:
+                    contextWindow: 65536
+                    reasoning: true
+                  reasoning_effort: high
     - name: writer
       image:
         # Build a current Fabric OpenClaw image; the default image lacks these features.
-        ref: nc-fabric-openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
+        ref:
+          nc-fabric-openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
       runtime:
         provider: docker
       network:
@@ -153,7 +214,8 @@ spec:
             version: 1
             filesystem_policy:
               include_workdir: false
-              read_only: [/usr, /bin, /sbin, /lib, /lib64, /etc, /app, /opt, /proc]
+              read_only: [/usr, /bin, /sbin, /lib, /lib64, /etc, /app, /opt,
+                    /proc]
               read_write: [/sandbox, /tmp, /dev/null, /dev/urandom, /home/node]
             landlock:
               compatibility: best_effort
@@ -175,27 +237,44 @@ spec:
                           path: /docs/**
                 binaries:
                   - path: /usr/local/bin/node
+              tracing:
+                name: tracing
+                endpoints:
+                  - host: host.openshell.internal
+                    port: 4318
+                    protocol: rest
+                    enforcement: enforce
+                    rules:
+                      - allow:
+                          method: POST
+                          path: /v1/traces
+                    allowed_ips:
+                      - 10.0.0.0/8
+                      - 172.16.0.0/12
+                      - 192.168.0.0/16
+                binaries:
+                  - path: /usr/local/bin/node
       harnessRef: assistant
       agent:
         name: writer
         integrationRefs: [search]
-        tools:
-          disclosure: progressive
         inference:
           routes:
             - name: primary
               providerRef: nemotron
               overrides:
                 model: nvidia-nemotron-3.5-lightning-30b-a3b-nvfp4
-                contextWindow: 65536
                 maxTokens: 8192
-                reasoning: true
-                reasoningEffort: high
-    # Read-only tools inside a separate sandbox; this agent receives no search grant.
+                settings:
+                  model_metadata:
+                    contextWindow: 65536
+                    reasoning: true
+                  reasoning_effort: high
     - name: reader
       image:
         # Build a current Fabric OpenClaw image; the default image lacks these features.
-        ref: nc-fabric-openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
+        ref:
+          nc-fabric-openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
       runtime:
         provider: docker
       network:
@@ -208,7 +287,8 @@ spec:
             version: 1
             filesystem_policy:
               include_workdir: false
-              read_only: [/usr, /bin, /sbin, /lib, /lib64, /etc, /app, /opt, /proc]
+              read_only: [/usr, /bin, /sbin, /lib, /lib64, /etc, /app, /opt,
+                    /proc]
               read_write: [/sandbox, /tmp, /dev/null, /dev/urandom, /home/node]
             landlock:
               compatibility: best_effort
@@ -228,6 +308,23 @@ spec:
                       - allow:
                           method: GET
                           path: /docs/**
+                binaries:
+                  - path: /usr/local/bin/node
+              tracing:
+                name: tracing
+                endpoints:
+                  - host: host.openshell.internal
+                    port: 4318
+                    protocol: rest
+                    enforcement: enforce
+                    rules:
+                      - allow:
+                          method: POST
+                          path: /v1/traces
+                    allowed_ips:
+                      - 10.0.0.0/8
+                      - 172.16.0.0/12
+                      - 192.168.0.0/16
                 binaries:
                   - path: /usr/local/bin/node
       harnessRef: assistant
@@ -241,7 +338,9 @@ spec:
               providerRef: nemotron
               overrides:
                 model: nvidia-nemotron-3.5-lightning-30b-a3b-nvfp4
-                contextWindow: 65536
                 maxTokens: 8192
-                reasoning: true
-                reasoningEffort: high
+                settings:
+                  model_metadata:
+                    contextWindow: 65536
+                    reasoning: true
+                  reasoning_effort: high

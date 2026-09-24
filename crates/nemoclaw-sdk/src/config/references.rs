@@ -5,7 +5,7 @@ use super::{ConfigError, Document, Harness, Inference, Route, Sandbox};
 
 // Borrow authored inference together with its declaration scope and diagnostic path.
 // A shared deployment definition cannot see a consuming sandbox's local providers.
-pub(super) struct ScopedInference<'a> {
+pub(crate) struct ScopedInference<'a> {
     pub inference: &'a Inference,
     pub sandbox: Option<&'a Sandbox>,
     pub path: String,
@@ -49,7 +49,7 @@ impl Document {
         Ok(self.scoped_inference(sandbox)?.inference)
     }
 
-    pub(super) fn scoped_inference<'a>(
+    pub(crate) fn scoped_inference<'a>(
         &'a self,
         sandbox: &'a Sandbox,
     ) -> Result<ScopedInference<'a>, ConfigError> {
@@ -166,19 +166,11 @@ impl Document {
 
 impl Harness {
     pub fn runtime(&self) -> String {
-        format!("fabric-{}", self.kind)
+        "fabric".into()
     }
 
     pub fn validate(&self) -> Result<(), ConfigError> {
         super::schema::validate_definition("Harness", self)?;
-        if self.kind.as_str().parse::<super::HarnessKind>()? != self.kind {
-            return Err(ConfigError::new(
-                "harness identifier must use its canonical representation",
-            ));
-        }
-        if let Some(interfaces) = &self.interfaces {
-            interfaces.validate(self.kind.clone())?;
-        }
         Ok(())
     }
 }
@@ -208,21 +200,7 @@ impl Inference {
             if !names.insert(&route.name) {
                 return Err(ConfigError::new("inference choices require unique names"));
             }
-            route
-                .overrides
-                .tuning
-                .validate(super::HarnessKind::OpenClaw)?;
-            if self.default_route()?.name != route.name
-                && route
-                    .overrides
-                    .tuning
-                    .reasoning_effort
-                    .is_some_and(|effort| effort != super::ReasoningEffort::Default)
-            {
-                return Err(ConfigError::new(
-                    "reasoningEffort configures the initial default model; omit it on other choices",
-                ));
-            }
+            super::schema::validate_tuning(&route.overrides.tuning)?;
         }
         Ok(())
     }

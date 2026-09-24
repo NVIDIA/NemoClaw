@@ -19,7 +19,10 @@ fn anthropic_with_claude_should_work() {
         desired["spec"]["inferenceProviders"][0]["endpoint"],
         "https://api.anthropic.com/v1"
     );
-    assert_eq!(desired["spec"]["sandboxes"][0]["harness"]["kind"], "claude");
+    assert_eq!(
+        desired["spec"]["sandboxes"][0]["harness"]["kind"],
+        "nvidia.fabric.claude"
+    );
     assert_eq!(document.credential_names(), ["ANTHROPIC_API_KEY"]);
 }
 
@@ -62,10 +65,13 @@ fn openai_compatible_endpoint_with_tuning_should_work() {
         "https://inference.example.com/v1"
     );
     assert_eq!(document.credential_names(), ["COMPATIBLE_API_KEY"]);
-    assert_eq!(overrides["reasoningEffort"], "high");
-    assert_eq!(overrides["contextWindow"], 65536);
+    assert_eq!(overrides["settings"]["reasoning_effort"], "high");
+    assert_eq!(
+        overrides["settings"]["model_metadata"]["contextWindow"],
+        65536
+    );
     assert_eq!(overrides["maxTokens"], 8192);
-    assert_eq!(overrides["reasoning"], true);
+    assert_eq!(overrides["settings"]["model_metadata"]["reasoning"], true);
 }
 
 #[test]
@@ -105,7 +111,7 @@ fn deep_agents_should_work() {
     let desired = normalized(&document);
     assert_eq!(
         desired["spec"]["sandboxes"][0]["harness"]["kind"],
-        "deepagents"
+        "nvidia.fabric.langchain.deepagents"
     );
 }
 
@@ -120,11 +126,16 @@ fn multiple_openclaw_sandboxes_with_policy_tools_and_observability_should_work()
     assert_eq!(sandboxes[1]["agent"]["name"], "writer");
     assert_eq!(sandboxes[2]["agent"]["name"], "reader");
     assert_eq!(sandboxes[2]["agent"]["tools"]["allow"], json!(["read"]));
-    assert_eq!(sandboxes[0]["agent"]["tools"]["disclosure"], "progressive");
+    assert_eq!(
+        desired["spec"]["harnesses"]["assistant"]["settings"]["native_config"]["tools"]["toolSearch"]
+            ["mode"],
+        "tools"
+    );
     assert_eq!(sandboxes[0]["network"]["proxy"]["host"], "10.200.0.1");
     assert_eq!(sandboxes[0]["network"]["proxy"]["port"], 3128);
     assert_eq!(
-        desired["spec"]["harnesses"]["assistant"]["observability"]["otlp"]["enabled"],
+        desired["spec"]["harnesses"]["assistant"]["settings"]["native_config"]["diagnostics"]["otel"]
+            ["enabled"],
         true
     );
     assert_eq!(
@@ -138,10 +149,13 @@ fn pi_with_native_model_metadata_should_work() {
     let yaml = include_bytes!("../../../examples/fabric-pi.yaml");
     let document = Document::parse(yaml.as_slice()).unwrap();
     let desired = normalized(&document);
-    assert_eq!(desired["spec"]["sandboxes"][0]["harness"]["kind"], "pi");
     assert_eq!(
-        desired["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]["piModel"]
-            ["api"],
+        desired["spec"]["sandboxes"][0]["harness"]["kind"],
+        "nvidia.fabric.pi"
+    );
+    assert_eq!(
+        desired["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]["settings"]
+            ["model_metadata"]["api"],
         "openai-completions"
     );
 }
@@ -218,7 +232,7 @@ fn openclaw_dashboard_should_work() {
     let document = Document::parse(yaml.as_slice()).unwrap();
     let desired = normalized(&document);
     assert_eq!(
-        desired["spec"]["sandboxes"][0]["harness"]["interfaces"]["dashboard"]["port"],
+        desired["spec"]["sandboxes"][0]["harness"]["settings"]["native_config"]["gateway"]["port"],
         18800
     );
 }
@@ -228,8 +242,11 @@ fn hermes_api_dashboard_and_tui_should_work() {
     let yaml = include_bytes!("../../../examples/hermes-interfaces.yaml");
     let document = Document::parse(yaml.as_slice()).unwrap();
     let desired = normalized(&document);
-    let interfaces = &desired["spec"]["sandboxes"][0]["harness"]["interfaces"];
-    assert_eq!(desired["spec"]["sandboxes"][0]["harness"]["kind"], "hermes");
+    let interfaces = &desired["spec"]["sandboxes"][0]["harness"]["settings"]["interfaces"];
+    assert_eq!(
+        desired["spec"]["sandboxes"][0]["harness"]["kind"],
+        "nvidia.fabric.hermes"
+    );
     assert_eq!(interfaces["api"]["port"], 8643);
     assert_eq!(interfaces["dashboard"]["enabled"], true);
     assert_eq!(interfaces["dashboard"]["port"], 18800);

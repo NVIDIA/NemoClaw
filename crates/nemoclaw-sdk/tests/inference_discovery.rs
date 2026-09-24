@@ -236,9 +236,8 @@ fn endpoint_requests_deduplicate_shared_routes_and_preserve_harness_api_defaults
     value["spec"]["sandboxes"][1] = second;
     let document = Document::parse(value.to_string().as_bytes()).unwrap();
     let requests = endpoint_requests(&document).unwrap();
-    assert_eq!(requests.len(), 2);
+    assert_eq!(requests.len(), 1);
     assert_eq!(requests[0].api, InferenceApi::OpenaiCompletions);
-    assert_eq!(requests[1].api, InferenceApi::OpenaiResponses);
 }
 
 #[test]

@@ -57,7 +57,7 @@ Nextest does not run doctests, so the separate Cargo command remains required.
 The [dependency workflow](../.github/workflows/dependencies.yml) runs on every pull request targeting `v1`, so its required check is available even when no dependencies change.
 Pushes to `v1` run it only when Rust manifests, lockfiles, the toolchain, the policy, or the workflow change.
 It runs once on Linux, outside the native build matrix, without compiling the workspace or caching build artifacts.
-The [policy](../deny.toml) permits the current license inventory and the two existing Git sources; dependency revisions remain pinned in the manifests and lockfile.
+The [policy](../deny.toml) permits the current license inventory and the explicitly listed Git sources; dependency revisions remain pinned in the manifests and lockfile.
 
 Install cargo-deny 0.20.2 once, then run from the repository root:
 
@@ -85,34 +85,25 @@ AGENT_PLATFORM=linux/arm64 docker buildx bake check
 ```
 
 The first command checks Bake's public target selection without a Docker daemon or prebuilt source tree.
-Docker checks the selected build instructions; the `check` group runs Ruff lint/format checks, Oxlint, Oxfmt, strict TypeScript checks, Python behavior tests, and Pi's TypeScript compilation and native model tests.
+Docker checks the selected build instructions; the `check` group runs Ruff lint/format checks, generic runtime behavior tests against Fabric's installed fixture adapter, and Fabric's Pi compilation and tests.
 Behavior tests run with networking disabled; downloading build dependencies still needs network access.
 Checks produce build cache entries and no tagged runtime images.
 
-For a faster source-only edit loop with host uv and Node.js 24.21.0 or newer:
+For a faster Python source edit loop with host uv:
 
 ```sh
 uv tool run --from ruff==0.16.7 ruff check .
 uv tool run --from ruff==0.16.7 ruff format --check .
-npm --prefix image ci --ignore-scripts
-npm --prefix image run lint
-npm --prefix image run format:check
-npm --prefix image run typecheck
 ```
 
-Use `ruff format .` through the same pinned uv invocation and `npm --prefix image run format` to apply formatting.
-The scope includes image Python/TypeScript, the native fixture code, and the Fabric adapter experiment runner.
-Standalone TypeScript fixtures use `.mts` and Node's native type stripping; they need no transpiler or generated JavaScript files.
-The host type check covers OpenClaw fixtures; the Pi build checks its model code and fixture against installed upstream declarations.
-OpenClaw's private bundles ship no declarations, so [small fixture declarations](../test/openclaw.d.ts) describe the consumed API shapes and native tests verify those boundaries.
-Upstream sources and model-specific recipe code retain their own conventions and checks.
+Use `ruff format .` through the same pinned uv invocation to apply formatting.
+The scope includes image Python and retained integration fixtures.
+Native adapter implementation and its behavioral tests live in Fabric and use Fabric's checks.
 
-The [image workflow](../.github/workflows/images.yml) runs for every pull request targeting `v1`, for pushes changing image inputs or tests, and on manual dispatch.
-It builds all ten agent images plus the proxy and exercises native adapters against isolated local protocol fixtures.
-Rust- or documentation-only pushes skip that image build; their schema and adapter-descriptor checks remain in the Rust suite.
-It also runs OpenClaw tools, execution, search, and tracing checks.
-Native messaging belongs to OpenClaw; NemoClaw tests that its adapter preserves unrelated native configuration and rejects drift in deployment-owned settings.
-These fixtures use no live credentials, send no external messages, and do not test GPU inference or live OpenShell deployments.
+The [image workflow](../.github/workflows/images.yml) builds the selected platform's agent images plus the proxy, verifies retained source hashes, and checks installed discovery metadata.
+It also runs the retained Fabric revision's native OpenClaw and Hermes qualification against isolated local inference, on platforms with those image targets.
+Rust- or documentation-only pushes skip that image build; their schema and descriptor consumption tests remain in the Rust suite.
+These checks use no live credentials and do not establish GPU inference or live OpenShell deployment behavior.
 
 ## CLI Tests
 

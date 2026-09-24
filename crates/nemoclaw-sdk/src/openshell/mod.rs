@@ -5,7 +5,7 @@
 mod tests;
 
 mod agent;
-mod pi_configuration;
+mod agent_configuration;
 pub(crate) use agent::runtime_read_requirements;
 mod native_profile;
 mod network;
@@ -13,7 +13,7 @@ mod profile;
 pub use native_profile::definition as inference_profile;
 pub use network::policy_json;
 mod inference;
-use inference::{INFERENCE_ENV, inference_environment, inference_settings};
+use inference::{PROVIDERS_ENV, inference_environment};
 use network::{launch_command, launch_environment, observed_proxy, row_policy, row_proxy};
 mod gateway;
 mod transport;
@@ -182,21 +182,17 @@ fn sandbox_row(
         .filter(|v| !v.is_empty())
         .ok_or(ObservationError::Incomplete)?;
     let runtime = meta.labels.get(AGENT_RUNTIME).cloned().unwrap_or_default();
-    if !runtime
-        .strip_prefix("fabric-")
-        .is_some_and(crate::config::is_fabric_harness)
-    {
+    if runtime != "fabric" {
         return Err(ObservationError::Incomplete);
     }
     let spec = sandbox.spec.ok_or(ObservationError::Incomplete)?;
     let image = spec.template.ok_or(ObservationError::Incomplete)?.image;
     let environment: Row = spec.environment.into_iter().collect();
     let proxy = observed_proxy(&environment)?;
-    let inference = environment.get(INFERENCE_ENV).cloned().unwrap_or_default();
-    inference_settings(&inference, &runtime)?;
+    let inference = environment.get(PROVIDERS_ENV).cloned().unwrap_or_default();
     let mut expected_environment = launch_environment(agent, &runtime, proxy.as_ref());
     if !inference.is_empty() {
-        expected_environment.insert(INFERENCE_ENV.into(), inference.clone());
+        expected_environment.insert(PROVIDERS_ENV.into(), inference.clone());
     }
     let policy = policy_json(spec.policy.as_ref().ok_or(ObservationError::Incomplete)?)?;
     let expected_providers = inference::provider_names(&inference, &runtime)?;
@@ -218,7 +214,7 @@ fn sandbox_row(
     let mut row = base(sandbox.metadata.clone(), name, removing)?;
     row.insert("agent_name".into(), agent.clone());
     row.insert("agent_runtime".into(), runtime);
-    row.insert("inference_json".into(), inference);
+    row.insert("provider_names_json".into(), inference);
     row.insert("image".into(), image);
     row.insert("policy_json".into(), policy);
     row.insert(

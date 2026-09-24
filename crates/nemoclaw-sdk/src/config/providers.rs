@@ -38,7 +38,7 @@ fn sandbox_path(sandbox: &Sandbox) -> String {
 }
 
 impl Document {
-    pub(super) fn route_provider<'a>(
+    pub(crate) fn route_provider<'a>(
         &'a self,
         route: &'a Route,
         inference: &ScopedInference<'a>,

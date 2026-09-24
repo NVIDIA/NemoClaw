@@ -23,7 +23,7 @@ mod projection;
 pub use answers::{
     AnswerOverrides, Answers, ApiChoice, HarnessChoice, ProviderPreset, RuntimeChoice,
 };
-pub use capabilities::{Capabilities, Scenario};
+pub use capabilities::Capabilities;
 pub use diagnostics::{Diagnostic, Diagnostics};
 pub use draft::{
     AuthoredDocument, CompletionBoundary, Draft, IdentityEdits, InferenceEdits, Review,
@@ -35,3 +35,6 @@ pub use facts::{AuthoringFacts, EndpointEvidence, GatewayEvidence, HardwareEvide
 pub use graph::{AnswerStatus, DependencyGraph};
 pub use guided::{AnswerChange, EditableField, FieldValue, GuidedEdit, GuidedField};
 pub use projection::Session;
+
+mod settings;
+pub use settings::SettingQuestion;

@@ -42,10 +42,7 @@ impl OpenShell {
     pub(super) async fn create_sandbox(&self, want: &Row) -> Result<String, ObservationError> {
         let name = value(want, "name");
         let workspace = value(want, "workspace");
-        if !value(want, "agent_runtime")
-            .strip_prefix("fabric-")
-            .is_some_and(crate::config::is_fabric_harness)
-        {
+        if value(want, "agent_runtime") != "fabric" {
             return Err(ObservationError::BindingMismatch);
         }
         let mut labels = labels(want);
@@ -70,7 +67,7 @@ impl OpenShell {
                         row_proxy(want)?.as_ref(),
                     ),
                     providers: inference::provider_names(
-                        value(want, "inference_json"),
+                        value(want, "provider_names_json"),
                         value(want, "agent_runtime"),
                     )?,
                     environment: inference_environment(want)?.into_iter().collect(),

@@ -66,7 +66,8 @@ Rebuild a bundle from the recorded source revision if the removed tools are need
 ## Build Agent Images
 
 Use Docker with Buildx on a native host that matches the selected image target.
-Set `AGENT_PLATFORM=linux/arm64` or `AGENT_PLATFORM=linux/amd64` explicitly; Bake rejects an omitted or unsupported platform.
+Pass `--platform linux/arm64` or `--platform linux/amd64` to the agent image builder.
+Direct Bake checks and proxy builds require the corresponding `AGENT_PLATFORM` environment variable.
 ARM64 selects all ten harnesses; AMD64 selects the native locks and stages for Deep Agents and OpenClaw.
 The remaining harnesses are ARM64-only until their pinned native dependencies have matching AMD64 artifacts and qualification.
 Agent images use Node.js 24.21.0 LTS and Python 3.14.7.
@@ -78,41 +79,40 @@ Digest-based sandbox use requires a Docker image store that retains repository d
 On a native Linux ARM64 host, run from the repository root:
 
 ```sh
-mkdir -p .build
-AGENT_PLATFORM=linux/arm64 docker buildx bake openclaw --load --metadata-file .build/agent-images.json
+python3 image/build_fabric.py --platform linux/arm64 openclaw
 docker image inspect nc-fabric:openclaw --format '{{index .RepoDigests 0}}'
 ```
 
 Use the printed immutable reference in `sandboxes[].image.ref`.
-Examples that omit `image` use the SDK pin for their selected harness from `versions.json`.
-Hermes uses `images.hermes`; other harnesses use `images.agent`.
+Examples that omit `image` use the generic default agent image pin from `versions.json`.
+Select an explicit image containing the chosen Fabric adapter; a harness identifier does not select a different image.
 The selected image must still exist on the compute daemon.
 The sandbox compute daemon must have access to that exact image.
-Build metadata records the exported digest separately under the target's `containerimage.digest` key.
+The builder starts a temporary process with networking disabled to read installed Fabric discovery metadata, then labels the final local image.
+It removes its temporary image tag after completion; it does not start an adapter or request model responses.
 The commands build and load local images; they do not publish images or launch a deployment.
 
 On a native Linux AMD64 host, build the general-purpose Deep Agents runtime with the platform selector:
 
 ```sh
-mkdir -p .build
-AGENT_PLATFORM=linux/amd64 docker buildx bake deepagents --load --metadata-file .build/agent-images-amd64.json
+python3 image/build_fabric.py --platform linux/amd64 deepagents
 docker image inspect nc-fabric:deepagents --format '{{index .RepoDigests 0}}'
 ```
 
 Use the printed immutable reference in `sandboxes[].image.ref`.
 Replace `deepagents` with `openclaw` to build the other qualified AMD64 harness.
-Run `AGENT_PLATFORM=linux/amd64 docker buildx bake agents --load` to build both.
+Run `python3 image/build_fabric.py --platform linux/amd64 agents` to build both.
 The AMD64 builds and image tests do not establish successful gateway provisioning or an end-to-end agent response.
 
-On ARM64, select `hermes`, `pi`, or another name from the [harness matrix](reference/fabric-harnesses.md), or build every agent with `AGENT_PLATFORM=linux/arm64 docker buildx bake agents --load`.
+On ARM64, select `hermes`, `pi`, or another name from the [harness matrix](reference/fabric-harnesses.md), or build every agent with `python3 image/build_fabric.py --platform linux/arm64 agents`.
 `AGENT_PLATFORM=linux/arm64 docker buildx bake ollama-proxy --load` builds the separate proxy image as `nc-fabric:ollama-proxy`; select `linux/amd64` on an AMD64 host.
 The proxy and its `proxy-tests` target use the same explicit platform selector.
-Set `IMAGE_PREFIX=nc-my-build` before Bake to use your own local repository name without replacing another build's tags.
+Set `IMAGE_PREFIX=nc-my-build` before the builder to use your own local repository name without replacing another build's tags.
 
 [The Bake file](../docker-bake.hcl) selects the target platform, qualified harnesses, dependency locks, and named stages in the [shared agent Dockerfile](../image/fabric/Dockerfile).
 Common Fabric wheels and base layers are shared; selected images contain only their required harness dependencies.
 The builder verifies archive and wheel hashes, retains upstream archives and local build sources under `/opt/nemoclaw/source/`, and records local source hashes in `/opt/nemoclaw/provenance.json`.
-The [source notice](../image/NOTICE.md) describes the retained local patches and licenses.
+The [source notice](../image/NOTICE.md) describes retained sources and licenses.
 Pinned archives and wheels do not make the whole image bit-reproducible: Debian packages still come from the configured repositories.
 
 Run [image checks](testing.md#image-source-checks) before changing or using an image recipe, and follow the [native fixture procedures](testing/fixtures.md#inference-api-fixtures) for behavior qualification.

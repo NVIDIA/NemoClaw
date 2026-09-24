@@ -135,16 +135,21 @@ async fn export_rejects_observed_pi_model_drift_without_reconfiguring_it() {
     )
     .unwrap();
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
-    document.spec.sandboxes[0].harness.as_mut().unwrap().kind =
-        nemoclaw_sdk::config::HarnessKind::Pi;
+    document.spec.sandboxes[0].harness.as_mut().unwrap().kind = "nvidia.fabric.pi".parse().unwrap();
     let deployment = Deployment::new(directory.path(), &bundle);
     let cancel = CancellationToken::new();
     deployment.apply(&document, &cancel).await.unwrap();
     assert_eq!(deployment.export(&cancel).await.unwrap(), document);
     let state = fs::read(directory.path().join("terraform.tfstate")).unwrap();
     let effects = fixture.state.lock().unwrap().effects;
-    for model in fixture.state.lock().unwrap().pi_models.values_mut() {
-        model["model"] = serde_json::json!("foreign-model");
+    for model in fixture
+        .state
+        .lock()
+        .unwrap()
+        .fabric_configurations
+        .values_mut()
+    {
+        model["models"]["default"]["model"] = serde_json::json!("foreign-model");
     }
     assert!(deployment.export(&cancel).await.is_err());
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
@@ -157,9 +162,9 @@ async fn export_rejects_observed_pi_model_drift_without_reconfiguring_it() {
             .state
             .lock()
             .unwrap()
-            .pi_models
+            .fabric_configurations
             .values()
-            .all(|model| model["model"] == "foreign-model")
+            .all(|model| model["models"]["default"]["model"] == "foreign-model")
     );
     deployment.destroy(&cancel).await.unwrap();
 }

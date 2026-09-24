@@ -16,6 +16,7 @@ pub(crate) enum Step {
     DeploymentName,
     Endpoint,
     Model,
+    Setting(usize),
     Review,
 }
 
@@ -35,8 +36,6 @@ pub(crate) enum Input {
 pub(crate) struct Wizard {
     pub(super) capabilities: Capabilities,
     base_capabilities: Capabilities,
-    catalog_capabilities: Option<Capabilities>,
-    catalog_snapshot: Option<nemoclaw_sdk::fabric_catalog::FabricCatalog>,
     pub(super) draft: Draft,
     pub(super) step: Step,
     pub(super) selected: usize,
@@ -65,8 +64,6 @@ impl Wizard {
             .expect("wizard receives a losslessly representable guided draft");
         Self {
             base_capabilities: capabilities.clone(),
-            catalog_capabilities: None,
-            catalog_snapshot: None,
             capabilities,
             draft,
             step: Step::Welcome,
@@ -174,22 +171,35 @@ impl Wizard {
     }
 
     pub(super) fn refresh_catalog(&mut self) {
-        let catalog = self.current_catalog().cloned();
-        if catalog == self.catalog_snapshot {
-            return;
-        }
+        let setting = self.setting_question();
+        let setting_value = setting
+            .as_ref()
+            .and_then(|question| question.choices.get(self.selected))
+            .cloned();
         let custom_selection =
             self.step == Step::Model && self.selected == self.choice_values().len();
         let selected = self.choice_values().get(self.selected).cloned();
-        self.catalog_capabilities = self.current_catalog().map(Capabilities::from_catalog);
-        let mut capabilities = self.base_capabilities.clone();
-        if let Some(catalog) = self.current_catalog() {
-            capabilities = capabilities.with_catalog(catalog);
+        self.capabilities = self
+            .current_catalog()
+            .map(Capabilities::from_catalog)
+            .unwrap_or_else(|| self.base_capabilities.clone());
+        if let Some(previous) = setting {
+            if let Some(current) = self.setting_question()
+                && previous.path == current.path
+                && previous.schema == current.schema
+            {
+                if let Some(value) = setting_value {
+                    self.selected = current
+                        .choices
+                        .iter()
+                        .position(|choice| choice == &value)
+                        .unwrap_or(0);
+                }
+                return;
+            }
+            self.set_step(self.step);
+            return;
         }
-        self.capabilities = capabilities
-            .preserving_draft(&self.draft)
-            .expect("discovery preserves the existing guided draft");
-        self.catalog_snapshot = catalog;
         if custom_selection {
             self.selected = self.choice_values().len();
             return;
@@ -253,6 +263,21 @@ impl Wizard {
             return;
         }
         if self.step == Step::Review {
+            match self.draft.next_setting(&self.capabilities) {
+                Ok(Some(_)) => {
+                    self.advance_step();
+                    return;
+                }
+                Err(error) => {
+                    self.error = Some(error.to_string());
+                    return;
+                }
+                _ => {}
+            }
+            if let Err(error) = self.draft.validate_settings(&self.capabilities) {
+                self.error = Some(error.to_string());
+                return;
+            }
             if self.draft.has_delegated_answers()
                 && let Err(error) = self.draft.check_delegation(
                     &self.capabilities,
@@ -282,6 +307,27 @@ impl Wizard {
             match self.draft.next_question(&self.capabilities) {
                 Ok(None) => self.accepted = true,
                 Ok(Some(_)) => self.advance_step(),
+                Err(error) => self.error = Some(error.to_string()),
+            }
+            return;
+        }
+        if let Some(question) = self.setting_question() {
+            let value = if !question.choices.is_empty() {
+                if self.selected < question.choices.len() {
+                    Ok(Some(question.choices[self.selected].clone()))
+                } else {
+                    Ok(None)
+                }
+            } else if self.input.is_empty() && !question.required {
+                Ok(None)
+            } else {
+                question.parse(&self.input).map(Some)
+            };
+            match value.and_then(|value| {
+                self.draft
+                    .answer_setting(&self.capabilities, &question.path, value)
+            }) {
+                Ok(()) => self.advance_step(),
                 Err(error) => self.error = Some(error.to_string()),
             }
             return;
@@ -334,9 +380,30 @@ impl Wizard {
     fn advance_step(&mut self) {
         match self.draft.next_question(&self.capabilities) {
             Ok(question) => {
-                let next = question
-                    .and_then(|field| step_for_field(field.id()))
-                    .unwrap_or(Step::Review);
+                let next = if let Some(step) = question.and_then(|field| step_for_field(field.id()))
+                {
+                    step
+                } else {
+                    match self.draft.next_setting(&self.capabilities) {
+                        Ok(Some(question)) => {
+                            let fields = self
+                                .draft
+                                .setting_questions(&self.capabilities)
+                                .expect("question comes from active schema");
+                            Step::Setting(
+                                fields
+                                    .iter()
+                                    .position(|field| field.path == question.path)
+                                    .unwrap(),
+                            )
+                        }
+                        Ok(None) => Step::Review,
+                        Err(error) => {
+                            self.error = Some(error.to_string());
+                            return;
+                        }
+                    }
+                };
                 if self.step != next {
                     self.history.push(self.step);
                 }
@@ -378,16 +445,53 @@ impl Wizard {
                 _ => None,
             })
             .unwrap_or_default();
+        if let Some(question) = self.setting_question() {
+            self.selected = question
+                .suggestion
+                .as_ref()
+                .and_then(|value| question.choices.iter().position(|choice| choice == value))
+                .unwrap_or(if question.required {
+                    0
+                } else {
+                    question.choices.len()
+                });
+            self.input = question
+                .suggestion
+                .map(|value| {
+                    value
+                        .as_str()
+                        .map(str::to_owned)
+                        .unwrap_or_else(|| value.to_string())
+                })
+                .unwrap_or_default();
+        }
         self.replace_input = self.is_text();
     }
 
+    pub(super) fn setting_question(&self) -> Option<nemoclaw_authoring::SettingQuestion> {
+        let Step::Setting(index) = self.step else {
+            return None;
+        };
+        self.draft
+            .setting_questions(&self.capabilities)
+            .ok()?
+            .get(index)
+            .cloned()
+    }
+
     pub(super) fn is_choice(&self) -> bool {
+        if let Some(question) = self.setting_question() {
+            return !question.choices.is_empty();
+        }
         !self.custom_model
             && self.field().is_some_and(EditableField::is_choice)
             && !self.choice_values().is_empty()
     }
 
     fn is_text(&self) -> bool {
+        if let Some(question) = self.setting_question() {
+            return question.choices.is_empty();
+        }
         self.custom_model || self.field().is_some_and(|field| !field.is_choice())
     }
 
@@ -424,6 +528,9 @@ impl Wizard {
                 .position(|seen| seen == step)
                 .unwrap_or(visited.len())
         });
+        if let Ok(settings) = self.draft.setting_questions(&self.capabilities) {
+            steps.extend((0..settings.len()).map(Step::Setting));
+        }
         steps.push(Step::Review);
         steps
     }
@@ -455,16 +562,7 @@ impl Wizard {
         let Some(field) = self.field_state() else {
             return Vec::new();
         };
-        let mut choices = field.choices().to_vec();
-        if self.current_catalog().is_some()
-            && let Some(offered) = &self.catalog_capabilities
-            && let Ok(answers) = self.draft.guided_answers(&self.capabilities)
-        {
-            choices.retain(|choice| {
-                choice == field.value() || offered.offers(&answers, field.id(), choice)
-            });
-        }
-        choices
+        field.choices().to_vec()
     }
 
     pub(super) fn runtime_unavailable_reason(
@@ -480,7 +578,7 @@ impl Wizard {
         match self.choice_values().get(index) {
             Some(choice)
                 if self.current_catalog().is_some()
-                    && self.catalog_capabilities.as_ref().is_some_and(|offered| {
+                    && Some(&self.capabilities).is_some_and(|offered| {
                         self.field()
                             .zip(self.draft.guided_answers(&self.capabilities).ok())
                             .is_some_and(|(field, answers)| {
@@ -496,6 +594,22 @@ impl Wizard {
     }
 
     pub(super) fn choice_labels(&self) -> Vec<String> {
+        if let Some(question) = self.setting_question() {
+            let mut labels: Vec<_> = question
+                .choices
+                .iter()
+                .map(|value| {
+                    value
+                        .as_str()
+                        .map(str::to_owned)
+                        .unwrap_or_else(|| value.to_string())
+                })
+                .collect();
+            if !question.required {
+                labels.push("Leave unset".into());
+            }
+            return labels;
+        }
         let mut labels = self
             .choice_values()
             .iter()
@@ -583,7 +697,7 @@ fn field_for_step(step: Step) -> Option<EditableField> {
         Step::DeploymentName => EditableField::DeploymentName,
         Step::Endpoint => EditableField::Endpoint,
         Step::Model => EditableField::Model,
-        Step::Welcome | Step::Review => return None,
+        Step::Welcome | Step::Review | Step::Setting(_) => return None,
     })
 }
 

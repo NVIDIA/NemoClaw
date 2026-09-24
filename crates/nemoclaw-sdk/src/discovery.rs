@@ -103,8 +103,6 @@ pub struct FabricObservation {
     pub image_id: Option<String>,
     pub catalog: Option<FabricCatalog>,
     #[serde(default)]
-    pub adapters: Vec<crate::fabric_capabilities::AdapterCapabilities>,
-    #[serde(default)]
     pub image: crate::fabric_capabilities::ImageMetadata,
     #[serde(default)]
     pub compatibility: Option<crate::fabric_capabilities::CompatibilityReport>,
@@ -122,7 +120,6 @@ pub async fn observe_fabric(
         source: "engine_image_inspect".into(),
         image_id: None,
         catalog: None,
-        adapters: Vec::new(),
         image: Default::default(),
         compatibility: None,
     };
@@ -148,11 +145,6 @@ pub async fn observe_fabric(
                 Some(Ok(catalog))
                     if observed.image_id.as_ref().is_some_and(|id| !id.is_empty()) =>
                 {
-                    observed.adapters = catalog
-                        .adapters
-                        .iter()
-                        .map(crate::fabric_capabilities::project_adapter)
-                        .collect();
                     observed.catalog = Some(catalog);
                     observed.status = ObservationStatus::Available;
                 }

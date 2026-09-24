@@ -161,8 +161,9 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
         .as_object_mut()
         .unwrap()
         .remove("default");
-    defs["Image"]["properties"]["ref"]["x-nemoclaw-default-rule"] =
-        json!("Omitted or empty selects the SDK pin for the selected harness.");
+    defs["Image"]["properties"]["ref"]["x-nemoclaw-default-rule"] = json!(
+        "Omitted or empty selects the generic SDK agent image pin; verify that it contains the selected Fabric adapter."
+    );
     let driver_values = defs["Runtime"]["properties"]["provider"]
         .as_object_mut()
         .unwrap()
@@ -242,7 +243,16 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
             {"required": ["harness"], "not": {"required": ["harnessRef"]}},
             {"required": ["harnessRef"], "not": {"required": ["harness"]}}
         ]}));
-    defs["Harness"]["allOf"] = json!([]);
+    let native_identifier =
+        json!({"minLength":1,"maxLength":256,"pattern":"^[^\\u0000-\\u001f\\u007f]+$(?![\\s\\S])"});
+    let allow = &mut defs["AgentTools"]["properties"]["allow"];
+    allow["items"] = json!({"type":"string"});
+    allow["items"]
+        .as_object_mut()
+        .unwrap()
+        .extend(native_identifier.as_object().unwrap().clone());
+    allow["uniqueItems"] = json!(true);
+
     property(&mut defs["Route"], "name", json!({"pattern": c::SLUG}));
     property(
         &mut defs["Inference"],
@@ -342,48 +352,7 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
             "else": at("provider", json!({"const":"openai"}), false)
         }}
     ]);
-    property(
-        &mut defs["OpenClawDashboard"],
-        "port",
-        json!({"not":{"minimum":8642,"maximum":8652}}),
-    );
-    defs["OpenClawDashboard"]["minProperties"] = json!(1);
     defs["AgentExecution"]["minProperties"] = json!(1);
-    property(&mut defs["OtlpTracing"], "enabled", json!({"const":true}));
-    property(&mut defs["RelayTracing"], "enabled", json!({"const":true}));
-    property(
-        &mut defs["OtlpTracing"],
-        "endpoint",
-        json!({"const":super::super::observability::OTLP_ENDPOINT}),
-    );
-    property(
-        &mut defs["OtlpTracing"],
-        "serviceName",
-        json!({"minLength":1,"maxLength":256,"pattern":"^[!-~](?:[ -~]*[!-~])?$(?![\\s\\S])"}),
-    );
-    defs["Harness"]["allOf"].as_array_mut().unwrap().extend([
-        json!({"if":{"required":["observability"],"properties":{"observability":{"required":["otlp"]}}},"then":{"properties":{"kind":{"const":"openclaw"}}}}),
-        json!({"if":{"required":["observability"],"properties":{"observability":{"required":["relay"]}}},"then":{"properties":{"kind":{"const":"hermes"}}}})
-    ]);
-    // JSON Schema's dollar anchor also matches before a trailing newline.
-    property(
-        &mut defs["AgentExecution"],
-        "heartbeatEvery",
-        json!({"pattern":"^[0-9]+[smh]$(?![\\s\\S])"}),
-    );
-    defs["Harness"]["allOf"].as_array_mut().unwrap().push(json!({"if":{"required":["execution"],"properties":{"execution":{"required":["heartbeatEvery"]}}},"then":{"properties":{"kind":{"const":"openclaw"}}}}));
-    defs["HermesInterfaces"]["minProperties"] = json!(1);
-    for field in ["port", "internalPort"] {
-        property(
-            &mut defs["HermesDashboard"],
-            field,
-            json!({"not":{"anyOf":[{"minimum":8642,"maximum":8652},{"const":18642}]}}),
-        );
-    }
-    defs["HermesDashboard"]["allOf"] = json!([{"if":{"properties":{"enabled":{"const":false}}},"then":forbid(&["port","internalPort","tui"])}]);
-    defs["Harness"]["allOf"].as_array_mut().unwrap().push(json!({"if":{"required":["interfaces"]},"then":{"properties":{"kind":{"enum":["openclaw","hermes"]}},"allOf":[
-        {"if":{"properties":{"kind":{"const":"openclaw"}}},"then":{"properties":{"interfaces":{"$ref":"#/$defs/OpenClawInterfaces"}}},"else":{"properties":{"interfaces":{"$ref":"#/$defs/HermesInterfaces"}}}}
-    ]}}));
     crate::services::constrain_schema(defs, normalized);
 
     root["allOf"] = json!([{
@@ -401,13 +370,13 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
         "Document::parse rejects YAML aliases, anchors, merge keys, unsupported tags, duplicate keys, multiple documents, and input larger than 1 MiB. It applies the compiled input schema before defaulting; Document::validate applies the normalized schema and semantic checks, including for directly constructed Rust values.",
         "The parser checks endpoint transport and address policy, managed gateway port bounds, canonical private IPv4 /24 networks, local engine socket syntax, and publication address/port/network agreement.",
         "Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.",
-        "Explicit filesystem grants must permit reads of the selected harness runtime directories; parent and read-write grants count. This parser check does not inspect images, resolve symlinks, or establish runtime permissions.",
-        "The schema requires an explicit default for multiple model choices. Rust checks unique route names, that the default names a route, and that the resolved harness supports the selected model count, tuning, and tools; omitted disclosure means progressive.",
-        "The parser resolves integrationRefs only from enclosing deployment or sandbox definitions, rejects name shadowing and incompatible agent grants, and permits at most one attached web search definition per sandbox. Brave supports OpenClaw and Deep Agents; Tavily supports OpenClaw and Hermes. Agent-inline definitions attach directly; unused enclosing definitions grant no access.",
+        "Explicit filesystem grants must permit reads of the packaged Fabric runtime and NemoClaw bridge directories; parent and read-write grants count. This parser check does not inspect images, resolve symlinks, or establish runtime permissions.",
+        "The schema requires an explicit default for multiple model choices. Rust checks unique route names, that the default names a route, and that native model and tool fields have valid structural shapes. Fabric validates adapter-specific combinations.",
+        "The parser resolves integrationRefs only from enclosing deployment or sandbox definitions, rejects name shadowing and missing agent references, and permits at most one attached web search definition per sandbox. Native search must be authored separately through public Fabric configuration and validated by Fabric. Agent-inline definitions attach directly; unused enclosing definitions grant no access.",
         "The schema requires exactly one sandbox harness or harnessRef and rejects agent-level harness selection. Rust resolves visible harnesses without shadowing. Each sandbox requires one agent and hosts one Fabric runtime using the sandbox-selected implementation. Shared definitions reuse configuration across sandboxes.",
-        "The parser permits non-default reasoningEffort values only on the initial default choice. Managed inference services may constrain routes to their declared served model.",
+        "Native reasoning-effort identifiers are preserved for Fabric validation. Managed inference services may constrain routes to their declared served model.",
         "Rust resolves inferenceRef from enclosing inferences, preserves declaration scope for nested provider references, and rejects missing names and shadowing. The schema rejects inline/reference ambiguity.",
-        "The parser resolves providerRef from enclosing inferenceProviders, rejects shadowing, conflicting selected names, more than 32 selected providers, incompatible managed-service combinations, and compares route models and authentication with the selected provider. Provider/agent compatibility is checked after reference resolution for both inline and shared definitions. Unselected definitions create no resources. Snapshot identity must match the service model.",
+        "The parser resolves providerRef from enclosing inferenceProviders, rejects shadowing, conflicting selected names, more than 32 selected providers, incompatible managed-service combinations, and compares route models and authentication with the selected provider. Provider transport and reference consistency are checked after reference resolution for both inline and shared definitions. Unselected definitions create no resources. Snapshot identity must match the service model.",
         "The parser checks memory threshold ordering and GPU/KV budget relationships; recipe path safety, byte-length limits, environment-map conflicts, snapshot file uniqueness, directory conflicts, and total-size overflow.",
         "Schema validation does not observe hardware, image labels, model weights, credentials, ownership, connectivity, or inference readiness. Those checks run during the relevant SDK operation."
     ]);

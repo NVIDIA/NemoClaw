@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use nemoclaw_sdk::config::{DEFAULT_AGENT_IMAGE, DEFAULT_GATEWAY_IMAGE, DEFAULT_HERMES_IMAGE};
+use nemoclaw_sdk::config::{DEFAULT_AGENT_IMAGE, DEFAULT_GATEWAY_IMAGE};
 
 #[test]
 fn openshell_telemetry_stays_disabled_even_when_environment_requests_it() {
@@ -33,7 +33,6 @@ fn runtime_defaults_use_the_artifact_manifest() {
     let pins: serde_json::Value =
         serde_json::from_str(include_str!("../../../versions.json")).unwrap();
     assert_eq!(pins["images"]["agent"], DEFAULT_AGENT_IMAGE);
-    assert_eq!(pins["images"]["hermes"], DEFAULT_HERMES_IMAGE);
     assert_eq!(pins["images"]["gateway"], DEFAULT_GATEWAY_IMAGE);
     for image in pins["images"].as_object().unwrap().values() {
         let digest = image.as_str().unwrap().split_once("@sha256:").unwrap().1;
@@ -99,4 +98,22 @@ fn declared_openshell_clients_match_the_artifact_revision() {
             "{name}"
         );
     }
+}
+
+#[test]
+fn fabric_planner_uses_the_same_immutable_owner_revision_as_image_discovery() {
+    let manifest: toml::Value = toml::from_str(include_str!("../Cargo.toml")).unwrap();
+    let dependency = &manifest["dependencies"]["nemo-fabric-core"];
+    let catalog = nemoclaw_sdk::fabric_catalog::FabricCatalog::bundled();
+    assert_eq!(
+        dependency.get("git").and_then(toml::Value::as_str),
+        Some("https://github.com/NVIDIA/NeMo-Fabric"),
+        "the planner requires the canonical Fabric source, not a local path"
+    );
+    assert_eq!(
+        dependency.get("rev").and_then(toml::Value::as_str),
+        Some(catalog.fabric_revision.as_str()),
+        "the planner and image descriptors must use the same owner revision"
+    );
+    assert!(dependency.get("path").is_none());
 }

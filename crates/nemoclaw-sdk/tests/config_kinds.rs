@@ -5,7 +5,7 @@ use serde_json::json;
 
 #[test]
 fn closed_selectors_reject_unknown_values_and_harnesses_reject_malformed_identifiers() {
-    assert!(serde_json::from_value::<Harness>(json!({"kind":"../escape"})).is_err());
+    assert!(serde_json::from_value::<Harness>(json!({"kind":" \t"})).is_err());
     assert!(serde_json::from_value::<Runtime>(json!({"provider":"unknown"})).is_err());
     assert!(
         serde_json::from_value::<InferenceProvider>(json!({"name":"model", "provider":"unknown"}))
@@ -38,27 +38,18 @@ fn selector_names_round_trip_without_changing_wire_values() {
             assert_eq!(&name.parse::<T>().unwrap(), kind);
             assert_eq!(kind.to_string(), *name);
         }
-        for name in ["", "../escape", "Docker", "OPENAI"] {
+        for name in ["", " "] {
             assert!(name.parse::<T>().is_err());
             assert!(serde_json::from_value::<T>(json!(name)).is_err());
         }
     }
-    round_trip(&[
-        (HarnessKind::DeepAgents, "deepagents"),
-        (HarnessKind::Hermes, "hermes"),
-        (HarnessKind::OpenClaw, "openclaw"),
-        (HarnessKind::Claude, "claude"),
-        (HarnessKind::Codex, "codex"),
-        (HarnessKind::MiniSweAgent, "mini-swe-agent"),
-        (HarnessKind::Nooa, "nooa"),
-        (HarnessKind::NooaBench, "nooa-bench"),
-        (HarnessKind::RemoteAgent, "remote-agent"),
-        (HarnessKind::Pi, "pi"),
-        (
-            HarnessKind::Other("fixture-new-agent".into()),
-            "fixture-new-agent",
-        ),
-    ]);
+    for name in [
+        "nvidia.fabric.pi",
+        "org.fabric.fixture.discoverable",
+        "../opaque-id",
+    ] {
+        round_trip(&[(name.parse::<HarnessKind>().unwrap(), name)]);
+    }
     round_trip(&[
         (ComputeDriver::Docker, "docker"),
         (ComputeDriver::Podman, "podman"),
@@ -92,8 +83,57 @@ fn omitted_and_empty_runtime_select_docker_without_changing_intent_digest() {
 }
 
 #[test]
-fn programmatic_harness_identifiers_cannot_bypass_native_variant_semantics() {
-    let mut harness: Harness = serde_json::from_value(json!({"kind":"openclaw"})).unwrap();
-    harness.kind = nemoclaw_sdk::config::HarnessKind::Other("openclaw".into());
-    assert!(harness.validate().is_err());
+fn opaque_adapter_identity_has_no_native_alias_or_default_image() {
+    let harness: Harness =
+        serde_json::from_value(json!({"kind":"org.fabric.fixture.discoverable"})).unwrap();
+    assert_eq!(harness.kind.as_str(), "org.fabric.fixture.discoverable");
+    assert_eq!(harness.runtime(), "fabric");
+}
+
+#[test]
+fn native_schema_fields_are_owned_only_by_fabric_settings() {
+    for field in ["interfaces", "observability"] {
+        assert!(
+            serde_json::from_value::<Harness>(json!({"kind":"org.fixture.adapter",field:{}}))
+                .is_err()
+        );
+    }
+    let harness: Harness=serde_json::from_value(json!({"kind":"org.fixture.adapter","settings":{"interfaces":{"future":null},"observability":{"future":true}}})).unwrap();
+    assert!(harness.settings.unwrap()["interfaces"]["future"].is_null());
+}
+
+#[test]
+fn opaque_fabric_identifiers_preserve_owner_valid_long_and_control_values() {
+    use nemoclaw_sdk::{
+        config::{Document, schema::input_schema},
+        fabric_catalog::FabricCatalog,
+    };
+    let validator = jsonschema::validator_for(&input_schema()).unwrap();
+    for id in [
+        format!("org.fabric.{}", "x".repeat(300)),
+        "org.fabric.\nfixture\u{1b}".into(),
+    ] {
+        let mut catalog = FabricCatalog::bundled();
+        catalog.adapters[0].descriptor["adapter_id"] = json!(id);
+        let catalog = FabricCatalog::from_json(&serde_json::to_string(&catalog).unwrap()).unwrap();
+        assert_eq!(catalog.adapters[0].adapter_id(), id);
+        let mut input: serde_json::Value =
+            serde_saphyr::from_str(include_str!("fixtures/config/local.yaml")).unwrap();
+        input["spec"]["sandboxes"][0]["harness"]["kind"] = json!(catalog.adapters[0].adapter_id());
+        assert!(
+            validator.is_valid(&input),
+            "schema rejected Fabric identifier"
+        );
+        let document = Document::parse(input.to_string().as_bytes()).unwrap();
+        let encoded = document.yaml().unwrap();
+        let restored = Document::parse(encoded.as_bytes()).unwrap();
+        assert_eq!(
+            restored
+                .sandbox_harness(&restored.spec.sandboxes[0])
+                .unwrap()
+                .kind
+                .as_str(),
+            id
+        );
+    }
 }

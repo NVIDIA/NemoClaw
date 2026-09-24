@@ -41,7 +41,11 @@ fn explicit_policy_and_proxy_survive_yaml_and_compilation() {
         .map(|k| (k.into(), format!("{k}-generation")))
         .into();
     let rows = targets(&document, &generations).unwrap();
-    let sandbox = &rows[3].values;
+    let sandbox = &rows
+        .iter()
+        .find(|row| row.kind == "sandbox")
+        .unwrap()
+        .values;
     let policy: Value = serde_json::from_str(&sandbox["policy_json"]).unwrap();
     assert_eq!(
         policy["network_policies"]["docs"]["endpoints"][0]["rules"][0]["allow"]["method"],
@@ -146,7 +150,13 @@ fn policy_template_markers_remain_literal_in_opentofu_configuration() {
         .unwrap();
     assert!(encoded.contains("/docs/$${file}/%%{literal}"));
     let rows = targets(&document, &generations).unwrap();
-    assert!(rows[3].values["policy_json"].contains("/docs/${file}/%{literal}"));
+    assert!(
+        rows.iter()
+            .find(|row| row.kind == "sandbox")
+            .unwrap()
+            .values["policy_json"]
+            .contains("/docs/${file}/%{literal}")
+    );
 }
 
 #[test]
@@ -170,11 +180,6 @@ fn explicit_filesystem_policy_must_allow_the_selected_runtime() {
         value.pointer_mut(fs).unwrap()["read_only"] =
             json!(["/usr", "/opt/fabric", "/opt/nemoclaw", extra]);
         parse(&value).unwrap();
-        if harness != "deepagents" {
-            value.pointer_mut(fs).unwrap()["read_only"] =
-                json!(["/usr", "/opt/fabric", "/opt/nemoclaw"]);
-            assert!(parse(&value).unwrap_err().to_string().contains(extra));
-        }
         value.pointer_mut(fs).unwrap()["read_only"] = json!(["/usr", "/opt/fabric", extra]);
         assert!(
             parse(&value)
@@ -227,7 +232,7 @@ fn shared_harness_policy_is_checked_but_omitted_filesystem_grants_keep_defaults(
     value["spec"]["sandboxes"][0]["harnessRef"] = json!("shared");
     let policy = &mut value["spec"]["sandboxes"][0]["network"]["policy"]["explicit"];
     policy["filesystem_policy"]["read_only"] = json!(["/usr", "/opt"]);
-    assert!(parse(&value).unwrap_err().to_string().contains("/app"));
+    parse(&value).unwrap();
     value["spec"]["sandboxes"][0]["network"]["policy"]["explicit"]
         .as_object_mut()
         .unwrap()

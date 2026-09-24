@@ -24,7 +24,7 @@ impl Definition {
             kind,
             fields: fields.to_vec(),
             mutable: mutable.to_vec(),
-            observed_running: matches!(kind, "managed_gateway" | "pi_configuration"),
+            observed_running: matches!(kind, "managed_gateway" | "agent_configuration"),
         }
     }
 }

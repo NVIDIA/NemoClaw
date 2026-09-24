@@ -1,5 +1,0 @@
-{
-  "categories": { "correctness": "error" },
-  "env": { "node": true },
-  "rules": { "no-unused-vars": "error", "typescript/no-explicit-any": "error" }
-}

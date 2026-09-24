@@ -230,7 +230,7 @@ impl Wizard {
                         Style::new().fg(if active { BRIGHT_GREEN } else { MUTED }),
                     ),
                     Span::styled(
-                        label,
+                        terminal_text(&label),
                         Style::new()
                             .fg(if active && unavailable.is_none() {
                                 WHITE
@@ -294,6 +294,12 @@ impl Wizard {
         }
         lines.extend(review_field("Deployment", &answers.deployment_name));
         lines.extend(review_field("Harness", labels::harness(&answers.harness)));
+        if let Some(settings) = &answers.harness_settings {
+            for (name, value) in settings {
+                lines.push(Line::from(format!("{name}: {value}")));
+            }
+        }
+
         lines.extend(review_field("Runtime", labels::runtime(answers.runtime)));
         lines.extend(review_field(
             "Provider",
@@ -372,7 +378,10 @@ impl Wizard {
         Some((position, steps.len()))
     }
 
-    fn title(&self) -> &'static str {
+    fn title(&self) -> String {
+        if let Some(question) = self.setting_question() {
+            return question.title;
+        }
         match self.step {
             Step::Harness => "Choose your agent harness",
             Step::Runtime => "Where should the sandbox run?",
@@ -383,9 +392,21 @@ impl Wizard {
             Step::Model => "Choose the model",
             _ => "",
         }
+        .into()
     }
 
-    fn help(&self) -> &'static str {
+    fn help(&self) -> String {
+        if let Some(question) = self.setting_question() {
+            return format!(
+                "{}{}",
+                question.description,
+                if question.required {
+                    " Required."
+                } else {
+                    " Optional; leave empty to skip."
+                }
+            );
+        }
         match self.step {
             Step::Harness => "The harness is the agent environment NemoClaw installs and isolates.",
             Step::Runtime => "The runtime owns the gateway and local sandbox resources.",
@@ -396,13 +417,30 @@ impl Wizard {
             Step::Model => "Choose a suggestion or enter another model identifier.",
             _ => "",
         }
+        .into()
     }
+}
+
+// External labels are text; escaping must not alter the selected identity.
+fn terminal_text(value: &str) -> String {
+    value
+        .chars()
+        .flat_map(|character| {
+            if character.is_control()
+                || matches!(character, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+            {
+                character.escape_default().collect::<Vec<_>>()
+            } else {
+                vec![character]
+            }
+        })
+        .collect()
 }
 
 fn review_field<'a>(label: &'a str, value: &'a str) -> [Line<'a>; 1] {
     [Line::from(vec![
         Span::styled(format!("{label}: "), Style::new().fg(MUTED)),
-        Span::styled(value, Style::new().fg(WHITE)),
+        Span::styled(terminal_text(value), Style::new().fg(WHITE)),
     ])]
 }
 
@@ -419,4 +457,16 @@ fn texture_line(width: usize) -> Line<'static> {
             })
             .collect::<Vec<_>>(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn discovered_identifiers_are_escaped_only_for_terminal_display() {
+        let identifier = "org.fixture.\u{1b}[31m\n\u{202e}agent";
+        let line = super::review_field("Harness", identifier);
+        let displayed = line[0].spans[1].content.as_ref();
+        assert_eq!(displayed, "org.fixture.\\u{1b}[31m\\n\\u{202e}agent");
+        assert_eq!(identifier, "org.fixture.\u{1b}[31m\n\u{202e}agent");
+    }
 }

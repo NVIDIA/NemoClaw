@@ -3,7 +3,7 @@
 required-version = "==0.16.7"
 target-version = "py312"
 line-length = 100
-include = ["image/**/*.py", "test/**/*.py", "tools/fabric-adapter-experiment.py", "tools/fabric_management/**/*.py"]
+include = ["image/**/*.py"]
 
 [lint]
 select = ["E4", "E7", "E9", "F", "I", "B", "UP"]

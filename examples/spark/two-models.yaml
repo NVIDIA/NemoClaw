@@ -65,48 +65,50 @@ spec:
         freeGateGiB: 12
         consecutiveSamples: 5
   inferenceProviders:
-  - name: fast
-    provider: openai
-    serviceRef: fast
-  - name: smart
-    provider: openai
-    serviceRef: smart
+    - name: fast
+      provider: openai
+      serviceRef: fast
+    - name: smart
+      provider: openai
+      serviceRef: smart
   sandboxes:
-  - name: assistant
-    image:
-      ref: nc-fabric@sha256:ac526ed31206c90557c7ac313400586e5347bee2c142efa4708256b122a81284
-    runtime:
-      provider: docker
-    network:
-      tier: isolated
-    harness:
-      kind: pi
-      execution:
-        timeoutSeconds: 300
-    agent:
-      name: assistant
-      inference:
-        routes:
-        - name: fast
-          providerRef: fast
-          overrides:
-            model: Qwen/Qwen3-4B
-            piModel:
-              api: openai-completions
-              contextWindow: 32768
-              maxTokens: 2048
-              reasoning: false
-              input:
-              - text
-        - name: smart
-          providerRef: smart
-          overrides:
-            model: nvidia/Qwen3.6-27B-NVFP4
-            piModel:
-              api: openai-completions
-              contextWindow: 32768
-              maxTokens: 2048
-              reasoning: false
-              input:
-              - text
-        default: fast
+    - name: assistant
+      image:
+        ref: nc-fabric@sha256:ac526ed31206c90557c7ac313400586e5347bee2c142efa4708256b122a81284
+      runtime:
+        provider: docker
+      network:
+        tier: isolated
+      harness:
+        kind: nvidia.fabric.pi
+        execution:
+          timeoutSeconds: 300
+      agent:
+        name: assistant
+        inference:
+          routes:
+            - name: fast
+              providerRef: fast
+              overrides:
+                model: Qwen/Qwen3-4B
+                settings:
+                  model_metadata:
+                    api: openai-completions
+                    contextWindow: 32768
+                    maxTokens: 2048
+                    reasoning: false
+                    input:
+                      - text
+            - name: smart
+              providerRef: smart
+              overrides:
+                model: nvidia/Qwen3.6-27B-NVFP4
+                settings:
+                  model_metadata:
+                    api: openai-completions
+                    contextWindow: 32768
+                    maxTokens: 2048
+                    reasoning: false
+                    input:
+                      - text
+          default: fast

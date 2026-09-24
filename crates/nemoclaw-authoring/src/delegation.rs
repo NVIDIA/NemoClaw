@@ -79,6 +79,7 @@ impl Draft {
                 "Required credentials are unavailable or unverified. Continue answering individually.",
             ));
         }
+        self.validate_settings(capabilities)?;
         self.review()?;
         Ok(())
     }
@@ -92,8 +93,9 @@ impl Draft {
         evidence: Option<&DiscoveryEvidence>,
         facts: &AuthoringFacts,
     ) -> Result<Self, Diagnostics> {
-        self.check_delegation(capabilities, evidence, facts)?;
         let mut candidate = self.clone();
+        candidate.delegate_setting_defaults(capabilities)?;
+        candidate.check_delegation(capabilities, evidence, facts)?;
         while let Some(question) = candidate.next_question(capabilities)? {
             candidate.delegate(capabilities, question.id())?;
         }
@@ -103,12 +105,15 @@ impl Draft {
 
     /// Return delegated choices to the interview without losing explicit answers.
     pub fn revoke_delegation(&mut self) {
-        self.accepted
-            .retain(|field| !self.delegated.contains(field));
-        self.delegated.clear();
+        self.decisions
+            .retain(|_, status| *status != AnswerStatus::Delegated);
+        self.revoke_setting_delegation();
     }
 
     pub fn has_delegated_answers(&self) -> bool {
-        !self.delegated.is_empty()
+        self.decisions
+            .values()
+            .any(|status| *status == AnswerStatus::Delegated)
+            || !self.delegated_settings.is_empty()
     }
 }

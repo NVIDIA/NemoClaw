@@ -268,8 +268,8 @@ impl Backend for OpenShell {
         desired: &Row,
         prior: Option<&Row>,
     ) -> Result<(), crate::Error> {
-        if kind == "pi_configuration" {
-            return self.plan_pi(desired).await;
+        if kind == "agent_configuration" {
+            return self.plan_configuration(desired).await;
         }
         // Bound resources were refreshed by OpenTofu. New resources still need
         // an ownership check: their names may already exist in the gateway.
@@ -293,8 +293,8 @@ impl Backend for OpenShell {
         prior: &Row,
         removing: bool,
     ) -> Result<Option<Row>, ObservationError> {
-        if kind == "pi_configuration" {
-            return self.read_pi(prior, removing).await;
+        if kind == "agent_configuration" {
+            return self.read_configuration(prior, removing).await;
         }
         let observed = self
             .observe(
@@ -311,38 +311,13 @@ impl Backend for OpenShell {
             verify_identity(prior, row)?;
             self.check_sandbox_phase(row)
                 .await
-                .map_err(|error| match error {
-                    crate::Error::Observation(error) => error,
-                    crate::Error::SandboxStartup {
-                        phase,
-                        reason,
-                        exit_code,
-                    } => ObservationError::SandboxStartup {
-                        phase,
-                        reason,
-                        exit_code: exit_code.parse().ok(),
-                    },
-                    _ => ObservationError::Query,
-                })?;
-        }
-        if kind == "sandbox"
-            && !removing
-            && let Some(row) = &observed
-            && inference_settings(&row["inference_json"], &row["agent_runtime"])?
-                .is_some_and(|settings| !settings.agents.is_empty())
-        {
-            verify_identity(prior, row)?;
-            // Refresh verifies native policy. Creation readback retains identity while
-            // the separate SDK readiness stage waits for the agent to start.
-            self.agent_configuration(row)
-                .await
-                .map_err(|_| ObservationError::Query)?;
+                .map_err(crate::Error::into_observation)?;
         }
         Ok(observed)
     }
     async fn ensure(&self, kind: &str, desired: &Row) -> Mutation {
-        if kind == "pi_configuration" {
-            return self.ensure_pi(desired).await;
+        if kind == "agent_configuration" {
+            return self.ensure_configuration(desired).await;
         }
         let fields: &[&str] = match kind {
             "workspace" => &["name", "owner", "generation"],
@@ -377,8 +352,8 @@ impl Backend for OpenShell {
         prior: &Row,
         destroying: bool,
     ) -> Result<(), ObservationError> {
-        if kind == "pi_configuration" {
-            return self.remove_pi(prior, destroying).await;
+        if kind == "agent_configuration" {
+            return self.remove_configuration(prior, destroying).await;
         }
         if !matches!(
             openshell_lifecycle(kind),

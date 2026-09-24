@@ -35,9 +35,10 @@ flowchart TB
     subgraph DEPLOY["OpenTofu — deployment stage: plan → SDK checks → apply"]
         PROVIDERS["4. NemoClaw provider → OpenShell<br/>Reconcile workspace and provider registrations"]
         SANDBOX["5. NemoClaw provider → OpenShell<br/>Create or observe sandbox<br/>Image, policies, credentials and startup settings"]
+        CONFIG["NemoClaw provider → generic host<br/>Apply SDK-prepared public Fabric configuration"]
         CHECK["Provider readiness checks"]
 
-        PROVIDERS --> SANDBOX
+        PROVIDERS --> SANDBOX --> CONFIG
     end
 
     COMPILE --> PROVIDERS
@@ -46,7 +47,7 @@ flowchart TB
     IMAGE -->|"Prepared image"| SANDBOX
 
     subgraph AGENT["NemoFabric configure sandbox"]
-        FABRIC["6. NemoClaw launcher builds Fabric configuration<br/>Fabric loads the selected adapter"]
+        FABRIC["6. Generic host calls Fabric with public configuration<br/>Fabric validates and loads the selected adapter"]
         ADAPTER["7. Adapter prepares native configuration<br/>OpenClaw JSON, Hermes configuration, etc."]
         HARNESS["8. Adapter starts its runtime<br/>Launch harness or connect to remote service"]
         RELAY["Optional NeMo Relay<br/>Experimental Hermes tracing"]
@@ -55,7 +56,7 @@ flowchart TB
         HARNESS -.-> RELAY
     end
 
-    SANDBOX -->|"Launch with startup settings"| FABRIC
+    CONFIG -->|"Configure after routes and sandbox exist"| FABRIC
     HARNESS -. "Observed through OpenShell" .-> CHECK
     CHECK --> RESULT["NemoClaw SDK + CLI<br/>Record and report result"]
 
@@ -77,8 +78,8 @@ OpenShell owns sandbox creation and policy enforcement.
 | **Deployment compilation** | After the runtime stage completes, the SDK compiles the OpenShell resource dependencies, sandbox policy, and startup settings into the deployment graph. |
 | **4. OpenShell registrations** | The NemoClaw provider reconciles the workspace, provider profiles, and credential-bearing provider registrations. Gateway version and compute-driver checks gate deployment mutations. |
 | **5. Sandbox reconciliation** | The NemoClaw provider sends OpenShell the image, network and filesystem policy, provider attachments, launch command, and environment. Existing bindings are observed; ordinary apply protects sandboxes against replacement or recreation of a missing bound sandbox. |
-| **6. Fabric configuration** | OpenShell starts NemoClaw's `fabric.py` launcher. It reads serialized `SandboxRuntimeSettings` from `NEMOCLAW_INFERENCE_CONFIG` and builds Fabric configuration for models, tools, and supported harness settings. |
-| **7. Native configuration** | The local OpenClaw and Hermes adapters initialize native configuration when absent, or validate deployment-owned settings when it exists. Conflicting settings are rejected; other adapters use their own configuration contracts. |
+| **6. Fabric configuration** | OpenShell starts the generic Fabric host. The SDK-owned `agent_configuration` resource supplies canonical Fabric configuration after routes are established; the host validates and starts it through Fabric's public API. |
+| **7. Native configuration** | The selected Fabric adapter maps the public configuration into native settings and owns native validation. The NemoClaw host performs no adapter-specific translation. |
 | **8. Harness runtime** | The adapter starts its runtime and launches the harness or connects to an independently deployed remote service. The harness uses its installed components and configured settings. |
 | **Optional Relay** | Explicitly enabled Hermes Relay tracing runs in process and writes artifacts inside the sandbox. It is an experimental integration. |
 | **Readiness and result** | Provider data sources observe sandbox configuration, startup, and supported health within the deployment graph. The SDK reads those observations, retains operation state, and the CLI reports the outcome. |
@@ -93,7 +94,7 @@ The selected engine, any SSH execution setup, and the harness image are [operato
 - The runtime stage is skipped when neither a managed gateway nor runtime-stage inference services are declared.
   An external gateway must already be reachable for deployment planning.
 - The deployment graph can also contain an [Ollama proxy](../inference.md#use-external-ollama-through-a-managed-proxy), its credential storage, model observation, and readiness dependencies.
-- Pi requires `nemoclaw_pi_configuration` after sandbox creation.
+- Each adapter uses `nemoclaw_agent_configuration` after sandbox creation and route setup.
   Its host waits for explicit configuration before starting Fabric, including after a process restart.
 - The pinned Fabric lacks `runtime.check_health()`.
   Apply reports that capability as unsupported while retaining its configuration and startup checks.
@@ -108,4 +109,4 @@ For partial failure and retry rules, see [deployment recovery](../usage.md#recov
 - [SDK operation orchestration](../../crates/nemoclaw-sdk/src/deployment/mod.rs) and [runtime stage](../../crates/nemoclaw-sdk/src/deployment/runtime.rs).
 - [Runtime graph compiler](../../crates/nemoclaw-sdk/src/compile_runtime.rs) and [deployment graph compiler](../../crates/nemoclaw-sdk/src/compile.rs).
 - [Harness image build](../../image/fabric/Dockerfile) and [NemoClaw Fabric launcher](../../image/fabric/fabric.py).
-- [Local OpenClaw adapter](../../image/fabric/openclaw_adapter.py), [local Hermes adapter](../../image/fabric/hermes_adapter.py), and [Pi host](../../image/fabric/pi_host.py).
+- [Fabric adapter implementations](https://github.com/NVIDIA/NeMo-Fabric/tree/main/adapters).

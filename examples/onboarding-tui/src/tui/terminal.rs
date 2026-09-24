@@ -246,7 +246,7 @@ const fn nonzero_or(value: u16, fallback: u16) -> u16 {
     if value == 0 { fallback } else { value }
 }
 
-async fn check_discovery(
+pub(super) async fn check_discovery(
     session: Option<&mut DiscoverySession>,
     draft: &Draft,
     capabilities: &Capabilities,

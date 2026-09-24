@@ -41,13 +41,10 @@ impl DependencyGraph {
 
 impl Draft {
     pub fn answer_status(&self, field: EditableField) -> AnswerStatus {
-        if self.delegated.contains(&field) {
-            AnswerStatus::Delegated
-        } else if self.is_accepted(field) {
-            AnswerStatus::Accepted
-        } else {
-            AnswerStatus::Suggested
-        }
+        self.decisions
+            .get(&field)
+            .copied()
+            .unwrap_or(AnswerStatus::Suggested)
     }
 
     /// Include the current constraint domain and conditional question visibility.
@@ -88,7 +85,7 @@ impl Draft {
             ));
         }
         *self = edit.accept();
-        self.delegated.push(field);
+        self.decisions.insert(field, AnswerStatus::Delegated);
         Ok(())
     }
 

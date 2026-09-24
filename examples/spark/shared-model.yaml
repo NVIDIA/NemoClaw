@@ -40,74 +40,77 @@ spec:
         freeGateGiB: 12
         consecutiveSamples: 5
   inferenceProviders:
-  - name: shared
-    provider: openai
-    serviceRef: shared
+    - name: shared
+      provider: openai
+      serviceRef: shared
   sandboxes:
-  - name: pi
-    image:
-      ref: nc-fabric@sha256:ac526ed31206c90557c7ac313400586e5347bee2c142efa4708256b122a81284
-    runtime:
-      provider: docker
-    network:
-      tier: isolated
-    harness:
-      kind: pi
-      execution:
-        timeoutSeconds: 300
-    agent:
-      name: assistant
-      inference:
-        routes:
-        - name: primary
-          providerRef: shared
-          overrides:
-            model: nvidia/Qwen3.6-35B-A3B-NVFP4
-            piModel:
-              api: openai-completions
-              contextWindow: 32768
-              maxTokens: 2048
-              reasoning: false
-              input:
-              - text
-  - name: openclaw
-    image:
-      ref: nc-fabric@sha256:a4402fa5dc8b020551f1e3bde409c8079767e53fcba7bd98b32197f82a9355a8
-    runtime:
-      provider: docker
-    network:
-      tier: isolated
-    harness:
-      kind: openclaw
-      execution:
-        timeoutSeconds: 300
-    agent:
-      name: assistant
-      inference:
-        routes:
-        - name: primary
-          providerRef: shared
-          overrides:
-            model: nvidia/Qwen3.6-35B-A3B-NVFP4
-            contextWindow: 32768
-            maxTokens: 2048
-  - name: deepagents
-    image:
-      ref: nc-fabric@sha256:f4a2f7068525f55f1dc25e77dfcc07998a32bd19f44ad75a61e304e255440f56
-    runtime:
-      provider: docker
-    network:
-      tier: isolated
-    harness:
-      kind: deepagents
-      execution:
-        timeoutSeconds: 300
-    agent:
-      name: assistant
-      inference:
-        routes:
-        - name: primary
-          providerRef: shared
-          overrides:
-            model: nvidia/Qwen3.6-35B-A3B-NVFP4
-            maxTokens: 1024
+    - name: pi
+      image:
+        ref: nc-fabric@sha256:ac526ed31206c90557c7ac313400586e5347bee2c142efa4708256b122a81284
+      runtime:
+        provider: docker
+      network:
+        tier: isolated
+      harness:
+        kind: nvidia.fabric.pi
+        execution:
+          timeoutSeconds: 300
+      agent:
+        name: assistant
+        inference:
+          routes:
+            - name: primary
+              providerRef: shared
+              overrides:
+                model: nvidia/Qwen3.6-35B-A3B-NVFP4
+                settings:
+                  model_metadata:
+                    api: openai-completions
+                    contextWindow: 32768
+                    maxTokens: 2048
+                    reasoning: false
+                    input:
+                      - text
+    - name: openclaw
+      image:
+        ref: nc-fabric@sha256:a4402fa5dc8b020551f1e3bde409c8079767e53fcba7bd98b32197f82a9355a8
+      runtime:
+        provider: docker
+      network:
+        tier: isolated
+      harness:
+        kind: nvidia.fabric.openclaw
+        execution:
+          timeoutSeconds: 300
+      agent:
+        name: assistant
+        inference:
+          routes:
+            - name: primary
+              providerRef: shared
+              overrides:
+                model: nvidia/Qwen3.6-35B-A3B-NVFP4
+                maxTokens: 2048
+                settings:
+                  model_metadata:
+                    contextWindow: 32768
+    - name: deepagents
+      image:
+        ref: nc-fabric@sha256:f4a2f7068525f55f1dc25e77dfcc07998a32bd19f44ad75a61e304e255440f56
+      runtime:
+        provider: docker
+      network:
+        tier: isolated
+      harness:
+        kind: nvidia.fabric.langchain.deepagents
+        execution:
+          timeoutSeconds: 300
+      agent:
+        name: assistant
+        inference:
+          routes:
+            - name: primary
+              providerRef: shared
+              overrides:
+                model: nvidia/Qwen3.6-35B-A3B-NVFP4
+                maxTokens: 1024

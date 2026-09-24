@@ -1,6 +1,5 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use nemoclaw_sdk::config::HarnessKind;
 use nemoclaw_sdk::{
     compile::{Generations, compile},
     config::Document,
@@ -182,23 +181,24 @@ fn five_agent_example_compiles_to_five_independent_sandboxes_sharing_inference()
             .iter()
             .find(|row| row.values["name"] == sandbox.name)
             .unwrap();
-        let settings: Value = serde_json::from_str(&row.values["inference_json"]).unwrap();
-        let runtime_agents = settings["agents"].as_array();
-        if harness.kind == HarnessKind::OpenClaw {
-            assert_eq!(runtime_agents.unwrap().len(), 1);
-        } else {
-            assert_eq!(row.values["agent_name"], sandbox.agent.name);
-        }
-        if let Some(agents) = runtime_agents {
-            assert!(agents.len() <= 1);
-            if let Some(agent) = agents.first() {
-                assert_eq!(agent["name"], sandbox.agent.name);
-            }
-        }
+        let configuration = rows
+            .iter()
+            .find(|candidate| {
+                candidate.kind == "agent_configuration" && candidate.values["name"] == sandbox.name
+            })
+            .unwrap();
+        let settings: Value = serde_json::from_str(&configuration.values["config_json"]).unwrap();
+        assert_eq!(settings["metadata"]["name"], sandbox.agent.name);
+        assert_eq!(row.values["agent_name"], sandbox.agent.name);
     }
     assert_eq!(
         counts,
-        [("openclaw", 2), ("deepagents", 2), ("pi", 1)].into()
+        [
+            ("nvidia.fabric.openclaw", 2),
+            ("nvidia.fabric.langchain.deepagents", 2),
+            ("nvidia.fabric.pi", 1)
+        ]
+        .into()
     );
 }
 

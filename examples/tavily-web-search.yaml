@@ -29,7 +29,24 @@ spec:
         # Use the digest from an OpenClaw image built from this revision.
         ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
       harness:
-        kind: openclaw
+        kind: nvidia.fabric.openclaw
+        settings:
+          native_config:
+            plugins:
+              load:
+                paths: [/opt/nemoclaw/plugins/tavily]
+              allow: [tavily]
+              entries:
+                tavily:
+                  enabled: true
+                  config:
+                    webSearch:
+                      apiKey: ${TAVILY_API_KEY}
+            tools:
+              web:
+                search:
+                  enabled: true
+                  provider: tavily
       agent:
         name: researcher
         integrationRefs: [search]
@@ -44,7 +61,16 @@ spec:
         # Use the digest from a Hermes image built from this revision.
         ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
       harness:
-        kind: hermes
+        kind: nvidia.fabric.hermes
+        settings:
+          mode: service
+          plugins_enabled: [web/tavily]
+          native_config:
+            web:
+              backend: tavily
+              search_backend: tavily
+              extract_backend: tavily
+              keyless_fallback: false
       agent:
         name: hermes
         integrationRefs: [search]

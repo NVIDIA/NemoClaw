@@ -30,7 +30,24 @@ spec:
         # Replace with the digest from a current OpenClaw image build.
         ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
       harness:
-        kind: openclaw
+        kind: nvidia.fabric.openclaw
+        settings:
+          native_config:
+            plugins:
+              load:
+                paths: [/opt/nemoclaw/plugins/brave]
+              allow: [brave]
+              entries:
+                brave:
+                  enabled: true
+                  config:
+                    webSearch:
+                      apiKey: ${BRAVE_API_KEY}
+            tools:
+              web:
+                search:
+                  enabled: true
+                  provider: brave
       agent:
         name: researcher
         integrationRefs: [search]
@@ -45,7 +62,24 @@ spec:
         # Replace with the digest from a current OpenClaw image build.
         ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
       harness:
-        kind: openclaw
+        kind: nvidia.fabric.openclaw
+        settings:
+          native_config:
+            plugins:
+              load:
+                paths: [/opt/nemoclaw/plugins/brave]
+              allow: [brave]
+              entries:
+                brave:
+                  enabled: true
+                  config:
+                    webSearch:
+                      apiKey: ${BRAVE_API_KEY}
+            tools:
+              web:
+                search:
+                  enabled: true
+                  provider: brave
       agent:
         name: writer
         integrationRefs: [search]

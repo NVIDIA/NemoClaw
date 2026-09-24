@@ -85,7 +85,13 @@ impl DiscoveryDataSource {
         };
         let requirements_valid = match &config.requirements_json {
             Value::Value(json) if self.fabric => serde_json::from_str::<FabricRequirements>(json)
-                .is_ok_and(|request| !request.harness.is_empty()),
+                .is_ok_and(|request| {
+                    request
+                        .configuration
+                        .pointer("/harness/adapter_id")
+                        .and_then(serde_json::Value::as_str)
+                        .is_some_and(|id| !id.is_empty())
+                }),
             Value::Value(_) => false,
             _ => true,
         };
@@ -385,12 +391,13 @@ mod tests {
     }
     #[cfg(unix)]
     #[tokio::test]
-    async fn selected_image_checks_api_platform_and_missing_metadata_without_starting_containers() {
+    async fn selected_image_checks_fabric_plan_platform_and_missing_metadata_without_starting_containers()
+     {
         use nemoclaw_sdk::fabric_catalog::{FabricCatalog, IMAGE_CATALOG_LABEL};
         let mut catalog = FabricCatalog::bundled();
         catalog
             .adapters
-            .retain(|adapter| adapter.harness == "openclaw");
+            .retain(|adapter| adapter.adapter_id() == "nvidia.fabric.langchain.deepagents");
         let label = serde_json::to_string(&catalog).unwrap();
         let digest = format!("registry/agent@sha256:{}", "a".repeat(64));
         let served_digest = digest.clone();
@@ -406,33 +413,33 @@ mod tests {
             backend: Arc::new(ConfiguredBackend::default()),
             fabric: true,
         };
-        for (api, architecture, image, expected) in [
+        for (settings, architecture, image, expected) in [
             (
-                "openai-completions",
+                serde_json::json!({}),
                 "aarch64",
                 digest.as_str(),
                 "supported",
             ),
             (
-                "invalid-protocol",
+                serde_json::json!({"unknown_setting":true}),
                 "aarch64",
                 digest.as_str(),
                 "unsupported",
             ),
             (
-                "openai-completions",
+                serde_json::json!({}),
                 "amd64",
                 digest.as_str(),
                 "unsupported",
             ),
-            ("openai-completions", "aarch64", "missing:image", "unknown"),
+            (serde_json::json!({}), "aarch64", "missing:image", "unknown"),
         ] {
             let mut config = engine_config();
             config.engine = Value::Value(fixture.endpoint.clone());
             config.compute_driver = Value::Null;
             config.image = Value::Value(image.into());
             config.requirements_json =
-                Value::Value(serde_json::json!({"harness":"openclaw", "api":api}).to_string());
+                Value::Value(serde_json::json!({"configuration":{"schema_version":"fabric.agent/v1alpha1","metadata":{"name":"main"},"harness":{"adapter_id":"nvidia.fabric.langchain.deepagents","settings":settings},"runtime":{},"models":{"default":{"provider":"openai","model":"fixture-model","base_url":"http://localhost/v1","api_key_env":"MODEL_KEY"}}}}).to_string());
             config.architecture = Value::Value(architecture.into());
             config.operating_system = Value::Value("linux".into());
             let mut diagnostics = Diagnostics::default();

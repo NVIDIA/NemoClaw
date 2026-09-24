@@ -83,7 +83,7 @@ impl Draft {
         Ok(EndpointRequest {
             endpoint: answers.endpoint,
             api: answers.api,
-            credential_env: Some(answers.credential_env),
+            credential_env: (!answers.credential_env.is_empty()).then_some(answers.credential_env),
         })
     }
 

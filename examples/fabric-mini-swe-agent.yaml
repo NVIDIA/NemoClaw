@@ -26,7 +26,11 @@ spec:
       network:
         tier: isolated
       harness:
-        kind: mini-swe-agent
+        kind: nvidia.fabric.mini-swe-agent
+        config:
+          environment:
+            env:
+              MSWEA_COST_TRACKING: ignore_errors
       agent:
         name: main
         inference:

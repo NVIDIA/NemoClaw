@@ -699,23 +699,20 @@ async fn gateway_readiness_dependency_waits_for_startup_before_workspace_creatio
 async fn standalone_pi_configuration_updates_without_replacing_the_sandbox() {
     let fixture = Fixture::start().await;
     let tofu = Standalone::new(&fixture.endpoint);
-    let source = fs::read_to_string(tofu.root.path().join("main.tf"))
-        .unwrap()
-        .replace("fabric-openclaw", "fabric-pi")
-        .replace("      model       = \"fixture-model\"\n", "");
+    let source = fs::read_to_string(tofu.root.path().join("main.tf")).unwrap();
     fs::write(
         tofu.root.path().join("main.tf"),
         source
             + r#"
 variable "model" { default = "first-model" }
-resource "nemoclaw_pi_configuration" "agent" {
+resource "nemoclaw_agent_configuration" "agent" {
   count = var.enabled ? 1 : 0
   workspace = nemoclaw_sandbox.agent[0].workspace
   name = nemoclaw_sandbox.agent[0].name
   owner = nemoclaw_sandbox.agent[0].owner
   generation = nemoclaw_sandbox.agent[0].generation
   sandbox_id = nemoclaw_sandbox.agent[0].id
-  model_json = jsonencode({ model = var.model })
+  config_json = jsonencode({ schema_version = "fabric.agent/v1alpha1", runtime = {}, metadata = { name = "assistant" }, harness = { adapter_id = "nvidia.fabric.pi" }, models = { default = { provider = "openai", model = var.model } } })
 }
 "#,
     )
@@ -755,7 +752,7 @@ resource "nemoclaw_pi_configuration" "agent" {
     assert_eq!(writes(), 2);
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
     // A stopped host is observed as drift; explicit apply reconfigures it.
-    fixture.state.lock().unwrap().pi_stopped = true;
+    fixture.state.lock().unwrap().fabric_stopped = true;
     tofu.run(
         &[
             "apply",
@@ -766,7 +763,7 @@ resource "nemoclaw_pi_configuration" "agent" {
         true,
     );
     assert_eq!(writes(), 3);
-    assert!(!fixture.state.lock().unwrap().pi_stopped);
+    assert!(!fixture.state.lock().unwrap().fabric_stopped);
     // Lose the exec response after the host accepted a configuration. Never
     // retry the mutation automatically; the next refresh observes the outcome.
     tofu.run(

@@ -45,15 +45,11 @@ fn a_new_author_can_accept_the_openclaw_defaults_and_review_safe_desired_state()
     assert_eq!(
         choices_for(&draft, &capabilities, EditableField::Harness),
         capabilities
-            .scenarios()
+            .harnesses()
             .iter()
-            .map(|scenario| FieldValue::Harness(scenario.harness()))
-            .fold(Vec::new(), |mut choices, value| {
-                if !choices.contains(&value) {
-                    choices.push(value);
-                }
-                choices
-            })
+            .cloned()
+            .map(FieldValue::Harness)
+            .collect::<Vec<_>>()
     );
     assert_eq!(
         choices_for(&draft, &capabilities, EditableField::Api),
@@ -73,7 +69,7 @@ fn a_new_author_can_accept_the_openclaw_defaults_and_review_safe_desired_state()
 
     assert_eq!(
         document.sandbox_harness(sandbox).unwrap().kind,
-        HarnessKind::OpenClaw
+        "nvidia.fabric.openclaw".parse::<HarnessKind>().unwrap()
     );
     assert_eq!(sandbox.runtime.provider, ComputeDriver::Docker);
     assert_eq!(review.credential_references(), ["NVIDIA_INFERENCE_API_KEY"]);
@@ -104,7 +100,10 @@ fn a_frontend_can_explain_which_suggestions_are_choices_and_which_are_free_text(
         .unwrap();
 
     assert!(harness.is_choice());
-    assert_eq!(harness.value(), &FieldValue::Harness(HarnessKind::OpenClaw));
+    assert_eq!(
+        harness.value(),
+        &FieldValue::Harness("nvidia.fabric.openclaw".parse::<HarnessKind>().unwrap())
+    );
     assert!(!deployment_name.is_choice());
     assert_eq!(
         deployment_name.value(),
@@ -122,7 +121,7 @@ fn an_author_can_follow_the_available_choices_from_openclaw_to_hermes() {
         &mut draft,
         &capabilities,
         EditableField::Harness,
-        FieldValue::Harness(HarnessKind::Hermes),
+        FieldValue::Harness("nvidia.fabric.hermes".parse::<HarnessKind>().unwrap()),
     );
 
     assert_eq!(
@@ -168,7 +167,7 @@ fn an_author_can_follow_the_available_choices_from_openclaw_to_hermes() {
 
     assert_eq!(
         document.sandbox_harness(sandbox).unwrap().kind,
-        HarnessKind::Hermes
+        "nvidia.fabric.hermes".parse::<HarnessKind>().unwrap()
     );
     assert_eq!(
         document.inference_provider().unwrap().api,
@@ -193,7 +192,10 @@ fn an_openclaw_author_can_choose_responses_without_losing_their_model() {
         [FieldValue::Model(NVIDIA_MODEL.into())]
     );
     let answers = draft.guided_answers(&capabilities).unwrap();
-    assert_eq!(answers.harness, HarnessKind::OpenClaw);
+    assert_eq!(
+        answers.harness,
+        "nvidia.fabric.openclaw".parse::<HarnessKind>().unwrap()
+    );
     assert_eq!(answers.api, InferenceApi::OpenaiResponses);
     assert_eq!(answers.model, NVIDIA_MODEL);
     assert_eq!(
@@ -224,7 +226,10 @@ fn an_author_can_reopen_generated_yaml_and_continue_where_they_left_off() {
     let answers = reopened.guided_answers(&capabilities).unwrap();
 
     assert_eq!(reopened.review().unwrap().uid(), UID);
-    assert_eq!(answers.harness, HarnessKind::OpenClaw);
+    assert_eq!(
+        answers.harness,
+        "nvidia.fabric.openclaw".parse::<HarnessKind>().unwrap()
+    );
     assert_eq!(answers.api, InferenceApi::OpenaiResponses);
     assert_eq!(answers.model, NVIDIA_MODEL);
     assert_eq!(
@@ -287,7 +292,10 @@ fn an_author_can_rename_their_deployment_without_changing_its_identity_or_infere
     assert_eq!(review.deployment_name(), "renamed-deployment");
     assert_eq!(answers.sandbox_name, "renamed-sandbox");
     assert_eq!(answers.agent_name, "primary");
-    assert_eq!(answers.harness, HarnessKind::OpenClaw);
+    assert_eq!(
+        answers.harness,
+        "nvidia.fabric.openclaw".parse::<HarnessKind>().unwrap()
+    );
     assert_eq!(answers.model, NVIDIA_MODEL);
     assert_eq!(review.credential_references(), ["NVIDIA_INFERENCE_API_KEY"]);
 }
@@ -337,14 +345,14 @@ fn the_guide_rejects_a_choice_that_is_not_available_at_that_point_in_the_journey
         &mut draft,
         &capabilities,
         EditableField::Harness,
-        FieldValue::Harness(HarnessKind::Pi),
+        FieldValue::Harness("nvidia.fabric.pi".parse::<HarnessKind>().unwrap()),
     );
 
     let diagnostics = draft
         .set_guided_field(
             &capabilities,
             EditableField::Api,
-            FieldValue::Api(InferenceApi::OpenaiResponses),
+            FieldValue::Api(InferenceApi::AnthropicMessages),
         )
         .unwrap_err();
 
@@ -396,8 +404,8 @@ fn accepted_answers_are_preserved_until_a_conflicting_edit_is_confirmed() {
     let edit = draft
         .propose_guided_edit(
             &capabilities,
-            EditableField::Harness,
-            FieldValue::Harness(HarnessKind::Pi),
+            EditableField::Inference,
+            FieldValue::Inference(ProviderPreset::Anthropic),
         )
         .unwrap();
     assert!(
@@ -409,10 +417,10 @@ fn accepted_answers_are_preserved_until_a_conflicting_edit_is_confirmed() {
     assert!(draft.is_accepted(EditableField::Api));
     let revised = edit.accept();
     assert!(!revised.is_accepted(EditableField::Api));
-    assert!(revised.is_accepted(EditableField::Harness));
+    assert!(revised.is_accepted(EditableField::Inference));
     assert_eq!(
         revised.guided_answers(&capabilities).unwrap().api,
-        InferenceApi::OpenaiCompletions
+        InferenceApi::AnthropicMessages
     );
 }
 
@@ -429,14 +437,14 @@ fn untouched_template_defaults_can_change_without_an_accepted_answer_conflict() 
     let edit = draft
         .propose_guided_edit(
             &capabilities,
-            EditableField::Harness,
-            FieldValue::Harness(HarnessKind::Pi),
+            EditableField::Inference,
+            FieldValue::Inference(ProviderPreset::Anthropic),
         )
         .unwrap();
     assert!(edit.conflicts().is_empty());
     assert_eq!(
         edit.accept().guided_answers(&capabilities).unwrap().api,
-        InferenceApi::OpenaiCompletions
+        InferenceApi::AnthropicMessages
     );
 }
 
@@ -525,7 +533,7 @@ fn interview_resolves_dependencies_before_unrelated_identity_and_skips_accepted_
         .propose_guided_edit(
             &capabilities,
             EditableField::Harness,
-            FieldValue::Harness(HarnessKind::OpenClaw),
+            FieldValue::Harness("nvidia.fabric.openclaw".parse::<HarnessKind>().unwrap()),
         )
         .unwrap();
     draft = edit.accept();
@@ -605,18 +613,19 @@ fn explicit_delegation_resolves_a_suggestion_and_context_changes_reopen_it() {
 
 #[test]
 fn observed_harnesses_bound_authoring_choices_without_inventing_support() {
-    let capabilities = Capabilities::from_harnesses([HarnessKind::OpenClaw]);
+    let capabilities =
+        Capabilities::from_harnesses(["nvidia.fabric.openclaw".parse::<HarnessKind>().unwrap()]);
     let draft = begin_onboarding(&capabilities);
     assert_eq!(
         choices_for(&draft, &capabilities, EditableField::Harness),
-        vec![FieldValue::Harness(HarnessKind::OpenClaw)]
+        vec![FieldValue::Harness(
+            "nvidia.fabric.openclaw".parse::<HarnessKind>().unwrap()
+        )]
     );
-    assert!(Capabilities::from_harnesses([]).scenarios().is_empty());
-    assert!(
-        Capabilities::from_harnesses([HarnessKind::Codex])
-            .scenarios()
-            .iter()
-            .all(|scenario| scenario.harness() == HarnessKind::Codex)
+    assert!(Capabilities::from_harnesses([]).harnesses().is_empty());
+    assert_eq!(
+        Capabilities::from_harnesses(["nvidia.fabric.codex".parse().unwrap()]).harnesses(),
+        &["nvidia.fabric.codex".parse::<HarnessKind>().unwrap()]
     );
 }
 
@@ -658,39 +667,36 @@ fn singleton_protocol_is_implied_and_hidden_endpoint_does_not_block_completion()
 }
 
 #[test]
-fn advertised_api_constraints_remove_incompatible_onboarding_choices() {
-    let mut catalog = nemoclaw_sdk::fabric_catalog::FabricCatalog::bundled();
-    catalog
-        .adapters
-        .retain(|adapter| adapter.harness == "openclaw");
-    catalog.adapters[0].descriptor["settings_schema"]["$defs"]["api"]["enum"]
-        .as_array_mut()
-        .unwrap()
-        .retain(|value| value.as_str() == Some("openai-responses"));
-    let choices = nemoclaw_authoring::Capabilities::from_catalog(&catalog);
-    assert!(!choices.scenarios().is_empty());
-    assert!(
-        choices
-            .scenarios()
-            .iter()
-            .all(|scenario| scenario.api() == nemoclaw_sdk::config::InferenceApi::OpenaiResponses)
-    );
+fn endpoint_protocol_choices_do_not_invent_harness_protocol_exclusions() {
+    let capabilities = Capabilities::available();
+    for harness in capabilities.harnesses() {
+        for provider in ProviderPreset::ALL {
+            let answers = Answers {
+                harness: harness.clone(),
+                ..Answers::onboarding_defaults().for_provider(provider)
+            };
+            let authored = Session::new()
+                .unwrap()
+                .project(&capabilities, &answers)
+                .unwrap();
+            let draft = Draft::from_document(authored.document().clone()).unwrap();
+            assert_eq!(
+                choices_for(&draft, &capabilities, EditableField::Api),
+                provider
+                    .apis()
+                    .iter()
+                    .copied()
+                    .map(FieldValue::Api)
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
 }
 
 #[test]
-fn every_sdk_known_catalog_harness_can_be_authored_and_roundtripped() {
-    let catalog = nemoclaw_sdk::fabric_catalog::FabricCatalog::bundled();
-    let capabilities = Capabilities::from_catalog(&catalog);
-    for harness in catalog
-        .adapters
-        .iter()
-        .filter_map(|adapter| adapter.harness.parse::<HarnessKind>().ok())
-    {
-        let scenario = capabilities
-            .scenarios()
-            .iter()
-            .find(|scenario| scenario.harness() == harness)
-            .unwrap_or_else(|| panic!("catalog harness {harness:?} excluded"));
+fn every_catalog_adapter_can_be_selected_and_roundtripped() {
+    let capabilities = Capabilities::available();
+    for harness in capabilities.harnesses() {
         let mut draft = begin_onboarding(&capabilities);
         choose(
             &mut draft,
@@ -699,14 +705,7 @@ fn every_sdk_known_catalog_harness_can_be_authored_and_roundtripped() {
             FieldValue::Harness(harness.clone()),
         );
         let answers = draft.guided_answers(&capabilities).unwrap();
-        assert_eq!(answers.harness, harness);
-        assert!(
-            capabilities
-                .scenarios()
-                .iter()
-                .any(|scenario| scenario.harness() == harness && scenario.api() == answers.api)
-        );
-        assert_eq!(scenario.harness(), harness);
+        assert_eq!(&answers.harness, harness);
         let review = draft.review().unwrap();
         let parsed = nemoclaw_sdk::config::Document::parse(review.yaml().as_bytes()).unwrap();
         assert_eq!(
@@ -720,44 +719,18 @@ fn every_sdk_known_catalog_harness_can_be_authored_and_roundtripped() {
 }
 
 #[test]
-fn inference_profiles_follow_protocols_without_harness_brand_restrictions() {
-    let capabilities = Capabilities::available();
-    assert!(
-        capabilities
-            .scenarios()
-            .iter()
-            .any(|scenario| scenario.harness() == HarnessKind::OpenClaw
-                && scenario.inference() == ProviderPreset::Nous)
-    );
-    assert!(
-        capabilities
-            .scenarios()
-            .iter()
-            .filter(|scenario| scenario.inference() == ProviderPreset::AnthropicCompatible)
-            .all(|scenario| scenario.api() == InferenceApi::AnthropicMessages)
-    );
-}
-
-#[test]
 fn a_previously_unknown_fabric_harness_is_authorable_without_a_code_registration() {
     let mut catalog = nemoclaw_sdk::fabric_catalog::FabricCatalog::bundled();
-    let mut descriptor = catalog
-        .adapters
-        .iter()
-        .find(|adapter| adapter.harness == "openclaw")
-        .unwrap()
-        .clone();
-    descriptor.harness = "fixture-new-agent".into();
-    descriptor.adapter_id = "test.fixture.new-agent".into();
-    descriptor.descriptor["adapter_id"] = descriptor.adapter_id.clone().into();
+    let mut descriptor = catalog.adapters[0].clone();
+    descriptor.descriptor["adapter_id"] = "test.fixture.new-agent".into();
     catalog.adapters.push(descriptor);
     let capabilities = Capabilities::from_catalog(&catalog);
-    let scenario = capabilities
-        .scenarios()
-        .iter()
-        .find(|scenario| scenario.harness().as_str() == "fixture-new-agent")
-        .expect("a descriptor-provided harness must not require SDK registration");
-    let mut answers = Answers::onboarding_defaults().for_scenario(scenario);
+    let harness: HarnessKind = "test.fixture.new-agent".parse().unwrap();
+    assert!(capabilities.harnesses().contains(&harness));
+    let mut answers = Answers {
+        harness,
+        ..Answers::onboarding_defaults()
+    };
     answers.image = "registry.example.test/custom-fabric@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into();
     answers.harness_settings = Some(
         serde_json::from_value(serde_json::json!({
@@ -772,7 +745,7 @@ fn a_previously_unknown_fabric_harness_is_authorable_without_a_code_registration
         .unwrap();
     let restored = Draft::from_yaml(authored.yaml().as_bytes()).unwrap();
     assert_eq!(restored.guided_answers(&capabilities).unwrap(), answers);
-    assert!(authored.yaml().contains("fixture-new-agent"));
+    assert!(authored.yaml().contains("test.fixture.new-agent"));
     let generations = [
         "workspace",
         "provider",
@@ -784,34 +757,28 @@ fn a_previously_unknown_fabric_harness_is_authorable_without_a_code_registration
     .into();
     let graph = nemoclaw_sdk::compile::compile(restored.document(), &generations, "0.1.0").unwrap();
     let sandbox = &graph["resource"]["nemoclaw_sandbox"][&answers.sandbox_name];
-    assert_eq!(sandbox["agent_runtime"], "fabric-fixture-new-agent");
-    let runtime: serde_json::Value =
-        serde_json::from_str(sandbox["inference_json"].as_str().unwrap()).unwrap();
+    assert_eq!(sandbox["agent_runtime"], "fabric");
+    let runtime: serde_json::Value = serde_json::from_str(
+        graph["resource"]["nemoclaw_agent_configuration"][&answers.sandbox_name]["config_json"]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
     assert_eq!(
-        runtime["settings"],
+        runtime["harness"]["settings"],
         serde_json::to_value(&answers.harness_settings).unwrap()
     );
 }
 
 #[test]
-fn updated_metadata_can_offer_a_new_protocol_for_an_existing_harness() {
+fn explicit_protocol_configuration_is_not_rejected_by_a_named_sdk_gate() {
     let mut catalog = nemoclaw_sdk::fabric_catalog::FabricCatalog::bundled();
-    catalog
-        .adapters
-        .retain(|adapter| adapter.harness == "codex");
-    catalog.adapters[0].descriptor["settings_schema"] = serde_json::json!({
-        "type": "object", "properties": {"api_type": {"enum": ["anthropic-messages"]}}
-    });
+    catalog.adapters[0].descriptor["settings_schema"] = serde_json::json!({"type":"object","properties":{"api_type":{"enum":["anthropic-messages"]}}});
     let capabilities = Capabilities::from_catalog(&catalog);
-    let scenario = capabilities
-        .scenarios()
-        .iter()
-        .find(|scenario| {
-            scenario.harness() == HarnessKind::Codex
-                && scenario.inference() == ProviderPreset::Anthropic
-        })
-        .expect("updated descriptor must override the old protocol assumption");
-    let answers = Answers::onboarding_defaults().for_scenario(scenario);
+    let answers = Answers {
+        harness: capabilities.harnesses()[0].clone(),
+        ..Answers::onboarding_defaults().for_provider(ProviderPreset::Anthropic)
+    };
     let authored = Session::new()
         .unwrap()
         .project(&capabilities, &answers)
@@ -827,4 +794,110 @@ fn updated_metadata_can_offer_a_new_protocol_for_an_existing_harness() {
             .unwrap(),
         answers
     );
+}
+
+#[test]
+fn lossless_draft_editing_does_not_require_a_cached_compatibility_scenario() {
+    let draft = begin_onboarding(&Capabilities::available());
+    let unavailable = Capabilities::from_harnesses([]);
+    let before = draft.document().clone();
+    let edited = draft
+        .propose_guided_edit(
+            &unavailable,
+            EditableField::DeploymentName,
+            FieldValue::Text("offline-rename".into()),
+        )
+        .expect("catalog absence must not prevent editing retained intent")
+        .accept();
+    assert_eq!(edited.document().spec, before.spec);
+    assert_eq!(edited.document().metadata.name, "offline-rename");
+    assert_eq!(edited.document().metadata.uid, before.metadata.uid);
+    assert!(edited.is_accepted(EditableField::DeploymentName));
+}
+
+#[test]
+fn direct_provider_choice_and_guided_choice_share_one_endpoint_preset() {
+    let capabilities = Capabilities::available();
+    let direct =
+        Answers::onboarding_defaults().with_overrides(nemoclaw_authoring::AnswerOverrides {
+            inference: Some(ProviderPreset::Anthropic),
+            ..Default::default()
+        });
+    let authored = Session::with_uid(UID)
+        .unwrap()
+        .project(&capabilities, &direct)
+        .unwrap();
+    let guided = begin_onboarding(&capabilities)
+        .propose_guided_edit(
+            &capabilities,
+            EditableField::Inference,
+            FieldValue::Inference(ProviderPreset::Anthropic),
+        )
+        .unwrap()
+        .accept();
+    assert_eq!(authored.document(), guided.document());
+}
+
+#[test]
+fn guided_edits_preserve_an_explicit_target_engine() {
+    let capabilities = Capabilities::available();
+    let draft = begin_onboarding(&capabilities);
+    let mut document = draft.document().clone();
+    document.spec.gateway.as_managed_mut().unwrap().engine =
+        "unix:///tmp/owned-discovery-fixture.sock".into();
+    let mut draft = Draft::from_document(document.clone()).unwrap();
+    draft
+        .set_guided_field(
+            &capabilities,
+            EditableField::Model,
+            FieldValue::Model("updated-model".into()),
+        )
+        .unwrap();
+    assert_eq!(draft.document().spec.gateway, document.spec.gateway);
+}
+
+#[test]
+fn anonymous_http_provider_is_losslessly_authorable_without_a_credential_reference() {
+    let capabilities = Capabilities::available();
+    let mut draft = begin_onboarding(&capabilities);
+    draft
+        .set_guided_field(
+            &capabilities,
+            EditableField::Inference,
+            FieldValue::Inference(ProviderPreset::OpenAiCompatible),
+        )
+        .unwrap();
+    draft
+        .set_guided_field(
+            &capabilities,
+            EditableField::Endpoint,
+            FieldValue::Text("http://127.0.0.1:11434/v1".into()),
+        )
+        .unwrap();
+    assert!(
+        draft.document().spec.inference_providers[0]
+            .credential
+            .is_none()
+    );
+    draft
+        .set_guided_field(
+            &capabilities,
+            EditableField::Model,
+            FieldValue::Model("local-model".into()),
+        )
+        .unwrap();
+    let reopened = Draft::from_yaml(draft.review().unwrap().yaml().as_bytes()).unwrap();
+    assert_eq!(reopened.document(), draft.document());
+    assert!(
+        reopened
+            .guided_answers(&capabilities)
+            .unwrap()
+            .credential_env
+            .is_empty()
+    );
+    reopened
+        .inference_request(&capabilities)
+        .unwrap()
+        .validate()
+        .unwrap();
 }

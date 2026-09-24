@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Read the existing Pi host status without configuring or invoking an agent."""
+"""Read the existing Fabric host status without configuring or invoking an agent."""
 import asyncio
 import json
 import sys
@@ -9,7 +9,7 @@ import sys
 async def observe(path):
     reader, writer = await asyncio.open_unix_connection(path, limit=1 << 20)
     try:
-        writer.write(b'{"operation":"check"}\n')
+        writer.write(b'{"operation":"status"}\n')
         await writer.drain()
         return json.loads(await asyncio.wait_for(reader.readline(), 10))
     finally:

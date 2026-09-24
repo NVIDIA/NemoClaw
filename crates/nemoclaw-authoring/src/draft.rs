@@ -50,9 +50,10 @@ pub struct InferenceEdits {
 /// A validated desired-state document being edited by a frontend.
 #[derive(Clone, Debug)]
 pub struct Draft {
-    document: Document,
-    pub(crate) accepted: Vec<crate::EditableField>,
-    pub(crate) delegated: Vec<crate::EditableField>,
+    pub(crate) document: Document,
+    pub(crate) decisions: std::collections::BTreeMap<crate::EditableField, crate::AnswerStatus>,
+    pub(crate) skipped_settings: std::collections::BTreeMap<String, serde_json::Value>,
+    pub(crate) delegated_settings: Vec<String>,
 }
 
 impl Draft {
@@ -63,8 +64,9 @@ impl Draft {
             .map_err(|error| diagnostic("document", &error.to_string()))?;
         Ok(Self {
             document,
-            accepted: Vec::new(),
-            delegated: Vec::new(),
+            decisions: Default::default(),
+            skipped_settings: Default::default(),
+            delegated_settings: Vec::new(),
         })
     }
 
@@ -86,9 +88,20 @@ impl Draft {
     ) -> Result<(), Diagnostics> {
         let authored =
             Session::with_uid(&self.document.metadata.uid)?.project(capabilities, &answers)?;
+        if self.document.spec.sandboxes[0]
+            .harness
+            .as_ref()
+            .map(|harness| &harness.kind)
+            != authored.document.spec.sandboxes[0]
+                .harness
+                .as_ref()
+                .map(|harness| &harness.kind)
+        {
+            self.skipped_settings.clear();
+            self.delegated_settings.clear();
+        }
         self.document = authored.document;
-        self.accepted.clear();
-        self.delegated.clear();
+        self.decisions.clear();
         Ok(())
     }
 
@@ -97,6 +110,12 @@ impl Draft {
         let document =
             Document::parse(bytes).map_err(|error| diagnostic("document", &error.to_string()))?;
         Self::from_document(document)
+    }
+
+    /// Validate the current adapter schema before producing reviewable YAML.
+    pub fn review_with(&self, capabilities: &Capabilities) -> Result<Review, Diagnostics> {
+        self.validate_settings(capabilities)?;
+        self.review()
     }
 
     /// Produces a validated snapshot for a frontend to render or accept.
@@ -191,25 +210,24 @@ fn guided_answers(
     let credential_env = provider
         .credential
         .as_ref()
-        .ok_or_else(|| diagnostic("document", "guided editing requires a credential reference"))?
-        .env
-        .clone();
-    let Some(scenario) = capabilities.scenarios().iter().find(|scenario| {
-        scenario.harness == harness.kind
-            && scenario.runtime == sandbox.runtime.provider
-            && scenario.provider_kind == provider.provider
-            && scenario.provider_api == provider.api
-            && scenario.provider_name == provider.name
-            && scenario.credential_env == credential_env
-            && (scenario.custom_endpoint || scenario.endpoint == provider.endpoint)
-            && (scenario.default_model == Some(route.overrides.model.as_str())
-                || scenario.custom_model)
-    }) else {
-        return Err(diagnostic(
-            "document",
-            "document does not match a guided onboarding preset",
-        ));
-    };
+        .map(|credential| credential.env.clone())
+        .unwrap_or_default();
+    let api = provider
+        .api
+        .unwrap_or_else(|| nemoclaw_sdk::config::InferenceApi::for_provider(provider.provider));
+    let preset = crate::ProviderPreset::ALL
+        .into_iter()
+        .filter(|preset| preset.profile().kind == provider.provider && preset.apis().contains(&api))
+        .max_by_key(|preset| {
+            usize::from(preset.profile().endpoint == provider.endpoint) * 4
+                + usize::from(preset.profile().custom_endpoint)
+        })
+        .ok_or_else(|| {
+            diagnostic(
+                "document",
+                "document does not match a guided endpoint preset",
+            )
+        })?;
     let answers = Answers {
         deployment_name: document.metadata.name.clone(),
         sandbox_name: sandbox.name.clone(),
@@ -217,12 +235,24 @@ fn guided_answers(
         harness: harness.kind.clone(),
         image: sandbox.image.ref_.clone(),
         harness_settings: harness.settings.clone(),
+        harness_config: harness.config.clone(),
         runtime: sandbox.runtime.provider,
-        inference: scenario.inference,
-        api: scenario.api,
+        engine: document.spec.gateway.as_managed().and_then(|gateway| {
+            let preset = if sandbox.runtime.provider == nemoclaw_sdk::config::ComputeDriver::Podman
+            {
+                "unix:///run/user/1000/podman/podman.sock".to_owned()
+            } else {
+                "unix:///var/run/docker.sock".to_owned()
+            };
+            (gateway.engine != preset).then(|| gateway.engine.clone())
+        }),
+        inference: preset,
+        api,
+        provider_api: provider.api,
         provider_name: provider.name.clone(),
         endpoint: provider.endpoint.clone(),
         model: route.overrides.model.clone(),
+        model_settings: route.overrides.settings.clone(),
         credential_env,
     };
     let projected = Session::with_uid(&document.metadata.uid)?.project(capabilities, &answers)?;

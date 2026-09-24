@@ -76,7 +76,7 @@ pub(crate) fn populate(
             "operating_system": "${jsondecode(data.nemoclaw_engine_capabilities.current.observation_json).operating_system}",
             "lifecycle": { "postcondition": [{
                 "condition": "${self.compatibility_status != \"unsupported\"}",
-                "error_message": "The selected image or Fabric adapter contradicts the configured platform, harness, API, tools, or interfaces. Revise the image or configuration."
+                "error_message": "The selected image or Fabric adapter contradicts the configured platform, adapter settings, native features, or filesystem grants. Revise the image or configuration."
             }] }
         });
         observations.insert(

@@ -116,13 +116,14 @@ See [unchanged apply and recovery](usage.md#updates-and-recovery) before using i
 ## 5. Access the Agent
 
 [Select the gateway and workspace](interfaces.md#select-the-gateway-and-workspace) in each terminal used for native access.
-Follow [Connect through OpenShell](interfaces.md#connect-through-openshell) to forward port `18800`, retrieve the sandbox-local token privately, and approve your browser's pairing request if prompted.
+Follow [Connect through OpenShell](interfaces.md#connect-through-openshell) to forward port `18800`.
+Native authentication and browser pairing must follow the selected Fabric adapter's contract; a qualified procedure for the migrated adapter remains **TBD**.
 Keep the forward bound to loopback.
 
 In the native dashboard, send a short prompt such as `Reply with a short greeting.`
 Verify an agent reply, which tests this endpoint/model/harness interaction beyond dashboard access or readiness.
 It does not establish general model quality or tool reliability.
-Browser and first-message rehearsal of this exact procedure: **TBD** — the existing interface fixtures verify native protocol behavior.
+Browser and first-message rehearsal of this exact procedure: **TBD** — retained historical interface fixtures do not qualify the migrated adapter.
 
 Stop forwarding with Ctrl-C when finished.
 The deployment continues running after the client exits.
@@ -137,7 +138,7 @@ nemoclaw plan --destroy --state-dir .local/first-deployment/state
 
 Read [destroy behavior](usage.md#destroy) and preserve needed native data before executing the deletion command there with this state directory.
 Destroy has no confirmation prompt and deletes sandbox files and conversation history.
-It removes the deployment's provider registration and route; the external gateway and inference service remain under their operators' control.
+It removes the deployment's provider registrations and agent configuration; the external gateway and inference service remain under their operators' control.
 Keep the local state for tracked retained resources and any interrupted teardown.
 
 ## Next Steps

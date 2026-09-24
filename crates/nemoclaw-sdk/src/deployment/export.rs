@@ -311,7 +311,7 @@ fn export_sandbox(expected: &Row, observed: &Row) -> Result<(), Error> {
         "policy_json",
         "proxy_host",
         "proxy_port",
-        "inference_json",
+        "provider_names_json",
     ]
     .iter()
     .any(|key| {
@@ -332,13 +332,13 @@ mod tests {
     #[test]
     fn export_rejects_configuration_and_intent_identity_drift_from_provider_observations() {
         let target = Target {
-            address: "nemoclaw_pi_configuration.agent".into(),
-            kind: "pi_configuration".into(),
+            address: "nemoclaw_agent_configuration.agent".into(),
+            kind: "agent_configuration".into(),
             values: Row::from([
                 ("owner".into(), "deployment".into()),
                 ("generation".into(), "generation".into()),
                 ("name".into(), "agent".into()),
-                ("model_json".into(), r#"{"model":"wanted"}"#.into()),
+                ("config_json".into(), r#"{"model":"wanted"}"#.into()),
             ]),
         };
         let observed = serde_json::to_value(&target.values).unwrap();
@@ -346,14 +346,14 @@ mod tests {
         for (key, value) in [
             ("owner", "foreign"),
             ("generation", "foreign"),
-            ("model_json", r#"{"model":"changed"}"#),
+            ("config_json", r#"{"model":"changed"}"#),
         ] {
             let mut changed = observed.clone();
             changed[key] = json!(value);
             assert!(validate_projection(&target, &changed).is_err(), "{key}");
         }
         let mut reformatted = observed;
-        reformatted["model_json"] = json!(r#"{ "model": "wanted" }"#);
+        reformatted["config_json"] = json!(r#"{ "model": "wanted" }"#);
         validate_projection(&target, &reformatted).unwrap();
     }
 
