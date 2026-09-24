@@ -12,6 +12,7 @@ import type { SandboxEntry } from "../../../state/registry/types";
 import {
   captureSandboxRuntimeSnapshot,
   confirmSandboxRuntimeRestore,
+  prepareSandboxStoppedStateCapture,
   prepareSandboxRuntimeRestore,
 } from "./provider-lifecycle";
 
@@ -129,6 +130,44 @@ describe("snapshot provider lifecycle", () => {
       5_000,
     );
     expect(capture).toHaveBeenCalledWith(expect.anything(), expect.anything(), 5_000);
+  });
+
+  it("keeps stopped capture optional and passes detached frozen authority to its owner", async () => {
+    const { bundle } = provider();
+    const surface = bundle.snapshot as Extract<typeof bundle.snapshot, { supported: true }>;
+    const target = sandbox();
+    const source = {
+      ...captureSandboxRuntimeSnapshot(bundle, target),
+      lifecycleState: "stopped" as const,
+    };
+    const projection = { directories: ["workspace"], prefixes: [], files: ["openclaw.json"] };
+    expect(prepareSandboxStoppedStateCapture(bundle, target, source, projection)).toBeNull();
+    const capture = vi.fn(async (_fd: number) => undefined);
+    const assertCurrent = vi.fn();
+    const prepare = vi.fn((entry, snapshot, layout) => {
+      expect(entry).not.toBe(target);
+      expect(snapshot).not.toBe(source);
+      expect(layout).not.toBe(projection);
+      expect(Object.isFrozen(entry)).toBe(true);
+      expect(Object.isFrozen(snapshot.runtime.runtime)).toBe(true);
+      expect(Object.isFrozen(layout.directories)).toBe(true);
+      return { capture, assertCurrent };
+    });
+    const owner = { ...bundle, snapshot: { ...surface, prepareStoppedStateCapture: prepare } };
+    const prepared = prepareSandboxStoppedStateCapture(owner, target, source, projection)!;
+    await prepared.capture(123);
+    prepared.assertCurrent();
+    expect(capture).toHaveBeenCalledWith(123);
+    expect(assertCurrent).toHaveBeenCalledOnce();
+    expect(() =>
+      prepareSandboxStoppedStateCapture(
+        owner,
+        target,
+        { ...source, providerId: "other" },
+        projection,
+      ),
+    ).toThrow("does not match the owning provider");
+    expect(prepare).toHaveBeenCalledOnce();
   });
 
   it("preflights before restore and revalidates through the same injected facet", () => {

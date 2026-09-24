@@ -25,6 +25,7 @@ import {
   type RuntimeProviderSnapshotRestoreSource,
   type RuntimeProviderSnapshotSurface,
 } from "./contract";
+import { prepareStoppedDockerStateCapture } from "./docker-stopped-state-capture";
 import {
   normalizeRuntimeProviderIdentity,
   normalizeRuntimeProviderManagedProfileRestoreAuthority,
@@ -66,8 +67,17 @@ export type RuntimeProviderManagedProfileRestorer = (
 ) => string;
 
 export interface RuntimeProviderSnapshotDriver {
+  readonly prepareStoppedStateCapture?: Extract<
+    RuntimeProviderSnapshotSurface,
+    { supported: true }
+  >["prepareStoppedStateCapture"];
   readonly observe: RuntimeProviderSnapshotObserver;
   readonly restoreManagedProfile: RuntimeProviderManagedProfileRestorer;
+  readonly canRestoreLifecycle?: (
+    sandbox: SandboxEntry,
+    source: RuntimeProviderSnapshotLifecycleState,
+    target: RuntimeProviderSnapshotLifecycleState,
+  ) => boolean;
   readonly canRepresentAcceleration?: (
     source: RuntimeProviderRuntimeReceipt["acceleration"],
     target: RuntimeProviderRuntimeReceipt["acceleration"],
@@ -725,7 +735,10 @@ function validateRestoreRequest(
   // A recovery may legitimately follow a runtime restart. Preserve the exact
   // current handle/generation and bind them into the restore receipt rather
   // than requiring them to equal the historical source identity.
-  if (source.lifecycleState !== expected.lifecycleState) {
+  if (
+    source.lifecycleState !== expected.lifecycleState &&
+    driver.canRestoreLifecycle?.(sandbox, source.lifecycleState, expected.lifecycleState) !== true
+  ) {
     throw new RuntimeProviderSnapshotError(
       `sandbox '${sandbox.name}' cannot represent the snapshot lifecycle state`,
     );
@@ -785,6 +798,8 @@ export function createRuntimeProviderSnapshotSurface(
       return observed.runtime;
     },
     canRepresentAcceleration: driver.canRepresentAcceleration,
+    canRestoreLifecycle: driver.canRestoreLifecycle,
+    prepareStoppedStateCapture: driver.prepareStoppedStateCapture,
     validateRestore(sandbox, preflight, source, managedProfile) {
       validateRestoreRequest(providerId, driver, sandbox, preflight, source, managedProfile);
     },
@@ -850,6 +865,20 @@ export function createDockerRuntimeProviderSnapshotSurface(
   return createRuntimeProviderSnapshotSurface(providerId, {
     observe: (sandbox, id, timeoutMs) =>
       observeDockerRuntimeSnapshot(sandbox, id, resolved, timeoutMs),
+    prepareStoppedStateCapture: (sandbox, source, projection) =>
+      providerId === "docker" &&
+      (sandbox.agent ?? "openclaw") === "openclaw" &&
+      source.lifecycleState === "stopped"
+        ? prepareStoppedDockerStateCapture(sandbox, source, projection)
+        : null,
+    // A stopped OpenClaw filesystem snapshot can populate a running replacement.
+    // Its receipt continues to record the actual stopped capture state; this
+    // transition does not claim to restore suspended process or kernel state.
+    canRestoreLifecycle: (sandbox, source, target) =>
+      providerId === "docker" &&
+      (sandbox.agent ?? "openclaw") === "openclaw" &&
+      source === "stopped" &&
+      target === "running",
     canRepresentAcceleration: dockerCanRepresentAcceleration,
     restoreManagedProfile: (sandbox, authority, runtime) =>
       verifyDockerManagedProfileRestore(sandbox, authority, runtime, resolved),

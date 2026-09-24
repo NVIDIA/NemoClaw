@@ -63,6 +63,8 @@ import {
   buildRestoreCleanupCommand,
   buildRestoreTarArgs,
   isAllowedStateSymlink,
+  copyCapturedOpenClawState,
+  type CapturedOpenClawState,
 } from "./state-directory-restore.js";
 import {
   extractPreservedEnvAssignments,
@@ -188,6 +190,8 @@ export interface RebuildMcpHandoffEntry {
 export type SnapshotEntry = RebuildManifest & { snapshotVersion: number };
 
 export interface BackupOptions {
+  /** Private, provider-verified source for OpenClaw recovery without container execution. */
+  capturedOpenClawState?: CapturedOpenClawState;
   name?: string | null;
   /** Absolute wall-clock deadline for all backup subprocesses and publication. */
   deadlineMs?: number;
@@ -1774,6 +1778,53 @@ function normalizeSnapshotBackupAuthority(options: BackupOptions): {
   };
 }
 
+interface CapturedOpenClawBackupRequest {
+  readonly captured: CapturedOpenClawState;
+  readonly sandboxName: string;
+  readonly agentName: string;
+  readonly backupPath: string;
+  readonly stateDirs: readonly string[];
+  readonly stateDirPrefixes: readonly string[];
+  readonly stateFiles: Parameters<typeof copyCapturedOpenClawState>[4];
+  readonly deadlineMs?: number;
+  readonly deferIncompleteBackupCleanup?: boolean;
+  readonly manifest: RebuildManifest;
+  readonly backedUpDirs: string[];
+  readonly backedUpFiles: string[];
+  readonly finish: () => BackupResult;
+}
+
+function backupCapturedOpenClawState(request: CapturedOpenClawBackupRequest): BackupResult {
+  try {
+    if (request.agentName !== "openclaw" || request.captured.sandboxName !== request.sandboxName) {
+      throw new Error("Stopped state capture only supports OpenClaw.");
+    }
+    const captured = copyCapturedOpenClawState(
+      request.captured,
+      request.backupPath,
+      request.stateDirs,
+      request.stateDirPrefixes,
+      request.stateFiles,
+    );
+    request.backedUpDirs.push(...captured.directories);
+    request.backedUpFiles.push(...captured.files);
+    return request.finish();
+  } catch {
+    const removed = removeBackupEntryWithinDeadline(request.backupPath, request.deadlineMs);
+    return {
+      success: false,
+      backedUpDirs: [],
+      failedDirs: [...request.stateDirs],
+      backedUpFiles: [],
+      failedFiles: request.stateFiles.map((file) => file.path),
+      error:
+        "Stopped OpenClaw state capture could not be published safely. The source sandbox was preserved." +
+        (removed ? "" : ` The unpublished backup at '${request.backupPath}' requires cleanup.`),
+      ...(!removed && request.deferIncompleteBackupCleanup ? { manifest: request.manifest } : {}),
+    };
+  }
+}
+
 function validateSnapshotPublication(
   backupPath: string,
   validateBeforePublish: BackupOptions["validateBeforePublish"],
@@ -2022,6 +2073,100 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
       backedUpFiles,
       failedFiles,
     };
+  }
+
+  const finishBackup = (): BackupResult => {
+    // SECURITY: Strip credentials from the local backup.
+    try {
+      sanitizeBackupDirectory(
+        backupPath,
+        {},
+        options.deadlineMs,
+        options.deferSanitizationDeadlineCleanup,
+      );
+    } catch (error) {
+      if (!isSnapshotSanitizationDeadlineError(error)) throw error;
+      return {
+        success: false,
+        backedUpDirs: [],
+        failedDirs: [...failedDirs, ...backedUpDirs],
+        backedUpFiles: [],
+        failedFiles: [...failedFiles, ...backedUpFiles],
+        error: "Snapshot sanitization skipped: backup deadline expired",
+        manifest,
+      };
+    }
+
+    const discoveredStateDirs = backedUpDirs.filter(
+      (dirName) =>
+        !stateDirs.includes(dirName) &&
+        stateDirPrefixes.some((prefix) => dirName.startsWith(prefix)),
+    );
+    if (discoveredStateDirs.length > 0) {
+      manifest.stateDirs = [...stateDirs, ...discoveredStateDirs];
+      _log(`Manifest stateDirs extended with prefix matches: [${discoveredStateDirs.join(",")}]`);
+    }
+    manifest.backedUpDirs = backedUpDirs;
+    manifest.failedBackupDirs = failedDirs.filter((failedDir) =>
+      manifest.stateDirs.includes(failedDir),
+    );
+    manifest.backupComplete = failedDirs.length === 0 && failedFiles.length === 0;
+
+    const publicationError = validateSnapshotPublication(
+      backupPath,
+      () => {
+        if (options.deadlineMs !== undefined && Date.now() >= options.deadlineMs) {
+          throw new Error("sandbox backup deadline expired");
+        }
+        options.validateBeforePublish?.();
+        if (options.deadlineMs !== undefined && Date.now() >= options.deadlineMs) {
+          throw new Error("sandbox backup deadline expired");
+        }
+      },
+      options.deferSanitizationDeadlineCleanup,
+    );
+    if (publicationError) {
+      return {
+        success: false,
+        backedUpDirs: [],
+        failedDirs: [],
+        backedUpFiles: [],
+        failedFiles: [],
+        error: publicationError,
+        ...(options.deferSanitizationDeadlineCleanup ? { manifest } : {}),
+      };
+    }
+    writeManifest(backupPath, manifest);
+    manifest.backupPath = backupPath;
+
+    return {
+      success: failedDirs.length === 0 && failedFiles.length === 0,
+      unreachable,
+      manifest,
+      backedUpDirs,
+      failedDirs,
+      ...(Object.keys(failedDirReasons).length > 0 ? { failedDirReasons } : {}),
+      backedUpFiles,
+      failedFiles,
+    };
+  };
+
+  if (options.capturedOpenClawState) {
+    return backupCapturedOpenClawState({
+      captured: options.capturedOpenClawState,
+      sandboxName,
+      agentName,
+      backupPath,
+      stateDirs,
+      stateDirPrefixes,
+      stateFiles,
+      deadlineMs: options.deadlineMs,
+      deferIncompleteBackupCleanup: options.deferSanitizationDeadlineCleanup,
+      manifest,
+      backedUpDirs,
+      backedUpFiles,
+      finish: finishBackup,
+    });
   }
 
   // SSH+tar single-roundtrip download
@@ -2464,81 +2609,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
     }
   }
 
-  // SECURITY: Strip credentials from the local backup
-  try {
-    sanitizeBackupDirectory(
-      backupPath,
-      {},
-      options.deadlineMs,
-      options.deferSanitizationDeadlineCleanup,
-    );
-  } catch (error) {
-    if (!isSnapshotSanitizationDeadlineError(error)) throw error;
-    return {
-      success: false,
-      backedUpDirs: [],
-      failedDirs: [...failedDirs, ...backedUpDirs],
-      backedUpFiles: [],
-      failedFiles: [...failedFiles, ...backedUpFiles],
-      error: "Snapshot sanitization skipped: backup deadline expired",
-      manifest,
-    };
-  }
-
-  // Record dynamically discovered directories in the manifest alongside the
-  // exact declarations so restoreSandboxState() can find them in backupPath.
-  // Preserve exact declaration order, followed by prefix-discovery order.
-  const discoveredStateDirs = backedUpDirs.filter(
-    (dirName) =>
-      !stateDirs.includes(dirName) && stateDirPrefixes.some((prefix) => dirName.startsWith(prefix)),
-  );
-  if (discoveredStateDirs.length > 0) {
-    manifest.stateDirs = [...stateDirs, ...discoveredStateDirs];
-    _log(`Manifest stateDirs extended with prefix matches: [${discoveredStateDirs.join(",")}]`);
-  }
-  manifest.backedUpDirs = backedUpDirs;
-  manifest.failedBackupDirs = failedDirs.filter((failedDir) =>
-    manifest.stateDirs.includes(failedDir),
-  );
-  manifest.backupComplete = failedDirs.length === 0 && failedFiles.length === 0;
-
-  const publicationError = validateSnapshotPublication(
-    backupPath,
-    () => {
-      if (options.deadlineMs !== undefined && Date.now() >= options.deadlineMs) {
-        throw new Error("sandbox backup deadline expired");
-      }
-      options.validateBeforePublish?.();
-      if (options.deadlineMs !== undefined && Date.now() >= options.deadlineMs) {
-        throw new Error("sandbox backup deadline expired");
-      }
-    },
-    options.deferSanitizationDeadlineCleanup,
-  );
-  if (publicationError) {
-    return {
-      success: false,
-      backedUpDirs: [],
-      failedDirs: [],
-      backedUpFiles: [],
-      failedFiles: [],
-      error: publicationError,
-      ...(options.deferSanitizationDeadlineCleanup ? { manifest } : {}),
-    };
-  }
-  writeManifest(backupPath, manifest);
-  manifest.backupPath = backupPath;
-
-  return {
-    success: failedDirs.length === 0 && failedFiles.length === 0,
-    unreachable,
-    manifest,
-    backedUpDirs,
-    failedDirs,
-    ...(Object.keys(failedDirReasons).length > 0 ? { failedDirReasons } : {}),
-    backedUpFiles,
-    failedFiles,
-  };
+  return finishBackup();
 }
 
 // ── Restore ────────────────────────────────────────────────────────

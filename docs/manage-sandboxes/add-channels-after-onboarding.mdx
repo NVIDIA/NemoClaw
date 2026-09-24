@@ -91,7 +91,14 @@ Inspect the channel's gateway providers, restore the preset YAML, and correct th
 When the gateway is reachable, run the `$$nemoclaw <name> channels remove <channel>` command printed by the CLI, then rerun `$$nemoclaw <name> channels add <channel>`.
 
 Choose the rebuild so the running sandbox image picks up the new channel.
-For Telegram, Discord, and Slack, `channels add` checks the rebuilt runtime for the selected bridge and reports startup, credential, or missing-plugin warnings before returning.
+After a successful rebuild, `channels add` checks the selected Telegram, Discord, or Slack bridge and reports startup, credential, or missing-plugin warnings before returning.
+
+<AgentOnly variant="openclaw">
+An official-plugin provenance failure stops the image build before these runtime checks.
+Report the failure diagnostic, plugin name and NemoClaw version to a maintainer; NemoClaw manages the package pins and build cache.
+Refer to [Official messaging plugin verification stops the build](../../reference/troubleshooting#official-messaging-plugin-verification-stops-the-build).
+</AgentOnly>
+
 If you defer the rebuild, apply the change later:
 
 ```bash
