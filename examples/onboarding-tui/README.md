@@ -6,7 +6,8 @@
 This crate provides the terminal questionnaire used by `nemoclaw onboard` and the standalone example.
 It is a trial authoring flow over `nemoclaw-authoring`.
 It writes validated YAML and can read target observations through a verified native bundle.
-It reports credential-reference availability without retaining values, and does not create deployment state or apply resources.
+Review reminds you to set missing credential references before applying, without retaining their values.
+Onboarding does not create deployment state or apply resources.
 
 With the [build prerequisites](../../docs/build.md) available, run from the repository root in a terminal:
 
@@ -85,7 +86,9 @@ A known engine mismatch, conflicting image platform or digest, or rejection by F
 Unknown observations still allow saving after answering individually and selecting a runtime offered on this host, including when authoring for a target to prepare later.
 
 Observed models supplement suggestions; you can still enter an identifier manually.
-The target summary distinguishes advertised hardware, unverified GPU inventory, credential-reference availability, and gateway status.
+Discovery supplies choices and validation without displaying hardware inventories, model counts or successful-check summaries.
+The TUI has no detailed diagnostic view.
+It retains incompatibility and unverified-target messages; review names missing credentials without blocking ordinary YAML authoring.
 These observations do not establish deployment readiness, successful authentication for every operation, model loading, or working inference.
 Complete GPU/driver/memory measurements require an explicitly selected SDK host collector; onboarding does not run it.
 Plan refreshes the relevant observations; apply retains its readiness checks.

@@ -292,6 +292,17 @@ impl Wizard {
                 "Remaining suggestions chosen with your permission.",
             ));
         }
+        for credential in &self.facts.credentials {
+            if credential.status == nemoclaw_sdk::discovery::ObservationStatus::Unavailable {
+                lines.push(Line::from(Span::styled(
+                    format!(
+                        "Set {} before applying.",
+                        terminal_text(&credential.reference)
+                    ),
+                    Style::new().fg(Color::Rgb(255, 170, 70)),
+                )));
+            }
+        }
         lines.extend(review_field("Deployment", &answers.deployment_name));
         lines.extend(review_field("Harness", labels::harness(&answers.harness)));
         if let Some(settings) = &answers.harness_settings {

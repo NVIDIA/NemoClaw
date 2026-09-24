@@ -437,6 +437,61 @@ fn changing_provider_reasks_the_model_without_reasking_an_accepted_name() {
 }
 
 #[test]
+fn compatible_discovery_does_not_add_a_status_block_to_the_questionnaire() {
+    let mut wizard = wizard();
+    establish_observed_discovery(&mut wizard);
+    assert!(
+        super::terminal::discovery_status(wizard.discovery.as_ref().unwrap(), wizard.draft(),)
+            .is_none()
+    );
+}
+
+#[test]
+fn missing_credential_is_a_review_action_without_blocking_yaml_authoring() {
+    use nemoclaw_sdk::{discovery::ObservationStatus, inference_discovery::CredentialObservation};
+    let capabilities = Capabilities::available();
+    let mut answers = Answers::onboarding_defaults();
+    answers.model = "provider/long-model-name-".repeat(8);
+    let authored = Session::new()
+        .unwrap()
+        .project(&capabilities, &answers)
+        .unwrap();
+    let draft = Draft::from_document(authored.document().clone()).unwrap();
+    let mut wizard = Wizard::new(capabilities, draft);
+    wizard.target_status = Some("Target unverified. You can save and check it with plan.".into());
+    wizard.facts.credentials = vec![CredentialObservation {
+        reference: "NVIDIA_INFERENCE_API_KEY".into(),
+        status: ObservationStatus::Unavailable,
+        reason: None,
+    }];
+    let mut terminal = Terminal::new(TestBackend::new(72, 24)).unwrap();
+    terminal.draw(|frame| wizard.render(frame)).unwrap();
+    assert!(
+        !terminal
+            .backend()
+            .to_string()
+            .contains("NVIDIA_INFERENCE_API_KEY")
+    );
+    navigate(&mut wizard, Step::Review, Input::Continue);
+    terminal.draw(|frame| wizard.render(frame)).unwrap();
+    let rendered = terminal.backend().to_string();
+    assert!(
+        rendered.contains("Set NVIDIA_INFERENCE_API_KEY before applying."),
+        "{rendered}"
+    );
+    for diagnostic in [
+        "Credentials:",
+        "GPU details",
+        "advertised models",
+        "GiB RAM",
+    ] {
+        assert!(!rendered.contains(diagnostic), "{rendered}");
+    }
+    wizard.handle(Input::Continue);
+    assert!(wizard.accepted());
+}
+
+#[test]
 fn engine_status_and_review_fit_in_the_minimum_terminal() {
     let mut wizard = wizard();
     navigate(&mut wizard, Step::Review, Input::Continue);

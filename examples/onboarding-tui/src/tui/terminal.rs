@@ -8,7 +8,7 @@ use nemoclaw_authoring::{
 };
 use nemoclaw_sdk::{
     CancellationToken, Error,
-    discovery::{DiscoveryRequest, ObservationStatus},
+    discovery::DiscoveryRequest,
     discovery_session::{DiscoveryObservation, DiscoveryQuery, DiscoverySession},
 };
 use ratatui::{Terminal, TerminalOptions, Viewport, backend::CrosstermBackend, layout::Rect};
@@ -81,8 +81,7 @@ pub(crate) async fn run(
         );
         let is_review = wizard.step == super::app::Step::Review;
         if last_inputs.as_ref() != Some(&inputs) || (is_review && !was_review) {
-            wizard.target_status =
-                Some("Discovering target hardware, image, gateway, and model catalog…".into());
+            wizard.target_status = Some("Checking available choices…".into());
             terminal.draw(|frame| wizard.render(frame))?;
             let discovery_cancel = cancel.child_token();
             let future = check_discovery(
@@ -111,13 +110,13 @@ pub(crate) async fn run(
             else {
                 return Ok(None);
             };
-            let mut status = discovery_status(&evidence, wizard.draft(), discovery.is_some());
+            let mut status = discovery_status(&evidence, wizard.draft());
             if let Some(reason) = wizard.runtime_unavailable_reason(target.compute_driver) {
-                status = format!("Podman {reason}. Choose Docker to continue on this host.");
+                status = Some(format!(
+                    "Podman {reason}. Choose Docker to continue on this host."
+                ));
             }
-            status.push('\n');
-            status.push_str(&facts_status(&facts));
-            wizard.target_status = Some(status);
+            wizard.target_status = status;
             wizard.discovery = Some(evidence);
             wizard.facts = facts;
             wizard.refresh_catalog();
@@ -367,78 +366,14 @@ pub(super) async fn check_discovery(
     Ok((evidence, facts))
 }
 
-fn facts_status(facts: &AuthoringFacts) -> String {
-    let hardware = facts
-        .hardware
-        .as_ref()
-        .map(|evidence| &evidence.observation);
-    let architecture = hardware
-        .and_then(|observed| observed.architecture.as_deref())
-        .filter(|value| value.len() < 24 && !value.chars().any(char::is_control))
-        .unwrap_or("architecture unknown");
-    let memory = hardware
-        .and_then(|observed| observed.memory_bytes)
-        .map(|bytes| format!("{} GiB RAM", bytes / (1 << 30)))
-        .unwrap_or_else(|| "RAM unknown".into());
-    let models = match facts
-        .endpoint
-        .as_ref()
-        .map(|evidence| &evidence.observation)
-    {
-        Some(observed) if observed.status == ObservationStatus::Available => {
-            format!("{} advertised models", observed.models.len())
-        }
-        _ => "model catalog unverified".into(),
-    };
-    let available = facts
-        .credentials
-        .iter()
-        .filter(|observed| observed.status == ObservationStatus::Available)
-        .count();
-    let gateway = match facts
-        .gateway
-        .as_ref()
-        .map(|evidence| evidence.observation.status)
-    {
-        Some(ObservationStatus::Available) => "gateway compatible",
-        Some(ObservationStatus::Unavailable) => "gateway incompatible",
-        _ => "gateway unverified",
-    };
-    let gpu = hardware
-        .filter(|observed| observed.gpu_inventory_complete)
-        .map(|observed| format!("{} GPUs", observed.gpus.len()))
-        .unwrap_or_else(|| "GPU details unknown".into());
-    let missing = facts
-        .credentials
-        .iter()
-        .filter(|observed| observed.status == ObservationStatus::Unavailable)
-        .map(|observed| observed.reference.as_str())
-        .take(2)
-        .collect::<Vec<_>>();
-    let missing = if missing.is_empty() {
-        String::new()
-    } else {
-        format!("; missing {}", missing.join(", "))
-    };
-    format!(
-        "{architecture}, {memory}, {gpu}.\n{models}; {gateway}.\nCredentials: {available}/{} available{missing}.",
-        facts.credentials.len()
-    )
-}
-
-fn discovery_status(evidence: &DiscoveryEvidence, draft: &Draft, has_bundle: bool) -> String {
-    if !has_bundle {
-        return "Target unverified; bundled Fabric metadata. Save for later.".into();
-    }
+pub(super) fn discovery_status(evidence: &DiscoveryEvidence, draft: &Draft) -> Option<String> {
     match evidence.assessment(draft) {
-        Ok(assessment) if assessment.status == CompatibilityStatus::Compatible => {
-            "Engine and image match. Plan/apply still checks readiness.".into()
-        }
-        Ok(assessment) if assessment.status == CompatibilityStatus::Conflict => format!(
+        Ok(assessment) if assessment.status == CompatibilityStatus::Compatible => None,
+        Ok(assessment) if assessment.status == CompatibilityStatus::Conflict => Some(format!(
             "{} Go back to revise the configuration before saving.",
             assessment.reasons.join(" ")
-        ),
-        _ => "Target unverified; bundled Fabric choices. Plan checks again.".into(),
+        )),
+        _ => Some("Target unverified. You can save and check it with plan.".into()),
     }
 }
 
@@ -464,9 +399,9 @@ mod target_tests {
         )
         .await
         .unwrap();
-        let result = discovery_status(&evidence, &draft, false);
+        let result = discovery_status(&evidence, &draft).unwrap();
         assert!(result.contains("unverified"));
-        assert!(result.contains("bundled Fabric"));
+        assert!(result.contains("You can save"));
         assert_eq!(
             evidence.assessment(&draft).unwrap().status,
             CompatibilityStatus::Unverified
@@ -529,23 +464,6 @@ mod target_tests {
         .await
         .unwrap();
         assert!(matches!(result, Err(Error::Cancelled)));
-    }
-
-    #[test]
-    fn missing_facts_do_not_become_zero_hardware_or_valid_credentials() {
-        let facts = AuthoringFacts {
-            credentials: vec![nemoclaw_sdk::inference_discovery::CredentialObservation {
-                reference: "NVIDIA_INFERENCE_API_KEY".into(),
-                status: ObservationStatus::Unavailable,
-                reason: None,
-            }],
-            ..Default::default()
-        };
-        let status = facts_status(&facts);
-        assert!(status.contains("architecture unknown"));
-        assert!(status.contains("GPU details unknown"));
-        assert!(status.contains("missing NVIDIA_INFERENCE_API_KEY"));
-        assert!(!status.contains("0 GPUs"));
     }
 
     #[tokio::test]
