@@ -44,7 +44,7 @@ function restoreEnv(name: string, value: string | undefined): void {
     : Reflect.set(process.env, name, value);
 }
 
-function writeRegistry(sandboxName: string): void {
+function writeRegistry(sandboxName: string, agent: string | null = null): void {
   fs.mkdirSync(path.join(TMP_HOME, ".nemoclaw"), { recursive: true });
   fs.writeFileSync(
     path.join(TMP_HOME, ".nemoclaw", "sandboxes.json"),
@@ -56,7 +56,7 @@ function writeRegistry(sandboxName: string): void {
           model: "m",
           provider: "p",
           gpuEnabled: false,
-          agent: null,
+          agent,
         },
       },
     }),
@@ -87,6 +87,7 @@ function prepareBackup(
   deferSanitizationDeadlineCleanup = false,
   validateBeforePublish?: () => void,
   downloadArchiveRoot?: string,
+  agent?: string | null,
 ): DeadlineRun {
   const binDir = path.join(fixture, "bin");
   const stageLog = path.join(fixture, "stages.log");
@@ -114,7 +115,9 @@ process.exit(0);
 const fs = require("node:fs");
 const { spawnSync } = require("node:child_process");
 const command = process.argv[process.argv.length - 1] || "";
-const stage = command.includes("[ -d ")
+const stage = command.includes("hardlink_count=")
+  ? "state-file"
+  : command.includes("[ -d ")
   ? "discovery"
   : command.includes("find ")
     ? "audit"
@@ -144,7 +147,7 @@ process.exit(stage === "download" ? 2 : 0);
     logs.push(String(message));
   });
 
-  writeRegistry("alpha");
+  writeRegistry("alpha", agent);
   process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
   process.env.PATH = `${binDir}:${process.env.PATH || ""}`;
   process.env.NEMOCLAW_REBUILD_VERBOSE = "1";
@@ -246,6 +249,33 @@ describe("shared backup deadline boundaries (#11936)", () => {
       expect(prepared.logs.join("\n")).toContain(
         "privileged state directory capture: backup deadline expired",
       );
+    });
+  });
+
+  it("does not classify state-file deadline expiry as an SSH transport failure", () => {
+    withFixture((fixture) => {
+      const privilegedRoot = path.join(fixture, "privileged");
+      fs.mkdirSync(path.join(privilegedRoot, "workspace"), { recursive: true });
+      fs.writeFileSync(path.join(privilegedRoot, "workspace", "marker.txt"), "preserved");
+      const captured = vi.fn((_request: unknown, archiveFd: number) => {
+        const archive = spawnSync("tar", ["-cf", "-", "-C", privilegedRoot, "workspace"]);
+        expect(archive.status, String(archive.stderr)).toBe(0);
+        fs.writeSync(archiveFd, archive.stdout);
+        return { outcome: "backed_up" as const };
+      });
+      const backup = prepareBackup(
+        fixture,
+        "state-file",
+        captured,
+        false,
+        undefined,
+        undefined,
+        "hermes",
+      ).run();
+
+      expect(backup.success).toBe(false);
+      expect(backup.unreachable).not.toBe(true);
+      expect(sshStagesOf(fixture)).toContain("state-file");
     });
   });
 

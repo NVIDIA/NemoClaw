@@ -1369,7 +1369,7 @@ function capturePreservedEnvFile(
   });
   _log(`Capturing preserved environment assignments from ${inventory.path}`);
   const timeoutMs = remainingBackupTimeoutMs(deadlineMs, 30_000);
-  if (timeoutMs === null) return { outcome: "failed", unreachable: true };
+  if (timeoutMs === null) return { outcome: "failed", unreachable: false };
   const result = spawnSync("ssh", [...sshArgs(configFile, sandboxName), command], {
     stdio: ["ignore", "pipe", "pipe"],
     timeout: timeoutMs,
@@ -1501,7 +1501,7 @@ function backupStateFile(
   const command = buildStateFileBackupCommand(dir, spec);
   _log(`Backing up state file ${spec.path} (${spec.strategy})`);
   const timeoutMs = remainingBackupTimeoutMs(deadlineMs, 120_000);
-  if (timeoutMs === null) return { outcome: "failed", unreachable: true };
+  if (timeoutMs === null) return { outcome: "failed", unreachable: false };
   const result = spawnSync("ssh", [...sshArgs(configFile, sandboxName), command], {
     stdio: ["ignore", "pipe", "pipe"],
     timeout: timeoutMs,

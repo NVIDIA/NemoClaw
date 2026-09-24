@@ -58,6 +58,7 @@ import {
   returnSandboxContainerToStopped,
   startStoppedSandboxContainerForBackup,
   startedSandboxBackupTransactionDeadline,
+  startedSandboxBackupWorkDeadline,
 } from "./stopped-sandbox-backup";
 
 export { removeStaleRebuildDockerOrphan };
@@ -526,9 +527,13 @@ export async function backupSandboxStateForRebuild(
 
   console.log("  Backing up sandbox state...");
   log(`Agent type: ${sb.agent || "openclaw"}, stateDirs from manifest`);
+  const transactionDeadlineMs = startedSandboxBackupTransactionDeadline();
   let backup = snapshotBackup.backupSandboxStateWithManagedAuthority(
     sandboxName,
-    capturedOpenClawState ? { capturedOpenClawState } : {},
+    {
+      deadlineMs: startedSandboxBackupWorkDeadline(transactionDeadlineMs),
+      ...(capturedOpenClawState ? { capturedOpenClawState } : {}),
+    },
     {
       getSandbox: (name) => loadRegistry().sandboxes[name] ?? null,
     },
@@ -542,7 +547,6 @@ export async function backupSandboxStateForRebuild(
   // it to stopped. Any other failure (permission denied, absent state, audit
   // rejection) is not a transport problem and must not attempt this recovery.
   if (!backup.success && backup.unreachable) {
-    const transactionDeadlineMs = startedSandboxBackupTransactionDeadline();
     const started = await startStoppedSandboxContainerForBackup(sandboxName, {
       deadlineMs: transactionDeadlineMs,
     });

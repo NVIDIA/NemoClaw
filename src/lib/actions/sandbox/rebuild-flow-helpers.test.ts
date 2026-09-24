@@ -1044,6 +1044,7 @@ describe("backupSandboxStateForRebuild stopped-container recovery (#11137)", () 
   const startedForBackup = { containerName: "openshell-alpha", runtimeProviderId: "docker" };
 
   it("recovers by starting the killed container, backing up, then returning it to stopped", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(1_000);
     backupSpy.mockReturnValue({
       success: false,
       backedUpDirs: [],
@@ -1066,15 +1067,20 @@ describe("backupSandboxStateForRebuild stopped-container recovery (#11137)", () 
     );
 
     expect(result).toEqual(makeBackupResult().manifest);
+    expect(backupSpy).toHaveBeenCalledWith(
+      "alpha",
+      { deadlineMs: 301_000 },
+      expect.objectContaining({ getSandbox: expect.any(Function) }),
+    );
     expect(startSpy).toHaveBeenCalledWith("alpha", {
-      deadlineMs: expect.any(Number),
+      deadlineMs: 331_000,
     });
     expect(backupStartedSpy).toHaveBeenCalledWith("alpha", {
-      deadlineMs: expect.any(Number),
+      deadlineMs: 331_000,
       deferSanitizationDeadlineCleanup: true,
     });
     expect(returnStoppedSpy).toHaveBeenCalledWith(startedForBackup, {
-      deadlineMs: expect.any(Number),
+      deadlineMs: 331_000,
     });
   });
 

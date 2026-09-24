@@ -275,6 +275,38 @@ describe("snapshot provider lifecycle", () => {
     expect(restore).not.toHaveBeenCalled();
   });
 
+  it("requires explicit provider approval for a stopped-to-running restore transition", () => {
+    const { bundle } = provider();
+    const surface = bundle.snapshot as Extract<typeof bundle.snapshot, { supported: true }>;
+    const source = {
+      schemaVersion: 1,
+      providerId: "mxc",
+      providerHandle: "opaque-source",
+      lifecycleState: "stopped",
+      lifecycleGeneration: "source-generation",
+      runtime: runtime(),
+    } as const;
+    expect(() =>
+      prepareSandboxRuntimeRestore(bundle, sandbox("target"), source, managedProfile),
+    ).toThrow("cannot represent the snapshot lifecycle state");
+
+    const approvedSurface = { ...surface, canRestoreLifecycle: vi.fn(() => true) };
+    const prepared = prepareSandboxRuntimeRestore(
+      { ...bundle, snapshot: approvedSurface },
+      sandbox("target"),
+      source,
+      managedProfile,
+    );
+
+    expect(prepared.source.lifecycleState).toBe("stopped");
+    expect(prepared.preflight.lifecycleState).toBe("running");
+    expect(approvedSurface.canRestoreLifecycle).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "target" }),
+      "stopped",
+      "running",
+    );
+  });
+
   it("propagates provider restore refusal from the read-only preflight edge", () => {
     const { bundle, validateRestore, restore } = provider();
     validateRestore.mockImplementationOnce(() => {
