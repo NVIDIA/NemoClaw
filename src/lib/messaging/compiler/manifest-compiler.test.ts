@@ -298,7 +298,7 @@ describe("ManifestCompiler", () => {
           kind: "package-install",
           value: {
             manager: "openclaw-plugin",
-            spec: "npm:@tencent-weixin/openclaw-weixin@2.4.3",
+            spec: "npm:@tencent-weixin/openclaw-weixin@2.4.9",
             pin: true,
           },
         }),
