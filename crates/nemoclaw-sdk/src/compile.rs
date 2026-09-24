@@ -369,11 +369,13 @@ fn graph_base(document: &Document, version: &str) -> Value {
         .iter()
         .map(|sandbox| &sandbox.runtime.provider)
         .collect();
-    json!({
+    let mut graph = json!({
         "terraform":{"required_version":format!("= {OPENTOFU_VERSION}"),"required_providers":{"nemoclaw":{"source":PROVIDER_ADDRESS,"version":format!("= {version}")}}},
         "provider":{"nemoclaw":provider}, "resource":{},
         "data":{"nemoclaw_gateway_capabilities":{"current":{"required_compute_drivers":drivers}}}
-    })
+    });
+    crate::discovery_graph::populate(&mut graph, document);
+    graph
 }
 
 fn compile_with_plans(

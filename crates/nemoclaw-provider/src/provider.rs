@@ -133,6 +133,20 @@ impl Provider for NemoClawProvider {
     ) -> Option<HashMap<String, Box<dyn DynamicDataSource>>> {
         Some(HashMap::from([
             (
+                "engine_capabilities".into(),
+                Box::new(crate::discovery::DiscoveryDataSource {
+                    backend: self.backend.clone(),
+                    fabric: false,
+                }) as Box<dyn DynamicDataSource>,
+            ),
+            (
+                "fabric_capabilities".into(),
+                Box::new(crate::discovery::DiscoveryDataSource {
+                    backend: self.backend.clone(),
+                    fabric: true,
+                }) as Box<dyn DynamicDataSource>,
+            ),
+            (
                 "sandbox_readiness".into(),
                 Box::new(crate::sandbox_readiness::SandboxReadinessDataSource(
                     self.backend.clone(),
@@ -173,11 +187,7 @@ impl Provider for NemoClawProvider {
                     } else {
                         AttributeType::String
                     },
-                    constraint: if name == "endpoint" {
-                        AttributeConstraint::Required
-                    } else {
-                        AttributeConstraint::Optional
-                    },
+                    constraint: AttributeConstraint::Optional,
                     ..Default::default()
                 },
             );
@@ -223,6 +233,22 @@ impl Provider for NemoClawProvider {
             }
         }
         if deferred {
+            return Some(());
+        }
+        if matches!(config.endpoint, Value::Null) {
+            if [
+                &config.credential_env,
+                &config.tls_ca_env,
+                &config.tls_certificate_env,
+                &config.tls_key_env,
+            ]
+            .into_iter()
+            .any(|value| matches!(value, Value::Value(value) if !value.is_empty()))
+                || matches!(config.destroy, Value::Value(true))
+            {
+                diags.root_error_short("Gateway credentials and teardown require an endpoint");
+                return None;
+            }
             return Some(());
         }
         let mut gateway = nemoclaw_sdk::config::ExternalGateway {
@@ -432,6 +458,30 @@ mod tests {
                     .is_err()
             );
         }
+    }
+
+    #[tokio::test]
+    async fn discovery_only_configuration_clears_gateway_client_and_teardown_permission() {
+        let provider = NemoClawProvider::default();
+        let mut diagnostics = Diagnostics::default();
+        provider
+            .configure(&mut diagnostics, String::new(), known())
+            .await
+            .unwrap();
+        provider
+            .configure(&mut diagnostics, String::new(), ProviderConfig::default())
+            .await
+            .unwrap();
+        assert!(diagnostics.errors.is_empty());
+        assert!(provider.backend.client().is_err());
+        assert!(!provider.destroying.load(Ordering::Acquire));
+        assert!(
+            provider
+                .backend
+                .plan("workspace", &Row::new(), None)
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]

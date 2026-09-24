@@ -228,3 +228,41 @@ fn missing_ownership_generations_stop_compilation() {
         );
     }
 }
+
+#[test]
+fn managed_plans_query_selected_engine_and_image_without_probe_resources() {
+    let document =
+        Document::parse(include_str!("../../../examples/onboarding/openclaw.yaml").as_bytes())
+            .unwrap();
+    let generations = ["workspace", "provider", "sandbox", "managed_gateway"]
+        .map(|kind| (kind.into(), "a".repeat(32)))
+        .into();
+    for graph in [
+        compile(&document, &generations, "0.1.0").unwrap(),
+        nemoclaw_sdk::compile::compile_runtime(&document, &generations, "0.1.0").unwrap(),
+    ] {
+        let engine = &graph["data"]["nemoclaw_engine_capabilities"]["current"];
+        assert_eq!(
+            engine["engine"],
+            document.spec.gateway.as_managed().unwrap().engine
+        );
+        assert_eq!(engine["compute_driver"], "docker");
+        assert!(
+            engine.get("depends_on").is_none(),
+            "read existing capabilities during plan"
+        );
+        let image = &graph["data"]["nemoclaw_fabric_capabilities"]["sandbox_0"];
+        assert_eq!(image["image"], document.spec.sandboxes[0].image.ref_);
+        assert!(
+            image.get("depends_on").is_none(),
+            "metadata inspection must not depend on image acquisition"
+        );
+        assert!(
+            image["lifecycle"]["postcondition"][0]["condition"]
+                .as_str()
+                .unwrap()
+                .contains("openclaw")
+        );
+        assert!(graph["output"]["discovery"]["value"].is_object());
+    }
+}

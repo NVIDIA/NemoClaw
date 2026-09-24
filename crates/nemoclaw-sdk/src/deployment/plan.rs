@@ -8,6 +8,8 @@ pub(super) struct Plan {
     pub resource_changes: Vec<ResourceChange>,
     #[serde(default)]
     pub resource_drift: Vec<ResourceChange>,
+    #[serde(default)]
+    pub planned_values: Value,
 }
 #[derive(Deserialize)]
 pub(super) struct ResourceChange {
@@ -35,6 +37,7 @@ fn observation(
     let expected = (change.address.starts_with("data.docker_image.")
         && allowed.contains_key(&change.address))
         || crate::compile::is_gateway_observation(&change.address)
+        || crate::discovery_graph::is_observation(&change.address)
         || allowed.keys().any(|address| {
             address
                 .strip_prefix("nemoclaw_sandbox.")
@@ -328,4 +331,64 @@ pub(super) fn check_destroy_plan(
         ));
     }
     Ok(changes)
+}
+
+impl Plan {
+    pub(super) fn discovery_deferred(&self) -> Vec<String> {
+        let Some(observations) = self
+            .planned_values
+            .pointer("/outputs/discovery/value")
+            .and_then(Value::as_object)
+        else {
+            return if self.planned_values.pointer("/outputs/discovery").is_some() {
+                vec![
+                    "Target discovery remains unknown until its provider inputs can be resolved."
+                        .into(),
+                ]
+            } else {
+                Vec::new()
+            };
+        };
+        observations.iter().filter_map(|(name, value)| {
+            let observation = value.as_str().and_then(|json| serde_json::from_str::<Value>(json).ok());
+            if observation.as_ref().is_some_and(|value| value["status"] == "available") {
+                return None;
+            }
+            Some(if name == "engine" {
+                "Selected engine capabilities are unverified; provider discovery could not establish prerequisites.".into()
+            } else {
+                "Selected image Fabric capabilities are unverified; the image is absent or its metadata could not be read. Runtime adapter checks remain required.".into()
+            })
+        }).collect()
+    }
+}
+
+#[cfg(test)]
+mod discovery_tests {
+    use super::*;
+
+    #[test]
+    fn an_unknown_discovery_output_cannot_make_the_plan_complete() {
+        let plan: Plan = serde_json::from_value(json!({
+            "planned_values": {"outputs": {"discovery": {"sensitive": false}}}
+        }))
+        .unwrap();
+        assert!(!plan.discovery_deferred().is_empty());
+    }
+
+    #[test]
+    fn unknown_and_absent_image_evidence_remain_unresolved_without_exposing_raw_diagnostics() {
+        let plan: Plan = serde_json::from_value(json!({
+            "planned_values": {"outputs": {"discovery": {"value": {
+                "engine": "{\"status\":\"available\"}",
+                "sandbox_0": "{\"status\":\"unknown\",\"reason\":\"secret-sentinel\"}",
+                "sandbox_1": "{\"status\":\"unavailable\"}"
+            }}}}
+        }))
+        .unwrap();
+        let deferred = plan.discovery_deferred();
+        assert_eq!(deferred.len(), 2);
+        assert!(deferred.iter().all(|message| message.contains("Fabric")));
+        assert!(!format!("{deferred:?}").contains("secret-sentinel"));
+    }
 }

@@ -91,6 +91,7 @@ mod resource;
 pub use nemoclaw_sdk::backend::{Backend, Mutation, Row};
 pub use resource::ResourceAdapter;
 mod capacity;
+mod discovery;
 mod gateway;
 mod provider;
 mod readiness;

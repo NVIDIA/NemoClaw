@@ -189,11 +189,12 @@ impl Deployment {
             }
         }
         record.validate_pending_intent(&document)?;
-        let (runtime_changes, deferred) = self
+        let (runtime_changes, deferred, runtime_discovery) = self
             .runtime_stage(&bundle, &store, &document, &mut record, apply, cancel)
             .await?;
         if deferred {
             let mut result = OperationResult::planned(runtime_changes);
+            result.deferred = runtime_discovery;
             result
                 .deferred
                 .push("OpenShell registration and sandbox require the managed gateway".into());
@@ -232,6 +233,10 @@ impl Deployment {
         changes.extend(root_changes);
         let mut result = OperationResult::planned(changes);
         if !apply {
+            result.deferred = runtime_discovery;
+            result.deferred.extend(plan.discovery_deferred());
+            result.deferred.sort();
+            result.deferred.dedup();
             if fresh {
                 store.save(&record)?;
             }

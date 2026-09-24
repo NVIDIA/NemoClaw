@@ -53,6 +53,10 @@ pub fn compile_teardown(
         .as_object_mut()
         .expect("compiled graph")
         .remove("data");
+    graph
+        .as_object_mut()
+        .expect("compiled graph")
+        .remove("output");
     graph["provider"]["nemoclaw"]["destroy"] = json!(true);
     let resources = graph["resource"]
         .as_object_mut()
@@ -151,6 +155,10 @@ mod tests {
                 "partial teardown must never create unfinished storage"
             );
             assert!(graph.get("data").is_none());
+            assert!(
+                graph.get("output").is_none(),
+                "teardown must not retain discovery references"
+            );
             assert_eq!(graph["provider"]["nemoclaw"]["destroy"], true);
             assert_eq!(graph["provider"]["docker"], full["provider"]["docker"]);
             for address in &established {

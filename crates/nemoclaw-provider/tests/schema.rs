@@ -153,3 +153,26 @@ fn registered_resources_compute_only_owned_observations_and_require_model_digest
     }
     assert!(diagnostics.errors.is_empty(), "{diagnostics:?}");
 }
+
+#[test]
+fn engine_discovery_is_available_without_a_gateway() {
+    use tf_provider::schema::AttributeConstraint;
+    let provider = NemoClawProvider::default();
+    let mut diagnostics = Diagnostics::default();
+    let sources = provider.get_data_sources(&mut diagnostics).unwrap();
+    for kind in ["engine_capabilities", "fabric_capabilities"] {
+        let schema = sources
+            .get(kind)
+            .expect("read-only discovery data source")
+            .schema(&mut diagnostics)
+            .unwrap();
+        assert!(matches!(
+            schema.block.attributes["observation_json"].constraint,
+            AttributeConstraint::Computed
+        ));
+    }
+    assert!(matches!(
+        provider.schema(&mut diagnostics).unwrap().block.attributes["endpoint"].constraint,
+        AttributeConstraint::Optional
+    ));
+}

@@ -162,3 +162,10 @@ pub use download::{
 };
 
 mod docker_compute;
+
+pub mod discovery_session;
+
+/// Read-only capability observations for authoring and planning.
+pub mod discovery;
+
+mod discovery_graph;
