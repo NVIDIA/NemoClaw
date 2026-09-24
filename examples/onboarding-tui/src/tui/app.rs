@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::labels;
-use nemoclaw_authoring::{Capabilities, Draft, EditableField, FieldValue};
+use nemoclaw_authoring::{
+    Capabilities, Draft, EditableField, FieldValue, GuidedEdit, RuntimeChoice,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Step {
@@ -40,10 +42,17 @@ pub(crate) struct Wizard {
     pub(super) accepted: bool,
     pub(super) cancelled: bool,
     pub(super) error: Option<String>,
+    pub(super) pending_edit: Option<GuidedEdit>,
+    pub(super) target_status: Option<String>,
+    local_podman: bool,
 }
 
 impl Wizard {
     pub(crate) fn new(capabilities: Capabilities, draft: Draft) -> Self {
+        Self::for_host(capabilities, draft, std::env::consts::OS)
+    }
+
+    pub(super) fn for_host(capabilities: Capabilities, draft: Draft, host_os: &str) -> Self {
         Self {
             capabilities,
             draft,
@@ -55,6 +64,9 @@ impl Wizard {
             accepted: false,
             cancelled: false,
             error: None,
+            pending_edit: None,
+            target_status: None,
+            local_podman: host_os == "linux",
         }
     }
 
@@ -88,6 +100,19 @@ impl Wizard {
     pub(crate) fn handle(&mut self, input: Input) {
         if matches!(input, Input::Cancel) {
             self.cancelled = true;
+            return;
+        }
+        if self.pending_edit.is_some() {
+            match input {
+                Input::Continue => {
+                    self.draft = self.pending_edit.take().unwrap().accept();
+                    self.advance_step();
+                }
+                Input::Back => {
+                    self.pending_edit = None;
+                }
+                _ => {}
+            }
             return;
         }
         match input {
@@ -141,6 +166,12 @@ impl Wizard {
             self.replace_input = true;
             return;
         }
+        if self.is_choice()
+            && let Some(reason) = self.choice_unavailable_reason(self.selected)
+        {
+            self.error = Some(reason.into());
+            return;
+        }
         let result = if self.is_choice() {
             self.commit_choice()
         } else if self.input.trim().is_empty() {
@@ -149,15 +180,31 @@ impl Wizard {
             self.commit_text()
         };
         match result {
-            Ok(()) => self.error = None,
+            Ok(edit) => {
+                self.error = None;
+                if !edit.conflicts().is_empty() {
+                    self.pending_edit = Some(edit);
+                    return;
+                }
+                self.draft = edit.accept();
+            }
             Err(diagnostics) => {
                 self.error = Some(diagnostics.to_string());
                 return;
             }
         }
+        self.advance_step();
+    }
+
+    fn advance_step(&mut self) {
         let steps = self.flow_steps();
         let index = steps.iter().position(|step| *step == self.step).unwrap();
-        self.set_step(steps[index + 1]);
+        let next = steps[index + 1..]
+            .iter()
+            .copied()
+            .find(|step| field_for_step(*step).is_none_or(|field| !self.draft.is_accepted(field)))
+            .unwrap_or(Step::Review);
+        self.set_step(next);
     }
 
     fn go_back(&mut self) {
@@ -183,9 +230,9 @@ impl Wizard {
         self.step = step;
         self.error = None;
         self.custom_model = step == Step::Model
-            && self
-                .field_state()
-                .is_some_and(|field| field.choices().is_empty());
+            && self.field_state().is_some_and(|field| {
+                field.choices().is_empty() || !field.choices().contains(field.value())
+            });
         self.selected = self.current_choice_index();
         self.input = self
             .field_state()
@@ -208,16 +255,7 @@ impl Wizard {
     }
 
     fn field(&self) -> Option<EditableField> {
-        Some(match self.step {
-            Step::Harness => EditableField::Harness,
-            Step::Runtime => EditableField::Runtime,
-            Step::Inference => EditableField::Inference,
-            Step::Api => EditableField::Api,
-            Step::DeploymentName => EditableField::DeploymentName,
-            Step::Endpoint => EditableField::Endpoint,
-            Step::Model => EditableField::Model,
-            Step::Welcome | Step::Review => return None,
-        })
+        field_for_step(self.step)
     }
 
     pub(super) fn flow_steps(&self) -> Vec<Step> {
@@ -261,13 +299,34 @@ impl Wizard {
         if count == 0 {
             return;
         }
-        self.selected = (self.selected as isize + delta).rem_euclid(count as isize) as usize;
+        for _ in 0..count {
+            self.selected = (self.selected as isize + delta).rem_euclid(count as isize) as usize;
+            if self.choice_unavailable_reason(self.selected).is_none() {
+                break;
+            }
+        }
     }
 
     fn choice_values(&self) -> Vec<FieldValue> {
         self.field_state()
             .map(|field| field.choices().to_vec())
             .unwrap_or_default()
+    }
+
+    pub(super) fn runtime_unavailable_reason(
+        &self,
+        runtime: RuntimeChoice,
+    ) -> Option<&'static str> {
+        // This preset uses a local Linux socket and native gateway process.
+        // It does not configure Podman Machine or a remote Linux target.
+        (runtime == RuntimeChoice::Podman && !self.local_podman).then_some("requires local Linux")
+    }
+
+    pub(super) fn choice_unavailable_reason(&self, index: usize) -> Option<&'static str> {
+        match self.choice_values().get(index) {
+            Some(FieldValue::Runtime(runtime)) => self.runtime_unavailable_reason(*runtime),
+            _ => None,
+        }
     }
 
     pub(super) fn choice_labels(&self) -> Vec<String> {
@@ -287,6 +346,38 @@ impl Wizard {
         labels
     }
 
+    pub(super) fn conflict_message(&self) -> String {
+        let Some(edit) = &self.pending_edit else {
+            return String::new();
+        };
+        let mut message = String::from("This choice affects answers you already accepted:\n\n");
+        for change in edit.conflicts() {
+            let name = match change.field {
+                EditableField::Harness => "Harness",
+                EditableField::Runtime => "Runtime",
+                EditableField::Inference => "Provider",
+                EditableField::Api => "API",
+                EditableField::Model => "Model",
+                EditableField::Endpoint => "Endpoint",
+                _ => "Answer",
+            };
+            if change.before == change.after {
+                message.push_str(&format!(
+                    "{name}: {} (confirm for the changed provider or endpoint)\n",
+                    labels::field_value(&change.before)
+                ));
+            } else {
+                message.push_str(&format!(
+                    "{name}: {} → {}\n",
+                    labels::field_value(&change.before),
+                    labels::field_value(&change.after)
+                ));
+            }
+        }
+        message.push_str("\nContinue to revise these answers, or go back to keep them.");
+        message
+    }
+
     fn current_choice_index(&self) -> usize {
         let Some(field) = self.field_state() else {
             return 0;
@@ -295,30 +386,37 @@ impl Wizard {
             .choices()
             .iter()
             .position(|choice| choice == field.value())
-            .unwrap_or(0)
+            .unwrap_or(field.choices().len())
     }
 
-    fn commit_choice(&mut self) -> Result<(), nemoclaw_authoring::Diagnostics> {
-        let Some(field) = self.field() else {
-            return Ok(());
-        };
-        let Some(value) = self.choice_values().get(self.selected).cloned() else {
-            return Ok(());
-        };
+    fn commit_choice(&mut self) -> Result<GuidedEdit, nemoclaw_authoring::Diagnostics> {
+        let field = self.field().expect("answer screen has a field");
+        let value = self.choice_values()[self.selected].clone();
         self.draft
-            .set_guided_field(&self.capabilities, field, value)
+            .propose_guided_edit(&self.capabilities, field, value)
     }
 
-    fn commit_text(&mut self) -> Result<(), nemoclaw_authoring::Diagnostics> {
-        let Some(field) = self.field() else {
-            return Ok(());
-        };
+    fn commit_text(&mut self) -> Result<GuidedEdit, nemoclaw_authoring::Diagnostics> {
+        let field = self.field().expect("answer screen has a field");
         let value = if field == EditableField::Model {
             FieldValue::Model(self.input.clone())
         } else {
             FieldValue::Text(self.input.clone())
         };
         self.draft
-            .set_guided_field(&self.capabilities, field, value)
+            .propose_guided_edit(&self.capabilities, field, value)
     }
+}
+
+fn field_for_step(step: Step) -> Option<EditableField> {
+    Some(match step {
+        Step::Harness => EditableField::Harness,
+        Step::Runtime => EditableField::Runtime,
+        Step::Inference => EditableField::Inference,
+        Step::Api => EditableField::Api,
+        Step::DeploymentName => EditableField::DeploymentName,
+        Step::Endpoint => EditableField::Endpoint,
+        Step::Model => EditableField::Model,
+        Step::Welcome | Step::Review => return None,
+    })
 }

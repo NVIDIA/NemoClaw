@@ -24,5 +24,5 @@ pub use diagnostics::{Diagnostic, Diagnostics};
 pub use draft::{
     AuthoredDocument, CompletionBoundary, Draft, IdentityEdits, InferenceEdits, Review,
 };
-pub use guided::{EditableField, FieldValue, GuidedField};
+pub use guided::{AnswerChange, EditableField, FieldValue, GuidedEdit, GuidedField};
 pub use projection::Session;

@@ -98,6 +98,7 @@ fn extracted_sources_build_without_git_and_ignore_generated_outputs() {
         "versions.json",
         "LICENSE",
         "crates/sdk/src/lib.rs",
+        "examples/onboarding-tui/src/lib.rs",
         "runtimes/example/Dockerfile",
     ] {
         let file = root.path().join(name);
@@ -105,7 +106,7 @@ fn extracted_sources_build_without_git_and_ignore_generated_outputs() {
         std::fs::write(file, name).unwrap();
     }
     let first = nemoclaw_build::source_inputs(root.path()).unwrap();
-    assert_eq!(first.len(), 7);
+    assert_eq!(first.len(), 8);
     for name in [
         "target/output",
         ".local/secret",
@@ -116,6 +117,16 @@ fn extracted_sources_build_without_git_and_ignore_generated_outputs() {
         std::fs::write(file, b"ignored").unwrap();
     }
     assert_eq!(first, nemoclaw_build::source_inputs(root.path()).unwrap());
+    std::fs::write(
+        root.path().join("examples/onboarding-tui/src/lib.rs"),
+        "changed questionnaire",
+    )
+    .unwrap();
+    let changed = nemoclaw_build::source_inputs(root.path()).unwrap();
+    assert_ne!(
+        nemoclaw_build::source_version(&first),
+        nemoclaw_build::source_version(&changed)
+    );
 }
 
 #[test]
@@ -190,6 +201,7 @@ fn supervisor_archive_excludes_every_recipe_and_retains_rust_sources_and_notices
         "LICENSE",
         "crates/runtime/src/main.rs",
         "crates/sdk/NOTICE.md",
+        "examples/onboarding-tui/src/lib.rs",
     ];
     for name in retained.into_iter().chain([
         "runtimes/qwen38/verify_packed.py",

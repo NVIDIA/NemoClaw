@@ -32,6 +32,7 @@ impl RenderContext {
             Command::Apply { file, .. } => ("Apply", Some(file.clone())),
             Command::Destroy { .. } => ("Destroy", None),
             Command::Export { .. } => ("Export", None),
+            Command::Onboard { file, .. } => ("Onboard", file.clone()),
         };
         Self {
             operation,
@@ -71,6 +72,7 @@ pub(crate) fn render(
 ) -> Result<String, Box<dyn std::error::Error>> {
     match result {
         CommandResult::Export(document) => Ok(document.yaml()?),
+        CommandResult::Authored(path) => Ok(path.map(|path| format!("Authored desired state: {}\nRun nemoclaw plan with this file when you are ready to check deployment.\n", terminal_text(&path.display().to_string()))).unwrap_or_default()),
         CommandResult::Operation(result) => match format {
             OutputFormat::Text => Ok(operation(&result, context)),
             OutputFormat::Json => {

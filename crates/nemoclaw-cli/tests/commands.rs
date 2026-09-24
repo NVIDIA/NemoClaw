@@ -377,3 +377,29 @@ fn removed_bundle_dir_flag_is_a_usage_error() {
     assert_eq!(output.status.code(), Some(2));
     assert!(!state.exists());
 }
+
+#[test]
+fn onboarding_requires_a_terminal_without_loading_a_bundle_or_creating_state() {
+    let directory = tempfile::tempdir().unwrap();
+    let state = directory.path().join("state");
+    let destination = directory.path().join("authored.yaml");
+    let template = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../examples/onboarding/openclaw.yaml");
+    let original = fs::read(&template).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
+        .arg("onboard")
+        .arg(&template)
+        .arg("--output")
+        .arg(&destination)
+        .arg("--state-dir")
+        .arg(&state)
+        .arg("--bundle")
+        .arg(directory.path().join("missing-bundle"))
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("requires a terminal"));
+    assert!(!state.exists());
+    assert!(!destination.exists());
+    assert_eq!(fs::read(template).unwrap(), original);
+}

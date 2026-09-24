@@ -8,6 +8,7 @@ pub const SOURCE_ROOTS: &[&str] = &[
     "versions.json",
     "LICENSE",
     "crates",
+    "examples/onboarding-tui",
     "runtimes",
 ];
 pub fn source_version(files: &[(String, Vec<u8>)]) -> String {

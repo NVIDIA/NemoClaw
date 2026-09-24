@@ -309,5 +309,289 @@ fn review_shows_only_the_choices_the_author_made() {
             "showed {internal:?}\n{rendered}"
         );
     }
-    assert!(lines[deployment + 1].contains("openclaw-nvidia-hosted"));
+    assert!(lines[deployment].contains("openclaw-nvidia-hosted"));
+}
+
+#[test]
+fn accepting_template_defaults_preserves_a_custom_model() {
+    let capabilities = Capabilities::available();
+    let mut answers = Answers::onboarding_defaults();
+    answers.model = "my-org/my-model".into();
+    let authored = Session::new()
+        .unwrap()
+        .project(&capabilities, &answers)
+        .unwrap();
+    let mut wizard = Wizard::new(
+        capabilities,
+        Draft::from_yaml(authored.yaml().as_bytes()).unwrap(),
+    );
+    for _ in 0..12 {
+        if wizard.step() == Step::Review {
+            break;
+        }
+        wizard.handle(Input::Continue);
+    }
+    assert_eq!(wizard.step(), Step::Review);
+    assert_eq!(
+        wizard.draft().guided_answers(&wizard.capabilities).unwrap(),
+        answers
+    );
+}
+
+#[test]
+fn a_conflicting_choice_can_be_cancelled_or_explicitly_accepted() {
+    let mut wizard = wizard();
+    wizard.draft = wizard
+        .draft
+        .propose_guided_edit(
+            &wizard.capabilities,
+            nemoclaw_authoring::EditableField::Api,
+            nemoclaw_authoring::FieldValue::Api(ApiChoice::OpenaiResponses),
+        )
+        .unwrap()
+        .accept();
+    wizard.handle(Input::Continue);
+    wizard.handle(Input::Next);
+    wizard.handle(Input::Next);
+    let original = wizard.draft().review().unwrap().yaml().to_owned();
+    wizard.handle(Input::Continue);
+    assert!(wizard.pending_edit.is_some());
+    assert_eq!(wizard.draft().review().unwrap().yaml(), original);
+    let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+    terminal.draw(|frame| wizard.render(frame)).unwrap();
+    let rendered = terminal.backend().to_string();
+    assert!(rendered.contains("answers you already accepted"));
+    assert!(rendered.contains("OpenAI Responses"));
+    assert!(rendered.contains("keep current answers"));
+    wizard.handle(Input::Back);
+    assert!(wizard.pending_edit.is_none());
+    assert_eq!(wizard.draft().review().unwrap().yaml(), original);
+    wizard.handle(Input::Continue);
+    wizard.handle(Input::Continue);
+    assert_eq!(wizard.step(), Step::Runtime);
+    assert_eq!(
+        wizard
+            .draft()
+            .guided_answers(&wizard.capabilities)
+            .unwrap()
+            .harness,
+        HarnessChoice::DeepAgents
+    );
+}
+
+#[test]
+fn changing_provider_reasks_the_model_without_reasking_an_accepted_name() {
+    let mut wizard = wizard();
+    while wizard.step() != Step::Review {
+        wizard.handle(Input::Continue);
+    }
+    while wizard.step() != Step::Inference {
+        wizard.handle(Input::Back);
+    }
+    wizard.handle(Input::Next);
+    wizard.handle(Input::Continue);
+    assert!(wizard.pending_edit.is_some());
+    wizard.handle(Input::Continue);
+    assert_eq!(wizard.step(), Step::Model);
+    assert!(
+        wizard
+            .draft()
+            .is_accepted(nemoclaw_authoring::EditableField::DeploymentName)
+    );
+}
+
+#[test]
+fn engine_status_and_review_fit_in_the_minimum_terminal() {
+    let mut wizard = wizard();
+    while wizard.step() != Step::Review {
+        wizard.handle(Input::Continue);
+    }
+    wizard.target_status = Some("Engine unverified. You can save for later.".into());
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    terminal.draw(|frame| wizard.render(frame)).unwrap();
+    let rendered = terminal.backend().to_string();
+    for expected in ["Deployment:", "Model:", "Engine unverified", "author YAML"] {
+        assert!(
+            rendered.contains(expected),
+            "missing {expected}: {rendered}"
+        );
+    }
+}
+
+#[test]
+fn every_guided_template_keeps_its_defaults_through_review_and_save() {
+    let capabilities = Capabilities::available();
+    for (index, scenario) in capabilities.scenarios().iter().enumerate() {
+        for custom in [false, true] {
+            let mut answers = Answers::onboarding_defaults().for_scenario(scenario);
+            answers.deployment_name = format!("template-{index}");
+            answers.sandbox_name = "template-sandbox".into();
+            answers.agent_name = "template-agent".into();
+            if custom {
+                answers.model = "my-org/custom-model-120b".into();
+                if scenario.accepts_custom_endpoint() {
+                    answers.endpoint = "https://inference.example.org/v1".into();
+                }
+            }
+            let original = Session::new()
+                .unwrap()
+                .project(&capabilities, &answers)
+                .unwrap();
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("template.yaml");
+            std::fs::write(&path, original.yaml()).unwrap();
+            let draft = crate::load(crate::Source::Template(&path), &capabilities).unwrap();
+            let expected = draft.document().clone();
+            assert_ne!(expected.metadata.uid, original.document().metadata.uid);
+            let mut wizard = Wizard::for_host(capabilities.clone(), draft, "linux");
+            for _ in 0..12 {
+                if wizard.step() == Step::Review {
+                    break;
+                }
+                assert!(
+                    wizard.error().is_none(),
+                    "{answers:?}: {:?}",
+                    wizard.error()
+                );
+                // Check what Enter will accept, not just the eventual YAML.
+                if wizard.is_choice() {
+                    let field = wizard
+                        .draft()
+                        .guided_fields(&capabilities)
+                        .unwrap()
+                        .into_iter()
+                        .find(|field| match field.id() {
+                            nemoclaw_authoring::EditableField::Harness => {
+                                wizard.step() == Step::Harness
+                            }
+                            nemoclaw_authoring::EditableField::Runtime => {
+                                wizard.step() == Step::Runtime
+                            }
+                            nemoclaw_authoring::EditableField::Inference => {
+                                wizard.step() == Step::Inference
+                            }
+                            nemoclaw_authoring::EditableField::Api => wizard.step() == Step::Api,
+                            nemoclaw_authoring::EditableField::Model => {
+                                wizard.step() == Step::Model
+                            }
+                            _ => false,
+                        })
+                        .unwrap();
+                    assert_eq!(
+                        &field.choices()[wizard.selected],
+                        field.value(),
+                        "{answers:?}"
+                    );
+                } else {
+                    match wizard.step() {
+                        Step::DeploymentName => {
+                            assert_eq!(wizard.input_value(), answers.deployment_name)
+                        }
+                        Step::Endpoint => assert_eq!(wizard.input_value(), answers.endpoint),
+                        Step::Model => assert_eq!(wizard.input_value(), answers.model),
+                        _ => {}
+                    }
+                }
+                wizard.handle(Input::Continue);
+            }
+            assert_eq!(wizard.step(), Step::Review, "{answers:?}");
+            assert_eq!(
+                wizard.draft().guided_answers(&capabilities).unwrap(),
+                answers
+            );
+            wizard.handle(Input::Continue);
+            assert!(wizard.accepted());
+            let output = directory.path().join("result.yaml");
+            crate::write_path(&output, wizard.draft().review().unwrap().yaml().as_bytes()).unwrap();
+            let result = crate::read_draft(&output).unwrap();
+
+            assert_eq!(result.document(), &expected, "{answers:?}");
+            assert_eq!(std::fs::read_to_string(path).unwrap(), original.yaml());
+        }
+    }
+}
+
+#[test]
+fn a_podman_template_is_disabled_on_mac_and_requires_a_runtime_change() {
+    use nemoclaw_authoring::RuntimeChoice;
+    let capabilities = Capabilities::available();
+    let scenario = capabilities
+        .scenarios()
+        .iter()
+        .find(|scenario| scenario.runtime() == RuntimeChoice::Podman)
+        .unwrap();
+    let answers = Answers::onboarding_defaults().for_scenario(scenario);
+    let authored = Session::new()
+        .unwrap()
+        .project(&capabilities, &answers)
+        .unwrap();
+    let mut wizard = Wizard::for_host(
+        capabilities.clone(),
+        Draft::from_yaml(authored.yaml().as_bytes()).unwrap(),
+        "macos",
+    );
+    wizard.handle(Input::Continue);
+    wizard.handle(Input::Continue);
+    assert_eq!(wizard.step(), Step::Runtime);
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    terminal.draw(|frame| wizard.render(frame)).unwrap();
+    let rendered = terminal.backend().to_string();
+    assert!(
+        rendered.contains("Podman (unavailable: requires local Linux)"),
+        "{rendered}"
+    );
+    wizard.handle(Input::Continue);
+    assert_eq!(wizard.step(), Step::Runtime);
+    assert_eq!(
+        wizard.draft().guided_answers(&capabilities).unwrap(),
+        answers
+    );
+    wizard.handle(Input::Previous);
+    wizard.handle(Input::Continue);
+    assert_eq!(wizard.step(), Step::Inference);
+    assert_eq!(
+        wizard
+            .draft()
+            .guided_answers(&capabilities)
+            .unwrap()
+            .runtime,
+        RuntimeChoice::Docker
+    );
+}
+
+#[test]
+fn mac_navigation_skips_podman_and_keeps_large_hosted_models_available() {
+    let mut wizard = wizard();
+    // Use an explicit platform so this regression also runs on Linux CI.
+    wizard = Wizard::for_host(wizard.capabilities.clone(), wizard.draft().clone(), "macos");
+    wizard.handle(Input::Continue);
+    wizard.handle(Input::Continue);
+    assert_eq!(wizard.step(), Step::Runtime);
+    wizard.handle(Input::Next);
+    assert_eq!(wizard.choice_labels()[wizard.selected], "Docker");
+    wizard.handle(Input::Previous);
+    assert_eq!(wizard.choice_labels()[wizard.selected], "Docker");
+    wizard.handle(Input::Continue);
+    assert_eq!(wizard.step(), Step::Inference);
+    assert!(wizard.choice_labels().contains(&"NVIDIA Endpoints".into()));
+    assert!(
+        wizard
+            .choice_labels()
+            .iter()
+            .all(|choice| !choice.to_lowercase().contains("vllm"))
+    );
+    for _ in 0..8 {
+        if wizard.step() == Step::Model {
+            break;
+        }
+        wizard.handle(Input::Continue);
+    }
+    assert_eq!(wizard.step(), Step::Model);
+    assert_eq!(
+        wizard.choice_labels()[wizard.selected],
+        "nvidia/nemotron-3-super-120b-a12b"
+    );
+    wizard.handle(Input::Continue);
+    wizard.handle(Input::Continue);
+    assert!(wizard.accepted());
 }

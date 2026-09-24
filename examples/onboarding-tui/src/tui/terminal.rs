@@ -35,7 +35,7 @@ impl Drop for TerminalGuard {
     }
 }
 
-pub(crate) fn run(
+pub(crate) async fn run(
     capabilities: Capabilities,
     draft: Draft,
     cancel: &CancellationToken,
@@ -49,10 +49,35 @@ pub(crate) fn run(
         },
     )?;
     let mut wizard = Wizard::new(capabilities, draft);
+    let mut last_target = None;
+    let mut was_review = false;
     loop {
         if cancel.is_cancelled() {
             return Err(Error::Cancelled.into());
         }
+        let gateway = wizard
+            .draft()
+            .document()
+            .spec
+            .gateway
+            .as_managed()
+            .expect("guided managed gateway");
+        let driver = wizard.draft().document().spec.sandboxes[0].runtime.provider;
+        let target = (gateway.engine.clone(), driver);
+        let is_review = wizard.step == super::app::Step::Review;
+        if last_target.as_ref() != Some(&target) || (is_review && !was_review) {
+            if let Some(reason) = wizard.runtime_unavailable_reason(driver) {
+                wizard.target_status = Some(format!(
+                    "The template's Podman preset {reason}. Choose Docker to continue on this host."
+                ));
+            } else {
+                wizard.target_status = Some("Checking the configured container engine…".into());
+                terminal.draw(|frame| wizard.render(frame))?;
+                wizard.target_status = Some(check_target(&target.0, target.1, cancel).await?);
+            }
+            last_target = Some(target);
+        }
+        was_review = is_review;
         terminal.draw(|frame| wizard.render(frame))?;
         if wizard.accepted() {
             return Ok(Some(wizard.draft().clone()));
@@ -115,4 +140,55 @@ fn terminal_area() -> Rect {
 
 const fn nonzero_or(value: u16, fallback: u16) -> u16 {
     if value == 0 { fallback } else { value }
+}
+
+async fn check_target(
+    endpoint: &str,
+    driver: nemoclaw_sdk::config::ComputeDriver,
+    cancel: &CancellationToken,
+) -> Result<String, Error> {
+    let check = async {
+        let engine = nemoclaw_sdk::docker::Engine::connect(endpoint)?;
+        engine.gateway_engine_info(driver).await?;
+        Ok::<_, Error>(())
+    };
+    let observed = tokio::select! {
+        biased;
+        () = cancel.cancelled() => return Err(Error::Cancelled),
+        result = tokio::time::timeout(Duration::from_secs(5), check) => result,
+    };
+    Ok(match observed {
+        Ok(Ok(())) => "Engine check passed. Deployment readiness still needs plan/apply.".into(),
+        Ok(Err(Error::Conflict(reason))) => format!("Engine requirement not met: {reason}. Change the runtime or save for later."),
+        Ok(Err(error)) => format!("Engine unverified: {error}. You can save for later; plan/apply will check again."),
+        Err(_) => "Engine unverified: check timed out. You can save for later; plan/apply will check again.".into(),
+    })
+}
+
+#[cfg(test)]
+mod target_tests {
+    use super::*;
+    use nemoclaw_sdk::config::ComputeDriver;
+
+    #[tokio::test]
+    async fn an_unreachable_engine_remains_unverified_and_does_not_block_authoring() {
+        let directory = tempfile::tempdir().unwrap();
+        let endpoint = format!("unix://{}", directory.path().join("missing.sock").display());
+        let result = check_target(&endpoint, ComputeDriver::Docker, &CancellationToken::new())
+            .await
+            .unwrap();
+        assert!(result.contains("unverified"));
+        assert!(result.contains("save for later"));
+        assert!(!result.contains("passed"));
+    }
+
+    #[tokio::test]
+    async fn cancelling_an_engine_check_stops_authoring() {
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        assert!(matches!(
+            check_target("unix:///unavailable.sock", ComputeDriver::Docker, &cancel).await,
+            Err(Error::Cancelled)
+        ));
+    }
 }

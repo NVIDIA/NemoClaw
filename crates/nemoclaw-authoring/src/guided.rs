@@ -131,7 +131,7 @@ impl Draft {
         value: FieldValue,
     ) -> Result<(), Diagnostics> {
         let mut answers = self.guided_answers(capabilities)?;
-        set_value(capabilities, &mut answers, field, value)?;
+        set_value(capabilities, &mut answers, field, value, &[])?;
         self.replace_answers(capabilities, answers)
     }
 }
@@ -228,6 +228,7 @@ fn set_value(
     answers: &mut Answers,
     field: EditableField,
     value: FieldValue,
+    accepted: &[EditableField],
 ) -> Result<(), Diagnostics> {
     if field == EditableField::Model
         && let FieldValue::Model(model) = &value
@@ -262,28 +263,24 @@ fn set_value(
                 }
                 _ => false,
             })
-            .max_by_key(|scenario| compatibility_score(scenario, answers, field));
+            .max_by_key(|scenario| {
+                let candidate = scenario_answers(answers, scenario, field, &value);
+                let preserved = accepted
+                    .iter()
+                    .filter(|other| {
+                        **other != field
+                            && current_value(answers, **other) == current_value(&candidate, **other)
+                    })
+                    .count();
+                (preserved, compatibility_score(scenario, answers, field))
+            });
         let Some(scenario) = selected else {
             return Err(diagnostic(
                 field.diagnostic_name(),
                 "value is not available for the current guided choices",
             ));
         };
-        let previous_model = answers.model.clone();
-        let previous_endpoint = answers.endpoint.clone();
-        let previous_inference = answers.inference;
-        *answers = answers.clone().for_scenario(scenario);
-        if scenario.default_model() == Some(previous_model.as_str())
-            || (scenario.accepts_custom_model() && !previous_model.is_empty())
-        {
-            answers.model = previous_model;
-        }
-        if scenario.accepts_custom_endpoint() && scenario.inference() == previous_inference {
-            answers.endpoint = previous_endpoint;
-        }
-        if let FieldValue::Model(model) = value {
-            answers.model = model;
-        }
+        *answers = scenario_answers(answers, scenario, field, &value);
         return Ok(());
     }
 
@@ -324,4 +321,104 @@ fn compatibility_score(scenario: &Scenario, answers: &Answers, changed: Editable
     .into_iter()
     .filter(|(field, matches)| *field != changed && *matches)
     .count() as u8
+}
+
+fn scenario_answers(
+    answers: &Answers,
+    scenario: &Scenario,
+    field: EditableField,
+    value: &FieldValue,
+) -> Answers {
+    let mut candidate = answers.clone().for_scenario(scenario);
+    // Keep custom identifiers within a provider. When switching providers, use
+    // its suggestion when available; the model question confirms the selection.
+    if scenario.inference() == answers.inference
+        && (scenario.default_model() == Some(answers.model.as_str())
+            || (scenario.accepts_custom_model() && !answers.model.is_empty()))
+    {
+        candidate.model = answers.model.clone();
+    }
+    if scenario.accepts_custom_endpoint() && scenario.inference() == answers.inference {
+        candidate.endpoint = answers.endpoint.clone();
+    }
+    if field == EditableField::Model
+        && let FieldValue::Model(model) = value
+    {
+        candidate.model = model.clone();
+    }
+    candidate
+}
+
+/// An accepted answer affected by a proposed edit. Nothing is committed yet.
+#[derive(Clone, Debug)]
+pub struct AnswerChange {
+    pub field: EditableField,
+    pub before: FieldValue,
+    pub after: FieldValue,
+}
+
+/// A validated edit that a frontend must present before replacing accepted answers.
+#[derive(Clone, Debug)]
+pub struct GuidedEdit {
+    draft: Draft,
+    conflicts: Vec<AnswerChange>,
+}
+
+impl GuidedEdit {
+    pub fn conflicts(&self) -> &[AnswerChange] {
+        &self.conflicts
+    }
+
+    /// Commit after the user accepts any conflicts. Affected answers become suggestions again.
+    pub fn accept(self) -> Draft {
+        self.draft
+    }
+}
+
+impl Draft {
+    pub fn is_accepted(&self, field: EditableField) -> bool {
+        self.accepted.contains(&field)
+    }
+
+    /// Prepare an answer without changing this draft or silently revising accepted answers.
+    pub fn propose_guided_edit(
+        &self,
+        capabilities: &Capabilities,
+        field: EditableField,
+        value: FieldValue,
+    ) -> Result<GuidedEdit, Diagnostics> {
+        let before = self.guided_answers(capabilities)?;
+        let mut after = before.clone();
+        set_value(capabilities, &mut after, field, value, &self.accepted)?;
+        let conflicts: Vec<_> = self
+            .accepted
+            .iter()
+            .copied()
+            .filter(|other| *other != field)
+            .filter_map(|other| {
+                let old = current_value(&before, other);
+                let new = current_value(&after, other);
+                // The same model string at another provider or endpoint is unconfirmed.
+                let needs_confirmation = other == EditableField::Model
+                    && (before.inference != after.inference || before.endpoint != after.endpoint);
+                (old != new || needs_confirmation).then_some(AnswerChange {
+                    field: other,
+                    before: old,
+                    after: new,
+                })
+            })
+            .collect();
+        let mut draft = self.clone();
+        draft.replace_answers(capabilities, after)?;
+        draft.accepted = self
+            .accepted
+            .iter()
+            .copied()
+            .filter(|other| {
+                *other != field && !conflicts.iter().any(|change| change.field == *other)
+            })
+            .collect();
+        draft.accepted.push(field);
+        Ok(GuidedEdit { draft, conflicts })
+    }
 }

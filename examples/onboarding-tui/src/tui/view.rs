@@ -61,16 +61,25 @@ impl Wizard {
             area.width.saturating_sub(margin * 2),
             area.height,
         );
-        let content_height = if self.step == Step::Review { 14 } else { 12 };
+        let content_height = 10;
         let rows = Layout::vertical([
             Constraint::Length(8),
             Constraint::Min(content_height),
+            Constraint::Length(if self.target_status.is_some() { 3 } else { 0 }),
             Constraint::Length(2),
         ])
         .split(body);
         self.render_logo(frame, rows[0]);
         self.render_question(frame, rows[1]);
-        self.render_footer(frame, rows[2]);
+        if let Some(status) = &self.target_status {
+            frame.render_widget(
+                Paragraph::new(status.as_str())
+                    .style(Style::new().fg(MUTED))
+                    .wrap(Wrap { trim: true }),
+                rows[2],
+            );
+        }
+        self.render_footer(frame, rows[3]);
     }
 
     fn render_logo(&self, frame: &mut Frame<'_>, area: Rect) {
@@ -97,7 +106,14 @@ impl Wizard {
             area.width,
             area.height.saturating_sub(1),
         );
-        if self.step == Step::Welcome {
+        if self.pending_edit.is_some() {
+            frame.render_widget(
+                Paragraph::new(self.conflict_message())
+                    .style(Style::new().fg(WHITE))
+                    .wrap(Wrap { trim: true }),
+                area,
+            );
+        } else if self.step == Step::Welcome {
             self.render_welcome(frame, area);
         } else if self.step == Step::Review {
             self.render_review(frame, area);
@@ -148,21 +164,18 @@ impl Wizard {
                     "NemoClaw runs an AI agent inside an isolated sandbox.",
                     Style::new().fg(MUTED),
                 )),
+                Line::from(""),
                 Line::from(Span::styled(
-                    "The sandbox limits what the agent can reach on your computer.",
+                    "Choose an agent, Docker or Podman, and hosted inference.",
+                    Style::new().fg(MUTED),
+                )),
+                Line::from(Span::styled(
+                    "Press Enter to keep each suggested answer.",
                     Style::new().fg(MUTED),
                 )),
                 Line::from(""),
                 Line::from(Span::styled(
-                    "This setup will help you choose:",
-                    Style::new().fg(WHITE),
-                )),
-                welcome_choice("which agent to use"),
-                welcome_choice("Docker or Podman for the sandbox"),
-                welcome_choice("a model provider and model"),
-                Line::from(""),
-                Line::from(Span::styled(
-                    "It writes a deployment YAML file for you to review.",
+                    "Review your choices and save a deployment YAML file.",
                     Style::new().fg(MUTED),
                 )),
                 Line::from(Span::styled(
@@ -188,15 +201,30 @@ impl Wizard {
             .take(visible)
             .map(|(index, label)| {
                 let active = index == self.selected;
+                let unavailable = self.choice_unavailable_reason(index);
+                let label = match unavailable {
+                    Some(reason) => format!("{label} (unavailable: {reason})"),
+                    None => label,
+                };
                 Line::from(vec![
                     Span::styled(
-                        if active { "  ●  " } else { "  ○  " },
+                        if unavailable.is_some() {
+                            "  ×  "
+                        } else if active {
+                            "  ●  "
+                        } else {
+                            "  ○  "
+                        },
                         Style::new().fg(if active { BRIGHT_GREEN } else { MUTED }),
                     ),
                     Span::styled(
                         label,
                         Style::new()
-                            .fg(if active { WHITE } else { MUTED })
+                            .fg(if active && unavailable.is_none() {
+                                WHITE
+                            } else {
+                                MUTED
+                            })
                             .add_modifier(if active {
                                 Modifier::BOLD
                             } else {
@@ -266,11 +294,17 @@ impl Wizard {
     }
 
     fn render_footer(&self, frame: &mut Frame<'_>, area: Rect) {
-        let controls = match self.step {
-            Step::Welcome => "Enter  begin     Esc  exit",
-            Step::Review => "Enter  author YAML     ←  back     Esc  exit",
-            _ if self.is_choice() => "↑/↓  choose     Enter  continue     ←  back     Esc  exit",
-            _ => "Type to replace     Enter  continue     ←  back     Esc  exit",
+        let controls = if self.pending_edit.is_some() {
+            "Enter  revise affected answers     ←  keep current answers     Esc  exit"
+        } else {
+            match self.step {
+                Step::Welcome => "Enter  begin     Esc  exit",
+                Step::Review => "Enter  author YAML     ←  back     Esc  exit",
+                _ if self.is_choice() => {
+                    "↑/↓  choose     Enter  continue     ←  back     Esc  exit"
+                }
+                _ => "Type to replace     Enter  continue     ←  back     Esc exit",
+            }
         };
         let rows = Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).split(area);
         frame.render_widget(
@@ -329,21 +363,11 @@ impl Wizard {
     }
 }
 
-fn welcome_choice(label: &'static str) -> Line<'static> {
-    Line::from(vec![
-        Span::styled("  • ", Style::new().fg(BRIGHT_GREEN)),
-        Span::styled(label, Style::new().fg(WHITE)),
-    ])
-}
-
-fn review_field<'a>(label: &'a str, value: &'a str) -> [Line<'a>; 2] {
-    [
-        Line::from(Span::styled(label, Style::new().fg(MUTED))),
-        Line::from(vec![
-            Span::raw("  "),
-            Span::styled(value, Style::new().fg(WHITE)),
-        ]),
-    ]
+fn review_field<'a>(label: &'a str, value: &'a str) -> [Line<'a>; 1] {
+    [Line::from(vec![
+        Span::styled(format!("{label}: "), Style::new().fg(MUTED)),
+        Span::styled(value, Style::new().fg(WHITE)),
+    ])]
 }
 
 fn texture_line(width: usize) -> Line<'static> {

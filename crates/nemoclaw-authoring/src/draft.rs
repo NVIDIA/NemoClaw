@@ -51,6 +51,7 @@ pub struct InferenceEdits {
 #[derive(Clone, Debug)]
 pub struct Draft {
     document: Document,
+    pub(crate) accepted: Vec<crate::EditableField>,
 }
 
 impl Draft {
@@ -59,7 +60,10 @@ impl Draft {
         document
             .validate()
             .map_err(|error| diagnostic("document", &error.to_string()))?;
-        Ok(Self { document })
+        Ok(Self {
+            document,
+            accepted: Vec::new(),
+        })
     }
 
     /// Returns the complete desired state owned by this draft.
@@ -81,6 +85,7 @@ impl Draft {
         let authored =
             Session::with_uid(&self.document.metadata.uid)?.project(capabilities, &answers)?;
         self.document = authored.document;
+        self.accepted.clear();
         Ok(())
     }
 
@@ -152,6 +157,12 @@ fn guided_answers(
     document: &Document,
     capabilities: &Capabilities,
 ) -> Result<Answers, Diagnostics> {
+    if !document.spec.services.is_empty() {
+        return Err(diagnostic(
+            "document",
+            "guided onboarding does not support managed inference services yet; use a hosted-endpoint template or edit this YAML directly. No hardware check was performed",
+        ));
+    }
     let [sandbox] = document.spec.sandboxes.as_slice() else {
         return Err(diagnostic(
             "document",

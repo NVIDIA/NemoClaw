@@ -374,3 +374,137 @@ fn direct_inputs_and_guided_choices_reach_the_same_openclaw_responses_document()
 
     assert_eq!(guided.review().unwrap().document(), direct.document());
 }
+
+#[test]
+fn accepted_answers_are_preserved_until_a_conflicting_edit_is_confirmed() {
+    let capabilities = Capabilities::available();
+    let draft = begin_onboarding(&capabilities);
+    assert!(!draft.is_accepted(EditableField::Api));
+    let draft = draft
+        .propose_guided_edit(
+            &capabilities,
+            EditableField::Api,
+            FieldValue::Api(InferenceApi::OpenaiResponses),
+        )
+        .unwrap()
+        .accept();
+    let before = draft.review().unwrap().yaml().to_owned();
+    let edit = draft
+        .propose_guided_edit(
+            &capabilities,
+            EditableField::Harness,
+            FieldValue::Harness(HarnessKind::DeepAgents),
+        )
+        .unwrap();
+    assert!(
+        edit.conflicts()
+            .iter()
+            .any(|change| change.field == EditableField::Api)
+    );
+    assert_eq!(draft.review().unwrap().yaml(), before);
+    assert!(draft.is_accepted(EditableField::Api));
+    let revised = edit.accept();
+    assert!(!revised.is_accepted(EditableField::Api));
+    assert!(revised.is_accepted(EditableField::Harness));
+    assert_eq!(
+        revised.guided_answers(&capabilities).unwrap().api,
+        InferenceApi::OpenaiCompletions
+    );
+}
+
+#[test]
+fn untouched_template_defaults_can_change_without_an_accepted_answer_conflict() {
+    let capabilities = Capabilities::available();
+    let mut draft = begin_onboarding(&capabilities);
+    choose(
+        &mut draft,
+        &capabilities,
+        EditableField::Api,
+        FieldValue::Api(InferenceApi::OpenaiResponses),
+    );
+    let edit = draft
+        .propose_guided_edit(
+            &capabilities,
+            EditableField::Harness,
+            FieldValue::Harness(HarnessKind::DeepAgents),
+        )
+        .unwrap();
+    assert!(edit.conflicts().is_empty());
+    assert_eq!(
+        edit.accept().guided_answers(&capabilities).unwrap().api,
+        InferenceApi::OpenaiCompletions
+    );
+}
+
+#[test]
+fn changing_a_provider_revisits_the_accepted_model_but_keeps_the_deployment_name() {
+    let capabilities = Capabilities::available();
+    let draft = begin_onboarding(&capabilities)
+        .propose_guided_edit(
+            &capabilities,
+            EditableField::DeploymentName,
+            FieldValue::Text("my-agent".into()),
+        )
+        .unwrap()
+        .accept()
+        .propose_guided_edit(
+            &capabilities,
+            EditableField::Model,
+            FieldValue::Model(NVIDIA_MODEL.into()),
+        )
+        .unwrap()
+        .accept();
+    let edit = draft
+        .propose_guided_edit(
+            &capabilities,
+            EditableField::Inference,
+            FieldValue::Inference(ProviderPreset::Anthropic),
+        )
+        .unwrap();
+    assert_eq!(
+        edit.conflicts()
+            .iter()
+            .map(|change| change.field)
+            .collect::<Vec<_>>(),
+        [EditableField::Model]
+    );
+    let revised = edit.accept();
+    assert!(revised.is_accepted(EditableField::DeploymentName));
+    assert!(!revised.is_accepted(EditableField::Model));
+    assert_eq!(
+        revised
+            .guided_answers(&capabilities)
+            .unwrap()
+            .deployment_name,
+        "my-agent"
+    );
+    assert_ne!(
+        revised.guided_answers(&capabilities).unwrap().model,
+        NVIDIA_MODEL
+    );
+}
+
+#[test]
+fn rejected_answer_preserves_both_the_document_and_accepted_answers() {
+    let capabilities = Capabilities::available();
+    let draft = begin_onboarding(&capabilities)
+        .propose_guided_edit(
+            &capabilities,
+            EditableField::DeploymentName,
+            FieldValue::Text("my-agent".into()),
+        )
+        .unwrap()
+        .accept();
+    let before = draft.review().unwrap().yaml().to_owned();
+    assert!(
+        draft
+            .propose_guided_edit(
+                &capabilities,
+                EditableField::DeploymentName,
+                FieldValue::Text("invalid name".into())
+            )
+            .is_err()
+    );
+    assert!(draft.is_accepted(EditableField::DeploymentName));
+    assert_eq!(draft.review().unwrap().yaml(), before);
+}

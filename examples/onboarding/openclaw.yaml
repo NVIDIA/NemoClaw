@@ -1,0 +1,33 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../../schemas/nemoclaw-v1alpha1.schema.json
+# YAML defaults for `nemoclaw onboard`; the command assigns a new deployment UID.
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: openclaw-nvidia-hosted
+  uid: 12345678-1234-4234-9234-123456789abc
+spec:
+  gateway:
+    management: managed
+  inferenceProviders:
+    - name: nvidia-prod
+      provider: openai
+      api: openai-completions
+      endpoint: https://integrate.api.nvidia.com/v1
+      credential:
+        env: NVIDIA_INFERENCE_API_KEY
+  sandboxes:
+    - name: assistant
+      runtime:
+        provider: docker
+      harness:
+        kind: openclaw
+      agent:
+        name: primary
+        inference:
+          routes:
+            - name: primary
+              providerRef: nvidia-prod
+              overrides:
+                model: nvidia/nemotron-3-super-120b-a12b
