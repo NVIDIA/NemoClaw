@@ -115,7 +115,12 @@ interface OpenClawConfig {
         baseUrl?: unknown;
         apiKey?: unknown;
         api?: unknown;
-        models?: Array<{ id?: unknown; name?: unknown; maxTokens?: unknown }>;
+        models?: Array<{
+          contextWindow?: unknown;
+          id?: unknown;
+          name?: unknown;
+          maxTokens?: unknown;
+        }>;
       }
     >;
   };
@@ -1078,7 +1083,13 @@ test(
       const startupConfig = JSON.parse(startupConfigResult.stdout) as OpenClawConfig;
       const startupModel = startupConfig.models?.providers?.inference?.models?.[0];
       expect(startupConfig.agents?.defaults?.model?.primary).toBe(`inference/${baselineModel}`);
-      expect(startupModel?.id).toBe(baselineModel);
+      expect(
+        startupModel !== undefined &&
+          startupModel.id === baselineModel &&
+          !Object.hasOwn(startupModel, "contextWindow") &&
+          !Object.hasOwn(startupModel, "maxTokens"),
+        `OpenClaw retained stale custom-image config metadata: ${JSON.stringify(startupModel)}`,
+      ).toBe(true);
 
       const effectiveModelResult = await sandbox.exec(
         SANDBOX_NAME,

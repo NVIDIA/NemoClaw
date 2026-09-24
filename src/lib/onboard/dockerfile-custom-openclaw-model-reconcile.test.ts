@@ -20,12 +20,21 @@ describe("custom OpenClaw Dockerfile model reconciliation", () => {
       behavior: "drops inherited limits",
       contextWindow: "",
       maxTokens: "",
+      inheritedModelId: "baked-model",
       expectedLimits: {},
     },
     {
       behavior: "retains explicit limits",
       contextWindow: "65536",
       maxTokens: "8192",
+      inheritedModelId: "baked-model",
+      expectedLimits: { contextWindow: 65_536, maxTokens: 8_192 },
+    },
+    {
+      behavior: "overrides inherited limits when the model already matches",
+      contextWindow: "65536",
+      maxTokens: "8192",
+      inheritedModelId: "provider/selected-model",
       expectedLimits: { contextWindow: 65_536, maxTokens: 8_192 },
     },
   ])("$behavior for the selected model and preserves the final image user", (testCase) => {
@@ -81,8 +90,8 @@ describe("custom OpenClaw Dockerfile model reconciliation", () => {
               inference: {
                 models: [
                   {
-                    id: "baked-model",
-                    name: "inference/baked-model",
+                    id: testCase.inheritedModelId,
+                    name: `inference/${testCase.inheritedModelId}`,
                     contextWindow: 131_072,
                     maxTokens: 4_096,
                   },

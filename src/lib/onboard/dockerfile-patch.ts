@@ -282,12 +282,11 @@ if os.path.exists(config_path):
             model_changed = first.get("id") not in (bare_model, provider_model)
             first["id"] = bare_model
             first["name"] = provider_model
-            if model_changed:
-                for field in ("contextWindow", "maxTokens"):
-                    if field in explicit_limits:
-                        first[field] = int(explicit_limits[field])
-                    else:
-                        first.pop(field, None)
+            for field in ("contextWindow", "maxTokens"):
+                if field in explicit_limits:
+                    first[field] = int(explicit_limits[field])
+                elif model_changed:
+                    first.pop(field, None)
             config_file.seek(0)
             json.dump(config, config_file, indent=2)
             config_file.write("\\n")
