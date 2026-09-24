@@ -170,9 +170,10 @@ See [SDK discovery](sdk.md#discover-before-authoring-or-planning) and [onboardin
 ## Gateway Capabilities
 
 The deployment graph reads `data.nemoclaw_gateway_capabilities.current` during planning through the provider's configured OpenShell connection.
-The data source reports the observed gateway version, driver names and aliases, driver-entry count, compatibility with the required compute drivers, and an `incompatibility` description that is empty when compatible.
+The data source reports the observed `gateway_version`, driver names and aliases in `compute_drivers`, the driver-entry count in `compute_driver_count`, `compatible` for the `required_compute_drivers`, and an `incompatibility` description that is empty when compatible.
 Compatibility requires the pinned OpenShell version and exactly one initialized driver matching every required name.
 OpenTofu lifecycle conditions name each failed requirement with its required and observed values.
+SDK discovery observations use the same description as their `reason`.
 Missing metadata, authentication failures, and transport failures stop ordinary planning without changing runtime resources.
 Each API read is bounded to 30 seconds.
 
