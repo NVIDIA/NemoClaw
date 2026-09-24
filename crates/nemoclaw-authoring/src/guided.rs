@@ -399,12 +399,17 @@ impl Draft {
                 let old = current_value(&before, other);
                 let new = current_value(&after, other);
                 // A model identifier must be reconfirmed when its interpretation changes.
-                let needs_confirmation = other == EditableField::Model
+                let delegated = self.delegated.contains(&other);
+                let needs_confirmation = ((other == EditableField::Model || delegated)
                     && EditableField::GUIDED.iter().any(|dependency| {
                         crate::DependencyGraph.depends_on(other, *dependency)
                             && current_value(&before, *dependency)
                                 != current_value(&after, *dependency)
-                    });
+                    }))
+                    // A new engine invalidates the evidence used for delegated
+                    // settings, even if their suggested strings stay the same.
+                    || (delegated && other != EditableField::DeploymentName
+                        && before.runtime != after.runtime);
                 (old != new || needs_confirmation).then_some(AnswerChange {
                     field: other,
                     before: old,

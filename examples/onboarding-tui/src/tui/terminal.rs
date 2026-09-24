@@ -159,6 +159,9 @@ pub(crate) async fn run(
             (KeyCode::Down, _) => Input::Next,
             (KeyCode::Left, _) => Input::Back,
             (KeyCode::Backspace, _) => Input::Backspace,
+            (KeyCode::Char('d'), modifiers) if modifiers.contains(KeyModifiers::CONTROL) => {
+                Input::DelegateRemaining
+            }
             (KeyCode::Char('a'), modifiers) if modifiers.contains(KeyModifiers::CONTROL) => {
                 Input::SelectAll
             }
@@ -169,6 +172,12 @@ pub(crate) async fn run(
             }
             _ => continue,
         };
+        if input == Input::DelegateRemaining && wizard.can_offer_delegation() {
+            wizard.facts.credentials = nemoclaw_sdk::inference_discovery::observe_credentials(
+                wizard.draft().document(),
+                &nemoclaw_sdk::openshell::EnvironmentSecrets,
+            )?;
+        }
         wizard.handle(input);
     }
 }

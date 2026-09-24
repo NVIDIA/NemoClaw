@@ -28,6 +28,7 @@ pub(crate) enum Input {
     Character(char),
     Backspace,
     SelectAll,
+    DelegateRemaining,
     Cancel,
 }
 
@@ -143,8 +144,53 @@ impl Wizard {
                     self.input.pop();
                 }
             }
+            Input::DelegateRemaining if self.can_offer_delegation() => self.delegate_remaining(),
             Input::Continue => self.advance(),
             _ => {}
+        }
+    }
+
+    pub(super) fn can_offer_delegation(&self) -> bool {
+        self.pending_edit.is_none()
+            && !matches!(self.step, Step::Welcome | Step::Harness | Step::Review)
+            && self.draft.is_accepted(EditableField::Harness)
+    }
+
+    fn delegate_remaining(&mut self) {
+        if let Some(field) = self.field_state() {
+            let edited = if self.is_choice() {
+                self.choice_values().get(self.selected) != Some(field.value())
+            } else {
+                match field.value() {
+                    FieldValue::Text(value) | FieldValue::Model(value) => self.input != *value,
+                    _ => false,
+                }
+            };
+            if edited {
+                self.error = Some(
+                    "Press Enter to accept this answer before choosing remaining settings.".into(),
+                );
+                return;
+            }
+        }
+        if let Ok(key) = self.draft.discovery_key()
+            && let Some(reason) = self.runtime_unavailable_reason(key.compute_driver)
+        {
+            self.error = Some(format!(
+                "Podman {reason}. Choose Docker before delegating settings."
+            ));
+            return;
+        }
+        match self.draft.delegate_remaining(
+            &self.capabilities,
+            self.discovery.as_ref(),
+            &self.facts,
+        ) {
+            Ok(draft) => {
+                self.draft = draft;
+                self.advance_step();
+            }
+            Err(error) => self.error = Some(error.to_string()),
         }
     }
 
@@ -154,6 +200,16 @@ impl Wizard {
             return;
         }
         if self.step == Step::Review {
+            if self.draft.has_delegated_answers()
+                && let Err(error) = self.draft.check_delegation(
+                    &self.capabilities,
+                    self.discovery.as_ref(),
+                    &self.facts,
+                )
+            {
+                self.error = Some(error.to_string());
+                return;
+            }
             if let Some(evidence) = &self.discovery {
                 match evidence.assessment(&self.draft) {
                     Ok(assessment)
@@ -238,6 +294,9 @@ impl Wizard {
     }
 
     fn go_back(&mut self) {
+        if self.step == Step::Review {
+            self.draft.revoke_delegation();
+        }
         if self.step == Step::Welcome {
             self.cancelled = true;
             return;
@@ -289,6 +348,9 @@ impl Wizard {
             .guided_fields(&self.capabilities)
             .expect("wizard retains a guided document")
             .into_iter()
+            .filter(|field| {
+                self.draft.answer_status(field.id()) != nemoclaw_authoring::AnswerStatus::Delegated
+            })
             .filter(|field| {
                 !field.is_choice()
                     || field.id() == EditableField::Model

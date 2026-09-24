@@ -66,7 +66,7 @@ impl Wizard {
             Constraint::Length(8),
             Constraint::Min(content_height),
             Constraint::Length(if self.target_status.is_some() { 4 } else { 0 }),
-            Constraint::Length(2),
+            Constraint::Length(if self.can_offer_delegation() { 3 } else { 2 }),
         ])
         .split(body);
         self.render_logo(frame, rows[0]);
@@ -188,6 +188,18 @@ impl Wizard {
     }
 
     fn render_choices(&self, frame: &mut Frame<'_>, area: Rect) {
+        let area = if let Some(error) = &self.error {
+            let rows = Layout::vertical([Constraint::Min(1), Constraint::Length(3)]).split(area);
+            frame.render_widget(
+                Paragraph::new(error.as_str())
+                    .style(Style::new().fg(Color::Rgb(255, 170, 70)))
+                    .wrap(Wrap { trim: true }),
+                rows[1],
+            );
+            rows[0]
+        } else {
+            area
+        };
         let labels = self.choice_labels();
         let visible = area.height as usize;
         let start = self
@@ -275,6 +287,11 @@ impl Wizard {
             .guided_answers(&self.capabilities)
             .expect("wizard retains a guided document");
         let mut lines = Vec::new();
+        if self.draft.has_delegated_answers() {
+            lines.push(Line::from(
+                "Remaining suggestions chosen with your permission.",
+            ));
+        }
         lines.extend(review_field("Deployment", &answers.deployment_name));
         lines.extend(review_field("Harness", labels::harness(answers.harness)));
         lines.extend(review_field("Runtime", labels::runtime(answers.runtime)));
@@ -313,13 +330,25 @@ impl Wizard {
                 _ => "Type to replace     Enter  continue     ←  back     Esc exit",
             }
         };
-        let rows = Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).split(area);
+        let rows = Layout::vertical([
+            Constraint::Length(1),
+            Constraint::Length(u16::from(self.can_offer_delegation())),
+            Constraint::Length(1),
+        ])
+        .split(area);
         frame.render_widget(
             Paragraph::new(controls).style(Style::new().fg(MUTED)),
             rows[0],
         );
+        if self.can_offer_delegation() {
+            frame.render_widget(
+                Paragraph::new("Ctrl+D  choose remaining settings and review")
+                    .style(Style::new().fg(MUTED)),
+                rows[1],
+            );
+        }
         if let Some((position, total)) = self.progress() {
-            let width = rows[1].width as usize;
+            let width = rows[2].width as usize;
             let filled = width.saturating_mul(position) / total;
             frame.render_widget(
                 Paragraph::new(Line::from(vec![
@@ -329,7 +358,7 @@ impl Wizard {
                         Style::new().fg(DEEP_GREEN),
                     ),
                 ])),
-                rows[1],
+                rows[2],
             );
         }
     }

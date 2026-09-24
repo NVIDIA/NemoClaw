@@ -712,3 +712,433 @@ fn discovered_model_can_be_selected_without_overwriting_the_current_suggestion()
         "vendor/discovered-model"
     );
 }
+
+/// Acceptance scenario: choosing a harness and delegating compatible remaining
+/// settings reaches review without answering the individual setting questions.
+#[test]
+fn delegation_after_harness_goes_directly_to_review_with_valid_yaml() {
+    use nemoclaw_authoring::{AnswerStatus, EditableField};
+    let mut wizard = wizard();
+    wizard.handle(Input::Continue);
+    wizard.handle(Input::Continue);
+    let before = wizard.draft.document().clone();
+    establish_compatible_discovery(&mut wizard);
+
+    wizard.handle(Input::DelegateRemaining);
+
+    assert_eq!(wizard.step(), Step::Review, "{:?}", wizard.error());
+    assert_eq!(wizard.draft.document(), &before);
+    assert_eq!(
+        wizard.draft.answer_status(EditableField::Harness),
+        AnswerStatus::Accepted
+    );
+    assert_eq!(
+        wizard.draft.answer_status(EditableField::Runtime),
+        AnswerStatus::Delegated
+    );
+    assert_eq!(
+        wizard.draft.answer_status(EditableField::Model),
+        AnswerStatus::Delegated
+    );
+    assert!(
+        wizard
+            .draft
+            .next_question(&wizard.capabilities)
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        !wizard.accepted(),
+        "delegation authorizes review, not saving"
+    );
+    let yaml = wizard.draft.review().unwrap().yaml().to_owned();
+    nemoclaw_sdk::config::Document::parse(yaml.as_bytes()).unwrap();
+    wizard.handle(Input::Continue);
+    assert!(wizard.accepted());
+}
+
+fn establish_compatible_discovery(wizard: &mut Wizard) {
+    use nemoclaw_authoring::{AuthoringFacts, DiscoveryEvidence, EndpointEvidence};
+    use nemoclaw_sdk::{
+        discovery::{EngineObservation, FabricObservation, ObservationStatus},
+        fabric_capabilities::ImageMetadata,
+        fabric_catalog::FabricCatalog,
+        inference_discovery::{AuthenticationStatus, CredentialObservation, EndpointObservation},
+    };
+    let key = wizard.draft.discovery_key().unwrap();
+    let request = wizard
+        .draft
+        .inference_request(&wizard.capabilities)
+        .unwrap();
+    let model = wizard
+        .draft
+        .guided_answers(&wizard.capabilities)
+        .unwrap()
+        .model;
+    wizard.discovery = Some(DiscoveryEvidence {
+        key: key.clone(),
+        engine: Some(EngineObservation {
+            status: ObservationStatus::Available,
+            reason: None,
+            source: "fixture".into(),
+            server_version: Some("1".into()),
+            architecture: Some("aarch64".into()),
+            operating_system: Some("linux".into()),
+            memory_bytes: None,
+            cpus: None,
+        }),
+        fabric: Some(FabricObservation {
+            status: ObservationStatus::Available,
+            reason: None,
+            source: "fixture".into(),
+            image_id: Some("sha256:observed".into()),
+            catalog: Some(FabricCatalog::bundled()),
+            image: ImageMetadata {
+                architecture: Some("arm64".into()),
+                operating_system: Some("linux".into()),
+                repo_digests: vec![key.image],
+                ..Default::default()
+            },
+            compatibility: None,
+            adapters: Vec::new(),
+        }),
+    });
+    wizard.facts = AuthoringFacts {
+        endpoint: Some(EndpointEvidence {
+            request,
+            observation: EndpointObservation {
+                status: ObservationStatus::Available,
+                reason: None,
+                source: "control_host_http_models".into(),
+                reachable: Some(true),
+                authentication: AuthenticationStatus::Accepted,
+                models: vec![model],
+                api_verified: false,
+            },
+        }),
+        credentials: wizard
+            .draft
+            .document()
+            .credential_names()
+            .into_iter()
+            .map(|reference| CredentialObservation {
+                reference: reference.into(),
+                status: ObservationStatus::Available,
+                reason: None,
+            })
+            .collect(),
+        ..Default::default()
+    };
+    let assessment = wizard
+        .discovery
+        .as_ref()
+        .unwrap()
+        .assessment(&wizard.draft)
+        .unwrap();
+    assert_eq!(
+        assessment.status,
+        nemoclaw_authoring::CompatibilityStatus::Compatible,
+        "{:?}",
+        assessment.reasons
+    );
+}
+
+#[test]
+fn delegation_requires_permission_and_current_compatible_discovery() {
+    use nemoclaw_sdk::{discovery::ObservationStatus, inference_discovery::AuthenticationStatus};
+    for case in [
+        "no target",
+        "stale target",
+        "unknown engine",
+        "conflicting image",
+        "no endpoint",
+        "stale endpoint",
+        "unknown catalog",
+        "unreachable",
+        "authentication denied",
+        "unadvertised model",
+        "missing credentials",
+    ] {
+        let mut wizard = wizard();
+        wizard.handle(Input::Continue);
+        wizard.handle(Input::Continue);
+        establish_compatible_discovery(&mut wizard);
+        match case {
+            "no target" => wizard.discovery = None,
+            "stale target" => wizard
+                .discovery
+                .as_mut()
+                .unwrap()
+                .key
+                .engine
+                .push_str("-other"),
+            "unknown engine" => {
+                wizard
+                    .discovery
+                    .as_mut()
+                    .unwrap()
+                    .engine
+                    .as_mut()
+                    .unwrap()
+                    .status = ObservationStatus::Unknown
+            }
+            "conflicting image" => {
+                wizard
+                    .discovery
+                    .as_mut()
+                    .unwrap()
+                    .fabric
+                    .as_mut()
+                    .unwrap()
+                    .image
+                    .architecture = Some("amd64".into())
+            }
+            "no endpoint" => wizard.facts.endpoint = None,
+            "stale endpoint" => wizard
+                .facts
+                .endpoint
+                .as_mut()
+                .unwrap()
+                .request
+                .endpoint
+                .push_str("/other"),
+            "unknown catalog" => {
+                wizard.facts.endpoint.as_mut().unwrap().observation.status =
+                    ObservationStatus::Unknown
+            }
+            "unreachable" => {
+                wizard
+                    .facts
+                    .endpoint
+                    .as_mut()
+                    .unwrap()
+                    .observation
+                    .reachable = Some(false)
+            }
+            "authentication denied" => {
+                wizard
+                    .facts
+                    .endpoint
+                    .as_mut()
+                    .unwrap()
+                    .observation
+                    .authentication = AuthenticationStatus::Denied
+            }
+            "unadvertised model" => wizard
+                .facts
+                .endpoint
+                .as_mut()
+                .unwrap()
+                .observation
+                .models
+                .clear(),
+            "missing credentials" => wizard.facts.credentials.clear(),
+            _ => unreachable!(),
+        }
+        let before = wizard.draft.document().clone();
+        wizard.handle(Input::DelegateRemaining);
+        assert_ne!(wizard.step(), Step::Review, "{case}");
+        assert!(wizard.error().is_some(), "{case}");
+        assert_eq!(wizard.draft.document(), &before, "{case}");
+        assert!(!wizard.draft.has_delegated_answers(), "{case}");
+    }
+    let mut wizard = wizard();
+    establish_compatible_discovery(&mut wizard);
+    wizard.handle(Input::Continue);
+    wizard.handle(Input::DelegateRemaining);
+    assert_eq!(wizard.step(), Step::Harness, "must choose a harness first");
+    wizard.handle(Input::Continue);
+    assert_ne!(
+        wizard.step(),
+        Step::Review,
+        "discovery alone is not permission"
+    );
+}
+
+#[test]
+fn delegation_is_visible_and_discovery_errors_are_visible_at_minimum_terminal_size() {
+    let mut wizard = wizard();
+    wizard.handle(Input::Continue);
+    wizard.handle(Input::Continue);
+    let mut terminal = Terminal::new(TestBackend::new(72, 24)).unwrap();
+    terminal.draw(|frame| wizard.render(frame)).unwrap();
+    assert!(
+        terminal
+            .backend()
+            .to_string()
+            .contains("Ctrl+D  choose remaining settings and review")
+    );
+    wizard.handle(Input::DelegateRemaining);
+    terminal.draw(|frame| wizard.render(frame)).unwrap();
+    assert!(
+        terminal
+            .backend()
+            .to_string()
+            .contains("Target discovery is missing or stale")
+    );
+}
+
+#[test]
+fn delegated_settings_are_checked_again_when_review_is_saved() {
+    let mut wizard = wizard();
+    wizard.handle(Input::Continue);
+    wizard.handle(Input::Continue);
+    establish_compatible_discovery(&mut wizard);
+    wizard.handle(Input::DelegateRemaining);
+    assert_eq!(wizard.step(), Step::Review);
+    // Simulate review refresh losing evidence. Do not save the delegated draft.
+    wizard.facts.endpoint = None;
+    wizard.handle(Input::Continue);
+    assert!(!wizard.accepted());
+    assert!(wizard.error().unwrap().contains("Model discovery"));
+    // The user can back out and explicitly accept the remaining settings instead.
+    wizard.handle(Input::Back);
+    for _ in 0..20 {
+        if wizard.accepted() {
+            break;
+        }
+        wizard.handle(Input::Continue);
+    }
+    assert!(
+        wizard.accepted(),
+        "manual fallback should remain available: {:?}",
+        wizard.error()
+    );
+}
+
+#[test]
+fn changing_runtime_reopens_delegated_settings_but_preserves_explicit_harness() {
+    use nemoclaw_authoring::{AnswerStatus, EditableField, FieldValue, RuntimeChoice};
+    let mut wizard = wizard();
+    wizard.handle(Input::Continue);
+    wizard.handle(Input::Continue);
+    establish_compatible_discovery(&mut wizard);
+    wizard.handle(Input::DelegateRemaining);
+    let changed = wizard
+        .draft
+        .propose_guided_edit(
+            &wizard.capabilities,
+            EditableField::Runtime,
+            FieldValue::Runtime(RuntimeChoice::Podman),
+        )
+        .unwrap()
+        .accept();
+    assert_eq!(
+        changed.answer_status(EditableField::Harness),
+        AnswerStatus::Accepted
+    );
+    assert_eq!(
+        changed.answer_status(EditableField::Inference),
+        AnswerStatus::Suggested
+    );
+    assert_eq!(
+        changed.answer_status(EditableField::Model),
+        AnswerStatus::Suggested
+    );
+}
+
+#[test]
+fn delegation_preserves_a_nondefault_harness_and_an_explicit_deployment_name() {
+    use nemoclaw_authoring::{AnswerStatus, EditableField};
+    let mut wizard = wizard();
+    wizard.handle(Input::Continue);
+    wizard.handle(Input::Next);
+    wizard.handle(Input::Continue);
+    navigate(&mut wizard, Step::DeploymentName, Input::Continue);
+    wizard.handle(Input::SelectAll);
+    for character in "chosen-name".chars() {
+        wizard.handle(Input::Character(character));
+    }
+    wizard.handle(Input::Continue);
+    establish_compatible_discovery(&mut wizard);
+    let before = wizard.draft.document().clone();
+    wizard.handle(Input::DelegateRemaining);
+    assert_eq!(wizard.step(), Step::Review, "{:?}", wizard.error());
+    assert_eq!(wizard.draft.document(), &before);
+    let answers = wizard.draft.guided_answers(&wizard.capabilities).unwrap();
+    assert_eq!(answers.harness, HarnessChoice::Hermes);
+    assert_eq!(answers.deployment_name, "chosen-name");
+    assert_eq!(
+        wizard.draft.answer_status(EditableField::DeploymentName),
+        AnswerStatus::Accepted
+    );
+}
+
+#[test]
+fn delegation_does_not_discard_an_unsubmitted_answer() {
+    let mut wizard = wizard();
+    navigate(&mut wizard, Step::DeploymentName, Input::Continue);
+    establish_compatible_discovery(&mut wizard);
+    wizard.handle(Input::SelectAll);
+    wizard.handle(Input::Character('x'));
+    wizard.handle(Input::DelegateRemaining);
+    assert_eq!(wizard.step(), Step::DeploymentName);
+    assert_eq!(wizard.input_value(), "x");
+    assert!(wizard.error().unwrap().contains("Press Enter"));
+}
+
+#[test]
+fn accepting_the_same_harness_preserves_delegation_but_changing_it_reopens_dependents() {
+    use nemoclaw_authoring::{AnswerStatus, EditableField, FieldValue};
+    let mut wizard = wizard();
+    wizard.handle(Input::Continue);
+    wizard.handle(Input::Continue);
+    establish_compatible_discovery(&mut wizard);
+    wizard.handle(Input::DelegateRemaining);
+    let same = wizard
+        .draft
+        .propose_guided_edit(
+            &wizard.capabilities,
+            EditableField::Harness,
+            FieldValue::Harness(HarnessChoice::OpenClaw),
+        )
+        .unwrap()
+        .accept();
+    assert_eq!(
+        same.answer_status(EditableField::Inference),
+        AnswerStatus::Delegated
+    );
+    let changed = same
+        .propose_guided_edit(
+            &wizard.capabilities,
+            EditableField::Harness,
+            FieldValue::Harness(HarnessChoice::DeepAgents),
+        )
+        .unwrap()
+        .accept();
+    assert_eq!(
+        changed.answer_status(EditableField::Inference),
+        AnswerStatus::Suggested
+    );
+    assert_eq!(
+        changed.answer_status(EditableField::Model),
+        AnswerStatus::Suggested
+    );
+    assert_eq!(
+        changed.answer_status(EditableField::DeploymentName),
+        AnswerStatus::Delegated
+    );
+}
+
+#[test]
+fn bulk_delegation_requires_an_explicit_harness_choice_even_for_other_frontends() {
+    let mut wizard = wizard();
+    establish_compatible_discovery(&mut wizard);
+    wizard
+        .draft
+        .delegate(
+            &wizard.capabilities,
+            nemoclaw_authoring::EditableField::Harness,
+        )
+        .unwrap();
+    assert!(
+        wizard
+            .draft
+            .delegate_remaining(
+                &wizard.capabilities,
+                wizard.discovery.as_ref(),
+                &wizard.facts
+            )
+            .is_err()
+    );
+}
