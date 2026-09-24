@@ -107,158 +107,15 @@ describe("setupHermesProviderInference smoke verification", () => {
 });
 
 describe("setupHermesProviderInference SSRF guard (#6072)", () => {
-  it("rejects loopback address", async () => {
-    await expect(
-      setupHermesProviderInference(
-        {
-          sandboxName: "alpha",
-          model: "m",
-          provider: "p",
-          endpointUrl: "http://127.0.0.1:8080/v1",
-          credentialEnv: null,
-          hermesAuthMethod: null,
-          hermesToolGateways: [],
-        },
-        makeDeps() as never,
-      ),
-    ).rejects.toThrow(/private or internal/);
-  });
-
-  it("rejects cloud metadata endpoint", async () => {
-    await expect(
-      setupHermesProviderInference(
-        {
-          sandboxName: "alpha",
-          model: "m",
-          provider: "p",
-          endpointUrl: "http://169.254.169.254/latest/meta-data/",
-          credentialEnv: null,
-          hermesAuthMethod: null,
-          hermesToolGateways: [],
-        },
-        makeDeps() as never,
-      ),
-    ).rejects.toThrow(/private or internal/);
-  });
-
-  it("rejects private RFC-1918 range", async () => {
-    await expect(
-      setupHermesProviderInference(
-        {
-          sandboxName: "alpha",
-          model: "m",
-          provider: "p",
-          endpointUrl: "http://10.0.0.1/v1",
-          credentialEnv: null,
-          hermesAuthMethod: null,
-          hermesToolGateways: [],
-        },
-        makeDeps() as never,
-      ),
-    ).rejects.toThrow(/private or internal/);
-  });
-
-  it("rejects localhost hostname", async () => {
-    await expect(
-      setupHermesProviderInference(
-        {
-          sandboxName: "alpha",
-          model: "m",
-          provider: "p",
-          endpointUrl: "http://localhost:11434/v1",
-          credentialEnv: null,
-          hermesAuthMethod: null,
-          hermesToolGateways: [],
-        },
-        makeDeps() as never,
-      ),
-    ).rejects.toThrow(/private or internal/);
-  });
-
-  it("rejects .internal TLD", async () => {
-    await expect(
-      setupHermesProviderInference(
-        {
-          sandboxName: "alpha",
-          model: "m",
-          provider: "p",
-          endpointUrl: "http://my-service.internal/v1",
-          credentialEnv: null,
-          hermesAuthMethod: null,
-          hermesToolGateways: [],
-        },
-        makeDeps() as never,
-      ),
-    ).rejects.toThrow(/private or internal/);
-  });
-
-  it("throws on malformed URL without leaking the raw value", async () => {
-    await expect(
-      setupHermesProviderInference(
-        {
-          sandboxName: "alpha",
-          model: "m",
-          provider: "p",
-          endpointUrl: "not-a-url",
-          credentialEnv: null,
-          hermesAuthMethod: null,
-          hermesToolGateways: [],
-        },
-        makeDeps() as never,
-      ),
-    ).rejects.toThrow(/valid URL/);
-  });
-
-  it("rejects unsupported scheme", async () => {
-    await expect(
-      setupHermesProviderInference(
-        {
-          sandboxName: "alpha",
-          model: "m",
-          provider: "p",
-          endpointUrl: "ftp://example.com/v1",
-          credentialEnv: null,
-          hermesAuthMethod: null,
-          hermesToolGateways: [],
-        },
-        makeDeps() as never,
-      ),
-    ).rejects.toThrow(/unsupported scheme/);
-  });
-
-  it("rejects URL with embedded credentials", async () => {
-    await expect(
-      setupHermesProviderInference(
-        {
-          sandboxName: "alpha",
-          model: "m",
-          provider: "p",
-          endpointUrl: "https://user:secret@example.com/v1",
-          credentialEnv: null,
-          hermesAuthMethod: null,
-          hermesToolGateways: [],
-        },
-        makeDeps() as never,
-      ),
-    ).rejects.toThrow(/credentials/);
-  });
-
-  it("does not call runOpenshell when endpoint is rejected", async () => {
+  it.each([
+    ["malformed URL", "not-a-url", /valid URL/],
+    ["unsupported scheme", "ftp://example.com/v1", /unsupported scheme/],
+    ["embedded credentials", "https://user:secret@example.com/v1", /credentials/],
+  ] as const)("rejects %s before configuring OpenShell", async (_label, endpointUrl, message) => {
     const deps = makeDeps();
     await expect(
-      setupHermesProviderInference(
-        {
-          sandboxName: "alpha",
-          model: "m",
-          provider: "p",
-          endpointUrl: "ftp://example.com/v1",
-          credentialEnv: null,
-          hermesAuthMethod: null,
-          hermesToolGateways: [],
-        },
-        deps as never,
-      ),
-    ).rejects.toThrow();
+      setupHermesProviderInference(makeArgs(endpointUrl), deps as never),
+    ).rejects.toThrow(message);
     expect(deps.runOpenshell).not.toHaveBeenCalled();
   });
 
@@ -338,6 +195,9 @@ describe("setupHermesProviderInference SSRF guard (#6072)", () => {
 
   it.each([
     "http://127.0.0.1/v1",
+    "http://127.0.0.1:8080/v1",
+    "http://localhost:11434/v1",
+    "http://my-service.internal/v1",
     "http://169.254.169.254/latest/meta-data/",
     "http://10.0.0.1/v1",
     "http://192.168.1.1/v1",

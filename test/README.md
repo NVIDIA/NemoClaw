@@ -26,6 +26,9 @@ The project globs in `vitest.config.ts` must remain disjoint and exhaustive.
 
 ## Adding tests
 
+Use the [test value audit](../.agents/skills/nemoclaw-contributor-test-audit/SKILL.md) when writing tests
+or reducing an existing suite. Identify the distinct regression before adding another test.
+
 Choose the execution lane from the boundary that the test exercises.
 Within the integration project, group new tests by the behavior that owns the assertion.
 For example, `process-recovery/` owns sandbox process and forward recovery coverage, `channels/` owns channel lifecycle coverage, and `credentials/` owns host credential storage and reset coverage.

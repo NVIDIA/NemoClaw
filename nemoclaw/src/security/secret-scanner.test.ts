@@ -109,7 +109,7 @@ describe("scanForSecrets", () => {
       expect(matches[0].pattern).toBe("Google API key");
     });
 
-    it("detects an Anthropic API key", () => {
+    it("detects one Anthropic API key without an OpenAI overlap", () => {
       const matches = scanForSecrets(`key: ${FAKE.anthropic}`);
       expect(matches).toHaveLength(1);
       expect(matches[0].pattern).toBe("Anthropic API key");
@@ -194,14 +194,6 @@ describe("scanForSecrets", () => {
       const matches = scanForSecrets(content);
       const nvidiaMatches = matches.filter((m) => m.pattern === "NVIDIA API key");
       expect(nvidiaMatches).toHaveLength(1);
-    });
-  });
-
-  describe("pattern overlap", () => {
-    it("Anthropic key is not double-matched as OpenAI", () => {
-      const matches = scanForSecrets(`key: ${FAKE.anthropic}`);
-      expect(matches).toHaveLength(1);
-      expect(matches[0].pattern).toBe("Anthropic API key");
     });
   });
 });

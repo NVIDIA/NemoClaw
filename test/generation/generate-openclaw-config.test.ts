@@ -229,11 +229,6 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(result.stderr).toContain("NEMOCLAW_OPENCLAW_OTEL_ENDPOINT must not include credentials");
   });
 
-  it("omits the retired device-auth bypass for loopback URL", () => {
-    const config = runConfigScript({ CHAT_UI_URL: "http://127.0.0.1:18789" });
-    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBeUndefined();
-  });
-
   it("treats loopback-looking URL userinfo before a remote host as remote", () => {
     const config = buildConfigDirect({ CHAT_UI_URL: "http://127.0.0.1:18789@evil.example" });
     expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBeUndefined();

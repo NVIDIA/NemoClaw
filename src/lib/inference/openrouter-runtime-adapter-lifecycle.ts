@@ -265,8 +265,3 @@ export async function ensureOpenRouterRuntimeAdapter(
 ): Promise<AdapterRoute> {
   return withAdapterLock(() => ensureOpenRouterRuntimeAdapterLocked(options));
 }
-
-export const __test = {
-  getAdapterScriptPath,
-  probeAdapterHealth,
-};

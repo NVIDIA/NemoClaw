@@ -23,6 +23,7 @@ This repo ships agent skills under `.agents/skills/`.
 Use `nemoclaw-user-guide` for end-user documentation routing, `nemoclaw-contributor-*` for contributor workflows, and `nemoclaw-maintainer-*` for maintainer workflows.
 The contributor lifecycle has one owner for each stage: `nemoclaw-contributor-onboard` for checkout setup, `nemoclaw-contributor-plan-issue` for planning, `nemoclaw-contributor-implement-issue` for implementation and its tests, and `nemoclaw-contributor-create-pr` for publication and review follow-up.
 Component-specific guidance belongs in the `AGENTS.md` file of the package it describes, not in a skill.
+Use `nemoclaw-contributor-test-audit` when writing tests, reviewing test value, or reducing a test suite.
 Use `nemoclaw-skills-guide` only when choosing a skill or browsing the catalog. Go directly to a known skill.
 Load supporting references only when their described condition applies; do not preload a lifecycle stack.
 When editing a skill, keep its description short and specific to the task that needs it. Put conditional

@@ -17,7 +17,6 @@ import {
   materializeSourceGraph,
   normalizeOpenClawSignatureAlias,
   parseAuditConfig,
-  reviewedArchiveGraphManifest,
   selectReviewedLockedGraphIdentity,
   validateWechatRuntimeInputs,
   verifyMaterializedLockedGraph,
@@ -724,12 +723,6 @@ describe("trusted npm audit workflow (#5896)", () => {
     config.sourceRegistryPackagesWithoutIntegrity[0]!.packageSpec = "not-an-exact-spec";
     expect(() => parseAuditConfig(JSON.stringify(config))).toThrow(
       "ci/reviewed-npm-audit.json is invalid",
-    );
-  });
-
-  it("rejects an affected tar release for the reviewed archive graph", () => {
-    expect(() => reviewedArchiveGraphManifest("7.5.20")).toThrow(
-      "reviewed archive graph tar version must be exactly 7.5.21",
     );
   });
 

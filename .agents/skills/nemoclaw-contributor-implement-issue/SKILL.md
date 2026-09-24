@@ -35,6 +35,7 @@ Use these references when the change needs their detail:
 - [Implementation discovery](../_shared/implementation-discovery.md) for locating current behavior and authoritative evidence.
 - [Code change considerations](../_shared/code-change-considerations.md) for design choices and nontrivial code changes.
 - [E2E selection and authoring](../../references/e2e-authoring.md) before adding, removing, moving, or repairing test coverage.
+- [Test value audit](../nemoclaw-contributor-test-audit/SKILL.md) when writing tests or reducing redundant coverage.
 - [Root-cause and state checks](../_shared/root-cause-and-state-checks.md) for defects shared by sibling paths or sensitive operations.
 - [Security rubric](../_shared/security-rubric.md) when changing a trust boundary or security control.
 - [Writing and review](../_shared/documentation-writing-review.md) when changing explanatory text.

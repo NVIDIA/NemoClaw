@@ -59,6 +59,7 @@ does not require renewed authorization for work the user already requested.
 | `nemoclaw-contributor-onboard` | Set up, repair, or verify a trusted source checkout, with explicit opt-ins for host-visible CLI exposure, the pinned agent, and runtime onboarding. |
 | `nemoclaw-contributor-plan-issue` | Research, refine, and divide a named issue into independently valuable capability slices without implementing or publishing them. |
 | `nemoclaw-contributor-implement-issue` | Implement the smallest accepted issue capability slice with focused validation, then continue to publication when requested. |
+| `nemoclaw-contributor-test-audit` | Review test value, remove redundant coverage, and verify that retained tests detect distinct regressions. |
 | `nemoclaw-contributor-create-pr` | Create a PR with the NemoClaw template, required checks, DCO declaration, and verified commits. Then, monitor CI and automated reviews. |
 | `nemoclaw-contributor-update-dependencies` | Audit and implement a dependency upgrade from current upstream and downstream contracts, including Hermes CalVer and base-image upgrades. |
 | `nemoclaw-contributor-update-docs` | Find user-visible changes merged to `main` and update their owning documentation under current repository policy. |

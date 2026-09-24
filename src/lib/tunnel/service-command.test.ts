@@ -70,14 +70,17 @@ describe("services command", () => {
     expect(startAll).toHaveBeenCalledWith({ sandboxName: "alpha" });
   });
 
-  it("stops services without a sandbox override when the default sandbox is unsafe", () => {
-    const stopAll = vi.fn();
-    runStopCommand({
-      listSandboxes: () => ({ defaultSandbox: "bad name" }),
-      stopAll,
-    });
-    expect(stopAll).toHaveBeenCalledWith({ sandboxName: undefined });
-  });
+  it.each([null, "bad name"])(
+    "stops services without a sandbox override when the default is %s",
+    (defaultSandbox) => {
+      const stopAll = vi.fn();
+      runStopCommand({
+        listSandboxes: () => ({ defaultSandbox }),
+        stopAll,
+      });
+      expect(stopAll).toHaveBeenCalledWith({ sandboxName: undefined });
+    },
+  );
 
   it("opts the legacy full-stop command into managed gateway release", () => {
     const stopAll = vi.fn();
