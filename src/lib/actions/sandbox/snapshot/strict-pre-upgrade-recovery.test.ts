@@ -157,7 +157,7 @@ describe("strict pre-upgrade recovery retention", () => {
     expect(mocks.captureRecordedSandboxBasePolicy).not.toHaveBeenCalled();
   });
 
-  it("skips the policy capture and discards the snapshot once the deadline expires (#11936)", async () => {
+  it("skips policy capture and returns a failed result for caller cleanup after expiry (#11936)", async () => {
     const result = {
       success: true,
       backedUpDirs: ["workspace"],

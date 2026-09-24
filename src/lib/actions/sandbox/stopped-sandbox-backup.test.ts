@@ -614,6 +614,47 @@ describe("backupStartedSandboxState", () => {
     expect(sleep).not.toHaveBeenCalled();
   });
 
+  it("gives a readiness probe its own timeout independent of retry spacing", async () => {
+    const probe = vi.fn().mockReturnValue(true);
+
+    await expect(
+      backupStartedSandboxState("my-sb", {
+        backup: vi.fn().mockReturnValue(ok),
+        probe,
+        delayMs: 1,
+        deadlineMs: 330_000,
+        now: () => 0,
+      }),
+    ).resolves.toEqual(ok);
+
+    expect(probe).toHaveBeenCalledWith("my-sb", 20_000);
+  });
+
+  it("preserves a late backup manifest for caller cleanup", async () => {
+    let now = 0;
+    const late = {
+      ...denied,
+      error: "capture failed",
+      manifest: { backupPath: "/backups/alpha/v1" },
+    };
+    const result = await backupStartedSandboxState("my-sb", {
+      backup: vi.fn(() => {
+        now = 300_001;
+        return late as never;
+      }),
+      probe: vi.fn().mockReturnValue(true),
+      deadlineMs: 330_000,
+      now: () => now,
+    });
+
+    expect(result).toMatchObject({
+      success: false,
+      unreachable: true,
+      error: "capture failed Sandbox backup exceeded its transaction deadline.",
+      manifest: { backupPath: "/backups/alpha/v1" },
+    });
+  });
+
   it("stops the default readiness probes at the transaction bound (#11936)", async () => {
     let now = 0;
     adapterMocks.probeSsh.mockReturnValue(false);

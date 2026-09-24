@@ -506,6 +506,11 @@ async function enrichFromPolicy(
       undefined,
       remainingMcpObservationMs(deadline),
     );
+    if (provider.exists === null) {
+      throw new McpBridgeError(
+        `Could not inspect MCP provider '${providerName}': ${provider.error ?? "unknown provider inspection failure"}`,
+      );
+    }
     return provider.exists === true
       ? {
           ...entry,
@@ -530,6 +535,11 @@ async function enrichFromPolicy(
     undefined,
     remainingMcpObservationMs(deadline),
   );
+  if (provider.exists === null) {
+    throw new McpBridgeError(
+      `Could not inspect MCP provider '${providerName ?? "unknown"}': ${provider.error ?? "unknown provider inspection failure"}`,
+    );
+  }
   const host = typeof endpoint.host === "string" ? endpoint.host.toLowerCase() : "";
   const sourceUrl = new URL(entry.url);
   const sourcePort = Number.parseInt(

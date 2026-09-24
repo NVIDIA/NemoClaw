@@ -682,16 +682,18 @@ describe("Docker provider snapshot evidence", () => {
   });
 
   it("normalizes Docker's explicit paused status", () => {
+    const queryRuntimeSnapshot = vi.fn(() => dockerSnapshot());
     const observed = observeDockerRuntimeSnapshot(
       sandbox({ openshellDriver: "docker" }),
       "docker",
       {
         captureHostCommand: dockerLifecycleCapture(undefined, { status: "paused", paused: true }),
-        queryRuntimeSnapshot: () => dockerSnapshot(),
+        queryRuntimeSnapshot,
       },
     );
 
     expect(observed.lifecycleState).toBe("paused");
+    expect(queryRuntimeSnapshot).toHaveBeenCalledWith("alpha");
   });
 
   it("captures exact live container, lifecycle, and device selectors", () => {

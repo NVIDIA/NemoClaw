@@ -476,7 +476,7 @@ export function observeDockerRuntimeSnapshot(
     DockerRuntimeSnapshotDependencies,
     "captureHostCommand" | "queryRuntimeSnapshot"
   >,
-  timeoutMs = 10_000,
+  timeoutMs?: number,
 ): RuntimeProviderSnapshotObservation {
   if (normalizeRuntimeProviderIdentity(sandbox.openshellDriver) !== providerId) {
     throw new RuntimeProviderSnapshotError(
@@ -484,13 +484,17 @@ export function observeDockerRuntimeSnapshot(
     );
   }
   const startedAtMs = Date.now();
-  const snapshot = dependencies.queryRuntimeSnapshot(sandbox.name, timeoutMs);
+  const snapshot =
+    timeoutMs === undefined
+      ? dependencies.queryRuntimeSnapshot(sandbox.name)
+      : dependencies.queryRuntimeSnapshot(sandbox.name, timeoutMs);
   if (!snapshot.ok || !DOCKER_CONTAINER_ID_PATTERN.test(snapshot.containerId)) {
     throw new RuntimeProviderSnapshotError(
       `sandbox '${sandbox.name}' exact Docker runtime identity could not be inspected`,
     );
   }
-  const remainingTimeoutMs = Math.floor(timeoutMs - (Date.now() - startedAtMs));
+  const remainingTimeoutMs =
+    timeoutMs === undefined ? 10_000 : Math.floor(timeoutMs - (Date.now() - startedAtMs));
   if (remainingTimeoutMs <= 0) {
     throw new RuntimeProviderSnapshotError(
       `sandbox '${sandbox.name}' runtime snapshot deadline expired`,

@@ -61,6 +61,7 @@ const STARTED_BACKUP_TRANSACTION_TIMEOUT_MS = 330_000;
 const STARTED_BACKUP_FINAL_BACKUP_RESERVE_MS = 120_000;
 const STARTED_BACKUP_STOP_RESERVE_MS = 30_000;
 const STARTED_BACKUP_RETRY_DELAY_MS = 2_000;
+const STARTED_BACKUP_PROBE_ATTEMPT_TIMEOUT_MS = 20_000;
 const OPENSHELL_MANAGED_BY_LABEL = "openshell.ai/managed-by";
 const OPENSHELL_MANAGED_BY_VALUE = "openshell";
 const OPENSHELL_SANDBOX_NAME_LABEL = "openshell.ai/sandbox-name";
@@ -368,12 +369,20 @@ export async function backupStartedSandboxState(
   const readinessDeadlineMs = backupDeadlineMs - STARTED_BACKUP_FINAL_BACKUP_RESERVE_MS;
 
   while (deps.now() < readinessDeadlineMs) {
-    const probeDeadlineMs = Math.min(readinessDeadlineMs, deps.now() + Math.max(1, deps.delayMs));
+    const probeDeadlineMs = Math.min(
+      readinessDeadlineMs,
+      deps.now() + STARTED_BACKUP_PROBE_ATTEMPT_TIMEOUT_MS,
+    );
     if (deps.probe(sandboxName, probeDeadlineMs)) {
       const result = deps.backup(sandboxName, backupDeadlineMs);
-      return deps.now() <= backupDeadlineMs
-        ? result
-        : unreachableBackupResult("Sandbox backup exceeded its transaction deadline.");
+      if (deps.now() <= backupDeadlineMs) return result;
+      const deadlineError = "Sandbox backup exceeded its transaction deadline.";
+      return {
+        ...result,
+        success: false,
+        unreachable: true,
+        error: result.error ? `${result.error} ${deadlineError}` : deadlineError,
+      };
     }
     const remainingReadinessMs = Math.floor(readinessDeadlineMs - deps.now());
     if (remainingReadinessMs <= 0) break;

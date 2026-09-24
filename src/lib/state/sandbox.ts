@@ -1052,6 +1052,15 @@ export function sanitizeBackupDirectory(
   }
 }
 
+function isSnapshotSanitizationDeadlineError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  if (error.message === "snapshot sanitization deadline expired") return true;
+  if (error.cause instanceof AggregateError) {
+    return error.cause.errors.some(isSnapshotSanitizationDeadlineError);
+  }
+  return isSnapshotSanitizationDeadlineError(error.cause);
+}
+
 // ── Logging ────────────────────────────────────────────────────────
 
 const _verbose = () => process.env.NEMOCLAW_REBUILD_VERBOSE === "1";
@@ -2315,7 +2324,20 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
   }
 
   // SECURITY: Strip credentials from the local backup
-  sanitizeBackupDirectory(backupPath, {}, options.deadlineMs);
+  try {
+    sanitizeBackupDirectory(backupPath, {}, options.deadlineMs);
+  } catch (error) {
+    if (!isSnapshotSanitizationDeadlineError(error)) throw error;
+    return {
+      success: false,
+      unreachable: true,
+      backedUpDirs: [],
+      failedDirs: [...failedDirs, ...backedUpDirs],
+      backedUpFiles: [],
+      failedFiles: [...failedFiles, ...backedUpFiles],
+      error: "Snapshot sanitization skipped: backup deadline expired",
+    };
+  }
 
   // Record dynamically discovered directories in the manifest alongside the
   // exact declarations so restoreSandboxState() can find them in backupPath.

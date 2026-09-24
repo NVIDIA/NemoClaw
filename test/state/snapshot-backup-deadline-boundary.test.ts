@@ -225,9 +225,12 @@ describe("shared backup deadline boundaries (#11936)", () => {
       });
       const prepared = prepareBackup(fixture, "download", captured);
 
-      // Sanitization shares the same expired deadline and reports the backup
-      // as unusable, so the privileged recovery decision is read from the log.
-      expect(prepared.run).toThrow(/Credential sanitization failed/);
+      const backup = prepared.run();
+      expect(backup).toMatchObject({
+        success: false,
+        unreachable: true,
+        error: "Snapshot sanitization skipped: backup deadline expired",
+      });
       expect(captured).toHaveBeenCalledOnce();
       expect(prepared.logs.join("\n")).toContain(
         "privileged state directory capture: backup deadline expired",

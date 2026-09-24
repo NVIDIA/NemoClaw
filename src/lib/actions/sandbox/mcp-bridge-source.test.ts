@@ -216,6 +216,33 @@ network_policies:
     });
   });
 
+  it("rejects an indeterminate provider observation for a recorded policy", async () => {
+    mocks.executeSandboxCommand.mockReturnValue({
+      status: 0,
+      stdout: JSON.stringify([
+        {
+          server: "github",
+          url: "https://api.githubcopilot.com/mcp/",
+          env: "GITHUB_TOKEN",
+          source: "native",
+        },
+      ]),
+      stderr: "",
+    });
+    mocks.inspectProvider.mockReturnValue({
+      exists: null,
+      id: null,
+      resourceVersion: null,
+      type: null,
+      credentialKeys: null,
+      error: "provider inspection timed out",
+    });
+
+    await expect(inspectSourceBridgeState(sandbox, runtimeSelection)).rejects.toThrow(
+      "provider inspection timed out",
+    );
+  });
+
   it("keeps legacy configuration separate for explicit migration", async () => {
     mocks.executeSandboxCommand.mockReturnValue({
       status: 0,
@@ -260,6 +287,34 @@ network_policies:
       providerId: "provider-id",
       source: "native",
     });
+  });
+
+  it("rejects an indeterminate deterministic provider observation", async () => {
+    mocks.capturePolicy.mockResolvedValue("network_policies: {}\n");
+    mocks.executeSandboxCommand.mockReturnValue({
+      status: 0,
+      stdout: JSON.stringify([
+        {
+          server: "github",
+          url: "https://api.githubcopilot.com/mcp/",
+          env: "GITHUB_TOKEN",
+          source: "native",
+        },
+      ]),
+      stderr: "",
+    });
+    mocks.inspectProvider.mockReturnValue({
+      exists: null,
+      id: null,
+      resourceVersion: null,
+      type: null,
+      credentialKeys: null,
+      error: "provider inspection timed out",
+    });
+
+    await expect(inspectSourceBridgeState(sandbox, runtimeSelection)).rejects.toThrow(
+      "provider inspection timed out",
+    );
   });
 
   it("detects the owning agent from native MCP state after local registry loss", async () => {
