@@ -36,7 +36,8 @@ Prepare the Google Cloud resources before you enable the channel.
 - Enable the Google Chat API and configure the Chat app that the sandbox will run.
 - Create a service account and download a JSON key. The JSON must contain
   non-empty `client_email` and `private_key` string fields.
-- Minify the service-account JSON to one line before you paste it at the `GOOGLECHAT_SERVICE_ACCOUNT` prompt.
+- Minify the service-account JSON to one line before you paste it at the interactive prompt.
+  `GOOGLECHAT_SERVICE_ACCOUNT` accepts the downloaded JSON with LF or CRLF line breaks when you set it in the host environment.
 
 Keep the JSON key available on the trusted host during enrollment.
 Do not copy it into the sandbox or the agent configuration.
