@@ -4990,18 +4990,19 @@ run_installer_host_preflight() {
           hasExplicitDeferredN1xOnboardingIntent,
         } = require(onboardAdmissionPath);
         const { loadGatewayManagementDeclaration } = require(gatewayManagementPath);
-        const { configuredRuntimeProviderOwnsHostReadiness } = require(gatewayRuntimePath);
+        const { configuredRuntimeProviderReadinessAuthority } = require(gatewayRuntimePath);
         const host = assessHost();
         const gatewayManagement = loadGatewayManagementDeclaration();
         const allowStorageRemediation =
           gatewayManagement.ok &&
           (gatewayManagement.declaration === null ||
             gatewayManagement.declaration?.mode === "nemoclaw-managed");
-        const selectedRuntimeOwnsHostReadiness =
-          configuredRuntimeProviderOwnsHostReadiness({
+        const selectedRuntimeAuthority =
+          configuredRuntimeProviderReadinessAuthority({
             environment: process.env,
             platform: process.platform,
           });
+        const selectedRuntimeOwnsHostReadiness = selectedRuntimeAuthority?.ownsHostReadiness === true;
         const actions = planHostAdvisories(host, {
           providerOwnsHostReadiness: selectedRuntimeOwnsHostReadiness,
         });
@@ -5013,6 +5014,7 @@ run_installer_host_preflight() {
             detectHostGpuPlatform: () => host.hostGpuPlatform,
             detectNvidiaDriverVersion: () => host.nvidiaDriverVersion,
             collectPlatformIdentity: () => ({}),
+            runtimeProvider: selectedRuntimeAuthority ?? undefined,
           }
         );
         const admission = evaluateOnboardReadinessAdmission(readiness, {

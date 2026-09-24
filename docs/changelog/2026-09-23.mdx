@@ -49,6 +49,11 @@ It also strengthens host OS reporting and Windows WSL GPU verification.
   Interactive entry still requires minified one-line JSON.
   Related change: [PR #10393](https://github.com/NVIDIA/NemoClaw/pull/10393).
   Refer to [Set Up Google Chat](/user-guide/openclaw/manage-sandboxes/messaging-channels/set-up-google-chat).
+- OpenClaw messaging image builds verify trusted official registry provenance for Discord, Slack, WhatsApp, Microsoft Teams, and Google Chat plugins.
+  They stop before runtime checks when the verification fails or the offline cache lacks a verified package.
+  WeChat uses the compatible 2.4.9 runtime.
+  Related change: [PR #12292](https://github.com/NVIDIA/NemoClaw/pull/12292).
+  Refer to [Add Channels After Onboarding](/user-guide/openclaw/manage-sandboxes/messaging-channels/add-channels-after-onboarding) for build-failure recovery.
 - The experimental direct blueprint runner reports an unreadable run directory instead of treating it as missing during `reconcile` or `rollback`.
   It stops before OpenShell commands or state writes; correct the directory access, then rerun the command.
   Related change: [PR #12320](https://github.com/NVIDIA/NemoClaw/pull/12320).
