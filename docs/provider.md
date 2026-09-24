@@ -77,44 +77,94 @@ If readback fails or identifies a substituted object, the provider returns the o
 OpenTofu retains that failed creation as tainted state; automatic untainting is not a recovery guarantee.
 OpenShell deletion is name-addressed without a conditional ID/version check; an immediate identity check does not make the API operation atomic.
 
+## Discovery Ownership
+
+Onboarding and planning consume observations from the owners below.
+Each observation keeps its source and distinguishes a successful read, confirmed unavailability, and unknown results.
+An observation describes the selected target at the time of its read; it is not a reservation or a promise of successful inference.
+
+| Question | Owner and source | When it runs |
+|---|---|---|
+| Engine prerequisites | `nemoclaw_engine_capabilities`; selected Docker/Podman API | Onboarding target changes and managed deployment planning |
+| Engine features, CPU, memory, and advertised GPU inventory | `nemoclaw_target_hardware`; selected engine API | Onboarding and planning for selected gateway/service engines |
+| GPU memory, driver, compute capability, and disk measurements | Direct SDK `observe_host_hardware` with a selected `HostObserver` | Explicit direct calls or existing configured service-capacity checks; the new passive hardware source does not run collectors |
+| Packaged adapters, APIs, settings, and runtime requirements | `nemoclaw_fabric_capabilities`; selected image metadata and generated Fabric descriptors | Onboarding image changes and managed deployment planning |
+| Advertised models and catalog authentication | `nemoclaw_inference_capabilities`; HTTP model-list endpoint from the control host | Onboarding endpoint changes and planning for selected inference routes |
+| Credential-reference availability | Direct SDK `observe_credentials`; application's secret resolver | Onboarding, SDK calls, and plan-result discovery; values and local availability do not enter provider state |
+| Gateway version and compute drivers | Existing `nemoclaw_gateway_capabilities`; authenticated OpenShell API | Onboarding review and required deployment lifecycle checks |
+| Existing resources, ownership, drift, and retained storage | Existing OpenTofu resource refresh and SDK retained bindings | Deployment planning; no separate scan adopts unowned resources |
+
 ## Engine and Fabric Discovery
 
-`nemoclaw_engine_capabilities` and `nemoclaw_fabric_capabilities` expose read-only observations without requiring an OpenShell connection.
-Both require `engine`, the selected container-engine endpoint.
-The engine data source also requires `compute_driver` (`docker` or `podman`); the Fabric data source requires `image`.
+`nemoclaw_engine_capabilities` and `nemoclaw_fabric_capabilities` require `engine`, the selected container-engine endpoint, without requiring an OpenShell connection.
+The engine source also requires `compute_driver` (`docker` or `podman`); the Fabric source requires `image`.
 Both return `status`, `available`, and structured JSON in `observation_json`.
 
 The engine observation checks gateway prerequisites and reports available server version, architecture, operating system, CPU count, and memory fields.
 These describe the selected engine, which may differ from the CLI host.
-The Fabric observation inspects an existing image and returns its image ID and advertised catalog when valid metadata is present.
-Neither read pulls an image, starts a container, reads credential values, or requests inference.
-Each backend observation is bounded to five seconds.
-The SDK bounds each discovery-session query, including OpenTofu initialization and execution, to thirty seconds.
+The image observation retains its configuration ID, repository manifest digests, platform, and size even when it lacks Fabric metadata.
+Neither source pulls images or starts containers.
+Each backend observation is bounded to five seconds; OpenTofu initialization and execution add overhead.
 
 `available` means the requested metadata was observed successfully.
 `unavailable` records a confirmed engine prerequisite mismatch or an image absent from the selected engine.
 `unknown` records an unreachable target, missing image labels, invalid metadata, or a timed-out observation.
 A missing image does not establish that the harness is unsupported.
-The JSON retains the observation source and reason where applicable; image metadata does not establish runtime health or API behavior.
+
+Fabric observations expose the original `catalog` and typed `adapters` projections.
+The projections include explicit API choices, streaming and lifecycle flags, tool-configuration support, native interfaces, accepted configuration fields, model/settings schemas, and declared runtime requirements such as binaries.
+Absent declarations remain unknown; an adapter's advertised streaming or tool configuration does not prove that a selected inference model supports those behaviors.
+Declared binary requirements do not establish that the binaries execute successfully.
+
+Optional `requirements_json` supplies a serialized SDK `FabricRequirements`: a harness and requested APIs, streaming, tool configuration, interfaces, or accepted configuration fields.
+Optional `architecture` and `operating_system` supply the execution engine's platform.
+The computed `compatibility_status` is `supported`, `unsupported`, or `unknown`, with per-requirement details in `observation_json.compatibility`.
+The same SDK assessment serves provider planning and onboarding.
+It checks one adapter against the whole request, normalizes architecture aliases, and compares requested manifest digests against repository digests rather than image configuration IDs.
+Omitting requirements preserves metadata-only discovery; incomplete evidence remains unknown.
 
 Fabric images built with this repository's Docker Bake configuration advertise `io.nemoclaw.fabric.catalog`.
-The generated labels select the upstream and local adapter descriptors installed by each recipe, apply its descriptor patches, and retain the pinned Fabric revision and source provenance.
-The SDK bundles the broader generated catalog for offline authoring and rejects stale source pins during compilation.
-Image checks verify generated catalog contents against the pinned archive.
-See [source notices and regeneration](../image/NOTICE.md) for provenance and the generation command.
+The generated labels select descriptors installed by each recipe, apply its descriptor patches, and retain the pinned Fabric revision and source provenance.
+The SDK bundles the broader catalog for offline authoring and rejects stale source pins during compilation.
+Image checks verify generated contents against the pinned archive.
+See [source notices and regeneration](../image/NOTICE.md).
 Older images and builds that bypass the Bake labels remain unverified.
 
-For a managed gateway, generated deployment graphs observe the engine and each sandbox image during planning, independently of resource creation or image acquisition.
-Lifecycle postconditions reject known engine incompatibility and a valid image catalog that omits the configured harness.
-The SDK reports unresolved engine or image discovery as deferred work, so an otherwise empty preview can remain incomplete.
-These informational unknowns do not relax required resource-refresh or gateway-compatibility checks.
-The image observation is scoped to the selected engine; it is not a catalog of images on every possible execution host.
+For a managed gateway, generated graphs observe each sandbox image independently of resource creation or image acquisition.
+Lifecycle postconditions reject known engine incompatibility or conflicting image/adapter metadata.
+Unknown evidence is reported as deferred work; it does not relax required resource-refresh or gateway checks.
+An image observation is scoped to the selected engine, not every possible execution host.
 
-Onboarding uses these same data sources through an isolated SDK discovery session when a verified bundle is available.
-It can preserve configuration for a target that is not yet available, and refreshes observations when relevant selections change.
-Known engine incompatibility or an advertised harness mismatch blocks onboarding review and saving; unknown observations permit offline authoring.
-The standalone example currently uses only the bundled offline catalog.
-See [onboarding target checks](../examples/onboarding-tui/README.md#target-checks).
+## Target Hardware
+
+`nemoclaw_target_hardware` requires `engine` and returns `status` and `observation_json`.
+The passive read reports the daemon identity, architecture, CPU/memory fields, and available engine features such as rootless mode, runtimes, networking, cgroups, and memory-limit support.
+GPU IDs advertised as engine generic resources are retained without inventing names, VRAM, driver versions, or compute capability.
+No GPU advertisement means unknown inventory, not zero GPUs.
+
+For complete host measurements, explicitly call the SDK's `hardware_discovery::observe_host_hardware` with the selected engine and a `HostObserver`.
+The operation checks the collector's daemon identity before accepting measurements and has a 30-second bound.
+It reports unsupported GPU memory counters separately from unobserved counters.
+Collector failure never falls back to the client's hardware.
+The new `nemoclaw_target_hardware` source uses passive engine information and does not execute a collector or launch a probe container.
+Existing configured service-capacity checks retain their daemon-bound `HostObserver` collectors; this passive source neither replaces nor disables those checks.
+
+## Inference Endpoint Metadata
+
+`nemoclaw_inference_capabilities` requires `endpoint` and `api`; optional `credential_env` names a credential reference.
+The provider resolves that reference in memory for the selected endpoint and returns `status` and `observation_json`, never the credential value.
+It issues bounded GET requests to the OpenAI-compatible or Anthropic model-list API, with no generation request and no redirects.
+Reads have a five-second total bound and limits on response size, models, and pagination.
+
+The observation identifies control-host reachability, catalog authentication, and advertised model identifiers.
+It does not establish sandbox reachability or generation, streaming, tool-calling, or model-loading behavior; `api_verified` remains false.
+Authentication denial is distinguished from a missing or unsupported model-list endpoint.
+Shared endpoint/API/credential-reference requests are deduplicated.
+Onboarding adds observed identifiers to model suggestions while preserving manual model entry and accepted choices.
+
+Credentials remain a direct SDK concern: `observe_credentials` reports whether each selected reference resolves, separately from remote authentication.
+Gateway and resource discovery reuse their existing strict lifecycle reads below, preserving bindings when refresh fails.
+See [SDK discovery](sdk.md#discover-before-authoring-or-planning) and [onboarding target checks](../examples/onboarding-tui/README.md#target-checks).
 
 ## Gateway Capabilities
 

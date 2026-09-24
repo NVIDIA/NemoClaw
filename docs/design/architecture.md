@@ -96,10 +96,13 @@ It does not create deployment state.
 Discovery evidence is keyed by engine endpoint, compute driver, image, and selected harness.
 Changing the engine invalidates target observations; changing the compute driver invalidates the engine check, and changing the image invalidates its catalog observation.
 Changing only the harness re-evaluates the existing image catalog; unrelated identity or inference edits preserve those observations.
-The discovery graph requests the engine observation before inspecting the image.
-Known engine incompatibility or an advertised harness mismatch blocks review and saving.
+Independent engine, hardware, image, and endpoint reads can share one OpenTofu discovery plan.
+Known engine incompatibility or conflicting image/adapter requirements block review and saving.
 Engine or image uncertainty remains explicit and permits offline authoring; the bundled catalog supplies provisional choices when target inspection is unavailable.
-The initial discovery scope covers engine prerequisites and metadata advertised by existing Fabric images, not GPU feasibility or inference endpoint qualification.
+Onboarding and planning share engine, hardware-advertisement, image, adapter, and model-catalog observations.
+Gateway checks and existing-resource refresh retain their existing owners and failure rules.
+Credential availability and explicit host collectors remain direct operations; neither introduces a second provider-state owner.
+Observed model identifiers supplement suggestions without replacing accepted intent or proving inference behavior.
 See [provider discovery](../provider.md#engine-and-fabric-discovery) for observation status and planning policy.
 
 The authoring dependency graph and OpenTofu execution graph have different jobs.

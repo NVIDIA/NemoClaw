@@ -6,7 +6,7 @@
 This crate provides the terminal questionnaire used by `nemoclaw onboard` and the standalone example.
 It is a trial authoring flow over `nemoclaw-authoring`.
 It writes validated YAML and can read target observations through a verified native bundle.
-It does not read credential values, create deployment state, or apply resources.
+It reports credential-reference availability without retaining values, and does not create deployment state or apply resources.
 
 With the [build prerequisites](../../docs/build.md) available, run from the repository root in a terminal:
 
@@ -58,19 +58,24 @@ The CLI uses its installed verified bundle for discovery, or a bundle selected w
 nemoclaw onboard examples/onboarding/openclaw.yaml --bundle /path/to/bundle --output my-deployment.yaml
 ```
 
-With a bundle, onboarding runs isolated OpenTofu data-source plans for the engine and selected Fabric image.
-It re-evaluates evidence when selections change, refreshes observations whose inputs changed, and refreshes both observations when entering review.
+With a bundle, onboarding runs isolated OpenTofu data-source plans for the engine, hardware advertisements, selected Fabric image, and inference model catalog.
+Independent requests share a plan, and duplicate requests are read once.
+It re-evaluates evidence when selections change, refreshes observations whose inputs changed, and refreshes the relevant observations when entering review.
 Each backend observation has a five-second timeout; each OpenTofu discovery query, including initialization when needed, has a thirty-second limit.
 Discovery supports cancellation and does not pull images or start containers.
+An ordinary discovery plan has a 30-second overall bound; the separate gateway query has a 35-second bound.
 The [provider reference](../../docs/provider.md#engine-and-fabric-discovery) defines the observations and image metadata contract.
 
 Without a usable bundle, onboarding uses bundled Fabric metadata and marks the target unverified.
-The standalone example currently has no bundle option and uses this offline path.
+The standalone example currently has no bundle option and uses this offline path, with local credential-availability checks.
 An unreachable engine or missing image metadata remains unverified; neither establishes that a harness is unsupported.
-A known engine mismatch or an image catalog that omits the selected harness blocks review and saving until the selection is corrected.
+A known engine mismatch or conflicting image platform, digest, API, tool, or interface metadata blocks review and saving until the selection is corrected.
 Unknown observations still allow saving after selecting a runtime offered on this host, including when authoring for a target to prepare later.
 
-These checks do not establish deployment readiness, GPU capacity, provider credentials, or model availability.
+Observed models supplement suggestions; you can still enter an identifier manually.
+The target summary distinguishes advertised hardware, unverified GPU inventory, credential-reference availability, and gateway status.
+These observations do not establish deployment readiness, successful authentication for every operation, model loading, or working inference.
+Complete GPU/driver/memory measurements require an explicitly selected SDK host collector; onboarding does not run it.
 Plan refreshes the relevant observations; apply retains its readiness checks.
 
 ## Guided choices
@@ -95,7 +100,6 @@ Some onboarding journeys cannot yet be represented faithfully. They remain ignor
 - V1 has no sandbox CPU and RAM sizing, sandbox GPU selection, host mounts, or messaging-channel configuration.
 - Desired-state policy does not preserve policy-tier and composable-preset intent.
 - V1 cannot preserve trusted-private-endpoint qualification intent.
-- Offline authoring cannot discover or validate a provider's current credential-bearing model catalog.
 
 The questionnaire omits these choices.
 

@@ -82,6 +82,57 @@ Use the same state directory across CLI and SDK operations for this deployment, 
 Each operation holds the deployment lock; schedule callers so they do not operate concurrently on that state.
 Apply computes its own checked plan; passing a previous preview is not part of the API.
 
+## Discover Before Authoring or Planning
+
+`discovery_session::DiscoverySession::new(bundle_directory)` verifies a native bundle and owns a disposable OpenTofu directory, separate from deployment state.
+Its `engine`, `hardware`, `fabric`, `inference`, and `gateway` methods read the corresponding provider observations.
+`batch` deduplicates identical engine, hardware, image, and endpoint requests and lets OpenTofu schedule independent reads together; results retain the caller's order.
+The session initializes OpenTofu once and refreshes data sources on subsequent requests.
+It never applies the discovery plan, pulls an image, or launches a probe container.
+The session bounds ordinary queries and batches to 30 seconds, and gateway discovery to 35 seconds, including OpenTofu overhead.
+
+Use `fabric_catalog::FabricCatalog::bundled()` when target inspection is unavailable.
+This catalog comes from the pinned Fabric source and local adapters; it is not evidence that any adapter is installed on the target.
+`fabric_capabilities::project_adapter` exposes explicit descriptor claims while preserving unknown fields.
+`FabricRequirements::for_sandbox` derives requirements through the existing configuration resolver, and `assess_image` shares adapter, platform, and manifest-digest compatibility rules between onboarding and planning.
+
+Credential availability stays direct through `inference_discovery::observe_credentials(&document, secrets)`.
+Only reference names, availability, and safe reasons are returned.
+Plan results include these direct observations in `OperationResult.discovery`, outside OpenTofu provider state.
+Provider subprocess discovery resolves credential references from its environment; it does not accept arbitrary in-process secret resolvers through `DiscoverySession`.
+For an explicit application-owned endpoint read, `observe_endpoint(&request, secrets)` accepts the application's resolver.
+For explicit host measurements, `hardware_discovery::observe_host_hardware(&engine, observer)` accepts a selected `HostObserver` and checks its daemon identity.
+These operations do not infer runtime feasibility from an available model name or advertised GPU.
+
+Deployment planning already refreshes selected resources and gateway metadata through their owners.
+Reuse those observations and retained bindings for ownership, drift, and storage decisions; a separate unowned-resource scan cannot authorize adoption.
+The [provider reference](provider.md#discovery-ownership) defines data-source inputs, sources, limitations, and unknown results for each category.
+
+## Read Plan Discovery and Resource Inventory
+
+`plan(&document, &cancel)` returns `OperationResult.discovery` when observations or inventory are available.
+The report reuses the checked OpenTofu plan and retained bindings; it does not scan for unowned resources or authorize adoption.
+Apply and destroy results omit this field when empty.
+
+| Report field | Meaning |
+|---|---|
+| `targets` | Safe query inputs, such as engine, image, endpoint, API, compute driver, and credential reference |
+| `observations` | Typed engine, hardware, Fabric, inference, gateway, and existing service-readiness results, or an explicit unresolved category |
+| `credentials` | Direct reference-availability checks through the application's `Secrets` resolver; values and local credential file paths are excluded |
+| `resources` | Resource addresses and validated plan facts, labeled with their `runtime` or `deployment` state scope |
+
+Join `targets` and `observations` by their keys within the same result.
+Completed observations retain their source; an endpoint catalog read from the control host does not establish sandbox reachability or working generation APIs.
+A later observation replaces an earlier observation of the same query, including its unresolved status.
+Known data reads remain visible when another provider read is deferred.
+
+For each resource, `existed` means it appeared in retained state or the refreshed plan's prior value; it is not a health assertion.
+`plannedActions` and `drifted` describe the checked plan.
+`retained` identifies an established resource retained by the owning teardown compiler, and `reusePlanned` means its plan is unchanged with no reported drift.
+These entries contain no resource IDs, specifications, or credential values.
+Retaining a workspace does not preserve sandbox files; see [retention](state.md#deletion-and-retention).
+Always inspect the operation's `deferred` list before treating the preview as complete.
+
 ## Read Apply Health
 
 `OperationResult.health` contains `SandboxHealth` observations, labeled with the sandbox and its sole agent.

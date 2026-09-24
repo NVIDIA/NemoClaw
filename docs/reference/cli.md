@@ -27,7 +27,7 @@ It uses the template's answers as suggestions, or built-in defaults when no temp
 The output defaults to `deployment.yaml`; onboarding never overwrites an existing file.
 It requires a terminal and does not create deployment state or apply resources.
 A verified bundle enables read-only provider discovery; without one, authoring remains available with the target marked unverified.
-Known engine incompatibility or an image catalog that omits the selected harness blocks onboarding review and saving.
+Known engine incompatibility or conflicting image platform, manifest digest, or Fabric adapter requirements blocks onboarding review and saving.
 The [onboarding guide](../../examples/onboarding-tui/README.md) describes adaptive questions, supported inputs, and target checks.
 
 Plan and apply derive credential requirements from the parsed document.
@@ -74,8 +74,10 @@ Friendly labels replace known internal addresses; verbose output includes those 
 Normal output groups image bindings by action sequence; verbose output lists each binding.
 Deferred work produces a prominent incomplete-plan result even when the known change list is empty.
 A plan with deferred work returns 0 because the preview succeeded; scripts must also check `complete` before treating it as a complete plan.
-Unresolved engine or Fabric image discovery appears as deferred work; a known engine incompatibility or advertised harness mismatch rejects planning.
+Unresolved engine, hardware, image, or endpoint discovery appears as deferred work; a known engine or image/adapter incompatibility rejects planning.
 Failures refreshing managed-resource identity or required gateway observations still return a nonzero exit code.
+Text output summarizes resource reuse and drift, advertised models, and credential-reference availability; `--verbose` adds observation statuses.
+JSON output preserves the full discovery report, including query provenance and separate runtime/deployment resource scopes.
 
 Apply summarizes actual changes and reported Fabric health.
 Unsupported health remains unsupported; a successful operation does not establish working model or agent responses.
@@ -114,6 +116,7 @@ The CLI preserves the [SDK result fields](../../crates/nemoclaw-sdk/src/deployme
 | `complete` | Whether a planned result has no deferred work; inspect this alongside the exit code |
 | `changes` | Resource addresses and planned/applied action lists; an empty list does not mean apply skipped readiness checks |
 | `deferred` | Checks or changes deferred by planning; omitted when empty |
+| `discovery` | Plan query targets, typed observations, credential-reference availability, and resource inventory; see the [SDK report contract](../sdk.md#read-plan-discovery-and-resource-inventory); omitted when empty |
 | `health` | Apply observations for the hosted Fabric runtime; includes explicit unsupported results; omitted for other operations |
 | `retained` | Retained resource addresses reported by the operation; omitted when empty and not an inventory of every surviving file or external service |
 
