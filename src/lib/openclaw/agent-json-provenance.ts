@@ -384,6 +384,7 @@ function isNonEmptyString(value: unknown): boolean {
   return typeof value === "string" && value.trim().length > 0;
 }
 
+/** A payload with visible text or media that is not an error or reasoning. */
 function isDeliveredReply(payload: unknown): boolean {
   if (!isObjectRecord(payload) || payload.isError === true || payload.isReasoning === true) {
     return false;
@@ -395,12 +396,15 @@ function isDeliveredReply(payload: unknown): boolean {
   );
 }
 
+/** OpenClaw's fixed reply when a tool turn settles without a final answer. */
 function isSettledToolFallback(payload: unknown): boolean {
   return isObjectRecord(payload) && String(payload.text).trim() === SETTLED_TOOL_FALLBACK_TEXT;
 }
 
-// OpenClaw sets replayInvalid on every turn that ran a mutating tool, so it
-// alone does not mean the turn is incomplete (#11844).
+/**
+ * OpenClaw sets replayInvalid on every turn that ran a mutating tool, so it
+ * alone does not mean the turn is incomplete (#11844).
+ */
 function isCompletedToolTurn({ doc, response, meta }: AgentResponse): boolean {
   if (
     doc !== response &&
