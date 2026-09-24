@@ -13,6 +13,7 @@ import {
 } from "../../../../test/helpers/docker-operation-authority-test-helpers";
 import { prependInstalledUserLocalOpenshellPath } from "../openshell-pin";
 import { detectWslDockerDesktopStatus } from "../wsl-docker-desktop-gpu";
+import { createDockerRuntimeProviderBundle } from "./docker";
 import {
   createDockerLlamaCppHostLocalOperation,
   createDockerLlamaCppOperationAuthority,
@@ -539,5 +540,39 @@ describe("managed llama.cpp operation probe strategy", () => {
       ...input,
       loopbackProbe: "host-process",
     });
+  });
+
+  it("bounds the registered Docker operation factory and rejects commands after expiry", () => {
+    const executableRoot = fakeExecutableRoot();
+    const invocationLog = path.join(executableRoot, "invocations.log");
+    writeFakeExecutable(
+      executableRoot,
+      "docker",
+      `printf '%s\\n' "$*" >> '${invocationLog}'\n/bin/sleep 2`,
+    );
+    const provider = createDockerRuntimeProviderBundle();
+    expect(provider.hostLocalInference.supported).toBe(true);
+    const hostLocalInference = provider.hostLocalInference as Extract<
+      typeof provider.hostLocalInference,
+      { supported: true }
+    >;
+    const operation = hostLocalInference.createOperation({
+      env: {
+        DOCKER_HOST: "unix:///tmp/nemoclaw-deadline-test.sock",
+        HOME: executableRoot,
+        PATH: executableRoot,
+      },
+      deadlineMs: Date.now() + 500,
+    });
+
+    const startedAt = Date.now();
+    const result = operation.engine.captureHost(["info"], 5_000);
+    expect(result.status).toBe(1);
+    expect(Date.now() - startedAt).toBeLessThan(1_500);
+    expect(fs.readFileSync(invocationLog, "utf8").trim().split("\n")).toEqual(["info"]);
+    expect(() => operation.engine.captureHost(["late-info"])).toThrow(
+      "host-local inference authority deadline expired",
+    );
+    expect(fs.readFileSync(invocationLog, "utf8").trim().split("\n")).toEqual(["info"]);
   });
 });
