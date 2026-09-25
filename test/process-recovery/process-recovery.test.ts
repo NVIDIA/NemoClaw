@@ -174,3 +174,45 @@ describe("recover with a dashboard port held by a listener the sandbox does not 
     },
   );
 });
+
+describe("native gateway inspection failure", () => {
+  const transport = requireSource(
+    "../../src/lib/adapters/sandbox/command-transport.ts",
+  ) as typeof import("../../src/lib/adapters/sandbox/command-transport.js");
+  function arrangeFailure(error: Error) {
+    const agentRuntime = requireSource("../../src/lib/agent/runtime.js");
+    const registry = requireSource("../../src/lib/state/registry.js");
+    vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue(null);
+    vi.spyOn(registry, "getSandbox").mockReturnValue({ name: "alpha", agent: "openclaw" });
+    return vi.spyOn(transport, "executeSandboxExecCommand").mockRejectedValue(error);
+  }
+
+  it.each(["cancelled", "timeout", "capture", "invocation", "unavailable", "malformed"] as const)(
+    "returns inconclusive recovery without mutation after %s",
+    async (kind) => {
+      const execute = arrangeFailure(new transport.SandboxCommandTransportError(kind));
+      const privileged = requireSource("../../src/lib/sandbox/privileged-exec.ts");
+      const executePrivileged = vi.spyOn(privileged, "executePrivilegedSandboxCommand");
+      const commandCli = requireSource("../../src/lib/adapters/openshell/sandbox-command-cli.ts");
+      const runCommand = vi.spyOn(commandCli, "runCliOpenShellBufferedCommand");
+      await expect(checkAndRecoverSandboxProcesses("alpha", { quiet: true })).resolves.toEqual({
+        checked: false,
+        wasRunning: null,
+        recovered: false,
+        forwardRecovered: false,
+      });
+      expect(execute).toHaveBeenCalledOnce();
+      expect(startForward).not.toHaveBeenCalled();
+      expect(executePrivileged).not.toHaveBeenCalled();
+      expect(runCommand).not.toHaveBeenCalled();
+    },
+  );
+
+  it("propagates unexpected gateway authority errors", async () => {
+    const error = new Error("gateway authority refused");
+    const execute = arrangeFailure(error);
+    await expect(checkAndRecoverSandboxProcesses("alpha", { quiet: true })).rejects.toBe(error);
+    expect(execute).toHaveBeenCalledOnce();
+    expect(startForward).not.toHaveBeenCalled();
+  });
+});

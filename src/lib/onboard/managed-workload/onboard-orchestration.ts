@@ -29,6 +29,7 @@ export {
   applyProviderManagedStartupRootRequest,
   finalizeProviderManagedStartupSharedState,
   releaseProviderManagedStartupHold,
+  refreshManagedStartupCorporateCaTrust,
   type ProviderManagedStartupTransaction,
 } from "../runtime-provider/access";
 import { createManagedStartupRootApplyRequest } from "../managed-startup/root-apply";

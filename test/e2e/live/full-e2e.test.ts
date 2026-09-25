@@ -57,6 +57,7 @@ import { buildSandboxCredentialScanCommand } from "./sandbox-credential-boundary
 import { FULL_E2E_TEST_TIMEOUT_MS } from "../../../tools/e2e/full-e2e-timeout-contract.mts";
 import { parseOpenClawJsonDocuments } from "../../../src/lib/openclaw/agent-json-provenance.ts";
 import { fullE2eGateway, withOwnedFullE2eGateway } from "../fixtures/full-e2e-gateway.ts";
+import { captureNativePluginFailureReadiness } from "../fixtures/native-plugin-failure-diagnostics.ts";
 import {
   cleanupAcquiredResource,
   cleanupWhenOpenShellAvailable,
@@ -226,6 +227,11 @@ async function invokeNativeWeatherPlugin(
     ),
     { artifactName, env: env(), timeoutMs: 60_000 },
   );
+  await captureNativePluginFailureReadiness(sandbox, result, {
+    sandboxName: SANDBOX_NAME,
+    artifactName,
+    env: env(),
+  });
   const document = parseOpenClawJsonDocuments(result.stdout)[0] as
     | {
         ok?: boolean;

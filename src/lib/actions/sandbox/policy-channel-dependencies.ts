@@ -59,7 +59,7 @@ export const policyChannelDependencies = {
       require("../../onboard/messaging-host-forward") as MessagingHostForwardModule;
     return messagingHostForward.createMessagingHostForwardPreEnableHookRegistry();
   },
-  /** Use stopped Docker cleanup only after both in-sandbox cleanup attempts fail. */
+  /** Select provider-owned stopped-state cleanup before native command execution. */
   clearStoppedSandboxStateRoots(
     sandboxName: string,
     paths: readonly string[],
