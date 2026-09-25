@@ -148,26 +148,3 @@ export function resolveContextWindowForModel(
   }
   return deps.defaultCloudContextWindow();
 }
-
-/**
- * Reconcile a context probe with a previously qualified ceiling during a route
- * change. Compatible endpoints have no authoritative generic probe, so they
- * retain a positive ceiling that the current managed profile already proved.
- * Other providers must supply a fresh value rather than inheriting capacity
- * from a different route.
- */
-export function reconcileContextWindowForModelChange(
-  provider: string,
-  resolvedContextWindow: number | null,
-  qualifiedContextWindow: number | null,
-): number | null {
-  if (resolvedContextWindow !== null) return resolvedContextWindow;
-  if (
-    (provider === "compatible-endpoint" || provider === "compatible-anthropic-endpoint") &&
-    Number.isSafeInteger(qualifiedContextWindow) &&
-    (qualifiedContextWindow as number) > 0
-  ) {
-    return qualifiedContextWindow;
-  }
-  return null;
-}

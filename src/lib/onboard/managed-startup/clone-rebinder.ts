@@ -5,10 +5,7 @@ import { createHash } from "node:crypto";
 
 import { cloneAndDeepFreeze } from "../../core/immutable";
 import { rebindLoopbackDashboardUrlPort } from "../../dashboard/url";
-import {
-  reconcileContextWindowForModelChange,
-  resolveContextWindowForModel,
-} from "../../inference/context-window";
+import { resolveContextWindowForModel } from "../../inference/context-window";
 import { rebindSandboxMessagingPlanForClone } from "../../messaging/clone-rebind";
 import { isValidName } from "../../name-validation";
 import { DEFAULT_TOOL_DISCLOSURE } from "../../tool-disclosure";
@@ -346,15 +343,9 @@ function reconcileCurrentSourceProfile(
       profile.inference?.model !== current.model
     ) {
       const currentProvider = requireCurrentString(current.provider, "inference provider");
-      const resolvedContextWindow =
-        managedStartupCloneRebinderDependencies.resolveContextWindowForModel(
-          currentProvider,
-          requireCurrentString(current.model, "inference model"),
-        );
-      contextWindow = reconcileContextWindowForModelChange(
+      contextWindow = managedStartupCloneRebinderDependencies.resolveContextWindowForModel(
         currentProvider,
-        resolvedContextWindow,
-        profile.tuning.contextWindow,
+        requireCurrentString(current.model, "inference model"),
       );
       if (contextWindow === null) {
         fail("current OpenClaw inference route has no verifiable context window");

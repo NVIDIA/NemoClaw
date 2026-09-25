@@ -17,11 +17,7 @@ import {
   getOllamaProbeCommand,
   resolveOllamaRuntimeContextWindow,
 } from "./local";
-import {
-  type ContextWindowDeps,
-  reconcileContextWindowForModelChange,
-  resolveContextWindowForModel,
-} from "./context-window";
+import { type ContextWindowDeps, resolveContextWindowForModel } from "./context-window";
 
 // The default dependencies reach ../runner through a lazy CJS require, so swap the
 // export on the loaded module instead of mocking the specifier.
@@ -135,24 +131,6 @@ describe("resolveContextWindowForModel", () => {
       expect(deps.defaultCloudContextWindow).not.toHaveBeenCalled();
     },
   );
-});
-
-describe("reconcileContextWindowForModelChange", () => {
-  it.each(["compatible-endpoint", "compatible-anthropic-endpoint"])(
-    "retains a qualified %s ceiling when no authoritative probe exists",
-    (provider) => {
-      expect(reconcileContextWindowForModelChange(provider, null, 16_384)).toBe(16_384);
-    },
-  );
-
-  it("prefers a fresh authoritative result", () => {
-    expect(reconcileContextWindowForModelChange("compatible-endpoint", 8192, 16_384)).toBe(8192);
-  });
-
-  it("does not borrow a ceiling for another provider or from invalid state", () => {
-    expect(reconcileContextWindowForModelChange("ollama-local", null, 16_384)).toBeNull();
-    expect(reconcileContextWindowForModelChange("compatible-endpoint", null, 0)).toBeNull();
-  });
 });
 
 describe("resolveContextWindowForModel default dependencies (#8974)", () => {

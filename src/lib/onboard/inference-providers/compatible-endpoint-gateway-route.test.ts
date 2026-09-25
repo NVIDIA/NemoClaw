@@ -29,6 +29,16 @@ describe("compatible endpoint gateway routing", () => {
     ).toBe(true);
   });
 
+  it("rejects the configured proxy listener port as a backend", () => {
+    expect(
+      isLoopbackNoAuthCompatibleEndpointUrl(
+        "compatible-endpoint",
+        "http://localhost:13000/v1",
+        13000,
+      ),
+    ).toBe(false);
+  });
+
   it.each([
     ["wrong provider", "http://localhost:12500/v1", "compatible-anthropic-endpoint"],
     ["remote host", "http://10.0.0.1:12500/v1"],

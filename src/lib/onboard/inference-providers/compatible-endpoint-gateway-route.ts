@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { OLLAMA_PROXY_PORT } from "../../core/ollama-proxy-port";
 import { VLLM_PORT } from "../../core/vllm-port";
 import { unsafeEndpointUrlViolation } from "../../core/endpoint-url-safety";
 import { LLAMA_CPP_PORT } from "../../inference/llama-cpp/contract";
@@ -29,6 +30,7 @@ const LOOPBACK_BRIDGE_PROVIDERS = new Set(["compatible-endpoint", "llama-cpp-loc
 export function isLoopbackNoAuthCompatibleEndpointUrl(
   provider: string,
   endpointUrl: string | null | undefined,
+  proxyPort: number = OLLAMA_PROXY_PORT,
 ): boolean {
   if (
     provider !== "compatible-endpoint" ||
@@ -54,7 +56,8 @@ export function isLoopbackNoAuthCompatibleEndpointUrl(
     port !== null &&
     Number.isInteger(port) &&
     port >= 1024 &&
-    port <= 65535
+    port <= 65535 &&
+    port !== proxyPort
   );
 }
 

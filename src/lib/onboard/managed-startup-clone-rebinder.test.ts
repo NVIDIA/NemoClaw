@@ -354,7 +354,7 @@ describe("rebindManagedStartupProfileForClone", () => {
     expect(rebound.profile.tuning.contextWindow).toBe(131_072);
   });
 
-  it("retains the qualified context when the current route changed to a compatible endpoint", () => {
+  it("rejects a changed compatible endpoint without selected-route context evidence", () => {
     const built = buildManagedStartupProfile({
       ...openClawInput(),
       environment: { NEMOCLAW_CONTEXT_WINDOW: "16384" },
@@ -363,17 +363,18 @@ describe("rebindManagedStartupProfileForClone", () => {
       .spyOn(managedStartupCloneRebinderDependencies, "resolveContextWindowForModel")
       .mockReturnValue(null);
 
-    const rebound = rebind(built, "openclaw", 20_789, {
-      provider: "compatible-endpoint",
-      model: "nvidia/custom-model",
-      preferredInferenceApi: "openai-completions",
-    });
+    expect(() =>
+      rebind(built, "openclaw", 20_789, {
+        provider: "compatible-endpoint",
+        model: "nvidia/custom-model",
+        preferredInferenceApi: "openai-completions",
+      }),
+    ).toThrow("current OpenClaw inference route has no verifiable context window");
 
     expect(resolveContextWindowForModel).toHaveBeenCalledWith(
       "compatible-endpoint",
       "nvidia/custom-model",
     );
-    expect(rebound.profile.tuning.contextWindow).toBe(16_384);
   });
 
   it("rebinds Hermes public dashboard and provider identity while retaining its internal port", () => {

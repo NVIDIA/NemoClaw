@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { LLAMA_CPP_PORT } from "../inference/llama-cpp/contract";
+import { OLLAMA_PROXY_PORT } from "./ollama-proxy-port";
 import { parseServicePortOverride } from "./service-port-boundary";
 
 /**
@@ -63,7 +64,7 @@ export const VLLM_PORT = parsePort(VLLM_PORT_ENV, DEFAULT_VLLM_PORT);
 /** Ollama inference port (default 11434, override via NEMOCLAW_OLLAMA_PORT). */
 export const OLLAMA_PORT = parsePort("NEMOCLAW_OLLAMA_PORT", 11434);
 /** Ollama auth proxy port (default 11435, override via NEMOCLAW_OLLAMA_PROXY_PORT). */
-export const OLLAMA_PROXY_PORT = parsePort("NEMOCLAW_OLLAMA_PROXY_PORT", 11435);
+export { OLLAMA_PROXY_PORT };
 /** llama.cpp existing-server attachment port; fixed by the declarative serving contract. */
 export { LLAMA_CPP_PORT };
 /** Default Hermes OpenAI-compatible API port (manifest `forward_ports[1]`; the default for start.sh `PUBLIC_PORT`). */

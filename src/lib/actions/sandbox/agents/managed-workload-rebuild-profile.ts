@@ -2,10 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { rebindLoopbackDashboardUrlPort } from "../../../dashboard/url";
-import {
-  reconcileContextWindowForModelChange,
-  resolveContextWindowForModel,
-} from "../../../inference/context-window";
+import { resolveContextWindowForModel } from "../../../inference/context-window";
 import type { SandboxMessagingPlan } from "../../../messaging";
 import { shouldManageDashboardForAgent } from "../../../onboard/dashboard-runtime";
 import { resolveHermesDashboardOnboardState } from "../../../onboard/hermes-dashboard";
@@ -101,27 +98,18 @@ export function prepareManagedRebuildProfileHandoff(input: {
     agent === "hermes" && resumeConfig.provider === "hermes-provider"
       ? (catalogHandoff.previousProfile.inference?.upstreamProvider ?? resumeConfig.provider)
       : resumeConfig.provider;
-  const resolvedOpenClawContextWindow =
+  const openClawRouteChanged =
+    agent === "openclaw" &&
+    (catalogHandoff.previousProfile.inference?.model !== resumeConfig.model ||
+      catalogHandoff.previousProfile.inference?.upstreamProvider !== resumeConfig.provider);
+  const currentOpenClawContextWindow =
     agent === "openclaw"
       ? managedRebuildProfileDependencies.resolveContextWindowForModel(
           resumeConfig.provider,
           resumeConfig.model,
         )
       : null;
-  const currentOpenClawContextWindow =
-    agent === "openclaw"
-      ? reconcileContextWindowForModelChange(
-          resumeConfig.provider,
-          resolvedOpenClawContextWindow,
-          catalogHandoff.previousProfile.tuning.contextWindow,
-        )
-      : null;
-  if (
-    agent === "openclaw" &&
-    currentOpenClawContextWindow === null &&
-    (catalogHandoff.previousProfile.inference?.model !== resumeConfig.model ||
-      catalogHandoff.previousProfile.inference?.upstreamProvider !== resumeConfig.provider)
-  ) {
+  if (openClawRouteChanged && currentOpenClawContextWindow === null) {
     throw new Error(
       `Cannot determine a context window for the current OpenClaw target '${resumeConfig.provider}/${resumeConfig.model}'.`,
     );

@@ -59,7 +59,7 @@ describe("managed workload rebuild mutation guard", () => {
     expect(revalidateManagedWorkloadRebuildBeforeDelete("alpha", undefined)).toBeNull();
   });
 
-  it("stages compatible-endpoint OpenClaw reasoning and qualified context before deletion", () => {
+  it("rejects a changed compatible endpoint without selected-route context evidence", () => {
     const catalogHandoff = {
       agent: "openclaw",
       previousProfile: {
@@ -88,7 +88,7 @@ describe("managed workload rebuild mutation guard", () => {
       null,
     );
 
-    expect(
+    expect(() =>
       prepareManagedRebuildProfileHandoff({
         catalogHandoff,
         targetConfig,
@@ -101,23 +101,10 @@ describe("managed workload rebuild mutation guard", () => {
         messagingPlan: null,
         environment: {},
       }),
-    ).toBe(handoff);
-    expect(stage).toHaveBeenCalledWith(
-      catalogHandoff,
-      expect.objectContaining({
-        inference: expect.objectContaining({
-          model: "reasoning-model",
-          upstreamProvider: "compatible-endpoint",
-          api: "openai-completions",
-        }),
-      }),
-      {},
-      {
-        openClawContextWindow: 16_384,
-        openClawReasoning: true,
-        openClawReasoningEffort: "high",
-      },
+    ).toThrow(
+      "Cannot determine a context window for the current OpenClaw target 'compatible-endpoint/reasoning-model'.",
     );
+    expect(stage).not.toHaveBeenCalled();
 
     vi.spyOn(
       managedRebuildProfileDependencies,
@@ -129,6 +116,9 @@ describe("managed workload rebuild mutation guard", () => {
       inferenceApi: "unsupported-api",
       inferenceCompat: null,
     });
+    vi.spyOn(managedRebuildProfileDependencies, "resolveContextWindowForModel").mockReturnValue(
+      16_384,
+    );
     expect(() =>
       prepareManagedRebuildProfileHandoff({
         catalogHandoff,
