@@ -36,16 +36,11 @@ import {
   retireRebuildSourceOpenClawWindowForDelete,
   runRebuildBackupPhase,
   writeRebuildMcpHandoff,
-  writeHermesOperatorConfigHandoff,
   writeRebuildPolicyHandoff,
 } from "./rebuild-backup-phase";
 import { buildRefreshMutableOpenClawConfigHashCommand } from "./rebuild-config-hash";
 import { runRebuildDestroyPhase } from "./rebuild-destroy-phase";
-import {
-  captureHermesOperatorConfigSnapshot,
-  REBUILD_HERMES_DASHBOARD_ENV_KEYS,
-  serializeHermesOperatorConfigSnapshot,
-} from "./rebuild-durable-config";
+import { REBUILD_HERMES_DASHBOARD_ENV_KEYS } from "./rebuild-durable-config";
 import {
   delegateRebuildToOwningRegistry,
   disposeRebuildAgentBaseImagePreflight,
@@ -572,31 +567,6 @@ async function rebuildSandboxUnlocked(
         );
       };
 
-      if (
-        rebuildAgent === "hermes" &&
-        backup.backupManifest?.agentType === "hermes" &&
-        !backup.backupManifest.hermesOperatorConfigHandoff &&
-        !preparedBackupRecovery &&
-        !staleRecovery
-      ) {
-        try {
-          const operatorConfig = captureHermesOperatorConfigSnapshot(sandboxName);
-          backup.backupManifest = writeHermesOperatorConfigHandoff(
-            backup.backupManifest,
-            serializeHermesOperatorConfigSnapshot(operatorConfig),
-            [...operatorConfig.entries.map((entry) => entry.key), ...operatorConfig.droppedKeys],
-          );
-          rebuildPolicyHandoffManifest = backup.backupManifest;
-          log(
-            `Captured Hermes operator config: restorable=${operatorConfig.entries.map((entry) => entry.key).join(",") || "none"}; managed=${operatorConfig.droppedKeys.join(",") || "none"}`,
-          );
-        } catch (error) {
-          return bail(
-            `Hermes operator configuration could not be captured before rebuild: ${rebuildFailureDetail(error)}`,
-          );
-        }
-      }
-
       // Validate the completed backup artifact produced above, not the mutable live
       // tree. This gate therefore follows backup creation and precedes every
       // destructive rebuild phase.
@@ -755,7 +725,6 @@ async function rebuildSandboxUnlocked(
             : {}),
           restoreSucceeded: restored.restoreSucceeded,
           openClawDoctorWindow: restored.openClawDoctorWindow,
-          hermesOperatorConfigRestore: restored.hermesOperatorConfigRestore,
           preparedBackupRecovery: true,
           versionCheck,
           log,
@@ -1085,7 +1054,6 @@ async function rebuildSandboxUnlocked(
         mcpRuntimeSelection: mcpPreparation.runtimeSelection,
         restoreSucceeded: restored.restoreSucceeded,
         openClawDoctorWindow: restored.openClawDoctorWindow,
-        hermesOperatorConfigRestore: restored.hermesOperatorConfigRestore,
         hermesCronRestoreIdentity,
         preparedBackupRecovery,
         versionCheck,

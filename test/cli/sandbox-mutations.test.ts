@@ -116,7 +116,7 @@ describe.concurrent("CLI dispatch", () => {
     },
   );
 
-  it("keeps public mutation dry-runs and native sandbox command routes", async ({ testHome }) => {
+  it("keeps public mutation dry-runs", async ({ testHome }) => {
     const { home } = testHome;
     writeSandboxRegistry(home);
 
@@ -133,10 +133,6 @@ describe.concurrent("CLI dispatch", () => {
     );
     expect(channels.code).toBe(0);
     expect(channels.out).toContain("--dry-run: would enable channel 'telegram' for 'alpha'.");
-
-    const snapshots = await runWithEnvAsync("sandbox snapshot list alpha", testHome.environment());
-    expect(snapshots.code).toBe(0);
-    expect(snapshots.out).toContain("No snapshots found for 'alpha'.");
   });
 
   it("keeps public policy-add/remove built-in mutation routes", async ({ testHome }) => {

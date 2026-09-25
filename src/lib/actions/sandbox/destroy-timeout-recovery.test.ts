@@ -60,35 +60,4 @@ describe("destroy timeout recovery", () => {
       expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
     },
   );
-
-  it("stops when workspace cleanup times out before sandbox deletion (#10106)", async () => {
-    const wipeError = Object.assign(new Error("OpenShell exec exceeded its deadline"), {
-      code: "ETIMEDOUT",
-    });
-    const harness = createDestroyHarness({
-      dockerRunResult: {
-        status: 0,
-        stdout: "aaaaaaaaaaaa\topenshell\tdefault\tsb-alpha\n",
-      },
-      mcpServers: ["github"],
-      registeredSandboxCount: 1,
-      wipeError,
-      wipeStatus: null,
-    });
-
-    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
-    expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
-      expect.arrayContaining(["sandbox", "exec", "--name", "alpha"]),
-      expect.objectContaining({
-        killSignal: "SIGKILL",
-        timeout: SANDBOX_DESTROY_TIMEOUT_MS,
-      }),
-    );
-    expect(harness.events).toEqual(["mcp-prepare", "wipe", "mcp-restore"]);
-    expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
-    const errorOutput = harness.errorSpy.mock.calls.map(([message]) => String(message)).join("\n");
-    expect(errorOutput).toContain("OpenShell workspace cleanup timed out after 60 seconds");
-    expect(errorOutput).toContain("nemoclaw alpha status");
-    expect(errorOutput).toContain("then retry destroy");
-  });
 });

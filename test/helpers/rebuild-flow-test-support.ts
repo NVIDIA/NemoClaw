@@ -230,7 +230,6 @@ export type RebuildFlowHarness = {
   restoreSandboxEntrySpy: MockInstance;
   restoreSandboxEntryIfMissingSpy: MockInstance;
   restoreMcpBridgesAfterRebuildSpy: MockInstance;
-  warnUnpreservedUserManagedFilesSpy: MockInstance;
   finalizePreparedImageSpy: MockInstance;
   session: RebuildFlowSession;
 };

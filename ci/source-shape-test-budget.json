@@ -12,16 +12,6 @@
       "category": "compatibility"
     },
     {
-      "file": "src/lib/state/sandbox-backup-sanitization.test.ts",
-      "test": "leaves an installed package manifest that names a credential-shaped dependency",
-      "category": "security"
-    },
-    {
-      "file": "src/lib/state/sandbox-backup-sanitization.test.ts",
-      "test": "returns a credential-free JSON manifest byte for byte",
-      "category": "security"
-    },
-    {
       "file": "test/e2e/live/hermes-e2e.test.ts",
       "test": "hermes-e2e: install.sh onboards Hermes and proves health plus live inference",
       "category": "security"

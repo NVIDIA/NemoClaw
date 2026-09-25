@@ -19,7 +19,6 @@ import {
   verifyFinalMutableOpenClawConfigHash,
 } from "./rebuild-config-hash";
 import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
-import type { HermesOperatorConfigRestoreReport } from "./rebuild-durable-config";
 import {
   completeHermesCronRestoreAfterGatewayReplacement,
   type HermesCronRestoreIdentity,
@@ -94,7 +93,6 @@ export interface RebuildPostRestorePhaseInput {
   ) => Promise<void>;
   restoreSucceeded: boolean;
   openClawDoctorWindow?: OpenClawPostRestoreDoctorWindow;
-  hermesOperatorConfigRestore?: HermesOperatorConfigRestoreReport;
   hermesCronRestoreIdentity?: HermesCronRestoreIdentity;
   preparedBackupRecovery: boolean;
   versionCheck: sandboxVersion.VersionCheckResult;
@@ -159,17 +157,6 @@ function printRebuildVersionFailureRecovery(
     );
   }
   return failureMessage;
-}
-
-export function printHermesOperatorConfigRestoreReport(
-  targetAgentName: string,
-  report: HermesOperatorConfigRestoreReport | undefined,
-): void {
-  if (targetAgentName !== "hermes" || !report) return;
-  const restored = report.restoredKeys.join(", ") || "none";
-  const dropped = report.droppedKeys.join(", ") || "none";
-  console.log(`    Restored Hermes operator config keys: ${restored}`);
-  console.log(`    Dropped Hermes operator config keys: ${dropped}`);
 }
 
 function printHermesApiTokenChangeNotice(sandboxName: string, targetAgentName: string): void {
@@ -246,7 +233,6 @@ export async function runRebuildPostRestorePhase(
     mcpRuntimeSelection,
     restoreSucceeded,
     openClawDoctorWindow: preparedOpenClawDoctorWindow,
-    hermesOperatorConfigRestore,
     hermesCronRestoreIdentity,
     preparedBackupRecovery,
     versionCheck,
@@ -670,7 +656,6 @@ export async function runRebuildPostRestorePhase(
     printHermesGatewayRestoreRecovery(sandboxName, hermesGatewayRestoreState);
     printMcpRestoreRecovery(sandboxName, mcpBridgeRestoreUnverified);
   }
-  printHermesOperatorConfigRestoreReport(targetAgentName, hermesOperatorConfigRestore);
   if (!restoreSucceeded) {
     console.error(
       `  State recovery remains incomplete. Correct the restore error, then run \`${CLI_NAME} ${sandboxName} rebuild\` again.`,

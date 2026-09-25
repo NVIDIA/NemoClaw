@@ -1417,27 +1417,6 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
 
-  managedRuntimeTarget("snapshot-commands", {
-    displayName: "Snapshot: restores selected sandbox state without credential leaks",
-    agentRuntime: "openclaw",
-    environmentOrInferenceEndpoint: "Ubuntu Docker host; no inference endpoint",
-    profile: "standard",
-    timeoutMinutes: 40,
-    installMode: "none",
-    restoreCli: false,
-    exposeCliBin: false,
-    owningPaths: [
-      "test/e2e/live/snapshot-credential-scanner.ts",
-      "src/lib/actions/sandbox/auto-pair-approval.ts",
-      "src/lib/actions/sandbox/restore-gateway-pairing.ts",
-      "src/lib/adapters/openshell/restore-gateway-pairing.ts",
-    ],
-    environment: {
-      ...nonInteractive,
-      NEMOCLAW_SANDBOX_NAME: "e2e-snapshot",
-      OPENSHELL_GATEWAY: "nemoclaw",
-    },
-  }),
   runtimeAgnosticTarget("spark-install", {
     displayName: "Install: leaves NemoClaw and OpenShell usable after standard installation",
     agentRuntime: "unresolved",
@@ -1472,22 +1451,6 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       "test/e2e/e2e-cloud-experimental/features/skill/verify-sandbox-skill-via-agent.sh",
     ],
     environment: hostedInference,
-  }),
-  managedRuntimeTarget("state-backup-restore", {
-    displayName: "Backup: restores workspace files and memory",
-    agentRuntime: "openclaw",
-    environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
-    profile: "nvidia-inference",
-    timeoutMinutes: 60,
-    installMode: "credential-free",
-    restoreCli: true,
-    exposeCliBin: true,
-    environment: {
-      ...hostedInference,
-      ...nonInteractive,
-      NEMOCLAW_SANDBOX_NAME: "e2e-state-backup",
-      OPENSHELL_GATEWAY: "nemoclaw",
-    },
   }),
   managedRuntimeTarget("telegram-injection", {
     displayName: "Messaging: treats Telegram shell metacharacters as data",

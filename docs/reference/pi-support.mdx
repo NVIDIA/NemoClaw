@@ -15,7 +15,7 @@ content:
   type: "reference"
 agent-variants: ["pi"]
 ---
-Pi is a NemoClaw agent runtime. Docker is the initial compute runtime. Pi-specific code does not own Docker lifecycle, snapshot, recovery, or cleanup behaviour.
+Pi is a NemoClaw agent runtime. Docker is the initial compute runtime. Pi-specific code does not own Docker lifecycle, backup, recovery, or cleanup behaviour.
 
 <Warning>
 The Pi runtime remains a release candidate until final activation adds it to the supported inventory and complete managed-image cohort. Published candidate images and qualification evidence do not make Pi selectable in an ordinary installation.
@@ -88,11 +88,11 @@ The supported baseline includes Pi's built-in `read`, `bash`, `edit`, and `write
 
 Interactive users may trust project-local skills, extensions, prompts, and packages explicitly. Those resources are user-owned and outside release qualification. Pi loads `AGENTS.md` and `CLAUDE.md` context files before the project-trust decision; `--no-context-files` disables them. Headless `--no-approve` ignores project-local executable resources but does not disable context files. OpenShell policy continues to govern filesystem, process, network, and credential access in both modes.
 
-A project-trust decision is not transferable backup state. Restoring a snapshot cannot turn an untrusted project into a trusted project.
+A project-trust decision is agent-native state. Whole-home rebuild transfer preserves the native files that record it; NemoClaw does not reinterpret or elevate that decision.
 
 ## Persistent and Reconstructed State
 
-Sessions, prompts, and themes are declared persistent user state. `settings.json` uses an accepted-key restore contract. Tools, executable resources, model configuration, authentication, managed route credentials, caches, and project trust are reconstructed or excluded.
+The complete Pi native home/workspace is persistent user state. Rebuild transfer does not filter `settings.json`, sessions, prompts, themes, tools, executable resources, model configuration, caches, project trust, or unknown future files by path. OpenShell-owned credentials remain outside the transferred tree.
 
 Pi starts with `umask 077`, so generated configuration and session files are private to the sandbox user. Runtime setup sets `PI_OFFLINE=1` and `PI_TELEMETRY=0`.
 

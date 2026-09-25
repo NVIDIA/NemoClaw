@@ -184,7 +184,7 @@ describe("rebuildSandbox flow: lifecycle", () => {
     expectNoSandboxDelete(harness.runOpenshellSpy);
   });
 
-  it("recreates with the provider-captured exact GPU before snapshot restore (#10758)", async () => {
+  it("recreates with the provider-captured exact GPU before rebuild restore (#10758)", async () => {
     const harness = createRebuildFlowHarness({
       sandboxEntry: {
         sandboxGpuMode: "auto",
@@ -299,9 +299,6 @@ describe("rebuildSandbox flow: lifecycle", () => {
       "alpha",
       { gatewayName: "nemoclaw", workspace: "default" },
       [mcpEntry],
-    );
-    expect(harness.prepareMcpBridgesForRebuildSpy.mock.invocationCallOrder[0]).toBeLessThan(
-      harness.warnUnpreservedUserManagedFilesSpy.mock.invocationCallOrder[0],
     );
     expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
       ["sandbox", "delete", "-g", "nemoclaw", "alpha"],

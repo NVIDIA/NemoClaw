@@ -216,9 +216,9 @@
       "notes": "YAML-defined egress with policy presets. Presets include `slack`, `discord`, `telegram`, `weather`, `openclaw-pricing`, `huggingface`, `npm`, `pypi`, `brew`, and others. Hot-reloadable at runtime with `$$nemoclaw <name> policy add`."
     },
     {
-      "name": "Snapshot and restore",
+      "name": "State persistence and rebuild transfer",
       "status": "tested",
-      "notes": "Create, list, and restore named snapshots of sandbox state with the `$$nemoclaw <name> snapshot` subcommands (`create`, `list`, `restore`). Credential stripping is enforced on capture. Unsafe symlinks are rejected on restore."
+      "notes": "OpenShell preserves the native agent home during routine lifecycle operations. Before destructive replacement, NemoClaw archives and integrity-checks the complete native home/workspace, then restores it into the replacement sandbox."
     },
     {
       "name": "Agent skills",
@@ -243,7 +243,7 @@
     {
       "name": "State migration",
       "status": "tested",
-      "notes": "Sandbox state migrates across rebuilds with credentials intentionally excluded. Hermes excludes `auth.json` and restores its SQLite session DB through the backup API. OpenClaw config merge prevents stale state from overwriting fresh values."
+      "notes": "The complete native agent home/workspace migrates across rebuilds. OpenShell-owned credentials remain outside that tree and are not copied into it."
     },
     {
       "name": "Blueprint versioning",

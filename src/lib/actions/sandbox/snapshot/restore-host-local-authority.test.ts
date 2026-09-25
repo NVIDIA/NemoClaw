@@ -221,7 +221,7 @@ async function successfulRestore(options: RecreatedSandboxRestoreOptions): Promi
   }
 }
 
-describe("host-local inference snapshot restore authority", () => {
+describe("host-local inference rebuild restore authority", () => {
   it.each([
     ["openclaw", "ollama"],
     ["openclaw", "nim"],

@@ -18,7 +18,7 @@ import { registryEntryGatewayPort } from "../../state/gateway-registry";
 import * as registry from "../../state/registry";
 import type { RebuildBackupManifest } from "./rebuild-backup-phase";
 import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
-import { type RebuildSandboxEntry, warnUnpreservedUserManagedFiles } from "./rebuild-flow-helpers";
+import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import { prepareMcpBeforeBestEffortNimStop } from "./rebuild-mcp-order";
 import {
   type McpRebuildPreparation,
@@ -239,17 +239,6 @@ export async function runRebuildDestroyPhase(
       return preparation;
     },
     afterPrepare: async (preparation) => {
-      // MCP preparation removes only adapter entries whose exact ownership
-      // fingerprints match the registry. Probe afterward so a Deep Agents
-      // user `.mcp.json` is not confused with the separate managed projection.
-      // This can block on SSH, so it must finish before the final DCode check.
-      if (input.capturedOpenClawState) {
-        console.warn(
-          "  User-managed files outside the declared OpenClaw state cannot be checked on the stopped sandbox and will not be restored. Re-add them after rebuild or manage them from the host.",
-        );
-      } else if (!staleRecovery) {
-        warnUnpreservedUserManagedFiles(sandboxName, log, preparation.runtimeSelection);
-      }
       if (validateAfterMcpPreparation) {
         let validation: RebuildDeleteValidationResult;
         try {

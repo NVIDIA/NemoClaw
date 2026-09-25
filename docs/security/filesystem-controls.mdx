@@ -90,7 +90,7 @@ NemoClaw writes `config.toml` during onboarding and rebuilds.
 Direct edits to this file can be overwritten when NemoClaw regenerates the managed inference route.
 
 The managed Deep Agents image deliberately omits raw provider and service credentials from generated configuration.
-Credential-bearing files such as `.deepagents/.env` remain excluded from NemoClaw snapshots. The native `.deepagents/.mcp.json` must contain only supported URLs and OpenShell resolver placeholders for managed entries.
+OpenShell-owned credential stores and host-only secrets remain outside the native home/workspace transfer. The native `.deepagents/.mcp.json` must contain only supported URLs and OpenShell resolver placeholders for managed entries.
 
 The agent-native `.deepagents/.mcp.json` contains OpenShell placeholders. NemoClaw reads it directly and carries managed entries through bounded lifecycle handoffs rather than reconstructing it from host-side registry state.
 

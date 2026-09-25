@@ -83,8 +83,6 @@ const RAW_SANDBOX_NAME_COMMANDS = new Set([
   "sandbox:skill",
 ]);
 
-const MULTI_SANDBOX_LIFECYCLE_COMMANDS = new Set(["sandbox:snapshot:restore"]);
-
 const HERMES_PORTABLE_UNSUPPORTED_HOST_EFFECTS = new Set([
   "inference:get",
   "list",
@@ -100,7 +98,6 @@ const HERMES_PORTABLE_HOST_FENCED_READS = new Set(["status", "debug"]);
 export type HermesPortableCommandPolicy = {
   readonly helpRequested: boolean;
   readonly hostFence: "read" | "deny" | null;
-  readonly multiSandboxLifecycle: boolean;
   readonly rawSandboxName: boolean;
 };
 
@@ -118,7 +115,6 @@ export function classifyHermesPortableCommand(
       : HERMES_PORTABLE_UNSUPPORTED_HOST_EFFECTS.has(commandId)
         ? "deny"
         : null,
-    multiSandboxLifecycle: MULTI_SANDBOX_LIFECYCLE_COMMANDS.has(commandId),
     rawSandboxName: RAW_SANDBOX_NAME_COMMANDS.has(commandId),
   };
 }

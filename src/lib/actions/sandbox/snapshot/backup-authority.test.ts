@@ -505,7 +505,7 @@ describe("managed snapshot backup authority", () => {
 
       const result = backupSandboxStateWithManagedAuthority(
         "alpha",
-        { name: "stable" },
+        {},
         { getSandbox, requireProvider, captureRuntime, backup },
       );
 
@@ -513,7 +513,6 @@ describe("managed snapshot backup authority", () => {
       expect(backup).toHaveBeenCalledWith(
         "alpha",
         expect.objectContaining({
-          name: "stable",
           workload: entry.workload,
           runtimeSnapshot: runtime(),
           validateBeforePublish: expect.any(Function),
@@ -542,7 +541,7 @@ describe("managed snapshot backup authority", () => {
 
       const result = backupSandboxStateWithManagedAuthority(
         entry.name,
-        { name: "llama" },
+        {},
         {
           getSandbox: () => entry,
           requireProvider: () => provider(),
@@ -603,7 +602,7 @@ describe("managed snapshot backup authority", () => {
 
     const result = backupSandboxStateWithManagedAuthority(
       "alpha",
-      { name: "legacy" },
+      {},
       {
         getSandbox: () => entry,
         requireProvider,
@@ -616,7 +615,6 @@ describe("managed snapshot backup authority", () => {
     expect(backup).toHaveBeenCalledWith(
       "alpha",
       expect.objectContaining({
-        name: "legacy",
         captureStateFile: expect.any(Function),
       }),
     );
@@ -642,7 +640,7 @@ describe("managed snapshot backup authority", () => {
 
       const result = backupSandboxStateWithManagedAuthority(
         "alpha",
-        { name: "host-local" },
+        {},
         {
           getSandbox: () => entry,
           requireProvider: () => provider(),
@@ -657,7 +655,6 @@ describe("managed snapshot backup authority", () => {
       expect(backup).toHaveBeenCalledWith(
         "alpha",
         expect.objectContaining({
-          name: "host-local",
           hostLocalInferenceReceipt: entry.hostLocalInferenceReceipt,
           validateBeforePublish: expect.any(Function),
         }),

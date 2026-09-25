@@ -37,7 +37,6 @@ describe("rebuild restore target forwarding", () => {
       expect.objectContaining({ backupPath: "/tmp/rebuild-backup" }),
       {
         targetAgentType: "langchain-deepagents-code",
-        allowCustomImageWholeStateFileRestore: true,
       },
       { getSandbox: expect.any(Function) },
     );

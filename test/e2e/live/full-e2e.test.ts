@@ -741,6 +741,7 @@ test(
         "nemoclaw and openshell are installed and usable",
         "sandbox appears in list/status and has policy/inference configuration",
         "native OpenClaw install, invoke, update, self-update, restart, discovery, and removal are not intercepted",
+        "an unregistered native-home file survives the exercised native lifecycle",
         "direct hosted inference and sandbox inference.local both respond",
         "sandbox state contains neither auth-profiles.json nor secret-shaped credential values",
         ...(process.platform === "linux"
@@ -913,6 +914,20 @@ test(
     const status = await waitForSandboxStatus(host);
     expect(status.exitCode, resultText(status)).toBe(0);
 
+    const nativeStateMarker = `full-e2e-native-state-${Date.now()}`;
+    const writeNativeStateMarker = await sandbox.execShell(
+      SANDBOX_NAME,
+      trustedSandboxShellScript(
+        `umask 077; printf '%s\\n' '${nativeStateMarker}' > /sandbox/.full-e2e-native-state-marker`,
+      ),
+      {
+        artifactName: "phase-3-write-unregistered-native-state",
+        env: env(),
+        redactionValues,
+        timeoutMs: 60_000,
+      },
+    );
+
     const inference = await sandbox.openshell(["inference", "get"], {
       artifactName: "phase-3-openshell-inference-get",
       env: env(),
@@ -1007,7 +1022,16 @@ test(
 
     progress.phase("exercise native plugin package and update lifecycle");
     await exerciseNativeOpenClawPluginLifecycle(host, sandbox);
-
+    const readNativeStateMarker = await sandbox.execShell(
+      SANDBOX_NAME,
+      trustedSandboxShellScript("cat /sandbox/.full-e2e-native-state-marker"),
+      {
+        artifactName: "phase-5-read-unregistered-native-state",
+        env: env(),
+        redactionValues,
+        timeoutMs: 60_000,
+      },
+    );
     progress.phase("inspect runtime logs and security posture");
     const logs = await repoNemoclaw(
       host,
@@ -1016,7 +1040,14 @@ test(
       {},
       90_000,
     );
-    expect(logs.exitCode === 0 && resultText(logs).trim().length > 0, resultText(logs)).toBe(true);
+    expect(
+      writeNativeStateMarker.exitCode === 0 &&
+        readNativeStateMarker.exitCode === 0 &&
+        readNativeStateMarker.stdout.trim() === nativeStateMarker &&
+        logs.exitCode === 0 &&
+        resultText(logs).trim().length > 0,
+      [writeNativeStateMarker, readNativeStateMarker, logs].map(resultText).join("\n"),
+    ).toBe(true);
 
     const securityPosture = securityPostureEnabled()
       ? await assertSecurityPosture(host, sandbox, SANDBOX_NAME, "openclaw")

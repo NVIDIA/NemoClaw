@@ -124,7 +124,7 @@ describe("Deep Agents MCP config adapter registration", () => {
     });
   });
 
-  it("replaces an unsafe symbolic link during snapshot restore without following it (#10756)", () => {
+  it("replaces an unsafe symbolic link during rebuild restore without following it (#10756)", () => {
     const initialConfig = { mcpServers: {} };
     const registration = runDeepAgentsConfigCommand(
       buildDeepAgentsMcpRegisterCommand(baseEntry, true, [baseEntry], false, "v12", {
@@ -155,7 +155,7 @@ describe("Deep Agents MCP config adapter registration", () => {
     );
   });
 
-  it("replaces an unsafe FIFO during snapshot restore without opening it (#10756)", () => {
+  it("replaces an unsafe FIFO during rebuild restore without opening it (#10756)", () => {
     const registration = runDeepAgentsConfigCommand(
       buildDeepAgentsMcpRegisterCommand(baseEntry, true, [baseEntry], false, "v12", {
         resetNativeConfig: true,
@@ -182,7 +182,7 @@ describe("Deep Agents MCP config adapter registration", () => {
     });
   });
 
-  it("replaces an unsafe dangling symlink during snapshot restore (#10756)", () => {
+  it("replaces an unsafe dangling symlink during rebuild restore (#10756)", () => {
     const registration = runDeepAgentsConfigCommand(
       buildDeepAgentsMcpRegisterCommand(baseEntry, true, [baseEntry], false, "v12", {
         resetNativeConfig: true,

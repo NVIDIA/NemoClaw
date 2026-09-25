@@ -352,9 +352,6 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
         }))) as never,
     );
   vi.spyOn(rebuildUsageNotice, "ensureRebuildUsageNoticeAccepted").mockResolvedValue(true);
-  const warnUnpreservedUserManagedFilesSpy = vi
-    .spyOn(rebuildFlowHelpers, "warnUnpreservedUserManagedFiles")
-    .mockImplementation(() => undefined);
   vi.spyOn(resolve, "resolveOpenshell").mockReturnValue(null);
   vi.spyOn(forwardRecovery, "teardownSandboxDashboardForward").mockReturnValue(true);
   vi.spyOn(agentDefs, "loadAgent").mockReturnValue(agentDef);
@@ -1188,7 +1185,6 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     restoreSandboxEntrySpy,
     restoreSandboxEntryIfMissingSpy,
     restoreMcpBridgesAfterRebuildSpy,
-    warnUnpreservedUserManagedFilesSpy,
     finalizePreparedImageSpy,
     session,
   };

@@ -37,7 +37,6 @@ export {
   readRebuildMcpHandoff,
   writeRebuildMcpHandoff,
   clearHermesOperatorConfigHandoff,
-  writeHermesOperatorConfigHandoff,
   writeRebuildPolicyHandoff,
 } from "../../state/sandbox";
 

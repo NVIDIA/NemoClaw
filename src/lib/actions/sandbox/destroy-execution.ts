@@ -56,7 +56,6 @@ import {
   prepareMcpBridgesForDestroy,
   restoreMcpBridgesAfterDestroyAbort,
 } from "./mcp-bridge";
-import { SandboxWorkspaceCleanupTimeoutError, wipeSandboxState } from "./wipe-state";
 
 export function redactDestroyError(error: unknown): string {
   return redactFull(error instanceof Error ? error.message : String(error));
@@ -91,7 +90,6 @@ type SandboxDestroyExecutionInput = {
   deps?: {
     hostLocalInferenceLifecycleOptions?: HostLocalInferenceLifecycleOptions;
     inspectOpenShellSandboxIdentityFingerprint?: typeof inspectOpenShellSandboxIdentityFingerprint;
-    wipeSandboxState?: typeof wipeSandboxState;
     deleteConvergence?: {
       now?: () => number;
       sleep?: (milliseconds: number) => void;
@@ -155,19 +153,6 @@ async function prepareMcpDestroy(
         ...(runtimeSelection ? { runtimeSelection } : {}),
       });
   return preparation;
-}
-
-function wipeLiveSandbox(
-  sandboxName: string,
-  sandboxRuntimeConfirmedAbsent: boolean,
-  deps: NonNullable<SandboxDestroyExecutionInput["deps"]> = {},
-  selectedRunOpenshell?: DestroyRunOpenshell,
-): void {
-  if (sandboxRuntimeConfirmedAbsent) return;
-  (deps.wipeSandboxState ?? wipeSandboxState)(
-    sandboxName,
-    selectedRunOpenshell ? { runOpenshell: selectedRunOpenshell } : {},
-  );
 }
 
 async function restoreMcpAfterDeleteAbort(
@@ -549,32 +534,8 @@ export async function executeSandboxDestroy({
         " Managed inference cleanup may already be partial; inspect or restart its resources before retrying.",
       );
     }
-    // An empty `expectedContainerIdentities` is a completed Docker identity
-    // probe with zero matching containers. `undefined` means this runtime
-    // does not use that probe (or Portable owns identity); skip the workspace wipe
-    // only when OpenShell already proved absence. A live labeled Docker
-    // identity still requires a workspace wipe even if the OpenShell list says absent.
-    const sandboxRuntimeConfirmedAbsent =
-      expectedContainerIdentities?.length === 0 ||
-      (expectedContainerIdentities === undefined && sandboxConfirmedAbsent);
-    try {
-      wipeLiveSandbox(sandboxName, sandboxRuntimeConfirmedAbsent, deps, selectedRunOpenshell);
-    } catch (error) {
-      const mcpRecoveryFailure = await restoreMcpForAbort();
-      const workspaceTimedOut = error instanceof SandboxWorkspaceCleanupTimeoutError;
-      return {
-        ok: false,
-        deleteOutput:
-          `${redactDestroyError(error)} No provider cleanup or sandbox deletion was attempted. ` +
-          "Managed inference cleanup may already be partial; inspect or restart its resources before retrying.",
-        exitCode: 1,
-        gatewayUnreachable: false,
-        ...(workspaceTimedOut ? { timedOut: true as const } : {}),
-        hostLocalInferenceOwnershipRequiresGateway: false,
-        mcpOwnershipRequiresGateway: false,
-        mcpRecoveryFailure,
-      };
-    }
+    // OpenShell owns workspace deletion together with sandbox deletion. Do not
+    // mutate the agent home independently before the provider accepts delete.
     const detachProviders = (): Promise<DetachSandboxProvidersResult> =>
       runSandboxProviderPreDeleteCleanup(sandboxName, {
         runOpenshell: selectedRunOpenshell,

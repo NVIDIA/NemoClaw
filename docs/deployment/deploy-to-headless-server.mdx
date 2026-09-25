@@ -325,10 +325,9 @@ An SSH command without `-t`, a service unit, and a CI job have no terminal on st
 
 ## Plan for Updates and Rebuilds
 
-Create a named snapshot before host maintenance or a manual update:
+Keep an independent host copy before host maintenance or a manual update when you need an extra recovery point:
 
 ```bash
-$$nemoclaw headless-agent snapshot create --name before-maintenance
 export NEMOCLAW_INSTALL_REF="<next-reviewed-40-character-commit-sha>"
 [[ "$NEMOCLAW_INSTALL_REF" =~ ^[0-9a-f]{40}$ ]] || {
   echo "NEMOCLAW_INSTALL_REF must be a reviewed full commit SHA" >&2
@@ -342,28 +341,15 @@ $$nemoclaw upgrade-sandboxes --check
 
 Use a newly reviewed commit SHA for each planned update instead of relying on the mutable installer default. The installer requires current backups before it changes an existing managed installation. Use `$$nemoclaw headless-agent rebuild` when you need the current agent image while preserving supported state.
 
-| Item | Same-container restart | Snapshot and restore | Rebuild or sandbox upgrade |
-| --- | --- | --- | --- |
-| Provider configuration | Preserved | Provider names are recorded, but raw credentials are not in the snapshot | Regenerated from registry and OpenShell provider state |
-| Current OpenShell policy, including custom presets and host edits | Remains in OpenShell | Read live for a clone handoff, not stored in snapshot metadata | Read live and handed to replacement creation |
-| Manifest-defined user and agent state | Preserved | Preserved | Preserved when backup and restore succeed |
-| Arbitrary files outside manifest state | Usually remain in the same writable layer | Not preserved | Not preserved |
-| Manually installed system or global packages | Usually remain in the same writable layer | Not preserved | Not preserved |
-| Direct edits to generated profile, config, or environment files | May remain until regeneration | Agent-specific and usually excluded or filtered | Regenerated or filtered by the current manifest |
+| Item | Same-container restart | Rebuild or sandbox upgrade |
+| --- | --- | --- |
+| Complete native home/workspace | Preserved by OpenShell storage | Captured and restored as one opaque tree |
+| Unknown files, native config, histories, hooks, plugins, packages, cron data, and child-agent state under that tree | Preserved | Preserved without a NemoClaw path allowlist |
+| OpenShell policy and credential stores | Remain under OpenShell ownership | Re-established through OpenShell; not copied into the agent archive |
+| Container image and system paths outside the native home/workspace | Remain with the same container | Replaced by the selected image |
+| Host tunnel processes | Remain only while their host processes are active | Re-established and verified after rebuild |
 
-<AgentOnly variant="openclaw">
-  | OpenClaw gateway token | Rotated when the container starts with mutable configuration | Not
-  captured; a replacement sandbox generates a new token | Rotated for the replacement sandbox |
-</AgentOnly>
-<AgentOnly variant="hermes">
-  | Hermes `API_SERVER_KEY` | Preserved | Not captured; a replacement sandbox generates a new token
-  | Rotated for the replacement sandbox |
-</AgentOnly>
-| Host tunnel process | Not applicable to a container restart | Not preserved | Not preserved | |
-Dashboard, API, messaging, and agent forwards | Preserved only while their host processes remain
-active | Re-established during supported recovery | Re-established and verified after rebuild |
-
-Snapshot only the state that the current agent manifest declares. Download any required file outside that contract before a destructive operation. Refer to [Understand Sandbox State](../manage-sandboxes/state-and-backups/understand-sandbox-state) and [Create and Restore Snapshots](../manage-sandboxes/state-and-backups/create-and-restore-snapshots) for agent-specific exclusions.
+Download any state outside the OpenShell-provided native home/workspace before a destructive operation. Refer to [Understand Sandbox State](../manage-sandboxes/state-and-backups/understand-sandbox-state) and [Persist Sandbox State](../manage-sandboxes/state-and-backups/create-and-restore-snapshots) for the persistence boundary.
 
 ## Recover After a Host Reboot
 
@@ -420,7 +406,7 @@ $$nemoclaw headless-agent destroy --yes
 $$nemoclaw onboard
 ```
 
-The missing sandbox's state cannot be recovered unless you have a separate snapshot. After onboarding, restore that snapshot explicitly. For failure-specific recovery boundaries, refer to [Recover and Rebuild Sandboxes](../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes).
+The missing sandbox's state cannot be recovered unless you have an independent backup. After onboarding, restore that backup with the same external method used to create it. For failure-specific recovery boundaries, refer to [Recover and Rebuild Sandboxes](../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes).
 
 <AgentOnly variant="openclaw,hermes">
 

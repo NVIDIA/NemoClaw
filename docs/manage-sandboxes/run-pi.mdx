@@ -72,33 +72,18 @@ Pi stores runtime state under `/sandbox/.pi/agent`:
 | `prompts/` | Read-only user resources | Preserved |
 | `themes/` | Read-only user resources | Preserved |
 | `tools/` | Executable resource state | Reconstructed, not restored |
-| `bin/` | Executable resource state | Reconstructed, not restored |
-| `settings.json` | User preferences | Restores only accepted keys |
-| `models.json` | Managed inference configuration | Reconstructed, not restored |
+| `bin/` | Executable resource state | Persists in the native home |
+| `settings.json` | User preferences | Persists without a key allowlist |
+| `models.json` | Native model configuration | Persists with the rest of Pi state |
 
-The accepted `settings.json` restore keys are `theme`, `hideThinkingBlock`, `showCacheMissNotices`, `quietStartup`, `steeringMode`, `followUpMode`, and `defaultThinkingLevel`. Unknown keys, managed routing, authentication, project trust, and executable extension state are not restored.
+## Native State Persistence
 
-## Create and Restore Snapshots
-
-Finish active Pi tasks before creating a snapshot.
-
-```bash
-nemoclaw <sandbox-name> snapshot create --name before-change
-nemoclaw <sandbox-name> snapshot list
-```
-
-Snapshots preserve declared user state. They do not preserve `auth.json`, managed route credentials, generated model configuration, project trust decisions, or executable tool and extension state.
-
-Restore replaces sandbox state from a selector returned by `snapshot list`: a version such as `v3`, a snapshot name, or a timestamp. Review the target and retain any newer state before continuing.
-
-```bash
-nemoclaw <sandbox-name> snapshot restore <version-or-name-or-timestamp>
-```
+OpenShell preserves Pi's complete native home and workspace across stop, start, and reconnect. Finish active Pi tasks before rebuilding. When a replacement sandbox is unavoidable, NemoClaw transfers the complete native state without interpreting individual settings or paths.
 
 ## Rebuild and Recover
 
 Rebuild validates the recorded workload authority and selects the immutable Pi image authorised by the protected qualification receipt.
-It preserves declared Pi state and replays the recorded context window, maximum output-token count, and reasoning flag.
+It preserves complete Pi state and replays the recorded context window, maximum output-token count, and reasoning flag.
 
 ```bash
 nemoclaw <sandbox-name> rebuild --yes
@@ -113,10 +98,9 @@ nemoclaw <sandbox-name> status
 
 Pi has no long-running agent gateway or host forward. `recover` re-enters the shared sandbox readiness path; it does not restart a Pi process. Rebuild when the Pi entrypoint, managed configuration, or image is inconsistent.
 
-Pi has no runtime `inference set` path. To change the provider, model, context window, output limit, or reasoning flag, create a snapshot, set the new selection, and run a fresh replacement.
+Pi has no runtime `inference set` path. To change the provider, model, context window, output limit, or reasoning flag, keep an independent copy if needed, set the new selection, and run a fresh replacement.
 
 ```bash
-nemoclaw <sandbox-name> snapshot create --name before-model-change
 nemoclaw onboard --agent pi --name <sandbox-name> --fresh --recreate-sandbox
 ```
 
@@ -139,12 +123,11 @@ Pi runtime self-update and package auto-update remain unsupported.
 
 ## Stop, Start, and Destroy
 
-Destroy removes the registered sandbox and its managed runtime resources. It does not remove gateway-held provider credentials. Create a snapshot before destroy when you need declared user state, and reset a provider credential separately after every dependent sandbox is gone.
+Destroy removes the registered sandbox, its native state, and its managed runtime resources. It does not remove gateway-held provider credentials. Copy any state you need first, and reset a provider credential separately after every dependent sandbox is gone.
 
 ```bash
 nemoclaw <sandbox-name> stop
 nemoclaw <sandbox-name> start
-nemoclaw <sandbox-name> snapshot create --name before-destroy
 nemoclaw <sandbox-name> destroy --yes
 nemoclaw credentials reset <provider> --yes
 ```

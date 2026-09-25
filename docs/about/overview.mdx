@@ -39,7 +39,7 @@ NemoClaw groups its supported capabilities around running, connecting, controlli
 | Run supported agents | Onboards OpenClaw, Hermes, or LangChain Deep Agents Code into an agent-specific sandbox image and configuration. |
 | Route inference | Connects supported hosted inference and local inference providers through `inference.local`. OpenShell keeps provider credentials outside the sandbox. |
 | Control sandbox access | Applies network policy, filesystem policy, process controls, and managed inference through OpenShell. |
-| Operate the lifecycle | Reports host readiness, creates or updates sandboxes, reports status and logs, rebuilds or recovers sandboxes, and creates or restores snapshots. |
+| Operate the lifecycle | Reports host readiness, creates or updates sandboxes, reports status and logs, and rebuilds or recovers sandboxes while preserving the native agent home. |
 | Connect Model Context Protocol (MCP) servers | Manages authenticated HTTPS Streamable HTTP MCP servers for all supported agent runtimes. OpenShell replaces credential placeholders at approved egress boundaries. |
 | Extend agent workflows | Installs agent skills and publishes Markdown documentation that coding agents can use for setup, operation, security review, and troubleshooting. |
 <AgentOnly variant="openclaw,hermes">
@@ -63,7 +63,7 @@ NemoClaw provides these controls and lifecycle tools to reduce those risks.
 | Sandboxed execution | Runs each agent in an OpenShell sandbox with documented filesystem, process, and network controls. Enforcement limitations vary by host. |
 | Credential custody | Keeps inference credentials and managed MCP bearer values outside the sandbox through OpenShell. |
 | Operator-controlled egress | Uses YAML network policy and policy presets. OpenShell blocks unapproved destinations and surfaces requests for operator review. |
-| Repeatable lifecycle | Uses versioned, digest-verified blueprints and manifest-declared state to support onboarding, rebuild, recovery, snapshot, and restore operations. |
+| Repeatable lifecycle | Uses versioned, digest-verified blueprints while OpenShell preserves the complete native home and workspace across supported lifecycle operations. |
 | Agent-specific workflows | Provides dedicated CLI aliases, configuration, lifecycle adapters, documentation, and validation for each supported agent runtime. |
 
 <AgentOnly variant="openclaw,hermes">

@@ -10,11 +10,9 @@ import { help as renderRootHelp } from "../../../src/lib/actions/root-help";
 import {
   removeSandboxImage,
   removeSandboxRegistryEntry,
-  removeSandboxRegistryEntryOutcome,
   removeSandboxRegistryEntryWithReceipt,
   requireSandboxDestructiveCleanupAuthority,
 } from "../../../src/lib/actions/sandbox/destroy";
-import { requireSnapshotDestinationRegistryRemoval } from "../../../src/lib/actions/sandbox/snapshot";
 import { COMMANDS, globalCommandTokens } from "../../../src/lib/cli/command-registry";
 import { getRegisteredOclifCommandMetadata } from "../../../src/lib/cli/oclif-metadata";
 import { normalizeGarbageCollectImagesOptions } from "../../../src/lib/domain/lifecycle/options";
@@ -165,62 +163,6 @@ describe("image cleanup: sandbox destroy removes Docker image (#2086)", () => {
       }),
     ).toBe(true);
     expect(removeSandbox).toHaveBeenCalledWith("alpha");
-  });
-
-  it("fails closed and reports the provider when workload image authority is unproven", () => {
-    const removeImage = vi.fn(() => ({ status: 0 }));
-    const warn = vi.fn();
-    const runtimeProviders = createRuntimeProviderBundleRegistry([
-      ["docker", createDockerRuntimeProviderBundle({ removeImage })],
-    ]);
-
-    const result = removeSandboxImage("alpha", {
-      getSandbox: () =>
-        ({
-          name: "alpha",
-          openshellDriver: "docker",
-          imageTag: "local/alpha:current",
-          workload: {
-            schemaVersion: 1,
-            kind: "legacy-dockerfile",
-            reference: "local/alpha:recorded",
-            shared: false,
-          },
-        }) as any,
-      runtimeProviders,
-      warn,
-    });
-
-    expect(result).toEqual({ status: "skipped", reason: "authority-unproven" });
-    expect(removeImage).not.toHaveBeenCalled();
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("Runtime provider 'docker'"));
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("workload receipt"));
-
-    const removeSandbox = vi.fn(() => true);
-    const removalOutcome = removeSandboxRegistryEntryOutcome("alpha", {
-      removeImage: () => result,
-      removeSandbox,
-    });
-    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    try {
-      expect(() => requireSnapshotDestinationRegistryRemoval("alpha", removalOutcome)).toThrow();
-      expect(removeSandbox).not.toHaveBeenCalled();
-      const output = error.mock.calls.flat().join("\n");
-      expect(output).toContain("doctor --json");
-      expect(output).toContain("Do not rewrite a receipt");
-    } finally {
-      error.mockRestore();
-    }
-  });
-
-  it("accepts an already absent registry entry after destination deletion", () => {
-    const outcome = removeSandboxRegistryEntryOutcome("alpha", {
-      removeImage: () => ({ status: "skipped", reason: "no-owned-image" }),
-      removeSandbox: () => false,
-    });
-
-    expect(outcome).toEqual({ status: "not-found", removed: false });
-    expect(() => requireSnapshotDestinationRegistryRemoval("alpha", outcome)).not.toThrow();
   });
 
   it.each([

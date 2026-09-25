@@ -45,6 +45,10 @@ function confirmSandboxMissingAfterDelete(markerPath: string, logPath: string): 
   ];
 }
 
+function isPersistentStateWipeExec(line: string): boolean {
+  return line.startsWith("sandbox exec --name alpha") && line.includes("rm -rf --");
+}
+
 describe("CLI dispatch", () => {
   it(
     "uses the platform gateway default when the last sandbox is destroyed (#2166, #4662)",
@@ -709,27 +713,13 @@ describe("CLI dispatch", () => {
     expect(deleteIndex).toBeGreaterThan(selectIndex);
     expect(lines.slice(deleteIndex + 1)).toContain("sandbox get -g nemoclaw-8081 alpha");
 
-    // #5455 PRA-2: the persistent-state wipe (`sandbox exec --name alpha ...`)
-    // MUST come after gateway select and before sandbox delete. Running the
-    // wipe before gateway selection would have it land on whichever gateway
-    // happened to be currently active (`other-gateway` in this fixture), so
-    // a same-named sandbox there could get its workspace wiped while the
-    // intended PVC on `nemoclaw-8081` is left intact. Lock the order in.
-    const wipeIndex = lines.findIndex((line) => line.startsWith("sandbox exec --name alpha"));
-    expect(wipeIndex, "destroy did not issue the persistent-state wipe exec").toBeGreaterThan(
-      selectIndex,
-    );
-    expect(wipeIndex).toBeLessThan(deleteIndex);
+    expect(lines.some(isPersistentStateWipeExec)).toBe(false);
   });
 
-  // #5455 Ultra PRA-3: when `--cleanup-gateway` is passed, the gateway-destroy
-  // tears the gateway runtime down after the sandbox is deleted. The wipe
-  // still has to land BEFORE `sandbox delete` (otherwise the PVC is gone),
-  // and the `gateway destroy / gateway remove` has to come AFTER it
-  // (otherwise the gateway the wipe exec targets is gone). Pin the full
-  // gateway-select -> wipe exec -> sandbox delete -> gateway teardown chain.
+  // OpenShell owns native storage deletion together with sandbox deletion.
+  // Gateway teardown still follows the completed delete.
   it(
-    "destroys with --cleanup-gateway and runs gateway-select -> wipe -> delete -> gateway-destroy in order",
+    "destroys with --cleanup-gateway and runs gateway-select -> delete -> gateway-destroy in order",
     testTimeoutOptions(30_000),
     () => {
       const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-destroy-cleanup-order-"));
@@ -783,7 +773,6 @@ describe("CLI dispatch", () => {
       expect(r.code, r.out).toBe(0);
       const lines = fs.readFileSync(openshellLog, "utf8").trim().split("\n");
       const selectIndex = lines.indexOf("gateway select nemoclaw-8081");
-      const wipeIndex = lines.findIndex((line) => line.startsWith("sandbox exec --name alpha"));
       const deleteIndex = lines.indexOf("sandbox delete -g nemoclaw-8081 alpha");
       const gatewayDestroyIndex = lines.findIndex(
         (line) =>
@@ -791,9 +780,9 @@ describe("CLI dispatch", () => {
       );
 
       expect(selectIndex, "gateway select did not run").toBeGreaterThanOrEqual(0);
-      expect(wipeIndex, "wipe exec did not run").toBeGreaterThan(selectIndex);
-      expect(deleteIndex, "sandbox delete did not run").toBeGreaterThan(wipeIndex);
+      expect(deleteIndex, "sandbox delete did not run").toBeGreaterThan(selectIndex);
       expect(gatewayDestroyIndex, "gateway teardown did not run").toBeGreaterThan(deleteIndex);
+      expect(lines.some(isPersistentStateWipeExec)).toBe(false);
     },
   );
 

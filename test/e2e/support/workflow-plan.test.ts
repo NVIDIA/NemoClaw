@@ -99,7 +99,7 @@ describe("E2E workflow plan", () => {
       }),
     ]);
     expect(plan.hermesSelected).toBe(true);
-    expect(plan.coverageMatrix).toHaveLength(78);
+    expect(plan.coverageMatrix).toHaveLength(76);
     expect(selectedWorkflowJobs(plan)).toEqual([
       "catalogue-brave-nvidia-inference",
       "catalogue-github-read",
@@ -158,7 +158,7 @@ describe("E2E workflow plan", () => {
       "ubuntu-repo-cloud-openclaw",
     ]);
     expect(plan.testMatrix).toEqual([]);
-    expect(catalogueIds).toHaveLength(47);
+    expect(catalogueIds).toHaveLength(45);
     expect(catalogueIds).not.toEqual(
       expect.arrayContaining([
         "bootstrap-install-smoke",
@@ -682,17 +682,6 @@ describe("E2E workflow plan", () => {
       "rebuild-openclaw",
     );
     expect(selectedWorkflowJobs(plan)).toContain("mcp-bridge");
-  });
-
-  it("selects only catalogue targets that own changed files", () => {
-    const changedFile = "test/e2e/live/snapshot-commands.test.ts";
-    const plan = buildE2eWorkflowPlan({}, { changedFiles: [changedFile] });
-
-    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toEqual([
-      "snapshot-commands",
-    ]);
-    expect(plan.catalogueMatrices.standard.map((row) => row.id)).toEqual(["snapshot-commands"]);
-    expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-standard", "jetson-nvmap-gpu"]);
   });
 
   it.each([

@@ -12,31 +12,31 @@
     "epicLiveExpectCalls": 2677
   },
   "limits": {
-    "testFileCount": 79,
-    "liveFileCount": 190,
+    "testFileCount": 77,
+    "liveFileCount": 186,
     "direct": {
-      "expectCalls": 1392,
-      "matcherAssertions": 1371,
+      "expectCalls": 1358,
+      "matcherAssertions": 1337,
       "nodeAssertions": 103,
-      "namedAssertionHelpers": 444,
+      "namedAssertionHelpers": 431,
       "failCalls": 0,
-      "throwGuards": 71,
+      "throwGuards": 62,
       "objectFieldAssertions": 172,
-      "assertionPoints": 2161,
-      "generatedProbeBlocks": 94,
-      "generatedProbeConditions": 239
+      "assertionPoints": 2105,
+      "generatedProbeBlocks": 90,
+      "generatedProbeConditions": 234
     },
     "unique": {
-      "expectCalls": 1826,
-      "matcherAssertions": 1800,
+      "expectCalls": 1792,
+      "matcherAssertions": 1766,
       "nodeAssertions": 126,
-      "namedAssertionHelpers": 686,
+      "namedAssertionHelpers": 673,
       "failCalls": 1,
-      "throwGuards": 557,
+      "throwGuards": 546,
       "objectFieldAssertions": 249,
-      "assertionPoints": 3419,
-      "generatedProbeBlocks": 235,
-      "generatedProbeConditions": 830
+      "assertionPoints": 3361,
+      "generatedProbeBlocks": 231,
+      "generatedProbeConditions": 825
     },
     "fileMetricOrder": [
       "directExpectCalls",
@@ -116,10 +116,8 @@
       "test/e2e/live/sandbox-survival.test.ts": [4,11,4,11,0],
       "test/e2e/live/sessions-agents-cli.test.ts": [20,29,20,31,0],
       "test/e2e/live/skill-agent.test.ts": [8,10,8,10,0],
-      "test/e2e/live/snapshot-commands.test.ts": [26,39,26,41,3],
       "test/e2e/live/spark-express-vllm.test.ts": [35,45,47,65,3],
       "test/e2e/live/spark-install.test.ts": [11,13,11,15,6],
-      "test/e2e/live/state-backup-restore.test.ts": [8,17,8,17,1],
       "test/e2e/live/telegram-injection.test.ts": [19,28,26,67,12],
       "test/e2e/live/token-rotation.test.ts": [28,36,28,36,2],
       "test/e2e/live/tunnel-lifecycle.test.ts": [0,0,8,17,4],

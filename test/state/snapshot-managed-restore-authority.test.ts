@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
+import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -14,13 +16,54 @@ import { encodeManagedStartupProfile } from "../../src/lib/onboard/managed-start
 const ORIGINAL_HOME = process.env.HOME;
 const TMP_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-snapshot-authority-"));
 process.env.HOME = TMP_HOME;
-const sandboxState = await import("../../src/lib/state/sandbox.js");
 const BACKUPS_ROOT = path.join(TMP_HOME, ".nemoclaw", "rebuild-backups");
+const ORIGINAL_PATH = process.env.PATH;
+const ORIGINAL_OPENSHELL = process.env.NEMOCLAW_OPENSHELL_BIN;
+const BIN_DIR = path.join(TMP_HOME, "bin");
+
+fs.mkdirSync(BIN_DIR, { recursive: true });
+fs.writeFileSync(
+  path.join(BIN_DIR, "openshell"),
+  `#!/bin/sh
+if [ "$1" = "sandbox" ] && [ "$2" = "get" ]; then
+  printf '{"name":"alpha"}\n'
+  exit 0
+fi
+if [ "$1" = "sandbox" ] && [ "$2" = "ssh-config" ]; then
+  printf 'Host openshell-alpha\n  HostName 127.0.0.1\n  User sandbox\n'
+  exit 0
+fi
+exit 1
+`,
+  { mode: 0o755 },
+);
+fs.writeFileSync(
+  path.join(BIN_DIR, "ssh"),
+  `#!/usr/bin/env node
+const command = process.argv.at(-1) || "";
+if (command.includes("printf") && command.includes("$HOME")) {
+  process.stdout.write(Buffer.from("/sandbox\\0/sandbox\\0"));
+  process.exit(0);
+}
+process.stdin.resume();
+process.stdin.on("end", () => process.exit(0));
+`,
+  { mode: 0o755 },
+);
+process.env.NEMOCLAW_OPENSHELL_BIN = path.join(BIN_DIR, "openshell");
+process.env.PATH = `${BIN_DIR}:${ORIGINAL_PATH ?? ""}`;
+const sandboxState = await import("../../src/lib/state/sandbox.js");
 
 afterAll(() => {
   void (ORIGINAL_HOME === undefined
     ? Reflect.deleteProperty(process.env, "HOME")
     : Reflect.set(process.env, "HOME", ORIGINAL_HOME));
+  void (ORIGINAL_PATH === undefined
+    ? Reflect.deleteProperty(process.env, "PATH")
+    : Reflect.set(process.env, "PATH", ORIGINAL_PATH));
+  void (ORIGINAL_OPENSHELL === undefined
+    ? Reflect.deleteProperty(process.env, "NEMOCLAW_OPENSHELL_BIN")
+    : Reflect.set(process.env, "NEMOCLAW_OPENSHELL_BIN", ORIGINAL_OPENSHELL));
   fs.rmSync(TMP_HOME, { recursive: true, force: true });
 });
 
@@ -66,15 +109,27 @@ function writeBackup(overrides: Record<string, unknown> = {}) {
   const timestamp = "2026-04-21T14-00-00-000Z";
   const backupPath = path.join(BACKUPS_ROOT, "alpha", timestamp);
   fs.mkdirSync(backupPath, { recursive: true });
+  const archivePath = path.join(backupPath, "native-home.tar");
+  const tar = spawnSync("tar", ["-cf", archivePath, "--files-from", "/dev/null"]);
+  assert.equal(tar.status, 0, "Could not create native-state test archive");
   const manifest = {
-    version: 1,
+    version: 2,
     sandboxName: "alpha",
     timestamp,
     agentType: "openclaw",
     agentVersion: null,
     expectedVersion: null,
     stateDirs: [],
-    dir: "/sandbox/.openclaw",
+    backedUpDirs: [],
+    failedBackupDirs: [],
+    backupComplete: true,
+    stateFiles: [],
+    nativeState: {
+      root: "/sandbox",
+      archive: "native-home.tar",
+      sha256: createHash("sha256").update(fs.readFileSync(archivePath)).digest("hex"),
+    },
+    dir: "/sandbox",
     backupPath,
     blueprintDigest: null,
     ...overrides,
@@ -105,7 +160,7 @@ function writeOpenClawRegistry(): void {
   );
 }
 
-describe("managed snapshot restore authority", () => {
+describe("managed rebuild restore authority", () => {
   it("binds every normalized restore-relevant manifest field selected by the operator", () => {
     const manifest = writeBackup({ backedUpDirs: ["workspace"], stateDirs: ["workspace"] });
     const selected = sandboxState.getLatestBackup("alpha");
@@ -144,23 +199,26 @@ describe("managed snapshot restore authority", () => {
         }),
       ).toMatchObject({
         success: false,
-        error: sandboxState.MANAGED_SNAPSHOT_RESTORE_AUTHORITY_ERROR,
+        error: sandboxState.MANAGED_REBUILD_RESTORE_AUTHORITY_ERROR,
       });
 
       writeOpenClawRegistry();
       expect(await sandboxState.restoreSandboxState("alpha", manifest.backupPath)).toMatchObject({
         success: false,
-        error: sandboxState.MANAGED_SNAPSHOT_RESTORE_AUTHORITY_ERROR,
+        error: sandboxState.MANAGED_REBUILD_RESTORE_AUTHORITY_ERROR,
       });
 
       const validateBeforeMutation = vi.fn();
-      expect(
-        await sandboxState.restoreRecreatedSandboxState("alpha", manifest.backupPath, {
+      const restored = await sandboxState.restoreRecreatedSandboxState(
+        "alpha",
+        manifest.backupPath,
+        {
           targetAgentType: "openclaw",
           authority: contentAuthority!,
           validateBeforeMutation,
-        }),
-      ).toMatchObject({ success: true });
+        },
+      );
+      expect(restored.success, restored.error).toBe(true);
       expect(validateBeforeMutation).toHaveBeenCalledOnce();
     },
   );

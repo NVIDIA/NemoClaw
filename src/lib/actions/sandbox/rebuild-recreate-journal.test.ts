@@ -733,7 +733,7 @@ describe("rebuild replacement recovery backup", () => {
   });
 
   const deps = () => ({
-    listBackups: () => [{ ...manifest, snapshotVersion: 1 }],
+    listBackups: () => [manifest],
     validateManifest: (_name: string, _agent: string | null | undefined, value: RebuildManifest) =>
       ({ ok: true, manifest: value }) as const,
   });

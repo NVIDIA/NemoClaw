@@ -566,11 +566,10 @@ function backupStateOnly(
   sandboxName: string,
   options: Pick<
     sandboxState.BackupOptions,
-    "name" | "captureStateFile" | "captureStateDirectories" | "capturedOpenClawState"
+    "captureStateFile" | "captureStateDirectories" | "capturedOpenClawState"
   >,
 ): sandboxState.BackupResult {
-  return options.name === undefined &&
-    options.capturedOpenClawState === undefined &&
+  return options.capturedOpenClawState === undefined &&
     options.captureStateFile === undefined &&
     options.captureStateDirectories === undefined
     ? dependencies.backup(sandboxName)
@@ -706,7 +705,7 @@ function captureSnapshotAuthority(
  */
 export function backupSandboxStateWithManagedAuthority(
   sandboxName: string,
-  options: Pick<sandboxState.BackupOptions, "name" | "capturedOpenClawState"> = {},
+  options: Pick<sandboxState.BackupOptions, "capturedOpenClawState"> = {},
   overrides: Pick<SnapshotBackupAuthorityDependencies, "getSandbox"> &
     Partial<Omit<SnapshotBackupAuthorityDependencies, "getSandbox">>,
 ): sandboxState.BackupResult {

@@ -15,8 +15,6 @@ import {
   type RebuildManifest,
   writeRebuildMcpHandoff,
   clearHermesOperatorConfigHandoff,
-  readHermesOperatorConfigHandoff,
-  writeHermesOperatorConfigHandoff,
   writeRebuildPolicyHandoff,
 } from "./sandbox.js";
 
@@ -91,51 +89,21 @@ describe("rebuild manifest publication", () => {
   });
 });
 
-describe("bounded Hermes operator config handoff", () => {
-  it("binds private exact content and removes recovery authority after success", () => {
-    const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-config-handoff-"));
-    tempDirs.push(backupPath);
-    const published = { ...manifest(backupPath), agentType: "hermes" };
-    __test.writeManifest(backupPath, published);
-    const document = '{"version":1,"sandboxName":"alpha","entries":[],"droppedKeys":[]}\n';
-
-    const withHandoff = writeHermesOperatorConfigHandoff(published, document, [
-      "memory.provider",
-      "model.max_tokens",
-    ]);
-    const handoffPath = path.join(backupPath, withHandoff.hermesOperatorConfigHandoff!.file);
-    expect(withHandoff.hermesOperatorConfigHandoff?.keys).toEqual([
-      "memory.provider",
-      "model.max_tokens",
-    ]);
-    expect(readHermesOperatorConfigHandoff(withHandoff)).toBe(document);
-    const descriptor = fs.openSync(handoffPath, fs.constants.O_RDWR | fs.constants.O_NOFOLLOW);
-    try {
-      expect(fs.fstatSync(descriptor).mode & 0o777).toBe(0o600);
-      fs.ftruncateSync(descriptor, 0);
-      fs.writeSync(descriptor, `${document}tampered`, 0, "utf8");
-      fs.fsyncSync(descriptor);
-      expect(readHermesOperatorConfigHandoff(withHandoff)).toBeNull();
-      fs.ftruncateSync(descriptor, 0);
-      fs.writeSync(descriptor, document, 0, "utf8");
-      fs.fsyncSync(descriptor);
-    } finally {
-      fs.closeSync(descriptor);
-    }
-
-    expect(clearHermesOperatorConfigHandoff(withHandoff)).toBe(true);
-    expect(fs.existsSync(handoffPath)).toBe(false);
-    expect(withHandoff).not.toHaveProperty("hermesOperatorConfigHandoff");
-  });
-
+describe("legacy Hermes operator config handoff cleanup", () => {
   it("retains retired cleanup identity after deletion fails and removes it on retry", () => {
     const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-config-cleanup-"));
     tempDirs.push(backupPath);
-    const published = { ...manifest(backupPath), agentType: "hermes" };
-    __test.writeManifest(backupPath, published);
     const document = '{"version":1,"sandboxName":"alpha","entries":[],"droppedKeys":[]}\n';
-    const withHandoff = writeHermesOperatorConfigHandoff(published, document);
+    const sha256 = "a".repeat(64);
+    const file = `hermes-operator-config-handoff.${sha256}.json`;
+    const withHandoff: RebuildManifest = {
+      ...manifest(backupPath),
+      agentType: "hermes",
+      hermesOperatorConfigHandoff: { file, sha256, keys: [] },
+    };
+    __test.writeManifest(backupPath, withHandoff);
     const handoffPath = path.join(backupPath, withHandoff.hermesOperatorConfigHandoff!.file);
+    fs.writeFileSync(handoffPath, document, { mode: 0o600 });
 
     expect(
       clearHermesOperatorConfigHandoff(withHandoff, {
@@ -147,24 +115,11 @@ describe("bounded Hermes operator config handoff", () => {
     expect(withHandoff.hermesOperatorConfigHandoff).toMatchObject({
       retired: true,
     });
-    expect(readHermesOperatorConfigHandoff(withHandoff)).toBeNull();
     expect(fs.existsSync(handoffPath)).toBe(true);
 
     expect(clearHermesOperatorConfigHandoff(withHandoff)).toBe(true);
     expect(fs.existsSync(handoffPath)).toBe(false);
     expect(withHandoff).not.toHaveProperty("hermesOperatorConfigHandoff");
-  });
-
-  it("rejects control characters in the Hermes config key inventory", () => {
-    const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-config-keys-"));
-    tempDirs.push(backupPath);
-    const published = { ...manifest(backupPath), agentType: "hermes" };
-    __test.writeManifest(backupPath, published);
-    const document = '{"version":1,"sandboxName":"alpha","entries":[],"droppedKeys":[]}\n';
-
-    expect(() =>
-      writeHermesOperatorConfigHandoff(published, document, ["model.max_tokens\nforged"]),
-    ).toThrow("key inventory is invalid");
   });
 });
 

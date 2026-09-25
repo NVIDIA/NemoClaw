@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
+import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -23,15 +26,27 @@ function writeBackup(
 ): Record<string, unknown> {
   const backupPath = path.join(BACKUPS_ROOT, sandboxName, timestamp);
   fs.mkdirSync(backupPath, { recursive: true });
+  const archivePath = path.join(backupPath, "native-home.tar");
+  const tar = spawnSync("tar", ["-cf", archivePath, "--files-from", "/dev/null"]);
+  assert.equal(tar.status, 0, "Could not create native-state test archive");
   const manifest = {
-    version: 1,
+    version: 2,
     sandboxName,
     timestamp,
     agentType: "openclaw",
     agentVersion: null,
     expectedVersion: null,
     stateDirs: [],
-    dir: "/sandbox/.openclaw",
+    backedUpDirs: [],
+    failedBackupDirs: [],
+    backupComplete: true,
+    stateFiles: [],
+    nativeState: {
+      root: "/sandbox",
+      archive: "native-home.tar",
+      sha256: createHash("sha256").update(fs.readFileSync(archivePath)).digest("hex"),
+    },
+    dir: "/sandbox",
     backupPath,
     blueprintDigest: null,
     ...overrides,
