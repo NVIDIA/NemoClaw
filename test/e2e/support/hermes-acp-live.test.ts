@@ -14,6 +14,7 @@ import {
   acpMessageContainsPong,
   createHermesAcpPromptEvidenceTracker,
   hermesAcpExchangeEvidencePassed,
+  hermesAcpGatewayStoppedPreconditionPassed,
   hermesAcpLiveHostEnv,
   hermesAcpScenarioTimeoutMs,
   isAcpResponse,
@@ -22,15 +23,99 @@ import {
 } from "../fixtures/hermes-acp-live.ts";
 
 describe("Hermes ACP live evidence boundary", () => {
-  it.each(["installed", "checkout"] as const)(
-    "initializes through the %s adapter",
-    async (installation) => {
+  const shellResult = ({
+    exitCode,
+    signal = null,
+    stderr = "",
+    stdout = "",
+    timedOut = false,
+  }: {
+    exitCode: number;
+    signal?: NodeJS.Signals | null;
+    stderr?: string;
+    stdout?: string;
+    timedOut?: boolean;
+  }) => ({
+    command: ["openshell", "status"],
+    exitCode,
+    signal,
+    timedOut,
+    stdout,
+    stderr,
+    artifacts: { stdout: "", stderr: "", result: "" },
+  });
+
+  it("recognizes the OpenShell 0.0.116 stopped-gateway response (#10947)", () => {
+    expect(
+      hermesAcpGatewayStoppedPreconditionPassed(
+        shellResult({
+          exitCode: 1,
+          stderr:
+            "Error:   × client error (Connect)\n  ├─▶ tcp connect error\n  ╰─▶ Connection refused (os error 111)\n",
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      hermesAcpGatewayStoppedPreconditionPassed(
+        shellResult({ exitCode: 0, stdout: "Status: Disconnected\nGateway: nemoclaw\n" }),
+      ),
+    ).toBe(true);
+    expect(
+      hermesAcpGatewayStoppedPreconditionPassed(
+        shellResult({
+          exitCode: 0,
+          stdout: "Status: Disconnected\nGateway: nemoclaw\n",
+          timedOut: true,
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      hermesAcpGatewayStoppedPreconditionPassed(
+        shellResult({
+          exitCode: 0,
+          signal: "SIGTERM",
+          stdout: "Status: Disconnected\nGateway: nemoclaw\n",
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      hermesAcpGatewayStoppedPreconditionPassed(
+        shellResult({ exitCode: 1, stderr: "Error: permission denied\n" }),
+      ),
+    ).toBe(false);
+    expect(
+      hermesAcpGatewayStoppedPreconditionPassed(
+        shellResult({ exitCode: 1, stderr: "Connection refused", timedOut: true }),
+      ),
+    ).toBe(false);
+    expect(
+      hermesAcpGatewayStoppedPreconditionPassed(
+        shellResult({
+          exitCode: 1,
+          signal: "SIGTERM",
+          stderr:
+            "Error:   × client error (Connect)\n  ├─▶ tcp connect error\n  ╰─▶ Connection refused (os error 111)\n",
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it.each([
+    ["installed", "initialize", 0],
+    ["checkout", "client-disconnect", 1],
+  ] as const)(
+    "%s adapter initializes and completes %s",
+    async (installation, scenario, exitCode) => {
       const artifactDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-acp-launch-"));
       const adapterEntrypoint = path.join(artifactDir, "nemoclaw-acp");
       fs.writeFileSync(
         adapterEntrypoint,
         `#!${process.execPath}
 const readline = require("node:readline");
+process.stdout.on("error", () => {
+  process.exitCode = 1;
+  process.stdin.destroy();
+});
 readline.createInterface({ input: process.stdin }).on("line", line => {
   const request = JSON.parse(line);
   process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: {} }) + "\\n");
@@ -61,15 +146,15 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
           progress,
           sandbox,
           sandboxName: "e2e-hermes",
-          scenario: "initialize",
+          scenario,
         }),
       ).resolves.toBe(true);
       expect(
-        JSON.parse(fs.readFileSync(path.join(artifactDir, "hermes-acp-initialize.json"), "utf8")),
+        JSON.parse(fs.readFileSync(path.join(artifactDir, `hermes-acp-${scenario}.json`), "utf8")),
       ).toMatchObject({
         passed: true,
         initialized: true,
-        exitCode: 0,
+        exitCode,
         adapterProcessAbsent: true,
         remoteProcessAbsent: true,
         timedOut: false,

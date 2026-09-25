@@ -1,0 +1,16 @@
+{
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0\n\nMaintainer-approved exception for the exact PR #10341 budget transition. Adds only deferred-onboarding.test.ts with [12,14,12,14,0]; existing per-file budgets remain unchanged. Approval: https://github.com/NVIDIA/NemoClaw/pull/10341#issuecomment-5799263232. Local hooks and candidate CI may use this branch policy. The independent PR check reads only trusted base policy, so its expected growth failure is explicitly waived for #10341. A changed base or candidate budget invalidates this exception. Remove after #10341 merges.\n\nPR #12305 adds 19 live assertion points for the approved stopped-container recovery proof while retaining healthy-rebuild coverage. Exact budget-transition approval: https://github.com/NVIDIA/NemoClaw/pull/12305#issuecomment-5803852010. No other budget transition is accepted by this entry.\n\nThe same 19-assertion helper is also exercised by rebuild-openclaw, independently of the inherited private-MCP failure. Unique assertion counts are unchanged; one helper file is extracted. Revised exact-transition approval: https://github.com/NVIDIA/NemoClaw/pull/12305#issuecomment-5807159038.",
+  "schemaVersion": 1,
+  "exceptions": [
+    {
+      "pullRequest": 10341,
+      "baseBudgetSha256": "61e9327b9db7db9a5e4acfba45cc171f16324f3f1beeb71a7b34df8d2f33a936",
+      "headBudgetSha256": "375c8f76724ccade48d8bbaafddc582984270350f95efde51211b0ff973a9dbe"
+    },
+    {
+      "pullRequest": 12305,
+      "baseBudgetSha256": "375c8f76724ccade48d8bbaafddc582984270350f95efde51211b0ff973a9dbe",
+      "headBudgetSha256": "a2950bb3b5be2ba76071f3956b8a9a30fb4f3877308542c3947cea3821bfdf28"
+    }
+  ]
+}

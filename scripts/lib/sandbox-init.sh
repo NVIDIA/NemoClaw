@@ -39,7 +39,6 @@ source "${_SANDBOX_INIT_DIR}/sandbox-rlimits.sh"
 # /tmp/nemoclaw-proxy-env.sh   root       444   root     sandbox   YES (/etc shell hooks)
 # /tmp/gateway.log             gateway    644   gateway  all       no (world-readable for diagnostics)
 # /tmp/auto-pair.log           root*      600   root*    inherited no
-# /tmp/nemoclaw-plugin-refresh.log sandbox 600   sandbox  sandbox   no (OpenClaw refresh output)
 # /tmp/.npm-cache/             sandbox    755   sandbox  sandbox   no (tool data)
 # /tmp/.cache/                 sandbox    755   sandbox  sandbox   no (tool data)
 # /tmp/.gnupg/                 sandbox    700   sandbox  sandbox   no (key data)
@@ -134,13 +133,8 @@ validate_tmp_permissions() {
   done
 
   # Restricted log files — gateway.log may be 600 (Hermes) or 644 (OpenClaw,
-  # world-readable for diagnostics). auto-pair.log is 600. The plugin-refresh
-  # log is written after privilege drop as sandbox, so keep it private and
-  # reject symlinks/non-regular files before launching services. OpenClaw's
-  # entrypoint sets PLUGIN_REFRESH_LOG; shared tests can override it while
-  # production keeps the fixed /tmp path.
-  local plugin_refresh_log="${PLUGIN_REFRESH_LOG:-/tmp/nemoclaw-plugin-refresh.log}"
-  for f in /tmp/gateway.log /tmp/auto-pair.log "$plugin_refresh_log"; do
+  # world-readable for diagnostics). auto-pair.log is 600.
+  for f in /tmp/gateway.log /tmp/auto-pair.log; do
     [ -e "$f" ] || [ -L "$f" ] || continue
     if [ -L "$f" ]; then
       echo "[SECURITY] $f is a symlink (expected regular log file)" >&2
@@ -162,16 +156,6 @@ validate_tmp_permissions() {
           failed=1
         fi
         ;;
-      */nemoclaw-plugin-refresh.log)
-        if [ "$perms" != "600" ]; then
-          echo "[SECURITY] $f has unexpected permissions: mode=$perms (expected 600)" >&2
-          failed=1
-        fi
-        if [ "$(id -u)" -eq 0 ] && [ "$owner" != "sandbox" ]; then
-          echo "[SECURITY] $f has unsafe owner: owner=$owner (expected sandbox)" >&2
-          failed=1
-        fi
-        ;;
       *)
         if [ "$perms" != "600" ]; then
           echo "[SECURITY] $f has unexpected permissions: mode=$perms (expected 600)" >&2
@@ -185,42 +169,14 @@ validate_tmp_permissions() {
 }
 
 # ── Capability dropping ──────────────────────────────────────────
-# CIS Docker Benchmark 5.3: containers should not run with default caps.
-# OpenShell manages the container runtime so we cannot pass --cap-drop=ALL
-# to docker run. Instead, drop dangerous capabilities from the bounding set
-# at startup using capsh. The bounding set limits what caps any child process
-# (gateway, sandbox, agent) can ever acquire.
+# OpenShell-managed entrypoints do not call this section. Direct-root
+# entrypoints can still need capsh. Their retained bounding caps
+# (chown, fowner, setuid, setgid, kill) support initialization and supervised
+# shutdown; init_step_down_prefixes can remove them when changing user.
+# NEMOCLAW_REQUIRE_CAP_DROP=1 retains fail-closed verification for unavailable
+# drops. The default preserves the legacy warn-and-continue behavior.
 #
-# Dropped (issue #3280): cap_sys_admin, cap_sys_ptrace plus the historical
-# set (cap_net_raw, cap_dac_override, cap_sys_chroot, cap_fsetid,
-# cap_setfcap, cap_mknod, cap_audit_write, cap_net_bind_service).
-# Dashboard listens on a high port (default 18789, validated >=1024 in
-# nemoclaw-start.sh), so cap_net_bind_service is unconditionally unused.
-#
-# Kept (each load-bearing — do not drop without an entrypoint refactor):
-#   cap_chown, cap_fowner — needed to chown/chmod files we did not create
-#     after dropping cap_dac_override (see #2659).
-#   cap_setuid, cap_setgid — required by setpriv to step down from root into
-#     the sandbox/gateway UIDs during entrypoint privilege separation.
-#   cap_kill — root PID 1 terminates stepped-down gateway and sandbox child
-#     processes during supervised shutdown. The managed-image security test
-#     separately verifies that sandbox cannot signal gateway-user processes.
-# When the runtime cannot drop the bounding set (no CAP_SETPCAP, or capsh
-# missing), the default is to warn and continue. Set NEMOCLAW_REQUIRE_CAP_DROP=1
-# to make that case fail-closed instead — see enforce_cap_drop_if_required.
-#
-# Ref: https://github.com/NVIDIA/NemoClaw/issues/797
-#      https://github.com/NVIDIA/NemoClaw/issues/3280
-#      https://github.com/NVIDIA/OpenShell/issues/1452 (connect-shell scope)
-#
-# Usage:
-#   drop_capabilities /usr/local/bin/nemoclaw-start "$@"
-#
-# Single source of truth for the dangerous capabilities the entrypoint drops
-# and (in strict mode) verifies are gone. "bit:name" pairs; bit numbers per
-# /usr/include/linux/capability.h. Both the capsh --drop list and
-# dangerous_caps_in_capbnd() derive from this array, so the drop-set and the
-# strict-mode verify-set cannot drift apart (issue #3280).
+# Single drop/verification list, with bit numbers from linux/capability.h.
 DANGEROUS_CAPS=(
   "21:cap_sys_admin"
   "19:cap_sys_ptrace"
@@ -243,33 +199,57 @@ dangerous_caps_drop_list() {
   printf '%s' "$out"
 }
 
-# The first argument is the absolute path to the entrypoint script to
-# re-exec via capsh. Remaining arguments are forwarded.
+# Use built-ins so verification observes the calling shell rather than an
+# exec'd reader whose capability state can differ. An explicit file argument
+# permits deterministic direct-root fixtures.
+read_capability_bounding_set() {
+  local key value rest seen=0 cap_bnd_hex=""
+  while IFS=$' \t' read -r key value rest; do
+    [ "$key" = CapBnd: ] || continue
+    [ "$seen" -eq 0 ] || return 1
+    seen=1
+    cap_bnd_hex="$value"
+    [ -z "$rest" ] || return 1
+  done <"$1" || return 1
+  [ "$seen" -eq 1 ] && [ -n "$cap_bnd_hex" ] || return 1
+  printf '%s\n' "$cap_bnd_hex"
+}
+
+# The first argument is the absolute entrypoint path; remaining args are forwarded.
 drop_capabilities() {
   local entrypoint="$1"
   shift
 
-  if [ "${NEMOCLAW_CAPS_DROPPED:-}" != "1" ] && command -v capsh >/dev/null 2>&1; then
-    # capsh --drop requires CAP_SETPCAP in the bounding set. OpenShell's
-    # sandbox runtime may strip it, so check before attempting the drop.
-    if capsh --has-p=cap_setpcap 2>/dev/null; then
-      export NEMOCLAW_CAPS_DROPPED=1
-      exec capsh \
-        --drop="$(dangerous_caps_drop_list)" \
-        -- -c "exec $entrypoint \"\$@\"" -- "$@"
+  local cap_bnd_hex present reason=""
+  if ! cap_bnd_hex="$(read_capability_bounding_set /proc/self/status 2>/dev/null)"; then
+    reason="could not read bounding set from /proc/self/status"
+  else
+    if ! present="$(dangerous_caps_in_capbnd "$cap_bnd_hex")"; then
+      reason="could not parse bounding set (CapBnd=${cap_bnd_hex})"
+    elif [ -n "$present" ]; then
+      reason="dangerous caps remain in bounding set (CapBnd=${cap_bnd_hex}): ${present}"
     fi
-    # CAP_SETPCAP missing (or the exec above failed): the drop could not run.
-    # Surface the residual bounding-set caps in the log.
-    report_residual_capabilities || true
-  elif [ "${NEMOCLAW_CAPS_DROPPED:-}" != "1" ]; then
-    echo "[SECURITY WARNING] capsh not available — running with default capabilities" >&2
   fi
 
-  # Opt-in fail-closed gate (issue #3280). Deliberately runs on EVERY path,
-  # including when NEMOCLAW_CAPS_DROPPED is already set: it verifies the actual
-  # bounding set rather than trusting that sentinel, so an inherited marker
-  # cannot mask a drop that never happened.
-  enforce_cap_drop_if_required
+  # Keep one capsh attempt for legacy entrypoints even when /proc is unreadable.
+  # The sentinel prevents re-execution loops; it never proves a successful drop.
+  if [ "${NEMOCLAW_CAPS_DROPPED:-}" != "1" ] \
+    && command -v capsh >/dev/null 2>&1 \
+    && capsh --has-p=cap_setpcap 2>/dev/null; then
+    export NEMOCLAW_CAPS_DROPPED=1
+    # capsh expands the positional parameters in its child shell.
+    # shellcheck disable=SC2016
+    exec capsh \
+      --drop="$(dangerous_caps_drop_list)" \
+      -- -c 'exec "$0" "$@"' "$entrypoint" "$@"
+  fi
+
+  [ -z "$reason" ] && return 0
+  if [ "${NEMOCLAW_REQUIRE_CAP_DROP:-}" = "1" ]; then
+    echo "[SECURITY] Refusing to start sandbox: ${reason}" >&2
+    exit 1
+  fi
+  echo "[SECURITY WARNING] Cannot drop bounding-set capabilities with capsh: ${reason}" >&2
 }
 
 # Pure decode: given a CapBnd hex string, echo the comma-separated list of the
@@ -299,83 +279,6 @@ dangerous_caps_in_capbnd() {
   printf '%s' "$present"
 }
 
-# Opt-in fail-closed enforcement (issue #3280). When NEMOCLAW_REQUIRE_CAP_DROP=1
-# the sandbox refuses to start unless the bounding set is provably free of the
-# dangerous capabilities. It verifies by reading the ACTUAL CapBnd — NOT by
-# trusting the NEMOCLAW_CAPS_DROPPED sentinel, which an inherited environment
-# could forge to bypass the gate.
-#
-# DEFAULT (unset) IS WARN-AND-CONTINUE — no host loses the ability to boot. This
-# is the lesson of #4266/#4341: a default-fail-closed drop broke EVERY host that
-# does not grant CAP_SETPCAP (GitHub runners, Brev shadecloud, Colossus Ubuntu
-# 24.04, Docker Desktop, WSL) and was reverted within hours. Inverting the
-# default to opt-in keeps that regression off by default.
-#
-# Scope: the AGENT process tree only. A `nemoclaw connect` shell is spawned by
-# the container runtime outside that tree and inherits the container's OCI
-# bounding set; tightening that requires cap_drop at sandbox create, tracked
-# upstream in NVIDIA/OpenShell#1452.
-#
-# Test seam: NEMOCLAW_PROC_STATUS overrides the status source so unit tests can
-# feed a known CapBnd fixture without a real /proc.
-enforce_cap_drop_if_required() {
-  [ "${NEMOCLAW_REQUIRE_CAP_DROP:-}" = "1" ] || return 0
-
-  local status_path="${NEMOCLAW_PROC_STATUS:-/proc/self/status}"
-  local cap_bnd_hex present reason=""
-  cap_bnd_hex=$(awk '/^CapBnd:/{print $2}' "$status_path" 2>/dev/null || true)
-  if [ -z "$cap_bnd_hex" ]; then
-    # Cannot verify → in strict mode, refuse rather than assume safety.
-    reason="could not read bounding set from ${status_path} — cannot verify drop"
-  elif ! present="$(dangerous_caps_in_capbnd "$cap_bnd_hex")"; then
-    # Non-empty but unparseable CapBnd is equally unverifiable → refuse.
-    reason="could not parse bounding set (CapBnd=${cap_bnd_hex}) — cannot verify drop"
-  elif [ -n "$present" ]; then
-    reason="dangerous caps remain in bounding set (CapBnd=${cap_bnd_hex}): ${present}"
-  fi
-  [ -n "$reason" ] || return 0
-
-  cat >&2 <<'EOF'
-
-┌─ [SECURITY] Refusing to start sandbox: bounding-set capability drop failed ──
-│
-│ NEMOCLAW_REQUIRE_CAP_DROP=1 is set, so NemoClaw refuses to start a sandbox
-│ that still holds dangerous bounding-set capabilities. The runtime could not
-│ drop them (capsh or CAP_SETPCAP unavailable on this host), so they remain.
-│
-│ To run anyway with the weaker (warn-only) posture, unset the variable:
-│   unset NEMOCLAW_REQUIRE_CAP_DROP
-│
-│ Tracking: https://github.com/NVIDIA/NemoClaw/issues/3280
-└──────────────────────────────────────────────────────────────────────────────
-EOF
-  echo "[SECURITY] ${reason}" >&2
-  exit 1
-}
-
-# Emit a loud diagnostic when capsh-based dropping is unavailable so that
-# residual dangerous bounding-set caps surface in logs instead of being
-# silently inherited from the container runtime. Called from the
-# CAP_SETPCAP-missing fallback path of drop_capabilities() (issue #3280).
-report_residual_capabilities() {
-  echo "[SECURITY] CAP_SETPCAP not available — cannot drop bounding-set caps via capsh" >&2
-
-  local status_path="${NEMOCLAW_PROC_STATUS:-/proc/self/status}"
-  local cap_bnd_hex present
-  if ! cap_bnd_hex=$(awk '/^CapBnd:/{print $2}' "$status_path" 2>/dev/null) \
-    || [ -z "$cap_bnd_hex" ]; then
-    echo "[SECURITY] Could not read ${status_path} — residual caps unknown" >&2
-    return 0
-  fi
-  echo "[SECURITY] Residual CapBnd=${cap_bnd_hex}" >&2
-
-  if ! present="$(dangerous_caps_in_capbnd "$cap_bnd_hex")"; then
-    echo "[SECURITY] Could not parse CapBnd=${cap_bnd_hex} — residual caps unknown" >&2
-  elif [ -n "$present" ]; then
-    echo "[SECURITY] Dangerous caps remain in bounding set: ${present}" >&2
-  fi
-}
-
 # ── Privilege step-down (issue #3280 follow-up) ──────────────────
 # Uses `setpriv` for every root-to-user transition. When CAP_SETPCAP is
 # available, setpriv also strips the load-bearing caps (cap_setuid,
@@ -395,7 +298,7 @@ report_residual_capabilities() {
 # If CAP_SETPCAP is unavailable, setpriv still changes identity and initializes
 # supplementary groups, but cannot remove the remaining load-bearing caps from
 # the bounding set. That case is logged consistently with
-# report_residual_capabilities. If setpriv itself is unavailable, the prefix
+# drop_capabilities. If setpriv itself is unavailable, the prefix
 # invokes a fail-closed helper instead of risking execution as root.
 # File-scope array declarations: bash 3.2 (macOS) does not accept `declare -g`,
 # but plain assignment at file scope is global by default. Inside
@@ -457,7 +360,9 @@ init_step_down_prefixes() {
   # shellcheck disable=SC2034  # consumed by entrypoint scripts (cross-file)
   STEP_DOWN_PREFIX_GATEWAY=("${gateway_prefix[@]}")
 }
-init_step_down_prefixes
+if [ "$(id -u)" -eq 0 ]; then
+  init_step_down_prefixes
+fi
 
 # ── Config integrity check ──────────────────────────────────────
 # The config hash was pinned at build time. If it doesn't match,
@@ -634,4 +539,224 @@ for item in plan.get("channels", []):
         seen.add(channel)
         print(channel)
 PY
+}
+
+# Process observation helpers used for launch health and signal cleanup.
+
+gateway_control_pid_is_live() {
+  local pid="$1"
+  local state
+  case "$pid" in
+    '' | 0 | 1 | *[!0-9]*) return 1 ;;
+  esac
+  kill -0 "$pid" 2>/dev/null || return 1
+  # kill -0 succeeds for an unreaped zombie. Do not record or trust a process
+  # that can no longer own a listener or handle a termination signal.
+  if command -v ps >/dev/null 2>&1; then
+    state="$(ps -o stat= -p "$pid" 2>/dev/null | awk 'NR == 1 { print $1 }')"
+    [ -n "$state" ] || return 1
+    case "$state" in
+      Z*) return 1 ;;
+    esac
+  elif [ -r "/proc/${pid}/stat" ]; then
+    state="$(sed -E 's/^[0-9]+ \(.*\) ([^ ]).*/\1/' "/proc/${pid}/stat" 2>/dev/null || true)"
+    [ "$state" != "Z" ] || return 1
+  fi
+  return 0
+}
+
+gateway_control_proc_root() {
+  if [ "${_NEMOCLAW_PROC_ROOT+x}" = x ]; then
+    printf '%s\n' "$_NEMOCLAW_PROC_ROOT"
+  elif [ "${_HERMES_PROC_ROOT+x}" = x ]; then
+    printf '%s\n' "$_HERMES_PROC_ROOT"
+  else
+    printf '/proc\n'
+  fi
+}
+
+gateway_control_proc_root_is_explicit() {
+  [ "${_NEMOCLAW_PROC_ROOT+x}" = x ] || [ "${_HERMES_PROC_ROOT+x}" = x ]
+}
+
+gateway_control_pid_start_identity() {
+  local pid="$1"
+  local proc_root stat_line stat_suffix started
+  case "$pid" in
+    '' | 0 | 1 | *[!0-9]*) return 1 ;;
+  esac
+  proc_root="$(gateway_control_proc_root)" || return 1
+  if [ -r "${proc_root}/${pid}/stat" ]; then
+    IFS= read -r stat_line <"${proc_root}/${pid}/stat" || return 1
+    stat_suffix="${stat_line##*) }"
+    [ "$stat_suffix" != "$stat_line" ] || return 1
+    # shellcheck disable=SC2086  # intentional field split of proc stat suffix
+    set -- $stat_suffix
+    [ "$#" -ge 20 ] || return 1
+    case "${20}" in
+      '' | *[!0-9]*) return 1 ;;
+    esac
+    printf '%s\n' "${20}"
+    return 0
+  fi
+  gateway_control_proc_root_is_explicit && return 1
+  command -v ps >/dev/null 2>&1 || return 1
+  started="$(LC_ALL=C ps -o lstart= -p "$pid" 2>/dev/null | awk 'NR == 1 { sub(/^[[:space:]]+/, ""); sub(/[[:space:]]+$/, ""); print; exit }')"
+  [ -n "$started" ] || return 1
+  printf 'ps:%s\n' "${started//[[:space:]]/_}"
+}
+
+gateway_control_pid_state() {
+  local pid="$1"
+  local proc_root stat_line stat_suffix state
+  case "$pid" in
+    '' | 0 | 1 | *[!0-9]*) return 1 ;;
+  esac
+  proc_root="$(gateway_control_proc_root)" || return 1
+  if [ -r "${proc_root}/${pid}/stat" ]; then
+    IFS= read -r stat_line <"${proc_root}/${pid}/stat" || return 1
+    stat_suffix="${stat_line##*) }"
+    [ "$stat_suffix" != "$stat_line" ] || return 1
+    # shellcheck disable=SC2086  # intentional field split of proc stat suffix
+    set -- $stat_suffix
+    [ "$#" -ge 1 ] || return 1
+    state="$1"
+  else
+    gateway_control_proc_root_is_explicit && return 1
+    command -v ps >/dev/null 2>&1 || return 1
+    state="$(ps -o stat= -p "$pid" 2>/dev/null | awk 'NR == 1 { print $1; exit }')"
+  fi
+  [ -n "$state" ] || return 1
+  printf '%s\n' "$state"
+}
+
+gateway_control_pid_matches_start_identity() {
+  local pid="$1"
+  local expected_start_identity="$2"
+  local current_start_identity
+  [ -n "$expected_start_identity" ] || return 1
+  current_start_identity="$(gateway_control_pid_start_identity "$pid")" || return 1
+  [ "$current_start_identity" = "$expected_start_identity" ]
+}
+
+gateway_control_pid_owns_tcp_listener() {
+  local pid="$1"
+  local port="$2"
+  local proc_root
+  local port_hex listener_inodes inode fd_path target listener_inode
+  if [ "$#" -ge 3 ]; then
+    proc_root="$3"
+  else
+    proc_root="$(gateway_control_proc_root)" || return 1
+  fi
+  case "$port" in
+    '' | *[!0-9]*) return 1 ;;
+  esac
+  [ "$port" -ge 1 ] && [ "$port" -le 65535 ] || return 1
+  gateway_control_pid_is_live "$pid" || return 1
+
+  # Match the listener socket inode to an fd owned by the exact tracked child.
+  # Callers cross a UID boundary before invoking this helper when PID 1 cannot
+  # inspect the gateway/dashboard fd directory after dropping CAP_SYS_PTRACE
+  # and CAP_DAC_OVERRIDE.
+  port_hex="$(printf '%04X' "$port")"
+  listener_inodes="$(awk -v expected_port="$port_hex" '
+    {
+      split($2, local_address, ":")
+      if (toupper(local_address[2]) == expected_port && $4 == "0A") {
+        print $10
+      }
+    }
+  ' "${proc_root}/net/tcp" "${proc_root}/net/tcp6" 2>/dev/null || true)"
+  [ -n "$listener_inodes" ] || return 1
+
+  for fd_path in "${proc_root}/${pid}"/fd/*; do
+    [ -L "$fd_path" ] || continue
+    target="$(readlink "$fd_path" 2>/dev/null || true)"
+    case "$target" in
+      'socket:['*']')
+        inode="${target#socket:[}"
+        inode="${inode%]}"
+        ;;
+      *) continue ;;
+    esac
+    while IFS= read -r listener_inode; do
+      [ "$inode" = "$listener_inode" ] && return 0
+    done <<EOF
+$listener_inodes
+EOF
+  done
+  return 1
+}
+
+gateway_control_stop_tracked_pid() {
+  local pid="$1"
+  local expected_start_identity="${2:-}"
+  local state
+  local attempts=0
+  case "$pid" in
+    '' | 0 | 1 | *[!0-9]*) return 0 ;;
+  esac
+  [ -n "$expected_start_identity" ] || return 1
+
+  # A missing or different identity means the tracked child is already gone.
+  # Never signal or wait for the process currently occupying a reused PID.
+  gateway_control_pid_matches_start_identity "$pid" "$expected_start_identity" || return 0
+  state="$(gateway_control_pid_state "$pid")" || return 0
+  case "$state" in
+    Z*)
+      if gateway_control_pid_matches_start_identity "$pid" "$expected_start_identity"; then
+        wait "$pid" 2>/dev/null || true
+      fi
+      return 0
+      ;;
+  esac
+
+  # Revalidate immediately before every signal. A numeric PID alone is never
+  # authority to terminate a process.
+  gateway_control_pid_matches_start_identity "$pid" "$expected_start_identity" || return 0
+  kill -TERM "$pid" 2>/dev/null || true
+  while [ "$attempts" -lt 50 ]; do
+    gateway_control_pid_matches_start_identity "$pid" "$expected_start_identity" || return 0
+    state="$(gateway_control_pid_state "$pid")" || return 0
+    case "$state" in
+      Z*)
+        if gateway_control_pid_matches_start_identity "$pid" "$expected_start_identity"; then
+          wait "$pid" 2>/dev/null || true
+        fi
+        return 0
+        ;;
+    esac
+    sleep 0.1
+    attempts=$((attempts + 1))
+  done
+  gateway_control_pid_matches_start_identity "$pid" "$expected_start_identity" || return 0
+  state="$(gateway_control_pid_state "$pid")" || return 0
+  case "$state" in
+    Z*)
+      if gateway_control_pid_matches_start_identity "$pid" "$expected_start_identity"; then
+        wait "$pid" 2>/dev/null || true
+      fi
+      return 0
+      ;;
+  esac
+  gateway_control_pid_matches_start_identity "$pid" "$expected_start_identity" || return 0
+  kill -KILL "$pid" 2>/dev/null || true
+
+  attempts=0
+  while [ "$attempts" -lt 50 ]; do
+    gateway_control_pid_matches_start_identity "$pid" "$expected_start_identity" || return 0
+    state="$(gateway_control_pid_state "$pid")" || return 0
+    case "$state" in
+      Z*)
+        if gateway_control_pid_matches_start_identity "$pid" "$expected_start_identity"; then
+          wait "$pid" 2>/dev/null || true
+        fi
+        return 0
+        ;;
+    esac
+    sleep 0.1
+    attempts=$((attempts + 1))
+  done
+  return 1
 }

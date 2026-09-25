@@ -43,6 +43,12 @@ export type CliRunResult = {
   out: string;
 };
 
+export type CliScriptRunOptions = {
+  env?: Record<string, string | undefined>;
+  timeout?: number;
+  removeImplicitHome?: (home: string) => void;
+};
+
 export type CliErrorShape = {
   status?: number;
   stdout?: string | Buffer;
@@ -176,6 +182,21 @@ export function runWithEnvAsync(
   return runWithEnvInternalAsync(args, env, timeout);
 }
 
+export function runCliScriptAsync(
+  script: string,
+  args: string,
+  options: CliScriptRunOptions = {},
+): Promise<CliRunResult> {
+  return runWithEnvInternalAsync(
+    args,
+    options.env ?? {},
+    options.timeout ?? execTimeout(),
+    undefined,
+    script,
+    options.removeImplicitHome,
+  );
+}
+
 export function runWithInput(
   args: string,
   input: string,
@@ -183,6 +204,15 @@ export function runWithInput(
   timeout: number = execTimeout(),
 ): CliRunResult {
   return runWithEnvInternal(args, env, timeout, input);
+}
+
+export function runWithInputAsync(
+  args: string,
+  input: string,
+  env: Record<string, string | undefined> = {},
+  timeout: number = execTimeout(),
+): Promise<CliRunResult> {
+  return runWithEnvInternalAsync(args, env, timeout, input);
 }
 
 function runWithEnvInternal(
@@ -233,6 +263,10 @@ async function runWithEnvInternalAsync(
   args: string,
   env: Record<string, string | undefined>,
   timeout: number,
+  input?: string,
+  script: string = CLI,
+  removeImplicitHome: (home: string) => void = (home) =>
+    fs.rmSync(home, { force: true, recursive: true }),
 ): Promise<CliRunResult> {
   const parsedArgs = splitCliArgs(args);
   const mergeStderrOnSuccess = parsedArgs.includes("2>&1");
@@ -244,7 +278,7 @@ async function runWithEnvInternalAsync(
     return await new Promise<CliRunResult>((resolve) => {
       const child = execFile(
         process.execPath,
-        [CLI, ...cliArgs],
+        [script, ...cliArgs],
         {
           encoding: "utf-8",
           timeout,
@@ -267,10 +301,10 @@ async function runWithEnvInternalAsync(
           resolve({ code, out: `${stdout}${stderr}${errorOutput}` });
         },
       );
-      child.stdin?.end();
+      child.stdin?.end(input);
     });
   } finally {
-    if (implicitHome) fs.rmSync(implicitHome, { force: true, recursive: true });
+    if (implicitHome) removeImplicitHome(implicitHome);
   }
 }
 

@@ -4,8 +4,13 @@
 import { dockerContainerInspectFormat } from "../../adapters/docker/inspect";
 import { dockerCapture } from "../../adapters/docker/run";
 import { resolveSandboxContainerOwner } from "../../domain/sandbox/container-owner";
-import { findLabeledSandboxContainers } from "../../onboard/docker-driver-sandbox-recovery";
+import { findLabeledSandboxContainers } from "../../onboard/docker-driver-container-observation";
 import * as registry from "../../state/registry";
+import {
+  findSandboxAcrossGatewayRoots,
+  listPublishedSandboxNamesAcrossGatewayRoots,
+} from "../../state/registry/cross-port";
+import type { SandboxEntry } from "../../state/registry/types";
 
 export type DockerHealthState = "healthy" | "unhealthy" | "starting" | "none" | "unknown";
 
@@ -26,10 +31,12 @@ export interface SandboxDockerRuntime {
   paused: boolean;
   running: boolean;
   containerName: string | null;
+  /** True only after a successful owned-container observation returned no rows. */
+  containerAbsenceConfirmed: boolean;
 }
 
 interface ResolveDeps {
-  getSandbox: (name: string) => registry.SandboxEntry | null;
+  getSandbox: (name: string) => SandboxEntry | null;
   listSandboxNames: () => string[];
   dockerPsNames: () => string;
   findLabeledSandboxContainers: typeof findLabeledSandboxContainers;
@@ -37,15 +44,29 @@ interface ResolveDeps {
   dockerInspectPaused: (containerName: string) => string;
 }
 
+export function listPublishedSandboxNamesForDockerRuntime(): string[] {
+  return listPublishedSandboxNamesAcrossGatewayRoots();
+}
+
+function missingDockerRuntime(containerAbsenceConfirmed = false): SandboxDockerRuntime {
+  return {
+    health: "none",
+    paused: false,
+    running: false,
+    containerName: null,
+    containerAbsenceConfirmed,
+  };
+}
+
 const defaultDeps: ResolveDeps = {
-  getSandbox: (name) => registry.getSandbox(name),
-  listSandboxNames: () =>
-    registry
-      .listSandboxes()
-      .sandboxes.filter(registry.isPublishedSandboxRegistration)
-      .map((entry) => entry.name),
+  getSandbox: (name) => {
+    const entry = findSandboxAcrossGatewayRoots(name)?.entry ?? null;
+    return entry && registry.isPublishedSandboxRegistration(entry) ? entry : null;
+  },
+  listSandboxNames: listPublishedSandboxNamesForDockerRuntime,
   dockerPsNames: () => dockerCapture(["ps", "--format", "{{.Names}}"], { ignoreError: true }),
-  findLabeledSandboxContainers: (sandboxName) => findLabeledSandboxContainers(sandboxName),
+  findLabeledSandboxContainers: (sandboxName) =>
+    findLabeledSandboxContainers(sandboxName, { ignoreError: false }),
   dockerInspectHealth: (containerName) =>
     dockerContainerInspectFormat(
       "{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}",
@@ -129,16 +150,16 @@ export function getSandboxDockerRuntime(
   const deps: ResolveDeps = { ...defaultDeps, ...depsOverride };
   try {
     if (deps.getSandbox(sandboxName)?.openshellDriver !== "docker") {
-      return { health: "none", paused: false, running: false, containerName: null };
+      return missingDockerRuntime();
     }
   } catch {
-    return { health: "none", paused: false, running: false, containerName: null };
+    return missingDockerRuntime();
   }
   let labeledContainers: ReturnType<typeof findLabeledSandboxContainers>;
   try {
     labeledContainers = deps.findLabeledSandboxContainers(sandboxName);
   } catch {
-    return { health: "none", paused: false, running: false, containerName: null };
+    return missingDockerRuntime();
   }
   const runningNames = labeledContainers
     .filter((container) => container.running)
@@ -155,7 +176,7 @@ export function getSandboxDockerRuntime(
       dockerPsNames: () => allNames,
     });
   if (!containerName) {
-    return { health: "none", paused: false, running: false, containerName: null };
+    return missingDockerRuntime(labeledContainers.length === 0);
   }
   const running = labeledContainers.some(
     (container) => container.name === containerName && container.running,
@@ -172,5 +193,5 @@ export function getSandboxDockerRuntime(
   } catch {
     paused = false;
   }
-  return { health, paused, running, containerName };
+  return { health, paused, running, containerName, containerAbsenceConfirmed: false };
 }

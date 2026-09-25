@@ -3,6 +3,7 @@
 
 import { randomUUID } from "node:crypto";
 import {
+  aggregateVerifiedGpuCapacity,
   escapeGpuNameForTerminal,
   NVIDIA_CONTAINER_GPU_PROOF_IMAGE,
   NVIDIA_CONTAINER_GPU_PROOF_SCRIPT,
@@ -15,7 +16,7 @@ import type { RuntimeProviderBundle, RuntimeProviderOwnedContainerResource } fro
 // both linux/amd64 and linux/arm64 images, and its ARM64 image ships a genuine
 // aarch64 CUDA binary. A real kernel execution is the device-usability proof;
 // the same container then reports capacity for the device namespace it proved.
-const NVIDIA_CONTAINER_GPU_CAPACITY_MARKER = "NEMOCLAW_GPU_MEMORY_MIB=";
+const NVIDIA_CONTAINER_GPU_DEVICE_MARKER = "NEMOCLAW_GPU_DEVICE=";
 
 // The proof may pull the image on first use. Keep the historical environment
 // variable as a compatibility surface while the execution owner is provider-neutral.
@@ -50,26 +51,64 @@ function resolveRuntimeProvider(): RuntimeProviderBundle {
   ).resolveConfiguredRuntimeProvider();
 }
 
-export function parseContainerGpuProofCapacity(
+export function parseContainerGpuProofDevices(
   output: string,
-): ContainerGpuProofResult["verifiedCapacity"] | null {
-  const firstMarker = output.indexOf(NVIDIA_CONTAINER_GPU_CAPACITY_MARKER);
-  if (firstMarker < 0 || firstMarker !== output.lastIndexOf(NVIDIA_CONTAINER_GPU_CAPACITY_MARKER)) {
-    return null;
-  }
-  const value = output.slice(firstMarker + NVIDIA_CONTAINER_GPU_CAPACITY_MARKER.length).trim();
-  const match = /^([1-9][0-9]*)\s*,\s*([0-9]+)$/u.exec(value);
-  if (!match) return null;
-  const totalMemoryMB = Number(match[1]);
-  const availableMemoryMB = Number(match[2]);
+): ContainerGpuProofResult["verifiedDevices"] | null {
+  const rows = output
+    .split("\n")
+    .filter((line) => line.startsWith(NVIDIA_CONTAINER_GPU_DEVICE_MARKER))
+    .map((line) => line.slice(NVIDIA_CONTAINER_GPU_DEVICE_MARKER.length));
+  if (rows.length === 0) return null;
+  if (rows.length > 16) return null;
+  const indices = new Set<number>();
+  const uuids = new Set<string>();
+  const devices = rows.map((row) => {
+    const uuidSeparator = row.indexOf(",");
+    const uuid = row.slice(0, uuidSeparator).trim();
+    const indexedDeviceRow = row.slice(uuidSeparator + 1);
+    const indexSeparator = indexedDeviceRow.indexOf(",");
+    const indexRaw = indexedDeviceRow.slice(0, indexSeparator).trim();
+    const deviceRow = indexedDeviceRow.slice(indexSeparator + 1);
+    const freeSeparator = deviceRow.lastIndexOf(",");
+    const beforeFree = deviceRow.slice(0, freeSeparator);
+    const totalSeparator = beforeFree.lastIndexOf(",");
+    const name = beforeFree.slice(0, totalSeparator).trim();
+    const totalMemoryRaw = beforeFree.slice(totalSeparator + 1).trim();
+    const availableMemoryRaw = deviceRow.slice(freeSeparator + 1).trim();
+    const totalMemoryMB = /^\d+$/u.test(totalMemoryRaw) ? Number(totalMemoryRaw) : Number.NaN;
+    const availableMemoryMB = /^\d+$/u.test(availableMemoryRaw)
+      ? Number(availableMemoryRaw)
+      : Number.NaN;
+    const index = /^\d+$/u.test(indexRaw) ? Number(indexRaw) : -1;
+    const duplicateIndex = indices.has(index);
+    const duplicateUuid = uuids.has(uuid);
+    indices.add(index);
+    uuids.add(uuid);
+    return { name, totalMemoryMB, availableMemoryMB, uuid, index, duplicateIndex, duplicateUuid };
+  });
   if (
-    !Number.isSafeInteger(totalMemoryMB) ||
-    !Number.isSafeInteger(availableMemoryMB) ||
-    availableMemoryMB > totalMemoryMB
+    devices.some(
+      ({ name, totalMemoryMB, availableMemoryMB, uuid, index, duplicateIndex, duplicateUuid }) =>
+        !name ||
+        !/^GPU-[0-9a-f-]+$/iu.test(uuid) ||
+        duplicateUuid ||
+        !Number.isSafeInteger(index) ||
+        index < 0 ||
+        duplicateIndex ||
+        !Number.isSafeInteger(totalMemoryMB) ||
+        totalMemoryMB <= 0 ||
+        !Number.isSafeInteger(availableMemoryMB) ||
+        availableMemoryMB < 0 ||
+        availableMemoryMB > totalMemoryMB,
+    )
   ) {
     return null;
   }
-  return { totalMemoryMB, availableMemoryMB };
+  return devices.map(({ name, totalMemoryMB, availableMemoryMB }) => ({
+    name,
+    totalMemoryMB,
+    availableMemoryMB,
+  }));
 }
 
 // An exec-format error on this ARM64-only path is a proof-image defect, not a
@@ -131,19 +170,19 @@ function runRuntimeProviderGpuProof(
     const timedOut = (result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT";
     const diagnosticSource = result.stderr || result.stdout;
     const workloadPassed = result.status === 0 && !timedOut && result.error === undefined;
-    const verifiedCapacity = workloadPassed ? parseContainerGpuProofCapacity(result.stdout) : null;
+    const verifiedDevices = workloadPassed ? parseContainerGpuProofDevices(result.stdout) : null;
     const cleanup = cleanupContainer(
       resource,
       timedOut || result.error !== undefined ? "until-deadline" : "immediate",
     );
-    const passed = workloadPassed && cleanup.status !== "failed";
+    const passed = workloadPassed && verifiedDevices !== null && cleanup.status !== "failed";
     return {
       providerId: provider.identity.id,
       passed,
       timedOut,
       exitCode: result.status,
       diagnostic: diagnosticSource.slice(0, 300),
-      ...(passed && verifiedCapacity ? { verifiedCapacity } : {}),
+      ...(passed && verifiedDevices ? { verifiedDevices } : {}),
       ...(cleanup ? { cleanup } : {}),
     };
   } catch (error) {
@@ -194,9 +233,10 @@ export function createArm64ContainerGpuProver(
     };
     if (result.passed) {
       log(`  ✓ ${provider.identity.displayName} GPU proof passed; trusting the reported GPU.`);
-      if (result.verifiedCapacity) {
+      const verifiedCapacity = aggregateVerifiedGpuCapacity(result.verifiedDevices);
+      if (verifiedCapacity) {
         log(
-          `  ✓ ${provider.identity.displayName} GPU capacity proof: ${String(result.verifiedCapacity.availableMemoryMB)} MiB available of ${String(result.verifiedCapacity.totalMemoryMB)} MiB.`,
+          `  ✓ ${provider.identity.displayName} GPU capacity proof: ${String(verifiedCapacity.availableMemoryMB)} MiB available of ${String(verifiedCapacity.totalMemoryMB)} MiB.`,
         );
       } else {
         log(

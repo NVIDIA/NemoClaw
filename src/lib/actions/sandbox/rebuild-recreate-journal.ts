@@ -25,6 +25,8 @@ import {
 } from "../../onboard/sandbox-recreate-probe";
 import {
   advanceSandboxRecreateTransaction,
+  assertSandboxRecreateSourceProof,
+  sandboxRecreateSourceProof,
   beginSandboxRecreateDelete,
   clearCompletedSandboxRecreateTransaction,
   fingerprintSandboxRecreateValue,
@@ -37,10 +39,12 @@ import { decisionSelected } from "../../state/onboard-checkpoint-decision";
 import type {
   CheckpointGatewayAuthority,
   CheckpointSandboxRecreatePhase,
+  CheckpointSandboxRecreateTransaction,
 } from "../../state/onboard-checkpoint-types";
 import * as onboardSession from "../../state/onboard-session";
 import * as registry from "../../state/registry";
 import {
+  clearRebuildMcpHandoff,
   clearRebuildPolicyHandoff,
   listBackups,
   type RebuildManifest,
@@ -94,6 +98,7 @@ interface RebuildRecoveryBackupDeps {
   readonly validateManifest?: typeof validateRebuildRecoveryManifest;
   readonly observePresence?: typeof observeSandboxPresenceOnGateway;
   readonly clearPolicyHandoff?: typeof clearRebuildPolicyHandoff;
+  readonly clearMcpHandoff?: typeof clearRebuildMcpHandoff;
 }
 
 function validateRecoveryIdentity(input: RebuildRecoveryBackupIdentity): void {
@@ -412,6 +417,37 @@ export type RetiredRebuildRecovery = Readonly<{
   transactionId: string;
 }>;
 
+export type RebuildRecoveryRoute = Readonly<{
+  gatewayName: string;
+  gatewayPort: number;
+}>;
+
+/** Read the routing authority for one exact retained recovery marker. */
+export function readRebuildRecoveryRoute(
+  input: Readonly<{ sandboxName: string; transactionId: string }>,
+  backupPath: string,
+): RebuildRecoveryRoute | null {
+  validateRecoveryIdentity({ ...input, agentName: null });
+  const record = readRecoveryRecord(backupPath);
+  if (record?.transactionId !== input.transactionId) return null;
+  if (record.sandboxName !== input.sandboxName) {
+    throw new Error(
+      `Rebuild recovery identity does not match sandbox '${input.sandboxName}'. Recovery remains at '${backupPath}'.`,
+    );
+  }
+  if (record.backupTimestamp !== path.basename(backupPath)) {
+    throw new Error(
+      `Rebuild recovery identity changed before routing. Recovery remains at '${backupPath}'.`,
+    );
+  }
+  if (record.schemaVersion === 1) {
+    throw new Error(
+      `Rebuild recovery '${input.transactionId}' does not contain recorded gateway authority. Recovery remains at '${backupPath}'.`,
+    );
+  }
+  return { gatewayName: record.gatewayName, gatewayPort: record.gatewayPort };
+}
+
 /**
  * Retire one credential-bearing rebuild handoff only after its recorded
  * gateway proves the old sandbox absent and the operator attests that required
@@ -493,6 +529,11 @@ export function retireRebuildRecoveryBackup(
   if (!(deps.clearPolicyHandoff ?? clearRebuildPolicyHandoff)(manifest)) {
     throw new Error(
       `The retained rebuild policy handoff could not be removed. Recovery remains at '${manifest.backupPath}'.`,
+    );
+  }
+  if (!(deps.clearMcpHandoff ?? clearRebuildMcpHandoff)(manifest)) {
+    throw new Error(
+      `The retained rebuild MCP recovery handoff could not be removed. Recovery remains at '${manifest.backupPath}'.`,
     );
   }
   try {
@@ -595,6 +636,19 @@ export function fingerprintRebuildRecreateTargetIntent(
 }
 
 export const observeRebuildSandbox = observeSandboxOnGateway;
+
+export function assertRebuildRecoverySource(
+  transaction: CheckpointSandboxRecreateTransaction,
+  target: SandboxRecreateTarget,
+  reservationSessionId: string,
+  runtimeSelection?: OpenShellRuntimeSelection,
+): void {
+  assertSandboxRecreateSourceProof(sandboxRecreateSourceProof(transaction, reservationSessionId), {
+    ...target,
+    registryEntry: registry.getSandbox(target.sandboxName),
+    observation: observeRebuildSandbox(target, undefined, runtimeSelection),
+  });
+}
 
 export interface OpenRebuildRecreateJournalInput {
   readonly target: RebuildRecreateJournalTarget;

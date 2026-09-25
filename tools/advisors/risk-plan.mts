@@ -18,12 +18,10 @@ const protectedManagedImageContract = (
 const { PROTECTED_MANAGED_IMAGE_ACTIVATION_PATH, PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID } =
   protectedManagedImageContract;
 
-export const RISK_PLAN_VERSION = 23 as const;
+export const RISK_PLAN_VERSION = 25 as const;
 
-export const PR_E2E_TYPED_TARGET_IDS = [
-  "ubuntu-repo-cloud-langchain-deepagents-code",
-  "ubuntu-repo-docker-post-reboot-recovery",
-] as const;
+export const PR_E2E_TYPED_TARGET_IDS = ["ubuntu-repo-cloud-langchain-deepagents-code"] as const;
+const SANDBOX_LIFECYCLE_TARGET_ID = "sandbox-survival";
 
 const PR_E2E_TYPED_TARGET_ID_SET = new Set<string>(PR_E2E_TYPED_TARGET_IDS);
 const PR_E2E_PLANNING_OMITTED_JOB_IDS = new Set(["jetson-nvmap-gpu"]);
@@ -39,12 +37,11 @@ const JOURNALED_RECREATE_RESUME_RUNTIME_FILES = new Set([
   "src/lib/onboard/machine/handlers/sandbox-resume.ts",
   "src/lib/onboard/machine/handlers/sandbox.ts",
 ]);
-const POST_REBOOT_DELIVERY_RUNTIME_FILES = new Set([
+const SANDBOX_LIFECYCLE_RUNTIME_FILES = new Set([
   "src/lib/actions/sandbox/status-snapshot.ts",
-  "src/lib/onboard/docker-driver-sandbox-recovery.ts",
+  "src/lib/onboard/docker-driver-container-observation.ts",
   "src/lib/onboard/docker-startup-command-agent.ts",
   "src/lib/onboard/sandbox-create-step.ts",
-  "tools/e2e/onboard-timeout-contract.mts",
 ]);
 export const GATEWAY_TOPOLOGY_FILES = [
   "src/lib/core/gateway-address.ts",
@@ -65,9 +62,38 @@ export const GATEWAY_TOPOLOGY_FILES = [
   "src/lib/onboard/runtime-provider/contract.ts",
   "src/lib/onboard/runtime-provider/podman-host-local-inference.ts",
 ] as const;
+// Keep explicit owners where shared gateway and forwarding code has no dedicated module.
+const BREV_LAUNCHABLE_FILES = new Set([
+  "test/e2e/live/launch-agent-turn.ts",
+  "tools/e2e/brev-launchable-e2e.sh",
+  "src/lib/onboard/gateway-binding.ts",
+  "src/lib/onboard/gateway-management.ts",
+  "src/lib/onboard/gateway-ownership.ts",
+  "src/lib/onboard/gateway-teardown-authority.ts",
+  "src/lib/onboard/gateway-host-runtime.ts",
+  "src/lib/onboard/agent-dashboard-forward.ts",
+  "src/lib/onboard/dashboard-forward-control.ts",
+  "src/lib/onboard/dashboard.ts",
+  "src/lib/adapters/openshell/command-execution.ts",
+  "src/lib/adapters/openshell/forward-cli.ts",
+  "src/lib/adapters/openshell/forward-runtime.ts",
+  "src/lib/adapters/openshell/forward.ts",
+  "src/lib/actions/sandbox/forward-recovery.ts",
+  "src/lib/actions/sandbox/process-recovery.ts",
+  "src/lib/actions/sandbox/status/process-recovery.ts",
+  "src/lib/actions/sandbox/connect.ts",
+  "src/lib/actions/sandbox/terminal-connect-probe.ts",
+  "src/lib/actions/sandbox/launch-readiness.ts",
+]);
+// Module and scenario ownership includes new helpers without expanding to unrelated agents.
+const BREV_LAUNCHABLE_MODULE_PREFIXES = [
+  "src/lib/onboard/gateway-binding/",
+  "src/lib/actions/sandbox/launch-readiness/",
+] as const;
+const BREV_LAUNCHABLE_SCENARIO_FILE =
+  /^test\/e2e\/(?:fixtures|live)\/full-e2e(?:[./-].*)?\.[cm]?[jt]s$/;
 const GATEWAY_TOPOLOGY_FILE_SET = new Set<string>(GATEWAY_TOPOLOGY_FILES);
 const MANAGED_STARTUP_E2E_JOB_IDS = [
-  "device-auth-health",
   "issue-4462-scope-upgrade-approval",
   "openclaw-inference-switch",
 ] as const;
@@ -326,7 +352,7 @@ export function focusedPrE2eTargetsForChangedFiles(
     ),
   );
   const postRebootMatchedFiles = stableUnique(
-    changedFiles.filter((file) => POST_REBOOT_DELIVERY_RUNTIME_FILES.has(file)),
+    changedFiles.filter((file) => SANDBOX_LIFECYCLE_RUNTIME_FILES.has(file)),
   );
   return [
     ...(deepAgentsMatchedFiles.length > 0
@@ -340,7 +366,7 @@ export function focusedPrE2eTargetsForChangedFiles(
     ...(postRebootMatchedFiles.length > 0
       ? [
           {
-            id: PR_E2E_TYPED_TARGET_IDS[1],
+            id: SANDBOX_LIFECYCLE_TARGET_ID,
             matchedFiles: postRebootMatchedFiles,
           },
         ]
@@ -351,6 +377,15 @@ export function focusedPrE2eTargetsForChangedFiles(
 export function focusedPrE2eJobsForChangedFiles(
   changedFiles: readonly string[],
 ): TrustedFocusedE2eJob[] {
+  const brevLaunchableFiles = stableUnique(
+    changedFiles.filter(
+      (file) =>
+        BREV_LAUNCHABLE_FILES.has(file) ||
+        (BREV_LAUNCHABLE_MODULE_PREFIXES.some((prefix) => file.startsWith(prefix)) &&
+          isRuntimeRelevant(file)) ||
+        BREV_LAUNCHABLE_SCENARIO_FILE.test(file),
+    ),
+  );
   const journaledRecreateResumeFiles = stableUnique(
     changedFiles.filter((file) => JOURNALED_RECREATE_RESUME_RUNTIME_FILES.has(file)),
   );
@@ -402,6 +437,7 @@ export function focusedPrE2eJobsForChangedFiles(
     ),
   );
   return [
+    { id: "staging-brev-launchable", matchedFiles: brevLaunchableFiles },
     ...(journaledRecreateResumeFiles.length > 0
       ? [
           {
@@ -584,7 +620,7 @@ export const RISK_RULES: readonly RiskRule[] = [
     summary:
       "Credential and security-boundary changes must preserve secrecy, sanitization, and fail-closed policy behavior.",
     tier: 3,
-    requiredJobs: ["cloud-inference", "security-posture"],
+    requiredJobs: ["full-e2e", "security-posture"],
     invariants: [
       "plaintext credentials do not cross logs, snapshots, artifacts, or sandbox boundaries",
       "invalid or missing security state fails closed",
@@ -602,7 +638,7 @@ export const RISK_RULES: readonly RiskRule[] = [
     summary:
       "E2E selection, execution, and evidence changes must preserve trusted dispatch and fail-closed result classification.",
     tier: 3,
-    requiredJobs: ["cloud-onboard", "cloud-inference", "security-posture"],
+    requiredJobs: ["cloud-onboard", "full-e2e", "security-posture"],
     invariants: [
       "the controller selects only trusted jobs and binds results to the intended PR commit",
       "single-shard and matrix jobs both emit complete evidence through the canonical reporter",

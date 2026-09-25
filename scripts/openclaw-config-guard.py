@@ -635,6 +635,15 @@ def _cmdline_is_nemoclaw_start(raw: bytes) -> bool:
     return direct or bash
 
 
+def _cmdline_is_managed_gateway_start(raw: bytes) -> bool:
+    arguments = tuple(raw.rstrip(b"\0").split(b"\0"))
+    # Explicit commands use the same launcher but do not supervise a gateway.
+    # Match the no-argument owner admitted by managed-gateway-control.py.
+    return _cmdline_is_nemoclaw_start(raw) and len(arguments) == (
+        1 if arguments[0] in NEMOCLAW_START_ARGV else 2
+    )
+
+
 def _cmdline_is_openshell_supervisor(raw: bytes) -> bool:
     arguments = raw.split(b"\0")
     return bool(arguments and arguments[0] == OPENSHELL_SUPERVISOR_ARGV0)
@@ -974,8 +983,8 @@ def _pinned_process_matches_supervised_nonroot_start(
             and first_status[0] == expected_effective_uid
             and second_status[0] == expected_effective_uid
             and first_cmdline == second_cmdline
-            and _cmdline_is_nemoclaw_start(first_cmdline)
-            and _cmdline_is_nemoclaw_start(second_cmdline)
+            and _cmdline_is_managed_gateway_start(first_cmdline)
+            and _cmdline_is_managed_gateway_start(second_cmdline)
             and topology_matches
             and pinned_before.st_dev == pinned_after.st_dev
             and pinned_before.st_ino == pinned_after.st_ino

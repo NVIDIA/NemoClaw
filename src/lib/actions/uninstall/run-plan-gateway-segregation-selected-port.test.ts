@@ -6,6 +6,14 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  dockerSandboxInspection,
+  writePreGatewaySession,
+  writeSelectedSandboxRegistry,
+  writeRetainedUninstallState,
+  writeRetainedUninstallStateWithStaleLock,
+  writeRetainedUninstallStateWithSelectedIdentity,
+} from "../../../../test/support/uninstall-pre-gateway-session";
+import {
   withProvenManagedGatewayProcess,
   withSuccessfulPreUninstallBackup,
   writeManagedGatewayRuntimeProof,
@@ -63,6 +71,18 @@ function writeScopedGatewayState(
   writeManagedGatewayRuntimeProof(stateDir, port);
 }
 
+function writeOnboardLock(stateRoot: string): void {
+  fs.writeFileSync(path.join(stateRoot, "onboard.lock"), "active\n", { mode: 0o600 });
+}
+
+function expectOnboardLockContention(stateRoot: string): void {
+  const lockPath = path.join(stateRoot, "onboard.lock");
+  expect(() => {
+    const descriptor = fs.openSync(lockPath, "wx", 0o600);
+    fs.closeSync(descriptor);
+  }).toThrow(expect.objectContaining({ code: "EEXIST" }));
+}
+
 function withManagedGatewayAuthority(deps: UninstallRunDeps): UninstallRunDeps {
   return withProvenManagedGatewayProcess({
     isPortFree: () => true,
@@ -118,7 +138,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
       const result = await runUninstallPlan(
         { assumeYes: true, deleteModels: false, destroyUserData: true, keepOpenShell: false },
         {
-          commandExists: (command) => command === "openshell",
+          commandExists: (command) => ["openshell", "docker"].includes(command),
           env: { HOME: tmpHome, NEMOCLAW_NON_INTERACTIVE: "1" } as NodeJS.ProcessEnv,
           existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),
           hasPortableRuntimeCleanup: () => false,
@@ -169,7 +189,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
       const result = await runUninstallPlan(
         { assumeYes: true, deleteModels: false, destroyUserData: true, keepOpenShell: false },
         {
-          commandExists: (command) => command === "openshell",
+          commandExists: (command) => ["openshell", "docker"].includes(command),
           env: { HOME: tmpHome, NEMOCLAW_NON_INTERACTIVE: "1" } as NodeJS.ProcessEnv,
           existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),
           isTty: false,
@@ -260,7 +280,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
             keepOpenShell: false,
           },
           {
-            commandExists: (command) => command === "openshell",
+            commandExists: (command) => ["openshell", "docker"].includes(command),
             env: {
               HOME: tmpHome,
               NEMOCLAW_GATEWAY_PORT: String(port),
@@ -345,7 +365,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
           keepOpenShell: false,
         },
         {
-          commandExists: (command) => ["openshell", "pgrep"].includes(command),
+          commandExists: (command) => ["openshell", "pgrep", "docker"].includes(command),
           env: {
             HOME: tmpHome,
             NEMOCLAW_GATEWAY_PORT: String(port),
@@ -397,6 +417,381 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
       fs.rmSync(tmpHome, { force: true, recursive: true });
     }
   });
+
+  const interruptedPreGatewayBase = {
+    assertErrors: (_errors: string): void => undefined,
+    childRun: false,
+    destroyUserData: false,
+    dockerInventory: null as RunResult | null,
+    dockerAvailable: true,
+    inventorySuccessesBeforeFailure: 0,
+    expectedDockerCalls: [] as string[][],
+    expectedNativeCalls: [] as string[][],
+    probeResults: {} as Record<string, RunResult>,
+    assertSiblingState: (_root: string) => undefined,
+    expectedExit: 0,
+    gatewayStateCreated: false,
+    liveGatewayNames: ["nemoclaw"],
+    onLog: (_message: string, _tmpHome: string, _port: number) => undefined,
+    onPortCheck: (_firstAfterAdmission: boolean, _tmpHome: string, _port: number) => undefined,
+    portAvailability: [true],
+    prepareState: (stateRoot: string, port: number) =>
+      writePreGatewaySession(stateRoot, port, "interrupted"),
+    stateKept: false,
+  };
+  const blockedPreGatewayBase = { ...interruptedPreGatewayBase, expectedExit: 1, stateKept: true };
+  const inventoryArgs = [
+    "ps",
+    "-a",
+    "--no-trunc",
+    "--filter",
+    "label=openshell.ai/sandbox-name=a4-test",
+    "--format",
+    "{{.ID}}",
+  ];
+  const retainedUninstallBase = {
+    ...interruptedPreGatewayBase,
+    destroyUserData: true,
+    prepareState: writeRetainedUninstallState,
+    expectedDockerCalls: [["docker", ...inventoryArgs]],
+  };
+  const keepUnset = "Keep NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR unset";
+  const retainedFailure =
+    (message: string, hint = keepUnset) =>
+    (errors: string) => {
+      for (const text of [message, hint]) expect(errors).toContain(text);
+      expect(errors).not.toMatch(/set to its original resolved directory|portable host authority/u);
+    };
+  const siblingContainer = "b".repeat(64);
+  const siblingInspect = [
+    "inspect",
+    "--type",
+    "container",
+    "--format",
+    "[{{json .Id}},{{json .Config.Labels}}]",
+    siblingContainer,
+  ];
+  const siblingGet = ["openshell", "sandbox", "get", "-g", "nemoclaw", "a4-test", "-o", "json"];
+  const inspectionKey = "docker " + siblingInspect.join(" ");
+  const inventoryAndInspectCalls = [
+    ["docker", ...inventoryArgs],
+    ["docker", ...siblingInspect],
+  ];
+  it.each([
+    {
+      ...retainedUninstallBase,
+      dockerInventory: ok(),
+      prepareState: writeRetainedUninstallStateWithStaleLock,
+      scenario: "purges retained user data after reclaiming a stale sandbox lock",
+    },
+    {
+      ...retainedUninstallBase,
+      scenario: "purges retained data while preserving a proven live same-name sibling",
+      dockerInventory: ok(siblingContainer + "\n"),
+      prepareState: (root: string, port: number) => writeRetainedUninstallState(root, port, true),
+      expectedDockerCalls: inventoryAndInspectCalls,
+      expectedNativeCalls: [siblingGet],
+      probeResults: {
+        [siblingGet.join(" ")]: ok(JSON.stringify({ name: "a4-test", id: "sibling-native" })),
+        [inspectionKey]: ok(dockerSandboxInspection(siblingContainer, "sibling-native")),
+      },
+      assertSiblingState: (root: string) =>
+        expect(
+          JSON.parse(fs.readFileSync(path.resolve(root, "../../sandboxes.json"), "utf8")).sandboxes[
+            "a4-test"
+          ].gatewayName,
+        ).toBe("nemoclaw"),
+    },
+    {
+      ...retainedUninstallBase,
+      dockerInventory: ok(),
+      liveGatewayNames: [],
+      scenario: "purges retained uninstall data when no other gateway remains",
+    },
+    {
+      ...retainedUninstallBase,
+      dockerInventory: ok(siblingContainer + "\n"),
+      expectedExit: 1,
+      stateKept: true,
+      prepareState: writeRetainedUninstallStateWithSelectedIdentity,
+      expectedDockerCalls: inventoryAndInspectCalls,
+      probeResults: {
+        [inspectionKey]: ok(dockerSandboxInspection(siblingContainer, "selected-native")),
+      },
+      assertErrors: retainedFailure("A selected sandbox container remains"),
+      scenario: "preserves retained uninstall data while a sandbox container remains",
+    },
+    {
+      ...retainedUninstallBase,
+      dockerInventory: ok(),
+      dockerAvailable: false,
+      expectedExit: 1,
+      stateKept: true,
+      assertErrors: retainedFailure("The Docker command is required", "Restore it"),
+      expectedDockerCalls: [],
+      scenario: "preserves retained data when the Docker command is missing",
+    },
+    ...[0, 4, 6].map((inventorySuccessesBeforeFailure) => ({
+      ...retainedUninstallBase,
+      dockerInventory: { status: 1, stdout: "", stderr: "inventory unavailable" },
+      inventorySuccessesBeforeFailure,
+      expectedExit: 1,
+      stateKept: true,
+      assertErrors: retainedFailure("Docker inventory could not be read"),
+      scenario: `preserves retained data when inventory fails after ${inventorySuccessesBeforeFailure} checks`,
+    })),
+    {
+      ...interruptedPreGatewayBase,
+      assertErrors: (errors: string) =>
+        expect(errors).not.toContain("sandbox namespace cannot be proven"),
+      liveGatewayNames: [],
+      scenario: "removes interrupted pre-gateway state when it is the only gateway",
+    },
+    {
+      ...interruptedPreGatewayBase,
+      scenario: "removes interrupted pre-gateway state while a sibling remains",
+    },
+    {
+      ...interruptedPreGatewayBase,
+      childRun: true,
+      scenario: "removes interrupted pre-gateway state during an all-ports child run",
+    },
+    {
+      ...blockedPreGatewayBase,
+      portAvailability: [false],
+      scenario: "preserves interrupted pre-gateway state when its port is occupied",
+    },
+    {
+      ...blockedPreGatewayBase,
+      portAvailability: [true, true, false],
+      scenario: "preserves interrupted pre-gateway state when its port becomes occupied",
+    },
+    {
+      ...blockedPreGatewayBase,
+      prepareState: (stateRoot: string, port: number) => {
+        writePreGatewaySession(stateRoot, port, "interrupted");
+        writeOnboardLock(stateRoot);
+      },
+      scenario: "preserves interrupted pre-gateway state when an onboarding lock is present",
+    },
+    {
+      ...blockedPreGatewayBase,
+      prepareState: (_stateRoot: string, _port: number) => undefined,
+      scenario: "preserves a selected state directory without an interrupted session",
+    },
+    {
+      ...blockedPreGatewayBase,
+      prepareState: (stateRoot: string, port: number) =>
+        writePreGatewaySession(stateRoot, port, "malformed"),
+      scenario: "preserves a selected state directory with malformed session state",
+    },
+    {
+      ...blockedPreGatewayBase,
+      prepareState: (stateRoot: string, port: number) =>
+        writePreGatewaySession(stateRoot, port, "sparse"),
+      scenario: "preserves state when required raw session fields are absent",
+    },
+    {
+      ...blockedPreGatewayBase,
+      prepareState: (stateRoot: string, port: number) =>
+        writePreGatewaySession(stateRoot, port, "future"),
+      scenario: "preserves a selected state directory with a future session schema",
+    },
+    {
+      ...blockedPreGatewayBase,
+      prepareState: (stateRoot: string, port: number) =>
+        writePreGatewaySession(stateRoot, port, "complete"),
+      scenario: "preserves a selected state directory from a completed onboard",
+    },
+    {
+      ...blockedPreGatewayBase,
+      destroyUserData: true,
+      prepareState: (stateRoot: string, port: number) => {
+        writePreGatewaySession(stateRoot, port, "interrupted");
+        writeSelectedSandboxRegistry(stateRoot, port);
+      },
+      scenario: "preserves interrupted state after a sandbox is registered",
+    },
+    {
+      ...blockedPreGatewayBase,
+      assertErrors: (errors: string) =>
+        expect(errors).toContain(
+          "The local gateway state changed during uninstall; preserving it for retry.",
+        ),
+      gatewayStateCreated: true,
+      onPortCheck: (firstAfterAdmission: boolean, tmpHome: string, port: number) =>
+        firstAfterAdmission ? writeScopedGatewayState(tmpHome, port) : undefined,
+      scenario: "preserves interrupted state when gateway state appears during revalidation",
+    },
+    {
+      ...blockedPreGatewayBase,
+      gatewayStateCreated: true,
+      onLog: (message: string, tmpHome: string, port: number) =>
+        message.includes("Stopping services") ? writeScopedGatewayState(tmpHome, port) : undefined,
+      scenario: "preserves interrupted state when gateway state appears after admission",
+    },
+    {
+      ...blockedPreGatewayBase,
+      onLog: (message: string, _tmpHome: string, port: number) =>
+        message.includes("Stopping services")
+          ? ["nemoclaw", `nemoclaw-${String(port)}`]
+          : undefined,
+      scenario: "preserves interrupted state when its registration appears after admission",
+    },
+    {
+      ...blockedPreGatewayBase,
+      onLog: (message: string, tmpHome: string, port: number) =>
+        message.includes("Stopping services")
+          ? writeSelectedSandboxRegistry(
+              path.join(tmpHome, ".nemoclaw", "gateways", String(port)),
+              port,
+            )
+          : undefined,
+      scenario: "preserves interrupted state when a sandbox is registered after admission",
+    },
+    {
+      ...interruptedPreGatewayBase,
+      onLog: (message: string, tmpHome: string, port: number) =>
+        message.includes("Stopping services") || message.includes("State and binaries")
+          ? expectOnboardLockContention(path.join(tmpHome, ".nemoclaw", "gateways", String(port)))
+          : undefined,
+      scenario: "holds the onboarding lock through interrupted state removal",
+    },
+  ])(
+    "$scenario (#11395)",
+    async ({
+      assertErrors,
+      childRun,
+      destroyUserData,
+      dockerInventory,
+      dockerAvailable,
+      inventorySuccessesBeforeFailure,
+      expectedDockerCalls,
+      expectedNativeCalls,
+      probeResults,
+      assertSiblingState,
+      expectedExit,
+      gatewayStateCreated,
+      liveGatewayNames,
+      onLog,
+      onPortCheck,
+      portAvailability,
+      prepareState,
+      stateKept,
+    }) => {
+      const tmpHome = fs.mkdtempSync(
+        path.join(process.cwd(), "nemoclaw-uninstall-pre-gateway-state-"),
+      );
+      const port = 9123;
+      try {
+        vi.stubEnv("NEMOCLAW_GATEWAY_PORT", String(port));
+        vi.resetModules();
+        const uninstall = await import("./run-plan");
+        const runPortUninstall =
+          dockerInventory === null
+            ? uninstall.runUninstallPlan
+            : uninstall.runUninstallPlanProduction;
+        const { withSandboxMutationLock } = await import("../../state/mcp-lifecycle-lock");
+        const selectedStateRoot = path.join(tmpHome, ".nemoclaw", "gateways", String(port));
+        const selectedGatewayState = path.join(
+          tmpHome,
+          ".local",
+          "state",
+          "nemoclaw",
+          resolveGatewayStateDirName(port),
+        );
+        fs.mkdirSync(selectedStateRoot, { mode: 0o700, recursive: true });
+        prepareState(selectedStateRoot, port);
+        const calls: string[][] = [];
+        const errors: string[] = [];
+        let observedGatewayNames: readonly string[] = liveGatewayNames;
+        let interruptedPreGatewayAdmissionObserved = false;
+        let postAdmissionPortChecks = 0;
+        let portAvailabilityIndex = 0;
+        let inventoryCount = 0;
+        const commandResults: Record<string, RunResult> = {
+          pgrep: { ...ok(), status: 1 },
+        };
+
+        const result = await runPortUninstall(
+          {
+            assumeYes: true,
+            deleteModels: false,
+            destroyUserData,
+            gatewayName: `nemoclaw-${String(port)}`,
+            keepOpenShell: false,
+          },
+          {
+            commandExists: (command) =>
+              ["openshell", "pgrep"].includes(command) ||
+              (command === "docker" && dockerAvailable && dockerInventory !== null),
+            env: {
+              HOME: tmpHome,
+              NEMOCLAW_GATEWAY_PORT: String(port),
+            } as NodeJS.ProcessEnv,
+            error: (message) => errors.push(message),
+            existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),
+            hasPortableRuntimeCleanup: () => false,
+            isPortFree: () => {
+              portAvailabilityIndex += 1;
+              onPortCheck(
+                interruptedPreGatewayAdmissionObserved && postAdmissionPortChecks++ === 0,
+                tmpHome,
+                port,
+              );
+              return portAvailability[
+                Math.min(portAvailabilityIndex - 1, portAvailability.length - 1)
+              ]!;
+            },
+            isTty: false,
+            log: (message) => {
+              interruptedPreGatewayAdmissionObserved ||=
+                message ===
+                "No sandbox or gateway process was created; continuing cleanup of the interrupted onboarding state.";
+              observedGatewayNames = onLog(message, tmpHome, port) ?? observedGatewayNames;
+            },
+            requireCompleteGatewayProcessCleanup: childRun,
+            rmSync: fs.rmSync,
+            run: (command, args) => {
+              calls.push([command, ...args]);
+              const commandKey = `${command} ${args[0] ?? ""} ${args[1] ?? ""}`.trim();
+              return commandKey === "openshell gateway list"
+                ? ok(JSON.stringify(observedGatewayNames.map((name) => ({ name }))))
+                : (probeResults[[command, ...args].join(" ")] ??
+                    commandResults[command] ??
+                    commandResults[commandKey] ??
+                    ok());
+            },
+            runDocker: (args) => {
+              calls.push(["docker", ...args]);
+              return args.join("\0") === inventoryArgs.join("\0")
+                ? inventoryCount++ < inventorySuccessesBeforeFailure
+                  ? ok()
+                  : (dockerInventory ?? ok())
+                : (probeResults[["docker", ...args].join(" ")] ?? ok());
+            },
+            withSandboxMutationLock,
+          },
+        );
+
+        expect(result.exitCode, errors.join("\n")).toBe(expectedExit);
+        expect(fs.existsSync(selectedStateRoot)).toBe(stateKept);
+        expect(fs.existsSync(selectedGatewayState)).toBe(gatewayStateCreated);
+        const nativeCalls = calls.filter(
+          ([command, resource, action]) =>
+            command === "openshell" && !(resource === "gateway" && action === "list"),
+        );
+        expect(new Set(nativeCalls.map((args) => JSON.stringify(args)))).toEqual(
+          new Set(expectedNativeCalls.map((args) => JSON.stringify(args))),
+        );
+        assertSiblingState(selectedStateRoot);
+        assertErrors(errors.join("\n"));
+        expect(calls).toEqual(expect.arrayContaining(expectedDockerCalls));
+      } finally {
+        fs.rmSync(tmpHome, { force: true, recursive: true });
+      }
+    },
+  );
 
   it("removes a marker-only configured reservation without OpenShell gateway cleanup", async () => {
     const tmpHome = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-uninstall-reservation-"));
@@ -530,7 +925,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
           keepOpenShell: false,
         },
         {
-          commandExists: (command) => command === "openshell",
+          commandExists: (command) => ["openshell", "docker"].includes(command),
           env: {
             HOME: tmpHome,
             NEMOCLAW_GATEWAY_PORT: String(port),
@@ -618,7 +1013,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
             keepOpenShell: false,
           },
           {
-            commandExists: (command) => command === "openshell",
+            commandExists: (command) => ["openshell", "docker"].includes(command),
             env: {
               HOME: tmpHome,
               NEMOCLAW_GATEWAY_PORT: String(port),
@@ -904,7 +1299,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
           keepOpenShell: false,
         },
         {
-          commandExists: (command) => command === "openshell",
+          commandExists: (command) => ["openshell", "docker"].includes(command),
           env: {
             HOME: tmpHome,
             NEMOCLAW_GATEWAY_PORT: String(selectedPort),
@@ -984,7 +1379,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
           keepOpenShell: false,
         },
         withSuccessfulPreUninstallBackup({
-          commandExists: (command) => command === "openshell",
+          commandExists: (command) => ["openshell", "docker"].includes(command),
           env: { HOME: tmpHome, NEMOCLAW_GATEWAY_PORT: String(port) } as NodeJS.ProcessEnv,
           error: vi.fn(),
           existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),
@@ -1064,7 +1459,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
           keepOpenShell: true,
         },
         withSuccessfulPreUninstallBackup({
-          commandExists: (command) => command === "openshell",
+          commandExists: (command) => ["openshell", "docker"].includes(command),
           env: { HOME: tmpHome, NEMOCLAW_GATEWAY_PORT: String(port) } as NodeJS.ProcessEnv,
           error: vi.fn(),
           existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),

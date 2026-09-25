@@ -293,7 +293,7 @@ function defaultWorkspacePath(env: NodeJS.ProcessEnv = process.env): string {
   return path.join(home, ".openclaw", "workspace");
 }
 
-function collectExternalRoots(
+export function collectExternalRoots(
   config: OpenClawConfigDocument | null,
   stateDir: string,
   env: NodeJS.ProcessEnv = process.env,
@@ -304,6 +304,7 @@ function collectExternalRoots(
 
   const agents = readRecordKey(config, "agents");
   const agentDefaults = readRecordKey(agents, "defaults");
+  const agentEntries = readRecordKey(agents, "entries");
   const agentList = readArrayKey(agents, "list");
   const skillLoad = readRecordKey(readRecordKey(config, "skills"), "load");
 
@@ -322,7 +323,44 @@ function collectExternalRoots(
     env,
   );
 
-  if (agentList) {
+  if (agentEntries) {
+    Object.entries(agentEntries).forEach(([agentId, entry]) => {
+      const agent = readRecord(entry);
+      if (!agent) return;
+      const workspace = readTrimmedString(agent.workspace);
+      const agentDir = readTrimmedString(agent.agentDir);
+
+      if (workspace) {
+        registerRoot(
+          rootMap,
+          {
+            pathValue: workspace,
+            kind: "workspace",
+            label: `${agentId}-workspace`,
+            bindingPath: `agents.entries.${agentId}.workspace`,
+            sandboxGroup: "workspaces",
+            required: true,
+          },
+          env,
+        );
+      }
+
+      if (agentDir) {
+        registerRoot(
+          rootMap,
+          {
+            pathValue: agentDir,
+            kind: "agentDir",
+            label: `${agentId}-agent-dir`,
+            bindingPath: `agents.entries.${agentId}.agentDir`,
+            sandboxGroup: "agent-dirs",
+            required: true,
+          },
+          env,
+        );
+      }
+    });
+  } else if (agentList) {
     agentList.forEach((entry, index) => {
       const agent = readRecord(entry);
       if (!agent) {

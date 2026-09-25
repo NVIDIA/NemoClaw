@@ -51,6 +51,8 @@ describe("onboard helpers", () => {
       const script = String.raw`
 const runner = require(${runnerPath});
 const fixtureMocks = require(${onboardScriptMocksPath});
+fixtureMocks.mockStandaloneGatewayTeardownAuthority();
+fixtureMocks.mockManagedStateVolumeOnboardLifecycle();
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
   sandboxName: "my-assistant",
 });
@@ -172,7 +174,10 @@ const { createSandbox } = require(${onboardPath});
         entry.command.includes("sandbox create"),
       );
       assert.ok(createCommand, "expected sandbox create command");
-      assert.match(createCommand.command, /nemoclaw-managed-startup-hold/);
+      assert.doesNotMatch(createCommand.command, /NEMOCLAW_STARTUP_PROFILE_B64=/);
+      assert.match(createCommand.command, /\/usr\/local\/bin\/nemoclaw-managed-startup-hold/);
+      assert.match(createCommand.command, /--profile-fingerprint [0-9a-f]{64}/);
+      assert.match(createCommand.command, /--bootstrap-identity [0-9a-f]{64}/);
       assert.match(
         createCommand.command,
         /--from ghcr\.io\/nvidia\/nemoclaw\/openclaw-sandbox@sha256:[0-9a-f]{64}/,
@@ -224,6 +229,8 @@ const os = require("node:os");
 const path = require("node:path");
 const runner = require(${runnerPath});
 const fixtureMocks = require(${onboardScriptMocksPath});
+fixtureMocks.mockStandaloneGatewayTeardownAuthority();
+fixtureMocks.mockManagedStateVolumeOnboardLifecycle();
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
   sandboxName: "hermes-sandbox",
 });
@@ -451,6 +458,8 @@ const os = require("node:os");
 const path = require("node:path");
 const runner = require(${runnerPath});
 const fixtureMocks = require(${onboardScriptMocksPath});
+fixtureMocks.mockStandaloneGatewayTeardownAuthority();
+fixtureMocks.mockManagedStateVolumeOnboardLifecycle();
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const preflight = require(${preflightPath});
@@ -616,6 +625,8 @@ const { createSandbox } = require(${onboardPath});
     const script = String.raw`
 const runner = require(${runnerPath});
 const fixtureMocks = require(${onboardScriptMocksPath});
+fixtureMocks.mockStandaloneGatewayTeardownAuthority();
+fixtureMocks.mockManagedStateVolumeOnboardLifecycle();
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const preflight = require(${preflightPath});
@@ -729,6 +740,8 @@ const { createSandbox } = require(${onboardPath});
     const script = String.raw`
 const runner = require(${runnerPath});
 const fixtureMocks = require(${onboardScriptMocksPath});
+fixtureMocks.mockStandaloneGatewayTeardownAuthority();
+fixtureMocks.mockManagedStateVolumeOnboardLifecycle();
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const preflight = require(${preflightPath});

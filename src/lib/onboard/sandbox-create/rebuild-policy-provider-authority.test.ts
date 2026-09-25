@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 
 import {
@@ -25,12 +25,14 @@ import {
 } from "../messaging-config";
 
 import {
-  bindRebuildPolicyProvidersToCreateArgs,
+  bindRebuildPolicyProvidersToCreateRequest,
+  beginRecreateDeleteAfterPolicyPreflight,
   resolveRebuildMessagingPolicyDeltas,
   resolveRebuildObservabilityPolicyDelta,
   resolveRebuildPolicyProviderAuthority,
   selectRebuildCreatePolicy,
 } from "./orchestration";
+import { readValidatedRebuildPolicySource } from "./rebuild-policy-handoff";
 
 const tempRoots: string[] = [];
 
@@ -47,21 +49,6 @@ afterEach(() => {
 });
 
 describe("rebuild policy provider handoff", () => {
-  const preservedMcpState = {
-    bridges: {
-      github: {
-        server: "github",
-        agent: "openclaw",
-        url: "https://mcp.example.com/",
-        env: ["MCP_TOKEN"],
-        providerName: "alpha-mcp-github",
-        providerId: "provider-id",
-        policyName: "mcp_github",
-        addedAt: "2026-08-30T00:00:00.000Z",
-      },
-    },
-  };
-
   it("derives active additions and disabled removals from current channel manifests", () => {
     expect(
       resolveRebuildMessagingPolicyDeltas({
@@ -315,12 +302,15 @@ describe("rebuild policy provider handoff", () => {
         expect(endpoints.filter(({ host }) => host.startsWith("idc-"))).toHaveLength(1);
         expect(endpoints.map(({ host }) => host)).not.toContain("*.weixin.qq.com");
 
-        expect(bindRebuildPolicyProvidersToCreateArgs(["--from", "image"], rebuilt)).toEqual([
-          "--from",
-          "image",
-          "--provider",
-          providerName,
-        ]);
+        expect(
+          bindRebuildPolicyProvidersToCreateRequest(
+            {
+              sandboxName: "alpha",
+              source: { reference: "image" },
+            },
+            rebuilt,
+          ).providers,
+        ).toEqual([providerName]);
       } finally {
         rebuilt.cleanup?.();
       }
@@ -354,59 +344,25 @@ describe("rebuild policy provider handoff", () => {
     },
   );
 
-  it("adds missing live-policy providers to the final create arguments", () => {
+  it("adds missing live-policy providers to the final create request", () => {
     expect(
-      bindRebuildPolicyProvidersToCreateArgs(
-        ["--from", "image", "--provider", "operator-provider"],
+      bindRebuildPolicyProvidersToCreateRequest(
+        {
+          sandboxName: "alpha",
+          source: { reference: "image" },
+          providers: ["operator-provider"],
+        },
         {
           credentialBindingProviders: ["operator-provider", "wechat-provider"],
         },
-      ),
-    ).toEqual([
-      "--from",
-      "image",
-      "--provider",
-      "operator-provider",
-      "--provider",
-      "wechat-provider",
-    ]);
-  });
-
-  it("inserts rebuild providers before the sandbox startup command separator", () => {
-    expect(
-      bindRebuildPolicyProvidersToCreateArgs(
-        [
-          "openshell",
-          "sandbox",
-          "create",
-          "--provider",
-          "inference-provider",
-          "--",
-          "env",
-          "nemoclaw-start",
-        ],
-        {
-          credentialBindingProviders: ["inference-provider", "mcp-provider"],
-        },
-      ),
-    ).toEqual([
-      "openshell",
-      "sandbox",
-      "create",
-      "--provider",
-      "inference-provider",
-      "--provider",
-      "mcp-provider",
-      "--",
-      "env",
-      "nemoclaw-start",
-    ]);
+      ).providers,
+    ).toEqual(["operator-provider", "wechat-provider"]);
   });
 
   it("authorizes enabled messaging and managed MCP providers but rejects disabled channels", () => {
     expect(
       resolveRebuildPolicyProviderAuthority({
-        createArgs: ["--from", "image", "--provider", "inference-provider"],
+        createProviders: ["inference-provider"],
         messagingPlan: {
           disabledChannels: ["discord"],
           credentialBindings: [
@@ -430,38 +386,87 @@ describe("rebuild policy provider handoff", () => {
             },
           ],
         },
-        preservedMcpState,
-        managedMcpRebuildHandoff: true,
+        policyDocument: YAML.stringify({
+          version: 1,
+          network_policies: {
+            mcp_bridge_github: {
+              name: "mcp_bridge_github",
+              endpoints: [
+                {
+                  host: "api.githubcopilot.com",
+                  port: 443,
+                  path: "/mcp/",
+                  protocol: "mcp",
+                  credential_binding: { provider: "alpha-mcp-github" },
+                  mcp: {
+                    max_body_bytes: 131_072,
+                    strict_tool_names: true,
+                    allow_all_known_mcp_methods: false,
+                  },
+                  rules: [{ allow: { method: "tools/list" } }],
+                },
+              ],
+              binaries: [{ path: "/usr/bin/node" }],
+            },
+          },
+        }),
       }),
     ).toEqual(["inference-provider", "alpha-telegram-bridge", "alpha-mcp-github"]);
   });
 
-  it("does not authorize MCP registry names without the managed rebuild handoff", () => {
+  it("does not authorize MCP providers absent from the source policy", () => {
     expect(
       resolveRebuildPolicyProviderAuthority({
-        createArgs: [],
+        createProviders: [],
         messagingPlan: null,
-        preservedMcpState,
-        managedMcpRebuildHandoff: false,
+        policyDocument: YAML.stringify({
+          version: 1,
+          network_policies: {
+            host_preserved: {
+              name: "host_preserved",
+              endpoints: [
+                {
+                  host: "example.com",
+                  port: 443,
+                  protocol: "rest",
+                  rules: [{ allow: { method: "GET", path: "/**" } }],
+                },
+              ],
+              binaries: [{ path: "/usr/bin/curl" }],
+            },
+          },
+        }),
       }),
     ).toEqual([]);
   });
 
-  it("ignores incomplete MCP add records even with a managed rebuild handoff", () => {
-    expect(
+  it("rejects malformed policy before any provider authority can be used", () => {
+    expect(() =>
       resolveRebuildPolicyProviderAuthority({
-        createArgs: [],
+        createProviders: [],
         messagingPlan: null,
-        preservedMcpState: {
-          bridges: {
-            github: {
-              ...preservedMcpState.bridges.github,
-              addState: "prepared",
-            },
-          },
-        },
-        managedMcpRebuildHandoff: true,
+        policyDocument: "network_policies:\n  broken: [\n",
       }),
-    ).toEqual([]);
+    ).toThrow();
+  });
+
+  it.each([
+    ["malformed YAML", "network_policies:\n  broken: [\n", /malformed/iu],
+    [
+      "invalid policy shape",
+      "version: 1\nnetwork_policies:\n  broken:\n    name: broken\n    endpoints: []\n",
+      /schema/iu,
+    ],
+  ])("rejects %s before the delete boundary", (_case, document, expected) => {
+    const policyPath = tempPolicy(document);
+    const beginDelete = vi.fn();
+
+    expect(() => {
+      beginRecreateDeleteAfterPolicyPreflight({
+        capturePolicySource: () => readValidatedRebuildPolicySource(policyPath),
+        beginDelete,
+      });
+    }).toThrow(expected);
+    expect(beginDelete).not.toHaveBeenCalled();
   });
 });

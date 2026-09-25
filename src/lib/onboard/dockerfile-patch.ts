@@ -57,8 +57,6 @@ const NODE_RUNTIME_REFRESH_INSTRUCTION =
 const PROXY_HOST_RE = /^[A-Za-z0-9._-]+$/;
 const POSITIVE_INT_RE = /^[1-9][0-9]*$/;
 
-type LooseObject = Record<string, unknown>;
-
 export function encodeDockerJsonArg(value: unknown): string {
   return Buffer.from(JSON.stringify(value ?? {}), "utf8").toString("base64");
 }
@@ -68,6 +66,7 @@ function sanitizeDockerArg(value: unknown): string {
 }
 
 export interface HermesPortableDockerfileBuildSettings {
+  readonly baseImageRef?: string;
   readonly model: string;
   readonly provider: string | null;
   readonly preferredInferenceApi: string | null;
@@ -136,10 +135,19 @@ export function renderHermesPortableDockerfileBuildSettings(
     ["NEMOCLAW_TOOL_DISCLOSURE", toolDisclosure],
     ["CHAT_UI_URL", ""],
   ] as const;
-  return replacements.reduce(
+  const rendered = replacements.reduce(
     (rendered, [name, value]) => replaceExactHermesPortableDockerArg(rendered, name, value),
     pinHermesPortableTargetArchitecture(source),
   );
+  if (input.baseImageRef === undefined) return rendered;
+  if (
+    !/^[A-Za-z0-9][A-Za-z0-9._/-]*(?::[A-Za-z0-9][A-Za-z0-9._-]{0,127}|@sha256:[a-f0-9]{64})$/u.test(
+      input.baseImageRef,
+    )
+  ) {
+    throw new Error("Hermes portable base image reference is invalid.");
+  }
+  return replaceExactHermesPortableDockerArg(rendered, "BASE_IMAGE", input.baseImageRef);
 }
 
 function encodeSanitizedDockerJsonArg(value: unknown): string {
@@ -311,14 +319,19 @@ export function patchStagedDockerfile(
   options: PatchStagedDockerfileOptions = {},
 ): PatchedDockerfileMetadata {
   const sanitizedModel = sanitizeDockerArg(model);
+  const providerless =
+    model === "" && !provider && !preferredInferenceApi && !inferenceBaseUrlOverride;
   const sandboxInference = getSandboxInferenceConfig(
     sanitizedModel,
     provider,
     preferredInferenceApi,
   );
-  const { providerKey, primaryModelRef, inferenceApi, inferenceCompat } = sandboxInference;
-  const inferenceBaseUrl =
-    inferenceBaseUrlOverride && inferenceBaseUrlOverride.trim()
+  const { providerKey, primaryModelRef, inferenceApi, inferenceCompat } = providerless
+    ? { providerKey: "", primaryModelRef: "", inferenceApi: "", inferenceCompat: null }
+    : sandboxInference;
+  const inferenceBaseUrl = providerless
+    ? ""
+    : inferenceBaseUrlOverride && inferenceBaseUrlOverride.trim()
       ? inferenceBaseUrlOverride
       : sandboxInference.inferenceBaseUrl;
   const patchSnapshot = readDockerfilePatchSnapshot(dockerfilePath);

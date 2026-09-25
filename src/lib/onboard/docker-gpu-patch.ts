@@ -15,7 +15,6 @@ import type {
   DockerGpuPatchMode,
   DockerGpuPatchResult,
   DockerGpuPatchSandboxSnapshot,
-  DockerUlimit,
 } from "./docker-gpu-patch-types";
 
 export { detectSandboxFallbackDns } from "./docker-gpu-dns-fallback";
@@ -29,10 +28,9 @@ export {
 } from "./docker-gpu-patch-clone";
 
 import { collectDockerGpuPatchDiagnostics } from "./docker-gpu-patch-diagnostics";
-import { formatDockerContainerState } from "./managed-bootstrap/docker-container-failure-evidence";
+import { formatDockerContainerState } from "./compute/docker-container-failure-evidence";
 import {
   getDockerGpuPatchFailureContext,
-  recreateOpenShellDockerSandboxContainer,
   recreateOpenShellDockerSandboxWithGpu,
 } from "./docker-gpu-patch-recreate";
 import {

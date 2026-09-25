@@ -29,9 +29,11 @@ const OPEN_READ_FLAGS =
 const SOURCE_DOCKERFILE_RELATIVE_PATH = "agents/hermes/Dockerfile" as const;
 const CONTEXT_DOCKERFILE_RELATIVE_PATH = "Dockerfile" as const;
 
+// Portable retains the same image-owned non-root startup hold even though its
+// host lifecycle remains independently receipt-bound, so its staged context
+// must carry that hold and its identity-bound completion/release protocol.
 const LOCAL_COPY_SOURCES = [
   "agents/hermes/a2a-neutral.patch",
-  "agents/hermes/build-mcp-digest.py",
   "agents/hermes/config/",
   "agents/hermes/cron-restore-control.py",
   "agents/hermes/dashboard-external-host.patch",
@@ -40,8 +42,6 @@ const LOCAL_COPY_SOURCES = [
   "agents/hermes/generate-config.ts",
   "agents/hermes/hermes-cli-adapter-v1.json",
   "agents/hermes/hermes-wrapper.py",
-  "agents/hermes/hindsight-client-probe-requirements.txt",
-  "agents/hermes/hindsight-lazy-integrity.patch",
   "agents/hermes/host/managed-tool-gateway-matrix.json",
   "agents/hermes/image-build-probes.py",
   // Dockerfile copies the policy into build-time and runtime locations.
@@ -52,47 +52,47 @@ const LOCAL_COPY_SOURCES = [
   "agents/hermes/patch-cron-execution-runtime.py",
   "agents/hermes/patch-cron-restore-drain.py",
   "agents/hermes/patch-discord-recovery-permissions.py",
+  "agents/hermes/patch-external-supervisor-recovery.py",
+  "agents/hermes/patch-external-supervisor-restart.py",
   "agents/hermes/patch-gateway-process-identity.py",
   "agents/hermes/patch-gateway-runtime-metadata.py",
   "agents/hermes/patch-hermes-sqlite-temp-store.py",
   "agents/hermes/patch-langfuse-credentials.mts",
-  "agents/hermes/patch-neutral-platform-env-activation.py",
+  "agents/hermes/patch-mcp-http-proxy.py",
   "agents/hermes/patch-profile-policy-defaults.py",
   "agents/hermes/patch-session-list-preview.py",
   "agents/hermes/plugin/__init__.py",
   "agents/hermes/plugin/plugin.yaml",
   "agents/hermes/runtime-config-guard.py",
-  "agents/hermes/runtime-boundaries.patch",
-  "agents/hermes/secure-dir-skip-chmod.patch",
   "agents/hermes/seed-dashboard-config.py",
   "agents/hermes/start.sh",
   "agents/hermes/validate-cli-adapter.py",
   "agents/hermes/validate-env-secret-boundary.py",
   "nemoclaw-blueprint/",
   "nemoclaw-blueprint/scripts/*.js",
-  "scripts/gateway-control.sh",
   "scripts/lib/bundled-npm-package.mts",
   "scripts/lib/corporate-ca-runtime.sh",
   "scripts/lib/entrypoint-env-wrapper.sh",
-  "scripts/lib/gateway-supervisor.sh",
   "scripts/lib/openclaw-npm-remediation.mts",
   "scripts/lib/patch-bundled-npm-ip-address.mts",
   "scripts/lib/reviewed-npm-archive.mts",
+  "scripts/lib/reviewed-npm-audit.mts",
+  "scripts/lib/reviewed-npm-identity.mts",
   "scripts/lib/sandbox-init.sh",
   "scripts/lib/sandbox-rlimits.sh",
-  "scripts/managed-bootstrap-entrypoint.c",
-  "scripts/managed-bootstrap-trampoline.sh",
-  "scripts/managed-gateway-control.py",
   "scripts/managed-startup-hold.sh",
   "scripts/patch-bundled-npm-brace-expansion.mts",
   "scripts/patch-bundled-npm-tar.mts",
+  "scripts/upgrade-bundled-npm.mts",
+  "ci/reviewed-npm-audit.json",
   "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.116.json",
   "src/lib/hermes-managed-route.ts",
   "src/lib/messaging/",
   "src/lib/messaging/channels/googlechat/runtime/hermes-adapter.py",
   "src/lib/tool-disclosure.ts",
+  "src/lib/providerless-inference.ts",
   "tools/mcp-tool-discovery-runtime/npm-cache-seed/tar-7.5.21.tgz",
-  "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-image-runtime.bundle",
+  "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-direct-image-runtime.bundle",
   "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/BUNDLED_PACKAGES.json",
   "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/THIRD_PARTY_LICENSES.txt",
   "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/mcp-tool-discovery.bundle",
@@ -130,6 +130,11 @@ type DirectoryEvidence = {
   readonly inode: string;
   readonly mode: string;
   readonly ownerUid: string;
+};
+
+type ReviewedNpmAddAuthority = {
+  readonly checksum: string;
+  readonly source: string;
 };
 
 export interface HermesPortableBuildContextAuthority {
@@ -244,7 +249,10 @@ function sourceTokenMatches(relativePath: string, token: string): boolean {
   return relativePath === token;
 }
 
-function parseDockerfileSources(bytes: Buffer): readonly string[] {
+function parseDockerfileSources(
+  bytes: Buffer,
+  reviewedNpm: ReviewedNpmAddAuthority,
+): readonly string[] {
   let text: string;
   try {
     text = UTF8.decode(bytes);
@@ -302,11 +310,16 @@ function parseDockerfileSources(bytes: Buffer): readonly string[] {
     if (tokens.length < 2) fail("Dockerfile has an incomplete COPY or ADD instruction");
     const sources = tokens.slice(0, -1);
     if (command === "ADD") {
+      const source = sources[0];
+      const checksum = options[0];
+      const isReviewedPythonArchive = source?.startsWith("https://files.pythonhosted.org/");
+      const isReviewedNpmArchive =
+        source === reviewedNpm.source && checksum === reviewedNpm.checksum;
       if (
         sources.length !== 1 ||
-        !sources[0]!.startsWith("https://files.pythonhosted.org/") ||
         options.length !== 1 ||
-        !/^--checksum=sha256:[a-f0-9]{64}$/u.test(options[0]!)
+        !/^--checksum=sha256:[a-f0-9]{64}$/u.test(checksum ?? "") ||
+        (!isReviewedPythonArchive && !isReviewedNpmArchive)
       ) {
         fail("Dockerfile has an unsupported local or unpinned ADD instruction");
       }
@@ -328,6 +341,32 @@ function parseDockerfileSources(bytes: Buffer): readonly string[] {
     fail("Dockerfile local COPY sources disagree with the reviewed allowlist");
   }
   return local;
+}
+
+function reviewedNpmAddAuthority(sourceEntries: readonly SourceEntry[]): ReviewedNpmAddAuthority {
+  const config = sourceEntries.find((entry) => entry.relativePath === "ci/reviewed-npm-audit.json");
+  if (config?.kind !== "file" || !config.bytes) fail("reviewed npm identity is unavailable");
+  let identity: unknown;
+  try {
+    identity = JSON.parse(UTF8.decode(config.bytes));
+  } catch {
+    fail("reviewed npm identity is invalid");
+  }
+  if (!identity || typeof identity !== "object") fail("reviewed npm identity is invalid");
+  const candidate = identity as Record<string, unknown>;
+  if (
+    typeof candidate.npmVersion !== "string" ||
+    !/^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/u.test(candidate.npmVersion) ||
+    typeof candidate.npmArchiveSha256 !== "string" ||
+    !SHA256.test(candidate.npmArchiveSha256) ||
+    candidate.registryOrigin !== "https://registry.npmjs.org/"
+  ) {
+    fail("reviewed npm identity is invalid");
+  }
+  return {
+    checksum: `--checksum=sha256:${candidate.npmArchiveSha256}`,
+    source: new URL(`npm/-/npm-${candidate.npmVersion}.tgz`, candidate.registryOrigin).href,
+  };
 }
 
 function readRevisionFile(filePath: string): {
@@ -773,7 +812,7 @@ function capture(
     (entry) => entry.relativePath === SOURCE_DOCKERFILE_RELATIVE_PATH,
   );
   if (dockerfile?.kind !== "file" || !dockerfile.bytes) fail("Dockerfile source is unavailable");
-  parseDockerfileSources(dockerfile.bytes);
+  parseDockerfileSources(dockerfile.bytes, reviewedNpmAddAuthority(sourceEntries));
   const contextEntries = renderContextEntries(sourceEntries, settings);
   return {
     authority: sourceAuthority(sourceEntries, contextEntries, revision, sourceDirectoryChain),

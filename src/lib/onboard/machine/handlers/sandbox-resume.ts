@@ -1,15 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  type WebSearchConfig,
-  webSearchEnvFor,
-  webSearchLabelFor,
-  webSearchProviderForConfig,
-} from "../../../inference/web-search";
 import type { Session } from "../../../state/onboard-session";
 import type { SandboxEntry } from "../../../state/registry";
 import { persistedSandboxHostMountsEqual } from "../../../state/registry/host-mount";
+import { reserveRecoveredSandboxInferenceRoute } from "../../sandbox-lifecycle";
 import { normalizeToolDisclosure, toolDisclosureOrDefault } from "../../../tool-disclosure";
 
 export interface SandboxResumeSignals {
@@ -38,6 +33,19 @@ export interface SandboxResumeSignals {
 
 export function hasHostMountConfigDrift(left: unknown, right: unknown): boolean {
   return !persistedSandboxHostMountsEqual(left, right);
+}
+
+/**
+ * A sandbox with no recorded channel configuration consumed none, so
+ * process-environment channel values are not drift.
+ */
+export function hasMessagingChannelConfigDrift<Config>(
+  effective: Config | null,
+  stored: Config | null,
+  configsEqual: (left: Config | null, right: Config | null) => boolean,
+): boolean {
+  if (stored === null) return false;
+  return !configsEqual(effective, stored);
 }
 
 interface InferenceRouteResumeInput {
@@ -137,30 +145,6 @@ export function requiresSandboxRecreation(
   explicitlyRequested: boolean,
 ): boolean {
   return explicitlyRequested || decision.kind !== "create";
-}
-
-export function mcpRegistryRemovalBlockReason(
-  decision: SandboxResumeDecision,
-  sandboxName: string | null,
-  webSearchConfig: WebSearchConfig | null,
-  getSandboxRegistryEntry: (sandboxName: string) => SandboxEntry | null,
-): string | null {
-  if (decision.kind !== "recreate" || !decision.removeRegistryEntry || !sandboxName) return null;
-  const mcpState = getSandboxRegistryEntry(sandboxName)?.mcp;
-  if (!mcpState) return null;
-
-  const selectedProvider = webSearchConfig ? webSearchProviderForConfig(webSearchConfig) : null;
-  if (selectedProvider) {
-    const credentialEnv = webSearchEnvFor(selectedProvider);
-    const collidingBridge = Object.values(mcpState.bridges).find((entry) =>
-      entry.env.includes(credentialEnv),
-    );
-    if (collidingBridge) {
-      return `  Cannot enable ${webSearchLabelFor(selectedProvider)}: MCP server '${collidingBridge.server}' already owns ${credentialEnv}. Use a distinct credential name.`;
-    }
-  }
-
-  return `  Sandbox '${sandboxName}' has managed MCP state. Use the transactional rebuild command before changing settings that recreate the sandbox.`;
 }
 
 function canReuseSandbox(signals: SandboxResumeSignals): boolean {
@@ -356,4 +340,45 @@ export function decideSandboxResume(signals: SandboxResumeSignals): SandboxResum
     note: "  [resume] Recorded sandbox state is unavailable; recreating it.",
     removeRegistryEntry: true,
   };
+}
+
+/** Preserve explicit runtime authority while reclaiming a published resume reservation. */
+export function reserveSandboxResumeRoute(
+  sandboxName: string,
+  entry: SandboxEntry | null,
+  route: Parameters<typeof import("../../../state/registry").reserveSandboxInferenceRoute>[1],
+  reserve: typeof import("../../../state/registry").reserveSandboxInferenceRoute,
+  cliName: string,
+): void {
+  if (!route.reservationSessionId || !entry) return;
+  const explicitHostLocal = entry.hostLocalInferenceProvenance !== undefined;
+  // Route-only create reservations stay with the verified create boundary.
+  if (
+    !explicitHostLocal &&
+    entry.pendingRouteReservation === true &&
+    (entry.reservationSessionId === route.reservationSessionId || entry.createdAt === undefined)
+  )
+    return;
+  const desired = explicitHostLocal
+    ? {
+        ...route,
+        gatewayPort: entry.gatewayPort ?? undefined,
+        openshellDriver: entry.openshellDriver ?? undefined,
+        hostLocalInferenceReceipt: entry.hostLocalInferenceReceipt,
+        hostLocalInferenceProvenance: entry.hostLocalInferenceProvenance,
+      }
+    : route;
+  try {
+    if (!reserveRecoveredSandboxInferenceRoute(reserve, sandboxName, desired)) {
+      throw new Error(`Failed to reserve the inference route for sandbox '${sandboxName}'.`);
+    }
+  } catch (error) {
+    if (!explicitHostLocal) throw error;
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Cannot reserve host-local inference for sandbox '${sandboxName}': ${detail}\n` +
+        `Run '${cliName} ${sandboxName} doctor' to inspect runtime and gateway authority before retrying.`,
+      { cause: error },
+    );
+  }
 }

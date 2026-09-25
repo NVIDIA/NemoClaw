@@ -102,6 +102,7 @@ export interface VerifiedSandboxCreateBoundary {
   readonly lifecycleGeneration: string;
   readonly lifecycleLiveIdentityFingerprint: string;
   readonly createAttemptNonce?: string;
+  readonly managedBootstrapIdentity?: string;
   readonly route: import("./docker-gpu-route").SelectedDockerGpuRoute;
 }
 

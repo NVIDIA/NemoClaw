@@ -226,7 +226,7 @@ describe("agent base image provisioning", () => {
               rootDir: root,
               validateImage: expect.any(Function),
               validationDescription:
-                "the required MCP Streamable HTTP and ACP runtimes and the immutable security package inventory",
+                "Hermes 0.21.3 with the required MCP Streamable HTTP and ACP runtimes and the immutable security package inventory",
             }),
           );
           expect(dockerImageInspectMock).not.toHaveBeenCalled();
@@ -275,7 +275,7 @@ describe("agent base image provisioning", () => {
               ? "nemoclaw-hermes-mcp-runtime-ok"
               : "nemoclaw-security-inventory-ok",
         );
-        dockerImageInspectFormatMock.mockImplementation((format: string, imageRef: string) =>
+        dockerImageInspectFormatMock.mockImplementation((format: string, _imageRef: string) =>
           format === "{{json .}}"
             ? JSON.stringify({
                 Id: imageId,
@@ -656,7 +656,7 @@ describe("agent base image provisioning", () => {
             }),
             validateImage: expect.any(Function),
             validationDescription:
-              "the required MCP Streamable HTTP and ACP runtimes and the immutable security package inventory",
+              "Hermes 0.21.3 with the required MCP Streamable HTTP and ACP runtimes and the immutable security package inventory",
             trustedLocalOverride: { ref: result.imageTag, provenance },
           }),
         );

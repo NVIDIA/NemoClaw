@@ -47,8 +47,11 @@ function resolveEffectivePolicy(presetNames: string[]): string {
 }
 
 describe("policy preset capability boundaries", () => {
-  it("allows GitHub git egress only when the github preset is active (#6502)", () => {
-    expect(allowsGitToReachGitHub(resolveEffectivePolicy(["brew"]))).toBe(false);
-    expect(allowsGitToReachGitHub(resolveEffectivePolicy(["brew", "github"]))).toBe(true);
-  });
+  it.each(["brew", "brew-balanced"])(
+    "requires the github preset for git egress alongside %s (#6502)",
+    (preset) => {
+      expect(allowsGitToReachGitHub(resolveEffectivePolicy([preset]))).toBe(false);
+      expect(allowsGitToReachGitHub(resolveEffectivePolicy([preset, "github"]))).toBe(true);
+    },
+  );
 });

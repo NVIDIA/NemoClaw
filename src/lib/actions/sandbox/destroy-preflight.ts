@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createCliOpenShellGatewayLifecycleFromRunner } from "../../adapters/openshell/gateway-lifecycle-cli";
 import os from "node:os";
 
 import { buildSelectedOpenShellSubprocessEnv } from "../../adapters/openshell/command-argv";
@@ -11,7 +12,7 @@ import { DEFAULT_MODEL_ROUTER_PORT, isRoutedInferenceProvider } from "../../onbo
 import {
   doesModelRouterProcessOwnPort,
   inspectModelRouterProcessForPort,
-  isRouterHealthy,
+  isRouterResponsive,
   stopModelRouterProcess,
 } from "../../onboard/model-router-process";
 import { listHostGatewayRegistryEntries } from "../../state/gateway-registry";
@@ -23,6 +24,12 @@ import type {
 } from "../../state/onboard-session";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
+import {
+  findSandboxAcrossGatewayRoots,
+  getSandboxAcrossGatewayRoots,
+  listPublishedSandboxesAcrossGatewayRoots,
+  removeSandboxFromOwningGatewayRegistry,
+} from "../../state/registry/cross-port";
 import { type DestroyRunOpenshell, selectGatewayForSandboxDestroy } from "./destroy-gateway";
 import { classifyDestroySandboxPresence, type DestroySandboxPresence } from "./destroy-presence";
 import {
@@ -43,6 +50,38 @@ export type SandboxDestroyPreflight = {
   sandboxPresence?: DestroySandboxPresence;
 };
 
+export type SandboxDestroyRegistryAuthority = {
+  entry: SandboxEntry | null;
+  getSandbox: typeof registry.getSandbox;
+  listSandboxes: typeof registry.listSandboxes;
+  removeSandbox: typeof registry.removeSandbox;
+};
+
+/** Pin destroy reads and mutation to the registry file that owns the named sandbox. */
+export function resolveSandboxDestroyRegistryAuthority(
+  sandboxName: string,
+): SandboxDestroyRegistryAuthority {
+  const hit = findSandboxAcrossGatewayRoots(sandboxName);
+  if (!hit) {
+    return {
+      entry: registry.getSandbox(sandboxName),
+      getSandbox: registry.getSandbox,
+      listSandboxes: registry.listSandboxes,
+      removeSandbox: registry.removeSandbox,
+    };
+  }
+  return {
+    entry: hit.entry,
+    getSandbox: getSandboxAcrossGatewayRoots,
+    listSandboxes: () => ({
+      sandboxes: listPublishedSandboxesAcrossGatewayRoots(),
+      defaultSandbox: null,
+    }),
+    removeSandbox: (name) =>
+      name === hit.entry.name ? removeSandboxFromOwningGatewayRegistry(hit) : false,
+  };
+}
+
 export function resolveSandboxDestroyGatewayName(
   sandboxName: string,
   sandbox: SandboxEntry | null,
@@ -62,17 +101,11 @@ export function resolveSandboxDestroyGatewayName(
 }
 
 export function resolveSandboxDestroyRuntimeSelection(
-  sandbox: SandboxEntry | null,
+  _sandbox: SandboxEntry | null,
 ): OpenShellRuntimeSelection | undefined {
-  if (
-    !sandbox ||
-    !Object.values(sandbox.mcp?.bridges ?? {}).some((entry) => entry.addState !== "prepared")
-  ) {
-    return undefined;
-  }
-  return (
-    require("./mcp-bridge-provider") as typeof import("./mcp-bridge-provider")
-  ).getMcpProviderInspectionRuntimeSelection(sandbox);
+  // MCP source inspection freezes its gateway target during preparation. The
+  // non-MCP registry is only a routing hint and cannot assert MCP ownership.
+  return undefined;
 }
 
 export function stopSandboxInferenceResources(
@@ -108,7 +141,7 @@ export type StopModelRouterForDestroyedSandboxDeps = {
   loadSession: () => Session | null;
   releaseOnboardLock: typeof releaseOnboardLock;
   inspectProcessForPort?: typeof inspectModelRouterProcessForPort;
-  isHealthy?: typeof isRouterHealthy;
+  isResponsive?: typeof isRouterResponsive;
   isRoutedProvider?: typeof isRoutedInferenceProvider;
   listHostRegistryEntries?: typeof listHostGatewayRegistryEntries;
   log?: (message: string) => void;
@@ -209,7 +242,7 @@ export async function stopModelRouterForDestroyedSandbox(
 
       const ownsPort = deps.ownsPort ?? doesModelRouterProcessOwnPort;
       const inspectProcessForPort = deps.inspectProcessForPort ?? inspectModelRouterProcessForPort;
-      const isHealthy = deps.isHealthy ?? isRouterHealthy;
+      const isResponsive = deps.isResponsive ?? isRouterResponsive;
       const recordedPid = sessionMatchesSandbox ? (session.routerPid ?? null) : null;
       const recordedCredentialHash = sessionMatchesSandbox
         ? (session.routerCredentialHash ?? null)
@@ -228,9 +261,9 @@ export async function stopModelRouterForDestroyedSandbox(
         }
         if (lookup.status === "found") {
           pid = lookup.pid;
-        } else if (await isHealthy(port, 1000)) {
+        } else if (await isResponsive(port, 1000)) {
           warn(
-            `No Model Router process could be confirmed for healthy port ${port}. ` +
+            `No Model Router process could be confirmed for responsive port ${port}. ` +
               "Keeping its session recovery identity; inspect the port listener before the next Model Router onboarding.",
           );
           return;
@@ -263,7 +296,7 @@ export async function stopModelRouterForDestroyedSandbox(
 
       // Clear when either field is set: a matching session with only a
       // credential hash still carries stale router identity after its sandbox
-      // is gone. A completed process scan plus an unhealthy port confirms that
+      // is gone. A completed process scan plus an unresponsive port confirms that
       // no router remains when no PID was found.
       if (sessionMatchesSandbox && (recordedPid !== null || recordedCredentialHash !== null)) {
         deps.compareAndSwapSession(
@@ -302,17 +335,19 @@ export async function stopModelRouterForDestroyedSandbox(
   return true;
 }
 
-export function prepareSandboxDestroy(
+export async function prepareSandboxDestroy(
   sandboxName: string,
   {
+    getSandbox = registry.getSandbox,
     retainedRecoveryGatewayName,
     operationRuntimeSelection,
   }: {
+    getSandbox?: typeof registry.getSandbox;
     retainedRecoveryGatewayName?: string;
     operationRuntimeSelection?: OpenShellRuntimeSelection;
   } = {},
-): SandboxDestroyPreflight {
-  const sandbox = registry.getSandbox(sandboxName);
+): Promise<SandboxDestroyPreflight> {
+  const sandbox = getSandbox(sandboxName);
   console.log(`  Deleting sandbox '${sandboxName}'...`);
   const { captureOpenshell, runOpenshell } = require("../../adapters/openshell/runtime") as Pick<
     typeof import("../../adapters/openshell/runtime"),
@@ -351,7 +386,12 @@ export function prepareSandboxDestroy(
           replaceEnv: true,
         })
     : undefined;
-  selectGatewayForSandboxDestroy(sandboxName, cleanupGatewayName, selectedRunOpenshell);
+  await selectGatewayForSandboxDestroy(
+    sandboxName,
+    cleanupGatewayName,
+    createCliOpenShellGatewayLifecycleFromRunner(selectedRunOpenshell),
+    runtimeSelection,
+  );
   process.env.OPENSHELL_GATEWAY = cleanupGatewayName;
 
   const sandboxPresence = classifyDestroySandboxPresence(

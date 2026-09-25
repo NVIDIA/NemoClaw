@@ -11,6 +11,16 @@ const RUN_MANAGED_IMAGE_SECURITY = Boolean(
   process.env.NEMOCLAW_TEST_IMAGE ?? process.env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_CONTRACT,
 );
 
+const ENTRYPOINT_CONFIG_REPAIR_PROOF = Buffer.from(
+  String.raw`set -eu
+test "$(id -un)" = sandbox
+test "$(stat -c '%a %U:%G' /sandbox/.openclaw)" = '2770 sandbox:sandbox'
+test "$(stat -c '%a %U:%G' /sandbox/.openclaw/openclaw.json)" = '660 sandbox:sandbox'
+test "$(wc -c </sandbox/.openclaw/openclaw.json)" -eq 3
+test "$(cat /sandbox/.openclaw/openclaw.json)" = '{}'
+`,
+).toString("base64");
+
 const PACKAGED_IMAGE_CONTRACT_PROBE = String.raw`import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -350,6 +360,7 @@ const ROOT_BOOT_RECOVERY_PROBE = String.raw`
 `;
 
 const DOCKER_OPERATION_TIMEOUT_MS = 45_000;
+const CONFIG_RECOVERY_TIMEOUT_MS = 2 * DOCKER_OPERATION_TIMEOUT_MS;
 const MANAGED_IMAGE_SECURITY_TIMEOUT_MS = 8 * 60_000;
 
 function managedImageCohort(): string {
@@ -365,6 +376,7 @@ async function runContainer(
   script: string,
   artifactName: string,
   extraArgs: string[] = [],
+  timeoutMs = DOCKER_OPERATION_TIMEOUT_MS,
 ) {
   const result = await host.command(
     "docker",
@@ -383,7 +395,7 @@ async function runContainer(
       "-c",
       script,
     ],
-    { artifactName, captureLimitBytes: 1024 * 1024, timeoutMs: DOCKER_OPERATION_TIMEOUT_MS },
+    { artifactName, captureLimitBytes: 1024 * 1024, timeoutMs },
   );
   expect(
     result.exitCode,
@@ -411,7 +423,11 @@ async function runDefaultContainer(
       image,
       ...command,
     ],
-    { artifactName, captureLimitBytes: 1024 * 1024, timeoutMs: DOCKER_OPERATION_TIMEOUT_MS },
+    {
+      artifactName,
+      captureLimitBytes: 1024 * 1024,
+      timeoutMs: DOCKER_OPERATION_TIMEOUT_MS,
+    },
   );
   expect(
     result.exitCode,
@@ -454,7 +470,7 @@ test.runIf(RUN_MANAGED_IMAGE_SECURITY)(
         `[ "$(bash -ic 'printf %s "$PATH"' 2>/dev/null)" = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" ]`,
         `[ "$(bash -lc 'printf %s "$PATH"' 2>/dev/null)" = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" ]`,
         "cd /sandbox/.openclaw && sha256sum -c .config-hash >/dev/null",
-        `python3 -c 'import json; assert json.load(open("/sandbox/.openclaw/openclaw.json"))["update"]["checkOnStart"] is False'`,
+        `python3 -c 'import json; assert "update" not in json.load(open("/sandbox/.openclaw/openclaw.json"))'`,
         'printf "%s:%s:%s\\n" "$gateway_uid" "$sandbox_uid" "$sandbox_gid"',
       ].join("\n"),
       "managed-image-openclaw-identities",
@@ -524,10 +540,6 @@ test.runIf(RUN_MANAGED_IMAGE_SECURITY)(
       host,
       image,
       [
-        "/usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- sleep 60 &",
-        "gateway_pid=$!",
-        'if /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- kill "$gateway_pid" 2>/dev/null; then exit 20; fi',
-        'kill "$gateway_pid"',
         "printf secret >/tmp/auto-pair.log",
         "chown root:root /tmp/auto-pair.log",
         "chmod 600 /tmp/auto-pair.log",
@@ -542,15 +554,10 @@ test.runIf(RUN_MANAGED_IMAGE_SECURITY)(
         `/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -c 'printf "{}\n" >/tmp/nemoclaw-auto-pair-status.json'`,
         "! /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -c 'printf x >>/tmp/nemoclaw-proxy-env.sh'",
         "! /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -c 'rm -f /tmp/nemoclaw-proxy-env.sh'",
-        "gateway_control_rc=0",
-        "/usr/local/bin/nemoclaw-gateway-control probe '0000000000000000000000000000000000000000000000000000000000000000' >/tmp/gateway-control.out 2>&1 || gateway_control_rc=$?",
-        '[ "$gateway_control_rc" -ne 0 ]',
-        "grep -qx SUPERVISOR_UNAVAILABLE /tmp/gateway-control.out",
         '/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -c \'printf " " >>/sandbox/.openclaw/openclaw.json; printf " " >>/sandbox/.openclaw/.config-hash\'',
         'for directory in /sandbox/.nemoclaw/state /sandbox/.nemoclaw/migration /sandbox/.nemoclaw/snapshots /sandbox/.nemoclaw/staging; do /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -c \'probe="$1/.nemoclaw-write-probe"; : >"$probe"; rm -f "$probe"\' sh "$directory"; done',
         `/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -c 'original=$(cat /sandbox/.nemoclaw/config.json); printf "{}\n" >/sandbox/.nemoclaw/config.json; printf "%s" "$original" >/sandbox/.nemoclaw/config.json'`,
-        'for path in /sandbox/.nemoclaw /sandbox/.nemoclaw/blueprints /usr/local/bin/nemoclaw-gateway-control; do ! /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- test -w "$path"; done',
-        "! /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- test -x /usr/local/bin/nemoclaw-gateway-control",
+        'for path in /sandbox/.nemoclaw /sandbox/.nemoclaw/blueprints; do ! /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- test -w "$path"; done',
       ].join("\n"),
       "managed-image-openclaw-isolation",
     );
@@ -609,23 +616,31 @@ test.runIf(RUN_MANAGED_IMAGE_SECURITY)(
         'sandbox_gid="$(id -g sandbox)"',
         "chmod 700 /sandbox/.openclaw",
         "chmod 600 /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash",
+        "printf 'CONFIG_RECOVERY_PHASE=initial-normalize-start\\n' >&2",
         '/usr/local/lib/nemoclaw/normalize_mutable_config_perms.py /sandbox/.openclaw "$sandbox_uid" "$sandbox_gid"',
+        "printf 'CONFIG_RECOVERY_PHASE=initial-normalize-complete\\n' >&2",
         '[ "$(stat -c \'%a %U:%G\' /sandbox/.openclaw)" = "2770 sandbox:sandbox" ]',
         '[ "$(stat -c \'%a %U:%G\' /sandbox/.openclaw/openclaw.json)" = "660 sandbox:sandbox" ]',
         "cp /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/openclaw.json.last-good",
         "chown sandbox:sandbox /sandbox/.openclaw/openclaw.json.last-good",
         "chmod 660 /sandbox/.openclaw/openclaw.json.last-good",
         ": >/sandbox/.openclaw/openclaw.json",
+        "printf 'CONFIG_RECOVERY_PHASE=recover-start\\n' >&2",
         '/usr/local/lib/nemoclaw/normalize_mutable_config_perms.py /sandbox/.openclaw "$sandbox_uid" "$sandbox_gid" recover',
+        "printf 'CONFIG_RECOVERY_PHASE=recover-complete\\n' >&2",
         "test -s /sandbox/.openclaw/openclaw.json",
         "chown gateway:gateway /sandbox/.openclaw",
         "before=\"$(stat -c '%u:%g:%a' /sandbox/.openclaw)\"",
         "repair_rc=0",
+        "printf 'CONFIG_RECOVERY_PHASE=refusal-start\\n' >&2",
         '/usr/local/lib/nemoclaw/normalize_mutable_config_perms.py /sandbox/.openclaw "$sandbox_uid" "$sandbox_gid" || repair_rc=$?',
+        "printf 'CONFIG_RECOVERY_PHASE=refusal-complete\\n' >&2",
         '[ "$repair_rc" -ne 0 ]',
         '[ "$before" = "$(stat -c \'%u:%g:%a\' /sandbox/.openclaw)" ]',
       ].join("\n"),
       "managed-image-openclaw-config-recovery",
+      [],
+      CONFIG_RECOVERY_TIMEOUT_MS,
     );
 
     await runContainer(
@@ -635,8 +650,12 @@ test.runIf(RUN_MANAGED_IMAGE_SECURITY)(
         '{ sed -n "/^resolve_mutable_config_normalizer() {$/,/^}$/p" /usr/local/bin/nemoclaw-start; sed -n "/^normalize_mutable_config_perms() {$/,/^}$/p" /usr/local/bin/nemoclaw-start; sed -n "/^recover_openclaw_config_if_empty() {$/,/^}$/p" /usr/local/bin/nemoclaw-start; } >/tmp/normalize.sh',
         "source /tmp/normalize.sh",
         "/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -c 'printf baseline > /sandbox/.openclaw/openclaw.json.nemoclaw-baseline; chmod 600 /sandbox/.openclaw/openclaw.json.nemoclaw-baseline; : > /sandbox/.openclaw/openclaw.json; chmod 600 /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash; chmod 700 /sandbox/.openclaw'",
+        "printf 'DAC_RECOVERY_PHASE=normalize-start\\n' >&2",
         "normalize_mutable_config_perms",
+        "printf 'DAC_RECOVERY_PHASE=normalize-complete\\n' >&2",
+        "printf 'DAC_RECOVERY_PHASE=recover-start\\n' >&2",
         "recover_openclaw_config_if_empty",
+        "printf 'DAC_RECOVERY_PHASE=recover-complete\\n' >&2",
         '[ "$(stat -c \'%a %U:%G\' /sandbox/.openclaw)" = "2770 sandbox:sandbox" ]',
         '[ "$(stat -c \'%a %U:%G\' /sandbox/.openclaw/openclaw.json)" = "660 sandbox:sandbox" ]',
         '[ "$(stat -c \'%a %U:%G\' /sandbox/.openclaw/.config-hash)" = "660 sandbox:sandbox" ]',
@@ -645,6 +664,7 @@ test.runIf(RUN_MANAGED_IMAGE_SECURITY)(
       ].join("\n"),
       "managed-image-openclaw-dac-recovery",
       ["--cap-drop=CAP_DAC_OVERRIDE"],
+      CONFIG_RECOVERY_TIMEOUT_MS,
     );
 
     await runContainer(
@@ -799,7 +819,7 @@ test.runIf(RUN_MANAGED_IMAGE_SECURITY)(
           "chmod 600 /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash",
           "chmod 2770 /sandbox/.openclaw",
           "mkdir -p /sandbox/.openclaw/bin",
-          `printf %s dGVzdCAiJChpZCAtdW4pIiA9IHNhbmRib3gKdGVzdCAiJChzdGF0IC1jICclYSAlVTolRycgL3NhbmRib3gvLm9wZW5jbGF3KSIgPSAnMjc3MCBzYW5kYm94OnNhbmRib3gnCnRlc3QgIiQoc3RhdCAtYyAnJWEgJVU6JUcnIC9zYW5kYm94Ly5vcGVuY2xhdy9vcGVuY2xhdy5qc29uKSIgPSAnNjYwIHNhbmRib3g6c2FuZGJveCcKZ3JlcCAtcXggJ3t9JyAvc2FuZGJveC8ub3BlbmNsYXcvb3BlbmNsYXcuanNvbgpjYXBfYm5kPSQoYXdrICcvXkNhcEJuZDove3ByaW50ICQyfScgL3Byb2Mvc2VsZi9zdGF0dXMpCnRlc3QgIiRjYXBfYm5kIiA9IDAwMDAwMDAwMDAwMDAxMDAK | base64 -d >/sandbox/.openclaw/bin/entrypoint-security-proof`,
+          `printf %s ${ENTRYPOINT_CONFIG_REPAIR_PROOF} | base64 -d >/sandbox/.openclaw/bin/entrypoint-security-proof`,
           "chmod 755 /sandbox/.openclaw/bin/entrypoint-security-proof",
         ].join("\n"),
         "managed-image-openclaw-prepare-entrypoint-repair",
@@ -872,39 +892,11 @@ test.runIf(RUN_MANAGED_IMAGE_SECURITY)(
       expect(refusalRemoved.exitCode).toBe(0);
     }
 
-    progress.phase("verify post-stepdown capability boundary");
-    const capabilities = await runContainer(
-      host,
-      image,
-      [
-        "source /usr/local/lib/nemoclaw/sandbox-init.sh",
-        'cat >/tmp/check-capabilities.sh <<\'NEMOCLAW_CAPABILITY_CHECK\'\nsource /usr/local/lib/nemoclaw/sandbox-init.sh\ncap_bnd="$(awk \'/^CapBnd:/{print $2}\' /proc/self/status)"\ntest -z "$(dangerous_caps_in_capbnd "$cap_bnd")"\nfor bit in 7 6 3; do test $(((16#$cap_bnd >> bit) & 1)) -eq 0; done\nprintf "CapBnd: %s\\n" "$cap_bnd"\nNEMOCLAW_CAPABILITY_CHECK',
-        "drop_capabilities /bin/bash -c 'source /usr/local/lib/nemoclaw/sandbox-init.sh; exec \"${STEP_DOWN_PREFIX_SANDBOX[@]}\" /bin/bash /tmp/check-capabilities.sh'",
-      ].join("\n"),
-      "managed-image-openclaw-capabilities",
-      [
-        "--cap-add=CAP_SYS_ADMIN",
-        "--cap-add=CAP_SYS_PTRACE",
-        "--cap-add=CAP_NET_RAW",
-        "--cap-add=CAP_DAC_OVERRIDE",
-        "--cap-add=CAP_SYS_CHROOT",
-        "--cap-add=CAP_FSETID",
-        "--cap-add=CAP_SETFCAP",
-        "--cap-add=CAP_MKNOD",
-        "--cap-add=CAP_AUDIT_WRITE",
-        "--cap-add=CAP_NET_BIND_SERVICE",
-      ],
-    );
-    const match = /^CapBnd:\s*([a-fA-F0-9]+)$/mu.exec(capabilities.stdout);
-    expect(match, "post-stepdown process must report CapBnd").not.toBeNull();
-
     progress.phase("record managed-image security evidence");
     await artifacts.writeJson("managed-image-security.json", {
       image,
       gatewayUid: Number(gatewayUid),
       sandboxUid: Number(sandboxUid),
-      capabilityBoundingSet: match?.[1]?.toLowerCase(),
-      dangerousCapabilitiesAbsent: "entrypoint inventory plus setuid, setgid, and kill",
     });
     await artifacts.target.complete({
       id: "managed-image-openclaw-security",

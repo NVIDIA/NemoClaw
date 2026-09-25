@@ -3,7 +3,7 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { McpBridgeEntry } from "../../state/registry";
+import type { McpSourceEntry } from "./mcp-bridge-contracts";
 
 const mocks = vi.hoisted(() => ({
   executeSandboxCommand: vi.fn(),
@@ -29,16 +29,15 @@ import {
   probeCredentialResolution,
 } from "./mcp-bridge-resolution-probe";
 
-const baseEntry: McpBridgeEntry = {
+const baseEntry: McpSourceEntry = {
   server: "github",
   agent: "openclaw",
-  adapter: "mcporter",
+  adapter: "openclaw-config",
   url: "https://api.githubcopilot.com/mcp/",
   env: ["GITHUB_TOKEN"],
   providerName: "alpha-mcp-github",
   providerId: "11111111-2222-4333-8444-555555555555",
   policyName: "mcp-bridge-github",
-  addedAt: new Date(0).toISOString(),
 };
 
 const readyProbe = {
@@ -228,32 +227,46 @@ describe("MCP credential-resolution probe classification", () => {
     expect(probe.detail).toContain("control probe failed");
   });
 
-  it("classifies a CONNECT-level proxy 403 as an indeterminate policy denial (#6379)", () => {
-    const probe = classifyCredentialResolutionProbe(
-      {
-        status: 0,
-        stdout: probeStdout({ curlExit: 56 }),
-        stderr: "curl: (56) CONNECT tunnel failed, response 403",
-      },
-      baseEntry,
-    );
-    expect(probe.ok).toBeNull();
-    expect(probe.detail).toContain("CONNECT 403");
-  });
+  it.each([
+    "curl: (56) CONNECT tunnel failed, response 403",
+    "Error: tunneling socket could not be established, statusCode=403",
+    "URLError: <urlopen error Tunnel connection failed: 403 Forbidden>",
+  ])(
+    "classifies a CONNECT-level proxy 403 as an indeterminate policy denial [%s] (#6379)",
+    (stderr) => {
+      const probe = classifyCredentialResolutionProbe(
+        {
+          status: 0,
+          stdout: probeStdout({ curlExit: 56 }),
+          stderr,
+        },
+        baseEntry,
+      );
+      expect(probe.ok).toBeNull();
+      expect(probe.detail).toContain("CONNECT 403");
+    },
+  );
 
-  it("classifies a CONNECT-level proxy 503 as unavailable TLS termination (#6379)", () => {
-    const probe = classifyCredentialResolutionProbe(
-      {
-        status: 0,
-        stdout: probeStdout({ curlExit: 56 }),
-        stderr: "curl: (56) CONNECT tunnel failed, response 503",
-      },
-      baseEntry,
-    );
-    expect(probe.ok).toBeNull();
-    expect(probe.detail).toContain("CONNECT 503");
-    expect(probe.detail).toContain("ephemeral CA initialization");
-  });
+  it.each([
+    "curl: (56) CONNECT tunnel failed, response 503",
+    "Error: tunneling socket could not be established, statusCode=503",
+    "URLError: <urlopen error Tunnel connection failed: 503 Service Unavailable>",
+  ])(
+    "classifies a CONNECT-level proxy 503 as unavailable TLS termination [%s] (#6379)",
+    (stderr) => {
+      const probe = classifyCredentialResolutionProbe(
+        {
+          status: 0,
+          stdout: probeStdout({ curlExit: 56 }),
+          stderr,
+        },
+        baseEntry,
+      );
+      expect(probe.ok).toBeNull();
+      expect(probe.detail).toContain("CONNECT 503");
+      expect(probe.detail).toContain("ephemeral CA initialization");
+    },
+  );
 
   it("classifies curl exit 28 as an indeterminate probe timeout (#6379)", () => {
     const probe = classifyCredentialResolutionProbe(
@@ -299,7 +312,7 @@ describe("MCP credential-resolution probe execution gates", () => {
       const probe = await probeCredentialResolution(
         "alpha",
         baseEntry,
-        "mcporter",
+        "openclaw-config",
         readiness,
         runtimeSelection,
       );
@@ -321,28 +334,48 @@ describe("MCP credential-resolution probe execution gates", () => {
     expect(mocks.executeSandboxCommand).not.toHaveBeenCalled();
   });
 
-  it("skips without contacting the sandbox while an add transaction is incomplete (#6379)", async () => {
-    const probe = await probeCredentialResolution(
-      "alpha",
-      { ...baseEntry, addState: "preflighted" },
-      "mcporter",
-      readyProbe,
-      runtimeSelection,
-    );
-    expect(probe).toEqual({ ok: null, detail: "add transaction incomplete" });
-    expect(mocks.executeSandboxCommand).not.toHaveBeenCalled();
-  });
-
   it("skips without contacting the sandbox when the stored URL is unsafe (#6379)", async () => {
     const probe = await probeCredentialResolution(
       "alpha",
       { ...baseEntry, url: "http://api.githubcopilot.com/mcp/" },
-      "mcporter",
+      "openclaw-config",
       readyProbe,
       runtimeSelection,
     );
     expect(probe).toEqual({ ok: null, detail: "no credential binding or safe endpoint to probe" });
     expect(mocks.executeSandboxCommand).not.toHaveBeenCalled();
+  });
+
+  it("probes a recorded trusted private endpoint instead of skipping it as unsafe (#11377)", async () => {
+    mocks.executeSandboxCommand.mockImplementation((_sandboxName: string, command: string) => {
+      const resultMarker = command.match(/__NEMOCLAW_SANDBOX_EXEC_STARTED___[0-9a-f]{32}/)?.[0];
+      return {
+        status: 0,
+        stdout: [
+          resultMarker,
+          probeStdout(
+            { httpStatus: 200, curlExit: 0, controlHttpStatus: 401, controlExit: 0 },
+            resultMarker,
+          ),
+        ].join("\n"),
+        stderr: "",
+      };
+    });
+    const probe = await probeCredentialResolution(
+      "alpha",
+      {
+        ...baseEntry,
+        url: "https://172.17.0.2:8443/mcp",
+        trustedPrivateHost: "172.17.0.2",
+        allowedIps: ["172.17.0.2"],
+      },
+      "openclaw-config",
+      readyProbe,
+      runtimeSelection,
+    );
+    expect(probe).toEqual({ ok: true, httpStatus: 200, controlHttpStatus: 401 });
+    expect(mocks.executeSandboxCommand).toHaveBeenCalledTimes(1);
+    expect(mocks.executeSandboxCommand.mock.calls[0]?.[1]).toContain("https://172.17.0.2:8443/mcp");
   });
 
   it("executes the probe in the sandbox and classifies the outcome (#6379)", async () => {
@@ -363,7 +396,7 @@ describe("MCP credential-resolution probe execution gates", () => {
     const probe = await probeCredentialResolution(
       "alpha",
       baseEntry,
-      "mcporter",
+      "openclaw-config",
       readyProbe,
       runtimeSelection,
     );
@@ -395,7 +428,7 @@ describe("MCP credential-resolution probe execution gates", () => {
     const probe = await probeCredentialResolution(
       "alpha",
       baseEntry,
-      "mcporter",
+      "openclaw-config",
       readyProbe,
       runtimeSelection,
       "v12",
@@ -414,7 +447,7 @@ describe("MCP credential-resolution probe execution gates", () => {
     const probe = await probeCredentialResolution(
       "alpha",
       baseEntry,
-      "mcporter",
+      "openclaw-config",
       readyProbe,
       runtimeSelection,
     );

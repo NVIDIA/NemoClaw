@@ -141,6 +141,7 @@ const ledgerSchema = Type.Object(
 export function createAdvisorFindingToolController(input: {
   headSha: string;
   interest: AdvisorInterest;
+  validatePrerequisites?: () => void;
 }): AdvisorFindingToolController {
   const headSha = fullSha(input.headSha, "headSha");
   const interest = input.interest;
@@ -154,6 +155,7 @@ export function createAdvisorFindingToolController(input: {
     executionMode: "sequential",
     execute: async (_id, rawInput) => {
       if (ledger) throw new Error("Advisor finding ledger already has a committed receipt");
+      input.validatePrerequisites?.();
       ledger = buildAdvisorFindingLedger({
         headSha,
         interest,

@@ -28,12 +28,10 @@ const E2E_WORKFLOW_CONTRACTS = [
   "test/e2e/support/mcp-workflow-boundary.test.ts",
   "test/e2e/support/mcp-workflow-compatibility.test.ts",
   "test/e2e/support/native-runtime-qualification-producer-workflow.test.ts",
-  "test/e2e/support/openclaw-plugin-runtime-exdev-workflow-boundary.test.ts",
   "test/e2e/support/onboard-timeout-contract.test.ts",
   "test/e2e/support/openshell-gateway-auth-contract-workflow-boundary.test.ts",
   "test/e2e/support/openshell-gateway-upgrade-workflow-boundary.test.ts",
   "test/e2e/support/prepare-e2e-workflow-boundary.test.ts",
-  "test/e2e/support/runner-pressure-workflow-boundary.test.ts",
   "test/e2e/support/security-posture-workflow-boundary.test.ts",
   "test/e2e/support/shared-e2e-workflow-boundary.test.ts",
   "test/e2e/support/staging-brev-launchable-identity-workflow-boundary.test.ts",
@@ -56,6 +54,9 @@ const OPAQUE_INPUTS = [
   ".github/actions/resolve-reviewed-hermes-platform/action.yaml",
   "Dockerfile",
   "agents/hermes/Dockerfile.base",
+  "agents/hermes/patch-external-supervisor-recovery.py",
+  "agents/hermes/patch-external-supervisor-restart.py",
+  "agents/hermes/patch-mcp-http-proxy.py",
   "agents/hermes/patch-session-list-preview.py",
   "agents/hermes/Dockerfile",
   "agents/langchain-deepagents-code/Dockerfile",
@@ -121,8 +122,6 @@ describe("Vitest opaque-input watch triggers", () => {
         "test/onboarding/onboard-extra-provider-reconciliation.test.ts",
         "test/onboarding/onboard-fresh-create-identity.test.ts",
         "test/onboarding/onboard-installer-restore-intent.test.ts",
-        "test/onboarding/onboard-managed-image-buildless-e2e.test.ts",
-        "test/onboarding/onboard-mcp-observability-redirect.test.ts",
         "test/onboarding/onboard-messaging.test.ts",
         "test/onboarding/onboard-prepared-build-context.test.ts",
         "test/onboarding/onboard-reservation-recreate.test.ts",
@@ -203,6 +202,7 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
     ]);
     expect(triggeredBy("Dockerfile")).toEqual([
+      "test/generation/providerless-agent-config.test.ts",
       "src/lib/onboard/managed-startup-profile.test.ts",
       "src/lib/sandbox/optimized-build-context-copy-sources.test.ts",
       "test/mcp/mcp-tool-discovery-image-contract.test.ts",
@@ -215,10 +215,20 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy("agents/hermes/patch-session-list-preview.py")).toEqual([
       "test/agents/hermes/hermes-session-list-preview-patch.test.ts",
     ]);
+    expect(triggeredBy("agents/hermes/patch-external-supervisor-recovery.py")).toEqual([
+      "test/agents/hermes/hermes-external-supervisor-recovery-patch.test.ts",
+    ]);
+    expect(triggeredBy("agents/hermes/patch-external-supervisor-restart.py")).toEqual([
+      "test/agents/hermes/hermes-external-supervisor-restart-patch.test.ts",
+    ]);
+    expect(triggeredBy("agents/hermes/patch-mcp-http-proxy.py")).toEqual([
+      "test/agents/hermes/hermes-mcp-http-proxy-patch.test.ts",
+    ]);
     expect(triggeredBy("nemoclaw-blueprint/policies/presets/nous-browser.yaml")).toEqual([
       "test/onboarding/effective-policy-contracts.test.ts",
     ]);
     expect(triggeredBy("agents/hermes/Dockerfile")).toEqual([
+      "test/generation/providerless-agent-config.test.ts",
       "src/lib/onboard/experimental/hermes-portable-build-context.test.ts",
       "src/lib/onboard/managed-startup-profile.test.ts",
       "test/agents/hermes/hermes-mcp-runtime-capability.test.ts",
@@ -264,10 +274,12 @@ describe("Vitest opaque-input watch triggers", () => {
     ]);
     expect(triggeredBy(".github/workflows/base-image.yaml")).toEqual([
       "test/inference/managed/managed-base-image-contract.test.ts",
+      "test/inference/managed/managed-image-mcp-bridge-publication.test.ts",
       "test/inference/managed/managed-image-publication-workflow.test.ts",
       "test/agents/deepagents/dcode-base-image-workflow.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/managed-images.yaml")).toEqual([
+      "test/inference/managed/managed-image-mcp-bridge-publication.test.ts",
       "test/inference/managed/managed-image-publication-workflow.test.ts",
       "test/e2e-runtime/pull-public-exact-digest.test.ts",
     ]);
@@ -379,6 +391,11 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy(".agents/skills/nemoclaw-maintainer-cut-release-tag/SKILL.md")).toEqual([
       "test/automation/releases/release-post-tag-follow-through.test.ts",
     ]);
+    expect(
+      triggeredBy(
+        ".agents/skills/nemoclaw-maintainer-cut-release-tag/references/cut-and-follow-through.md",
+      ),
+    ).toEqual(["test/automation/releases/release-post-tag-follow-through.test.ts"]);
     expect(triggeredBy(".agents/skills/nemoclaw-maintainer-evening/SKILL.md")).toEqual([
       "test/automation/releases/release-post-tag-follow-through.test.ts",
     ]);

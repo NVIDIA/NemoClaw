@@ -66,8 +66,8 @@ function sourceEntry(profile: ManagedStartupProfile): SandboxEntry {
     workload: receipt,
     lifecycleGeneration: "generation-source",
     lifecycleLiveIdentityFingerprint: createHash("sha256").update("source").digest("hex"),
-    provider: profile.inference.upstreamProvider,
-    model: profile.inference.model,
+    provider: profile.inference!.upstreamProvider,
+    model: profile.inference!.model,
     hermesToolGateways: ["nous-web"],
     hermesInferenceProvider: "source-hermes-inference",
   };

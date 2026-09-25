@@ -12,6 +12,7 @@ import * as runtime from "../../adapters/openshell/runtime";
 import * as defs from "../../agent/defs";
 import * as store from "../../credentials/store";
 import * as gatewayRuntime from "../../gateway-runtime-action";
+import { createBuiltInMessagingHookRegistry, MessagingSetupApplier } from "../../messaging";
 import * as policy from "../../policy";
 import { hashCredential } from "../../security/credential-hash";
 import * as onboardSession from "../../state/onboard-session";
@@ -361,6 +362,14 @@ beforeEach(() => {
 
   // Lazy legacy-provider seam: no onboarding graph is loaded for this suite.
   upsertMock = vi.spyOn(policyChannelDependencies, "upsertMessagingProviders").mockReturnValue([]);
+  vi.spyOn(
+    policyChannelDependencies,
+    "createMessagingHostForwardPreEnableHookRegistry",
+  ).mockReturnValue(
+    createBuiltInMessagingHookRegistry({
+      teams: { hostForwardPortConflict: { checkPortAvailable: async () => ({ ok: true }) } },
+    }),
+  );
   vi.spyOn(policyChannelDependencies, "revalidateChannelProviderPolicy").mockImplementation(
     async () => undefined,
   );
@@ -410,7 +419,7 @@ beforeEach(() => {
     .mockResolvedValue(undefined);
   ensureMessagingHostForwardAfterRebuildMock = vi
     .spyOn(messagingHostForwardLifecycle, "ensureMessagingHostForwardAfterRebuild")
-    .mockReturnValue(true);
+    .mockResolvedValue(true);
 
   // After a successful interactive add, channel health-check hooks can probe
   // the sandbox via executeSandboxExecCommand, which calls getOpenshellBinary()
@@ -1296,11 +1305,73 @@ describe("Teams host-forward lifecycle (PRA-2)", () => {
     return plan?.channels?.find((channel) => channel.channelId === "teams")?.hostForward;
   }
 
+  it("rejects an occupied host port before persisting any channel state", async () => {
+    setTeamsEnv();
+    arrangeRegistry({ current: makeEmptyEntry("alpha") });
+    const preEnableHookRegistry = createBuiltInMessagingHookRegistry({
+      teams: {
+        hostForwardPortConflict: {
+          checkPortAvailable: async () => ({ ok: false, process: "nc", pid: 4321 }),
+          isCurrentSandboxForward: () => false,
+        },
+      },
+    });
+
+    vi.mocked(
+      policyChannelDependencies.createMessagingHostForwardPreEnableHookRegistry,
+    ).mockReturnValue(preEnableHookRegistry);
+    await expect(addSandboxChannel("alpha", { channel: "teams" })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(
+      policyChannelDependencies.createMessagingHostForwardPreEnableHookRegistry,
+    ).toHaveBeenCalledOnce();
+    expect(loggedText()).toContain(
+      "Microsoft Teams webhook port 3978 is already in use by nc (PID 4321)",
+    );
+    expect(loggedText()).toContain("MSTEAMS_PORT");
+    expect(upsertMock).not.toHaveBeenCalled();
+    expect(saveCredentialMock).not.toHaveBeenCalled();
+    expect(applyPresetMock).not.toHaveBeenCalled();
+    expect(updateSandboxMock).not.toHaveBeenCalled();
+    expect(rebuildSandboxMock).not.toHaveBeenCalled();
+  });
+
+  it.each(["add", "start", "add QR"])(
+    "reports incomplete channel %s when the host forward fails (#11648)",
+    async (operation) => {
+      setTeamsEnv();
+      arrangeRegistry({
+        current:
+          operation === "start"
+            ? makeTeamsEntry("alpha", { disabled: true, port: "3978" })
+            : makeEmptyEntry("alpha"),
+      });
+      getDisabledChannelsMock.mockReturnValue(operation === "start" ? ["teams"] : []);
+      ensureMessagingHostForwardAfterRebuildMock.mockResolvedValue(false);
+      const healthChecks = vi.spyOn(MessagingSetupApplier, "applyHealthChecks");
+      const action = operation === "start" ? startSandboxChannel : addSandboxChannel;
+      await expect(
+        action("alpha", { channel: operation === "add QR" ? "whatsapp" : "teams" }),
+      ).rejects.toThrow(/host forward.*incomplete/i);
+      expect(ensureMessagingHostForwardAfterRebuildMock).toHaveBeenCalledOnce();
+      expect(healthChecks).not.toHaveBeenCalled();
+    },
+  );
+
   it("channels add teams starts the MSTEAMS_PORT host forward after rebuild-now completes", async () => {
     setTeamsEnv();
     arrangeRegistry({ current: makeEmptyEntry("alpha") });
+    const preEnableHookRegistry = createBuiltInMessagingHookRegistry({
+      teams: {
+        hostForwardPortConflict: {
+          checkPortAvailable: async () => ({ ok: true }),
+        },
+      },
+    });
 
-    await addSandboxChannel("alpha", { channel: "teams" });
+    await addSandboxChannel("alpha", { channel: "teams" }, { preEnableHookRegistry });
 
     expect(rebuildSandboxMock).toHaveBeenCalledWith("alpha", ["--yes"]);
     expect(ensureMessagingHostForwardAfterRebuildMock).toHaveBeenCalledWith(

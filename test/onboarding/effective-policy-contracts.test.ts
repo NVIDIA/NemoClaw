@@ -203,10 +203,13 @@ describe("effective built-in policy contracts", () => {
       );
     });
 
+    // The published 2026.7.1 and 2026.9.1 archives contain byte-identical
+    // skills/weather/SKILL.md content (SHA-256 62ab4821aa873949d1c1091836be1659a42b32caadce4bd145f5505a1ceaeec1),
+    // so the reviewed read-only egress contract remains unchanged.
     expect(
       loadAgent("openclaw").expectedVersion,
       "Revalidate the bundled OpenClaw weather skill before changing its reviewed egress contract",
-    ).toBe("2026.7.1");
+    ).toBe("2026.9.1");
   });
 
   it("uses raw L4 tunnels only for protocols that cannot be REST-inspected", () => {
@@ -623,28 +626,19 @@ describe("effective built-in policy contracts", () => {
         "/usr/local/bin/brew",
       ].sort(),
     );
-    const github = requireEndpoint(brew, "github.com");
-    expect(github).toMatchObject({ port: 443, access: "full" });
-    expect(github).not.toHaveProperty("protocol");
-    expect(github).not.toHaveProperty("tls");
-
-    const rawGithub = requireEndpoint(brew, "raw.githubusercontent.com");
-    expect(rawGithub).toMatchObject({
-      port: 443,
-      protocol: "rest",
-      enforcement: "enforce",
+    ["github.com", "raw.githubusercontent.com"].forEach((host) => {
+      const endpoint = requireEndpoint(brew, host);
+      expect(endpoint).toMatchObject({ port: 443, access: "full" });
+      expect(endpoint).not.toHaveProperty("protocol");
+      expect(endpoint).not.toHaveProperty("tls");
     });
-    expect(rawGithub).not.toHaveProperty("access");
-    expect(rules(rawGithub)).toEqual([
-      { method: "GET", path: "/**" },
-      { method: "HEAD", path: "/**" },
-    ]);
-
-    (brew.endpoints ?? []).filter(
-      (candidate) => !["github.com", "raw.githubusercontent.com"].includes(candidate.host ?? ""),
-    ).forEach((endpoint) => {
-      expect(endpoint).toMatchObject({ access: "full", tls: "skip" });
-    });
+    (brew.endpoints ?? [])
+      .filter(
+        (candidate) => !["github.com", "raw.githubusercontent.com"].includes(candidate.host ?? ""),
+      )
+      .forEach((endpoint) => {
+        expect(endpoint).toMatchObject({ access: "full", tls: "skip" });
+      });
     expect((claude.endpoints ?? []).map((endpoint) => endpoint.host).sort()).toEqual([
       "api.anthropic.com",
       "platform.claude.com",

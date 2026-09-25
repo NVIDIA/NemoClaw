@@ -103,6 +103,7 @@ describe("Hermes GPU managed-image authority proof", () => {
         OPENSHELL_MAIN_PROCESS_SPEC: openshellMainProcessSpecEnvValue(command, false),
       }),
     ).toEqual(command);
+    expect(command).not.toContain("/usr/local/bin/nemoclaw-managed-bootstrap");
   });
 
   it("retains the legacy OpenShell sandbox-command fallback", () => {

@@ -35,7 +35,7 @@ function registryEntry(
     entry: {
       name,
       agent: "hermes",
-      agentVersion: "0.20.6",
+      agentVersion: HERMES_LIFECYCLE_DEFINITION.agentVersion,
       fromDockerfile: null,
       gatewayName,
       gatewayPort,
@@ -244,6 +244,7 @@ describe("Hermes ACP command", () => {
     expect(fixture.output.text()).toBe("");
     expect(fixture.diagnostics.text()).toBe("gateway lifecycle progress belongs on ACP stderr\n");
     expect(fixture.recoverGateway).toHaveBeenCalledWith({
+      authorizeExactTargetTransportRecovery: true,
       gatewayName: "nemoclaw",
       output: expect.objectContaining({
         error: expect.any(Function),

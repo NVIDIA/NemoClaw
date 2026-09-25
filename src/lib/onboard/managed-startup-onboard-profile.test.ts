@@ -242,12 +242,11 @@ describe("buildManagedStartupOnboardProfile", () => {
       agentConfig: {
         agent: "openclaw",
         webSearch: { enabled: true, provider: "tavily" },
-        deviceAuth: { disabled: true, optOutSource: "managed-onboard" },
       },
       tools: { disclosure: "direct", enabledGateways: [] },
     });
     expect(built.profile.messaging.plan).not.toBeNull();
-    expect(built.profile.inference.upstreamEndpointUrl).toBeNull();
+    expect(built.profile.inference!.upstreamEndpointUrl).toBeNull();
   });
 
   it("keeps bracketed IPv6 loopback OpenClaw dashboards in loopback mode", () => {
@@ -453,23 +452,23 @@ describe("buildManagedStartupOnboardProfile", () => {
     expect(
       buildManagedStartupOnboardProfile(
         openClawInput({
-          inference: { ...openClawInput().inference, routedBaseUrl: route },
+          inference: { ...openClawInput().inference!, routedBaseUrl: route },
         }),
-      ).profile.inference.routedBaseUrl,
+      ).profile.inference!.routedBaseUrl,
     ).toBe(route);
     expect(
       buildManagedStartupOnboardProfile(
         hermesInput({
-          inference: { ...hermesInput().inference, routedBaseUrl: route },
+          inference: { ...hermesInput().inference!, routedBaseUrl: route },
         }),
-      ).profile.inference.routedBaseUrl,
+      ).profile.inference!.routedBaseUrl,
     ).toBe(route);
     expect(
       buildManagedStartupOnboardProfile(
         dcodeInput({
-          inference: { ...dcodeInput().inference, routedBaseUrl: route },
+          inference: { ...dcodeInput().inference!, routedBaseUrl: route },
         }),
-      ).profile.inference.routedBaseUrl,
+      ).profile.inference!.routedBaseUrl,
     ).toBe(route);
   });
 
@@ -533,7 +532,7 @@ describe("buildManagedStartupOnboardProfile", () => {
       model: "gpt-5.4",
       api: "openai-responses",
     });
-    expect(decodeManagedStartupProfile(built.encodedProfile).inference.model).toBe("gpt-5.4");
+    expect(decodeManagedStartupProfile(built.encodedProfile).inference!.model).toBe("gpt-5.4");
     expect(built.profile.tools.disclosure).toBe("direct");
     expect(built.profile.agentConfig).toMatchObject({
       agent: "openclaw",

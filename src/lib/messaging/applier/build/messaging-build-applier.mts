@@ -28,7 +28,6 @@ import {
   readEnvLineKey,
   staleCredentialEnvKeys,
 } from "../credential-env-cleanup.ts";
-import { allowRenderedOpenClawPlugins } from "../openclaw-plugin-allow.ts";
 import {
   selectActiveMessagingChannelIds,
   selectEnabledMessagingAgentRender,
@@ -141,7 +140,8 @@ type OpenClawPluginInstall = {
 };
 
 // Every trusted messaging plugin binds exact package identity, registry SRI,
-// registry tarball URL, and packed-byte SRI before local archive installation.
+// registry tarball URL, and packed-byte SRI before installation. Only third-party
+// plugins install from the local archive; official channels need npm provenance.
 // Keep these checks together when #5896 consolidates the archive installers.
 export const OPENCLAW_MESSAGING_PLUGIN_ARCHIVE_PROVENANCE_POLICY = Object.freeze({
   schemaVersion: 1,
@@ -163,6 +163,26 @@ function isPinnedHermesUvPackageSpec(spec: string): boolean {
 }
 
 export class MessagingBuildApplierError extends Error {}
+
+type OfficialPluginProvenanceCondition =
+  | "inspection failed"
+  | "inspection timed out"
+  | "inspection did not return JSON"
+  | "did not retain trusted exact registry provenance";
+
+class OfficialPluginProvenanceError extends MessagingBuildApplierError {
+  readonly pluginId: string;
+  readonly condition: OfficialPluginProvenanceCondition;
+
+  constructor(pluginId: string, condition: OfficialPluginProvenanceCondition) {
+    super(`OpenClaw official npm plugin ${pluginId} ${condition}`);
+    this.pluginId = pluginId;
+    this.condition = condition;
+  }
+}
+
+class MessagingBuildCommandError extends MessagingBuildApplierError {}
+class MessagingBuildCommandTimeoutError extends MessagingBuildCommandError {}
 
 export const DEFAULT_MESSAGING_RUNTIME_PLAN_PATH =
   "/usr/local/share/nemoclaw/messaging-runtime-plan.json";
@@ -281,7 +301,6 @@ export function applyMessagingAgentRenderToObject(
     );
     setJsonPath(config, render.path, value);
   }
-  if (plan.agent === "openclaw") allowRenderedOpenClawPlugins(config, renderEntries);
 }
 
 export function applyMessagingAgentRenderToEnvLines(
@@ -773,14 +792,36 @@ function installOpenClawPluginPackages(installs: readonly OpenClawPluginInstall[
     // fetched bytes in HOME/.npm in an earlier image layer.
     const packed = packVerifiedOpenClawPluginArchive(install, installEnv);
     try {
-      // Install through the `npm-pack:` spec so OpenClaw records npm
-      // provenance (source, resolved name/version, integrity) for the
-      // verified tarball. A bare archive path records archive provenance,
-      // which fails the trusted-official-install check gating openKeyedStore
-      // on OpenClaw >= 2026.6.10 and crash-loops channel plugins that use
-      // keyed state (e.g. WhatsApp). npm-pack installs always record the
-      // exact resolved version, so `--pin` is not needed.
-      runCommand(["openclaw", "plugins", "install", `npm-pack:${packed.archivePath}`], installEnv);
+      const officialPluginId = officialPluginIdFromManifest(install.spec, env);
+      // Official channels need registry provenance for the ingress queue.
+      // The verified archive warms the cache before the exact npm install.
+      // Third-party plugins retain their reviewed local archive installation.
+      const installTarget = officialPluginId ? install.spec : `npm-pack:${packed.archivePath}`;
+      const commandEnv = officialPluginId
+        ? { ...installEnv, NPM_CONFIG_OFFLINE: "true", npm_config_offline: "true" }
+        : installEnv;
+      runCommand(
+        ["openclaw", "plugins", "install", "--force", "--accept-capabilities", installTarget],
+        commandEnv,
+      );
+      if (officialPluginId) {
+        let inspection: string;
+        try {
+          inspection = runCommand(
+            ["openclaw", "plugins", "inspect", officialPluginId, "--json"],
+            commandEnv,
+            { emitOutput: false, timeoutMs: 60_000 },
+          );
+        } catch (error) {
+          throw new OfficialPluginProvenanceError(
+            officialPluginId,
+            error instanceof MessagingBuildCommandTimeoutError
+              ? "inspection timed out"
+              : "inspection failed",
+          );
+        }
+        verifyTrustedOfficialNpmInstall(install, officialPluginId, inspection);
+      }
       if (install.runtimeLock) {
         const openClawVersion = sanitizeOptionalString(env.OPENCLAW_VERSION);
         if (!openClawVersion) {
@@ -969,7 +1010,6 @@ function applyMessagingRenderEntriesToObject(
     );
     setJsonPath(config, render.path, value);
   }
-  if (plan.agent === "openclaw") allowRenderedOpenClawPlugins(config, renderEntries);
 }
 
 function readEnvRenderLines(render: MessagingRenderEntry): readonly string[] {
@@ -1333,16 +1373,70 @@ function requireExactNpmPackageSpec(
   return { packageSpec: parsed.packageSpec, version: parsed.version };
 }
 
-function runCommand(args: readonly string[], env: Env): void {
+function runCommand(
+  args: readonly string[],
+  env: Env,
+  options: { readonly emitOutput?: boolean; readonly timeoutMs?: number } = {},
+): string {
   console.log(`+ ${args.join(" ")}`);
   const result = spawnSync(args[0] as string, args.slice(1), {
+    ...(options.timeoutMs ? { timeout: options.timeoutMs, killSignal: "SIGKILL" as const } : {}),
+    encoding: "utf8",
     env: env as NodeJS.ProcessEnv,
-    stdio: "inherit",
+    maxBuffer: 64 * 1024 * 1024,
+    stdio: ["ignore", "pipe", "pipe"],
   });
-  if (result.error) throw result.error;
+  if ((result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT")
+    throw new MessagingBuildCommandTimeoutError();
+  if (result.error) throw new MessagingBuildCommandError();
   if (result.status !== 0) {
-    throw new MessagingBuildApplierError(
-      `${args[0]} exited with status ${String(result.status ?? "unknown")}`,
+    throw new MessagingBuildCommandError();
+  }
+  if (result.stdout && options.emitOutput !== false) process.stdout.write(result.stdout);
+  if (result.stderr && options.emitOutput !== false) process.stderr.write(result.stderr);
+  return result.stdout ?? "";
+}
+
+function officialPluginIdFromManifest(spec: string, env: Env): string | undefined {
+  if (!spec.startsWith("npm:@openclaw/")) return undefined;
+  const manifest: ChannelManifest | undefined = BUILT_IN_CHANNEL_MANIFESTS.find(
+    (manifest: ChannelManifest) =>
+      manifest.agentPackages?.some(
+        (pkg) =>
+          pkg.agent === "openclaw" &&
+          pkg.manager === "openclaw-plugin" &&
+          resolveOpenClawPackageSpec(pkg.spec, env) === spec,
+      ),
+  );
+  return manifest?.runtime?.openclaw?.channelName;
+}
+
+function verifyTrustedOfficialNpmInstall(
+  install: OpenClawPluginInstall,
+  pluginId: string,
+  inspectOutput: string,
+): void {
+  let inspected: unknown;
+  try {
+    inspected = JSON.parse(inspectOutput);
+  } catch {
+    throw new OfficialPluginProvenanceError(pluginId, "inspection did not return JSON");
+  }
+  const inspectedRecord = isObject(inspected) ? inspected : {};
+  const record = isObject(inspectedRecord.install) ? inspectedRecord.install : {};
+  const plugin = isObject(inspectedRecord.plugin) ? inspectedRecord.plugin : {};
+  if (
+    plugin.id !== pluginId ||
+    plugin.trustedOfficialInstall !== true ||
+    record.source !== "npm" ||
+    record.sourcePath !== undefined ||
+    record.artifactKind !== undefined ||
+    record.resolvedSpec !== install.npmPackageSpec ||
+    record.integrity !== install.integrity
+  ) {
+    throw new OfficialPluginProvenanceError(
+      pluginId,
+      "did not retain trusted exact registry provenance",
     );
   }
 }
@@ -1373,6 +1467,9 @@ function packVerifiedOpenClawPluginArchive(
     packageSpec: install.npmPackageSpec,
     tarballUrl: install.tarballUrl,
   });
+  if (officialPluginIdFromManifest(install.spec, env)) {
+    return { archivePath: archive.archivePath, rootDir: archive.rootDirectory };
+  }
   const exactPackage = requireExactNpmPackageSpec(install.spec, install.npmPackageSpec);
   const remediated = remediateReviewedOpenClawPluginArchive({
     archivePath: archive.archivePath,
@@ -1380,7 +1477,10 @@ function packVerifiedOpenClawPluginArchive(
     packageSpec: exactPackage.packageSpec,
     workingDirectory: archive.rootDirectory,
   });
-  return { archivePath: remediated.archivePath, rootDir: archive.rootDirectory };
+  return {
+    archivePath: remediated.archivePath,
+    rootDir: archive.rootDirectory,
+  };
 }
 
 type CredentialPlaceholderRule = {
@@ -1966,7 +2066,10 @@ export function main(argv: readonly string[] = process.argv.slice(2)): void {
     console.log(JSON.stringify(describeMessagingBuildPhase(plan, phase, process.env), null, 2));
     return;
   }
-  applyMessagingBuildPhase(plan, phase, process.env, { managedStartupRuntime, mode });
+  applyMessagingBuildPhase(plan, phase, process.env, {
+    managedStartupRuntime,
+    mode,
+  });
 }
 
 function parseMessagingBuildArgs(argv: readonly string[]): {
@@ -2073,11 +2176,24 @@ function isMainModule(): boolean {
   return process.argv[1] ? import.meta.url === pathToFileURL(resolve(process.argv[1])).href : false;
 }
 
+function fatalMessagingBuildDiagnostic(error: unknown): string {
+  if (error instanceof OfficialPluginProvenanceError) {
+    return `Official OpenClaw plugin '${error.pluginId}' ${error.condition}. NemoClaw manages the package pins and build cache. Report this failure, the plugin name and your NemoClaw version to a maintainer.`;
+  }
+  if (error instanceof MessagingBuildCommandError) {
+    return "Messaging build applier command failed.";
+  }
+  if (error instanceof MessagingBuildApplierError) {
+    return "Messaging build applier rejected invalid or unsafe input.";
+  }
+  return "Messaging build applier failed.";
+}
+
 if (isMainModule()) {
   try {
     main();
   } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
+    console.error(fatalMessagingBuildDiagnostic(error));
     process.exit(2);
   }
 }

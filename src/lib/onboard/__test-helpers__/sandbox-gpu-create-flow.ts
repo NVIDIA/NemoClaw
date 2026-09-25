@@ -11,7 +11,6 @@ import { createCliOpenShellSandboxObserver } from "../../adapters/openshell/sand
 import type { OpenShellSandboxBufferedCommandExecutor } from "../../adapters/openshell/sandbox-command";
 import type { CheckpointPortableRuntimeAuthority } from "../../state/onboard-checkpoint-types";
 import type { SandboxGpuProofResult } from "../../state/registry";
-import type { ManagedBootstrapRuntimeCreateLifecycleInput } from "../managed-bootstrap/runtime-create";
 import type {
   SandboxGpuCreateFlowDeps,
   SandboxGpuCreateFlowInput,
@@ -46,11 +45,17 @@ export function createGpuFlowInput(): SandboxGpuCreateFlowInput {
     gatewayName: "nemoclaw",
     gatewayPort: 8080,
     sandboxReadyTimeoutSecs: 60,
-    createArgv: ["openshell", "sandbox", "create", "--gpu"],
+    createRequest: {
+      sandboxName: "alpha",
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      source: { reference: "openshell/sandbox-from:test" },
+      gpu: {},
+      startupCommand: ["nemoclaw-start"],
+      environment: {},
+    },
     sandboxEnv: {},
     sandboxStartupCommand: ["nemoclaw-start"],
     prebuild: {
-      createArgs: ["--from", "openshell/sandbox-from:test", "--name", "alpha", "--gpu"],
       imageRef: "openshell/sandbox-from:test",
       imageId: GPU_IMAGE_ID,
     },
@@ -128,7 +133,7 @@ export function createGpuFlowDeps(
 export function createGpuPatchFixture() {
   return {
     maybeApplyDuringCreate: vi.fn(),
-    replacementRuntimeId: vi.fn(() => null),
+    replacementRuntimeId: vi.fn<() => string | null>(() => null),
     createFailureMessage: vi.fn(() => null),
     exitOnPatchError: vi.fn(),
     rollbackManagedStartupAfterCreateFailure: vi.fn(),
@@ -310,7 +315,7 @@ export function createGpuFlowTestHarness(mocks: Record<string, ReturnType<typeof
   function createSourceInput(): SandboxGpuCreateFlowInput {
     const input = createGpuFlowInput();
     input.prebuild = {
-      createArgs: ["--from", "/tmp/build/Dockerfile", "--name", "alpha", "--gpu"],
+      sourceReference: "/tmp/build/Dockerfile",
       imageRef: null,
       imageId: null,
     };
@@ -325,47 +330,6 @@ export function createGpuFlowTestHarness(mocks: Record<string, ReturnType<typeof
       JSON.stringify({ credsStore: "desktop.exe" }),
     );
     return dockerConfig;
-  }
-
-  function attachManagedBootstrap(input: SandboxGpuCreateFlowInput): void {
-    input.sandboxGpuConfig = {
-      mode: "0",
-      hostGpuDetected: false,
-      hostGpuPlatform: null,
-      sandboxGpuEnabled: false,
-      sandboxGpuDevice: null,
-      errors: [],
-    };
-    input.gpuRoutePlan = "none";
-    input.initialGpuRoute = "none";
-    input.managedBootstrap = {
-      bootstrapIdentity: "e".repeat(64),
-      stateRoot: "/tmp/nemoclaw-managed-bootstrap",
-      runtimeProvider: {
-        identity: { id: "mxc" },
-        bootstrap: {
-          createOnboardRouting: () => ({ nativeFallbackHasCleanBaseline: false }),
-          createLifecycle: (options: ManagedBootstrapRuntimeCreateLifecycleInput) => ({
-            launchArgv: options.launchArgv,
-            patch: createGpuPatchFixture(),
-            recoverUnfinished: async () => null,
-            prepareNetwork: async () => undefined,
-            runCreate: async <T>(
-              start: (held: {
-                readonly heldWorkloadArgv: readonly string[];
-                readonly bootstrapIdentity: string;
-              }) => Promise<{ readonly value: T }>,
-            ): Promise<T> =>
-              (
-                await start({
-                  heldWorkloadArgv: options.heldWorkloadArgv,
-                  bootstrapIdentity: options.bootstrapIdentity,
-                })
-              ).value,
-          }),
-        },
-      },
-    } as unknown as NonNullable<SandboxGpuCreateFlowInput["managedBootstrap"]>;
   }
 
   function captureCreateEnv(): {
@@ -425,7 +389,6 @@ export function createGpuFlowTestHarness(mocks: Record<string, ReturnType<typeof
     errorOutput,
     createSourceInput,
     writeDesktopCredsStore,
-    attachManagedBootstrap,
     captureCreateEnv,
     setupHarness,
     resetHarness,

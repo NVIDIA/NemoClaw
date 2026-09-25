@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { AgentMcpAdapter } from "../../agent/defs";
-import type { McpBridgeEntry, SandboxEntry } from "../../state/registry";
+import type { SandboxEntry } from "../../state/registry";
+import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import {
   registerAgentAdapterAtCurrentCredentialRevision,
   unregisterAgentAdapter,
@@ -15,14 +16,14 @@ import {
 import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
 import { getBridgeAdapter, getSandboxAgent } from "./mcp-bridge-state";
 
-export type McpScrubbedAdapterEntry = McpBridgeEntry & {
+export type McpScrubbedAdapterEntry = McpSourceEntry & {
   credentialRevision?: McpAttachedCredentialRevision;
 };
 
 /** Resolve the exact persisted adapter, falling back only for legacy entries. */
 export function resolveManagedMcpAdapter(
   sandbox: SandboxEntry,
-  entry: McpBridgeEntry,
+  entry: McpSourceEntry,
 ): AgentMcpAdapter {
   return isAgentMcpAdapter(entry.adapter)
     ? entry.adapter
@@ -33,7 +34,7 @@ export function resolveManagedMcpAdapter(
 export async function scrubManagedMcpAdapterOrThrow(
   sandboxName: string,
   sandbox: SandboxEntry,
-  entry: McpBridgeEntry,
+  entry: McpSourceEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
 ): Promise<McpScrubbedAdapterEntry> {
   const observation = await observeMcpCredentialRevision(sandboxName, entry, runtimeSelection);
