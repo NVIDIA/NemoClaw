@@ -186,7 +186,6 @@ describe("OpenClaw restore diagnostics", () => {
         expect.stringContaining(buildOpenClawRestoreLogCommand()),
         15_000,
         {
-          localDockerFallbackPolicy: "never",
           runtimeSelection,
         },
       );

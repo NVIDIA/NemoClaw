@@ -63,6 +63,14 @@ import {
   cleanupWhenOpenShellAvailable,
 } from "../fixtures/cleanup-resources.ts";
 import { getSandbox } from "../../../src/lib/state/registry.ts";
+import {
+  buildNativeModelRestartCommand,
+  NATIVE_RESTART_PROVIDER,
+} from "./full-e2e-native-model.ts";
+import {
+  agentReplyContainsToken,
+  parseOpenClawGatewayModelRun,
+} from "./openclaw-inference-switch-helpers.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-full";
 const FULL_E2E_TARGET_ID = process.env.E2E_TARGET_ID ?? "full-e2e";
@@ -76,7 +84,6 @@ const INSTALL_TIMEOUT_MS = execTimeout(25 * 60_000);
 const FIRST_TURN_TIMEOUT_MS = 240_000;
 const MAX_SILENCE_SECS = 60;
 const EXPECTED_FIRST_REPLY = "NEMOCLAW_E2E_READY_6002";
-const NATIVE_MODEL_RESTART_MARKER = "inference/nemoclaw-e2e-native-model";
 const AUTHORITATIVE_LOCAL_BASE_BUILD_OUTPUT =
   "Building OpenClaw sandbox base image locally because no compatible published base image was found.";
 const MEASURE_COLD_ONBOARD =
@@ -386,25 +393,12 @@ sha256sum /sandbox/.bashrc /sandbox/.profile > /tmp/nemoclaw-e2e-profiles.sha256
       timeoutMs: 30_000,
     },
   );
-  const editNativeModel = await input.sandbox.exec(
-    SANDBOX_NAME,
-    [
-      "/usr/bin/env",
-      "HOME=/sandbox",
-      "/usr/local/bin/openclaw",
-      "config",
-      "set",
-      "agents.defaults.model.primary",
-      JSON.stringify(NATIVE_MODEL_RESTART_MARKER),
-      "--strict-json",
-    ],
-    {
-      artifactName: "phase-4-write-native-model",
-      env: env(),
-      redactionValues: input.redactionValues,
-      timeoutMs: 30_000,
-    },
-  );
+  const editNativeModel = await input.sandbox.exec(SANDBOX_NAME, buildNativeModelRestartCommand(), {
+    artifactName: "phase-4-write-native-model",
+    env: env(),
+    redactionValues: input.redactionValues,
+    timeoutMs: 120_000,
+  });
   const validateNativeModel = await input.sandbox.exec(
     SANDBOX_NAME,
     ["/usr/bin/env", "HOME=/sandbox", "/usr/local/bin/openclaw", "config", "validate"],
@@ -457,6 +451,11 @@ sha256sum /sandbox/.bashrc /sandbox/.profile > /tmp/nemoclaw-e2e-profiles.sha256
       .join("\n"),
   ).toBe(true);
 
+  const nativeModel = JSON.parse(editNativeModel.stdout) as {
+    original: string;
+    primary: string;
+    model: string;
+  };
   const persistedModel = await input.sandbox.exec(
     SANDBOX_NAME,
     [
@@ -475,6 +474,30 @@ sha256sum /sandbox/.bashrc /sandbox/.profile > /tmp/nemoclaw-e2e-profiles.sha256
       timeoutMs: 30_000,
     },
   );
+  // Observe the running gateway before restoring the native selection. A disk
+  // read alone cannot detect a gateway that still uses the previous model.
+  const nativeTurn = await input.sandbox.exec(
+    SANDBOX_NAME,
+    [
+      "/usr/bin/env",
+      "HOME=/sandbox",
+      "/usr/local/bin/openclaw",
+      "infer",
+      "model",
+      "run",
+      "--gateway",
+      "--json",
+      "--prompt",
+      "Reply with exactly one word: PONG",
+    ],
+    {
+      artifactName: "phase-4-native-model-gateway-turn-after-start",
+      env: env(),
+      redactionValues: input.redactionValues,
+      timeoutMs: FIRST_TURN_TIMEOUT_MS,
+    },
+  );
+  const nativeReply = parseOpenClawGatewayModelRun(nativeTurn.stdout);
   const restoreNativeModel = await input.sandbox.exec(
     SANDBOX_NAME,
     [
@@ -494,6 +517,18 @@ sha256sum /sandbox/.bashrc /sandbox/.profile > /tmp/nemoclaw-e2e-profiles.sha256
       timeoutMs: 30_000,
     },
   );
+  const removeNativeTestProvider = await input.sandbox.execShell(
+    SANDBOX_NAME,
+    trustedSandboxShellScript(`set -eu
+/usr/bin/env HOME=/sandbox /usr/local/bin/openclaw config unset ${shellQuote(`agents.defaults.models[${JSON.stringify(nativeModel.primary)}]`)}
+/usr/bin/env HOME=/sandbox /usr/local/bin/openclaw config unset models.providers.${NATIVE_RESTART_PROVIDER}`),
+    {
+      artifactName: "phase-4-remove-native-test-provider",
+      env: env(),
+      redactionValues: input.redactionValues,
+      timeoutMs: 120_000,
+    },
+  );
   const validateRestoredModel = await input.sandbox.exec(
     SANDBOX_NAME,
     ["/usr/bin/env", "HOME=/sandbox", "/usr/local/bin/openclaw", "config", "validate"],
@@ -511,13 +546,28 @@ sha256sum /sandbox/.bashrc /sandbox/.profile > /tmp/nemoclaw-e2e-profiles.sha256
   );
   expect(
     persistedModel.exitCode === 0 &&
-      persistedModel.stdout.trim() === JSON.stringify(NATIVE_MODEL_RESTART_MARKER) &&
+      persistedModel.stdout.trim() === JSON.stringify(nativeModel.primary) &&
+      nativeModel.original === JSON.parse(originalModel.stdout) &&
+      !nativeTurn.timedOut &&
+      nativeTurn.exitCode === 0 &&
+      nativeReply?.provider === NATIVE_RESTART_PROVIDER &&
+      nativeReply.model === nativeModel.model &&
+      agentReplyContainsToken(nativeReply.text, "PONG") &&
       !restoreNativeModel.timedOut &&
       restoreNativeModel.exitCode === 0 &&
+      !removeNativeTestProvider.timedOut &&
+      removeNativeTestProvider.exitCode === 0 &&
       validateRestoredModel.exitCode === 0 &&
       !restartAfterNativeModelRestore.timedOut &&
       restartAfterNativeModelRestore.exitCode === 0,
-    [persistedModel, restoreNativeModel, validateRestoredModel, restartAfterNativeModelRestore]
+    [
+      persistedModel,
+      nativeTurn,
+      restoreNativeModel,
+      removeNativeTestProvider,
+      validateRestoredModel,
+      restartAfterNativeModelRestore,
+    ]
       .map(resultText)
       .join("\n"),
   ).toBe(true);

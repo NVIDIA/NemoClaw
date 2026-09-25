@@ -13,7 +13,7 @@
   },
   "limits": {
     "testFileCount": 78,
-    "liveFileCount": 189,
+    "liveFileCount": 190,
     "direct": {
       "expectCalls": 1356,
       "matcherAssertions": 1335,
@@ -35,8 +35,8 @@
       "throwGuards": 551,
       "objectFieldAssertions": 244,
       "assertionPoints": 3371,
-      "generatedProbeBlocks": 234,
-      "generatedProbeConditions": 829
+      "generatedProbeBlocks": 235,
+      "generatedProbeConditions": 835
     },
     "fileMetricOrder": [
       "directExpectCalls",
@@ -61,7 +61,7 @@
       "test/e2e/live/deferred-onboarding.test.ts": [12,14,12,14,0],
       "test/e2e/live/double-onboard.test.ts": [36,43,36,43,0],
       "test/e2e/live/external-gateway-health.test.ts": [4,5,4,11,0],
-      "test/e2e/live/full-e2e.test.ts": [28,32,28,61,7],
+      "test/e2e/live/full-e2e.test.ts": [28,32,28,61,8],
       "test/e2e/live/gpu-double-onboard.test.ts": [21,24,21,24,0],
       "test/e2e/live/gpu-e2e.test.ts": [39,44,72,90,3],
       "test/e2e/live/hermes-discord.test.ts": [10,25,17,64,14],

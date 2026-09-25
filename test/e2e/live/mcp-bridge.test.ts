@@ -92,13 +92,12 @@ import {
   assertAuthenticatedMcpRediscovery,
   assertAuthenticatedMcpToolDiscovery,
   runHermesInitialMcpReadiness,
+  withMcpToolCallFailureEvidence,
+  buildDeepAgentsConfigProbe,
 } from "./mcp-bridge-tool-discovery.ts";
 import { proveKilledDockerOpenClawRecovery } from "./openclaw-stopped-recovery.ts";
 import { assertTrustedPrivateMcpRebindingDenied } from "./mcp-bridge-trusted-private.ts";
-import {
-  buildMcpCredentialHandleAuthorizationPattern,
-  MCP_PROVIDER_REWRITE_PROBE_SOURCE,
-} from "./mcp-provider-rewrite-probe.ts";
+import { MCP_PROVIDER_REWRITE_PROBE_SOURCE } from "./mcp-provider-rewrite-probe.ts";
 import { assertRawOpenShellAllowedIpsRebindingDenied } from "./openshell-allowed-ips-rebinding.ts";
 import { prepareExactMainMcpProof } from "./openshell-exact-main-mcp-proof.ts";
 import { pausePortableHostLockOwner } from "../support/mcp-bridge-portable-lock-barrier.ts";
@@ -502,21 +501,7 @@ async function assertDeepAgentsConfig(
   sandboxName: string,
   mcpUrl: string,
 ): Promise<void> {
-  const authorizationPattern = buildMcpCredentialHandleAuthorizationPattern("FAKE_MCP_SECRET");
-  const script = [
-    "set -eu",
-    "python3 - <<'PY'",
-    "import json, pathlib, re",
-    "path = pathlib.Path('/sandbox/.deepagents/.mcp.json')",
-    "text = path.read_text(encoding='utf-8')",
-    "data = json.loads(text)",
-    `entry = data['mcpServers'][${JSON.stringify(SERVER_NAME)}]`,
-    "assert entry['type'] == 'http'",
-    `assert entry['url'] == ${JSON.stringify(mcpUrl)}`,
-    `assert re.fullmatch(${JSON.stringify(authorizationPattern)}, entry['headers']['Authorization'])`,
-    `assert ${JSON.stringify(HOST_SECRET)} not in text`,
-    "PY",
-  ].join("\n");
+  const script = buildDeepAgentsConfigProbe(mcpUrl, SERVER_NAME, HOST_SECRET);
   const result = await sandbox.execShell(sandboxName, trustedSandboxShellScript(script), {
     artifactName: "deepagents-mcp-config-assertions",
     env: buildAvailabilityProbeEnv(),
@@ -873,17 +858,31 @@ test(
     openClawToolSearch.toolNames = ["distinct__fake_echo"];
     try {
       await restartBridgeWithoutHostSecret(host, OPENCLAW_SANDBOX_NAME, "openclaw");
-      await assertRealAdapterToolCall(host, sandbox, distinctMcp, {
-        ...bridge,
-        resultToken: MCP_RESULT,
-        expectedSecret: ROTATED_HOST_SECRET,
-        otherEndpoint: fakeMcp,
-        serverName: "distinct",
-        mcpUrl: distinctTunnel.url,
-        credentialEnvName: "DISTINCT_MCP_SECRET",
-        deniedTool: MCP_BRIDGE_DENIED_TOOL_NAME,
-        artifactName: "openclaw-dual-distinct-tool-call",
-      });
+      await withMcpToolCallFailureEvidence(
+        () =>
+          assertRealAdapterToolCall(host, sandbox, distinctMcp, {
+            ...bridge,
+            resultToken: MCP_RESULT,
+            expectedSecret: ROTATED_HOST_SECRET,
+            otherEndpoint: fakeMcp,
+            serverName: "distinct",
+            mcpUrl: distinctTunnel.url,
+            credentialEnvName: "DISTINCT_MCP_SECRET",
+            deniedTool: MCP_BRIDGE_DENIED_TOOL_NAME,
+            artifactName: "openclaw-dual-distinct-tool-call",
+          }),
+        host,
+        {
+          artifacts,
+          artifactPrefix: "openclaw-dual-distinct",
+          sandboxName: OPENCLAW_SANDBOX_NAME,
+          serverName: "distinct",
+          credentialEnvName: "DISTINCT_MCP_SECRET",
+          requests: distinctMcp.requests,
+          expectedSecret: ROTATED_HOST_SECRET,
+          redactionValues: [HOST_SECRET, ROTATED_HOST_SECRET],
+        },
+      );
     } finally {
       openClawToolSearch.query = "fake echo";
       openClawToolSearch.toolNames = ["fake__fake_echo"];
