@@ -592,7 +592,7 @@ describe("rebuild post-restore phase", () => {
       expectedVersion: "0.20.6",
       isStale: true,
       verificationFailed: false,
-      detectionMethod: "ssh-exec",
+      detectionMethod: "openshell-exec",
     });
     const args = {
       ...input(),
@@ -777,7 +777,7 @@ describe("rebuild post-restore phase", () => {
       expectedVersion: "0.20.6",
       isStale: false,
       verificationFailed: false,
-      detectionMethod: "ssh-exec",
+      detectionMethod: "openshell-exec",
     });
     const args = {
       ...input(),

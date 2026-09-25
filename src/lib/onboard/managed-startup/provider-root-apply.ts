@@ -1,6 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  createSdkOpenShellSandboxStateLifecycle,
+  type MutateOpenShellSandboxRequest,
+  type OpenShellSandboxStateLifecycle,
+} from "../../adapters/openshell/sandbox-lifecycle-sdk";
+
 import type {
   RuntimeProviderBundle,
   RuntimeProviderCommandCapture,
@@ -442,5 +448,22 @@ export function releaseProviderManagedStartupHold(input: {
         commandDetail(result) ? `: ${commandDetail(result)}` : ""
       }`,
     );
+  }
+}
+
+/** Reload the supervisor's upstream TLS roots after the root apply installs a CA. */
+export async function refreshManagedStartupCorporateCaTrust(
+  request: MutateOpenShellSandboxRequest,
+  lifecycle: OpenShellSandboxStateLifecycle = createSdkOpenShellSandboxStateLifecycle(),
+): Promise<void> {
+  // OpenShell snapshots its TLS roots before the held managed workload receives
+  // its profile. Native stop/start retains that exact container and its CA files.
+  for (const action of ["stop", "start"] as const) {
+    const result = await lifecycle[`${action}Sandbox`](request);
+    if (result.kind === "failed") {
+      throw new Error(
+        `Could not ${action} sandbox '${request.sandboxName}' to activate corporate CA trust: ${result.error.message}`,
+      );
+    }
   }
 }

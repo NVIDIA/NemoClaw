@@ -10,6 +10,7 @@ import type {
 // Import source directly so this test cannot pass against a stale build.
 import {
   confirmRecoveredSandboxGatewayManaged,
+  isSandboxGatewayHttpReachableForStatus,
   resolveGatewayRecoveryWaitSeconds,
   waitForRecoveredSandboxGateway,
   waitForRecreatedSandboxOpenShellReady,
@@ -876,5 +877,78 @@ describe("shared gateway recovery wait policy", () => {
         NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS: "0.25",
       }),
     ).toBe(0.25);
+  });
+});
+
+describe("status ordinary command transport", () => {
+  it("uses the guarded native executor with its selected gateway and caller deadline", async () => {
+    vi.stubEnv("OPENCLAW_GATEWAY_TOKEN", "host-gateway-token");
+    vi.stubEnv("NEMOCLAW_SANDBOX_EXEC_TIMEOUT_MS", "60000");
+    const commandExecutor = sequencedExecutor(
+      completed(0, "", "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nRUNNING"),
+    );
+    try {
+      await expect(
+        isSandboxGatewayHttpReachableForStatus("alpha", "recorded-gateway", {
+          commandExecutor,
+          getHealthProbeUrl: () => "http://127.0.0.1:18789/health",
+          startup: { timeoutMs: 1234 },
+        }),
+      ).resolves.toBe(true);
+      expect(commandExecutor.runBuffered).toHaveBeenCalledOnce();
+      const request = commandExecutor.runBuffered.mock.calls[0]![0];
+      expect(request.target).toEqual({ kind: "named", gatewayName: "recorded-gateway" });
+      expect(request.timeoutMilliseconds).toBe(1234);
+      expect(request.command.slice(0, 5)).toEqual([
+        "/bin/bash",
+        "--noprofile",
+        "--norc",
+        "-p",
+        "-c",
+      ]);
+      expect(request.command[5]).toBe('builtin unset OPENCLAW_GATEWAY_TOKEN; builtin exec -- "$@"');
+      expect(request.environment).not.toHaveProperty("OPENCLAW_GATEWAY_TOKEN");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it.each(["cancelled", "timeout", "capture", "invocation", "unavailable", "malformed"] as const)(
+    "keeps %s unobservable without retrying",
+    async (kind) => {
+      const commandExecutor = sequencedExecutor(
+        kind === "malformed"
+          ? completed(0, "", "unframed output")
+          : {
+              outcome: { kind: "failed", error: { kind, message: "unavailable" } },
+              stdout: "",
+              stderr: "",
+            },
+      );
+      await expect(
+        isSandboxGatewayHttpReachableForStatus("alpha", undefined, {
+          commandExecutor,
+          getHealthProbeUrl: () => "http://127.0.0.1:18789/health",
+        }),
+      ).resolves.toBeNull();
+      expect(commandExecutor.runBuffered).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("keeps a remote nonzero result unobservable and propagates unexpected executor errors", async () => {
+    const commandExecutor = sequencedExecutor(
+      completed(7, "", "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nRUNNING"),
+    );
+    const options = { commandExecutor, getHealthProbeUrl: () => "http://127.0.0.1:18789/health" };
+    await expect(
+      isSandboxGatewayHttpReachableForStatus("alpha", undefined, options),
+    ).resolves.toBeNull();
+    expect(commandExecutor.runBuffered).toHaveBeenCalledOnce();
+    const error = new Error("authority changed");
+    commandExecutor.runBuffered.mockRejectedValueOnce(error);
+    await expect(isSandboxGatewayHttpReachableForStatus("alpha", undefined, options)).rejects.toBe(
+      error,
+    );
+    expect(commandExecutor.runBuffered).toHaveBeenCalledTimes(2);
   });
 });
