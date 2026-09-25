@@ -59,6 +59,27 @@ describe("probeHostServiceSandboxReachability", () => {
     expect(result.detail).toContain("4000");
   });
 
+  it("lets usesHostGatewayRouteImpl override a host-gateway runtime snapshot (#11626)", async () => {
+    const gatewayRuntime = {
+      ...prepareNativePodmanGatewayHostRuntime({
+        environment: {},
+        platform: "linux",
+        socketPath: "/run/user/1000/podman/podman.sock",
+      }),
+      sandboxHostAddress: null,
+      usesHostGatewayRoute: true,
+    };
+    const result = await probeHostServiceSandboxReachability({
+      port: 4000,
+      gatewayRuntime,
+      inspectNetworkImpl: () => makeNetwork(),
+      usesHostGatewayRouteImpl: () => false,
+      runImpl: () => ({ status: 1, stderr: "nc: connect failed" }),
+    });
+    expect(result.reason).toBe("tcp_failed");
+    expect(result.sandboxHostAddress).toBeNull();
+  });
+
   it("treats a missing sandbox network as probe_unavailable (non-fatal during fresh setup)", async () => {
     const result = await probeHostServiceSandboxReachability({
       port: 4000,

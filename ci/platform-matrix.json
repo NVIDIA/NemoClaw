@@ -145,7 +145,7 @@
       "name": "Local llama.cpp (already running)",
       "status": "experimental",
       "endpoint_type": "Local OpenAI-compatible",
-      "notes": "Attaches only to an authenticated operator-managed server on loopback port `8081` that passes cooperative native llama.cpp fingerprinting. NemoClaw does not own its server, model, or lifecycle."
+      "notes": "Attaches only to an authenticated operator-managed server on loopback port `8081` that passes cooperative native llama.cpp fingerprinting. Onboarding also probes the sandbox route at `host.openshell.internal:8081` and refuses the attachment when that TCP check fails; an unavailable probe stays non-fatal. NemoClaw does not own its server, model, or lifecycle."
     },
     {
       "name": "Local llama.cpp (managed)",

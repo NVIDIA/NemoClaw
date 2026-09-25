@@ -51,6 +51,10 @@ export interface HostServiceReachabilityResult {
   networkName: string;
   subnet?: string;
   gatewayIp?: string;
+  /** Effective address the probe maps onto `host.openshell.internal`. */
+  sandboxHostAddress?: string | null;
+  usesHostGatewayRoute?: boolean;
+  runtimeProviderId?: string;
   detail?: string;
 }
 
@@ -69,6 +73,8 @@ export interface HostServiceReachabilityOptions {
   runImpl?: (args: readonly string[], timeoutMs: number) => ProbeRunResult;
   inspectNetworkImpl?: (networkName: string) => { subnet?: string; gatewayIp?: string } | undefined;
   usesHostGatewayRouteImpl?: () => boolean;
+  /** Treat an nc exit 1 as conclusive on explicit-address and host-gateway routes. */
+  treatNonBridgeTcpFailureAsConclusive?: boolean;
   platform?: NodeJS.Platform;
   gatewayRuntime?: RuntimeProviderGatewayHostRuntime;
 }
@@ -123,9 +129,7 @@ export async function probeHostServiceSandboxReachability(
   const providerHostAddress = portableProfile
     ? PORTABLE_HOST_GATEWAY_IP
     : managedGatewayRuntime.sandboxHostAddress;
-  const isHostGateway =
-    providerHostAddress === null &&
-    (managedGatewayRuntime.usesHostGatewayRoute === true || usesHostGatewayRoute());
+  const isHostGateway = providerHostAddress === null && usesHostGatewayRoute();
   const usesNonBridgeRoute = providerHostAddress !== null || isHostGateway;
 
   if (!usesNonBridgeRoute && !network.gatewayIp) {
@@ -144,6 +148,11 @@ export async function probeHostServiceSandboxReachability(
     : isHostGateway
       ? "host-gateway"
       : (network.gatewayIp as string);
+  const runtimeMeta = {
+    sandboxHostAddress: providerHostAddress,
+    usesHostGatewayRoute: isHostGateway,
+    runtimeProviderId: managedGatewayRuntime.providerId,
+  };
 
   const probeArgs = [
     "run",
@@ -170,6 +179,7 @@ export async function probeHostServiceSandboxReachability(
       networkName,
       subnet: network.subnet,
       gatewayIp: network.gatewayIp,
+      ...runtimeMeta,
     };
   }
 
@@ -182,9 +192,14 @@ export async function probeHostServiceSandboxReachability(
     .filter((s): s is string => Boolean(s))
     .join(" | ");
 
-  // Non-nc failures, DNS failures, and host-gateway routes do not prove that
-  // a native Docker bridge UFW rule blocked the connection.
-  if (result.status !== 1 || isNameResolutionFailure(detail) || usesNonBridgeRoute) {
+  // Existing callers treat non-bridge failures as inconclusive because they
+  // diagnose native Docker bridge firewalls. A caller that requires the tested
+  // route itself to connect can classify nc exit 1 as a TCP failure.
+  if (
+    result.status !== 1 ||
+    isNameResolutionFailure(detail) ||
+    (usesNonBridgeRoute && opts.treatNonBridgeTcpFailureAsConclusive !== true)
+  ) {
     return {
       ok: false,
       reason: "probe_unavailable",
@@ -192,6 +207,7 @@ export async function probeHostServiceSandboxReachability(
       networkName,
       subnet: network.subnet,
       gatewayIp: network.gatewayIp,
+      ...runtimeMeta,
       detail: portableProfile
         ? "portable host-gateway probe did not connect"
         : detail || "probe did not complete",
@@ -205,6 +221,7 @@ export async function probeHostServiceSandboxReachability(
     networkName,
     subnet: network.subnet,
     gatewayIp: network.gatewayIp,
+    ...runtimeMeta,
     detail: `sandbox container on "${networkName}" could not reach ${HOST_INTERNAL_NAME}:${port}`,
   };
 }

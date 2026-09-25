@@ -10,8 +10,18 @@ import {
 } from "../../inference/llama-cpp";
 import type { SetupNimSelectionResult, SetupNimSelectionState } from "../setup-nim-flow";
 import { applyDetectedEndpointContextWindow } from "../../inference/compatible-endpoint-context";
+import {
+  formatLlamaCppSandboxUnreachableMessage,
+  probeLlamaCppSandboxReachability,
+  type LlamaCppSandboxReachabilityResult,
+} from "./sandbox-reachability";
 
 type CredentialNavigation = string | Readonly<{ kind: string }>;
+
+export interface LlamaCppSelectionOptions {
+  /** Managed install already proved the bridge hop and owns rollback. */
+  skipSandboxReachability?: boolean;
+}
 
 export interface LlamaCppSelectionDeps {
   isNonInteractive(): boolean;
@@ -38,6 +48,7 @@ export interface LlamaCppSelectionDeps {
   error(message: string): void;
   log(message: string): void;
   exitProcess(code: number): never;
+  probeSandboxReachability?: () => Promise<LlamaCppSandboxReachabilityResult>;
 }
 
 /** Attach only to a positively classified, operator-run llama.cpp server. */
@@ -47,11 +58,13 @@ export function createLlamaCppSelectionHandler(
   state: SetupNimSelectionState,
   requestedModel: string | null,
   recoveredModel: string | null,
+  options?: LlamaCppSelectionOptions,
 ) => Promise<SetupNimSelectionResult> {
   return /** Validate server identity and inference before applying the selected model and context. */ async function handleLlamaCppSelection(
     state,
     requestedModel,
     recoveredModel,
+    options,
   ): Promise<SetupNimSelectionResult> {
     let apiKey = deps.resolveCredential(LLAMA_CPP_CREDENTIAL_ENV);
     if (!apiKey && deps.isNonInteractive()) {
@@ -106,6 +119,15 @@ export function createLlamaCppSelectionHandler(
     );
     if (!validation.ok || validation.retry === "selection" || validation.retry === "model") {
       return "retry-selection";
+    }
+    if (options?.skipSandboxReachability !== true) {
+      const sandboxReach = await (
+        deps.probeSandboxReachability ?? probeLlamaCppSandboxReachability
+      )();
+      if (!sandboxReach.ok && sandboxReach.reason === "tcp_failed") {
+        deps.error(formatLlamaCppSandboxUnreachableMessage(sandboxReach));
+        return deps.isNonInteractive() ? deps.exitProcess(1) : "retry-selection";
+      }
     }
     state.preferredInferenceApi = "openai-completions";
     deps.log(`  Attached Local llama.cpp with served model alias: ${attachment.model}`);
