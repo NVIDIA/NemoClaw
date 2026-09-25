@@ -118,6 +118,8 @@ Preserve `ci/coverage-threshold-*.json`. Report coverage as unmeasured when no c
 
 Run `npm run test:projects:check` after adding, moving, or deleting test files.
 Run applicable formatting checks and `git diff --check`.
+For live companions, run the mock/live parity checker against the complete proposed base/head diff.
+Passing the checker's unit suite does not establish parity for that diff.
 Use `CONTRIBUTING.md` for broader validation and committed PR requirements.
 Only the requested live E2E workflow can establish live E2E results; local tests cannot substitute.
 

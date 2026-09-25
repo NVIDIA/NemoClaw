@@ -307,9 +307,11 @@
     {
       "live": "test/e2e/live/dashboard-remote-bind.test.ts",
       "liveSources": [
+        "test/e2e/live/dashboard-remote-bind-env.ts",
         "test/e2e/live/json-envelope.ts"
       ],
       "fast": [
+        "test/e2e/support/dashboard-remote-bind-env.test.ts",
         "src/lib/actions/sandbox/forward-recovery-declared-ports.test.ts",
         "src/lib/actions/sandbox/start.test.ts",
         "src/lib/actions/sandbox/process-recovery.test.ts",
@@ -815,9 +817,7 @@
         "src/lib/onboard/runtime-provider/docker-stopped-state-capture.test.ts",
         "test/state/snapshot-stopped-openclaw.test.ts"
       ],
-      "liveSources": [
-        "test/e2e/live/openclaw-stopped-recovery.ts"
-      ]
+      "liveSources": ["test/e2e/live/openclaw-stopped-recovery.ts"]
     },
     {
       "live": "test/e2e/live/sandbox-survival.test.ts",

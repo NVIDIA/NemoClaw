@@ -8,13 +8,14 @@ import {
   parseNemoClawConfigDocumentName,
   parseNemoClawConfigDocumentUid,
 } from "../../../src/lib/config/model.ts";
-import { describe, expect, it } from "vitest";
+import { chai, describe, expect, it } from "vitest";
 
 import { assertBraveConfig, assertBraveExport } from "../live/brave-search-helpers.ts";
 
 const VERSIONED_PLACEHOLDER = "openshell:resolve:env:v12590243949725316565_BRAVE_API_KEY";
 const UNVERSIONED_PLACEHOLDER = "openshell:resolve:env:BRAVE_API_KEY";
 const SYNTHETIC_SECRET = "synthetic-brave-secret";
+const PARSE_CANARY = "LEAKME99";
 const INTERNAL_TRANSPORT = "openshell:resolve:env";
 
 function unicodeEscape(value: string): string {
@@ -44,7 +45,6 @@ describe("Brave Search E2E configuration assertion", () => {
 
   it.each([
     ["missing", undefined],
-    ["raw", "test-raw-brave-key"],
     ["wrong-provider", "openshell:resolve:env:TAVILY_API_KEY"],
     ["noncanonical-prefix", "openshell:resolve:env:OTHER_BRAVE_API_KEY"],
     ["malformed-version-prefix", "openshell:resolve:env:vABC_BRAVE_API_KEY"],
@@ -52,10 +52,24 @@ describe("Brave Search E2E configuration assertion", () => {
     expect(() => assertBraveConfig(openClawConfig(apiKey))).toThrow();
   });
 
-  it("rejects a credential from the retired inline search configuration", () => {
-    expect(() =>
-      assertBraveConfig(openClawConfig(VERSIONED_PLACEHOLDER, "test-raw-brave-key")),
-    ).toThrow();
+  it.each([
+    ["raw plugin credential", openClawConfig(SYNTHETIC_SECRET), SYNTHETIC_SECRET],
+    [
+      "raw retired inline credential",
+      openClawConfig(VERSIONED_PLACEHOLDER, SYNTHETIC_SECRET),
+      SYNTHETIC_SECRET,
+    ],
+    ["malformed JSON", `${PARSE_CANARY} {`, PARSE_CANARY],
+  ])("rejects %s without exposing private configuration", (_case, config, secret) => {
+    let error: unknown;
+    try {
+      assertBraveConfig(config);
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toBeInstanceOf(chai.AssertionError);
+    expect(error).not.toHaveProperty("cause");
+    expect(String(error)).not.toContain(secret);
   });
 });
 
@@ -117,8 +131,22 @@ describe("Brave Search E2E export assertion", () => {
     } catch (caught) {
       error = caught;
     }
-    expect(error).toBeInstanceOf(Error);
+    expect(error).toBeInstanceOf(chai.AssertionError);
+    expect(error).not.toHaveProperty("cause");
     expect(String(error)).not.toContain(SYNTHETIC_SECRET);
+    expect(String(error)).not.toContain(value);
+  });
+
+  it("rejects malformed private YAML without echoing the parser input", () => {
+    let error: unknown;
+    try {
+      assertBraveExport(`${PARSE_CANARY}: [`, [PARSE_CANARY]);
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toBeInstanceOf(chai.AssertionError);
+    expect(error).not.toHaveProperty("cause");
+    expect(String(error)).not.toContain(PARSE_CANARY);
   });
 
   it("requires the expected Brave integration for this live scenario (#10904)", () => {

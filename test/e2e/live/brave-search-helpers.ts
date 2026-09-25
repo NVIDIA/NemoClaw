@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { chai } from "vitest";
 import YAML from "yaml";
 import { asExportedConfig } from "../../support/config-export-document.ts";
 import { inspectConfigExportArtifactSafety } from "../fixtures/phases/config-export-validation.ts";
@@ -169,40 +170,54 @@ export async function exportBraveConfig(
   );
 }
 
+// Assertion and parser errors can carry the private source or offending value.
+// Keep their details inside this boundary instead of attaching a private cause.
+function privateValidation<T>(label: "Brave configuration" | "Brave export", validate: () => T): T {
+  try {
+    return validate();
+  } catch {
+    throw new chai.AssertionError(`${label} failed validation`);
+  }
+}
+
 /** Validate private export output before retaining only public spec evidence. */
 export function assertBraveExport(raw: string, credentialValues: readonly string[]) {
-  const decoded = YAML.parse(raw);
-  const safety = inspectConfigExportArtifactSafety(raw, credentialValues, decoded);
-  expect(
-    safety.knownSecretsAbsent && safety.internalTransportsAbsent,
-    "Export must omit credential values and internal transports",
-  ).toBe(true);
-  const document = asExportedConfig(decoded);
-  const webSearch = document.spec.sandboxes[0]?.integrations?.["brave-search"];
-  expect(webSearch?.provider).toBe("brave");
-  expect(webSearch?.credential.env).toBe("BRAVE_API_KEY");
-  const sandbox = document.spec.sandboxes[0]!;
-  const primary = sandbox.agent;
-  expect(primary?.integrationRefs).toEqual(["brave-search"]);
-  return document.spec;
+  return privateValidation("Brave export", () => {
+    const decoded = YAML.parse(raw);
+    const safety = inspectConfigExportArtifactSafety(raw, credentialValues, decoded);
+    expect(
+      safety.knownSecretsAbsent && safety.internalTransportsAbsent,
+      "Export must omit credential values and internal transports",
+    ).toBe(true);
+    const document = asExportedConfig(decoded);
+    const webSearch = document.spec.sandboxes[0]?.integrations?.["brave-search"];
+    expect(webSearch?.provider).toBe("brave");
+    expect(webSearch?.credential.env).toBe("BRAVE_API_KEY");
+    const sandbox = document.spec.sandboxes[0]!;
+    const primary = sandbox.agent;
+    expect(primary?.integrationRefs).toEqual(["brave-search"]);
+    return document.spec;
+  });
 }
 
 export function assertBraveConfig(configText: string): string {
-  const parsedConfig = JSON.parse(configText) as {
-    tools?: { web?: { search?: { enabled?: unknown; provider?: unknown; apiKey?: unknown } } };
-    plugins?: {
-      entries?: { brave?: { config?: { webSearch?: { apiKey?: unknown } } } };
+  return privateValidation("Brave configuration", () => {
+    const parsedConfig = JSON.parse(configText) as {
+      tools?: { web?: { search?: { enabled?: unknown; provider?: unknown; apiKey?: unknown } } };
+      plugins?: {
+        entries?: { brave?: { config?: { webSearch?: { apiKey?: unknown } } } };
+      };
     };
-  };
-  const searchConfig = parsedConfig.tools?.web?.search;
-  expect(searchConfig?.enabled, configText).toBe(true);
-  expect(searchConfig?.provider, configText).toBe("brave");
-  expect(searchConfig?.apiKey, configText).toBeUndefined();
-  const placeholderValue = parsedConfig.plugins?.entries?.brave?.config?.webSearch?.apiKey;
-  const placeholder =
-    typeof placeholderValue === "string" && placeholderValue ? placeholderValue : undefined;
-  expect(placeholder, configText).toMatch(PLACEHOLDER_PATTERN);
-  return placeholder ?? "";
+    const searchConfig = parsedConfig.tools?.web?.search;
+    expect(searchConfig?.enabled, configText).toBe(true);
+    expect(searchConfig?.provider, configText).toBe("brave");
+    expect(searchConfig?.apiKey, configText).toBeUndefined();
+    const placeholderValue = parsedConfig.plugins?.entries?.brave?.config?.webSearch?.apiKey;
+    const placeholder =
+      typeof placeholderValue === "string" && placeholderValue ? placeholderValue : undefined;
+    expect(placeholder, configText).toMatch(PLACEHOLDER_PATTERN);
+    return placeholder ?? "";
+  });
 }
 
 /**
