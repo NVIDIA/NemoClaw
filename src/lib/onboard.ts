@@ -456,8 +456,7 @@ const {
   withDashboardPortReservationScope: withSandboxPortReservationScope,
 } = require("./onboard/dashboard-port") as typeof import("./onboard/dashboard-port");
 const rebuildTarget: typeof import("./onboard/authoritative-rebuild-target") = require("./onboard/authoritative-rebuild-target");
-const { assertDashboardPortNotReserved, buildRequiredPreflightPorts } =
-  require("./onboard/preflight-ports") as typeof import("./onboard/preflight-ports");
+const preflightPorts: typeof import("./onboard/preflight-ports") = require("./onboard/preflight-ports");
 const { printPortConflictReport } =
   require("./onboard/port-conflict-report") as typeof import("./onboard/port-conflict-report");
 const { runPreflightGatewaySequence } =
@@ -1134,6 +1133,7 @@ const preflightGateway = preflightGatewayAuthority.createOnboardPreflightGateway
 
 async function preflight(
   preflightOpts: PreflightOptions = {},
+  sandboxName: string | null = null,
 ): Promise<ReturnType<typeof nim.detectGpu>> {
   step(1, 8, "Preflight checks");
   const { gpu, host, sandboxGpuConfig, gpuTrustGateRejection } =
@@ -1183,19 +1183,12 @@ async function preflight(
     warn: console.warn,
   });
 
-  // Required ports — gateway, plus the dashboard port when an explicit one
-  // is requested. envVar is the override env var documented in
-  // src/lib/core/ports.ts; surfacing it in the preflight error gives users a clear
-  // escape hatch when an unrelated process is holding the default port
-  // (closes #2497). When --control-ui-port is set, check that port instead
-  // of the default. When auto-allocation is possible (no explicit port),
-  // skip the dashboard port check entirely — ensureDashboardForward will
-  // find a free port.
+  // Check explicit dashboard ports here; automatic allocation runs at sandbox
+  // creation. Provider-owned reuse still requires a verified dashboard forward.
   const dashboardPortToCheck = _preflightDashboardPort ?? null;
-  // #4984 — fail fast on an explicit reserved dashboard port; deferred paths
-  // (CHAT_UI_URL / persisted) are caught at createSandbox.
-  assertDashboardPortNotReserved(dashboardPortToCheck);
-  const requiredPorts = buildRequiredPreflightPorts({
+  // Reject explicit reserved ports; sandbox creation checks deferred ports (#4984).
+  preflightPorts.assertDashboardPortNotReserved(dashboardPortToCheck);
+  const requiredPorts = preflightPorts.buildRequiredPreflightPorts({
     gatewayPort: GATEWAY_PORT,
     dashboardPort: dashboardPortToCheck,
     dashboardLabel: `${cliDisplayName()} dashboard`,
@@ -1216,6 +1209,11 @@ async function preflight(
         gatewayReuseState: reuseState,
         externallySupervised: gatewayExternallySupervised,
         managedGatewayObservationAuthoritative,
+        verifyDashboardForward: (dashboardPort) =>
+          preflightPorts.isRegisteredDashboardForwardOwned(sandboxName, dashboardPort, {
+            getSandbox: registry.getSandbox.bind(registry),
+            createForwardPortObserver,
+          }),
         portCheckOptions,
         supportsLifecycleCommands,
         destroyGateway,
@@ -2856,7 +2854,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           getResumeSandboxGpuOverrides,
           detectGpuForReadiness: () => nim.detectGpu({ proveArm64ContainerGpu: null }),
           detectGpu: fatalRuntimePreflight.detectGpuWithRuntimeProviderProof,
-          runPreflight: (preflightOptions) => preflight({ ...opts, ...preflightOptions }),
+          runPreflight: (preflightOptions) =>
+            preflight({ ...opts, ...preflightOptions }, initialFlowContext.sandboxName),
           assessHost,
           providerNameToOptionKey: providerKey,
           assertOnboardHostReadiness: (host, gpu, options) =>
