@@ -554,6 +554,7 @@ async function isOpenClawDoctorSandboxStopped(
   sandboxName: string,
   runtimeSelection: OpenShellRuntimeSelection | undefined,
   deps: OpenClawPostRestoreDoctorDeps,
+  timeoutMs = OPENSHELL_PROBE_TIMEOUT_MS,
 ): Promise<boolean> {
   try {
     const observed = await openClawDoctorSandboxLookup(
@@ -564,7 +565,7 @@ async function isOpenClawDoctorSandboxStopped(
       target: runtimeSelection
         ? namedOpenShellGateway(runtimeSelection.gatewayName)
         : selectedOpenShellGateway(),
-      timeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
+      timeoutMs: Math.max(1, Math.min(OPENSHELL_PROBE_TIMEOUT_MS, Math.floor(timeoutMs))),
     });
     if (!observed.result.ok || observed.result.value.state !== "present") return false;
     const sandbox = observed.result.value.sandbox;
@@ -1032,9 +1033,17 @@ export async function finishOpenClawPostRestoreDoctor(
         runtimeSelection,
       );
       if (markersBefore?.status !== 0) {
+        const stoppedLookupRemainingMs = reconciliationDeadlineMs - deps.now();
         if (
+          Number.isFinite(stoppedLookupRemainingMs) &&
+          stoppedLookupRemainingMs > 0 &&
           !stoppedSandboxRestartAttempted &&
-          (await isOpenClawDoctorSandboxStopped(sandboxName, runtimeSelection, deps))
+          (await isOpenClawDoctorSandboxStopped(
+            sandboxName,
+            runtimeSelection,
+            deps,
+            stoppedLookupRemainingMs,
+          ))
         ) {
           const restartRemainingMs = reconciliationDeadlineMs - deps.now();
           if (!Number.isFinite(restartRemainingMs) || restartRemainingMs <= 0) return false;

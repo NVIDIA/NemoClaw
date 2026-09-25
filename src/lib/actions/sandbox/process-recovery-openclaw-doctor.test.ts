@@ -823,6 +823,7 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
         },
         {
           captureOpenshell: capture as never,
+          collectFailureLogs: vi.fn(async () => []),
           executeSandboxExecCommand: execute,
           lookupSandbox,
           now: () => now,
@@ -837,6 +838,7 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
       ["sandbox", "start", "alpha"],
       expect.objectContaining({ timeout: 1_000 }),
     );
+    expect(lookupSandbox).toHaveBeenCalledWith(expect.objectContaining({ timeoutMs: 1_000 }));
   });
 
   it("keeps the gateway gated when the verified release cannot be published", async () => {
