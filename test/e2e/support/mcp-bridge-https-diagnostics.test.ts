@@ -8,8 +8,8 @@ import path from "node:path";
 import { once } from "node:events";
 import https from "node:https";
 import net from "node:net";
-import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
-import { startFakeMcpHttpsServer, type StartedHttpServer } from "../live/mcp-bridge-servers.ts";
+import { afterAll, describe, expect, it, vi } from "vitest";
+import { startFakeMcpHttpsServer } from "../live/mcp-bridge-servers.ts";
 import { shouldRetryMcpDiscoveryAfterRestart } from "../live/mcp-bridge-tool-discovery.ts";
 import { createMcpFixtureTls } from "../fixtures/mcp-fixture-tls.ts";
 
@@ -19,14 +19,17 @@ vi.mock("node:child_process", async (importOriginal) => {
 });
 
 const { tls: fixtureTls, close: closeFixtureTls } = createMcpFixtureTls();
-const servers: StartedHttpServer[] = [];
 afterAll(closeFixtureTls);
-afterEach(async () => {
-  await Promise.all(servers.splice(0).map((server) => server.close()));
-});
 describe("MCP HTTPS transport diagnostics", () => {
-  it("records only fixed TLS failure categories and closes when diagnostic persistence fails", async () => {
-    const persist = vi.fn().mockRejectedValue(new Error("artifact unavailable"));
+  it("records fixed TLS categories and closes before stalled or failed diagnostic persistence", async () => {
+    const failure = new Error("artifact unavailable");
+    let rejectWrite!: (error: Error) => void;
+    const write = new Promise<void>((_resolve, reject) => {
+      rejectWrite = reject;
+    });
+    // An earlier assertion can enter teardown before close() observes this promise.
+    void write.catch(() => undefined);
+    const persist = vi.fn(() => write);
     const server = await startFakeMcpHttpsServer({
       secret: "diagnostic-secret",
       tls: fixtureTls,
@@ -34,6 +37,7 @@ describe("MCP HTTPS transport diagnostics", () => {
     });
     const client = net.connect(server.port, "127.0.0.1");
     let reconnect: net.Socket | undefined;
+    let closing: Promise<unknown> | undefined;
     try {
       client.on("error", () => {});
       client.resume();
@@ -53,14 +57,28 @@ describe("MCP HTTPS transport diagnostics", () => {
           OTHER: 0,
         },
       });
-      await expect(server.close()).rejects.toThrow("artifact unavailable");
-      expect(persist).toHaveBeenCalledWith(server.diagnostics());
+      closing = server.close().then(
+        () => null,
+        (error: unknown) => error,
+      );
+      await expect.poll(() => persist.mock.calls.length).toBe(1);
       reconnect = net.connect(server.port, "127.0.0.1");
-      const [error] = await once(reconnect, "error");
-      expect(error.code).toBe("ECONNREFUSED");
+      const connection = await new Promise<string>((resolve) => {
+        reconnect!.once("connect", () => resolve("connected"));
+        reconnect!.once("error", (error: NodeJS.ErrnoException) => resolve(String(error.code)));
+      });
+      expect(connection).toBe("ECONNREFUSED");
+      rejectWrite(failure);
+      expect(await closing).toBe(failure);
+      expect(persist).toHaveBeenCalledWith(server.diagnostics());
+      await expect(server.close()).rejects.toMatchObject({
+        errors: [expect.objectContaining({ code: "ERR_SERVER_NOT_RUNNING" }), failure],
+      });
     } finally {
+      rejectWrite(failure);
       client.destroy();
       reconnect?.destroy();
+      await closing;
       persist.mockResolvedValue(undefined);
       await server.close().catch((error: NodeJS.ErrnoException) => {
         expect(error).toMatchObject({ code: "ERR_SERVER_NOT_RUNNING" });
@@ -70,8 +88,13 @@ describe("MCP HTTPS transport diagnostics", () => {
 
   it("records a slow POST arrival before its body completes", async () => {
     const secret = "slow-request-secret";
-    const server = await startFakeMcpHttpsServer({ secret, tls: fixtureTls });
-    servers.push(server);
+    const persist = vi.fn(async () => undefined);
+    const server = await startFakeMcpHttpsServer({
+      secret,
+      tls: fixtureTls,
+      onCloseDiagnostics: persist,
+    });
+    let closing: Promise<void> | undefined;
     const body = JSON.stringify({
       jsonrpc: "2.0",
       id: 1,
@@ -127,8 +150,10 @@ describe("MCP HTTPS transport diagnostics", () => {
         shouldRetryMcpDiscoveryAfterRestart(server.observations.slice(observationOffset)),
       ).toBe(false);
 
+      closing = server.close();
       slowRequest.end(body.slice(1));
       expect(await observedStatus).toEqual({ ok: true, status: 200 });
+      await closing;
       expect(server.requests).toHaveLength(1);
       expect(server.observations[observationOffset]).toBe(arrival);
       expect(server.requests[0]).toBe(arrival);
@@ -138,6 +163,8 @@ describe("MCP HTTPS transport diagnostics", () => {
         requestHeaders: 1,
         requestBodiesComplete: 1,
       });
+      expect(persist).toHaveBeenCalledOnce();
+      expect(persist).toHaveBeenCalledWith(server.diagnostics());
       const copied = server.diagnostics();
       copied.requestHeaders = 99;
       copied.tlsClientErrors.OTHER = 99;
@@ -145,6 +172,7 @@ describe("MCP HTTPS transport diagnostics", () => {
       expect(server.diagnostics().tlsClientErrors.OTHER).toBe(0);
     } finally {
       slowRequest.destroy();
+      await (closing ?? server.close());
     }
   });
 });

@@ -85,7 +85,7 @@ it.each(["missing", "oversized", "malformed", "symlink", "directory", "fifo"])(
       missing: () => undefined,
       directory: () => fs.mkdirSync(file),
       fifo: () => {
-        execFileSync("mkfifo", [file]);
+        execFileSync("mkfifo", [file], { timeout: 10_000, killSignal: "SIGKILL" });
       },
       oversized: () => fs.writeFileSync(file, "secret".repeat(1000)),
       malformed: () => fs.writeFileSync(file, "secret"),
