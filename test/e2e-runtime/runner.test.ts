@@ -351,9 +351,9 @@ describe("runner env merging", () => {
     )?.[2]?.env;
     expect(dockerEnv).toMatchObject({
       DOCKER_HOST: "unix:///explicit-host.sock",
+      DOCKER_CONFIG: "/tmp/context-docker-config",
     });
     expect(dockerEnv?.DOCKER_CONTEXT).toBeUndefined();
-    expect(dockerEnv?.DOCKER_CONFIG).toBeUndefined();
   });
 
   it("keeps an ambient Docker host authoritative when both selectors appear after initialization (#12223)", () => {
@@ -387,9 +387,9 @@ describe("runner env merging", () => {
     const dockerEnv = requireCall(withoutDockerAuthorityProbe(calls), 0)[2]?.env;
     expect(dockerEnv).toMatchObject({
       DOCKER_HOST: "unix:///selected-host.sock",
+      DOCKER_CONFIG: "/tmp/context-docker-config",
     });
     expect(dockerEnv?.DOCKER_CONTEXT).toBeUndefined();
-    expect(dockerEnv?.DOCKER_CONFIG).toBeUndefined();
   });
 
   it("preserves Docker context and config only for Docker subprocesses (#8816)", () => {
@@ -454,7 +454,12 @@ describe("runner env merging", () => {
       vi.stubEnv("DOCKER_HOST", undefined);
       delete require.cache[require.resolve(runnerPath)];
       const { run } = require(runnerPath);
-      run(["docker", "ps"], { env: { DOCKER_HOST: "unix:///explicit.sock" } });
+      run(["docker", "ps"], {
+        env: {
+          DOCKER_HOST: "unix:///explicit.sock",
+          DOCKER_CONFIG: "/tmp/explicit-docker-config",
+        },
+      });
       vi.stubEnv("DOCKER_CONTEXT", "ambient-context");
       vi.stubEnv("DOCKER_HOST", "unix:///selected-fallback.sock");
       run(["docker", "ps"]);
@@ -468,14 +473,14 @@ describe("runner env merging", () => {
     expect(runnerCalls).toHaveLength(2);
     expect(requireCall(runnerCalls, 0)[2]?.env).toMatchObject({
       DOCKER_HOST: "unix:///explicit.sock",
+      DOCKER_CONFIG: "/tmp/explicit-docker-config",
     });
     expect(requireCall(runnerCalls, 0)[2]?.env?.DOCKER_CONTEXT).toBeUndefined();
-    expect(requireCall(runnerCalls, 0)[2]?.env?.DOCKER_CONFIG).toBeUndefined();
     expect(requireCall(runnerCalls, 1)[2]?.env).toMatchObject({
       DOCKER_HOST: "unix:///selected-fallback.sock",
+      DOCKER_CONFIG: "/tmp/ambient-docker-config",
     });
     expect(requireCall(runnerCalls, 1)[2]?.env?.DOCKER_CONTEXT).toBeUndefined();
-    expect(requireCall(runnerCalls, 1)[2]?.env?.DOCKER_CONFIG).toBeUndefined();
   });
 
   it("preserves process env when opts.env is provided to runCapture", () => {

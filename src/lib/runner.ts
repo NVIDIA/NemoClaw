@@ -77,9 +77,8 @@ function buildRunnerEnv(
       String(process.env.DOCKER_HOST ?? "").trim();
     return buildDockerSubprocessEnv(process.env, selectedDockerHost || undefined, normalizedExtra, {
       preserveDockerConfig:
-        normalizedExtra.DOCKER_HOST === undefined &&
-        dockerAuthority?.source === "context" &&
-        selectedDockerHost === dockerAuthority.dockerHost,
+        selectedDockerHost !== "" &&
+        (normalizedExtra.DOCKER_CONFIG !== undefined || process.env.DOCKER_CONFIG !== undefined),
     });
   }
   return buildSubprocessEnv(normalizedExtra);
