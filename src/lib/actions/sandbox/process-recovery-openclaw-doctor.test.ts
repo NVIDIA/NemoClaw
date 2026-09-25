@@ -794,6 +794,51 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
     );
   });
 
+  it("caps a stopped replacement restart to the remaining reconciliation budget", async () => {
+    let now = 0;
+    const execute = vi
+      .fn()
+      .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" })
+      .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" })
+      .mockImplementationOnce(async () => {
+        now = 179_000;
+        return { status: 1, stdout: "", stderr: "sandbox stopped" };
+      });
+    const capture = vi.fn(() => ({ status: 0, output: "" }));
+    const lookupSandbox = vi.fn(async () => ({
+      result: {
+        ok: true as const,
+        value: {
+          state: "present" as const,
+          sandbox: { name: "alpha", phase: "Stopped", readiness: "terminal" as const },
+        },
+      },
+      displayOutput: "",
+    }));
+    await expect(
+      finishOpenClawPostRestoreDoctor(
+        {
+          sandboxName: "alpha",
+          runtimeSelection: { gatewayName: "recorded-gateway", workspace: "default" },
+        },
+        {
+          captureOpenshell: capture as never,
+          executeSandboxExecCommand: execute,
+          lookupSandbox,
+          now: () => now,
+          sleep: vi.fn(async (seconds: number) => {
+            now += seconds * 1_000;
+          }),
+        },
+      ),
+    ).resolves.toEqual(expect.objectContaining({ ok: false, stage: "restart" }));
+
+    expect(capture).toHaveBeenCalledExactlyOnceWith(
+      ["sandbox", "start", "alpha"],
+      expect.objectContaining({ timeout: 1_000 }),
+    );
+  });
+
   it("keeps the gateway gated when the verified release cannot be published", async () => {
     const execute = vi.fn(async () => ({ status: 35, stdout: "", stderr: "" }));
 

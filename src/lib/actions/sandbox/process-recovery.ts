@@ -1036,6 +1036,8 @@ export async function finishOpenClawPostRestoreDoctor(
           !stoppedSandboxRestartAttempted &&
           (await isOpenClawDoctorSandboxStopped(sandboxName, runtimeSelection, deps))
         ) {
+          const restartRemainingMs = reconciliationDeadlineMs - deps.now();
+          if (!Number.isFinite(restartRemainingMs) || restartRemainingMs <= 0) return false;
           stoppedSandboxRestartAttempted = true;
           captureOpenClawDoctorLifecycle(
             deps,
@@ -1046,7 +1048,10 @@ export async function finishOpenClawPostRestoreDoctor(
                 includeStderr: true,
                 killProcessTreeOnTimeout: true,
                 killSignal: "SIGKILL" as const,
-                timeout: OPENCLAW_DOCTOR_RESTART_TIMEOUT_MS,
+                timeout: Math.min(
+                  OPENCLAW_DOCTOR_RESTART_TIMEOUT_MS,
+                  Math.max(1, Math.floor(restartRemainingMs)),
+                ),
               },
               runtimeSelection,
             ),
