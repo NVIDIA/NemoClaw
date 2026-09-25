@@ -23,18 +23,15 @@ export function hermesPortableStartupReuseGateEnabled(env: NodeJS.ProcessEnv): b
   );
 }
 
-/** Reuse evidence only beneath the same live lifecycle fence and bounded invocation. */
-export async function withHermesPortableStartupOperation<T>(
+async function withSelectedHermesPortableStartupOperation<T>(
   sandboxName: string,
   stateDir: string | undefined,
   operation: () => Promise<T> | T,
-  env: NodeJS.ProcessEnv = process.env,
-  now: () => number = () => performance.now(),
+  profileSelected: () => boolean,
+  env: NodeJS.ProcessEnv,
+  now: () => number,
 ): Promise<T> {
-  if (
-    env.NEMOCLAW_EXPERIMENTAL_PROFILE !== "portable" ||
-    !hermesPortableStartupReuseGateEnabled(env)
-  ) {
+  if (!profileSelected() || !hermesPortableStartupReuseGateEnabled(env)) {
     return await operation();
   }
   const retained = currentHermesPortableStartupOperation(sandboxName);
@@ -48,7 +45,7 @@ export async function withHermesPortableStartupOperation<T>(
     current: () => {
       const current = now();
       active &&=
-        env.NEMOCLAW_EXPERIMENTAL_PROFILE === "portable" &&
+        profileSelected() &&
         hermesPortableStartupReuseGateEnabled(env) &&
         Number.isFinite(current) &&
         current >= previous &&
@@ -65,6 +62,45 @@ export async function withHermesPortableStartupOperation<T>(
       active = false;
     }
   });
+}
+
+/** Reuse evidence only beneath an explicitly selected profile, live fence, and bounded invocation. */
+export async function withHermesPortableStartupOperation<T>(
+  sandboxName: string,
+  stateDir: string | undefined,
+  operation: () => Promise<T> | T,
+  env: NodeJS.ProcessEnv = process.env,
+  now: () => number = () => performance.now(),
+): Promise<T> {
+  return await withSelectedHermesPortableStartupOperation(
+    sandboxName,
+    stateDir,
+    operation,
+    () => env.NEMOCLAW_EXPERIMENTAL_PROFILE === "portable",
+    env,
+    now,
+  );
+}
+
+/** Retain an already-recorded Portable opt-in when a later command has no profile environment. */
+export async function withPersistedHermesPortableStartupOperation<T>(
+  sandboxName: string,
+  stateDir: string | undefined,
+  operation: () => Promise<T> | T,
+  env: NodeJS.ProcessEnv = process.env,
+  now: () => number = () => performance.now(),
+): Promise<T> {
+  return await withSelectedHermesPortableStartupOperation(
+    sandboxName,
+    stateDir,
+    operation,
+    () => {
+      const profile = env.NEMOCLAW_EXPERIMENTAL_PROFILE;
+      return profile === undefined || profile === "portable";
+    },
+    env,
+    now,
+  );
 }
 
 export function currentHermesPortableStartupOperation(

@@ -56,7 +56,7 @@ describe("Portable-aware sandbox lifecycle lock", () => {
     expect(fs.existsSync(portableHostFencePath(homeDir))).toBe(false);
   });
 
-  it("enables bounded startup reuse for a recognized Portable receipt without a profile override", async () => {
+  it("retains the persisted Portable opt-in when a later command has no profile environment", async () => {
     vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", undefined);
 
     await withSandboxLifecycleLock("alpha", () => {

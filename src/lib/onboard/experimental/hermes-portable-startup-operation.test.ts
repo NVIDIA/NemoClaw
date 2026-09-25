@@ -10,6 +10,7 @@ import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock-acquisition
 import {
   currentHermesPortableStartupOperation,
   withHermesPortableStartupOperation,
+  withPersistedHermesPortableStartupOperation,
 } from "./hermes-portable-startup-operation";
 
 const env = {
@@ -102,6 +103,27 @@ describe("Portable startup evidence lifetime", () => {
             expect(currentHermesPortableStartupOperation("alpha")).toBeDefined();
           },
           { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
+        ),
+      { stateDir },
+    );
+  });
+
+  it("retains a persisted Portable opt-in only while the command has no conflicting profile", async () => {
+    const environment: NodeJS.ProcessEnv = {};
+    await withMcpLifecycleLock(
+      "alpha",
+      () =>
+        withPersistedHermesPortableStartupOperation(
+          "alpha",
+          stateDir,
+          () => {
+            expect(currentHermesPortableStartupOperation("alpha")).toBeDefined();
+            environment.NEMOCLAW_EXPERIMENTAL_PROFILE = "default";
+            expect(currentHermesPortableStartupOperation("alpha")).toBeUndefined();
+            delete environment.NEMOCLAW_EXPERIMENTAL_PROFILE;
+            expect(currentHermesPortableStartupOperation("alpha")).toBeUndefined();
+          },
+          environment,
         ),
       { stateDir },
     );
