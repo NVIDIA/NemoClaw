@@ -414,4 +414,61 @@ describe("config rotate-token", () => {
     expect(saveCredential).not.toHaveBeenCalled();
     expect(appendAuditEntry).not.toHaveBeenCalled();
   });
+
+  it("does not persist the token when provider update and recreation both fail", async () => {
+    const appendAuditEntry = vi.fn();
+    const saveCredential = vi.fn();
+    const runOpenshellCommand = vi
+      .fn<RotateTokenDeps["runOpenshellCommand"]>()
+      .mockReturnValue({ status: 1 } as ReturnType<RotateTokenDeps["runOpenshellCommand"]>);
+    const deps = {
+      appendAuditEntry,
+      captureOpenshellCommand: vi.fn(() => ({
+        output: "openshell 0.0.116\n",
+        status: 0,
+        stderr: "",
+        stdout: "openshell 0.0.116\n",
+      })),
+      fail: (lines: string | readonly string[]): never => {
+        throw new Error(typeof lines === "string" ? lines : lines.join("\n"));
+      },
+      loadSandbox: () => ({
+        credentialEnv: "COMPATIBLE_API_KEY",
+        endpointUrl: "https://compatible.example.test/v1",
+        preferredInferenceApi: "openai-completions",
+        provider: "compatible-endpoint",
+      }),
+      loadSession: vi.fn(() => null),
+      promptSecret: vi.fn().mockResolvedValue("rejected-route-secret"),
+      resolveAgentConfig: () => DEFAULT_AGENT_CONFIG,
+      runOpenshellCommand,
+      saveCredential,
+      validateName: vi.fn((name: string) => name),
+    } satisfies RotateTokenDeps;
+
+    await expect(rotateSandboxToken("rotate-profile-test", {}, deps)).rejects.toThrow(
+      "Failed to update provider",
+    );
+
+    expect(runOpenshellCommand).toHaveBeenCalledTimes(2);
+    expect(runOpenshellCommand).toHaveBeenNthCalledWith(
+      2,
+      expect.any(String),
+      [
+        "provider",
+        "create",
+        "--name",
+        "compatible-endpoint",
+        "--type",
+        "openai",
+        "--credential",
+        "COMPATIBLE_API_KEY",
+        "--config",
+        "OPENAI_BASE_URL=https://compatible.example.test/v1",
+      ],
+      expect.objectContaining({ env: { COMPATIBLE_API_KEY: "rejected-route-secret" } }),
+    );
+    expect(saveCredential).not.toHaveBeenCalled();
+    expect(appendAuditEntry).not.toHaveBeenCalled();
+  });
 });
