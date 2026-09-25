@@ -8,7 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
 
-import { SANDBOX_EXEC_STARTED_MARKER } from "../../src/lib/actions/sandbox/sandbox-exec-output";
+import { SANDBOX_EXEC_STARTED_MARKER } from "../../src/lib/adapters/sandbox/sandbox-exec-output";
 import type { OwnedTestResources } from "../helpers/owned-test-resources";
 import { execTimeout, testTimeout, testTimeoutOptions } from "../helpers/timeouts";
 
@@ -608,7 +608,7 @@ export function createDebugCommandTestEnv(
   options: { extraSandboxNames?: string[]; gatewayPort?: number; openshellArgsLog?: string } = {},
 ): Record<string, string> {
   const { home, bin: localBin } = resources.home(prefix);
-  const sandboxName = `${prefix}${process.pid.toString(36)}-${Date.now().toString(36)}`;
+  const sandboxName = `${prefix.slice(0, 5)}${process.pid.toString(36)}-${Date.now().toString(36)}`;
   fs.mkdirSync(localBin, { recursive: true });
   // Register the env-sourced sandbox plus any extra names supplied via the
   // --sandbox flag so the validation gate accepts them.

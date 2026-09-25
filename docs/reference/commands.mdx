@@ -2384,22 +2384,22 @@ Slack requires both `SLACK_BOT_TOKEN` (bot user OAuth) and `SLACK_APP_TOKEN` (ap
 
 ### `$$nemoclaw <name> channels remove <channel>`
 
-Clear the stored credentials for a messaging channel and rebuild the sandbox so the image drops the channel. Running `remove` for a channel that was never configured is a no-op against the credentials file and still triggers the rebuild prompt. When the bridge provider is attached to a live sandbox, NemoClaw detaches it before deleting the provider from the OpenShell gateway. If deletion fails, NemoClaw attempts to restore the attachment before returning the failure. If restoration also fails, the diagnostic names the provider and sandbox and warns that channel delivery may remain interrupted. If the matching built-in policy preset is applied, NemoClaw also removes that preset from the current OpenShell policy so the upstream API is no longer allow-listed after the channel is gone. When removing Teams, NemoClaw removes Teams-owned Microsoft login credential bindings from matching Outlook policy endpoints. It refuses to remove a binding owned by another integration. No session preset list exists to synchronize.
+Clear the stored credentials for a messaging channel and rebuild the sandbox so the image drops the channel. Running `remove` for a channel that was never configured is a no-op against the credentials file and normally still triggers the rebuild prompt. OpenClaw WeChat also checks for orphaned physical session state when no channel or policy entry exists; if cleanup cannot be confirmed, removal stops before rebuilding. When the bridge provider is attached to a live sandbox, NemoClaw detaches it before deleting the provider from the OpenShell gateway. If deletion fails, NemoClaw attempts to restore the attachment before returning the failure. If restoration also fails, the diagnostic names the provider and sandbox and warns that channel delivery may remain interrupted. If the matching built-in policy preset is applied, NemoClaw also removes that preset from the current OpenShell policy so the upstream API is no longer allow-listed after the channel is gone. When removing Teams, NemoClaw removes Teams-owned Microsoft login credential bindings from matching Outlook policy endpoints. It refuses to remove a binding owned by another integration. No session preset list exists to synchronize.
 
 For QR-paired channels (today: WhatsApp), NemoClaw destructively clears the in-sandbox session directories before the rebuild so the `state_dirs` backup does not restore the auth blob and let the channel reconnect:
 
 - OpenClaw: `/sandbox/.openclaw/<channel>/` (for example `/sandbox/.openclaw/whatsapp/`).
 - Hermes: `/sandbox/.hermes/platforms/<channel>/` (for example `/sandbox/.hermes/platforms/whatsapp/`). For WhatsApp, NemoClaw also clears the current Dashboard profile at `/sandbox/.hermes/profiles/dashboard-home/platforms/whatsapp/session/` and the legacy migration source at `/sandbox/.hermes/dashboard-home/platforms/whatsapp/session/`.
 
-NemoClaw runs the cleanup through `openshell sandbox exec` first.
-If OpenShell is unavailable or its outcome is inconclusive, NemoClaw retries the same cleanup through the sandbox's registered local runtime provider unless OpenShell reports cancellation.
-NemoClaw permits this retry only because removing the declared paths is idempotent and the success sentinel verifies completion.
-A runtime validation or identity refusal stops removal instead of falling through to SSH.
-If the sentinel remains absent after any permitted local retry, NemoClaw tries SSH.
-For OpenClaw WeChat only, if the sentinel remains absent after those attempts, NemoClaw asks the registered runtime provider to run its distinct stopped-state cleanup.
-If cleanup still fails, the command refuses to rebuild and prints recovery guidance for the reported condition.
-Fix that condition, then rerun the command.
-This failure prevents the next rebuild from restoring stale channel authentication files.
+NemoClaw runs cleanup for a running sandbox through native OpenShell execution.
+Cleanup succeeds only when the command exits successfully and returns its completion sentinel.
+If execution fails or the result is inconclusive, the command refuses to rebuild and prints recovery guidance.
+Fix the reported condition, then rerun the command so a rebuild cannot restore stale channel authentication files.
+
+For OpenClaw WeChat only, NemoClaw checks the registered runtime provider for its distinct stopped-state cleanup before native execution.
+The provider must confirm sandbox ownership, a stopped runtime resource, and one writable state resource containing the declared paths.
+If the registry entry is missing, the provider does not support stopped-state cleanup, or no eligible stopped runtime resource exists, NemoClaw falls through to native cleanup.
+Removal proceeds only when that command exits successfully and returns its completion sentinel.
 
 ```bash
 $$nemoclaw my-assistant channels remove telegram

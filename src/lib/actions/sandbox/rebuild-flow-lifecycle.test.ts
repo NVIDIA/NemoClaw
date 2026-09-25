@@ -619,7 +619,7 @@ describe("rebuildSandbox flow: lifecycle", () => {
         expectedVersion: "0.2.0",
         isStale: false,
         verificationFailed: false,
-        detectionMethod: "ssh-exec",
+        detectionMethod: "openshell-exec",
       },
     });
 
@@ -643,7 +643,7 @@ describe("rebuildSandbox flow: lifecycle", () => {
         expectedVersion: "0.2.0",
         isStale: false,
         verificationFailed: false,
-        detectionMethod: "ssh-exec",
+        detectionMethod: "openshell-exec",
       },
     });
 
@@ -667,7 +667,7 @@ describe("rebuildSandbox flow: lifecycle", () => {
         expectedVersion: "0.2.0",
         isStale: false,
         verificationFailed: false,
-        detectionMethod: "ssh-exec",
+        detectionMethod: "openshell-exec",
       },
     });
 
