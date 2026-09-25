@@ -49,6 +49,10 @@ It also strengthens host OS reporting and Windows WSL GPU verification.
   Interactive entry still requires minified one-line JSON.
   Related change: [PR #10393](https://github.com/NVIDIA/NemoClaw/pull/10393).
   Refer to [Set Up Google Chat](/user-guide/openclaw/manage-sandboxes/messaging-channels/set-up-google-chat).
+- OpenClaw managed `inference.local` routes clear NVIDIA credential aliases and remove only the matching NemoClaw-generated legacy profile before setup.
+  Direct routes and unrelated profiles remain unchanged.
+  Related change: [PR #12237](https://github.com/NVIDIA/NemoClaw/pull/12237).
+  Refer to [Process Controls](/user-guide/openclaw/security/security-controls/process-controls#auth-profile-permissions).
 - OpenClaw messaging image builds verify trusted official registry provenance for Discord, Slack, WhatsApp, Microsoft Teams, and Google Chat plugins.
   They stop before runtime checks when the verification fails or the offline cache lacks a verified package.
   WeChat uses the compatible 2.4.9 runtime.
@@ -57,6 +61,10 @@ It also strengthens host OS reporting and Windows WSL GPU verification.
 - The experimental direct blueprint runner reports an unreadable run directory instead of treating it as missing during `reconcile` or `rollback`.
   It stops before OpenShell commands or state writes; correct the directory access, then rerun the command.
   Related change: [PR #12320](https://github.com/NVIDIA/NemoClaw/pull/12320).
+- Onboarding treats a persistent ordinary `404` from `/v1/models` as an inference-route failure instead of reporting a verified deployment.
+  Correct the endpoint, then run `nemoclaw onboard --resume` to verify the retained session.
+  Related change: [PR #12339](https://github.com/NVIDIA/NemoClaw/pull/12339).
+  Refer to [Verify the Sandbox Inference Route](/user-guide/openclaw/inference/validate-inference/verify-inference-route).
 - Native rootless Podman preserves its current-user runtime context during gateway recovery.
   It can reuse a trusted managed gateway service after that service removes standalone ownership records.
   Related change: [PR #12267](https://github.com/NVIDIA/NemoClaw/pull/12267).
