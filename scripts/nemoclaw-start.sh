@@ -4063,7 +4063,6 @@ seed_default_workspace_templates_as_sandbox() {
 setup_auth_profile_as_sandbox() {
   run_step_down_as_sandbox \
     "export HOME=/sandbox; write_auth_profile; harden_auth_profiles" \
-    openclaw_config_dir_owner \
     is_managed_inference_route \
     write_auth_profile \
     harden_auth_profiles

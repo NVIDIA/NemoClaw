@@ -163,6 +163,14 @@ Do not commit the temporary files or any other file that contains a real API key
 Stream the prepared JSON5 config into the sandbox as the sandbox user.
 The first process builds one minimal JSON patch, and the second process applies it with one native OpenClaw command.
 
+<Warning>
+  The update contains provider credentials.
+  OpenClaw can retain earlier configurations in `openclaw.json.bak` and `openclaw.json.bak.1` through `openclaw.json.bak.4`.
+  A rejected write can also save its payload in `openclaw.json.rejected.<timestamp>`.
+  These sandbox files can contain API keys and are not removed by the host temporary-file cleanup below.
+  Treat them as credentials and do not include their contents in logs or support reports.
+</Warning>
+
 ```bash
 (
   set -euo pipefail
@@ -202,9 +210,13 @@ process.stdin.on("end", () => {
 For ordinary key changes, connect to the sandbox and use `openclaw configure`, `openclaw config set`, or `openclaw config unset`.
 
 Node parses the prepared JSON5 and sends only the selected provider, optional `agents.defaults.subagents`, `agents.defaults.timeoutSeconds`, and `agents.list` to OpenClaw through standard input.
-OpenClaw validates and writes the whole patch atomically.
-If parsing, validation, or writing fails, the native config remains unchanged.
-Correct the reported error, then rerun this section before you restart the gateway.
+OpenClaw validates the requested changes before applying them.
+A parsing or validation error prevents the requested update.
+A write failure or lost Docker connection can leave completion uncertain; do not assume the original configuration remains unchanged.
+Do not restart the gateway while the update result is uncertain.
+Reconnect and inspect the intended non-secret settings.
+Resolve the reported error before repeating this section.
+Restart the gateway only after the update succeeds.
 On success, OpenClaw serializes the complete config as standard JSON, so JSON5 comments and formatting
 in the original file are removed.
 
@@ -290,8 +302,10 @@ Remove only the retired `providers.nvidia-omni` entry and preserve every other p
 Then remove the retired provider from the native config with the `openclaw config unset` command above
 and restart the gateway.
 
-Removing only one copy does not retire the credential.
-Rotate the provider key if either persistent file may have been exposed.
+Removing the two active entries does not remove credentials from OpenClaw backups or rejected payloads.
+Replace the key in any other clients that still need it.
+Then revoke the retired key with its provider.
+Rotate the provider key if any active or retained copy may have been exposed.
 
 ## Allow Auxiliary Provider Egress
 

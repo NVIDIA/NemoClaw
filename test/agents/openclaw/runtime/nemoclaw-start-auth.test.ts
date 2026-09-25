@@ -357,7 +357,6 @@ describe("setup_auth_profile_as_sandbox", () => {
         "set -euo pipefail",
         "export HOME=/root",
         "STEP_DOWN_PREFIX_SANDBOX=(env)",
-        "openclaw_config_dir_owner() { echo sandbox; }",
         `write_auth_profile() { printf '%s\\n' "$HOME" >${JSON.stringify(observedHome)}; }`,
         "harden_auth_profiles() { :; }",
         helper,

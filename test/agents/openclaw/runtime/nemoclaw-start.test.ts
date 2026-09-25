@@ -3310,7 +3310,6 @@ describe("native configuration during simulated root startup", () => {
         "#!/usr/bin/env bash",
         "set -euo pipefail",
         'id() { if [ "${1:-}" = "-u" ]; then printf "0"; else command id "$@"; fi; }',
-        'openclaw_config_dir_owner() { printf "sandbox"; }',
         "NEMOCLAW_CMD=()",
         '_PROXY_URL=""',
         '_NO_PROXY_VAL=""',
