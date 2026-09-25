@@ -158,12 +158,12 @@ describe("E2E workflow plan", () => {
       "ubuntu-repo-cloud-openclaw",
     ]);
     expect(plan.testMatrix).toEqual([]);
-    expect(catalogueIds).toHaveLength(46);
+    expect(catalogueIds).toHaveLength(47);
+    expect(catalogueIds).toContain("openclaw-inference-switch");
     expect(catalogueIds).not.toEqual(
       expect.arrayContaining([
         "bootstrap-install-smoke",
         "gpu-e2e",
-        "openclaw-inference-switch",
         "rebuild-hermes",
         "rebuild-openclaw",
       ]),
@@ -749,6 +749,21 @@ describe("E2E workflow plan", () => {
     expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(
       "openclaw-inference-switch",
     );
+  });
+
+  it("runs provider switching on Docker and Podman with custom-image setup limited to Docker", () => {
+    const target = catalogueTarget("openclaw-inference-switch");
+    const plan = buildE2eWorkflowPlan(
+      { targets: "openclaw-inference-switch" },
+      { gatewayRuntimes: ["docker", "podman"] },
+    );
+
+    expect(target.gatewayRuntimes).toEqual(["docker", "podman"]);
+    expect(target.environment.NEMOCLAW_CUSTOM_IMAGE_RUNTIME).toBe("docker");
+    expect(plan.catalogueMatrices.standard.map((row) => [row.id, row.runtime_provider])).toEqual([
+      ["openclaw-inference-switch", "docker"],
+      ["openclaw-inference-switch", "podman"],
+    ]);
   });
 
   it.each([

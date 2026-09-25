@@ -135,4 +135,39 @@ describe("custom OpenClaw Dockerfile model reconciliation", () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("does not invent a final image user when the Dockerfile declares no USER", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-custom-model-user-patch-"));
+    try {
+      const dockerfilePath = path.join(root, "Dockerfile");
+      fs.writeFileSync(
+        dockerfilePath,
+        [
+          "FROM example.invalid/openclaw@sha256:" + "1".repeat(64),
+          "ARG NEMOCLAW_TOOL_DISCLOSURE=progressive",
+        ].join("\n"),
+      );
+
+      patchStagedDockerfile(
+        dockerfilePath,
+        "provider/selected-model",
+        "http://127.0.0.1:18789",
+        "build-1",
+        null,
+        null,
+        null,
+        null,
+        false,
+        null,
+        [],
+        { agentName: "openclaw", reconcileCustomOpenClawModel: true },
+      );
+
+      const patched = fs.readFileSync(dockerfilePath, "utf-8");
+      expect(patched.match(/^USER(?:\s|$).*$/gimu)).toBeNull();
+      expect(patched.trimEnd().endsWith("fi")).toBe(true);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

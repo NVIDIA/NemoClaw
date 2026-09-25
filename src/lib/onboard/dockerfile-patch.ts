@@ -211,7 +211,8 @@ function appendCustomOpenClawModelReconcile(
       (last, instruction) => (/^USER(?:\s|$)/i.test(instruction.text) ? instruction : last),
       null,
     );
-  const restoreUser = finalUser?.text ?? "USER sandbox";
+  const useRoot = finalUser === null ? "" : "USER root\n";
+  const restoreUser = finalUser === null ? "" : `\n${finalUser.text}`;
   const encodedModel = Buffer.from(model, "utf8").toString("base64");
   const encodedLimits = Buffer.from(JSON.stringify(explicitLimits), "utf8").toString("base64");
 
@@ -220,8 +221,7 @@ function appendCustomOpenClawModelReconcile(
 # Reconcile inherited OpenClaw model metadata with this custom image's route.
 ARG NEMOCLAW_CUSTOM_ROUTE_MODEL_B64=${encodedModel}
 ARG NEMOCLAW_CUSTOM_ROUTE_LIMITS_B64=${encodedLimits}
-USER root
-RUN NEMOCLAW_CUSTOM_ROUTE_MODEL_B64="\${NEMOCLAW_CUSTOM_ROUTE_MODEL_B64}" NEMOCLAW_CUSTOM_ROUTE_LIMITS_B64="\${NEMOCLAW_CUSTOM_ROUTE_LIMITS_B64}" /usr/bin/python3 - <<'PYNEMOCLAWCUSTOMROUTE'
+${useRoot}RUN NEMOCLAW_CUSTOM_ROUTE_MODEL_B64="\${NEMOCLAW_CUSTOM_ROUTE_MODEL_B64}" NEMOCLAW_CUSTOM_ROUTE_LIMITS_B64="\${NEMOCLAW_CUSTOM_ROUTE_LIMITS_B64}" /usr/bin/python3 - <<'PYNEMOCLAWCUSTOMROUTE'
 import base64
 import json
 import os
@@ -302,8 +302,7 @@ RUN if [ -f /sandbox/.openclaw/openclaw.json ]; then \\
         sha256sum openclaw.json > .config-hash; \\
         chown --reference=openclaw.json .config-hash; \\
         chmod --reference=openclaw.json .config-hash; \\
-    fi
-${restoreUser}
+    fi${restoreUser}
 `;
 }
 

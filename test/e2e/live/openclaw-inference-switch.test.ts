@@ -1002,12 +1002,16 @@ test(
     );
 
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-switch-home-"));
-    const customImageDockerfile = stageNonRootCustomOpenClawImageDockerfile(
-      home,
-      readLiveE2eManagedImageCatalogContracts(liveE2eManagedImageCatalog(process.env)!).get(
-        "openclaw",
-      )!.reference,
-    );
+    const customImageRuntime = process.env.NEMOCLAW_CUSTOM_IMAGE_RUNTIME;
+    const customImageDockerfile =
+      runtimeProvider.id === customImageRuntime
+        ? stageNonRootCustomOpenClawImageDockerfile(
+            home,
+            readLiveE2eManagedImageCatalogContracts(liveE2eManagedImageCatalog(process.env)!).get(
+              "openclaw",
+            )!.reference,
+          )
+        : null;
     let mockProvider: MockAnthropicProvider | undefined;
     cleanup.trackDisposable(
       `remove OpenClaw inference switch test home for ${SANDBOX_NAME}`,
@@ -1051,8 +1055,12 @@ test(
         cwd: REPO_ROOT,
         env: commandEnv(home, {
           ...baseline.env,
-          NEMOCLAW_FROM_DOCKERFILE: customImageDockerfile,
-          NEMOCLAW_SANDBOX_PREBUILD: "1",
+          ...(customImageDockerfile === null
+            ? {}
+            : {
+                NEMOCLAW_FROM_DOCKERFILE: customImageDockerfile,
+                NEMOCLAW_SANDBOX_PREBUILD: "1",
+              }),
           NEMOCLAW_RECREATE_SANDBOX: "1",
         }),
         redactionValues,
@@ -1070,7 +1078,7 @@ test(
       skip("NVIDIA endpoint validation was unavailable/rate-limited during onboarding");
     }
     expect(install.exitCode, installText).toBe(0);
-    {
+    if (customImageDockerfile !== null) {
       const startupConfigResult = await sandbox.exec(
         SANDBOX_NAME,
         ["cat", "/sandbox/.openclaw/openclaw.json"],

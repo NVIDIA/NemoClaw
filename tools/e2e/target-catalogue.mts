@@ -1138,7 +1138,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       OPENSHELL_GATEWAY: "nemoclaw",
     },
   }),
-  dockerOnlyTarget("openclaw-inference-switch", {
+  managedRuntimeTarget("openclaw-inference-switch", {
     displayName: "Inference: OpenClaw switches providers and remains responsive",
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint: "Ubuntu; compatible inference fixtures",
@@ -1165,6 +1165,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       NEMOCLAW_SWITCH_MODEL: "mock-anthropic-model",
       NEMOCLAW_SWITCH_INFERENCE_API: "anthropic-messages",
       NEMOCLAW_SWITCH_MOCK_ANTHROPIC: "1",
+      NEMOCLAW_CUSTOM_IMAGE_RUNTIME: "docker",
       OPENSHELL_GATEWAY: "nemoclaw",
     },
   }),
