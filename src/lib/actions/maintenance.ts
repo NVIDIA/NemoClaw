@@ -144,12 +144,12 @@ async function backupSandboxWithinMutationLock(
       enforceRemovedImmutabilityMigrationBoundary(sandboxName, {
         allowStateRecord: true,
       });
-      const transactionDeadlineMs = shouldStartStoppedContainer
+      const startDeadlineMs = shouldStartStoppedContainer
         ? startedSandboxBackupTransactionDeadline()
         : null;
       const startedForBackup = shouldStartStoppedContainer
         ? await startStoppedSandboxContainerForBackup(sandboxName, {
-            deadlineMs: transactionDeadlineMs ?? undefined,
+            deadlineMs: startDeadlineMs ?? undefined,
           })
         : null;
       if (shouldStartStoppedContainer && !startedForBackup) {
@@ -162,6 +162,13 @@ async function backupSandboxWithinMutationLock(
       if (startedForBackup) {
         console.log(`  Starting stopped sandbox '${sandboxName}' to back it up...`);
       }
+      // Starting the container has its own bounded window. Establish the
+      // readiness/backup/cleanup transaction only after OpenShell accepts that
+      // start so lifecycle startup cannot consume the documented readiness
+      // allowance or either cleanup reserve.
+      const transactionDeadlineMs = startedForBackup
+        ? startedSandboxBackupTransactionDeadline()
+        : null;
       console.log(`  Backing up '${sandboxName}'...`);
       let result: sandboxState.BackupResult | null = null;
       let orphanManifestMessage: string | null = null;

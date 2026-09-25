@@ -873,9 +873,10 @@ describe("backupSandboxStateForRebuild failure safety", () => {
     expect(errorLines.some((line: string) => line.includes("workspace"))).toBe(true);
     expect(
       errorLines.some((line: string) =>
-        line.includes("Incomplete snapshot retained for manual recovery"),
+        line.includes("Incomplete snapshot retained for manual inspection and cleanup only"),
       ),
     ).toBe(true);
+    expect(errorLines.some((line: string) => line.includes("manual recovery"))).toBe(false);
     expect(
       errorLines.some((line: string) => line.includes("excluded from snapshot restore selection")),
     ).toBe(true);
@@ -1190,7 +1191,7 @@ describe("backupSandboxStateForRebuild stopped-container recovery (#11137)", () 
     });
     expect(order).toEqual(["backup", "stop", "cleanup"]);
     expect(removeBackupSpy).toHaveBeenCalledWith("alpha", "/backups/alpha/incomplete", 361_001);
-    expect(vi.mocked(backupStartedSpy).mock.calls[0]?.[1]?.deadlineMs).toBe(331_000);
+    expect(vi.mocked(backupStartedSpy).mock.calls[0]?.[1]?.deadlineMs).toBe(661_001);
     expect(vi.mocked(console.error).mock.calls.flat().join("\n")).not.toContain("loose file");
   });
 
@@ -1220,7 +1221,10 @@ describe("backupSandboxStateForRebuild stopped-container recovery (#11137)", () 
 
     const reported = vi.mocked(console.error).mock.calls.flat().join("\n");
     expect(reported).toContain("could not be removed");
-    expect(reported).toContain("Incomplete snapshot retained for manual recovery");
+    expect(reported).toContain(
+      "Incomplete snapshot retained for manual inspection and cleanup only",
+    );
+    expect(reported).not.toContain("manual recovery");
   });
 
   it("reports the still-running container when the retry and the return to stopped both fail", async () => {

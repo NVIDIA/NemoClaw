@@ -527,11 +527,11 @@ export async function backupSandboxStateForRebuild(
 
   console.log("  Backing up sandbox state...");
   log(`Agent type: ${sb.agent || "openclaw"}, stateDirs from manifest`);
-  const transactionDeadlineMs = startedSandboxBackupTransactionDeadline();
+  const initialTransactionDeadlineMs = startedSandboxBackupTransactionDeadline();
   let backup = snapshotBackup.backupSandboxStateWithManagedAuthority(
     sandboxName,
     {
-      deadlineMs: startedSandboxBackupWorkDeadline(transactionDeadlineMs),
+      deadlineMs: startedSandboxBackupWorkDeadline(initialTransactionDeadlineMs),
       ...(capturedOpenClawState ? { capturedOpenClawState } : {}),
     },
     {
@@ -548,11 +548,12 @@ export async function backupSandboxStateForRebuild(
   // rejection) is not a transport problem and must not attempt this recovery.
   if (!backup.success && backup.unreachable) {
     const started = await startStoppedSandboxContainerForBackup(sandboxName, {
-      deadlineMs: transactionDeadlineMs,
+      deadlineMs: initialTransactionDeadlineMs,
     });
     if (started) {
       console.log("  Sandbox container is stopped; starting it to back up state before rebuild...");
       log(`Started stopped container '${started.containerName}' to retry backup`);
+      const transactionDeadlineMs = startedSandboxBackupTransactionDeadline();
       let returnedToStopped = false;
       try {
         backup = await backupStartedSandboxState(sandboxName, {
@@ -644,7 +645,7 @@ export async function backupSandboxStateForRebuild(
       console.error(`  Failed files: ${backup.failedFiles.join(", ")}`);
     if (backup.manifest?.backupPath) {
       console.error(
-        `  Incomplete snapshot retained for manual recovery: ${backup.manifest.backupPath}`,
+        `  Incomplete snapshot retained for manual inspection and cleanup only: ${backup.manifest.backupPath}`,
       );
       console.error("  It is excluded from snapshot restore selection.");
     }

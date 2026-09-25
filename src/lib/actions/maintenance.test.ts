@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   startStoppedSandboxContainerForBackup: vi.fn(),
   backupStartedSandboxState: vi.fn(),
   returnSandboxContainerToStopped: vi.fn(),
+  startedSandboxBackupTransactionDeadline: vi.fn(() => 330_000),
   retainStrictPreUpgradeRecoveryState: vi.fn(),
   discardIncompleteBackup: vi.fn(),
   isSandboxContainerDefinitivelyAbsent: vi.fn(),
@@ -100,7 +101,7 @@ vi.mock("./sandbox/stopped-sandbox-backup", () => ({
   backupStartedSandboxState: mocks.backupStartedSandboxState,
   returnSandboxContainerToStopped: mocks.returnSandboxContainerToStopped,
   isSandboxContainerDefinitivelyAbsent: mocks.isSandboxContainerDefinitivelyAbsent,
-  startedSandboxBackupTransactionDeadline: () => 330_000,
+  startedSandboxBackupTransactionDeadline: mocks.startedSandboxBackupTransactionDeadline,
   startedSandboxBackupWorkDeadline: (transactionDeadlineMs: number) =>
     transactionDeadlineMs - 30_000,
 }));
@@ -814,11 +815,11 @@ describe("backupAll", () => {
       defaultSandbox: "sb-stopped",
     });
     readySandboxNames = new Set();
-    const startedForBackup = {
-      containerName: "openshell-sb-stopped-abc",
-      runtimeProviderId: "docker",
-    };
-    mocks.startStoppedSandboxContainerForBackup.mockReturnValue(startedForBackup);
+    const started = { containerName: "container", runtimeProviderId: "docker" };
+    mocks.startStoppedSandboxContainerForBackup.mockReturnValue(started);
+    mocks.startedSandboxBackupTransactionDeadline
+      .mockReturnValueOnce(330_000)
+      .mockReturnValueOnce(360_000);
     mocks.backupStartedSandboxState.mockResolvedValue({
       success: true,
       backedUpDirs: ["workspace"],
@@ -849,11 +850,11 @@ describe("backupAll", () => {
       expect.anything(),
       expect.anything(),
       { gatewayName: "nemoclaw", workspace: "default" },
-      300_000,
+      330_000,
     );
     expect(stopClock).toEqual([400_000]);
-    expect(mocks.returnSandboxContainerToStopped).toHaveBeenCalledWith(startedForBackup, {
-      deadlineMs: 330_000,
+    expect(mocks.returnSandboxContainerToStopped).toHaveBeenCalledWith(started, {
+      deadlineMs: 360_000,
     });
     expect(mocks.recordSandboxStopIntent).toHaveBeenCalledWith(
       "sb-stopped",
