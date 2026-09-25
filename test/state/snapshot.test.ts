@@ -141,7 +141,17 @@ process.exit(93);
       fs.rmSync(path.join(nativeRoot, ".openclaw"), { recursive: true, force: true });
       fs.writeFileSync(path.join(nativeRoot, "stale.txt"), "remove-me");
 
-      const restore = await sandboxState.restoreSandboxState("alpha", backup.manifest!.backupPath);
+      let archiveMutatedAfterValidation = false;
+      const restore = await sandboxState.restoreSandboxState("alpha", backup.manifest!.backupPath, {
+        validateBeforeMutation: () => {
+          fs.writeFileSync(
+            path.join(backup.manifest!.backupPath, "native-home.tar"),
+            "changed after validation",
+          );
+          archiveMutatedAfterValidation = true;
+        },
+      });
+      expect(archiveMutatedAfterValidation).toBe(true);
       expect(restore).toEqual({
         success: true,
         restoredDirs: ["."],

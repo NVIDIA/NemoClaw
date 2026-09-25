@@ -10,6 +10,7 @@ import {
   existsSync,
   fstatSync,
   lstatSync,
+  mkdtempSync,
   mkdirSync,
   openSync,
   readdirSync,
@@ -20,6 +21,7 @@ import {
   rmSync,
   statSync,
   writeFileSync,
+  writeSync,
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -1339,37 +1341,69 @@ function sha256Descriptor(descriptor: number): string {
 
 type OpenedNativeArchive = { descriptor: number } | { error: string };
 
+function copyNativeArchiveToPrivateDescriptor(sourceDescriptor: number): {
+  descriptor: number;
+  sha256: string;
+} {
+  const temporaryRoot = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-restore-"));
+  const privatePath = path.join(temporaryRoot, "archive.tar");
+  let descriptor: number | null = null;
+  try {
+    descriptor = openSync(
+      privatePath,
+      constants.O_CREAT | constants.O_EXCL | constants.O_RDWR | constants.O_NOFOLLOW,
+      0o600,
+    );
+    const hash = createHash("sha256");
+    const buffer = Buffer.allocUnsafe(64 * 1024);
+    let position = 0;
+    for (;;) {
+      const bytesRead = readSync(sourceDescriptor, buffer, 0, buffer.byteLength, position);
+      if (bytesRead === 0) break;
+      hash.update(buffer.subarray(0, bytesRead));
+      let written = 0;
+      while (written < bytesRead) {
+        written += writeSync(descriptor, buffer, written, bytesRead - written, position + written);
+      }
+      position += bytesRead;
+    }
+    const result = { descriptor, sha256: hash.digest("hex") };
+    descriptor = null;
+    return result;
+  } finally {
+    if (descriptor !== null) closeSync(descriptor);
+    rmSync(temporaryRoot, { recursive: true, force: true });
+  }
+}
+
 function openValidatedNativeArchive(
   archivePath: string,
   expectedSha256: string,
   nativeRoot: string,
 ): OpenedNativeArchive {
-  let listingDescriptor: number | null = null;
+  let sourceDescriptor: number | null = null;
   let restoreDescriptor: number | null = null;
   const identityError = "Native home/workspace archive identity does not match its manifest";
   try {
-    listingDescriptor = openSync(archivePath, constants.O_RDONLY | constants.O_NOFOLLOW);
-    restoreDescriptor = openSync(archivePath, constants.O_RDONLY | constants.O_NOFOLLOW);
-    const listingIdentity = fstatSync(listingDescriptor);
-    const restoreIdentity = fstatSync(restoreDescriptor);
+    sourceDescriptor = openSync(archivePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const sourceIdentity = fstatSync(sourceDescriptor);
+    if (!sourceIdentity.isFile()) return { error: identityError };
+    const privateArchive = copyNativeArchiveToPrivateDescriptor(sourceDescriptor);
+    restoreDescriptor = privateArchive.descriptor;
     if (
-      !listingIdentity.isFile() ||
-      !restoreIdentity.isFile() ||
-      listingIdentity.dev !== restoreIdentity.dev ||
-      listingIdentity.ino !== restoreIdentity.ino ||
-      listingIdentity.size !== restoreIdentity.size ||
-      sha256Descriptor(restoreDescriptor) !== expectedSha256
+      fstatSync(restoreDescriptor).size !== sourceIdentity.size ||
+      privateArchive.sha256 !== expectedSha256
     ) {
       return { error: identityError };
     }
-    const validation = validateTarEntries({ fileDescriptor: listingDescriptor }, nativeRoot);
-    const finalIdentity = fstatSync(restoreDescriptor);
+    const validation = validateTarEntries({ fileDescriptor: sourceDescriptor }, nativeRoot);
+    const finalIdentity = fstatSync(sourceDescriptor);
     if (
-      finalIdentity.dev !== restoreIdentity.dev ||
-      finalIdentity.ino !== restoreIdentity.ino ||
-      finalIdentity.size !== restoreIdentity.size ||
-      finalIdentity.mtimeMs !== restoreIdentity.mtimeMs ||
-      finalIdentity.ctimeMs !== restoreIdentity.ctimeMs
+      finalIdentity.dev !== sourceIdentity.dev ||
+      finalIdentity.ino !== sourceIdentity.ino ||
+      finalIdentity.size !== sourceIdentity.size ||
+      finalIdentity.mtimeMs !== sourceIdentity.mtimeMs ||
+      finalIdentity.ctimeMs !== sourceIdentity.ctimeMs
     ) {
       return { error: identityError };
     }
@@ -1384,7 +1418,7 @@ function openValidatedNativeArchive(
   } catch {
     return { error: "Native home/workspace archive is missing or unreadable" };
   } finally {
-    if (listingDescriptor !== null) closeSync(listingDescriptor);
+    if (sourceDescriptor !== null) closeSync(sourceDescriptor);
     if (restoreDescriptor !== null) closeSync(restoreDescriptor);
   }
 }
