@@ -410,21 +410,21 @@ function runBoundedDirectServiceUserProof(
   executablePath: string,
   options: OllamaSystemdExecutableProofOptions,
 ): OllamaExecutableCaptureResult {
-  // GNU timeout creates a separate process group unless --foreground is used.
-  // That preserves descendant cleanup without relying on the transient systemd
-  // service path that timed out, while the outer runner remains a final bound.
+  // Keep GNU timeout outside sudo so it is the direct child supervised by the
+  // runner and owns the complete sudo/service-user proof process group. Without
+  // this ordering, the outer timeout could stop only sudo and orphan descendants.
   const result = options.runCaptureExImpl(
     [
+      "/usr/bin/timeout",
+      "--signal=TERM",
+      `--kill-after=${EXECUTION_PROOF_KILL_AFTER}`,
+      `${String(EXECUTION_PROOF_TIMEOUT_SECONDS)}s`,
       ...commandPrefix(options.sudoPrefix),
       "-u",
       sudoServiceUserArgument(serviceUser),
       "--",
       "/usr/bin/env",
       "LC_ALL=C",
-      "/usr/bin/timeout",
-      "--signal=TERM",
-      `--kill-after=${EXECUTION_PROOF_KILL_AFTER}`,
-      `${String(EXECUTION_PROOF_TIMEOUT_SECONDS)}s`,
       executablePath,
       "--version",
     ],
@@ -487,7 +487,7 @@ function executionFailureDetail(
   const detail = sanitizeReadinessText(result.stderr ?? "", EXECUTION_FAILURE_DETAIL_LIMIT)
     .replace(/\s+/gu, " ")
     .trim();
-  return detail ? ` ${source} detail: ${detail}` : "";
+  return detail ? ` ${source} detail: ${detail}` : ` ${source} returned no diagnostic detail.`;
 }
 
 /** Prove that systemd's configured Ollama user can execute the exact binary and PT_INTERP. */

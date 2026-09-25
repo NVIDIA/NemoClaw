@@ -80,6 +80,10 @@ function expectBoundedDirectServiceUserProofCommand(
   serviceUser: string,
 ): void {
   expect(command).toEqual([
+    "/usr/bin/timeout",
+    "--signal=TERM",
+    "--kill-after=250ms",
+    "15s",
     "/usr/bin/sudo",
     "-n",
     "-u",
@@ -87,10 +91,6 @@ function expectBoundedDirectServiceUserProofCommand(
     "--",
     "/usr/bin/env",
     "LC_ALL=C",
-    "/usr/bin/timeout",
-    "--signal=TERM",
-    "--kill-after=250ms",
-    "15s",
     executablePath,
     "--version",
   ]);
@@ -778,6 +778,33 @@ describe("proveOllamaSystemdServiceExecutable", () => {
     );
     expect(result.ok ? "" : result.message).not.toContain(credential);
     expect(result.ok ? "" : result.message).not.toContain("detail ".repeat(40));
+  });
+
+  it("retains the fallback proof source when stderr is empty (#12281)", () => {
+    const fixture = proofFixture(0o755);
+    fixture.runCaptureExImpl.mockImplementation((command: readonly string[]) =>
+      captureForCommand(command, [
+        [
+          (candidate) => candidate[0] === "/usr/bin/systemctl",
+          () =>
+            capture(
+              0,
+              `User=ollama\nExecStart={ path=${executablePath} ; argv[]=${executablePath} serve ; }`,
+            ),
+        ],
+        [(candidate) => candidate[0] === "/usr/bin/id", () => capture(0)],
+        [(candidate) => isServiceUserProofCommand(candidate), () => capture(null, "", true)],
+        [(candidate) => isBoundedDirectServiceUserProofCommand(candidate), () => capture(1)],
+        [(candidate) => isServiceUserAccessCommand(candidate), () => accessCapture(true)],
+      ]),
+    );
+
+    const result = proveOllamaSystemdServiceExecutable(fixture.options);
+
+    expect(result).toMatchObject({ classification: "execution-failed", ok: false });
+    expect(result.ok ? "" : result.message).toContain(
+      "direct proof returned no diagnostic detail.",
+    );
   });
 
   it("accepts an initial service-user proof without changing permissions (#9728)", () => {
