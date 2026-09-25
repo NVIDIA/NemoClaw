@@ -263,3 +263,17 @@ export function listHostGatewayRegistryEntries(home: string): HostGatewayRegistr
   }
   return result;
 }
+
+/**
+ * Enumerate every gateway port represented by durable host state.
+ *
+ * State-root names protect gateways that do not yet have a sandbox row, while
+ * registry bindings retain ports recorded by legacy layouts. Consumers that
+ * expose a host loopback service must treat the complete inventory as control
+ * plane, even when the current process selects another gateway.
+ */
+export function listRecordedGatewayPorts(home: string): number[] {
+  const ports = new Set(listGatewayStateRoots(home).map(({ gatewayPort }) => gatewayPort));
+  for (const { gatewayPort } of listHostGatewayRegistryEntries(home)) ports.add(gatewayPort);
+  return [...ports].sort((left, right) => left - right);
+}

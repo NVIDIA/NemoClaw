@@ -2,10 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isProtectedNemoClawHostPort } from "../../core/protected-host-ports";
+import { DEFAULT_OLLAMA_PROXY_PORT, OLLAMA_PROXY_PORT } from "../../core/ollama-proxy-port";
 import { VLLM_PORT } from "../../core/vllm-port";
 import { unsafeEndpointUrlViolation } from "../../core/endpoint-url-safety";
 import { LLAMA_CPP_PORT } from "../../inference/llama-cpp/contract";
 import { isLoopbackHostname } from "../../private-networks";
+import { listRecordedGatewayPorts, resolveHome } from "../../state/gateway-registry";
 import type { RunOpenshell, UpsertProvider, UpsertProviderResult } from "./types";
 
 // Keep this list aligned with the materialized host.openshell.internal endpoints
@@ -28,26 +30,25 @@ const LOOPBACK_BRIDGE_PROVIDERS = new Set(["compatible-endpoint", "llama-cpp-loc
  * loopback port that is not reserved for NemoClaw's control plane, even though
  * direct sandbox bridge routes use a fixed port set.
  */
-export function isLoopbackNoAuthCompatibleEndpointUrl(
+function loopbackNoAuthCompatibleEndpointPort(
   provider: string,
   endpointUrl: string | null | undefined,
-): boolean {
+): number | null {
   if (
     provider !== "compatible-endpoint" ||
     !endpointUrl ||
     unsafeEndpointUrlViolation(endpointUrl)
   ) {
-    return false;
+    return null;
   }
   let parsed: URL;
   try {
     parsed = new URL(endpointUrl);
   } catch {
-    return false;
+    return null;
   }
   const port = parsed.port ? Number(parsed.port) : null;
-  return (
-    parsed.protocol === "http:" &&
+  return parsed.protocol === "http:" &&
     !parsed.username &&
     !parsed.password &&
     !parsed.search &&
@@ -56,8 +57,34 @@ export function isLoopbackNoAuthCompatibleEndpointUrl(
     port !== null &&
     Number.isInteger(port) &&
     port >= 1024 &&
-    port <= 65535 &&
-    !isProtectedNemoClawHostPort(port)
+    port <= 65535
+    ? port
+    : null;
+}
+
+export function isLoopbackNoAuthCompatibleEndpointUrl(
+  provider: string,
+  endpointUrl: string | null | undefined,
+): boolean {
+  const port = loopbackNoAuthCompatibleEndpointPort(provider, endpointUrl);
+  return (
+    port !== null &&
+    !isProtectedNemoClawHostPort(port) &&
+    !listRecordedGatewayPorts(resolveHome()).includes(port)
+  );
+}
+
+/**
+ * Recognize the one historical route shape that fresh onboarding now rejects.
+ * The caller must also require the durable no-auth proxy credential marker.
+ */
+export function isLegacyRecordedLoopbackNoAuthCompatibleEndpointUrl(
+  provider: string,
+  endpointUrl: string | null | undefined,
+): boolean {
+  return (
+    OLLAMA_PROXY_PORT !== DEFAULT_OLLAMA_PROXY_PORT &&
+    loopbackNoAuthCompatibleEndpointPort(provider, endpointUrl) === DEFAULT_OLLAMA_PROXY_PORT
   );
 }
 

@@ -5,7 +5,10 @@ import { D, R } from "../../cli/terminal-style";
 import { unsafeEndpointUrlViolation } from "../../core/endpoint-url-safety";
 import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../inference/ollama/contract";
 import type { InferenceSelection } from "../../inference/selection";
-import { isLoopbackNoAuthCompatibleEndpointUrl } from "../../onboard/inference-providers/compatible-endpoint-gateway-route";
+import {
+  isLegacyRecordedLoopbackNoAuthCompatibleEndpointUrl,
+  isLoopbackNoAuthCompatibleEndpointUrl,
+} from "../../onboard/inference-providers/compatible-endpoint-gateway-route";
 import type { RegistryInferenceRoute } from "../../onboard/rebuild-route-handoff";
 import { isRecoveredProviderCredentialReuseSelectionKey } from "../../onboard/recovered-provider-reuse";
 import {
@@ -86,7 +89,8 @@ export function getRebuildCredentialEnvFromRegistry(
   if (
     provider === "compatible-endpoint" &&
     recordedCredentialEnv === OLLAMA_LOCAL_CREDENTIAL_ENV &&
-    isLoopbackNoAuthCompatibleEndpointUrl(provider, recordedEndpointUrl)
+    (isLoopbackNoAuthCompatibleEndpointUrl(provider, recordedEndpointUrl) ||
+      isLegacyRecordedLoopbackNoAuthCompatibleEndpointUrl(provider, recordedEndpointUrl))
   ) {
     return OLLAMA_LOCAL_CREDENTIAL_ENV;
   }

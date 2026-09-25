@@ -656,7 +656,8 @@ function sharedProxyBackendConflict(): Error {
   return new Error(
     "The shared protected loopback route already serves another inference backend. " +
       "NemoClaw will not replace it while existing sandboxes may depend on it. " +
-      "Use the already configured endpoint, or remove or migrate those sandboxes before selecting a different endpoint.",
+      "Use the already configured endpoint. To select a different backend, back up your sandboxes, " +
+      "remove the final NemoClaw gateway with the uninstaller, and then reinstall; moving or removing a sandbox alone does not release this host-global binding.",
   );
 }
 

@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   AUTOMATIC_GATEWAY_PORT_RANGE_END,
@@ -13,6 +17,7 @@ import {
   DEFAULT_BEDROCK_RUNTIME_ADAPTER_PORT,
   DEFAULT_GATEWAY_PORT,
   DEFAULT_HTTPS_PIN_RUNTIME_ADAPTER_PORT,
+  DEFAULT_MODEL_ROUTER_PORT,
   DEFAULT_OLLAMA_PROXY_PORT,
   DEFAULT_OPENROUTER_RUNTIME_ADAPTER_PORT,
   GATEWAY_PORT,
@@ -29,6 +34,13 @@ import {
   isLoopbackNoAuthCompatibleEndpointUrl,
   reuseRegisteredProviderWithGatewayEndpoint,
 } from "./compatible-endpoint-gateway-route";
+
+const tempHomes: string[] = [];
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  for (const home of tempHomes.splice(0)) fs.rmSync(home, { recursive: true, force: true });
+});
 
 describe("compatible endpoint gateway routing", () => {
   it("recognizes protected no-auth proxy sources on unprivileged loopback ports", () => {
@@ -61,6 +73,7 @@ describe("compatible endpoint gateway routing", () => {
     ["Hermes API range start", HERMES_API_PORT_RANGE_START],
     ["Hermes API range interior", HERMES_API_PORT_RANGE_START + 1],
     ["Hermes API range end", HERMES_API_PORT_RANGE_END],
+    ["Model Router", DEFAULT_MODEL_ROUTER_PORT],
     ["configured proxy", OLLAMA_PROXY_PORT],
     ["default proxy", DEFAULT_OLLAMA_PROXY_PORT],
     ["configured Bedrock adapter", BEDROCK_RUNTIME_ADAPTER_PORT],
@@ -72,6 +85,17 @@ describe("compatible endpoint gateway routing", () => {
   ])("rejects the protected NemoClaw %s port", (_label, port) => {
     expect(
       isLoopbackNoAuthCompatibleEndpointUrl("compatible-endpoint", `http://localhost:${port}/v1`),
+    ).toBe(false);
+  });
+
+  it("rejects a non-default gateway port recorded by another host gateway", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-recorded-gateway-port-"));
+    tempHomes.push(home);
+    fs.mkdirSync(path.join(home, ".nemoclaw", "gateways", "18080"), { recursive: true });
+    vi.stubEnv("HOME", home);
+
+    expect(
+      isLoopbackNoAuthCompatibleEndpointUrl("compatible-endpoint", "http://localhost:18080/v1"),
     ).toBe(false);
   });
 

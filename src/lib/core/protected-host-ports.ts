@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { DEFAULT_OLLAMA_PROXY_PORT, OLLAMA_PROXY_PORT } from "./ollama-proxy-port";
+import { DEFAULT_MODEL_ROUTER_PORT } from "./model-router-port";
 import { parseServicePortOverride } from "./service-port-boundary";
+
+export { DEFAULT_MODEL_ROUTER_PORT };
 
 export const DEFAULT_GATEWAY_PORT = 8080;
 /** Keep aligned with find_safe_alternate_gateway_port() in scripts/install.sh. */
@@ -68,6 +71,7 @@ export function isProtectedNemoClawHostPort(port: number): boolean {
     port === DASHBOARD_PORT ||
     (port >= DASHBOARD_PORT_RANGE_START && port <= DASHBOARD_PORT_RANGE_END) ||
     isHermesApiPort(port) ||
+    port === DEFAULT_MODEL_ROUTER_PORT ||
     port === OLLAMA_PROXY_PORT ||
     port === DEFAULT_OLLAMA_PROXY_PORT ||
     port === BEDROCK_RUNTIME_ADAPTER_PORT ||

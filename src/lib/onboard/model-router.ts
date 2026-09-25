@@ -5,7 +5,7 @@ import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { GATEWAY_PORT } from "../core/ports";
+import { DEFAULT_MODEL_ROUTER_PORT, GATEWAY_PORT } from "../core/ports";
 import { requireValue } from "../core/require-value";
 import { compactText } from "../core/url-utils";
 import {
@@ -591,7 +591,7 @@ function getRoutedProfile(): BlueprintInferenceProfile {
   return bp;
 }
 
-export const DEFAULT_MODEL_ROUTER_PORT = 4000;
+export { DEFAULT_MODEL_ROUTER_PORT };
 
 export function resolveModelRouterPort(): number {
   return getRoutedProfile().router?.port || DEFAULT_MODEL_ROUTER_PORT;

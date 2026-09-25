@@ -21,7 +21,7 @@ import {
 import { type OpenRegularFile, openRegularFileNoFollow } from "../../adapters/fs/regular-file";
 import { type AgentBranding, getAgentBranding } from "../../cli/branding";
 import { isErrnoException } from "../../core/errno";
-import { DEFAULT_GATEWAY_PORT, GATEWAY_PORT } from "../../core/ports";
+import { DEFAULT_GATEWAY_PORT, DEFAULT_MODEL_ROUTER_PORT, GATEWAY_PORT } from "../../core/ports";
 import { isStdinTty, readLineFromStdin } from "../../core/stdin";
 import { sleepMs } from "../../core/wait";
 import {
@@ -1137,8 +1137,6 @@ function stopOllamaAuthProxy(
 
   if (stopped.size === 0) runtime.log("No Ollama auth proxy processes found");
 }
-
-const DEFAULT_MODEL_ROUTER_PORT = 4000;
 
 function resolveModelRouterPort(_runtime: UninstallRuntime): number {
   // Routed onboard profiles use blueprint port 4000 by default; a custom port

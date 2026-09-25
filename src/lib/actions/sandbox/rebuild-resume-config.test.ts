@@ -40,6 +40,8 @@ function snapshotEnv(names: readonly string[]): () => void {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+  vi.resetModules();
 });
 
 describe("isLocalInferenceProvider", () => {
@@ -103,6 +105,28 @@ describe("getRebuildCredentialEnvFromRegistry", () => {
         "http://localhost:999/v1",
       ),
     ).toBe("COMPATIBLE_API_KEY");
+    expect(
+      getRebuildCredentialEnvFromRegistry(
+        "compatible-endpoint",
+        "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+        "http://localhost:11435/v1",
+      ),
+    ).toBe("COMPATIBLE_API_KEY");
+  });
+
+  it("preserves a legacy port-11435 no-auth route when the proxy moved", async () => {
+    vi.stubEnv("NEMOCLAW_OLLAMA_PROXY_PORT", "12435");
+    vi.resetModules();
+    const { getRebuildCredentialEnvFromRegistry: resolveCredential } =
+      await import("./rebuild-resume-preflight");
+
+    expect(
+      resolveCredential(
+        "compatible-endpoint",
+        "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+        "http://localhost:11435/v1",
+      ),
+    ).toBe("NEMOCLAW_OLLAMA_PROXY_TOKEN");
   });
 
   it("returns null for local and unset providers", () => {
