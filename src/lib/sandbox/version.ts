@@ -9,8 +9,10 @@
 //   Slow: OpenShell exec into sandbox, run version_command, cache result in registry
 
 import { parseVersionFromText } from "../adapters/openshell/client.js";
-import { createCliOpenShellSandboxCommandExecutor } from "../adapters/openshell/sandbox-command-cli.js";
-import { wrapExecCommandWithRuntimeEnv } from "../actions/sandbox/runtime-env.js";
+import {
+  executeOrdinarySandboxCommand,
+  SandboxCommandTransportError,
+} from "../adapters/sandbox/ordinary-command.js";
 import { loadAgent } from "../agent/defs.js";
 import { resolveSandboxGatewayName } from "../onboard/gateway-binding.js";
 import * as registry from "../state/registry.js";
@@ -107,15 +109,16 @@ export async function probeAgentVersion(
   const probeGatewayName = gatewayName ?? resolveProbeGatewayName(sandboxName);
   if (probeGatewayName === null) return null;
 
-  const result = await createCliOpenShellSandboxCommandExecutor().runBuffered({
-    sandboxName,
-    target: { kind: "named", gatewayName: probeGatewayName },
-    command: wrapExecCommandWithRuntimeEnv(["sh", "-c", agent.versionCommand]),
-    timeoutMilliseconds: 15000,
-  });
-  return result.outcome.kind === "completed" && result.outcome.exitCode === 0
-    ? parseVersionFromText(result.stdout, agent.versionCommand)
-    : null;
+  try {
+    const result = await executeOrdinarySandboxCommand(sandboxName, agent.versionCommand, 15000, {
+      gatewayName: probeGatewayName,
+      honorCallerTimeout: true,
+    });
+    return result.status === 0 ? parseVersionFromText(result.stdout, agent.versionCommand) : null;
+  } catch (error) {
+    if (error instanceof SandboxCommandTransportError) return null;
+    throw error;
+  }
 }
 
 /**

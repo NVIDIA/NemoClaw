@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { wrapExecCommandWithRuntimeEnv } from "../actions/sandbox/runtime-env.js";
+import { wrapOrdinarySandboxCommand } from "../adapters/sandbox/command-transport.js";
+import {
+  buildSandboxExecMarkedCommand,
+  SANDBOX_EXEC_STARTED_MARKER,
+} from "../adapters/sandbox/sandbox-exec-output.js";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -68,6 +72,10 @@ const registry = await import("../state/registry.js");
 const { checkAgentVersion, formatStalenessWarning } = await import("./version.js");
 
 const TEST_REGISTRY_FILE = join(TEST_HOME, ".nemoclaw", "sandboxes.json");
+
+function framedOutput(output: string): string {
+  return `${SANDBOX_EXEC_STARTED_MARKER}\n${output}`;
+}
 
 function resetTestRegistry(): void {
   mkdirSync(dirname(TEST_REGISTRY_FILE), { recursive: true });
@@ -142,7 +150,7 @@ describe("checkAgentVersion", async () => {
 
     runBuffered.mockResolvedValue({
       outcome: { kind: "completed", exitCode: 0 },
-      stdout: "OpenClaw 2026.5.27 (abc123)\n",
+      stdout: framedOutput("OpenClaw 2026.5.27 (abc123)\n"),
       stderr: "",
     });
 
@@ -154,12 +162,19 @@ describe("checkAgentVersion", async () => {
     // default gateway, and the probe pins to it explicitly rather than
     // inheriting OpenShell's current selection (#7429).
 
-    expect(runBuffered).toHaveBeenCalledWith({
-      sandboxName: "test-sb",
-      target: { kind: "named", gatewayName: "nemoclaw" },
-      command: wrapExecCommandWithRuntimeEnv(["sh", "-c", "openclaw --version"]),
-      timeoutMilliseconds: 15000,
-    });
+    expect(runBuffered).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxName: "test-sb",
+        target: { kind: "named", gatewayName: "nemoclaw" },
+        command: wrapOrdinarySandboxCommand([
+          "sh",
+          "-c",
+          buildSandboxExecMarkedCommand("openclaw --version"),
+        ]),
+        timeoutMilliseconds: 15000,
+      }),
+    );
+    expect(JSON.stringify(runBuffered.mock.calls)).not.toContain("nemoclaw-proxy-env.sh");
 
     // Should have cached the version in registry
     const updated = registry.getSandbox("test-sb");
@@ -183,7 +198,7 @@ describe("checkAgentVersion", async () => {
       writeFileSync(TEST_REGISTRY_FILE, JSON.stringify(document));
       runBuffered.mockResolvedValue({
         outcome: { kind: "completed", exitCode: 0 },
-        stdout: "OpenClaw 2026.5.27",
+        stdout: framedOutput("OpenClaw 2026.5.27"),
         stderr: "",
       });
       expect(await checkAgentVersion("test-sb")).toMatchObject({
@@ -207,7 +222,7 @@ describe("checkAgentVersion", async () => {
 
     runBuffered.mockResolvedValue({
       outcome: { kind: "completed", exitCode: 0 },
-      stdout: "OpenClaw 2026.5.27 (abc123)\n",
+      stdout: framedOutput("OpenClaw 2026.5.27 (abc123)\n"),
       stderr: "",
     });
 
@@ -228,7 +243,7 @@ describe("checkAgentVersion", async () => {
 
     runBuffered.mockResolvedValue({
       outcome: { kind: "completed", exitCode: 0 },
-      stdout: "Hermes Agent 0.17.0\n",
+      stdout: framedOutput("Hermes Agent 0.17.0\n"),
       stderr: "",
     });
 
@@ -239,12 +254,18 @@ describe("checkAgentVersion", async () => {
     expect(result.sandboxVersion).toBe("0.17.0");
     expect(result.verificationFailed).toBe(false);
     // The Hermes agent definition drives the probe, not the openclaw default.
-    expect(runBuffered).toHaveBeenCalledWith({
-      sandboxName: "hermes-sb",
-      target: { kind: "named", gatewayName: "nemoclaw-18080" },
-      command: wrapExecCommandWithRuntimeEnv(["sh", "-c", "hermes --version"]),
-      timeoutMilliseconds: 15000,
-    });
+    expect(runBuffered).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxName: "hermes-sb",
+        target: { kind: "named", gatewayName: "nemoclaw-18080" },
+        command: wrapOrdinarySandboxCommand([
+          "sh",
+          "-c",
+          buildSandboxExecMarkedCommand("hermes --version"),
+        ]),
+        timeoutMilliseconds: 15000,
+      }),
+    );
   });
 
   it("does not probe at all when the persisted gateway binding is corrupted (#7429)", async () => {
@@ -303,7 +324,7 @@ describe("checkAgentVersion", async () => {
     runBuffered.mockResolvedValue({
       outcome: { kind: "completed", exitCode: result.exitCode },
       stderr: "",
-      stdout: result.stdout,
+      stdout: framedOutput(result.stdout),
     });
     expect(await checkAgentVersion("test-sb")).toMatchObject({
       verificationFailed: true,
@@ -332,7 +353,7 @@ describe("checkAgentVersion", async () => {
 
     runBuffered.mockResolvedValue({
       outcome: { kind: "completed", exitCode: 0 },
-      stdout: "OpenClaw 2026.5.27 (abc123)\n",
+      stdout: framedOutput("OpenClaw 2026.5.27 (abc123)\n"),
       stderr: "",
     });
 
@@ -491,7 +512,7 @@ describe("checkAgentVersion", async () => {
 
     runBuffered.mockResolvedValue({
       outcome: { kind: "completed", exitCode: 0 },
-      stdout: "hermes 0.17.0\n",
+      stdout: framedOutput("hermes 0.17.0\n"),
       stderr: "",
     });
 
@@ -516,7 +537,7 @@ describe("checkAgentVersion", async () => {
 
     runBuffered.mockResolvedValue({
       outcome: { kind: "completed", exitCode: 0 },
-      stdout: "hermes 0.17.0\n",
+      stdout: framedOutput("hermes 0.17.0\n"),
       stderr: "",
     });
 

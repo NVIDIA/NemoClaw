@@ -53,7 +53,11 @@ vi.mock("./tarball", async () => {
 });
 
 beforeEach(() => {
-  mocks.runBuffered.mockReset().mockResolvedValue({ status: 0, stdout: "", stderr: "" });
+  mocks.runBuffered.mockReset().mockResolvedValue({
+    status: 0,
+    stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nfixture diagnostics",
+    stderr: "",
+  });
   mocks.archive.mockReset();
   mocks.directories.length = 0;
   mocks.archivedFiles.length = 0;
@@ -67,6 +71,19 @@ afterEach(() => {
 });
 
 describe("debug sandbox internals failure boundary", () => {
+  it("uses the non-sourcing ordinary command facade for sandbox diagnostics", async () => {
+    await runDebug({
+      sandboxName: "alpha",
+      gatewayName: "owned",
+      quick: true,
+      output: "debug.tar.gz",
+    });
+    const calls = JSON.stringify(mocks.runBuffered.mock.calls);
+    expect(calls).toContain("--noprofile");
+    expect(calls).toContain("__NEMOCLAW_SANDBOX_EXEC_STARTED__");
+    expect(calls).not.toContain("nemoclaw-proxy-env.sh");
+  });
+
   it("retains later diagnostics and archive when endpoint authority rejects sandbox internals", async () => {
     vi.stubEnv(
       "OPENSHELL_GATEWAY_ENDPOINT",

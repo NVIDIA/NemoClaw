@@ -7,9 +7,7 @@ import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { dockerExecFileSync } from "../adapters/docker/exec";
-import { createCliOpenShellSandboxCommandExecutor } from "../adapters/openshell/sandbox-command-cli";
-import { wrapExecCommandWithRuntimeEnv } from "../actions/sandbox/runtime-env";
-import { SandboxCommandTransportError } from "../adapters/sandbox/command-transport";
+import { executeOrdinarySandboxCommand } from "../adapters/sandbox/ordinary-command";
 import { OpenShellGatewayEndpointOverrideError } from "../openshell-gateway-endpoint-guard";
 import { DASHBOARD_PORT } from "../core/ports";
 import { redactFullWithUrls } from "../security/redact";
@@ -359,10 +357,6 @@ async function collectSandboxInternals(
 
   section("Sandbox Internals");
 
-  const target = gatewayName
-    ? { kind: "named" as const, gatewayName }
-    : { kind: "selected" as const };
-  const executor = createCliOpenShellSandboxCommandExecutor();
   const commands = [
     ["sandbox-ps", ["ps", "-ef"]],
     ["sandbox-free", ["free", "-m"]],
@@ -374,27 +368,26 @@ async function collectSandboxInternals(
       : []),
   ] as [string, string[]][];
   for (const [label, command] of commands) {
-    let result: Awaited<ReturnType<typeof executor.runBuffered>>;
+    let result: Awaited<ReturnType<typeof executeOrdinarySandboxCommand>>;
     try {
-      result = await executor.runBuffered({
+      result = await executeOrdinarySandboxCommand(
         sandboxName,
-        target,
-        command: wrapExecCommandWithRuntimeEnv(command),
-        timeoutMilliseconds: TIMEOUT_MS,
-      });
+        command.map((argument) => `'${argument.replaceAll("'", `'\\''`)}'`).join(" "),
+        TIMEOUT_MS,
+        {
+          honorCallerTimeout: true,
+          ...(gatewayName ? { gatewayName } : {}),
+        },
+      );
     } catch (error) {
       if (!(error instanceof OpenShellGatewayEndpointOverrideError)) throw error;
       warn(`Sandbox internals skipped: ${redact(error.message)}`);
       return;
     }
-    if (result.outcome.kind === "failed" && result.outcome.error.kind === "cancelled") {
-      throw new SandboxCommandTransportError("cancelled");
-    }
     const redacted = redact(`${result.stdout}\n${result.stderr}`);
     writeFileSync(join(collectDir, `${label}.txt`), redacted);
     console.log(redacted.trimEnd());
-    if (result.outcome.kind === "failed") warn(`${label}: ${result.outcome.error.kind}`);
-    else if (result.outcome.exitCode !== 0) console.log("  (command exited with non-zero status)");
+    if (result.status !== 0) console.log("  (command exited with non-zero status)");
   }
 }
 
