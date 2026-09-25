@@ -109,7 +109,7 @@ exports.hasExplicitDeferredN1xOnboardingIntent = (env) =>
   );
   fs.writeFileSync(
     `${onboardDir}/docker-driver-gateway-env.js`,
-    `exports.configuredRuntimeProviderOwnsHostReadiness = () => false;\n`,
+    `exports.configuredRuntimeProviderReadinessAuthority = () => null;\n`,
   );
 }
 

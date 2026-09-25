@@ -162,8 +162,10 @@ credentials, and must pass.
 These are two required acceptance executions, not retries; either failure remains a failed check.
 The concurrent-add probe retries only the rejected command after status proves that the other
 command committed one coherent bridge. The rejected command must report the exact portable
-host-lock timeout. The retry runs once, has its own command artifact, and must succeed idempotently
-from the verified committed source. Production Hermes add owns reload-transport reconciliation, so
+host-lock timeout, optionally followed by the current recorded-owner-is-still-running remediation.
+Unknown or unverifiable-owner diagnostics remain failures. The deterministic classifier and one-retry
+bound are covered by `support/mcp-bridge-reliability.test.ts`. The retry has its own command artifact
+and must succeed idempotently from the verified committed source. Production Hermes add owns reload-transport reconciliation, so
 the E2E boundary does not retry a Hermes mutation after transport loss.
 The workflow records one publication cohort before its PR producer matrix runs. Failed-job reruns
 reuse that cohort and replace only the stable run-scoped artifact owned by each retried agent.
@@ -172,6 +174,16 @@ reject mixed cohorts, another run, a future attempt, and another candidate revis
 The managed-image scope does not claim trusted-private DNS-rebinding coverage: host and sandbox
 `/etc/hosts` fixtures do not control the OpenShell supervisor's egress resolver. Full MCP bridge E2E
 coverage retains that assertion for environments with supervisor-authoritative DNS.
+The trusted-private HTTPS fixture records bounded TLS, request-header, and completed-body counters
+before the status assertion and during final cleanup. TLS errors use fixed code buckets; these
+diagnostics contain no raw errors, request data, or credentials and do not establish successful
+authenticated discovery. The server and event streams close before final diagnostic persistence.
+Persistence has a 10-second deadline; a write failure or timeout is reported after resource cleanup,
+so later cleanup entries can continue.
+Onboarding repair and resume fixtures capture bounded, read-only Podman ownership observations
+before and after the resumed command. They retain only validated fixed-schema facts and never raw
+child output. These separate observations do not replace the production ownership decision or prove
+which predicate rejected an earlier invocation; command results and cleanup remain authoritative.
 
 Full MCP bridge E2E also owns the supervisor's corporate-CA TLS consumer check:
 onboarding receives the fixture CA through `NEMOCLAW_CORPORATE_CA_BUNDLE`, and the
@@ -432,6 +444,15 @@ CLI must emit a v1alpha1 document with the `deepagents` harness, hosted OpenAI-c
 credential reference, and independently observed effective policy.
 The fixture compares the registry before and after export, and state validation confirms that the
 sandbox remains ready after the read-only command.
+
+The OpenClaw shard of the pinned Docker `mcp-bridge` target also owns Error-state recovery for
+OpenShell 0.0.116. After its healthy-source rebuild checks, it kills only the runtime bound to the
+test-created native sandbox ID, observes Error, and rebuilds without reintroducing the MCP host
+secret. A different container must preserve a workspace marker and complete the authenticated MCP
+tool call with the existing denial rule. The Podman and explicit-only development-runtime targets
+retain their existing bridge checks and record this additional Docker compatibility proof as not
+applicable. Capture validation, credential sanitization, source drift refusals and lifecycle-transition
+rules remain covered by source and component tests.
 
 The `sandbox-operations` target owns live final-gateway cleanup on the Docker-backed OpenShell
 boundary. It leaves one sandbox live after removing only its local registry entry, then requires a
@@ -844,7 +865,12 @@ After replacing plugin v1 with v2, it restarts through the native gateway
 command and invokes the updated tool through the running gateway. A separate
 CLI inspection cannot prove that the gateway discarded its cached plugin code.
 `rebuild-openclaw` proves a user-installed native plugin survives rebuild with
-no NemoClaw ownership metadata. `rebuild-hermes` proves native user-plugin and
+no NemoClaw ownership metadata. On the pinned Docker runtime it then kills the exact test-owned
+container, observes `Error`, and requires a different container to restore both the workspace and
+native plugin, with the OpenClaw health endpoint ready. This uses the same identity-fenced disruption
+helper as the MCP target, but reaches recovery independently of MCP networking. The retained receipt
+identifies whether native readiness or provider-backed MCP was proved; neither substitutes for the
+other. The original healthy-source checks and all MCP assertions remain in place. `rebuild-hermes` proves native user-plugin and
 lazy-package state survive rebuild. Managed-image activation exercises native
 OpenClaw and Hermes discovery before and after gateway restart. Deterministic
 state-restore tests prove complete native directories are archived without
