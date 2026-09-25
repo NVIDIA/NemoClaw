@@ -48,6 +48,11 @@ export async function captureHermesMcpLifecycleFailure(
       ...diagnosticOptions,
       artifactName: `${prefix}-container-identity`,
     });
+    const startupLog = runtime.hostInvocation([
+      "cp",
+      `${containerId}:/tmp/nemoclaw-start.log`,
+      "-",
+    ]);
     await Promise.allSettled([
       runtime.command(
         [
@@ -62,6 +67,25 @@ export async function captureHermesMcpLifecycleFailure(
         ...diagnosticOptions,
         artifactName: `${prefix}-container-logs`,
       }),
+      // OpenShell redirects the managed entrypoint into this file. Stream only
+      // its contents from the stopped container; never unpack files on the host.
+      host.command(
+        "bash",
+        [
+          "-o",
+          "pipefail",
+          "-c",
+          '"$@" | tar -xOf - nemoclaw-start.log | tail -c 32768',
+          "hermes-startup-diagnostics",
+          startupLog.command,
+          ...startupLog.args,
+        ],
+        {
+          ...diagnosticOptions,
+          env: buildAvailabilityProbeEnv(),
+          artifactName: `${prefix}-startup-log`,
+        },
+      ),
     ]);
   } catch {
     // Failure-only evidence must preserve the original lifecycle assertion.

@@ -199,6 +199,9 @@ exec is rejected in `Error` state. Container reads require exactly one validated
 runtime resource handle. Each output stream is limited to 32 KiB and each command to 30 seconds; log
 capture retains at most 200 lines from the last two minutes for OpenShell and
 three minutes for the runtime container, with fixture credentials redacted.
+The collector also streams the last 32 KiB of `/tmp/nemoclaw-start.log` from the
+stopped container. It reads only that archive member without unpacking files on
+the host, applies the same credential redaction, and stops after 30 seconds.
 Diagnostic acquisition does not retry the mutation or replace its result.
 OpenClaw launch evidence reports whether a SQLite rejection concerns file metadata or the transcript table, without exposing paths, identities, or session contents. The existing evidence checks remain required.
 A failed native weather-plugin invocation also records unauthenticated liveness and readiness HTTP status codes, bounded to two three-second probes. It does not repeat the tool invocation or replace its failure.

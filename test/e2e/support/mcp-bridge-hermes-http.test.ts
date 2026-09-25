@@ -82,7 +82,45 @@ describe("Hermes MCP HTTP failure diagnostics", () => {
           artifactName: `hermes-mcp-${operation}-failure-container-state`,
         }),
       );
-      expect(command).toHaveBeenCalledTimes(4);
+      expect(command).toHaveBeenCalledWith(
+        "bash",
+        [
+          "-o",
+          "pipefail",
+          "-c",
+          expect.any(String),
+          "hermes-startup-diagnostics",
+          "docker",
+          "cp",
+          `${CONTAINER_ID}:/tmp/nemoclaw-start.log`,
+          "-",
+        ],
+        expect.objectContaining({
+          artifactName: `hermes-mcp-${operation}-failure-startup-log`,
+          captureLimitBytes: 32_768,
+          timeoutMs: 30_000,
+          redactionValues: ["fixture-secret"],
+        }),
+      );
+      const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-hermes-startup-log-"));
+      try {
+        const log = `${"x".repeat(40_000)}\n[CRITICAL] fixture startup failure\n`;
+        writeFileSync(path.join(directory, "nemoclaw-start.log"), log);
+        const archive = path.join(directory, "startup.tar");
+        const packed = spawnSync("tar", ["-cf", archive, "-C", directory, "nemoclaw-start.log"]);
+        expect(packed.status).toBe(0);
+        const startupArgs = command.mock.calls[4]?.[1] as string[];
+        const captured = spawnSync("bash", [...startupArgs.slice(0, 5), "cat", archive], {
+          encoding: "utf8",
+          timeout: TIMEOUT_MS,
+          cwd: directory,
+        });
+        expect(captured.status, captured.stderr).toBe(0);
+        expect(captured.stdout).toBe(log.slice(-32_768));
+      } finally {
+        rmSync(directory, { recursive: true, force: true });
+      }
+      expect(command).toHaveBeenCalledTimes(5);
     },
   );
 
