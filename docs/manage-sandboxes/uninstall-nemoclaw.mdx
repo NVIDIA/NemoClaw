@@ -27,6 +27,8 @@ An explicit user-data purge skips eligible fresh backups and attempts to remove 
 Uninstall delegates sandbox and gateway container removal to OpenShell and the selected runtime.
 When removing a managed gateway, sandbox cleanup runs before the gateway service is stopped.
 Its Docker cleanup does not force-remove containers based on names, `nemoclaw-` or `openshell-` prefixes, or NemoClaw image references.
+When NemoClaw manages the local gateway, recorded Docker sandboxes require the Docker command for cleanup verification; restore the command before retrying if it is missing.
+An installation with no recorded Docker sandboxes can complete runtime cleanup without that command.
 If Docker inventory fails or cannot confirm cleanup of a selected sandbox or gateway, uninstall exits nonzero and preserves the remaining state for retry.
 Docker verification runs before CLI removal, so you can retry with the installed command.
 This includes stopped legacy containers whose ownership cannot be established.

@@ -1603,7 +1603,6 @@ async function removeOpenShellResources(
   // Retain connection and provider state until runtime cleanup is confirmed.
   if (
     !externallySupervised &&
-    runtime.commandExists("docker") &&
     !verifyDockerContainerCleanup(runtime, null, sandboxNames, sandboxRegistrations)
   )
     return false;
@@ -2374,6 +2373,14 @@ function stopBedrockRuntimeAdapterForUninstall(
   throw new IncompleteBedrockRuntimeAdapterCleanupError();
 }
 
+function hasDockerSandboxRegistrations(
+  registrations: SelectedRegistrySandboxState["registrations"],
+): boolean {
+  return Object.entries(registrations).some(
+    ([name, entry]) => managedHermesStateVolumeContext(name, entry).runtimeProviderId === "docker",
+  );
+}
+
 /** Container deletion belongs to the runtime owners; names only identify uncertain leftovers. */
 function verifyDockerContainerCleanup(
   runtime: UninstallRuntime,
@@ -2382,6 +2389,8 @@ function verifyDockerContainerCleanup(
   registrations: SelectedRegistrySandboxState["registrations"],
   rejectConventionMatches = false,
 ): boolean {
+  if (!runtime.commandExists("docker") && !hasDockerSandboxRegistrations(registrations))
+    return true;
   const result = runtime.runDocker(["ps", "-a", "--format", "{{.ID}} {{.Image}} {{.Names}}"], {
     env: runtime.env,
   });
@@ -2542,11 +2551,12 @@ function executeDockerResourceStep(
     return true;
   }
   if (!dockerIsAvailable(runtime)) {
-    if (!runtime.commandExists("docker")) return true;
+    if (!runtime.commandExists("docker") && !hasDockerSandboxRegistrations(registrations))
+      return true;
     runtime.error(
       options.forceFreshReset
         ? "Docker is installed but unavailable; force-fresh cleanup cannot prove that receipt volumes are absent."
-        : "Docker is installed but unavailable; container cleanup could not be verified. Remaining uninstall state was preserved for retry.",
+        : "Docker is unavailable; container cleanup could not be verified. Remaining uninstall state was preserved for retry.",
     );
     return false;
   }
@@ -4746,6 +4756,17 @@ async function prepareUninstallRun(
     !runtime.commandExists("openshell")
   ) {
     runtime.error(OPENSHELL_COMMAND_MISSING_ERROR);
+    return { kind: "complete", outcome: { exitCode: 1, plan } };
+  }
+  if (
+    !portableRuntimeCleanup &&
+    !externallySupervised &&
+    hasDockerSandboxRegistrations(selectedSandboxState.registrations) &&
+    !runtime.commandExists("docker")
+  ) {
+    runtime.error(
+      "The Docker command is required to verify cleanup of the selected Docker sandboxes. Restore it and rerun uninstall; recovery state was preserved for retry.",
+    );
     return { kind: "complete", outcome: { exitCode: 1, plan } };
   }
   const preserveUnderStateDir = resolvePreserveSet(paths, resolvedOptions, runtime);

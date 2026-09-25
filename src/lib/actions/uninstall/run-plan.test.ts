@@ -1001,7 +1001,7 @@ describe("uninstall run plan", () => {
       } = {},
     ): UninstallRunDeps {
       return {
-        commandExists: (command) => command === "openshell",
+        commandExists: (command) => command === "openshell" || command === "docker",
         env: {
           HOME: tmpHome,
           NEMOCLAW_NON_INTERACTIVE: "",

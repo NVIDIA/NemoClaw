@@ -164,7 +164,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       const result = await runUninstallPlan(
         { assumeYes: true, deleteModels: false, destroyUserData: true, keepOpenShell: true },
         {
-          commandExists: (command) => command === "openshell",
+          commandExists: (command) => command === "openshell" || command === "docker",
           env: { HOME: tmpHome } as NodeJS.ProcessEnv,
           existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),
           isTty: false,
@@ -225,7 +225,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
     const result = await runUninstallPlan(
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
       {
-        commandExists: (command) => command === "openshell",
+        commandExists: (command) => command === "openshell" || command === "docker",
         env: { HOME: STATIC_TEST_HOME } as NodeJS.ProcessEnv,
         existsSync: () => false,
         isTty: false,
@@ -298,7 +298,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
     const result = await runUninstallPlan(
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
       {
-        commandExists: (command) => command !== "docker" && command !== "pgrep",
+        commandExists: (command) => command !== "pgrep",
         env: { HOME: STATIC_TEST_HOME, TMPDIR: "/tmp/test" } as NodeJS.ProcessEnv,
         existsSync: () => false,
         isTty: false,
@@ -400,7 +400,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       const result = await runUninstallPlan(
         { assumeYes: true, deleteModels: false, keepOpenShell: true },
         {
-          commandExists: (command) => command !== "docker" && command !== "pgrep",
+          commandExists: (command) => command !== "pgrep",
           env: { HOME: STATIC_TEST_HOME, TMPDIR: "/tmp/test" } as NodeJS.ProcessEnv,
           error: (line) => warnings.push(line),
           existsSync: () => false,
@@ -472,7 +472,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       const result = await runUninstallPlan(
         { assumeYes: true, deleteModels: false, keepOpenShell: true },
         {
-          commandExists: (command) => command === "openshell",
+          commandExists: (command) => command === "openshell" || command === "docker",
           env: {
             HOME: tmpHome,
             NEMOCLAW_NON_INTERACTIVE: "",
@@ -534,7 +534,8 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       const result = await runUninstallPlan(
         { assumeYes: true, deleteModels: false, destroyUserData: true, keepOpenShell: true },
         {
-          commandExists: (command) => command === "lsof" || command === "openshell",
+          commandExists: (command) =>
+            command === "lsof" || command === "openshell" || command === "docker",
           env: { HOME: tmpHome, LOGNAME: "testuser" } as NodeJS.ProcessEnv,
           existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),
           isTty: false,
@@ -590,7 +591,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       const result = await runUninstallPlan(
         { assumeYes: true, deleteModels: false, keepOpenShell: true },
         {
-          commandExists: (command) => command !== "docker" && command !== "pgrep",
+          commandExists: (command) => command !== "pgrep",
           env: { HOME: tmpHome, NEMOCLAW_NON_INTERACTIVE: "" } as NodeJS.ProcessEnv,
           existsSync: (target) =>
             target === "/swapfile" || (target.startsWith(tmpHome) && fs.existsSync(target)),
@@ -640,7 +641,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       const runCalls: string[][] = [];
 
       const deps = {
-        commandExists: (command: string) => command !== "docker" && command !== "pgrep",
+        commandExists: (command: string) => command !== "pgrep",
         env: {
           HOME: tmpHome,
           NEMOCLAW_GATEWAY_PORT: String(port),
@@ -702,7 +703,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       const result = await runPortUninstall(
         { assumeYes: true, deleteModels: false, keepOpenShell: true },
         {
-          commandExists: (command) => command !== "docker" && command !== "pgrep",
+          commandExists: (command) => command !== "pgrep",
           env: {
             HOME: tmpHome,
             NEMOCLAW_GATEWAY_PORT: String(port),
@@ -769,7 +770,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
           keepOpenShell: true,
         },
         {
-          commandExists: (command) => command === "openshell",
+          commandExists: (command) => command === "openshell" || command === "docker",
           env: { HOME: tmpHome, NEMOCLAW_GATEWAY_PORT: String(port) } as NodeJS.ProcessEnv,
           existsSync: (target) =>
             target === "/swapfile" || (target.startsWith(tmpHome) && fs.existsSync(target)),
@@ -840,7 +841,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
           keepOpenShell: false,
         },
         {
-          commandExists: (command) => command === "openshell",
+          commandExists: (command) => command === "openshell" || command === "docker",
           env: {
             HOME: tmpHome,
             NEMOCLAW_GATEWAY_PORT: String(selectedPort),
@@ -919,7 +920,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
           keepOpenShell: false,
         },
         {
-          commandExists: (command) => command === "openshell",
+          commandExists: (command) => command === "openshell" || command === "docker",
           env: {
             HOME: tmpHome,
             NEMOCLAW_GATEWAY_PORT: "8080",
@@ -1116,7 +1117,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       const result = await runUninstallPlan(
         { assumeYes: true, deleteModels: false, destroyUserData: true, keepOpenShell: false },
         {
-          commandExists: (command) => command === "openshell",
+          commandExists: (command) => command === "openshell" || command === "docker",
           env: { HOME: tmpHome, NEMOCLAW_NON_INTERACTIVE: "1" } as NodeJS.ProcessEnv,
           existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),
           hasPortableRuntimeCleanup: () => false,
@@ -1166,7 +1167,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       const result = await runUninstallPlan(
         { assumeYes: true, deleteModels: false, destroyUserData: true, keepOpenShell: false },
         {
-          commandExists: (command) => command === "openshell",
+          commandExists: (command) => command === "openshell" || command === "docker",
           env: { HOME: tmpHome, NEMOCLAW_NON_INTERACTIVE: "1" } as NodeJS.ProcessEnv,
           existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),
           hasPortableRuntimeCleanup: () => false,
@@ -1214,7 +1215,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       const result = await runUninstallPlan(
         { assumeYes: true, deleteModels: false, destroyUserData: true, keepOpenShell: false },
         {
-          commandExists: (command) => command === "openshell",
+          commandExists: (command) => command === "openshell" || command === "docker",
           env: { HOME: tmpHome, NEMOCLAW_NON_INTERACTIVE: "1" } as NodeJS.ProcessEnv,
           existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),
           isTty: false,
@@ -1339,7 +1340,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       const result = await runUninstallPlan(
         { assumeYes: true, deleteModels: false, destroyUserData: true, keepOpenShell: false },
         {
-          commandExists: (command) => command === "openshell",
+          commandExists: (command) => command === "openshell" || command === "docker",
           env: { HOME: tmpHome, NEMOCLAW_NON_INTERACTIVE: "1" } as NodeJS.ProcessEnv,
           existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),
           isTty: false,
@@ -1391,7 +1392,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       const result = await runUninstallPlan(
         { assumeYes: true, deleteModels: false, destroyUserData: true, keepOpenShell: false },
         {
-          commandExists: (command) => command === "openshell",
+          commandExists: (command) => command === "openshell" || command === "docker",
           env: { HOME: tmpHome, NEMOCLAW_NON_INTERACTIVE: "1" } as NodeJS.ProcessEnv,
           existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),
           isTty: false,
@@ -1460,7 +1461,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       const result = await runUninstallPlan(
         { assumeYes: true, deleteModels: false, destroyUserData: true, keepOpenShell: false },
         {
-          commandExists: (command) => command === "openshell",
+          commandExists: (command) => command === "openshell" || command === "docker",
           env: { HOME: tmpHome, NEMOCLAW_NON_INTERACTIVE: "1" } as NodeJS.ProcessEnv,
           existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),
           isTty: false,

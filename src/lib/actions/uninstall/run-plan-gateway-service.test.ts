@@ -222,7 +222,7 @@ describe("uninstall OpenShell gateway user service", () => {
       test,
       false,
       {
-        commandExists: (command) => command === "systemctl",
+        commandExists: (command) => command === "systemctl" || command === "docker",
         run: (command, args) => {
           calls.push([command, ...args]);
           return ok();
@@ -268,7 +268,7 @@ describe("uninstall OpenShell gateway user service", () => {
       test,
       false,
       {
-        commandExists: (command) => command === "systemctl",
+        commandExists: (command) => command === "systemctl" || command === "docker",
         error: (message) => errors.push(message),
         getTrustedActiveOpenShellGatewayUserServiceIdentity: serviceIdentity,
         readProcessEnvironment: () => ({
@@ -319,7 +319,7 @@ describe("uninstall OpenShell gateway user service", () => {
       test,
       false,
       {
-        commandExists: (command) => command === "systemctl",
+        commandExists: (command) => command === "systemctl" || command === "docker",
         error: (message) => errors.push(message),
         getTrustedActiveOpenShellGatewayUserServiceIdentity: () => ({
           executablePath: "/usr/bin/openshell-gateway",
@@ -658,7 +658,7 @@ describe("uninstall OpenShell gateway user service", () => {
           }
         : {};
       const deps: Partial<UninstallRunDeps> = {
-        commandExists: (command) => command === "systemctl",
+        commandExists: (command) => command === "systemctl" || command === "docker",
         run: (command, args) => {
           calls.push([command, ...args]);
           return ok();
@@ -708,7 +708,7 @@ describe("uninstall OpenShell gateway user service", () => {
       test,
       false,
       {
-        commandExists: (command) => command === "systemctl",
+        commandExists: (command) => command === "systemctl" || command === "docker",
         run: (command, args) => {
           calls.push([command, ...args]);
           return command === "openshell" && args[0] === "sandbox"
@@ -798,24 +798,26 @@ describe("uninstall OpenShell gateway user service", () => {
       [{ name: "nemoclaw" }, { name: "nemoclaw-8081" }],
     );
 
-    // Sandbox deletion succeeded, so this pins the second cleanup boundary: registration
-    // removal failed, and uninstall still returns before it removes the gateway service.
-    expect(calls).toContainEqual([
-      "openshell",
-      "sandbox",
-      "delete",
-      "-g",
-      "nemoclaw",
-      "my-assistant",
-    ]);
+    // Missing Docker stops before deletion; otherwise registration failure preserves the unit.
+    expect(
+      calls.filter(
+        ([command, resource, action]) =>
+          command === "openshell" && resource === "sandbox" && action === "delete",
+      ),
+    ).toEqual(
+      dockerInstalled ? [["openshell", "sandbox", "delete", "-g", "nemoclaw", "my-assistant"]] : [],
+    );
+    expect(warnings.some((line) => line.includes("The Docker command is required"))).toBe(
+      !dockerInstalled,
+    );
     expect(result.exitCode).toBe(1);
     const guidance = warnings.find((line) => line.startsWith("Docker is not available")) ?? "";
-    expect(Boolean(guidance)).toBe(recovery);
+    expect(Boolean(guidance)).toBe(recovery && dockerInstalled);
     expect(
       /WSL integration.*wsl --shutdown.*docker info.*rerun the same uninstall command/s.test(
         guidance,
       ),
-    ).toBe(recovery);
+    ).toBe(recovery && dockerInstalled);
     expect(runDocker.mock.calls.map(([args]) => args)).toEqual(
       dockerInstalled ? [["ps", "-a", "--format", "{{.ID}} {{.Image}} {{.Names}}"], ["info"]] : [],
     );
@@ -829,7 +831,7 @@ describe("uninstall OpenShell gateway user service", () => {
     { condition: "unreachable", dockerInstalled: true, dockerStatus: 1, recovery: true },
     { condition: "timed out", dockerInstalled: true, dockerStatus: null, recovery: true },
   ])(
-    "preserves the Linux unit after gateway removal fails with Docker $condition (#11438)",
+    "preserves the Linux unit during failed cleanup with Docker $condition (#11438)",
     verifyDockerRecovery,
   );
 
@@ -903,7 +905,7 @@ describe("uninstall OpenShell gateway user service", () => {
     const calls: string[][] = [];
 
     const result = await uninstall(test, false, {
-      commandExists: (command) => command === "systemctl",
+      commandExists: (command) => command === "systemctl" || command === "docker",
       run: (command, args) => {
         calls.push([command, ...args]);
         return ok();

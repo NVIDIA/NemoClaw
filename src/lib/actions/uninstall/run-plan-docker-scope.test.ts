@@ -71,6 +71,7 @@ async function runWithDockerInventory(
     registration?: Record<string, unknown>;
     deleteResult?: RunResult;
     dockerResponses?: Record<string, RunResult>;
+    commandExists?: UninstallRunDeps["commandExists"];
     siblingId?: string;
     prepareHome?: (homeDir: string) => void;
   } = {},
@@ -152,7 +153,7 @@ async function runWithDockerInventory(
     const result = await runUninstallPlan(
       { assumeYes: true, destroyUserData: true, deleteModels: false, keepOpenShell: true },
       {
-        commandExists: () => true,
+        commandExists: options.commandExists ?? (() => true),
         env: {
           HOME: homeDir,
           NEMOCLAW_GATEWAY_PORT: String(port),
@@ -277,7 +278,7 @@ describe("uninstall Docker resource scope", () => {
       port: 18080,
       runPlan,
       siblingId,
-      prepareHome: (homeDir) => {
+      prepareHome: (homeDir: string) => {
         fs.writeFileSync(
           path.join(homeDir, ".nemoclaw", "sandboxes.json"),
           JSON.stringify({
@@ -407,6 +408,67 @@ describe("uninstall Docker resource scope", () => {
         ([command, action]) => command === "npm" && ["unlink", "uninstall"].includes(action!),
       ),
     ).toBe(false);
+  });
+
+  it.each([
+    { kind: "Docker", registration: { openshellDriver: "docker" } },
+    { kind: "legacy Docker", registration: {} },
+  ])("retains $kind resources when the Docker command is missing", async ({ registration }) => {
+    const result = await runWithDockerInventory({
+      commandExists: (command) => command !== "docker",
+      registration,
+    });
+    expect(result.result.exitCode).toBe(1);
+    expect(result.retainedRegistry).toBe(result.registry);
+    expect(result.metadataWrites).toEqual([]);
+    expect(result.calls).toEqual([]);
+    expect(
+      result.commands.some(
+        ([command, resource]) => command === "openshell" && resource === "sandbox",
+      ),
+    ).toBe(false);
+    expect(result.commands.some(([command]) => command === "npm")).toBe(false);
+    expect(result.rmSync).not.toHaveBeenCalled();
+    expect(result.errors.join("\n")).toContain("Docker command");
+  });
+
+  it("retains recovery metadata if Docker disappears after admission", async () => {
+    const dockerAvailable = vi.fn().mockReturnValueOnce(true).mockReturnValue(false);
+    const result = await runWithDockerInventory({
+      commandExists: (command) => command !== "docker" || dockerAvailable(),
+      inventory: { status: 127, stdout: "", stderr: "Docker command missing" },
+    });
+    expect(result.result.exitCode).toBe(1);
+    expect(result.calls).toContainEqual(["ps", "-a", "--format", CONTAINER_FORMAT]);
+    expect(result.metadataWrites).toEqual([]);
+    expect(result.retainedRegistry).toBe(result.registry);
+    expect(result.commands.some(([command]) => command === "npm")).toBe(false);
+  });
+
+  it.each([
+    {
+      kind: "no sandbox",
+      prepareHome: (homeDir: string) =>
+        fs.writeFileSync(
+          path.join(homeDir, ".nemoclaw", "sandboxes.json"),
+          JSON.stringify({ defaultSandbox: null, sandboxes: {} }),
+        ),
+    },
+    { kind: "Podman sandbox", registration: { openshellDriver: "podman" } },
+  ])("permits missing Docker with $kind recorded", async (options) => {
+    const result = await runWithDockerInventory({
+      commandExists: (command) => command !== "docker",
+      ...options,
+    });
+    expect(result.result.exitCode).toBe(0);
+    expect(result.calls).toEqual([]);
+    expect(result.commands).toContainEqual([
+      "npm",
+      "uninstall",
+      "-g",
+      "--loglevel=error",
+      "nemoclaw",
+    ]);
   });
 
   it("uses the selected non-default gateway and preserves default gateway containers", async () => {

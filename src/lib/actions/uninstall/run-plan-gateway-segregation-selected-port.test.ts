@@ -138,7 +138,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
       const result = await runUninstallPlan(
         { assumeYes: true, deleteModels: false, destroyUserData: true, keepOpenShell: false },
         {
-          commandExists: (command) => command === "openshell",
+          commandExists: (command) => ["openshell", "docker"].includes(command),
           env: { HOME: tmpHome, NEMOCLAW_NON_INTERACTIVE: "1" } as NodeJS.ProcessEnv,
           existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),
           hasPortableRuntimeCleanup: () => false,
@@ -189,7 +189,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
       const result = await runUninstallPlan(
         { assumeYes: true, deleteModels: false, destroyUserData: true, keepOpenShell: false },
         {
-          commandExists: (command) => command === "openshell",
+          commandExists: (command) => ["openshell", "docker"].includes(command),
           env: { HOME: tmpHome, NEMOCLAW_NON_INTERACTIVE: "1" } as NodeJS.ProcessEnv,
           existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),
           isTty: false,
@@ -280,7 +280,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
             keepOpenShell: false,
           },
           {
-            commandExists: (command) => command === "openshell",
+            commandExists: (command) => ["openshell", "docker"].includes(command),
             env: {
               HOME: tmpHome,
               NEMOCLAW_GATEWAY_PORT: String(port),
@@ -365,7 +365,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
           keepOpenShell: false,
         },
         {
-          commandExists: (command) => ["openshell", "pgrep"].includes(command),
+          commandExists: (command) => ["openshell", "pgrep", "docker"].includes(command),
           env: {
             HOME: tmpHome,
             NEMOCLAW_GATEWAY_PORT: String(port),
@@ -455,11 +455,13 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
     prepareState: writeRetainedUninstallState,
     expectedDockerCalls: [["docker", ...inventoryArgs]],
   };
-  const retainedFailure = (message: string) => (errors: string) => {
-    expect(errors).toContain(message);
-    expect(errors).toContain("Keep NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR unset");
-    expect(errors).not.toMatch(/set to its original resolved directory|portable host authority/u);
-  };
+  const keepUnset = "Keep NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR unset";
+  const retainedFailure =
+    (message: string, hint = keepUnset) =>
+    (errors: string) => {
+      for (const text of [message, hint]) expect(errors).toContain(text);
+      expect(errors).not.toMatch(/set to its original resolved directory|portable host authority/u);
+    };
   const siblingContainer = "b".repeat(64);
   const siblingInspect = [
     "inspect",
@@ -525,9 +527,9 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
       dockerAvailable: false,
       expectedExit: 1,
       stateKept: true,
-      assertErrors: retainedFailure("Docker inventory could not be read"),
+      assertErrors: retainedFailure("The Docker command is required", "Restore it"),
       expectedDockerCalls: [],
-      scenario: "preserves retained data when Docker is unavailable",
+      scenario: "preserves retained data when the Docker command is missing",
     },
     ...[0, 4, 6].map((inventorySuccessesBeforeFailure) => ({
       ...retainedUninstallBase,
@@ -721,8 +723,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
           },
           {
             commandExists: (command) =>
-              command === "openshell" ||
-              command === "pgrep" ||
+              ["openshell", "pgrep"].includes(command) ||
               (command === "docker" && dockerAvailable && dockerInventory !== null),
             env: {
               HOME: tmpHome,
@@ -924,7 +925,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
           keepOpenShell: false,
         },
         {
-          commandExists: (command) => command === "openshell",
+          commandExists: (command) => ["openshell", "docker"].includes(command),
           env: {
             HOME: tmpHome,
             NEMOCLAW_GATEWAY_PORT: String(port),
@@ -1012,7 +1013,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
             keepOpenShell: false,
           },
           {
-            commandExists: (command) => command === "openshell",
+            commandExists: (command) => ["openshell", "docker"].includes(command),
             env: {
               HOME: tmpHome,
               NEMOCLAW_GATEWAY_PORT: String(port),
@@ -1298,7 +1299,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
           keepOpenShell: false,
         },
         {
-          commandExists: (command) => command === "openshell",
+          commandExists: (command) => ["openshell", "docker"].includes(command),
           env: {
             HOME: tmpHome,
             NEMOCLAW_GATEWAY_PORT: String(selectedPort),
@@ -1378,7 +1379,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
           keepOpenShell: false,
         },
         withSuccessfulPreUninstallBackup({
-          commandExists: (command) => command === "openshell",
+          commandExists: (command) => ["openshell", "docker"].includes(command),
           env: { HOME: tmpHome, NEMOCLAW_GATEWAY_PORT: String(port) } as NodeJS.ProcessEnv,
           error: vi.fn(),
           existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),
@@ -1458,7 +1459,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
           keepOpenShell: true,
         },
         withSuccessfulPreUninstallBackup({
-          commandExists: (command) => command === "openshell",
+          commandExists: (command) => ["openshell", "docker"].includes(command),
           env: { HOME: tmpHome, NEMOCLAW_GATEWAY_PORT: String(port) } as NodeJS.ProcessEnv,
           error: vi.fn(),
           existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),

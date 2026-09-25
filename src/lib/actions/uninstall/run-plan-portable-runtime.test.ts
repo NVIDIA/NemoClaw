@@ -1229,7 +1229,7 @@ describe("portable runtime cleanup in the uninstall run plan", testTimeoutOption
       const result = await runUninstallPlanWithBackup(
         { assumeYes: true, deleteModels: false, keepOpenShell: false },
         withProvenManagedGatewayProcess({
-          commandExists: (command) => ["openshell", "pgrep", "lsof"].includes(command),
+          commandExists: (command) => ["openshell", "pgrep", "lsof", "docker"].includes(command),
           env: { HOME: homeDir } as NodeJS.ProcessEnv,
           existsSync: fs.existsSync,
           hasPortableRuntimeCleanup: detectPortable,
