@@ -258,8 +258,7 @@ printf '%s\n' "$token" | grep -Eq '^[[:xdigit:]]{64}$'
 curl -sS -o /dev/null -w '%{http_code}\n' --max-time 15 http://127.0.0.1:8642/v1/models | grep -Fx 401
 printf 'header = "Authorization: Bearer %s"\n' wrong-token | curl -sS -o /dev/null -w '%{http_code}\n' --max-time 15 --config - http://127.0.0.1:8642/v1/models | grep -Fx 401
 printf 'header = "Authorization: Bearer %s"\n' "$token" | curl -sS -o /dev/null -w '%{http_code}\n' --max-time 15 --config - http://127.0.0.1:8642/v1/models | grep -Ex '(2..|3..|404)'
-test ! -e /sandbox/.hermes/profiles/dashboard-home/config.yaml
-test ! -e /sandbox/.hermes/profiles/dashboard-home/.env`,
+test ! -e /sandbox/.hermes/profiles/dashboard-home`,
   );
   await expectContainerSh(
     probe,
@@ -382,6 +381,11 @@ rm -f /sandbox/.hermes/gateway.pid
 printf "stale pid\n" >/sandbox/.hermes/runtime/gateway.pid
 printf "stale lock\n" >/sandbox/.hermes/runtime/gateway.lock
 ln -s runtime/gateway.pid /sandbox/.hermes/gateway.pid
+legacy_home=/sandbox/.hermes/profiles/dashboard-home
+install -d -m 700 -o sandbox -g sandbox "$legacy_home"
+install -m 600 -o sandbox -g sandbox /sandbox/.hermes/config.yaml "$legacy_home/config.yaml"
+printf "root-entrypoint migration proof\n" >/tmp/nemoclaw-legacy-memory
+install -m 600 -o sandbox -g sandbox /tmp/nemoclaw-legacy-memory "$legacy_home/ENTRYPOINT-MIGRATION.md"
 chmod 00750 /sandbox/.hermes
 chown sandbox:sandbox /sandbox/.hermes/sessions /sandbox/.hermes/gateway /sandbox/.hermes/runtime
 chmod 750 /sandbox/.hermes/sessions /sandbox/.hermes/gateway /sandbox/.hermes/runtime
@@ -417,7 +421,7 @@ exec /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-start`;
     probe,
     container,
     "legacy recovery or root Python isolation evidence was missing",
-    "grep -F 'Removing unsafe stale Hermes legacy PID file symlink' /tmp/nemoclaw-start.log && test ! -e /tmp/nemoclaw-root-sitecustomize-ran",
+    "grep -F 'Removing unsafe stale Hermes legacy PID file symlink' /tmp/nemoclaw-start.log && grep -Fx 'root-entrypoint migration proof' /sandbox/.hermes/ENTRYPOINT-MIGRATION.md && test ! -e /tmp/nemoclaw-root-sitecustomize-ran",
   );
 }
 
@@ -723,6 +727,8 @@ test(
         assertion: "restoredStateMigrationVerified",
         contract: [
           "legacy gateway.pid symlink and state shape are repaired and booted",
+          "legacy dashboard durable state migrates through the packaged production entrypoint",
+          "verified generated dashboard configuration is retired after native-state migration",
           "restored state directories permit gateway-user and sandbox-user writes",
           "hostile inherited PYTHONPATH cannot execute sitecustomize as root",
         ],
