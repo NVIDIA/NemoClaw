@@ -33,7 +33,7 @@ describe("Portable inference startup reuse", () => {
     const input = { ...harness.input, prepareProbeDependency: vi.fn(async () => dependency) };
     const overrides = { ...harness.overrides, inspectReadinessRuntime };
     const recover = () => recoverHermesPortableOllamaInference(input, overrides as never);
-    const run = () =>
+    const run = (startupEnv: NodeJS.ProcessEnv = input.env) =>
       withMcpLifecycleLock(
         "alpha",
         () =>
@@ -41,7 +41,7 @@ describe("Portable inference startup reuse", () => {
             "alpha",
             path.join(stateDir, "state"),
             recover,
-            input.env,
+            startupEnv,
             () => now,
           ),
         { stateDir: path.join(stateDir, "state") },
@@ -57,6 +57,26 @@ describe("Portable inference startup reuse", () => {
     expect(h.overrides.prepareRecoveryEntry).not.toHaveBeenCalled();
     expect(h.dependency.release).toHaveBeenCalledOnce();
     expect(h.dependency.rollback).not.toHaveBeenCalled();
+  });
+
+  it("reuses the recognized Portable scope without an ambient profile override (#11574)", async () => {
+    const h = setup();
+    const startupEnv = { ...h.input.env };
+    delete (h.input.env as NodeJS.ProcessEnv).NEMOCLAW_EXPERIMENTAL_PROFILE;
+
+    await expect(h.run(startupEnv)).resolves.toBe("reused");
+    expect(h.overrides.inspectReadinessRuntime).toHaveBeenCalledTimes(2);
+    expect(h.overrides.prepareRecoveryEntry).not.toHaveBeenCalled();
+  });
+
+  it("rejects an explicit non-Portable profile even inside a Portable scope (#11574)", async () => {
+    const h = setup();
+    const startupEnv = { ...h.input.env };
+    (h.input.env as NodeJS.ProcessEnv).NEMOCLAW_EXPERIMENTAL_PROFILE = "default";
+
+    await expect(h.run(startupEnv)).resolves.toBe("reused");
+    expect(h.overrides.inspectReadinessRuntime).not.toHaveBeenCalled();
+    expect(h.overrides.prepareRecoveryEntry).toHaveBeenCalledOnce();
   });
 
   it("reinspects through the original read-only authority after the async boundary (#11574)", async () => {

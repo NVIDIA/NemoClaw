@@ -9,6 +9,7 @@ import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clien
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
+import { proveKilledDockerOpenClawRecovery } from "./openclaw-stopped-recovery.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-rebuild-oc";
 const DASHBOARD_PORT = 18_792;
@@ -54,6 +55,7 @@ test(
         "write durable OpenClaw state",
         "rebuild the sandbox",
         "verify restored state and native readiness",
+        "recover a killed Docker source",
       ],
     },
   },
@@ -79,6 +81,7 @@ test(
         "rebuild uses the published exact managed image instead of constructing a stale base",
         "workspace state and a native user-installed plugin survive the rebuild",
         "the native OpenClaw health endpoint is ready after restore",
+        "Docker Error-state recovery preserves workspace and native plugin state",
       ],
     });
 
@@ -132,31 +135,50 @@ test(
     );
     assertExitZero(write, "write OpenClaw rebuild marker");
 
-    progress.phase("rebuild the sandbox");
-    const rebuild = await host.nemoclaw([SANDBOX_NAME, "rebuild", "--yes", "--verbose"], {
-      artifactName: "rebuild-openclaw-current-managed-image",
-      env,
-      redactionValues: redactions,
-      timeoutMs: 20 * 60_000,
-    });
-    assertExitZero(rebuild, "rebuild OpenClaw sandbox");
-    expect(resultText(rebuild)).toContain(`Sandbox '${SANDBOX_NAME}' rebuild completed`);
-
-    progress.phase("verify restored state and native readiness");
-    await waitForNativeOpenClaw(sandbox, redactions);
-    const read = await sandbox.execShell(
-      SANDBOX_NAME,
-      trustedSandboxShellScript(
-        'marker="$(cat /sandbox/.openclaw/workspace/.rebuild-state-marker)"; HOME=/sandbox openclaw plugins inspect e2e-rebuild-plugin --runtime --json >/dev/null; printf "%s\\n" "$marker"',
-      ),
-      {
-        artifactName: "rebuild-openclaw-read-marker",
+    const rebuildSource = async (artifactName: string) => {
+      const rebuild = await host.nemoclaw([SANDBOX_NAME, "rebuild", "--yes", "--verbose"], {
+        artifactName,
         env,
         redactionValues: redactions,
+        timeoutMs: 20 * 60_000,
+      });
+      assertExitZero(rebuild, "rebuild OpenClaw sandbox");
+      expect(resultText(rebuild)).toContain(`Sandbox '${SANDBOX_NAME}' rebuild completed`);
+    };
+    const verifyRestoredState = async (artifactPrefix: string) => {
+      await waitForNativeOpenClaw(sandbox, redactions, artifactPrefix);
+      const read = await sandbox.execShell(
+        SANDBOX_NAME,
+        trustedSandboxShellScript(
+          'marker="$(cat /sandbox/.openclaw/workspace/.rebuild-state-marker)"; HOME=/sandbox openclaw plugins inspect e2e-rebuild-plugin --runtime --json >/dev/null; printf "%s\\n" "$marker"',
+        ),
+        {
+          artifactName: `${artifactPrefix}-read-marker`,
+          env,
+          redactionValues: redactions,
+        },
+      );
+      assertExitZero(read, "read restored OpenClaw marker");
+      expect(read.stdout.trim(), resultText(read)).toBe(marker);
+    };
+
+    progress.phase("rebuild the sandbox");
+    await rebuildSource("rebuild-openclaw-current-managed-image");
+    progress.phase("verify restored state and native readiness");
+    await verifyRestoredState("rebuild-openclaw");
+
+    progress.phase("recover a killed Docker source");
+    await proveKilledDockerOpenClawRecovery(
+      sandbox,
+      runtimeProvider,
+      artifacts,
+      SANDBOX_NAME,
+      async () => {
+        await rebuildSource("rebuild-openclaw-stopped-source");
+        await verifyRestoredState("rebuild-openclaw-stopped-source");
       },
+      "native-readiness",
     );
-    assertExitZero(read, "read restored OpenClaw marker");
-    expect(read.stdout.trim(), resultText(read)).toBe(marker);
 
     await artifacts.target.complete({
       id: "rebuild-openclaw",
@@ -168,7 +190,11 @@ test(
   },
 );
 
-async function waitForNativeOpenClaw(sandbox: SandboxClient, redactions: string[]): Promise<void> {
+async function waitForNativeOpenClaw(
+  sandbox: SandboxClient,
+  redactions: string[],
+  artifactPrefix: string,
+): Promise<void> {
   const ready = await sandbox.execShell(
     SANDBOX_NAME,
     trustedSandboxShellScript(
@@ -185,7 +211,7 @@ async function waitForNativeOpenClaw(sandbox: SandboxClient, redactions: string[
       ].join("\n"),
     ),
     {
-      artifactName: "rebuild-openclaw-native-ready",
+      artifactName: `${artifactPrefix}-native-ready`,
       env: buildAvailabilityProbeEnv(),
       redactionValues: redactions,
       timeoutMs: 180_000,

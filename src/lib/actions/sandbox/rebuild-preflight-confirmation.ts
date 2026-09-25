@@ -11,7 +11,7 @@ import {
 } from "../../domain/lifecycle/options";
 import type { DcodeAutoApprovalMode } from "../../onboard/dcode-auto-approval";
 import * as sandboxVersion from "../../sandbox/version";
-import { redact } from "../../security/redact";
+import { redact, redactFullWithUrls } from "../../security/redact";
 import {
   createSystemDeps as createSessionDeps,
   getActiveSandboxSessions,
@@ -22,6 +22,15 @@ import { printRebuildPreflightFailure } from "./rebuild-preflight-error";
 import { ensureRebuildUsageNoticeAccepted } from "./rebuild-usage-notice";
 
 export type RebuildVersionCheck = sandboxVersion.VersionCheckResult;
+
+const MAX_REBUILD_FAILURE_MESSAGE_CHARS = 4 * 1024;
+
+/** Preserve actionable rebuild diagnostics without forwarding recognized credentials. */
+export function redactBoundedRebuildFailure(error: unknown): string {
+  return redactFullWithUrls(error instanceof Error ? error.message : String(error))
+    .trim()
+    .slice(0, MAX_REBUILD_FAILURE_MESSAGE_CHARS);
+}
 
 export function createRebuildCommandContext(
   options: string[] | RebuildSandboxOptions,
@@ -148,6 +157,42 @@ async function ensureRebuildUsageNoticeOrBail(bail: RebuildBail): Promise<void> 
     "Third-party software notice was not accepted",
     bail,
   );
+}
+
+/** Confirm a sibling-root rebuild before its detached worker is started. */
+export async function confirmDelegatedRebuildIntent(
+  sandboxName: string,
+  requestedDcodeAutoApprovalMode?: DcodeAutoApprovalMode,
+): Promise<boolean> {
+  if (
+    process.stdin?.isTTY !== true ||
+    process.env.CI === "true" ||
+    process.env.CI === "1" ||
+    process.env.GITHUB_ACTIONS === "true"
+  ) {
+    console.error(
+      "  Cannot confirm rebuild without an interactive terminal. Re-run with --yes or --force.",
+    );
+    return false;
+  }
+  const activeSessionCount = countActiveSandboxSessionsForRebuild(sandboxName);
+  console.log("");
+  console.log(`  ${B}Rebuild sandbox '${sandboxName}'${R}`);
+  console.log("");
+  if (
+    !(await confirmSandboxRebuildIfNeeded(
+      false,
+      activeSessionCount,
+      askPrompt,
+      requestedDcodeAutoApprovalMode,
+    ))
+  ) {
+    return false;
+  }
+  await ensureRebuildUsageNoticeOrBail((message) => {
+    throw new Error(message);
+  });
+  return true;
 }
 
 export async function confirmRebuildIntent(

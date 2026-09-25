@@ -42,9 +42,10 @@ export async function tryReuseHermesPortableOllamaStartup(
   const env = input.env ?? process.env;
   const stateDir = input.stateDir ?? defaultPortableDemoStateDir(env);
   const scope = currentHermesPortableStartupOperation(input.sandboxName);
+  const explicitProfile = env.NEMOCLAW_EXPERIMENTAL_PROFILE;
   if (
     input.intent !== "connect-probe-only" ||
-    env.NEMOCLAW_EXPERIMENTAL_PROFILE !== "portable" ||
+    (explicitProfile !== undefined && explicitProfile !== "portable") ||
     !hermesPortableStartupReuseGateEnabled(env) ||
     !scope ||
     scope.stateDir !== path.join(stateDir, "state")

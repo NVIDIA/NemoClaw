@@ -831,10 +831,7 @@ export function prepareDualStationPair(
   const selected = selectPretrustedTarget(options, local, resume, deps);
   if ("kind" in selected) return selected;
   const strict = Boolean(
-    resume ||
-    options.explicitPeer?.trim() ||
-    options.reuseExistingManagedPair ||
-    options.migrateLegacySingleStationHead,
+    resume || options.explicitPeer?.trim() || options.reuseExistingManagedPair,
   );
   const { binding, automatic } = selected;
 

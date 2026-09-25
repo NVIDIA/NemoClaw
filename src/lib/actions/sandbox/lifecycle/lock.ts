@@ -34,8 +34,9 @@ export async function withSandboxLifecycleLock<T>(
     const portable = resolveHermesPortableLifecycleLockOptions(sandboxName);
     const resolved =
       options.stateDir !== undefined ? options : portable ? { ...options, ...portable } : options;
+    const portableSelected = portable !== undefined && portable.stateDir === resolved.stateDir;
     const startupEnv =
-      portable && process.env.NEMOCLAW_EXPERIMENTAL_PROFILE === undefined
+      portableSelected && process.env.NEMOCLAW_EXPERIMENTAL_PROFILE === undefined
         ? { ...process.env, NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" }
         : process.env;
     const scoped = () =>

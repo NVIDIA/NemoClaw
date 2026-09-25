@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  withPodmanOwnerDiagnostic,
+  captureBoundedPodmanOwnerDiagnostic,
+} from "../fixtures/podman-owner-diagnostic";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -26,6 +30,7 @@ import {
   expectSandboxProviderAttachment,
   upsertGenericGatewayProvider,
 } from "../fixtures/gateway-providers.ts";
+import { prepareOnboardSandboxes } from "../fixtures/onboard-precleanup.ts";
 import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
@@ -76,47 +81,6 @@ function onboardEnv(sandboxName: string, fakeBaseUrl: string, extra: NodeJS.Proc
     NEMOCLAW_SANDBOX_NAME: sandboxName,
     ...extra,
   });
-}
-
-async function cleanup(host: HostCliClient, sandbox: SandboxClient): Promise<void> {
-  for (const name of [SANDBOX_NAME, OTHER_SANDBOX_NAME]) {
-    await nemoclaw(host, [name, "destroy", "--yes"], `cleanup-destroy-${name}`).catch(
-      () => undefined,
-    );
-    await sandbox
-      .openshell(["sandbox", "delete", name], {
-        artifactName: `cleanup-openshell-delete-${name}`,
-        env: env(),
-        timeoutMs: 60_000,
-      })
-      .catch(() => undefined);
-  }
-  await sandbox
-    .openshell(["forward", "stop", "18789"], {
-      artifactName: "cleanup-forward-stop-18789",
-      env: env(),
-      timeoutMs: 30_000,
-    })
-    .catch(() => undefined);
-  await sandbox
-    .openshell(["provider", "delete", "-g", "nemoclaw", LIVE_EXTRA_PROVIDER], {
-      artifactName: "cleanup-live-extra-provider-delete",
-      env: env({ [EXTRA_PROVIDER_TOKEN_ENV]: EXTRA_PROVIDER_TOKEN }),
-      timeoutMs: 60_000,
-    })
-    .catch(() => undefined);
-  await sandbox
-    .openshell(["gateway", "destroy", "-g", "nemoclaw"], {
-      artifactName: "cleanup-gateway-destroy",
-      env: env(),
-      timeoutMs: 60_000,
-    })
-    .catch(() => undefined);
-  updateExtraProviders((providers) => {
-    providers.delete(STALE_EXTRA_PROVIDER);
-    providers.delete(LIVE_EXTRA_PROVIDER);
-  });
-  fs.rmSync(SESSION_FILE, { force: true });
 }
 
 async function waitSandboxAbsent(sandbox: SandboxClient, name: string): Promise<void> {
@@ -189,6 +153,7 @@ test(
         providers.delete(LIVE_EXTRA_PROVIDER);
       });
       fs.rmSync(SESSION_FILE, { force: true });
+      expect(fs.existsSync(SESSION_FILE)).toBe(false);
     });
     const cleanupWhenInstalled = (artifactName: string, run: () => Promise<void>): Promise<void> =>
       cleanupWhenOpenShellAvailable(
@@ -251,37 +216,25 @@ test(
       18789,
       forwardCleanupOptions,
     );
-    const repairSandboxNames = [SANDBOX_NAME, OTHER_SANDBOX_NAME];
-    [...repairSandboxNames].reverse().forEach((name) => {
-      cleanupRegistry.trackDisposable(`delete OpenShell sandbox ${name}`, () =>
-        cleanupWhenInstalled(`cleanup-probe-openshell-sandbox-${name}`, () =>
-          sandbox.cleanupSandbox(name, {
-            artifactName: `cleanup-openshell-delete-${name}`,
-            env: env(),
-            redactionValues: [EXTRA_PROVIDER_TOKEN],
-            timeoutMs: 60_000,
-          }),
-        ),
-      );
-      const sandboxCleanupOptions = {
-        artifactName: `cleanup-destroy-${name}`,
-        env: env(),
-        redactionValues: [EXTRA_PROVIDER_TOKEN],
-        timeoutMs: 20 * 60_000,
-      };
-      cleanupRegistry.trackSandbox(
-        {
-          cleanupSandbox: (sandboxName: string) =>
-            cleanupWhenInstalled(`cleanup-probe-openshell-nemoclaw-${sandboxName}`, () =>
-              host.cleanupSandbox(sandboxName, sandboxCleanupOptions),
-            ),
-        },
-        name,
-        sandboxCleanupOptions,
-      );
-    });
     progress.phase("clear prior onboard-repair state");
-    await cleanup(host, sandbox);
+    await prepareOnboardSandboxes(
+      host,
+      sandbox,
+      cleanupRegistry,
+      [SANDBOX_NAME, OTHER_SANDBOX_NAME],
+      LIVE_EXTRA_PROVIDER,
+      {
+        env: env({ [EXTRA_PROVIDER_TOKEN_ENV]: EXTRA_PROVIDER_TOKEN }),
+        redactionValues: [EXTRA_PROVIDER_TOKEN],
+        timeoutMs: 60_000,
+        artifactName: "precleanup-gateway-inspection",
+      },
+    );
+    updateExtraProviders((providers) => {
+      providers.delete(STALE_EXTRA_PROVIDER);
+      providers.delete(LIVE_EXTRA_PROVIDER);
+    });
+    fs.rmSync(SESSION_FILE, { force: true });
 
     progress.phase("interrupt onboarding after sandbox creation");
     const first = await nemoclaw(
@@ -336,15 +289,22 @@ test(
     });
     await waitSandboxAbsent(sandbox, SANDBOX_NAME);
 
-    const repair = await nemoclaw(
-      host,
-      ["onboard", "--resume", "--non-interactive"],
-      "phase-2-resume-repair",
-      onboardEnv(SANDBOX_NAME, fake.baseUrl, {
-        NEMOCLAW_POLICY_MODE: "skip",
-        ...corporateCa.env,
-      }),
-      execTimeout(20 * 60_000),
+    const repairEnv = onboardEnv(SANDBOX_NAME, fake.baseUrl, {
+      NEMOCLAW_POLICY_MODE: "skip",
+      ...corporateCa.env,
+    });
+    const repair = await withPodmanOwnerDiagnostic(
+      repairEnv,
+      (phase, report) => artifacts.writeJson(`owner-resume-${phase}.json`, report),
+      () =>
+        nemoclaw(
+          host,
+          ["onboard", "--resume", "--non-interactive"],
+          "phase-2-resume-repair",
+          repairEnv,
+          execTimeout(20 * 60_000),
+        ),
+      (environment, phase) => captureBoundedPodmanOwnerDiagnostic(host, environment, phase),
     );
     expect(repair.exitCode, resultText(repair)).toBe(0);
     expect(resultText(repair)).toContain("[resume] Skipping preflight (cached)");
@@ -424,8 +384,6 @@ test(
     expect(resultText(providerConflict)).toContain("not 'gpt-5.4'");
 
     progress.phase("clear the repaired onboarding state");
-    await cleanup(host, sandbox);
-    expect(fs.existsSync(SESSION_FILE)).toBe(false);
     await artifacts.target.complete({ id: "onboard-repair", status: "passed" });
   },
 );

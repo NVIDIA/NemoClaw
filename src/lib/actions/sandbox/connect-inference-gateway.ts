@@ -9,7 +9,7 @@ import {
 import { LOCAL_INFERENCE_TIMEOUT_SECS } from "../../onboard/env";
 import { resolveRegisteredRuntimeProvider } from "../../onboard/runtime-provider/selection";
 import type { SandboxEntry } from "../../state/registry";
-import * as registry from "../../state/registry";
+import { listPublishedSandboxesAcrossGatewayRoots } from "../../state/registry/cross-port";
 
 /** Identify the legacy cluster gateway without branching on managed provider IDs. */
 export function sandboxUsesLegacyClusterGateway(sandbox: SandboxEntry | null): boolean {
@@ -38,7 +38,7 @@ export function canSandboxGatewayRouteRealign(
   sandboxName: string,
   sb: SandboxEntry,
   gatewayName: string,
-  sandboxes: readonly SandboxEntry[] = registry.listSandboxes().sandboxes,
+  sandboxes: readonly SandboxEntry[] = listPublishedSandboxesAcrossGatewayRoots(),
 ): boolean {
   const result = sandboxGatewayRouteCompatibility(sandboxName, sb, gatewayName, sandboxes);
   return result.ok || isAdvisoryGatewayRouteConflict(result);
@@ -75,7 +75,7 @@ export function assertSandboxGatewayRouteCompatible(
     sandboxName,
     sb,
     gatewayName,
-    registry.listSandboxes().sandboxes,
+    listPublishedSandboxesAcrossGatewayRoots(),
   );
   if (!result.ok && !isAdvisoryGatewayRouteConflict(result)) {
     throw new GatewayRouteConflictError(result);

@@ -4,9 +4,10 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type {
-  OpenShellForwardAdapter,
-  OpenShellForwardIdentity,
+import {
+  formatOpenShellForwardStartFailure,
+  type OpenShellForwardAdapter,
+  type OpenShellForwardIdentity,
 } from "../adapters/openshell/forward";
 import {
   createOpenShellForwardAdapterForAuthority,
@@ -393,7 +394,11 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       | Awaited<ReturnType<OpenShellForwardAdapter["startForward"]>>
       | Awaited<ReturnType<OpenShellForwardAdapter["retireLegacyForward"]>>,
   ): string {
-    if ("error" in result) return result.error.message;
+    if ("error" in result) {
+      const failure = "failure" in result ? result.failure : undefined;
+      const suffix = failure ? ` [${formatOpenShellForwardStartFailure(failure)}]` : "";
+      return `${result.error.message}${suffix}`;
+    }
     if ("observation" in result) {
       return result.observation.state === "foreign"
         ? "The host port is owned by a foreign listener."

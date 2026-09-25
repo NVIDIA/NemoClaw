@@ -111,6 +111,21 @@ export type {
   PreparedHermesPortableForwardRecovery,
 };
 
+/** Read recovery authority from the registry root that owns the sandbox. */
+function readRecoverySandbox(sandboxName: string): registry.SandboxEntry | null {
+  return registry.getSandboxAcrossGatewayRoots(sandboxName) ?? registry.getSandbox(sandboxName);
+}
+
+function getRecoverySessionAgent(
+  sandboxName?: string,
+): ReturnType<typeof agentRuntime.getSessionAgent> {
+  if (!sandboxName) return agentRuntime.getSessionAgent();
+  return agentRuntime.resolveRegisteredSandboxAgent(
+    sandboxName,
+    agentRuntime.getSessionAgent(sandboxName),
+  );
+}
+
 export type {
   GatewayRestartDeps,
   GatewayRestartFailureLayer,
@@ -123,6 +138,7 @@ export type RestartSandboxGatewayOptions = BaseRestartSandboxGatewayOptions & {
 };
 
 export { buildSandboxExecMarkedCommand } from "./sandbox-exec-output";
+export { buildSubprocessEnv as buildSandboxSubprocessEnv };
 
 export type { SandboxCommandResult, SandboxExecCommandOptions };
 
@@ -1177,6 +1193,27 @@ export function beginUnregisteredOpenClawPostRestoreDoctor(
   );
 }
 
+export function beginUnregisteredOpenClawBackupQuiesce(
+  sandboxName: string,
+  runtimeSelection?: OpenShellRuntimeSelection,
+): Promise<OpenClawPostRestoreDoctorResult> {
+  return beginOpenClawPostRestoreDoctor(
+    sandboxName,
+    runtimeSelection,
+    OPENCLAW_UNREGISTERED_POST_RESTORE_DOCTOR_DEPS,
+    "backup",
+  );
+}
+
+export function promoteUnregisteredOpenClawBackupQuiesceToPostRestoreDoctor(
+  window: OpenClawPostRestoreDoctorWindow,
+): Promise<OpenClawPostRestoreDoctorResult> {
+  return promoteOpenClawBackupQuiesceToPostRestoreDoctor(
+    window,
+    OPENCLAW_UNREGISTERED_POST_RESTORE_DOCTOR_DEPS,
+  );
+}
+
 export function finishUnregisteredOpenClawPostRestoreDoctor(
   window: OpenClawPostRestoreDoctorWindow,
 ): Promise<Exclude<OpenClawPostRestoreDoctorResult, { ok: true }> | { ok: true }> {
@@ -1324,7 +1361,7 @@ async function isSandboxGatewayRunning(
   sandboxName: string,
   runtimeSelection?: OpenShellRuntimeSelection,
 ): Promise<boolean | null> {
-  const agent = agentRuntime.getSessionAgent(sandboxName);
+  const agent = getRecoverySessionAgent(sandboxName);
   if (agent && !agentRuntime.hasGatewayRuntime(agent)) return null;
   const probeUrl = getSandboxHealthProbeUrl(sandboxName);
   const command = sandboxGatewayRecoveryProbeCommand(probeUrl);
@@ -1560,7 +1597,7 @@ type ManagedGatewayProbeOptions = {
 };
 
 function canProbeManagedGateway(sandboxName: string, options: ManagedGatewayProbeOptions): boolean {
-  const getSandbox = options.getSandboxImpl ?? registry.getSandbox;
+  const getSandbox = options.getSandboxImpl ?? readRecoverySandbox;
   const entry = getSandbox(sandboxName);
   if (!entry) return false;
   const persistedAgent = entry.agent ?? "openclaw";
@@ -1568,7 +1605,7 @@ function canProbeManagedGateway(sandboxName: string, options: ManagedGatewayProb
 
   if (!usesManagedGatewayController(entry)) return false;
 
-  const getSessionAgent = options.getSessionAgentImpl ?? agentRuntime.getSessionAgent;
+  const getSessionAgent = options.getSessionAgentImpl ?? getRecoverySessionAgent;
   const agent = getSessionAgent(sandboxName);
   if (persistedAgent === "hermes" && agent?.name !== "hermes") return false;
   if (agent && !agentRuntime.hasGatewayRuntime(agent)) return false;
@@ -1612,7 +1649,7 @@ export async function isSandboxGatewayRunningForStatus(
     getHealthProbeUrl?: typeof getSandboxHealthProbeUrl;
   } = {},
 ): Promise<boolean | null> {
-  const agent = (options.getSessionAgent ?? agentRuntime.getSessionAgent)(sandboxName);
+  const agent = (options.getSessionAgent ?? getRecoverySessionAgent)(sandboxName);
   if (agent && !agentRuntime.hasGatewayRuntime(agent)) return null;
   return isSandboxGatewayHttpReachableForStatus(sandboxName, gatewayName, options);
 }
@@ -1748,11 +1785,11 @@ async function recoverSandboxProcesses(
     runtimeSelection?: OpenShellRuntimeSelection;
   } = {},
 ): Promise<SandboxProcessRecovery | null> {
-  const agent = agentRuntime.getSessionAgent(sandboxName);
+  const agent = getRecoverySessionAgent(sandboxName);
   const dashboardPort = resolveSandboxDashboardPort(sandboxName);
   let persistedAgent: string | null;
   try {
-    persistedAgent = sandboxAgentName(sandboxName, registry.getSandbox);
+    persistedAgent = sandboxAgentName(sandboxName, readRecoverySandbox);
   } catch (error) {
     const detail =
       error instanceof Error && error.message.trim()
@@ -1761,7 +1798,7 @@ async function recoverSandboxProcesses(
     quiet || printGatewayRestartFailure(sandboxName, "unsupported agent", detail);
     return null;
   }
-  const persistedSandbox = registry.getSandbox(sandboxName);
+  const persistedSandbox = readRecoverySandbox(sandboxName);
   const persistedProvider = resolveRegisteredRuntimeProvider(persistedSandbox?.openshellDriver);
   // An explicit provider recovery surface owns its runtime transition.
   if (
@@ -1836,9 +1873,18 @@ export async function restartSandboxGateway(
     restartSandboxGatewayWithDeps(sandboxName, {
       quiet,
       deps: {
-        getSessionAgent: agentRuntime.getSessionAgent,
-        getSandbox: registry.getSandbox,
+        getSessionAgent: getRecoverySessionAgent,
+        getSandbox: readRecoverySandbox,
         resolveSandboxDashboardPort,
+        buildOpenClawReadinessProbeCommand: (name) => {
+          // OpenClaw 2026.3.11+ exposes { ready: boolean } here:
+          // https://github.com/openclaw/openclaw/blob/v2026.3.11/src/gateway/server-http.ts
+          const url = new URL(resolveSandboxHealthProbeUrl(name));
+          url.pathname = "/readyz";
+          url.search = "";
+          url.hash = "";
+          return `curl --noproxy '*' --silent --show-error --fail --write-out '\\n%{http_code}' --max-time 3 ${shellQuote(url.href)}`;
+        },
         executeSandboxExecCommand: (name, command, timeout) =>
           executeSandboxExecCommand(
             name,
@@ -1852,7 +1898,7 @@ export async function restartSandboxGateway(
           waitForRecoveredSandboxGateway(name, {
             ...options,
             runtimeSelection,
-            timeoutSeconds: gatewayRecoveryTimeoutSeconds(agentRuntime.getSessionAgent(name)),
+            timeoutSeconds: gatewayRecoveryTimeoutSeconds(getRecoverySessionAgent(name)),
           }),
         ensureSandboxPortForward: (name) => ensureSandboxPortForward(name, { runtimeSelection }),
         ensureHermesDashboardPortForwardIfEnabled: (name) =>
@@ -2219,7 +2265,7 @@ function printHostManagedGatewayRecoveryHints(
   let agentName = agent?.name ?? null;
   if (!agentName) {
     try {
-      agentName = registry.getSandbox(sandboxName)?.agent ?? null;
+      agentName = readRecoverySandbox(sandboxName)?.agent ?? null;
     } catch {
       // Preserve the legacy OpenClaw hint when registry lookup itself failed.
     }
@@ -2242,7 +2288,7 @@ function recoveryAgentDisplayName(
 ): string {
   if (agent) return agentRuntime.getAgentDisplayName(agent);
   try {
-    const persistedAgent = registry.getSandbox(sandboxName)?.agent;
+    const persistedAgent = readRecoverySandbox(sandboxName)?.agent;
     if (persistedAgent && persistedAgent !== "openclaw") return persistedAgent;
   } catch {
     // The recovery path below reports registry lookup failures with the
@@ -2468,7 +2514,7 @@ async function checkAndRecoverSandboxProcessesWithoutHostLock(
     stage: "processes" | "forward",
     operation: () => Promise<T>,
   ): Promise<T> => (probeTiming ? probeTiming.measureAsync(stage, operation) : operation());
-  const recoveryAgent = agentRuntime.getSessionAgent(sandboxName);
+  const recoveryAgent = getRecoverySessionAgent(sandboxName);
   const recoveryDisplayName = recoveryAgentDisplayName(sandboxName, recoveryAgent);
   if (recoveryAgent && !agentRuntime.hasGatewayRuntime(recoveryAgent)) {
     return {

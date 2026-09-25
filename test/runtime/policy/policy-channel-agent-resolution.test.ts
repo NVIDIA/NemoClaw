@@ -180,6 +180,73 @@ process.stdout.write("__RESULT__" + JSON.stringify({ gatewayPresets }));
     const payload = JSON.parse(result.stdout.split("__RESULT__")[1].trim());
     expect(payload.gatewayPresets).toEqual(["npm"]);
   });
+
+  it("reads live presets through the gateway registry root that owns the sandbox", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-sibling-root-"));
+    const openshellPath = path.join(tmpDir, "openshell");
+    const openshellLog = path.join(tmpDir, "openshell.log");
+    const stateRoot = path.join(tmpDir, ".nemoclaw", "gateways", "9000");
+    fs.mkdirSync(stateRoot, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(
+      path.join(stateRoot, "sandboxes.json"),
+      `${JSON.stringify({
+        defaultSandbox: "sibling-sandbox",
+        sandboxes: {
+          "sibling-sandbox": {
+            name: "sibling-sandbox",
+            agent: "openclaw",
+            gatewayName: "nemoclaw-9000",
+            gatewayPort: 9000,
+          },
+        },
+      })}\n`,
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(
+      openshellPath,
+      [
+        "#!/usr/bin/env bash",
+        `printf '%s\\n' "$*" >> ${JSON.stringify(openshellLog)}`,
+        "cat <<'EOF'",
+        "Version: 1",
+        "---",
+        "version: 1",
+        "network_policies:",
+        "  npm_yarn:",
+        "    endpoints: []",
+        "EOF",
+        "",
+      ].join("\n"),
+    );
+    fs.chmodSync(openshellPath, 0o755);
+    const script = String.raw`
+(async () => {
+const policies = (await import(${POLICIES_PATH})).default;
+const gatewayPresets = await policies.getGatewayPresets("sibling-sandbox", undefined, {
+  name: "sibling-sandbox",
+  agent: "openclaw",
+  gatewayName: "nemoclaw-9000",
+  gatewayPort: 9000,
+});
+process.stdout.write("__RESULT__" + JSON.stringify({ gatewayPresets }));
+
+})().catch((error) => { console.error(error); process.exitCode = 1; });
+`;
+    const result = spawnSync(process.execPath, [...SOURCE_NODE_ARGS, "-e", script], {
+      cwd: REPO_ROOT,
+      encoding: "utf-8",
+      env: { ...process.env, HOME: tmpDir, NEMOCLAW_OPENSHELL_BIN: openshellPath },
+    });
+    expect(result.status, result.stderr).toBe(0);
+    const calls = fs.readFileSync(openshellLog, "utf8");
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+
+    expect(JSON.parse(result.stdout.split("__RESULT__")[1].trim())).toEqual({
+      gatewayPresets: ["npm"],
+    });
+    expect(calls).toContain("policy get -g nemoclaw-9000 --full sibling-sandbox");
+  });
+
   it("setup policy preset catalog omits unsupported Deep Agents messaging policies (#6185)", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-setup-agent-"));
     const script = String.raw`

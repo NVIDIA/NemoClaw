@@ -187,6 +187,20 @@ describe("Portable lifecycle startup handoff", () => {
     );
   });
 
+  it("falls back to fresh qualification when retained command time is exhausted (#11574)", async () => {
+    const h = setup();
+    let commandNow = 0;
+    h.deps.now = () => commandNow;
+
+    await h.run(async () => {
+      await h.recover();
+      commandNow = 240_001;
+      h.fixture.captureOpenShell.mockClear();
+      await expect(h.recover()).resolves.toEqual({ kind: "already-running" });
+      expect(h.execReadiness()).toBe(true);
+    });
+  });
+
   it("recovers again after a supported stop (#11574)", async () => {
     const h = setup();
     await h.run(async () => {

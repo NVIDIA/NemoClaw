@@ -43,6 +43,7 @@ export type ConnectHarness = {
   captureOpenshellSpy: MockInstance;
   captureResolvedOpenshellSpy: MockInstance;
   checkAndRecoverSpy: MockInstance;
+  connectManagedOpenShellSdkSpy: MockInstance;
   waitForStartedHermesGatewayProcessSpy: MockInstance;
   connectSandbox: ConnectSandbox;
   ensureOllamaAuthProxySpy: MockInstance;
@@ -589,39 +590,44 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     .spyOn(runtime, "captureOpenshell")
     .mockImplementation(captureOpenshellImplementation);
   const openShellSdk = requireDist("../../src/lib/adapters/openshell/sdk.js");
-  vi.spyOn(openShellSdk, "connectManagedOpenShellSdk").mockResolvedValue({
-    raw: {
-      startSandbox: async ({ name }: { name: string }) => {
-        const invokeCapture = runtime.captureOpenshell as (args: string[]) => {
-          status?: number | null;
-        };
-        const completion = invokeCapture([
-          "sandbox",
-          "start",
-          "-g",
-          options.registryEntry?.gatewayName ?? "nemoclaw",
-          name,
-        ]) as { status?: number | null };
-        if (completion.status !== 0) {
-          throw Object.assign(new Error("OpenShell start failed."), {
-            code: String(completion.status ?? "unknown"),
-          });
-        }
-        return { sandbox: { metadata: { id: "alpha-sandbox-id" } } };
-      },
-      stopSandbox: async () => ({ sandbox: { metadata: { id: "alpha-sandbox-id" } } }),
-    },
-    sandbox: {
-      get: async () => ({
-        id: "alpha-sandbox-id",
-        phase: String(
-          options.sandboxGetPhase ??
-            (options.registryEntry?.stopped === true ? "Stopped" : "Ready"),
-        ).toLowerCase(),
-      }),
-      waitReady: async () => ({ id: "alpha-sandbox-id", phase: "ready" }),
-    },
-  });
+  const connectManagedOpenShellSdkSpy = vi
+    .spyOn(openShellSdk, "connectManagedOpenShellSdk")
+    .mockImplementation(async (...args: unknown[]) => {
+      const target = args[0] as { kind: string; gatewayName?: string };
+      return {
+        raw: {
+          startSandbox: async ({ name }: { name: string }) => {
+            const invokeCapture = runtime.captureOpenshell as (args: string[]) => {
+              status?: number | null;
+            };
+            const completion = invokeCapture([
+              "sandbox",
+              "start",
+              "-g",
+              target.gatewayName ?? "nemoclaw",
+              name,
+            ]) as { status?: number | null };
+            if (completion.status !== 0) {
+              throw Object.assign(new Error("OpenShell start failed."), {
+                code: String(completion.status ?? "unknown"),
+              });
+            }
+            return { sandbox: { metadata: { id: "alpha-sandbox-id" } } };
+          },
+          stopSandbox: async () => ({ sandbox: { metadata: { id: "alpha-sandbox-id" } } }),
+        },
+        sandbox: {
+          get: async () => ({
+            id: "alpha-sandbox-id",
+            phase: String(
+              options.sandboxGetPhase ??
+                (options.registryEntry?.stopped === true ? "Stopped" : "Ready"),
+            ).toLowerCase(),
+          }),
+          waitReady: async () => ({ id: "alpha-sandbox-id", phase: "ready" }),
+        },
+      };
+    });
   const captureResolvedOpenshellSpy = vi
     .spyOn(runtime, "captureResolvedOpenshell")
     .mockImplementation(captureOpenshellImplementation);
@@ -678,9 +684,10 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     retireLegacyForward: vi.fn(),
     verifyForwardRelease: vi.fn(async () => ({ state: "released" as const })),
   });
-  const prepareHermesPortableLaunchForwardsSpy = options.preparedForwardRecovery
-    ? vi.spyOn(processRecovery, "prepareHermesPortableLaunchForwards")
-    : vi.fn();
+  const prepareHermesPortableLaunchForwardsSpy = vi.spyOn(
+    processRecovery,
+    "prepareHermesPortableLaunchForwards",
+  );
   if (options.preparedForwardRecovery) {
     const result = {
       kind: options.preparedForwardRecovery.kind ?? "restored",
@@ -778,6 +785,16 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
         : null;
     },
   );
+  vi.spyOn(crossPortRegistry, "getSandboxAcrossGatewayRoots").mockImplementation(
+    (name: unknown) => registryEntries.find((candidate) => candidate.name === String(name)) ?? null,
+  );
+  vi.spyOn(crossPortRegistry, "recordSandboxStopIntentAcrossGatewayRoots").mockImplementation(((
+    name: string,
+    stopped: boolean,
+  ) => registry.recordSandboxStopIntent(name, stopped, registry.updateSandbox)) as never);
+  vi.spyOn(crossPortRegistry, "listPublishedSandboxesAcrossGatewayRoots").mockImplementation(
+    () => registryEntries,
+  );
   vi.spyOn(registry, "listSandboxes").mockReturnValue({
     sandboxes: registryEntries,
     defaultSandbox: primaryRegistryEntry.name,
@@ -834,6 +851,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     captureOpenshellSpy,
     captureResolvedOpenshellSpy,
     checkAndRecoverSpy,
+    connectManagedOpenShellSdkSpy,
     waitForStartedHermesGatewayProcessSpy,
     connectSandbox: requireDist(connectModulePath).connectSandbox,
     ensureOllamaAuthProxySpy,

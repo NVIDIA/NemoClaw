@@ -3,7 +3,10 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
-import { createOpenShellOperationDeadline } from "../../adapters/openshell/operation-deadline";
+import {
+  createOpenShellOperationDeadline,
+  OpenShellOperationAllowanceExhaustedError,
+} from "../../adapters/openshell/operation-deadline";
 import { createCliOpenShellSandboxLifecycle } from "../../adapters/openshell/sandbox-lifecycle-cli";
 import { isDeepStrictEqual, TextDecoder } from "node:util";
 import { redactOnboardCommandDiagnosticText } from "../diagnostics/redaction";
@@ -1649,7 +1652,13 @@ async function tryReuseHermesPortableLifecycleStartup(
     }
   };
   assertRegistry();
-  const ready = await retained.verify();
+  let ready: boolean;
+  try {
+    ready = await retained.verify();
+  } catch (error) {
+    if (error instanceof OpenShellOperationAllowanceExhaustedError) return false;
+    throw error;
+  }
   assertRegistry();
   if (!ready || currentHermesPortableLifecycleStartupScope(sandboxName, deps) !== scope) {
     return false;

@@ -8,7 +8,10 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
 import { createHermesPortableUninstallFixture } from "../../../../test/helpers/hermes-portable-uninstall-fixture";
-import { createConnectHarness } from "../../../../test/support/connect-flow-test-harness";
+import {
+  createConnectHarness,
+  requireDist,
+} from "../../../../test/support/connect-flow-test-harness";
 import type { OpenShellSandboxBufferedCommandRequest } from "../../adapters/openshell/sandbox-command";
 import { hermesPortableReceiptDirectory } from "../../onboard/experimental/hermes-portable-receipt";
 import type { SandboxEntry } from "../../state/registry";
@@ -639,6 +642,25 @@ describe("Hermes accepted launch-readiness probe", () => {
     );
   });
 
+  it("uses the operator-facing refusal when Portable authority appears after preflight", async () => {
+    const harness = missingHermesHarness();
+    const gatewayState = requireDist("../../src/lib/actions/sandbox/gateway-state.js") as {
+      qualifyPortableAgentLifecycleAuthority: MockInstance;
+    };
+    gatewayState.qualifyPortableAgentLifecycleAuthority.mockImplementationOnce(() => ({
+      kind: "openclaw",
+    }));
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
+      "Hermes portable lifecycle authority for 'alpha' is missing, incomplete, or changed",
+    );
+    expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
+  });
+
   it("rejects recovered lifecycle drift before stopped inference recovery", async () => {
     const harness = missingHermesHarness("stopped");
     harness.qualifyHermesPortableAcceptedReadinessAuthoritySpy
@@ -922,6 +944,32 @@ describe("Hermes accepted launch-readiness probe", () => {
     expect(output).toContain("Do not run another probe or launch");
     expect(output).toContain("Initial recovery failure:");
     expect(output).toContain("did not become healthy before the recovery deadline");
+    expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
+  });
+
+  it("reports a safe typed forward startup failure", async () => {
+    const harness = missingHermesHarness();
+    harness.verifyHermesPortableLaunchForwardsSpy.mockReturnValue({ kind: "unhealthy" });
+    harness.forwardAdapterObserveSpy.mockImplementation(async ({ forwards }) =>
+      forwards.map((forward: object) => ({ state: "absent" as const, forward })),
+    );
+    harness.forwardAdapterStartSpy.mockImplementationOnce(async ({ forward }) => ({
+      state: "failed" as const,
+      forward,
+      effect: "none" as const,
+      error: {
+        kind: "command" as const,
+        message: "The OpenShell forward command failed.",
+      },
+      failure: { stage: "startup" as const, reason: "child_exited" as const, exitStatus: 17 },
+    }));
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    const output = harness.errorSpy.mock.calls.flat().join("\n");
+    expect(output).toContain("Startup failure: forward-start startup/child_exited status=17.");
     expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
   });
 

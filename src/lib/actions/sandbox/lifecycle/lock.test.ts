@@ -57,11 +57,24 @@ describe("Portable-aware sandbox lifecycle lock", () => {
   });
 
   it("enables bounded startup reuse for a recognized Portable receipt without a profile override", async () => {
-    delete process.env.NEMOCLAW_EXPERIMENTAL_PROFILE;
+    vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", undefined);
 
     await withSandboxLifecycleLock("alpha", () => {
       expect(currentHermesPortableStartupOperation("alpha")).toBeDefined();
     });
+  });
+
+  it("does not infer Portable startup reuse for an explicitly selected lock domain", async () => {
+    vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", undefined);
+    const explicitStateDir = path.join(homeDir, ".nemoclaw", "gateways", "18080", "state");
+
+    await withSandboxLifecycleLock(
+      "alpha",
+      () => {
+        expect(currentHermesPortableStartupOperation("alpha")).toBeUndefined();
+      },
+      { stateDir: explicitStateDir },
+    );
   });
 
   it("does not override an explicit non-Portable profile", async () => {

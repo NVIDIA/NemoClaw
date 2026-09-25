@@ -51,6 +51,7 @@ COPY agents/hermes/config/ /opt/nemoclaw-hermes-config/config/
 COPY agents/hermes/image-build-probes.py agents/hermes/finalize-image-layout.sh /opt/nemoclaw-hermes-config/
 COPY agents/hermes/a2a-neutral.patch agents/hermes/patch-gateway-runtime-metadata.py /opt/nemoclaw-hermes-config/
 COPY agents/hermes/patch-gateway-process-identity.py /opt/nemoclaw-hermes-config/patch-gateway-process-identity.py
+COPY agents/hermes/patch-mcp-http-proxy.py /opt/nemoclaw-hermes-config/patch-mcp-http-proxy.py
 COPY agents/hermes/patch-external-supervisor-restart.py /opt/nemoclaw-hermes-config/patch-external-supervisor-restart.py
 COPY agents/hermes/patch-external-supervisor-recovery.py /opt/nemoclaw-hermes-config/patch-external-supervisor-recovery.py
 COPY agents/hermes/patch-cron-execution-runtime.py /opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py
@@ -543,6 +544,35 @@ RUN /usr/bin/python3 -I \
     && HERMES_HOME="$(mktemp -d)" /opt/hermes/.venv/bin/python -I \
         /opt/nemoclaw-hermes-config/image-build-probes.py gateway-runtime-metadata
 
+# Hermes v0.21.3 wraps caller-owned MCP HTTP transports to preserve its
+# response-body cap. Supplying that transport disables httpx's environment
+# proxy discovery, so the real Streamable HTTP and SSE sessions bypass
+# OpenShell even though preliminary probes use HTTPS_PROXY. Restore standard
+# proxy and NO_PROXY selection on both body-capped transports. Exact source
+# hashes and a behavior probe force re-review when Hermes changes this path.
+ARG NEMOCLAW_HERMES_MCP_HTTP_PROXY_PATCHER_SHA256=c2c4be2ab1406d93ad327f11786a54fe14b6f0834d7ffe713acf805d6d1985cb
+ARG NEMOCLAW_HERMES_MCP_HTTP_TRANSPORT_SOURCE_SHA256=691901e3bee4c8f49975b77a802a146d28c3970963753fbc539bb1a30809b3a2
+ARG NEMOCLAW_HERMES_MCP_HTTP_TRANSPORT_PATCHED_SHA256=a2b28260c65baabb00edc367e1829bf283567e3a6737683acfc8b024e230e6bf
+# hadolint ignore=DL4006
+RUN printf '%s  %s\n' \
+        "$NEMOCLAW_HERMES_MCP_HTTP_PROXY_PATCHER_SHA256" /opt/nemoclaw-hermes-config/patch-mcp-http-proxy.py \
+        "$NEMOCLAW_HERMES_MCP_HTTP_TRANSPORT_SOURCE_SHA256" /opt/hermes/tools/mcp_tool_transport.py \
+    | sha256sum -c - \
+    || { echo "ERROR: Hermes MCP HTTP proxy source identity mismatch" >&2; exit 1; }
+# hadolint ignore=DL4006
+RUN /usr/bin/python3 -I \
+        /opt/nemoclaw-hermes-config/patch-mcp-http-proxy.py \
+        /opt/hermes/tools/mcp_tool_transport.py \
+    && /opt/hermes/.venv/bin/python -m py_compile /opt/hermes/tools/mcp_tool_transport.py \
+    && printf '%s  %s\n' \
+        "$NEMOCLAW_HERMES_MCP_HTTP_TRANSPORT_PATCHED_SHA256" /opt/hermes/tools/mcp_tool_transport.py \
+    | sha256sum -c - \
+    && env -u SSL_CERT_FILE -u all_proxy -u http_proxy -u https_proxy -u no_proxy \
+        ALL_PROXY= HTTP_PROXY= HTTPS_PROXY=http://10.200.0.1:3128 \
+        NO_PROXY=direct.example \
+        /opt/hermes/.venv/bin/python -I -c \
+        'import asyncio; from tools.mcp_tool import sdk_httpx; from tools.mcp_tool_transport import _body_capped_httpx_client; h = sdk_httpx(); c = _body_capped_httpx_client(h); remote = c._transport_for_url(h.URL("https://remote.example/mcp")); direct = c._transport_for_url(h.URL("https://direct.example/mcp")); assert type(remote).__name__ == "_BodyCapTransport" and type(remote._inner._pool).__name__ == "AsyncHTTPProxy"; assert type(direct).__name__ == "_BodyCapTransport" and type(direct._inner._pool).__name__ == "AsyncConnectionPool"; asyncio.run(c.aclose())'
+
 # NemoClaw installs its wrapper as `hermes` and moves the real entrypoint to
 # `hermes.real`, so every managed gateway command line carries that basename.
 # Hermes only accepts `hermes`/`hermes.exe` as the entry token, which defeats
@@ -602,6 +632,7 @@ ARG NEMOCLAW_HERMES_BACKUP_SOURCE_SHA256=1a48cbde16552268d796bcf22fdaa8231c924c7
 # Hermes v0.21.3 drops explicit auxiliary output limits on custom endpoints.
 # Preserve those limits on NemoClaw's managed inference route so session-title
 # generation cannot occupy Ollama's only inference slot until the context fills.
+# hadolint ignore=DL3064
 ARG NEMOCLAW_HERMES_AUXILIARY_TOKEN_LIMIT_PATCHER_SHA256=f73aab612f9038380c26bf6d3bd73820f2708868bde3afff15fc8df23fd1c27c
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
@@ -626,6 +657,7 @@ RUN set -eu; \
         /opt/nemoclaw-hermes-config/image-build-probes.py auxiliary-token-limit \
     && rm /opt/nemoclaw-hermes-config/patch-gateway-runtime-metadata.py \
         /opt/nemoclaw-hermes-config/patch-gateway-process-identity.py \
+        /opt/nemoclaw-hermes-config/patch-mcp-http-proxy.py \
         /opt/nemoclaw-hermes-config/patch-external-supervisor-restart.py \
         /opt/nemoclaw-hermes-config/patch-external-supervisor-recovery.py \
         /opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py \
@@ -1287,11 +1319,16 @@ RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/runtime)" = "gateway:sandbox 277
         /sandbox/.hermes/skills
 
 # Pin config hash at build time for config and environment integrity verification at startup.
-RUN mkdir -p /etc/nemoclaw \
+RUN install -d -o root -g root -m 0755 /etc/nemoclaw \
     && sha256sum /sandbox/.hermes/config.yaml /sandbox/.hermes/.env \
     > /etc/nemoclaw/hermes.config-hash \
-    && chown root:root /etc/nemoclaw/hermes.config-hash \
-    && chmod 444 /etc/nemoclaw/hermes.config-hash
+    && touch /etc/nemoclaw/hermes-mcp-transaction.lock \
+    && chown root:root \
+        /etc/nemoclaw/hermes.config-hash \
+        /etc/nemoclaw/hermes-mcp-transaction.lock \
+    && chmod 444 \
+        /etc/nemoclaw/hermes.config-hash \
+        /etc/nemoclaw/hermes-mcp-transaction.lock
 
 # Publish the mutable in-tree compatibility hash used by runtime checks.
 RUN cp /etc/nemoclaw/hermes.config-hash /sandbox/.hermes/.config-hash \
@@ -1364,6 +1401,7 @@ RUN check_metadata() { \
     && check_absent /opt/nemoclaw-hermes-config/finalize-image-layout.sh \
     && check_absent /opt/nemoclaw-hermes-config/patch-gateway-runtime-metadata.py \
     && check_absent /opt/nemoclaw-hermes-config/patch-gateway-process-identity.py \
+    && check_absent /opt/nemoclaw-hermes-config/patch-mcp-http-proxy.py \
     && check_absent /opt/nemoclaw-hermes-config/patch-external-supervisor-restart.py \
     && check_absent /opt/nemoclaw-hermes-config/patch-external-supervisor-recovery.py \
     && check_absent /opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py \
@@ -1386,6 +1424,7 @@ RUN check_metadata() { \
     && check_absent /sandbox/.nemoclaw/hermes-cron-restore-drain.json \
     && check_absent /sandbox/.nemoclaw/hermes-cron-restore-release-recovery.json \
     && check_metadata /sandbox/.nemoclaw 'root:root 1755' \
+    && check_metadata /etc/nemoclaw/hermes-mcp-transaction.lock 'root:root 444' \
     && check_metadata /opt/hermes/plugins/nemoclaw 'root:root 755' \
     && check_metadata /opt/hermes/plugins/nemoclaw/__init__.py 'root:root 444' \
     && check_metadata /scripts/lib/bundled-npm-package.mts 'root:root 444' \

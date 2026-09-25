@@ -1,13 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { HERMES_INTERFACE_DEFAULTS } from "../../config/model";
 import type { ManagedStartupProfile } from "../../onboard/managed-startup/profile";
 import type {
   ExportFinding,
   ObservedExportRegistry,
   VerifiedExportSource,
 } from "./export-evidence";
+import { V1ALPHA1_RUNTIME_DEFAULTS } from "./v1alpha1-runtime-defaults";
 
 type InterfaceInspection = Readonly<{
   findings: readonly ExportFinding[];
@@ -20,7 +20,7 @@ function mismatch(
   category: ExportFinding["category"],
   diagnostic: string,
 ): ExportFinding {
-  return { field: `spec.sandboxes[].agents[].interfaces.${leaf}`, category, diagnostic };
+  return { field: `spec.sandboxes[].harness.interfaces.${leaf}`, category, diagnostic };
 }
 
 type OpenClawDashboard = Extract<ManagedStartupProfile["dashboard"], { agent: "openclaw" }>;
@@ -60,13 +60,16 @@ function inspectOpenClawDashboard(
 ): InterfaceInspection {
   const { port, bindAddress } = dashboard;
   const remote = bindAddress === "0.0.0.0";
+  const defaults = V1ALPHA1_RUNTIME_DEFAULTS.openclaw.interfaces.dashboard;
   const projected = {
-    ...(port === 18_789 ? {} : { port }),
-    ...(remote ? { bind: bindAddress } : {}),
+    ...(port === defaults.port ? {} : { port }),
+    ...(bindAddress === defaults.bind ? {} : { bind: bindAddress }),
   };
+  const targetDashboard =
+    Object.keys(projected).length === 0 && !defaults.enabled ? { port: defaults.port } : projected;
   return {
     findings: openClawDashboardFindings(entry, dashboard),
-    ...(Object.keys(projected).length ? { interfaces: { dashboard: projected } } : {}),
+    ...(Object.keys(targetDashboard).length ? { interfaces: { dashboard: targetDashboard } } : {}),
     dashboard: {
       agent: "openclaw",
       mode: remote ? "remote" : "loopback",
@@ -146,15 +149,16 @@ function hermesDashboardFindings(
 }
 
 function projectHermesDashboard(dashboard: EnabledHermesDashboard) {
+  const defaults = V1ALPHA1_RUNTIME_DEFAULTS.hermes.interfaces.dashboard;
   return {
     enabled: true as const,
-    ...(dashboard.publicPort === HERMES_INTERFACE_DEFAULTS.dashboardPort
-      ? {}
-      : { port: dashboard.publicPort }),
-    ...(dashboard.internalPort === HERMES_INTERFACE_DEFAULTS.dashboardInternalPort
+    ...(dashboard.publicPort === defaults.port ? {} : { port: dashboard.publicPort }),
+    ...(dashboard.internalPort === defaults.internalPort
       ? {}
       : { internalPort: dashboard.internalPort }),
-    ...(dashboard.tuiEnabled ? { tui: { enabled: true } } : {}),
+    ...(dashboard.tuiEnabled === defaults.tuiEnabled
+      ? {}
+      : { tui: { enabled: dashboard.tuiEnabled } }),
   };
 }
 
@@ -162,16 +166,20 @@ function inspectHermesDashboard(
   entry: ObservedExportRegistry,
   dashboard: HermesDashboard,
 ): InterfaceInspection {
+  const defaults = V1ALPHA1_RUNTIME_DEFAULTS.hermes.interfaces;
   const findings = hermesApiFindings(entry, dashboard.mode === "loopback-forwarded");
   const api =
-    typeof entry.hermesApiPort === "number" &&
-    entry.hermesApiPort !== HERMES_INTERFACE_DEFAULTS.apiPort
+    typeof entry.hermesApiPort === "number" && entry.hermesApiPort !== defaults.api.port
       ? { api: { port: entry.hermesApiPort } }
       : {};
   if (dashboard.mode === "disabled") {
+    const targetDashboard = defaults.dashboard.enabled
+      ? { dashboard: { enabled: false as const } }
+      : {};
+    const interfaces = { ...targetDashboard, ...api };
     return {
       findings: [...findings, ...disabledHermesDashboardFindings(entry)],
-      ...(Object.keys(api).length ? { interfaces: api } : {}),
+      ...(Object.keys(interfaces).length ? { interfaces } : {}),
     };
   }
   const url = `http://127.0.0.1:${dashboard.publicPort}`;

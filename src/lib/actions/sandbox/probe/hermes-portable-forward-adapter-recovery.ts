@@ -5,6 +5,7 @@ import type {
   OpenShellForwardAdapter,
   OpenShellForwardIdentity,
   OpenShellForwardObservation,
+  OpenShellForwardStartFailure,
 } from "../../../adapters/openshell/forward";
 import { createOpenShellOperationDeadline } from "../../../adapters/openshell/operation-deadline";
 
@@ -45,7 +46,7 @@ export type HermesPortableForwardRecoveryContext =
       readonly cause: "forward-mutation-failed";
       readonly operation: "start" | "stop";
       readonly port: number;
-      readonly startupFailure?: string;
+      readonly startupFailure?: OpenShellForwardStartFailure;
     }
   | { readonly cause: "port-occupied"; readonly port: number };
 
@@ -121,17 +122,20 @@ function startResultFailure(
       port: forward.port,
     });
   }
+  const startupFailure = "failure" in started ? started.failure : undefined;
   if (started.state === "cleanup_uncertain") {
     return new HermesPortableForwardRecoveryError("restoration-unproved", {
       cause: "forward-mutation-failed",
       operation: "start",
       port: forward.port,
+      ...(startupFailure ? { startupFailure } : {}),
     });
   }
   return new HermesPortableForwardRecoveryError("recovery-failed", {
     cause: "forward-mutation-failed",
     operation: "start",
     port: forward.port,
+    ...(startupFailure ? { startupFailure } : {}),
   });
 }
 
