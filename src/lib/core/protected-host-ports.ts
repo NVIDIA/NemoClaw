@@ -11,6 +11,7 @@ const CONFIGURED_GATEWAY_PORT = parseServicePortOverride(
   DEFAULT_GATEWAY_PORT,
 );
 
+/** Default OpenClaw dashboard port inside the sandbox and on the host. */
 export const SANDBOX_DASHBOARD_PORT = 18789;
 export const DASHBOARD_PORT = parseServicePortOverride(
   "NEMOCLAW_DASHBOARD_PORT",
@@ -19,6 +20,15 @@ export const DASHBOARD_PORT = parseServicePortOverride(
 );
 export const DASHBOARD_PORT_RANGE_START = SANDBOX_DASHBOARD_PORT;
 export const DASHBOARD_PORT_RANGE_END = 18799;
+
+/** Default Hermes OpenAI-compatible API port and its per-sandbox allocation range. */
+export const HERMES_OPENAI_API_PORT = 8642;
+export const HERMES_API_PORT_RANGE_START = HERMES_OPENAI_API_PORT;
+export const HERMES_API_PORT_RANGE_END = 8652;
+
+export function isHermesApiPort(port: number): boolean {
+  return port >= HERMES_API_PORT_RANGE_START && port <= HERMES_API_PORT_RANGE_END;
+}
 
 export const DEFAULT_BEDROCK_RUNTIME_ADAPTER_PORT = 11436;
 export const BEDROCK_RUNTIME_ADAPTER_PORT = parseServicePortOverride(
@@ -52,6 +62,7 @@ export function isProtectedNemoClawHostPort(port: number): boolean {
     port === CONFIGURED_GATEWAY_PORT ||
     port === DASHBOARD_PORT ||
     (port >= DASHBOARD_PORT_RANGE_START && port <= DASHBOARD_PORT_RANGE_END) ||
+    isHermesApiPort(port) ||
     port === OLLAMA_PROXY_PORT ||
     port === DEFAULT_OLLAMA_PROXY_PORT ||
     port === BEDROCK_RUNTIME_ADAPTER_PORT ||

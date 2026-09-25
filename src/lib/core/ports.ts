@@ -12,7 +12,11 @@ import {
   DEFAULT_GATEWAY_PORT,
   DEFAULT_HTTPS_PIN_RUNTIME_ADAPTER_PORT,
   DEFAULT_OPENROUTER_RUNTIME_ADAPTER_PORT,
+  HERMES_API_PORT_RANGE_END,
+  HERMES_API_PORT_RANGE_START,
+  HERMES_OPENAI_API_PORT,
   HTTPS_PIN_RUNTIME_ADAPTER_PORT,
+  isHermesApiPort,
   OPENROUTER_RUNTIME_ADAPTER_PORT,
   SANDBOX_DASHBOARD_PORT,
 } from "./protected-host-ports";
@@ -27,7 +31,11 @@ export {
   DEFAULT_GATEWAY_PORT,
   DEFAULT_HTTPS_PIN_RUNTIME_ADAPTER_PORT,
   DEFAULT_OPENROUTER_RUNTIME_ADAPTER_PORT,
+  HERMES_API_PORT_RANGE_END,
+  HERMES_API_PORT_RANGE_START,
+  HERMES_OPENAI_API_PORT,
   HTTPS_PIN_RUNTIME_ADAPTER_PORT,
+  isHermesApiPort,
   OPENROUTER_RUNTIME_ADAPTER_PORT,
 };
 
@@ -66,13 +74,6 @@ export interface RuntimeAdapterPortValidationOptions extends GatewayPortValidati
 
 type PortValidationOptions = GatewayPortValidationOptions | RuntimeAdapterPortValidationOptions;
 
-/**
- * The default port the OpenClaw dashboard listens on inside the sandbox.
- * The sandbox image is built with CHAT_UI_URL=http://127.0.0.1:SANDBOX_DASHBOARD_PORT
- * (patched by patchStagedDockerfile), so the gateway starts on whichever port was
- * configured via NEMOCLAW_DASHBOARD_PORT at onboard time. This constant represents
- * the hardcoded default when no override is set.
- */
 export const VLLM_PORT_ENV = "NEMOCLAW_VLLM_PORT";
 export const DEFAULT_VLLM_PORT = 8000;
 /** vLLM / NIM inference port (default 8000, override via NEMOCLAW_VLLM_PORT). */
@@ -83,23 +84,6 @@ export const OLLAMA_PORT = parsePort("NEMOCLAW_OLLAMA_PORT", 11434);
 export { DEFAULT_OLLAMA_PROXY_PORT, OLLAMA_PROXY_PORT };
 /** llama.cpp existing-server attachment port; fixed by the declarative serving contract. */
 export { LLAMA_CPP_PORT };
-/** Default Hermes OpenAI-compatible API port (manifest `forward_ports[1]`; the default for start.sh `PUBLIC_PORT`). */
-export const HERMES_OPENAI_API_PORT = 8642;
-/** Start of the auto-allocation range for Hermes API ports (inclusive). */
-export const HERMES_API_PORT_RANGE_START = HERMES_OPENAI_API_PORT;
-/** End of the auto-allocation range for Hermes API ports (inclusive). */
-export const HERMES_API_PORT_RANGE_END = 8652;
-
-/**
- * The API port is a per-sandbox host resource: each Hermes sandbox exposes its
- * OpenAI-compatible API on its own port allocated from
- * `HERMES_API_PORT_RANGE_START` through `HERMES_API_PORT_RANGE_END`, so two
- * sandboxes can serve inference on one host. Every port in that range is
- * therefore unavailable as a dashboard port, for any agent.
- */
-export function isHermesApiPort(port: number): boolean {
-  return port >= HERMES_API_PORT_RANGE_START && port <= HERMES_API_PORT_RANGE_END;
-}
 interface ServicePortDefinition {
   readonly envVar: string | null;
   readonly label: string;

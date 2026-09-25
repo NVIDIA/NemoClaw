@@ -63,11 +63,6 @@ const stateDir = path.join(process.env.HOME, ".nemoclaw");
 fs.mkdirSync(stateDir, { recursive: true });
 fs.writeFileSync(path.join(stateDir, "ollama-proxy-token"), "committed-token\n", { mode: 0o600 });
 fs.writeFileSync(path.join(stateDir, "ollama-backend"), "http://127.0.0.1:7000\n", { mode: 0o600 });
-fs.writeFileSync(
-  path.join(stateDir, "ollama-backend.json"),
-  JSON.stringify({ schemaVersion: 1, kind: "compatible-endpoint", url: "http://127.0.0.1:7000" }),
-  { mode: 0o600 },
-);
 fs.writeFileSync(path.join(stateDir, "ollama-auth-proxy.pid"), "4000\n", { mode: 0o600 });
 
 const proxy = require(${proxyPath});
@@ -87,6 +82,7 @@ console.log(JSON.stringify({
   runningToken: proxy.getOllamaProxyToken(),
   persistedToken: fs.readFileSync(path.join(stateDir, "ollama-proxy-token"), "utf8").trim(),
   persistedBackend: fs.readFileSync(path.join(stateDir, "ollama-backend"), "utf8").trim(),
+  persistedDescriptor: JSON.parse(fs.readFileSync(path.join(stateDir, "ollama-backend.json"), "utf8")),
 }));
 `;
     fs.writeFileSync(scriptPath, script);
@@ -115,5 +111,10 @@ console.log(JSON.stringify({
     assert.equal(payload.runningToken, "committed-token");
     assert.equal(payload.persistedToken, "committed-token");
     assert.equal(payload.persistedBackend, "http://127.0.0.1:7000");
+    assert.deepEqual(payload.persistedDescriptor, {
+      schemaVersion: 1,
+      kind: "compatible-endpoint",
+      url: "http://127.0.0.1:7000",
+    });
   });
 });

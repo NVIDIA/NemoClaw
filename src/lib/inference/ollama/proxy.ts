@@ -686,10 +686,10 @@ function noAuthProxy(endpointUrl: string) {
     const endpoint = new URL(endpointUrl);
     const persistedToken = loadPersistedProxyToken();
     const persistedBackend = readProxyBackendIdentity();
-    if (
-      persistedToken &&
-      (persistedBackend.kind !== "compatible-endpoint" || persistedBackend.url !== endpoint.origin)
-    ) {
+    const reusesCompatibleBackend =
+      persistedBackend.url === endpoint.origin &&
+      (persistedBackend.kind === "compatible-endpoint" || persistedBackend.kind === "unknown");
+    if (persistedToken && !reusesCompatibleBackend) {
       throw new Error(
         "The shared protected loopback route already serves another inference backend. " +
           "NemoClaw will not replace it while existing sandboxes may depend on it. " +
