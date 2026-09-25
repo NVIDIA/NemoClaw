@@ -11,12 +11,6 @@
       "pullRequest": 12305,
       "baseBudgetSha256": "375c8f76724ccade48d8bbaafddc582984270350f95efde51211b0ff973a9dbe",
       "headBudgetSha256": "a2950bb3b5be2ba76071f3956b8a9a30fb4f3877308542c3947cea3821bfdf28"
-    },
-    {
-      "$comment": "PR #12120 proves a valid native OpenClaw model selection through the gateway after restart. Exact budget-transition approval: https://github.com/NVIDIA/NemoClaw/pull/12120#issuecomment-5836305525. This entry accepts only the named PR and budget hashes; it does not waive other checks.",
-      "pullRequest": 12120,
-      "baseBudgetSha256": "a2950bb3b5be2ba76071f3956b8a9a30fb4f3877308542c3947cea3821bfdf28",
-      "headBudgetSha256": "a8571d255eeb8b855ab88ae47023257b981835cd2d81b7cb16dfe1f8ef3eba8b"
     }
   ]
 }

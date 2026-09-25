@@ -63,10 +63,7 @@ import {
   cleanupWhenOpenShellAvailable,
 } from "../fixtures/cleanup-resources.ts";
 import { getSandbox } from "../../../src/lib/state/registry.ts";
-import {
-  buildNativeModelRestartCommand,
-  NATIVE_RESTART_PROVIDER,
-} from "./full-e2e-native-model.ts";
+import { buildNativeModelRestartFixture } from "./full-e2e-native-model.ts";
 import {
   agentReplyContainsToken,
   parseOpenClawGatewayModelRun,
@@ -353,6 +350,7 @@ console.log(JSON.stringify({
 
 async function runOpenClawLaunchTurns(input: {
   host: HostCliClient;
+  model: string;
   redactionValues: string[];
   sandbox: SandboxClient;
 }): Promise<void> {
@@ -393,12 +391,18 @@ sha256sum /sandbox/.bashrc /sandbox/.profile > /tmp/nemoclaw-e2e-profiles.sha256
       timeoutMs: 30_000,
     },
   );
-  const editNativeModel = await input.sandbox.exec(SANDBOX_NAME, buildNativeModelRestartCommand(), {
-    artifactName: "phase-4-write-native-model",
-    env: env(),
-    redactionValues: input.redactionValues,
-    timeoutMs: 120_000,
-  });
+  const nativeModel = buildNativeModelRestartFixture(input.model);
+  const editNativeModel = await input.sandbox.exec(
+    SANDBOX_NAME,
+    ["/usr/bin/env", "HOME=/sandbox", "/usr/local/bin/openclaw", "config", "patch", "--stdin"],
+    {
+      artifactName: "phase-4-write-native-model",
+      env: env(),
+      stdin: { text: nativeModel.patch },
+      redactionValues: input.redactionValues,
+      timeoutMs: 120_000,
+    },
+  );
   const validateNativeModel = await input.sandbox.exec(
     SANDBOX_NAME,
     ["/usr/bin/env", "HOME=/sandbox", "/usr/local/bin/openclaw", "config", "validate"],
@@ -430,6 +434,8 @@ sha256sum /sandbox/.bashrc /sandbox/.profile > /tmp/nemoclaw-e2e-profiles.sha256
     !prepareLaunch.timedOut &&
       prepareLaunch.exitCode === 0 &&
       originalModel.exitCode === 0 &&
+      !editNativeModel.timedOut &&
+      editNativeModel.signal === null &&
       editNativeModel.exitCode === 0 &&
       validateNativeModel.exitCode === 0 &&
       (!afterNativeFix || nativeStateDoctorReportIsValid(afterNativeFix)) &&
@@ -451,11 +457,6 @@ sha256sum /sandbox/.bashrc /sandbox/.profile > /tmp/nemoclaw-e2e-profiles.sha256
       .join("\n"),
   ).toBe(true);
 
-  const nativeModel = JSON.parse(editNativeModel.stdout) as {
-    original: string;
-    primary: string;
-    model: string;
-  };
   const persistedModel = await input.sandbox.exec(
     SANDBOX_NAME,
     [
@@ -521,7 +522,7 @@ sha256sum /sandbox/.bashrc /sandbox/.profile > /tmp/nemoclaw-e2e-profiles.sha256
     SANDBOX_NAME,
     trustedSandboxShellScript(`set -eu
 /usr/bin/env HOME=/sandbox /usr/local/bin/openclaw config unset ${shellQuote(`agents.defaults.models[${JSON.stringify(nativeModel.primary)}]`)}
-/usr/bin/env HOME=/sandbox /usr/local/bin/openclaw config unset models.providers.${NATIVE_RESTART_PROVIDER}`),
+/usr/bin/env HOME=/sandbox /usr/local/bin/openclaw config unset models.providers.${nativeModel.provider}`),
     {
       artifactName: "phase-4-remove-native-test-provider",
       env: env(),
@@ -547,10 +548,9 @@ sha256sum /sandbox/.bashrc /sandbox/.profile > /tmp/nemoclaw-e2e-profiles.sha256
   expect(
     persistedModel.exitCode === 0 &&
       persistedModel.stdout.trim() === JSON.stringify(nativeModel.primary) &&
-      nativeModel.original === JSON.parse(originalModel.stdout) &&
       !nativeTurn.timedOut &&
       nativeTurn.exitCode === 0 &&
-      nativeReply?.provider === NATIVE_RESTART_PROVIDER &&
+      nativeReply?.provider === nativeModel.provider &&
       nativeReply.model === nativeModel.model &&
       agentReplyContainsToken(nativeReply.text, "PONG") &&
       !restoreNativeModel.timedOut &&
@@ -1173,7 +1173,7 @@ test(
 
     progress.phase("verify native configuration across restart and launch");
     await (process.platform === "linux"
-      ? runOpenClawLaunchTurns({ host, redactionValues, sandbox })
+      ? runOpenClawLaunchTurns({ host, model: hosted.model, redactionValues, sandbox })
       : Promise.resolve());
 
     progress.phase("exercise native plugin package and update lifecycle");

@@ -150,10 +150,19 @@ OpenClaw failure probes read only regular, single-link log files without followi
 They omit log content above 16 KiB or changed during the read, so truncation cannot split a credential before host redaction.
 Oversized files retain size and permission metadata for diagnosis.
 
-The `full-e2e` restart probe selects a temporary native OpenClaw provider backed by the configured endpoint and model.
+The `full-e2e` restart probe selects a UUID-scoped native OpenClaw provider using the already-tested model through `inference.local`.
 After NemoClaw stop/start, a gateway-only turn must report that provider and model before the probe restores the original selection.
 The probe removes its temporary native entries before the launch checks.
-Provider credentials stay inside the sandbox; the setup command returns only model identifiers.
+The fixture contains no provider credentials. It sends a JSON patch to native OpenClaw through stdin.
+
+The restart probe no longer rereads native configuration to clone and validate a provider.
+The preceding inference turn already verifies the selected model and route.
+Native `config validate` and the post-restart gateway turn retain the live configuration and inference checks.
+UUID-scoped names replace the fixed-name collision checks; the fixture does not copy existing aliases or credentials.
+Patch construction and unique names are tested in `full-e2e-native-model.test.ts` in `e2e-support`.
+The removed config-reader and child-error-redaction checks belonged to the deleted cloning command.
+Native CLI output still uses the fixture's redaction path.
+The live credential scan, launch-readiness checks, restoration, and temporary-entry cleanup remain unchanged.
 
 After a live target succeeds, the E2E workflow requires
 `config-export-evidence.v1.json`. It also requires `config-export.yaml` when
