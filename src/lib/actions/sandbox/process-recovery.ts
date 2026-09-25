@@ -1012,6 +1012,7 @@ export async function finishOpenClawPostRestoreDoctor(
   if (!released.ok) return released;
 
   const { sandboxName, runtimeSelection } = window;
+  let stoppedSandboxRestartAttempted = false;
 
   const reconciliationDeadlineMs = deps.now() + OPENCLAW_DOCTOR_RECONCILIATION_TIMEOUT_MS;
   const completed = await waitUntilAsync(
@@ -1030,7 +1031,29 @@ export async function finishOpenClawPostRestoreDoctor(
         beforeTimeout,
         runtimeSelection,
       );
-      if (markersBefore?.status !== 0) return false;
+      if (markersBefore?.status !== 0) {
+        if (
+          !stoppedSandboxRestartAttempted &&
+          (await isOpenClawDoctorSandboxStopped(sandboxName, runtimeSelection, deps))
+        ) {
+          stoppedSandboxRestartAttempted = true;
+          captureOpenClawDoctorLifecycle(
+            deps,
+            ["sandbox", "start", sandboxName],
+            withSelectedOpenShellCommandOptions(
+              {
+                ignoreError: true,
+                includeStderr: true,
+                killProcessTreeOnTimeout: true,
+                killSignal: "SIGKILL" as const,
+                timeout: OPENCLAW_DOCTOR_RESTART_TIMEOUT_MS,
+              },
+              runtimeSelection,
+            ),
+          );
+        }
+        return false;
+      }
 
       const healthTimeout = probeTimeout();
       if (healthTimeout === null) return false;
