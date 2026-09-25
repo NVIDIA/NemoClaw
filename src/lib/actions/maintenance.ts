@@ -237,32 +237,27 @@ export async function backupAllUnderPortableHostFence(
       .filter((sandbox) => sandbox.readiness === "ready")
       .map((sandbox) => sandbox.name),
   );
-  // Source-of-truth review (#6520):
+  // Stranded records (#6520, #7290, #11795):
   //
-  // - Invalid state: a sandbox the selected gateway does not observe, whose
+  // - Classification: a sandbox the selected gateway does not observe, whose
   //   persisted binding resolves to that gateway, and whose OpenShell-labeled
-  //   container is definitively absent is stranded. It has no state left to
-  //   back up, so counting it as a strict-gate skip would abort the
-  //   installer's pre-upgrade backup before its recovery phase
-  //   (recover_preexisting_sandboxes_before_onboard in scripts/install.sh)
-  //   that knows how to surface it ever runs.
-  // - Source boundary: the state is created by `nemoclaw uninstall`, which
-  //   removes the gateway registration and containers but deliberately
-  //   preserves sandboxes.json so a later reinstall can rebuild from it.
-  // - Source-fix constraint: backup-all must not reconcile the registry —
-  //   clearing a stranded record is owned by the recovery phase's
-  //   destroy/onboard guidance (and the user), and this gate runs before
-  //   that phase. Deleting records inside a backup command would destroy the
-  //   very evidence the recovery phase reports.
-  // - Removal condition: drop this exemption when install/uninstall
-  //   reconciles sandboxes.json against the gateway (stranded records can no
-  //   longer reach backup-all), or when the installer runs its recovery
-  //   phase before the strict pre-upgrade backup.
-  //
-  // The container-absence gate (checked per candidate at skip time and again
-  // after the confirming listing) makes the exemption race-safe: a
-  // reconnecting or sibling-healthy sandbox still has a container, and a
-  // candidate the gateway observes again reverts to a genuine strict skip.
+  //   container is definitively absent is stranded. It has nothing to back up
+  //   and nothing to start, so it is counted and reported separately from
+  //   skipped sandboxes, with the same destroy/onboard guidance the
+  //   installer's recovery phase prints.
+  // - Confirmation: a stranded candidate must still be unobserved in a second
+  //   pinned listing after the backup loop, and its container must still be
+  //   absent; otherwise it reverts to a genuine strict skip. A reconnecting or
+  //   sibling-healthy sandbox keeps its container, so the check is race-safe.
+  // - Strict gate: a strict pre-upgrade backup fails closed on a confirmed
+  //   stranded sandbox (#11795). The installer would otherwise retire the
+  //   legacy gateway and refuse the same sandbox later in the upgrade phase.
+  //   A strict pre-uninstall backup only reports it: uninstall preserves
+  //   sandboxes.json, so the record needs no backup, and the reinstall
+  //   guidance handles it (#7290).
+  // - No registry mutation: backup-all never clears a stranded record. That
+  //   is owned by the destroy/onboard guidance and the user; deleting it here
+  //   would destroy the evidence that guidance reports.
   const orphanNames = new Set(
     classifyOrphanedRegistrySandboxes(sandboxes, {
       observedNames: new Set(liveList.sandboxes.map((sandbox) => sandbox.name)),
@@ -288,7 +283,7 @@ export async function backupAllUnderPortableHostFence(
     // reports that this registry row has no runtime to back up.
     // Apply the same gateway-binding + Docker-absence proof before acquiring
     // that lock. The confirming post-loop probes below still close the race
-    // before the installer accepts the exemption.
+    // before the sandbox is counted as stranded.
     if (orphanNames.has(sb.name) && isSandboxContainerDefinitivelyAbsent(sb.name)) {
       strandedOrphans.push(sb.name);
       return;
@@ -324,8 +319,9 @@ export async function backupAllUnderPortableHostFence(
     );
     if (attempt.stoppedContainerUnavailable) {
       if (orphanNames.has(sb.name) && isSandboxContainerDefinitivelyAbsent(sb.name)) {
-        // Tracked separately from `skipped` so the strict gate stays
-        // untripped: there is nothing to back up and nothing to start.
+        // Tracked separately from `skipped`: there is nothing to back up and
+        // nothing to start, and the summary and strict gate count it as
+        // stranded rather than as a not-running skip (#11795).
         strandedOrphans.push(sb.name);
         return;
       }
@@ -383,8 +379,8 @@ export async function backupAllUnderPortableHostFence(
   }
   // The classification above is only as fresh as the pre-loop listing, and
   // the backup loop can run for minutes. Confirm with a second pinned listing
-  // that every stranded candidate is still unobserved before accepting the
-  // exemption (same two-phase confirmation as upgrade-sandboxes, #6114); a
+  // that every stranded candidate is still unobserved before counting it as
+  // stranded (same two-phase confirmation as upgrade-sandboxes, #6114); a
   // candidate that reappeared reverts to the genuine strict skip it would
   // otherwise have been.
   let confirmedStranded = strandedOrphans;
@@ -422,6 +418,10 @@ export async function backupAllUnderPortableHostFence(
     purpose === "pre-uninstall"
       ? "rerun the original uninstall command"
       : `run '${CLI_NAME} backup-all' again`;
+  const strictRerun =
+    purpose === "pre-uninstall"
+      ? "rerun the original uninstall command"
+      : `rerun the installer or '${CLI_NAME} backup-all'`;
   if (backed > 0) {
     console.log(`  Backups stored in: ${rebuildBackupsDirectory(resolveHome(), GATEWAY_PORT)}`);
   }
@@ -456,16 +456,24 @@ export async function backupAllUnderPortableHostFence(
     );
     if (notRunningSkipped > 0) {
       console.error(
-        `  ${notRunningSkipped} skipped sandbox(es) were not running. Start each sandbox/container, then ${
-          purpose === "pre-uninstall"
-            ? "rerun the original uninstall command"
-            : `rerun the installer or '${CLI_NAME} backup-all'`
-        }.`,
+        `  ${notRunningSkipped} skipped sandbox(es) were not running. Start each sandbox/container, then ${strictRerun}.`,
       );
     }
     console.error("  Resolve each skipped sandbox using its reason above and retry.");
   }
-  if (failed > 0 || (requireAll && skipped > 0)) process.exit(1);
+  // Only the pre-upgrade gate fails on stranded sandboxes; see the
+  // stranded-record notes above for the pre-uninstall boundary.
+  const strandedFailsStrictGate = requireAll && purpose === "pre-upgrade" && stranded > 0;
+  if (strandedFailsStrictGate) {
+    console.error("");
+    console.error(
+      `  Strict pre-upgrade backup requires every registered sandbox to be backed up; ${stranded} stranded sandbox(es) have no container left to back up.`,
+    );
+    console.error(
+      `  Clear or rebuild each stranded sandbox using the guidance above, then ${strictRerun}.`,
+    );
+  }
+  if (failed > 0 || (requireAll && skipped > 0) || strandedFailsStrictGate) process.exit(1);
 }
 
 export async function garbageCollectImages(

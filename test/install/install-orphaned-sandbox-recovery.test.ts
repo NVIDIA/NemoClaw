@@ -162,6 +162,85 @@ esac
   };
 }
 
+/** Drive the installer's real strict-backup failure branch with a confirmed stranded sandbox. */
+function runStrictBackupStrandedFailure(options: {
+  legacyGateway: boolean;
+  backupExitCode?: number;
+}): {
+  output: string;
+  cleanup: () => void;
+} {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-stranded-gate-"));
+  const callLog = path.join(tmp, "calls.log");
+  const stateDir = path.join(tmp, "state");
+  fs.mkdirSync(stateDir);
+  fs.writeFileSync(path.join(stateDir, "sandboxes.json"), "{}\n");
+  const stubBin = path.join(tmp, "stub-cli");
+  fs.writeFileSync(
+    stubBin,
+    `#!/usr/bin/env bash
+printf 'command=%s require_all=%s\\n' "$*" "\${NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS:-}" >> ${JSON.stringify(callLog)}
+case "\${1:-}" in
+  backup-all)
+    printf '  Pre-upgrade backup: 1 backed up, 0 failed, 0 skipped, 1 stranded\\n'
+    printf '%s\\n' ${JSON.stringify(ORPHAN_LINE)}
+    printf '  Strict pre-upgrade backup requires every registered sandbox to be backed up; 1 stranded sandbox(es) have no container left to back up.\\n' >&2
+    exit ${options.backupExitCode ?? 1}
+    ;;
+esac
+`,
+    { mode: 0o755 },
+  );
+  // A fake openshell on PATH records every lifecycle call so the test can
+  // prove that gateway retirement never starts after the failed backup.
+  const fakeBinDir = path.join(tmp, "bin");
+  fs.mkdirSync(fakeBinDir);
+  fs.writeFileSync(
+    path.join(fakeBinDir, "openshell"),
+    `#!/usr/bin/env bash\nprintf 'openshell %s\\n' "$*" >> ${JSON.stringify(callLog)}\nexit 0\n`,
+    { mode: 0o755 },
+  );
+  const versionRange = options.legacyGateway ? "0.0.110 0.0.116" : "0.0.100 0.0.116";
+
+  const snippet = `
+    set -e
+    source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1 || true
+    info() { :; }
+    warn() { :; }
+    ok() { :; }
+    sleep() { :; }
+    error() { printf '[ERROR] %s\\n' "$*"; exit 1; }
+    nemoclaw_state_dir() { printf '%s' ${JSON.stringify(stateDir)}; }
+    resolve_nemoclaw_gateway_port() { printf '8080'; }
+    nemoclaw_gateway_name() { printf 'nemoclaw'; }
+    registered_sandbox_count() { printf '2'; }
+    require_openshell_compatible_sandbox_names() { return 0; }
+    installed_openshell_version() { printf '0.0.106'; }
+    legacy_openshell_gateway_upgrade_needed() { return 0; }
+    confirm_experimental_openshell_gateway_upgrade() { return 0; }
+    confirm_legacy_managed_image_recovery() { return 0; }
+    resolve_current_openshell_version_range() { printf '%s' "${versionRange}"; }
+    prepare_current_cli_for_preupgrade_backup() { return 0; }
+    resolve_prepared_cli_runner() { printf '%s' "${stubBin}"; }
+    status=0
+    ( preinstall_backup_and_retire_legacy_gateway ) || status=$?
+    echo "status=\${status}"
+    cat ${JSON.stringify(callLog)}
+  `;
+
+  const result = spawnSync("bash", ["-c", snippet], {
+    encoding: "utf-8",
+    env: {
+      ...installerTestEnv(tmp),
+      PATH: `${fakeBinDir}:${process.env.PATH ?? "/usr/bin:/bin"}`,
+    },
+  });
+  return {
+    output: `${result.stdout}\n${result.stderr}`,
+    cleanup: () => fs.rmSync(tmp, { recursive: true, force: true }),
+  };
+}
+
 describe("install.sh recovery outcome classification (#6520)", () => {
   it("marks the run orphaned when the CLI reports sandboxes not found on their recorded gateway", () => {
     const { output, cleanup } = runRecoveryClassification([ORPHAN_LINE, NO_REBUILD_LINE], 0);
@@ -231,6 +310,47 @@ describe("install.sh strict-backup recovery handoff", () => {
       expect(output.indexOf("command=backup-all")).toBeLessThan(
         output.indexOf("command=upgrade-sandboxes --auto"),
       );
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+describe("install.sh strict-backup stranded gate (#11795)", () => {
+  it("stops before retiring a legacy gateway when strict backup fails on a stranded sandbox", () => {
+    const { output, cleanup } = runStrictBackupStrandedFailure({ legacyGateway: true });
+    try {
+      expect(output).toContain("status=1");
+      expect(output).toContain("command=backup-all --retire-legacy-forwards require_all=1");
+      expect(output).toContain("[ERROR] Pre-upgrade backup failed");
+      expect(output).not.toContain("openshell gateway destroy");
+      expect(output).not.toContain("openshell gateway remove");
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("retires the legacy gateway only after strict backup succeeds (control)", () => {
+    // Proves the harness observes retirement, so the absence above is meaningful.
+    const { output, cleanup } = runStrictBackupStrandedFailure({
+      legacyGateway: true,
+      backupExitCode: 0,
+    });
+    try {
+      expect(output).toContain("status=0");
+      expect(output).toContain("openshell gateway destroy -g nemoclaw");
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("stops the installer when strict backup fails on a stranded sandbox with an in-range gateway", () => {
+    const { output, cleanup } = runStrictBackupStrandedFailure({ legacyGateway: false });
+    try {
+      expect(output).toContain("status=1");
+      expect(output).toContain("command=backup-all require_all=1");
+      expect(output).toContain("[ERROR] Pre-upgrade backup stopped the installer");
+      expect(output).not.toContain("openshell gateway");
     } finally {
       cleanup();
     }
