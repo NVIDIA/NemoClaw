@@ -5,7 +5,6 @@ import * as childProcess from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { once } from "node:events";
 import https from "node:https";
 import net from "node:net";
 import { afterAll, describe, expect, it, vi } from "vitest";
@@ -41,7 +40,9 @@ describe("MCP HTTPS transport diagnostics", () => {
     try {
       client.on("error", () => {});
       client.resume();
-      const closed = once(client, "close");
+      const closed = new Promise<void>((resolve) => {
+        client.once("close", () => resolve());
+      });
       client.end("GET /injected-sensitive-marker HTTP/1.1\r\nHost: localhost\r\n\r\n");
       await closed;
       await expect.poll(() => server.diagnostics().tlsClientErrors.ERR_SSL_HTTP_REQUEST).toBe(1);
