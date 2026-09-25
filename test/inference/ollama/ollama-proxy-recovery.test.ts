@@ -1423,10 +1423,12 @@ execute().catch((error) => {
         assert.equal(fs.readFileSync(activeTokenPath, "utf8").trim(), spawnedTokens[0]);
 
         fs.rmSync(enteredPath, { force: true });
-        fs.writeFileSync(path.join(stateDir, "ollama-proxy-token"), "old-token\n", { mode: 0o600 });
-        fs.writeFileSync(path.join(stateDir, "ollama-backend"), "http://127.0.0.1:11434\n", {
-          mode: 0o600,
-        });
+        fs.rmSync(path.join(stateDir, "ollama-proxy-token"), { force: true });
+        fs.rmSync(path.join(stateDir, "ollama-backend"), { force: true });
+        fs.rmSync(path.join(stateDir, "ollama-backend.json"), { force: true });
+        fs.rmSync(path.join(stateDir, "ollama-auth-proxy.pid"), { force: true });
+        fs.rmSync(path.join(stateDir, "ollama-proxy-port"), { force: true });
+        fs.rmSync(activeTokenPath, { force: true });
         fs.writeFileSync(spawnLogPath, "");
 
         const transaction = runChild("transaction");

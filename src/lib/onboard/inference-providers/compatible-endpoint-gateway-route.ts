@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { OLLAMA_PROXY_PORT } from "../../core/ollama-proxy-port";
+import { isProtectedNemoClawHostPort } from "../../core/protected-host-ports";
 import { VLLM_PORT } from "../../core/vllm-port";
 import { unsafeEndpointUrlViolation } from "../../core/endpoint-url-safety";
 import { LLAMA_CPP_PORT } from "../../inference/llama-cpp/contract";
@@ -24,13 +24,13 @@ const LOOPBACK_BRIDGE_PROVIDERS = new Set(["compatible-endpoint", "llama-cpp-loc
 
 /**
  * Validate the source identity of a compatible endpoint onboarded through the
- * protected no-auth proxy. The proxy may forward to any explicit unprivileged
- * loopback port even though direct sandbox bridge routes use a fixed port set.
+ * protected no-auth proxy. The proxy may forward to an explicit unprivileged
+ * loopback port that is not reserved for NemoClaw's control plane, even though
+ * direct sandbox bridge routes use a fixed port set.
  */
 export function isLoopbackNoAuthCompatibleEndpointUrl(
   provider: string,
   endpointUrl: string | null | undefined,
-  proxyPort: number = OLLAMA_PROXY_PORT,
 ): boolean {
   if (
     provider !== "compatible-endpoint" ||
@@ -57,7 +57,7 @@ export function isLoopbackNoAuthCompatibleEndpointUrl(
     Number.isInteger(port) &&
     port >= 1024 &&
     port <= 65535 &&
-    port !== proxyPort
+    !isProtectedNemoClawHostPort(port)
   );
 }
 

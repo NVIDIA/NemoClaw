@@ -18,8 +18,8 @@ OpenShell forwards the traffic and injects the provider credential at egress.
 The sandbox does not receive the raw API key.
 
 Use `COMPATIBLE_API_KEY` for an OpenAI-compatible endpoint that requires authentication.
-For an HTTP endpoint on `localhost`, `127.0.0.1`, or `[::1]`, you can select no authentication on any explicit unprivileged port from `1024` through `65535`.
-The endpoint port must differ from `NEMOCLAW_OLLAMA_PROXY_PORT` (`11435` by default); configure a different free proxy port before onboarding when they conflict.
+For an HTTP endpoint on `localhost`, `127.0.0.1`, or `[::1]`, you can select no authentication on an explicit unprivileged port from `1024` through `65535` that is not reserved for the NemoClaw gateway, dashboard, auth proxy, or credential adapters.
+The shared protected proxy keeps serving its existing backend while any sandbox may depend on that route; reuse the same endpoint or migrate those sandboxes before selecting a different no-authentication backend.
 For non-interactive onboarding of that OpenAI-compatible endpoint, set `NEMOCLAW_COMPATIBLE_AUTH_MODE=none`.
 Use `COMPATIBLE_ANTHROPIC_API_KEY` for a custom Anthropic-compatible endpoint.
 Anthropic-compatible onboarding requires a non-empty value even when the upstream server does not authenticate requests.

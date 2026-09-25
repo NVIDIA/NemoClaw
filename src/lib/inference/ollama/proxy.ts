@@ -652,17 +652,6 @@ function startOllamaAuthProxyWithTokenUnlocked(
   }
 }
 
-function startOllamaAuthProxyWithToken(proxyToken: string, backendUrl?: string): boolean {
-  return withOllamaProxyLifecycleLock(() => {
-    const releaseReservedPortOnFailure = !readProxyStateFile(PROXY_TOKEN_PATH);
-    return startOllamaAuthProxyWithTokenUnlocked(
-      proxyToken,
-      backendUrl,
-      releaseReservedPortOnFailure,
-    );
-  });
-}
-
 function startOllamaAuthProxy(backendUrl?: string): boolean {
   return withOllamaProxyLifecycleLock(() => {
     // Re-onboarding the committed local Ollama route must keep the credential
@@ -693,18 +682,35 @@ function startOllamaAuthProxy(backendUrl?: string): boolean {
 }
 
 function noAuthProxy(endpointUrl: string) {
-  const endpoint = new URL(endpointUrl);
-  if (!startOllamaAuthProxyWithToken(generateProxyToken(), endpoint.origin)) {
-    restorePersistedOllamaAuthProxy();
-    throw new Error("Could not start the protected loopback route.");
-  }
-  return {
-    baseUrl: `http://host.openshell.internal:${OLLAMA_PROXY_PORT}${endpoint.pathname}`,
-    credentialValue: getOllamaProxyToken()!,
-    persist: () =>
-      persistProxyToken(getOllamaProxyToken()!, endpoint.origin, "compatible-endpoint"),
-    restore: restorePersistedOllamaAuthProxy,
-  };
+  return withOllamaProxyLifecycleLock(() => {
+    const endpoint = new URL(endpointUrl);
+    const persistedToken = loadPersistedProxyToken();
+    const persistedBackend = readProxyBackendIdentity();
+    if (
+      persistedToken &&
+      (persistedBackend.kind !== "compatible-endpoint" || persistedBackend.url !== endpoint.origin)
+    ) {
+      throw new Error(
+        "The shared protected loopback route already serves another inference backend. " +
+          "NemoClaw will not replace it while existing sandboxes may depend on it. " +
+          "Use the already configured endpoint, or remove or migrate those sandboxes before selecting a different endpoint.",
+      );
+    }
+
+    const proxyToken = persistedToken ?? generateProxyToken();
+    if (
+      !startOllamaAuthProxyWithTokenUnlocked(proxyToken, endpoint.origin, persistedToken === null)
+    ) {
+      restorePersistedOllamaAuthProxy();
+      throw new Error("Could not start the protected loopback route.");
+    }
+    return {
+      baseUrl: `http://host.openshell.internal:${OLLAMA_PROXY_PORT}${endpoint.pathname}`,
+      credentialValue: proxyToken,
+      persist: () => persistProxyToken(proxyToken, endpoint.origin, "compatible-endpoint"),
+      restore: restorePersistedOllamaAuthProxy,
+    };
+  });
 }
 
 function restorePersistedOllamaAuthProxy(): void {

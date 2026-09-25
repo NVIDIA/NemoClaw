@@ -9,8 +9,8 @@ import path from "node:path";
 
 import { describe, it } from "vitest";
 
-describe("ollama auth proxy rollback", () => {
-  it("restores committed state after an abandoned or failed replacement (#7424)", () => {
+describe("ollama auth proxy route ownership", () => {
+  it("reuses an identical committed route and rejects a different backend before mutation", () => {
     const repoRoot = path.join(import.meta.dirname, "../../..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-proxy-rollback-"));
     const scriptPath = path.join(tmpDir, "rollback-check.js");
@@ -63,11 +63,16 @@ const stateDir = path.join(process.env.HOME, ".nemoclaw");
 fs.mkdirSync(stateDir, { recursive: true });
 fs.writeFileSync(path.join(stateDir, "ollama-proxy-token"), "committed-token\n", { mode: 0o600 });
 fs.writeFileSync(path.join(stateDir, "ollama-backend"), "http://127.0.0.1:7000\n", { mode: 0o600 });
+fs.writeFileSync(
+  path.join(stateDir, "ollama-backend.json"),
+  JSON.stringify({ schemaVersion: 1, kind: "compatible-endpoint", url: "http://127.0.0.1:7000" }),
+  { mode: 0o600 },
+);
 fs.writeFileSync(path.join(stateDir, "ollama-auth-proxy.pid"), "4000\n", { mode: 0o600 });
 
 const proxy = require(${proxyPath});
-const prepared = proxy.noAuthProxy("http://127.0.0.1:8000/v1");
-prepared.restore();
+const prepared = proxy.noAuthProxy("http://127.0.0.1:7000/v1");
+prepared.persist();
 let startupError = "";
 try {
   proxy.noAuthProxy("http://127.0.0.1:9000/v1");
@@ -98,21 +103,15 @@ console.log(JSON.stringify({
 
     assert.equal(result.status, 0, result.stderr);
     const payload = JSON.parse(result.stdout.trim().split("\n").pop() ?? "{}");
-    assert.equal(payload.proxySpawns.length, 4);
-    assert.notEqual(payload.proxySpawns[0].token, "committed-token");
-    assert.equal(payload.proxySpawns[0].backendUrl, "http://127.0.0.1:8000");
-    assert.equal(payload.proxySpawns[1].token, "committed-token");
-    assert.equal(payload.proxySpawns[1].backendUrl, "http://127.0.0.1:7000");
-    assert.notEqual(payload.proxySpawns[2].token, "committed-token");
-    assert.equal(payload.proxySpawns[2].backendUrl, "http://127.0.0.1:9000");
-    assert.equal(payload.proxySpawns[3].token, "committed-token");
-    assert.equal(payload.proxySpawns[3].backendUrl, "http://127.0.0.1:7000");
-    assert.deepEqual(payload.runCommands, [
-      ["kill", "4000"],
-      ["kill", "5000"],
-      ["kill", "6000"],
+    assert.deepEqual(payload.proxySpawns, [
+      {
+        pid: 5000,
+        token: "committed-token",
+        backendUrl: "http://127.0.0.1:7000",
+      },
     ]);
-    assert.equal(payload.startupError, "Could not start the protected loopback route.");
+    assert.deepEqual(payload.runCommands, [["kill", "4000"]]);
+    assert.match(payload.startupError, /already serves another inference backend/);
     assert.equal(payload.runningToken, "committed-token");
     assert.equal(payload.persistedToken, "committed-token");
     assert.equal(payload.persistedBackend, "http://127.0.0.1:7000");

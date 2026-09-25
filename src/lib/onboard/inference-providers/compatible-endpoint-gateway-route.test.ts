@@ -4,6 +4,21 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  BEDROCK_RUNTIME_ADAPTER_PORT,
+  DASHBOARD_PORT,
+  DASHBOARD_PORT_RANGE_END,
+  DASHBOARD_PORT_RANGE_START,
+  DEFAULT_BEDROCK_RUNTIME_ADAPTER_PORT,
+  DEFAULT_HTTPS_PIN_RUNTIME_ADAPTER_PORT,
+  DEFAULT_OLLAMA_PROXY_PORT,
+  DEFAULT_OPENROUTER_RUNTIME_ADAPTER_PORT,
+  GATEWAY_PORT,
+  HTTPS_PIN_RUNTIME_ADAPTER_PORT,
+  OLLAMA_PROXY_PORT,
+  OPENROUTER_RUNTIME_ADAPTER_PORT,
+} from "../../core/ports";
+
+import {
   COMPATIBLE_ENDPOINT_GATEWAY_PORTS,
   gatewayReachableCompatibleEndpointUrl,
   isLoopbackNoAuthCompatibleEndpointUrl,
@@ -29,13 +44,22 @@ describe("compatible endpoint gateway routing", () => {
     ).toBe(true);
   });
 
-  it("rejects the configured proxy listener port as a backend", () => {
+  it.each([
+    ["gateway", GATEWAY_PORT],
+    ["dashboard", DASHBOARD_PORT],
+    ["dashboard range start", DASHBOARD_PORT_RANGE_START],
+    ["dashboard range end", DASHBOARD_PORT_RANGE_END],
+    ["configured proxy", OLLAMA_PROXY_PORT],
+    ["default proxy", DEFAULT_OLLAMA_PROXY_PORT],
+    ["configured Bedrock adapter", BEDROCK_RUNTIME_ADAPTER_PORT],
+    ["default Bedrock adapter", DEFAULT_BEDROCK_RUNTIME_ADAPTER_PORT],
+    ["configured OpenRouter adapter", OPENROUTER_RUNTIME_ADAPTER_PORT],
+    ["default OpenRouter adapter", DEFAULT_OPENROUTER_RUNTIME_ADAPTER_PORT],
+    ["configured HTTPS-pin adapter", HTTPS_PIN_RUNTIME_ADAPTER_PORT],
+    ["default HTTPS-pin adapter", DEFAULT_HTTPS_PIN_RUNTIME_ADAPTER_PORT],
+  ])("rejects the protected NemoClaw %s port", (_label, port) => {
     expect(
-      isLoopbackNoAuthCompatibleEndpointUrl(
-        "compatible-endpoint",
-        "http://localhost:13000/v1",
-        13000,
-      ),
+      isLoopbackNoAuthCompatibleEndpointUrl("compatible-endpoint", `http://localhost:${port}/v1`),
     ).toBe(false);
   });
 

@@ -1,0 +1,64 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { DEFAULT_OLLAMA_PROXY_PORT, OLLAMA_PROXY_PORT } from "./ollama-proxy-port";
+import { parseServicePortOverride } from "./service-port-boundary";
+
+export const DEFAULT_GATEWAY_PORT = 8080;
+const CONFIGURED_GATEWAY_PORT = parseServicePortOverride(
+  "NEMOCLAW_GATEWAY_PORT",
+  process.env.NEMOCLAW_GATEWAY_PORT,
+  DEFAULT_GATEWAY_PORT,
+);
+
+export const SANDBOX_DASHBOARD_PORT = 18789;
+export const DASHBOARD_PORT = parseServicePortOverride(
+  "NEMOCLAW_DASHBOARD_PORT",
+  process.env.NEMOCLAW_DASHBOARD_PORT,
+  SANDBOX_DASHBOARD_PORT,
+);
+export const DASHBOARD_PORT_RANGE_START = SANDBOX_DASHBOARD_PORT;
+export const DASHBOARD_PORT_RANGE_END = 18799;
+
+export const DEFAULT_BEDROCK_RUNTIME_ADAPTER_PORT = 11436;
+export const BEDROCK_RUNTIME_ADAPTER_PORT = parseServicePortOverride(
+  "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT",
+  process.env.NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT,
+  DEFAULT_BEDROCK_RUNTIME_ADAPTER_PORT,
+);
+export const DEFAULT_OPENROUTER_RUNTIME_ADAPTER_PORT = 11437;
+export const OPENROUTER_RUNTIME_ADAPTER_PORT = parseServicePortOverride(
+  "NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT",
+  process.env.NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT,
+  DEFAULT_OPENROUTER_RUNTIME_ADAPTER_PORT,
+);
+export const DEFAULT_HTTPS_PIN_RUNTIME_ADAPTER_PORT = 11438;
+export const HTTPS_PIN_RUNTIME_ADAPTER_PORT = parseServicePortOverride(
+  "NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_PORT",
+  process.env.NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_PORT,
+  DEFAULT_HTTPS_PIN_RUNTIME_ADAPTER_PORT,
+);
+
+/**
+ * Ports that an operator-entered loopback inference URL must never target.
+ *
+ * Inference backends are intentionally absent: they are valid compatible
+ * endpoint targets. This boundary covers NemoClaw's own control plane,
+ * credential-injecting adapters, and defaults that stay reserved when an
+ * adapter or proxy is moved with an environment override.
+ */
+export function isProtectedNemoClawHostPort(port: number): boolean {
+  return (
+    port === CONFIGURED_GATEWAY_PORT ||
+    port === DASHBOARD_PORT ||
+    (port >= DASHBOARD_PORT_RANGE_START && port <= DASHBOARD_PORT_RANGE_END) ||
+    port === OLLAMA_PROXY_PORT ||
+    port === DEFAULT_OLLAMA_PROXY_PORT ||
+    port === BEDROCK_RUNTIME_ADAPTER_PORT ||
+    port === DEFAULT_BEDROCK_RUNTIME_ADAPTER_PORT ||
+    port === OPENROUTER_RUNTIME_ADAPTER_PORT ||
+    port === DEFAULT_OPENROUTER_RUNTIME_ADAPTER_PORT ||
+    port === HTTPS_PIN_RUNTIME_ADAPTER_PORT ||
+    port === DEFAULT_HTTPS_PIN_RUNTIME_ADAPTER_PORT
+  );
+}
