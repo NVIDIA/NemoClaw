@@ -5,7 +5,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { withSandboxLifecycleLock } from "../../actions/sandbox/lifecycle/lock";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock-acquisition";
+import { hermesPortableReceiptDirectory } from "./hermes-portable-receipt";
 import { withHermesPortableStartupOperation } from "./hermes-portable-startup-operation";
 import { recoverHermesPortableOllamaInference } from "./hermes-portable-ollama-inference";
 import { createHarness } from "./hermes-portable-ollama-recovery.test-fixture";
@@ -17,7 +19,10 @@ describe("Portable inference startup reuse", () => {
     stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "hermes-inference-reuse-"));
     now = 0;
   });
-  afterEach(() => fs.rmSync(stateDir, { recursive: true, force: true }));
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    fs.rmSync(stateDir, { recursive: true, force: true });
+  });
 
   function setup() {
     const harness = createHarness(true, true);
@@ -67,6 +72,23 @@ describe("Portable inference startup reuse", () => {
     await expect(h.run(startupEnv)).resolves.toBe("reused");
     expect(h.overrides.inspectReadinessRuntime).toHaveBeenCalledTimes(2);
     expect(h.overrides.prepareRecoveryEntry).not.toHaveBeenCalled();
+  });
+
+  it("hands a persisted receipt selection from the real lifecycle lock to probe recovery (#11574)", async () => {
+    const h = setup();
+    delete (h.input.env as NodeJS.ProcessEnv).NEMOCLAW_EXPERIMENTAL_PROFILE;
+    vi.stubEnv("HOME", stateDir);
+    vi.stubEnv("NEMOCLAW_TEST_BASE_HOME", stateDir);
+    vi.stubEnv("NEMOCLAW_TEST_STATE_DIR", stateDir);
+    fs.mkdirSync(hermesPortableReceiptDirectory("alpha", stateDir), { recursive: true });
+
+    await expect(withSandboxLifecycleLock("alpha", h.recover)).resolves.toBe("reused");
+    expect(h.input.verifyRoute).toHaveBeenCalledOnce();
+    expect(h.input.prepareProbeDependency).toHaveBeenCalledOnce();
+    expect(h.overrides.inspectReadinessRuntime).toHaveBeenCalledTimes(2);
+    expect(h.overrides.prepareRecoveryEntry).not.toHaveBeenCalled();
+    expect(h.dependency.release).toHaveBeenCalledOnce();
+    expect(h.dependency.rollback).not.toHaveBeenCalled();
   });
 
   it("rejects an explicit non-Portable profile even inside a Portable scope (#11574)", async () => {
