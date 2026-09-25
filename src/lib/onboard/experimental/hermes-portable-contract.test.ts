@@ -16,6 +16,8 @@ import {
 } from "./hermes-portable-contract";
 
 const SANDBOX = "alpha";
+const PRE_DASHBOARD_STATE_CLEANUP_MANIFEST_SHA256 =
+  "3f19946aa05920ef90ae0651e2da123ad8b13bedff6e0dd8c1b9f5cb20024af5";
 const PRE_DEFERRED_ONBOARDING_MANIFEST_SHA256 =
   "4600403d80c0ca038a89ac627f248a41148f1d97f649a49588a06b29427cee6c";
 const PRE_UPGRADE_MANIFEST_SHA256 =
@@ -113,6 +115,40 @@ function removeReviewedNativeOwnershipMetadata(agent: AgentDefinition): void {
         ? { ...entry, clearWhenAbsent: true }
         : entry,
     ),
+  });
+}
+
+function restoreLegacyDashboardStateMetadata(agent: AgentDefinition): void {
+  const source = fs.readFileSync(agent.manifestPath, "utf8");
+  const marker = "  # Hermes' WhatsApp bridge stores QR-paired session credentials under\n";
+  const legacyState = [
+    "  # Legacy pre-#7200 dashboard profile location. Keep it in snapshots while",
+    "  # startup migrates existing state into profiles/dashboard-home.",
+    "  - dashboard-home",
+    "",
+  ].join("\n");
+  expect(source.split(marker)).toHaveLength(2);
+  fs.writeFileSync(agent.manifestPath, source.replace(marker, `${legacyState}${marker}`), {
+    mode: 0o644,
+  });
+  const pairingIndex = agent.stateDirectories.findIndex(
+    (entry) => entry.kind === "path" && entry.path === "pairing",
+  );
+  expect(pairingIndex).toBeGreaterThanOrEqual(0);
+  Object.defineProperty(agent, "stateDirectories", {
+    configurable: true,
+    enumerable: true,
+    writable: true,
+    value: [
+      ...agent.stateDirectories.slice(0, pairingIndex + 1),
+      {
+        kind: "path",
+        path: "dashboard-home",
+        backup: true,
+        clearWhenAbsent: true,
+      },
+      ...agent.stateDirectories.slice(pairingIndex + 1),
+    ],
   });
 }
 
@@ -255,18 +291,30 @@ describe("Hermes portable startup contract", () => {
 
   it.each([
     {
+      expectedManifestSha256: PRE_DASHBOARD_STATE_CLEANUP_MANIFEST_SHA256,
+      prepare: restoreLegacyDashboardStateMetadata,
+      startupDescriptorChanged: true,
+    },
+    {
       expectedManifestSha256: PRE_DEFERRED_ONBOARDING_MANIFEST_SHA256,
-      prepare: removeDeferredOnboardingMetadata,
-      startupDescriptorChanged: false,
+      prepare: (agent: AgentDefinition) => {
+        restoreLegacyDashboardStateMetadata(agent);
+        removeDeferredOnboardingMetadata(agent);
+      },
+      startupDescriptorChanged: true,
     },
     {
       expectedManifestSha256: PRE_UPGRADE_MANIFEST_SHA256,
-      prepare: restorePreviousReviewedManifest,
-      startupDescriptorChanged: false,
+      prepare: (agent: AgentDefinition) => {
+        restoreLegacyDashboardStateMetadata(agent);
+        restorePreviousReviewedManifest(agent);
+      },
+      startupDescriptorChanged: true,
     },
     {
       expectedManifestSha256: PRE_SKILLS_MANIFEST_SHA256,
       prepare: (agent: AgentDefinition) => {
+        restoreLegacyDashboardStateMetadata(agent);
         restorePreviousReviewedManifest(agent);
         removeReviewedSkillsMetadata(agent);
         removeReviewedNativeOwnershipMetadata(agent);
@@ -276,13 +324,14 @@ describe("Hermes portable startup contract", () => {
     {
       expectedManifestSha256: PRE_NATIVE_OWNERSHIP_MANIFEST_SHA256,
       prepare: (agent: AgentDefinition) => {
+        restoreLegacyDashboardStateMetadata(agent);
         restorePreviousReviewedManifest(agent);
         removeReviewedNativeOwnershipMetadata(agent);
       },
       startupDescriptorChanged: true,
     },
   ])(
-    "accepts reviewed manifest metadata transition $expectedManifestSha256 when startup authority is unchanged (#11248, #11766)",
+    "accepts reviewed manifest metadata transition $expectedManifestSha256 when startup authority is unchanged (#11248, #11766, #11768)",
     ({ expectedManifestSha256, prepare, startupDescriptorChanged }) => {
       const installedAgent = copyAgent();
       prepare(installedAgent);
@@ -312,6 +361,7 @@ describe("Hermes portable startup contract", () => {
   it("derives reviewed transition descriptors for the actual sandbox name (#11766)", () => {
     const sandboxName = "hermes-portable-e2e";
     const installedAgent = copyAgent();
+    restoreLegacyDashboardStateMetadata(installedAgent);
     restorePreviousReviewedManifest(installedAgent);
     removeReviewedSkillsMetadata(installedAgent);
     removeReviewedNativeOwnershipMetadata(installedAgent);

@@ -47,14 +47,17 @@ const ALLOWED_ENV = new Set([
 ]);
 const REVIEWED_HERMES_MANIFEST_VERSIONS = new Set(["0.20.6", "0.21.3"]);
 // One-way compatibility bridges for the exact additive skills metadata change
-// in #11248, native restore ownership in #11766, and host-only deferred
-// onboarding metadata in #10341. None of these relax startup authority checks.
+// in #11248, native restore ownership in #11766, host-only deferred onboarding
+// metadata in #10341, and removal of NemoClaw's legacy dashboard snapshot state
+// in #11768. None of these relax startup authority checks.
 // Support these reviewed manifest generations through the current and next
 // LKG upgrade window. Remove them under #11357 once release qualification and
 // the historical rootless lifecycle fixture have advanced past these hashes.
 const REVIEWED_INSTALLED_STATE_IDENTITY =
   "1cadfa0a741b4e66b5599a5edede99c2ef9cb00ef59c9814f164f95a89957140";
-const CURRENT_STATE_IDENTITY = "60ee30ca30cf989b0eb9ab67ed9633f470ad05b2c9c92f5e576d2ea8a6db3c64";
+const PRE_DASHBOARD_CLEANUP_STATE_IDENTITY =
+  "60ee30ca30cf989b0eb9ab67ed9633f470ad05b2c9c92f5e576d2ea8a6db3c64";
+const CURRENT_STATE_IDENTITY = "f8324b7b457a1ea7776ef6982746964796e39e1ac6f83100c14fa8e31ab70fd8";
 const REVIEWED_INSTALLED_MANIFEST_STATE_IDENTITIES = new Map([
   [
     "c7bcd6e0616904ab66c1f2f39a670d920cfb1b7ef7c1edc496e20e554db6a6c2",
@@ -64,10 +67,20 @@ const REVIEWED_INSTALLED_MANIFEST_STATE_IDENTITIES = new Map([
     "e78822837d5530f61a26ea1d554d7f9b21be13e3e223e294f0999187dc0fa71e",
     REVIEWED_INSTALLED_STATE_IDENTITY,
   ],
-  ["27453a10ca2e75f16ce5a1487192d11ac92b4d1752e8538131b5233c17a89d85", CURRENT_STATE_IDENTITY],
-  ["4600403d80c0ca038a89ac627f248a41148f1d97f649a49588a06b29427cee6c", CURRENT_STATE_IDENTITY],
+  [
+    "27453a10ca2e75f16ce5a1487192d11ac92b4d1752e8538131b5233c17a89d85",
+    PRE_DASHBOARD_CLEANUP_STATE_IDENTITY,
+  ],
+  [
+    "4600403d80c0ca038a89ac627f248a41148f1d97f649a49588a06b29427cee6c",
+    PRE_DASHBOARD_CLEANUP_STATE_IDENTITY,
+  ],
+  [
+    "3f19946aa05920ef90ae0651e2da123ad8b13bedff6e0dd8c1b9f5cb20024af5",
+    PRE_DASHBOARD_CLEANUP_STATE_IDENTITY,
+  ],
 ]);
-const CURRENT_MANIFEST = "3f19946aa05920ef90ae0651e2da123ad8b13bedff6e0dd8c1b9f5cb20024af5";
+const CURRENT_MANIFEST = "f4f46a689a7e999641bab84522ae97159435bdef599912ece038e4d4b03dff46";
 
 export interface ResolveHermesPortableStartupContractInput {
   readonly agent: AgentDefinition;
