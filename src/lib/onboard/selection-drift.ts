@@ -43,41 +43,48 @@ export type SelectionConfigReadDeps = {
   tmpDir?: string;
 };
 
-export function findSelectionConfigPath(dir: string, filename = "config.json"): string | null {
+export function findSelectionConfigPath(dir: string): string | null {
   if (!dir || !fs.existsSync(dir)) return null;
   const entries = fs.readdirSync(dir, { withFileTypes: true });
   for (const entry of entries) {
     const fullPath = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      const found = findSelectionConfigPath(fullPath, filename);
+      const found = findSelectionConfigPath(fullPath);
       if (found) return found;
       continue;
     }
-    if (entry.name === filename) {
+    if (entry.name === "config.json") {
       return fullPath;
     }
   }
   return null;
 }
 
-function readDownloadedSelectionSource(
+export function readSandboxSelectionConfig(
   sandboxName: string,
-  remotePath: string,
-  filename: string,
   deps: SelectionConfigReadDeps,
-): string | null {
+): SelectionIdentity | null {
   if (!sandboxName) return null;
   let tmpDir: string | undefined;
   try {
     tmpDir = fs.mkdtempSync(path.join(deps.tmpDir ?? os.tmpdir(), "nemoclaw-selection-"));
     const result = deps.runOpenshell(
-      ["sandbox", "download", sandboxName, remotePath, `${tmpDir}${path.sep}`],
+      [
+        "sandbox",
+        "download",
+        sandboxName,
+        "/sandbox/.nemoclaw/config.json",
+        `${tmpDir}${path.sep}`,
+      ],
       { ignoreError: true, stdio: ["ignore", "ignore", "ignore"] },
     );
     if (result.status !== 0) return null;
-    const configPath = findSelectionConfigPath(tmpDir, filename);
+    const configPath = findSelectionConfigPath(tmpDir);
     if (!configPath) return null;
-    return fs.readFileSync(configPath, "utf-8");
+    const parsed = JSON.parse(fs.readFileSync(configPath, "utf-8")) as Record<string, unknown>;
+    const provider = normalizeSelectionComponent(parsed.provider);
+    const model = normalizeSelectionComponent(parsed.model);
+    return provider && model ? { provider, model } : null;
   } catch {
     return null;
   } finally {
@@ -88,27 +95,6 @@ function readDownloadedSelectionSource(
         // ignore cleanup errors
       }
     }
-  }
-}
-
-export function readSandboxSelectionConfig(
-  sandboxName: string,
-  deps: SelectionConfigReadDeps,
-): SelectionIdentity | null {
-  const raw = readDownloadedSelectionSource(
-    sandboxName,
-    "/sandbox/.nemoclaw/config.json",
-    "config.json",
-    deps,
-  );
-  if (raw === null) return null;
-  try {
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const provider = normalizeSelectionComponent(parsed.provider);
-    const model = normalizeSelectionComponent(parsed.model);
-    return provider && model ? { provider, model } : null;
-  } catch {
-    return null;
   }
 }
 

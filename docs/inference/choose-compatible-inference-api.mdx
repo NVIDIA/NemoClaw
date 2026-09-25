@@ -77,9 +77,10 @@ Finish active work before continuing.
 </Warning>
 
 ```bash
-$$nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox
+NEMOCLAW_PREFERRED_API=openai-responses $$nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox
 ```
 
+For Chat Completions, use `NEMOCLAW_PREFERRED_API=openai-completions` in the same command.
 NemoClaw probes the endpoint again and writes the selected API path into the replacement sandbox image.
 
 </AgentOnly>
