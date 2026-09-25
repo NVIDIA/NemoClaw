@@ -348,18 +348,13 @@ export async function checkRebuildGatewayCredentialReuseOrBail(
     );
     return true;
   }
-  const rejectionReason =
-    decision.kind === "reject"
-      ? decision.reason
-      : "the host credential state changed during preflight";
-
   console.error("");
   console.error(
-    `  ${_RD}Rebuild preflight failed:${R} cannot safely reuse the gateway credential for '${config.provider}'.`,
+    `  ${_RD}Rebuild preflight failed:${R} cannot safely reuse the recorded gateway credential.`,
   );
-  console.error(`  ${rejectionReason}.`);
-  console.error(`  Export ${config.credentialEnv} to use normal credential validation and upsert.`);
+  console.error("  The recorded route or host credential state changed during preflight.");
+  console.error("  Export the provider credential to use normal validation and upsert.");
   console.error("  Sandbox is untouched — no data was lost.");
-  bail(`Unsafe gateway credential reuse for provider '${config.provider}': ${rejectionReason}`);
+  bail("Unsafe gateway credential reuse");
   return false;
 }

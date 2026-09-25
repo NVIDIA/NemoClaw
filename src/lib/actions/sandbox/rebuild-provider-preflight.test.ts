@@ -284,7 +284,7 @@ describe("checkRebuildGatewayCredentialReuseOrBail", () => {
   });
 
   it("rejects spoofed gateway bindings", async () => {
-    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const spoofedProvider = {
       ...exactGatewayProvider,
       credentialKeys: ["ATTACKER_KEY"],
@@ -294,7 +294,11 @@ describe("checkRebuildGatewayCredentialReuseOrBail", () => {
         readGatewayProviderMetadata: async () => spoofedProvider,
         readRecordedProviderEndpoints: () => [],
       }),
-    ).rejects.toThrow("no compatible non-secret identity");
+    ).rejects.toThrow("Unsafe gateway credential reuse");
+    const diagnostics = error.mock.calls.flat().join("\n");
+    expect(diagnostics).not.toContain("compatible-endpoint");
+    expect(diagnostics).not.toContain("COMPATIBLE_API_KEY");
+    expect(diagnostics).not.toContain("ATTACKER_KEY");
   });
 
   it("rejects a custom endpoint recorded by another sandbox", async () => {
@@ -306,7 +310,7 @@ describe("checkRebuildGatewayCredentialReuseOrBail", () => {
         readGatewayProviderMetadata: async () => exactGatewayProvider,
         readRecordedProviderEndpoints,
       }),
-    ).rejects.toThrow("recovered endpoint identity is missing or incompatible");
+    ).rejects.toThrow("Unsafe gateway credential reuse");
     expect(readRecordedProviderEndpoints).toHaveBeenCalledWith("compatible-endpoint", "alpha");
   });
 });
