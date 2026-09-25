@@ -15,6 +15,7 @@ export const DEFAULT_PARITY_MANIFEST = "test/e2e/mock-parity.json";
 
 export type MockParityEntry = {
   live: string;
+  /** Live helpers and explicitly owned shared test/e2e/fixtures sources. */
   liveSources?: string[];
   fast?: string[];
   liveOnlyReason?: string;
@@ -26,7 +27,8 @@ export type MockParityManifest = {
 };
 
 const LIVE_TEST = /^test\/e2e\/live\/.+\.test\.ts$/u;
-const LIVE_HELPER = /^test\/e2e\/live\/(?!.*\.test\.ts$).+\.ts$/u;
+const LIVE_HELPER = /^test\/e2e\/live\/(?!.*\.test\.ts$).+\.(?:py|ts)$/u;
+const SHARED_FIXTURE = /^test\/e2e\/fixtures\/(?!.*\.test\.ts$).+\.ts$/u;
 const FAST_TESTS = [
   /^src\/.+\.test\.ts$/u,
   /^nemoclaw\/src\/.+\.test\.ts$/u,
@@ -99,11 +101,17 @@ function isFastPrTest(file: string): boolean {
 
 export function validateMockParity(options: {
   manifest: MockParityManifest;
+  baseManifest?: MockParityManifest;
+  changedFastTestRenames?: ReadonlyMap<string, string>;
+  renamedLiveOwners?: ReadonlyMap<string, string>;
   changedFiles: readonly string[];
   fileExists?: (file: string) => boolean;
 }): string[] {
   const {
     manifest,
+    baseManifest,
+    changedFastTestRenames = new Map<string, string>(),
+    renamedLiveOwners = new Map<string, string>(),
     changedFiles,
     fileExists = (file) => fs.existsSync(path.join(REPO_ROOT, file)),
   } = options;
@@ -135,7 +143,9 @@ export function validateMockParity(options: {
       (!Array.isArray(entry.liveSources) ||
         entry.liveSources.some((file) => typeof file !== "string"))
     ) {
-      errors.push(`${entry.live}: liveSources must be an array of live E2E helper paths`);
+      errors.push(
+        `${entry.live}: liveSources must be an array of live E2E helper or shared fixture paths`,
+      );
       continue;
     }
     if (
@@ -159,12 +169,19 @@ export function validateMockParity(options: {
 
     if (!fileExists(entry.live)) errors.push(`${entry.live}: live test does not exist`);
     for (const sourceFile of new Set(entry.liveSources ?? [])) {
-      if (!isSafeRepoPath(sourceFile) || !LIVE_HELPER.test(sourceFile)) {
-        errors.push(`${entry.live}: ${sourceFile} is not a test/e2e/live/**/*.ts helper file`);
+      if (
+        !isSafeRepoPath(sourceFile) ||
+        !(LIVE_HELPER.test(sourceFile) || SHARED_FIXTURE.test(sourceFile))
+      ) {
+        errors.push(
+          `${entry.live}: ${sourceFile} is not a test/e2e/live/**/*.py or *.ts helper or test/e2e/fixtures/**/*.ts fixture`,
+        );
         continue;
       }
       if (!fileExists(sourceFile)) {
-        errors.push(`${entry.live}: live E2E helper does not exist: ${sourceFile}`);
+        errors.push(
+          `${entry.live}: live E2E helper or shared fixture does not exist: ${sourceFile}`,
+        );
       }
       const owners = sourceOwners.get(sourceFile) ?? [];
       owners.push(entry);
@@ -180,13 +197,27 @@ export function validateMockParity(options: {
   }
 
   const changedFileSet = new Set(changedFiles);
-  const requireChangedFastTest = (entry: MockParityEntry, changedSource: string): void => {
+  const requireChangedFastTest = (
+    entry: MockParityEntry,
+    changedSource: string,
+    allowRename = false,
+  ): void => {
     const mappedFastTests = Array.isArray(entry.fast)
       ? entry.fast.filter((fastFile): fastFile is string => typeof fastFile === "string")
       : [];
     if (
       mappedFastTests.length > 0 &&
-      !mappedFastTests.some((fastFile) => changedFileSet.has(fastFile))
+      !mappedFastTests.some((fastFile) => {
+        if (changedFileSet.has(fastFile)) return true;
+        const replacement = allowRename ? changedFastTestRenames.get(fastFile) : undefined;
+        return (
+          replacement !== undefined &&
+          isFastPrTest(replacement) &&
+          fileExists(replacement) &&
+          changedFileSet.has(replacement) &&
+          entries.get(renamedLiveOwners.get(entry.live) ?? entry.live)?.fast?.includes(replacement)
+        );
+      })
     ) {
       errors.push(
         changedSource === entry.live
@@ -205,7 +236,29 @@ export function validateMockParity(options: {
     requireChangedFastTest(entry, liveFile);
   }
 
-  for (const helperFile of [...changedFileSet].filter((file) => LIVE_HELPER.test(file))) {
+  // Removing an explicit owner must not exempt a changed fixture from its
+  // established fast-test obligation in the same PR.
+  for (const entry of baseManifest?.entries ?? []) {
+    for (const source of entry.liveSources ?? []) {
+      if (SHARED_FIXTURE.test(source) && changedFileSet.has(source)) {
+        const headEntry = entries.get(renamedLiveOwners.get(entry.live) ?? entry.live);
+        const retainsOwnership =
+          headEntry?.liveSources?.includes(source) &&
+          entry.fast?.every((fastFile) => headEntry.fast?.includes(fastFile));
+        requireChangedFastTest(
+          headEntry && retainsOwnership ? { ...entry, fast: headEntry.fast } : entry,
+          source,
+          true,
+        );
+      }
+    }
+  }
+
+  // Existing live helpers require ownership; shared fixtures opt in explicitly
+  // through liveSources so unrelated fixture contracts are not broadened.
+  for (const helperFile of [...changedFileSet].filter(
+    (file) => LIVE_HELPER.test(file) || sourceOwners.has(file),
+  )) {
     const owners = sourceOwners.get(helperFile) ?? [];
     if (owners.length === 0) {
       errors.push(
@@ -216,7 +269,7 @@ export function validateMockParity(options: {
     for (const owner of owners) requireChangedFastTest(owner, helperFile);
   }
 
-  return errors.sort();
+  return [...new Set(errors)].sort();
 }
 
 function argument(name: string): string | undefined {
@@ -224,10 +277,11 @@ function argument(name: string): string | undefined {
   return index >= 0 ? process.argv[index + 1] : undefined;
 }
 
-function sourceAtRef(ref: string, file: string): string | null {
+function sourceAtRef(ref: string, file: string, repoRoot = REPO_ROOT): string | null {
   try {
     return execFileSync("git", ["show", `${ref}:${file}`], {
-      cwd: REPO_ROOT,
+      cwd: repoRoot,
+      stdio: ["ignore", "pipe", "pipe"],
       encoding: "utf8",
       maxBuffer: 10 * 1024 * 1024,
     });
@@ -243,27 +297,88 @@ export function filterMockParityRelevantChangedFiles(
   sourceAtHead: (file: string) => string | null,
 ): string[] {
   return files.filter((file) => {
-    if (!LIVE_TEST.test(file) && !LIVE_HELPER.test(file) && !isFastPrTest(file)) return true;
+    if (
+      !LIVE_TEST.test(file) &&
+      !LIVE_HELPER.test(file) &&
+      !SHARED_FIXTURE.test(file) &&
+      !isFastPrTest(file)
+    )
+      return true;
+    // Python indentation is executable syntax, so the TypeScript token filter
+    // cannot safely classify any Python helper change as metadata-only.
+    if (LIVE_HELPER.test(file) && file.endsWith(".py")) return true;
     return isMockParityRelevantSourceChange(sourceAtBase(file), sourceAtHead(file));
   });
 }
 
-function changedFiles(base: string, head: string): string[] {
-  const files = execFileSync(
+function gitRenamedPaths(base: string, head: string, repoRoot: string): Map<string, string> {
+  const fields = execFileSync(
     "git",
-    ["diff", "--name-only", "--diff-filter=ACMR", `${base}...${head}`],
+    ["diff", "--name-status", "-z", "--find-renames", "--diff-filter=R", `${base}...${head}`],
     {
-      cwd: REPO_ROOT,
+      cwd: repoRoot,
       encoding: "utf8",
     },
-  )
-    .split(/\r?\n/u)
-    .filter(Boolean);
+  ).split("\0");
+  const paths = new Map<string, string>();
+  for (let index = 0; index + 2 < fields.length; index += 3) {
+    paths.set(fields[index + 2]!, fields[index + 1]!);
+  }
+  return paths;
+}
+
+export function collectMockParityChangedFiles(
+  base: string,
+  head: string,
+  repoRoot = REPO_ROOT,
+): string[] {
+  const names = (filter: string, options: readonly string[] = []): string[] =>
+    execFileSync(
+      "git",
+      ["diff", "--name-only", `--diff-filter=${filter}`, ...options, `${base}...${head}`],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+      },
+    )
+      .split(/\r?\n/u)
+      .filter(Boolean);
+  // Preserve existing deletion handling for other source kinds; explicitly owned
+  // shared fixtures retain their base-manifest obligation after deletion.
+  const files = [
+    ...names("ACMR"),
+    ...names("D", ["--no-renames"]).filter((file) => SHARED_FIXTURE.test(file)),
+  ];
+  const renamedPaths = gitRenamedPaths(base, head, repoRoot);
   return filterMockParityRelevantChangedFiles(
     files,
-    (file) => sourceAtRef(base, file),
-    (file) => sourceAtRef(head, file),
+    (file) => sourceAtRef(base, renamedPaths.get(file) ?? file, repoRoot),
+    (file) => sourceAtRef(head, file, repoRoot),
   );
+}
+
+/** Preserve base ownership only through Git-proven live-owner and changed fast-test renames. */
+export function collectMockParityRenames(
+  base: string,
+  head: string,
+  repoRoot = REPO_ROOT,
+): { changedFastTestRenames: Map<string, string>; renamedLiveOwners: Map<string, string> } {
+  const changedFastTestRenames = new Map<string, string>();
+  const renamedLiveOwners = new Map<string, string>();
+  for (const [newPath, oldPath] of gitRenamedPaths(base, head, repoRoot)) {
+    const before = sourceAtRef(base, oldPath, repoRoot);
+    const after = sourceAtRef(head, newPath, repoRoot);
+    if (before === null || after === null) continue;
+    if (LIVE_TEST.test(oldPath) && LIVE_TEST.test(newPath)) renamedLiveOwners.set(oldPath, newPath);
+    if (
+      isFastPrTest(oldPath) &&
+      isFastPrTest(newPath) &&
+      isMockParityRelevantSourceChange(before, after)
+    ) {
+      changedFastTestRenames.set(oldPath, newPath);
+    }
+  }
+  return { changedFastTestRenames, renamedLiveOwners };
 }
 
 function main(): void {
@@ -273,7 +388,19 @@ function main(): void {
 
   const manifestPath = path.join(REPO_ROOT, DEFAULT_PARITY_MANIFEST);
   const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as MockParityManifest;
-  const errors = validateMockParity({ manifest, changedFiles: changedFiles(base, head) });
+  const baseManifest = JSON.parse(
+    execFileSync("git", ["show", `${base}:${DEFAULT_PARITY_MANIFEST}`], {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+      maxBuffer: 10 * 1024 * 1024,
+    }),
+  ) as MockParityManifest;
+  const errors = validateMockParity({
+    manifest,
+    baseManifest,
+    changedFiles: collectMockParityChangedFiles(base, head),
+    ...collectMockParityRenames(base, head),
+  });
   if (errors.length > 0) {
     console.error(
       ["E2E mock/live parity check failed:", ...errors.map((error) => `- ${error}`)].join("\n"),

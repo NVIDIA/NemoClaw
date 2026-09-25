@@ -88,7 +88,7 @@ describe("E2E workflow plan", () => {
     ).toEqual({
       catalogue: E2E_TARGET_CATALOGUE.length,
       "typed-registry": 3,
-      "shared-e2e": 2,
+      "shared-e2e": 1,
       "retained-workflow": 14,
       staging: 1,
     });
@@ -99,7 +99,7 @@ describe("E2E workflow plan", () => {
       }),
     ]);
     expect(plan.hermesSelected).toBe(true);
-    expect(plan.coverageMatrix).toHaveLength(76);
+    expect(plan.coverageMatrix).toHaveLength(78);
     expect(selectedWorkflowJobs(plan)).toEqual([
       "catalogue-brave-nvidia-inference",
       "catalogue-github-read",
@@ -130,6 +130,23 @@ describe("E2E workflow plan", () => {
     expect(releaseRequiredWorkflowJobs()).not.toContain("llama-cpp-dgx-spark-qualification");
   });
 
+  it("runs deferred onboarding for both accepted agents on both managed runtimes", () => {
+    const plan = buildE2eWorkflowPlan(
+      { jobs: "deferred-onboarding-hermes,deferred-onboarding-langchain-deepagents-code" },
+      { gatewayRuntimes: ["docker", "podman"] },
+    );
+    expect(
+      plan.catalogueMatrices["nvidia-api"].map((row) => [row.id, row.runtime_provider]),
+    ).toEqual([
+      ["deferred-onboarding-hermes", "docker"],
+      ["deferred-onboarding-hermes", "podman"],
+      ["deferred-onboarding-langchain-deepagents-code", "docker"],
+      ["deferred-onboarding-langchain-deepagents-code", "podman"],
+    ]);
+    expect(plan.matrix).toEqual([]);
+    expect(plan.testMatrix).toEqual([]);
+  });
+
   it("selects only native Podman-eligible executions when explicitly requested", () => {
     const plan = buildE2eWorkflowPlan({}, { gatewayRuntimes: ["podman"] });
     const catalogueIds = Object.values(plan.catalogueMatrices)
@@ -141,9 +158,14 @@ describe("E2E workflow plan", () => {
       "ubuntu-repo-cloud-openclaw",
     ]);
     expect(plan.testMatrix).toEqual([]);
-    expect(catalogueIds).toHaveLength(46);
+    expect(catalogueIds).toHaveLength(47);
     expect(catalogueIds).not.toEqual(
-      expect.arrayContaining(["bootstrap-install-smoke", "rebuild-hermes", "rebuild-openclaw"]),
+      expect.arrayContaining([
+        "bootstrap-install-smoke",
+        "gpu-e2e",
+        "rebuild-hermes",
+        "rebuild-openclaw",
+      ]),
     );
     expect(catalogueIds.some((id) => id.startsWith("openshell-gateway-upgrade-"))).toBe(false);
     expect(selectedWorkflowJobs(plan)).toEqual([
@@ -651,6 +673,17 @@ describe("E2E workflow plan", () => {
     expect(selectedWorkflowJobs(plan)).toContain("hermes-gpu-startup");
   });
 
+  it("selects both stopped-recovery consumers when the shared proof changes", () => {
+    const plan = buildE2eWorkflowPlan(
+      {},
+      { changedFiles: ["test/e2e/live/openclaw-stopped-recovery.ts"] },
+    );
+    expect(plan.catalogueMatrices["nvidia-inference"].map((row) => row.id)).toContain(
+      "rebuild-openclaw",
+    );
+    expect(selectedWorkflowJobs(plan)).toContain("mcp-bridge");
+  });
+
   it("selects only catalogue targets that own changed files", () => {
     const changedFile = "test/e2e/live/snapshot-commands.test.ts";
     const plan = buildE2eWorkflowPlan({}, { changedFiles: [changedFile] });
@@ -660,6 +693,22 @@ describe("E2E workflow plan", () => {
     ]);
     expect(plan.catalogueMatrices.standard.map((row) => row.id)).toEqual(["snapshot-commands"]);
     expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-standard", "jetson-nvmap-gpu"]);
+  });
+
+  it.each([
+    "scripts/install.sh",
+    "src/lib/actions/global.ts",
+    "src/lib/actions/maintenance.ts",
+    "src/lib/actions/sandbox/forward-recovery.ts",
+    "src/lib/actions/upgrade-sandboxes.ts",
+  ])("selects both gateway-upgrade fixtures when %s changes", (changedFile) => {
+    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toEqual([
+      ...(changedFile === "scripts/install.sh"
+        ? ["deferred-onboarding-hermes", "deferred-onboarding-langchain-deepagents-code"]
+        : []),
+      "openshell-gateway-upgrade-v0-0-89-x86-64",
+      "openshell-gateway-upgrade-v0-0-123-x86-64",
+    ]);
   });
 
   it("selects sandbox operations when its gateway client changes", () => {
@@ -777,6 +826,9 @@ describe("E2E workflow plan", () => {
 
   it.each([
     "nemoclaw-blueprint/router/pool-config.yaml",
+    "src/lib/actions/sandbox/destroy-preflight.ts",
+    "src/lib/onboard/model-router-process.ts",
+    "src/lib/onboard/model-router.ts",
     "test/e2e/live/model-router-provider-routed-inference-helpers.ts",
   ])("selects the Model Router target when %s changes", (changedFile) => {
     expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(

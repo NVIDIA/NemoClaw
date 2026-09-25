@@ -3005,6 +3005,7 @@ describe("Telegram diagnostics (#2766)", () => {
         "seed_default_workspace_templates() { :; }",
         "seed_default_workspace_templates_as_sandbox() { seed_default_workspace_templates; }",
         "write_auth_profile() { :; }",
+        "clear_managed_inference_credentials() { :; }",
         "harden_auth_profiles() { :; }",
         "run_step_down_as_sandbox() { :; }",
         "setup_auth_profile_as_sandbox() { :; }",
@@ -3292,128 +3293,6 @@ process.stderr.write('FailoverError: token=123456:LATER\\n');
       expect(withoutPreload.stdout).not.toContain(preloadPath);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-});
-
-describe("write_auth_profile (#1332)", () => {
-  // Invokes write_auth_profile from the production start script in an isolated
-  // HOME, then asserts on the resulting auth-profiles.json — observable
-  // behavior, not source-text shape.
-  const wrapper = [
-    "set -euo pipefail",
-    `eval "$(sed -n '/^write_auth_profile() {$/,/^}$/p' "$1")"`,
-    "write_auth_profile",
-  ].join("\n");
-
-  function runWriteAuthProfile(env: Record<string, string>): {
-    home: string;
-    authPath: string;
-    status: number;
-    stderr: string;
-  } {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auth-test-"));
-    const result = spawnSync("bash", ["-s", "--", START_SCRIPT], {
-      input: wrapper,
-      env: { PATH: process.env.PATH, HOME: home, ...env },
-      encoding: "utf-8",
-    });
-    return {
-      home,
-      authPath: path.join(home, ".openclaw", "agents", "main", "agent", "auth-profiles.json"),
-      status: result.status ?? -1,
-      stderr: result.stderr ?? "",
-    };
-  }
-
-  it("writes profile under the route identifier from NEMOCLAW_INFERENCE_PROVIDER_ID", () => {
-    const { home, authPath, status, stderr } = runWriteAuthProfile({
-      NVIDIA_INFERENCE_API_KEY: "secret",
-      NEMOCLAW_INFERENCE_PROVIDER_ID: "openai",
-    });
-    try {
-      expect(status, stderr).toBe(0);
-      const profile = JSON.parse(fs.readFileSync(authPath, "utf-8"));
-      expect(profile).toEqual({
-        "openai:manual": {
-          type: "api_key",
-          provider: "openai",
-          keyRef: { source: "env", id: "NVIDIA_INFERENCE_API_KEY" },
-          profileId: "openai:manual",
-        },
-      });
-    } finally {
-      fs.rmSync(home, { recursive: true, force: true });
-    }
-  });
-
-  it("falls back to 'inference' when neither route identifier is set", () => {
-    const { home, authPath, status, stderr } = runWriteAuthProfile({
-      NVIDIA_INFERENCE_API_KEY: "secret",
-    });
-    try {
-      expect(status, stderr).toBe(0);
-      const profile = JSON.parse(fs.readFileSync(authPath, "utf-8"));
-      expect(profile).toHaveProperty("inference:manual");
-      expect(profile["inference:manual"].provider).toBe("inference");
-      expect(profile).not.toHaveProperty("nvidia:manual");
-    } finally {
-      fs.rmSync(home, { recursive: true, force: true });
-    }
-  });
-
-  it("does not use 'nvidia' as the default provider key", () => {
-    const { home, authPath, status } = runWriteAuthProfile({
-      NVIDIA_INFERENCE_API_KEY: "secret",
-    });
-    try {
-      expect(status).toBe(0);
-      const profile = JSON.parse(fs.readFileSync(authPath, "utf-8"));
-      expect(Object.keys(profile).every((key) => !/^nvidia:/.test(key))).toBe(true);
-    } finally {
-      fs.rmSync(home, { recursive: true, force: true });
-    }
-  });
-
-  it("treats provider_key as a literal (no shell command substitution)", () => {
-    // If the provider_key were interpolated into the heredoc instead of
-    // passed as argv, $(...) inside the value would execute and replace it.
-    const { home, authPath, status, stderr } = runWriteAuthProfile({
-      NVIDIA_INFERENCE_API_KEY: "secret",
-      NEMOCLAW_INFERENCE_PROVIDER_ID: "$(echo pwned)",
-    });
-    try {
-      expect(status, stderr).toBe(0);
-      const profile = JSON.parse(fs.readFileSync(authPath, "utf-8"));
-      expect(profile).toHaveProperty("$(echo pwned):manual");
-      expect(profile["$(echo pwned):manual"].provider).toBe("$(echo pwned)");
-      expect(profile).not.toHaveProperty("pwned:manual");
-    } finally {
-      fs.rmSync(home, { recursive: true, force: true });
-    }
-  });
-
-  it("is a no-op when NVIDIA_INFERENCE_API_KEY is unset", () => {
-    const { home, authPath, status } = runWriteAuthProfile({});
-    try {
-      expect(status).toBe(0);
-      expect(fs.existsSync(authPath)).toBe(false);
-    } finally {
-      fs.rmSync(home, { recursive: true, force: true });
-    }
-  });
-
-  it("writes the auth profile with 0600 permissions", () => {
-    const { home, authPath, status } = runWriteAuthProfile({
-      NVIDIA_INFERENCE_API_KEY: "secret",
-      NEMOCLAW_INFERENCE_PROVIDER_ID: "openai",
-    });
-    try {
-      expect(status).toBe(0);
-      const mode = fs.statSync(authPath).mode & 0o777;
-      expect(mode).toBe(0o600);
-    } finally {
-      fs.rmSync(home, { recursive: true, force: true });
     }
   });
 });
@@ -3989,17 +3868,13 @@ describe("run_step_down_as_sandbox", () => {
 describe("setup_auth_profile_as_sandbox", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
   const helper = [
+    extractShellFunctionFromSource(src, "is_managed_inference_route"),
     extractShellFunctionFromSource(src, "_step_down_extract_function"),
     extractShellFunctionFromSource(src, "run_step_down_as_sandbox"),
   ].join("\n");
   const setup = extractShellFunctionFromSource(src, "setup_auth_profile_as_sandbox");
   it("runs the auth-profile setup under HOME=/sandbox even when the parent env has HOME=/root", () => {
-    // setpriv preserves the parent shell's environment, so the root
-    // entrypoint's HOME=/root would otherwise leak into the step-down
-    // shell and `write_auth_profile`'s `~/.openclaw/...` expansion
-    // would target /root. Stub `write_auth_profile` to record the
-    // HOME the step-down shell actually observed and assert it was
-    // overridden to /sandbox.
+    // setpriv preserves HOME; profile setup must replace /root with /sandbox.
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-setup-auth-profile-"));
     const observedHome = path.join(tmpDir, "observed-home");
     const scriptPath = path.join(tmpDir, "run.sh");
@@ -4235,7 +4110,10 @@ describe("direct-root entrypoint composition under CAP_DAC_OVERRIDE drop", () =>
       extractShellFunctionFromSource(src, "_step_down_extract_function"),
       extractShellFunctionFromSource(src, "run_step_down_as_sandbox"),
     ].join("\n");
-    const setupAuth = extractShellFunctionFromSource(src, "setup_auth_profile_as_sandbox");
+    const setupAuth = [
+      extractShellFunctionFromSource(src, "is_managed_inference_route"),
+      extractShellFunctionFromSource(src, "setup_auth_profile_as_sandbox"),
+    ].join("\n");
     fs.writeFileSync(
       scriptPath,
       [

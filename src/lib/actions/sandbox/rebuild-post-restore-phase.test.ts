@@ -48,7 +48,7 @@ describe("rebuild post-restore phase", () => {
           runtime: { kind: runtimeKindByAgent[agentName] },
         }) as never,
     );
-    vi.spyOn(restoreWindow, "beginOpenClawPostRestoreDoctor").mockImplementation(
+    vi.spyOn(restoreWindow, "beginUnregisteredOpenClawPostRestoreDoctor").mockImplementation(
       async (sandboxName, runtimeSelection) => {
         order.push("doctor-begin");
         return {
@@ -60,14 +60,18 @@ describe("rebuild post-restore phase", () => {
         };
       },
     );
-    vi.spyOn(restoreWindow, "finishOpenClawPostRestoreDoctor").mockImplementation(async () => {
-      order.push("doctor-finish");
-      return { ok: true };
-    });
-    vi.spyOn(restoreWindow, "abortOpenClawPostRestoreDoctor").mockImplementation(async () => {
-      order.push("doctor-abort");
-      return { ok: true };
-    });
+    vi.spyOn(restoreWindow, "finishUnregisteredOpenClawPostRestoreDoctor").mockImplementation(
+      async () => {
+        order.push("doctor-finish");
+        return { ok: true };
+      },
+    );
+    vi.spyOn(restoreWindow, "abortUnregisteredOpenClawPostRestoreDoctor").mockImplementation(
+      async () => {
+        order.push("doctor-abort");
+        return { ok: true };
+      },
+    );
     vi.spyOn(sessionModels, "reconcileStalePinnedSessionModelsAfterRebuild").mockImplementation(
       async () => {
         order.push("reconcile");
@@ -193,22 +197,23 @@ describe("rebuild post-restore phase", () => {
       "host-forward",
       "config-hash-final",
     ]);
-    expect(processRecovery.beginOpenClawPostRestoreDoctor).toHaveBeenCalledExactlyOnceWith(
-      "alpha",
-      undefined,
-    );
-    expect(processRecovery.finishOpenClawPostRestoreDoctor).toHaveBeenCalledOnce();
-    expect(processRecovery.abortOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
+    expect(
+      processRecovery.beginUnregisteredOpenClawPostRestoreDoctor,
+    ).toHaveBeenCalledExactlyOnceWith("alpha", undefined);
+    expect(processRecovery.finishUnregisteredOpenClawPostRestoreDoctor).toHaveBeenCalledOnce();
+    expect(processRecovery.abortUnregisteredOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
   });
 
   it("reuses the maintenance window established before filesystem restore", async () => {
     const window = { sandboxName: "alpha" };
-    vi.mocked(processRecovery.beginOpenClawPostRestoreDoctor).mockClear();
+    vi.mocked(processRecovery.beginUnregisteredOpenClawPostRestoreDoctor).mockClear();
 
     await runRebuildPostRestorePhase({ ...input(), openClawDoctorWindow: window });
 
-    expect(processRecovery.beginOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
-    expect(processRecovery.finishOpenClawPostRestoreDoctor).toHaveBeenCalledWith(window);
+    expect(processRecovery.beginUnregisteredOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
+    expect(processRecovery.finishUnregisteredOpenClawPostRestoreDoctor).toHaveBeenCalledWith(
+      window,
+    );
     expect(order).toEqual([
       "reconcile",
       "messaging",
@@ -299,7 +304,7 @@ describe("rebuild post-restore phase", () => {
 
     await runRebuildPostRestorePhase(args);
 
-    expect(processRecovery.beginOpenClawPostRestoreDoctor).toHaveBeenCalledWith(
+    expect(processRecovery.beginUnregisteredOpenClawPostRestoreDoctor).toHaveBeenCalledWith(
       "alpha",
       runtimeSelection,
     );
@@ -348,7 +353,7 @@ describe("rebuild post-restore phase", () => {
   });
 
   it("does not record a final hash without trusted doctor completion (#9946)", async () => {
-    vi.mocked(processRecovery.beginOpenClawPostRestoreDoctor).mockResolvedValue({
+    vi.mocked(processRecovery.beginUnregisteredOpenClawPostRestoreDoctor).mockResolvedValue({
       ok: false,
       stage: "doctor",
       detail: "completion unverified",
@@ -366,7 +371,7 @@ describe("rebuild post-restore phase", () => {
     expect(args.bail).toHaveBeenCalledWith(
       "OpenClaw post-upgrade structure repair failed during rebuild.",
     );
-    expect(processRecovery.abortOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
+    expect(processRecovery.abortUnregisteredOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
     const output = vi.mocked(console.log).mock.calls.flat().join("\n");
     expect(output).toContain("Post-upgrade structure repair failed before offline restoration");
     expect(output).not.toContain("rebuilt successfully");
@@ -390,7 +395,7 @@ describe("rebuild post-restore phase", () => {
   });
 
   it("finishes offline writes but stops online finalization when doctor restart fails (#9946)", async () => {
-    vi.mocked(processRecovery.finishOpenClawPostRestoreDoctor).mockResolvedValue({
+    vi.mocked(processRecovery.finishUnregisteredOpenClawPostRestoreDoctor).mockResolvedValue({
       ok: false,
       stage: "restart",
       detail: "sensitive doctor output",
@@ -413,7 +418,9 @@ describe("rebuild post-restore phase", () => {
     expect(args.bail).toHaveBeenCalledWith(
       "OpenClaw post-upgrade structure repair failed during rebuild.",
     );
-    expect(processRecovery.abortOpenClawPostRestoreDoctor).toHaveBeenCalledExactlyOnceWith({
+    expect(
+      processRecovery.abortUnregisteredOpenClawPostRestoreDoctor,
+    ).toHaveBeenCalledExactlyOnceWith({
       sandboxName: "alpha",
     });
     const output = vi.mocked(console.log).mock.calls.flat().join("\n");
@@ -437,7 +444,9 @@ describe("rebuild post-restore phase", () => {
       "OpenClaw messaging manifest config reapply failed during rebuild.",
     );
     expect(args.log).toHaveBeenCalledWith("Messaging manifest reapply failed: config write failed");
-    expect(processRecovery.abortOpenClawPostRestoreDoctor).toHaveBeenCalledExactlyOnceWith({
+    expect(
+      processRecovery.abortUnregisteredOpenClawPostRestoreDoctor,
+    ).toHaveBeenCalledExactlyOnceWith({
       sandboxName: "alpha",
     });
     const output = vi.mocked(console.error).mock.calls.flat().join("\n");
@@ -457,10 +466,12 @@ describe("rebuild post-restore phase", () => {
     expect(args.bail).toHaveBeenCalledWith(
       "Could not retire pending messaging removals after rebuild.",
     );
-    expect(processRecovery.abortOpenClawPostRestoreDoctor).toHaveBeenCalledExactlyOnceWith({
+    expect(
+      processRecovery.abortUnregisteredOpenClawPostRestoreDoctor,
+    ).toHaveBeenCalledExactlyOnceWith({
       sandboxName: "alpha",
     });
-    expect(processRecovery.finishOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
+    expect(processRecovery.finishUnregisteredOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -485,10 +496,12 @@ describe("rebuild post-restore phase", () => {
 
       await expect(runRebuildPostRestorePhase(input())).rejects.toThrow(message);
 
-      expect(processRecovery.abortOpenClawPostRestoreDoctor).toHaveBeenCalledExactlyOnceWith({
+      expect(
+        processRecovery.abortUnregisteredOpenClawPostRestoreDoctor,
+      ).toHaveBeenCalledExactlyOnceWith({
         sandboxName: "alpha",
       });
-      expect(processRecovery.finishOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
+      expect(processRecovery.finishUnregisteredOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
     },
   );
 
@@ -496,7 +509,7 @@ describe("rebuild post-restore phase", () => {
     vi.mocked(sessionModels.reconcileStalePinnedSessionModelsAfterRebuild).mockRejectedValue(
       new Error("original restoration failure"),
     );
-    vi.mocked(processRecovery.abortOpenClawPostRestoreDoctor).mockRejectedValue(
+    vi.mocked(processRecovery.abortUnregisteredOpenClawPostRestoreDoctor).mockRejectedValue(
       new Error("sensitive abort failure"),
     );
     const args = input();
@@ -511,10 +524,12 @@ describe("rebuild post-restore phase", () => {
 
   it("captures a completed doctor mutation and rejects a later config change (#9946)", async () => {
     let configHashValid = true;
-    vi.mocked(processRecovery.finishOpenClawPostRestoreDoctor).mockImplementation(async () => {
-      configHashValid = false;
-      return { ok: true };
-    });
+    vi.mocked(processRecovery.finishUnregisteredOpenClawPostRestoreDoctor).mockImplementation(
+      async () => {
+        configHashValid = false;
+        return { ok: true };
+      },
+    );
     vi.mocked(
       rebuildConfigHash.refreshMutableOpenClawConfigHashAfterPostRestoreWrites,
     ).mockImplementation(async () => {
@@ -559,13 +574,13 @@ describe("rebuild post-restore phase", () => {
 
     expect(args.bail).not.toHaveBeenCalled();
     expect(sessionModels.reconcileStalePinnedSessionModelsAfterRebuild).not.toHaveBeenCalled();
-    expect(processRecovery.beginOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
-    expect(processRecovery.finishOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
+    expect(processRecovery.beginUnregisteredOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
+    expect(processRecovery.finishUnregisteredOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
     expect(mutableConfigPerms.inspectMutableHermesConfigPerms).toHaveBeenCalledWith("alpha");
     expect(verification).toEqual({ mutableConfigPermissionsVerified: true });
   });
 
-  it("rejects a replacement whose live version does not match the rebuild target", async () => {
+  it.each([false, true])("rejects a version mismatch during recovery=%s", async (recovery) => {
     agentName = "hermes";
     vi.mocked(agentDefs.loadAgent).mockReturnValue({
       name: "hermes",
@@ -577,16 +592,19 @@ describe("rebuild post-restore phase", () => {
       expectedVersion: "0.20.6",
       isStale: true,
       verificationFailed: false,
-      detectionMethod: "ssh-exec",
+      detectionMethod: "openshell-exec",
     });
     const args = {
       ...input(),
+      preparedBackupRecovery: recovery,
       versionCheck: { expectedVersion: "0.20.6" } as never,
-      hermesCronRestoreIdentity: {
-        pid: 41,
-        start_time: 902,
-        drain_token: "restore-token",
-      },
+      hermesCronRestoreIdentity: !recovery
+        ? {
+            pid: 41,
+            start_time: 902,
+            drain_token: "restore-token",
+          }
+        : undefined,
     };
 
     await runRebuildPostRestorePhase(args);
@@ -609,13 +627,143 @@ describe("rebuild post-restore phase", () => {
       rebuildHermesPostRestore.completeHermesCronRestoreAfterGatewayReplacement,
     ).not.toHaveBeenCalled();
     expect(messagingHostForward.ensureMessagingHostForwardAfterRebuild).not.toHaveBeenCalled();
-    expect(vi.mocked(console.error).mock.calls.flat().join("\n")).toContain(
-      "Hermes cron dispatch remains drained",
-    );
-    expect(vi.mocked(console.log).mock.calls.flat().join("\n")).not.toContain(
-      "rebuilt successfully",
-    );
+    const errors = vi.mocked(console.error).mock.calls.flat().join("\n");
+    expect(errors.includes("Hermes cron dispatch remains drained")).toBe(!recovery);
+    expect(errors).toContain("nemoclaw alpha recover");
+    expect(errors).toContain("expected 0.20.6, observed 0.19.0");
+    expect(errors).not.toContain("gateway restart");
+    expect(vi.mocked(console.log).mock.calls.flat().join("\n")).not.toContain("rebuild completed");
   });
+
+  it.each([
+    {
+      cronGate: false,
+      preparedBackupRecovery: false,
+      restoreSucceeded: true,
+      gatewayDetail: "nemoclaw alpha gateway restart",
+      recoveryDetail: "If gateway health is still unverified",
+    },
+    {
+      cronGate: true,
+      preparedBackupRecovery: false,
+      restoreSucceeded: true,
+      gatewayDetail: "Hermes gateway health was not verified after state restore.",
+      recoveryDetail: "Hermes cron dispatch remains drained",
+    },
+    {
+      cronGate: false,
+      preparedBackupRecovery: true,
+      restoreSucceeded: false,
+      gatewayDetail: "Correct the reported restore problem",
+      recoveryDetail: "nemoclaw alpha recover",
+    },
+  ])(
+    "reports unavailable verification with cron gate=$cronGate, prepared recovery=$preparedBackupRecovery, and restore=$restoreSucceeded (#12004)",
+    async ({
+      cronGate,
+      preparedBackupRecovery,
+      restoreSucceeded,
+      gatewayDetail,
+      recoveryDetail,
+    }) => {
+      agentName = "hermes";
+      vi.mocked(sandboxVersion.checkAgentVersion).mockResolvedValue({
+        sandboxVersion: null,
+        expectedVersion: "0.20.6",
+        isStale: false,
+        verificationFailed: true,
+        detectionMethod: "unknown",
+        unavailableReason: "probe-failed",
+      });
+      vi.mocked(rebuildHermesPostRestore.restartHermesGatewayAfterStateRestore).mockResolvedValue(
+        "restart-failed",
+      );
+      vi.mocked(
+        rebuildHermesPostRestore.verifyHermesGatewayAfterStateRestoreForCronGate,
+      ).mockResolvedValue({ state: "unverified" });
+      vi.mocked(rebuildMcp.restoreMcpAfterRebuild).mockResolvedValue(false);
+      const failure = new Error("rebuild stopped");
+      const args = {
+        ...input(),
+        preparedBackupRecovery,
+        restoreSucceeded,
+        bail: vi.fn((): never => {
+          throw failure;
+        }),
+        backupManifest: { backupPath: "/tmp/alpha-backup" } as never,
+        versionCheck: { expectedVersion: "0.20.6" } as never,
+        hermesCronRestoreIdentity: cronGate
+          ? { pid: 41, start_time: 902, drain_token: "restore-token" }
+          : undefined,
+      };
+
+      await expect(runRebuildPostRestorePhase(args)).rejects.toBe(failure);
+
+      expect(args.bail).toHaveBeenCalledExactlyOnceWith(
+        restoreSucceeded
+          ? "Replacement agent version could not be verified after rebuild."
+          : "State restore remained incomplete after rebuilding 'alpha'.",
+      );
+      const errors = vi.mocked(console.error).mock.calls.flat().join("\n");
+      const logs = vi.mocked(console.log).mock.calls.flat().join("\n");
+      expect(errors).toContain(
+        "Replacement agent version could not be verified (expected 0.20.6).",
+      );
+      expect(errors).not.toContain("did not match");
+      expect(errors).toContain("Backup is preserved at: /tmp/alpha-backup");
+      expect(errors).toContain("nemoclaw alpha recover");
+      expect(logs).toContain("nemoclaw alpha mcp restart");
+      expect(errors).toContain(gatewayDetail);
+      expect(errors).toContain(recoveryDetail);
+      expect(errors.includes("gateway restart")).toBe(!cronGate && !preparedBackupRecovery);
+      expect(errors.indexOf(gatewayDetail)).toBeLessThan(errors.indexOf("alpha recover"));
+      expect(registry.updateSandbox).toHaveBeenLastCalledWith("alpha", { agentVersion: null });
+      expect(
+        rebuildHermesPostRestore.completeHermesCronRestoreAfterGatewayReplacement,
+      ).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    { target: "hermes", restoreSucceeded: true, reason: "invalid-gateway-binding" },
+    { target: "hermes", restoreSucceeded: false, reason: "probe-failed" },
+    { target: "openclaw", restoreSucceeded: true, reason: "probe-failed" },
+  ] as const)(
+    "omits Hermes restart guidance for $target with restore=$restoreSucceeded and $reason (#12004)",
+    async ({ target, restoreSucceeded, reason }) => {
+      agentName = target;
+      vi.mocked(sandboxVersion.checkAgentVersion).mockResolvedValue({
+        sandboxVersion: null,
+        expectedVersion: "0.20.6",
+        isStale: false,
+        verificationFailed: true,
+        detectionMethod: reason === "probe-failed" ? "unknown" : "unavailable",
+        unavailableReason: reason,
+      });
+      const failure = new Error("rebuild stopped");
+      const args = {
+        ...input(),
+        restoreSucceeded,
+        bail: vi.fn((): never => {
+          throw failure;
+        }),
+        versionCheck: { expectedVersion: "0.20.6" } as never,
+      };
+      await expect(runRebuildPostRestorePhase(args)).rejects.toBe(failure);
+      expect(args.bail).toHaveBeenCalledExactlyOnceWith(
+        restoreSucceeded
+          ? "Replacement agent version could not be verified after rebuild."
+          : "State restore remained incomplete after rebuilding 'alpha'.",
+      );
+      const errors = vi.mocked(console.error).mock.calls.flat().join("\n");
+      expect(errors).not.toContain("gateway restart");
+      expect(
+        errors.includes(
+          "State recovery remains incomplete. Correct the restore error, then run `nemoclaw alpha rebuild` again.",
+        ),
+      ).toBe(!restoreSucceeded);
+    },
+  );
 
   it("records the live replacement version only after an exact forced probe", async () => {
     agentName = "hermes";
@@ -629,7 +777,7 @@ describe("rebuild post-restore phase", () => {
       expectedVersion: "0.20.6",
       isStale: false,
       verificationFailed: false,
-      detectionMethod: "ssh-exec",
+      detectionMethod: "openshell-exec",
     });
     const args = {
       ...input(),

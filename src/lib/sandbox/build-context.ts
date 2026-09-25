@@ -114,7 +114,7 @@ function stageMcpToolDiscoveryRuntime(rootDir: string, buildCtx: string): void {
     });
   }
   for (const relativePath of [
-    "managed-startup-image-runtime.bundle",
+    "managed-startup-direct-image-runtime.bundle",
     path.join("mcp-tool-discovery", "BUNDLED_PACKAGES.json"),
     path.join("mcp-tool-discovery", "THIRD_PARTY_LICENSES.txt"),
     path.join("mcp-tool-discovery", "mcp-tool-discovery.bundle"),
@@ -140,11 +140,6 @@ function stageManagedStartupRuntimeSources(rootDir: string, buildCtx: string): v
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.copyFileSync(source, target);
   }
-  fs.cpSync(
-    path.join(rootDir, "src", "lib", "onboard", "managed-bootstrap"),
-    path.join(buildCtx, "src", "lib", "onboard", "managed-bootstrap"),
-    { recursive: true },
-  );
   fs.cpSync(
     path.join(rootDir, "src", "lib", "onboard", "managed-startup"),
     path.join(buildCtx, "src", "lib", "onboard", "managed-startup"),
@@ -310,14 +305,6 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "managed-startup-hold.sh"),
   );
   fs.copyFileSync(
-    path.join(rootDir, "scripts", "managed-bootstrap-entrypoint.c"),
-    path.join(stagedScriptsDir, "managed-bootstrap-entrypoint.c"),
-  );
-  fs.copyFileSync(
-    path.join(rootDir, "scripts", "managed-bootstrap-trampoline.sh"),
-    path.join(stagedScriptsDir, "managed-bootstrap-trampoline.sh"),
-  );
-  fs.copyFileSync(
     path.join(rootDir, "scripts", "openclaw-config-guard.py"),
     path.join(stagedScriptsDir, "openclaw-config-guard.py"),
   );
@@ -398,6 +385,10 @@ function stageOptimizedSandboxBuildContext(
   fs.copyFileSync(
     path.join(rootDir, "scripts", "patch-openclaw-chat-send.mts"),
     path.join(stagedScriptsDir, "patch-openclaw-chat-send.mts"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "patch-openclaw-container-restart.mts"),
+    path.join(stagedScriptsDir, "lib", "patch-openclaw-container-restart.mts"),
   );
   // Dockerfile copies this OpenClaw MCP patch into the optimized build context.
   fs.copyFileSync(

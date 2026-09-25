@@ -1421,7 +1421,7 @@ export function assertOnboardLockOwned(): void {
 }
 
 const ONBOARD_LOCK_CONTENTION_LEAD =
-  "Cannot update onboarding recovery while another onboarding run owns the lock.";
+  "Cannot update onboarding recovery because the onboarding lock is unavailable.";
 
 type OnboardLockContentionDetails = Pick<
   OnboardLockResult,
@@ -1429,7 +1429,7 @@ type OnboardLockContentionDetails = Pick<
 >;
 
 /**
- * Format holder-identity guidance for a live onboarding-lock contender.
+ * Format recorded ownership details without assuming the identity was verified.
  *
  * The caller's lead sentence stays first so the original internal wording is
  * preserved, then the recorded holder details and a remediation step follow.
@@ -1439,13 +1439,13 @@ function onboardLockContentionGuidance(
   lead: string = ONBOARD_LOCK_CONTENTION_LEAD,
 ): string {
   const holderDetails = [
-    lock.holderPid ? `Lock holder PID: ${lock.holderPid}.` : "",
+    lock.holderPid ? `Recorded lock PID: ${lock.holderPid}.` : "",
     lock.holderStartedAt ? `Started: ${lock.holderStartedAt}.` : "",
-    lock.holderCommand ? `Lock holder command: ${lock.holderCommand}.` : "",
+    lock.holderCommand ? `Recorded lock command: ${lock.holderCommand}.` : "",
   ].filter((detail) => detail.length > 0);
   const remediation = lock.stale
-    ? "Wait briefly, then rerun so verified stale-lock cleanup can finish."
-    : "Wait for the other run to finish, then rerun.";
+    ? "Wait briefly, then rerun to retry lock acquisition."
+    : "Wait for any active onboarding run to finish, then rerun.";
   return [lead, ...holderDetails, remediation].join(" ");
 }
 
@@ -2354,7 +2354,7 @@ export function reconcileStationExpressReceiptRetirement(expectedGeneration: str
       throw new Error(
         onboardLockContentionGuidance(
           lock,
-          "Cannot reconcile DGX Station Express receipt retirement while another onboarding run is in progress.",
+          "Cannot reconcile DGX Station Express receipt retirement because the onboarding lock is unavailable.",
         ),
       );
     }

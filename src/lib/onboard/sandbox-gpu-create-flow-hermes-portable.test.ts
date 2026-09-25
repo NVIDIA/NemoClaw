@@ -48,11 +48,7 @@ import {
   resetGpuFlowMocks,
   setupGpuFlowMocks,
 } from "./__test-helpers__/sandbox-gpu-create-flow";
-import {
-  cleanupSandboxCreateSource,
-  runSandboxGpuCreateFlow,
-  type SandboxGpuCreateFlowInput,
-} from "./sandbox-gpu-create-flow";
+import { cleanupSandboxCreateSource, runSandboxGpuCreateFlow } from "./sandbox-gpu-create-flow";
 import * as sandboxGpuCreateAttempt from "./sandbox-gpu-create-attempt";
 
 const PORTABLE_RUNTIME_AUTHORITY: CheckpointPortableRuntimeAuthority = {
@@ -109,7 +105,7 @@ describe("Hermes portable sandbox create flow", () => {
     }
   });
 
-  it("keeps non-OpenClaw portable creation on the existing runtime patch (#9068)", async () => {
+  it("does not infer Portable ownership from ambient profile state", async () => {
     const input = createInput();
     input.hostEnv = { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" };
     input.portableLifecycle = false;
@@ -121,7 +117,7 @@ describe("Hermes portable sandbox create flow", () => {
     await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({ route: "native" });
 
     expect(mocks.createDockerGpuSandboxCreatePatch).toHaveBeenCalledOnce();
-    expect(deps.installPortableDemoLifecycle).toHaveBeenCalledOnce();
+    expect(deps.installPortableDemoLifecycle).not.toHaveBeenCalled();
   });
 
   it("uses the Hermes portable create handoff without Docker or OpenClaw lifecycle mutation (#9203)", async () => {
@@ -146,7 +142,7 @@ describe("Hermes portable sandbox create flow", () => {
     expect(deps.verifyDirectSandboxGpu).toHaveBeenCalledOnce();
   });
 
-  it("keeps schema-5 create failure diagnostics out of ambient gateway logs (#9203)", async () => {
+  it("classifies a spawned Hermes create failure as ambiguous without retry (#9203)", async () => {
     const input = createInput();
     input.gpuRoutePlan = "native-only";
     input.hermesPortableLifecycle = true;
@@ -162,13 +158,13 @@ describe("Hermes portable sandbox create flow", () => {
       sawProgress: false,
     });
 
-    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow("exit 7");
-
-    expect(exit).toHaveBeenCalledWith(7);
-    expect(mocks.printSandboxCreateFailureDiagnostics).not.toHaveBeenCalled();
-    expect(console.error).toHaveBeenCalledWith(
-      expect.stringContaining("did not complete receipt-owned creation"),
+    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
+      "did not confirm whether sandbox 'alpha' was created",
     );
+
+    expect(exit).not.toHaveBeenCalled();
+    expect(mocks.streamSandboxCreate).toHaveBeenCalledOnce();
+    expect(mocks.printSandboxCreateFailureDiagnostics).not.toHaveBeenCalled();
   });
 
   it("preserves receipt authority instead of suggesting name-only cleanup (#9203)", async () => {
@@ -196,7 +192,7 @@ describe("Hermes portable sandbox create flow", () => {
     expect(output).not.toContain("openshell sandbox delete");
   });
 
-  it("rejects compatibility and managed bootstrap before Hermes portable create effects (#9203)", async () => {
+  it("rejects compatibility before Hermes portable create effects (#9203)", async () => {
     const compatibility = createInput();
     compatibility.hermesPortableLifecycle = true;
     compatibility.lifecycleGeneration = "generation-1";
@@ -206,22 +202,6 @@ describe("Hermes portable sandbox create flow", () => {
       "Docker GPU compatibility is unavailable",
     );
 
-    const managed = createInput();
-    managed.gpuRoutePlan = "native-only";
-    managed.hermesPortableLifecycle = true;
-    managed.lifecycleGeneration = "generation-1";
-    managed.portableRuntimeAuthority = PORTABLE_RUNTIME_AUTHORITY;
-    const createOnboardRouting = vi.fn();
-    const createLifecycle = vi.fn();
-    managed.managedBootstrap = {
-      runtimeProvider: { bootstrap: { createOnboardRouting, createLifecycle } },
-    } as unknown as NonNullable<SandboxGpuCreateFlowInput["managedBootstrap"]>;
-    await expect(runSandboxGpuCreateFlow(managed, createDeps())).rejects.toThrow(
-      "Hermes portable onboarding cannot use managed-image bootstrap",
-    );
-
-    expect(createOnboardRouting).not.toHaveBeenCalled();
-    expect(createLifecycle).not.toHaveBeenCalled();
     expect(mocks.streamSandboxCreate).not.toHaveBeenCalled();
     expect(mocks.createDockerGpuSandboxCreatePatch).not.toHaveBeenCalled();
   });

@@ -33,8 +33,10 @@ import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   normalizeRuntimeProviderIdentity,
   type RuntimeProviderBundleRegistry,
+  type RuntimeProviderChannelStopTransport,
   type RuntimeProviderWorkloadCleanupResult,
   requireRuntimeProviderDestructiveCleanupAuthority,
+  resolveRuntimeProviderBundle,
 } from "../../onboard/runtime-provider/access";
 import {
   emitProviderDetachResidualHint,
@@ -77,6 +79,7 @@ import {
 } from "./destroy-presence";
 import {
   prepareSandboxDestroy,
+  resolveSandboxDestroyRegistryAuthority,
   resolveSandboxDestroyGatewayName,
   resolveSandboxDestroyRuntimeSelection,
   stopModelRouterForDestroyedSandbox,
@@ -202,6 +205,7 @@ export type CleanupSandboxServicesDeps = {
   listSandboxes?: typeof registry.listSandboxes;
   stopAll?: (opts: {
     sandboxName: string;
+    channelStopTransport?: RuntimeProviderChannelStopTransport;
     cleanupOllamaModels?: boolean;
     unloadOllamaModels?: () => OllamaUnloadResult | void;
   }) => OllamaUnloadResult | void;
@@ -273,7 +277,13 @@ function reportFinalGatewayLeftRunning(
 
 export async function cleanupSandboxServices(
   sandboxName: string,
-  { stopHostServices = false }: { stopHostServices?: boolean } = {},
+  {
+    stopHostServices = false,
+    channelStopTransport,
+  }: {
+    stopHostServices?: boolean;
+    channelStopTransport?: RuntimeProviderChannelStopTransport;
+  } = {},
   deps: CleanupSandboxServicesDeps = {},
 ): Promise<void> {
   // Source boundary: this exported helper can be called independently of CLI
@@ -290,12 +300,14 @@ export async function cleanupSandboxServices(
     deps.stopAll ??
     ((opts: {
       sandboxName: string;
+      channelStopTransport?: RuntimeProviderChannelStopTransport;
       cleanupOllamaModels?: boolean;
       unloadOllamaModels?: () => OllamaUnloadResult | void;
     }) => {
       const services = require("../../tunnel/services") as {
         stopAll: (opts: {
           sandboxName: string;
+          channelStopTransport?: RuntimeProviderChannelStopTransport;
           cleanupOllamaModels?: boolean;
           unloadOllamaModels?: () => OllamaUnloadResult | void;
         }) => OllamaUnloadResult | void;
@@ -408,6 +420,7 @@ export async function cleanupSandboxServices(
         );
         return stopAll({
           sandboxName: validatedSandboxName,
+          ...(channelStopTransport ? { channelStopTransport } : {}),
           cleanupOllamaModels,
           unloadOllamaModels: () => unloadOllamaModels(),
         });
@@ -673,7 +686,10 @@ async function destroySandboxUnlocked(
   } = {},
 ): Promise<void> {
   const normalized = normalizeDestroySandboxOptions(options);
-  const registeredSandbox = registry.getSandbox(sandboxName);
+  const registryAuthority = resolveSandboxDestroyRegistryAuthority(sandboxName);
+  const getRegisteredSandbox = registryAuthority.getSandbox;
+  const listRegisteredSandboxes = registryAuthority.listSandboxes;
+  const registeredSandbox = registryAuthority.entry;
   const operationRuntimeSelection = resolveSandboxDestroyRuntimeSelection(registeredSandbox);
   if (!(await confirmSandboxDestroy(sandboxName, normalized, operationRuntimeSelection))) return;
   if (registeredSandbox) {
@@ -721,10 +737,18 @@ async function destroySandboxUnlocked(
     destroyGatewayName,
     registeredSandbox?.openshellDriver,
   );
+  const destroyRuntimeProvider = resolveRuntimeProviderBundle(
+    destroyRuntimeProviderId,
+    CURRENT_RUNTIME_PROVIDER_BUNDLES,
+  );
+  const destroyChannelStopTransport =
+    destroyRuntimeProvider?.lifecycle.supported === true
+      ? destroyRuntimeProvider.lifecycle.channelStopTransport
+      : undefined;
   let portableContainerAuthority: ReturnType<typeof preparePortableDemoSandboxDestroyAuthority>;
   try {
     portableContainerAuthority = preparePortableDemoSandboxDestroyAuthority(sandboxName, () => {
-      const current = registry.getSandbox(sandboxName);
+      const current = getRegisteredSandbox(sandboxName);
       return current
         ? {
             agent: current.agent,
@@ -740,7 +764,7 @@ async function destroySandboxUnlocked(
   }
 
   const inspectContainerIdentity = () => {
-    const registeredSandbox = registry.getSandbox(sandboxName);
+    const registeredSandbox = getRegisteredSandbox(sandboxName);
     return assertUnambiguousDestroyContainerIdentity(sandboxName, {
       cliName: CLI_NAME,
       providerId: destroyRuntimeProviderId ?? normalizeRuntimeProviderIdentity(null),
@@ -819,6 +843,7 @@ async function destroySandboxUnlocked(
   let destroyPreflight: Awaited<ReturnType<typeof prepareSandboxDestroy>>;
   try {
     destroyPreflight = await prepareSandboxDestroy(sandboxName, {
+      getSandbox: getRegisteredSandbox,
       retainedRecoveryGatewayName: retainedRecoveryAuthority?.gatewayName,
       operationRuntimeSelection,
     });
@@ -896,8 +921,8 @@ async function destroySandboxUnlocked(
   try {
     destructiveResult = await executeSandboxDestroy({
       force: normalized.force === true,
-      getSandbox: registry.getSandbox,
-      listSandboxes: registry.listSandboxes,
+      getSandbox: getRegisteredSandbox,
+      listSandboxes: listRegisteredSandboxes,
       deleteGatewayName: cleanupGatewayName,
       runOpenshell,
       ...(mcpRuntimeSelection ? { mcpRuntimeSelection } : {}),
@@ -1076,15 +1101,20 @@ async function destroySandboxUnlocked(
   try {
     const shouldStopHostServices = shouldStopHostServicesAfterDestroy({
       deleteSucceededOrAlreadyGone,
-      registeredSandboxCount: registry.listSandboxes().sandboxes.length,
-      sandboxStillRegistered: !!registry.getSandbox(sandboxName),
+      registeredSandboxCount: listRegisteredSandboxes().sandboxes.length,
+      sandboxStillRegistered: !!getRegisteredSandbox(sandboxName),
     });
     await cleanupSandboxServices(
       sandboxName,
       {
         stopHostServices: shouldStopHostServices,
+        ...(destroyChannelStopTransport
+          ? { channelStopTransport: destroyChannelStopTransport }
+          : {}),
       },
       {
+        getSandbox: getRegisteredSandbox,
+        listSandboxes: listRegisteredSandboxes,
         runOpenshell: cleanupRunOpenshell,
       },
     );
@@ -1132,15 +1162,19 @@ async function destroySandboxUnlocked(
   if (deleteSucceededOrAlreadyGone && retireRemovedImmutabilityState) {
     retireRemovedImmutabilityStateRecord(sandboxName, "sandbox-destroyed");
   }
-  const removalOutcome = removeSandboxRegistryEntryOutcome(sandboxName);
+  const removalOutcome = removeSandboxRegistryEntryOutcome(sandboxName, {
+    removeImage: (name) => removeSandboxImage(name, { getSandbox: getRegisteredSandbox }),
+    removeSandbox: registryAuthority.removeSandbox,
+  });
   const removed = removalOutcome.removed;
   // A retry after successful registry removal still owns final gateway cleanup.
   // The gateway runtime marker captured its provider before the first delete.
   const registryEntryAbsent =
-    removalOutcome.status === "complete" || removalOutcome.status === "not-found";
+    removalOutcome.status === "complete" ||
+    (removalOutcome.status === "not-found" && !getRegisteredSandbox(sandboxName));
   if (removalOutcome.status === "blocked") {
     const providerId = normalizeRuntimeProviderIdentity(
-      (registry.getSandbox(sandboxName) ?? sandbox)?.openshellDriver,
+      (getRegisteredSandbox(sandboxName) ?? sandbox)?.openshellDriver,
     );
     console.warn(
       `  ${YW}⚠${R} Sandbox '${sandboxName}' cleanup is incomplete for runtime provider ` +
@@ -1175,7 +1209,7 @@ async function destroySandboxUnlocked(
         await withOllamaModelOwnershipTransaction(() => {
           const selectedHost = loadPersistedOllamaHost();
           if (!isLocalOllamaRouteOwner(sandbox, selectedHost)) return;
-          const remainingSandboxes = registry.listSandboxes().sandboxes;
+          const remainingSandboxes = listRegisteredSandboxes().sandboxes;
           localInference.clearPersistedOllamaHostIfUnused(remainingSandboxes);
         });
       } catch (error) {
@@ -1186,7 +1220,9 @@ async function destroySandboxUnlocked(
     }
   }
   if (deleteSucceededOrAlreadyGone && removed && priorHttpsPinRouteId) {
-    await revokeDestroyedSandboxHttpsPinRoute(cleanupGatewayName, priorHttpsPinRouteId);
+    await revokeDestroyedSandboxHttpsPinRoute(cleanupGatewayName, priorHttpsPinRouteId, {
+      listSandboxes: listRegisteredSandboxes,
+    });
   }
   let routedSessionCleanupHandled = false;
   if (deleteSucceededOrAlreadyGone && removed) {
@@ -1269,7 +1305,7 @@ async function destroySandboxUnlocked(
   const cleanupDecision =
     deleteSucceededOrAlreadyGone &&
     registryEntryAbsent &&
-    registry.listSandboxes().sandboxes.length === 0
+    listRegisteredSandboxes().sandboxes.length === 0
       ? resolveDestroyGatewayCleanupDecision(normalized, {
           nonInteractive: isDestroyNonInteractiveEnv(),
           platform: process.platform,
@@ -1288,6 +1324,7 @@ async function destroySandboxUnlocked(
         },
         {
           ...deps.finalGatewayCleanup,
+          listSandboxes: listRegisteredSandboxes,
           ...(cleanupCaptureOpenshell ? { captureOpenshell: cleanupCaptureOpenshell } : {}),
         },
       );

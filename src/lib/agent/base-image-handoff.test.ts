@@ -64,8 +64,7 @@ function fixture(options: { canonicalSource?: boolean } = {}) {
     pinnedRemoteRef,
     requirePinnedRemoteRef: true,
     validateImage: () => true,
-    validationDescription:
-      "the required MCP Streamable HTTP and ACP runtimes and the immutable security package inventory",
+    validationDescription: `Hermes ${agent.expectedVersion} with the required MCP Streamable HTTP and ACP runtimes and the immutable security package inventory`,
   };
   const imageId = `sha256:${"a".repeat(64)}`;
   const canonicalRef = `nemoclaw-hermes-sandbox-base-local:image-${"a".repeat(64)}`;

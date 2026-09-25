@@ -45,7 +45,6 @@ import {
   isManagedClusterRuntimeBindingStateEntry,
   MANAGED_CLUSTER_VLLM_RUNTIME_RECEIPT_FILE,
   MANAGED_VLLM_API_KEY_FILE,
-  MCP_LIFECYCLE_LOCK_DIRNAME,
 } from "../../inference/serving/managed-runtime-receipts";
 import { buildDockerGatewayDebEnvFile } from "../../onboard/docker-driver-gateway-env";
 import {
@@ -59,12 +58,17 @@ import {
   assertManagedGatewayStateDirectoryParentTrusted,
   isManagedGatewayStateRootReservation,
   managedGatewayStateRootOwnershipFailure,
+  resolveGatewayCompatContainerName,
   resolveGatewayName,
   resolveGatewayPortFromName,
   UnsafeGatewayStateDirectoryError,
 } from "../../onboard/gateway-binding";
 import { type GatewayOwner, isExternallySupervised } from "../../onboard/gateway-ownership";
 import {
+  findUnresolvedDockerSandboxes,
+  gatewayLifecycleStateContainsOnlyOwnedLocks,
+  retainedDockerSandboxIsAbsent,
+  RetainedSandboxInventoryError,
   type GatewayCleanupRuntime,
   type GatewayTeardownAuthorityResolver,
   isInterruptedPreGatewaySession,
@@ -117,7 +121,6 @@ import {
   type ManagedHermesStateVolumeRuntime,
   type ManagedHermesStateVolumeContext,
   removeManagedHermesStateVolumes,
-  requiresManagedHermesStateVolume,
 } from "./hermes-uninstall-cleanup";
 import {
   stopBedrockRuntimeAdapter,
@@ -441,22 +444,6 @@ function scopedStatePreservationEntries(
     MANAGED_VLLM_API_KEY_FILE,
     "portable-demo-lifecycle",
   ];
-}
-
-function dormantHostGlobalLifecycleState(sharedRoot: string): boolean {
-  const stateDir = path.join(sharedRoot, "state");
-  try {
-    const state = fs.lstatSync(stateDir);
-    if (state.isSymbolicLink() || !state.isDirectory()) return false;
-    const entries = fs.readdirSync(stateDir);
-    if (entries.length === 0) return true;
-    if (entries.length !== 1 || entries[0] !== MCP_LIFECYCLE_LOCK_DIRNAME) return false;
-    const locksDir = path.join(stateDir, MCP_LIFECYCLE_LOCK_DIRNAME);
-    const locks = fs.lstatSync(locksDir);
-    return !locks.isSymbolicLink() && locks.isDirectory() && fs.readdirSync(locksDir).length === 0;
-  } catch {
-    return false;
-  }
 }
 
 function removePathExcept(
@@ -1571,6 +1558,7 @@ async function removeOpenShellResources(
   runtime: UninstallRuntime,
   scopedToSelectedGateway: boolean,
   sandboxNames: readonly string[],
+  sandboxRegistrations: SelectedRegistrySandboxState["registrations"],
   teardownAuthority: GatewayOwner,
 ): Promise<boolean> {
   if (!runtime.commandExists("openshell")) {
@@ -1602,20 +1590,26 @@ async function removeOpenShellResources(
       runtime.warn("Selected gateway cleanup was incomplete; preserving its state for retry.");
       return false;
     }
+  } else {
+    // #6520: a no-op delete must not print `Deleted … skipped`.
+    runOptional(
+      runtime,
+      "Deleted all OpenShell sandboxes",
+      "openshell",
+      ["sandbox", "delete", "--all"],
+      { onSkip: OPENSHELL_SANDBOXES_DELETE_SKIP_MESSAGE },
+    );
+  }
+  // Retain connection and provider state until runtime cleanup is confirmed.
+  if (
+    !externallySupervised &&
+    !verifyDockerContainerCleanup(runtime, null, sandboxNames, sandboxRegistrations)
+  )
+    return false;
+  if (scopedToSelectedGateway) {
     runtime.log("Sibling gateways remain; kept shared OpenShell provider registrations.");
     return true;
   }
-  // #6520 sub-bug: a no-op delete must not print `Deleted … skipped`;
-  // wording lives in domain/uninstall/messaging.ts.
-  runOptional(
-    runtime,
-    "Deleted all OpenShell sandboxes",
-    "openshell",
-    ["sandbox", "delete", "--all"],
-    {
-      onSkip: OPENSHELL_SANDBOXES_DELETE_SKIP_MESSAGE,
-    },
-  );
   const providerAdapter = createUninstallProviderAdapter(runtime.run, runtime.env);
   for (const providerName of NEMOCLAW_PROVIDERS) {
     const result = await providerAdapter.deleteProvider({
@@ -2379,66 +2373,72 @@ function stopBedrockRuntimeAdapterForUninstall(
   throw new IncompleteBedrockRuntimeAdapterCleanupError();
 }
 
-function removeDockerContainers(
-  runtime: UninstallRuntime,
-  gatewayName?: string,
-  allowConventionRemoval = true,
+function hasDockerSandboxRegistrations(
+  registrations: SelectedRegistrySandboxState["registrations"],
 ): boolean {
+  return Object.entries(registrations).some(
+    ([name, entry]) => managedHermesStateVolumeContext(name, entry).runtimeProviderId === "docker",
+  );
+}
+
+/** Container deletion belongs to the runtime owners; names only identify uncertain leftovers. */
+function verifyDockerContainerCleanup(
+  runtime: UninstallRuntime,
+  gatewayName: string | null,
+  sandboxNames: readonly string[],
+  registrations: SelectedRegistrySandboxState["registrations"],
+  rejectConventionMatches = false,
+): boolean {
+  if (!runtime.commandExists("docker") && !hasDockerSandboxRegistrations(registrations))
+    return true;
   const result = runtime.runDocker(["ps", "-a", "--format", "{{.ID}} {{.Image}} {{.Names}}"], {
     env: runtime.env,
   });
-  if (result.status !== 0) {
-    runtime.warn("Failed to inventory Docker containers");
-    return false;
-  }
-  const ids = splitNonEmptyLines(result.stdout)
-    .filter((line) => {
-      const fields = dockerInventoryFields(line, 3);
-      const image = fields[1] ?? "";
-      const name = fields[2] ?? "";
-      if (!gatewayName) {
-        if (MANAGED_INFERENCE_CONTAINER_NAME_PATTERN.test(name)) {
-          return false;
-        }
-        // `openclaw` is deliberately absent: NemoClaw's containers are
-        // `openshell-*` (cluster and sandbox) and `nemoclaw-*` (gateway compat
-        // and managed inference), so that term only ever selected the separate
-        // OpenClaw project's containers for `docker rm -f` (#8496).
-        // Probe containers that run with `--rm` and no `--name`, such as
-        // `hermesBaseImageSupportsMcp`, take a random Docker name. Their
-        // NemoClaw image reference is the only way to reclaim one that an
-        // interrupted run orphaned.
-        return isOwnedDockerContainerName(name) || isOwnedDockerImageRepository(image);
-      }
-      return (
-        name === `openshell-cluster-${gatewayName}` ||
-        name ===
-          (GATEWAY_PORT === DEFAULT_GATEWAY_PORT
-            ? "nemoclaw-openshell-gateway"
-            : `nemoclaw-openshell-gateway-${String(GATEWAY_PORT)}`)
-      );
-    })
-    .map((line) => line.split(/\s+/)[0]);
-  if (ids.length === 0) {
-    runtime.log(`No ${runtimeBranding(runtime).display}/OpenShell Docker containers found`);
-    return true;
-  }
-  if (!allowConventionRemoval) {
-    runtime.warn(
-      `Force-fresh cleanup preserved convention-matching Docker container ${ids[0]} because no trusted host state binds that container ID to this installation.`,
+  if (result.status !== 0 || result.error || result.signal) {
+    runtime.error(
+      "Could not inventory Docker containers. Remaining uninstall state was preserved for retry.",
     );
     return false;
   }
-  let removedAll = true;
-  for (const id of [...new Set(ids)]) {
-    if (runtime.runDocker(["rm", "-f", id], { env: runtime.env, stdio: "ignore" }).status === 0)
-      runtime.log(`Removed Docker container ${id}`);
-    else {
-      runtime.warn(`Failed to remove Docker container ${id}`);
-      removedAll = false;
-    }
+  const rows = splitNonEmptyLines(result.stdout).map((line) => line.trim().split(/\s+/u));
+  if (rows.some((fields) => fields.length !== 3 || fields.some((field) => !field))) {
+    runtime.error(
+      "Docker returned an incomplete container inventory. Remaining uninstall state was preserved for retry.",
+    );
+    return false;
   }
-  return removedAll;
+  if (rows.length === 0) return true;
+  const unresolved = findUnresolvedDockerSandboxes(
+    runtime.env.HOME || os.homedir(),
+    GATEWAY_PORT,
+    sandboxNames,
+    registrations,
+    rows.map((fields) => fields[2]!),
+    (args) => runtime.runDocker(args, { env: runtime.env, timeout: 5_000 }),
+    (args) => runtime.run("openshell", args, { env: runtime.env, timeout: 10_000 }),
+  );
+  if (unresolved.length > 0) {
+    runtime.error(
+      `Docker cleanup could not confirm these sandboxes are absent: ${unresolved.join(", ")}. Complete cleanup through the owning runtime, then retry; remaining uninstall state was preserved.`,
+    );
+    return false;
+  }
+  const remaining = rows.filter((fields) => {
+    const name = fields[2]!;
+    if (MANAGED_INFERENCE_CONTAINER_NAME_PATTERN.test(name)) return false;
+    return (
+      (gatewayName !== null &&
+        (name === `openshell-cluster-${gatewayName}` ||
+          name === resolveGatewayCompatContainerName(GATEWAY_PORT))) ||
+      (rejectConventionMatches &&
+        (isConventionalDockerContainerName(name) || isOwnedDockerImageRepository(fields[1]!)))
+    );
+  });
+  if (remaining.length === 0) return true;
+  runtime.error(
+    `Preserved Docker containers with unverified ownership: ${remaining.map((fields) => `${fields[2]} (${fields[0]})`).join(", ")}. Complete cleanup through the owning runtime, then retry; remaining uninstall state was preserved.`,
+  );
+  return false;
 }
 
 function removeDockerImages(runtime: UninstallRuntime): boolean {
@@ -2484,7 +2484,7 @@ function dockerImageRepository(imageRef: string): string {
   return tagSeparator > slashSeparator ? withoutDigest.slice(0, tagSeparator) : withoutDigest;
 }
 
-function isOwnedDockerContainerName(name: string): boolean {
+function isConventionalDockerContainerName(name: string): boolean {
   return /^openshell-(?:cluster-)?/iu.test(name) || /^nemoclaw-/iu.test(name);
 }
 
@@ -2541,6 +2541,8 @@ function executeDockerResourceStep(
   scopedToSelectedGateway: boolean,
   externallySupervised: boolean,
   volumeNames: readonly string[],
+  sandboxNames: readonly string[],
+  registrations: SelectedRegistrySandboxState["registrations"],
 ): boolean {
   if (externallySupervised) {
     runtime.log(
@@ -2549,21 +2551,23 @@ function executeDockerResourceStep(
     return true;
   }
   if (!dockerIsAvailable(runtime)) {
-    if (!options.forceFreshReset || !runtime.commandExists("docker")) return true;
+    if (!runtime.commandExists("docker") && !hasDockerSandboxRegistrations(registrations))
+      return true;
     runtime.error(
-      "Docker is installed but unavailable; force-fresh cleanup cannot prove that receipt volumes are absent.",
+      options.forceFreshReset
+        ? "Docker is installed but unavailable; force-fresh cleanup cannot prove that receipt volumes are absent."
+        : "Docker is unavailable; container cleanup could not be verified. Remaining uninstall state was preserved for retry.",
     );
     return false;
   }
-  const removedContainers = removeDockerContainers(
+  const removedContainers = verifyDockerContainerCleanup(
     runtime,
-    scopedToSelectedGateway ? options.gatewayName || resolveGatewayName(GATEWAY_PORT) : undefined,
-    !options.forceFreshReset,
+    options.gatewayName || resolveGatewayName(GATEWAY_PORT),
+    sandboxNames,
+    registrations,
+    options.forceFreshReset === true && !scopedToSelectedGateway,
   );
-  if (options.forceFreshReset && !removedContainers) {
-    runtime.error("Force-fresh cleanup found a Docker container without verified ownership.");
-    return false;
-  }
+  if (!removedContainers) return false;
   let removedImages = true;
   if (scopedToSelectedGateway) {
     runtime.log("Sibling gateways remain; kept shared Docker images.");
@@ -2847,7 +2851,7 @@ async function discoverOtherGatewayEnvironments(
             (entry) =>
               !isSharedHostStateEntry(entry) &&
               !ignoredSharedRootEntries.has(entry) &&
-              !(entry === "state" && dormantHostGlobalLifecycleState(sharedRoot)),
+              !(entry === "state" && gatewayLifecycleStateContainsOnlyOwnedLocks(sharedRoot)),
           )
       ) {
         return otherGatewaysRemain([DEFAULT_GATEWAY_PORT]);
@@ -3057,6 +3061,7 @@ async function executeOpenShellResourceCleanup(
   runtime: UninstallRuntime,
   scopedToSelectedGateway: boolean,
   sandboxNames: readonly string[],
+  sandboxRegistrations: SelectedRegistrySandboxState["registrations"],
   managedHermesStateVolumes: readonly ManagedHermesStateVolumeContext[],
   teardownAuthority: GatewayOwner,
   portableRuntimeCleanup: boolean,
@@ -3082,9 +3087,7 @@ async function executeOpenShellResourceCleanup(
         interruptedOnboardLock,
       ))
     ) {
-      runtime.warn(
-        "The interrupted pre-gateway state changed during uninstall; preserving it for retry.",
-      );
+      runtime.warn("The local gateway state changed during uninstall; preserving it for retry.");
       return false;
     }
     return true;
@@ -3124,20 +3127,11 @@ async function executeOpenShellResourceCleanup(
       runtime,
       scopedToSelectedGateway,
       sandboxNames,
+      sandboxRegistrations,
       teardownAuthority,
     ))
   ) {
     return false;
-  }
-  if (
-    !portableRuntimeCleanup &&
-    !externallySupervised &&
-    !scopedToSelectedGateway &&
-    managedHermesStateVolumes.some((context) => requiresManagedHermesStateVolume(context)) &&
-    dockerIsAvailable(runtime)
-  ) {
-    // An unreachable gateway can leave a stopped sandbox container attached to the state volume.
-    removeDockerContainers(runtime);
   }
   if (
     !portableRuntimeCleanup &&
@@ -3251,12 +3245,62 @@ async function interruptedPreGatewayStateIsStable(
     teardownAuthority.mode === "nemoclaw-managed" &&
     !runtime.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR?.trim() &&
     pathEntryExists(paths.nemoclawStateDir, runtime) &&
-    hasInterruptedPreGatewaySession(paths, options, runtime, teardownAuthority) &&
     onboardLockIsStable &&
     !pathEntryExists(paths.selectedGatewayLocalStateDir, runtime) &&
-    selectedGatewayRegistryIsEmpty(paths, runtime) &&
-    (await selectedGatewayRegistrationIsAbsent(options, runtime))
+    (await selectedGatewayRegistrationIsAbsent(options, runtime)) &&
+    ((hasInterruptedPreGatewaySession(paths, options, runtime, teardownAuthority) &&
+      selectedGatewayRegistryIsEmpty(paths, runtime)) ||
+      (options.destroyUserData === true &&
+        preservedUninstallDataHasNoContainers(paths, runtime, onboardLock)))
   );
+}
+
+/** A previous uninstall can leave its registry and backups after removing runtime authority. */
+function preservedUninstallDataHasNoContainers(
+  paths: UninstallPaths,
+  runtime: UninstallRuntime,
+  onboardLock?: OnboardStateLockHandle,
+): boolean {
+  try {
+    assertGatewayStatePathSafe(runtime.env.HOME || os.homedir(), paths.nemoclawStateDir);
+    const state = selectedRegistrySandboxState(paths, runtime);
+    const entries = fs.readdirSync(paths.nemoclawStateDir, { withFileTypes: true });
+    if (
+      !entries.every(
+        (entry) =>
+          (onboardLock && entry.name === "onboard.lock" && entry.isFile()) ||
+          (entry.name === "state" &&
+            entry.isDirectory() &&
+            gatewayLifecycleStateContainsOnlyOwnedLocks(paths.nemoclawStateDir, state.names)) ||
+          (PRESERVED_USER_DATA_ENTRIES.includes(entry.name) &&
+            (entry.name === "sandboxes.json" ? entry.isFile() : entry.isDirectory())),
+      )
+    )
+      return false;
+    return Object.entries(state.registrations).every(([name, entry]) => {
+      if (
+        entry.openshellDriver !== "docker" ||
+        entry.pendingRouteReservation !== undefined ||
+        entry.pendingCreateIdentity !== undefined
+      )
+        return false;
+      if (!runtime.commandExists("docker")) throw new RetainedSandboxInventoryError("inventory");
+      return retainedDockerSandboxIsAbsent(
+        runtime.env.HOME || os.homedir(),
+        GATEWAY_PORT,
+        name,
+        entry,
+        (args) => runtime.runDocker(args, { env: runtime.env, timeout: 5_000 }),
+        (args) => runtime.run("openshell", args, { env: runtime.env, timeout: 10_000 }),
+        (reason) => {
+          throw new RetainedSandboxInventoryError(reason);
+        },
+      );
+    });
+  } catch (error) {
+    if (error instanceof RetainedSandboxInventoryError) throw error;
+    return false;
+  }
 }
 
 function selectedGatewayRegistryIsEmpty(paths: UninstallPaths, runtime: UninstallRuntime): boolean {
@@ -3464,9 +3508,7 @@ async function assertInterruptedPreGatewayStateRemovalAllowed(
   ) {
     return;
   }
-  runtime.warn(
-    "The interrupted pre-gateway state changed during uninstall; preserving it for retry.",
-  );
+  runtime.warn("The local gateway state changed during uninstall; preserving it for retry.");
   throw new InterruptedPreGatewayStateChangedError();
 }
 
@@ -3554,12 +3596,14 @@ async function prepareOpenShellCleanup(
           ))
         ) {
           runtime.warn(
-            "The interrupted pre-gateway state changed during uninstall; preserving it for retry.",
+            "The local gateway state changed during uninstall; preserving it for retry.",
           );
           return retainStateLifecycleLock("blocked");
         }
         runtime.log(
-          "No sandbox or gateway process was created; continuing cleanup of the interrupted onboarding state.",
+          hasInterruptedPreGatewaySession(paths, options, runtime, teardownAuthority)
+            ? "No sandbox or gateway process was created; continuing cleanup of the interrupted onboarding state."
+            : "No registered sandbox containers or gateway resources remain; purging retained uninstall data.",
         );
         return retainStateLifecycleLock("interrupted-pre-gateway");
       }
@@ -3606,6 +3650,10 @@ async function prepareOpenShellCleanup(
       "Removed the unused configured gateway state reservation; no gateway resources were created.",
     );
     return retainStateLifecycleLock("reservation-removed");
+  } catch (error) {
+    if (!(error instanceof RetainedSandboxInventoryError)) throw error;
+    runtime.warn(error.message);
+    return retainStateLifecycleLock("blocked");
   } finally {
     if (!cleanupLocksTransferred && interruptedOnboardLock) {
       releaseOnboardStateLock(interruptedOnboardLock);
@@ -3626,6 +3674,7 @@ async function executePlan(
   sharedRegistryMustBePreserved: boolean,
   otherGatewayPorts: readonly number[],
   sandboxNames: readonly string[],
+  sandboxRegistrations: SelectedRegistrySandboxState["registrations"],
   managedHermesStateVolumes: readonly ManagedHermesStateVolumeContext[],
   teardownAuthority: GatewayOwner,
   portableRuntimeCleanup: boolean,
@@ -3703,6 +3752,7 @@ async function executePlan(
       sharedRegistryMustBePreserved,
       otherGatewayPorts,
       sandboxNames,
+      sandboxRegistrations,
       managedHermesStateVolumes,
       teardownAuthority,
       portableRuntimeCleanup,
@@ -3711,6 +3761,10 @@ async function executePlan(
       interruptedOnboardLock,
     );
   } catch (error) {
+    if (error instanceof RetainedSandboxInventoryError) {
+      runtime.warn(error.message);
+      return { ok: false, scopedToSelectedGateway };
+    }
     if (error instanceof InterruptedPreGatewayStateChangedError) {
       return {
         ok: false,
@@ -4170,6 +4224,7 @@ async function executePreparedPlan(
   initialSharedRegistryMustBePreserved: boolean,
   initialOtherGatewayPorts: readonly number[],
   sandboxNames: readonly string[],
+  sandboxRegistrations: SelectedRegistrySandboxState["registrations"],
   managedHermesStateVolumes: readonly ManagedHermesStateVolumeContext[],
   teardownAuthority: GatewayOwner,
   portableRuntimeCleanup: boolean,
@@ -4237,17 +4292,7 @@ async function executePreparedPlan(
       ) {
         return { ok: false, scopedToSelectedGateway };
       }
-      // #8220: a gateway-scoped uninstall still needs the selected OpenShell
-      // gateway service running to delete its sandbox, so "OpenShell resources"
-      // removes that unit after the sandbox delete succeeds.
-      if (
-        !scopedToSelectedGateway &&
-        !portableRuntimeCleanup &&
-        openShellCleanup !== "reservation-removed" &&
-        !removeManagedDefaultGatewayUserService(runtime, options, externallySupervised)
-      ) {
-        ok = false;
-      }
+      // Keep the gateway available until its runtime has removed the sandboxes.
       if (!scopedToSelectedGateway) {
         stopHelperServices(paths, runtime);
         removeGlob(paths.helperServiceGlob, runtime);
@@ -4255,21 +4300,6 @@ async function executePreparedPlan(
           runtime.log(serviceKeepMessage);
         } else {
           stopOrphanedOpenShell(runtime);
-          if (!externallySupervised && openShellCleanup !== "reservation-removed") {
-            stopHostGatewayProcessesForUninstall(
-              runtime,
-              GATEWAY_PORT === DEFAULT_GATEWAY_PORT
-                ? { logNoProcesses: true }
-                : {
-                    gatewayBin: runtime.env.NEMOCLAW_OPENSHELL_GATEWAY_BIN,
-                    logNoProcesses: true,
-                    openShellGatewayName: options.gatewayName || resolveGatewayName(GATEWAY_PORT),
-                    openShellGatewayPort: GATEWAY_PORT,
-                    preserveRuntimeFilesOnNonMatching: true,
-                    stateDir: paths.selectedGatewayLocalStateDir,
-                  },
-            );
-          }
         }
       } else {
         runtime.log("Sibling gateways remain; kept shared helper services and sibling forwards.");
@@ -4298,6 +4328,7 @@ async function executePreparedPlan(
           runtime,
           scopedToSelectedGateway,
           sandboxNames,
+          sandboxRegistrations,
           managedHermesStateVolumes,
           teardownAuthority,
           false,
@@ -4305,6 +4336,29 @@ async function executePreparedPlan(
         ))
       ) {
         return { ok: false, scopedToSelectedGateway };
+      }
+      if (
+        !scopedToSelectedGateway &&
+        !portableRuntimeCleanup &&
+        !options.keepOpenShell &&
+        !externallySupervised &&
+        openShellCleanup !== "reservation-removed"
+      ) {
+        if (!removeManagedDefaultGatewayUserService(runtime, options, externallySupervised))
+          ok = false;
+        stopHostGatewayProcessesForUninstall(
+          runtime,
+          GATEWAY_PORT === DEFAULT_GATEWAY_PORT
+            ? { logNoProcesses: true }
+            : {
+                gatewayBin: runtime.env.NEMOCLAW_OPENSHELL_GATEWAY_BIN,
+                logNoProcesses: true,
+                openShellGatewayName: options.gatewayName || resolveGatewayName(GATEWAY_PORT),
+                openShellGatewayPort: GATEWAY_PORT,
+                preserveRuntimeFilesOnNonMatching: true,
+                stateDir: paths.selectedGatewayLocalStateDir,
+              },
+        );
       }
     } else if (step.name === "NemoClaw CLI") {
       const completion = await completePortablePlan(
@@ -4335,6 +4389,8 @@ async function executePreparedPlan(
           step.actions.flatMap((action) =>
             action.kind === "delete-docker-volume" ? [action.name] : [],
           ),
+          sandboxNames,
+          sandboxRegistrations,
         )
       ) {
         return { ok: false, scopedToSelectedGateway };
@@ -4491,6 +4547,7 @@ async function completePortablePlan(
       runtime,
       scoped,
       sandboxNames,
+      {},
       [],
       authority,
       true,
@@ -4701,6 +4758,17 @@ async function prepareUninstallRun(
     runtime.error(OPENSHELL_COMMAND_MISSING_ERROR);
     return { kind: "complete", outcome: { exitCode: 1, plan } };
   }
+  if (
+    !portableRuntimeCleanup &&
+    !externallySupervised &&
+    hasDockerSandboxRegistrations(selectedSandboxState.registrations) &&
+    !runtime.commandExists("docker")
+  ) {
+    runtime.error(
+      "The Docker command is required to verify cleanup of the selected Docker sandboxes. Restore it and rerun uninstall; recovery state was preserved for retry.",
+    );
+    return { kind: "complete", outcome: { exitCode: 1, plan } };
+  }
   const preserveUnderStateDir = resolvePreserveSet(paths, resolvedOptions, runtime);
   return {
     kind: "ready",
@@ -4747,6 +4815,7 @@ async function executePreparedUninstall(
       prepared.gatewayInspection.sharedRegistryMustBePreserved,
       prepared.gatewayInspection.otherGatewayPorts,
       selectedSandboxState.names,
+      selectedSandboxState.registrations,
       selectedSandboxState.managedHermesStateVolumes,
       teardownAuthority,
       portableRuntimeCleanup,

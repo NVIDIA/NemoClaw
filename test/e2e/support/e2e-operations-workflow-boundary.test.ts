@@ -23,6 +23,7 @@ const COLD_ONBOARD_PERFORMANCE_EVIDENCE_PATH =
   "e2e-artifacts/live/${{ matrix.id }}/onboard-progress-budget.json";
 const CONFIG_EXPORT_EVIDENCE_PATH =
   "e2e-artifacts/live/${{ matrix.id }}/config-export-evidence.v1.json";
+const CONFIG_EXPORT_YAML_PATH = "e2e-artifacts/live/${{ matrix.id }}/config-export.yaml";
 
 function workflowScript(jobName: string, stepName: string): string {
   const workflow = readE2eOperationsWorkflow();
@@ -34,6 +35,20 @@ function workflowScript(jobName: string, stepName: string): string {
 describe("E2E operations workflow", testTimeoutOptions(15_000), () => {
   it("accepts the checked-in workflow", () => {
     expect(validateE2eOperationsWorkflowBoundary()).toEqual([]);
+    const workflow = readE2eOperationsWorkflow();
+    const steps = workflow.jobs.live.steps!;
+    const toolchain = steps.splice(
+      steps.findIndex((step) => step.name === "Set up pinned v1 compatibility toolchain"),
+      1,
+    )[0]!;
+    steps.splice(
+      steps.findIndex((step) => step.name === "Authenticate to Docker Hub") + 1,
+      0,
+      toolchain,
+    );
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "live E2E must set up the pinned v1 toolchain before Docker authentication",
+    );
   });
   it.each([true, undefined])("rejects recorder cone mode %s (#11489)", (coneMode) => {
     const workflow = readE2eOperationsWorkflow();
@@ -70,8 +85,67 @@ describe("E2E operations workflow", testTimeoutOptions(15_000), () => {
       "live E2E must upload automatic config export evidence",
     );
   });
+  it("requires validated config export YAML in retained live artifacts (#12132)", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const upload = workflow.jobs.live.steps!.find((step) => step.name === "Upload E2E artifacts")!;
+    upload.with!.path = String(upload.with!.path)
+      .split("\n")
+      .filter((line) => line.trim() !== CONFIG_EXPORT_YAML_PATH)
+      .join("\n");
+
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "live E2E must upload the validated config export YAML",
+    );
+  });
   it.each([
     { mode: "removed check", run: "true", continueOnError: false },
+    {
+      mode: "missing YAML check",
+      run: [
+        "set -euo pipefail",
+        `evidence="${CONFIG_EXPORT_EVIDENCE_PATH}"`,
+        'test -f "$evidence"',
+      ].join("\n"),
+      continueOnError: false,
+    },
+    {
+      mode: "missing YAML digest binding",
+      run: [
+        "set -euo pipefail",
+        `evidence="${CONFIG_EXPORT_EVIDENCE_PATH}"`,
+        `yaml="${CONFIG_EXPORT_YAML_PATH}"`,
+        'test -f "$evidence"',
+        "jq -e '.passed == true' \"$evidence\" >/dev/null",
+        'case "$(jq -er \'.classification\' "$evidence")" in',
+        '  success) test -f "$yaml" ;;',
+        "  expected-refusal|no-usable-sandbox) ;;",
+        "  *) exit 1 ;;",
+        "esac",
+      ].join("\n"),
+      continueOnError: false,
+    },
+    {
+      mode: "missing pinned consumer proof",
+      run: [
+        "set -euo pipefail",
+        `evidence="${CONFIG_EXPORT_EVIDENCE_PATH}"`,
+        `yaml="${CONFIG_EXPORT_YAML_PATH}"`,
+        'test -f "$evidence"',
+        "jq -e '.passed == true' \"$evidence\" >/dev/null",
+        'case "$(jq -er \'.classification\' "$evidence")" in',
+        "  success)",
+        '    test -f "$yaml"',
+        '    expected_sha="$(jq -er \'.export.sha256 | strings | select(test("^[0-9a-f]{64}$"))\' "$evidence")"',
+        '    actual_sha="$(sha256sum -- "$yaml")"',
+        '    actual_sha="${actual_sha%% *}"',
+        '    test "$actual_sha" = "$expected_sha"',
+        "    ;;",
+        "  expected-refusal|no-usable-sandbox) ;;",
+        "  *) exit 1 ;;",
+        "esac",
+      ].join("\n"),
+      continueOnError: false,
+    },
     {
       mode: "ignored shell failure",
       run: `test -f "${CONFIG_EXPORT_EVIDENCE_PATH}" || true`,
@@ -507,8 +581,8 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
         );
         expect(authentication.run).not.toContain("collaborators/");
         expect(authentication.run).not.toContain("role_name");
-        expect(authentication.env).not.toHaveProperty("GITHUB_TOKEN");
-        expect(authentication.run).not.toContain("Authorization:");
+        expect(authentication.env?.GITHUB_TOKEN).toBe("${{ github.token }}");
+        expect(authentication.run).toContain('--header "Authorization: Bearer ${GITHUB_TOKEN}"');
       } finally {
         rmSync(directory, { force: true, recursive: true });
       }
@@ -516,8 +590,8 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
   );
 
   it.each([
-    ["a denied public PR metadata request", "return 22"],
-    ["malformed public PR metadata", `printf '%s' '{'`],
+    ["a denied authenticated PR metadata request", "return 22"],
+    ["malformed authenticated PR metadata", `printf '%s' '{'`],
   ])("fails closed for %s", (_caseName, curlResult) => {
     const workflow = readE2eOperationsWorkflow();
     const authentication = workflow.jobs["generate-matrix"].steps!.find(

@@ -6,6 +6,7 @@ import type { ModelPromptOptions, ModelPromptResult } from "../inference/model-p
 import { promptCloudModel } from "../inference/model-prompts";
 import {
   createNvidiaFeaturedModelPromptOptionsLoader,
+  isRetiredNvidiaFeaturedModelId,
   type NvidiaFeaturedModelOptions,
 } from "../inference/nvidia-featured-models";
 import { BACK_TO_SELECTION } from "../navigation";
@@ -24,7 +25,10 @@ export type NvidiaFeaturedModelSessionOptions = {
   writeLine?: (message: string) => void;
   defaultModel?: string;
   loadingMessage?: string;
-} & Pick<NvidiaFeaturedModelOptions, "catalogLabel" | "catalogUrl" | "retiredModelIds" | "warn">;
+} & Pick<
+  NvidiaFeaturedModelOptions,
+  "catalogLabel" | "catalogUrl" | "fallbackModelOptions" | "retiredModelIds" | "warn"
+>;
 
 /** Create one catalog-backed model selector for an onboarding session. */
 export function createNvidiaFeaturedModelSession(
@@ -32,28 +36,63 @@ export function createNvidiaFeaturedModelSession(
 ): NvidiaFeaturedModelSession {
   const writeLine = options.writeLine ?? console.log;
   const defaultModel = options.defaultModel?.trim() || DEFAULT_CLOUD_MODEL;
+  const warn = options.warn ?? console.warn;
   const loadingMessage = options.loadingMessage ?? "  Loading NVIDIA's featured model catalog...";
   const loadPromptOptions = createNvidiaFeaturedModelPromptOptionsLoader({
     catalogLabel: options.catalogLabel,
     catalogUrl: options.catalogUrl,
+    fallbackModelOptions: options.fallbackModelOptions,
     retiredModelIds: options.retiredModelIds,
     warn: options.warn,
   });
   let announcedLoad = false;
   return {
     async select(requestedModel, recoveredModel, nonInteractive, envModel, promptOptions) {
-      if (requestedModel) return requestedModel;
-      if (recoveredModel) return recoveredModel;
       const configuredModel = envModel?.trim();
-      if (nonInteractive) return configuredModel || defaultModel;
+      const configuredModelIsRetired = Boolean(
+        configuredModel && isRetiredNvidiaFeaturedModelId(configuredModel, options.retiredModelIds),
+      );
+      const requestedModelIsRetired = Boolean(
+        requestedModel && isRetiredNvidiaFeaturedModelId(requestedModel, options.retiredModelIds),
+      );
+      if (requestedModel) {
+        if (!requestedModelIsRetired) {
+          return requestedModel;
+        }
+        const replacementModel =
+          configuredModel && !configuredModelIsRetired ? configuredModel : defaultModel;
+        warn(
+          nonInteractive
+            ? `  Warning: configured NVIDIA model "${requestedModel}" is retired; ignoring it and using "${replacementModel}" instead.`
+            : `  Warning: configured NVIDIA model "${requestedModel}" is retired; choose a replacement model.`,
+        );
+        if (nonInteractive) return replacementModel;
+      }
+      if (recoveredModel && !requestedModelIsRetired) {
+        if (!isRetiredNvidiaFeaturedModelId(recoveredModel, options.retiredModelIds)) {
+          return recoveredModel;
+        }
+        warn(
+          nonInteractive
+            ? `  Warning: recovered NVIDIA model "${recoveredModel}" is retired; using "${configuredModel && !configuredModelIsRetired ? configuredModel : defaultModel}" instead.`
+            : `  Warning: recovered NVIDIA model "${recoveredModel}" is retired; choose a replacement model.`,
+        );
+      }
+      if (nonInteractive) {
+        return configuredModel && !configuredModelIsRetired ? configuredModel : defaultModel;
+      }
       if (!announcedLoad) {
         writeLine(loadingMessage);
         announcedLoad = true;
       }
       return promptCloudModel({
-        ...loadPromptOptions(configuredModel || defaultModel),
+        ...loadPromptOptions(
+          configuredModel && !configuredModelIsRetired ? configuredModel : defaultModel,
+        ),
         ...promptOptions,
-        manualDefaultModelId: promptOptions?.manualDefaultModelId ?? configuredModel,
+        manualDefaultModelId:
+          promptOptions?.manualDefaultModelId ??
+          (configuredModel && !configuredModelIsRetired ? configuredModel : undefined),
       });
     },
   };
@@ -67,11 +106,19 @@ export async function selectFeaturedModelAfterCredentialPrompt(
   session: NvidiaFeaturedModelSession,
   credentialNavigation: unknown,
   shouldReturnToProviderSelection: (result: unknown) => boolean,
-  requestedModel: string | null,
+  selection: { requestedModel: string | null; constrainedModel?: ModelPromptResult | null },
   recoveredModel: string | null,
   nonInteractive: boolean,
   envModel?: string,
 ): Promise<ModelPromptResult> {
   if (shouldReturnToProviderSelection(credentialNavigation)) return BACK_TO_SELECTION;
-  return session.select(requestedModel, recoveredModel, nonInteractive, envModel);
+  const { requestedModel, constrainedModel } = selection;
+  const effectiveRequestedModel =
+    requestedModel ??
+    (typeof constrainedModel === "string" &&
+    constrainedModel.trim() &&
+    constrainedModel !== recoveredModel
+      ? constrainedModel
+      : null);
+  return session.select(effectiveRequestedModel, recoveredModel, nonInteractive, envModel);
 }

@@ -219,6 +219,31 @@ describe("connectSandbox probe-only observe mode", () => {
     expect(harness.waitForStartedHermesGatewayProcessSpy.mock.invocationCallOrder[0]).toBeLessThan(
       harness.checkAndRecoverSpy.mock.invocationCallOrder[0]!,
     );
+    const recoveryOptions = harness.checkAndRecoverSpy.mock.calls[0]?.[1];
+    expect(recoveryOptions?.isSandboxGatewayRunningImpl).toBeTypeOf("function");
+    await expect(recoveryOptions?.isSandboxGatewayRunningImpl?.("alpha")).resolves.toBe(true);
+  });
+
+  it("reuses the Hermes process observation accepted by the start command", async () => {
+    const harness = createConnectHarness({
+      agentName: "hermes",
+      gatewayProcessSettlement: null,
+      sessionAgent: { name: "hermes" },
+      registryEntry: { stopped: true },
+      listOutput: "alpha Ready",
+    });
+
+    await expect(
+      harness.connectSandbox("alpha", {
+        managedHermesGatewayProcessObserved: true,
+        probeOnly: true,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.waitForStartedHermesGatewayProcessSpy).toHaveBeenCalledOnce();
+    const recoveryOptions = harness.checkAndRecoverSpy.mock.calls[0]?.[1];
+    expect(recoveryOptions?.isSandboxGatewayRunningImpl).toBeTypeOf("function");
+    await expect(recoveryOptions?.isSandboxGatewayRunningImpl?.("alpha")).resolves.toBe(true);
   });
 
   it("stops before recovery when a just-started Hermes gateway stays stopped", async () => {
@@ -287,14 +312,14 @@ describe("connectSandbox probe-only observe mode", () => {
       dockerRuntime: { containerName: "openshell-alpha", running: false, paused: false },
       dockerStartStatus: 1,
       sandboxLifecycleStartStatus: 1,
-      expectedDockerStartCalls: 1,
+      expectedDockerStartCalls: 0,
     },
     {
       condition: "Docker reports no start status",
       dockerRuntime: { containerName: "openshell-alpha", running: false, paused: false },
       dockerStartStatus: null,
       sandboxLifecycleStartStatus: 1,
-      expectedDockerStartCalls: 1,
+      expectedDockerStartCalls: 0,
     },
     {
       condition: "the container is already running",
@@ -346,6 +371,7 @@ describe("connectSandbox probe-only observe mode", () => {
   it("fails before recovery when the initial Error persists after the start (#10466)", async () => {
     const harness = createConnectHarness({
       dockerRuntime: { containerName: "openshell-alpha", running: false, paused: false },
+      sandboxGetPhase: "Stopped",
       listOutputs: Array.from({ length: 21 }, () => "alpha Error"),
     });
 
@@ -367,19 +393,20 @@ describe("connectSandbox probe-only observe mode", () => {
     expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
   });
 
-  it("continues readiness polling when neither start recovers the container (#8967)", async () => {
+  it("continues readiness polling when OpenShell cannot start the container (#8967)", async () => {
     const harness = createConnectHarness({
       dockerRuntime: { containerName: "openshell-alpha", running: false, paused: false },
       dockerStartStatus: 1,
       sandboxLifecycleStartStatus: 1,
+      sandboxGetPhase: "Stopped",
       listOutput: "alpha Ready",
     });
 
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
 
-    expect(harness.dockerStartSpy).toHaveBeenCalledOnce();
+    expect(harness.dockerStartSpy).not.toHaveBeenCalled();
     expect(harness.errorSpy.mock.calls.map(([line]) => String(line)).join("\n")).toContain(
-      "Docker could not start container 'openshell-alpha' (exit 1); continuing with readiness checks.",
+      "OpenShell could not start sandbox 'alpha': OpenShell is unavailable (Error, code 1).",
     );
     expect(
       harness.captureOpenshellSpy.mock.calls.some(
@@ -389,23 +416,21 @@ describe("connectSandbox probe-only observe mode", () => {
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
-  it("falls back to Docker when OpenShell reports no lifecycle-start status (#8967)", async () => {
+  it("does not fall back to Docker when OpenShell reports no lifecycle-start status (#8967)", async () => {
     const harness = createConnectHarness({
       dockerRuntime: { containerName: "openshell-alpha", running: false, paused: false },
       sandboxLifecycleStartStatus: null,
+      sandboxGetPhase: "Stopped",
       listOutput: "alpha Ready",
     });
 
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
 
-    expect(harness.dockerStartSpy).toHaveBeenCalledOnce();
+    expect(harness.dockerStartSpy).not.toHaveBeenCalled();
     const lifecycleStartIndices = harness.captureOpenshellSpy.mock.calls.flatMap(([args], index) =>
       Array.isArray(args) && args[0] === "sandbox" && args[1] === "start" ? [index] : [],
     );
     expect(lifecycleStartIndices).toHaveLength(1);
-    expect(
-      harness.captureOpenshellSpy.mock.invocationCallOrder[lifecycleStartIndices[0]!],
-    ).toBeLessThan(harness.dockerStartSpy.mock.invocationCallOrder[0]!);
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
@@ -457,6 +482,35 @@ describe("connectSandbox probe-only observe mode", () => {
     expect(listInvocations.length).toBeGreaterThan(0);
     expect(startInvocations[0]!.order).toBeLessThan(listInvocations[0]!.order);
     expect(harness.dockerStartSpy).not.toHaveBeenCalled();
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it("starts a stopped sibling-root sandbox through its owning gateway", async () => {
+    const harness = createConnectHarness({
+      registryEntry: { gatewayName: "nemoclaw", gatewayPort: 8245 },
+      sandboxGetPhase: "Stopped",
+      listOutput: "alpha Ready",
+    });
+    const selectedRegistry = requireDist("../../src/lib/state/registry.js");
+    selectedRegistry.getSandbox.mockReturnValue(null);
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+
+    expect(harness.captureOpenshellSpy).toHaveBeenCalledWith(
+      ["sandbox", "get", "-g", "nemoclaw-8245", "alpha"],
+      expect.objectContaining({ ignoreError: true }),
+    );
+    expect(harness.connectManagedOpenShellSdkSpy).toHaveBeenCalledWith(
+      { kind: "named", gatewayName: "nemoclaw-8245" },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(harness.captureOpenshellSpy).toHaveBeenCalledWith([
+      "sandbox",
+      "start",
+      "-g",
+      "nemoclaw-8245",
+      "alpha",
+    ]);
     expect(exitSpy).not.toHaveBeenCalled();
   });
 

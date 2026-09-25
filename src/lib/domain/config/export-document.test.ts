@@ -6,7 +6,6 @@ import {
   parseNemoClawConfigDocumentName,
   parseNemoClawConfigDocumentUid,
 } from "../../config/model";
-import { exportedAgentList } from "../../../../test/support/config-export-document";
 import { buildExportConfig } from "./export-document";
 import type { VerifiedExportSource } from "./export-evidence";
 
@@ -50,6 +49,20 @@ const source = {
 } as unknown as VerifiedExportSource;
 
 describe("export config builder", () => {
+  it.each(["openclaw", "hermes"] as const)(
+    "emits one singular %s agent for the v1alpha1 consumer (#12131)",
+    (agent) => {
+      const result = buildExportConfig(
+        { ...source, agent, interfaces: undefined },
+        { documentName: alphaDocumentName, documentUid: firstUid },
+      );
+      const sandbox = result.spec.sandboxes[0]!;
+
+      expect(sandbox).toHaveProperty("agent");
+      expect(sandbox).not.toHaveProperty("agents");
+    },
+  );
+
   it("maps a verified source into one aggregate (#10938)", () => {
     const result = buildExportConfig(source, {
       documentName: workAgentsDocumentName,
@@ -91,20 +104,18 @@ describe("export config builder", () => {
               },
             },
             harness: { kind: "openclaw" },
-            agents: [
-              {
-                name: "primary",
-                inference: {
-                  routes: [
-                    {
-                      name: "primary",
-                      providerRef: "hosted-openai-api",
-                      overrides: { model: "gpt-5" },
-                    },
-                  ],
-                },
+            agent: {
+              name: "primary",
+              inference: {
+                routes: [
+                  {
+                    name: "primary",
+                    providerRef: "hosted-openai-api",
+                    overrides: { model: "gpt-5" },
+                  },
+                ],
               },
-            ],
+            },
           },
         ],
       },
@@ -132,40 +143,13 @@ describe("export config builder", () => {
       },
     });
     const sandbox = document.spec.sandboxes[0]!;
-    expect("agents" in sandbox).toBe(true);
-    expect(exportedAgentList(sandbox)[0]!.integrationRefs).toEqual(["brave-search"]);
+    expect("agent" in sandbox).toBe(true);
+    expect(sandbox.agent.integrationRefs).toEqual(["brave-search"]);
     expect(document.spec.inferenceProviders).toHaveLength(1);
     expect(
       buildExportConfig(source, { documentName: alphaDocumentName, documentUid: firstUid }).spec
         .sandboxes[0],
     ).not.toHaveProperty("integrations");
-  });
-
-  it("grants Brave only to the declared primary agent", () => {
-    const document = buildExportConfig(
-      {
-        ...source,
-        webSearch: {
-          provider: "brave",
-          agentRefs: ["primary"],
-          credential: { env: "BRAVE_API_KEY" },
-        },
-        additionalAgents: [{ name: "researcher", tools: { allow: ["read"] } }],
-      } as unknown as VerifiedExportSource,
-      {
-        documentName: alphaDocumentName,
-        documentUid: firstUid,
-      },
-    );
-
-    const sandbox = document.spec.sandboxes[0]!;
-    expect("agents" in sandbox).toBe(true);
-    const agents = exportedAgentList(sandbox);
-    expect(agents).toMatchObject([
-      { name: "primary", integrationRefs: ["brave-search"] },
-      { name: "researcher" },
-    ]);
-    expect(agents[1]).not.toHaveProperty("integrationRefs");
   });
 
   it("uses the supplied identity and keeps derived references deterministic (#10938)", () => {
@@ -183,10 +167,8 @@ describe("export config builder", () => {
     expect(second.spec).toEqual(first.spec);
     expect(second.spec.inferenceProviders[0]?.name).toBe("hosted-openai-api");
     const sandbox = second.spec.sandboxes[0]!;
-    expect("agents" in sandbox).toBe(true);
-    expect(exportedAgentList(sandbox)[0]?.inference.routes[0]?.providerRef).toBe(
-      "hosted-openai-api",
-    );
+    expect("agent" in sandbox).toBe(true);
+    expect(sandbox.agent.inference.routes[0]?.providerRef).toBe("hosted-openai-api");
   });
 
   it("preserves the verified Hermes agent type (#11286)", () => {
@@ -199,6 +181,7 @@ describe("export config builder", () => {
     );
 
     expect(result.spec.sandboxes[0]?.harness.kind).toBe("hermes");
+    expect(result.spec.sandboxes[0]).not.toHaveProperty("image");
     expect(result.spec.sandboxes[0]?.harness).not.toHaveProperty("observability");
     expect(result.spec.sandboxes[0]?.network.policy.explicit).toMatchObject({
       process: { run_as_user: "1000", run_as_group: "1000" },
@@ -230,8 +213,8 @@ describe("export config builder", () => {
     );
 
     const sandbox = result.spec.sandboxes[0]!;
-    expect("agents" in sandbox).toBe(true);
-    expect(exportedAgentList(sandbox)[0]?.auth).toEqual({
+    expect("agent" in sandbox).toBe(true);
+    expect(sandbox.agent.auth).toEqual({
       method: "api-key",
     });
   });
@@ -252,6 +235,141 @@ describe("export config builder", () => {
       provider: "openai",
       api: "openai-responses",
       endpoint: "https://api.openai.com/v1",
+    });
+  });
+
+  it.each([
+    { label: "default ports", daemonPort: 11_434, proxyPort: 11_435 },
+    { label: "custom ports", daemonPort: 21_434, proxyPort: 21_435 },
+  ])(
+    "maps attached Ollama with $label into the accepted v1alpha1 shape (#12012)",
+    ({ daemonPort, proxyPort }) => {
+      const model = "qwen3.5:9b";
+      const result = buildExportConfig(
+        {
+          ...source,
+          inference: {
+            provider: "ollama-local",
+            model,
+            api: "openai-completions",
+            overrides: { contextWindow: 32_768, maxTokens: 4096 },
+            serving: {
+              backend: "ollama",
+              daemon: { management: "external", hostPort: daemonPort },
+              proxy: { management: "nemoclaw", hostPort: proxyPort },
+              model: { servedName: model, digest },
+            },
+          },
+        } as unknown as VerifiedExportSource,
+        {
+          documentName: alphaDocumentName,
+          documentUid: firstUid,
+        },
+      );
+
+      expect(result.spec.inferenceProviders).toEqual([
+        {
+          name: "local",
+          provider: "openai",
+          api: "openai-completions",
+          serviceRef: "ollama-auth",
+        },
+      ]);
+      expect(result.spec.services).toEqual({
+        "ollama-auth": {
+          kind: "ollamaProxy",
+          image: null,
+          endpoint: `http://172.30.154.1:${proxyPort}/v1`,
+          upstream: {
+            endpoint: `http://127.0.0.1:${daemonPort}/v1`,
+            model: {
+              name: model,
+              digest: "a".repeat(64),
+            },
+          },
+        },
+      });
+      expect(result.spec.inferenceProviders[0]).not.toHaveProperty("credential");
+      const sandbox = result.spec.sandboxes[0]!;
+      expect(sandbox.agent.inference.routes[0]).toEqual({
+        name: "primary",
+        providerRef: "local",
+        overrides: { model, contextWindow: 32_768, maxTokens: 4096 },
+      });
+    },
+  );
+
+  it("maps fixed managed vLLM into a human-completable current-v1 service (#12012)", () => {
+    const servedName = "nvidia-nemotron-3.5-lightning-30b-a3b-nvfp4";
+    const result = buildExportConfig(
+      {
+        ...source,
+        inference: {
+          provider: "vllm-local",
+          model: servedName,
+          api: "openai-completions",
+          serving: {
+            backend: "vllm",
+            catalogDigest: digest,
+            profile: {
+              id: "vllm.linux-amd64-nvidia.single.nemotron-3.5-lightning-30b-a3b-nvfp4",
+              digest,
+            },
+            recipe: {
+              id: "vllm.nemotron-3.5-lightning-30b-a3b-nvfp4.linux-amd64-single.v1",
+              digest,
+            },
+            model: {
+              id: "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4",
+              revision: "0dcd680e5585c791728c83342b311d0a0026dbeb",
+              servedName,
+            },
+            runtime: { image: { ref: `vllm/vllm-openai@${digest}` } },
+            hostPort: 18_000,
+          },
+        },
+      } as unknown as VerifiedExportSource,
+      { documentName: alphaDocumentName, documentUid: firstUid },
+    );
+
+    expect(result.spec.inferenceProviders).toEqual([
+      {
+        name: "managed-vllm",
+        provider: "openai",
+        api: "openai-completions",
+        serviceRef: "vllm",
+      },
+    ]);
+    expect(result.spec.services).toEqual({
+      vllm: {
+        kind: "vllm",
+        authentication: "bearer",
+        hardware: {
+          architecture: "amd64",
+          minComputeCapability: 90,
+          minGpuMemoryBytes: 96_000_000_000,
+          minDriverMajor: 580,
+        },
+        container: { ipc: "host", sharedMemoryGiB: 32 },
+        image: null,
+        model: {
+          repository: "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4",
+          revision: "0dcd680e5585c791728c83342b311d0a0026dbeb",
+        },
+        serving: {
+          modelName: servedName,
+          mambaBackend: "flashinfer",
+          enforceEager: false,
+          toolParser: "qwen3_coder",
+          reasoningParser: "nemotron_v3",
+          port: 18_000,
+          contextTokens: 65_536,
+          maxSequences: 1,
+          batchTokens: 4096,
+          startupTimeoutSeconds: 1800,
+        },
+        memory: { gpuMemoryUtilization: 0.75 },
+      },
     });
   });
 });

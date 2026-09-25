@@ -472,15 +472,15 @@ describe("verifyGpuSandboxLocalInferenceAndCommitAfterReady", () => {
       () => {
         throw new Error("Expected local inference verification to fail.");
       },
-      (error: unknown) => error as Error & { managedBootstrapRollbackError?: unknown },
+      (error: unknown) => error as Error & { runtimeRollbackError?: unknown },
     );
 
     expect(failure).toBeInstanceOf(Error);
     expect(failure.message).toContain(
-      "Managed bootstrap rollback requires attention: Rollback failed: <REDACTED>",
+      "Runtime rollback requires attention: Rollback failed: <REDACTED>",
     );
     expect(failure.message).not.toContain(secret);
-    expect(failure.managedBootstrapRollbackError).toBe(rollbackError);
+    expect(failure.runtimeRollbackError).toBe(rollbackError);
     expect(rollbackError.message).toBe("Rollback failed: <REDACTED>");
     expect(rollbackError.stack).not.toContain(secret);
     expect(rollbackError.stack).toContain("<REDACTED>");

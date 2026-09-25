@@ -45,9 +45,8 @@ on:
       - "nemoclaw/**"
       - "nemoclaw-blueprint/**"
       - "scripts/**"
-      - "src/lib/actions/sandbox/openshell-child-visible-credentials.v*.json"
-      - "src/lib/actions/sandbox/mcp-bridge-*.ts"
-      - "src/lib/actions/sandbox/rebuild-post-restore-phase.ts"
+      - "src/lib/actions/sandbox/**"
+      - "src/lib/adapters/openshell/**"
       - "src/lib/agent/candidate-authority.ts"
       - "src/lib/extra-agents-validation.ts"
       - "src/lib/core/json-types.ts"
@@ -58,6 +57,7 @@ on:
       - "src/lib/state/paths.ts"
       - "src/lib/state/state-root.ts"
       - "test/e2e/live/mcp-bridge*.ts"
+      - "test/e2e/support/mcp-bridge-portable-lock-barrier.ts"
       - "test/e2e/fixtures/gateway-runtime-start.ts"
       - "test/e2e/fixtures/phases/lifecycle.ts"
       - "test/e2e/live/managed-image-activation-e2e*.ts"
@@ -95,7 +95,7 @@ jobs:
       - name: Checkout npm audit code from the base commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: 5310ad0a5c25d49f06910525456ea2529506b3ae
+          ref: 8ed889c14ccd7e828a9fbc20606cc7c587e6ca31
           path: .trusted-reviewed-npm-audit
           persist-credentials: false
           sparse-checkout: |
@@ -115,7 +115,7 @@ jobs:
         shell: bash
         env:
           CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
-          REVIEWED_AUDIT_SHA: 5310ad0a5c25d49f06910525456ea2529506b3ae
+          REVIEWED_AUDIT_SHA: 8ed889c14ccd7e828a9fbc20606cc7c587e6ca31
         run: |
           set -euo pipefail
           [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ ]]
@@ -211,6 +211,7 @@ jobs:
             install -m 0644 "$source_file" "$destination_file"
           done
           for support_relative in \
+            agents/langchain-deepagents-code/validate-runtime-contract.py \
             ci/reviewed-npm-audit.json \
             scripts/lib/bundled-npm-package.mts \
             scripts/lib/patch-bundled-npm-ip-address.mts \
@@ -537,7 +538,7 @@ jobs:
         if: matrix.agent == 'openclaw'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: 5310ad0a5c25d49f06910525456ea2529506b3ae
+          ref: 8ed889c14ccd7e828a9fbc20606cc7c587e6ca31
           path: .trusted-mcporter-audit
           persist-credentials: false
           sparse-checkout: |
@@ -565,7 +566,7 @@ jobs:
           raw="$RUNNER_TEMP/reviewed-npm-audit/mcporter-runtime.raw.json"
           policy="$RUNNER_TEMP/reviewed-npm-audit/mcporter-runtime.policy.json"
           trusted_root="$GITHUB_WORKSPACE/.trusted-mcporter-audit"
-          test "$(git -C "$trusted_root" rev-parse --verify HEAD)" = '5310ad0a5c25d49f06910525456ea2529506b3ae'
+          test "$(git -C "$trusted_root" rev-parse --verify HEAD)" = '8ed889c14ccd7e828a9fbc20606cc7c587e6ca31'
           node --experimental-strip-types --no-warnings \
             "$trusted_root/scripts/lib/npm-audit-receipt.mts" \
             --receipt "$receipt" \
@@ -1102,7 +1103,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          npm ci --ignore-scripts --no-audit --no-fund
+          node scripts/lib/openshell-sdk-install.mts prepare
+          npm ci --ignore-scripts --no-audit --no-fund --@nvidia:registry=https://npm.pkg.github.com
+          node scripts/lib/openshell-sdk-install.mts check
           mapfile -d '' contracts < <(
             find "$RUNNER_TEMP/managed-pr-contracts" -type f -name contract.json -print0
           )
@@ -1139,6 +1142,332 @@ jobs:
         with:
           name: managed-image-activation-${{ github.run_id }}-${{ github.run_attempt }}
           path: e2e-artifacts/live/managed-image-activation/
+          if-no-files-found: error
+          retention-days: 1
+
+  pr-managed-podman-activation:
+    name: PR exact all-agent managed runtime activation on rootless Podman
+    needs: pr-build-and-entrypoint
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-26.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    env:
+      CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/managed-image-podman-activation
+      E2E_JOB: "1"
+      E2E_SOURCE_REVISION: ${{ github.event.pull_request.head.sha }}
+      E2E_TARGET_ID: managed-image-activation
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_E2E_EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+      NEMOCLAW_E2E_SHARD: default
+      NEMOCLAW_GATEWAY_RUNTIME: podman
+      NEMOCLAW_MANAGED_ACTIVATION_CATALOG: ${{ github.workspace }}/managed-pr-catalog.json
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_RUN_LIVE_E2E: "1"
+      OPENSHELL_DRIVERS: podman
+      OPENSHELL_GATEWAY: nemoclaw
+      PODMAN_APT_VERSION: "5.7.0+ds2-3build1"
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Initialize managed Podman activation diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -d -m 0700 "$E2E_ARTIFACT_DIR"
+          printf 'candidate_sha=%s\nphase=setup\n' "$CANDIDATE_SHA" \
+            >"$E2E_ARTIFACT_DIR/setup-context.txt"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.18.1
+
+      - name: Install reviewed npm
+        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
+
+      - name: Bind E2E correlation identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          correlation_id="$(node --input-type=module -e \
+            'import { randomUUID } from "node:crypto"; console.log(randomUUID())')"
+          [[ "$correlation_id" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$ ]]
+          printf 'NEMOCLAW_E2E_CORRELATION_ID=%s\n' "$correlation_id" >> "$GITHUB_ENV"
+
+      - name: Download exact published all-agent contracts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: managed-pr-contract-${{ github.run_id }}-*
+          path: ${{ runner.temp }}/managed-pr-contracts
+          merge-multiple: false
+
+      - name: Assemble exact all-agent activation catalog
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/lib/openshell-sdk-install.mts prepare
+          npm ci --ignore-scripts --no-audit --no-fund --@nvidia:registry=https://npm.pkg.github.com
+          node scripts/lib/openshell-sdk-install.mts check
+          mapfile -d '' contracts < <(
+            find "$RUNNER_TEMP/managed-pr-contracts" -type f -name contract.json -print0
+          )
+          node --no-warnings \
+            tools/e2e/pr-managed-image-publication.mts assemble \
+            "$CANDIDATE_SHA" \
+            "$NEMOCLAW_MANAGED_ACTIVATION_CATALOG" \
+            "${contracts[@]}"
+
+      - name: Build exact candidate CLI
+        run: npm run build:cli
+
+      - name: Install OpenShell CLI
+        shell: bash
+        run: env -u GITHUB_TOKEN bash scripts/install-openshell.sh
+
+      - name: Install rootless Podman runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes \
+            apparmor \
+            fuse-overlayfs \
+            passt \
+            slirp4netns \
+            uidmap \
+            "podman=$PODMAN_APT_VERSION"
+          test "$(dpkg-query --show --showformat='${Version}' podman)" = "$PODMAN_APT_VERSION"
+          test "$(podman --version)" = "podman version 5.7.0"
+          pasta_profile=/etc/apparmor.d/usr.bin.pasta
+          signal_rule='^[[:space:]]*signal[[:space:]]+\(receive\)[[:space:]]+peer=podman,[[:space:]]*$'
+          test -f "$pasta_profile"
+          if ! grep -Eq "$signal_rule" "$pasta_profile"; then
+            sudo sed -i \
+              '/^[[:space:]]*include <abstractions\/pasta>[[:space:]]*$/a\  signal (receive) peer=podman,' \
+              "$pasta_profile"
+          fi
+          sudo apparmor_parser -r "$pasta_profile"
+
+      - name: Start exact rootless Podman API service
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          uid="$(id -u)"
+          runtime_dir="/run/user/$uid"
+          socket_path="$runtime_dir/podman/podman.sock"
+          install -d -m 0700 "$runtime_dir" "$runtime_dir/podman" "$E2E_ARTIFACT_DIR"
+          export XDG_RUNTIME_DIR="$runtime_dir"
+          containers_conf="$RUNNER_TEMP/nemoclaw-managed-podman-containers.conf"
+          cat >"$containers_conf" <<'CONTAINERS_CONF'
+          [network]
+          default_rootless_network_cmd = "pasta"
+          firewall_driver = "iptables"
+
+          [engine]
+          env = ["NETAVARK_FW=iptables"]
+          CONTAINERS_CONF
+          chmod 0600 "$containers_conf"
+          export CONTAINERS_CONF="$containers_conf"
+          export NETAVARK_FW=iptables
+          service_log="$E2E_ARTIFACT_DIR/podman-system-service.log"
+          podman system service --time=0 "unix://$socket_path" >"$service_log" 2>&1 &
+          service_pid="$!"
+          for attempt in $(seq 1 30); do
+            if podman --url "unix://$socket_path" info --format json \
+              >"$E2E_ARTIFACT_DIR/podman-info.json" 2>>"$service_log"; then
+              break
+            fi
+            test "$attempt" -lt 30
+            sleep 1
+          done
+          test -S "$socket_path"
+          jq -e '(.host.security.rootless // .Host.Security.Rootless) == true' \
+            "$E2E_ARTIFACT_DIR/podman-info.json" >/dev/null
+          sudo ip address replace 169.254.2.2/32 dev lo
+          {
+            printf 'CONTAINER_HOST=unix://%s\n' "$socket_path"
+            printf 'CONTAINERS_CONF=%s\n' "$containers_conf"
+            printf 'E2E_MANAGED_PODMAN_SERVICE_PID=%s\n' "$service_pid"
+            printf 'NETAVARK_FW=iptables\n'
+            printf 'OPENSHELL_PODMAN_SOCKET=%s\n' "$socket_path"
+            printf 'XDG_RUNTIME_DIR=%s\n' "$runtime_dir"
+          } >>"$GITHUB_ENV"
+
+      - name: Disable and guard Docker
+        shell: bash
+        run: |
+          set -euo pipefail
+          guard_dir="$RUNNER_TEMP/nemoclaw-managed-podman-docker-guard"
+          guard_log="$guard_dir/invocations.log"
+          install -d -m 0700 "$guard_dir/bin"
+          : >"$guard_log"
+          cat >"$guard_dir/bin/docker" <<'DOCKER_GUARD'
+          #!/usr/bin/env bash
+          subcommand="${1:-missing}"
+          [[ "$subcommand" =~ ^[a-z][a-z0-9-]{0,31}$ ]] || subcommand=invalid
+          printf '%s\n' "$subcommand" >>"${E2E_DOCKER_GUARD_LOG:?}"
+          printf 'Docker CLI use is forbidden in managed Podman activation.\n' >&2
+          exit 97
+          DOCKER_GUARD
+          chmod 0700 "$guard_dir/bin/docker"
+          guard_bin="$guard_dir/bin/docker"
+          guarded_path="$guard_dir/bin:$PATH"
+          export DOCKER_API_VERSION= DOCKER_CERT_PATH= DOCKER_CONFIG= DOCKER_CONTEXT=
+          export DOCKER_HOST= DOCKER_TLS_VERIFY=
+          export E2E_DOCKER_GUARD_BIN="$guard_bin" E2E_DOCKER_GUARD_LOG="$guard_log"
+          export PATH="$guarded_path"
+          sudo systemctl stop docker.service docker.socket || true
+          sudo systemctl mask --runtime docker.service docker.socket || true
+          sudo pkill -TERM -x dockerd 2>/dev/null || true
+          for attempt in $(seq 1 20); do
+            if ! pgrep -x dockerd >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          if pgrep -x dockerd >/dev/null; then
+            echo "::error::dockerd remained active after Docker shutdown" >&2
+            exit 1
+          fi
+          sudo rm -f /var/run/docker.sock /run/docker.sock
+          {
+            printf 'DOCKER_API_VERSION=\n'
+            printf 'DOCKER_CERT_PATH=\n'
+            printf 'DOCKER_CONFIG=\n'
+            printf 'DOCKER_CONTEXT=\n'
+            printf 'DOCKER_HOST=\n'
+            printf 'DOCKER_TLS_VERIFY=\n'
+            printf 'E2E_DOCKER_GUARD_BIN=%s\n' "$guard_bin"
+            printf 'E2E_DOCKER_GUARD_LOG=%s\n' "$guard_log"
+            printf 'PATH=%s\n' "$guarded_path"
+          } >>"$GITHUB_ENV"
+          if systemctl is-active --quiet docker.service; then
+            echo "::error::docker.service remained active after Docker shutdown" >&2
+            exit 1
+          fi
+          if systemctl is-active --quiet docker.socket; then
+            echo "::error::docker.socket remained active after Docker shutdown" >&2
+            exit 1
+          fi
+          if [ -S /var/run/docker.sock ]; then
+            echo "::error::Docker socket remained available after Docker shutdown" >&2
+            exit 1
+          fi
+          docker_candidate="$(command -v docker || true)"
+          if [ "$docker_candidate" != "$guard_bin" ]; then
+            echo "::error::Docker command resolution escaped the invocation guard" >&2
+            exit 1
+          fi
+          jq -n \
+            --arg dockerCandidate "$docker_candidate" \
+            '{
+              schemaVersion: 1,
+              phase: "before-candidate",
+              dockerServiceActive: false,
+              dockerSocketActive: false,
+              dockerDaemonActive: false,
+              dockerSocketPresent: false,
+              dockerGuardInvocationCount: 0,
+              dockerCandidate: $dockerCandidate
+            }' >"$E2E_ARTIFACT_DIR/docker-absence-before-candidate.json"
+
+      - name: Run real all-agent managed runtime activation on Podman
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse --verify HEAD)" = "$CANDIDATE_SHA"
+          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+          export OPENSHELL_BIN="$(command -v openshell)"
+          "$OPENSHELL_BIN" --version
+          npx --no-install tsx tools/e2e/live-vitest-invocation.mts run \
+            --test-path test/e2e/live/managed-image-activation-e2e.test.ts
+
+      - name: Verify Docker stayed unavailable
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "$E2E_DOCKER_GUARD_LOG"
+          guard_bytes="$(wc -c <"$E2E_DOCKER_GUARD_LOG" | tr -d '[:space:]')"
+          guard_commands="$(jq -Rsc 'split("\n") | map(select(length > 0)) | unique' "$E2E_DOCKER_GUARD_LOG")"
+          docker_candidate="$(command -v docker || true)"
+          docker_service_state="$(systemctl is-active docker.service 2>/dev/null || true)"
+          docker_socket_state="$(systemctl is-active docker.socket 2>/dev/null || true)"
+          docker_daemon_active=false
+          docker_socket_present=false
+          pgrep -x dockerd >/dev/null && docker_daemon_active=true
+          [ -S /var/run/docker.sock ] && docker_socket_present=true
+          jq -n \
+            --arg dockerCandidate "$docker_candidate" \
+            --arg dockerServiceState "$docker_service_state" \
+            --arg dockerSocketState "$docker_socket_state" \
+            --argjson dockerDaemonActive "$docker_daemon_active" \
+            --argjson dockerSocketPresent "$docker_socket_present" \
+            --argjson dockerGuardCommands "$guard_commands" \
+            --argjson guardBytes "$guard_bytes" \
+            '{
+              schemaVersion: 1,
+              phase: "after-candidate",
+              dockerServiceState: $dockerServiceState,
+              dockerSocketState: $dockerSocketState,
+              dockerDaemonActive: $dockerDaemonActive,
+              dockerSocketPresent: $dockerSocketPresent,
+              dockerGuardBytes: $guardBytes,
+              dockerGuardCommands: $dockerGuardCommands,
+              dockerCandidate: $dockerCandidate
+            }' >"$E2E_ARTIFACT_DIR/docker-absence-after-candidate.json"
+          if [ "$guard_bytes" -ne 0 ]; then
+            echo "::error::Docker invocation guard recorded candidate execution: $(jq -r 'join(",")' <<<"$guard_commands")" >&2
+            exit 1
+          fi
+          if [ "$docker_candidate" != "$E2E_DOCKER_GUARD_BIN" ]; then
+            echo "::error::Docker command resolution escaped the invocation guard" >&2
+            exit 1
+          fi
+          if [ "$docker_service_state" = active ]; then
+            echo "::error::docker.service became active during managed Podman activation" >&2
+            exit 1
+          fi
+          if [ "$docker_socket_state" = active ]; then
+            echo "::error::docker.socket became active during managed Podman activation" >&2
+            exit 1
+          fi
+          if [ "$docker_daemon_active" = true ]; then
+            echo "::error::dockerd became active during managed Podman activation" >&2
+            exit 1
+          fi
+          if [ "$docker_socket_present" = true ]; then
+            echo "::error::Docker socket became available during managed Podman activation" >&2
+            exit 1
+          fi
+
+      - name: Stop rootless Podman API service
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo ip address delete 169.254.2.2/32 dev lo 2>/dev/null || true
+          service_pid="${E2E_MANAGED_PODMAN_SERVICE_PID:-}"
+          if [[ "$service_pid" =~ ^[1-9][0-9]*$ ]]; then
+            kill "$service_pid" 2>/dev/null || true
+            wait "$service_pid" 2>/dev/null || true
+          fi
+
+      - name: Upload managed Podman activation evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: managed-image-podman-activation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: e2e-artifacts/live/managed-image-podman-activation/
           if-no-files-found: error
           retention-days: 1
 
@@ -1289,7 +1618,13 @@ jobs:
             test "$(stat -c %a /sandbox/.pi/agent/models.json)" = 600
             test "$(stat -c %U /sandbox/.pi/agent/models.json)" = sandbox
             node -e "const c=require(\"/sandbox/.pi/agent/models.json\"); if (!c.defaultModel || !c.providers.openshell.baseUrl) process.exit(1)"
-            test -x /usr/local/bin/nemoclaw-managed-bootstrap
+            runtime=/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs
+            test -f "$runtime"
+            test ! -L "$runtime"
+            test "$(stat -c "%u:%g:%a" "$runtime")" = 0:0:444
+            test -x /usr/local/bin/nemoclaw-managed-startup-hold
+            test ! -e /usr/local/bin/nemoclaw-managed-bootstrap
+            test ! -e /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh
           '
       - name: Log in to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -1359,7 +1694,13 @@ jobs:
             test "$(stat -c %a /sandbox/.pi/agent/models.json)" = 600
             test "$(stat -c %U /sandbox/.pi/agent/models.json)" = sandbox
             node -e "const c=require(\"/sandbox/.pi/agent/models.json\"); if (!c.defaultModel || !c.providers.openshell.baseUrl) process.exit(1)"
-            test -x /usr/local/bin/nemoclaw-managed-bootstrap
+            runtime=/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs
+            test -f "$runtime"
+            test ! -L "$runtime"
+            test "$(stat -c "%u:%g:%a" "$runtime")" = 0:0:444
+            test -x /usr/local/bin/nemoclaw-managed-startup-hold
+            test ! -e /usr/local/bin/nemoclaw-managed-bootstrap
+            test ! -e /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh
           '
       # The checks above bypass /usr/local/bin/nemoclaw-start with a direct
       # --entrypoint override, so they never prove the entrypoint itself runs
@@ -2038,7 +2379,7 @@ jobs:
             "diagnostics-otel": ["@openclaw/diagnostics-otel", "2026.9.1"],
             brave: ["@openclaw/brave-plugin", "2026.9.1"],
             discord: ["@openclaw/discord", "2026.9.1"],
-            "openclaw-weixin": ["@tencent-weixin/openclaw-weixin", "2.4.3"],
+            "openclaw-weixin": ["@tencent-weixin/openclaw-weixin", "2.4.9"],
             slack: ["@openclaw/slack", "2026.9.1"],
             whatsapp: ["@openclaw/whatsapp", "2026.9.1"],
             msteams: ["@openclaw/msteams", "2026.9.1"],
@@ -2125,6 +2466,13 @@ jobs:
             *) echo "ERROR: unsupported managed agent $AGENT" >&2; exit 1 ;;
           esac
           VALIDATE_FILESYSTEM
+
+          if [ "$AGENT" = "langchain-deepagents-code" ]; then
+            DOCKER_CONFIG="$anonymous_config" \
+              node --no-warnings scripts/checks/validate-dcode-runtime-contract.mts \
+                --reference "$reference" \
+                --platform "$PLATFORM"
+          fi
 
           version_output="$(
             DOCKER_CONFIG="$anonymous_config" docker run --rm \

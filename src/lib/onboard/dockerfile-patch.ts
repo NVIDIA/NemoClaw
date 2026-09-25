@@ -66,6 +66,7 @@ function sanitizeDockerArg(value: unknown): string {
 }
 
 export interface HermesPortableDockerfileBuildSettings {
+  readonly baseImageRef?: string;
   readonly model: string;
   readonly provider: string | null;
   readonly preferredInferenceApi: string | null;
@@ -134,10 +135,19 @@ export function renderHermesPortableDockerfileBuildSettings(
     ["NEMOCLAW_TOOL_DISCLOSURE", toolDisclosure],
     ["CHAT_UI_URL", ""],
   ] as const;
-  return replacements.reduce(
+  const rendered = replacements.reduce(
     (rendered, [name, value]) => replaceExactHermesPortableDockerArg(rendered, name, value),
     pinHermesPortableTargetArchitecture(source),
   );
+  if (input.baseImageRef === undefined) return rendered;
+  if (
+    !/^[A-Za-z0-9][A-Za-z0-9._/-]*(?::[A-Za-z0-9][A-Za-z0-9._-]{0,127}|@sha256:[a-f0-9]{64})$/u.test(
+      input.baseImageRef,
+    )
+  ) {
+    throw new Error("Hermes portable base image reference is invalid.");
+  }
+  return replaceExactHermesPortableDockerArg(rendered, "BASE_IMAGE", input.baseImageRef);
 }
 
 function encodeSanitizedDockerJsonArg(value: unknown): string {

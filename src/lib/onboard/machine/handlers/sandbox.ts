@@ -117,6 +117,7 @@ import {
   replacesSameNameSandbox,
   requiresSandboxRecreation,
   resolveToolDisclosureResumeSignals,
+  reserveSandboxResumeRoute,
   type SandboxResumeDecision,
 } from "./sandbox-resume";
 
@@ -378,19 +379,7 @@ export interface SandboxStateOptions<
       runVerifiedSandboxCreateEffects?: import("../../types").VerifiedSandboxCreateEffects,
     ): Promise<string>;
     finalizeSandboxRouteReservation(sandboxName: string, sessionId: string): boolean;
-    reserveSandboxInferenceRoute(
-      sandboxName: string,
-      route: {
-        provider: string | null;
-        model: string | null;
-        endpointUrl: string | null;
-        endpointSource: InferenceEndpointSource | null;
-        credentialEnv: string | null;
-        preferredInferenceApi: string | null;
-        gatewayName: string;
-        reservationSessionId?: string;
-      },
-    ): boolean;
+    reserveSandboxInferenceRoute: typeof import("../../../state/registry").reserveSandboxInferenceRoute;
     updateSandboxRegistry(sandboxName: string, updates: Record<string, unknown>): void;
     getSandboxAgentRegistryFields(
       agent: Agent,
@@ -1193,34 +1182,23 @@ class SandboxStateFlow<
     throw new Error("exitProcess returned while aborting an incompatible gateway route");
   }
 
-  // Sandbox creation admits only a pending route reservation owned by this
-  // session. A resumed run whose inference step was skipped still holds the
-  // published row of the sandbox it is about to replace, so convert that row
-  // into the session's reservation before the create transaction starts.
   private reserveCreateRouteForSession(sandboxName: string): void {
-    const sessionId = this.options.session?.sessionId;
-    const entry = this.deps.getSandboxRegistryEntry(sandboxName);
-    if (
-      !sessionId ||
-      !entry ||
-      entry.pendingRouteReservation === true ||
-      entry.hostLocalInferenceProvenance !== undefined
-    ) {
-      return;
-    }
-    const reserved = this.deps.reserveSandboxInferenceRoute(sandboxName, {
-      provider: this.options.provider,
-      model: this.options.model,
-      endpointUrl: this.options.endpointUrl,
-      endpointSource: this.options.endpointSource ?? null,
-      credentialEnv: this.options.credentialEnv,
-      preferredInferenceApi: this.options.preferredInferenceApi,
-      gatewayName: this.options.gatewayName,
-      reservationSessionId: sessionId,
-    });
-    if (!reserved) {
-      throw new Error(`Failed to reserve the inference route for sandbox '${sandboxName}'.`);
-    }
+    reserveSandboxResumeRoute(
+      sandboxName,
+      this.deps.getSandboxRegistryEntry(sandboxName),
+      {
+        provider: this.options.provider,
+        model: this.options.model,
+        endpointUrl: this.options.endpointUrl,
+        endpointSource: this.options.endpointSource ?? null,
+        credentialEnv: this.options.credentialEnv,
+        preferredInferenceApi: this.options.preferredInferenceApi,
+        gatewayName: this.options.gatewayName,
+        reservationSessionId: this.options.session?.sessionId,
+      },
+      this.deps.reserveSandboxInferenceRoute,
+      this.deps.cliName(),
+    );
   }
 
   private finalizeInferenceRouteReservation(
@@ -1230,6 +1208,9 @@ class SandboxStateFlow<
     const entry = this.deps.getSandboxRegistryEntry(sandboxName);
     if (entry?.pendingRouteReservation !== true) return;
     const sessionId = state.session?.sessionId;
+    if (sessionId && entry.reservationSessionId !== sessionId) {
+      this.reserveCreateRouteForSession(sandboxName);
+    }
     if (sessionId && this.deps.finalizeSandboxRouteReservation(sandboxName, sessionId)) return;
     this.deps.error(
       `  Error: sandbox '${sandboxName}' inference route reservation changed while onboarding was in progress. Retry onboarding.`,

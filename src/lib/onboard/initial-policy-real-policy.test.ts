@@ -19,6 +19,8 @@ import {
   MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY,
 } from "./managed-startup/shared-state-transaction";
 import { prepareInitialSandboxCreatePolicy } from "./initial-policy";
+import { resolveTierPresets } from "../policy/tiers";
+import { listPresets } from "../policy";
 
 type PolicyRule = {
   allow?: {
@@ -99,16 +101,12 @@ describe("initial sandbox policy real preset merge", () => {
   const shippingPolicyCases = managedImagePolicyCases.filter(
     ({ agent }) => agent !== "langchain-deepagents-code",
   );
-  const managedStartupReadOnlyPaths = [
-    { path: MANAGED_STARTUP_MERGED_CA_FILE, issue: "#9360", purpose: "CA bundle" },
-    {
-      path: MANAGED_STARTUP_RUNTIME_ENV_FILE,
-      issue: "#9357",
-      purpose: "runtime environment",
-    },
+  const managedStartupExchangePaths = [
+    MANAGED_STARTUP_MERGED_CA_FILE,
+    MANAGED_STARTUP_RUNTIME_ENV_FILE,
+    MANAGED_STARTUP_COMPLETION_FILE,
   ] as const;
   const protectedManagedStartupPaths = [
-    MANAGED_STARTUP_COMPLETION_FILE,
     "/run/nemoclaw/openclaw-config-guard",
     MANAGED_STARTUP_SHARED_ROLLBACK_RECEIPT_DIRECTORY,
     MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY,
@@ -122,9 +120,10 @@ describe("initial sandbox policy real preset merge", () => {
     expect(Object.keys(managedImagePolicyPathsByAgent)).toEqual([...SHIPPED_MANAGED_IMAGE_AGENTS]);
     expect(policyIdentities).toHaveLength(3);
     expect(new Set(policyIdentities).size).toBe(policyIdentities.length);
-    expect(managedStartupReadOnlyPaths.map(({ path: trustedPath }) => trustedPath)).toEqual([
-      MANAGED_STARTUP_MERGED_CA_FILE,
-      MANAGED_STARTUP_RUNTIME_ENV_FILE,
+    expect(managedStartupExchangePaths.map((exchangePath) => path.dirname(exchangePath))).toEqual([
+      "/tmp",
+      "/tmp",
+      "/tmp",
     ]);
   });
 
@@ -144,33 +143,15 @@ describe("initial sandbox policy real preset merge", () => {
     );
   });
 
-  it.each(
-    managedImagePolicyCases.flatMap((policyCase) =>
-      managedStartupReadOnlyPaths.map((trustedPath) => ({ policyCase, trustedPath })),
-    ),
-  )(
-    "grants $policyCase.agent policy $policyCase.path exact read-only access to the managed startup $trustedPath.purpose ($trustedPath.issue)",
-    ({ policyCase, trustedPath }) => {
+  it.each(managedImagePolicyCases)(
+    "uses the existing sticky temporary exchange for $agent managed startup handoff (#11905)",
+    (policyCase) => {
       const prepared = prepareInitialSandboxCreatePolicy(repoPath(...policyCase.path), [], {
         agentName: policyCase.agent,
       });
       const policy = readPreparedPolicy(prepared);
-      const readOnly = policy.filesystem_policy?.read_only ?? [];
-      const readWrite = policy.filesystem_policy?.read_write ?? [];
-      const normalizedReadOnly = readOnly.map(normalizeFilesystemPolicyPath);
-      const normalizedReadWrite = readWrite.map(normalizeFilesystemPolicyPath);
-      const trustedPathAncestors = filesystemPolicyAncestors(trustedPath.path);
 
-      expect(readOnly, policyCase.path.join("/")).toContain(trustedPath.path);
-      expect(normalizedReadWrite, policyCase.path.join("/")).not.toContain(trustedPath.path);
-      expect(
-        normalizedReadOnly.filter((candidate) => trustedPathAncestors.includes(candidate)),
-        policyCase.path.join("/"),
-      ).toEqual([]);
-      expect(
-        normalizedReadWrite.filter((candidate) => trustedPathAncestors.includes(candidate)),
-        policyCase.path.join("/"),
-      ).toEqual([]);
+      expect(policy.filesystem_policy?.read_write, policyCase.path.join("/")).toContain("/tmp");
     },
   );
 
@@ -246,7 +227,7 @@ describe("initial sandbox policy real preset merge", () => {
 
     const managedInference = effective.network_policies?.managed_inference;
 
-    expect(effective.filesystem_policy?.read_only).toContain(MANAGED_STARTUP_MERGED_CA_FILE);
+    expect(effective.filesystem_policy?.read_write).toContain("/tmp");
     expect(managedInference).toEqual({
       name: "managed_inference",
       endpoints: [
@@ -680,6 +661,68 @@ describe("initial sandbox policy real preset merge", () => {
       }
     },
   );
+
+  function readDcodeTierPolicy(tier: string): PolicyDocument {
+    const available = new Set(
+      listPresets({ agent: "langchain-deepagents-code" }).map(({ name }) => name),
+    );
+    return readPreparedPolicy(
+      prepareInitialSandboxCreatePolicy(
+        repoPath("agents", "langchain-deepagents-code", "policy-additions.yaml"),
+        [],
+        {
+          agentName: "langchain-deepagents-code",
+          additionalPresets: resolveTierPresets(tier)
+            .map(({ name }) => name)
+            .filter((name) => available.has(name)),
+        },
+      ),
+    );
+  }
+
+  it("keeps every raw GitHub route read-only in Balanced (#10380)", () => {
+    const policies = readDcodeTierPolicy("balanced").network_policies ?? {};
+    const rawEndpoints = Object.values(policies).flatMap(({ endpoints }) =>
+      (endpoints ?? []).filter(({ host }) => host === "raw.githubusercontent.com"),
+    );
+    const readOnly = {
+      host: "raw.githubusercontent.com",
+      port: 443,
+      protocol: "rest",
+      enforcement: "enforce",
+      rules: [
+        { allow: { method: "GET", path: "/**" } },
+        { allow: { method: "HEAD", path: "/**" } },
+      ],
+    };
+    expect(rawEndpoints).toEqual([readOnly, readOnly]);
+    expect(policies["brew-balanced"]?.binaries).toContainEqual({ path: "/usr/bin/curl" });
+  });
+
+  it("preserves unrestricted raw GitHub access through Homebrew in Open (#10380)", () => {
+    const brew = readDcodeTierPolicy("open").network_policies?.brew;
+    expect(brew?.binaries).toContainEqual({ path: "/usr/bin/curl" });
+    expect(brew?.endpoints?.find(({ host }) => host === "raw.githubusercontent.com")).toEqual({
+      host: "raw.githubusercontent.com",
+      port: 443,
+      access: "full",
+    });
+  });
+
+  it("preserves Personal's broad web access without raw GitHub method rules (#10380)", () => {
+    const policies = readDcodeTierPolicy("personal").network_policies ?? {};
+    expect(
+      Object.values(policies).flatMap(({ endpoints }) =>
+        (endpoints ?? []).filter(({ host }) => host === "raw.githubusercontent.com"),
+      ),
+    ).toEqual([]);
+    expect(policies.personal_open_internet).toMatchObject({
+      endpoints: [{ ports: [80, 443] }],
+      binaries: [{ path: "/**" }],
+    });
+    expect(policies.personal_open_internet.endpoints?.[0]).not.toHaveProperty("rules");
+    expect(policies.personal_open_internet.endpoints?.[0]).not.toHaveProperty("protocol");
+  });
 
   it("keeps the Restricted OpenClaw npm baseline inspected and GET-only (#8497)", () => {
     const baselinePath = repoPath("nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml");

@@ -58,6 +58,45 @@ describe("printSandboxCreateRecoveryHints", () => {
     expect(stderr()).toContain("Docker memory");
   });
 
+  it("prints semantic ordinary-create context without runtime environment values", () => {
+    printSandboxCreateRecoveryHints("provider rejected request", {
+      createContext: {
+        sourceReference: "managed@example.invalid",
+        policyAttached: true,
+        providers: ["nvidia"],
+        gpuRequested: true,
+        gpuDevice: null,
+        cpu: "2",
+        memory: "4Gi",
+      },
+    });
+
+    expect(stderr()).toContain("source: managed@example.invalid");
+    expect(stderr()).toContain("providers: nvidia");
+    expect(stderr()).toContain("resources: cpu=2, memory=4Gi");
+    expect(stderr()).toContain("runtime environment omitted");
+  });
+
+  it("keeps semantic upload recovery on the supported NemoClaw path", () => {
+    printSandboxCreateRecoveryHints("failed to upload image tar into container", {
+      createContext: {
+        sourceReference: "/tmp/Dockerfile",
+        policyAttached: true,
+        providers: [],
+        gpuRequested: false,
+        gpuDevice: null,
+        cpu: null,
+        memory: null,
+      },
+    });
+
+    expect(stderr()).toContain("onboard --resume");
+    expect(stderr()).not.toContain("openshell sandbox create");
+    expect(stderr()).not.toContain("registry:2");
+    expect(stderr()).not.toContain("docker push");
+    expect(stderr()).not.toContain("buildah push");
+  });
+
   it("prints progress-specific resume guidance when upload reached the gateway", () => {
     printSandboxCreateRecoveryHints(
       ["[progress] Uploaded to gateway", "failed to read image export stream"].join("\n"),

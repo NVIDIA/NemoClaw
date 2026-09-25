@@ -634,8 +634,6 @@ async function promptYesNoOrDefault(
   );
 }
 
-// ── Helpers ──────────────────────────────────────────────────────
-
 const {
   getDockerDriverGatewayEndpoint,
   getGatewayClusterImageDrift,
@@ -1116,8 +1114,6 @@ const { gatewayClusterHealthcheckPassed, repairGatewayBootstrapSecrets } =
 // parsePolicyPresetEnv — see urlUtils import above
 // isSafeModelId — see validation import above
 
-// ── Step 1: Preflight ────────────────────────────────────────────
-
 type PreflightOptions = import("./onboard/fatal-runtime-preflight").FatalRuntimePreflightOptions;
 const preflightGateway = preflightGatewayAuthority.createOnboardPreflightGatewayAuthority({
   gatewayName: () => GATEWAY_NAME,
@@ -1305,8 +1301,6 @@ async function preflight(
   if (_preflightDashboardPort === null) preflightDashboardPortRangeAvailability();
   return gpu; // #3953 — fail-fast before next step
 }
-
-// ── Step 2: Gateway ──────────────────────────────────────────────
 
 const applyOverlayfsAutoFix = overlayfsAutoFix.createOverlayfsAutoFix({
   assessHost: preflightUtils.assessHost,
@@ -1570,8 +1564,6 @@ const { createSandbox, createSandboxWithTemporaryManagedRuntime } =
     },
     resolveComputePlan: dockerDriverPlatform.resolveCurrentOpenShellComputePlan,
   });
-// ── Step 3: Inference selection ──────────────────────────────────
-
 type ProviderChoice = import("./onboard/provider-menu").ProviderMenuChoice;
 type RebuildRouteHandoff = import("./onboard/rebuild-route-handoff").RebuildRouteHandoff;
 
@@ -2014,7 +2006,7 @@ async function handleRemoteProviderSelection(
       state.nvidiaFeaturedModels!,
       apiKeyNavigation,
       credentialPrompt.shouldReturnToProviderSelection,
-      requestedModel || (typeof state.model === "string" ? state.model : null),
+      { requestedModel, constrainedModel: state.model },
       recoveredFromSandbox ? recoveredModel : null,
       isNonInteractive(),
       process.env.NEMOCLAW_MODEL,
@@ -2378,8 +2370,6 @@ function createSetupInference(overrides: Partial<SetupInferenceDeps> = {}): Setu
   return setupInferenceFactory.createSetupInference(getSetupInferenceDeps(), overrides);
 }
 const setupInference = createSetupInference();
-// ── Step 6: Messaging channels ───────────────────────────────────
-
 const MESSAGING_CHANNELS = listChannels();
 const sandboxCreateIntentResolver = sandboxCreateIntentResolution.createSandboxCreateIntentResolver<
   AgentDefinition | null,
@@ -2609,7 +2599,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   NON_INTERACTIVE = initialEntryOptions.nonInteractive;
   RECREATE_SANDBOX = opts.recreateSandbox || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
   _preflightDashboardPort =
-    opts.controlUiPort ?? (process.env.NEMOCLAW_DASHBOARD_PORT != null ? DASHBOARD_PORT : null);
+    opts.controlUiPort ?? (process.env.NEMOCLAW_DASHBOARD_PORT?.trim() ? DASHBOARD_PORT : null);
   onboardRuntimeBoundary.reset();
   const portableRetirementEntry = portableRetirementAuthority.beginPortableOnboardRetirementEntry({
     alreadyHeld: opts.onboardLockAlreadyHeld === true,
@@ -3176,12 +3166,17 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       );
       const finalFlowContext = prepareFinalOnboardFlowContext(coreFlowResult);
       let liveFinalFlowContext: InitialOnboardFlowContext = finalFlowContext;
+      const finalSandboxRegistration = registry.getSandbox(finalFlowContext.sandboxName);
       const finalFlowPhases = createFinalOnboardFlowPhases<
         InitialOnboardFlowContext,
         import("./dashboard/contract").DashboardDeliveryChain,
         import("./verify-deployment").VerifyDeploymentResult
       >({
         branchState: agent ? "agent_setup" : "openclaw",
+        managedOpenclawStartup: managedWorkloadOnboard.shouldUseManagedOpenclawStartup(
+          !agent,
+          finalSandboxRegistration,
+        ),
         portableRuntimeContext:
           agent?.name === "hermes" ? lockedRuntime.portableRuntimeContext : null,
         preserveRebuildLivePolicy: opts.rebuildPolicySourcePath !== undefined,
@@ -3210,6 +3205,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           skippedStepMessage,
           recordStateSkipped,
           startRecordedStep,
+          announceOpenclawSetup: () =>
+            step(7, 8, `Setting up ${agentProductName()} inside sandbox`),
           setupOpenclaw,
           configureOpenclawSandbox,
           recordStepComplete,
@@ -3249,7 +3246,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           ...component.finalDeps(GATEWAY_NAME, onboardSession, registry, runCaptureOpenshell),
           verifyWebSearchInsideSandbox,
           toSessionUpdates,
-          removeLegacyCredentialsFile,
+          removeLegacyCredentialsFile: () => removeLegacyCredentialsFile(stagedLegacyValues),
           cleanupStaleHostFiles,
           getChatUiUrl: () => process.env.CHAT_UI_URL || `http://127.0.0.1:${DASHBOARD_PORT}`,
           buildVerifyChain: (chatUiUrl, name) => buildAgentVerifyChain(chatUiUrl, name, agent),
@@ -3261,25 +3258,17 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
               {
                 executeSandboxCommand: (sandbox: string, script: string) =>
                   executeSandboxCommandForVerification(sandbox, script, sandboxExec),
-                probeHostPort: (port: number, probePath: string) => {
-                  const result = runCapture(
-                    [
-                      "curl",
-                      "-so",
-                      "/dev/null",
-                      "-w",
-                      "%{http_code}",
-                      "--max-time",
-                      "3",
-                      `http://127.0.0.1:${port}${probePath}`,
-                    ],
-                    { ignoreError: true },
-                  );
-                  return parseInt(result.trim(), 10) || 0;
-                },
+                probeHostPort: onboardDashboard.probeVerificationHostPort,
                 getMessagingChannels: () => liveFinalFlowContext.selectedMessagingChannels || [],
                 providerExistsInGateway: (providerName: string) =>
                   providerExistsInGateway(providerName),
+                probeInferenceInvocation: () =>
+                  verifyDeploymentModule.probeOnboardInferenceInvocation({
+                    ...liveFinalFlowContext,
+                    sandboxName: name,
+                    gatewayName: GATEWAY_NAME,
+                    agentName: agent?.name,
+                  }),
               },
               {
                 diagnoseCustomOpenClawRuntime:
@@ -3287,6 +3276,10 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
                     liveFinalFlowContext.fromDockerfile,
                     agent?.name,
                   ),
+                inferenceRouteContext: {
+                  agentName: agent?.name,
+                  provider: liveFinalFlowContext.provider,
+                },
               },
             );
           },

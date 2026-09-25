@@ -822,6 +822,9 @@ restore_onboard_forward_after_post_checks() {
   chmod 700 "$state_dir" \
     || error "Could not secure gateway-scoped runtime state directory: ${state_dir}"
   pid_file="${state_dir}/${agent_name}-${sandbox_name}-${port}.forward.pid"
+  # Fresh onboarding already created and verified these service forwards. This
+  # installer path only retires an exact legacy watcher before normal recovery.
+  [[ -f "$pid_file" ]] || return 0
   if [[ -f "$pid_file" ]]; then
     local old_pid expected_watcher_script current_uid old_uid old_args node_bin openshell_bin expected_args
     old_pid="$(cat "$pid_file" 2>/dev/null || true)"
@@ -1083,8 +1086,8 @@ usage() {
   printf "  ${C_DIM}Options:${C_RESET}\n"
   printf "    --non-interactive    Skip prompts (uses env vars / defaults)\n"
   printf "    --yes-i-accept-third-party-software Accept the third-party software notice without prompting\n"
-  printf "    --defer-onboarding   Install Hermes without onboarding when NVIDIA inference credentials are absent\n"
-  printf "                          Use only with NEMOCLAW_AGENT=hermes, no registered sandboxes, no local model profile,\n"
+  printf "    --defer-onboarding   Install NemoClaw without onboarding for a supported agent when NVIDIA inference credentials are absent\n"
+  printf "                          Use only with NEMOCLAW_AGENT=hermes or langchain-deepagents-code, no registered sandboxes, no local model profile,\n"
   printf "                          and the build, cloud, or routed NVIDIA hosted provider\n"
   printf "    --fresh              Discard any failed/interrupted onboarding session and start over\n"
   printf "    --force-fresh-install Destroy all NemoClaw and OpenShell state, then reinstall (Apple silicon macOS only)\n"
@@ -1097,7 +1100,7 @@ usage() {
   printf "    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 Same as --yes-i-accept-third-party-software\n"
   printf "    NEMOCLAW_NON_INTERACTIVE=1    Same as --non-interactive\n"
   printf "    NEMOCLAW_DEFER_ONBOARDING=1   Same as --defer-onboarding\n"
-  printf "                                  Use only with NEMOCLAW_AGENT=hermes, no registered sandboxes, no local model profile,\n"
+  printf "                                  Use only with NEMOCLAW_AGENT=hermes or langchain-deepagents-code, no registered sandboxes, no local model profile,\n"
   printf "                                  and the build, cloud, or routed NVIDIA hosted provider\n"
   printf "    NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt Allow sudo prompts during non-interactive onboarding\n"
   printf "    NEMOCLAW_FRESH=1              Same as --fresh\n"
@@ -1111,7 +1114,12 @@ usage() {
   printf "    NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1\n"
   printf "                                  Allow automatic pre-0.0.37 OpenShell gateway upgrade\n"
   printf "    NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1\n"
-  printf "                                  Continue after manually backing up and retiring old gateway\n"
+  printf "                                  Continue only after the current CLI completes strict backup and forward retirement:\n"
+  printf "                                  NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS=1 nemoclaw backup-all --retire-legacy-forwards\n"
+  printf "                                  Then retire the selected gateway process:\n"
+  printf "                                  openshell gateway destroy -g nemoclaw || openshell gateway destroy\n"
+  printf "                                  For NEMOCLAW_GATEWAY_PORT=<port>, destroy nemoclaw-<port> with -g and omit the unnamed fallback\n"
+  printf "                                  Resolve any failure before setting this variable\n"
   printf "    NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE\n"
   printf "                                  Exact JSON array of pre-fingerprint managed sandbox names\n"
   printf "    NEMOCLAW_RECREATE_SANDBOX=1   Recreate an existing sandbox\n"
@@ -3244,6 +3252,18 @@ finish_nemoclaw_install() {
       fi
       error "Could not install the OpenShell version pinned by the prepared source after retiring the gateway. The installer preserved the sandbox backups and did not start recovery. Rerun the installer with ${retry_gateway_port_env}NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 to reuse the prepared upgrade state and retry the OpenShell install."
     fi
+    # The retired gateway registration is intentionally gone. Start the newly
+    # installed, identity-checked NemoClaw service before upgrade-sandboxes
+    # queries the old rows; otherwise the recovery command sees an unreachable
+    # selected gateway and cannot recreate even though its backup is complete.
+    if [[ "$(uname -s)" == "Linux" ]] \
+      && command_exists systemctl \
+      && systemctl --user show-environment >/dev/null 2>&1; then
+      info "Starting the current OpenShell gateway before sandbox recovery…"
+      restart_selected_openshell_gateway_user_service \
+        "systemd:${NEMOCLAW_GATEWAY_SERVICE_NAME}.service" \
+        || error "The current OpenShell gateway service could not start after the legacy gateway was retired. Sandbox backups were preserved; fix the user service and rerun with NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1."
+    fi
     _OPENSHELL_INSTALL_REQUIRED_BEFORE_RECOVERY=false
   else
     case "${_NEMOCLAW_CLI_INSTALL_MODE:-}" in
@@ -3630,6 +3650,7 @@ resolve_prepared_cli_runner() {
 }
 
 run_preupgrade_backup() {
+  local retire_legacy_forwards="${1:-false}"
   if ! prepare_current_cli_for_preupgrade_backup; then
     warn "Could not prepare the current ${_CLI_DISPLAY} CLI for pre-upgrade backup."
     return 1
@@ -3641,7 +3662,11 @@ run_preupgrade_backup() {
     return 1
   fi
 
-  NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS=1 "$current_cli_runner" backup-all 2>&1
+  local backup_args=(backup-all)
+  if [[ "$retire_legacy_forwards" == true ]]; then
+    backup_args+=(--retire-legacy-forwards)
+  fi
+  NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS=1 "$current_cli_runner" "${backup_args[@]}" 2>&1
 }
 
 force_fresh_install_has_existing_state() {
@@ -4057,16 +4082,19 @@ EOF
 }
 
 print_openshell_upgrade_manual_commands() {
-  local gateway_port gateway_name gateway_port_env=""
+  local gateway_port gateway_name gateway_port_env="" gateway_retire_command=""
   gateway_port="$(resolve_nemoclaw_gateway_port)" || return 1
   gateway_name="$(nemoclaw_gateway_name)" || return 1
   if [ "$gateway_port" -ne 8080 ]; then
     gateway_port_env="NEMOCLAW_GATEWAY_PORT=${gateway_port} "
+    gateway_retire_command="openshell gateway destroy -g ${gateway_name}"
+  else
+    gateway_retire_command="openshell gateway destroy -g ${gateway_name} || openshell gateway destroy"
   fi
   cat <<EOF
   Manual upgrade path (after installing the current CLI with OpenShell deferred):
-    ${gateway_port_env}NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS=1 ${_CLI_BIN} backup-all
-    openshell gateway remove ${gateway_name} || openshell gateway destroy -g ${gateway_name}
+    ${gateway_port_env}NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS=1 ${_CLI_BIN} backup-all --retire-legacy-forwards
+    ${gateway_retire_command}
     curl -fsSL https://www.nvidia.com/nemoclaw.sh | ${gateway_port_env}NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 bash
     ${gateway_port_env}${_CLI_BIN} upgrade-sandboxes --check
 
@@ -4667,10 +4695,21 @@ preinstall_backup_and_retire_legacy_gateway() {
   fi
 
   confirm_legacy_managed_image_recovery "$reg_file"
+  local supported_range="" min_openshell_version="" max_openshell_version=""
+  supported_range="$(resolve_current_openshell_version_range || true)"
+  if [[ -n "$supported_range" ]]; then
+    read -r min_openshell_version max_openshell_version <<<"$supported_range"
+  fi
+  local retire_legacy_forwards=false
+  if [[ -n "$old_openshell_version" && -n "$supported_range" ]] \
+    && { ! version_gte "$old_openshell_version" "$min_openshell_version" \
+      || ! version_gte "$max_openshell_version" "$old_openshell_version"; }; then
+    retire_legacy_forwards=true
+  fi
   info "Backing up ${sandbox_count} sandbox(es) before upgrading OpenShell…"
-  if ! run_preupgrade_backup; then
-    if legacy_openshell_gateway_upgrade_needed "$old_openshell_version"; then
-      error "Pre-upgrade backup failed. Aborting before retiring the legacy OpenShell gateway."
+  if ! run_preupgrade_backup "$retire_legacy_forwards"; then
+    if [[ "$retire_legacy_forwards" == true ]]; then
+      error "Pre-upgrade backup failed, or exact legacy dashboard forward retirement could not be proved. The gateway was not retired, and sandbox backups were preserved if they completed."
     fi
     error "Pre-upgrade backup stopped the installer. Resolve every reported sandbox backup failure or skipped sandbox using the CLI output above, then rerun the installer."
   fi
@@ -4682,11 +4721,9 @@ preinstall_backup_and_retire_legacy_gateway() {
   # Retire a backed-up gateway before install-openshell replaces an out-of-range
   # component set. Leaving the old gateway process alive makes the new CLI's
   # schema preflight fail before sandbox recovery can recreate it.
-  local supported_range="" min_openshell_version="" max_openshell_version=""
-  if ! supported_range="$(resolve_current_openshell_version_range)"; then
+  if [[ -z "$supported_range" ]]; then
     error "Could not resolve the current OpenShell version range. Existing gateway and sandbox state were left unchanged after backup."
   fi
-  read -r min_openshell_version max_openshell_version <<<"$supported_range"
   [ -n "$old_openshell_version" ] \
     || error "Could not determine the installed OpenShell version. The installer stopped after backup without retiring the gateway."
   if ! version_gte "$old_openshell_version" "$min_openshell_version" \
@@ -4953,18 +4990,19 @@ run_installer_host_preflight() {
           hasExplicitDeferredN1xOnboardingIntent,
         } = require(onboardAdmissionPath);
         const { loadGatewayManagementDeclaration } = require(gatewayManagementPath);
-        const { configuredRuntimeProviderOwnsHostReadiness } = require(gatewayRuntimePath);
+        const { configuredRuntimeProviderReadinessAuthority } = require(gatewayRuntimePath);
         const host = assessHost();
         const gatewayManagement = loadGatewayManagementDeclaration();
         const allowStorageRemediation =
           gatewayManagement.ok &&
           (gatewayManagement.declaration === null ||
             gatewayManagement.declaration?.mode === "nemoclaw-managed");
-        const selectedRuntimeOwnsHostReadiness =
-          configuredRuntimeProviderOwnsHostReadiness({
+        const selectedRuntimeAuthority =
+          configuredRuntimeProviderReadinessAuthority({
             environment: process.env,
             platform: process.platform,
           });
+        const selectedRuntimeOwnsHostReadiness = selectedRuntimeAuthority?.ownsHostReadiness === true;
         const actions = planHostAdvisories(host, {
           providerOwnsHostReadiness: selectedRuntimeOwnsHostReadiness,
         });
@@ -4976,6 +5014,7 @@ run_installer_host_preflight() {
             detectHostGpuPlatform: () => host.hostGpuPlatform,
             detectNvidiaDriverVersion: () => host.nvidiaDriverVersion,
             collectPlatformIdentity: () => ({}),
+            runtimeProvider: selectedRuntimeAuthority ?? undefined,
           }
         );
         const admission = evaluateOnboardReadinessAdmission(readiness, {
@@ -5192,11 +5231,21 @@ recover_preexisting_sandboxes_before_onboard() {
   return 1
 }
 
-validate_deferred_hermes_onboarding_request() {
+agent_supports_deferred_onboarding() {
+  local agent_name="${NEMOCLAW_AGENT:-openclaw}"
+  case "$agent_name" in
+    "" | *[!a-z0-9-]*) return 1 ;;
+  esac
+  local manifest_path="${NEMOCLAW_SOURCE_ROOT}/agents/${agent_name}/manifest.yaml"
+  [[ -f "$manifest_path" ]] || return 1
+  grep -Eq '^deferred_onboarding:[[:space:]]*true[[:space:]]*$' "$manifest_path"
+}
+
+validate_deferred_onboarding_request() {
   [[ "${DEFER_ONBOARDING:-}" == "1" ]] || return 0
 
-  if [[ "${NEMOCLAW_AGENT:-openclaw}" != "hermes" ]]; then
-    error "--defer-onboarding currently requires NEMOCLAW_AGENT=hermes."
+  if ! agent_supports_deferred_onboarding; then
+    error "--defer-onboarding is not supported for NEMOCLAW_AGENT=${NEMOCLAW_AGENT:-openclaw}."
   fi
   if [[ "${NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE:-}" == "1" ]]; then
     error "--defer-onboarding does not support a local model profile."
@@ -5209,24 +5258,41 @@ validate_deferred_hermes_onboarding_request() {
   esac
 }
 
-should_defer_hermes_onboarding() {
-  local registered_sandbox_count="${1:-0}"
-  local provider_key="${NEMOCLAW_PROVIDER_KEY:-}"
-  [[ "${DEFER_ONBOARDING:-}" == "1" ]] || return 1
-  [[ "${NEMOCLAW_AGENT:-openclaw}" == "hermes" ]] || return 1
-  [[ "$registered_sandbox_count" == "0" ]] || return 1
-  [[ -z "${NVIDIA_INFERENCE_API_KEY:-}" ]] || return 1
-  [[ -z "${NVIDIA_API_KEY:-}" ]] || return 1
+resolve_deferred_onboarding_decision() {
+  local cli_runner="$1"
+  local registered_sandbox_count="${2:-0}"
+  local decision=""
+  if ! decision="$(
+    "$cli_runner" internal installer plan \
+      --defer-onboarding \
+      --deferred-onboarding-supported \
+      --registered-sandbox-count "$registered_sandbox_count" \
+      --deferred-onboarding-decision
+  )"; then
+    error "Could not resolve the deferred-onboarding installer decision."
+  fi
+  printf '%s' "$decision"
+}
 
-  provider_key="${provider_key#"${provider_key%%[![:space:]]*}"}"
-  provider_key="${provider_key%"${provider_key##*[![:space:]]}"}"
-  provider_key="$(printf '%s' "$provider_key" | tr '[:upper:]' '[:lower:]')"
-  # Keep this list aligned with PROVIDER_KEY_ROUTE_VALUES in
-  # src/lib/onboard/providers.ts. These values select a route; they are not
-  # inference credentials.
-  case "$provider_key" in
-    "" | inference | cloud | nim | vllm | open-router | openrouterai | anthropiccompatible | hermes | hermes-provider | hermesprovider | nous | nous-portal | build | openrouter | openai | anthropic | gemini | ollama | llama-cpp | install-llama-cpp | custom | nim-local | routed | install-vllm | install-ollama | install-windows-ollama | start-windows-ollama) ;;
-    *) return 1 ;;
+should_defer_onboarding() {
+  local cli_runner="$1"
+  local registered_sandbox_count="${2:-0}"
+  local decision=""
+  [[ "${DEFER_ONBOARDING:-}" == "1" ]] || return 1
+  decision="$(resolve_deferred_onboarding_decision "$cli_runner" "$registered_sandbox_count")"
+  case "$decision" in
+    defer) return 0 ;;
+    credential-present | existing-sandbox | not-requested) return 1 ;;
+    unsupported-agent)
+      error "--defer-onboarding is not supported for NEMOCLAW_AGENT=${NEMOCLAW_AGENT:-openclaw}."
+      ;;
+    unsupported-local-model)
+      error "--defer-onboarding does not support a local model profile."
+      ;;
+    unsupported-provider)
+      error "--defer-onboarding currently supports NVIDIA hosted inference only. Use NEMOCLAW_PROVIDER=build, cloud, or routed."
+      ;;
+    *) error "Unexpected deferred-onboarding installer decision: ${decision:-empty}." ;;
   esac
 }
 
@@ -7016,12 +7082,16 @@ ensure_station_express_pair() {
         || error "Dual DGX Station preparation returned an inconsistent reboot result; refusing to continue."
       [ "${_STATION_EXPRESS_DEFERRED_MANAGED_PAIR:-0}" != "1" ] \
         || error "The running managed dual-Station head could not be matched to its trusted reciprocal peer; refusing single-Station fallback."
-      [ "${_STATION_EXPRESS_MIGRATING_LEGACY_HEAD:-0}" != "1" ] \
-        || error "The running legacy single-Station head could not be matched to a trusted reciprocal peer; refusing migration and single-Station fallback."
       [ -z "${NEMOCLAW_DGX_STATION_PEER:-}" ] \
         || error "The explicit DGX Station peer could not be qualified; refusing single-Station fallback."
       station_dual_pair_resume_pending \
         && error "Dual DGX Station preparation returned a single-Station result while exact pair resume state is pending; refusing to discard it."
+      if [ "${_STATION_EXPRESS_MIGRATING_LEGACY_HEAD:-0}" = "1" ]; then
+        # An implicit peer miss keeps the existing single-Station workload.
+        # Recheck its ownership before continuing without host preparation.
+        station_migratable_legacy_single_head_running \
+          || error "The nemoclaw-vllm container no longer matches the legacy image ($STATION_ULTRA_LEGACY_VLLM_IMAGE) and ownership contract after peer discovery. Inspect it with 'docker inspect nemoclaw-vllm'; restore the original single-Station workload before retrying, or stop this upgrade if the change was intentional."
+      fi
       if [ "${_STATION_EXPRESS_MODEL_WAS_EXPLICIT:-0}" = "0" ]; then
         NEMOCLAW_VLLM_MODEL="$STATION_ULTRA_VLLM_MODEL"
         NEMOCLAW_MODEL="$STATION_ULTRA_SERVED_MODEL"
@@ -7077,6 +7147,7 @@ clear_station_dual_pair_resume() {
 # Station and portable preparation own their target; ordinary installs use early admission.
 prepare_installer_host() {
   maybe_offer_express_install
+  validate_deferred_onboarding_request
   # Reject conflicting explicit Station selections and pending-pair bypasses
   # before the local host-preparation helper can mutate packages or Docker.
   validate_station_pair_selection
@@ -7547,7 +7618,7 @@ main() {
     && { [ -n "${NEMOCLAW_PROVIDER:-}" ] || [ -n "${NEMOCLAW_MODEL:-}" ]; }; then
     error "The local model profile does not accept NEMOCLAW_PROVIDER or NEMOCLAW_MODEL overrides."
   fi
-  validate_deferred_hermes_onboarding_request
+  validate_deferred_onboarding_request
   # If the user explicitly accepted the third-party-software notice, treat
   # that as non-interactive intent for the rest of the run too — show_usage_notice
   # is only one of several phase-3 steps that need a TTY or --non-interactive
@@ -7616,10 +7687,6 @@ main() {
   # host prerequisite preparation before the generic Docker bootstrap.
   prepare_installer_host
 
-  # Express selection can change the provider after the initial argument
-  # validation. Recheck the deferred-onboarding scope before installation.
-  validate_deferred_hermes_onboarding_request
-
   install_nemoclaw_before_onboarding
 
   # Gate the onboarding-adjacent steps on the absolute CLI path so a stale
@@ -7646,8 +7713,8 @@ main() {
       warn "Consider destroying existing sessions with '${_CLI_BIN} <name> destroy' first."
       warn "Set NEMOCLAW_SINGLE_SESSION=1 to abort the installer when sessions are active."
     fi
-    if should_defer_hermes_onboarding "$_registered_sandbox_count"; then
-      info "NVIDIA inference credentials are absent. Hermes onboarding did not run."
+    if should_defer_onboarding "$_cli_runner" "$_registered_sandbox_count"; then
+      info "NVIDIA inference credentials are absent. $(agent_display_name "${NEMOCLAW_AGENT:-openclaw}") onboarding did not run."
     else
       if ! recover_preexisting_sandboxes_before_onboard "$_cli_runner"; then
         finalize_install

@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Compose NemoClaw's rebuild drain with pinned Hermes operator drain control.
 
-Hermes v2026.8.27 / 0.20.6 scopes its operator marker to one container epoch.
+Hermes v2026.9.14 / 0.21.3 scopes its operator marker to one container epoch.
 That is correct for operator lifecycle actions, but a NemoClaw rebuild marker
 must survive replacement gateway and container restarts until restored scripts
 and cron jobs are revalidated. Keep those two owners on separate paths and OR
@@ -34,10 +34,10 @@ _NEMOCLAW_CRON_RESTORE_DRAIN_PATH = Path(
 '''
 
 OLD_OPERATOR_HEADER = '''def drain_requested(*, home: Optional[Path] = None) -> bool:
-    """True iff a begin-drain marker for THIS instantiation is present.
+    """True iff an active (present, same-epoch, unexpired) begin-drain marker exists.
 '''
 NEW_OPERATOR_HEADER = '''def operator_drain_requested(*, home: Optional[Path] = None) -> bool:
-    """True iff a begin-drain marker for THIS instantiation is present.
+    """True iff an active (present, same-epoch, unexpired) begin-drain marker exists.
 '''
 
 DRAIN_NOTIFICATION_HEADER = (
@@ -99,15 +99,8 @@ def drain_requested(*, home: Optional[Path] = None) -> bool:
     )
 '''
 
-OLD_RUN_BLOCK = '''        # External (NAS-driven) drain state — distinct from the shutdown
-        # ``_draining`` flag above. Set by ``_drain_control_watcher`` when the
-        # ``.drain_request.json`` marker is present: the gateway flips
-        # ``gateway_state -> draining`` and refuses NEW turns, but the process
-        # does NOT exit (the whole point — quiesce-without-restart, D4a). It is
-        # fully reversible: removing the marker reverts to ``running`` and
-        # re-accepts turns. ``_draining`` (shutdown) is one-way and ends in
-        # process exit; this one is a steady state NAS polls during its
-        # request -> poll -> proceed loop.
+OLD_RUN_BLOCK = '''        # External (NAS-driven) drain, distinct from one-way ``_draining``: set while ``.drain_request.json``
+        # exists — NEW turns refused, process stays up, removing the marker reverts to ``running``.
         self._external_drain_active = False
 '''
 NEW_RUN_BLOCK = '''        # External drain state is distinct from the one-way shutdown flag.
@@ -197,10 +190,8 @@ JOBS_RELEASE_HELPER = '''def rearm_nemoclaw_drained_oneshots(not_before: datetim
 '''
 
 DRAIN_CONTEXT = "from utils import atomic_json_write"
-RUN_CONTEXT = (
-    "class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, "
-    "GatewaySlashCommandsMixin):"
-)
+RUN_CONTEXT = "class GatewayRunner("
+SHUTDOWN_CONTEXT = "class GatewayShutdownMixin:"
 
 
 def _require_exact(source: str, shape: str, description: str) -> None:
@@ -234,10 +225,12 @@ def _state(
 def patch_files(
     drain_control_path: Path,
     gateway_run_path: Path,
+    gateway_shutdown_path: Path,
     cron_jobs_path: Path,
 ) -> None:
     drain_source = drain_control_path.read_text(encoding="utf-8")
     run_source = gateway_run_path.read_text(encoding="utf-8")
+    shutdown_source = gateway_shutdown_path.read_text(encoding="utf-8")
     jobs_source = cron_jobs_path.read_text(encoding="utf-8")
 
     _require_exact(drain_source, DRAIN_CONTEXT, "drain-control import context")
@@ -247,6 +240,7 @@ def patch_files(
         "drain notification predicate",
     )
     _require_exact(run_source, RUN_CONTEXT, "GatewayRunner declaration")
+    _require_exact(shutdown_source, SHUTDOWN_CONTEXT, "GatewayShutdownMixin declaration")
     _require_exact(jobs_source, JOBS_ANCHOR, "cron due-jobs boundary")
     drain_state = _state(
         drain_source,
@@ -260,9 +254,15 @@ def patch_files(
     )
     run_state = _state(
         run_source,
-        old_shapes=(OLD_RUN_BLOCK, OLD_ENTER_BLOCK),
-        new_shapes=(NEW_RUN_BLOCK, NEW_ENTER_BLOCK),
+        old_shapes=(OLD_RUN_BLOCK,),
+        new_shapes=(NEW_RUN_BLOCK,),
         description="GatewayRunner initialization",
+    )
+    shutdown_state = _state(
+        shutdown_source,
+        old_shapes=(OLD_ENTER_BLOCK,),
+        new_shapes=(NEW_ENTER_BLOCK,),
+        description="GatewayRunner drain transition",
     )
     helper_count = jobs_source.count(JOBS_RELEASE_HELPER)
     if helper_count == 0:
@@ -274,7 +274,7 @@ def patch_files(
             "ERROR: Hermes cron restore drain source shape changed; "
             "cron release helper is duplicated"
         )
-    if len({drain_state, run_state, jobs_state}) != 1:
+    if len({drain_state, run_state, shutdown_state, jobs_state}) != 1:
         raise SystemExit(
             "ERROR: Hermes cron restore drain patch is only partially applied"
         )
@@ -288,10 +288,11 @@ def patch_files(
         f"{COMPOSED_FUNCTIONS}\n\n{DRAIN_NOTIFICATION_HEADER}",
     )
     run_source = run_source.replace(OLD_RUN_BLOCK, NEW_RUN_BLOCK)
-    run_source = run_source.replace(OLD_ENTER_BLOCK, NEW_ENTER_BLOCK)
+    shutdown_source = shutdown_source.replace(OLD_ENTER_BLOCK, NEW_ENTER_BLOCK)
     jobs_source = jobs_source.replace(JOBS_ANCHOR, f"{JOBS_RELEASE_HELPER}{JOBS_ANCHOR}")
     drain_control_path.write_text(drain_source, encoding="utf-8")
     gateway_run_path.write_text(run_source, encoding="utf-8")
+    gateway_shutdown_path.write_text(shutdown_source, encoding="utf-8")
     cron_jobs_path.write_text(jobs_source, encoding="utf-8")
 
 
@@ -308,6 +309,11 @@ def main() -> int:
         help="Hermes gateway runner module to patch",
     )
     parser.add_argument(
+        "--gateway-shutdown",
+        default="/opt/hermes/gateway/run_shutdown.py",
+        help="Hermes gateway shutdown mixin module to patch",
+    )
+    parser.add_argument(
         "--cron-jobs",
         default="/opt/hermes/cron/jobs.py",
         help="Hermes cron jobs module to patch",
@@ -316,6 +322,7 @@ def main() -> int:
     patch_files(
         Path(args.drain_control),
         Path(args.gateway_run),
+        Path(args.gateway_shutdown),
         Path(args.cron_jobs),
     )
     return 0
