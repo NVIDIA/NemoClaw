@@ -171,7 +171,7 @@ test(
           : []),
         "ordinary cloud onboard migrates an allowlisted legacy credential through the real gateway",
         "tampered non-credential legacy fields do not become gateway providers",
-        "successful onboard removes plaintext credentials.json",
+        "successful onboard retires the migrated plaintext credential",
         "sandbox appears healthy after cloud onboarding",
         "explicit corporate CA source is baked and merged with OpenShell trust inside the sandbox",
         "validated compatible-endpoint reasoning reaches the authenticated runtime handoff and OpenClaw model metadata",
@@ -243,8 +243,8 @@ test(
 
     progress.phase("verify migrated gateway credential");
     expect(
-      fs.existsSync(legacyFile),
-      "successful onboard must remove legacy credentials.json",
+      Object.values(JSON.parse(fs.readFileSync(legacyFile, "utf8"))).includes(hosted.apiKey),
+      "successful onboard must retire the migrated plaintext credential",
     ).toBe(false);
     const providers = await host.command(
       "openshell",
