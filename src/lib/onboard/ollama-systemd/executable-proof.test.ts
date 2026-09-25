@@ -333,6 +333,70 @@ describe("proveOllamaSystemdServiceExecutable", () => {
     expect(commands.flat()).not.toContain("serve");
   });
 
+  it("uses the bounded direct proof when post-repair systemd verification times out (#12281)", () => {
+    const fixture = proofFixture();
+    let systemdProofCount = 0;
+    fixture.runCaptureExImpl.mockImplementation((command: readonly string[]) =>
+      captureForCommand(command, [
+        [
+          (candidate) => candidate[0] === "/usr/bin/systemctl",
+          () =>
+            capture(
+              0,
+              `User=ollama\nExecStart={ path=${executablePath} ; argv[]=${executablePath} serve ; }`,
+            ),
+        ],
+        [(candidate) => candidate[0] === "/usr/bin/id", () => capture(0)],
+        [
+          (candidate) => isServiceUserProofCommand(candidate),
+          () => {
+            systemdProofCount += 1;
+            return systemdProofCount === 1 ? capture(1) : capture(null, "", true);
+          },
+        ],
+        [
+          (candidate) =>
+            isServiceUserAccessCommand(candidate) && candidate.at(-1) === executablePath,
+          () => accessCapture(false),
+        ],
+        [(candidate) => isServiceUserAccessCommand(candidate), () => accessCapture(true)],
+        [
+          (candidate) => candidate.includes("/usr/bin/chmod"),
+          (candidate) => {
+            fixture.setMode(
+              Number.parseInt(String(candidate[candidate.indexOf("/usr/bin/chmod") + 1]), 8),
+            );
+            return capture(0);
+          },
+        ],
+        [
+          (candidate) => isBoundedDirectServiceUserProofCommand(candidate),
+          () => capture(0, "ollama version is 0.11.10\n"),
+        ],
+      ]),
+    );
+
+    expect(proveOllamaSystemdServiceExecutable(fixture.options)).toMatchObject({
+      ok: true,
+      repaired: true,
+    });
+    const commands = fixture.runCaptureExImpl.mock.calls.map(
+      ([command]) => command as readonly string[],
+    );
+    expect(commands.filter(isServiceUserProofCommand)).toHaveLength(2);
+    const directProofs = commands.filter(isBoundedDirectServiceUserProofCommand);
+    expect(directProofs).toHaveLength(1);
+    expectBoundedDirectServiceUserProofCommand(directProofs[0] ?? [], "ollama");
+    expect(
+      fixture.runCaptureExImpl.mock.calls.find(([command]) =>
+        isBoundedDirectServiceUserProofCommand(command as readonly string[]),
+      )?.[1],
+    ).toEqual({ timeout: 17_000 });
+    expect(commands.filter((command) => command.includes("/usr/bin/chmod"))).toEqual([
+      ["/usr/bin/sudo", "-n", "/usr/bin/chmod", "0755", "--", executablePath],
+    ]);
+  });
+
   it("restores the previous mode when the proof still fails after repair (#9728)", () => {
     const fixture = proofFixture();
     fixture.runCaptureExImpl.mockImplementation((command: readonly string[]) =>
