@@ -27,6 +27,7 @@ export interface StartedHttpServer {
 }
 
 export const FAKE_MCP_STATUS_RESULT_TOKEN = "MCP_STATUS_OK";
+const MCP_DIAGNOSTIC_PERSIST_TIMEOUT_MS = 10_000;
 
 export interface FakeMcpRequest {
   method: string;
@@ -1497,10 +1498,29 @@ export async function startFakeMcpHttpsServer(options: {
         for (const session of legacySessions.values()) session.phase = "closed";
         legacySessions.clear();
       }
-      try {
-        await options.onCloseDiagnostics?.(snapshot());
-      } catch (error) {
-        errors.push(error);
+      const persistDiagnostics = options.onCloseDiagnostics;
+      if (persistDiagnostics) {
+        let deadline: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await Promise.race([
+            Promise.resolve().then(() => persistDiagnostics(snapshot())),
+            new Promise<never>((_resolve, reject) => {
+              deadline = setTimeout(
+                () =>
+                  reject(
+                    new Error(
+                      `MCP HTTPS diagnostic persistence timed out after ${MCP_DIAGNOSTIC_PERSIST_TIMEOUT_MS} ms`,
+                    ),
+                  ),
+                MCP_DIAGNOSTIC_PERSIST_TIMEOUT_MS,
+              );
+            }),
+          ]);
+        } catch (error) {
+          errors.push(error);
+        } finally {
+          clearTimeout(deadline);
+        }
       }
       if (errors.length > 0) {
         throw errors.length === 1

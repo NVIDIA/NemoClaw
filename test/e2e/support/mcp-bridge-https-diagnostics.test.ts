@@ -11,6 +11,7 @@ import { afterAll, describe, expect, it, vi } from "vitest";
 import { startFakeMcpHttpsServer } from "../live/mcp-bridge-servers.ts";
 import { shouldRetryMcpDiscoveryAfterRestart } from "../live/mcp-bridge-tool-discovery.ts";
 import { createMcpFixtureTls } from "../fixtures/mcp-fixture-tls.ts";
+import { CleanupRegistry } from "../fixtures/cleanup.ts";
 
 vi.mock("node:child_process", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:child_process")>();
@@ -20,6 +21,57 @@ vi.mock("node:child_process", async (importOriginal) => {
 const { tls: fixtureTls, close: closeFixtureTls } = createMcpFixtureTls();
 afterAll(closeFixtureTls);
 describe("MCP HTTPS transport diagnostics", () => {
+  it("bounds stalled diagnostic persistence so later owned cleanup still runs", async () => {
+    let started!: () => void;
+    let release!: () => void;
+    const writing = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const server = await startFakeMcpHttpsServer({
+      secret: "diagnostic-secret",
+      tls: fixtureTls,
+      onCloseDiagnostics: () => {
+        started();
+        return pending;
+      },
+    });
+    const cleanup = new CleanupRegistry();
+    const later = vi.fn();
+    cleanup.add("release follow-up test resource", later);
+    cleanup.add("close HTTPS fixture", () => server.close());
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const completion = cleanup.runAll();
+    let reconnect: net.Socket | undefined;
+    try {
+      await writing;
+      reconnect = net.connect(server.port, "127.0.0.1");
+      const connection = await new Promise<string>((resolve) => {
+        reconnect!.once("connect", () => resolve("connected"));
+        reconnect!.once("error", (error: NodeJS.ErrnoException) => resolve(String(error.code)));
+      });
+      expect(connection).toBe("ECONNREFUSED");
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(later).toHaveBeenCalledOnce();
+      expect(await completion).toEqual({
+        passed: ["release follow-up test resource"],
+        failures: [
+          {
+            name: "close HTTPS fixture",
+            message: expect.stringContaining("diagnostic persistence timed out"),
+          },
+        ],
+      });
+    } finally {
+      release();
+      reconnect?.destroy();
+      await completion;
+      vi.useRealTimers();
+    }
+  });
+
   it("records fixed TLS categories and closes before stalled or failed diagnostic persistence", async () => {
     const failure = new Error("artifact unavailable");
     let rejectWrite!: (error: Error) => void;

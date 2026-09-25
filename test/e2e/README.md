@@ -177,7 +177,9 @@ coverage retains that assertion for environments with supervisor-authoritative D
 The trusted-private HTTPS fixture records bounded TLS, request-header, and completed-body counters
 before the status assertion and during final cleanup. TLS errors use fixed code buckets; these
 diagnostics contain no raw errors, request data, or credentials and do not establish successful
-authenticated discovery. The server still closes if writing its final diagnostic artifact fails.
+authenticated discovery. The server and event streams close before final diagnostic persistence.
+Persistence has a 10-second deadline; a write failure or timeout is reported after resource cleanup,
+so later cleanup entries can continue.
 Onboarding repair and resume fixtures capture bounded, read-only Podman ownership observations
 before and after the resumed command. They retain only validated fixed-schema facts and never raw
 child output. These separate observations do not replace the production ownership decision or prove
