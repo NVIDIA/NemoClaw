@@ -388,6 +388,48 @@ describe("Hermes legacy dashboard-state migration", () => {
     expect(fs.existsSync(path.join(hermes, "USER.md"))).toBe(false);
   });
 
+  it("discards every generated metadata file while preserving durable state", () => {
+    const { hermes } = dashboardMigrationFixture();
+    const legacy = path.join(hermes, "profiles/dashboard-home");
+    writeDashboardMigrationFile(path.join(legacy, ".config-hash"), "generated hash\n");
+    writeDashboardMigrationFile(path.join(legacy, ".env-hash"), "generated env hash\n");
+    writeDashboardMigrationFile(
+      path.join(legacy, ".runtime-config-state.json"),
+      "generated runtime state\n",
+    );
+    writeDashboardMigrationFile(
+      path.join(legacy, "gateway_state.json"),
+      "generated gateway state\n",
+    );
+    writeDashboardMigrationFile(path.join(legacy, "MEMORY.md"), "durable\n");
+
+    const result = runDashboardMigration(hermes);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(fs.readFileSync(path.join(hermes, "MEMORY.md"), "utf8")).toBe("durable\n");
+    expect(fs.existsSync(path.join(hermes, ".config-hash"))).toBe(false);
+    expect(fs.existsSync(path.join(hermes, ".env-hash"))).toBe(false);
+    expect(fs.existsSync(path.join(hermes, ".runtime-config-state.json"))).toBe(false);
+    expect(fs.existsSync(path.join(hermes, "gateway_state.json"))).toBe(false);
+    expect(fs.existsSync(legacy)).toBe(false);
+  });
+
+  it("does not treat a generated-only legacy root as ambiguous user state", () => {
+    const { hermes } = dashboardMigrationFixture();
+    writeDashboardMigrationFile(path.join(hermes, "dashboard-home/.config-hash"), "generated\n");
+    writeDashboardMigrationFile(
+      path.join(hermes, "profiles/dashboard-home/MEMORY.md"),
+      "durable\n",
+    );
+
+    const result = runDashboardMigration(hermes);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(fs.readFileSync(path.join(hermes, "MEMORY.md"), "utf8")).toBe("durable\n");
+    expect(fs.existsSync(path.join(hermes, "dashboard-home"))).toBe(false);
+    expect(fs.existsSync(path.join(hermes, "profiles/dashboard-home"))).toBe(false);
+  });
+
   it("retires byte-identical legacy duplicates", () => {
     const { hermes } = dashboardMigrationFixture();
     writeDashboardMigrationFile(path.join(hermes, "MEMORY.md"), "same\n");

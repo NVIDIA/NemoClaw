@@ -431,7 +431,11 @@ def migrate(
                     except BaseException:
                         os.close(source_fd)
                         raise
-            populated = [(name, fd) for name, fd in sources if _entries(fd)]
+            populated = [
+                (name, fd)
+                for name, fd in sources
+                if any(entry not in MANAGED_SHADOW_FILES for entry in _entries(fd))
+            ]
             if len(populated) > 1:
                 raise MigrationError(
                     "both legacy dashboard homes contain state; refusing an ambiguous merge"

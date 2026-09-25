@@ -68,7 +68,8 @@ Hermes snapshots include `SOUL.md`, user-created named profiles under `.hermes/p
 The gateway, CLI, TUI, and Web Dashboard share the native `.hermes/config.yaml`; snapshots exclude that NemoClaw-managed file and `.hermes/.env`.
 Rebuild restore treats `.hermes/profiles/` as native agent-owned state and preserves user-created named profiles.
 On startup, NemoClaw migrates an older reserved `.hermes/profiles/dashboard-home/` into the shared native home, including a legacy WhatsApp session, and removes the retired profile.
-Generated shadow `config.yaml` and `.env` files are discarded instead of replacing the native configuration.
+It removes only named generated hash and runtime-state metadata.
+Other safe regular files, including legacy `config.yaml` and `.env` files, merge only when the native destination is absent or byte-identical.
 Unsafe links or conflicting native and legacy files stop startup without deleting either copy.
 The default-profile snapshot also includes cron execution history in `.hermes/runtime/cron-executions.db` and Discord replay state in `.hermes/gateway/discord_message_recovery.db`.
 NemoClaw captures cron job definitions from `.hermes/cron` and user-authored cron scripts from `.hermes/scripts` as directory state.
