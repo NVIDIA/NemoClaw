@@ -162,8 +162,10 @@ credentials, and must pass.
 These are two required acceptance executions, not retries; either failure remains a failed check.
 The concurrent-add probe retries only the rejected command after status proves that the other
 command committed one coherent bridge. The rejected command must report the exact portable
-host-lock timeout. The retry runs once, has its own command artifact, and must succeed idempotently
-from the verified committed source. Production Hermes add owns reload-transport reconciliation, so
+host-lock timeout, optionally followed by the current recorded-owner-is-still-running remediation.
+Unknown or unverifiable-owner diagnostics remain failures. The deterministic classifier and one-retry
+bound are covered by `support/mcp-bridge-reliability.test.ts`. The retry has its own command artifact
+and must succeed idempotently from the verified committed source. Production Hermes add owns reload-transport reconciliation, so
 the E2E boundary does not retry a Hermes mutation after transport loss.
 The workflow records one publication cohort before its PR producer matrix runs. Failed-job reruns
 reuse that cohort and replace only the stable run-scoped artifact owned by each retried agent.
@@ -172,6 +174,16 @@ reject mixed cohorts, another run, a future attempt, and another candidate revis
 The managed-image scope does not claim trusted-private DNS-rebinding coverage: host and sandbox
 `/etc/hosts` fixtures do not control the OpenShell supervisor's egress resolver. Full MCP bridge E2E
 coverage retains that assertion for environments with supervisor-authoritative DNS.
+The trusted-private HTTPS fixture records bounded TLS, request-header, and completed-body counters
+before the status assertion and during final cleanup. TLS errors use fixed code buckets; these
+diagnostics contain no raw errors, request data, or credentials and do not establish successful
+authenticated discovery. The server and event streams close before final diagnostic persistence.
+Persistence has a 10-second deadline; a write failure or timeout is reported after resource cleanup,
+so later cleanup entries can continue.
+Onboarding repair and resume fixtures capture bounded, read-only Podman ownership observations
+before and after the resumed command. They retain only validated fixed-schema facts and never raw
+child output. These separate observations do not replace the production ownership decision or prove
+which predicate rejected an earlier invocation; command results and cleanup remain authoritative.
 
 The same workflow publishes each Pi pull-request candidate by immutable digest after validating the
 local image, removes registry credentials, validates the anonymously pullable digest, and uploads a
