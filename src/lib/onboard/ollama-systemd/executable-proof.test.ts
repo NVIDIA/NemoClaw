@@ -733,7 +733,7 @@ describe("proveOllamaSystemdServiceExecutable", () => {
     expect(proveOllamaSystemdServiceExecutable(fixture.options)).toMatchObject({
       classification: "execution-timeout",
       message:
-        "Ollama ExecStart did not complete '--version' as systemd User 'ollama' within 15 seconds",
+        "systemd-run timed out after 15 seconds, and the direct service-user recovery proof also timed out after 15 seconds for Ollama ExecStart '--version' as systemd User 'ollama'",
       ok: false,
     });
   });

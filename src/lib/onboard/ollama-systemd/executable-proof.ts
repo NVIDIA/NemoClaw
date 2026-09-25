@@ -561,7 +561,7 @@ export function proveOllamaSystemdServiceExecutable(
   if (initialProof.timedOut) {
     return failed(
       "execution-timeout",
-      `Ollama ExecStart did not complete '--version' as systemd User '${metadata.serviceUser}' within ${String(EXECUTION_PROOF_TIMEOUT_SECONDS)} seconds`,
+      `systemd-run timed out after ${String(EXECUTION_PROOF_TIMEOUT_SECONDS)} seconds, and the direct service-user recovery proof also timed out after ${String(EXECUTION_PROOF_TIMEOUT_SECONDS)} seconds for Ollama ExecStart '--version' as systemd User '${metadata.serviceUser}'`,
     );
   }
   const proofFailureDetail = executionFailureDetail(initialProof, initialProofSource);
