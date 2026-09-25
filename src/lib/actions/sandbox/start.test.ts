@@ -373,44 +373,52 @@ describe("startSandbox native lifecycle", () => {
     );
   });
 
-  it("observes Hermes startup through the native health endpoint", async () => {
-    const requests: OpenShellSandboxBufferedCommandRequest[] = [];
-    const runBuffered = vi.fn(async (request: OpenShellSandboxBufferedCommandRequest) => {
-      requests.push(request);
-      return {
-        outcome: { kind: "completed" as const, exitCode: 0 },
-        stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nRUNNING\n",
-        stderr: "",
-      };
-    });
-    vi.spyOn(sandboxCommandCli, "createCliOpenShellSandboxCommandExecutor").mockReturnValue({
-      probeDirectory: vi.fn(async () => ({ state: "present" as const })),
-      runBuffered,
-      runStreaming: vi.fn(async () => ({
-        outcome: { kind: "completed" as const, exitCode: 0 },
-        release: () => undefined,
-      })),
-    });
-    vi.spyOn(registry, "getSandbox").mockReturnValue(
-      sandbox({ agent: "hermes", gatewayName: "nemoclaw-19080", stopped: true }),
-    );
-    const h = harness({ probeGatewayProcess: undefined });
-    h.getSandbox.mockReturnValue(
-      sandbox({ agent: "hermes", gatewayName: "nemoclaw-19080", stopped: true }),
-    );
+  it.each(["RUNNING", "UNAVAILABLE"])(
+    "observes Hermes startup health outcome %s",
+    async (health) => {
+      const requests: OpenShellSandboxBufferedCommandRequest[] = [];
+      const runBuffered = vi.fn(async (request: OpenShellSandboxBufferedCommandRequest) => {
+        requests.push(request);
+        return {
+          outcome: { kind: "completed" as const, exitCode: 0 },
+          stdout: `__NEMOCLAW_SANDBOX_EXEC_STARTED__\n${health}\n`,
+          stderr: "",
+        };
+      });
+      vi.spyOn(sandboxCommandCli, "createCliOpenShellSandboxCommandExecutor").mockReturnValue({
+        probeDirectory: vi.fn(async () => ({ state: "present" as const })),
+        runBuffered,
+        runStreaming: vi.fn(async () => ({
+          outcome: { kind: "completed" as const, exitCode: 0 },
+          release: () => undefined,
+        })),
+      });
+      vi.spyOn(registry, "getSandbox").mockReturnValue(
+        sandbox({ agent: "hermes", gatewayName: "nemoclaw-19080", stopped: true }),
+      );
+      const h = harness({ probeGatewayProcess: undefined });
+      h.getSandbox.mockReturnValue(
+        sandbox({ agent: "hermes", gatewayName: "nemoclaw-19080", stopped: true }),
+      );
 
-    await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
+      await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({
+        exitCode: health === "RUNNING" ? 0 : 1,
+      });
 
-    expect(requests).toHaveLength(1);
-    expect(requests[0]).toEqual(
-      expect.objectContaining({
-        sandboxName: "my-sandbox",
-        target: { kind: "named", gatewayName: "nemoclaw-19080" },
-        command: ["sh", "-c", expect.stringContaining("/health")],
-      }),
-    );
-    expect(requests[0]?.command.join(" ")).not.toContain("/usr/local/bin/nemoclaw-gateway-control");
-  });
+      expect(requests).toHaveLength(health === "RUNNING" ? 1 : 6);
+      expect(h.verifyGateway).toHaveBeenCalledTimes(health === "RUNNING" ? 1 : 0);
+      expect(requests[0]).toEqual(
+        expect.objectContaining({
+          sandboxName: "my-sandbox",
+          target: { kind: "named", gatewayName: "nemoclaw-19080" },
+          command: expect.arrayContaining(["sh", "-c", expect.stringContaining("/health")]),
+        }),
+      );
+      expect(requests[0]?.command.join(" ")).not.toContain(
+        "/usr/local/bin/nemoclaw-gateway-control",
+      );
+    },
+  );
 
   it.each(["openclaw", undefined])(
     "waits for the stopped %s gateway HTTP listener before repairing forwards",

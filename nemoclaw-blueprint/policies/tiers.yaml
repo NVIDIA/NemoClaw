@@ -27,7 +27,7 @@ tiers:
       - { name: npm,          access: read-write }
       - { name: pypi,         access: read-write }
       - { name: huggingface,  access: read-write }
-      - { name: brew,         access: read-write }
+      - { name: brew-balanced, access: read-write }
       - { name: brave,        access: read-write }
 
   - name: open

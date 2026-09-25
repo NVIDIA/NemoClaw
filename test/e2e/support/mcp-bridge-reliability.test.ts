@@ -766,15 +766,17 @@ describe("MCP bridge transient classification", () => {
     expect(retry).not.toHaveBeenCalled();
   });
 
-  it("retries the portable host lock loser after the committed bridge is verified", async () => {
+  it.each([
+    "Error: Failed to acquire lock on /home/runner/.nemoclaw-portable-host.lock after 120 retries",
+    "Error: Failed to acquire lock on /home/runner/.nemoclaw-portable-host.lock after 120 retries. Recorded owner PID 9896 is still running. Wait for it to finish. Rerun this command to retry lock acquisition.",
+  ])("retries the verified portable host lock loser: %s", async (diagnostic) => {
     const retryResult = { exitCode: 1 };
     const retry = vi.fn(async () => retryResult);
 
     await expect(
       retryAfterConcurrentAddTransientFailure({
         committedBridgeVerified: true,
-        diagnostic:
-          "Error: Failed to acquire lock on /home/runner/.nemoclaw-portable-host.lock after 120 retries",
+        diagnostic,
         originalResult: { exitCode: 1 },
         retry,
       }),
@@ -782,21 +784,18 @@ describe("MCP bridge transient classification", () => {
     expect(retry).toHaveBeenCalledOnce();
   });
 
-  it("fails closed for an unknown rejection", async () => {
+  it.each([
+    "unexpected transport error",
+    "Error: Failed to acquire lock on /tmp/other.lock after 120 retries",
+    "Error: Failed to acquire lock on /home/runner/.nemoclaw-portable-host.lock after 120 retries. Recorded owner PID 0 is still running. Wait for it to finish. Rerun this command to retry lock acquisition.",
+    "Error: Failed to acquire lock on /home/runner/.nemoclaw-portable-host.lock after 120 retries. PID 9896 exists but cannot be confirmed as the recorded owner. Wait for any active operation to finish. Rerun this command to retry lock acquisition.",
+    "Error: Failed to acquire lock on /home/runner/.nemoclaw-portable-host.lock after 120 retries. An unrelated failure followed.",
+  ])("fails closed for an unknown rejection: %s", async (diagnostic) => {
     const retry = vi.fn(async () => ({ exitCode: 1 }));
-
     await expect(
       retryAfterConcurrentAddTransientFailure({
         committedBridgeVerified: true,
-        diagnostic: "unexpected transport error",
-        originalResult: { exitCode: 1 },
-        retry,
-      }),
-    ).rejects.toThrow("not a known transient failure");
-    await expect(
-      retryAfterConcurrentAddTransientFailure({
-        committedBridgeVerified: true,
-        diagnostic: "Error: Failed to acquire lock on /tmp/other.lock after 120 retries",
+        diagnostic,
         originalResult: { exitCode: 1 },
         retry,
       }),

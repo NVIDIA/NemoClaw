@@ -1,12 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
+
 import { createHash } from "node:crypto";
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime";
 import { shellQuote } from "../../core/shell-quote";
 import { MANAGED_PROVIDER_ID } from "../../inference/config";
 import { isSafeModelId } from "../../validation";
-import { executeSandboxCommand } from "./process-recovery";
+import { executeSandboxExecCommand } from "../../adapters/sandbox/command-transport";
 import type { RebuildLog } from "./rebuild-credential-preflight";
 import { DEFAULT_AGENT_ID } from "./sessions/paths";
 
@@ -228,8 +230,10 @@ async function executeReconcileCommand(
   runtimeSelection?: OpenShellRuntimeSelection,
 ) {
   return runtimeSelection
-    ? await executeSandboxCommand(sandboxName, command, { runtimeSelection })
-    : await executeSandboxCommand(sandboxName, command);
+    ? await executeSandboxExecCommand(sandboxName, command, undefined, {
+        runtimeSelection,
+      })
+    : await executeSandboxExecCommand(sandboxName, command);
 }
 
 async function readPrimaryModelRef(
@@ -241,7 +245,7 @@ async function readPrimaryModelRef(
     `cat ${OPENCLAW_CONFIG_PATH} 2>/dev/null`,
     runtimeSelection,
   );
-  if (!res || res.status !== 0 || !res.stdout.trim()) return null;
+  if (res.status !== 0 || !res.stdout.trim()) return null;
   try {
     const config = JSON.parse(res.stdout) as {
       agents?: { defaults?: { model?: { primary?: unknown } } };
@@ -272,38 +276,43 @@ export async function reconcileStalePinnedSessionModelsAfterRebuild(
   log: RebuildLog,
   runtimeSelection?: OpenShellRuntimeSelection,
 ): Promise<void> {
-  const primary = await readPrimaryModelRef(sandboxName, runtimeSelection);
-  if (!primary) {
-    log("Session model reconcile skipped: could not read agents.defaults.model.primary");
-    return;
-  }
-  const sessionsPath = defaultAgentSessionsPath(DEFAULT_AGENT_ID);
-  const readResult = await executeReconcileCommand(
-    sandboxName,
-    `cat ${sessionsPath} 2>/dev/null`,
-    runtimeSelection,
-  );
-  if (!readResult || readResult.status !== 0 || !readResult.stdout.trim()) {
-    log(`Session model reconcile skipped: no session store at ${sessionsPath}`);
-    return;
-  }
-  const reconciled = reconcilePinnedSessionModels(readResult.stdout, primary);
-  if (!reconciled.changed) {
-    log("Session model reconcile: no stale pinned session models");
-    return;
-  }
-  const writeResult = await executeReconcileCommand(
-    sandboxName,
-    buildSessionStoreReplaceCommand(sessionsPath, reconciled.content, readResult.stdout),
-    runtimeSelection,
-  );
-  if (!writeResult || writeResult.status !== 0) {
-    log(
-      `Session model reconcile: failed to write ${sessionsPath} (status=${writeResult?.status ?? "null"})`,
+  try {
+    const primary = await readPrimaryModelRef(sandboxName, runtimeSelection);
+    if (!primary) {
+      log("Session model reconcile skipped: could not read agents.defaults.model.primary");
+      return;
+    }
+    const sessionsPath = defaultAgentSessionsPath(DEFAULT_AGENT_ID);
+    const readResult = await executeReconcileCommand(
+      sandboxName,
+      `cat ${sessionsPath} 2>/dev/null`,
+      runtimeSelection,
     );
-    return;
+    if (readResult.status !== 0 || !readResult.stdout.trim()) {
+      log(`Session model reconcile skipped: no session store at ${sessionsPath}`);
+      return;
+    }
+    const reconciled = reconcilePinnedSessionModels(readResult.stdout, primary);
+    if (!reconciled.changed) {
+      log("Session model reconcile: no stale pinned session models");
+      return;
+    }
+    const writeResult = await executeReconcileCommand(
+      sandboxName,
+      buildSessionStoreReplaceCommand(sessionsPath, reconciled.content, readResult.stdout),
+      runtimeSelection,
+    );
+    if (writeResult.status !== 0) {
+      log(
+        `Session model reconcile: failed to write ${sessionsPath} (status=${writeResult.status})`,
+      );
+      return;
+    }
+    log(
+      `Session model reconcile: cleared stale pinned model on ${reconciled.clearedSessionKeys.length} session(s) so they follow ${primary}`,
+    );
+  } catch (error) {
+    if (!(error instanceof SandboxCommandTransportError)) throw error;
+    log(`Session model reconcile incomplete: ${error.message}`);
   }
-  log(
-    `Session model reconcile: cleared stale pinned model on ${reconciled.clearedSessionKeys.length} session(s) so they follow ${primary}`,
-  );
 }

@@ -88,8 +88,8 @@ export class RuntimeProviderPrerequisite {
   private readonly invocation: RuntimeProviderInvocation;
 
   constructor(
-    private readonly host: HostCliClient,
-    private readonly skip: RuntimeProviderSkip,
+    private readonly host: Pick<HostCliClient, "command">,
+    private readonly skip?: RuntimeProviderSkip,
     private readonly environment: NodeJS.ProcessEnv = process.env,
   ) {
     this.invocation = configuredRuntimeProviderInvocation(environment);
@@ -121,7 +121,7 @@ export class RuntimeProviderPrerequisite {
 
     const detail = [result.stdout, result.stderr].filter(Boolean).join("\n");
     const reason = `${this.displayName} is required for ${options.scenarioLabel} live E2E: ${detail}`;
-    if (process.env.GITHUB_ACTIONS === "true") throw new Error(reason);
+    if (process.env.GITHUB_ACTIONS === "true" || !this.skip) throw new Error(reason);
     this.skip(reason);
   }
 
