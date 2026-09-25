@@ -77,10 +77,13 @@ def _open_file(parent_fd: int, name: str, display: str) -> int:
         fd = os.open(name, flags, dir_fd=parent_fd)
     except OSError as exc:
         raise MigrationError(f"{display} is not a safe regular file: {exc.strerror}") from exc
-    opened = os.fstat(fd)
-    if not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1:
+    try:
+        opened = os.fstat(fd)
+        if not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1:
+            raise MigrationError(f"{display} is not a single-link regular file")
+    except BaseException:
         os.close(fd)
-        raise MigrationError(f"{display} is not a single-link regular file")
+        raise
     return fd
 
 
@@ -93,19 +96,21 @@ def _same_file(
     target_display: str,
 ) -> bool:
     left = _open_file(source_fd, source_name, source_display)
-    right = _open_file(target_fd, target_name, target_display)
     try:
-        if os.fstat(left).st_size != os.fstat(right).st_size:
-            return False
-        while True:
-            left_chunk = os.read(left, 64 * 1024)
-            right_chunk = os.read(right, 64 * 1024)
-            if left_chunk != right_chunk:
+        right = _open_file(target_fd, target_name, target_display)
+        try:
+            if os.fstat(left).st_size != os.fstat(right).st_size:
                 return False
-            if not left_chunk:
-                return True
+            while True:
+                left_chunk = os.read(left, 64 * 1024)
+                right_chunk = os.read(right, 64 * 1024)
+                if left_chunk != right_chunk:
+                    return False
+                if not left_chunk:
+                    return True
+        finally:
+            os.close(right)
     finally:
-        os.close(right)
         os.close(left)
 
 
@@ -146,11 +151,13 @@ def _preflight_tree(
         target_identity = _identity(target_fd, name, target_path)
         if stat.S_ISDIR(source.mode) and stat.S_ISDIR(target_identity.mode):
             source_child = _open_dir(source_fd, name, source_path)
-            target_child = _open_dir(target_fd, name, target_path)
             try:
-                _preflight_tree(source_child, source_path, target_child, target_path)
+                target_child = _open_dir(target_fd, name, target_path)
+                try:
+                    _preflight_tree(source_child, source_path, target_child, target_path)
+                finally:
+                    os.close(target_child)
             finally:
-                os.close(target_child)
                 os.close(source_child)
             continue
         if stat.S_ISREG(source.mode) and stat.S_ISREG(target_identity.mode):
@@ -272,16 +279,18 @@ def _merge_tree(source_fd: int, source_display: str, target_fd: int, target_disp
                 os.mkdir(name, stat.S_IMODE(source.mode), dir_fd=target_fd)
                 created = _identity(target_fd, name, target_path)
                 source_child = _open_dir(source_fd, name, source_path)
-                target_child = _open_dir(target_fd, name, target_path)
                 try:
-                    if not _matches(source, os.fstat(source_child)):
-                        raise MigrationError(f"{source_path} changed before migration")
-                    if not _matches(created, os.fstat(target_child)):
-                        raise MigrationError(f"{target_path} changed while it was created")
-                    _merge_tree(source_child, source_path, target_child, target_path)
-                    os.fchmod(target_child, stat.S_IMODE(source.mode))
+                    target_child = _open_dir(target_fd, name, target_path)
+                    try:
+                        if not _matches(source, os.fstat(source_child)):
+                            raise MigrationError(f"{source_path} changed before migration")
+                        if not _matches(created, os.fstat(target_child)):
+                            raise MigrationError(f"{target_path} changed while it was created")
+                        _merge_tree(source_child, source_path, target_child, target_path)
+                        os.fchmod(target_child, stat.S_IMODE(source.mode))
+                    finally:
+                        os.close(target_child)
                 finally:
-                    os.close(target_child)
                     os.close(source_child)
                 os.rmdir(name, dir_fd=source_fd)
             else:
@@ -290,11 +299,13 @@ def _merge_tree(source_fd: int, source_display: str, target_fd: int, target_disp
         target_identity = _identity(target_fd, name, target_path)
         if stat.S_ISDIR(source.mode) and stat.S_ISDIR(target_identity.mode):
             source_child = _open_dir(source_fd, name, source_path)
-            target_child = _open_dir(target_fd, name, target_path)
             try:
-                _merge_tree(source_child, source_path, target_child, target_path)
+                target_child = _open_dir(target_fd, name, target_path)
+                try:
+                    _merge_tree(source_child, source_path, target_child, target_path)
+                finally:
+                    os.close(target_child)
             finally:
-                os.close(target_child)
                 os.close(source_child)
             os.rmdir(name, dir_fd=source_fd)
             continue
@@ -340,7 +351,11 @@ def migrate(hermes_dir: str) -> bool:
             for relative in LEGACY_PATHS:
                 source_fd = _open_relative_directory(root_fd, relative)
                 if source_fd is not None:
-                    sources.append((relative, source_fd))
+                    try:
+                        sources.append((relative, source_fd))
+                    except BaseException:
+                        os.close(source_fd)
+                        raise
             populated = [(name, fd) for name, fd in sources if _entries(fd)]
             if len(populated) > 1:
                 raise MigrationError(
