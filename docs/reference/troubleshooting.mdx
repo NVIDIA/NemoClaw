@@ -1905,22 +1905,21 @@ gateway connect failed: GatewayClientRequestError: scope upgrade pending approva
   (requestId: 4899d110-911f-4bc7-ac1a-85d76c7b366f)
 ```
 
-When you run an `openclaw` command through `$$nemoclaw <name> exec -- ...` and it exits non-zero, NemoClaw asks the sandbox whether any device request is pending. If one is, it appends the review path to stderr after the command's own output:
+List the pending requests through the native OpenClaw interface:
 
-```text
-$$nemoclaw: a device scope upgrade is waiting for approval inside sandbox 'my-assistant'.
-  The OpenClaw gateway refused the command until the requested scopes are approved.
-  Review pending requests: $$nemoclaw my-assistant exec -- openclaw devices list
-  Approve the one you recognize, after checking its device and requested scopes:
-                           $$nemoclaw my-assistant exec -- openclaw devices approve <requestId>
-  Silence this hint:       export NEMOCLAW_NO_POLICY_HINT=1
+```bash
+$$nemoclaw <name> exec -- openclaw devices list
 ```
 
-Read `openclaw devices list`, confirm the requesting device and the requested scopes, approve that request by id, then re-run the original command unchanged.
+Confirm the requesting device and the requested scopes.
+Approve only the request that matches the failed command:
 
-The hint never names a request id. NemoClaw cannot tell which pending request belongs to the failed command, so naming one would present an unrelated request — for example a different device asking for `operator.admin` — as this command's remedy. You make that decision from `devices list`.
+```bash
+$$nemoclaw <name> exec -- openclaw devices approve <requestId>
+```
 
-The probe runs only for a failed `openclaw` command. A command that succeeds, a non-`openclaw` command, and a transport failure all print no hint. If the probe fails, or nothing is pending, no hint is added. An invalid sandbox name is shown as `<name>`. `NEMOCLAW_NO_POLICY_HINT` suppresses this hint on the same terms as the network-policy breadcrumb above.
+Then rerun the original command unchanged.
+NemoClaw preserves the native command output and exit status and does not inspect pending requests automatically.
 
 </AgentOnly>
 
