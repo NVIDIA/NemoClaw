@@ -29,6 +29,7 @@ describe("config rotate-token", () => {
       fail: (lines: string | readonly string[]): never => {
         throw new Error(typeof lines === "string" ? lines : lines.join("\n"));
       },
+      loadSandbox: () => null,
       loadSession: () => ({
         sandboxName: "rotate-profile-test",
         credentialEnv: "OPENAI_API_KEY",
@@ -84,6 +85,7 @@ describe("config rotate-token", () => {
       fail: (lines: string | readonly string[]): never => {
         throw new Error(typeof lines === "string" ? lines : lines.join("\n"));
       },
+      loadSandbox: () => null,
       loadSession: () => ({
         sandboxName: "rotate-profile-test",
         credentialEnv: "OPENAI_API_KEY",
@@ -105,5 +107,68 @@ describe("config rotate-token", () => {
     expect(JSON.stringify(captureOpenshellCommand.mock.calls)).not.toContain("rotation-secret");
     expect(saveCredential).not.toHaveBeenCalled();
     expect(runOpenshellCommand).not.toHaveBeenCalled();
+  });
+
+  it("rotates the provider currently registered to the named sandbox instead of a stale session", async () => {
+    const loadSession = vi.fn(() => ({
+      sandboxName: "rotate-profile-test",
+      credentialEnv: "OPENAI_API_KEY",
+      provider: "openai-api",
+      providerType: "openai",
+    }));
+    const runOpenshellCommand = vi
+      .fn<RotateTokenDeps["runOpenshellCommand"]>()
+      .mockReturnValueOnce({ status: 1 } as ReturnType<RotateTokenDeps["runOpenshellCommand"]>)
+      .mockReturnValueOnce({ status: 0 } as ReturnType<RotateTokenDeps["runOpenshellCommand"]>);
+    const saveCredential = vi.fn();
+    const deps = {
+      appendAuditEntry: vi.fn(),
+      captureOpenshellCommand: vi.fn(() => ({
+        output: "openshell 0.0.116\n",
+        status: 0,
+        stderr: "",
+        stdout: "openshell 0.0.116\n",
+      })),
+      fail: (lines: string | readonly string[]): never => {
+        throw new Error(typeof lines === "string" ? lines : lines.join("\n"));
+      },
+      loadSandbox: () => ({
+        credentialEnv: "ANTHROPIC_API_KEY",
+        preferredInferenceApi: "anthropic-messages",
+        provider: "compatible-anthropic-endpoint",
+      }),
+      loadSession,
+      promptSecret: vi.fn().mockResolvedValue("current-route-secret"),
+      resolveAgentConfig: () => DEFAULT_AGENT_CONFIG,
+      runOpenshellCommand,
+      saveCredential,
+      validateName: vi.fn((name: string) => name),
+    } satisfies RotateTokenDeps;
+
+    await rotateSandboxToken("rotate-profile-test", {}, deps);
+
+    expect(loadSession).not.toHaveBeenCalled();
+    expect(saveCredential).toHaveBeenCalledWith("ANTHROPIC_API_KEY", "current-route-secret");
+    expect(runOpenshellCommand).toHaveBeenNthCalledWith(
+      1,
+      expect.any(String),
+      ["provider", "update", "compatible-anthropic-endpoint", "--credential", "ANTHROPIC_API_KEY"],
+      expect.objectContaining({ env: { ANTHROPIC_API_KEY: "current-route-secret" } }),
+    );
+    expect(runOpenshellCommand).toHaveBeenNthCalledWith(
+      2,
+      expect.any(String),
+      [
+        "provider",
+        "create",
+        "--name",
+        "compatible-anthropic-endpoint",
+        "--type",
+        "anthropic",
+        "--credential",
+        "ANTHROPIC_API_KEY",
+      ],
+      expect.objectContaining({ env: { ANTHROPIC_API_KEY: "current-route-secret" } }),
+    );
   });
 });

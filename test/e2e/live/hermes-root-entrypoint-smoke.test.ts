@@ -281,7 +281,10 @@ test ! -e /sandbox/.hermes/profiles/dashboard-home/.env`,
   );
 }
 
-async function assertBuildOnlyPathsAbsent(probe: DockerProbe, container: string): Promise<void> {
+async function assertImageCapabilitiesAndStageRecovery(
+  probe: DockerProbe,
+  container: string,
+): Promise<void> {
   await expectContainerSh(
     probe,
     container,
@@ -304,7 +307,8 @@ assert HermesACPAgent is not None
 PY
 for path in /opt/hermes/tests /root/.npm /root/.cache/electron /root/.cache/node-gyp /root/.cache/uv; do
   test ! -e "$path" && test ! -L "$path"
-done`,
+done
+/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- chmod 0700 /sandbox/.hermes`,
   );
 }
 
@@ -351,10 +355,19 @@ async function runCleanVariant(
     { artifactName: "start-clean-root-entrypoint-container", timeoutMs: RUN_TIMEOUT_MS },
   );
   await waitForHealth(probe, container);
+  await assertImageCapabilitiesAndStageRecovery(probe, container);
+
+  // Exercise the root entrypoint's recovery posture from the exact restrictive
+  // mode the native dashboard can leave behind. A recovered gateway must be
+  // healthy and retain traversal of the shared native Hermes home.
+  await probe.expect(["restart", container], {
+    artifactName: "restart-clean-root-entrypoint-container",
+    timeoutMs: RUN_TIMEOUT_MS,
+  });
+  await waitForHealth(probe, container);
   await assertGatewayProcess(probe, container, "1");
   await assertGatewayLogClean(probe, container);
   await assertRuntimeLayout(probe, container);
-  await assertBuildOnlyPathsAbsent(probe, container);
 }
 
 async function runLegacyVariant(
@@ -680,6 +693,7 @@ test(
           "gateway user cannot remove config.yaml from sticky config root",
           "Hermes API denies missing and wrong bearer tokens and accepts API_SERVER_KEY",
           "dashboard uses the native Hermes config without a shadow config or .env",
+          "root recovery restores gateway access after dashboard-style home tightening",
         ],
       },
       async ({ containers, image, probe, runId }) => {

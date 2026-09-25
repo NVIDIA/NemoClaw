@@ -18,6 +18,7 @@ export type { AgentConfigTarget } from "./agent-config";
 
 const {
   DEFAULT_AGENT_CONFIG,
+  loadSandboxCredentialRoute,
   resolveAgentConfig: resolveAgentConfigTarget,
 }: typeof import("./agent-config") = require("./agent-config");
 const {
@@ -1239,6 +1240,7 @@ async function configRotateToken(sandboxName: string, opts: RotateTokenOpts = {}
     appendAuditEntry,
     captureOpenshellCommand,
     fail: configFail,
+    loadSandbox: loadSandboxCredentialRoute,
     loadSession: loadRotateTokenSession,
     promptSecret,
     resolveAgentConfig,

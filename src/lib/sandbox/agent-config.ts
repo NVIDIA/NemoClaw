@@ -27,6 +27,12 @@ export interface AgentConfigDependencies {
   };
 }
 
+export interface SandboxCredentialRoute {
+  credentialEnv?: string | null;
+  preferredInferenceApi?: string | null;
+  provider?: string | null;
+}
+
 export const DEFAULT_AGENT_CONFIG: AgentConfigTarget = {
   agentName: "openclaw",
   configPath: "/sandbox/.openclaw/openclaw.json",
@@ -40,6 +46,11 @@ function defaultDependencies(): AgentConfigDependencies {
   const registry = require("../state/registry");
   const agentDefs = require("../agent/defs");
   return { getSandbox: registry.getSandbox, loadAgent: agentDefs.loadAgent };
+}
+
+export function loadSandboxCredentialRoute(sandboxName: string): SandboxCredentialRoute | null {
+  const registry = require("../state/registry") as typeof import("../state/registry");
+  return registry.getSandbox(sandboxName);
 }
 
 function requireCanonicalConfigDir(value: string): string {

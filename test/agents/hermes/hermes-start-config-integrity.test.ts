@@ -110,6 +110,59 @@ function runHermesDashboardLaunch() {
   }
 }
 
+function runRootDashboardRecovery() {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-dashboard-recovery-"));
+  const scriptPath = path.join(tmpDir, "run.sh");
+  const hermesHome = path.join(tmpDir, ".hermes");
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+  fs.mkdirSync(hermesHome, { recursive: true, mode: 0o770 });
+  fs.writeFileSync(
+    scriptPath,
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      'id() { if [ "${1:-}" = "-u" ]; then printf "0\\n"; else command id "$@"; fi; }',
+      'hermes_socat_bridge_healthy() { [ "$1" = api-socat ]; }',
+      "hermes_api_socat_bridge_healthy() { return 0; }",
+      "hermes_dashboard_healthy() { return 1; }",
+      "hermes_stop_tracked_role() { return 0; }",
+      `start_hermes_dashboard_sandbox_user() { chmod 0700 ${shellQuote(hermesHome)}; DASHBOARD_PID=22; DASHBOARD_SOCAT_PID=23; }`,
+      "start_hermes_dashboard_current_user() { return 99; }",
+      `ensure_hermes_config_root_mode() { chmod 3770 ${shellQuote(hermesHome)}; }`,
+      "sleep() { :; }",
+      "ensure_dashboard_log_stream() { return 0; }",
+      "ensure_gateway_log_stream() { return 0; }",
+      extractShellFunctionFromSource(
+        src,
+        "restore_hermes_config_permissions_after_dashboard_start",
+      ),
+      extractShellFunctionFromSource(src, "ensure_hermes_supervised_auxiliaries"),
+      "SOCAT_PID=11",
+      "DASHBOARD_PID=12",
+      "DASHBOARD_SOCAT_PID=13",
+      "PUBLIC_PORT=8642",
+      "INTERNAL_PORT=18642",
+      "DASHBOARD_PUBLIC_PORT=5173",
+      "DASHBOARD_INTERNAL_PORT=15173",
+      "GATEWAY_PID=10",
+      "ensure_hermes_supervised_auxiliaries",
+      `test -n "$(find ${shellQuote(hermesHome)} -prune -perm 3770 -print)"`,
+      "printf '3770\\n'",
+    ].join("\n"),
+    { mode: 0o700 },
+  );
+
+  try {
+    return spawnSync("bash", [scriptPath], {
+      encoding: "utf-8",
+      timeout: 5000,
+      env: process.env,
+    });
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
 describe("agents/hermes/start.sh config integrity", () => {
   it("verifies the strict Hermes hash through the sandbox identity in root mode", () => {
     const result = runHermesConfigIntegrityVerifierAsRoot();
@@ -128,5 +181,12 @@ describe("agents/hermes/start.sh config integrity", () => {
       `api_env=${hermesHome}/.env`,
       "args=dashboard --isolated",
     ]);
+  });
+
+  it("restores shared Hermes-home access after root-mode dashboard recovery", () => {
+    const result = runRootDashboardRecovery();
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim()).toBe("3770");
   });
 });

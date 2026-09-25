@@ -56,6 +56,7 @@ test(
       contracts: [
         "rebuild uses the published exact managed image without stale controller fixtures",
         "Hermes memory, native user plugin, and lazy package state survive the rebuild",
+        "the retired dashboard-home profile is removed from restored state",
         "the native Hermes health endpoint is ready after restore",
       ],
     });
@@ -106,6 +107,9 @@ test(
         "printf '%s\\n' 'name: e2e-native-plugin' 'version: 1.0.0' > \"$plugin/plugin.yaml\"",
         "printf '%s\\n' 'E2E_NATIVE_PLUGIN = \"present\"' 'def register(ctx): pass' > \"$plugin/__init__.py\"",
         "printf '%s\\n' 'E2E_NATIVE_PACKAGE = \"present\"' > \"$package/__init__.py\"",
+        "legacy_profile=/sandbox/.hermes/profiles/dashboard-home",
+        'mkdir -p "$legacy_profile"',
+        `printf '%s\\n' '${marker}' > "$legacy_profile/.rebuild-retired-profile-sentinel"`,
         "HERMES_HOME=/sandbox/.hermes hermes plugins list --plain --user >/tmp/e2e-native-plugins-before-rebuild",
         "grep -Fq 'e2e-native-plugin' /tmp/e2e-native-plugins-before-rebuild",
         "HERMES_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages /opt/hermes/.venv/bin/python -I -c 'import hermes_bootstrap, e2e_native_package'",
@@ -141,6 +145,7 @@ test(
         'marker="$(cat /sandbox/.hermes/memories/.rebuild-state-marker)"',
         "HERMES_HOME=/sandbox/.hermes hermes plugins list --plain --user >/tmp/e2e-native-plugins-after-rebuild",
         "grep -Fq 'e2e-native-plugin' /tmp/e2e-native-plugins-after-rebuild",
+        "test ! -e /sandbox/.hermes/profiles/dashboard-home",
         "/opt/hermes/.venv/bin/python -I /sandbox/.hermes/plugins/e2e-native-plugin/__init__.py",
         "HERMES_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages /opt/hermes/.venv/bin/python -I -c 'import hermes_bootstrap, e2e_native_package'",
         'printf "%s\\n" "$marker"',
@@ -154,6 +159,7 @@ test(
       id: "rebuild-hermes",
       status: "passed",
       stateRestored: true,
+      retiredDashboardProfileRemoved: true,
       nativeReady: true,
       staleControllerRecovery: false,
     });

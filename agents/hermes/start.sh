@@ -2661,6 +2661,10 @@ ensure_hermes_supervised_auxiliaries() {
     else
       start_hermes_dashboard_current_user || return 1
     fi
+    # The native dashboard may tighten the shared Hermes home while starting.
+    # In root-separated mode the gateway still needs sandbox-group traversal,
+    # including when this is a replacement launched by the recovery loop.
+    restore_hermes_config_permissions_after_dashboard_start || return 1
   elif ! hermes_socat_bridge_healthy dashboard-socat "${DASHBOARD_SOCAT_PID:-}" "$DASHBOARD_PUBLIC_PORT"; then
     hermes_stop_tracked_role dashboard-socat "${DASHBOARD_SOCAT_PID:-0}" current "$DASHBOARD_PUBLIC_PORT" || return 1
     DASHBOARD_SOCAT_PID=""
@@ -3093,7 +3097,6 @@ start_hermes_root_gateway() {
   wait_for_hermes_gateway_internal "$GATEWAY_PID" || return 1
   ensure_hermes_supervised_auxiliaries || return 1
   finalize_tirith_marker_retry || return 1
-  restore_hermes_config_permissions_after_dashboard_start || return 1
 }
 
 # ── Main ─────────────────────────────────────────────────────────
