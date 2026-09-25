@@ -117,8 +117,12 @@ function runSelector(
   }
 }
 
-function runAdminApprovalScript(failureCommand?: FakeFailureCommand): {
+function runAdminApprovalScript(
+  failureCommand?: FakeFailureCommand,
+  failureOutputPaddingBytes = 0,
+): {
   commands: string[];
+  capturedApprovalBytes: number;
   result: SpawnSyncReturns<string>;
 } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-admin-script-"));
@@ -126,6 +130,7 @@ function runAdminApprovalScript(failureCommand?: FakeFailureCommand): {
   const openclawPath = path.join(root, "openclaw");
   const devicesPath = path.join(root, "devices.json");
   const commandLogPath = path.join(root, "openclaw.log");
+  const mktempCounterPath = path.join(root, "mktemp-counter");
   const stateRoot = writeLocalIdentity(root);
   const helperPath = writePairingStateHelper(root);
   fs.writeFileSync(
@@ -138,6 +143,21 @@ exec /bin/bash
     { mode: 0o755 },
   );
   fs.writeFileSync(
+    path.join(root, "mktemp"),
+    `#!/bin/sh
+set -eu
+count=0
+if [ -f "$FAKE_MKTEMP_COUNTER" ]; then IFS= read -r count <"$FAKE_MKTEMP_COUNTER"; fi
+count=$((count + 1))
+printf '%s\n' "$count" >"$FAKE_MKTEMP_COUNTER"
+output="$FAKE_MKTEMP_ROOT/capture-$count"
+: >"$output"
+printf '%s\n' "$output"
+`,
+    { mode: 0o755 },
+  );
+  fs.writeFileSync(path.join(root, "rm"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  fs.writeFileSync(
     openclawPath,
     `#!/bin/sh
 set -eu
@@ -149,6 +169,7 @@ if [ "\${FAKE_OPENCLAW_FAIL:-}" = "$1:$2" ]; then
     cron:add) printf '%s\\n' 'scope upgrade pending approval cron=cron-1' >&2 ;;
     cron:run) printf '%s\\n' 'request timed out cron=cron-1' >&2 ;;
   esac
+  python3 -c 'import sys; sys.stderr.buffer.write(b"x" * int(sys.argv[1]))' "$FAKE_FAILURE_OUTPUT_PADDING_BYTES"
   exit 91
 fi
 case "$1:$2" in
@@ -168,6 +189,9 @@ esac
     FAKE_DEVICES_STATE: devicesPath,
     FAKE_OPENCLAW_FAIL: failureCommand ?? "",
     FAKE_OPENCLAW_LOG: commandLogPath,
+    FAKE_FAILURE_OUTPUT_PADDING_BYTES: String(failureOutputPaddingBytes),
+    FAKE_MKTEMP_COUNTER: mktempCounterPath,
+    FAKE_MKTEMP_ROOT: root,
     NEMOCLAW_OPENCLAW_PAIRING_STATE_HELPER: helperPath,
     OPENCLAW_STATE_DIR: stateRoot,
     OPENCLAW_ALLOW_INSECURE_PRIVATE_WS: "",
@@ -184,7 +208,11 @@ esac
     const commands = fs.existsSync(commandLogPath)
       ? fs.readFileSync(commandLogPath, "utf8").trim().split("\n")
       : [];
-    return { commands, result };
+    const approvalCapturePath = path.join(root, "capture-5");
+    const capturedApprovalBytes = fs.existsSync(approvalCapturePath)
+      ? fs.statSync(approvalCapturePath).size
+      : 0;
+    return { capturedApprovalBytes, commands, result };
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -251,6 +279,15 @@ describe("prepared connect-shell administrative approval", () => {
       expect(artifact).not.toContain("test-gateway-token");
     },
   );
+
+  it("bounds failed approval output while preserving the command status and diagnostic (#5324)", () => {
+    const { capturedApprovalBytes, result } = runAdminApprovalScript("devices:approve", 256 * 1024);
+
+    expect(result.status).toBe(27);
+    expect(result.stderr).toContain("ADMIN_APPROVE_FAILED");
+    expect(result.stderr).toContain("ADMIN_DIAGNOSTIC=authorization-rejected");
+    expect(capturedApprovalBytes).toBe(65_536);
+  });
 
   it("executes the approval sequence over native loopback (#5324)", () => {
     const { commands, result } = runAdminApprovalScript();
@@ -344,6 +381,20 @@ describe("prepared connect-shell administrative approval", () => {
     expect(result.stderr).toContain("does not match the local CLI identity");
     expect(result.selectedRequestId).toBe("");
   });
+
+  it.each(["pending", "paired"] as const)(
+    "rejects malformed %s records alongside otherwise valid state (#5324)",
+    (recordSet) => {
+      const state = adminState();
+      (state[recordSet] as unknown[]).push("malformed");
+
+      const result = runSelector(state);
+
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain(`${recordSet} records must be an array of objects`);
+      expect(result.selectedRequestId).toBe("");
+    },
+  );
 
   it("rejects a missing local CLI identity (#5324)", () => {
     const result = runSelector(adminState(), EXPECTED_IDENTITY, omitLocalIdentity);

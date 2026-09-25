@@ -11,9 +11,17 @@ import sys
 from pathlib import Path
 
 data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+if not isinstance(data, dict):
+    raise SystemExit("device state must be an object")
 request_id_path = Path(sys.argv[2])
-pending = data.get("pending") or []
-paired = data.get("paired") or []
+pending = data.get("pending")
+paired = data.get("paired")
+pending = [] if pending is None else pending
+paired = [] if paired is None else paired
+if not isinstance(pending, list) or any(not isinstance(request, dict) for request in pending):
+    raise SystemExit("pending records must be an array of objects")
+if not isinstance(paired, list) or any(not isinstance(device, dict) for device in paired):
+    raise SystemExit("paired records must be an array of objects")
 allowed_scopes = {"operator.pairing", "operator.read", "operator.write", "operator.admin"}
 non_admin_scopes = {"operator.pairing", "operator.read", "operator.write"}
 
@@ -151,7 +159,7 @@ if (
 ):
     raise SystemExit("local CLI identity binding is invalid")
 
-request_entries = [request for request in pending if isinstance(request, dict)]
+request_entries = pending
 if len(request_entries) != 1:
     raise SystemExit(f"expected exactly one pending request, found {len(request_entries)}")
 request = request_entries[0]
@@ -177,7 +185,7 @@ if device_id != identity_device_id or public_key != identity_key:
 matching_devices = [
     device
     for device in paired
-    if isinstance(device, dict) and norm(device.get("deviceId")) == device_id
+    if norm(device.get("deviceId")) == device_id
 ]
 if not device_id or len(matching_devices) != 1:
     raise SystemExit(f"cron requestId must match exactly one paired device, found {len(matching_devices)}")
