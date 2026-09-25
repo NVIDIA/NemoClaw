@@ -307,15 +307,16 @@ describe("managed Hermes state volume uninstall", () => {
     }
   });
 
-  it("removes an owned stopped sandbox container before its Hermes state volume", async () => {
+  it("preserves a stopped sandbox and its state when the owning runtime leaves it behind", async () => {
     const harness = await runManagedHermesVolumeUninstall("owned", true, "owned");
     try {
-      expect(harness.result.exitCode, harness.errors.join("\n")).toBe(0);
-      expect(harness.containerPresent()).toBe(false);
-      expect(harness.volumePresent()).toBe(false);
-      expect(harness.events.indexOf(`docker rm -f ${harness.containerId}`)).toBeLessThan(
-        harness.events.indexOf(`docker volume rm ${harness.volumeName}`),
-      );
+      expect(harness.result.exitCode).toBe(1);
+      expect(harness.containerPresent()).toBe(true);
+      expect(harness.volumePresent()).toBe(true);
+      expect(harness.dockerCalls).not.toContainEqual(["rm", "-f", harness.containerId]);
+      expect(harness.dockerCalls).not.toContainEqual(["volume", "rm", harness.volumeName]);
+      expect(fs.existsSync(harness.registryFile)).toBe(true);
+      expect(harness.errors.join("\n")).toContain("sandboxes are absent: hermes");
     } finally {
       harness.cleanup();
     }

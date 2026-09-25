@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { expect } from "vitest";
+import { buildMcpBridgeExactMainEnv } from "./mcp-bridge-onboard-env.ts";
 import { MCP_MUTATION_TIMEOUT_MS, type McpAdapter } from "./mcp-bridge-cleanup.ts";
 import { applyMcpHostPolicyEdit } from "./mcp-bridge-sandbox.ts";
 import {
@@ -826,4 +827,28 @@ export async function restartBridgeWithoutHostSecret(
     timeoutMs: 12 * 60_000,
   });
   assertExitZero(restart, `${artifactPrefix} mcp restart without host secret`);
+}
+
+export async function rebuildWithoutMcpHostSecret(
+  host: HostCliClient,
+  sandboxName: string,
+  artifactPrefix: string,
+  envOverlay: NodeJS.ProcessEnv = {},
+): Promise<void> {
+  const rebuild = await host.nemoclaw([sandboxName, "rebuild", "--yes"], {
+    artifactName: `${artifactPrefix}-rebuild-with-provider-backed-mcp`,
+    env: {
+      ...buildMcpBridgeExactMainEnv({ envOverlay }),
+      COMPATIBLE_API_KEY: MCP_BRIDGE_TEST_CREDENTIALS.compatibleEndpoint,
+      NEMOCLAW_REBUILD_VERBOSE: "1",
+      NVIDIA_INFERENCE_API_KEY: MCP_BRIDGE_TEST_CREDENTIALS.compatibleEndpoint,
+    },
+    redactionValues: [
+      MCP_BRIDGE_TEST_CREDENTIALS.compatibleEndpoint,
+      MCP_BRIDGE_TEST_CREDENTIALS.host,
+      MCP_BRIDGE_TEST_CREDENTIALS.rotatedHost,
+    ],
+    timeoutMs: 25 * 60_000,
+  });
+  assertExitZero(rebuild, `${artifactPrefix} rebuild without MCP host secret`);
 }

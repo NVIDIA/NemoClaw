@@ -167,7 +167,10 @@ export interface RuntimeProviderGatewayHostRuntime {
     run(
       args: readonly string[],
       timeoutMs: number,
-      options?: { maxOutputBytes: number; environment?: Record<string, string> },
+      options?: {
+        maxOutputBytes: number;
+        environment?: Record<string, string>;
+      },
     ): RuntimeProviderGatewayCommandResult;
     ensureProbeImageCached(image: string): RuntimeProviderGatewayImageCacheResult;
   };
@@ -555,6 +558,23 @@ export interface RuntimeProviderSnapshotRestoreSource {
   readonly runtime: RuntimeProviderRuntimeReceipt;
 }
 
+export interface RuntimeProviderStoppedStateProjection {
+  readonly directories: readonly string[];
+  readonly prefixes: readonly string[];
+  readonly files: readonly string[];
+  readonly managedStateRoots?: readonly {
+    readonly mountTarget: string;
+    readonly resourceIdentity: string;
+    readonly ownershipLabels: Readonly<Record<string, string>>;
+  }[];
+}
+
+export interface RuntimeProviderStoppedStateCapture {
+  /** The caller owns the private destination fd and archive validation. */
+  capture(archiveFd: number): Promise<void>;
+  assertCurrent(): void;
+}
+
 export interface RuntimeProviderSnapshotRestoreReceipt {
   readonly schemaVersion: 1;
   readonly providerId: string;
@@ -674,10 +694,22 @@ export type RuntimeProviderSnapshotSurface =
         sandbox: SandboxEntry,
         preflight: RuntimeProviderSnapshotPreflightReceipt,
       ): RuntimeProviderRuntimeReceipt;
+      /** Optional read-only filesystem capture from an identified stopped runtime. */
+      prepareStoppedStateCapture?(
+        sandbox: SandboxEntry,
+        source: RuntimeProviderSnapshotRestoreSource,
+        projection: RuntimeProviderStoppedStateProjection,
+      ): RuntimeProviderStoppedStateCapture | null;
       /** Compare provider-owned acceleration encodings without widening central authority. */
       canRepresentAcceleration?(
         source: RuntimeProviderRuntimeReceipt["acceleration"],
         target: RuntimeProviderRuntimeReceipt["acceleration"],
+      ): boolean;
+      /** An explicit provider-owned transition for restoring captured filesystem state. */
+      canRestoreLifecycle?(
+        sandbox: SandboxEntry,
+        source: RuntimeProviderSnapshotLifecycleState,
+        target: RuntimeProviderSnapshotLifecycleState,
       ): boolean;
       validateRestore(
         sandbox: SandboxEntry,

@@ -101,6 +101,29 @@ describe("OpenShell SDK sandbox lifecycle", () => {
     });
   });
 
+  it.each(["startSandbox", "stopSandbox"] as const)(
+    "reports an Error-state refusal from %s without calling the gateway unavailable",
+    async (operation) => {
+      const test = harness();
+      test.get.mockResolvedValue({ id: sandboxId, phase: "Error" });
+      test[operation].mockRejectedValue(
+        Object.assign(new Error("secret server detail"), { code: 9 }),
+      );
+
+      const result = await test.lifecycle[operation](request);
+
+      expect(result).toEqual({
+        kind: "failed",
+        error: {
+          kind: "command",
+          reason: "failed",
+          message: `OpenShell rejected the ${operation === "startSandbox" ? "start" : "stop"} request because the sandbox is in Error state.`,
+        },
+      });
+      expect(test.waitReady).not.toHaveBeenCalled();
+    },
+  );
+
   it("bounds a connection that never settles", async () => {
     let connectionSignal: AbortSignal | undefined;
     const lifecycle = createSdkOpenShellSandboxStateLifecycle({
