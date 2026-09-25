@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
+import {
+  executeSandboxExecCommand,
+  SandboxCommandTransportError,
+} from "../../adapters/sandbox/command-transport";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import type { CapturedOpenClawState } from "../../state/state-directory-restore";
@@ -24,7 +27,6 @@ import {
   inspectMcpProvider,
   type McpProviderInspectionRuntimeSelection,
 } from "./mcp-bridge-provider-inspection";
-import { executeSandboxExecCommand } from "../../adapters/sandbox/command-transport";
 import { quoteMcpBridgeShellArg } from "./mcp-bridge-runtime-command";
 import { redactBridgeFailureForDisplay } from "./mcp-bridge-output";
 import { buildMcpBridgeProviderName, normalizeMcpDenyTools } from "./mcp-bridge-validation";
@@ -451,7 +453,10 @@ async function inspectAgentMcpSourcesForAgent(
       sandbox.name,
       sourceCommand(adapter, agent.configPaths.dir),
       deadline ? remainingMcpObservationMs(deadline) : undefined,
-      { runtimeSelection },
+      {
+        runtimeSelection,
+        ...(deadline ? { honorCallerTimeout: true } : {}),
+      },
     );
   } catch (error) {
     if (!(error instanceof SandboxCommandTransportError)) throw error;

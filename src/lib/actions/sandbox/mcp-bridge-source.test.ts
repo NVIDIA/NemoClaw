@@ -103,7 +103,7 @@ network_policies:
       "alpha",
       expect.any(String),
       1_000,
-      { runtimeSelection },
+      expect.objectContaining({ honorCallerTimeout: true, runtimeSelection }),
     );
 
     now.mockReturnValue(10_000);
@@ -219,7 +219,7 @@ network_policies:
   });
 
   it("rejects an indeterminate provider observation for a recorded policy", async () => {
-    mocks.executeSandboxCommand.mockReturnValue({
+    mocks.executeSandboxExecCommand.mockReturnValue({
       status: 0,
       stdout: JSON.stringify([
         {
@@ -293,7 +293,7 @@ network_policies:
 
   it("rejects an indeterminate deterministic provider observation", async () => {
     mocks.capturePolicy.mockResolvedValue("network_policies: {}\n");
-    mocks.executeSandboxCommand.mockReturnValue({
+    mocks.executeSandboxExecCommand.mockReturnValue({
       status: 0,
       stdout: JSON.stringify([
         {
