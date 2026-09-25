@@ -57,3 +57,7 @@ It also strengthens host OS reporting and Windows WSL GPU verification.
 - The experimental direct blueprint runner reports an unreadable run directory instead of treating it as missing during `reconcile` or `rollback`.
   It stops before OpenShell commands or state writes; correct the directory access, then rerun the command.
   Related change: [PR #12320](https://github.com/NVIDIA/NemoClaw/pull/12320).
+- Native rootless Podman preserves its current-user runtime context during gateway recovery.
+  It can reuse a trusted managed gateway service after that service removes standalone ownership records.
+  Related change: [PR #12267](https://github.com/NVIDIA/NemoClaw/pull/12267).
+  Refer to [Podman](/user-guide/openclaw/reference/troubleshooting#podman) for provider requirements and recovery guidance.
