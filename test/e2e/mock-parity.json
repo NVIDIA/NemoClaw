@@ -924,6 +924,7 @@
       "fast": [
         "test/agents/hermes/hermes-runtime-api-key.test.ts",
         "test/agents/hermes/hermes-start.test.ts",
+        "test/agents/hermes/hermes-start-config-integrity.test.ts",
         "test/runtime/sandbox/sandbox-init.test.ts",
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",
