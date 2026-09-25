@@ -6,7 +6,6 @@ import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import https from "node:https";
-import type { AddressInfo } from "node:net";
 import os from "node:os";
 
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
@@ -19,8 +18,6 @@ import {
 import { spawnObservedChild } from "../fixtures/observed-child-process.ts";
 import type { TestProgress, TestProgressCapability } from "../fixtures/progress.ts";
 
-type TestServer = http.Server | https.Server;
-
 export const HERMES_DEFERRED_TOOL_SEARCH_MISS =
   "Hermes tool_search did not return the deferred target";
 
@@ -30,6 +27,7 @@ export interface StartedHttpServer {
 }
 
 export const FAKE_MCP_STATUS_RESULT_TOKEN = "MCP_STATUS_OK";
+const MCP_DIAGNOSTIC_PERSIST_TIMEOUT_MS = 10_000;
 
 export interface FakeMcpRequest {
   method: string;
@@ -51,7 +49,21 @@ export interface FakeMcpRequest {
   rpcId?: string | number | null;
 }
 
+export interface FakeMcpHttpsDiagnostics {
+  secureConnections: number;
+  requestHeaders: number;
+  requestBodiesComplete: number;
+  tlsClientErrors: {
+    ERR_SSL_HTTP_REQUEST: number;
+    ERR_SSL_WRONG_VERSION_NUMBER: number;
+    ERR_SSL_UNEXPECTED_EOF_WHILE_READING: number;
+    ECONNRESET: number;
+    OTHER: number;
+  };
+}
+
 export interface FakeMcpHttpsServer extends StartedHttpServer {
+  diagnostics(): FakeMcpHttpsDiagnostics;
   setSecret(secret: string): void;
   observations: FakeMcpRequest[];
   requests: FakeMcpRequest[];
@@ -157,14 +169,6 @@ const MCP_EMPTY_RESULT_BY_METHOD: Record<string, unknown> = {
   },
   "messages/listen": {},
 };
-
-function requireTcpPort(server: TestServer, label: string): number {
-  const address = server.address();
-  if (!address || typeof address === "string") {
-    throw new Error(`${label} did not bind to a TCP port`);
-  }
-  return (address as AddressInfo).port;
-}
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -1040,9 +1044,9 @@ export async function startCompatibleMock(options: {
     jsonResponse(res, 404, { error: { message: "not found" } });
   });
 
-  await listenOnRandomPort(server);
+  const port = await listenOnRandomPort(server);
   return {
-    port: requireTcpPort(server, "compatible endpoint mock"),
+    port,
     close: () => closeServer(server),
   };
 }
@@ -1052,6 +1056,7 @@ export async function startFakeMcpHttpsServer(options: {
   challenge?: string;
   resultToken?: string;
   tls?: { cert: Buffer; key: Buffer };
+  onCloseDiagnostics?: (diagnostics: FakeMcpHttpsDiagnostics) => Promise<void>;
 }): Promise<FakeMcpHttpsServer> {
   let expectedSecret = options.secret;
   let nextSessionId = 1;
@@ -1073,7 +1078,25 @@ export async function startFakeMcpHttpsServer(options: {
   const requests: FakeMcpRequest[] = [];
   const observations: FakeMcpRequest[] = [];
   const tlsFailures: string[] = [];
+  const diagnostics: FakeMcpHttpsDiagnostics = {
+    secureConnections: 0,
+    requestHeaders: 0,
+    requestBodiesComplete: 0,
+    tlsClientErrors: {
+      ERR_SSL_HTTP_REQUEST: 0,
+      ERR_SSL_WRONG_VERSION_NUMBER: 0,
+      ERR_SSL_UNEXPECTED_EOF_WHILE_READING: 0,
+      ECONNRESET: 0,
+      OTHER: 0,
+    },
+  };
+  const increment = (value: number): number => Math.min(value + 1, 65_535);
+  const snapshot = (): FakeMcpHttpsDiagnostics => ({
+    ...diagnostics,
+    tlsClientErrors: { ...diagnostics.tlsClientErrors },
+  });
   const server = https.createServer(tls, async (req, res) => {
+    diagnostics.requestHeaders = increment(diagnostics.requestHeaders);
     const requestUrl = new URL(req.url ?? "/", "https://fake-mcp.local");
     const requestPath = requestUrl.pathname;
     const legacySessionId = requestUrl.searchParams.get("legacySessionId") ?? "";
@@ -1099,6 +1122,7 @@ export async function startFakeMcpHttpsServer(options: {
     };
     observations.push(recordedObservation);
     const body = await readRequestBody(req);
+    diagnostics.requestBodiesComplete = increment(diagnostics.requestBodiesComplete);
     recordedObservation.body = body;
     let parsedPayload: McpRequestPayload | null = null;
     try {
@@ -1444,7 +1468,17 @@ export async function startFakeMcpHttpsServer(options: {
     });
   });
 
+  server.on("secureConnection", () => {
+    diagnostics.secureConnections = increment(diagnostics.secureConnections);
+  });
   server.on("tlsClientError", (error: NodeJS.ErrnoException) => {
+    const code = error.code;
+    const bucket =
+      code && Object.hasOwn(diagnostics.tlsClientErrors, code)
+        ? (code as keyof FakeMcpHttpsDiagnostics["tlsClientErrors"])
+        : "OTHER";
+    diagnostics.tlsClientErrors[bucket] = increment(diagnostics.tlsClientErrors[bucket]);
+
     if (tlsFailures.length >= 8) return;
     const knownCodes = new Set([
       "ERR_SSL_TLSV1_ALERT_UNKNOWN_CA",
@@ -1453,11 +1487,12 @@ export async function startFakeMcpHttpsServer(options: {
       "ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION",
       "ECONNRESET",
     ]);
-    tlsFailures.push(error.code && knownCodes.has(error.code) ? error.code : "OTHER");
+    tlsFailures.push(code && knownCodes.has(code) ? code : "OTHER");
   });
-  await listenOnRandomPort(server);
+  const port = await listenOnRandomPort(server);
   return {
-    port: requireTcpPort(server, "fake MCP endpoint"),
+    diagnostics: snapshot,
+    port,
     observations,
     requests,
     tlsFailures,
@@ -1466,10 +1501,45 @@ export async function startFakeMcpHttpsServer(options: {
       expectedSecret = secret;
     },
     close: async () => {
-      for (const response of serverEventStreams) response.destroy();
-      await closeServer(server);
-      for (const session of legacySessions.values()) session.phase = "closed";
-      legacySessions.clear();
+      const errors: unknown[] = [];
+      try {
+        for (const response of serverEventStreams) response.destroy();
+        await closeServer(server);
+      } catch (error) {
+        errors.push(error);
+      } finally {
+        for (const session of legacySessions.values()) session.phase = "closed";
+        legacySessions.clear();
+      }
+      const persistDiagnostics = options.onCloseDiagnostics;
+      if (persistDiagnostics) {
+        let deadline: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await Promise.race([
+            Promise.resolve().then(() => persistDiagnostics(snapshot())),
+            new Promise<never>((_resolve, reject) => {
+              deadline = setTimeout(
+                () =>
+                  reject(
+                    new Error(
+                      `MCP HTTPS diagnostic persistence timed out after ${MCP_DIAGNOSTIC_PERSIST_TIMEOUT_MS} ms`,
+                    ),
+                  ),
+                MCP_DIAGNOSTIC_PERSIST_TIMEOUT_MS,
+              );
+            }),
+          ]);
+        } catch (error) {
+          errors.push(error);
+        } finally {
+          clearTimeout(deadline);
+        }
+      }
+      if (errors.length > 0) {
+        throw errors.length === 1
+          ? errors[0]
+          : new AggregateError(errors, "MCP HTTPS shutdown and diagnostic persistence failed");
+      }
     },
   };
 }
