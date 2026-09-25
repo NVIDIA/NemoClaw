@@ -41,11 +41,10 @@ export function createHermesAcpDiagnostics(artifacts: ArtifactSink) {
           }
         }
         if (!complete) continue;
-        if (
-          !droppingLine &&
-          (/"jsonrpc"\s*:/u.test(pending) ||
-            (/^\s*[[\]{}"]/u.test(pending) && !/^\[\d{1,3}\/\d{1,3}\] /u.test(pending)))
-        ) {
+        // Protocol content can follow a log prefix. Only the producer's numeric
+        // progress prefix is exempt from the conservative structured-data filter.
+        const diagnostic = pending.replace(/^\[\d{1,3}\/\d{1,3}\] /u, "");
+        if (!droppingLine && /[[\]{}"]/u.test(diagnostic)) {
           discarded = true;
         } else if (!droppingLine) {
           const line = artifacts.redact(pending);

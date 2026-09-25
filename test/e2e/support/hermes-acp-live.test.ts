@@ -197,6 +197,67 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
     2_000,
   );
 
+  it("cleans up a failed restart before propagating its error when remote verification fails", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-acp-restart-failure-"));
+    const adapterEntrypoint = path.join(root, "adapter.cjs");
+    const pidReceipt = path.join(root, "pid.txt");
+    fs.writeFileSync(
+      adapterEntrypoint,
+      `
+process.on("SIGTERM", () => {});
+require("node:fs").writeFileSync(${JSON.stringify(pidReceipt)}, String(process.pid));
+require("node:readline").createInterface({ input: process.stdin }).on("line", line => {
+  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: JSON.parse(line).id, result: {} }) + "\\n");
+});
+`,
+    );
+    const progress = startTestProgress(
+      "failed ACP restart",
+      ["restart gateway", "verify adapter absence"],
+      {
+        logLine: () => undefined,
+      },
+    );
+    onTestFinished(() => {
+      progress.stop();
+      try {
+        const childPid = Number(fs.readFileSync(pidReceipt, "utf8"));
+        expect(Number.isSafeInteger(childPid) && childPid > 1).toBe(true);
+        process.kill(-childPid, "SIGKILL");
+      } catch {
+        // The scenario normally removes this test-owned process group first.
+      }
+      fs.rmSync(root, { force: true, recursive: true });
+    });
+    const restartError = new Error("gateway restart rejected");
+    await expect(
+      runHermesAcpLiveScenario({
+        adapterEntrypoint,
+        artifacts: new ArtifactSink(root),
+        env: {},
+        progress,
+        restartGateway: async () => {
+          throw restartError;
+        },
+        sandbox: new SandboxClient({
+          run: vi.fn().mockRejectedValue(new Error("cleanup observation unavailable")),
+        }),
+        sandboxName: "e2e-hermes",
+        scenario: "gateway-restart",
+      }),
+    ).rejects.toBe(restartError);
+    expect(isProcessAbsent(Number(fs.readFileSync(pidReceipt, "utf8")))).toBe(true);
+    expect(
+      JSON.parse(fs.readFileSync(path.join(root, "hermes-acp-gateway-restart.json"), "utf8")),
+    ).toMatchObject({
+      passed: false,
+      initialized: true,
+      adapterProcessAbsent: true,
+      remoteProcessAbsent: false,
+      timedOut: false,
+    });
+  }, 5_000);
+
   it("retains redacted child stderr without persisting ACP stdout", async () => {
     const artifactDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-acp-diagnostics-"));
     const adapterEntrypoint = path.join(artifactDir, "adapter.cjs");

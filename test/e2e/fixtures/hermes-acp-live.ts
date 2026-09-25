@@ -362,9 +362,11 @@ export async function runHermesAcpLiveScenario(options: HermesAcpLiveOptions): P
     if (!protocolValid) signalAdapter(child, "SIGTERM");
     notify();
   };
+  const cancellation = new AbortController();
   const supervise = superviseChild(child, {
     timeoutMs: scenarioTimeoutMs,
     killGraceMs: 1_000,
+    signal: cancellation.signal,
     onStdout: (chunk) => {
       observedBytes += Buffer.byteLength(chunk, "utf8");
       if (observedBytes > ACP_MESSAGE_LIMIT_BYTES) {
@@ -413,67 +415,75 @@ export async function runHermesAcpLiveScenario(options: HermesAcpLiveOptions): P
 
   let sessionCreated = false;
   let promptCompleted = false;
-  if (scenarioValid && options.scenario === "cancel") {
-    signalAdapter(child, "SIGTERM");
-  } else if (scenarioValid && options.scenario === "client-disconnect") {
-    child.stdout?.destroy();
-    child.stderr?.destroy();
-    scenarioValid = await writeRequest(input, {
-      jsonrpc: "2.0",
-      id: 2,
-      method: "session/new",
-      params: { cwd: "/sandbox", mcpServers: [] },
-    });
-  } else if (scenarioValid && options.scenario === "gateway-restart") {
-    if (!options.restartGateway) {
-      scenarioValid = false;
+  let scenarioFailure: { error: unknown } | null = null;
+  try {
+    if (scenarioValid && options.scenario === "cancel") {
       signalAdapter(child, "SIGTERM");
-    } else {
-      await options.restartGateway();
-    }
-  } else if (scenarioValid && options.scenario === "remote-exit") {
-    scenarioValid = await terminateRemoteHermesAcp(
-      options.sandbox,
-      options.sandboxName,
-      options.env,
-    );
-  } else if (
-    scenarioValid &&
-    (options.scenario === "exchange" || options.scenario === "gateway-recovery")
-  ) {
-    scenarioValid = await writeRequest(input, {
-      jsonrpc: "2.0",
-      id: 2,
-      method: "session/new",
-      params: { cwd: "/sandbox", mcpServers: [] },
-    });
-    const createSession = scenarioValid ? await nextResponse(2) : null;
-    const sessionId = sessionIdFromResponse(createSession);
-    sessionCreated = sessionId !== null;
-    scenarioValid &&= sessionCreated;
-    if (scenarioValid) {
-      scenarioValid = await writeRequest(
-        input,
-        {
-          jsonrpc: "2.0",
-          id: 3,
-          method: "session/prompt",
-          params: {
-            sessionId,
-            prompt: [{ type: "text", text: "Reply with exactly one word: PONG" }],
-          },
-        },
-        () => promptEvidence.markPromptWritten(sessionId!),
+    } else if (scenarioValid && options.scenario === "client-disconnect") {
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+      scenarioValid = await writeRequest(input, {
+        jsonrpc: "2.0",
+        id: 2,
+        method: "session/new",
+        params: { cwd: "/sandbox", mcpServers: [] },
+      });
+    } else if (scenarioValid && options.scenario === "gateway-restart") {
+      if (!options.restartGateway) {
+        scenarioValid = false;
+        signalAdapter(child, "SIGTERM");
+      } else {
+        await options.restartGateway();
+      }
+    } else if (scenarioValid && options.scenario === "remote-exit") {
+      scenarioValid = await terminateRemoteHermesAcp(
+        options.sandbox,
+        options.sandboxName,
+        options.env,
       );
-      const prompt = scenarioValid ? await nextResponse(3) : null;
-      promptCompleted = typeof prompt?.result === "object" && prompt.result !== null;
-      scenarioValid &&= promptCompleted;
+    } else if (
+      scenarioValid &&
+      (options.scenario === "exchange" || options.scenario === "gateway-recovery")
+    ) {
+      scenarioValid = await writeRequest(input, {
+        jsonrpc: "2.0",
+        id: 2,
+        method: "session/new",
+        params: { cwd: "/sandbox", mcpServers: [] },
+      });
+      const createSession = scenarioValid ? await nextResponse(2) : null;
+      const sessionId = sessionIdFromResponse(createSession);
+      sessionCreated = sessionId !== null;
+      scenarioValid &&= sessionCreated;
+      if (scenarioValid) {
+        scenarioValid = await writeRequest(
+          input,
+          {
+            jsonrpc: "2.0",
+            id: 3,
+            method: "session/prompt",
+            params: {
+              sessionId,
+              prompt: [{ type: "text", text: "Reply with exactly one word: PONG" }],
+            },
+          },
+          () => promptEvidence.markPromptWritten(sessionId!),
+        );
+        const prompt = scenarioValid ? await nextResponse(3) : null;
+        promptCompleted = typeof prompt?.result === "object" && prompt.result !== null;
+        scenarioValid &&= promptCompleted;
+        input.end();
+      }
+    } else if (scenarioValid) {
       input.end();
     }
-  } else if (scenarioValid) {
-    input.end();
+  } catch (error) {
+    scenarioFailure = { error };
+    scenarioValid = false;
   }
-  if (!scenarioValid) signalAdapter(child, "SIGTERM");
+  // The supervisor owns group termination and bounded escalation, including
+  // callback failures. Complete cleanup and write evidence before rethrowing.
+  if (!scenarioValid) cancellation.abort();
 
   const result = await supervise;
   if (buffered.trim()) consumeLine(buffered);
@@ -491,12 +501,18 @@ export async function runHermesAcpLiveScenario(options: HermesAcpLiveOptions): P
     expectedExit === null
       ? typeof result.exitCode === "number" && result.exitCode > 0 && result.exitCode !== 255
       : result.exitCode === expectedExit;
-  const remoteProcessAbsent = await verifyNoRemoteHermesAcpProcess(
-    options.sandbox,
-    options.sandboxName,
-    options.env,
-    `hermes-acp-${options.scenario}-remote-process-cleanup`,
-  );
+  let remoteProcessAbsent = false;
+  try {
+    remoteProcessAbsent = await verifyNoRemoteHermesAcpProcess(
+      options.sandbox,
+      options.sandboxName,
+      options.env,
+      `hermes-acp-${options.scenario}-remote-process-cleanup`,
+    );
+  } catch (error) {
+    scenarioFailure ??= { error };
+    scenarioValid = false;
+  }
   const adapterProcessAbsent = isProcessAbsent(child.pid);
   const passed =
     !result.timedOut &&
@@ -531,5 +547,6 @@ export async function runHermesAcpLiveScenario(options: HermesAcpLiveOptions): P
     stderrObserved,
     timedOut: result.timedOut,
   });
+  if (scenarioFailure) throw scenarioFailure.error;
   return passed;
 }

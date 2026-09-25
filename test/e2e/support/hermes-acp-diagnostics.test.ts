@@ -60,6 +60,8 @@ it("drops protocol-shaped stderr and stops recording after initialization", asyn
   const { diagnostics, read } = fixture();
   diagnostics.append('gateway starting\n{"jsonrpc":"2.0","result":"private payload"}\n');
   diagnostics.append('  "prompt": "private continuation",\n');
+  diagnostics.append('debug: {"params":{"prompt":"private prefixed payload"}}\n');
+  diagnostics.append('[1/3] {"params":{"prompt":"private progress payload"}}\n');
   diagnostics.append("partial startup");
   diagnostics.stop();
   diagnostics.append("later agent output\n");

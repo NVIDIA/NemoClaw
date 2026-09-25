@@ -374,6 +374,23 @@ describe("Hermes config export live evidence", () => {
     await expect(runEnabledFixture()).resolves.toEqual({ checked: true, passed: false });
   });
 
+  it("rejects successful exports from both aliases for a Podman source", async () => {
+    mocks.load().sandboxes.hermes.openshellDriver = "podman";
+    const writeExport = async (_command: string, args: string[]) => {
+      fs.writeFileSync(args.at(args.indexOf("--output") + 1)!, exportedHermesYaml());
+      return { exitCode: 0, stderr: "", stdout: "" };
+    };
+    mocks.command
+      .mockImplementationOnce(writeExport)
+      .mockImplementationOnce(writeExport)
+      .mockResolvedValue({ exitCode: 1, stderr: "sandbox identity drifted", stdout: "" });
+    await expect(
+      runEnabledFixture([], false, { NEMOCLAW_HERMES_API_PORT: "8642" }),
+    ).resolves.toEqual({ checked: true, passed: false });
+    expect(mocks.writeText).not.toHaveBeenCalled();
+    expect(mocks.save).not.toHaveBeenCalled();
+  });
+
   it("rejects a credential-bearing HTTP refusal when one alias publishes output", async () => {
     mocks.load.mockReturnValue({
       sandboxes: {

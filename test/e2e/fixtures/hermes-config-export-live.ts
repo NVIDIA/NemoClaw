@@ -340,15 +340,15 @@ export async function verifyHermesConfigExportLive(
         output.includes(value),
       ),
   );
-  if (!launchersSucceeded) {
-    const expectsCredentialHttpRefusal =
-      typeof entry.credentialEnv === "string" &&
-      entry.credentialEnv.length > 0 &&
-      entry.endpointUrl?.toLowerCase().startsWith("http:") === true;
-    const expectedRefusals = [
-      ...(entry.openshellDriver === "podman" ? [PODMAN_REFUSAL] : []),
-      ...(expectsCredentialHttpRefusal ? [CREDENTIAL_HTTP_REFUSAL] : []),
-    ];
+  const expectsCredentialHttpRefusal =
+    typeof entry.credentialEnv === "string" &&
+    entry.credentialEnv.length > 0 &&
+    entry.endpointUrl?.toLowerCase().startsWith("http:") === true;
+  const expectedRefusals = [
+    ...(entry.openshellDriver === "podman" ? [PODMAN_REFUSAL] : []),
+    ...(expectsCredentialHttpRefusal ? [CREDENTIAL_HTTP_REFUSAL] : []),
+  ];
+  if (expectedRefusals.length > 0 || !launchersSucceeded) {
     if (expectedRefusals.length > 0) {
       const expectedDiagnostic = ["Config export failed (unsupported).", ...expectedRefusals].join(
         "\n",
