@@ -55,15 +55,12 @@
     "test/agents/deepagents/langchain-deepagents-code-image.test.ts": 17504,
     "test/agents/deepagents/langchain-deepagents-code-nemotron-profile-plugin.test.ts": 7530,
     "test/agents/deepagents/nemo-deepagents-alias.test.ts": 17997,
-    "test/agents/hermes/hermes-kanban-snapshot.test.ts": 10528,
     "test/agents/hermes/hermes-provider-foundation.test.ts": 5353,
     "test/agents/hermes/hermes-runtime-api-key.test.ts": 9872,
-    "test/agents/hermes/hermes-state-ledger-snapshot.test.ts": 5742,
     "test/agents/hermes/hermes-tool-gateway-broker.test.ts": 8095,
     "test/agents/hermes/nemohermes-alias.test.ts": 14670,
     "test/agents/openclaw/openclaw-chat-send-patch.test.ts": 8126,
     "test/agents/openclaw/openclaw-config-guard.test.ts": 22936,
-    "test/agents/openclaw/openclaw-config-snapshot.test.ts": 5147,
     "test/agents/openclaw/openclaw-device-self-approval-patch.test.ts": 36649,
     "test/agents/openclaw/openclaw-device-stored-auth-patch.test.ts": 8297,
     "test/agents/openclaw/openclaw-gemini-inference-compat-runtime.test.ts": 36915,
@@ -195,8 +192,6 @@
     "test/skills/check-gates-compliance.test.ts": 22684,
     "test/skills/dependency-upgrade-skill-security.test.ts": 5353,
     "test/skills/dependency-upgrade-skill.test.ts": 19850,
-    "test/state/snapshot-restore-existing-dest.test.ts": 17653,
-    "test/state/snapshot-stale-directory-restore.test.ts": 7384,
     "test/state/snapshot.test.ts": 23861
   }
 }

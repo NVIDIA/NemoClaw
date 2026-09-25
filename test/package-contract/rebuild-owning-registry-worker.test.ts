@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -36,16 +37,28 @@ function writeRecoveryFixture(home: string) {
   const sha256 = createHash("sha256").update(policy).digest("hex");
   const handoffPath = path.join(backupPath, `rebuild-policy-handoff.${sha256}.yaml`);
   fs.writeFileSync(handoffPath, policy, { mode: 0o600 });
+  const archivePath = path.join(backupPath, "native-home.tar");
+  const tar = spawnSync("tar", ["-cf", archivePath, "--files-from", "/dev/null"]);
+  assert.equal(tar.status, 0, "Could not create native-state recovery fixture");
+  const archiveSha256 = createHash("sha256").update(fs.readFileSync(archivePath)).digest("hex");
   const manifest = {
-    version: 1,
+    version: 2,
     sandboxName: "alpha",
     timestamp: TIMESTAMP,
     agentType: "openclaw",
     agentVersion: null,
     expectedVersion: null,
     stateDirs: [],
+    backedUpDirs: [],
+    failedBackupDirs: [],
     backupComplete: true,
-    dir: "/sandbox/.openclaw",
+    stateFiles: [],
+    nativeState: {
+      root: "/sandbox",
+      archive: "native-home.tar" as const,
+      sha256: archiveSha256,
+    },
+    dir: "/sandbox",
     backupPath,
     blueprintDigest: null,
     rebuildPolicyHandoff: { file: path.basename(handoffPath), sha256 },

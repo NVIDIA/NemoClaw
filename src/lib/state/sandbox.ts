@@ -62,7 +62,7 @@ import { cloneSandboxWorkloadReceipt } from "./registry/workload.js";
 import * as registry from "./registry.js";
 import { isSshTransportFailure } from "./ssh-transport.js";
 import { nemoclawStateRoot } from "./state-root.js";
-import { runTarListing, type TarArchiveSource } from "./tar-listing.js";
+import { runTarListing, type TarArchiveSource, type TarListingSource } from "./tar-listing.js";
 
 const HOME_DIR = path.resolve(process.env.HOME || os.homedir());
 const REBUILD_BACKUPS_DIR = path.join(nemoclawStateRoot(HOME_DIR, GATEWAY_PORT), "rebuild-backups");
@@ -611,7 +611,7 @@ function rejectSymlinksOnPath(targetPath: string): void {
  * Rejects absolute paths, path traversal (..), and null bytes.
  */
 export function validateTarEntries(
-  tarArchive: TarArchiveSource,
+  tarArchive: TarListingSource,
   targetDir: string,
 ): TarValidationResult {
   const entries: string[] = [];
@@ -1317,18 +1317,76 @@ function resolveNativeStateRoot(
 
 function sha256File(filePath: string): string {
   const descriptor = openSync(filePath, constants.O_RDONLY | constants.O_NOFOLLOW);
-  const hash = createHash("sha256");
-  const buffer = Buffer.allocUnsafe(64 * 1024);
   try {
-    for (;;) {
-      const bytesRead = readSync(descriptor, buffer, 0, buffer.byteLength, null);
-      if (bytesRead === 0) break;
-      hash.update(buffer.subarray(0, bytesRead));
-    }
+    return sha256Descriptor(descriptor);
   } finally {
     closeSync(descriptor);
   }
+}
+
+function sha256Descriptor(descriptor: number): string {
+  const hash = createHash("sha256");
+  const buffer = Buffer.allocUnsafe(64 * 1024);
+  let position = 0;
+  for (;;) {
+    const bytesRead = readSync(descriptor, buffer, 0, buffer.byteLength, position);
+    if (bytesRead === 0) break;
+    hash.update(buffer.subarray(0, bytesRead));
+    position += bytesRead;
+  }
   return hash.digest("hex");
+}
+
+type OpenedNativeArchive = { descriptor: number } | { error: string };
+
+function openValidatedNativeArchive(
+  archivePath: string,
+  expectedSha256: string,
+  nativeRoot: string,
+): OpenedNativeArchive {
+  let listingDescriptor: number | null = null;
+  let restoreDescriptor: number | null = null;
+  const identityError = "Native home/workspace archive identity does not match its manifest";
+  try {
+    listingDescriptor = openSync(archivePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+    restoreDescriptor = openSync(archivePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const listingIdentity = fstatSync(listingDescriptor);
+    const restoreIdentity = fstatSync(restoreDescriptor);
+    if (
+      !listingIdentity.isFile() ||
+      !restoreIdentity.isFile() ||
+      listingIdentity.dev !== restoreIdentity.dev ||
+      listingIdentity.ino !== restoreIdentity.ino ||
+      listingIdentity.size !== restoreIdentity.size ||
+      sha256Descriptor(restoreDescriptor) !== expectedSha256
+    ) {
+      return { error: identityError };
+    }
+    const validation = validateTarEntries({ fileDescriptor: listingDescriptor }, nativeRoot);
+    const finalIdentity = fstatSync(restoreDescriptor);
+    if (
+      finalIdentity.dev !== restoreIdentity.dev ||
+      finalIdentity.ino !== restoreIdentity.ino ||
+      finalIdentity.size !== restoreIdentity.size ||
+      finalIdentity.mtimeMs !== restoreIdentity.mtimeMs ||
+      finalIdentity.ctimeMs !== restoreIdentity.ctimeMs
+    ) {
+      return { error: identityError };
+    }
+    if (!validation.safe) {
+      return {
+        error: `Native home/workspace archive is unsafe: ${validation.violations.join("; ")}`,
+      };
+    }
+    const descriptor = restoreDescriptor;
+    restoreDescriptor = null;
+    return { descriptor };
+  } catch {
+    return { error: "Native home/workspace archive is missing or unreadable" };
+  } finally {
+    if (listingDescriptor !== null) closeSync(listingDescriptor);
+    if (restoreDescriptor !== null) closeSync(restoreDescriptor);
+  }
 }
 
 /** Capture one opaque archive of the OpenShell-owned native home/workspace. */
@@ -1672,84 +1730,70 @@ async function restoreNativeSandboxState(
     }
   }
   const archivePath = path.join(backupPath, manifest.nativeState.archive);
-  try {
-    if (
-      !lstatSync(archivePath).isFile() ||
-      sha256File(archivePath) !== manifest.nativeState.sha256
-    ) {
-      return failure("Native home/workspace archive identity does not match its manifest");
-    }
-  } catch {
-    return failure("Native home/workspace archive is missing or unreadable");
-  }
-  const archiveValidation = validateTarEntries(
-    { filePath: archivePath },
+  const openedArchive = openValidatedNativeArchive(
+    archivePath,
+    manifest.nativeState.sha256,
     manifest.nativeState.root,
   );
-  if (!archiveValidation.safe) {
-    return failure(
-      `Native home/workspace archive is unsafe: ${archiveValidation.violations.join("; ")}`,
-    );
-  }
+  if ("error" in openedArchive) return failure(openedArchive.error);
+  const archiveFd = openedArchive.descriptor;
 
-  const selectedEnv = options.runtimeSelection
-    ? buildSelectedOpenShellSubprocessEnv(options.runtimeSelection)
-    : undefined;
-  const sshConfig = getSshConfig(sandboxName, selectedSshConfigOptions(options.runtimeSelection));
-  if (!sshConfig) return failure(`Could not get SSH configuration for target '${sandboxName}'`);
-  const temporary = createTempSshConfig(sshConfig, "nemoclaw-native-restore-");
   try {
-    const rootResult = resolveNativeStateRoot(temporary.file, sandboxName, selectedEnv);
-    if ("error" in rootResult) return failure(rootResult.error);
-    if (rootResult.root !== manifest.nativeState.root) {
-      return failure(
-        `Backup native root '${manifest.nativeState.root}' does not match target root '${rootResult.root}'`,
-      );
-    }
-    const mutationError = await validateSnapshotRestoreMutation(backupPath, options);
-    if (mutationError) return failure(mutationError);
-
-    const root = shellQuote(rootResult.root);
-    const command = [
-      "set -eu",
-      `root=${root}`,
-      '[ -d "$root" ] && [ ! -L "$root" ]',
-      'find "$root" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +',
-      'exec tar --no-same-owner -xf - -C "$root"',
-    ].join("; ");
-    const archiveFd = openSync(archivePath, constants.O_RDONLY | constants.O_NOFOLLOW);
-    let result: ReturnType<typeof spawnSync>;
+    const selectedEnv = options.runtimeSelection
+      ? buildSelectedOpenShellSubprocessEnv(options.runtimeSelection)
+      : undefined;
+    const sshConfig = getSshConfig(sandboxName, selectedSshConfigOptions(options.runtimeSelection));
+    if (!sshConfig) return failure(`Could not get SSH configuration for target '${sandboxName}'`);
+    const temporary = createTempSshConfig(sshConfig, "nemoclaw-native-restore-");
     try {
-      result = spawnSync("ssh", [...sshArgs(temporary.file, sandboxName), command], {
+      const rootResult = resolveNativeStateRoot(temporary.file, sandboxName, selectedEnv);
+      if ("error" in rootResult) return failure(rootResult.error);
+      if (rootResult.root !== manifest.nativeState.root) {
+        return failure(
+          `Backup native root '${manifest.nativeState.root}' does not match target root '${rootResult.root}'`,
+        );
+      }
+      const mutationError = await validateSnapshotRestoreMutation(backupPath, options);
+      if (mutationError) return failure(mutationError);
+
+      const root = shellQuote(rootResult.root);
+      const command = [
+        "set -eu",
+        `root=${root}`,
+        '[ -d "$root" ] && [ ! -L "$root" ]',
+        'find "$root" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +',
+        'exec tar --no-same-owner -xf - -C "$root"',
+      ].join("; ");
+      const result = spawnSync("ssh", [...sshArgs(temporary.file, sandboxName), command], {
         ...(selectedEnv ? { env: selectedEnv } : {}),
         stdio: [archiveFd, "pipe", "pipe"],
         timeout: NATIVE_STATE_CAPTURE_TIMEOUT_MS,
         maxBuffer: 1024 * 1024,
       });
+      if (result.status !== 0 || result.error || result.signal) {
+        const detail =
+          result.error?.message ??
+          (result.signal
+            ? `signal ${result.signal}`
+            : result.stderr?.toString().trim() || `exit ${String(result.status)}`);
+        return failure(`Native home/workspace restore failed: ${detail.substring(0, 240)}`);
+      }
+      return {
+        success: true,
+        restoredDirs: ["."],
+        failedDirs: [],
+        restoredFiles: [],
+        failedFiles: [],
+      };
     } finally {
-      closeSync(archiveFd);
+      try {
+        temporary.cleanup();
+      } catch {
+        /* ignore */
+      }
     }
-    if (result.status !== 0 || result.error || result.signal) {
-      const detail =
-        result.error?.message ??
-        (result.signal
-          ? `signal ${result.signal}`
-          : result.stderr?.toString().trim() || `exit ${String(result.status)}`);
-      return failure(`Native home/workspace restore failed: ${detail.substring(0, 240)}`);
-    }
-    return {
-      success: true,
-      restoredDirs: ["."],
-      failedDirs: [],
-      restoredFiles: [],
-      failedFiles: [],
-    };
   } finally {
-    try {
-      temporary.cleanup();
-    } catch {
-      /* ignore */
-    }
+    closeSync(archiveFd);
   }
 }
 

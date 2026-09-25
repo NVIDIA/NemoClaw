@@ -53,9 +53,10 @@ function tarExitStatus(result: ReturnType<typeof spawnSync>): number {
 }
 
 export type TarArchiveSource = Buffer | { filePath: string };
+export type TarListingSource = TarArchiveSource | { fileDescriptor: number };
 
 export function runTarListing(
-  tarArchive: TarArchiveSource,
+  tarArchive: TarListingSource,
   args: string[],
   failureLabel: string,
   onLine: (line: string) => void,
@@ -75,10 +76,14 @@ export function runTarListing(
           maxBuffer: TAR_LISTING_STDERR_MAX_BUFFER_BYTES,
         })
       : (() => {
-          archiveFd = openSync(tarArchive.filePath, "r");
+          const descriptor =
+            "fileDescriptor" in tarArchive
+              ? tarArchive.fileDescriptor
+              : openSync(tarArchive.filePath, "r");
+          if ("filePath" in tarArchive) archiveFd = descriptor;
           return spawnSync("tar", args, {
             encoding: "utf-8",
-            stdio: [archiveFd, listingFd, "pipe"],
+            stdio: [descriptor, listingFd, "pipe"],
             timeout: 60000,
             maxBuffer: TAR_LISTING_STDERR_MAX_BUFFER_BYTES,
           });

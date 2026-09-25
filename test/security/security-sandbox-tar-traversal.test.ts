@@ -241,6 +241,25 @@ describe("Fix: validateTarEntries rejects malicious tar entries", () => {
     expect(result.entries.length).toBe(3);
   });
 
+  it("validates an already-open archive after its pathname is removed", async () => {
+    const { validateTarEntries } = await loadSandboxState();
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-descriptor-tar-"));
+    const archivePath = path.join(workDir, "native-home.tar");
+    fs.writeFileSync(archivePath, buildTar([{ path: "workspace/state.json", content: "{}" }]));
+    const descriptor = fs.openSync(archivePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    try {
+      fs.unlinkSync(archivePath);
+
+      expect(validateTarEntries({ fileDescriptor: descriptor }, "/sandbox")).toMatchObject({
+        safe: true,
+        entries: ["workspace/state.json"],
+      });
+    } finally {
+      fs.closeSync(descriptor);
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
   it("rejects mixed archive if any entry is malicious", async () => {
     const { validateTarEntries } = await loadSandboxState();
     const targetDir = "/tmp/nemoclaw-test-target";
