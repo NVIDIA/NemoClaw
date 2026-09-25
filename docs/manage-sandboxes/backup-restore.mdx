@@ -64,10 +64,9 @@ A rebuild does not repair the damaged tree, because each rebuild restores the tr
 </AgentOnly>
 
 <AgentOnly variant="hermes">
-Hermes snapshots include `SOUL.md`, the Web Dashboard profile under `.hermes/profiles/dashboard-home/`, the SQLite database behind `.hermes/state.db`, and the default kanban board in `.hermes/kanban.db`.
-On the first startup after this layout change, NemoClaw moves an existing `.hermes/dashboard-home/` directory when the canonical profile is absent or empty and the legacy path is not a symlink.
-Startup sets the canonical dashboard profile directory to mode `0700`, whether it migrates legacy state or reuses an existing destination.
-During normal startup, NemoClaw refuses unsafe paths and does not merge two populated profile directories.
+Hermes snapshots include `SOUL.md`, user-created named profiles under `.hermes/profiles/`, the SQLite database behind `.hermes/state.db`, and the default kanban board in `.hermes/kanban.db`.
+The gateway, CLI, TUI, and Web Dashboard share the native `.hermes/config.yaml`; snapshots exclude that NemoClaw-managed file and `.hermes/.env`.
+Rebuild restore removes the retired reserved `.hermes/profiles/dashboard-home/` directory while preserving every other named profile.
 The default-profile snapshot also includes cron execution history in `.hermes/runtime/cron-executions.db` and Discord replay state in `.hermes/gateway/discord_message_recovery.db`.
 NemoClaw captures cron job definitions from `.hermes/cron` and user-authored cron scripts from `.hermes/scripts` as directory state.
 NemoClaw uses SQLite's online backup API and restores these databases through SQLite instead of copying live raw database files.
@@ -76,7 +75,7 @@ Named-profile cron and Discord databases under `.hermes/profiles/<name>/` use ra
 
 Kanban backup is limited to the backward-compatible default board in `kanban.db`. Named boards, attachments, worker logs, scratch workspaces under `.hermes/kanban/`, and external directory or worktree targets are not included; back up that state separately.
 
-The dashboard profile includes `MEMORY.md` and `USER.md`. The Hermes state database can contain session metadata and message history needed for a faithful restore.
+The Hermes state database can contain session metadata and message history needed for a faithful restore.
 
 </AgentOnly>
 <AgentOnly variant="deepagents">
@@ -236,7 +235,7 @@ If an independent Hermes operator drain exists, recovery leaves it active.
 After recovery succeeds, rerun `rebuild` with the same replacement settings so NemoClaw can retire the replacement journal.
 </Warning>
 
-After a rebuild restores `dashboard-home` or `profiles`, NemoClaw reruns the dashboard state migration before it reports the restore as complete. During rebuild restore, NemoClaw moves disjoint top-level entries from the legacy dashboard directory without replacing entries in the canonical profile. If an entry collides or migration otherwise fails, NemoClaw marks the restore incomplete instead of reporting success.
+After a rebuild restores `profiles`, NemoClaw removes only the retired reserved `profiles/dashboard-home` directory before it reports the restore as complete. If that cleanup fails, NemoClaw marks the restore incomplete instead of reporting success.
 
 </AgentOnly>
 <AgentOnly variant="deepagents">

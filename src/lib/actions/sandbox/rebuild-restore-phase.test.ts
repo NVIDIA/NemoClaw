@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConfigObject } from "../../security/credential-filter";
 import * as sandboxConfig from "../../sandbox/config";
 import * as restoreWindow from "./runtime/openclaw-lifecycle";
+import * as hermesLifecycle from "./runtime/hermes-lifecycle";
 import { serializeHermesOperatorConfigSnapshot } from "./rebuild-durable-config";
 import { runRebuildRestorePhase } from "./rebuild-restore-phase";
 import * as snapshotRestore from "./snapshot/restore-authority";
@@ -188,6 +189,89 @@ describe("rebuild filesystem restore", () => {
     );
   });
 
+  it("removes only the retired Hermes dashboard profile after restore", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(snapshotRestore, "restoreRecreatedSandboxStateWithManagedAuthority").mockResolvedValue(
+      {
+        success: true,
+        restoredDirs: ["profiles"],
+        restoredFiles: [],
+        failedDirs: [],
+        failedFiles: [],
+      },
+    );
+    const restoredState = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-profiles-"));
+    const retiredProfile = path.join(restoredState, "profiles", "dashboard-home");
+    const userProfile = path.join(restoredState, "profiles", "research");
+    fs.mkdirSync(retiredProfile, { recursive: true });
+    fs.mkdirSync(userProfile, { recursive: true });
+    fs.writeFileSync(path.join(retiredProfile, "config.yaml"), "model: legacy\n");
+    fs.writeFileSync(path.join(userProfile, "MEMORY.md"), "keep me\n");
+    const cleanup = vi
+      .spyOn(hermesLifecycle, "executePrivilegedSandboxCommand")
+      .mockImplementation((_sandboxName, command) => {
+        expect(command).toEqual(["rm", "-rf", "--", "/sandbox/.hermes/profiles/dashboard-home"]);
+        fs.rmSync(retiredProfile, { recursive: true, force: true });
+        return { status: 0, stdout: "", stderr: "" };
+      });
+
+    try {
+      const result = await runRebuildRestorePhase({
+        sandboxName: "hermes",
+        targetAgentType: "hermes",
+        targetImageIsCustom: false,
+        backupManifest,
+        log: vi.fn(),
+      });
+
+      expect(cleanup).toHaveBeenCalledExactlyOnceWith(
+        "hermes",
+        ["rm", "-rf", "--", "/sandbox/.hermes/profiles/dashboard-home"],
+        15_000,
+      );
+      expect(fs.existsSync(retiredProfile)).toBe(false);
+      expect(fs.readFileSync(path.join(userProfile, "MEMORY.md"), "utf8")).toBe("keep me\n");
+      expect(result).toEqual({
+        restoreSucceeded: true,
+        hermesOperatorConfigRestore: { restoredKeys: [], droppedKeys: [] },
+      });
+    } finally {
+      fs.rmSync(restoredState, { recursive: true, force: true });
+    }
+  });
+
+  it("marks a Hermes restore incomplete when retired profile cleanup fails", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(snapshotRestore, "restoreRecreatedSandboxStateWithManagedAuthority").mockResolvedValue(
+      {
+        success: true,
+        restoredDirs: ["profiles"],
+        restoredFiles: [],
+        failedDirs: [],
+        failedFiles: [],
+      },
+    );
+    vi.spyOn(hermesLifecycle, "executePrivilegedSandboxCommand").mockReturnValue({
+      status: 1,
+      stdout: "",
+      stderr: "permission denied",
+    });
+
+    await expect(
+      runRebuildRestorePhase({
+        sandboxName: "hermes",
+        targetAgentType: "hermes",
+        targetImageIsCustom: false,
+        backupManifest,
+        log: vi.fn(),
+      }),
+    ).resolves.toEqual({
+      restoreSucceeded: false,
+      hermesOperatorConfigRestore: { restoredKeys: [], droppedKeys: [] },
+    });
+  });
+
   it("restores digest-bound Hermes operator config", async () => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.spyOn(snapshotRestore, "restoreRecreatedSandboxStateWithManagedAuthority").mockResolvedValue(
@@ -199,6 +283,11 @@ describe("rebuild filesystem restore", () => {
         failedFiles: [],
       },
     );
+    vi.spyOn(hermesLifecycle, "executePrivilegedSandboxCommand").mockReturnValue({
+      status: 0,
+      stdout: "",
+      stderr: "",
+    });
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-10495-restore-"));
     try {
       const snapshot = {
@@ -273,6 +362,11 @@ describe("rebuild filesystem restore", () => {
         failedFiles: [],
       },
     );
+    vi.spyOn(hermesLifecycle, "executePrivilegedSandboxCommand").mockReturnValue({
+      status: 0,
+      stdout: "",
+      stderr: "",
+    });
     const write = vi.spyOn(sandboxConfig, "writeSandboxConfig").mockImplementation(() => undefined);
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-10495-tampered-"));
     try {
