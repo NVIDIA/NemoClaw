@@ -16,9 +16,6 @@ const realConnectRecovery = inferenceAdapter.recoverHermesPortableInferenceForCo
 const inferenceEngine = requireDist(
   "../../src/lib/onboard/experimental/hermes-portable-ollama-inference.js",
 ) as typeof import("../../onboard/experimental/hermes-portable-ollama-inference");
-const forwardRecovery = requireDist(
-  "../../src/lib/actions/sandbox/probe/hermes-portable-forward-adapter-recovery.js",
-) as typeof import("./probe/hermes-portable-forward-adapter-recovery");
 function harness(options: Parameters<typeof createConnectHarness>[0] = {}) {
   return createConnectHarness({
     agentName: "hermes",
@@ -65,7 +62,7 @@ describe("Hermes Portable interactive inference recovery", () => {
         (await input.prepareProbeDependency?.())?.release();
         return "recovered";
       });
-    const prepareForwards = vi.spyOn(forwardRecovery, "prepareHermesPortableLaunchForwards");
+    const prepareForwards = h.prepareHermesPortableLaunchForwardsSpy;
     await expect(prepare()).resolves.toMatchObject({
       hermesPortable: true,
       sb: { provider: "ollama-local", model: "qwen3-vl:4b" },
@@ -89,7 +86,7 @@ describe("Hermes Portable interactive inference recovery", () => {
 
   it("keeps healthy interactive inference on verification without recovery (#11757)", async () => {
     const h = harness({ inferenceProbeResponses: ["OK 200"] });
-    const prepareForwards = vi.spyOn(forwardRecovery, "prepareHermesPortableLaunchForwards");
+    const prepareForwards = h.prepareHermesPortableLaunchForwardsSpy;
     await expect(prepare()).resolves.toMatchObject({ hermesPortable: true });
     expect(h.recoverHermesPortableOllamaInferenceSpy).not.toHaveBeenCalled();
     expect(prepareForwards).toHaveBeenCalledOnce();
@@ -177,7 +174,7 @@ describe("Hermes Portable interactive inference recovery", () => {
     const engine = vi
       .spyOn(inferenceEngine, "recoverHermesPortableOllamaInference")
       .mockRejectedValue(new Error("engine failure canary"));
-    const prepareForwards = vi.spyOn(forwardRecovery, "prepareHermesPortableLaunchForwards");
+    const prepareForwards = h.prepareHermesPortableLaunchForwardsSpy;
     await expect(prepare()).rejects.toThrow("process.exit(1)");
     expect(engine).toHaveBeenCalledOnce();
     expect(prepareForwards).not.toHaveBeenCalled();
