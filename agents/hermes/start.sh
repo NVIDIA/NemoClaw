@@ -1602,6 +1602,8 @@ def describe_unsafe_existing_path(root_fd: int) -> str:
 
 root_fd = -1
 fd = -1
+uid = None
+gid = None
 try:
     try:
         root_fd = os.open(root, directory_flags)
@@ -1613,8 +1615,92 @@ try:
         print(f"[SECURITY] Refusing Hermes layout repair because {root} changed while it was opened", file=sys.stderr)
         sys.exit(1)
 
+    if os.geteuid() == 0:
+        try:
+            uid = pwd.getpwnam("gateway").pw_uid
+            gid = grp.getgrnam("sandbox").gr_gid
+        except KeyError as exc:
+            print(f"[SECURITY] Refusing Hermes layout repair because gateway/sandbox account lookup failed: {exc}", file=sys.stderr)
+            sys.exit(1)
+
     try:
         fd = os.open(name, file_flags, mode, dir_fd=root_fd)
+    except PermissionError as exc:
+        try:
+            before = os.stat(name, dir_fd=root_fd, follow_symlinks=False)
+        except OSError:
+            before = None
+        if (
+            os.geteuid() != 0
+            or uid is None
+            or gid is None
+            or not hasattr(os, "O_PATH")
+            or before is None
+            or not stat.S_ISREG(before.st_mode)
+        ):
+            reason = describe_unsafe_existing_path(root_fd)
+            detail = exc.strerror or errno.errorcode.get(exc.errno, str(exc.errno))
+            print(f"[SECURITY] Refusing Hermes layout repair because {path} {reason}: {detail}", file=sys.stderr)
+            sys.exit(1)
+        if before.st_nlink != 1:
+            print(f"[SECURITY] Refusing Hermes layout repair because {path} has hard-link count {before.st_nlink}", file=sys.stderr)
+            sys.exit(1)
+
+        held_flags = os.O_PATH | os.O_NOFOLLOW
+        held_flags |= getattr(os, "O_CLOEXEC", 0)
+        held_fd = -1
+        try:
+            try:
+                held_fd = os.open(name, held_flags, dir_fd=root_fd)
+            except OSError as held_exc:
+                print(f"[SECURITY] Refusing Hermes layout repair because {path} could not be held safely for repair: {held_exc.strerror}", file=sys.stderr)
+                sys.exit(1)
+            held = os.fstat(held_fd)
+            if not stat.S_ISREG(held.st_mode):
+                print(f"[SECURITY] Refusing Hermes layout repair because {path} is not a regular file", file=sys.stderr)
+                sys.exit(1)
+            if held.st_nlink != 1:
+                print(f"[SECURITY] Refusing Hermes layout repair because {path} has hard-link count {held.st_nlink}", file=sys.stderr)
+                sys.exit(1)
+            if (held.st_dev, held.st_ino) != (before.st_dev, before.st_ino):
+                print(f"[SECURITY] Refusing Hermes layout repair because {path} changed while it was held for repair", file=sys.stderr)
+                sys.exit(1)
+
+            held_path = f"/proc/self/fd/{held_fd}"
+            try:
+                os.chown(held_path, uid, gid)
+                os.chmod(held_path, mode)
+            except OSError as repair_exc:
+                print(f"[SECURITY] Refusing Hermes layout repair because {path} restricted mode could not be repaired safely: {repair_exc.strerror}", file=sys.stderr)
+                sys.exit(1)
+            repaired = os.fstat(held_fd)
+            if (
+                not stat.S_ISREG(repaired.st_mode)
+                or repaired.st_nlink != 1
+                or stat.S_IMODE(repaired.st_mode) != mode
+                or repaired.st_uid != uid
+                or repaired.st_gid != gid
+            ):
+                print(f"[SECURITY] Refusing Hermes layout repair because {path} metadata did not match after restricted-mode repair", file=sys.stderr)
+                sys.exit(1)
+            current = os.stat(name, dir_fd=root_fd, follow_symlinks=False)
+            if (current.st_dev, current.st_ino) != (repaired.st_dev, repaired.st_ino):
+                print(f"[SECURITY] Refusing Hermes layout repair because {path} changed during restricted-mode repair", file=sys.stderr)
+                sys.exit(1)
+            try:
+                fd = os.open(name, file_flags, mode, dir_fd=root_fd)
+            except OSError as reopen_exc:
+                print(f"[SECURITY] Refusing Hermes layout repair because {path} could not be reopened after restricted-mode repair: {reopen_exc.strerror}", file=sys.stderr)
+                sys.exit(1)
+            reopened = os.fstat(fd)
+            if (reopened.st_dev, reopened.st_ino) != (held.st_dev, held.st_ino):
+                os.close(fd)
+                fd = -1
+                print(f"[SECURITY] Refusing Hermes layout repair because {path} changed after restricted-mode repair", file=sys.stderr)
+                sys.exit(1)
+        finally:
+            if held_fd >= 0:
+                os.close(held_fd)
     except OSError as exc:
         reason = describe_unsafe_existing_path(root_fd)
         detail = exc.strerror or errno.errorcode.get(exc.errno, str(exc.errno))
@@ -1633,12 +1719,6 @@ try:
         sys.exit(1)
 
     if os.geteuid() == 0:
-        try:
-            uid = pwd.getpwnam("gateway").pw_uid
-            gid = grp.getgrnam("sandbox").gr_gid
-        except KeyError as exc:
-            print(f"[SECURITY] Refusing Hermes layout repair because gateway/sandbox account lookup failed: {exc}", file=sys.stderr)
-            sys.exit(1)
         os.fchown(fd, uid, gid)
         os.fchmod(fd, mode)
     elif stat.S_IMODE(st.st_mode) != mode:
