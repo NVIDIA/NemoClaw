@@ -6,7 +6,7 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   assertHermesMcpHttpResponse,
@@ -21,6 +21,9 @@ import {
 const TIMEOUT_MS = 5_000;
 const SYSTEM_PATH = "/usr/bin:/bin";
 const CONTAINER_ID = "a".repeat(64);
+
+beforeEach(() => vi.stubEnv("NEMOCLAW_GATEWAY_RUNTIME", "docker"));
+afterEach(() => vi.unstubAllEnvs());
 
 function httpResult(status: number, body = "", result = "") {
   return {
