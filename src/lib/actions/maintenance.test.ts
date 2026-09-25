@@ -861,7 +861,7 @@ describe("backupAll", () => {
       expect.anything(),
     );
   });
-  it("restores stopped state before removing a rejected partial strict snapshot (#11936)", async () => {
+  it("removes a rejected partial strict snapshot after a failed stopped-state restoration (#11936)", async () => {
     mocks.listSandboxes.mockReturnValue({
       sandboxes: [{ name: "sb-stopped" }],
       defaultSandbox: null,
@@ -881,29 +881,28 @@ describe("backupAll", () => {
       manifest: { backupPath: "/backups/sb-stopped/incomplete" },
     });
     mocks.discardIncompleteBackup.mockImplementation((_sandbox, result) => result);
+    mocks.returnSandboxContainerToStopped.mockReturnValue(false);
     process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS = "1";
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
-    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
-      throw new Error(`exit:${code}`);
-    }) as never);
 
-    await expect(backupAll()).rejects.toThrow("exit:1");
-
-    expect(mocks.returnSandboxContainerToStopped).toHaveBeenCalledWith(
-      {
-        containerName: "openshell-sb-stopped-abc",
-        runtimeProviderId: "docker",
-      },
-      {
-        deadlineMs: 330_000,
-      },
+    await expect(backupAll()).rejects.toThrow(
+      "could not return its container to the stopped state",
     );
+
     expect(mocks.returnSandboxContainerToStopped.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.discardIncompleteBackup.mock.invocationCallOrder[0],
     );
     expect(mocks.discardIncompleteBackup.mock.calls[0]?.[2]).toBeGreaterThan(Date.now());
-    expect(logSpy.mock.calls.flat().join("\n")).toContain("0 backed up, 1 failed, 0 skipped");
+    expect(mocks.discardIncompleteBackup).toHaveBeenCalledWith(
+      "sb-stopped",
+      expect.objectContaining({
+        error: "symlink audit failed; partial permission cleanup timed out",
+        manifest: { backupPath: "/backups/sb-stopped/incomplete" },
+      }),
+      expect.any(Number),
+      "strict pre-upgrade",
+    );
   });
 
   it("fails when the started container cannot be returned to its stopped state (#6500)", async () => {
