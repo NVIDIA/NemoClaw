@@ -67,7 +67,7 @@ describe("policy channel remove/enable flows", () => {
       name: "hermes",
       displayName: "Hermes",
       configPaths: { dir: "/sandbox/.hermes" },
-      stateDirs: ["platforms", "profiles", "dashboard-home"],
+      stateDirs: ["platforms", "profiles"],
     } as unknown as defs.AgentDefinition);
     vi.spyOn(registry, "getSandbox").mockReturnValue(current);
     vi.spyOn(registry, "getConfiguredMessagingChannelsFromEntry").mockReturnValue(["whatsapp"]);

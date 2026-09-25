@@ -21,7 +21,6 @@ import {
   parseHermesOperatorConfigSnapshot,
   verifyHermesOperatorConfigSnapshot,
 } from "./rebuild-durable-config";
-import * as hermesLifecycle from "./runtime/hermes-lifecycle";
 import * as snapshotRestore from "./snapshot/restore-authority";
 
 export interface RebuildRestorePhaseInput {
@@ -44,32 +43,6 @@ const EMPTY_HERMES_OPERATOR_CONFIG_RESTORE: HermesOperatorConfigRestoreReport = 
   restoredKeys: [],
   droppedKeys: [],
 };
-
-const RETIRED_HERMES_DASHBOARD_PROFILE = "/sandbox/.hermes/profiles/dashboard-home";
-const HERMES_LEGACY_PROFILE_CLEANUP_TIMEOUT_MS = 15_000;
-
-function removeRetiredHermesDashboardProfile(sandboxName: string, log: RebuildLog): boolean {
-  try {
-    const result = hermesLifecycle.executePrivilegedSandboxCommand(
-      sandboxName,
-      ["rm", "-rf", "--", RETIRED_HERMES_DASHBOARD_PROFILE],
-      HERMES_LEGACY_PROFILE_CLEANUP_TIMEOUT_MS,
-    );
-    if (result?.status === 0) {
-      log(`Removed retired Hermes dashboard profile: ${RETIRED_HERMES_DASHBOARD_PROFILE}`);
-      return true;
-    }
-    const detail =
-      result?.stderr.replace(/\s+/gu, " ").trim().slice(-500) || "transport unavailable";
-    log(`Retired Hermes dashboard profile cleanup failed: ${detail}`);
-  } catch (error) {
-    log(
-      `Retired Hermes dashboard profile cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-  console.error(`  ${YW}Hermes legacy dashboard profile cleanup failed.${R}`);
-  return false;
-}
 
 function restoreHermesOperatorConfig(
   sandboxName: string,
@@ -189,9 +162,6 @@ export async function runRebuildRestorePhase(
       `Restore result: success=${restore.success}, restored=${restore.restoredDirs.join(",")}; files=${restore.restoredFiles.join(",")}, failed=${restore.failedDirs.join(",")}; failedFiles=${restore.failedFiles.join(",")}${restore.error ? `; error=${restore.error}` : ""}`,
     );
     restoreSucceeded = restore.success;
-    if (targetAgentType === "hermes" && !removeRetiredHermesDashboardProfile(sandboxName, log)) {
-      restoreSucceeded = false;
-    }
     hermesOperatorConfigRestore =
       targetAgentType === "hermes"
         ? restoreHermesOperatorConfig(sandboxName, backupManifest, log)

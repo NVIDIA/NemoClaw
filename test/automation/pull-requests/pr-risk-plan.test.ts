@@ -36,9 +36,10 @@ const HERMES_SANDBOX_BOUNDARY_JOBS = [
   "security-posture",
 ];
 const HERMES_CLI_ADAPTER_JOBS = ["channels-stop-start", "mcp-bridge"];
-const HERMES_CRON_RESTORE_FILES = [
+const HERMES_REBUILD_RESTORE_FILES = [
   "agents/hermes/cron-restore-control.py",
   "agents/hermes/patch-cron-restore-drain.py",
+  "src/lib/actions/sandbox/rebuild-restore-phase.ts",
   "src/lib/actions/sandbox/rebuild-hermes-post-restore.ts",
   "src/lib/actions/sandbox/runtime/hermes-cron-restore-recovery.ts",
 ];
@@ -141,7 +142,7 @@ describe("deterministic PR risk plan", () => {
     const second = plan("src/lib/onboard.ts", "src/lib/state/registry.ts");
 
     expect(first).toEqual(second);
-    expect(first.version).toBe(25);
+    expect(first.version).toBe(26);
     expect(first.headSha).toBe(HEAD_SHA);
     expect(first.planHash).toMatch(/^[a-f0-9]{64}$/u);
     expect(first.changedFiles).toEqual(["src/lib/onboard.ts", "src/lib/state/registry.ts"]);
@@ -291,13 +292,14 @@ describe("deterministic PR risk plan", () => {
     expect(riskPlanRequiredJobIds(result)).toEqual(expectedRequiredJobs);
   });
 
-  it.each(HERMES_CRON_RESTORE_FILES)(
-    "selects Hermes rebuild E2E for cron restore and drain changes in %s (#7806)",
+  it.each(HERMES_REBUILD_RESTORE_FILES)(
+    "selects Hermes rebuild E2E for rebuild restore changes in %s (#7806)",
     (changedFile) => {
       const result = plan(changedFile);
       const expectedRequiredJobs = changedFile.startsWith("agents/hermes/")
         ? [...HERMES_SANDBOX_BOUNDARY_JOBS, "rebuild-hermes"]
-        : changedFile === "src/lib/actions/sandbox/rebuild-hermes-post-restore.ts"
+        : changedFile === "src/lib/actions/sandbox/rebuild-hermes-post-restore.ts" ||
+            changedFile === "src/lib/actions/sandbox/rebuild-restore-phase.ts"
           ? [
               "managed-image-multiarch-startup",
               "managed-image-protected-runtime",

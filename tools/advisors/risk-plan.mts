@@ -18,7 +18,7 @@ const protectedManagedImageContract = (
 const { PROTECTED_MANAGED_IMAGE_ACTIVATION_PATH, PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID } =
   protectedManagedImageContract;
 
-export const RISK_PLAN_VERSION = 25 as const;
+export const RISK_PLAN_VERSION = 26 as const;
 
 export const PR_E2E_TYPED_TARGET_IDS = ["ubuntu-repo-cloud-langchain-deepagents-code"] as const;
 const SANDBOX_LIFECYCLE_TARGET_ID = "sandbox-survival";
@@ -105,10 +105,11 @@ const HERMES_CLI_ADAPTER_RUNTIME_FILES = new Set([
   "agents/hermes/hermes-wrapper.py",
   "agents/hermes/validate-cli-adapter.py",
 ]);
-const HERMES_CRON_RESTORE_E2E_JOB_IDS = ["rebuild-hermes"] as const;
-const HERMES_CRON_RESTORE_RUNTIME_FILES = new Set([
+const HERMES_REBUILD_RESTORE_E2E_JOB_IDS = ["rebuild-hermes"] as const;
+const HERMES_REBUILD_RESTORE_RUNTIME_FILES = new Set([
   "agents/hermes/cron-restore-control.py",
   "agents/hermes/patch-cron-restore-drain.py",
+  "src/lib/actions/sandbox/rebuild-restore-phase.ts",
   "src/lib/actions/sandbox/rebuild-hermes-post-restore.ts",
   "src/lib/actions/sandbox/runtime/hermes-cron-restore-recovery.ts",
 ]);
@@ -405,9 +406,9 @@ export function focusedPrE2eJobsForChangedFiles(
   const hermesAcpRuntimeFiles = stableUnique(
     changedFiles.filter((file) => HERMES_ACP_RUNTIME_FILES.has(file) && isRuntimeRelevant(file)),
   );
-  const hermesCronRestoreFiles = stableUnique(
+  const hermesRebuildRestoreFiles = stableUnique(
     changedFiles.filter(
-      (file) => HERMES_CRON_RESTORE_RUNTIME_FILES.has(file) && isRuntimeRelevant(file),
+      (file) => HERMES_REBUILD_RESTORE_RUNTIME_FILES.has(file) && isRuntimeRelevant(file),
     ),
   );
   const hermesManagedPolicyFiles = stableUnique(
@@ -457,9 +458,9 @@ export function focusedPrE2eJobsForChangedFiles(
       id,
       matchedFiles: hermesAcpRuntimeFiles,
     })),
-    ...HERMES_CRON_RESTORE_E2E_JOB_IDS.map((id) => ({
+    ...HERMES_REBUILD_RESTORE_E2E_JOB_IDS.map((id) => ({
       id,
-      matchedFiles: hermesCronRestoreFiles,
+      matchedFiles: hermesRebuildRestoreFiles,
     })),
     ...HERMES_MANAGED_POLICY_E2E_JOB_IDS.map((id) => ({
       id,

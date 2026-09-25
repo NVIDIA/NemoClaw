@@ -60,8 +60,8 @@ The sandbox stores mutable session credentials in durable `platforms/whatsapp` s
 </AgentOnly>
 The credentials survive rebuilds without re-pairing.
 <AgentOnly variant="hermes">
-Rebuild restore retires the reserved legacy `profiles/dashboard-home` directory while preserving the shared `platforms/whatsapp` session.
-On an older running sandbox, use `$$nemoclaw <sandbox> channels remove whatsapp` to clear every compatibility session path before pairing again.
+Rebuild preserves the shared `platforms/whatsapp` session and native Hermes profiles, including an older `profiles/dashboard-home` profile.
+Use `$$nemoclaw <sandbox> channels remove whatsapp` to clear every compatibility session path before pairing again.
 </AgentOnly>
 This is the runtime tradeoff of enabling WhatsApp without a host bridge: a paired sandbox can use that WhatsApp account until you unpair it or clear the durable state.
 
