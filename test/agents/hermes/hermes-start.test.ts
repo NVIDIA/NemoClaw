@@ -223,6 +223,7 @@ function runHermesEnvSecretBoundary(opts: {
       `HERMES_DIR=${shellQuote(hermesHome)}`,
       `_HERMES_BOUNDARY_VALIDATOR=${shellQuote(SECRET_BOUNDARY_VALIDATOR_SCRIPT)}`,
       "ensure_hermes_config_root_mode() { :; }",
+      "migrate_legacy_hermes_dashboard_state() { :; }",
       ...boundaryInvocation,
     ].join("\n"),
     { mode: 0o700 },
@@ -368,6 +369,7 @@ function runHermesRootStartupMutableRootPreflight(initialMode = 0o750) {
       'ensure_hermes_runtime_api_server_key() { printf "api-key mode=%s\\n" "$(dir_mode)"; }',
       'validate_hermes_env_secret_boundary() { printf "env-boundary mode=%s\\n" "$(dir_mode)"; }',
       'validate_hermes_runtime_env_secret_boundary() { printf "runtime-boundary mode=%s\\n" "$(dir_mode)"; }',
+      'migrate_legacy_hermes_dashboard_state() { printf "dashboard-migration mode=%s\\n" "$(dir_mode)"; }',
       "refresh_hermes_provider_placeholders() { :; }",
       "configure_messaging_channels() { :; }",
       'retry_tirith_marker_if_needed() { printf "tirith-state=%s\\n" "$TIRITH_RETRY_MARKER_CLEARED"; }',
@@ -1110,6 +1112,7 @@ describe("agents/hermes/start.sh env secret boundary", () => {
           "set -euo pipefail",
           "hash_state=stale",
           'trace() { printf "%s\\n" "$1"; }',
+          "migrate_legacy_hermes_dashboard_state() { trace dashboard-migration; }",
           "validate_hermes_env_secret_boundary() { trace env-boundary; }",
           "prepare_hermes_lazy_dependencies() { trace lazy-dependencies; }",
           "ensure_hermes_runtime_api_server_key() { trace api-key; }",
@@ -1128,6 +1131,7 @@ describe("agents/hermes/start.sh env secret boundary", () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout.trim().split("\n")).toEqual([
+      "dashboard-migration",
       "env-boundary",
       "hashes:compat:adopt",
       "lazy-dependencies",

@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { executeOrdinarySandboxCommand } from "../../adapters/sandbox/ordinary-command";
 import type { ConfigObject } from "../../security/credential-filter";
 import * as sandboxConfig from "../../sandbox/config";
 import * as restoreWindow from "./runtime/openclaw-lifecycle";
@@ -14,6 +15,10 @@ import * as hermesLifecycle from "./runtime/hermes-lifecycle";
 import { serializeHermesOperatorConfigSnapshot } from "./rebuild-durable-config";
 import { runRebuildRestorePhase } from "./rebuild-restore-phase";
 import * as snapshotRestore from "./snapshot/restore-authority";
+
+vi.mock("../../adapters/sandbox/ordinary-command", () => ({
+  executeOrdinarySandboxCommand: vi.fn(),
+}));
 
 const backupManifest = {
   agentType: "openclaw",
@@ -39,6 +44,11 @@ describe("rebuild filesystem restore", () => {
     });
     vi.spyOn(restoreWindow, "abortUnregisteredOpenClawPostRestoreDoctor").mockResolvedValue({
       ok: true,
+    });
+    vi.mocked(executeOrdinarySandboxCommand).mockReset().mockResolvedValue({
+      status: 0,
+      stdout: "",
+      stderr: "",
     });
   });
 
@@ -96,7 +106,11 @@ describe("rebuild filesystem restore", () => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.mocked(
       restoreWindow.promoteUnregisteredOpenClawBackupQuiesceToPostRestoreDoctor,
-    ).mockResolvedValue({ ok: false, stage: "doctor", detail: "backup marker replaced" });
+    ).mockResolvedValue({
+      ok: false,
+      stage: "doctor",
+      detail: "backup marker replaced",
+    });
     vi.spyOn(snapshotRestore, "restoreRecreatedSandboxStateWithManagedAuthority").mockResolvedValue(
       {
         success: true,
@@ -191,15 +205,15 @@ describe("rebuild filesystem restore", () => {
 
   it("preserves native Hermes profiles without a privileged post-restore deletion", async () => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
-    vi.spyOn(snapshotRestore, "restoreRecreatedSandboxStateWithManagedAuthority").mockResolvedValue(
-      {
+    const restore = vi
+      .spyOn(snapshotRestore, "restoreRecreatedSandboxStateWithManagedAuthority")
+      .mockResolvedValue({
         success: true,
         restoredDirs: ["profiles"],
         restoredFiles: [],
         failedDirs: [],
         failedFiles: [],
-      },
-    );
+      });
     const privilegedMutation = vi
       .spyOn(hermesLifecycle, "executePrivilegedSandboxCommand")
       .mockReturnValue({
@@ -217,10 +231,91 @@ describe("rebuild filesystem restore", () => {
     });
 
     expect(privilegedMutation).not.toHaveBeenCalled();
+    expect(restore).toHaveBeenCalledWith(
+      "hermes",
+      backupManifest,
+      {
+        targetAgentType: "hermes",
+        restoreLegacyMigrationStateDirs: ["dashboard-home"],
+      },
+      { getSandbox: expect.any(Function) },
+    );
+    expect(executeOrdinarySandboxCommand).toHaveBeenCalledWith(
+      "hermes",
+      expect.stringContaining("migrate-hermes-dashboard-state.py"),
+      30_000,
+      {},
+    );
     expect(result).toEqual({
       restoreSucceeded: true,
       hermesOperatorConfigRestore: { restoredKeys: [], droppedKeys: [] },
     });
+  });
+
+  it("fails closed when restored legacy Hermes state cannot be migrated", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(snapshotRestore, "restoreRecreatedSandboxStateWithManagedAuthority").mockResolvedValue(
+      {
+        success: true,
+        restoredDirs: ["profiles", "dashboard-home"],
+        restoredFiles: [],
+        failedDirs: [],
+        failedFiles: [],
+      },
+    );
+
+    const result = await runRebuildRestorePhase({
+      sandboxName: "hermes",
+      targetAgentType: "hermes",
+      targetImageIsCustom: false,
+      backupManifest,
+      log: vi.fn(),
+      migrateHermesLegacyDashboardState: vi.fn().mockResolvedValue({
+        status: 1,
+        stdout: "",
+        stderr: "conflicting legacy state",
+      }),
+    });
+
+    expect(result).toEqual({
+      restoreSucceeded: false,
+      hermesOperatorConfigRestore: { restoredKeys: [], droppedKeys: [] },
+    });
+  });
+
+  it("fails closed when the Hermes migration transport throws", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(snapshotRestore, "restoreRecreatedSandboxStateWithManagedAuthority").mockResolvedValue(
+      {
+        success: true,
+        restoredDirs: ["dashboard-home"],
+        restoredFiles: [],
+        failedDirs: [],
+        failedFiles: [],
+      },
+    );
+    vi.mocked(executeOrdinarySandboxCommand).mockRejectedValueOnce(
+      new Error("sandbox command transport failed"),
+    );
+    const log = vi.fn();
+
+    const result = await runRebuildRestorePhase({
+      sandboxName: "hermes",
+      targetAgentType: "hermes",
+      targetImageIsCustom: false,
+      backupManifest,
+      log,
+    });
+
+    expect(result).toEqual({
+      restoreSucceeded: false,
+      hermesOperatorConfigRestore: { restoredKeys: [], droppedKeys: [] },
+    });
+    expect(log).toHaveBeenCalledWith(
+      "Hermes legacy dashboard-state migration transport failed: sandbox command transport failed",
+    );
   });
 
   it("restores digest-bound Hermes operator config", async () => {

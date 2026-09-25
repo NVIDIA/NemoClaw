@@ -120,17 +120,47 @@ function removeReviewedNativeOwnershipMetadata(agent: AgentDefinition): void {
 
 function restorePreviousDashboardStateComment(agent: AgentDefinition): void {
   const source = fs.readFileSync(agent.manifestPath, "utf8");
-  const currentComment = [
-    "  # Legacy pre-#7200 dashboard state is no longer read or written at runtime,",
-    "  # but remains rebuild-durable until an explicit state migration retires it.",
+  const currentDeclaration = [
+    "  # Retired pre-#7200 dashboard state is accepted only as a non-backup",
+    "  # migration source. Startup moves safe contents into the native Hermes home",
+    "  # and removes the legacy directory; new snapshots never perpetuate it.",
+    "  - path: dashboard-home",
+    "    backup: false",
   ].join("\n");
-  const previousComment = [
+  const previousDeclaration = [
     "  # Legacy pre-#7200 dashboard profile location. Keep it in snapshots while",
     "  # startup migrates existing state into profiles/dashboard-home.",
+    "  - dashboard-home",
   ].join("\n");
-  expect(source.split(currentComment)).toHaveLength(2);
-  fs.writeFileSync(agent.manifestPath, source.replace(currentComment, previousComment), {
+  expect(source.split(currentDeclaration)).toHaveLength(2);
+  fs.writeFileSync(agent.manifestPath, source.replace(currentDeclaration, previousDeclaration), {
     mode: 0o644,
+  });
+  Object.defineProperties(agent, {
+    stateDirectories: {
+      configurable: true,
+      enumerable: true,
+      writable: true,
+      value: agent.stateDirectories.map((entry) =>
+        entry.kind === "path" && entry.path === "dashboard-home"
+          ? { ...entry, backup: true }
+          : entry,
+      ),
+    },
+    backupStateDirs: {
+      configurable: true,
+      enumerable: true,
+      writable: true,
+      value: agent.stateDirs.filter(
+        (entry) => entry === "dashboard-home" || !agent.nonBackupStateDirs.includes(entry),
+      ),
+    },
+    nonBackupStateDirs: {
+      configurable: true,
+      enumerable: true,
+      writable: true,
+      value: agent.nonBackupStateDirs.filter((entry) => entry !== "dashboard-home"),
+    },
   });
 }
 
@@ -275,7 +305,7 @@ describe("Hermes portable startup contract", () => {
     {
       expectedManifestSha256: PRE_DASHBOARD_STATE_CLEANUP_MANIFEST_SHA256,
       prepare: restorePreviousDashboardStateComment,
-      startupDescriptorChanged: false,
+      startupDescriptorChanged: true,
     },
     {
       expectedManifestSha256: PRE_DEFERRED_ONBOARDING_MANIFEST_SHA256,
@@ -283,7 +313,7 @@ describe("Hermes portable startup contract", () => {
         restorePreviousDashboardStateComment(agent);
         removeDeferredOnboardingMetadata(agent);
       },
-      startupDescriptorChanged: false,
+      startupDescriptorChanged: true,
     },
     {
       expectedManifestSha256: PRE_UPGRADE_MANIFEST_SHA256,
@@ -291,7 +321,7 @@ describe("Hermes portable startup contract", () => {
         restorePreviousDashboardStateComment(agent);
         restorePreviousReviewedManifest(agent);
       },
-      startupDescriptorChanged: false,
+      startupDescriptorChanged: true,
     },
     {
       expectedManifestSha256: PRE_SKILLS_MANIFEST_SHA256,

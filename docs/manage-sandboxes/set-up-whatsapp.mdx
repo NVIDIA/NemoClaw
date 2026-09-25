@@ -36,7 +36,8 @@ If pairing exits with a gateway close such as `1008`, rerun the login command on
 Hermes dashboard pairing and the gateway share `/sandbox/.hermes/platforms/whatsapp/session`.
 After scanning a dashboard QR code, run `$$nemoclaw <sandbox> channels status --channel whatsapp` to confirm that the shared session is available to the gateway.
 
-If `channels status` reports credentials only under the legacy `profiles/dashboard-home` path, the sandbox has credentials from an image that wrote dashboard sessions to that path.
+Current managed images migrate a safe legacy `profiles/dashboard-home` session into the shared native path during startup.
+If `channels status` still reports credentials only under the legacy path, the sandbox is running an older image or migration could not complete.
 Clear every WhatsApp session path first with the supported removal command, then re-add the channel:
 
 ```bash
@@ -60,8 +61,9 @@ The sandbox stores mutable session credentials in durable `platforms/whatsapp` s
 </AgentOnly>
 The credentials survive rebuilds without re-pairing.
 <AgentOnly variant="hermes">
-Rebuild preserves the shared `platforms/whatsapp` session and native Hermes profiles, including an older `profiles/dashboard-home` profile.
-Use `$$nemoclaw <sandbox> channels remove whatsapp` to clear every compatibility session path before pairing again.
+Rebuild preserves the shared `platforms/whatsapp` session and user-created native Hermes profiles.
+An older `profiles/dashboard-home` session is migrated into the shared path during startup and the retired profile is removed.
+Use `$$nemoclaw <sandbox> channels remove whatsapp` to clear every compatibility session path before pairing again when migration reports a conflict.
 </AgentOnly>
 This is the runtime tradeoff of enabling WhatsApp without a host bridge: a paired sandbox can use that WhatsApp account until you unpair it or clear the durable state.
 

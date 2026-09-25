@@ -306,6 +306,10 @@ _HERMES_RUNTIME_CONFIG_GUARD="/usr/local/lib/nemoclaw/hermes-runtime-config-guar
 if [ ! -f "$_HERMES_RUNTIME_CONFIG_GUARD" ]; then
   _HERMES_RUNTIME_CONFIG_GUARD="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/runtime-config-guard.py"
 fi
+_HERMES_DASHBOARD_STATE_MIGRATOR="/usr/local/lib/nemoclaw/migrate-hermes-dashboard-state.py"
+if [ ! -f "$_HERMES_DASHBOARD_STATE_MIGRATOR" ]; then
+  _HERMES_DASHBOARD_STATE_MIGRATOR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/migrate-dashboard-state.py"
+fi
 _HERMES_TIRITH_MARKER_FINALIZER="/usr/local/lib/nemoclaw/finalize-tirith-marker.py"
 if [ ! -f "$_HERMES_TIRITH_MARKER_FINALIZER" ]; then
   _HERMES_TIRITH_MARKER_FINALIZER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/finalize-tirith-marker.py"
@@ -2915,6 +2919,7 @@ mark_hermes_gateway_stopped() {
 }
 
 prepare_hermes_nonroot_runtime() {
+  migrate_legacy_hermes_dashboard_state || return 1
   # Classify raw .env material at its dedicated boundary before the config
   # integrity guard authenticates the full config/env snapshot. Repeat after
   # the trusted startup mutations below so their outputs remain covered.
@@ -2930,6 +2935,15 @@ prepare_hermes_nonroot_runtime() {
   refresh_hermes_runtime_config_hashes compat || return 1
   configure_messaging_channels || return 1
   prepare_tirith_marker_retry || return 1
+}
+
+migrate_legacy_hermes_dashboard_state() {
+  if [ "$(id -u)" -eq 0 ]; then
+    "${STEP_DOWN_PREFIX_SANDBOX[@]}" "$_HERMES_PYTHON" -I \
+      "$_HERMES_DASHBOARD_STATE_MIGRATOR" --hermes-dir "$HERMES_DIR"
+    return $?
+  fi
+  "$_HERMES_PYTHON" -I "$_HERMES_DASHBOARD_STATE_MIGRATOR" --hermes-dir "$HERMES_DIR"
 }
 
 prepare_hermes_root_runtime_dir() {
@@ -3046,6 +3060,7 @@ prepare_hermes_root_runtime() {
   # gateway-group traversal; no unprivileged service is launched until every
   # config and environment boundary below has passed.
   ensure_hermes_config_root_mode || return 1
+  migrate_legacy_hermes_dashboard_state || return 1
   validate_hermes_env_secret_boundary || return 1
   validate_hermes_runtime_env_secret_boundary || return 1
   refresh_hermes_runtime_config_hashes both adopt || return 1

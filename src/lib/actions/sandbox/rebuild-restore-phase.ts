@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
+import type { SandboxCommandResult } from "../../adapters/sandbox/command-transport";
+import { executeOrdinarySandboxCommand } from "../../adapters/sandbox/ordinary-command";
 import { G, R, YW } from "../../cli/terminal-style";
 import * as sandboxConfig from "../../sandbox/config";
 import { load as loadRegistry } from "../../state/registry/persistence";
@@ -31,6 +33,10 @@ export interface RebuildRestorePhaseInput {
   reconcileManagedDcodeObservability?: boolean;
   runtimeSelection?: OpenShellRuntimeSelection;
   log: RebuildLog;
+  migrateHermesLegacyDashboardState?: (
+    sandboxName: string,
+    runtimeSelection?: OpenShellRuntimeSelection,
+  ) => Promise<SandboxCommandResult | null>;
 }
 
 export interface RebuildRestorePhaseResult {
@@ -43,6 +49,23 @@ const EMPTY_HERMES_OPERATOR_CONFIG_RESTORE: HermesOperatorConfigRestoreReport = 
   restoredKeys: [],
   droppedKeys: [],
 };
+
+const HERMES_DASHBOARD_STATE_MIGRATION_COMMAND =
+  "/opt/hermes/.venv/bin/python3 -I /usr/local/lib/nemoclaw/migrate-hermes-dashboard-state.py --hermes-dir /sandbox/.hermes";
+
+function migrateHermesLegacyDashboardState(
+  sandboxName: string,
+  runtimeSelection?: OpenShellRuntimeSelection,
+): Promise<SandboxCommandResult | null> {
+  return executeOrdinarySandboxCommand(
+    sandboxName,
+    HERMES_DASHBOARD_STATE_MIGRATION_COMMAND,
+    30_000,
+    {
+      ...(runtimeSelection ? { runtimeSelection } : {}),
+    },
+  );
+}
 
 function restoreHermesOperatorConfig(
   sandboxName: string,
@@ -149,6 +172,9 @@ export async function runRebuildRestorePhase(
           targetAgentType,
           ...(targetImageIsCustom ? { allowCustomImageWholeStateFileRestore: true } : {}),
           ...(runtimeSelection ? { runtimeSelection } : {}),
+          ...(targetAgentType === "hermes"
+            ? { restoreLegacyMigrationStateDirs: ["dashboard-home"] }
+            : {}),
         },
         { getSandbox: (name) => loadRegistry().sandboxes[name] ?? null },
       );
@@ -162,14 +188,36 @@ export async function runRebuildRestorePhase(
       `Restore result: success=${restore.success}, restored=${restore.restoredDirs.join(",")}; files=${restore.restoredFiles.join(",")}, failed=${restore.failedDirs.join(",")}; failedFiles=${restore.failedFiles.join(",")}${restore.error ? `; error=${restore.error}` : ""}`,
     );
     restoreSucceeded = restore.success;
+    let hermesDashboardStateMigrationSucceeded = true;
+    if (targetAgentType === "hermes" && restore.success) {
+      const migrate = input.migrateHermesLegacyDashboardState ?? migrateHermesLegacyDashboardState;
+      let migration: SandboxCommandResult | null = null;
+      try {
+        migration = await migrate(sandboxName, runtimeSelection);
+      } catch (error) {
+        log(
+          `Hermes legacy dashboard-state migration transport failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      hermesDashboardStateMigrationSucceeded = migration?.status === 0;
+      log(
+        `Hermes legacy dashboard-state migration: ${hermesDashboardStateMigrationSucceeded ? "complete" : `failed${migration ? ` (exit ${migration.status})` : " (transport unavailable)"}`}`,
+      );
+      if (!hermesDashboardStateMigrationSucceeded) {
+        restoreSucceeded = false;
+        console.error(`  ${YW}Hermes legacy dashboard-state migration failed.${R}`);
+        const detail = migration?.stderr.trim();
+        if (detail) console.error(`  ${detail.slice(0, 500)}`);
+      }
+    }
     hermesOperatorConfigRestore =
-      targetAgentType === "hermes"
+      targetAgentType === "hermes" && hermesDashboardStateMigrationSucceeded
         ? restoreHermesOperatorConfig(sandboxName, backupManifest, log)
         : null;
     if (hermesOperatorConfigRestore && !hermesOperatorConfigRestore.success) {
       restoreSucceeded = false;
     }
-    if (!restore.success) {
+    if (!restore.success || !hermesDashboardStateMigrationSucceeded) {
       if (openClawDoctorWindow) {
         await abortUnregisteredOpenClawPostRestoreDoctor(openClawDoctorWindow);
         openClawDoctorWindow = undefined;

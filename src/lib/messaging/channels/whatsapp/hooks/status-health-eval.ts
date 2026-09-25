@@ -128,9 +128,10 @@ function isParseableTimestamp(value: string | null): value is string {
   return value !== null && Number.isFinite(Date.parse(value));
 }
 
-// A rebuild restores the legacy dashboard session instead of dropping it, so
-// re-pairing alone leaves the sandbox holding two credential sets. Send the
-// operator through `channels remove`, which clears every WhatsApp session path.
+// Successfully started current images migrate this legacy session. If the
+// compatibility probe still sees it, send the operator through the explicit
+// removal flow rather than guessing whether an older image or a migration
+// collision left two credential sets.
 const HERMES_LEGACY_DASHBOARD_SESSION_HINT =
   "Run `nemoclaw <sandbox> channels remove whatsapp` to clear every WhatsApp session path, then `nemoclaw <sandbox> channels add whatsapp`. Pair again from the dashboard so credentials are stored in `/sandbox/.hermes/platforms/whatsapp/session`. Rerun `nemoclaw <sandbox> channels status --channel whatsapp`.";
 

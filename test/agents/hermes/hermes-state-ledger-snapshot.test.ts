@@ -76,7 +76,8 @@ describe("Hermes 0.19 durable state ledgers", () => {
     const hermes = loadAgent("hermes");
 
     expect(hermes.stateDirs).toContain("cron");
-    expect(hermes.stateDirs).toContain("dashboard-home");
+    expect(hermes.nonBackupStateDirs).toContain("dashboard-home");
+    expect(hermes.backupStateDirs).not.toContain("dashboard-home");
     expect(hermes.stateFiles).toEqual(
       expect.arrayContaining([
         { path: "runtime/cron-executions.db", strategy: "sqlite_backup" },

@@ -26,6 +26,7 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "agents/hermes/image-build-probes.py", mode: "100644" },
   { path: "agents/hermes/managed_policy.py", mode: "100644" },
   { path: "agents/hermes/mcp-config-transaction.py", mode: "100755" },
+  { path: "agents/hermes/migrate-dashboard-state.py", mode: "100755" },
   { path: "agents/hermes/patch-auxiliary-token-limit.py", mode: "100755" },
   { path: "agents/hermes/patch-cron-execution-runtime.py", mode: "100755" },
   { path: "agents/hermes/patch-cron-restore-drain.py", mode: "100755" },

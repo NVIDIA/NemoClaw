@@ -319,12 +319,15 @@ export interface RecreatedSandboxRestoreOptions extends SnapshotRestoreOptions {
   allowCustomImageWholeStateFileRestore?: true;
   /** Exact OpenShell target frozen by the enclosing rebuild transaction. */
   runtimeSelection?: OpenShellRuntimeSelection;
+  /** Non-backup legacy directories restored only for an immediate validated migration. */
+  restoreLegacyMigrationStateDirs?: readonly string[];
 }
 
 interface InternalRestoreOptions {
   targetAgentType: string;
   allowCustomImageWholeStateFileRestore?: true;
   runtimeSelection?: OpenShellRuntimeSelection;
+  restoreLegacyMigrationStateDirs?: readonly string[];
   authority?: SnapshotRestoreAuthority;
   validateBeforeMutation?: () => void | Promise<void>;
 }
@@ -2396,6 +2399,9 @@ export async function restoreRecreatedSandboxState(
       ? { allowCustomImageWholeStateFileRestore: true }
       : {}),
     ...(options.runtimeSelection ? { runtimeSelection: options.runtimeSelection } : {}),
+    ...(options.restoreLegacyMigrationStateDirs
+      ? { restoreLegacyMigrationStateDirs: options.restoreLegacyMigrationStateDirs }
+      : {}),
     ...(options.authority ? { authority: options.authority } : {}),
     ...(options.validateBeforeMutation
       ? { validateBeforeMutation: options.validateBeforeMutation }
@@ -2504,6 +2510,15 @@ async function restoreSandboxStateInternal(
   const isTargetBackupDir = (dirName: string): boolean =>
     !isTargetNonBackupDir(dirName) &&
     isAllowedDiscoveredStateDir(dirName, targetBackupDirs, targetBackupPrefixes);
+  const restoreLegacyMigrationStateDirs = new Set(options.restoreLegacyMigrationStateDirs ?? []);
+  const invalidLegacyMigrationDirs = [...restoreLegacyMigrationStateDirs].filter(
+    (dirName) => !isTargetNonBackupDir(dirName),
+  );
+  if (invalidLegacyMigrationDirs.length > 0) {
+    return failRestoreContract(
+      `Legacy migration directories are not declared non-backup state for target agent '${options.targetAgentType}': ${invalidLegacyMigrationDirs.join(", ")}`,
+    );
+  }
   const undeclaredSnapshotDirs = manifest.stateDirs.filter(
     (dirName) => !isTargetBackupDir(dirName) && !isTargetNonBackupDir(dirName),
   );
@@ -2512,7 +2527,9 @@ async function restoreSandboxStateInternal(
       `Backup state directories are not declared by target agent '${options.targetAgentType}': ${undeclaredSnapshotDirs.join(", ")}`,
     );
   }
-  const skippedNonBackupDirs = localDirs.filter(isTargetNonBackupDir);
+  const skippedNonBackupDirs = localDirs.filter(
+    (dirName) => isTargetNonBackupDir(dirName) && !restoreLegacyMigrationStateDirs.has(dirName),
+  );
   if (skippedNonBackupDirs.length > 0) {
     _log(`Skipping non-backup state dirs from restore: [${skippedNonBackupDirs.join(",")}]`);
     for (const d of skippedNonBackupDirs) {

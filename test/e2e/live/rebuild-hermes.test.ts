@@ -55,7 +55,7 @@ test(
       boundary: "exact managed Hermes rebuild state restoration and native readiness",
       contracts: [
         "rebuild uses the published exact managed image without stale controller fixtures",
-        "Hermes memory, native user plugin, lazy package state, operator config, and legacy dashboard session state survive the rebuild",
+        "Hermes memory, native user plugin, lazy package state, operator config, and migrated dashboard session state survive the rebuild",
         "the native Hermes health endpoint is ready after restore",
       ],
     });
@@ -95,8 +95,9 @@ test(
     progress.phase("write durable Hermes state");
     const marker = `rebuild-hermes-${Date.now()}`;
     const operatorMaxTokens = 24_577;
-    const legacyDashboardSession =
-      "/sandbox/.hermes/dashboard-home/platforms/whatsapp/session/creds.json";
+    const legacyDashboardHome = "/sandbox/.hermes/profiles/dashboard-home";
+    const legacyDashboardSession = `${legacyDashboardHome}/platforms/whatsapp/session/creds.json`;
+    const nativeDashboardSession = "/sandbox/.hermes/platforms/whatsapp/session/creds.json";
     await host.nemoclaw(
       [
         SANDBOX_NAME,
@@ -162,7 +163,9 @@ test(
       [
         "set -eu",
         assertOperatorConfig,
-        `/opt/hermes/.venv/bin/python -c 'from pathlib import Path; import sys; sys.exit(${JSON.stringify(marker)} not in Path("${legacyDashboardSession}").read_text())'`,
+        `/opt/hermes/.venv/bin/python -c 'from pathlib import Path; import sys; sys.exit(${JSON.stringify(marker)} not in Path("${nativeDashboardSession}").read_text())'`,
+        `test ! -e '${legacyDashboardHome}'`,
+        "test ! -e /sandbox/.hermes/dashboard-home",
         'marker="$(cat /sandbox/.hermes/memories/.rebuild-state-marker)"',
         "HERMES_HOME=/sandbox/.hermes hermes plugins list --plain --user >/tmp/e2e-native-plugins-after-rebuild",
         "grep -Fq 'e2e-native-plugin' /tmp/e2e-native-plugins-after-rebuild",

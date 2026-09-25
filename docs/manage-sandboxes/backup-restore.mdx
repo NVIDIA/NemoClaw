@@ -66,7 +66,10 @@ A rebuild does not repair the damaged tree, because each rebuild restores the tr
 <AgentOnly variant="hermes">
 Hermes snapshots include `SOUL.md`, user-created named profiles under `.hermes/profiles/`, the SQLite database behind `.hermes/state.db`, and the default kanban board in `.hermes/kanban.db`.
 The gateway, CLI, TUI, and Web Dashboard share the native `.hermes/config.yaml`; snapshots exclude that NemoClaw-managed file and `.hermes/.env`.
-Rebuild restore treats `.hermes/profiles/` as native agent-owned state and preserves every named profile, including an older `.hermes/profiles/dashboard-home/`; the dashboard no longer reads that reserved profile.
+Rebuild restore treats `.hermes/profiles/` as native agent-owned state and preserves user-created named profiles.
+On startup, NemoClaw migrates an older reserved `.hermes/profiles/dashboard-home/` into the shared native home, including a legacy WhatsApp session, and removes the retired profile.
+Generated shadow `config.yaml` and `.env` files are discarded instead of replacing the native configuration.
+Unsafe links or conflicting native and legacy files stop startup without deleting either copy.
 The default-profile snapshot also includes cron execution history in `.hermes/runtime/cron-executions.db` and Discord replay state in `.hermes/gateway/discord_message_recovery.db`.
 NemoClaw captures cron job definitions from `.hermes/cron` and user-authored cron scripts from `.hermes/scripts` as directory state.
 NemoClaw uses SQLite's online backup API and restores these databases through SQLite instead of copying live raw database files.
@@ -235,7 +238,10 @@ If an independent Hermes operator drain exists, recovery leaves it active.
 After recovery succeeds, rerun `rebuild` with the same replacement settings so NemoClaw can retire the replacement journal.
 </Warning>
 
-After a rebuild restores `profiles`, NemoClaw preserves that native agent-owned directory unchanged. An older `profiles/dashboard-home` profile is inactive compatibility state, but rebuild does not delete it. If it contains legacy WhatsApp credentials, use `$$nemoclaw <sandbox> channels remove whatsapp` to clear the compatibility sessions before pairing again.
+After a rebuild restores `profiles`, NemoClaw preserves user-created named profiles unchanged.
+The reserved `profiles/dashboard-home` name is a one-time migration source rather than durable profile state.
+Startup moves safe legacy files into the native Hermes home and retires that directory.
+If migration reports a collision or unsafe path, inspect both copies from a trusted recovery environment; NemoClaw leaves them intact instead of choosing one.
 
 </AgentOnly>
 <AgentOnly variant="deepagents">

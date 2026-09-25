@@ -63,7 +63,9 @@ $$nemoclaw "$SANDBOX" download /sandbox/.hermes/platforms/ "$BACKUP_DIR/platform
 
 Do not copy `/sandbox/.hermes/config.yaml` or `/sandbox/.hermes/.env` between sandboxes.
 The gateway, CLI, TUI, and Web Dashboard share those native files, and NemoClaw recreates their managed route and credential placeholders for the destination sandbox.
-The retired reserved profile at `.hermes/profiles/dashboard-home/` is not active dashboard state, but rebuild preserves it with other native profiles. Omit it from a manual transfer unless you intentionally need its contents; use `$$nemoclaw <sandbox> channels remove whatsapp` to clear compatibility sessions from an existing sandbox.
+The retired reserved profile at `.hermes/profiles/dashboard-home/` is a one-time migration source, not active dashboard state.
+Do not create or manually transfer that directory.
+Startup migrates safe legacy files and WhatsApp session state into the native Hermes home, discards generated shadow configuration, and refuses conflicting or linked state without deleting it.
 
 </AgentOnly>
 <AgentOnly variant="deepagents">

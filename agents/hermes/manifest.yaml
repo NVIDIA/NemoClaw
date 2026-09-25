@@ -92,9 +92,11 @@ state_dirs:
   - profiles
   - cache
   - pairing
-  # Legacy pre-#7200 dashboard state is no longer read or written at runtime,
-  # but remains rebuild-durable until an explicit state migration retires it.
-  - dashboard-home
+  # Retired pre-#7200 dashboard state is accepted only as a non-backup
+  # migration source. Startup moves safe contents into the native Hermes home
+  # and removes the legacy directory; new snapshots never perpetuate it.
+  - path: dashboard-home
+    backup: false
   # Hermes' WhatsApp bridge stores QR-paired session credentials under
   # ~/.hermes/platforms/whatsapp/session. Preserve the parent so rebuilds
   # keep the in-sandbox pairing state without re-scanning.
