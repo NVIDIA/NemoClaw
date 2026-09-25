@@ -590,7 +590,6 @@ function dockerClientBinding(
 ): DockerClientBinding {
   const configArgs = ["--config", dockerConfigPath(env)] as const;
   const tls = dockerTlsArgs(env);
-  const explicitContext = exactDockerValue(env.DOCKER_CONTEXT, "DOCKER_CONTEXT");
   const explicitHost = exactDockerValue(env.DOCKER_HOST, "DOCKER_HOST");
   if (explicitHost) {
     const host = dockerHost(explicitHost);
@@ -599,6 +598,7 @@ function dockerClientBinding(
     return qualifiedDockerClientBinding(operation, endpointArgs, host, host, executable);
   }
 
+  const explicitContext = exactDockerValue(env.DOCKER_CONTEXT, "DOCKER_CONTEXT");
   let context: string;
   if (explicitContext) {
     context = dockerContextName(explicitContext, "DOCKER_CONTEXT");

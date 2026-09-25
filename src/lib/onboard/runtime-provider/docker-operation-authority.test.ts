@@ -87,34 +87,37 @@ describe("Docker operation authority", () => {
     ]);
   });
 
-  it("binds DOCKER_HOST when both Docker selectors are set (#12223)", () => {
-    const capture = contextCapture("ssh://ignored-context.example.test");
-    const authority = createDockerOperationAuthority(
-      "sandbox-lifecycle",
-      {
-        DOCKER_CONFIG: "/tmp/nemoclaw-docker",
-        DOCKER_CONTEXT: "stale-context",
-        DOCKER_HOST: "unix:///tmp/explicit-docker.sock",
-      },
-      capture,
-    );
+  it.each([" stale-context ", "stale\u0007context"])(
+    "binds DOCKER_HOST without validating the unused context %j (#12223)",
+    (dockerContext) => {
+      const capture = contextCapture("ssh://ignored-context.example.test");
+      const authority = createDockerOperationAuthority(
+        "sandbox-lifecycle",
+        {
+          DOCKER_CONFIG: "/tmp/nemoclaw-docker",
+          DOCKER_CONTEXT: dockerContext,
+          DOCKER_HOST: "unix:///tmp/explicit-docker.sock",
+        },
+        capture,
+      );
 
-    expect(authority.engine.capture(["info"]).status).toBe(0);
-    expect(capture.mock.calls.at(-1)?.[1]).toEqual([
-      "--config",
-      "/tmp/nemoclaw-docker",
-      "--host",
-      "unix:///tmp/explicit-docker.sock",
-      "info",
-    ]);
-    expect(dockerOperationCommandArguments(authority, ["ps"])).toEqual([
-      "--config",
-      "/tmp/nemoclaw-docker",
-      "--host",
-      "unix:///tmp/explicit-docker.sock",
-      "ps",
-    ]);
-  });
+      expect(authority.engine.capture(["info"]).status).toBe(0);
+      expect(capture.mock.calls.at(-1)?.[1]).toEqual([
+        "--config",
+        "/tmp/nemoclaw-docker",
+        "--host",
+        "unix:///tmp/explicit-docker.sock",
+        "info",
+      ]);
+      expect(dockerOperationCommandArguments(authority, ["ps"])).toEqual([
+        "--config",
+        "/tmp/nemoclaw-docker",
+        "--host",
+        "unix:///tmp/explicit-docker.sock",
+        "ps",
+      ]);
+    },
+  );
 
   it("includes operation, engine, and executable-qualified authority in the stable binding digest", () => {
     const capture = contextCapture("ssh://nvidia@spark.example.test");
