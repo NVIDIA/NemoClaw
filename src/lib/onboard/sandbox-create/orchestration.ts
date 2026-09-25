@@ -1254,6 +1254,171 @@ export async function runSandboxCreateWithIdentityVerification<
   return result;
 }
 
+/** Build the verified-create callback whose ordering gates agent release and publication. */
+export function createVerifiedSandboxStartupEffects(input: {
+  readonly sandboxName: string;
+  readonly gatewayName: string;
+  readonly managedStartupRootApplyRequest:
+    | import("../managed-startup/root-apply").ManagedStartupRootApplyRequest
+    | null;
+  readonly runtimeProvider: import("../runtime-provider/contract").RuntimeProviderBundle | null;
+  readonly managedBootstrapIdentity: string | null;
+  readonly resumingVerifiedCreate: boolean;
+  readonly managedWorkloadOnboard: Pick<
+    SandboxCreateOrchestrationRuntime["managedWorkloadOnboard"],
+    | "applyProviderManagedStartupRootRequest"
+    | "finalizeProviderManagedStartupSharedState"
+    | "releaseProviderManagedStartupHold"
+    | "resumeProviderManagedStartupTrust"
+    | "refreshProviderManagedStartupTrust"
+  >;
+  readonly revalidateVerifiedCreateIdentity: (
+    boundary: VerifiedSandboxCreateBoundary,
+    operation: string,
+  ) => void;
+  readonly onProtocol: (protocol: ProviderManagedStartupTransaction["protocol"]) => void;
+  readonly onFinished: () => void;
+  readonly runDeferredProviderEffects?: (
+    context: VerifiedSandboxCreateEffectsContext,
+  ) => Promise<void>;
+}) {
+  const {
+    sandboxName,
+    gatewayName,
+    managedStartupRootApplyRequest,
+    runtimeProvider,
+    managedBootstrapIdentity,
+    resumingVerifiedCreate,
+    managedWorkloadOnboard,
+    revalidateVerifiedCreateIdentity,
+    onProtocol,
+    onFinished,
+    runDeferredProviderEffects,
+  } = input;
+  if (!managedStartupRootApplyRequest && !runDeferredProviderEffects) return undefined;
+  return async (
+    identity: import("../sandbox-gpu-create-flow").CreatedSandboxIdentity,
+    _exactIdentity: string,
+    boundary: VerifiedSandboxCreateBoundary,
+    beforeEffectsResult?: unknown,
+  ): Promise<void> => {
+    const context: VerifiedSandboxCreateEffectsContext = {
+      ...boundary,
+      revalidateSandboxIdentity: (operation) =>
+        revalidateVerifiedCreateIdentity(boundary, operation),
+    };
+    if (managedStartupRootApplyRequest) {
+      const expectedContainerId =
+        identity.route === "compatibility" ? String(beforeEffectsResult ?? "") : null;
+      if (
+        identity.route === "compatibility" &&
+        beforeEffectsResult !== undefined &&
+        !/^[a-f0-9]{64}$/u.test(expectedContainerId ?? "")
+      ) {
+        throw new Error("Compatibility startup has no exact replacement runtime authority.");
+      }
+      context.revalidateSandboxIdentity(
+        `applying managed startup profile for sandbox '${sandboxName}'`,
+      );
+      if (!managedBootstrapIdentity) {
+        throw new Error("Managed startup launch has no exact bootstrap identity.");
+      }
+      if (!runtimeProvider) {
+        throw new Error("Managed startup launch has no selected runtime provider.");
+      }
+      const managedStartupRuntimeProvider = runtimeProvider;
+      if (resumingVerifiedCreate) {
+        await managedWorkloadOnboard.resumeProviderManagedStartupTrust({
+          sandboxName,
+          sandboxId: identity.sandboxId,
+          gatewayName: gatewayName,
+          corporateCa: managedStartupRootApplyRequest.corporateCaB64 !== null,
+          route: identity.route,
+        });
+      }
+      console.log("  Applying managed startup profile to the verified sandbox...");
+      let managedStartupTransaction: ReturnType<
+        typeof managedWorkloadOnboard.applyProviderManagedStartupRootRequest
+      >;
+      try {
+        managedStartupTransaction = managedWorkloadOnboard.applyProviderManagedStartupRootRequest({
+          runtimeProvider: managedStartupRuntimeProvider,
+          sandboxName,
+          sandboxId: identity.sandboxId,
+          bootstrapIdentity: managedBootstrapIdentity,
+          request: managedStartupRootApplyRequest,
+          ...(expectedContainerId ? { expectedContainerId } : {}),
+        });
+        onProtocol(managedStartupTransaction?.protocol ?? "identity-bound");
+      } catch (error) {
+        console.error(
+          `  Managed startup root apply failed: ${
+            error instanceof Error ? error.message : "unknown root apply failure"
+          }`,
+        );
+        throw error;
+      }
+      console.log("  ✓ Applied the managed startup profile");
+      if (managedStartupTransaction) {
+        console.log("  Committing managed startup shared state...");
+        const sharedState = managedWorkloadOnboard.finalizeProviderManagedStartupSharedState({
+          runtimeProvider: managedStartupRuntimeProvider,
+          sandboxName,
+          sandboxId: identity.sandboxId,
+          transaction: managedStartupTransaction,
+          supervisorReady: true,
+        });
+        if (!sharedState.supervisorReady || sharedState.failure) {
+          console.error(
+            `  Managed startup shared-state commit failed: ${
+              sharedState.failure?.message ?? "startup supervisor was not ready"
+            }`,
+          );
+          throw sharedState.failure ?? new Error("Managed startup shared-state commit failed.");
+        }
+        console.log("  ✓ Committed managed startup shared state");
+      }
+      await managedWorkloadOnboard.refreshProviderManagedStartupTrust({
+        runtimeProvider: managedStartupRuntimeProvider,
+        sandboxName,
+        sandboxId: identity.sandboxId,
+        gatewayName: gatewayName,
+        transaction: managedStartupTransaction,
+        corporateCa: managedStartupRootApplyRequest.corporateCaB64 !== null,
+        route: identity.route,
+        ...(expectedContainerId ? { expectedContainerId } : {}),
+      });
+      if (managedStartupTransaction) {
+        try {
+          releaseManagedStartupHoldWithRetry(() =>
+            managedWorkloadOnboard.releaseProviderManagedStartupHold({
+              runtimeProvider: managedStartupRuntimeProvider,
+              sandboxName,
+              sandboxId: identity.sandboxId,
+              transaction: managedStartupTransaction,
+              profileFingerprint: managedStartupRootApplyRequest.profileFingerprint,
+            }),
+          );
+        } catch (error) {
+          console.error(
+            `  Managed startup hold release failed after commit: ${
+              error instanceof Error ? error.message : "unknown release failure"
+            }`,
+          );
+          throw error;
+        }
+        console.log("  ✓ Released the managed startup hold");
+      }
+      onFinished();
+      context.revalidateSandboxIdentity(
+        `confirming managed startup profile for sandbox '${sandboxName}'`,
+      );
+      console.log("  ✓ Revalidated the managed startup sandbox identity");
+    }
+    if (runDeferredProviderEffects) await runDeferredProviderEffects(context);
+  };
+}
+
 export function hasManagedMcpRebuildHandoff(
   createIntent: SandboxCreateIntent | null | undefined,
 ): boolean {
@@ -3049,133 +3214,23 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           ),
         retainedSandboxRecoveryRetryOwner: postCreateRecoveryRetryOwner,
         cleanupTemporarySources: cleanupSandboxCreateSources,
-        runVerifiedCreateEffects:
-          managedStartupRootApplyRequest || runDeferredProviderEffects
-            ? async (identity, _exactIdentity, boundary, beforeEffectsResult) => {
-                const context: VerifiedSandboxCreateEffectsContext = {
-                  ...boundary,
-                  revalidateSandboxIdentity: (operation) =>
-                    revalidateVerifiedCreateIdentity(boundary, operation),
-                };
-                if (managedStartupRootApplyRequest) {
-                  const expectedContainerId =
-                    identity.route === "compatibility" ? String(beforeEffectsResult ?? "") : null;
-                  if (
-                    identity.route === "compatibility" &&
-                    beforeEffectsResult !== undefined &&
-                    !/^[a-f0-9]{64}$/u.test(expectedContainerId ?? "")
-                  ) {
-                    throw new Error(
-                      "Compatibility startup has no exact replacement runtime authority.",
-                    );
-                  }
-                  context.revalidateSandboxIdentity(
-                    `applying managed startup profile for sandbox '${sandboxName}'`,
-                  );
-                  if (!managedBootstrapIdentity) {
-                    throw new Error("Managed startup launch has no exact bootstrap identity.");
-                  }
-                  if (!managedWorkloadRuntime.runtimeProvider) {
-                    throw new Error("Managed startup launch has no selected runtime provider.");
-                  }
-                  const managedStartupRuntimeProvider = managedWorkloadRuntime.runtimeProvider;
-                  if (resumeVerifiedCreateInput) {
-                    await managedWorkloadOnboard.resumeProviderManagedStartupTrust({
-                      sandboxName,
-                      sandboxId: identity.sandboxId,
-                      gatewayName: GATEWAY_NAME,
-                      corporateCa: managedStartupRootApplyRequest.corporateCaB64 !== null,
-                      route: identity.route,
-                    });
-                  }
-                  console.log("  Applying managed startup profile to the verified sandbox...");
-                  let managedStartupTransaction: ReturnType<
-                    typeof managedWorkloadOnboard.applyProviderManagedStartupRootRequest
-                  >;
-                  try {
-                    managedStartupTransaction =
-                      managedWorkloadOnboard.applyProviderManagedStartupRootRequest({
-                        runtimeProvider: managedStartupRuntimeProvider,
-                        sandboxName,
-                        sandboxId: identity.sandboxId,
-                        bootstrapIdentity: managedBootstrapIdentity,
-                        request: managedStartupRootApplyRequest,
-                        ...(expectedContainerId ? { expectedContainerId } : {}),
-                      });
-                    managedStartupProtocol =
-                      managedStartupTransaction?.protocol ?? "identity-bound";
-                  } catch (error) {
-                    console.error(
-                      `  Managed startup root apply failed: ${
-                        error instanceof Error ? error.message : "unknown root apply failure"
-                      }`,
-                    );
-                    throw error;
-                  }
-                  console.log("  ✓ Applied the managed startup profile");
-                  if (managedStartupTransaction) {
-                    console.log("  Committing managed startup shared state...");
-                    const sharedState =
-                      managedWorkloadOnboard.finalizeProviderManagedStartupSharedState({
-                        runtimeProvider: managedStartupRuntimeProvider,
-                        sandboxName,
-                        sandboxId: identity.sandboxId,
-                        transaction: managedStartupTransaction,
-                        supervisorReady: true,
-                      });
-                    if (!sharedState.supervisorReady || sharedState.failure) {
-                      console.error(
-                        `  Managed startup shared-state commit failed: ${
-                          sharedState.failure?.message ?? "startup supervisor was not ready"
-                        }`,
-                      );
-                      throw (
-                        sharedState.failure ??
-                        new Error("Managed startup shared-state commit failed.")
-                      );
-                    }
-                    console.log("  ✓ Committed managed startup shared state");
-                  }
-                  await managedWorkloadOnboard.refreshProviderManagedStartupTrust({
-                    runtimeProvider: managedStartupRuntimeProvider,
-                    sandboxName,
-                    sandboxId: identity.sandboxId,
-                    gatewayName: GATEWAY_NAME,
-                    transaction: managedStartupTransaction,
-                    corporateCa: managedStartupRootApplyRequest.corporateCaB64 !== null,
-                    route: identity.route,
-                    ...(expectedContainerId ? { expectedContainerId } : {}),
-                  });
-                  if (managedStartupTransaction) {
-                    try {
-                      releaseManagedStartupHoldWithRetry(() =>
-                        managedWorkloadOnboard.releaseProviderManagedStartupHold({
-                          runtimeProvider: managedStartupRuntimeProvider,
-                          sandboxName,
-                          sandboxId: identity.sandboxId,
-                          transaction: managedStartupTransaction,
-                          profileFingerprint: managedStartupRootApplyRequest.profileFingerprint,
-                        }),
-                      );
-                    } catch (error) {
-                      console.error(
-                        `  Managed startup hold release failed after commit: ${
-                          error instanceof Error ? error.message : "unknown release failure"
-                        }`,
-                      );
-                      throw error;
-                    }
-                    console.log("  ✓ Released the managed startup hold");
-                  }
-                  managedBootstrapCreateFinished = true;
-                  context.revalidateSandboxIdentity(
-                    `confirming managed startup profile for sandbox '${sandboxName}'`,
-                  );
-                  console.log("  ✓ Revalidated the managed startup sandbox identity");
-                }
-                if (runDeferredProviderEffects) await runDeferredProviderEffects(context);
-              }
-            : undefined,
+        runVerifiedCreateEffects: createVerifiedSandboxStartupEffects({
+          sandboxName,
+          gatewayName: GATEWAY_NAME,
+          managedStartupRootApplyRequest,
+          runtimeProvider: managedWorkloadRuntime.runtimeProvider,
+          managedBootstrapIdentity,
+          resumingVerifiedCreate: Boolean(resumeVerifiedCreateInput),
+          managedWorkloadOnboard,
+          revalidateVerifiedCreateIdentity,
+          onProtocol: (protocol) => {
+            managedStartupProtocol = protocol;
+          },
+          onFinished: () => {
+            managedBootstrapCreateFinished = true;
+          },
+          runDeferredProviderEffects,
+        }),
         create: async (verifyCreatedSandbox) => {
           const created = await sandboxGpuCreateFlow.runSandboxGpuCreateFlow(
             {
