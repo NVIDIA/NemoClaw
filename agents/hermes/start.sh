@@ -2849,11 +2849,15 @@ publish_hermes_root_runtime_marker() {
 }
 
 prepare_hermes_root_runtime() {
+  # The native dashboard can tighten its shared home to 0700 before it exits.
+  # Restore only the descriptor-verified root directory before validators need
+  # gateway-group traversal; no unprivileged service is launched until every
+  # config and environment boundary below has passed.
+  ensure_hermes_config_root_mode || return 1
   validate_hermes_env_secret_boundary || return 1
   validate_hermes_runtime_env_secret_boundary || return 1
   refresh_hermes_runtime_config_hashes both adopt || return 1
   prepare_hermes_lazy_dependencies || return 1
-  ensure_hermes_config_root_mode || return 1
   ensure_hermes_runtime_api_server_key both || return 1
   validate_hermes_env_secret_boundary || return 1
   validate_hermes_runtime_env_secret_boundary || return 1

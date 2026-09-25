@@ -222,6 +222,7 @@ function runHermesEnvSecretBoundary(opts: {
       extractShellFunctionFromSource(src, "validate_hermes_env_secret_boundary"),
       `HERMES_DIR=${shellQuote(hermesHome)}`,
       `_HERMES_BOUNDARY_VALIDATOR=${shellQuote(SECRET_BOUNDARY_VALIDATOR_SCRIPT)}`,
+      "ensure_hermes_config_root_mode() { :; }",
       ...boundaryInvocation,
     ].join("\n"),
     { mode: 0o700 },
@@ -365,8 +366,8 @@ function runHermesRootStartupMutableRootPreflight() {
       'refresh_hermes_runtime_config_hashes() { printf "adopt mode=%s args=%s\\n" "$(dir_mode)" "$*"; }',
       'prepare_hermes_lazy_dependencies() { printf "lazy mode=%s\\n" "$(dir_mode)"; }',
       'ensure_hermes_runtime_api_server_key() { printf "api-key mode=%s\\n" "$(dir_mode)"; }',
-      "validate_hermes_env_secret_boundary() { :; }",
-      "validate_hermes_runtime_env_secret_boundary() { :; }",
+      'validate_hermes_env_secret_boundary() { printf "env-boundary mode=%s\\n" "$(dir_mode)"; }',
+      'validate_hermes_runtime_env_secret_boundary() { printf "runtime-boundary mode=%s\\n" "$(dir_mode)"; }',
       "refresh_hermes_provider_placeholders() { :; }",
       "configure_messaging_channels() { :; }",
       'retry_tirith_marker_if_needed() { printf "tirith-state=%s\\n" "$TIRITH_RETRY_MARKER_CLEARED"; }',
@@ -1452,12 +1453,14 @@ describe("agents/hermes/start.sh Tirith marker bootstrap", () => {
     },
   );
 
-  it("repairs the Hermes config root before strict runtime config updates", () => {
+  it("repairs the Hermes config root before runtime config inspection", () => {
     const run = runHermesRootStartupMutableRootPreflight();
 
     expect(run.result.status).toBe(0);
-    expect(run.result.stdout).toContain("adopt mode=750 args=both adopt");
-    expect(run.result.stdout).toContain("lazy mode=750");
+    expect(run.result.stdout).toContain("env-boundary mode=3770");
+    expect(run.result.stdout).toContain("runtime-boundary mode=3770");
+    expect(run.result.stdout).toContain("adopt mode=3770 args=both adopt");
+    expect(run.result.stdout).toContain("lazy mode=3770");
     expect(run.result.stdout).toContain("api-key mode=3770");
     expect(run.result.stdout).toContain("tirith-state=0");
     expect(run.hermesDirMode).toBe("3770");
