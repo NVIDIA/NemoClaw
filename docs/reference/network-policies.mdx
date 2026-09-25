@@ -127,9 +127,16 @@ During onboarding, the wizard prompts for a policy tier that determines the defa
 | Tier | Presets included | Description |
 | --- | --- | --- |
 | Restricted | No tier defaults | Starts from the baseline policy. Web search or messaging integrations selected earlier can still suggest their required presets; deselect them during policy review for baseline-only access. Restricted suppresses other agent-required additions; reapply them later with `policy add` only after reviewing the additional egress. |
-| Balanced (default) | `npm`, `pypi`, `huggingface`, `brew`, `brave`; selected `tavily` web search access when supported | Full dev tooling. Fresh onboarding filters web-search egress to the provider selected for the active agent. No messaging platform access. Apply the `weather` preset explicitly if your agent needs read-only weather lookups. |
+| Balanced (default) | `npm`, `pypi`, `huggingface`, `brew-balanced`, `brave`; selected `tavily` web search access when supported | Full dev tooling. Fresh onboarding filters web-search egress to the provider selected for the active agent. No messaging platform access. Apply the `weather` preset explicitly if your agent needs read-only weather lookups. |
 | Open | `npm`, `pypi`, `huggingface`, `brew`, `brave`, `weather`, `public-reference`, `slack`, `discord`, `telegram`, `wechat` (experimental), `whatsapp` (experimental), `teams` (experimental), `jira`, `outlook`; selected `tavily` web search access when supported | Broad access across third-party services including messaging, productivity, weather, and public-reference APIs. Fresh onboarding filters web-search egress to the provider selected for the active agent. |
 | Personal | `personal-open-internet` (mandatory) | Lets every sandbox binary open TCP connections to public and private address ranges on destination ports `80` and `443`. The broad route replaces overlapping web endpoints while preserving non-web policy. Unspecified, loopback, and link-local ranges remain blocked. |
+
+Balanced uses `brew-balanced` to allow only GET and HEAD to `raw.githubusercontent.com` for the preset's binaries.
+Open retains unrestricted raw GitHub access through `brew`, and Personal retains its broad web policy.
+Reselecting Balanced's suggested presets preserves an existing `brew` grant, including its unrestricted raw GitHub access.
+Adding `brew-balanced` does not narrow that broader grant.
+To narrow it, explicitly remove `brew` and apply `brew-balanced`.
+Resuming onboarding reapplies the saved selection; skipping optional setup preserves existing grants.
 
 When Personal is selected or carried forward, the `personal-open-internet` preset is mandatory for every agent and every onboarding entry point. Interactive choices, `NEMOCLAW_POLICY_MODE=custom`, and `NEMOCLAW_POLICY_MODE=skip` control only additional presets; they cannot deselect, skip, or replace Personal's required web authority.
 

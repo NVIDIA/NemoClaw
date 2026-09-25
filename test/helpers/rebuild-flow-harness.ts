@@ -64,6 +64,7 @@ export const portableRetirementAuthority = requireDist(
 export const portableAgentLifecycle = requireDist(
   "../../onboard/experimental/portable-agent-lifecycle.js",
 );
+export const commandTransport = requireDist("../../adapters/sandbox/command-transport.js");
 export const processRecovery = requireDist("./process-recovery.js");
 export const openClawLifecycle = requireDist(
   "./runtime/openclaw-lifecycle.js",
@@ -71,6 +72,7 @@ export const openClawLifecycle = requireDist(
 export const { rebuildOnboardDependencies } = requireDist("./rebuild-onboard-dependencies.js");
 export const rebuildCustomImagePreflight = requireDist("./rebuild-custom-image-preflight.js");
 export const rebuildFlowHelpers = requireDist("./rebuild-flow-helpers.js");
+export const snapshotBackup = requireDist("./snapshot/backup-authority.js");
 export const rebuildInference = requireDist("./inference-invocation-probe.js");
 export const rebuildManagedImage = requireDist("./rebuild-managed-image-preflight.js");
 export const rebuildMessagingConflict = requireDist("./rebuild-messaging-conflict-preflight.js");

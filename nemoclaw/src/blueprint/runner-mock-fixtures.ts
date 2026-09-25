@@ -42,14 +42,14 @@ export function createRunnerFsStore(): RunnerFsStore {
 }
 
 function missingEntry(path: string): never {
-  throw new Error(`ENOENT: ${path}`);
+  throw Object.assign(new Error(`ENOENT: ${path}`), { code: "ENOENT" });
 }
 
 /** Behavior options for inMemoryFsMethods. */
 export interface InMemoryFsOptions {
   /** Canonical-path overrides consulted by realpathSync before the store. */
   realpaths?: Map<string, string>;
-  /** Wrapper applied to mutating methods so tests can track calls (pass vi.fn). */
+  /** Wrapper for mutations and directory reads so tests can track calls (pass vi.fn). */
   spy?: <T extends (...args: never[]) => unknown>(fn: T) => T;
 }
 
@@ -92,7 +92,7 @@ export function inMemoryFsMethods(store: Map<string, RunnerFsEntry>, options?: I
     unlinkSync: spy((target: string) => {
       if (!store.delete(target)) return missingEntry(target);
     }),
-    readdirSync: (p: string) => {
+    readdirSync: spy((p: string) => {
       const prefix = p.endsWith("/") ? p : `${p}/`;
       const entries = new Set(
         [...store.keys()]
@@ -101,7 +101,7 @@ export function inMemoryFsMethods(store: Map<string, RunnerFsEntry>, options?: I
           .filter((first): first is string => Boolean(first)),
       );
       return entries.size === 0 && !store.has(p) ? missingEntry(p) : [...entries].sort();
-    },
+    }),
     realpathSync: (p: string) => {
       const resolved = resolve(p);
       const mapped = options?.realpaths?.get(resolved);

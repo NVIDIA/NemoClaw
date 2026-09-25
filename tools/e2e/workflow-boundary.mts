@@ -774,6 +774,7 @@ const LIVE_E2E_OWNING_FILE_JOBS = new Map<string, readonly string[]>([
   ["test/e2e/live/hermes-gpu-startup-proof.ts", ["hermes-gpu-startup"]],
   ["test/helpers/openshell-gateway-start-output.ts", ["hermes-gpu-startup"]],
   ["test/helpers/openshell-components.ts", ["mcp-bridge"]],
+  ["test/e2e/live/openclaw-stopped-recovery.ts", ["mcp-bridge"]],
   ["test/e2e/live/openshell-driver-config-test-wrapper.ts", ["mcp-bridge"]],
 ]);
 
