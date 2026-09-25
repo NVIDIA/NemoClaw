@@ -12,7 +12,8 @@ const METADATA_TIMEOUT_MS = 5_000;
 const EXECUTION_PROOF_TIMEOUT_SECONDS = 15;
 const EXECUTION_PROOF_TIMEOUT_MS = EXECUTION_PROOF_TIMEOUT_SECONDS * 1_000;
 const EXECUTION_PROOF_SUPERVISOR_TIMEOUT_MS = EXECUTION_PROOF_TIMEOUT_MS + 2_000;
-const EXECUTION_PROOF_KILL_AFTER = "250ms";
+const EXECUTION_PROOF_SYSTEMD_KILL_AFTER = "250ms";
+const EXECUTION_PROOF_TIMEOUT_KILL_AFTER = "0.25s";
 const EXECUTION_FAILURE_DETAIL_LIMIT = 240;
 const SYSTEMD_RUN_TIMEOUT_RESULT = /^\s*Finished with result: timeout\s*$/mu;
 const TIMEOUT_EXIT_CODES = new Set([124, 137]);
@@ -392,7 +393,7 @@ function runServiceUserProof(
       `--uid=${serviceUser}`,
       "--property=KillMode=control-group",
       `--property=RuntimeMaxSec=${String(EXECUTION_PROOF_TIMEOUT_SECONDS)}s`,
-      `--property=TimeoutStopSec=${EXECUTION_PROOF_KILL_AFTER}`,
+      `--property=TimeoutStopSec=${EXECUTION_PROOF_SYSTEMD_KILL_AFTER}`,
       "--property=SendSIGKILL=yes",
       executablePath,
       "--version",
@@ -417,7 +418,7 @@ function runBoundedDirectServiceUserProof(
     [
       "/usr/bin/timeout",
       "--signal=TERM",
-      `--kill-after=${EXECUTION_PROOF_KILL_AFTER}`,
+      `--kill-after=${EXECUTION_PROOF_TIMEOUT_KILL_AFTER}`,
       `${String(EXECUTION_PROOF_TIMEOUT_SECONDS)}s`,
       ...commandPrefix(options.sudoPrefix),
       "-u",

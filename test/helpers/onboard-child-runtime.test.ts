@@ -104,7 +104,7 @@ describe("onboard child Ollama execution proof runner", () => {
         [
           "/usr/bin/timeout",
           "--signal=TERM",
-          "--kill-after=250ms",
+          "--kill-after=0.25s",
           "15s",
           "/usr/bin/sudo",
           "-n",
@@ -170,7 +170,7 @@ describe("onboard child Ollama execution proof runner", () => {
         [
           "/usr/bin/timeout",
           "--signal=TERM",
-          "--kill-after=250ms",
+          "--kill-after=0.25s",
           "15s",
           "/usr/bin/sudo",
           "-n",
@@ -195,7 +195,7 @@ describe("onboard child Ollama execution proof runner", () => {
           "LC_ALL=C",
           "/usr/bin/timeout",
           "--signal=TERM",
-          "--kill-after=250ms",
+          "--kill-after=0.25s",
           "15s",
           executablePath,
           "--version",

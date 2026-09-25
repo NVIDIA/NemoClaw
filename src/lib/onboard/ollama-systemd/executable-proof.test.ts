@@ -82,7 +82,7 @@ function expectBoundedDirectServiceUserProofCommand(
   expect(command).toEqual([
     "/usr/bin/timeout",
     "--signal=TERM",
-    "--kill-after=250ms",
+    "--kill-after=0.25s",
     "15s",
     "/usr/bin/sudo",
     "-n",
@@ -282,7 +282,8 @@ describe("bounded direct execution proof process ownership", () => {
         [
           "#!/bin/sh",
           "trap '' TERM",
-          '/bin/sh -c \'trap "" TERM; printf "%s\\n" "$$" > "$1"; while :; do /bin/sleep 1; done\' proof-descendant "$1" &',
+          "/bin/sh -c 'trap \"\" TERM; while :; do /bin/sleep 1; done' proof-descendant &",
+          'printf "%s\\n" "$!" > "$1"',
           "wait",
         ].join("\n"),
         { mode: 0o755 },
@@ -290,8 +291,8 @@ describe("bounded direct execution proof process ownership", () => {
 
       const result = spawnSync(
         "/usr/bin/timeout",
-        ["--signal=TERM", "--kill-after=250ms", "1s", scriptPath, pidPath],
-        { timeout: 3_000 },
+        ["--signal=TERM", "--kill-after=0.25s", "3s", scriptPath, pidPath],
+        { timeout: 6_000 },
       );
       const descendantPid = Number.parseInt(fs.readFileSync(pidPath, "utf8").trim(), 10);
       const statPath = `/proc/${String(descendantPid)}/stat`;
