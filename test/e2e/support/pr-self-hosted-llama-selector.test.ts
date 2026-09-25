@@ -22,12 +22,15 @@ type WorkflowStep = {
 
 type WorkflowJob = {
   env?: Record<string, string>;
+  if?: string;
   outputs?: Record<string, string>;
   permissions?: Record<string, string>;
   "runs-on"?: string;
   steps?: WorkflowStep[];
   "timeout-minutes"?: number;
   needs?: string;
+  uses?: string;
+  with?: Record<string, unknown>;
 };
 
 type Workflow = {
@@ -35,6 +38,7 @@ type Workflow = {
 };
 
 const WORKFLOW_PATH = ".github/workflows/pr-self-hosted.yaml";
+const SANDBOX_IMAGES_WORKFLOW_PATH = ".github/workflows/sandbox-images.yaml";
 const LLAMA_LIVE_TEST_PATH = "test/e2e/live/llama-cpp-generic-gpu.test.ts";
 const CANDIDATE_SHA = "a".repeat(40);
 const BASE_SHA = "b".repeat(40);
@@ -161,6 +165,50 @@ fi
 }
 
 describe.concurrent("generic NVIDIA GPU PR selection", () => {
+  // source-shape-contract: security -- The copied PR workflow must run the exact Hermes root-entrypoint recovery proof while excluding unrelated image jobs
+  it("runs the Hermes root-entrypoint recovery proof for the copied PR revision", ({ expect }) => {
+    const caller = workflow().jobs["hermes-root-entrypoint-smoke"];
+    expect(caller).toMatchObject({
+      uses: "./.github/workflows/sandbox-images.yaml",
+      with: { hermes_only: true },
+    });
+
+    const reusable = YAML.parse(readFileSync(SANDBOX_IMAGES_WORKFLOW_PATH, "utf8")) as {
+      on: { workflow_call: { inputs: Record<string, unknown> } };
+      jobs: Record<string, WorkflowJob>;
+    };
+    expect(reusable.on.workflow_call.inputs.hermes_only).toMatchObject({
+      default: false,
+      required: false,
+      type: "boolean",
+    });
+    expect(reusable.jobs["test-hermes-sandbox-image"]?.needs).toBe("build-hermes-sandbox-image");
+    expect(
+      reusable.jobs["test-hermes-sandbox-image"]?.steps?.find(
+        (step) => step.name === "Run Hermes root entrypoint smoke Vitest test",
+      )?.run,
+    ).toContain("test/e2e/live/hermes-root-entrypoint-smoke.test.ts");
+    expect(
+      reusable.jobs["test-hermes-sandbox-image"]?.steps?.find(
+        (step) => step.name === "Upload Hermes root entrypoint smoke artifacts",
+      ),
+    ).toMatchObject({
+      if: "always()",
+      with: { path: "e2e-artifacts/live/hermes-root-entrypoint-smoke/" },
+    });
+    expect(
+      [
+        "build-sandbox-images",
+        "messaging-plan-image-boundary",
+        "runtime-overrides",
+        "managed-image-openclaw-security",
+        "port-override-image-contract",
+      ].map((jobName) => reusable.jobs[jobName]?.if),
+    ).toEqual(
+      Array.from({ length: 5 }, () => expect.stringContaining("inputs.hermes_only != true")),
+    );
+  });
+
   it.for(declaredSelectionPaths())(
     "selects the generic NVIDIA GPU E2E job when %s can change installer readiness",
     async (changedFile, { expect }) => {

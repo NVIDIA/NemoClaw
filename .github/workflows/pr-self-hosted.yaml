@@ -28,6 +28,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  hermes-root-entrypoint-smoke:
+    uses: ./.github/workflows/sandbox-images.yaml
+    with:
+      hermes_only: true
+
   select-llama-cpp-generic-gpu:
     runs-on: ubuntu-latest
     timeout-minutes: 55
