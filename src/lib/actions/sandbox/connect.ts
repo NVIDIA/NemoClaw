@@ -127,7 +127,6 @@ import type { HermesPortableContainerInspectionTimingEvidence } from "../../onbo
 import {
   checkAndRecoverSandboxProcesses,
   createHermesPortableForwardRecoveryInput,
-  executeSandboxExecCommand,
   type GatewayRestartFailureLayer,
   HermesPortableForwardRecoveryError,
   type HermesPortableForwardRecoveryContext,
@@ -353,11 +352,7 @@ async function exitOnGatewayRecoveryFailure(
   );
   console.error(`  Recovery detail: ${safeDetail}${terminalPunctuation}`);
   if (showWedgeDiagnostics) {
-    await printGatewayWedgeDiagnostics(sandboxName, (name, command) =>
-      executeSandboxExecCommand(name, command, undefined, {
-        localDockerFallbackPolicy: "read-only",
-      }),
-    );
+    await printGatewayWedgeDiagnostics(sandboxName);
     console.error("  Check /tmp/gateway.log inside the sandbox for details.");
   }
   process.exit(1);
@@ -554,11 +549,7 @@ async function runSandboxConnectProbe(
   // Surface the #4710 wedge signature: recovery ran with quiet=true, so this
   // is the operator's only window into a gateway that served briefly and
   // then dropped its listener.
-  await printGatewayWedgeDiagnostics(sandboxName, (name, command) =>
-    executeSandboxExecCommand(name, command, undefined, {
-      localDockerFallbackPolicy: "read-only",
-    }),
-  );
+  await printGatewayWedgeDiagnostics(sandboxName);
   console.error("  Check /tmp/gateway.log inside the sandbox for details.");
   process.exit(1);
 }
