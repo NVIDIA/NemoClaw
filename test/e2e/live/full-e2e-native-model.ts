@@ -3,6 +3,23 @@
 
 import { randomUUID } from "node:crypto";
 
+// A failed restoration must not prevent removal of the temporary provider.
+export async function withNativeModelCleanup<T>(
+  verify: () => Promise<T>,
+  restore: () => Promise<void>,
+  removeProvider: () => Promise<void>,
+): Promise<T> {
+  try {
+    return await verify();
+  } finally {
+    try {
+      await restore();
+    } finally {
+      await removeProvider();
+    }
+  }
+}
+
 // The preceding inference.local turn qualifies this model and route. A new
 // provider name makes a gateway that ignores the native edit distinguishable.
 export function buildNativeModelRestartFixture(model: string) {

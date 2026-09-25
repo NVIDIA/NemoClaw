@@ -734,6 +734,8 @@ function writeOpenClawInferenceConfigNatively(
   writeValues(sandboxName, updates, gatewayName);
 }
 
+class OpenClawInferenceConfigSyncError extends InferenceSetError {}
+
 function failOpenClawInferenceConfigSync(
   agentName: string,
   sandboxName: string,
@@ -742,7 +744,7 @@ function failOpenClawInferenceConfigSync(
 ): void {
   if (agentName !== "openclaw") return;
   deps.log("  Retry the same inference set command to finish applying the model.");
-  throw new InferenceSetError(
+  throw new OpenClawInferenceConfigSyncError(
     `OpenClaw inference route synchronization did not complete for '${sandboxName}': ${detail}. ` +
       `The native OpenClaw batch update applies all related values or none, but its completion was not confirmed. ` +
       `Retry the same inference set command to converge it.`,
@@ -1646,6 +1648,7 @@ async function runInferenceSetWithoutHostLock(
     }
     return mutation;
   } catch (error) {
+    if (error instanceof OpenClawInferenceConfigSyncError) throw error;
     if (!providerMutation) throw error;
     if (restoredSelectionAfterProviderFailure) throw error;
     const detail = error instanceof Error ? error.message : String(error);

@@ -63,7 +63,7 @@ import {
   cleanupWhenOpenShellAvailable,
 } from "../fixtures/cleanup-resources.ts";
 import { getSandbox } from "../../../src/lib/state/registry.ts";
-import { buildNativeModelRestartFixture } from "./full-e2e-native-model.ts";
+import { buildNativeModelRestartFixture, withNativeModelCleanup } from "./full-e2e-native-model.ts";
 import {
   agentReplyContainsToken,
   parseOpenClawGatewayModelRun,
@@ -403,148 +403,161 @@ sha256sum /sandbox/.bashrc /sandbox/.profile > /tmp/nemoclaw-e2e-profiles.sha256
       timeoutMs: 120_000,
     },
   );
-  const validateNativeModel = await input.sandbox.exec(
-    SANDBOX_NAME,
-    ["/usr/bin/env", "HOME=/sandbox", "/usr/local/bin/openclaw", "config", "validate"],
-    {
-      artifactName: "phase-4-validate-native-model",
-      env: env(),
-      redactionValues: input.redactionValues,
-      timeoutMs: 30_000,
-    },
-  );
-  const afterNativeFix = securityPostureEnabled()
-    ? await readNativeStateDoctor(input.sandbox, "phase-4-native-state-after-fix")
-    : null;
-  const stopAfterNativeEdit = await repoNemoclaw(
-    input.host,
-    [SANDBOX_NAME, "stop"],
-    "phase-4-stop-after-native-config-edit",
-    {},
-    120_000,
-  );
-  const startAfterNativeEdit = await repoNemoclaw(
-    input.host,
-    [SANDBOX_NAME, "start"],
-    "phase-4-start-after-native-config-edit",
-    {},
-    10 * 60_000,
-  );
-  expect(
-    !prepareLaunch.timedOut &&
-      prepareLaunch.exitCode === 0 &&
-      originalModel.exitCode === 0 &&
-      !editNativeModel.timedOut &&
-      editNativeModel.signal === null &&
-      editNativeModel.exitCode === 0 &&
-      validateNativeModel.exitCode === 0 &&
-      (!afterNativeFix || nativeStateDoctorReportIsValid(afterNativeFix)) &&
-      !stopAfterNativeEdit.timedOut &&
-      stopAfterNativeEdit.exitCode === 0 &&
-      !startAfterNativeEdit.timedOut &&
-      startAfterNativeEdit.exitCode === 0,
-    [
-      prepareLaunch,
-      originalModel,
-      editNativeModel,
-      validateNativeModel,
-      afterNativeFix,
-      stopAfterNativeEdit,
-      startAfterNativeEdit,
-    ]
-      .filter((result) => result !== null)
-      .map(resultText)
-      .join("\n"),
-  ).toBe(true);
+  let restoreNativeModel!: ShellProbeResult;
+  let removeNativeTestProvider!: ShellProbeResult;
+  let validateRestoredModel!: ShellProbeResult;
+  let restartAfterNativeModelRestore!: ShellProbeResult;
+  const [persistedModel, nativeTurn] = await withNativeModelCleanup(
+    async () => {
+      const validateNativeModel = await input.sandbox.exec(
+        SANDBOX_NAME,
+        ["/usr/bin/env", "HOME=/sandbox", "/usr/local/bin/openclaw", "config", "validate"],
+        {
+          artifactName: "phase-4-validate-native-model",
+          env: env(),
+          redactionValues: input.redactionValues,
+          timeoutMs: 30_000,
+        },
+      );
+      const afterNativeFix = securityPostureEnabled()
+        ? await readNativeStateDoctor(input.sandbox, "phase-4-native-state-after-fix")
+        : null;
+      const stopAfterNativeEdit = await repoNemoclaw(
+        input.host,
+        [SANDBOX_NAME, "stop"],
+        "phase-4-stop-after-native-config-edit",
+        {},
+        120_000,
+      );
+      const startAfterNativeEdit = await repoNemoclaw(
+        input.host,
+        [SANDBOX_NAME, "start"],
+        "phase-4-start-after-native-config-edit",
+        {},
+        10 * 60_000,
+      );
+      expect(
+        !prepareLaunch.timedOut &&
+          prepareLaunch.exitCode === 0 &&
+          originalModel.exitCode === 0 &&
+          !editNativeModel.timedOut &&
+          editNativeModel.signal === null &&
+          editNativeModel.exitCode === 0 &&
+          validateNativeModel.exitCode === 0 &&
+          (!afterNativeFix || nativeStateDoctorReportIsValid(afterNativeFix)) &&
+          !stopAfterNativeEdit.timedOut &&
+          stopAfterNativeEdit.exitCode === 0 &&
+          !startAfterNativeEdit.timedOut &&
+          startAfterNativeEdit.exitCode === 0,
+        [
+          prepareLaunch,
+          originalModel,
+          editNativeModel,
+          validateNativeModel,
+          afterNativeFix,
+          stopAfterNativeEdit,
+          startAfterNativeEdit,
+        ]
+          .filter((result) => result !== null)
+          .map(resultText)
+          .join("\n"),
+      ).toBe(true);
 
-  const persistedModel = await input.sandbox.exec(
-    SANDBOX_NAME,
-    [
-      "/usr/bin/env",
-      "HOME=/sandbox",
-      "/usr/local/bin/openclaw",
-      "config",
-      "get",
-      "agents.defaults.model.primary",
-      "--json",
-    ],
-    {
-      artifactName: "phase-4-read-persisted-native-model",
-      env: env(),
-      redactionValues: input.redactionValues,
-      timeoutMs: 30_000,
+      const persistedModel = await input.sandbox.exec(
+        SANDBOX_NAME,
+        [
+          "/usr/bin/env",
+          "HOME=/sandbox",
+          "/usr/local/bin/openclaw",
+          "config",
+          "get",
+          "agents.defaults.model.primary",
+          "--json",
+        ],
+        {
+          artifactName: "phase-4-read-persisted-native-model",
+          env: env(),
+          redactionValues: input.redactionValues,
+          timeoutMs: 30_000,
+        },
+      );
+      // Observe the running gateway before restoring the native selection. A disk
+      // read alone cannot detect a gateway that still uses the previous model.
+      const nativeTurn = await input.sandbox.exec(
+        SANDBOX_NAME,
+        [
+          "/usr/bin/env",
+          "HOME=/sandbox",
+          "/usr/local/bin/openclaw",
+          "infer",
+          "model",
+          "run",
+          "--gateway",
+          "--json",
+          "--prompt",
+          "Reply with exactly one word: PONG",
+        ],
+        {
+          artifactName: "phase-4-native-model-gateway-turn-after-start",
+          env: env(),
+          redactionValues: input.redactionValues,
+          timeoutMs: FIRST_TURN_TIMEOUT_MS,
+        },
+      );
+      return [persistedModel, nativeTurn] as const;
     },
-  );
-  // Observe the running gateway before restoring the native selection. A disk
-  // read alone cannot detect a gateway that still uses the previous model.
-  const nativeTurn = await input.sandbox.exec(
-    SANDBOX_NAME,
-    [
-      "/usr/bin/env",
-      "HOME=/sandbox",
-      "/usr/local/bin/openclaw",
-      "infer",
-      "model",
-      "run",
-      "--gateway",
-      "--json",
-      "--prompt",
-      "Reply with exactly one word: PONG",
-    ],
-    {
-      artifactName: "phase-4-native-model-gateway-turn-after-start",
-      env: env(),
-      redactionValues: input.redactionValues,
-      timeoutMs: FIRST_TURN_TIMEOUT_MS,
+    async () => {
+      restoreNativeModel = await input.sandbox.exec(
+        SANDBOX_NAME,
+        [
+          "/usr/bin/env",
+          "HOME=/sandbox",
+          "/usr/local/bin/openclaw",
+          "config",
+          "set",
+          "agents.defaults.model.primary",
+          originalModel.stdout.trim(),
+          "--strict-json",
+        ],
+        {
+          artifactName: "phase-4-restore-native-model",
+          env: env(),
+          redactionValues: input.redactionValues,
+          timeoutMs: 30_000,
+        },
+      );
+    },
+    async () => {
+      removeNativeTestProvider = await input.sandbox.execShell(
+        SANDBOX_NAME,
+        trustedSandboxShellScript(`set -eu
+/usr/bin/env HOME=/sandbox /usr/local/bin/openclaw config unset ${shellQuote(`agents.defaults.models[${JSON.stringify(nativeModel.primary)}]`)}
+/usr/bin/env HOME=/sandbox /usr/local/bin/openclaw config unset models.providers.${nativeModel.provider}`),
+        {
+          artifactName: "phase-4-remove-native-test-provider",
+          env: env(),
+          redactionValues: input.redactionValues,
+          timeoutMs: 120_000,
+        },
+      );
+      validateRestoredModel = await input.sandbox.exec(
+        SANDBOX_NAME,
+        ["/usr/bin/env", "HOME=/sandbox", "/usr/local/bin/openclaw", "config", "validate"],
+        {
+          artifactName: "phase-4-validate-restored-native-model",
+          env: env(),
+          redactionValues: input.redactionValues,
+          timeoutMs: 30_000,
+        },
+      );
+      restartAfterNativeModelRestore = await repoNemoclaw(
+        input.host,
+        [SANDBOX_NAME, "gateway", "restart"],
+        "phase-4-restart-after-native-model-restore",
+      );
     },
   );
   const nativeReply = parseOpenClawGatewayModelRun(nativeTurn.stdout);
-  const restoreNativeModel = await input.sandbox.exec(
-    SANDBOX_NAME,
-    [
-      "/usr/bin/env",
-      "HOME=/sandbox",
-      "/usr/local/bin/openclaw",
-      "config",
-      "set",
-      "agents.defaults.model.primary",
-      originalModel.stdout.trim(),
-      "--strict-json",
-    ],
-    {
-      artifactName: "phase-4-restore-native-model",
-      env: env(),
-      redactionValues: input.redactionValues,
-      timeoutMs: 30_000,
-    },
-  );
-  const removeNativeTestProvider = await input.sandbox.execShell(
-    SANDBOX_NAME,
-    trustedSandboxShellScript(`set -eu
-/usr/bin/env HOME=/sandbox /usr/local/bin/openclaw config unset ${shellQuote(`agents.defaults.models[${JSON.stringify(nativeModel.primary)}]`)}
-/usr/bin/env HOME=/sandbox /usr/local/bin/openclaw config unset models.providers.${nativeModel.provider}`),
-    {
-      artifactName: "phase-4-remove-native-test-provider",
-      env: env(),
-      redactionValues: input.redactionValues,
-      timeoutMs: 120_000,
-    },
-  );
-  const validateRestoredModel = await input.sandbox.exec(
-    SANDBOX_NAME,
-    ["/usr/bin/env", "HOME=/sandbox", "/usr/local/bin/openclaw", "config", "validate"],
-    {
-      artifactName: "phase-4-validate-restored-native-model",
-      env: env(),
-      redactionValues: input.redactionValues,
-      timeoutMs: 30_000,
-    },
-  );
-  const restartAfterNativeModelRestore = await repoNemoclaw(
-    input.host,
-    [SANDBOX_NAME, "gateway", "restart"],
-    "phase-4-restart-after-native-model-restore",
-  );
   expect(
     persistedModel.exitCode === 0 &&
       persistedModel.stdout.trim() === JSON.stringify(nativeModel.primary) &&
