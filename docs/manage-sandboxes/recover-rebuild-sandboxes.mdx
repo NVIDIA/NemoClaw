@@ -341,11 +341,8 @@ A gateway that reports no live inference route does not stop the rebuild. Replac
   binding on its recorded OpenShell gateway. A missing or mismatched binding stops before recreation
   and requires the matching host environment variable before you retry. Rebuild also restores the
   complete credential-sanitized native `openclaw.json` file, so native OpenClaw configuration
-  changes survive sandbox replacement without a selective merge. After state restoration, NemoClaw
-  clears a session's stale model and provider pin when it still targets the managed `inference`
-  provider but no longer matches the configured default model. The session then follows the current
-  default selected through `inference set`, while sessions pinned to another provider remain
-  unchanged.
+  changes survive sandbox replacement without a selective merge.
+  Rebuild preserves restored OpenClaw session model and provider selections, including selections that differ from the configured default.
 </AgentOnly>
 
 <AgentOnly variant="hermes">

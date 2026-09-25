@@ -39,7 +39,6 @@ import {
   finishUnregisteredOpenClawPostRestoreDoctor,
   type OpenClawPostRestoreDoctorWindow,
 } from "./runtime/openclaw-lifecycle";
-import { reconcileStalePinnedSessionModelsAfterRebuild } from "./reconcile-session-models";
 
 export {
   type HermesCronRestoreIdentity,
@@ -305,11 +304,6 @@ export async function runRebuildPostRestorePhase(
         bail,
       );
       if (!openClawDoctorWindow) return;
-
-      // #7102: clear stale per-session pinned models left over from an
-      // `inference set` before this rebuild. The maintenance receipt above proves
-      // that OpenClaw cannot race this sessions.json mutation.
-      await reconcileStalePinnedSessionModelsAfterRebuild(sandboxName, log, mcpRuntimeSelection);
 
       try {
         await reapplyMessagingManifestBeforeOpenClawStart(

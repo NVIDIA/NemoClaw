@@ -1,7 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as sandboxTransport from "../../adapters/sandbox/command-transport";
 import * as agentDefs from "../../agent/defs";
 import * as agentRuntime from "../../agent/runtime";
 import * as mutableConfigPerms from "../../sandbox/mutable-config-perms";
@@ -16,7 +21,6 @@ import {
   printHermesOperatorConfigRestoreReport,
   runRebuildPostRestorePhase,
 } from "./rebuild-post-restore-phase";
-import * as sessionModels from "./reconcile-session-models";
 
 const processRecovery = restoreWindow;
 
@@ -70,11 +74,6 @@ describe("rebuild post-restore phase", () => {
       async () => {
         order.push("doctor-abort");
         return { ok: true };
-      },
-    );
-    vi.spyOn(sessionModels, "reconcileStalePinnedSessionModelsAfterRebuild").mockImplementation(
-      async () => {
-        order.push("reconcile");
       },
     );
     vi.spyOn(rebuildMessaging, "reapplyMessagingManifestBeforeOpenClawStart").mockImplementation(
@@ -165,7 +164,6 @@ describe("rebuild post-restore phase", () => {
 
     expect(order).toEqual([
       "maintenance-begin",
-      "reconcile",
       "messaging",
       "mcp",
       "native-start",
@@ -179,6 +177,45 @@ describe("rebuild post-restore phase", () => {
     expect(processRecovery.abortUnregisteredOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
   });
 
+  it("preserves restored native session selections that differ from the default (#11764)", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "rebuild-native-sessions-"));
+    const sessionsDirectory = join(directory, "agents", "main", "sessions");
+    const sessionsPath = join(sessionsDirectory, "sessions.json");
+    const original = JSON.stringify({
+      managed: { modelProvider: "inference", model: "operator-choice", sessionId: "s1" },
+      default: { modelProvider: "inference", model: "default-model", sessionId: "s2" },
+      custom: { modelProvider: "custom", model: "custom-model", sessionId: "s3" },
+      unpinned: { sessionId: "s4", updatedAt: 42 },
+    });
+    try {
+      mkdirSync(sessionsDirectory, { recursive: true });
+      writeFileSync(sessionsPath, original);
+      writeFileSync(
+        join(directory, "openclaw.json"),
+        '{ agents: { defaults: { model: { primary: "inference/default-model" } } } }',
+      );
+      vi.spyOn(sandboxTransport, "executeSandboxExecCommand").mockImplementation(
+        async (_sandboxName, command) => {
+          const result = spawnSync(
+            "sh",
+            ["-c", command.replaceAll("/sandbox/.openclaw", directory)],
+            {
+              encoding: "utf8",
+            },
+          );
+          return { status: result.status ?? 1, stdout: result.stdout, stderr: result.stderr };
+        },
+      );
+
+      await runRebuildPostRestorePhase(input());
+
+      expect(readFileSync(sessionsPath, "utf8")).toBe(original);
+      expect(processRecovery.finishUnregisteredOpenClawPostRestoreDoctor).toHaveBeenCalledOnce();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("reuses the maintenance window established before filesystem restore", async () => {
     const window = { sandboxName: "alpha", kind: "backup" } as const;
     vi.mocked(processRecovery.beginUnregisteredOpenClawBackupQuiesce).mockClear();
@@ -189,7 +226,7 @@ describe("rebuild post-restore phase", () => {
     expect(processRecovery.finishUnregisteredOpenClawPostRestoreDoctor).toHaveBeenCalledWith(
       window,
     );
-    expect(order).toEqual(["reconcile", "messaging", "mcp", "native-start", "host-forward"]);
+    expect(order).toEqual(["messaging", "mcp", "native-start", "host-forward"]);
   });
 
   it("reuses the MCP rebuild target for every post-restore sandbox command (#10514)", async () => {
@@ -213,11 +250,6 @@ describe("rebuild post-restore phase", () => {
     expect(rebuildMessaging.reapplyMessagingManifestBeforeOpenClawStart).toHaveBeenCalledWith(
       "alpha",
       null,
-      args.log,
-      runtimeSelection,
-    );
-    expect(sessionModels.reconcileStalePinnedSessionModelsAfterRebuild).toHaveBeenCalledWith(
-      "alpha",
       args.log,
       runtimeSelection,
     );
@@ -257,7 +289,6 @@ describe("rebuild post-restore phase", () => {
 
     await runRebuildPostRestorePhase(args);
 
-    expect(sessionModels.reconcileStalePinnedSessionModelsAfterRebuild).toHaveBeenCalledOnce();
     expect(rebuildMessaging.reapplyMessagingManifestBeforeOpenClawStart).toHaveBeenCalledOnce();
     expect(rebuildHermesPostRestore.restartHermesGatewayAfterStateRestore).not.toHaveBeenCalled();
     expect(rebuildHermesPostRestore.verifyHermesGatewayAfterStateRestore).not.toHaveBeenCalled();
@@ -322,40 +353,24 @@ describe("rebuild post-restore phase", () => {
     expect(processRecovery.finishUnregisteredOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
   });
 
-  it.each([
-    {
-      fail: () =>
-        vi
-          .mocked(sessionModels.reconcileStalePinnedSessionModelsAfterRebuild)
-          .mockRejectedValue(new Error("session reconciliation failed")),
-      message: "session reconciliation failed",
-    },
-    {
-      fail: () =>
-        vi
-          .mocked(rebuildMcp.restoreMcpAfterRebuild)
-          .mockRejectedValue(new Error("MCP restoration failed")),
-      message: "MCP restoration failed",
-    },
-  ])(
-    "aborts the maintenance gate when an offline writer throws: $message",
-    async ({ fail, message }) => {
-      fail();
+  it("aborts the maintenance gate when MCP restoration throws", async () => {
+    vi.mocked(rebuildMcp.restoreMcpAfterRebuild).mockRejectedValue(
+      new Error("MCP restoration failed"),
+    );
 
-      await expect(runRebuildPostRestorePhase(input())).rejects.toThrow(message);
+    await expect(runRebuildPostRestorePhase(input())).rejects.toThrow("MCP restoration failed");
 
-      expect(
-        processRecovery.abortUnregisteredOpenClawPostRestoreDoctor,
-      ).toHaveBeenCalledExactlyOnceWith({
-        sandboxName: "alpha",
-        kind: "backup",
-      });
-      expect(processRecovery.finishUnregisteredOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
-    },
-  );
+    expect(
+      processRecovery.abortUnregisteredOpenClawPostRestoreDoctor,
+    ).toHaveBeenCalledExactlyOnceWith({
+      sandboxName: "alpha",
+      kind: "backup",
+    });
+    expect(processRecovery.finishUnregisteredOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
+  });
 
   it("does not mask the restoration failure when the maintenance abort itself throws", async () => {
-    vi.mocked(sessionModels.reconcileStalePinnedSessionModelsAfterRebuild).mockRejectedValue(
+    vi.mocked(rebuildMcp.restoreMcpAfterRebuild).mockRejectedValue(
       new Error("original restoration failure"),
     );
     vi.mocked(processRecovery.abortUnregisteredOpenClawPostRestoreDoctor).mockRejectedValue(
@@ -371,14 +386,13 @@ describe("rebuild post-restore phase", () => {
     );
   });
 
-  it("does not run OpenClaw session reconciliation for another agent (#7102)", async () => {
+  it("does not enter an OpenClaw maintenance window for another agent", async () => {
     agentName = "hermes";
     const args = input();
 
     const verification = await runRebuildPostRestorePhase(args);
 
     expect(args.bail).not.toHaveBeenCalled();
-    expect(sessionModels.reconcileStalePinnedSessionModelsAfterRebuild).not.toHaveBeenCalled();
     expect(processRecovery.beginUnregisteredOpenClawBackupQuiesce).not.toHaveBeenCalled();
     expect(processRecovery.finishUnregisteredOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
     expect(mutableConfigPerms.inspectMutableHermesConfigPerms).toHaveBeenCalledWith("alpha");
