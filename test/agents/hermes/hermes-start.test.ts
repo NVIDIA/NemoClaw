@@ -345,13 +345,13 @@ function runTirithExplicitCommandDispatch(mode: "non-root" | "root") {
   }
 }
 
-function runHermesRootStartupMutableRootPreflight() {
+function runHermesRootStartupMutableRootPreflight(initialMode = 0o750) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-root-preflight-"));
   const hermesHome = path.join(tmpDir, ".hermes");
   const scriptPath = path.join(tmpDir, "run.sh");
 
   fs.mkdirSync(hermesHome, { recursive: true });
-  fs.chmodSync(hermesHome, 0o750);
+  fs.chmodSync(hermesHome, initialMode);
 
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
   fs.writeFileSync(
@@ -1465,4 +1465,15 @@ describe("agents/hermes/start.sh Tirith marker bootstrap", () => {
     expect(run.result.stdout).toContain("tirith-state=0");
     expect(run.hermesDirMode).toBe("3770");
   });
+
+  it.runIf(process.platform === "linux")(
+    "repairs an owner-executable Hermes config root after capability drop",
+    () => {
+      const run = runHermesRootStartupMutableRootPreflight(0o300);
+
+      expect(run.result.status, run.result.stderr).toBe(0);
+      expect(run.result.stdout).toContain("env-boundary mode=3770");
+      expect(run.hermesDirMode).toBe("3770");
+    },
+  );
 });

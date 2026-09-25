@@ -801,9 +801,70 @@ open_flags |= getattr(os, "O_CLOEXEC", 0)
 root_fd = -1
 target_fd = -1
 display = root if name == "." else f"{root}/{name}"
+sandbox_uid = None
+sandbox_gid = None
+if os.geteuid() == 0:
+    try:
+        sandbox_uid = pwd.getpwnam("sandbox").pw_uid
+        sandbox_gid = grp.getgrnam("sandbox").gr_gid
+    except KeyError as exc:
+        fail(f"sandbox account lookup failed: {exc}")
+
+
+def open_restricted_config_root() -> int:
+    if name != "." or not hasattr(os, "O_PATH"):
+        fail(f"{root} could not be opened safely: Permission denied")
+    path_flags = os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW
+    path_flags |= getattr(os, "O_CLOEXEC", 0)
+    held_fd = -1
+    try:
+        try:
+            held_fd = os.open(root, path_flags)
+        except OSError as exc:
+            fail(f"{root} could not be held safely for repair: {exc.strerror}")
+        held = os.fstat(held_fd)
+        if (held.st_dev, held.st_ino) != (root_before.st_dev, root_before.st_ino):
+            fail(f"{root} changed while it was held for repair")
+        if not stat.S_ISDIR(held.st_mode):
+            fail(f"{root} is not a safe directory")
+
+        # Direct-root startup intentionally drops CAP_DAC_OVERRIDE. O_PATH can
+        # still hold the exact unreadable directory, and the proc fd link lets
+        # the retained owner capabilities repair that inode without reopening
+        # or racing the sandbox-controlled pathname.
+        held_path = f"/proc/self/fd/{held_fd}"
+        try:
+            if sandbox_uid is not None and sandbox_gid is not None:
+                os.chown(held_path, sandbox_uid, sandbox_gid)
+            os.chmod(held_path, desired_mode)
+        except OSError as exc:
+            fail(f"{root} restricted mode could not be repaired safely: {exc.strerror}")
+        repaired = os.fstat(held_fd)
+        if stat.S_IMODE(repaired.st_mode) != desired_mode:
+            fail(f"{root} restricted mode did not match after repair")
+        if sandbox_uid is not None and sandbox_gid is not None and (
+            repaired.st_uid != sandbox_uid or repaired.st_gid != sandbox_gid
+        ):
+            fail(f"{root} restricted ownership did not match sandbox:sandbox after repair")
+        try:
+            reopened_fd = os.open(root, open_flags)
+        except OSError as exc:
+            fail(f"{root} could not be reopened after restricted-mode repair: {exc.strerror}")
+        reopened = os.fstat(reopened_fd)
+        if (reopened.st_dev, reopened.st_ino) != (held.st_dev, held.st_ino):
+            os.close(reopened_fd)
+            fail(f"{root} changed after restricted-mode repair")
+        return reopened_fd
+    finally:
+        if held_fd >= 0:
+            os.close(held_fd)
+
+
 try:
     try:
         root_fd = os.open(root, open_flags)
+    except PermissionError:
+        root_fd = open_restricted_config_root()
     except OSError as exc:
         fail(f"{root} could not be opened safely: {exc.strerror}")
     root_open = os.fstat(root_fd)
@@ -842,11 +903,6 @@ try:
             fail(f"{display} could not be opened safely: {detail}")
 
     if os.geteuid() == 0:
-        try:
-            sandbox_uid = pwd.getpwnam("sandbox").pw_uid
-            sandbox_gid = grp.getgrnam("sandbox").gr_gid
-        except KeyError as exc:
-            fail(f"sandbox account lookup failed: {exc}")
         try:
             os.fchown(target_fd, sandbox_uid, sandbox_gid)
         except OSError as exc:
