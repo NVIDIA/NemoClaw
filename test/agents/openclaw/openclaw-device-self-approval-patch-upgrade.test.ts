@@ -359,6 +359,10 @@ describe("OpenClaw device self-approval patch upgrades (#4462)", () => {
       const source = fs.readFileSync(file, "utf8");
       const prior = source
         .replace(
+          'new Set(["operator.pairing", "operator.read", "operator.write", "operator.admin"])',
+          'new Set(["operator.pairing", "operator.read", "operator.write"])',
+        )
+        .replace(
           '\t\t\tconst nemoclawAllowedAdminUpgradeScopes = new Set([...nemoclawAllowedUpgradeScopes, "operator.admin"]);\n',
           "",
         )
@@ -399,6 +403,9 @@ describe("OpenClaw device self-approval patch upgrades (#4462)", () => {
       const upgrade = runPatch(dist);
       expect(upgrade.status, `${upgrade.stdout}${upgrade.stderr}`).toBe(0);
       const upgraded = fs.readFileSync(file, "utf8");
+      expect(upgraded).toContain(
+        'new Set(["operator.pairing", "operator.read", "operator.write", "operator.admin"])',
+      );
       expect(
         upgraded.match(/nemoclaw: require explicit approval for CLI operator.admin upgrade/gu),
       ).toHaveLength(1);

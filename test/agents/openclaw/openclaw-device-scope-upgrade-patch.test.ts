@@ -119,4 +119,28 @@ describe("OpenClaw bounded current-layout scope upgrade patch", () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
+
+  it("rejects a structurally changed admin scope admission gate", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-admin-auth-drift-"));
+    const dist = path.join(tmp, "dist");
+    fs.mkdirSync(dist);
+    writeCurrentGatewayCallFixtureDist(dist);
+    try {
+      expect(runPatch(dist).status).toBe(0);
+      const file = path.join(dist, "message-handler-fixture.js");
+      const source = fs.readFileSync(file, "utf8");
+      const damaged = source.replace(
+        'new Set(["operator.pairing", "operator.read", "operator.write", "operator.admin"])',
+        'new Set(["operator.pairing", "operator.read", "operator.write", "operator.superadmin"])',
+      );
+      expect(damaged).not.toBe(source);
+      fs.writeFileSync(file, damaged);
+
+      const audit = runPatch(dist, true);
+      expect(audit.status).toBe(3);
+      expect(audit.stdout).toContain("structurally changed patch");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });

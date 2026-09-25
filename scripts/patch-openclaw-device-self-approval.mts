@@ -905,8 +905,8 @@ const AUTH_DEVICE_TOKEN_TARGET = [
   "\t\t\tauthOk = true;",
   '\t\t\tauthMethod = "device-token";',
 ].join("\n");
-const AUTH_DEVICE_TOKEN_REPLACEMENT = [
-  '\t\tconst nemoclawAllowedUpgradeScopes = new Set(["operator.pairing", "operator.read", "operator.write", "operator.admin"]);',
+const AUTH_DEVICE_TOKEN_REPLACEMENT_PREVIOUS = [
+  '\t\tconst nemoclawAllowedUpgradeScopes = new Set(["operator.pairing", "operator.read", "operator.write"]);',
   '\t\tconst nemoclawScopeUpgradeScopes = Array.isArray(params.scopes) ? params.scopes.map((scope) => typeof scope === "string" ? scope.trim() : "") : [];',
   "\t\tconst nemoclawCliScopeUpgrade =",
   "\t\t\t!tokenCheck.ok &&",
@@ -921,6 +921,10 @@ const AUTH_DEVICE_TOKEN_REPLACEMENT = [
   "\t\t\tauthOk = true;",
   '\t\t\tauthMethod = "device-token";',
 ].join("\n");
+const AUTH_DEVICE_TOKEN_REPLACEMENT = AUTH_DEVICE_TOKEN_REPLACEMENT_PREVIOUS.replace(
+  'new Set(["operator.pairing", "operator.read", "operator.write"])',
+  'new Set(["operator.pairing", "operator.read", "operator.write", "operator.admin"])',
+);
 const AUTH_DEVICE_TOKEN_SQLITE_TARGET = [
   "\t\tasync verifyDeviceToken(paramsLocal) {",
   "\t\t\treturn await verifyDeviceToken({",
@@ -929,13 +933,13 @@ const AUTH_DEVICE_TOKEN_SQLITE_TARGET = [
   "\t\t\t});",
   "\t\t}",
 ].join("\n");
-const AUTH_DEVICE_TOKEN_SQLITE_REPLACEMENT = [
+const AUTH_DEVICE_TOKEN_SQLITE_REPLACEMENT_PREVIOUS = [
   "\t\tasync verifyDeviceToken(paramsLocal) {",
   "\t\t\tconst nemoclawTokenCheck = await verifyDeviceToken({",
   "\t\t\t\t...paramsLocal,",
   "\t\t\t\trequiredSharedGatewaySessionGeneration: getRequiredSharedGatewaySessionGeneration?.()",
   "\t\t\t});",
-  '\t\t\tconst nemoclawAllowedUpgradeScopes = new Set(["operator.pairing", "operator.read", "operator.write", "operator.admin"]);',
+  '\t\t\tconst nemoclawAllowedUpgradeScopes = new Set(["operator.pairing", "operator.read", "operator.write"]);',
   '\t\t\tconst nemoclawScopeUpgradeScopes = Array.isArray(paramsLocal.scopes) ? paramsLocal.scopes.map((scope) => typeof scope === "string" ? scope.trim() : "") : [];',
   "\t\t\tconst nemoclawCliScopeUpgrade =",
   "\t\t\t\t!nemoclawTokenCheck.ok &&",
@@ -949,6 +953,10 @@ const AUTH_DEVICE_TOKEN_SQLITE_REPLACEMENT = [
   `\t\t\treturn nemoclawCliScopeUpgrade ? { ...nemoclawTokenCheck, ok: true } : nemoclawTokenCheck; // ${AUTH_SCOPE_UPGRADE_MARKER} (#4462)`,
   "\t\t}",
 ].join("\n");
+const AUTH_DEVICE_TOKEN_SQLITE_REPLACEMENT = AUTH_DEVICE_TOKEN_SQLITE_REPLACEMENT_PREVIOUS.replace(
+  'new Set(["operator.pairing", "operator.read", "operator.write"])',
+  'new Set(["operator.pairing", "operator.read", "operator.write", "operator.admin"])',
+);
 
 const AUTH_INLINE_APPROVAL_TARGET =
   "\t\t\tconst inlineApprovalAttempted = trustedProxyApprovalScopes !== null || pairing.request.silent === true;";
@@ -2171,6 +2179,32 @@ const BASE_FILE_SPECS: FileSpec[] = [
         result.source.includes(AUTH_DEVICE_TOKEN_SQLITE_TARGET) ||
         result.source.includes(AUTH_INLINE_APPROVAL_TARGET) ||
         result.source.includes(AUTH_DEFER_SILENT_SCOPE_UPGRADE_MARKER);
+      if (result.source.includes(AUTH_SCOPE_UPGRADE_MARKER)) {
+        const appliedReplacement = sqliteLayout
+          ? AUTH_DEVICE_TOKEN_SQLITE_REPLACEMENT
+          : AUTH_DEVICE_TOKEN_REPLACEMENT;
+        const previousReplacement = sqliteLayout
+          ? AUTH_DEVICE_TOKEN_SQLITE_REPLACEMENT_PREVIOUS
+          : AUTH_DEVICE_TOKEN_REPLACEMENT_PREVIOUS;
+        if (!result.source.includes(appliedReplacement)) {
+          if (!result.source.includes(previousReplacement)) {
+            return {
+              source,
+              status: "no-match",
+              error: `gateway device-token scope-upgrade patch in ${file}: structurally changed patch`,
+            };
+          }
+          result = replaceExactlyOnce(
+            result.source,
+            previousReplacement,
+            appliedReplacement,
+            "gateway device-token admin scope-upgrade target",
+            file,
+          );
+          if (result.error) return { source, status: "no-match", error: result.error };
+          changed = true;
+        }
+      }
       if (!result.source.includes(AUTH_SCOPE_UPGRADE_MARKER) && sqliteLayout) {
         result = replaceExactlyOnce(
           result.source,
@@ -2231,7 +2265,10 @@ const BASE_FILE_SPECS: FileSpec[] = [
         };
       }
       if (result.source.includes(AUTH_SCOPE_UPGRADE_MARKER)) {
-        return { source, status: "already-applied" };
+        return {
+          source: result.source,
+          status: changed ? "would-apply" : "already-applied",
+        };
       }
       result = replaceExactlyOnce(
         result.source,
