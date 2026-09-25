@@ -94,6 +94,14 @@ function selectorScript(): string {
   return script;
 }
 
+function hermesSelectorScript(): string {
+  const script = workflow().jobs["select-hermes-root-entrypoint"]?.steps?.find(
+    (step) => step.name === "Select Hermes root-entrypoint qualification from PR files",
+  )?.run;
+  assert(typeof script === "string", "Hermes root-entrypoint selector script is missing");
+  return script;
+}
+
 function declaredSelectionPaths(): readonly string[] {
   const script = selectorScript();
   const exactPaths = [...script.matchAll(/\.filename == "([^"]+)"/gu)].map(([, value]) => {
@@ -111,14 +119,14 @@ function declaredSelectionPaths(): readonly string[] {
   return paths;
 }
 
-async function selectGenericGpuLane(
+async function executeSelector(
+  script: string,
+  fixtureName: string,
   changedFiles: readonly string[],
   copiedSha = CANDIDATE_SHA,
   baseSha = BASE_SHA,
 ) {
-  const script = selectorScript();
-
-  const directory = mkdtempSync(join(tmpdir(), "nemoclaw-generic-gpu-selector-"));
+  const directory = mkdtempSync(join(tmpdir(), `nemoclaw-${fixtureName}-selector-`));
   const binDirectory = join(directory, "bin");
   const outputPath = join(directory, "github-output");
   const ghPath = join(binDirectory, "gh");
@@ -164,11 +172,41 @@ fi
   }
 }
 
+function selectGenericGpuLane(
+  changedFiles: readonly string[],
+  copiedSha = CANDIDATE_SHA,
+  baseSha = BASE_SHA,
+) {
+  return executeSelector(selectorScript(), "generic-gpu", changedFiles, copiedSha, baseSha);
+}
+
+function selectHermesRootEntrypoint(
+  changedFiles: readonly string[],
+  copiedSha = CANDIDATE_SHA,
+  baseSha = BASE_SHA,
+) {
+  return executeSelector(
+    hermesSelectorScript(),
+    "hermes-root-entrypoint",
+    changedFiles,
+    copiedSha,
+    baseSha,
+  );
+}
+
 describe.concurrent("generic NVIDIA GPU PR selection", () => {
   // source-shape-contract: security -- The copied PR workflow must run the exact Hermes root-entrypoint recovery proof while excluding unrelated image jobs
   it("runs the Hermes root-entrypoint recovery proof for the copied PR revision", ({ expect }) => {
+    const selector = workflow().jobs["select-hermes-root-entrypoint"];
     const caller = workflow().jobs["hermes-root-entrypoint-smoke"];
+    expect(selector).toMatchObject({
+      outputs: { selected: "${{ steps.changed.outputs.selected }}" },
+      permissions: { contents: "read" },
+      "runs-on": "ubuntu-latest",
+    });
     expect(caller).toMatchObject({
+      if: "${{ needs.select-hermes-root-entrypoint.outputs.selected == 'true' }}",
+      needs: "select-hermes-root-entrypoint",
       uses: "./.github/workflows/sandbox-images.yaml",
       with: { hermes_only: true },
     });
@@ -206,6 +244,20 @@ describe.concurrent("generic NVIDIA GPU PR selection", () => {
       ].map((jobName) => reusable.jobs[jobName]?.if),
     ).toEqual(
       Array.from({ length: 5 }, () => expect.stringContaining("inputs.hermes_only != true")),
+    );
+  });
+
+  // source-shape-contract: security -- Executes the copied-PR selector to prove a Hermes runtime owner retains the trusted root-entrypoint qualification
+  it("selects Hermes qualification for a Hermes runtime change", async ({ expect }) => {
+    await expect(selectHermesRootEntrypoint(["agents/hermes/start.sh"])).resolves.toBe(
+      "selected=true",
+    );
+  });
+
+  // source-shape-contract: security -- Executes the copied-PR selector to prove unrelated documentation cannot consume trusted Hermes image runners
+  it("skips Hermes qualification for unrelated documentation", async ({ expect }) => {
+    await expect(selectHermesRootEntrypoint(["docs/get-started/quickstart.mdx"])).resolves.toBe(
+      "selected=false",
     );
   });
 
