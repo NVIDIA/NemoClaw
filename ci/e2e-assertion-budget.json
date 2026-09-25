@@ -12,31 +12,31 @@
     "epicLiveExpectCalls": 2677
   },
   "limits": {
-    "testFileCount": 79,
-    "liveFileCount": 190,
+    "testFileCount": 78,
+    "liveFileCount": 189,
     "direct": {
       "expectCalls": 1356,
       "matcherAssertions": 1335,
       "nodeAssertions": 103,
-      "namedAssertionHelpers": 444,
+      "namedAssertionHelpers": 443,
       "failCalls": 0,
-      "throwGuards": 71,
-      "objectFieldAssertions": 172,
-      "assertionPoints": 2161,
-      "generatedProbeBlocks": 94,
-      "generatedProbeConditions": 239
+      "throwGuards": 65,
+      "objectFieldAssertions": 167,
+      "assertionPoints": 2113,
+      "generatedProbeBlocks": 93,
+      "generatedProbeConditions": 238
     },
     "unique": {
-      "expectCalls": 1826,
-      "matcherAssertions": 1800,
+      "expectCalls": 1790,
+      "matcherAssertions": 1764,
       "nodeAssertions": 126,
-      "namedAssertionHelpers": 686,
+      "namedAssertionHelpers": 685,
       "failCalls": 1,
-      "throwGuards": 557,
-      "objectFieldAssertions": 249,
-      "assertionPoints": 3419,
-      "generatedProbeBlocks": 235,
-      "generatedProbeConditions": 830
+      "throwGuards": 551,
+      "objectFieldAssertions": 244,
+      "assertionPoints": 3371,
+      "generatedProbeBlocks": 234,
+      "generatedProbeConditions": 829
     },
     "fileMetricOrder": [
       "directExpectCalls",

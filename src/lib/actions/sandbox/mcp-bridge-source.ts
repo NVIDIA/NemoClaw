@@ -242,13 +242,13 @@ function buildHermesSourceCommand(configDir: string): string {
   ].join("\n");
 }
 
-function buildOpenClawSourceScript(configDir: string): string {
+function buildOpenClawSourceScript(configDir: string, json5ModulePath: string): string {
   const nativePath = path.posix.join(configDir, "openclaw.json");
   const legacyPath = path.posix.join(configDir, "workspace", "config", "mcporter.json");
   const payload = { nativePath, legacyPath };
   return [
     'const fs = require("node:fs");',
-    'const JSON5 = require("/usr/local/lib/node_modules/openclaw/node_modules/json5");',
+    `const JSON5 = require(${JSON.stringify(json5ModulePath)});`,
     `const paths = JSON.parse(${sourcePayload(payload)});`,
     "const MAX_BYTES = 262144;",
     "const PREFIX = 'Bearer openshell:resolve:env:';",
@@ -265,7 +265,11 @@ function buildOpenClawSourceScript(configDir: string): string {
 }
 
 function buildOpenClawSourceCommand(configDir: string): string {
-  return ["node - <<'NODE'", buildOpenClawSourceScript(configDir), "NODE"].join("\n");
+  return [
+    "node - <<'NODE'",
+    buildOpenClawSourceScript(configDir, "/usr/local/lib/node_modules/openclaw/node_modules/json5"),
+    "NODE",
+  ].join("\n");
 }
 
 function sourceCommand(adapter: AgentMcpAdapter, configDir: string): string {
@@ -460,7 +464,9 @@ export function inspectCapturedOpenClawMcpSources(
   source.assertCurrent();
   let output: string;
   try {
-    output = execFileSync(process.execPath, ["-e", buildOpenClawSourceScript(source.directory)], {
+    // Resolve from the CLI installation, never from provider-captured agent state.
+    const script = buildOpenClawSourceScript(source.directory, require.resolve("json5"));
+    output = execFileSync(process.execPath, ["-e", script], {
       encoding: "utf8",
       env: {},
       cwd: source.directory,
