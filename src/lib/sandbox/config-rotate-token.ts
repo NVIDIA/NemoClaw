@@ -138,8 +138,6 @@ export async function rotateSandboxToken(
     deps.fail(error instanceof Error ? error.message : "OpenShell version check failed.");
   }
 
-  deps.saveCredential(credentialEnv, newToken);
-
   console.log("  Updating openshell provider...");
   const result = deps.runOpenshellCommand(
     binary,
@@ -187,6 +185,8 @@ export async function rotateSandboxToken(
     if (createResult.status !== 0)
       deps.fail("  Failed to update provider. You may need to re-onboard.");
   }
+
+  deps.saveCredential(credentialEnv, newToken);
 
   deps.appendAuditEntry({
     action: "rotate_token",

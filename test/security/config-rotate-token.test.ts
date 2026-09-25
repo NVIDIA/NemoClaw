@@ -330,6 +330,7 @@ describe("config rotate-token", () => {
 
   it("refuses to recreate an endpoint-backed registered provider without its endpoint", async () => {
     const appendAuditEntry = vi.fn();
+    const saveCredential = vi.fn();
     const runOpenshellCommand = vi
       .fn<RotateTokenDeps["runOpenshellCommand"]>()
       .mockReturnValue({ status: 1 } as ReturnType<RotateTokenDeps["runOpenshellCommand"]>);
@@ -354,7 +355,7 @@ describe("config rotate-token", () => {
       promptSecret: vi.fn().mockResolvedValue("current-route-secret"),
       resolveAgentConfig: () => DEFAULT_AGENT_CONFIG,
       runOpenshellCommand,
-      saveCredential: vi.fn(),
+      saveCredential,
       validateName: vi.fn((name: string) => name),
     } satisfies RotateTokenDeps;
 
@@ -363,6 +364,7 @@ describe("config rotate-token", () => {
     );
 
     expect(runOpenshellCommand).toHaveBeenCalledOnce();
+    expect(saveCredential).not.toHaveBeenCalled();
     expect(appendAuditEntry).not.toHaveBeenCalled();
   });
 });
