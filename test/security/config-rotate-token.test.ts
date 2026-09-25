@@ -163,6 +163,53 @@ describe("config rotate-token", () => {
     },
   );
 
+  it.each([
+    {
+      message: "is not bound to sandbox 'rotate-profile-test'",
+      sessionSandboxName: null,
+    },
+    {
+      message: "is for sandbox 'another-sandbox', not 'rotate-profile-test'",
+      sessionSandboxName: "another-sandbox",
+    },
+  ])(
+    "rejects an onboard session with sandbox binding $sessionSandboxName before credential side effects",
+    async ({ message, sessionSandboxName }) => {
+      const promptSecret = vi.fn();
+      const saveCredential = vi.fn();
+      const runOpenshellCommand = vi.fn<RotateTokenDeps["runOpenshellCommand"]>();
+      const captureOpenshellCommand = vi.fn<RotateTokenDeps["captureOpenshellCommand"]>();
+      const resolveAgentConfig = vi.fn(() => DEFAULT_AGENT_CONFIG);
+      const deps = {
+        appendAuditEntry: vi.fn(),
+        captureOpenshellCommand,
+        fail: (lines: string | readonly string[]): never => {
+          throw new Error(typeof lines === "string" ? lines : lines.join("\n"));
+        },
+        loadSandbox: () => null,
+        loadSession: () => ({
+          sandboxName: sessionSandboxName,
+          credentialEnv: "OPENAI_API_KEY",
+          provider: "inference",
+          providerType: "openai",
+        }),
+        promptSecret,
+        resolveAgentConfig,
+        runOpenshellCommand,
+        saveCredential,
+        validateName: vi.fn((name: string) => name),
+      } satisfies RotateTokenDeps;
+
+      await expect(rotateSandboxToken("rotate-profile-test", {}, deps)).rejects.toThrow(message);
+
+      expect(resolveAgentConfig).not.toHaveBeenCalled();
+      expect(promptSecret).not.toHaveBeenCalled();
+      expect(captureOpenshellCommand).not.toHaveBeenCalled();
+      expect(saveCredential).not.toHaveBeenCalled();
+      expect(runOpenshellCommand).not.toHaveBeenCalled();
+    },
+  );
+
   it("rotates the provider currently registered to the named sandbox instead of a stale session", async () => {
     const loadSession = vi.fn(() => ({
       sandboxName: "rotate-profile-test",

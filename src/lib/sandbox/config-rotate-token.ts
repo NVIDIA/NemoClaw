@@ -86,8 +86,12 @@ export async function rotateSandboxToken(
       ]);
     }
 
-    if (session.sandboxName && session.sandboxName !== sandboxName) {
-      deps.fail(`  Onboard session is for sandbox '${session.sandboxName}', not '${sandboxName}'.`);
+    if (session.sandboxName !== sandboxName) {
+      deps.fail(
+        session.sandboxName
+          ? `  Onboard session is for sandbox '${session.sandboxName}', not '${sandboxName}'.`
+          : `  Onboard session is not bound to sandbox '${sandboxName}'.`,
+      );
     }
     credentialEnv = session.credentialEnv;
     providerName = session.provider || "inference";
