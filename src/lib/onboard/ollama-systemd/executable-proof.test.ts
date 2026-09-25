@@ -817,7 +817,7 @@ describe("proveOllamaSystemdServiceExecutable", () => {
     expect(result.ok ? "" : result.message).not.toContain("detail ".repeat(40));
   });
 
-  it("retains the fallback proof source when stderr is empty (#12281)", () => {
+  it("retains the systemd timeout and direct fallback diagnostics (#12281)", () => {
     const fixture = proofFixture(0o755);
     fixture.runCaptureExImpl.mockImplementation((command: readonly string[]) =>
       captureForCommand(command, [
@@ -830,8 +830,17 @@ describe("proveOllamaSystemdServiceExecutable", () => {
             ),
         ],
         [(candidate) => candidate[0] === "/usr/bin/id", () => capture(0)],
-        [(candidate) => isServiceUserProofCommand(candidate), () => capture(null, "", true)],
-        [(candidate) => isBoundedDirectServiceUserProofCommand(candidate), () => capture(1)],
+        [
+          (candidate) => isServiceUserProofCommand(candidate),
+          () => ({
+            ...capture(null, "", true),
+            stderr: "Finished with result: timeout\n",
+          }),
+        ],
+        [
+          (candidate) => isBoundedDirectServiceUserProofCommand(candidate),
+          () => ({ ...capture(1), stderr: "direct proof failed\n" }),
+        ],
         [(candidate) => isServiceUserAccessCommand(candidate), () => accessCapture(true)],
       ]),
     );
@@ -839,9 +848,11 @@ describe("proveOllamaSystemdServiceExecutable", () => {
     const result = proveOllamaSystemdServiceExecutable(fixture.options);
 
     expect(result).toMatchObject({ classification: "execution-failed", ok: false });
+    expect(result.ok ? "" : result.message).toContain("systemd-run timed out.");
     expect(result.ok ? "" : result.message).toContain(
-      "direct proof returned no diagnostic detail.",
+      "systemd-run detail: Finished with result: timeout",
     );
+    expect(result.ok ? "" : result.message).toContain("direct proof detail: direct proof failed");
   });
 
   it("accepts an initial service-user proof without changing permissions (#9728)", () => {

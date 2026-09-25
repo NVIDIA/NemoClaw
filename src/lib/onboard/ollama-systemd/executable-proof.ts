@@ -442,14 +442,19 @@ function runServiceUserProofWithFallback(
   serviceUser: string,
   executablePath: string,
   options: OllamaSystemdExecutableProofOptions,
-): { result: OllamaExecutableCaptureResult; source: "direct proof" | "systemd-run" } {
-  const result = runServiceUserProof(serviceUser, executablePath, options);
-  return result.timedOut
+): {
+  precedingSystemdTimeout: OllamaExecutableCaptureResult | null;
+  result: OllamaExecutableCaptureResult;
+  source: "direct proof" | "systemd-run";
+} {
+  const systemdResult = runServiceUserProof(serviceUser, executablePath, options);
+  return systemdResult.timedOut
     ? {
+        precedingSystemdTimeout: systemdResult,
         result: runBoundedDirectServiceUserProof(serviceUser, executablePath, options),
         source: "direct proof",
       }
-    : { result, source: "systemd-run" };
+    : { precedingSystemdTimeout: null, result: systemdResult, source: "systemd-run" };
 }
 
 function runServiceUserPathAccessProof(
@@ -550,11 +555,11 @@ export function proveOllamaSystemdServiceExecutable(
     );
   }
 
-  const { result: initialProof, source: initialProofSource } = runServiceUserProofWithFallback(
-    metadata.serviceUser,
-    metadata.executablePath,
-    options,
-  );
+  const {
+    precedingSystemdTimeout,
+    result: initialProof,
+    source: initialProofSource,
+  } = runServiceUserProofWithFallback(metadata.serviceUser, metadata.executablePath, options);
   if (!initialProof.timedOut && initialProof.exitCode === 0) {
     return { ...metadata, interpreterPath, ok: true, repaired: false };
   }
@@ -564,7 +569,9 @@ export function proveOllamaSystemdServiceExecutable(
       `systemd-run timed out after ${String(EXECUTION_PROOF_TIMEOUT_SECONDS)} seconds, and the direct service-user recovery proof also timed out after ${String(EXECUTION_PROOF_TIMEOUT_SECONDS)} seconds for Ollama ExecStart '--version' as systemd User '${metadata.serviceUser}'`,
     );
   }
-  const proofFailureDetail = executionFailureDetail(initialProof, initialProofSource);
+  const proofFailureDetail = precedingSystemdTimeout
+    ? ` systemd-run timed out.${executionFailureDetail(precedingSystemdTimeout, "systemd-run")}${executionFailureDetail(initialProof, initialProofSource)}`
+    : executionFailureDetail(initialProof, initialProofSource);
 
   const executableAccessResult = runServiceUserPathAccessProof(
     metadata.serviceUser,
