@@ -1155,33 +1155,6 @@ async function verifyHermesPortableInferenceRoute(
   return finalAuthority.entry;
 }
 
-/** Verify the recorded Hermes route without invoking any inference repair. */
-async function verifyHermesPortableInferenceRouteOrExit(
-  sandboxName: string,
-  agent: InferenceRouteProbeAgent,
-  expectedAuthority?: HermesPortableActiveLifecycleAuthority,
-  commandAuthority?: HermesPortableReadinessCommandAuthority,
-  retainVerified?: (
-    entry: SandboxEntry,
-    probe: ReturnType<typeof parseSandboxInferenceRouteProbeResult>,
-  ) => void,
-): Promise<SandboxEntry> {
-  try {
-    return await verifyHermesPortableInferenceRoute(
-      sandboxName,
-      agent,
-      expectedAuthority,
-      commandAuthority,
-      retainVerified,
-    );
-  } catch (error) {
-    failHermesPortableInferenceRoute(
-      sandboxName,
-      error instanceof HermesPortableInferenceRouteVerificationError ? error.reason : "unreachable",
-    );
-  }
-}
-
 type HermesPortableProbeRouteResult = {
   readonly entry: SandboxEntry;
   readonly forwardsRecovered: boolean;
@@ -1288,19 +1261,7 @@ async function verifyOrRecoverHermesPortableInferenceRouteForConnectOrExit(
     failHermesPortableInferenceRoute(sandboxName, "missing or incomplete");
   }
   if (authority.entry.provider !== "ollama-local") {
-    const entry = await verifyHermesPortableInferenceRouteOrExit(
-      sandboxName,
-      agent,
-      authority,
-      options.commandAuthority,
-      options.retainVerified,
-    );
-    try {
-      options.validateVerified?.(entry);
-    } catch {
-      failHermesPortableInferenceRoute(sandboxName, "changed during verification");
-    }
-    return { entry, forwardsRecovered: false };
+    failHermesPortableInferenceRoute(sandboxName, "changed during verification");
   }
   let verified: SandboxEntry | null = null;
   let preparedForwards: PreparedHermesPortableForwardRecovery | null = null;
