@@ -133,7 +133,7 @@ export function buildDebugCommandDeps(rootDir: string): RunDebugCommandDeps {
         : null;
       if (portable) return runHermesPortableDebug(options, portable);
       assertNoHermesPortableHostAuthority(defaultPortableStateDir(process.env), "debug");
-      runDebug(options);
+      return runDebug(options);
     },
   };
 }

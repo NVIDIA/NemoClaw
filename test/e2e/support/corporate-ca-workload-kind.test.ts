@@ -17,7 +17,8 @@ import {
 import { encodeManagedStartupProfile } from "../../../src/lib/onboard/managed-startup/profile.ts";
 import { nemoclawStateRoot } from "../../../src/lib/state/state-root.ts";
 import { registeredCorporateCaWorkloadKind } from "../fixtures/corporate-ca.ts";
-import { createPublicInstallerWorkspace } from "../fixtures/public-installer-workspace.ts";
+import { createPublicInstallWorkspace } from "../fixtures/public-install-workspace.ts";
+import { CleanupRegistry } from "../fixtures/cleanup.ts";
 import { connectManagedOpenShellSdk } from "../../../src/lib/adapters/openshell/sdk.ts";
 
 const SANDBOX_NAME = "corporate-ca-authority";
@@ -35,28 +36,32 @@ describe("corporate CA public installer workspace", () => {
     { mode: 0o700, accepted: true, label: "accepts a private fixture home" },
     { mode: 0o777, accepted: false, label: "rejects fixture homes with writable ancestors" },
   ])("$label", async ({ mode, accepted }) => {
-    const workspace = createPublicInstallerWorkspace();
-    temporaryHomes.push(workspace);
-    fs.chmodSync(workspace, mode);
-    const home = path.join(workspace, "home");
-    const stateDir = path.join(home, ".local/state/nemoclaw/openshell-docker-gateway");
-    fs.mkdirSync(path.join(stateDir, "tls/client"), { recursive: true, mode: 0o700 });
-    fs.writeFileSync(path.join(stateDir, "tls/ca.crt"), "fixture-ca", { mode: 0o600 });
-    fs.writeFileSync(path.join(stateDir, "tls/client/tls.crt"), "fixture-cert", { mode: 0o600 });
-    fs.writeFileSync(path.join(stateDir, "tls/client/tls.key"), "fixture-key", { mode: 0o600 });
-    const connect = vi.fn(async () => ({}));
-    const outcome = await connectManagedOpenShellSdk(
-      { kind: "named", gatewayName: "nemoclaw" },
-      { env: { HOME: home }, loadSdk: async () => ({ OpenShellClient: { connect } }) },
-    ).then(
-      () => ({ accepted: true, error: "" }),
-      (error: Error) => ({ accepted: false, error: error.message }),
-    );
-    expect(outcome.accepted).toBe(accepted);
-    expect(connect).toHaveBeenCalledTimes(accepted ? 1 : 0);
-    expect(outcome.error).toEqual(
-      accepted ? "" : expect.stringContaining("without group or world write access"),
-    );
+    const cleanup = new CleanupRegistry();
+    const workspace = createPublicInstallWorkspace(cleanup);
+    try {
+      fs.chmodSync(workspace, mode);
+      const home = path.join(workspace, "home");
+      const stateDir = path.join(home, ".local/state/nemoclaw/openshell-docker-gateway");
+      fs.mkdirSync(path.join(stateDir, "tls/client"), { recursive: true, mode: 0o700 });
+      fs.writeFileSync(path.join(stateDir, "tls/ca.crt"), "fixture-ca", { mode: 0o600 });
+      fs.writeFileSync(path.join(stateDir, "tls/client/tls.crt"), "fixture-cert", { mode: 0o600 });
+      fs.writeFileSync(path.join(stateDir, "tls/client/tls.key"), "fixture-key", { mode: 0o600 });
+      const connect = vi.fn(async () => ({}));
+      const outcome = await connectManagedOpenShellSdk(
+        { kind: "named", gatewayName: "nemoclaw" },
+        { env: { HOME: home }, loadSdk: async () => ({ OpenShellClient: { connect } }) },
+      ).then(
+        () => ({ accepted: true, error: "" }),
+        (error: Error) => ({ accepted: false, error: error.message }),
+      );
+      expect(outcome.accepted).toBe(accepted);
+      expect(connect).toHaveBeenCalledTimes(accepted ? 1 : 0);
+      expect(outcome.error).toEqual(
+        accepted ? "" : expect.stringContaining("without group or world write access"),
+      );
+    } finally {
+      expect((await cleanup.runAll()).failures).toEqual([]);
+    }
   });
 });
 

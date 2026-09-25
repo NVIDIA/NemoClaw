@@ -1,18 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  createSdkOpenShellSandboxStateLifecycle,
+  type MutateOpenShellSandboxRequest,
+  type OpenShellSandboxStateLifecycle,
+} from "../../adapters/openshell/sandbox-lifecycle-sdk";
+
 import type {
   RuntimeProviderBundle,
   RuntimeProviderCommandCapture,
   RuntimeProviderPrivilegedSandboxControl,
 } from "../runtime-provider/contract";
 import type { SandboxEntry } from "../../state/registry/types";
-import type { SelectedDockerGpuRoute } from "../docker-gpu-route";
-import { fingerprintOpenShellSandboxId } from "../../adapters/openshell/sandbox-identity";
-import {
-  createSdkOpenShellSandboxStateLifecycle,
-  type OpenShellSandboxStateLifecycle,
-} from "../../adapters/openshell/sandbox-lifecycle-sdk";
 import { MANAGED_STARTUP_RUNTIME_EXECUTABLE } from "./image-runtime";
 import {
   type ManagedStartupRootApplyRequest,
@@ -85,7 +85,6 @@ function inspectExactCreatedRuntime(input: {
   readonly sandboxName: string;
   readonly sandboxId: string;
   readonly expectedContainerId?: string;
-  readonly running?: boolean;
 }): ProviderManagedStartupRuntime {
   const runtime = requireRuntimeProvider(input.bundle);
   const sandbox: SandboxEntry = {
@@ -139,7 +138,7 @@ function inspectExactCreatedRuntime(input: {
     labels["openshell.ai/sandbox-name"] !== input.sandboxName ||
     labels["openshell.ai/sandbox-id"] !== input.sandboxId ||
     labels["openshell.ai/sandbox-workspace"] !== "default" ||
-    row.State?.Running !== (input.running ?? true) ||
+    row.State?.Running !== true ||
     row.State.Paused === true ||
     row.State.Restarting === true ||
     row.State.Dead === true
@@ -185,14 +184,12 @@ function inspectExactTransactionRuntime(input: {
   readonly sandboxName: string;
   readonly sandboxId: string;
   readonly transaction: ProviderManagedStartupTransaction;
-  readonly running?: boolean;
 }): ProviderManagedStartupRuntime {
   const pinned = inspectExactCreatedRuntime({
     bundle: input.runtimeProvider,
     sandboxName: input.sandboxName,
     sandboxId: input.sandboxId,
     expectedContainerId: input.transaction.containerId,
-    running: input.running,
   });
   if (
     pinned.transaction.containerId !== input.transaction.containerId ||
@@ -410,90 +407,6 @@ export function finalizeProviderManagedStartupSharedState(input: {
   return { supervisorReady: false, failure: null };
 }
 
-function trustLifecycleRequest(input: {
-  readonly sandboxName: string;
-  readonly sandboxId: string;
-  readonly gatewayName: string;
-}) {
-  const sandboxIdentityFingerprint = fingerprintOpenShellSandboxId(input.sandboxId);
-  if (!sandboxIdentityFingerprint) {
-    throw new Error("Corporate CA startup requires a verified sandbox identity.");
-  }
-  return {
-    sandboxName: input.sandboxName,
-    sandboxIdentityFingerprint,
-    target: { kind: "named" as const, gatewayName: input.gatewayName },
-    timeoutMs: 75_000,
-  };
-}
-
-/** Resume an interrupted trust refresh before root application needs a running container. */
-export async function resumeProviderManagedStartupTrust(
-  input: {
-    readonly sandboxName: string;
-    readonly sandboxId: string;
-    readonly gatewayName: string;
-    readonly corporateCa: boolean;
-    readonly route: SelectedDockerGpuRoute;
-  },
-  lifecycle: OpenShellSandboxStateLifecycle = createSdkOpenShellSandboxStateLifecycle(),
-): Promise<void> {
-  if (!input.corporateCa || input.route === "compatibility") return;
-  // OpenShell start is idempotent for Ready and resumes Stopped/Starting. The
-  // SDK verifies the saved sandbox identity before mutation and after Ready.
-  const started = await lifecycle.startSandbox(trustLifecycleRequest(input));
-  if (started.kind === "failed") {
-    throw new Error(`Could not resume corporate CA startup: ${started.error.message}`);
-  }
-}
-
-/**
- * OpenShell 0.0.116 snapshots upstream TLS roots before root profile application.
- * Restart the same sandbox after committing its CA, before releasing the agent.
- * A policy update or an agent-only restart cannot refresh the supervisor's roots.
- */
-export async function refreshProviderManagedStartupTrust(
-  input: {
-    readonly runtimeProvider: RuntimeProviderBundle;
-    readonly sandboxName: string;
-    readonly sandboxId: string;
-    readonly gatewayName: string;
-    readonly transaction: ProviderManagedStartupTransaction | null;
-    readonly corporateCa: boolean;
-    readonly route: SelectedDockerGpuRoute;
-    readonly expectedContainerId?: string;
-  },
-  lifecycle: OpenShellSandboxStateLifecycle = createSdkOpenShellSandboxStateLifecycle(),
-): Promise<void> {
-  // Compatibility owns a final handoff that restarts the replacement after CA
-  // installation. Its OpenShell row is deliberately Stopped during root apply.
-  if (!input.corporateCa || input.route === "compatibility") return;
-  const request = trustLifecycleRequest(input);
-  const runtime = input.transaction
-    ? inspectExactTransactionRuntime({ ...input, transaction: input.transaction })
-    : inspectExactCreatedRuntime({
-        bundle: input.runtimeProvider,
-        sandboxName: input.sandboxName,
-        sandboxId: input.sandboxId,
-        expectedContainerId: input.expectedContainerId,
-      });
-  const stopped = await lifecycle.stopSandbox(request);
-  if (stopped.kind === "failed") {
-    throw new Error(
-      `Could not stop the sandbox to refresh corporate CA trust: ${stopped.error.message}`,
-    );
-  }
-  const identity = { ...input, transaction: runtime.transaction };
-  inspectExactTransactionRuntime({ ...identity, running: false });
-  const started = await lifecycle.startSandbox(request);
-  if (started.kind === "failed") {
-    throw new Error(
-      `Could not restart the sandbox to refresh corporate CA trust: ${started.error.message}`,
-    );
-  }
-  inspectExactTransactionRuntime(identity);
-}
-
 export function releaseProviderManagedStartupHold(input: {
   readonly runtimeProvider: RuntimeProviderBundle;
   readonly sandboxName: string;
@@ -535,5 +448,22 @@ export function releaseProviderManagedStartupHold(input: {
         commandDetail(result) ? `: ${commandDetail(result)}` : ""
       }`,
     );
+  }
+}
+
+/** Reload the supervisor's upstream TLS roots after the root apply installs a CA. */
+export async function refreshManagedStartupCorporateCaTrust(
+  request: MutateOpenShellSandboxRequest,
+  lifecycle: OpenShellSandboxStateLifecycle = createSdkOpenShellSandboxStateLifecycle(),
+): Promise<void> {
+  // OpenShell snapshots its TLS roots before the held managed workload receives
+  // its profile. Native stop/start retains that exact container and its CA files.
+  for (const action of ["stop", "start"] as const) {
+    const result = await lifecycle[`${action}Sandbox`](request);
+    if (result.kind === "failed") {
+      throw new Error(
+        `Could not ${action} sandbox '${request.sandboxName}' to activate corporate CA trust: ${result.error.message}`,
+      );
+    }
   }
 }

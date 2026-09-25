@@ -59,7 +59,11 @@ describe("launch-readiness gateway health scope", () => {
       expect.objectContaining({
         sandboxName: "alpha",
         target: { kind: "named", gatewayName: "nemoclaw-8091" },
-        command: ["sh", "-c", expect.stringContaining("http://127.0.0.1:18789/health")],
+        command: expect.arrayContaining([
+          "sh",
+          "-c",
+          expect.stringContaining("http://127.0.0.1:18789/health"),
+        ]),
       }),
     );
   });
@@ -79,8 +83,8 @@ describe("launch-readiness gateway health scope", () => {
       }),
     ).resolves.toBeNull();
 
-    expect(runBuffered.mock.calls[0]?.[0].command[2]).toContain("echo UNAVAILABLE");
-    expect(runBuffered.mock.calls[0]?.[0].command[2]).not.toContain("echo STOPPED");
+    expect(runBuffered.mock.calls[0]?.[0].command.at(-1)).toContain("echo UNAVAILABLE");
+    expect(runBuffered.mock.calls[0]?.[0].command.at(-1)).not.toContain("echo STOPPED");
   });
 
   it.each([
@@ -97,7 +101,7 @@ describe("launch-readiness gateway health scope", () => {
           outcome: { kind: "completed", exitCode: 0 },
           stdout: execFileSync(
             "sh",
-            ["-c", `curl() { printf '%s' '${http}'; return ${code}; }; ${request.command[2]}`],
+            ["-c", `curl() { printf '%s' '${http}'; return ${code}; }; ${request.command.at(-1)}`],
             { encoding: "utf8" },
           ),
           stderr: "",
@@ -155,7 +159,11 @@ describe("launch-readiness gateway health scope", () => {
       expect.objectContaining({
         sandboxName: "alpha",
         target: { kind: "named", gatewayName: "nemoclaw-19080" },
-        command: ["sh", "-c", expect.stringContaining("http://127.0.0.1:18789/health")],
+        command: expect.arrayContaining([
+          "sh",
+          "-c",
+          expect.stringContaining("http://127.0.0.1:18789/health"),
+        ]),
       }),
     );
   });
