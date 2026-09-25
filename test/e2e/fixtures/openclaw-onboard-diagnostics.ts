@@ -21,11 +21,21 @@ for (const file of process.argv.slice(1)) {
     fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
     const stat = fs.fstatSync(fd);
     if (!stat.isFile() || stat.nlink !== 1) throw new Error("unsafe log");
-    const start = Math.max(0, stat.size - 16384);
-    const buffer = Buffer.alloc(stat.size - start);
-    const bytes = fs.readSync(fd, buffer, 0, buffer.length, start);
+    // Do not split a credential before the host applies value redaction.
+    if (stat.size > 16384) {
+      console.log(JSON.stringify({ file, uid: stat.uid, gid: stat.gid, mode: stat.mode & 511,
+        size: stat.size, logOmitted: "size-limit" }));
+      continue;
+    }
+    const buffer = Buffer.alloc(stat.size);
+    const bytes = fs.readSync(fd, buffer, 0, buffer.length, 0);
+    const after = fs.fstatSync(fd);
+    if (bytes !== stat.size || after.size !== stat.size || after.mtimeMs !== stat.mtimeMs) {
+      console.log(JSON.stringify({ file, logOmitted: "changed-during-read" }));
+      continue;
+    }
     console.log(JSON.stringify({ file, uid: stat.uid, gid: stat.gid, mode: stat.mode & 511,
-      truncated: start > 0, log: buffer.subarray(0, bytes).toString("utf8") }));
+      truncated: false, log: buffer.subarray(0, bytes).toString("utf8") }));
   } catch {
     console.log(JSON.stringify({ file, readable: false }));
   } finally {

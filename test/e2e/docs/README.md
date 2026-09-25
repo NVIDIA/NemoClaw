@@ -146,6 +146,10 @@ secrets and internal credential transport markers before publication.
 The secret scan covers registered fixture values, not arbitrary unregistered
 secrets. Review selected exports before retaining them as migration fixtures.
 
+OpenClaw failure probes read only regular, single-link log files without following symlinks.
+They omit log content above 16 KiB or changed during the read, so truncation cannot split a credential before host redaction.
+Oversized files retain size and permission metadata for diagnosis.
+
 After a live target succeeds, the E2E workflow requires
 `config-export-evidence.v1.json`. It also requires `config-export.yaml` when
 the evidence classification is `success`; `expected-refusal` and

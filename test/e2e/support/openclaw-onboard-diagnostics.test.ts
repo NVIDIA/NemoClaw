@@ -102,14 +102,17 @@ describe("OpenClaw onboarding failure diagnostics", () => {
     expect(redactString(secret, redactions)).not.toContain(secret);
   });
 
-  it("caps log reads, rejects links, and sends captured secrets through fixture redaction", () => {
+  it("omits oversized logs, rejects links, and redacts complete captured credentials", () => {
     const directory = mkdtempSync(join(tmpdir(), "onboard-diagnostics-"));
     try {
       const log = join(directory, "startup.log");
       const secret = join(directory, "credentials");
       const symlink = join(directory, "symlink.log");
       const hardlink = join(directory, "hardlink.log");
-      writeFileSync(log, "x".repeat(20000) + "\nAuthorization: Bearer fixture-secret\n");
+      const oversized = join(directory, "oversized.log");
+      const boundarySecret = "synthetic-credential-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+      writeFileSync(log, "Authorization: Bearer fixture-secret\n");
+      writeFileSync(oversized, boundarySecret + "x".repeat(16384 - 24));
       writeFileSync(secret, "must-not-read-linked-credentials");
       symlinkSync(secret, symlink);
       linkSync(secret, hardlink);
@@ -118,6 +121,7 @@ describe("OpenClaw onboarding failure diagnostics", () => {
         symlink,
         hardlink,
         join(directory, "absent"),
+        oversized,
       ]);
       const result = spawnSync(command, args, {
         encoding: "utf8",
@@ -129,12 +133,45 @@ describe("OpenClaw onboarding failure diagnostics", () => {
         .trim()
         .split("\n")
         .map((line) => JSON.parse(line));
-      expect(Buffer.byteLength(records[0].log)).toBe(16384);
-      expect(records[0].truncated).toBe(true);
+      expect(records[0].log).toBe("Authorization: Bearer fixture-secret\n");
+      expect(records[0].truncated).toBe(false);
       expect(records.slice(1, 4).map((record) => record.readable)).toEqual([false, false, false]);
       expect(result.stdout).not.toContain("must-not-read-linked-credentials");
       expect(redactString(result.stdout, options.redactionValues)).not.toContain("fixture-secret");
+      expect(records[4]).toMatchObject({ logOmitted: "size-limit" });
+      expect(result.stdout).not.toContain(boundarySecret.slice(-24));
       expect(records.slice(4).every((record) => !("log" in record))).toBe(true);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("omits a log that grows during its bounded read", () => {
+    const directory = mkdtempSync(join(tmpdir(), "onboard-diagnostics-growth-"));
+    try {
+      const log = join(directory, "startup.log");
+      writeFileSync(log, "synthetic-credential-prefix");
+      const [command, flag, reader, ...paths] = buildOpenClawOnboardDiagnosticsCommand([log]);
+      const growDuringRead = String.raw`
+const io = require("node:fs");
+const read = io.readSync;
+io.readSync = (...args) => {
+  const bytes = read(...args);
+  io.appendFileSync(process.argv[1], "-suffix");
+  return bytes;
+};
+`;
+      const result = spawnSync(command, [flag, growDuringRead + reader, ...paths], {
+        encoding: "utf8",
+        timeout: 5000,
+        killSignal: "SIGKILL",
+      });
+      expect(result.status).toBe(0);
+      expect(JSON.parse(result.stdout.split("\n")[0])).toEqual({
+        file: log,
+        logOmitted: "changed-during-read",
+      });
+      expect(result.stdout).not.toContain("synthetic-credential");
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
