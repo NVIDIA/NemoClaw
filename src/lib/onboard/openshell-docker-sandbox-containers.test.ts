@@ -148,6 +148,16 @@ function querySnapshot(fields: unknown, nvidiaVisibleDevices?: string) {
 }
 
 describe("queryOpenShellDockerSandboxRuntimeSnapshot", () => {
+  it("does not start container discovery after the shared deadline expires", () => {
+    const dockerRun = vi.fn();
+    const now = vi.fn().mockReturnValueOnce(1_000).mockReturnValue(1_001);
+
+    expect(
+      queryOpenShellDockerSandboxRuntimeSnapshot("alpha", { dockerRun }, { timeoutMs: 1, now }),
+    ).toEqual({ ok: false, error: "Docker sandbox query deadline expired" });
+    expect(dockerRun).not.toHaveBeenCalled();
+  });
+
   it("returns immutable identity, bookkeeping ref, and safe absence from one exact container", () => {
     const { dockerRun, result } = querySnapshot(EMPTY_RUNTIME_FIELDS);
 

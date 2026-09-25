@@ -88,14 +88,14 @@ function queryDockerSandboxContainerIds(
   timeoutMs: number,
 ): OpenShellDockerSandboxContainerQuery {
   const run = deps.dockerRun ?? dockerRun;
-  const requestedTimeoutMs =
-    Number.isFinite(timeoutMs) && timeoutMs > 0
-      ? Math.floor(timeoutMs)
-      : DOCKER_SANDBOX_QUERY_TIMEOUT_MS;
+  const requestedTimeoutMs = Math.floor(timeoutMs);
+  if (!Number.isFinite(timeoutMs) || requestedTimeoutMs <= 0) {
+    return { ok: false, ids: [], error: "Docker sandbox query deadline expired" };
+  }
   const result = run([...filterArgs, "--format", "{{.ID}}"], {
     ignoreError: true,
     suppressOutput: true,
-    timeout: Math.max(1, Math.min(DOCKER_SANDBOX_QUERY_TIMEOUT_MS, requestedTimeoutMs)),
+    timeout: Math.min(DOCKER_SANDBOX_QUERY_TIMEOUT_MS, requestedTimeoutMs),
   });
   if (Number(result.status ?? 1) !== 0) {
     return {
