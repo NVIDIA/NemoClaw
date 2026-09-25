@@ -1194,8 +1194,52 @@ describe("backupAll", () => {
     );
     expect(logOutput).toContain("destroy` to clear a stranded record");
     expect(logOutput).toContain("onboard` to rebuild it");
-    expect(logOutput).toContain("1 backed up, 0 failed, 0 skipped");
+    expect(logOutput).toContain("1 backed up, 0 failed, 0 skipped, 1 stranded");
     expect(logOutput).not.toContain("Skipping 'sb-stranded'");
+  });
+
+  it("counts a confirmed stranded sandbox in the summary when strict mode is off (#11795)", async () => {
+    // Without the strict gate the run must still not read as a clean backup:
+    // the stranded sandbox was never captured, so the summary names it.
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "sb-good" }, { name: "sb-stranded" }],
+      defaultSandbox: null,
+    });
+    readySandboxNames = new Set(["sb-good"]);
+    liveSandboxNames = new Set(["sb-good"]);
+    mocks.isSandboxContainerDefinitivelyAbsent.mockImplementation(
+      (name: string) => name === "sb-stranded",
+    );
+    mocks.withSandboxMutationLock.mockImplementation((name: string, action: () => unknown) =>
+      name === "sb-stranded"
+        ? Promise.reject(new Error("Sandbox mutation lock is unavailable"))
+        : action(),
+    );
+    mocks.backupSandboxState.mockReturnValue({
+      success: true,
+      backedUpDirs: ["workspace"],
+      failedDirs: [],
+      backedUpFiles: [],
+      failedFiles: [],
+      manifest: { backupPath: "/backups/sb-good/timestamp" },
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`);
+    }) as never);
+
+    await backupAll();
+
+    expect(exitSpy).not.toHaveBeenCalled();
+    const logOutput = logSpy.mock.calls.flat().join("\n");
+    expect(logOutput).toContain("1 backed up, 0 failed, 0 skipped, 1 stranded");
+    expect(logOutput).toContain(
+      "1 recorded sandbox(es) were not found on their recorded gateway: sb-stranded.",
+    );
+    expect(errorSpy.mock.calls.flat().join("\n")).not.toContain(
+      "requires every registered sandbox",
+    );
   });
 
   it("keeps the strict abort for an absent sandbox bound to a different gateway (#6520)", async () => {

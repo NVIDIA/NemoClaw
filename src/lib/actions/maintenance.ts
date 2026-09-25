@@ -409,8 +409,14 @@ export async function backupAllUnderPortableHostFence(
   }
   console.log("");
   const purposeLabel = purpose === "pre-uninstall" ? "Pre-uninstall" : "Pre-upgrade";
+  // A confirmed stranded sandbox was not backed up, so the summary must count
+  // it; a reader who trusts the counters would otherwise conclude every
+  // registered sandbox was captured (#11795).
+  const stranded = confirmedStranded.length;
   console.log(
-    `  ${purposeLabel} backup: ${backed} backed up, ${failed} failed, ${skipped} skipped`,
+    `  ${purposeLabel} backup: ${backed} backed up, ${failed} failed, ${skipped} skipped${
+      stranded > 0 ? `, ${stranded} stranded` : ""
+    }`,
   );
   const strictRetry =
     purpose === "pre-uninstall"
