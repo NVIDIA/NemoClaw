@@ -1228,26 +1228,31 @@ describe("backupSandboxStateForRebuild stopped-container recovery (#11137)", () 
   });
 
   it("reports the still-running container when the retry and the return to stopped both fail", async () => {
-    backupSpy.mockReturnValue({
+    const order: string[] = [];
+    const failedBackup = {
       success: false,
+      error: "Snapshot sanitization skipped: backup deadline expired",
       backedUpDirs: [],
       backedUpFiles: [],
-      failedDirs: [".state"],
+      failedDirs: [],
       failedFiles: [],
+      manifest: { ...makeBackupResult().manifest!, backupPath: "/backups/alpha/incomplete" },
+    };
+    backupSpy.mockReturnValue({
+      ...failedBackup,
       manifest: null,
       unreachable: true,
     });
     startSpy.mockReturnValue(startedForBackup);
-    backupStartedSpy.mockResolvedValue({
-      success: false,
-      backedUpDirs: [],
-      backedUpFiles: [],
-      failedDirs: [".state"],
-      failedFiles: [],
-      manifest: null,
-      unreachable: true,
+    backupStartedSpy.mockResolvedValue(failedBackup);
+    returnStoppedSpy.mockImplementation(() => {
+      order.push("stop");
+      return false;
     });
-    returnStoppedSpy.mockReturnValue(false);
+    removeBackupSpy.mockImplementation(() => {
+      order.push("cleanup");
+      return false;
+    });
 
     await expect(
       backupSandboxStateForRebuild("alpha", makeSandboxEntry(), false, () => undefined, makeBail()),
@@ -1258,6 +1263,13 @@ describe("backupSandboxStateForRebuild stopped-container recovery (#11137)", () 
     expect(reported).toContain("openshell-alpha");
     expect(reported).toContain("may still be running");
     expect(reported).toContain("The retried backup also failed");
+    expect(reported).toContain("could not be removed");
+    expect(order).toEqual(["stop", "cleanup"]);
+    expect(removeBackupSpy).toHaveBeenCalledWith(
+      "alpha",
+      "/backups/alpha/incomplete",
+      expect.any(Number),
+    );
     // The ordinary backup-failure diagnostic must not run: it would imply the
     // sandbox was left in its original stopped state.
     expect(reported).not.toContain("Failed to back up sandbox state.");

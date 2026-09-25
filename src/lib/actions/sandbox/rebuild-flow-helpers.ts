@@ -574,8 +574,9 @@ export async function backupSandboxStateForRebuild(
         }
       }
       // Recursive snapshot cleanup can consume the lifecycle reserve. Defer it
-      // until the container this recovery started is observably Stopped again.
-      if (returnedToStopped && !backup.success) {
+      // until after the attempt to return the container to Stopped, even when
+      // that attempt fails, so an unpublished partial snapshot is not retained.
+      if (!backup.success) {
         const cleanupDeadlineMs = Date.now() + INCOMPLETE_REBUILD_BACKUP_CLEANUP_TIMEOUT_MS;
         backup = snapshotBackup.discardIncompleteBackup(
           sandboxName,
@@ -597,6 +598,9 @@ export async function backupSandboxStateForRebuild(
         console.error("  but could not return it to its stopped state.");
         if (!backup.success) {
           console.error("  The retried backup also failed, so no sandbox state was preserved.");
+          if (backup.error) {
+            console.error(`  Backup failure: ${backup.error}`);
+          }
         }
         console.error(
           `  The sandbox was stopped before rebuild started and container '${started.containerName}' may still be running.`,
