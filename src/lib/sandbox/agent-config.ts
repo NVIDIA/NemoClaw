@@ -27,13 +27,6 @@ export interface AgentConfigDependencies {
   };
 }
 
-export interface SandboxCredentialRoute {
-  credentialEnv?: string | null;
-  endpointUrl?: string | null;
-  preferredInferenceApi?: string | null;
-  provider?: string | null;
-}
-
 export const DEFAULT_AGENT_CONFIG: AgentConfigTarget = {
   agentName: "openclaw",
   configPath: "/sandbox/.openclaw/openclaw.json",
@@ -47,30 +40,6 @@ function defaultDependencies(): AgentConfigDependencies {
   const registry = require("../state/registry");
   const agentDefs = require("../agent/defs");
   return { getSandbox: registry.getSandbox, loadAgent: agentDefs.loadAgent };
-}
-
-export function loadSandboxCredentialRoute(sandboxName: string): SandboxCredentialRoute | null {
-  const registry = require("../state/registry") as typeof import("../state/registry");
-  return registry.getSandbox(sandboxName);
-}
-
-export function resolveSandboxCredentialProviderType(
-  providerName: string,
-  preferredInferenceApi: string | null,
-): string {
-  const { resolveInferenceProviderType } = require("../onboard/providers") as {
-    resolveInferenceProviderType: (provider: string, preferredApi?: string | null) => string;
-  };
-  return resolveInferenceProviderType(providerName, preferredInferenceApi);
-}
-
-export function resolveSandboxCredentialProviderEndpoint(
-  providerName: string,
-  endpointUrl: string | null,
-): string | null {
-  const { gatewayReachableCompatibleEndpointUrl } =
-    require("../onboard/inference-providers/compatible-endpoint-gateway-route") as typeof import("../onboard/inference-providers/compatible-endpoint-gateway-route");
-  return gatewayReachableCompatibleEndpointUrl(providerName, endpointUrl) ?? null;
 }
 
 function requireCanonicalConfigDir(value: string): string {

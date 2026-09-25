@@ -3,10 +3,6 @@
 
 import { assertMcpCredentialBoundaryRuntimeVersion } from "../actions/sandbox/mcp-bridge-validation";
 import type { Session } from "../state/onboard-session";
-import {
-  resolveSandboxCredentialProviderEndpoint,
-  resolveSandboxCredentialProviderType,
-} from "./agent-config";
 
 export interface RotateTokenOpts {
   fromEnv?: string | null;
@@ -20,7 +16,18 @@ type RotateTokenSession = Pick<Session, "credentialEnv" | "provider" | "sandboxN
   readonly providerType?: string;
 };
 
-type RotateTokenSandboxRoute = import("./agent-config").SandboxCredentialRoute;
+interface RotateTokenSandboxRoute {
+  credentialEnv?: string | null;
+  endpointUrl?: string | null;
+  preferredInferenceApi?: string | null;
+  provider?: string | null;
+}
+
+export function loadSandboxCredentialRoute(sandboxName: string): RotateTokenSandboxRoute | null {
+  const { load } =
+    require("../state/registry/persistence") as typeof import("../state/registry/persistence");
+  return load().sandboxes[sandboxName] ?? null;
+}
 
 export function loadRotateTokenSession(): RotateTokenSession | null {
   const { loadSession } =
@@ -209,6 +216,25 @@ function nonEmptyString(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const normalized = value.trim();
   return normalized.length > 0 ? normalized : null;
+}
+
+function resolveSandboxCredentialProviderType(
+  providerName: string,
+  preferredInferenceApi: string | null,
+): string {
+  const { resolveInferenceProviderType } = require("../onboard/providers") as {
+    resolveInferenceProviderType: (provider: string, preferredApi?: string | null) => string;
+  };
+  return resolveInferenceProviderType(providerName, preferredInferenceApi);
+}
+
+function resolveSandboxCredentialProviderEndpoint(
+  providerName: string,
+  endpointUrl: string | null,
+): string | null {
+  const { gatewayReachableCompatibleEndpointUrl } =
+    require("../onboard/inference-providers/compatible-endpoint-gateway-route") as typeof import("../onboard/inference-providers/compatible-endpoint-gateway-route");
+  return gatewayReachableCompatibleEndpointUrl(providerName, endpointUrl) ?? null;
 }
 
 function getOpenshellBinary(): string {

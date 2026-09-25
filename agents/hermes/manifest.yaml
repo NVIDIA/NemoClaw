@@ -92,6 +92,9 @@ state_dirs:
   - profiles
   - cache
   - pairing
+  # Legacy pre-#7200 dashboard state is no longer read or written at runtime,
+  # but remains rebuild-durable until an explicit state migration retires it.
+  - dashboard-home
   # Hermes' WhatsApp bridge stores QR-paired session credentials under
   # ~/.hermes/platforms/whatsapp/session. Preserve the parent so rebuilds
   # keep the in-sandbox pairing state without re-scanning.

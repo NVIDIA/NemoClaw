@@ -18,7 +18,6 @@ export type { AgentConfigTarget } from "./agent-config";
 
 const {
   DEFAULT_AGENT_CONFIG,
-  loadSandboxCredentialRoute,
   resolveAgentConfig: resolveAgentConfigTarget,
 }: typeof import("./agent-config") = require("./agent-config");
 const {
@@ -62,6 +61,7 @@ const {
   serializeConfig,
 }: typeof import("./config-format") = require("./config-format");
 const {
+  loadSandboxCredentialRoute,
   loadRotateTokenSession,
   readStdin,
   rotateSandboxToken,

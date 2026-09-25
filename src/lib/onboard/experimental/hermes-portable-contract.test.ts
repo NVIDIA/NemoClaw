@@ -118,37 +118,19 @@ function removeReviewedNativeOwnershipMetadata(agent: AgentDefinition): void {
   });
 }
 
-function restoreLegacyDashboardStateMetadata(agent: AgentDefinition): void {
+function restorePreviousDashboardStateComment(agent: AgentDefinition): void {
   const source = fs.readFileSync(agent.manifestPath, "utf8");
-  const marker = "  # Hermes' WhatsApp bridge stores QR-paired session credentials under\n";
-  const legacyState = [
+  const currentComment = [
+    "  # Legacy pre-#7200 dashboard state is no longer read or written at runtime,",
+    "  # but remains rebuild-durable until an explicit state migration retires it.",
+  ].join("\n");
+  const previousComment = [
     "  # Legacy pre-#7200 dashboard profile location. Keep it in snapshots while",
     "  # startup migrates existing state into profiles/dashboard-home.",
-    "  - dashboard-home",
-    "",
   ].join("\n");
-  expect(source.split(marker)).toHaveLength(2);
-  fs.writeFileSync(agent.manifestPath, source.replace(marker, `${legacyState}${marker}`), {
+  expect(source.split(currentComment)).toHaveLength(2);
+  fs.writeFileSync(agent.manifestPath, source.replace(currentComment, previousComment), {
     mode: 0o644,
-  });
-  const pairingIndex = agent.stateDirectories.findIndex(
-    (entry) => entry.kind === "path" && entry.path === "pairing",
-  );
-  expect(pairingIndex).toBeGreaterThanOrEqual(0);
-  Object.defineProperty(agent, "stateDirectories", {
-    configurable: true,
-    enumerable: true,
-    writable: true,
-    value: [
-      ...agent.stateDirectories.slice(0, pairingIndex + 1),
-      {
-        kind: "path",
-        path: "dashboard-home",
-        backup: true,
-        clearWhenAbsent: true,
-      },
-      ...agent.stateDirectories.slice(pairingIndex + 1),
-    ],
   });
 }
 
@@ -292,29 +274,29 @@ describe("Hermes portable startup contract", () => {
   it.each([
     {
       expectedManifestSha256: PRE_DASHBOARD_STATE_CLEANUP_MANIFEST_SHA256,
-      prepare: restoreLegacyDashboardStateMetadata,
-      startupDescriptorChanged: true,
+      prepare: restorePreviousDashboardStateComment,
+      startupDescriptorChanged: false,
     },
     {
       expectedManifestSha256: PRE_DEFERRED_ONBOARDING_MANIFEST_SHA256,
       prepare: (agent: AgentDefinition) => {
-        restoreLegacyDashboardStateMetadata(agent);
+        restorePreviousDashboardStateComment(agent);
         removeDeferredOnboardingMetadata(agent);
       },
-      startupDescriptorChanged: true,
+      startupDescriptorChanged: false,
     },
     {
       expectedManifestSha256: PRE_UPGRADE_MANIFEST_SHA256,
       prepare: (agent: AgentDefinition) => {
-        restoreLegacyDashboardStateMetadata(agent);
+        restorePreviousDashboardStateComment(agent);
         restorePreviousReviewedManifest(agent);
       },
-      startupDescriptorChanged: true,
+      startupDescriptorChanged: false,
     },
     {
       expectedManifestSha256: PRE_SKILLS_MANIFEST_SHA256,
       prepare: (agent: AgentDefinition) => {
-        restoreLegacyDashboardStateMetadata(agent);
+        restorePreviousDashboardStateComment(agent);
         restorePreviousReviewedManifest(agent);
         removeReviewedSkillsMetadata(agent);
         removeReviewedNativeOwnershipMetadata(agent);
@@ -324,7 +306,7 @@ describe("Hermes portable startup contract", () => {
     {
       expectedManifestSha256: PRE_NATIVE_OWNERSHIP_MANIFEST_SHA256,
       prepare: (agent: AgentDefinition) => {
-        restoreLegacyDashboardStateMetadata(agent);
+        restorePreviousDashboardStateComment(agent);
         restorePreviousReviewedManifest(agent);
         removeReviewedNativeOwnershipMetadata(agent);
       },
@@ -361,7 +343,7 @@ describe("Hermes portable startup contract", () => {
   it("derives reviewed transition descriptors for the actual sandbox name (#11766)", () => {
     const sandboxName = "hermes-portable-e2e";
     const installedAgent = copyAgent();
-    restoreLegacyDashboardStateMetadata(installedAgent);
+    restorePreviousDashboardStateComment(installedAgent);
     restorePreviousReviewedManifest(installedAgent);
     removeReviewedSkillsMetadata(installedAgent);
     removeReviewedNativeOwnershipMetadata(installedAgent);
