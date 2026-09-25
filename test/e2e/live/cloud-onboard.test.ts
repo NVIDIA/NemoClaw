@@ -19,6 +19,7 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { assertStockManagedImageReceipt } from "../fixtures/managed-image-receipt.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
+import { createPublicInstallerWorkspace } from "../fixtures/public-installer-workspace.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-cloud-onboard";
@@ -138,7 +139,7 @@ test(
     const installUrl =
       process.env.NEMOCLAW_INSTALL_SCRIPT_URL ??
       `https://raw.githubusercontent.com/NVIDIA/NemoClaw/${ref}/install.sh`;
-    const installCwd = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-public-install-"));
+    const installCwd = createPublicInstallerWorkspace();
     const testHome = path.join(installCwd, "home");
     const legacyDir = path.join(testHome, ".nemoclaw");
     const legacyFile = path.join(legacyDir, "credentials.json");
