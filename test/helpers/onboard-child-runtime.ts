@@ -111,9 +111,12 @@ function createSuccessfulOllamaServiceExecutionProofRunner(fallback, systemdProo
       argv[directSudoOffset + 2] === "--" &&
       argv[directSudoOffset + 3] === "/usr/bin/env" &&
       argv[directSudoOffset + 4] === "LC_ALL=C" &&
-      argv[directSudoOffset + 5] === executablePath &&
-      argv[directSudoOffset + 6] === "--version" &&
-      argv.length === directSudoOffset + 7
+      argv[directSudoOffset + 5] === "/bin/sh" &&
+      argv[directSudoOffset + 6] === "-c" &&
+      argv[directSudoOffset + 7].includes('"$1" --version') &&
+      argv[directSudoOffset + 8] === "nemoclaw-direct-service-user-proof" &&
+      argv[directSudoOffset + 9] === executablePath &&
+      argv.length === directSudoOffset + 10
     ) {
       return success("ollama version is 0.11.10\n");
     }

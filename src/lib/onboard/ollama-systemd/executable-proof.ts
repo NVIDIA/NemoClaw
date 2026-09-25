@@ -16,7 +16,6 @@ const EXECUTION_PROOF_SYSTEMD_KILL_AFTER = "250ms";
 const EXECUTION_PROOF_TIMEOUT_KILL_AFTER = "0.25s";
 const EXECUTION_FAILURE_DETAIL_LIMIT = 240;
 const SYSTEMD_RUN_TIMEOUT_RESULT = /^\s*Finished with result: timeout\s*$/mu;
-const TIMEOUT_EXIT_CODES = new Set([124, 137]);
 const MAX_PROGRAM_HEADERS = 1_024;
 const MAX_PROGRAM_HEADER_SIZE = 1_024;
 const MAX_INTERPRETER_PATH_BYTES = 4_096;
@@ -27,6 +26,14 @@ const SERVICE_USER_ACCESS_SCRIPT = [
   "status=$?",
   `/usr/bin/printf '${SERVICE_USER_ACCESS_MARKER}:%s\\n' "$status"`,
   'exit "$status"',
+].join("\n");
+const DIRECT_SERVICE_USER_PROOF_SCRIPT = [
+  '"$1" --version',
+  "status=$?",
+  'case "$status" in',
+  "  124|137) exit 1 ;;",
+  '  *) exit "$status" ;;',
+  "esac",
 ].join("\n");
 
 export type OllamaExecutablePathMetadata = {
@@ -426,15 +433,19 @@ function runBoundedDirectServiceUserProof(
       "--",
       "/usr/bin/env",
       "LC_ALL=C",
+      "/bin/sh",
+      "-c",
+      DIRECT_SERVICE_USER_PROOF_SCRIPT,
+      "nemoclaw-direct-service-user-proof",
       executablePath,
-      "--version",
     ],
     { timeout: EXECUTION_PROOF_SUPERVISOR_TIMEOUT_MS },
   );
   return {
     ...result,
-    timedOut:
-      result.timedOut || (result.exitCode !== null && TIMEOUT_EXIT_CODES.has(result.exitCode)),
+    // The wrapper remaps a completed child exit 124/137 to 1. Those statuses
+    // therefore identify GNU timeout's own deadline handling here.
+    timedOut: result.timedOut || result.exitCode === 124 || result.exitCode === 137,
   };
 }
 

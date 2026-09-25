@@ -24,6 +24,14 @@ const serviceUserAccessScript = [
   "/usr/bin/printf 'nemoclaw-service-user-access:%s\\n' \"$status\"",
   'exit "$status"',
 ].join("\n");
+const directServiceUserProofScript = [
+  '"$1" --version',
+  "status=$?",
+  'case "$status" in',
+  "  124|137) exit 1 ;;",
+  '  *) exit "$status" ;;',
+  "esac",
+].join("\n");
 const temporaryDirectories: string[] = [];
 
 function capture(
@@ -48,7 +56,11 @@ function isServiceUserProofCommand(command: readonly string[]): boolean {
 }
 
 function isBoundedDirectServiceUserProofCommand(command: readonly string[]): boolean {
-  return command.includes("/usr/bin/timeout") && command.at(-1) === "--version";
+  return (
+    command.includes("/usr/bin/timeout") &&
+    command.includes(directServiceUserProofScript) &&
+    command.at(-1) === executablePath
+  );
 }
 
 function expectServiceUserProofCommand(command: readonly string[], serviceUser: string): void {
@@ -91,8 +103,11 @@ function expectBoundedDirectServiceUserProofCommand(
     "--",
     "/usr/bin/env",
     "LC_ALL=C",
+    "/bin/sh",
+    "-c",
+    directServiceUserProofScript,
+    "nemoclaw-direct-service-user-proof",
     executablePath,
-    "--version",
   ]);
 }
 
@@ -270,6 +285,52 @@ describe("readElfInterpreterPath", () => {
 });
 
 describe("bounded direct execution proof process ownership", () => {
+  it.each([124, 137])(
+    "does not confuse a completed child exit %i with deadline expiry (#12281)",
+    (exitCode) => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-child-exit-"));
+      temporaryDirectories.push(directory);
+      const scriptPath = path.join(directory, "proof.sh");
+      fs.writeFileSync(scriptPath, `#!/bin/sh\nexit ${String(exitCode)}\n`, { mode: 0o755 });
+      const result = spawnSync(
+        "/bin/sh",
+        ["-c", directServiceUserProofScript, "nemoclaw-direct-service-user-proof", scriptPath],
+        { timeout: 3_000 },
+      );
+
+      expect(result.status).toBe(1);
+    },
+  );
+
+  it.runIf(process.platform === "linux" && fs.existsSync("/usr/bin/timeout"))(
+    "preserves GNU timeout's deadline status after wrapping the proof command (#12281)",
+    () => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-deadline-"));
+      temporaryDirectories.push(directory);
+      const scriptPath = path.join(directory, "proof.sh");
+      fs.writeFileSync(scriptPath, "#!/bin/sh\ntrap '' TERM\nwhile :; do /bin/sleep 1; done\n", {
+        mode: 0o755,
+      });
+
+      const result = spawnSync(
+        "/usr/bin/timeout",
+        [
+          "--signal=TERM",
+          "--kill-after=0.25s",
+          "0.1s",
+          "/bin/sh",
+          "-c",
+          directServiceUserProofScript,
+          "nemoclaw-direct-service-user-proof",
+          scriptPath,
+        ],
+        { timeout: 3_000 },
+      );
+
+      expect([124, 137]).toContain(result.status);
+    },
+  );
+
   it.runIf(process.platform === "linux" && fs.existsSync("/usr/bin/timeout"))(
     "kills a TERM-resistant descendant through GNU timeout's process group (#12281)",
     () => {
