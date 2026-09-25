@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // Regression test for #2177 — when a user re-runs `nemoclaw onboard` on an
-// existing sandbox and narrows the preset selection (e.g. Balanced default
+// existing sandbox and narrows the preset selection (e.g. legacy Balanced presets
 // of [npm, pypi, huggingface, brew, brave] down to just [npm]), the policy
 // setup step must honor the final selection: apply new presets AND remove
 // previously-applied ones that are no longer selected.
@@ -33,6 +33,7 @@ type PolicyScenarioOptions = {
   alreadyApplied?: string[];
   customPresetNames?: string[];
   selectionOptions?: SetupPolicySelectionOptions;
+  interactiveSelection?: string[] | null;
 };
 
 type PolicyScenarioResult = {
@@ -54,6 +55,7 @@ async function runPolicyScenario({
   alreadyApplied,
   customPresetNames = [],
   selectionOptions = {},
+  interactiveSelection,
 }: PolicyScenarioOptions = {}): Promise<PolicyScenarioResult> {
   const effectiveTier = tierEnv ?? "balanced";
   const effectiveApplied = alreadyApplied ?? ["npm", "pypi", "huggingface", "brew", "brave"];
@@ -85,7 +87,7 @@ async function runPolicyScenario({
     localInferenceProviders: ["ollama-local", "vllm-local"],
     step: () => undefined,
     note: () => undefined,
-    isNonInteractive: () => true,
+    isNonInteractive: () => interactiveSelection === undefined,
     waitForSandboxReady: async () => ({ ready: true, reason: "ready", error: null }),
     waitForSandboxControlPlaneReady: async () => true,
     syncPresetSelection: (_sandboxName, current, selected) => {
@@ -96,9 +98,11 @@ async function runPolicyScenario({
       appliedState = [...selected];
     },
     selectPolicyTier: async () => effectiveTier,
-    selectTierPresetsAndAccess: async () => {
-      throw new Error("unexpected interactive policy selection");
-    },
+    selectTierPresetsAndAccess: async (_tier, _presets, initialSelected) =>
+      (interactiveSelection ?? initialSelected ?? []).map((name) => ({
+        name,
+        access: "read-write",
+      })),
     parsePolicyPresetEnv,
     env,
   };
@@ -140,7 +144,7 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
   // onboard. Tier defaults are recomputed against the current provider, so a
   // user-added preset such as `local-inference` is not in `suggestions` on a
   // cloud-provider sandbox — without the additive guard it would be removed.
-  it("non-interactive suggested re-onboard preserves user-added presets", async () => {
+  it("suggested Balanced re-onboard replaces legacy brew and preserves user-added presets (#10380)", async () => {
     const payload = await runPolicyScenario({
       policyMode: "suggested",
       policyPresets: "",
@@ -160,15 +164,14 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
     // declining Brave search does not narrow it (#10404).
     assert.deepEqual(
       payload.removedCalls,
-      [],
-      `expected no preset to be removed, got ${JSON.stringify(payload.removedCalls)}`,
+      ["brew"],
+      `expected only legacy brew to be removed, got ${JSON.stringify(payload.removedCalls)}`,
     );
 
-    // Final state should still contain every previously-applied preset.
+    // The tier replacement must leave unrelated applied presets intact.
     const finalSorted = payload.finalApplied.slice().sort();
     assert.deepEqual(finalSorted, [
       "brave",
-      "brew",
       "brew-balanced",
       "huggingface",
       "local-inference",
@@ -196,8 +199,8 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
     );
     assert.deepEqual(
       payload.removedCalls,
-      [],
-      `expected no preset to be removed, got ${JSON.stringify(payload.removedCalls)}`,
+      ["brew"],
+      `expected only legacy brew to be removed, got ${JSON.stringify(payload.removedCalls)}`,
     );
   });
 
@@ -217,9 +220,8 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
       payload.chosen.includes("my-internal-api"),
       `expected chosen to preserve my-internal-api, got ${JSON.stringify(payload.chosen)}`,
     );
-    assert.deepEqual(payload.removedCalls, ["brave"]);
+    assert.deepEqual(payload.removedCalls.slice().sort(), ["brave", "brew"]);
     assert.deepEqual(payload.finalApplied.slice().sort(), [
-      "brew",
       "brew-balanced",
       "huggingface",
       "my-internal-api",
@@ -227,6 +229,61 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
       "openclaw-pricing",
       "pypi",
     ]);
+  });
+
+  it.each([
+    { label: "Open defaults", options: { tierEnv: "open" } },
+    { label: "Personal defaults", options: { tierEnv: "personal" } },
+    {
+      label: "explicit custom selection",
+      options: { policyMode: "custom", policyPresets: "brew" },
+    },
+    { label: "explicit suggested override", options: { policyPresets: "brew" } },
+    { label: "skipped selection", options: { policyMode: "skip" } },
+    { label: "suggested override without replacement", options: { policyPresets: "npm" } },
+    {
+      label: "recorded resume selection",
+      options: { selectionOptions: { tierName: "balanced", selectedPresets: ["brew"] } },
+    },
+    { label: "operator-owned brew", options: { customPresetNames: ["brew"] } },
+  ] satisfies Array<{ label: string; options: PolicyScenarioOptions }>)(
+    "preserves unrestricted brew for $label (#10380)",
+    async ({ options }) => {
+      const payload = await runPolicyScenario({
+        policyMode: "suggested",
+        policyPresets: "",
+        alreadyApplied: ["brew"],
+        ...options,
+      });
+      assert.ok(payload.finalApplied.includes("brew"));
+      assert.ok(!payload.removedCalls.includes("brew"));
+    },
+  );
+
+  it.each([
+    { label: "suggested defaults", selection: null, expected: ["brew-balanced"] },
+    { label: "explicit brew selection", selection: ["brew"], expected: ["brew"] },
+  ])(
+    "uses $label during interactive Balanced re-onboarding (#10380)",
+    async ({ selection, expected }) => {
+      const payload = await runPolicyScenario({
+        alreadyApplied: ["brew"],
+        interactiveSelection: selection,
+      });
+      assert.deepEqual(
+        payload.finalApplied.filter((name) => name.startsWith("brew")),
+        expected,
+      );
+    },
+  );
+
+  it("applies a recorded Balanced replacement when onboarding resumes (#10380)", async () => {
+    const payload = await runPolicyScenario({
+      alreadyApplied: ["brew"],
+      selectionOptions: { tierName: "balanced", selectedPresets: ["brew-balanced"] },
+    });
+    assert.deepEqual(payload.finalApplied, ["brew-balanced"]);
+    assert.deepEqual(payload.removedCalls, ["brew"]);
   });
 
   it("resume selection removes unsupported Brave preset", async () => {

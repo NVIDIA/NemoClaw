@@ -536,6 +536,16 @@ async function setupPoliciesWithSelectionInner(
   // must not narrow it. Resolved after `tierName` so a freshly prompted tier
   // counts too; Restricted lists no such default and still prunes. (#6844, #10404)
   const appliedForPreservation = pruneUnavailablePresets(applied, { tierName });
+  // Replace only a built-in grant whose Balanced replacement is selected.
+  // Explicit choices and operator-owned policies retain their authority.
+  const appliedForSelection = (selection: readonly string[]) =>
+    appliedForPreservation.filter(
+      (name) =>
+        tierName !== "balanced" ||
+        !selection.includes("brew-balanced") ||
+        name !== "brew" ||
+        customPresetNames.has(name),
+    );
   const suggestions = excludePresets(
     pruneUnavailablePresets(
       computeSetupPresetSuggestions(deps, tierName, {
@@ -667,7 +677,7 @@ async function setupPoliciesWithSelectionInner(
       // openclaw-pricing / openclaw-diagnostics-otel-local) are intentionally
       // excluded so suppression survives the preservation pass.
       const kept: string[] = [];
-      for (const name of appliedForPreservation) {
+      for (const name of appliedForSelection(chosen)) {
         if (chosenSet.has(name)) continue;
         if (suppressedNames.has(name)) continue;
         chosen.push(name);
@@ -693,7 +703,7 @@ async function setupPoliciesWithSelectionInner(
 
   const knownNames = new Set(allPresets.map((preset) => preset.name));
   const initialSelected = [
-    ...appliedForPreservation.filter((name) => knownNames.has(name)),
+    ...appliedForSelection(suggestions).filter((name) => knownNames.has(name)),
     ...suggestions.filter((name) => knownNames.has(name) && !applied.includes(name)),
   ];
   const resolvedPresets = await deps.selectTierPresetsAndAccess(
