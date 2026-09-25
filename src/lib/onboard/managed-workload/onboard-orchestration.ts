@@ -28,6 +28,8 @@ import {
 export {
   applyProviderManagedStartupRootRequest,
   finalizeProviderManagedStartupSharedState,
+  refreshProviderManagedStartupTrust,
+  resumeProviderManagedStartupTrust,
   releaseProviderManagedStartupHold,
   type ProviderManagedStartupTransaction,
 } from "../runtime-provider/access";

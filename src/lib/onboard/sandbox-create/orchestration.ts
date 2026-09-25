@@ -519,8 +519,13 @@ export function allowsNotReadyCreatedSandboxReconciliation(input: {
   readonly createRoute: PendingSandboxCreateIdentity["route"] | null;
   readonly currentCheckpoint: PendingSandboxCreateIdentity | null;
   readonly acceptedCheckpoint: PendingSandboxCreateIdentity | null;
+  readonly corporateCa?: boolean;
 }): boolean {
   const checkpoint = input.currentCheckpoint ?? input.acceptedCheckpoint;
+  // A recorded corporate-CA startup can be interrupted between stop and start.
+  // Reconciliation still requires its saved identity; the SDK must regain Ready
+  // before root application or hold release. Final publication keeps its gate.
+  if (input.corporateCa && input.acceptedCheckpoint) return true;
   // Compatibility applies one exact, reversible initial runtime cutover after
   // OpenShell publishes the nonce-owned sandbox but before that replacement
   // can settle Ready. Reconciliation stays bound to the captured fingerprint;
@@ -2727,6 +2732,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         createRoute: managedBootstrapCreateRoute,
         currentCheckpoint: pendingCreateIdentity,
         acceptedCheckpoint: acceptedTargetPendingIdentity,
+        corporateCa: Boolean(managedStartupRootApplyRequest?.corporateCaB64),
       });
     const revalidateCreatedSandboxIdentity = (
       expectedIdentity: string,
@@ -3073,6 +3079,15 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                     throw new Error("Managed startup launch has no selected runtime provider.");
                   }
                   const managedStartupRuntimeProvider = managedWorkloadRuntime.runtimeProvider;
+                  if (resumeVerifiedCreateInput) {
+                    await managedWorkloadOnboard.resumeProviderManagedStartupTrust({
+                      sandboxName,
+                      sandboxId: identity.sandboxId,
+                      gatewayName: GATEWAY_NAME,
+                      corporateCa: managedStartupRootApplyRequest.corporateCaB64 !== null,
+                      route: identity.route,
+                    });
+                  }
                   console.log("  Applying managed startup profile to the verified sandbox...");
                   let managedStartupTransaction: ReturnType<
                     typeof managedWorkloadOnboard.applyProviderManagedStartupRootRequest
@@ -3120,6 +3135,18 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                       );
                     }
                     console.log("  ✓ Committed managed startup shared state");
+                  }
+                  await managedWorkloadOnboard.refreshProviderManagedStartupTrust({
+                    runtimeProvider: managedStartupRuntimeProvider,
+                    sandboxName,
+                    sandboxId: identity.sandboxId,
+                    gatewayName: GATEWAY_NAME,
+                    transaction: managedStartupTransaction,
+                    corporateCa: managedStartupRootApplyRequest.corporateCaB64 !== null,
+                    route: identity.route,
+                    ...(expectedContainerId ? { expectedContainerId } : {}),
+                  });
+                  if (managedStartupTransaction) {
                     try {
                       releaseManagedStartupHoldWithRetry(() =>
                         managedWorkloadOnboard.releaseProviderManagedStartupHold({

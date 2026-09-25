@@ -62,6 +62,7 @@ import { createOnboardCreatedSandboxRegistration } from "../created-sandbox-fina
 import { runSandboxGpuCreateFlow } from "../sandbox-gpu-create-flow";
 import { createCreatedSandboxLifecycle } from "../sandbox-recreate-transaction";
 import { fingerprintSandboxRecreateValue } from "../sandbox-recreate-transaction";
+import { revalidateCreatedSandboxLifecycleRegistration } from "../sandbox-recreate-transaction";
 import {
   allowsNotReadyCreatedSandboxReconciliation,
   allowsNotReadyCreatedSandboxRevalidation,
@@ -73,6 +74,62 @@ import {
 import { resolveLegacyCompatibilityFinalHandoffRuntime } from "./identity-boundary";
 
 describe("compatibility create reconciliation", () => {
+  it("admits interrupted corporate-CA recovery only with the saved identity and keeps final publication gated", () => {
+    const checkpoint: PendingSandboxCreateIdentity = {
+      schemaVersion: 1,
+      state: "verified-create",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      sandboxName: "interrupted-ca",
+      lifecycleGeneration: "ca-generation",
+      sandboxIdentityFingerprint: fingerprintSandboxRecreateValue("ca-sandbox-id"),
+      route: "native",
+    };
+    const input = {
+      managedBootstrapCreateFinished: false,
+      createRoute: "native" as const,
+      currentCheckpoint: checkpoint,
+      acceptedCheckpoint: checkpoint,
+      corporateCa: true,
+    };
+    const options = {
+      allowNotReadyWithMatchingIdentity: allowsNotReadyCreatedSandboxReconciliation(input),
+    };
+    const registration = {
+      lifecycleGeneration: checkpoint.lifecycleGeneration,
+      lifecycleLiveIdentityFingerprint: checkpoint.sandboxIdentityFingerprint,
+    };
+    expect(
+      revalidateCreatedSandboxLifecycleRegistration(
+        checkpoint,
+        registration,
+        () => ({
+          state: "not_ready",
+          liveIdentityFingerprint: checkpoint.sandboxIdentityFingerprint,
+        }),
+        options,
+      ),
+    ).toEqual(registration);
+    expect(() =>
+      revalidateCreatedSandboxLifecycleRegistration(
+        checkpoint,
+        registration,
+        () => ({
+          state: "not_ready",
+          liveIdentityFingerprint: fingerprintSandboxRecreateValue("foreign-sandbox-id"),
+        }),
+        options,
+      ),
+    ).toThrow("live identity changed");
+    expect(allowsNotReadyCreatedSandboxReconciliation({ ...input, acceptedCheckpoint: null })).toBe(
+      false,
+    );
+    expect(allowsNotReadyCreatedSandboxReconciliation({ ...input, corporateCa: false })).toBe(
+      false,
+    );
+    expect(allowsNotReadyCreatedSandboxRevalidation(input)).toBe(false);
+  });
+
   it("allows same-identity NotReady reconciliation before cutover but withholds publication (#11905)", () => {
     const input = {
       managedBootstrapCreateFinished: false,
