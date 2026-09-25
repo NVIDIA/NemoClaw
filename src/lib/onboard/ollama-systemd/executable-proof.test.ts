@@ -269,6 +269,42 @@ describe("readElfInterpreterPath", () => {
   });
 });
 
+describe("bounded direct execution proof process ownership", () => {
+  it.runIf(process.platform === "linux" && fs.existsSync("/usr/bin/timeout"))(
+    "kills a TERM-resistant descendant through GNU timeout's process group (#12281)",
+    () => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-timeout-group-"));
+      temporaryDirectories.push(directory);
+      const pidPath = path.join(directory, "descendant.pid");
+      const scriptPath = path.join(directory, "proof.sh");
+      fs.writeFileSync(
+        scriptPath,
+        [
+          "#!/bin/sh",
+          "trap '' TERM",
+          '/bin/sh -c \'trap "" TERM; printf "%s\\n" "$$" > "$1"; while :; do /bin/sleep 1; done\' proof-descendant "$1" &',
+          "wait",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+
+      const result = spawnSync(
+        "/usr/bin/timeout",
+        ["--signal=TERM", "--kill-after=250ms", "1s", scriptPath, pidPath],
+        { timeout: 3_000 },
+      );
+      const descendantPid = Number.parseInt(fs.readFileSync(pidPath, "utf8").trim(), 10);
+      const statPath = `/proc/${String(descendantPid)}/stat`;
+      const processState = fs.existsSync(statPath)
+        ? fs.readFileSync(statPath, "utf8").split(" ")[2]
+        : "";
+
+      expect(result.status).not.toBe(0);
+      expect(["", "Z"]).toContain(processState);
+    },
+  );
+});
+
 describe("proveOllamaSystemdServiceExecutable", () => {
   it("uses sudo's numeric UID form for every service-user command (#9728)", () => {
     const fixture = proofFixture(0o755, "997");

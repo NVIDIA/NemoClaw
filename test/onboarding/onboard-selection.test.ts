@@ -1487,7 +1487,7 @@ reportChildScenario(async () => {
   });
 
   it(
-    "treats an implicit latest Ollama model as installed during systemd repair",
+    "recovers a timed-out systemd proof before accepting an implicit latest Ollama model",
     {
       timeout: PROVIDER_SELECTION_TEST_TIMEOUT_MS,
     },
@@ -1528,7 +1528,7 @@ runner.runCapture = (command) => {
   if (cmd.includes("api/generate")) return '{"response":"hello"}';
   if (cmd.includes("ps")) return "node ollama-auth-proxy.js";
   return "";
-}; runner.runCaptureEx = createSuccessfulOllamaServiceExecutionProofRunner(runner.runCaptureEx);
+}; runner.runCaptureEx = createSuccessfulOllamaServiceExecutionProofRunner(runner.runCaptureEx, true);
 runner.run = (command) => {
   runCommands.push(Array.isArray(command) ? command.join(" ") : command);
   return { status: 0 };
