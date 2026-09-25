@@ -625,7 +625,8 @@
         "test/e2e/live/openshell-allowed-ips-rebinding.ts",
         "test/e2e/live/openshell-driver-config-test-wrapper.ts",
         "test/e2e/live/openshell-exact-main-exec.ts",
-        "test/e2e/live/openshell-exact-main-runtime-contracts.ts"
+        "test/e2e/live/openshell-exact-main-runtime-contracts.ts",
+        "test/e2e/live/openclaw-stopped-recovery.ts"
       ],
       "fast": [
         "src/lib/actions/sandbox/mcp-bridge-state.test.ts",
@@ -650,7 +651,9 @@
         "test/e2e/support/openshell-exact-main-driver-config.test.ts",
         "test/e2e/support/openshell-exact-main-child-contracts.test.ts",
         "test/e2e/support/openshell-exact-main-runtime-contracts.test.ts",
-        "test/mcp/mcp-bridge-servers.test.ts"
+        "test/mcp/mcp-bridge-servers.test.ts",
+        "src/lib/onboard/runtime-provider/docker-stopped-state-capture.test.ts",
+        "test/state/snapshot-stopped-openclaw.test.ts"
       ]
     },
     {
@@ -811,7 +814,12 @@
         "src/lib/state/native-agent-state-restore.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
-        "test/e2e/support/native-lifecycle-migration-contract.test.ts"
+        "test/e2e/support/native-lifecycle-migration-contract.test.ts",
+        "src/lib/onboard/runtime-provider/docker-stopped-state-capture.test.ts",
+        "test/state/snapshot-stopped-openclaw.test.ts"
+      ],
+      "liveSources": [
+        "test/e2e/live/openclaw-stopped-recovery.ts"
       ]
     },
     {
