@@ -1295,9 +1295,68 @@ def repair_file(parent_fd: int, name: str, path: str) -> None:
         fail(f"{path} is a symlink")
     if not stat.S_ISREG(before.st_mode):
         fail(f"{path} is not a regular file")
+    if before.st_nlink != 1:
+        fail(f"{path} has hard-link count {before.st_nlink}")
+
+    sandbox_uid, sandbox_gid = resolve_sandbox_identity()
 
     try:
         fd = os.open(name, file_flags, dir_fd=parent_fd)
+    except PermissionError as exc:
+        # The dashboard can leave an owner-only log behind before a direct-root
+        # container restart. That topology intentionally lacks
+        # CAP_DAC_OVERRIDE, but retains the owner capabilities needed to repair
+        # the exact inode. Hold it with O_PATH, validate it before mutation,
+        # repair through the proc fd, and only then reopen it normally.
+        if (
+            os.geteuid() != 0
+            or sandbox_uid is None
+            or sandbox_gid is None
+            or not hasattr(os, "O_PATH")
+        ):
+            detail = exc.strerror or errno.errorcode.get(exc.errno, str(exc.errno))
+            fail(f"{path} could not be opened safely: {detail}")
+        held_flags = os.O_PATH | os.O_NOFOLLOW
+        held_flags |= getattr(os, "O_CLOEXEC", 0)
+        held_fd = -1
+        try:
+            try:
+                held_fd = os.open(name, held_flags, dir_fd=parent_fd)
+            except OSError as held_exc:
+                fail(f"{path} could not be held safely for repair: {held_exc.strerror}")
+            held = os.fstat(held_fd)
+            if not stat.S_ISREG(held.st_mode):
+                fail(f"{path} is not a regular file")
+            if held.st_nlink != 1:
+                fail(f"{path} has hard-link count {held.st_nlink}")
+            if (held.st_dev, held.st_ino) != (before.st_dev, before.st_ino):
+                fail(f"{path} changed while it was held for repair")
+
+            held_path = f"/proc/self/fd/{held_fd}"
+            try:
+                os.chown(held_path, sandbox_uid, sandbox_gid)
+                os.chmod(held_path, file_mode)
+            except OSError as repair_exc:
+                fail(f"{path} restricted mode could not be repaired safely: {repair_exc.strerror}")
+            repaired = os.fstat(held_fd)
+            if not stat.S_ISREG(repaired.st_mode) or repaired.st_nlink != 1:
+                fail(f"{path} changed type or link count during restricted-mode repair")
+            if stat.S_IMODE(repaired.st_mode) != file_mode:
+                fail(f"{path} restricted mode did not match after repair")
+            if repaired.st_uid != sandbox_uid or repaired.st_gid != sandbox_gid:
+                fail(f"{path} restricted ownership did not match sandbox:sandbox after repair")
+            verify_named_inode(parent_fd, name, path, repaired)
+            try:
+                fd = os.open(name, file_flags, dir_fd=parent_fd)
+            except OSError as reopen_exc:
+                fail(f"{path} could not be reopened after restricted-mode repair: {reopen_exc.strerror}")
+            reopened = os.fstat(fd)
+            if (reopened.st_dev, reopened.st_ino) != (held.st_dev, held.st_ino):
+                os.close(fd)
+                fail(f"{path} changed after restricted-mode repair")
+        finally:
+            if held_fd >= 0:
+                os.close(held_fd)
     except OSError as exc:
         current = stat_entry(parent_fd, name, path)
         if stat.S_ISLNK(current.st_mode):
@@ -1315,7 +1374,6 @@ def repair_file(parent_fd: int, name: str, path: str) -> None:
             fail(f"{path} has hard-link count {opened.st_nlink}")
         if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
             fail(f"{path} changed while it was opened")
-        sandbox_uid, sandbox_gid = resolve_sandbox_identity()
         if sandbox_uid is not None and sandbox_gid is not None:
             os.fchown(fd, sandbox_uid, sandbox_gid)
         enforce_mode(fd, path, file_mode)
