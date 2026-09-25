@@ -55,7 +55,12 @@ export type SdkOpenShellSandboxStateLifecycleDeps = Readonly<{
 
 const DEFAULT_MUTATION_TIMEOUT_MS = 75_000;
 
-function lifecycleError(error: unknown, timedOut: boolean): OpenShellSandboxError {
+function lifecycleError(
+  error: unknown,
+  timedOut: boolean,
+  action: "start" | "stop",
+  observedPhase: string | undefined,
+): OpenShellSandboxError {
   if (timedOut) {
     return { kind: "timeout", message: "OpenShell timed out." };
   }
@@ -78,6 +83,16 @@ function lifecycleError(error: unknown, timedOut: boolean): OpenShellSandboxErro
   }
   if (code === "4" || code === "canceled" || code === "deadline_exceeded") {
     return { kind: "timeout", message: "OpenShell timed out." };
+  }
+  if (["9", "failed_precondition"].includes(code) || connectCode === "9") {
+    return {
+      kind: "command",
+      reason: "failed",
+      message:
+        observedPhase?.toLowerCase() === "error"
+          ? `OpenShell rejected the ${action} request because the sandbox is in Error state.`
+          : `OpenShell rejected the ${action} request because the sandbox's current state does not permit it.`,
+    };
   }
   const errorName = error instanceof Error && error.name ? error.name : "unknown error";
   const diagnostic = [
@@ -124,6 +139,7 @@ async function mutate(
       { once: true },
     );
   });
+  let observedPhase: string | undefined;
   try {
     const client = await Promise.race([
       connect(request.target, { signal: controller.signal }),
@@ -143,6 +159,7 @@ async function mutate(
         },
       };
     }
+    observedPhase = observed.phase;
     const operation = action === "start" ? client.raw.startSandbox : client.raw.stopSandbox;
     const mutation = await Promise.race([
       operation({ name: request.sandboxName, workspace: "default" }, { signal: controller.signal }),
@@ -202,7 +219,10 @@ async function mutate(
     }
     return { kind: "accepted" };
   } catch (error) {
-    return { kind: "failed", error: lifecycleError(error, controller.signal.aborted) };
+    return {
+      kind: "failed",
+      error: lifecycleError(error, controller.signal.aborted, action, observedPhase),
+    };
   } finally {
     clearTimeout(timeout);
   }

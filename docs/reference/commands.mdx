@@ -530,7 +530,10 @@ An active same-name replacement is separate from ordinary onboarding-step resume
 Use `--fresh` to discard the saved onboarding session and start the wizard from the beginning. This clears stale or failed session state before NemoClaw creates a new session record. It also bypasses locally recorded sandbox base-image resolution metadata and reruns normal candidate resolution. `--fresh` takes precedence over a base-image hint carried from a rebuild, so NemoClaw does not use that recorded hint. The installer also accepts `--fresh` and forwards it to `$$nemoclaw onboard`, which skips automatic resume detection. `--resume` and `--fresh` are mutually exclusive. For an existing completed sandbox, use `--fresh --name <sandbox-name> --recreate-sandbox` when you intentionally want onboarding to replace that sandbox with a new provider, model, agent, or startup setting. Use `$$nemoclaw <sandbox-name> rebuild` when you want NemoClaw to recreate the sandbox from its recorded registry metadata without changing those selections.
 
 Before reserving an inference route, onboarding can release a foreign-session route-only reservation while it holds the onboarding lock.
-It preserves the current session's reservation, any row that is no longer route-only, and any row that has gained verified sandbox-create authority.
+For an already published sandbox on the gateway selected in the current session's checkpoint, it can transfer a foreign pending reservation to the new session while retaining the sandbox data.
+The row remains pending until normal onboarding finalization, so reclaiming it does not publish an unverified inference route.
+It preserves the current session's reservation and any row that has gained verified sandbox-create authority.
+A published row remains unchanged when its gateway differs from the selected authority or that authority is unavailable.
 Without the lock, it preserves the foreign reservation.
 
 <AgentOnly variant="openclaw,hermes">
@@ -2362,7 +2365,11 @@ NemoClaw attempts to restore stored provider credentials, but it cannot restore 
 It flags `gateway-providers` as residual.
 Inspect the channel's gateway providers, restore the preset YAML, and correct the gateway failure.
 When the gateway is reachable, run the `$$nemoclaw <name> channels remove <channel>` command printed by the CLI, then rerun `$$nemoclaw <name> channels add <channel>`.
-For Telegram, Discord, and Slack, a rebuild triggered by `channels add` also verifies that the selected bridge starts and reports credential, startup, or plugin discovery warnings.
+After a successful rebuild, `channels add` verifies that the selected Telegram, Discord, or Slack bridge starts and reports credential, startup, or plugin discovery warnings.
+
+For OpenClaw, an official-plugin provenance failure stops the image build before those runtime checks.
+Report the failure diagnostic, plugin name and NemoClaw version to a maintainer; NemoClaw manages the package pins and build cache.
+
 
 ```bash
 $$nemoclaw my-assistant channels add telegram
@@ -3055,7 +3062,13 @@ $$nemoclaw my-assistant rebuild [--retire-recovery <transaction-id> --yes] [--ye
 
 If another terminal has an active SSH session to the sandbox, `rebuild` prints an active-session warning and requires confirmation before destroying the sandbox. Pass `--yes`, `-y`, or `--force` to skip the prompt in scripted workflows.
 
-The backup step normally reaches the sandbox over its live transport. When that first attempt fails because the transport is unreachable, and the sandbox has exactly one eligible stopped container, `rebuild` starts that container, retries the backup, and returns the container to its stopped state before continuing. `rebuild` aborts before deleting the original sandbox when it finds no eligible stopped container, when the retried backup also fails, or when it cannot return the started container to its stopped state; in that last case it names the container so you can stop it yourself before retrying.
+<AgentOnly variant="openclaw">
+
+For a managed Docker OpenClaw sandbox in `Error`, `rebuild` captures declared state without starting or executing in the stopped source. The original container must still exist, and any mounted managed state volume must have the expected ownership and be used only by that container. Capture or identity validation failure stops replacement before deletion. User-managed files, including `.env` and `.mcp.json`, are excluded; keep secure host copies and add them again after recovery. See [Rebuild While Preserving State](../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes#rebuild-while-preserving-state) for preservation limits and recovery steps.
+
+</AgentOnly>
+
+For other eligible sources, the backup step normally reaches the sandbox over its live transport. When that first attempt fails because the transport is unreachable, and the sandbox has exactly one eligible stopped container, `rebuild` starts that container, retries the backup, and returns the container to its stopped state before continuing. `rebuild` aborts before deleting the original sandbox when it finds no eligible stopped container, when the retried backup also fails, or when it cannot return the started container to its stopped state; in that last case it names the container so you can stop it yourself before retrying.
 If any manifest-declared state directory or state file cannot be archived, `rebuild` reports each failed path and stops before deleting the original sandbox.
 This fail-closed behavior also applies to `--force`, even when the backup contains other usable entries.
 An incomplete snapshot remains excluded from `snapshot list` and snapshot restore selection.
@@ -3789,6 +3802,14 @@ Use the dedicated gateway state directory created for that port, not a shared or
 Onboarding rejects relative overrides, the shared NemoClaw state root or its parents, and existing nonempty directories without valid NemoClaw-managed gateway configuration.
 Let onboarding create the directory when possible. Every existing ancestor, from its containing directory to the filesystem root, must be a real directory owned by the current user or root and must not be group- or world-writable. If the state directory already exists, it must be an owner-controlled, non-symbolic-link directory with mode `0700`.
 If onboarding stops immediately after reserving that directory, uninstall removes the marker-only reservation only while the selected gateway port is free. Gateway configuration, a runtime marker, or a PID file moves cleanup to the managed-gateway checks instead. A port-bound marked gateway with valid generated configuration can be retired after the port is free and a complete process scan proves that no live process claims its state; a listener or unproven process preserves the directory. Inspect and stop the listener or matching gateway process, then rerun uninstall after the port is free.
+If a prior uninstall removed a non-default gateway but retained its registry and backups, rerun `NEMOCLAW_GATEWAY_PORT=<port> $$nemoclaw uninstall --destroy-user-data` to remove that retained data.
+This recovery requires the default state directory for that port, with `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR` unset, and retained rows that explicitly identify Docker.
+The selected gateway registration, runtime directory, processes, listener and sandbox containers must be absent.
+A same-name container is preserved as a sibling only when its Docker identity matches another published registry row and that sibling gateway currently confirms the same sandbox identity.
+Missing or failed inventory, unknown ownership, or conflicting identity preserves the data and makes uninstall exit nonzero.
+The diagnostic identifies unreadable Docker inventory, a remaining selected container, or unproven same-name container ownership and gives its retry action. Keep `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR` unset for this retained-data recovery.
+Restore access to Docker and the affected sibling gateway, resolve the reported conflict, then retry the same command.
+
 When `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR` is unset, a non-default port can also remove NemoClaw state after onboarding fails during preflight, before it creates a gateway or sandbox.
 This interrupted-preflight cleanup does not apply to a custom state root.
 For a custom state root, uninstall exits nonzero and preserves the interrupted state.

@@ -24,8 +24,17 @@ During `--all-gateway-ports`, the sweep continues with later ports and reports t
 `--yes` skips the confirmation prompt but does not skip this backup gate.
 An explicit user-data purge skips eligible fresh backups and attempts to remove both current sandbox state and existing host-side backups.
 
-Full uninstall does not remove a Docker container or image only because its name or image reference contains `openclaw`.
-It preserves resources from a separate OpenClaw installation while continuing to remove NemoClaw and OpenShell Docker resources.
+Uninstall delegates sandbox and gateway container removal to OpenShell and the selected runtime.
+When removing a managed gateway, sandbox cleanup runs before the gateway service is stopped.
+Its Docker cleanup does not force-remove containers based on names, `nemoclaw-` or `openshell-` prefixes, or NemoClaw image references.
+For the standard profile with a gateway managed by NemoClaw, recorded Docker sandboxes require the Docker command for cleanup verification; restore the command before retrying if it is missing.
+Portable cleanup follows its recorded runtime configuration and its own verification steps.
+An installation with no recorded Docker sandboxes can complete runtime cleanup without that command.
+If Docker inventory fails or cannot confirm cleanup of a selected sandbox or gateway, uninstall exits nonzero and preserves the remaining state for retry.
+Docker verification runs before CLI removal, so you can retry with the installed command.
+This includes stopped legacy containers whose ownership cannot be established.
+Complete their cleanup through the owning runtime, then retry uninstall with the same gateway port.
+It preserves resources from a separate OpenClaw installation and does not remove a Docker image only because its name or image reference contains `openclaw`.
 During full uninstall, NemoClaw stops a Bedrock Runtime adapter when its recorded process ID matches the adapter command line.
 When `lsof` is available, full uninstall also scans the configured adapter port and stops only a matching process owned by the current user.
 If `lsof` is unavailable and no recorded process was stopped, uninstall warns that it skipped the orphan scan.
@@ -78,6 +87,14 @@ It recovers a stale lock when the recorded process is no longer active.
 Immediately before deletion, uninstall atomically detaches the validated state root so a new onboarding run can safely recreate the original path.
 If a sibling gateway appears during cleanup, uninstall switches to gateway-scoped cleanup and preserves shared resources.
 If the evidence changes or the lock is unavailable, uninstall exits nonzero and preserves the state for a retry.
+
+If a previous uninstall removed a nondefault gateway but retained its registry and backups, rerun uninstall for that port with `--destroy-user-data` to remove the retained data.
+This recovery requires the default gateway state directory, absent gateway registration and runtime resources, and a successful Docker inventory that proves the registered sandbox containers are gone.
+Every retained row must identify Docker as its runtime.
+If recovery cannot continue, the diagnostic distinguishes unreadable Docker inventory, a remaining selected container, and unproven same-name container ownership. Follow its retry action and keep `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR` unset for this recovery.
+NemoClaw can distinguish a same-name sibling container only when its immutable OpenShell identity matches that sibling's published registry row and the sibling's live gateway confirms the identity.
+An unknown runtime, unproven container identity, active resource, or failed inventory preserves the data for recovery.
+The same onboarding lock and state revalidation protect this cleanup.
 
 ## Stop the Amazon Bedrock Runtime Adapter
 

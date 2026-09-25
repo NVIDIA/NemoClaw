@@ -43,7 +43,7 @@ describe("managed-image capability union", () => {
     expect(collectManagedImageOpenClawPluginInstallSpecs({ OPENCLAW_VERSION: "2026.9.1" })).toEqual(
       [
         "npm:@openclaw/discord@2026.9.1",
-        "npm:@tencent-weixin/openclaw-weixin@2.4.3",
+        "npm:@tencent-weixin/openclaw-weixin@2.4.9",
         "npm:@openclaw/slack@2026.9.1",
         "npm:@openclaw/whatsapp@2026.9.1",
         "npm:@openclaw/msteams@2026.9.1",

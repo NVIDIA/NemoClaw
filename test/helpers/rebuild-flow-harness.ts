@@ -71,6 +71,7 @@ export const openClawLifecycle = requireDist(
 export const { rebuildOnboardDependencies } = requireDist("./rebuild-onboard-dependencies.js");
 export const rebuildCustomImagePreflight = requireDist("./rebuild-custom-image-preflight.js");
 export const rebuildFlowHelpers = requireDist("./rebuild-flow-helpers.js");
+export const snapshotBackup = requireDist("./snapshot/backup-authority.js");
 export const rebuildInference = requireDist("./inference-invocation-probe.js");
 export const rebuildManagedImage = requireDist("./rebuild-managed-image-preflight.js");
 export const rebuildMessagingConflict = requireDist("./rebuild-messaging-conflict-preflight.js");
