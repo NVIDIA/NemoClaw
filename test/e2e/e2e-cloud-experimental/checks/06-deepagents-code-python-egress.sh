@@ -345,7 +345,7 @@ ca = os.environ['SSL_CERT_FILE']
 
 def request(method):
     command = [
-        '/usr/bin/curl', '--silent', '--show-error', '--noproxy', '',
+        '/usr/bin/curl', '--disable', '--silent', '--show-error', '--noproxy', '',
         '--proxy', proxy, '--cacert', ca, '--connect-timeout', '10',
         '--max-time', '30', '--write-out', '\n%{http_code}',
     ]
@@ -371,7 +371,7 @@ OUT="$(sandbox_exec_argv sh -c '. /tmp/nemoclaw-proxy-env.sh && exec /opt/venv/b
 if echo "$OUT" | grep -Fxq 'RAW_GITHUB_GET_HEAD_ALLOWED_POST_DENIED_LOCALLY'; then
   pass "Balanced allows raw GitHub GET and HEAD and denies POST locally"
 else
-  fail_test "Balanced raw GitHub method enforcement failed: $OUT"
+  fail_test "Balanced raw GitHub method probe did not confirm GET/HEAD access and local POST denial"
 fi
 
 expect_fetch_blocked "unapproved hosts" "https://example.com/"

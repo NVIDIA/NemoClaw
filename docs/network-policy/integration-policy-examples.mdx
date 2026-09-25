@@ -348,7 +348,7 @@ Use these presets when an agent workflow needs to install packages or download m
 
 Balanced already includes `brew-balanced`, so it does not need the `brew` additions below.
 Those commands opt into unrestricted raw GitHub methods; Open uses that broader preset by default.
-To restore the Balanced Homebrew policy, use `$$nemoclaw my-assistant policy add brew-balanced --yes` instead.
+For an older Balanced sandbox, use the [Homebrew preset replacement procedure](#homebrew-specifics) below.
 
 Add only the preset required for the task:
 
@@ -375,7 +375,17 @@ If `uv` is installed somewhere else in the sandbox, add a custom preset for that
 
 The sandbox base image includes Homebrew (Linuxbrew).
 Balanced supplies its network access through `brew-balanced`; Open supplies it through `brew`.
-If Balanced's preset is missing, restore it with `$$nemoclaw my-assistant policy add brew-balanced --yes`.
+Adding `brew-balanced` alone does not narrow an existing `brew` grant.
+To replace the older built-in Homebrew grant in a Balanced sandbox, remove it before adding the restricted preset:
+
+```bash
+$$nemoclaw my-assistant policy remove brew --yes &&
+  $$nemoclaw my-assistant policy add brew-balanced --yes
+```
+
+Verify that `policy list` marks `brew-balanced` as applied and `brew` as inactive.
+If the addition fails, resolve the reported error and rerun the add command.
+Keep `brew` on Open or when you intend its broader access.
 Use the broader `brew` command below only when you intend to allow unrestricted raw GitHub methods.
 A `/usr/local/bin/brew` wrapper puts the entry point on the sandbox `PATH` while delegating to the Linuxbrew prefix.
 Installed formula commands are available from the Linuxbrew bin directory in sandbox shell sessions:
