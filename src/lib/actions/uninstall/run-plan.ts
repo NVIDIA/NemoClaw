@@ -1558,6 +1558,7 @@ async function removeOpenShellResources(
   runtime: UninstallRuntime,
   scopedToSelectedGateway: boolean,
   sandboxNames: readonly string[],
+  sandboxRegistrations: SelectedRegistrySandboxState["registrations"],
   teardownAuthority: GatewayOwner,
 ): Promise<boolean> {
   if (!runtime.commandExists("openshell")) {
@@ -1589,20 +1590,27 @@ async function removeOpenShellResources(
       runtime.warn("Selected gateway cleanup was incomplete; preserving its state for retry.");
       return false;
     }
+  } else {
+    // #6520: a no-op delete must not print `Deleted … skipped`.
+    runOptional(
+      runtime,
+      "Deleted all OpenShell sandboxes",
+      "openshell",
+      ["sandbox", "delete", "--all"],
+      { onSkip: OPENSHELL_SANDBOXES_DELETE_SKIP_MESSAGE },
+    );
+  }
+  // Retain connection and provider state until runtime cleanup is confirmed.
+  if (
+    !externallySupervised &&
+    runtime.commandExists("docker") &&
+    !verifyDockerContainerCleanup(runtime, null, sandboxNames, sandboxRegistrations)
+  )
+    return false;
+  if (scopedToSelectedGateway) {
     runtime.log("Sibling gateways remain; kept shared OpenShell provider registrations.");
     return true;
   }
-  // #6520 sub-bug: a no-op delete must not print `Deleted … skipped`;
-  // wording lives in domain/uninstall/messaging.ts.
-  runOptional(
-    runtime,
-    "Deleted all OpenShell sandboxes",
-    "openshell",
-    ["sandbox", "delete", "--all"],
-    {
-      onSkip: OPENSHELL_SANDBOXES_DELETE_SKIP_MESSAGE,
-    },
-  );
   const providerAdapter = createUninstallProviderAdapter(runtime.run, runtime.env);
   for (const providerName of NEMOCLAW_PROVIDERS) {
     const result = await providerAdapter.deleteProvider({
@@ -3109,15 +3117,11 @@ async function executeOpenShellResourceCleanup(
       runtime,
       scopedToSelectedGateway,
       sandboxNames,
+      sandboxRegistrations,
       teardownAuthority,
     ))
   ) {
     return false;
-  }
-  if (!portableRuntimeCleanup && !externallySupervised && runtime.commandExists("docker")) {
-    // Preserve both a leftover container and its ownership state if runtime cleanup was incomplete.
-    if (!verifyDockerContainerCleanup(runtime, null, sandboxNames, sandboxRegistrations))
-      return false;
   }
   if (
     !portableRuntimeCleanup &&

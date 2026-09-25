@@ -69,6 +69,7 @@ async function runWithDockerInventory(
     port?: number;
     runPlan?: typeof runUninstallPlanBase;
     registration?: Record<string, unknown>;
+    deleteResult?: RunResult;
     dockerResponses?: Record<string, RunResult>;
     siblingId?: string;
     prepareHome?: (homeDir: string) => void;
@@ -112,7 +113,7 @@ async function runWithDockerInventory(
       const handlers: Record<string, () => RunResult> = {
         "openshell sandbox delete": () => {
           rows.delete("owned-sandbox");
-          return ok();
+          return options.deleteResult ?? ok();
         },
         "openshell sandbox get": () =>
           ok(JSON.stringify({ name: "my-assistant", id: options.siblingId })),
@@ -173,6 +174,13 @@ async function runWithDockerInventory(
     return {
       calls,
       commands,
+      metadataWrites: commands.filter((args) =>
+        [
+          "openshell provider delete",
+          "openshell gateway remove",
+          "openshell gateway destroy",
+        ].includes(args.slice(0, 3).join(" ")),
+      ),
       result,
       errors,
       rmSync,
@@ -202,37 +210,42 @@ describe("uninstall Docker resource scope", () => {
     ]);
   });
 
-  it("retains state when a published sandbox remains despite runtime cleanup", async () => {
-    const id = "a".repeat(64);
-    const sandboxId = "selected-sandbox-id";
-    const fingerprint = createHash("sha256").update(sandboxId).digest("hex");
-    const result = await runWithDockerInventory({
-      registration: { openshellDriver: "docker", lifecycleLiveIdentityFingerprint: fingerprint },
-      leftovers: [
-        `${id} nemoclaw-sandbox-local:build-1 openshell-default--my-assistant-runtime-id`,
-      ],
-      dockerResponses: {
-        "ps -a --no-trunc --filter label=openshell.ai/sandbox-name=my-assistant --format {{.ID}}":
-          ok(id),
-        [`inspect --type container --format [{{json .Id}},{{json .Config.Labels}}] ${id}`]: ok(
-          JSON.stringify([
-            id,
-            {
-              "openshell.ai/managed-by": "openshell",
-              "openshell.ai/sandbox-name": "my-assistant",
-              "openshell.ai/sandbox-id": sandboxId,
-              "openshell.ai/sandbox-namespace": "default",
-            },
-          ]),
-        ),
-      },
-    });
-    expect(result.result.exitCode).toBe(1);
-    expect(result.calls.some((args) => args[0] === "inspect" && args.at(-1) === id)).toBe(true);
-    expect(result.errors.join("\n")).toContain("my-assistant");
-    expect(result.retainedRegistry).toBe(result.registry);
-    expect(result.calls.filter((args) => args[0] === "rm" || args[0] === "images")).toEqual([]);
-  });
+  it.each([0, 1])(
+    "retains the gateway and state when a published sandbox remains after cleanup status %s",
+    async (status) => {
+      const id = "a".repeat(64);
+      const sandboxId = "selected-sandbox-id";
+      const fingerprint = createHash("sha256").update(sandboxId).digest("hex");
+      const result = await runWithDockerInventory({
+        deleteResult: { status, stdout: "", stderr: "" },
+        registration: { openshellDriver: "docker", lifecycleLiveIdentityFingerprint: fingerprint },
+        leftovers: [
+          `${id} nemoclaw-sandbox-local:build-1 openshell-default--my-assistant-runtime-id`,
+        ],
+        dockerResponses: {
+          "ps -a --no-trunc --filter label=openshell.ai/sandbox-name=my-assistant --format {{.ID}}":
+            ok(id),
+          [`inspect --type container --format [{{json .Id}},{{json .Config.Labels}}] ${id}`]: ok(
+            JSON.stringify([
+              id,
+              {
+                "openshell.ai/managed-by": "openshell",
+                "openshell.ai/sandbox-name": "my-assistant",
+                "openshell.ai/sandbox-id": sandboxId,
+                "openshell.ai/sandbox-namespace": "default",
+              },
+            ]),
+          ),
+        },
+      });
+      expect(result.result.exitCode).toBe(1);
+      expect(result.calls.some((args) => args[0] === "inspect" && args.at(-1) === id)).toBe(true);
+      expect(result.errors.join("\n")).toContain("my-assistant");
+      expect(result.retainedRegistry).toBe(result.registry);
+      expect(result.metadataWrites).toEqual([]);
+      expect(result.calls.filter((args) => args[0] === "rm" || args[0] === "images")).toEqual([]);
+    },
+  );
 
   it("accepts published sandbox absence after its owning runtime removes it", async () => {
     const result = await runWithDockerInventory({
@@ -321,34 +334,42 @@ describe("uninstall Docker resource scope", () => {
     expect(result.calls.filter((args) => args[0] === "rm")).toEqual([]);
   });
 
-  it.each([
-    ["cluster", ["foreign-exact redis:7 openshell-cluster-nemoclaw"]],
-    ["gateway", ["foreign-exact redis:7 nemoclaw-openshell-gateway"]],
-    ["sandbox", ["foreign-exact redis:7 openshell-my-assistant"]],
+  it.each<[string, string[], boolean]>([
+    ["cluster", ["foreign-exact redis:7 openshell-cluster-nemoclaw"], false],
+    ["gateway", ["foreign-exact redis:7 nemoclaw-openshell-gateway"], false],
+    ["sandbox", ["foreign-exact redis:7 openshell-my-assistant"], true],
     [
       "ambiguous sandbox",
       [
         "first redis:7 openshell-my-assistant-runtime-a",
         "second redis:7 openshell-my-assistant-runtime-b",
       ],
+      true,
     ],
-  ])("preserves %s name collisions, recovery state, and the CLI", async (_kind, leftovers) => {
-    const result = await runWithDockerInventory({ leftovers });
-    expect(result.calls).toContainEqual(["ps", "-a", "--format", CONTAINER_FORMAT]);
-    expect(result.result.exitCode).toBe(1);
-    expect(result.remaining).toEqual(leftovers.map((row) => row.split(" ")[0]));
-    expect(result.calls.filter((args) => args[0] === "rm" || args[0] === "images")).toEqual([]);
-    expect(result.errors.join("\n")).toContain(
-      _kind.includes("sandbox") ? "my-assistant" : leftovers[0]!.split(" ")[2],
-    );
-    expect(result.retainedRegistry).toBe(result.registry);
-    expect(result.rmSync.mock.calls.some(([target]) => target === result.stateDir)).toBe(false);
-    expect(
-      result.commands.some(
-        ([command, action]) => command === "npm" && ["unlink", "uninstall"].includes(action!),
-      ),
-    ).toBe(false);
-  });
+  ])(
+    "preserves %s name collisions, recovery state, and the CLI",
+    async (_kind, leftovers, keepGateway) => {
+      const result = await runWithDockerInventory({ leftovers });
+      expect(result.calls).toContainEqual(["ps", "-a", "--format", CONTAINER_FORMAT]);
+      expect(result.result.exitCode).toBe(1);
+      expect(result.remaining).toEqual([
+        ...(keepGateway ? ["owned-gateway"] : []),
+        ...leftovers.map((row) => row.split(" ")[0]),
+      ]);
+      expect(result.metadataWrites.length === 0).toBe(keepGateway);
+      expect(result.calls.filter((args) => args[0] === "rm" || args[0] === "images")).toEqual([]);
+      expect(result.errors.join("\n")).toContain(
+        _kind.includes("sandbox") ? "my-assistant" : leftovers[0]!.split(" ")[2],
+      );
+      expect(result.retainedRegistry).toBe(result.registry);
+      expect(result.rmSync.mock.calls.some(([target]) => target === result.stateDir)).toBe(false);
+      expect(
+        result.commands.some(
+          ([command, action]) => command === "npm" && ["unlink", "uninstall"].includes(action!),
+        ),
+      ).toBe(false);
+    },
+  );
 
   it.each([
     { status: 42, stdout: "", stderr: "inventory unavailable" },
@@ -359,6 +380,7 @@ describe("uninstall Docker resource scope", () => {
     expect(result.errors.join("\n")).toContain("preserved for retry");
     expect(result.calls.filter((args) => args[0] === "rm" || args[0] === "images")).toEqual([]);
     expect(result.retainedRegistry).toBe(result.registry);
+    expect(result.metadataWrites).toEqual([]);
     expect(
       result.commands.some(
         ([command, action]) => command === "npm" && ["unlink", "uninstall"].includes(action!),
