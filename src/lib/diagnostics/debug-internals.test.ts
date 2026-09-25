@@ -102,6 +102,27 @@ describe("debug sandbox internals failure boundary", () => {
     expect(existsSync(mocks.directories[0]!)).toBe(false);
   });
 
+  it.each(["unavailable", "timeout", "capture", "invocation", "malformed"] as const)(
+    "retains later diagnostics and archive after a %s sandbox transport failure",
+    async (kind) => {
+      mocks.runBuffered.mockRejectedValue(new SandboxCommandTransportError(kind));
+      await expect(
+        runDebug({ sandboxName: "alpha", gatewayName: "owned", output: "debug.tar.gz" }),
+      ).resolves.toBeUndefined();
+      expect(mocks.runBuffered).toHaveBeenCalledOnce();
+      expect(mocks.archive).toHaveBeenCalledOnce();
+      expect(mocks.archivedFiles).toEqual(
+        expect.arrayContaining(["curl-models.txt", "vmstat.txt"]),
+      );
+      expect(mocks.archivedFiles).not.toContain("sandbox-ps.txt");
+      expect(console.log).toHaveBeenCalledWith(
+        expect.stringContaining("Sandbox internals skipped:"),
+      );
+      expect(mocks.directories).toHaveLength(1);
+      expect(existsSync(mocks.directories[0]!)).toBe(false);
+    },
+  );
+
   it.each([
     new SandboxCommandTransportError("cancelled"),
     new Error("unexpected executor failure"),

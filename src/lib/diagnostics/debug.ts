@@ -7,7 +7,10 @@ import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { dockerExecFileSync } from "../adapters/docker/exec";
-import { executeOrdinarySandboxCommand } from "../adapters/sandbox/ordinary-command";
+import {
+  executeOrdinarySandboxCommand,
+  SandboxCommandTransportError,
+} from "../adapters/sandbox/ordinary-command";
 import { OpenShellGatewayEndpointOverrideError } from "../openshell-gateway-endpoint-guard";
 import { DASHBOARD_PORT } from "../core/ports";
 import { redactFullWithUrls } from "../security/redact";
@@ -380,9 +383,15 @@ async function collectSandboxInternals(
         },
       );
     } catch (error) {
-      if (!(error instanceof OpenShellGatewayEndpointOverrideError)) throw error;
-      warn(`Sandbox internals skipped: ${redact(error.message)}`);
-      return;
+      if (error instanceof OpenShellGatewayEndpointOverrideError) {
+        warn(`Sandbox internals skipped: ${redact(error.message)}`);
+        return;
+      }
+      if (error instanceof SandboxCommandTransportError && error.kind !== "cancelled") {
+        warn(`Sandbox internals skipped: ${redact(error.message)}`);
+        return;
+      }
+      throw error;
     }
     const redacted = redact(`${result.stdout}\n${result.stderr}`);
     writeFileSync(join(collectDir, `${label}.txt`), redacted);
