@@ -1604,6 +1604,7 @@ root_fd = -1
 fd = -1
 uid = None
 gid = None
+restricted_repair = False
 try:
     try:
         root_fd = os.open(root, directory_flags)
@@ -1687,17 +1688,14 @@ try:
             if (current.st_dev, current.st_ino) != (repaired.st_dev, repaired.st_ino):
                 print(f"[SECURITY] Refusing Hermes layout repair because {path} changed during restricted-mode repair", file=sys.stderr)
                 sys.exit(1)
-            try:
-                fd = os.open(name, file_flags, mode, dir_fd=root_fd)
-            except OSError as reopen_exc:
-                print(f"[SECURITY] Refusing Hermes layout repair because {path} could not be reopened after restricted-mode repair: {reopen_exc.strerror}", file=sys.stderr)
-                sys.exit(1)
-            reopened = os.fstat(fd)
-            if (reopened.st_dev, reopened.st_ino) != (held.st_dev, held.st_ino):
-                os.close(fd)
-                fd = -1
-                print(f"[SECURITY] Refusing Hermes layout repair because {path} changed after restricted-mode repair", file=sys.stderr)
-                sys.exit(1)
+            # This repair only needs a validated metadata descriptor; it never
+            # writes history content. Keep the O_PATH reference instead of
+            # reopening a gateway-owned file, which a capability-dropped root
+            # process may still be unable to do under the runtime's group/ACL
+            # policy even after the final mode is correct.
+            fd = held_fd
+            held_fd = -1
+            restricted_repair = True
         finally:
             if held_fd >= 0:
                 os.close(held_fd)
@@ -1718,7 +1716,7 @@ try:
         print(f"[SECURITY] Refusing Hermes layout repair because {path} has hard-link count {st.st_nlink}", file=sys.stderr)
         sys.exit(1)
 
-    if os.geteuid() == 0:
+    if os.geteuid() == 0 and not restricted_repair:
         os.fchown(fd, uid, gid)
         os.fchmod(fd, mode)
     elif stat.S_IMODE(st.st_mode) != mode:
