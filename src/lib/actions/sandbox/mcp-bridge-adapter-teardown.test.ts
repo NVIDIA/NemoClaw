@@ -85,6 +85,7 @@ vi.mock("./mcp-bridge-validation", () => ({
 import { scrubManagedMcpAdapterOrThrow } from "./mcp-bridge-adapter-teardown";
 import {
   prepareMcpBridgesForAbsentSandboxRebuild,
+  prepareMcpBridgesForStoppedSandboxRebuild,
   prepareMcpBridgesForRebuild,
   restoreMcpBridgesAfterRebuild,
 } from "./mcp-bridge-rebuild";
@@ -158,6 +159,33 @@ describe("MCP adapter teardown rollback", () => {
       expect(mocks.detachProvider).not.toHaveBeenCalled();
     },
   );
+
+  it("preserves captured OpenClaw MCP intent without executing in or detaching the stopped source", async () => {
+    mocks.getSandboxOrThrow.mockReturnValue({ name: "alpha", agent: "openclaw" });
+    const source = { sandboxName: "alpha", directory: "/private/captured", assertCurrent: vi.fn() };
+    const nativeEntry = { ...entry, agent: "openclaw", adapter: "openclaw-config" as const };
+    const result = await prepareMcpBridgesForStoppedSandboxRebuild(
+      "alpha",
+      [nativeEntry],
+      source,
+      runtimeSelection,
+    );
+    expect(result.entries).toEqual([nativeEntry]);
+    expect(result.detachedProviderEntries).toEqual([]);
+    expect(mocks.assertMcpProviderRecoverable).toHaveBeenCalled();
+    expect(mocks.unregisterAgentAdapter).not.toHaveBeenCalled();
+    expect(mocks.removeGeneratedPolicy).not.toHaveBeenCalled();
+    expect(mocks.detachProvider).not.toHaveBeenCalled();
+    expect(source.assertCurrent).toHaveBeenCalledTimes(2);
+    await expect(result.revalidateBeforeDelete?.()).resolves.toBeUndefined();
+    mocks.captureRecordedSandboxBasePolicy.mockResolvedValue(
+      "version: 1\nnetwork_policies:\n  changed: {}\n",
+    );
+    await expect(result.revalidateBeforeDelete?.()).rejects.toThrow("policy changed");
+    await expect(
+      prepareMcpBridgesForStoppedSandboxRebuild("beta", [nativeEntry], source, runtimeSelection),
+    ).rejects.toThrow("does not match");
+  });
 
   it("preserves distinct credential endpoints in an absent-sandbox rebuild handoff", async () => {
     const distinct = {
