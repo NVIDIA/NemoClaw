@@ -22,22 +22,6 @@ export function normalizeSelectionComponent(value: unknown): string | null {
     : null;
 }
 
-export type OpenClawSelectionTarget = {
-  providerKey: string;
-  primaryModelRef: string;
-};
-
-function resolveOpenClawSelectionTarget(
-  target: OpenClawSelectionTarget | null,
-): SelectionIdentity | null {
-  if (!target) return null;
-  const separator = target.primaryModelRef.indexOf("/");
-  if (separator <= 0 || separator === target.primaryModelRef.length - 1) return null;
-  const provider = normalizeSelectionComponent(target.providerKey);
-  const model = normalizeSelectionComponent(target.primaryModelRef.slice(separator + 1));
-  return provider && model ? { provider, model } : null;
-}
-
 export type SelectionDrift = {
   changed: boolean;
   providerChanged: boolean;
@@ -56,7 +40,6 @@ type RunOpenshellForSelection = (
 
 export type SelectionConfigReadDeps = {
   runOpenshell: RunOpenshellForSelection;
-  runCaptureOpenshell?: (args: string[], opts: { ignoreError: true; timeout: number }) => string;
   tmpDir?: string;
 };
 
@@ -129,70 +112,15 @@ export function readSandboxSelectionConfig(
   }
 }
 
-export function readOpenClawSelectionConfig(
-  sandboxName: string,
-  deps: SelectionConfigReadDeps,
-): SelectionIdentity | null {
-  if (!sandboxName || !deps.runCaptureOpenshell) return null;
-  try {
-    // Let OpenClaw parse its credential-bearing JSON5 inside the sandbox. Only
-    // the requested scalar crosses into the host process.
-    const output = deps.runCaptureOpenshell(
-      [
-        "sandbox",
-        "exec",
-        "--name",
-        sandboxName,
-        "--",
-        "/usr/bin/env",
-        "HOME=/sandbox",
-        "/usr/local/bin/openclaw",
-        "config",
-        "get",
-        "agents.defaults.model.primary",
-        "--json",
-      ],
-      { ignoreError: true, timeout: 30_000 },
-    );
-    const primary = JSON.parse(output) as unknown;
-    if (typeof primary !== "string") return null;
-    const separator = primary.indexOf("/");
-    if (separator <= 0 || separator === primary.length - 1) return null;
-    const provider = normalizeSelectionComponent(primary.slice(0, separator));
-    const model = normalizeSelectionComponent(primary.slice(separator + 1));
-    return provider && model ? { provider, model } : null;
-  } catch {
-    return null;
-  }
-}
-
 export function getSelectionDrift(
   sandboxName: string,
   requestedProvider: string | null,
   requestedModel: string | null,
-  agentName: string | null,
-  openClawTarget: OpenClawSelectionTarget | null,
   deps: SelectionConfigReadDeps,
 ): SelectionDrift {
-  const openClawRequest = agentName === "openclaw";
-  const requestedOpenClawSelection = openClawRequest
-    ? resolveOpenClawSelectionTarget(openClawTarget)
-    : null;
-  if (openClawRequest && !requestedOpenClawSelection) {
-    return {
-      changed: true,
-      providerChanged: false,
-      modelChanged: false,
-      existingProvider: null,
-      existingModel: null,
-      requestedProvider: null,
-      requestedModel: null,
-      unknown: true,
-    };
-  }
-  const existing = openClawRequest
-    ? readOpenClawSelectionConfig(sandboxName, deps)
-    : readSandboxSelectionConfig(sandboxName, deps);
+  // Compare onboarding intent, not native OpenClaw edits made after creation.
+  // An unreadable record stays unknown; native config is not a deletion signal.
+  const existing = readSandboxSelectionConfig(sandboxName, deps);
   if (!existing) {
     return {
       changed: true,
@@ -200,37 +128,16 @@ export function getSelectionDrift(
       modelChanged: false,
       existingProvider: null,
       existingModel: null,
-      requestedProvider: requestedOpenClawSelection?.provider ?? requestedProvider,
-      requestedModel: requestedOpenClawSelection?.model ?? requestedModel,
+      requestedProvider,
+      requestedModel,
       unknown: true,
     };
   }
 
   const existingProvider = existing.provider;
   const existingModel = existing.model;
-  if (!existingProvider || !existingModel) {
-    return {
-      changed: true,
-      providerChanged: false,
-      modelChanged: false,
-      existingProvider,
-      existingModel,
-      requestedProvider: requestedOpenClawSelection?.provider ?? requestedProvider,
-      requestedModel: requestedOpenClawSelection?.model ?? requestedModel,
-      unknown: true,
-    };
-  }
-
-  const requestedNativeProvider = openClawRequest
-    ? requestedOpenClawSelection?.provider
-    : requestedProvider;
-  const requestedNativeModel = openClawRequest ? requestedOpenClawSelection?.model : requestedModel;
-  const providerChanged = Boolean(
-    existingProvider && requestedNativeProvider && existingProvider !== requestedNativeProvider,
-  );
-  const modelChanged = Boolean(
-    existingModel && requestedNativeModel && existingModel !== requestedNativeModel,
-  );
+  const providerChanged = Boolean(requestedProvider && existingProvider !== requestedProvider);
+  const modelChanged = Boolean(requestedModel && existingModel !== requestedModel);
 
   return {
     changed: providerChanged || modelChanged,
@@ -238,8 +145,8 @@ export function getSelectionDrift(
     modelChanged,
     existingProvider,
     existingModel,
-    requestedProvider: requestedNativeProvider,
-    requestedModel: requestedNativeModel,
+    requestedProvider,
+    requestedModel,
     unknown: false,
   };
 }

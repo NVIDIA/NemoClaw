@@ -1567,10 +1567,6 @@ async function deleteJournaledRecreateSource(input: {
 
 export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrchestrationRuntime) {
   const postCreateRecoveryRetryOwner = installPostCreateRecoveryRetryOwner();
-  const getRequestedOpenClawSelection = (
-    agentName: string | null,
-    ...selection: Parameters<SandboxCreateOrchestrationRuntime["getSandboxInferenceConfig"]>
-  ) => (agentName === "openclaw" ? runtime.getSandboxInferenceConfig(...selection) : null);
   return async function createSandboxWithBaseImageResolution(
     baseImageResolutionContext: import("../base-image-resolution-flow").BaseImageResolutionContext,
     portableRuntimeContext: PortableOnboardRuntimeContext | null,
@@ -2160,19 +2156,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             },
             readDcodeSelectionDrift,
           )
-        : getSelectionDrift(
-            sandboxName,
-            provider,
-            model,
-            requestedAgentName,
-            getRequestedOpenClawSelection(
-              requestedAgentName,
-              model,
-              provider,
-              preferredInferenceApi,
-            ),
-            { runOpenshell, runCaptureOpenshell },
-          );
+        : getSelectionDrift(sandboxName, provider, model, { runOpenshell });
       const actionableSelectionDrift = requiresSelectionRecreate(
         selectionDrift,
         isManagedDcodeAgent,

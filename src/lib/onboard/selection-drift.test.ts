@@ -10,9 +10,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   findSelectionConfigPath,
   getSelectionDrift,
-  readOpenClawSelectionConfig,
   readSandboxSelectionConfig,
 } from "./selection-drift";
+import { requiresSelectionRecreate } from "./dcode-selection-drift";
 
 const tmpRoots: string[] = [];
 
@@ -29,6 +29,23 @@ afterEach(() => {
 });
 
 describe("selection drift helpers", () => {
+  it("preserves native OpenClaw model edits when the requested onboarding selection is unchanged", () => {
+    const runOpenshell = vi.fn((args: string[]) => {
+      fs.writeFileSync(
+        path.join(args[4], "config.json"),
+        JSON.stringify({ provider: "compatible-endpoint", model: "model-a" }),
+      );
+      return { status: 0 };
+    });
+    expect(
+      getSelectionDrift("alpha", "compatible-endpoint", "model-a", { runOpenshell }),
+    ).toMatchObject({ changed: false, unknown: false });
+    expect(runOpenshell).toHaveBeenCalledExactlyOnceWith(
+      ["sandbox", "download", "alpha", "/sandbox/.nemoclaw/config.json", expect.any(String)],
+      { ignoreError: true, stdio: ["ignore", "ignore", "ignore"] },
+    );
+  });
+
   it("finds nested config.json files", () => {
     const root = tmpRoot();
     const nested = path.join(root, "sandbox", ".nemoclaw");
@@ -83,70 +100,34 @@ describe("selection drift helpers", () => {
     expect(fs.existsSync(String(downloadedParent))).toBe(false);
   });
 
-  it("reads only the native OpenClaw model scalar without downloading its config", () => {
-    const root = tmpRoot();
-    const runOpenshell = vi.fn(() => ({ status: 1 }));
-    const runCaptureOpenshell = vi.fn(() => JSON.stringify("inference/model-a"));
+  it.each([
+    { provider: "inference", model: "model-a\u001b]52;c;attack\u0007" },
+    { provider: "inference\nforged-output", model: "model-a" },
+    { provider: "inference", model: "a".repeat(513) },
+    { provider: "inference", model: "" },
+    { provider: "inference", model: 42 },
+  ])("rejects unsafe or invalid sandbox-owned selection state: %j", (selection) => {
+    const runOpenshell = vi.fn((args: string[]) => {
+      fs.writeFileSync(path.join(args[4], "config.json"), JSON.stringify(selection));
+      return { status: 0 };
+    });
 
-    expect(
-      readOpenClawSelectionConfig("alpha", {
-        runOpenshell,
-        runCaptureOpenshell,
-        tmpDir: root,
-      }),
-    ).toEqual({ provider: "inference", model: "model-a" });
-    expect(runCaptureOpenshell).toHaveBeenCalledExactlyOnceWith(
-      [
-        "sandbox",
-        "exec",
-        "--name",
-        "alpha",
-        "--",
-        "/usr/bin/env",
-        "HOME=/sandbox",
-        "/usr/local/bin/openclaw",
-        "config",
-        "get",
-        "agents.defaults.model.primary",
-        "--json",
-      ],
-      { ignoreError: true, timeout: 30_000 },
-    );
-    expect(runOpenshell).not.toHaveBeenCalled();
-    expect(fs.readdirSync(root)).toEqual([]);
-  });
-
-  it("rejects terminal controls from sandbox-owned selection state", () => {
-    const runOpenshell = vi.fn(() => ({ status: 1 }));
-
-    expect(
-      readOpenClawSelectionConfig("alpha", {
-        runOpenshell,
-        runCaptureOpenshell: () => JSON.stringify("inference/model-a\u001b]52;c;attack\u0007"),
-      }),
-    ).toBeNull();
+    expect(readSandboxSelectionConfig("alpha", { runOpenshell })).toBeNull();
+    expect(fs.existsSync(runOpenshell.mock.calls[0][0][4])).toBe(false);
   });
 
   it("reports unknown drift when no readable selection config exists", () => {
     expect(
-      getSelectionDrift(
-        "alpha",
-        "compatible-endpoint",
-        "model-a",
-        "openclaw",
-        { providerKey: "inference", primaryModelRef: "inference/model-a" },
-        {
-          runOpenshell: () => ({ status: 1 }),
-          runCaptureOpenshell: () => "",
-        },
-      ),
+      getSelectionDrift("alpha", "compatible-endpoint", "model-a", {
+        runOpenshell: () => ({ status: 1 }),
+      }),
     ).toEqual({
       changed: true,
       providerChanged: false,
       modelChanged: false,
       existingProvider: null,
       existingModel: null,
-      requestedProvider: "inference",
+      requestedProvider: "compatible-endpoint",
       requestedModel: "model-a",
       unknown: true,
     });
@@ -164,9 +145,7 @@ describe("selection drift helpers", () => {
       return { status: 0 };
     });
 
-    expect(
-      getSelectionDrift("alpha", "new-provider", "new-model", "hermes", null, { runOpenshell }),
-    ).toEqual({
+    expect(getSelectionDrift("alpha", "new-provider", "new-model", { runOpenshell })).toEqual({
       changed: true,
       providerChanged: true,
       modelChanged: true,
@@ -178,54 +157,37 @@ describe("selection drift helpers", () => {
     });
   });
 
-  it("uses a matching native OpenClaw selection instead of stale NemoClaw state", () => {
-    const runOpenshell = vi.fn(() => ({ status: 1 }));
-    const runCaptureOpenshell = vi.fn(() => JSON.stringify("inference/model-a"));
+  it.each([
+    ["other-provider", "model-a", true, false],
+    ["compatible-endpoint", "model-b", false, true],
+  ] as const)(
+    "requires recreation for an explicit selection change to %s/%s",
+    (provider, model, providerChanged, modelChanged) => {
+      const drift = getSelectionDrift("alpha", provider, model, {
+        runOpenshell: (args) => {
+          fs.writeFileSync(
+            path.join(args[4], "config.json"),
+            JSON.stringify({ provider: "compatible-endpoint", model: "model-a" }),
+          );
+          return { status: 0 };
+        },
+      });
+      expect(drift).toMatchObject({ changed: true, providerChanged, modelChanged, unknown: false });
+      expect(requiresSelectionRecreate(drift, false)).toBe(true);
+    },
+  );
 
-    expect(
-      getSelectionDrift(
-        "alpha",
-        "compatible-endpoint",
-        "model-a",
-        "openclaw",
-        { providerKey: "inference", primaryModelRef: "inference/model-a" },
-        { runOpenshell, runCaptureOpenshell },
-      ),
-    ).toEqual({
-      changed: false,
-      providerChanged: false,
-      modelChanged: false,
-      existingProvider: "inference",
-      existingModel: "model-a",
-      requestedProvider: "inference",
-      requestedModel: "model-a",
-      unknown: false,
-    });
-    expect(runOpenshell).not.toHaveBeenCalled();
-  });
-
-  it("reports drift when the native OpenClaw selection differs", () => {
-    const runOpenshell = vi.fn(() => ({ status: 1 }));
-    const runCaptureOpenshell = vi.fn(() => JSON.stringify("inference/model-b"));
-
-    expect(
-      getSelectionDrift(
-        "alpha",
-        "compatible-endpoint",
-        "model-a",
-        "openclaw",
-        { providerKey: "inference", primaryModelRef: "inference/model-a" },
-        { runOpenshell, runCaptureOpenshell },
-      ),
-    ).toEqual({
-      changed: true,
-      providerChanged: false,
-      modelChanged: true,
-      existingProvider: "inference",
-      existingModel: "model-b",
-      requestedProvider: "inference",
-      requestedModel: "model-a",
-      unknown: false,
-    });
-  });
+  it.each(["not json", "{}"])(
+    "does not authorize recreation without a readable selection record: %s",
+    (record) => {
+      const drift = getSelectionDrift("alpha", "compatible-endpoint", "model-a", {
+        runOpenshell: (args) => {
+          fs.writeFileSync(path.join(args[4], "config.json"), record);
+          return { status: 0 };
+        },
+      });
+      expect(drift).toMatchObject({ changed: true, unknown: true });
+      expect(requiresSelectionRecreate(drift, false)).toBe(false);
+    },
+  );
 });

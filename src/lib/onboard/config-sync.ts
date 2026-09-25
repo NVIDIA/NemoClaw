@@ -66,11 +66,16 @@ export function buildSandboxConfigSyncScript(
   selectionConfig: ProviderSelectionConfig & { agent?: string; onboardedAt?: string },
   managedProfileApplied = false,
 ): string {
-  // OpenClaw owns routing in openclaw.json. Other agents still consume their
-  // selection snapshot for resume drift checks.
+  // Record onboarding intent for reuse comparisons, not OpenClaw runtime routing.
+  // Native OpenClaw edits never flow back into this selection record.
   const metadata =
     !selectionConfig.agent || selectionConfig.agent === "openclaw"
-      ? { profile: selectionConfig.profile, onboardedAt: selectionConfig.onboardedAt }
+      ? {
+          profile: selectionConfig.profile,
+          provider: selectionConfig.provider,
+          model: selectionConfig.model,
+          onboardedAt: selectionConfig.onboardedAt,
+        }
       : selectionConfig;
   const writeSelection = `
 set -euo pipefail

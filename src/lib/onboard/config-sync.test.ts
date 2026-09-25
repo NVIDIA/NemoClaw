@@ -9,6 +9,7 @@ import path from "node:path";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { shellQuote } from "../core/shell-quote";
+import { getSelectionDrift } from "./selection-drift";
 import {
   buildSandboxConfigSyncScript,
   createNemoClawConfigSync,
@@ -190,7 +191,23 @@ describe("sandbox config sync helpers", () => {
 
     expect(JSON.parse(fs.readFileSync(path.join(nemoclawDir, "config.json"), "utf8"))).toEqual({
       profile: selection.profile,
+      provider: selection.provider,
+      model: selection.model,
     });
+    const readRecordedSelection = (args: string[]) => {
+      fs.copyFileSync(path.join(nemoclawDir, "config.json"), path.join(args[4], "config.json"));
+      return { status: 0 };
+    };
+    expect(
+      getSelectionDrift("alpha", selection.provider, selection.model, {
+        runOpenshell: readRecordedSelection,
+      }),
+    ).toMatchObject({ changed: false, unknown: false });
+    expect(
+      getSelectionDrift("alpha", selection.provider, "explicit-new-model", {
+        runOpenshell: readRecordedSelection,
+      }),
+    ).toMatchObject({ changed: true, modelChanged: true, unknown: false });
     expect(modeBits(nemoclawDir)).toBe(0o700);
     expect(modeBits(path.join(nemoclawDir, "config.json"))).toBe(0o600);
     expect(JSON.parse(fs.readFileSync(openclawConfig, "utf8"))).toEqual(existingConfig);
@@ -209,7 +226,7 @@ describe("sandbox config sync helpers", () => {
 
     expect(
       JSON.parse(fs.readFileSync(path.join(homeDir, ".nemoclaw", "config.json"), "utf8")),
-    ).toEqual({ profile: selection.profile });
+    ).toEqual({ profile: selection.profile, provider: selection.provider, model: selection.model });
     expect(modeBits(path.join(openclawDir, "agents", "main", "sessions"))).toBe(0o700);
   });
 
@@ -255,7 +272,11 @@ describe("sandbox config sync helpers", () => {
 
     expect(
       JSON.parse(fs.readFileSync(path.join(homeDir, ".nemoclaw", "config.json"), "utf8")),
-    ).toEqual({ profile: anthropicSelection.profile });
+    ).toEqual({
+      profile: anthropicSelection.profile,
+      provider: anthropicSelection.provider,
+      model: anthropicSelection.model,
+    });
   });
 
   itUnix("syncs selection without reading invalid native OpenClaw configuration", () => {
@@ -269,7 +290,7 @@ describe("sandbox config sync helpers", () => {
     runConfigSyncScript(script, homeDir, String(process.getuid?.()));
     expect(
       JSON.parse(fs.readFileSync(path.join(homeDir, ".nemoclaw", "config.json"), "utf8")),
-    ).toEqual({ profile: selection.profile });
+    ).toEqual({ profile: selection.profile, provider: selection.provider, model: selection.model });
     expect(fs.readFileSync(configFile, "utf8")).toBe(config);
   });
 
@@ -312,7 +333,12 @@ describe("sandbox config sync helpers", () => {
       runConfigSyncScript(script, homeDir, "1234");
       expect(
         JSON.parse(fs.readFileSync(path.join(homeDir, ".nemoclaw", "config.json"), "utf8")),
-      ).toEqual({ profile: selection.profile, onboardedAt: expect.any(String) });
+      ).toEqual({
+        profile: selection.profile,
+        provider: selection.provider,
+        model: selection.model,
+        onboardedAt: expect.any(String),
+      });
     } finally {
       fs.rmSync(homeDir, { recursive: true, force: true });
     }
