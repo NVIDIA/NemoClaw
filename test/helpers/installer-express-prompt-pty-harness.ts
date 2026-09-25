@@ -98,7 +98,7 @@ install_nemoclaw_before_onboarding() {
     'exports.loadGatewayManagementDeclaration = () => ({ ok: true, declaration: null });' \
     >"$onboard_dir/gateway-management.js"
   printf '%s\n' \
-    'exports.configuredRuntimeProviderOwnsHostReadiness = () => false;' \
+    'exports.configuredRuntimeProviderReadinessAuthority = () => null;' \
     >"$onboard_dir/docker-driver-gateway-env.js"
   printf '%s\n' \
     'exports.isPortableExperimentalProfile = () => false;' \

@@ -814,6 +814,7 @@ describe("managed gateway port readiness (#7411)", () => {
           gatewayName,
           gatewayPort,
           expectedEndpoint: endpoint,
+          runtimeSocketPath: environment.OPENSHELL_PODMAN_SOCKET,
           managedGatewayEndpoints: expect.arrayContaining([endpoint]),
           portAvailable: false,
         }),

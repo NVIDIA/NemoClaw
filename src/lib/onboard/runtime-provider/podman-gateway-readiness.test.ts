@@ -25,6 +25,7 @@ const ENVIRONMENT = { HOME: "/home/nemoclaw", PATH: "/usr/bin:/bin" };
 const STATE_DIR = resolveDockerDriverGatewayStateDir(ENVIRONMENT, ENVIRONMENT.HOME, GATEWAY_PORT);
 const PID_FILE = path.join(STATE_DIR, "openshell-gateway.pid");
 const MARKER_FILE = getDockerDriverGatewayRuntimeMarkerPath(STATE_DIR);
+const PODMAN_SOCKET = "/run/user/1000/podman/podman.sock";
 
 function input() {
   return {
@@ -41,6 +42,7 @@ function input() {
     portAvailable: false,
     installedOpenShellVersion: "0.0.116",
     trustedGatewayBin: GATEWAY_BIN,
+    runtimeSocketPath: PODMAN_SOCKET,
   };
 }
 
@@ -86,6 +88,9 @@ function readinessDeps(
       () => `${GATEWAY_BIN} --name ${GATEWAY_NAME} --port ${String(GATEWAY_PORT)}`,
     ),
     readProcessExecutable: vi.fn(() => GATEWAY_BIN),
+    readProcessEnvironment: vi.fn(() => null),
+    readManagedService: vi.fn(() => null),
+    runtimeFileMissing: vi.fn(() => false),
     runHost: vi.fn(
       (command, args) =>
         commands.get([command, ...args].join("\0")) ?? {
@@ -97,7 +102,123 @@ function readinessDeps(
   };
 }
 
+function managedServiceDeps() {
+  const deps = readinessDeps();
+  return {
+    ...deps,
+    readOwnedFile: vi.fn(() => null),
+    runtimeFileMissing: vi.fn(() => true),
+    readProcessArguments: vi.fn(() => GATEWAY_BIN),
+    readManagedService: vi.fn(() => ({ pid: PID, executablePath: GATEWAY_BIN })),
+    readProcessEnvironment: vi.fn(() => ({
+      OPENSHELL_DB_URL: `sqlite:${path.join(STATE_DIR, "openshell.db")}`,
+      OPENSHELL_DRIVERS: "podman",
+      OPENSHELL_PODMAN_SOCKET: PODMAN_SOCKET,
+      OPENSHELL_GRPC_ENDPOINT: input().expectedEndpoint,
+      OPENSHELL_SERVER_PORT: String(GATEWAY_PORT),
+    })),
+    runHost: vi.fn((command: string, args: readonly string[], env: NodeJS.ProcessEnv) =>
+      command === GATEWAY_BIN && args.join(" ") === "--version"
+        ? { status: 0, stdout: "openshell-gateway 0.0.116\n", stderr: "" }
+        : deps.runHost(command, args, env),
+    ),
+  };
+}
+
 describe("native Podman gateway readiness", () => {
+  it("reuses the managed service after startup clears standalone ownership files", () => {
+    const deps = managedServiceDeps();
+    const observed = observeNativePodmanGatewayReadiness(input(), deps);
+    expect(observed.listenerScan).toEqual({ pids: [PID], unverifiedPids: [], complete: true });
+    expect(observed.targetBoundListenerPids).toEqual([PID]);
+    expect(observed.versionCompatibility).toBe("compatible");
+    expect(
+      classifyManagedGatewayPortConflict(
+        false,
+        observed.listenerScan,
+        "healthy",
+        false,
+        observed.endpointBinding,
+        observed.targetBoundListenerPids.includes(PID),
+      ),
+    ).toBe("none");
+    expect(
+      deps.runHost.mock.calls.every(([command]) => ["lsof", "ps", GATEWAY_BIN].includes(command)),
+    ).toBe(true);
+  });
+
+  it.each([
+    ["OPENSHELL_DRIVERS", "docker"],
+    ["OPENSHELL_PODMAN_SOCKET", "/run/foreign/podman.sock"],
+    ["OPENSHELL_SERVER_PORT", "8990"],
+    ["OPENSHELL_GRPC_ENDPOINT", "https://127.0.0.1:8080"],
+    ["OPENSHELL_DB_URL", "sqlite:/foreign/openshell.db"],
+    ["NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE", "foreign"],
+  ])("rejects a managed service with mismatched %s", (key, value) => {
+    const deps = managedServiceDeps();
+    const env = { ...deps.readProcessEnvironment(), [key]: value };
+    deps.readProcessEnvironment.mockReturnValue(env);
+    expect(observeNativePodmanGatewayReadiness(input(), deps).listenerScan.unverifiedPids).toEqual([
+      PID,
+    ]);
+    expect(deps.runHost.mock.calls.some(([command]) => command === GATEWAY_BIN)).toBe(false);
+  });
+
+  const invalidServices: Record<string, Partial<PodmanGatewayReadinessDeps>> = {
+    "no trusted service": { readManagedService: () => null },
+    "another service PID": {
+      readManagedService: () => ({ pid: 5252, executablePath: GATEWAY_BIN }),
+    },
+    "another service executable": {
+      readManagedService: () => ({ pid: PID, executablePath: "/foreign" }),
+    },
+    "another process executable": { readProcessExecutable: () => "/foreign" },
+    "CLI overrides": { readProcessArguments: () => `${GATEWAY_BIN} --port 8990` },
+    "unreadable process environment": { readProcessEnvironment: () => null },
+    "an unreadable standalone record": { runtimeFileMissing: () => false },
+    "a partial standalone record": {
+      readOwnedFile: (file) => (file === PID_FILE ? String(PID) : null),
+    },
+    "a service restart during observation": {
+      readManagedService: vi
+        .fn()
+        .mockReturnValueOnce({ pid: PID, executablePath: GATEWAY_BIN })
+        .mockReturnValue(null),
+    },
+    "an executable change during observation": {
+      readProcessExecutable: vi.fn().mockReturnValueOnce(GATEWAY_BIN).mockReturnValue("/foreign"),
+    },
+  };
+  it.each(Object.entries(invalidServices))(
+    "rejects managed ownership with %s",
+    (_label, overrides) => {
+      const observed = observeNativePodmanGatewayReadiness(input(), {
+        ...managedServiceDeps(),
+        ...overrides,
+      });
+      expect(observed.listenerScan.unverifiedPids).toEqual([PID]);
+      expect(observed.versionCompatibility).toBe("unknown");
+    },
+  );
+
+  it.each([
+    [0, "openshell-gateway 0.0.115", "drift"],
+    [null, "", "unknown"],
+  ] as const)(
+    "keeps the managed gateway version independent of the CLI (%s, %s)",
+    (status, stdout, expected) => {
+      const deps = managedServiceDeps();
+      const run = deps.runHost;
+      const observation = observeNativePodmanGatewayReadiness(input(), {
+        ...deps,
+        runHost: (command, args, env) =>
+          command === GATEWAY_BIN ? { status, stdout, stderr: "" } : run(command, args, env),
+      });
+      expect(observation.listenerScan.pids).toEqual([PID]);
+      expect(observation.versionCompatibility).toBe(expected);
+    },
+  );
+
   it("recognizes one target-bound listener and its recorded OpenShell version (#10984)", () => {
     expect(observeNativePodmanGatewayReadiness(input(), readinessDeps())).toEqual({
       endpointBinding: "match",

@@ -17,6 +17,7 @@ export type CreateOpenShellSandboxRequest = Readonly<{
   gpu?: Readonly<{ device?: string }>;
   resources?: Readonly<{ cpu?: string; memory?: string }>;
   providers?: readonly string[];
+  autoProviders?: boolean;
   labels?: Readonly<Record<string, string>>;
   startupCommand: readonly string[];
   environment: NodeJS.ProcessEnv;

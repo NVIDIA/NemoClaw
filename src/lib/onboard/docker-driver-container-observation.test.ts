@@ -26,4 +26,16 @@ describe("findLabeledSandboxContainers", () => {
   it("returns no rows for an empty observation", () => {
     expect(findLabeledSandboxContainers("e2e-x", { dockerCapture: () => "" })).toEqual([]);
   });
+
+  it("can propagate an observation failure instead of reporting absence", () => {
+    expect(() =>
+      findLabeledSandboxContainers("e2e-x", {
+        ignoreError: false,
+        dockerCapture: (_args, options) => {
+          expect(options?.ignoreError).toBe(false);
+          throw new Error("Docker observation failed");
+        },
+      }),
+    ).toThrow("Docker observation failed");
+  });
 });
