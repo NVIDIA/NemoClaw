@@ -55,7 +55,7 @@ test(
       boundary: "exact managed Hermes rebuild state restoration and native readiness",
       contracts: [
         "rebuild uses the published exact managed image without stale controller fixtures",
-        "Hermes memory, native user plugin, and lazy package state survive the rebuild",
+        "Hermes memory, native user plugin, lazy package state, and operator config survive the rebuild",
         "the native Hermes health endpoint is ready after restore",
       ],
     });
@@ -94,11 +94,31 @@ test(
 
     progress.phase("write durable Hermes state");
     const marker = `rebuild-hermes-${Date.now()}`;
+    const operatorMaxTokens = 24_577;
+    await host.nemoclaw(
+      [
+        SANDBOX_NAME,
+        "config",
+        "set",
+        "--key",
+        "model.max_tokens",
+        "--value",
+        String(operatorMaxTokens),
+        "--config-accept-new-path",
+      ],
+      {
+        artifactName: "rebuild-hermes-set-operator-config",
+        env,
+        redactionValues: redactions,
+      },
+    );
+    const assertOperatorConfig = `/opt/hermes/.venv/bin/python -c 'from pathlib import Path; import sys, yaml; cfg = yaml.safe_load(Path("/sandbox/.hermes/config.yaml").read_text()) or {}; sys.exit(cfg.get("model", {}).get("max_tokens") != ${operatorMaxTokens})'`;
     const write = await sandboxSh(
       sandbox,
       SANDBOX_NAME,
       [
         "set -eu",
+        assertOperatorConfig,
         `umask 077; mkdir -p /sandbox/.hermes/memories; printf '%s\\n' '${marker}' > /sandbox/.hermes/memories/.rebuild-state-marker; sync`,
         "plugin=/sandbox/.hermes/plugins/e2e-native-plugin",
         "package=/sandbox/.hermes/lazy-packages/e2e_native_package",
@@ -138,6 +158,7 @@ test(
       SANDBOX_NAME,
       [
         "set -eu",
+        assertOperatorConfig,
         'marker="$(cat /sandbox/.hermes/memories/.rebuild-state-marker)"',
         "HERMES_HOME=/sandbox/.hermes hermes plugins list --plain --user >/tmp/e2e-native-plugins-after-rebuild",
         "grep -Fq 'e2e-native-plugin' /tmp/e2e-native-plugins-after-rebuild",
