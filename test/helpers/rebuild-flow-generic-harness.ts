@@ -938,6 +938,13 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       overrides.executeSandboxExecCommand ??
         (() => ({ status: 0, stdout: "doctor ok", stderr: "" })),
     );
+  if (agentName === "hermes") {
+    vi.spyOn(processRecovery, "executePrivilegedSandboxCommand").mockReturnValue({
+      status: 0,
+      stdout: "",
+      stderr: "",
+    });
+  }
   vi.spyOn(processRecovery, "beginOpenClawPostRestoreDoctor").mockImplementation(
     async (sandboxName, runtimeSelection) => ({
       ok: true,
