@@ -128,6 +128,48 @@ describe("mergeOpenClawRestoredConfig", () => {
     });
   });
 
+  it("keeps a lower backed-up context ceiling when regenerated defaults are larger", () => {
+    const merged = mergeOpenClawRestoredConfig(
+      {
+        models: {
+          providers: {
+            inference: { models: [{ id: "current", contextWindow: 16384 }] },
+          },
+        },
+      },
+      {
+        models: {
+          providers: {
+            inference: { models: [{ id: "current", contextWindow: 131072 }] },
+          },
+        },
+      },
+    ) as Record<string, any>;
+
+    expect(merged.models.providers.inference.models[0].contextWindow).toBe(16384);
+  });
+
+  it("uses the fresh context when the backup does not contain a valid ceiling", () => {
+    const merged = mergeOpenClawRestoredConfig(
+      {
+        models: {
+          providers: {
+            inference: { models: [{ id: "current", contextWindow: "unknown" }] },
+          },
+        },
+      },
+      {
+        models: {
+          providers: {
+            inference: { models: [{ id: "current", contextWindow: 16384 }] },
+          },
+        },
+      },
+    ) as Record<string, any>;
+
+    expect(merged.models.providers.inference.models[0].contextWindow).toBe(16384);
+  });
+
   it("re-owns primary model routing while retaining other native agent settings", () => {
     const merged = mergeOpenClawRestoredConfig(
       {

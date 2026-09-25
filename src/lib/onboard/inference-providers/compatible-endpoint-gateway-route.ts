@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { VLLM_PORT } from "../../core/vllm-port";
+import { unsafeEndpointUrlViolation } from "../../core/endpoint-url-safety";
 import { LLAMA_CPP_PORT } from "../../inference/llama-cpp/contract";
 import { isLoopbackHostname } from "../../private-networks";
 import type { RunOpenshell, UpsertProvider, UpsertProviderResult } from "./types";
@@ -29,7 +30,13 @@ export function isLoopbackNoAuthCompatibleEndpointUrl(
   provider: string,
   endpointUrl: string | null | undefined,
 ): boolean {
-  if (provider !== "compatible-endpoint" || !endpointUrl) return false;
+  if (
+    provider !== "compatible-endpoint" ||
+    !endpointUrl ||
+    unsafeEndpointUrlViolation(endpointUrl)
+  ) {
+    return false;
+  }
   let parsed: URL;
   try {
     parsed = new URL(endpointUrl);

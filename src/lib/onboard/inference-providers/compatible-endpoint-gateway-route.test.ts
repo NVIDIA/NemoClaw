@@ -21,17 +21,33 @@ describe("compatible endpoint gateway routing", () => {
     expect(
       isLoopbackNoAuthCompatibleEndpointUrl("compatible-endpoint", "http://[::1]:12500/v1"),
     ).toBe(true);
+    expect(
+      isLoopbackNoAuthCompatibleEndpointUrl("compatible-endpoint", "http://localhost:1024/v1"),
+    ).toBe(true);
+    expect(
+      isLoopbackNoAuthCompatibleEndpointUrl("compatible-endpoint", "http://localhost:65535/v1"),
+    ).toBe(true);
   });
 
   it.each([
+    ["wrong provider", "http://localhost:12500/v1", "compatible-anthropic-endpoint"],
     ["remote host", "http://10.0.0.1:12500/v1"],
     ["public host", "https://inference.example.test/v1"],
+    ["HTTPS loopback", "https://localhost:12500/v1"],
+    ["default port", "http://localhost/v1"],
     ["privileged port", "http://localhost:999/v1"],
+    ["out-of-range port", "http://localhost:65536/v1"],
     ["userinfo", "http://user@localhost:12500/v1"],
     ["query", "http://localhost:12500/v1?tenant=other"],
-  ])("rejects an unsafe no-auth proxy source: %s", (_label, endpointUrl) => {
-    expect(isLoopbackNoAuthCompatibleEndpointUrl("compatible-endpoint", endpointUrl)).toBe(false);
-  });
+    ["fragment", "http://localhost:12500/v1#models"],
+    ["encoded control", "http://localhost:12500/v1%0ax"],
+    ["malformed URL", "not a URL"],
+  ])(
+    "rejects an unsafe no-auth proxy source: %s",
+    (_label, endpointUrl, provider = "compatible-endpoint") => {
+      expect(isLoopbackNoAuthCompatibleEndpointUrl(provider, endpointUrl)).toBe(false);
+    },
+  );
 
   it.each(["localhost", "127.0.0.1", "[::1]"])(
     "rewrites exact HTTP loopback hosts on bundled local-inference ports [case %#] (#5744)",
