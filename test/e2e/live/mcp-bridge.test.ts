@@ -49,7 +49,6 @@ import {
 } from "./mcp-bridge-hermes-lifecycle.ts";
 import {
   assertMcpBridgeManagedImageReceipt,
-  buildMcpBridgeExactMainEnv,
   buildMcpBridgeOnboardArgs,
   buildMcpBridgeOnboardEnv,
   requireMcpBridgeTlsCaCert,
@@ -68,6 +67,7 @@ import {
   runMcpProviderRewriteProbe,
   runOpenClawDeniedToolUpdateProof,
   restartBridgeWithoutHostSecret,
+  rebuildWithoutMcpHostSecret,
   retryOpenClawBaselineScopeOnboardFailure,
   retryAfterConcurrentAddTransientFailure,
   retryHermesGatewayDraining,
@@ -91,6 +91,7 @@ import {
   assertAuthenticatedMcpToolDiscovery,
   runHermesInitialMcpReadiness,
 } from "./mcp-bridge-tool-discovery.ts";
+import { proveKilledDockerOpenClawRecovery } from "./openclaw-stopped-recovery.ts";
 import { assertTrustedPrivateMcpRebindingDenied } from "./mcp-bridge-trusted-private.ts";
 import {
   buildMcpCredentialHandleAuthorizationPattern,
@@ -696,25 +697,6 @@ async function replaceBridgeCredentialConservatively(
     applyHostPolicyEdit: false,
   });
 }
-async function rebuildWithoutMcpHostSecret(
-  host: HostCliClient,
-  sandboxName: string,
-  artifactPrefix: string,
-  envOverlay: NodeJS.ProcessEnv = {},
-): Promise<void> {
-  const rebuild = await host.nemoclaw([sandboxName, "rebuild", "--yes"], {
-    artifactName: `${artifactPrefix}-rebuild-with-provider-backed-mcp`,
-    env: {
-      ...buildMcpBridgeExactMainEnv({ envOverlay }),
-      COMPATIBLE_API_KEY: COMPATIBLE_KEY,
-      NEMOCLAW_REBUILD_VERBOSE: "1",
-      NVIDIA_INFERENCE_API_KEY: COMPATIBLE_KEY,
-    },
-    redactionValues: [COMPATIBLE_KEY, HOST_SECRET, ROTATED_HOST_SECRET],
-    timeoutMs: 25 * 60_000,
-  });
-  expectExitZero(rebuild, `${artifactPrefix} rebuild without MCP host secret`);
-}
 
 test(
   "mcp-bridge",
@@ -722,7 +704,7 @@ test(
     timeout: testTimeout(45 * 60_000),
     meta: { e2ePhases: MCP_BRIDGE_PHASES.openclaw },
   },
-  async ({ artifacts, cleanup, host, progress, sandbox }) => {
+  async ({ artifacts, cleanup, host, progress, sandbox, runtimeProvider }) => {
     await artifacts.writeJson("scenario.json", {
       id: "mcp-bridge",
       sandbox: OPENCLAW_SANDBOX_NAME,
@@ -1073,21 +1055,35 @@ test(
       [HOST_SECRET, ROTATED_HOST_SECRET],
       "openclaw-assert-secrets-absent-after-rotation",
     );
+    const proveRestoredBridge = async (prefix: string) => {
+      await assertSecretAbsentFromSandbox(
+        sandbox,
+        OPENCLAW_SANDBOX_NAME,
+        ["/sandbox/.openclaw", "/sandbox/.mcp.json"],
+        [HOST_SECRET, ROTATED_HOST_SECRET],
+        `${prefix}-assert-secrets-absent-after-rebuild`,
+      );
+      await assertRealAdapterToolCall(host, sandbox, fakeMcp, {
+        ...bridge,
+        resultToken: MCP_RESULT,
+        artifactName: `${prefix}-real-mcp-tool-call-after-rebuild`,
+        expectedSecret: ROTATED_HOST_SECRET,
+        deniedTool: MCP_BRIDGE_DENIED_TOOL_NAME,
+      });
+    };
     await rebuildWithoutMcpHostSecret(host, OPENCLAW_SANDBOX_NAME, "openclaw");
-    await assertSecretAbsentFromSandbox(
+    await proveRestoredBridge("openclaw");
+    await proveKilledDockerOpenClawRecovery(
       sandbox,
+      runtimeProvider,
+      artifacts,
       OPENCLAW_SANDBOX_NAME,
-      ["/sandbox/.openclaw", "/sandbox/.mcp.json"],
-      [HOST_SECRET, ROTATED_HOST_SECRET],
-      "openclaw-assert-secrets-absent-after-rebuild",
+      async () => {
+        await rebuildWithoutMcpHostSecret(host, OPENCLAW_SANDBOX_NAME, "openclaw-stopped");
+        await proveRestoredBridge("openclaw-stopped");
+      },
+      "provider-backed-mcp",
     );
-    await assertRealAdapterToolCall(host, sandbox, fakeMcp, {
-      ...bridge,
-      resultToken: MCP_RESULT,
-      artifactName: "openclaw-real-mcp-tool-call-after-rebuild",
-      expectedSecret: ROTATED_HOST_SECRET,
-      deniedTool: MCP_BRIDGE_DENIED_TOOL_NAME,
-    });
     await removeBridgeAndAssertEmpty(host, sandbox, {
       ...bridge,
       adapter: "openclaw-config",

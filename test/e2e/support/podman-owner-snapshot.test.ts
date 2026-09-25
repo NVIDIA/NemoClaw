@@ -16,6 +16,7 @@ const input = {
   portAvailable: false,
   installedOpenShellVersion: "0.0.116",
   trustedGatewayBin: "/trusted/gateway",
+  runtimeSocketPath: "/run/user/1000/podman/podman.sock",
 };
 const marker = buildDockerDriverGatewayRuntimeMarker({
   pid: 42,

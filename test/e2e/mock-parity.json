@@ -3,6 +3,14 @@
   "version": 1,
   "entries": [
     {
+      "live": "test/e2e/live/deferred-onboarding.test.ts",
+      "fast": [
+        "src/lib/actions/installer/deferred-onboarding.test.ts",
+        "test/install/install-onboard-yes.test.ts",
+        "test/e2e/support/workflow-plan.test.ts"
+      ]
+    },
+    {
       "live": "test/e2e/live/portable-cpu-delegation-proof.test.ts",
       "fast": [
         "src/lib/onboard/experimental/portable-cpu-delegation-preflight.test.ts",
@@ -533,7 +541,10 @@
       ],
       "fast": [
         "src/lib/adapters/config/live-export-source-ollama.test.ts",
+        "src/lib/adapters/config/live-export-source-vllm.test.ts",
         "src/lib/domain/config/export-document.test.ts",
+        "src/lib/inference/local-model-profile/cleanup.test.ts",
+        "src/lib/inference/serving/vllm-export-runtime.test.ts",
         "test/e2e/support/gpu-e2e-helpers.test.ts",
         "test/e2e/support/hermes-cli-adapter-live.test.ts",
         "test/e2e/support/runtime-provider-fixture.test.ts",
@@ -641,7 +652,8 @@
         "test/e2e/live/openshell-allowed-ips-rebinding.ts",
         "test/e2e/live/openshell-driver-config-test-wrapper.ts",
         "test/e2e/live/openshell-exact-main-exec.ts",
-        "test/e2e/live/openshell-exact-main-runtime-contracts.ts"
+        "test/e2e/live/openshell-exact-main-runtime-contracts.ts",
+        "test/e2e/live/openclaw-stopped-recovery.ts"
       ],
       "fast": [
         "src/lib/actions/sandbox/mcp-bridge-state.test.ts",
@@ -668,7 +680,9 @@
         "test/e2e/support/openshell-exact-main-child-contracts.test.ts",
         "test/e2e/support/openshell-exact-main-runtime-contracts.test.ts",
         "test/mcp/mcp-bridge-servers.test.ts",
-        "test/e2e/support/mcp-bridge-https-diagnostics.test.ts"
+        "test/e2e/support/mcp-bridge-https-diagnostics.test.ts",
+        "src/lib/onboard/runtime-provider/docker-stopped-state-capture.test.ts",
+        "test/state/snapshot-stopped-openclaw.test.ts"
       ]
     },
     {
@@ -829,7 +843,12 @@
         "src/lib/state/native-agent-state-restore.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
-        "test/e2e/support/native-lifecycle-migration-contract.test.ts"
+        "test/e2e/support/native-lifecycle-migration-contract.test.ts",
+        "src/lib/onboard/runtime-provider/docker-stopped-state-capture.test.ts",
+        "test/state/snapshot-stopped-openclaw.test.ts"
+      ],
+      "liveSources": [
+        "test/e2e/live/openclaw-stopped-recovery.ts"
       ]
     },
     {

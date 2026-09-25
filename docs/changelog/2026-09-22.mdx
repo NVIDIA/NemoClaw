@@ -9,7 +9,7 @@ NemoClaw v0.0.128 adds canonical v1alpha1 configuration export for supported sin
 It also updates the managed OpenClaw and Hermes runtimes and improves inference readiness, MCP changes, onboarding recovery, and Deep Agents compatibility.
 
 - `nemoclaw config export` now emits the supported `nemoclaw.nvidia.com/v1alpha1` shape for hosted single-agent OpenClaw, Hermes, and Deep Agents sandboxes.
-  OpenClaw and Hermes exports use the singular `sandbox.agent` field and an explicit `image: null` placeholder, while imported corporate CA state no longer blocks migration output.
+  OpenClaw and Hermes exports use the singular `sandbox.agent` field and omit the target-managed image, while imported corporate CA state no longer blocks migration output.
   Exports with unsupported secondary-agent rosters still fail before publication instead of dropping agents.
   Related changes: [PR #11986](https://github.com/NVIDIA/NemoClaw/pull/11986), [PR #12057](https://github.com/NVIDIA/NemoClaw/pull/12057), [PR #12013](https://github.com/NVIDIA/NemoClaw/pull/12013), [PR #12164](https://github.com/NVIDIA/NemoClaw/pull/12164), and [PR #12168](https://github.com/NVIDIA/NemoClaw/pull/12168).
   For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).

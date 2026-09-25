@@ -95,7 +95,7 @@ jobs:
       - name: Checkout npm audit code from the base commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: 5310ad0a5c25d49f06910525456ea2529506b3ae
+          ref: 8ed889c14ccd7e828a9fbc20606cc7c587e6ca31
           path: .trusted-reviewed-npm-audit
           persist-credentials: false
           sparse-checkout: |
@@ -115,7 +115,7 @@ jobs:
         shell: bash
         env:
           CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
-          REVIEWED_AUDIT_SHA: 5310ad0a5c25d49f06910525456ea2529506b3ae
+          REVIEWED_AUDIT_SHA: 8ed889c14ccd7e828a9fbc20606cc7c587e6ca31
         run: |
           set -euo pipefail
           [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ ]]
@@ -538,7 +538,7 @@ jobs:
         if: matrix.agent == 'openclaw'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: 5310ad0a5c25d49f06910525456ea2529506b3ae
+          ref: 8ed889c14ccd7e828a9fbc20606cc7c587e6ca31
           path: .trusted-mcporter-audit
           persist-credentials: false
           sparse-checkout: |
@@ -566,7 +566,7 @@ jobs:
           raw="$RUNNER_TEMP/reviewed-npm-audit/mcporter-runtime.raw.json"
           policy="$RUNNER_TEMP/reviewed-npm-audit/mcporter-runtime.policy.json"
           trusted_root="$GITHUB_WORKSPACE/.trusted-mcporter-audit"
-          test "$(git -C "$trusted_root" rev-parse --verify HEAD)" = '5310ad0a5c25d49f06910525456ea2529506b3ae'
+          test "$(git -C "$trusted_root" rev-parse --verify HEAD)" = '8ed889c14ccd7e828a9fbc20606cc7c587e6ca31'
           node --experimental-strip-types --no-warnings \
             "$trusted_root/scripts/lib/npm-audit-receipt.mts" \
             --receipt "$receipt" \
@@ -2379,7 +2379,7 @@ jobs:
             "diagnostics-otel": ["@openclaw/diagnostics-otel", "2026.9.1"],
             brave: ["@openclaw/brave-plugin", "2026.9.1"],
             discord: ["@openclaw/discord", "2026.9.1"],
-            "openclaw-weixin": ["@tencent-weixin/openclaw-weixin", "2.4.3"],
+            "openclaw-weixin": ["@tencent-weixin/openclaw-weixin", "2.4.9"],
             slack: ["@openclaw/slack", "2026.9.1"],
             whatsapp: ["@openclaw/whatsapp", "2026.9.1"],
             msteams: ["@openclaw/msteams", "2026.9.1"],

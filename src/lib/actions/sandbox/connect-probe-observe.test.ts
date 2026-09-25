@@ -485,6 +485,35 @@ describe("connectSandbox probe-only observe mode", () => {
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
+  it("starts a stopped sibling-root sandbox through its owning gateway", async () => {
+    const harness = createConnectHarness({
+      registryEntry: { gatewayName: "nemoclaw", gatewayPort: 8245 },
+      sandboxGetPhase: "Stopped",
+      listOutput: "alpha Ready",
+    });
+    const selectedRegistry = requireDist("../../src/lib/state/registry.js");
+    selectedRegistry.getSandbox.mockReturnValue(null);
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+
+    expect(harness.captureOpenshellSpy).toHaveBeenCalledWith(
+      ["sandbox", "get", "-g", "nemoclaw-8245", "alpha"],
+      expect.objectContaining({ ignoreError: true }),
+    );
+    expect(harness.connectManagedOpenShellSdkSpy).toHaveBeenCalledWith(
+      { kind: "named", gatewayName: "nemoclaw-8245" },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(harness.captureOpenshellSpy).toHaveBeenCalledWith([
+      "sandbox",
+      "start",
+      "-g",
+      "nemoclaw-8245",
+      "alpha",
+    ]);
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
   it("suggests a longer equivalent retry when probe-only readiness times out", async () => {
     vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValue(300_001);
     const harness = createConnectHarness({ listOutput: "alpha Starting" });
