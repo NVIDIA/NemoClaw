@@ -87,20 +87,6 @@ export async function cleanupBraveNemoClawSandbox(host: HostCliClient): Promise<
   ).toBe(true);
 }
 
-export function assertDockerAvailable(
-  result: ShellProbeResult,
-  skip: (note?: string) => never,
-): void {
-  result.exitCode === 0 || process.env.GITHUB_ACTIONS === "true"
-    ? undefined
-    : skip(`Docker is required for Brave search E2E: ${resultText(result)}`);
-  result.exitCode === 0 ||
-    process.env.GITHUB_ACTIONS !== "true" ||
-    (() => {
-      throw new Error(`Docker is required for Brave search E2E: ${resultText(result)}`);
-    })();
-}
-
 export async function onboardBrave(
   host: HostCliClient,
   braveKey: string,

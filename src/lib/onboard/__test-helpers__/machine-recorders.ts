@@ -6,22 +6,6 @@ import type { OnboardMachineState } from "../machine/types";
 import type { OnboardRuntimeBoundary } from "../runtime-boundary";
 
 /**
- * Helper factory for recording invalidated transition targets in machine flow
- * tests. Keeps the `if` gate out of `.test.ts` files so the codebase-growth
- * guardrail against added conditionals in changed test bodies stays satisfied.
- */
-export function recordInvalidatedTargets(targets: string[]) {
-  return async (result: OnboardStateResult): Promise<void> => {
-    if (result.type === "transition") targets.push(result.next);
-  };
-}
-
-/** Push the transition target onto `targets` when the result is a transition. */
-export function pushIfTransition(targets: string[], result: OnboardStateResult): void {
-  if (result.type === "transition") targets.push(result.next);
-}
-
-/**
  * Delegate transition-result application to the boundary's invalidation
  * semantics when the current session already advanced past the target or the
  * expected source state does not match. Returns true when the result was

@@ -108,20 +108,20 @@ describe("lib/resolve-openshell", () => {
     ).toBeNull();
   });
 
-  it("falls back to ~/.local/bin when command -v fails", () => {
+  it("falls back to ~/.local/bin when command -v is empty", () => {
     expect(
       resolveOpenshell({
-        commandVResult: null,
+        commandVResult: "",
         checkExecutable: (p) => p === "/fakehome/.local/bin/openshell",
         home: "/fakehome",
       }),
     ).toBe("/fakehome/.local/bin/openshell");
   });
 
-  it("falls back to /usr/local/bin", () => {
+  it("falls back to /usr/local/bin after rejecting non-absolute command output", () => {
     expect(
       resolveOpenshell({
-        commandVResult: null,
+        commandVResult: "openshell",
         checkExecutable: (p) => p === "/usr/local/bin/openshell",
       }),
     ).toBe("/usr/local/bin/openshell");
@@ -186,14 +186,16 @@ describe("lib/resolve-openshell", () => {
     );
   });
 
-  it("skips home candidate when home is not absolute", () => {
+  it("skips a relative home while retaining system fallback candidates", () => {
+    const checkExecutable = vi.fn((candidate) => candidate === "/usr/bin/openshell");
     expect(
-      resolveOpenshell({
-        commandVResult: null,
-        checkExecutable: () => false,
-        home: "relative/path",
-      }),
-    ).toBeNull();
+      resolveOpenshell({ commandVResult: null, checkExecutable, home: "relative/path", env: {} }),
+    ).toBe("/usr/bin/openshell");
+    expect(checkExecutable.mock.calls.flat()).toEqual([
+      "/opt/homebrew/bin/openshell",
+      "/usr/local/bin/openshell",
+      "/usr/bin/openshell",
+    ]);
   });
 });
 

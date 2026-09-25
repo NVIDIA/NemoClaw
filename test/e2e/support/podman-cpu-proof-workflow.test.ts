@@ -356,7 +356,6 @@ describe("native Podman CPU proof workflow", () => {
     "src/lib/onboard/managed-startup/**",
     "src/lib/onboard/sandbox-create/**",
     "src/lib/onboard/sandbox-create-launch.ts",
-    "src/lib/onboard/sandbox-create-step.ts",
     "src/lib/onboard/sandbox-gpu-create-flow.ts",
     "src/lib/onboard/sandbox-gpu-create-run-attempt.ts",
     "src/lib/onboard/runtime-provider/contract.ts",

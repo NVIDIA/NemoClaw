@@ -305,51 +305,11 @@ describe("cleanupGatewayAfterLastSandbox", () => {
     vi.clearAllMocks();
     delete process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR;
   });
-
-  it("uses the PID-file-scoped host gateway reaper for macOS final destroy (#4662)", async () => {
-    vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
-    vi.spyOn(os, "homedir").mockReturnValue("/home/tester");
-    const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
-    const stateDir = path.join(
-      "/home/tester",
-      ".local",
-      "state",
-      "nemoclaw",
-      "openshell-docker-gateway-8081",
-    );
-
-    await cleanupGatewayAfterLastSandbox("nemoclaw-8081", runOpenshell);
-
-    expect(mocks.stopHostGatewayProcesses).toHaveBeenCalledWith(
-      {},
-      {
-        usePgrepFallback: false,
-        stateDir,
-        pidFile: path.join(stateDir, "openshell-gateway.pid"),
-        openShellGatewayName: "nemoclaw-8081",
-        openShellGatewayPort: 8081,
-        preserveRuntimeFilesOnNonMatching: true,
-      },
-    );
-    expect(runOpenshell).toHaveBeenCalledWith(["gateway", "remove", "nemoclaw-8081"], {
-      ignoreError: true,
-      includeStderr: true,
-      includeStreams: true,
-      maxBuffer: 1048576,
-      suppressOutput: true,
-      timeout: 30000,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    expect(mocks.dockerRemoveVolumesByPrefix).toHaveBeenCalledWith(
-      "openshell-cluster-nemoclaw-8081",
-      {
-        ignoreError: true,
-      },
-    );
-  });
-
-  it("keeps the PID-file-scoped host gateway reaper active for Linux final destroy", async () => {
-    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+  it.each([
+    ["macOS (#4662)", { platform: "darwin" }],
+    ["Linux", { platform: "linux" }],
+  ] as const)("keeps final gateway reaping PID-file-scoped on %s", async (_title, { platform }) => {
+    vi.spyOn(process, "platform", "get").mockReturnValue(platform);
     vi.spyOn(os, "homedir").mockReturnValue("/home/tester");
     const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
     const stateDir = path.join(

@@ -531,39 +531,6 @@ export function setupFixture(
   return { tmpDir, stateFile, sandboxName };
 }
 
-export function createVmRootfs(tmpDir: string, sandboxId = "abc") {
-  const rootfs = path.join(
-    tmpDir,
-    ".local",
-    "state",
-    "nemoclaw",
-    "openshell-docker-gateway",
-    "vm-driver",
-    "sandboxes",
-    sandboxId,
-    "rootfs",
-  );
-  fs.mkdirSync(path.join(rootfs, "etc"), { recursive: true });
-  fs.mkdirSync(path.join(rootfs, "srv"), { recursive: true });
-  fs.writeFileSync(
-    path.join(rootfs, "etc", "resolv.conf"),
-    "nameserver 8.8.8.8\nnameserver 8.8.4.4\n",
-  );
-  fs.writeFileSync(
-    path.join(rootfs, "srv", "openshell-vm-sandbox-init.sh"),
-    [
-      "elif ip link show eth0 >/dev/null 2>&1; then",
-      "    if [ ! -s /etc/resolv.conf ]; then",
-      '        echo "nameserver 8.8.8.8" > /etc/resolv.conf',
-      '        echo "nameserver 8.8.4.4" >> /etc/resolv.conf',
-      "    fi",
-      "fi",
-      "",
-    ].join("\n"),
-  );
-  return rootfs;
-}
-
 export function runConnect(
   tmpDir: string,
   sandboxName: string,

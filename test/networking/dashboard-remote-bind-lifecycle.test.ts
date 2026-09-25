@@ -362,67 +362,46 @@ describe("remote dashboard bind production lifecycle", () => {
       fs.rmSync(directory, { recursive: true, force: true });
     }
   });
+  it.each([
+    [
+      "Node",
+      {
+        prefix: "nemoclaw-remote-bind-node-",
+        dockerfileRun: `RUN node -e "require('node:fs').writeFileSync('/sandbox/.openclaw/openclaw.json','{}')"`,
+      },
+    ],
+    [
+      "Python",
+      {
+        prefix: "nemoclaw-remote-bind-python-",
+        dockerfileRun: `RUN python3 -c "import json; json.dump({}, open('/sandbox/.openclaw/openclaw.json','w'))"`,
+      },
+    ],
+    [
+      "tee",
+      {
+        prefix: "nemoclaw-remote-bind-tee-",
+        dockerfileRun: "RUN printf '{}' | tee /sandbox/.openclaw/openclaw.json >/dev/null",
+      },
+    ],
+  ] as const)(
+    "rejects %s config rewrites after remote-bind generation (#6024)",
+    (_title, { prefix, dockerfileRun }) => {
+      vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+      const dockerfile = path.join(directory, "Dockerfile");
+      fs.writeFileSync(dockerfile, remoteBindDockerfile(dockerfileRun));
 
-  it("rejects Node rewrites after the remote-bind generator (#6024)", () => {
-    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-remote-bind-node-"));
-    const dockerfile = path.join(directory, "Dockerfile");
-    fs.writeFileSync(
-      dockerfile,
-      remoteBindDockerfile(
-        `RUN node -e "require('node:fs').writeFileSync('/sandbox/.openclaw/openclaw.json','{}')"`,
-      ),
-    );
-
-    try {
-      expect(() =>
-        patchStagedDockerfile(dockerfile, "test-model", "http://127.0.0.1:18789"),
-      ).toThrow(/preserve the generated remote dashboard output/);
-      expect(hasPreparedRemoteDashboardBind(dockerfile)).toBe(false);
-    } finally {
-      fs.rmSync(directory, { recursive: true, force: true });
-    }
-  });
-
-  it("rejects Python rewrites after the remote-bind generator (#6024)", () => {
-    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-remote-bind-python-"));
-    const dockerfile = path.join(directory, "Dockerfile");
-    fs.writeFileSync(
-      dockerfile,
-      remoteBindDockerfile(
-        `RUN python3 -c "import json; json.dump({}, open('/sandbox/.openclaw/openclaw.json','w'))"`,
-      ),
-    );
-
-    try {
-      expect(() =>
-        patchStagedDockerfile(dockerfile, "test-model", "http://127.0.0.1:18789"),
-      ).toThrow(/preserve the generated remote dashboard output/);
-      expect(hasPreparedRemoteDashboardBind(dockerfile)).toBe(false);
-    } finally {
-      fs.rmSync(directory, { recursive: true, force: true });
-    }
-  });
-
-  it("rejects tee rewrites after the remote-bind generator (#6024)", () => {
-    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-remote-bind-tee-"));
-    const dockerfile = path.join(directory, "Dockerfile");
-    fs.writeFileSync(
-      dockerfile,
-      remoteBindDockerfile("RUN printf '{}' | tee /sandbox/.openclaw/openclaw.json >/dev/null"),
-    );
-
-    try {
-      expect(() =>
-        patchStagedDockerfile(dockerfile, "test-model", "http://127.0.0.1:18789"),
-      ).toThrow(/preserve the generated remote dashboard output/);
-      expect(hasPreparedRemoteDashboardBind(dockerfile)).toBe(false);
-    } finally {
-      fs.rmSync(directory, { recursive: true, force: true });
-    }
-  });
+      try {
+        expect(() =>
+          patchStagedDockerfile(dockerfile, "test-model", "http://127.0.0.1:18789"),
+        ).toThrow(/preserve the generated remote dashboard output/);
+        expect(hasPreparedRemoteDashboardBind(dockerfile)).toBe(false);
+      } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("allows final-stage config metadata updates after the remote-bind generator (#6024)", () => {
     vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");

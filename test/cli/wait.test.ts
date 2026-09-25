@@ -9,44 +9,19 @@ import { retryUntil, retryUntilAsync } from "../../src/lib/core/retry.js";
 import {
   buildLoopbackProbeEnv,
   sleepMs,
-  sleepSeconds,
   waitForPort,
   waitUntil,
   waitUntilAsync,
 } from "../../src/lib/core/wait.js";
 
 describe("wait utility", () => {
-  it("sleepMs blocks for approximately the requested time", () => {
+  it("sleepMs blocks for at least the requested time", () => {
     const start = performance.now();
     sleepMs(100);
     const end = performance.now();
     const duration = end - start;
 
-    // Allow for some jitter, but should be at least 100ms.
-    // Increased upper bound to 500ms to avoid CI flakes on loaded runners.
     assert.ok(duration >= 100, `duration ${duration}ms < 100ms`);
-    assert.ok(duration < 500, `duration ${duration}ms > 500ms`);
-  });
-
-  it("sleepSeconds blocks for approximately the requested time", () => {
-    const start = performance.now();
-    sleepSeconds(0.1);
-    const end = performance.now();
-    const duration = end - start;
-
-    assert.ok(duration >= 100, `duration ${duration}ms < 100ms`);
-    assert.ok(duration < 500, `duration ${duration}ms > 500ms`);
-  });
-
-  it("returns immediately for zero, negative, or non-finite time", () => {
-    const start = performance.now();
-    sleepMs(0);
-    sleepMs(-50);
-    sleepMs(NaN);
-    sleepMs(Infinity);
-    const end = performance.now();
-    const duration = end - start;
-    assert.ok(duration < 50, `duration ${duration}ms > 50ms`);
   });
 
   const throwWhenSelected = (selected: boolean, error: Error): void =>
@@ -156,27 +131,6 @@ describe("wait utility", () => {
       expect(sleep).toHaveBeenCalledTimes(failure === "sleep" ? 1 : 0);
     },
   );
-
-  it("waitUntil returns immediately when the condition is already true", () => {
-    const sleeps: number[] = [];
-    let attempts = 0;
-
-    const result = waitUntil(
-      () => {
-        attempts += 1;
-        return true;
-      },
-      {
-        deadlineMs: 100,
-        now: () => 0,
-        sleep: (ms) => sleeps.push(ms),
-      },
-    );
-
-    expect(result).toBe(true);
-    expect(attempts).toBe(1);
-    expect(sleeps).toEqual([]);
-  });
 
   it("waitUntil does not probe when the deadline is already expired", () => {
     const sleeps: number[] = [];

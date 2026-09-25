@@ -194,56 +194,24 @@ describe("onboard flow slices", () => {
       ]).map((entry) => entry.state),
     ).toEqual(["openclaw", "agent_setup", "policies", "finalizing", "post_verify"]);
   });
-
-  it("runs the final slice from openclaw to completion", async () => {
+  it.each([
+    ["OpenClaw", { state: "openclaw" }],
+    ["agent setup", { state: "agent_setup" }],
+  ] as const)("runs the final slice from %s to completion", async (_title, { state }) => {
     const result = await runFinalOnboardFlowSequence({
       context: context(),
       runtime: runtime(
         createSession({
           machine: {
             version: MACHINE_SNAPSHOT_VERSION,
-            state: "openclaw",
+            state: state,
             stateEnteredAt: "2026-05-29T00:00:00.000Z",
             revision: 0,
           },
         }),
       ),
       phases: [
-        phase("openclaw", "policies"),
-        phase("policies", "finalizing"),
-        phase("finalizing", "post_verify"),
-        {
-          state: "post_verify",
-          run: (ctx) => ({
-            context: ctx,
-            result: completeOnboardMachine({ sandboxName: "my-assistant" }),
-          }),
-        },
-      ],
-    });
-
-    expect(result.session).toMatchObject({
-      status: "complete",
-      sandboxName: "my-assistant",
-      machine: { state: "complete" },
-    });
-  });
-
-  it("runs the final slice from agent setup to completion", async () => {
-    const result = await runFinalOnboardFlowSequence({
-      context: context(),
-      runtime: runtime(
-        createSession({
-          machine: {
-            version: MACHINE_SNAPSHOT_VERSION,
-            state: "agent_setup",
-            stateEnteredAt: "2026-05-29T00:00:00.000Z",
-            revision: 0,
-          },
-        }),
-      ),
-      phases: [
-        phase("agent_setup", "policies"),
+        phase(state, "policies"),
         phase("policies", "finalizing"),
         phase("finalizing", "post_verify"),
         {

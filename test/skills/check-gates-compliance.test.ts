@@ -439,110 +439,71 @@ describe("maintainer merge-gate contributor compliance", () => {
     });
     expect(advisory.details).toContain("missing");
   });
+  it.each([
+    [
+      "a malformed timestamp after approval",
+      {
+        firstState: "APPROVED",
+        firstSubmittedAt: "2026-01-01T00:00:00Z",
+        secondState: "CHANGES_REQUESTED",
+        secondSubmittedAt: "not-a-timestamp",
+      },
+    ],
+    [
+      "a malformed timestamp before approval",
+      {
+        firstState: "CHANGES_REQUESTED",
+        firstSubmittedAt: "not-a-timestamp",
+        secondState: "APPROVED",
+        secondSubmittedAt: "2026-01-01T00:00:00Z",
+      },
+    ],
+    [
+      "simultaneous opinions with approval first",
+      {
+        firstState: "APPROVED",
+        firstSubmittedAt: "2026-01-01T00:00:00Z",
+        secondState: "CHANGES_REQUESTED",
+        secondSubmittedAt: "2026-01-01T00:00:00Z",
+      },
+    ],
+    [
+      "simultaneous opinions with changes requested first",
+      {
+        firstState: "CHANGES_REQUESTED",
+        firstSubmittedAt: "2026-01-01T00:00:00Z",
+        secondState: "APPROVED",
+        secondSubmittedAt: "2026-01-01T00:00:00Z",
+      },
+    ],
+  ] as const)(
+    "reports uncertain contributor approval for %s (#6222)",
+    (_title, { firstState, firstSubmittedAt, secondState, secondSubmittedAt }) => {
+      const result = runGate({
+        body: "Signed-off-by: Example User <user@example.com>",
+        commitAuthorLogins: ["contributor"],
+        reviews: [
+          {
+            author: { login: "contributor" },
+            state: firstState,
+            submittedAt: firstSubmittedAt,
+          },
+          {
+            author: { login: "contributor" },
+            state: secondState,
+            submittedAt: secondSubmittedAt,
+          },
+        ],
+        verified: true,
+      });
 
-  it("does not confirm approval when a later opinion has a malformed timestamp (#6222)", () => {
-    const result = runGate({
-      body: "Signed-off-by: Example User <user@example.com>",
-      commitAuthorLogins: ["contributor"],
-      reviews: [
-        {
-          author: { login: "contributor" },
-          state: "APPROVED",
-          submittedAt: "2026-01-01T00:00:00Z",
-        },
-        {
-          author: { login: "contributor" },
-          state: "CHANGES_REQUESTED",
-          submittedAt: "not-a-timestamp",
-        },
-      ],
-      verified: true,
-    });
-
-    expect(JSON.parse(result.stdout).advisories.contributorApprovalOverlap).toMatchObject({
-      status: "warning",
-      actors: [],
-      uncertainActors: ["contributor"],
-    });
-  });
-
-  it("does not confirm approval when an earlier input opinion has a malformed timestamp (#6222)", () => {
-    const result = runGate({
-      body: "Signed-off-by: Example User <user@example.com>",
-      commitAuthorLogins: ["contributor"],
-      reviews: [
-        {
-          author: { login: "contributor" },
-          state: "CHANGES_REQUESTED",
-          submittedAt: "not-a-timestamp",
-        },
-        {
-          author: { login: "contributor" },
-          state: "APPROVED",
-          submittedAt: "2026-01-01T00:00:00Z",
-        },
-      ],
-      verified: true,
-    });
-
-    expect(JSON.parse(result.stdout).advisories.contributorApprovalOverlap).toMatchObject({
-      status: "warning",
-      actors: [],
-      uncertainActors: ["contributor"],
-    });
-  });
-
-  it("reports uncertainty for conflicting opinions with equal timestamps (#6222)", () => {
-    const result = runGate({
-      body: "Signed-off-by: Example User <user@example.com>",
-      commitAuthorLogins: ["contributor"],
-      reviews: [
-        {
-          author: { login: "contributor" },
-          state: "APPROVED",
-          submittedAt: "2026-01-01T00:00:00Z",
-        },
-        {
-          author: { login: "contributor" },
-          state: "CHANGES_REQUESTED",
-          submittedAt: "2026-01-01T00:00:00Z",
-        },
-      ],
-      verified: true,
-    });
-
-    expect(JSON.parse(result.stdout).advisories.contributorApprovalOverlap).toMatchObject({
-      status: "warning",
-      actors: [],
-      uncertainActors: ["contributor"],
-    });
-  });
-
-  it("reports equal-timestamp conflicts independently of API order (#6222)", () => {
-    const result = runGate({
-      body: "Signed-off-by: Example User <user@example.com>",
-      commitAuthorLogins: ["contributor"],
-      reviews: [
-        {
-          author: { login: "contributor" },
-          state: "CHANGES_REQUESTED",
-          submittedAt: "2026-01-01T00:00:00Z",
-        },
-        {
-          author: { login: "contributor" },
-          state: "APPROVED",
-          submittedAt: "2026-01-01T00:00:00Z",
-        },
-      ],
-      verified: true,
-    });
-
-    expect(JSON.parse(result.stdout).advisories.contributorApprovalOverlap).toMatchObject({
-      status: "warning",
-      actors: [],
-      uncertainActors: ["contributor"],
-    });
-  });
+      expect(JSON.parse(result.stdout).advisories.contributorApprovalOverlap).toMatchObject({
+        status: "warning",
+        actors: [],
+        uncertainActors: ["contributor"],
+      });
+    },
+  );
 
   it("accepts GraphQL RFC3339 timestamp variants (#6222)", () => {
     const result = runGate({

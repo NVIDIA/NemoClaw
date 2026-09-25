@@ -717,84 +717,59 @@ describe("runUpdateAction", () => {
     expect(options?.env?.NEMOCLAW_INSTALL_REF).toBe(MAINTAINED_REVISION);
     expect(options?.env?.NEMOCLAW_INSTALL_TAG).toBeUndefined();
   });
-
-  it("preserves the canonical Deep Agents agent selection while sanitizing installer env", async () => {
-    const spawnSyncImpl = vi.fn(
-      () => ({ status: 0, stdout: "", stderr: "", signal: null }) as never,
-    );
-    const log = vi.fn();
-
-    await runUpdateAction(
-      { yes: true },
+  it.each([
+    [
+      "Deep Agents",
       {
-        currentVersion: () => "0.1.0",
-        env: {
-          ...process.env,
-          BASH_ENV: "/tmp/review-bash-env",
-          NEMOCLAW_AGENT: "langchain-deepagents-code",
-          NEMOCLAW_INSTALL_REF: "refs/heads/not-maintained",
-        },
-        getMaintainedTarget: () => maintainedTarget("0.2.0"),
-        isSourceCheckout: () => false,
-        log,
-        spawnSyncImpl,
+        agent: "langchain-deepagents-code",
+        installerMessage: "Running maintained NemoDeepAgents installer",
+        completionMessage: "Installer completed. Run `nemo-deepagents upgrade-sandboxes --check`",
       },
-    );
-
-    const calls = spawnSyncImpl.mock.calls as unknown as Array<
-      [string, readonly string[], { env?: NodeJS.ProcessEnv }]
-    >;
-    const options = calls[0]?.[2];
-    expect(options?.env?.NEMOCLAW_AGENT).toBe("langchain-deepagents-code");
-    expect(options?.env?.BASH_ENV).toBeUndefined();
-    expect(options?.env?.NEMOCLAW_INSTALL_REF).toBe(MAINTAINED_REVISION);
-    expect(log).toHaveBeenCalledWith(
-      expect.stringContaining("Running maintained NemoDeepAgents installer"),
-    );
-    expect(log).toHaveBeenCalledWith(
-      expect.stringContaining(
-        "Installer completed. Run `nemo-deepagents upgrade-sandboxes --check`",
-      ),
-    );
-  });
-
-  it("preserves the Hermes agent selection while sanitizing installer env", async () => {
-    const spawnSyncImpl = vi.fn(
-      () => ({ status: 0, stdout: "", stderr: "", signal: null }) as never,
-    );
-    const log = vi.fn();
-
-    await runUpdateAction(
-      { yes: true },
+    ],
+    [
+      "Hermes",
       {
-        currentVersion: () => "0.1.0",
-        env: {
-          ...process.env,
-          BASH_ENV: "/tmp/review-bash-env",
-          NEMOCLAW_AGENT: "hermes",
-          NEMOCLAW_INSTALL_REF: "refs/heads/not-maintained",
-        },
-        getMaintainedTarget: () => maintainedTarget("0.2.0"),
-        isSourceCheckout: () => false,
-        log,
-        spawnSyncImpl,
+        agent: "hermes",
+        installerMessage: "Running maintained NemoHermes installer",
+        completionMessage: "Installer completed. Run `nemohermes upgrade-sandboxes --check`",
       },
-    );
+    ],
+  ] as const)(
+    "preserves %s agent selection while sanitizing installer env",
+    async (_title, { agent, installerMessage, completionMessage }) => {
+      const spawnSyncImpl = vi.fn(
+        () => ({ status: 0, stdout: "", stderr: "", signal: null }) as never,
+      );
+      const log = vi.fn();
 
-    const calls = spawnSyncImpl.mock.calls as unknown as Array<
-      [string, readonly string[], { env?: NodeJS.ProcessEnv }]
-    >;
-    const options = calls[0]?.[2];
-    expect(options?.env?.NEMOCLAW_AGENT).toBe("hermes");
-    expect(options?.env?.BASH_ENV).toBeUndefined();
-    expect(options?.env?.NEMOCLAW_INSTALL_REF).toBe(MAINTAINED_REVISION);
-    expect(log).toHaveBeenCalledWith(
-      expect.stringContaining("Running maintained NemoHermes installer"),
-    );
-    expect(log).toHaveBeenCalledWith(
-      expect.stringContaining("Installer completed. Run `nemohermes upgrade-sandboxes --check`"),
-    );
-  });
+      await runUpdateAction(
+        { yes: true },
+        {
+          currentVersion: () => "0.1.0",
+          env: {
+            ...process.env,
+            BASH_ENV: "/tmp/review-bash-env",
+            NEMOCLAW_AGENT: agent,
+            NEMOCLAW_INSTALL_REF: "refs/heads/not-maintained",
+          },
+          getMaintainedTarget: () => maintainedTarget("0.2.0"),
+          isSourceCheckout: () => false,
+          log,
+          spawnSyncImpl,
+        },
+      );
+
+      const calls = spawnSyncImpl.mock.calls as unknown as Array<
+        [string, readonly string[], { env?: NodeJS.ProcessEnv }]
+      >;
+      const options = calls[0]?.[2];
+      expect(options?.env?.NEMOCLAW_AGENT).toBe(agent);
+      expect(options?.env?.BASH_ENV).toBeUndefined();
+      expect(options?.env?.NEMOCLAW_INSTALL_REF).toBe(MAINTAINED_REVISION);
+      expect(log).toHaveBeenCalledWith(expect.stringContaining(installerMessage));
+      expect(log).toHaveBeenCalledWith(expect.stringContaining(completionMessage));
+    },
+  );
 
   it("skips installer when package install is already current", async () => {
     const spawnSyncImpl = vi.fn();

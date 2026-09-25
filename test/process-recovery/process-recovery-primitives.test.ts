@@ -237,8 +237,17 @@ describe("waitForManagedGatewaySupervisor", () => {
     expect(sleepImpl).toHaveBeenCalledOnce();
     expect(sleepImpl).toHaveBeenCalledWith(3);
   });
-
-  it("does not wait when a health marker includes unclassified output (#7818)", () => {
+  it.each([
+    [
+      "health markers with unclassified output (#7818)",
+      { diagnostic: "GATEWAY_HEALTH_TIMEOUT\nunexpected detail" },
+    ],
+    ["unclassified supervisor refusals", { diagnostic: "prefix SUPERVISOR_NOT_RUNNING suffix" }],
+    [
+      "detailed privileged-control refusals",
+      { diagnostic: "PRIVILEGED_CONTROL_UNAVAILABLE: container identity changed" },
+    ],
+  ] as const)("does not wait through %s", (_title, { diagnostic }) => {
     const sleepImpl = vi.fn();
 
     expect(
@@ -247,41 +256,7 @@ describe("waitForManagedGatewaySupervisor", () => {
         requestGatewaySupervisorActionImpl: vi.fn(() => ({
           status: 1,
           stdout: "",
-          stderr: "GATEWAY_HEALTH_TIMEOUT\nunexpected detail",
-        })),
-        sleepImpl,
-      }),
-    ).toBe(false);
-    expect(sleepImpl).not.toHaveBeenCalled();
-  });
-
-  it("does not wait through an unclassified supervisor refusal", () => {
-    const sleepImpl = vi.fn();
-
-    expect(
-      waitForManagedGatewaySupervisor("new-clone", {
-        maxAttempts: 2,
-        requestGatewaySupervisorActionImpl: vi.fn(() => ({
-          status: 1,
-          stdout: "",
-          stderr: "prefix SUPERVISOR_NOT_RUNNING suffix",
-        })),
-        sleepImpl,
-      }),
-    ).toBe(false);
-    expect(sleepImpl).not.toHaveBeenCalled();
-  });
-
-  it("does not wait through a detailed privileged-control refusal", () => {
-    const sleepImpl = vi.fn();
-
-    expect(
-      waitForManagedGatewaySupervisor("new-clone", {
-        maxAttempts: 2,
-        requestGatewaySupervisorActionImpl: vi.fn(() => ({
-          status: 1,
-          stdout: "",
-          stderr: "PRIVILEGED_CONTROL_UNAVAILABLE: container identity changed",
+          stderr: diagnostic,
         })),
         sleepImpl,
       }),

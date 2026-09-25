@@ -48,10 +48,6 @@ export function trustedFormulaBoundaryEvents(operation: string): string[] {
   ];
 }
 
-export function unverifiedFormulaBoundaryEvents(operation: string): string[] {
-  return trustedFormulaBoundaryEvents(operation).filter((event) => !event.startsWith("trust "));
-}
-
 export const V00101_SANDBOX_BUILD_DIGESTS = [
   "a2704babbb468fd0a359bfdd9844de71095b730758541b4ca8cbab77d4018920",
   "88300e35f153123e4dc3021c537834dd6c0a09665a4a6d3974cd285d512345c4",

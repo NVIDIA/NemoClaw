@@ -123,96 +123,51 @@ describe("MCP credential-resolution probe classification", () => {
       expect(probe.detail).toContain("expired or revoked credential");
     },
   );
-
-  it("classifies identical 5xx responses as indeterminate endpoint failure (#6379)", () => {
-    const probe = classifyCredentialResolutionProbe(
+  it.each([
+    [
+      "identical 500 responses",
+      { httpStatus: 500, controlHttpStatus: 500, detail: "failed identically" },
+    ],
+    [
+      "401 versus 400 responses",
       {
-        status: 0,
-        stdout: probeStdout({
-          httpStatus: 500,
-          curlExit: 0,
-          controlHttpStatus: 500,
-          controlExit: 0,
-        }),
-        stderr: "",
+        httpStatus: 401,
+        controlHttpStatus: 400,
+        detail: "differing rejections do not prove resolution",
       },
-      baseEntry,
-    );
-    expect(probe.ok).toBeNull();
-    expect(probe.detail).toContain("failed identically");
-  });
-
-  it("never reports differing non-2xx rejections as verified resolution (#6379)", () => {
-    const probe = classifyCredentialResolutionProbe(
-      {
-        status: 0,
-        stdout: probeStdout({
-          httpStatus: 401,
-          curlExit: 0,
-          controlHttpStatus: 400,
-          controlExit: 0,
-        }),
-        stderr: "",
-      },
-      baseEntry,
-    );
-    expect(probe.ok).toBeNull();
-    expect(probe.detail).toContain("differing rejections do not prove resolution");
-  });
-
-  it("names request validation among the hypotheses for identical 400 rejections (#6379)", () => {
-    const probe = classifyCredentialResolutionProbe(
-      {
-        status: 0,
-        stdout: probeStdout({
-          httpStatus: 400,
-          curlExit: 0,
-          controlHttpStatus: 400,
-          controlExit: 0,
-        }),
-        stderr: "",
-      },
-      baseEntry,
-    );
-    expect(probe.ok).toBeNull();
-    expect(probe.detail).toContain("request validation");
-  });
-
-  it("classifies dual 2xx as an endpoint that does not enforce authentication (#6379)", () => {
-    const probe = classifyCredentialResolutionProbe(
-      {
-        status: 0,
-        stdout: probeStdout({
-          httpStatus: 200,
-          curlExit: 0,
-          controlHttpStatus: 200,
-          controlExit: 0,
-        }),
-        stderr: "",
-      },
-      baseEntry,
-    );
-    expect(probe.ok).toBeNull();
-    expect(probe.detail).toContain("does not enforce authentication");
-  });
-
-  it("classifies differing non-auth statuses as indeterminate (#6379)", () => {
-    const probe = classifyCredentialResolutionProbe(
-      {
-        status: 0,
-        stdout: probeStdout({
-          httpStatus: 400,
-          curlExit: 0,
-          controlHttpStatus: 401,
-          controlExit: 0,
-        }),
-        stderr: "",
-      },
-      baseEntry,
-    );
-    expect(probe.ok).toBeNull();
-    expect(probe.detail).toContain("known-good host");
-  });
+    ],
+    [
+      "identical 400 responses",
+      { httpStatus: 400, controlHttpStatus: 400, detail: "request validation" },
+    ],
+    [
+      "identical 200 responses",
+      { httpStatus: 200, controlHttpStatus: 200, detail: "does not enforce authentication" },
+    ],
+    [
+      "400 versus 401 responses",
+      { httpStatus: 400, controlHttpStatus: 401, detail: "known-good host" },
+    ],
+  ] as const)(
+    "keeps credential resolution inconclusive for %s (#6379)",
+    (_title, { httpStatus, controlHttpStatus, detail }) => {
+      const probe = classifyCredentialResolutionProbe(
+        {
+          status: 0,
+          stdout: probeStdout({
+            httpStatus: httpStatus,
+            curlExit: 0,
+            controlHttpStatus: controlHttpStatus,
+            controlExit: 0,
+          }),
+          stderr: "",
+        },
+        baseEntry,
+      );
+      expect(probe.ok).toBeNull();
+      expect(probe.detail).toContain(detail);
+    },
+  );
 
   it("classifies a failed control probe as indeterminate (#6379)", () => {
     const probe = classifyCredentialResolutionProbe(

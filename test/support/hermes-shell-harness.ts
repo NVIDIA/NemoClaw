@@ -13,16 +13,6 @@ export function extractShellFunction(src: string, name: string): string {
   return extractShellFunctionFromSource(src, name, "agents/hermes/start.sh");
 }
 
-export function bashPrintfQ(value: string): string {
-  const result = spawnSync("bash", ["-c", "printf '%q' \"$1\"", "bash-printf-q", value], {
-    encoding: "utf-8",
-    timeout: 5000,
-    env: process.env,
-  });
-  if (result.status !== 0) throw new Error(`bash printf %q failed: ${result.stderr}`);
-  return result.stdout;
-}
-
 export const LOCKED_HERMES_CONFIG_STAT_MOCK = [
   "stat() {",
   '  if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%U:%G" ] && [ "${3:-}" = "$HERMES_DIR" ]; then printf "root:root\\n"; return 0; fi',

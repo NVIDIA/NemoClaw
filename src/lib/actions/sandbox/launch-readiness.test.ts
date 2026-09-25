@@ -1431,6 +1431,21 @@ describe("launch readiness validation", () => {
     expect(publishLease).not.toHaveBeenCalled();
   });
 
+  it("accepts qualification-registered providers without a provider-name branch", () => {
+    const projection = buildLaunchReadinessRegistryProjection(
+      { ...sandbox, openshellDriver: "podman" },
+      loadAgent("openclaw"),
+    ) as { openshellDriver: string };
+
+    expect(projection.openshellDriver).toBe("podman");
+    expect(() =>
+      buildLaunchReadinessRegistryProjection(
+        { ...sandbox, openshellDriver: "unregistered-runtime" },
+        loadAgent("openclaw"),
+      ),
+    ).toThrow();
+  });
+
   it("rejects in-progress lifecycle and policy mutations", () => {
     const agent = loadAgent("openclaw");
     expect(() =>

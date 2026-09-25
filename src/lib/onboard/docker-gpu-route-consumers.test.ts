@@ -7,7 +7,6 @@ import {
   enforceDockerGpuPatchPreserveNetwork,
   shouldSkipGpuBridgeProbe,
   shouldUseDockerGpuPatchHostNetwork,
-  verifyDockerGpuSandboxLocalInference,
   verifyGpuSandboxAfterReady,
 } from "./docker-gpu-local-inference";
 import { resolveDockerGpuRoutePlan } from "./docker-gpu-route";
@@ -139,14 +138,6 @@ describe("selected route consumers", () => {
 
   it("skips compatibility-only inference gates after native wins", async () => {
     const execInSandbox = vi.fn();
-    expect(
-      await verifyDockerGpuSandboxLocalInference(GPU_CONFIG, "ollama-local", {
-        sandboxName: "alpha",
-        dockerDriverGateway: true,
-        selectedRoute: "native",
-        env: HOST_NETWORK_ENV,
-      }),
-    ).toEqual({ status: "skipped", reason: "not-docker-gpu-patch" });
 
     const verifyDirectSandboxGpu = vi.fn();
     await verifyGpuSandboxAfterReady(GPU_CONFIG, "ollama-local", {

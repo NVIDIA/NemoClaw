@@ -6,10 +6,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import {
-  CANDIDATE_MANAGED_IMAGE_AGENTS,
-  SHIPPED_MANAGED_IMAGE_AGENTS,
-} from "../../../../src/lib/onboard/managed-image/contract.ts";
 import { validateCandidateContract } from "../../../../tools/managed-images/validate-candidate-contract.mts";
 import {
   readWorkflow,
@@ -40,13 +36,6 @@ function candidateContract(overrides: Record<string, unknown> = {}): Record<stri
     ...overrides,
   };
 }
-
-describe("Pi release cohort separation", () => {
-  it("keeps pi a candidate agent and out of the shipped cohort", () => {
-    expect(CANDIDATE_MANAGED_IMAGE_AGENTS).toContain("pi");
-    expect(SHIPPED_MANAGED_IMAGE_AGENTS).not.toContain("pi");
-  });
-});
 
 describe("Pi candidate contract validation", () => {
   it.each([

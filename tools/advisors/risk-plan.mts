@@ -41,7 +41,7 @@ const SANDBOX_LIFECYCLE_RUNTIME_FILES = new Set([
   "src/lib/actions/sandbox/status-snapshot.ts",
   "src/lib/onboard/docker-driver-container-observation.ts",
   "src/lib/onboard/docker-startup-command-agent.ts",
-  "src/lib/onboard/sandbox-create-step.ts",
+  "src/lib/onboard/sandbox-gpu-create-flow.ts",
 ]);
 export const GATEWAY_TOPOLOGY_FILES = [
   "src/lib/core/gateway-address.ts",

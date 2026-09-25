@@ -128,72 +128,58 @@ describe("Hermes native service restart supervision", () => {
     );
     expect(result.stderr).toContain("Gated host recovery requested");
   });
+  it.each([
+    [
+      "controller transport settlement fails",
+      {
+        exitAttemptsSource: "readonly HERMES_GATEWAY_RECOVERY_REQUESTER_EXIT_ATTEMPTS=30",
+        requesterIdentitySource: "hermes_recovery_requester_start_time() { return 1; }",
+        sleepSource: "sleep() { return 1; }",
+        expectedError: "controller transport did not settle",
+      },
+    ],
+    [
+      "the recovery controller does not exit",
+      {
+        exitAttemptsSource: "readonly HERMES_GATEWAY_RECOVERY_REQUESTER_EXIT_ATTEMPTS=2",
+        requesterIdentitySource: 'hermes_recovery_requester_start_time() { printf "%s" 654; }',
+        sleepSource: "sleep() { :; }",
+        expectedError: "controller did not exit",
+      },
+    ],
+    [
+      "controller identity remains unreadable",
+      {
+        exitAttemptsSource: "readonly HERMES_GATEWAY_RECOVERY_REQUESTER_EXIT_ATTEMPTS=2",
+        requesterIdentitySource: "hermes_recovery_requester_start_time() { return 2; }",
+        sleepSource: "sleep() { :; }",
+        expectedError: "controller did not exit",
+      },
+    ],
+  ] as const)(
+    "refuses relaunch when %s",
+    (_title, { exitAttemptsSource, requesterIdentitySource, sleepSource, expectedError }) => {
+      const script = [
+        "set -uo pipefail",
+        exitAttemptsSource,
+        "readonly HERMES_GATEWAY_RECOVERY_REQUEST_WAIT_SECONDS=120",
+        "readonly HERMES_GATEWAY_RECOVERY_TRANSPORT_SETTLE_SECONDS=1",
+        'publish_hermes_gateway_recovery_generation() { HERMES_GATEWAY_RECOVERY_GENERATION="$(printf c%.0s {1..64})"; request_identity="v2 $HERMES_GATEWAY_RECOVERY_GENERATION 321 654"; }',
+        'hermes_gateway_recovery_request_value() { printf "%s\\n" "$request_identity"; }',
+        requesterIdentitySource,
+        sleepSource,
+        extractShellFunction(source, "wait_for_hermes_recovery_requester_exit"),
+        extractShellFunction(source, "wait_for_hermes_gateway_recovery_request"),
+        "wait_for_hermes_gateway_recovery_request",
+      ].join("\n");
 
-  it("does not authorize relaunch when controller transport settlement fails", () => {
-    const script = [
-      "set -uo pipefail",
-      "readonly HERMES_GATEWAY_RECOVERY_REQUESTER_EXIT_ATTEMPTS=30",
-      "readonly HERMES_GATEWAY_RECOVERY_REQUEST_WAIT_SECONDS=120",
-      "readonly HERMES_GATEWAY_RECOVERY_TRANSPORT_SETTLE_SECONDS=1",
-      'publish_hermes_gateway_recovery_generation() { HERMES_GATEWAY_RECOVERY_GENERATION="$(printf c%.0s {1..64})"; request_identity="v2 $HERMES_GATEWAY_RECOVERY_GENERATION 321 654"; }',
-      'hermes_gateway_recovery_request_value() { printf "%s\\n" "$request_identity"; }',
-      "hermes_recovery_requester_start_time() { return 1; }",
-      "sleep() { return 1; }",
-      extractShellFunction(source, "wait_for_hermes_recovery_requester_exit"),
-      extractShellFunction(source, "wait_for_hermes_gateway_recovery_request"),
-      "wait_for_hermes_gateway_recovery_request",
-    ].join("\n");
+      const result = spawnSync("bash", ["-c", script], { encoding: "utf8", timeout: 5_000 });
 
-    const result = spawnSync("bash", ["-c", script], { encoding: "utf8", timeout: 5_000 });
-
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("controller transport did not settle");
-    expect(result.stderr).not.toContain("relaunching");
-  });
-
-  it("does not authorize relaunch when the recovery controller does not exit", () => {
-    const script = [
-      "set -uo pipefail",
-      "readonly HERMES_GATEWAY_RECOVERY_REQUESTER_EXIT_ATTEMPTS=2",
-      "readonly HERMES_GATEWAY_RECOVERY_REQUEST_WAIT_SECONDS=120",
-      "readonly HERMES_GATEWAY_RECOVERY_TRANSPORT_SETTLE_SECONDS=1",
-      'publish_hermes_gateway_recovery_generation() { HERMES_GATEWAY_RECOVERY_GENERATION="$(printf c%.0s {1..64})"; request_identity="v2 $HERMES_GATEWAY_RECOVERY_GENERATION 321 654"; }',
-      'hermes_gateway_recovery_request_value() { printf "%s\\n" "$request_identity"; }',
-      'hermes_recovery_requester_start_time() { printf "%s" 654; }',
-      "sleep() { :; }",
-      extractShellFunction(source, "wait_for_hermes_recovery_requester_exit"),
-      extractShellFunction(source, "wait_for_hermes_gateway_recovery_request"),
-      "wait_for_hermes_gateway_recovery_request",
-    ].join("\n");
-
-    const result = spawnSync("bash", ["-c", script], { encoding: "utf8", timeout: 5_000 });
-
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("controller did not exit");
-    expect(result.stderr).not.toContain("relaunching");
-  });
-
-  it("does not authorize relaunch when the controller identity remains unreadable", () => {
-    const script = [
-      "set -uo pipefail",
-      "readonly HERMES_GATEWAY_RECOVERY_REQUESTER_EXIT_ATTEMPTS=2",
-      "readonly HERMES_GATEWAY_RECOVERY_REQUEST_WAIT_SECONDS=120",
-      "readonly HERMES_GATEWAY_RECOVERY_TRANSPORT_SETTLE_SECONDS=1",
-      'publish_hermes_gateway_recovery_generation() { HERMES_GATEWAY_RECOVERY_GENERATION="$(printf c%.0s {1..64})"; request_identity="v2 $HERMES_GATEWAY_RECOVERY_GENERATION 321 654"; }',
-      'hermes_gateway_recovery_request_value() { printf "%s\\n" "$request_identity"; }',
-      "hermes_recovery_requester_start_time() { return 2; }",
-      "sleep() { :; }",
-      extractShellFunction(source, "wait_for_hermes_recovery_requester_exit"),
-      extractShellFunction(source, "wait_for_hermes_gateway_recovery_request"),
-      "wait_for_hermes_gateway_recovery_request",
-    ].join("\n");
-
-    const result = spawnSync("bash", ["-c", script], { encoding: "utf8", timeout: 5_000 });
-
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("controller did not exit");
-    expect(result.stderr).not.toContain("relaunching");
-  });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(expectedError);
+      expect(result.stderr).not.toContain("relaunching");
+    },
+  );
 
   it("stops when no gated recovery request arrives before the deadline", () => {
     const script = [

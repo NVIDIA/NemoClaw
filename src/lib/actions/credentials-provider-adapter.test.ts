@@ -520,84 +520,56 @@ describe("credential actions use typed OpenShell provider results", () => {
     });
     expect(adapter.createProvider).not.toHaveBeenCalled();
   });
+  it.each([
+    [
+      "non-overlapping MCP keys",
+      { credentialKey: "CUSTOM_TOKEN", providerName: "hermes-mcp-maas" },
+    ],
+    [
+      "overlapping retained-provider keys",
+      { credentialKey: "MAAS_GLEAN_TOKEN", providerName: "destination-telegram-bridge" },
+    ],
+  ] as const)(
+    "defers provider conflict checks until attachment for %s (#9806)",
+    async (_title, { credentialKey, providerName }) => {
+      const inspectProviderProfile = vi.fn<OpenShellProviderAdapter["inspectProviderProfile"]>(
+        async () => ({ ok: true, value: { credentialKeys: [credentialKey] } }),
+      );
+      const adapter = providerAdapter({
+        inspectProviderProfile,
+        listProviders: vi.fn<OpenShellProviderAdapter["listProviders"]>(async () => ({
+          ok: true,
+          value: { names: [providerName] },
+        })),
+        getProvider: vi.fn<OpenShellProviderAdapter["getProvider"]>(async () => ({
+          ok: true,
+          value: {
+            name: providerName,
+            type: "nemoclaw-mcp-v1",
+            credentialKeys: ["MAAS_GLEAN_TOKEN"],
+            configKeys: [],
+          },
+        })),
+      });
 
-  it("creates from existing credentials when live MCP provider keys do not overlap (#9806)", async () => {
-    const inspectProviderProfile = vi.fn<OpenShellProviderAdapter["inspectProviderProfile"]>(
-      async () => ({ ok: true, value: { credentialKeys: ["CUSTOM_TOKEN"] } }),
-    );
-    const adapter = providerAdapter({
-      inspectProviderProfile,
-      listProviders: vi.fn<OpenShellProviderAdapter["listProviders"]>(async () => ({
-        ok: true,
-        value: { names: ["hermes-mcp-maas"] },
-      })),
-      getProvider: vi.fn<OpenShellProviderAdapter["getProvider"]>(async () => ({
-        ok: true,
-        value: {
-          name: "hermes-mcp-maas",
-          type: "nemoclaw-mcp-v1",
-          credentialKeys: ["MAAS_GLEAN_TOKEN"],
-          configKeys: [],
+      const result = await runCredentialsAddAction(
+        {
+          provider: "custom-provider",
+          type: "generic",
+          credentials: [],
+          configPairs: [],
+          fromExisting: true,
         },
-      })),
-    });
+        { providerAdapter: adapter },
+      );
 
-    const result = await runCredentialsAddAction(
-      {
-        provider: "custom-provider",
-        type: "generic",
-        credentials: [],
-        configPairs: [],
-        fromExisting: true,
-      },
-      { providerAdapter: adapter },
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(adapter.inspectProviderProfile).toHaveBeenCalledOnce();
-    expect(adapter.listProviders).not.toHaveBeenCalled();
-    expect(adapter.getProvider).not.toHaveBeenCalled();
-    expect(adapter.createProvider).toHaveBeenCalledOnce();
-  });
-
-  it("defers overlapping retained-provider checks until an actual sandbox attachment (#9806)", async () => {
-    const inspectProviderProfile = vi.fn<OpenShellProviderAdapter["inspectProviderProfile"]>(
-      async () => ({ ok: true, value: { credentialKeys: ["MAAS_GLEAN_TOKEN"] } }),
-    );
-    const adapter = providerAdapter({
-      inspectProviderProfile,
-      listProviders: vi.fn<OpenShellProviderAdapter["listProviders"]>(async () => ({
-        ok: true,
-        value: { names: ["destination-telegram-bridge"] },
-      })),
-      getProvider: vi.fn<OpenShellProviderAdapter["getProvider"]>(async () => ({
-        ok: true,
-        value: {
-          name: "destination-telegram-bridge",
-          type: "nemoclaw-mcp-v1",
-          credentialKeys: ["MAAS_GLEAN_TOKEN"],
-          configKeys: [],
-        },
-      })),
-    });
-
-    const result = await runCredentialsAddAction(
-      {
-        provider: "custom-provider",
-        type: "generic",
-        credentials: [],
-        configPairs: [],
-        fromExisting: true,
-      },
-      { providerAdapter: adapter },
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(adapter.inspectProviderProfile).toHaveBeenCalledOnce();
-    expect(adapter.listProviders).not.toHaveBeenCalled();
-    expect(adapter.getProvider).not.toHaveBeenCalled();
-    expect(adapter.createProvider).toHaveBeenCalledOnce();
-  });
+      expect(result.exitCode).toBe(0);
+      expect(adapter.inspectProviderProfile).toHaveBeenCalledOnce();
+      expect(adapter.listProviders).not.toHaveBeenCalled();
+      expect(adapter.getProvider).not.toHaveBeenCalled();
+      expect(adapter.createProvider).toHaveBeenCalledOnce();
+    },
+  );
 
   it("lists credentials separately from messaging bridge providers (#9806)", async () => {
     const listProviders: OpenShellProviderAdapter["listProviders"] = async () => ({

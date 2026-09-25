@@ -56,78 +56,57 @@ describe("OpenShell MCP feature gate", () => {
       fs.rmSync(path.dirname(sandbox), { recursive: true, force: true });
     }
   });
-
-  it("identifies the pinned v0.0.82 sandbox artifacts without executing them", () => {
-    const sandbox = path.join(
-      fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-features-")),
-      "openshell-sandbox",
-    );
-    try {
-      fs.writeFileSync(
-        sandbox,
-        `#!/bin/sh\nexit 127\n# ${REQUIRED_OPENSHELL_SANDBOX_MCP_FEATURE}\n`,
-        { mode: 0o755 },
+  it.each([
+    [
+      "v0.0.82",
+      {
+        x64Digest: "145246049bd73c60452ac3c2b4b1801663196c8e2f80575af820289c78c1cf09",
+        expectedArm64Digest: "76bc19b70d9f1e1e9871307045796cd39cc7b8fc4c08ffc90593cc934f36d500",
+        version: "0.0.82",
+      },
+    ],
+    [
+      "v0.0.101",
+      {
+        x64Digest: "a2704babbb468fd0a359bfdd9844de71095b730758541b4ca8cbab77d4018920",
+        expectedArm64Digest: "88300e35f153123e4dc3021c537834dd6c0a09665a4a6d3974cd285d512345c4",
+        version: "0.0.101",
+      },
+    ],
+    [
+      "v0.0.106",
+      {
+        x64Digest: "019301ec8618abbed8135e8d39dde7bea47e5e92813bbc17768550de34db59f8",
+        expectedArm64Digest: "0031c6b257a23ecc1a2333153918324f3af0005e68abde388858d682ec646c55",
+        version: "0.0.106",
+      },
+    ],
+  ] as const)(
+    "identifies pinned %s sandbox artifacts without executing them",
+    (_title, { x64Digest, expectedArm64Digest, version }) => {
+      const sandbox = path.join(
+        fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-features-")),
+        "openshell-sandbox",
       );
-      const digest = "145246049bd73c60452ac3c2b4b1801663196c8e2f80575af820289c78c1cf09";
-      const arm64Digest = "76bc19b70d9f1e1e9871307045796cd39cc7b8fc4c08ffc90593cc934f36d500";
+      try {
+        fs.writeFileSync(
+          sandbox,
+          `#!/bin/sh\nexit 127\n# ${REQUIRED_OPENSHELL_SANDBOX_MCP_FEATURE}\n`,
+          { mode: 0o755 },
+        );
+        const digest = x64Digest;
+        const arm64Digest = expectedArm64Digest;
 
-      expect(pinnedOpenShellSandboxBuildVersion(digest)).toBe("0.0.82");
-      expect(pinnedOpenShellSandboxBuildVersion(arm64Digest)).toBe("0.0.82");
-      expect(resolveOpenShellComponentBuildVersion(sandbox, "sandbox", () => digest)).toBe(
-        "0.0.82",
-      );
-    } finally {
-      fs.rmSync(path.dirname(sandbox), { recursive: true, force: true });
-    }
-  });
-
-  it("identifies the pinned v0.0.101 sandbox artifacts without executing them", () => {
-    const sandbox = path.join(
-      fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-features-")),
-      "openshell-sandbox",
-    );
-    try {
-      fs.writeFileSync(
-        sandbox,
-        `#!/bin/sh\nexit 127\n# ${REQUIRED_OPENSHELL_SANDBOX_MCP_FEATURE}\n`,
-        { mode: 0o755 },
-      );
-      const digest = "a2704babbb468fd0a359bfdd9844de71095b730758541b4ca8cbab77d4018920";
-      const arm64Digest = "88300e35f153123e4dc3021c537834dd6c0a09665a4a6d3974cd285d512345c4";
-
-      expect(pinnedOpenShellSandboxBuildVersion(digest)).toBe("0.0.101");
-      expect(pinnedOpenShellSandboxBuildVersion(arm64Digest)).toBe("0.0.101");
-      expect(resolveOpenShellComponentBuildVersion(sandbox, "sandbox", () => digest)).toBe(
-        "0.0.101",
-      );
-    } finally {
-      fs.rmSync(path.dirname(sandbox), { recursive: true, force: true });
-    }
-  });
-
-  it("identifies the pinned v0.0.106 sandbox artifacts without executing them", () => {
-    const sandbox = path.join(
-      fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-features-")),
-      "openshell-sandbox",
-    );
-    try {
-      fs.writeFileSync(
-        sandbox,
-        `#!/bin/sh\nexit 127\n# ${REQUIRED_OPENSHELL_SANDBOX_MCP_FEATURE}\n`,
-        { mode: 0o755 },
-      );
-      const digest = "019301ec8618abbed8135e8d39dde7bea47e5e92813bbc17768550de34db59f8";
-      const arm64Digest = "0031c6b257a23ecc1a2333153918324f3af0005e68abde388858d682ec646c55";
-
-      expect(pinnedOpenShellSandboxBuildVersion(digest)).toBe("0.0.106");
-      expect(pinnedOpenShellSandboxBuildVersion(arm64Digest)).toBe("0.0.106");
-      expect(resolveOpenShellComponentBuildVersion(sandbox, "sandbox", () => digest)).toBe(
-        "0.0.106",
-      );
-    } finally {
-      fs.rmSync(path.dirname(sandbox), { recursive: true, force: true });
-    }
-  });
+        expect(pinnedOpenShellSandboxBuildVersion(digest)).toBe(version);
+        expect(pinnedOpenShellSandboxBuildVersion(arm64Digest)).toBe(version);
+        expect(resolveOpenShellComponentBuildVersion(sandbox, "sandbox", () => digest)).toBe(
+          version,
+        );
+      } finally {
+        fs.rmSync(path.dirname(sandbox), { recursive: true, force: true });
+      }
+    },
+  );
 
   it("finds provider rewrite and MCP L7 markers across OpenShell binaries", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-features-"));

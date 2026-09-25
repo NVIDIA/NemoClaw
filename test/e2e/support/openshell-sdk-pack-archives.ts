@@ -34,24 +34,3 @@ export function parseNpmPackArchives(stdout: string): NpmPackArchive[] {
   );
   return entries;
 }
-
-export function splitPackageSources<T extends { name: string }>(sources: readonly T[]): T[][] {
-  const batches: T[][] = [];
-  for (const source of sources) {
-    const batch = batches.find((candidate) =>
-      candidate.every((existing) => existing.name !== source.name),
-    );
-    if (batch) batch.push(source);
-    else batches.push([source]);
-  }
-  return batches;
-}
-
-export async function packUniquePackageSources<T extends { name: string }>(
-  sources: readonly T[],
-  pack: (batch: readonly T[]) => Promise<NpmPackArchive[]>,
-): Promise<NpmPackArchive[]> {
-  const archives: NpmPackArchive[] = [];
-  for (const batch of splitPackageSources(sources)) archives.push(...(await pack(batch)));
-  return archives;
-}

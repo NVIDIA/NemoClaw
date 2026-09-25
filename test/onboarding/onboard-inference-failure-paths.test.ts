@@ -701,80 +701,66 @@ describe("setupInference dependency failures", () => {
     expect(harness.logs).toEqual([]);
     expectNoPostFailureSideEffects(harness);
   });
-
-  it("preserves the provider status through the injected Bedrock exit boundary", async () => {
-    vi.stubEnv(BEDROCK_CREDENTIAL_ENV, "bedrock-bearer");
-    const exitProcess = createInjectedExit();
-    const ensureAdapter = vi.fn(async () => successfulBedrockAdapter());
-    const upsertProvider = vi.fn(async () => ({
-      ok: false,
-      status: 23,
-      message: "Bedrock provider registration failed",
-    }));
-    const harness = createDirectSetupInferenceHarness({
-      overrides: {
-        isNonInteractive: () => true,
-        exitProcess,
-        upsertProvider,
-        bedrockRuntimeOnboard: withBedrockAdapter(ensureAdapter),
+  it.each([
+    [
+      "status 23",
+      {
+        status: 23,
+        failureMessage: "Bedrock provider registration failed",
+        exitError: "EXIT_CALLED:23",
+        expectedExitStatus: 23,
+        expectedErrorLog: "  Bedrock provider registration failed",
       },
-    });
-
-    await expect(
-      harness.setupInference(
-        "test-box",
-        BEDROCK_MODEL,
-        "compatible-anthropic-endpoint",
-        BEDROCK_ENDPOINT,
-        BEDROCK_CREDENTIAL_ENV,
-      ),
-    ).rejects.toThrow("EXIT_CALLED:23");
-
-    expect(ensureAdapter).toHaveBeenCalledOnce();
-    expect(upsertProvider).toHaveBeenCalledOnce();
-    expect(exitProcess).toHaveBeenCalledOnce();
-    expect(exitProcess).toHaveBeenCalledWith(23);
-    expect(harness.errors).toContain("  Bedrock provider registration failed");
-    expect(harness.logs).toEqual([]);
-    expectNoPostFailureSideEffects(harness);
-  });
-
-  it("falls back to status 1 when Bedrock provider registration returns status 0", async () => {
-    vi.stubEnv(BEDROCK_CREDENTIAL_ENV, "bedrock-bearer");
-    const exitProcess = createInjectedExit();
-    const ensureAdapter = vi.fn(async () => successfulBedrockAdapter());
-    const upsertProvider = vi.fn(async () => ({
-      ok: false,
-      status: 0,
-      message: "Bedrock provider registration failed without status",
-    }));
-    const harness = createDirectSetupInferenceHarness({
-      overrides: {
-        isNonInteractive: () => true,
-        exitProcess,
-        upsertProvider,
-        bedrockRuntimeOnboard: withBedrockAdapter(ensureAdapter),
+    ],
+    [
+      "status 0",
+      {
+        status: 0,
+        failureMessage: "Bedrock provider registration failed without status",
+        exitError: "EXIT_CALLED:1",
+        expectedExitStatus: 1,
+        expectedErrorLog: "  Bedrock provider registration failed without status",
       },
-    });
+    ],
+  ] as const)(
+    "maps provider %s to the Bedrock failure exit",
+    async (_title, { status, failureMessage, exitError, expectedExitStatus, expectedErrorLog }) => {
+      vi.stubEnv(BEDROCK_CREDENTIAL_ENV, "bedrock-bearer");
+      const exitProcess = createInjectedExit();
+      const ensureAdapter = vi.fn(async () => successfulBedrockAdapter());
+      const upsertProvider = vi.fn(async () => ({
+        ok: false,
+        status: status,
+        message: failureMessage,
+      }));
+      const harness = createDirectSetupInferenceHarness({
+        overrides: {
+          isNonInteractive: () => true,
+          exitProcess,
+          upsertProvider,
+          bedrockRuntimeOnboard: withBedrockAdapter(ensureAdapter),
+        },
+      });
 
-    await expect(
-      harness.setupInference(
-        "test-box",
-        BEDROCK_MODEL,
-        "compatible-anthropic-endpoint",
-        BEDROCK_ENDPOINT,
-        BEDROCK_CREDENTIAL_ENV,
-      ),
-    ).rejects.toThrow("EXIT_CALLED:1");
+      await expect(
+        harness.setupInference(
+          "test-box",
+          BEDROCK_MODEL,
+          "compatible-anthropic-endpoint",
+          BEDROCK_ENDPOINT,
+          BEDROCK_CREDENTIAL_ENV,
+        ),
+      ).rejects.toThrow(exitError);
 
-    expect(ensureAdapter).toHaveBeenCalledOnce();
-    expect(upsertProvider).toHaveBeenCalledOnce();
-    expect(exitProcess).toHaveBeenCalledOnce();
-    expect(exitProcess).toHaveBeenCalledWith(1);
-    expect(harness.errors).toContain("  Bedrock provider registration failed without status");
-    expect(harness.logs).toEqual([]);
-    expectNoPostFailureSideEffects(harness);
-  });
+      expect(ensureAdapter).toHaveBeenCalledOnce();
+      expect(upsertProvider).toHaveBeenCalledOnce();
+      expect(exitProcess).toHaveBeenCalledOnce();
+      expect(exitProcess).toHaveBeenCalledWith(expectedExitStatus);
+      expect(harness.errors).toContain(expectedErrorLog);
+      expect(harness.logs).toEqual([]);
+      expectNoPostFailureSideEffects(harness);
+    },
+  );
 
   it("preserves the inference-set status through the injected Bedrock exit boundary", async () => {
     vi.stubEnv(BEDROCK_CREDENTIAL_ENV, "bedrock-bearer");

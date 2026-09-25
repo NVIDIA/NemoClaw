@@ -307,7 +307,6 @@
     {
       "live": "test/e2e/live/dashboard-remote-bind.test.ts",
       "liveSources": [
-        "test/e2e/live/dashboard-connect-handoff.ts",
         "test/e2e/live/json-envelope.ts"
       ],
       "fast": [
@@ -316,7 +315,6 @@
         "src/lib/actions/sandbox/process-recovery.test.ts",
         "src/lib/actions/sandbox/launch-readiness-gateway-health.test.ts",
         "test/e2e/support/json-envelope.test.ts",
-        "test/e2e/support/dashboard-connect-handoff.test.ts",
         "test/e2e/support/runtime-provider-fixture.test.ts"
       ]
     },
@@ -611,7 +609,6 @@
       "liveSources": [
         "test/e2e/live/dns-rebinding-hosts-fixture.ts",
         "test/e2e/live/mcp-bridge-cleanup.ts",
-        "test/e2e/live/mcp-bridge-deepagents-config.ts",
         "test/e2e/live/mcp-bridge-hermes-http.ts",
         "test/e2e/live/mcp-bridge-onboard-env.ts",
         "test/e2e/live/mcp-bridge-reliability.ts",

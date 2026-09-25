@@ -49,44 +49,6 @@ export type CliScriptRunOptions = {
   removeImplicitHome?: (home: string) => void;
 };
 
-export type CliErrorShape = {
-  status?: number;
-  stdout?: string | Buffer;
-  stderr?: string | Buffer;
-};
-
-export type CliErrorCandidate = {
-  status?: unknown;
-  stdout?: unknown;
-  stderr?: unknown;
-};
-
-export function isCliErrorCandidate(value: unknown): value is CliErrorCandidate {
-  return typeof value === "object" && value !== null;
-}
-
-export function readBufferOrStringProperty(
-  value: CliErrorCandidate,
-  key: "stdout" | "stderr",
-): string | Buffer | undefined {
-  const property = value[key];
-  return typeof property === "string" || Buffer.isBuffer(property) ? property : undefined;
-}
-
-export function toText(value: string | Buffer | undefined): string {
-  return typeof value === "string" ? value : Buffer.isBuffer(value) ? value.toString("utf8") : "";
-}
-
-export function readCliErrorOutput(error: CliErrorShape | string | null | undefined): CliRunResult {
-  if (!error || typeof error === "string") {
-    return { code: 1, out: String(error || "") };
-  }
-  return {
-    code: typeof error.status === "number" ? error.status : 1,
-    out: `${toText(error.stdout)}${toText(error.stderr)}`,
-  };
-}
-
 function splitCliArgs(args: string): string[] {
   const tokens: string[] = [];
   let current = "";
@@ -308,10 +270,6 @@ async function runWithEnvInternalAsync(
   }
 }
 
-export function readRecordedArgs(markerFile: string): string[] {
-  return fs.readFileSync(markerFile, "utf8").trim().split(/\s+/);
-}
-
 export type SandboxEntry = {
   name: string;
   model: string;
@@ -324,23 +282,6 @@ export type SandboxEntry = {
 };
 
 export type SandboxOverrides = Partial<SandboxEntry> & Record<string, unknown>;
-
-export function writeRecordingCommand(
-  binDir: string,
-  command: string,
-  markerFile: string,
-  exitCode: number,
-): void {
-  fs.writeFileSync(
-    path.join(binDir, command),
-    [
-      "#!/usr/bin/env bash",
-      `printf '%s\\n' "$*" >> ${JSON.stringify(markerFile)}`,
-      `exit ${exitCode}`,
-    ].join("\n"),
-    { mode: 0o755 },
-  );
-}
 
 export function writeSandboxRegistry(
   home: string,
@@ -666,33 +607,4 @@ export function createDebugCommandTestEnv(
     NEMOCLAW_SANDBOX: sandboxName,
     PATH: `${localBin}:${process.env.PATH || ""}`,
   };
-}
-
-export function writeHostAliasDockerStub(
-  localBin: string,
-  dockerLog: string,
-  hostAliases: { ip: string; hostnames: string[] }[],
-  { gatewayRunning = true }: { gatewayRunning?: boolean } = {},
-): void {
-  const resource = JSON.stringify({
-    metadata: { resourceVersion: "123" },
-    spec: { podTemplate: { spec: { hostAliases } } },
-  });
-  fs.writeFileSync(
-    path.join(localBin, "docker"),
-    [
-      "#!/usr/bin/env bash",
-      `log_file=${JSON.stringify(dockerLog)}`,
-      'printf "%s\\n" "$@" >> "$log_file"',
-      'if [ "$1" = "ps" ]; then',
-      gatewayRunning ? '  printf "%s\\n" "openshell-cluster-nemoclaw"' : "  :",
-      "  exit 0",
-      "fi",
-      'if printf "%s\\n" "$@" | grep -q "^get$"; then',
-      `  printf "%s\\n" ${JSON.stringify(resource)}`,
-      "fi",
-      "exit 0",
-    ].join("\n"),
-    { mode: 0o755 },
-  );
 }

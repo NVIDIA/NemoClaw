@@ -48,6 +48,17 @@ record both removal decisions and the reason superficially similar tests remain 
 An unimported module may still be a packaged API, a manifest-loaded asset, a subprocess entrypoint,
 or an intentionally dormant implementation. Check those consumers and the feature's history.
 
+Include fixture libraries, live companions, shell/Python helpers, and tests of those helpers in the
+inventory. Follow retired entrypoints through their remaining dependency chains. A unit or package
+test does not itself establish a production consumer. Check compiled loaders, shell launchers,
+configured setup hooks, and intentionally inactive qualification paths before removing a chain.
+Trace existing remediation PRs so the audit does not duplicate another accepted change.
+
+When only scenario data differs, consider a named table instead of retaining copied setup and
+assertions. Preserve each input and expected result, and verify that test names remain useful.
+Audit unconditional skips: repair useful checks with isolated, bounded fixtures; remove placeholders
+whose subject or failure injection was retired.
+
 Look for:
 
 - Tests without assertions, self-comparisons, or expected results calculated by the subject under test.

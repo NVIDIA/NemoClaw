@@ -26,16 +26,3 @@ export function resolveOpenShellSiblingComponents(openshellPath: string): OpenSh
     sandbox: canonicalSibling("openshell-sandbox"),
   };
 }
-
-/** Keep command, gateway, sandbox, and ForwardTcp ownership on one component set. */
-export function withCanonicalOpenShellEnv(
-  env: NodeJS.ProcessEnv,
-  components: OpenShellComponents,
-): NodeJS.ProcessEnv {
-  return {
-    ...env,
-    NEMOCLAW_OPENSHELL_BIN: components.cli,
-    NEMOCLAW_OPENSHELL_GATEWAY_BIN: components.gateway,
-    NEMOCLAW_OPENSHELL_SANDBOX_BIN: components.sandbox,
-  };
-}

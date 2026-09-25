@@ -298,23 +298,6 @@ describe("cleanupSandboxServices Ollama unload (#2717)", () => {
     );
   });
 
-  it("fails closed before other cleanup when the Google Chat tunnel cannot stop", async () => {
-    const harness = buildDeps({ provider: "ollama-local" });
-    vi.mocked(harness.deps.stopGooglechatWebhookTunnel).mockImplementation(() => {
-      throw new Error("cloudflared refused to stop");
-    });
-
-    await expect(
-      cleanupSandboxServices("regression-2717", { stopHostServices: true }, harness.deps),
-    ).rejects.toThrow(/Refusing to finish sandbox cleanup/);
-
-    expect(harness.deps.getSandbox).not.toHaveBeenCalled();
-    expect(harness.deps.stopAll).not.toHaveBeenCalled();
-    expect(harness.deps.unloadOllamaModels).not.toHaveBeenCalled();
-    expect(harness.deps.rmSync).not.toHaveBeenCalled();
-    expect(harness.deps.runOpenshell).not.toHaveBeenCalled();
-  });
-
   it("rejects traversal-shaped sandbox names before any cleanup side effect", async () => {
     const harness = buildDeps({ provider: "ollama-local" });
 

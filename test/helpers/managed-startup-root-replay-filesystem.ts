@@ -6,51 +6,6 @@ import { vi } from "vitest";
 
 import { MANAGED_STARTUP_RUNTIME_ENV_FILE } from "../../src/lib/onboard/managed-startup/image-runtime";
 
-type RenameObserver = (source: string, target: string) => void;
-type UnlinkObserver = (target: string) => void;
-type ObserverEffect = () => void;
-type ObserverGate = () => boolean;
-
-const alwaysObserve: ObserverGate = () => true;
-
-export function observeMatchingRename(
-  expectedSource: string,
-  expectedTarget: string,
-  effect: ObserverEffect,
-  enabled: ObserverGate = alwaysObserve,
-): RenameObserver {
-  return (source, target) => {
-    if (enabled() && source === expectedSource && target === expectedTarget) effect();
-  };
-}
-
-export function observeMatchingLink(
-  expectedSource: string,
-  expectedTarget: string,
-  effect: ObserverEffect,
-): RenameObserver {
-  return observeMatchingRename(expectedSource, expectedTarget, effect);
-}
-
-export function observeMatchingRenameTarget(
-  expectedTarget: string,
-  effect: ObserverEffect,
-): RenameObserver {
-  return (_source, target) => {
-    if (target === expectedTarget) effect();
-  };
-}
-
-export function observeMatchingUnlink(
-  expectedTarget: string,
-  effect: ObserverEffect,
-  enabled: ObserverGate = alwaysObserve,
-): UnlinkObserver {
-  return (target) => {
-    if (enabled() && target === expectedTarget) effect();
-  };
-}
-
 export function mockRootReplayFilesystem(
   runtimeWrites: string[],
   seededFiles: ReadonlyMap<
