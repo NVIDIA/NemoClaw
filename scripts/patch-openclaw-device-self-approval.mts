@@ -906,7 +906,7 @@ const AUTH_DEVICE_TOKEN_TARGET = [
   '\t\t\tauthMethod = "device-token";',
 ].join("\n");
 const AUTH_DEVICE_TOKEN_REPLACEMENT = [
-  '\t\tconst nemoclawAllowedUpgradeScopes = new Set(["operator.pairing", "operator.read", "operator.write"]);',
+  '\t\tconst nemoclawAllowedUpgradeScopes = new Set(["operator.pairing", "operator.read", "operator.write", "operator.admin"]);',
   '\t\tconst nemoclawScopeUpgradeScopes = Array.isArray(params.scopes) ? params.scopes.map((scope) => typeof scope === "string" ? scope.trim() : "") : [];',
   "\t\tconst nemoclawCliScopeUpgrade =",
   "\t\t\t!tokenCheck.ok &&",
@@ -935,7 +935,7 @@ const AUTH_DEVICE_TOKEN_SQLITE_REPLACEMENT = [
   "\t\t\t\t...paramsLocal,",
   "\t\t\t\trequiredSharedGatewaySessionGeneration: getRequiredSharedGatewaySessionGeneration?.()",
   "\t\t\t});",
-  '\t\t\tconst nemoclawAllowedUpgradeScopes = new Set(["operator.pairing", "operator.read", "operator.write"]);',
+  '\t\t\tconst nemoclawAllowedUpgradeScopes = new Set(["operator.pairing", "operator.read", "operator.write", "operator.admin"]);',
   '\t\t\tconst nemoclawScopeUpgradeScopes = Array.isArray(paramsLocal.scopes) ? paramsLocal.scopes.map((scope) => typeof scope === "string" ? scope.trim() : "") : [];',
   "\t\t\tconst nemoclawCliScopeUpgrade =",
   "\t\t\t\t!nemoclawTokenCheck.ok &&",

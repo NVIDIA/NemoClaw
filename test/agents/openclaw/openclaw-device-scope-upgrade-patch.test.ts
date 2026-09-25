@@ -14,7 +14,7 @@ import {
 } from "../../helpers/openclaw-device-self-approval-patch-harness";
 
 describe("OpenClaw bounded current-layout scope upgrade patch", () => {
-  it("keeps silent CLI admin upgrades pending for explicit approval", () => {
+  it("keeps silent CLI admin upgrades pending for explicit approval", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-current-defer-"));
     const dist = path.join(tmp, "dist");
     fs.mkdirSync(dist);
@@ -23,6 +23,9 @@ describe("OpenClaw bounded current-layout scope upgrade patch", () => {
       const apply = runPatch(dist);
       expect(apply.status, `${apply.stdout}${apply.stderr}`).toBe(0);
       const source = fs.readFileSync(path.join(dist, "message-handler-fixture.js"), "utf8");
+      const verifyDeviceToken = runFixture<
+        (params: Record<string, unknown>) => Promise<Record<string, unknown>>
+      >(source, "authDeps.verifyDeviceToken");
       const resolvePairingOutcome = runFixture<
         (input: Record<string, unknown>) => "approved" | "pending"
       >(source, "resolvePairingOutcome");
@@ -42,6 +45,12 @@ describe("OpenClaw bounded current-layout scope upgrade patch", () => {
         trustedProxyApprovalScopes: null,
       };
 
+      await expect(
+        verifyDeviceToken({ role: "operator", scopes: ["operator.admin"] }),
+      ).resolves.toMatchObject({ ok: true, reason: "scope-mismatch" });
+      await expect(
+        verifyDeviceToken({ role: "operator", scopes: ["operator.admin", "operator.unknown"] }),
+      ).resolves.toMatchObject({ ok: false, reason: "scope-mismatch" });
       expect(resolvePairingOutcome(exact)).toBe("pending");
       expect(resolvePairingOutcome({ ...exact, authMethod: "password" })).toBe("approved");
       expect(resolvePairingOutcome({ ...exact, reason: "not-paired" })).toBe("approved");

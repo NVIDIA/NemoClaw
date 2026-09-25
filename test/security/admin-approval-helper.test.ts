@@ -10,9 +10,13 @@ import { describe, expect, it } from "vitest";
 
 import { adminApprovalConnectScript } from "../e2e/fixtures/admin-approval-connect.ts";
 import { ADMIN_REQUEST_SELECTOR_PY } from "../e2e/fixtures/admin-request-selector.ts";
-import { preApprovalAdminProbeEvidence } from "../e2e/fixtures/issue-4462-admin-approval-evidence.ts";
+import {
+  pendingAdminRequestId,
+  preApprovalAdminProbeEvidence,
+} from "../e2e/fixtures/issue-4462-admin-approval-evidence.ts";
 
 const EXPECTED_REQUEST_ID = "12345678-1234-4123-8123-123456789abc";
+const VERSION_ONE_REQUEST_ID = "12345678-1234-1123-8123-123456789abc";
 const EXPECTED_PUBLIC_KEY_BYTES = Buffer.from(Array.from({ length: 32 }, (_value, index) => index));
 const EXPECTED_PUBLIC_KEY = EXPECTED_PUBLIC_KEY_BYTES.toString("base64url");
 const EXPECTED_DEVICE_ID = createHash("sha256").update(EXPECTED_PUBLIC_KEY_BYTES).digest("hex");
@@ -33,7 +37,10 @@ def read_openclaw_pairing_state(state_dir, timeout=1):
 
 type FakeFailureCommand = "devices:list" | "devices:approve" | "cron:add" | "cron:run";
 
-function adminState(tokenShape: "array" | "object" = "array"): Record<string, unknown> {
+function adminState(
+  tokenShape: "array" | "object" = "array",
+  requestId = EXPECTED_REQUEST_ID,
+): Record<string, unknown> {
   const operatorToken = {
     role: "operator",
     scopes: ["operator.pairing", "operator.read", "operator.write"],
@@ -41,7 +48,7 @@ function adminState(tokenShape: "array" | "object" = "array"): Record<string, un
   return {
     pending: [
       {
-        requestId: EXPECTED_REQUEST_ID,
+        requestId,
         deviceId: EXPECTED_DEVICE_ID,
         publicKey: EXPECTED_PUBLIC_KEY,
         clientId: "cli",
@@ -120,6 +127,7 @@ function runSelector(
 function runAdminApprovalScript(
   failureCommand?: FakeFailureCommand,
   failureOutputPaddingBytes = 0,
+  requestId = EXPECTED_REQUEST_ID,
 ): {
   commands: string[];
   capturedApprovalBytes: number;
@@ -182,7 +190,7 @@ esac
 `,
     { mode: 0o755 },
   );
-  fs.writeFileSync(devicesPath, JSON.stringify(adminState()));
+  fs.writeFileSync(devicesPath, JSON.stringify(adminState("array", requestId)));
   const childEnv: NodeJS.ProcessEnv = {
     ...process.env,
     PATH: `${root}:${process.env.PATH ?? ""}`,
@@ -306,6 +314,20 @@ describe("prepared connect-shell administrative approval", () => {
       "cron add --name admin-cron --every 2h --agent main --session isolated --message hello",
       "cron run cron-1",
     ]);
+  });
+
+  it("accepts the same non-v4 request IDs in the trigger parser and canonical selector (#5324)", () => {
+    const triggeredRequestId = pendingAdminRequestId({
+      exitCode: 1,
+      stderr: `scope upgrade pending approval (requestId: ${VERSION_ONE_REQUEST_ID})`,
+      stdout: "",
+      timedOut: false,
+    });
+    expect(triggeredRequestId).toBe(VERSION_ONE_REQUEST_ID);
+
+    const { commands, result } = runAdminApprovalScript(undefined, 0, VERSION_ONE_REQUEST_ID);
+    expect(result.status, result.stderr).toBe(0);
+    expect(commands).toContain(`devices approve ${VERSION_ONE_REQUEST_ID}`);
   });
 
   it.each([
