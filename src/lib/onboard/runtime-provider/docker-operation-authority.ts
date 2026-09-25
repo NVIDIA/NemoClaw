@@ -592,7 +592,7 @@ function dockerClientBinding(
   const tls = dockerTlsArgs(env);
   const explicitContext = exactDockerValue(env.DOCKER_CONTEXT, "DOCKER_CONTEXT");
   const explicitHost = exactDockerValue(env.DOCKER_HOST, "DOCKER_HOST");
-  if (!explicitContext && explicitHost) {
+  if (explicitHost) {
     const host = dockerHost(explicitHost);
     requireSecureDockerEndpoint(host, tls.verify);
     const endpointArgs = Object.freeze([...configArgs, "--host", host, ...tls.args]);
