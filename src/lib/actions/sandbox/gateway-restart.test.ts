@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import { execFile } from "node:child_process";
 import { createServer } from "node:http";
 import { promisify } from "node:util";
@@ -74,6 +75,29 @@ describe("restartSandboxGateway native lifecycle", () => {
       ...overrides,
     };
   }
+
+  it.each(["cancelled", "capture", "invocation", "timeout", "unavailable", "malformed"] as const)(
+    "reports %s transport failure without retrying restart",
+    async (kind) => {
+      silenceConsole();
+      const execute = vi.fn().mockRejectedValue(new SandboxCommandTransportError(kind));
+      const deps = baseDeps({ executeSandboxExecCommand: execute });
+      await expect(restartSandboxGateway("alpha", { quiet: true, deps })).resolves.toMatchObject({
+        ok: false,
+        failureLayer: "native agent command",
+      });
+      expect(execute).toHaveBeenCalledOnce();
+      expect(deps.waitForRecoveredSandboxGateway).not.toHaveBeenCalled();
+      expect(console.error).toHaveBeenCalledWith(expect.stringContaining(kind));
+    },
+  );
+
+  it("propagates unexpected restart errors", async () => {
+    silenceConsole();
+    const error = new Error("authority refusal");
+    const deps = baseDeps({ executeSandboxExecCommand: vi.fn().mockRejectedValue(error) });
+    await expect(restartSandboxGateway("alpha", { quiet: true, deps })).rejects.toBe(error);
+  });
 
   it("asks OpenClaw for a native safe restart without service-manager ownership", async () => {
     silenceConsole();
@@ -172,6 +196,30 @@ describe("restartSandboxGateway native lifecycle", () => {
     },
   );
 
+  it("treats lost OpenClaw readiness transport as unavailable evidence", async () => {
+    silenceConsole();
+    const execute = vi
+      .fn()
+      .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" })
+      .mockRejectedValueOnce(new SandboxCommandTransportError("unavailable"));
+    const deps = baseDeps({
+      executeSandboxExecCommand: execute,
+      waitForRecoveredSandboxGateway: async (
+        name: string,
+        options: Parameters<typeof waitForRecoveredSandboxGateway>[1],
+      ) => {
+        expect(await options!.probeImpl!(name)).toBeNull();
+        return false;
+      },
+    });
+    await expect(restartSandboxGateway("alpha", { quiet: true, deps })).resolves.toMatchObject({
+      ok: false,
+      failureLayer: "health timeout",
+    });
+    expect(execute).toHaveBeenCalledTimes(2);
+    expect(deps.ensureSandboxPortForward).not.toHaveBeenCalled();
+  });
+
   it("requires health proof when Hermes restart closes the exec relay before status", async () => {
     silenceConsole();
     const deps = baseDeps({
@@ -210,6 +258,26 @@ describe("restartSandboxGateway native lifecycle", () => {
 
     expect(result).toMatchObject({ ok: false, failureLayer: "native agent command" });
     expect(deps.waitForRecoveredSandboxGateway).not.toHaveBeenCalled();
+  });
+
+  it("retains the restart diagnostic when Hermes log collection loses transport", async () => {
+    silenceConsole();
+    const execute = vi
+      .fn()
+      .mockResolvedValueOnce({ status: 1, stdout: "", stderr: "native restart failed" })
+      .mockRejectedValueOnce(new SandboxCommandTransportError("unavailable"));
+    const deps = baseDeps({
+      getSessionAgent: () => ({ name: "hermes", displayName: "Hermes Agent" }),
+      getSandbox: () => ({ name: "hermes-box", agent: "hermes" }),
+      executeSandboxExecCommand: execute,
+    });
+    await expect(restartSandboxGateway("hermes-box", { quiet: true, deps })).resolves.toEqual({
+      ok: false,
+      failureLayer: "native agent command",
+      detail: "native restart failed",
+    });
+    expect(execute).toHaveBeenCalledTimes(2);
+    expect(execute.mock.calls[1]?.[1]).toContain("tail -n");
   });
 
   it("refuses Hermes restart before reload when the secret boundary fails", async () => {

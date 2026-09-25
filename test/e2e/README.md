@@ -185,6 +185,24 @@ before and after the resumed command. They retain only validated fixed-schema fa
 child output. These separate observations do not replace the production ownership decision or prove
 which predicate rejected an earlier invocation; command results and cleanup remain authoritative.
 
+Full MCP bridge E2E also owns the supervisor's corporate-CA TLS consumer check:
+onboarding receives the fixture CA through `NEMOCLAW_CORPORATE_CA_BUNDLE`, and the
+trusted-private probe must discover authenticated tools from the HTTPS fixture
+signed by that CA through supervisor egress. Cloud onboarding separately verifies
+installed bundle contents and permissions; file presence alone is not TLS-consumer
+evidence. The managed-startup unit tests own activation ordering and identity checks.
+
+If the Hermes replacement-credential restart or subsequent bridge removal fails, MCP E2E captures host-side
+OpenShell supervisor logs and the runtime container's state and startup output
+before asserting the original failure. These reads remain available when sandbox
+exec is rejected in `Error` state. Container reads require exactly one validated
+runtime resource handle. Each output stream is limited to 32 KiB and each command to 30 seconds; log
+capture retains at most 200 lines from the last two minutes for OpenShell and
+three minutes for the runtime container, with fixture credentials redacted.
+Diagnostic acquisition does not retry the mutation or replace its result.
+OpenClaw launch evidence reports whether a SQLite rejection concerns file metadata or the transcript table, without exposing paths, identities, or session contents. The existing evidence checks remain required.
+A failed native weather-plugin invocation also records unauthenticated liveness and readiness HTTP status codes, bounded to two three-second probes. It does not repeat the tool invocation or replace its failure.
+
 The same workflow publishes each Pi pull-request candidate by immutable digest after validating the
 local image, removes registry credentials, validates the anonymously pullable digest, and uploads a
 `managed-candidate-contract-*` artifact bound to the pull-request head. Pi remains outside the
@@ -1419,6 +1437,11 @@ series for one execution only; this telemetry does not maintain cross-run
 rolling history or write to the GitHub Actions step summary. Both output files
 are private regular files on the runner (`0600`) with strict per-line and total
 size limits.
+
+Cloud onboarding creates its disposable installer workspace and isolated `HOME`
+under the runner account's home directory. Native SDK lifecycle operations require
+trusted gateway-state ancestors, so this workspace must not live beneath the
+world-writable system temporary directory. The test cleanup removes the workspace.
 
 Raw cloud-onboard traces stay under the runner temporary directory. Before
 artifact upload, `scripts/e2e/sanitize-trace-timing.py` reduces them to the

@@ -5,12 +5,7 @@ import { describe, expect, it } from "vitest";
 import type { AgentDefinition } from "./defs";
 import { loadAgent } from "./defs";
 // Import source directly so tests cannot pass against a stale build.
-import {
-  buildRecoveryScript,
-  getInteractiveAgentCommand,
-  getTerminalCommand,
-  TERMINAL_AGENT_RECOVERY_SCRIPT,
-} from "./runtime";
+import { getInteractiveAgentCommand, getTerminalCommand } from "./runtime";
 
 const terminalAgent = {
   name: "terminal-agent",
@@ -24,10 +19,6 @@ const terminalAgent = {
 } as AgentDefinition;
 
 describe("terminal agent runtime helpers", () => {
-  it("returns an explicit terminal sentinel for agents without a gateway process", () => {
-    expect(buildRecoveryScript(terminalAgent, 18789)).toBe(TERMINAL_AGENT_RECOVERY_SCRIPT);
-  });
-
   it("resolves terminal launch commands without synthesizing gateway recovery", () => {
     expect(getTerminalCommand(terminalAgent)).toBe("terminal-agent");
     expect(getTerminalCommand(terminalAgent, "headless")).toBe("terminal-agent -n");

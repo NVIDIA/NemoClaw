@@ -38,6 +38,8 @@ import {
   assertHermesMcpHttpResponse,
   buildHermesMcpChatProbeScript,
   buildHermesMcpRuntimeDiagnosticsScript,
+  captureHermesMcpLifecycleFailure,
+  readHermesGatewayIdentity,
   HERMES_MCP_FAILURE_CAPTURE_BYTES,
 } from "./mcp-bridge-hermes-http.ts";
 import {
@@ -398,6 +400,12 @@ async function removeBridgeAndAssertEmpty(
     options.adapter,
     options.artifactPrefix,
   );
+  await captureHermesMcpLifecycleFailure(host, remove, {
+    agent: options.agent,
+    sandboxName: options.sandboxName,
+    operation: "remove",
+    redactionValues: [...Object.values(MCP_BRIDGE_TEST_CREDENTIALS), TOOL_CHALLENGE],
+  });
   expectExitZero(remove, `${options.artifactPrefix} mcp remove fake server`);
   const list = await host.nemoclaw([options.sandboxName, "mcp", "list", "--json"], {
     artifactName: `${options.artifactPrefix}-mcp-list-after-remove`,
@@ -623,26 +631,12 @@ async function assertRealAdapterToolCall(
   expect(denied ? denied.policyDenied : true).toBe(true);
   expect(denied ? denied.after : calls.length).toBe(denied ? denied.before : calls.length);
 }
+
 async function captureHermesGatewayIdentity(
   sandbox: SandboxClient,
   artifactName: string,
 ): Promise<void> {
-  const result = await sandbox.execShell(
-    HERMES_SANDBOX_NAME,
-    trustedSandboxShellScript(
-      [
-        "set -eu",
-        "/usr/bin/python3 -I -S - <<'PY'",
-        "import json, pathlib",
-        "record = json.loads(pathlib.Path('/sandbox/.hermes/runtime/gateway.pid').read_text())",
-        "pid = record if isinstance(record, int) else record['pid']",
-        "fields = pathlib.Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()",
-        "print(json.dumps({'pid': pid, 'start_time': int(fields[19])}, sort_keys=True))",
-        "PY",
-      ].join("\n"),
-    ),
-    { artifactName, env: buildAvailabilityProbeEnv(), timeoutMs: 60_000 },
-  );
+  const result = await readHermesGatewayIdentity(sandbox, HERMES_SANDBOX_NAME, artifactName);
   expectExitZero(result, artifactName);
 }
 
@@ -673,6 +667,12 @@ async function replaceBridgeCredentialConservatively(
     env: { ...buildAvailabilityProbeEnv(), FAKE_MCP_SECRET: ROTATED_HOST_SECRET },
     redactionValues: [HOST_SECRET, ROTATED_HOST_SECRET],
     timeoutMs: 12 * 60_000,
+  });
+  await captureHermesMcpLifecycleFailure(host, restart, {
+    operation: "restart",
+    agent,
+    sandboxName,
+    redactionValues: [...Object.values(MCP_BRIDGE_TEST_CREDENTIALS), TOOL_CHALLENGE],
   });
   expectExitZero(restart, `${artifactPrefix} restart ignores replacement credential`);
   await assertRealAdapterToolCall(host, sandbox, fakeMcp, {

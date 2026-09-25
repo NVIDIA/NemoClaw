@@ -77,3 +77,12 @@ It also strengthens host OS reporting and Windows WSL GPU verification.
   If the workload changes during discovery, installation stops rather than continuing the upgrade.
   Related change: [PR #12296](https://github.com/NVIDIA/NemoClaw/pull/12296).
   Refer to [Set Up vLLM on Two DGX Stations](/user-guide/openclaw/inference/local-inference/set-up-vllm-on-two-dgx-stations) for the recovery procedure.
+- Messaging-channel removal uses native OpenShell execution for running-sandbox session cleanup.
+  A failed, cancelled, or inconclusive cleanup does not retry through SSH or a local runtime provider, and the command stops before rebuilding.
+  OpenClaw WeChat can use its separately verified stopped-state cleanup before native execution.
+  Related change: [PR #12181](https://github.com/NVIDIA/NemoClaw/pull/12181).
+  Refer to [Manage Messaging Channels](/user-guide/openclaw/manage-sandboxes/messaging-channels/manage-messaging-channels) for cleanup and retry conditions.
+- When managed OpenClaw onboarding imports a corporate CA, it refreshes the OpenShell supervisor trust through a native stop and start before onboarding completes.
+  If either action fails, onboarding retains the sandbox for recovery.
+  Related change: [PR #12181](https://github.com/NVIDIA/NemoClaw/pull/12181).
+  Refer to [Configure Corporate CA Trust](/user-guide/openclaw/security/configure-corporate-ca-trust) for the trust boundary.

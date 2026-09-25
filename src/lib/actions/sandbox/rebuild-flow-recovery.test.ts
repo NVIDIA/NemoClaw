@@ -870,7 +870,7 @@ describe("rebuildSandbox flow: recovery", () => {
   it("fails the rebuild while surfacing incomplete OpenClaw post-restore work", async () => {
     const harness = createRebuildFlowHarness({
       sandboxEntry: {},
-      executeSandboxCommand: () => ({ status: 1, stdout: "", stderr: "hash refresh failed" }),
+      executeSandboxExecCommand: () => ({ status: 1, stdout: "", stderr: "hash refresh failed" }),
       repairMutableConfigPerms: () => ({
         applied: true,
         verified: false,
