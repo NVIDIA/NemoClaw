@@ -372,6 +372,57 @@ describe("Hermes legacy dashboard-state migration", () => {
     expect(fs.readFileSync(legacyConfig, "utf8")).toBe("model: user-dashboard-edit\n");
   });
 
+  it("discards a verified generated dashboard projection that differs from native config", () => {
+    const { hermes } = dashboardMigrationFixture();
+    const legacy = path.join(hermes, "profiles/dashboard-home");
+    const nativeConfig = [
+      "_config_version: 33",
+      "_nemoclaw_upstream:",
+      "  provider_key: routed",
+      "model:",
+      "  default: nvidia/model",
+      "  provider: custom",
+      "  base_url: https://inference.local/v1",
+      "  api_key: sk-OPENSHELL-PROXY-REWRITE",
+      "approvals:",
+      "  mode: manual",
+      "terminal:",
+      "  timeout: 180",
+      "",
+    ].join("\n");
+    const generatedConfig = [
+      "_config_version: 27",
+      "_nemoclaw_upstream:",
+      "  provider_key: routed",
+      "model:",
+      "  default: nvidia/model",
+      "  provider: routed",
+      "  base_url: https://inference.local/v1",
+      "  api_key: sk-OPENSHELL-PROXY-REWRITE",
+      "approvals:",
+      "  mode: manual",
+      "",
+    ].join("\n");
+    writeDashboardMigrationFile(path.join(hermes, "config.yaml"), nativeConfig);
+    writeDashboardMigrationFile(
+      path.join(hermes, ".env"),
+      "API_SERVER_HOST=127.0.0.1\nAPI_SERVER_PORT=18642\nUNRELATED_NATIVE=1\n",
+    );
+    writeDashboardMigrationFile(path.join(legacy, "config.yaml"), generatedConfig);
+    writeDashboardMigrationFile(
+      path.join(legacy, ".env"),
+      "API_SERVER_HOST=127.0.0.1\nAPI_SERVER_PORT=18642\n",
+    );
+    writeDashboardMigrationFile(path.join(legacy, "MEMORY.md"), "durable\n");
+
+    const result = runDashboardMigration(hermes);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(fs.readFileSync(path.join(hermes, "config.yaml"), "utf8")).toBe(nativeConfig);
+    expect(fs.readFileSync(path.join(hermes, "MEMORY.md"), "utf8")).toBe("durable\n");
+    expect(fs.existsSync(legacy)).toBe(false);
+  });
+
   it("refuses an over-limit legacy tree before moving any state", () => {
     const { hermes } = dashboardMigrationFixture();
     const legacy = path.join(hermes, "profiles/dashboard-home");

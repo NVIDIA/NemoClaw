@@ -65,8 +65,9 @@ Do not copy `/sandbox/.hermes/config.yaml` or `/sandbox/.hermes/.env` between sa
 The gateway, CLI, TUI, and Web Dashboard share those native files, and NemoClaw recreates their managed route and credential placeholders for the destination sandbox.
 The retired reserved profile at `.hermes/profiles/dashboard-home/` is a one-time migration source, not active dashboard state.
 Do not create or manually transfer that directory.
-Startup removes only named generated hash and runtime-state metadata, then migrates other safe legacy files and WhatsApp session state into the native Hermes home.
-Legacy `config.yaml` and `.env` files merge only when the native destination is absent or byte-identical; conflicting or linked state stops migration without deleting either copy.
+Startup removes named generated hash and runtime-state metadata, then migrates other safe legacy files and WhatsApp session state into the native Hermes home.
+It removes a legacy `config.yaml` or `.env` only when its contents match the generated projection of the native files; otherwise those files merge only when the native destination is absent or byte-identical.
+Conflicting or linked state stops migration without deleting either copy.
 
 </AgentOnly>
 <AgentOnly variant="deepagents">

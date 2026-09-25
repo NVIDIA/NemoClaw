@@ -14,6 +14,7 @@ replace the native configuration.
 from __future__ import annotations
 
 import argparse
+import copy
 import errno
 import hashlib
 import os
@@ -30,6 +31,38 @@ MANAGED_SHADOW_FILES = frozenset(
         "gateway_state.json",
     }
 )
+VERIFIABLE_SHADOW_FILES = frozenset({"config.yaml", ".env"})
+ROUTING_KEYS = ("model", "providers", "custom_providers", "_nemoclaw_upstream")
+MANAGED_CONFIG_PATHS = (
+    ("approvals", "mode"),
+    ("browser", "allow_unsafe_evaluate"),
+    ("browser", "restrict_evaluate"),
+    ("database", "temp_store"),
+    ("session_reset", "mode"),
+    ("session_reset", "at_hour"),
+    ("session_reset", "idle_minutes"),
+    ("session_reset", "notify"),
+    ("session_reset", "notify_exclude_platforms"),
+    ("session_reset", "bg_process_max_age_hours"),
+    ("display", "show_reasoning"),
+    ("display", "show_commentary"),
+    ("updates", "pre_update_backup"),
+    ("updates", "refresh_cua_driver"),
+)
+DASHBOARD_ENV_KEYS = frozenset(
+    {
+        "API_SERVER_HOST",
+        "API_SERVER_PORT",
+        "TAVILY_API_KEY",
+        "NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER",
+        "FIRECRAWL_GATEWAY_URL",
+        "OPENAI_AUDIO_GATEWAY_URL",
+        "BROWSER_USE_GATEWAY_URL",
+        "FAL_QUEUE_GATEWAY_URL",
+        "MODAL_GATEWAY_URL",
+    }
+)
+MAX_VERIFICATION_BYTES = 4 * 1024 * 1024
 LEGACY_PATHS = ("dashboard-home", "profiles/dashboard-home")
 DEFAULT_MAX_ENTRIES = 100_000
 DEFAULT_MAX_DEPTH = 64
@@ -155,6 +188,202 @@ def _entries(fd: int) -> list[str]:
         raise MigrationError(f"legacy dashboard state could not be listed: {exc.strerror}") from exc
 
 
+def _read_text(parent_fd: int, name: str, display: str) -> str | None:
+    fd = _open_file(parent_fd, name, display)
+    try:
+        size = os.fstat(fd).st_size
+        if size > MAX_VERIFICATION_BYTES:
+            return None
+        chunks: list[bytes] = []
+        remaining = size + 1
+        while remaining > 0:
+            chunk = os.read(fd, min(64 * 1024, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        if remaining == 0:
+            return None
+        return b"".join(chunks).decode("utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    finally:
+        os.close(fd)
+
+
+def _path_value(document: dict, path: tuple[str, ...]) -> tuple[bool, object]:
+    current: object = document
+    for segment in path:
+        if not isinstance(current, dict) or segment not in current:
+            return False, None
+        current = current[segment]
+    return True, current
+
+
+def _remove_path(document: dict, path: tuple[str, ...]) -> None:
+    parents: list[tuple[dict, str]] = []
+    current = document
+    for segment in path[:-1]:
+        child = current.get(segment)
+        if not isinstance(child, dict):
+            return
+        parents.append((current, segment))
+        current = child
+    current.pop(path[-1], None)
+    for parent, segment in reversed(parents):
+        child = parent.get(segment)
+        if isinstance(child, dict) and not child:
+            parent.pop(segment, None)
+
+
+def _is_subset_equal(candidate: object, reference: object) -> bool:
+    if isinstance(candidate, dict):
+        return isinstance(reference, dict) and all(
+            key in reference and _is_subset_equal(value, reference[key])
+            for key, value in candidate.items()
+        )
+    return candidate == reference
+
+
+def _verified_generated_config(
+    source_fd: int,
+    source_name: str,
+    source_display: str,
+    target_fd: int,
+    target_display: str,
+) -> bool:
+    source_text = _read_text(source_fd, source_name, source_display)
+    target_text = _read_text(target_fd, source_name, target_display)
+    if source_text is None or target_text is None:
+        return False
+    try:
+        import yaml
+
+        source = yaml.safe_load(source_text)
+        target = yaml.safe_load(target_text)
+    except Exception:
+        return False
+    if not isinstance(source, dict) or not isinstance(target, dict):
+        return False
+
+    for key in ROUTING_KEYS:
+        expected = copy.deepcopy(target.get(key))
+        if key == "model" and isinstance(expected, dict):
+            upstream = target.get("_nemoclaw_upstream")
+            if isinstance(upstream, dict) and isinstance(upstream.get("provider_key"), str):
+                expected["provider"] = upstream["provider_key"]
+        if source.get(key) != expected or (key in source) != (key in target):
+            return False
+
+    for path in MANAGED_CONFIG_PATHS:
+        present, value = _path_value(source, path)
+        if present:
+            target_present, target_value = _path_value(target, path)
+            if not target_present or value != target_value:
+                return False
+
+    source_web = source.get("web")
+    if isinstance(source_web, dict) and "backend" in source_web:
+        target_web = target.get("web")
+        if not isinstance(target_web, dict) or source_web["backend"] != target_web.get("backend"):
+            return False
+    version = source.get("_config_version")
+    if version is not None and not isinstance(version, int):
+        return False
+
+    source_residual = copy.deepcopy(source)
+    target_residual = copy.deepcopy(target)
+    for document in (source_residual, target_residual):
+        document.pop("_config_version", None)
+        for key in ROUTING_KEYS:
+            document.pop(key, None)
+        for path in MANAGED_CONFIG_PATHS:
+            _remove_path(document, path)
+        _remove_path(document, ("web", "backend"))
+    return _is_subset_equal(source_residual, target_residual)
+
+
+def _parse_env(text: str) -> dict[str, str] | None:
+    values: dict[str, str] = {}
+    for line in text.splitlines():
+        candidate = line.lstrip()
+        if candidate.startswith("export "):
+            candidate = candidate[len("export ") :].lstrip()
+        if not candidate or "=" not in candidate:
+            if candidate:
+                return None
+            continue
+        key, value = candidate.split("=", 1)
+        key = key.strip()
+        if not key or key in values:
+            return None
+        values[key] = value.strip()
+    return values
+
+
+def _verified_generated_env(
+    source_fd: int,
+    source_name: str,
+    source_display: str,
+    target_fd: int,
+    target_display: str,
+) -> bool:
+    source_text = _read_text(source_fd, source_name, source_display)
+    target_text = _read_text(target_fd, source_name, target_display)
+    if source_text is None or target_text is None:
+        return False
+    source = _parse_env(source_text)
+    target = _parse_env(target_text)
+    return (
+        source is not None
+        and target is not None
+        and all(key in DASHBOARD_ENV_KEYS and target.get(key) == value for key, value in source.items())
+    )
+
+
+def _is_verified_generated_shadow(
+    source_fd: int,
+    name: str,
+    source_display: str,
+    target_fd: int,
+    target_display: str,
+) -> bool:
+    if name == "config.yaml":
+        return _verified_generated_config(
+            source_fd, name, source_display, target_fd, target_display
+        )
+    if name == ".env":
+        return _verified_generated_env(source_fd, name, source_display, target_fd, target_display)
+    return False
+
+
+def _source_has_user_state(
+    source_fd: int,
+    source_display: str,
+    target_fd: int,
+    target_display: str,
+) -> bool:
+    for name in _entries(source_fd):
+        source_path = f"{source_display}/{name}"
+        source = _identity(source_fd, name, source_path)
+        if name in MANAGED_SHADOW_FILES:
+            if not stat.S_ISREG(source.mode):
+                raise MigrationError(f"generated shadow path {source_path} is not a regular file")
+            continue
+        if name in VERIFIABLE_SHADOW_FILES and stat.S_ISREG(source.mode):
+            target_path = f"{target_display}/{name}"
+            if _lookup(target_fd, name) is not None and _is_verified_generated_shadow(
+                source_fd,
+                name,
+                source_path,
+                target_fd,
+                target_path,
+            ):
+                continue
+        return True
+    return False
+
+
 def _lookup(parent_fd: int, name: str) -> os.stat_result | None:
     try:
         return os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
@@ -175,11 +404,26 @@ def _preflight_tree(
         target_path = f"{target_display}/{name}"
         source = _identity(source_fd, name, source_path)
         budget.consume(source, source_path, depth)
-        if source_display.rsplit("/", 1)[-1] == "dashboard-home" and name in MANAGED_SHADOW_FILES:
+        at_legacy_root = source_display.rsplit("/", 1)[-1] == "dashboard-home"
+        if at_legacy_root and name in MANAGED_SHADOW_FILES:
             if not stat.S_ISREG(source.mode):
                 raise MigrationError(f"generated shadow path {source_path} is not a regular file")
             continue
         target = _lookup(target_fd, name)
+        if (
+            at_legacy_root
+            and name in VERIFIABLE_SHADOW_FILES
+            and target is not None
+            and stat.S_ISREG(source.mode)
+            and _is_verified_generated_shadow(
+                source_fd,
+                name,
+                source_path,
+                target_fd,
+                target_path,
+            )
+        ):
+            continue
         if target is None:
             if stat.S_ISDIR(source.mode):
                 child = _open_dir(source_fd, name, source_path)
@@ -325,10 +569,26 @@ def _merge_tree(
         target_path = f"{target_display}/{name}"
         source = _identity(source_fd, name, source_path)
         budget.consume(source, source_path, depth)
-        if source_display.rsplit("/", 1)[-1] == "dashboard-home" and name in MANAGED_SHADOW_FILES:
+        at_legacy_root = source_display.rsplit("/", 1)[-1] == "dashboard-home"
+        if at_legacy_root and name in MANAGED_SHADOW_FILES:
             _remove_generated_file(source_fd, name, source_path)
             continue
         target = _lookup(target_fd, name)
+        if (
+            at_legacy_root
+            and name in VERIFIABLE_SHADOW_FILES
+            and target is not None
+            and stat.S_ISREG(source.mode)
+            and _is_verified_generated_shadow(
+                source_fd,
+                name,
+                source_path,
+                target_fd,
+                target_path,
+            )
+        ):
+            _remove_generated_file(source_fd, name, source_path)
+            continue
         if target is None:
             if stat.S_ISDIR(source.mode):
                 os.mkdir(name, stat.S_IMODE(source.mode), dir_fd=target_fd)
@@ -434,7 +694,12 @@ def migrate(
             populated = [
                 (name, fd)
                 for name, fd in sources
-                if any(entry not in MANAGED_SHADOW_FILES for entry in _entries(fd))
+                if _source_has_user_state(
+                    fd,
+                    f"{hermes_dir}/{name}",
+                    root_fd,
+                    hermes_dir,
+                )
             ]
             if len(populated) > 1:
                 raise MigrationError(
