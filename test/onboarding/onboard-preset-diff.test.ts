@@ -169,6 +169,7 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
     assert.deepEqual(finalSorted, [
       "brave",
       "brew",
+      "brew-balanced",
       "huggingface",
       "local-inference",
       "npm",
@@ -219,6 +220,7 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
     assert.deepEqual(payload.removedCalls, ["brave"]);
     assert.deepEqual(payload.finalApplied.slice().sort(), [
       "brew",
+      "brew-balanced",
       "huggingface",
       "my-internal-api",
       "npm",
