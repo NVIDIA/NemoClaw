@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { rebindLoopbackDashboardUrlPort } from "../../../dashboard/url";
-import { resolveContextWindowForModel } from "../../../inference/context-window";
+import {
+  reconcileContextWindowForModelChange,
+  resolveContextWindowForModel,
+} from "../../../inference/context-window";
 import type { SandboxMessagingPlan } from "../../../messaging";
 import { shouldManageDashboardForAgent } from "../../../onboard/dashboard-runtime";
 import { resolveHermesDashboardOnboardState } from "../../../onboard/hermes-dashboard";
@@ -98,11 +101,19 @@ export function prepareManagedRebuildProfileHandoff(input: {
     agent === "hermes" && resumeConfig.provider === "hermes-provider"
       ? (catalogHandoff.previousProfile.inference?.upstreamProvider ?? resumeConfig.provider)
       : resumeConfig.provider;
-  const currentOpenClawContextWindow =
+  const resolvedOpenClawContextWindow =
     agent === "openclaw"
       ? managedRebuildProfileDependencies.resolveContextWindowForModel(
           resumeConfig.provider,
           resumeConfig.model,
+        )
+      : null;
+  const currentOpenClawContextWindow =
+    agent === "openclaw"
+      ? reconcileContextWindowForModelChange(
+          resumeConfig.provider,
+          resolvedOpenClawContextWindow,
+          catalogHandoff.previousProfile.tuning.contextWindow,
         )
       : null;
   if (

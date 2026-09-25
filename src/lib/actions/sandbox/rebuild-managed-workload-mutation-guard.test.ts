@@ -59,12 +59,13 @@ describe("managed workload rebuild mutation guard", () => {
     expect(revalidateManagedWorkloadRebuildBeforeDelete("alpha", undefined)).toBeNull();
   });
 
-  it("stages compatible-endpoint OpenClaw reasoning authority before deletion", () => {
+  it("stages compatible-endpoint OpenClaw reasoning and qualified context before deletion", () => {
     const catalogHandoff = {
       agent: "openclaw",
       previousProfile: {
         inference: { model: "previous-model", upstreamProvider: "nvidia-prod" },
         dashboard: { agent: "openclaw", bindAddress: "127.0.0.1", wslExposure: false },
+        tuning: { contextWindow: 16_384 },
       },
     } as unknown as managedWorkload.ManagedWorkloadRebuildCatalogHandoff;
     const targetConfig = {
@@ -84,7 +85,7 @@ describe("managed workload rebuild mutation guard", () => {
       .spyOn(managedWorkload, "stageManagedWorkloadRebuildProfile")
       .mockReturnValue(handoff);
     vi.spyOn(managedRebuildProfileDependencies, "resolveContextWindowForModel").mockReturnValue(
-      131_072,
+      null,
     );
 
     expect(
@@ -112,7 +113,7 @@ describe("managed workload rebuild mutation guard", () => {
       }),
       {},
       {
-        openClawContextWindow: 131_072,
+        openClawContextWindow: 16_384,
         openClawReasoning: true,
         openClawReasoningEffort: "high",
       },

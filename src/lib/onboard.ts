@@ -2036,12 +2036,9 @@ async function handleRemoteProviderSelection(
     );
     const compatibleNoAuth =
       selected.key === "custom" &&
-      Boolean(
-        state.endpointUrl &&
-        compatibleEndpointGatewayRoute.gatewayReachableCompatibleEndpointUrl(
-          state.provider,
-          state.endpointUrl,
-        ) !== state.endpointUrl,
+      compatibleEndpointGatewayRoute.isLoopbackNoAuthCompatibleEndpointUrl(
+        state.provider,
+        state.endpointUrl,
       );
     const useNoAuth =
       compatibleNoAuth &&

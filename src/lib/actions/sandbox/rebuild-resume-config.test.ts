@@ -188,6 +188,38 @@ describe("getRebuildEndpointFromRegistry", () => {
 });
 
 describe("prepareRebuildResumeConfig", () => {
+  it("preserves a durable loopback no-auth route through rebuild configuration", () => {
+    vi.spyOn(onboardSession, "loadSession").mockReturnValue(null);
+
+    const config = prepareRebuildResumeConfig(
+      "alpha",
+      entry({
+        provider: "compatible-endpoint",
+        model: "nvidia/model",
+        endpointUrl: "http://localhost:12500/v1",
+        credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+        preferredInferenceApi: "openai-completions",
+      }),
+      "openclaw",
+      noopLog,
+      throwingBail,
+    );
+
+    expect(config).toMatchObject({
+      provider: "compatible-endpoint",
+      model: "nvidia/model",
+      endpointUrl: "http://localhost:12500/v1",
+      credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+      registryInferenceRoute: {
+        provider: "compatible-endpoint",
+        model: "nvidia/model",
+        endpointUrl: "http://localhost:12500/v1",
+        preferredInferenceApi: "openai-completions",
+        source: "registry",
+      },
+    });
+  });
+
   it("preserves a stale Hermes API marker so rebuild re-arms provider setup (#6289)", () => {
     vi.spyOn(onboardSession, "loadSession").mockReturnValue(null);
 
