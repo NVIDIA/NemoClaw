@@ -43,6 +43,7 @@ import {
   policyState,
   portableRetirementAuthority,
   processRecovery,
+  commandTransport,
   providerCommand,
   purgeRebuildModule,
   type RebuildFlowHarness,
@@ -603,7 +604,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
         sandboxVersion: expectedVersion,
         isStale: false,
         verificationFailed: false,
-        detectionMethod: "ssh-exec",
+        detectionMethod: "openshell-exec",
       };
     }
     Object.assign(currentSandboxEntry, overrides.entryUpdatesAfterVersionCheck ?? {});
@@ -927,16 +928,13 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       if (removed) policyRemovalObserved = true;
       return removed;
     });
-  const executeSandboxCommandSpy = vi
-    .spyOn(processRecovery, "executeSandboxCommand")
-    .mockImplementation(
-      overrides.executeSandboxCommand ?? (() => ({ status: 0, stdout: "doctor ok", stderr: "" })),
-    );
   const executeSandboxExecCommandSpy = vi
-    .spyOn(processRecovery, "executeSandboxExecCommand")
-    .mockImplementation(
-      overrides.executeSandboxExecCommand ??
-        (() => ({ status: 0, stdout: "doctor ok", stderr: "" })),
+    .spyOn(commandTransport, "executeSandboxExecCommand")
+    .mockImplementation(async () =>
+      (
+        overrides.executeSandboxExecCommand ??
+        (() => ({ status: 0, stdout: "doctor ok", stderr: "" }))
+      )(),
     );
   vi.spyOn(processRecovery, "beginOpenClawPostRestoreDoctor").mockImplementation(
     async (sandboxName, runtimeSelection) => ({
@@ -1135,7 +1133,6 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     checkAndRecoverSandboxProcessesSpy,
     restartSandboxGatewaySpy,
     errorSpy,
-    executeSandboxCommandSpy,
     executeSandboxExecCommandSpy,
     runOpenClawPostRestoreDoctorSpy,
     ensureMessagingHostForwardAfterRebuildSpy,

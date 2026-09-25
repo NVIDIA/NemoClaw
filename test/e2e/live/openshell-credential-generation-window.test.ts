@@ -19,6 +19,7 @@ import {
 import { MCP_BRIDGE_TEST_CREDENTIALS } from "../fixtures/mcp-bridge-credentials.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { hostAddressForSandbox } from "./mcp-bridge-sandbox.ts";
+import { prepareOwnedSandboxForOnboard } from "../fixtures/owned-sandbox-cleanup.ts";
 import {
   type FakeMcpHttpsServer,
   startCompatibleMock,
@@ -406,14 +407,7 @@ test(
     });
     const hostAddress = await hostAddressForSandbox(host);
     const endpointUrl = `http://${hostAddress}:${compatibleMock.port}/v1`;
-    await host.cleanupSandbox(SANDBOX_NAME, {
-      artifactName: "precleanup-credential-window-sandbox",
-      timeoutMs: 15 * 60_000,
-    });
-    cleanup.trackSandbox(host, SANDBOX_NAME, {
-      artifactName: "cleanup-credential-window-sandbox",
-      timeoutMs: 15 * 60_000,
-    });
+    await prepareOwnedSandboxForOnboard(host, sandbox, cleanup, SANDBOX_NAME);
     const onboard = await host.nemoclaw(
       ["onboard", "--non-interactive", "--yes", "--yes-i-accept-third-party-software"],
       {

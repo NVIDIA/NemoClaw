@@ -4,6 +4,7 @@
 import type { SpawnSyncOptions } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { resolveSandboxContainerOwner } from "../../domain/sandbox/container-owner";
 import { fingerprintOpenShellSandboxId } from "../../domain/sandbox/openshell-identity";
 import {
   listGatewayStateRoots,
@@ -174,6 +175,41 @@ export class RetainedSandboxInventoryError extends Error {
     );
     this.name = "RetainedSandboxInventoryError";
   }
+}
+
+/** Check removed sandboxes before uninstall discards their registry evidence. Names never authorize deletion. */
+export function findUnresolvedDockerSandboxes(
+  home: string,
+  selectedPort: number,
+  names: readonly string[],
+  registrations: Record<string, GatewayRegistryEntry>,
+  containerNames: readonly string[],
+  capture: (args: string[]) => RunResult,
+  captureOpenShell: (args: string[]) => RunResult,
+): string[] {
+  return names.filter((name) => {
+    const entry = registrations[name];
+    if (
+      !entry ||
+      entry.openshellDriver !== "docker" ||
+      typeof entry.lifecycleLiveIdentityFingerprint !== "string" ||
+      !/^[a-f0-9]{64}$/u.test(entry.lifecycleLiveIdentityFingerprint) ||
+      entry.pendingCreateIdentity !== undefined ||
+      entry.pendingRouteReservation !== undefined
+    ) {
+      return containerNames.some(
+        (container) => resolveSandboxContainerOwner(container, name, names) === container,
+      );
+    }
+    return !retainedDockerSandboxIsAbsent(
+      home,
+      selectedPort,
+      name,
+      entry,
+      capture,
+      captureOpenShell,
+    );
+  });
 }
 
 /** Establish absence without mistaking a known sibling's immutable identity for this sandbox. */

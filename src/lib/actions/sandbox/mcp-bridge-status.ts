@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import { type AgentDefinition, type AgentMcpAdapter, loadAgent } from "../../agent/defs";
 import {
   buildDeepAgentsMcpStatusCommand,
@@ -54,7 +55,7 @@ import {
   validateSandboxName,
 } from "./mcp-bridge-validation";
 import { normalizeRecordedMcpServerUrl } from "./mcp-bridge/recorded-url";
-import { executeSandboxCommand } from "./process-recovery";
+import { executeSandboxExecCommand } from "../../adapters/sandbox/command-transport";
 
 export interface McpBridgeJsonSummary {
   sandbox: string;
@@ -163,9 +164,15 @@ async function getAdapterRegistration(
       : adapter === "hermes-config"
         ? buildHermesMcpStatusCommand(entry, credentialRevision)
         : buildDeepAgentsMcpStatusCommand(entry, credentialRevision);
-  const result = await executeSandboxCommand(sandboxName, command, { runtimeSelection });
-  if (!result)
-    return credentialInspectionFailure ?? { registered: null, detail: "sandbox unreachable" };
+  let result: Awaited<ReturnType<typeof executeSandboxExecCommand>>;
+  try {
+    result = await executeSandboxExecCommand(sandboxName, command, undefined, {
+      runtimeSelection,
+    });
+  } catch (error) {
+    if (!(error instanceof SandboxCommandTransportError)) throw error;
+    return credentialInspectionFailure ?? { registered: null, detail: error.message };
+  }
   const unsafeProjection =
     adapter === "deepagents-config" ? parseUnsafeDeepAgentsMcpConfigResult(result) : null;
   if (unsafeProjection) {
@@ -202,7 +209,7 @@ export interface McpBridgeStatusOptions {
   allowCredentialProbeWithAdapterMismatch?: boolean;
   /**
    * Run the wire-level credential-resolution probe for each entry (#6379).
-   * Costs one SSH round trip plus an in-sandbox MCP initialize per entry, so
+   * Costs one native command plus an in-sandbox MCP initialize per entry, so
    * the dispatch layer enables it only where the operator asked for it.
    */
   probeCredentialResolution?: boolean;

@@ -376,6 +376,41 @@ it("qualifies ordered turns from the OpenClaw 2026.9.1 SQLite transcript store",
   expect(qualification.status, qualification.stderr).toBe(0);
 });
 
+it("identifies unsafe SQLite permissions without exposing transcript contents", () => {
+  const { qualification } = runEvidenceFixture({
+    after: {},
+    afterBaseline: (sessionRoot) => chmodSync(createSqliteSessionStore(sessionRoot, []), 0o644),
+    expectedTurns: 1,
+  });
+  expect(qualification.status).toBe(2);
+  expect(qualification.stderr).toContain('"reason":"sqlite_session_store_invalid"');
+  expect(qualification.stderr).toContain('"check":"metadata"');
+  expect(qualification.stderr).toContain('"privateMode":false');
+  expect(qualification.stderr).toContain('"ownerMatches":true');
+  expect(qualification.stdout).toBe("");
+  expect(qualification.stderr).not.toContain("openclaw-agent.sqlite");
+});
+
+it("distinguishes a missing transcript table from invalid SQLite permissions", () => {
+  const { qualification } = runEvidenceFixture({
+    after: {},
+    afterBaseline: (sessionRoot) => {
+      const database = new DatabaseSync(createSqliteSessionStore(sessionRoot, []));
+      try {
+        database.exec("DROP TABLE transcript_events");
+      } finally {
+        database.close();
+      }
+    },
+    expectedTurns: 1,
+  });
+  expect(qualification.status).toBe(2);
+  expect(qualification.stderr).toContain('"reason":"sqlite_session_store_invalid"');
+  expect(qualification.stderr).toContain('"check":"transcript_table"');
+  expect(qualification.stdout).toBe("");
+  expect(qualification.stderr).not.toContain("openclaw-agent.sqlite");
+});
+
 it("rejects a SQLite transcript store that appears after a JSONL-only baseline", () => {
   const { baseline, qualification } = runEvidenceFixture({
     before: { "session-a": [message("user", "prior input")] },
