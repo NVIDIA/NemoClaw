@@ -103,6 +103,56 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     expect(output).toContain("Restored 1 directories, 1 files");
   });
 
+  it("migrates a restored Hermes legacy dashboard home before reporting success", async () => {
+    f.getLatestBackupMock.mockReturnValue({
+      snapshotVersion: 4,
+      timestamp: "2026-06-15T00:00:00.000Z",
+      backupPath: "/tmp/backup-alpha",
+    });
+    f.getSandboxMock.mockReturnValue({ name: "alpha", agent: "hermes" });
+    f.restoreSandboxStateMock.mockReturnValue({
+      success: true,
+      restoredDirs: ["dashboard-home"],
+      restoredFiles: [],
+      failedDirs: [],
+      failedFiles: [],
+    });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await runSandboxSnapshot("alpha", { kind: "restore" });
+
+    expect(f.migrateHermesLegacyDashboardStateMock).toHaveBeenCalledWith("alpha");
+  });
+
+  it("fails a Hermes snapshot restore when legacy dashboard migration fails", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    f.getLatestBackupMock.mockReturnValue({
+      snapshotVersion: 4,
+      timestamp: "2026-06-15T00:00:00.000Z",
+      backupPath: "/tmp/backup-alpha",
+    });
+    f.getSandboxMock.mockReturnValue({ name: "alpha", agent: "hermes" });
+    f.restoreSandboxStateMock.mockReturnValue({
+      success: true,
+      restoredDirs: ["dashboard-home"],
+      restoredFiles: [],
+      failedDirs: [],
+      failedFiles: [],
+    });
+    f.migrateHermesLegacyDashboardStateMock.mockResolvedValue({
+      status: 1,
+      stdout: "",
+      stderr: "migration conflict",
+    });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(runSandboxSnapshot("alpha", { kind: "restore" })).rejects.toThrow();
+
+    expect(consoleError.mock.calls.flat().join("\n")).toContain(
+      "Hermes legacy dashboard-state migration did not complete",
+    );
+  });
+
   it.each([
     { label: "managed", fromDockerfile: undefined },
     { label: "custom-image", fromDockerfile: "/tmp/Dockerfile" },

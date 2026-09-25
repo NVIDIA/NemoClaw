@@ -53,10 +53,12 @@ function writeDashboardMigrationFile(file: string, value: string): void {
   fs.writeFileSync(file, value, { mode: 0o600 });
 }
 
-function runDashboardMigration(hermes: string) {
-  return spawnSync("python3", ["-I", dashboardStateMigrator, "--hermes-dir", hermes], {
-    encoding: "utf8",
-  });
+function runDashboardMigration(hermes: string, extraArgs: string[] = []) {
+  return spawnSync(
+    "python3",
+    ["-I", dashboardStateMigrator, "--hermes-dir", hermes, ...extraArgs],
+    { encoding: "utf8" },
+  );
 }
 
 function createLedger(filePath: string, value: string): void {
@@ -339,6 +341,8 @@ describe("Hermes legacy dashboard-state migration", () => {
     );
     writeDashboardMigrationFile(path.join(legacy, "config.yaml"), "model: shadow\n");
     writeDashboardMigrationFile(path.join(legacy, ".env"), "SHADOW=1\n");
+    writeDashboardMigrationFile(path.join(hermes, "config.yaml"), "model: shadow\n");
+    writeDashboardMigrationFile(path.join(hermes, ".env"), "SHADOW=1\n");
 
     const result = runDashboardMigration(hermes);
 
@@ -349,9 +353,39 @@ describe("Hermes legacy dashboard-state migration", () => {
       fs.readFileSync(path.join(hermes, "platforms/whatsapp/session/creds.json"), "utf8"),
     ).toBe('{"paired":true}\n');
     expect(fs.existsSync(legacy)).toBe(false);
-    expect(fs.existsSync(path.join(hermes, "config.yaml"))).toBe(false);
-    expect(fs.existsSync(path.join(hermes, ".env"))).toBe(false);
+    expect(fs.readFileSync(path.join(hermes, "config.yaml"), "utf8")).toBe("model: shadow\n");
+    expect(fs.readFileSync(path.join(hermes, ".env"), "utf8")).toBe("SHADOW=1\n");
     expect(runDashboardMigration(hermes).status).toBe(0);
+  });
+
+  it("refuses unverified legacy configuration without deleting either copy", () => {
+    const { hermes } = dashboardMigrationFixture();
+    const legacyConfig = path.join(hermes, "profiles/dashboard-home/config.yaml");
+    writeDashboardMigrationFile(path.join(hermes, "config.yaml"), "model: native\n");
+    writeDashboardMigrationFile(legacyConfig, "model: user-dashboard-edit\n");
+
+    const result = runDashboardMigration(hermes);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("conflicts with native state");
+    expect(fs.readFileSync(path.join(hermes, "config.yaml"), "utf8")).toBe("model: native\n");
+    expect(fs.readFileSync(legacyConfig, "utf8")).toBe("model: user-dashboard-edit\n");
+  });
+
+  it("refuses an over-limit legacy tree before moving any state", () => {
+    const { hermes } = dashboardMigrationFixture();
+    const legacy = path.join(hermes, "profiles/dashboard-home");
+    writeDashboardMigrationFile(path.join(legacy, "MEMORY.md"), "one\n");
+    writeDashboardMigrationFile(path.join(legacy, "USER.md"), "two\n");
+
+    const result = runDashboardMigration(hermes, ["--max-entries", "1"]);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("exceeds maximum entry count 1");
+    expect(fs.readFileSync(path.join(legacy, "MEMORY.md"), "utf8")).toBe("one\n");
+    expect(fs.readFileSync(path.join(legacy, "USER.md"), "utf8")).toBe("two\n");
+    expect(fs.existsSync(path.join(hermes, "MEMORY.md"))).toBe(false);
+    expect(fs.existsSync(path.join(hermes, "USER.md"))).toBe(false);
   });
 
   it("retires byte-identical legacy duplicates", () => {

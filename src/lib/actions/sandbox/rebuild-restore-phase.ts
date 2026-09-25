@@ -3,7 +3,6 @@
 
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import type { SandboxCommandResult } from "../../adapters/sandbox/command-transport";
-import { executeOrdinarySandboxCommand } from "../../adapters/sandbox/ordinary-command";
 import { G, R, YW } from "../../cli/terminal-style";
 import * as sandboxConfig from "../../sandbox/config";
 import { load as loadRegistry } from "../../state/registry/persistence";
@@ -17,6 +16,7 @@ import {
   promoteUnregisteredOpenClawBackupQuiesceToPostRestoreDoctor,
   type OpenClawPostRestoreDoctorWindow,
 } from "./runtime/openclaw-lifecycle";
+import { migrateHermesLegacyDashboardState } from "./snapshot-hermes-gateway-hint";
 import {
   applyHermesOperatorConfigSnapshot,
   type HermesOperatorConfigRestoreReport,
@@ -49,23 +49,6 @@ const EMPTY_HERMES_OPERATOR_CONFIG_RESTORE: HermesOperatorConfigRestoreReport = 
   restoredKeys: [],
   droppedKeys: [],
 };
-
-const HERMES_DASHBOARD_STATE_MIGRATION_COMMAND =
-  "/opt/hermes/.venv/bin/python3 -I /usr/local/lib/nemoclaw/migrate-hermes-dashboard-state.py --hermes-dir /sandbox/.hermes";
-
-function migrateHermesLegacyDashboardState(
-  sandboxName: string,
-  runtimeSelection?: OpenShellRuntimeSelection,
-): Promise<SandboxCommandResult | null> {
-  return executeOrdinarySandboxCommand(
-    sandboxName,
-    HERMES_DASHBOARD_STATE_MIGRATION_COMMAND,
-    30_000,
-    {
-      ...(runtimeSelection ? { runtimeSelection } : {}),
-    },
-  );
-}
 
 function restoreHermesOperatorConfig(
   sandboxName: string,

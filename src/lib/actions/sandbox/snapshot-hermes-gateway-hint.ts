@@ -1,6 +1,27 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
+import type { SandboxCommandResult } from "../../adapters/sandbox/command-transport";
+import { executeOrdinarySandboxCommand } from "../../adapters/sandbox/ordinary-command";
+
+export const HERMES_DASHBOARD_STATE_MIGRATION_COMMAND =
+  "/opt/hermes/.venv/bin/python3 -I /usr/local/lib/nemoclaw/migrate-hermes-dashboard-state.py --hermes-dir /sandbox/.hermes";
+
+export function migrateHermesLegacyDashboardState(
+  sandboxName: string,
+  runtimeSelection?: OpenShellRuntimeSelection,
+): Promise<SandboxCommandResult | null> {
+  return executeOrdinarySandboxCommand(
+    sandboxName,
+    HERMES_DASHBOARD_STATE_MIGRATION_COMMAND,
+    30_000,
+    {
+      ...(runtimeSelection ? { runtimeSelection } : {}),
+    },
+  );
+}
+
 interface SnapshotStateFile {
   path: string;
   strategy: "copy" | "sqlite_backup";

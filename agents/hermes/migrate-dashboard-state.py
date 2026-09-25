@@ -25,14 +25,15 @@ from dataclasses import dataclass
 MANAGED_SHADOW_FILES = frozenset(
     {
         ".config-hash",
-        ".env",
         ".env-hash",
         ".runtime-config-state.json",
-        "config.yaml",
         "gateway_state.json",
     }
 )
 LEGACY_PATHS = ("dashboard-home", "profiles/dashboard-home")
+DEFAULT_MAX_ENTRIES = 100_000
+DEFAULT_MAX_DEPTH = 64
+DEFAULT_MAX_BYTES = 10 * 1024 * 1024 * 1024
 
 
 class MigrationError(Exception):
@@ -45,6 +46,33 @@ class EntryIdentity:
     inode: int
     mode: int
     links: int
+    size: int
+
+
+@dataclass
+class MigrationBudget:
+    max_entries: int
+    max_depth: int
+    max_bytes: int
+    entries: int = 0
+    total_bytes: int = 0
+
+    def consume(self, entry: EntryIdentity, display: str, depth: int) -> None:
+        if depth > self.max_depth:
+            raise MigrationError(
+                f"legacy dashboard state exceeds maximum depth {self.max_depth} at {display}"
+            )
+        self.entries += 1
+        if self.entries > self.max_entries:
+            raise MigrationError(
+                f"legacy dashboard state exceeds maximum entry count {self.max_entries}"
+            )
+        if stat.S_ISREG(entry.mode):
+            self.total_bytes += entry.size
+            if self.total_bytes > self.max_bytes:
+                raise MigrationError(
+                    f"legacy dashboard state exceeds maximum byte count {self.max_bytes}"
+                )
 
 
 def _identity(parent_fd: int, name: str, display: str) -> EntryIdentity:
@@ -58,7 +86,13 @@ def _identity(parent_fd: int, name: str, display: str) -> EntryIdentity:
         raise MigrationError(f"{display} is not a regular file or directory")
     if stat.S_ISREG(current.st_mode) and current.st_nlink != 1:
         raise MigrationError(f"{display} has hard-link count {current.st_nlink}")
-    return EntryIdentity(current.st_dev, current.st_ino, current.st_mode, current.st_nlink)
+    return EntryIdentity(
+        current.st_dev,
+        current.st_ino,
+        current.st_mode,
+        current.st_nlink,
+        current.st_size,
+    )
 
 
 def _open_dir(parent_fd: int, name: str, display: str) -> int:
@@ -129,12 +163,18 @@ def _lookup(parent_fd: int, name: str) -> os.stat_result | None:
 
 
 def _preflight_tree(
-    source_fd: int, source_display: str, target_fd: int, target_display: str
+    source_fd: int,
+    source_display: str,
+    target_fd: int,
+    target_display: str,
+    budget: MigrationBudget,
+    depth: int,
 ) -> None:
     for name in _entries(source_fd):
         source_path = f"{source_display}/{name}"
         target_path = f"{target_display}/{name}"
         source = _identity(source_fd, name, source_path)
+        budget.consume(source, source_path, depth)
         if source_display.rsplit("/", 1)[-1] == "dashboard-home" and name in MANAGED_SHADOW_FILES:
             if not stat.S_ISREG(source.mode):
                 raise MigrationError(f"generated shadow path {source_path} is not a regular file")
@@ -144,7 +184,7 @@ def _preflight_tree(
             if stat.S_ISDIR(source.mode):
                 child = _open_dir(source_fd, name, source_path)
                 try:
-                    _preflight_tree(child, source_path, child, source_path)
+                    _preflight_tree(child, source_path, child, source_path, budget, depth + 1)
                 finally:
                     os.close(child)
             continue
@@ -154,7 +194,14 @@ def _preflight_tree(
             try:
                 target_child = _open_dir(target_fd, name, target_path)
                 try:
-                    _preflight_tree(source_child, source_path, target_child, target_path)
+                    _preflight_tree(
+                        source_child,
+                        source_path,
+                        target_child,
+                        target_path,
+                        budget,
+                        depth + 1,
+                    )
                 finally:
                     os.close(target_child)
             finally:
@@ -265,11 +312,19 @@ def _remove_generated_file(parent_fd: int, name: str, display: str) -> None:
     _unlink_verified(parent_fd, name, display)
 
 
-def _merge_tree(source_fd: int, source_display: str, target_fd: int, target_display: str) -> None:
+def _merge_tree(
+    source_fd: int,
+    source_display: str,
+    target_fd: int,
+    target_display: str,
+    budget: MigrationBudget,
+    depth: int,
+) -> None:
     for name in _entries(source_fd):
         source_path = f"{source_display}/{name}"
         target_path = f"{target_display}/{name}"
         source = _identity(source_fd, name, source_path)
+        budget.consume(source, source_path, depth)
         if source_display.rsplit("/", 1)[-1] == "dashboard-home" and name in MANAGED_SHADOW_FILES:
             _remove_generated_file(source_fd, name, source_path)
             continue
@@ -286,7 +341,14 @@ def _merge_tree(source_fd: int, source_display: str, target_fd: int, target_disp
                             raise MigrationError(f"{source_path} changed before migration")
                         if not _matches(created, os.fstat(target_child)):
                             raise MigrationError(f"{target_path} changed while it was created")
-                        _merge_tree(source_child, source_path, target_child, target_path)
+                        _merge_tree(
+                            source_child,
+                            source_path,
+                            target_child,
+                            target_path,
+                            budget,
+                            depth + 1,
+                        )
                         os.fchmod(target_child, stat.S_IMODE(source.mode))
                     finally:
                         os.close(target_child)
@@ -302,7 +364,14 @@ def _merge_tree(source_fd: int, source_display: str, target_fd: int, target_disp
             try:
                 target_child = _open_dir(target_fd, name, target_path)
                 try:
-                    _merge_tree(source_child, source_path, target_child, target_path)
+                    _merge_tree(
+                        source_child,
+                        source_path,
+                        target_child,
+                        target_path,
+                        budget,
+                        depth + 1,
+                    )
                 finally:
                     os.close(target_child)
             finally:
@@ -336,7 +405,13 @@ def _open_relative_directory(root_fd: int, relative: str) -> int | None:
         raise
 
 
-def migrate(hermes_dir: str) -> bool:
+def migrate(
+    hermes_dir: str,
+    *,
+    max_entries: int = DEFAULT_MAX_ENTRIES,
+    max_depth: int = DEFAULT_MAX_DEPTH,
+    max_bytes: int = DEFAULT_MAX_BYTES,
+) -> bool:
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
     flags |= getattr(os, "O_CLOEXEC", 0)
     try:
@@ -361,9 +436,26 @@ def migrate(hermes_dir: str) -> bool:
                 raise MigrationError(
                     "both legacy dashboard homes contain state; refusing an ambiguous merge"
                 )
+            preflight_budget = MigrationBudget(max_entries, max_depth, max_bytes)
             for relative, source_fd in sources:
-                _preflight_tree(source_fd, f"{hermes_dir}/{relative}", root_fd, hermes_dir)
-                _merge_tree(source_fd, f"{hermes_dir}/{relative}", root_fd, hermes_dir)
+                _preflight_tree(
+                    source_fd,
+                    f"{hermes_dir}/{relative}",
+                    root_fd,
+                    hermes_dir,
+                    preflight_budget,
+                    1,
+                )
+            merge_budget = MigrationBudget(max_entries, max_depth, max_bytes)
+            for relative, source_fd in sources:
+                _merge_tree(
+                    source_fd,
+                    f"{hermes_dir}/{relative}",
+                    root_fd,
+                    hermes_dir,
+                    merge_budget,
+                    1,
+                )
                 parent_relative, name = (
                     relative.rsplit("/", 1) if "/" in relative else ("", relative)
                 )
@@ -390,9 +482,19 @@ def migrate(hermes_dir: str) -> bool:
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--hermes-dir", default="/sandbox/.hermes")
+    parser.add_argument("--max-entries", type=int, default=DEFAULT_MAX_ENTRIES)
+    parser.add_argument("--max-depth", type=int, default=DEFAULT_MAX_DEPTH)
+    parser.add_argument("--max-bytes", type=int, default=DEFAULT_MAX_BYTES)
     args = parser.parse_args(argv[1:])
+    if args.max_entries < 1 or args.max_depth < 1 or args.max_bytes < 0:
+        parser.error("migration limits must be positive (max-bytes may be zero)")
     try:
-        changed = migrate(args.hermes_dir)
+        changed = migrate(
+            args.hermes_dir,
+            max_entries=args.max_entries,
+            max_depth=args.max_depth,
+            max_bytes=args.max_bytes,
+        )
     except MigrationError as exc:
         print(
             f"[SECURITY] Refusing legacy Hermes dashboard-state migration: {exc}",
