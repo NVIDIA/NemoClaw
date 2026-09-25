@@ -517,7 +517,7 @@ describe("trusted npm audit workflow (#5896)", () => {
     );
     expect(
       config.archivePackages.some(
-        ({ packageSpec }) => packageSpec === "@tencent-weixin/openclaw-weixin@2.4.3",
+        ({ packageSpec }) => packageSpec === "@tencent-weixin/openclaw-weixin@2.4.9",
       ),
     ).toBe(true);
     expect(config.lockedGraphs).toContainEqual(
@@ -525,7 +525,7 @@ describe("trusted npm audit workflow (#5896)", () => {
         id: "wechat-runtime",
         inputValidation: "wechat-runtime",
         installMode: "legacy-peer-deps",
-        lockSha256: "09a91cabd559ed2294fb263602009f9f79259e765281992e56961eed0e8c1ed9",
+        lockSha256: "84f2b731e9ffe731d29c28ebbe795116217771971c729b577df1a8816296f9b8",
         severityThreshold: "low",
         signatureAudit: "retry-download-failures",
       }),

@@ -298,7 +298,7 @@ describe("ManifestCompiler", () => {
           kind: "package-install",
           value: {
             manager: "openclaw-plugin",
-            spec: "npm:@tencent-weixin/openclaw-weixin@2.4.3",
+            spec: "npm:@tencent-weixin/openclaw-weixin@2.4.9",
             pin: true,
           },
         }),
@@ -499,6 +499,7 @@ describe("ManifestCompiler", () => {
   it.each([
     ["MSTEAMS_APP_ID", "teams-app\nEVIL=1"],
     ["MSTEAMS_TENANT_ID", "teams-tenant\nEVIL=1"],
+    ["MSTEAMS_APP_PASSWORD", "teams-password\r\nEVIL=1"],
     ["TEAMS_ALLOWED_USERS", "user-one\nEVIL=1"],
   ] as const)("rejects unsafe Microsoft Teams Hermes env value %s", async (envKey, value) => {
     await expect(
@@ -1013,6 +1014,45 @@ describe("ManifestCompiler", () => {
       },
     );
   });
+
+  it.each([
+    ["openclaw", "onboard", true, true, "\n"],
+    ["openclaw", "add-channel", true, true, "\r\n"],
+    ["hermes", "onboard", false, true, "\r\n"],
+    ["hermes", "add-channel", false, true, "\n"],
+    ["openclaw", "onboard", false, false, "\n"],
+  ] as const)(
+    "accepts formatted Google Chat JSON for %s %s interactive=%s (#10383)",
+    async (agent, workflow, isInteractive, active, eol) => {
+      const secret = "synthetic-googlechat-private-key";
+      const account = { client_email: "bot@example.test", private_key: `${secret}\nkey-material` };
+      const serviceAccountJson = JSON.stringify(account, null, 2).replaceAll("\n", eol);
+      await withEnv(
+        {
+          GOOGLECHAT_SERVICE_ACCOUNT: serviceAccountJson,
+          GOOGLECHAT_AUDIENCE: "https://chat.test/googlechat",
+        },
+        async () => {
+          const plan = await compiler().compile({
+            sandboxName: "demo",
+            agent,
+            workflow,
+            isInteractive,
+            configuredChannels: ["googlechat"],
+          });
+          expect(plan.channels[0]?.active).toBe(active);
+          expect(plan.channels[0]?.inputs).toContainEqual(
+            expect.objectContaining({
+              inputId: "serviceAccount",
+              kind: "secret",
+              credentialAvailable: true,
+            }),
+          );
+          expect(JSON.stringify(plan)).not.toContain(secret);
+        },
+      );
+    },
+  );
 
   it("reads config default values when env keys are unset", async () => {
     const customManifest = {

@@ -83,6 +83,7 @@ export type StatusFlowHarnessOptions = {
     | Error
     | (() => PortableAgentReceiptDisposition | Error);
   registryEntry?: "present" | "missing";
+  publishedAcrossGatewayRoots?: boolean;
   withMcpLifecycleLock?: WithMcpLifecycleLock;
   lookup?: SandboxGatewayState;
   lookupState?: "present" | "missing";
@@ -137,6 +138,7 @@ export function createStatusFlowHarness(options: StatusFlowHarnessOptions = {}):
   const policy = requireDist("../../src/lib/policy/index.js");
   const sandboxVersion = requireDist("../../src/lib/sandbox/version.js");
   const registry = requireDist("../../src/lib/state/registry.js");
+  const crossPortRegistry = requireDist("../../src/lib/state/registry/cross-port.js");
   const sandboxSession = requireDist("../../src/lib/state/sandbox-session.js");
 
   const lookup: SandboxGatewayState =
@@ -184,6 +186,17 @@ export function createStatusFlowHarness(options: StatusFlowHarnessOptions = {}):
 
   vi.spyOn(registry, "getSandbox").mockReturnValue(
     options.registryEntry === "missing" ? null : sandboxEntry,
+  );
+  vi.spyOn(crossPortRegistry, "findSandboxAcrossGatewayRoots").mockReturnValue(
+    options.registryEntry === "missing" && !options.publishedAcrossGatewayRoots
+      ? null
+      : sandboxEntry
+        ? {
+            entry: sandboxEntry,
+            gatewayPort: null,
+            registryFile: "/test/sandboxes.json",
+          }
+        : null,
   );
   const removeSandboxSpy = vi.spyOn(registry, "removeSandbox").mockImplementation(() => undefined);
   vi.spyOn(statusPreflight, "getSandboxStatusPreflight").mockResolvedValue(
@@ -250,6 +263,8 @@ export function createStatusFlowHarness(options: StatusFlowHarnessOptions = {}):
       containerName: "openshell-alpha",
       health: "unhealthy",
       paused: false,
+      running: true,
+      containerAbsenceConfirmed: false,
     });
   const isSandboxGatewayRunningForStatusSpy = vi
     .spyOn(statusProcessRecovery, "isSandboxGatewayRunningForStatus")
