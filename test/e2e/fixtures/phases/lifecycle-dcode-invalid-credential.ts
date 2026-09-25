@@ -158,7 +158,9 @@ async function managedContainerIds(
       "-a",
       "--no-trunc",
       "--filter",
-      "label=openshell.ai/managed-by=openshell",
+      deps.runtimeProvider.id === "podman"
+        ? "label=openshell.managed=true"
+        : "label=openshell.ai/managed-by=openshell",
       "--filter",
       `label=openshell.ai/sandbox-name=${sandboxName}`,
       "--format",

@@ -64,7 +64,7 @@ export function wechatReplacementGraphFixture(repoRoot: string): LockedGraphFixt
   };
   const lock = Buffer.from(JSON.stringify(lockValue));
   const integrity =
-    "sha512-dPQbidUNWigC6V10vGW4i+GLH09x+6zUhafZRjuxkJ9GDu8o62WBsnUTojp4KqUH756hz+t2v9khiCRSi0dBDw==";
+    "sha512-SfaYehR1Cwq2VV5HxJBp9sVilMms420VfZlMbF4YjRbWomr5+GxfXp9HkeU6y5TbnOc4Ysq0qPw1yBvJwbenBA==";
   return {
     graph: {
       directory: "agents/openclaw/wechat-runtime",
@@ -79,9 +79,9 @@ export function wechatReplacementGraphFixture(repoRoot: string): LockedGraphFixt
         integrity,
         label: "WeChat fixture",
         lockSha256: createHash("sha256").update(lock).digest("hex"),
-        packageSpec: "@tencent-weixin/openclaw-weixin@2.4.3",
+        packageSpec: "@tencent-weixin/openclaw-weixin@2.4.9",
         tarballUrl:
-          "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.3.tgz",
+          "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.9.tgz",
       },
       severityThreshold: "low",
       signatureAudit: "retry-download-failures",

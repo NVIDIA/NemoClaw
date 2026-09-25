@@ -1,0 +1,52 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+preset:
+  name: brew-balanced
+  # Open uses the unrestricted brew preset.
+  # The brew binary is preinstalled in the sandbox base image (#3913), so this
+  # preset only needs to grant the network egress used by `brew install` to
+  # fetch formulae and bottles.
+  description: "Homebrew package access with GET and HEAD only for raw GitHub content (Balanced)"
+
+network_policies:
+  brew-balanced:
+    name: brew-balanced
+    endpoints:
+      - host: formulae.brew.sh
+        port: 443
+        access: full
+        tls: skip
+      - host: github.com
+        port: 443
+        access: full
+        # Keep github.com on automatic TLS handling so this preset composes
+        # with the agent baselines and narrower inspected routes under
+        # OpenShell 0.0.99. System git is excluded below; the
+        # remaining curl/Homebrew clients trust the sandbox CA.
+      - host: ghcr.io
+        port: 443
+        access: full
+        tls: skip
+      - host: pkg-containers.githubusercontent.com
+        port: 443
+        access: full
+        tls: skip
+      - host: objects.githubusercontent.com
+        port: 443
+        access: full
+        tls: skip
+      - host: raw.githubusercontent.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: HEAD, path: "/**" }
+    # System git is intentionally excluded; git-based Homebrew operations require the github preset.
+    binaries:
+      - { path: /usr/bin/curl }
+      - { path: /usr/local/bin/brew }
+      - { path: /home/linuxbrew/.linuxbrew/bin/brew }
+      - { path: /home/linuxbrew/.linuxbrew/bin/* }
+      - { path: /home/linuxbrew/.linuxbrew/Homebrew/bin/* }

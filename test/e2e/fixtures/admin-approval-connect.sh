@@ -29,7 +29,9 @@ emit_admin_diagnostic() {
   python3 - "$1" <<'PY_ADMIN_DIAGNOSTIC'
 import re, sys
 from pathlib import Path
-try: raw=Path(sys.argv[1]).read_text(encoding='utf-8', errors='replace')[:65536]
+try:
+    with Path(sys.argv[1]).open('rb') as stream:
+        raw=stream.read(65536).decode('utf-8', errors='replace')
 except FileNotFoundError: raw=''
 checks=(
     ('timeout', r'timed?\s*out|timeout'),
@@ -42,6 +44,31 @@ checks=(
 label=next((name for name, pattern in checks if re.search(pattern, raw, re.IGNORECASE)), 'command-failed' if raw.strip() else 'no-output')
 print(f'ADMIN_DIAGNOSTIC={label}', file=sys.stderr)
 PY_ADMIN_DIAGNOSTIC
+}
+run_with_bounded_output() {
+  local output_path="$1"
+  local -a command_status
+  shift
+  set +e
+  "$@" 2>&1 | python3 -c '
+import sys
+
+remaining = 65536
+while True:
+    chunk = sys.stdin.buffer.read(65536)
+    if not chunk:
+        break
+    if remaining:
+        kept = chunk[:remaining]
+        sys.stdout.buffer.write(kept)
+        remaining -= len(kept)
+' >"$output_path"
+  command_status=("${PIPESTATUS[@]}")
+  set -e
+  if [ "${command_status[0]}" -ne 0 ]; then
+    return "${command_status[0]}"
+  fi
+  return "${command_status[1]}"
 }
 devices_json="$(mktemp)"
 devices_err="$(mktemp)"
@@ -70,12 +97,12 @@ request_id="$(cat "$request_id_file")"
   exit 26
 }
 echo "ISSUE_5324_STAGE=explicit-admin-approval"
-if ! openclaw devices approve "$request_id" >"$approve_output" 2>&1; then
+if ! run_with_bounded_output "$approve_output" openclaw devices approve "$request_id"; then
   echo "ADMIN_APPROVE_FAILED" >&2
   emit_admin_diagnostic "$approve_output"
   exit 27
 fi
-if ! openclaw cron add --name "$cron_name" --every 2h --agent main --session isolated --message "hello" >"$cron_output" 2>&1; then
+if ! run_with_bounded_output "$cron_output" openclaw cron add --name "$cron_name" --every 2h --agent main --session isolated --message "hello"; then
   echo "ADMIN_CRON_RETRY_FAILED" >&2
   emit_admin_diagnostic "$cron_output"
   exit 28
@@ -106,7 +133,7 @@ cron_id="$(cat "$cron_id_file")"
   exit 28
 }
 echo "ISSUE_5324_STAGE=cron-run"
-if ! openclaw cron run "$cron_id" >"$cron_run_output" 2>&1; then
+if ! run_with_bounded_output "$cron_run_output" openclaw cron run "$cron_id"; then
   echo "ADMIN_CRON_RUN_FAILED" >&2
   emit_admin_diagnostic "$cron_run_output"
   exit 29

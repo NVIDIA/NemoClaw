@@ -3,12 +3,14 @@
 
 import path from "node:path";
 
-import {
-  gatewayIdForStateDir,
-  NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
-} from "../docker-driver-gateway-config";
 import { readDockerDriverGatewayProcessEnvironment } from "../docker-driver-gateway-process-identity";
 import { HOST_GATEWAY_PGREP_PATTERN } from "../host-gateway-process";
+import {
+  NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
+  processEnvironmentUsesSelectedGatewayState,
+} from "./process-environment";
+
+export { processEnvironmentUsesSelectedGatewayState } from "./process-environment";
 
 interface ProcessScanResult {
   stdout: string;
@@ -33,21 +35,6 @@ interface DockerDriverGatewayStateOwnershipDeps {
 export interface DockerDriverGatewayStateOwnership {
   isDockerDriverGatewayPidUsingSelectedState(pid: number): boolean;
   isDockerDriverGatewayStateInUse(): boolean;
-}
-
-export function processEnvironmentUsesSelectedGatewayState(
-  processEnv: Readonly<Record<string, string>>,
-  stateDir: string,
-): boolean {
-  const selectedNamespace = gatewayIdForStateDir(stateDir);
-  const namespace = processEnv[NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV];
-  const databaseUrl = processEnv.OPENSHELL_DB_URL;
-  const selectedDatabaseUrl = `sqlite:${path.join(stateDir, "openshell.db")}`;
-  if (databaseUrl !== undefined && databaseUrl !== selectedDatabaseUrl) return false;
-  if (namespace === selectedNamespace) return true;
-  return (
-    (namespace === undefined || namespace === "default") && databaseUrl === selectedDatabaseUrl
-  );
 }
 
 function readProcessEnvironmentFromPs(
