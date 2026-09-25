@@ -163,6 +163,50 @@ function runRootDashboardRecovery() {
   }
 }
 
+function runRootDashboardLaunchReadinessFailure() {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-dashboard-permissions-"));
+  const scriptPath = path.join(tmpDir, "run.sh");
+  const hermesHome = path.join(tmpDir, ".hermes");
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+  fs.mkdirSync(hermesHome, { recursive: true, mode: 0o770 });
+  fs.writeFileSync(
+    scriptPath,
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      'id() { if [ "${1:-}" = "-u" ]; then printf "0\\n"; else command id "$@"; fi; }',
+      "build_hermes_dashboard_args() { return 0; }",
+      "prepare_restricted_log() { return 0; }",
+      `launch_hermes_dashboard_process() { chmod 0700 ${shellQuote(hermesHome)}; DASHBOARD_PID=22; }`,
+      "ensure_dashboard_log_stream() { return 1; }",
+      `ensure_hermes_config_root_mode() { chmod 3770 ${shellQuote(hermesHome)}; }`,
+      "sleep() { :; }",
+      extractShellFunctionFromSource(
+        src,
+        "restore_hermes_config_permissions_after_dashboard_start",
+      ),
+      extractShellFunctionFromSource(src, "start_hermes_dashboard_sandbox_user"),
+      "DASHBOARD_INTERNAL_PORT=15173",
+      "status=0",
+      "start_hermes_dashboard_sandbox_user || status=$?",
+      'test "$status" -eq 1',
+      `test -n "$(find ${shellQuote(hermesHome)} -prune -perm 3770 -print)"`,
+      "printf 'status=%s mode=3770\\n' \"$status\"",
+    ].join("\n"),
+    { mode: 0o700 },
+  );
+
+  try {
+    return spawnSync("bash", [scriptPath], {
+      encoding: "utf-8",
+      timeout: 5000,
+      env: process.env,
+    });
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
 describe("agents/hermes/start.sh config integrity", () => {
   it("verifies the strict Hermes hash through the sandbox identity in root mode", () => {
     const result = runHermesConfigIntegrityVerifierAsRoot();
@@ -188,5 +232,12 @@ describe("agents/hermes/start.sh config integrity", () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout.trim()).toBe("3770");
+  });
+
+  it("restores shared Hermes-home access before root-mode dashboard readiness", () => {
+    const result = runRootDashboardLaunchReadinessFailure();
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim()).toBe("status=1 mode=3770");
   });
 });

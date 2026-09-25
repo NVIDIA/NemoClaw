@@ -2102,6 +2102,7 @@ start_hermes_dashboard_sandbox_user() {
   build_hermes_dashboard_args || return 1
   prepare_restricted_log /tmp/dashboard.log sandbox:sandbox 600 || return 1
   launch_hermes_dashboard_process sandbox || return 1
+  restore_hermes_config_permissions_after_dashboard_start || return 1
   echo "[gateway] hermes dashboard launched as 'sandbox' user (pid $DASHBOARD_PID)" >&2
   ensure_dashboard_log_stream || return 1
   if ! hermes_capture_tracked_role dashboard "$DASHBOARD_PID" sandbox "$DASHBOARD_INTERNAL_PORT"; then

@@ -29,6 +29,7 @@ export interface AgentConfigDependencies {
 
 export interface SandboxCredentialRoute {
   credentialEnv?: string | null;
+  endpointUrl?: string | null;
   preferredInferenceApi?: string | null;
   provider?: string | null;
 }
@@ -61,6 +62,15 @@ export function resolveSandboxCredentialProviderType(
     resolveInferenceProviderType: (provider: string, preferredApi?: string | null) => string;
   };
   return resolveInferenceProviderType(providerName, preferredInferenceApi);
+}
+
+export function resolveSandboxCredentialProviderEndpoint(
+  providerName: string,
+  endpointUrl: string | null,
+): string | null {
+  const { gatewayReachableCompatibleEndpointUrl } =
+    require("../onboard/inference-providers/compatible-endpoint-gateway-route") as typeof import("../onboard/inference-providers/compatible-endpoint-gateway-route");
+  return gatewayReachableCompatibleEndpointUrl(providerName, endpointUrl) ?? null;
 }
 
 function requireCanonicalConfigDir(value: string): string {

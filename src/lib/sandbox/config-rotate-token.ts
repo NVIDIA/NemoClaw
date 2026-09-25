@@ -3,7 +3,10 @@
 
 import { assertMcpCredentialBoundaryRuntimeVersion } from "../actions/sandbox/mcp-bridge-validation";
 import type { Session } from "../state/onboard-session";
-import { resolveSandboxCredentialProviderType } from "./agent-config";
+import {
+  resolveSandboxCredentialProviderEndpoint,
+  resolveSandboxCredentialProviderType,
+} from "./agent-config";
 
 export interface RotateTokenOpts {
   fromEnv?: string | null;
@@ -13,6 +16,7 @@ export interface RotateTokenOpts {
 type RotateTokenFailure = (lines: string | readonly string[], exitCode?: number) => never;
 
 type RotateTokenSession = Pick<Session, "credentialEnv" | "provider" | "sandboxName"> & {
+  readonly endpointUrl?: string | null;
   readonly providerType?: string;
 };
 
@@ -51,6 +55,7 @@ export async function rotateSandboxToken(
   let credentialEnv: string;
   let providerName: string;
   let providerType: string;
+  let providerEndpointUrl: string | null = null;
   if (registeredRoute) {
     if (!registeredProvider) {
       deps.fail([
@@ -71,6 +76,7 @@ export async function rotateSandboxToken(
       registeredProvider,
       registeredRoute?.preferredInferenceApi ?? null,
     );
+    providerEndpointUrl = nonEmptyString(registeredRoute?.endpointUrl);
   } else {
     if (!session || !session.credentialEnv) {
       deps.fail([
@@ -86,6 +92,7 @@ export async function rotateSandboxToken(
     credentialEnv = session.credentialEnv;
     providerName = session.provider || "inference";
     providerType = session.providerType || "generic";
+    providerEndpointUrl = nonEmptyString(session.endpointUrl);
   }
 
   const target = deps.resolveAgentConfig(sandboxName);
@@ -146,25 +153,37 @@ export async function rotateSandboxToken(
   );
 
   if (result.status !== 0) {
-    const createResult = deps.runOpenshellCommand(
-      binary,
-      [
-        "provider",
-        "create",
-        "--name",
+    const createArgs = [
+      "provider",
+      "create",
+      "--name",
+      providerName,
+      "--type",
+      providerType,
+      "--credential",
+      credentialEnv,
+    ];
+    if (providerType === "openai" || providerType === "anthropic") {
+      const endpointUrl = resolveSandboxCredentialProviderEndpoint(
         providerName,
-        "--type",
-        providerType,
-        "--credential",
-        credentialEnv,
-      ],
-      {
-        env: { [credentialEnv]: newToken },
-        ignoreError: true,
-        errorLine: console.error,
-        exit: (code: number) => process.exit(code),
-      },
-    );
+        providerEndpointUrl,
+      );
+      if (!endpointUrl) {
+        deps.fail(
+          `  Cannot recreate provider '${providerName}' without its endpoint. Re-run onboarding.`,
+        );
+      }
+      createArgs.push(
+        "--config",
+        `${providerType === "anthropic" ? "ANTHROPIC_BASE_URL" : "OPENAI_BASE_URL"}=${endpointUrl}`,
+      );
+    }
+    const createResult = deps.runOpenshellCommand(binary, createArgs, {
+      env: { [credentialEnv]: newToken },
+      ignoreError: true,
+      errorLine: console.error,
+      exit: (code: number) => process.exit(code),
+    });
     if (createResult.status !== 0)
       deps.fail("  Failed to update provider. You may need to re-onboard.");
   }
