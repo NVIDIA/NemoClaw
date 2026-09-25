@@ -249,7 +249,7 @@ Runtime state, such as logs, memory, platform sessions, and the SQLite state dat
 Hermes state lives in the sandbox's persistent state volume, not in the container image alone.
 Normal restarts preserve that state.
 Rebuilds and upgrades use NemoClaw's snapshot flow to preserve manifest-defined Hermes state, including `SOUL.md`, user-created named profiles, the SQLite database behind `.hermes/state.db`, and the default kanban board in `.hermes/kanban.db`.
-Rebuild restore removes the retired reserved `.hermes/profiles/dashboard-home/` directory while preserving every other named profile.
+Rebuild restore treats `.hermes/profiles/` as native agent-owned state and preserves every named profile, including an older `.hermes/profiles/dashboard-home/`; the dashboard no longer reads that reserved profile.
 Named boards, attachments, worker logs, scratch workspaces under `.hermes/kanban/`, and external directory or worktree targets are not included in the kanban backup.
 
 Running `$$nemoclaw <name> destroy` deletes the sandbox and its persistent state volume.

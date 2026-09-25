@@ -66,7 +66,7 @@ A rebuild does not repair the damaged tree, because each rebuild restores the tr
 <AgentOnly variant="hermes">
 Hermes snapshots include `SOUL.md`, user-created named profiles under `.hermes/profiles/`, the SQLite database behind `.hermes/state.db`, and the default kanban board in `.hermes/kanban.db`.
 The gateway, CLI, TUI, and Web Dashboard share the native `.hermes/config.yaml`; snapshots exclude that NemoClaw-managed file and `.hermes/.env`.
-Rebuild restore removes the retired reserved `.hermes/profiles/dashboard-home/` directory while preserving every other named profile.
+Rebuild restore treats `.hermes/profiles/` as native agent-owned state and preserves every named profile, including an older `.hermes/profiles/dashboard-home/`; the dashboard no longer reads that reserved profile.
 The default-profile snapshot also includes cron execution history in `.hermes/runtime/cron-executions.db` and Discord replay state in `.hermes/gateway/discord_message_recovery.db`.
 NemoClaw captures cron job definitions from `.hermes/cron` and user-authored cron scripts from `.hermes/scripts` as directory state.
 NemoClaw uses SQLite's online backup API and restores these databases through SQLite instead of copying live raw database files.
@@ -235,7 +235,7 @@ If an independent Hermes operator drain exists, recovery leaves it active.
 After recovery succeeds, rerun `rebuild` with the same replacement settings so NemoClaw can retire the replacement journal.
 </Warning>
 
-After a rebuild restores `profiles`, NemoClaw removes only the retired reserved `profiles/dashboard-home` directory before it reports the restore as complete. If that cleanup fails, NemoClaw marks the restore incomplete instead of reporting success.
+After a rebuild restores `profiles`, NemoClaw preserves that native agent-owned directory unchanged. An older `profiles/dashboard-home` profile is inactive compatibility state, but rebuild does not delete it. If it contains legacy WhatsApp credentials, use `$$nemoclaw <sandbox> channels remove whatsapp` to clear the compatibility sessions before pairing again.
 
 </AgentOnly>
 <AgentOnly variant="deepagents">

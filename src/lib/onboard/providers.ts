@@ -177,6 +177,45 @@ const OLLAMA_PROXY_CREDENTIAL_ENV = OLLAMA_LOCAL_CREDENTIAL_ENV;
 
 const DISCORD_SNOWFLAKE_RE = /^[0-9]{17,19}$/;
 
+/**
+ * Resolve the onboarding metadata for a concrete provider name.
+ *
+ * Local NIM deliberately reuses the NVIDIA Endpoints gateway contract even
+ * though it has a distinct persisted provider name. Keep that alias here so
+ * provider creation, recovery, and credential rotation cannot drift on the
+ * OpenShell provider type.
+ */
+function getRemoteProviderConfigForName(
+  providerName,
+  remoteProviderConfig = REMOTE_PROVIDER_CONFIG,
+) {
+  if (providerName === "nvidia-nim") return remoteProviderConfig.build || null;
+  return (
+    Object.values(remoteProviderConfig).find((entry) => entry.providerName === providerName) || null
+  );
+}
+
+/** Return the OpenShell provider type owned by onboarding metadata. */
+function resolveInferenceProviderType(
+  providerName,
+  preferredInferenceApi = null,
+  remoteProviderConfig = REMOTE_PROVIDER_CONFIG,
+) {
+  const config = getRemoteProviderConfigForName(providerName, remoteProviderConfig);
+  // An OpenAI-only agent can intentionally use the OpenAI surface of a custom
+  // Anthropic endpoint. This is the one onboarding path where the persisted
+  // API family overrides the provider's default metadata.
+  if (
+    providerName === "compatible-anthropic-endpoint" &&
+    preferredInferenceApi === "openai-completions"
+  ) {
+    return "openai";
+  }
+  if (config) return config.providerType;
+  if (preferredInferenceApi === "anthropic-messages") return "anthropic";
+  return "openai";
+}
+
 // ── Provider label ───────────────────────────────────────────────
 
 /**
@@ -559,6 +598,8 @@ module.exports = {
   HOSTED_INFERENCE_MODEL,
   NON_INTERACTIVE_PROVIDER_ALIASES,
   NON_INTERACTIVE_PROVIDER_KEYS,
+  getRemoteProviderConfigForName,
+  resolveInferenceProviderType,
   getProviderLabel,
   getEffectiveProviderName,
   stageHostedInferenceSourceSecretEnv,

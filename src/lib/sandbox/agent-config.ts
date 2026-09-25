@@ -53,6 +53,16 @@ export function loadSandboxCredentialRoute(sandboxName: string): SandboxCredenti
   return registry.getSandbox(sandboxName);
 }
 
+export function resolveSandboxCredentialProviderType(
+  providerName: string,
+  preferredInferenceApi: string | null,
+): string {
+  const { resolveInferenceProviderType } = require("../onboard/providers") as {
+    resolveInferenceProviderType: (provider: string, preferredApi?: string | null) => string;
+  };
+  return resolveInferenceProviderType(providerName, preferredInferenceApi);
+}
+
 function requireCanonicalConfigDir(value: string): string {
   if (
     !path.posix.isAbsolute(value) ||

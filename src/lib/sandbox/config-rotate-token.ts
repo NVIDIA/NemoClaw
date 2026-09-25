@@ -3,6 +3,7 @@
 
 import { assertMcpCredentialBoundaryRuntimeVersion } from "../actions/sandbox/mcp-bridge-validation";
 import type { Session } from "../state/onboard-session";
+import { resolveSandboxCredentialProviderType } from "./agent-config";
 
 export interface RotateTokenOpts {
   fromEnv?: string | null;
@@ -66,7 +67,7 @@ export async function rotateSandboxToken(
     }
     credentialEnv = registeredCredentialEnv;
     providerName = registeredProvider;
-    providerType = getRegisteredProviderType(
+    providerType = resolveSandboxCredentialProviderType(
       registeredProvider,
       registeredRoute?.preferredInferenceApi ?? null,
     );
@@ -185,27 +186,6 @@ function nonEmptyString(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const normalized = value.trim();
   return normalized.length > 0 ? normalized : null;
-}
-
-function getRegisteredProviderType(
-  providerName: string,
-  preferredInferenceApi: string | null,
-): string {
-  if (providerName === "nvidia-prod") return "nvidia";
-  if (
-    preferredInferenceApi === "openai-completions" ||
-    preferredInferenceApi === "openai-responses"
-  ) {
-    return "openai";
-  }
-  if (
-    preferredInferenceApi === "anthropic-messages" ||
-    providerName === "anthropic-prod" ||
-    providerName === "compatible-anthropic-endpoint"
-  ) {
-    return "anthropic";
-  }
-  return "openai";
 }
 
 function getOpenshellBinary(): string {

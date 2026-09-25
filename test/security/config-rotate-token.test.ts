@@ -225,4 +225,52 @@ describe("config rotate-token", () => {
       expect.objectContaining({ env: { ANTHROPIC_API_KEY: "current-route-secret" } }),
     );
   });
+
+  it("recreates a registered local NIM route with the onboarding-owned NVIDIA provider type", async () => {
+    const runOpenshellCommand = vi
+      .fn<RotateTokenDeps["runOpenshellCommand"]>()
+      .mockReturnValueOnce({ status: 1 } as ReturnType<RotateTokenDeps["runOpenshellCommand"]>)
+      .mockReturnValueOnce({ status: 0 } as ReturnType<RotateTokenDeps["runOpenshellCommand"]>);
+    const deps = {
+      appendAuditEntry: vi.fn(),
+      captureOpenshellCommand: vi.fn(() => ({
+        output: "openshell 0.0.116\n",
+        status: 0,
+        stderr: "",
+        stdout: "openshell 0.0.116\n",
+      })),
+      fail: (lines: string | readonly string[]): never => {
+        throw new Error(typeof lines === "string" ? lines : lines.join("\n"));
+      },
+      loadSandbox: () => ({
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+        preferredInferenceApi: "openai-completions",
+        provider: "nvidia-nim",
+      }),
+      loadSession: vi.fn(() => null),
+      promptSecret: vi.fn().mockResolvedValue("current-route-secret"),
+      resolveAgentConfig: () => DEFAULT_AGENT_CONFIG,
+      runOpenshellCommand,
+      saveCredential: vi.fn(),
+      validateName: vi.fn((name: string) => name),
+    } satisfies RotateTokenDeps;
+
+    await rotateSandboxToken("rotate-profile-test", {}, deps);
+
+    expect(runOpenshellCommand).toHaveBeenNthCalledWith(
+      2,
+      expect.any(String),
+      [
+        "provider",
+        "create",
+        "--name",
+        "nvidia-nim",
+        "--type",
+        "nvidia",
+        "--credential",
+        "NVIDIA_INFERENCE_API_KEY",
+      ],
+      expect.objectContaining({ env: { NVIDIA_INFERENCE_API_KEY: "current-route-secret" } }),
+    );
+  });
 });
