@@ -11,6 +11,9 @@ import { ArtifactSink } from "../fixtures/artifacts.ts";
 import {
   captureManagedImageOnboardPairingDiagnostics,
   collectOnboardFailureDockerDiagnostics,
+  externalImageActivationAgents,
+  externalImageActivationMatches,
+  externalImageActivationOnboardArgs,
   managedActivationPostRestartAgentTurnScript,
   managedActivationOpenClawPluginScript,
   managedHermesBoundaryPoisonCommand,
@@ -111,6 +114,63 @@ printf '%s\n' "$@" >"$MANAGED_ACTIVATION_FIXTURE/openclaw-args"
 }
 
 describe("managed image activation failure diagnostics", () => {
+  it("adopts public OpenClaw and Hermes digests only through Docker", () => {
+    const reference = `ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:${"a".repeat(64)}`;
+    expect(externalImageActivationAgents("docker")).toEqual(["openclaw", "hermes"]);
+    expect(externalImageActivationAgents("podman")).toEqual([]);
+    expect(externalImageActivationOnboardArgs(reference, "openclaw", "ext-img-openclaw")).toEqual([
+      "onboard",
+      "--from-image",
+      reference,
+      "--fresh",
+      "--recreate-sandbox",
+      "--non-interactive",
+      "--yes",
+      "--no-gpu",
+      "--agent",
+      "openclaw",
+      "--name",
+      "ext-img-openclaw",
+    ]);
+  });
+
+  it("binds external-image success to disclosure, receipt, Docker identity, and cleanup", () => {
+    const reference = `ghcr.io/nvidia/nemoclaw/hermes-sandbox@sha256:${"a".repeat(64)}`;
+    const imageId = `sha256:${"b".repeat(64)}`;
+    const evidence = {
+      agent: "hermes" as const,
+      reference,
+      platform: "linux/amd64" as const,
+      onboardExitCode: 0,
+      destroyExitCode: 0,
+      beforeInspectExitCode: 0,
+      afterInspectExitCode: 0,
+      beforeImageId: imageId,
+      afterImageId: imageId,
+      toolDisclosure: "progressive",
+      receipt: {
+        schemaVersion: 1,
+        kind: "external-image",
+        reference,
+        platform: "linux/amd64",
+        runtimeImageContentId: imageId,
+        shared: true,
+      },
+    };
+
+    expect(externalImageActivationMatches(evidence)).toBe(true);
+    expect(
+      externalImageActivationMatches({
+        ...evidence,
+        receipt: { ...evidence.receipt, runtimeImageContentId: `sha256:${"c".repeat(64)}` },
+      }),
+    ).toBe(false);
+    expect(externalImageActivationMatches({ ...evidence, toolDisclosure: "direct" })).toBe(false);
+    expect(externalImageActivationMatches({ ...evidence, afterInspectExitCode: 1 })).toBe(false);
+    expect(externalImageActivationMatches({ ...evidence, afterImageId: "" })).toBe(false);
+    expect(externalImageActivationMatches({ ...evidence, destroyExitCode: 1 })).toBe(false);
+  });
+
   it("waits only for the exact OpenShell Deleting phase and records each observation", async () => {
     const list = vi
       .fn()

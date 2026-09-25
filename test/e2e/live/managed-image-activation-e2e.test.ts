@@ -7,7 +7,7 @@ import { qualifyManagedImageActivation } from "./managed-image-activation-e2e-he
 const TIMEOUT_MS = 75 * 60_000;
 
 test(
-  "candidate CLI activates exact managed images for every shipped agent without a Dockerfile build (#7744)",
+  "candidate CLI activates managed images without builds and Docker adopts public agent digests (#7744, #11932)",
   {
     timeout: TIMEOUT_MS,
     meta: {
@@ -23,7 +23,7 @@ test(
         "onboard and exercise Deep Agents Code",
         "stop and start Deep Agents Code through public NemoClaw lifecycle",
         "destroy and verify Deep Agents Code cleanup",
-        "prove buildless all-agent activation",
+        "prove buildless activation and Docker external-image retention",
       ],
     },
   },
@@ -31,7 +31,7 @@ test(
     const containerEngine = process.env.NEMOCLAW_GATEWAY_RUNTIME === "podman" ? "Podman" : "Docker";
     await artifacts.target.declare({
       id: "managed-image-activation",
-      boundary: `exact candidate CLI and published all-agent managed-image digests through real ${containerEngine}, OpenShell, agent turns, gateway restart readiness, and exact cleanup`,
+      boundary: `exact candidate CLI and published all-agent managed-image digests through real ${containerEngine}, OpenShell, agent turns, gateway restart readiness, and exact cleanup${containerEngine === "Docker" ? "; Docker also adopts and retains the public OpenClaw and Hermes digests as external images" : ""}`,
       agents: ["openclaw", "hermes", "langchain-deepagents-code"],
       syntheticBoundary:
         "Only the OpenAI-compatible inference response is synthetic; runtime construction and agent execution are real.",

@@ -95,6 +95,18 @@ function printOrphanedRegistrySandboxes(orphans: registry.SandboxEntry[]): void 
   console.log(`  ${D}${orphanedRegistryRemediation(CLI_NAME)}${R}`);
 }
 
+function printPinnedExternalImageSandboxes(sandboxes: registry.SandboxEntry[]): void {
+  if (sandboxes.length === 0) return;
+  console.log(`\n  ${B}Pinned external images:${R}`);
+  for (const sandbox of sandboxes) {
+    const reference =
+      sandbox.workload?.kind === "external-image" ? sandbox.workload.reference : "unknown";
+    console.log(
+      `    ${sandbox.name}  ${reference}  (${D}publisher-managed; not automatically replaced${R})`,
+    );
+  }
+}
+
 type PreparedBackupRecovery = {
   sandbox: registry.SandboxEntry;
   manifest: sandboxState.RebuildManifest;
@@ -351,12 +363,18 @@ export async function upgradeSandboxes(
   // build so a NemoClaw image/build change is detected even when the agent
   // version is unchanged (#5026).
   const currentNemoclawVersion = resolveCurrentNemoclawVersion();
+  const externalImageSandboxes = sandboxes.filter(
+    (sandbox) => sandbox.workload?.kind === "external-image",
+  );
+  const managedUpgradeSandboxes = sandboxes.filter(
+    (sandbox) => sandbox.workload?.kind !== "external-image",
+  );
   const versions = new Map<string, sandboxVersion.VersionCheckResult>();
-  for (const sandbox of sandboxes) {
+  for (const sandbox of managedUpgradeSandboxes) {
     versions.set(sandbox.name, await checkAgentVersionForUpgrade(sandbox.name, liveNames));
   }
   const { stale, unknown } = classifyUpgradeableSandboxes(
-    sandboxes,
+    managedUpgradeSandboxes,
     liveNames,
     (name) => versions.get(name)!,
     { currentNemoclawVersion },
@@ -397,7 +415,7 @@ export async function upgradeSandboxes(
     const staleLiveNames = new Set(
       stale.filter((sandbox) => sandbox.running).map((sandbox) => sandbox.name),
     );
-    const gatewayEligible = sandboxes.filter((sandbox) =>
+    const gatewayEligible = managedUpgradeSandboxes.filter((sandbox) =>
       isPreparedRecoveryCandidate(
         sandbox,
         liveNames,
@@ -471,6 +489,7 @@ export async function upgradeSandboxes(
   // stay in the stale list: their version drift is real information.
   const orphanNames = new Set(unobservedOwnGatewaySandboxes.map((sandbox) => sandbox.name));
   const unknownWithoutOrphans = unknown.filter((sandbox) => !orphanNames.has(sandbox.name));
+  printPinnedExternalImageSandboxes(externalImageSandboxes);
 
   if (
     stale.length === 0 &&
@@ -488,7 +507,11 @@ export async function upgradeSandboxes(
       if (checkOnly) process.exit(1);
       return;
     }
-    console.log("  All sandboxes are up to date.");
+    console.log(
+      externalImageSandboxes.length > 0
+        ? "  No automatically managed sandboxes require an upgrade."
+        : "  All sandboxes are up to date.",
+    );
     return;
   }
 

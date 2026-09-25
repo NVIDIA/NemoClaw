@@ -184,6 +184,7 @@ export type OnboardOptions = {
   /** Operator-selected APF compatibility mode for fresh sandbox creation. */
   apfInterceptorRequested?: boolean | null;
   fromDockerfile?: string | null;
+  fromImage?: string | null;
   sandboxName?: string | null;
   /** Explicit host directories exposed read-only to the sandbox. */
   hostMounts?: readonly import("../state/registry/types").SandboxHostMount[];

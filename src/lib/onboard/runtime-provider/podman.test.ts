@@ -616,6 +616,16 @@ describe("managed Podman runtime provider", () => {
         shared: false,
       }),
     ).toBe(false);
+    expect(
+      runtime.providers.podman?.workload.acceptsReceipt({
+        schemaVersion: 1,
+        kind: "external-image",
+        reference: `ghcr.io/example/downstream-openclaw@sha256:${"d".repeat(64)}`,
+        platform: "linux/amd64",
+        runtimeImageContentId: `sha256:${"e".repeat(64)}`,
+        shared: true,
+      }),
+    ).toBe(false);
   });
 
   it("fails host-local inference before probing either Podman operation scope", () => {

@@ -876,6 +876,11 @@ OpenClaw and Hermes discovery before and after gateway restart. Deterministic
 state-restore tests prove complete native directories are archived without
 image-plugin exclusions.
 
+On Docker, managed-image activation also adopts the published OpenClaw and
+Hermes digests through `--from-image`. It confirms OpenShell readiness, the
+durable external-image receipt, NemoClaw destruction, and shared image
+retention. The external-image check does not run on Podman.
+
 ## Device-auth health classification
 
 Issue #11946 retired the standalone `device-auth-health` target. The target

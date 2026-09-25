@@ -587,6 +587,7 @@ export function fingerprintRebuildRecreateTargetIntent(
     | "recreateModel"
     | "recreatePreferredInferenceApi"
     | "fromDockerfile"
+    | "fromImage"
     | "sandboxGpu"
     | "sandboxGpuDevice"
     | "controlUiPort"
@@ -617,6 +618,7 @@ export function fingerprintRebuildRecreateTargetIntent(
     model: options.recreateModel,
     preferredInferenceApi: options.recreatePreferredInferenceApi,
     fromDockerfile: options.fromDockerfile,
+    ...(options.fromImage ? { fromImage: options.fromImage } : {}),
     sandboxGpu: options.sandboxGpu,
     sandboxGpuDevice: options.sandboxGpuDevice,
     controlUiPort: options.controlUiPort,

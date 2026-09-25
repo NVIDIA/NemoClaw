@@ -203,6 +203,18 @@ describe("buildRebuildRecreateOnboardOpts", () => {
     expect(opts.toolDisclosure).toBe("direct");
   });
 
+  it("carries the exact publisher-owned image reference into inner onboard", () => {
+    const fromImage = `ghcr.io/example/openclaw@sha256:${"a".repeat(64)}`;
+    const opts = buildRebuildRecreateOnboardOpts({
+      ...baseArgs,
+      storedFromImage: fromImage,
+      sb: dashboard,
+    });
+
+    expect(opts.fromImage).toBe(fromImage);
+    expect(opts.fromDockerfile).toBeNull();
+  });
+
   it("carries durable read-only host mounts into authoritative recreation", () => {
     const hostMounts = [
       { source: process.cwd(), target: "/sandbox/project", readOnly: true as const },

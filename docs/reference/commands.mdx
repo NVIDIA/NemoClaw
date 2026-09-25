@@ -378,7 +378,7 @@ Use the stable `id` value with `$$nemoclaw onboard --profile <name>`. Display na
 Run the interactive setup wizard (recommended for new installs). The wizard creates an OpenShell gateway, registers inference providers, selects the exact managed image (or builds an explicit custom Dockerfile), and creates the sandbox. Use this command for new installs and for recreating a sandbox after changes to policy or configuration.
 
 ```bash
-$$nemoclaw onboard [--profile <name>] [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--apf-interceptor] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--host-mount <host:/sandbox/path>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--vllm-gpu-device <index-or-uuid>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--observability | --no-observability] [--control-ui-port <N>] [--events=jsonl] [--yes | -y] [--no-ollama-autostart] [--yes-i-accept-third-party-software]
+$$nemoclaw onboard [--profile <name>] [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--apf-interceptor] [--gpu | --no-gpu] [--from <Dockerfile> | --from-image <repository>@sha256:<digest>] [--name <sandbox>] [--host-mount <host:/sandbox/path>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--vllm-gpu-device <index-or-uuid>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--observability | --no-observability] [--control-ui-port <N>] [--events=jsonl] [--yes | -y] [--no-ollama-autostart] [--yes-i-accept-third-party-software]
 ```
 
 <AgentOnly variant="hermes">
@@ -998,6 +998,31 @@ NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_FROM_DOCKERFILE=path/to/Dockerfile NEMOCLAW_
 ```
 
 If a `--resume` is attempted with a different `--from` path than the original session, onboarding exits with a conflict error rather than silently building from the wrong image.
+
+<AgentOnly variant="openclaw,hermes">
+
+#### `--from-image <repository>@<digest>`
+
+Onboard a published OpenClaw or Hermes image with the Docker runtime without building a Dockerfile.
+Supply an immutable SHA-256 digest with `--from-image` or `NEMOCLAW_FROM_IMAGE`.
+In non-interactive mode, supply a sandbox name with `--name` or `NEMOCLAW_SANDBOX_NAME`.
+The image publisher owns its content and compatibility with your NemoClaw release.
+
+```bash
+$$nemoclaw onboard --name my-agent --from-image <repository>@sha256:<digest>
+```
+
+The image must match the runtime platform and declare a non-root user, `/sandbox` working directory, and startup command.
+It must contain `NEMOCLAW_TOOL_DISCLOSURE=progressive` or `NEMOCLAW_TOOL_DISCLOSURE=direct`.
+Onboarding adopts that mode when you have not selected one; an explicit conflicting mode fails before creation.
+Configure registry credentials through Docker before onboarding a private image.
+
+Do not combine `--from-image` with `--from` or the Portable profile.
+Resume retains the recorded digest; changing it requires `--fresh --recreate-sandbox`.
+Rebuild consumes the same digest without building an image.
+Cleanup retains the published image, and upgrades leave it pinned and publisher-managed.
+
+</AgentOnly>
 
 #### `--name <sandbox>`
 
@@ -3598,7 +3623,7 @@ For Deep Agents sandboxes, run `$$nemoclaw onboard --fresh --name <sandbox-name>
 
 <Warning>The `$$nemoclaw setup` command is deprecated. Use `$$nemoclaw onboard` instead.</Warning>
 
-This command remains as a compatibility alias to `$$nemoclaw onboard` and accepts the same flags: `--profile <name>`, `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--apf-interceptor`, `--gpu` / `--no-gpu`, `--from`, `--name`, `--host-mount`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--vllm-gpu-device`, `--agent`, `--agents <agents.yaml>`, `--tool-disclosure <progressive|direct>`, `--observability` / `--no-observability`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
+This command remains as a compatibility alias to `$$nemoclaw onboard` and accepts the same flags: `--profile <name>`, `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--apf-interceptor`, `--gpu` / `--no-gpu`, `--from`, `--from-image`, `--name`, `--host-mount`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--vllm-gpu-device`, `--agent`, `--agents <agents.yaml>`, `--tool-disclosure <progressive|direct>`, `--observability` / `--no-observability`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
 
 ```bash
 $$nemoclaw setup
@@ -3611,7 +3636,7 @@ $$nemoclaw setup
   onboard` instead, because current OpenShell releases handle the older DGX Spark cgroup behavior.
 </Warning>
 
-This command remains as a compatibility alias to `$$nemoclaw onboard` and accepts the same flags: `--profile <name>`, `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--apf-interceptor`, `--gpu` / `--no-gpu`, `--from`, `--name`, `--host-mount`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--vllm-gpu-device`, `--agent`, `--agents <agents.yaml>`, `--tool-disclosure <progressive|direct>`, `--observability` / `--no-observability`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
+This command remains as a compatibility alias to `$$nemoclaw onboard` and accepts the same flags: `--profile <name>`, `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--apf-interceptor`, `--gpu` / `--no-gpu`, `--from`, `--from-image`, `--name`, `--host-mount`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--vllm-gpu-device`, `--agent`, `--agents <agents.yaml>`, `--tool-disclosure <progressive|direct>`, `--observability` / `--no-observability`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
 
 ```bash
 $$nemoclaw setup-spark

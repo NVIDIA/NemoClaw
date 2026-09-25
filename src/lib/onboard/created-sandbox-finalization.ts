@@ -580,6 +580,7 @@ type OnboardCreateContext = {
 type OnboardAgentFlags = {
   readonly customOpenClawImage: boolean;
   readonly isManagedDcodeAgent: boolean;
+  readonly externalImage?: boolean;
 };
 type OnboardInferenceSelection = {
   readonly provider: string;
@@ -708,7 +709,7 @@ export function createOnboardCreatedSandboxCompletion(
         restoreBackupPath,
         preUpgradeBackup: pendingStateRestoreBackupPath !== null,
         targetAgentType: agent?.name ?? "openclaw",
-        customImage: Boolean(fromDockerfile),
+        customImage: Boolean(fromDockerfile) || agentFlags.externalImage === true,
         validateManagedDcode: agentFlags.isManagedDcodeAgent,
         provider,
         model,
@@ -729,7 +730,7 @@ export function createOnboardCreatedSandboxCompletion(
           : {}),
         runtimeFields,
         agent,
-        agentVersionKnown: !fromDockerfile,
+        agentVersionKnown: !fromDockerfile && agentFlags.externalImage !== true,
         portableLifecycle,
         toolDisclosure: sandboxRegistrationOptions.toolDisclosure,
         observabilityEnabled: createIntent?.observabilityEnabled === true,

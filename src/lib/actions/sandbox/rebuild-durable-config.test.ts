@@ -19,6 +19,78 @@ import {
 } from "./rebuild-durable-config";
 
 describe("resolveRebuildDurableConfig", () => {
+  const externalReference = `ghcr.io/example/openclaw@sha256:${"a".repeat(64)}`;
+  const externalReceipt = {
+    schemaVersion: 1 as const,
+    kind: "external-image" as const,
+    reference: externalReference,
+    platform: "linux/arm64" as const,
+    runtimeImageContentId: `sha256:${"b".repeat(64)}`,
+    shared: true as const,
+  };
+
+  it("rebuilds only the exact external image recorded by the durable receipt", () => {
+    const config = resolveRebuildDurableConfig(
+      "alpha",
+      { name: "alpha", workload: externalReceipt },
+      createSession({
+        sandboxName: "alpha",
+        metadata: { gatewayName: "nemoclaw", fromDockerfile: null, fromImage: externalReference },
+      }),
+    );
+
+    expect(config.fromImage).toBe(externalReference);
+    expect(config.fromImageError).toBeNull();
+    expect(config.fromDockerfile).toBeNull();
+  });
+
+  it("fails closed when the matching session requests a changed external digest", () => {
+    const config = resolveRebuildDurableConfig(
+      "alpha",
+      { name: "alpha", nemoclawVersion: "0.1.0", workload: externalReceipt },
+      createSession({
+        sandboxName: "alpha",
+        metadata: {
+          gatewayName: "nemoclaw",
+          fromDockerfile: null,
+          fromImage: `ghcr.io/example/openclaw@sha256:${"c".repeat(64)}`,
+        },
+      }),
+    );
+
+    expect(config.fromImage).toBe(externalReference);
+    expect(config.fromImageError).toContain("different external image digest");
+  });
+
+  it("fails closed when external-image session state has no durable receipt", () => {
+    const config = resolveRebuildDurableConfig(
+      "alpha",
+      { name: "alpha", nemoclawVersion: "0.1.0" },
+      createSession({
+        sandboxName: "alpha",
+        metadata: { gatewayName: "nemoclaw", fromDockerfile: null, fromImage: externalReference },
+      }),
+    );
+
+    expect(config.fromImage).toBeNull();
+    expect(config.fromImageError).toContain("without a durable receipt");
+  });
+
+  it("rejects an external image that conflicts with a custom Dockerfile", () => {
+    const config = resolveRebuildDurableConfig(
+      "alpha",
+      {
+        name: "alpha",
+        nemoclawVersion: "0.1.0",
+        fromDockerfile: "/tmp/custom.Dockerfile",
+        workload: externalReceipt,
+      },
+      null,
+    );
+
+    expect(config.fromImageError).toContain("conflicts with a recorded custom Dockerfile");
+  });
+
   it("keeps the registry tool-disclosure selection authoritative", () => {
     const config = resolveRebuildDurableConfig(
       "alpha",

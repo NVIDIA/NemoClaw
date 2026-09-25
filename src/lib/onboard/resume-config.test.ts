@@ -70,6 +70,35 @@ describe("authoritative rebuild resume config", () => {
     });
   });
 
+  it("resumes an adopted external-image disclosure when the operator made no explicit choice", () => {
+    expect(
+      getResumeConfigConflicts(
+        {
+          sandboxName: "demo",
+          provider: "nvidia-prod",
+          model: "test-model",
+          toolDisclosure: "direct",
+        },
+        {},
+      ),
+    ).not.toContainEqual(expect.objectContaining({ field: "tool disclosure" }));
+  });
+
+  it("requires resume to retain the recorded external image digest", () => {
+    const recorded = `ghcr.io/example/openclaw@sha256:${"a".repeat(64)}`;
+    const changed = `ghcr.io/example/openclaw@sha256:${"b".repeat(64)}`;
+    const session = { metadata: { fromDockerfile: null, fromImage: recorded } };
+
+    expect(getResumeConfigConflicts(session, { fromImage: recorded })).not.toContainEqual(
+      expect.objectContaining({ field: "fromImage" }),
+    );
+    expect(getResumeConfigConflicts(session, { fromImage: changed })).toContainEqual({
+      field: "fromImage",
+      requested: changed,
+      recorded,
+    });
+  });
+
   it("fails closed for a corrupt persisted tool-disclosure value", () => {
     const corrupt = normalizeSession({
       version: 1,

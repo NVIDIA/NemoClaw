@@ -21,6 +21,7 @@ export type {
   RuntimeProviderBundleRegistry,
   RuntimeProviderChannelStopTransport,
   RuntimeProviderGatewayLauncher,
+  RuntimeProviderExternalImageSupport,
   RuntimeProviderManagedImageSupport,
   RuntimeProviderWorkloadProfile,
   RuntimeProviderWorkloadCleanupPlan,

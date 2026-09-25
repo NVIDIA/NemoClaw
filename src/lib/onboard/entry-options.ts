@@ -12,6 +12,7 @@ import {
   parseExtraPlaceholderKeys,
 } from "./extra-placeholder-keys";
 import { RESERVED_SANDBOX_NAMES } from "./sandbox-agent";
+import { parseExactExternalImageReference } from "./workload/external-image";
 import type { OnboardOptions } from "./types";
 import {
   requireStationExpressResumeIntent,
@@ -24,6 +25,7 @@ export interface OnboardEntryOptionsInput {
     resume?: boolean;
     fresh?: boolean;
     fromDockerfile?: string | null;
+    fromImage?: string | null;
     sandboxName?: string | null;
   };
   env: NodeJS.ProcessEnv | Record<string, string | undefined>;
@@ -60,6 +62,7 @@ export interface ResolvedOnboardEntryOptions {
   resume: boolean;
   fresh: boolean;
   requestedFromDockerfile: string | null;
+  requestedFromImage?: string | null;
   requestedSandboxName: string | null;
   cannotPrompt: boolean;
 }
@@ -378,6 +381,24 @@ export function resolveOnboardEntryOptions(
   const requestedFromDockerfile =
     input.opts.fromDockerfile ||
     (deps.isNonInteractive() ? input.env.NEMOCLAW_FROM_DOCKERFILE || null : null);
+  const rawRequestedFromImage =
+    input.opts.fromImage ||
+    (deps.isNonInteractive() ? input.env.NEMOCLAW_FROM_IMAGE || null : null);
+  let requestedFromImage: string | null = null;
+  if (rawRequestedFromImage) {
+    try {
+      requestedFromImage = parseExactExternalImageReference(rawRequestedFromImage);
+    } catch (error) {
+      deps.error(`  ${error instanceof Error ? error.message : String(error)}`);
+      deps.exitProcess(1);
+    }
+  }
+  if (requestedFromDockerfile && requestedFromImage) {
+    deps.error(
+      "  A Dockerfile source and an external image source cannot both be selected. Use only --from/NEMOCLAW_FROM_DOCKERFILE or --from-image/NEMOCLAW_FROM_IMAGE.",
+    );
+    deps.exitProcess(1);
+  }
   const cannotPrompt = deps.isNonInteractive() || !input.stdinIsTty || !input.stdoutIsTty;
   let requestedSandboxName: string | null =
     typeof input.opts.sandboxName === "string" && input.opts.sandboxName.length > 0
@@ -482,9 +503,16 @@ export function resolveOnboardEntryOptions(
       deps.exitProcess(1);
     }
   }
-  if (cannotPrompt && !resume && requestedFromDockerfile && !requestedSandboxName) {
+  if (
+    cannotPrompt &&
+    !resume &&
+    (requestedFromDockerfile || requestedFromImage) &&
+    !requestedSandboxName
+  ) {
     deps.error(
-      "  --from <Dockerfile> requires --name <sandbox> (or NEMOCLAW_SANDBOX_NAME) when running without a TTY or with --non-interactive.",
+      requestedFromDockerfile
+        ? "  --from <Dockerfile> requires --name <sandbox> (or NEMOCLAW_SANDBOX_NAME) when running without a TTY or with --non-interactive."
+        : "  --from-image <repository@sha256:digest> requires --name <sandbox> (or NEMOCLAW_SANDBOX_NAME) when running without a TTY or with --non-interactive.",
     );
     deps.error("  A sandbox name cannot be prompted for in this context.");
     deps.exitProcess(1);
@@ -494,6 +522,7 @@ export function resolveOnboardEntryOptions(
     resume,
     fresh,
     requestedFromDockerfile,
+    ...(requestedFromImage ? { requestedFromImage } : {}),
     requestedSandboxName,
     cannotPrompt,
   };

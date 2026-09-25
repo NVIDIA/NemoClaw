@@ -9,6 +9,7 @@ import {
   parseGatewayBindAddress,
 } from "../../core/gateway-address";
 import { parseDockerDaemonObservation } from "../../domain/docker-host";
+import { cloneSandboxWorkloadReceipt } from "../../state/registry/workload";
 import {
   DOCKER_NETWORK_IPAM_INSPECT_FORMAT,
   parseDockerNetworkIpamEntries,
@@ -269,6 +270,11 @@ const COMPLETE_MANAGED_IMAGE_V1_PROFILE = {
     startupProfileContractVersions: [MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION],
     capabilityContractVersions: [MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION],
   },
+  externalImageSupport: {
+    exactDigestReferences: true,
+    platforms: MANAGED_IMAGE_PLATFORMS,
+    agents: ["openclaw", "hermes"],
+  },
   hostArchitectures: ["amd64", "arm64"],
   managedImageSelectionPolicy: "require-managed",
   legacyDockerfileBuilds: true,
@@ -277,10 +283,14 @@ const COMPLETE_MANAGED_IMAGE_V1_PROFILE = {
 function acceptsReceipt(
   profile: RuntimeProviderWorkloadProfile,
   receipt: RuntimeProviderCleanupInput["sandbox"]["workload"],
+  externalImages: boolean,
 ): boolean {
   if (!receipt) return true;
   if (receipt.kind === "legacy-dockerfile") return profile.legacyDockerfileBuilds;
   if (receipt.kind === "native-artifact") return false;
+  if (receipt.kind === "external-image") {
+    return externalImages && cloneSandboxWorkloadReceipt(receipt)?.kind === "external-image";
+  }
   if (receipt.platform === undefined) return false;
   return (
     profile.support !== null &&
@@ -301,6 +311,7 @@ export function createDockerRuntimeProviderBundle(
   const deps = resolveDependencies(overrides);
   const containerEngineOperations = new Set<RuntimeProviderContainerEngineOperation>([
     "host-doctor",
+    "external-image-preparation",
     "gateway-inspection",
     "host-local-inference",
     "sandbox-lifecycle",
@@ -389,7 +400,7 @@ export function createDockerRuntimeProviderBundle(
       supported: true,
       profile: COMPLETE_MANAGED_IMAGE_V1_PROFILE,
       managedStateMountDriverId: "docker",
-      acceptsReceipt: (receipt) => acceptsReceipt(COMPLETE_MANAGED_IMAGE_V1_PROFILE, receipt),
+      acceptsReceipt: (receipt) => acceptsReceipt(COMPLETE_MANAGED_IMAGE_V1_PROFILE, receipt, true),
     },
     hostLocalInference: {
       providerId,
@@ -435,6 +446,11 @@ export function createDockerRuntimeProviderBundle(
       supported: true,
       identities: [
         { operation: "host-doctor", engineId: "docker", displayName: "Docker" },
+        {
+          operation: "external-image-preparation",
+          engineId: "docker",
+          displayName: "Docker",
+        },
         { operation: "gateway-inspection", engineId: "docker", displayName: "Docker" },
         { operation: "host-local-inference", engineId: "docker", displayName: "Docker" },
         { operation: "sandbox-lifecycle", engineId: "docker", displayName: "Docker" },
@@ -532,7 +548,7 @@ export function createKubernetesRuntimeProviderBundle(
       providerId,
       supported: true,
       profile,
-      acceptsReceipt: (receipt) => acceptsReceipt(profile, receipt),
+      acceptsReceipt: (receipt) => acceptsReceipt(profile, receipt, false),
     },
     hostLocalInference: unsupported(
       providerId,

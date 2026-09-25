@@ -344,6 +344,16 @@ function projectWorkload(workload: SandboxWorkloadReceipt | undefined): unknown 
       shared: workload.shared,
     };
   }
+  if (workload.kind === "external-image") {
+    return {
+      schemaVersion: workload.schemaVersion,
+      kind: workload.kind,
+      reference: workload.reference,
+      platform: workload.platform,
+      runtimeImageContentId: workload.runtimeImageContentId,
+      shared: workload.shared,
+    };
+  }
   return {
     schemaVersion: workload.schemaVersion,
     kind: workload.kind,

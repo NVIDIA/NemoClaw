@@ -557,6 +557,34 @@ describe("onboard command options", () => {
     expect(resolve({ from: relativeDockerfilePath }).fromDockerfile).toBe(relativeDockerfilePath);
   });
 
+  it("accepts only exact-digest external image references", () => {
+    const reference = `ghcr.io/example/openclaw@sha256:${"a".repeat(64)}`;
+    expect(resolve({ "from-image": reference }).fromImage).toBe(reference);
+
+    const errors: string[] = [];
+    expect(() =>
+      resolve(
+        { "from-image": "ghcr.io/example/openclaw:latest" },
+        { error: (message = "") => errors.push(message) },
+      ),
+    ).toThrow("exit:1");
+    expect(errors.join("\n")).toContain("repository@sha256");
+  });
+
+  it("rejects simultaneous Dockerfile and external image sources", () => {
+    const errors: string[] = [];
+    expect(() =>
+      resolve(
+        {
+          from: "Dockerfile",
+          "from-image": `ghcr.io/example/openclaw@sha256:${"a".repeat(64)}`,
+        },
+        { error: (message = "") => errors.push(message) },
+      ),
+    ).toThrow("exit:1");
+    expect(errors.join("\n")).toContain("--from and --from-image cannot both be set");
+  });
+
   it("rejects missing and non-file Dockerfile paths before onboarding", () => {
     const errors: string[] = [];
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-from-errors-"));

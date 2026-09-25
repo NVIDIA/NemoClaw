@@ -50,6 +50,7 @@ import { managedSandboxFeatureIssue } from "./managed-sandbox-feature";
 import { parseReadOnlyHostMounts, requireReadOnlyHostMountRuntimeSupport } from "./host-mount";
 import { DCODE_OBSERVABILITY_FEATURE } from "./observability-policy-presets";
 import { isOpenclawAgent } from "./openclaw-otel-policy-presets";
+import { parseExactExternalImageReference } from "./workload/external-image";
 import { NOTICE_ACCEPT_ENV, NOTICE_ACCEPT_FLAG_NAME } from "./usage-notice";
 import {
   OnboardResumeIntentError,
@@ -69,6 +70,7 @@ export interface OnboardCommandOptions {
   recreateSandbox: boolean;
   apfInterceptorRequested: boolean | null;
   fromDockerfile: string | null;
+  fromImage?: string | null;
   sandboxName: string | null;
   hostMounts?: import("../state/registry/types").SandboxHostMount[];
   sandboxGpu: "enable" | "disable" | null;
@@ -466,6 +468,18 @@ function resolveOnboardToolDisclosure(
   }
 }
 
+function resolveExternalImageReference(
+  value: string | undefined,
+  deps: ResolveOnboardOptionsDeps,
+): string | null {
+  if (value === undefined) return null;
+  try {
+    return parseExactExternalImageReference(value);
+  } catch (error) {
+    fail(deps, `  ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 export function resolveOnboardOptions(
   flags: OnboardFlags,
   deps: ResolveOnboardOptionsDeps,
@@ -478,6 +492,10 @@ export function resolveOnboardOptions(
   validateObservabilityAgent(flags.observability, agent, deps);
   const toolDisclosure = resolveOnboardToolDisclosure(flags, experimentalProfile, resume, deps);
   const hostMounts = resolveHostMounts(flags["host-mount"], experimentalProfile, deps);
+  if (flags.from !== undefined && flags["from-image"] !== undefined) {
+    fail(deps, "  --from and --from-image cannot both be set.");
+  }
+  const fromImage = resolveExternalImageReference(flags["from-image"], deps);
   return {
     tempManagedRuntime: flags["temp-managed-runtime"] === true,
     tempManagedRuntimeCatalog: resolveFileOption(
@@ -492,6 +510,7 @@ export function resolveOnboardOptions(
     recreateSandbox: flags["recreate-sandbox"] === true,
     apfInterceptorRequested: flags["apf-interceptor"] === true ? true : null,
     fromDockerfile: resolveFileOption("--from", flags.from, deps, true),
+    ...(fromImage ? { fromImage } : {}),
     sandboxName: flags.name ?? null,
     ...(hostMounts.length > 0 ? { hostMounts } : {}),
     sandboxGpu: resolveSandboxGpu(flags),

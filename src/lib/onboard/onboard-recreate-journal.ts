@@ -26,6 +26,7 @@ import {
 export interface OnboardRecreateTargetIntent {
   readonly agent: string | null;
   readonly fromDockerfile: string | null;
+  readonly fromImage: string | null;
   readonly provider: string | null;
   readonly model: string | null;
   readonly preferredInferenceApi: string | null;
