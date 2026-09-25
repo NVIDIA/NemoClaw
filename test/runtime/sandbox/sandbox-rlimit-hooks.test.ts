@@ -606,6 +606,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
     const managedPolicyReader = path.join(localLib, "managed_policy.py");
     const langfuseCredentialPatcher = path.join(localLib, "patch-hermes-langfuse-credentials.mts");
     const runtimeGuard = path.join(localLib, "hermes-runtime-config-guard.py");
+    const dashboardStateMigrator = path.join(localLib, "migrate-hermes-dashboard-state.py");
     const tirithMarkerFinalizer = path.join(localLib, "finalize-tirith-marker.py");
     const mcpTransaction = path.join(localLib, "hermes-mcp-config-transaction.py");
     const mcpCredentialBoundary = path.join(
@@ -637,6 +638,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       fs.writeFileSync(managedPolicyReader, "# managed policy reader fixture\n");
       fs.writeFileSync(langfuseCredentialPatcher, "# Langfuse credential patcher fixture\n");
       fs.writeFileSync(runtimeGuard, "# runtime guard fixture\n");
+      fs.writeFileSync(dashboardStateMigrator, "# dashboard state migrator fixture\n");
       fs.writeFileSync(tirithMarkerFinalizer, "# Tirith marker finalizer fixture\n");
       fs.writeFileSync(mcpTransaction, "# MCP transaction fixture\n");
       fs.writeFileSync(mcpCredentialBoundary, "{}\n");
@@ -683,6 +685,10 @@ describe("sandbox rlimit system hooks (#2173)", () => {
           langfuseCredentialPatcher,
         )
         .replaceAll("/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py", runtimeGuard)
+        .replaceAll(
+          "/usr/local/lib/nemoclaw/migrate-hermes-dashboard-state.py",
+          dashboardStateMigrator,
+        )
         .replaceAll("/usr/local/lib/nemoclaw/finalize-tirith-marker.py", tirithMarkerFinalizer)
         .replaceAll("/usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py", mcpTransaction)
         .replaceAll(
@@ -717,6 +723,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       expect(hardenedDir.mode & 0o777).toBe(0o755);
       expect(hardenedSafetyNet.mode & 0o777).toBe(0o444);
       expect(fs.statSync(discordRecoveryPatcher).mode & 0o777).toBe(0o755);
+      expect(fs.statSync(dashboardStateMigrator).mode & 0o777).toBe(0o755);
       expect(fs.statSync(langfuseCredentialPatcher).mode & 0o777).toBe(0o444);
       expect(fs.statSync(mcpCredentialBoundary).mode & 0o777).toBe(0o444);
       expect(fs.statSync(hermesCronRestoreControl).mode & 0o777).toBe(0o700);
