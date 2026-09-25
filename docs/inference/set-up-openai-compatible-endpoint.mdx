@@ -66,7 +66,7 @@ Sandbox inference requests continue to use the base `inference.local` policy, so
 For authenticated endpoints, NemoClaw leaves URLs without an explicit port, URLs on `:80` or another privileged port, and URLs on unsupported ports unchanged.
 Those authenticated URLs require a separately compatible runtime topology and network policy.
 This rewrite depends on an OpenShell topology that resolves `host.openshell.internal` inside the sandbox; if that bridge is unavailable, onboarding can still validate the host URL, but `$$nemoclaw <name> status` is the authoritative runtime check.
-The protected no-authentication proxy is a separate route and can front an endpoint on an explicit unprivileged port (`1024` through `65535`) that is not reserved for the NemoClaw gateway, dashboard, per-sandbox API, auth proxy, or credential adapters; keep that server bound to loopback.
+The protected no-authentication proxy is a separate route and can front an endpoint on an explicit unprivileged port (`1024` through `65535`) that is not reserved for the NemoClaw gateway (including its automatic allocation range, `8990` through `9005`), dashboard, per-sandbox API, auth proxy, or credential adapters; keep that server bound to loopback.
 NemoClaw's token-protected proxy makes the loopback service reachable from the sandbox without exposing the backend on other host interfaces.
 The shared proxy keeps serving its existing backend while any sandbox may depend on that route; reuse the same endpoint or migrate those sandboxes before selecting a different no-authentication backend.
 
@@ -136,7 +136,7 @@ NEMOCLAW_PROVIDER=custom \
 | `NEMOCLAW_PROVIDER` | Set to `custom`. |
 | `NEMOCLAW_ENDPOINT_URL` | Base URL of the server, without userinfo, query, or fragment components. |
 | `NEMOCLAW_MODEL` | Model ID reported by the server. |
-| `NEMOCLAW_COMPATIBLE_AUTH_MODE` | Set to `none` to explicitly select no authentication for an HTTP endpoint using `localhost`, `127.0.0.1`, or `[::1]` and an explicit port from `1024` through `65535` that is not reserved for the NemoClaw gateway, dashboard, per-sandbox API, auth proxy, or credential adapters. |
+| `NEMOCLAW_COMPATIBLE_AUTH_MODE` | Set to `none` to explicitly select no authentication for an HTTP endpoint using `localhost`, `127.0.0.1`, or `[::1]` and an explicit port from `1024` through `65535` that is not reserved for the NemoClaw gateway (including its automatic allocation range, `8990` through `9005`), dashboard, per-sandbox API, auth proxy, or credential adapters. |
 | `NEMOCLAW_REASONING` | Enables reasoning-only validation with the case-insensitive true values `true`, `1`, `yes`, and `y`. |
 | `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` | Optional comma-separated hostnames or IP literals for operator-owned private endpoints. Wildcards are not supported. |
 | `NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS` | Inference-only compatibility alias for `NEMOCLAW_TRUSTED_PRIVATE_HOSTS`. Inference onboarding combines entries from both variables. |

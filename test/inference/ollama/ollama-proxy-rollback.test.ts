@@ -74,11 +74,18 @@ try {
 } catch (error) {
   startupError = error.message;
 }
+let ollamaStartupError = "";
+try {
+  proxy.startOllamaAuthProxy();
+} catch (error) {
+  ollamaStartupError = error.message;
+}
 
 console.log(JSON.stringify({
   proxySpawns,
   runCommands,
   startupError,
+  ollamaStartupError,
   runningToken: proxy.getOllamaProxyToken(),
   persistedToken: fs.readFileSync(path.join(stateDir, "ollama-proxy-token"), "utf8").trim(),
   persistedBackend: fs.readFileSync(path.join(stateDir, "ollama-backend"), "utf8").trim(),
@@ -108,6 +115,7 @@ console.log(JSON.stringify({
     ]);
     assert.deepEqual(payload.runCommands, [["kill", "4000"]]);
     assert.match(payload.startupError, /already serves another inference backend/);
+    assert.match(payload.ollamaStartupError, /already serves another inference backend/);
     assert.equal(payload.runningToken, "committed-token");
     assert.equal(payload.persistedToken, "committed-token");
     assert.equal(payload.persistedBackend, "http://127.0.0.1:7000");

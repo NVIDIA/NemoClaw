@@ -652,12 +652,28 @@ function startOllamaAuthProxyWithTokenUnlocked(
   }
 }
 
+function sharedProxyBackendConflict(): Error {
+  return new Error(
+    "The shared protected loopback route already serves another inference backend. " +
+      "NemoClaw will not replace it while existing sandboxes may depend on it. " +
+      "Use the already configured endpoint, or remove or migrate those sandboxes before selecting a different endpoint.",
+  );
+}
+
 function startOllamaAuthProxy(backendUrl?: string): boolean {
   return withOllamaProxyLifecycleLock(() => {
     // Re-onboarding the committed local Ollama route must keep the credential
     // already mounted in the sandbox. A compatible custom endpoint uses the
     // explicit fresh-token path below until provider selection commits it.
     let proxyToken = loadPersistedProxyToken();
+    const requestedBackendUrl = backendUrl ?? `http://127.0.0.1:${OLLAMA_PORT}`;
+    const persistedBackend = readProxyBackendIdentity();
+    // Token-only legacy state predates backend identity persistence and has
+    // always implied local Ollama. A recorded backend, however, is ownership
+    // evidence and must never be replaced with a different route.
+    if (proxyToken && persistedBackend.url && persistedBackend.url !== requestedBackendUrl) {
+      throw sharedProxyBackendConflict();
+    }
     const reservedNewToken = !proxyToken;
     if (!proxyToken) {
       proxyToken = generateProxyToken();
@@ -669,7 +685,7 @@ function startOllamaAuthProxy(backendUrl?: string): boolean {
     try {
       const started = startOllamaAuthProxyWithTokenUnlocked(
         proxyToken,
-        backendUrl,
+        requestedBackendUrl,
         reservedNewToken,
       );
       if (!started && reservedNewToken) removeLocalAdapterFile(PROXY_TOKEN_PATH);
@@ -686,15 +702,8 @@ function noAuthProxy(endpointUrl: string) {
     const endpoint = new URL(endpointUrl);
     const persistedToken = loadPersistedProxyToken();
     const persistedBackend = readProxyBackendIdentity();
-    const reusesCompatibleBackend =
-      persistedBackend.url === endpoint.origin &&
-      (persistedBackend.kind === "compatible-endpoint" || persistedBackend.kind === "unknown");
-    if (persistedToken && !reusesCompatibleBackend) {
-      throw new Error(
-        "The shared protected loopback route already serves another inference backend. " +
-          "NemoClaw will not replace it while existing sandboxes may depend on it. " +
-          "Use the already configured endpoint, or remove or migrate those sandboxes before selecting a different endpoint.",
-      );
+    if (persistedToken && persistedBackend.url !== endpoint.origin) {
+      throw sharedProxyBackendConflict();
     }
 
     const proxyToken = persistedToken ?? generateProxyToken();

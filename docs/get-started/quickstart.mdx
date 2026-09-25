@@ -331,7 +331,7 @@ Use these details when your first-run path needs more control.
     | Model Router | You want NemoClaw to start the host-side model router. | `NVIDIA_INFERENCE_API_KEY` |
 
     For an OpenAI-compatible HTTP endpoint on `localhost`, `127.0.0.1`, or `[::1]`, press Enter to select no authentication when the endpoint uses an explicit port from `1024` through `65535`.
-    The endpoint port must not be reserved for the NemoClaw gateway, dashboard, per-sandbox API, auth proxy, or credential adapters.
+    The endpoint port must not be reserved for the NemoClaw gateway (including its automatic allocation range, `8990` through `9005`), dashboard, per-sandbox API, auth proxy, or credential adapters.
     The shared protected proxy keeps serving its existing backend while any sandbox may depend on that route; reuse the same endpoint or migrate those sandboxes before selecting a different no-authentication backend.
 
     After you enter a sandbox name, the wizard asks for final confirmation before it registers the provider, prompts for integrations, and creates the sandbox.

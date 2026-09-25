@@ -5,6 +5,9 @@ import { DEFAULT_OLLAMA_PROXY_PORT, OLLAMA_PROXY_PORT } from "./ollama-proxy-por
 import { parseServicePortOverride } from "./service-port-boundary";
 
 export const DEFAULT_GATEWAY_PORT = 8080;
+/** Keep aligned with find_safe_alternate_gateway_port() in scripts/install.sh. */
+export const AUTOMATIC_GATEWAY_PORT_RANGE_START = 8990;
+export const AUTOMATIC_GATEWAY_PORT_RANGE_END = 9005;
 const CONFIGURED_GATEWAY_PORT = parseServicePortOverride(
   "NEMOCLAW_GATEWAY_PORT",
   process.env.NEMOCLAW_GATEWAY_PORT,
@@ -59,7 +62,9 @@ export const HTTPS_PIN_RUNTIME_ADAPTER_PORT = parseServicePortOverride(
  */
 export function isProtectedNemoClawHostPort(port: number): boolean {
   return (
+    port === DEFAULT_GATEWAY_PORT ||
     port === CONFIGURED_GATEWAY_PORT ||
+    (port >= AUTOMATIC_GATEWAY_PORT_RANGE_START && port <= AUTOMATIC_GATEWAY_PORT_RANGE_END) ||
     port === DASHBOARD_PORT ||
     (port >= DASHBOARD_PORT_RANGE_START && port <= DASHBOARD_PORT_RANGE_END) ||
     isHermesApiPort(port) ||

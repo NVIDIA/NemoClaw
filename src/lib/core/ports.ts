@@ -4,6 +4,8 @@
 import { LLAMA_CPP_PORT } from "../inference/llama-cpp/contract";
 import { DEFAULT_OLLAMA_PROXY_PORT, OLLAMA_PROXY_PORT } from "./ollama-proxy-port";
 import {
+  AUTOMATIC_GATEWAY_PORT_RANGE_END,
+  AUTOMATIC_GATEWAY_PORT_RANGE_START,
   BEDROCK_RUNTIME_ADAPTER_PORT,
   DASHBOARD_PORT,
   DASHBOARD_PORT_RANGE_END,
@@ -23,6 +25,8 @@ import {
 import { parseServicePortOverride } from "./service-port-boundary";
 
 export {
+  AUTOMATIC_GATEWAY_PORT_RANGE_END,
+  AUTOMATIC_GATEWAY_PORT_RANGE_START,
   BEDROCK_RUNTIME_ADAPTER_PORT,
   DASHBOARD_PORT,
   DASHBOARD_PORT_RANGE_END,

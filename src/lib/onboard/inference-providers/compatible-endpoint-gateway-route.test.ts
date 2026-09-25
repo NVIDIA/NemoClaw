@@ -4,11 +4,14 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  AUTOMATIC_GATEWAY_PORT_RANGE_END,
+  AUTOMATIC_GATEWAY_PORT_RANGE_START,
   BEDROCK_RUNTIME_ADAPTER_PORT,
   DASHBOARD_PORT,
   DASHBOARD_PORT_RANGE_END,
   DASHBOARD_PORT_RANGE_START,
   DEFAULT_BEDROCK_RUNTIME_ADAPTER_PORT,
+  DEFAULT_GATEWAY_PORT,
   DEFAULT_HTTPS_PIN_RUNTIME_ADAPTER_PORT,
   DEFAULT_OLLAMA_PROXY_PORT,
   DEFAULT_OPENROUTER_RUNTIME_ADAPTER_PORT,
@@ -47,7 +50,11 @@ describe("compatible endpoint gateway routing", () => {
   });
 
   it.each([
+    ["default gateway", DEFAULT_GATEWAY_PORT],
     ["gateway", GATEWAY_PORT],
+    ["automatic gateway range start", AUTOMATIC_GATEWAY_PORT_RANGE_START],
+    ["automatic gateway range interior", AUTOMATIC_GATEWAY_PORT_RANGE_START + 1],
+    ["automatic gateway range end", AUTOMATIC_GATEWAY_PORT_RANGE_END],
     ["dashboard", DASHBOARD_PORT],
     ["dashboard range start", DASHBOARD_PORT_RANGE_START],
     ["dashboard range end", DASHBOARD_PORT_RANGE_END],
