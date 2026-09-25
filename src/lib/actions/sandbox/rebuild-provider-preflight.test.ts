@@ -313,4 +313,29 @@ describe("checkRebuildGatewayCredentialReuseOrBail", () => {
     ).rejects.toThrow("Unsafe gateway credential reuse");
     expect(readRecordedProviderEndpoints).toHaveBeenCalledWith("compatible-endpoint", "alpha");
   });
+
+  it("reports the rejected recovery condition without endpoint details", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const mismatchedEndpoint = config({
+      endpointUrl: "https://secret-canary.example.test/v1",
+    });
+
+    await expect(
+      checkRebuildGatewayCredentialReuseOrBail(
+        "alpha",
+        mismatchedEndpoint,
+        false,
+        vi.fn(),
+        throwingBail,
+        {
+          readGatewayProviderMetadata: async () => exactGatewayProvider,
+          readRecordedProviderEndpoints: () => [],
+        },
+      ),
+    ).rejects.toThrow("Unsafe gateway credential reuse");
+
+    const diagnostics = error.mock.calls.flat().join("\n");
+    expect(diagnostics).toContain("The recorded endpoint identity is missing or incompatible.");
+    expect(diagnostics).not.toContain("secret-canary");
+  });
 });

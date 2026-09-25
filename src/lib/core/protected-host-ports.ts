@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { DEFAULT_OLLAMA_PROXY_PORT, OLLAMA_PROXY_PORT } from "./ollama-proxy-port";
-import { DEFAULT_MODEL_ROUTER_PORT } from "./model-router-port";
+import { DEFAULT_MODEL_ROUTER_PORT, resolveConfiguredModelRouterPort } from "./model-router-port";
 import { parseServicePortOverride } from "./service-port-boundary";
 
 export { DEFAULT_MODEL_ROUTER_PORT };
@@ -16,6 +16,7 @@ const CONFIGURED_GATEWAY_PORT = parseServicePortOverride(
   process.env.NEMOCLAW_GATEWAY_PORT,
   DEFAULT_GATEWAY_PORT,
 );
+const CONFIGURED_MODEL_ROUTER_PORT = resolveConfiguredModelRouterPort();
 
 /** Default OpenClaw dashboard port inside the sandbox and on the host. */
 export const SANDBOX_DASHBOARD_PORT = 18789;
@@ -72,6 +73,7 @@ export function isProtectedNemoClawHostPort(port: number): boolean {
     (port >= DASHBOARD_PORT_RANGE_START && port <= DASHBOARD_PORT_RANGE_END) ||
     isHermesApiPort(port) ||
     port === DEFAULT_MODEL_ROUTER_PORT ||
+    port === CONFIGURED_MODEL_ROUTER_PORT ||
     port === OLLAMA_PROXY_PORT ||
     port === DEFAULT_OLLAMA_PROXY_PORT ||
     port === BEDROCK_RUNTIME_ADAPTER_PORT ||

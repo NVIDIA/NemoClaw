@@ -18,8 +18,41 @@ function tempHome(): string {
 describe("protected NemoClaw host ports", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
+    vi.doUnmock("./repository-root");
     vi.resetModules();
     for (const home of tempHomes.splice(0)) fs.rmSync(home, { recursive: true, force: true });
+  });
+
+  it("rejects the Model Router port configured by the routed blueprint", async () => {
+    const root = tempHome();
+    const blueprintDir = path.join(root, "nemoclaw-blueprint");
+    fs.mkdirSync(blueprintDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(blueprintDir, "blueprint.yaml"),
+      [
+        "components:",
+        "  inference:",
+        "    profiles:",
+        "      routed:",
+        "        model: test/model",
+        "  router:",
+        "    enabled: true",
+        "    port: 23006",
+        "",
+      ].join("\n"),
+    );
+    vi.stubEnv("HOME", tempHome());
+    vi.doMock("./repository-root", () => ({ REPOSITORY_ROOT: root }));
+    vi.resetModules();
+
+    const { isProtectedNemoClawHostPort } = await import("./protected-host-ports");
+    const { isLoopbackNoAuthCompatibleEndpointUrl } =
+      await import("../onboard/inference-providers/compatible-endpoint-gateway-route");
+
+    expect(isProtectedNemoClawHostPort(23006)).toBe(true);
+    expect(
+      isLoopbackNoAuthCompatibleEndpointUrl("compatible-endpoint", "http://localhost:23006/v1"),
+    ).toBe(false);
   });
 
   it("keeps the default and automatic gateway ports reserved under an override", async () => {
