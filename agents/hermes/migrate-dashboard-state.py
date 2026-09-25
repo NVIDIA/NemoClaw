@@ -250,10 +250,11 @@ def _verified_generated_config(
     source_name: str,
     source_display: str,
     target_fd: int,
+    target_name: str,
     target_display: str,
 ) -> bool:
     source_text = _read_text(source_fd, source_name, source_display)
-    target_text = _read_text(target_fd, source_name, target_display)
+    target_text = _read_text(target_fd, target_name, target_display)
     if source_text is None or target_text is None:
         return False
     try:
@@ -326,10 +327,11 @@ def _verified_generated_env(
     source_name: str,
     source_display: str,
     target_fd: int,
+    target_name: str,
     target_display: str,
 ) -> bool:
     source_text = _read_text(source_fd, source_name, source_display)
-    target_text = _read_text(target_fd, source_name, target_display)
+    target_text = _read_text(target_fd, target_name, target_display)
     if source_text is None or target_text is None:
         return False
     source = _parse_env(source_text)
@@ -343,17 +345,30 @@ def _verified_generated_env(
 
 def _is_verified_generated_shadow(
     source_fd: int,
-    name: str,
+    source_name: str,
+    logical_name: str,
     source_display: str,
     target_fd: int,
     target_display: str,
 ) -> bool:
-    if name == "config.yaml":
+    if logical_name == "config.yaml":
         return _verified_generated_config(
-            source_fd, name, source_display, target_fd, target_display
+            source_fd,
+            source_name,
+            source_display,
+            target_fd,
+            logical_name,
+            target_display,
         )
-    if name == ".env":
-        return _verified_generated_env(source_fd, name, source_display, target_fd, target_display)
+    if logical_name == ".env":
+        return _verified_generated_env(
+            source_fd,
+            source_name,
+            source_display,
+            target_fd,
+            logical_name,
+            target_display,
+        )
     return False
 
 
@@ -374,6 +389,7 @@ def _source_has_user_state(
             target_path = f"{target_display}/{name}"
             if _lookup(target_fd, name) is not None and _is_verified_generated_shadow(
                 source_fd,
+                name,
                 name,
                 source_path,
                 target_fd,
@@ -417,6 +433,7 @@ def _preflight_tree(
             and stat.S_ISREG(source.mode)
             and _is_verified_generated_shadow(
                 source_fd,
+                name,
                 name,
                 source_path,
                 target_fd,
@@ -528,10 +545,17 @@ def _move_no_replace_verified(
     raise MigrationError(f"{source_display} changed during migration")
 
 
-def _unlink_verified(parent_fd: int, name: str, display: str) -> None:
+def _unlink_verified(
+    parent_fd: int,
+    name: str,
+    display: str,
+    expected: EntryIdentity | None = None,
+) -> None:
     before = _identity(parent_fd, name, display)
     if not stat.S_ISREG(before.mode):
         raise MigrationError(f"{display} is not a regular file")
+    if expected is not None and before != expected:
+        raise MigrationError(f"{display} changed after verification")
     quarantine = ".nemoclaw-dashboard-migration-" + hashlib.sha256(
         os.fsencode(name)
     ).hexdigest()[:24]
@@ -554,6 +578,72 @@ def _unlink_verified(parent_fd: int, name: str, display: str) -> None:
 
 def _remove_generated_file(parent_fd: int, name: str, display: str) -> None:
     _unlink_verified(parent_fd, name, display)
+
+
+def _remove_verified_generated_shadow(
+    source_fd: int,
+    name: str,
+    source_display: str,
+    target_fd: int,
+    target_display: str,
+) -> None:
+    before = _identity(source_fd, name, source_display)
+    if not stat.S_ISREG(before.mode):
+        raise MigrationError(f"{source_display} is not a regular file")
+    quarantine = ".nemoclaw-dashboard-verified-" + hashlib.sha256(
+        os.fsencode(name)
+    ).hexdigest()[:24]
+    try:
+        _rename_no_replace(source_fd, name, source_fd, quarantine)
+    except OSError as exc:
+        raise MigrationError(
+            f"{source_display} could not be quarantined safely: {exc.strerror}"
+        ) from exc
+    moved = os.stat(quarantine, dir_fd=source_fd, follow_symlinks=False)
+    if not _matches(before, moved):
+        try:
+            _rename_no_replace(source_fd, quarantine, source_fd, name)
+        except OSError as rollback:
+            raise MigrationError(
+                f"{source_display} changed while it was quarantined and rollback failed: "
+                f"{rollback.strerror}"
+            ) from rollback
+        raise MigrationError(f"{source_display} changed while it was quarantined")
+    if not _is_verified_generated_shadow(
+        source_fd,
+        quarantine,
+        name,
+        source_display,
+        target_fd,
+        target_display,
+    ):
+        try:
+            _rename_no_replace(source_fd, quarantine, source_fd, name)
+        except OSError as rollback:
+            raise MigrationError(
+                f"{source_display} changed before generated-state verification and rollback "
+                f"failed: {rollback.strerror}"
+            ) from rollback
+        raise MigrationError(
+            f"{source_display} changed before generated-state verification"
+        )
+    try:
+        _unlink_verified(
+            source_fd,
+            quarantine,
+            source_display,
+            expected=before,
+        )
+    except BaseException:
+        if _lookup(source_fd, quarantine) is not None and _lookup(source_fd, name) is None:
+            try:
+                _rename_no_replace(source_fd, quarantine, source_fd, name)
+            except OSError as rollback:
+                raise MigrationError(
+                    f"{source_display} could not be restored after verified deletion failed: "
+                    f"{rollback.strerror}"
+                ) from rollback
+        raise
 
 
 def _merge_tree(
@@ -582,12 +672,19 @@ def _merge_tree(
             and _is_verified_generated_shadow(
                 source_fd,
                 name,
+                name,
                 source_path,
                 target_fd,
                 target_path,
             )
         ):
-            _remove_generated_file(source_fd, name, source_path)
+            _remove_verified_generated_shadow(
+                source_fd,
+                name,
+                source_path,
+                target_fd,
+                target_path,
+            )
             continue
         if target is None:
             if stat.S_ISDIR(source.mode):
