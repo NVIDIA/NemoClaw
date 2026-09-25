@@ -61,8 +61,6 @@ describe("runInferenceSet OpenClaw routing", () => {
     });
     expect(deps.calls.writeSandboxConfig).toHaveBeenCalledWith("alpha", OPENCLAW_TARGET, config);
     expect(deps.calls.recomputeSandboxConfigHash).toHaveBeenCalledWith("alpha", OPENCLAW_TARGET);
-    // The dashboard re-seed is Hermes-only; OpenClaw has no isolated dashboard config. (#6893)
-    expect(deps.calls.seedHermesDashboardConfig).not.toHaveBeenCalled();
     expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
       "alpha",
       expect.objectContaining({
@@ -83,7 +81,7 @@ describe("runInferenceSet OpenClaw routing", () => {
     ]);
     expect(deps.getSession()).toMatchObject({
       provider: "nvidia-prod",
-      model: "nvidia/nemotron-3-super-120b-a12b",
+      model: "moonshotai/kimi-k2.6",
       endpointUrl: "https://inference.local/v1",
     });
     expect(result).toMatchObject({
@@ -92,7 +90,6 @@ describe("runInferenceSet OpenClaw routing", () => {
       model: "nvidia/nemotron-3-super-120b-a12b",
       primaryModelRef: "inference/nvidia/nemotron-3-super-120b-a12b",
       configChanged: true,
-      sessionUpdated: true,
       inSandboxConfigSynced: true,
     });
     expect(deps.calls.restartSandboxGateway).toHaveBeenCalledOnce();

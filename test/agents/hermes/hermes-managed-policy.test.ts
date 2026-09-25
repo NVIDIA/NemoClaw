@@ -26,13 +26,6 @@ const PROFILE_PATCHER_PATH = path.join(
   "hermes",
   "patch-profile-policy-defaults.py",
 );
-const DASHBOARD_SEEDER_PATH = path.join(
-  import.meta.dirname,
-  "../../..",
-  "agents",
-  "hermes",
-  "seed-dashboard-config.py",
-);
 const SETTINGS: HermesBuildSettings = {
   model: "test-model",
   baseUrl: "https://inference.local/v1",
@@ -105,7 +98,6 @@ describe("Hermes managed policy", () => {
     expect(policy.schema_version).toBe(HERMES_MANAGED_POLICY_SCHEMA_VERSION);
     expect(Object.keys(policy).sort()).toEqual([
       "config",
-      "dashboard",
       "env_lines",
       "managed_paths",
       "schema_version",
@@ -116,7 +108,6 @@ describe("Hermes managed policy", () => {
       model: "test-model",
     });
     expect(policy.env_lines).toContain("DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN");
-    expect(policy.dashboard.env_keys).not.toContain("API_SERVER_KEY");
     expect(serialized).not.toContain(rawSecret);
     expect(loadWithPython(policy).status).toBe(0);
   });
@@ -130,7 +121,7 @@ describe("Hermes managed policy", () => {
     const result = loadWithPython(policy);
 
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain("has no migration to 1");
+    expect(result.stderr).toContain(`has no migration to ${HERMES_MANAGED_POLICY_SCHEMA_VERSION}`);
   });
 
   it("rejects a raw model credential without echoing it (#8008)", () => {
@@ -156,14 +147,6 @@ describe("Hermes managed policy", () => {
       encoding: "utf8",
       timeout: 5000,
     });
-    const seeder = spawnSync("python3", ["-I", DASHBOARD_SEEDER_PATH], {
-      encoding: "utf8",
-      timeout: 5000,
-    });
-
     expect(patcher.status, patcher.stderr).toBe(0);
-    expect(seeder.status).toBe(1);
-    expect(seeder.stderr).toContain("usage: seed-dashboard-config.py");
-    expect(seeder.stderr).not.toContain("ModuleNotFoundError");
   });
 });

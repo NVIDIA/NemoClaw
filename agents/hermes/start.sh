@@ -279,7 +279,6 @@ if [ "$DASHBOARD_PUBLIC_PORT" -eq "$DASHBOARD_INTERNAL_PORT" ]; then
   DASHBOARD_INTERNAL_PORT=19120
 fi
 HERMES_DASHBOARD_TUI="${NEMOCLAW_HERMES_DASHBOARD_TUI:-${HERMES_DASHBOARD_TUI:-0}}"
-HERMES_DASHBOARD_HOME="${HERMES_DASHBOARD_HOME:-/sandbox/.hermes/profiles/dashboard-home}"
 HERMES="$(command -v hermes)" # Resolve once, use absolute path everywhere
 
 # Hermes resolves config and runtime state relative to HERMES_HOME. The config
@@ -301,18 +300,6 @@ _HERMES_BOUNDARY_VALIDATOR="/usr/local/lib/nemoclaw/validate-hermes-env-secret-b
 if [ ! -f "$_HERMES_BOUNDARY_VALIDATOR" ]; then
   _HERMES_BOUNDARY_VALIDATOR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/validate-env-secret-boundary.py"
 fi
-
-# Resolve the dashboard config seeder (same install/dev-fallback pattern as the
-# boundary validator above). The Hermes dashboard runs under its own
-# HERMES_DASHBOARD_HOME, so it never sees the model/custom_providers block
-# NemoClaw writes to the gateway config; this script mirrors those routing keys
-# into the dashboard config so the Models page and kanban specifier/dispatcher
-# resolve the routed model.
-_HERMES_DASHBOARD_CONFIG_SEEDER="/usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py"
-if [ ! -f "$_HERMES_DASHBOARD_CONFIG_SEEDER" ]; then
-  _HERMES_DASHBOARD_CONFIG_SEEDER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/seed-dashboard-config.py"
-fi
-_HERMES_MANAGED_POLICY="/usr/local/share/nemoclaw/hermes-managed-policy.json"
 
 # Descriptor-safe updater for runtime-mutable Hermes config/env/hash files.
 _HERMES_RUNTIME_CONFIG_GUARD="/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py"
@@ -338,13 +325,8 @@ if [ -e "$HERMES_STARTUP_READY_FILE" ] && ! rm -f "$HERMES_STARTUP_READY_FILE"; 
   exit 1
 fi
 
-# The seeder imports PyYAML, which ships ONLY in the Hermes venv — not in the
-# base-image python3 that is first on PATH at container boot. Invoked with
-# the base python3, the seeder hits its "PyYAML unavailable; skipping model
-# seed" branch and returns 0, so the model routing is silently never mirrored
-# into the dashboard home and the Models page shows no models.
-#
-# Pick the venv interpreter from a fixed trusted absolute-path list so a
+# Hermes startup tooling imports PyYAML, which ships in the Hermes venv.
+# Pick the interpreter from a fixed trusted absolute-path list so a
 # PATH-shadowed python3 (via SSH env, compromised sandbox, or malicious
 # entrypoint wrapper) cannot bypass the runtime-config-guard security checks.
 # The list scans first-wins ordered most-preferred first (venv > local >
@@ -2058,9 +2040,9 @@ start_socat_forwarder() {
 }
 
 build_hermes_dashboard_args() {
-  # HERMES_DASHBOARD_HOME is a dedicated profile for privilege separation.
-  # Hermes otherwise treats a profiles/<name> launch as a request for its
-  # unified machine dashboard and re-execs outside this prepared profile.
+  # The dashboard shares Hermes' native home so the gateway, dashboard, CLI,
+  # and TUI observe one agent-owned configuration. `--isolated` keeps the
+  # dashboard from supervising the separately launched gateway.
   HERMES_DASHBOARD_ARGS=(
     dashboard
     --host
@@ -2076,92 +2058,9 @@ build_hermes_dashboard_args() {
   fi
 }
 
-prepare_hermes_dashboard_home() {
-  local owner="${1:-}"
-  local rc=0
-  if [ "$(id -u)" -eq 0 ] && [ -n "$owner" ]; then
-    # Root starts the dashboard service, but the dashboard home is sandbox-owned
-    # mutable state. Do every path-touching operation after step-down so root
-    # never follows, creates, chowns, chmods, or deletes through a
-    # sandbox-controlled dashboard-home path. Remove this branch only if
-    # dashboard home creation moves into a trusted image-build step.
-    # shellcheck disable=SC2016  # inner shell expands after sandbox step-down
-    env HERMES_DIR="$HERMES_DIR" \
-      HERMES_DASHBOARD_HOME="$HERMES_DASHBOARD_HOME" \
-      _HERMES_PYTHON="$_HERMES_PYTHON" \
-      _HERMES_DASHBOARD_CONFIG_SEEDER="$_HERMES_DASHBOARD_CONFIG_SEEDER" \
-      _HERMES_MANAGED_POLICY="$_HERMES_MANAGED_POLICY" \
-      "${STEP_DOWN_PREFIX_SANDBOX[@]}" sh -c '
-        if [ -L "$HERMES_DASHBOARD_HOME" ]; then
-          echo "[SECURITY] Refusing Hermes dashboard startup because ${HERMES_DASHBOARD_HOME} is a symlink" >&2
-          exit 1
-        fi
-        mkdir -p "$HERMES_DASHBOARD_HOME" || exit 1
-        if [ -L "$HERMES_DASHBOARD_HOME" ] || [ ! -d "$HERMES_DASHBOARD_HOME" ]; then
-          echo "[SECURITY] Refusing Hermes dashboard startup because ${HERMES_DASHBOARD_HOME} is not a safe directory" >&2
-          exit 1
-        fi
-        chmod 700 "$HERMES_DASHBOARD_HOME" || exit 1
-        # The dashboard can attempt a gateway restart from its isolated
-        # HERMES_HOME. In NemoClaw the real gateway lives under /sandbox/.hermes,
-        # so a failed dashboard-scoped restart can leave stale startup_failed
-        # state that poisons /api/status even while the real gateway is healthy.
-        rm -f "${HERMES_DASHBOARD_HOME}/gateway_state.json" 2>/dev/null || true
-        exec "$_HERMES_PYTHON" "$_HERMES_DASHBOARD_CONFIG_SEEDER" \
-          "$_HERMES_MANAGED_POLICY" \
-          "${HERMES_DIR}/config.yaml" "${HERMES_DASHBOARD_HOME}/config.yaml" \
-          "${HERMES_DIR}/.env" "${HERMES_DASHBOARD_HOME}/.env"
-      ' || rc=$?
-    if [ "$rc" -ne 0 ]; then
-      echo "[dashboard] ERROR: config seed exited ${rc}; refusing dashboard startup" >&2
-      return "$rc"
-    fi
-    return 0
-  fi
-
-  if [ -L "$HERMES_DASHBOARD_HOME" ]; then
-    echo "[SECURITY] Refusing Hermes dashboard startup because ${HERMES_DASHBOARD_HOME} is a symlink" >&2
-    return 1
-  fi
-  mkdir -p "$HERMES_DASHBOARD_HOME" || return 1
-  if [ -L "$HERMES_DASHBOARD_HOME" ] || [ ! -d "$HERMES_DASHBOARD_HOME" ]; then
-    echo "[SECURITY] Refusing Hermes dashboard startup because ${HERMES_DASHBOARD_HOME} is not a safe directory" >&2
-    return 1
-  fi
-  chmod 700 "$HERMES_DASHBOARD_HOME" || return 1
-  seed_hermes_dashboard_config
-}
-
-# Mirror the gateway's model routing and non-secret dotenv context into the
-# dashboard's isolated HERMES_HOME so its Models page (/api/model/options),
-# Chat/TUI setup checks, and kanban specifier/dispatcher resolve the routed
-# model. The dashboard runs under HERMES_DASHBOARD_HOME for privilege separation and
-# otherwise only sees a Hermes-default config with an empty model. Idempotent:
-# refreshes the keys on every launch. Missing gateway config is a benign no-op
-# in the seeder; security refusals and write failures abort startup.
-seed_hermes_dashboard_config() {
-  local dst="${HERMES_DASHBOARD_HOME}/config.yaml"
-  local env_dst="${HERMES_DASHBOARD_HOME}/.env"
-  local rc=0
-
-  # Non-root and explicit same-user launches perform cleanup and seeding under
-  # the current service user; root launches run the equivalent block inside
-  # prepare_hermes_dashboard_home after stepping down to the sandbox identity.
-  rm -f "${HERMES_DASHBOARD_HOME}/gateway_state.json" 2>/dev/null || true
-  env "$_HERMES_PYTHON" "$_HERMES_DASHBOARD_CONFIG_SEEDER" \
-    "$_HERMES_MANAGED_POLICY" \
-    "${HERMES_DIR}/config.yaml" "$dst" \
-    "${HERMES_DIR}/.env" "$env_dst" || rc=$?
-
-  if [ "$rc" -ne 0 ]; then
-    echo "[dashboard] ERROR: config seed exited ${rc}; refusing dashboard startup" >&2
-    return "$rc"
-  fi
-}
-
 launch_hermes_dashboard_process() {
   local service_user="${1:-current}"
-  local HERMES_HOME="${HERMES_DASHBOARD_HOME}"
+  local HERMES_HOME="${HERMES_DIR}"
   local GATEWAY_HEALTH_URL="http://127.0.0.1:${INTERNAL_PORT}"
   local NEMOCLAW_HERMES_DASHBOARD_API_SERVER_ENV="${HERMES_DIR}/.env"
   local _NEMOCLAW_HERMES_DASHBOARD_EXTERNAL_HOST="${HERMES_DASHBOARD_EXTERNAL_HOST}"
@@ -2187,7 +2086,6 @@ launch_hermes_dashboard_process() {
 
 start_hermes_dashboard_current_user() {
   build_hermes_dashboard_args || return 1
-  prepare_hermes_dashboard_home "" || return 1
   prepare_restricted_log /tmp/dashboard.log "" 600 || return 1
   launch_hermes_dashboard_process current || return 1
   echo "[gateway] hermes dashboard launched (pid $DASHBOARD_PID)" >&2
@@ -2202,7 +2100,6 @@ start_hermes_dashboard_current_user() {
 
 start_hermes_dashboard_sandbox_user() {
   build_hermes_dashboard_args || return 1
-  prepare_hermes_dashboard_home sandbox:sandbox || return 1
   prepare_restricted_log /tmp/dashboard.log sandbox:sandbox 600 || return 1
   launch_hermes_dashboard_process sandbox || return 1
   echo "[gateway] hermes dashboard launched as 'sandbox' user (pid $DASHBOARD_PID)" >&2
@@ -3190,11 +3087,6 @@ supervise_hermes_service_restarts_current_user() {
 }
 
 start_hermes_root_gateway() {
-  # Migrate and seed the dashboard profile before Hermes reads the shared home.
-  # Waiting until dashboard launch leaves restored legacy state in the gateway's
-  # HERMES_HOME during its readiness check.
-  prepare_hermes_dashboard_home sandbox:sandbox || return 1
-
   # Start Hermes gateway. Messaging egress goes directly through OpenShell.
   launch_hermes_gateway || return 1
   start_gateway_log_stream || return 1

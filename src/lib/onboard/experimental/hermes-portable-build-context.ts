@@ -64,7 +64,6 @@ const LOCAL_COPY_SOURCES = [
   "agents/hermes/plugin/__init__.py",
   "agents/hermes/plugin/plugin.yaml",
   "agents/hermes/runtime-config-guard.py",
-  "agents/hermes/seed-dashboard-config.py",
   "agents/hermes/start.sh",
   "agents/hermes/validate-cli-adapter.py",
   "agents/hermes/validate-env-secret-boundary.py",

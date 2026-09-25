@@ -42,7 +42,6 @@ function expectNoInferenceMutation(calls: ReturnType<typeof createDeps>["calls"]
   expect(calls.updateSandbox).not.toHaveBeenCalled();
   expect(calls.writeSandboxConfig).not.toHaveBeenCalled();
   expect(calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
-  expect(calls.updateSession).not.toHaveBeenCalled();
   expect(calls.restartSandboxGateway).not.toHaveBeenCalled();
 }
 
@@ -159,7 +158,6 @@ describe("runInferenceSet accepts the installer provider name — facet 1 (#6321
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
     expect(deps.calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
-    expect(deps.calls.updateSession).not.toHaveBeenCalled();
     expect(deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
   });
 

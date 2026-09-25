@@ -125,7 +125,6 @@ const HERMES_MANAGED_POLICY_FILES = new Set([
   "agents/hermes/image-build-probes.py",
   "agents/hermes/managed_policy.py",
   "agents/hermes/patch-profile-policy-defaults.py",
-  "agents/hermes/seed-dashboard-config.py",
   "agents/hermes/start.sh",
   "src/lib/hermes-managed-route.ts",
 ]);

@@ -11,7 +11,7 @@ import stat
 from pathlib import Path
 
 MANAGED_POLICY_PATH = Path("/usr/local/share/nemoclaw/hermes-managed-policy.json")
-MANAGED_POLICY_SCHEMA_VERSION = 1
+MANAGED_POLICY_SCHEMA_VERSION = 2
 HERMES_PROXY_REWRITE_SENTINEL = "sk-OPENSHELL-PROXY-REWRITE"
 
 
@@ -63,7 +63,6 @@ def load_managed_policy(path: Path = MANAGED_POLICY_PATH) -> dict:
         "schema_version",
         "config",
         "env_lines",
-        "dashboard",
         "managed_paths",
     }:
         raise ManagedPolicyError("managed policy has an unexpected top-level shape")
@@ -76,14 +75,6 @@ def load_managed_policy(path: Path = MANAGED_POLICY_PATH) -> dict:
     if not isinstance(document.get("config"), dict):
         raise ManagedPolicyError("managed policy config must be a mapping")
     _string_list(document.get("env_lines"), "managed policy env_lines")
-    dashboard = document.get("dashboard")
-    if not isinstance(dashboard, dict) or set(dashboard) != {
-        "routing_keys",
-        "env_keys",
-    }:
-        raise ManagedPolicyError("managed policy dashboard has an unexpected shape")
-    for key in ("routing_keys", "env_keys"):
-        _string_list(dashboard.get(key), f"managed policy dashboard.{key}")
     managed_paths = _string_list(
         document.get("managed_paths"),
         "managed policy managed_paths",
@@ -98,9 +89,6 @@ def load_managed_policy(path: Path = MANAGED_POLICY_PATH) -> dict:
         )
     for managed_path in managed_paths:
         policy_value(config, managed_path)
-    for key in dashboard["routing_keys"]:
-        if has_routing and key not in config:
-            raise ManagedPolicyError(f"managed policy config is missing {key}")
     return document
 
 

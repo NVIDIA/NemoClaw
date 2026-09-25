@@ -576,19 +576,6 @@ def verify_langfuse_credentials() -> None:
     )
 
 
-def verify_dashboard_policy(path: Path) -> None:
-    import yaml
-    from managed_policy import load_managed_policy, policy_value
-
-    config = yaml.safe_load(path.read_text(encoding="utf-8"))
-    policy = load_managed_policy()
-    for dotted_path in policy["managed_paths"]:
-        expected = policy_value(policy["config"], dotted_path)
-        actual = policy_value(config, dotted_path)
-        assert actual == expected, (dotted_path, actual, expected)
-    path.unlink()
-
-
 def verify_cron_create() -> None:
     from cron.executions import create_execution
 
@@ -811,12 +798,9 @@ COMMANDS: dict[str, Callable[[], None]] = {
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) == 3 and argv[1] == "dashboard-policy":
-        verify_dashboard_policy(Path(argv[2]))
-        return 0
     if len(argv) != 2 or argv[1] not in COMMANDS:
-        commands = ", ".join(sorted([*COMMANDS, "dashboard-policy"]))
-        raise SystemExit(f"usage: {Path(argv[0]).name} <command> [path]\ncommands: {commands}")
+        commands = ", ".join(sorted(COMMANDS))
+        raise SystemExit(f"usage: {Path(argv[0]).name} <command>\ncommands: {commands}")
     COMMANDS[argv[1]]()
     return 0
 

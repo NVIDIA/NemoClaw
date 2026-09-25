@@ -4,7 +4,7 @@
 import { chmodSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { HermesManagedPolicyV1 } from "./managed-policy.ts";
+import type { HermesManagedPolicyV2 } from "./managed-policy.ts";
 import { buildHermesUpstreamHeader } from "./upstream-header.ts";
 import { toYaml } from "./yaml.ts";
 
@@ -18,7 +18,7 @@ export type WrittenHermesConfig = {
 export function writeHermesConfigFiles(
   config: Record<string, unknown>,
   envLines: string[],
-  policy: HermesManagedPolicyV1,
+  policy: HermesManagedPolicyV2,
   homeDir: string = homedir(),
 ): WrittenHermesConfig {
   const configPath = join(homeDir, ".hermes", "config.yaml");

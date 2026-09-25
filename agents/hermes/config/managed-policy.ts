@@ -19,7 +19,7 @@ export {
   hermesProviderKey,
 } from "../../../src/lib/hermes-managed-route.ts";
 
-export const HERMES_MANAGED_POLICY_SCHEMA_VERSION = 1 as const;
+export const HERMES_MANAGED_POLICY_SCHEMA_VERSION = 2 as const;
 
 const REMOTE_PLATFORM_TOOLSETS = [
   "web",
@@ -88,25 +88,6 @@ export const MANAGED_IMAGE_HERMES_NEUTRAL_PLATFORMS = [
   "yuanbao",
 ] as const;
 
-const DASHBOARD_ROUTING_KEYS = [
-  "model",
-  "providers",
-  "custom_providers",
-  "_nemoclaw_upstream",
-] as const;
-
-const DASHBOARD_ENV_KEYS = [
-  "API_SERVER_HOST",
-  "API_SERVER_PORT",
-  "TAVILY_API_KEY",
-  "NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER",
-  "FIRECRAWL_GATEWAY_URL",
-  "OPENAI_AUDIO_GATEWAY_URL",
-  "BROWSER_USE_GATEWAY_URL",
-  "FAL_QUEUE_GATEWAY_URL",
-  "MODAL_GATEWAY_URL",
-] as const;
-
 const MANAGED_POLICY_PATHS = [
   "approvals.mode",
   "browser.allow_unsafe_evaluate",
@@ -156,21 +137,17 @@ type HermesManagedConfigBase = Record<string, unknown> & {
 
 export type HermesManagedConfig = HermesManagedConfigBase & Partial<HermesManagedRouting>;
 
-export type HermesManagedPolicyV1 = {
+export type HermesManagedPolicyV2 = {
   schema_version: typeof HERMES_MANAGED_POLICY_SCHEMA_VERSION;
   config: HermesManagedConfig;
   env_lines: string[];
-  dashboard: {
-    routing_keys: [...typeof DASHBOARD_ROUTING_KEYS];
-    env_keys: [...typeof DASHBOARD_ENV_KEYS];
-  };
   managed_paths: [...typeof MANAGED_POLICY_PATHS];
 };
 
 export function buildHermesManagedPolicy(
   settings: HermesBuildSettings,
   env: NodeJS.ProcessEnv = process.env,
-): HermesManagedPolicyV1 {
+): HermesManagedPolicyV2 {
   const platforms: Record<string, unknown> = {
     api_server: {
       enabled: true,
@@ -307,10 +284,6 @@ export function buildHermesManagedPolicy(
     schema_version: HERMES_MANAGED_POLICY_SCHEMA_VERSION,
     config,
     env_lines: buildHermesEnvLines(settings, env),
-    dashboard: {
-      routing_keys: [...DASHBOARD_ROUTING_KEYS],
-      env_keys: [...DASHBOARD_ENV_KEYS],
-    },
     managed_paths: [...MANAGED_POLICY_PATHS],
   };
 }

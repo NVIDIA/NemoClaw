@@ -169,20 +169,6 @@ export async function runRebuildRestorePhase(
     if (hermesOperatorConfigRestore && !hermesOperatorConfigRestore.success) {
       restoreSucceeded = false;
     }
-    if (
-      targetAgentType === "hermes" &&
-      restore.restoredDirs.some(
-        (directory) => directory === "dashboard-home" || directory === "profiles",
-      )
-    ) {
-      const target = sandboxConfig.resolveAgentConfig(sandboxName);
-      const seeded =
-        target.agentName === "hermes"
-          ? sandboxConfig.restoreHermesDashboardConfig(sandboxName, target)
-          : "failed";
-      log(`Hermes dashboard state after restore: ${seeded}`);
-      if (seeded === "failed") restoreSucceeded = false;
-    }
     if (!restore.success) {
       if (openClawDoctorWindow) {
         await abortUnregisteredOpenClawPostRestoreDoctor(openClawDoctorWindow);

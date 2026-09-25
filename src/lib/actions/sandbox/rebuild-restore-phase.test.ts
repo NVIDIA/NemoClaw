@@ -188,47 +188,7 @@ describe("rebuild filesystem restore", () => {
     );
   });
 
-  it("migrates restored Hermes dashboard state into its current profile", async () => {
-    vi.spyOn(console, "log").mockImplementation(() => undefined);
-    vi.spyOn(snapshotRestore, "restoreRecreatedSandboxStateWithManagedAuthority").mockResolvedValue(
-      {
-        success: true,
-        restoredDirs: ["profiles", "dashboard-home"],
-        restoredFiles: [],
-        failedDirs: [],
-        failedFiles: [],
-      },
-    );
-    const target = {
-      agentName: "hermes",
-      configDir: "/sandbox/.hermes",
-      configPath: "/sandbox/.hermes/config.yaml",
-      configFile: "config.yaml",
-      format: "yaml",
-    } as const;
-    vi.spyOn(sandboxConfig, "resolveAgentConfig").mockReturnValue(target);
-    const migrate = vi
-      .spyOn(sandboxConfig, "restoreHermesDashboardConfig")
-      .mockReturnValue("converged");
-    const log = vi.fn();
-
-    const result = await runRebuildRestorePhase({
-      sandboxName: "hermes",
-      targetAgentType: "hermes",
-      targetImageIsCustom: false,
-      backupManifest,
-      log,
-    });
-
-    expect(migrate).toHaveBeenCalledWith("hermes", target);
-    expect(log).toHaveBeenCalledWith("Hermes dashboard state after restore: converged");
-    expect(result).toEqual({
-      restoreSucceeded: true,
-      hermesOperatorConfigRestore: { restoredKeys: [], droppedKeys: [] },
-    });
-  });
-
-  it("restores digest-bound Hermes operator config before dashboard reseeding", async () => {
+  it("restores digest-bound Hermes operator config", async () => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.spyOn(snapshotRestore, "restoreRecreatedSandboxStateWithManagedAuthority").mockResolvedValue(
       {
@@ -276,10 +236,6 @@ describe("rebuild filesystem restore", () => {
       const write = vi
         .spyOn(sandboxConfig, "writeSandboxConfig")
         .mockImplementation(() => undefined);
-      const reseed = vi
-        .spyOn(sandboxConfig, "restoreHermesDashboardConfig")
-        .mockReturnValue("converged");
-
       const result = await runRebuildRestorePhase({
         sandboxName: "hermes",
         targetAgentType: "hermes",
@@ -293,7 +249,6 @@ describe("rebuild filesystem restore", () => {
         model: { default: "fresh", max_tokens: 24576 },
         memory: { provider: "hindsight" },
       });
-      expect(reseed.mock.invocationCallOrder[0]).toBeGreaterThan(write.mock.invocationCallOrder[0]);
       expect(result).toEqual({
         restoreSucceeded: true,
         hermesOperatorConfigRestore: {
@@ -304,42 +259,6 @@ describe("rebuild filesystem restore", () => {
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
-  });
-
-  it("reports an unresolved or failed Hermes dashboard migration as incomplete", async () => {
-    vi.spyOn(console, "log").mockImplementation(() => undefined);
-    vi.spyOn(console, "error").mockImplementation(() => undefined);
-    vi.spyOn(snapshotRestore, "restoreRecreatedSandboxStateWithManagedAuthority").mockResolvedValue(
-      {
-        success: true,
-        restoredDirs: ["dashboard-home"],
-        restoredFiles: [],
-        failedDirs: [],
-        failedFiles: [],
-      },
-    );
-    vi.spyOn(sandboxConfig, "resolveAgentConfig").mockReturnValue({
-      agentName: "openclaw",
-      configDir: "/sandbox/.openclaw",
-      configPath: "/sandbox/.openclaw/openclaw.json",
-      configFile: "openclaw.json",
-      format: "json",
-    });
-    const migrate = vi.spyOn(sandboxConfig, "restoreHermesDashboardConfig");
-
-    const result = await runRebuildRestorePhase({
-      sandboxName: "hermes",
-      targetAgentType: "hermes",
-      targetImageIsCustom: false,
-      backupManifest,
-      log: vi.fn(),
-    });
-
-    expect(migrate).not.toHaveBeenCalled();
-    expect(result).toEqual({
-      restoreSucceeded: false,
-      hermesOperatorConfigRestore: { restoredKeys: [], droppedKeys: [] },
-    });
   });
 
   it("fails closed when the Hermes config handoff digest does not match", async () => {
