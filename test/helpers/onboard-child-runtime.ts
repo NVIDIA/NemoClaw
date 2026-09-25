@@ -98,6 +98,22 @@ function createSuccessfulOllamaServiceExecutionProofRunner(fallback) {
       return success("ollama version is 0.11.10\n");
     }
     if (
+      argv[0] === "/usr/bin/sudo" &&
+      argv[commandOffset] === "-u" &&
+      argv[commandOffset + 1] === "ollama" &&
+      argv[commandOffset + 2] === "--" &&
+      argv[commandOffset + 3] === "/usr/bin/env" &&
+      argv[commandOffset + 4] === "LC_ALL=C" &&
+      argv[commandOffset + 5] === "/usr/bin/timeout" &&
+      argv[commandOffset + 6] === "--signal=TERM" &&
+      argv[commandOffset + 7] === "--kill-after=250ms" &&
+      argv[commandOffset + 8] === "15s" &&
+      argv.at(-2) === executablePath &&
+      argv.at(-1) === "--version"
+    ) {
+      return success("ollama version is 0.11.10\n");
+    }
+    if (
       failUnmatchedExecutionProof &&
       argv[0] === "/usr/bin/sudo" &&
       argv.at(-2) === executablePath &&

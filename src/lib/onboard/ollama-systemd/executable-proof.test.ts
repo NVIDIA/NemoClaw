@@ -47,6 +47,10 @@ function isServiceUserProofCommand(command: readonly string[]): boolean {
   return command.includes("/usr/bin/systemd-run") && command.at(-1) === "--version";
 }
 
+function isBoundedDirectServiceUserProofCommand(command: readonly string[]): boolean {
+  return command.includes("/usr/bin/timeout") && command.at(-1) === "--version";
+}
+
 function expectServiceUserProofCommand(command: readonly string[], serviceUser: string): void {
   expect(command.slice(0, 5)).toEqual([
     "/usr/bin/sudo",
@@ -69,6 +73,27 @@ function expectServiceUserProofCommand(command: readonly string[], serviceUser: 
     ]),
   );
   expect(command.slice(-2)).toEqual([executablePath, "--version"]);
+}
+
+function expectBoundedDirectServiceUserProofCommand(
+  command: readonly string[],
+  serviceUser: string,
+): void {
+  expect(command).toEqual([
+    "/usr/bin/sudo",
+    "-n",
+    "-u",
+    serviceUser,
+    "--",
+    "/usr/bin/env",
+    "LC_ALL=C",
+    "/usr/bin/timeout",
+    "--signal=TERM",
+    "--kill-after=250ms",
+    "15s",
+    executablePath,
+    "--version",
+  ]);
 }
 
 type CommandCase = readonly [
@@ -513,12 +538,6 @@ describe("proveOllamaSystemdServiceExecutable", () => {
         "could not verify that systemd User 'ollama' resolves to a host account within 5 seconds",
     },
     {
-      call: 3,
-      classification: "execution-timeout",
-      message:
-        "Ollama ExecStart did not complete '--version' as systemd User 'ollama' within 15 seconds",
-    },
-    {
       call: 4,
       classification: "executable-timeout",
       message: `could not verify that systemd User 'ollama' can execute Ollama ExecStart '${executablePath}' within 5 seconds`,
@@ -552,6 +571,72 @@ describe("proveOllamaSystemdServiceExecutable", () => {
     },
   );
 
+  it("falls back to a bounded direct service-user proof after systemd-run times out (#12281)", () => {
+    const fixture = proofFixture(0o755);
+    fixture.runCaptureExImpl.mockImplementation((command: readonly string[]) =>
+      captureForCommand(command, [
+        [
+          (candidate) => candidate[0] === "/usr/bin/systemctl",
+          () =>
+            capture(
+              0,
+              `User=ollama\nExecStart={ path=${executablePath} ; argv[]=${executablePath} serve ; }`,
+            ),
+        ],
+        [(candidate) => candidate[0] === "/usr/bin/id", () => capture(0)],
+        [(candidate) => isServiceUserProofCommand(candidate), () => capture(null, "", true)],
+        [
+          (candidate) => isBoundedDirectServiceUserProofCommand(candidate),
+          () => capture(0, "ollama version is 0.11.10\n"),
+        ],
+      ]),
+    );
+
+    expect(proveOllamaSystemdServiceExecutable(fixture.options)).toMatchObject({
+      ok: true,
+      repaired: false,
+      serviceUser: "ollama",
+    });
+    const directCalls = fixture.runCaptureExImpl.mock.calls.filter(([command]) =>
+      isBoundedDirectServiceUserProofCommand(command as readonly string[]),
+    );
+    expect(directCalls).toHaveLength(1);
+    const [[command, options]] = directCalls;
+    expectBoundedDirectServiceUserProofCommand(command as readonly string[], "ollama");
+    expect(options).toEqual({ timeout: 17_000 });
+    expect(
+      fixture.runCaptureExImpl.mock.calls.some(([candidate]) =>
+        (candidate as readonly string[]).includes("/usr/bin/chmod"),
+      ),
+    ).toBe(false);
+  });
+
+  it("fails closed when both bounded service-user proofs time out (#12281)", () => {
+    const fixture = proofFixture(0o755);
+    fixture.runCaptureExImpl.mockImplementation((command: readonly string[]) =>
+      captureForCommand(command, [
+        [
+          (candidate) => candidate[0] === "/usr/bin/systemctl",
+          () =>
+            capture(
+              0,
+              `User=ollama\nExecStart={ path=${executablePath} ; argv[]=${executablePath} serve ; }`,
+            ),
+        ],
+        [(candidate) => candidate[0] === "/usr/bin/id", () => capture(0)],
+        [(candidate) => isServiceUserProofCommand(candidate), () => capture(null, "", true)],
+        [(candidate) => isBoundedDirectServiceUserProofCommand(candidate), () => capture(124)],
+      ]),
+    );
+
+    expect(proveOllamaSystemdServiceExecutable(fixture.options)).toMatchObject({
+      classification: "execution-timeout",
+      message:
+        "Ollama ExecStart did not complete '--version' as systemd User 'ollama' within 15 seconds",
+      ok: false,
+    });
+  });
+
   it("passes cgroup cleanup limits to systemd-run for the service-user proof (#10663)", () => {
     const fixture = proofFixture(0o755);
 
@@ -568,10 +653,12 @@ describe("proveOllamaSystemdServiceExecutable", () => {
   it("classifies the systemd cgroup runtime limit as an execution timeout (#10663)", () => {
     const fixture = proofFixture(0o755);
     fixture.runCaptureExImpl.mockImplementation((command: readonly string[]) =>
-      command.includes("/usr/bin/systemd-run")
+      command.includes("/usr/bin/systemd-run") || command.includes("/usr/bin/timeout")
         ? {
-            exitCode: 1,
-            stderr: "Finished with result: timeout\n",
+            exitCode: command.includes("/usr/bin/timeout") ? 124 : 1,
+            stderr: command.includes("/usr/bin/systemd-run")
+              ? "Finished with result: timeout\n"
+              : "",
             stdout: "",
             timedOut: false,
           }

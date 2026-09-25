@@ -99,6 +99,24 @@ describe("onboard child Ollama execution proof runner", () => {
         ],
         { timeout: 17_000 },
       );
+      const matchingFallback = runner(
+        [
+          "/usr/bin/sudo",
+          "-n",
+          "-u",
+          "ollama",
+          "--",
+          "/usr/bin/env",
+          "LC_ALL=C",
+          "/usr/bin/timeout",
+          "--signal=TERM",
+          "--kill-after=250ms",
+          "15s",
+          executablePath,
+          "--version",
+        ],
+        { timeout: 17_000 },
+      );
       const unmatched = runner(["/usr/bin/sudo", "-n", executablePath, "--version"], {
         timeout: 17_000,
       });
@@ -107,6 +125,7 @@ describe("onboard child Ollama execution proof runner", () => {
       });
 
       assert.equal(matching.exitCode, 0);
+      assert.equal(matchingFallback.exitCode, 0);
       assert.equal(unmatched.exitCode, 1);
       assert.match(unmatched.stderr, /Unexpected Ollama service execution-proof command/u);
       assert.equal(unrelated.exitCode, 0);
