@@ -113,6 +113,7 @@ export interface RuntimeProviderOwnedGatewayReadinessInput {
   readonly gatewayName: string;
   readonly gatewayPort: number;
   readonly expectedEndpoint: string;
+  readonly runtimeSocketPath: string | null;
   readonly managedGatewayEndpoints: readonly (string | null)[];
   readonly portAvailable: boolean;
   readonly installedOpenShellVersion: string | null;

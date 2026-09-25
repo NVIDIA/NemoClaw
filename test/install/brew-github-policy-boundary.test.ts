@@ -48,7 +48,12 @@ function resolveEffectivePolicy(presetNames: string[]): string {
 
 describe("policy preset capability boundaries", () => {
   it("removes the broader grant when replacing brew with brew-balanced (#10380)", () => {
-    const broad = resolveEffectivePolicy(["brew"]);
+    const broad = resolveEffectivePolicy(["brew", "brew-balanced"]);
+    expect(YAML.parse(broad).network_policies.brew.endpoints).toContainEqual({
+      host: "raw.githubusercontent.com",
+      port: 443,
+      access: "full",
+    });
     const entries = policies.extractPresetEntries(policies.loadPreset("brew")!);
     const removed = policies.removePresetFromPolicy(broad, entries);
     const narrowed = policies.mergePresetNamesIntoPolicy(removed, ["brew-balanced"]);

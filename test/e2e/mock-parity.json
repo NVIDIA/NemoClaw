@@ -286,8 +286,12 @@
     },
     {
       "live": "test/e2e/live/openshell-credential-generation-window.test.ts",
-      "liveSources": ["test/e2e/live/openshell-credential-generation-window.ts"],
+      "liveSources": [
+        "test/e2e/live/openshell-credential-generation-window.ts",
+        "test/e2e/fixtures/owned-sandbox-cleanup.ts"
+      ],
       "fast": [
+        "test/e2e/support/owned-sandbox-cleanup.test.ts",
         "test/credentials/openshell-credential-generation-window.test.ts",
         "test/mcp/mcp-artifact-secret-scan.test.ts",
         "test/mcp/mcp-agent-matrix-artifact-proof.test.ts",
@@ -330,7 +334,17 @@
     },
     {
       "live": "test/e2e/live/onboard-repair.test.ts",
+      "liveSources": [
+        "test/e2e/fixtures/podman-owner-diagnostic.ts",
+        "test/e2e/fixtures/podman-owner-snapshot.ts",
+        "test/e2e/fixtures/onboard-precleanup.ts",
+        "test/e2e/fixtures/owned-sandbox-cleanup.ts"
+      ],
       "fast": [
+        "test/e2e/support/podman-owner-diagnostic.test.ts",
+        "test/e2e/support/podman-owner-snapshot.test.ts",
+        "test/e2e/support/onboard-precleanup.test.ts",
+        "test/e2e/support/owned-sandbox-cleanup.test.ts",
         "src/lib/onboard/extra-provider-reconciliation-diagnostics.test.ts",
         "src/lib/onboard/extra-provider-reconciliation-probes.test.ts",
         "src/lib/onboard/extra-provider-reconciliation.test.ts",
@@ -346,7 +360,17 @@
     },
     {
       "live": "test/e2e/live/onboard-resume.test.ts",
+      "liveSources": [
+        "test/e2e/fixtures/podman-owner-diagnostic.ts",
+        "test/e2e/fixtures/podman-owner-snapshot.ts",
+        "test/e2e/fixtures/onboard-precleanup.ts",
+        "test/e2e/fixtures/owned-sandbox-cleanup.ts"
+      ],
       "fast": [
+        "test/e2e/support/podman-owner-diagnostic.test.ts",
+        "test/e2e/support/podman-owner-snapshot.test.ts",
+        "test/e2e/support/onboard-precleanup.test.ts",
+        "test/e2e/support/owned-sandbox-cleanup.test.ts",
         "src/lib/onboard/extra-provider-reconciliation-diagnostics.test.ts",
         "src/lib/onboard/extra-provider-reconciliation-probes.test.ts",
         "src/lib/onboard/extra-provider-reconciliation.test.ts",
@@ -609,6 +633,8 @@
     {
       "live": "test/e2e/live/mcp-bridge.test.ts",
       "liveSources": [
+        "test/e2e/fixtures/owned-sandbox-cleanup.ts",
+        "test/e2e/fixtures/routed-private-relay.ts",
         "test/e2e/live/dns-rebinding-hosts-fixture.ts",
         "test/e2e/live/mcp-bridge-cleanup.ts",
         "test/e2e/live/mcp-bridge-deepagents-config.ts",
@@ -616,6 +642,7 @@
         "test/e2e/live/mcp-bridge-onboard-env.ts",
         "test/e2e/live/mcp-bridge-reliability.ts",
         "test/e2e/live/mcp-bridge-servers.ts",
+        "test/e2e/fixtures/mcp-fixture-tls.ts",
         "test/e2e/live/mcp-bridge-hermes-lifecycle.ts",
         "test/e2e/live/mcp-bridge-phases.ts",
         "test/e2e/live/mcp-bridge-sandbox.ts",
@@ -638,7 +665,8 @@
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/e2e-redaction-entry.test.ts",
-        "test/e2e/support/mcp-bridge-cleanup.test.ts",
+        "test/e2e/support/owned-sandbox-cleanup.test.ts",
+        "test/e2e/support/routed-private-relay.test.ts",
         "test/e2e/support/mcp-bridge-hermes-lifecycle.test.ts",
         "test/e2e/support/mcp-bridge-hermes-http.test.ts",
         "test/e2e/support/mcp-bridge-onboard-env.test.ts",
@@ -652,6 +680,7 @@
         "test/e2e/support/openshell-exact-main-child-contracts.test.ts",
         "test/e2e/support/openshell-exact-main-runtime-contracts.test.ts",
         "test/mcp/mcp-bridge-servers.test.ts",
+        "test/e2e/support/mcp-bridge-https-diagnostics.test.ts",
         "src/lib/onboard/runtime-provider/docker-stopped-state-capture.test.ts",
         "test/state/snapshot-stopped-openclaw.test.ts"
       ]

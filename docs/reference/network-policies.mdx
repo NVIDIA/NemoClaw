@@ -133,11 +133,10 @@ During onboarding, the wizard prompts for a policy tier that determines the defa
 
 Balanced uses `brew-balanced` to allow only GET and HEAD to `raw.githubusercontent.com` for the preset's binaries.
 Open retains unrestricted raw GitHub access through `brew`, and Personal retains its broad web policy.
-When you reselect Balanced's suggested presets, NemoClaw replaces the previous built-in `brew` preset with `brew-balanced`.
-Explicit `brew` selections retain its broader policy.
-Resuming onboarding keeps the current `brew` selection rather than reselecting Balanced defaults.
-Skipping optional setup preserves the applied `brew` policy.
-Operator-owned `brew` policies are not replaced.
+Reselecting Balanced's suggested presets preserves an existing `brew` grant, including its unrestricted raw GitHub access.
+Adding `brew-balanced` does not narrow that broader grant.
+To narrow it, explicitly remove `brew` and apply `brew-balanced`.
+Resuming onboarding reapplies the saved selection; skipping optional setup preserves existing grants.
 
 When Personal is selected or carried forward, the `personal-open-internet` preset is mandatory for every agent and every onboarding entry point. Interactive choices, `NEMOCLAW_POLICY_MODE=custom`, and `NEMOCLAW_POLICY_MODE=skip` control only additional presets; they cannot deselect, skip, or replace Personal's required web authority.
 
