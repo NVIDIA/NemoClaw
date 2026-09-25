@@ -61,3 +61,19 @@ It also strengthens host OS reporting and Windows WSL GPU verification.
   It can reuse a trusted managed gateway service after that service removes standalone ownership records.
   Related change: [PR #12267](https://github.com/NVIDIA/NemoClaw/pull/12267).
   Refer to [Podman](/user-guide/openclaw/reference/troubleshooting#podman) for provider requirements and recovery guidance.
+- Balanced policy tiers now use `brew-balanced`, which limits `raw.githubusercontent.com` to GET and HEAD requests for its Homebrew binaries.
+  Existing `brew` access remains until you remove `brew` and add `brew-balanced`; Open retains `brew`.
+  Related change: [PR #10487](https://github.com/NVIDIA/NemoClaw/pull/10487).
+  Refer to [Network Policies](/user-guide/openclaw/reference/network-policies#policy-tiers) for tier and replacement details.
+- Rebuild can preserve declared state from a managed Docker OpenClaw sandbox in `Phase: Error` without starting or executing in its stopped container.
+  It requires an unchanged source container and exclusively owned managed state volume; user-managed `.env` and `.mcp.json` files are excluded.
+  Related change: [PR #12305](https://github.com/NVIDIA/NemoClaw/pull/12305).
+  Refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes) for requirements and recovery limits.
+- Uninstall leaves unrelated Docker containers intact and keeps a managed gateway running until its registered sandboxes are cleaned up.
+  For a nondefault gateway whose runtime is gone, `--destroy-user-data` can purge retained Docker registry and backup data after it verifies that the selected containers are absent.
+  Related changes: [PR #10478](https://github.com/NVIDIA/NemoClaw/pull/10478) and [PR #12299](https://github.com/NVIDIA/NemoClaw/pull/12299).
+  Refer to [Uninstall NemoClaw](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/uninstall-nemoclaw) for verification and retry conditions.
+- DGX Station Express preserves a recognized legacy single-Station workload when automatic peer discovery cannot qualify a trusted pair.
+  If the workload changes during discovery, installation stops rather than continuing the upgrade.
+  Related change: [PR #12296](https://github.com/NVIDIA/NemoClaw/pull/12296).
+  Refer to [Set Up vLLM on Two DGX Stations](/user-guide/openclaw/inference/local-inference/set-up-vllm-on-two-dgx-stations) for the recovery procedure.
