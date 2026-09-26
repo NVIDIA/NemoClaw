@@ -1931,7 +1931,8 @@ gateway connect failed: GatewayClientRequestError: scope upgrade pending approva
 ```
 
 Open the prepared shell. During setup, `connect` automatically settles pending
-upgrades limited to pairing, read, and write scopes:
+requests from the `cli`, `openclaw-cli`, and `openclaw-control-ui` clients when
+the requested scopes are limited to pairing, read, and write:
 
 ```bash
 $$nemoclaw my-assistant connect
@@ -1955,8 +1956,9 @@ openclaw devices approve <requestId>
 Then rerun the original command again.
 The `exec` command preserves the native command output and exit status. After
 `exec` fails, NemoClaw does not inspect pending requests automatically. The
-`connect` flow settles only allowlisted pairing, read, and write upgrades;
-requests outside that bounded path remain available for manual review.
+`connect` flow settles only allowlisted client identities requesting pairing,
+read, and write scopes; requests outside that bounded path remain available for
+manual review.
 
 </AgentOnly>
 
