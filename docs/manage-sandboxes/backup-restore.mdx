@@ -65,7 +65,8 @@ A rebuild does not repair the damaged tree, because each rebuild restores the tr
 
 <AgentOnly variant="hermes">
 Hermes snapshots include `SOUL.md`, user-created named profiles under `.hermes/profiles/`, the SQLite database behind `.hermes/state.db`, and the default kanban board in `.hermes/kanban.db`.
-The gateway, CLI, TUI, and Web Dashboard share the native `.hermes/config.yaml`; snapshots exclude that NemoClaw-managed file and `.hermes/.env`.
+The gateway, CLI, TUI, and Web Dashboard share the native `.hermes/config.yaml`; snapshots exclude that NemoClaw-managed file and do not retain the raw `.hermes/.env` file.
+For rebuild recovery, NemoClaw preserves only the allowlisted non-secret home-channel assignments from `.hermes/.env`; other values are not retained.
 Rebuild restore treats `.hermes/profiles/` as native agent-owned state and preserves user-created named profiles.
 On startup, NemoClaw migrates an older reserved `.hermes/profiles/dashboard-home/` into the shared native home, including a legacy WhatsApp session, and removes the retired profile.
 It removes named generated hash and runtime-state metadata.
