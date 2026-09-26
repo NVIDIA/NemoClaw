@@ -110,6 +110,33 @@ describe("buildSandboxRuntimeEnvArgs", () => {
     expect(envArgs).toContain("NEMOCLAW_HERMES_API_PORT=8647");
   });
 
+  it("injects the selected OpenShell gateway name only for OpenClaw", () => {
+    const base = {
+      chatUiUrl: "",
+      manageDashboard: false,
+      getDashboardForwardPort: () => "0",
+      hermesDashboardState: disabledHermesDashboardState,
+      extraPlaceholderKeys: [],
+      env: {} as NodeJS.ProcessEnv,
+      openshellGatewayName: "nemoclaw-18081",
+    };
+
+    const openclaw = buildSandboxRuntimeEnvArgs({
+      ...base,
+      agent: { name: "openclaw", configPaths: { dir: "/sandbox/.openclaw" } } as any,
+    }).envArgs;
+    const hermes = buildSandboxRuntimeEnvArgs({
+      ...base,
+      agent: { name: "hermes", configPaths: { dir: "/sandbox/.hermes" } } as any,
+      hermesApiPort: 8642,
+    }).envArgs;
+
+    expect(openclaw).toContain("NEMOCLAW_OPENSHELL_GATEWAY_NAME=nemoclaw-18081");
+    expect(hermes.some((entry) => entry.startsWith("NEMOCLAW_OPENSHELL_GATEWAY_NAME="))).toBe(
+      false,
+    );
+  });
+
   it("omits NEMOCLAW_SANDBOX_NAME when no sandbox name is known", () => {
     const envArgs = buildSandboxRuntimeEnvArgs({
       agent: { name: "openclaw", configPaths: { dir: "/sandbox/.openclaw" } } as any,
@@ -685,7 +712,7 @@ describe("prepareSandboxCreateLaunchWithPrebuild", () => {
       agent: null,
       chatUiUrl: "",
       createArgs: ["--from", dockerfile, "--name", "demo"],
-      env: {},
+      env: { NEMOCLAW_MODEL: "provider/generated-model" },
       extraPlaceholderKeys: [],
       getDashboardForwardPort: () => "0",
       hermesDashboardState: disabledHermesDashboardState,

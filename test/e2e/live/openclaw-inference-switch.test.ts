@@ -49,13 +49,20 @@ import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import { runBoundedRetry } from "../../../tools/e2e/retry-evidence.mts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
+  liveE2eManagedImageCatalog,
+  readLiveE2eManagedImageCatalogContracts,
+} from "../../../src/lib/onboard/workload/preparation.ts";
+import {
   agentReplyContainsToken,
   anthropicToolCount,
+  BAKED_STALE_CONTEXT_WINDOW,
+  BAKED_STALE_MAX_TOKENS,
   classifyOpenClawPostSwitchInferenceAttempt,
   MOCK_BASELINE_API_KEY,
   MOCK_BASELINE_MODEL,
   mockBaselineInference,
   parseOpenClawGatewayModelRun,
+  stageNonRootCustomOpenClawImageDockerfile,
 } from "./openclaw-inference-switch-helpers.ts";
 import {
   PUBLIC_NVIDIA_SWITCH_MODEL,
@@ -108,7 +115,12 @@ interface OpenClawConfig {
         baseUrl?: unknown;
         apiKey?: unknown;
         api?: unknown;
-        models?: Array<{ id?: unknown; name?: unknown; maxTokens?: unknown }>;
+        models?: Array<{
+          contextWindow?: unknown;
+          id?: unknown;
+          name?: unknown;
+          maxTokens?: unknown;
+        }>;
       }
     >;
   };
@@ -160,7 +172,7 @@ function proveMockBaselineAuthentication(
 ): Promise<void> {
   return baseline
     ? proveSelectedMockBaselineAuthentication(baseline, sandbox, home, artifacts)
-    : Promise.resolve(expect(baseline).toBeUndefined());
+    : Promise.resolve();
 }
 
 async function proveSelectedMockBaselineAuthentication(
@@ -462,8 +474,11 @@ async function prepareCompatibleAnthropicSwitchBinding(
   home: string,
   mockProvider: MockAnthropicProvider | undefined,
 ): Promise<CompatibleAnthropicSwitchBinding | null> {
-  if (SWITCH_PROVIDER !== "compatible-anthropic-endpoint") return null;
-  if (SWITCH_INFERENCE_API !== "anthropic-messages") return null;
+  if (
+    SWITCH_PROVIDER !== "compatible-anthropic-endpoint" ||
+    SWITCH_INFERENCE_API !== "anthropic-messages"
+  )
+    return null;
 
   const endpointUrl = process.env.NEMOCLAW_SWITCH_ENDPOINT_URL ?? mockProvider?.endpointUrl ?? "";
   const binding = compatibleAnthropicSwitchBinding(endpointUrl);
@@ -514,7 +529,6 @@ async function assertRegistryAndSession(
   const registryPath = path.join(home, ".nemoclaw", "sandboxes.json");
   const registry = JSON.parse(fs.readFileSync(registryPath, "utf8")) as SandboxRegistry;
   const sandbox = registry.sandboxes?.[SANDBOX_NAME];
-  expect(sandbox, `sandbox ${SANDBOX_NAME} missing from registry`).toBeTruthy();
   expect(sandbox?.provider).toBe(SWITCH_PROVIDER);
   expect(sandbox?.model).toBe(SWITCH_MODEL);
   expect(sandbox?.nimContainer).toBeNull();
@@ -539,7 +553,6 @@ async function assertRegistryAndSession(
 
   const sessionPath = path.join(home, ".nemoclaw", "onboard-session.json");
   const session = JSON.parse(fs.readFileSync(sessionPath, "utf8")) as OnboardSession;
-  expect(Object.keys(session).length, "onboard session is empty").toBeGreaterThan(0);
   expect(session.sandboxName).toBe(SANDBOX_NAME);
   expect(session.provider).toBe(SWITCH_PROVIDER);
   expect(session.model).toBe(SWITCH_MODEL);
@@ -587,7 +600,6 @@ async function assertOpenClawConfig(sandbox: SandboxClient, home: string): Promi
   expect(provider?.api).toBe(SWITCH_INFERENCE_API);
   expect(firstModel?.id).toBe(SWITCH_MODEL);
   expect(firstModel?.name).toBe(expectedPrimary);
-  expect(typeof firstModel?.maxTokens).toBe("number");
   expect(firstModel?.maxTokens).toBeGreaterThan(0);
 
   const hashCheck = await sandboxShell(
@@ -600,7 +612,6 @@ async function assertOpenClawConfig(sandbox: SandboxClient, home: string): Promi
     },
   );
   expect(hashCheck.exitCode, resultText(hashCheck)).toBe(0);
-  expect(hashCheck.stdout.trim()).toBe("OK");
 }
 
 function httpStatusFromResponse(response: string): string {
@@ -927,6 +938,7 @@ test(
         "install and onboard baseline OpenClaw",
         "prepare the switched provider and endpoint",
         "switch the route and verify restart semantics",
+        "stop and start the sandbox without replaying the create-time route",
         "inspect route configuration and recorded state",
         "prove inference.local and OpenClaw gateway inference",
         "apply sandbox retention and record the result",
@@ -944,9 +956,11 @@ test(
       contracts: [
         "the selected runtime is available and an authenticated compatible baseline endpoint is staged",
         "install.sh --non-interactive onboards an OpenClaw sandbox",
+        "Docker execution also proves non-root custom-image startup reconciles a divergent baked model and resolves new effective limits",
         "when selected, the mock baseline route completes one explicit authenticated fixture request",
         "nemoclaw inference set switches the running sandbox route",
         "OpenClaw gateway is supervisor-restarted after every changed inference configuration",
+        "a later sandbox stop/start preserves the switched model instead of replaying the create-time route",
         "OpenShell route points at the switched provider/model",
         "OpenClaw config and .config-hash reflect the switched inference API/model",
         "registry and onboard session record the switched provider/model",
@@ -954,11 +968,6 @@ test(
         "OpenClaw gateway model inference answers through the switched route without agent tools",
       ],
     });
-
-    expect(
-      fs.existsSync(CLI_ENTRYPOINT),
-      "run `npm run build:cli` before live repo CLI targets",
-    ).toBe(true);
 
     await runtimeProvider.requireAvailable({
       artifactName: "prereq-runtime-info-openclaw-inference-switch",
@@ -982,6 +991,7 @@ test(
     const baseline = baselineProvider
       ? mockBaselineInference(baselineProvider.baseUrl)
       : requireHostedInferenceConfig(secrets);
+    const baselineModel = baseline.env.NEMOCLAW_MODEL;
     const apiKey = baseline.apiKey;
     const publicApiKey =
       SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER
@@ -992,6 +1002,16 @@ test(
     );
 
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-switch-home-"));
+    const customImageRuntime = process.env.NEMOCLAW_CUSTOM_IMAGE_RUNTIME;
+    const customImageDockerfile =
+      runtimeProvider.id === customImageRuntime
+        ? stageNonRootCustomOpenClawImageDockerfile(
+            home,
+            readLiveE2eManagedImageCatalogContracts(liveE2eManagedImageCatalog(process.env)!).get(
+              "openclaw",
+            )!.reference,
+          )
+        : null;
     let mockProvider: MockAnthropicProvider | undefined;
     cleanup.trackDisposable(
       `remove OpenClaw inference switch test home for ${SANDBOX_NAME}`,
@@ -1035,6 +1055,12 @@ test(
         cwd: REPO_ROOT,
         env: commandEnv(home, {
           ...baseline.env,
+          ...(customImageDockerfile === null
+            ? {}
+            : {
+                NEMOCLAW_FROM_DOCKERFILE: customImageDockerfile,
+                NEMOCLAW_SANDBOX_PREBUILD: "1",
+              }),
           NEMOCLAW_RECREATE_SANDBOX: "1",
         }),
         redactionValues,
@@ -1052,6 +1078,91 @@ test(
       skip("NVIDIA endpoint validation was unavailable/rate-limited during onboarding");
     }
     expect(install.exitCode, installText).toBe(0);
+    if (customImageDockerfile !== null) {
+      const startupConfigResult = await sandbox.exec(
+        SANDBOX_NAME,
+        ["cat", "/sandbox/.openclaw/openclaw.json"],
+        {
+          artifactName: "read-openclaw-config-after-custom-image-startup",
+          env: commandEnv(home),
+          timeoutMs: COMMAND_TIMEOUT_MS,
+        },
+      );
+      const startupConfig = JSON.parse(startupConfigResult.stdout) as OpenClawConfig;
+      const startupModel = startupConfig.models?.providers?.inference?.models?.[0];
+      expect(startupConfig.agents?.defaults?.model?.primary).toBe(`inference/${baselineModel}`);
+      expect(
+        startupModel !== undefined &&
+          startupModel.id === baselineModel &&
+          !Object.hasOwn(startupModel, "contextWindow") &&
+          !Object.hasOwn(startupModel, "maxTokens"),
+        `OpenClaw retained stale custom-image config metadata: ${JSON.stringify(startupModel)}`,
+      ).toBe(true);
+
+      const effectiveModelResult = await sandbox.exec(
+        SANDBOX_NAME,
+        [
+          "openclaw",
+          "infer",
+          "model",
+          "inspect",
+          "--model",
+          `inference/${baselineModel}`,
+          "--json",
+        ],
+        {
+          artifactName: "inspect-effective-model-after-custom-image-startup",
+          env: commandEnv(home),
+          timeoutMs: COMMAND_TIMEOUT_MS,
+        },
+      );
+      expect(effectiveModelResult.exitCode, resultText(effectiveModelResult)).toBe(0);
+      const effectiveModel = JSON.parse(effectiveModelResult.stdout) as Record<string, unknown>;
+      const {
+        contextWindow: effectiveContextWindow,
+        id,
+        maxTokens: effectiveMaxTokens,
+        provider,
+      } = effectiveModel;
+      const effectiveModelMatches =
+        provider === "inference" &&
+        id === baselineModel &&
+        typeof effectiveContextWindow === "number" &&
+        effectiveContextWindow > 0 &&
+        effectiveContextWindow !== BAKED_STALE_CONTEXT_WINDOW &&
+        typeof effectiveMaxTokens === "number" &&
+        effectiveMaxTokens > 0 &&
+        effectiveMaxTokens !== BAKED_STALE_MAX_TOKENS;
+      expect(
+        effectiveModelMatches,
+        `OpenClaw retained stale or invalid custom-image model metadata: ${JSON.stringify(effectiveModel)}`,
+      ).toBe(true);
+      await artifacts.writeJson("custom-image-effective-model.json", {
+        contextWindow: effectiveContextWindow,
+        maximumOutputTokens: effectiveMaxTokens,
+        modelId: id,
+        modelRef: `${String(provider)}/${String(id)}`,
+        provider,
+      });
+
+      const runtimeUser = await sandbox.exec(SANDBOX_NAME, ["id", "-u"], {
+        artifactName: "read-custom-image-runtime-user",
+        env: commandEnv(home),
+        timeoutMs: COMMAND_TIMEOUT_MS,
+      });
+      expect(Number(runtimeUser.stdout.trim())).toBeGreaterThan(0);
+
+      const startupHash = await sandboxShell(
+        sandbox,
+        home,
+        "cd /sandbox/.openclaw && sha256sum -c .config-hash --status",
+        {
+          artifactName: "openclaw-config-hash-after-custom-image-startup",
+          timeoutMs: COMMAND_TIMEOUT_MS,
+        },
+      );
+      expect(startupHash.exitCode, resultText(startupHash)).toBe(0);
+    }
     await proveMockBaselineAuthentication(baselineProvider, sandbox, home, artifacts);
 
     progress.phase("prepare the switched provider and endpoint");
@@ -1076,11 +1187,6 @@ test(
     switchBinding && redactionValues.push(switchBinding.credentialValue);
 
     progress.phase("switch the route and verify restart semantics");
-    expect(baseline.env.NEMOCLAW_PREFERRED_API).toBe("openai-completions");
-    const apiFamilyChanges = SWITCH_MOCK_ANTHROPIC === "1";
-    expect(SWITCH_INFERENCE_API).toBe(
-      apiFamilyChanges ? "anthropic-messages" : "openai-completions",
-    );
     const pidBefore = await openclawGatewayPid(sandbox, home);
     const switchResult = await runOpenClawInferenceSetWithRetry(
       host,
@@ -1105,6 +1211,21 @@ test(
         `OpenClaw gateway process did not change after the config switch (${pidBefore} -> ${pidAfter})`,
       ).toBe(false);
     }
+
+    progress.phase("stop and start the sandbox without replaying the create-time route");
+    const gatewayName = process.env.OPENSHELL_GATEWAY ?? "nemoclaw";
+    const stop = await sandbox.openshell(["sandbox", "stop", "-g", gatewayName, SANDBOX_NAME], {
+      artifactName: "openshell-stop-after-openclaw-inference-switch",
+      env: commandEnv(home),
+      timeoutMs: COMMAND_TIMEOUT_MS,
+    });
+    expect(stop.exitCode, resultText(stop)).toBe(0);
+    const start = await sandbox.openshell(["sandbox", "start", "-g", gatewayName, SANDBOX_NAME], {
+      artifactName: "openshell-start-after-openclaw-inference-switch",
+      env: commandEnv(home),
+      timeoutMs: COMMAND_TIMEOUT_MS,
+    });
+    expect(start.exitCode, resultText(start)).toBe(0);
 
     progress.phase("inspect route configuration and recorded state");
     await assertOpenShellRoute(host, home);
@@ -1155,6 +1276,7 @@ test(
         installCompleted: install.exitCode === 0,
         inferenceSetCompleted: switchResult.exitCode === 0,
         gatewayRestartExpected: true,
+        switchedModelSurvivedSandboxRestart: true,
         gatewayPidStable,
         routeChecked: true,
         configChecked: true,

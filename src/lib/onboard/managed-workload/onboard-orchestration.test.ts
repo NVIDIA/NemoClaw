@@ -787,6 +787,7 @@ describe("managed workload onboard orchestration", () => {
         fromDockerfile,
         preparedBuildContext,
         preResolvedBaseImageMetadata: resolutionMetadata,
+        model: "nvidia/selected-model",
       } as never;
     });
     const resolveSandboxBuildPatch = vi.fn(async (input: Record<string, unknown>) => {

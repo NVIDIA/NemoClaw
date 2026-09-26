@@ -22,8 +22,8 @@ Some changes apply at runtime, while image and filesystem changes require a rebu
 
 | Item | When the change takes effect | How to change it |
 | --- | --- | --- |
-| Inference provider | Runtime route and config update; rebuild only if you need to recreate the image | Run `$$nemoclaw inference set` |
-| Inference model on the current provider | Runtime route and config update | Run `$$nemoclaw inference set` |
+| Inference provider | Runtime route update; configuration update only when the sandbox user can write `/sandbox/.openclaw/openclaw.json` | Run `$$nemoclaw inference set` |
+| Inference model on the current provider | Runtime route update; configuration update only when the sandbox user can write `/sandbox/.openclaw/openclaw.json` | Run `$$nemoclaw inference set` |
 | Sub-agent | Re-onboard required because the sub-agent and workspace are baked at onboard | `$$nemoclaw onboard --recreate-sandbox` |
 | Network policy preset | Runtime on the next request; rebuild only if the preset adds bind-mounted secrets | `$$nemoclaw <name> policy add <preset>` or `policy remove <preset>` |
 | Network allowlist | Runtime on the next request | `openshell policy set` or the interactive approval prompt at the gateway |
@@ -39,6 +39,9 @@ Some changes apply at runtime, while image and filesystem changes require a rebu
 | GPU passthrough or device selector | Locked at creation | Re-onboard with `--gpu` or `--sandbox-gpu-device` |
 | `agents.list` | Runtime after gateway restart; generated OpenClaw configuration disables hot reload | Prefer agent or NemoClaw commands that keep host and sandbox state aligned, then run `$$nemoclaw <name> gateway restart` |
 | `openclaw.json` keys | Mixed; supported config and inference updates apply at runtime, while image, policy, web search, and channel changes can require rebuild | Use `$$nemoclaw inference set` or `$$nemoclaw <name> config set` so the config and integrity hash change together |
+
+If NemoClaw skips custom-image configuration synchronization, update the image so the sandbox user owns and can write the OpenClaw configuration, then recreate the sandbox.
+Refer to [Switch Models](../../inference/manage-inference/switch-models) for the custom-image route and configuration behavior.
 
 For a new or pristine OpenClaw workspace, `NEMOCLAW_MINIMAL_BOOTSTRAP=1` avoids roughly 3,000 tokens of per-turn project-context overhead by skipping the default template seed. It does not delete existing workspace files.
 

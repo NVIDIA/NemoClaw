@@ -969,12 +969,6 @@ apply_model_override() {
     || [ -n "${NEMOCLAW_INFERENCE_API_OVERRIDE:-}" ] \
     || return 0
 
-  # Host overrides require root startup authority.
-  if [ "$(id -u)" -ne 0 ]; then
-    printf '[SECURITY] Model/inference overrides ignored — requires root (non-root mode cannot write to config)\n' >&2
-    return 0
-  fi
-
   local config_file="/sandbox/.openclaw/openclaw.json"
   local hash_file="/sandbox/.openclaw/.config-hash"
 
@@ -983,6 +977,11 @@ apply_model_override() {
   if [ -L "$config_file" ] || [ -L "$hash_file" ]; then
     printf '[SECURITY] Refusing model override — config or hash path is a symlink\n' >&2
     return 1
+  fi
+
+  if [ "$(id -u)" -ne 0 ] && [ ! -w "$config_file" ]; then
+    printf '[SECURITY] Model/inference overrides ignored: OpenClaw config is not writable by the sandbox user\n' >&2
+    return 0
   fi
 
   local model_override="${NEMOCLAW_MODEL_OVERRIDE:-}"
@@ -1122,9 +1121,8 @@ PYOVERRIDE
 # reconciliation the file's stale entry can be pushed back, reverting
 # the route.
 #
-# Probe the live gateway via `openshell inference get --json` and
-# treat it as the source of truth: when the gateway model differs
-# from the file, align both primary and the inference provider's
+# Probe the live gateway via `openshell inference get`. When the route model
+# differs from the file, align both primary and the inference provider's
 # first model entry so the agent identity and the gateway route stay
 # consistent across the next reconcile cycle.
 #
@@ -1141,49 +1139,171 @@ reconcile_agent_model_with_provider() {
   # overwrite the user's explicit choice with an inference/-prefixed variant.
   [ -z "${NEMOCLAW_MODEL_OVERRIDE:-}" ] || return 0
 
-  if [ "$(id -u)" -ne 0 ]; then
-    return 0
-  fi
-
   local config_file="/sandbox/.openclaw/openclaw.json"
   local hash_file="/sandbox/.openclaw/.config-hash"
+  local custom_route_marker="/sandbox/.openclaw/.nemoclaw-custom-route-pending"
 
   [ -f "$config_file" ] || return 0
 
-  if [ -L "$config_file" ] || [ -L "$hash_file" ]; then
+  if [ -L "$config_file" ] || [ -L "$hash_file" ] || [ -L "$custom_route_marker" ]; then
+    printf '[SECURITY] Refusing agent model reconciliation: config, hash, or receipt path is a symlink\n' >&2
+    return 1
+  fi
+  if [ -e "$custom_route_marker" ] && [ ! -f "$custom_route_marker" ]; then
+    printf '[SECURITY] Refusing agent model reconciliation: custom-image route receipt is not a regular file\n' >&2
+    return 1
+  fi
+
+  if [ "$(id -u)" -ne 0 ] && [ ! -w "$config_file" ]; then
+    printf '[config] Agent model reconciliation skipped: OpenClaw config is not writable by the sandbox user\n' >&2
     return 0
   fi
 
   local gateway_model=""
-  if command -v openshell >/dev/null 2>&1; then
+  local model_source="gateway"
+  if [ -f "$custom_route_marker" ]; then
+    if ! run_openclaw_config_as_owner /usr/bin/python3 -I - \
+      "$config_file" "$custom_route_marker" <<'PYCUSTOMROUTE'; then
+import hashlib
+import os
+import re
+import stat
+import sys
+
+config_path, marker_path = sys.argv[1:]
+flags = os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0)
+
+
+def open_regular(path):
+    descriptor = os.open(path, flags)
+    metadata = os.fstat(descriptor)
+    current = os.stat(path, follow_symlinks=False)
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_nlink != 1
+        or (metadata.st_dev, metadata.st_ino) != (current.st_dev, current.st_ino)
+    ):
+        os.close(descriptor)
+        raise OSError("path is not a trusted regular file")
+    return descriptor
+
+
+def read_bounded(descriptor, limit):
+    chunks = []
+    remaining = limit + 1
+    while remaining > 0:
+        chunk = os.read(descriptor, remaining)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
+
+
+try:
+    config_fd = open_regular(config_path)
+    marker_fd = open_regular(marker_path)
+    try:
+        config = read_bounded(config_fd, 8 * 1024 * 1024)
+        marker = read_bounded(marker_fd, 255)
+    finally:
+        os.close(marker_fd)
+        os.close(config_fd)
+except OSError:
+    raise SystemExit(1)
+
+if len(config) > 8 * 1024 * 1024 or len(marker) > 255:
+    raise SystemExit(1)
+match = re.fullmatch(rb"([a-f0-9]{64})  openclaw\.json\n", marker)
+if match is None or hashlib.sha256(config).hexdigest().encode("ascii") != match.group(1):
+    raise SystemExit(1)
+PYCUSTOMROUTE
+      printf '[SECURITY] Refusing invalid custom-image route receipt\n' >&2
+      return 1
+    fi
+    # The staged Dockerfile already reconciled the selected route into this
+    # exact config. Keep that create-time choice authoritative for the first
+    # launch; the marker is retired only after the gateway reports readiness.
+    model_source="custom-image"
+  elif command -v openshell >/dev/null 2>&1; then
     gateway_model="$(
-      python3 - <<'PYPROBE'
-import json, subprocess
+      /usr/bin/python3 -I - <<'PYPROBE'
+import os
+import re
+import subprocess
+import sys
+
+ansi_escape = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|[@-_])")
+gateway_name = os.environ.get("NEMOCLAW_OPENSHELL_GATEWAY_NAME", "nemoclaw")
+if not re.fullmatch(r"nemoclaw(?:-[1-9][0-9]{0,4})?", gateway_name):
+    print("[config] Gateway model probe unavailable: invalid NemoClaw gateway name", file=sys.stderr)
+    raise SystemExit(0)
+
 try:
     result = subprocess.run(
-        ["openshell", "inference", "get", "--json"],
+        ["openshell", "inference", "get", "-g", gateway_name],
         capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        text=True,
         timeout=3,
         check=False,
     )
-except Exception:
+except subprocess.TimeoutExpired:
+    print("[config] Gateway model probe unavailable: openshell inference get timed out", file=sys.stderr)
+    raise SystemExit(0)
+except OSError:
+    print("[config] Gateway model probe unavailable: openshell inference get could not start", file=sys.stderr)
     raise SystemExit(0)
 if result.returncode != 0:
+    print(
+        f"[config] Gateway model probe unavailable: openshell inference get exited with status {result.returncode}",
+        file=sys.stderr,
+    )
     raise SystemExit(0)
-try:
-    data = json.loads(result.stdout)
-except Exception:
+
+lines = ansi_escape.sub("", result.stdout).splitlines()
+section_count = 0
+in_inference_section = False
+models = []
+unconfigured = False
+for line in lines:
+    if re.fullmatch(r"(?:Gateway )?Inference:\s*", line, re.IGNORECASE):
+        section_count += 1
+        in_inference_section = True
+        continue
+    if in_inference_section and re.fullmatch(r"\S.*:\s*", line):
+        in_inference_section = False
+        continue
+    if not in_inference_section:
+        continue
+    if re.fullmatch(r"\s*Not configured\s*", line, re.IGNORECASE):
+        unconfigured = True
+        continue
+    match = re.fullmatch(r"\s*Model:\s*(.+?)\s*", line)
+    if match:
+        models.append(match.group(1))
+
+if section_count == 1 and unconfigured and not models:
+    print("[config] Gateway model probe unavailable: openshell reported no configured inference route", file=sys.stderr)
     raise SystemExit(0)
-model = data.get("model") if isinstance(data, dict) else None
-if isinstance(model, str) and model:
-    print(model)
+if section_count != 1 or len(models) != 1:
+    print("[config] Gateway model probe unavailable: openshell returned malformed inference output", file=sys.stderr)
+    raise SystemExit(0)
+model = models[0]
+if len(model) > 512 or re.fullmatch(r"[A-Za-z0-9._:/-]+", model) is None:
+    print("[SECURITY] Gateway model probe rejected an unsafe model identifier", file=sys.stderr)
+    raise SystemExit(0)
+print(model)
 PYPROBE
     )"
+  else
+    printf '[config] Gateway model probe unavailable: openshell is not installed\n' >&2
   fi
 
   local provider_model_ref
   provider_model_ref="$(
-    run_openclaw_config_as_owner /usr/bin/env GATEWAY_MODEL="${gateway_model:-}" \
+    run_openclaw_config_as_owner /usr/bin/env GATEWAY_MODEL="${gateway_model:-}" MODEL_SOURCE="$model_source" \
       /usr/bin/python3 -I - "$config_file" <<'PYRECONCILE_READ'
 import json, os, sys
 
@@ -1218,8 +1338,9 @@ if gateway_target is not None:
     first_name_ok = isinstance(first_name, str) and first_name == gateway_target
     first_id_ok = isinstance(first_id, str) and (first_id == bare or first_id == gateway_target)
     if primary_ok and first_name_ok and first_id_ok:
+        print("already-synced")
         sys.exit(0)
-    print(f"gateway\t{gateway_target}")
+    print(f"{os.environ.get('MODEL_SOURCE', 'gateway')}\t{gateway_target}")
     sys.exit(0)
 
 # Legacy fallback: gateway probe is unavailable. Align primary with
@@ -1232,10 +1353,19 @@ legacy_target = qualify(first.get("name") or first.get("id"))
 if legacy_target is None:
     sys.exit(0)
 if isinstance(primary, str) and primary == legacy_target:
+    print("already-synced")
     sys.exit(0)
 print(f"legacy\t{legacy_target}")
 PYRECONCILE_READ
   )"
+
+  if [ "$provider_model_ref" = "already-synced" ]; then
+    # A prior attempt may have installed this config before its hash refresh
+    # failed. Keep the retry fail-closed until both files agree.
+    local _hash_rc=0
+    ensure_mutable_openclaw_config_hash || _hash_rc=$?
+    return "$_hash_rc"
+  fi
 
   if [ -z "$provider_model_ref" ]; then
     return 0
@@ -1257,7 +1387,7 @@ config_file, provider_model = sys.argv[1], sys.argv[2]
 with open(config_file) as f:
     cfg = json.load(f)
 cfg.setdefault("agents", {}).setdefault("defaults", {}).setdefault("model", {})["primary"] = provider_model
-if os.environ.get("RECONCILE_SOURCE") == "gateway":
+if os.environ.get("RECONCILE_SOURCE") != "legacy":
     bare = (
         provider_model[len("inference/"):]
         if provider_model.startswith("inference/")
@@ -1274,8 +1404,12 @@ if os.environ.get("RECONCILE_SOURCE") == "gateway":
     if not isinstance(first, dict):
         first = {}
         models_list[0] = first
+    provider_model_unchanged = first.get("id") in (bare, provider_model)
     first["id"] = bare
     first["name"] = provider_model
+    if not provider_model_unchanged:
+        first.pop("contextWindow", None)
+        first.pop("maxTokens", None)
 with open(config_file, "w") as f:
     json.dump(cfg, f, indent=2)
 PYRECONCILE_WRITE
@@ -1290,6 +1424,31 @@ PYRECONCILE_WRITE
 
   normalize_mutable_config_perms || _write_rc=$?
   [ "$_write_rc" -eq 0 ] || return "$_write_rc"
+}
+
+retire_custom_route_reconcile_marker() {
+  local marker="/sandbox/.openclaw/.nemoclaw-custom-route-pending"
+  [ -e "$marker" ] || [ -L "$marker" ] || return 0
+  if [ -L "$marker" ] || [ ! -f "$marker" ]; then
+    printf '[SECURITY] Refusing unsafe custom-image route receipt retirement\n' >&2
+    return 1
+  fi
+  run_openclaw_config_as_owner /bin/rm -f -- "$marker"
+}
+
+settle_custom_route_reconcile_marker() {
+  local pid="$1"
+  local expected_identity="$2"
+  local marker="/sandbox/.openclaw/.nemoclaw-custom-route-pending"
+  [ -e "$marker" ] || [ -L "$marker" ] || return 0
+  if ! wait_for_openclaw_gateway_internal "$pid" "$expected_identity"; then
+    printf '[config] Custom-image route receipt retained because the first gateway launch did not become ready\n' >&2
+    return 0
+  fi
+  if ! retire_custom_route_reconcile_marker; then
+    printf '[SECURITY] Custom-image route receipt could not be retired after gateway readiness\n' >&2
+  fi
+  return 0
 }
 
 # ── Runtime CORS origin override ──────────────────────────────────
@@ -5075,6 +5234,7 @@ launch_openclaw_gateway() {
     exit 1
   fi
   record_gateway_pid "$GATEWAY_PID" "$GATEWAY_PID_START_IDENTITY"
+  settle_custom_route_reconcile_marker "$GATEWAY_PID" "$GATEWAY_PID_START_IDENTITY"
   # shellcheck disable=SC2034  # read by cleanup_on_signal from sandbox-init.sh
   SANDBOX_WAIT_PID="$GATEWAY_PID"
   echo "[gateway] openclaw gateway launched as native 'sandbox' agent user (pid $GATEWAY_PID)" >&2
@@ -5087,6 +5247,7 @@ launch_openclaw_gateway_non_root() {
     "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" || return 1
   capture_openclaw_pid_start_identity "$GATEWAY_PID" GATEWAY_PID_START_IDENTITY || exit 1
   record_gateway_pid "$GATEWAY_PID" "$GATEWAY_PID_START_IDENTITY"
+  settle_custom_route_reconcile_marker "$GATEWAY_PID" "$GATEWAY_PID_START_IDENTITY"
   _nemoclaw_capture_epoch_realtime _NEMOCLAW_GATEWAY_SPAWN_FINISHED_EPOCH
   record_portable_openclaw_gateway_startup_timing
   echo "[gateway] openclaw gateway launched (pid $GATEWAY_PID)" >&2

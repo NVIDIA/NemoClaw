@@ -159,6 +159,7 @@ describe("E2E workflow plan", () => {
     ]);
     expect(plan.testMatrix).toEqual([]);
     expect(catalogueIds).toHaveLength(47);
+    expect(catalogueIds).toContain("openclaw-inference-switch");
     expect(catalogueIds).not.toEqual(
       expect.arrayContaining([
         "bootstrap-install-smoke",
@@ -747,6 +748,35 @@ describe("E2E workflow plan", () => {
       );
     },
   );
+
+  it.each([
+    "scripts/nemoclaw-start.sh",
+    "src/lib/onboard/docker-startup-command-env.ts",
+    "src/lib/onboard/dockerfile-patch.ts",
+    "src/lib/onboard/managed-workload/onboard-orchestration.ts",
+    "src/lib/onboard/sandbox-create/orchestration.ts",
+    "src/lib/onboard/sandbox-create-launch.ts",
+    "src/lib/onboard/sandbox-dockerfile-patch-flow.ts",
+  ])("selects the Docker custom-image proof when %s changes", (changedFile) => {
+    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(
+      "openclaw-inference-switch",
+    );
+  });
+
+  it("runs provider switching on Docker and Podman with custom-image setup limited to Docker", () => {
+    const target = catalogueTarget("openclaw-inference-switch");
+    const plan = buildE2eWorkflowPlan(
+      { targets: "openclaw-inference-switch" },
+      { gatewayRuntimes: ["docker", "podman"] },
+    );
+
+    expect(target.gatewayRuntimes).toEqual(["docker", "podman"]);
+    expect(target.environment.NEMOCLAW_CUSTOM_IMAGE_RUNTIME).toBe("docker");
+    expect(plan.catalogueMatrices.standard.map((row) => [row.id, row.runtime_provider])).toEqual([
+      ["openclaw-inference-switch", "docker"],
+      ["openclaw-inference-switch", "podman"],
+    ]);
+  });
 
   it.each([
     "src/lib/adapters/openshell/command-execution.ts",

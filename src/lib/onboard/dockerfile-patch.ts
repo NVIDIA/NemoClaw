@@ -192,6 +192,146 @@ export interface PatchStagedDockerfileOptions {
   compatibleEndpointReasoning?: "true" | "false";
   wslDashboardExposure?: boolean;
   rebuildPreservedEnv?: readonly PreservedEnvFile[];
+  reconcileCustomOpenClawModel?: boolean;
+}
+
+function appendCustomOpenClawModelReconcile(
+  dockerfile: string,
+  model: string,
+  explicitLimits: { contextWindow?: string; maxTokens?: string },
+): string {
+  const instructions = dockerfileInstructions(dockerfile);
+  const finalFromIndex = instructions.reduce(
+    (last, instruction, index) => (/^FROM(?:\s|$)/i.test(instruction.text) ? index : last),
+    -1,
+  );
+  const finalUser = instructions
+    .slice(finalFromIndex + 1)
+    .reduce<DockerfileInstruction | null>(
+      (last, instruction) => (/^USER(?:\s|$)/i.test(instruction.text) ? instruction : last),
+      null,
+    );
+  const useRoot = finalUser === null ? "" : "USER root\n";
+  const restoreUser = finalUser === null ? "" : `\n${finalUser.text}`;
+  const encodedModel = Buffer.from(model, "utf8").toString("base64");
+  const encodedLimits = Buffer.from(JSON.stringify(explicitLimits), "utf8").toString("base64");
+
+  return `${dockerfile.trimEnd()}
+
+# Reconcile inherited OpenClaw model metadata with this custom image's route.
+ARG NEMOCLAW_CUSTOM_ROUTE_MODEL_B64=${encodedModel}
+ARG NEMOCLAW_CUSTOM_ROUTE_LIMITS_B64=${encodedLimits}
+${useRoot}RUN NEMOCLAW_CUSTOM_ROUTE_MODEL_B64="\${NEMOCLAW_CUSTOM_ROUTE_MODEL_B64}" NEMOCLAW_CUSTOM_ROUTE_LIMITS_B64="\${NEMOCLAW_CUSTOM_ROUTE_LIMITS_B64}" /usr/bin/python3 - <<'PYNEMOCLAWCUSTOMROUTE'
+import base64
+import hashlib
+import json
+import os
+import re
+import stat
+
+config_path = "/sandbox/.openclaw/openclaw.json"
+marker_path = os.path.join(os.path.dirname(config_path), ".nemoclaw-custom-route-pending")
+if os.path.exists(config_path):
+    model = base64.b64decode(
+        os.environ["NEMOCLAW_CUSTOM_ROUTE_MODEL_B64"], validate=True
+    ).decode("utf-8")
+    if len(model) > 512 or re.fullmatch(r"[A-Za-z0-9._:/-]+", model) is None:
+        raise SystemExit("custom OpenClaw route model is invalid")
+    explicit_limits = json.loads(
+        base64.b64decode(
+            os.environ["NEMOCLAW_CUSTOM_ROUTE_LIMITS_B64"], validate=True
+        ).decode("utf-8")
+    )
+    if not isinstance(explicit_limits, dict) or set(explicit_limits) - {
+        "contextWindow",
+        "maxTokens",
+    }:
+        raise SystemExit("custom OpenClaw route limits are invalid")
+    for field, value in explicit_limits.items():
+        if not isinstance(value, str) or re.fullmatch(r"[1-9][0-9]*", value) is None:
+            raise SystemExit("custom OpenClaw route limits are invalid")
+        if field == "contextWindow" and int(value) > ${MAX_AUTODETECTED_OLLAMA_CONTEXT_WINDOW}:
+            raise SystemExit("custom OpenClaw route context window is too large")
+    flags = os.O_RDWR | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0)
+    config_fd = os.open(config_path, flags)
+    try:
+        metadata = os.fstat(config_fd)
+        current = os.stat(config_path, follow_symlinks=False)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or (metadata.st_dev, metadata.st_ino) != (current.st_dev, current.st_ino)
+            or metadata.st_nlink != 1
+        ):
+            raise OSError("OpenClaw config is not a trusted regular file")
+        with os.fdopen(config_fd, "r+", encoding="utf-8", closefd=False) as config_file:
+            config = json.load(config_file)
+            provider_model = model if model.startswith("inference/") else f"inference/{model}"
+            bare_model = model.removeprefix("inference/")
+            config.setdefault("agents", {}).setdefault("defaults", {}).setdefault("model", {})[
+                "primary"
+            ] = provider_model
+            inference = config.setdefault("models", {}).setdefault("providers", {}).setdefault(
+                "inference", {}
+            )
+            models = inference.get("models")
+            if not isinstance(models, list) or not models:
+                models = [{}]
+                inference["models"] = models
+            first = models[0]
+            if not isinstance(first, dict):
+                first = {}
+                models[0] = first
+            model_changed = first.get("id") not in (bare_model, provider_model)
+            first["id"] = bare_model
+            first["name"] = provider_model
+            for field in ("contextWindow", "maxTokens"):
+                if field in explicit_limits:
+                    first[field] = int(explicit_limits[field])
+                elif model_changed:
+                    first.pop(field, None)
+            config_file.seek(0)
+            json.dump(config, config_file, indent=2)
+            config_file.write("\\n")
+            config_file.truncate()
+            config_file.flush()
+            os.fsync(config_fd)
+            config_file.seek(0)
+            config_digest = hashlib.sha256(config_file.read().encode("utf-8")).hexdigest()
+        try:
+            os.unlink(marker_path)
+        except FileNotFoundError:
+            pass
+        marker_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0)
+        marker_fd = os.open(marker_path, marker_flags, stat.S_IMODE(metadata.st_mode))
+        try:
+            marker_metadata = os.fstat(marker_fd)
+            marker_current = os.stat(marker_path, follow_symlinks=False)
+            if (
+                not stat.S_ISREG(marker_metadata.st_mode)
+                or (marker_metadata.st_dev, marker_metadata.st_ino)
+                != (marker_current.st_dev, marker_current.st_ino)
+                or marker_metadata.st_nlink != 1
+            ):
+                raise OSError("custom route receipt is not a trusted regular file")
+            with os.fdopen(marker_fd, "w", encoding="ascii", closefd=False) as marker_file:
+                marker_file.write(f"{config_digest}  openclaw.json\\n")
+                marker_file.flush()
+            os.fsync(marker_fd)
+        finally:
+            os.close(marker_fd)
+    finally:
+        os.close(config_fd)
+PYNEMOCLAWCUSTOMROUTE
+RUN if [ -f /sandbox/.openclaw/openclaw.json ]; then \\
+        cd /sandbox/.openclaw; \\
+        rm -f -- .config-hash; \\
+        sha256sum openclaw.json > .config-hash; \\
+        chown --reference=openclaw.json .config-hash; \\
+        chown --reference=openclaw.json .nemoclaw-custom-route-pending; \\
+        chmod --reference=openclaw.json .config-hash; \\
+        chmod --reference=openclaw.json .nemoclaw-custom-route-pending; \\
+    fi${restoreUser}
+`;
 }
 
 function openClawRuntimeUserArg(dockerfile: string): DockerfileInstruction | null {
@@ -703,6 +843,16 @@ export function patchStagedDockerfile(
           "trust anchor and external TLS through the corporate proxy may fail",
       );
     }
+  }
+  if (options.reconcileCustomOpenClawModel) {
+    dockerfile = appendCustomOpenClawModelReconcile(dockerfile, sanitizedModel, {
+      ...(contextWindow &&
+      POSITIVE_INT_RE.test(contextWindow) &&
+      Number(contextWindow) <= MAX_AUTODETECTED_OLLAMA_CONTEXT_WINDOW
+        ? { contextWindow }
+        : {}),
+      ...(maxTokens && POSITIVE_INT_RE.test(maxTokens) ? { maxTokens } : {}),
+    });
   }
 
   replaceDockerfilePatchSnapshot(dockerfilePath, patchSnapshot, dockerfile);

@@ -61,6 +61,13 @@ OpenClaw accepts an explicit context window and maximum output-token count.
 | `NEMOCLAW_CONTEXT_WINDOW` | Positive integer in tokens | `131072` |
 | `NEMOCLAW_MAX_TOKENS` | Positive integer in tokens | `4096` |
 
+These defaults apply to NemoClaw-managed images.
+For a custom image supplied with `--from`, NemoClaw applies valid explicit overrides when it builds the sandbox image.
+A runtime route change does not rebuild that image.
+Recreate the sandbox to apply explicit limits to the new route.
+When the selected model differs from the inherited image model, NemoClaw removes inherited `contextWindow` and `maxTokens` values during that build if no valid explicit overrides exist.
+OpenClaw and the selected model then determine the effective limits.
+
 Export one or both values before onboarding.
 
 ```bash
@@ -69,7 +76,8 @@ export NEMOCLAW_MAX_TOKENS=8192
 $$nemoclaw onboard
 ```
 
-NemoClaw ignores invalid values and uses the default instead.
+NemoClaw does not apply invalid values.
+For a custom image whose selected model differs from the inherited image model, NemoClaw applies each valid explicit limit independently and removes each inherited limit that has no explicit replacement.
 
 </AgentOnly>
 

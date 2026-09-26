@@ -43,6 +43,19 @@ If the route metadata is incomplete, NemoClaw stops and tells you to re-run onbo
 
 </AgentOnly>
 
+<AgentOnly variant="openclaw">
+
+At runtime, NemoClaw replaces `contextWindow` only when it resolves a value for the selected model and can retain an existing `maxTokens` value.
+For an OpenClaw custom image built with `--from`, onboarding patches an inherited model ID to the selected route during the image build.
+It removes both inherited limits when the model ID changes and refreshes `.config-hash` before restoring the custom image's final user.
+On later starts, NemoClaw can also reconcile drift from the live gateway when the sandbox user can write `/sandbox/.openclaw/openclaw.json`.
+If that runtime configuration is not writable, NemoClaw reports that reconciliation was skipped and preserves the existing configuration.
+Make the configuration writable by the sandbox user if later runtime route changes must update the file, then recreate the sandbox.
+To keep explicit limits for the new model, set `NEMOCLAW_CONTEXT_WINDOW` and `NEMOCLAW_MAX_TOKENS` to values supported by that model before you recreate the sandbox.
+Refer to [Configure Model Limits](configure-model-limits) for the environment variable requirements.
+
+</AgentOnly>
+
 <AgentOnly variant="hermes">
 
 For Hermes, the command recomputes the target model's context window before it updates the main configuration and dashboard profile.
