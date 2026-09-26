@@ -8,6 +8,11 @@
 NemoClaw v0.0.129 extends configuration export and deferred onboarding, improves OpenClaw restart readiness, and corrects recovery across local gateways.
 It also strengthens host OS reporting and Windows WSL GPU verification.
 
+- OpenClaw device approval exits successfully only after direct-gateway or local-fallback output drains.
+  A callback failure or a one-second timeout exits nonzero instead.
+  A same-device CLI request for `operator.admin` requires explicit approval; bounded non-administrative scope upgrades remain automatic.
+  Related change: [PR #12197](https://github.com/NVIDIA/NemoClaw/pull/12197).
+  Refer to [Gateway Authentication Controls](/user-guide/openclaw/security/security-controls/gateway-authentication-controls#approve-administrative-scopes-manually).
 - Configuration export preserves effective OpenClaw and Hermes settings when v1alpha1 omission defaults would change behavior.
   Supported OpenClaw exports for attached Ollama with a managed proxy and the fixed managed vLLM profile now include local inference service templates.
   These templates contain `image: null`; replace that value with an official, immutable, compatible v1 runtime image before v1 parsing or planning.
@@ -45,3 +50,52 @@ It also strengthens host OS reporting and Windows WSL GPU verification.
   Unmigrated entries remain available for later onboarding attempts.
   Related change: [PR #10384](https://github.com/NVIDIA/NemoClaw/pull/10384).
   Refer to [Credential Storage](/user-guide/openclaw/security/credential-storage) for migration and cleanup conditions.
+- Google Chat accepts formatted service-account JSON with LF or CRLF line breaks in `GOOGLECHAT_SERVICE_ACCOUNT`.
+  Interactive entry still requires minified one-line JSON.
+  Related change: [PR #10393](https://github.com/NVIDIA/NemoClaw/pull/10393).
+  Refer to [Set Up Google Chat](/user-guide/openclaw/manage-sandboxes/messaging-channels/set-up-google-chat).
+- OpenClaw managed `inference.local` routes clear NVIDIA credential aliases and remove only the matching NemoClaw-generated legacy profile before setup.
+  Direct routes and unrelated profiles remain unchanged.
+  Related change: [PR #12237](https://github.com/NVIDIA/NemoClaw/pull/12237).
+  Refer to [Process Controls](/user-guide/openclaw/security/security-controls/process-controls#auth-profile-permissions).
+- OpenClaw messaging image builds verify trusted official registry provenance for Discord, Slack, WhatsApp, Microsoft Teams, and Google Chat plugins.
+  They stop before runtime checks when the verification fails or the offline cache lacks a verified package.
+  WeChat uses the compatible 2.4.9 runtime.
+  Related change: [PR #12292](https://github.com/NVIDIA/NemoClaw/pull/12292).
+  Refer to [Add Channels After Onboarding](/user-guide/openclaw/manage-sandboxes/messaging-channels/add-channels-after-onboarding) for build-failure recovery.
+- The experimental direct blueprint runner reports an unreadable run directory instead of treating it as missing during `reconcile` or `rollback`.
+  It stops before OpenShell commands or state writes; correct the directory access, then rerun the command.
+  Related change: [PR #12320](https://github.com/NVIDIA/NemoClaw/pull/12320).
+- Onboarding treats a persistent ordinary `404` from `/v1/models` as an inference-route failure instead of reporting a verified deployment.
+  Correct the endpoint, then run `nemoclaw onboard --resume` to verify the retained session.
+  Related change: [PR #12339](https://github.com/NVIDIA/NemoClaw/pull/12339).
+  Refer to [Verify the Sandbox Inference Route](/user-guide/openclaw/inference/validate-inference/verify-inference-route).
+- Native rootless Podman preserves its current-user runtime context during gateway recovery.
+  It can reuse a trusted managed gateway service after that service removes standalone ownership records.
+  Related change: [PR #12267](https://github.com/NVIDIA/NemoClaw/pull/12267).
+  Refer to [Podman](/user-guide/openclaw/reference/troubleshooting#podman) for provider requirements and recovery guidance.
+- Balanced policy tiers now use `brew-balanced`, which limits `raw.githubusercontent.com` to GET and HEAD requests for its Homebrew binaries.
+  Existing `brew` access remains until you remove `brew` and add `brew-balanced`; Open retains `brew`.
+  Related change: [PR #10487](https://github.com/NVIDIA/NemoClaw/pull/10487).
+  Refer to [Network Policies](/user-guide/openclaw/reference/network-policies#policy-tiers) for tier and replacement details.
+- Rebuild can preserve declared state from a managed Docker OpenClaw sandbox in `Phase: Error` without starting or executing in its stopped container.
+  It requires an unchanged source container and exclusively owned managed state volume; user-managed `.env` and `.mcp.json` files are excluded.
+  Related change: [PR #12305](https://github.com/NVIDIA/NemoClaw/pull/12305).
+  Refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes) for requirements and recovery limits.
+- Uninstall leaves unrelated Docker containers intact and keeps a managed gateway running until its registered sandboxes are cleaned up.
+  For a nondefault gateway whose runtime is gone, `--destroy-user-data` can purge retained Docker registry and backup data after it verifies that the selected containers are absent.
+  Related changes: [PR #10478](https://github.com/NVIDIA/NemoClaw/pull/10478) and [PR #12299](https://github.com/NVIDIA/NemoClaw/pull/12299).
+  Refer to [Uninstall NemoClaw](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/uninstall-nemoclaw) for verification and retry conditions.
+- DGX Station Express preserves a recognized legacy single-Station workload when automatic peer discovery cannot qualify a trusted pair.
+  If the workload changes during discovery, installation stops rather than continuing the upgrade.
+  Related change: [PR #12296](https://github.com/NVIDIA/NemoClaw/pull/12296).
+  Refer to [Set Up vLLM on Two DGX Stations](/user-guide/openclaw/inference/local-inference/set-up-vllm-on-two-dgx-stations) for the recovery procedure.
+- Messaging-channel removal uses native OpenShell execution for running-sandbox session cleanup.
+  A failed, cancelled, or inconclusive cleanup does not retry through SSH or a local runtime provider, and the command stops before rebuilding.
+  OpenClaw WeChat can use its separately verified stopped-state cleanup before native execution.
+  Related change: [PR #12181](https://github.com/NVIDIA/NemoClaw/pull/12181).
+  Refer to [Manage Messaging Channels](/user-guide/openclaw/manage-sandboxes/messaging-channels/manage-messaging-channels) for cleanup and retry conditions.
+- When managed OpenClaw onboarding imports a corporate CA, it refreshes the OpenShell supervisor trust through a native stop and start before onboarding completes.
+  If either action fails, onboarding retains the sandbox for recovery.
+  Related change: [PR #12181](https://github.com/NVIDIA/NemoClaw/pull/12181).
+  Refer to [Configure Corporate CA Trust](/user-guide/openclaw/security/configure-corporate-ca-trust) for the trust boundary.

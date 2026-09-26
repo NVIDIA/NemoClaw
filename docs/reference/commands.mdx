@@ -3821,9 +3821,11 @@ An active lock, changed checkpoint, new selected-gateway state, occupied port, i
 If a sibling gateway appears during cleanup, uninstall switches to gateway-scoped cleanup and preserves shared resources.
 Onboarding holds an exclusive lifecycle lock from reservation through gateway initialization.
 If uninstall reports that onboarding owns the state directory while onboarding is active, wait for onboarding to finish and rerun uninstall; the reservation is preserved.
-If the reported `onboard.lock` remains after onboarding ended abruptly, rerun uninstall after the recorded process ends so NemoClaw can recover the stale lock.
-Uninstall reports the lock path and preserves a recent malformed lock for 30 seconds because another process can still be writing it.
-Wait until the lock has not changed for at least 30 seconds, confirm that no onboarding process shares the state root, and retry.
+If the reported `onboard.lock` remains after onboarding ends abruptly, wait briefly and rerun uninstall to retry lock acquisition.
+A recorded PID or command describes the lock record. It does not prove that process owns an active lock.
+Do not stop a process or delete the lock from that record.
+NemoClaw preserves a recent malformed lock for 30 seconds because another process can still be writing it.
+Wait at least 30 seconds, then retry.
 Successful managed cleanup recursively removes that directory and all contents; `--keep-openshell` preserves it.
 Before cleanup, uninstall validates port-bound state-root ownership and exact live process identity. A marked, stopped gateway can instead use a free port plus a complete process-absence scan; pre-marker gateways can use their owner-private generated configuration as the legacy ownership proof only with live process identity.
 
