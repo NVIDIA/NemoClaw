@@ -172,7 +172,7 @@ test(
           : []),
         "ordinary cloud onboard migrates an allowlisted legacy credential through the real gateway",
         "tampered non-credential legacy fields do not become gateway providers",
-        "successful onboard retires the migrated credential entry",
+        "successful onboard retires migrated plaintext and preserves unrelated legacy entries",
         "sandbox appears healthy after cloud onboarding",
         "explicit corporate CA source is baked and merged with OpenShell trust inside the sandbox",
         "validated compatible-endpoint reasoning reaches the authenticated runtime handoff and OpenClaw model metadata",
@@ -193,14 +193,17 @@ test(
     await cleanup(host, { home: testHome, label: "pre-cleanup", verify: false });
 
     progress.phase("stage legacy plaintext credential");
+    const retainedLegacyEntries = {
+      OPENSHELL_GATEWAY: "evil-gw-from-tampered-file",
+      NODE_OPTIONS: "--require=/tmp/evil.js",
+    };
     fs.mkdirSync(legacyDir, { recursive: true, mode: 0o700 });
     fs.writeFileSync(
       legacyFile,
       JSON.stringify(
         {
           [hosted.credentialEnv]: hosted.apiKey,
-          OPENSHELL_GATEWAY: "evil-gw-from-tampered-file",
-          NODE_OPTIONS: "--require=/tmp/evil.js",
+          ...retainedLegacyEntries,
         },
         null,
         2,
@@ -244,9 +247,9 @@ test(
 
     progress.phase("verify migrated gateway credential");
     expect(
-      Object.hasOwn(JSON.parse(fs.readFileSync(legacyFile, "utf8")), hosted.credentialEnv),
-      "successful onboard must retire the migrated credential entry",
-    ).toBe(false);
+      JSON.parse(secrets.redact(fs.readFileSync(legacyFile, "utf8"), redactionValues)),
+      "successful onboard must retire migrated credentials and preserve unrelated entries",
+    ).toEqual(retainedLegacyEntries);
     const providers = await host.command(
       "openshell",
       ["-g", "nemoclaw", "provider", "list", "--names"],
