@@ -99,6 +99,7 @@ export interface VerifiedSandboxCreateBoundary {
   readonly sandboxName: string;
   readonly gatewayName: string;
   readonly gatewayPort: number;
+  readonly openshellGatewayStateDir?: string;
   readonly lifecycleGeneration: string;
   readonly lifecycleLiveIdentityFingerprint: string;
   readonly createAttemptNonce?: string;
