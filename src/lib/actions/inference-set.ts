@@ -273,16 +273,36 @@ const INSTALLER_PROVIDER_ALIASES: Readonly<Record<string, string>> = {
   routed: "nvidia-router",
 };
 
+const SUPPORTED_PROVIDER_NAME_SET: ReadonlySet<string> = new Set(SUPPORTED_PROVIDER_NAMES);
+
 /**
  * Map an installer-style provider key (the vocabulary `nemoclaw onboard`
  * accepts) to its OpenShell provider name (the vocabulary `inference set`
  * validates against). Inputs that are already OpenShell provider names — or
  * any unrecognized value — pass through unchanged so validation still rejects
  * genuinely unsupported providers. See #6321.
+ *
+ * #11369: some providers are documented/used with installer-style underscore
+ * spellings (e.g. `ollama_local`, `vllm_local`, `nvidia_prod`) even though the
+ * canonical OpenShell name and the alias keys are hyphenated. After the direct
+ * lookup, retry with underscores folded to hyphens so an underscore spelling of
+ * any canonical name or alias key normalizes to the same OpenShell provider,
+ * instead of being rejected as unsupported. Unknown values still pass through
+ * unchanged.
  */
 export function normalizeInferenceSetProvider(provider: string): string {
   const trimmed = provider.trim();
-  return INSTALLER_PROVIDER_ALIASES[trimmed.toLowerCase()] ?? trimmed;
+  const lowered = trimmed.toLowerCase();
+  const directAlias = INSTALLER_PROVIDER_ALIASES[lowered];
+  if (directAlias) return directAlias;
+  if (SUPPORTED_PROVIDER_NAME_SET.has(lowered)) return trimmed;
+  const hyphenated = lowered.replaceAll("_", "-");
+  if (hyphenated !== lowered) {
+    const hyphenatedAlias = INSTALLER_PROVIDER_ALIASES[hyphenated];
+    if (hyphenatedAlias) return hyphenatedAlias;
+    if (SUPPORTED_PROVIDER_NAME_SET.has(hyphenated)) return hyphenated;
+  }
+  return trimmed;
 }
 
 /** Exposed for the alias-sync regression test. */
