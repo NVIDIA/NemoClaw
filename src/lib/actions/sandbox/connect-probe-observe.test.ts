@@ -76,7 +76,7 @@ describe("connectSandbox probe-only observe mode", () => {
     expect(harness.ensureLiveSandboxSpy).not.toHaveBeenCalled();
   });
 
-  it("settles completed Portable pairing before publishing probe readiness (#9207)", async () => {
+  it("settles Portable pairing and clears bounded late requests before probe readiness (#11763)", async () => {
     const harness = createConnectHarness({
       portablePairingSettlementResult: { kind: "settled" },
     });
@@ -84,7 +84,7 @@ describe("connectSandbox probe-only observe mode", () => {
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
 
     expect(harness.settlePortablePairingSpy).toHaveBeenCalledWith("alpha");
-    expect(harness.runAutoPairSpy).not.toHaveBeenCalled();
+    expect(harness.runAutoPairSpy).toHaveBeenCalledWith("alpha");
     expect(harness.settlePortablePairingSpy.mock.invocationCallOrder[0]).toBeLessThan(
       harness.publishLaunchReadinessSpy.mock.invocationCallOrder[0]!,
     );

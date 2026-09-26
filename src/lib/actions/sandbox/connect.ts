@@ -517,9 +517,11 @@ async function runSandboxConnectProbe(
     // Defense-in-depth scope-upgrade approval on the probe-only / `recover`
     // path (#4504): the gateway is up, so deterministically clear any pending
     // allowlisted CLI/webchat scope upgrade. Best-effort; never throws.
-    if (!(await measureAsync("pairing", () => settlePortablePairingOrExit(sandboxName)))) {
-      measure("pairing", () => runConnectAutoPairApprovalPass(sandboxName));
-    }
+    await measureAsync("pairing", () => settlePortablePairingOrExit(sandboxName));
+    // Portable settlement proves the primary CLI identity only. Keep the
+    // bounded pass so connect also clears later allowlisted tool-scope
+    // upgrades from secondary native clients.
+    measure("pairing", () => runConnectAutoPairApprovalPass(sandboxName));
     if (processCheck.forwardRecovered) {
       console.log(
         `  Probe complete: ${agentName} gateway is running in '${sandboxName}'; restored dashboard port forward.`,
@@ -532,9 +534,10 @@ async function runSandboxConnectProbe(
   if (processCheck.recovered) {
     await measureAsync("inference", () => ensureSandboxInferenceRouteOrExit(sandboxName, agent));
     // Same defense-in-depth approval after a recovery (#4504); best-effort.
-    if (!(await measureAsync("pairing", () => settlePortablePairingOrExit(sandboxName)))) {
-      measure("pairing", () => runConnectAutoPairApprovalPass(sandboxName));
-    }
+    await measureAsync("pairing", () => settlePortablePairingOrExit(sandboxName));
+    // A settled primary Portable identity does not imply that every later
+    // allowlisted native-client request has settled.
+    measure("pairing", () => runConnectAutoPairApprovalPass(sandboxName));
     console.log(`  Probe complete: ${agentName} gateway is running in '${sandboxName}'.`);
     return;
   }
@@ -2449,7 +2452,11 @@ export async function prepareInteractiveSession(sandboxName: string): Promise<{
         );
         await recoverHermesPortableForwardsForConnectProbeOrExit(sandboxName, authority);
       }
-      if (!hermesPortable && !(await settlePortablePairingOrExit(sandboxName))) {
+      if (!hermesPortable) {
+        await settlePortablePairingOrExit(sandboxName);
+        // Strict Portable settlement covers the primary CLI identity. The
+        // existing bounded pass remains responsible for post-onboarding
+        // allowlisted requests before the interactive shell starts.
         completeInteractiveSessionSetup(sandboxName, sb);
       }
       prepared.value = { agent, sb, hermesPortable };
