@@ -223,12 +223,14 @@ ARG NEMOCLAW_CUSTOM_ROUTE_MODEL_B64=${encodedModel}
 ARG NEMOCLAW_CUSTOM_ROUTE_LIMITS_B64=${encodedLimits}
 ${useRoot}RUN NEMOCLAW_CUSTOM_ROUTE_MODEL_B64="\${NEMOCLAW_CUSTOM_ROUTE_MODEL_B64}" NEMOCLAW_CUSTOM_ROUTE_LIMITS_B64="\${NEMOCLAW_CUSTOM_ROUTE_LIMITS_B64}" /usr/bin/python3 - <<'PYNEMOCLAWCUSTOMROUTE'
 import base64
+import hashlib
 import json
 import os
 import re
 import stat
 
 config_path = "/sandbox/.openclaw/openclaw.json"
+marker_path = os.path.join(os.path.dirname(config_path), ".nemoclaw-custom-route-pending")
 if os.path.exists(config_path):
     model = base64.b64decode(
         os.environ["NEMOCLAW_CUSTOM_ROUTE_MODEL_B64"], validate=True
@@ -293,6 +295,30 @@ if os.path.exists(config_path):
             config_file.truncate()
             config_file.flush()
             os.fsync(config_fd)
+            config_file.seek(0)
+            config_digest = hashlib.sha256(config_file.read().encode("utf-8")).hexdigest()
+        try:
+            os.unlink(marker_path)
+        except FileNotFoundError:
+            pass
+        marker_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0)
+        marker_fd = os.open(marker_path, marker_flags, stat.S_IMODE(metadata.st_mode))
+        try:
+            marker_metadata = os.fstat(marker_fd)
+            marker_current = os.stat(marker_path, follow_symlinks=False)
+            if (
+                not stat.S_ISREG(marker_metadata.st_mode)
+                or (marker_metadata.st_dev, marker_metadata.st_ino)
+                != (marker_current.st_dev, marker_current.st_ino)
+                or marker_metadata.st_nlink != 1
+            ):
+                raise OSError("custom route receipt is not a trusted regular file")
+            with os.fdopen(marker_fd, "w", encoding="ascii", closefd=False) as marker_file:
+                marker_file.write(f"{config_digest}  openclaw.json\\n")
+                marker_file.flush()
+            os.fsync(marker_fd)
+        finally:
+            os.close(marker_fd)
     finally:
         os.close(config_fd)
 PYNEMOCLAWCUSTOMROUTE
@@ -301,7 +327,9 @@ RUN if [ -f /sandbox/.openclaw/openclaw.json ]; then \\
         rm -f -- .config-hash; \\
         sha256sum openclaw.json > .config-hash; \\
         chown --reference=openclaw.json .config-hash; \\
+        chown --reference=openclaw.json .nemoclaw-custom-route-pending; \\
         chmod --reference=openclaw.json .config-hash; \\
+        chmod --reference=openclaw.json .nemoclaw-custom-route-pending; \\
     fi${restoreUser}
 `;
 }

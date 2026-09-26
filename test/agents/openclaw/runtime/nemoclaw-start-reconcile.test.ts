@@ -35,9 +35,11 @@ interface RunReconcileOptions {
   gatewayName?: string;
   userId?: number;
   useActualUser?: boolean;
-  symlink?: "config" | "hash";
+  symlink?: "config" | "hash" | "marker";
   configWritable?: boolean;
   hashFailure?: boolean | "once";
+  customRoutePending?: boolean | "directory" | "invalid";
+  retireCustomRouteBeforeRetry?: boolean;
   env?: Record<string, string>;
 }
 
@@ -60,6 +62,24 @@ describe("agent identity reconciliation with provider (#3175)", () => {
     const hashPath = path.join(openclawDir, ".config-hash");
     fs.writeFileSync(configPath, JSON.stringify(initialConfig));
     fs.writeFileSync(hashPath, "oldhash\n");
+    const customRouteMarkerPath = path.join(openclawDir, ".nemoclaw-custom-route-pending");
+    const prepareCustomRouteMarker = new Map<
+      boolean | "directory" | "invalid" | undefined,
+      () => void
+    >([
+      [undefined, () => undefined],
+      [false, () => undefined],
+      ["directory", () => fs.mkdirSync(customRouteMarkerPath)],
+      ["invalid", () => fs.writeFileSync(customRouteMarkerPath, "invalid\n")],
+      [
+        true,
+        () => {
+          const digest = createHash("sha256").update(fs.readFileSync(configPath)).digest("hex");
+          fs.writeFileSync(customRouteMarkerPath, `${digest}  openclaw.json\n`);
+        },
+      ],
+    ]).get(options.customRoutePending);
+    prepareCustomRouteMarker!();
     fs.chmodSync(openclawDir, 0o2770);
     fs.chmodSync(configPath, options.configWritable === false ? 0o440 : 0o660);
     fs.chmodSync(hashPath, 0o660);
@@ -73,6 +93,11 @@ describe("agent identity reconciliation with provider (#3175)", () => {
         const target = path.join(openclawDir, ".config-hash.real");
         fs.renameSync(hashPath, target);
         fs.symlinkSync(target, hashPath);
+      },
+      marker: () => {
+        const target = path.join(openclawDir, ".nemoclaw-custom-route-pending.real");
+        fs.renameSync(customRouteMarkerPath, target);
+        fs.symlinkSync(target, customRouteMarkerPath);
       },
       none: () => undefined,
     }[options.symlink ?? "none"];
@@ -128,18 +153,26 @@ describe("agent identity reconciliation with provider (#3175)", () => {
       "/sandbox",
       root,
     );
+    const retireFn = extractShellFunction("retire_custom_route_reconcile_marker").replaceAll(
+      "/sandbox",
+      root,
+    );
     const wrapper = [
       "#!/usr/bin/env bash",
       "set -euo pipefail",
       ...(options.useActualUser ? [] : [`id() { echo ${options.userId ?? 0}; }`]),
       helperFns,
       fn,
+      retireFn,
       ...(options.hashFailure === "once"
         ? [
             "_first_reconcile_rc=0",
             "reconcile_agent_model_with_provider || _first_reconcile_rc=$?",
             '[ "$_first_reconcile_rc" -eq 19 ] || exit 91',
           ]
+        : []),
+      ...(options.retireCustomRouteBeforeRetry
+        ? ["reconcile_agent_model_with_provider", "retire_custom_route_reconcile_marker"]
         : []),
       "reconcile_agent_model_with_provider",
     ].join("\n");
@@ -174,9 +207,44 @@ describe("agent identity reconciliation with provider (#3175)", () => {
     const configRaw = fs.readFileSync(configPath, "utf-8");
     const config = JSON.parse(configRaw);
     const hash = fs.readFileSync(hashPath, "utf-8");
+    const customRoutePending = fs.existsSync(customRouteMarkerPath);
     const expectedHash = `${createHash("sha256").update(configRaw).digest("hex")}  openclaw.json\n`;
     fs.rmSync(root, { recursive: true, force: true });
-    return { result, config, hash, expectedHash };
+    return { result, config, hash, expectedHash, customRoutePending };
+  }
+
+  function runCustomRouteSettlement(gatewayReady: boolean) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-route-settlement-"));
+    const openclawDir = path.join(root, ".openclaw");
+    const markerPath = path.join(openclawDir, ".nemoclaw-custom-route-pending");
+    fs.mkdirSync(openclawDir, { recursive: true });
+    fs.writeFileSync(markerPath, `${"a".repeat(64)}  openclaw.json\n`);
+    const retireFn = extractShellFunction("retire_custom_route_reconcile_marker").replaceAll(
+      "/sandbox",
+      root,
+    );
+    const settleFn = extractShellFunction("settle_custom_route_reconcile_marker").replaceAll(
+      "/sandbox",
+      root,
+    );
+    const script = path.join(root, "run.sh");
+    fs.writeFileSync(
+      script,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        'run_openclaw_config_as_owner() { "$@"; }',
+        `wait_for_openclaw_gateway_internal() { return ${gatewayReady ? 0 : 23}; }`,
+        retireFn,
+        settleFn,
+        'settle_custom_route_reconcile_marker "123" "pid-identity"',
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+    const result = spawnSync("bash", [script], { encoding: "utf-8" });
+    const markerPending = fs.existsSync(markerPath);
+    fs.rmSync(root, { recursive: true, force: true });
+    return { result, markerPending };
   }
 
   it("aligns agents.defaults.model.primary to inference provider's first model when they drift", () => {
@@ -257,6 +325,144 @@ describe("agent identity reconciliation with provider (#3175)", () => {
   });
 
   // ── Gateway-as-source-of-truth path (the #3175 user-reported repro) ──
+
+  it("keeps the staged custom-image route authoritative for its first launch (#12033)", () => {
+    const selected = {
+      agents: { defaults: { model: { primary: "inference/custom/selected" } } },
+      models: {
+        providers: {
+          inference: {
+            api: "openai-completions",
+            models: [{ id: "custom/selected", name: "inference/custom/selected" }],
+          },
+        },
+      },
+    };
+    const { result, config, hash, expectedHash, customRoutePending } = runReconcile(selected, {
+      customRoutePending: true,
+      gatewayModel: "nvidia/nemotron-3-super-120b-a12b",
+    });
+
+    expect(result.status, result.stderr || result.stdout).toBe(0);
+    expect(config).toEqual(selected);
+    expect(hash).toBe(expectedHash);
+    expect(customRoutePending).toBe(true);
+  });
+
+  it("fails closed when the staged custom-image route receipt does not match the config", () => {
+    const initial = {
+      agents: { defaults: { model: { primary: "inference/custom/selected" } } },
+      models: {
+        providers: {
+          inference: {
+            models: [{ id: "custom/selected", name: "inference/custom/selected" }],
+          },
+        },
+      },
+    };
+    const { result, config, hash, customRoutePending } = runReconcile(initial, {
+      customRoutePending: "invalid",
+      gatewayModel: "nvidia/nemotron-3-super-120b-a12b",
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("invalid custom-image route receipt");
+    expect(config).toEqual(initial);
+    expect(hash).toBe("oldhash\n");
+    expect(customRoutePending).toBe(true);
+  });
+
+  it("fails closed when the staged custom-image route receipt is a symlink", () => {
+    const initial = {
+      agents: { defaults: { model: { primary: "inference/custom/selected" } } },
+      models: {
+        providers: {
+          inference: {
+            models: [{ id: "custom/selected", name: "inference/custom/selected" }],
+          },
+        },
+      },
+    };
+    const { result, config, hash, customRoutePending } = runReconcile(initial, {
+      customRoutePending: true,
+      gatewayModel: "nvidia/nemotron-3-super-120b-a12b",
+      symlink: "marker",
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("config, hash, or receipt path is a symlink");
+    expect(config).toEqual(initial);
+    expect(hash).toBe("oldhash\n");
+    expect(customRoutePending).toBe(true);
+  });
+
+  it("fails closed when the staged custom-image route receipt is not a regular file", () => {
+    const initial = {
+      agents: { defaults: { model: { primary: "inference/custom/selected" } } },
+      models: {
+        providers: {
+          inference: {
+            models: [{ id: "custom/selected", name: "inference/custom/selected" }],
+          },
+        },
+      },
+    };
+    const { result, config, hash, customRoutePending } = runReconcile(initial, {
+      customRoutePending: "directory",
+      gatewayModel: "nvidia/nemotron-3-super-120b-a12b",
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("custom-image route receipt is not a regular file");
+    expect(config).toEqual(initial);
+    expect(hash).toBe("oldhash\n");
+    expect(customRoutePending).toBe(true);
+  });
+
+  it("uses the live gateway after the first custom-image launch retires its receipt", () => {
+    const { result, config, hash, customRoutePending } = runReconcile(
+      {
+        agents: { defaults: { model: { primary: "inference/custom/selected" } } },
+        models: {
+          providers: {
+            inference: {
+              models: [{ id: "custom/selected", name: "inference/custom/selected" }],
+            },
+          },
+        },
+      },
+      {
+        customRoutePending: true,
+        gatewayModel: "provider/switched",
+        retireCustomRouteBeforeRetry: true,
+      },
+    );
+
+    expect(result.status, result.stderr || result.stdout).toBe(0);
+    expect(config.agents.defaults.model.primary).toBe("inference/provider/switched");
+    expect(config.models.providers.inference.models[0]).toMatchObject({
+      id: "provider/switched",
+      name: "inference/provider/switched",
+    });
+    expect(hash).not.toBe("oldhash\n");
+    expect(customRoutePending).toBe(false);
+  });
+
+  it.each([
+    { gatewayReady: true, markerPending: false },
+    { gatewayReady: false, markerPending: true },
+  ])(
+    "retires the custom-image route receipt only after gateway readiness: $gatewayReady",
+    ({ gatewayReady, markerPending }) => {
+      const settled = runCustomRouteSettlement(gatewayReady);
+
+      expect(settled.result.status, settled.result.stderr || settled.result.stdout).toBe(0);
+      expect(settled.markerPending).toBe(markerPending);
+      expect(settled.result.stderr).toContain(
+        gatewayReady ? "" : "first gateway launch did not become ready",
+      );
+    },
+  );
 
   it("preserves an explicit model override when the live gateway reports a conflicting model", () => {
     const initial = {
@@ -792,7 +998,7 @@ describe("agent identity reconciliation with provider (#3175)", () => {
     expect(result.status).toBe(1);
     expect(config.agents.defaults.model.primary).toBe("inference/old-model");
     expect(hash).toBe("oldhash\n");
-    expect(result.stderr).toContain("config or hash path is a symlink");
+    expect(result.stderr).toContain("config, hash, or receipt path is a symlink");
   });
 
   it("propagates a hash refresh failure after the config write", () => {

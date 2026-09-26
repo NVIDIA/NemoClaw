@@ -1141,11 +1141,16 @@ reconcile_agent_model_with_provider() {
 
   local config_file="/sandbox/.openclaw/openclaw.json"
   local hash_file="/sandbox/.openclaw/.config-hash"
+  local custom_route_marker="/sandbox/.openclaw/.nemoclaw-custom-route-pending"
 
   [ -f "$config_file" ] || return 0
 
-  if [ -L "$config_file" ] || [ -L "$hash_file" ]; then
-    printf '[SECURITY] Refusing agent model reconciliation: config or hash path is a symlink\n' >&2
+  if [ -L "$config_file" ] || [ -L "$hash_file" ] || [ -L "$custom_route_marker" ]; then
+    printf '[SECURITY] Refusing agent model reconciliation: config, hash, or receipt path is a symlink\n' >&2
+    return 1
+  fi
+  if [ -e "$custom_route_marker" ] && [ ! -f "$custom_route_marker" ]; then
+    printf '[SECURITY] Refusing agent model reconciliation: custom-image route receipt is not a regular file\n' >&2
     return 1
   fi
 
@@ -1156,7 +1161,71 @@ reconcile_agent_model_with_provider() {
 
   local gateway_model=""
   local model_source="gateway"
-  if command -v openshell >/dev/null 2>&1; then
+  if [ -f "$custom_route_marker" ]; then
+    if ! run_openclaw_config_as_owner /usr/bin/python3 -I - \
+      "$config_file" "$custom_route_marker" <<'PYCUSTOMROUTE'; then
+import hashlib
+import os
+import re
+import stat
+import sys
+
+config_path, marker_path = sys.argv[1:]
+flags = os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0)
+
+
+def open_regular(path):
+    descriptor = os.open(path, flags)
+    metadata = os.fstat(descriptor)
+    current = os.stat(path, follow_symlinks=False)
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_nlink != 1
+        or (metadata.st_dev, metadata.st_ino) != (current.st_dev, current.st_ino)
+    ):
+        os.close(descriptor)
+        raise OSError("path is not a trusted regular file")
+    return descriptor
+
+
+def read_bounded(descriptor, limit):
+    chunks = []
+    remaining = limit + 1
+    while remaining > 0:
+        chunk = os.read(descriptor, remaining)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
+
+
+try:
+    config_fd = open_regular(config_path)
+    marker_fd = open_regular(marker_path)
+    try:
+        config = read_bounded(config_fd, 8 * 1024 * 1024)
+        marker = read_bounded(marker_fd, 255)
+    finally:
+        os.close(marker_fd)
+        os.close(config_fd)
+except OSError:
+    raise SystemExit(1)
+
+if len(config) > 8 * 1024 * 1024 or len(marker) > 255:
+    raise SystemExit(1)
+match = re.fullmatch(rb"([a-f0-9]{64})  openclaw\.json\n", marker)
+if match is None or hashlib.sha256(config).hexdigest().encode("ascii") != match.group(1):
+    raise SystemExit(1)
+PYCUSTOMROUTE
+      printf '[SECURITY] Refusing invalid custom-image route receipt\n' >&2
+      return 1
+    fi
+    # The staged Dockerfile already reconciled the selected route into this
+    # exact config. Keep that create-time choice authoritative for the first
+    # launch; the marker is retired only after the gateway reports readiness.
+    model_source="custom-image"
+  elif command -v openshell >/dev/null 2>&1; then
     gateway_model="$(
       /usr/bin/python3 -I - <<'PYPROBE'
 import os
@@ -1355,6 +1424,31 @@ PYRECONCILE_WRITE
 
   normalize_mutable_config_perms || _write_rc=$?
   [ "$_write_rc" -eq 0 ] || return "$_write_rc"
+}
+
+retire_custom_route_reconcile_marker() {
+  local marker="/sandbox/.openclaw/.nemoclaw-custom-route-pending"
+  [ -e "$marker" ] || [ -L "$marker" ] || return 0
+  if [ -L "$marker" ] || [ ! -f "$marker" ]; then
+    printf '[SECURITY] Refusing unsafe custom-image route receipt retirement\n' >&2
+    return 1
+  fi
+  run_openclaw_config_as_owner /bin/rm -f -- "$marker"
+}
+
+settle_custom_route_reconcile_marker() {
+  local pid="$1"
+  local expected_identity="$2"
+  local marker="/sandbox/.openclaw/.nemoclaw-custom-route-pending"
+  [ -e "$marker" ] || [ -L "$marker" ] || return 0
+  if ! wait_for_openclaw_gateway_internal "$pid" "$expected_identity"; then
+    printf '[config] Custom-image route receipt retained because the first gateway launch did not become ready\n' >&2
+    return 0
+  fi
+  if ! retire_custom_route_reconcile_marker; then
+    printf '[SECURITY] Custom-image route receipt could not be retired after gateway readiness\n' >&2
+  fi
+  return 0
 }
 
 # ── Runtime CORS origin override ──────────────────────────────────
@@ -5140,6 +5234,7 @@ launch_openclaw_gateway() {
     exit 1
   fi
   record_gateway_pid "$GATEWAY_PID" "$GATEWAY_PID_START_IDENTITY"
+  settle_custom_route_reconcile_marker "$GATEWAY_PID" "$GATEWAY_PID_START_IDENTITY"
   # shellcheck disable=SC2034  # read by cleanup_on_signal from sandbox-init.sh
   SANDBOX_WAIT_PID="$GATEWAY_PID"
   echo "[gateway] openclaw gateway launched as native 'sandbox' agent user (pid $GATEWAY_PID)" >&2
@@ -5152,6 +5247,7 @@ launch_openclaw_gateway_non_root() {
     "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" || return 1
   capture_openclaw_pid_start_identity "$GATEWAY_PID" GATEWAY_PID_START_IDENTITY || exit 1
   record_gateway_pid "$GATEWAY_PID" "$GATEWAY_PID_START_IDENTITY"
+  settle_custom_route_reconcile_marker "$GATEWAY_PID" "$GATEWAY_PID_START_IDENTITY"
   _nemoclaw_capture_epoch_realtime _NEMOCLAW_GATEWAY_SPAWN_FINISHED_EPOCH
   record_portable_openclaw_gateway_startup_timing
   echo "[gateway] openclaw gateway launched (pid $GATEWAY_PID)" >&2
