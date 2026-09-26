@@ -14,7 +14,6 @@ import {
   readRebuildPolicyHandoff,
   type RebuildManifest,
   writeRebuildMcpHandoff,
-  clearHermesOperatorConfigHandoff,
   writeRebuildPolicyHandoff,
 } from "./sandbox.js";
 
@@ -28,9 +27,6 @@ function manifest(backupPath: string): RebuildManifest {
     agentType: "openclaw",
     agentVersion: null,
     expectedVersion: null,
-    stateDirs: [],
-    failedBackupDirs: [],
-    stateFiles: [],
     dir: "/sandbox",
     backupPath,
     blueprintDigest: "digest",
@@ -86,40 +82,6 @@ describe("rebuild manifest publication", () => {
         }),
       }),
     ).toThrow("write failed");
-  });
-});
-
-describe("legacy Hermes operator config handoff cleanup", () => {
-  it("retains retired cleanup identity after deletion fails and removes it on retry", () => {
-    const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-config-cleanup-"));
-    tempDirs.push(backupPath);
-    const document = '{"version":1,"sandboxName":"alpha","entries":[],"droppedKeys":[]}\n';
-    const sha256 = "a".repeat(64);
-    const file = `hermes-operator-config-handoff.${sha256}.json`;
-    const withHandoff: RebuildManifest = {
-      ...manifest(backupPath),
-      agentType: "hermes",
-      hermesOperatorConfigHandoff: { file, sha256, keys: [] },
-    };
-    __test.writeManifest(backupPath, withHandoff);
-    const handoffPath = path.join(backupPath, withHandoff.hermesOperatorConfigHandoff!.file);
-    fs.writeFileSync(handoffPath, document, { mode: 0o600 });
-
-    expect(
-      clearHermesOperatorConfigHandoff(withHandoff, {
-        remove: vi.fn(() => {
-          throw new Error("injected deletion failure");
-        }),
-      }),
-    ).toBe(false);
-    expect(withHandoff.hermesOperatorConfigHandoff).toMatchObject({
-      retired: true,
-    });
-    expect(fs.existsSync(handoffPath)).toBe(true);
-
-    expect(clearHermesOperatorConfigHandoff(withHandoff)).toBe(true);
-    expect(fs.existsSync(handoffPath)).toBe(false);
-    expect(withHandoff).not.toHaveProperty("hermesOperatorConfigHandoff");
   });
 });
 
@@ -256,7 +218,10 @@ describe("bounded rebuild MCP handoff", () => {
     policyName: "mcp-bridge-github",
     source: "native" as const,
   };
-  const runtimeSelection = { gatewayName: "nemoclaw", workspace: "default" as const };
+  const runtimeSelection = {
+    gatewayName: "nemoclaw",
+    workspace: "default" as const,
+  };
 
   it("persists exact source-derived state for retry and removes it after recovery", () => {
     const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-handoff-"));
@@ -286,7 +251,10 @@ describe("bounded rebuild MCP handoff", () => {
     const persisted = __test.readManifest(backupPath);
 
     expect(persisted).not.toBeNull();
-    expect(readRebuildMcpHandoff(persisted!)).toEqual({ entries: [], runtimeSelection });
+    expect(readRebuildMcpHandoff(persisted!)).toEqual({
+      entries: [],
+      runtimeSelection,
+    });
   });
 
   it("rejects fields that could persist credential material", () => {

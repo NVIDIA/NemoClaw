@@ -32,16 +32,18 @@ function makeBackupResult(): ReturnType<typeof sandboxState.backupSandboxState> 
     failedDirs: [],
     failedFiles: [],
     manifest: {
-      version: 1,
+      version: 2,
       sandboxName: "alpha",
       timestamp: "2026-06-01T00-00-00-000Z",
       agentType: "langchain-deepagents-code",
       agentVersion: null,
       expectedVersion: "0.1.55",
-      stateDirs: [".state"],
-      backedUpDirs: [".state"],
-      stateFiles: [{ path: "config.toml", strategy: "copy" }],
-      dir: "/sandbox/.deepagents",
+      nativeState: {
+        root: "/sandbox",
+        archive: "native-home.tar",
+        sha256: "a".repeat(64),
+      },
+      dir: "/sandbox",
       backupPath: "/tmp/nemoclaw-rebuild-backup",
       blueprintDigest: null,
     } as ReturnType<typeof sandboxState.backupSandboxState>["manifest"],
@@ -222,9 +224,10 @@ describe("rebuild agent base image preflight", () => {
   });
 
   function mockBaseImagePreflight(imageRef: string) {
-    const loadAgent = vi
-      .spyOn(agentDefs, "loadAgent")
-      .mockReturnValue({ name: "hermes", displayName: "Hermes Agent" } as never);
+    const loadAgent = vi.spyOn(agentDefs, "loadAgent").mockReturnValue({
+      name: "hermes",
+      displayName: "Hermes Agent",
+    } as never);
     const ensureAgentBaseImage = vi
       .spyOn(agentOnboard, "ensureAgentBaseImage")
       .mockReturnValue({ imageTag: imageRef, built: true });
@@ -587,7 +590,10 @@ describe("rebuild agent base image preflight", () => {
       resolutionMetadata,
       resolutionMetadata,
     );
-    expect(result.trustedLocalOverride).toEqual({ ref: canonicalRef, provenance });
+    expect(result.trustedLocalOverride).toEqual({
+      ref: canonicalRef,
+      provenance,
+    });
   });
 
   it("disposes a temporary recreate handoff at most once (#7144)", () => {
@@ -902,7 +908,10 @@ describe("backupSandboxStateForRebuild stopped-container recovery (#11137)", () 
     vi.restoreAllMocks();
   });
 
-  const startedForBackup = { containerName: "openshell-alpha", runtimeProviderId: "docker" };
+  const startedForBackup = {
+    containerName: "openshell-alpha",
+    runtimeProviderId: "docker",
+  };
 
   it("recovers by starting the killed container, backing up, then returning it to stopped", async () => {
     backupSpy.mockReturnValue({

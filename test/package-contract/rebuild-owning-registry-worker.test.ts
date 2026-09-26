@@ -48,11 +48,6 @@ function writeRecoveryFixture(home: string) {
     agentType: "openclaw",
     agentVersion: null,
     expectedVersion: null,
-    stateDirs: [],
-    backedUpDirs: [],
-    failedBackupDirs: [],
-    backupComplete: true,
-    stateFiles: [],
     nativeState: {
       root: "/sandbox",
       archive: "native-home.tar" as const,
@@ -245,7 +240,9 @@ describe("compiled rebuild owning-registry worker", () => {
           },
         );
 
-        await vi.waitFor(() => expect(fs.existsSync(marker)).toBe(true), { timeout: 2_000 });
+        await vi.waitFor(() => expect(fs.existsSync(marker)).toBe(true), {
+          timeout: 2_000,
+        });
         const workerPid = Number(fs.readFileSync(marker, "utf8"));
         const workerEnvironment = fs
           .readFileSync(`/proc/${String(workerPid)}/environ`, "utf8")

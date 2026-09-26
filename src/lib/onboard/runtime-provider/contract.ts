@@ -560,9 +560,8 @@ export interface RuntimeProviderSnapshotRestoreSource {
 }
 
 export interface RuntimeProviderStoppedStateProjection {
-  readonly directories: readonly string[];
-  readonly prefixes: readonly string[];
-  readonly files: readonly string[];
+  /** Canonical complete native home/workspace root owned by the stopped runtime. */
+  readonly nativeRoot: string;
   readonly managedStateRoots?: readonly {
     readonly mountTarget: string;
     readonly resourceIdentity: string;

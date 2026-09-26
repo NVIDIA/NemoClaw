@@ -1257,7 +1257,7 @@ This is only useful if the original failure was transient, for example a network
 $$nemoclaw onboard --resume
 ```
 
-```
+````
 
 <AgentOnly variant="openclaw">
 
@@ -1269,7 +1269,7 @@ As a last resort, you can also delete the session file directly and re-run the i
 
 ```bash
 rm ~/.nemoclaw/onboard-session.json
-```
+````
 
 ### Kubernetes namespace not ready
 
@@ -1548,7 +1548,6 @@ credential projection, but must not add the retired NemoClaw gateway controller.
 
 <AgentOnly variant="hermes">
 
-
 ### Hermes config reports a mutation already in progress
 
 Hermes host config writes and lifecycle seals use the same root-only mutation lock.
@@ -1605,21 +1604,6 @@ $$nemoclaw <name> rebuild
 ```
 
 The rebuild command transfers the complete native home and workspace, destroys the old sandbox, recreates it with the current image, and restores that state. Keep an independent host copy if you need an additional safety net.
-- A `python3` executable beside the canonical Node.js executable
-
-NemoClaw rejects a candidate that fails its ownership, permission, or executable checks. For more information about the interpreter requirement, refer to [Prerequisites](../get-started/prerequisites).
-
-If NemoClaw reports that it removed the incomplete snapshot, install or repair `python3` at an accepted location. Then rerun the complete command.
-
-If cleanup fails, treat the reported directory as retained until you confirm that it is absent.
-
-<Warning title="Retained Incomplete Snapshot">
-  A retained incomplete snapshot can contain unsanitized credentials. The
-  directory must remain owner-only. You must not restore, copy, or share the
-  directory. You must remove the directory only by the exact path that NemoClaw
-  reports. You must confirm that the exact path no longer exists before you
-  rerun the complete command.
-</Warning>
 
 ### Sandbox shows as stopped
 
@@ -2038,7 +2022,6 @@ $$nemoclaw onboard
 ```
 
 The variable accepts seconds and applies to the readiness wait only. When the ordinary create deadline expires, NemoClaw preserves the partially created sandbox because OpenShell deletion targets its mutable name. Same-name onboarding remains blocked while that sandbox exists. Run `$$nemoclaw <sandbox-name> destroy` to check retained recovery. Do not delete the sandbox by mutable name.
-
 
 The failure path also differs when NemoClaw recreates an OpenShell-managed Docker runtime immediately before this wait. NemoClaw pins the exact OpenShell sandbox ID before recreation. Within the same deadline, NemoClaw requires two consecutive `Ready` observations that each confirm the exact ID and successful command execution. It retries only OpenShell's exact `sandbox is not ready` response. If the deadline expires, the ID changes, or another probe fails, NemoClaw preserves diagnostics and attempts to restore the pre-recreation Docker container. If restoration fails, NemoClaw reports that the sandbox and container state is uncertain. NemoClaw does not start dashboard or other host forwarding, and it does not delete a sandbox by its mutable name. It leaves the sandbox in place for inspection and recovery.
 
@@ -2812,7 +2795,6 @@ If GPU passthrough is not required on this host, rerun onboarding with `--no-gpu
 
 The route depends on the host environment and the operator control. Identify the matching path before applying the recovery guidance.
 
-
 | Symptom                                                                                                                                                                 | Route or stage                  | Recovery                                                                                                                                                                                                                                                                                                                                                                         |
 | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Native `--gpu` is rejected, host runtime evidence identifies GPU injection failure, or an explicit driver proof fails and host configuration confirms no GPU attachment | Ordinary Linux native attempt   | The default native-only route stops. Retry with `NEMOCLAW_DOCKER_GPU_PATCH=fallback` only if you explicitly accept one bounded compatibility retry, or use `=1` to select compatibility before creation.                                                                                                                                                                         |
@@ -3102,7 +3084,7 @@ Run `nemohermes <name> stop` followed by `nemohermes <name> start` to reset the 
 If the requests recur, inspect the gateway logs and correct the action or configuration that requests each restart.
 Other unexpected gateway exit statuses fail immediately and do not consume this restart budget.
 
-An unsafe startup layout also stops automatic relaunch. If layout repair reports the maximum log-entry count or repair depth, archive or remove old retained logs from a trusted host-side recovery environment, then stop and start the sandbox. For symbolic links, hard links, unsafe entry types, or paths that changed during repair, do not repair the path in place. Restore a trusted snapshot into a recreated sandbox or recreate from host-side onboarding configuration.
+An unsafe startup layout also stops automatic relaunch. If layout repair reports the maximum log-entry count or repair depth, archive or remove old retained logs from a trusted host-side recovery environment, then stop and start the sandbox. For symbolic links, hard links, unsafe entry types, or paths that changed during repair, do not repair the path in place. Restore a trusted host copy into a recreated sandbox or recreate from host-side onboarding configuration.
 
 If an integrity mismatch is reported or the sandbox still cannot start, rebuild it from registered configuration:
 

@@ -36,11 +36,6 @@ function writeBackup(
     agentType: "openclaw",
     agentVersion: null,
     expectedVersion: null,
-    stateDirs: [],
-    backedUpDirs: [],
-    failedBackupDirs: [],
-    backupComplete: true,
-    stateFiles: [],
     nativeState: {
       root: "/sandbox",
       archive: "native-home.tar",
@@ -103,10 +98,8 @@ describe("prepared rebuild backup recovery validation (#6114)", () => {
     expect(sandboxState.getLatestBackup("alpha")).toBeNull();
   });
 
-  it("does not select a legacy selective backup for automatic restore", () => {
+  it("does not select a manifest carrying retired selective backup fields", () => {
     writeBackup("alpha", "2026-07-01T06-50-42-044Z", {
-      version: 1,
-      nativeState: undefined,
       stateDirs: ["workspace"],
       backedUpDirs: ["workspace"],
     });

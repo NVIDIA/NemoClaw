@@ -18,6 +18,7 @@ import { registryEntryGatewayPort } from "../../state/gateway-registry";
 import * as registry from "../../state/registry";
 import type { RebuildBackupManifest } from "./rebuild-backup-phase";
 import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
+import type { PreparedStoppedNativeState } from "../../state/state-directory-restore";
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import { prepareMcpBeforeBestEffortNimStop } from "./rebuild-mcp-order";
 import {
@@ -36,7 +37,7 @@ export type RebuildDeleteValidationResult =
   | { ok: false; message: string; code?: number };
 
 export interface RebuildDestroyPhaseInput {
-  capturedOpenClawState?: import("../../state/state-directory-restore").CapturedOpenClawState;
+  stoppedNativeState?: PreparedStoppedNativeState;
   sandboxName: string;
   sandboxEntry: RebuildSandboxEntry;
   staleRecovery: boolean;
@@ -234,7 +235,7 @@ export async function runRebuildDestroyPhase(
         bail,
         input.runtimeSelection,
         input.mcpEntries ?? [],
-        ...(input.capturedOpenClawState ? ([input.capturedOpenClawState] as const) : ([] as const)),
+        ...(input.stoppedNativeState ? ([input.stoppedNativeState] as const) : ([] as const)),
       );
       return preparation;
     },
@@ -409,7 +410,10 @@ export async function runRebuildDestroyPhase(
       preparation = await prepareSourceForDelete();
     } catch (error) {
       log(`Unexpected source delete preparation failure: ${redactFull(String(error))}`);
-      preparation = { ok: false, message: "Source sandbox could not be prepared for deletion." };
+      preparation = {
+        ok: false,
+        message: "Source sandbox could not be prepared for deletion.",
+      };
     }
     if (!preparation.ok) {
       const mcpRecoveryFailure = await reattachMcpAfterDeleteFailure(

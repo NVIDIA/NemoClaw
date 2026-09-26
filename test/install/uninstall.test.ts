@@ -62,7 +62,7 @@ exit 0
 remote="\${!#}"
 case "$remote" in
   *'work=$(pwd -P)'*) printf '/sandbox\\0/sandbox\\0' ;;
-  *"exec tar -C"*)
+  *"tar -C"*)
     /usr/bin/tar -cf - -C ${JSON.stringify(path.dirname(sandboxConfigDir))} -- .
     status=$?
     case "$status" in 0) printf 'backup-complete\\n' >> ${JSON.stringify(eventLog)} ;; esac

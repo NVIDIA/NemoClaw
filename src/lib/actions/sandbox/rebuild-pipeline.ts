@@ -26,7 +26,6 @@ import {
   captureRebuildPolicyDocument,
   bindRebuildSnapshotGpuAuthority,
   clearRebuildMcpHandoff,
-  clearHermesOperatorConfigHandoff,
   clearRebuildPolicyHandoff,
   readRebuildPolicyHandoff,
   readRebuildMcpHandoff,
@@ -292,8 +291,7 @@ async function rebuildSandboxUnlocked(
             backupManifest: recoveryManifest,
           }) ||
           recoveryManifest.rebuildPolicyHandoff?.retired === true ||
-          recoveryManifest.rebuildMcpHandoff?.retired === true ||
-          recoveryManifest.hermesOperatorConfigHandoff?.retired === true
+          recoveryManifest.rebuildMcpHandoff?.retired === true
         : false;
       const activeRecoverySession = onboardSession.loadSession();
       const activeRecoveryTransaction = activeRecoverySession?.checkpoint?.sandboxRecreate;
@@ -476,16 +474,6 @@ async function rebuildSandboxUnlocked(
             "A retired rebuild policy handoff cannot be cleaned up until the journaled replacement is accepted.",
           );
         }
-        if (
-          cleanupManifest.hermesOperatorConfigHandoff &&
-          !clearHermesOperatorConfigHandoff(cleanupManifest)
-        ) {
-          reportIncompletePolicyHandoffCleanup(
-            cleanupManifest,
-            "The retired Hermes operator config handoff artifact or metadata could not be removed.",
-          );
-          return;
-        }
         if (!completePolicyHandoffCleanup(cleanupJournal.id, cleanupManifest)) return;
         if (!clearRecoveryMarker(cleanupJournal.id, cleanupManifest)) return;
         cleanupJournal.completeAcceptedTarget();
@@ -497,7 +485,7 @@ async function rebuildSandboxUnlocked(
       }
 
       const backup = await runRebuildBackupPhase({
-        ...(stoppedSource ? { capturedOpenClawState: stoppedSource } : {}),
+        ...(stoppedSource ? { stoppedNativeState: stoppedSource } : {}),
         sandboxName,
         gatewayName: recreateOptions.targetGatewayName,
         gatewayPort: recreateOptions.targetGatewayPort,
@@ -571,8 +559,7 @@ async function rebuildSandboxUnlocked(
       // destructive rebuild phase.
       const hermesCronRestorePreflight = runHermesCronRestoreBackupPreflight({
         rebuildAgent,
-        backupPath: backup.backupManifest?.backupPath ?? null,
-        backedUpDirs: backup.backupManifest?.backedUpDirs ?? [],
+        backupManifest: backup.backupManifest,
         log,
         bail,
       });
@@ -650,15 +637,6 @@ async function rebuildSandboxUnlocked(
           );
           return bail(
             "Replacement state restoration is incomplete; the replacement journal was retained.",
-          );
-        }
-        if (
-          backup.backupManifest?.hermesOperatorConfigHandoff &&
-          backup.backupManifest.backupPath !== recoveryBackup.backupPath &&
-          !clearHermesOperatorConfigHandoff(backup.backupManifest)
-        ) {
-          return bail(
-            "The unused current-run Hermes operator config handoff could not be retired during recovery.",
           );
         }
         if (
@@ -741,12 +719,6 @@ async function rebuildSandboxUnlocked(
             );
           }
         }
-        if (
-          recoveryBackup.hermesOperatorConfigHandoff &&
-          !clearHermesOperatorConfigHandoff(recoveryBackup)
-        ) {
-          return bail("The Hermes operator config handoff could not be retired after recovery.");
-        }
         if (retireRemovedImmutabilityState) {
           if (!postRestoreVerification?.mutableConfigPermissionsVerified) {
             return bail(
@@ -770,7 +742,7 @@ async function rebuildSandboxUnlocked(
       let preservedMcpPolicyHandoff = false;
       const sourceWindowForDelete = sourceOpenClawDoctorWindow;
       const mcpPreparation = await runRebuildDestroyPhase({
-        ...(stoppedSource ? { capturedOpenClawState: stoppedSource } : {}),
+        ...(stoppedSource ? { stoppedNativeState: stoppedSource } : {}),
         sandboxName,
         sandboxEntry,
         recheckMessagingConflicts,
@@ -1043,12 +1015,6 @@ async function rebuildSandboxUnlocked(
         retireRemovedImmutabilityStateRecord(sandboxName, "mutable-rebuild");
       }
       if (backup.backupManifest) {
-        if (
-          backup.backupManifest.hermesOperatorConfigHandoff &&
-          !clearHermesOperatorConfigHandoff(backup.backupManifest)
-        ) {
-          return bail("The Hermes operator config handoff could not be retired after rebuild.");
-        }
         if (!completePolicyHandoffCleanup(recreateJournal.id, backup.backupManifest)) return;
         if (!clearRecoveryMarker(recreateJournal.id, backup.backupManifest)) return;
       }

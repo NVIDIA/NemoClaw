@@ -28,6 +28,7 @@ import os from "node:os";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { spawnSync } from "child_process";
+import { parse as parseYaml } from "yaml";
 
 import {
   captureSandboxSshConfigCommand,
@@ -38,19 +39,22 @@ import { buildSelectedOpenShellSubprocessEnv } from "../adapters/openshell/comma
 import { resolveOpenshell } from "../adapters/openshell/resolve.js";
 import type { OpenShellRuntimeSelection } from "../adapters/openshell/runtime-selection.js";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts.js";
-import type { AgentMcpAdapter, AgentStateFile } from "../agent/defs.js";
+import type { AgentMcpAdapter } from "../agent/defs.js";
 import { loadAgent } from "../agent/defs.js";
 import { isObjectRecord } from "../core/json-types.js";
 import { GATEWAY_PORT } from "../core/ports.js";
 import { shellQuote } from "../runner.js";
 import { createTempSshConfig } from "../sandbox/temp-ssh-config.js";
+import {
+  isConfigValue,
+  isDependencyLockfile,
+  isSensitiveFile,
+  sanitizeEnvFileContent,
+  stripCredentials,
+  valueLooksLikeSecret,
+} from "../security/credential-filter.js";
 import { inspectMcpDeniedToolSelectors } from "../security/mcp-denied-tool-selector.js";
 import { isAllowedStateSymlink } from "./state-directory-restore.js";
-import {
-  HERMES_PRESERVED_ENV_INVENTORY,
-  type PreservedEnvFile,
-  validatePreservedEnvFiles,
-} from "./preserved-env/index.js";
 import {
   cloneSandboxRuntimeSnapshot,
   type SandboxRuntimeSnapshot,
@@ -73,7 +77,7 @@ const NATIVE_STATE_ARCHIVE = "native-home.tar";
 const NATIVE_STATE_CAPTURE_TIMEOUT_MS = 10 * 60 * 1000;
 const NATIVE_STATE_CAPTURE_RESERVE_BYTES = 64 * 1024 * 1024;
 const NATIVE_STATE_CAPTURE_MAX_BYTES = Number.MAX_SAFE_INTEGER - 1;
-export const STATE_DIRECTORY_CAPTURE_MAX_BYTES = 256 * 1024 * 1024;
+const NATIVE_STATE_CREDENTIAL_SCAN_MAX_BYTES = 16 * 1024 * 1024;
 export const MANAGED_REBUILD_RESTORE_AUTHORITY_ERROR =
   "managed rebuild restore requires exact content and runtime authority";
 export const HOST_LOCAL_INFERENCE_REBUILD_RESTORE_AUTHORITY_ERROR =
@@ -92,14 +96,6 @@ export interface RebuildManifest {
   agentType: string;
   agentVersion: string | null;
   expectedVersion: string | null;
-  stateDirs: string[];
-  /** Directories verified as safe to restore. Absent on older manifests. */
-  backedUpDirs?: string[];
-  /** Declared directories that could not be backed up. Absent on older manifests. */
-  failedBackupDirs?: string[];
-  /** False when the retained files are incomplete and must not be selected for restore. */
-  backupComplete?: boolean;
-  stateFiles?: StateFileSpec[];
   /**
    * Opaque copy of the OpenShell-owned native home/workspace. Version 2
    * manifests always use this instead of a per-agent state inventory.
@@ -109,10 +105,8 @@ export interface RebuildManifest {
     archive: typeof NATIVE_STATE_ARCHIVE;
     sha256: string;
   };
-  /** Single config/state directory */
+  /** Canonical native home/workspace root. */
   dir: string;
-  /** @deprecated Old field name for `dir` — retained for backward compat with pre-consolidation backups. */
-  writableDir?: string;
   backupPath: string;
   blueprintDigest: string | null;
   /** Bounded live-policy handoff retained only while a rebuild transaction is recoverable. */
@@ -129,20 +123,6 @@ export interface RebuildManifest {
     /** Cleanup-only identity; retired handoffs cannot be consumed for recovery. */
     retired?: boolean;
   };
-  /** Digest-bound Hermes operator config retained only while rebuild recovery is possible. */
-  hermesOperatorConfigHandoff?: {
-    file: string;
-    sha256: string;
-    /** Keys captured or classified as dropped before the handoff was written. */
-    keys?: string[];
-    /** Cleanup-only identity; retired handoffs cannot be consumed for recovery. */
-    retired?: boolean;
-  };
-  /**
-   * @deprecated Ignored legacy selective-backup field retained only so old
-   * manifests can still be parsed and retired safely.
-   */
-  preservedEnv?: PreservedEnvFile[];
   /**
    * Provider-neutral runtime and acceleration state captured before the
    * filesystem copy. Required when `workload` is a managed-image receipt.
@@ -157,7 +137,6 @@ export interface RebuildManifest {
   hostLocalInferenceReceipt?: string;
   /** Explicit hidden-lifecycle provenance paired with the exact receipt. */
   hostLocalInferenceProvenance?: SandboxHostLocalInferenceProvenance;
-  instances?: InstanceBackup[];
 }
 
 export interface RebuildMcpHandoffEntry {
@@ -193,21 +172,6 @@ export interface BackupOptions {
    * derives its bound from free space in the private backup filesystem.
    */
   nativeStateCaptureMaxBytes?: number;
-}
-
-export interface InstanceBackup {
-  instanceId: string;
-  agentType: string;
-  dataDir: string;
-  stateDirs: string[];
-  backedUpDirs: string[];
-}
-
-export type StateFileStrategy = "copy" | "sqlite_backup";
-
-export interface StateFileSpec {
-  path: string;
-  strategy: StateFileStrategy;
 }
 
 export interface BackupResult {
@@ -284,38 +248,6 @@ export interface TarValidationResult {
 export interface SafeExtractResult {
   success: boolean;
   error?: string;
-}
-
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((entry) => typeof entry === "string");
-}
-
-function isStateFileSpec(value: unknown): value is StateFileSpec {
-  return (
-    isObjectRecord(value) &&
-    typeof value.path === "string" &&
-    (value.strategy === "copy" || value.strategy === "sqlite_backup") &&
-    normalizeStateFileSpec({ path: value.path, strategy: value.strategy }) !== null
-  );
-}
-
-function isInstanceBackup(value: unknown): value is InstanceBackup {
-  if (!isObjectRecord(value) || !isStateDirArray(value.stateDirs)) return false;
-  return (
-    typeof value.instanceId === "string" &&
-    typeof value.agentType === "string" &&
-    typeof value.dataDir === "string" &&
-    isBackedUpDirArray(value.backedUpDirs, value.stateDirs)
-  );
-}
-
-function isHermesOperatorConfigInventoryKey(value: unknown): value is string {
-  return (
-    typeof value === "string" &&
-    value.length > 0 &&
-    value.length <= 512 &&
-    !/[\u0000-\u001f\u007f]/u.test(value)
-  );
 }
 
 const REBUILD_MCP_ENTRY_KEYS = new Set([
@@ -424,8 +356,26 @@ function isRebuildMcpHandoff(
 }
 
 function isRebuildManifest(value: unknown): value is RebuildManifest {
-  if (!isObjectRecord(value) || !isStateDirArray(value.stateDirs)) return false;
-  const dir = typeof value.dir === "string" ? value.dir : value.writableDir;
+  if (!isObjectRecord(value)) return false;
+  const allowedKeys = new Set([
+    "agentType",
+    "agentVersion",
+    "backupPath",
+    "blueprintDigest",
+    "dir",
+    "expectedVersion",
+    "hostLocalInferenceProvenance",
+    "hostLocalInferenceReceipt",
+    "nativeState",
+    "rebuildMcpHandoff",
+    "rebuildPolicyHandoff",
+    "runtimeSnapshot",
+    "sandboxName",
+    "timestamp",
+    "version",
+    "workload",
+  ]);
+  if (Object.keys(value).some((key) => !allowedKeys.has(key))) return false;
   const runtimeSnapshot =
     value.runtimeSnapshot === undefined
       ? undefined
@@ -459,14 +409,8 @@ function isRebuildManifest(value: unknown): value is RebuildManifest {
     typeof value.agentType === "string" &&
     (value.agentVersion === null || typeof value.agentVersion === "string") &&
     (value.expectedVersion === null || typeof value.expectedVersion === "string") &&
-    (value.backedUpDirs === undefined || isBackedUpDirArray(value.backedUpDirs, value.stateDirs)) &&
-    (value.failedBackupDirs === undefined ||
-      isBackedUpDirArray(value.failedBackupDirs, value.stateDirs)) &&
-    (value.backupComplete === undefined || typeof value.backupComplete === "boolean") &&
-    typeof dir === "string" &&
+    typeof value.dir === "string" &&
     typeof value.backupPath === "string" &&
-    (value.stateFiles === undefined ||
-      (Array.isArray(value.stateFiles) && value.stateFiles.every(isStateFileSpec))) &&
     (value.nativeState === undefined ||
       (isObjectRecord(value.nativeState) &&
         typeof value.nativeState.root === "string" &&
@@ -489,31 +433,12 @@ function isRebuildManifest(value: unknown): value is RebuildManifest {
         value.rebuildPolicyHandoff.file ===
           `rebuild-policy-handoff.${value.rebuildPolicyHandoff.sha256}.yaml`)) &&
     (value.rebuildMcpHandoff === undefined || isRebuildMcpHandoff(value.rebuildMcpHandoff)) &&
-    (value.hermesOperatorConfigHandoff === undefined ||
-      (value.agentType === "hermes" &&
-        isObjectRecord(value.hermesOperatorConfigHandoff) &&
-        typeof value.hermesOperatorConfigHandoff.file === "string" &&
-        typeof value.hermesOperatorConfigHandoff.sha256 === "string" &&
-        /^[a-f0-9]{64}$/.test(value.hermesOperatorConfigHandoff.sha256) &&
-        (value.hermesOperatorConfigHandoff.keys === undefined ||
-          (Array.isArray(value.hermesOperatorConfigHandoff.keys) &&
-            value.hermesOperatorConfigHandoff.keys.length <= 4096 &&
-            value.hermesOperatorConfigHandoff.keys.every(isHermesOperatorConfigInventoryKey))) &&
-        (value.hermesOperatorConfigHandoff.retired === undefined ||
-          value.hermesOperatorConfigHandoff.retired === true) &&
-        value.hermesOperatorConfigHandoff.file ===
-          `hermes-operator-config-handoff.${value.hermesOperatorConfigHandoff.sha256}.json`)) &&
-    (value.preservedEnv === undefined ||
-      (value.agentType === "hermes" &&
-        validatePreservedEnvFiles(value.preservedEnv, HERMES_PRESERVED_ENV_INVENTORY))) &&
     (value.runtimeSnapshot === undefined || runtimeSnapshot !== undefined) &&
     (value.workload === undefined || workload !== undefined) &&
     (value.hostLocalInferenceReceipt === undefined ||
       (typeof hostLocalInferenceReceipt === "string" && hostLocalInferenceReceipt.length > 0)) &&
     validHostLocalInferenceProvenance &&
-    (workload?.kind !== "managed-image" || runtimeSnapshot !== undefined) &&
-    (value.instances === undefined ||
-      (Array.isArray(value.instances) && value.instances.every((entry) => isInstanceBackup(entry))))
+    (workload?.kind !== "managed-image" || runtimeSnapshot !== undefined)
   );
 }
 
@@ -875,53 +800,7 @@ function _log(msg: string): void {
   if (_verbose()) console.error(`  [sandbox-state ${new Date().toISOString()}] ${msg}`);
 }
 
-function normalizeStateFilePath(filePath: string): string | null {
-  if (!filePath || filePath.includes("\0") || path.isAbsolute(filePath)) return null;
-  const normalized = path.posix.normalize(filePath.replace(/\\/g, "/"));
-  if (normalized === "." || normalized.startsWith("../") || normalized === "..") return null;
-  return normalized;
-}
-
-function isSafeStateDirPath(dirPath: string): boolean {
-  if (!dirPath || dirPath.includes("\0") || path.isAbsolute(dirPath)) return false;
-  const normalized = path.posix.normalize(dirPath.replace(/\\/g, "/"));
-  return (
-    normalized === dirPath &&
-    normalized !== "." &&
-    normalized !== ".." &&
-    !normalized.startsWith("../")
-  );
-}
-
-function isStateDirArray(value: unknown): value is string[] {
-  return isStringArray(value) && value.every(isSafeStateDirPath);
-}
-
-function isBackedUpDirArray(value: unknown, stateDirs: string[]): value is string[] {
-  const stateDirSet = new Set(stateDirs);
-  return (
-    isStringArray(value) &&
-    value.every((dirName) => isSafeStateDirPath(dirName) && stateDirSet.has(dirName))
-  );
-}
-
-function normalizeStateFileSpec(spec: AgentStateFile | StateFileSpec): StateFileSpec | null {
-  const normalized = normalizeStateFilePath(spec.path);
-  if (!normalized) return null;
-  if (spec.strategy !== "copy" && spec.strategy !== "sqlite_backup") return null;
-  return { path: normalized, strategy: spec.strategy };
-}
-
-function normalizeStateFileSpecsPreservingDuplicates(
-  specs: readonly (AgentStateFile | StateFileSpec)[],
-): StateFileSpec[] {
-  return specs.flatMap((spec) => {
-    const normalized = normalizeStateFileSpec(spec);
-    return normalized ? [normalized] : [];
-  });
-}
-
-/** Check privileged snapshot requests against the owning agent manifest. */
+/** Normalize provider and workload authority before snapshot publication. */
 function normalizeSnapshotBackupAuthority(options: BackupOptions): {
   readonly runtimeSnapshot?: SandboxRuntimeSnapshot;
   readonly workload?: SandboxWorkloadReceipt;
@@ -1083,6 +962,63 @@ function sha256File(filePath: string): string {
   }
 }
 
+function structuredContentIsCredentialFree(fileName: string, raw: string): boolean {
+  let value: unknown;
+  try {
+    value = fileName.endsWith(".json") ? JSON.parse(raw) : parseYaml(raw);
+  } catch {
+    return false;
+  }
+  if (value === null || value === undefined) return true;
+  if (!isConfigValue(value)) return false;
+  if (typeof value === "string" && valueLooksLikeSecret(value)) return false;
+  return isDeepStrictEqual(stripCredentials(value), value);
+}
+
+function readNativeArchiveEntry(archivePath: string, entry: string): Buffer | null {
+  let descriptor: number | null = null;
+  try {
+    descriptor = openSync(archivePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const result = spawnSync("tar", ["-xOf", "-", "--", entry], {
+      stdio: [descriptor, "pipe", "pipe"],
+      timeout: 60_000,
+      maxBuffer: NATIVE_STATE_CREDENTIAL_SCAN_MAX_BYTES + 1,
+    });
+    if (result.status !== 0 || result.error || result.signal || !Buffer.isBuffer(result.stdout)) {
+      return null;
+    }
+    return result.stdout;
+  } finally {
+    if (descriptor !== null) closeSync(descriptor);
+  }
+}
+
+function nativeArchiveCredentialViolation(
+  archivePath: string,
+  entries: readonly string[],
+): string | null {
+  for (const entry of new Set(entries)) {
+    if (entry.endsWith("/")) continue;
+    const fileName = path.posix.basename(entry).toLowerCase();
+    if (isDependencyLockfile(fileName)) continue;
+    if (isSensitiveFile(fileName)) return entry;
+    const isEnv = fileName === ".env" || fileName.endsWith(".env");
+    const isStructured =
+      fileName.endsWith(".json") || fileName.endsWith(".yaml") || fileName.endsWith(".yml");
+    if (!isEnv && !isStructured) continue;
+    const content = readNativeArchiveEntry(archivePath, entry);
+    if (!content || content.byteLength > NATIVE_STATE_CREDENTIAL_SCAN_MAX_BYTES) return entry;
+    const raw = content.toString("utf8");
+    if (
+      (isEnv && sanitizeEnvFileContent(raw) !== raw) ||
+      (isStructured && !structuredContentIsCredentialFree(fileName, raw))
+    ) {
+      return entry;
+    }
+  }
+  return null;
+}
+
 function sha256Descriptor(descriptor: number): string {
   const hash = createHash("sha256");
   const buffer = Buffer.allocUnsafe(64 * 1024);
@@ -1187,10 +1123,54 @@ function openValidatedNativeArchive(
       /^[A-Z0-9_]+$/.test(error.code)
         ? ` (${error.code})`
         : "";
-    return { error: `Native home/workspace archive is missing or unreadable${code}` };
+    return {
+      error: `Native home/workspace archive is missing or unreadable${code}`,
+    };
   } finally {
     if (sourceDescriptor !== null) closeSync(sourceDescriptor);
     if (restoreDescriptor !== null) closeSync(restoreDescriptor);
+  }
+}
+
+/**
+ * Inspect a digest-bound native-state archive through a private extraction.
+ * The temporary tree is removed before this function returns.
+ */
+function rejectNativeStateInspection(message: string): never {
+  throw new Error(message);
+}
+
+export function inspectNativeSandboxState<T>(
+  backupPath: string,
+  inspect: (nativeRoot: string) => T,
+): T {
+  const manifest = readManifest(backupPath);
+  if (!manifest?.nativeState || manifest.version !== MANIFEST_VERSION) {
+    rejectNativeStateInspection(
+      "Backup does not contain a supported complete native home/workspace archive",
+    );
+  }
+  const archivePath = path.join(backupPath, manifest.nativeState.archive);
+  const openedArchive = openValidatedNativeArchive(
+    archivePath,
+    manifest.nativeState.sha256,
+    manifest.nativeState.root,
+  );
+  if ("error" in openedArchive) rejectNativeStateInspection(openedArchive.error);
+  const temporary = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-inspect-"));
+  try {
+    const result = spawnSync("tar", ["--no-same-owner", "-xf", "-", "-C", temporary], {
+      stdio: [openedArchive.descriptor, "pipe", "pipe"],
+      timeout: NATIVE_STATE_CAPTURE_TIMEOUT_MS,
+      maxBuffer: 1024 * 1024,
+    });
+    if (result.status !== 0 || result.error || result.signal) {
+      throw new Error("Native home/workspace archive could not be extracted for inspection");
+    }
+    return inspect(temporary);
+  } finally {
+    closeSync(openedArchive.descriptor);
+    rmSync(temporary, { recursive: true, force: true });
   }
 }
 
@@ -1269,7 +1249,31 @@ function backupNativeSandboxState(sandboxName: string, options: BackupOptions): 
     );
     let result: ReturnType<typeof spawnSync>;
     try {
-      const command = `set -eu; root=${shellQuote(rootResult.root)}; { [ -d "$root" ] && [ ! -L "$root" ]; } || exit 20; exec tar -C "$root" -cf - -- .`;
+      // The SSH command runs as the sandbox user. Freeze every other process
+      // owned by that user before reading the complete native tree so SQLite,
+      // WAL, and ordinary files are captured at one process-quiescent point.
+      // Keep the SSH ancestry live so the archive can stream, and always resume
+      // processes through the EXIT trap, including tar failures and signals.
+      const command = [
+        "set -eu",
+        `root=${shellQuote(rootResult.root)}`,
+        '{ [ -d "$root" ] && [ ! -L "$root" ]; } || exit 20',
+        "uid=$(id -u)",
+        "self=$$",
+        'ancestors=" $self "',
+        "cursor=$PPID",
+        'while [ "$cursor" -gt 1 ] 2>/dev/null; do ancestors="$ancestors$cursor "; parent=""; while IFS=":" read -r key value; do if [ "$key" = "PPid" ]; then set -- $value; parent=${1:-}; break; fi; done < "/proc/$cursor/status"; cursor=$parent; [ -n "$cursor" ] || break; done',
+        'collect_candidates() { candidates=""; for proc in /proc/[0-9]*; do pid=${proc##*/}; case "$ancestors" in *" $pid "*) continue ;; esac; owner=""; while IFS=":" read -r key value; do if [ "$key" = "Uid" ]; then set -- $value; owner=${1:-}; break; fi; done < "$proc/status" 2>/dev/null || :; [ "$owner" = "$uid" ] && candidates="$candidates $pid"; done; }',
+        'stopped=""',
+        'resume() { [ -z "$stopped" ] || kill -CONT $stopped 2>/dev/null || :; }',
+        "trap resume EXIT HUP INT TERM",
+        "collect_candidates",
+        'for pid in $candidates; do if kill -STOP "$pid" 2>/dev/null; then stopped="$stopped $pid"; fi; done',
+        'for pid in $stopped; do attempts=0; while [ -r "/proc/$pid/status" ]; do state=""; while IFS=":" read -r key value; do if [ "$key" = "State" ]; then set -- $value; state=${1:-}; break; fi; done < "/proc/$pid/status"; case "$state" in T*) break ;; esac; attempts=$((attempts + 1)); [ "$attempts" -lt 100 ] || exit 21; sleep 0.01; done; done',
+        "collect_candidates",
+        'for pid in $candidates; do case " $stopped " in *" $pid "*) ;; *) exit 21 ;; esac; done',
+        'tar -C "$root" --hard-dereference -cf - -- .',
+      ].join("; ");
       result = spawnSync(
         "bash",
         [
@@ -1309,8 +1313,12 @@ function backupNativeSandboxState(sandboxName: string, options: BackupOptions): 
           ? `signal ${result.signal}`
           : result.stderr?.toString().trim() || `exit ${String(result.status)}`);
       rmSync(backupPath, { recursive: true, force: true });
+      const changedDuringRead =
+        result.status === 1 && /file changed as we read it/iu.test(result.stderr?.toString() ?? "");
       return nativeStateFailure(
-        `Native home/workspace capture failed: ${detail.substring(0, 240)}`,
+        changedDuringRead
+          ? "Native home/workspace capture changed while it was read after quiescing; no backup was published. Retry after stopping the sandbox."
+          : `Native home/workspace capture failed: ${detail.substring(0, 240)}`,
         isSshTransportFailure(result),
       );
     }
@@ -1321,6 +1329,13 @@ function backupNativeSandboxState(sandboxName: string, options: BackupOptions): 
         `Native state archive validation failed: ${validation.violations.join("; ")}`,
       );
     }
+    const credentialViolation = nativeArchiveCredentialViolation(archivePath, validation.entries);
+    if (credentialViolation) {
+      rmSync(backupPath, { recursive: true, force: true });
+      return nativeStateFailure(
+        `Native state archive contains credential-bearing or uninspectable content at '${credentialViolation}'. Move credentials to supported OpenShell credential storage and retry.`,
+      );
+    }
 
     const manifest: RebuildManifest = {
       version: MANIFEST_VERSION,
@@ -1329,11 +1344,6 @@ function backupNativeSandboxState(sandboxName: string, options: BackupOptions): 
       agentType: agentName,
       agentVersion: sandbox?.agentVersion || null,
       expectedVersion: agent.expectedVersion,
-      stateDirs: [],
-      backedUpDirs: [],
-      failedBackupDirs: [],
-      backupComplete: true,
-      stateFiles: [],
       nativeState: {
         root: rootResult.root,
         archive: NATIVE_STATE_ARCHIVE,
@@ -1614,12 +1624,10 @@ async function restoreNativeSandboxState(
         "set -eu",
         `root=${root}`,
         '{ [ -d "$root" ] && [ ! -L "$root" ]; } || exit 20',
-        'command -v realpath >/dev/null || { echo "native restore requires realpath" >&2; exit 23; }',
         'stage="$(mktemp -d "${TMPDIR:-/tmp}/nemoclaw-native-restore.XXXXXX")"',
         "trap 'rm -rf -- \"$stage\"' EXIT HUP INT TERM",
         'tar --no-same-owner -xf - -C "$stage"',
         'if find "$stage" -type f -links +1 -print -quit | grep -q .; then echo "native restore archive contains a hard link" >&2; exit 21; fi',
-        'find "$stage" -type l -exec sh -eu -c \'stage=$1; root=$2; shift 2; for link do target=$(readlink -- "$link"); case "$target" in /*) resolved=$(realpath -m -- "$target"); case "$resolved" in "$root"|"$root"/*) ;; *) echo "native restore symlink escapes root: $link -> $target" >&2; exit 22 ;; esac ;; *) resolved=$(realpath -m -- "$(dirname -- "$link")/$target"); case "$resolved" in "$stage"|"$stage"/*) ;; *) echo "native restore symlink escapes root: $link -> $target" >&2; exit 22 ;; esac ;; esac; done\' sh "$stage" "$root" {} +',
         'find "$root" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +',
         'cp -a -- "$stage"/. "$root"/',
       ].join("; ");
@@ -1829,7 +1837,10 @@ export function writeRebuildMcpHandoff(
   if (!isRebuildMcpHandoff(handoff)) {
     throw new Error("Cannot persist an invalid rebuild MCP recovery handoff");
   }
-  const next = { ...manifest, rebuildMcpHandoff: cloneRebuildMcpHandoff(handoff) };
+  const next = {
+    ...manifest,
+    rebuildMcpHandoff: cloneRebuildMcpHandoff(handoff),
+  };
   writeManifest(manifest.backupPath, next);
   Object.assign(manifest, next);
   return next;
@@ -1855,7 +1866,10 @@ export function clearRebuildMcpHandoff(
   if (handoff.retired !== true) {
     const retired = {
       ...manifest,
-      rebuildMcpHandoff: { ...cloneRebuildMcpHandoff(handoff), retired: true as const },
+      rebuildMcpHandoff: {
+        ...cloneRebuildMcpHandoff(handoff),
+        retired: true as const,
+      },
     };
     try {
       writeManifest(manifest.backupPath, retired);
@@ -1918,46 +1932,6 @@ export function clearRebuildPolicyHandoff(
   return true;
 }
 
-/** Retire recovery authority, then delete the Hermes operator config handoff. */
-export function clearHermesOperatorConfigHandoff(
-  manifest: RebuildManifest,
-  ops: {
-    write?: typeof writeManifest;
-    remove?: typeof rmSync;
-  } = {},
-): boolean {
-  const handoff = manifest.hermesOperatorConfigHandoff;
-  if (!handoff) return true;
-  const write = ops.write ?? writeManifest;
-  const remove = ops.remove ?? rmSync;
-  if (handoff.retired !== true) {
-    const retired = {
-      ...manifest,
-      hermesOperatorConfigHandoff: { ...handoff, retired: true as const },
-    };
-    try {
-      write(manifest.backupPath, retired);
-    } catch {
-      return false;
-    }
-    Object.assign(manifest, retired);
-  }
-  try {
-    remove(path.join(manifest.backupPath, handoff.file), { force: true });
-  } catch {
-    return false;
-  }
-  const cleared = { ...manifest };
-  delete cleared.hermesOperatorConfigHandoff;
-  try {
-    write(manifest.backupPath, cleared);
-  } catch {
-    return false;
-  }
-  delete manifest.hermesOperatorConfigHandoff;
-  return true;
-}
-
 function readManifestPayload(backupPath: string): unknown | null {
   const manifestPath = path.join(backupPath, "rebuild-manifest.json");
   if (!existsSync(manifestPath)) return null;
@@ -1972,12 +1946,7 @@ function readManifest(backupPath: string): RebuildManifest | null {
   try {
     const parsed = readManifestPayload(backupPath);
     if (!isRebuildManifest(parsed)) return null;
-    const manifest = parsed as RebuildManifest & {
-      dir?: string;
-      writableDir?: string;
-    };
-    const dir = manifest.dir ?? manifest.writableDir;
-    if (!dir) return null;
+    const manifest = parsed;
     const runtimeSnapshot =
       manifest.runtimeSnapshot === undefined
         ? undefined
@@ -1992,10 +1961,6 @@ function readManifest(backupPath: string): RebuildManifest | null {
     );
     return {
       ...manifest,
-      dir,
-      // Preserve repeated normalized paths from this untrusted payload so the
-      // restore contract can reject them instead of silently de-duplicating.
-      stateFiles: normalizeStateFileSpecsPreservingDuplicates(manifest.stateFiles ?? []),
       blueprintDigest: manifest.blueprintDigest ?? null,
       ...(runtimeSnapshot === undefined ? {} : { runtimeSnapshot }),
       ...(workload === undefined ? {} : { workload }),
@@ -2012,17 +1977,6 @@ function readManifest(backupPath: string): RebuildManifest | null {
 export type RebuildRecoveryManifestValidation =
   | { ok: true; manifest: RebuildManifest }
   | { ok: false; reason: string };
-
-function legacyStateFilesArePresent(backupPath: string, manifest: RebuildManifest): boolean {
-  if (manifest.backupComplete !== undefined) return true;
-  return (manifest.stateFiles ?? []).every((spec) => {
-    try {
-      return lstatSync(path.join(backupPath, spec.path)).isFile();
-    } catch {
-      return false;
-    }
-  });
-}
 
 /**
  * Remove one completed rebuild backup without allowing a caller-controlled
@@ -2157,14 +2111,7 @@ export function listBackups(sandboxName: string): SnapshotEntry[] {
   for (const entry of rawEntries) {
     const backupPath = path.join(dir, entry.name);
     const m = readManifest(backupPath);
-    if (
-      m &&
-      m.version === MANIFEST_VERSION &&
-      m.nativeState !== undefined &&
-      m.backupComplete !== false &&
-      (m.failedBackupDirs?.length ?? 0) === 0 &&
-      legacyStateFilesArePresent(backupPath, m)
-    ) {
+    if (m && m.version === MANIFEST_VERSION && m.nativeState !== undefined) {
       manifests.push(m);
     }
   }

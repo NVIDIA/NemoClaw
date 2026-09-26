@@ -171,7 +171,11 @@ function nativeWeatherPluginWriteScript(version: NativePluginVersion): string {
     description: "Dependency-free native plugin lifecycle fixture",
     activation: { onStartup: true },
     contracts: { tools: ["get_weather"] },
-    configSchema: { type: "object", properties: {}, additionalProperties: false },
+    configSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
   });
   const entrypoint = `const plugin = {
   id: "weather",
@@ -255,7 +259,11 @@ async function exerciseNativeOpenClawPluginVersion(
   const install = await sandbox.execShell(
     SANDBOX_NAME,
     trustedSandboxShellScript(nativeWeatherPluginWriteScript(version)),
-    { artifactName: `phase-4-native-plugin-install-${version}`, env: env(), timeoutMs: 120_000 },
+    {
+      artifactName: `phase-4-native-plugin-install-${version}`,
+      env: env(),
+      timeoutMs: 120_000,
+    },
   );
   expect(install.exitCode, resultText(install)).toBe(0);
   const restart = await repoNemoclaw(
@@ -279,7 +287,11 @@ async function exerciseNativeOpenClawPluginLifecycle(
   const updateDryRun = await sandbox.exec(
     SANDBOX_NAME,
     ["/usr/local/bin/openclaw", "plugins", "update", "weather", "--dry-run"],
-    { artifactName: "phase-4-native-plugin-update-dry-run", env: env(), timeoutMs: 120_000 },
+    {
+      artifactName: "phase-4-native-plugin-update-dry-run",
+      env: env(),
+      timeoutMs: 120_000,
+    },
   );
   expect(updateDryRun.exitCode, resultText(updateDryRun)).toBe(0);
 
@@ -294,20 +306,32 @@ async function exerciseNativeOpenClawPluginLifecycle(
       "--tag",
       "2026.7.1",
     ],
-    { artifactName: "phase-4-native-self-update-dry-run", env: env(), timeoutMs: 120_000 },
+    {
+      artifactName: "phase-4-native-self-update-dry-run",
+      env: env(),
+      timeoutMs: 120_000,
+    },
   );
   expect(selfUpdateDryRun.exitCode, resultText(selfUpdateDryRun)).toBe(0);
 
   const uninstall = await sandbox.exec(
     SANDBOX_NAME,
     ["/usr/local/bin/openclaw", "plugins", "uninstall", "weather", "--force"],
-    { artifactName: "phase-4-native-plugin-uninstall", env: env(), timeoutMs: 120_000 },
+    {
+      artifactName: "phase-4-native-plugin-uninstall",
+      env: env(),
+      timeoutMs: 120_000,
+    },
   );
   expect(uninstall.exitCode, resultText(uninstall)).toBe(0);
   const absent = await sandbox.exec(
     SANDBOX_NAME,
     ["/usr/local/bin/openclaw", "plugins", "inspect", "weather", "--json"],
-    { artifactName: "phase-4-native-plugin-absent", env: env(), timeoutMs: 30_000 },
+    {
+      artifactName: "phase-4-native-plugin-absent",
+      env: env(),
+      timeoutMs: 30_000,
+    },
   );
   expect(`exit=${absent.exitCode}\n${resultText(absent)}`).toMatch(
     /^exit=1\n[\s\S]*(?:weather.*(?:not found|unknown)|(?:not found|unknown).*weather)/iu,
@@ -488,7 +512,11 @@ async function preCleanup(host: HostCliClient, sandbox: SandboxClient): Promise<
   await withOwnedFullE2eGateway(gateway, () =>
     cleanupWhenOpenShellAvailable(
       host,
-      { artifactName: "pre-cleanup-openshell-available", env: env(), timeoutMs: 15_000 },
+      {
+        artifactName: "pre-cleanup-openshell-available",
+        env: env(),
+        timeoutMs: 15_000,
+      },
       () =>
         host.cleanupGatewayRegistration(gateway.env.OPENSHELL_GATEWAY, {
           artifactName: "pre-cleanup-openshell-gateway-destroy",
@@ -526,18 +554,11 @@ function createColdOnboardCapture(): ColdOnboardCapture | null {
 }
 
 function readFullE2eColdPathBudget() {
-  try {
-    return readColdOnboardPerformanceBudget(
-      JSON.parse(
-        fs.readFileSync(path.join(REPO_ROOT, "ci", "onboard-performance-budget.json"), "utf8"),
-      ) as unknown,
-    );
-  } catch (error) {
-    throw new Error(
-      `Full E2E cold-path performance budget is invalid: ${error instanceof Error ? error.message : String(error)}`,
-      { cause: error },
-    );
-  }
+  return readColdOnboardPerformanceBudget(
+    JSON.parse(
+      fs.readFileSync(path.join(REPO_ROOT, "ci", "onboard-performance-budget.json"), "utf8"),
+    ) as unknown,
+  );
 }
 
 async function assertColdOnboardPerformance(input: {
@@ -821,7 +842,9 @@ test(
             ...(coldOnboard ? { NEMOCLAW_TRACE_FILE: coldOnboard.traceFile } : {}),
           }),
           ...(coldOnboard
-            ? { onOutput: (event: ShellProbeOutputEvent) => coldOnboard.outputEvents.push(event) }
+            ? {
+                onOutput: (event: ShellProbeOutputEvent) => coldOnboard.outputEvents.push(event),
+              }
             : {}),
           redactionValues,
           timeoutMs: INSTALL_TIMEOUT_MS,
@@ -856,7 +879,11 @@ test(
     const nativeDoctor = await sandbox.exec(
       SANDBOX_NAME,
       ["/usr/local/bin/openclaw", "doctor", "--lint", "--json"],
-      { artifactName: "phase-2-first-native-openclaw-doctor", env: env(), timeoutMs: 180_000 },
+      {
+        artifactName: "phase-2-first-native-openclaw-doctor",
+        env: env(),
+        timeoutMs: 180_000,
+      },
     );
     // State-integrity is opt-in upstream; run it before repair and retain all findings.
     const nativeStateDoctor = securityPostureEnabled()

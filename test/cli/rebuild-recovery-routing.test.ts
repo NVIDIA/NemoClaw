@@ -61,11 +61,6 @@ function writeRecoveryFixture(home: string) {
       agentType: "openclaw",
       agentVersion: null,
       expectedVersion: null,
-      stateDirs: [],
-      backedUpDirs: [],
-      failedBackupDirs: [],
-      backupComplete: true,
-      stateFiles: [],
       nativeState: {
         root: "/sandbox",
         archive: "native-home.tar",
@@ -258,8 +253,6 @@ describe("CLI rebuild recovery routing", () => {
             agentType: "openclaw",
             agentVersion: null,
             expectedVersion: null,
-            stateDirs: [],
-            backupComplete: true,
             nativeState: {
               root: "/sandbox",
               archive: "native-home.tar",

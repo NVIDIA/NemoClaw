@@ -38,9 +38,7 @@ function volumeObservation() {
 }
 const projection = {
   managedStateRoots: managedRoots,
-  directories: ["workspace"],
-  prefixes: ["workspace-"],
-  files: ["openclaw.json"],
+  nativeRoot: "/sandbox",
 };
 const containerId = "a".repeat(64);
 const sandbox = {
@@ -117,19 +115,29 @@ describe("stopped Docker recovery capture", () => {
     async (mounted) => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-stopped-capture-test-"));
       const archive = path.join(root, "archive");
-      fs.mkdirSync(path.join(root, ".openclaw", "workspace"), { recursive: true });
-      fs.mkdirSync(path.join(root, ".openclaw", "identity"));
-      fs.writeFileSync(path.join(root, ".openclaw", "workspace", "retained.txt"), "captured bytes");
+      fs.mkdirSync(path.join(root, "sandbox", ".openclaw", "workspace"), {
+        recursive: true,
+      });
+      fs.mkdirSync(path.join(root, "sandbox", "custom-package"));
       fs.writeFileSync(
-        path.join(root, ".openclaw", "identity", "machine-key"),
-        "NEVER-PERSIST-MACHINE-KEY",
+        path.join(root, "sandbox", ".openclaw", "workspace", "retained.txt"),
+        "captured bytes",
       );
+      fs.writeFileSync(
+        path.join(root, "sandbox", "custom-package", "unregistered.txt"),
+        "complete native state",
+      );
+      fs.linkSync(
+        path.join(root, "sandbox", "custom-package", "unregistered.txt"),
+        path.join(root, "sandbox", "custom-package", "hardlinked.txt"),
+      );
+      fs.symlinkSync("/usr/bin/python3", path.join(root, "sandbox", "python"));
       const descriptor = fs.openSync(archive, "wx+", 0o600);
       const source: unknown[] = observation();
       source[5] = mounted ? [managedMount] : [];
       const inspect = vi.fn((args: readonly string[]) => inspectStorage(args, source));
       const read = vi.fn(() =>
-        spawn("tar", ["-cf", "-", "-C", root, ".openclaw"], {
+        spawn("tar", ["-cf", "-", "-C", root, "sandbox"], {
           env: { ...process.env, COPYFILE_DISABLE: "1" },
           stdio: ["ignore", "pipe", "pipe"],
         }),
@@ -140,15 +148,24 @@ describe("stopped Docker recovery capture", () => {
           spawn: read,
         }).capture(descriptor);
         expect(
-          execFileSync("tar", ["-xOf", archive, "workspace/retained.txt"], { encoding: "utf8" }),
+          execFileSync("tar", ["-xOf", archive, ".openclaw/workspace/retained.txt"], {
+            encoding: "utf8",
+          }),
         ).toBe("captured bytes");
-        const capturedBytes = Buffer.alloc(fs.fstatSync(descriptor).size);
-        fs.readSync(descriptor, capturedBytes, 0, capturedBytes.length, 0);
-        expect(capturedBytes.includes(Buffer.from("NEVER-PERSIST-MACHINE-KEY"))).toBe(false);
-        expect(execFileSync("tar", ["-tf", archive], { encoding: "utf8" })).not.toContain(
-          "identity",
-        );
-        expect(read).toHaveBeenCalledWith(["cp", `${containerId}:/sandbox/.openclaw`, "-"], {
+        expect(
+          execFileSync("tar", ["-xOf", archive, "custom-package/unregistered.txt"], {
+            encoding: "utf8",
+          }),
+        ).toBe("complete native state");
+        const extracted = path.join(root, "extracted");
+        fs.mkdirSync(extracted);
+        execFileSync("tar", ["-xf", archive, "-C", extracted]);
+        expect(fs.readlinkSync(path.join(extracted, "python"))).toBe("/usr/bin/python3");
+        expect(
+          fs.readFileSync(path.join(extracted, "custom-package", "hardlinked.txt"), "utf8"),
+        ).toBe("complete native state");
+        expect(fs.statSync(path.join(extracted, "custom-package", "hardlinked.txt")).nlink).toBe(2);
+        expect(read).toHaveBeenCalledWith(["cp", `${containerId}:/sandbox`, "-"], {
           stdio: ["ignore", "pipe", "pipe"],
         });
         expect(inspect.mock.calls.length).toBeGreaterThanOrEqual(3);
@@ -189,13 +206,20 @@ describe("stopped Docker recovery capture", () => {
     [
       "running",
       (value: unknown[]) => {
-        value[1] = { ...(value[1] as object), Status: "running", Running: true };
+        value[1] = {
+          ...(value[1] as object),
+          Status: "running",
+          Running: true,
+        };
       },
     ],
     [
       "wrong sandbox",
       (value: unknown[]) => {
-        value[2] = { ...(value[2] as object), "openshell.ai/sandbox-id": "someone-else" };
+        value[2] = {
+          ...(value[2] as object),
+          "openshell.ai/sandbox-id": "someone-else",
+        };
       },
     ],
     [
@@ -230,13 +254,21 @@ describe("stopped Docker recovery capture", () => {
   });
 
   it.each([
-    { name: "unowned", volume: { ...volumeObservation(), Labels: {} }, users: containerId },
+    {
+      name: "unowned",
+      volume: { ...volumeObservation(), Labels: {} },
+      users: containerId,
+    },
     {
       name: "externally backed",
       volume: { ...volumeObservation(), Options: { type: "nfs" } },
       users: containerId,
     },
-    { name: "shared", volume: volumeObservation(), users: `${containerId}\n${"c".repeat(64)}` },
+    {
+      name: "shared",
+      volume: volumeObservation(),
+      users: `${containerId}\n${"c".repeat(64)}`,
+    },
     { name: "unbound", volume: volumeObservation(), users: "" },
   ])("refuses a $name managed state volume before copying", ({ volume, users }) => {
     const source: unknown[] = observation();

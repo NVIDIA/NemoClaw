@@ -4,8 +4,14 @@
 title: "Run and Manage Pi"
 sidebar-title: "Run and Manage Pi"
 description: "Operate Pi interactively or headlessly and manage its sandbox lifecycle and persistent state."
-description-agent: "Covers Pi terminal commands, lifecycle operations, state, snapshots, rebuild, recovery, and troubleshooting."
-keywords: ["run pi agent", "pi headless mode", "pi sandbox rebuild", "pi session backup"]
+description-agent: "Covers Pi terminal commands, lifecycle operations, native-state persistence, rebuild, recovery, and troubleshooting."
+keywords:
+  [
+    "run pi agent",
+    "pi headless mode",
+    "pi sandbox rebuild",
+    "pi session backup",
+  ]
 topics: ["manage-sandboxes", "terminal-runtime", "pi"]
 tags: ["pi", "lifecycle", "backup", "recovery"]
 difficulty: "intermediate"
@@ -15,11 +21,13 @@ content:
   type: "how_to"
 agent-variants: ["pi"]
 ---
+
 Use NemoClaw for host-side lifecycle operations and Pi for work inside the sandbox.
 
 <Note>
-Pi remains unavailable to normal installations until final release activation.
-Candidate qualification uses these lifecycle commands; internal qualification settings are not a user setup path.
+  Pi remains unavailable to normal installations until final release activation.
+  Candidate qualification uses these lifecycle commands; internal qualification
+  settings are not a user setup path.
 </Note>
 
 ## Connect and Run Pi
@@ -66,15 +74,15 @@ nemoclaw list
 
 Pi stores runtime state under `/sandbox/.pi/agent`:
 
-| Path | Ownership | Snapshot behaviour |
-|---|---|---|
-| `sessions/` | Confidential user state | Preserved |
-| `prompts/` | Read-only user resources | Preserved |
-| `themes/` | Read-only user resources | Preserved |
-| `tools/` | Executable resource state | Reconstructed, not restored |
-| `bin/` | Executable resource state | Persists in the native home |
-| `settings.json` | User preferences | Persists without a key allowlist |
-| `models.json` | Native model configuration | Persists with the rest of Pi state |
+| Path            | Ownership                  | Native-state persistence           |
+| --------------- | -------------------------- | ---------------------------------- |
+| `sessions/`     | Confidential user state    | Preserved                          |
+| `prompts/`      | Read-only user resources   | Preserved                          |
+| `themes/`       | Read-only user resources   | Preserved                          |
+| `tools/`        | Executable resource state  | Reconstructed, not restored        |
+| `bin/`          | Executable resource state  | Persists in the native home        |
+| `settings.json` | User preferences           | Persists without a key allowlist   |
+| `models.json`   | Native model configuration | Persists with the rest of Pi state |
 
 ## Native State Persistence
 

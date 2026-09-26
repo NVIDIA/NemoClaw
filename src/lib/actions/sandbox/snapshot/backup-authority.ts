@@ -2,15 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isDeepStrictEqual } from "node:util";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import type { AgentDefinition } from "../../../agent/definition-types";
-import {
-  copyCapturedOpenClawState,
-  type CapturedOpenClawState,
-} from "../../../state/state-directory-restore";
 import { runTarListing } from "../../../state/tar-listing";
 import type { RuntimeProviderBundle } from "../../../onboard/runtime-provider/contract";
 import { managedStartupStateRootOwnership } from "../../../onboard/managed-startup/state-roots";
@@ -27,6 +23,7 @@ import {
   captureSandboxRuntimeSnapshot,
   prepareSandboxStoppedStateCapture,
 } from "./provider-lifecycle";
+import type { PreparedStoppedNativeState } from "../../../state/state-directory-restore";
 
 type SnapshotBackupAuthority = Pick<
   sandboxState.BackupOptions,
@@ -214,17 +211,15 @@ export function backupSandboxStateWithManagedAuthority(
   return authority ? dependencies.backup(sandboxName, authority) : dependencies.backup(sandboxName);
 }
 
-export interface PreparedStoppedOpenClawState extends CapturedOpenClawState {
-  readonly cleanupDirectory: string;
-  dispose(): void;
+function rejectStoppedState(message: string): never {
+  throw new Error(message);
 }
 
-/** Prepare a private, declared-state copy before inspecting MCP or deleting an Error source. */
+/** Prepare a private complete native-state copy before inspecting a stopped source. */
 export async function prepareStoppedOpenClawState(
   sandboxName: string,
   getSandbox: SnapshotBackupAuthorityDependencies["getSandbox"],
-  agent: AgentDefinition,
-): Promise<PreparedStoppedOpenClawState | null> {
+): Promise<PreparedStoppedNativeState | null> {
   const dependencies = { ...defaultDependencies, getSandbox };
   const entry = getSandbox(sandboxName);
   if (!entry || (entry.agent ?? "openclaw") !== "openclaw") return null;
@@ -236,9 +231,7 @@ export async function prepareStoppedOpenClawState(
     entry,
     runtime,
     {
-      directories: agent.backupStateDirs,
-      prefixes: agent.backupStateDirPrefixes,
-      files: agent.stateFiles.map((file) => (typeof file === "string" ? file : file.path)),
+      nativeRoot: "/sandbox",
       managedStateRoots:
         authority.workload.kind === "managed-image"
           ? managedStartupStateRootOwnership({ agent: "openclaw", sandboxName })
@@ -253,7 +246,7 @@ export async function prepareStoppedOpenClawState(
       current.gatewayName !== entry.gatewayName ||
       current.lifecycleLiveIdentityFingerprint !== entry.lifecycleLiveIdentityFingerprint
     ) {
-      throw new Error("Stopped source registration changed during recovery.");
+      rejectStoppedState("Stopped source registration changed during recovery.");
     }
     authority.validateBeforePublish?.();
     capture.assertCurrent();
@@ -262,7 +255,6 @@ export async function prepareStoppedOpenClawState(
   fs.chmodSync(temporary, 0o700);
   const archivePath = path.join(temporary, "source.tar");
   const raw = path.join(temporary, "raw");
-  const directory = path.join(temporary, "state");
   const cleanupOnExit = (): void => {
     try {
       fs.rmSync(temporary, { recursive: true, force: true });
@@ -289,35 +281,53 @@ export async function prepareStoppedOpenClawState(
       ["-tvf", "-"],
       "stopped state inventory",
       (line) => {
-        if (!["-", "d", "l"].includes(line[0] ?? "")) unsupported = true;
+        if (!["-", "d", "l", "h"].includes(line[0] ?? "")) unsupported = true;
       },
     );
     if (listingFailure || unsupported)
-      throw new Error("Stopped state contains an unsupported archive entry.");
+      rejectStoppedState("Stopped state contains an unsupported archive entry.");
     fs.mkdirSync(raw, { mode: 0o700 });
-    const extracted = sandboxState.safeTarExtract(archive, raw);
-    if (!extracted.success) throw new Error("Stopped state archive failed snapshot validation.");
-    const sourceDirectory = raw;
-    const sourceRoot = fs.lstatSync(sourceDirectory);
+    const validation = sandboxState.validateTarEntries(archive, raw);
+    if (!validation.safe) rejectStoppedState("Stopped state archive failed snapshot validation.");
+    // This provider-owned stream has already containment-checked hard-link
+    // targets and limited headers to files, directories, and links. Extract
+    // into a new private directory without resolving symlink targets: absolute
+    // and system-targeting links are legitimate native-home content, and tar
+    // must preserve them rather than write through them.
+    const extracted = spawnSync("tar", ["-xf", archivePath, "--no-same-owner", "-C", raw], {
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 60_000,
+    });
+    if (extracted.status !== 0 || extracted.error || extracted.signal) {
+      rejectStoppedState("Stopped state archive failed snapshot extraction.");
+    }
+    const sourceRoot = fs.lstatSync(raw);
     if (!sourceRoot.isDirectory() || sourceRoot.isSymbolicLink())
-      throw new Error("Stopped OpenClaw state root is not a directory.");
-    fs.chmodSync(sourceDirectory, 0o700);
-    fs.mkdirSync(directory, { mode: 0o700 });
-    copyCapturedOpenClawState(
-      { sandboxName, directory: sourceDirectory, assertCurrent },
-      directory,
-      agent.backupStateDirs,
-      agent.backupStateDirPrefixes,
-      agent.stateFiles.map((file) =>
-        typeof file === "string"
-          ? { path: file, strategy: "copy" }
-          : { path: file.path, strategy: file.strategy ?? "copy" },
-      ),
-    );
-    fs.rmSync(raw, { recursive: true, force: true });
+      rejectStoppedState("Stopped OpenClaw state root is not a directory.");
+    fs.chmodSync(raw, 0o700);
+    let directory = path.join(raw, ".openclaw");
+    try {
+      const configRoot = fs.lstatSync(directory);
+      if (!configRoot.isDirectory() || configRoot.isSymbolicLink()) {
+        rejectStoppedState("Stopped OpenClaw config root is not a directory.");
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        rejectStoppedState(error instanceof Error ? error.message : String(error));
+      }
+      directory = path.join(temporary, "empty-openclaw");
+      fs.mkdirSync(directory, { mode: 0o700 });
+    }
     fs.unlinkSync(archivePath);
     assertCurrent();
-    return { sandboxName, directory, cleanupDirectory: temporary, assertCurrent, dispose };
+    return {
+      sandboxName,
+      nativeDirectory: raw,
+      directory,
+      cleanupDirectory: temporary,
+      assertCurrent,
+      dispose,
+    };
   } catch (error) {
     dispose();
     throw error;

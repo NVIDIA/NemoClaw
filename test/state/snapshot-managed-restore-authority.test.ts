@@ -119,11 +119,6 @@ function writeBackup(overrides: Record<string, unknown> = {}) {
     agentType: "openclaw",
     agentVersion: null,
     expectedVersion: null,
-    stateDirs: [],
-    backedUpDirs: [],
-    failedBackupDirs: [],
-    backupComplete: true,
-    stateFiles: [],
     nativeState: {
       root: "/sandbox",
       archive: "native-home.tar",
@@ -162,13 +157,13 @@ function writeOpenClawRegistry(): void {
 
 describe("managed rebuild restore authority", () => {
   it("binds every normalized restore-relevant manifest field selected by the operator", () => {
-    const manifest = writeBackup({ backedUpDirs: ["workspace"], stateDirs: ["workspace"] });
+    const manifest = writeBackup({ agentVersion: "1.0.0" });
     const selected = sandboxState.getLatestBackup("alpha");
     expect(selected).not.toBeNull();
 
     fs.writeFileSync(
       path.join(manifest.backupPath, "rebuild-manifest.json"),
-      JSON.stringify({ ...manifest, stateDirs: ["workspace", "agents"] }, null, 2),
+      JSON.stringify({ ...manifest, agentVersion: "1.0.1" }, null, 2),
     );
 
     expect(sandboxState.captureSnapshotRestoreAuthority(manifest.backupPath, selected!)).toBeNull();
@@ -237,7 +232,10 @@ it.each([
       throw new Error("policy observation rejected");
     },
     mutate: (_manifest: ReturnType<typeof writeBackup>) => undefined,
-    expected: { success: false, error: expect.stringContaining("policy observation rejected") },
+    expected: {
+      success: false,
+      error: expect.stringContaining("policy observation rejected"),
+    },
   },
   {
     outcome: "content-drift",
@@ -245,7 +243,7 @@ it.each([
     mutate: (manifest: ReturnType<typeof writeBackup>) =>
       fs.writeFileSync(
         path.join(manifest.backupPath, "rebuild-manifest.json"),
-        JSON.stringify({ ...manifest, stateDirs: ["workspace"] }),
+        JSON.stringify({ ...manifest, agentVersion: "drifted" }),
       ),
     expected: {
       success: false,

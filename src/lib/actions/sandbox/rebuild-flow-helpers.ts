@@ -52,6 +52,7 @@ import {
   usesLegacyRuntimeLifecycleCompatibility,
 } from "./gateway-state";
 import * as snapshotBackup from "./snapshot/backup-authority";
+import type { PreparedStoppedNativeState } from "../../state/state-directory-restore";
 import {
   backupStartedSandboxState,
   returnSandboxContainerToStopped,
@@ -77,7 +78,7 @@ export async function prepareRebuildStoppedOpenClawState(
   liveState: RebuildLiveState,
   hasRecoveryManifest: boolean,
   getSandbox: Parameters<typeof snapshotBackup.prepareStoppedOpenClawState>[1],
-): Promise<snapshotBackup.PreparedStoppedOpenClawState | null> {
+): Promise<PreparedStoppedNativeState | null> {
   if (
     !liveState.terminalPhase ||
     liveState.staleRecovery ||
@@ -85,7 +86,7 @@ export async function prepareRebuildStoppedOpenClawState(
     (entry.agent ?? "openclaw") !== "openclaw"
   )
     return null;
-  return snapshotBackup.prepareStoppedOpenClawState(entry.name, getSandbox, loadAgent("openclaw"));
+  return snapshotBackup.prepareStoppedOpenClawState(entry.name, getSandbox);
 }
 
 export type RebuildLiveStateOptions = {
@@ -621,10 +622,15 @@ export async function backupSandboxStateForRebuild(
     return undefined;
   }
   const backupManifest = backup.manifest ?? null;
-  if (!backupManifest) {
+  if (!backupManifest?.nativeState || backupManifest.version !== 2) {
     console.error("  Failed to record backup metadata.");
+    if (backupManifest?.backupPath) {
+      if (!sandboxState.removeSandboxStateBackup(sandboxName, backupManifest.backupPath)) {
+        console.error(`  Remove the unusable backup manually: ${backupManifest.backupPath}`);
+      }
+    }
     console.error("  Aborting rebuild to prevent data loss.");
-    bail("Failed to record backup metadata.");
+    bail("Failed to record complete native-state backup metadata.");
     return undefined;
   }
   console.log(

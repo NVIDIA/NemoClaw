@@ -29,6 +29,7 @@ import {
   retireOpenClawPostRestoreDoctorForDelete,
   type OpenClawPostRestoreDoctorWindow,
 } from "./runtime/openclaw-lifecycle";
+import type { PreparedStoppedNativeState } from "../../state/state-directory-restore";
 
 export {
   clearRebuildMcpHandoff,
@@ -36,7 +37,6 @@ export {
   readRebuildPolicyHandoff,
   readRebuildMcpHandoff,
   writeRebuildMcpHandoff,
-  clearHermesOperatorConfigHandoff,
   writeRebuildPolicyHandoff,
 } from "../../state/sandbox";
 
@@ -73,7 +73,7 @@ export interface RebuildBackupPhaseInput {
   log: RebuildLog;
   bail: RebuildBail;
   runtimeSelection?: OpenShellRuntimeSelection;
-  capturedOpenClawState?: import("../../state/state-directory-restore").CapturedOpenClawState;
+  stoppedNativeState?: PreparedStoppedNativeState;
 }
 
 export interface RebuildBackupPhaseResult {
@@ -156,10 +156,10 @@ export async function runRebuildBackupPhase(
           input.runtimeSelection,
         );
   let sourceBackupWindow: OpenClawPostRestoreDoctorWindow | null = null;
-  input.capturedOpenClawState?.assertCurrent();
+  input.stoppedNativeState?.assertCurrent();
   if (
     !preparedRecoveryManifest &&
-    !input.capturedOpenClawState &&
+    !input.stoppedNativeState &&
     !input.staleRecovery &&
     (input.sandboxEntry.agent ?? "openclaw") === "openclaw"
   ) {

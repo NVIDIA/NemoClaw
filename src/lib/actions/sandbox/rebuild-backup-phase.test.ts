@@ -174,7 +174,9 @@ describe("rebuild policy handoff", () => {
     ].join("\n");
     const sha256 = createHash("sha256").update(legacyCredentialPolicy).digest("hex");
     const file = `rebuild-policy-handoff.${sha256}.yaml`;
-    fs.writeFileSync(path.join(backupPath, file), legacyCredentialPolicy, { mode: 0o600 });
+    fs.writeFileSync(path.join(backupPath, file), legacyCredentialPolicy, {
+      mode: 0o600,
+    });
     const preparedRecoveryManifest = {
       version: 1,
       sandboxName: "alpha",
@@ -182,9 +184,6 @@ describe("rebuild policy handoff", () => {
       agentType: "openclaw",
       agentVersion: null,
       expectedVersion: null,
-      stateDirs: [],
-      failedBackupDirs: [],
-      stateFiles: [],
       dir: "/sandbox/.openclaw",
       backupPath,
       blueprintDigest: "digest",

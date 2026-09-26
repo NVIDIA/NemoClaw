@@ -29,7 +29,10 @@ const mocks = vi.hoisted(() => ({
   unregisterAgentAdapter: vi.fn(),
 }));
 
-vi.mock("../../state/registry", () => ({ getSandbox: vi.fn(), updateSandbox: vi.fn() }));
+vi.mock("../../state/registry", () => ({
+  getSandbox: vi.fn(),
+  updateSandbox: vi.fn(),
+}));
 vi.mock("./mcp-bridge-adapters", () => ({
   registerAgentAdapterAtCurrentCredentialRevision:
     mocks.registerAgentAdapterAtCurrentCredentialRevision,
@@ -91,7 +94,10 @@ import {
 } from "./mcp-bridge-rebuild";
 
 const sandbox = { agent: "hermes" } as SandboxEntry;
-const runtimeSelection = { gatewayName: "nemoclaw-8091", workspace: "default" } as const;
+const runtimeSelection = {
+  gatewayName: "nemoclaw-8091",
+  workspace: "default",
+} as const;
 const entry: McpSourceEntry = {
   server: "github",
   agent: "hermes",
@@ -161,9 +167,23 @@ describe("MCP adapter teardown rollback", () => {
   );
 
   it("preserves captured OpenClaw MCP intent without executing in or detaching the stopped source", async () => {
-    mocks.getSandboxOrThrow.mockReturnValue({ name: "alpha", agent: "openclaw" });
-    const source = { sandboxName: "alpha", directory: "/private/captured", assertCurrent: vi.fn() };
-    const nativeEntry = { ...entry, agent: "openclaw", adapter: "openclaw-config" as const };
+    mocks.getSandboxOrThrow.mockReturnValue({
+      name: "alpha",
+      agent: "openclaw",
+    });
+    const source = {
+      sandboxName: "alpha",
+      nativeDirectory: "/private/native",
+      directory: "/private/captured",
+      cleanupDirectory: "/private",
+      assertCurrent: vi.fn(),
+      dispose: vi.fn(),
+    };
+    const nativeEntry = {
+      ...entry,
+      agent: "openclaw",
+      adapter: "openclaw-config" as const,
+    };
     const result = await prepareMcpBridgesForStoppedSandboxRebuild(
       "alpha",
       [nativeEntry],

@@ -123,7 +123,6 @@ function manifest(agent: Agent, service: Service, port = 8000): RebuildManifest 
     agentType: agent,
     agentVersion: null,
     expectedVersion: null,
-    stateDirs: [],
     dir: "/sandbox",
     backupPath: "/tmp/alpha",
     blueprintDigest: null,
@@ -305,7 +304,10 @@ describe("host-local inference rebuild restore authority", () => {
 
     const result = await restoreRecreatedSandboxStateWithManagedAuthority(
       "alpha",
-      { ...manifest("openclaw", "vllm"), hostLocalInferenceReceipt: serialized },
+      {
+        ...manifest("openclaw", "vllm"),
+        hostLocalInferenceReceipt: serialized,
+      },
       { targetAgentType: "openclaw" },
       {
         getSandbox: () => target,
@@ -390,7 +392,10 @@ describe("host-local inference rebuild restore authority", () => {
 
     const result = await restoreRecreatedSandboxStateWithManagedAuthority(
       "alpha",
-      { ...manifest("openclaw", "vllm"), hostLocalInferenceReceipt: serialized },
+      {
+        ...manifest("openclaw", "vllm"),
+        hostLocalInferenceReceipt: serialized,
+      },
       { targetAgentType: "openclaw" },
       {
         getSandbox: () => target,
