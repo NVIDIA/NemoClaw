@@ -24,6 +24,8 @@ import {
   currentNemoclawUpgradeRef,
   gatewayCredentialNonExposureScript,
   gatewayUpgradeRecoverySucceeded,
+  gatewayUpgradeInstallerCommand,
+  prepareGatewayUpgradeUserManager,
   GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS,
   isolateGatewayUpgradeFixtureEnv,
   legacyGatewayUpgradeBaseImageOverrideEnabled,
@@ -35,6 +37,51 @@ import {
 } from "../live/openshell-gateway-upgrade-helpers.ts";
 
 describe("OpenShell gateway upgrade boundary", () => {
+  it.each([
+    { label: "unselected fixture", enabled: false, exitCode: 1, calls: 0, failed: false },
+    { label: "ready manager", enabled: true, exitCode: 0, calls: 1, failed: false },
+    { label: "manager failure", enabled: true, exitCode: 1, calls: 1, failed: true },
+    { label: "missing exit status", enabled: true, exitCode: null, calls: 1, failed: true },
+  ])(
+    "prepares systemd only for its selected fixture: $label",
+    async ({ enabled, exitCode, calls, failed }) => {
+      const command = vi
+        .fn()
+        .mockResolvedValue({ exitCode, stdout: "", stderr: "fixture manager failure" });
+      const rejected = await prepareGatewayUpgradeUserManager({ command }, {}, enabled).then(
+        () => false,
+        () => true,
+      );
+      expect({ calls: command.mock.calls.length, failed: rejected }).toEqual({ calls, failed });
+    },
+  );
+
+  it.each([false, true])(
+    "preserves installer arguments and HOME spelling (redundant=%s)",
+    (redundant) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "gateway-upgrade-path-env-"));
+      const installer = path.join(root, "installer.sh");
+      const home = redundant ? `${root}/home with spaces//` : undefined;
+      fs.writeFileSync(installer, 'printf \'%s\\n\' "$HOME" "$XDG_CONFIG_HOME" "$1"\n');
+      try {
+        const result = spawnSync(
+          "bash",
+          ["-c", gatewayUpgradeInstallerCommand([installer, "literal $HOME"], home)],
+          {
+            encoding: "utf8",
+            env: { PATH: "/usr/bin:/bin", HOME: root },
+          },
+        );
+        expect(result.status, result.stderr).toBe(0);
+        expect(result.stdout).toBe(
+          `${home ?? root}\n${home ? `${home}/.config//` : ""}\nliteral $HOME\n`,
+        );
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("pins the retained gateway-upgrade fixture in the catalogue (#10517)", () => {
     expect(Object.isFrozen(REVIEWED_GATEWAY_UPGRADE_FIXTURE)).toBe(true);
     expect(Object.isFrozen(REVIEWED_GATEWAY_UPGRADE_FIXTURE.openClawArchive)).toBe(true);

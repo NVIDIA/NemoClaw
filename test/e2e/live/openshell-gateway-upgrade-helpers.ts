@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { shellQuote } from "../fixtures/clients/command.ts";
+import { resultText, shellQuote } from "../fixtures/clients/command.ts";
+import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { reviewedOldInstallerProfile } from "./openshell-gateway-upgrade-old-installer.ts";
 
@@ -15,6 +16,58 @@ const MANAGED_IMAGE_QUALIFICATION_ENV_KEYS = [
   "NEMOCLAW_E2E_MANAGED_IMAGE_REVISION",
 ] as const;
 export const GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS = 35 * 60_000;
+
+/** Apply path spelling at the installer boundary, after login-shell startup. */
+export function gatewayUpgradeInstallerCommand(args: readonly string[], home?: string): string {
+  const prefix = home
+    ? `HOME=${shellQuote(home)} XDG_CONFIG_HOME=${shellQuote(`${home}/.config//`)} `
+    : "";
+  return `${prefix}bash ${args.map(shellQuote).join(" ")}`;
+}
+
+/** Prepare the disposable runner's user manager before the historical install. */
+export async function prepareGatewayUpgradeUserManager(
+  host: Pick<HostCliClient, "command">,
+  env: NodeJS.ProcessEnv,
+  enabled: boolean,
+): Promise<void> {
+  if (!enabled) return;
+  const result = await host.command(
+    "sudo",
+    ["-n", "systemctl", "start", `user@${process.getuid?.()}.service`],
+    {
+      artifactName: "prepare-systemd-user-manager",
+      env,
+      timeoutMs: 30_000,
+    },
+  );
+  if (result.exitCode !== 0)
+    throw new Error(`Cannot prepare the systemd user manager: ${resultText(result)}`);
+}
+
+/** Retain real systemd metadata for revision-bound manual verification. */
+export async function captureGatewayUpgradeService(
+  host: HostCliClient,
+  phase: string,
+  env: NodeJS.ProcessEnv,
+  enabled: boolean,
+): Promise<void> {
+  if (!enabled) return;
+  await host.command(
+    "systemctl",
+    [
+      "--user",
+      "show",
+      "nemoclaw-openshell-gateway.service",
+      "--property=FragmentPath,ActiveState,MainPID,InvocationID",
+    ],
+    {
+      artifactName: `${phase}-systemd-gateway`,
+      env,
+      timeoutMs: 30_000,
+    },
+  );
+}
 
 export async function captureGatewayUpgradeFailureDiagnostics(
   exitCode: number | null,
