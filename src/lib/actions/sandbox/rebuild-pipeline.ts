@@ -159,6 +159,7 @@ export async function rebuildSandbox(
           TAVILY_API_KEY_ENV,
           MESSAGING_SETUP_APPLIER_ENV_KEY,
           DOCKER_GPU_PATCH_NETWORK_ENV,
+          "NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR",
           ...REBUILD_HERMES_DASHBOARD_ENV_KEYS,
           ...MESSAGING_CHANNEL_CONFIG_ENV_KEYS,
         ];

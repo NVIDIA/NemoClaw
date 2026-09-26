@@ -15,6 +15,8 @@ export interface PendingSandboxCreateIdentity {
   readonly state: "verified-create";
   readonly gatewayName: string;
   readonly gatewayPort: number;
+  /** Custom gateway state directory retained across interrupted creation. */
+  readonly openshellGatewayStateDir?: string;
   readonly sandboxName: string;
   readonly lifecycleGeneration: string;
   readonly sandboxIdentityFingerprint: string;
@@ -160,6 +162,8 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   // different NEMOCLAW_GATEWAY_PORT no longer recreates/kills the first (#4422).
   gatewayName?: string | null;
   gatewayPort?: number | null;
+  /** Resolved custom OpenShell gateway state directory used when this sandbox was onboarded. */
+  openshellGatewayStateDir?: string | null;
   /** Whether the sandbox was intentionally stopped via the stop command (#11025). */
   stopped?: boolean;
   /** Explicit retained Portable lifecycle owner; absent for every standard sandbox. */

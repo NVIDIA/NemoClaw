@@ -62,7 +62,10 @@ import {
 export { removeStaleRebuildDockerOrphan };
 export { replaceOpenShellRuntimeSelectionEnv, snapshotOpenShellEnv };
 export { resolveSandboxGatewayName };
-export { delegateRebuildToOwningRegistry } from "./rebuild/owning-registry";
+export {
+  delegateRebuildToOwningRegistry,
+  restoreRecordedRebuildGatewayStateDir,
+} from "./rebuild/owning-registry";
 
 export type RebuildSandboxEntry = SandboxEntry & { agents?: unknown[] };
 
