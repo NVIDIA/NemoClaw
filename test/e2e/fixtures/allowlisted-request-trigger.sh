@@ -5,6 +5,7 @@
 set -euo pipefail
 selector_path="${ISSUE_4462_ALLOWLISTED_SELECTOR_PATH:-/tmp/issue-4462-pending-allowlisted-request.py}"
 client_state="${ISSUE_4462_ALLOWLISTED_CLIENT_STATE_DIR:-/tmp/issue-4462-allowlisted-client}"
+client_config="$client_state/openclaw.json"
 trigger_output="$(mktemp)"
 trap 'rm -f -- "$trigger_output"' EXIT
 unset OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_PORT \
@@ -14,11 +15,13 @@ if [ -e "$client_state" ]; then
   exit 32
 fi
 install -d -m 0700 -- "$client_state"
+printf '%s\n' '{"gateway":{"mode":"local","port":18789,"auth":{}}}' >"$client_config"
+chmod 0600 "$client_config"
 params="$(printf '{"key":"agent:main:nemoclaw-e2e-allowlisted-%s-%s","agentId":"main"}' "$$" "$(date +%s)")"
 set +e
 NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING=1 \
   OPENCLAW_STATE_DIR="$client_state" \
-  OPENCLAW_CONFIG_PATH=/sandbox/.openclaw/openclaw.json \
+  OPENCLAW_CONFIG_PATH="$client_config" \
   openclaw gateway call sessions.create --params "$params" --json \
   >"$trigger_output" 2>&1
 trigger_status=$?

@@ -93,10 +93,11 @@ print("ISSUE_4462_ALLOWLISTED_GATEWAY_STATE_OK")
 PY_ALLOWLISTED_STATE
 unset OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_PORT \
   OPENCLAW_GATEWAY_TOKEN OPENCLAW_GATEWAY_PASSWORD
+client_state=/tmp/issue-4462-allowlisted-client
 params="$(printf '{"key":"agent:main:nemoclaw-e2e-allowlisted-retry-%s-%s","agentId":"main"}' "$$" "$(date +%s)")"
 NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING=1 \
-  OPENCLAW_STATE_DIR=/tmp/issue-4462-allowlisted-client \
-  OPENCLAW_CONFIG_PATH=/sandbox/.openclaw/openclaw.json \
+  OPENCLAW_STATE_DIR="$client_state" \
+  OPENCLAW_CONFIG_PATH="$client_state/openclaw.json" \
   openclaw gateway call sessions.create --params "$params" --json >/dev/null
 echo ISSUE_4462_ALLOWLISTED_RETRY_OK
 NEMOCLAW_ALLOWLISTED_APPROVAL
