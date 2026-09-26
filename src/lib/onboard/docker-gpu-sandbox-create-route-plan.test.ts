@@ -132,6 +132,40 @@ describe("resolveDockerGpuSandboxCreatePlan", () => {
     expect(log).toHaveBeenCalledWith(expect.stringMatching(/unrecognized.*compatibility-only/i));
   });
 
+  it("carries the unified-memory warning into the create-plan message (#12255)", () => {
+    const result = resolveDockerGpuSandboxCreatePlan(
+      { sandboxGpuEnabled: true, hostGpuPlatform: "spark" },
+      {
+        dockerDriverGateway: true,
+        dockerDesktopWsl: false,
+        env: {},
+        platform: "linux",
+        readHostMemory: () => ({ totalMiB: 124608, availableMiB: 30038 }),
+      },
+    );
+
+    expect(result.logMessage).toContain("Direct sandbox GPU enabled");
+    expect(result.logMessage).toContain("30038 MiB of 124608 MiB host memory is available");
+    expect(result.logMessage).toContain("--no-sandbox-gpu");
+  });
+
+  it("leaves the create-plan message alone when the pool is mostly free (#12255)", () => {
+    const result = resolveDockerGpuSandboxCreatePlan(
+      { sandboxGpuEnabled: true, hostGpuPlatform: "spark" },
+      {
+        dockerDriverGateway: true,
+        dockerDesktopWsl: false,
+        env: {},
+        platform: "linux",
+        readHostMemory: () => ({ totalMiB: 124608, availableMiB: 118000 }),
+      },
+    );
+
+    expect(result.logMessage).toBe(
+      "  Direct sandbox GPU enabled; allowing OpenShell GPU policy enrichment.",
+    );
+  });
+
   it("keeps the portable profile on native GPU lifecycle operations (#9068)", () => {
     const log = vi.fn();
     const detectDockerDesktopWsl = vi.fn(() => true);

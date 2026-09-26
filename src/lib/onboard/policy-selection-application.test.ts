@@ -9,7 +9,8 @@ import {
 } from "./policy-selection";
 import { selectFromNumberedMenuOrExit } from "./prompt-helpers";
 
-const { seedInitialPolicyContext, syncPresetSelection } = vi.hoisted(() => ({
+const { hostMemory, seedInitialPolicyContext, syncPresetSelection } = vi.hoisted(() => ({
+  hostMemory: vi.fn<() => { totalMiB: number; availableMiB: number } | null>(() => null),
   seedInitialPolicyContext: vi.fn(),
   syncPresetSelection: vi.fn(),
 }));
@@ -23,6 +24,10 @@ vi.mock("../policy", () => ({
   listSetupPolicyPresets: vi.fn(() => [{ name: "npm" }]),
   resolveSandboxBaselinePolicy: vi.fn(),
   setupPolicyPresetSupported: vi.fn(() => true),
+}));
+vi.mock("./sandbox-gpu-notes", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./sandbox-gpu-notes")>()),
+  readHostMemorySnapshot: () => hostMemory(),
 }));
 vi.mock("./policy-context-seed", () => ({ seedInitialPolicyContext }));
 vi.mock("./policy-preset-sync", () => ({ syncPresetSelection }));
@@ -219,6 +224,86 @@ describe("onboarding policy application", () => {
       ).resolves.toEqual(["discord"]);
 
       expect(syncPresetSelection).toHaveBeenCalledWith("alpha", [], ["discord"]);
+    });
+  });
+
+  describe("readiness failure diagnostics (#12255)", () => {
+    function applicationThatNeverBecomesReady() {
+      vi.mocked(policies.listSetupPolicyPresets).mockResolvedValue([{ name: "npm" }] as Awaited<
+        ReturnType<typeof policies.listSetupPolicyPresets>
+      >);
+      vi.mocked(policies.getAppliedPresets).mockResolvedValue([]);
+      syncPresetSelection.mockImplementation(() => undefined);
+      seedInitialPolicyContext.mockImplementation(() => undefined);
+      return createOnboardPolicyApplication({
+        localInferenceProviders: [],
+        step: vi.fn(),
+        note: vi.fn(),
+        isNonInteractive: vi.fn(() => true),
+        prompt: vi.fn(async () => ""),
+        selectFromNumberedMenuOrExit,
+        makeOnboardCancelExit: (rollback, cleanup) => () => {
+          cleanup();
+          rollback.markCancelled();
+        },
+        sandboxCancelRollback: { markCancelled: vi.fn() },
+        useColor: false,
+        withSandboxMutationLock: async (_sandboxName, action) => await action(),
+        waitForSandboxReady: vi.fn(async () => ({
+          ready: false as const,
+          reason: "timeout" as const,
+          error: null,
+        })),
+        waitForSandboxControlPlaneReady: vi.fn(async () => true),
+        parsePolicyPresetEnv: vi.fn(() => []),
+        env: {},
+      });
+    }
+
+    it("reports the host memory pool with the readiness failure", async () => {
+      hostMemory.mockReturnValue({ totalMiB: 124607, availableMiB: 2048 });
+      const application = applicationThatNeverBecomesReady();
+      const errors: string[] = [];
+      const errorSpy = vi
+        .spyOn(console, "error")
+        .mockImplementation((line?: unknown) => void errors.push(String(line)));
+      const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
+        throw new Error("exit");
+      }) as never);
+
+      await expect(
+        application.setupPoliciesWithSelection("alpha", { selectedPresets: ["npm"] }),
+      ).rejects.toThrow("exit");
+
+      const printed = errors.join("\n");
+      expect(printed).toContain("was not ready before policy application.");
+      expect(printed).toContain("host_memory_available_mib=2048");
+      expect(printed).toContain("--no-sandbox-gpu");
+      errorSpy.mockRestore();
+      exitSpy.mockRestore();
+    });
+
+    it("says nothing extra when the host pool cannot be read", async () => {
+      hostMemory.mockReturnValue(null);
+      const application = applicationThatNeverBecomesReady();
+      const errors: string[] = [];
+      const errorSpy = vi
+        .spyOn(console, "error")
+        .mockImplementation((line?: unknown) => void errors.push(String(line)));
+      const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
+        throw new Error("exit");
+      }) as never);
+
+      await expect(
+        application.setupPoliciesWithSelection("alpha", { selectedPresets: ["npm"] }),
+      ).rejects.toThrow("exit");
+
+      const printed = errors.join("\n");
+      expect(printed).toContain("was not ready before policy application.");
+      expect(printed).not.toContain("host_memory_");
+      expect(printed).not.toContain("--no-sandbox-gpu");
+      errorSpy.mockRestore();
+      exitSpy.mockRestore();
     });
   });
 });

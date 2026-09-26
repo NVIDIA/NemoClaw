@@ -4,6 +4,7 @@
 import { type DockerGpuRoutePlan, resolveDockerGpuRoutePlan } from "./docker-gpu-route";
 import { isPortableExperimentalProfile } from "./experimental/portable-profile";
 import { detectWslDockerDesktopStatus } from "./wsl-docker-desktop-gpu";
+import { type HostMemorySnapshot, unifiedMemoryGpuSandboxWarningLines } from "./sandbox-gpu-notes";
 
 type DockerGpuSandboxConfig = {
   sandboxGpuEnabled: boolean;
@@ -69,6 +70,7 @@ export function resolveDockerGpuSandboxCreatePlan(
     portableLifecycle?: boolean;
     platform?: NodeJS.Platform;
     log?: (message: string) => void;
+    readHostMemory?: () => HostMemorySnapshot | null;
   },
 ): DockerGpuSandboxCreatePlan {
   const env = options.env ?? process.env;
@@ -86,9 +88,19 @@ export function resolveDockerGpuSandboxCreatePlan(
     platform: options.platform,
     log: options.log,
   });
-  const logMessage = config.sandboxGpuEnabled
+  const routeMessage = config.sandboxGpuEnabled
     ? gpuRouteLogMessage(gpuRoutePlan, config.hostGpuPlatform)
     : null;
+  // Inference is installed before a sandbox is created, so whatever a serving
+  // runtime reserved is already out of the pool this sandbox draws on. Warn
+  // here rather than at preflight, where the pool is still untouched (#12255).
+  const memoryWarning = options.readHostMemory
+    ? unifiedMemoryGpuSandboxWarningLines(config, options.readHostMemory)
+    : unifiedMemoryGpuSandboxWarningLines(config);
+  const logMessage =
+    memoryWarning.length > 0
+      ? [routeMessage, ...memoryWarning].filter((line) => line !== null).join("\n")
+      : routeMessage;
   return { gpuRoutePlan, logMessage };
 }
 

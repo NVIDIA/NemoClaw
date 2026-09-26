@@ -53,6 +53,11 @@ import {
   filterSuppressedAgentRequiredPresets,
   RESTRICTED_TIER_NAME,
 } from "./policy-tier-suppression";
+import {
+  gpuSandboxMemoryPressureHints,
+  hostMemoryDiagnosticLines,
+  readHostMemorySnapshot,
+} from "./sandbox-gpu-notes";
 import { withPolicyApplicationTrace } from "./tracing";
 
 export { suppressedAgentRequiredPresets } from "./policy-tier-suppression";
@@ -362,6 +367,13 @@ export async function setupPoliciesWithSelection(
   return chosen;
 }
 
+function reportSandboxReadinessMemoryContext(): void {
+  const hostMemory = readHostMemorySnapshot();
+  if (!hostMemory) return;
+  for (const line of hostMemoryDiagnosticLines(hostMemory)) console.error(`    ${line}`);
+  for (const hint of gpuSandboxMemoryPressureHints(hostMemory)) console.error(`  ${hint}`);
+}
+
 async function requireSandboxReady(
   deps: SetupPolicySelectionDeps,
   sandboxName: string,
@@ -377,6 +389,12 @@ async function requireSandboxReady(
       process.exit(1);
     }
     console.error(`  Sandbox '${sandboxName}' was not ready ${stage} policy application.`);
+    // A sandbox that started and then died is indistinguishable here from one
+    // that never started, and on a unified-memory host the usual cause is a
+    // GPU allocation the driver refused while a managed inference server held
+    // the pool. Report the pool so the operator is not left with a lifecycle
+    // message that never mentions memory (#12255).
+    reportSandboxReadinessMemoryContext();
     process.exit(1);
   }
   if (stage === "after" && !(await deps.waitForSandboxControlPlaneReady(sandboxName))) {
