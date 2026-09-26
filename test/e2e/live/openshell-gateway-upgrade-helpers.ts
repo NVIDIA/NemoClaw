@@ -5,6 +5,21 @@ import { resultText, shellQuote } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { reviewedOldInstallerProfile } from "./openshell-gateway-upgrade-old-installer.ts";
+import {
+  openClawAgentResponseRecord,
+  parseOpenClawJsonDocuments,
+} from "../../../src/lib/openclaw/agent-json-provenance.ts";
+
+/** A successful RPC transport can still carry a failed agent run. */
+export function gatewayUpgradeAgentResponseIsSuccessful(raw: string): boolean {
+  const responses = parseOpenClawJsonDocuments(raw).filter(
+    (document) => openClawAgentResponseRecord(document) !== null,
+  );
+  return (
+    responses.length > 0 &&
+    responses.every((document) => (document as { status?: unknown }).status === "ok")
+  );
+}
 
 const NON_INTERACTIVE_INSTALLER_ARGS = ["--non-interactive", "--yes-i-accept-third-party-software"];
 const GATEWAY_VOLUME_PREFIX = "openshell-cluster-nemoclaw";

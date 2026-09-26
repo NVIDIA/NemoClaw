@@ -24,6 +24,7 @@ import {
   currentNemoclawUpgradeRef,
   gatewayCredentialNonExposureScript,
   gatewayUpgradeRecoverySucceeded,
+  gatewayUpgradeAgentResponseIsSuccessful,
   gatewayUpgradeInstallerCommand,
   prepareGatewayUpgradeUserManager,
   GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS,
@@ -37,6 +38,24 @@ import {
 } from "../live/openshell-gateway-upgrade-helpers.ts";
 
 describe("OpenShell gateway upgrade boundary", () => {
+  it.each([
+    { statuses: ["ok"], expected: true },
+    { statuses: ["error"], expected: false },
+    { statuses: ["timeout"], expected: false },
+    { statuses: ["accepted"], expected: false },
+    { statuses: ["error", "ok"], expected: false },
+    { statuses: [undefined], expected: false },
+    { statuses: [], expected: false },
+  ])("accepts only successful native agent responses: $statuses", ({ statuses, expected }) => {
+    const raw = [
+      JSON.stringify({ event: "diagnostic", status: "error" }),
+      ...statuses.map((status) =>
+        JSON.stringify({ status, result: { payloads: [{ text: "ok" }], meta: {} } }),
+      ),
+    ].join("\n");
+    expect(gatewayUpgradeAgentResponseIsSuccessful(raw)).toBe(expected);
+  });
+
   const fragmentPath = "/home/runner/.config/systemd/user/nemoclaw-openshell-gateway.service";
   const service = (invocation: string) => ({
     exitCode: 0,

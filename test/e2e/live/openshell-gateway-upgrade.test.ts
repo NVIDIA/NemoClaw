@@ -44,6 +44,7 @@ import {
   currentNemoclawUpgradeRef,
   gatewayCredentialNonExposureScript,
   gatewayUpgradeRecoverySucceeded,
+  gatewayUpgradeAgentResponseIsSuccessful,
   gatewayUpgradeInstallerCommand,
   type GatewayUpgradeServiceEvidence,
   captureGatewayUpgradeService,
@@ -271,6 +272,7 @@ async function collectOpenClawCredentialBoundary(
     valid:
       secretNonExposure.exitCode === 0 &&
       agent.exitCode === 0 &&
+      (phase !== "upgraded" || gatewayUpgradeAgentResponseIsSuccessful(agent.stdout)) &&
       parseOpenClawAgentText(agent.stdout).trim().toLowerCase() === "ok" &&
       requests.length > 0 &&
       requests.every((request) => request.auth === "ok" && request.authorizationSent === true),
