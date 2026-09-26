@@ -5,7 +5,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { INFERENCE_ROUTE_PROBE_SCRIPT } from "../../../src/lib/actions/sandbox/connect-inference-route-probe.ts";
 import { HERMES_E2E_TEST_TIMEOUT_MS } from "../../../tools/e2e/hermes-timeout-contract.mts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -24,7 +23,6 @@ import {
   captureHermesRoutingTopology,
 } from "../fixtures/hermes-routing-topology.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
-import { captureSandboxFailureDiagnostics } from "../fixtures/sandbox-failure-diagnostics.ts";
 import {
   assertSecurityPosture,
   securityPostureEnabled,
@@ -749,19 +747,6 @@ test(
         artifactName: "phase-4-recover-openshell-managed-hermes-gateway",
         env: commandEnv(),
         timeoutMs: 180_000,
-      });
-      await captureSandboxFailureDiagnostics(host, recoverManagedGateway, {
-        sandboxName: SANDBOX_NAME,
-        artifactPrefix: "phase-4-managed-hermes-recovery",
-        redactionValues,
-        captureGatewayLog: true,
-        captureAdditional: () =>
-          sandbox.execShell(SANDBOX_NAME, trustedSandboxShellScript(INFERENCE_ROUTE_PROBE_SCRIPT), {
-            artifactName: "phase-4-managed-hermes-recovery-followup-inference-route",
-            env: commandEnv(),
-            redactionValues,
-            timeoutMs: 30_000,
-          }),
       });
       expect(recoverManagedGateway.exitCode, resultText(recoverManagedGateway)).toBe(0);
 

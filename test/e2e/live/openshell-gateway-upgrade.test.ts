@@ -37,7 +37,6 @@ import {
 import { registerOpenShellHostMockFirewall } from "../fixtures/host-mock-firewall.ts";
 import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
-import { captureSandboxFailureDiagnostics } from "../fixtures/sandbox-failure-diagnostics.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   captureGatewayUpgradeFailureDiagnostics,
@@ -395,7 +394,7 @@ async function runInstallerPayload(
   logName: string,
   env: NodeJS.ProcessEnv,
   options: {
-    onFailure?: (result: ShellProbeResult) => Promise<void>;
+    onFailure?: () => Promise<void>;
     redactionValues?: string[];
     home?: string;
   } = {},
@@ -410,11 +409,7 @@ async function runInstallerPayload(
   });
   artifacts.addRedactionValues(redactionValues);
   await artifacts.writeText(logName, resultText(result));
-  const onFailure = options.onFailure;
-  await captureGatewayUpgradeFailureDiagnostics(
-    result.exitCode,
-    onFailure ? () => onFailure(result) : undefined,
-  );
+  await captureGatewayUpgradeFailureDiagnostics(result.exitCode, options.onFailure);
   expect(result.exitCode === 0, `${label} NemoClaw installer failed:\n${resultText(result)}`).toBe(
     true,
   );
@@ -544,16 +539,7 @@ async function installOldNemoclawAndClaw(
       artifacts,
       "old-install.log",
       installEnv,
-      {
-        redactionValues: [GATEWAY_CREDENTIAL],
-        onFailure: (result) =>
-          captureSandboxFailureDiagnostics(host, result, {
-            sandboxName: SURVIVOR_SANDBOX,
-            artifactPrefix: "old-install-failure",
-            redactionValues: [GATEWAY_CREDENTIAL, process.env.GITHUB_TOKEN ?? ""].filter(Boolean),
-            captureGatewayLog: true,
-          }),
-      },
+      { redactionValues: [GATEWAY_CREDENTIAL] },
     );
   } finally {
     removeReviewedNpmArchive(reviewedOpenClaw);
