@@ -7,18 +7,52 @@ cli=__NEMOCLAW_ALLOWLISTED_CLI__
 sandbox=__NEMOCLAW_ALLOWLISTED_SANDBOX__
 trigger_output="$(mktemp)"
 request_id_file="$(mktemp)"
-trap 'rm -f -- "$trigger_output" "$request_id_file"' EXIT
+devices_json="$(mktemp)"
+device_id_file="$(mktemp)"
+trap 'rm -f -- "$trigger_output" "$request_id_file" "$devices_json" "$device_id_file"' EXIT
 
+# Revoke the current device's operator token through OpenClaw's public API so
+# the next write-scope command creates a real same-device repair request. This
+# remains valid after OpenClaw migrates identity and pairing state to SQLite.
 # Expansion is intentionally deferred to the in-sandbox bash process.
 # shellcheck disable=SC2016
 "$cli" "$sandbox" exec --timeout 60 -- bash -lc \
-  'set -euo pipefail; identity=/sandbox/.openclaw/identity; test -f "$identity/device.json"; rm -f -- "$identity/device.json" "$identity/device-auth.json"'
+  'unset OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_PORT OPENCLAW_GATEWAY_TOKEN OPENCLAW_GATEWAY_PASSWORD; openclaw devices list --json' \
+  >"$devices_json"
+python3 - "$devices_json" "$device_id_file" <<'PY_DEVICE_ID'
+import json, sys
+from pathlib import Path
+
+data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+paired = data.get("paired") or []
+if not isinstance(paired, list):
+    raise SystemExit("paired device state is unavailable")
+matches = [
+    item
+    for item in paired
+    if isinstance(item, dict)
+    and item.get("clientId") in {"cli", "openclaw-cli"}
+    and item.get("clientMode") == "cli"
+]
+if len(matches) != 1:
+    raise SystemExit(f"expected one paired CLI device, found {len(matches)}")
+device_id = str(matches[0].get("deviceId") or "").strip()
+if not device_id:
+    raise SystemExit("paired CLI device has no deviceId")
+Path(sys.argv[2]).write_text(device_id, encoding="utf-8")
+PY_DEVICE_ID
+device_id="$(cat "$device_id_file")"
+# Expansion is intentionally deferred to the in-sandbox bash process.
+# shellcheck disable=SC2016
+"$cli" "$sandbox" exec --timeout 60 -- bash -lc \
+  'unset OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_PORT OPENCLAW_GATEWAY_TOKEN OPENCLAW_GATEWAY_PASSWORD; openclaw devices revoke --device "$1" --role operator --json' \
+  -- "$device_id" >/dev/null
 
 set +e
 # Expansion is intentionally deferred to the in-sandbox bash process.
 # shellcheck disable=SC2016
 "$cli" "$sandbox" exec --timeout 60 -- bash -lc \
-  'set +e; openclaw agents list --json; status=$?; set -e; python3 /tmp/issue-4462-pending-allowlisted-request.py; exit "$status"' \
+  'set +e; unset OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_PORT OPENCLAW_GATEWAY_TOKEN OPENCLAW_GATEWAY_PASSWORD; params="$(printf '\''{"key":"agent:main:nemoclaw-e2e-allowlisted-%s-%s","agentId":"main"}'\'' "$$" "$(date +%s)")"; NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING=1 openclaw gateway call sessions.create --params "$params" --json; status=$?; set -e; python3 /tmp/issue-4462-pending-allowlisted-request.py; exit "$status"' \
   >"$trigger_output" 2>&1
 trigger_status=$?
 set -e
@@ -133,7 +167,11 @@ if any(
     raise SystemExit("current CLI identity still has a pending request")
 print("ISSUE_4462_ALLOWLISTED_GATEWAY_STATE_OK")
 PY_ALLOWLISTED_STATE
-openclaw agents list --json >/dev/null
+unset OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_PORT \
+  OPENCLAW_GATEWAY_TOKEN OPENCLAW_GATEWAY_PASSWORD
+params="$(printf '{"key":"agent:main:nemoclaw-e2e-allowlisted-retry-%s-%s","agentId":"main"}' "$$" "$(date +%s)")"
+NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING=1 \
+  openclaw gateway call sessions.create --params "$params" --json >/dev/null
 echo ISSUE_4462_ALLOWLISTED_RETRY_OK
 NEMOCLAW_ALLOWLISTED_APPROVAL
 } | "$cli" "$sandbox" connect
