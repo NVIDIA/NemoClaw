@@ -25,7 +25,7 @@ import {
 import { cloneSandboxHostMounts } from "../state/registry/host-mount";
 import type { QualifiedSandboxInferenceRouteReservation } from "../state/registry/route-reservation";
 import { cloneSandboxWorkloadReceipt } from "../state/registry/workload";
-import { DEFAULT_TOOL_DISCLOSURE, type ToolDisclosure } from "../tool-disclosure";
+import { defaultToolDisclosureForRoute, type ToolDisclosure } from "../tool-disclosure";
 import type { DcodeAutoApprovalMode } from "./dcode-auto-approval";
 import {
   classifyPortableLifecycleReceipt,
@@ -249,7 +249,8 @@ export function buildCreatedSandboxRegistryEntry(
     ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),
     ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
     ...(deferredN1xManagedVllmAccepted ? { deferredN1xManagedVllmAccepted: true as const } : {}),
-    toolDisclosure: input.toolDisclosure ?? DEFAULT_TOOL_DISCLOSURE,
+    toolDisclosure:
+      input.toolDisclosure ?? defaultToolDisclosureForRoute(input.inferenceSelection.provider),
     observabilityEnabled: input.observabilityEnabled === true,
     ...(input.dcodeAutoApprovalMode !== undefined
       ? { dcodeAutoApprovalMode: input.dcodeAutoApprovalMode }

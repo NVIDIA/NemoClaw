@@ -358,6 +358,34 @@ describe("buildCreatedSandboxRegistryEntry", () => {
     expect(entry.preferredInferenceApi).toBeNull();
   });
 
+  it("defaults local inference routes to direct tool disclosure (#12106)", () => {
+    const entry = buildCreatedSandboxRegistryEntry({
+      sandboxName: "demo",
+      inferenceSelection: {
+        model: "gemma4:26b",
+        provider: "ollama-local",
+        endpointUrl: null,
+        credentialEnv: null,
+        preferredInferenceApi: null,
+        compatibleEndpointReasoning: null,
+        compatibleEndpointReasoningEffort: null,
+        nimContainer: null,
+      },
+      runtimeFields,
+      agent: null,
+      agentVersionKnown: true,
+      imageTag: null,
+      plannedMessagingState: undefined,
+      hermesToolGateways: [],
+      hermesDashboardState: { enabled: false, config: null },
+      dashboardPort: 18789,
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+    });
+
+    expect(entry.toolDisclosure).toBe("direct");
+  });
+
   it("records an explicit direct tool-disclosure selection", () => {
     const entry = buildCreatedSandboxRegistryEntry({
       sandboxName: "demo",

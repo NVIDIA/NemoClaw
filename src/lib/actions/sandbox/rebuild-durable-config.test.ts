@@ -79,6 +79,18 @@ describe("resolveRebuildDurableConfig", () => {
     expect(config.toolDisclosureError).toBeNull();
   });
 
+  it("defaults missing local-route tool-disclosure state to direct (#12106)", () => {
+    const config = resolveRebuildDurableConfig(
+      "alpha",
+      { name: "alpha", provider: "ollama-local", nemoclawVersion: "0.1.0" },
+      null,
+      { provider: "ollama-local", model: "gemma4:26b" },
+    );
+
+    expect(config.toolDisclosure).toBe("direct");
+    expect(config.toolDisclosureError).toBeNull();
+  });
+
   it("fails closed for corrupt durable tool-disclosure state", () => {
     const config = resolveRebuildDurableConfig(
       "alpha",
