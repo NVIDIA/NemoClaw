@@ -754,6 +754,7 @@ describe("E2E workflow plan", () => {
     "src/lib/onboard/docker-startup-command-env.ts",
     "src/lib/onboard/dockerfile-patch.ts",
     "src/lib/onboard/managed-workload/onboard-orchestration.ts",
+    "src/lib/onboard/sandbox-create/orchestration.ts",
     "src/lib/onboard/sandbox-create-launch.ts",
     "src/lib/onboard/sandbox-dockerfile-patch-flow.ts",
   ])("selects the Docker custom-image proof when %s changes", (changedFile) => {
