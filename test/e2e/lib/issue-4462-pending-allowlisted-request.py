@@ -2,11 +2,17 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import importlib.util
+import os
 import re
 from pathlib import Path
 
-STATE_ROOT = Path("/sandbox/.openclaw")
-HELPER_PATH = Path("/usr/local/lib/nemoclaw/openclaw_pairing_state.py")
+STATE_ROOT = Path(os.environ.get("OPENCLAW_STATE_DIR", "/sandbox/.openclaw"))
+HELPER_PATH = Path(
+    os.environ.get(
+        "NEMOCLAW_OPENCLAW_PAIRING_STATE_HELPER",
+        "/usr/local/lib/nemoclaw/openclaw_pairing_state.py",
+    )
+)
 ALLOWED_CLIENTS = {"cli", "openclaw-cli", "openclaw-control-ui"}
 ALLOWED_SCOPES = {"operator.pairing", "operator.read", "operator.write"}
 
