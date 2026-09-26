@@ -647,6 +647,8 @@ function comparablePinnedV1Evidence(
 
 function targetPolicyForV1Alpha1(value: unknown, agent: string | null | undefined): unknown {
   const policy = structuredClone(requiredRecord(value, "effective policy"));
+  const landlock = policy.landlock as Record<string, unknown> | undefined;
+  if (landlock?.compatibility === "strict") landlock.compatibility = "hard_requirement";
   const process = policy.process as Record<string, unknown> | undefined;
   if (process && typeof process === "object" && !Array.isArray(process)) {
     if (process.run_as_user === "sandbox") process.run_as_user = "1000";

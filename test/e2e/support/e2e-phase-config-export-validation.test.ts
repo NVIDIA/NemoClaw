@@ -302,7 +302,7 @@ function dependencies(
   };
 }
 
-function successfulHost(raw: string) {
+function successfulHost(raw: string, effectivePolicy: unknown = POLICY) {
   return {
     command: vi.fn(
       async (): Promise<
@@ -311,7 +311,7 @@ function successfulHost(raw: string) {
         exitCode: 0,
         signal: null,
         timedOut: false,
-        stdout: `Version: 1\n---\n${JSON.stringify(POLICY)}`,
+        stdout: `Version: 1\n---\n${JSON.stringify(effectivePolicy)}`,
         stderr: "",
       }),
     ),
@@ -519,9 +519,11 @@ if (process.argv.includes("--output")) {
     },
   );
   it("publishes exact bytes only when pinned native settings match (#11485)", async () => {
-    const raw = `${JSON.stringify(
-      document({ gatewayEndpoint: "http://127.0.0.1:8080/export-evidence" }),
-    )}\n`;
+    const exported = document({ gatewayEndpoint: "http://127.0.0.1:8080/export-evidence" });
+    Object.assign(exported.spec.sandboxes[0]!.network.policy, {
+      explicit: { ...POLICY, landlock: { compatibility: "hard_requirement" } },
+    });
+    const raw = `${JSON.stringify(exported)}\n`;
     const publishedExport = {
       bytes: raw,
       byteLength: Buffer.byteLength(raw, "utf8"),
@@ -534,7 +536,7 @@ if (process.argv.includes("--output")) {
     const test = fixture({
       artifacts: new ArtifactSink(artifactRoot),
       dependencies: independentDependencies,
-      host: successfulHost(raw),
+      host: successfulHost(raw, { ...POLICY, landlock: { compatibility: "strict" } }),
     });
     const evidence = await test.phase.from(target("required"), instance());
     const persistedEvidence = JSON.parse(
