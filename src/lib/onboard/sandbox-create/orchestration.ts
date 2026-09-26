@@ -103,7 +103,8 @@ function recordedOpenShellGatewayStateDir(
   if (recorded && configured && recorded !== configured) {
     throw new Error("Custom OpenShell gateway state directory changed since sandbox creation.");
   }
-  return recorded ?? configured;
+  // Legacy checkpoints cannot prove which custom directory was used at creation.
+  return checkpoint ? (recorded ?? null) : configured;
 }
 
 function cancelRecoveryIdentity(

@@ -15,6 +15,7 @@ import {
   uninstallChildEnv,
 } from "./all-gateway-ports";
 import type { UninstallRunDeps, UninstallRunOptions } from "./run-plan";
+import { readGatewayOpenShellStateDir } from "../../state/gateway-registry";
 
 const OPTIONS: UninstallRunOptions = {
   assumeYes: true,
@@ -123,6 +124,81 @@ describe("uninstall across every gateway port (#7791)", () => {
     expect(envByPort.get(9000)).toBe("/home/tester/custom-gateway-9000");
     expect(envByPort.get(18080)).toBeUndefined();
   });
+
+  it.each([
+    ["incomplete create", {}, false],
+    [
+      "matching completed metadata",
+      { openshellGatewayStateDir: "/srv/nemoclaw/custom-9000" },
+      false,
+    ],
+    [
+      "conflicting completed metadata",
+      { openshellGatewayStateDir: "/srv/nemoclaw/other-9000" },
+      true,
+    ],
+    ["foreign sandbox", { name: "other" }, true],
+    ["foreign gateway", { gatewayName: "nemoclaw-18080", gatewayPort: 18080 }, true],
+    ["completed row with a checkpoint", { pendingRouteReservation: false }, true],
+    ["missing reservation owner", { reservationSessionId: undefined }, true],
+    ["changed lifecycle", { lifecycleGeneration: "changed" }, true],
+    [
+      "malformed checkpoint",
+      { pendingCreateIdentity: { openshellGatewayStateDir: "relative" } },
+      true,
+    ],
+  ] as const)(
+    "recovers checkpoint directories or rejects %s before any uninstall pass",
+    async (_scenario, override, reject) => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pending-uninstall-"));
+      try {
+        const root = path.join(home, ".nemoclaw", "gateways", "9000");
+        fs.mkdirSync(root, { recursive: true });
+        const entry = {
+          name: "pending",
+          gatewayName: "nemoclaw-9000",
+          gatewayPort: 9000,
+          pendingRouteReservation: true,
+          reservationSessionId: "session-owner",
+          lifecycleGeneration: "generation-1",
+          lifecycleLiveIdentityFingerprint: "a".repeat(64),
+          pendingCreateIdentity: {
+            schemaVersion: 1,
+            state: "verified-create",
+            sandboxName: "pending",
+            gatewayName: "nemoclaw-9000",
+            gatewayPort: 9000,
+            lifecycleGeneration: "generation-1",
+            sandboxIdentityFingerprint: "a".repeat(64),
+            route: "none",
+            openshellGatewayStateDir: "/srv/nemoclaw/custom-9000",
+          },
+          ...override,
+        };
+        fs.writeFileSync(
+          path.join(root, "sandboxes.json"),
+          JSON.stringify({ defaultSandbox: null, sandboxes: { [entry.name]: entry } }),
+        );
+        const { deps, runPortPass, runSelectedPass } = sweepDeps({
+          home,
+          env: { HOME: home },
+          listGatewayPorts: () => [8080, 9000],
+          gatewayStateDirForPort: readGatewayOpenShellStateDir,
+        });
+        const result = await runUninstallAllGatewayPorts(OPTIONS, deps);
+        expect(result.exitCode).toBe(reject ? 1 : 0);
+        expect(
+          runPortPass.mock.calls.map(([port, _options, env]) => [
+            port,
+            env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
+          ]),
+        ).toEqual(reject ? [] : [[9000, "/srv/nemoclaw/custom-9000"]]);
+        expect(runSelectedPass).toHaveBeenCalledTimes(reject ? 0 : 1);
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("restores a recorded custom state directory for the selected pass (#10665)", async () => {
     const { deps, runSelectedPass } = sweepDeps({

@@ -9,11 +9,13 @@ import type { Readable } from "node:stream";
 import type { RebuildSandboxOptions } from "../../../domain/lifecycle/options";
 import { resolveGatewayName } from "../../../gateway-runtime-action";
 import { webSearchEnvFor } from "../../../inference/web-search";
+import { resolveGatewayStateDirForPort } from "../../../onboard/gateway/state-dir";
 import { snapshotCredentialEnv } from "../../../onboard/credential-env";
 import {
   assertGatewayStatePathSafe,
   isValidName,
   listGatewayStateRoots,
+  registryEntryGatewayPort,
 } from "../../../state/gateway-registry";
 import { isCurrentPortableHostFenceHeld } from "../../../state/portable-uninstall-retirement";
 import { buildSubprocessEnv } from "../../../subprocess-env";
@@ -97,6 +99,29 @@ const REBUILD_ENV_NAMES = [
   "NEMOCLAW_REBUILD_VERBOSE",
   "NEMOCLAW_SANDBOX_BASE_IMAGE_REFRESH",
 ] as const;
+
+/** Recover the recorded gateway location before rebuild can start or replace it. */
+export function restoreRecordedRebuildGatewayStateDir(
+  entry: SandboxEntry | null | undefined,
+  home: string,
+  env: NodeJS.ProcessEnv = process.env,
+): void {
+  if (env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR?.trim() || entry?.openshellGatewayStateDir == null)
+    return;
+  const recorded = entry.openshellGatewayStateDir;
+  if (typeof recorded !== "string" || !recorded || path.resolve(recorded) !== recorded) {
+    throw new Error("Cannot rebuild with an invalid recorded OpenShell gateway state directory.");
+  }
+  env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR = resolveGatewayStateDirForPort({
+    configured: recorded,
+    home,
+    port: registryEntryGatewayPort({
+      name: entry.name,
+      gatewayName: entry.gatewayName,
+      gatewayPort: entry.gatewayPort,
+    }),
+  });
+}
 
 function rebuildWorkerEnv(
   gatewayPort: number,

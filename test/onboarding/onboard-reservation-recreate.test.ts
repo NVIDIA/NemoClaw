@@ -369,6 +369,7 @@ const { createSandbox } = require(${onboardPath});
 
   it.concurrent.for([
     { scenario: "same-session", resumes: true },
+    { scenario: "legacy-checkpoint", resumes: true },
     { scenario: "foreign-reservation", resumes: false },
     { scenario: "changed-checkpoint", resumes: false },
     { scenario: "changed-gateway-directory", resumes: false },
@@ -489,6 +490,11 @@ const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry,
 if (mode === "resume" && scenario === "foreign-reservation") {
   const data = registry.load();
   data.sandboxes["my-assistant"].reservationSessionId = "session-foreign";
+  registry.save(data);
+}
+if (mode === "resume" && scenario === "legacy-checkpoint") {
+  const data = registry.load();
+  delete data.sandboxes["my-assistant"].pendingCreateIdentity.openshellGatewayStateDir;
   registry.save(data);
 }
 if (mode === "resume" && scenario === "changed-checkpoint") {
@@ -658,8 +664,9 @@ createArgs[16] = async () => {
     error = caught instanceof Error ? (caught.stack ?? caught.message) : String(caught);
   }
   if (mode === "seed" && !error) throw new Error("expected the injected effect failure");
-  if (mode === "resume" && scenario === "same-session" && error) throw new Error(error);
-  if (mode === "resume" && scenario !== "same-session" && !error) {
+  const resumes = scenario === "same-session" || scenario === "legacy-checkpoint";
+  if (mode === "resume" && resumes && error) throw new Error(error);
+  if (mode === "resume" && !resumes && !error) {
     throw new Error("expected changed recovery authority to be refused");
   }
   clearInterval(keepAlive);
@@ -718,7 +725,11 @@ createArgs[16] = async () => {
         env: {
           ...env,
           NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR:
-            scenario === "changed-gateway-directory" ? workspace.path("other-gateway-state") : "",
+            scenario === "legacy-checkpoint"
+              ? customGatewayStateDir
+              : scenario === "changed-gateway-directory"
+                ? workspace.path("other-gateway-state")
+                : "",
         },
         timeoutMs: 40_000,
         context,
@@ -751,7 +762,7 @@ createArgs[16] = async () => {
       assert.equal(recovered.sandboxName, resumes ? "my-assistant" : null);
       assert.equal(
         recovered.registryEntry.openshellGatewayStateDir,
-        resumes ? customGatewayStateDir : undefined,
+        resumes && scenario !== "legacy-checkpoint" ? customGatewayStateDir : undefined,
       );
       assert.equal(recovered.registryEntry.pendingRouteReservation, resumes ? undefined : true);
       assert.equal(Boolean(recovered.registryEntry.pendingCreateIdentity), !resumes);

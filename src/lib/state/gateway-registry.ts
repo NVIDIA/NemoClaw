@@ -10,6 +10,7 @@ import { DEFAULT_GATEWAY_PORT } from "../core/ports";
 import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../name-validation";
 import { resolveGatewayName, resolveGatewayPortFromName } from "../onboard/gateway-binding";
 import { GATEWAYS_SUBDIR, nemoclawStateRoot } from "./state-root";
+import { normalizePendingSandboxCreateIdentity } from "./registry/pending-create-identity";
 
 export { GATEWAYS_SUBDIR, resolveHome } from "./state-root";
 export { DEFAULT_GATEWAY_PORT } from "../core/ports";
@@ -213,10 +214,28 @@ export function registryOpenShellGatewayStateDir(
 ): string | null {
   const recorded = new Set<string>();
   for (const entry of Object.values(registry.sandboxes)) {
-    if (registryEntryGatewayPort(entry) !== gatewayPort) continue;
+    const entryPort = registryEntryGatewayPort(entry);
+    const pending = normalizePendingSandboxCreateIdentity(entry.pendingCreateIdentity);
+    if (
+      pending &&
+      (entry.pendingRouteReservation !== true ||
+        typeof entry.reservationSessionId !== "string" ||
+        !entry.reservationSessionId.trim() ||
+        pending.sandboxName !== entry.name ||
+        pending.gatewayName !== resolveGatewayName(entryPort) ||
+        pending.gatewayPort !== entryPort ||
+        pending.lifecycleGeneration !== entry.lifecycleGeneration ||
+        pending.sandboxIdentityFingerprint !== entry.lifecycleLiveIdentityFingerprint)
+    ) {
+      throw stateError(
+        `sandbox ${JSON.stringify(entry.name)} has a conflicting pending create identity`,
+      );
+    }
+    if (entryPort !== gatewayPort) continue;
     if (typeof entry.openshellGatewayStateDir === "string") {
       recorded.add(entry.openshellGatewayStateDir);
     }
+    if (pending?.openshellGatewayStateDir) recorded.add(pending.openshellGatewayStateDir);
   }
   if (recorded.size > 1) {
     throw stateError(

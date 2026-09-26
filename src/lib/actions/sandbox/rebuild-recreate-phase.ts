@@ -390,10 +390,6 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
   }
 
   const preservedRegistryFields = {
-    ...(sb.openshellGatewayStateDir &&
-    registry.getSandbox(sandboxName)?.openshellGatewayStateDir === undefined
-      ? { openshellGatewayStateDir: sb.openshellGatewayStateDir }
-      : {}),
     ...(hasRebuildHermesToolGateways ? { hermesToolGateways: [...rebuildHermesToolGateways] } : {}),
   };
   if (Object.keys(preservedRegistryFields).length > 0) {

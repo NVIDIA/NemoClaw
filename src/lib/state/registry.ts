@@ -202,6 +202,11 @@ function assertPendingCreateIdentityMatchesRegistration(
     ["gateway name", checkpoint.gatewayName === requestedEntry.gatewayName],
     ["gateway port", checkpoint.gatewayPort === requestedEntry.gatewayPort],
     [
+      "gateway state directory",
+      (checkpoint.openshellGatewayStateDir ?? null) ===
+        (requestedEntry.openshellGatewayStateDir ?? null),
+    ],
+    [
       "requested lifecycle generation",
       checkpoint.lifecycleGeneration === requestedEntry.lifecycleGeneration,
     ],

@@ -3907,8 +3907,10 @@ When the sweep finds more than one port, it confirms once against the resulting 
 When it finds only the selected port, it uses the standard uninstall confirmation without a port list and runs that port once.
 Each port runs as its own uninstall so that every port-scoped value, including the state root, registry file, gateway name, and Docker resource names, resolves from that port rather than from the calling environment.
 An ambient `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR` applies only to the currently selected port, which runs last.
-Child passes for other ports use their default per-port gateway state directories.
-If another port with a custom directory fails, rerun `NEMOCLAW_GATEWAY_PORT=<failed-port> NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR="<original-absolute-path>" $$nemoclaw uninstall`.
+The sweep restores each port's custom state directory from its sandbox registry or verified incomplete-create checkpoint.
+Invalid or conflicting recorded directories stop the sweep before any port cleanup.
+Ports without recorded directories use their default per-port gateway state directories.
+For an older custom gateway whose directory was not recorded, rerun `NEMOCLAW_GATEWAY_PORT=<failed-port> NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR="<original-absolute-path>" $$nemoclaw uninstall`.
 The selected port runs last so its pass can remove the shared host resources once no other environment remains.
 `--delete-models`, `--destroy-user-data`, and `--keep-openshell` apply to every port; `--gateway` remains a check against the selected port only.
 A failure to enumerate the gateway state roots safely stops the sweep before any port uninstall begins.
