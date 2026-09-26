@@ -8,6 +8,11 @@
 NemoClaw v0.0.129 extends configuration export and deferred onboarding, improves OpenClaw restart readiness, and corrects recovery across local gateways.
 It also strengthens host OS reporting and Windows WSL GPU verification.
 
+- OpenClaw device approval exits successfully only after direct-gateway or local-fallback output drains.
+  A callback failure or a one-second timeout exits nonzero instead.
+  A same-device CLI request for `operator.admin` requires explicit approval; bounded non-administrative scope upgrades remain automatic.
+  Related change: [PR #12197](https://github.com/NVIDIA/NemoClaw/pull/12197).
+  Refer to [Gateway Authentication Controls](/user-guide/openclaw/security/security-controls/gateway-authentication-controls#approve-administrative-scopes-manually).
 - Configuration export preserves effective OpenClaw and Hermes settings when v1alpha1 omission defaults would change behavior.
   Supported OpenClaw exports for attached Ollama with a managed proxy and the fixed managed vLLM profile now include local inference service templates.
   These templates contain `image: null`; replace that value with an official, immutable, compatible v1 runtime image before v1 parsing or planning.
