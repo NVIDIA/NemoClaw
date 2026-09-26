@@ -50,14 +50,19 @@ describe("rebuildSandbox flow: recovery", () => {
   });
 
   function stoppedRecoveryHarness() {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-stopped-source-"));
+    const nativeDirectory = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-rebuild-stopped-source-"),
+    );
+    const directory = path.join(nativeDirectory, ".openclaw");
+    fs.mkdirSync(directory);
     fs.writeFileSync(path.join(directory, "openclaw.json"), "{}");
     const captured = {
       sandboxName: "alpha",
+      nativeDirectory,
       directory,
-      cleanupDirectory: directory,
+      cleanupDirectory: nativeDirectory,
       assertCurrent: vi.fn(),
-      dispose: vi.fn(() => fs.rmSync(directory, { recursive: true, force: true })),
+      dispose: vi.fn(() => fs.rmSync(nativeDirectory, { recursive: true, force: true })),
     };
     const harness = createRebuildFlowHarness({
       sandboxInventory: { sandboxes: [{ name: "alpha", phase: "Error", readiness: "terminal" }] },
@@ -72,13 +77,23 @@ describe("rebuildSandbox flow: recovery", () => {
       await expect(
         harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
       ).resolves.toBeUndefined();
-      expect(harness.backupSandboxStateSpy).toHaveBeenCalledWith("alpha");
+      expect(harness.backupSandboxStateSpy).toHaveBeenCalledWith(
+        "alpha",
+        expect.objectContaining({
+          nativeStateSource: {
+            root: "/sandbox",
+            directory: captured.nativeDirectory,
+            assertCurrent: captured.assertCurrent,
+          },
+          validateBeforePublish: expect.any(Function),
+        }),
+      );
       expect(harness.onboardSpy).toHaveBeenCalled();
       expect(openClawLifecycle.beginOpenClawBackupQuiesce).not.toHaveBeenCalled();
       expect(mcpBridgeSource.inspectAgentMcpSources).not.toHaveBeenCalled();
       expect(captured.dispose).toHaveBeenCalledOnce();
     } finally {
-      fs.rmSync(captured.directory, { recursive: true, force: true });
+      fs.rmSync(captured.cleanupDirectory, { recursive: true, force: true });
     }
   });
 
@@ -101,7 +116,7 @@ describe("rebuildSandbox flow: recovery", () => {
         expect.stringContaining(JSON.stringify(captured.cleanupDirectory)),
       );
     } finally {
-      fs.rmSync(captured.directory, { recursive: true, force: true });
+      fs.rmSync(captured.cleanupDirectory, { recursive: true, force: true });
     }
   });
 
