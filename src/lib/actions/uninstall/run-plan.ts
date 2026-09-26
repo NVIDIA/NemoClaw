@@ -1138,25 +1138,45 @@ function stopOllamaAuthProxy(
   if (stopped.size === 0) runtime.log("No Ollama auth proxy processes found");
 }
 
-const DEFAULT_MODEL_ROUTER_PORT = 4000;
-
-function resolveModelRouterPort(_runtime: UninstallRuntime): number {
-  // Routed onboard profiles use blueprint port 4000 by default; a custom port
-  // would require reading the blueprint, which uninstall does not do today.
-  return DEFAULT_MODEL_ROUTER_PORT;
+interface RecordedModelRouter {
+  pid: number | null;
+  port: number | null;
+  expected: boolean;
 }
 
-function readOnboardSessionRouterPid(paths: UninstallPaths): number | null {
+function readOnboardSessionModelRouter(paths: UninstallPaths): RecordedModelRouter {
   const sessionFile = path.join(paths.nemoclawStateDir, "onboard-session.json");
   try {
     const raw = fs.readFileSync(sessionFile, "utf-8");
-    const data = JSON.parse(raw) as { routerPid?: unknown };
-    const pid = data.routerPid;
-    if (typeof pid === "number" && Number.isInteger(pid) && pid > 0) return pid;
+    const data = JSON.parse(raw) as {
+      provider?: unknown;
+      routerCredentialHash?: unknown;
+      routerPid?: unknown;
+      routerPort?: unknown;
+    };
+    const pid =
+      typeof data.routerPid === "number" && Number.isInteger(data.routerPid) && data.routerPid > 0
+        ? data.routerPid
+        : null;
+    const port =
+      typeof data.routerPort === "number" &&
+      Number.isInteger(data.routerPort) &&
+      data.routerPort > 0 &&
+      data.routerPort <= 65535
+        ? data.routerPort
+        : null;
+    return {
+      pid,
+      port,
+      expected:
+        data.provider === "nvidia-router" ||
+        pid !== null ||
+        typeof data.routerCredentialHash === "string",
+    };
   } catch {
     /* ignore — State step deletes the file shortly anyway */
   }
-  return null;
+  return { pid: null, port: null, expected: false };
 }
 
 function tryStopModelRouterPid(pid: number, runtime: UninstallRuntime): boolean {
@@ -1178,16 +1198,29 @@ function stopModelRouter(
   paths: UninstallPaths,
   runtime: UninstallRuntime,
   scanOrphans = true,
-): void {
-  // The model router is a detached child started during routed onboard that
-  // listens on port 4000 by default. Without this cleanup, uninstall +
-  // reinstall fails with "Port 4000 already has a healthy router endpoint".
-  // The tracked PID lives in ~/.nemoclaw/onboard-session.json (routerPid), not
-  // a dedicated .pid file. Mirrors stopOllamaAuthProxy() and issue #5169.
+): boolean {
+  // The model router is a detached child started during routed onboarding.
+  // Both its PID and exact bound port are recorded in onboard-session.json;
+  // cleanup must not guess from the current blueprint because that blueprint
+  // may have changed since the process started.
   const stopped = new Set<number>();
-  const routerPort = resolveModelRouterPort(runtime);
+  const recorded = readOnboardSessionModelRouter(paths);
+  if (recorded.port === null) {
+    if (recorded.expected) {
+      const pidDetail =
+        recorded.pid === null ? "" : ` The recorded process is PID ${recorded.pid}.`;
+      runtime.warn(
+        `Model Router cleanup is incomplete because its recorded port is missing; refusing to guess from the current blueprint.${pidDetail} Stop the verified Model Router process, then rerun nemoclaw uninstall. The onboarding session was retained for recovery.`,
+      );
+      return false;
+    } else {
+      runtime.log("No model router processes found");
+    }
+    return true;
+  }
+  const routerPort = recorded.port;
 
-  const recordedPid = readOnboardSessionRouterPid(paths);
+  const recordedPid = recorded.pid;
   if (
     recordedPid !== null &&
     pidOwnedByCurrentUser(recordedPid, runtime) &&
@@ -1198,14 +1231,14 @@ function stopModelRouter(
 
   if (!scanOrphans) {
     if (stopped.size === 0) runtime.log("No selected-gateway model router found");
-    return;
+    return true;
   }
 
   if (!runtime.commandExists("lsof")) {
     if (stopped.size === 0) {
       runtime.warn("lsof not found; skipping orphan model router scan.");
     }
-    return;
+    return true;
   }
   const lsof = runtime.run("lsof", ["-ti", `:${routerPort}`], { env: runtime.env });
   const pids = splitNonEmptyLines(lsof.stdout).map(Number).filter(Number.isFinite);
@@ -1217,6 +1250,7 @@ function stopModelRouter(
   }
 
   if (stopped.size === 0) runtime.log("No model router processes found");
+  return true;
 }
 
 function stopOrphanedOpenShell(runtime: UninstallRuntime): void {
@@ -4317,7 +4351,9 @@ async function executePreparedPlan(
       } else {
         stopHttpsPinRuntimeAdapter(paths, runtime);
       }
-      stopModelRouter(paths, runtime, !scopedToSelectedGateway);
+      if (!stopModelRouter(paths, runtime, !scopedToSelectedGateway)) {
+        return { ok: false, scopedToSelectedGateway };
+      }
       stopBedrockRuntimeAdapterForUninstall(paths, runtime, scopedToSelectedGateway);
     } else if (step.name === "OpenShell resources") {
       if (openShellCleanup === "reservation-removed") {

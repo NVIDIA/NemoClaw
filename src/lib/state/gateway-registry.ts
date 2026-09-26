@@ -24,6 +24,7 @@ export {
 export { withRegistryLockAt } from "./registry/lock";
 
 const MAX_REGISTRY_BYTES = 16 * 1024 * 1024;
+const MAX_ONBOARD_SESSION_BYTES = 1024 * 1024;
 const MAX_GATEWAY_ROOTS = 256;
 const MAX_GATEWAY_DIRECTORY_ENTRIES = 1024;
 
@@ -324,4 +325,62 @@ export function listHostGatewayRegistryEntries(home: string): HostGatewayRegistr
     }
   }
   return result;
+}
+
+/**
+ * Enumerate every gateway port represented by durable host state.
+ *
+ * State-root names protect gateways that do not yet have a sandbox row, while
+ * registry bindings retain ports recorded by legacy layouts. Consumers that
+ * expose a host loopback service must treat the complete inventory as control
+ * plane, even when the current process selects another gateway.
+ */
+export function listRecordedGatewayPorts(home: string): number[] {
+  const ports = new Set(listGatewayStateRoots(home).map(({ gatewayPort }) => gatewayPort));
+  for (const { gatewayPort } of listHostGatewayRegistryEntries(home)) ports.add(gatewayPort);
+  return [...ports].sort((left, right) => left - right);
+}
+
+/** Enumerate exact Model Router ports retained by onboarding state on this host. */
+export function listRecordedModelRouterPorts(home: string): number[] {
+  const ports = new Set<number>();
+  for (const state of listGatewayStateRoots(home)) {
+    const sessionFile = path.join(state.root, "onboard-session.json");
+    assertGatewayStatePathSafe(home, path.dirname(sessionFile));
+    let fd: number;
+    try {
+      fd = openReadOnlyNoFollow(sessionFile);
+    } catch (error) {
+      if (isErrnoException(error) && error.code === "ENOENT") continue;
+      throw error;
+    }
+    try {
+      const stat = fs.fstatSync(fd);
+      if (!stat.isFile()) throw stateError(`${sessionFile} is not a regular file`);
+      if (stat.size > MAX_ONBOARD_SESSION_BYTES) {
+        throw stateError(
+          `${sessionFile} exceeds the ${String(MAX_ONBOARD_SESSION_BYTES)} byte limit`,
+        );
+      }
+      const parsed: unknown = JSON.parse(fs.readFileSync(fd, "utf8"));
+      if (!isObjectRecord(parsed)) throw stateError(`${sessionFile} is not an object`);
+      const routerPort = parsed.routerPort;
+      if (routerPort === undefined || routerPort === null) continue;
+      if (
+        typeof routerPort !== "number" ||
+        !Number.isInteger(routerPort) ||
+        routerPort < 1 ||
+        routerPort > 65535
+      ) {
+        throw stateError(`${sessionFile} has an invalid routerPort`);
+      }
+      ports.add(routerPort);
+    } catch (error) {
+      if (error instanceof SyntaxError) throw stateError(`${sessionFile} is not valid JSON`);
+      throw error;
+    } finally {
+      fs.closeSync(fd);
+    }
+  }
+  return [...ports].sort((left, right) => left - right);
 }

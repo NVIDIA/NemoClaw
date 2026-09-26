@@ -40,6 +40,8 @@ function snapshotEnv(names: readonly string[]): () => void {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+  vi.resetModules();
 });
 
 describe("isLocalInferenceProvider", () => {
@@ -79,6 +81,52 @@ describe("getRebuildCredentialEnvFromRegistry", () => {
     expect(getRebuildCredentialEnvFromRegistry("compatible-endpoint", "bad-name")).toBe(
       "COMPATIBLE_API_KEY",
     );
+  });
+
+  it("preserves the no-auth proxy credential only for a safe loopback route", () => {
+    expect(
+      getRebuildCredentialEnvFromRegistry(
+        "compatible-endpoint",
+        "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+        "http://localhost:12500/v1",
+      ),
+    ).toBe("NEMOCLAW_OLLAMA_PROXY_TOKEN");
+    expect(
+      getRebuildCredentialEnvFromRegistry(
+        "compatible-endpoint",
+        "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+        "https://inference.example.test/v1",
+      ),
+    ).toBe("COMPATIBLE_API_KEY");
+    expect(
+      getRebuildCredentialEnvFromRegistry(
+        "compatible-endpoint",
+        "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+        "http://localhost:999/v1",
+      ),
+    ).toBe("COMPATIBLE_API_KEY");
+    expect(
+      getRebuildCredentialEnvFromRegistry(
+        "compatible-endpoint",
+        "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+        "http://localhost:11435/v1",
+      ),
+    ).toBe("COMPATIBLE_API_KEY");
+  });
+
+  it("preserves a legacy port-11435 no-auth route when the proxy moved", async () => {
+    vi.stubEnv("NEMOCLAW_OLLAMA_PROXY_PORT", "12435");
+    vi.resetModules();
+    const { getRebuildCredentialEnvFromRegistry: resolveCredential } =
+      await import("./rebuild-resume-preflight");
+
+    expect(
+      resolveCredential(
+        "compatible-endpoint",
+        "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+        "http://localhost:11435/v1",
+      ),
+    ).toBe("NEMOCLAW_OLLAMA_PROXY_TOKEN");
   });
 
   it("returns null for local and unset providers", () => {
@@ -164,6 +212,68 @@ describe("getRebuildEndpointFromRegistry", () => {
 });
 
 describe("prepareRebuildResumeConfig", () => {
+  it("preserves a durable loopback no-auth route through rebuild configuration", () => {
+    vi.spyOn(onboardSession, "loadSession").mockReturnValue(null);
+
+    const config = prepareRebuildResumeConfig(
+      "alpha",
+      entry({
+        provider: "compatible-endpoint",
+        model: "nvidia/model",
+        endpointUrl: "http://localhost:12500/v1",
+        credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+        preferredInferenceApi: "openai-completions",
+      }),
+      "openclaw",
+      noopLog,
+      throwingBail,
+    );
+
+    expect(config).toMatchObject({
+      provider: "compatible-endpoint",
+      model: "nvidia/model",
+      endpointUrl: "http://localhost:12500/v1",
+      credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+      registryInferenceRoute: {
+        provider: "compatible-endpoint",
+        model: "nvidia/model",
+        endpointUrl: "http://localhost:12500/v1",
+        preferredInferenceApi: "openai-completions",
+        source: "registry",
+      },
+    });
+  });
+
+  it("resolves a legacy no-auth credential from the matching session endpoint", () => {
+    vi.spyOn(onboardSession, "loadSession").mockReturnValue({
+      sandboxName: "alpha",
+      provider: "compatible-endpoint",
+      model: "nvidia/model",
+      endpointUrl: "http://localhost:12500/v1",
+      credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+      preferredInferenceApi: "openai-completions",
+    });
+
+    const config = prepareRebuildResumeConfig(
+      "alpha",
+      entry({
+        provider: "compatible-endpoint",
+        model: "nvidia/model",
+        credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+        preferredInferenceApi: "openai-completions",
+      }),
+      "openclaw",
+      noopLog,
+      throwingBail,
+    );
+
+    expect(config).toMatchObject({
+      endpointUrl: "http://localhost:12500/v1",
+      credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+      pinEndpoint: false,
+    });
+  });
+
   it("preserves a stale Hermes API marker so rebuild re-arms provider setup (#6289)", () => {
     vi.spyOn(onboardSession, "loadSession").mockReturnValue(null);
 

@@ -146,6 +146,7 @@ export async function setupRemoteProviderInference(
     endpointUrl: string | null;
     credentialEnv: string | null;
     reuseGatewayCredentialWithoutLocalKey?: boolean;
+    allowLegacyRecordedNoAuthEndpoint?: boolean;
     skipHostInferenceSmoke?: boolean;
     preferredInferenceApi?: string | null;
     pinnedAddresses?: readonly string[];
@@ -161,6 +162,7 @@ export async function setupRemoteProviderInference(
     endpointUrl,
     credentialEnv,
     reuseGatewayCredentialWithoutLocalKey,
+    allowLegacyRecordedNoAuthEndpoint,
     skipHostInferenceSmoke,
     preferredInferenceApi,
     pinnedAddresses,
@@ -250,7 +252,11 @@ export async function setupRemoteProviderInference(
   > => {
     const previousProxyCredential = credentialEnv ? process.env[credentialEnv] : undefined;
     const proxy =
-      credentialEnv === inference.OLLAMA_LOCAL_CREDENTIAL_ENV ? noAuth(endpointUrl!) : null;
+      credentialEnv === inference.OLLAMA_LOCAL_CREDENTIAL_ENV
+        ? allowLegacyRecordedNoAuthEndpoint
+          ? noAuth(endpointUrl!, { allowLegacyRecordedEndpoint: true })
+          : noAuth(endpointUrl!)
+        : null;
     if (proxy) process.env[credentialEnv!] = proxy.credentialValue;
     let proxySettled = proxy === null;
     const restoreUncommittedProxy = () => {

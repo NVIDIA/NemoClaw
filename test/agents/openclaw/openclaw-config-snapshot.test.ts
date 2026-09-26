@@ -404,8 +404,8 @@ describe("OpenClaw durable config file (#5027)", () => {
       expect(model.cost).toEqual({ input: 0.5, output: 1.5, cacheRead: 0.1, cacheWrite: 0.2 });
       expect(model.maxTokens).toBe(32768);
       expect(model.compat).toEqual({ supportsUsageInStreaming: true, toolCallStyle: "openai" });
-      expect(model.input).toEqual(["text", "image"]);
-      // Fresh runtime routing/credentials win.
+      // Fresh runtime routing, credentials, and endpoint capabilities win.
+      expect(model.input).toEqual(["text"]);
       expect(model.id).toBe("moonshotai/kimi-k2");
       expect(model.name).toBe("fresh-display-name");
       expect(after.models.providers.inference.baseUrl).toBe("http://127.0.0.1:9999/v1");

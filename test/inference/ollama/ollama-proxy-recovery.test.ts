@@ -565,7 +565,7 @@ console.log(JSON.stringify({
     assert.equal(payload.proxySpawns[0].env.OLLAMA_BACKEND_PORT, "11434");
   });
 
-  it("keeps the committed token when switching from a compatible backend to Ollama (#7424)", async (context) => {
+  it("reuses a committed Ollama backend for the same compatible endpoint (#7424)", async (context) => {
     const repoRoot = path.join(import.meta.dirname, "../../..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-proxy-switch-"));
     const scriptPath = path.join(tmpDir, "provider-switch-check.js");
@@ -616,14 +616,19 @@ childProcess.spawnSync = (...args) => {
 const stateDir = path.join(process.env.HOME, ".nemoclaw");
 fs.mkdirSync(stateDir, { recursive: true });
 fs.writeFileSync(path.join(stateDir, "ollama-proxy-token"), "compatible-token\n", { mode: 0o600 });
-fs.writeFileSync(path.join(stateDir, "ollama-backend"), "http://127.0.0.1:8000\n", { mode: 0o600 });
+fs.writeFileSync(path.join(stateDir, "ollama-backend"), "http://127.0.0.1:11434\n", { mode: 0o600 });
+fs.writeFileSync(path.join(stateDir, "ollama-backend.json"), JSON.stringify({
+  schemaVersion: 1,
+  kind: "ollama",
+  url: "http://127.0.0.1:11434",
+}), { mode: 0o600 });
 fs.writeFileSync(path.join(stateDir, "ollama-auth-proxy.pid"), "4242\n", { mode: 0o600 });
 
 const proxy = require(${proxyPath});
-const started = proxy.startOllamaAuthProxy();
+const prepared = proxy.noAuthProxy("http://127.0.0.1:11434/v1");
+prepared.persist();
 proxy.ensureOllamaAuthProxy();
 const runningToken = proxy.getOllamaProxyToken();
-proxy.persistProxyToken(runningToken);
 
 // Simulate a host restart after provider setup commits the selected route.
 fs.writeFileSync(path.join(stateDir, "ollama-auth-proxy.pid"), "99999\n", { mode: 0o600 });
@@ -632,7 +637,6 @@ const recoveredProxy = require(${proxyPath});
 recoveredProxy.ensureOllamaAuthProxy();
 
 console.log(JSON.stringify({
-  started,
   proxySpawns,
   runCommands,
   runningToken,
@@ -653,14 +657,12 @@ console.log(JSON.stringify({
 
     assert.equal(result.status, 0, result.stderr);
     const payload = parseStdoutJson<{
-      started: boolean;
       proxySpawns: Array<{ token: string; backendUrl: string }>;
       runCommands: string[][];
       runningToken: string;
       persistedBackend: string;
       persistedDescriptor: { schemaVersion: number; kind: string; url: string };
     }>(result.stdout);
-    assert.equal(payload.started, true);
     assert.equal(payload.proxySpawns.length, 2);
     assert.equal(payload.proxySpawns[0].backendUrl, "http://127.0.0.1:11434");
     assert.equal(payload.proxySpawns[0].token, payload.runningToken);
@@ -671,7 +673,7 @@ console.log(JSON.stringify({
     assert.equal(payload.persistedBackend, "http://127.0.0.1:11434");
     assert.deepEqual(payload.persistedDescriptor, {
       schemaVersion: 1,
-      kind: "ollama",
+      kind: "compatible-endpoint",
       url: "http://127.0.0.1:11434",
     });
   });
@@ -1423,10 +1425,12 @@ execute().catch((error) => {
         assert.equal(fs.readFileSync(activeTokenPath, "utf8").trim(), spawnedTokens[0]);
 
         fs.rmSync(enteredPath, { force: true });
-        fs.writeFileSync(path.join(stateDir, "ollama-proxy-token"), "old-token\n", { mode: 0o600 });
-        fs.writeFileSync(path.join(stateDir, "ollama-backend"), "http://127.0.0.1:11434\n", {
-          mode: 0o600,
-        });
+        fs.rmSync(path.join(stateDir, "ollama-proxy-token"), { force: true });
+        fs.rmSync(path.join(stateDir, "ollama-backend"), { force: true });
+        fs.rmSync(path.join(stateDir, "ollama-backend.json"), { force: true });
+        fs.rmSync(path.join(stateDir, "ollama-auth-proxy.pid"), { force: true });
+        fs.rmSync(path.join(stateDir, "ollama-proxy-port"), { force: true });
+        fs.rmSync(activeTokenPath, { force: true });
         fs.writeFileSync(spawnLogPath, "");
 
         const transaction = runChild("transaction");

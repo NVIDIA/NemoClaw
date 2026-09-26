@@ -31,7 +31,7 @@ export const OPENCLAW_CONFIG_RESTORE_OWNERSHIP = {
    */
   providerRuntimeOwnedFields: ["baseUrl", "api", "apiKey"],
   /** A model entry's routing identity is owned by the fresh rebuild. */
-  modelRuntimeOwnedFields: ["id", "name"],
+  modelRuntimeOwnedFields: ["id", "name", "input"],
   /**
    * Durable user-owned top-level sections are inherited from the backup.
    * `agents` is durable except its primary model routing reference, which the
@@ -183,10 +183,10 @@ function restoreRuntimeOwnedFields(
 /**
  * Reconcile one model entry whose id matches across backup and current.
  *
- * The fresh rebuild owns the model's routing identity (`id`/`name`); the
- * backup restores the user's non-secret tuning (`reasoning`, `cost`,
- * `contextWindow`, `maxTokens`, `compat`, `input`, …) that the regenerated
- * defaults would otherwise reset (issue #5202).
+ * The fresh rebuild owns routing identity and input capability. The backup
+ * restores the remaining non-secret tuning. Context capacity is reconciled to
+ * the lower positive limit because either side may carry the qualified ceiling
+ * and choosing the larger value can overflow the replacement endpoint.
  */
 function mergeOpenClawModelEntry(
   backupModel: Record<string, unknown>,
@@ -194,6 +194,18 @@ function mergeOpenClawModelEntry(
 ): Record<string, unknown> {
   const merged = mergeJsonObjects(currentModel, backupModel);
   restoreRuntimeOwnedFields(merged, currentModel, MODEL_RUNTIME_OWNED_FIELDS);
+  const backupContextWindow = backupModel.contextWindow;
+  const currentContextWindow = currentModel.contextWindow;
+  if (
+    Number.isSafeInteger(backupContextWindow) &&
+    (backupContextWindow as number) > 0 &&
+    Number.isSafeInteger(currentContextWindow) &&
+    (currentContextWindow as number) > 0
+  ) {
+    merged.contextWindow = Math.min(backupContextWindow as number, currentContextWindow as number);
+  } else if (Number.isSafeInteger(currentContextWindow) && (currentContextWindow as number) > 0) {
+    merged.contextWindow = currentContextWindow;
+  }
   return merged;
 }
 

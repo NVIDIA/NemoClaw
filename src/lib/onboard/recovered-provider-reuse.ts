@@ -25,10 +25,19 @@ export function isRecoveredProviderCredentialReuseSelectionKey(value: string): b
   return Object.prototype.hasOwnProperty.call(SUPPORTED_INFERENCE_APIS_BY_SELECTION, value);
 }
 
+export type RecoveredProviderReuseRejectCondition =
+  | "recovery-source"
+  | "provider-identity"
+  | "model-identity"
+  | "inference-api"
+  | "provider-surface"
+  | "gateway-provider-identity"
+  | "endpoint-identity";
+
 export type RecoveredProviderReuseDecision =
   | { kind: "validate-host-credential" }
   | { kind: "reuse-gateway-credential"; preferredInferenceApi: string }
-  | { kind: "reject"; reason: string };
+  | { kind: "reject"; condition: RecoveredProviderReuseRejectCondition; reason: string };
 
 type EndpointIdentity = {
   flavor: EndpointFlavor;
@@ -106,22 +115,38 @@ export function assessRecoveredProviderCredentialReuse(options: {
 }): RecoveredProviderReuseDecision {
   if (options.hostCredentialAvailable) return { kind: "validate-host-credential" };
   if (!options.recoveredFromSandbox) {
-    return { kind: "reject", reason: "the selection was not recovered from this sandbox" };
+    return {
+      kind: "reject",
+      condition: "recovery-source",
+      reason: "the selection was not recovered from this sandbox",
+    };
   }
 
   const selectedProvider = completeProvider(options.selectedProvider);
   const recoveredProvider = completeProvider(options.recoveredProvider);
   if (!selectedProvider || !recoveredProvider || selectedProvider !== recoveredProvider) {
-    return { kind: "reject", reason: "the recovered provider identity is missing or incompatible" };
+    return {
+      kind: "reject",
+      condition: "provider-identity",
+      reason: "the recovered provider identity is missing or incompatible",
+    };
   }
   const selectedModel = completeModel(options.selectedModel);
   const recoveredModel = completeModel(options.recoveredModel);
   if (!selectedModel || !recoveredModel || selectedModel !== recoveredModel) {
-    return { kind: "reject", reason: "the recovered model is missing or invalid" };
+    return {
+      kind: "reject",
+      condition: "model-identity",
+      reason: "the recovered model is missing or invalid",
+    };
   }
   const supportedApis = SUPPORTED_INFERENCE_APIS_BY_SELECTION[options.selectedKey];
   if (!supportedApis?.has(options.recoveredPreferredInferenceApi ?? "")) {
-    return { kind: "reject", reason: "the recovered inference API is missing or unsupported" };
+    return {
+      kind: "reject",
+      condition: "inference-api",
+      reason: "the recovered inference API is missing or unsupported",
+    };
   }
   const gatewayProvider = options.gatewayProvider;
   // #6294: an OpenAI-only agent coerced onto openai-completions registers the
@@ -154,6 +179,7 @@ export function assessRecoveredProviderCredentialReuse(options: {
     if (expectedProviderType === "openai" && gatewayProvider?.type === "anthropic") {
       return {
         kind: "reject",
+        condition: "provider-surface",
         reason:
           `provider '${selectedProvider}' is still registered for the Anthropic Messages ` +
           `surface; export ${options.expectedCredentialEnv} so onboarding can re-register ` +
@@ -162,6 +188,7 @@ export function assessRecoveredProviderCredentialReuse(options: {
     }
     return {
       kind: "reject",
+      condition: "gateway-provider-identity",
       reason: `provider '${selectedProvider}' has no compatible non-secret identity in OpenShell`,
     };
   }
@@ -201,6 +228,7 @@ export function assessRecoveredProviderCredentialReuse(options: {
     ) {
       return {
         kind: "reject",
+        condition: "endpoint-identity",
         reason: "the recovered endpoint identity is missing or incompatible",
       };
     }

@@ -160,6 +160,7 @@ function sessionMatchesDestroySnapshot(current: Session | null, expected: Sessio
     current.sandboxName === expected.sandboxName &&
     current.endpointUrl === expected.endpointUrl &&
     current.routerPid === expected.routerPid &&
+    current.routerPort === expected.routerPort &&
     current.routerCredentialHash === expected.routerCredentialHash
   );
 }
@@ -223,7 +224,8 @@ export async function stopModelRouterForDestroyedSandbox(
       }
       const sessionMatchesSandbox =
         session?.sandboxName === sandbox.name &&
-        resolveDestroyedSandboxRouterPort(session.endpointUrl) === port;
+        resolveDestroyedSandboxRouterPort(session.endpointUrl) === port &&
+        (session.routerPort == null || session.routerPort === port);
       destroyedSessionId = session?.sandboxName === sandbox.name ? session.sessionId : null;
 
       const listHostRegistryEntries =
@@ -244,6 +246,7 @@ export async function stopModelRouterForDestroyedSandbox(
       const inspectProcessForPort = deps.inspectProcessForPort ?? inspectModelRouterProcessForPort;
       const isResponsive = deps.isResponsive ?? isRouterResponsive;
       const recordedPid = sessionMatchesSandbox ? (session.routerPid ?? null) : null;
+      const recordedRouterPort = sessionMatchesSandbox ? (session.routerPort ?? null) : null;
       const recordedCredentialHash = sessionMatchesSandbox
         ? (session.routerCredentialHash ?? null)
         : null;
@@ -294,20 +297,25 @@ export async function stopModelRouterForDestroyedSandbox(
         }
       }
 
-      // Clear when either field is set: a matching session with only a
+      // Clear when any field is set: a matching session with only a port or
       // credential hash still carries stale router identity after its sandbox
-      // is gone. A completed process scan plus an unresponsive port confirms that
-      // no router remains when no PID was found.
-      if (sessionMatchesSandbox && (recordedPid !== null || recordedCredentialHash !== null)) {
+      // is gone. A completed process scan plus an unresponsive port confirms
+      // that no router remains when no PID was found.
+      if (
+        sessionMatchesSandbox &&
+        (recordedPid !== null || recordedRouterPort !== null || recordedCredentialHash !== null)
+      ) {
         deps.compareAndSwapSession(
           (current) =>
             current.sessionId === session.sessionId &&
             current.sandboxName === session.sandboxName &&
             current.endpointUrl === session.endpointUrl &&
             current.routerPid === recordedPid &&
+            (current.routerPort ?? null) === recordedRouterPort &&
             current.routerCredentialHash === recordedCredentialHash,
           (current) => {
             current.routerPid = null;
+            current.routerPort = null;
             current.routerCredentialHash = null;
             return current;
           },

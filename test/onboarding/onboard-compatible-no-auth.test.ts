@@ -43,7 +43,7 @@ async function run(mode) {
   Object.assign(process.env, {
     NEMOCLAW_NON_INTERACTIVE: "1",
     NEMOCLAW_PROVIDER: "custom",
-    NEMOCLAW_ENDPOINT_URL: "http://localhost:8000/v1",
+    NEMOCLAW_ENDPOINT_URL: "http://localhost:12500/v1",
     NEMOCLAW_MODEL: "test-model",
     NEMOCLAW_PREFERRED_API: "chat-completions",
   });

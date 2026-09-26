@@ -20,6 +20,13 @@ const exactGatewayProvider: GatewayProviderMetadata = {
   configKeys: ["OPENAI_BASE_URL"],
 };
 
+const noAuthGatewayProvider: GatewayProviderMetadata = {
+  name: "compatible-endpoint",
+  type: "openai",
+  credentialKeys: ["NEMOCLAW_OLLAMA_PROXY_TOKEN"],
+  configKeys: ["OPENAI_BASE_URL"],
+};
+
 function config(overrides: Partial<RebuildResumeConfig> = {}): RebuildResumeConfig {
   return {
     agent: null,
@@ -141,6 +148,31 @@ describe("checkRebuildGatewayCredentialReuseOrBail", () => {
     ).resolves.toBe(true);
   });
 
+  it("accepts the loopback no-auth proxy identity recorded by onboarding", async () => {
+    const noAuthConfig = config({
+      credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+      endpointUrl: "http://localhost:12500/v1",
+      registryInferenceRoute: {
+        ...config().registryInferenceRoute!,
+        endpointUrl: "http://localhost:12500/v1",
+      },
+    });
+
+    await expect(
+      checkRebuildGatewayCredentialReuseOrBail(
+        "alpha",
+        noAuthConfig,
+        false,
+        vi.fn(),
+        throwingBail,
+        {
+          readGatewayProviderMetadata: async () => noAuthGatewayProvider,
+          readRecordedProviderEndpoints: () => [],
+        },
+      ),
+    ).resolves.toBe(true);
+  });
+
   it("preserves normal host-key validation without reading gateway recovery metadata", async () => {
     const readGatewayProviderMetadata = vi.fn();
     await expect(
@@ -252,7 +284,7 @@ describe("checkRebuildGatewayCredentialReuseOrBail", () => {
   });
 
   it("rejects spoofed gateway bindings", async () => {
-    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const spoofedProvider = {
       ...exactGatewayProvider,
       credentialKeys: ["ATTACKER_KEY"],
@@ -262,7 +294,11 @@ describe("checkRebuildGatewayCredentialReuseOrBail", () => {
         readGatewayProviderMetadata: async () => spoofedProvider,
         readRecordedProviderEndpoints: () => [],
       }),
-    ).rejects.toThrow("no compatible non-secret identity");
+    ).rejects.toThrow("Unsafe gateway credential reuse");
+    const diagnostics = error.mock.calls.flat().join("\n");
+    expect(diagnostics).not.toContain("compatible-endpoint");
+    expect(diagnostics).not.toContain("COMPATIBLE_API_KEY");
+    expect(diagnostics).not.toContain("ATTACKER_KEY");
   });
 
   it("rejects a custom endpoint recorded by another sandbox", async () => {
@@ -274,7 +310,32 @@ describe("checkRebuildGatewayCredentialReuseOrBail", () => {
         readGatewayProviderMetadata: async () => exactGatewayProvider,
         readRecordedProviderEndpoints,
       }),
-    ).rejects.toThrow("recovered endpoint identity is missing or incompatible");
+    ).rejects.toThrow("Unsafe gateway credential reuse");
     expect(readRecordedProviderEndpoints).toHaveBeenCalledWith("compatible-endpoint", "alpha");
+  });
+
+  it("reports the rejected recovery condition without endpoint details", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const mismatchedEndpoint = config({
+      endpointUrl: "https://secret-canary.example.test/v1",
+    });
+
+    await expect(
+      checkRebuildGatewayCredentialReuseOrBail(
+        "alpha",
+        mismatchedEndpoint,
+        false,
+        vi.fn(),
+        throwingBail,
+        {
+          readGatewayProviderMetadata: async () => exactGatewayProvider,
+          readRecordedProviderEndpoints: () => [],
+        },
+      ),
+    ).rejects.toThrow("Unsafe gateway credential reuse");
+
+    const diagnostics = error.mock.calls.flat().join("\n");
+    expect(diagnostics).toContain("The recorded endpoint identity is missing or incompatible.");
+    expect(diagnostics).not.toContain("secret-canary");
   });
 });

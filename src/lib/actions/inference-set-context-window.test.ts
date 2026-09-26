@@ -39,15 +39,76 @@ describe("runInferenceSet context window", () => {
     expect(logged).toMatch(/Context window for 'qwen2\.5:7b': 16384 tokens/);
   });
 
-  it("keeps the existing window and warns when it cannot be determined", async () => {
+  it("removes a previous route's window when the new value cannot be determined", async () => {
     const config = ollamaConfig();
     const deps = createDeps({ config, session: baseSession(), contextWindow: null });
 
     await runInferenceSet({ provider: "ollama-local", model: "qwen2.5:7b", noVerify: true }, deps);
 
-    expect(inferenceModels(config)[0].contextWindow).toBe(131072);
+    expect(inferenceModels(config)[0]).not.toHaveProperty("contextWindow");
     const logged = deps.calls.log.mock.calls.map((a) => String(a[0])).join("\n");
     expect(logged).toMatch(/could not determine the context window/i);
+    expect(logged).toMatch(/removing the previous route's value/i);
     expect(logged).toMatch(/rebuild/);
+  });
+
+  it("preserves a same-route window when re-probing cannot determine a value", async () => {
+    const config = ollamaConfig();
+    const entry = {
+      name: "alpha",
+      agent: "openclaw",
+      provider: "ollama-local",
+      model: "llama3.2:3b",
+      endpointUrl: null,
+      preferredInferenceApi: "openai-completions",
+    };
+    const deps = createDeps({
+      config,
+      entry,
+      session: baseSession({
+        provider: "ollama-local",
+        model: "llama3.2:3b",
+        endpointUrl: null,
+        preferredInferenceApi: "openai-completions",
+      }),
+      contextWindow: null,
+    });
+
+    await runInferenceSet({ provider: "ollama-local", model: "llama3.2:3b", noVerify: true }, deps);
+
+    expect(inferenceModels(config)[0].contextWindow).toBe(131072);
+    const logged = deps.calls.log.mock.calls.map((a) => String(a[0])).join("\n");
+    expect(logged).toMatch(/keeping the existing same-route value/i);
+  });
+
+  it("removes the old model's window when retrying after a registry-first partial switch", async () => {
+    const config = ollamaConfig();
+    const entry = {
+      name: "alpha",
+      agent: "openclaw",
+      provider: "ollama-local",
+      model: "qwen2.5:7b",
+      endpointUrl: null,
+      preferredInferenceApi: "openai-completions",
+    };
+    const deps = createDeps({
+      config,
+      entry,
+      session: baseSession({
+        provider: "ollama-local",
+        model: "qwen2.5:7b",
+        endpointUrl: null,
+        preferredInferenceApi: "openai-completions",
+      }),
+      contextWindow: null,
+    });
+
+    await runInferenceSet({ provider: "ollama-local", model: "qwen2.5:7b", noVerify: true }, deps);
+
+    expect(inferenceModels(config)[0]).toMatchObject({
+      id: "qwen2.5:7b",
+      name: "inference/qwen2.5:7b",
+    });
+    expect(inferenceModels(config)[0]).not.toHaveProperty("contextWindow");
   });
 });

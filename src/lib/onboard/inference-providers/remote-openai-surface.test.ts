@@ -352,7 +352,7 @@ describe("OpenAI-compatible no-auth provider registration", () => {
     sandboxName: SANDBOX,
     model: MODEL,
     provider: "compatible-endpoint",
-    endpointUrl: "http://localhost:8000/v1",
+    endpointUrl: "http://localhost:12500/v1",
     credentialEnv: NO_AUTH_ENV,
     preferredInferenceApi: "openai-completions",
     pinnedAddresses: ["127.0.0.1"],
@@ -376,7 +376,7 @@ describe("OpenAI-compatible no-auth provider registration", () => {
       done: false,
     });
 
-    expect(noAuthProxy).toHaveBeenCalledWith("http://localhost:8000/v1");
+    expect(noAuthProxy).toHaveBeenCalledWith("http://localhost:12500/v1");
     expect(withOllamaProxyLifecycleTransaction).toHaveBeenCalledOnce();
     expect(harness.upsertProvider).toHaveBeenCalledWith(
       "compatible-endpoint",
@@ -387,6 +387,41 @@ describe("OpenAI-compatible no-auth provider registration", () => {
     );
     expect(persist).toHaveBeenCalledOnce();
     expect(restore).not.toHaveBeenCalled();
+    expect(harness.runOpenshell).toHaveBeenCalledWith(
+      [
+        "inference",
+        "set",
+        "--no-verify",
+        "--provider",
+        "compatible-endpoint",
+        "--model",
+        MODEL,
+        "--timeout",
+        "60",
+      ],
+      { ignoreError: true },
+    );
+  });
+
+  it("carries recorded legacy-route authority to final proxy setup", async () => {
+    const harness = createHarness();
+    vi.mocked(noAuthProxy).mockReturnValue({
+      baseUrl: "http://host.openshell.internal:12435/v1",
+      credentialValue: "proxy-token",
+      persist: vi.fn(),
+      restore: vi.fn(),
+    });
+
+    await expect(
+      setupRemoteProviderInference(
+        { ...args, allowLegacyRecordedNoAuthEndpoint: true },
+        harness.deps,
+      ),
+    ).resolves.toEqual({ done: false });
+
+    expect(noAuthProxy).toHaveBeenCalledWith("http://localhost:12500/v1", {
+      allowLegacyRecordedEndpoint: true,
+    });
   });
 
   it("stops before registration when proxy startup fails (#7424)", async () => {

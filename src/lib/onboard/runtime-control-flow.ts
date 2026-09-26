@@ -137,7 +137,10 @@ export function planSelectedAgentTransition(
           deps.note(
             `  Agent changed from ${formatSandboxAgentName(recordedAgentName)} to ${formatSandboxAgentName(selectedAgentName)}; refreshing provider selection.`,
           );
-          await deps.stopTrackedModelRouterForAgentChange(originalSession, input.routerPort);
+          await deps.stopTrackedModelRouterForAgentChange(
+            originalSession,
+            originalSession.routerPort ?? input.routerPort,
+          );
         }
         return deps.updateSession((current) => {
           const transitioned = resumeAgentChanged
