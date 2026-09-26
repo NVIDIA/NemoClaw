@@ -100,6 +100,7 @@ export type StatusFlowHarnessOptions = {
         compatibleEndpointReasoningEffort?: "low" | "medium" | "high" | null;
         hostMounts?: SandboxHostMount[];
         dashboardRemoteBindPrepared?: boolean;
+        dashboardBindAddress?: string | null;
       })
     | null;
   versionCheck?: {

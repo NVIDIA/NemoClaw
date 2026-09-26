@@ -45,6 +45,7 @@ describe("ensureAgentDashboardForward", () => {
 
     expect(ensureDashboardForward).toHaveBeenNthCalledWith(1, "hm", "http://127.0.0.1:18789", {
       allowPortReallocation: false,
+      recordDashboardBind: true,
       ...(reuseExistingForward ? { reuseExistingForward: true } : {}),
     });
     expect(ensureDashboardForward).toHaveBeenNthCalledWith(2, "hm", "http://127.0.0.1:8642", {
@@ -73,6 +74,7 @@ describe("ensureAgentDashboardForward", () => {
 
     expect(ensureDashboardForward).toHaveBeenNthCalledWith(1, "hm", "http://127.0.0.1:18789", {
       allowPortReallocation: false,
+      recordDashboardBind: true,
     });
     expect(ensureDashboardForward).toHaveBeenNthCalledWith(2, "hm", "http://127.0.0.1:8643", {
       allowPortReallocation: false,
@@ -128,6 +130,7 @@ describe("ensureAgentDashboardForward", () => {
 
     expect(ensureDashboardForward).toHaveBeenNthCalledWith(1, "hm", "http://127.0.0.1:9120", {
       allowPortReallocation: false,
+      recordDashboardBind: true,
     });
     expect(ensureDashboardForward).toHaveBeenNthCalledWith(2, "hm", "http://127.0.0.1:8642", {
       allowPortReallocation: false,
@@ -164,7 +167,7 @@ describe("ensureAgentDashboardForward", () => {
       1,
       "hm",
       "https://hermes.example.test:9120/ui",
-      { allowPortReallocation: false },
+      { allowPortReallocation: false, recordDashboardBind: true },
     );
     expect(process.env.CHAT_UI_URL).toBe("https://hermes.example.test:9120/ui");
   });
@@ -191,6 +194,7 @@ describe("ensureAgentDashboardForward", () => {
 
     expect(ensureDashboardForward).toHaveBeenCalledWith("api-agent", "http://127.0.0.1:8647", {
       allowPortReallocation: false,
+      recordDashboardBind: true,
     });
     expect(ensureDashboardForward).not.toHaveBeenCalledWith(
       "api-agent",
@@ -226,7 +230,7 @@ describe("ensureAgentDashboardForward", () => {
       1,
       "legacy-hermes",
       "http://127.0.0.1:8642",
-      { allowPortReallocation: false },
+      { allowPortReallocation: false, recordDashboardBind: true },
     );
     expect(ensureDashboardForward).toHaveBeenNthCalledWith(
       2,

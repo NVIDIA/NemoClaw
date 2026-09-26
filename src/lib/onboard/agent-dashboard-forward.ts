@@ -22,6 +22,7 @@ export type EnsureDashboardForward = (
   options?: {
     allowPortReallocation?: boolean;
     reuseExistingForward?: boolean;
+    recordDashboardBind?: boolean;
     revalidateSandboxIdentity?: (operation: string) => void;
   },
 ) => number | Promise<number>;
@@ -42,6 +43,11 @@ export async function ensureAgentDashboardForward(options: {
   beforeForwardPort?: (port: number) => Promise<void> | void;
   reuseExistingForward?: boolean;
   revalidateSandboxIdentity?: (operation: string) => void;
+  /**
+   * Receives this launcher's warnings, such as an optional agent port
+   * forward that did not start. Only the primary dashboard forward records
+   * its bind (#10861).
+   */
   warn?: (message: string) => void;
 }): Promise<number> {
   const {
@@ -110,6 +116,7 @@ export async function ensureAgentDashboardForward(options: {
       requestedDashboardUrl,
       {
         allowPortReallocation: false,
+        recordDashboardBind: true,
         ...(reuseExistingForward ? { reuseExistingForward: true } : {}),
         ...(revalidateIdentity ? { revalidateSandboxIdentity: revalidateIdentity } : {}),
       },

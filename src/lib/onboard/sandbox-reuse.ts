@@ -108,6 +108,7 @@ export interface ReusedSandboxDashboardStateInput {
     chatUiUrl: string,
     options?: {
       reuseExistingForward?: boolean;
+      recordDashboardBind?: boolean;
       revalidateSandboxIdentity?: (operation: string) => void;
     },
   ): number | Promise<number>;
@@ -148,8 +149,12 @@ export async function applyReusedSandboxDashboardState(
   }
   input.revalidateSandboxIdentity?.(`restore dashboard state for sandbox '${input.sandboxName}'`);
   const reuseExistingForward = canReuseDashboardForwardForAgent(input.agent);
+  // The launcher records the bind of the dashboard forward it starts and
+  // leaves the record alone when it keeps an existing owned forward (#10861),
+  // so this path writes no bind of its own.
   const dashboardPort = manageDashboard
     ? await input.ensureDashboardForward(input.sandboxName, input.chatUiUrl, {
+        recordDashboardBind: true,
         ...(reuseExistingForward ? { reuseExistingForward: true } : {}),
         ...(input.revalidateSandboxIdentity
           ? { revalidateSandboxIdentity: input.revalidateSandboxIdentity }

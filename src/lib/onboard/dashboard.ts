@@ -95,9 +95,19 @@ export interface OnboardDashboardDeps {
         hermesDashboardPort?: number | null;
         lifecycleLiveIdentityFingerprint?: string;
         pendingRouteReservation?: true;
+        dashboardBindAddress?: string | null;
       }
     | null
     | undefined;
+  /**
+   * Registry write for the dashboard bind record (#10861). The launcher
+   * records the bind of the forward it is about to start, refuses a wide
+   * bind it cannot record, and puts the previous record back when the
+   * forward does not start, so no command describes a listener that does
+   * not exist. Tests inject this; production writes through the registry
+   * context.
+   */
+  recordDashboardBind?(sandboxName: string, bindAddress: string | null): boolean;
   /** Typed forwarding adapter factory. Tests inject a fake; production uses the CLI adapter. */
   forwardAdapterForAuthority?: (
     authority: DashboardForwardRuntimeAuthority,
@@ -228,11 +238,18 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     : null;
   const getSandbox = deps.getSandbox ?? productionForwardRegistry?.getSandbox;
   const listSandboxes = deps.listSandboxes ?? productionForwardRegistry?.listSandboxes;
+  const recordDashboardBind =
+    deps.recordDashboardBind ??
+    (productionForwardRegistry
+      ? (sandboxName: string, bindAddress: string | null) =>
+          productionForwardRegistry.updateSandbox(sandboxName, {
+            dashboardBindAddress: bindAddress,
+          })
+      : undefined);
   const resolveGatewayName =
     deps.resolveForwardGatewayName ?? productionForwardRegistry?.resolveGatewayName;
   const forwardAdapterForAuthority =
     deps.forwardAdapterForAuthority ?? createOpenShellForwardAdapterForAuthority;
-
   function resolveForwardServiceGateway(
     sandboxName: string,
     options: DashboardForwardOptions = {},
@@ -389,6 +406,43 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     process.exit(1);
   }
 
+  /**
+   * Write the dashboard bind record. `null` means no registry context can
+   * record binds (test harnesses without one); `false` means the write was
+   * rejected or threw.
+   */
+  function recordBind(sandboxName: string, bindAddress: string | null): boolean | null {
+    if (!recordDashboardBind) return null;
+    try {
+      return recordDashboardBind(sandboxName, bindAddress) !== false;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Put the previous record back after a forward whose bind was recorded did not start. */
+  function restoreBind(
+    sandboxName: string,
+    previousBind: string | null,
+    bindRecorded: boolean | null,
+  ): void {
+    if (bindRecorded !== true || recordBind(sandboxName, previousBind) === true) return;
+    console.warn(
+      `  Warning: the recorded dashboard bind for '${sandboxName}' could not be restored after the forward failed to start; \`dashboard-url\` may report a listener that does not exist until the next forward launch.`,
+    );
+  }
+
+  /** Explain a refused dashboard forward whose record would misdescribe it. */
+  function dashboardBindRecordRefusal(
+    sandboxName: string,
+    bindAddress: string,
+    previousBind: string | null,
+  ): string {
+    return bindAddress === "0.0.0.0"
+      ? `Refusing to start the dashboard forward for '${sandboxName}' on all interfaces: its exposure could not be recorded, so \`dashboard-url\`, \`list\` and \`status\` would not disclose it. Repair the sandbox registry and re-run onboarding.`
+      : `Refusing to start the dashboard forward for '${sandboxName}' on loopback: the registry still records a bind on ${String(previousBind)} and could not be updated, so \`dashboard-url\`, \`list\` and \`status\` would report exposure that no longer exists. Repair the sandbox registry and re-run onboarding.`;
+  }
+
   function forwardResultMessage(
     result:
       | Awaited<ReturnType<OpenShellForwardAdapter["startForward"]>>
@@ -482,15 +536,21 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       );
     }
     let actualPort: number;
+    let observedOwnedForward = false;
     try {
-      actualPort = (
-        await findAvailableDashboardPortFromObserver(
-          sandboxName,
-          preferredPort,
-          observeForwardPorts,
-          registryOccupiedPorts,
-        )
-      ).port;
+      const selection = await findAvailableDashboardPortFromObserver(
+        sandboxName,
+        preferredPort,
+        observeForwardPorts,
+        registryOccupiedPorts,
+      );
+      actualPort = selection.port;
+      observedOwnedForward = selection.observations.some(
+        (observation) =>
+          observation.state === "owned" &&
+          "forward" in observation &&
+          observation.forward.port === actualPort,
+      );
     } catch (err) {
       if (!rollbackSandboxOnFailure) throw err;
       rollbackSandboxAndExit(sandboxName, err, options.gatewayName);
@@ -515,9 +575,40 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     }
 
     const actualGateway = resolveForwardServiceGateway(sandboxName, options);
+    if (actualGateway && reuseExistingForward && observedOwnedForward) {
+      revalidateSandboxIdentity?.(
+        `retain dashboard forward ${String(actualPort)} for sandbox '${sandboxName}'`,
+      );
+      return actualPort;
+    }
+    // The registry record must describe the dashboard forward (#10861): a
+    // wide bind is never started undisclosed, and a loopback bind replacing a
+    // recorded wide one must not leave that record standing. Either is
+    // refused when the write fails. A loopback bind over a loopback or absent
+    // record proceeds; the next launch writes the record again. Only the
+    // dashboard callers opt in; declared agent ports share this launcher and
+    // never touch the record.
+    const recordsBind = options.recordDashboardBind === true;
+    const bindAddress = resolveDashboardForwardBind(getSandbox?.(sandboxName), {
+      requestedBind: process.env.NEMOCLAW_DASHBOARD_BIND,
+      wsl: deps.isWsl(),
+    });
+    const previousBind = recordsBind
+      ? (getSandbox?.(sandboxName)?.dashboardBindAddress ?? null)
+      : null;
+    const bindRecorded = recordsBind ? recordBind(sandboxName, bindAddress) : null;
     let fwdOk = false;
     let fwdDiagnostic = "";
-    if (actualGateway) {
+    let bindRefusal: string | null = null;
+    if (bindRecorded === false && (bindAddress === "0.0.0.0" || previousBind === "0.0.0.0")) {
+      bindRefusal = dashboardBindRecordRefusal(sandboxName, bindAddress, previousBind);
+      fwdDiagnostic = bindRefusal;
+    } else if (actualGateway) {
+      if (bindRecorded === false) {
+        console.warn(
+          `  Warning: the dashboard bind for '${sandboxName}' could not be recorded; the registry keeps its previous value until the next forward launch.`,
+        );
+      }
       try {
         revalidateSandboxIdentity?.(
           `start dashboard forward ${String(actualPort)} for sandbox '${sandboxName}'`,
@@ -538,6 +629,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       fwdDiagnostic = "ForwardTcp authority changed before service start";
     }
     if (!fwdOk) {
+      restoreBind(sandboxName, previousBind, bindRecorded);
       const looksLikePortConflict = looksLikeForwardPortConflict(fwdDiagnostic);
       if (rollbackSandboxOnFailure) {
         const err = new Error(
@@ -545,10 +637,11 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
             ? `Failed to start dashboard forward on port ${actualPort} — the host port ` +
                 `is held by another process. Free it and run \`${deps.cliName()} onboard\` again, ` +
                 `or pass \`--control-ui-port <N>\` to pick a different dashboard port.`
-            : `Failed to start dashboard forward on port ${actualPort}: ${fwdDiagnostic.slice(0, 240)}`,
+            : `Failed to start dashboard forward on port ${actualPort}: ${bindRefusal ?? fwdDiagnostic.slice(0, 240)}`,
         );
         rollbackSandboxAndExit(sandboxName, err, options.gatewayName);
       }
+      if (bindRefusal !== null) throw new Error(bindRefusal);
       throw new Error(
         `Failed to start dashboard forward on port ${actualPort} for '${sandboxName}': ${fwdDiagnostic.slice(0, 240)}. ` +
           "Inspect the listener before retrying onboarding.",
@@ -593,6 +686,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       envUrl || (persistedPort === null ? undefined : `http://127.0.0.1:${String(persistedPort)}`);
     const actualPort = await ensureDashboardForward(sandboxName, requestedUrl, {
       allowPortReallocation: false,
+      recordDashboardBind: true,
       reuseExistingForward: true,
       ...(revalidateSandboxIdentity ? { revalidateSandboxIdentity } : {}),
     });

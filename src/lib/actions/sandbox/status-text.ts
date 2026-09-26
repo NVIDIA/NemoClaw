@@ -361,8 +361,18 @@ function printDashboardRemoteAccessHint(context: SandboxStatusTextContext): void
   const { sandboxName, sb } = context;
   const dashboardPort = sb?.dashboardPort;
   if (!dashboardPort) return;
-  const accessUrl = sb?.dashboardRemoteBindPrepared
-    ? `http://0.0.0.0:${dashboardPort}`
+  // The recorded bind is the only durable answer: NEMOCLAW_DASHBOARD_BIND and
+  // WSL selected it when the forward last started, and later commands rarely
+  // carry that environment, so reading the live environment would report a
+  // loopback bind for a sandbox exposed on every interface (#10861).
+  // `dashboardRemoteBindPrepared` describes the
+  // sandbox's generated configuration, not a host listener, so it does not
+  // stand in for a missing record: `dashboard-url` and `list` say the bind
+  // is not recorded, and the guidance stays until a forward launch records
+  // it. Rows with no record read the live environment as before.
+  const recordedBindAddress = sb?.dashboardBindAddress;
+  const accessUrl = recordedBindAddress
+    ? `http://${recordedBindAddress}:${dashboardPort}`
     : process.env.CHAT_UI_URL;
   if (!buildSshForwardHintLines({ port: dashboardPort, accessUrl })) return;
   console.log(

@@ -33,7 +33,7 @@ $$nemoclaw list
 
 The list shows each sandbox's model, provider, policy presets, and active SSH session indicator.
 <AgentOnly variant="openclaw,hermes">
-It also shows the dashboard URL when NemoClaw records a dashboard port.
+It also shows the dashboard URL when NemoClaw records a dashboard port, marked `(bound on all interfaces)` when that dashboard forward listens on every interface, or `(bind not recorded)` when NemoClaw has no recorded bind for that forward.
 </AgentOnly>
 Use JSON output for scripts:
 

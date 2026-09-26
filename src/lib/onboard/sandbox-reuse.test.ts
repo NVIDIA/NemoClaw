@@ -83,10 +83,52 @@ describe("applyReusedSandboxDashboardState", () => {
       expect(ensureForState).toHaveBeenCalledTimes(enabled ? 0 : 1);
       expect(result.hermesDashboardState).toBe(hermesDashboardState);
       expect(ensureDashboardForward).toHaveBeenCalledWith("reuse-me", "http://127.0.0.1:18789", {
+        recordDashboardBind: true,
         reuseExistingForward: true,
       });
     },
   );
+
+  it("leaves the dashboard bind record to the launcher (#10861)", async () => {
+    const updateSandbox = vi.fn();
+    const ensureDashboardForward = vi.fn(() => 18789);
+
+    await applyReusedSandboxDashboardState({
+      sandboxName: "reuse-me",
+      chatUiUrl: "https://dashboard.example.test:18789",
+      env: {},
+      agent: null,
+      model: "test-model",
+      provider: "openai-compatible",
+      selectionVerified: true,
+      sandboxGpuConfig: {
+        hostGpuDetected: false,
+        hostGpuPlatform: null,
+        sandboxGpuEnabled: false,
+        mode: "auto",
+        sandboxGpuDevice: null,
+        errors: [],
+      },
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      ensureDashboardForward,
+      hermesDashboardForwarding: {
+        resolveStateForPort: vi.fn(() => ({ enabled: false, config: null })),
+        ensureForState: vi.fn(),
+      },
+      updateSandbox,
+      updateReusedSandboxMetadata: vi.fn(),
+    });
+
+    expect(ensureDashboardForward).toHaveBeenCalledWith(
+      "reuse-me",
+      "https://dashboard.example.test:18789",
+      { recordDashboardBind: true, reuseExistingForward: true },
+    );
+    expect(
+      updateSandbox.mock.calls.map(([, updates]) => "dashboardBindAddress" in updates),
+    ).toEqual([false]);
+  });
 
   it("skips dashboard forwarding while preserving reuse metadata for terminal agents", async () => {
     const updateSandbox = vi.fn();
@@ -251,6 +293,7 @@ describe("applyReusedSandboxDashboardState", () => {
 
     expect(releaseDashboardPort).toHaveBeenCalledOnce();
     expect(ensureDashboardForward).toHaveBeenCalledWith("reuse-me", "http://127.0.0.1:18789", {
+      recordDashboardBind: true,
       reuseExistingForward: true,
     });
     expect(result.dashboardPort).toBe(18_789);
@@ -302,6 +345,7 @@ describe("applyReusedSandboxDashboardState", () => {
 
     expect(ensureForState).toHaveBeenCalledOnce();
     expect(ensureDashboardForward).toHaveBeenCalledWith("reuse-me", "http://127.0.0.1:18789", {
+      recordDashboardBind: true,
       reuseExistingForward: true,
       revalidateSandboxIdentity,
     });
