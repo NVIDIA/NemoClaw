@@ -7,8 +7,9 @@ import { isDeepStrictEqual } from "node:util";
 import { restoreRecreatedSandboxStateWithManagedAuthority } from "../actions/sandbox/snapshot/restore-authority";
 import {
   abortUnregisteredOpenClawPostRestoreDoctor,
-  beginUnregisteredOpenClawPostRestoreDoctor,
+  beginUnregisteredOpenClawBackupQuiesce,
   finishUnregisteredOpenClawPostRestoreDoctor,
+  promoteUnregisteredOpenClawBackupQuiesceToPostRestoreDoctor,
   type OpenClawPostRestoreDoctorWindow,
 } from "../actions/sandbox/runtime/openclaw-lifecycle";
 import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
@@ -842,7 +843,7 @@ export async function finalizeCreatedSandbox(
       deps.revalidateSandboxIdentity?.(
         `entering offline state restore for sandbox '${options.sandboxName}'`,
       );
-      const doctorWindow = await beginUnregisteredOpenClawPostRestoreDoctor(options.sandboxName);
+      const doctorWindow = await beginUnregisteredOpenClawBackupQuiesce(options.sandboxName);
       if (!doctorWindow.ok) {
         deps.error(
           `  OpenClaw state restore could not enter its gateway-down maintenance window (${doctorWindow.stage}: ${doctorWindow.detail}).`,
@@ -920,7 +921,15 @@ export async function finalizeCreatedSandbox(
       deps.revalidateSandboxIdentity?.(
         `releasing offline state restore for sandbox '${options.sandboxName}'`,
       );
-      const resumed = await finishUnregisteredOpenClawPostRestoreDoctor(openClawRestoreWindow);
+      // Repair the restored state while the same startup still holds the gateway
+      // down, as the rebuild path does. Repairing the fresh tree before copying
+      // the snapshot cannot validate the state that the gateway will actually use.
+      const repaired =
+        await promoteUnregisteredOpenClawBackupQuiesceToPostRestoreDoctor(openClawRestoreWindow);
+      if (repaired.ok) openClawRestoreWindow = repaired.window;
+      const resumed = repaired.ok
+        ? await finishUnregisteredOpenClawPostRestoreDoctor(openClawRestoreWindow)
+        : repaired;
       if (!resumed.ok) {
         await abortOpenClawRestoreWindow();
         deps.error(

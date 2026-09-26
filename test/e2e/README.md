@@ -214,7 +214,7 @@ the bounded redactor, which retains the last 32 KiB and removes secret fragments
 the capture boundary. It reads only that archive member without unpacking files on
 the host and includes the capture-omission notice in the retained artifact.
 The same collector retains startup, container, supervisor, and host gateway evidence after failed
-onboarding, restore, and rebuild operations. Expected nonzero outcomes can be declared so a normal
+onboarding, restore, rebuild, and cloud security checks. Expected nonzero outcomes can be declared so a normal
 refusal does not trigger collection; a timeout still captures evidence. Diagnostic acquisition does
 not retry the mutation or replace its result.
 OpenClaw launch evidence reports whether a SQLite rejection concerns file metadata or the transcript table, without exposing paths, identities, or session contents. The existing evidence checks remain required.

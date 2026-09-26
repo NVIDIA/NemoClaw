@@ -16,7 +16,7 @@ import { type E2ETargetFixtures, expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { hostedInferenceCredentialReferencePattern } from "../fixtures/hosted-inference.ts";
 import { OPENSHELL_V0116_QUALIFICATION } from "../fixtures/openshell-v0116-qualification.ts";
-import { REPO_ROOT } from "../fixtures/paths.ts";
+import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import { resolveVerifiedCloudflaredBinary } from "./cloudflared-prerequisite.ts";
 import {
   remapDnsRebindingHostname,
@@ -46,6 +46,7 @@ import { startRuntimeIdentityOAuthServer } from "./runtime-identity-oauth-server
 // This is the PR-required inference-routing lane. Credential-backed provider
 // smokes live in inference-routing-provider-smoke.test.ts and are never selected
 // by the PR-safe workflow job.
+process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
 
 test(
   "TC-INF-06 invalid API key fails with credential classification and cleanup",

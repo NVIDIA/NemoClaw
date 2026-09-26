@@ -175,7 +175,7 @@ export function createBedrockRuntimeAdapterServer(options: {
   const logger = options.logger || defaultAdapterLogger;
   // Bedrock Runtime has no model-discovery operation. Advertise only model IDs
   // this process has actually served, including the onboarding smoke request.
-  const servedModels = new Set<string>();
+  const servedModels = new Map<string, number>();
   return http.createServer(async (req, res) => {
     const started = Date.now();
     let model = "unknown";
@@ -219,8 +219,8 @@ export function createBedrockRuntimeAdapterServer(options: {
         sendJson(res, 200, {
           object: "list",
           data: [...servedModels]
-            .sort()
-            .map((id) => ({ id, object: "model", owned_by: "amazon-bedrock" })),
+            .sort(([left], [right]) => left.localeCompare(right))
+            .map(([id, created]) => ({ id, object: "model", created, owned_by: "amazon-bedrock" })),
         });
         return;
       }
@@ -251,7 +251,7 @@ export function createBedrockRuntimeAdapterServer(options: {
         for await (const chunk of chunks) {
           res.write(`data: ${JSON.stringify(chunk)}\n\n`);
         }
-        servedModels.add(model);
+        servedModels.set(model, servedModels.get(model) ?? Math.floor(Date.now() / 1000));
         res.write("data: [DONE]\n\n");
         res.end();
         logAdapterEvent(logger, "request_completed", {
@@ -266,7 +266,7 @@ export function createBedrockRuntimeAdapterServer(options: {
 
       operation = "converse";
       const response = await createOpenAiChatCompletion(body, options.client);
-      servedModels.add(model);
+      servedModels.set(model, servedModels.get(model) ?? Math.floor(Date.now() / 1000));
       sendJson(res, 200, response);
       logAdapterEvent(logger, "request_completed", {
         operation,

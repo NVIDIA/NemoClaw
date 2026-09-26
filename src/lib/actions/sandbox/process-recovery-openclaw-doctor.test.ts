@@ -36,15 +36,17 @@ function fakeGnuStatEnv(root: string): NodeJS.ProcessEnv {
 }
 
 describe("OpenClaw post-upgrade recovery doctor", () => {
-  it("publishes an owner-only one-shot marker atomically", () => {
+  it("retires a stale ready receipt before publishing an owner-only one-shot marker", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-doctor-marker-"));
+    const ready = path.join(root, "doctor-ready");
     try {
-      const command = buildOpenClawPostUpgradeDoctorMarkerCommand().replaceAll(
-        "/sandbox/.openclaw",
-        root,
-      );
+      fs.writeFileSync(ready, "nemoclaw-openclaw-post-upgrade-doctor-ready-v1\n", { mode: 0o600 });
+      const command = buildOpenClawPostUpgradeDoctorMarkerCommand()
+        .replaceAll("/sandbox/.openclaw", root)
+        .replaceAll("/tmp/nemoclaw-post-upgrade-doctor-ready", ready);
       execFileSync("bash", ["-c", command]);
 
+      expect(fs.existsSync(ready)).toBe(false);
       const marker = path.join(root, ".nemoclaw-post-upgrade-doctor");
       expect(fs.readFileSync(marker, "utf8")).toBe("nemoclaw-openclaw-post-upgrade-doctor-v2\n");
       expect(fs.statSync(marker).mode & 0o777).toBe(0o600);
@@ -53,15 +55,14 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
     }
   });
 
-  it.each(["chmod", "printf", "mv"])(
+  it.each(["rm", "chmod", "printf", "mv"])(
     "fails closed when the atomic marker %s operation fails",
     (operation) => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-doctor-marker-failure-"));
       try {
-        const command = buildOpenClawPostUpgradeDoctorMarkerCommand().replaceAll(
-          "/sandbox/.openclaw",
-          root,
-        );
+        const command = buildOpenClawPostUpgradeDoctorMarkerCommand()
+          .replaceAll("/sandbox/.openclaw", root)
+          .replaceAll("/tmp/nemoclaw-post-upgrade-doctor-ready", path.join(root, "doctor-ready"));
         const result = spawnSync("bash", ["-c", `${operation}() { return 19; }; ${command}`], {
           encoding: "utf8",
         });

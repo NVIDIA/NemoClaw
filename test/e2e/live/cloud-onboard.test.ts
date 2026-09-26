@@ -19,6 +19,7 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { assertStockManagedImageReceipt } from "../fixtures/managed-image-receipt.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
+import { captureSandboxFailureDiagnostics } from "../fixtures/sandbox-failure-diagnostics.ts";
 import { createPublicInstallWorkspace } from "../fixtures/public-install-workspace.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
@@ -353,6 +354,12 @@ test(
         }),
         redactionValues,
         timeoutMs: 180_000,
+      });
+      await captureSandboxFailureDiagnostics(host, result, {
+        sandboxName: SANDBOX_NAME,
+        artifactPrefix: `cloud-check-${scriptName.replace(/\.sh$/, "")}-failure`,
+        redactionValues,
+        captureGatewayLog: true,
       });
       expect(result.exitCode, `${scriptName}: ${resultText(result)}`).toBe(0);
     }

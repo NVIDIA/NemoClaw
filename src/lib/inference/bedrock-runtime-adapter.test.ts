@@ -342,14 +342,22 @@ describe("Bedrock Runtime OpenAI adapter", () => {
     expect(response.choices[0].message.content).toBe("OK");
   });
 
-  it("lists only models served successfully by the authenticated adapter", async () => {
+  it("lists only models served successfully by the authenticated adapter", async ({
+    onTestFinished,
+  }) => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_740_000_000_000);
+    onTestFinished(() => now.mockRestore());
     const send = vi
       .fn()
       .mockResolvedValueOnce({
         output: { message: { content: [{ text: "OK" }] } },
         stopReason: "end_turn",
       })
-      .mockRejectedValueOnce(new Error("model unavailable"));
+      .mockRejectedValueOnce(new Error("model unavailable"))
+      .mockResolvedValueOnce({
+        output: { message: { content: [{ text: "OK" }] } },
+        stopReason: "end_turn",
+      });
     const baseUrl = await listen(
       createBedrockRuntimeAdapterServer({
         token: "local-token",
@@ -386,9 +394,24 @@ describe("Bedrock Runtime OpenAI adapter", () => {
     const catalog = await fetch(`${baseUrl}/v1/models`, { headers });
     expect(await catalog.json()).toEqual({
       object: "list",
-      data: [{ id: "served-model", object: "model", owned_by: "amazon-bedrock" }],
+      data: [
+        { id: "served-model", object: "model", created: 1_740_000_000, owned_by: "amazon-bedrock" },
+      ],
     });
-    expect(send).toHaveBeenCalledTimes(2);
+    now.mockReturnValue(1_740_000_010_000);
+    const servedAgain = await fetch(`${baseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model: "served-model",
+        messages: [{ role: "user", content: "hello" }],
+      }),
+    });
+    expect(servedAgain.status).toBe(200);
+    await servedAgain.json();
+    const repeatedCatalog = await fetch(`${baseUrl}/v1/models`, { headers });
+    expect(await repeatedCatalog.json()).toMatchObject({ data: [{ created: 1_740_000_000 }] });
+    expect(send).toHaveBeenCalledTimes(3);
   });
 
   it.each([

@@ -523,8 +523,10 @@
         "test/e2e/support/e2e-host-dependency-workflow-boundary.test.ts",
         "test/e2e/support/corporate-ca-workload-kind.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
-      ]
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/mcp-bridge-hermes-http.test.ts"
+      ],
+      "liveSources": ["test/e2e/fixtures/sandbox-failure-diagnostics.ts"]
     },
     {
       "live": "test/e2e/live/common-egress-agent.test.ts",
