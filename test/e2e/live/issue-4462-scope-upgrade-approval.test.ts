@@ -35,6 +35,12 @@ const GATEWAY_OBSERVER_LOCAL_PATH = path.join(
 // execute the uploaded file by its basename.
 const GATEWAY_OBSERVER_REMOTE_DIR = "/tmp";
 const GATEWAY_OBSERVER_REMOTE_PATH = `${GATEWAY_OBSERVER_REMOTE_DIR}/issue-4462-fresh-agent-gateway-snapshot.py`;
+const PENDING_ALLOWLISTED_REQUEST_LOCAL_PATH = path.join(
+  import.meta.dirname,
+  "..",
+  "lib",
+  "issue-4462-pending-allowlisted-request.py",
+);
 
 validateSandboxName(SANDBOX_NAME);
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
@@ -181,6 +187,17 @@ test(
       },
     );
     expect(upload.exitCode, "Gateway observer upload failed; inspect the phase artifact").toBe(0);
+    await sandbox.upload(
+      SANDBOX_NAME,
+      PENDING_ALLOWLISTED_REQUEST_LOCAL_PATH,
+      GATEWAY_OBSERVER_REMOTE_DIR,
+      {
+        artifactName: "phase-2-upload-pending-allowlisted-selector",
+        env: env(),
+        redactionValues: [apiKey],
+        timeoutMs: GATEWAY_OBSERVATION_TIMEOUT_MS,
+      },
+    );
 
     const captureGatewayObservation = async <T>(phase: string): Promise<T> => {
       const result = await sandbox.exec(

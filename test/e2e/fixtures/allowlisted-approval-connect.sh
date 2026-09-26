@@ -15,7 +15,11 @@ trap 'rm -f -- "$trigger_output" "$request_id_file"' EXIT
   'set -euo pipefail; identity=/sandbox/.openclaw/identity; test -f "$identity/device.json"; rm -f -- "$identity/device.json" "$identity/device-auth.json"'
 
 set +e
-"$cli" "$sandbox" exec --timeout 60 -- openclaw agents list --json >"$trigger_output" 2>&1
+# Expansion is intentionally deferred to the in-sandbox bash process.
+# shellcheck disable=SC2016
+"$cli" "$sandbox" exec --timeout 60 -- bash -lc \
+  'set +e; openclaw agents list --json; status=$?; set -e; python3 /tmp/issue-4462-pending-allowlisted-request.py; exit "$status"' \
+  >"$trigger_output" 2>&1
 trigger_status=$?
 set -e
 if [ "$trigger_status" -eq 0 ]; then
@@ -34,14 +38,13 @@ if not re.search(
     re.IGNORECASE,
 ):
     raise SystemExit("native failure did not report a pending allowlisted request")
-request_ids = {
-    match.lower()
-    for match in re.findall(
-        r"\brequestId\s*[:=]\s*([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\b",
+request_ids = set(
+    re.findall(
+        r"^ISSUE_4462_ALLOWLISTED_REQUEST_ID=([0-9a-f-]{36})$",
         raw,
-        re.IGNORECASE,
+        re.MULTILINE,
     )
-}
+)
 if len(request_ids) != 1:
     raise SystemExit(f"native failure reported {len(request_ids)} request IDs")
 Path(sys.argv[2]).write_text(next(iter(request_ids)), encoding="utf-8")
