@@ -38,13 +38,11 @@ const CURRENT_INSTALLED_BASE = [
 
 const CURRENT_INSTALLED_DOCKERFILE = [
   "COPY agents/hermes/validate-hermes-env-secret-boundary.py /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py",
-  "COPY agents/hermes/seed-dashboard-config.py /usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py",
   "RUN sha256sum /sandbox/.hermes/config.yaml /sandbox/.hermes/.env > /etc/nemoclaw/hermes.config-hash",
   "COPY agents/hermes/mcp-config-transaction.py /usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py",
   "COPY src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.116.json /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.116.json",
   "RUN HERMES_HOME=/sandbox/.hermes /usr/local/bin/hermes doctor --fix \\",
   "    && node /opt/nemoclaw-hermes-config/generate-config.ts",
-  "RUN mkdir -p /sandbox/.hermes/profiles/dashboard-home",
   "",
 ].join("\n");
 

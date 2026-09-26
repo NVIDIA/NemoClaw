@@ -893,6 +893,45 @@ describe("created OpenClaw sandbox finalization", () => {
     expect(register).toHaveBeenCalledWith(publishedTarget);
   });
 
+  it("admits legacy Hermes dashboard state for migration during recreated restore", async () => {
+    const register = vi.fn((target) => target);
+
+    await finalizeCreatedSandbox(
+      {
+        sandboxName: "hermes",
+        restoreBackupPath: "/tmp/hermes-backup",
+        preUpgradeBackup: true,
+        targetAgentType: "hermes",
+        validateManagedDcode: false,
+        provider: "compatible-endpoint",
+        model: "demo",
+        preferredInferenceApi: "openai-completions",
+      },
+      {
+        ...preparedRestoreAuthority("hermes"),
+        restoreRecreatedSandboxState: async (_name, _backupPath, options) => {
+          expect(options.restoreLegacyMigrationStateDirs).toEqual(["dashboard-home"]);
+          return {
+            success: true,
+            restoredDirs: ["dashboard-home"],
+            failedDirs: [],
+            restoredFiles: [],
+            failedFiles: [],
+          };
+        },
+        getDcodeSelectionDrift: vi.fn(),
+        register,
+        note: vi.fn(),
+        error: vi.fn(),
+        exitProcess: (code): never => {
+          throw new Error(`exit ${code}`);
+        },
+      },
+    );
+
+    expect(register).toHaveBeenCalledWith({ name: "hermes" });
+  });
+
   it("does not publish the prepared target when managed restore fails (#10546)", async () => {
     const prepared = { name: "openclaw" } as SandboxEntry;
     const register = vi.fn();

@@ -29,6 +29,12 @@ const { probeOpenAiLikeEndpointOptimized } = require("../../inference/onboard-pr
     options?: Record<string, unknown>,
   ) => Promise<{ ok: boolean; message?: string }>;
 };
+const { getRemoteProviderConfigForName } = require("../providers") as {
+  getRemoteProviderConfigForName: (
+    providerName: string,
+    remoteProviderConfig: RemoteProviderDeps["REMOTE_PROVIDER_CONFIG"],
+  ) => RemoteProviderDeps["REMOTE_PROVIDER_CONFIG"][string] | null;
+};
 
 type StaleProviderReplaceResult = { ok: boolean; status?: number | null; message?: string };
 
@@ -188,10 +194,7 @@ export async function setupRemoteProviderInference(
     compactText,
   } = deps;
 
-  const config =
-    provider === "nvidia-nim"
-      ? REMOTE_PROVIDER_CONFIG.build
-      : Object.values(REMOTE_PROVIDER_CONFIG).find((entry) => entry.providerName === provider);
+  const config = getRemoteProviderConfigForName(provider, REMOTE_PROVIDER_CONFIG);
   if (!config) {
     error(`  Unsupported provider configuration: ${provider}`);
     return exitProcess(1);

@@ -178,6 +178,7 @@ test(
       provider: "compatible-endpoint",
       model: hostedInstallModel(installEnv),
     });
+    const baselineSession = structuredClone(registryState().session);
     const publicProvider = publicApiKey
       ? await registerPublicNvidiaSwitchProvider(host, publicApiKey, env())
       : null;
@@ -252,27 +253,16 @@ test(
     expect((await apiKeyShape(sandbox)).exitCode).toBe(0);
     expect(config.stdout).not.toMatch(/^models:\s*$/mu);
 
-    const dashboardConfig = await sandbox.exec(
+    const dashboardShadowConfig = await sandbox.exec(
       SANDBOX_NAME,
-      ["cat", "/sandbox/.hermes/profiles/dashboard-home/config.yaml"],
+      ["test", "!", "-e", "/sandbox/.hermes/profiles/dashboard-home/config.yaml"],
       {
-        artifactName: "hermes-dashboard-config-yaml-after-switch",
+        artifactName: "hermes-dashboard-shadow-config-absent-after-switch",
         env: env(),
-        redactionValues,
         timeoutMs: 30_000,
       },
     );
-    expect(dashboardConfig.exitCode, resultText(dashboardConfig)).toBe(0);
-    const dashboardModel = parseHermesModelBlock(dashboardConfig.stdout);
-    expect(dashboardModel.default).toBe(SWITCH_MODEL);
-    expect(dashboardModel.provider).toBe(SWITCH_PROVIDER);
-    expect(dashboardModel.base_url).toBe(expectedBaseUrl());
-    expect(dashboardModel.api_mode).toBe(expectedApiMode());
-    ["approvals", "browser", "session_reset", "display", "updates"].forEach(
-      (reviewedPolicySection) => {
-        expect(dashboardConfig.stdout).toMatch(new RegExp(`^${reviewedPolicySection}:`, "mu"));
-      },
-    );
+    expect(dashboardShadowConfig.exitCode, resultText(dashboardShadowConfig)).toBe(0);
 
     const dashboardModelInfo = await sandbox.exec(
       SANDBOX_NAME,
@@ -314,10 +304,7 @@ test(
     expect(state.registry.sandboxes?.[SANDBOX_NAME]?.agent).toBe("hermes");
     expect(state.registry.sandboxes?.[SANDBOX_NAME]?.provider).toBe(SWITCH_PROVIDER);
     expect(state.registry.sandboxes?.[SANDBOX_NAME]?.model).toBe(SWITCH_MODEL);
-    expect(state.session.sandboxName).toBe(SANDBOX_NAME);
-    expect(state.session.agent).toBe("hermes");
-    expect(state.session.provider).toBe(SWITCH_PROVIDER);
-    expect(state.session.model).toBe(SWITCH_MODEL);
+    expect(state.session).toEqual(baselineSession);
     const publicSwitch = SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER;
     const durableEndpointUrl = publicSwitch
       ? null
@@ -337,14 +324,6 @@ test(
       publicSwitch ? null : RUNTIME_SWITCH_API,
     );
     expect(state.registry.sandboxes?.[SANDBOX_NAME]?.nimContainer).toBeNull();
-    expect(canonicalEndpoint(state.session.endpointUrl)).toBe(
-      canonicalEndpoint(publicSwitch ? "https://inference.local/v1" : durableEndpointUrl),
-    );
-    expect(state.session.credentialEnv).toBe(
-      publicSwitch ? "OPENAI_API_KEY" : durableCredentialEnv,
-    );
-    expect(state.session.preferredInferenceApi).toBe(RUNTIME_SWITCH_API);
-    expect(state.session.nimContainer).toBeNull();
 
     progress.phase("exercise inference.local and Hermes API");
     const inferenceLocalPayload = JSON.stringify({

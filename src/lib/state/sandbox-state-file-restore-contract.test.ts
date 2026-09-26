@@ -133,4 +133,25 @@ describe("state-file restore target contract", () => {
     expect(result.error).toContain("does not match target directory");
     expect(result.failedFiles).toEqual(["config.toml"]);
   });
+
+  it("admits only declared non-backup directories as one-time migration sources", async () => {
+    const backupPath = writeBackup({
+      agentType: "hermes",
+      dir: "/sandbox/.hermes",
+      stateFiles: [],
+    });
+
+    const invalid = await restoreRecreatedSandboxState("alpha", backupPath, {
+      targetAgentType: "hermes",
+      restoreLegacyMigrationStateDirs: ["profiles"],
+    });
+    const valid = await restoreRecreatedSandboxState("alpha", backupPath, {
+      targetAgentType: "hermes",
+      restoreLegacyMigrationStateDirs: ["dashboard-home"],
+    });
+
+    expect(invalid.success).toBe(false);
+    expect(invalid.error).toContain("not declared non-backup state");
+    expect(valid.success).toBe(true);
+  });
 });

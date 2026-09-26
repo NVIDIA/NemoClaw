@@ -231,7 +231,7 @@ async function assertRuntimeLayout(probe: DockerProbe, container: string): Promi
   await expectContainerSh(
     probe,
     container,
-    "Hermes runtime, API authorization, or dashboard credential-boundary contract failed",
+    "Hermes runtime, API authorization, or native dashboard config contract failed",
     String.raw`set -eu
 /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- sh -euc 'for dir in hooks image_cache audio_cache logs/curator; do p="/sandbox/.hermes/$dir/.nemoclaw-write-test"; : >"$p"; rm -f "$p"; done'
 for dir in sessions gateway runtime; do
@@ -258,18 +258,7 @@ printf '%s\n' "$token" | grep -Eq '^[[:xdigit:]]{64}$'
 curl -sS -o /dev/null -w '%{http_code}\n' --max-time 15 http://127.0.0.1:8642/v1/models | grep -Fx 401
 printf 'header = "Authorization: Bearer %s"\n' wrong-token | curl -sS -o /dev/null -w '%{http_code}\n' --max-time 15 --config - http://127.0.0.1:8642/v1/models | grep -Fx 401
 printf 'header = "Authorization: Bearer %s"\n' "$token" | curl -sS -o /dev/null -w '%{http_code}\n' --max-time 15 --config - http://127.0.0.1:8642/v1/models | grep -Ex '(2..|3..|404)'
-dashboard=/sandbox/.hermes/profiles/dashboard-home
-timeout 30 sh -c 'until stat "$1/config.yaml" >/dev/null 2>&1 && stat "$1/.env" >/dev/null 2>&1; do sleep 1; done' sh "$dashboard"
-stat -c '%U:%G %a' "$dashboard" | grep -Fx 'sandbox:sandbox 700'
-stat -c '%U:%G %a' "$dashboard/config.yaml" | grep -Fx 'sandbox:sandbox 600'
-stat -c '%U:%G %a' "$dashboard/.env" | grep -Fx 'sandbox:sandbox 600'
-sed -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' -e 's/^[[:space:]]*export[[:space:]]*//' "$dashboard/.env" | cut -d= -f1 | sort > /tmp/nemoclaw-dashboard-env-keys
-printf '%s\n' API_SERVER_HOST API_SERVER_PORT | sort > /tmp/nemoclaw-dashboard-env-keys.expected
-cmp /tmp/nemoclaw-dashboard-env-keys.expected /tmp/nemoclaw-dashboard-env-keys
-grep -Eq '^[[:space:]]*(export[[:space:]]+)?API_SERVER_KEY=' "$dashboard/.env" && exit 1 || :
-grep -F 'model:' "$dashboard/config.yaml" >/dev/null
-grep -F 'custom_providers:' "$dashboard/config.yaml" >/dev/null
-grep -F '_nemoclaw_upstream:' "$dashboard/config.yaml" >/dev/null`,
+test ! -e /sandbox/.hermes/profiles/dashboard-home`,
   );
   await expectContainerSh(
     probe,
@@ -291,7 +280,10 @@ grep -F '_nemoclaw_upstream:' "$dashboard/config.yaml" >/dev/null`,
   );
 }
 
-async function assertBuildOnlyPathsAbsent(probe: DockerProbe, container: string): Promise<void> {
+async function assertImageCapabilitiesAndStageRecovery(
+  probe: DockerProbe,
+  container: string,
+): Promise<void> {
   await expectContainerSh(
     probe,
     container,
@@ -314,29 +306,8 @@ assert HermesACPAgent is not None
 PY
 for path in /opt/hermes/tests /root/.npm /root/.cache/electron /root/.cache/node-gyp /root/.cache/uv; do
   test ! -e "$path" && test ! -L "$path"
-done`,
-  );
-}
-
-async function assertLegacyDashboardMigration(
-  probe: DockerProbe,
-  container: string,
-): Promise<void> {
-  await expectContainerSh(
-    probe,
-    container,
-    "legacy dashboard profile was not migrated with its state and permissions",
-    String.raw`
-set -eu
-test ! -e /sandbox/.hermes/dashboard-home
-test ! -L /sandbox/.hermes/dashboard-home
-test -f /sandbox/.hermes/profiles/dashboard-home/MEMORY.md
-grep -Fx "legacy dashboard memory" /sandbox/.hermes/profiles/dashboard-home/MEMORY.md
-[ "$(stat -c '%a' /sandbox/.hermes/profiles/dashboard-home)" = "700" ]
-[ "$(stat -c '%U:%G' /sandbox/.hermes/profiles/dashboard-home)" = "sandbox:sandbox" ]
-[ "$(stat -c '%a' /sandbox/.hermes/profiles/dashboard-home/MEMORY.md)" = "600" ]
-[ "$(stat -c '%U:%G' /sandbox/.hermes/profiles/dashboard-home/MEMORY.md)" = "sandbox:sandbox" ]
-`,
+done
+/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- chmod 0700 /sandbox/.hermes`,
   );
 }
 
@@ -383,10 +354,19 @@ async function runCleanVariant(
     { artifactName: "start-clean-root-entrypoint-container", timeoutMs: RUN_TIMEOUT_MS },
   );
   await waitForHealth(probe, container);
+  await assertImageCapabilitiesAndStageRecovery(probe, container);
+
+  // Exercise the root entrypoint's recovery posture from the exact restrictive
+  // mode the native dashboard can leave behind. A recovered gateway must be
+  // healthy and retain traversal of the shared native Hermes home.
+  await probe.expect(["restart", container], {
+    artifactName: "restart-clean-root-entrypoint-container",
+    timeoutMs: RUN_TIMEOUT_MS,
+  });
+  await waitForHealth(probe, container);
   await assertGatewayProcess(probe, container, "1");
   await assertGatewayLogClean(probe, container);
   await assertRuntimeLayout(probe, container);
-  await assertBuildOnlyPathsAbsent(probe, container);
 }
 
 async function runLegacyVariant(
@@ -401,10 +381,11 @@ rm -f /sandbox/.hermes/gateway.pid
 printf "stale pid\n" >/sandbox/.hermes/runtime/gateway.pid
 printf "stale lock\n" >/sandbox/.hermes/runtime/gateway.lock
 ln -s runtime/gateway.pid /sandbox/.hermes/gateway.pid
-install -d -m 770 -o sandbox -g sandbox /sandbox/.hermes/dashboard-home
-printf "legacy dashboard memory\n" >/sandbox/.hermes/dashboard-home/MEMORY.md
-chown sandbox:sandbox /sandbox/.hermes/dashboard-home/MEMORY.md
-chmod 600 /sandbox/.hermes/dashboard-home/MEMORY.md
+legacy_home=/sandbox/.hermes/profiles/dashboard-home
+install -d -m 700 -o sandbox -g sandbox "$legacy_home"
+install -m 600 -o sandbox -g sandbox /sandbox/.hermes/config.yaml "$legacy_home/config.yaml"
+printf "root-entrypoint migration proof\n" >/tmp/nemoclaw-legacy-memory
+install -m 600 -o sandbox -g sandbox /tmp/nemoclaw-legacy-memory "$legacy_home/ENTRYPOINT-MIGRATION.md"
 chmod 00750 /sandbox/.hermes
 chown sandbox:sandbox /sandbox/.hermes/sessions /sandbox/.hermes/gateway /sandbox/.hermes/runtime
 chmod 750 /sandbox/.hermes/sessions /sandbox/.hermes/gateway /sandbox/.hermes/runtime
@@ -436,12 +417,11 @@ exec /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-start`;
   await assertGatewayProcess(probe, container);
   await assertGatewayLogClean(probe, container);
   await assertRuntimeLayout(probe, container);
-  await assertLegacyDashboardMigration(probe, container);
   await expectContainerSh(
     probe,
     container,
     "legacy recovery or root Python isolation evidence was missing",
-    "grep -F 'Removing unsafe stale Hermes legacy PID file symlink' /tmp/nemoclaw-start.log && test ! -e /tmp/nemoclaw-root-sitecustomize-ran",
+    "grep -F 'Removing unsafe stale Hermes legacy PID file symlink' /tmp/nemoclaw-start.log && grep -Fx 'root-entrypoint migration proof' /sandbox/.hermes/ENTRYPOINT-MIGRATION.md && test ! -e /tmp/nemoclaw-root-sitecustomize-ran",
   );
 }
 
@@ -716,7 +696,8 @@ test(
           "gateway.pid is stored as a regular file below the writable runtime directory",
           "gateway user cannot remove config.yaml from sticky config root",
           "Hermes API denies missing and wrong bearer tokens and accepts API_SERVER_KEY",
-          "dashboard profile is sandbox-owned and excludes API_SERVER_KEY from its .env allowlist",
+          "dashboard uses the native Hermes config without a shadow config or .env",
+          "root recovery restores gateway access after dashboard-style home tightening",
         ],
       },
       async ({ containers, image, probe, runId }) => {
@@ -728,7 +709,7 @@ test(
 );
 
 test(
-  "repairs restored Hermes state and legacy dashboard layout during root startup",
+  "repairs restored Hermes state during root startup",
   {
     meta: {
       e2ePhases: [
@@ -746,8 +727,9 @@ test(
         assertion: "restoredStateMigrationVerified",
         contract: [
           "legacy gateway.pid symlink and state shape are repaired and booted",
+          "legacy dashboard durable state migrates through the packaged production entrypoint",
+          "verified generated dashboard configuration is retired after native-state migration",
           "restored state directories permit gateway-user and sandbox-user writes",
-          "legacy dashboard profile state is moved into profiles/dashboard-home",
           "hostile inherited PYTHONPATH cannot execute sitecustomize as root",
         ],
       },

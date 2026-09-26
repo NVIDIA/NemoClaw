@@ -8,6 +8,8 @@ import path from "node:path";
 
 import { afterAll, afterEach, describe, expect, it } from "vitest";
 
+import type { HermesBuildSettings } from "../../../agents/hermes/config/build-env.ts";
+import { buildHermesManagedPolicy } from "../../../agents/hermes/config/managed-policy.ts";
 import { loadAgent } from "../../../src/lib/agent/defs.ts";
 
 const originalHome = process.env.HOME;
@@ -17,8 +19,22 @@ const sandboxState = await import("../../../src/lib/state/sandbox.ts");
 const { buildStateFileBackupCommand, buildStateFileRestoreCommand } = sandboxState;
 
 const sandboxPython = "/usr/bin/python3";
+const dashboardStateMigrator = path.resolve("agents/hermes/migrate-dashboard-state.py");
 const canRunSqlite = process.platform === "linux" && fs.existsSync(sandboxPython);
 const fixtures: string[] = [];
+const MIGRATION_POLICY_SETTINGS: HermesBuildSettings = {
+  model: "test-model",
+  baseUrl: "https://inference.local/v1",
+  providerKey: "test-provider",
+  upstreamProvider: "Test Provider",
+  inferenceApi: "openai-completions",
+  contextWindow: 32_768,
+  toolDisclosure: "progressive",
+  webSearchProvider: null,
+  messagingCredentialPlaceholders: [],
+  managedToolGateways: { brokerEnabled: false, presets: [] },
+  managedImageCapabilityUnion: false,
+};
 
 afterEach(() => {
   for (const fixture of fixtures.splice(0)) {
@@ -37,6 +53,39 @@ function tempFixture(): string {
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-ledger-"));
   fixtures.push(fixture);
   return fixture;
+}
+
+function dashboardMigrationFixture(): { root: string; hermes: string } {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-dashboard-migration-"));
+  const hermes = path.join(root, ".hermes");
+  fs.mkdirSync(hermes);
+  fs.writeFileSync(
+    path.join(root, "managed-policy.json"),
+    `${JSON.stringify(buildHermesManagedPolicy(MIGRATION_POLICY_SETTINGS, {}))}\n`,
+  );
+  fixtures.push(root);
+  return { root, hermes };
+}
+
+function writeDashboardMigrationFile(file: string, value: string): void {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, value, { mode: 0o600 });
+}
+
+function runDashboardMigration(hermes: string, extraArgs: string[] = []) {
+  return spawnSync(
+    "python3",
+    [
+      "-I",
+      dashboardStateMigrator,
+      "--hermes-dir",
+      hermes,
+      "--managed-policy",
+      path.join(path.dirname(hermes), "managed-policy.json"),
+      ...extraArgs,
+    ],
+    { encoding: "utf8" },
+  );
 }
 
 function createLedger(filePath: string, value: string): void {
@@ -76,6 +125,8 @@ describe("Hermes 0.19 durable state ledgers", () => {
     const hermes = loadAgent("hermes");
 
     expect(hermes.stateDirs).toContain("cron");
+    expect(hermes.nonBackupStateDirs).toContain("dashboard-home");
+    expect(hermes.backupStateDirs).not.toContain("dashboard-home");
     expect(hermes.stateFiles).toEqual(
       expect.arrayContaining([
         { path: "runtime/cron-executions.db", strategy: "sqlite_backup" },
@@ -302,5 +353,339 @@ for (const name of ["SOUL.md", ".hermes_history"]) {
         : Reflect.set(process.env, "NEMOCLAW_OPENSHELL_BIN", oldOpenshell);
       process.env.PATH = oldPath;
     }
+  });
+});
+
+describe("Hermes legacy dashboard-state migration", () => {
+  it("moves profile state and its WhatsApp session into the native home", () => {
+    const { hermes } = dashboardMigrationFixture();
+    const legacy = path.join(hermes, "profiles/dashboard-home");
+    writeDashboardMigrationFile(path.join(legacy, "MEMORY.md"), "remember me\n");
+    writeDashboardMigrationFile(path.join(legacy, "USER.md"), "operator\n");
+    writeDashboardMigrationFile(
+      path.join(legacy, "platforms/whatsapp/session/creds.json"),
+      '{"paired":true}\n',
+    );
+    writeDashboardMigrationFile(path.join(legacy, "config.yaml"), "model: shadow\n");
+    writeDashboardMigrationFile(path.join(legacy, ".env"), "SHADOW=1\n");
+    writeDashboardMigrationFile(path.join(hermes, "config.yaml"), "model: shadow\n");
+    writeDashboardMigrationFile(path.join(hermes, ".env"), "SHADOW=1\n");
+
+    const result = runDashboardMigration(hermes);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(fs.readFileSync(path.join(hermes, "MEMORY.md"), "utf8")).toBe("remember me\n");
+    expect(fs.readFileSync(path.join(hermes, "USER.md"), "utf8")).toBe("operator\n");
+    expect(
+      fs.readFileSync(path.join(hermes, "platforms/whatsapp/session/creds.json"), "utf8"),
+    ).toBe('{"paired":true}\n');
+    expect(fs.existsSync(legacy)).toBe(false);
+    expect(fs.readFileSync(path.join(hermes, "config.yaml"), "utf8")).toBe("model: shadow\n");
+    expect(fs.readFileSync(path.join(hermes, ".env"), "utf8")).toBe("SHADOW=1\n");
+    expect(runDashboardMigration(hermes).status).toBe(0);
+  });
+
+  it("refuses unverified legacy configuration without deleting either copy", () => {
+    const { hermes } = dashboardMigrationFixture();
+    const legacyConfig = path.join(hermes, "profiles/dashboard-home/config.yaml");
+    writeDashboardMigrationFile(path.join(hermes, "config.yaml"), "model: native\n");
+    writeDashboardMigrationFile(legacyConfig, "model: user-dashboard-edit\n");
+
+    const result = runDashboardMigration(hermes);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("conflicts with native state");
+    expect(fs.readFileSync(path.join(hermes, "config.yaml"), "utf8")).toBe("model: native\n");
+    expect(fs.readFileSync(legacyConfig, "utf8")).toBe("model: user-dashboard-edit\n");
+  });
+
+  it("preserves legacy configuration with duplicate YAML keys at any mapping depth", () => {
+    const { hermes } = dashboardMigrationFixture();
+    const legacyConfig = path.join(hermes, "profiles/dashboard-home/config.yaml");
+    const nativeConfig = [
+      "model:",
+      "  default: nvidia/model",
+      "  provider: routed",
+      "  base_url: https://inference.local/v1",
+      "  api_key: sk-OPENSHELL-PROXY-REWRITE",
+      "",
+    ].join("\n");
+    const ambiguousConfig = [
+      "model:",
+      "  default: user-edited/model",
+      "  default: nvidia/model",
+      "  provider: routed",
+      "  base_url: https://inference.local/v1",
+      "  api_key: sk-OPENSHELL-PROXY-REWRITE",
+      "",
+    ].join("\n");
+    writeDashboardMigrationFile(path.join(hermes, "config.yaml"), nativeConfig);
+    writeDashboardMigrationFile(legacyConfig, ambiguousConfig);
+
+    const result = runDashboardMigration(hermes);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("conflicts with native state");
+    expect(fs.readFileSync(path.join(hermes, "config.yaml"), "utf8")).toBe(nativeConfig);
+    expect(fs.readFileSync(legacyConfig, "utf8")).toBe(ambiguousConfig);
+  });
+
+  it("discards a verified generated dashboard projection that differs from native config", () => {
+    const { hermes } = dashboardMigrationFixture();
+    const legacy = path.join(hermes, "profiles/dashboard-home");
+    const nativeConfig = [
+      "_config_version: 33",
+      "_nemoclaw_upstream:",
+      "  provider_key: routed",
+      "model:",
+      "  default: nvidia/model",
+      "  provider: custom",
+      "  base_url: https://inference.local/v1",
+      "  api_key: sk-OPENSHELL-PROXY-REWRITE",
+      "approvals:",
+      "  mode: manual",
+      "terminal:",
+      "  timeout: 180",
+      "",
+    ].join("\n");
+    const generatedConfig = [
+      "_config_version: 27",
+      "_nemoclaw_upstream:",
+      "  provider_key: routed",
+      "model:",
+      "  default: nvidia/model",
+      "  provider: routed",
+      "  base_url: https://inference.local/v1",
+      "  api_key: sk-OPENSHELL-PROXY-REWRITE",
+      "approvals:",
+      "  mode: manual",
+      "",
+    ].join("\n");
+    writeDashboardMigrationFile(path.join(hermes, "config.yaml"), nativeConfig);
+    writeDashboardMigrationFile(
+      path.join(hermes, ".env"),
+      "API_SERVER_HOST=127.0.0.1\nAPI_SERVER_PORT=18642\nUNRELATED_NATIVE=1\n",
+    );
+    writeDashboardMigrationFile(path.join(legacy, "config.yaml"), generatedConfig);
+    writeDashboardMigrationFile(
+      path.join(legacy, ".env"),
+      "API_SERVER_HOST=127.0.0.1\nAPI_SERVER_PORT=18642\n",
+    );
+    writeDashboardMigrationFile(path.join(legacy, "MEMORY.md"), "durable\n");
+
+    const result = runDashboardMigration(hermes);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(fs.readFileSync(path.join(hermes, "config.yaml"), "utf8")).toBe(nativeConfig);
+    expect(fs.readFileSync(path.join(hermes, "MEMORY.md"), "utf8")).toBe("durable\n");
+    expect(fs.existsSync(legacy)).toBe(false);
+  });
+
+  it("classifies generated environment state through the managed policy contract", () => {
+    const { root, hermes } = dashboardMigrationFixture();
+    const legacy = path.join(hermes, "profiles/dashboard-home");
+    const policyPath = path.join(root, "managed-policy.json");
+    const policy = JSON.parse(fs.readFileSync(policyPath, "utf8")) as {
+      shadow_migration: { env_keys: string[] };
+    };
+    policy.shadow_migration.env_keys.push("NEMOCLAW_POLICY_PROBE");
+    fs.writeFileSync(policyPath, `${JSON.stringify(policy)}\n`);
+    writeDashboardMigrationFile(path.join(hermes, ".env"), "NEMOCLAW_POLICY_PROBE=1\n");
+    writeDashboardMigrationFile(path.join(legacy, ".env"), "NEMOCLAW_POLICY_PROBE=1\n");
+    writeDashboardMigrationFile(path.join(legacy, "MEMORY.md"), "durable\n");
+
+    const result = runDashboardMigration(hermes);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(fs.readFileSync(path.join(hermes, "MEMORY.md"), "utf8")).toBe("durable\n");
+    expect(fs.existsSync(legacy)).toBe(false);
+  });
+
+  it("refuses an over-limit legacy tree before moving any state", () => {
+    const { hermes } = dashboardMigrationFixture();
+    const legacy = path.join(hermes, "profiles/dashboard-home");
+    writeDashboardMigrationFile(path.join(legacy, "MEMORY.md"), "one\n");
+    writeDashboardMigrationFile(path.join(legacy, "USER.md"), "two\n");
+
+    const result = runDashboardMigration(hermes, ["--max-entries", "1"]);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("exceeds maximum entry count 1");
+    expect(fs.readFileSync(path.join(legacy, "MEMORY.md"), "utf8")).toBe("one\n");
+    expect(fs.readFileSync(path.join(legacy, "USER.md"), "utf8")).toBe("two\n");
+    expect(fs.existsSync(path.join(hermes, "MEMORY.md"))).toBe(false);
+    expect(fs.existsSync(path.join(hermes, "USER.md"))).toBe(false);
+  });
+
+  it("refuses an over-depth legacy tree before moving any state", () => {
+    const { hermes } = dashboardMigrationFixture();
+    const legacy = path.join(hermes, "profiles/dashboard-home");
+    const deepFile = path.join(legacy, "one/two/MEMORY.md");
+    writeDashboardMigrationFile(deepFile, "too deep\n");
+
+    const result = runDashboardMigration(hermes, ["--max-depth", "2"]);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("exceeds maximum depth 2");
+    expect(fs.readFileSync(deepFile, "utf8")).toBe("too deep\n");
+    expect(fs.existsSync(path.join(hermes, "one"))).toBe(false);
+  });
+
+  it("refuses an over-byte legacy tree before moving any state", () => {
+    const { hermes } = dashboardMigrationFixture();
+    const legacyFile = path.join(hermes, "profiles/dashboard-home/MEMORY.md");
+    writeDashboardMigrationFile(legacyFile, "too many bytes\n");
+
+    const result = runDashboardMigration(hermes, ["--max-bytes", "4"]);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("exceeds maximum byte count 4");
+    expect(fs.readFileSync(legacyFile, "utf8")).toBe("too many bytes\n");
+    expect(fs.existsSync(path.join(hermes, "MEMORY.md"))).toBe(false);
+  });
+
+  it("discards every generated metadata file while preserving durable state", () => {
+    const { hermes } = dashboardMigrationFixture();
+    const legacy = path.join(hermes, "profiles/dashboard-home");
+    writeDashboardMigrationFile(path.join(legacy, ".config-hash"), "generated hash\n");
+    writeDashboardMigrationFile(path.join(legacy, ".env-hash"), "generated env hash\n");
+    writeDashboardMigrationFile(
+      path.join(legacy, ".runtime-config-state.json"),
+      "generated runtime state\n",
+    );
+    writeDashboardMigrationFile(
+      path.join(legacy, "gateway_state.json"),
+      "generated gateway state\n",
+    );
+    writeDashboardMigrationFile(path.join(legacy, "MEMORY.md"), "durable\n");
+
+    const result = runDashboardMigration(hermes);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(fs.readFileSync(path.join(hermes, "MEMORY.md"), "utf8")).toBe("durable\n");
+    expect(fs.existsSync(path.join(hermes, ".config-hash"))).toBe(false);
+    expect(fs.existsSync(path.join(hermes, ".env-hash"))).toBe(false);
+    expect(fs.existsSync(path.join(hermes, ".runtime-config-state.json"))).toBe(false);
+    expect(fs.existsSync(path.join(hermes, "gateway_state.json"))).toBe(false);
+    expect(fs.existsSync(legacy)).toBe(false);
+  });
+
+  it.skipIf(!canRunSqlite)(
+    "backs up legacy dashboard SQLite state and retires runtime-only artifacts",
+    () => {
+      const { hermes } = dashboardMigrationFixture();
+      const legacy = path.join(hermes, "profiles/dashboard-home");
+      const runtime = path.join(hermes, "runtime");
+      const nativeLogs = path.join(hermes, "logs");
+      fs.mkdirSync(runtime);
+      fs.mkdirSync(nativeLogs);
+      fs.symlinkSync("runtime/state.db", path.join(hermes, "state.db"));
+      createLedger(path.join(legacy, "state.db"), "legacy-dashboard");
+      writeDashboardMigrationFile(path.join(legacy, "gateway.lock"), "stale lock\n");
+      writeDashboardMigrationFile(path.join(legacy, "gateway.pid"), "123\n");
+      writeDashboardMigrationFile(path.join(legacy, "state.db-wal"), "stale wal\n");
+      writeDashboardMigrationFile(path.join(legacy, "state.db-shm"), "stale shm\n");
+      writeDashboardMigrationFile(path.join(legacy, "logs/dashboard.log"), "stale log\n");
+      writeDashboardMigrationFile(path.join(nativeLogs, "gateway.log"), "native log\n");
+
+      const result = runDashboardMigration(hermes);
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(readLedger(path.join(runtime, "state.db"))).toBe("legacy-dashboard");
+      expect(fs.readlinkSync(path.join(hermes, "state.db"))).toBe("runtime/state.db");
+      expect(fs.readFileSync(path.join(nativeLogs, "gateway.log"), "utf8")).toBe("native log\n");
+      expect(fs.existsSync(legacy)).toBe(false);
+      expect(fs.existsSync(path.join(hermes, "gateway.lock"))).toBe(false);
+      expect(fs.existsSync(path.join(hermes, "gateway.pid"))).toBe(false);
+    },
+  );
+
+  it("does not treat a generated-only legacy root as ambiguous user state", () => {
+    const { hermes } = dashboardMigrationFixture();
+    writeDashboardMigrationFile(path.join(hermes, "dashboard-home/.config-hash"), "generated\n");
+    writeDashboardMigrationFile(
+      path.join(hermes, "profiles/dashboard-home/MEMORY.md"),
+      "durable\n",
+    );
+
+    const result = runDashboardMigration(hermes);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(fs.readFileSync(path.join(hermes, "MEMORY.md"), "utf8")).toBe("durable\n");
+    expect(fs.existsSync(path.join(hermes, "dashboard-home"))).toBe(false);
+    expect(fs.existsSync(path.join(hermes, "profiles/dashboard-home"))).toBe(false);
+  });
+
+  it("retires byte-identical legacy duplicates", () => {
+    const { hermes } = dashboardMigrationFixture();
+    writeDashboardMigrationFile(path.join(hermes, "MEMORY.md"), "same\n");
+    writeDashboardMigrationFile(path.join(hermes, "profiles/dashboard-home/MEMORY.md"), "same\n");
+
+    const result = runDashboardMigration(hermes);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(fs.readFileSync(path.join(hermes, "MEMORY.md"), "utf8")).toBe("same\n");
+    expect(fs.existsSync(path.join(hermes, "profiles/dashboard-home"))).toBe(false);
+  });
+
+  it("migrates the pre-profile dashboard home restored from an older snapshot", () => {
+    const { hermes } = dashboardMigrationFixture();
+    const legacy = path.join(hermes, "dashboard-home");
+    writeDashboardMigrationFile(path.join(legacy, "MEMORY.md"), "old snapshot\n");
+
+    const result = runDashboardMigration(hermes);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(fs.readFileSync(path.join(hermes, "MEMORY.md"), "utf8")).toBe("old snapshot\n");
+    expect(fs.existsSync(legacy)).toBe(false);
+  });
+
+  it("refuses a conflicting native destination without deleting either copy", () => {
+    const { hermes } = dashboardMigrationFixture();
+    const legacy = path.join(hermes, "profiles/dashboard-home/MEMORY.md");
+    writeDashboardMigrationFile(path.join(hermes, "MEMORY.md"), "native\n");
+    writeDashboardMigrationFile(legacy, "legacy\n");
+
+    const result = runDashboardMigration(hermes);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("conflicts with native state");
+    expect(fs.readFileSync(path.join(hermes, "MEMORY.md"), "utf8")).toBe("native\n");
+    expect(fs.readFileSync(legacy, "utf8")).toBe("legacy\n");
+  });
+
+  it("refuses linked legacy state", () => {
+    const { root, hermes } = dashboardMigrationFixture();
+    const legacy = path.join(hermes, "profiles/dashboard-home");
+    fs.mkdirSync(legacy, { recursive: true });
+    writeDashboardMigrationFile(path.join(root, "outside"), "outside\n");
+    fs.symlinkSync(path.join(root, "outside"), path.join(legacy, "MEMORY.md"));
+
+    const symlinkResult = runDashboardMigration(hermes);
+
+    expect(symlinkResult.status).toBe(1);
+    expect(symlinkResult.stderr).toContain("symbolic link");
+    fs.unlinkSync(path.join(legacy, "MEMORY.md"));
+    writeDashboardMigrationFile(path.join(legacy, "MEMORY.md"), "linked\n");
+    fs.linkSync(path.join(legacy, "MEMORY.md"), path.join(root, "linked-copy"));
+
+    const hardlinkResult = runDashboardMigration(hermes);
+
+    expect(hardlinkResult.status).toBe(1);
+    expect(hardlinkResult.stderr).toContain("hard-link count 2");
+    expect(fs.readFileSync(path.join(root, "linked-copy"), "utf8")).toBe("linked\n");
+  });
+
+  it("refuses two populated legacy homes as ambiguous", () => {
+    const { hermes } = dashboardMigrationFixture();
+    writeDashboardMigrationFile(path.join(hermes, "dashboard-home/MEMORY.md"), "old\n");
+    writeDashboardMigrationFile(path.join(hermes, "profiles/dashboard-home/USER.md"), "newer\n");
+
+    const result = runDashboardMigration(hermes);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("both legacy dashboard homes contain state");
+    expect(fs.existsSync(path.join(hermes, "dashboard-home/MEMORY.md"))).toBe(true);
+    expect(fs.existsSync(path.join(hermes, "profiles/dashboard-home/USER.md"))).toBe(true);
   });
 });

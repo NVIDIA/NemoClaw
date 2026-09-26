@@ -1745,13 +1745,11 @@ function getSandboxChannelStatePaths(
   if (stateDirs.has("platforms")) {
     paths.push(`${configDir}/platforms/${channelName}`);
   }
-  if (isHermesWhatsapp && stateDirs.has("profiles")) {
+  // Compatibility session paths are part of the supported removal contract,
+  // not the active rebuild manifest. Keep clearing them after their retired
+  // state_dirs entries disappear so old credentials cannot survive removal.
+  if (isHermesWhatsapp) {
     paths.push(`${configDir}/profiles/dashboard-home/platforms/whatsapp/session`);
-  }
-  // Retain cleanup for the pre-profile Dashboard home while Hermes startup
-  // still treats it as migration input. This prevents legacy credentials from
-  // being migrated back into the canonical profile during a later rebuild.
-  if (isHermesWhatsapp && stateDirs.has("dashboard-home")) {
     paths.push(`${configDir}/dashboard-home/platforms/whatsapp/session`);
   }
   if (paths.length === 0 && stateDirs.has(channelName)) {

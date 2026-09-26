@@ -12,8 +12,22 @@ export interface RotateTokenOpts {
 type RotateTokenFailure = (lines: string | readonly string[], exitCode?: number) => never;
 
 type RotateTokenSession = Pick<Session, "credentialEnv" | "provider" | "sandboxName"> & {
+  readonly endpointUrl?: string | null;
   readonly providerType?: string;
 };
+
+interface RotateTokenSandboxRoute {
+  credentialEnv?: string | null;
+  endpointUrl?: string | null;
+  preferredInferenceApi?: string | null;
+  provider?: string | null;
+}
+
+export function loadSandboxCredentialRoute(sandboxName: string): RotateTokenSandboxRoute | null {
+  const { load } =
+    require("../state/registry/persistence") as typeof import("../state/registry/persistence");
+  return load().sandboxes[sandboxName] ?? null;
+}
 
 export function loadRotateTokenSession(): RotateTokenSession | null {
   const { loadSession } =
@@ -25,6 +39,7 @@ export type RotateTokenDeps = {
   readonly appendAuditEntry: typeof import("../state/audit/operational").appendAuditEntry;
   readonly captureOpenshellCommand: typeof import("../adapters/openshell/client").captureOpenshellCommand;
   readonly fail: RotateTokenFailure;
+  readonly loadSandbox: (sandboxName: string) => RotateTokenSandboxRoute | null;
   readonly loadSession: () => RotateTokenSession | null;
   readonly promptSecret: typeof import("../credentials/store").promptSecret;
   readonly resolveAgentConfig: (sandboxName: string) => import("./agent-config").AgentConfigTarget;
@@ -40,22 +55,58 @@ export async function rotateSandboxToken(
 ): Promise<void> {
   deps.validateName(sandboxName, "sandbox name");
 
-  const session = deps.loadSession();
-  if (!session || !session.credentialEnv) {
-    deps.fail([
-      `  Cannot determine credential for sandbox '${sandboxName}'.`,
-      "  No onboard session found with a credentialEnv.",
-      "  Re-run: nemoclaw onboard --recreate-sandbox",
-    ]);
-  }
+  const registeredRoute = deps.loadSandbox(sandboxName);
+  const registeredProvider = nonEmptyString(registeredRoute?.provider);
+  const session = registeredRoute ? null : deps.loadSession();
 
-  if (session.sandboxName && session.sandboxName !== sandboxName) {
-    deps.fail(`  Onboard session is for sandbox '${session.sandboxName}', not '${sandboxName}'.`);
+  let credentialEnv: string;
+  let providerName: string;
+  let providerType: string;
+  let providerEndpointUrl: string | null = null;
+  if (registeredRoute) {
+    if (!registeredProvider) {
+      deps.fail([
+        `  Cannot rotate a credential for sandbox '${sandboxName}'.`,
+        "  Its registry entry has no inference provider.",
+      ]);
+    }
+    const registeredCredentialEnv = nonEmptyString(registeredRoute?.credentialEnv);
+    if (!registeredCredentialEnv) {
+      deps.fail([
+        `  Cannot rotate a credential for sandbox '${sandboxName}'.`,
+        `  Its registered provider '${registeredProvider}' has no credential environment variable.`,
+      ]);
+    }
+    credentialEnv = registeredCredentialEnv;
+    providerName = registeredProvider;
+    providerType = resolveSandboxCredentialProviderType(
+      registeredProvider,
+      registeredRoute?.preferredInferenceApi ?? null,
+    );
+    providerEndpointUrl = nonEmptyString(registeredRoute?.endpointUrl);
+  } else {
+    if (!session || !session.credentialEnv) {
+      deps.fail([
+        `  Cannot determine credential for sandbox '${sandboxName}'.`,
+        "  No registered inference route or onboard session was found with a credentialEnv.",
+        "  Re-run: nemoclaw onboard --recreate-sandbox",
+      ]);
+    }
+
+    if (session.sandboxName !== sandboxName) {
+      deps.fail(
+        session.sandboxName
+          ? `  Onboard session is for sandbox '${session.sandboxName}', not '${sandboxName}'.`
+          : `  Onboard session is not bound to sandbox '${sandboxName}'.`,
+      );
+    }
+    credentialEnv = session.credentialEnv;
+    providerName = session.provider || "inference";
+    providerType = session.providerType || "generic";
+    providerEndpointUrl = nonEmptyString(session.endpointUrl);
   }
 
   const target = deps.resolveAgentConfig(sandboxName);
-  const credentialEnv: string = session.credentialEnv;
-  const providerName: string = session.provider || "inference";
 
   console.log(`  Agent:          ${target.agentName}`);
   console.log(`  Provider:       ${providerName}`);
@@ -76,8 +127,6 @@ export async function rotateSandboxToken(
   if (/\s/.test(newToken)) deps.fail("  Token contains whitespace. This is likely a paste error.");
 
   const binary = getOpenshellBinary();
-  const providerType = session.providerType || "generic";
-
   try {
     assertMcpCredentialBoundaryRuntimeVersion({
       resolveOpenshell: () => binary,
@@ -100,8 +149,6 @@ export async function rotateSandboxToken(
     deps.fail(error instanceof Error ? error.message : "OpenShell version check failed.");
   }
 
-  deps.saveCredential(credentialEnv, newToken);
-
   console.log("  Updating openshell provider...");
   const result = deps.runOpenshellCommand(
     binary,
@@ -115,28 +162,42 @@ export async function rotateSandboxToken(
   );
 
   if (result.status !== 0) {
-    const createResult = deps.runOpenshellCommand(
-      binary,
-      [
-        "provider",
-        "create",
-        "--name",
+    const createArgs = [
+      "provider",
+      "create",
+      "--name",
+      providerName,
+      "--type",
+      providerType,
+      "--credential",
+      credentialEnv,
+    ];
+    if (providerType === "openai" || providerType === "anthropic") {
+      const endpointUrl = resolveSandboxCredentialProviderEndpoint(
         providerName,
-        "--type",
-        providerType,
-        "--credential",
-        credentialEnv,
-      ],
-      {
-        env: { [credentialEnv]: newToken },
-        ignoreError: true,
-        errorLine: console.error,
-        exit: (code: number) => process.exit(code),
-      },
-    );
+        providerEndpointUrl,
+      );
+      if (!endpointUrl) {
+        deps.fail(
+          `  Cannot recreate provider '${providerName}' without its endpoint. Re-run onboarding.`,
+        );
+      }
+      createArgs.push(
+        "--config",
+        `${providerType === "anthropic" ? "ANTHROPIC_BASE_URL" : "OPENAI_BASE_URL"}=${endpointUrl}`,
+      );
+    }
+    const createResult = deps.runOpenshellCommand(binary, createArgs, {
+      env: { [credentialEnv]: newToken },
+      ignoreError: true,
+      errorLine: console.error,
+      exit: (code: number) => process.exit(code),
+    });
     if (createResult.status !== 0)
       deps.fail("  Failed to update provider. You may need to re-onboard.");
   }
+
+  deps.saveCredential(credentialEnv, newToken);
 
   deps.appendAuditEntry({
     action: "rotate_token",
@@ -149,6 +210,31 @@ export async function rotateSandboxToken(
   console.log(`  Token rotated: ****${lastFour}`);
   console.log("");
   console.log("  The new credential is active immediately for new sandbox requests.");
+}
+
+function nonEmptyString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function resolveSandboxCredentialProviderType(
+  providerName: string,
+  preferredInferenceApi: string | null,
+): string {
+  const { resolveInferenceProviderType } = require("../onboard/providers") as {
+    resolveInferenceProviderType: (provider: string, preferredApi?: string | null) => string;
+  };
+  return resolveInferenceProviderType(providerName, preferredInferenceApi);
+}
+
+function resolveSandboxCredentialProviderEndpoint(
+  providerName: string,
+  endpointUrl: string | null,
+): string | null {
+  const { gatewayReachableCompatibleEndpointUrl } =
+    require("../onboard/inference-providers/compatible-endpoint-gateway-route") as typeof import("../onboard/inference-providers/compatible-endpoint-gateway-route");
+  return gatewayReachableCompatibleEndpointUrl(providerName, endpointUrl) ?? null;
 }
 
 function getOpenshellBinary(): string {

@@ -54,30 +54,20 @@ Use manual download and upload only when you need to inspect or transfer a speci
 ```bash
 SANDBOX=my-hermes
 BACKUP_DIR=~/.nemoclaw/backups/$(date +%Y%m%d-%H%M%S)
-mkdir -p "$BACKUP_DIR/dashboard-home"
+mkdir -p "$BACKUP_DIR"
 
 $$nemoclaw "$SANDBOX" download /sandbox/SOUL.md "$BACKUP_DIR/"
 $$nemoclaw "$SANDBOX" download /sandbox/.hermes/state.db "$BACKUP_DIR/"
-$$nemoclaw "$SANDBOX" download /sandbox/.hermes/profiles/dashboard-home/MEMORY.md "$BACKUP_DIR/dashboard-home/MEMORY.md"
-$$nemoclaw "$SANDBOX" download /sandbox/.hermes/profiles/dashboard-home/USER.md "$BACKUP_DIR/dashboard-home/USER.md"
 $$nemoclaw "$SANDBOX" download /sandbox/.hermes/platforms/ "$BACKUP_DIR/platforms/"
 ```
 
-Copy only the dashboard profile's `MEMORY.md` and `USER.md` files.
-Do not copy `.hermes/profiles/dashboard-home/.env` or `.hermes/profiles/dashboard-home/config.yaml`.
-NemoClaw regenerates both files from the managed policy and current inference route.
-The dashboard process receives its API bearer token through the runtime environment instead of the mirrored `.env` file.
-
-If startup refuses a legacy profile migration, download the preserved user files for inspection:
-
-```bash
-mkdir -p "$BACKUP_DIR/dashboard-home-legacy"
-$$nemoclaw "$SANDBOX" download /sandbox/.hermes/dashboard-home/MEMORY.md "$BACKUP_DIR/dashboard-home-legacy/MEMORY.md"
-$$nemoclaw "$SANDBOX" download /sandbox/.hermes/dashboard-home/USER.md "$BACKUP_DIR/dashboard-home-legacy/USER.md"
-```
-
-Do not download the legacy `.env` or `config.yaml`.
-Compare the preserved user files with the canonical profile before you upload either version.
+Do not copy `/sandbox/.hermes/config.yaml` or `/sandbox/.hermes/.env` between sandboxes.
+The gateway, CLI, TUI, and Web Dashboard share those native files, and NemoClaw recreates their managed route and credential placeholders for the destination sandbox.
+The retired reserved profile at `.hermes/profiles/dashboard-home/` is a one-time migration source, not active dashboard state.
+Do not create or manually transfer that directory.
+Startup removes named generated hash and runtime-state metadata, then migrates other safe legacy files and WhatsApp session state into the native Hermes home.
+It removes a legacy `config.yaml` or `.env` only when its contents match the generated projection of the native files; otherwise those files merge only when the native destination is absent or byte-identical.
+Conflicting or linked state stops migration without deleting either copy.
 
 </AgentOnly>
 <AgentOnly variant="deepagents">
@@ -138,8 +128,6 @@ BACKUP_DIR=~/.nemoclaw/backups/20260320-120000  # pick a timestamp
 
 $$nemoclaw "$SANDBOX" upload "$BACKUP_DIR/SOUL.md" /sandbox/
 $$nemoclaw "$SANDBOX" upload "$BACKUP_DIR/state.db" /sandbox/.hermes/
-$$nemoclaw "$SANDBOX" upload "$BACKUP_DIR/dashboard-home/MEMORY.md" /sandbox/.hermes/profiles/dashboard-home/MEMORY.md
-$$nemoclaw "$SANDBOX" upload "$BACKUP_DIR/dashboard-home/USER.md" /sandbox/.hermes/profiles/dashboard-home/USER.md
 $$nemoclaw "$SANDBOX" upload "$BACKUP_DIR/platforms/" /sandbox/.hermes/platforms/
 ```
 

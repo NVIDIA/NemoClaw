@@ -16,6 +16,8 @@ import {
 } from "./hermes-portable-contract";
 
 const SANDBOX = "alpha";
+const PRE_DASHBOARD_STATE_CLEANUP_MANIFEST_SHA256 =
+  "3f19946aa05920ef90ae0651e2da123ad8b13bedff6e0dd8c1b9f5cb20024af5";
 const PRE_DEFERRED_ONBOARDING_MANIFEST_SHA256 =
   "4600403d80c0ca038a89ac627f248a41148f1d97f649a49588a06b29427cee6c";
 const PRE_UPGRADE_MANIFEST_SHA256 =
@@ -113,6 +115,52 @@ function removeReviewedNativeOwnershipMetadata(agent: AgentDefinition): void {
         ? { ...entry, clearWhenAbsent: true }
         : entry,
     ),
+  });
+}
+
+function restorePreviousDashboardStateComment(agent: AgentDefinition): void {
+  const source = fs.readFileSync(agent.manifestPath, "utf8");
+  const currentDeclaration = [
+    "  # Retired pre-#7200 dashboard state is accepted only as a non-backup",
+    "  # migration source. Startup moves safe contents into the native Hermes home",
+    "  # and removes the legacy directory; new snapshots never perpetuate it.",
+    "  - path: dashboard-home",
+    "    backup: false",
+  ].join("\n");
+  const previousDeclaration = [
+    "  # Legacy pre-#7200 dashboard profile location. Keep it in snapshots while",
+    "  # startup migrates existing state into profiles/dashboard-home.",
+    "  - dashboard-home",
+  ].join("\n");
+  expect(source.split(currentDeclaration)).toHaveLength(2);
+  fs.writeFileSync(agent.manifestPath, source.replace(currentDeclaration, previousDeclaration), {
+    mode: 0o644,
+  });
+  Object.defineProperties(agent, {
+    stateDirectories: {
+      configurable: true,
+      enumerable: true,
+      writable: true,
+      value: agent.stateDirectories.map((entry) =>
+        entry.kind === "path" && entry.path === "dashboard-home"
+          ? { ...entry, backup: true }
+          : entry,
+      ),
+    },
+    backupStateDirs: {
+      configurable: true,
+      enumerable: true,
+      writable: true,
+      value: agent.stateDirs.filter(
+        (entry) => entry === "dashboard-home" || !agent.nonBackupStateDirs.includes(entry),
+      ),
+    },
+    nonBackupStateDirs: {
+      configurable: true,
+      enumerable: true,
+      writable: true,
+      value: agent.nonBackupStateDirs.filter((entry) => entry !== "dashboard-home"),
+    },
   });
 }
 
@@ -255,18 +303,30 @@ describe("Hermes portable startup contract", () => {
 
   it.each([
     {
+      expectedManifestSha256: PRE_DASHBOARD_STATE_CLEANUP_MANIFEST_SHA256,
+      prepare: restorePreviousDashboardStateComment,
+      startupDescriptorChanged: true,
+    },
+    {
       expectedManifestSha256: PRE_DEFERRED_ONBOARDING_MANIFEST_SHA256,
-      prepare: removeDeferredOnboardingMetadata,
-      startupDescriptorChanged: false,
+      prepare: (agent: AgentDefinition) => {
+        restorePreviousDashboardStateComment(agent);
+        removeDeferredOnboardingMetadata(agent);
+      },
+      startupDescriptorChanged: true,
     },
     {
       expectedManifestSha256: PRE_UPGRADE_MANIFEST_SHA256,
-      prepare: restorePreviousReviewedManifest,
-      startupDescriptorChanged: false,
+      prepare: (agent: AgentDefinition) => {
+        restorePreviousDashboardStateComment(agent);
+        restorePreviousReviewedManifest(agent);
+      },
+      startupDescriptorChanged: true,
     },
     {
       expectedManifestSha256: PRE_SKILLS_MANIFEST_SHA256,
       prepare: (agent: AgentDefinition) => {
+        restorePreviousDashboardStateComment(agent);
         restorePreviousReviewedManifest(agent);
         removeReviewedSkillsMetadata(agent);
         removeReviewedNativeOwnershipMetadata(agent);
@@ -276,13 +336,14 @@ describe("Hermes portable startup contract", () => {
     {
       expectedManifestSha256: PRE_NATIVE_OWNERSHIP_MANIFEST_SHA256,
       prepare: (agent: AgentDefinition) => {
+        restorePreviousDashboardStateComment(agent);
         restorePreviousReviewedManifest(agent);
         removeReviewedNativeOwnershipMetadata(agent);
       },
       startupDescriptorChanged: true,
     },
   ])(
-    "accepts reviewed manifest metadata transition $expectedManifestSha256 when startup authority is unchanged (#11248, #11766)",
+    "accepts reviewed manifest metadata transition $expectedManifestSha256 when startup authority is unchanged (#11248, #11766, #11768)",
     ({ expectedManifestSha256, prepare, startupDescriptorChanged }) => {
       const installedAgent = copyAgent();
       prepare(installedAgent);
@@ -312,6 +373,7 @@ describe("Hermes portable startup contract", () => {
   it("derives reviewed transition descriptors for the actual sandbox name (#11766)", () => {
     const sandboxName = "hermes-portable-e2e";
     const installedAgent = copyAgent();
+    restorePreviousDashboardStateComment(installedAgent);
     restorePreviousReviewedManifest(installedAgent);
     removeReviewedSkillsMetadata(installedAgent);
     removeReviewedNativeOwnershipMetadata(installedAgent);
