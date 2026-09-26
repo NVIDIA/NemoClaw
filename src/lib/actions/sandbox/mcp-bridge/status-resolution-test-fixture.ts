@@ -81,6 +81,8 @@ process.env.NEMOCLAW_GATEWAY_MANAGEMENT = gatewayManagementPath;
 const registry = require("./src/lib/state/registry.js");
 const dns = require("node:dns/promises");
 dns.lookup = async () => [{ address: "8.8.8.8", family: 4 }];
+require("./src/lib/adapters/dns/resolve.js").resolveHostAddressesBounded =
+  (host) => dns.lookup(host, { all: true, verbatim: true });
 const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
 const providerInspection = require("./src/lib/actions/sandbox/mcp-bridge-provider-inspection.js");

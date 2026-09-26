@@ -226,6 +226,7 @@ export function normalizeMcpServerUrl(
 export async function preflightMcpServerUrlResolvedTarget(
   parsed: URL,
   options: McpBridgeTargetPreflightOptions = {},
+  lookup: typeof resolveHostAddresses = resolveHostAddresses,
 ): Promise<McpBridgeTargetValidation> {
   // invalidState: a hostname is public at add time but later rebinds to an
   // unpinned address. sourceBoundary: NemoClaw pins the add-time public answers;
@@ -252,8 +253,10 @@ export async function preflightMcpServerUrlResolvedTarget(
   }
   const result = await assertEndpointResolvesPublic(
     parsed.toString(),
-    async (hostname) => resolveHostAddresses(hostname),
-    { trustedPrivateHosts: normalizedTrustedHosts },
+    async (hostname) => lookup(hostname),
+    {
+      trustedPrivateHosts: normalizedTrustedHosts,
+    },
   );
   if (!result.ok) {
     if (result.reasonCode === "private-answer" && result.offendingAddress) {
@@ -324,9 +327,10 @@ export type McpBridgePublicPinStatus = Omit<McpBridgeRecordedPinStatus, "state">
 export async function inspectMcpRecordedPublicTargetPins(
   parsed: URL,
   recordedPins: readonly string[],
+  lookup: typeof resolveHostAddresses = resolveHostAddresses,
 ): Promise<McpBridgePublicPinStatus> {
   try {
-    const target = await preflightMcpServerUrlResolvedTarget(parsed);
+    const target = await preflightMcpServerUrlResolvedTarget(parsed, {}, lookup);
     const policyPins = [...new Set(recordedPins.map((address) => address.toLowerCase()))].sort();
     const matches =
       policyPins.length === target.addresses.length &&

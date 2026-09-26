@@ -389,6 +389,62 @@ describeConcurrentProbeSuite("MCP status wire-level credential-resolution probe"
     expect(range.publicTarget).toBeUndefined();
   });
 
+  it("bounds public DNS work and continues after a timed-out lookup (#10464)", async (context) => {
+    const home = createTempHome("nemoclaw-mcp-public-pin-budget-");
+    const { stdout } = await runHarness(
+      context,
+      home,
+      String.raw`
+  const native = {
+    github: sourceEntry,
+    one: { ...sourceEntry, server: "one", url: "https://one.example.test/mcp" },
+    two: { ...sourceEntry, server: "two", url: "https://two.example.test/mcp" },
+    three: { ...sourceEntry, server: "three", url: "https://three.example.test/mcp" },
+    four: { ...sourceEntry, server: "four", url: "https://four.example.test/mcp" },
+  };
+  sourceState.inspectSourceBridgeState = () => ({ bridges: native, sources: { native, legacy: {} } });
+  const release = {};
+  const reject = {};
+  const started = [];
+  let active = 0;
+  let peak = 0;
+  const lookup = async (host) => {
+    active += 1;
+    peak = Math.max(peak, active);
+    started.push(host);
+    try {
+      return await new Promise((resolve, fail) => { release[host] = resolve; reject[host] = fail; });
+    } finally { active -= 1; }
+  };
+  dns.lookup = lookup;
+  require("./src/lib/adapters/dns/resolve.js").resolveHostAddressesBounded = lookup;
+  const pending = bridge.statusMcpBridge("alpha");
+  await new Promise(setImmediate);
+  const initial = started.length;
+  reject["api.githubcopilot.com"](new Error("DNS lookup timed out"));
+  await new Promise(setImmediate);
+  const afterTimeout = started.length;
+  const addresses = [{ address: "8.8.8.8", family: 4 }];
+  release["one.example.test"](addresses);
+  release["two.example.test"](addresses);
+  release["three.example.test"](addresses);
+  release["four.example.test"](addresses);
+  const statuses = await pending;
+  writeHarnessResult(JSON.stringify({ initial, afterTimeout, peak,
+    states: statuses.map((status) => status.publicTarget.state),
+    pins: statuses[0].publicTarget.recordedPins,
+  }));
+`,
+    );
+    expect(JSON.parse(stdout)).toEqual({
+      initial: 4,
+      afterTimeout: 5,
+      peak: 4,
+      states: ["unresolved", "match", "match", "match", "match"],
+      pins: ["8.8.8.8"],
+    });
+  });
+
   it("sends the observed revision and rejects canonical probe authority (#10079)", async (context) => {
     const home = createTempHome("nemoclaw-mcp-resolution-revision-");
     const { stdout } = await runHarness(

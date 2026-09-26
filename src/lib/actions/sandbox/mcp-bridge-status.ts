@@ -3,6 +3,7 @@
 
 import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import { isIP } from "node:net";
+import { resolveHostAddressesBounded } from "../../adapters/dns/resolve";
 import { type AgentDefinition, type AgentMcpAdapter, loadAgent } from "../../agent/defs";
 import {
   buildDeepAgentsMcpStatusCommand,
@@ -338,6 +339,8 @@ export async function statusMcpBridge(
   }
   const privatePinStatusByServer = new Map<string, McpBridgeRecordedPinStatus>();
   const publicPinStatusByServer = new Map<string, McpBridgePublicPinStatus>();
+  const publicPinQueues = Array.from({ length: 4 }, () => Promise.resolve());
+  let nextPublicQueue = 0;
   await Promise.all(
     entries.map(async ([name, entry]) => {
       if (!entry?.allowedIps) return;
@@ -355,10 +358,18 @@ export async function statusMcpBridge(
         return;
       }
       if (entry.allowedIps.some((address) => isIP(address) === 0)) return;
-      publicPinStatusByServer.set(
-        name,
-        await inspectMcpRecordedPublicTargetPins(parsed, entry.allowedIps),
-      );
+      const pins = entry.allowedIps;
+      const slot = nextPublicQueue++ % publicPinQueues.length;
+      const inspection = publicPinQueues[slot].then(async () => {
+        publicPinStatusByServer.set(
+          name,
+          await inspectMcpRecordedPublicTargetPins(parsed, pins, (hostname) =>
+            resolveHostAddressesBounded(hostname, 2_000),
+          ),
+        );
+      });
+      publicPinQueues[slot] = inspection;
+      return inspection;
     }),
   );
 

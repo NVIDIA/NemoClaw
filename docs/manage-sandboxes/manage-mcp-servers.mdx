@@ -44,6 +44,7 @@ An existing valid provider can remain ready when a host variable is unset becaus
 Status resolves public and trusted private endpoints without changing managed state.
 Text output reports `public address pins:` or `private address pins:` with `match`, `drift`, or `unresolved`.
 Public endpoints that resolve to private or special-use addresses report `rejected`.
+NemoClaw reports `unresolved` when a public DNS lookup exceeds 2 seconds and leaves its live pins unchanged.
 JSON output reports the same value, recorded pins, and validated current pins when available in `publicTarget` or `trustedPrivateTarget`.
 Status never adds a new address to the policy.
 For public or trusted-private drift, follow [Change Endpoint Pins](#change-endpoint-pins).
