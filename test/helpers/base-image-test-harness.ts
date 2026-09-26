@@ -25,7 +25,11 @@ export function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefini
   return {
     name: "hermes",
     displayName: "Hermes Agent",
-    healthProbe: { url: "http://127.0.0.1:8642/health", port: 8642, timeout_seconds: 90 },
+    healthProbe: {
+      url: "http://127.0.0.1:8642/health",
+      port: 8642,
+      timeout_seconds: 90,
+    },
     forwardPort: 8642,
     dashboard: {
       kind: "api",

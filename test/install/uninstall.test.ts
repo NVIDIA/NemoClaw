@@ -45,7 +45,7 @@ case "$*" in
   "gateway list -o json") printf '[{"name":"nemoclaw"}]\\n' ;;
   "gateway info -g nemoclaw") printf 'Gateway: nemoclaw\\n' ;;
   "sandbox list"|"sandbox list -g nemoclaw") printf 'ordinary-authority Ready\\n' ;;
-  "sandbox ssh-config ordinary-authority") printf 'Host openshell-ordinary-authority.default\\n  HostName 127.0.0.1\\n  User sandbox\\n  Port 2222\\n' ;;
+  "sandbox ssh-config "*) printf 'Host openshell-%s.default\\n  HostName 127.0.0.1\\n  User sandbox\\n  Port 2222\\n' "$3" ;;
   "sandbox delete "*)
     printf 'delete\\n' >> ${JSON.stringify(eventLog)}
     rm -rf ${JSON.stringify(path.dirname(sandboxConfigDir))}
@@ -61,9 +61,9 @@ exit 0
       `#!/usr/bin/env bash
 remote="\${!#}"
 case "$remote" in
-  *"-printf"*) exit 0 ;;
-  *"tar --hard-dereference"*)
-    /usr/bin/tar -cf - -C ${JSON.stringify(sandboxConfigDir)} -- workspace
+  *'work=$(pwd -P)'*) printf '/sandbox\\0/sandbox\\0' ;;
+  *"tar -C"*)
+    /usr/bin/tar -cf - -C ${JSON.stringify(path.dirname(sandboxConfigDir))} -- .
     status=$?
     case "$status" in 0) printf 'backup-complete\\n' >> ${JSON.stringify(eventLog)} ;; esac
     exit "$status"
@@ -387,13 +387,18 @@ esac
     try {
       const result = runUninstall(tmp, ["--yes"]);
       const output = `${result.stdout}${result.stderr}`;
+      expect(result.status, output).toBe(0);
       const backupRoot = path.join(stateDir, "rebuild-backups", "ordinary-authority");
       const snapshot = fs.readdirSync(backupRoot).at(0);
-      const backupFile = path.join(backupRoot, String(snapshot), "workspace", "USER.md");
+      const archive = path.join(backupRoot, String(snapshot), "native-home.tar");
+      const archivedWorkspace = spawnSync(
+        "/usr/bin/tar",
+        ["-xOf", archive, "./.openclaw/workspace/USER.md"],
+        { encoding: null },
+      );
       const events = fs.readFileSync(path.join(tmp, "uninstall-events"), "utf8").trim().split("\n");
 
-      expect(result.status, output).toBe(0);
-      expect(createHash("sha256").update(fs.readFileSync(backupFile)).digest("hex")).toBe(
+      expect(createHash("sha256").update(archivedWorkspace.stdout).digest("hex")).toBe(
         workspaceDigest,
       );
       expect(output).toContain("Pre-uninstall backup: 1 backed up, 0 failed, 0 skipped");

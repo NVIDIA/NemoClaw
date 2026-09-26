@@ -1044,7 +1044,7 @@ describe("destroySandbox flow", () => {
       "Container identity could not be inspected after managed inference cleanup: daemon unavailable",
     ],
   ])(
-    "restores MCP preparation and refuses workspace wipe after %s",
+    "restores MCP preparation and refuses deletion after %s",
     async (_scenario, changedIdentity, expectedMessage) => {
       const managed = { status: 0, stdout: "aaaa000000000000\topenshell\tdefault\tsb-alpha" };
       const harness = createDestroyHarness({
@@ -1058,7 +1058,6 @@ describe("destroySandbox flow", () => {
 
       expect(harness.events).toEqual(["mcp-prepare", "mcp-restore"]);
       expect(harness.stopNimByNameSpy).toHaveBeenCalledOnce();
-      expect(harness.events).not.toContain("wipe");
       expect(harness.events).not.toContain("detach");
       expect(harness.events).not.toContain("delete");
       expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
@@ -1089,7 +1088,7 @@ describe("destroySandbox flow", () => {
 
     await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
 
-    expect(harness.events).toEqual(["mcp-prepare", "wipe", "detach", "mcp-restore"]);
+    expect(harness.events).toEqual(["mcp-prepare", "detach", "mcp-restore"]);
     expect(
       harness.runOpenshellSpy.mock.calls.some(
         ([args]) => Array.isArray(args) && args[0] === "sandbox" && args[1] === "delete",

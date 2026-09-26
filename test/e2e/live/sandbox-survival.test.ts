@@ -5,7 +5,7 @@
  *
  * Preserves the supported boundaries: install.sh/onboard, OpenShell sandbox
  * OpenShell stop/start, native OpenClaw readiness, sandbox exec, and
- * durable /sandbox/.openclaw state markers.
+ * arbitrary native home/workspace state.
  */
 
 import fs from "node:fs";
@@ -115,7 +115,7 @@ test(
         "install.sh --non-interactive creates the named OpenClaw sandbox",
         "OpenShell owns sandbox stop and start",
         "sandbox exec and the native OpenClaw gateway are usable after restart",
-        "declared workspace, session, and memory markers survive the OpenShell lifecycle",
+        "arbitrary home, workspace, package, plugin, hook, cron, session, and memory markers survive without NemoClaw recovery",
         "final destroy removes the sandbox",
       ],
     });
@@ -231,6 +231,10 @@ test(
     const markerValue = `nemoclaw-survival-${Date.now()}`;
     const markers: SandboxMarker[] = [
       {
+        path: "/sandbox/.survival-unknown-marker",
+        value: markerValue,
+      },
+      {
         path: "/sandbox/.openclaw/workspace/.survival-workspace-marker",
         value: markerValue,
       },
@@ -240,6 +244,22 @@ test(
       },
       {
         path: "/sandbox/.openclaw/memory/.survival-memory-marker",
+        value: markerValue,
+      },
+      {
+        path: "/sandbox/.local/share/e2e-package/.survival-package-marker",
+        value: markerValue,
+      },
+      {
+        path: "/sandbox/.openclaw/plugins/e2e/.survival-plugin-marker",
+        value: markerValue,
+      },
+      {
+        path: "/sandbox/.openclaw/hooks/.survival-hook-marker",
+        value: markerValue,
+      },
+      {
+        path: "/sandbox/.openclaw/cron/.survival-cron-marker",
         value: markerValue,
       },
     ];

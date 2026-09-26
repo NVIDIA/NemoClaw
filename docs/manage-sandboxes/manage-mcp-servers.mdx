@@ -168,7 +168,7 @@ $$nemoclaw my-sandbox mcp update doordash \
 
 The command changes only the live OpenShell policy. It does not change the agent-native endpoint, credential reference, provider, attachment, or agent adapter. Live policy is the enforcement source of truth; NemoClaw does not retain a second denied-tool intent record.
 
-NemoClaw validates the current source entry and endpoint pins, removes the existing route, and then applies the replacement. This keeps an interrupted stricter update fail-closed. If replacement activation fails, the MCP route remains blocked and the error prints the exact `mcp update` command to retry. Rebuild snapshots and restores the complete live policy, including denied-tool rules, without regenerating it from registry state.
+NemoClaw validates the current source entry and endpoint pins, removes the existing route, and then applies the replacement. This keeps an interrupted stricter update fail-closed. If replacement activation fails, the MCP route remains blocked and the error prints the exact `mcp update` command to retry. Rebuild captures and restores the complete live policy, including denied-tool rules, without regenerating it from registry state.
 
 Clear every denied-tool rule explicitly:
 

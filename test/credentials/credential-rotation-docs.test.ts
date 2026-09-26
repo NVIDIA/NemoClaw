@@ -75,8 +75,12 @@ describe("credential rotation documentation", () => {
     expect(guide).toContain("WECHAT_BOT_TOKEN");
     expect(guide).toContain("MSTEAMS_APP_PASSWORD");
     expect(guide).toContain("Telegram, Discord, Slack, WeChat, or Microsoft Teams");
-    expect(guide).toContain("backs up supported workspace and manifest-declared state");
-    expect(guide).toContain("Files outside those state paths are not preserved.");
+    expect(guide).toContain("transfers the complete native home/workspace");
+    expect(guide).toContain(
+      "The transfer preserves everything beneath the resolved native home/workspace root",
+    );
+    expect(guide).not.toContain("manifest-declared state");
+    expect(guide).not.toContain("Files outside those state paths are not preserved.");
     expect(guide).toContain("If the recorded channel state changes during rotation");
     expect(guide).toContain("A channel stopped with `channels stop` remains inactive");
     expect(guide).toContain("The sandbox registry stores the credential hash");

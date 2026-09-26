@@ -193,6 +193,7 @@
         "test/agents/openclaw/openclaw-container-restart-patch.test.ts",
         "test/agents/openclaw/runtime/nemoclaw-start-preload-gateway.test.ts",
         "src/lib/state/native-agent-state-restore.test.ts",
+        "test/state/snapshot.test.ts",
         "test/runtime/sandbox/sandbox-provisioning.test.ts",
         "test/e2e/support/hosted-inference.test.ts",
         "test/e2e/support/full-e2e-inference-probe.test.ts",
@@ -412,21 +413,6 @@
       "fast": [
         "test/e2e/support/onboard-interactive-pty.test.ts",
         "test/e2e/support/runtime-provider-fixture.test.ts"
-      ]
-    },
-    {
-      "live": "test/e2e/live/snapshot-commands.test.ts",
-      "liveSources": ["test/e2e/live/snapshot-commands-helpers.ts"],
-      "fast": [
-        "src/lib/actions/sandbox/snapshot-command-host-local-authority.test.ts",
-        "src/lib/actions/sandbox/snapshot-restore-lifecycle.test.ts",
-        "src/lib/actions/sandbox/stopped-sandbox-backup.test.ts",
-        "src/lib/state/sandbox-backup-sanitization.test.ts",
-        "test/agents/openclaw/openclaw-config-snapshot.test.ts",
-        "test/state/snapshot.test.ts",
-        "test/e2e/support/snapshot-commands-helpers.test.ts",
-        "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
       ]
     },
     {
@@ -708,7 +694,7 @@
         "test/mcp/mcp-bridge-servers.test.ts",
         "test/e2e/support/mcp-bridge-https-diagnostics.test.ts",
         "src/lib/onboard/runtime-provider/docker-stopped-state-capture.test.ts",
-        "test/state/snapshot-stopped-openclaw.test.ts"
+        "test/state/snapshot.test.ts"
       ]
     },
     {
@@ -871,7 +857,7 @@
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/native-lifecycle-migration-contract.test.ts",
         "src/lib/onboard/runtime-provider/docker-stopped-state-capture.test.ts",
-        "test/state/snapshot-stopped-openclaw.test.ts"
+        "test/state/snapshot.test.ts"
       ],
       "liveSources": ["test/e2e/live/openclaw-stopped-recovery.ts"]
     },
@@ -879,6 +865,7 @@
       "live": "test/e2e/live/sandbox-survival.test.ts",
       "fast": [
         "src/lib/onboard/machine/finalization-deps.test.ts",
+        "src/lib/actions/sandbox/destroy-flow.test.ts",
         "test/agents/native-gateway-lifecycle.test.ts",
         "src/lib/actions/sandbox/gateway-state-probe-recovery-start.test.ts",
         "src/lib/onboard/runtime-provider/docker.test.ts",
@@ -922,15 +909,6 @@
     {
       "live": "test/e2e/live/spark-install.test.ts",
       "fast": [
-        "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
-      ]
-    },
-    {
-      "live": "test/e2e/live/state-backup-restore.test.ts",
-      "fast": [
-        "src/lib/actions/sandbox/download.test.ts",
-        "test/scripts/backup-workspace.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]

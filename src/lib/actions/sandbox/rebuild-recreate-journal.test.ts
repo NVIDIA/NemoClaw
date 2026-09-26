@@ -142,9 +142,12 @@ describe("rebuild replacement target fingerprint", () => {
     { recreatePreferredInferenceApi: "anthropic" },
     { reinstallDeferredN1xManagedVllm: true },
   ] as const)("changes when a recorded replacement input changes [case %#]", (drift) => {
-    expect(fingerprintRebuildRecreateTargetIntent({ ...recreateOptions, ...drift })).not.toBe(
-      fingerprintRebuildRecreateTargetIntent(recreateOptions),
-    );
+    expect(
+      fingerprintRebuildRecreateTargetIntent({
+        ...recreateOptions,
+        ...drift,
+      }),
+    ).not.toBe(fingerprintRebuildRecreateTargetIntent(recreateOptions));
   });
 
   it("changes when the replacement targets another gateway", () => {
@@ -158,9 +161,12 @@ describe("rebuild replacement target fingerprint", () => {
   });
 
   it("preserves the previous fingerprint for a replacement without host mounts (#9451)", () => {
-    expect(fingerprintRebuildRecreateTargetIntent({ ...recreateOptions, hostMounts: [] })).toBe(
-      PRE_HOST_MOUNT_FINGERPRINT,
-    );
+    expect(
+      fingerprintRebuildRecreateTargetIntent({
+        ...recreateOptions,
+        hostMounts: [],
+      }),
+    ).toBe(PRE_HOST_MOUNT_FINGERPRINT);
   });
 
   it("separates a mounted replacement from the pre-binding fingerprint (#9451)", () => {
@@ -436,7 +442,11 @@ describe("rebuild replacement journal", () => {
     } as registry.SandboxEntry);
 
     expect(() =>
-      open({ sandboxName: "alpha", gatewayName: "nemoclaw-7070", gatewayPort: 7070 }),
+      open({
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw-7070",
+        gatewayPort: 7070,
+      }),
     ).toThrow(/different recreate transaction in progress/);
     expect(session.checkpoint?.sandboxRecreate).toMatchObject({
       id: stranded.id,
@@ -721,7 +731,6 @@ describe("rebuild replacement recovery backup", () => {
       agentType: "openclaw",
       agentVersion: null,
       expectedVersion: null,
-      stateDirs: [],
       dir: "/sandbox/.openclaw",
       backupPath,
       blueprintDigest: null,
@@ -733,7 +742,7 @@ describe("rebuild replacement recovery backup", () => {
   });
 
   const deps = () => ({
-    listBackups: () => [{ ...manifest, snapshotVersion: 1 }],
+    listBackups: () => [manifest],
     validateManifest: (_name: string, _agent: string | null | undefined, value: RebuildManifest) =>
       ({ ok: true, manifest: value }) as const,
   });

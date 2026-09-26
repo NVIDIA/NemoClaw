@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -20,7 +21,6 @@ import {
   finalizeCreatedSandbox,
   restoreSelectedOnboardSnapshot,
 } from "./created-sandbox-finalization";
-import { getDcodeSelectionDrift } from "./dcode-selection-drift";
 import type { HermesPortableConfiguredReceipt } from "./experimental/hermes-portable-receipt";
 import { pendingSandboxCreateIdentityForBoundary } from "./sandbox-create/identity-boundary";
 import type { SandboxGpuCreateFlowResult } from "./sandbox-gpu-create-flow";
@@ -145,32 +145,18 @@ function makeRestoreFixture(): {
   fixtures.push(root);
   const bin = path.join(root, "bin");
   const backupPath = path.join(root, "backup");
+  const backupSource = path.join(root, "backup-source");
   const liveDir = path.join(root, "live", ".deepagents");
+  const liveRoot = path.dirname(liveDir);
   const currentPath = path.join(liveDir, "config.toml");
+  const backupConfigPath = path.join(backupSource, ".deepagents", "config.toml");
   const oldPath = process.env.PATH ?? "";
   fs.mkdirSync(bin, { recursive: true });
   fs.mkdirSync(backupPath);
+  fs.mkdirSync(path.dirname(backupConfigPath), { recursive: true });
   fs.mkdirSync(liveDir, { recursive: true });
-
   fs.writeFileSync(
-    path.join(backupPath, "rebuild-manifest.json"),
-    JSON.stringify({
-      version: 1,
-      sandboxName: "dcode",
-      timestamp: "2026-07-06T00:00:00.000Z",
-      agentType: "langchain-deepagents-code",
-      agentVersion: "0.1.0",
-      expectedVersion: "0.1.0",
-      stateDirs: [],
-      backedUpDirs: [],
-      stateFiles: [{ path: "config.toml", strategy: "copy" }],
-      dir: "/sandbox/.deepagents",
-      backupPath,
-      blueprintDigest: null,
-    }),
-  );
-  fs.writeFileSync(
-    path.join(backupPath, "config.toml"),
+    backupConfigPath,
     [
       "[models]",
       'default = "openai:old-model"',
@@ -210,55 +196,27 @@ function makeRestoreFixture(): {
     ].join("\n"),
   );
 
-  const pythonResult = ["python3.13", "python3.12", "python3.11", "python3"]
-    .map((candidate) =>
-      spawnSync(
-        candidate,
-        ["-c", "import sys; assert sys.version_info >= (3, 11); print(sys.executable)"],
-        { encoding: "utf8" },
-      ),
-    )
-    .find((result) => result.status === 0 && result.stdout.trim().length > 0);
-  expect(pythonResult, "Python 3.11 or newer is required").toBeDefined();
-  const hostPython = pythonResult!.stdout.trim();
-  const python = path.join(bin, "python3");
-  executable(
-    python,
-    `#!${hostPython}
-import json
-import subprocess
-import sys
-import types
-
-NODE_TOML_WRITER = r"""
-const fs = require("node:fs");
-const { stringify } = require("smol-toml");
-const value = JSON.parse(fs.readFileSync(0, "utf8"));
-process.stdout.write(stringify(value));
-"""
-
-def dumps(value):
-    completed = subprocess.run(
-        ["node", "-e", NODE_TOML_WRITER],
-        input=json.dumps(value, allow_nan=False),
-        capture_output=True,
-        check=True,
-        text=True,
-    )
-    return completed.stdout
-
-tomli_w = types.ModuleType("tomli_w")
-tomli_w.dumps = dumps
-sys.modules["tomli_w"] = tomli_w
-
-try:
-    script_index = sys.argv.index("-c", 1) + 1
-except ValueError:
-    script_index = 1
-script = sys.argv[script_index]
-sys.argv = [sys.argv[0], *sys.argv[script_index + 1:]]
-exec(script, {"__name__": "__main__"})
-`,
+  const archivePath = path.join(backupPath, "native-home.tar");
+  expect(spawnSync("tar", ["-C", backupSource, "-cf", archivePath, "--", "."]).status).toBe(0);
+  const archiveSha256 = createHash("sha256").update(fs.readFileSync(archivePath)).digest("hex");
+  fs.writeFileSync(
+    path.join(backupPath, "rebuild-manifest.json"),
+    JSON.stringify({
+      version: 2,
+      sandboxName: "dcode",
+      timestamp: "2026-07-06T00:00:00.000Z",
+      agentType: "langchain-deepagents-code",
+      agentVersion: "0.1.0",
+      expectedVersion: "0.1.0",
+      nativeState: {
+        root: "/sandbox",
+        archive: "native-home.tar",
+        sha256: archiveSha256,
+      },
+      dir: "/sandbox",
+      backupPath,
+      blueprintDigest: null,
+    }),
   );
   const openshell = path.join(bin, "openshell");
   executable(
@@ -271,8 +229,20 @@ exec(script, {"__name__": "__main__"})
 const fs = require("node:fs");
 const { spawnSync } = require("node:child_process");
 const command = process.argv.at(-1)
-  .replaceAll("/sandbox/.deepagents", ${JSON.stringify(liveDir)})
-  .replace("/opt/venv/bin/python3", ${JSON.stringify(python)});
+  .replaceAll("/sandbox/.deepagents", ${JSON.stringify(liveDir)});
+if (command.includes("printf '%s\\\\0%s\\\\0'")) {
+  process.stdout.write(Buffer.from("/sandbox\\0/sandbox\\0"));
+  process.exit(0);
+}
+if (command.includes('find "$root" -mindepth 1')) {
+  for (const entry of fs.readdirSync(${JSON.stringify(liveRoot)})) {
+    fs.rmSync(require("node:path").join(${JSON.stringify(liveRoot)}, entry), { recursive: true, force: true });
+  }
+  const result = spawnSync("tar", ["--no-same-owner", "-xf", "-", "-C", ${JSON.stringify(liveRoot)}], { input: fs.readFileSync(0), stdio: ["pipe", "pipe", "pipe"] });
+  if (result.stdout) fs.writeSync(1, result.stdout);
+  if (result.stderr) fs.writeSync(2, result.stderr);
+  process.exit(result.status ?? 1);
+}
 const result = spawnSync("bash", ["-c", command], { input: fs.readFileSync(0), stdio: ["pipe", "pipe", "pipe"] });
 if (result.stdout) fs.writeSync(1, result.stdout);
 if (result.stderr) fs.writeSync(2, result.stderr);
@@ -282,20 +252,6 @@ process.exit(result.status ?? 1);
   process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
   process.env.PATH = `${bin}${path.delimiter}${oldPath}`;
   return { backupPath, currentPath, oldPath };
-}
-
-function identityFromConfig(config: string): string {
-  const metadata = config.match(
-    /^# NemoClaw provider route: ([^;]+); upstream provider: ([^;]+);/m,
-  );
-  const model = config.match(/^default = "([^"]+)"$/m)?.[1];
-  const endpoint = config.match(/^base_url = "([^"]+)"$/m)?.[1];
-  return [
-    `Route:    ${metadata?.[1] ?? ""}`,
-    `Provider: ${metadata?.[2] ?? ""}`,
-    `Model:    ${model ?? ""}`,
-    `Endpoint: ${endpoint ?? ""}`,
-  ].join("\n");
 }
 
 describe("created DCode sandbox finalization", () => {
@@ -353,7 +309,7 @@ describe("created DCode sandbox finalization", () => {
     expect(restore).not.toHaveBeenCalled();
   });
 
-  it("merges stale backup preferences before live validation and registry publication (#6311)", async () => {
+  it("restores the complete native state before validation and registry publication (#11767)", async () => {
     const fixture = makeRestoreFixture();
     const order: string[] = [];
     const registeredConfigs: string[] = [];
@@ -373,21 +329,18 @@ describe("created DCode sandbox finalization", () => {
           ...preparedRestoreAuthority("dcode"),
           restoreRecreatedSandboxState: async (name, backup, options) => {
             order.push("restore");
-            expect(options.allowCustomImageWholeStateFileRestore).toBeUndefined();
             return await sandboxState.restoreRecreatedSandboxState(name, backup, options);
           },
-          getDcodeSelectionDrift: async (name, provider, model, api) => {
+          getDcodeSelectionDrift: async () => {
             order.push("validate");
-            return getDcodeSelectionDrift(name, provider, model, api, {
-              getGatewayName: () => "nemoclaw-18081",
-              commandExecutor: {
-                runBuffered: async () => ({
-                  outcome: { kind: "completed", exitCode: 0 },
-                  stdout: identityFromConfig(fs.readFileSync(fixture.currentPath, "utf8")),
-                  stderr: "",
-                }),
-              },
-            });
+            return {
+              changed: false,
+              providerChanged: false,
+              modelChanged: false,
+              existingProvider: "nvidia-prod",
+              existingModel: "openai:new-model",
+              unknown: false,
+            };
           },
           register: () => {
             order.push("register");
@@ -402,11 +355,10 @@ describe("created DCode sandbox finalization", () => {
       );
 
       expect(order).toEqual(["restore", "validate", "register"]);
-      expect(registeredConfigs[0]).toContain('default = "openai:new-model"');
-      expect(registeredConfigs[0]).not.toContain("old-model");
-      expect(registeredConfigs[0]).not.toContain("[agents]");
-      expect(registeredConfigs[0]).toContain("[ui]\nshow_scrollbar = true");
-      expect(registeredConfigs[0]).not.toContain('theme = "dark"');
+      expect(registeredConfigs[0]).toContain('default = "openai:old-model"');
+      expect(registeredConfigs[0]).toContain("[agents]");
+      expect(registeredConfigs[0]).toContain("show_scrollbar = true");
+      expect(registeredConfigs[0]).toContain('theme = "dark"');
     } finally {
       process.env.PATH = fixture.oldPath;
     }
@@ -756,7 +708,6 @@ describe("created DCode sandbox finalization", () => {
         {
           ...preparedRestoreAuthority("custom-dcode"),
           restoreRecreatedSandboxState: async (name, backup, options) => {
-            expect(options.allowCustomImageWholeStateFileRestore).toBe(true);
             return await sandboxState.restoreRecreatedSandboxState(name, backup, options);
           },
           getDcodeSelectionDrift: vi.fn(),

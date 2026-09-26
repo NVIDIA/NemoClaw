@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "Transfer State Manually"
 sidebar-title: "Transfer State Manually"
-description: "Download and upload selected sandbox state files when a managed snapshot is not the right transfer path."
+description: "Download and upload selected sandbox state files when you need an independent or targeted transfer."
 description-agent: "Explains safe manual download and upload paths for OpenClaw workspace files, Hermes state, and Deep Agents state. Use when inspecting or transferring specific files."
 keywords: ["nemoclaw download", "nemoclaw upload", "manual sandbox backup", "workspace transfer"]
 content:
@@ -12,7 +12,7 @@ skill:
   priority: 30
 ---
 Use manual transfer when you need to inspect or move specific state files.
-Use [Create and Restore Snapshots](create-and-restore-snapshots) for normal backup, rebuild, and restore workflows.
+OpenShell preserves the native home/workspace during routine lifecycle operations, and NemoClaw transfers the complete tree during rebuild. Use manual transfer for an independent backup or a targeted cross-sandbox move.
 
 ## Download State
 
@@ -48,7 +48,7 @@ Download it for reference only, and do not upload a saved copy. See [Explain Net
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-For Hermes, prefer [Create and Restore Snapshots](create-and-restore-snapshots) for a faithful `state.db` restore.
+For Hermes, prefer [Persist Sandbox State](create-and-restore-snapshots) for normal lifecycle preservation of `state.db`.
 Use manual download and upload only when you need to inspect or transfer a specific file.
 
 ```bash
@@ -95,9 +95,9 @@ $$nemoclaw "$SANDBOX" download /sandbox/.deepagents/agent/skills/ "$BACKUP_DIR/a
 
 Do not recursively download `/sandbox/.deepagents/.state/`.
 That directory can contain upstream credential state such as `auth.json` and `chatgpt-auth.json`, which can copy secrets to the host and restore state that the managed launcher refuses.
-Use `$$nemoclaw <name> snapshot create` when you need NemoClaw's built-in sanitizer for Deep Agents runtime state.
+Review every downloaded path and exclude credential state from manual copies.
 
-Do not manually transfer `/sandbox/.deepagents/.mcp.json`. Entries in that shared native file have entry-level ownership: user-authored credential-free entries belong to the workspace, while NemoClaw-managed entries contain OpenShell provider and policy bindings that are valid only for their source sandbox. Use a NemoClaw snapshot or the managed rebuild flow to preserve both classes safely. Run `$$nemoclaw <name> mcp migrate --apply` first if the sandbox still has legacy MCP state.
+Do not manually transfer `/sandbox/.deepagents/.mcp.json`. Entries in that shared native file have entry-level ownership: user-authored credential-free entries belong to the workspace, while NemoClaw-managed entries contain OpenShell provider and policy bindings that are valid only for their source sandbox. Use the managed rebuild flow when native MCP entries must move with the complete native state. Run `$$nemoclaw <name> mcp migrate --apply` first if the sandbox still has legacy MCP state.
 
 </AgentOnly>
 
@@ -129,7 +129,7 @@ $$nemoclaw "$SANDBOX" upload "$BACKUP_DIR/memory/" /sandbox/.openclaw/workspace/
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-For Hermes, prefer [Create and Restore Snapshots](create-and-restore-snapshots) for a faithful `state.db` restore.
+For Hermes, prefer [Persist Sandbox State](create-and-restore-snapshots) for normal lifecycle preservation of `state.db`.
 Use manual download and upload only when you need to inspect or transfer a specific file.
 
 ```bash
@@ -156,7 +156,7 @@ $$nemoclaw "$SANDBOX" upload "$BACKUP_DIR/agent-skills/" /sandbox/.deepagents/ag
 ```
 
 Do not upload saved `.deepagents/.state` or `.deepagents/.mcp.json` contents during manual restore.
-Restore only the safe files listed above. Use a NemoClaw snapshot or managed rebuild when native MCP entries must survive replacement, so NemoClaw can preserve user-owned entries and reconnect managed entries to live OpenShell policy and provider state.
+Restore only the safe files listed above. Use managed rebuild when native MCP entries must survive replacement, so the complete native state moves with the live OpenShell policy and provider state.
 
 Treat downloaded `config.toml` as inspection context.
 Do not upload an old `config.toml` over a rebuilt sandbox unless you are intentionally replacing NemoClaw's generated route metadata.
@@ -169,7 +169,7 @@ Do not upload an old `config.toml` over a rebuilt sandbox unless you are intenti
 
 <Note title="Source-tree helper script">
 The [`scripts/backup-workspace.sh`](https://github.com/NVIDIA/NemoClaw/blob/main/scripts/backup-workspace.sh) helper exists only in the NemoClaw source repository for engineering workflows.
-It is not installed by the standard installer, so host installs should use `nemoclaw backup-all` or the snapshot commands.
+It is not installed by the standard installer. Host installs can use `nemoclaw backup-all` for the installer safety backup, or `nemoclaw <name> download` for an independent file copy.
 </Note>
 
 Run the contributor setup from the NemoClaw source repository root before you create a backup:
@@ -238,5 +238,5 @@ memory/
 ## Related Topics
 
 - [Understand Sandbox State](understand-sandbox-state) for agent-specific paths and persistence rules.
-- [Create and Restore Snapshots](create-and-restore-snapshots) for managed restore and clone operations.
+- [Persist Sandbox State](create-and-restore-snapshots) for OpenShell persistence and whole-home rebuild transfer.
 - [CLI Selection Guide](../../reference/cli-selection-guide) for NemoClaw and OpenShell command boundaries.

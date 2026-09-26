@@ -150,10 +150,9 @@ $$nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox
 
 A normal Pi rebuild replays the recorded context window, maximum output-token count, and reasoning flag.
 Changing those values requires a fresh replacement.
-Create a snapshot first when declared user state must survive, then export the new values and recreate the sandbox.
+Keep an independent copy first when you need an extra recovery point, then export the new values and recreate the sandbox.
 
 ```bash
-nemoclaw <sandbox-name> snapshot create --name before-model-change
 nemoclaw onboard --agent pi --name <sandbox-name> --fresh --recreate-sandbox
 ```
 

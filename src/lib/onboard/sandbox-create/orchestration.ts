@@ -2571,7 +2571,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                 preferredInferenceApi,
                 webSearchConfig,
                 toolDisclosure: effectiveToolDisclosure,
-                rebuildPreservedEnv: createIntent?.rebuildPreservedEnv,
                 ...(isManagedDcodeAgent
                   ? { dcodeAutoApprovalMode: dcodeAutoApprovalPlan.mode }
                   : {}),

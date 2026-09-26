@@ -168,7 +168,7 @@ Legacy managed-image confirmation never overrides recorded custom-image evidence
 </AgentOnly>
 
 <AgentOnly variant="openclaw">
-OpenClaw's native plugin and package state is restored with the rest of its declared state; NemoClaw does not require separate plugin ownership metadata.
+OpenClaw's native plugin and package state transfers with the complete native home; NemoClaw does not require separate plugin ownership metadata.
 </AgentOnly>
 
 The installer attempts every eligible recovery and exits with a nonzero status if any recovery fails.
@@ -211,10 +211,9 @@ A local-only forced cleanup does not confirm that the OpenShell sandbox was dele
 
 ### Use the Manual Update Flow
 
-Create a snapshot before a manual update.
+Keep an independent host copy before a manual update when you need an extra recovery point.
 
 ```bash
-$$nemoclaw <sandbox-name> snapshot create --name pre-upgrade
 $$nemoclaw update --yes
 $$nemoclaw upgrade-sandboxes --check
 ```
@@ -224,14 +223,14 @@ The command exits nonzero when it reports stale state, an unknown version, a bac
 Inspect each diagnostic before you select a remediation or automate the next action.
 When all your registered sandboxes resolve to one recorded gateway, the command queries that gateway instead of the gateway for your current `NEMOCLAW_GATEWAY_PORT`.
 
-Each rebuild destroys the old container and creates a new one while preserving the manifest-defined workspace or agent state that NemoClaw knows how to snapshot.
+Each rebuild destroys the old container and creates a new one while transferring the complete OpenShell-provided native home/workspace.
 `upgrade-sandboxes --check` can report a sandbox as stale because the running agent version is behind, because the managed NemoClaw image fingerprint differs from the current CLI, or both.
 
 Custom-image sandboxes created with `--from <Dockerfile>` are not marked stale solely by image fingerprint, so an upgrade check does not accidentally replace them with the default image.
-Runtime changes outside the manifest-defined state paths, such as packages installed manually in the running container, are not preserved.
+Paths outside the native home/workspace, such as packages installed into the container image's system directories, are not preserved. Packages and other files installed under the native home are preserved.
 
 ## Related Topics
 
-- [Create and Restore Snapshots](../state-and-backups/create-and-restore-snapshots) for the preservation contract.
+- [Persist Sandbox State](../state-and-backups/create-and-restore-snapshots) for the preservation contract.
 - [Recover and Rebuild Sandboxes](recover-and-rebuild-sandboxes) for manual recreation.
 - [`$$nemoclaw update`](../../reference/commands#$$nemoclaw-update) and [`$$nemoclaw upgrade-sandboxes`](../../reference/commands#$$nemoclaw-upgrade-sandboxes) for command flags.

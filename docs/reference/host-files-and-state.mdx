@@ -98,7 +98,7 @@ Run `$$nemoclaw onboard` to register a sandbox again.
 |---|---|---|
 | `~/.nemoclaw/state/` | Operational coordination for lifecycle locks, local routing, and port-forward helpers. | No. Deleting it can disrupt an active operation and discard recovery context. |
 | `~/.nemoclaw/snapshots/` | Copies of host `~/.openclaw` state and configured external roots created by blueprint migration and rollback flows. NemoClaw excludes known authentication-state files and strips recognized credential values from copied JSON, YAML, and `.env` files. | Only after you no longer need the corresponding rollback or restore point. The host CLI does not expose the direct runner's retention actions. |
-| `~/.nemoclaw/rebuild-backups/` | Host-side snapshots written by `backup-all`, `snapshot create`, and rebuild flows. | Only after you no longer need rollback or restore points. |
+| `~/.nemoclaw/rebuild-backups/` | Internal whole-native-state handoffs written by `backup-all` and rebuild flows. | Only after you no longer need rebuild recovery. |
 | `~/.nemoclaw/backups/` | Workspace backups written by legacy backup helpers and some recovery flows. | Only after confirming you no longer need those workspace archives. |
 | `~/.nemoclaw/mounts/` | Default local mount points created by share or mount commands. | Unmount first, then remove unused directories. |
 | `~/.nemoclaw/blueprints/` | Cached blueprint inputs used by onboarding and sandbox recreation. | Avoid manual deletion unless you plan to rerun onboarding from fresh inputs. |
@@ -174,6 +174,6 @@ For operational uninstall steps, refer to:
 <AgentOnly variant="deepagents">
 
 - [Uninstall NemoClaw](../manage-sandboxes/operate-sandboxes/uninstall-nemoclaw) for the generic uninstall flow.
-- [Create and Restore Snapshots](../manage-sandboxes/state-and-backups/create-and-restore-snapshots) before removing state you may need later.
+- [Transfer State Manually](../manage-sandboxes/state-and-backups/transfer-state-manually) before removing state you may need later.
 
 </AgentOnly>

@@ -71,7 +71,6 @@ function manifest(agent: ShippedManagedImageAgent): RebuildManifest {
     agentType: agent,
     agentVersion: null,
     expectedVersion: null,
-    stateDirs: [],
     dir: "/sandbox",
     backupPath: "/tmp/alpha",
     blueprintDigest: null,
@@ -240,7 +239,11 @@ function provider(agent: ShippedManagedImageAgent) {
       providerId: "mxc",
       supported: true,
       contractVersion: 1,
-      capabilities: { backup: true, restore: true, managedProfileRestore: true },
+      capabilities: {
+        backup: true,
+        restore: true,
+        managedProfileRestore: true,
+      },
       preflight,
       capture: () => runtimeSnapshot().runtime,
       validateRestore,
@@ -290,7 +293,11 @@ describe("managed rebuild restore authority", () => {
   );
 
   it("keeps legacy rebuild manifests on the state-only restore path", async () => {
-    const legacy = { ...manifest("openclaw"), workload: undefined, runtimeSnapshot: undefined };
+    const legacy = {
+      ...manifest("openclaw"),
+      workload: undefined,
+      runtimeSnapshot: undefined,
+    };
     const restore = vi.fn(async () => ({
       success: true,
       restoredDirs: [],
@@ -347,7 +354,10 @@ describe("managed rebuild restore authority", () => {
   ])("restores retained NVIDIA authority %s through managed rebuild (#10758)", async (selector) => {
     const fixture = managedDockerRestoreFixture([selector], "all");
 
-    expect(await fixture.run()).toMatchObject({ success: true, restoredDirs: ["workspace"] });
+    expect(await fixture.run()).toMatchObject({
+      success: true,
+      restoredDirs: ["workspace"],
+    });
     expect(fixture.restore).toHaveBeenCalledOnce();
     expect(
       fixture.captureHostCommand.mock.calls.filter(([, args]) => args[0] === "exec"),
@@ -388,7 +398,10 @@ describe("managed rebuild restore authority", () => {
     );
 
     fixture.selectTarget("0");
-    expect(await fixture.run()).toMatchObject({ success: true, restoredDirs: ["workspace"] });
+    expect(await fixture.run()).toMatchObject({
+      success: true,
+      restoredDirs: ["workspace"],
+    });
     expect(fixture.restore).toHaveBeenCalledOnce();
     expect(
       fixture.captureHostCommand.mock.calls.filter(([, args]) => args[0] === "exec"),

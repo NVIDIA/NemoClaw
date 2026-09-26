@@ -268,13 +268,9 @@ const STARTED_BACKUP_RETRY_DELAY_MS = 2_000;
 
 const defaultBackupRetryDeps: BackupRetryDeps = {
   backup: (name) =>
-    snapshotBackup.backupSandboxStateWithManagedAuthority(
-      name,
-      {},
-      {
-        getSandbox: registry.getSandbox,
-      },
-    ),
+    snapshotBackup.backupSandboxStateWithManagedAuthority(name, {
+      getSandbox: registry.getSandbox,
+    }),
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   // Managed-profile containers run their provider-owned startup before the
   // OpenShell SSH transport becomes reachable. Keep this inside backup-all's

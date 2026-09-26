@@ -341,11 +341,6 @@ describe("translatePublicSandboxArgv", () => {
       ],
     );
     expectNative(
-      translatePublicSandboxArgv("alpha", "snapshot", ["restore", "latest"]),
-      "sandbox:snapshot:restore",
-      ["alpha", "latest"],
-    );
-    expectNative(
       translatePublicSandboxArgv("alpha", "gateway", ["restart", "--quiet"]),
       "sandbox:gateway:restart",
       ["alpha", "--quiet"],
@@ -379,18 +374,16 @@ describe("translatePublicSandboxArgv", () => {
       ["alpha"],
       ["sandbox", "skill", "bogus", "alpha"],
     );
-    expectNative(
-      translatePublicSandboxArgv("alpha", "snapshot", ["bogus"]),
-      "sandbox:snapshot:bogus",
-      ["alpha"],
-      ["sandbox", "snapshot", "bogus", "alpha"],
-    );
   });
 
   it("reports unknown public sandbox actions before oclif execution", () => {
     expect(translatePublicSandboxArgv("alpha", "bogus", [])).toEqual({
       kind: "unknownPublicAction",
       action: "bogus",
+    });
+    expect(translatePublicSandboxArgv("alpha", "snapshot", ["create"])).toEqual({
+      kind: "unknownPublicAction",
+      action: "snapshot",
     });
   });
 

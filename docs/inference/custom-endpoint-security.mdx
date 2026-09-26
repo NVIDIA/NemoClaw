@@ -121,13 +121,10 @@ The first command records the source-subnet policy for the running adapter.
 NemoClaw retries revocation during the second command.
 When no other sandbox references the route, a completed switch without a revocation warning confirms that the adapter removed it.
 
-<Warning title="Create Snapshots Before Cleanup">
-NemoClaw attempts to wipe manifest-defined agent state before it deletes a sandbox.
-OpenShell can retain the per-name persistent volume after sandbox deletion.
-If the wipe cannot complete, onboarding with the same name can make old files available again.
-Do not rely on a retained volume as a backup.
-Before you destroy a remaining sandbox, create a snapshot of any state that you must keep.
-Refer to [Create and Restore Snapshots](../../manage-sandboxes/state-and-backups/create-and-restore-snapshots) for instructions.
+<Warning title="Download State Before Cleanup">
+Sandbox deletion is an OpenShell lifecycle operation and removes the sandbox's native storage.
+Before you destroy a remaining sandbox, download any state that you must keep to an independently managed location.
+Refer to [Transfer State Manually](../../manage-sandboxes/state-and-backups/transfer-state-manually) for instructions.
 </Warning>
 
 If the affected sandbox was destroyed or revocation continues to fail, destroy all remaining sandboxes before adapter cleanup.

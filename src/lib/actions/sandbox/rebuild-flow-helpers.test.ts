@@ -14,7 +14,6 @@ import * as agentOnboard from "../../agent/onboard";
 import * as gatewayRuntime from "../../gateway-runtime-action";
 import type { SandboxBaseImageResolutionMetadata } from "../../sandbox-base-image";
 import * as sandboxState from "../../state/sandbox";
-import * as userManagedFilesProbe from "../../state/user-managed-files-probe";
 import * as snapshotBackup from "./snapshot/backup-authority";
 import * as stoppedSandboxBackup from "./stopped-sandbox-backup";
 import {
@@ -23,7 +22,6 @@ import {
   ensureRebuildAgentBaseImage,
   ensureRebuildTargetGatewaySelected,
   pinRebuildAgentBaseImageForRecreate,
-  warnUnpreservedUserManagedFiles,
 } from "./rebuild-flow-helpers";
 
 function makeBackupResult(): ReturnType<typeof sandboxState.backupSandboxState> {
@@ -34,16 +32,18 @@ function makeBackupResult(): ReturnType<typeof sandboxState.backupSandboxState> 
     failedDirs: [],
     failedFiles: [],
     manifest: {
-      version: 1,
+      version: 2,
       sandboxName: "alpha",
       timestamp: "2026-06-01T00-00-00-000Z",
       agentType: "langchain-deepagents-code",
       agentVersion: null,
       expectedVersion: "0.1.55",
-      stateDirs: [".state"],
-      backedUpDirs: [".state"],
-      stateFiles: [{ path: "config.toml", strategy: "copy" }],
-      dir: "/sandbox/.deepagents",
+      nativeState: {
+        root: "/sandbox",
+        archive: "native-home.tar",
+        sha256: "a".repeat(64),
+      },
+      dir: "/sandbox",
       backupPath: "/tmp/nemoclaw-rebuild-backup",
       blueprintDigest: null,
     } as ReturnType<typeof sandboxState.backupSandboxState>["manifest"],
@@ -224,9 +224,10 @@ describe("rebuild agent base image preflight", () => {
   });
 
   function mockBaseImagePreflight(imageRef: string) {
-    const loadAgent = vi
-      .spyOn(agentDefs, "loadAgent")
-      .mockReturnValue({ name: "hermes", displayName: "Hermes Agent" } as never);
+    const loadAgent = vi.spyOn(agentDefs, "loadAgent").mockReturnValue({
+      name: "hermes",
+      displayName: "Hermes Agent",
+    } as never);
     const ensureAgentBaseImage = vi
       .spyOn(agentOnboard, "ensureAgentBaseImage")
       .mockReturnValue({ imageTag: imageRef, built: true });
@@ -589,7 +590,10 @@ describe("rebuild agent base image preflight", () => {
       resolutionMetadata,
       resolutionMetadata,
     );
-    expect(result.trustedLocalOverride).toEqual({ ref: canonicalRef, provenance });
+    expect(result.trustedLocalOverride).toEqual({
+      ref: canonicalRef,
+      provenance,
+    });
   });
 
   it("disposes a temporary recreate handoff at most once (#7144)", () => {
@@ -873,148 +877,13 @@ describe("backupSandboxStateForRebuild failure safety", () => {
     expect(errorLines.some((line: string) => line.includes("workspace"))).toBe(true);
     expect(
       errorLines.some((line: string) =>
-        line.includes("Incomplete snapshot retained for manual recovery"),
+        line.includes("Incomplete backup retained for manual recovery"),
       ),
     ).toBe(true);
     expect(
-      errorLines.some((line: string) => line.includes("excluded from snapshot restore selection")),
+      errorLines.some((line: string) => line.includes("excluded from automatic rebuild recovery")),
     ).toBe(true);
     expect(errorLines.some((line: string) => line.includes("Aborting rebuild"))).toBe(true);
-  });
-});
-
-describe("warnUnpreservedUserManagedFiles", () => {
-  let warnSpy: MockInstance;
-  let errorSpy: MockInstance;
-  let backupSpy: MockInstance;
-  let probeSpy: MockInstance;
-
-  beforeEach(() => {
-    warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    vi.spyOn(console, "log").mockImplementation(() => undefined);
-    errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-
-    backupSpy = vi
-      .spyOn(snapshotBackup, "backupSandboxStateWithManagedAuthority")
-      .mockReturnValue(makeBackupResult());
-    probeSpy = vi.spyOn(userManagedFilesProbe, "probeUserManagedFiles").mockReturnValue({
-      declared: [],
-      existing: [],
-    });
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  it("warns directly before a rebuild replaces user-managed MCP files", () => {
-    probeSpy.mockReturnValue({
-      declared: [".env", ".mcp.json"],
-      existing: [".env", ".mcp.json"],
-    });
-
-    warnUnpreservedUserManagedFiles("alpha", () => undefined);
-
-    expect(probeSpy).toHaveBeenCalledOnce();
-    expect(probeSpy).toHaveBeenCalledWith("alpha", undefined);
-
-    const warnLines = warnSpy.mock.calls.map((args: unknown[]) => String(args[0]));
-    expect(
-      warnLines.some((line: string) => line.includes("will not be preserved if rebuild replaces")),
-    ).toBe(true);
-    expect(warnLines.some((line: string) => line.includes(".env, .mcp.json"))).toBe(true);
-    expect(warnLines.some((line: string) => line.includes("After a successful rebuild"))).toBe(
-      true,
-    );
-  });
-
-  it("emits no warning when probe returns no existing user-managed files", () => {
-    probeSpy.mockReturnValue({
-      declared: [".env", ".mcp.json"],
-      existing: [],
-    });
-
-    warnUnpreservedUserManagedFiles("alpha", () => undefined);
-
-    expect(probeSpy).toHaveBeenCalledOnce();
-    const warnLines = warnSpy.mock.calls.map((args: unknown[]) => String(args[0]));
-    expect(warnLines.some((line: string) => line.includes("will not be preserved"))).toBe(false);
-  });
-
-  it("emits no warning when agent declares no user-managed files", () => {
-    probeSpy.mockReturnValue({ declared: [], existing: [] });
-
-    warnUnpreservedUserManagedFiles("alpha", () => undefined);
-
-    expect(probeSpy).toHaveBeenCalledOnce();
-    const warnLines = warnSpy.mock.calls.map((args: unknown[]) => String(args[0]));
-    expect(warnLines.some((line: string) => line.includes("will not be preserved"))).toBe(false);
-  });
-
-  it("skips probe when staleRecovery short-circuits the backup", async () => {
-    const result = await backupSandboxStateForRebuild(
-      "alpha",
-      makeSandboxEntry(),
-      true,
-      () => undefined,
-      makeBail(),
-    );
-
-    expect(result).toBeNull();
-    expect(backupSpy).not.toHaveBeenCalled();
-    expect(probeSpy).not.toHaveBeenCalled();
-  });
-
-  it("does not probe during backup before managed MCP adapter entries are scrubbed", async () => {
-    const result = await backupSandboxStateForRebuild(
-      "alpha",
-      makeSandboxEntry(),
-      false,
-      () => undefined,
-      makeBail(),
-    );
-
-    expect(result).toBeTruthy();
-    expect(backupSpy).toHaveBeenCalledOnce();
-    expect(probeSpy).not.toHaveBeenCalled();
-  });
-
-  it("surfaces a user-visible warning when the post-scrub probe errors", () => {
-    probeSpy.mockImplementation(() => {
-      throw new Error("ssh boom");
-    });
-
-    expect(() => warnUnpreservedUserManagedFiles("alpha", () => undefined)).not.toThrow();
-
-    const warnLines = warnSpy.mock.calls.map((args: unknown[]) => String(args[0]));
-    expect(
-      warnLines.some((line: string) =>
-        line.includes("Could not check declared user-managed files"),
-      ),
-    ).toBe(true);
-    expect(warnLines.some((line: string) => line.includes("Re-add any user-managed files"))).toBe(
-      true,
-    );
-    expect(errorSpy).not.toHaveBeenCalled();
-  });
-
-  it("surfaces the backup failure reason before aborting", async () => {
-    backupSpy.mockReturnValue({
-      ...makeBackupResult(),
-      success: false,
-      backedUpDirs: [],
-      backedUpFiles: [],
-      failedDirs: [".state"],
-      failedFiles: ["config.toml"],
-      error: "Pre-backup audit rejected an unsafe symlink",
-    });
-
-    await expect(
-      backupSandboxStateForRebuild("alpha", makeSandboxEntry(), false, () => undefined, makeBail()),
-    ).rejects.toThrow("bail: Failed to back up sandbox state.");
-
-    const errorLines = errorSpy.mock.calls.map((args: unknown[]) => String(args[0]));
-    expect(errorLines).toContain("  Reason: Pre-backup audit rejected an unsafe symlink");
   });
 });
 
@@ -1039,7 +908,36 @@ describe("backupSandboxStateForRebuild stopped-container recovery (#11137)", () 
     vi.restoreAllMocks();
   });
 
-  const startedForBackup = { containerName: "openshell-alpha", runtimeProviderId: "docker" };
+  const startedForBackup = {
+    containerName: "openshell-alpha",
+    runtimeProviderId: "docker",
+  };
+
+  it("uses the prepared stopped native-state copy without starting the container", async () => {
+    const stoppedNativeState = {
+      sandboxName: "alpha",
+      nativeDirectory: "/private/stopped-native",
+      directory: "/private/stopped-native/.openclaw",
+      cleanupDirectory: "/private",
+      assertCurrent: vi.fn(),
+      dispose: vi.fn(),
+    };
+    backupSpy.mockReturnValue(makeBackupResult());
+
+    const result = await backupSandboxStateForRebuild(
+      "alpha",
+      makeSandboxEntry(),
+      false,
+      () => undefined,
+      makeBail(),
+      stoppedNativeState,
+    );
+
+    expect(result).toEqual(makeBackupResult().manifest);
+    expect(backupSpy).toHaveBeenCalledWith("alpha", expect.any(Object), stoppedNativeState);
+    expect(startSpy).not.toHaveBeenCalled();
+    expect(backupStartedSpy).not.toHaveBeenCalled();
+  });
 
   it("recovers by starting the killed container, backing up, then returning it to stopped", async () => {
     backupSpy.mockReturnValue({

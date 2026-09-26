@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { vi } from "vitest";
 import { makePreparedRecoveryManifest } from "../../src/lib/actions/sandbox/rebuild-flow-test-fixtures";
@@ -109,6 +111,13 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     .spyOn(removedImmutabilityMigration, "enforceRemovedImmutabilityMigrationBoundary")
     .mockReturnValue({ stateRecord: null, recoveryArtifacts: [] });
   const backupPath = createHarnessTempDir("nemoclaw-rebuild-backup-");
+  const nativeSource = createHarnessTempDir("nemoclaw-rebuild-native-");
+  fs.mkdirSync(path.join(nativeSource, ".hermes"));
+  const nativeArchive = path.join(backupPath, "native-home.tar");
+  execFileSync("tar", ["-C", nativeSource, "-cf", nativeArchive, "--", "."]);
+  const nativeArchiveSha256 = createHash("sha256")
+    .update(fs.readFileSync(nativeArchive))
+    .digest("hex");
   let latestValidatedRecoveryManifest: Record<string, unknown> | null = null;
   vi.spyOn(policyGet, "getSandboxPolicy").mockReturnValue({
     yaml: "version: 1\nnetwork_policies:\n  host_preserved: {}\n",
@@ -234,7 +243,11 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const ensureRebuildAgentBaseImageSpy = vi
     .spyOn(rebuildFlowHelpers, "ensureRebuildAgentBaseImage")
     .mockReturnValue(
-      overrides.baseImagePreflight ?? { ok: true, imageRef: null, overrideEnvVar: null },
+      overrides.baseImagePreflight ?? {
+        ok: true,
+        imageRef: null,
+        overrideEnvVar: null,
+      },
     );
   vi.spyOn(rebuildFlowHelpers, "removeStaleRebuildDockerOrphan").mockReturnValue(undefined);
   vi.spyOn(onboardSession, "listRetainedSandboxRecoveryRecords").mockReturnValue([]);
@@ -344,20 +357,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   vi.spyOn(rebuildCustomImagePreflight, "preflightRebuildImage").mockResolvedValue(
     overrides.customImagePreflight ?? defaultImagePreflight,
   );
-  const finalizePreparedImageSpy = vi
-    .spyOn(rebuildCustomImagePreflight, "finalizePreparedRebuildImageMessagingPlan")
-    .mockImplementation(
-      (overrides.finalizePreparedImage ??
-        ((prepared: typeof defaultImagePreflight.prepared) => ({
-          ok: true as const,
-          imageTag: "nemoclaw-rebuild-finalize:test",
-          prepared,
-        }))) as never,
-    );
   vi.spyOn(rebuildUsageNotice, "ensureRebuildUsageNoticeAccepted").mockResolvedValue(true);
-  const warnUnpreservedUserManagedFilesSpy = vi
-    .spyOn(rebuildFlowHelpers, "warnUnpreservedUserManagedFiles")
-    .mockImplementation(() => undefined);
   vi.spyOn(resolve, "resolveOpenshell").mockReturnValue(null);
   vi.spyOn(forwardRecovery, "teardownSandboxDashboardForward").mockReturnValue(true);
   vi.spyOn(agentDefs, "loadAgent").mockReturnValue(agentDef);
@@ -444,7 +444,9 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const releaseOnboardLockSpy = vi
     .spyOn(onboardSession, "releaseOnboardLock")
     .mockImplementation(() => undefined);
-  vi.spyOn(onboardSession, "acquireOnboardLock").mockReturnValue({ acquired: true });
+  vi.spyOn(onboardSession, "acquireOnboardLock").mockReturnValue({
+    acquired: true,
+  });
   const finalizeIncompleteOnboardStepSpy = installTerminalStepFailureMock(onboardSession, session);
   session.sandboxName = overrides.sessionSandboxName ?? session.sandboxName;
   const currentSandboxEntry = {
@@ -564,7 +566,12 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   vi.spyOn(rebuildRoutePreflight, "revalidateRebuildRouteBeforeDelete").mockImplementation(
     (...args: unknown[]) => {
       const receipt = args[0] as Record<string, unknown>;
-      return overrides.revalidateRebuildRouteBeforeDelete?.(receipt) ?? { ok: true, receipt };
+      return (
+        overrides.revalidateRebuildRouteBeforeDelete?.(receipt) ?? {
+          ok: true,
+          receipt,
+        }
+      );
     },
   );
   const restoreSandboxEntrySpy = vi
@@ -666,20 +673,34 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     .mockImplementation(() => {
       overrides.beforeBackup?.();
       const manifest = {
+        version: 2,
+        sandboxName: "alpha",
         agentType:
           typeof overrides.sandboxEntry?.agent === "string"
             ? overrides.sandboxEntry.agent
             : "openclaw",
-        dir: "/sandbox/.openclaw",
+        agentVersion: "0.1.0",
+        expectedVersion: "0.2.0",
+        nativeState: {
+          root: "/sandbox",
+          archive: "native-home.tar",
+          sha256: nativeArchiveSha256,
+        },
+        dir: "/sandbox",
         backupPath,
         timestamp: "2026-06-01T00:00:00.000Z",
+        blueprintDigest: null,
         ...(overrides.backupRuntimeSnapshot
-          ? { runtimeSnapshot: structuredClone(overrides.backupRuntimeSnapshot) }
-          : {}),
-        ...(overrides.backupPreservedEnv
-          ? { preservedEnv: structuredClone(overrides.backupPreservedEnv) }
+          ? {
+              runtimeSnapshot: structuredClone(overrides.backupRuntimeSnapshot),
+            }
           : {}),
       };
+      fs.writeFileSync(
+        path.join(backupPath, "rebuild-manifest.json"),
+        `${JSON.stringify(manifest, null, 2)}\n`,
+        { mode: 0o600 },
+      );
       registerHarnessRebuildBackup(manifest as ReturnType<typeof sandboxState.listBackups>[number]);
       return {
         success: true,
@@ -767,7 +788,10 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
             ? currentSandboxEntry.credentialEnv
             : "COMPATIBLE_API_KEY";
         const output = JSON.stringify([
-          { name: provider, credential_keys: credentialEnv ? [credentialEnv] : [] },
+          {
+            name: provider,
+            credential_keys: credentialEnv ? [credentialEnv] : [],
+          },
         ]);
         return { status: 0, output, stdout: output, stderr: "" };
       }
@@ -779,7 +803,9 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
           }
         : { status: 0, output: "" };
     });
-  providerCommand.setProviderCommandRuntimeHooksForTest({ runOpenshell: runOpenshellSpy });
+  providerCommand.setProviderCommandRuntimeHooksForTest({
+    runOpenshell: runOpenshellSpy,
+  });
   const captureOpenshellSpy = vi
     .spyOn(openshellRuntime, "captureOpenshell")
     .mockImplementation((args: unknown, options?: unknown) => {
@@ -1200,8 +1226,6 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     restoreSandboxEntrySpy,
     restoreSandboxEntryIfMissingSpy,
     restoreMcpBridgesAfterRebuildSpy,
-    warnUnpreservedUserManagedFilesSpy,
-    finalizePreparedImageSpy,
     session,
   };
 }

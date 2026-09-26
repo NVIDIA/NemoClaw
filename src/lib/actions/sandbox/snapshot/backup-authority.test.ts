@@ -3,25 +3,7 @@
 
 import { createHash } from "node:crypto";
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
-
-const privilegedCaptureMocks = vi.hoisted(() => ({
-  dockerSpawnSync: vi.fn(),
-  executePrivilegedSandboxCommand: vi.fn(),
-  privilegedSandboxExecArgv: vi.fn(() => ["exec", "container", "python3"]),
-  withPrivilegedSandboxExecutionLease: vi.fn(
-    (_sandboxName: string, _operation: string, run: () => unknown) => run(),
-  ),
-}));
-
-vi.mock("../../../adapters/docker/exec", () => ({
-  dockerSpawnSync: privilegedCaptureMocks.dockerSpawnSync,
-}));
-vi.mock("../../../sandbox/privileged-exec", () => ({
-  executePrivilegedSandboxCommand: privilegedCaptureMocks.executePrivilegedSandboxCommand,
-  privilegedSandboxExecArgv: privilegedCaptureMocks.privilegedSandboxExecArgv,
-  withPrivilegedSandboxExecutionLease: privilegedCaptureMocks.withPrivilegedSandboxExecutionLease,
-}));
+import { describe, expect, it, vi } from "vitest";
 
 import { managedStartupE2eProfile } from "../../../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import {
@@ -37,14 +19,7 @@ import type { RuntimeProviderBundle } from "../../../onboard/runtime-provider/co
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../../state/registry/types";
 import { createSandboxHostLocalInferenceProvenance } from "../../../state/registry/host-local-inference";
 import type { BackupOptions, BackupResult } from "../../../state/sandbox";
-import {
-  backupSandboxStateWithManagedAuthority,
-  captureHermesStateDirectories,
-  captureHermesStateFile,
-  captureOpenClawStateFile,
-  HERMES_DIRECTORY_CAPTURE_SCRIPT,
-  HERMES_STATE_CAPTURE_SCRIPT,
-} from "./backup-authority";
+import { backupSandboxStateWithManagedAuthority } from "./backup-authority";
 
 function workload(
   agent: ShippedManagedImageAgent,
@@ -139,7 +114,6 @@ function successfulBackup(options: BackupOptions): BackupResult {
       agentType: "openclaw",
       agentVersion: null,
       expectedVersion: null,
-      stateDirs: [],
       dir: "/sandbox",
       backupPath: "/tmp/alpha",
       blueprintDigest: null,
@@ -191,305 +165,14 @@ function explicitLlamaSandbox(agent: "openclaw" | "hermes" | "langchain-deepagen
 }
 
 describe("managed snapshot backup authority", () => {
-  beforeEach(() => {
-    privilegedCaptureMocks.dockerSpawnSync.mockReset();
-    privilegedCaptureMocks.executePrivilegedSandboxCommand.mockReset();
-    privilegedCaptureMocks.privilegedSandboxExecArgv.mockClear();
-    privilegedCaptureMocks.withPrivilegedSandboxExecutionLease.mockClear();
-  });
-
-  it("captures the exact OpenClaw configuration with bounded direct execution", () => {
-    const data = Buffer.from('{"models":{"default":"nvidia/test"}}\n');
-    privilegedCaptureMocks.executePrivilegedSandboxCommand.mockReturnValue({
-      status: 0,
-      signal: null,
-      error: undefined,
-      stdout: data,
-      stderr: Buffer.alloc(0),
-    } as never);
-
-    const result = captureOpenClawStateFile("alpha", {
-      sandboxName: "alpha",
-      dir: "/sandbox/.openclaw",
-      spec: { path: "openclaw.json", strategy: "copy" },
-    });
-
-    expect(result).toEqual({ outcome: "backed_up", data });
-    expect(privilegedCaptureMocks.withPrivilegedSandboxExecutionLease).toHaveBeenCalledWith(
-      "alpha",
-      "OpenClaw config snapshot capture",
-      expect.any(Function),
-    );
-    expect(privilegedCaptureMocks.executePrivilegedSandboxCommand).toHaveBeenCalledWith(
-      "alpha",
-      expect.arrayContaining(["/usr/bin/python3", "-I", "-S", "-c"]),
-      expect.objectContaining({
-        sanitizeEnvironment: true,
-        timeout: 30_000,
-        maxOutputBytes: 17 * 1024 * 1024,
-      }),
-    );
-  });
-
-  it("recognizes only the fixed missing-file failure protocol", () => {
-    privilegedCaptureMocks.executePrivilegedSandboxCommand.mockReturnValue({
-      status: 2,
-      signal: null,
-      error: undefined,
-      stdout: Buffer.alloc(0),
-      stderr: Buffer.from("nemoclaw-openclaw-config-capture:missing\n"),
-    } as never);
-
-    const result = captureOpenClawStateFile("alpha", {
-      sandboxName: "alpha",
-      dir: "/sandbox/.openclaw",
-      spec: { path: "openclaw.json", strategy: "copy" },
-    });
-
-    expect(result).toEqual({ outcome: "missing" });
-  });
-
-  it("returns a fixed failure reason when privileged capture rejects unsafe file metadata", () => {
-    privilegedCaptureMocks.executePrivilegedSandboxCommand.mockReturnValue({
-      status: 11,
-      signal: null,
-      error: undefined,
-      stdout: Buffer.alloc(0),
-      stderr: Buffer.from("nemoclaw-openclaw-config-capture:unsafe-file-metadata\n"),
-    } as never);
-
-    const result = captureOpenClawStateFile("alpha", {
-      sandboxName: "alpha",
-      dir: "/sandbox/.openclaw",
-      spec: { path: "openclaw.json", strategy: "copy" },
-    });
-
-    expect(result).toEqual({
-      outcome: "failed",
-      error: "privileged config capture failed: exit 11; reason unsafe-file-metadata",
-    });
-  });
-
-  it("bounds and redacts untrusted privileged stderr", () => {
-    privilegedCaptureMocks.executePrivilegedSandboxCommand.mockReturnValue({
-      status: 10,
-      signal: null,
-      error: undefined,
-      stdout: Buffer.alloc(0),
-      stderr: Buffer.from(`permission denied apiKey=secret-value\u0000${"x".repeat(2048)}`),
-    } as never);
-
-    const result = captureOpenClawStateFile("alpha", {
-      sandboxName: "alpha",
-      dir: "/sandbox/.openclaw",
-      spec: { path: "openclaw.json", strategy: "copy" },
-    });
-
-    expect(result).toMatchObject({ outcome: "failed" });
-    const failedResult = result as Extract<NonNullable<typeof result>, { outcome: "failed" }>;
-    const error = failedResult.error ?? "";
-    expect(error).toContain("permission denied apiKey=<REDACTED>");
-    expect(error).not.toContain("secret-value");
-    expect(error).not.toContain("\u0000");
-    expect(error.length).toBeLessThan(320);
-  });
-
-  it("does not confuse an unrecognized exit 2 with a missing config", () => {
-    privilegedCaptureMocks.executePrivilegedSandboxCommand.mockReturnValue({
-      status: 2,
-      signal: null,
-      error: undefined,
-      stdout: Buffer.alloc(0),
-      stderr: Buffer.from("docker exec usage error"),
-    } as never);
-
-    const result = captureOpenClawStateFile("alpha", {
-      sandboxName: "alpha",
-      dir: "/sandbox/.openclaw",
-      spec: { path: "openclaw.json", strategy: "copy" },
-    });
-
-    expect(result).toEqual({
-      outcome: "failed",
-      error: "privileged config capture failed: exit 2; docker exec usage error",
-    });
-  });
-
-  it.each([
-    {
-      input: "an undeclared OpenClaw state file path",
-      request: {
-        sandboxName: "alpha",
-        dir: "/sandbox/.openclaw",
-        spec: { path: "credentials/token", strategy: "copy" },
-      },
-    },
-    {
-      input: "an undeclared OpenClaw state file strategy",
-      request: {
-        sandboxName: "alpha",
-        dir: "/sandbox/.openclaw",
-        spec: { path: "openclaw.json", strategy: "sqlite_backup" },
-      },
-    },
-    {
-      input: "an undeclared OpenClaw state directory",
-      request: {
-        sandboxName: "alpha",
-        dir: "/sandbox/other",
-        spec: { path: "openclaw.json", strategy: "copy" },
-      },
-    },
-  ] as const)("rejects $input before privileged capture", ({ request }) => {
-    expect(captureOpenClawStateFile("alpha", request)).toBeNull();
-    expect(privilegedCaptureMocks.withPrivilegedSandboxExecutionLease).not.toHaveBeenCalled();
-    expect(privilegedCaptureMocks.executePrivilegedSandboxCommand).not.toHaveBeenCalled();
-  });
-
-  it("captures declared Hermes files and rejects arbitrary paths", () => {
-    privilegedCaptureMocks.dockerSpawnSync.mockReturnValue({
-      status: 0,
-      signal: null,
-      error: undefined,
-      stdout: Buffer.from("state"),
-      stderr: Buffer.alloc(0),
-    } as never);
-    expect(
-      captureHermesStateFile("alpha", {
-        sandboxName: "alpha",
-        dir: "/sandbox/.hermes",
-        spec: { path: "SOUL.md", strategy: "copy" },
-      }),
-    ).toEqual({ outcome: "backed_up", data: Buffer.from("state") });
-    expect(privilegedCaptureMocks.dockerSpawnSync).toHaveBeenLastCalledWith(
-      expect.any(Array),
-      expect.objectContaining({ maxBuffer: 256 * 1024 * 1024 }),
-    );
-    expect(privilegedCaptureMocks.privilegedSandboxExecArgv).toHaveBeenLastCalledWith(
-      "alpha",
-      expect.arrayContaining([HERMES_STATE_CAPTURE_SCRIPT, "/sandbox/.hermes", "SOUL.md", "copy"]),
-      false,
-      true,
-    );
-    expect(
-      captureHermesStateFile("alpha", {
-        sandboxName: "alpha",
-        dir: "/sandbox/.hermes",
-        spec: { path: "credentials/token", strategy: "copy" },
-      }),
-    ).toBeNull();
-  });
-
-  it.each([
-    [2, { outcome: "missing" }],
-    [
-      1,
-      {
-        outcome: "failed",
-        error: "privileged Hermes state capture failed: exit 1",
-      },
-    ],
-  ] as const)(
-    "propagates Hermes state capture exit %i without publishing bytes",
-    (status, expected) => {
-      privilegedCaptureMocks.dockerSpawnSync.mockReturnValue({
-        status,
-        signal: null,
-        error: undefined,
-        stdout: Buffer.alloc(0),
-        stderr: Buffer.alloc(0),
-      } as never);
-
-      expect(
-        captureHermesStateFile("alpha", {
-          sandboxName: "alpha",
-          dir: "/sandbox/.hermes",
-          spec: { path: "SOUL.md", strategy: "copy" },
-        }),
-      ).toEqual(expected);
-    },
-  );
-
-  it("streams only declared Hermes directories to the state-owned archive fd", () => {
-    privilegedCaptureMocks.dockerSpawnSync.mockReturnValue({
-      status: 0,
-      signal: null,
-      error: undefined,
-      stdout: null,
-      stderr: Buffer.alloc(0),
-    } as never);
-    expect(
-      captureHermesStateDirectories(
-        "alpha",
-        {
-          sandboxName: "alpha",
-          dir: "/sandbox/.hermes",
-          dirs: ["workspace"],
-          maxArchiveBytes: 256 * 1024 * 1024,
-        },
-        42,
-      ),
-    ).toEqual({ outcome: "backed_up" });
-    expect(privilegedCaptureMocks.dockerSpawnSync).toHaveBeenLastCalledWith(
-      expect.any(Array),
-      expect.objectContaining({ stdio: ["ignore", 42, "pipe"] }),
-    );
-    expect(privilegedCaptureMocks.privilegedSandboxExecArgv).toHaveBeenLastCalledWith(
-      "alpha",
-      expect.arrayContaining([
-        HERMES_DIRECTORY_CAPTURE_SCRIPT,
-        "/sandbox/.hermes",
-        String(256 * 1024 * 1024),
-        "workspace",
-      ]),
-      false,
-      true,
-    );
-    expect(
-      captureHermesStateDirectories(
-        "alpha",
-        {
-          sandboxName: "other",
-          dir: "/sandbox/.hermes",
-          dirs: ["workspace"],
-          maxArchiveBytes: 256 * 1024 * 1024,
-        },
-        42,
-      ),
-    ).toBeNull();
-    expect(
-      captureHermesStateDirectories(
-        "alpha",
-        {
-          sandboxName: "alpha",
-          dir: "/sandbox/.hermes",
-          dirs: ["../outside"],
-          maxArchiveBytes: 256 * 1024 * 1024,
-        },
-        42,
-      ),
-    ).toBeNull();
-  });
-
-  it("does not execute privileged capture when a normal Hermes backup succeeds", () => {
+  it("uses only the whole-home state path for unmanaged Hermes backup", () => {
     const backup = vi.fn((_name: string, options: BackupOptions = {}) => successfulBackup(options));
-    const result = backupSandboxStateWithManagedAuthority(
-      "alpha",
-      {},
-      {
-        getSandbox: () => ({ name: "alpha", agent: "hermes" }) as SandboxEntry,
-        backup,
-      },
-    );
+    const result = backupSandboxStateWithManagedAuthority("alpha", {
+      getSandbox: () => ({ name: "alpha", agent: "hermes" }) as SandboxEntry,
+      backup,
+    });
     expect(result.success).toBe(true);
-    expect(backup).toHaveBeenCalledWith(
-      "alpha",
-      expect.objectContaining({
-        captureStateFile: expect.any(Function),
-        captureStateDirectories: expect.any(Function),
-      }),
-    );
-    expect(privilegedCaptureMocks.dockerSpawnSync).not.toHaveBeenCalled();
+    expect(backup).toHaveBeenCalledWith("alpha");
   });
 
   it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
@@ -503,17 +186,17 @@ describe("managed snapshot backup authority", () => {
         successfulBackup(options),
       );
 
-      const result = backupSandboxStateWithManagedAuthority(
-        "alpha",
-        { name: "stable" },
-        { getSandbox, requireProvider, captureRuntime, backup },
-      );
+      const result = backupSandboxStateWithManagedAuthority("alpha", {
+        getSandbox,
+        requireProvider,
+        captureRuntime,
+        backup,
+      });
 
       expect(result.success).toBe(true);
       expect(backup).toHaveBeenCalledWith(
         "alpha",
         expect.objectContaining({
-          name: "stable",
           workload: entry.workload,
           runtimeSnapshot: runtime(),
           validateBeforePublish: expect.any(Function),
@@ -524,6 +207,47 @@ describe("managed snapshot backup authority", () => {
       expect(captureRuntime).toHaveBeenCalledTimes(2);
     },
   );
+
+  it("backs up a stopped sandbox from its prepared native-state copy", () => {
+    const entry = sandbox("openclaw");
+    const assertCurrent = vi.fn();
+    const stoppedNativeState = {
+      sandboxName: "alpha",
+      nativeDirectory: "/private/stopped-native",
+      directory: "/private/stopped-native/.openclaw",
+      cleanupDirectory: "/private",
+      assertCurrent,
+      dispose: vi.fn(),
+    };
+    const backup = vi.fn((_name: string, options: BackupOptions = {}) => successfulBackup(options));
+
+    const result = backupSandboxStateWithManagedAuthority(
+      "alpha",
+      {
+        getSandbox: () => entry,
+        requireProvider: () => provider(),
+        captureRuntime: () => runtime(),
+        backup,
+      },
+      stoppedNativeState,
+    );
+
+    expect(result.success).toBe(true);
+    expect(backup).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({
+        nativeStateSource: {
+          root: "/sandbox",
+          directory: stoppedNativeState.nativeDirectory,
+          assertCurrent,
+        },
+        validateBeforePublish: expect.any(Function),
+      }),
+    );
+    const options = backup.mock.calls[0]?.[1];
+    options?.nativeStateSource?.assertCurrent();
+    expect(assertCurrent).toHaveBeenCalledOnce();
+  });
 
   it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
     "carries exact explicit llama.cpp authority through %s backup",
@@ -540,18 +264,14 @@ describe("managed snapshot backup authority", () => {
         successfulBackup(options),
       );
 
-      const result = backupSandboxStateWithManagedAuthority(
-        entry.name,
-        { name: "llama" },
-        {
-          getSandbox: () => entry,
-          requireProvider: () => provider(),
-          captureRuntime: vi.fn() as never,
-          prepareHostLocalInference: prepareHostLocalInference as never,
-          confirmHostLocalInference: confirmHostLocalInference as never,
-          backup,
-        },
-      );
+      const result = backupSandboxStateWithManagedAuthority(entry.name, {
+        getSandbox: () => entry,
+        requireProvider: () => provider(),
+        captureRuntime: vi.fn() as never,
+        prepareHostLocalInference: prepareHostLocalInference as never,
+        confirmHostLocalInference: confirmHostLocalInference as never,
+        backup,
+      });
 
       expect(result.success).toBe(true);
       expect(backup).toHaveBeenCalledWith(
@@ -571,17 +291,13 @@ describe("managed snapshot backup authority", () => {
     const entry = explicitLlamaSandbox("openclaw");
     const backup = vi.fn();
 
-    const result = backupSandboxStateWithManagedAuthority(
-      entry.name,
-      {},
-      {
-        getSandbox: () => entry,
-        requireProvider: () => provider(),
-        captureRuntime: vi.fn() as never,
-        prepareHostLocalInference: vi.fn(() => null),
-        backup,
-      },
-    );
+    const result = backupSandboxStateWithManagedAuthority(entry.name, {
+      getSandbox: () => entry,
+      requireProvider: () => provider(),
+      captureRuntime: vi.fn() as never,
+      prepareHostLocalInference: vi.fn(() => null),
+      backup,
+    });
 
     expect(result).toMatchObject({
       success: false,
@@ -590,7 +306,7 @@ describe("managed snapshot backup authority", () => {
     expect(backup).not.toHaveBeenCalled();
   });
 
-  it("keeps explicit Dockerfile backups on the legacy state-only path", () => {
+  it("keeps explicit Dockerfile backups on the whole-home state path", () => {
     const entry = {
       name: "alpha",
       agent: "openclaw",
@@ -601,25 +317,15 @@ describe("managed snapshot backup authority", () => {
     const requireProvider = vi.fn();
     const captureRuntime = vi.fn();
 
-    const result = backupSandboxStateWithManagedAuthority(
-      "alpha",
-      { name: "legacy" },
-      {
-        getSandbox: () => entry,
-        requireProvider,
-        captureRuntime: captureRuntime as never,
-        backup,
-      },
-    );
+    const result = backupSandboxStateWithManagedAuthority("alpha", {
+      getSandbox: () => entry,
+      requireProvider,
+      captureRuntime: captureRuntime as never,
+      backup,
+    });
 
     expect(result.success).toBe(true);
-    expect(backup).toHaveBeenCalledWith(
-      "alpha",
-      expect.objectContaining({
-        name: "legacy",
-        captureStateFile: expect.any(Function),
-      }),
-    );
+    expect(backup).toHaveBeenCalledWith("alpha");
     expect(requireProvider).not.toHaveBeenCalled();
     expect(captureRuntime).not.toHaveBeenCalled();
   });
@@ -640,24 +346,19 @@ describe("managed snapshot backup authority", () => {
         successfulBackup(options),
       );
 
-      const result = backupSandboxStateWithManagedAuthority(
-        "alpha",
-        { name: "host-local" },
-        {
-          getSandbox: () => entry,
-          requireProvider: () => provider(),
-          captureRuntime: vi.fn() as never,
-          prepareHostLocalInference: prepareHostLocalInference as never,
-          confirmHostLocalInference: confirmHostLocalInference as never,
-          backup,
-        },
-      );
+      const result = backupSandboxStateWithManagedAuthority("alpha", {
+        getSandbox: () => entry,
+        requireProvider: () => provider(),
+        captureRuntime: vi.fn() as never,
+        prepareHostLocalInference: prepareHostLocalInference as never,
+        confirmHostLocalInference: confirmHostLocalInference as never,
+        backup,
+      });
 
       expect(result.success).toBe(true);
       expect(backup).toHaveBeenCalledWith(
         "alpha",
         expect.objectContaining({
-          name: "host-local",
           hostLocalInferenceReceipt: entry.hostLocalInferenceReceipt,
           validateBeforePublish: expect.any(Function),
         }),
@@ -699,18 +400,14 @@ describe("managed snapshot backup authority", () => {
     });
     const backup = vi.fn((_name: string, options: BackupOptions = {}) => successfulBackup(options));
 
-    const result = backupSandboxStateWithManagedAuthority(
-      "alpha",
-      {},
-      {
-        getSandbox: vi.fn(() => entries.shift() ?? null),
-        requireProvider: () => provider(),
-        captureRuntime: vi.fn() as never,
-        prepareHostLocalInference: vi.fn(() => prepared) as never,
-        confirmHostLocalInference: confirmHostLocalInference as never,
-        backup,
-      },
-    );
+    const result = backupSandboxStateWithManagedAuthority("alpha", {
+      getSandbox: vi.fn(() => entries.shift() ?? null),
+      requireProvider: () => provider(),
+      captureRuntime: vi.fn() as never,
+      prepareHostLocalInference: vi.fn(() => prepared) as never,
+      confirmHostLocalInference: confirmHostLocalInference as never,
+      backup,
+    });
 
     expect(result).toMatchObject({
       success: false,
@@ -722,16 +419,12 @@ describe("managed snapshot backup authority", () => {
     const entry = sandbox("openclaw");
     const backup = vi.fn();
 
-    const result = backupSandboxStateWithManagedAuthority(
-      "alpha",
-      {},
-      {
-        getSandbox: () => entry,
-        requireProvider: () => provider(false),
-        captureRuntime: vi.fn() as never,
-        backup,
-      },
-    );
+    const result = backupSandboxStateWithManagedAuthority("alpha", {
+      getSandbox: () => entry,
+      requireProvider: () => provider(false),
+      captureRuntime: vi.fn() as never,
+      backup,
+    });
 
     expect(result).toMatchObject({
       success: false,
@@ -769,19 +462,15 @@ describe("managed snapshot backup authority", () => {
         successfulBackup(options),
       );
 
-      const result = backupSandboxStateWithManagedAuthority(
-        "alpha",
-        {},
-        {
-          getSandbox,
-          requireProvider: () => provider(),
-          captureRuntime: captureRuntime as (
-            bundle: RuntimeProviderBundle,
-            entry: SandboxEntry,
-          ) => ReturnType<typeof runtime>,
-          backup,
-        },
-      );
+      const result = backupSandboxStateWithManagedAuthority("alpha", {
+        getSandbox,
+        requireProvider: () => provider(),
+        captureRuntime: captureRuntime as (
+          bundle: RuntimeProviderBundle,
+          entry: SandboxEntry,
+        ) => ReturnType<typeof runtime>,
+        backup,
+      });
 
       expect(result).toMatchObject({
         success: false,

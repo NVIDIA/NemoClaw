@@ -149,7 +149,7 @@ describe("doctor lifecycle registration checks", () => {
       group: "Sandbox",
       label: "Lifecycle registration",
       status: "ok",
-      detail: expect.stringContaining("snapshot, rebuild, upgrade, recovery, and reboot"),
+      detail: expect.stringContaining("rebuild, upgrade, recovery, and reboot"),
     });
   });
 

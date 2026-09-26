@@ -5,13 +5,9 @@ import { type MockInstance, vi } from "vitest";
 import type { GatewayRestartResult } from "../../src/lib/actions/sandbox/gateway-restart";
 import type { SandboxGatewayState } from "../../src/lib/actions/sandbox/gateway-state";
 import type { OpenShellSandboxInventory } from "../../src/lib/adapters/openshell/sandbox-observer";
-import type {
-  finalizePreparedRebuildImageMessagingPlan,
-  RebuildImagePreflightResult,
-} from "../../src/lib/actions/sandbox/rebuild-custom-image-preflight";
+import type { RebuildImagePreflightResult } from "../../src/lib/actions/sandbox/rebuild-custom-image-preflight";
 import type { RebuildRecreateOnboardOpts } from "../../src/lib/actions/sandbox/rebuild-gpu-opt-out";
 import type { VersionCheckResult } from "../../src/lib/sandbox/version";
-import type { PreservedEnvFile } from "../../src/lib/state/preserved-env";
 import type { SandboxEntry, SandboxRemovalReceipt } from "../../src/lib/state/registry";
 import type { SandboxRuntimeSnapshot } from "../../src/lib/state/registry/runtime-snapshot";
 
@@ -157,7 +153,6 @@ export type RebuildFlowOverrides = {
     stderr?: string;
     error?: Error;
   };
-  backupPreservedEnv?: PreservedEnvFile[];
   backupRuntimeSnapshot?: SandboxRuntimeSnapshot;
   ensureValidatedBraveSearchCredential?: () => Promise<unknown>;
   ensureValidatedWebSearchCredential?: () => Promise<unknown>;
@@ -166,7 +161,6 @@ export type RebuildFlowOverrides = {
   versionCheck?: VersionCheckResult;
   hydrateCredentialEnv?: (credentialEnv: string) => string | null;
   customImagePreflight?: RebuildImagePreflightResult;
-  finalizePreparedImage?: typeof finalizePreparedRebuildImageMessagingPlan;
   defaultSelectionRevision?: number;
   preDeleteDefaultSelectionRevision?: number;
   removalReceipt?: SandboxRemovalReceipt | null;
@@ -230,8 +224,6 @@ export type RebuildFlowHarness = {
   restoreSandboxEntrySpy: MockInstance;
   restoreSandboxEntryIfMissingSpy: MockInstance;
   restoreMcpBridgesAfterRebuildSpy: MockInstance;
-  warnUnpreservedUserManagedFilesSpy: MockInstance;
-  finalizePreparedImageSpy: MockInstance;
   session: RebuildFlowSession;
 };
 export const originalSandboxName = process.env.NEMOCLAW_SANDBOX_NAME;

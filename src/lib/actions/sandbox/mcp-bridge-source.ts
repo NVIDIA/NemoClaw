@@ -4,7 +4,7 @@
 import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import type { CapturedOpenClawState } from "../../state/state-directory-restore";
+import type { PreparedStoppedNativeState } from "../../state/state-directory-restore";
 import { isDeepStrictEqual } from "node:util";
 import { readLegacyMcpRegistryProjection } from "../../state/registry/legacy-mcp";
 
@@ -460,7 +460,7 @@ function sourceSnapshotFromRecords(
 
 /** Use the same bounded reader on provider-captured regular files without executing sandbox code. */
 export function inspectCapturedOpenClawMcpSources(
-  source: CapturedOpenClawState,
+  source: PreparedStoppedNativeState,
 ): AgentMcpSourceSnapshot {
   source.assertCurrent();
   let output: string;
@@ -660,7 +660,10 @@ export async function inspectPolicyOnlyMcpEntry(
 export async function inspectSourceBridgeState(
   sandbox: SandboxEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
-): Promise<{ bridges: Record<string, McpSourceEntry>; sources: AgentMcpSourceSnapshot }> {
+): Promise<{
+  bridges: Record<string, McpSourceEntry>;
+  sources: AgentMcpSourceSnapshot;
+}> {
   const sources = await inspectAgentMcpSources(sandbox, runtimeSelection);
   const bridges = await joinMcpEntriesToOpenShell(sandbox, sources.native, runtimeSelection);
   return { bridges, sources };
@@ -669,7 +672,10 @@ export async function inspectSourceBridgeState(
 export async function inspectLegacyBridgeState(
   sandbox: SandboxEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
-): Promise<{ bridges: Record<string, McpSourceEntry>; sources: AgentMcpSourceSnapshot }> {
+): Promise<{
+  bridges: Record<string, McpSourceEntry>;
+  sources: AgentMcpSourceSnapshot;
+}> {
   const sources = await inspectAgentMcpSources(sandbox, runtimeSelection);
   const bridges = await joinMcpEntriesToOpenShell(
     sandbox,

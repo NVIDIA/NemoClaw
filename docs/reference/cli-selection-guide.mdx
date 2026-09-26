@@ -51,11 +51,9 @@ Use `--resume` only when you are recovering an interrupted onboarding session. F
   $$nemoclaw upgrade-sandboxes --check
   ```
 
-- Snapshot, restore, or mount sandbox state:
+- Mount or manually copy sandbox state:
 
   ```bash
-  $$nemoclaw my-assistant snapshot create --name before-change
-  $$nemoclaw my-assistant snapshot restore before-change
   $$nemoclaw my-assistant share mount
   ```
 
@@ -252,7 +250,7 @@ Use `openshell policy update` for precise live endpoint or REST rule changes. Us
 
 ### Move Workspace Files
 
-Use `$$nemoclaw <name> snapshot create`, `snapshot restore`, or `share mount` for normal workspace preservation and editing.
+OpenShell preserves the native sandbox home through stop, start, and reconnect. Use `$$nemoclaw <name> share mount` for direct workspace editing or `download` for an independent host copy.
 
 Use `$$nemoclaw <name> download` for manual host downloads when you need control over source and destination paths.
 Use `openshell sandbox upload` when you intentionally want the raw OpenShell upload path.
@@ -284,7 +282,7 @@ Use `openshell sandbox upload` when you intentionally want the raw OpenShell upl
 - [Customize the Network Policy](../network-policy/customize-network-policy) for persistent network access changes.
 - [Approve or Deny Network Requests](../network-policy/approve-network-requests) for the OpenShell TUI approval flow.
 - [Understand Sandbox State](../manage-sandboxes/state-and-backups/understand-sandbox-state) for Deep Agents state and file transfer guidance.
-- [Create and Restore Snapshots](../manage-sandboxes/state-and-backups/create-and-restore-snapshots) for snapshot and restore workflows.
+- [Persist Sandbox State](../manage-sandboxes/state-and-backups/create-and-restore-snapshots) for OpenShell persistence and whole-home rebuild transfer.
 - [Choose an Inference Provider](../inference/learn-and-choose/choose-inference-provider) for provider configuration details.
 
 </AgentOnly>

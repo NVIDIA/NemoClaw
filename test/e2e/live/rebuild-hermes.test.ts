@@ -55,7 +55,7 @@ test(
       boundary: "exact managed Hermes rebuild state restoration and native readiness",
       contracts: [
         "rebuild uses the published exact managed image without stale controller fixtures",
-        "Hermes memory, native user plugin, and lazy package state survive the rebuild",
+        "unknown home, workspace, memory, hook, cron, child-agent, plugin, and package state survive the rebuild",
         "the native Hermes health endpoint is ready after restore",
       ],
     });
@@ -100,6 +100,7 @@ test(
       [
         "set -eu",
         `umask 077; mkdir -p /sandbox/.hermes/memories; printf '%s\\n' '${marker}' > /sandbox/.hermes/memories/.rebuild-state-marker; sync`,
+        `mkdir -p /sandbox/.hermes/workspace /sandbox/.hermes/hooks /sandbox/.hermes/cron /sandbox/.hermes/agents/child; for target in /sandbox/.rebuild-unknown-marker /sandbox/.hermes/workspace/.rebuild-workspace-marker /sandbox/.hermes/hooks/.rebuild-hook-marker /sandbox/.hermes/cron/.rebuild-cron-marker /sandbox/.hermes/agents/child/.rebuild-history-marker; do printf '%s' '${marker}' > "$target"; done`,
         "plugin=/sandbox/.hermes/plugins/e2e-native-plugin",
         "package=/sandbox/.hermes/lazy-packages/e2e_native_package",
         'mkdir -p "$plugin" "$package"',
@@ -139,6 +140,7 @@ test(
       [
         "set -eu",
         'marker="$(cat /sandbox/.hermes/memories/.rebuild-state-marker)"',
+        'for target in /sandbox/.rebuild-unknown-marker /sandbox/.hermes/workspace/.rebuild-workspace-marker /sandbox/.hermes/hooks/.rebuild-hook-marker /sandbox/.hermes/cron/.rebuild-cron-marker /sandbox/.hermes/agents/child/.rebuild-history-marker; do test "$(cat "$target")" = "$marker"; done',
         "HERMES_HOME=/sandbox/.hermes hermes plugins list --plain --user >/tmp/e2e-native-plugins-after-rebuild",
         "grep -Fq 'e2e-native-plugin' /tmp/e2e-native-plugins-after-rebuild",
         "/opt/hermes/.venv/bin/python -I /sandbox/.hermes/plugins/e2e-native-plugin/__init__.py",

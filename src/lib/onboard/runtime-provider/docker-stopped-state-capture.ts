@@ -20,19 +20,20 @@ const CAPTURE_TIMEOUT_MS = 120_000;
 const INSPECT_FORMAT =
   "[{{json .Id}},{{json .State}},{{json .Config.Labels}},{{json .RestartCount}},{{json .Image}},{{json .Mounts}}]";
 
-// Filter before writing any archive to disk. Machine-local identity, pairing
-// state and other undeclared files never enter the retained capture.
-const PROJECT_STATE_ARCHIVE = String.raw`import json, pathlib, sys, tarfile
-layout = json.loads(sys.argv[1])
-directories = set(layout['directories'])
-files = set(layout['files'])
-prefixes = tuple(layout['prefixes'])
+function rejectStoppedCapture(message: string): never {
+  throw new Error(message);
+}
+
+// Normalize the provider archive without selecting an agent-owned inventory.
+// The complete native root is retained for stopped-source inspection.
+const COMPLETE_NATIVE_STATE_ARCHIVE = String.raw`import pathlib, sys, tarfile
+root_name = sys.argv[1]
 root_seen = False
 with tarfile.open(fileobj=sys.stdin.buffer, mode='r|') as source:
     with tarfile.open(fileobj=sys.stdout.buffer, mode='w|') as target:
         for entry in source:
             parts = pathlib.PurePosixPath(entry.name).parts
-            if not parts or '\0' in entry.name or entry.name.startswith('/') or '..' in parts or parts[0] != '.openclaw':
+            if not parts or '\0' in entry.name or entry.name.startswith('/') or '..' in parts or parts[0] != root_name:
                 raise ValueError('invalid stopped state path')
             if len(parts) == 1:
                 if root_seen or not entry.isdir(): raise ValueError('state root is not one directory')
@@ -41,16 +42,16 @@ with tarfile.open(fileobj=sys.stdin.buffer, mode='r|') as source:
                 entry.mode = 0o700
             else:
                 if not root_seen: raise ValueError('state root header missing')
-                top = parts[1]
-                directory = top in directories or top.startswith(prefixes)
-                state_file = top in files and len(parts) == 2
-                if not directory and not state_file: continue
-                if state_file and not entry.isfile(): raise ValueError('invalid state file')
                 entry.name = '/'.join(parts[1:])
-            if not (entry.isfile() or entry.isdir() or entry.issym()) or entry.sparse is not None:
+            if not (entry.isfile() or entry.isdir() or entry.issym() or entry.islnk()) or entry.sparse is not None:
                 raise ValueError('unsupported stopped state entry')
             entry.pax_headers = {}
             entry.mode &= 0o777
+            if entry.islnk():
+                link_parts = pathlib.PurePosixPath(entry.linkname).parts
+                if not link_parts or entry.linkname.startswith('/') or '..' in link_parts or link_parts[0] != root_name or len(link_parts) == 1:
+                    raise ValueError('invalid stopped state hard link')
+                entry.linkname = '/'.join(link_parts[1:])
             target.addfile(entry, source.extractfile(entry) if entry.isfile() else None)
 if not root_seen: raise ValueError('state root header missing')
 `;
@@ -58,6 +59,7 @@ if not root_seen: raise ValueError('state root header missing')
 function observeManagedStateMounts(
   mounts: readonly unknown[],
   roots: NonNullable<RuntimeProviderStoppedStateProjection["managedStateRoots"]>,
+  nativeRoot: string,
   containerId: string,
   readDocker: (args: readonly string[]) => string | null,
 ): readonly unknown[] | null {
@@ -73,7 +75,7 @@ function observeManagedStateMounts(
       path.posix.normalize(destination) !== destination
     )
       return null;
-    const source = "/sandbox/.openclaw";
+    const source = nativeRoot;
     if (
       destination !== source &&
       !destination.startsWith(`${source}/`) &&
@@ -173,19 +175,12 @@ export function prepareStoppedDockerStateCapture(
     runtime.runtime.runtime.kind !== "docker-container" ||
     !/^[a-f0-9]{64}$/u.test(runtime.runtime.runtime.handle)
   ) {
-    throw new Error("Stopped state capture requires an identified Docker OpenClaw sandbox.");
+    rejectStoppedCapture("Stopped state capture requires an identified Docker OpenClaw sandbox.");
   }
-  if (
-    [...projection.directories, ...projection.prefixes, ...projection.files].some(
-      (name) => !/^[A-Za-z0-9._-]+$/u.test(name) || name === "." || name === "..",
-    )
-  )
-    throw new Error("Stopped state projection contains an invalid declared path.");
-  const encodedProjection = JSON.stringify({
-    directories: projection.directories,
-    prefixes: projection.prefixes,
-    files: projection.files,
-  });
+  if (projection.nativeRoot !== "/sandbox") {
+    rejectStoppedCapture("Stopped state projection requires the complete canonical native root.");
+  }
+  const nativeRootName = path.posix.basename(projection.nativeRoot);
   const managedStateRoots = structuredClone(projection.managedStateRoots ?? []);
   const containerId = runtime.runtime.runtime.handle;
   const inspect = dependencies.inspect ?? dockerSpawnSync;
@@ -208,15 +203,15 @@ export function prepareStoppedDockerStateCapture(
       INSPECT_FORMAT,
       containerId,
     ]);
-    if (raw === null) throw new Error("Could not verify the stopped source container.");
+    if (raw === null) rejectStoppedCapture("Could not verify the stopped source container.");
     let fields: unknown;
     try {
       fields = JSON.parse(raw);
     } catch {
-      throw new Error("The stopped source container returned invalid identity evidence.");
+      rejectStoppedCapture("The stopped source container returned invalid identity evidence.");
     }
     if (!Array.isArray(fields) || fields.length !== 6) {
-      throw new Error("The stopped source container returned invalid identity evidence.");
+      rejectStoppedCapture("The stopped source container returned invalid identity evidence.");
     }
     const [id, state, labels, restarts, image, mounts] = fields;
     if (
@@ -243,16 +238,17 @@ export function prepareStoppedDockerStateCapture(
       !/^sha256:[a-f0-9]{64}$/u.test(image) ||
       !Array.isArray(mounts)
     ) {
-      throw new Error("The source container is no longer the stopped registered sandbox.");
+      rejectStoppedCapture("The source container is no longer the stopped registered sandbox.");
     }
     const ownedVolumes = observeManagedStateMounts(
       mounts,
       managedStateRoots,
+      projection.nativeRoot,
       containerId,
       readDocker,
     );
     if (!ownedVolumes)
-      throw new Error("The source container is no longer the stopped registered sandbox.");
+      rejectStoppedCapture("The source container is no longer the stopped registered sandbox.");
     // Docker enumerates mounts from a map. Their order is not source identity;
     // retain every validated mount and field while comparing them by destination.
     const orderedMounts = [...mounts].sort((left, right) =>
@@ -273,7 +269,7 @@ export function prepareStoppedDockerStateCapture(
   const initial = observe();
   const assertCurrent = (): void => {
     if (!isDeepStrictEqual(observe(), initial)) {
-      throw new Error("The stopped source container changed during recovery capture.");
+      rejectStoppedCapture("The stopped source container changed during recovery capture.");
     }
   };
   return {
@@ -283,12 +279,12 @@ export function prepareStoppedDockerStateCapture(
       await new Promise<void>((resolve, reject) => {
         // No -L or trailing '/.': an agent-replaced root symlink stays a link
         // in the archive and the state owner rejects it instead of following it.
-        const child = spawn(["cp", `${containerId}:/sandbox/.openclaw`, "-"], {
+        const child = spawn(["cp", `${containerId}:${projection.nativeRoot}`, "-"], {
           stdio: ["ignore", "pipe", "pipe"],
         });
         const filter = spawnHost(
           "python3",
-          ["-I", "-c", PROJECT_STATE_ARCHIVE, encodedProjection],
+          ["-I", "-c", COMPLETE_NATIVE_STATE_ARCHIVE, nativeRootName],
           {
             env: { PATH: process.env.PATH ?? "" },
             stdio: ["pipe", "pipe", "pipe"],
@@ -327,7 +323,7 @@ export function prepareStoppedDockerStateCapture(
             let offset = 0;
             while (offset < chunk.length) {
               const written = writeSync(archiveFd, chunk, offset, chunk.length - offset);
-              if (written <= 0) throw new Error("short write");
+              if (written <= 0) rejectStoppedCapture("short write");
               offset += written;
             }
           } catch {

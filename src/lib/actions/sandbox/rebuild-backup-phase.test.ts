@@ -131,6 +131,31 @@ describe("rebuild policy handoff", () => {
     });
   });
 
+  it("passes a prepared stopped native-state source into the rebuild backup", async () => {
+    const stoppedNativeState = {
+      sandboxName: "alpha",
+      nativeDirectory: "/private/stopped-native",
+      directory: "/private/stopped-native/.openclaw",
+      cleanupDirectory: "/private",
+      assertCurrent: vi.fn(),
+      dispose: vi.fn(),
+    };
+    const backup = vi.fn(async () => null);
+
+    await runRebuildBackupPhase(input({ stoppedNativeState }), backup);
+
+    expect(stoppedNativeState.assertCurrent).toHaveBeenCalledOnce();
+    expect(backup).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ name: "alpha" }),
+      false,
+      expect.any(Function),
+      expect.any(Function),
+      stoppedNativeState,
+    );
+    expect(mocks.beginOpenClawBackupQuiesce).not.toHaveBeenCalled();
+  });
+
   it("rejects a literal credential before creating a rebuild policy handoff", async () => {
     const credential = "opaque-url-credential";
     mocks.captureRecordedSandboxBasePolicy.mockReturnValue(
@@ -174,7 +199,9 @@ describe("rebuild policy handoff", () => {
     ].join("\n");
     const sha256 = createHash("sha256").update(legacyCredentialPolicy).digest("hex");
     const file = `rebuild-policy-handoff.${sha256}.yaml`;
-    fs.writeFileSync(path.join(backupPath, file), legacyCredentialPolicy, { mode: 0o600 });
+    fs.writeFileSync(path.join(backupPath, file), legacyCredentialPolicy, {
+      mode: 0o600,
+    });
     const preparedRecoveryManifest = {
       version: 1,
       sandboxName: "alpha",
@@ -182,9 +209,6 @@ describe("rebuild policy handoff", () => {
       agentType: "openclaw",
       agentVersion: null,
       expectedVersion: null,
-      stateDirs: [],
-      failedBackupDirs: [],
-      stateFiles: [],
       dir: "/sandbox/.openclaw",
       backupPath,
       blueprintDigest: "digest",

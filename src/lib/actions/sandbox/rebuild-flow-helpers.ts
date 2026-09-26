@@ -44,7 +44,6 @@ import type { SandboxEntry } from "../../state/registry";
 import { load as loadRegistry } from "../../state/registry/persistence";
 import * as sandboxState from "../../state/sandbox";
 import { removeStaleRebuildDockerOrphan } from "../../onboard/openshell-docker-sandbox-containers";
-import * as userManagedFilesProbe from "../../state/user-managed-files-probe";
 import {
   getReconciledSandboxGatewayState,
   printSandboxGatewayStateHint,
@@ -53,6 +52,7 @@ import {
   usesLegacyRuntimeLifecycleCompatibility,
 } from "./gateway-state";
 import * as snapshotBackup from "./snapshot/backup-authority";
+import type { PreparedStoppedNativeState } from "../../state/state-directory-restore";
 import {
   backupStartedSandboxState,
   returnSandboxContainerToStopped,
@@ -81,7 +81,7 @@ export async function prepareRebuildStoppedOpenClawState(
   liveState: RebuildLiveState,
   hasRecoveryManifest: boolean,
   getSandbox: Parameters<typeof snapshotBackup.prepareStoppedOpenClawState>[1],
-): Promise<snapshotBackup.PreparedStoppedOpenClawState | null> {
+): Promise<PreparedStoppedNativeState | null> {
   if (
     !liveState.terminalPhase ||
     liveState.staleRecovery ||
@@ -89,7 +89,7 @@ export async function prepareRebuildStoppedOpenClawState(
     (entry.agent ?? "openclaw") !== "openclaw"
   )
     return null;
-  return snapshotBackup.prepareStoppedOpenClawState(entry.name, getSandbox, loadAgent("openclaw"));
+  return snapshotBackup.prepareStoppedOpenClawState(entry.name, getSandbox);
 }
 
 export type RebuildLiveStateOptions = {
@@ -520,18 +520,18 @@ export async function backupSandboxStateForRebuild(
   staleRecovery: boolean,
   log: (msg: string) => void,
   bail: (msg: string, code?: number) => never,
-  capturedOpenClawState?: sandboxState.BackupOptions["capturedOpenClawState"],
+  stoppedNativeState?: PreparedStoppedNativeState,
 ): Promise<sandboxState.RebuildManifest | null | undefined> {
   if (staleRecovery) return null;
 
   console.log("  Backing up sandbox state...");
-  log(`Agent type: ${sb.agent || "openclaw"}, stateDirs from manifest`);
+  log(`Agent type: ${sb.agent || "openclaw"}, complete native home/workspace transfer`);
   let backup = snapshotBackup.backupSandboxStateWithManagedAuthority(
     sandboxName,
-    capturedOpenClawState ? { capturedOpenClawState } : {},
     {
       getSandbox: (name) => loadRegistry().sandboxes[name] ?? null,
     },
+    stoppedNativeState,
   );
   log(
     `Backup result: success=${backup.success}, backed=${backup.backedUpDirs.join(",")}; files=${backup.backedUpFiles.join(",")}, failed=${backup.failedDirs.join(",")}; failedFiles=${backup.failedFiles.join(",")}`,
@@ -541,7 +541,7 @@ export async function backupSandboxStateForRebuild(
   // already recovers a stopped container (#6500): start it, retry, then return
   // it to stopped. Any other failure (permission denied, absent state, audit
   // rejection) is not a transport problem and must not attempt this recovery.
-  if (!backup.success && backup.unreachable) {
+  if (!stoppedNativeState && !backup.success && backup.unreachable) {
     const started = await startStoppedSandboxContainerForBackup(sandboxName);
     if (started) {
       console.log("  Sandbox container is stopped; starting it to back up state before rebuild...");
@@ -621,19 +621,24 @@ export async function backupSandboxStateForRebuild(
       console.error(`  Failed files: ${backup.failedFiles.join(", ")}`);
     if (backup.manifest?.backupPath) {
       console.error(
-        `  Incomplete snapshot retained for manual recovery: ${backup.manifest.backupPath}`,
+        `  Incomplete backup retained for manual recovery: ${backup.manifest.backupPath}`,
       );
-      console.error("  It is excluded from snapshot restore selection.");
+      console.error("  It is excluded from automatic rebuild recovery.");
     }
     console.error("  Aborting rebuild to prevent data loss.");
     bail("Failed to back up sandbox state.");
     return undefined;
   }
   const backupManifest = backup.manifest ?? null;
-  if (!backupManifest) {
+  if (!backupManifest?.nativeState || backupManifest.version !== 2) {
     console.error("  Failed to record backup metadata.");
+    if (backupManifest?.backupPath) {
+      if (!sandboxState.removeSandboxStateBackup(sandboxName, backupManifest.backupPath)) {
+        console.error(`  Remove the unusable backup manually: ${backupManifest.backupPath}`);
+      }
+    }
     console.error("  Aborting rebuild to prevent data loss.");
-    bail("Failed to record backup metadata.");
+    bail("Failed to record complete native-state backup metadata.");
     return undefined;
   }
   console.log(
@@ -641,41 +646,4 @@ export async function backupSandboxStateForRebuild(
   );
   console.log(`    Backup: ${backupManifest.backupPath}`);
   return backupManifest;
-}
-
-/**
- * Warn only after MCP rebuild preparation has scrubbed NemoClaw-owned adapter
- * entries. In particular, a managed-only Deep Agents `.mcp.json` is removed by
- * that transaction; if the file still exists at this point it contains
- * additional user-owned content that the state backup intentionally excludes.
- */
-export function warnUnpreservedUserManagedFiles(
-  sandboxName: string,
-  log: (msg: string) => void,
-  runtimeSelection?: OpenShellRuntimeSelection,
-): void {
-  let probe: userManagedFilesProbe.UserManagedFilesProbe;
-  try {
-    probe = userManagedFilesProbe.probeUserManagedFiles(sandboxName, runtimeSelection);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    log(`User-managed file probe errored: ${message}`);
-    console.warn(
-      `  ${YW}⚠${R} Could not check declared user-managed files before rebuild (probe failed).`,
-    );
-    console.warn(
-      "    Re-add any user-managed files you keep in the sandbox after rebuild, or manage them from the host.",
-    );
-    return;
-  }
-  if (probe.existing.length === 0) {
-    if (probe.declared.length > 0) {
-      log(`User-managed files declared but none present in sandbox: [${probe.declared.join(",")}]`);
-    }
-    return;
-  }
-  console.warn(
-    `  ${YW}⚠${R} User-managed files will not be preserved if rebuild replaces this sandbox: ${probe.existing.join(", ")}`,
-  );
-  console.warn("    After a successful rebuild, re-add them or manage them from the host.");
 }

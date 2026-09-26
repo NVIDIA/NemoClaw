@@ -17,7 +17,7 @@ Use the built-in uninstall command when the installed CLI is available.
 $$nemoclaw uninstall
 ```
 
-Within each gateway pass, uninstall creates a fresh host-side snapshot for each eligible registered sandbox before it deletes that pass's OpenShell sandboxes.
+Within each gateway pass, uninstall creates a fresh host-side backup for each eligible registered sandbox before it deletes that pass's OpenShell sandboxes.
 It uses the same state contract as `$$nemoclaw backup-all`, including temporarily starting an eligible stopped Docker sandbox.
 If any current sandbox cannot be backed up, that gateway pass exits nonzero before sandbox deletion.
 During `--all-gateway-ports`, the sweep continues with later ports and reports the aggregate failure.
@@ -53,7 +53,7 @@ Uninstall preserves an unrelated process that uses the same port.
 <AgentOnly variant="hermes">
 <Warning>
 For a Docker Hermes sandbox that uses the NemoClaw-managed image, uninstall removes its managed state volume even without `--destroy-user-data`.
-Default uninstall snapshots required Hermes state first.
+Default uninstall backs up required Hermes state first.
 When using `--destroy-user-data`, back up required state separately before uninstall.
 NemoClaw removes only a volume with exact ownership labels; inspection or removal failure exits nonzero and preserves registry state for retry.
 </Warning>
@@ -295,7 +295,7 @@ Do not add `sandbox_namespace` manually to a live gateway configuration because 
 In this section, `<selected-state-root>` is `~/.nemoclaw/` for the default gateway or `~/.nemoclaw/gateways/<port>/` for a non-default gateway.
 For the default gateway, the uninstall command preserves `~/.nemoclaw/rebuild-backups/`, `~/.nemoclaw/backups/`, and `~/.nemoclaw/sandboxes.json` by default.
 A non-default gateway uses the corresponding entries under `~/.nemoclaw/gateways/<port>/`.
-Before deleting a registered sandbox, the default path writes a fresh snapshot under that gateway's `rebuild-backups/` directory.
+Before deleting a registered sandbox, the default path writes a fresh backup under that gateway's `rebuild-backups/` directory.
 The whole-host sweep applies this gate separately to each selected gateway port.
 If a backup fails or any registered sandbox is skipped, uninstall stops that gateway pass before OpenShell resource cleanup.
 A registry entry confirmed absent from both the selected gateway and Docker is exempt because no sandbox state remains to capture.
@@ -370,4 +370,4 @@ curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uni
 
 - [Host Files and State](../../reference/host-files-and-state) for the complete host-side file and preservation reference.
 - [`$$nemoclaw uninstall`](../../reference/commands#$$nemoclaw-uninstall) for the full command contract and hosted-script comparison.
-- [Create and Restore Snapshots](../state-and-backups/create-and-restore-snapshots) before removing state you may need later.
+- [Transfer State Manually](../state-and-backups/transfer-state-manually) before removing state you may need later.

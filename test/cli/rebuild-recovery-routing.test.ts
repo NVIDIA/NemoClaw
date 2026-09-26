@@ -47,21 +47,26 @@ function writeRecoveryFixture(home: string) {
   const handoffPath = path.join(backupPath, `rebuild-policy-handoff.${sha256}.yaml`);
   const recordPath = path.join(backupPath, ".nemoclaw-rebuild-recovery.json");
   const manifestPath = path.join(backupPath, "rebuild-manifest.json");
+  const archivePath = path.join(backupPath, "native-home.tar");
   const retainedPath = path.join(backupPath, "workspace-notes.txt");
   fs.writeFileSync(handoffPath, policy, { mode: 0o600 });
+  fs.writeFileSync(archivePath, "native state\n", { mode: 0o600 });
   fs.writeFileSync(retainedPath, "recovered later\n");
   fs.writeFileSync(
     manifestPath,
     JSON.stringify({
-      version: 1,
+      version: 2,
       sandboxName: "gw1-sb",
       timestamp: TIMESTAMP,
       agentType: "openclaw",
       agentVersion: null,
       expectedVersion: null,
-      stateDirs: [],
-      backupComplete: true,
-      dir: "/sandbox/.openclaw",
+      nativeState: {
+        root: "/sandbox",
+        archive: "native-home.tar",
+        sha256: createHash("sha256").update("native state\n").digest("hex"),
+      },
+      dir: "/sandbox",
       backupPath,
       blueprintDigest: null,
       rebuildPolicyHandoff: { file: path.basename(handoffPath), sha256 },
@@ -234,21 +239,26 @@ describe("CLI rebuild recovery routing", () => {
         const handoffPath = path.join(backupPath, `rebuild-policy-handoff.${sha256}.yaml`);
         const recordPath = path.join(backupPath, ".nemoclaw-rebuild-recovery.json");
         const manifestPath = path.join(backupPath, "rebuild-manifest.json");
+        const archivePath = path.join(backupPath, "native-home.tar");
         const retainedPath = path.join(backupPath, "workspace-notes.txt");
         fs.writeFileSync(handoffPath, policy, { mode: 0o600 });
+        fs.writeFileSync(archivePath, "native state\n", { mode: 0o600 });
         fs.writeFileSync(retainedPath, "recovered later\n");
         fs.writeFileSync(
           manifestPath,
           JSON.stringify({
-            version: 1,
+            version: 2,
             sandboxName: "gw1-sb",
             timestamp,
             agentType: "openclaw",
             agentVersion: null,
             expectedVersion: null,
-            stateDirs: [],
-            backupComplete: true,
-            dir: "/sandbox/.openclaw",
+            nativeState: {
+              root: "/sandbox",
+              archive: "native-home.tar",
+              sha256: createHash("sha256").update("native state\n").digest("hex"),
+            },
+            dir: "/sandbox",
             backupPath,
             blueprintDigest: null,
             rebuildPolicyHandoff: { file: path.basename(handoffPath), sha256 },

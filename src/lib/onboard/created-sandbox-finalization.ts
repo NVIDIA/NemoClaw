@@ -18,7 +18,7 @@ import type { SandboxEntry, SandboxGpuProofResult } from "../state/registry";
 import type { QualifiedSandboxInferenceRouteReservation } from "../state/registry/route-reservation";
 import * as sandboxState from "../state/sandbox";
 import {
-  MANAGED_SNAPSHOT_RESTORE_AUTHORITY_ERROR,
+  MANAGED_REBUILD_RESTORE_AUTHORITY_ERROR,
   type RecreatedSandboxRestoreOptions,
   type RestoreResult,
 } from "../state/sandbox";
@@ -831,7 +831,7 @@ export async function finalizeCreatedSandbox(
     deps.revalidateSandboxIdentity?.(`restoring files for sandbox '${options.sandboxName}'`);
     if (!deps.prepareRegistration || !deps.revalidatePreparedRegistration) {
       deps.error(
-        `  Managed snapshot restore has no prepared registration authority for sandbox '${options.sandboxName}'.`,
+        `  Managed rebuild restore has no prepared registration authority for sandbox '${options.sandboxName}'.`,
       );
       deps.error("  State was not restored and registry metadata was not updated.");
       reportUnregisteredSandboxRecovery();
@@ -857,7 +857,6 @@ export async function finalizeCreatedSandbox(
     }
     const restoreOptions = {
       targetAgentType: options.targetAgentType,
-      ...(options.customImage ? { allowCustomImageWholeStateFileRestore: true } : {}),
     } satisfies RecreatedSandboxRestoreOptions;
     const resolveTarget = async () => {
       preparedRegistration = await deps.revalidatePreparedRegistration!(preparedRegistration!);
@@ -883,10 +882,10 @@ export async function finalizeCreatedSandbox(
         `  ✓ State restored (${restore.restoredDirs.length} directories, ${restore.restoredFiles.length} files)`,
       );
     } else {
-      if (restore.error === MANAGED_SNAPSHOT_RESTORE_AUTHORITY_ERROR) {
+      if (restore.error === MANAGED_REBUILD_RESTORE_AUTHORITY_ERROR) {
         await abortOpenClawRestoreWindow();
         deps.error(
-          `  Managed snapshot restore is deferred for newly created sandbox '${options.sandboxName}' until its runtime authority can be bound before registry publication.`,
+          `  Managed rebuild restore is deferred for newly created sandbox '${options.sandboxName}' until its runtime authority can be bound before registry publication.`,
         );
         deps.error("  State was not restored and registry metadata was not updated.");
         reportUnregisteredSandboxRecovery();
