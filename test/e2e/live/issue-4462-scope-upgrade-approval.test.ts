@@ -25,7 +25,7 @@ import { ISSUE_4462_SCOPE_UPGRADE_PHASES } from "./issue-4462-admin-approval-hel
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-issue-4462";
 const LIVE_TIMEOUT_MS = testTimeout(70 * 60_000);
 const INSTALL_TIMEOUT_MS = execTimeout(30 * 60_000);
-const AUTO_PAIR_DEADLINE_SECS = String(INSTALL_TIMEOUT_MS / 1_000);
+const AUTO_PAIR_DEADLINE_SECS = "30";
 const GATEWAY_OBSERVATION_TIMEOUT_MS = 30_000;
 const GATEWAY_OBSERVATION_TIMEOUT_SECS = String(GATEWAY_OBSERVATION_TIMEOUT_MS / 1_000);
 const GATEWAY_OBSERVER_LOCAL_PATH = path.join(
@@ -53,10 +53,10 @@ function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     ...buildAvailabilityProbeEnv(),
     PATH: `${os.homedir()}/.local/bin:${os.homedir()}/.npm-global/bin:${process.env.PATH ?? ""}`,
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
-    // Preserve the default one-second re-entry cadence through operator.write
-    // settlement. Delay slow-mode polling until after operator.admin approval.
+    // Give fresh onboarding enough time to settle operator.write, then let the
+    // watcher expire so the late-request phase proves connect-time recovery.
     NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: AUTO_PAIR_DEADLINE_SECS,
-    NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: AUTO_PAIR_DEADLINE_SECS,
+    NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "1",
     NEMOCLAW_FRESH: "1",
     NEMOCLAW_NON_INTERACTIVE: "1",
     NEMOCLAW_RECREATE_SANDBOX: "1",
@@ -260,15 +260,25 @@ test(
     ]);
 
     progress.phase("settle a post-onboarding allowlisted request through connect");
-    const allowlistedTrigger = await sandbox.exec(
-      SANDBOX_NAME,
-      ["bash", "-lc", ALLOWLISTED_REQUEST_TRIGGER_SH],
+    const allowlistedTrigger = await host.command(
+      process.execPath,
+      [
+        CLI_ENTRYPOINT,
+        SANDBOX_NAME,
+        "exec",
+        "--timeout",
+        "90",
+        "--",
+        "bash",
+        "-lc",
+        ALLOWLISTED_REQUEST_TRIGGER_SH,
+      ],
       {
         artifactName: "phase-3-trigger-allowlisted-request",
         captureLimitBytes: 64 * 1024,
         env: env(),
         redactionValues: [apiKey],
-        timeoutMs: 60_000,
+        timeoutMs: 120_000,
       },
     );
     const allowlistedRequestId = pendingAllowlistedRequestId(allowlistedTrigger) ?? "";

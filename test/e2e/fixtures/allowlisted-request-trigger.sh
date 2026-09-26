@@ -4,6 +4,7 @@
 
 set -euo pipefail
 selector_path="${ISSUE_4462_ALLOWLISTED_SELECTOR_PATH:-/tmp/issue-4462-pending-allowlisted-request.py}"
+watcher_status_path="${ISSUE_4462_AUTO_PAIR_STATUS_PATH:-/tmp/nemoclaw-auto-pair-status.json}"
 devices_json="$(mktemp)"
 device_id_file="$(mktemp)"
 remove_output="$(mktemp)"
@@ -11,6 +12,26 @@ trigger_output="$(mktemp)"
 trap 'rm -f -- "$devices_json" "$device_id_file" "$remove_output" "$trigger_output"' EXIT
 unset OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_PORT \
   OPENCLAW_GATEWAY_TOKEN OPENCLAW_GATEWAY_PASSWORD
+
+# The startup watcher is a separate supported approval owner. Wait for its
+# published terminal state so this fixture specifically proves the connect
+# recovery path after that owner has naturally reached its configured deadline.
+python3 - "$watcher_status_path" <<'PY_WATCHER_STOPPED'
+import json, sys, time
+from pathlib import Path
+
+status_path = Path(sys.argv[1])
+for _attempt in range(46):
+    try:
+        status = json.loads(status_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        status = None
+    if isinstance(status, dict) and status.get("state") == "stopped":
+        break
+    time.sleep(1)
+else:
+    raise SystemExit("auto-pair watcher did not publish its stopped state")
+PY_WATCHER_STOPPED
 
 # Remove the current CLI through OpenClaw's public API. Its descriptor-backed
 # identity remains in place, so the next write command publishes a real

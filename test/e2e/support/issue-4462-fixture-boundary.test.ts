@@ -183,6 +183,7 @@ describe("scope-upgrade approval live fixture", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-4462-trigger-"));
     const openclaw = path.join(root, "openclaw");
     const selector = path.join(root, "selector.py");
+    const watcherStatus = path.join(root, "auto-pair-status.json");
     const requestId = "12345678-1234-4123-8123-123456789abc";
     fs.writeFileSync(
       openclaw,
@@ -206,11 +207,13 @@ esac
       { mode: 0o755 },
     );
     fs.writeFileSync(selector, `print("ISSUE_4462_ALLOWLISTED_REQUEST_ID=${requestId}")\n`);
+    fs.writeFileSync(watcherStatus, '{"schemaVersion":1,"state":"stopped"}\n');
     try {
       const result = spawnSync("bash", ["-c", ALLOWLISTED_REQUEST_TRIGGER_SH], {
         encoding: "utf8",
         env: {
           ...process.env,
+          ISSUE_4462_AUTO_PAIR_STATUS_PATH: watcherStatus,
           ISSUE_4462_ALLOWLISTED_SELECTOR_PATH: selector,
           PATH: `${root}:${process.env.PATH ?? ""}`,
         },
