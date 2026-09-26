@@ -139,6 +139,44 @@ describe("docker-driver gateway runtime helpers", () => {
     }
   });
 
+  it("restores and persists the gateway binding through the runtime entrypoint", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-binding-runtime-"));
+    const stateDir = path.join(home, "custom-gateway-18080");
+    const networkName = "mvca-nemoclaw-b2";
+    const homedirSpy = vi.spyOn(os, "homedir").mockReturnValue(home);
+    try {
+      withEnv(
+        {
+          NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: stateDir,
+          OPENSHELL_DOCKER_NETWORK_NAME: networkName,
+        },
+        () => {
+          makeHelpers().helpers.getDockerDriverGatewayEnv(null, "linux");
+        },
+      );
+
+      withEnv(
+        {
+          NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: undefined,
+          OPENSHELL_DOCKER_NETWORK_NAME: undefined,
+        },
+        () => {
+          const { helpers } = makeHelpers();
+          const env = helpers.getDockerDriverGatewayEnv(null, "linux");
+
+          expect(helpers.getDockerDriverGatewayStateDir()).toBe(path.resolve(stateDir));
+          expect(env.OPENSHELL_DOCKER_NETWORK_NAME).toBe(networkName);
+          expect(fs.existsSync(path.join(home, ".local/state/nemoclaw/gateway-runtime-bindings.json"))).toBe(
+            true,
+          );
+        },
+      );
+    } finally {
+      homedirSpy.mockRestore();
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it.each([
     ["relative", "relative-gateway-state"],
     ["shared root", path.join(os.homedir(), ".local", "state", "nemoclaw")],

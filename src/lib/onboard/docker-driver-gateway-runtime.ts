@@ -36,6 +36,10 @@ import {
 } from "./gateway-process-identity";
 import { resolveOpenshell } from "./openshell-cli";
 import type { PortProbeResult } from "./preflight";
+import {
+  restoreDockerDriverGatewayBinding,
+  writeDockerDriverGatewayBinding,
+} from "./docker-driver-gateway-binding";
 
 // Keep the listener option type on the established runtime facade while the
 // implementation remains isolated in docker-driver-gateway-port-listener.ts.
@@ -171,6 +175,7 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     typeof deps.gatewayPort === "function" ? deps.gatewayPort() : deps.gatewayPort;
 
   function getDockerDriverGatewayStateDir(): string {
+    restoreDockerDriverGatewayBinding(process.env, os.homedir(), currentGatewayPort());
     return gatewayBinding.resolveGatewayStateDirForPort({
       configured: process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
       home: os.homedir(),
@@ -279,6 +284,10 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
       getDockerSupervisorImage: () => getOpenShellDockerSupervisorImage(versionOutput),
       resolveSandboxBin: resolveOpenShellSandboxBinary,
       enableBindMounts: deps.enableBindMounts?.() === true,
+    });
+    writeDockerDriverGatewayBinding(os.homedir(), currentGatewayPort(), {
+      stateDir: getDockerDriverGatewayStateDir(),
+      dockerNetworkName: gatewayEnv.OPENSHELL_DOCKER_NETWORK_NAME,
     });
     if (gatewayEnv.OPENSHELL_LOCAL_TLS_DIR) {
       process.env.OPENSHELL_LOCAL_TLS_DIR = gatewayEnv.OPENSHELL_LOCAL_TLS_DIR;
