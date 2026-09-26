@@ -150,7 +150,7 @@ describe("connectSandbox flow", () => {
     expect(harness.runAutoPairSpy).toHaveBeenCalledWith("alpha", "nemoclaw-8091");
   });
 
-  it("runs bounded late-request approval after strict Portable settlement (#11763)", async () => {
+  it("uses strict settlement and skips ordinary approval for a completed Portable sandbox (#9207)", async () => {
     const harness = createConnectHarness({
       portablePairingSettlementResult: { kind: "settled" },
     });
@@ -158,7 +158,7 @@ describe("connectSandbox flow", () => {
     await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(0)");
 
     expect(harness.settlePortablePairingSpy).toHaveBeenCalledWith("alpha");
-    expect(harness.runAutoPairSpy).toHaveBeenCalledWith("alpha", "nemoclaw");
+    expect(harness.runAutoPairSpy).not.toHaveBeenCalled();
   });
 
   it("stops connect with an incomplete-onboarding diagnosis when Portable settlement fails (#9207)", async () => {
