@@ -934,13 +934,8 @@ test(
     const allowedNodeRequests = fakeMcp.requests.slice(requestCountBeforeAllowedNodeProof);
     expect(allowedNodeRequests).toHaveLength(1);
     expect(allowedNodeRequests[0]).toMatchObject({
-      method: "POST",
       path: "/mcp",
       auth: `Bearer ${HOST_SECRET}`,
-    });
-    expect(JSON.parse(allowedNodeRequests[0].body)).toMatchObject({
-      jsonrpc: "2.0",
-      method: "tools/list",
     });
     const deniedMethodRequestCount = fakeMcp.requests.filter(
       (request) => request.rpcMethod === "admin/delete",
@@ -1016,8 +1011,6 @@ test(
     const registryRaw = fs.existsSync(REGISTRY_FILE) ? fs.readFileSync(REGISTRY_FILE, "utf8") : "";
     expect(registryRaw).not.toContain(mcpUrl);
     expect(registryRaw).not.toContain(providerName);
-    expect(registryRaw).not.toContain("enc:v1:");
-    expect(registryRaw).not.toContain("proxy.pid");
     expect(registryRaw).not.toContain(HOST_SECRET);
     await assertSecretAbsentFromSandbox(sandbox, OPENCLAW_SANDBOX_NAME, [
       "/sandbox/.openclaw",

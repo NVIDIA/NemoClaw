@@ -464,6 +464,13 @@ except `allowed_ips`. This live step proves that OpenShell enforces the refreshe
 depend on an external DNS rotation happening during the test. A failed step restores the captured
 policy before normal sandbox cleanup.
 
+The pin-recovery proof stays within the existing assertion budget by retiring fixture-detail checks:
+the probe's fixed HTTP method and JSON-RPC fields, and the removed proxy's `enc:v1:` and `proxy.pid`
+markers. `test/mcp/mcp-bridge-servers.test.ts` owns the fake server's protocol behavior, and
+`test/state/registry.test.ts` proves legacy MCP state is omitted from runtime and disk. Live checks
+still verify the authenticated request, policy denials, absence of MCP URLs, provider names and
+credentials from the registry, and restart, rebuild and cleanup outcomes.
+
 The `sandbox-operations` target owns live final-gateway cleanup on the Docker-backed OpenShell
 boundary. It leaves one sandbox live after removing only its local registry entry, then requires a
 `destroy --cleanup-gateway` of the registered sandbox to preserve the gateway, report the live
