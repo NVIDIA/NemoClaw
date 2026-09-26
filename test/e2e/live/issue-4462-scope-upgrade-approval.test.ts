@@ -10,7 +10,6 @@ import { type HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { trackIssue4462FailureDiagnostics } from "../fixtures/issue-4462-diagnostics.ts";
-import { isGatewayBackedOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import {
   pendingAdminRequestId,
@@ -151,15 +150,11 @@ test(
       [
         CLI_ENTRYPOINT,
         SANDBOX_NAME,
-        "exec",
+        "agent",
         "--timeout",
         String(AGENT_COMMAND_TIMEOUT_SECS),
-        "--",
-        "openclaw",
-        "agent",
         "--agent",
         "main",
-        "--json",
         "--thinking",
         "off",
         "--session-id",
@@ -180,9 +175,9 @@ test(
       "The first gateway-backed agent request failed; inspect the phase artifact",
     ).toBe(0);
     expect(
-      isGatewayBackedOpenClawAgentText(agent, "4"),
+      agent.stdout.trim(),
       "The first agent request did not return the expected gateway-backed answer",
-    ).toBe(true);
+    ).toBe("4");
 
     progress.phase("trigger and approve an operator.admin request through connect");
     const cronName = `issue-5324-admin-${Date.now()}-${process.pid}`;

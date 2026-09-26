@@ -30,17 +30,6 @@ const OPENCLAW_CONTAINER_KEYS = [
   "items",
   "segments",
 ] as const;
-const OPENCLAW_NON_GATEWAY_MARKER =
-  /EMBEDDED FALLBACK|\[agent\/embedded\]|gateway connect failed|scope upgrade pending approval|device pairing required|pairing required|fallbackFrom[": ]+gateway|transport[": ]+embedded/i;
-const SHELL_PROBE_OMISSION_MARKER =
-  /^\[shell-probe omitted \d+ earlier bytes; showing up to the last \d+ bytes\]\n/u;
-
-function requestsDefaultGatewayAgent(command: readonly string[]): boolean {
-  const openClawIndex = command.findIndex(
-    (argument, index) => argument === "openclaw" && command[index + 1] === "agent",
-  );
-  return openClawIndex >= 0 && !command.slice(openClawIndex + 2).includes("--local");
-}
 
 function responseContainsToolCallStructure(
   document: unknown,
@@ -151,19 +140,6 @@ export function parseOpenClawAgentText(raw: string): string {
 export function isExactOpenClawAgentText(raw: string, expected: string): boolean {
   const parts = openClawAgentTextParts(raw);
   return parts.length === 1 && parts[0] === expected;
-}
-
-export function isGatewayBackedOpenClawAgentText(
-  result: Pick<ShellProbeResult, "command" | "stdout" | "stderr">,
-  expected: string,
-): boolean {
-  return (
-    requestsDefaultGatewayAgent(result.command) &&
-    !SHELL_PROBE_OMISSION_MARKER.test(result.stdout) &&
-    !SHELL_PROBE_OMISSION_MARKER.test(result.stderr) &&
-    isExactOpenClawAgentText(result.stdout, expected) &&
-    !OPENCLAW_NON_GATEWAY_MARKER.test(`${result.stdout}\n${result.stderr}`)
-  );
 }
 
 export function nativeStateDoctorReportIsValid(

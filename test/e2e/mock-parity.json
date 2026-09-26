@@ -639,8 +639,8 @@
         "test/e2e/live/issue-4462-admin-approval-helper.ts"
       ],
       "fast": [
+        "src/lib/actions/sandbox/agent/passthrough.test.ts",
         "test/security/admin-approval-helper.test.ts",
-        "test/e2e/support/openclaw-agent-output.test.ts",
         "test/e2e/support/issue-4462-fixture-boundary.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
