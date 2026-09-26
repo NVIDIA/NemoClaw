@@ -16,7 +16,10 @@ import {
   promoteUnregisteredOpenClawBackupQuiesceToPostRestoreDoctor,
   type OpenClawPostRestoreDoctorWindow,
 } from "./runtime/openclaw-lifecycle";
-import { migrateHermesLegacyDashboardState } from "./snapshot-hermes-gateway-hint";
+import {
+  hermesDashboardStateMigrationRecoveryGuidance,
+  migrateHermesLegacyDashboardState,
+} from "./snapshot-hermes-gateway-hint";
 import {
   applyHermesOperatorConfigSnapshot,
   type HermesOperatorConfigRestoreReport,
@@ -191,6 +194,7 @@ export async function runRebuildRestorePhase(
         console.error(`  ${YW}Hermes legacy dashboard-state migration failed.${R}`);
         const detail = migration?.stderr.trim();
         if (detail) console.error(`  ${detail.slice(0, 500)}`);
+        console.error(`  ${hermesDashboardStateMigrationRecoveryGuidance(sandboxName)}`);
       }
     }
     hermesOperatorConfigRestore =

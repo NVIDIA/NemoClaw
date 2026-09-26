@@ -116,6 +116,7 @@ import {
   snapshotCloneHermesApiEnvArgs,
 } from "./snapshot/forward-port-allocation";
 import {
+  hermesDashboardStateMigrationRecoveryGuidance,
   migrateHermesLegacyDashboardState,
   printHermesGatewayRestoreHint,
 } from "./snapshot-hermes-gateway-hint";
@@ -1790,6 +1791,7 @@ async function runSnapshotRestoreUnlocked(
           );
           const detail = migration?.stderr.trim();
           if (detail) console.error(`  ${detail.slice(0, 500)}`);
+          console.error(`  ${hermesDashboardStateMigrationRecoveryGuidance(targetSandbox)}`);
           snapshotExit(1);
         }
       }

@@ -14,6 +14,7 @@ import * as restoreWindow from "./runtime/openclaw-lifecycle";
 import * as hermesLifecycle from "./runtime/hermes-lifecycle";
 import { serializeHermesOperatorConfigSnapshot } from "./rebuild-durable-config";
 import { runRebuildRestorePhase } from "./rebuild-restore-phase";
+import { HERMES_DASHBOARD_STATE_MIGRATION_TIMEOUT_MS } from "./snapshot-hermes-gateway-hint";
 import * as snapshotRestore from "./snapshot/restore-authority";
 
 vi.mock("../../adapters/sandbox/ordinary-command", () => ({
@@ -243,8 +244,8 @@ describe("rebuild filesystem restore", () => {
     expect(executeOrdinarySandboxCommand).toHaveBeenCalledWith(
       "hermes",
       expect.stringContaining("migrate-hermes-dashboard-state.py"),
-      30_000,
-      {},
+      HERMES_DASHBOARD_STATE_MIGRATION_TIMEOUT_MS,
+      { honorCallerTimeout: true },
     );
     expect(result).toEqual({
       restoreSucceeded: true,
@@ -254,7 +255,7 @@ describe("rebuild filesystem restore", () => {
 
   it("fails closed when restored legacy Hermes state cannot be migrated", async () => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
-    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(snapshotRestore, "restoreRecreatedSandboxStateWithManagedAuthority").mockResolvedValue(
       {
         success: true,
@@ -282,6 +283,9 @@ describe("rebuild filesystem restore", () => {
       restoreSucceeded: false,
       hermesOperatorConfigRestore: { restoredKeys: [], droppedKeys: [] },
     });
+    expect(consoleError.mock.calls.flat().join("\n")).toContain(
+      "may contain a partial legacy dashboard-state migration",
+    );
   });
 
   it("fails closed when the Hermes migration transport throws", async () => {
