@@ -193,6 +193,11 @@ case "$*" in
     [ "$OPENCLAW_STATE_DIR" = "$ISSUE_4462_ALLOWLISTED_CLIENT_STATE_DIR" ]
     [ "$OPENCLAW_CONFIG_PATH" = /sandbox/.openclaw/openclaw.json ]
     grep -Fqx '{"gateway":{"mode":"local","port":18789,"auth":{}}}' "$OPENCLAW_STATE_DIR/openclaw.json"
+    printf '%s\\n' '{"paired":[]}'
+    ;;
+  "gateway call sessions.create --params "*)
+    [ "$OPENCLAW_STATE_DIR" = "$ISSUE_4462_ALLOWLISTED_CLIENT_STATE_DIR" ]
+    [ "$OPENCLAW_CONFIG_PATH" = "$ISSUE_4462_ALLOWLISTED_CLIENT_STATE_DIR/openclaw.json" ]
     printf '%s\\n' 'pairing required' >&2
     exit 17
     ;;

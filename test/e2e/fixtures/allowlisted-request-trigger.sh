@@ -6,8 +6,9 @@ set -euo pipefail
 selector_path="${ISSUE_4462_ALLOWLISTED_SELECTOR_PATH:-/tmp/issue-4462-pending-allowlisted-request.py}"
 client_state="${ISSUE_4462_ALLOWLISTED_CLIENT_STATE_DIR:-/tmp/issue-4462-allowlisted-client}"
 client_config="$client_state/openclaw.json"
+bootstrap_output="$(mktemp)"
 trigger_output="$(mktemp)"
-trap 'rm -f -- "$trigger_output"' EXIT
+trap 'rm -f -- "$bootstrap_output" "$trigger_output"' EXIT
 unset OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_PORT \
   OPENCLAW_GATEWAY_TOKEN OPENCLAW_GATEWAY_PASSWORD
 if [ -e "$client_state" ]; then
@@ -21,7 +22,19 @@ set +e
 NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING=1 \
   OPENCLAW_STATE_DIR="$client_state" \
   OPENCLAW_CONFIG_PATH=/sandbox/.openclaw/openclaw.json \
-  openclaw devices list --json \
+  openclaw devices list --json >"$bootstrap_output" 2>&1
+bootstrap_status=$?
+set -e
+if [ "$bootstrap_status" -ne 0 ]; then
+  echo "allowlisted fixture pairing bootstrap failed" >&2
+  exit 33
+fi
+params="$(printf '{"key":"agent:main:nemoclaw-e2e-allowlisted-%s-%s","agentId":"main"}' "$$" "$(date +%s)")"
+set +e
+NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING=1 \
+  OPENCLAW_STATE_DIR="$client_state" \
+  OPENCLAW_CONFIG_PATH="$client_config" \
+  openclaw gateway call sessions.create --params "$params" --json \
   >"$trigger_output" 2>&1
 trigger_status=$?
 set -e
