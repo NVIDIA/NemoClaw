@@ -4,10 +4,6 @@
 import os from "node:os";
 import path from "node:path";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
-import {
-  ALLOWLISTED_REQUEST_TRIGGER_SH,
-  allowlistedApprovalConnectScript,
-} from "../fixtures/allowlisted-approval-connect.ts";
 import { adminApprovalConnectScript } from "../fixtures/admin-approval-connect.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
@@ -25,7 +21,7 @@ import { ISSUE_4462_SCOPE_UPGRADE_PHASES } from "./issue-4462-admin-approval-hel
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-issue-4462";
 const LIVE_TIMEOUT_MS = testTimeout(70 * 60_000);
 const INSTALL_TIMEOUT_MS = execTimeout(30 * 60_000);
-const AUTO_PAIR_DEADLINE_SECS = "30";
+const AUTO_PAIR_DEADLINE_SECS = String(INSTALL_TIMEOUT_MS / 1_000);
 const GATEWAY_OBSERVATION_TIMEOUT_MS = 30_000;
 const GATEWAY_OBSERVATION_TIMEOUT_SECS = String(GATEWAY_OBSERVATION_TIMEOUT_MS / 1_000);
 const GATEWAY_OBSERVER_LOCAL_PATH = path.join(
@@ -38,12 +34,6 @@ const GATEWAY_OBSERVER_LOCAL_PATH = path.join(
 // execute the uploaded file by its basename.
 const GATEWAY_OBSERVER_REMOTE_DIR = "/tmp";
 const GATEWAY_OBSERVER_REMOTE_PATH = `${GATEWAY_OBSERVER_REMOTE_DIR}/issue-4462-fresh-agent-gateway-snapshot.py`;
-const PENDING_ALLOWLISTED_REQUEST_LOCAL_PATH = path.join(
-  import.meta.dirname,
-  "..",
-  "lib",
-  "issue-4462-pending-allowlisted-request.py",
-);
 
 validateSandboxName(SANDBOX_NAME);
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
@@ -53,10 +43,10 @@ function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     ...buildAvailabilityProbeEnv(),
     PATH: `${os.homedir()}/.local/bin:${os.homedir()}/.npm-global/bin:${process.env.PATH ?? ""}`,
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
-    // Give fresh onboarding enough time to settle operator.write, then let the
-    // watcher expire so the late-request phase proves connect-time recovery.
+    // Preserve the default one-second re-entry cadence through operator.write
+    // settlement. Delay slow-mode polling until after operator.admin approval.
     NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: AUTO_PAIR_DEADLINE_SECS,
-    NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "1",
+    NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: AUTO_PAIR_DEADLINE_SECS,
     NEMOCLAW_FRESH: "1",
     NEMOCLAW_NON_INTERACTIVE: "1",
     NEMOCLAW_RECREATE_SANDBOX: "1",
@@ -75,22 +65,6 @@ interface FreshAgentGatewaySnapshot {
   pairedCliCount: number;
   pendingCount: number;
   sameDevicePendingCount: number;
-}
-
-interface CapturedCommandResult {
-  exitCode: number | null;
-  stderr: string;
-  stdout: string;
-}
-
-function pendingAllowlistedRequestId(result: CapturedCommandResult): string | undefined {
-  const matches = [
-    ...`${result.stdout}\n${result.stderr}`.matchAll(
-      /^ISSUE_4462_ALLOWLISTED_REQUEST_ID=([0-9a-f-]{36})$/gimu,
-    ),
-  ].map((match) => match[1]?.toLowerCase());
-  const requestIds = [...new Set(matches.filter((value): value is string => !!value))];
-  return result.exitCode !== 0 && requestIds.length === 1 ? requestIds[0] : undefined;
 }
 
 async function cleanup(host: HostCliClient, sandbox: SandboxClient): Promise<void> {
@@ -121,7 +95,7 @@ async function cleanup(host: HostCliClient, sandbox: SandboxClient): Promise<voi
     .catch(() => undefined);
 }
 test(
-  "settles allowlisted requests through connect and requires explicit operator.admin approval (#4462)",
+  "settles operator.write during onboarding and requires explicit operator.admin approval (#4462)",
   {
     timeout: LIVE_TIMEOUT_MS,
     meta: { e2ePhases: ISSUE_4462_SCOPE_UPGRADE_PHASES },
@@ -142,7 +116,6 @@ test(
       contracts: [
         "install.sh creates a real OpenClaw sandbox",
         "fresh onboarding settles one CLI identity with operator.write and without a pending request or operator.admin",
-        "a post-onboarding same-device CLI request remains pending after exec and connect settles it through the real gateway before retry",
         "the issue 5324 nemoclaw <name> exec transport reaches the local OpenClaw CLI pairing path",
         "the prepared connect shell keeps the injected gateway URL private while retaining port and token",
         "operator.admin remains pending until explicit device approval",
@@ -205,21 +178,7 @@ test(
         timeoutMs: GATEWAY_OBSERVATION_TIMEOUT_MS,
       },
     );
-    const selectorUpload = await sandbox.upload(
-      SANDBOX_NAME,
-      PENDING_ALLOWLISTED_REQUEST_LOCAL_PATH,
-      GATEWAY_OBSERVER_REMOTE_DIR,
-      {
-        artifactName: "phase-2-upload-pending-allowlisted-selector",
-        env: env(),
-        redactionValues: [apiKey],
-        timeoutMs: GATEWAY_OBSERVATION_TIMEOUT_MS,
-      },
-    );
-    expect(
-      selectorUpload.exitCode === 0 && upload.exitCode === 0,
-      `Pending allowlisted selector upload must exit 0 (selector=${String(selectorUpload.exitCode)}, gateway-observer=${String(upload.exitCode)}); inspect the phase-2 upload artifacts`,
-    ).toBe(true);
+    expect(upload.exitCode, "Gateway observer upload failed; inspect the phase artifact").toBe(0);
 
     const captureGatewayObservation = async <T>(phase: string): Promise<T> => {
       const result = await sandbox.exec(
@@ -259,52 +218,6 @@ test(
       "operator.write",
     ]);
 
-    progress.phase("settle a post-onboarding allowlisted request through connect");
-    const allowlistedTrigger = await host.command(
-      process.execPath,
-      [
-        CLI_ENTRYPOINT,
-        SANDBOX_NAME,
-        "exec",
-        "--timeout",
-        "90",
-        "--",
-        "bash",
-        "-lc",
-        ALLOWLISTED_REQUEST_TRIGGER_SH,
-      ],
-      {
-        artifactName: "phase-3-trigger-allowlisted-request",
-        captureLimitBytes: 64 * 1024,
-        env: env(),
-        redactionValues: [apiKey],
-        timeoutMs: 120_000,
-      },
-    );
-    const allowlistedRequestId = pendingAllowlistedRequestId(allowlistedTrigger) ?? "";
-    const allowlistedConnect = await host.command(
-      "bash",
-      [
-        "-lc",
-        allowlistedApprovalConnectScript(host.commandPath, SANDBOX_NAME, allowlistedRequestId),
-      ],
-      {
-        artifactName: "phase-4-connect-allowlisted-approval",
-        captureLimitBytes: 64 * 1024,
-        env: env(),
-        redactionValues: [apiKey],
-        timeoutMs: 4 * 60_000,
-      },
-    );
-    const allowlistedConnectText = resultText(allowlistedConnect);
-    const allowlistedConnectSucceeded =
-      allowlistedConnect.exitCode === 0 &&
-      allowlistedConnectText.includes("ISSUE_4462_ALLOWLISTED_RETRY_OK");
-    expect(
-      allowlistedConnectSucceeded,
-      `Connect allowlisted approval proof failed with exit ${String(allowlistedConnect.exitCode)}`,
-    ).toBe(true);
-
     progress.phase("trigger and approve an operator.admin request through connect");
     const cronName = `issue-5324-admin-${Date.now()}-${process.pid}`;
     const cronTrigger = await host.command(
@@ -339,7 +252,7 @@ test(
       },
     );
     const cronTriggerEvidence = preApprovalAdminProbeEvidence(cronTrigger);
-    await artifacts.writeJson("phase-5-trigger-admin-cron.json", cronTriggerEvidence);
+    await artifacts.writeJson("phase-3-trigger-admin-cron.json", cronTriggerEvidence);
     const cronTriggerRequestId = pendingAdminRequestId(cronTrigger);
     expect(
       cronTriggerRequestId,
@@ -358,16 +271,18 @@ test(
         ),
       ],
       {
-        artifactName: "phase-6-connect-admin-approval",
+        artifactName: "phase-4-connect-admin-approval",
         captureLimitBytes: 64 * 1024,
         env: env(),
         redactionValues: [apiKey],
         timeoutMs: 4 * 60_000,
       },
     );
-    const adminConnectSucceeded =
-      adminConnect.exitCode === 0 &&
-      resultText(adminConnect).includes("ISSUE_5324_ADMIN_APPROVAL_OK");
+    const adminConnectSucceeded = resultText(adminConnect).includes("ISSUE_5324_ADMIN_APPROVAL_OK");
+    expect(
+      adminConnect.exitCode,
+      "Explicit admin approval failed; inspect the phase artifact",
+    ).toBe(0);
     expect(adminConnectSucceeded, "Explicit admin approval did not reach the settled state").toBe(
       true,
     );

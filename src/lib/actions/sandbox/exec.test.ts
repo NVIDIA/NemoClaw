@@ -227,6 +227,84 @@ describe("execSandbox policy-denial hint wiring (#5978)", () => {
   });
 });
 
+describe("startSandboxExec native stream preservation (#11763)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it.each([
+    ["successful", 0],
+    ["failed", 23],
+  ])("preserves native stdout, stderr, and exit status for a %s command", async (_label, code) => {
+    const stdoutText = `native stdout ${code}\n`;
+    const stderrText = `native stderr ${code}\n`;
+    let observedStdout = "";
+    let observedStderr = "";
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      observedStdout += String(chunk);
+      return true;
+    });
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+      observedStderr += String(chunk);
+      return true;
+    });
+    const runStreaming = vi.fn(async () => {
+      process.stdout.write(stdoutText);
+      process.stderr.write(stderrText);
+      return {
+        outcome: { kind: "completed" as const, exitCode: code },
+        release: vi.fn(),
+      };
+    });
+    const probeLogs = vi.fn(() => "");
+    let exitCode = Number.NaN;
+    const exit = ((value?: number) => {
+      exitCode = value ?? 0;
+      throw new Error("__exec_exit__");
+    }) as (value: number) => never;
+
+    const finish = await startSandboxExec(
+      "native-stream-sandbox",
+      ["sh", "-c", "printf native"],
+      {},
+      {
+        selectGateway: () => ({ outcome: "unregistered", gatewayName: null }),
+        commandExecutor: {
+          probeDirectory: async () => ({ state: "present" }),
+          runStreaming,
+        },
+        cleanupDeps: {
+          getSandbox: () => null,
+          inspectMutableConfigPerms: vi.fn(() => {
+            throw new Error("cleanup should be skipped for an unregistered sandbox");
+          }),
+          repairMutableConfigPerms: vi.fn(() => {
+            throw new Error("cleanup should be skipped for an unregistered sandbox");
+          }),
+        },
+        policyHint: {
+          attempts: 1,
+          enableAudit: vi.fn(),
+          env: {},
+          probeLogs,
+          sleep: async () => {},
+        },
+        exit,
+      },
+    );
+
+    await expect(finish()).rejects.toThrow("__exec_exit__");
+
+    expect(runStreaming).toHaveBeenCalledOnce();
+    expect(stdout).toHaveBeenCalledExactlyOnceWith(stdoutText);
+    expect(stderr).toHaveBeenCalledExactlyOnceWith(stderrText);
+    expect(observedStdout).toBe(stdoutText);
+    expect(observedStderr).toBe(stderrText);
+    expect(exitCode).toBe(code);
+    expect(probeLogs).toHaveBeenCalledTimes(code === 0 ? 0 : 1);
+  });
+});
+
 it.each([
   { mode: "sync", error: new Error("lock timed out"), commandCode: 0, invocationFailed: false },
   {
