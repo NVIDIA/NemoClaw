@@ -316,6 +316,7 @@ if [ ! -f "$_HERMES_TIRITH_MARKER_FINALIZER" ]; then
 fi
 _HERMES_GUARD_TIMEOUT=(timeout --signal=TERM --kill-after=5s 12m)
 _HERMES_BOUNDARY_TIMEOUT=(timeout --signal=TERM --kill-after=2s 15s)
+_HERMES_DASHBOARD_STATE_MIGRATION_TIMEOUT=(timeout --signal=TERM --kill-after=5s 30m)
 HERMES_STARTUP_READY_FILE="/run/nemoclaw/hermes-startup-ready"
 HERMES_GATEWAY_RECOVERY_REQUEST_FILE="/tmp/nemoclaw-hermes-gateway-recovery/request"
 HERMES_GATEWAY_RECOVERY_WAITING_FILE="/tmp/nemoclaw-hermes-gateway-recovery-waiting"
@@ -2938,12 +2939,22 @@ prepare_hermes_nonroot_runtime() {
 }
 
 migrate_legacy_hermes_dashboard_state() {
+  local rc=0
   if [ "$(id -u)" -eq 0 ]; then
-    "${STEP_DOWN_PREFIX_SANDBOX[@]}" "$_HERMES_PYTHON" -I \
-      "$_HERMES_DASHBOARD_STATE_MIGRATOR" --hermes-dir "$HERMES_DIR"
-    return $?
+    "${_HERMES_DASHBOARD_STATE_MIGRATION_TIMEOUT[@]}" \
+      "${STEP_DOWN_PREFIX_SANDBOX[@]}" "$_HERMES_PYTHON" -I \
+      "$_HERMES_DASHBOARD_STATE_MIGRATOR" --hermes-dir "$HERMES_DIR" || rc=$?
+  else
+    "${_HERMES_DASHBOARD_STATE_MIGRATION_TIMEOUT[@]}" \
+      "$_HERMES_PYTHON" -I "$_HERMES_DASHBOARD_STATE_MIGRATOR" \
+      --hermes-dir "$HERMES_DIR" || rc=$?
   fi
-  "$_HERMES_PYTHON" -I "$_HERMES_DASHBOARD_STATE_MIGRATOR" --hermes-dir "$HERMES_DIR"
+  if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
+    echo "[SECURITY] Legacy Hermes dashboard-state migration exceeded its 30-minute deadline." >&2
+    echo "[SECURITY] Legacy state may remain at $HERMES_DIR/dashboard-home or $HERMES_DIR/profiles/dashboard-home, and $HERMES_DIR may contain a partial migration." >&2
+    echo "[SECURITY] Inspect and reconcile both locations before retrying Hermes startup." >&2
+  fi
+  return "$rc"
 }
 
 prepare_hermes_root_runtime_dir() {

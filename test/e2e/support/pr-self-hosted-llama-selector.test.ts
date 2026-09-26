@@ -242,14 +242,22 @@ describe.concurrent("generic NVIDIA GPU PR selection", () => {
       with: { path: "e2e-artifacts/live/hermes-root-entrypoint-smoke/" },
     });
     expect(
-      [
-        "build-sandbox-images",
-        "messaging-plan-image-boundary",
-        "runtime-overrides",
-        "managed-image-openclaw-security",
-        "port-override-image-contract",
-      ].map((jobName) => reusable.jobs[jobName]?.if),
-    ).toEqual(Array.from({ length: 5 }, () => "${{ inputs.hermes_only != true }}"));
+      Object.fromEntries(
+        Object.entries(reusable.jobs)
+          .filter(
+            ([jobName]) =>
+              jobName !== "build-hermes-sandbox-image" && jobName !== "test-hermes-sandbox-image",
+          )
+          .map(([jobName, job]) => [jobName, job.if]),
+      ),
+    ).toEqual({
+      "build-sandbox-images": "${{ inputs.hermes_only != true }}",
+      "build-sandbox-images-arm64": "${{ inputs.hermes_only != true && inputs.run_arm64 }}",
+      "managed-image-openclaw-security": "${{ inputs.hermes_only != true }}",
+      "messaging-plan-image-boundary": "${{ inputs.hermes_only != true }}",
+      "port-override-image-contract": "${{ inputs.hermes_only != true }}",
+      "runtime-overrides": "${{ inputs.hermes_only != true }}",
+    });
   });
 
   // source-shape-contract: security -- Executes the copied-PR selector to prove a Hermes runtime owner retains the trusted root-entrypoint qualification

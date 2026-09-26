@@ -11,7 +11,7 @@ import stat
 from pathlib import Path
 
 MANAGED_POLICY_PATH = Path("/usr/local/share/nemoclaw/hermes-managed-policy.json")
-MANAGED_POLICY_SCHEMA_VERSION = 2
+MANAGED_POLICY_SCHEMA_VERSION = 3
 HERMES_PROXY_REWRITE_SENTINEL = "sk-OPENSHELL-PROXY-REWRITE"
 
 
@@ -64,6 +64,7 @@ def load_managed_policy(path: Path = MANAGED_POLICY_PATH) -> dict:
         "config",
         "env_lines",
         "managed_paths",
+        "shadow_migration",
     }:
         raise ManagedPolicyError("managed policy has an unexpected top-level shape")
     version = document.get("schema_version")
@@ -79,6 +80,14 @@ def load_managed_policy(path: Path = MANAGED_POLICY_PATH) -> dict:
         document.get("managed_paths"),
         "managed policy managed_paths",
     )
+    shadow_migration = document.get("shadow_migration")
+    if not isinstance(shadow_migration, dict) or set(shadow_migration) != {
+        "routing_keys",
+        "env_keys",
+    }:
+        raise ManagedPolicyError("managed policy shadow_migration has an unexpected shape")
+    _string_list(shadow_migration.get("routing_keys"), "shadow migration routing_keys")
+    _string_list(shadow_migration.get("env_keys"), "shadow migration env_keys")
     config = document["config"]
     has_routing = any(
         key in config for key in ("model", "providers", "custom_providers", "_nemoclaw_upstream")

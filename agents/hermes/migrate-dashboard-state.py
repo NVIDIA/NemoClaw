@@ -18,9 +18,19 @@ import copy
 import errno
 import hashlib
 import os
+import signal
 import stat
 import sys
 from dataclasses import dataclass
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from managed_policy import (  # noqa: E402
+    MANAGED_POLICY_PATH,
+    ManagedPolicyError,
+    load_managed_policy,
+)
 
 
 MANAGED_SHADOW_FILES = frozenset(
@@ -32,36 +42,6 @@ MANAGED_SHADOW_FILES = frozenset(
     }
 )
 VERIFIABLE_SHADOW_FILES = frozenset({"config.yaml", ".env"})
-ROUTING_KEYS = ("model", "providers", "custom_providers", "_nemoclaw_upstream")
-MANAGED_CONFIG_PATHS = (
-    ("approvals", "mode"),
-    ("browser", "allow_unsafe_evaluate"),
-    ("browser", "restrict_evaluate"),
-    ("database", "temp_store"),
-    ("session_reset", "mode"),
-    ("session_reset", "at_hour"),
-    ("session_reset", "idle_minutes"),
-    ("session_reset", "notify"),
-    ("session_reset", "notify_exclude_platforms"),
-    ("session_reset", "bg_process_max_age_hours"),
-    ("display", "show_reasoning"),
-    ("display", "show_commentary"),
-    ("updates", "pre_update_backup"),
-    ("updates", "refresh_cua_driver"),
-)
-DASHBOARD_ENV_KEYS = frozenset(
-    {
-        "API_SERVER_HOST",
-        "API_SERVER_PORT",
-        "TAVILY_API_KEY",
-        "NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER",
-        "FIRECRAWL_GATEWAY_URL",
-        "OPENAI_AUDIO_GATEWAY_URL",
-        "BROWSER_USE_GATEWAY_URL",
-        "FAL_QUEUE_GATEWAY_URL",
-        "MODAL_GATEWAY_URL",
-    }
-)
 MAX_VERIFICATION_BYTES = 4 * 1024 * 1024
 LEGACY_PATHS = ("dashboard-home", "profiles/dashboard-home")
 DEFAULT_MAX_ENTRIES = 100_000
@@ -106,6 +86,29 @@ class MigrationBudget:
                 raise MigrationError(
                     f"legacy dashboard state exceeds maximum byte count {self.max_bytes}"
                 )
+
+
+@dataclass(frozen=True)
+class ShadowMigrationPolicy:
+    routing_keys: tuple[str, ...]
+    managed_config_paths: tuple[tuple[str, ...], ...]
+    env_keys: frozenset[str]
+
+
+def _load_shadow_migration_policy(path: str) -> ShadowMigrationPolicy:
+    try:
+        document = load_managed_policy(Path(path))
+    except ManagedPolicyError as exc:
+        raise MigrationError(f"managed Hermes policy is invalid: {exc}") from exc
+    shadow = document["shadow_migration"]
+    managed_paths = tuple(tuple(value.split(".")) for value in document["managed_paths"])
+    if any(not path or any(not segment for segment in path) for path in managed_paths):
+        raise MigrationError("managed Hermes policy contains an invalid managed path")
+    return ShadowMigrationPolicy(
+        routing_keys=tuple(shadow["routing_keys"]),
+        managed_config_paths=managed_paths,
+        env_keys=frozenset(shadow["env_keys"]),
+    )
 
 
 def _identity(parent_fd: int, name: str, display: str) -> EntryIdentity:
@@ -252,6 +255,7 @@ def _verified_generated_config(
     target_fd: int,
     target_name: str,
     target_display: str,
+    policy: ShadowMigrationPolicy,
 ) -> bool:
     source_text = _read_text(source_fd, source_name, source_display)
     target_text = _read_text(target_fd, target_name, target_display)
@@ -267,7 +271,7 @@ def _verified_generated_config(
     if not isinstance(source, dict) or not isinstance(target, dict):
         return False
 
-    for key in ROUTING_KEYS:
+    for key in policy.routing_keys:
         expected = copy.deepcopy(target.get(key))
         if key == "model" and isinstance(expected, dict):
             upstream = target.get("_nemoclaw_upstream")
@@ -276,7 +280,7 @@ def _verified_generated_config(
         if source.get(key) != expected or (key in source) != (key in target):
             return False
 
-    for path in MANAGED_CONFIG_PATHS:
+    for path in policy.managed_config_paths:
         present, value = _path_value(source, path)
         if present:
             target_present, target_value = _path_value(target, path)
@@ -296,9 +300,9 @@ def _verified_generated_config(
     target_residual = copy.deepcopy(target)
     for document in (source_residual, target_residual):
         document.pop("_config_version", None)
-        for key in ROUTING_KEYS:
+        for key in policy.routing_keys:
             document.pop(key, None)
-        for path in MANAGED_CONFIG_PATHS:
+        for path in policy.managed_config_paths:
             _remove_path(document, path)
         _remove_path(document, ("web", "backend"))
     return _is_subset_equal(source_residual, target_residual)
@@ -329,6 +333,7 @@ def _verified_generated_env(
     target_fd: int,
     target_name: str,
     target_display: str,
+    policy: ShadowMigrationPolicy,
 ) -> bool:
     source_text = _read_text(source_fd, source_name, source_display)
     target_text = _read_text(target_fd, target_name, target_display)
@@ -339,7 +344,7 @@ def _verified_generated_env(
     return (
         source is not None
         and target is not None
-        and all(key in DASHBOARD_ENV_KEYS and target.get(key) == value for key, value in source.items())
+        and all(key in policy.env_keys and target.get(key) == value for key, value in source.items())
     )
 
 
@@ -350,6 +355,7 @@ def _is_verified_generated_shadow(
     source_display: str,
     target_fd: int,
     target_display: str,
+    policy: ShadowMigrationPolicy,
 ) -> bool:
     if logical_name == "config.yaml":
         return _verified_generated_config(
@@ -359,6 +365,7 @@ def _is_verified_generated_shadow(
             target_fd,
             logical_name,
             target_display,
+            policy,
         )
     if logical_name == ".env":
         return _verified_generated_env(
@@ -368,6 +375,7 @@ def _is_verified_generated_shadow(
             target_fd,
             logical_name,
             target_display,
+            policy,
         )
     return False
 
@@ -377,6 +385,7 @@ def _source_has_user_state(
     source_display: str,
     target_fd: int,
     target_display: str,
+    policy: ShadowMigrationPolicy,
 ) -> bool:
     for name in _entries(source_fd):
         source_path = f"{source_display}/{name}"
@@ -394,6 +403,7 @@ def _source_has_user_state(
                 source_path,
                 target_fd,
                 target_path,
+                policy,
             ):
                 continue
         return True
@@ -412,6 +422,7 @@ def _preflight_tree(
     source_display: str,
     target_fd: int,
     target_display: str,
+    policy: ShadowMigrationPolicy,
     budget: MigrationBudget,
     depth: int,
 ) -> None:
@@ -438,6 +449,7 @@ def _preflight_tree(
                 source_path,
                 target_fd,
                 target_path,
+                policy,
             )
         ):
             continue
@@ -445,7 +457,9 @@ def _preflight_tree(
             if stat.S_ISDIR(source.mode):
                 child = _open_dir(source_fd, name, source_path)
                 try:
-                    _preflight_tree(child, source_path, child, source_path, budget, depth + 1)
+                    _preflight_tree(
+                        child, source_path, child, source_path, policy, budget, depth + 1
+                    )
                 finally:
                     os.close(child)
             continue
@@ -460,6 +474,7 @@ def _preflight_tree(
                         source_path,
                         target_child,
                         target_path,
+                        policy,
                         budget,
                         depth + 1,
                     )
@@ -559,21 +574,34 @@ def _unlink_verified(
     quarantine = ".nemoclaw-dashboard-migration-" + hashlib.sha256(
         os.fsencode(name)
     ).hexdigest()[:24]
+    quarantined = False
     try:
-        _rename_no_replace(parent_fd, name, parent_fd, quarantine)
-    except OSError as exc:
-        raise MigrationError(f"{display} could not be quarantined safely: {exc.strerror}") from exc
-    moved = os.stat(quarantine, dir_fd=parent_fd, follow_symlinks=False)
-    if not _matches(before, moved):
         try:
-            _rename_no_replace(parent_fd, quarantine, parent_fd, name)
-        except OSError as rollback:
+            _rename_no_replace(parent_fd, name, parent_fd, quarantine)
+            quarantined = True
+        except OSError as exc:
             raise MigrationError(
-                f"{display} changed while it was quarantined and rollback failed: "
-                f"{rollback.strerror}"
-            ) from rollback
-        raise MigrationError(f"{display} changed while it was quarantined")
-    os.unlink(quarantine, dir_fd=parent_fd)
+                f"{display} could not be quarantined safely: {exc.strerror}"
+            ) from exc
+        moved = os.stat(quarantine, dir_fd=parent_fd, follow_symlinks=False)
+        if not _matches(before, moved):
+            raise MigrationError(f"{display} changed while it was quarantined")
+        os.unlink(quarantine, dir_fd=parent_fd)
+        quarantined = False
+    except BaseException:
+        if quarantined and _lookup(parent_fd, quarantine) is not None:
+            if _lookup(parent_fd, name) is not None:
+                raise MigrationError(
+                    f"{display} could not be restored because its original name reappeared"
+                )
+            try:
+                _rename_no_replace(parent_fd, quarantine, parent_fd, name)
+            except OSError as rollback:
+                raise MigrationError(
+                    f"{display} could not be restored after deletion failed: "
+                    f"{rollback.strerror}"
+                ) from rollback
+        raise
 
 
 def _remove_generated_file(parent_fd: int, name: str, display: str) -> None:
@@ -586,6 +614,7 @@ def _remove_verified_generated_shadow(
     source_display: str,
     target_fd: int,
     target_display: str,
+    policy: ShadowMigrationPolicy,
 ) -> None:
     before = _identity(source_fd, name, source_display)
     if not stat.S_ISREG(before.mode):
@@ -593,49 +622,38 @@ def _remove_verified_generated_shadow(
     quarantine = ".nemoclaw-dashboard-verified-" + hashlib.sha256(
         os.fsencode(name)
     ).hexdigest()[:24]
+    quarantined = False
     try:
-        _rename_no_replace(source_fd, name, source_fd, quarantine)
-    except OSError as exc:
-        raise MigrationError(
-            f"{source_display} could not be quarantined safely: {exc.strerror}"
-        ) from exc
-    moved = os.stat(quarantine, dir_fd=source_fd, follow_symlinks=False)
-    if not _matches(before, moved):
         try:
-            _rename_no_replace(source_fd, quarantine, source_fd, name)
-        except OSError as rollback:
+            _rename_no_replace(source_fd, name, source_fd, quarantine)
+            quarantined = True
+        except OSError as exc:
             raise MigrationError(
-                f"{source_display} changed while it was quarantined and rollback failed: "
-                f"{rollback.strerror}"
-            ) from rollback
-        raise MigrationError(f"{source_display} changed while it was quarantined")
-    if not _is_verified_generated_shadow(
-        source_fd,
-        quarantine,
-        name,
-        source_display,
-        target_fd,
-        target_display,
-    ):
-        try:
-            _rename_no_replace(source_fd, quarantine, source_fd, name)
-        except OSError as rollback:
-            raise MigrationError(
-                f"{source_display} changed before generated-state verification and rollback "
-                f"failed: {rollback.strerror}"
-            ) from rollback
-        raise MigrationError(
-            f"{source_display} changed before generated-state verification"
-        )
-    try:
-        _unlink_verified(
+                f"{source_display} could not be quarantined safely: {exc.strerror}"
+            ) from exc
+        moved = os.stat(quarantine, dir_fd=source_fd, follow_symlinks=False)
+        if not _matches(before, moved):
+            raise MigrationError(f"{source_display} changed while it was quarantined")
+        if not _is_verified_generated_shadow(
             source_fd,
             quarantine,
+            name,
             source_display,
-            expected=before,
-        )
+            target_fd,
+            target_display,
+            policy,
+        ):
+            raise MigrationError(
+                f"{source_display} changed before generated-state verification"
+            )
+        _unlink_verified(source_fd, quarantine, source_display, expected=before)
+        quarantined = False
     except BaseException:
-        if _lookup(source_fd, quarantine) is not None and _lookup(source_fd, name) is None:
+        if quarantined and _lookup(source_fd, quarantine) is not None:
+            if _lookup(source_fd, name) is not None:
+                raise MigrationError(
+                    f"{source_display} could not be restored because its original name reappeared"
+                )
             try:
                 _rename_no_replace(source_fd, quarantine, source_fd, name)
             except OSError as rollback:
@@ -651,6 +669,7 @@ def _merge_tree(
     source_display: str,
     target_fd: int,
     target_display: str,
+    policy: ShadowMigrationPolicy,
     budget: MigrationBudget,
     depth: int,
 ) -> None:
@@ -676,6 +695,7 @@ def _merge_tree(
                 source_path,
                 target_fd,
                 target_path,
+                policy,
             )
         ):
             _remove_verified_generated_shadow(
@@ -684,6 +704,7 @@ def _merge_tree(
                 source_path,
                 target_fd,
                 target_path,
+                policy,
             )
             continue
         if target is None:
@@ -703,6 +724,7 @@ def _merge_tree(
                             source_path,
                             target_child,
                             target_path,
+                            policy,
                             budget,
                             depth + 1,
                         )
@@ -726,6 +748,7 @@ def _merge_tree(
                         source_path,
                         target_child,
                         target_path,
+                        policy,
                         budget,
                         depth + 1,
                     )
@@ -765,6 +788,7 @@ def _open_relative_directory(root_fd: int, relative: str) -> int | None:
 def migrate(
     hermes_dir: str,
     *,
+    policy: ShadowMigrationPolicy,
     max_entries: int = DEFAULT_MAX_ENTRIES,
     max_depth: int = DEFAULT_MAX_DEPTH,
     max_bytes: int = DEFAULT_MAX_BYTES,
@@ -796,6 +820,7 @@ def migrate(
                     f"{hermes_dir}/{name}",
                     root_fd,
                     hermes_dir,
+                    policy,
                 )
             ]
             if len(populated) > 1:
@@ -809,6 +834,7 @@ def migrate(
                     f"{hermes_dir}/{relative}",
                     root_fd,
                     hermes_dir,
+                    policy,
                     preflight_budget,
                     1,
                 )
@@ -819,6 +845,7 @@ def migrate(
                     f"{hermes_dir}/{relative}",
                     root_fd,
                     hermes_dir,
+                    policy,
                     merge_budget,
                     1,
                 )
@@ -848,15 +875,23 @@ def migrate(
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--hermes-dir", default="/sandbox/.hermes")
+    parser.add_argument("--managed-policy", default=str(MANAGED_POLICY_PATH))
     parser.add_argument("--max-entries", type=int, default=DEFAULT_MAX_ENTRIES)
     parser.add_argument("--max-depth", type=int, default=DEFAULT_MAX_DEPTH)
     parser.add_argument("--max-bytes", type=int, default=DEFAULT_MAX_BYTES)
     args = parser.parse_args(argv[1:])
     if args.max_entries < 1 or args.max_depth < 1 or args.max_bytes < 0:
         parser.error("migration limits must be positive (max-bytes may be zero)")
+    def interrupt_migration(signum: int, _frame: object) -> None:
+        raise MigrationError(f"migration interrupted by signal {signum}")
+
+    signal.signal(signal.SIGTERM, interrupt_migration)
+    signal.signal(signal.SIGINT, interrupt_migration)
     try:
+        policy = _load_shadow_migration_policy(args.managed_policy)
         changed = migrate(
             args.hermes_dir,
+            policy=policy,
             max_entries=args.max_entries,
             max_depth=args.max_depth,
             max_bytes=args.max_bytes,

@@ -101,7 +101,12 @@ describe("Hermes managed policy", () => {
       "env_lines",
       "managed_paths",
       "schema_version",
+      "shadow_migration",
     ]);
+    expect(policy.shadow_migration).toMatchObject({
+      routing_keys: expect.arrayContaining(["model", "_nemoclaw_upstream"]),
+      env_keys: expect.arrayContaining(["API_SERVER_HOST", "API_SERVER_PORT"]),
+    });
     expect(policy.config._nemoclaw_upstream).toEqual({
       provider: "NVIDIA Router",
       provider_key: "nvidia-router",

@@ -19,7 +19,26 @@ export {
   hermesProviderKey,
 } from "../../../src/lib/hermes-managed-route.ts";
 
-export const HERMES_MANAGED_POLICY_SCHEMA_VERSION = 2 as const;
+export const HERMES_MANAGED_POLICY_SCHEMA_VERSION = 3 as const;
+
+const SHADOW_MIGRATION_ROUTING_KEYS = [
+  "model",
+  "providers",
+  "custom_providers",
+  "_nemoclaw_upstream",
+] as const;
+
+const SHADOW_MIGRATION_ENV_KEYS = [
+  "API_SERVER_HOST",
+  "API_SERVER_PORT",
+  "TAVILY_API_KEY",
+  "NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER",
+  "FIRECRAWL_GATEWAY_URL",
+  "OPENAI_AUDIO_GATEWAY_URL",
+  "BROWSER_USE_GATEWAY_URL",
+  "FAL_QUEUE_GATEWAY_URL",
+  "MODAL_GATEWAY_URL",
+] as const;
 
 const REMOTE_PLATFORM_TOOLSETS = [
   "web",
@@ -137,17 +156,21 @@ type HermesManagedConfigBase = Record<string, unknown> & {
 
 export type HermesManagedConfig = HermesManagedConfigBase & Partial<HermesManagedRouting>;
 
-export type HermesManagedPolicyV2 = {
+export type HermesManagedPolicyV3 = {
   schema_version: typeof HERMES_MANAGED_POLICY_SCHEMA_VERSION;
   config: HermesManagedConfig;
   env_lines: string[];
   managed_paths: [...typeof MANAGED_POLICY_PATHS];
+  shadow_migration: {
+    routing_keys: [...typeof SHADOW_MIGRATION_ROUTING_KEYS];
+    env_keys: [...typeof SHADOW_MIGRATION_ENV_KEYS];
+  };
 };
 
 export function buildHermesManagedPolicy(
   settings: HermesBuildSettings,
   env: NodeJS.ProcessEnv = process.env,
-): HermesManagedPolicyV2 {
+): HermesManagedPolicyV3 {
   const platforms: Record<string, unknown> = {
     api_server: {
       enabled: true,
@@ -285,6 +308,10 @@ export function buildHermesManagedPolicy(
     config,
     env_lines: buildHermesEnvLines(settings, env),
     managed_paths: [...MANAGED_POLICY_PATHS],
+    shadow_migration: {
+      routing_keys: [...SHADOW_MIGRATION_ROUTING_KEYS],
+      env_keys: [...SHADOW_MIGRATION_ENV_KEYS],
+    },
   };
 }
 

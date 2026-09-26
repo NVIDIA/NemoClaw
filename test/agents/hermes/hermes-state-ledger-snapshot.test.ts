@@ -8,6 +8,8 @@ import path from "node:path";
 
 import { afterAll, afterEach, describe, expect, it } from "vitest";
 
+import type { HermesBuildSettings } from "../../../agents/hermes/config/build-env.ts";
+import { buildHermesManagedPolicy } from "../../../agents/hermes/config/managed-policy.ts";
 import { loadAgent } from "../../../src/lib/agent/defs.ts";
 
 const originalHome = process.env.HOME;
@@ -20,6 +22,19 @@ const sandboxPython = "/usr/bin/python3";
 const dashboardStateMigrator = path.resolve("agents/hermes/migrate-dashboard-state.py");
 const canRunSqlite = process.platform === "linux" && fs.existsSync(sandboxPython);
 const fixtures: string[] = [];
+const MIGRATION_POLICY_SETTINGS: HermesBuildSettings = {
+  model: "test-model",
+  baseUrl: "https://inference.local/v1",
+  providerKey: "test-provider",
+  upstreamProvider: "Test Provider",
+  inferenceApi: "openai-completions",
+  contextWindow: 32_768,
+  toolDisclosure: "progressive",
+  webSearchProvider: null,
+  messagingCredentialPlaceholders: [],
+  managedToolGateways: { brokerEnabled: false, presets: [] },
+  managedImageCapabilityUnion: false,
+};
 
 afterEach(() => {
   for (const fixture of fixtures.splice(0)) {
@@ -44,6 +59,10 @@ function dashboardMigrationFixture(): { root: string; hermes: string } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-dashboard-migration-"));
   const hermes = path.join(root, ".hermes");
   fs.mkdirSync(hermes);
+  fs.writeFileSync(
+    path.join(root, "managed-policy.json"),
+    `${JSON.stringify(buildHermesManagedPolicy(MIGRATION_POLICY_SETTINGS, {}))}\n`,
+  );
   fixtures.push(root);
   return { root, hermes };
 }
@@ -56,7 +75,15 @@ function writeDashboardMigrationFile(file: string, value: string): void {
 function runDashboardMigration(hermes: string, extraArgs: string[] = []) {
   return spawnSync(
     "python3",
-    ["-I", dashboardStateMigrator, "--hermes-dir", hermes, ...extraArgs],
+    [
+      "-I",
+      dashboardStateMigrator,
+      "--hermes-dir",
+      hermes,
+      "--managed-policy",
+      path.join(path.dirname(hermes), "managed-policy.json"),
+      ...extraArgs,
+    ],
     { encoding: "utf8" },
   );
 }
@@ -423,6 +450,26 @@ describe("Hermes legacy dashboard-state migration", () => {
     expect(fs.existsSync(legacy)).toBe(false);
   });
 
+  it("classifies generated environment state through the managed policy contract", () => {
+    const { root, hermes } = dashboardMigrationFixture();
+    const legacy = path.join(hermes, "profiles/dashboard-home");
+    const policyPath = path.join(root, "managed-policy.json");
+    const policy = JSON.parse(fs.readFileSync(policyPath, "utf8")) as {
+      shadow_migration: { env_keys: string[] };
+    };
+    policy.shadow_migration.env_keys.push("NEMOCLAW_POLICY_PROBE");
+    fs.writeFileSync(policyPath, `${JSON.stringify(policy)}\n`);
+    writeDashboardMigrationFile(path.join(hermes, ".env"), "NEMOCLAW_POLICY_PROBE=1\n");
+    writeDashboardMigrationFile(path.join(legacy, ".env"), "NEMOCLAW_POLICY_PROBE=1\n");
+    writeDashboardMigrationFile(path.join(legacy, "MEMORY.md"), "durable\n");
+
+    const result = runDashboardMigration(hermes);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(fs.readFileSync(path.join(hermes, "MEMORY.md"), "utf8")).toBe("durable\n");
+    expect(fs.existsSync(legacy)).toBe(false);
+  });
+
   it("refuses an over-limit legacy tree before moving any state", () => {
     const { hermes } = dashboardMigrationFixture();
     const legacy = path.join(hermes, "profiles/dashboard-home");
@@ -437,6 +484,33 @@ describe("Hermes legacy dashboard-state migration", () => {
     expect(fs.readFileSync(path.join(legacy, "USER.md"), "utf8")).toBe("two\n");
     expect(fs.existsSync(path.join(hermes, "MEMORY.md"))).toBe(false);
     expect(fs.existsSync(path.join(hermes, "USER.md"))).toBe(false);
+  });
+
+  it("refuses an over-depth legacy tree before moving any state", () => {
+    const { hermes } = dashboardMigrationFixture();
+    const legacy = path.join(hermes, "profiles/dashboard-home");
+    const deepFile = path.join(legacy, "one/two/MEMORY.md");
+    writeDashboardMigrationFile(deepFile, "too deep\n");
+
+    const result = runDashboardMigration(hermes, ["--max-depth", "2"]);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("exceeds maximum depth 2");
+    expect(fs.readFileSync(deepFile, "utf8")).toBe("too deep\n");
+    expect(fs.existsSync(path.join(hermes, "one"))).toBe(false);
+  });
+
+  it("refuses an over-byte legacy tree before moving any state", () => {
+    const { hermes } = dashboardMigrationFixture();
+    const legacyFile = path.join(hermes, "profiles/dashboard-home/MEMORY.md");
+    writeDashboardMigrationFile(legacyFile, "too many bytes\n");
+
+    const result = runDashboardMigration(hermes, ["--max-bytes", "4"]);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("exceeds maximum byte count 4");
+    expect(fs.readFileSync(legacyFile, "utf8")).toBe("too many bytes\n");
+    expect(fs.existsSync(path.join(hermes, "MEMORY.md"))).toBe(false);
   });
 
   it("discards every generated metadata file while preserving durable state", () => {

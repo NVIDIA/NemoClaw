@@ -857,6 +857,9 @@ export async function finalizeCreatedSandbox(
     const restoreOptions = {
       targetAgentType: options.targetAgentType,
       ...(options.customImage ? { allowCustomImageWholeStateFileRestore: true } : {}),
+      ...(options.targetAgentType === "hermes"
+        ? { restoreLegacyMigrationStateDirs: ["dashboard-home"] }
+        : {}),
     } satisfies RecreatedSandboxRestoreOptions;
     const resolveTarget = async () => {
       preparedRegistration = await deps.revalidatePreparedRegistration!(preparedRegistration!);
