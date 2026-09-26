@@ -9,7 +9,8 @@ trigger_output="$(mktemp)"
 request_id_file="$(mktemp)"
 devices_json="$(mktemp)"
 device_id_file="$(mktemp)"
-trap 'rm -f -- "$trigger_output" "$request_id_file" "$devices_json" "$device_id_file"' EXIT
+revoke_output="$(mktemp)"
+trap 'rm -f -- "$trigger_output" "$request_id_file" "$devices_json" "$device_id_file" "$revoke_output"' EXIT
 
 # Revoke the current device's operator token through OpenClaw's public API so
 # the next write-scope command creates a real same-device repair request. This
@@ -42,11 +43,18 @@ if not device_id:
 Path(sys.argv[2]).write_text(device_id, encoding="utf-8")
 PY_DEVICE_ID
 device_id="$(cat "$device_id_file")"
+set +e
 # Expansion is intentionally deferred to the in-sandbox bash process.
 # shellcheck disable=SC2016
 "$cli" "$sandbox" exec --timeout 60 -- bash -lc \
   'unset OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_PORT OPENCLAW_GATEWAY_TOKEN OPENCLAW_GATEWAY_PASSWORD; openclaw devices revoke --device "$1" --role operator --json' \
-  -- "$device_id" >/dev/null
+  -- "$device_id" >"$revoke_output" 2>&1
+revoke_status=$?
+set -e
+if [ "$revoke_status" -ne 0 ] && ! grep -Eqi 'device token .* denied' "$revoke_output"; then
+  echo "ALLOWLISTED_NATIVE_REVOKE_FAILED" >&2
+  exit 32
+fi
 
 set +e
 # Expansion is intentionally deferred to the in-sandbox bash process.
@@ -67,7 +75,7 @@ from pathlib import Path
 
 raw = Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace")
 if not re.search(
-    r"scope upgrade pending approval|device pairing required|pairing required",
+    r"scope upgrade pending approval|device pairing required|pairing required|device token .* denied",
     raw,
     re.IGNORECASE,
 ):
@@ -89,34 +97,42 @@ request_id="$(cat "$request_id_file")"
   printf 'expected_request_id=%q\n' "$request_id"
   cat <<'NEMOCLAW_ALLOWLISTED_APPROVAL'
 set -euo pipefail
-devices_json="$(mktemp)"
-trap 'rm -f -- "$devices_json"' EXIT
-openclaw devices list --json >"$devices_json"
-python3 - "$devices_json" "$expected_request_id" <<'PY_ALLOWLISTED_STATE'
-import json, sys
-from pathlib import Path
+python3 - "$expected_request_id" <<'PY_ALLOWLISTED_STATE'
+import importlib.util, sys
 
-data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-expected = sys.argv[2].strip().lower()
-pending = data.get("pending") or []
-paired = data.get("paired") or []
-if not isinstance(pending, list) or not isinstance(paired, list):
-    raise SystemExit("device state arrays are unavailable")
+helper_path = "/usr/local/lib/nemoclaw/openclaw_pairing_state.py"
+spec = importlib.util.spec_from_file_location("nemoclaw_allowlisted_state", helper_path)
+if spec is None or spec.loader is None:
+    raise SystemExit("canonical pairing-state helper is unavailable")
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+records, _metadata = module.read_openclaw_pairing_state(
+    "/sandbox/.openclaw", timeout=1
+)
+identity = records.get("identity")
+pending_map = records.get("pending")
+paired_map = records.get("paired")
+if (
+    not isinstance(identity, dict)
+    or not isinstance(pending_map, dict)
+    or not isinstance(paired_map, dict)
+):
+    raise SystemExit("canonical pairing state is unavailable")
+pending = list(pending_map.values())
+paired = list(paired_map.values())
+if any(not isinstance(item, dict) for item in pending + paired):
+    raise SystemExit("canonical pairing records must be objects")
+expected = sys.argv[1].strip().lower()
 if any(
     str(item.get("requestId") or "").strip().lower() == expected
     for item in pending
-    if isinstance(item, dict)
 ):
     raise SystemExit("the allowlisted request remains pending after connect")
-identity = json.loads(
-    Path("/sandbox/.openclaw/identity/device.json").read_text(encoding="utf-8")
-)
 device_id = str(identity.get("deviceId") or "").strip()
 matches = [
     item
     for item in paired
-    if isinstance(item, dict)
-    and str(item.get("deviceId") or "").strip() == device_id
+    if str(item.get("deviceId") or "").strip() == device_id
 ]
 if not device_id or len(matches) != 1:
     raise SystemExit(
@@ -162,7 +178,6 @@ if not required.issubset(scope_set(active[0].get("scopes"))):
 if any(
     str(item.get("deviceId") or "").strip() == device_id
     for item in pending
-    if isinstance(item, dict)
 ):
     raise SystemExit("current CLI identity still has a pending request")
 print("ISSUE_4462_ALLOWLISTED_GATEWAY_STATE_OK")
