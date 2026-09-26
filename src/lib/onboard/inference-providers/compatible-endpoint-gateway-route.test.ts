@@ -88,6 +88,27 @@ describe("compatible endpoint gateway routing", () => {
     ).toBe(false);
   });
 
+  it("permits only an authorized recorded route on the moved proxy's old default port", async () => {
+    vi.stubEnv("NEMOCLAW_OLLAMA_PROXY_PORT", "12435");
+    vi.resetModules();
+    const { assertLoopbackNoAuthCompatibleEndpointUrl } =
+      await import("./compatible-endpoint-gateway-route");
+
+    expect(() => assertLoopbackNoAuthCompatibleEndpointUrl("http://localhost:11435/v1")).toThrow(
+      /no longer eligible/,
+    );
+    expect(() =>
+      assertLoopbackNoAuthCompatibleEndpointUrl("http://localhost:11435/v1", {
+        allowLegacyRecordedEndpoint: true,
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertLoopbackNoAuthCompatibleEndpointUrl("http://localhost:12435/v1", {
+        allowLegacyRecordedEndpoint: true,
+      }),
+    ).toThrow(/no longer eligible/);
+  });
+
   it("rejects a non-default gateway port recorded by another host gateway", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-recorded-gateway-port-"));
     tempHomes.push(home);

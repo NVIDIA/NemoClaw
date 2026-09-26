@@ -125,4 +125,70 @@ console.log(JSON.stringify({
       url: "http://127.0.0.1:7000",
     });
   });
+
+  it("treats token-only legacy state as the local Ollama backend", () => {
+    const repoRoot = path.join(import.meta.dirname, "../../..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-proxy-legacy-token-"));
+    const scriptPath = path.join(tmpDir, "legacy-token-check.js");
+    const proxyPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "inference", "ollama", "proxy.ts"),
+    );
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+
+    const script = String.raw`
+const fs = require("node:fs");
+const path = require("node:path");
+const childProcess = require("node:child_process");
+const runner = require(${runnerPath});
+
+const proxySpawns = [];
+childProcess.spawn = (...args) => {
+  proxySpawns.push(args);
+  return { pid: 5000, unref() {} };
+};
+runner.runCapture = () => "";
+runner.run = () => ({ status: 0, stdout: "", stderr: "" });
+require("node:module").syncBuiltinESMExports();
+
+const stateDir = path.join(process.env.HOME, ".nemoclaw");
+fs.mkdirSync(stateDir, { recursive: true });
+fs.writeFileSync(path.join(stateDir, "ollama-proxy-token"), "legacy-token\n", { mode: 0o600 });
+
+let startupError = "";
+try {
+  require(${proxyPath}).noAuthProxy("http://127.0.0.1:7000/v1");
+} catch (error) {
+  startupError = error.message;
+}
+
+console.log(JSON.stringify({
+  proxySpawns: proxySpawns.length,
+  startupError,
+  persistedToken: fs.readFileSync(path.join(stateDir, "ollama-proxy-token"), "utf8").trim(),
+  backendExists: fs.existsSync(path.join(stateDir, "ollama-backend")),
+  descriptorExists: fs.existsSync(path.join(stateDir, "ollama-backend.json")),
+  portExists: fs.existsSync(path.join(stateDir, "ollama-proxy-port")),
+}));
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const childEnv: NodeJS.ProcessEnv = { ...process.env, HOME: tmpDir };
+    delete childEnv.NEMOCLAW_OLLAMA_PROXY_PORT;
+    delete childEnv.NEMOCLAW_OLLAMA_PORT;
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      env: childEnv,
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim().split("\n").pop() ?? "{}");
+    assert.equal(payload.proxySpawns, 0);
+    assert.match(payload.startupError, /already serves another inference backend/);
+    assert.equal(payload.persistedToken, "legacy-token");
+    assert.equal(payload.backendExists, false);
+    assert.equal(payload.descriptorExists, false);
+    assert.equal(payload.portExists, false);
+  });
 });

@@ -673,7 +673,9 @@ function startOllamaAuthProxy(backendUrl?: string): boolean {
     // Token-only legacy state predates backend identity persistence and has
     // always implied local Ollama. A recorded backend, however, is ownership
     // evidence and must never be replaced with a different route.
-    if (proxyToken && persistedBackend.url && persistedBackend.url !== requestedBackendUrl) {
+    const establishedBackendUrl =
+      persistedBackend.url ?? (proxyToken ? `http://127.0.0.1:${OLLAMA_PORT}` : null);
+    if (proxyToken && establishedBackendUrl !== requestedBackendUrl) {
       throw sharedProxyBackendConflict();
     }
     const reservedNewToken = !proxyToken;
@@ -699,15 +701,17 @@ function startOllamaAuthProxy(backendUrl?: string): boolean {
   });
 }
 
-function noAuthProxy(endpointUrl: string) {
+function noAuthProxy(endpointUrl: string, options: { allowLegacyRecordedEndpoint?: boolean } = {}) {
   return withOllamaProxyLifecycleLock(() => {
     const endpoint = new URL(endpointUrl);
     const persistedToken = loadPersistedProxyToken();
     const persistedBackend = readProxyBackendIdentity();
-    if (persistedToken && persistedBackend.url !== endpoint.origin) {
+    const establishedBackendUrl =
+      persistedBackend.url ?? (persistedToken ? `http://127.0.0.1:${OLLAMA_PORT}` : null);
+    if (persistedToken && establishedBackendUrl !== endpoint.origin) {
       throw sharedProxyBackendConflict();
     }
-    assertNoAuthProxyEndpointEligible(endpointUrl);
+    assertNoAuthProxyEndpointEligible(endpointUrl, options);
 
     const proxyToken = persistedToken ?? generateProxyToken();
     if (

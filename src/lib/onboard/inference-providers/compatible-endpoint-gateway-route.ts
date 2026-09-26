@@ -77,8 +77,15 @@ export function isLoopbackNoAuthCompatibleEndpointUrl(
 }
 
 /** Revalidate the no-auth endpoint at the proxy's final mutation boundary. */
-export function assertLoopbackNoAuthCompatibleEndpointUrl(endpointUrl: string): void {
-  if (!isLoopbackNoAuthCompatibleEndpointUrl("compatible-endpoint", endpointUrl)) {
+export function assertLoopbackNoAuthCompatibleEndpointUrl(
+  endpointUrl: string,
+  options: { allowLegacyRecordedEndpoint?: boolean } = {},
+): void {
+  const eligible = isLoopbackNoAuthCompatibleEndpointUrl("compatible-endpoint", endpointUrl);
+  const authorizedLegacyEndpoint =
+    options.allowLegacyRecordedEndpoint === true &&
+    isLegacyRecordedLoopbackNoAuthCompatibleEndpointUrl("compatible-endpoint", endpointUrl);
+  if (!eligible && !authorizedLegacyEndpoint) {
     throw new Error(NO_AUTH_PROXY_ENDPOINT_INELIGIBLE_ERROR);
   }
 }

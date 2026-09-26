@@ -12,6 +12,7 @@ import {
 } from "../../../inference/gateway-route-compatibility";
 import { withModelRouterPortLifecycleLock } from "../../../inference/gateway-route-mutation-lock";
 import { getOllamaContextWindowFloorForAgent } from "../../../inference/ollama-runtime-context";
+import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../../inference/ollama/contract";
 import type { InferenceEndpointSource } from "../../../inference/selection";
 import type { ServingProfileProvenance } from "../../../inference/serving/types";
 import type { WebSearchConfig } from "../../../inference/web-search";
@@ -91,6 +92,21 @@ export interface ProviderInferenceSetupOptions {
   hostLocalInference?: HostLocalInferenceStartupSelection;
   /** Proxy token prepared after configuration review; avoids repeating host mutations in setup. */
   preparedOllamaProxyToken?: string;
+  /** Narrow rebuild authority for the historical default no-auth proxy port. */
+  allowLegacyRecordedNoAuthEndpoint?: boolean;
+}
+
+function canRecoverLegacyRecordedNoAuthEndpoint(options: {
+  authoritativeResumeConfig: boolean;
+  recoveredRecordedProvider: boolean;
+  provider: string;
+  credentialEnv: string | null;
+}): boolean {
+  return (
+    (options.authoritativeResumeConfig || options.recoveredRecordedProvider) &&
+    options.provider === "compatible-endpoint" &&
+    options.credentialEnv === OLLAMA_LOCAL_CREDENTIAL_ENV
+  );
 }
 
 export interface ProviderSelectionResult {
@@ -1936,6 +1952,12 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       const inferenceOptions = {
         gatewayName,
         allowToolsIncompatible,
+        allowLegacyRecordedNoAuthEndpoint: canRecoverLegacyRecordedNoAuthEndpoint({
+          authoritativeResumeConfig,
+          recoveredRecordedProvider,
+          provider: selectedProvider,
+          credentialEnv,
+        }),
         ...(preparedOllamaProxyToken ? { preparedOllamaProxyToken } : {}),
         ...(skipHostInferenceSmoke ? { skipHostInferenceSmoke } : {}),
         ...(reuseGatewayCredentialWithoutLocalKey ? { reuseGatewayCredentialWithoutLocalKey } : {}),

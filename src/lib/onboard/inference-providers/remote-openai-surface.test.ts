@@ -403,6 +403,27 @@ describe("OpenAI-compatible no-auth provider registration", () => {
     );
   });
 
+  it("carries recorded legacy-route authority to final proxy setup", async () => {
+    const harness = createHarness();
+    vi.mocked(noAuthProxy).mockReturnValue({
+      baseUrl: "http://host.openshell.internal:12435/v1",
+      credentialValue: "proxy-token",
+      persist: vi.fn(),
+      restore: vi.fn(),
+    });
+
+    await expect(
+      setupRemoteProviderInference(
+        { ...args, allowLegacyRecordedNoAuthEndpoint: true },
+        harness.deps,
+      ),
+    ).resolves.toEqual({ done: false });
+
+    expect(noAuthProxy).toHaveBeenCalledWith("http://localhost:12500/v1", {
+      allowLegacyRecordedEndpoint: true,
+    });
+  });
+
   it("stops before registration when proxy startup fails (#7424)", async () => {
     const harness = createHarness();
     vi.mocked(noAuthProxy).mockImplementation(() => {
