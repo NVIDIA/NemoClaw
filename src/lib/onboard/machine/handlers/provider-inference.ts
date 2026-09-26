@@ -96,17 +96,17 @@ export interface ProviderInferenceSetupOptions {
   allowLegacyRecordedNoAuthEndpoint?: boolean;
 }
 
-function canRecoverLegacyRecordedNoAuthEndpoint(options: {
+function legacyRecordedNoAuthEndpointSetupOptions(options: {
   authoritativeResumeConfig: boolean;
   recoveredRecordedProvider: boolean;
   provider: string;
   credentialEnv: string | null;
-}): boolean {
-  return (
+}): Pick<ProviderInferenceSetupOptions, "allowLegacyRecordedNoAuthEndpoint"> {
+  const authorized =
     (options.authoritativeResumeConfig || options.recoveredRecordedProvider) &&
     options.provider === "compatible-endpoint" &&
-    options.credentialEnv === OLLAMA_LOCAL_CREDENTIAL_ENV
-  );
+    options.credentialEnv === OLLAMA_LOCAL_CREDENTIAL_ENV;
+  return authorized ? { allowLegacyRecordedNoAuthEndpoint: true } : {};
 }
 
 export interface ProviderSelectionResult {
@@ -1952,7 +1952,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       const inferenceOptions = {
         gatewayName,
         allowToolsIncompatible,
-        allowLegacyRecordedNoAuthEndpoint: canRecoverLegacyRecordedNoAuthEndpoint({
+        ...legacyRecordedNoAuthEndpointSetupOptions({
           authoritativeResumeConfig,
           recoveredRecordedProvider,
           provider: selectedProvider,
