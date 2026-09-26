@@ -154,7 +154,7 @@ describe("E2E host dependency action boundary (#6961)", () => {
     expect(validateE2eWorkflow(workflow)).toContain(expectedError);
   });
 
-  it.each(["", "   ", "expect\ncurl", "curl"])(
+  it.each(["", "   ", "expect\ncurl", "curl", "runc"])(
     "executes the host helper with validated packages and bounded retries [%s] (#6961)",
     (invalidPackages) => {
       expect(fs.statSync(SCRIPT_PATH).mode & 0o111).not.toBe(0);
@@ -207,7 +207,7 @@ exit 64
         expect(fs.existsSync(callsPath)).toBe(false);
 
         const retried = runSetup(
-          "expect iptables conmon fuse-overlayfs nftables runc slirp4netns uidmap",
+          "expect iptables conmon fuse-overlayfs nftables slirp4netns uidmap",
           3,
         );
         expect(retried.status, retried.stderr).toBe(0);
@@ -215,7 +215,7 @@ exit 64
           "apt-get update",
           "apt-get update",
           "apt-get update",
-          "apt-get install -y --no-install-recommends expect iptables conmon fuse-overlayfs nftables runc slirp4netns uidmap",
+          "apt-get install -y --no-remove --no-install-recommends expect iptables conmon fuse-overlayfs nftables slirp4netns uidmap",
         ]);
 
         const exhausted = runSetup("expect", 4);
