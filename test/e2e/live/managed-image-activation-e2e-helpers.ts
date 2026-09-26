@@ -17,6 +17,7 @@ import {
 } from "../../../src/lib/onboard/managed-image/contract.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { adminApprovalConnectScript } from "../fixtures/admin-approval-connect.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import {
   assertExitZero,
@@ -39,6 +40,10 @@ import { initializeGatewayForCleanup } from "../fixtures/gateway-runtime-start.t
 import type { LifecyclePhaseFixture } from "../fixtures/phases/lifecycle.ts";
 import { pollUntil } from "../fixtures/polling.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
+import {
+  pendingAdminRequestId,
+  preApprovalAdminProbeEvidence,
+} from "../fixtures/issue-4462-admin-approval-evidence.ts";
 
 const API_KEY = "nemoclaw-managed-activation-e2e-key";
 const MODEL = "nemoclaw-managed-activation-model";
@@ -48,6 +53,8 @@ const ONBOARD_TIMEOUT_MS = 20 * 60_000;
 const OPENCLAW_POST_RESTART_READY_TIMEOUT_SECONDS = 60;
 const OPENCLAW_POST_RESTART_READY_TIMEOUT_MS =
   (OPENCLAW_POST_RESTART_READY_TIMEOUT_SECONDS + 10) * 1_000;
+const OPENCLAW_ADMIN_APPROVAL_CAPTURE_LIMIT_BYTES = 64 * 1024;
+const OPENCLAW_ADMIN_APPROVAL_MARKER = "ISSUE_5324_ADMIN_APPROVAL_OK";
 const HERMES_BOUNDARY_SENTINEL = "SENTINEL_MANAGED_RESTART_RAW_SECRET";
 const HERMES_BOUNDARY_BACKUP = "/tmp/nemoclaw-hermes-env-before-restart-refusal";
 const MANAGED_ACTIVATION_DELETE_SETTLEMENT_DELAYS_MS = [1_000, 1_000, 1_000] as const;
@@ -206,6 +213,67 @@ function agentTurnCommand(agent: ShippedManagedImageAgent, sessionId: string): s
     case "langchain-deepagents-code":
       return ["dcode", "-n", "Reply with exactly one word: PONG", "--json"];
   }
+}
+
+export async function approveOpenClawAdminScope(
+  host: HostCliClient,
+  sandbox: SandboxClient,
+  sandboxName: string,
+  env: NodeJS.ProcessEnv,
+): Promise<void> {
+  const cronName = `managed-activation-admin-${Date.now()}`;
+  const trigger = await sandbox.exec(
+    sandboxName,
+    [
+      "openclaw",
+      "cron",
+      "add",
+      "--name",
+      cronName,
+      "--every",
+      "2h",
+      "--agent",
+      "main",
+      "--session",
+      "isolated",
+      "--message",
+      "hello",
+    ],
+    {
+      artifactName: "openclaw-cron-add-before-admin-approval",
+      env,
+      redactionValues: [API_KEY],
+      timeoutMs: AGENT_TIMEOUT_MS,
+    },
+  );
+  const requestId = pendingAdminRequestId(trigger);
+  const approval = requestId
+    ? await host.command(
+        "bash",
+        ["-lc", adminApprovalConnectScript(host.commandPath, sandboxName, cronName, requestId)],
+        {
+          artifactName: "openclaw-explicit-admin-approval",
+          captureLimitBytes: OPENCLAW_ADMIN_APPROVAL_CAPTURE_LIMIT_BYTES,
+          env,
+          redactionValues: [API_KEY],
+          timeoutMs: 4 * 60_000,
+        },
+      )
+    : null;
+  const approvalSucceeded =
+    requestId !== null &&
+    preApprovalAdminProbeEvidence(trigger).outcome === "approval-required" &&
+    approval !== null &&
+    approval.exitCode === 0 &&
+    resultText(approval).includes(OPENCLAW_ADMIN_APPROVAL_MARKER);
+  expect(
+    approvalSucceeded,
+    [
+      "OpenClaw explicit admin approval did not authorize the cron consumer",
+      resultText(trigger),
+      approval ? resultText(approval) : "request ID unavailable",
+    ].join("\n"),
+  ).toBe(true);
 }
 
 export function managedActivationPostRestartAgentTurnScript(
@@ -750,6 +818,9 @@ async function qualifyAgent(
     await collectOnboardFailureDockerDiagnostics(artifacts, host, agent, sandboxName, env);
   }
   expect(onboard.exitCode, resultText(onboard)).toBe(0);
+  if (agent === "openclaw") {
+    await approveOpenClawAdminScope(host, sandbox, sandboxName, env);
+  }
   await runAgentTurn(sandbox, agent, sandboxName, "before", env);
   if (agent === "openclaw") await runOpenClawSubagentTurn(sandbox, sandboxName, env);
   if (agent === "hermes") {
@@ -889,9 +960,9 @@ export async function qualifyManagedImageActivation(fixtures: RuntimeFixtures): 
   const chatRequests = inference
     .requests()
     .filter((request) => request.method === "POST" && request.path === "/v1/chat/completions");
-  expect(chatRequests.length).toBeGreaterThanOrEqual(SHIPPED_MANAGED_IMAGE_AGENTS.length * 2);
   expect(
-    chatRequests.every((request) => request.auth === "ok" && request.model === MODEL) &&
+    chatRequests.length >= SHIPPED_MANAGED_IMAGE_AGENTS.length * 2 &&
+      chatRequests.every((request) => request.auth === "ok" && request.model === MODEL) &&
       chatRequests.some((request) => request.requestCanaryPresent === true) &&
       chatRequests.some((request) => request.toolResultPresent === true),
   ).toBe(true);
