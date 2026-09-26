@@ -262,8 +262,20 @@ describe("rebuild resume snapshot repair", () => {
         failedDirs: [],
         failedFiles: [],
         manifest: {
+          version: 2,
+          sandboxName: "alpha",
           backupPath,
           timestamp: "2026-06-01T00:00:00.000Z",
+          agentType: "openclaw",
+          agentVersion: "0.0.1",
+          expectedVersion: "0.1.0",
+          nativeState: {
+            root: "/sandbox",
+            archive: "native-home.tar",
+            sha256: "a".repeat(64),
+          },
+          dir: "/sandbox",
+          blueprintDigest: null,
         },
       } as never),
       vi

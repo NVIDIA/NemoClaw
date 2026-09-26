@@ -65,11 +65,9 @@ restore the backup if one is available. Rebuild cannot recover a workspace or li
 policy that no longer exists.
 
 <AgentOnly variant="openclaw,hermes">
-  The `start` command repairs the agent runtime and host-side port forwards. It
-  returns success only after it authenticates the recovered agent runtime,
-  OpenShell reports the sandbox ready, and host-side port forwards pass their
-  checks. If a check fails, the command exits nonzero, identifies the failure,
-  and prints recovery guidance before you retry `start`.
+The `start` command repairs the agent runtime and host-side port forwards.
+It returns success only after it authenticates the recovered agent runtime, OpenShell reports the sandbox ready, and host-side port forwards pass their checks.
+If a check fails, the command exits nonzero, identifies the failure, and prints recovery guidance before you retry `start`.
 </AgentOnly>
 
 ## Recover the Agent Runtime

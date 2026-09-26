@@ -152,15 +152,13 @@ describe("stopped Docker recovery capture", () => {
             encoding: "utf8",
           }),
         ).toBe("captured bytes");
-        expect(
-          execFileSync("tar", ["-xOf", archive, "custom-package/unregistered.txt"], {
-            encoding: "utf8",
-          }),
-        ).toBe("complete native state");
         const extracted = path.join(root, "extracted");
         fs.mkdirSync(extracted);
         execFileSync("tar", ["-xf", archive, "-C", extracted]);
         expect(fs.readlinkSync(path.join(extracted, "python"))).toBe("/usr/bin/python3");
+        expect(
+          fs.readFileSync(path.join(extracted, "custom-package", "unregistered.txt"), "utf8"),
+        ).toBe("complete native state");
         expect(
           fs.readFileSync(path.join(extracted, "custom-package", "hardlinked.txt"), "utf8"),
         ).toBe("complete native state");
