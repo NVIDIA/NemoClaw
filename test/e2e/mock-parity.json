@@ -33,12 +33,20 @@
     },
     {
       "live": "test/e2e/live/llama-cpp-generic-gpu.test.ts",
+      "liveSources": [
+        "test/e2e/fixtures/admin-approval-connect.sh",
+        "test/e2e/fixtures/admin-approval-connect.ts",
+        "test/e2e/fixtures/admin-request-selector.ts",
+        "test/e2e/fixtures/issue-4462-admin-approval-evidence.ts",
+        "test/e2e/lib/issue-4462-admin-request-selector.py"
+      ],
       "fast": [
         "src/lib/inference/llama-cpp/index.test.ts",
         "src/lib/onboard/llama-cpp-selection/index.test.ts",
         "src/lib/inference/llama-cpp/managed-selection.test.ts",
         "src/lib/inference/llama-cpp/managed-installer.test.ts",
         "src/lib/onboard/setup-nim-flow.test.ts",
+        "test/security/admin-approval-helper.test.ts",
         "test/e2e/support/pr-self-hosted-llama-selector.test.ts",
         "test/e2e/support/onboard-timeout-contract.test.ts"
       ]
@@ -66,7 +74,14 @@
     },
     {
       "live": "test/e2e/live/managed-image-activation-e2e.test.ts",
-      "liveSources": ["test/e2e/live/managed-image-activation-e2e-helpers.ts"],
+      "liveSources": [
+        "test/e2e/fixtures/admin-approval-connect.sh",
+        "test/e2e/fixtures/admin-approval-connect.ts",
+        "test/e2e/fixtures/admin-request-selector.ts",
+        "test/e2e/fixtures/issue-4462-admin-approval-evidence.ts",
+        "test/e2e/lib/issue-4462-admin-request-selector.py",
+        "test/e2e/live/managed-image-activation-e2e-helpers.ts"
+      ],
       "fast": [
         "src/lib/onboard/command.test.ts",
         "src/lib/onboard/sandbox-workload-preparation.test.ts",
@@ -183,6 +198,7 @@
         "test/e2e/support/full-e2e-inference-probe.test.ts",
         "test/e2e/support/full-e2e-gateway.test.ts",
         "test/e2e/support/launch-agent-turn-provider-availability.test.ts",
+        "test/e2e/support/launch-agent-turn-session-evidence.test.ts",
         "test/e2e/support/launch-agent-turn.test.ts",
         "test/e2e/support/openclaw-agent-output.test.ts",
         "test/e2e/support/pr-base-comparison.test.ts",
@@ -201,6 +217,7 @@
         "src/lib/actions/sandbox/launch-readiness.test.ts",
         "src/lib/state/launch-readiness-lease.test.ts",
         "test/e2e/support/launch-agent-turn-provider-availability.test.ts",
+        "test/e2e/support/launch-agent-turn-session-evidence.test.ts",
         "test/e2e/support/launch-agent-turn.test.ts",
         "test/e2e-runtime/launch-readiness-forward-observation.test.ts"
       ]
@@ -286,8 +303,12 @@
     },
     {
       "live": "test/e2e/live/openshell-credential-generation-window.test.ts",
-      "liveSources": ["test/e2e/live/openshell-credential-generation-window.ts"],
+      "liveSources": [
+        "test/e2e/live/openshell-credential-generation-window.ts",
+        "test/e2e/fixtures/owned-sandbox-cleanup.ts"
+      ],
       "fast": [
+        "test/e2e/support/owned-sandbox-cleanup.test.ts",
         "test/credentials/openshell-credential-generation-window.test.ts",
         "test/mcp/mcp-artifact-secret-scan.test.ts",
         "test/mcp/mcp-agent-matrix-artifact-proof.test.ts",
@@ -330,7 +351,17 @@
     },
     {
       "live": "test/e2e/live/onboard-repair.test.ts",
+      "liveSources": [
+        "test/e2e/fixtures/podman-owner-diagnostic.ts",
+        "test/e2e/fixtures/podman-owner-snapshot.ts",
+        "test/e2e/fixtures/onboard-precleanup.ts",
+        "test/e2e/fixtures/owned-sandbox-cleanup.ts"
+      ],
       "fast": [
+        "test/e2e/support/podman-owner-diagnostic.test.ts",
+        "test/e2e/support/podman-owner-snapshot.test.ts",
+        "test/e2e/support/onboard-precleanup.test.ts",
+        "test/e2e/support/owned-sandbox-cleanup.test.ts",
         "src/lib/onboard/extra-provider-reconciliation-diagnostics.test.ts",
         "src/lib/onboard/extra-provider-reconciliation-probes.test.ts",
         "src/lib/onboard/extra-provider-reconciliation.test.ts",
@@ -346,7 +377,17 @@
     },
     {
       "live": "test/e2e/live/onboard-resume.test.ts",
+      "liveSources": [
+        "test/e2e/fixtures/podman-owner-diagnostic.ts",
+        "test/e2e/fixtures/podman-owner-snapshot.ts",
+        "test/e2e/fixtures/onboard-precleanup.ts",
+        "test/e2e/fixtures/owned-sandbox-cleanup.ts"
+      ],
       "fast": [
+        "test/e2e/support/podman-owner-diagnostic.test.ts",
+        "test/e2e/support/podman-owner-snapshot.test.ts",
+        "test/e2e/support/onboard-precleanup.test.ts",
+        "test/e2e/support/owned-sandbox-cleanup.test.ts",
         "src/lib/onboard/extra-provider-reconciliation-diagnostics.test.ts",
         "src/lib/onboard/extra-provider-reconciliation-probes.test.ts",
         "src/lib/onboard/extra-provider-reconciliation.test.ts",
@@ -588,7 +629,15 @@
     },
     {
       "live": "test/e2e/live/issue-4462-scope-upgrade-approval.test.ts",
-      "liveSources": ["test/e2e/live/issue-4462-admin-approval-helper.ts"],
+      "liveSources": [
+        "test/e2e/fixtures/admin-approval-connect.sh",
+        "test/e2e/fixtures/admin-approval-connect.ts",
+        "test/e2e/fixtures/admin-request-selector.ts",
+        "test/e2e/fixtures/issue-4462-admin-approval-evidence.ts",
+        "test/e2e/lib/issue-4462-admin-request-selector.py",
+        "test/e2e/lib/issue-4462-fresh-agent-gateway-snapshot.py",
+        "test/e2e/live/issue-4462-admin-approval-helper.ts"
+      ],
       "fast": [
         "test/e2e/support/issue-4462-fixture-boundary.test.ts",
         "test/e2e/support/issue-4462-gateway-snapshot.test.ts",
@@ -609,6 +658,8 @@
     {
       "live": "test/e2e/live/mcp-bridge.test.ts",
       "liveSources": [
+        "test/e2e/fixtures/owned-sandbox-cleanup.ts",
+        "test/e2e/fixtures/routed-private-relay.ts",
         "test/e2e/live/dns-rebinding-hosts-fixture.ts",
         "test/e2e/live/mcp-bridge-cleanup.ts",
         "test/e2e/live/mcp-bridge-deepagents-config.ts",
@@ -616,6 +667,7 @@
         "test/e2e/live/mcp-bridge-onboard-env.ts",
         "test/e2e/live/mcp-bridge-reliability.ts",
         "test/e2e/live/mcp-bridge-servers.ts",
+        "test/e2e/fixtures/mcp-fixture-tls.ts",
         "test/e2e/live/mcp-bridge-hermes-lifecycle.ts",
         "test/e2e/live/mcp-bridge-phases.ts",
         "test/e2e/live/mcp-bridge-sandbox.ts",
@@ -638,7 +690,8 @@
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/e2e-redaction-entry.test.ts",
-        "test/e2e/support/mcp-bridge-cleanup.test.ts",
+        "test/e2e/support/owned-sandbox-cleanup.test.ts",
+        "test/e2e/support/routed-private-relay.test.ts",
         "test/e2e/support/mcp-bridge-hermes-lifecycle.test.ts",
         "test/e2e/support/mcp-bridge-hermes-http.test.ts",
         "test/e2e/support/mcp-bridge-onboard-env.test.ts",
@@ -652,6 +705,7 @@
         "test/e2e/support/openshell-exact-main-child-contracts.test.ts",
         "test/e2e/support/openshell-exact-main-runtime-contracts.test.ts",
         "test/mcp/mcp-bridge-servers.test.ts",
+        "test/e2e/support/mcp-bridge-https-diagnostics.test.ts",
         "src/lib/onboard/runtime-provider/docker-stopped-state-capture.test.ts",
         "test/state/snapshot-stopped-openclaw.test.ts"
       ]
@@ -818,9 +872,7 @@
         "src/lib/onboard/runtime-provider/docker-stopped-state-capture.test.ts",
         "test/state/snapshot-stopped-openclaw.test.ts"
       ],
-      "liveSources": [
-        "test/e2e/live/openclaw-stopped-recovery.ts"
-      ]
+      "liveSources": ["test/e2e/live/openclaw-stopped-recovery.ts"]
     },
     {
       "live": "test/e2e/live/sandbox-survival.test.ts",

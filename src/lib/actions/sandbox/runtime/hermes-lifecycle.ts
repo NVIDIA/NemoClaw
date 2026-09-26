@@ -77,4 +77,4 @@ export async function waitForGatedHermesGatewayRecovery(sandboxName: string): Pr
   });
 }
 
-export type SandboxCommandResult = processRecovery.SandboxCommandResult;
+export type { SandboxCommandResult } from "../../../adapters/sandbox/command-transport";

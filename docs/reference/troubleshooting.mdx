@@ -1289,6 +1289,31 @@ bash uninstall.sh --yes
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
+<AgentOnly variant="openclaw,hermes">
+
+### Onboarding fails because the inference route served no model catalog
+
+Onboarding verifies the sandbox inference route before it reports the deployment healthy.
+When `https://inference.local/v1/models` keeps returning `HTTP 404`, the route answered but served no model catalog, so nothing validated your selected model against the provider.
+Onboarding retries for the usual startup budget, then marks the `inference` check failed and exits nonzero instead of reporting a verified deployment.
+
+Re-check the route and the recorded provider and model:
+
+```bash
+$$nemoclaw <name> status
+```
+
+`$$nemoclaw <name> status` applies the same HTTP 404 rule, so onboarding and status agree about the model catalog.
+
+Confirm the provider and model are configured for this sandbox and that the endpoint serves `/v1/models`.
+This result is resumable, so correct the endpoint and continue the recorded session:
+
+```bash
+$$nemoclaw onboard --resume
+```
+
+</AgentOnly>
+
 ## Runtime
 
 <AgentOnly variant="openclaw">
@@ -1908,14 +1933,20 @@ gateway connect failed: GatewayClientRequestError: scope upgrade pending approva
 List the pending requests through the native OpenClaw interface:
 
 ```bash
-$$nemoclaw <name> exec -- openclaw devices list
+$$nemoclaw <name> connect
 ```
 
-Confirm the requesting device and the requested scopes.
+In the prepared shell, list the requests:
+
+```bash
+openclaw devices list --json
+```
+
+Confirm the requesting client, device, and requested scopes.
 Approve only the request that matches the failed command:
 
 ```bash
-$$nemoclaw <name> exec -- openclaw devices approve <requestId>
+openclaw devices approve <requestId>
 ```
 
 Then rerun the original command unchanged.

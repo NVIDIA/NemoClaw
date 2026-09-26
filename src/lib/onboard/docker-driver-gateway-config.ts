@@ -38,6 +38,15 @@ import {
   resolveRegisteredRuntimeProvider,
 } from "./runtime-provider/selection";
 
+import {
+  gatewayIdForStateDir,
+  NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
+} from "./gateway/process-environment";
+export {
+  gatewayIdForStateDir,
+  NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
+} from "./gateway/process-environment";
+
 export type { DockerDriverGatewayJwtBundle } from "./docker-driver-gateway-jwt-bundle";
 export { ensureDockerDriverGatewayJwtBundle } from "./docker-driver-gateway-jwt-bundle";
 
@@ -49,7 +58,6 @@ const PRE_AUTH_DOCKER_DRIVER_GATEWAY_VERSION = "0.0.44";
 export const NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV =
   "NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY";
 export const NO_EXTERNAL_COMPONENT_GATEWAY_IDENTITY = "none";
-export const NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV = "NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE";
 
 interface FileIdentity {
   dev: number;
@@ -436,13 +444,6 @@ function cleanupStaleAtomicFileTemps(dir: string, basename: string): void {
       fs.rmSync(path.join(dir, entry.name), { force: true });
     }
   }
-}
-
-export function gatewayIdForStateDir(stateDir: string): string {
-  const leaf = path.basename(path.resolve(stateDir)).replace(/[^A-Za-z0-9_.-]/g, "-");
-  const scope = `${String(process.getuid?.() ?? "unknown")}\0${path.resolve(stateDir)}`;
-  const suffix = createHash("sha256").update(scope).digest("hex").slice(0, 12);
-  return `nemoclaw-${leaf || "gateway"}-${suffix}`;
 }
 
 function legacyGatewayIdForStateDir(stateDir: string): string {

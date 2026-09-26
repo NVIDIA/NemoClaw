@@ -404,7 +404,7 @@ export async function runMcpProviderRewriteProbe(
 const OPENCLAW_BASELINE_SCOPE_CAUSE =
   "its canonical CLI device did not receive the required baseline scopes";
 const PORTABLE_HOST_LOCK_CONTENTION =
-  /^Error: Failed to acquire lock on \/[^\n]*\/\.nemoclaw-portable-host\.lock after 120 retries$/u;
+  /^Error: Failed to acquire lock on \/[^\n]*\/\.nemoclaw-portable-host\.lock after 120 retries(?:\. Recorded owner PID [1-9][0-9]* is still running\. Wait for it to finish\. Rerun this command to retry lock acquisition\.)?$/u;
 
 function normalizeHermesTransportDiagnostic(diagnostic: string): string {
   return diagnostic
