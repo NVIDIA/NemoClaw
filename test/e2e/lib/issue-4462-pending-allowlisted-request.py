@@ -58,16 +58,15 @@ primary_device_id = norm(identity.get("deviceId"))
 matches = [
     request
     for request in pending.values()
-    if norm(request.get("deviceId"))
-    and norm(request.get("deviceId")) != primary_device_id
+    if norm(request.get("deviceId")) == primary_device_id
     and request.get("clientId") in ALLOWED_CLIENTS
     and request.get("clientMode") == "cli"
     and roles(request) == {"operator"}
-    and "operator.write" in requested_scopes(request)
+    and "operator.pairing" in requested_scopes(request)
     and requested_scopes(request).issubset(ALLOWED_SCOPES)
 ]
 if not primary_device_id or len(matches) != 1:
-    raise SystemExit(f"expected one bounded secondary CLI request, found {len(matches)}")
+    raise SystemExit(f"expected one bounded request for the current CLI identity, found {len(matches)}")
 request = matches[0]
 request_id = norm(request.get("requestId"))
 if not re.fullmatch(

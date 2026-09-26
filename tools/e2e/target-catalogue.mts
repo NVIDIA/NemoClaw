@@ -946,6 +946,12 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     installMode: "authenticated",
     restoreCli: true,
     exposeCliBin: true,
+    owningPaths: [
+      "test/e2e/fixtures/allowlisted-approval-connect.sh",
+      "test/e2e/fixtures/allowlisted-approval-connect.ts",
+      "test/e2e/fixtures/allowlisted-request-trigger.sh",
+      "test/e2e/lib/issue-4462-pending-allowlisted-request.py",
+    ],
     environment: {
       ...hostedInference,
       ...nonInteractive,

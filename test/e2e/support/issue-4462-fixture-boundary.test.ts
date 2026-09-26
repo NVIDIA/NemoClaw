@@ -179,7 +179,7 @@ print('ISSUE_4462_FIXTURE_BEHAVIOR_OK')
 `;
 
 describe("scope-upgrade approval live fixture", () => {
-  it("publishes the canonical request ID after a direct native pairing failure", () => {
+  it("publishes the canonical same-device request ID after a direct native pairing failure", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-4462-trigger-"));
     const openclaw = path.join(root, "openclaw");
     const selector = path.join(root, "selector.py");
@@ -190,14 +190,13 @@ describe("scope-upgrade approval live fixture", () => {
 set -euo pipefail
 case "$*" in
   "devices list --json")
-    [ "$OPENCLAW_STATE_DIR" = "$ISSUE_4462_ALLOWLISTED_CLIENT_STATE_DIR" ]
-    [ "$OPENCLAW_CONFIG_PATH" = /sandbox/.openclaw/openclaw.json ]
-    grep -Fqx '{"gateway":{"mode":"local","port":18789,"auth":{}}}' "$OPENCLAW_STATE_DIR/openclaw.json"
-    printf '%s\\n' '{"paired":[]}'
+    printf '%s\\n' '{"paired":[{"clientId":"cli","clientMode":"cli","deviceId":"fixture-device"}]}'
+    ;;
+  "devices remove fixture-device --json")
+    printf '%s\\n' 'device token fixture denied' >&2
+    exit 1
     ;;
   "gateway call sessions.create --params "*)
-    [ "$OPENCLAW_STATE_DIR" = "$ISSUE_4462_ALLOWLISTED_CLIENT_STATE_DIR" ]
-    [ "$OPENCLAW_CONFIG_PATH" = "$ISSUE_4462_ALLOWLISTED_CLIENT_STATE_DIR/openclaw.json" ]
     printf '%s\\n' 'pairing required' >&2
     exit 17
     ;;
@@ -212,7 +211,6 @@ esac
         encoding: "utf8",
         env: {
           ...process.env,
-          ISSUE_4462_ALLOWLISTED_CLIENT_STATE_DIR: path.join(root, "client-state"),
           ISSUE_4462_ALLOWLISTED_SELECTOR_PATH: selector,
           PATH: `${root}:${process.env.PATH ?? ""}`,
         },

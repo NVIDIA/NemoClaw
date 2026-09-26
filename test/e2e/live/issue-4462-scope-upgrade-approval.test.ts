@@ -142,7 +142,7 @@ test(
       contracts: [
         "install.sh creates a real OpenClaw sandbox",
         "fresh onboarding settles one CLI identity with operator.write and without a pending request or operator.admin",
-        "a post-onboarding allowlisted CLI request remains pending after exec and connect settles it through the real gateway before retry",
+        "a post-onboarding same-device CLI request remains pending after exec and connect settles it through the real gateway before retry",
         "the issue 5324 nemoclaw <name> exec transport reaches the local OpenClaw CLI pairing path",
         "the prepared connect shell keeps the injected gateway URL private while retaining port and token",
         "operator.admin remains pending until explicit device approval",
@@ -205,8 +205,7 @@ test(
         timeoutMs: GATEWAY_OBSERVATION_TIMEOUT_MS,
       },
     );
-    expect(upload.exitCode, "Gateway observer upload failed; inspect the phase artifact").toBe(0);
-    await sandbox.upload(
+    const selectorUpload = await sandbox.upload(
       SANDBOX_NAME,
       PENDING_ALLOWLISTED_REQUEST_LOCAL_PATH,
       GATEWAY_OBSERVER_REMOTE_DIR,
@@ -217,6 +216,10 @@ test(
         timeoutMs: GATEWAY_OBSERVATION_TIMEOUT_MS,
       },
     );
+    expect(
+      selectorUpload.exitCode === 0 && upload.exitCode === 0,
+      `Pending allowlisted selector upload must exit 0 (selector=${String(selectorUpload.exitCode)}, gateway-observer=${String(upload.exitCode)}); inspect the phase-2 upload artifacts`,
+    ).toBe(true);
 
     const captureGatewayObservation = async <T>(phase: string): Promise<T> => {
       const result = await sandbox.exec(

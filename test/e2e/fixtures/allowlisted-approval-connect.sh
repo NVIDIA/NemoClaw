@@ -43,22 +43,21 @@ if any(
     for item in pending
 ):
     raise SystemExit("the allowlisted request remains pending after connect")
-if pending:
-    raise SystemExit(f"expected no pending requests after connect, found {len(pending)}")
-primary_device_id = str(identity.get("deviceId") or "").strip()
+device_id = str(identity.get("deviceId") or "").strip()
 matches = [
     item
     for item in paired
-    if str(item.get("deviceId") or "").strip()
-    and str(item.get("deviceId") or "").strip() != primary_device_id
-    and item.get("clientId") in {"cli", "openclaw-cli", "openclaw-control-ui"}
-    and item.get("clientMode") == "cli"
+    if str(item.get("deviceId") or "").strip() == device_id
 ]
-if not primary_device_id or len(matches) != 1:
+if not device_id or len(matches) != 1:
     raise SystemExit(
-        f"expected one paired secondary CLI device, found {len(matches)}"
+        f"current CLI identity must match one paired device, found {len(matches)}"
     )
 device = matches[0]
+if device.get("clientId") not in {"cli", "openclaw-cli"} or device.get(
+    "clientMode"
+) != "cli":
+    raise SystemExit("settled device is not an allowlisted CLI identity")
 
 
 def scope_set(value):
@@ -91,6 +90,11 @@ if not required.issubset(approved):
     raise SystemExit("paired device scopes are not active after connect")
 if not required.issubset(scope_set(active[0].get("scopes"))):
     raise SystemExit("operator token scopes are not active after connect")
+if any(
+    str(item.get("deviceId") or "").strip() == device_id
+    for item in pending
+):
+    raise SystemExit("current CLI identity still has a pending request")
 print("ISSUE_4462_ALLOWLISTED_GATEWAY_STATE_OK")
 PY_ALLOWLISTED_STATE
     break
@@ -104,11 +108,8 @@ PY_ALLOWLISTED_STATE
 done
 unset OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_PORT \
   OPENCLAW_GATEWAY_TOKEN OPENCLAW_GATEWAY_PASSWORD
-client_state=/tmp/issue-4462-allowlisted-client
 params="$(printf '{"key":"agent:main:nemoclaw-e2e-allowlisted-retry-%s-%s","agentId":"main"}' "$$" "$(date +%s)")"
 NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING=1 \
-  OPENCLAW_STATE_DIR="$client_state" \
-  OPENCLAW_CONFIG_PATH="$client_state/openclaw.json" \
   openclaw gateway call sessions.create --params "$params" --json >/dev/null
 echo ISSUE_4462_ALLOWLISTED_RETRY_OK
 NEMOCLAW_ALLOWLISTED_APPROVAL
