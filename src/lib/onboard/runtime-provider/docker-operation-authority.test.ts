@@ -32,7 +32,9 @@ function fakeExecutableRoot(): string {
 }
 
 function writeFakeExecutable(root: string, name: string, script: string): void {
-  fs.writeFileSync(path.join(root, name), `#!/bin/sh\n${script}\n`, { mode: 0o700 });
+  fs.writeFileSync(path.join(root, name), `#!/bin/sh\n${script}\n`, {
+    mode: 0o700,
+  });
 }
 
 function fakeDocker(output: string): string {
@@ -84,6 +86,38 @@ describe("Docker operation authority", () => {
       "sandbox",
     ]);
   });
+
+  it.each([" stale-context ", "stale\u0007context"])(
+    "binds DOCKER_HOST without validating the unused context %j (#12223)",
+    (dockerContext) => {
+      const capture = contextCapture("ssh://ignored-context.example.test");
+      const authority = createDockerOperationAuthority(
+        "sandbox-lifecycle",
+        {
+          DOCKER_CONFIG: "/tmp/nemoclaw-docker",
+          DOCKER_CONTEXT: dockerContext,
+          DOCKER_HOST: "unix:///tmp/explicit-docker.sock",
+        },
+        capture,
+      );
+
+      expect(authority.engine.capture(["info"]).status).toBe(0);
+      expect(capture.mock.calls.at(-1)?.[1]).toEqual([
+        "--config",
+        "/tmp/nemoclaw-docker",
+        "--host",
+        "unix:///tmp/explicit-docker.sock",
+        "info",
+      ]);
+      expect(dockerOperationCommandArguments(authority, ["ps"])).toEqual([
+        "--config",
+        "/tmp/nemoclaw-docker",
+        "--host",
+        "unix:///tmp/explicit-docker.sock",
+        "ps",
+      ]);
+    },
+  );
 
   it("includes operation, engine, and executable-qualified authority in the stable binding digest", () => {
     const capture = contextCapture("ssh://nvidia@spark.example.test");
@@ -181,7 +215,9 @@ describe("Docker operation authority", () => {
     const home = fakeExecutableRoot();
     const localBin = path.join(home, ".local", "bin");
     fs.mkdirSync(localBin, { recursive: true });
-    fs.writeFileSync(path.join(localBin, "openshell"), "not executable\n", { mode: 0o600 });
+    fs.writeFileSync(path.join(localBin, "openshell"), "not executable\n", {
+      mode: 0o600,
+    });
     const environment = {
       HOME: home,
       DOCKER_HOST: "unix:///tmp/nemoclaw-docker.sock",
@@ -202,7 +238,10 @@ describe("Docker operation authority", () => {
     const getFutureShellPathHint = vi.fn(() => "export PATH");
 
     expect(
-      prependInstalledUserLocalOpenshellPath({ env: environment, getFutureShellPathHint }),
+      prependInstalledUserLocalOpenshellPath({
+        env: environment,
+        getFutureShellPathHint,
+      }),
     ).toBeNull();
     expect(getFutureShellPathHint).not.toHaveBeenCalled();
     expect(environment.PATH).toBe("/usr/bin");
@@ -438,7 +477,10 @@ describe("Docker operation authority", () => {
     expect(() =>
       createDockerOperationAuthority(
         "sandbox-lifecycle",
-        { HOME: "/tmp/nemoclaw-home", DOCKER_HOST: "tcp://spark.example.test:2375" },
+        {
+          HOME: "/tmp/nemoclaw-home",
+          DOCKER_HOST: "tcp://spark.example.test:2375",
+        },
         capture,
       ),
     ).toThrow("requires verified TLS for remote Docker TCP endpoints");
@@ -519,7 +561,10 @@ describe("managed llama.cpp operation probe strategy", () => {
 
       operation.createLlamaCppLifecycle(input);
 
-      expect(createLifecycle).toHaveBeenCalledExactlyOnceWith({ ...input, loopbackProbe });
+      expect(createLifecycle).toHaveBeenCalledExactlyOnceWith({
+        ...input,
+        loopbackProbe,
+      });
     },
   );
 
@@ -533,7 +578,10 @@ describe("managed llama.cpp operation probe strategy", () => {
       createLifecycle,
     );
 
-    operation.createLlamaCppLifecycle({ ...input, loopbackProbe: "host-process" });
+    operation.createLlamaCppLifecycle({
+      ...input,
+      loopbackProbe: "host-process",
+    });
 
     expect(createLifecycle).toHaveBeenCalledExactlyOnceWith({
       ...input,

@@ -78,13 +78,13 @@ export function dockerBuildSubprocessEnv(
       delete env[key];
     }
   }
-  // Match Docker's authority contract. A nonblank context overrides DOCKER_HOST;
-  // otherwise an explicit host owns the selection. Keep DOCKER_CONFIG because
+  // Match the Docker CLI's effective authority. A nonblank DOCKER_HOST overrides
+  // DOCKER_CONTEXT; otherwise a context owns the selection. Keep DOCKER_CONFIG because
   // either selected daemon can require credentials or client certificates.
-  if (String(env.DOCKER_CONTEXT ?? "").trim()) {
-    delete env.DOCKER_HOST;
-  } else if (env.DOCKER_HOST !== undefined) {
+  if (String(env.DOCKER_HOST ?? "").trim()) {
     delete env.DOCKER_CONTEXT;
+  } else if (String(env.DOCKER_CONTEXT ?? "").trim()) {
+    delete env.DOCKER_HOST;
   }
   return env;
 }
@@ -134,11 +134,11 @@ export function dockerContextIsDefaultFromBuild(
     return result.error || result.status !== 0 ? null : String(result.stdout).trim();
   },
 ): boolean {
+  // Any explicit endpoint owns daemon authority, including alternate Unix sockets,
+  // even when a context selector is also present.
+  if (String(env.DOCKER_HOST ?? "").trim()) return false;
   const explicitContext = String(env.DOCKER_CONTEXT ?? "").trim();
   if (explicitContext) return explicitContext === "default";
-  // Without a context override, any explicit endpoint owns daemon authority,
-  // including alternate Unix sockets.
-  if (env.DOCKER_HOST) return false;
   return showContext(env) === "default";
 }
 

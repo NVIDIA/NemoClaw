@@ -214,7 +214,7 @@ Onboarding preflight prints this warning before the first image pull and then co
 
 On WSL, NemoClaw automatically uses a temporary credential-free Docker configuration for public managed image pulls, generated image builds, GPU probes, and local-inference probe images when all of these conditions apply:
 
-- `DOCKER_CONTEXT` selects the `default` context, or, when it is unset, `DOCKER_HOST` is unset.
+- `DOCKER_HOST` is unset and the effective Docker context is `default`.
 - The client configuration selects the Docker Desktop credential helper.
 - The read-only helper probe fails.
 - The operation does not require registry credentials.
