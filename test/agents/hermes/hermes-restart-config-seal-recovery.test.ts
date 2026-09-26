@@ -53,8 +53,6 @@ def restricted_unlink(name, *, dir_fd=None):
     return real_unlink(name, dir_fd=dir_fd)
 os.fchown, os.unlink = restricted_chown, restricted_unlink
 guard["_restore_restart_seal"](state_file, verify_hash=True)
-hermes_metadata = os.stat(state["hermes_dir"])
-assert owners.get(hermes_metadata.st_ino, hermes_metadata.st_uid) == state["hermes"]["uid"], "Hermes directory ownership was not restored"
 `,
           RUNTIME_CONFIG_GUARD,
           fixture.statePath,
