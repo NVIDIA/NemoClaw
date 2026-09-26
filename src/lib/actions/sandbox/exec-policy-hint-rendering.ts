@@ -102,9 +102,10 @@ export function buildScopeUpgradeExecHint(cliName: string, rawSandboxName: strin
   return [
     `${cliName}: a device scope upgrade is waiting for approval inside sandbox '${sandboxName}'.`,
     "  The OpenClaw gateway refused the command until the requested scopes are approved.",
-    `  Review pending requests: ${cliName} ${sandboxName} exec -- openclaw devices list`,
+    `  Open a prepared shell:   ${cliName} ${sandboxName} connect`,
+    "  In that shell, review:   openclaw devices list --json",
     `  Approve the one you recognize, after checking its device and requested scopes:`,
-    `                           ${cliName} ${sandboxName} exec -- openclaw devices approve ${SCOPE_UPGRADE_REQUEST_PLACEHOLDER}`,
+    `                           openclaw devices approve ${SCOPE_UPGRADE_REQUEST_PLACEHOLDER}`,
     `  Silence this hint:       export ${POLICY_HINT_SUPPRESS_ENV}=1`,
   ].join("\n");
 }

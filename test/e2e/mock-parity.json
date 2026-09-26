@@ -33,12 +33,20 @@
     },
     {
       "live": "test/e2e/live/llama-cpp-generic-gpu.test.ts",
+      "liveSources": [
+        "test/e2e/fixtures/admin-approval-connect.sh",
+        "test/e2e/fixtures/admin-approval-connect.ts",
+        "test/e2e/fixtures/admin-request-selector.ts",
+        "test/e2e/fixtures/issue-4462-admin-approval-evidence.ts",
+        "test/e2e/lib/issue-4462-admin-request-selector.py"
+      ],
       "fast": [
         "src/lib/inference/llama-cpp/index.test.ts",
         "src/lib/onboard/llama-cpp-selection/index.test.ts",
         "src/lib/inference/llama-cpp/managed-selection.test.ts",
         "src/lib/inference/llama-cpp/managed-installer.test.ts",
         "src/lib/onboard/setup-nim-flow.test.ts",
+        "test/security/admin-approval-helper.test.ts",
         "test/e2e/support/pr-self-hosted-llama-selector.test.ts",
         "test/e2e/support/onboard-timeout-contract.test.ts"
       ]
@@ -66,7 +74,14 @@
     },
     {
       "live": "test/e2e/live/managed-image-activation-e2e.test.ts",
-      "liveSources": ["test/e2e/live/managed-image-activation-e2e-helpers.ts"],
+      "liveSources": [
+        "test/e2e/fixtures/admin-approval-connect.sh",
+        "test/e2e/fixtures/admin-approval-connect.ts",
+        "test/e2e/fixtures/admin-request-selector.ts",
+        "test/e2e/fixtures/issue-4462-admin-approval-evidence.ts",
+        "test/e2e/lib/issue-4462-admin-request-selector.py",
+        "test/e2e/live/managed-image-activation-e2e-helpers.ts"
+      ],
       "fast": [
         "src/lib/onboard/command.test.ts",
         "src/lib/onboard/sandbox-workload-preparation.test.ts",
@@ -614,7 +629,15 @@
     },
     {
       "live": "test/e2e/live/issue-4462-scope-upgrade-approval.test.ts",
-      "liveSources": ["test/e2e/live/issue-4462-admin-approval-helper.ts"],
+      "liveSources": [
+        "test/e2e/fixtures/admin-approval-connect.sh",
+        "test/e2e/fixtures/admin-approval-connect.ts",
+        "test/e2e/fixtures/admin-request-selector.ts",
+        "test/e2e/fixtures/issue-4462-admin-approval-evidence.ts",
+        "test/e2e/lib/issue-4462-admin-request-selector.py",
+        "test/e2e/lib/issue-4462-fresh-agent-gateway-snapshot.py",
+        "test/e2e/live/issue-4462-admin-approval-helper.ts"
+      ],
       "fast": [
         "test/e2e/support/issue-4462-fixture-boundary.test.ts",
         "test/e2e/support/issue-4462-gateway-snapshot.test.ts",
@@ -849,9 +872,7 @@
         "src/lib/onboard/runtime-provider/docker-stopped-state-capture.test.ts",
         "test/state/snapshot-stopped-openclaw.test.ts"
       ],
-      "liveSources": [
-        "test/e2e/live/openclaw-stopped-recovery.ts"
-      ]
+      "liveSources": ["test/e2e/live/openclaw-stopped-recovery.ts"]
     },
     {
       "live": "test/e2e/live/sandbox-survival.test.ts",
