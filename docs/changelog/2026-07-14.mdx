@@ -14,8 +14,8 @@ It also makes shared inference route changes explicit and safe, warns on risky l
   For more information, refer to [Use Shared Gateway Routes](/user-guide/openclaw/inference/manage-inference/use-shared-gateway-routes) and [View Active Inference Route](/user-guide/openclaw/inference/manage-inference/view-active-inference-route).
 - Qualifying DGX Station GB300 systems enter the express-install path.
   This path availability does not change DGX Station's Deferred support status.
-  Managed vLLM storage preflight treats verified shortages as advisory during express and other non-interactive setup while the checks mature.
-  Interactive setup still requires explicit confirmation, and non-interactive setup still stops when model-cache capacity is inconclusive.
+  Express installation and other non-interactive setup stop after a verified warning that Docker image storage or model-cache storage is insufficient, before the guarded download starts.
+  Interactive setup still requires explicit confirmation, non-interactive setup stops with guidance when model-cache capacity is inconclusive, and an inconclusive Docker image-storage check continues automatically.
   For more information, refer to [Set Up vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm), [Platform Support and Launch Claims](/user-guide/openclaw/reference/platform-support), and [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
 - Onboarding warns when a bring-your-own vLLM server on DGX Spark appears to serve a large unquantized model that may exhaust GPU memory under agent tool-call load.
   The warning is suppressed for the managed Spark vLLM recipe.
