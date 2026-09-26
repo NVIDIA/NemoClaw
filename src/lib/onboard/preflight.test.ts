@@ -1471,7 +1471,7 @@ describe("probeDockerBridgeContainerStart", () => {
       "bridge",
     ]);
     // Image pinned to an immutable digest (#3630 CodeRabbit).
-    expect(captured[6]).toMatch(/^busybox@sha256:[0-9a-f]{64}$/);
+    expect(captured[6]).toMatch(/^docker\.io\/library\/busybox@sha256:[0-9a-f]{64}$/);
     expect(captured[7]).toBe("true");
     expect(seenOpts?.timeout).toBe(20_000);
   });

@@ -35,7 +35,7 @@ const HOST_INTERNAL_NAME = "host.openshell.internal";
 // Pinned busybox digest — same image used by the gateway bridge probe so
 // it is likely already pulled and avoids a redundant registry fetch.
 const PROBE_IMAGE =
-  "busybox@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662";
+  "docker.io/library/busybox@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662";
 const PROBE_TIMEOUT_SEC = 5;
 const PROBE_OVERHEAD_MS = 10_000;
 

@@ -130,6 +130,9 @@ describe("probeHostServiceSandboxReachability", () => {
     expect(capturedArgs).toContain(`host.openshell.internal:${PORTABLE_HOST_GATEWAY_IP}`);
     expect(capturedArgs).not.toContain("host.openshell.internal:host-gateway");
     expect(capturedArgs).not.toContain("host.openshell.internal:10.89.0.1");
+    expect(capturedArgs).toContain(
+      "docker.io/library/busybox@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662",
+    );
   });
 
   it("routes native Podman probes through the sandbox host gateway", async () => {
@@ -165,6 +168,9 @@ describe("probeHostServiceSandboxReachability", () => {
     expect(run).toHaveBeenCalledOnce();
     expect(capturedArgs).toContain(`host.openshell.internal:${PORTABLE_HOST_GATEWAY_IP}`);
     expect(capturedArgs).not.toContain("host.openshell.internal:10.89.0.1");
+    expect(capturedArgs).toContain(
+      "docker.io/library/busybox@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662",
+    );
   });
 
   it("keeps portable host-gateway failures credential-free and inconclusive", async () => {

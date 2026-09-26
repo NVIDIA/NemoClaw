@@ -136,7 +136,9 @@ describe("printDockerBridgeContainerStartFailure", () => {
     const blob = messages.join("\n");
     // The manual nslookup verification must use the pinned digest, not
     // the floating `busybox:latest` tag.
-    expect(blob).toMatch(/docker run --rm busybox@sha256:[0-9a-f]{64} nslookup/);
+    expect(blob).toMatch(
+      /docker run --rm docker\.io\/library\/busybox@sha256:[0-9a-f]{64} nslookup/,
+    );
     expect(blob).not.toMatch(/docker run --rm busybox\s+nslookup/);
   });
 
@@ -155,7 +157,9 @@ describe("printDockerBridgeContainerStartFailure", () => {
     });
     errSpy.mockRestore();
     const blob = messages.join("\n");
-    expect(blob).toMatch(/docker run --rm --network bridge busybox@sha256:[0-9a-f]{64} true/);
+    expect(blob).toMatch(
+      /docker run --rm --network bridge docker\.io\/library\/busybox@sha256:[0-9a-f]{64} true/,
+    );
     expect(blob).not.toMatch(/busybox:latest true/);
   });
 
