@@ -9,11 +9,11 @@ trigger_output="$(mktemp)"
 request_id_file="$(mktemp)"
 devices_json="$(mktemp)"
 device_id_file="$(mktemp)"
-revoke_output="$(mktemp)"
-trap 'rm -f -- "$trigger_output" "$request_id_file" "$devices_json" "$device_id_file" "$revoke_output"' EXIT
+remove_output="$(mktemp)"
+trap 'rm -f -- "$trigger_output" "$request_id_file" "$devices_json" "$device_id_file" "$remove_output"' EXIT
 
-# Revoke the current device's operator token through OpenClaw's public API so
-# the next write-scope command creates a real same-device repair request. This
+# Remove the current device through OpenClaw's public API so the next
+# write-scope command creates a real post-onboarding pairing request. This
 # remains valid after OpenClaw migrates identity and pairing state to SQLite.
 # Expansion is intentionally deferred to the in-sandbox bash process.
 # shellcheck disable=SC2016
@@ -47,12 +47,12 @@ set +e
 # Expansion is intentionally deferred to the in-sandbox bash process.
 # shellcheck disable=SC2016
 "$cli" "$sandbox" exec --timeout 60 -- bash -lc \
-  'unset OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_PORT OPENCLAW_GATEWAY_TOKEN OPENCLAW_GATEWAY_PASSWORD; openclaw devices revoke --device "$1" --role operator --json' \
-  -- "$device_id" >"$revoke_output" 2>&1
-revoke_status=$?
+  'unset OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_PORT OPENCLAW_GATEWAY_TOKEN OPENCLAW_GATEWAY_PASSWORD; openclaw devices remove "$1" --json' \
+  -- "$device_id" >"$remove_output" 2>&1
+remove_status=$?
 set -e
-if [ "$revoke_status" -ne 0 ] && ! grep -Eqi 'device token .* denied' "$revoke_output"; then
-  echo "ALLOWLISTED_NATIVE_REVOKE_FAILED" >&2
+if [ "$remove_status" -ne 0 ] && ! grep -Eqi 'device token .* denied' "$remove_output"; then
+  echo "ALLOWLISTED_NATIVE_REMOVE_FAILED" >&2
   exit 32
 fi
 
