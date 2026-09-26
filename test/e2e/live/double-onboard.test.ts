@@ -15,6 +15,7 @@ import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT } from "../fixtures/paths.ts";
+import { captureSandboxFailureDiagnostics } from "../fixtures/sandbox-failure-diagnostics.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 const REGISTRY_FILE = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
@@ -451,6 +452,12 @@ test(
 
     progress.phase("onboard sibling sandbox with isolated dashboard");
     const sibling = await runOnboard(host, SANDBOX_B, fake.baseUrl, "phase-4-sibling-onboard");
+    await captureSandboxFailureDiagnostics(host, sibling, {
+      sandboxName: SANDBOX_B,
+      artifactPrefix: "phase-4-sibling-onboard",
+      redactionValues: ["dummy"],
+      captureGatewayLog: true,
+    });
     expect(sibling.exitCode, resultText(sibling)).toBe(0);
     await sandbox.expectListed(SANDBOX_A, {
       artifactName: "phase-4-openshell-sandbox-a-listed",

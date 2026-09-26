@@ -251,6 +251,12 @@ test(
       }),
       execTimeout(20 * 60_000),
     );
+    await captureSandboxFailureDiagnostics(host, first, {
+      sandboxName: SANDBOX_NAME,
+      artifactPrefix: "phase-1-forced-failure",
+      redactionValues: [EXTRA_PROVIDER_TOKEN, "dummy"],
+      captureGatewayLog: true,
+    });
     expect(first.exitCode, resultText(first)).toBe(1);
     expect(resultText(first)).toContain("Forced onboarding failure at step 'policies'");
     expect(fs.existsSync(SESSION_FILE)).toBe(true);

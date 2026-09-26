@@ -558,7 +558,6 @@ describe("created sandbox identity gate", () => {
         "2",
       ],
       {
-        onCapture: expect.any(Function),
         ignoreError: false,
         timeout: expect.any(Number),
         maxBuffer: 1024 * 1024,

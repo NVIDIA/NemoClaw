@@ -16,10 +16,14 @@ export async function captureSandboxFailureDiagnostics(
     artifactPrefix: string;
     redactionValues: string[];
     captureGatewayLog?: boolean;
+    captureAdditional?: () => Promise<unknown>;
     expectedExitCode?: number;
   },
 ): Promise<void> {
   if (result.exitCode === (options.expectedExitCode ?? 0) && !result.timedOut) return;
+  await Promise.resolve()
+    .then(options.captureAdditional)
+    .catch(() => undefined);
   await host
     .command(
       host.openshellCommandPath,

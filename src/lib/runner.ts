@@ -49,22 +49,6 @@ type CaptureOptions = Omit<SpawnSyncOptionsWithStringEncoding, "encoding"> & {
   includeStderr?: boolean;
 };
 
-export interface CaptureObservation {
-  readonly argv: readonly string[];
-  readonly cwd: string;
-  readonly env: Readonly<Record<string, string>>;
-  readonly exitCode: number | null;
-  readonly signal: NodeJS.Signals | null;
-  readonly errorCode: string | null;
-  readonly stdout: string;
-  readonly stderr: string;
-}
-
-type ObservedCaptureOptions = CaptureOptions & {
-  /** Observe the completed command without changing its output or failure semantics. */
-  onCapture?: (observation: CaptureObservation) => void;
-};
-
 type SpawnResult = SpawnSyncReturns<string | Buffer>;
 
 const dockerAuthority = detectDockerHost();
@@ -332,7 +316,7 @@ function capturedRunCaptureOutput(
   return [stdout, stderr].filter(Boolean).join("\n").trim();
 }
 
-function runCapture(cmd: readonly string[], opts: ObservedCaptureOptions = {}): string {
+function runCapture(cmd: readonly string[], opts: CaptureOptions = {}): string {
   if (!Array.isArray(cmd)) {
     throw new Error("runCapture no longer accepts shell strings; pass an argv array instead");
   }
@@ -340,7 +324,6 @@ function runCapture(cmd: readonly string[], opts: ObservedCaptureOptions = {}): 
   const {
     ignoreError,
     includeStderr,
-    onCapture,
     replaceEnv,
     env: extraEnv,
     stdio: _stdio,
@@ -358,30 +341,14 @@ function runCapture(cmd: readonly string[], opts: ObservedCaptureOptions = {}): 
     // NUL bytes.
     // lgtm[js/indirect-command-line-injection]
     // lgtm[js/shell-command-injection-from-environment]
-    const environment = buildRunnerEnv(extraEnv, exe, replaceEnv);
     const result = spawnSync(exe, args, {
       ...spawnOpts,
       shell: false,
       cwd: ROOT,
-      env: environment,
+      env: buildRunnerEnv(extraEnv, exe, replaceEnv),
       stdio: ["pipe", "pipe", "pipe"],
       encoding: "utf-8",
     });
-
-    try {
-      onCapture?.({
-        argv: [exe, ...args],
-        cwd: ROOT,
-        env: { ...environment },
-        exitCode: result.status,
-        signal: result.signal,
-        errorCode: (result.error as NodeJS.ErrnoException | undefined)?.code ?? null,
-        stdout: result.stdout ?? "",
-        stderr: result.stderr ?? "",
-      });
-    } catch {
-      // An observation failure must not replace the completed command's result.
-    }
 
     // Check result.error first — spawnSync sets this (with status === null) when
     // the executable is missing (ENOENT), the call times out, or the spawn fails.
