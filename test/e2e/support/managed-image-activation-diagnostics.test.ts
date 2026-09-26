@@ -232,7 +232,7 @@ describe("managed image activation failure diagnostics", () => {
           "cron",
           "add",
           "--name",
-          `managed-activation-admin-${now}`,
+          `openclaw-admin-approval-${now}`,
           "--every",
           "2h",
           "--agent",
@@ -247,7 +247,7 @@ describe("managed image activation failure diagnostics", () => {
       const [command, args] = hostCommand.mock.calls[0]!;
       expect(command).toBe("bash");
       expect(args.slice(0, 1)).toEqual(["-lc"]);
-      expect(args[1]).toContain(`managed-activation-admin-${now}`);
+      expect(args[1]).toContain(`openclaw-admin-approval-${now}`);
       expect(args[1]).toContain(`expected_request_id='${requestId}'`);
       expect(args[1]).toContain('openclaw cron run "$cron_id"');
     } finally {

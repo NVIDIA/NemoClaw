@@ -20,7 +20,7 @@ export async function approveOpenClawAdminScope(
   env: NodeJS.ProcessEnv,
   redactionValues: readonly string[] = [],
 ): Promise<void> {
-  const cronName = `managed-activation-admin-${Date.now()}`;
+  const cronName = `openclaw-admin-approval-${Date.now()}`;
   const trigger = await sandbox.exec(
     sandboxName,
     [

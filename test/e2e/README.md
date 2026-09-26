@@ -203,12 +203,13 @@ If the Hermes replacement-credential restart or subsequent bridge removal fails,
 OpenShell supervisor logs and the runtime container's state and startup output
 before asserting the original failure. These reads remain available when sandbox
 exec is rejected in `Error` state. Container reads require exactly one validated
-runtime resource handle. Each output stream is limited to 32 KiB and each command to 30 seconds; log
+runtime resource handle. Each output stream uses a 32 KiB capture buffer and each command has a 30-second limit; log
 capture retains at most 200 lines from the last two minutes for OpenShell and
 three minutes for the runtime container, with fixture credentials redacted.
-The collector also streams the last 32 KiB of `/tmp/nemoclaw-start.log` from the
-stopped container. It reads only that archive member without unpacking files on
-the host, applies the same credential redaction, and stops after 30 seconds.
+The collector also streams `/tmp/nemoclaw-start.log` from the stopped container into
+the bounded redactor, which retains the last 32 KiB and removes secret fragments at
+the capture boundary. It reads only that archive member without unpacking files on
+the host and includes the capture-omission notice in the retained artifact.
 Diagnostic acquisition does not retry the mutation or replace its result.
 OpenClaw launch evidence reports whether a SQLite rejection concerns file metadata or the transcript table, without exposing paths, identities, or session contents. The existing evidence checks remain required.
 A failed native weather-plugin invocation also records unauthenticated liveness and readiness HTTP status codes, bounded to two three-second probes. It does not repeat the tool invocation or replace its failure.

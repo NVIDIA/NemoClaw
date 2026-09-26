@@ -114,7 +114,9 @@ describe("Hermes MCP HTTP failure diagnostics", () => {
         { logLine: () => undefined },
       );
       try {
-        const log = `${"x".repeat(40_000)}\n[CRITICAL] fixture startup failure fixture-secret\n`;
+        const lastLine = "\n[CRITICAL] fixture startup failure fixture-secret\n";
+        // The 32 KiB tail starts inside the first secret, leaving "secret".
+        const log = `${"x".repeat(40_000)}fixture-secret${"x".repeat(32_768 - 6 - lastLine.length)}${lastLine}`;
         writeFileSync(path.join(directory, "nemoclaw-start.log"), log);
         const archive = path.join(directory, "startup.tar");
         const packed = spawnSync("tar", ["-cf", archive, "-C", directory, "nemoclaw-start.log"]);
@@ -138,9 +140,13 @@ describe("Hermes MCP HTTP failure diagnostics", () => {
         );
         progress.phase("verify retained evidence");
         expect(captured.exitCode, captured.stderr).toBe(0);
-        expect(captured.stdout).not.toContain("fixture-secret");
+        expect(captured.stdout.includes("secret")).toBe(false);
         expect(captured.stdout).toContain("[CRITICAL] fixture startup failure [REDACTED]");
-        expect(Buffer.byteLength(captured.stdout)).toBeLessThanOrEqual(32_768);
+        const [captureNotice, ...retainedLines] = captured.stdout.split("\n");
+        expect(captureNotice).toBe(
+          "[shell-probe omitted 40008 earlier bytes; showing up to the last 32768 bytes]",
+        );
+        expect(Buffer.byteLength(retainedLines.join("\n"))).toBeLessThanOrEqual(32_768);
         expect(
           readFileSync(
             artifacts.pathFor(`shell/hermes-mcp-${operation}-failure-startup-log.stdout.txt`),

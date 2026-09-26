@@ -75,7 +75,7 @@ export async function captureHermesMcpLifecycleFailure(
           "-o",
           "pipefail",
           "-c",
-          '"$@" | tar -xOf - nemoclaw-start.log | tail -c 32768',
+          '"$@" | tar -xOf - nemoclaw-start.log',
           "hermes-startup-diagnostics",
           startupLog.command,
           ...startupLog.args,
