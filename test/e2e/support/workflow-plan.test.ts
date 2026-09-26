@@ -690,6 +690,16 @@ describe("E2E workflow plan", () => {
     expect(selectedWorkflowJobs(plan)).toContain("mcp-bridge");
   });
 
+  it("selects every live consumer when the shared gateway classifier changes", () => {
+    const changedFile = "test/e2e/fixtures/openclaw-agent-output.ts";
+
+    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toEqual([
+      "issue-4462-scope-upgrade-approval",
+      "openclaw-inference-switch",
+      "snapshot-commands",
+    ]);
+  });
+
   it("selects only catalogue targets that own changed files", () => {
     const changedFile = "test/e2e/live/snapshot-commands.test.ts";
     const plan = buildE2eWorkflowPlan({}, { changedFiles: [changedFile] });

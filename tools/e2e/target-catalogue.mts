@@ -947,6 +947,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     installMode: "authenticated",
     restoreCli: true,
     exposeCliBin: true,
+    owningPaths: ["test/e2e/fixtures/openclaw-agent-output.ts"],
     environment: {
       ...hostedInference,
       ...nonInteractive,
@@ -1148,7 +1149,10 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     installMode: "none",
     restoreCli: true,
     exposeCliBin: true,
-    owningPaths: ["test/e2e/live/openclaw-inference-switch-helpers.ts"],
+    owningPaths: [
+      "test/e2e/fixtures/openclaw-agent-output.ts",
+      "test/e2e/live/openclaw-inference-switch-helpers.ts",
+    ],
     environment: {
       ...nonInteractive,
       NEMOCLAW_AGENT: "openclaw",
@@ -1428,6 +1432,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     restoreCli: false,
     exposeCliBin: false,
     owningPaths: [
+      "test/e2e/fixtures/openclaw-agent-output.ts",
       "test/e2e/live/snapshot-credential-scanner.ts",
       "src/lib/actions/sandbox/auto-pair-approval.ts",
       "src/lib/actions/sandbox/restore-gateway-pairing.ts",
