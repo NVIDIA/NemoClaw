@@ -803,6 +803,17 @@ Run `$$nemoclaw status` for a broader gateway health report.
 </AgentOnly>
 
 <AgentOnly variant="hermes">
+
+### Portable Hermes receipt and registry authority do not match
+
+Portable Hermes lifecycle commands require the current registry entry and the durable lifecycle receipt to identify the same sandbox, gateway, and lifecycle generation. If onboarding reports that it cannot match them, keep both files unchanged and inspect the sandbox:
+
+```bash
+nemohermes <sandbox-name> doctor
+```
+
+Do not copy, recreate, or edit a registry entry or lifecycle receipt by hand. If `doctor` reports that it cannot qualify the authority, preserve both files unchanged and stop. Manual edits can bind recovery to stale or replacement state.
+
 If `nemohermes <name> recover` reports that the Hermes secret-boundary validator is missing, the sandbox image predates the recovery-side validator that re-checks `/sandbox/.hermes/.env`.
 Current NemoClaw releases fail closed in this state: recovery reports that the validator is missing, leaves an otherwise healthy gateway untouched, refuses to claim the secret boundary was checked, and instructs you to re-image the sandbox with a current Hermes build.
 

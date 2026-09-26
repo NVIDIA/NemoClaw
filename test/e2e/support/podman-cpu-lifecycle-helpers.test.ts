@@ -10,7 +10,11 @@ import { describe, expect, test, vi } from "vitest";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import { startTestProgress, type TestProgress } from "../fixtures/progress.ts";
 import { ShellProbe } from "../fixtures/shell-probe.ts";
-import { runCommand, startPinnedGateway } from "../live/podman-cpu-lifecycle-helpers.ts";
+import {
+  podmanSocketPath,
+  runCommand,
+  startPinnedGateway,
+} from "../live/podman-cpu-lifecycle-helpers.ts";
 
 const PHASES = ["exercise the Podman lifecycle helper", "verify helper cleanup"] as const;
 
@@ -56,6 +60,21 @@ function killProcessIfAlive(pid: number | null): void {
 }
 
 describe("Podman CPU lifecycle helper", () => {
+  test("uses the workflow-owned Podman socket and falls back to the OpenShell authority", () => {
+    expect(
+      podmanSocketPath({
+        E2E_PODMAN_SOCKET: "/run/user/1001/podman/e2e.sock",
+        OPENSHELL_PODMAN_SOCKET: "/run/user/1001/podman/openshell.sock",
+      }),
+    ).toBe("/run/user/1001/podman/e2e.sock");
+    expect(
+      podmanSocketPath({
+        OPENSHELL_PODMAN_SOCKET: "/run/user/1001/podman/openshell.sock",
+      }),
+    ).toBe("/run/user/1001/podman/openshell.sock");
+    expect(podmanSocketPath({})).toBe("");
+  });
+
   test("reports CLI child lifecycle through the canonical ShellProbe boundary (#8497)", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-podman-command-test-"));
     const logLines: string[] = [];

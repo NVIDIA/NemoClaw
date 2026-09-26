@@ -166,6 +166,7 @@ type TargetOptions = Omit<
   compatibleApiKey?: boolean;
   requiredOptionalCredentials?: readonly E2eOptionalCredential[];
   prAdvisorSelectable?: boolean;
+  releaseRequired?: boolean;
   shard?: string;
   artifactLayout?: E2eArtifactLayout;
   testFile?: string;
@@ -192,6 +193,7 @@ function target(id: string, options: TargetOptions): E2eCatalogueTarget {
     compatibleApiKey = false,
     requiredOptionalCredentials = [],
     prAdvisorSelectable = false,
+    releaseRequired = true,
     shard = "default",
     artifactLayout = "target-shard",
     testFile = `test/e2e/live/${id}.test.ts`,
@@ -206,7 +208,7 @@ function target(id: string, options: TargetOptions): E2eCatalogueTarget {
     unresolvedReason,
     testFile,
     owningPaths: [testFile, ...owningPaths],
-    releaseRequired: true,
+    releaseRequired,
     runner,
     runnerKey,
     targetId,
@@ -239,6 +241,13 @@ function dockerOnlyTarget(
   options: Omit<TargetOptions, "gatewayRuntimes">,
 ): E2eCatalogueTarget {
   return target(id, { ...options, gatewayRuntimes: ["docker"] });
+}
+
+function podmanOnlyTarget(
+  id: string,
+  options: Omit<TargetOptions, "gatewayRuntimes">,
+): E2eCatalogueTarget {
+  return target(id, { ...options, gatewayRuntimes: ["podman"] });
 }
 
 function runtimeAgnosticTarget(
@@ -838,6 +847,37 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       NEMOCLAW_OLLAMA_PULL_TIMEOUT: "2400",
       NEMOCLAW_SANDBOX_NAME: "e2e-gpu-ollama",
       OPENSHELL_GATEWAY: "nemoclaw",
+    },
+  }),
+  podmanOnlyTarget("portable-hermes-finalization", {
+    displayName: "Onboarding: Portable Hermes finalization and doctor share readiness",
+    agentRuntime: "hermes",
+    environmentOrInferenceEndpoint:
+      "x86-64 NVIDIA GPU runner; rootless Podman; receipt-qualified managed Hermes gateway",
+    profile: "standard",
+    releaseRequired: false,
+    runner: "linux-amd64-gpu-rtxpro6000-latest-1",
+    timeoutMinutes: 90,
+    installMode: "none",
+    restoreCli: true,
+    exposeCliBin: true,
+    selector: "^portable-hermes-finalization:",
+    testFile: "test/e2e/live/podman-cpu-lifecycle.test.ts",
+    owningPaths: [
+      "test/e2e/fixtures/portable-hermes-finalization.ts",
+      "src/lib/actions/sandbox/doctor.ts",
+      "src/lib/actions/sandbox/doctor-system-checks.ts",
+      "src/lib/actions/sandbox/gateway-state.ts",
+      "src/lib/onboard/experimental/portable-agent-lifecycle.ts",
+      "src/lib/onboard/machine/final-flow-composition.ts",
+      "src/lib/onboard/machine/finalization-deps.ts",
+      "src/lib/onboard/machine/handlers/finalization.ts",
+    ],
+    environment: {
+      ...nonInteractive,
+      NEMOCLAW_AGENT: "hermes",
+      NEMOCLAW_EXPERIMENTAL_PROFILE: "portable",
+      NEMOCLAW_SANDBOX_NAME: "e2e-hm-portable-final",
     },
   }),
   managedRuntimeTarget("full-e2e", {
@@ -1613,6 +1653,9 @@ export function validateE2eTargetCatalogue(
     }
     if (!E2E_EXECUTION_PROFILES.includes(entry.profile)) {
       throw new Error(`E2E target ${entry.id} has an invalid execution profile`);
+    }
+    if (typeof entry.releaseRequired !== "boolean") {
+      throw new Error(`E2E target ${entry.id} has invalid release qualification membership`);
     }
     if (
       entry.gatewayRuntimes !== E2E_RUNTIME_AGNOSTIC &&
