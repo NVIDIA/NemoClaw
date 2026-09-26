@@ -19,6 +19,7 @@ import {
   readSync,
   renameSync,
   rmSync,
+  statfsSync,
   statSync,
   writeFileSync,
   writeSync,
@@ -46,10 +47,8 @@ import { createTempSshConfig } from "../sandbox/temp-ssh-config.js";
 import { inspectMcpDeniedToolSelectors } from "../security/mcp-denied-tool-selector.js";
 import { isAllowedStateSymlink } from "./state-directory-restore.js";
 import {
-  extractPreservedEnvAssignments,
   HERMES_PRESERVED_ENV_INVENTORY,
   type PreservedEnvFile,
-  type PreservedEnvInventory,
   validatePreservedEnvFiles,
 } from "./preserved-env/index.js";
 import {
@@ -72,6 +71,8 @@ const REBUILD_BACKUPS_DIR = path.join(nemoclawStateRoot(HOME_DIR, GATEWAY_PORT),
 const MANIFEST_VERSION = 2;
 const NATIVE_STATE_ARCHIVE = "native-home.tar";
 const NATIVE_STATE_CAPTURE_TIMEOUT_MS = 10 * 60 * 1000;
+const NATIVE_STATE_CAPTURE_RESERVE_BYTES = 64 * 1024 * 1024;
+const NATIVE_STATE_CAPTURE_MAX_BYTES = Number.MAX_SAFE_INTEGER - 1;
 export const STATE_DIRECTORY_CAPTURE_MAX_BYTES = 256 * 1024 * 1024;
 export const MANAGED_REBUILD_RESTORE_AUTHORITY_ERROR =
   "managed rebuild restore requires exact content and runtime authority";
@@ -137,7 +138,10 @@ export interface RebuildManifest {
     /** Cleanup-only identity; retired handoffs cannot be consumed for recovery. */
     retired?: boolean;
   };
-  /** Allowlisted non-secret environment assignments captured for image recreation. */
+  /**
+   * @deprecated Ignored legacy selective-backup field retained only so old
+   * manifests can still be parsed and retired safely.
+   */
   preservedEnv?: PreservedEnvFile[];
   /**
    * Provider-neutral runtime and acceleration state captured before the
@@ -185,11 +189,10 @@ export interface BackupOptions {
    */
   validateBeforePublish?: () => void;
   /**
-   * Internal capture path for a declared state file that the sandbox-user SSH
-   * transport cannot read. The caller must independently enforce path,
-   * identity, and stable-read constraints before returning bytes.
+   * Internal deterministic capture bound used by tests. Production capture
+   * derives its bound from free space in the private backup filesystem.
    */
-  captureStateFile?: StateFileCapture;
+  nativeStateCaptureMaxBytes?: number;
 }
 
 export interface InstanceBackup {
@@ -206,19 +209,6 @@ export interface StateFileSpec {
   path: string;
   strategy: StateFileStrategy;
 }
-
-export interface StateFileCaptureRequest {
-  sandboxName: string;
-  dir: string;
-  spec: StateFileSpec;
-}
-
-export type StateFileCaptureResult =
-  | { outcome: "backed_up"; data: Buffer }
-  | { outcome: "missing" }
-  | { outcome: "failed"; error?: string; unreachable?: boolean };
-
-export type StateFileCapture = (request: StateFileCaptureRequest) => StateFileCaptureResult | null;
 
 export interface BackupResult {
   success: boolean;
@@ -932,200 +922,6 @@ function normalizeStateFileSpecsPreservingDuplicates(
 }
 
 /** Check privileged snapshot requests against the owning agent manifest. */
-export function isDeclaredAgentStateFile(
-  agentName: string,
-  dir: string,
-  spec: StateFileSpec,
-): boolean {
-  const agent = loadAgent(agentName);
-  return (
-    dir === agent.configPaths.dir &&
-    ((agentName === "hermes" && spec.path === ".env" && spec.strategy === "copy") ||
-      agent.stateFiles.some(
-        (entry) => entry.path === spec.path && entry.strategy === spec.strategy,
-      ))
-  );
-}
-
-function stateFileRemotePath(dir: string, filePath: string): string {
-  return `${dir.replace(/\/+$/, "")}/${filePath}`;
-}
-
-const SQLITE_BACKUP_PY = [
-  "import sqlite3, sys",
-  "src, dst = sys.argv[1], sys.argv[2]",
-  "src_conn = sqlite3.connect('file:' + src + '?mode=ro', uri=True, timeout=30)",
-  "dst_conn = sqlite3.connect(dst, timeout=30)",
-  "try:",
-  "    dst_conn.execute('PRAGMA busy_timeout=30000')",
-  "    src_conn.backup(dst_conn)",
-  "    ok = dst_conn.execute('PRAGMA quick_check').fetchone()[0]",
-  "    if ok != 'ok':",
-  "        raise SystemExit('sqlite quick_check failed: ' + str(ok))",
-  "finally:",
-  "    dst_conn.close()",
-  "    src_conn.close()",
-].join("\n");
-
-export function buildStateFileBackupCommand(dir: string, spec: StateFileSpec): string {
-  const remotePath = stateFileRemotePath(dir, spec.path);
-  const quotedRemotePath = shellQuote(remotePath);
-  if (spec.strategy === "sqlite_backup") {
-    return [
-      `src=${quotedRemotePath}`,
-      '[ ! -e "$src" ] && exit 2',
-      '[ -f "$src" ] && [ ! -L "$src" ] || { echo "unsafe sqlite state file: $src" >&2; exit 10; }',
-      '[ -r "$src" ] || { echo "permission denied: $src" >&2; exit 1; }',
-      'hardlink_count="$(find "$src" -maxdepth 0 -type f -links +1 -print 2>/dev/null | wc -l | tr -d " ")"',
-      '[ "${hardlink_count:-0}" = "0" ] || { echo "hard-linked sqlite state file rejected: $src" >&2; exit 11; }',
-      'tmp="$(mktemp /tmp/nemoclaw-sqlite-backup.XXXXXX)"',
-      "trap 'rm -f \"$tmp\"' EXIT",
-      `/usr/bin/python3 -I -S -c ${shellQuote(SQLITE_BACKUP_PY)} "$src" "$tmp" && cat -- "$tmp"`,
-    ].join("; ");
-  }
-
-  return [
-    `src=${quotedRemotePath}`,
-    '[ ! -e "$src" ] && exit 2',
-    '[ -f "$src" ] && [ ! -L "$src" ] || { echo "unsafe state file: $src" >&2; exit 10; }',
-    'hardlink_count="$(find "$src" -maxdepth 0 -type f -links +1 -print 2>/dev/null | wc -l | tr -d " ")"',
-    '[ "${hardlink_count:-0}" = "0" ] || { echo "hard-linked state file rejected: $src" >&2; exit 11; }',
-    'cat -- "$src"',
-  ].join("; ");
-}
-
-type StateFileBackupOutcome = "backed_up" | "missing" | "failed";
-
-function capturePreservedEnvFile(
-  configFile: string,
-  sandboxName: string,
-  dir: string,
-  inventory: PreservedEnvInventory,
-  captureFallback?: StateFileCapture,
-): {
-  outcome: StateFileBackupOutcome;
-  file?: PreservedEnvFile;
-  unreachable: boolean;
-} {
-  const command = buildStateFileBackupCommand(dir, {
-    path: inventory.path,
-    strategy: "copy",
-  });
-  _log(`Capturing preserved environment assignments from ${inventory.path}`);
-  const result = spawnSync("ssh", [...sshArgs(configFile, sandboxName), command], {
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout: 30000,
-    maxBuffer: 1024 * 1024,
-  });
-  if (result.status === 2) return { outcome: "missing", unreachable: false };
-  let captured: StateFileCaptureResult | null = null;
-  if (
-    result.status === 1 &&
-    !result.error &&
-    !result.signal &&
-    /permission denied/i.test(result.stderr?.toString() ?? "") &&
-    captureFallback !== undefined
-  ) {
-    try {
-      captured = captureFallback({
-        sandboxName,
-        dir,
-        spec: { path: inventory.path, strategy: "copy" },
-      });
-    } catch (error) {
-      captured = {
-        outcome: "failed",
-        error: error instanceof Error ? error.message : String(error),
-      };
-    }
-  }
-  if (captured?.outcome === "missing") return { outcome: "missing", unreachable: false };
-  const data = captured?.outcome === "backed_up" ? captured.data : null;
-  if ((result.status !== 0 || result.error || result.signal || !result.stdout) && data === null) {
-    const detail =
-      (captured?.outcome === "failed" ? captured.error : undefined) ||
-      (result.stderr?.toString() || "").trim() ||
-      result.error?.message ||
-      (result.signal ? `signal ${result.signal}` : `exit ${String(result.status)}`);
-    _log(`FAILED: preserved environment capture ${inventory.path}: ${detail.substring(0, 200)}`);
-    return {
-      outcome: "failed",
-      unreachable:
-        (captured?.outcome === "failed" && captured.unreachable === true) ||
-        isSshTransportFailure(result),
-    };
-  }
-  try {
-    const assignments = extractPreservedEnvAssignments(
-      (data ?? result.stdout).toString("utf8"),
-      inventory,
-    );
-    _log(
-      `Captured ${assignments.length} preserved environment ${assignments.length === 1 ? "key" : "keys"} from ${inventory.path}`,
-    );
-    return {
-      outcome: "backed_up",
-      file: { path: inventory.path, assignments },
-      unreachable: false,
-    };
-  } catch (error) {
-    _log(
-      `FAILED: preserved environment capture ${inventory.path}: ${error instanceof Error ? error.message : String(error)}`,
-    );
-    return { outcome: "failed", unreachable: false };
-  }
-}
-
-function capturePreservedEnvFiles(
-  configFile: string,
-  sandboxName: string,
-  dir: string,
-  inventories: readonly PreservedEnvInventory[],
-  captureFallback?: StateFileCapture,
-): { files: PreservedEnvFile[]; failedPaths: string[]; unreachable: boolean } {
-  const files: PreservedEnvFile[] = [];
-  const failedPaths: string[] = [];
-  let unreachable = false;
-  for (const inventory of inventories) {
-    const result = capturePreservedEnvFile(
-      configFile,
-      sandboxName,
-      dir,
-      inventory,
-      captureFallback,
-    );
-    if (result.outcome === "backed_up" && result.file) {
-      files.push(result.file);
-    } else if (result.outcome === "failed") {
-      failedPaths.push(inventory.path);
-      if (result.unreachable) unreachable = true;
-    }
-  }
-  return { files, failedPaths, unreachable };
-}
-
-function captureAgentPreservedEnvFiles(
-  agentName: string,
-  configFile: string,
-  sandboxName: string,
-  dir: string,
-  manifest: RebuildManifest,
-  failedFiles: string[],
-  captureFallback?: StateFileCapture,
-): boolean {
-  if (agentName !== "hermes") return false;
-  const preserved = capturePreservedEnvFiles(
-    configFile,
-    sandboxName,
-    dir,
-    HERMES_PRESERVED_ENV_INVENTORY,
-    captureFallback,
-  );
-  manifest.preservedEnv = preserved.files;
-  failedFiles.push(...preserved.failedPaths);
-  return preserved.unreachable;
-}
-
 function normalizeSnapshotBackupAuthority(options: BackupOptions): {
   readonly runtimeSnapshot?: SandboxRuntimeSnapshot;
   readonly workload?: SandboxWorkloadReceipt;
@@ -1398,6 +1194,28 @@ function openValidatedNativeArchive(
   }
 }
 
+function nativeStateCaptureMaxBytes(backupPath: string, override?: number): number {
+  if (override !== undefined) {
+    if (
+      !Number.isSafeInteger(override) ||
+      override <= 0 ||
+      override > NATIVE_STATE_CAPTURE_MAX_BYTES
+    ) {
+      throw new Error(
+        `Native state capture limit must be an integer between 1 and ${NATIVE_STATE_CAPTURE_MAX_BYTES}`,
+      );
+    }
+    return override;
+  }
+  const stats = statfsSync(backupPath, { bigint: true });
+  const available = stats.bavail * stats.bsize;
+  const reserve = BigInt(NATIVE_STATE_CAPTURE_RESERVE_BYTES);
+  const bounded = available > reserve ? available - reserve : 0n;
+  return Number(
+    bounded > BigInt(NATIVE_STATE_CAPTURE_MAX_BYTES) ? NATIVE_STATE_CAPTURE_MAX_BYTES : bounded,
+  );
+}
+
 /** Capture one opaque archive of the OpenShell-owned native home/workspace. */
 function backupNativeSandboxState(sandboxName: string, options: BackupOptions): BackupResult {
   const sandbox = registry.getSandbox(sandboxName);
@@ -1420,13 +1238,29 @@ function backupNativeSandboxState(sandboxName: string, options: BackupOptions): 
     return nativeStateFailure("Could not get SSH configuration for native state capture", true);
   }
   const temporary = createTempSshConfig(sshConfig, "nemoclaw-native-state-");
-  const failedFiles: string[] = [];
   try {
     const rootResult = resolveNativeStateRoot(temporary.file, sandboxName);
     if ("error" in rootResult) {
       rmSync(backupPath, { recursive: true, force: true });
       return nativeStateFailure(rootResult.error, rootResult.unreachable);
     }
+    let maxBytes: number;
+    try {
+      maxBytes = nativeStateCaptureMaxBytes(backupPath, options.nativeStateCaptureMaxBytes);
+    } catch (error) {
+      rmSync(backupPath, { recursive: true, force: true });
+      const detail = error instanceof Error ? error.message : String(error);
+      return nativeStateFailure(
+        `Could not determine a safe native home/workspace capture limit: ${detail}`,
+      );
+    }
+    if (maxBytes === 0) {
+      rmSync(backupPath, { recursive: true, force: true });
+      return nativeStateFailure(
+        `Native home/workspace capture has no space available after the ${NATIVE_STATE_CAPTURE_RESERVE_BYTES}-byte safety reserve. Free backup-disk space and retry.`,
+      );
+    }
+
     const archivePath = path.join(backupPath, NATIVE_STATE_ARCHIVE);
     const archiveFd = openSync(
       archivePath,
@@ -1436,15 +1270,39 @@ function backupNativeSandboxState(sandboxName: string, options: BackupOptions): 
     let result: ReturnType<typeof spawnSync>;
     try {
       const command = `set -eu; root=${shellQuote(rootResult.root)}; { [ -d "$root" ] && [ ! -L "$root" ]; } || exit 20; exec tar -C "$root" -cf - -- .`;
-      result = spawnSync("ssh", [...sshArgs(temporary.file, sandboxName), command], {
-        stdio: ["ignore", archiveFd, "pipe"],
-        timeout: NATIVE_STATE_CAPTURE_TIMEOUT_MS,
-        maxBuffer: 1024 * 1024,
-      });
+      result = spawnSync(
+        "bash",
+        [
+          "-o",
+          "pipefail",
+          "-c",
+          '"$@" | head -c "$NEMOCLAW_NATIVE_CAPTURE_LIMIT_PLUS_ONE"',
+          "nemoclaw-native-capture",
+          "ssh",
+          ...sshArgs(temporary.file, sandboxName),
+          command,
+        ],
+        {
+          env: {
+            ...process.env,
+            NEMOCLAW_NATIVE_CAPTURE_LIMIT_PLUS_ONE: String(maxBytes + 1),
+          },
+          stdio: ["ignore", archiveFd, "pipe"],
+          timeout: NATIVE_STATE_CAPTURE_TIMEOUT_MS,
+          maxBuffer: 1024 * 1024,
+        },
+      );
     } finally {
       closeSync(archiveFd);
     }
-    if (result.status !== 0 || result.error || result.signal || statSync(archivePath).size === 0) {
+    const archiveSize = statSync(archivePath).size;
+    if (archiveSize > maxBytes) {
+      rmSync(backupPath, { recursive: true, force: true });
+      return nativeStateFailure(
+        `Native home/workspace capture exceeded the ${maxBytes}-byte backup-space limit. Free backup-disk space or reduce the native home, then retry.`,
+      );
+    }
+    if (result.status !== 0 || result.error || result.signal || archiveSize === 0) {
       const detail =
         result.error?.message ??
         (result.signal
@@ -1484,24 +1342,8 @@ function backupNativeSandboxState(sandboxName: string, options: BackupOptions): 
       dir: rootResult.root,
       backupPath,
       blueprintDigest: computeBlueprintDigest(),
-      ...(agentName === "hermes" ? { preservedEnv: [] } : {}),
       ...authority,
     };
-    captureAgentPreservedEnvFiles(
-      agentName,
-      temporary.file,
-      sandboxName,
-      agent.configPaths.dir,
-      manifest,
-      failedFiles,
-      options.captureStateFile,
-    );
-    if (failedFiles.length > 0) {
-      rmSync(backupPath, { recursive: true, force: true });
-      return nativeStateFailure(
-        `Failed to capture rebuild environment metadata: ${failedFiles.join(", ")}`,
-      );
-    }
     const publicationError = validateSnapshotPublication(backupPath, options.validateBeforePublish);
     if (publicationError) return nativeStateFailure(publicationError);
     writeManifest(backupPath, manifest);
@@ -1772,8 +1614,14 @@ async function restoreNativeSandboxState(
         "set -eu",
         `root=${root}`,
         '{ [ -d "$root" ] && [ ! -L "$root" ]; } || exit 20',
+        'command -v realpath >/dev/null || { echo "native restore requires realpath" >&2; exit 23; }',
+        'stage="$(mktemp -d "${TMPDIR:-/tmp}/nemoclaw-native-restore.XXXXXX")"',
+        "trap 'rm -rf -- \"$stage\"' EXIT HUP INT TERM",
+        'tar --no-same-owner -xf - -C "$stage"',
+        'if find "$stage" -type f -links +1 -print -quit | grep -q .; then echo "native restore archive contains a hard link" >&2; exit 21; fi',
+        'find "$stage" -type l -exec sh -eu -c \'stage=$1; root=$2; shift 2; for link do target=$(readlink -- "$link"); case "$target" in /*) resolved=$(realpath -m -- "$target"); case "$resolved" in "$root"|"$root"/*) ;; *) echo "native restore symlink escapes root: $link -> $target" >&2; exit 22 ;; esac ;; *) resolved=$(realpath -m -- "$(dirname -- "$link")/$target"); case "$resolved" in "$stage"|"$stage"/*) ;; *) echo "native restore symlink escapes root: $link -> $target" >&2; exit 22 ;; esac ;; esac; done\' sh "$stage" "$root" {} +',
         'find "$root" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +',
-        'exec tar --no-same-owner -xf - -C "$root"',
+        'cp -a -- "$stage"/. "$root"/',
       ].join("; ");
       const result = spawnSync("ssh", [...sshArgs(temporary.file, sandboxName), command], {
         ...(selectedEnv ? { env: selectedEnv } : {}),

@@ -18,9 +18,7 @@ import * as snapshotRestore from "./snapshot/restore-authority";
 export interface RebuildRestorePhaseInput {
   sandboxName: string;
   targetAgentType: string;
-  targetImageIsCustom: boolean;
   backupManifest: RebuildBackupManifest;
-  reconcileManagedDcodeObservability?: boolean;
   runtimeSelection?: OpenShellRuntimeSelection;
   log: RebuildLog;
 }

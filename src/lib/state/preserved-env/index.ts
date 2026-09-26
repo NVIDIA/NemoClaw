@@ -1,11 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type {
-  SandboxMessagingEnvLinesRenderPlan,
-  SandboxMessagingPlan,
-} from "../../messaging/manifest/types";
-
 export interface PreservedEnvInventory {
   readonly path: string;
   readonly patterns: readonly string[];
@@ -120,64 +115,4 @@ export function validatePreservedEnvFiles(
     seenPaths.add(record.path);
     return true;
   });
-}
-
-export function mergeHermesPreservedEnvIntoMessagingPlan(
-  plan: SandboxMessagingPlan,
-  preservedFiles: readonly PreservedEnvFile[] | undefined,
-): SandboxMessagingPlan;
-export function mergeHermesPreservedEnvIntoMessagingPlan(
-  plan: null,
-  preservedFiles: readonly PreservedEnvFile[] | undefined,
-): null;
-export function mergeHermesPreservedEnvIntoMessagingPlan(
-  plan: SandboxMessagingPlan | null,
-  preservedFiles: readonly PreservedEnvFile[] | undefined,
-): SandboxMessagingPlan | null {
-  if (!plan || plan.agent !== "hermes" || !preservedFiles || preservedFiles.length === 0) {
-    return plan;
-  }
-  if (!validatePreservedEnvFiles(preservedFiles, HERMES_PRESERVED_ENV_INVENTORY)) {
-    throw new Error("Invalid preserved environment assignments");
-  }
-  const assignments = preservedFiles
-    .filter((file) => file.path === ".env")
-    .flatMap((file) => file.assignments);
-  if (assignments.length === 0) return plan;
-
-  const enabledChannels = plan.channels.filter((channel) => channel.active && !channel.disabled);
-  // Prefer a channel that already renders into ~/.hermes/.env so the preserved
-  // lines ride along with an existing entry. Fall back to any enabled channel:
-  // whether a channel renders env lines depends on its inputs, and anchoring
-  // only on that would silently drop the captured home-channel values whenever
-  // no channel happens to render one.
-  const activeChannel =
-    enabledChannels.find((channel) =>
-      plan.agentRender.some(
-        (render) =>
-          render.channelId === channel.channelId &&
-          render.kind === "env-lines" &&
-          render.agent === "hermes" &&
-          render.target === "~/.hermes/.env",
-      ),
-    ) ?? enabledChannels[0];
-  if (!activeChannel) return plan;
-
-  const preservedRender: SandboxMessagingEnvLinesRenderPlan = {
-    channelId: activeChannel.channelId,
-    renderId: "hermes-preserved-home-channels",
-    hookId: "hermes-preserved-home-channels",
-    handler: "common.staticOutputs",
-    kind: "env-lines",
-    agent: "hermes",
-    target: "~/.hermes/.env",
-    lines: assignments,
-    templateRefs: [],
-  };
-  return {
-    ...plan,
-    // Preserved values are applied first. A current manifest render for the
-    // same key remains authoritative because the env merger processes it later.
-    agentRender: [preservedRender, ...plan.agentRender],
-  };
 }

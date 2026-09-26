@@ -82,7 +82,6 @@ export interface SandboxOnboardFlowPhaseOptions<
   resumeAgentChanged: boolean;
   requestedObservabilityEnabled?: boolean | null;
   requestedDcodeAutoApprovalMode?: DcodeAutoApprovalMode | null;
-  rebuildPreservedEnv?: readonly import("../../state/preserved-env").PreservedEnvFile[];
   rebuildPolicySourcePath?: string;
   hostMounts?: readonly import("../../state/registry/types").SandboxHostMount[];
   endpointProvenance: EndpointProvenanceOptions;
@@ -347,7 +346,6 @@ export function createSandboxOnboardFlowPhase<
       resumeAgentChanged: options.resumeAgentChanged,
       requestedObservabilityEnabled: options.requestedObservabilityEnabled,
       requestedDcodeAutoApprovalMode: options.requestedDcodeAutoApprovalMode,
-      rebuildPreservedEnv: options.rebuildPreservedEnv,
       rebuildPolicySourcePath: options.rebuildPolicySourcePath,
       hostMounts: options.hostMounts,
       recreateSandbox: options.recreateSandbox,

@@ -53,7 +53,6 @@ describe("rebuild filesystem restore", () => {
     const result = await runRebuildRestorePhase({
       sandboxName: "alpha",
       targetAgentType: "openclaw",
-      targetImageIsCustom: false,
       backupManifest,
       log: vi.fn(),
     });
@@ -100,7 +99,6 @@ describe("rebuild filesystem restore", () => {
       runRebuildRestorePhase({
         sandboxName: "alpha",
         targetAgentType: "openclaw",
-        targetImageIsCustom: false,
         backupManifest,
         log: vi.fn(),
       }),
@@ -128,7 +126,6 @@ describe("rebuild filesystem restore", () => {
     await runRebuildRestorePhase({
       sandboxName: "alpha",
       targetAgentType: "openclaw",
-      targetImageIsCustom: true,
       backupManifest,
       log: vi.fn(),
     });
@@ -161,7 +158,6 @@ describe("rebuild filesystem restore", () => {
     await runRebuildRestorePhase({
       sandboxName: "alpha",
       targetAgentType: "openclaw",
-      targetImageIsCustom: false,
       backupManifest,
       runtimeSelection,
       log: vi.fn(),
@@ -191,7 +187,6 @@ describe("rebuild filesystem restore", () => {
       runRebuildRestorePhase({
         sandboxName: "hermes",
         targetAgentType: "hermes",
-        targetImageIsCustom: false,
         backupManifest: { agentType: "hermes", backupPath: "/tmp/rebuild-backup" } as never,
         log: vi.fn(),
       }),
@@ -217,7 +212,6 @@ describe("rebuild filesystem restore", () => {
     const result = await runRebuildRestorePhase({
       sandboxName: "alpha",
       targetAgentType: "openclaw",
-      targetImageIsCustom: false,
       backupManifest,
       log,
     });

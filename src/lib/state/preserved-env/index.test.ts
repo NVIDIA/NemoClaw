@@ -3,55 +3,13 @@
 
 import { describe, expect, it } from "vitest";
 
-import { applyMessagingAgentRenderToEnvLines } from "../../messaging/applier/build/messaging-build-applier.mts";
-import type { SandboxMessagingPlan } from "../../messaging/manifest/types";
 import {
   extractPreservedEnvAssignments,
   HERMES_PRESERVED_ENV_INVENTORY,
-  mergeHermesPreservedEnvIntoMessagingPlan,
   validatePreservedEnvFiles,
 } from "./index";
 
 const inventory = HERMES_PRESERVED_ENV_INVENTORY[0]!;
-
-function hermesPlan(): SandboxMessagingPlan {
-  return {
-    schemaVersion: 1,
-    sandboxName: "alpha",
-    agent: "hermes",
-    workflow: "rebuild",
-    channels: [
-      {
-        channelId: "slack",
-        displayName: "Slack",
-        authMode: "token-paste",
-        active: true,
-        selected: true,
-        configured: true,
-        disabled: false,
-        inputs: [],
-        hooks: [],
-      },
-    ],
-    disabledChannels: [],
-    credentialBindings: [],
-    networkPolicy: { presets: [], entries: [] },
-    agentRender: [
-      {
-        channelId: "slack",
-        renderId: "slack-hermes-env",
-        kind: "env-lines",
-        agent: "hermes",
-        target: "~/.hermes/.env",
-        lines: ["SLACK_BOT_TOKEN=openshell:resolve:env:SLACK_BOT_TOKEN"],
-        templateRefs: [],
-      },
-    ],
-    buildSteps: [],
-    stateUpdates: [],
-    healthChecks: [],
-  };
-}
 
 describe("preserved environment inventory", () => {
   it("captures home-channel assignments for every supported Hermes channel (#7803)", () => {
@@ -108,115 +66,5 @@ describe("preserved environment inventory", () => {
         HERMES_PRESERVED_ENV_INVENTORY,
       ),
     ).toBe(false);
-  });
-
-  it.each([
-    "openshell:resolve:env:TAVILY_API_KEY",
-    "openshell:resolve:env:v17_TAVILY_API_KEY",
-    "tvly-backup-test-secret",
-  ])("does not restore a Tavily credential from an older Hermes dotenv [case %#]", (credential) => {
-    const assignments = extractPreservedEnvAssignments(
-      `SLACK_HOME_CHANNEL=C0123\nTAVILY_API_KEY=${credential}\n`,
-      inventory,
-    );
-    const merged = mergeHermesPreservedEnvIntoMessagingPlan(hermesPlan(), [
-      { path: ".env", assignments },
-    ]);
-    const envLines: string[] = [];
-    applyMessagingAgentRenderToEnvLines(envLines, merged, "~/.hermes/.env");
-
-    expect(envLines).toContain("SLACK_HOME_CHANNEL=C0123");
-    expect(envLines.join("\n")).not.toContain("TAVILY_API_KEY=");
-    expect(() =>
-      mergeHermesPreservedEnvIntoMessagingPlan(hermesPlan(), [
-        { path: ".env", assignments: [`TAVILY_API_KEY=${credential}`] },
-      ]),
-    ).toThrow("Invalid preserved environment assignments");
-  });
-
-  it("applies restored values before current manifest renders (#7803)", () => {
-    const plan = hermesPlan();
-    const currentRender = plan.agentRender[0];
-    expect(currentRender?.kind).toBe("env-lines");
-    const currentEnvRender = currentRender as SandboxMessagingPlan["agentRender"][number] & {
-      kind: "env-lines";
-      lines: string[];
-    };
-    const merged = mergeHermesPreservedEnvIntoMessagingPlan(
-      {
-        ...plan,
-        agentRender: [
-          {
-            ...currentEnvRender,
-            lines: [...currentEnvRender.lines, "SLACK_HOME_CHANNEL=CURRENT"],
-          },
-        ],
-      },
-      [
-        {
-          path: ".env",
-          assignments: [
-            "SLACK_HOME_CHANNEL=C0123",
-            "SLACK_HOME_CHANNEL_NAME=alerts",
-            "SLACK_HOME_CHANNEL_THREAD_ID=",
-          ],
-        },
-      ],
-    );
-
-    expect(merged?.agentRender.map((render) => render.renderId)).toEqual([
-      "hermes-preserved-home-channels",
-      "slack-hermes-env",
-    ]);
-    expect(merged?.agentRender[0]).toMatchObject({
-      channelId: "slack",
-      target: "~/.hermes/.env",
-      lines: [
-        "SLACK_HOME_CHANNEL=C0123",
-        "SLACK_HOME_CHANNEL_NAME=alerts",
-        "SLACK_HOME_CHANNEL_THREAD_ID=",
-      ],
-    });
-    const envLines: string[] = [];
-    applyMessagingAgentRenderToEnvLines(envLines, merged, "~/.hermes/.env");
-    expect(envLines).toContain("SLACK_HOME_CHANNEL=CURRENT");
-    expect(envLines).not.toContain("SLACK_HOME_CHANNEL=C0123");
-  });
-
-  it("retains restored values when the current manifest leaves them unset (#7803)", () => {
-    const merged = mergeHermesPreservedEnvIntoMessagingPlan(
-      { ...hermesPlan(), workflow: "onboard" },
-      [
-        {
-          path: ".env",
-          assignments: ["SLACK_HOME_CHANNEL=C0123"],
-        },
-      ],
-    );
-    const envLines: string[] = [];
-    applyMessagingAgentRenderToEnvLines(envLines, merged, "~/.hermes/.env");
-    expect(envLines).toContain("SLACK_HOME_CHANNEL=C0123");
-  });
-
-  it("rejects unscoped assignments at the merge boundary (#7803)", () => {
-    expect(() =>
-      mergeHermesPreservedEnvIntoMessagingPlan(hermesPlan(), [
-        { path: ".env", assignments: ["SLACK_BOT_TOKEN=xoxb-secret"] },
-      ]),
-    ).toThrow("Invalid preserved environment assignments");
-  });
-
-  it("does not apply preserved values without an active Hermes environment render (#7803)", () => {
-    const plan = hermesPlan();
-    const inactivePlan: SandboxMessagingPlan = {
-      ...plan,
-      channels: plan.channels.map((channel) => ({ ...channel, active: false })),
-    };
-
-    expect(
-      mergeHermesPreservedEnvIntoMessagingPlan(inactivePlan, [
-        { path: ".env", assignments: ["SLACK_HOME_CHANNEL=C0123"] },
-      ]),
-    ).toBe(inactivePlan);
   });
 });

@@ -31,7 +31,6 @@ import { normalizeSandboxGpuMode } from "../../onboard/sandbox-gpu-mode";
 import type { ManagedWorkloadRebuildHandoff } from "../../onboard/workload/rebuild";
 import type { SandboxBaseImageResolutionMetadata } from "../../sandbox-base-image";
 import type { CheckpointGatewayAuthority } from "../../state/onboard-checkpoint-types";
-import type { PreservedEnvFile } from "../../state/preserved-env";
 import { type ToolDisclosure, toolDisclosureOrDefault } from "../../tool-disclosure";
 
 export type RebuildGpuOptOutEntry = {
@@ -140,7 +139,6 @@ export type RebuildRecreateOnboardOpts = {
   rebuildGatewayAuthority?: CheckpointGatewayAuthority;
   preparedImageRebuild?: PreparedImageRebuildHandoff;
   managedWorkloadRebuild?: ManagedWorkloadRebuildHandoff;
-  rebuildPreservedEnv?: readonly PreservedEnvFile[];
   rebuildPolicySourcePath?: string;
   hostMounts?: readonly import("../../state/registry/types").SandboxHostMount[];
   autoYes: boolean;

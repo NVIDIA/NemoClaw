@@ -287,9 +287,6 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
       ...(preparedBackupRecovery ? { allowRemovedImmutabilityStateRecord: true } : {}),
       rebuildGatewayAuthority,
       rebuildPolicySourcePath,
-      ...(rebuildsHermesSandbox && backupManifest?.preservedEnv
-        ? { rebuildPreservedEnv: backupManifest.preservedEnv }
-        : {}),
       recreateJournalTargetIntentFingerprint: recreateJournal.targetIntentFingerprint,
     });
     const returnedExitCode = normalizeProcessExitCode(process.exitCode);

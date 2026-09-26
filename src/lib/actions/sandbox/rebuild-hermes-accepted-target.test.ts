@@ -74,7 +74,6 @@ vi.mock("./rebuild-backup-phase", async (importOriginal) => ({
 }));
 
 vi.mock("./rebuild-preflight-phase", () => ({
-  finalizePreparedRebuildImageMessagingPlan: vi.fn(),
   runHermesCronRestoreBackupPreflight: () => ({ plan: null }),
   runRebuildPreflightPhase: phaseMocks.runPreflight,
 }));

@@ -6,7 +6,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { dockerSpawnSync } from "../../../adapters/docker/exec";
 import type { AgentDefinition } from "../../../agent/definition-types";
 import {
   copyCapturedOpenClawState,
@@ -23,10 +22,6 @@ import {
 import { requireRuntimeProviderBundleForSandbox } from "../../../onboard/runtime-provider/registry";
 import type { SandboxEntry } from "../../../state/registry/types";
 import * as sandboxState from "../../../state/sandbox";
-import {
-  privilegedSandboxExecArgv,
-  withPrivilegedSandboxExecutionLease,
-} from "../../../sandbox/privileged-exec";
 import { readManagedSnapshotProfileAuthority } from "./managed-profile";
 import {
   captureSandboxRuntimeSnapshot,
@@ -49,147 +44,6 @@ interface SnapshotBackupAuthorityDependencies {
   readonly prepareHostLocalInference: typeof prepareSandboxHostLocalInferenceAuthority;
   readonly confirmHostLocalInference: typeof confirmHostLocalInferenceAuthority;
   readonly backup: typeof sandboxState.backupSandboxState;
-  readonly captureHermesStateFile: typeof captureHermesStateFile;
-}
-
-const HERMES_CAPTURE_TIMEOUT_MS = 120_000;
-const HERMES_CAPTURE_MAX_BUFFER = 256 * 1024 * 1024;
-export const HERMES_STATE_CAPTURE_SCRIPT = `import os, sqlite3, stat, sys, tempfile
-base, relative, strategy = sys.argv[1:]
-parts = relative.split("/")
-if not relative or relative.startswith("/") or any(part in ("", ".", "..") for part in parts):
-    raise SystemExit(10)
-if strategy not in ("copy", "sqlite_backup"):
-    raise SystemExit(10)
-directory_flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-file_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
-def identity(value):
-    return (value.st_dev, value.st_ino, stat.S_IFMT(value.st_mode), value.st_size, value.st_mtime_ns, value.st_ctime_ns, value.st_nlink)
-def directory_identity(value):
-    return (value.st_dev, value.st_ino, stat.S_IFMT(value.st_mode))
-directory_fds = []
-file_fd = None
-target_name = None
-try:
-    base_fd = os.open(base, directory_flags)
-    directory_fds.append(base_fd)
-    base_before = os.fstat(base_fd)
-    for component in parts[:-1]:
-        next_fd = os.open(component, directory_flags, dir_fd=directory_fds[-1])
-        opened = os.fstat(next_fd)
-        current = os.stat(component, dir_fd=directory_fds[-1], follow_symlinks=False)
-        if not stat.S_ISDIR(opened.st_mode) or directory_identity(opened) != directory_identity(current):
-            os.close(next_fd)
-            raise SystemExit(11)
-        directory_fds.append(next_fd)
-    try:
-        file_fd = os.open(parts[-1], file_flags, dir_fd=directory_fds[-1])
-    except FileNotFoundError:
-        raise SystemExit(2)
-    before = os.fstat(file_fd)
-    current_before = os.stat(parts[-1], dir_fd=directory_fds[-1], follow_symlinks=False)
-    if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or identity(before) != identity(current_before):
-        raise SystemExit(11)
-    target = tempfile.NamedTemporaryFile(dir="/tmp", delete=False)
-    target_name = target.name
-    target.close()
-    if strategy == "sqlite_backup":
-        source = sqlite3.connect("file:/proc/self/fd/" + str(file_fd) + "?mode=ro", uri=True, timeout=30)
-        destination = sqlite3.connect(target_name, timeout=30)
-        try:
-            source.backup(destination)
-            if destination.execute("PRAGMA quick_check").fetchone()[0] != "ok":
-                raise SystemExit(12)
-        finally:
-            destination.close()
-            source.close()
-    else:
-        with open(target_name, "wb", buffering=0) as target_stream:
-            while True:
-                chunk = os.read(file_fd, 64 * 1024)
-                if not chunk:
-                    break
-                target_stream.write(chunk)
-    after = os.fstat(file_fd)
-    current_after = os.stat(parts[-1], dir_fd=directory_fds[-1], follow_symlinks=False)
-    if identity(before) != identity(after) or identity(before) != identity(current_after):
-        raise SystemExit(13)
-    for index, component in enumerate(parts[:-1]):
-        opened = os.fstat(directory_fds[index + 1])
-        current = os.stat(component, dir_fd=directory_fds[index], follow_symlinks=False)
-        if directory_identity(opened) != directory_identity(current) or not stat.S_ISDIR(current.st_mode):
-            raise SystemExit(13)
-    base_current = os.stat(base, follow_symlinks=False)
-    if directory_identity(base_before) != directory_identity(base_current) or not stat.S_ISDIR(base_current.st_mode):
-        raise SystemExit(13)
-    with open(target_name, "rb", buffering=0) as stream:
-        while True:
-            chunk = stream.read(64 * 1024)
-            if not chunk:
-                break
-            sys.stdout.buffer.write(chunk)
-finally:
-    if target_name is not None:
-        try:
-            os.unlink(target_name)
-        except FileNotFoundError:
-            pass
-    if file_fd is not None:
-        os.close(file_fd)
-    for descriptor in reversed(directory_fds):
-        os.close(descriptor)
-`;
-
-export function captureHermesStateFile(
-  sandboxName: string,
-  request: sandboxState.StateFileCaptureRequest,
-): sandboxState.StateFileCaptureResult | null {
-  if (
-    request.sandboxName !== sandboxName ||
-    !sandboxState.isDeclaredAgentStateFile("hermes", request.dir, request.spec)
-  )
-    return null;
-  try {
-    return withPrivilegedSandboxExecutionLease(sandboxName, "Hermes state snapshot capture", () => {
-      const result = dockerSpawnSync(
-        privilegedSandboxExecArgv(
-          sandboxName,
-          [
-            "/usr/bin/python3",
-            "-I",
-            "-S",
-            "-c",
-            HERMES_STATE_CAPTURE_SCRIPT,
-            request.dir,
-            request.spec.path,
-            request.spec.strategy,
-          ],
-          false,
-          true,
-        ),
-        {
-          encoding: null,
-          stdio: ["ignore", "pipe", "pipe"],
-          timeout: HERMES_CAPTURE_TIMEOUT_MS,
-          maxBuffer: HERMES_CAPTURE_MAX_BUFFER,
-        },
-      );
-      if (result.status === 2 && !result.error && result.signal === null)
-        return { outcome: "missing" };
-      if (result.status !== 0 || result.error || result.signal || !Buffer.isBuffer(result.stdout)) {
-        return {
-          outcome: "failed",
-          error: `privileged Hermes state capture failed: ${result.error?.message ?? (result.signal ? `signal ${result.signal}` : `exit ${String(result.status)}`)}`,
-        };
-      }
-      return { outcome: "backed_up", data: result.stdout };
-    });
-  } catch (error) {
-    return {
-      outcome: "failed",
-      error: error instanceof Error ? error.message : String(error),
-    };
-  }
 }
 
 const defaultDependencies: Omit<SnapshotBackupAuthorityDependencies, "getSandbox"> = {
@@ -201,7 +55,6 @@ const defaultDependencies: Omit<SnapshotBackupAuthorityDependencies, "getSandbox
   // Keep the call late-bound so tests and alternative state stores can replace
   // the module export without this adapter retaining an import-time reference.
   backup: (...args) => sandboxState.backupSandboxState(...args),
-  captureHermesStateFile,
 };
 
 function failure(error: unknown): sandboxState.BackupResult {
@@ -352,28 +205,13 @@ export function backupSandboxStateWithManagedAuthority(
   const entry = dependencies.getSandbox(sandboxName);
   if (!entry) return dependencies.backup(sandboxName);
 
-  // The complete native-home archive owns agent state. Hermes keeps one narrow
-  // privileged fallback only for reading allowlisted recreation environment
-  // metadata when the ordinary SSH user cannot read `.env`.
-  const stateCaptureOptions: Pick<sandboxState.BackupOptions, "captureStateFile"> =
-    entry.agent === "hermes"
-      ? {
-          captureStateFile: (request) => dependencies.captureHermesStateFile(sandboxName, request),
-        }
-      : {};
-  const backupOptions = stateCaptureOptions;
-
   let authority: SnapshotBackupAuthority | null;
   try {
     authority = captureSnapshotAuthority(entry, dependencies);
   } catch (error) {
     return failure(error);
   }
-  return authority
-    ? dependencies.backup(sandboxName, { ...backupOptions, ...authority })
-    : Object.keys(backupOptions).length === 0
-      ? dependencies.backup(sandboxName)
-      : dependencies.backup(sandboxName, backupOptions);
+  return authority ? dependencies.backup(sandboxName, authority) : dependencies.backup(sandboxName);
 }
 
 export interface PreparedStoppedOpenClawState extends CapturedOpenClawState {

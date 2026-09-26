@@ -204,7 +204,6 @@ export interface SandboxStateOptions<
   resumeAgentChanged: boolean;
   requestedObservabilityEnabled?: boolean | null;
   requestedDcodeAutoApprovalMode?: DcodeAutoApprovalMode | null;
-  rebuildPreservedEnv?: readonly import("../../../state/preserved-env").PreservedEnvFile[];
   rebuildPolicySourcePath?: string;
   hostMounts?: readonly import("../../../state/registry/types").SandboxHostMount[];
   recreateSandbox: (requested?: boolean) => boolean;
@@ -1835,9 +1834,6 @@ class SandboxStateFlow<
         ? { dcodeAutoApprovalMode: this.dcodeAutoApprovalMode }
         : {}),
       ...deferredSandboxEffectsIntent(deferSandboxEffectsUntilIdentityVerification),
-      ...(this.options.rebuildPreservedEnv
-        ? { rebuildPreservedEnv: this.options.rebuildPreservedEnv }
-        : {}),
       recreateJournalTargetIntentFingerprint:
         this.options.recreateJournalTargetIntentFingerprint ?? undefined,
       ...(this.options.rebuildPolicySourcePath

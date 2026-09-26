@@ -611,17 +611,11 @@ describe("core onboard flow phases", () => {
     expect(createIntent).not.toHaveProperty("deferSandboxEffectsUntilIdentityVerification");
   });
 
-  it("carries authoritative rebuild state into sandbox creation (#7803)", async () => {
+  it("carries authoritative rebuild policy into sandbox creation", async () => {
     const createSandbox = vi.fn(async () => "created-sandbox");
-    const rebuildPreservedEnv = [
-      {
-        path: ".env",
-        assignments: ["SLACK_HOME_CHANNEL=C0123"],
-      },
-    ];
     const rebuildPolicySourcePath = "/tmp/current-policy.yaml";
     const { providerInference: providerPhase, sandbox: sandboxPhase } = createPhases({
-      sandboxOptions: { rebuildPreservedEnv, rebuildPolicySourcePath },
+      sandboxOptions: { rebuildPolicySourcePath },
       sandboxDeps: { createSandbox },
     });
 
@@ -629,7 +623,6 @@ describe("core onboard flow phases", () => {
     await sandboxPhase.run(providerResult.context);
 
     expect((createSandbox.mock.calls[0] as unknown[] | undefined)?.[15]).toMatchObject({
-      rebuildPreservedEnv,
       rebuildPolicySourcePath,
     });
   });

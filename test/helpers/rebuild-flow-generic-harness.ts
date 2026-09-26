@@ -341,16 +341,6 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   vi.spyOn(rebuildCustomImagePreflight, "preflightRebuildImage").mockResolvedValue(
     overrides.customImagePreflight ?? defaultImagePreflight,
   );
-  const finalizePreparedImageSpy = vi
-    .spyOn(rebuildCustomImagePreflight, "finalizePreparedRebuildImageMessagingPlan")
-    .mockImplementation(
-      (overrides.finalizePreparedImage ??
-        ((prepared: typeof defaultImagePreflight.prepared) => ({
-          ok: true as const,
-          imageTag: "nemoclaw-rebuild-finalize:test",
-          prepared,
-        }))) as never,
-    );
   vi.spyOn(rebuildUsageNotice, "ensureRebuildUsageNoticeAccepted").mockResolvedValue(true);
   vi.spyOn(resolve, "resolveOpenshell").mockReturnValue(null);
   vi.spyOn(forwardRecovery, "teardownSandboxDashboardForward").mockReturnValue(true);
@@ -660,9 +650,6 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
         timestamp: "2026-06-01T00:00:00.000Z",
         ...(overrides.backupRuntimeSnapshot
           ? { runtimeSnapshot: structuredClone(overrides.backupRuntimeSnapshot) }
-          : {}),
-        ...(overrides.backupPreservedEnv
-          ? { preservedEnv: structuredClone(overrides.backupPreservedEnv) }
           : {}),
       };
       registerHarnessRebuildBackup(manifest as ReturnType<typeof sandboxState.listBackups>[number]);
@@ -1185,7 +1172,6 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     restoreSandboxEntrySpy,
     restoreSandboxEntryIfMissingSpy,
     restoreMcpBridgesAfterRebuildSpy,
-    finalizePreparedImageSpy,
     session,
   };
 }
