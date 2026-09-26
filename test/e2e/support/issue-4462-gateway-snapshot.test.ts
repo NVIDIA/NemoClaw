@@ -303,8 +303,8 @@ describe("fresh-agent gateway snapshot artifacts", () => {
           clientMode: "cli",
           role: "operator",
           roles: ["operator"],
-          scopes: ["operator.pairing", "operator.write"],
-          requestedScopes: ["operator.pairing", "operator.write"],
+          scopes: ["operator.write"],
+          requestedScopes: ["operator.write"],
         },
         unrelated: {
           requestId: "87654321-4321-4321-8321-cba987654321",

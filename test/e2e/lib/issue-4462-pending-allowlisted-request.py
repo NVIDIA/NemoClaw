@@ -63,7 +63,7 @@ matches = [
     and request.get("clientId") in ALLOWED_CLIENTS
     and request.get("clientMode") == "cli"
     and roles(request) == {"operator"}
-    and "operator.pairing" in requested_scopes(request)
+    and "operator.write" in requested_scopes(request)
     and requested_scopes(request).issubset(ALLOWED_SCOPES)
 ]
 if not primary_device_id or len(matches) != 1:
