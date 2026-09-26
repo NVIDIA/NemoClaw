@@ -358,7 +358,9 @@ export async function setupPoliciesWithSelection(
   const chosen = await withPolicyApplicationTrace(sandboxName, options, () =>
     setupPoliciesWithSelectionInner(deps, sandboxName, options),
   );
-  await seedInitialPolicyContext(sandboxName);
+  if ((deps.env ?? process.env).NEMOCLAW_MINIMAL_BOOTSTRAP !== "1") {
+    await seedInitialPolicyContext(sandboxName);
+  }
   return chosen;
 }
 

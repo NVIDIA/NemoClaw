@@ -7,6 +7,7 @@ import { R, YW } from "../../cli/terminal-style";
 import { shellQuote } from "../../core/shell-quote";
 import * as registry from "../../state/registry";
 import { SANDBOX_DESTROY_TIMEOUT_MS } from "./destroy-gateway";
+import { POLICY_CONTEXT_SANDBOX_PATH } from "./policy-explain";
 
 type RunOpenshellResult = { error?: Error; status: number | null };
 type RunOpenshell = (args: string[], opts?: Record<string, unknown>) => RunOpenshellResult;
@@ -183,12 +184,22 @@ export function wipeSandboxState(sandboxName: string, deps: WipeSandboxStateDeps
     .map((file) => validateManifestPath(file.path))
     .filter((p): p is string => p !== null);
 
+  // POLICY_CONTEXT_SANDBOX_PATH is a NemoClaw-owned artifact written to a
+  // fixed absolute path, not a manifest-declared state target. It only gets
+  // wiped today as a side effect of "workspace" happening to be declared as
+  // a state_dir for the same path prefix (#10951) -- add it explicitly so
+  // its removal is guaranteed rather than incidental to that declaration.
+  const policyContextRelativePath = POLICY_CONTEXT_SANDBOX_PATH.startsWith(`${resolvedDir}/`)
+    ? POLICY_CONTEXT_SANDBOX_PATH.slice(resolvedDir.length + 1)
+    : null;
+
   const targets = [
     ...validStateDirs.map(shellQuote),
     ...validStateFiles.map(shellQuote),
     // Quote the manifest-derived prefix and leave only the appended wildcard
     // unquoted. A no-match leaves the literal token, which `rm -rf` ignores.
     ...validStateDirPrefixes.map((prefix) => `${shellQuote(prefix)}*`),
+    ...(policyContextRelativePath ? [shellQuote(policyContextRelativePath)] : []),
   ];
 
   // cd into the config dir first so relative names and globs resolve there;
