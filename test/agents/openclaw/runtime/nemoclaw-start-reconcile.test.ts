@@ -18,7 +18,7 @@ const START_SCRIPT = path.join(
 
 interface RunReconcileOptions {
   /**
-   * Model the stubbed `openshell inference get -g nemoclaw` should print.
+   * Model the stubbed `openshell inference get -g <gateway>` should print.
    * - undefined → no openshell on PATH (probe falls back to in-file logic).
    * - "" → openshell exists but returns an unconfigured inference section.
    * - non-empty string → openshell returns a configured inference section.
@@ -32,6 +32,7 @@ interface RunReconcileOptions {
   gatewayRawOutput?: string;
   gatewayExitCode?: number;
   gatewayDelaySeconds?: number;
+  gatewayName?: string;
   userId?: number;
   useActualUser?: boolean;
   symlink?: "config" | "hash";
@@ -82,6 +83,7 @@ describe("agent identity reconciliation with provider (#3175)", () => {
     const installStub =
       options.gatewayRawOutput !== undefined || options.gatewayModel !== undefined;
     if (installStub) {
+      const gatewayName = options.gatewayName ?? "nemoclaw";
       const payload =
         options.gatewayRawOutput !== undefined
           ? options.gatewayRawOutput
@@ -91,7 +93,7 @@ describe("agent identity reconciliation with provider (#3175)", () => {
       const stub = [
         "#!/usr/bin/env bash",
         'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
-        '  [ "$#" -eq 4 ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw" ] || exit 64',
+        `  [ "$#" -eq 4 ] && [ "$3" = "-g" ] && [ "$4" = ${JSON.stringify(gatewayName)} ] || exit 64`,
         options.gatewayDelaySeconds ? `  sleep ${options.gatewayDelaySeconds}` : "  :",
         `  printf '%b' ${JSON.stringify(payload)}`,
         `  exit ${options.gatewayExitCode ?? 0}`,
@@ -162,7 +164,12 @@ describe("agent identity reconciliation with provider (#3175)", () => {
     const pathValue = installStub ? `${binDir}${path.delimiter}${scrubbedPath}` : scrubbedPath;
     const result = spawnSync("bash", [script], {
       encoding: "utf-8",
-      env: { ...process.env, ...options.env, PATH: pathValue },
+      env: {
+        ...process.env,
+        ...(options.gatewayName ? { NEMOCLAW_OPENSHELL_GATEWAY_NAME: options.gatewayName } : {}),
+        ...options.env,
+        PATH: pathValue,
+      },
     });
     const configRaw = fs.readFileSync(configPath, "utf-8");
     const config = JSON.parse(configRaw);
@@ -413,6 +420,26 @@ describe("agent identity reconciliation with provider (#3175)", () => {
     expect(config.models.providers.inference.models[0]).not.toHaveProperty("maxTokens");
     expect(hash).not.toBe("oldhash\n");
     expect(hash).toContain("openclaw.json");
+  });
+
+  it("queries the selected nondefault OpenShell gateway", () => {
+    const { result, config } = runReconcile(
+      {
+        agents: { defaults: { model: { primary: "inference/old-model" } } },
+        models: {
+          providers: {
+            inference: {
+              api: "openai-completions",
+              models: [{ id: "old-model", name: "inference/old-model" }],
+            },
+          },
+        },
+      },
+      { gatewayModel: "new-model", gatewayName: "nemoclaw-18081" },
+    );
+
+    expect(result.status).toBe(0);
+    expect(config.agents.defaults.model.primary).toBe("inference/new-model");
   });
 
   it("accepts an inference-qualified gateway model without double-prefixing", () => {

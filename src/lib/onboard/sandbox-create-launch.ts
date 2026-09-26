@@ -42,6 +42,7 @@ export interface SandboxCreateLaunchInput {
   hermesDashboardState: HermesDashboardOnboardState;
   /** Reserved host port for this Hermes sandbox's OpenAI-compatible API. */
   hermesApiPort?: number | null;
+  openshellGatewayName?: string;
   manageDashboard?: boolean;
   openshellShellCommand: OpenshellShellCommand;
   openshellArgv?: OpenshellArgv;
@@ -123,6 +124,7 @@ export function prepareSandboxRuntimeLaunch(
     extraPlaceholderKeys: input.extraPlaceholderKeys,
     observabilityEnabled: input.observabilityEnabled,
     sandboxName: input.sandboxName,
+    openshellGatewayName: input.openshellGatewayName,
     allowHermesApiPortOverride: true,
     env,
   });

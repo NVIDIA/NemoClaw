@@ -2628,6 +2628,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               observabilityEnabled: createIntent?.observabilityEnabled === true,
               chatUiUrl,
               sandboxName,
+              openshellGatewayName: GATEWAY_NAME,
               env: process.env,
               extraPlaceholderKeys: resolvedCreateIntent.extraPlaceholderKeys,
               getDashboardForwardPort,

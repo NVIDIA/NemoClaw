@@ -1159,15 +1159,20 @@ reconcile_agent_model_with_provider() {
   if command -v openshell >/dev/null 2>&1; then
     gateway_model="$(
       /usr/bin/python3 -I - <<'PYPROBE'
+import os
 import re
 import subprocess
 import sys
 
 ansi_escape = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|[@-_])")
+gateway_name = os.environ.get("NEMOCLAW_OPENSHELL_GATEWAY_NAME", "nemoclaw")
+if not re.fullmatch(r"nemoclaw(?:-[1-9][0-9]{0,4})?", gateway_name):
+    print("[config] Gateway model probe unavailable: invalid NemoClaw gateway name", file=sys.stderr)
+    raise SystemExit(0)
 
 try:
     result = subprocess.run(
-        ["openshell", "inference", "get", "-g", "nemoclaw"],
+        ["openshell", "inference", "get", "-g", gateway_name],
         capture_output=True,
         encoding="utf-8",
         errors="replace",
