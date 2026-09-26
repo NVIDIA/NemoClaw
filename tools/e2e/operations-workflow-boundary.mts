@@ -8,9 +8,18 @@ import { isDeepStrictEqual } from "node:util";
 
 import ts from "typescript";
 import YAML from "yaml";
+import {
+  PRE_CANDIDATE_WORKFLOW_ENV,
+  PRE_CANDIDATE_STEP_ENV,
+  PRE_CANDIDATE_STEP_CONDITIONS,
+} from "./pre-candidate-workflow-contract.mts";
 import { RISK_RULES } from "../advisors/risk-plan.mts";
 import { validateStandardProfileWorkflowBoundary } from "./standard-profile-workflow-boundary.mts";
 import { catalogueTarget, E2E_TARGET_CATALOGUE } from "./target-catalogue.mts";
+import {
+  isReviewedOpenShellSdkInstallStep,
+  REVIEWED_OPEN_SHELL_SDK_INSTALL_STEP,
+} from "./reviewed-openshell-sdk-install-workflow-boundary.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
@@ -33,6 +42,30 @@ const LIVE_VITEST_HELPER = "tools/e2e/live-vitest-invocation.mts run --test-path
 const E2E_ARTIFACT_ACTION = "NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@";
 const COLD_ONBOARD_PERFORMANCE_EVIDENCE_PATH =
   "e2e-artifacts/live/${{ matrix.id }}/onboard-progress-budget.json";
+const CONFIG_EXPORT_EVIDENCE_PATH =
+  "e2e-artifacts/live/${{ matrix.id }}/config-export-evidence.v1.json";
+const CONFIG_EXPORT_YAML_PATH = "e2e-artifacts/live/${{ matrix.id }}/config-export.yaml";
+const CONFIG_EXPORT_REQUIREMENT_SCRIPT =
+  [
+    "set -euo pipefail",
+    `evidence="${CONFIG_EXPORT_EVIDENCE_PATH}"`,
+    `yaml="${CONFIG_EXPORT_YAML_PATH}"`,
+    'test -f "$evidence"',
+    "jq -e '.passed == true' \"$evidence\" >/dev/null",
+    'case "$(jq -er \'.classification\' "$evidence")" in',
+    "  success)",
+    '    test -f "$yaml"',
+    "    jq -e '.consumer.passed == true' \"$evidence\" >/dev/null",
+    '    jq -er \'.consumer.revision | strings | select(test("^[0-9a-f]{40}$"))\' "$evidence" >/dev/null',
+    '    expected_sha="$(jq -er \'.export.sha256 | strings | select(test("^[0-9a-f]{64}$"))\' "$evidence")"',
+    '    actual_sha="$(sha256sum -- "$yaml")"',
+    '    actual_sha="${actual_sha%% *}"',
+    '    test "$actual_sha" = "$expected_sha"',
+    "    ;;",
+    "  expected-refusal|no-usable-sandbox) ;;",
+    "  *) exit 1 ;;",
+    "esac",
+  ].join("\n") + "\n";
 const MANAGED_SOURCE_CONDITION =
   "${{ inputs.pr_number == '' || steps.select_pr_source.outputs.selection == 'base-cohort' }}";
 const BASE_PUBLICATION_CONDITION =
@@ -202,6 +235,24 @@ function findStep(job: WorkflowJob, name: string): WorkflowStep {
   return job.steps?.find((step) => step.name === name) ?? {};
 }
 
+function hasPinnedV1ToolchainBeforeDockerAuthentication(job: WorkflowJob): boolean {
+  const steps = job.steps ?? [];
+  const checkoutIndex = steps.indexOf(
+    steps.find((step) => step.uses?.startsWith("actions/checkout@")) ?? {},
+  );
+  const compatibilityToolchain = findStep(job, "Set up pinned v1 compatibility toolchain");
+  const compatibilityToolchainIndex = steps.indexOf(compatibilityToolchain);
+  const dockerAuthenticationIndex = steps.indexOf(findStep(job, "Authenticate to Docker Hub"));
+  return (
+    compatibilityToolchain.uses ===
+      "actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659" &&
+    compatibilityToolchain.with?.toolchain === "1.98.1" &&
+    checkoutIndex >= 0 &&
+    checkoutIndex < compatibilityToolchainIndex &&
+    compatibilityToolchainIndex < dockerAuthenticationIndex
+  );
+}
+
 function executableSource(job: WorkflowJob): string {
   return (job.steps ?? [])
     .flatMap((step) => [step.run, step.with?.script])
@@ -306,11 +357,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
       errors.push(`workflow_dispatch ${name} must be an optional string with an empty default`);
     }
   }
-  const expectedEnvironment = {
-    NEMOCLAW_E2E_CORRELATION_ID: "${{ inputs.correlation_id }}",
-    NEMOCLAW_E2E_EXPECTED_SHA: "${{ inputs.checkout_sha }}",
-    NEMOCLAW_E2E_SHARD: "default",
-  };
+  const expectedEnvironment = PRE_CANDIDATE_WORKFLOW_ENV;
   for (const [name, value] of Object.entries(expectedEnvironment)) {
     if (workflow.env?.[name] !== value) errors.push(`E2E workflow must bind ${name}`);
   }
@@ -386,33 +433,19 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   const authentication = authenticationIndex >= 0 ? steps[authenticationIndex] : {};
   if (
     authentication.id !== "candidate_authorization" ||
-    authentication.if !==
-      "${{ inputs.pr_number != '' || inputs.checkout_sha != '' || inputs.checkout_repository != '' || inputs.base_sha != '' || inputs.workflow_sha != '' }}"
+    authentication.if !== PRE_CANDIDATE_STEP_CONDITIONS["Authenticate manual PR dispatch"]
   ) {
     errors.push("Manual PR authentication must run when any candidate identity input is present");
   }
-  const authEnvironment = {
-    ALLOW_JETSON_DISPATCH: "${{ inputs.allow_jetson_dispatch && 'true' || 'false' }}",
-    BASE_SHA: "${{ inputs.base_sha }}",
-    CHECKOUT_REPOSITORY: "${{ inputs.checkout_repository }}",
-    CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
-    EXPECTED_WORKFLOW_SHA: "${{ inputs.workflow_sha }}",
-    INCLUDE_LAUNCHABLE: "${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}",
-    JOBS: "${{ inputs.jobs }}",
-    PR_NUMBER: "${{ inputs.pr_number }}",
-    TARGETS: "${{ inputs.targets }}",
-    WORKFLOW_EVENT: "${{ github.event_name }}",
-    WORKFLOW_REF: "${{ github.ref }}",
-    WORKFLOW_SHA: "${{ github.workflow_sha }}",
-  };
+  if (authentication["continue-on-error"] !== undefined) {
+    errors.push("Manual PR authentication must not tolerate authorization failure");
+  }
+  const authEnvironment = PRE_CANDIDATE_STEP_ENV["Authenticate manual PR dispatch"];
   for (const [name, value] of Object.entries(authEnvironment)) {
     if (authentication.env?.[name] !== value)
       errors.push(`Manual PR authentication must bind ${name}`);
   }
   const authSource = String(authentication.run ?? "");
-  if (authentication.env?.GITHUB_TOKEN !== undefined || authSource.includes("Authorization:")) {
-    errors.push("Manual PR authentication must use the public PR metadata endpoint");
-  }
   for (const fragment of [
     '"$WORKFLOW_EVENT" == "workflow_dispatch"',
     '"$WORKFLOW_REF" == refs/heads/*',
@@ -421,6 +454,8 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     '"$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$',
     '"$BASE_SHA" =~ ^[a-f0-9]{40}$',
     '"$EXPECTED_WORKFLOW_SHA" == "$WORKFLOW_SHA"',
+    '[[ -n "$GITHUB_TOKEN" ]]',
+    '--header "Authorization: Bearer ${GITHUB_TOKEN}"',
     "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}",
     `[[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "NVIDIA/NemoClaw" ]]`,
     `[[ "$(jq -r '.base.ref // ""' <<< "$pull_json")" == "main" ]]`,
@@ -452,13 +487,6 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     if (!authSource.includes(fragment))
       errors.push(`Manual PR authentication must retain ${fragment}`);
   }
-  if (
-    authSource.includes("Authorization: Bearer") ||
-    Object.hasOwn(authentication.env ?? {}, "GITHUB_TOKEN")
-  ) {
-    errors.push("Manual PR authentication must use public PR metadata without a job token");
-  }
-
   const qualificationPlanName = "native-runtime-qualification-producer-plan";
   const qualificationPlan = workflow.jobs[qualificationPlanName] ?? {};
   const trustedMainPlanCondition =
@@ -865,8 +893,51 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
     errors.push("generate-matrix must not relay Deep Agents Code base outputs");
   }
   const live = workflow.jobs.live ?? {};
-  if (!sameMembers(needs(live), ["base-image-publication", "generate-matrix"])) {
-    errors.push("live E2E must wait for matrix generation and base-image publication");
+  if (
+    !sameMembers(needs(live), [
+      "base-image-publication",
+      "generate-matrix",
+      "package-openshell-sdk",
+    ])
+  ) {
+    errors.push(
+      "live E2E must wait for matrix generation, base-image publication, and the reviewed SDK",
+    );
+  }
+  const sdkSteps = live.steps ?? [];
+  if (!hasPinnedV1ToolchainBeforeDockerAuthentication(live)) {
+    errors.push("live E2E must set up the pinned v1 toolchain before Docker authentication");
+  }
+  const hermesE2e = workflow.jobs["hermes-e2e"] ?? {};
+  if (!hasPinnedV1ToolchainBeforeDockerAuthentication(hermesE2e)) {
+    errors.push("Hermes E2E must set up the pinned v1 toolchain before Docker authentication");
+  }
+  const sdkDownload = findStep(live, "Download reviewed OpenShell SDK archive");
+  const sdkInstall = findStep(live, REVIEWED_OPEN_SHELL_SDK_INSTALL_STEP);
+  const prepareIndex = sdkSteps.indexOf(findStep(live, "Prepare E2E workspace"));
+  const downloadIndex = sdkSteps.indexOf(sdkDownload);
+  const installIndex = sdkSteps.indexOf(sdkInstall);
+  const runIndex = sdkSteps.indexOf(findStep(live, "Run live E2E tests"));
+  if (
+    !isDeepStrictEqual(sdkDownload, {
+      name: "Download reviewed OpenShell SDK archive",
+      uses: DOWNLOAD_ARTIFACT_ACTION,
+      with: {
+        name: "${{ needs.package-openshell-sdk.outputs.artifact_name }}",
+        path: "${{ runner.temp }}/openshell-sdk",
+      },
+    }) ||
+    !isReviewedOpenShellSdkInstallStep(sdkInstall) ||
+    !(
+      prepareIndex >= 0 &&
+      prepareIndex < downloadIndex &&
+      downloadIndex < installIndex &&
+      installIndex < runIndex
+    )
+  ) {
+    errors.push(
+      "live E2E must download and install the reviewed SDK after workspace preparation and before tests",
+    );
   }
   const cloudOnboard = workflow.jobs["cloud-onboard"] ?? {};
   if (!sameMembers(needs(cloudOnboard), ["base-image-publication", "generate-matrix"])) {
@@ -954,11 +1025,12 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
   }
   if (
     live.env?.NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF !==
-    "${{ needs.generate-matrix.outputs.workload_source == 'managed-image' && needs.base-image-publication.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.dcode_base_ref || '' }}"
+    "${{ needs.generate-matrix.outputs.workload_source == 'managed-image' && needs.base-image-publication.outputs.dcode_base_ref || '' }}"
   ) {
     errors.push("live DCode must use one selected immutable image authority");
   }
   const evidence = findStep(live, "Record immutable Deep Agents Code base evidence");
+  const requireConfigExportEvidence = findStep(live, "Require automatic config export evidence");
   const upload = findStep(live, "Upload E2E artifacts");
   const uploadPaths = String(upload.with?.path ?? "")
     .split("\n")
@@ -980,6 +1052,24 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
   }
   if (!uploadPaths.includes(COLD_ONBOARD_PERFORMANCE_EVIDENCE_PATH)) {
     errors.push("live E2E must upload cold-onboard performance evidence");
+  }
+  if (!uploadPaths.includes(CONFIG_EXPORT_EVIDENCE_PATH)) {
+    errors.push("live E2E must upload automatic config export evidence");
+  }
+  if (!uploadPaths.includes(CONFIG_EXPORT_YAML_PATH)) {
+    errors.push("live E2E must upload the validated config export YAML");
+  }
+  if (
+    requireConfigExportEvidence.if !== "${{ success() }}" ||
+    requireConfigExportEvidence.shell !== "bash" ||
+    String(requireConfigExportEvidence.run ?? "") !== CONFIG_EXPORT_REQUIREMENT_SCRIPT ||
+    (requireConfigExportEvidence["continue-on-error"] !== undefined &&
+      requireConfigExportEvidence["continue-on-error"] !== false) ||
+    liveSteps.indexOf(requireConfigExportEvidence) <=
+      liveSteps.indexOf(findStep(live, "Run live E2E tests")) ||
+    liveSteps.indexOf(requireConfigExportEvidence) >= liveSteps.indexOf(upload)
+  ) {
+    errors.push("live E2E must require automatic config export evidence before upload");
   }
   if (!sameMembers(needs(workflow.jobs["staging-brev-launchable"] ?? {}), ["generate-matrix"])) {
     errors.push("staging-brev-launchable must wait only for generate-matrix");

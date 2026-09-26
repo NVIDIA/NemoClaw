@@ -11,7 +11,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { managedStartupE2eProfile } from "../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import { loadAgent } from "../agent/defs";
 import { SANDBOX_BUILD_CONTEXT_PREFIX } from "../sandbox/build-context";
-import { MANAGED_BOOTSTRAP_IDENTITY_ENV } from "./managed-bootstrap/adapter";
 import { encodeManagedStartupProfile } from "./managed-startup/profile";
 import { createManagedStartupRootApplyRequest } from "./managed-startup/root-apply";
 import { createOpenshellCliHelpers } from "./openshell-cli";
@@ -264,6 +263,21 @@ describe("buildSandboxRuntimeEnvArgs", () => {
 });
 
 describe("prepareSandboxCreateLaunch", () => {
+  it("uses the selected environment when no build environment override exists", () => {
+    const result = prepareSandboxCreateLaunch({
+      agent: null,
+      chatUiUrl: "",
+      createArgs: ["--from", "example.invalid/image", "--name", "demo"],
+      env: { HOME: "/selected/home" },
+      extraPlaceholderKeys: [],
+      getDashboardForwardPort: () => "",
+      hermesDashboardState: disabledHermesDashboardState,
+      openshellShellCommand: (args) => `openshell ${args.join(" ")}`,
+    });
+
+    expect(result.sandboxEnv).toEqual({ HOME: "/selected/home" });
+  });
+
   it("removes an inherited sandbox policy when create omits caller policy (#9833)", () => {
     const result = prepareSandboxCreateLaunch({
       agent: null,
@@ -283,12 +297,13 @@ describe("prepareSandboxCreateLaunch", () => {
   });
 
   it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
-    "renders one identity-bound held launch for %s without exposing the startup profile",
+    "holds %s until its exact bounded startup profile is applied",
     (agentName) => {
       const request = createManagedStartupRootApplyRequest({
         agent: agentName,
         encodedProfile: encodeManagedStartupProfile(managedStartupE2eProfile(agentName)),
       });
+      const managedBootstrapIdentity = "f".repeat(64);
       const result = prepareSandboxCreateLaunch({
         agent: loadAgent(agentName),
         chatUiUrl: "",
@@ -302,6 +317,7 @@ describe("prepareSandboxCreateLaunch", () => {
         openshellShellCommand: (args) => args.join(" "),
         openshellArgv: (args) => ["openshell", ...args],
         buildEnv: () => ({}),
+        managedBootstrapIdentity,
         managedStartupRootApplyRequest: request,
       });
 
@@ -310,49 +326,23 @@ describe("prepareSandboxCreateLaunch", () => {
         ...result.envArgs,
         "/usr/local/bin/nemoclaw-start",
       ]);
-      expect(result.managedBootstrapIdentity).toMatch(/^[a-f0-9]{64}$/u);
       expect(result.sandboxStartupCommand).toEqual([
-        ...result.intendedSandboxStartupCommand.slice(0, -1),
+        "env",
+        ...result.envArgs,
         "/usr/local/bin/nemoclaw-managed-startup-hold",
         "--agent",
         agentName,
         "--profile-fingerprint",
         request.profileFingerprint,
         "--bootstrap-identity",
-        result.managedBootstrapIdentity,
+        managedBootstrapIdentity,
         "--",
+        "/usr/local/bin/nemoclaw-start",
       ]);
-      expect(result.createArgv).toEqual(
-        expect.arrayContaining([
-          "--env",
-          `${MANAGED_BOOTSTRAP_IDENTITY_ENV}=${result.managedBootstrapIdentity}`,
-        ]),
-      );
-      expect(result.createArgv.join("\n")).not.toContain(request.encodedProfile);
+      expect(result.managedBootstrapIdentity).toBe(managedBootstrapIdentity);
+      expect(result.envArgs.join("\n")).not.toContain(request.encodedProfile);
     },
   );
-
-  it("rejects a caller-supplied managed bootstrap identity environment", () => {
-    const request = createManagedStartupRootApplyRequest({
-      agent: "openclaw",
-      encodedProfile: encodeManagedStartupProfile(managedStartupE2eProfile("openclaw")),
-    });
-
-    expect(() =>
-      prepareSandboxCreateLaunch({
-        agent: loadAgent("openclaw"),
-        chatUiUrl: "",
-        createArgs: ["--env", `${MANAGED_BOOTSTRAP_IDENTITY_ENV}=${"a".repeat(64)}`],
-        env: {},
-        extraPlaceholderKeys: [],
-        getDashboardForwardPort: () => "0",
-        hermesDashboardState: disabledHermesDashboardState,
-        manageDashboard: false,
-        openshellShellCommand: (args) => args.join(" "),
-        managedStartupRootApplyRequest: request,
-      }),
-    ).toThrow(`must not override reserved ${MANAGED_BOOTSTRAP_IDENTITY_ENV}`);
-  });
 
   it("builds the sandbox create command and runtime env envelope", () => {
     const openshellShellCommand = vi.fn((args: string[]) => `openshell ${args.join(" ")}`);

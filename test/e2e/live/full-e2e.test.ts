@@ -57,6 +57,12 @@ import { buildSandboxCredentialScanCommand } from "./sandbox-credential-boundary
 import { FULL_E2E_TEST_TIMEOUT_MS } from "../../../tools/e2e/full-e2e-timeout-contract.mts";
 import { parseOpenClawJsonDocuments } from "../../../src/lib/openclaw/agent-json-provenance.ts";
 import { fullE2eGateway, withOwnedFullE2eGateway } from "../fixtures/full-e2e-gateway.ts";
+import { captureNativePluginFailureReadiness } from "../fixtures/native-plugin-failure-diagnostics.ts";
+import {
+  cleanupAcquiredResource,
+  cleanupWhenOpenShellAvailable,
+} from "../fixtures/cleanup-resources.ts";
+import { getSandbox } from "../../../src/lib/state/registry.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-full";
 const FULL_E2E_TARGET_ID = process.env.E2E_TARGET_ID ?? "full-e2e";
@@ -196,13 +202,6 @@ function nativeWeatherPluginWriteScript(version: NativePluginVersion): string {
 };
 export default plugin;
 `;
-  const updateVerification =
-    version === "v2"
-      ? [
-          "HOME=/sandbox openclaw plugins inspect weather --runtime --json > /tmp/e2e-native-weather-v2.json",
-          `grep -Eq '"version"[[:space:]]*:[[:space:]]*"2\\.0\\.0"' /tmp/e2e-native-weather-v2.json`,
-        ]
-      : [];
   return [
     "set -eu",
     "source_dir=/sandbox/e2e-native-weather",
@@ -211,8 +210,7 @@ export default plugin;
     `printf '%s' ${shellQuote(packageJson)} > "$source_dir/package.json"`,
     `printf '%s' ${shellQuote(manifest)} > "$source_dir/openclaw.plugin.json"`,
     `printf '%s' ${shellQuote(entrypoint)} > "$source_dir/index.js"`,
-    'HOME=/sandbox openclaw plugins install "$source_dir" --force',
-    ...updateVerification,
+    'HOME=/sandbox openclaw plugins install --force --accept-capabilities "$source_dir"',
   ].join("\n");
 }
 
@@ -229,6 +227,11 @@ async function invokeNativeWeatherPlugin(
     ),
     { artifactName, env: env(), timeoutMs: 60_000 },
   );
+  await captureNativePluginFailureReadiness(sandbox, result, {
+    sandboxName: SANDBOX_NAME,
+    artifactName,
+    env: env(),
+  });
   const document = parseOpenClawJsonDocuments(result.stdout)[0] as
     | {
         ok?: boolean;
@@ -244,25 +247,34 @@ async function invokeNativeWeatherPlugin(
   ).toBe(true);
 }
 
-async function exerciseNativeOpenClawPluginLifecycle(
+async function exerciseNativeOpenClawPluginVersion(
   host: HostCliClient,
   sandbox: SandboxClient,
+  version: NativePluginVersion,
 ): Promise<void> {
-  const installV1 = await sandbox.execShell(
+  const install = await sandbox.execShell(
     SANDBOX_NAME,
-    trustedSandboxShellScript(nativeWeatherPluginWriteScript("v1")),
-    { artifactName: "phase-4-native-plugin-install-v1", env: env(), timeoutMs: 120_000 },
+    trustedSandboxShellScript(nativeWeatherPluginWriteScript(version)),
+    { artifactName: `phase-4-native-plugin-install-${version}`, env: env(), timeoutMs: 120_000 },
   );
-  expect(installV1.exitCode, resultText(installV1)).toBe(0);
+  expect(install.exitCode, resultText(install)).toBe(0);
   const restart = await repoNemoclaw(
     host,
     [SANDBOX_NAME, "gateway", "restart"],
-    "phase-4-native-plugin-gateway-restart",
+    `phase-4-native-plugin-gateway-restart-${version}`,
     {},
     180_000,
   );
   expect(restart.exitCode, resultText(restart)).toBe(0);
-  await invokeNativeWeatherPlugin(sandbox, "v1", "phase-4-native-plugin-invoke-v1");
+  await invokeNativeWeatherPlugin(sandbox, version, `phase-4-native-plugin-invoke-${version}`);
+}
+
+async function exerciseNativeOpenClawPluginLifecycle(
+  host: HostCliClient,
+  sandbox: SandboxClient,
+): Promise<void> {
+  await exerciseNativeOpenClawPluginVersion(host, sandbox, "v1");
+  await exerciseNativeOpenClawPluginVersion(host, sandbox, "v2");
 
   const updateDryRun = await sandbox.exec(
     SANDBOX_NAME,
@@ -270,13 +282,6 @@ async function exerciseNativeOpenClawPluginLifecycle(
     { artifactName: "phase-4-native-plugin-update-dry-run", env: env(), timeoutMs: 120_000 },
   );
   expect(updateDryRun.exitCode, resultText(updateDryRun)).toBe(0);
-
-  const installV2 = await sandbox.execShell(
-    SANDBOX_NAME,
-    trustedSandboxShellScript(nativeWeatherPluginWriteScript("v2")),
-    { artifactName: "phase-4-native-plugin-install-v2", env: env(), timeoutMs: 120_000 },
-  );
-  expect(installV2.exitCode, resultText(installV2)).toBe(0);
 
   const selfUpdateDryRun = await sandbox.exec(
     SANDBOX_NAME,
@@ -343,6 +348,10 @@ async function runOpenClawLaunchTurns(input: {
   redactionValues: string[];
   sandbox: SandboxClient;
 }): Promise<void> {
+  // OpenClaw 2026.9.1 requires exclusive gateway-lifecycle ownership for
+  // doctor repairs. The rebuild qualification lane owns that offline
+  // maintenance boundary; this security lane retains the live lint evidence
+  // above and limits its running-gateway mutation to config set/validate.
   const prepareLaunch = await input.sandbox.execShell(
     SANDBOX_NAME,
     trustedSandboxShellScript(`set -eu
@@ -352,7 +361,7 @@ for f in /sandbox/.bashrc /sandbox/.profile; do
 done
 ${
   securityPostureEnabled()
-    ? "bash -lc 'openclaw doctor --fix --yes --non-interactive && /usr/local/bin/openclaw config set agents.defaults.timeoutSeconds 119 && openclaw config validate'"
+    ? "bash -lc '/usr/local/bin/openclaw config set agents.defaults.timeoutSeconds 119 && openclaw config validate'"
     : ""
 }
 sha256sum /sandbox/.bashrc /sandbox/.profile > /tmp/nemoclaw-e2e-profiles.sha256`),
@@ -452,25 +461,41 @@ sha256sum /sandbox/.bashrc /sandbox/.profile > /tmp/nemoclaw-e2e-profiles.sha256
   ).toBe(true);
 }
 
-async function cleanup(host: HostCliClient, sandbox: SandboxClient): Promise<void> {
-  await repoNemoclaw(host, [SANDBOX_NAME, "destroy", "--yes"], "cleanup-nemoclaw-destroy").catch(
-    () => undefined,
+function cleanupRegisteredSandbox(cleanup: () => Promise<void>): Promise<void> {
+  // Check when cleanup runs: CLI recovery for a missing source-install entry
+  // can start a default gateway, including after a failed install or teardown.
+  return cleanupAcquiredResource(
+    USE_PREINSTALLED_LAUNCHABLE || getSandbox(SANDBOX_NAME) !== null,
+    cleanup,
   );
+}
+
+async function preCleanup(host: HostCliClient, sandbox: SandboxClient): Promise<void> {
+  await cleanupRegisteredSandbox(async () => {
+    await repoNemoclaw(
+      host,
+      [SANDBOX_NAME, "destroy", "--yes"],
+      "pre-cleanup-nemoclaw-destroy",
+    ).catch(() => undefined);
+  });
   await sandbox
     .openshell(["sandbox", "delete", SANDBOX_NAME], {
-      artifactName: "cleanup-openshell-sandbox-delete",
+      artifactName: "pre-cleanup-openshell-sandbox-delete",
       env: env(),
       timeoutMs: 60_000,
     })
     .catch(() => undefined);
   await withOwnedFullE2eGateway(gateway, () =>
-    sandbox
-      .openshell(["gateway", "destroy", "-g", gateway.env.OPENSHELL_GATEWAY], {
-        artifactName: "cleanup-openshell-gateway-destroy",
-        env: env(),
-        timeoutMs: 60_000,
-      })
-      .catch(() => undefined),
+    cleanupWhenOpenShellAvailable(
+      host,
+      { artifactName: "pre-cleanup-openshell-available", env: env(), timeoutMs: 15_000 },
+      () =>
+        host.cleanupGatewayRegistration(gateway.env.OPENSHELL_GATEWAY, {
+          artifactName: "pre-cleanup-openshell-gateway-destroy",
+          env: env(),
+          timeoutMs: 60_000,
+        }),
+    ),
   );
 }
 
@@ -756,13 +781,17 @@ test(
         timeoutMs: 60_000,
       }),
     );
-    cleanupRegistry.trackSandbox(host, SANDBOX_NAME, {
-      artifactName: "cleanup-nemoclaw-destroy",
-      env: env(),
-      redactionValues: [hosted.apiKey],
-      timeoutMs: 120_000,
-    });
-    await cleanup(host, sandbox);
+    cleanupRegistry.trackDisposable(`destroy sandbox ${SANDBOX_NAME}`, () =>
+      cleanupRegisteredSandbox(() =>
+        host.cleanupSandbox(SANDBOX_NAME, {
+          artifactName: "cleanup-nemoclaw-destroy",
+          env: env(),
+          redactionValues: [hosted.apiKey],
+          timeoutMs: 120_000,
+        }),
+      ),
+    );
+    await preCleanup(host, sandbox);
     await bindApprovedPrBaseForBaseImageComparison(host, MEASURE_COLD_ONBOARD);
 
     const coldOnboard = createColdOnboardCapture();
@@ -994,7 +1023,12 @@ test(
       : null;
 
     progress.phase("remove full-E2E sandbox");
-    await cleanup(host, sandbox);
+    await host.cleanupSandbox(SANDBOX_NAME, {
+      artifactName: "verify-cleanup-nemoclaw-destroy",
+      env: env(),
+      redactionValues,
+      timeoutMs: 120_000,
+    });
     const registry = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
     const registryText = fs.existsSync(registry) ? fs.readFileSync(registry, "utf8") : "";
     expect(registryText).not.toContain(SANDBOX_NAME);

@@ -899,6 +899,37 @@ describe("connectSandbox flow", () => {
     expect(harness.checkAndRecoverSpy).toHaveBeenCalled();
   });
 
+  it("observes OpenShell-managed Hermes through native health during probe-only connect", async () => {
+    const harness = createConnectHarness({
+      agentName: "hermes",
+      sessionAgent: { name: "hermes" },
+      registryEntry: {
+        openshellDriver: "docker",
+        gatewayName: "nemoclaw",
+      },
+      useRealProcessRecovery: true,
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+
+    const healthRequests = harness.sandboxRunBufferedSpy.mock.calls
+      .map(([request]) => request as OpenShellSandboxBufferedCommandRequest)
+      .filter((request) => request.command.join(" ").includes("/health"));
+    expect(healthRequests).toHaveLength(1);
+    expect(healthRequests[0]).toEqual(
+      expect.objectContaining({
+        sandboxName: "alpha",
+        target: { kind: "selected" },
+      }),
+    );
+    expect(healthRequests[0]?.command.join(" ")).not.toContain(
+      "/usr/local/bin/nemoclaw-gateway-control",
+    );
+    expect(harness.spawnSyncSpy.mock.calls.flat().map(String).join(" ")).not.toContain(
+      "/usr/local/bin/nemoclaw-gateway-control",
+    );
+  });
+
   it("keeps active Hermes probe on receipt-owned recovery with every Docker path poisoned (#9203)", async () => {
     const harness = createConnectHarness({
       agentName: "hermes",
@@ -1053,7 +1084,7 @@ describe("connectSandbox flow", () => {
     expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
   });
 
-  it("keeps active Hermes interactive setup inside receipt-owned recovery (#9203)", async () => {
+  it("keeps sibling-root Hermes interactive setup inside receipt-owned recovery (#9203)", async () => {
     vi.stubEnv("NVIDIA_INFERENCE_API_KEY", "do-not-forward");
     vi.stubEnv("GITHUB_TOKEN", "do-not-forward");
     vi.stubEnv("AWS_SECRET_ACCESS_KEY", "do-not-forward");
@@ -1072,13 +1103,16 @@ describe("connectSandbox flow", () => {
       sessionAgent: { name: "hermes" },
       registryEntry: {
         openshellDriver: "docker",
-        gatewayName: "nemoclaw",
+        gatewayName: "nemoclaw-8245",
+        gatewayPort: 8245,
         lifecycleGeneration: "generation-1",
         hermesToolGateways: ["tool-gateway"],
       },
       portableReceiptDisposition: { kind: "hermes", phase: "active" },
       portableRecoveryResult: { kind: "already-running" },
     });
+    const selectedRegistry = requireDist("../../src/lib/state/registry.js");
+    selectedRegistry.getSandbox.mockReturnValue(null);
     const captureResolved = harness.captureResolvedOpenshellSpy.getMockImplementation()!;
     const forwardRecovery = requireDist("../../src/lib/actions/sandbox/forward-recovery.js");
     let forwardsRestored = false;
@@ -1123,7 +1157,7 @@ describe("connectSandbox flow", () => {
     expect(harness.recoverHermesPortableOllamaInferenceSpy).not.toHaveBeenCalled();
     expect(harness.forwardAdapterStartSpy).toHaveBeenCalledOnce();
     await expect(
-      forwardRecovery.areSandboxLaunchForwardsHealthy("alpha", "nemoclaw"),
+      forwardRecovery.areSandboxLaunchForwardsHealthy("alpha", "nemoclaw-8245"),
     ).resolves.toBe(true);
     expect(harness.forwardAdapterStartSpy.mock.invocationCallOrder[0]!).toBeLessThan(
       harness.startSandboxSessionSpy.mock.invocationCallOrder[0]!,
@@ -1133,7 +1167,7 @@ describe("connectSandbox flow", () => {
     expect(harness.startSandboxSessionSpy).toHaveBeenCalledWith({
       kind: "connect",
       sandboxName: "alpha",
-      target: { kind: "named", gatewayName: "nemoclaw" },
+      target: { kind: "named", gatewayName: "nemoclaw-8245" },
     });
     expect(harness.createSessionExecutorSpy.mock.calls[0]?.[0]).toMatchObject({
       environment: expect.not.objectContaining({

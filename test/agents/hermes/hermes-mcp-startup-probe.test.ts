@@ -18,7 +18,10 @@ vi.mock("../../../src/lib/adapters/openshell/provider-command", () => ({
 
 vi.mock("../../../src/lib/actions/sandbox/process-recovery", () => ({
   executeGatewaySupervisorAction: mocks.executeGatewaySupervisorAction,
-  executeSandboxCommand: vi.fn(),
+}));
+vi.mock("../../../src/lib/adapters/sandbox/command-transport", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../src/lib/adapters/sandbox/command-transport")>()),
+  executeSandboxExecCommand: vi.fn(),
 }));
 
 vi.mock("../../../src/lib/core/wait", () => ({
@@ -88,7 +91,7 @@ const starting: ProbeResult = {
 };
 const ready: ProbeResult = {
   status: 0,
-  stdout: '{"ok":true}\n',
+  stdout: '{"capabilities":{"reconcile_finality":1},"ok":true}\n',
   stderr: "",
 };
 describe("Hermes managed MCP startup probe", () => {

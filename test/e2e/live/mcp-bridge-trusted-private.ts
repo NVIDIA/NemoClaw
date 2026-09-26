@@ -65,7 +65,15 @@ export async function assertTrustedPrivateMcpRebindingDenied(
     survivingMcpUrl: string;
   },
 ): Promise<void> {
-  const rebindMcp = await startFakeMcpHttpsServer({ secret: REBIND_HOST_SECRET });
+  const rebindMcp = await startFakeMcpHttpsServer({
+    secret: REBIND_HOST_SECRET,
+    onCloseDiagnostics: async (diagnostics) => {
+      await options.artifacts.writeJson(
+        `${options.artifactPrefix}-mcp-trusted-private-final-diagnostics.json`,
+        diagnostics,
+      );
+    },
+  });
   cleanup.add(`stop ${options.artifactPrefix} trusted-private fake MCP HTTPS server`, () =>
     rebindMcp.close(),
   );
@@ -156,6 +164,10 @@ export async function assertTrustedPrivateMcpRebindingDenied(
       REBIND_HOST_SECRET,
       MCP_PROBE_CONTROL_BEARER,
     ),
+  );
+  await options.artifacts.writeJson(
+    `${options.artifactPrefix}-mcp-trusted-private-status-diagnostics.json`,
+    rebindMcp.diagnostics(),
   );
   expectExitZero(status, `${options.artifactPrefix} inspects trusted-private route after add`);
   const controlProbe = rebindMcp.requests

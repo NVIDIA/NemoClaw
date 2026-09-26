@@ -7,10 +7,34 @@ import { describe, expect, it } from "vitest";
 
 import { loadManifest } from "../registry/manifests.ts";
 import { buildTargetRegistry, listTargets } from "../registry/registry.ts";
+import type { TargetDefinition } from "../registry/types.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const RUN_TARGETS = path.join(REPO_ROOT, "test/e2e/registry/run.ts");
 const TSX = path.join(REPO_ROOT, "node_modules/.bin/tsx");
+
+const CONFIG_EXPORT_TARGET: TargetDefinition = {
+  id: "export-coverage",
+  description: "Config export coverage validation fixture",
+  executionCoverage: {
+    agentRuntime: "openclaw",
+    observableOutcome: "Config export preserves the deployed configuration",
+    environmentOrInferenceEndpoint: "Ubuntu managed runtime",
+    unresolvedReason: "",
+  },
+  manifestPath: "test/e2e/manifests/openclaw-nvidia.yaml",
+  environment: {
+    platform: "ubuntu-local",
+    install: "repo-current",
+    runtime: "managed-runtime-running",
+    onboarding: "cloud-openclaw",
+  },
+  expectedStateId: "cloud-openclaw-ready",
+  configExport: { expectation: "required" },
+  suiteIds: [],
+  requiredSecrets: [],
+  gatewayRuntimes: ["docker"],
+};
 
 function runTargetCli(args: string[]) {
   return spawnSync(TSX, [RUN_TARGETS, ...args], {
@@ -59,6 +83,37 @@ describe("deterministic target registry", () => {
       buildTargetRegistry([{ ...registered, expectedStateId: "missing-expected-state" }]),
     ).toThrow("Unknown expected_state id 'missing-expected-state'");
   });
+
+  it("reports a coverage gap when a target omits its config export expectation (#11485)", () => {
+    const registered = CONFIG_EXPORT_TARGET;
+    expect(buildTargetRegistry([registered]).byId.get(registered.id)).toBe(registered);
+    const targetWithoutExpectation = {
+      ...registered,
+      configExport: undefined,
+    } as unknown as typeof registered;
+
+    expect(() => buildTargetRegistry([targetWithoutExpectation])).toThrow(
+      /config export coverage gap/,
+    );
+  });
+
+  it.each(["cloud-openclaw-ready", "macos-cli-ready-docker-optional"])(
+    "rejects no-usable-sandbox when %s does not require absence (#11485)",
+    (expectedStateId) => {
+      const target: TargetDefinition = {
+        ...CONFIG_EXPORT_TARGET,
+        expectedStateId,
+        configExport: { expectation: "no-usable-sandbox" },
+      };
+
+      expect(() => buildTargetRegistry([target])).toThrow(
+        /no-usable-sandbox config export requires an absent sandbox expected state/,
+      );
+
+      const absentTarget = { ...target, expectedStateId: "preflight-failure-no-sandbox" };
+      expect(buildTargetRegistry([absentTarget]).byId.get(absentTarget.id)).toBe(absentTarget);
+    },
+  );
 
   it.each(listTargets())(
     "resolves $id to a valid repository manifest (#11407)",

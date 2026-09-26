@@ -8,14 +8,14 @@ import {
   expectExportRefusal,
 } from "../../../../test/support/config-export-harness";
 import os from "node:os";
-import { describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
-import { validateNemoClawConfig } from "../../config/schema";
+import { describe, expect, it, vi } from "vitest";
+import { asExportedConfig } from "../../../../test/support/config-export-document";
 import { createOllamaExportProbe } from "../../inference/ollama/proxy";
 import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../inference/ollama/contract";
 import type { ObservedOllamaProxy } from "../../inference/ollama/proxy-observation";
 import { getSandboxEntryInference } from "../../state/registry-entry-view";
-import { getLiveGatewayInference } from "../../inference/live";
+import { captureSanitizedResolvedOpenshell } from "../openshell/sanitized-capture";
 import {
   readFailureCanary,
   inventory,
@@ -69,11 +69,9 @@ function mockOllamaSource(model: string = "qwen3.5:9b") {
     provider: "ollama-local",
     model,
   });
-  vi.mocked(getLiveGatewayInference).mockReturnValue({
-    failure: null,
-    inference: { provider: "ollama-local", model },
-    output: "",
+  vi.mocked(captureSanitizedResolvedOpenshell).mockReturnValue({
     status: 0,
+    output: `Gateway inference:\n  Provider: ollama-local\n  Model: ${model}\n`,
   });
   const liveSandbox = inventory();
   Object.assign(liveSandbox.sandbox.spec, { providers: ["ollama-local"] });
@@ -138,43 +136,60 @@ describe("attached Ollama export pipeline", () => {
       readProfile: () => Promise.reject({ code: 5 }),
     },
   ])(
-    "exports the $name binding without reading gateway credentials (#11857)",
+    "exports the $name binding without reading gateway credentials (#11857, #12012)",
     async ({ workspace, credentialEnv, readProfile, model = "qwen3.5:9b" }) => {
-      const { source, observed, probe, readCredential, localProvider, effectivePolicy } =
-        mockOllamaSource(model);
+      const { source, probe, readCredential, localProvider } = mockOllamaSource(model);
       source.credentialEnv = credentialEnv;
       localProvider.profileWorkspace = workspace;
       raw.getProviderProfile.mockImplementation(readProfile);
       const { result, writeStdout, publish } = await exportLiveSource();
       expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
-      const yaml = writeStdout.mock.calls[0]![0];
-      const document = validateNemoClawConfig(YAML.parse(yaml));
+      const document = asExportedConfig(YAML.parse(writeStdout.mock.calls[0]![0]));
       expect(document.spec.inferenceProviders).toEqual([
         {
-          name: "local-ollama",
-          provider: "ollama-local",
+          name: "local",
+          provider: "openai",
           api: "openai-completions",
-          serving: observed.serving,
+          serviceRef: "ollama-auth",
         },
       ]);
-      expect(document.spec.sandboxes[0]!.agents[0]!.inference.routes).toEqual([
-        {
-          name: "primary",
-          providerRef: "local-ollama",
-          overrides: { model },
+      expect(document.spec.services).toEqual({
+        "ollama-auth": {
+          kind: "ollamaProxy",
+          image: null,
+          endpoint: "http://172.30.48.1:11440/v1",
+          upstream: {
+            endpoint: "http://127.0.0.1:11439/v1",
+            model: {
+              name: model,
+              digest: "a".repeat(64),
+            },
+          },
         },
-      ]);
+      });
+      const sandbox = document.spec.sandboxes[0]!;
+      expect(sandbox.agent.inference.routes[0]).toMatchObject({
+        providerRef: "local",
+        overrides: { model },
+      });
+      expect(writeStdout.mock.calls[0]![0]).not.toContain("credential");
+      expect(writeStdout.mock.calls[0]![0]).toContain("image: null");
       expect(probe.readActiveConfig).toHaveBeenCalledWith(11440);
       expect(probe.readDaemonModels).toHaveBeenCalledWith(11439);
       expect(readCredential).not.toHaveBeenCalled();
-      expect(yaml).not.toMatch(/NEMOCLAW_OLLAMA_PROXY_TOKEN|credential-canary-value/u);
-      expect(JSON.stringify(document.spec.inferenceProviders)).not.toContain(
-        "host.openshell.internal",
-      );
-      expect(document.spec.sandboxes[0]!.network.policy.explicit).toEqual(effectivePolicy);
       expect(publish).not.toHaveBeenCalled();
     },
   );
+
+  it("refuses a stable proxy-port drift without publication (#12012)", async () => {
+    const { observed } = mockOllamaSource();
+    observed.serving.proxy.hostPort = 21_435;
+    vi.mocked(createOllamaExportProbe).mockReturnValue(ollamaProbe(observed));
+    expectExportRefusal(await exportLiveSource(), {
+      field: "spec.services[].upstream",
+      category: "drifted",
+    });
+  });
 
   it.each([
     {
@@ -188,11 +203,9 @@ describe("attached Ollama export pipeline", () => {
       authority: "live route",
       category: "live-verification-failed",
       change: () => {
-        vi.mocked(getLiveGatewayInference).mockReturnValue({
-          failure: null,
-          inference: { provider: "ollama-local", model: "qwen3.5:9b" },
-          output: "",
+        vi.mocked(captureSanitizedResolvedOpenshell).mockReturnValue({
           status: 0,
+          output: "Gateway inference:\n  Provider: ollama-local\n  Model: qwen3.5:9b\n",
         });
       },
     },
@@ -245,33 +258,6 @@ describe("attached Ollama export pipeline", () => {
     expect(writeStdout).not.toHaveBeenCalled();
   });
 
-  it.each([
-    [
-      { endpointUrl: "http://host.openshell.internal:11435/v1" },
-      { field: "spec.inferenceProviders[].endpoint", category: "drifted" },
-    ],
-    [
-      { credentialEnv: "OTHER_TOKEN" },
-      { field: "source.live", category: "live-verification-failed" },
-    ],
-    [{ agent: "hermes" }, { field: "spec.inferenceProviders[].serving", category: "drifted" }],
-    [
-      { sandboxGpuEnabled: true, sandboxGpuDevice: "nvidia.com/gpu=all" },
-      { field: "spec.sandboxes[].runtime.gpu", category: "unsupported" },
-    ],
-  ])("refuses unsupported or drifted local route intent %# (#11435)", async (change, finding) => {
-    const { source } = mockOllamaSource();
-    Object.assign(source, change);
-    expectExportRefusal(await exportLiveSource(), finding);
-  });
-  it("refuses an absent provider attachment (#11435)", async () => {
-    mockOllamaSource();
-    raw.getSandbox.mockResolvedValue(inventory());
-    expectExportRefusal(await exportLiveSource(), {
-      field: "spec.inferenceProviders[].serving",
-      category: "drifted",
-    });
-  });
   it.each([
     {
       field: "pid",

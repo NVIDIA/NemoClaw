@@ -61,13 +61,13 @@ describe("live E2E target matrix", () => {
     ]);
   });
 
-  it("assigns the default timeout to every typed target", () => {
+  it("includes ordered Deep Agents and automatic config-export budgets", () => {
     expect(
       Object.fromEntries(buildLiveTargetMatrix().map((row) => [row.id, row.timeout_minutes])),
     ).toEqual({
-      "ubuntu-policy-custom-missing-presets-negative": 45,
-      "ubuntu-repo-cloud-langchain-deepagents-code": 45,
-      "ubuntu-repo-cloud-openclaw": 45,
+      "ubuntu-policy-custom-missing-presets-negative": 63,
+      "ubuntu-repo-cloud-langchain-deepagents-code": 163,
+      "ubuntu-repo-cloud-openclaw": 63,
     });
   });
 

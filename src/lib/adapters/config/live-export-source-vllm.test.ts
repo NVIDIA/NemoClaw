@@ -10,6 +10,7 @@ import {
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
+import { asExportedConfig } from "../../../../test/support/config-export-document";
 import { runConfigExport } from "../../actions/config/export";
 import {
   parseNemoClawConfigDocumentName,
@@ -18,20 +19,19 @@ import {
   type ImmutableImageReference,
   parseNemoClawConfigDocumentUid,
 } from "../../config/model";
-import { validateNemoClawConfig } from "../../config/schema";
 import { observeManagedVllmForExport } from "../../inference/serving/vllm-export-runtime";
 import { loadServingCatalog } from "../../inference/serving/catalog-loader";
 import { servingProfileProvenance } from "../../inference/serving/profile-provenance";
 import { applyVllmRuntimeContextWindow } from "../../inference/vllm-runtime-context";
 import { resolveManagedStartupInferenceRoute } from "../../inference/gateway/route-contract";
 import type { ObservedManagedVllmRuntime } from "../../domain/config/export-evidence";
-import { getLiveGatewayInference } from "../../inference/live";
 import { buildManagedStartupProfile } from "../../onboard/managed-startup/profile-builder";
 import type { ManagedStartupProfileBuilderInput } from "../../onboard/managed-startup/profile-builder";
 import { getSandboxEntryInference } from "../../state/registry-entry-view";
 import { load as loadRegistry } from "../../state/registry/persistence";
 import type { SandboxEntry } from "../../state/registry/types";
 import { observeStableExportSource } from "../../actions/config/observe-export-source";
+import { captureSanitizedResolvedOpenshell } from "../openshell/sanitized-capture";
 import { createLiveExportSnapshotReader } from "./live-export-source";
 import {
   braveProvider,
@@ -39,8 +39,6 @@ import {
   startupInput,
   entry,
   inventory,
-  configuration,
-  openAiProviderProfile,
 } from "./live-export-source-test-fixture";
 import { managedBraveProfile } from "../../../../test/fixtures/openshell-provider-profile";
 
@@ -121,85 +119,86 @@ function mockManagedVllmSource(
     provider: "vllm-local",
     model,
   });
-  vi.mocked(getLiveGatewayInference).mockReturnValue({
-    failure: null,
-    inference: { provider: "vllm-local", model },
-    output: "",
+  vi.mocked(captureSanitizedResolvedOpenshell).mockReturnValue({
     status: 0,
+    output: `Gateway inference:\n  Provider: vllm-local\n  Model: ${model}\n`,
   });
   const liveSandbox = inventory();
   Object.assign(liveSandbox.sandbox.spec, { providers: ["vllm-local"] });
   raw.getSandbox.mockResolvedValue(liveSandbox);
   const credentials = { NEMOCLAW_VLLM_LOCAL_TOKEN: readFailureCanary };
-  raw.getProvider.mockResolvedValue({
-    provider: {
-      metadata: {
-        id: "provider-id",
-        name: "vllm-local",
-        workspace: "default",
-        resourceVersion: 8n,
-      },
-      type: "openai",
-      profileWorkspace: "default",
-      credentials,
-      config: { OPENAI_BASE_URL: source.endpointUrl },
+  const localProvider = {
+    metadata: {
+      id: "provider-id",
+      name: "vllm-local",
+      workspace: "default",
+      resourceVersion: 8n,
     },
+    type: "openai",
+    credentials,
+    config: { OPENAI_BASE_URL: source.endpointUrl },
+    // `openshell provider create` binds the selected workspace explicitly.
+    profileWorkspace: "default",
+  };
+  raw.getProvider.mockResolvedValue({
+    provider: localProvider,
   });
-  raw.getProviderProfile.mockResolvedValue(openAiProviderProfile());
-  return { source, observed };
+  raw.getProviderProfile.mockImplementation(async () => {
+    throw new Error(readFailureCanary);
+  });
+  return { source, observed, localProvider };
 }
 
 describe("managed vLLM export pipeline", () => {
-  it("refuses an absent OpenAI profile without publishing (#11435)", async () => {
-    mockManagedVllmSource();
-    raw.getProviderProfile.mockRejectedValue({ code: 5 });
-    expectExportRefusal(await exportLiveSource(), {
-      field: "spec.inferenceProviders[].serving",
-      category: "drifted",
-    });
-  });
-
-  it("exports the real fixed onboarding profile and reparses its managed provider", async () => {
-    const f = mockManagedVllmSource();
-    const output = vi.fn(async (_value: string) => {});
-    const publish = vi.fn();
-    const result = await runConfigExport(
-      {
-        sandboxName: "alpha",
-        documentName: parseNemoClawConfigDocumentName("alpha"),
-        target: { kind: "stdout" },
-      },
-      {
-        observe: (name) => observeStableExportSource(name, createLiveExportSnapshotReader()),
-        createDocumentUid: () =>
-          parseNemoClawConfigDocumentUid("123e4567-e89b-42d3-a456-426614174000"),
-        publish,
-        writeStdout: output,
-      },
-    );
-    expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
-    const yaml = output.mock.calls[0]![0];
-    const document = validateNemoClawConfig(YAML.parse(yaml));
-    expect(document.spec.inferenceProviders).toEqual([
-      {
-        name: "managed-vllm",
-        provider: "vllm-local",
-        api: "openai-completions",
-        serving: f.observed.serving,
-      },
-    ]);
-    expect(document.spec.sandboxes[0]!.agents[0]!.inference.routes[0]!.overrides).toEqual({
-      model: f.source.model,
-      contextWindow: 65536,
-    });
-    expect(yaml).not.toContain(readFailureCanary);
-    expect(yaml).not.toContain("NEMOCLAW_VLLM_LOCAL_TOKEN");
-    expect(yaml).not.toContain("host.openshell.internal");
-    expect(publish).not.toHaveBeenCalled();
-  });
+  it.each([
+    { count: 1, names: ["researcher"] },
+    { count: 2, names: ["researcher", "reviewer"] },
+    { count: 128, names: Array.from({ length: 128 }, (_, index) => `reader-${index}`) },
+  ])(
+    "refuses all $count fixed-profile secondaries that current v1 cannot represent (#11859, #12012)",
+    async ({ names }) => {
+      mockManagedVllmSource({
+        NEMOCLAW_EXTRA_AGENTS_JSON: JSON.stringify(
+          names.map((id) => ({ id, tools: { allow: ["read"] } })),
+        ),
+      });
+      const output = vi.fn(async (_value: string) => {});
+      const publish = vi.fn();
+      const result = await runConfigExport(
+        {
+          sandboxName: "alpha",
+          documentName: parseNemoClawConfigDocumentName("alpha"),
+          target: { kind: "stdout" },
+        },
+        {
+          observe: (name) => observeStableExportSource(name, createLiveExportSnapshotReader()),
+          createDocumentUid: () =>
+            parseNemoClawConfigDocumentUid("123e4567-e89b-42d3-a456-426614174000"),
+          publish,
+          writeStdout: output,
+        },
+      );
+      expect(result).toMatchObject({
+        ok: false,
+        failure: {
+          kind: "observation",
+          findings: [
+            expect.objectContaining({
+              field: "spec.sandboxes[].agent",
+              category: "unsupported",
+              diagnostic:
+                "V1alpha1 export does not support an OpenClaw sandbox with secondary agents.",
+            }),
+          ],
+        },
+      });
+      expect(output).not.toHaveBeenCalled();
+      expect(publish).not.toHaveBeenCalled();
+    },
+  );
 
   it("exports direct tools, managed vLLM, Brave and retained OTLP with qualified profile bindings", async () => {
-    const f = mockManagedVllmSource(
+    mockManagedVllmSource(
       {
         NEMOCLAW_OPENCLAW_OTEL: "1",
         NEMOCLAW_OPENCLAW_OTEL_ENDPOINT: "http://host.openshell.internal:4318",
@@ -225,24 +224,17 @@ describe("managed vLLM export pipeline", () => {
     raw.getSandbox.mockResolvedValue(liveSandbox);
     const { result, writeStdout, publish } = await exportLiveSource();
     expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
-    const yaml = writeStdout.mock.calls[0]![0];
-    expect(yaml).not.toContain(readFailureCanary);
-    expect(yaml).not.toContain("NEMOCLAW_VLLM_LOCAL_TOKEN");
-    expect(yaml).not.toContain("host.openshell.internal:18000");
-    const document = validateNemoClawConfig(YAML.parse(yaml));
-    expect(document.spec.inferenceProviders).toEqual([
-      {
-        name: "managed-vllm",
-        provider: "vllm-local",
-        api: "openai-completions",
-        serving: f.observed.serving,
+    const document = asExportedConfig(YAML.parse(writeStdout.mock.calls[0]![0]));
+    expect(document.spec.services?.vllm).toMatchObject({ kind: "vllm", image: null });
+    expect(document.spec.sandboxes[0]).toMatchObject({
+      integrations: {
+        "brave-search": {
+          kind: "webSearch",
+          provider: "brave",
+          credential: { env: "BRAVE_API_KEY" },
+        },
       },
-    ]);
-    expect(document.spec.sandboxes[0]!.agents).toEqual([
-      {
-        name: "primary",
-        type: "openclaw",
-        tools: { disclosure: "direct" },
+      harness: {
         observability: {
           otlp: {
             enabled: true,
@@ -251,22 +243,11 @@ describe("managed vLLM export pipeline", () => {
             sampleRate: 0.5,
           },
         },
-        inference: {
-          routes: [
-            {
-              name: "primary",
-              providerRef: "managed-vllm",
-              overrides: { model: f.source.model, contextWindow: 65536 },
-            },
-          ],
-        },
       },
-    ]);
-    expect(document.spec.sandboxes[0]!.network.policy.explicit).toEqual(configuration().policy);
-    expect(document.spec.sandboxes[0]!.integrations?.webSearch).toEqual({
-      provider: "brave",
-      agentRefs: ["primary"],
-      credential: { env: "BRAVE_API_KEY" },
+    });
+    expect(document.spec.sandboxes[0]!.agent).toMatchObject({
+      tools: { disclosure: "direct" },
+      integrationRefs: ["brave-search"],
     });
     expect(search.readCredential).not.toHaveBeenCalled();
     expect(publish).not.toHaveBeenCalled();
@@ -312,42 +293,49 @@ describe("managed vLLM export pipeline", () => {
   ])(
     "exports retained $label with the fixed managed deployment (#11855, #11856)",
     async ({ environment, execution, overrides }) => {
-      const f = mockManagedVllmSource(environment);
+      mockManagedVllmSource(environment);
       vi.stubEnv("NEMOCLAW_AGENT_TIMEOUT", "1200");
       vi.stubEnv("NEMOCLAW_AGENT_HEARTBEAT_EVERY", "1h");
       vi.stubEnv("NEMOCLAW_MAX_TOKENS", "42");
       vi.stubEnv("NEMOCLAW_REASONING", "true");
       const { result, writeStdout, publish } = await exportLiveSource();
       expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
-      const yaml = writeStdout.mock.calls[0]![0];
-      const document = validateNemoClawConfig(YAML.parse(yaml));
-      expect(document.spec.inferenceProviders).toEqual([
-        {
-          name: "managed-vllm",
-          provider: "vllm-local",
-          api: "openai-completions",
-          serving: f.observed.serving,
-        },
-      ]);
-      const agent = document.spec.sandboxes[0]!.agents[0]!;
-      expect(agent).toEqual({
-        name: "primary",
-        type: "openclaw",
-        ...(execution === undefined ? {} : { execution }),
-        inference: {
-          routes: [
-            {
-              name: "primary",
-              providerRef: "managed-vllm",
-              overrides: { model: f.source.model, contextWindow: 65536, ...overrides },
-            },
-          ],
-        },
+      const document = asExportedConfig(YAML.parse(writeStdout.mock.calls[0]![0]));
+      expect(document.spec.sandboxes[0]!.harness.execution).toEqual(execution);
+      expect(document.spec.sandboxes[0]!.agent.inference.routes[0]!.overrides).toEqual({
+        contextWindow: 65536,
+        model: "nvidia-nemotron-3.5-lightning-30b-a3b-nvfp4",
+        ...overrides,
       });
-      expect(yaml).not.toContain(readFailureCanary);
+      expect(document.spec.services?.vllm).toMatchObject({ kind: "vllm", image: null });
+      expect(raw.getProviderProfile).not.toHaveBeenCalled();
       expect(publish).not.toHaveBeenCalled();
     },
   );
+
+  it("qualifies the fixed vLLM runtime when the registry omits profile provenance", async () => {
+    const fixture = mockManagedVllmSource();
+    const source: SandboxEntry = { ...fixture.source };
+    delete source.servingProfileProvenance;
+    vi.mocked(loadRegistry).mockReturnValue({
+      sandboxes: { alpha: source },
+      defaultSandbox: null,
+    });
+
+    await expect(createLiveExportSnapshotReader().read("alpha")).resolves.toMatchObject({
+      kind: "observed",
+      inference: {
+        provider: "vllm-local",
+        credentialEnv: null,
+        endpointEvidence: {
+          provider: { name: "vllm-local", workspace: "default" },
+          source: { kind: "provider-config", key: "OPENAI_BASE_URL" },
+        },
+      },
+    });
+    expect(observeManagedVllmForExport).toHaveBeenCalledWith(undefined);
+    expect(raw.getProviderProfile).not.toHaveBeenCalled();
+  });
 
   it.each([
     ["agentConfig", { agentTimeoutSeconds: 0 }],
@@ -399,7 +387,6 @@ describe("managed vLLM export pipeline", () => {
 
   it.each([
     { workload: undefined },
-    { servingProfileProvenance: undefined },
     { lifecycleLiveIdentityFingerprint: "f".repeat(64) },
     { compatibleEndpointReasoning: "false" },
     { model: "another-model" },
@@ -422,28 +409,6 @@ describe("managed vLLM export pipeline", () => {
     },
   );
 
-  it.each([
-    { hostPort: 19000 },
-    { catalogDigest: `sha256:${"f".repeat(64)}` },
-    { profile: { id: EXPORTED_VLLM_PROFILE_ID, digest: `sha256:${"f".repeat(64)}` } },
-    { recipe: { id: EXPORTED_VLLM_RECIPE_ID, digest: `sha256:${"f".repeat(64)}` } },
-    {
-      runtime: {
-        image: { ref: `nvcr.io/nvidia/vllm@sha256:${"f".repeat(64)}` as ImmutableImageReference },
-      },
-    },
-  ])("rejects serving drift with retained settings %j (#11855, #11856)", async (change) => {
-    const f = mockManagedVllmSource({ NEMOCLAW_AGENT_TIMEOUT: "900", NEMOCLAW_MAX_TOKENS: "8192" });
-    vi.mocked(observeManagedVllmForExport).mockReturnValue({
-      ...f.observed,
-      serving: { ...f.observed.serving, ...change },
-    });
-    expectExportRefusal(await exportLiveSource(), {
-      field: "spec.inferenceProviders[].serving",
-      category: "drifted",
-    });
-  });
-
   it("detects managed container restart between complete snapshots", async () => {
     const f = mockManagedVllmSource({ NEMOCLAW_AGENT_TIMEOUT: "900", NEMOCLAW_MAX_TOKENS: "8192" });
     let revision = 0;
@@ -454,8 +419,9 @@ describe("managed vLLM export pipeline", () => {
     expectExportRefusal(await exportLiveSource(), { category: "unstable-source" });
   });
 
-  it("rejects a shadowed OpenAI profile with additional endpoint behavior", async () => {
-    mockManagedVllmSource();
+  it("rejects a cross-workspace OpenAI profile binding without reading the profile", async () => {
+    const { localProvider } = mockManagedVllmSource();
+    Object.assign(localProvider, { profileWorkspace: "other-workspace" });
     raw.getProviderProfile.mockResolvedValue({
       profile: {
         id: "openai",
@@ -472,21 +438,28 @@ describe("managed vLLM export pipeline", () => {
       kind: "read-failed",
       stage: "provider-metadata",
     });
+    expect(raw.getProviderProfile).not.toHaveBeenCalled();
   });
 
-  it("detects resolved provider profile revision changes", async () => {
-    mockManagedVllmSource();
-    let revision = 4n;
-    raw.getProviderProfile.mockImplementation(async () => ({
-      profile: {
-        id: "openai",
-        source: "user",
-        scope: "workspace",
-        resourceVersion: revision++,
-        credentials: [],
-        endpoints: [],
-        binaries: [],
-        inferenceCapable: true,
+  it("refuses endpoint drift from the verified managed runtime", async () => {
+    const { source, localProvider } = mockManagedVllmSource();
+    const endpointUrl = "http://host.openshell.internal:18001/v1";
+    vi.mocked(loadRegistry).mockReturnValue({
+      sandboxes: { alpha: { ...source, endpointUrl } },
+      defaultSandbox: null,
+    });
+    Object.assign(localProvider.config, { OPENAI_BASE_URL: endpointUrl });
+
+    expectExportRefusal(await exportLiveSource(), { category: "missing-provenance" });
+  });
+
+  it("detects direct provider revision changes", async () => {
+    const { localProvider } = mockManagedVllmSource();
+    let revision = 8n;
+    raw.getProvider.mockImplementation(async () => ({
+      provider: {
+        ...localProvider,
+        metadata: { ...localProvider.metadata, resourceVersion: revision++ },
       },
     }));
     expect(
@@ -496,6 +469,7 @@ describe("managed vLLM export pipeline", () => {
       attempts: 2,
       findings: [expect.objectContaining({ category: "unstable-source" })],
     });
+    expect(raw.getProviderProfile).not.toHaveBeenCalled();
   });
 
   it("contains runtime failures before provider metadata or publication", async () => {

@@ -61,8 +61,8 @@ That root-entrypoint topology runs the gateway as the separate `gateway` user an
 |---|---|
 | Default | A stock Dockerfile build declares `USER sandbox`. The OpenShell-managed topology runs the gateway and agent under the same sandbox UID because `no-new-privileges` prevents the non-root entrypoint from changing users. |
 | What you can change | OpenClaw managed and custom images must keep `USER sandbox` as the default for OpenShell 0.0.116. A direct container runtime outside OpenShell can still override the image user to `root`. |
-| Risk if relaxed | A same-UID agent can signal peer processes and can attempt to imitate the expected gateway process shape. The root managed controller prevents PID-reuse mistakes, but it cannot prove provenance against a malicious same-UID process or provide the direct root-entrypoint restart seal for mutable config. |
-| Recommendation | Keep the OpenShell-managed image user as `sandbox`. Use a direct root-entrypoint deployment only outside OpenShell when separate gateway and agent UIDs are required. Treat an OpenShell-managed controller that shares the `sandbox` UID as an authenticated lifecycle control, not as proof that the target process is trustworthy. |
+| Risk if relaxed | A same-UID agent can signal peer processes and can attempt to imitate the expected gateway process shape. Native restart and host health checks prove service availability, not provenance against a malicious same-user process. |
+| Recommendation | Keep the OpenShell-managed image user as `sandbox`. Use a direct root-entrypoint deployment only outside OpenShell when separate gateway and agent UIDs are required. Treat native lifecycle and readiness checks as availability controls, not proof that the target process is trustworthy. |
 
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -290,12 +290,15 @@ A registry-side tag change cannot silently select another managed sandbox image.
 
 ## Auth Profile Permissions
 
-The entrypoint and migration flows enforce `chmod 600` on all `auth-profiles.json` files under `~/.openclaw`.
-This prevents other users on the host from reading stored credentials.
+For managed `inference.local` routes, the entrypoint clears the NVIDIA credential aliases before setup and command execution.
+It removes only the exact legacy NemoClaw-generated profile for the selected managed provider and preserves other profiles.
+Direct inference routes outside `inference.local` retain supplied credentials.
+The entrypoint and migration flows enforce `chmod 600` on auth-profile files under `~/.openclaw`.
+This prevents other users on the host from reading stored credentials that remain.
 
 | Aspect | Detail |
 |---|---|
-| Default | `600` permissions applied recursively at startup and after migration restores. |
+| Default | The selected managed provider's generated profile is removed. Other auth profiles receive `600` permissions recursively at startup and after migration restores. |
 | What you can change | This is not a user-facing knob. The entrypoint enforces it. |
 | Risk if relaxed | Looser permissions let other users or processes on the host read provider API keys and tokens stored in auth profiles. |
 | Recommendation | No action needed. If you see a `permission denied` error when reading auth profiles, verify that you are running as the same user who created them. |

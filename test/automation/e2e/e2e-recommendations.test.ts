@@ -68,6 +68,13 @@ function metadata(
 }
 
 describe("E2E recommendation normalizer", () => {
+  it("allows the opted-in credentialed Model Router target", () => {
+    const inventory = trustedE2eRecommendationInventory();
+
+    expect(inventory.allowedJobIds).toContain("model-router-provider-routed-inference");
+    expect(inventory.manualOnlyJobIds).not.toContain("model-router-provider-routed-inference");
+  });
+
   it("maps changed catalogue tests to their logical advisor selectors", () => {
     const inventory = trustedE2eRecommendationInventory();
     const trustedJobIds = new Set([...inventory.allowedJobIds, ...inventory.manualOnlyJobIds]);
@@ -140,6 +147,7 @@ describe("E2E recommendation normalizer", () => {
         "tools/e2e/module-tags.mts",
         ".github/workflows/e2e.yaml",
         "test/platform/images/vllm-docker-storage.test.ts",
+        "test/helpers/timeouts.ts",
       ]) {
         const destination = path.join(tmp, file);
         fs.mkdirSync(path.dirname(destination), { recursive: true });

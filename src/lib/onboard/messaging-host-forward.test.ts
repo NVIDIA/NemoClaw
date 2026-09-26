@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { SandboxMessagingPlan } from "../messaging/manifest";
 import {
+  createMessagingHostForwardPortConflictHookOptions,
   ensureMessagingHostForwardIfConfigured,
   resolveProductionForwardServiceGatewayName,
   resolveMessagingHostForward,
@@ -98,6 +99,112 @@ function makeCompactTeamsPlan(): SandboxMessagingPlan {
 }
 
 describe("ensureMessagingHostForwardIfConfigured", () => {
+  it("uses the supplied gateway and workspace to check listener ownership", async () => {
+    const checkPortAvailable = vi.fn(async () => ({
+      ok: false,
+      process: "openshell",
+      pid: 1234,
+    }));
+    const describeForwardListener = vi.fn(async () => "owned" as const);
+    const options = createMessagingHostForwardPortConflictHookOptions({
+      checkPortAvailable,
+      describeForwardListener,
+      runtimeSelection: { gatewayName: "nemoclaw-8090", workspace: "review" },
+    });
+
+    await expect(options.checkPortAvailable?.(3978)).resolves.toMatchObject({ ok: false });
+    await expect(
+      options.isCurrentSandboxForward?.("demo", "nemoclaw-8090", 3978, 1234),
+    ).resolves.toBe(true);
+    expect(describeForwardListener).toHaveBeenCalledWith(
+      "demo",
+      3978,
+      "127.0.0.1",
+      {
+        gatewayName: "nemoclaw-8090",
+        workspace: "review",
+      },
+      undefined,
+      1234,
+    );
+  });
+
+  it("targets the hook gateway and default workspace without a runtime selection", async () => {
+    const describeForwardListener = vi.fn(async () => "owned" as const);
+    const options = createMessagingHostForwardPortConflictHookOptions({
+      describeForwardListener,
+    });
+
+    await expect(options.isCurrentSandboxForward?.("demo", "nemoclaw", 3978, 1234)).resolves.toBe(
+      true,
+    );
+    expect(describeForwardListener).toHaveBeenCalledWith(
+      "demo",
+      3978,
+      "127.0.0.1",
+      {
+        gatewayName: "nemoclaw",
+        workspace: "default",
+      },
+      undefined,
+      1234,
+    );
+  });
+
+  it.each([null, "nemoclaw-8090"])(
+    "rejects missing or mismatched gateway authority: %s",
+    async (gateway) => {
+      const describeForwardListener = vi.fn(async () => "owned" as const);
+      const options = createMessagingHostForwardPortConflictHookOptions({
+        describeForwardListener,
+        runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
+      });
+
+      await expect(options.isCurrentSandboxForward?.("demo", gateway, 3978, 1234)).resolves.toBe(
+        false,
+      );
+      expect(describeForwardListener).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["absent", "foreign", "stale", "indeterminate"] as const)(
+    "rejects an occupied port when its forward observation is %s",
+    async (state) => {
+      const options = createMessagingHostForwardPortConflictHookOptions({
+        describeForwardListener: async () => state,
+      });
+
+      await expect(options.isCurrentSandboxForward?.("demo", "nemoclaw", 3978, 1234)).resolves.toBe(
+        false,
+      );
+    },
+  );
+
+  it("rejects ownership when the observation fails", async () => {
+    const options = createMessagingHostForwardPortConflictHookOptions({
+      describeForwardListener: async () => {
+        throw new Error("forward observation unavailable");
+      },
+    });
+
+    await expect(options.isCurrentSandboxForward?.("demo", "nemoclaw", 3978, 1234)).resolves.toBe(
+      false,
+    );
+  });
+
+  it("rejects listener ownership when the observed PID differs", async () => {
+    const describeForwardListener = vi.fn<
+      typeof import("../actions/sandbox/forward-recovery").describeSandboxPortForwardListener
+    >(async (...args) => (args[5] === 1234 ? ("owned" as const) : ("foreign" as const)));
+    const options = createMessagingHostForwardPortConflictHookOptions({
+      describeForwardListener,
+    });
+
+    await expect(options.isCurrentSandboxForward?.("demo", "nemoclaw", 3978, 9876)).resolves.toBe(
+      false,
+    );
+  });
+
   it("resolves compact persisted messaging host forwards", () => {
     expect(resolveMessagingHostForward(makeCompactTeamsPlan())).toEqual({
       channelId: "teams",

@@ -64,6 +64,16 @@ describe("managed image release identity", () => {
   it.each(["pr-build-and-entrypoint", "build-and-validate"])(
     "keeps the %s release when a tag arrives before the CLI build (#11282)",
     (name) => {
+      expect(identity.permissions).toEqual({ contents: "read" });
+      expect(step(identity, "Checkout publication revision").with).toEqual({
+        ref: "${{ github.event.pull_request.head.sha || github.sha }}",
+        "fetch-depth": 0,
+        "persist-credentials": false,
+      });
+      expect(identity.outputs).toEqual({
+        cohort: "${{ steps.identity.outputs.cohort }}",
+        release: "${{ steps.release.outputs.value }}",
+      });
       const resolver = step(identity, "Resolve managed image release identity");
       const resolved = run(resolver.run ?? "");
       expect(resolved.status, resolved.stderr).toBe(0);
@@ -72,6 +82,11 @@ describe("managed image release identity", () => {
       expect(getVersion({ rootDir: root })).toBe("0.0.126");
 
       const bind = step(activation, "Bind CLI to publication release");
+      expect(bind.env?.RELEASE).toBe("${{ needs.publication-identity.outputs.release }}");
+      const steps = activation.steps ?? [];
+      expect(steps.indexOf(bind)).toBeLessThan(
+        steps.indexOf(step(activation, "Build exact candidate CLI")),
+      );
       const bound = run(bind.run ?? "", { RELEASE: release });
       expect(bound.status, bound.stderr).toBe(0);
       const generated = spawnSync(

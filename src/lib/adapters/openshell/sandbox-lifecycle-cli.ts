@@ -2,12 +2,20 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isValidName } from "../../sandbox-name-contract";
+import { buildSubprocessEnvFrom } from "../../subprocess-env";
+import {
+  streamSandboxCreate,
+  type StreamSandboxCreateOptions,
+  type StreamSandboxCreateResult,
+} from "../../sandbox/create-stream";
 import { redactCredentialText } from "../../security/credential-filter";
 import { redact } from "../../security/redact";
-import { waitUntilAsync } from "../../core/wait";
-import { withSelectedOpenShellCommandOptions } from "./command-argv";
+import { sleepMs, waitUntilAsync } from "../../core/wait";
+import { resolveOpenshellBinary, withSelectedOpenShellCommandOptions } from "./command-argv";
+import { buildOpenShellRuntimeSelectionEnv } from "./runtime-selection";
 import { assertNoOpenShellGatewayEndpointOverride } from "./gateway-scope";
 import type {
+  CreateOpenShellSandboxRequest,
   DeleteOpenShellSandboxRequest,
   OpenShellSandboxDeleteSubmission,
   OpenShellSandboxLifecycle,
@@ -27,7 +35,11 @@ import { OPENSHELL_HEAVY_TIMEOUT_MS, OPENSHELL_PROBE_TIMEOUT_MS } from "./comman
 const DIAGNOSTIC_LIMIT_BYTES = 4 * 1024;
 const CAPTURE_LIMIT_BYTES = 1024 * 1024;
 
-export { createCliOpenShellSandboxLookupFromRunner, createCliOpenShellSandboxObserverFromRunner };
+export {
+  createCliOpenShellSandboxLookupFromRunner,
+  createCliOpenShellSandboxObserverFromRunner,
+  sleepMs as sleepOpenShellLifecycleMs,
+};
 
 const DELETE_ABSENCE_MAX_ATTEMPTS = 20;
 const DELETE_ABSENCE_INITIAL_INTERVAL_MS = 250;
@@ -176,9 +188,142 @@ function validDeleteRequest(request: DeleteOpenShellSandboxRequest): boolean {
   );
 }
 
+export type StreamSandboxCreateCommand = (
+  command: string,
+  args: readonly string[],
+  env: NodeJS.ProcessEnv,
+  options: StreamSandboxCreateOptions,
+) => Promise<StreamSandboxCreateResult>;
+
+function validCreateText(value: string | undefined): value is string {
+  return typeof value === "string" && value.length > 0 && !/[\u0000\r\n]/u.test(value);
+}
+
+/** Own the child environment allowlist for OpenShell create processes. */
+export function buildOpenShellSandboxCreateEnvironment(
+  source: NodeJS.ProcessEnv,
+  options: {
+    readonly policyAttached: boolean;
+    readonly dockerClientConfigDirectory?: string;
+  },
+): Record<string, string> {
+  const environment = buildSubprocessEnvFrom(source);
+  delete environment.KUBECONFIG;
+  delete environment.SSH_AUTH_SOCK;
+  if (!options.policyAttached) delete environment.OPENSHELL_SANDBOX_POLICY;
+  if (options.dockerClientConfigDirectory) {
+    environment.DOCKER_CONFIG = options.dockerClientConfigDirectory;
+  }
+  return environment;
+}
+
+function validCreateRequest(request: CreateOpenShellSandboxRequest): boolean {
+  if (
+    !isValidName(request.sandboxName) ||
+    request.target.kind !== "named" ||
+    !isValidName(request.target.gatewayName) ||
+    !validCreateText(request.source.reference) ||
+    request.startupCommand.length === 0 ||
+    request.startupCommand.some((value) => !validCreateText(value)) ||
+    (request.autoProviders === true && (request.providers?.length ?? 0) > 0) ||
+    (request.runtimeSelection &&
+      request.runtimeSelection.gatewayName !== request.target.gatewayName)
+  ) {
+    return false;
+  }
+  const optionalValues = [
+    request.policyPath,
+    request.driverConfigJson,
+    request.gpu?.device,
+    request.resources?.cpu,
+    request.resources?.memory,
+    request.dockerClientConfigDirectory,
+    request.workingDirectory,
+    ...Object.keys(request.labels ?? {}),
+    ...Object.values(request.labels ?? {}),
+    ...(request.providers ?? []),
+  ];
+  if (optionalValues.some((value) => value !== undefined && !validCreateText(value))) return false;
+  if (request.driverConfigJson) {
+    try {
+      const parsed = JSON.parse(request.driverConfigJson) as unknown;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return false;
+    } catch {
+      return false;
+    }
+  }
+  return true;
+}
+
+export function renderCreateOpenShellSandboxArgs(request: CreateOpenShellSandboxRequest): string[] {
+  if (!validCreateRequest(request)) {
+    throw new Error("Invalid OpenShell sandbox create request.");
+  }
+  return [
+    "sandbox",
+    "create",
+    "-g",
+    request.target.gatewayName,
+    "--from",
+    request.source.reference,
+    "--name",
+    request.sandboxName,
+    ...(request.policyPath ? ["--policy", request.policyPath] : []),
+    ...(request.driverConfigJson ? ["--driver-config-json", request.driverConfigJson] : []),
+    ...(request.gpu ? ["--gpu"] : []),
+    ...(request.gpu?.device ? ["--gpu-device", request.gpu.device] : []),
+    ...(request.resources?.cpu ? ["--cpu", request.resources.cpu] : []),
+    ...(request.resources?.memory ? ["--memory", request.resources.memory] : []),
+    ...Object.entries(request.labels ?? {}).flatMap(([name, value]) => [
+      "--label",
+      `${name}=${value}`,
+    ]),
+    ...(request.providers ?? []).flatMap((provider) => ["--provider", provider]),
+    ...(request.autoProviders === true ? ["--auto-providers"] : []),
+    "--",
+    ...request.startupCommand,
+  ];
+}
+
 function outputOf(result: CapturedOpenShellCommandResult): string {
   const streams = `${result.stderr ?? ""}\n${result.stdout ?? ""}`.trim();
   return streams || result.output.trim();
+}
+
+/** Exact CLI parser rejection that proves OpenShell did not submit a create request. */
+export function isNativeGpuCreatePreBuildRejection(output: string): boolean {
+  const text = String(output ?? "");
+  if (text.length > 4096) return false;
+  const lines = text
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length === 0 || lines.length > 4) return false;
+  const [errorLine, ...envelope] = lines;
+  const exactError =
+    /^error:\s+(?:unexpected|unrecognized|unknown|unsupported)\s+(?:argument|option|flag)(?:\s+|:\s*)['"`]?--gpu['"`]?(?:\s+(?:found|provided|specified))?\.?$/iu.test(
+      errorLine,
+    ) ||
+    /^error:\s+(?:argument|option|flag)\s+['"`]?--gpu['"`]?\s+(?:is not supported|was rejected)\.?$/iu.test(
+      errorLine,
+    );
+  return (
+    exactError &&
+    envelope.every(
+      (line) =>
+        /^tip:\s+to pass ['"`]--gpu['"`] as a value, use ['"`]-- --gpu['"`]\.?$/iu.test(line) ||
+        /^Usage:\s+openshell sandbox create(?:\s|$)/u.test(line) ||
+        /^For more information, try ['"`]--help['"`]\.?$/u.test(line),
+    )
+  );
+}
+
+function isDefiniteCreatePreSubmissionFailure(result: StreamSandboxCreateResult): boolean {
+  if (result.sawProgress) return false;
+  return (
+    isNativeGpuCreatePreBuildRejection(result.output) ||
+    /^spawn failed:.*\((?:ENOENT|EACCES)\)$/imu.test(result.output)
+  );
 }
 
 function failedDelete(
@@ -219,10 +364,71 @@ function isAmbiguousFailure(
 
 export function createCliOpenShellSandboxLifecycle(input: {
   capture: SandboxLifecycleCapture;
+  streamCreate?: StreamSandboxCreateCommand;
+  resolveBinary?: () => string;
   defaultTimeoutMs?: number;
   environment?: NodeJS.ProcessEnv;
 }): OpenShellSandboxLifecycle {
   return {
+    async createSandbox(request, options = {}) {
+      if (!validCreateRequest(request)) {
+        return {
+          status: 1,
+          output: "Invalid OpenShell sandbox create request.",
+          sawProgress: false,
+          ambiguous: false,
+          diagnostic: "Invalid OpenShell sandbox create request.",
+        };
+      }
+      let submitted = false;
+      try {
+        if (!request.runtimeSelection) {
+          assertNoOpenShellGatewayEndpointOverride(request.environment);
+        }
+        const args = renderCreateOpenShellSandboxArgs(request);
+        const stream = input.streamCreate ?? streamSandboxCreate;
+        const filteredEnvironment = buildOpenShellSandboxCreateEnvironment(request.environment, {
+          policyAttached: Boolean(request.policyPath),
+          ...(request.dockerClientConfigDirectory
+            ? { dockerClientConfigDirectory: request.dockerClientConfigDirectory }
+            : {}),
+        });
+        const environment = request.runtimeSelection
+          ? buildOpenShellRuntimeSelectionEnv(filteredEnvironment, request.runtimeSelection)
+          : filteredEnvironment;
+        const executable = input.resolveBinary?.() ?? resolveOpenshellBinary();
+        submitted = true;
+        const result = await stream(executable, args, environment, {
+          ...options,
+          ...(request.workingDirectory ? { cwd: request.workingDirectory } : {}),
+        });
+        // A spawned non-success result is ambiguous unless the child reported
+        // exact evidence that submission never began.
+        const ambiguous =
+          result.readyTerminationTimedOut === true ||
+          (result.status !== 0 && !isDefiniteCreatePreSubmissionFailure(result));
+        const diagnostic = safeDiagnostic(result.output);
+        return {
+          ...result,
+          output: diagnostic,
+          ambiguous,
+          diagnostic,
+        };
+      } catch (caught) {
+        const error = caught instanceof Error ? caught : new Error("OpenShell create failed.");
+        const code = (error as NodeJS.ErrnoException).code;
+        const definite =
+          code === "ENOENT" || code === "EACCES" || error.message.startsWith("Invalid");
+        const diagnostic = safeDiagnostic(error.message);
+        return {
+          status: 1,
+          output: diagnostic,
+          sawProgress: false,
+          ambiguous: submitted && !definite,
+          diagnostic,
+        };
+      }
+    },
     async deleteSandbox(request) {
       if (!validDeleteRequest(request)) return failedDelete(invalidDeleteError);
       if (!request.runtimeSelection) {
@@ -296,7 +502,11 @@ function streamText(value: unknown): string {
 /** Adapt the existing buffered runner only inside the lifecycle transport boundary. */
 export function createCliOpenShellSandboxLifecycleFromRunner(
   run: RunSandboxMutationCommand,
-  options: Readonly<{ defaultTimeoutMs?: number; environment?: NodeJS.ProcessEnv }> = {},
+  options: Readonly<{
+    defaultTimeoutMs?: number;
+    environment?: NodeJS.ProcessEnv;
+    resolveBinary?: () => string;
+  }> = {},
 ): OpenShellSandboxLifecycle {
   return createCliOpenShellSandboxLifecycle({
     ...options,

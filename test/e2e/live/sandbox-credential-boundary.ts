@@ -5,7 +5,6 @@ import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
 import { HIGH_CONFIDENCE_PREFIXED_TOKEN_ERE } from "../../../nemoclaw/src/security/secret-scanner.ts";
 
 const DEFAULT_SANDBOX_STATE_DIRECTORIES = ["/sandbox/.openclaw", "/sandbox/.nemoclaw"];
-
 /** Build a path-only scan for concrete credential values in sandbox state. */
 export function buildSandboxCredentialScanCommand(
   directories: readonly string[] = DEFAULT_SANDBOX_STATE_DIRECTORIES,

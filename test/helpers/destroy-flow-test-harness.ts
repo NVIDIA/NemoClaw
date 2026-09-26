@@ -273,6 +273,8 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     return removeExactDockerContainers(...args);
   });
   const destroyExecution = requireSource("./destroy-execution.js");
+  const forwardRecovery = requireSource("./forward-recovery.js");
+  vi.spyOn(forwardRecovery, "teardownSandboxDashboardForward").mockResolvedValue(true);
   const destroyCommand = requireSource("../../../commands/sandbox/destroy.js").default;
   const destroyPreflight = requireSource("./destroy-preflight.js");
   const sandboxSession = requireSource("../../state/sandbox-session.js");
@@ -428,7 +430,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   vi.spyOn(modelRouterProcess, "inspectModelRouterProcessForPort").mockReturnValue({
     status: "absent",
   });
-  vi.spyOn(modelRouterProcess, "isRouterHealthy").mockResolvedValue(false);
+  vi.spyOn(modelRouterProcess, "isRouterResponsive").mockResolvedValue(false);
   vi.spyOn(onboardSession, "loadSession").mockImplementation(() => ({ ...sessionState }));
   let retainedRecoveryRecords = [...(options.retainedRecoveryRecords ?? [])];
   vi.spyOn(onboardSession, "listRetainedSandboxRecoveryRecords").mockImplementation(

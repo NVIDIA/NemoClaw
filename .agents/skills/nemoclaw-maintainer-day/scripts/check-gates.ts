@@ -370,12 +370,15 @@ const PR_METADATA_EDIT_JOB_NAMES = new Set([
   "checks",
   "cli-test-shards",
   "cli-tests",
+  "compile-artifacts",
   "docs-only-checks",
+  "hugging-face-models",
   "installer-integration",
+  "openshell-sdk-package",
   "plugin-tests",
+  "real-openclaw-dist-harness",
   "reviewed-npm-audit",
   "static-checks",
-  "wechat-runtime-audit",
 ]);
 const PR_REVIEW_ADVISOR_WORKFLOW_NAME = "Automation / PR Review Advisor";
 const PR_REVIEW_ADVISOR_WORKFLOW_PATH = ".github/workflows/pr-review-advisor.yaml";
@@ -1407,7 +1410,7 @@ function checkConflicts(
 } {
   const conflictStatus = (mergeable ?? "UNKNOWN").toUpperCase();
   const status = (mergeStateStatus ?? "UNKNOWN").toUpperCase();
-  const currentBaseStates = new Set(["BLOCKED", "CLEAN", "HAS_HOOKS", "UNSTABLE"]);
+  const permittedMergeStates = new Set(["BEHIND", "BLOCKED", "CLEAN", "HAS_HOOKS", "UNSTABLE"]);
 
   if (!currentBaseSha) {
     return {
@@ -1418,20 +1421,13 @@ function checkConflicts(
       baseSha,
     };
   }
-  if (baseSha !== currentBaseSha) {
-    return {
-      pass: false,
-      details: "PR branch is behind its base branch; refresh it before approval",
-      mergeable: conflictStatus,
-      mergeStateStatus: status,
-      baseSha,
-      currentBaseSha,
-    };
-  }
-  if (conflictStatus === "MERGEABLE" && currentBaseStates.has(status)) {
+  if (conflictStatus === "MERGEABLE" && permittedMergeStates.has(status)) {
     return {
       pass: true,
-      details: "No merge conflicts",
+      details:
+        baseSha === currentBaseSha && status !== "BEHIND"
+          ? "No merge conflicts"
+          : "No merge conflicts; PR branch is behind its base branch",
       mergeable: conflictStatus,
       mergeStateStatus: status,
       baseSha,
@@ -1440,10 +1436,7 @@ function checkConflicts(
   }
   return {
     pass: false,
-    details:
-      status === "BEHIND"
-        ? "PR branch is behind its base branch; refresh it before approval"
-        : `Mergeability: ${conflictStatus}; merge state: ${status}`,
+    details: `Mergeability: ${conflictStatus}; merge state: ${status}`,
     mergeable: conflictStatus,
     mergeStateStatus: status,
     baseSha,

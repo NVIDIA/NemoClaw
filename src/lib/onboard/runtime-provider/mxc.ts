@@ -161,7 +161,6 @@ export function createMxcRuntimeProviderBundle({
       providerId: MXC_PROVIDER_ID,
       supported: true,
       hostLocalInference: false,
-      directLifecycle: false,
       legacyGatewayContainerInspection: false,
       workloadImageCleanup: false,
       readOnlyHostMounts: {

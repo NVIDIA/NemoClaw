@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { testTimeout } from "../helpers/timeouts";
 import {
   INSTALLER_PAYLOAD,
   TEST_SYSTEM_PATH,
@@ -41,6 +42,7 @@ function copyCompiledOnboardAdmission(readinessDir: string, onboardDir: string):
 function runInstallerHostAdmissionTest(
   host: {
     runtime: string;
+    isWsl?: boolean;
     isN1x?: boolean;
     hasNestedOverlayConflict?: boolean;
     isUnsupportedRuntime?: boolean;
@@ -120,13 +122,27 @@ exports.configuredRuntimeProviderOwnsHostReadiness = ({ environment = process.en
   if (resolutionFailure) throw new Error(resolutionFailure);
   return environment.NEMOCLAW_EXPERIMENTAL_PROFILE !== "portable" &&
     environment.NEMOCLAW_GATEWAY_RUNTIME === "podman";
-};\n`,
+};
+exports.configuredRuntimeProviderReadinessAuthority = (options) => ({
+  providerId: options.environment.NEMOCLAW_GATEWAY_RUNTIME || "docker",
+  ownsHostReadiness: exports.configuredRuntimeProviderOwnsHostReadiness(options),
+});\n`,
   );
   fs.writeFileSync(
     path.join(readinessDir, "host.js"),
     `exports.createHostReadinessReport = (_options, collection) => {
   const host = collection.assess();
   const findings = [];
+  if (host.isWsl) {
+    const { projectPlatformQualification } = require(${JSON.stringify(path.resolve("dist/lib/readiness/platform-qualification.js"))});
+    findings.push(...projectPlatformQualification({
+      platform: "linux", architecture: "arm64", isWsl: true,
+      runtime: host.runtime, dockerInstalled: false, dockerReachable: false,
+      hasNvidiaGpu: false,
+      runtimeProviderId: collection.runtimeProvider?.providerId,
+      runtimeProviderOwnsHostReadiness: collection.runtimeProvider?.ownsHostReadiness,
+    }).findings);
+  }
   if (host.hasNestedOverlayConflict) {
     findings.push({
       id: "host.docker.storage_incompatible",
@@ -419,32 +435,37 @@ describe("installer host preflight package contract", () => {
     expect(output).not.toMatch(/Host preflight found issues/);
   });
 
-  it("admits a Docker-less host through the selected managed runtime provider (#10891)", () => {
-    const dockerCapabilityIds = [
-      "host.docker.available",
-      "host.docker.daemon_reachable",
-      "host.docker.runtime_supported",
-      "host.docker.storage_compatible",
-      "host.docker.storage_remediation_available",
-    ];
-    const host = {
-      runtime: "unknown",
-      additionalFindingIds: ["host.docker.unavailable"],
-      unknownCapabilityIds: dockerCapabilityIds,
-    };
+  it.each([false, true])(
+    "admits a Docker-less host through its selected provider with WSL=%s (#12261)",
+    (isWsl) => {
+      const dockerCapabilityIds = [
+        "host.docker.available",
+        "host.docker.daemon_reachable",
+        "host.docker.runtime_supported",
+        "host.docker.storage_compatible",
+        "host.docker.storage_remediation_available",
+      ];
+      const host = {
+        runtime: "unknown",
+        isWsl,
+        additionalFindingIds: ["host.docker.unavailable"],
+        unknownCapabilityIds: dockerCapabilityIds,
+      };
 
-    const admitted = runInstallerHostAdmissionTest(host, undefined, {
-      gatewayRuntime: "podman",
-    });
-    expect(admitted.result.status, admitted.output).toBe(0);
-    expect(admitted.output).not.toMatch(/Host preflight found issues/);
-    expect(admitted.output).not.toContain("Install Docker");
+      const admitted = runInstallerHostAdmissionTest(host, undefined, {
+        gatewayRuntime: "podman",
+      });
+      expect(admitted.result.status, admitted.output).toBe(0);
+      expect(admitted.output).not.toMatch(/Host preflight found issues/);
+      expect(admitted.output).not.toContain("Install Docker");
 
-    const rejected = runInstallerHostAdmissionTest(host);
-    expect(rejected.result.status).toBe(1);
-    expect(rejected.output).toContain("host.docker.unavailable");
-    expect(rejected.output).toContain("Install Docker");
-  });
+      const rejected = runInstallerHostAdmissionTest(host);
+      expect(rejected.result.status).toBe(1);
+      expect(rejected.output).toContain("host.docker.unavailable");
+      expect(rejected.output).toContain("Install Docker");
+    },
+    testTimeout(15_000),
+  );
 
   it("fails closed when selected provider resolution throws", () => {
     const { output, result } = runInstallerHostAdmissionTest(

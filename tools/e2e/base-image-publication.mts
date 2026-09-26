@@ -54,6 +54,10 @@ const REVIEWED_PATH_GLOBS = new Map<string, RegExp>([
   ],
   ["test/e2e/live/mcp-bridge*.ts", /^test\/e2e\/live\/mcp-bridge[^/]*[.]ts$/u],
   [
+    "test/e2e/support/mcp-bridge-portable-lock-barrier.ts",
+    /^test\/e2e\/support\/mcp-bridge-portable-lock-barrier[.]ts$/u,
+  ],
+  [
     "src/lib/actions/sandbox/mcp-bridge-*.ts",
     /^src\/lib\/actions\/sandbox\/mcp-bridge-[^/]*[.]ts$/u,
   ],

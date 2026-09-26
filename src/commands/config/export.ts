@@ -14,7 +14,7 @@ export default class ConfigExportCommand extends NemoClawCommand {
   static enableJsonFlag = true;
   static summary = "Export a sandbox to a NemoClaw configuration file";
   static description =
-    "Export a secret-free configuration from the registered sandbox and its current state. The command does not change the sandbox.";
+    "Export a secret-free v1alpha1 configuration from the registered sandbox and its current state. The command does not change the sandbox.";
   static usage = ["config export <sandbox> --output <path|-> [--name <name>] [--force] [--json]"];
   static examples = [
     "<%= config.bin %> config export alpha --output nemoclaw.yaml",
@@ -27,7 +27,10 @@ export default class ConfigExportCommand extends NemoClawCommand {
       description: "Write YAML to this path on Linux. Use - on any supported host.",
       required: true,
     }),
-    name: Flags.string({ description: "Set metadata.name in the exported document" }),
+    name: Flags.string({
+      description:
+        "Set metadata.name (lowercase, starts with a letter, up to 40 letters, digits, or hyphens)",
+    }),
     force: Flags.boolean({
       description: "Replace an existing regular file; refuse symlinks and other file types",
       default: false,
@@ -61,9 +64,17 @@ export default class ConfigExportCommand extends NemoClawCommand {
     const { args, flags } = await this.parse(ConfigExportCommand);
     const json = this.jsonEnabled();
     const documentName = flags.name ?? args.sandboxName;
-    const { isValidNemoClawConfigDocumentName, parseNemoClawConfigDocumentUid } =
-      await import("../../lib/config/model");
-    if (!isValidNemoClawConfigDocumentName(documentName)) this.error("The config name is invalid.");
+    const [
+      { isValidNemoClawConfigDocumentName, parseNemoClawConfigDocumentUid },
+      { isV1Alpha1ExportName },
+    ] = await Promise.all([
+      import("../../lib/config/model"),
+      import("../../lib/config/v1alpha1-export"),
+    ]);
+    if (!isValidNemoClawConfigDocumentName(documentName) || !isV1Alpha1ExportName(documentName))
+      this.error(
+        "The config name must be a lowercase v1 name of at most 40 letters, digits, or hyphens, starting with a letter.",
+      );
     const target = this.exportTarget(flags.output, flags.force, json);
     const [
       { runConfigExport },

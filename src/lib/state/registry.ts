@@ -92,6 +92,10 @@ export {
   withLock,
 } from "./registry/lock";
 export { load, REGISTRY_FILE, save } from "./registry/persistence";
+export {
+  getSandboxAcrossGatewayRoots,
+  recordSandboxStopIntentAcrossGatewayRoots,
+} from "./registry/cross-port";
 export type {
   SandboxEntry,
   SandboxGpuProofResult,
@@ -509,6 +513,11 @@ export function registerSandbox(
           : null,
       imageTag: entry.imageTag || null,
       workload: cloneSandboxWorkloadReceipt(entry.workload),
+      managedStartupProtocol:
+        entry.managedStartupProtocol === "identity-bound" ||
+        entry.managedStartupProtocol === "legacy-unbound"
+          ? entry.managedStartupProtocol
+          : undefined,
       ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),
       ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
       lifecycleGeneration: entry.lifecycleGeneration,
@@ -536,7 +545,11 @@ export function registerSandbox(
         ? data
         : reversibleRemoval.claimInitialDefaultInRegistry(data, entry.name),
     );
-    return structuredClone(registered);
+    const persisted = load().sandboxes[entry.name];
+    if (!persisted) {
+      throw new Error(`Cannot read sandbox '${entry.name}' after registration`);
+    }
+    return structuredClone(persisted);
   });
 }
 
@@ -560,6 +573,8 @@ type SandboxInferenceRouteReservation = Pick<
 interface SandboxInferenceRouteReservationOptions {
   /** Refuse instead of changing any existing registry row. */
   requireAbsent?: boolean;
+  /** Caller-qualified abandoned registered row; compare and replace without publishing it. */
+  reclaimAbandoned?: SandboxEntry;
 }
 
 /**
@@ -572,10 +587,27 @@ export function reserveSandboxInferenceRoute(
   route: SandboxInferenceRouteReservation,
   options: SandboxInferenceRouteReservationOptions = {},
 ): boolean {
+  const abandoned = options.reclaimAbandoned
+    ? structuredClone(options.reclaimAbandoned)
+    : undefined;
   return withLock(() => {
     const data = load();
     const existing = data.sandboxes[name];
     if (options.requireAbsent === true && existing !== undefined) return false;
+    if (
+      abandoned &&
+      (!isDeepStrictEqual(existing, abandoned) ||
+        abandoned.pendingRouteReservation !== true ||
+        abandoned.pendingCreateIdentity !== undefined ||
+        typeof abandoned.createdAt !== "string" ||
+        !Number.isFinite(Date.parse(abandoned.createdAt)) ||
+        !route.reservationSessionId ||
+        typeof abandoned.reservationSessionId !== "string" ||
+        !abandoned.reservationSessionId ||
+        abandoned.reservationSessionId === route.reservationSessionId ||
+        abandoned.gatewayName !== route.gatewayName)
+    )
+      return false;
     const normalized = normalizeInferenceSelection(route);
     const provenance = cloneSandboxHostLocalInferenceProvenance(route.hostLocalInferenceProvenance);
     if (
@@ -616,7 +648,7 @@ export function reserveSandboxInferenceRoute(
     if (existing?.hostLocalInferenceProvenance !== undefined && !sameExplicitHostLocalRoute) {
       throw new Error("Cannot change an explicit host-local inference lifecycle reservation");
     }
-    if (existing?.pendingRouteReservation === true) {
+    if (existing?.pendingRouteReservation === true && !abandoned) {
       const sameReservation =
         (sameExplicitHostLocalRoute &&
           existing.reservationSessionId === undefined &&
@@ -858,6 +890,28 @@ export function finalizePendingSandboxRegistration(name: string): boolean {
     }
     data.sandboxes[name] = { ...current, pendingRouteReservation: undefined };
     save(reversibleRemoval.claimInitialDefaultInRegistry(data, name));
+    return true;
+  });
+}
+
+/** Publish a pending registration only while its complete staged row remains current. */
+export function finalizePendingSandboxRegistrationIfCurrent(expected: SandboxEntry): boolean {
+  const expectedSnapshot = JSON.parse(JSON.stringify(expected)) as SandboxEntry;
+  if (
+    expectedSnapshot.pendingRouteReservation !== true ||
+    expectedSnapshot.pendingCreateIdentity !== undefined
+  ) {
+    return false;
+  }
+  return withLock(() => {
+    const data = load();
+    const current = data.sandboxes[expectedSnapshot.name];
+    if (!current || !isDeepStrictEqual(current, expectedSnapshot)) return false;
+    data.sandboxes[expectedSnapshot.name] = {
+      ...current,
+      pendingRouteReservation: undefined,
+    };
+    save(reversibleRemoval.claimInitialDefaultInRegistry(data, expectedSnapshot.name));
     return true;
   });
 }

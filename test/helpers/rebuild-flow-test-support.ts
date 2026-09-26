@@ -47,8 +47,15 @@ export type RebuildFlowOverrides = {
     overrideEnvVar: string | null;
     disposeImageRef?: () => boolean;
   };
-  executeSandboxCommand?: () => { status: number; stdout: string; stderr: string } | null;
   executeSandboxExecCommand?: () => { status: number; stdout: string; stderr: string } | null;
+  runOpenClawPostRestoreDoctor?: () => Promise<
+    | { ok: true }
+    | {
+        ok: false;
+        stage: "mark" | "stop" | "doctor" | "release" | "restart";
+        detail: string;
+      }
+  >;
   checkAndRecoverSandboxProcesses?: () => {
     checked: boolean;
     wasRunning: boolean | null;
@@ -121,6 +128,7 @@ export type RebuildFlowOverrides = {
     revalidateBeforeDelete?: () => Promise<void>;
     assertDeleteEdgeUnchanged?: () => void;
   };
+  mcpLegacySources?: Array<Record<string, unknown>>;
   runOpenshell?: (args: string[]) =>
     | {
         status: number;
@@ -173,8 +181,8 @@ export type RebuildFlowHarness = {
   checkAndRecoverSandboxProcessesSpy: MockInstance;
   restartSandboxGatewaySpy: MockInstance;
   errorSpy: MockInstance;
-  executeSandboxCommandSpy: MockInstance;
   executeSandboxExecCommandSpy: MockInstance;
+  runOpenClawPostRestoreDoctorSpy: MockInstance;
   ensureMessagingHostForwardAfterRebuildSpy: MockInstance;
   ensureRebuildAgentBaseImageSpy: MockInstance;
   ensureAgentBaseImageSpy: MockInstance;

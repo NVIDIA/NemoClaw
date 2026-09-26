@@ -68,6 +68,7 @@ export function uninstallChildArgs(options: UninstallRunOptions): string[] {
   const args = ["internal", "uninstall", "run-plan", "--yes", "--all-gateway-ports-child"];
   if (options.deleteModels) args.push("--delete-models");
   if (options.destroyUserData) args.push("--destroy-user-data");
+  if (options.forceFreshReset) args.push("--force-fresh-reset");
   if (options.keepOpenShell) args.push("--keep-openshell");
   return args;
 }

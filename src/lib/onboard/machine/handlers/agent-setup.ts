@@ -16,6 +16,7 @@ export interface AgentSetupStateOptions<Agent> {
   session: Session | null;
   hermesAuthMethod: string | null;
   hermesToolGateways: string[];
+  managedOpenclawStartup?: boolean;
   revalidateSandboxIdentity?: (operation: string) => void;
   deps: {
     handleAgentSetup(
@@ -32,6 +33,7 @@ export interface AgentSetupStateOptions<Agent> {
     persistDashboardPort(sandboxName: string, dashboardPort: number): void;
     recordStepSkipped(stepName: string): Promise<Session>;
     isOpenclawReady(sandboxName: string): Promise<boolean>;
+    waitForSandboxControlPlaneReady(sandboxName: string): Promise<boolean>;
     skippedStepMessage(stepName: string, detail?: string | null): void;
     recordStateSkipped(
       state: "openclaw",
@@ -41,6 +43,7 @@ export interface AgentSetupStateOptions<Agent> {
       stepName: string,
       updates: { sandboxName: string; provider: string; model: string },
     ): Promise<void>;
+    announceOpenclawSetup?(): void;
     setupOpenclaw(
       sandboxName: string,
       model: string,
@@ -54,6 +57,7 @@ export interface AgentSetupStateOptions<Agent> {
       provider: string,
       webSearchConfig: WebSearchSelection,
       revalidateSandboxIdentity?: (operation: string) => void,
+      managedProfileApplied?: boolean,
     ): Promise<void>;
     recordStepComplete(stepName: string, updates: SessionUpdates): Promise<Session>;
     toSessionUpdates(updates: Record<string, unknown>): SessionUpdates;
@@ -75,6 +79,7 @@ export async function handleAgentSetupState<Agent>({
   session,
   hermesAuthMethod,
   hermesToolGateways,
+  managedOpenclawStartup = false,
   revalidateSandboxIdentity,
   deps,
 }: AgentSetupStateOptions<Agent>): Promise<AgentSetupStateResult> {
@@ -103,6 +108,11 @@ export async function handleAgentSetupState<Agent>({
 
   const resumeOpenclaw = resume && sandboxName && (await deps.isOpenclawReady(sandboxName));
   if (resumeOpenclaw) {
+    if (!(await deps.waitForSandboxControlPlaneReady(sandboxName))) {
+      throw new Error(
+        `Sandbox '${sandboxName}' did not re-register with OpenShell before OpenClaw resume configuration.`,
+      );
+    }
     deps.skippedStepMessage("openclaw", sandboxName);
     revalidateSandboxIdentity?.(`synchronize OpenClaw in sandbox '${sandboxName}'`);
     await deps.configureOpenclawSandbox(
@@ -111,9 +121,32 @@ export async function handleAgentSetupState<Agent>({
       provider,
       webSearchConfig,
       revalidateSandboxIdentity,
+      managedOpenclawStartup === true,
     );
     revalidateSandboxIdentity?.(`record resumed OpenClaw setup for sandbox '${sandboxName}'`);
     await deps.recordStateSkipped("openclaw", { reason: "resume", sandboxName });
+    await deps.recordStepComplete(
+      "openclaw",
+      deps.toSessionUpdates({ sandboxName, provider, model, hermesAuthMethod, hermesToolGateways }),
+    );
+  } else if (managedOpenclawStartup) {
+    deps.announceOpenclawSetup?.();
+    await deps.startRecordedStep("openclaw", { sandboxName, provider, model });
+    if (!(await deps.waitForSandboxControlPlaneReady(sandboxName))) {
+      throw new Error(
+        `Managed OpenClaw startup did not re-register with OpenShell for sandbox '${sandboxName}'.`,
+      );
+    }
+    revalidateSandboxIdentity?.(`synchronize managed OpenClaw in sandbox '${sandboxName}'`);
+    await deps.configureOpenclawSandbox(
+      sandboxName,
+      model,
+      provider,
+      webSearchConfig,
+      revalidateSandboxIdentity,
+      true,
+    );
+    revalidateSandboxIdentity?.(`complete managed OpenClaw setup for sandbox '${sandboxName}'`);
     await deps.recordStepComplete(
       "openclaw",
       deps.toSessionUpdates({ sandboxName, provider, model, hermesAuthMethod, hermesToolGateways }),
