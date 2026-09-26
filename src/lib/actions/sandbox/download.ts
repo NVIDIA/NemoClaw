@@ -138,12 +138,16 @@ export async function downloadFromSandbox(
   try {
     const result = await withMcpLifecycleLock(opts.sandboxName, async () => {
       assertHermesPortableCommandUnavailable(opts.sandboxName, "sandbox:download");
-      const sandboxPath = (opts.sandboxPath ?? "").trim();
-      if (!sandboxPath) {
+      const requestedPath = (opts.sandboxPath ?? "").trim();
+      if (!requestedPath) {
         throw new Error(
           `No sandbox path provided; usage: ${CLI_NAME} ${opts.sandboxName} download <sandbox-path> [host-dest]`,
         );
       }
+      // `openshell sandbox download` takes the source as a positional argument,
+      // so a relative path that starts with a hyphen is parsed as a flag. Anchor
+      // it with `./` so it stays positional. Absolute paths are already safe.
+      const sandboxPath = requestedPath.startsWith("-") ? `./${requestedPath}` : requestedPath;
       const hostDest = resolveHostPathFromCwd((opts.hostDest ?? "").trim() || ".");
 
       await ensureLiveSandboxOrExit(opts.sandboxName, {
