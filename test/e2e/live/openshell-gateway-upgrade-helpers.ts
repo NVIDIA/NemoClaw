@@ -51,9 +51,9 @@ export async function captureGatewayUpgradeService(
   phase: string,
   env: NodeJS.ProcessEnv,
   enabled: boolean,
-): Promise<void> {
-  if (!enabled) return;
-  await host.command(
+): Promise<ShellProbeResult | null> {
+  if (!enabled) return null;
+  return host.command(
     "systemctl",
     [
       "--user",
@@ -67,6 +67,46 @@ export async function captureGatewayUpgradeService(
       timeoutMs: 30_000,
     },
   );
+}
+
+type ServiceObservation = Pick<ShellProbeResult, "exitCode" | "stdout" | "signal" | "timedOut">;
+export interface GatewayUpgradeServiceEvidence {
+  before: ServiceObservation | null;
+  after: ServiceObservation | null;
+  expectedFragmentPath: string;
+}
+
+function activeServiceInvocation(
+  observation: ServiceObservation | null,
+  fragmentPath: string,
+): string | null {
+  if (!observation || observation.exitCode !== 0 || observation.signal || observation.timedOut)
+    return null;
+  const lines = observation.stdout.trim().split(/\r?\n/);
+  const properties = new Map(
+    lines.map((line) => {
+      const separator = line.indexOf("=");
+      return [line.slice(0, separator), line.slice(separator + 1)];
+    }),
+  );
+  const invocation = properties.get("InvocationID") ?? "";
+  const pid = properties.get("MainPID") ?? "";
+  return lines.length === 4 &&
+    properties.size === 4 &&
+    properties.get("FragmentPath") === fragmentPath &&
+    properties.get("ActiveState") === "active" &&
+    /^[1-9][0-9]*$/.test(pid) &&
+    Number.isSafeInteger(Number(pid)) &&
+    /^[0-9a-f]{32}$/.test(invocation) &&
+    invocation !== "0".repeat(32)
+    ? invocation
+    : null;
+}
+
+function gatewayServiceWasReplaced(evidence: GatewayUpgradeServiceEvidence): boolean {
+  const before = activeServiceInvocation(evidence.before, evidence.expectedFragmentPath);
+  const after = activeServiceInvocation(evidence.after, evidence.expectedFragmentPath);
+  return before !== null && after !== null && before !== after;
 }
 
 export async function captureGatewayUpgradeFailureDiagnostics(
@@ -139,9 +179,13 @@ export function gatewayUpgradeRecoverySucceeded(
   recovery: Pick<ShellProbeResult, "exitCode">,
   forward: { readonly valid: boolean },
   stateChecks: readonly Pick<ShellProbeResult, "exitCode">[],
+  service?: GatewayUpgradeServiceEvidence,
 ): boolean {
   return (
-    recovery.exitCode === 0 && forward.valid && stateChecks.every((result) => result.exitCode === 0)
+    recovery.exitCode === 0 &&
+    forward.valid &&
+    stateChecks.every((result) => result.exitCode === 0) &&
+    (service === undefined || gatewayServiceWasReplaced(service))
   );
 }
 

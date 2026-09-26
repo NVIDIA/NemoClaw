@@ -26,7 +26,6 @@ import {
   hermesProviderAuth,
   installTerminalStepFailureMock,
   listHarnessRebuildBackups,
-  launchReadiness,
   loadRebuildSandbox,
   mcpBridge,
   mcpBridgeProviderInspection,
@@ -40,7 +39,6 @@ import {
   openClawLifecycle,
   openshellRuntime,
   policies,
-  pairingSettlement,
   policyGet,
   policyState,
   portableRetirementAuthority,
@@ -368,12 +366,6 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       : ({ name: sessionAgentName } as never),
   );
   vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue(agentDisplayName);
-  vi.spyOn(pairingSettlement, "settleOrdinaryOpenClawPairing").mockResolvedValue({
-    kind: "settled",
-  });
-  vi.spyOn(launchReadiness, "settlePortableOpenClawPairing").mockResolvedValue({
-    kind: "not-portable",
-  });
   vi.spyOn(gatewayRuntime, "recoverNamedGatewayRuntime").mockImplementation(
     async (...args: unknown[]) => {
       const gatewayName =

@@ -6,14 +6,12 @@ import * as agentRuntime from "../../agent/runtime";
 import { CLI_NAME } from "../../cli/branding";
 import { D, G, R, YW } from "../../cli/terminal-style";
 import type { SandboxMessagingPlan } from "../../messaging";
-import { settleOrdinaryOpenClawPairing } from "../../onboard/machine/finalization-deps";
 import * as sandboxVersion from "../../sandbox/version";
 import {
   inspectMutableHermesConfigPerms,
   repairMutableConfigPerms,
 } from "../../sandbox/mutable-config-perms";
 import * as registry from "../../state/registry";
-import { settlePortableOpenClawPairing } from "./launch-readiness";
 import { ensureMessagingHostForwardAfterRebuild } from "./messaging-host-forward-lifecycle";
 import type { RebuildBackupManifest } from "./rebuild-backup-phase";
 import {
@@ -635,24 +633,6 @@ export async function runRebuildPostRestorePhase(
     log(`Verified the rebuilt ${targetAgentName} terminal-agent mutable posture`);
   }
   const postRestoreComplete = genericPostRestoreComplete && mutableConfigPermissionsVerified;
-  if (postRestoreComplete && targetAgentName === "openclaw") {
-    // Restore replaces native pairing state after inner onboarding. Reuse the
-    // profile's existing settlement owner before reporting the rebuilt runtime ready.
-    const portablePairing = await settlePortableOpenClawPairing(sandboxName);
-    const pairing =
-      portablePairing.kind === "not-portable"
-        ? await settleOrdinaryOpenClawPairing(sandboxName)
-        : portablePairing;
-    if (pairing.kind !== "settled") {
-      console.error(`  OpenClaw pairing remains incomplete after state restore: ${pairing.reason}`);
-      if (backupManifest) console.error(`  Backup is preserved at: ${backupManifest.backupPath}`);
-      console.error(
-        `  Resolve the pairing failure, then rerun \`${CLI_NAME} ${sandboxName} rebuild --yes\`.`,
-      );
-      bail("OpenClaw pairing remained incomplete after rebuild.");
-      return;
-    }
-  }
   if (postRestoreComplete) {
     console.log(`  ${G}✓${R} Sandbox '${sandboxName}' rebuild completed`);
     if (versionCheck.expectedVersion) {

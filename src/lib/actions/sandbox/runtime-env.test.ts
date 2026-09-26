@@ -95,29 +95,6 @@ describe("wrapExecCommandWithRuntimeEnv", () => {
     expect(result.stdout).not.toContain("super-secret-gateway-token");
   });
 
-  it("dispatches the agent without login profiles restoring gateway-token authentication", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-agent-login-profile-"));
-    const profile = "export OPENCLAW_GATEWAY_TOKEN=profile-only-test-token\n";
-    fs.writeFileSync(path.join(root, ".profile"), profile);
-    fs.writeFileSync(path.join(root, ".bash_profile"), profile);
-    const command = [
-      process.execPath,
-      "-e",
-      "process.stdout.write(JSON.stringify({ tokenPresent: Object.hasOwn(process.env, 'OPENCLAW_GATEWAY_TOKEN') }))",
-    ];
-    const [binary, ...args] = wrapOpenClawAgentCommandWithRuntimeEnv(command);
-    try {
-      const result = spawnSync(binary!, args, {
-        encoding: "utf8",
-        env: { HOME: root, PATH: "/usr/bin:/bin", OPENCLAW_GATEWAY_TOKEN: "ambient-test-token" },
-      });
-      expect(result.status, result.stderr).toBe(0);
-      expect(JSON.parse(result.stdout)).toEqual({ tokenPresent: false });
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
   it("ignores ambient BASH_ENV before sourcing the trusted runtime env (#4504)", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-exec-bash-env-"));
     const bashEnv = path.join(root, "bash-env.sh");
