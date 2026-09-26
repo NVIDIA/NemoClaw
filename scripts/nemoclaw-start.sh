@@ -1264,6 +1264,7 @@ if gateway_target is not None:
     first_name_ok = isinstance(first_name, str) and first_name == gateway_target
     first_id_ok = isinstance(first_id, str) and (first_id == bare or first_id == gateway_target)
     if primary_ok and first_name_ok and first_id_ok:
+        print("already-synced")
         sys.exit(0)
     print(f"{os.environ.get('MODEL_SOURCE', 'gateway')}\t{gateway_target}")
     sys.exit(0)
@@ -1278,10 +1279,19 @@ legacy_target = qualify(first.get("name") or first.get("id"))
 if legacy_target is None:
     sys.exit(0)
 if isinstance(primary, str) and primary == legacy_target:
+    print("already-synced")
     sys.exit(0)
 print(f"legacy\t{legacy_target}")
 PYRECONCILE_READ
   )"
+
+  if [ "$provider_model_ref" = "already-synced" ]; then
+    # A prior attempt may have installed this config before its hash refresh
+    # failed. Keep the retry fail-closed until both files agree.
+    local _hash_rc=0
+    ensure_mutable_openclaw_config_hash || _hash_rc=$?
+    return "$_hash_rc"
+  fi
 
   if [ -z "$provider_model_ref" ]; then
     return 0

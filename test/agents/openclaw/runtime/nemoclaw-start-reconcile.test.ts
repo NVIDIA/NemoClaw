@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -35,7 +36,7 @@ interface RunReconcileOptions {
   useActualUser?: boolean;
   symlink?: "config" | "hash";
   configWritable?: boolean;
-  hashFailure?: boolean;
+  hashFailure?: boolean | "once";
   env?: Record<string, string>;
 }
 
@@ -101,14 +102,25 @@ describe("agent identity reconciliation with provider (#3175)", () => {
       fs.writeFileSync(path.join(binDir, "openshell"), stub, { mode: 0o755 });
     }
 
+    const hashHelper =
+      options.hashFailure === true
+        ? "ensure_mutable_openclaw_config_hash() { return 19; }"
+        : options.hashFailure === "once"
+          ? [
+              "_hash_refresh_attempt=0",
+              "ensure_mutable_openclaw_config_hash() {",
+              "  _hash_refresh_attempt=$((_hash_refresh_attempt + 1))",
+              '  [ "$_hash_refresh_attempt" -gt 1 ] || return 19',
+              `  (cd ${JSON.stringify(openclawDir)} && sha256sum openclaw.json >.config-hash)`,
+              "}",
+            ].join("\n")
+          : `ensure_mutable_openclaw_config_hash() { (cd ${JSON.stringify(openclawDir)} && sha256sum openclaw.json >.config-hash); }`;
     const helperFns = [
       "normalize_mutable_config_perms() { :; }",
       options.useActualUser
         ? extractShellFunction("run_openclaw_config_as_owner")
         : 'run_openclaw_config_as_owner() { "$@"; }',
-      options.hashFailure
-        ? "ensure_mutable_openclaw_config_hash() { return 19; }"
-        : `ensure_mutable_openclaw_config_hash() { (cd ${JSON.stringify(openclawDir)} && sha256sum openclaw.json >.config-hash); }`,
+      hashHelper,
     ].join("\n");
     const fn = extractShellFunction("reconcile_agent_model_with_provider").replaceAll(
       "/sandbox",
@@ -120,6 +132,13 @@ describe("agent identity reconciliation with provider (#3175)", () => {
       ...(options.useActualUser ? [] : [`id() { echo ${options.userId ?? 0}; }`]),
       helperFns,
       fn,
+      ...(options.hashFailure === "once"
+        ? [
+            "_first_reconcile_rc=0",
+            "reconcile_agent_model_with_provider || _first_reconcile_rc=$?",
+            '[ "$_first_reconcile_rc" -eq 19 ] || exit 91',
+          ]
+        : []),
       "reconcile_agent_model_with_provider",
     ].join("\n");
     const script = path.join(root, "run.sh");
@@ -145,10 +164,12 @@ describe("agent identity reconciliation with provider (#3175)", () => {
       encoding: "utf-8",
       env: { ...process.env, ...options.env, PATH: pathValue },
     });
-    const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+    const configRaw = fs.readFileSync(configPath, "utf-8");
+    const config = JSON.parse(configRaw);
     const hash = fs.readFileSync(hashPath, "utf-8");
+    const expectedHash = `${createHash("sha256").update(configRaw).digest("hex")}  openclaw.json\n`;
     fs.rmSync(root, { recursive: true, force: true });
-    return { result, config, hash };
+    return { result, config, hash, expectedHash };
   }
 
   it("aligns agents.defaults.model.primary to inference provider's first model when they drift", () => {
@@ -171,7 +192,7 @@ describe("agent identity reconciliation with provider (#3175)", () => {
   });
 
   it("is a no-op when primary already matches the provider's model", () => {
-    const { result, config, hash } = runReconcile({
+    const { result, config, hash, expectedHash } = runReconcile({
       agents: {
         defaults: { model: { primary: "inference/nvidia/same-model" } },
       },
@@ -187,7 +208,7 @@ describe("agent identity reconciliation with provider (#3175)", () => {
 
     expect(result.status).toBe(0);
     expect(config.agents.defaults.model.primary).toBe("inference/nvidia/same-model");
-    expect(hash).toBe("oldhash\n");
+    expect(hash).toBe(expectedHash);
   });
 
   it("falls back to an inference-qualified model ref when provider metadata lacks name", () => {
@@ -322,11 +343,11 @@ describe("agent identity reconciliation with provider (#3175)", () => {
         },
       },
     };
-    const { result, config, hash } = runReconcile(switched);
+    const { result, config, hash, expectedHash } = runReconcile(switched);
 
     expect(result.status, result.stderr || result.stdout).toBe(0);
     expect(config).toEqual(switched);
-    expect(hash).toBe("oldhash\n");
+    expect(hash).toBe(expectedHash);
   });
 
   it.runIf(typeof process.getuid === "function" && process.getuid() !== 0)(
@@ -420,7 +441,7 @@ describe("agent identity reconciliation with provider (#3175)", () => {
   });
 
   it("is a no-op when the live gateway model matches both file fields", () => {
-    const { result, config, hash } = runReconcile(
+    const { result, config, hash, expectedHash } = runReconcile(
       {
         agents: { defaults: { model: { primary: "inference/nvidia/synced" } } },
         models: {
@@ -448,7 +469,7 @@ describe("agent identity reconciliation with provider (#3175)", () => {
       contextWindow: 131072,
       maxTokens: 4096,
     });
-    expect(hash).toBe("oldhash\n");
+    expect(hash).toBe(expectedHash);
   });
 
   it("preserves explicit limits when only the primary model reference is stale", () => {
@@ -765,5 +786,25 @@ describe("agent identity reconciliation with provider (#3175)", () => {
     expect(result.status).toBe(19);
     expect(config.agents.defaults.model.primary).toBe("inference/gateway-model");
     expect(hash).toBe("oldhash\n");
+  });
+
+  it("repairs the stale hash when reconciliation retries after a hash refresh failure", () => {
+    const { result, config, hash, expectedHash } = runReconcile(
+      {
+        agents: { defaults: { model: { primary: "inference/old-model" } } },
+        models: {
+          providers: {
+            inference: {
+              models: [{ id: "file-model", name: "inference/file-model" }],
+            },
+          },
+        },
+      },
+      { gatewayModel: "gateway-model", hashFailure: "once" },
+    );
+
+    expect(result.status, result.stderr || result.stdout).toBe(0);
+    expect(config.agents.defaults.model.primary).toBe("inference/gateway-model");
+    expect(hash).toBe(expectedHash);
   });
 });
