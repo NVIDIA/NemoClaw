@@ -3262,6 +3262,13 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
                 getMessagingChannels: () => liveFinalFlowContext.selectedMessagingChannels || [],
                 providerExistsInGateway: (providerName: string) =>
                   providerExistsInGateway(providerName),
+                probeInferenceInvocation: () =>
+                  verifyDeploymentModule.probeOnboardInferenceInvocation({
+                    ...liveFinalFlowContext,
+                    sandboxName: name,
+                    gatewayName: GATEWAY_NAME,
+                    agentName: agent?.name,
+                  }),
               },
               {
                 diagnoseCustomOpenClawRuntime:
@@ -3269,6 +3276,10 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
                     liveFinalFlowContext.fromDockerfile,
                     agent?.name,
                   ),
+                inferenceRouteContext: {
+                  agentName: agent?.name,
+                  provider: liveFinalFlowContext.provider,
+                },
               },
             );
           },

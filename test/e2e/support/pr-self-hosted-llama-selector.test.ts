@@ -45,6 +45,13 @@ const REQUIRED_RUNTIME_AUTHORITY_PATHS = [
   "src/lib/onboard/runtime-provider/current.ts",
   "src/lib/onboard/setup-nim-flow.ts",
 ] as const;
+const SHARED_ADMIN_APPROVAL_PATHS = [
+  "test/e2e/fixtures/admin-approval-connect.sh",
+  "test/e2e/fixtures/admin-approval-connect.ts",
+  "test/e2e/fixtures/admin-request-selector.ts",
+  "test/e2e/fixtures/issue-4462-admin-approval-evidence.ts",
+  "test/e2e/lib/issue-4462-admin-request-selector.py",
+] as const;
 const ARM64_PROOF_AUTHORITY_PATHS = [
   "src/lib/container-gpu-proof.ts",
   "src/lib/onboard/runtime-provider/nvidia-container-proof.ts",
@@ -173,6 +180,16 @@ describe.concurrent("generic NVIDIA GPU PR selection", () => {
 
   it.for(REQUIRED_RUNTIME_AUTHORITY_PATHS)(
     "independently requires the generic GPU E2E when runtime authority owner %s changes",
+    async (changedFile, { expect }) => {
+      const result = await selectGenericGpuLane([changedFile]);
+      expect(result).toBe(
+        `base_sha=${BASE_SHA}\nhead_sha=${CANDIDATE_SHA}\npr_number=8748\nselected=true`,
+      );
+    },
+  );
+
+  it.for(SHARED_ADMIN_APPROVAL_PATHS)(
+    "selects the generic GPU E2E when shared admin approval owner %s changes",
     async (changedFile, { expect }) => {
       const result = await selectGenericGpuLane([changedFile]);
       expect(result).toBe(
