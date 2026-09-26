@@ -486,6 +486,7 @@
     {
       "live": "test/e2e/live/cloud-onboard.test.ts",
       "fast": [
+        "test/e2e/support/e2e-redaction-entry.test.ts",
         "src/lib/onboard/initial-policy-real-policy.test.ts",
         "src/lib/onboard/managed-startup-image-runtime-handoff.test.ts",
         "test/e2e/support/managed-image-cohort-contract.test.ts",
@@ -819,6 +820,8 @@
         "test/e2e/live/openshell-gateway-upgrade-old-installer.ts"
       ],
       "fast": [
+        "src/lib/actions/sandbox/runtime-env.test.ts",
+        "src/lib/actions/sandbox/rebuild-post-restore-phase.test.ts",
         "src/lib/actions/sandbox/rebuild-flow-lifecycle.test.ts",
         "src/lib/actions/sandbox/rebuild-flow-recovery.test.ts",
         "src/lib/actions/sandbox/rebuild-flow-target-image.test.ts",

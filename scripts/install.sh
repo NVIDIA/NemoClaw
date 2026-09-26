@@ -2062,7 +2062,8 @@ trusted_openshell_gateway_bin_for_service() {
   if [[ "$user_bin_home" != /* ]]; then
     user_bin_home="${HOME%/}/.local/bin"
   fi
-  user_bin_home="$(collapse_duplicate_slashes "${user_bin_home%/}")"
+  user_bin_home="$(collapse_duplicate_slashes "$user_bin_home")"
+  user_bin_home="${user_bin_home%/}"
   case "$gateway_bin" in
     "${user_bin_home}/openshell-gateway" | /usr/local/bin/openshell-gateway | /usr/bin/openshell-gateway)
       return 0

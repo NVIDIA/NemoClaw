@@ -7,6 +7,8 @@ import * as agentRuntime from "../../agent/runtime";
 import * as mutableConfigPerms from "../../sandbox/mutable-config-perms";
 import * as registry from "../../state/registry";
 import * as sandboxVersion from "../../sandbox/version";
+import * as pairingSettlement from "../../onboard/machine/finalization-deps";
+import * as launchReadiness from "./launch-readiness";
 import * as messagingHostForward from "./messaging-host-forward-lifecycle";
 import * as restoreWindow from "./runtime/openclaw-lifecycle";
 import * as rebuildConfigHash from "./rebuild-config-hash";
@@ -141,6 +143,12 @@ describe("rebuild post-restore phase", () => {
       () => ({ agent: agentName === "openclaw" ? null : agentName }) as never,
     );
     vi.spyOn(registry, "updateSandbox").mockReturnValue(true);
+    vi.spyOn(pairingSettlement, "settleOrdinaryOpenClawPairing").mockResolvedValue({
+      kind: "settled",
+    });
+    vi.spyOn(launchReadiness, "settlePortableOpenClawPairing").mockResolvedValue({
+      kind: "not-portable",
+    });
     vi.spyOn(sandboxVersion, "checkAgentVersion").mockResolvedValue({
       sandboxVersion: null,
       expectedVersion: null,
@@ -202,6 +210,38 @@ describe("rebuild post-restore phase", () => {
     ).toHaveBeenCalledExactlyOnceWith("alpha", undefined);
     expect(processRecovery.finishUnregisteredOpenClawPostRestoreDoctor).toHaveBeenCalledOnce();
     expect(processRecovery.abortUnregisteredOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
+    expect(pairingSettlement.settleOrdinaryOpenClawPairing).toHaveBeenCalledExactlyOnceWith(
+      "alpha",
+    );
+  });
+
+  it.each(["scope-upgrade-not-approved", "scope-upgrade-rejected"] as const)(
+    "does not declare a restored OpenClaw sandbox complete when pairing is %s",
+    async (reason) => {
+      vi.mocked(pairingSettlement.settleOrdinaryOpenClawPairing).mockResolvedValue({
+        kind: "incomplete",
+        reason,
+      });
+      const args = input();
+
+      const verification = await runRebuildPostRestorePhase(args);
+
+      expect(args.bail).toHaveBeenCalledWith("OpenClaw pairing remained incomplete after rebuild.");
+      expect(verification).toBeUndefined();
+      expect(vi.mocked(console.log).mock.calls.flat().join("\n")).not.toContain(
+        "rebuild completed",
+      );
+    },
+  );
+
+  it("keeps Portable pairing with its existing settlement owner", async () => {
+    vi.mocked(launchReadiness.settlePortableOpenClawPairing).mockResolvedValue({ kind: "settled" });
+    const args = input();
+
+    await runRebuildPostRestorePhase(args);
+
+    expect(pairingSettlement.settleOrdinaryOpenClawPairing).not.toHaveBeenCalled();
+    expect(args.bail).not.toHaveBeenCalled();
   });
 
   it("reuses the maintenance window established before filesystem restore", async () => {

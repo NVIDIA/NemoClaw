@@ -3,10 +3,10 @@
 
 /**
  * Installs one reviewed historical NemoClaw/OpenShell gateway, creates a real
- * OpenClaw sandboxes, seeds durable workspace state, and runs the current
- * installer upgrade path. The survivor must remain usable. Fixture-declared
- * stopped sandboxes must preserve their workspace state and stopped phase.
- * Agent-image and OpenClaw-state-format migration are outside this target.
+ * OpenClaw sandbox, seeds durable workspace state, and runs the current
+ * installer upgrade path with the current managed agent image. The survivor
+ * must remain usable. Fixture-declared stopped sandboxes must preserve their
+ * workspace state and stopped phase after native state restoration.
  */
 
 import { createHash } from "node:crypto";

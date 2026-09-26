@@ -273,19 +273,22 @@ describe("install.sh OpenShell gateway service", () => {
     expect(unit).not.toContain(`${home}//`);
   });
 
-  it("stages a user-local binary from an absolute XDG bin home (#6903)", () => {
-    const home = makeTempRoot();
-    const xdgBinHome = path.join(home, "custom-bin");
-    const gatewayBin = path.join(xdgBinHome, "openshell-gateway");
-    fs.mkdirSync(xdgBinHome, { recursive: true });
-    writeExecutable(gatewayBin, "#!/usr/bin/env bash\nexit 0\n");
+  it.each(["", "/", "//", "///"])(
+    "stages a user-local binary with XDG bin-home suffix '%s' (#10541)",
+    (suffix) => {
+      const home = makeTempRoot();
+      const xdgBinHome = path.join(home, "custom-bin");
+      const gatewayBin = path.join(xdgBinHome, "openshell-gateway");
+      fs.mkdirSync(xdgBinHome, { recursive: true });
+      writeExecutable(gatewayBin, "#!/usr/bin/env bash\nexit 0\n");
 
-    const result = stageService(home, gatewayBin, { XDG_BIN_HOME: xdgBinHome });
-    const unit = fs.readFileSync(servicePath(home), "utf-8");
+      const result = stageService(home, gatewayBin, { XDG_BIN_HOME: `${xdgBinHome}${suffix}` });
+      const unit = fs.readFileSync(servicePath(home), "utf-8");
 
-    expect(result.status).toBe(0);
-    expect(unit).toContain(`ExecStart=${gatewayBin}`);
-  });
+      expect(result.status).toBe(0);
+      expect(unit).toContain(`ExecStart=${gatewayBin}`);
+    },
+  );
 
   it("leaves custom gateway ports on the detached lifecycle (#6903)", () => {
     const home = makeTempRoot();
