@@ -49,6 +49,7 @@ export interface HealthyPortReuseInput {
   gatewayReuseState: GatewayReuseState;
   externallySupervised: boolean;
   managedGatewayObservationAuthoritative?: boolean;
+  verifyDashboardForward?: (port: number) => Promise<boolean>;
   portCheckOptions: CheckPortOpts | undefined;
   supportsLifecycleCommands: boolean;
   destroyGateway: () => boolean | Promise<boolean>;
@@ -81,7 +82,9 @@ export async function applyHealthyPortReuse(
   // same numeric port and must still retain normal conflict handling.
   if (input.externallySupervised) return kind === "gateway" ? "continue" : null;
   if (input.managedGatewayObservationAuthoritative) {
-    return kind === "gateway" && input.gatewayReuseState === "healthy" ? "continue" : null;
+    if (input.gatewayReuseState !== "healthy") return null;
+    if (kind === "gateway") return "continue";
+    return (await input.verifyDashboardForward?.(port)) === true ? "continue" : null;
   }
   if (input.gatewayReuseState !== "healthy") return null;
   // Only probe the container when lifecycle commands are advertised — for

@@ -100,6 +100,40 @@ describe("runInteractiveShell", () => {
 });
 
 describe("runCapture with argv array", () => {
+  it.each([
+    [0, (invoke: () => string) => expect(invoke()).toBe("out")],
+    [17, (invoke: () => string) => expect(invoke).toThrow("Command failed with status 17")],
+  ] as const)(
+    "observes the actual capture without changing exit %s semantics",
+    (exitCode, verify) => {
+      let captured: runner.CaptureObservation | undefined;
+      const command = [
+        process.execPath,
+        "-e",
+        `process.stdout.write(" out\\n"); process.stderr.write("err\\n"); process.exit(${exitCode})`,
+      ];
+      const invoke = () =>
+        runner.runCapture(command, {
+          env: { NEMOCLAW_TEST_VAR: "observed-context" },
+          onCapture: (value) => {
+            captured = value;
+            throw new Error("observer failure");
+          },
+        });
+      verify(invoke);
+      expect(captured).toMatchObject({
+        argv: command,
+        cwd: runner.ROOT,
+        env: { NEMOCLAW_TEST_VAR: "observed-context" },
+        exitCode,
+        signal: null,
+        errorCode: null,
+        stdout: " out\n",
+        stderr: "err\n",
+      });
+    },
+  );
+
   it("captures stdout from a simple command", () => {
     const output = runner.runCapture(["echo", "hello world"]);
     expect(output).toBe("hello world");

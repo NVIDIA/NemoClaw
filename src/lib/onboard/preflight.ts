@@ -1355,7 +1355,7 @@ const PROBE_TIMEOUT_MS = 20_000;
 // digest used by the sandbox-bridge gateway probe so both probes pull
 // the exact same blob and share its Docker image cache.
 export const BUSYBOX_PROBE_IMAGE =
-  "busybox@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662";
+  "docker.io/library/busybox@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662";
 
 /**
  * Longer ceiling for image pulls. Decoupled from PROBE_TIMEOUT_MS so a

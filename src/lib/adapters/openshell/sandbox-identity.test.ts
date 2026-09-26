@@ -2,11 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createOpenshellCliHelpers } from "../../onboard/openshell-cli";
+import { ROOT, runCapture } from "../../runner";
 
 import { describe, expect, it, vi } from "vitest";
 
 import {
   createOpenshellSandboxIdReader,
+  type CreatedSandboxIdentityEvidence,
+  observeCreatedOpenShellSandboxId,
   fingerprintOpenShellSandboxId,
   fingerprintOpenShellSandboxLiveIdentity,
   isOpenShellSandboxId,
@@ -40,6 +47,140 @@ function sandboxListJson(overrides: Record<string, unknown> = {}): string {
     },
   ]);
 }
+
+describe("create selector execution evidence", () => {
+  it.each([
+    ["matched", sandboxListJson(), 0, "matched", "matched", 1],
+    [
+      "failed command",
+      "partial selector response",
+      17,
+      "invalid",
+      "selector-execution-nonzero",
+      null,
+    ],
+    ["empty rows", "[]", 0, "pending", "selector-rows-empty", 0],
+    [
+      "ambiguous rows",
+      `${sandboxListJson().slice(0, -1)},${sandboxListJson().slice(1)}`,
+      0,
+      "invalid",
+      "selector-output-ambiguous",
+      2,
+    ],
+    [
+      "wrong nonce",
+      sandboxListJson({ labels: { [NEMOCLAW_CREATE_ATTEMPT_LABEL]: "b".repeat(62) } }),
+      0,
+      "invalid",
+      "selector-identity-mismatch",
+      1,
+    ],
+    [
+      "incomplete metadata",
+      sandboxListJson({ resource_version: null }),
+      0,
+      "pending",
+      "selector-metadata-incomplete",
+      1,
+    ],
+    ["malformed output", "not-json", 0, "invalid", "selector-output-malformed", null],
+  ] as const)(
+    "retains bounded actual execution evidence for %s",
+    (_name, stdout, exitCode, state, diagnostic, rowCount) => {
+      const directory = mkdtempSync(join(tmpdir(), "selector evidence "));
+      const binary = join(directory, "fake openshell");
+      const secret = "selector-credential-canary";
+      const stderr =
+        `stderr: ${secret} https://user:password@localhost/private ` + "x".repeat(5000);
+      let evidence: CreatedSandboxIdentityEvidence | undefined;
+      try {
+        writeFileSync(
+          binary,
+          `#!${process.execPath}\nprocess.stdout.write(process.env.SELECTOR_FIXTURE_OUTPUT); process.stderr.write(process.env.SELECTOR_FIXTURE_ERROR); process.exit(Number(process.env.SELECTOR_FIXTURE_EXIT));\n`,
+          { mode: 0o700 },
+        );
+        const cli = createOpenshellCliHelpers({
+          getCachedBinary: () => binary,
+          setCachedBinary: () => {},
+          getGatewayPort: () => 8080,
+          getDockerDriverGatewayEndpoint: () => "http://gateway:8080",
+          runCaptureCommand: (argv, options) =>
+            runCapture(argv, {
+              ...options,
+              env: {
+                OPENSHELL_GATEWAY: "selected-gateway",
+                OPENSHELL_WORKSPACE: directory,
+                NEMOCLAW_GATEWAY_RUNTIME: "podman",
+                CONTAINER_HOST: "unix:///run/user/1000/podman/podman.sock",
+                NVIDIA_API_KEY: secret,
+                SELECTOR_FIXTURE_OUTPUT: stdout,
+                SELECTOR_FIXTURE_ERROR: stderr,
+                SELECTOR_FIXTURE_EXIT: String(exitCode),
+              },
+            }),
+        });
+        const observation = observeCreatedOpenShellSandboxId(
+          {
+            sandboxName: "alpha",
+            gatewayName: "selected-gateway",
+            createAttemptNonce: CREATE_ATTEMPT_NONCE,
+            runCaptureOpenshell: cli.runCaptureOpenshell,
+            onObservation: (value) => {
+              evidence = value;
+              throw new Error("observer failure");
+            },
+          },
+          3000,
+        );
+        expect(observation.state).toBe(state);
+        expect(evidence).toMatchObject({
+          captureStatus: "captured",
+          exitCode,
+          signal: null,
+          errorCode: null,
+          state,
+          diagnostic,
+          rowCount,
+          outputTruncated: true,
+          context: {
+            cwd: ROOT,
+            gatewayName: "selected-gateway",
+            OPENSHELL_GATEWAY: "selected-gateway",
+            OPENSHELL_WORKSPACE: directory,
+            NEMOCLAW_GATEWAY_RUNTIME: "podman",
+            CONTAINER_HOST: "unix:///run/user/1000/podman/podman.sock",
+          },
+        });
+        expect(evidence?.command).toEqual(
+          expect.arrayContaining([
+            binary,
+            "--selector",
+            `${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${CREATE_ATTEMPT_NONCE}`,
+          ]),
+        );
+        expect(evidence?.stderr).toHaveLength(4096);
+        expect(evidence?.stderr).toContain("stderr:");
+        expect(JSON.stringify(evidence)).not.toMatch(
+          /selector-credential-canary|user:password|sandbox-alpha/,
+        );
+        expect(evidence?.stdout).not.toBe("");
+        expect(evidence?.rows).toEqual(
+          Array(rowCount ?? 0).fill(
+            expect.objectContaining({
+              name: "alpha",
+              phase: "Ready",
+              created_at: "2026-08-25T00:00:00Z",
+              nonceMatches: diagnostic !== "selector-identity-mismatch",
+            }),
+          ),
+        );
+      } finally {
+        rmSync(directory, { recursive: true, force: true });
+      }
+    },
+  );
+});
 
 describe("OpenShell sandbox identity parsing", () => {
   it("accepts one exact durable ID with optional terminal color", () => {

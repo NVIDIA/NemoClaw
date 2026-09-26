@@ -8,11 +8,11 @@ import path, { join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
+import { approveOpenClawAdminScope } from "../live/openclaw-admin-scope.ts";
 import { adminApprovalConnectScript } from "../fixtures/admin-approval-connect.ts";
 import { createHostProcessWorkspace } from "../../helpers/host-process-harness.ts";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import {
-  approveOpenClawAdminScope,
   captureManagedImageOnboardPairingDiagnostics,
   collectOnboardFailureDockerDiagnostics,
   managedActivationPostRestartAgentTurnScript,
@@ -232,7 +232,7 @@ describe("managed image activation failure diagnostics", () => {
           "cron",
           "add",
           "--name",
-          `managed-activation-admin-${now}`,
+          `openclaw-admin-approval-${now}`,
           "--every",
           "2h",
           "--agent",
@@ -247,11 +247,56 @@ describe("managed image activation failure diagnostics", () => {
       const [command, args] = hostCommand.mock.calls[0]!;
       expect(command).toBe("bash");
       expect(args.slice(0, 1)).toEqual(["-lc"]);
-      expect(args[1]).toContain(`managed-activation-admin-${now}`);
+      expect(args[1]).toContain(`openclaw-admin-approval-${now}`);
       expect(args[1]).toContain(`expected_request_id='${requestId}'`);
       expect(args[1]).toContain('openclaw cron run "$cron_id"');
     } finally {
       nowSpy.mockRestore();
+    }
+  });
+
+  it("prepares feature approval without creating a cron job or an extra agent session", () => {
+    const fixture = createHostProcessWorkspace("nemoclaw-feature-admin-approval-");
+    const requestId = "4edc8df0-20d0-4308-b0e8-850843ae0cf4";
+    const commandLog = fixture.path("commands.log");
+    fixture.writeExecutable("nemoclaw", "#!/bin/sh\nexec /bin/bash\n");
+    fixture.writeExecutable(
+      "openclaw",
+      `#!/bin/sh
+printf '%s\\n' "$*" >>"$ADMIN_COMMAND_LOG"
+case "$1:$2" in
+  devices:list) cat "$FAKE_DEVICES_STATE"; exit 0 ;;
+  devices:approve) exit 0 ;;
+  *) exit 91 ;;
+esac
+`,
+    );
+    try {
+      const result = fixture.run(
+        "/bin/bash",
+        [
+          "-lc",
+          `PATH=${JSON.stringify(fixture.binDir)}:$PATH
+export PATH
+${adminApprovalConnectScript("nemoclaw", "fixture-sandbox", "feature-cron", requestId, false)}`,
+        ],
+        {
+          env: fixture.environment({
+            ...prepareManagedAdminState(fixture.root, requestId),
+            ADMIN_COMMAND_LOG: commandLog,
+            OPENCLAW_GATEWAY_PORT: "18789",
+            OPENCLAW_GATEWAY_TOKEN: "fixture-token",
+          }),
+          timeout: 10_000,
+        },
+      );
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("ISSUE_5324_ADMIN_APPROVAL_OK");
+      expect(fs.readFileSync(commandLog, "utf8")).toBe(
+        `devices list --json\ndevices approve ${requestId}\n`,
+      );
+    } finally {
+      fixture.remove();
     }
   });
 

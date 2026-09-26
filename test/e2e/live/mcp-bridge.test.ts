@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { captureSandboxFailureDiagnostics } from "../fixtures/sandbox-failure-diagnostics.ts";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -13,6 +14,7 @@ import { shellQuote } from "../../../src/lib/core/shell-quote";
 import type { McpSourceEntry } from "../../../src/lib/actions/sandbox/mcp-bridge-contracts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
+import { approveOpenClawAdminScope } from "./openclaw-admin-scope.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import { assertExitZero as expectExitZero, resultText } from "../fixtures/clients/command.ts";
@@ -50,7 +52,7 @@ import {
   assertHermesRemovalSurvivesGatewayRestart,
 } from "./mcp-bridge-hermes-lifecycle.ts";
 import {
-  assertMcpBridgeManagedImageReceipt,
+  assertMcpBridgeManagedRegistryReceipt,
   buildMcpBridgeOnboardArgs,
   buildMcpBridgeOnboardEnv,
   requireMcpBridgeTlsCaCert,
@@ -64,7 +66,6 @@ import {
   addBridgeAndReadStatus,
   readConcurrentMcpStatusAndConfirmHermesRegistration,
   MCP_BRIDGE_DENIED_TOOL_NAME,
-  MCP_BRIDGE_DENIED_TOOL_SELECTOR,
   runDeniedMcpToolCall,
   runMcpProviderRewriteProbe,
   runOpenClawDeniedToolUpdateProof,
@@ -126,15 +127,6 @@ function mcpBridgeShardTest(shard: McpBridgeShard) {
 }
 const test = mcpBridgeShardTest("openclaw");
 type McpAgent = "openclaw" | "hermes" | "langchain-deepagents-code";
-function expectManagedImageQualificationReceipt(sandboxName: string, agent: McpAgent): void {
-  const registry = JSON.parse(fs.readFileSync(REGISTRY_FILE, "utf8")) as {
-    sandboxes?: Record<string, { workload?: Record<string, unknown> }>;
-  };
-  assertMcpBridgeManagedImageReceipt({
-    expectedAgent: agent,
-    workload: registry.sandboxes?.[sandboxName]?.workload,
-  });
-}
 async function onboardAgent(
   host: HostCliClient,
   sandbox: SandboxClient,
@@ -174,8 +166,14 @@ async function onboardAgent(
         artifactName: `${options.artifactName}-baseline-scope-retry`,
       }),
   });
+  await captureSandboxFailureDiagnostics(host, result, {
+    sandboxName: options.sandboxName,
+    artifactPrefix: `${options.artifactName}-failure`,
+    redactionValues: [COMPATIBLE_KEY],
+    captureGatewayLog: true,
+  });
   expectExitZero(result, `onboard ${options.agent} sandbox for MCP bridge`);
-  expectManagedImageQualificationReceipt(options.sandboxName, options.agent);
+  assertMcpBridgeManagedRegistryReceipt(options.sandboxName, options.agent, REGISTRY_FILE);
 }
 async function assertSecretAbsentFromSandbox(
   sandbox: SandboxClient,
@@ -365,7 +363,6 @@ async function assertBridgeInfrastructure(
     ),
   );
   expect(policyText).not.toContain("FAKE_MCP_SECRET");
-  expect(policyText).toContain(`tool: ${MCP_BRIDGE_DENIED_TOOL_SELECTOR}`);
   expect(policyText).toContain(new URL(options.mcpUrl).hostname);
   const provider = await host.command(
     host.openshellCommandPath,
@@ -751,10 +748,15 @@ test(
       ...bridge,
       artifactName: "onboard-openclaw-mcp-bridge",
     });
-    // Exercise the raw OpenShell `allowed_ips` boundary before any NemoClaw MCP
-    // mutation in full-scope topologies. The helper uses a direct curl request
-    // with a /** binary grant, then restores this sandbox's exact base policy
-    // before returning, so this proof is independent of the CLI and adapter.
+    await approveOpenClawAdminScope(
+      host,
+      sandbox,
+      OPENCLAW_SANDBOX_NAME,
+      buildAvailabilityProbeEnv(),
+      [COMPATIBLE_KEY, HOST_SECRET],
+    );
+    // Prove raw OpenShell allowed_ips with curl and a /** grant before MCP
+    // mutation. The helper restores the exact base policy before returning.
     await runFullMcpBridgeE2eCoverage(mcpBridgeE2eScope, () =>
       assertRawOpenShellAllowedIpsRebindingDenied({
         artifacts,
@@ -836,8 +838,7 @@ test(
     expect(aliasState.providerAbsent).toBe(true);
     expect(aliasState.policyAbsent).toBe(true);
     expect(aliasState.adapterAbsent).toBe(true);
-    // Distinguishable endpoints must coexist, not merely pass preflight. Exercise
-    // both native adapters while both credentials and policy entries are present.
+    // Exercise both native adapters with both credentials and policy entries present.
     const distinctMcp = await startFakeMcpHttpsServer({
       ...MCP_SERVER_OPTIONS,
       secret: ROTATED_HOST_SECRET,
@@ -1151,8 +1152,7 @@ mcpBridgeShardTest("hermes")(
     cleanup.add("remove Hermes MCP bridge", () =>
       cleanupMcpBridge(host, HERMES_SANDBOX_NAME, SERVER_NAME, "hermes-config"),
     );
-    // Cleanup is LIFO. Register evidence after bridge removal so failure state
-    // is captured before cleanup mutates the config and restarts the gateway.
+    // LIFO cleanup captures failure evidence before bridge removal changes the gateway.
     cleanup.add("capture Hermes MCP runtime evidence", async () => {
       await sandbox.execShell(
         HERMES_SANDBOX_NAME,

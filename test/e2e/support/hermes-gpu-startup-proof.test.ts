@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { openshellMainProcessSpecEnvValue } from "../../../src/lib/onboard/docker-startup-command-env.ts";
@@ -9,6 +13,7 @@ import {
   assertHermesContainerImageAuthority,
   assertHermesGpuStartupOutputContract,
   assertHermesManagedWorkloadAuthority,
+  buildHermesGpuFailureCaptureScript,
   HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS,
   hermesRuntimeIntendedCommand,
   normalizeImmutableImageContentId,
@@ -18,6 +23,11 @@ const HEALTHY_NEW_GATEWAY = [
   "Container runtime: docker",
   "  Starting OpenShell gateway...",
   "Docker-driver gateway is healthy",
+].join("\n");
+const HEALTHY_PODMAN_GATEWAY = [
+  "  ✓ Podman runtime: rootless server 6.1.0 (client 6.1.0), cgroups v2, linux/amd64",
+  "  Starting OpenShell gateway via managed service...",
+  "  ✓ OpenShell gateway managed service is healthy",
 ].join("\n");
 const NON_FALLBACK_DISCLOSURE_CASES = [
   ["native-success", HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS[0]],
@@ -42,6 +52,20 @@ const VALID_MANAGED_AUTHORITY = {
 } as unknown as ManagedWorkloadAuthority;
 
 describe("Hermes GPU startup output contract", () => {
+  it("accepts observed Podman managed-service startup output", () => {
+    expect(() =>
+      assertHermesGpuStartupOutputContract("native-success", "podman", HEALTHY_PODMAN_GATEWAY),
+    ).not.toThrow();
+  });
+
+  it.each([
+    ["docker", HEALTHY_PODMAN_GATEWAY],
+    ["podman", HEALTHY_NEW_GATEWAY],
+    ["podman", HEALTHY_PODMAN_GATEWAY.replace(" is healthy", " is unavailable")],
+  ] as const)("rejects a wrong runtime or unhealthy gateway for %s", (runtime, output) => {
+    expect(() => assertHermesGpuStartupOutputContract("native-success", runtime, output)).toThrow();
+  });
+
   it.each(["native-success", "compatibility-only"] as const)(
     "accepts %s output without legacy Docker container progress text (#9362)",
     (route) => {
@@ -233,4 +257,76 @@ describe("Hermes GPU managed-image authority proof", () => {
       assertHermesContainerImageAuthority("ghcr.io/nvidia/test:latest", MANAGED_IMAGE_REFERENCE),
     ).toThrow();
   });
+});
+
+describe("Hermes GPU failure capture", () => {
+  it.each([
+    ["container found", 0, "container-id\n", 4, false],
+    ["successful empty query", 0, "", 1, true],
+    ["failed query", 17, "", 1, false],
+  ] as const)(
+    "preserves runtime argv and distinguishes %s",
+    (_label, status, output, calls, absent) => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "hermes-gpu-capture-"));
+      const runtime = path.join(directory, "runtime command with spaces");
+      const callsFile = path.join(directory, "calls");
+      const endpoint = "unix:///tmp/podman context.sock";
+      fs.writeFileSync(
+        runtime,
+        `#!/bin/bash
+printf '%s\\n' '__CALL__' "$@" >> "$CALLS_FILE"
+case "$4" in
+  ps) printf '%s' "$QUERY_OUTPUT"; printf '%s' query-stderr >&2; exit "$QUERY_STATUS" ;;
+  *) printf '%s\\n' runtime-detail ;;
+esac
+`,
+        { mode: 0o700 },
+      );
+      try {
+        const result = spawnSync(
+          "bash",
+          [
+            "--noprofile",
+            "--norc",
+            "-c",
+            buildHermesGpuFailureCaptureScript(),
+            "capture",
+            "label=openshell.ai/sandbox-name=fixture",
+            "",
+            runtime,
+            "--url",
+            endpoint,
+          ],
+          {
+            encoding: "utf8",
+            timeout: 5000,
+            env: {
+              ...process.env,
+              BASH_ENV: "/dev/null",
+              CALLS_FILE: callsFile,
+              QUERY_OUTPUT: output,
+              QUERY_STATUS: String(status),
+            },
+          },
+        );
+        expect(result.status, result.stderr).toBe(status);
+        expect(result.stdout.includes("no runtime container found")).toBe(absent);
+        expect(result.stderr).toContain("query-stderr");
+        const invocations = fs.readFileSync(callsFile, "utf8").split("__CALL__\n").slice(1);
+        expect(invocations).toHaveLength(calls);
+        expect(invocations[0].trim().split("\n")).toEqual([
+          "--url",
+          endpoint,
+          "container",
+          "ps",
+          "--all",
+          "--quiet",
+          "--filter",
+          "label=openshell.ai/sandbox-name=fixture",
+        ]);
+      } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+      }
+    },
+  );
 });

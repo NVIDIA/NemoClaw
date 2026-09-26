@@ -558,6 +558,7 @@ describe("created sandbox identity gate", () => {
         "2",
       ],
       {
+        onCapture: expect.any(Function),
         ignoreError: false,
         timeout: expect.any(Number),
         maxBuffer: 1024 * 1024,
@@ -1146,6 +1147,7 @@ describe("created sandbox identity gate", () => {
     );
     expect(String(error)).not.toContain(nonce);
     expect(String(error)).not.toContain(outputCanary);
+    expect(String(error)).toContain("selector-identity-mismatch");
     expect(input.verifyCreatedSandboxBeforeEffects).not.toHaveBeenCalled();
     expect(patch.ensureApplied).not.toHaveBeenCalled();
     expect(mocks.waitForCreatedSandboxReadyWithTrace).not.toHaveBeenCalled();

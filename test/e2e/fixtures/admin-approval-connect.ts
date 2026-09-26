@@ -16,6 +16,7 @@ export function adminApprovalConnectScript(
   sandboxName: string,
   cronName: string,
   expectedRequestId?: string,
+  verifyCronConsumer = true,
 ): string {
   const cli = shellQuote(cliPath);
   const sandbox = shellQuote(sandboxName);
@@ -24,6 +25,7 @@ export function adminApprovalConnectScript(
     shellQuote(cronName),
   )
     .replace("__NEMOCLAW_ADMIN_EXPECTED_REQUEST_ID__", shellQuote(expectedRequestId ?? ""))
+    .replace("__NEMOCLAW_ADMIN_VERIFY_CRON__", verifyCronConsumer ? "1" : "0")
     .replace("__NEMOCLAW_ADMIN_REQUEST_SELECTOR_PY__", ADMIN_REQUEST_SELECTOR_PY);
   return [
     "set -euo pipefail",

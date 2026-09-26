@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { captureSandboxFailureDiagnostics } from "../fixtures/sandbox-failure-diagnostics.ts";
 import {
   withPodmanOwnerDiagnostic,
   captureBoundedPodmanOwnerDiagnostic,
@@ -351,6 +352,12 @@ test(
       }),
       execTimeout(20 * 60_000),
     );
+    await captureSandboxFailureDiagnostics(host, reinject, {
+      sandboxName: SANDBOX_NAME,
+      artifactPrefix: "phase-3-reinject-failure",
+      redactionValues: [EXTRA_PROVIDER_TOKEN, "dummy"],
+      captureGatewayLog: true,
+    });
     expect(reinject.exitCode, resultText(reinject)).toBe(1);
 
     progress.phase("reject conflicting resume inputs");

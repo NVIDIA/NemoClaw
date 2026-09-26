@@ -8,6 +8,11 @@ Direct E2E coverage runs through Vitest.
 Interactive TUI targets require `expect`. The unified workflow installs it
 before those targets run; local runners must provide it themselves.
 
+The native Podman row of Hermes GPU startup installs its reviewed host prerequisites before candidate checkout.
+It uses the pinned host-dependency action for `conmon`, `fuse-overlayfs`, `golang-github-containers-common`, `iptables`, `nftables`, `slirp4netns`, and `uidmap`.
+The container configuration package supplies Podman's standard image policy and seccomp files.
+The install refuses package removals, preserving the runner's Docker and containerd packages and their supplied runtime.
+
 - `.github/workflows/e2e.yaml` compares the commits before and after each push to `main`.
   It selects targets and jobs that own changed files, then publishes the `Relevant E2E` check.
   It also supports trusted manual dispatches for the latest PR commit.
@@ -160,6 +165,18 @@ assembles one exact candidate catalog from the workflow's published contracts, u
 and sandbox, records the authenticated discovery diagnostics, scans the evidence for fixture
 credentials, and must pass.
 These are two required acceptance executions, not retries; either failure remains a failed check.
+OpenClaw feature tests use the shared explicit admin-approval fixture before native operations
+that require elevated scopes. It approves only the request ID emitted by the current sandbox's
+non-admin CLI, after the existing selector verifies that device and its requested scopes.
+Managed-image activation retains its cron-consumer proof. Feature setup can stop after the exact
+approval and verify the grant through its own native operation, avoiding an unrelated cron job or
+agent session. Sessions/agents coverage requires the main session seed to succeed and does not
+approve arbitrary pending devices or silently skip the main-session cases.
+The feature tests exercise the CLI instead of separately asserting that its source and compiled files exist.
+The full onboarding test relies on its existing status poll, which fails when status never succeeds.
+MCP tests retain live allow/deny enforcement and credential-rotation checks without asserting policy
+serialization or the provider-update success message. Approval phase labels live with the existing
+fixture evidence helpers; moving these labels does not move live assertions.
 The concurrent-add probe retries only the rejected command after status proves that the other
 command committed one coherent bridge. The rejected command must report the exact portable
 host-lock timeout, optionally followed by the current recorded-owner-is-still-running remediation.
@@ -191,15 +208,26 @@ trusted-private probe must discover authenticated tools from the HTTPS fixture
 signed by that CA through supervisor egress. Cloud onboarding separately verifies
 installed bundle contents and permissions; file presence alone is not TLS-consumer
 evidence. The managed-startup unit tests own activation ordering and identity checks.
+Cloud onboarding checks that migrated credentials are removed and unrelated legacy entries
+remain, with redaction applied before assertion formatting. Credential-store tests cover
+equal-valued unrelated fields, complete-file deletion when no unrelated entries remain,
+and preservation after failed migration.
 
 If the Hermes replacement-credential restart or subsequent bridge removal fails, MCP E2E captures host-side
 OpenShell supervisor logs and the runtime container's state and startup output
 before asserting the original failure. These reads remain available when sandbox
 exec is rejected in `Error` state. Container reads require exactly one validated
-runtime resource handle. Each output stream is limited to 32 KiB and each command to 30 seconds; log
+runtime resource handle. Each output stream uses a 32 KiB capture buffer and each command has a 30-second limit; log
 capture retains at most 200 lines from the last two minutes for OpenShell and
 three minutes for the runtime container, with fixture credentials redacted.
-Diagnostic acquisition does not retry the mutation or replace its result.
+The collector also streams `/tmp/nemoclaw-start.log` from the stopped container into
+the bounded redactor, which retains the last 32 KiB and removes secret fragments at
+the capture boundary. It reads only that archive member without unpacking files on
+the host and includes the capture-omission notice in the retained artifact.
+The same collector retains startup, container, supervisor, and host gateway evidence after failed
+onboarding, restore, rebuild, and cloud security checks. Expected nonzero outcomes can be declared so a normal
+refusal does not trigger collection; a timeout still captures evidence. Diagnostic acquisition does
+not retry the mutation or replace its result.
 OpenClaw launch evidence reports whether a SQLite rejection concerns file metadata or the transcript table, without exposing paths, identities, or session contents. The existing evidence checks remain required.
 A failed native weather-plugin invocation also records unauthenticated liveness and readiness HTTP status codes, bounded to two three-second probes. It does not repeat the tool invocation or replace its failure.
 
@@ -454,12 +482,13 @@ retain their existing bridge checks and record this additional Docker compatibil
 applicable. Capture validation, credential sanitization, source drift refusals and lifecycle-transition
 rules remain covered by source and component tests.
 
-The `sandbox-operations` target owns live final-gateway cleanup on the Docker-backed OpenShell
-boundary. It leaves one sandbox live after removing only its local registry entry, then requires a
+The `sandbox-operations` target owns live final-gateway cleanup on Docker and native Podman. It leaves one sandbox live after removing only its local registry entry, then requires a
 `destroy --cleanup-gateway` of the registered sandbox to preserve the gateway, report the live
 sandbox and recovery commands, and exit nonzero. After cleanup, it onboards and destroys one final
 sandbox,
 requires the bounded command to finish, and proves both the sandbox and gateway runtime are absent.
+The outer destroy command deadline is twice the CLI's heavy-operation deadline so the CLI can
+finish its own timeout, absence, and gateway checks. The survivor onboarding budget stays separate.
 Deterministic destroy tests own the exact 30-second retry schedule and delayed-list sequence.
 
 `deferred-onboarding-hermes` and `deferred-onboarding-langchain-deepagents-code` exercise the

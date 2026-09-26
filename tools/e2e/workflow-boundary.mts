@@ -420,7 +420,7 @@ export function validateHostDependencyAction(
       "Install reviewed apt host dependencies with bounded retries from a trusted pinned action.",
     inputs: {
       packages: {
-        description: "Space-separated apt packages from the reviewed allowlist (expect, iptables).",
+        description: "Space-separated apt packages from the reviewed host dependency allowlist.",
         required: true,
       },
     },

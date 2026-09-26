@@ -31,6 +31,7 @@ import {
 } from "./hermes-gpu-startup-fallback.ts";
 import {
   assertHermesGpuStartupProof,
+  buildHermesGpuFailureCaptureScript,
   HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS,
 } from "./hermes-gpu-startup-proof.ts";
 
@@ -268,40 +269,7 @@ async function captureFailedGpuContainer(
 ): Promise<void> {
   const sandboxFilter = `label=openshell.ai/sandbox-name=${SANDBOX_NAME}`;
   const runtimeInvocation = runtimeProvider.hostInvocation([]);
-  const script = String.raw`set -u
-sandbox_filter="$1"
-diagnostics_dir="$2"
-shift 2
-runtime_command=("$@")
-if [ -n "$diagnostics_dir" ] && [ -d "$diagnostics_dir" ]; then
-  printf '%s\n' "== pre-rollback diagnostics $diagnostics_dir =="
-  for name in summary.txt patched-container-state.json docker-inspect.json docker-network-summary.txt docker-top.txt docker-logs.txt openshell-sandbox-get.txt openshell-sandbox-list.txt openshell-logs.txt; do
-    file="$diagnostics_dir/$name"
-    if [ -f "$file" ]; then
-      printf '%s\n' "== $name =="
-      if [ "$name" = openshell-logs.txt ]; then
-        tail -n 800 "$file"
-      else
-        sed -n '1,800p' "$file"
-      fi
-    fi
-  done
-else
-  printf '%s\n' "pre-rollback diagnostics directory unavailable: $diagnostics_dir"
-fi
-ids="$("\${runtime_command[@]}" container ps --all --quiet --filter "$sandbox_filter")"
-if [ -z "$ids" ]; then
-  printf '%s\n' "no runtime container found for $sandbox_filter"
-  exit 0
-fi
-for id in $ids; do
-  printf '%s\n' "== container $id inspect =="
-  "\${runtime_command[@]}" container inspect --format '{{json .Name}} {{json .Config.User}} {{json .Config.Entrypoint}} {{json .Config.Cmd}} {{json .State}} {{json .HostConfig.RestartPolicy}}' "$id" 2>&1 || true
-  printf '%s\n' "== container $id top =="
-  "\${runtime_command[@]}" container top "$id" -eo user,pid,ppid,stat,args 2>&1 || true
-  printf '%s\n' "== container $id logs =="
-  "\${runtime_command[@]}" container logs --tail 300 "$id" 2>&1 || true
-done`;
+  const script = buildHermesGpuFailureCaptureScript();
   await captureDiagnosticsBestEffort(() =>
     host.command(
       "bash",
@@ -316,6 +284,7 @@ done`;
       ],
       {
         artifactName: "phase-2-hermes-gpu-startup-failure-diagnostics",
+        captureLimitBytes: 32_768,
         env: buildAvailabilityProbeEnv(),
         redactionValues: [FAKE_API_KEY],
         timeoutMs: 30_000,

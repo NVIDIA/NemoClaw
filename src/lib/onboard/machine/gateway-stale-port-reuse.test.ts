@@ -89,6 +89,29 @@ describe("applyHealthyPortReuse", () => {
     vi.restoreAllMocks();
   });
 
+  it("reuses a provider-owned dashboard only after its forward is verified", async () => {
+    const verifyDashboardForward = vi.fn(async () => true);
+    const destroyGateway = vi.fn(() => true);
+    const checkPortAvailable = vi.fn();
+    const verifyGatewayContainerRunning = vi.fn();
+    await expect(
+      applyHealthyPortReuse({
+        ...BASE_INPUT,
+        kind: "dashboard",
+        port: 18789,
+        managedGatewayObservationAuthoritative: true,
+        verifyDashboardForward,
+        destroyGateway,
+        checkPortAvailable,
+        verifyGatewayContainerRunning,
+      }),
+    ).resolves.toBe("continue");
+    expect(verifyDashboardForward).toHaveBeenCalledExactlyOnceWith(18789);
+    expect(destroyGateway).not.toHaveBeenCalled();
+    expect(checkPortAvailable).not.toHaveBeenCalled();
+    expect(verifyGatewayContainerRunning).not.toHaveBeenCalled();
+  });
+
   it("reuses a provider-owned gateway without Docker container inspection (#10984)", async () => {
     const destroyGateway = vi.fn(() => true);
     const checkPortAvailable = vi.fn();

@@ -9,6 +9,8 @@ import {
   warnIfDockerBuildEnvironmentCleanupFailed,
 } from "../adapters/docker/client-isolation";
 import {
+  CreatedSandboxIdentityError,
+  type CreatedSandboxIdentityEvidence,
   NEMOCLAW_CREATE_ATTEMPT_LABEL,
   NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH,
   parseOpenShellSandboxId,
@@ -522,6 +524,11 @@ export function createSandboxGpuCreateAttemptRunner(
       }
     }
     const createAttemptNonce = resolveCreateAttemptNonce(input, deferPostCreateEffects);
+    const identityObservations: CreatedSandboxIdentityEvidence[] = [];
+    const recordIdentityObservation = (evidence: CreatedSandboxIdentityEvidence): void => {
+      identityObservations.push(evidence);
+      identityObservations.splice(0, Math.max(0, identityObservations.length - 2));
+    };
     const persistIdentitySettlementRecovery = (
       sandboxIdentityFingerprint: string | null = null,
     ): void => {
@@ -548,6 +555,7 @@ export function createSandboxGpuCreateAttemptRunner(
         persistenceCause = error;
       }
       console.error(`  ${message}`);
+      console.error(`  Create identity selector evidence: ${JSON.stringify(identityObservations)}`);
       if (!persisted) {
         const persistenceFailureMessage =
           "NemoClaw could not save the retained sandbox recovery record for this create attempt.";
@@ -637,8 +645,9 @@ export function createSandboxGpuCreateAttemptRunner(
     let readyCheckCreatedSandboxId: string | null = null;
     let readyCheckCreatedIdentityFailure: unknown = null;
     const failReadyCheckCreatedIdentity = (diagnostic: string): true => {
-      readyCheckCreatedIdentityFailure = new Error(
-        `OpenShell did not return the exact created identity for sandbox '${input.sandboxName}'. Diagnostic class: ${diagnostic}.`,
+      readyCheckCreatedIdentityFailure = new CreatedSandboxIdentityError(
+        input.sandboxName,
+        diagnostic,
       );
       return true;
     };
@@ -649,6 +658,7 @@ export function createSandboxGpuCreateAttemptRunner(
         gatewayName: input.gatewayName,
         createAttemptNonce: createAttemptNonce!,
         runCaptureOpenshell: deps.runCaptureOpenshell,
+        onObservation: recordIdentityObservation,
         priorSandboxId: readyCheckCreatedSandboxId,
         sleep: (milliseconds) => deps.sleep(milliseconds / 1000),
       });
@@ -673,7 +683,7 @@ export function createSandboxGpuCreateAttemptRunner(
       } catch (error) {
         persistIdentitySettlementRecovery();
         throw new Error(
-          `Sandbox '${input.sandboxName}' was created, but OpenShell did not return one exact durable sandbox identity before post-create effects.`,
+          `Sandbox '${input.sandboxName}' was created, but OpenShell did not return one exact durable sandbox identity before post-create effects${error instanceof CreatedSandboxIdentityError ? ` (${error.diagnostic})` : ""}.`,
           { cause: error },
         );
       }
@@ -731,6 +741,7 @@ export function createSandboxGpuCreateAttemptRunner(
             gatewayName: input.gatewayName,
             createAttemptNonce,
             runCaptureOpenshell: captureSandboxReadiness,
+            onObservation: recordIdentityObservation,
           },
           SANDBOX_READY_PROBE_TIMEOUT_MS,
         );
@@ -795,6 +806,7 @@ export function createSandboxGpuCreateAttemptRunner(
                   gatewayName: input.gatewayName,
                   createAttemptNonce,
                   runCaptureOpenshell: captureSandboxReadiness,
+                  onObservation: recordIdentityObservation,
                 },
                 SANDBOX_READY_PROBE_TIMEOUT_MS,
               );
@@ -997,7 +1009,7 @@ export function createSandboxGpuCreateAttemptRunner(
       } catch (error) {
         persistIdentitySettlementRecovery();
         throw new Error(
-          `Sandbox '${input.sandboxName}' was created, but OpenShell did not return one exact durable sandbox identity before post-create effects.`,
+          `Sandbox '${input.sandboxName}' was created, but OpenShell did not return one exact durable sandbox identity before post-create effects${error instanceof CreatedSandboxIdentityError ? ` (${error.diagnostic})` : ""}.`,
           { cause: error },
         );
       }

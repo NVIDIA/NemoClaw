@@ -189,6 +189,9 @@ describe("isSandboxBridgeGatewayReachable", () => {
     expect(run).toHaveBeenCalledOnce();
     expect(seen.args).toContain(`host.openshell.internal:${PORTABLE_HOST_GATEWAY_IP}`);
     expect(seen.args).not.toContain("host.openshell.internal:10.89.0.1");
+    expect(seen.args).toContain(
+      "docker.io/library/busybox@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662",
+    );
   });
 
   it("does not call a missing Docker network a firewall failure", async () => {

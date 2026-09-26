@@ -7,6 +7,12 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ArtifactSink } from "../fixtures/artifacts.ts";
+import { captureSandboxFailureDiagnostics } from "../fixtures/sandbox-failure-diagnostics.ts";
+import { HostCliClient } from "../fixtures/clients/host.ts";
+import { startTestProgress } from "../fixtures/progress.ts";
+import { redactString } from "../fixtures/redaction.ts";
+import { ShellProbe } from "../fixtures/shell-probe.ts";
 
 import {
   assertHermesMcpHttpResponse,
@@ -35,6 +41,32 @@ function httpResult(status: number, body = "", result = "") {
 }
 
 describe("Hermes MCP HTTP failure diagnostics", () => {
+  it("captures gateway evidence after a timeout while preserving expected refusals", async () => {
+    const command = vi.fn().mockResolvedValue({ exitCode: 0, stdout: "" });
+    const host = { command, openshellCommandPath: "/reviewed/openshell" };
+    const options = {
+      sandboxName: "owned-openclaw",
+      artifactPrefix: "onboard-failure",
+      redactionValues: ["fixture-secret"],
+      captureGatewayLog: true,
+      expectedExitCode: 1,
+    };
+    await captureSandboxFailureDiagnostics(host, { exitCode: 1, timedOut: false }, options);
+    expect(command).not.toHaveBeenCalled();
+    await captureSandboxFailureDiagnostics(host, { exitCode: null, timedOut: true }, options);
+    expect(command).toHaveBeenCalledWith(
+      "cat",
+      [expect.stringMatching(/gateway\.log$/u)],
+      expect.objectContaining({
+        artifactName: "onboard-failure-gateway-log",
+        redactionValues: ["fixture-secret"],
+        captureLimitBytes: 32_768,
+        timeoutMs: 5_000,
+      }),
+    );
+    expect(command).toHaveBeenCalledTimes(3);
+  });
+
   it.each(["restart", "remove"] as const)(
     "captures bounded supervisor logs after %s failure without requiring sandbox exec",
     async (operation) => {
@@ -82,7 +114,77 @@ describe("Hermes MCP HTTP failure diagnostics", () => {
           artifactName: `hermes-mcp-${operation}-failure-container-state`,
         }),
       );
-      expect(command).toHaveBeenCalledTimes(4);
+      expect(command).toHaveBeenCalledWith(
+        "bash",
+        [
+          "-o",
+          "pipefail",
+          "-c",
+          expect.any(String),
+          `hermes-mcp-${operation}-failure`,
+          "docker",
+          "cp",
+          `${CONTAINER_ID}:/tmp/nemoclaw-start.log`,
+          "-",
+        ],
+        expect.objectContaining({
+          artifactName: `hermes-mcp-${operation}-failure-startup-log`,
+          captureLimitBytes: 32_768,
+          timeoutMs: 30_000,
+          redactionValues: ["fixture-secret"],
+        }),
+      );
+      const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-hermes-startup-log-"));
+      const progress = startTestProgress(
+        "Hermes startup capture",
+        ["capture startup log", "verify retained evidence"],
+        { logLine: () => undefined },
+      );
+      try {
+        const lastLine = "\n[CRITICAL] fixture startup failure fixture-secret\n";
+        // The 32 KiB tail starts inside the first secret, leaving "secret".
+        const log = `${"x".repeat(40_000)}fixture-secret${"x".repeat(32_768 - 6 - lastLine.length)}${lastLine}`;
+        writeFileSync(path.join(directory, "nemoclaw-start.log"), log);
+        const archive = path.join(directory, "startup.tar");
+        const packed = spawnSync("tar", ["-cf", archive, "-C", directory, "nemoclaw-start.log"]);
+        expect(packed.status).toBe(0);
+        const startupArgs = command.mock.calls[4]?.[1] as string[];
+        const artifacts = new ArtifactSink(path.join(directory, "artifacts"));
+        const captureHost = new HostCliClient(
+          new ShellProbe({
+            artifacts,
+            progress,
+            redact: redactString,
+            signal: new AbortController().signal,
+          }),
+          { cwd: directory },
+        );
+        progress.phase("capture startup log");
+        const captured = await captureHost.command(
+          "bash",
+          [...startupArgs.slice(0, 5), "cat", archive],
+          command.mock.calls[4]?.[2],
+        );
+        progress.phase("verify retained evidence");
+        expect(captured.exitCode, captured.stderr).toBe(0);
+        expect(captured.stdout.includes("secret")).toBe(false);
+        expect(captured.stdout).toContain("[CRITICAL] fixture startup failure [REDACTED]");
+        const [captureNotice, ...retainedLines] = captured.stdout.split("\n");
+        expect(captureNotice).toBe(
+          "[shell-probe omitted 40008 earlier bytes; showing up to the last 32768 bytes]",
+        );
+        expect(Buffer.byteLength(retainedLines.join("\n"))).toBeLessThanOrEqual(32_768);
+        expect(
+          readFileSync(
+            artifacts.pathFor(`shell/hermes-mcp-${operation}-failure-startup-log.stdout.txt`),
+            "utf8",
+          ),
+        ).toBe(captured.stdout);
+      } finally {
+        progress.stop();
+        rmSync(directory, { recursive: true, force: true });
+      }
+      expect(command).toHaveBeenCalledTimes(5);
     },
   );
 

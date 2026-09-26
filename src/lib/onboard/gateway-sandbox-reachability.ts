@@ -36,7 +36,7 @@ export type { UfwAutoApplyOptions, UfwAutoApplyResult } from "./ufw-auto-apply";
 export { tryAutoApplyUfwRule } from "./ufw-auto-apply";
 
 const DEFAULT_PROBE_IMAGE =
-  "busybox@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662";
+  "docker.io/library/busybox@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662";
 const DEFAULT_NETWORK_NAME = DEFAULT_DOCKER_DRIVER_NETWORK_NAME;
 const HOST_INTERNAL_NAME = "host.openshell.internal";
 const HOST_DOCKER_INTERNAL_NAME = "host.docker.internal";

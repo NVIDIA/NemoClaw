@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { performance } from "node:perf_hooks";
+import type { CaptureObservation } from "../../runner";
+import { isCredentialField, redactCredentialText } from "../../security/credential-filter";
 import {
   fingerprintOpenShellSandboxId,
   isOpenShellSandboxId,
@@ -120,11 +122,29 @@ export function resolveOpenShellSandboxId(
  * supplied on `sandbox create`; a same-name replacement without that label is
  * rejected before the caller can run post-create effects.
  */
+export type CreatedSandboxIdentityEvidence = Readonly<{
+  selector: readonly string[];
+  context: Readonly<Record<string, string | null>>;
+  command: readonly string[];
+  captureStatus: "captured" | "unavailable";
+  exitCode: number | null;
+  signal: string | null;
+  errorCode: string | null;
+  stdout: string;
+  stderr: string;
+  outputTruncated: boolean;
+  state: string;
+  diagnostic: string;
+  rowCount: number | null;
+  rows: readonly Readonly<Record<string, string | number | boolean | null>>[];
+}>;
+
 type CreatedOpenShellSandboxIdentityInput = {
   readonly sandboxName: string;
   readonly gatewayName: string;
   readonly createAttemptNonce: string;
   readonly runCaptureOpenshell: (args: string[], options?: Record<string, unknown>) => string;
+  readonly onObservation?: (evidence: CreatedSandboxIdentityEvidence) => void;
 };
 
 type CreatedOpenShellSandboxIdentityObservation =
@@ -155,10 +175,15 @@ function assertCreateAttemptNonce(createAttemptNonce: string): void {
   }
 }
 
-function createdIdentityError(sandboxName: string, diagnostic = "settlement-incomplete"): Error {
-  return new Error(
-    `OpenShell did not return the exact created identity for sandbox '${sandboxName}'. Diagnostic class: ${diagnostic}.`,
-  );
+export class CreatedSandboxIdentityError extends Error {
+  readonly diagnostic: string;
+
+  constructor(sandboxName: string, diagnostic = "settlement-incomplete") {
+    super(
+      `OpenShell did not return the exact created identity for sandbox '${sandboxName}'. Diagnostic class: ${diagnostic}.`,
+    );
+    this.diagnostic = diagnostic;
+  }
 }
 
 function hasIncompleteCreatedIdentityMetadata(row: Record<string, unknown>): boolean {
@@ -214,46 +239,166 @@ function classifySelectorExecutionError(
     : "selector-execution-non-error";
 }
 
+function createdIdentityEvidence(
+  input: CreatedOpenShellSandboxIdentityInput,
+  selector: readonly string[],
+  execution: CaptureObservation | undefined,
+  output: string,
+  rows: readonly unknown[] | null,
+  observation: CreatedOpenShellSandboxIdentityObservation,
+): CreatedSandboxIdentityEvidence {
+  const secrets = Object.entries(execution?.env ?? {})
+    .filter(([key, value]) => isCredentialField(key) && value.length >= 4)
+    .map(([, value]) => value)
+    .sort((a, b) => b.length - a.length);
+  const identities = (rows ?? []).flatMap((row) => {
+    if (!row || typeof row !== "object" || Array.isArray(row)) return [];
+    const id = (row as Record<string, unknown>).id;
+    if (typeof id !== "string") return [];
+    const fingerprint = fingerprintOpenShellSandboxId(id);
+    return fingerprint ? [[id, fingerprint] as const] : [];
+  });
+  const text = (value: string, limit = 4096): string => {
+    let redacted = redactCredentialText(value);
+    for (const secret of secrets) redacted = redacted.split(secret).join("<REDACTED>");
+    for (const [id, fingerprint] of identities) {
+      redacted = redacted.split(id).join(`<identity:${fingerprint}>`);
+    }
+    return redacted.slice(0, limit);
+  };
+  const runtimeKeys = [
+    "OPENSHELL_GATEWAY",
+    "OPENSHELL_WORKSPACE",
+    "OPENSHELL_LOCAL_TLS_DIR",
+    "NEMOCLAW_GATEWAY_RUNTIME",
+    "CONTAINER_HOST",
+    "DOCKER_HOST",
+    "XDG_RUNTIME_DIR",
+  ];
+  const metadataKeys = [
+    "id",
+    "name",
+    "resource_version",
+    "created_at",
+    "phase",
+    "current_policy_version",
+  ];
+  let diagnostic: string = observation.state;
+  if (observation.state === "invalid") diagnostic = observation.diagnostic;
+  if (observation.state === "pending") {
+    diagnostic =
+      observation.sandboxId === null ? "selector-rows-empty" : "selector-metadata-incomplete";
+  }
+  const stdout = execution?.stdout ?? output;
+  const stderr = execution?.stderr ?? "";
+  return {
+    selector: selector.map((value) => text(value, 256)),
+    context: {
+      sandboxName: text(input.sandboxName, 256),
+      gatewayName: text(input.gatewayName, 256),
+      cwd: execution ? text(execution.cwd, 1024) : null,
+      ...Object.fromEntries(
+        runtimeKeys.map((key) => [
+          key,
+          execution?.env[key] === undefined ? null : text(execution.env[key], 1024),
+        ]),
+      ),
+    },
+    command: (execution?.argv ?? []).slice(0, 32).map((value) => text(value, 512)),
+    captureStatus: execution ? "captured" : "unavailable",
+    exitCode: execution?.exitCode ?? null,
+    signal: execution?.signal ?? null,
+    errorCode: execution?.errorCode ? text(execution.errorCode, 128) : null,
+    stdout: text(stdout),
+    stderr: text(stderr),
+    outputTruncated: stdout.length > 4096 || stderr.length > 4096,
+    state: observation.state,
+    diagnostic,
+    rowCount: rows?.length ?? null,
+    rows: (rows ?? []).slice(0, 2).map((row) => {
+      const record =
+        row && typeof row === "object" && !Array.isArray(row)
+          ? (row as Record<string, unknown>)
+          : {};
+      const values = Object.fromEntries(
+        metadataKeys.map((key) => {
+          const value = record[key];
+          if (typeof value === "string") return [key, text(value, 256)];
+          if (typeof value === "number" || typeof value === "boolean" || value === null)
+            return [key, value];
+          return [key, `<${typeof value}>`];
+        }),
+      );
+      const label =
+        record.labels && typeof record.labels === "object" && !Array.isArray(record.labels)
+          ? (record.labels as Record<string, unknown>)[NEMOCLAW_CREATE_ATTEMPT_LABEL]
+          : undefined;
+      return {
+        ...values,
+        createAttemptLabel: typeof label === "string" ? text(label, 256) : null,
+        nonceMatches: label === input.createAttemptNonce,
+      };
+    }),
+  };
+}
+
 export function observeCreatedOpenShellSandboxId(
   input: CreatedOpenShellSandboxIdentityInput,
   timeout: number,
 ): CreatedOpenShellSandboxIdentityObservation {
   assertCreateAttemptNonce(input.createAttemptNonce);
-  let output: string;
+  const selector = [
+    "sandbox",
+    "list",
+    "-g",
+    input.gatewayName,
+    "--selector",
+    `${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${input.createAttemptNonce}`,
+    "--output",
+    "json",
+    "--limit",
+    "2",
+  ];
+  let output = "";
+  let rows: readonly unknown[] | null = null;
+  let execution: CaptureObservation | undefined;
+  const report = (observation: CreatedOpenShellSandboxIdentityObservation) => {
+    try {
+      input.onObservation?.(
+        createdIdentityEvidence(input, selector, execution, output, rows, observation),
+      );
+    } catch {
+      // Diagnostic observers cannot change the identity decision.
+    }
+    return observation;
+  };
   try {
-    output = input.runCaptureOpenshell(
-      [
-        "sandbox",
-        "list",
-        "-g",
-        input.gatewayName,
-        "--selector",
-        `${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${input.createAttemptNonce}`,
-        "--output",
-        "json",
-        "--limit",
-        "2",
-      ],
-      {
-        ignoreError: false,
-        timeout,
-        maxBuffer: 1024 * 1024,
-        killSignal: "SIGKILL",
-        killProcessTreeOnTimeout: true,
-      },
-    );
+    output = input.runCaptureOpenshell(selector, {
+      ignoreError: false,
+      timeout,
+      maxBuffer: 1024 * 1024,
+      killSignal: "SIGKILL",
+      killProcessTreeOnTimeout: true,
+      ...(input.onObservation
+        ? {
+            onCapture: (captured: CaptureObservation) => {
+              execution = captured;
+            },
+          }
+        : {}),
+    });
   } catch (error) {
-    return { state: "invalid", diagnostic: classifySelectorExecutionError(error) };
+    return report({ state: "invalid", diagnostic: classifySelectorExecutionError(error) });
   }
-  const rows = parseOpenShellSandboxListJson(output);
-  if (!rows) return { state: "invalid", diagnostic: "selector-output-malformed" };
-  if (rows.length === 0) return { state: "pending", sandboxId: null };
+  rows = parseOpenShellSandboxListJson(output);
+  if (!rows) return report({ state: "invalid", diagnostic: "selector-output-malformed" });
+  if (rows.length === 0) return report({ state: "pending", sandboxId: null });
   if (rows.length !== 1) {
-    return { state: "invalid", diagnostic: "selector-output-ambiguous" };
+    return report({ state: "invalid", diagnostic: "selector-output-ambiguous" });
   }
   const row = rows[0];
   if (!row || typeof row !== "object" || Array.isArray(row)) {
-    return { state: "invalid", diagnostic: "selector-row-malformed" };
+    return report({ state: "invalid", diagnostic: "selector-row-malformed" });
   }
   const candidate = row as Record<string, unknown>;
   const labels = candidate.labels;
@@ -266,14 +411,16 @@ export function observeCreatedOpenShellSandboxId(
     !Object.values(labels as Record<string, unknown>).every((label) => typeof label === "string") ||
     (labels as Record<string, string>)[NEMOCLAW_CREATE_ATTEMPT_LABEL] !== input.createAttemptNonce
   ) {
-    return { state: "invalid", diagnostic: "selector-identity-mismatch" };
+    return report({ state: "invalid", diagnostic: "selector-identity-mismatch" });
   }
   if (!isStrictSandboxListJsonRow(candidate)) {
-    return hasIncompleteCreatedIdentityMetadata(candidate)
-      ? { state: "pending", sandboxId: candidate.id }
-      : { state: "invalid", diagnostic: "selector-metadata-malformed" };
+    return report(
+      hasIncompleteCreatedIdentityMetadata(candidate)
+        ? { state: "pending", sandboxId: candidate.id }
+        : { state: "invalid", diagnostic: "selector-metadata-malformed" },
+    );
   }
-  return { state: "matched", sandboxId: candidate.id };
+  return report({ state: "matched", sandboxId: candidate.id });
 }
 
 export function resolveCreatedOpenShellSandboxId(
@@ -285,7 +432,7 @@ export function resolveCreatedOpenShellSandboxId(
     CREATED_IDENTITY_SETTLEMENT_TIMEOUT_MS,
   );
   if (observation.state !== "matched") {
-    throw createdIdentityError(
+    throw new CreatedSandboxIdentityError(
       input.sandboxName,
       observation.state === "invalid" ? observation.diagnostic : "settlement-pending",
     );
@@ -306,6 +453,7 @@ export function settleCreatedOpenShellSandboxId(input: {
   readonly gatewayName: string;
   readonly createAttemptNonce: string;
   readonly runCaptureOpenshell: (args: string[], options?: Record<string, unknown>) => string;
+  readonly onObservation?: (evidence: CreatedSandboxIdentityEvidence) => void;
   readonly priorSandboxId?: string | null;
   readonly now?: () => number;
   readonly sleep: (milliseconds: number) => void;
@@ -313,7 +461,7 @@ export function settleCreatedOpenShellSandboxId(input: {
   assertCreateAttemptNonce(input.createAttemptNonce);
   if (input.priorSandboxId !== undefined && input.priorSandboxId !== null) {
     if (!isOpenShellSandboxId(input.priorSandboxId)) {
-      throw createdIdentityError(input.sandboxName);
+      throw new CreatedSandboxIdentityError(input.sandboxName);
     }
   }
   const now = input.now ?? (() => performance.now());
@@ -321,7 +469,7 @@ export function settleCreatedOpenShellSandboxId(input: {
   const deadlineMs = startedAt + CREATED_IDENTITY_SETTLEMENT_TIMEOUT_MS;
 
   if (!Number.isFinite(startedAt) || !Number.isFinite(deadlineMs) || deadlineMs <= startedAt) {
-    throw createdIdentityError(input.sandboxName);
+    throw new CreatedSandboxIdentityError(input.sandboxName);
   }
 
   let previousNowMs = startedAt;
@@ -330,7 +478,7 @@ export function settleCreatedOpenShellSandboxId(input: {
   const readNow = (): number => {
     const currentNowMs = now();
     if (!Number.isFinite(currentNowMs) || currentNowMs < previousNowMs) {
-      throw createdIdentityError(input.sandboxName);
+      throw new CreatedSandboxIdentityError(input.sandboxName);
     }
     previousNowMs = currentNowMs;
     return currentNowMs;
@@ -362,7 +510,7 @@ export function settleCreatedOpenShellSandboxId(input: {
     input.sleep(Math.min(CREATED_IDENTITY_SETTLEMENT_INTERVAL_MS, remainingAfterReadMs));
   }
 
-  throw createdIdentityError(input.sandboxName, diagnostic);
+  throw new CreatedSandboxIdentityError(input.sandboxName, diagnostic);
 }
 
 /**

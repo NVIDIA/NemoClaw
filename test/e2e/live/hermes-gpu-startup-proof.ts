@@ -43,6 +43,49 @@ interface HermesGpuStartupProofOptions {
   status: Pick<ShellProbeResult, "stdout" | "stderr">;
 }
 
+/** Retain runtime-query failures without turning them into successful absence evidence. */
+export function buildHermesGpuFailureCaptureScript(): string {
+  const runtimeCommandExpansion = "${runtime_command[@]}";
+  return String.raw`set -u
+sandbox_filter="$1"
+diagnostics_dir="$2"
+shift 2
+runtime_command=("$@")
+if [ -n "$diagnostics_dir" ] && [ -d "$diagnostics_dir" ]; then
+  printf '%s\n' "== pre-rollback diagnostics $diagnostics_dir =="
+  for name in summary.txt patched-container-state.json docker-inspect.json docker-network-summary.txt docker-top.txt docker-logs.txt openshell-sandbox-get.txt openshell-sandbox-list.txt openshell-logs.txt; do
+    file="$diagnostics_dir/$name"
+    if [ -f "$file" ]; then
+      printf '%s\n' "== $name =="
+      if [ "$name" = openshell-logs.txt ]; then
+        tail -n 800 "$file"
+      else
+        sed -n '1,800p' "$file"
+      fi
+    fi
+  done
+else
+  printf '%s\n' "pre-rollback diagnostics directory unavailable: $diagnostics_dir"
+fi
+ids="$("${runtimeCommandExpansion}" container ps --all --quiet --filter "$sandbox_filter")" || {
+  query_status=$?
+  printf 'runtime container selector failed (exit %s)\n' "$query_status" >&2
+  exit "$query_status"
+}
+if [ -z "$ids" ]; then
+  printf '%s\n' "no runtime container found for $sandbox_filter"
+  exit 0
+fi
+for id in $ids; do
+  printf '%s\n' "== container $id inspect =="
+  "${runtimeCommandExpansion}" container inspect --format '{{json .Id}} {{json .Name}} {{json .Config.Labels}} {{json .Image}} {{json .Config.User}} {{json .Config.Entrypoint}} {{json .Config.Cmd}} {{json .State}} {{json .HostConfig.RestartPolicy}}' "$id" 2>&1 || true
+  printf '%s\n' "== container $id top =="
+  "${runtimeCommandExpansion}" container top "$id" -eo user,pid,ppid,stat,args 2>&1 || true
+  printf '%s\n' "== container $id logs =="
+  "${runtimeCommandExpansion}" container logs --tail 300 "$id" 2>&1 || true
+done`;
+}
+
 const IMMUTABLE_IMAGE_REFERENCE = /^[^@\s]+@sha256:[a-f0-9]{64}$/u;
 const IMMUTABLE_IMAGE_CONTENT_ID = /^sha256:[a-f0-9]{64}$/u;
 const BARE_IMMUTABLE_IMAGE_CONTENT_ID = /^[a-f0-9]{64}$/u;
@@ -68,9 +111,13 @@ export function assertHermesGpuStartupOutputContract(
   runtimeProviderId: RuntimeProviderPrerequisite["id"],
   installText: string,
 ): void {
-  expect(installText).toContain(`Container runtime: ${runtimeProviderId}`);
+  const runtimeLine =
+    runtimeProviderId === "podman"
+      ? /(?:Container runtime: podman|Podman runtime: rootless server)/u
+      : /Container runtime: docker/u;
+  expect(stripAnsi(installText)).toMatch(runtimeLine);
   expect(installText).toMatch(OPENSHELL_GATEWAY_START_LINE);
-  expect(installText).toMatch(/gateway is healthy/u);
+  expect(stripAnsi(installText)).toMatch(/gateway(?: managed service)? is healthy/u);
   expect(installText).not.toContain("Reusing healthy NemoClaw gateway.");
   expect(installText).not.toMatch(/Reusing existing .*gateway/u);
   expect(installText).not.toContain("[reuse] Skipping gateway (running)");

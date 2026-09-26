@@ -4,6 +4,7 @@
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
+import { approveOpenClawAdminScope } from "./openclaw-admin-scope.ts";
 import * as http2 from "node:http2";
 import { createRequire } from "node:module";
 import net from "node:net";
@@ -25,7 +26,7 @@ import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { testHomeEnvironment } from "../fixtures/environment-profiles.ts";
-import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
+import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import type { TestProgress, TestProgressCapability } from "../fixtures/progress.ts";
 import {
@@ -51,7 +52,6 @@ import {
 
 const require = createRequire(import.meta.url);
 
-const DIST_ENTRYPOINT = CLI_DIST_ENTRYPOINT;
 const BEDROCK_HOSTNAME = "bedrock-runtime.us-east-1.amazonaws.com";
 const BEDROCK_MOCK_PORT = 18147;
 const BEDROCK_ENDPOINT_URL = `https://${BEDROCK_HOSTNAME}`;
@@ -627,10 +627,6 @@ async function removeBedrockTlsRedirect(host: HostCliClient, home: string): Prom
 }
 
 async function prepareSourceCliAndOpenShell(host: HostCliClient, home: string): Promise<void> {
-  expect(
-    fs.existsSync(DIST_ENTRYPOINT),
-    "run `npm run build:cli` before live Bedrock Runtime compatible Anthropic targets",
-  ).toBe(true);
   expectExitZero(
     await host.command("node", [CLI_ENTRYPOINT, "--version"], {
       artifactName: "source-cli-version-bedrock-runtime",
@@ -960,6 +956,14 @@ test(
     if (AGENT === "hermes") {
       await assertHermesApiChat(sandbox, home);
     } else {
+      await approveOpenClawAdminScope(
+        host,
+        sandbox,
+        SANDBOX_NAME,
+        testEnv(home),
+        [COMPATIBLE_KEY],
+        false,
+      );
       await assertOpenClawAgentTurn(sandbox, home);
     }
 

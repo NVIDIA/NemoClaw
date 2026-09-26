@@ -367,10 +367,14 @@ export function buildOpenClawPostUpgradeDoctorMarkerCommand(
 ): string {
   const marker = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_MARKER);
   const content = shellQuote(markerValue);
+  const ready = shellQuote(OPENCLAW_POST_UPGRADE_DOCTOR_READY);
   return [
     "set -e",
     'dir="/sandbox/.openclaw"',
     '[ -d "$dir" ] && [ ! -L "$dir" ] || exit 10',
+    // The same container retains /tmp across stop/start. Its previous receipt
+    // cannot authorize restoration before the next entrypoint reaches the gate.
+    `rm -f -- ${ready}`,
     'tmp="$(mktemp "$dir/.nemoclaw-post-upgrade-doctor.XXXXXX")" || exit 11',
     "trap 'rm -f -- \"$tmp\"' EXIT",
     'chmod 600 "$tmp"',
