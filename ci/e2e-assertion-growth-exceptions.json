@@ -1,5 +1,5 @@
 {
-  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0\n\nMaintainer-approved exception for the exact PR #10341 budget transition. Adds only deferred-onboarding.test.ts with [12,14,12,14,0]; existing per-file budgets remain unchanged. Approval: https://github.com/NVIDIA/NemoClaw/pull/10341#issuecomment-5799263232. Local hooks and candidate CI may use this branch policy. The independent PR check reads only trusted base policy, so its expected growth failure is explicitly waived for #10341. A changed base or candidate budget invalidates this exception. Remove after #10341 merges.\n\nPR #12305 adds 19 live assertion points for the approved stopped-container recovery proof while retaining healthy-rebuild coverage. Exact budget-transition approval: https://github.com/NVIDIA/NemoClaw/pull/12305#issuecomment-5803852010. No other budget transition is accepted by this entry.\n\nThe same 19-assertion helper is also exercised by rebuild-openclaw, independently of the inherited private-MCP failure. Unique assertion counts are unchanged; one helper file is extracted. Revised exact-transition approval: https://github.com/NVIDIA/NemoClaw/pull/12305#issuecomment-5807159038.\n\nPR #12343 preserves the approved one session-seed assertion and shared explicit-approval evidence after resolving conflicts with main 994f73fc9e11f1576b7c99b7fd4e3b95b56700f5. The exact base/candidate transition is recorded at https://github.com/NVIDIA/NemoClaw/pull/12343#issuecomment-5846771192. No other growth or test-size change is accepted by this entry. The independent trusted-base growth check remains an explicit maintainer override, not a passing check.",
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0\n\nMaintainer-approved exception for the exact PR #10341 budget transition. Adds only deferred-onboarding.test.ts with [12,14,12,14,0]; existing per-file budgets remain unchanged. Approval: https://github.com/NVIDIA/NemoClaw/pull/10341#issuecomment-5799263232. Local hooks and candidate CI may use this branch policy. The independent PR check reads only trusted base policy, so its expected growth failure is explicitly waived for #10341. A changed base or candidate budget invalidates this exception. Remove after #10341 merges.\n\nPR #12305 adds 19 live assertion points for the approved stopped-container recovery proof while retaining healthy-rebuild coverage. Exact budget-transition approval: https://github.com/NVIDIA/NemoClaw/pull/12305#issuecomment-5803852010. No other budget transition is accepted by this entry.\n\nThe same 19-assertion helper is also exercised by rebuild-openclaw, independently of the inherited private-MCP failure. Unique assertion counts are unchanged; one helper file is extracted. Revised exact-transition approval: https://github.com/NVIDIA/NemoClaw/pull/12305#issuecomment-5807159038.",
   "schemaVersion": 1,
   "exceptions": [
     {
@@ -11,11 +11,6 @@
       "pullRequest": 12305,
       "baseBudgetSha256": "375c8f76724ccade48d8bbaafddc582984270350f95efde51211b0ff973a9dbe",
       "headBudgetSha256": "a2950bb3b5be2ba76071f3956b8a9a30fb4f3877308542c3947cea3821bfdf28"
-    },
-    {
-      "pullRequest": 12343,
-      "baseBudgetSha256": "a7290e1c9541917e48d15cd5879d276b8aceb1747de476328a2c8c2a13bd29e4",
-      "headBudgetSha256": "be0b801011add4e29c3b68a569136fa2e4d459e77552480c2f21d65e85e6a4df"
     }
   ]
 }

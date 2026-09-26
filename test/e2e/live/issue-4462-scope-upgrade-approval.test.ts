@@ -13,10 +13,10 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import { trackIssue4462FailureDiagnostics } from "../fixtures/issue-4462-diagnostics.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import {
+  ISSUE_4462_SCOPE_UPGRADE_PHASES,
   pendingAdminRequestId,
   preApprovalAdminProbeEvidence,
 } from "../fixtures/issue-4462-admin-approval-evidence.ts";
-import { ISSUE_4462_SCOPE_UPGRADE_PHASES } from "./issue-4462-admin-approval-helper.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-issue-4462";
 const LIVE_TIMEOUT_MS = testTimeout(70 * 60_000);

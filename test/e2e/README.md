@@ -167,6 +167,11 @@ Managed-image activation retains its cron-consumer proof. Feature setup can stop
 approval and verify the grant through its own native operation, avoiding an unrelated cron job or
 agent session. Sessions/agents coverage requires the main session seed to succeed and does not
 approve arbitrary pending devices or silently skip the main-session cases.
+The feature tests exercise the CLI instead of separately asserting that its source and compiled files exist.
+The full onboarding test relies on its existing status poll, which fails when status never succeeds.
+MCP tests retain live allow/deny enforcement and credential-rotation checks without asserting policy
+serialization or the provider-update success message. Approval phase labels live with the existing
+fixture evidence helpers; moving these labels does not move live assertions.
 The concurrent-add probe retries only the rejected command after status proves that the other
 command committed one coherent bridge. The rejected command must report the exact portable
 host-lock timeout, optionally followed by the current recorded-owner-is-still-running remediation.

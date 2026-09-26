@@ -912,8 +912,7 @@ test(
 
     const list = await repoNemoclaw(host, ["list"], "phase-3-nemoclaw-list");
     expect(list.exitCode === 0 && list.stdout.includes(SANDBOX_NAME), resultText(list)).toBe(true);
-    const status = await waitForSandboxStatus(host);
-    expect(status.exitCode, resultText(status)).toBe(0);
+    await waitForSandboxStatus(host);
 
     const inference = await sandbox.openshell(["inference", "get"], {
       artifactName: "phase-3-openshell-inference-get",

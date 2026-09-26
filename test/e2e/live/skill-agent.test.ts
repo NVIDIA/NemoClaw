@@ -114,10 +114,6 @@ test(
     },
   },
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
-    expect(
-      fs.existsSync(CLI_ENTRYPOINT),
-      "run `npm run build:cli` before live repo CLI targets",
-    ).toBe(true);
     expect(fs.existsSync(ADD_SKILL_SCRIPT), `missing skill add helper: ${ADD_SKILL_SCRIPT}`).toBe(
       true,
     );
