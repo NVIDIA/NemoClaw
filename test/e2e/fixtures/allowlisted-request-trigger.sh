@@ -17,12 +17,11 @@ fi
 install -d -m 0700 -- "$client_state"
 printf '%s\n' '{"gateway":{"mode":"local","port":18789,"auth":{}}}' >"$client_config"
 chmod 0600 "$client_config"
-params="$(printf '{"key":"agent:main:nemoclaw-e2e-allowlisted-%s-%s","agentId":"main"}' "$$" "$(date +%s)")"
 set +e
 NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING=1 \
   OPENCLAW_STATE_DIR="$client_state" \
-  OPENCLAW_CONFIG_PATH="$client_config" \
-  openclaw gateway call sessions.create --params "$params" --json \
+  OPENCLAW_CONFIG_PATH=/sandbox/.openclaw/openclaw.json \
+  openclaw devices list --json \
   >"$trigger_output" 2>&1
 trigger_status=$?
 set -e

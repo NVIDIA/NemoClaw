@@ -189,10 +189,10 @@ describe("scope-upgrade approval live fixture", () => {
       `#!/bin/bash
 set -euo pipefail
 case "$*" in
-  "gateway call sessions.create --params "*)
+  "devices list --json")
     [ "$OPENCLAW_STATE_DIR" = "$ISSUE_4462_ALLOWLISTED_CLIENT_STATE_DIR" ]
-    [ "$OPENCLAW_CONFIG_PATH" = "$ISSUE_4462_ALLOWLISTED_CLIENT_STATE_DIR/openclaw.json" ]
-    grep -Fqx '{"gateway":{"mode":"local","port":18789,"auth":{}}}' "$OPENCLAW_CONFIG_PATH"
+    [ "$OPENCLAW_CONFIG_PATH" = /sandbox/.openclaw/openclaw.json ]
+    grep -Fqx '{"gateway":{"mode":"local","port":18789,"auth":{}}}' "$OPENCLAW_STATE_DIR/openclaw.json"
     printf '%s\\n' 'pairing required' >&2
     exit 17
     ;;
