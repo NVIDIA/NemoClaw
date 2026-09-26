@@ -100,3 +100,15 @@ first on `PATH` and exposes `gtar` as `tar` only to the Vitest process through a
 This workflow runs only after pushes to `main`; candidate-controlled and manually dispatched code
 does not receive its package credential. WSL installs `gnu-coreutils` for fixtures that require GNU
 utility behavior, keeps Ubuntu's default utilities intact, and stops Docker before non-live tests.
+
+Some tests also run host `python3` helper scripts. The same job installs their packages from
+[`ci/platform-vitest-macos-requirements.lock`](../ci/platform-vitest-macos-requirements.lock), which
+owns the authoritative list. Install them before you run the `cli` project:
+
+```bash
+python3 -m pip install --requirement ci/platform-vitest-macos-requirements.lock
+```
+
+A host without those packages fails on the helper's empty output rather than on the import error, so
+the failure does not name the missing package. `mcp-bridge-adapter-hermes.test.ts` reports
+`expected '' to be 'registered'` when `python3` cannot import `yaml`.
