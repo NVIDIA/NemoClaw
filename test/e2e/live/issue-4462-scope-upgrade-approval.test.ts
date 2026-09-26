@@ -4,7 +4,10 @@
 import os from "node:os";
 import path from "node:path";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
-import { allowlistedApprovalConnectScript } from "../fixtures/allowlisted-approval-connect.ts";
+import {
+  ALLOWLISTED_REQUEST_TRIGGER_SH,
+  allowlistedApprovalConnectScript,
+} from "../fixtures/allowlisted-approval-connect.ts";
 import { adminApprovalConnectScript } from "../fixtures/admin-approval-connect.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
@@ -72,6 +75,22 @@ interface FreshAgentGatewaySnapshot {
   pairedCliCount: number;
   pendingCount: number;
   sameDevicePendingCount: number;
+}
+
+interface CapturedCommandResult {
+  exitCode: number | null;
+  stderr: string;
+  stdout: string;
+}
+
+function pendingAllowlistedRequestId(result: CapturedCommandResult): string | undefined {
+  const matches = [
+    ...`${result.stdout}\n${result.stderr}`.matchAll(
+      /^ISSUE_4462_ALLOWLISTED_REQUEST_ID=([0-9a-f-]{36})$/gimu,
+    ),
+  ].map((match) => match[1]?.toLowerCase());
+  const requestIds = [...new Set(matches.filter((value): value is string => !!value))];
+  return result.exitCode !== 0 && requestIds.length === 1 ? requestIds[0] : undefined;
 }
 
 async function cleanup(host: HostCliClient, sandbox: SandboxClient): Promise<void> {
@@ -238,11 +257,26 @@ test(
     ]);
 
     progress.phase("settle a post-onboarding allowlisted request through connect");
+    const allowlistedTrigger = await sandbox.exec(
+      SANDBOX_NAME,
+      ["bash", "-lc", ALLOWLISTED_REQUEST_TRIGGER_SH],
+      {
+        artifactName: "phase-3-trigger-allowlisted-request",
+        captureLimitBytes: 64 * 1024,
+        env: env(),
+        redactionValues: [apiKey],
+        timeoutMs: 60_000,
+      },
+    );
+    const allowlistedRequestId = pendingAllowlistedRequestId(allowlistedTrigger) ?? "";
     const allowlistedConnect = await host.command(
       "bash",
-      ["-lc", allowlistedApprovalConnectScript(host.commandPath, SANDBOX_NAME)],
+      [
+        "-lc",
+        allowlistedApprovalConnectScript(host.commandPath, SANDBOX_NAME, allowlistedRequestId),
+      ],
       {
-        artifactName: "phase-3-4-connect-allowlisted-approval",
+        artifactName: "phase-4-connect-allowlisted-approval",
         captureLimitBytes: 64 * 1024,
         env: env(),
         redactionValues: [apiKey],
