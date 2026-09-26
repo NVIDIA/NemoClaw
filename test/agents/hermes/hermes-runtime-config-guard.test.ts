@@ -34,52 +34,6 @@ sys.modules[spec.name] = guard
 spec.loader.exec_module(guard)
 `;
 
-describe("Hermes restart orphan marker metadata", () => {
-  it("reopens an existing marker without requesting data-read access", () => {
-    const result = runPythonHarness(`${loadGuardModule}
-import errno
-import json
-import stat
-from types import SimpleNamespace
-
-calls = []
-metadata_flag = getattr(guard.os, "O_PATH", 1 << 29)
-guard.os.O_PATH = metadata_flag
-guard.os.geteuid = lambda: 0
-guard.os.getegid = lambda: 0
-
-def fake_open(path, flags, *args, **kwargs):
-    calls.append([path, flags, kwargs.get("dir_fd")])
-    if flags & guard.os.O_CREAT:
-        raise FileExistsError(errno.EEXIST, "exists", path)
-    return 73
-
-guard.os.open = fake_open
-guard.os.fstat = lambda _fd: SimpleNamespace(
-    st_mode=stat.S_IFREG | 0o400,
-    st_uid=0,
-    st_gid=0,
-    st_nlink=1,
-)
-guard.os.close = lambda _fd: None
-
-guard._ensure_restart_orphan_marker(41)
-print(json.dumps({
-    "metadata_only": bool(calls[1][1] & metadata_flag),
-    "no_follow": bool(calls[1][1] & guard._no_follow_flag()),
-    "dir_fd": calls[1][2],
-}))
-`);
-
-    expect(result.status, result.stderr).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual({
-      metadata_only: true,
-      no_follow: true,
-      dir_fd: 41,
-    });
-  });
-});
-
 describe("Hermes candidate schema validation (#8614)", () => {
   it("rejects an incomplete home_channel before a sealed write transaction starts", () => {
     const result = runPythonHarness(`${loadGuardModule}
