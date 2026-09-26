@@ -93,6 +93,29 @@ async function captureCommandEvidence(outcome: string) {
 }
 
 describe("fixture redaction entry point", () => {
+  it.each([false, true])(
+    "preserves credential presence in redacted legacy JSON (retired=%s)",
+    (retired) => {
+      const secret = "fixture-hosted-key-for-retirement";
+      const retained = {
+        OPENSHELL_GATEWAY: "evil-gw-from-tampered-file",
+        NODE_OPTIONS: "--require=/tmp/evil.js",
+      };
+      const store = new SecretStore({}, (note): never => {
+        throw new Error(note);
+      });
+      const plaintext = JSON.stringify({
+        ...retained,
+        ...(retired ? {} : { NVIDIA_INFERENCE_API_KEY: secret }),
+      });
+
+      expect(JSON.parse(store.redact(plaintext, [secret]))).toEqual({
+        ...retained,
+        ...(retired ? {} : { NVIDIA_INFERENCE_API_KEY: "[REDACTED]" }),
+      });
+    },
+  );
+
   it.each([
     { outcome: "success", exitCode: 0, timedOut: false, failed: false, commandOmitted: undefined },
     { outcome: "failure", exitCode: 7, timedOut: false, failed: false, commandOmitted: undefined },
