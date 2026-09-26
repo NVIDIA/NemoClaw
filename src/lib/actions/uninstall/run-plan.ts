@@ -25,7 +25,6 @@ import { DEFAULT_GATEWAY_PORT, GATEWAY_PORT } from "../../core/ports";
 import { isStdinTty, readLineFromStdin } from "../../core/stdin";
 import { sleepMs } from "../../core/wait";
 import {
-  OPENSHELL_SANDBOXES_DELETE_SKIP_MESSAGE,
   preservedRegistryUnrecoverableWarnings,
   providerDeleteSkipMessage,
   sandboxDeleteAbsentMessage,
@@ -128,11 +127,13 @@ import {
   stopOpenRouterRuntimeAdapter,
 } from "./openrouter-runtime-adapter-cleanup";
 import {
+  deleteAllSelectedGatewaySandboxes,
   deleteSelectedGatewaySandbox,
   isModelRouterPid,
   isOllamaAuthProxyPid,
   pidExists,
   removeForceFreshReceiptVolumes,
+  selectedGatewayCleanupRuntimeSelection,
 } from "./runtime-commands";
 import {
   buildUninstallPlan,

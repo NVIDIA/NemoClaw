@@ -16,6 +16,7 @@ import {
   ensureDockerDriverGatewayJwtBundle,
   gatewayIdForStateDir,
 } from "../../onboard/docker-driver-gateway-config";
+import { writeCompleteDockerDriverGatewayLocalTlsBundle } from "../../onboard/__test-helpers__/docker-driver-gateway-local-tls";
 import { NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE } from "../../onboard/docker-driver-gateway-service";
 import { resolveGatewayStateDirName } from "../../onboard/gateway-binding";
 import { readGatewayRegistryFile } from "../../state/gateway-registry";
@@ -33,9 +34,7 @@ const STATIC_TEST_HOME = fs.mkdtempSync(
 const NAMED_GATEWAY_ABSENCE = "No gateway metadata found for nemoclaw.";
 const REMOVE_UNSUPPORTED = "unrecognized subcommand 'remove'";
 
-afterAll(() => {
-  fs.rmSync(STATIC_TEST_HOME, { recursive: true, force: true });
-});
+afterAll(() => fs.rmSync(STATIC_TEST_HOME, { recursive: true, force: true }));
 
 function ok(stdout = ""): RunResult {
   return { status: 0, stdout, stderr: "" };
@@ -74,6 +73,7 @@ function writeScopedGatewayState(home: string, port = 8080): string {
   const stateDir = path.join(home, ".local", "state", "nemoclaw", resolveGatewayStateDirName(port));
   const configPath = path.join(stateDir, "openshell-gateway.toml");
   const jwtBundle = ensureDockerDriverGatewayJwtBundle(stateDir);
+  writeCompleteDockerDriverGatewayLocalTlsBundle(stateDir);
   fs.writeFileSync(
     configPath,
     buildDockerDriverGatewayConfigToml(

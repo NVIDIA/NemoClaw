@@ -21,6 +21,7 @@ import {
   ensureDockerDriverGatewayJwtBundle,
   gatewayIdForStateDir,
 } from "../../onboard/docker-driver-gateway-config";
+import { writeCompleteDockerDriverGatewayLocalTlsBundle } from "../../onboard/__test-helpers__/docker-driver-gateway-local-tls";
 import {
   type RunResult,
   runUninstallPlan as runUninstallPlanBase,
@@ -105,6 +106,7 @@ function publishManagedLlamaOwner(
 function writeScopedGatewayState(home: string): void {
   const stateDir = path.join(home, ".local", "state", "nemoclaw", "openshell-docker-gateway");
   const jwtBundle = ensureDockerDriverGatewayJwtBundle(stateDir);
+  writeCompleteDockerDriverGatewayLocalTlsBundle(stateDir);
   fs.writeFileSync(
     path.join(stateDir, "openshell-gateway.toml"),
     buildDockerDriverGatewayConfigToml(

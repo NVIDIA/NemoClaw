@@ -8,13 +8,20 @@ import {
   createUninstallSandboxObserver,
   type RunResult,
 } from "../../adapters/uninstall/commands";
+import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
+import { OPENSHELL_DEFAULT_WORKSPACE } from "../../adapters/openshell/sandbox-ssh-host";
 import {
+  OPENSHELL_SANDBOXES_DELETE_SKIP_MESSAGE,
   sandboxDeleteAbsentMessage,
   sandboxDeleteFailureMessage,
 } from "../../domain/uninstall/messaging";
 import { isOllamaAuthProxyCommandLine } from "../../inference/ollama/process";
 import { isModelRouterCommandLineForPort } from "../../onboard/model-router-process";
 import { MANAGED_STARTUP_RECEIPT_VOLUME_PREFIX } from "../../onboard/managed-startup/docker-receipt-transfer";
+import {
+  dockerDriverGatewayLocalTlsAuthorityIsConfigured,
+  resolveCompleteDockerDriverGatewayLocalTlsDir,
+} from "../../onboard/docker-driver-gateway-local-tls";
 
 interface UninstallRuntimeCommands {
   env: NodeJS.ProcessEnv;
@@ -35,6 +42,22 @@ const MANAGED_STARTUP_RECEIPT_VOLUME_PATTERN = new RegExp(
   `^${MANAGED_STARTUP_RECEIPT_VOLUME_PREFIX}-[0-9a-f]{32}$`,
   "u",
 );
+const BULK_DELETE_MAX_OBSERVATIONS = 5;
+const BULK_DELETE_REQUIRED_EMPTY_OBSERVATIONS = 2;
+
+export function selectedGatewayCleanupRuntimeSelection(
+  gatewayName: string,
+  gatewayStateDir: string,
+): OpenShellRuntimeSelection | null {
+  const localTlsDir = resolveCompleteDockerDriverGatewayLocalTlsDir(gatewayStateDir);
+  if (!localTlsDir && dockerDriverGatewayLocalTlsAuthorityIsConfigured(gatewayStateDir))
+    return null;
+  return {
+    gatewayName,
+    workspace: OPENSHELL_DEFAULT_WORKSPACE,
+    ...(localTlsDir ? { localTlsDir } : {}),
+  };
+}
 
 function nonEmptyLines(output: string): string[] {
   return output
@@ -100,6 +123,51 @@ export async function deleteSelectedGatewaySandbox(
     if (attempt < 4) runtime.sleep?.(200);
   }
   runtime.warn(sandboxDeleteFailureMessage(sandboxName));
+  return false;
+}
+
+export async function deleteAllSelectedGatewaySandboxes(
+  runtime: UninstallRuntimeCommands,
+  runtimeSelection: OpenShellRuntimeSelection | null,
+): Promise<boolean> {
+  if (!runtimeSelection) {
+    runtime.warn(
+      "OpenShell selected-gateway cleanup authority is incomplete; preserving its state for retry.",
+    );
+    return false;
+  }
+  const result = await createUninstallSandboxLifecycle(runtime.run, runtime.env).deleteAllSandboxes(
+    { target: { kind: "selected" }, runtimeSelection },
+  );
+  if (
+    result.kind === "failed" &&
+    result.error.kind === "command" &&
+    result.error.reason === "invalid_request"
+  ) {
+    runtime.warn("OpenShell rejected the selected-gateway sandbox cleanup request.");
+    return false;
+  }
+
+  const observer = createUninstallSandboxObserver(runtime.run, runtime.env, runtimeSelection);
+  let consecutiveEmptyObservations = 0;
+  let lastObservationError: string | null = null;
+  for (let attempt = 0; attempt < BULK_DELETE_MAX_OBSERVATIONS; attempt += 1) {
+    const observed = await observer.listSandboxes({ target: { kind: "selected" } });
+    lastObservationError = observed.ok ? null : observed.error.message;
+    consecutiveEmptyObservations =
+      observed.ok && observed.value.sandboxes.length === 0 ? consecutiveEmptyObservations + 1 : 0;
+    if (consecutiveEmptyObservations >= BULK_DELETE_REQUIRED_EMPTY_OBSERVATIONS) {
+      if (result.kind === "accepted") runtime.log("Deleted all OpenShell sandboxes");
+      else runtime.warn(OPENSHELL_SANDBOXES_DELETE_SKIP_MESSAGE);
+      return true;
+    }
+    if (attempt < BULK_DELETE_MAX_OBSERVATIONS - 1) runtime.sleep?.(200);
+  }
+  runtime.warn(
+    lastObservationError
+      ? `OpenShell sandbox cleanup was incomplete because inventory could not be verified: ${lastObservationError} Preserving its state for retry.`
+      : "OpenShell sandbox cleanup was incomplete; preserving its state for retry.",
+  );
   return false;
 }
 

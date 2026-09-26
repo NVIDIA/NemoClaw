@@ -13,6 +13,11 @@ const request = {
   target: { kind: "named", gatewayName: "nemoclaw-8091" },
 } as const;
 
+const bulkDeleteRequest = {
+  target: { kind: "selected" },
+  runtimeSelection: { gatewayName: "nemoclaw-8091", workspace: "recorded" },
+} as const;
+
 const createRequest = {
   sandboxName: "alpha",
   target: { kind: "named", gatewayName: "nemoclaw-8091" },
@@ -221,6 +226,88 @@ describe("OpenShell sandbox lifecycle CLI", () => {
       maxBuffer: 1024 * 1024,
       timeout: 60_000,
     });
+  });
+
+  it("submits one selected-gateway bulk delete without retrying (#11831)", async () => {
+    const capture = vi.fn().mockResolvedValue({ status: 0, output: "deleted" });
+    const result = await createCliOpenShellSandboxLifecycle({ capture }).deleteAllSandboxes(
+      bulkDeleteRequest,
+    );
+
+    expect(result).toEqual({ kind: "accepted", diagnostic: "deleted", exitCode: 0 });
+    expect(capture).toHaveBeenCalledOnce();
+    expect(capture).toHaveBeenCalledWith(
+      ["sandbox", "delete", "--all"],
+      expect.objectContaining({
+        ignoreError: true,
+        includeStderr: true,
+        includeStreams: true,
+        maxBuffer: 1024 * 1024,
+        timeout: 60_000,
+        replaceEnv: true,
+        env: expect.objectContaining({
+          OPENSHELL_GATEWAY: "nemoclaw-8091",
+          OPENSHELL_WORKSPACE: "recorded",
+        }),
+      }),
+    );
+  });
+
+  it("rejects non-selected bulk deletion before execution (#11831)", async () => {
+    const capture = vi.fn();
+    const lifecycle = createCliOpenShellSandboxLifecycle({ capture });
+
+    await expect(
+      lifecycle.deleteAllSandboxes({
+        target: { kind: "named", gatewayName: "foreign" } as never,
+        runtimeSelection: bulkDeleteRequest.runtimeSelection,
+      }),
+    ).resolves.toMatchObject({
+      kind: "failed",
+      ambiguous: false,
+      error: { kind: "command", reason: "invalid_request" },
+    });
+    await expect(
+      lifecycle.deleteAllSandboxes({ ...bulkDeleteRequest, timeoutMs: 0 }),
+    ).resolves.toMatchObject({
+      kind: "failed",
+      ambiguous: false,
+      error: { kind: "command", reason: "invalid_request" },
+    });
+    expect(capture).not.toHaveBeenCalled();
+  });
+
+  it("keeps an unsettled bulk deletion ambiguous and redacted (#11831)", async () => {
+    const capture = vi.fn().mockResolvedValue({
+      status: null,
+      output: "api_key=must-not-leak",
+      error: Object.assign(new Error("buffer exceeded"), { code: "ENOBUFS" }),
+    });
+    const result = await createCliOpenShellSandboxLifecycle({ capture }).deleteAllSandboxes(
+      bulkDeleteRequest,
+    );
+
+    expect(result).toMatchObject({ kind: "failed", ambiguous: true });
+    expect(JSON.stringify(result)).not.toContain("must-not-leak");
+    expect(capture).toHaveBeenCalledOnce();
+  });
+
+  it("replaces an ambient gateway selector for bulk deletion (#11831)", async () => {
+    vi.stubEnv("OPENSHELL_GATEWAY", "foreign");
+    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://ambient.invalid");
+    const capture = vi.fn().mockResolvedValue({ status: 0, output: "deleted" });
+
+    await createCliOpenShellSandboxLifecycle({ capture }).deleteAllSandboxes(bulkDeleteRequest);
+
+    const [, options] = capture.mock.calls[0];
+    expect(options).toMatchObject({
+      replaceEnv: true,
+      env: {
+        OPENSHELL_GATEWAY: "nemoclaw-8091",
+        OPENSHELL_WORKSPACE: "recorded",
+      },
+    });
+    expect(options.env).not.toHaveProperty("OPENSHELL_GATEWAY_ENDPOINT");
   });
 
   it("pins the delete to its frozen runtime selection", async () => {

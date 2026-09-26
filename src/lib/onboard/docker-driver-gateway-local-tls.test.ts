@@ -8,9 +8,15 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  TEST_DOCKER_DRIVER_GATEWAY_CERT_PEM as TEST_CERT_PEM,
+  TEST_DOCKER_DRIVER_GATEWAY_KEY_PEM as TEST_KEY_PEM,
+  writeDockerDriverGatewayLocalTlsBundle as writeBundle,
+} from "./__test-helpers__/docker-driver-gateway-local-tls";
+import {
   dockerDriverGatewayLocalTlsBundleIsComplete,
   ensureDockerDriverGatewayLocalTlsBundle,
   getDockerDriverGatewayLocalTlsBundle,
+  resolveCompleteDockerDriverGatewayLocalTlsDir,
 } from "./docker-driver-gateway-local-tls";
 import { PORTABLE_HOST_GATEWAY_IP } from "./experimental/portable-profile";
 
@@ -19,28 +25,6 @@ const TEST_CERT_SKEW_BOUNDARY_NOT_YET_VALID_AT = new Date("2026-06-26T20:38:47.0
 const TEST_CERT_NOT_YET_VALID_AT = new Date("2026-06-26T20:38:46.000Z");
 const TEST_CERT_SKEW_BOUNDARY_EXPIRED_AT = new Date("2036-06-23T20:48:47.000Z");
 const TEST_CERT_EXPIRED_AT = new Date("2036-06-23T20:48:48.000Z");
-
-const TEST_CERT_PEM = `-----BEGIN CERTIFICATE-----
-MIIDSDCCAjCgAwIBAgIUBpjeCY46iq7RCJIJJRARHcI2jUkwDQYJKoZIhvcNAQEL
-BQAwGDEWMBQGA1UEAwwNbmVtb2NsYXctdGVzdDAeFw0yNjA2MjYyMDQzNDdaFw0z
-NjA2MjMyMDQzNDdaMBgxFjAUBgNVBAMMDW5lbW9jbGF3LXRlc3QwggEiMA0GCSqG
-SIb3DQEBAQUAA4IBDwAwggEKAoIBAQCNNYxZ+eNXrah+l9KkvH+frUAZFA+WY5Mp
-EM2ghtxP5r9CE4izEdKRdk+bq85mVW17M9u+vLA0F0FmFRzAGV74qW+DJgbbefxR
-J6tcowGACoAbNBvELpkQpDBqeLtQdtcSK92RLiRCmP94m21xTkF77Kvg2HeddvUn
-SZJ+SgBscgNVo1Hdf85YMVwxg51n0bhtZmk2WXnAbqCj/Zmka6lKbhomcMaPKuDV
-bz+VKy+9xPK+/sio9wsdFQ9X6Z6liUwID9Z2hjneZXfYycUGTSddcBuqe2s61MZA
-ntQCzsnwzJxgl1BBZ/FbE4eCO0QL1mPc9wDkD2299nrtZ9gsQYLXAgMBAAGjgYkw
-gYYwHQYDVR0OBBYEFPIKiGBTsTkY0/DkeDxK9zcBbctYMB8GA1UdIwQYMBaAFPIK
-iGBTsTkY0/DkeDxK9zcBbctYMA8GA1UdEwEB/wQFMAMBAf8wMwYDVR0RBCwwKoIX
-aG9zdC5vcGVuc2hlbGwuaW50ZXJuYWyCCWxvY2FsaG9zdIcEfwAAATANBgkqhkiG
-9w0BAQsFAAOCAQEAfoS+BKlCJNVovT3TMrhiBUhIAtYbBBESp3a2W/vgiV2hZO8o
-UDY8lt8Pa2BuU3bwLBnMpr3iChdKLJ70KofqJAgRS6lEgkTXejfoRETuHngqIB5F
-Kwz7iSdNmbMNaSaG0JsBpsmTLdkoXVbCoburV534yG0VLDSdGy0dEklxRP2OEQ1s
-eyP7541jrt1kFMyPWQ/SaLmFYYCKtYGe1PtKYw0HJf4UQGbNJC8TRZ9KyqfcSdMr
-8gMJ6LlArc4hplBJV19dbQJmMpWfQZFpzOzV1lK46YAJSlaUGKzoreaGs4GzHYHD
-vTUDCPebEbi9VRlMpX9j7ti+yqqFitz/42+JeA==
------END CERTIFICATE-----
-`;
 
 const TEST_CERT_WITHOUT_REQUIRED_SAN_PEM = `-----BEGIN CERTIFICATE-----
 MIIDETCCAfmgAwIBAgIUHcSxS4dERobRjaJRbfMQoMPf3K8wDQYJKoZIhvcNAQEL
@@ -64,38 +48,6 @@ pBIexcT1Wv4GD4R5P7jmS3DByQiuwURc4UspT6lcVmOsN7pXqh5GocK7uF9TYEw6
 `;
 
 const TEST_KEY_LABEL = "PRIVATE " + "KEY";
-const TEST_KEY_PEM = [
-  `-----BEGIN ${TEST_KEY_LABEL}-----`,
-  "MIIEvwIBADANBgkqhkiG9w0BAQEFAASCBKkwggSlAgEAAoIBAQCNNYxZ+eNXrah+",
-  "l9KkvH+frUAZFA+WY5MpEM2ghtxP5r9CE4izEdKRdk+bq85mVW17M9u+vLA0F0Fm",
-  "FRzAGV74qW+DJgbbefxRJ6tcowGACoAbNBvELpkQpDBqeLtQdtcSK92RLiRCmP94",
-  "m21xTkF77Kvg2HeddvUnSZJ+SgBscgNVo1Hdf85YMVwxg51n0bhtZmk2WXnAbqCj",
-  "/Zmka6lKbhomcMaPKuDVbz+VKy+9xPK+/sio9wsdFQ9X6Z6liUwID9Z2hjneZXfY",
-  "ycUGTSddcBuqe2s61MZAntQCzsnwzJxgl1BBZ/FbE4eCO0QL1mPc9wDkD2299nrt",
-  "Z9gsQYLXAgMBAAECggEAQzZLucABgAg+fRMSxiqarIwwSD+OM8ztjMxcs529W6K/",
-  "Qlo95M4E5gvkVHpwYbEjzVKfs6foTsMK8+X0q1LoK3+qfkgpV2o2uQIixJMp8aIN",
-  "2+Tvmm97l7ou+V7B+ci3EgUjDylhRPnCD8wbSaUv8iZyoTEnriGjCrIwMkBS90qQ",
-  "VbNd3oIyl/CgK5KSgHdyx8Zg8HXs/49pd4J77TgEqP5EBM4y8NI60iEzEWqgocY/",
-  "KnotfPcBBSwfFJ7R0hqYGdy+x7mjxlW8IRDL86R+/EfFgi1+DkhF6xjtvhcw9Hqf",
-  "dRrMnEDTQrQF0K53X5UIHXNSDeZsl11mAPZS4GryIQKBgQDCQlkbpBITTPrKqqaQ",
-  "j4QEVRLbK/H4Fc52L9Upag4dNrmpGDPL0pHQIhUDVpgBh0oMt+7xTGuspYu+/UMW",
-  "DX85V+YcoGn2394lcTsaXrLOtsm8c2EEjrqv/wjbITxyVxIpUj+OpEhzfnEG8Squ",
-  "z7NFP9wmL43iOOZNtN+FSr7FmQKBgQC6FtqjEAzEfy4p9OBhqTKLpHAsib+3dR1T",
-  "es5IvWCzFVauDjQeR6BW3W+xugGcDE6KsonG200YvcbDfPSTYufdouCqH/ehjViB",
-  "zMVuCU7r597eXtC8WiWj7O9WGdh31tKPrunBhecVLlSIxICJ08LO48ki0MyAQwxs",
-  "U9NI/nLx7wKBgQC29P4vxksv2mSp1CekJ0bTPbzQp4bxfLhDH7HHm5dHdG9QDvdZ",
-  "lCy4tiDMUBZB+kWHzQRCRxNyO0huzOEOOBAG1f5oH70tQpNa+FYN8/q8LfO6hYBu",
-  "Zm71q2GP4LGpjtAQEuLBWYDTJdcWDrWAhyX0pryVSlx7H9Pog92xEEC0oQKBgQCE",
-  "hpwkftyo3+4vgS5/PrE5k90zStKXQ7ej6RSZ5wzD3RGDGahyXA5Lbp4KE27sBDO3",
-  "QRkv3qRUV2sDc6z2ffyk8kdPwT5o9jGvFvcPu19SUCp/cUT0rrqZuLZmOjfYeMwx",
-  "+Z6N7N+6TOl1EYR9I6tcDgsDWXIaciWZzETveg7ATwKBgQCpeLMdb0ChKj4NaZmp",
-  "x+WjgREJCp6/RapH3l4HIpADjByZIBlOZRBfJjhEm19HbvLIRep42F9+Qh0HCHbU",
-  "5Sh6Odw+MzFyF27Kqatrt5jZKFQqAeT0wLDE/+MhG3XoEJKOqfDMJNKNRsIQa50c",
-  "NKQ/hhZnPYQ4uv8naNDfKfk8bw==",
-  `-----END ${TEST_KEY_LABEL}-----`,
-  "",
-].join("\n");
-
 const TEST_KEY_WITHOUT_REQUIRED_SAN_PEM = [
   `-----BEGIN ${TEST_KEY_LABEL}-----`,
   "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDXwhjS2SOCpEll",
@@ -127,26 +79,6 @@ const TEST_KEY_WITHOUT_REQUIRED_SAN_PEM = [
   `-----END ${TEST_KEY_LABEL}-----`,
   "",
 ].join("\n");
-
-function writeBundle(
-  stateDir: string,
-  certContent: string,
-  keyContent: string,
-): Record<string, string> {
-  const paths = getDockerDriverGatewayLocalTlsBundle(stateDir);
-  const contents = {
-    [paths.caPath]: certContent,
-    [paths.serverCertPath]: certContent,
-    [paths.serverKeyPath]: keyContent,
-    [paths.clientCertPath]: certContent,
-    [paths.clientKeyPath]: keyContent,
-  };
-  for (const [filePath, content] of Object.entries(contents)) {
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    fs.writeFileSync(filePath, content);
-  }
-  return contents;
-}
 
 function useTestCertificateClock(now = TEST_CERT_VALID_AT): void {
   vi.useFakeTimers();
@@ -215,6 +147,7 @@ describe("docker-driver-gateway-local-tls", () => {
       });
 
       expect(bundle.localTlsDir).toBe(path.join(stateDir, "tls"));
+      expect(resolveCompleteDockerDriverGatewayLocalTlsDir(stateDir)).toBe(bundle.localTlsDir);
       expect(calls).toHaveLength(1);
       expect(calls[0]).toMatchObject({
         command: "/opt/openshell/openshell-gateway",
@@ -326,6 +259,7 @@ describe("docker-driver-gateway-local-tls", () => {
     useTestCertificateClock();
     try {
       expect(dockerDriverGatewayLocalTlsBundleIsComplete(stateDir)).toBe(false);
+      expect(resolveCompleteDockerDriverGatewayLocalTlsDir(stateDir)).toBeUndefined();
 
       ensureDockerDriverGatewayLocalTlsBundle({
         env: { PATH: "/usr/bin" },

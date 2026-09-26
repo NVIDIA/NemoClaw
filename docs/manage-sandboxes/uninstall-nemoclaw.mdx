@@ -297,6 +297,11 @@ The whole-host sweep applies this gate separately to each selected gateway port.
 If a backup fails or any registered sandbox is skipped, uninstall stops that gateway pass before OpenShell resource cleanup.
 A registry entry confirmed absent from both the selected gateway and Docker is exempt because no sandbox state remains to capture.
 When uninstall confirms that no sibling gateways remain, it also removes the shared CLI, services, images, providers, configuration, models, and swap.
+During full uninstall, NemoClaw requires complete selected-gateway authority before it removes provider registrations, the gateway registration, `sandboxes.json`, or later local state.
+It also requires two consecutive empty OpenShell sandbox inventories.
+If the authority is incomplete or the inventory cannot be verified or does not remain empty, uninstall exits nonzero and preserves that downstream state for retry.
+The OpenShell sandbox deletion can partially complete before verification fails.
+Resolve the reported OpenShell authority or inventory error, inspect the selected gateway, and rerun the same uninstall command.
 During full uninstall, a managed distributed-vLLM receipt makes NemoClaw first revalidate the recorded plan and every cluster node, GPU, container, and SSH peer identity.
 It then removes only the receipt-owned containers.
 The managed-cluster receipt is host-global under `~/.nemoclaw/`.
