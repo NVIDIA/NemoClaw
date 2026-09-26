@@ -35,8 +35,8 @@
       "throwGuards": 557,
       "objectFieldAssertions": 249,
       "assertionPoints": 3419,
-      "generatedProbeBlocks": 235,
-      "generatedProbeConditions": 830
+      "generatedProbeBlocks": 219,
+      "generatedProbeConditions": 780
     },
     "fileMetricOrder": [
       "directExpectCalls",
@@ -74,7 +74,7 @@
       "test/e2e/live/inference-routing-provider-smoke.test.ts": [8,13,20,33,2],
       "test/e2e/live/inference-routing.test.ts": [36,51,48,89,15],
       "test/e2e/live/issue-4434-tui-unreachable-inference.test.ts": [28,32,28,32,0],
-      "test/e2e/live/issue-4462-scope-upgrade-approval.test.ts": [8,18,8,18,16],
+      "test/e2e/live/issue-4462-scope-upgrade-approval.test.ts": [8,18,8,18,0],
       "test/e2e/live/issue-9880-staging-launchable.test.ts": [0,0,0,0,0],
       "test/e2e/live/jetson-nvmap-gpu.test.ts": [37,50,37,50,4],
       "test/e2e/live/launch-readiness-lease-acceptance.test.ts": [6,6,6,10,6],
