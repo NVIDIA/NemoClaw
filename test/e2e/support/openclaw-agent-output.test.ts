@@ -17,9 +17,46 @@ describe("OpenClaw agent-output fixture", () => {
     status: "ok",
     result: { payloads: [{ text: "4" }], meta: {} },
   });
+  const gatewayCommand = ["openclaw", "agent", "--agent", "main", "--json", "-m", "ping"];
 
-  it("accepts an exact reply without non-gateway transport evidence", () => {
-    expect(isGatewayBackedOpenClawAgentText({ stdout: exactReply, stderr: "" }, "4")).toBe(true);
+  it("accepts an exact reply from the default gateway command without fallback evidence", () => {
+    expect(
+      isGatewayBackedOpenClawAgentText(
+        { command: gatewayCommand, stdout: exactReply, stderr: "" },
+        "4",
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects an exact reply without a default gateway command", () => {
+    expect(
+      isGatewayBackedOpenClawAgentText(
+        { command: ["printf", "4"], stdout: exactReply, stderr: "" },
+        "4",
+      ),
+    ).toBe(false);
+    expect(
+      isGatewayBackedOpenClawAgentText(
+        { command: [...gatewayCommand, "--local"], stdout: exactReply, stderr: "" },
+        "4",
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects exact replies when either captured stream omitted earlier evidence", () => {
+    const omitted = "[shell-probe omitted 1 earlier bytes; showing up to the last 65536 bytes]\n";
+    expect(
+      isGatewayBackedOpenClawAgentText(
+        { command: gatewayCommand, stdout: `${omitted}${exactReply}`, stderr: "" },
+        "4",
+      ),
+    ).toBe(false);
+    expect(
+      isGatewayBackedOpenClawAgentText(
+        { command: gatewayCommand, stdout: exactReply, stderr: `${omitted}diagnostic` },
+        "4",
+      ),
+    ).toBe(false);
   });
 
   it.each([
@@ -33,11 +70,17 @@ describe("OpenClaw agent-output fixture", () => {
     '"transport":"embedded"',
   ])("rejects an exact reply with %s evidence on either stream", (marker) => {
     expect(
-      isGatewayBackedOpenClawAgentText({ stdout: `${marker}\n${exactReply}`, stderr: "" }, "4"),
+      isGatewayBackedOpenClawAgentText(
+        { command: gatewayCommand, stdout: `${marker}\n${exactReply}`, stderr: "" },
+        "4",
+      ),
     ).toBe(false);
-    expect(isGatewayBackedOpenClawAgentText({ stdout: exactReply, stderr: marker }, "4")).toBe(
-      false,
-    );
+    expect(
+      isGatewayBackedOpenClawAgentText(
+        { command: gatewayCommand, stdout: exactReply, stderr: marker },
+        "4",
+      ),
+    ).toBe(false);
   });
 
   it("preserves one hosted JSON reply and its agent-duration evidence", () => {
