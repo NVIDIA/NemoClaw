@@ -93,6 +93,20 @@ import {
   readValidatedRebuildPolicySource,
 } from "./rebuild-policy-handoff";
 
+function recordedOpenShellGatewayStateDir(
+  resolveStateDir: () => string,
+  checkpoint: PendingSandboxCreateIdentity | null,
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
+  const configured = env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR?.trim() ? resolveStateDir() : null;
+  const recorded = checkpoint?.openshellGatewayStateDir;
+  if (recorded && configured && recorded !== configured) {
+    throw new Error("Custom OpenShell gateway state directory changed since sandbox creation.");
+  }
+  // Legacy checkpoints cannot prove which custom directory was used at creation.
+  return checkpoint ? (recorded ?? null) : configured;
+}
+
 function cancelRecoveryIdentity(
   liveExists: boolean,
   requireVerifiedCreateBoundary: () => VerifiedSandboxCreateBoundary,
@@ -1691,6 +1705,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       readDcodeSelectionDrift,
       sandboxCommandExecutor,
       getDefaultSandboxNameForAgent,
+      getDockerDriverGatewayStateDir,
       getHermesToolGatewayBroker,
       getRequestedSandboxAgentName,
       getSandboxAgentDrift,
@@ -2074,6 +2089,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       readEntry: () => registry.getSandbox(sandboxName),
     });
     const resumingVerifiedCreate = acceptedTargetPendingIdentity !== null;
+    const openshellGatewayStateDir = recordedOpenShellGatewayStateDir(
+      getDockerDriverGatewayStateDir,
+      acceptedTargetPendingIdentity,
+    );
     const restoreReusedSandboxDashboard = async (selectionVerified: boolean): Promise<void> => {
       ({ chatUiUrl } = await sandboxReuse.restoreReusedSandboxDashboardState({
         sandboxName,
@@ -3070,6 +3089,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             sandboxName,
             gatewayName: GATEWAY_NAME,
             gatewayPort: GATEWAY_PORT,
+            ...(openshellGatewayStateDir ? { openshellGatewayStateDir } : {}),
             lifecycleGeneration: createdSandboxLifecycle.generation,
             lifecycleLiveIdentityFingerprint: identity.liveIdentityFingerprint,
             createAttemptNonce: identity.createAttemptNonce,
@@ -3360,7 +3380,11 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       },
       { plannedMessagingState, hermesToolGateways },
       hermesApiPortReservationScope.effectivePort,
-      { gatewayName: GATEWAY_NAME, gatewayPort: GATEWAY_PORT },
+      {
+        gatewayName: GATEWAY_NAME,
+        gatewayPort: GATEWAY_PORT,
+        openshellGatewayStateDir,
+      },
       {
         initialSandboxPolicy,
         compatibilityPolicyPath,
