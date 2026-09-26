@@ -154,6 +154,15 @@ export {
 };
 `;
 
+const AGENT_TOOLS_FIXTURE_SOURCE = RUNTIME_FIXTURE_SOURCE.replace(
+  "export {\n  resolveToolSearchConfig as _,\n  createOpenClawCodingTools as t,\n  applyToolSearchCatalog as p,\n};",
+  "export { createOpenClawCodingTools as t };",
+);
+const LOCAL_MODEL_LEAN_FIXTURE_SOURCE = RUNTIME_FIXTURE_SOURCE.replace(
+  "export {\n  resolveToolSearchConfig as _,\n  createOpenClawCodingTools as t,\n  applyToolSearchCatalog as p,\n};",
+  "export { resolveToolSearchConfig as _, applyToolSearchCatalog as p };",
+);
+
 interface FixtureOptions {
   config?: unknown;
   runtimeFileName?: string;
@@ -226,14 +235,15 @@ describe("OpenClaw Tool Search pinned-runtime validator", () => {
     expect(result.visibleToolNames).toEqual(["nemoclaw_runtime_validator_probe"]);
   });
 
-  it("selects the exact 2026.7.1 agent-tools runtime layout", async () => {
+  it("selects the exact 2026.9.1 agent-tools and local-model-lean runtime layout", async () => {
     const fixture = writeFixture({
       runtimeFileName: "agent-tools-fixture.js",
-      secondRuntimeFileName: "tool-search-fixture.js",
-      secondSource: RUNTIME_FIXTURE_SOURCE,
-      version: "2026.7.1",
+      source: AGENT_TOOLS_FIXTURE_SOURCE,
+      secondRuntimeFileName: "local-model-lean-fixture.js",
+      secondSource: LOCAL_MODEL_LEAN_FIXTURE_SOURCE,
+      version: "2026.9.1",
     });
-    const result = await validateFixture(fixture, "progressive", "2026.7.1");
+    const result = await validateFixture(fixture, "progressive", "2026.9.1");
 
     expect(result.runtimeModulePath).toMatch(/agent-tools-fixture\.js$/);
   });

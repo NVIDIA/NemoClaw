@@ -150,6 +150,28 @@ export function managedStartupWorkspaceRoot(input: {
   });
 }
 
+/** Ownership fields for read-only capture; no permission settings leave this owner. */
+export function managedStartupStateRootOwnership(input: {
+  readonly agent: ManagedStartupAgent;
+  readonly sandboxName: string;
+}): readonly Pick<
+  ManagedStartupStateRoot,
+  "mountTarget" | "resourceIdentity" | "ownershipLabels"
+>[] {
+  return Object.freeze(
+    managedStartupStateRoots({
+      ...input,
+      agentIdentity: { uid: 0, gid: 0 },
+    }).map(({ mountTarget, resourceIdentity, ownershipLabels }) =>
+      Object.freeze({
+        mountTarget,
+        resourceIdentity,
+        ownershipLabels,
+      }),
+    ),
+  );
+}
+
 export function managedStartupStateRoots(input: {
   readonly agent: ManagedStartupAgent;
   readonly sandboxName: string;

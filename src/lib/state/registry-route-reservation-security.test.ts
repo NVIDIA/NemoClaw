@@ -24,6 +24,75 @@ describe("sandbox inference route reservation security", () => {
     vi.resetModules();
   });
 
+  it.each([
+    ["changed", "/srv/nemoclaw/custom-a", "/srv/nemoclaw/custom-b"],
+    ["omitted", "/srv/nemoclaw/custom-a", undefined],
+    ["invented", undefined, "/srv/nemoclaw/custom-b"],
+  ] as const)(
+    "rejects final registration when its gateway directory is %s",
+    async (_scenario, recorded, requested) => {
+      const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-state-dir-registration-"));
+      vi.stubEnv("HOME", home);
+      vi.resetModules();
+      try {
+        const registry = await import("./registry");
+        const authority = {
+          sandboxName: "alpha",
+          gatewayName: "nemoclaw",
+          sessionId: "session-owner",
+          selection: EXACT_ROUTE_SELECTION,
+        };
+        registry.reserveSandboxInferenceRoute("alpha", {
+          ...EXACT_ROUTE_SELECTION,
+          gatewayName: authority.gatewayName,
+          reservationSessionId: authority.sessionId,
+        });
+        const create = registry.qualifyPendingSandboxCreateReservation(
+          authority,
+          registry.getSandbox("alpha"),
+        );
+        const checkpoint = {
+          schemaVersion: 1,
+          state: "verified-create",
+          sandboxName: "alpha",
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+          lifecycleGeneration: "generation-1",
+          sandboxIdentityFingerprint: "a".repeat(64),
+          route: "none",
+          openshellGatewayStateDir: recorded,
+        } as const;
+        registry.recordPendingSandboxCreateIdentity(create, checkpoint);
+        const before = await fs.readFile(registry.REGISTRY_FILE, "utf8");
+        const registration = {
+          name: "alpha",
+          ...EXACT_ROUTE_SELECTION,
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+          lifecycleGeneration: checkpoint.lifecycleGeneration,
+          lifecycleLiveIdentityFingerprint: checkpoint.sandboxIdentityFingerprint,
+          openshellGatewayStateDir: requested,
+        };
+        const options = { verifiedCreate: { reservation: create, checkpoint } };
+        expect(() => registry.registerSandbox(registration, undefined, options)).toThrow(
+          /gateway state directory/u,
+        );
+        expect(await fs.readFile(registry.REGISTRY_FILE, "utf8")).toBe(before);
+        expect(registry.getDefault()).toBeNull();
+        const registered = registry.registerSandbox(
+          { ...registration, openshellGatewayStateDir: recorded },
+          undefined,
+          options,
+        );
+        expect(registered.openshellGatewayStateDir).toBe(recorded);
+        expect(registered.pendingCreateIdentity).toBeUndefined();
+        expect(registry.getSandbox("alpha")).toEqual(registered);
+      } finally {
+        await fs.rm(home, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("keeps a live reservation immutable until its row is explicitly abandoned (#9833)", async () => {
     const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-route-reservation-"));
     vi.stubEnv("HOME", home);

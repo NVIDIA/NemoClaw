@@ -43,14 +43,14 @@ An existing valid provider can remain ready when a host variable is unset becaus
 
 Status resolves public and trusted private endpoints without changing managed state.
 Text output reports `public address pins:` or `private address pins:` with `match`, `drift`, or `unresolved`.
-JSON output reports the same value and both address sets in `publicTarget` or `trustedPrivateTarget`.
+Public endpoints that resolve to private or special-use addresses report `rejected`.
+JSON output reports the same value, recorded pins, and validated current pins when available in `publicTarget` or `trustedPrivateTarget`.
 Status never adds a new address to the policy.
-For public drift, run `$$nemoclaw my-sandbox mcp restart <server>` to validate, apply, and record the current public answers.
-For trusted-private drift, review the address change and follow [Change Endpoint Pins](#change-endpoint-pins).
+For public or trusted-private drift, follow [Change Endpoint Pins](#change-endpoint-pins).
 
 ## Migrate an Existing Registration
 
-Preview legacy Mcporter or Deep Agents projection entries before the first mutation with the cutover release:
+To keep using legacy Mcporter or Deep Agents projection entries, preview their conversion to native configuration:
 
 ```bash
 $$nemoclaw my-sandbox mcp migrate
@@ -181,10 +181,27 @@ Clear every denied-tool rule explicitly:
 $$nemoclaw my-sandbox mcp update doordash --clear-deny-tools
 ```
 
-The update command requires either one or more `--deny-tool` options or `--clear-deny-tools`.
-It rejects both modes in one command.
+Use only one update mode per command: `--deny-tool`, `--clear-deny-tools`, or `--refresh-public-pins`.
 
 ## Change Endpoint Pins
+
+When a public server changes addresses, refresh its existing exact pins explicitly:
+
+```bash
+$$nemoclaw my-sandbox mcp update github --refresh-public-pins
+$$nemoclaw my-sandbox mcp status github --tools
+```
+
+The refresh validates the current DNS answers and replaces only `allowed_ips` on the existing MCP endpoint in the live OpenShell policy.
+It preserves denied tools, methods, binary grants, credential bindings, and every other policy field.
+Agent configuration, providers, and attachments remain unchanged, and NemoClaw retains no separate MCP pin record.
+Status, restart, rebuild, and restore do not refresh these pins.
+
+Refresh requires an existing public endpoint with exact public pins and matching agent and policy sources.
+It rejects private or special-use DNS answers and policies with address ranges.
+Correct a reported source conflict before retrying.
+If the write cannot be confirmed, inspect `mcp status` and the live OpenShell policy before retrying.
+Successful tool discovery verifies that the endpoint is reachable through its existing credential binding.
 
 For a trusted-private server, review every destination change before NemoClaw records new pins. Neither status, restart, rebuild, nor restore changes the recorded address set.
 
@@ -203,6 +220,20 @@ unset LOCAL_MCP_TOKEN
 Removing the server deletes the agent-native entry, removes its generated key from the current OpenShell policy, and detaches the provider. The provider itself is preserved for explicit cleanup. The re-add performs a new DNS preflight and records the reviewed exact address set.
 
 ## Remove a Server
+
+For a legacy registration, removal requires a committed registry row that proves ownership of the named entry.
+Removal also requires every other committed legacy row to have an observed legacy entry with the same server name.
+If a registry-only row remains, NemoClaw preserves all sources and refuses removal.
+Run `$$nemoclaw my-sandbox mcp migrate --apply` when you intend to convert those registrations to native configuration, or explicitly resolve the registry-only rows first.
+When these conditions pass, you do not need to migrate the named entry before removing it.
+NemoClaw verifies that the named legacy entry is absent before retiring its ownership row and cleaning up policy and provider attachments.
+Ownership rows for remaining legacy entries are preserved so you can remove or migrate them later.
+If the registry write fails after the agent entry is removed, rerun the same removal command.
+The retry verifies that the entry is still absent and compares any remaining policy's recorded registration and provider identity with the committed ownership row before retiring that row.
+Provider detachment still requires an exact match with the live provider identity.
+NemoClaw preserves unproven entries and refuses removal when the same server exists in both legacy and native configuration.
+
+Remove the named registration:
 
 ```bash
 $$nemoclaw my-sandbox mcp remove github

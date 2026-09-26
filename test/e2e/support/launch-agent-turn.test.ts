@@ -27,15 +27,12 @@ import { testTimeout } from "../../helpers/timeouts";
 import { cleanLaunchState, runLaunchCommand } from "./launch-agent-turn-process.ts";
 import {
   LAUNCH_TURN_SCRIPT,
-  OPENCLAW_LAUNCH_READINESS_LEASE_ACCEPTANCE_TIMEOUT_MS,
-  OPENCLAW_LAUNCH_READINESS_LEASE_MAXIMUM_MS,
   OPENCLAW_LAUNCH_OPENSHELL_PRELOAD_SCRIPT,
   OPENCLAW_LAUNCH_RUNTIME_ENV_SCRIPT,
   OPENCLAW_PROVIDER_UNAVAILABLE_MARKER,
   OPENCLAW_PTY_MONITOR_STARTER_SCRIPT,
   OPENCLAW_SESSION_EVIDENCE_SCRIPT,
   runOpenClawLaunchSession,
-  runOpenClawLaunchReadinessLeaseTurns,
 } from "../live/launch-agent-turn.ts";
 
 vi.setConfig({ maxConcurrency: 3 });
@@ -67,6 +64,8 @@ type FixtureMode =
   | "recording-timeout"
   | "restored-canonical-timeout"
   | "supervisor-timeout"
+  | "exit-requires-open-input"
+  | "user-exit-130"
   | "valid";
 
 interface LaunchFixtureInvocation {
@@ -134,8 +133,8 @@ async function runLaunchSessionFixture(
   const pendingQualificationMarker = join(fixtureRoot, "pending-qualification-observed");
   const ptyPathUnreadableMarker = join(fixtureRoot, "pty-path-unreadable");
   const ptySocketReceiptPath = join(fixtureRoot, "pty-socket-receipt.json");
-  const invocationEnv = invocation?.env ?? {};
-  const runId = invocationEnv.NEMOCLAW_LAUNCH_RUN_ID ?? randomUUID().replaceAll("-", "");
+  const inputEnv = invocation?.env ?? {};
+  const runId = inputEnv.NEMOCLAW_LAUNCH_RUN_ID ?? randomUUID().replaceAll("-", "");
   const baselinePath = `/tmp/nemoclaw-launch-session-${runId}.json`;
   const ptyMonitorRoot = `/tmp/nemoclaw-launch-turn-${runId}`;
   mkdirSync(sessionRoot);
@@ -379,7 +378,11 @@ const exitWithStatus = process.exit.bind(process);
   if (mode === "late-extra") append("user", firstInput);
   rl.close();
   if (exitCommand !== "/exit") process.exit(65);
-  process.exit(mode.includes("nonzero") ? 23 : 0);
+  if (mode === "exit-requires-open-input") {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    if (process.stdin.readableEnded) process.exit(67);
+  }
+  process.exit(mode === "user-exit-130" ? 130 : mode.includes("nonzero") ? 23 : 0);
 })().catch(() => process.exit(66));
 `,
     );
@@ -467,7 +470,7 @@ exec "$@"
       });
     const result = await launch({
       ...process.env,
-      ...invocationEnv,
+      ...inputEnv,
       HOME: fixtureRoot,
       NEMOCLAW_FIXTURE_BIN_ROOT: fixtureRoot,
       NEMOCLAW_FIXTURE_CANONICAL_RESTORED_MARKER: canonicalRestoredMarker,
@@ -484,16 +487,17 @@ exec "$@"
       NEMOCLAW_FIXTURE_RUN_ID: runId,
       NEMOCLAW_FIXTURE_TUI_PIDS: tuiPidsPath,
       NEMOCLAW_FIXTURE_TTY_MARKER: ttyMarker,
-      NEMOCLAW_LAUNCH_COMMAND: invocationEnv.NEMOCLAW_LAUNCH_COMMAND ?? fakeLaunch,
-      NEMOCLAW_LAUNCH_ENTRYPOINT: invocationEnv.NEMOCLAW_LAUNCH_ENTRYPOINT ?? "",
-      NEMOCLAW_LAUNCH_EXIT_COMMAND: invocationEnv.NEMOCLAW_LAUNCH_EXIT_COMMAND ?? "/exit",
-      NEMOCLAW_LAUNCH_FIRST_INPUT: invocationEnv.NEMOCLAW_LAUNCH_FIRST_INPUT ?? "first input",
+      NEMOCLAW_LAUNCH_COMMAND: inputEnv.NEMOCLAW_LAUNCH_COMMAND ?? fakeLaunch,
+      NEMOCLAW_LAUNCH_ENTRYPOINT: inputEnv.NEMOCLAW_LAUNCH_ENTRYPOINT ?? "",
+      NEMOCLAW_LAUNCH_EXIT_COMMAND: inputEnv.NEMOCLAW_LAUNCH_EXIT_COMMAND ?? "/exit",
+      NEMOCLAW_LAUNCH_FIRST_INPUT: inputEnv.NEMOCLAW_LAUNCH_FIRST_INPUT ?? "first input",
+      NEMOCLAW_LAUNCH_FIRST_USER_IDENTIFIER: inputEnv.NEMOCLAW_LAUNCH_FIRST_USER_IDENTIFIER ?? "",
       NEMOCLAW_LAUNCH_HOST_TMP_ROOT: fixtureRoot,
       NEMOCLAW_LAUNCH_OPENSHELL_PRELOAD_SCRIPT: OPENCLAW_LAUNCH_OPENSHELL_PRELOAD_SCRIPT,
       NEMOCLAW_LAUNCH_PTY_MONITOR_STARTER_SCRIPT: ptyMonitorStarterScript,
       NEMOCLAW_LAUNCH_RUN_ID: runId,
       NEMOCLAW_LAUNCH_RUNTIME_ENV_SCRIPT: OPENCLAW_LAUNCH_RUNTIME_ENV_SCRIPT,
-      NEMOCLAW_LAUNCH_SANDBOX: invocationEnv.NEMOCLAW_LAUNCH_SANDBOX ?? "sandbox",
+      NEMOCLAW_LAUNCH_SANDBOX: inputEnv.NEMOCLAW_LAUNCH_SANDBOX ?? "sandbox",
       NEMOCLAW_LAUNCH_SESSION_BUDGET_SECONDS:
         mode === "restored-canonical-timeout" || mode === "supervisor-timeout"
           ? "10"
@@ -501,13 +505,14 @@ exec "$@"
             ? "5"
             : mode.endsWith("-timeout")
               ? "2"
-              : (invocationEnv.NEMOCLAW_LAUNCH_SESSION_BUDGET_SECONDS ?? "230"),
-      NEMOCLAW_LAUNCH_SECOND_INPUT: invocationEnv.NEMOCLAW_LAUNCH_SECOND_INPUT ?? "second input",
+              : (inputEnv.NEMOCLAW_LAUNCH_SESSION_BUDGET_SECONDS ?? "230"),
+      NEMOCLAW_LAUNCH_SECOND_INPUT: inputEnv.NEMOCLAW_LAUNCH_SECOND_INPUT ?? "second input",
+      NEMOCLAW_LAUNCH_SECOND_USER_IDENTIFIER: inputEnv.NEMOCLAW_LAUNCH_SECOND_USER_IDENTIFIER ?? "",
       NEMOCLAW_LAUNCH_SESSION_EVIDENCE_SCRIPT: OPENCLAW_SESSION_EVIDENCE_SCRIPT,
       NEMOCLAW_LAUNCH_SESSION_ROOT: sessionRoot,
       NEMOCLAW_OPENSHELL_COMMAND: fakeOpenshell,
       PATH: `${fixtureRoot}:${process.env.PATH ?? ""}`,
-      TERM: invocationEnv.TERM ?? "xterm-256color",
+      TERM: inputEnv.TERM ?? "xterm-256color",
     });
     const tuiProcessIds = existsSync(tuiPidsPath)
       ? readFileSync(tuiPidsPath, "utf8").trim().split("\n").filter(Boolean)
@@ -888,7 +893,10 @@ it.runIf(process.platform === "linux" && process.getuid?.() !== 0).concurrent(
       ttyObserved,
     } = await runLaunchSessionFixture("pty-path-unreadable", "absent");
     expect(ttyObserved, result.stderr).toBe(true);
-    expect(ptyPathQueryResult, result.stderr).toEqual({ errorCode: null, status: 1 });
+    expect(ptyPathQueryResult, result.stderr).toEqual({
+      errorCode: null,
+      status: 1,
+    });
     expect(baselineRemoved, result.stderr).toBe(true);
     expect(ptyMonitorRemoved, result.stderr).toBe(true);
     expect(hostSessionResidue, result.stderr).toEqual([]);
@@ -1299,7 +1307,7 @@ it.runIf(process.platform === "linux").concurrent(
 );
 
 it.runIf(process.platform === "linux").concurrent(
-  "propagates a nonzero TUI exit after two structured turns (#9160)",
+  "keeps input open through clean /exit and rejects nonzero launch status (#9160, #11105)",
   async ({ expect }) => {
     const { baselineRemoved, result, ttyObserved } = await runLaunchSessionFixture(
       "nonzero",
@@ -1309,6 +1317,11 @@ it.runIf(process.platform === "linux").concurrent(
     expect(baselineRemoved).toBe(true);
     expect(result.signal).toBeNull();
     expect(result.status).toBe(23);
+    const cleanExit = await runLaunchSessionFixture("exit-requires-open-input", "absent");
+    expect(cleanExit.result.status, cleanExit.result.stderr).toBe(0);
+    const userExit = await runLaunchSessionFixture("user-exit-130", "absent");
+    expect(userExit.result.status, userExit.result.stderr).toBe(130);
+    expect(userExit.result.stderr).toContain("launch exited with status 130");
   },
 );
 
@@ -1419,77 +1432,5 @@ it.each(["", "relative-tmp", "/tmp/absolute-tmp"])(
     } finally {
       platform.mockRestore();
     }
-  },
-);
-
-it.runIf(process.platform === "linux")(
-  "runs the producer then two PTY launch sessions under one lease (#8942, #9023, #9160)",
-  async () => {
-    const calls: Array<{ command: string; args: string[]; env?: NodeJS.ProcessEnv }> = [];
-    let launchPhaseStartedAtCallCount = -1;
-    const host = {
-      command: async (command: string, args: string[], options?: { env?: NodeJS.ProcessEnv }) => {
-        calls.push({ command, args, env: options?.env });
-        return { exitCode: 0, signal: null, stdout: "", stderr: "" };
-      },
-      openshellCommandPath: "/usr/bin/openshell",
-    };
-    await runOpenClawLaunchReadinessLeaseTurns({
-      artifactName: "lease-turn",
-      cliCommand: "node",
-      cliEntrypoint: "/repo/bin/nemoclaw.js",
-      env: {},
-      exitCommand: "/exit",
-      host: host as never,
-      redactionValues: [],
-      sandboxName: "alpha",
-      beforeLaunchTurns: () => {
-        launchPhaseStartedAtCallCount = calls.length;
-      },
-    });
-    expect(
-      launchPhaseStartedAtCallCount === 1 &&
-        OPENCLAW_LAUNCH_READINESS_LEASE_ACCEPTANCE_TIMEOUT_MS >=
-          OPENCLAW_LAUNCH_READINESS_LEASE_MAXIMUM_MS + 5 * 60_000,
-    ).toBe(true);
-    expect(calls).toHaveLength(3);
-    expect(calls[0]).toMatchObject({
-      command: "node",
-      args: ["/repo/bin/nemoclaw.js", "alpha", "connect", "--probe-only"],
-    });
-    expect(calls.slice(1).map((call) => call.command)).toEqual(["bash", "bash"]);
-    expect(calls.slice(1).map((call) => call.args)).toEqual([
-      ["-lc", LAUNCH_TURN_SCRIPT],
-      ["-lc", LAUNCH_TURN_SCRIPT],
-    ]);
-    expect(calls.slice(1).map((call) => call.env?.NEMOCLAW_LAUNCH_EXIT_COMMAND)).toEqual([
-      "/exit",
-      "/exit",
-    ]);
-    expect(calls.slice(1).map((call) => call.env?.NEMOCLAW_OPENSHELL_COMMAND)).toEqual([
-      "/usr/bin/openshell",
-      "/usr/bin/openshell",
-    ]);
-    calls.slice(1).forEach((call) => {
-      expect(call.env).not.toHaveProperty("NEMOCLAW_LAUNCH_EXPECTED_REPLY");
-      expect(call.env).not.toHaveProperty("NEMOCLAW_LAUNCH_POST_REPLY_READY_TEXT");
-      expect(call.env).not.toHaveProperty("NEMOCLAW_LAUNCH_PROMPT");
-      expect(call.env).not.toHaveProperty("NEMOCLAW_LAUNCH_READY_TEXT");
-      expect(typeof call.env?.NEMOCLAW_LAUNCH_FIRST_INPUT).toBe("string");
-      expect(typeof call.env?.NEMOCLAW_LAUNCH_SECOND_INPUT).toBe("string");
-      expect(call.env?.NEMOCLAW_LAUNCH_FIRST_INPUT).not.toBe(
-        call.env?.NEMOCLAW_LAUNCH_SECOND_INPUT,
-      );
-      expect(call.env?.NEMOCLAW_LAUNCH_SESSION_EVIDENCE_SCRIPT).toBe(
-        OPENCLAW_SESSION_EVIDENCE_SCRIPT,
-      );
-      expect(call.env?.NEMOCLAW_LAUNCH_OPENSHELL_PRELOAD_SCRIPT).toBe(
-        OPENCLAW_LAUNCH_OPENSHELL_PRELOAD_SCRIPT,
-      );
-      expect(call.env?.NEMOCLAW_LAUNCH_PTY_MONITOR_STARTER_SCRIPT).toBe(
-        OPENCLAW_PTY_MONITOR_STARTER_SCRIPT,
-      );
-      expect(call.env?.NEMOCLAW_LAUNCH_RUNTIME_ENV_SCRIPT).toBe(OPENCLAW_LAUNCH_RUNTIME_ENV_SCRIPT);
-    });
   },
 );

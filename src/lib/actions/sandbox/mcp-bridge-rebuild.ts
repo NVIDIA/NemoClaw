@@ -13,13 +13,11 @@ import {
   scrubManagedMcpAdapterOrThrow,
   type McpScrubbedAdapterEntry,
 } from "./mcp-bridge-adapter-teardown";
-import { isAgentMcpAdapter, McpBridgeError } from "./mcp-bridge-contracts";
+import { McpBridgeError } from "./mcp-bridge-contracts";
 import { cloneMcpSourceEntry, inspectExactMcpDestroyProvider } from "./mcp-bridge-destroy";
 import {
   assertGeneratedPolicyMutationSafe,
-  assertMcpBridgePolicyTarget,
   buildMcpBridgePolicyKey,
-  buildMcpBridgePolicyYaml,
   removeGeneratedPolicy,
 } from "./mcp-bridge-policy";
 import {
@@ -33,9 +31,12 @@ import {
   waitForDetachedMcpCredential,
 } from "./mcp-bridge-provider";
 import { restoreExistingMcpBridgeRuntime } from "./mcp-bridge-restart";
-import type { McpBridgeTargetValidation } from "./mcp-bridge-url-validation";
 import { assertMcpAdapterTeardownRuntimeCapabilities } from "./mcp-bridge-runtime-capabilities";
-import { ensureSandboxGatewaySelected, getSandboxOrThrow } from "./mcp-bridge-state";
+import {
+  assertNoAmbiguousMcpCredentialTargets,
+  ensureSandboxGatewaySelected,
+  getSandboxOrThrow,
+} from "./mcp-bridge-state";
 import { assertAuthenticatedBridgeEntry, validateSandboxName } from "./mcp-bridge-validation";
 
 export interface McpRebuildPreparation {
@@ -71,81 +72,6 @@ function policyWithoutManagedMcpEntries(
   );
 }
 
-function resolvedTargetForEntry(
-  targets: ReadonlyMap<string, McpBridgeTargetValidation>,
-  entry: McpSourceEntry,
-): McpBridgeTargetValidation {
-  const target = targets.get(entry.server);
-  if (!target || target.addresses.length === 0) {
-    throw new McpBridgeError(
-      `MCP server '${entry.server}' has no validated address pins. Refusing rebuild.`,
-    );
-  }
-  return target;
-}
-
-function entriesWithRefreshedPublicPins(
-  entries: readonly McpSourceEntry[],
-  targets: ReadonlyMap<string, McpBridgeTargetValidation>,
-): McpSourceEntry[] {
-  return entries.map((entry) => {
-    const target = resolvedTargetForEntry(targets, entry);
-    assertMcpBridgePolicyTarget(entry, target);
-    return entry.trustedPrivateHost ? entry : { ...entry, allowedIps: [...target.addresses] };
-  });
-}
-
-/**
- * Keep every operator-owned handoff node intact while replacing only the exact
- * generated MCP rules with the targets proved during rebuild preparation.
- */
-function policyWithRefreshedManagedMcpEntries(
-  policyHandoff: string,
-  entries: readonly McpSourceEntry[],
-  targets: ReadonlyMap<string, McpBridgeTargetValidation>,
-): string {
-  const document = YAML.parseDocument(policyHandoff);
-  if (document.errors.length > 0) {
-    throw new McpBridgeError("Could not parse the live OpenShell policy captured for rebuild.");
-  }
-  const networkPolicies = document.get("network_policies", true);
-  if (!YAML.isMap(networkPolicies)) {
-    throw new McpBridgeError(
-      "The live OpenShell policy captured for rebuild has no network policies.",
-    );
-  }
-  for (const entry of entries) {
-    const target = resolvedTargetForEntry(targets, entry);
-    const generated = YAML.parse(
-      buildMcpBridgePolicyYaml(
-        entry.server,
-        entry.url,
-        isAgentMcpAdapter(entry.adapter) ? entry.adapter : "openclaw-config",
-        target,
-        entry.providerName ?? "",
-      ),
-    ) as { network_policies: Record<string, unknown> };
-    networkPolicies.set(
-      buildMcpBridgePolicyKey(entry.server),
-      generated.network_policies[buildMcpBridgePolicyKey(entry.server)],
-    );
-  }
-  return document.toString();
-}
-
-async function assertRebuildTargetsUnchanged(entries: readonly McpSourceEntry[]): Promise<void> {
-  const targets = await preflightMcpEntryTargets(entries);
-  for (const entry of entries) {
-    const target = resolvedTargetForEntry(targets, entry);
-    assertMcpBridgePolicyTarget(entry, target);
-    if (!entry.trustedPrivateHost && !isDeepStrictEqual(entry.allowedIps ?? [], target.addresses)) {
-      throw new McpBridgeError(
-        `Public MCP target '${entry.server}' changed after rebuild preflight. Refusing sandbox deletion.`,
-      );
-    }
-  }
-}
-
 async function assertMcpTeardownPolicyUnchanged(
   sandboxName: string,
   expectedTeardownPolicy: string,
@@ -178,6 +104,7 @@ async function getCompleteMcpRebuildEntries(
   const currentSandbox = getSandboxOrThrow(sandboxName);
   let runtimeSelection = options.runtimeSelection;
   const entries = sourceEntries.map(cloneMcpSourceEntry);
+  assertNoAmbiguousMcpCredentialTargets(entries);
   if (entries.length > 0) {
     runtimeSelection ??= getMcpProviderInspectionRuntimeSelection(currentSandbox);
   }
@@ -190,7 +117,7 @@ async function getCompleteMcpRebuildEntries(
  * to scrub, so this path validates targets and provider recoverability without
  * attempting sandbox exec or changing provider attachment state.
  */
-export async function prepareMcpBridgesForAbsentSandboxRebuild(
+async function prepareMcpBridgesWithoutSourceMutation(
   sandboxName: string,
   sourceEntries: readonly McpSourceEntry[],
   runtimeSelection?: McpProviderInspectionRuntimeSelection,
@@ -228,6 +155,62 @@ export async function prepareMcpBridgesForAbsentSandboxRebuild(
   };
 }
 
+export async function prepareMcpBridgesForAbsentSandboxRebuild(
+  sandboxName: string,
+  sourceEntries: readonly McpSourceEntry[],
+  runtimeSelection?: McpProviderInspectionRuntimeSelection,
+): Promise<McpRebuildPreparation> {
+  return prepareMcpBridgesWithoutSourceMutation(sandboxName, sourceEntries, runtimeSelection);
+}
+
+/** A captured, unmounted Docker source cannot execute or retain adapter state after deletion. */
+export async function prepareMcpBridgesForStoppedSandboxRebuild(
+  sandboxName: string,
+  sourceEntries: readonly McpSourceEntry[],
+  source: import("../../state/state-directory-restore").CapturedOpenClawState,
+  runtimeSelection?: McpProviderInspectionRuntimeSelection,
+): Promise<McpRebuildPreparation> {
+  if (
+    source.sandboxName !== sandboxName ||
+    (getSandboxOrThrow(sandboxName).agent ?? "openclaw") !== "openclaw"
+  ) {
+    throw new McpBridgeError(
+      "Stopped MCP preservation does not match the captured OpenClaw sandbox.",
+    );
+  }
+  source.assertCurrent();
+  const prepared = await prepareMcpBridgesWithoutSourceMutation(
+    sandboxName,
+    sourceEntries,
+    runtimeSelection,
+  );
+  source.assertCurrent();
+  if (prepared.entries.length === 0)
+    return { ...prepared, assertDeleteEdgeUnchanged: source.assertCurrent };
+  const selectedRuntime = prepared.runtimeSelection;
+  if (!selectedRuntime)
+    throw new McpBridgeError("Stopped MCP preservation has no gateway authority.");
+  const policyHandoff = await policies.captureRecordedSandboxBasePolicy(
+    sandboxName,
+    "capture the stopped source policy before replacement",
+    selectedRuntime,
+  );
+  if (!policyHandoff || !isSandboxPolicyCredentialFree(policyHandoff)) {
+    throw new McpBridgeError("Stopped MCP preservation requires a credential-free live policy.");
+  }
+  return {
+    ...prepared,
+    policyHandoff,
+    assertDeleteEdgeUnchanged: source.assertCurrent,
+    revalidateBeforeDelete: async () => {
+      source.assertCurrent();
+      await assertMcpTeardownPolicyUnchanged(sandboxName, policyHandoff, selectedRuntime);
+      await prepareMcpBridgesWithoutSourceMutation(sandboxName, prepared.entries, selectedRuntime);
+      source.assertCurrent();
+    },
+  };
+}
+
 export async function prepareMcpBridgesForRebuild(
   sandboxName: string,
   sourceEntries: readonly McpSourceEntry[],
@@ -247,10 +230,9 @@ export async function prepareMcpBridgesForRebuild(
   if (!providerRuntimeSelection) {
     throw new McpBridgeError(`Could not resolve MCP runtime authority for '${sandboxName}'.`);
   }
-  const preflightTargets = await preflightMcpEntryTargets(entries);
-  const refreshedEntries = entriesWithRefreshedPublicPins(entries, preflightTargets);
+  await preflightMcpEntryTargets(entries);
   await ensureSandboxGatewaySelected(sandboxName, providerRuntimeSelection);
-  for (const entry of refreshedEntries) assertGeneratedPolicyMutationSafe(sandboxName, entry);
+  for (const entry of entries) assertGeneratedPolicyMutationSafe(sandboxName, entry);
   await assertMcpAdapterTeardownRuntimeCapabilities(
     sandboxName,
     sandbox,
@@ -279,15 +261,7 @@ export async function prepareMcpBridgesForRebuild(
       `Cannot prepare the MCP rebuild policy handoff for sandbox '${sandboxName}' because its live OpenShell policy contains a literal credential value. Replace literal credentials with supported OpenShell credential bindings or resolver placeholders, then retry the rebuild.`,
     );
   }
-  const refreshedPolicyHandoff = policyWithRefreshedManagedMcpEntries(
-    policyHandoff,
-    refreshedEntries,
-    preflightTargets,
-  );
-  const expectedTeardownPolicy = policyWithoutManagedMcpEntries(
-    refreshedPolicyHandoff,
-    refreshedEntries,
-  );
+  const expectedTeardownPolicy = policyWithoutManagedMcpEntries(policyHandoff, entries);
   const detached: McpSourceEntry[] = [];
   const scrubbedAdapters: McpScrubbedAdapterEntry[] = [];
   const removedPolicies: McpSourceEntry[] = [];
@@ -369,13 +343,12 @@ export async function prepareMcpBridgesForRebuild(
     );
   }
   return {
-    entries: refreshedEntries,
+    entries,
     detachedProviderEntries: detached,
     scrubbedAdapterEntries: scrubbedAdapters,
-    policyHandoff: refreshedPolicyHandoff,
+    policyHandoff,
     runtimeSelection: providerRuntimeSelection,
     revalidateBeforeDelete: async () => {
-      await assertRebuildTargetsUnchanged(refreshedEntries);
       await assertMcpTeardownPolicyUnchanged(
         sandboxName,
         expectedTeardownPolicy,

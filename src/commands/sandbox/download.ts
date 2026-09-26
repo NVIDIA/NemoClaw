@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Args } from "@oclif/core";
+import { isSandboxLifecycleDeferredExit } from "../../lib/core/process-exit";
 
 import {
   downloadFromSandbox,
@@ -44,6 +45,7 @@ export default class SandboxDownloadCommand extends NemoClawCommand {
         hostDest: args.hostDest,
       });
     } catch (error) {
+      if (isSandboxLifecycleDeferredExit(error)) this.exit(error.exitCode);
       const exitCode = error instanceof SandboxDownloadSourceMissingError ? error.exitCode : 1;
       this.failWithLines([`  ${(error as Error).message}`], exitCode);
     }

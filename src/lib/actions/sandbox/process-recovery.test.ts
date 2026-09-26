@@ -7,10 +7,11 @@ import type {
   OpenShellSandboxBufferedCommandCompletion,
   OpenShellSandboxBufferedCommandExecutor,
 } from "../../adapters/openshell/sandbox-command";
-import { parseManagedGatewayControlCompletion } from "./gateway-restart";
 // Import source directly so this test cannot pass against a stale build.
 import {
   confirmRecoveredSandboxGatewayManaged,
+  isSandboxGatewayHttpReachableForStatus,
+  resolveGatewayRecoveryWaitSeconds,
   waitForRecoveredSandboxGateway,
   waitForRecreatedSandboxOpenShellReady,
 } from "./process-recovery";
@@ -35,6 +36,9 @@ const OPENSHELL_SUPERVISOR_RELAY_CHANNEL_TIMED_OUT_STDERR = `Error:   × code: '
 `;
 const OPENSHELL_RELAY_CHANNEL_DROPPED_STDERR = `Error:   × status: Unavailable, message: "relay
   │ channel dropped", details: [], metadata: MetadataMap { headers: {} }
+`;
+const OPENSHELL_EXEC_RELAY_CLOSED_STDERR = `Error:   × code: 'The service is currently unavailable', message: "exec relay closed
+  │ before the command reported an exit status"
 `;
 const OPENSHELL_RELAY_TARGET_NOT_FOUND_STDERR = `Error:   × code: 'The service is currently unavailable', message: "No such file
   │ or directory (os error 2)"
@@ -74,39 +78,6 @@ function sequencedExecutor(
   });
   return { runBuffered };
 }
-
-describe("managed gateway control completion", () => {
-  const nonce = "a".repeat(64);
-
-  it.each([
-    ["ok", 0, 4242],
-    ["ok", 4242, 4242],
-    ["already-running", 4242, 4242],
-    ["already-running", 4242, 5252],
-  ] as const)(
-    "preserves the exact %s controller disposition (#7919)",
-    (disposition, oldPid, newPid) => {
-      expect(
-        parseManagedGatewayControlCompletion({
-          status: 0,
-          stdout: `v1 ${nonce} complete ${disposition} ${oldPid} ${newPid}\nGATEWAY_PID=${newPid}`,
-          stderr: "",
-        }),
-      ).toEqual({ disposition, oldPid, newPid });
-    },
-  );
-
-  it.each([
-    [`v1 ${nonce} complete already-running 4242 4242\nGATEWAY_PID=5252`, ""],
-    [`v1 ${nonce} complete ok 0 4242\nGATEWAY_PID=4242\nextra`, ""],
-    [`v1 ${nonce} complete changed 0 4242\nGATEWAY_PID=4242`, ""],
-    [`v1 ${nonce} complete ok 0 9007199254740992\nGATEWAY_PID=9007199254740992`, ""],
-    [`v1 ${nonce} complete ok 0 4242\nGATEWAY_PID=4242`, "unexpected warning"],
-    ["GATEWAY_PID=4242", ""],
-  ])("rejects malformed or unstructured controller output (#7919)", (stdout, stderr) => {
-    expect(parseManagedGatewayControlCompletion({ status: 0, stdout, stderr })).toBeNull();
-  });
-});
 
 describe("recreated sandbox OpenShell readiness", () => {
   afterEach(() => {
@@ -316,6 +287,26 @@ describe("recreated sandbox OpenShell readiness", () => {
       }),
     ).toBe(true);
     expect(beforeProbe).toHaveBeenCalledTimes(2);
+    expect(commandExecutor.runBuffered).toHaveBeenCalledTimes(2);
+    expect(sleeps).toEqual([3]);
+  });
+
+  it("retries when the replacement exec relay closes during control-plane convergence", async () => {
+    const commandExecutor = sequencedExecutor(
+      completed(1, OPENSHELL_EXEC_RELAY_CLOSED_STDERR),
+      completed(0),
+    );
+    const sleeps: number[] = [];
+
+    expect(
+      await waitForRecreatedSandboxOpenShellReady("recreated-box", {
+        beforeProbe: () => true,
+        commandExecutor,
+        intervalSeconds: 3,
+        sleepImpl: (seconds) => sleeps.push(seconds),
+        timeoutSeconds: 30,
+      }),
+    ).toBe(true);
     expect(commandExecutor.runBuffered).toHaveBeenCalledTimes(2);
     expect(sleeps).toEqual([3]);
   });
@@ -852,5 +843,112 @@ describe("waitForRecoveredSandboxGateway settle-window confirmation (#4710)", ()
 
     expect(ok).toBe(false);
     expect(probes).toBe(3);
+  });
+});
+
+describe("shared gateway recovery wait policy", () => {
+  it.each([
+    [undefined, 30],
+    ["", 30],
+    ["invalid", 30],
+    ["-1", 30],
+    ["Infinity", 30],
+    ["0", 0],
+    ["0.25", 0.25],
+    ["6", 6],
+    ["1e300", Number.MAX_SAFE_INTEGER / 1_000],
+  ] as const)("resolves HTTP health override %s", (value, expected) => {
+    expect(
+      resolveGatewayRecoveryWaitSeconds(undefined, {
+        NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS: value,
+      }),
+    ).toBe(expected);
+  });
+
+  it.each([30, 90, 120])("preserves the %s-second phase default with one override", (fallback) => {
+    expect(resolveGatewayRecoveryWaitSeconds(fallback, {})).toBe(fallback);
+    expect(
+      resolveGatewayRecoveryWaitSeconds(fallback, {
+        NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS: "invalid",
+      }),
+    ).toBe(fallback);
+    expect(
+      resolveGatewayRecoveryWaitSeconds(fallback, {
+        NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS: "0.25",
+      }),
+    ).toBe(0.25);
+  });
+});
+
+describe("status ordinary command transport", () => {
+  it("uses the guarded native executor with its selected gateway and caller deadline", async () => {
+    vi.stubEnv("OPENCLAW_GATEWAY_TOKEN", "host-gateway-token");
+    vi.stubEnv("NEMOCLAW_SANDBOX_EXEC_TIMEOUT_MS", "60000");
+    const commandExecutor = sequencedExecutor(
+      completed(0, "", "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nRUNNING"),
+    );
+    try {
+      await expect(
+        isSandboxGatewayHttpReachableForStatus("alpha", "recorded-gateway", {
+          commandExecutor,
+          getHealthProbeUrl: () => "http://127.0.0.1:18789/health",
+          startup: { timeoutMs: 1234 },
+        }),
+      ).resolves.toBe(true);
+      expect(commandExecutor.runBuffered).toHaveBeenCalledOnce();
+      const request = commandExecutor.runBuffered.mock.calls[0]![0];
+      expect(request.target).toEqual({ kind: "named", gatewayName: "recorded-gateway" });
+      expect(request.timeoutMilliseconds).toBe(1234);
+      expect(request.command.slice(0, 5)).toEqual([
+        "/bin/bash",
+        "--noprofile",
+        "--norc",
+        "-p",
+        "-c",
+      ]);
+      expect(request.command[5]).toBe('builtin unset OPENCLAW_GATEWAY_TOKEN; builtin exec -- "$@"');
+      expect(request.environment).not.toHaveProperty("OPENCLAW_GATEWAY_TOKEN");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it.each(["cancelled", "timeout", "capture", "invocation", "unavailable", "malformed"] as const)(
+    "keeps %s unobservable without retrying",
+    async (kind) => {
+      const commandExecutor = sequencedExecutor(
+        kind === "malformed"
+          ? completed(0, "", "unframed output")
+          : {
+              outcome: { kind: "failed", error: { kind, message: "unavailable" } },
+              stdout: "",
+              stderr: "",
+            },
+      );
+      await expect(
+        isSandboxGatewayHttpReachableForStatus("alpha", undefined, {
+          commandExecutor,
+          getHealthProbeUrl: () => "http://127.0.0.1:18789/health",
+        }),
+      ).resolves.toBeNull();
+      expect(commandExecutor.runBuffered).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("keeps a remote nonzero result unobservable and propagates unexpected executor errors", async () => {
+    const commandExecutor = sequencedExecutor(
+      completed(7, "", "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nRUNNING"),
+    );
+    const options = { commandExecutor, getHealthProbeUrl: () => "http://127.0.0.1:18789/health" };
+    await expect(
+      isSandboxGatewayHttpReachableForStatus("alpha", undefined, options),
+    ).resolves.toBeNull();
+    expect(commandExecutor.runBuffered).toHaveBeenCalledOnce();
+    const error = new Error("authority changed");
+    commandExecutor.runBuffered.mockRejectedValueOnce(error);
+    await expect(isSandboxGatewayHttpReachableForStatus("alpha", undefined, options)).rejects.toBe(
+      error,
+    );
+    expect(commandExecutor.runBuffered).toHaveBeenCalledTimes(2);
   });
 });

@@ -317,15 +317,20 @@ export async function preflightMcpServerUrlResolvedTarget(
   return { addresses };
 }
 
+export type McpBridgePublicPinStatus = Omit<McpBridgeRecordedPinStatus, "state"> & {
+  state: McpBridgeRecordedPinStatus["state"] | "rejected";
+};
+
 export async function inspectMcpRecordedPublicTargetPins(
   parsed: URL,
   recordedPins: readonly string[],
-): Promise<McpBridgeRecordedPinStatus> {
+): Promise<McpBridgePublicPinStatus> {
   try {
     const target = await preflightMcpServerUrlResolvedTarget(parsed);
+    const policyPins = [...new Set(recordedPins.map((address) => address.toLowerCase()))].sort();
     const matches =
-      recordedPins.length === target.addresses.length &&
-      recordedPins.every((address, index) => address === target.addresses[index]);
+      policyPins.length === target.addresses.length &&
+      policyPins.every((address, index) => address === target.addresses[index]);
     return {
       state: matches ? "match" : "drift",
       currentAddresses: target.addresses,
@@ -334,7 +339,7 @@ export async function inspectMcpRecordedPublicTargetPins(
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     const unresolved = error instanceof McpBridgeError && error.reasonCode === "unresolved";
-    return { state: unresolved ? "unresolved" : "drift", detail };
+    return { state: unresolved ? "unresolved" : "rejected", detail };
   }
 }
 

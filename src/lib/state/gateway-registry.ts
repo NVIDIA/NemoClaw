@@ -10,9 +10,11 @@ import { DEFAULT_GATEWAY_PORT } from "../core/ports";
 import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../name-validation";
 import { resolveGatewayName, resolveGatewayPortFromName } from "../onboard/gateway-binding";
 import { GATEWAYS_SUBDIR, nemoclawStateRoot } from "./state-root";
+import { normalizePendingSandboxCreateIdentity } from "./registry/pending-create-identity";
 
 export { GATEWAYS_SUBDIR, resolveHome } from "./state-root";
 export { DEFAULT_GATEWAY_PORT } from "../core/ports";
+export { isValidName } from "../name-validation";
 export {
   releaseManagedGatewayStateLifecycleLock,
   tryAcquireManagedGatewayStateLifecycleLock,
@@ -31,10 +33,12 @@ export interface GatewayRegistryEntry extends Record<string, unknown> {
   hermesApiPort?: number | null;
   gatewayName?: string | null;
   gatewayPort?: number | null;
+  openshellGatewayStateDir?: string | null;
 }
 
 export interface GatewayRegistryDocument extends Record<string, unknown> {
   defaultSandbox: string | null;
+  defaultSelectionRevision?: number;
   sandboxes: Record<string, GatewayRegistryEntry>;
 }
 
@@ -93,6 +97,14 @@ function parseRegistry(filePath: string, raw: string): GatewayRegistryDocument {
   ) {
     throw stateError(`${filePath} has an invalid defaultSandbox`);
   }
+  if (
+    parsed.defaultSelectionRevision !== undefined &&
+    (typeof parsed.defaultSelectionRevision !== "number" ||
+      !Number.isSafeInteger(parsed.defaultSelectionRevision) ||
+      parsed.defaultSelectionRevision < 0)
+  ) {
+    throw stateError(`${filePath} has an invalid defaultSelectionRevision`);
+  }
 
   const sandboxes: Record<string, GatewayRegistryEntry> = {};
   for (const [name, value] of Object.entries(parsed.sandboxes)) {
@@ -113,6 +125,19 @@ function parseRegistry(filePath: string, raw: string): GatewayRegistryDocument {
       ) {
         throw stateError(`${filePath} has an invalid ${field} for sandbox ${JSON.stringify(name)}`);
       }
+    }
+    const gatewayStateDir = value.openshellGatewayStateDir;
+    if (
+      gatewayStateDir !== undefined &&
+      gatewayStateDir !== null &&
+      (typeof gatewayStateDir !== "string" ||
+        gatewayStateDir.length === 0 ||
+        !path.isAbsolute(gatewayStateDir) ||
+        path.resolve(gatewayStateDir) !== gatewayStateDir)
+    ) {
+      throw stateError(
+        `${filePath} has an invalid openshellGatewayStateDir for sandbox ${JSON.stringify(name)}`,
+      );
     }
     sandboxes[name] =
       value.dashboardPort === 0
@@ -180,6 +205,53 @@ export function registryEntryGatewayPort(entry: GatewayRegistryEntry): number {
   }
   if (portFromName !== null) return portFromName;
   return DEFAULT_GATEWAY_PORT;
+}
+
+/** Recover one unambiguous onboard-time custom OpenShell state directory for a gateway port. */
+export function registryOpenShellGatewayStateDir(
+  registry: GatewayRegistryDocument,
+  gatewayPort: number,
+): string | null {
+  const recorded = new Set<string>();
+  for (const entry of Object.values(registry.sandboxes)) {
+    const entryPort = registryEntryGatewayPort(entry);
+    const pending = normalizePendingSandboxCreateIdentity(entry.pendingCreateIdentity);
+    if (
+      pending &&
+      (entry.pendingRouteReservation !== true ||
+        typeof entry.reservationSessionId !== "string" ||
+        !entry.reservationSessionId.trim() ||
+        pending.sandboxName !== entry.name ||
+        pending.gatewayName !== resolveGatewayName(entryPort) ||
+        pending.gatewayPort !== entryPort ||
+        pending.lifecycleGeneration !== entry.lifecycleGeneration ||
+        pending.sandboxIdentityFingerprint !== entry.lifecycleLiveIdentityFingerprint)
+    ) {
+      throw stateError(
+        `sandbox ${JSON.stringify(entry.name)} has a conflicting pending create identity`,
+      );
+    }
+    if (entryPort !== gatewayPort) continue;
+    if (typeof entry.openshellGatewayStateDir === "string") {
+      recorded.add(entry.openshellGatewayStateDir);
+    }
+    if (pending?.openshellGatewayStateDir) recorded.add(pending.openshellGatewayStateDir);
+  }
+  if (recorded.size > 1) {
+    throw stateError(
+      `gateway port ${String(gatewayPort)} has conflicting OpenShell state directories`,
+    );
+  }
+  return recorded.values().next().value ?? null;
+}
+
+/** Read one port's recorded custom OpenShell state directory from its canonical registry. */
+export function readGatewayOpenShellStateDir(home: string, gatewayPort: number): string | null {
+  const registry = readGatewayRegistryFile(
+    home,
+    path.join(nemoclawStateRoot(home, gatewayPort), "sandboxes.json"),
+  );
+  return registry ? registryOpenShellGatewayStateDir(registry, gatewayPort) : null;
 }
 
 /** Enumerate the default root plus bounded, real, numeric non-default gateway roots. */

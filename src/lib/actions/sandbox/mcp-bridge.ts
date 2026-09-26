@@ -8,6 +8,7 @@ import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provide
 import {
   addMcpBridge as addMcpBridgeLifecycle,
   updateMcpBridgeDenyTools as updateMcpBridgeDenyToolsLifecycle,
+  refreshMcpBridgePublicPins,
 } from "./mcp-bridge-add-restart";
 import {
   type McpBridgeAddOptions,
@@ -185,6 +186,8 @@ export async function finalizeMcpBridgesAfterSandboxDelete(
   return finalizeMcpBridgesAfterSandboxDeleteLifecycle(sandboxName, preparation, options);
 }
 
+export { prepareMcpBridgesForStoppedSandboxRebuild } from "./mcp-bridge-rebuild";
+
 export async function prepareMcpBridgesForAbsentSandboxRebuild(
   sandboxName: string,
   runtimeSelection?: McpProviderInspectionRuntimeSelection,
@@ -340,11 +343,12 @@ FLAGS
       return;
     case "update":
       console.log(`USAGE
-  nemoclaw <name> mcp update <server> (--deny-tool TOOL [...] | --clear-deny-tools)
+  nemoclaw <name> mcp update <server> (--deny-tool TOOL [...] | --clear-deny-tools | --refresh-public-pins)
 
 FLAGS
   --deny-tool TOOL    Replace the denied-tool list with exact names or globs; repeatable
-  --clear-deny-tools  Remove every denied-tool rule`);
+  --clear-deny-tools  Remove every denied-tool rule
+  --refresh-public-pins  Refresh existing public address pins in live OpenShell policy`);
       return;
     case "status":
       console.log(`USAGE
@@ -414,7 +418,9 @@ export async function dispatchMcpBridgeCommand(
       }
       case "update": {
         const options = parseMcpUpdateArgs(rest);
-        await updateMcpBridgeDenyTools(sandboxName, options.server, options.denyTools);
+        if ("refreshPublicPins" in options)
+          await refreshMcpBridgePublicPins(sandboxName, options.server);
+        else await updateMcpBridgeDenyTools(sandboxName, options.server, options.denyTools);
         return;
       }
       case "list": {

@@ -65,6 +65,8 @@ export function renderMcpBridgeStatus(
     if (status.publicTarget) {
       console.log(`    public host: ${status.publicTarget.host}`);
       console.log(`    public address pins: ${status.publicTarget.state}`);
+      if (status.publicTarget.detail)
+        console.log(`    public address detail: ${status.publicTarget.detail}`);
     }
     console.log(`    provider: ${status.provider.name ?? "(none)"}`);
     console.log(

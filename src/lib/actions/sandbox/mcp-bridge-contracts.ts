@@ -79,10 +79,9 @@ export interface McpBridgeToolDiscoveryResult {
   failureClass?: McpBridgeToolDiscoveryFailureClass;
 }
 
-export interface ParsedMcpUpdateArgs {
-  server: string;
-  denyTools: string[];
-}
+export type ParsedMcpUpdateArgs =
+  | { server: string; denyTools: string[] }
+  | { server: string; refreshPublicPins: true };
 
 export interface McpBridgeStatus {
   server: string;
@@ -106,7 +105,7 @@ export interface McpBridgeStatus {
     host: string;
     recordedPins: string[];
     currentPins?: string[];
-    state: "match" | "drift" | "unresolved";
+    state: "match" | "drift" | "unresolved" | "rejected";
     detail?: string;
   };
   env: {

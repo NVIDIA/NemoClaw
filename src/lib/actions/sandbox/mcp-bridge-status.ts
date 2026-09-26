@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
+import { isIP } from "node:net";
 import { type AgentDefinition, type AgentMcpAdapter, loadAgent } from "../../agent/defs";
-import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import {
   buildDeepAgentsMcpStatusCommand,
   buildHermesMcpStatusCommand,
@@ -11,7 +12,12 @@ import {
   openClawConfigDir,
 } from "./mcp-bridge-adapters";
 import { parseUnsafeDeepAgentsMcpConfigResult } from "./mcp-bridge-adapter-status";
-import { isAgentMcpAdapter, McpBridgeError, type McpBridgeStatus } from "./mcp-bridge-contracts";
+import {
+  isAgentMcpAdapter,
+  McpBridgeError,
+  type McpSourceEntry,
+  type McpBridgeStatus,
+} from "./mcp-bridge-contracts";
 import { redactBridgeFailureForDisplay, redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import { getPolicyPresence } from "./mcp-bridge-policy";
 import {
@@ -44,15 +50,16 @@ import {
   inspectMcpRecordedPublicTargetPins,
   inspectMcpRecordedTargetPins,
   type McpBridgeRecordedPinStatus,
+  type McpBridgePublicPinStatus,
 } from "./mcp-bridge-url-validation";
 import {
   assertAuthenticatedBridgeEntry,
-  normalizeMcpServerUrl,
   resolvePersistedCredentialEnvForRedaction,
   validateMcpServerName,
   validateSandboxName,
 } from "./mcp-bridge-validation";
-import { executeSandboxCommand } from "./process-recovery";
+import { normalizeRecordedMcpServerUrl } from "./mcp-bridge/recorded-url";
+import { executeSandboxExecCommand } from "../../adapters/sandbox/command-transport";
 
 export interface McpBridgeJsonSummary {
   sandbox: string;
@@ -115,9 +122,7 @@ export async function assertUnchangedStableMcpCredentialAuthorized(
 
 function storedUrlWarning(entry: McpSourceEntry): string | undefined {
   try {
-    return normalizeMcpServerUrl(entry.url, {
-      trustedPrivateHosts: entry.trustedPrivateHost ? [entry.trustedPrivateHost] : undefined,
-    }) === entry.url
+    return normalizeRecordedMcpServerUrl(entry) === entry.url
       ? undefined
       : UNSUPPORTED_STORED_URL_WARNING;
   } catch {
@@ -163,9 +168,15 @@ async function getAdapterRegistration(
       : adapter === "hermes-config"
         ? buildHermesMcpStatusCommand(entry, credentialRevision)
         : buildDeepAgentsMcpStatusCommand(entry, credentialRevision);
-  const result = await executeSandboxCommand(sandboxName, command, { runtimeSelection });
-  if (!result)
-    return credentialInspectionFailure ?? { registered: null, detail: "sandbox unreachable" };
+  let result: Awaited<ReturnType<typeof executeSandboxExecCommand>>;
+  try {
+    result = await executeSandboxExecCommand(sandboxName, command, undefined, {
+      runtimeSelection,
+    });
+  } catch (error) {
+    if (!(error instanceof SandboxCommandTransportError)) throw error;
+    return credentialInspectionFailure ?? { registered: null, detail: error.message };
+  }
   const unsafeProjection =
     adapter === "deepagents-config" ? parseUnsafeDeepAgentsMcpConfigResult(result) : null;
   if (unsafeProjection) {
@@ -202,7 +213,7 @@ export interface McpBridgeStatusOptions {
   allowCredentialProbeWithAdapterMismatch?: boolean;
   /**
    * Run the wire-level credential-resolution probe for each entry (#6379).
-   * Costs one SSH round trip plus an in-sandbox MCP initialize per entry, so
+   * Costs one native command plus an in-sandbox MCP initialize per entry, so
    * the dispatch layer enables it only where the operator asked for it.
    */
   probeCredentialResolution?: boolean;
@@ -326,24 +337,27 @@ export async function statusMcpBridge(
     }
   }
   const privatePinStatusByServer = new Map<string, McpBridgeRecordedPinStatus>();
-  const publicPinStatusByServer = new Map<string, McpBridgeRecordedPinStatus>();
+  const publicPinStatusByServer = new Map<string, McpBridgePublicPinStatus>();
   await Promise.all(
     entries.map(async ([name, entry]) => {
       if (!entry?.allowedIps) return;
+      let parsed: URL;
+      try {
+        parsed = new URL(entry.url);
+      } catch {
+        return;
+      }
       if (entry.trustedPrivateHost) {
         privatePinStatusByServer.set(
           name,
-          await inspectMcpRecordedTargetPins(
-            new URL(entry.url),
-            entry.trustedPrivateHost,
-            entry.allowedIps,
-          ),
+          await inspectMcpRecordedTargetPins(parsed, entry.trustedPrivateHost, entry.allowedIps),
         );
         return;
       }
+      if (entry.allowedIps.some((address) => isIP(address) === 0)) return;
       publicPinStatusByServer.set(
         name,
-        await inspectMcpRecordedPublicTargetPins(new URL(entry.url), entry.allowedIps),
+        await inspectMcpRecordedPublicTargetPins(parsed, entry.allowedIps),
       );
     }),
   );
@@ -411,11 +425,16 @@ export async function statusMcpBridge(
       }
       if (publicPinStatus?.state === "drift") {
         warnings.push(
-          "Public DNS answers differ from the recorded pins. Run mcp restart to refresh validated public pins.",
+          "Public DNS answers differ from the recorded pins. Run mcp update <server> --refresh-public-pins to refresh the live policy.",
         );
       } else if (publicPinStatus?.state === "unresolved") {
         warnings.push(
           "Public DNS resolution is unavailable. The recorded policy pins were not changed.",
+        );
+      }
+      if (publicPinStatus?.state === "rejected") {
+        warnings.push(
+          `Public DNS target was rejected: ${publicPinStatus.detail ?? "the current addresses are not public"} The live policy was not changed.`,
         );
       }
       const unsafeCredentialMayBeAttached =
@@ -463,8 +482,7 @@ export async function statusMcpBridge(
                     credentialRevision,
                   )
           : undefined;
-      // A public CONNECT 403 that coincides with recorded-pin drift is a DNS
-      // rotation, not a credential problem; name the concrete fix (#10464).
+      // Name observed pin drift when it can explain the CONNECT denial (#10464).
       const diagnosedCredentialResolution =
         credentialResolution?.detail === MCP_CONNECT_403_POLICY_DETAIL &&
         entry?.allowedIps &&
@@ -475,7 +493,7 @@ export async function statusMcpBridge(
               detail:
                 `OpenShell denied the probe connection (CONNECT 403): current public DNS answers ` +
                 `${publicPinStatus.currentAddresses.join(", ")} do not match recorded pins ` +
-                `${entry.allowedIps.join(", ")}. Run mcp restart to refresh validated public pins.`,
+                `${entry.allowedIps.join(", ")}. Run mcp update <server> --refresh-public-pins to refresh the live policy.`,
             }
           : credentialResolution;
       const resolutionWarning = diagnosedCredentialResolution

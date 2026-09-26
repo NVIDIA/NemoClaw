@@ -16,6 +16,8 @@ import {
   type SandboxRecreateObserver,
 } from "../../../onboard/sandbox-recreate-probe";
 import type { SandboxEntry } from "../../../state/registry";
+import { createSynchronousCliOpenShellInferenceRouteObserver } from "../../../adapters/openshell/inference-route-cli";
+import type { OpenShellInferenceRouteObserver } from "../../../adapters/openshell/inference-route";
 import {
   buildSandboxInferenceRouteProbeRequest,
   type InferenceRouteProbeAgent,
@@ -26,7 +28,10 @@ import {
   isDcodeOpenRouterModelsRoute404,
   runSandboxInferenceInvocationProbe,
 } from "../inference-route-health";
-import { isSandboxGatewayRunningForStatus } from "../process-recovery";
+import {
+  isSandboxGatewayHttpReachableForStatus,
+  isSandboxGatewayRunningForStatus,
+} from "../process-recovery";
 
 export type LaunchReadinessObservationCategory =
   | "missing"
@@ -54,9 +59,13 @@ export interface LaunchReadinessHealthDeps {
   listAgents?: typeof listAgents;
   loadAgent?: typeof loadAgent;
   capture?: LaunchReadinessBoundCapture;
+  inferenceRouteObserver?: OpenShellInferenceRouteObserver;
   commandExecutor?: OpenShellSandboxBufferedCommandExecutor;
   gatewayHealth?: (sandboxName: string, gatewayName: string) => Promise<boolean | null>;
-  forwardsHealthy?: (sandboxName: string, gatewayName: string) => boolean | null;
+  forwardsHealthy?: (
+    sandboxName: string,
+    gatewayName: string,
+  ) => boolean | null | Promise<boolean | null>;
   smoke?: (sandboxName: string, agent: AgentDefinition) => ReturnType<typeof runAgentSmokeCommands>;
   inferenceProbe?: (
     sandboxName: string,
@@ -73,6 +82,13 @@ export type LaunchReadinessBoundCapture = (
   options?: NonNullable<Parameters<typeof captureOpenshell>[1]>,
 ) => LaunchReadinessCaptureResult;
 
+/** Bind the route observer to the same capture owner as the other readiness reads. */
+export function createLaunchReadinessInferenceRouteObserver(
+  capture: LaunchReadinessBoundCapture,
+): OpenShellInferenceRouteObserver {
+  return createSynchronousCliOpenShellInferenceRouteObserver(capture);
+}
+
 /** Route every OpenShell-backed readiness observation through one bound capture owner. */
 export function createBoundLaunchReadinessDeps(
   capture: LaunchReadinessBoundCapture,
@@ -85,13 +101,14 @@ export function createBoundLaunchReadinessDeps(
         ignoreError: options?.ignoreError ?? true,
         timeout: options?.timeout ?? OPENSHELL_PROBE_TIMEOUT_MS,
       }),
+    inferenceRouteObserver: createLaunchReadinessInferenceRouteObserver(capture),
     observeSandbox: (target) => observeSandboxOnGateway(target, capture),
     gatewayHealth: (sandboxName, gatewayName) =>
-      isSandboxGatewayRunningForStatus(sandboxName, gatewayName, {
+      isSandboxGatewayHttpReachableForStatus(sandboxName, gatewayName, {
         commandExecutor,
       }),
     forwardsHealthy: (sandboxName, gatewayName) =>
-      areSandboxLaunchForwardsHealthy(sandboxName, gatewayName, capture),
+      areSandboxLaunchForwardsHealthy(sandboxName, gatewayName),
     inferenceProbe: (sandboxName, agent, gatewayName) =>
       probeInferenceRoute(sandboxName, agent, gatewayName, commandExecutor),
     commandExecutor,
@@ -253,7 +270,7 @@ export async function requireLaunchSemanticHealth(
     const forwardStartedAt = performance.now();
     let forwards: boolean | null;
     try {
-      forwards = (deps.forwardsHealthy ?? areSandboxLaunchForwardsHealthy)(
+      forwards = await (deps.forwardsHealthy ?? areSandboxLaunchForwardsHealthy)(
         sandboxName,
         gatewayName,
       );

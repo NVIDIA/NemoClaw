@@ -28,6 +28,30 @@ function successfulProbeWithStdout(stdout: string): ShellProbeResult {
 }
 
 describe("configured E2E runtime provider fixture", () => {
+  it("fails an unavailable diagnostic runtime when no skip handler is supplied", async () => {
+    const command = vi.fn<HostCliClient["command"]>().mockResolvedValue({
+      ...successfulProbe(),
+      exitCode: 1,
+      stdout: "",
+      stderr: "runtime unavailable",
+    });
+    const runtime = new RuntimeProviderPrerequisite({ command }, undefined, {
+      NEMOCLAW_GATEWAY_RUNTIME: "docker",
+    });
+    vi.stubEnv("GITHUB_ACTIONS", "false");
+    try {
+      await expect(
+        runtime.requireAvailable({
+          artifactName: "diagnostic-runtime",
+          scenarioLabel: "failure diagnostics",
+        }),
+      ).rejects.toThrow("runtime unavailable");
+      expect(command).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("preserves native Podman runtime authority for CLI child processes", () => {
     const env = buildAvailabilityProbeEnv({
       HOME: "/home/runner",

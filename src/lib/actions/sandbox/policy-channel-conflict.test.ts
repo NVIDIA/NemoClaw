@@ -12,7 +12,7 @@ import * as runtime from "../../adapters/openshell/runtime";
 import * as defs from "../../agent/defs";
 import * as store from "../../credentials/store";
 import * as gatewayRuntime from "../../gateway-runtime-action";
-import { MessagingSetupApplier } from "../../messaging";
+import { createBuiltInMessagingHookRegistry, MessagingSetupApplier } from "../../messaging";
 import * as policy from "../../policy";
 import { hashCredential } from "../../security/credential-hash";
 import * as onboardSession from "../../state/onboard-session";
@@ -22,7 +22,7 @@ import * as crossPortRegistry from "../../state/registry/cross-port";
 import * as messagingHostForwardLifecycle from "./messaging-host-forward-lifecycle";
 import { addSandboxChannel, startSandboxChannel } from "./policy-channel";
 import { policyChannelDependencies } from "./policy-channel-dependencies";
-import * as processRecovery from "./process-recovery";
+import * as commandTransport from "../../adapters/sandbox/command-transport";
 
 function agentFixture(name: string): defs.AgentDefinition {
   return { name } as defs.AgentDefinition;
@@ -362,6 +362,14 @@ beforeEach(() => {
 
   // Lazy legacy-provider seam: no onboarding graph is loaded for this suite.
   upsertMock = vi.spyOn(policyChannelDependencies, "upsertMessagingProviders").mockReturnValue([]);
+  vi.spyOn(
+    policyChannelDependencies,
+    "createMessagingHostForwardPreEnableHookRegistry",
+  ).mockReturnValue(
+    createBuiltInMessagingHookRegistry({
+      teams: { hostForwardPortConflict: { checkPortAvailable: async () => ({ ok: true }) } },
+    }),
+  );
   vi.spyOn(policyChannelDependencies, "revalidateChannelProviderPolicy").mockImplementation(
     async () => undefined,
   );
@@ -419,8 +427,9 @@ beforeEach(() => {
   // unit-test runner; locally it is installed, so this only bites in CI). Stub
   // the exec path so the post-add verification never shells out and never trips
   // the exit spy unless a test explicitly overrides it.
-  vi.spyOn(processRecovery, "executeSandboxExecCommand").mockResolvedValue(null);
-  vi.spyOn(processRecovery, "executeSandboxCommand").mockResolvedValue(null);
+  vi.spyOn(commandTransport, "executeSandboxExecCommand").mockRejectedValue(
+    new commandTransport.SandboxCommandTransportError("unavailable"),
+  );
 
   process.env.NEMOCLAW_SKIP_TELEGRAM_REACHABILITY = "1";
   process.env.NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION = "1";
@@ -1237,12 +1246,12 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
     expect(text).toContain("'telegram' bridge startup detected");
     expect(text).toContain("Telegram direct-message allowlist is empty");
     const execCommands = vi
-      .mocked(processRecovery.executeSandboxExecCommand)
+      .mocked(commandTransport.executeSandboxExecCommand)
       .mock.calls.map((call: unknown[]) => String(call[1]));
     expect(
       vi
-        .mocked(processRecovery.executeSandboxExecCommand)
-        .mock.calls.every((call) => call[3]?.localDockerFallbackPolicy === "read-only"),
+        .mocked(commandTransport.executeSandboxExecCommand)
+        .mock.calls.every((call) => call[3] === undefined || Object.keys(call[3]).length === 0),
     ).toBe(true);
     expect(execCommands.some((cmd: string) => cmd.includes("grep"))).toBe(false);
     expect(
@@ -1297,6 +1306,39 @@ describe("Teams host-forward lifecycle (PRA-2)", () => {
     return plan?.channels?.find((channel) => channel.channelId === "teams")?.hostForward;
   }
 
+  it("rejects an occupied host port before persisting any channel state", async () => {
+    setTeamsEnv();
+    arrangeRegistry({ current: makeEmptyEntry("alpha") });
+    const preEnableHookRegistry = createBuiltInMessagingHookRegistry({
+      teams: {
+        hostForwardPortConflict: {
+          checkPortAvailable: async () => ({ ok: false, process: "nc", pid: 4321 }),
+          isCurrentSandboxForward: () => false,
+        },
+      },
+    });
+
+    vi.mocked(
+      policyChannelDependencies.createMessagingHostForwardPreEnableHookRegistry,
+    ).mockReturnValue(preEnableHookRegistry);
+    await expect(addSandboxChannel("alpha", { channel: "teams" })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(
+      policyChannelDependencies.createMessagingHostForwardPreEnableHookRegistry,
+    ).toHaveBeenCalledOnce();
+    expect(loggedText()).toContain(
+      "Microsoft Teams webhook port 3978 is already in use by nc (PID 4321)",
+    );
+    expect(loggedText()).toContain("MSTEAMS_PORT");
+    expect(upsertMock).not.toHaveBeenCalled();
+    expect(saveCredentialMock).not.toHaveBeenCalled();
+    expect(applyPresetMock).not.toHaveBeenCalled();
+    expect(updateSandboxMock).not.toHaveBeenCalled();
+    expect(rebuildSandboxMock).not.toHaveBeenCalled();
+  });
+
   it.each(["add", "start", "add QR"])(
     "reports incomplete channel %s when the host forward fails (#11648)",
     async (operation) => {
@@ -1322,8 +1364,15 @@ describe("Teams host-forward lifecycle (PRA-2)", () => {
   it("channels add teams starts the MSTEAMS_PORT host forward after rebuild-now completes", async () => {
     setTeamsEnv();
     arrangeRegistry({ current: makeEmptyEntry("alpha") });
+    const preEnableHookRegistry = createBuiltInMessagingHookRegistry({
+      teams: {
+        hostForwardPortConflict: {
+          checkPortAvailable: async () => ({ ok: true }),
+        },
+      },
+    });
 
-    await addSandboxChannel("alpha", { channel: "teams" });
+    await addSandboxChannel("alpha", { channel: "teams" }, { preEnableHookRegistry });
 
     expect(rebuildSandboxMock).toHaveBeenCalledWith("alpha", ["--yes"]);
     expect(ensureMessagingHostForwardAfterRebuildMock).toHaveBeenCalledWith(
@@ -1433,7 +1482,7 @@ describe("Teams host-forward lifecycle (PRA-2)", () => {
 });
 
 function mockBridgeHealthExec(options: { config: unknown; log: string }): void {
-  vi.mocked(processRecovery.executeSandboxExecCommand).mockImplementation(
+  vi.mocked(commandTransport.executeSandboxExecCommand).mockImplementation(
     async (_sandboxName: string, command: string) => {
       if (command.includes("cat") && command.includes("openclaw.json")) {
         return { status: 0, stdout: JSON.stringify(options.config), stderr: "" };
@@ -1441,7 +1490,7 @@ function mockBridgeHealthExec(options: { config: unknown; log: string }): void {
       if (command.includes("tail -n 400") && command.includes("gateway.log")) {
         return { status: 0, stdout: options.log, stderr: "" };
       }
-      return null;
+      throw new commandTransport.SandboxCommandTransportError("unavailable");
     },
   );
 }

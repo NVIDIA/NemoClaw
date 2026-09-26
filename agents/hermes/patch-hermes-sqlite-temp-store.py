@@ -1,39 +1,27 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Patch SessionDB for SQLite temp storage and NemoClaw's shared state ledger.
+"""Patch Hermes shared state permissions for NemoClaw's split runtime identity.
 
 Source-of-truth note for this localized Hermes runtime patch:
-  - Invalid state: Hermes v0.20.6 SessionDB does not set PRAGMA temp_store=MEMORY,
-    so SQLite falls back to file-based temp storage when processing FK constraints
-    (for example, the ON DELETE CASCADE on session_model_usage -> sessions). When
-    `hermes sessions delete` is invoked through OpenShell sandbox execution —
-    the code path used by `nemohermes <sandbox> sessions delete <id>` — the
-    process runs in a restricted environment where SQLite's temp-file creation
-    syscalls fail with
-    SQLITE_CANTOPEN, causing every `DELETE FROM sessions` with FK enforcement
-    enabled to raise `sqlite3.OperationalError: unable to open database file`
-    (#8301). The same command succeeds through Docker execution because that
-    context allows the file-based temp store.
-  - A second invalid state exists in NemoClaw's root-separated runtime: SQLite
+  - Invalid state: in NemoClaw's root-separated runtime, SQLite
     creates state.db and its WAL/SHM sidecars as 0640 even under umask 0007.
     The gateway owns those files, so the sandbox-group CLI cannot persist a chat
     session. Only the fixed `.hermes/state.db -> runtime/state.db` layout is
     normalized to gateway/sandbox-shared mode 0660; other Hermes homes and files
     keep upstream permissions.
-  - Value being patched: pinned/prebuilt `/opt/hermes/hermes_state.py`
-    `SessionDB.__init__` connection setup. The patch inserts one descriptor-safe
-    fixed-layout normalizer before SQLite opens an existing database and again
-    after schema initialization has created its WAL sidecars. It also inserts
-    `PRAGMA temp_store=MEMORY` before `PRAGMA foreign_keys=ON`.
+  - Value being patched: pinned/prebuilt `/opt/hermes/hermes_state.py` writer
+    connection setup. The patch inserts one descriptor-safe fixed-layout
+    normalizer after each native `_secure_state_db_files` call. Hermes v0.21.3
+    natively owns `database.temp_store`; NemoClaw sets that managed configuration
+    to `2` (memory) instead of patching a PRAGMA into the source.
   - Source-fix constraint: NemoClaw layers a sandbox image on top of the
     published Hermes runtime; the source fix belongs upstream in Hermes, not in
     NemoClaw's TypeScript or wrapper code.
-  - Regression evidence: on first application, this patcher accepts exactly one
-    unpatched connection setup block and no temp-store statement. A later
-    application accepts exactly one complete patched block with one temp-store
-    statement. Every other source shape fails without writing. The Dockerfile
-    checks for the inserted PRAGMA after patching. The image-build
+  - Regression evidence: on first application, this patcher accepts exactly two
+    native hardening call sites with no shared-state helper. A later application
+    accepts exactly one complete helper and two normalizer calls. Every other
+    source shape fails without writing. The image-build
     `session-delete` behavior test covers the temp store. The image's
     `session-state-create` and `session-state-reopen` probes execute the patched
     SessionDB as gateway then sandbox and require exact state.db metadata plus a
@@ -41,7 +29,7 @@ Source-of-truth note for this localized Hermes runtime patch:
     SQLite retains WAL mode and require those sidecars absent when Hermes'
     selected journal mode is DELETE on a WAL-incompatible filesystem.
   - Removal condition: delete this patch when the pinned Hermes runtime natively
-    sets `PRAGMA temp_store=MEMORY` (or equivalent) in `SessionDB.__init__`.
+    supports a group-shared state database across separate runtime identities.
 """
 
 from __future__ import annotations
@@ -49,16 +37,9 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-IMPORTS_OLD = """import re
-import sqlite3
-import sys"""
-IMPORTS_NEW = """import re
-import sqlite3
-import stat
-import sys"""
-HELPER_ANCHOR_OLD = """DEFAULT_DB_PATH = get_hermes_home() / "state.db"
+HELPER_ANCHOR_OLD = """DEFAULT_DB_PATH = _IMPORT_DEFAULT_DB_PATH = get_hermes_home() / "state.db"
 
-# How long SessionDB stops attempting read-only opens"""
+# Back off from read-only opens"""
 HELPER = '''_NEMOCLAW_SHARED_STATE_LINK = Path("/sandbox/.hermes/state.db")
 _NEMOCLAW_SHARED_STATE_DIRECTORY = Path("/sandbox/.hermes/runtime")
 _NEMOCLAW_SHARED_STATE_NAMES = ("state.db", "state.db-wal", "state.db-shm")
@@ -142,76 +123,56 @@ def _nemoclaw_normalize_shared_state_permissions(db_path: Path) -> None:
                 os.close(descriptor)
     finally:
         os.close(directory_fd)'''
-HELPER_ANCHOR_NEW = f'''DEFAULT_DB_PATH = get_hermes_home() / "state.db"
+HELPER_ANCHOR_NEW = f'''DEFAULT_DB_PATH = _IMPORT_DEFAULT_DB_PATH = get_hermes_home() / "state.db"
 
 {HELPER}
 
-# How long SessionDB stops attempting read-only opens'''
-CONNECT_ANCHOR_OLD = """            def _connect_and_init():
-                self._conn = _connect_tracked_db("""
-CONNECT_ANCHOR_NEW = """            def _connect_and_init():
-                _nemoclaw_normalize_shared_state_permissions(self.db_path)
-                self._conn = _connect_tracked_db("""
-INIT_ANCHOR_OLD = """                self._init_schema()"""
-INIT_ANCHOR_NEW = """                self._init_schema()
-                _nemoclaw_normalize_shared_state_permissions(self.db_path)"""
-CONNECTION_OLD = (
-    'apply_database_pragmas(self._conn, db_label="state.db")\n'
-    '                self._conn.execute("PRAGMA foreign_keys=ON")'
-)
-CONNECTION_TEMP_ONLY = (
-    'apply_database_pragmas(self._conn, db_label="state.db")\n'
-    '                self._conn.execute("PRAGMA temp_store=MEMORY")\n'
-    '                self._conn.execute("PRAGMA foreign_keys=ON")'
-)
-EXPECTED_OCCURRENCES = 1
+# Back off from read-only opens'''
+OPEN_ANCHOR_OLD = """            _secure_state_db_files(self.db_path)
+            apply_database_pragmas(conn, db_label="state.db")"""
+OPEN_ANCHOR_NEW = """            _secure_state_db_files(self.db_path)
+            _nemoclaw_normalize_shared_state_permissions(self.db_path)
+            apply_database_pragmas(conn, db_label="state.db")"""
+INIT_ANCHOR_OLD = """        _secure_state_db_files(self.db_path, create_main=True)
+        self._conn = self._open_writer_conn()"""
+INIT_ANCHOR_NEW = """        _secure_state_db_files(self.db_path, create_main=True)
+        _nemoclaw_normalize_shared_state_permissions(self.db_path)
+        self._conn = self._open_writer_conn()"""
 
 
 def patch_file(path: Path) -> None:
     source = path.read_text(encoding="utf-8")
-    old_count = source.count(CONNECTION_OLD)
-    temp_only_count = source.count(CONNECTION_TEMP_ONLY)
-    temp_statement_count = source.count('self._conn.execute("PRAGMA temp_store=MEMORY")')
     helper_count = source.count("def _nemoclaw_normalize_shared_state_permissions(")
     call_count = source.count("_nemoclaw_normalize_shared_state_permissions(self.db_path)")
     if (
-        old_count == 0
-        and temp_only_count == EXPECTED_OCCURRENCES
-        and temp_statement_count == EXPECTED_OCCURRENCES
-        and helper_count == EXPECTED_OCCURRENCES
+        helper_count == 1
         and call_count == 2
-        and source.count(IMPORTS_NEW) == EXPECTED_OCCURRENCES
-        and source.count(HELPER_ANCHOR_NEW) == EXPECTED_OCCURRENCES
-        and source.count(CONNECT_ANCHOR_NEW) == EXPECTED_OCCURRENCES
-        and source.count(INIT_ANCHOR_NEW) == EXPECTED_OCCURRENCES
+        and source.count(HELPER_ANCHOR_NEW) == 1
+        and source.count(OPEN_ANCHOR_NEW) == 1
+        and source.count(INIT_ANCHOR_NEW) == 1
+        and source.count("_secure_state_db_files(self.db_path)") == 1
+        and source.count("_secure_state_db_files(self.db_path, create_main=True)") == 1
     ):
         return
     if (
-        old_count + temp_only_count != EXPECTED_OCCURRENCES
-        or temp_statement_count != temp_only_count
-        or helper_count != 0
+        helper_count != 0
         or call_count != 0
-        or source.count(IMPORTS_OLD) != EXPECTED_OCCURRENCES
-        or source.count(IMPORTS_NEW) != 0
-        or source.count(HELPER_ANCHOR_OLD) != EXPECTED_OCCURRENCES
-        or source.count(CONNECT_ANCHOR_OLD) != EXPECTED_OCCURRENCES
-        or source.count(CONNECT_ANCHOR_NEW) != 0
-        or source.count(INIT_ANCHOR_OLD) != EXPECTED_OCCURRENCES
+        or source.count(HELPER_ANCHOR_OLD) != 1
+        or source.count(OPEN_ANCHOR_OLD) != 1
+        or source.count(OPEN_ANCHOR_NEW) != 0
+        or source.count(INIT_ANCHOR_OLD) != 1
         or source.count(INIT_ANCHOR_NEW) != 0
+        or source.count("_secure_state_db_files(self.db_path)") != 1
+        or source.count("_secure_state_db_files(self.db_path, create_main=True)") != 1
     ):
         raise SystemExit(
-            "ERROR: Hermes SessionDB.__init__ connection setup shape changed; "
-            "expected one unpatched or legacy temp-store block with no shared-state "
-            f"helper; found {old_count} unpatched blocks, {temp_only_count} legacy "
-            f"temp-store blocks, {temp_statement_count} temp-store statements, "
-            f"{helper_count} helpers, and {call_count} helper calls"
+            "ERROR: Hermes shared state hardening shape changed; expected two "
+            f"unpatched native hardening sites; found {helper_count} helpers and "
+            f"{call_count} helper calls"
         )
-    connection = CONNECTION_OLD if old_count == EXPECTED_OCCURRENCES else CONNECTION_TEMP_ONLY
-    patched = source.replace(IMPORTS_OLD, IMPORTS_NEW)
-    patched = patched.replace(HELPER_ANCHOR_OLD, HELPER_ANCHOR_NEW)
-    patched = patched.replace(CONNECT_ANCHOR_OLD, CONNECT_ANCHOR_NEW)
+    patched = source.replace(HELPER_ANCHOR_OLD, HELPER_ANCHOR_NEW)
+    patched = patched.replace(OPEN_ANCHOR_OLD, OPEN_ANCHOR_NEW)
     patched = patched.replace(INIT_ANCHOR_OLD, INIT_ANCHOR_NEW)
-    patched = patched.replace(connection, CONNECTION_TEMP_ONLY)
     path.write_text(patched, encoding="utf-8")
 
 
