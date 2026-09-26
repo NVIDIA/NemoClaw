@@ -124,6 +124,27 @@ describe("current Podman runtime provider", () => {
     );
   });
 
+  it("does not inspect after container lookup exhausts the shared snapshot timeout", () => {
+    let nowMs = 1_000;
+    const now = vi.spyOn(Date, "now").mockImplementation(() => nowMs);
+    const engine = runtimeEngine(() => exactLabels());
+    vi.mocked(engine.capture).mockImplementation(() => {
+      nowMs = 2_000;
+      return { status: 0, stdout: `${CONTAINER_ID}\n`, stderr: "" };
+    });
+    const surface = createPodmanRuntimeProviderSnapshotSurface(engine);
+    const supported = surface as Extract<typeof surface, { readonly supported: true }>;
+
+    expect(() => supported.preflight("backup", sandbox(), 1_000)).toThrow(
+      "Podman runtime observation deadline expired",
+    );
+    expect(engine.capture).not.toHaveBeenCalledWith(
+      expect.arrayContaining(["container", "inspect"]),
+      expect.anything(),
+    );
+    now.mockRestore();
+  });
+
   it("does not inherit the portable Docker compatibility socket", () => {
     expect(
       resolveNativePodmanSocketPath({

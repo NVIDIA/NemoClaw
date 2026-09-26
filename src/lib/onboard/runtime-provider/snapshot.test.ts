@@ -723,19 +723,22 @@ describe("Docker provider snapshot evidence", () => {
   });
 
   it("normalizes Docker's explicit paused status", () => {
+    const queryRuntimeSnapshot = vi.fn(() => dockerSnapshot());
     const observed = observeDockerRuntimeSnapshot(
       sandbox({ openshellDriver: "docker" }),
       "docker",
       {
         captureHostCommand: dockerLifecycleCapture(undefined, { status: "paused", paused: true }),
-        queryRuntimeSnapshot: () => dockerSnapshot(),
+        queryRuntimeSnapshot,
       },
     );
 
     expect(observed.lifecycleState).toBe("paused");
+    expect(queryRuntimeSnapshot).toHaveBeenCalledWith("alpha");
   });
 
   it("captures exact live container, lifecycle, and device selectors", () => {
+    const captureHostCommand = dockerLifecycleCapture();
     const queryRuntimeSnapshot = vi.fn(() =>
       dockerSnapshot({
         deviceRequests: [
@@ -760,7 +763,8 @@ describe("Docker provider snapshot evidence", () => {
         sandboxGpuDevice: null,
       }),
       "docker",
-      { captureHostCommand: dockerLifecycleCapture(), queryRuntimeSnapshot },
+      { captureHostCommand, queryRuntimeSnapshot },
+      4_321,
     );
 
     expect(observed).toMatchObject({
@@ -776,6 +780,38 @@ describe("Docker provider snapshot evidence", () => {
         },
       },
     });
+    expect(queryRuntimeSnapshot).toHaveBeenCalledWith("alpha", 4_321);
+    expect(captureHostCommand).toHaveBeenCalledWith(
+      "docker",
+      expect.any(Array),
+      expect.any(Number),
+    );
+  });
+
+  it("does not inspect lifecycle after runtime identity exhausts the shared deadline", () => {
+    const timeoutMs = 4_321;
+    let nowMs = 10_000;
+    const now = vi.spyOn(Date, "now").mockImplementation(() => nowMs);
+    const captureHostCommand = vi.fn();
+    const queryRuntimeSnapshot = vi.fn(() => {
+      nowMs += timeoutMs;
+      return dockerSnapshot();
+    });
+
+    try {
+      expect(() =>
+        observeDockerRuntimeSnapshot(
+          sandbox({ openshellDriver: "docker" }),
+          "docker",
+          { captureHostCommand, queryRuntimeSnapshot },
+          timeoutMs,
+        ),
+      ).toThrow(/runtime snapshot deadline expired/u);
+      expect(queryRuntimeSnapshot).toHaveBeenCalledWith("alpha", timeoutMs);
+      expect(captureHostCommand).not.toHaveBeenCalled();
+    } finally {
+      now.mockRestore();
+    }
   });
 
   it.each([

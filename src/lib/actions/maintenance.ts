@@ -36,6 +36,8 @@ import {
   backupStartedSandboxState,
   isSandboxContainerDefinitivelyAbsent,
   returnSandboxContainerToStopped,
+  startedSandboxBackupTransactionDeadline,
+  startedSandboxBackupWorkDeadline,
   type StartedForBackup,
   startStoppedSandboxContainerForBackup,
 } from "./sandbox/stopped-sandbox-backup";
@@ -49,6 +51,7 @@ const D = useColor ? "\x1b[2m" : "";
 const R = useColor ? "\x1b[0m" : "";
 const RD = useColor ? "\x1b[1;31m" : "";
 const YW = useColor ? "\x1b[1;33m" : "";
+const STRICT_BACKUP_POST_STOP_CLEANUP_TIMEOUT_MS = 30_000;
 
 export function shouldSkipUnreachableSandboxBackup(env: NodeJS.ProcessEnv): boolean {
   return env.NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP === "1";
@@ -90,12 +93,17 @@ interface BackupAllSandboxAttempt {
 async function returnStartedSandboxToStopped(
   sandboxName: string,
   startedForBackup: StartedForBackup,
+  transactionDeadlineMs: number | null,
 ): Promise<Error | null> {
   const failureDetail =
     "could not return its container to the stopped state; the container was left running";
   const failureMessage = `Backup cleanup failed for '${sandboxName}': ${failureDetail}.`;
   try {
-    if (await returnSandboxContainerToStopped(startedForBackup)) {
+    if (
+      await returnSandboxContainerToStopped(startedForBackup, {
+        ...(transactionDeadlineMs === null ? {} : { deadlineMs: transactionDeadlineMs }),
+      })
+    ) {
       if (!registry.recordSandboxStopIntent(sandboxName, true, registry.updateSandbox)) {
         const error = new Error(
           `Backup cleanup failed for '${sandboxName}': the container returned to the stopped state, but NemoClaw could not retain that lifecycle intent.`,
@@ -121,17 +129,28 @@ async function returnStartedSandboxToStopped(
 async function backupSandboxWithinMutationLock(
   sandboxName: string,
   shouldStartStoppedContainer: boolean,
+  discardFailedBackup:
+    | ((result: sandboxState.BackupResult, cleanupDeadlineMs: number) => sandboxState.BackupResult)
+    | null,
   backup: (
     startedForBackup: StartedForBackup | null,
+    transactionDeadlineMs: number | null,
   ) => sandboxState.BackupResult | Promise<sandboxState.BackupResult>,
 ): Promise<BackupAllSandboxAttempt> {
   let enteredTransactionLock = false;
   try {
     return await withSandboxMutationLock(sandboxName, async () => {
       enteredTransactionLock = true;
-      enforceRemovedImmutabilityMigrationBoundary(sandboxName, { allowStateRecord: true });
+      enforceRemovedImmutabilityMigrationBoundary(sandboxName, {
+        allowStateRecord: true,
+      });
+      const startDeadlineMs = shouldStartStoppedContainer
+        ? startedSandboxBackupTransactionDeadline()
+        : null;
       const startedForBackup = shouldStartStoppedContainer
-        ? await startStoppedSandboxContainerForBackup(sandboxName)
+        ? await startStoppedSandboxContainerForBackup(sandboxName, {
+            deadlineMs: startDeadlineMs ?? undefined,
+          })
         : null;
       if (shouldStartStoppedContainer && !startedForBackup) {
         return {
@@ -143,6 +162,13 @@ async function backupSandboxWithinMutationLock(
       if (startedForBackup) {
         console.log(`  Starting stopped sandbox '${sandboxName}' to back it up...`);
       }
+      // Starting the container has its own bounded window. Establish the
+      // readiness/backup/cleanup transaction only after OpenShell accepts that
+      // start so lifecycle startup cannot consume the documented readiness
+      // allowance or either cleanup reserve.
+      const transactionDeadlineMs = startedForBackup
+        ? startedSandboxBackupTransactionDeadline()
+        : null;
       console.log(`  Backing up '${sandboxName}'...`);
       let result: sandboxState.BackupResult | null = null;
       let orphanManifestMessage: string | null = null;
@@ -150,7 +176,7 @@ async function backupSandboxWithinMutationLock(
       let hasBackupError = false;
       let stoppedContainerCleanupError: Error | null = null;
       try {
-        result = await backup(startedForBackup);
+        result = await backup(startedForBackup, transactionDeadlineMs);
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
         // Preserve the narrow pre-upgrade orphan exception inside the mutation
@@ -166,8 +192,19 @@ async function backupSandboxWithinMutationLock(
           stoppedContainerCleanupError = await returnStartedSandboxToStopped(
             sandboxName,
             startedForBackup,
+            transactionDeadlineMs,
           );
         }
+      }
+      // A strict snapshot can be large. Remove it only after the stopped-state
+      // restoration attempt, so filesystem cleanup cannot consume the
+      // lifecycle stop reserve. A failed restoration must not retain an unsafe
+      // extracted tree on the host.
+      if (result && !result.success && discardFailedBackup) {
+        result = discardFailedBackup(
+          result,
+          Date.now() + STRICT_BACKUP_POST_STOP_CLEANUP_TIMEOUT_MS,
+        );
       }
       if (stoppedContainerCleanupError && hasBackupError) {
         throw new AggregateError(
@@ -304,9 +341,21 @@ export async function backupAllUnderPortableHostFence(
     const attempt = await backupSandboxWithinMutationLock(
       sb.name,
       !readyNames.has(sb.name),
-      async (startedForBackup) => {
+      retainPreUpgradePolicy
+        ? (failedResult, cleanupDeadlineMs) =>
+            snapshotBackup.discardIncompleteBackup(
+              sb.name,
+              failedResult,
+              cleanupDeadlineMs,
+              "strict pre-upgrade",
+            )
+        : null,
+      async (startedForBackup, transactionDeadlineMs) => {
         const backupResult = await (startedForBackup
-          ? backupStartedSandboxState(sb.name)
+          ? backupStartedSandboxState(sb.name, {
+              deadlineMs: transactionDeadlineMs ?? undefined,
+              deferSanitizationDeadlineCleanup: retainPreUpgradePolicy,
+            })
           : snapshotBackup.backupSandboxStateWithManagedAuthority(
               sb.name,
               {},
@@ -315,10 +364,19 @@ export async function backupAllUnderPortableHostFence(
               },
             ));
         return retainPreUpgradePolicy
-          ? retainStrictPreUpgradeRecoveryState(sb, backupResult, {
-              gatewayName: resolveSandboxGatewayName(sb),
-              workspace: "default",
-            })
+          ? retainStrictPreUpgradeRecoveryState(
+              sb,
+              backupResult,
+              {
+                gatewayName: resolveSandboxGatewayName(sb),
+                workspace: "default",
+              },
+              // Retention runs while a started container is still up, so it
+              // may consume only the backup share of the transaction.
+              transactionDeadlineMs === null
+                ? undefined
+                : startedSandboxBackupWorkDeadline(transactionDeadlineMs),
+            )
           : backupResult;
       },
     );

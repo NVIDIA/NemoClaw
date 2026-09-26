@@ -3,7 +3,7 @@
 
 import { createHash } from "node:crypto";
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const privilegedCaptureMocks = vi.hoisted(() => ({
   dockerSpawnSync: vi.fn(),
@@ -37,14 +37,43 @@ import type { RuntimeProviderBundle } from "../../../onboard/runtime-provider/co
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../../state/registry/types";
 import { createSandboxHostLocalInferenceProvenance } from "../../../state/registry/host-local-inference";
 import type { BackupOptions, BackupResult } from "../../../state/sandbox";
+import * as sandboxState from "../../../state/sandbox";
 import {
   backupSandboxStateWithManagedAuthority,
   captureHermesStateDirectories,
   captureHermesStateFile,
   captureOpenClawStateFile,
+  discardIncompleteBackup,
   HERMES_DIRECTORY_CAPTURE_SCRIPT,
   HERMES_STATE_CAPTURE_SCRIPT,
 } from "./backup-authority";
+
+describe("incomplete backup cleanup", () => {
+  const failed = {
+    success: false,
+    backedUpDirs: ["workspace"],
+    failedDirs: [],
+    backedUpFiles: ["settings.json"],
+    failedFiles: [],
+    manifest: { backupPath: "/backups/alpha/incomplete" },
+    error: "capture failed",
+  } as unknown as BackupResult;
+
+  it("removes the unpublished manifest and clears backed-up entries", () => {
+    vi.spyOn(sandboxState, "removeSandboxStateBackup").mockReturnValue(true);
+    const result = discardIncompleteBackup("alpha", failed, 12_345, "strict pre-upgrade");
+    expect(result).toMatchObject({ backedUpDirs: [], backedUpFiles: [] });
+    expect(result).not.toHaveProperty("manifest");
+  });
+
+  it("retains the manifest and operation diagnostic when bounded removal fails", () => {
+    vi.spyOn(sandboxState, "removeSandboxStateBackup").mockReturnValue(false);
+    expect(discardIncompleteBackup("alpha", failed, 12_345, "rebuild")).toMatchObject({
+      manifest: failed.manifest,
+      error: expect.stringContaining("Failed rebuild backup"),
+    });
+  });
+});
 
 function workload(
   agent: ShippedManagedImageAgent,
@@ -191,6 +220,10 @@ function explicitLlamaSandbox(agent: "openclaw" | "hermes" | "langchain-deepagen
 }
 
 describe("managed snapshot backup authority", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   beforeEach(() => {
     privilegedCaptureMocks.dockerSpawnSync.mockReset();
     privilegedCaptureMocks.executePrivilegedSandboxCommand.mockReset();
@@ -198,7 +231,8 @@ describe("managed snapshot backup authority", () => {
     privilegedCaptureMocks.withPrivilegedSandboxExecutionLease.mockClear();
   });
 
-  it("captures the exact OpenClaw configuration with bounded direct execution", () => {
+  it("captures the exact OpenClaw configuration with the remaining deadline", () => {
+    vi.spyOn(Date, "now").mockReturnValue(10_000);
     const data = Buffer.from('{"models":{"default":"nvidia/test"}}\n');
     privilegedCaptureMocks.executePrivilegedSandboxCommand.mockReturnValue({
       status: 0,
@@ -212,6 +246,7 @@ describe("managed snapshot backup authority", () => {
       sandboxName: "alpha",
       dir: "/sandbox/.openclaw",
       spec: { path: "openclaw.json", strategy: "copy" },
+      deadlineMs: 12_345,
     });
 
     expect(result).toEqual({ outcome: "backed_up", data });
@@ -225,7 +260,7 @@ describe("managed snapshot backup authority", () => {
       expect.arrayContaining(["/usr/bin/python3", "-I", "-S", "-c"]),
       expect.objectContaining({
         sanitizeEnvironment: true,
-        timeout: 30_000,
+        timeout: 2_345,
         maxOutputBytes: 17 * 1024 * 1024,
       }),
     );
@@ -347,6 +382,7 @@ describe("managed snapshot backup authority", () => {
   });
 
   it("captures declared Hermes files and rejects arbitrary paths", () => {
+    vi.spyOn(Date, "now").mockReturnValue(10_000);
     privilegedCaptureMocks.dockerSpawnSync.mockReturnValue({
       status: 0,
       signal: null,
@@ -359,11 +395,12 @@ describe("managed snapshot backup authority", () => {
         sandboxName: "alpha",
         dir: "/sandbox/.hermes",
         spec: { path: "SOUL.md", strategy: "copy" },
+        deadlineMs: 12_345,
       }),
     ).toEqual({ outcome: "backed_up", data: Buffer.from("state") });
     expect(privilegedCaptureMocks.dockerSpawnSync).toHaveBeenLastCalledWith(
       expect.any(Array),
-      expect.objectContaining({ maxBuffer: 256 * 1024 * 1024 }),
+      expect.objectContaining({ maxBuffer: 256 * 1024 * 1024, timeout: 2_345 }),
     );
     expect(privilegedCaptureMocks.privilegedSandboxExecArgv).toHaveBeenLastCalledWith(
       "alpha",
@@ -411,6 +448,7 @@ describe("managed snapshot backup authority", () => {
   );
 
   it("streams only declared Hermes directories to the state-owned archive fd", () => {
+    vi.spyOn(Date, "now").mockReturnValue(10_000);
     privilegedCaptureMocks.dockerSpawnSync.mockReturnValue({
       status: 0,
       signal: null,
@@ -426,13 +464,17 @@ describe("managed snapshot backup authority", () => {
           dir: "/sandbox/.hermes",
           dirs: ["workspace"],
           maxArchiveBytes: 256 * 1024 * 1024,
+          deadlineMs: 12_345,
         },
         42,
       ),
     ).toEqual({ outcome: "backed_up" });
     expect(privilegedCaptureMocks.dockerSpawnSync).toHaveBeenLastCalledWith(
       expect.any(Array),
-      expect.objectContaining({ stdio: ["ignore", 42, "pipe"] }),
+      expect.objectContaining({
+        stdio: ["ignore", 42, "pipe"],
+        timeout: 2_345,
+      }),
     );
     expect(privilegedCaptureMocks.privilegedSandboxExecArgv).toHaveBeenLastCalledWith(
       "alpha",
@@ -471,6 +513,52 @@ describe("managed snapshot backup authority", () => {
     ).toBeNull();
   });
 
+  it("does not start a privileged capture after its deadline", () => {
+    vi.spyOn(Date, "now").mockReturnValue(10_000);
+
+    expect(
+      captureOpenClawStateFile("alpha", {
+        sandboxName: "alpha",
+        dir: "/sandbox/.openclaw",
+        spec: { path: "openclaw.json", strategy: "copy" },
+        deadlineMs: 10_000,
+      }),
+    ).toEqual({
+      outcome: "failed",
+      error: "privileged config capture deadline expired",
+    });
+    expect(
+      captureHermesStateFile("alpha", {
+        sandboxName: "alpha",
+        dir: "/sandbox/.hermes",
+        spec: { path: "SOUL.md", strategy: "copy" },
+        deadlineMs: 10_000,
+      }),
+    ).toEqual({
+      outcome: "failed",
+      error: "privileged Hermes state capture deadline expired",
+    });
+    expect(
+      captureHermesStateDirectories(
+        "alpha",
+        {
+          sandboxName: "alpha",
+          dir: "/sandbox/.hermes",
+          dirs: ["workspace"],
+          maxArchiveBytes: 256 * 1024 * 1024,
+          deadlineMs: 10_000,
+        },
+        42,
+      ),
+    ).toEqual({
+      outcome: "failed",
+      error: "privileged Hermes directory capture deadline expired",
+    });
+    expect(privilegedCaptureMocks.withPrivilegedSandboxExecutionLease).not.toHaveBeenCalled();
+    expect(privilegedCaptureMocks.executePrivilegedSandboxCommand).not.toHaveBeenCalled();
+    expect(privilegedCaptureMocks.dockerSpawnSync).not.toHaveBeenCalled();
+  });
+
   it("does not execute privileged capture when a normal Hermes backup succeeds", () => {
     const backup = vi.fn((_name: string, options: BackupOptions = {}) => successfulBackup(options));
     const result = backupSandboxStateWithManagedAuthority(
@@ -492,9 +580,26 @@ describe("managed snapshot backup authority", () => {
     expect(privilegedCaptureMocks.dockerSpawnSync).not.toHaveBeenCalled();
   });
 
+  it("keeps the shared transaction deadline on an unregistered state-only backup (#11936)", () => {
+    const backup = vi.fn((_name: string, options: BackupOptions = {}) => successfulBackup(options));
+
+    const result = backupSandboxStateWithManagedAuthority(
+      "alpha",
+      { deadlineMs: 1_700_000_300_000 },
+      { getSandbox: () => null, backup },
+    );
+
+    expect(result.success).toBe(true);
+    expect(backup).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ deadlineMs: 1_700_000_300_000 }),
+    );
+  });
+
   it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
     "captures and republishes exact %s provider authority",
     (agent) => {
+      vi.spyOn(Date, "now").mockReturnValue(10_000);
       const entry = sandbox(agent);
       const getSandbox = vi.fn(() => entry);
       const requireProvider = vi.fn(() => provider());
@@ -505,7 +610,7 @@ describe("managed snapshot backup authority", () => {
 
       const result = backupSandboxStateWithManagedAuthority(
         "alpha",
-        { name: "stable" },
+        { name: "stable", deadlineMs: 12_345 },
         { getSandbox, requireProvider, captureRuntime, backup },
       );
 
@@ -522,8 +627,82 @@ describe("managed snapshot backup authority", () => {
       expect(getSandbox).toHaveBeenCalledTimes(2);
       expect(requireProvider).toHaveBeenCalledTimes(2);
       expect(captureRuntime).toHaveBeenCalledTimes(2);
+      expect(captureRuntime).toHaveBeenNthCalledWith(1, expect.anything(), entry, 12_345);
+      expect(captureRuntime).toHaveBeenNthCalledWith(2, expect.anything(), entry, 12_345);
     },
   );
+
+  it("does not start managed authority capture after the shared deadline", () => {
+    vi.spyOn(Date, "now").mockReturnValue(10_000);
+    const entry = sandbox("openclaw");
+    const requireProvider = vi.fn(() => provider());
+    const captureRuntime = vi.fn(() => runtime());
+    const backup = vi.fn();
+
+    const result = backupSandboxStateWithManagedAuthority(
+      entry.name,
+      { deadlineMs: 10_000 },
+      { getSandbox: () => entry, requireProvider, captureRuntime, backup },
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+      error: expect.stringContaining("provider snapshot authority deadline expired"),
+    });
+    expect(requireProvider).not.toHaveBeenCalled();
+    expect(captureRuntime).not.toHaveBeenCalled();
+    expect(backup).not.toHaveBeenCalled();
+  });
+
+  it("rejects managed authority capture that finishes after the shared deadline", () => {
+    let now = 9_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    const entry = sandbox("openclaw");
+    const captureRuntime = vi.fn(() => {
+      now = 10_000;
+      return runtime();
+    });
+    const backup = vi.fn();
+
+    const result = backupSandboxStateWithManagedAuthority(
+      entry.name,
+      { deadlineMs: 10_000 },
+      { getSandbox: () => entry, requireProvider: () => provider(), captureRuntime, backup },
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+      error: expect.stringContaining("provider snapshot authority deadline expired"),
+    });
+    expect(captureRuntime).toHaveBeenCalledOnce();
+    expect(backup).not.toHaveBeenCalled();
+  });
+
+  it("rejects managed authority revalidation that finishes after the shared deadline", () => {
+    let now = 9_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    const entry = sandbox("openclaw");
+    const captureRuntime = vi
+      .fn(() => runtime())
+      .mockImplementationOnce(() => runtime())
+      .mockImplementationOnce(() => {
+        now = 10_000;
+        return runtime();
+      });
+    const backup = vi.fn((_name: string, options: BackupOptions = {}) => successfulBackup(options));
+
+    const result = backupSandboxStateWithManagedAuthority(
+      entry.name,
+      { deadlineMs: 10_000 },
+      { getSandbox: () => entry, requireProvider: () => provider(), captureRuntime, backup },
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+      error: expect.stringContaining("provider snapshot authority deadline expired"),
+    });
+    expect(captureRuntime).toHaveBeenCalledTimes(2);
+  });
 
   it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
     "carries exact explicit llama.cpp authority through %s backup",
@@ -666,6 +845,139 @@ describe("managed snapshot backup authority", () => {
       expect(confirmHostLocalInference).toHaveBeenCalledWith(expect.anything(), entry, prepared);
     },
   );
+
+  it("does not start host-local authority capture after the shared deadline", () => {
+    vi.spyOn(Date, "now").mockReturnValue(10_000);
+    const entry = hostLocalSandbox("openclaw");
+    const requireProvider = vi.fn(() => provider());
+    const prepareHostLocalInference = vi.fn();
+    const backup = vi.fn();
+
+    const result = backupSandboxStateWithManagedAuthority(
+      entry.name,
+      { deadlineMs: 10_000 },
+      {
+        getSandbox: () => entry,
+        requireProvider,
+        captureRuntime: vi.fn() as never,
+        prepareHostLocalInference: prepareHostLocalInference as never,
+        backup,
+      },
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+      error: expect.stringContaining("provider snapshot authority deadline expired"),
+    });
+    expect(requireProvider).not.toHaveBeenCalled();
+    expect(prepareHostLocalInference).not.toHaveBeenCalled();
+    expect(backup).not.toHaveBeenCalled();
+  });
+
+  it("bounds host-local preparation and confirmation by the shared deadline", () => {
+    vi.spyOn(Date, "now").mockReturnValue(9_000);
+    const entry = hostLocalSandbox("openclaw");
+    const prepared = {
+      providerId: "mxc",
+      sandboxName: entry.name,
+      serializedReceipt: entry.hostLocalInferenceReceipt,
+    };
+    const prepareHostLocalInference = vi.fn(() => prepared);
+    const confirmHostLocalInference = vi.fn();
+    const backup = vi.fn((_name: string, options: BackupOptions = {}) => successfulBackup(options));
+
+    const result = backupSandboxStateWithManagedAuthority(
+      entry.name,
+      { deadlineMs: 10_000 },
+      {
+        getSandbox: () => entry,
+        requireProvider: () => provider(),
+        captureRuntime: vi.fn() as never,
+        prepareHostLocalInference: prepareHostLocalInference as never,
+        confirmHostLocalInference: confirmHostLocalInference as never,
+        backup,
+      },
+    );
+
+    expect(result.success).toBe(true);
+    expect(prepareHostLocalInference).toHaveBeenCalledWith(expect.anything(), entry, {
+      deadlineMs: 10_000,
+    });
+    expect(confirmHostLocalInference).toHaveBeenCalledWith(expect.anything(), entry, prepared, {
+      deadlineMs: 10_000,
+    });
+  });
+
+  it("does not start host-local confirmation after the shared deadline", () => {
+    vi.spyOn(Date, "now")
+      .mockReturnValueOnce(9_000)
+      .mockReturnValueOnce(9_000)
+      .mockReturnValueOnce(9_000)
+      .mockReturnValue(10_000);
+    const entry = hostLocalSandbox("openclaw");
+    const prepared = {
+      providerId: "mxc",
+      sandboxName: entry.name,
+      serializedReceipt: entry.hostLocalInferenceReceipt,
+    };
+    const confirmHostLocalInference = vi.fn();
+    const backup = vi.fn((_name: string, options: BackupOptions = {}) => successfulBackup(options));
+
+    const result = backupSandboxStateWithManagedAuthority(
+      entry.name,
+      { deadlineMs: 10_000 },
+      {
+        getSandbox: () => entry,
+        requireProvider: () => provider(),
+        captureRuntime: vi.fn() as never,
+        prepareHostLocalInference: vi.fn(() => prepared) as never,
+        confirmHostLocalInference: confirmHostLocalInference as never,
+        backup,
+      },
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+      error: expect.stringContaining("provider snapshot authority deadline expired"),
+    });
+    expect(confirmHostLocalInference).not.toHaveBeenCalled();
+  });
+
+  it("rejects host-local confirmation that finishes after the shared deadline", () => {
+    vi.spyOn(Date, "now")
+      .mockReturnValueOnce(9_000)
+      .mockReturnValueOnce(9_000)
+      .mockReturnValueOnce(9_000)
+      .mockReturnValueOnce(9_000)
+      .mockReturnValue(10_000);
+    const entry = hostLocalSandbox("openclaw");
+    const prepared = {
+      providerId: "mxc",
+      sandboxName: entry.name,
+      serializedReceipt: entry.hostLocalInferenceReceipt,
+    };
+    const confirmHostLocalInference = vi.fn();
+    const backup = vi.fn((_name: string, options: BackupOptions = {}) => successfulBackup(options));
+
+    const result = backupSandboxStateWithManagedAuthority(
+      entry.name,
+      { deadlineMs: 10_000 },
+      {
+        getSandbox: () => entry,
+        requireProvider: () => provider(),
+        captureRuntime: vi.fn() as never,
+        prepareHostLocalInference: vi.fn(() => prepared) as never,
+        confirmHostLocalInference: confirmHostLocalInference as never,
+        backup,
+      },
+    );
+
+    expect(confirmHostLocalInference).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({
+      success: false,
+      error: expect.stringContaining("provider snapshot authority deadline expired"),
+    });
+  });
 
   it.each([
     ["agent", { agent: "hermes" }],

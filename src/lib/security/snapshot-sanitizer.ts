@@ -27,6 +27,14 @@ import {
 export { SnapshotSanitizerPrerequisiteError } from "../../../nemoclaw/dist/shared/snapshot-sanitizer-boundary.cjs";
 
 const MAX_SANITIZATION_PASSES = 3;
+const SANITIZATION_EXECUTOR_TIMEOUT_MS = 60_000;
+
+function remainingSanitizationTimeoutMs(deadlineMs: number | undefined): number {
+  if (deadlineMs === undefined) return SANITIZATION_EXECUTOR_TIMEOUT_MS;
+  const remainingMs = Math.floor(deadlineMs - Date.now());
+  if (remainingMs <= 0) throw new Error("snapshot sanitization deadline expired");
+  return Math.min(SANITIZATION_EXECUTOR_TIMEOUT_MS, remainingMs);
+}
 
 const VENDORED_DEPENDENCY_DIRECTORY = "node_modules";
 const DEPENDENCY_MANIFEST_NAME = "package.json";
@@ -179,23 +187,37 @@ function actionForScannedFile(file: SnapshotScannedFile): SnapshotSanitizationAc
  * directory or file that changes after inspection therefore fails closed
  * instead of redirecting the sanitizer outside the snapshot root.
  */
-export function sanitizeSnapshotDirectory(rootPath: string): void {
+export function sanitizeSnapshotDirectory(rootPath: string, deadlineMs?: number): void {
   for (let pass = 0; pass < MAX_SANITIZATION_PASSES; pass += 1) {
+    remainingSanitizationTimeoutMs(deadlineMs);
     const root = inspectDescriptorSnapshotRoot(rootPath);
     if (root === null) {
       if (pass === 0) return;
       throw new Error(`Failed to inspect snapshot artifacts safely: ${rootPath}`);
     }
 
-    const scan = scanDescriptorSnapshot(root, CREDENTIAL_SENSITIVE_BASENAMES);
+    const scan = scanDescriptorSnapshot(
+      root,
+      CREDENTIAL_SENSITIVE_BASENAMES,
+      undefined,
+      remainingSanitizationTimeoutMs(deadlineMs),
+    );
     if (scan === null) {
       throw new Error(`Failed to inspect snapshot artifacts safely: ${rootPath}`);
     }
     const actions = scan.files
       .map((file) => actionForScannedFile(file))
       .filter((action): action is SnapshotSanitizationAction => action !== null);
+    remainingSanitizationTimeoutMs(deadlineMs);
     if (actions.length === 0) return;
-    if (!applyDescriptorSnapshotActions(root, scan, actions)) {
+    if (
+      !applyDescriptorSnapshotActions(
+        root,
+        scan,
+        actions,
+        remainingSanitizationTimeoutMs(deadlineMs),
+      )
+    ) {
       throw new Error(`Failed to sanitize snapshot artifacts safely: ${rootPath}`);
     }
   }

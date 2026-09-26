@@ -66,6 +66,35 @@ const OPENCLAW_CONFIG_DIRECTORY = "/sandbox/.openclaw";
 const OPENCLAW_CONFIG_NAME = "openclaw.json";
 const HERMES_CAPTURE_TIMEOUT_MS = 120_000;
 const HERMES_CAPTURE_MAX_BUFFER = 256 * 1024 * 1024;
+
+export function discardIncompleteBackup(
+  sandboxName: string,
+  result: sandboxState.BackupResult,
+  cleanupDeadlineMs: number,
+  operation: string,
+): sandboxState.BackupResult {
+  const backupPath = result.manifest?.backupPath;
+  if (!backupPath) return result;
+  if (sandboxState.removeSandboxStateBackup(sandboxName, backupPath, cleanupDeadlineMs)) {
+    const { manifest: _removedManifest, ...withoutPartialBackup } = result;
+    return { ...withoutPartialBackup, backedUpDirs: [], backedUpFiles: [] };
+  }
+  const cleanupError = `Failed ${operation} backup at '${backupPath}' could not be removed`;
+  return { ...result, error: result.error ? `${result.error}. ${cleanupError}` : cleanupError };
+}
+
+function captureTimeoutMs(deadlineMs: number | undefined, maximumMs: number): number | null {
+  if (deadlineMs === undefined) return maximumMs;
+  const remainingMs = Math.floor(deadlineMs - Date.now());
+  return remainingMs > 0 ? Math.min(maximumMs, remainingMs) : null;
+}
+
+function requireAuthorityBudget(deadlineMs: number | undefined): void {
+  if (deadlineMs !== undefined && deadlineMs <= Date.now()) {
+    throw new Error("provider snapshot authority deadline expired");
+  }
+}
+
 export const OPENCLAW_CONFIG_CAPTURE_SCRIPT = `import os, stat, sys
 maximum = ${MAX_OPENCLAW_CONFIG_BYTES}
 directory = sys.argv[1]
@@ -184,6 +213,13 @@ export function captureOpenClawStateFile(
     return null;
   }
   try {
+    const timeoutMs = captureTimeoutMs(request.deadlineMs, OPENCLAW_CONFIG_CAPTURE_TIMEOUT_MS);
+    if (timeoutMs === null) {
+      return {
+        outcome: "failed",
+        error: "privileged config capture deadline expired",
+      };
+    }
     return withPrivilegedSandboxExecutionLease(
       sandboxName,
       "OpenClaw config snapshot capture",
@@ -201,7 +237,7 @@ export function captureOpenClawStateFile(
           ],
           {
             sanitizeEnvironment: true,
-            timeout: OPENCLAW_CONFIG_CAPTURE_TIMEOUT_MS,
+            timeout: timeoutMs,
             maxOutputBytes: OPENCLAW_CONFIG_CAPTURE_MAX_BUFFER,
           },
         );
@@ -432,6 +468,13 @@ export function captureHermesStateFile(
   )
     return null;
   try {
+    const timeoutMs = captureTimeoutMs(request.deadlineMs, HERMES_CAPTURE_TIMEOUT_MS);
+    if (timeoutMs === null) {
+      return {
+        outcome: "failed",
+        error: "privileged Hermes state capture deadline expired",
+      };
+    }
     return withPrivilegedSandboxExecutionLease(sandboxName, "Hermes state snapshot capture", () => {
       const result = dockerSpawnSync(
         privilegedSandboxExecArgv(
@@ -452,7 +495,7 @@ export function captureHermesStateFile(
         {
           encoding: null,
           stdio: ["ignore", "pipe", "pipe"],
-          timeout: HERMES_CAPTURE_TIMEOUT_MS,
+          timeout: timeoutMs,
           maxBuffer: HERMES_CAPTURE_MAX_BUFFER,
         },
       );
@@ -486,6 +529,13 @@ export function captureHermesStateDirectories(
     return null;
   }
   try {
+    const timeoutMs = captureTimeoutMs(request.deadlineMs, HERMES_CAPTURE_TIMEOUT_MS);
+    if (timeoutMs === null) {
+      return {
+        outcome: "failed",
+        error: "privileged Hermes directory capture deadline expired",
+      };
+    }
     return withPrivilegedSandboxExecutionLease(
       sandboxName,
       "Hermes state directory snapshot capture",
@@ -509,7 +559,7 @@ export function captureHermesStateDirectories(
           {
             encoding: null,
             stdio: ["ignore", archiveFd, "pipe"],
-            timeout: HERMES_CAPTURE_TIMEOUT_MS,
+            timeout: timeoutMs,
             maxBuffer: 1024 * 1024,
           },
         );
@@ -566,10 +616,17 @@ function backupStateOnly(
   sandboxName: string,
   options: Pick<
     sandboxState.BackupOptions,
-    "name" | "captureStateFile" | "captureStateDirectories" | "capturedOpenClawState"
+    | "name"
+    | "deadlineMs"
+    | "deferSanitizationDeadlineCleanup"
+    | "captureStateFile"
+    | "captureStateDirectories"
+    | "capturedOpenClawState"
   >,
 ): sandboxState.BackupResult {
   return options.name === undefined &&
+    options.deadlineMs === undefined &&
+    options.deferSanitizationDeadlineCleanup === undefined &&
     options.capturedOpenClawState === undefined &&
     options.captureStateFile === undefined &&
     options.captureStateDirectories === undefined
@@ -590,7 +647,9 @@ function readAuthority(entry: SandboxEntry) {
 function captureManagedAuthority(
   entry: SandboxEntry,
   dependencies: SnapshotBackupAuthorityDependencies,
+  deadlineMs?: number,
 ): SnapshotBackupAuthority | null {
+  requireAuthorityBudget(deadlineMs);
   const authority = readAuthority(entry);
   if (!authority) return null;
   const provider = dependencies.requireProvider(entry);
@@ -599,13 +658,15 @@ function captureManagedAuthority(
       `runtime provider '${provider.identity.id}' does not accept the managed workload receipt`,
     );
   }
-  const runtimeSnapshot = dependencies.captureRuntime(provider, entry);
+  const runtimeSnapshot = dependencies.captureRuntime(provider, entry, deadlineMs);
+  requireAuthorityBudget(deadlineMs);
   const workload = authority.receipt;
 
   return {
     runtimeSnapshot,
     workload,
     validateBeforePublish: () => {
+      requireAuthorityBudget(deadlineMs);
       const current = dependencies.getSandbox(entry.name);
       if (!current) {
         throw new Error(`sandbox '${entry.name}' is no longer registered`);
@@ -621,7 +682,8 @@ function captureManagedAuthority(
       ) {
         throw new Error(`sandbox '${entry.name}' runtime provider changed during backup`);
       }
-      const currentRuntime = dependencies.captureRuntime(currentProvider, current);
+      const currentRuntime = dependencies.captureRuntime(currentProvider, current, deadlineMs);
+      requireAuthorityBudget(deadlineMs);
       if (!isDeepStrictEqual(currentRuntime, runtimeSnapshot)) {
         throw new Error(`sandbox '${entry.name}' runtime changed during backup`);
       }
@@ -632,14 +694,20 @@ function captureManagedAuthority(
 function captureHostLocalInferenceAuthority(
   entry: SandboxEntry,
   dependencies: SnapshotBackupAuthorityDependencies,
+  deadlineMs?: number,
 ): Pick<
   sandboxState.BackupOptions,
   "hostLocalInferenceReceipt" | "hostLocalInferenceProvenance" | "validateBeforePublish"
 > | null {
   const receipt = entry.hostLocalInferenceReceipt;
   if (typeof receipt !== "string") return null;
+  requireAuthorityBudget(deadlineMs);
   const provider = dependencies.requireProvider(entry);
-  const prepared = dependencies.prepareHostLocalInference(provider, entry);
+  const prepared =
+    deadlineMs === undefined
+      ? dependencies.prepareHostLocalInference(provider, entry)
+      : dependencies.prepareHostLocalInference(provider, entry, { deadlineMs });
+  requireAuthorityBudget(deadlineMs);
   if (!prepared) {
     if (entry.hostLocalInferenceProvenance) {
       throw new Error("explicit host-local inference lifecycle authority cannot be reconstructed");
@@ -652,6 +720,7 @@ function captureHostLocalInferenceAuthority(
       ? { hostLocalInferenceProvenance: entry.hostLocalInferenceProvenance }
       : {}),
     validateBeforePublish: () => {
+      requireAuthorityBudget(deadlineMs);
       const current = dependencies.getSandbox(entry.name);
       if (!current) throw new Error(`sandbox '${entry.name}' is no longer registered`);
       if (current.hostLocalInferenceReceipt !== receipt) {
@@ -668,7 +737,12 @@ function captureHostLocalInferenceAuthority(
       if (currentProvider.identity.id !== provider.identity.id) {
         throw new Error(`sandbox '${entry.name}' runtime provider changed during backup`);
       }
-      dependencies.confirmHostLocalInference(currentProvider, current, prepared);
+      if (deadlineMs === undefined) {
+        dependencies.confirmHostLocalInference(currentProvider, current, prepared);
+      } else {
+        dependencies.confirmHostLocalInference(currentProvider, current, prepared, { deadlineMs });
+      }
+      requireAuthorityBudget(deadlineMs);
     },
   };
 }
@@ -676,9 +750,10 @@ function captureHostLocalInferenceAuthority(
 function captureSnapshotAuthority(
   entry: SandboxEntry,
   dependencies: SnapshotBackupAuthorityDependencies,
+  deadlineMs?: number,
 ): SnapshotBackupAuthority | null {
-  const managed = captureManagedAuthority(entry, dependencies);
-  const hostLocal = captureHostLocalInferenceAuthority(entry, dependencies);
+  const managed = captureManagedAuthority(entry, dependencies, deadlineMs);
+  const hostLocal = captureHostLocalInferenceAuthority(entry, dependencies, deadlineMs);
   if (!managed && !hostLocal) return null;
   return {
     ...(managed?.runtimeSnapshot === undefined ? {} : { runtimeSnapshot: managed.runtimeSnapshot }),
@@ -706,7 +781,10 @@ function captureSnapshotAuthority(
  */
 export function backupSandboxStateWithManagedAuthority(
   sandboxName: string,
-  options: Pick<sandboxState.BackupOptions, "name" | "capturedOpenClawState"> = {},
+  options: Pick<
+    sandboxState.BackupOptions,
+    "name" | "deadlineMs" | "deferSanitizationDeadlineCleanup" | "capturedOpenClawState"
+  > = {},
   overrides: Pick<SnapshotBackupAuthorityDependencies, "getSandbox"> &
     Partial<Omit<SnapshotBackupAuthorityDependencies, "getSandbox">>,
 ): sandboxState.BackupResult {
@@ -735,7 +813,7 @@ export function backupSandboxStateWithManagedAuthority(
 
   let authority: SnapshotBackupAuthority | null;
   try {
-    authority = captureSnapshotAuthority(entry, dependencies);
+    authority = captureSnapshotAuthority(entry, dependencies, options.deadlineMs);
   } catch (error) {
     return failure(error);
   }

@@ -515,6 +515,7 @@ export function allowsNotReadyCreatedSandboxRevalidation(input: {
 }
 
 export function allowsNotReadyCreatedSandboxReconciliation(input: {
+  readonly managedBootstrapCreateActive: boolean;
   readonly managedBootstrapCreateFinished: boolean;
   readonly createRoute: PendingSandboxCreateIdentity["route"] | null;
   readonly currentCheckpoint: PendingSandboxCreateIdentity | null;
@@ -528,7 +529,7 @@ export function allowsNotReadyCreatedSandboxReconciliation(input: {
   // requires the durable handoff acknowledgement.
   if (input.createRoute === "compatibility") return true;
   if (checkpoint?.exactFinalHandoffCommitStarted === true) return true;
-  return input.managedBootstrapCreateFinished;
+  return input.managedBootstrapCreateActive || input.managedBootstrapCreateFinished;
 }
 
 /**
@@ -2786,6 +2787,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       });
     const allowNotReadyDuringCreate = (): boolean =>
       allowsNotReadyCreatedSandboxReconciliation({
+        managedBootstrapCreateActive: managedStartupRootApplyRequest !== null,
         managedBootstrapCreateFinished,
         createRoute: managedBootstrapCreateRoute,
         currentCheckpoint: pendingCreateIdentity,

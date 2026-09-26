@@ -193,6 +193,14 @@ export interface BackupOptions {
   /** Private, provider-verified source for OpenClaw recovery without container execution. */
   capturedOpenClawState?: CapturedOpenClawState;
   name?: string | null;
+  /** Absolute wall-clock deadline for all backup subprocesses and publication. */
+  deadlineMs?: number;
+  /**
+   * Internal lifecycle fence for strict stopped-sandbox backups. When
+   * sanitization exhausts the work deadline, the caller removes the partial
+   * snapshot only after restoring the temporarily started container.
+   */
+  deferSanitizationDeadlineCleanup?: boolean;
   runtimeSnapshot?: SandboxRuntimeSnapshot;
   workload?: SandboxWorkloadReceipt;
   hostLocalInferenceReceipt?: string;
@@ -236,6 +244,7 @@ export interface StateFileCaptureRequest {
   sandboxName: string;
   dir: string;
   spec: StateFileSpec;
+  deadlineMs?: number;
 }
 
 export type StateFileCaptureResult =
@@ -247,6 +256,7 @@ export interface StateDirectoryCaptureRequest {
   sandboxName: string;
   dir: string;
   dirs: readonly string[];
+  deadlineMs?: number;
   /** Maximum archive bytes the privileged producer may write to the owned fd. */
   maxArchiveBytes: number;
 }
@@ -338,6 +348,7 @@ export interface TarValidationResult {
 export interface SafeExtractResult {
   success: boolean;
   error?: string;
+  cleanupDeferred?: true;
 }
 
 function isStringArray(value: unknown): value is string[] {
@@ -628,11 +639,18 @@ function rejectSymlinksOnPath(targetPath: string): void {
 export function validateTarEntries(
   tarArchive: TarArchiveSource,
   targetDir: string,
+  timeoutMs = 60_000,
 ): TarValidationResult {
   const entries: string[] = [];
-  const listingFailure = runTarListing(tarArchive, ["-tf", "-"], "tar listing", (line) => {
-    entries.push(line);
-  });
+  const listingFailure = runTarListing(
+    tarArchive,
+    ["-tf", "-"],
+    "tar listing",
+    (line) => {
+      entries.push(line);
+    },
+    timeoutMs,
+  );
   if (listingFailure) {
     return {
       safe: false,
@@ -677,12 +695,25 @@ export function validateTarEntries(
  * like "escapes" relative to the extraction temp dir on the host, but
  * are intra-sandbox once the backup is restored. See issue #2268.
  */
-function auditExtractedSymlinks(dirPath: string, allowedRoots: string[]): string[] {
+function auditExtractedSymlinks(
+  dirPath: string,
+  allowedRoots: string[],
+  deadlineMs?: number,
+): { violations: string[]; deadlineExpired: boolean } {
   const violations: string[] = [];
-  if (!existsSync(dirPath)) return violations;
+  let deadlineExpired = false;
+  if (!existsSync(dirPath)) return { violations, deadlineExpired };
 
   const walk = (current: string): void => {
+    if (remainingBackupTimeoutMs(deadlineMs, 60_000) === null) {
+      deadlineExpired = true;
+      return;
+    }
     for (const entry of readdirSync(current, { withFileTypes: true })) {
+      if (remainingBackupTimeoutMs(deadlineMs, 60_000) === null) {
+        deadlineExpired = true;
+        return;
+      }
       const fullPath = path.join(current, entry.name);
       try {
         const stat = lstatSync(fullPath);
@@ -735,6 +766,7 @@ function auditExtractedSymlinks(dirPath: string, allowedRoots: string[]): string
           }
         } else if (stat.isDirectory()) {
           walk(fullPath);
+          if (deadlineExpired) return;
         }
       } catch {
         /* skip unreadable entries */
@@ -742,7 +774,7 @@ function auditExtractedSymlinks(dirPath: string, allowedRoots: string[]): string
     }
   };
   walk(dirPath);
-  return violations;
+  return { violations, deadlineExpired };
 }
 
 /**
@@ -751,15 +783,21 @@ function auditExtractedSymlinks(dirPath: string, allowedRoots: string[]): string
  * legitimate reason to contain them, and they can be used to reference
  * files outside the extraction root.
  */
-export function rejectHardLinks(tarArchive: TarArchiveSource): string[] {
+export function rejectHardLinks(tarArchive: TarArchiveSource, timeoutMs = 60_000): string[] {
   const violations: string[] = [];
-  const listingFailure = runTarListing(tarArchive, ["-tvf", "-"], "tar verbose listing", (line) => {
-    // Both GNU tar and bsdtar prefix hard-link entries with 'h' in verbose mode
-    // and include " link to " in the line.
-    if (line.startsWith("h") || / link to /.test(line)) {
-      violations.push(`hard link: ${line.trim()}`);
-    }
-  });
+  const listingFailure = runTarListing(
+    tarArchive,
+    ["-tvf", "-"],
+    "tar verbose listing",
+    (line) => {
+      // Both GNU tar and bsdtar prefix hard-link entries with 'h' in verbose mode
+      // and include " link to " in the line.
+      if (line.startsWith("h") || / link to /.test(line)) {
+        violations.push(`hard link: ${line.trim()}`);
+      }
+    },
+    timeoutMs,
+  );
   if (listingFailure) return [listingFailure];
 
   return violations;
@@ -769,9 +807,18 @@ export function rejectHardLinks(tarArchive: TarArchiveSource): string[] {
  * SECURITY: Validate tar contents, extract with safety flags, then
  * audit for symlink escapes. Nukes the extraction on any violation.
  */
-export function safeTarExtract(tarArchive: TarArchiveSource, targetDir: string): SafeExtractResult {
+export function safeTarExtract(
+  tarArchive: TarArchiveSource,
+  targetDir: string,
+  deadlineMs?: number,
+  deferViolationCleanup = false,
+): SafeExtractResult {
   // Phase 1a: Validate entry paths before extraction
-  const validation = validateTarEntries(tarArchive, targetDir);
+  const validationTimeoutMs = remainingBackupTimeoutMs(deadlineMs, 60_000);
+  if (validationTimeoutMs === null) {
+    return { success: false, error: "tar entry validation skipped: backup deadline expired" };
+  }
+  const validation = validateTarEntries(tarArchive, targetDir, validationTimeoutMs);
   if (!validation.safe) {
     return {
       success: false,
@@ -780,7 +827,11 @@ export function safeTarExtract(tarArchive: TarArchiveSource, targetDir: string):
   }
 
   // Phase 1b: Reject hard links (not detectable via tar -tf, require verbose listing)
-  const hardLinkViolations = rejectHardLinks(tarArchive);
+  const hardLinkTimeoutMs = remainingBackupTimeoutMs(deadlineMs, 60_000);
+  if (hardLinkTimeoutMs === null) {
+    return { success: false, error: "hard link validation skipped: backup deadline expired" };
+  }
+  const hardLinkViolations = rejectHardLinks(tarArchive, hardLinkTimeoutMs);
   if (hardLinkViolations.length > 0) {
     return {
       success: false,
@@ -789,6 +840,10 @@ export function safeTarExtract(tarArchive: TarArchiveSource, targetDir: string):
   }
 
   // Phase 2: Extract with --no-same-owner to prevent ownership manipulation
+  const extractionTimeoutMs = remainingBackupTimeoutMs(deadlineMs, 60_000);
+  if (extractionTimeoutMs === null) {
+    return { success: false, error: "tar extraction skipped: backup deadline expired" };
+  }
   let archiveFd: number | null = null;
   let extractResult: ReturnType<typeof spawnSync>;
   try {
@@ -796,13 +851,13 @@ export function safeTarExtract(tarArchive: TarArchiveSource, targetDir: string):
       ? spawnSync("tar", ["-xf", "-", "--no-same-owner", "-C", targetDir], {
           input: tarArchive,
           stdio: ["pipe", "pipe", "pipe"],
-          timeout: 60000,
+          timeout: extractionTimeoutMs,
         })
       : (() => {
           archiveFd = openSync(tarArchive.filePath, "r");
           return spawnSync("tar", ["-xf", "-", "--no-same-owner", "-C", targetDir], {
             stdio: [archiveFd, "pipe", "pipe"],
-            timeout: 60000,
+            timeout: extractionTimeoutMs,
           });
         })();
   } finally {
@@ -815,14 +870,25 @@ export function safeTarExtract(tarArchive: TarArchiveSource, targetDir: string):
       error: `tar extraction failed (exit ${extractResult.status}): ${(extractResult.stderr?.toString() || "").substring(0, 200)}`,
     };
   }
+  if (remainingBackupTimeoutMs(deadlineMs, 60_000) === null) {
+    return { success: false, error: "tar extraction exceeded backup deadline" };
+  }
 
   // Phase 3: Post-extraction symlink audit (symlink targets are not
   // visible in `tar -tf` output, so we must check after extraction).
   // Allow targets inside either the host extraction dir OR the canonical
   // sandbox root (/sandbox) — the latter covers legitimate intra-sandbox
   // symlinks baked into the base image (see #2268).
-  const symlinkViolations = auditExtractedSymlinks(targetDir, [targetDir, "/sandbox"]);
+  const symlinkAudit = auditExtractedSymlinks(targetDir, [targetDir, "/sandbox"], deadlineMs);
+  const symlinkViolations = symlinkAudit.violations;
   if (symlinkViolations.length > 0) {
+    if (deferViolationCleanup) {
+      return {
+        success: false,
+        error: `post-extraction symlink audit failed: ${symlinkViolations.join("; ")}`,
+        cleanupDeferred: true,
+      };
+    }
     // Nuke the extraction — do not leave attacker-controlled symlinks on host
     try {
       rmSync(targetDir, { recursive: true, force: true });
@@ -835,11 +901,23 @@ export function safeTarExtract(tarArchive: TarArchiveSource, targetDir: string):
       error: `post-extraction symlink audit failed: ${symlinkViolations.join("; ")}`,
     };
   }
+  if (symlinkAudit.deadlineExpired || remainingBackupTimeoutMs(deadlineMs, 60_000) === null) {
+    return { success: false, error: "post-extraction audit exceeded backup deadline" };
+  }
 
   return { success: true };
 }
 
 // ── Helpers ────────────────────────────────────────────────────────
+
+function remainingBackupTimeoutMs(
+  deadlineMs: number | undefined,
+  maximumMs: number,
+): number | null {
+  if (deadlineMs === undefined) return maximumMs;
+  const remainingMs = Math.floor(deadlineMs - Date.now());
+  return remainingMs > 0 ? Math.min(maximumMs, remainingMs) : null;
+}
 
 export function getSshConfig(
   sandboxName: string,
@@ -847,15 +925,17 @@ export function getSshConfig(
     env?: NodeJS.ProcessEnv;
     gatewayName?: string;
     replaceEnv?: boolean;
+    timeoutMs?: number;
   } = {},
 ): string | null {
   const openshellBinary = resolveOpenshell();
   if (!openshellBinary) return null;
 
+  const { timeoutMs = OPENSHELL_PROBE_TIMEOUT_MS, ...captureOptions } = runtimeOptions;
   const result = captureSandboxSshConfigCommand(openshellBinary, sandboxName, {
-    ...runtimeOptions,
+    ...captureOptions,
     ignoreError: true,
-    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+    timeout: timeoutMs,
   });
   if (result.status !== 0) return null;
   return result.output;
@@ -895,6 +975,27 @@ export function sshArgs(configFile: string, sandboxName: string): string[] {
   ];
 }
 
+/** Probe only the SSH transport, bounded by one absolute deadline. */
+export function probeSandboxSshReachable(sandboxName: string, deadlineMs: number): boolean {
+  const configTimeoutMs = remainingBackupTimeoutMs(deadlineMs, OPENSHELL_PROBE_TIMEOUT_MS);
+  if (configTimeoutMs === null) return false;
+  const sshConfig = getSshConfig(sandboxName, { timeoutMs: configTimeoutMs });
+  if (!sshConfig) return false;
+
+  const tempSshConfig = createTempSshConfig(sshConfig, "nemoclaw-readiness-");
+  try {
+    const probeTimeoutMs = remainingBackupTimeoutMs(deadlineMs, OPENSHELL_PROBE_TIMEOUT_MS);
+    if (probeTimeoutMs === null) return false;
+    const result = spawnSync("ssh", [...sshArgs(tempSshConfig.file, sandboxName), ":"], {
+      stdio: ["ignore", "ignore", "pipe"],
+      timeout: probeTimeoutMs,
+    });
+    return result.status === 0 && !result.error && !result.signal;
+  } finally {
+    tempSshConfig.cleanup();
+  }
+}
+
 function computeBlueprintDigest(): string | null {
   // Look for blueprint.yaml relative to the agent-defs ROOT
   const candidates = [
@@ -915,21 +1016,44 @@ function computeBlueprintDigest(): string | null {
 }
 
 export interface BackupSanitizationOperations {
-  sanitizeDirectory: (backupPath: string) => void;
+  sanitizeDirectory: (backupPath: string, deadlineMs?: number) => void;
   removeBackup: (backupPath: string) => void;
   backupExists: (backupPath: string) => boolean;
 }
 
 const DEFAULT_BACKUP_SANITIZATION_OPERATIONS: BackupSanitizationOperations = {
-  sanitizeDirectory: sanitizeSnapshotDirectory,
+  sanitizeDirectory: (backupPath, deadlineMs) => sanitizeSnapshotDirectory(backupPath, deadlineMs),
   removeBackup: (backupPath) => rmSync(backupPath, { recursive: true, force: true }),
   backupExists: existsSync,
 };
+
+class SnapshotSanitizationDeadlineError extends Error {
+  constructor(cause: unknown, cleanupDeferred = false) {
+    super(
+      cleanupDeferred
+        ? "Credential sanitization exceeded the backup deadline; deferred incomplete backup cleanup"
+        : "Credential sanitization failed; removed the incomplete backup",
+      { cause },
+    );
+    this.name = "SnapshotSanitizationDeadlineError";
+  }
+}
+
+function containsSnapshotSanitizationDeadlineError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  if (error.message === "snapshot sanitization deadline expired") return true;
+  if (error.cause instanceof AggregateError) {
+    return error.cause.errors.some(containsSnapshotSanitizationDeadlineError);
+  }
+  return containsSnapshotSanitizationDeadlineError(error.cause);
+}
 
 /** @visibleForTesting */
 export function sanitizeBackupDirectory(
   dirPath: string,
   overrides: Partial<BackupSanitizationOperations> = {},
+  deadlineMs?: number,
+  deferDeadlineCleanup = false,
 ): void {
   const operations = {
     ...DEFAULT_BACKUP_SANITIZATION_OPERATIONS,
@@ -937,7 +1061,13 @@ export function sanitizeBackupDirectory(
   };
 
   try {
-    operations.sanitizeDirectory(dirPath);
+    if (remainingBackupTimeoutMs(deadlineMs, 60_000) === null) {
+      throw new Error("snapshot sanitization deadline expired");
+    }
+    operations.sanitizeDirectory(dirPath, deadlineMs);
+    if (remainingBackupTimeoutMs(deadlineMs, 60_000) === null) {
+      throw new Error("snapshot sanitization deadline expired");
+    }
   } catch (error) {
     // sanitizeBackupDirectory replaces the message, so an unmet prerequisite
     // would otherwise survive only as `cause` and never reach the operator. (#8202)
@@ -945,6 +1075,9 @@ export function sanitizeBackupDirectory(
       error instanceof SnapshotSanitizerPrerequisiteError ? `${error.message}. ` : "";
     const validatedSnapshotPath =
       error instanceof SnapshotSanitizerPrerequisiteError ? error.snapshotPath : null;
+    if (deferDeadlineCleanup && containsSnapshotSanitizationDeadlineError(error)) {
+      throw new SnapshotSanitizationDeadlineError(error, true);
+    }
     try {
       operations.removeBackup(dirPath);
     } catch (cleanupError) {
@@ -969,6 +1102,9 @@ export function sanitizeBackupDirectory(
         { cause: error },
       );
     }
+    if (containsSnapshotSanitizationDeadlineError(error)) {
+      throw new SnapshotSanitizationDeadlineError(error);
+    }
     throw new Error(
       `${prerequisite}Credential sanitization failed; removed the incomplete backup`,
       {
@@ -976,6 +1112,10 @@ export function sanitizeBackupDirectory(
       },
     );
   }
+}
+
+function isSnapshotSanitizationDeadlineError(error: unknown): boolean {
+  return error instanceof SnapshotSanitizationDeadlineError;
 }
 
 // ── Logging ────────────────────────────────────────────────────────
@@ -1216,6 +1356,7 @@ function capturePreservedEnvFile(
   sandboxName: string,
   dir: string,
   inventory: PreservedEnvInventory,
+  deadlineMs: number | undefined,
   captureFallback?: StateFileCapture,
 ): {
   outcome: StateFileBackupOutcome;
@@ -1227,9 +1368,11 @@ function capturePreservedEnvFile(
     strategy: "copy",
   });
   _log(`Capturing preserved environment assignments from ${inventory.path}`);
+  const timeoutMs = remainingBackupTimeoutMs(deadlineMs, 30_000);
+  if (timeoutMs === null) return { outcome: "failed", unreachable: false };
   const result = spawnSync("ssh", [...sshArgs(configFile, sandboxName), command], {
     stdio: ["ignore", "pipe", "pipe"],
-    timeout: 30000,
+    timeout: timeoutMs,
     maxBuffer: 1024 * 1024,
   });
   if (result.status === 2) return { outcome: "missing", unreachable: false };
@@ -1246,6 +1389,7 @@ function capturePreservedEnvFile(
         sandboxName,
         dir,
         spec: { path: inventory.path, strategy: "copy" },
+        deadlineMs,
       });
     } catch (error) {
       captured = {
@@ -1296,6 +1440,7 @@ function capturePreservedEnvFiles(
   sandboxName: string,
   dir: string,
   inventories: readonly PreservedEnvInventory[],
+  deadlineMs: number | undefined,
   captureFallback?: StateFileCapture,
 ): { files: PreservedEnvFile[]; failedPaths: string[]; unreachable: boolean } {
   const files: PreservedEnvFile[] = [];
@@ -1307,6 +1452,7 @@ function capturePreservedEnvFiles(
       sandboxName,
       dir,
       inventory,
+      deadlineMs,
       captureFallback,
     );
     if (result.outcome === "backed_up" && result.file) {
@@ -1326,6 +1472,7 @@ function captureAgentPreservedEnvFiles(
   dir: string,
   manifest: RebuildManifest,
   failedFiles: string[],
+  deadlineMs: number | undefined,
   captureFallback?: StateFileCapture,
 ): boolean {
   if (agentName !== "hermes") return false;
@@ -1334,6 +1481,7 @@ function captureAgentPreservedEnvFiles(
     sandboxName,
     dir,
     HERMES_PRESERVED_ENV_INVENTORY,
+    deadlineMs,
     captureFallback,
   );
   manifest.preservedEnv = preserved.files;
@@ -1347,13 +1495,16 @@ function backupStateFile(
   dir: string,
   spec: StateFileSpec,
   backupPath: string,
+  deadlineMs: number | undefined,
   captureFallback?: StateFileCapture,
 ): StateFileBackupResult {
   const command = buildStateFileBackupCommand(dir, spec);
   _log(`Backing up state file ${spec.path} (${spec.strategy})`);
+  const timeoutMs = remainingBackupTimeoutMs(deadlineMs, 120_000);
+  if (timeoutMs === null) return { outcome: "failed", unreachable: false };
   const result = spawnSync("ssh", [...sshArgs(configFile, sandboxName), command], {
     stdio: ["ignore", "pipe", "pipe"],
-    timeout: 120000,
+    timeout: timeoutMs,
     maxBuffer: 256 * 1024 * 1024,
   });
 
@@ -1368,7 +1519,7 @@ function backupStateFile(
     captureFallback !== undefined
   ) {
     try {
-      captured = captureFallback({ sandboxName, dir, spec });
+      captured = captureFallback({ sandboxName, dir, spec, deadlineMs });
     } catch (error) {
       captured = {
         outcome: "failed",
@@ -1418,12 +1569,14 @@ function retryPermissionDeniedDirectories(
   failedDirs: string[],
   backedUpDirs: string[],
   failedDirReasons: Record<string, string>,
-): void {
-  if (!captureFallback) return;
+  deadlineMs: number | undefined,
+  deferViolationCleanup: boolean,
+): string | null {
+  if (!captureFallback) return null;
   const denied = failedDirs.filter(
     (name) => failedDirReasons[name] === BACKUP_FAILURE_PERMISSION_DENIED,
   );
-  if (denied.length === 0) return;
+  if (denied.length === 0) return null;
   let stagingDir: string | undefined;
   let archivePath = "";
   let archiveFd: number | undefined;
@@ -1437,6 +1590,7 @@ function retryPermissionDeniedDirectories(
         dir,
         dirs: denied,
         maxArchiveBytes: STATE_DIRECTORY_CAPTURE_MAX_BYTES,
+        deadlineMs,
       },
       archiveFd,
     );
@@ -1455,10 +1609,19 @@ function retryPermissionDeniedDirectories(
             ? (capture.error ?? "failed")
             : "no archive";
       _log(`FAILED: privileged state directory capture: ${detail}`);
-      return;
+      return null;
     }
     const allowedTopLevelEntries = new Set(denied);
-    const archiveValidation = validateTarEntries({ filePath: archivePath }, backupPath);
+    const validationTimeoutMs = remainingBackupTimeoutMs(deadlineMs, 60_000);
+    if (validationTimeoutMs === null) {
+      _log("FAILED: privileged state directory capture: backup deadline expired");
+      return null;
+    }
+    const archiveValidation = validateTarEntries(
+      { filePath: archivePath },
+      backupPath,
+      validationTimeoutMs,
+    );
     const undeclaredEntry = archiveValidation.entries.find((entry) => {
       const normalized = entry.replace(/^\.\/+/, "");
       const topLevel = normalized.split("/", 1)[0];
@@ -1469,17 +1632,30 @@ function retryPermissionDeniedDirectories(
         ? `undeclared archive entry: ${undeclaredEntry}`
         : archiveValidation.violations.join("; ");
       _log(`FAILED: privileged state directory capture: ${detail}`);
-      return;
+      return null;
     }
     for (const name of denied) {
       const target = path.join(backupPath, name);
-      rejectSymlinksOnPath(target);
-      rmSync(target, { recursive: true, force: true });
+      if (!deferViolationCleanup) {
+        rejectSymlinksOnPath(target);
+        rmSync(target, { recursive: true, force: true });
+        continue;
+      }
+      if (!removeBackupEntryWithinDeadline(target, deadlineMs)) {
+        const detail = `bounded cleanup did not remove partial directory '${name}'`;
+        _log(`FAILED: privileged state directory capture: ${detail}`);
+        return detail;
+      }
     }
-    const extracted = safeTarExtract({ filePath: archivePath }, backupPath);
+    const extracted = safeTarExtract(
+      { filePath: archivePath },
+      backupPath,
+      deadlineMs,
+      deferViolationCleanup,
+    );
     if (!extracted.success) {
       _log(`FAILED: privileged state directory capture: ${extracted.error}`);
-      return;
+      return extracted.cleanupDeferred ? (extracted.error ?? "unsafe extracted backup tree") : null;
     }
     const recovered = new Set(existingBackupDirs(backupPath, denied));
     for (const name of denied) {
@@ -1497,6 +1673,39 @@ function retryPermissionDeniedDirectories(
     if (archiveFd !== undefined) closeSync(archiveFd);
     if (stagingDir) rmSync(stagingDir, { recursive: true, force: true });
   }
+  return null;
+}
+
+/** @visibleForTesting Remove one unpublished backup entry within the caller's work deadline. */
+export function removeBackupEntryWithinDeadline(targetPath: string, deadlineMs?: number): boolean {
+  try {
+    rejectSymlinksOnPath(targetPath);
+    return removePathWithinDeadline(targetPath, deadlineMs);
+  } catch {
+    return false;
+  }
+}
+
+function removePathWithinDeadline(targetPath: string, deadlineMs?: number): boolean {
+  if (deadlineMs === undefined) {
+    rmSync(targetPath, { recursive: true, force: true });
+  } else {
+    const timeout = remainingBackupTimeoutMs(deadlineMs, 60_000);
+    if (timeout === null) return false;
+    const removal = spawnSync(
+      process.execPath,
+      ["-e", "require('node:fs').rmSync(process.argv[1],{recursive:true,force:true})", targetPath],
+      {
+        timeout,
+        killSignal: "SIGKILL",
+        stdio: "ignore",
+        windowsHide: true,
+        env: { ...process.env, NODE_OPTIONS: undefined, NODE_PATH: undefined },
+      },
+    );
+    if (removal.status !== 0 || removal.error) return false;
+  }
+  return !existsSync(targetPath);
 }
 
 // ── Backup ─────────────────────────────────────────────────────────
@@ -1569,9 +1778,57 @@ function normalizeSnapshotBackupAuthority(options: BackupOptions): {
   };
 }
 
+interface CapturedOpenClawBackupRequest {
+  readonly captured: CapturedOpenClawState;
+  readonly sandboxName: string;
+  readonly agentName: string;
+  readonly backupPath: string;
+  readonly stateDirs: readonly string[];
+  readonly stateDirPrefixes: readonly string[];
+  readonly stateFiles: Parameters<typeof copyCapturedOpenClawState>[4];
+  readonly deadlineMs?: number;
+  readonly deferIncompleteBackupCleanup?: boolean;
+  readonly manifest: RebuildManifest;
+  readonly backedUpDirs: string[];
+  readonly backedUpFiles: string[];
+  readonly finish: () => BackupResult;
+}
+
+function backupCapturedOpenClawState(request: CapturedOpenClawBackupRequest): BackupResult {
+  try {
+    if (request.agentName !== "openclaw" || request.captured.sandboxName !== request.sandboxName) {
+      throw new Error("Stopped state capture only supports OpenClaw.");
+    }
+    const captured = copyCapturedOpenClawState(
+      request.captured,
+      request.backupPath,
+      request.stateDirs,
+      request.stateDirPrefixes,
+      request.stateFiles,
+    );
+    request.backedUpDirs.push(...captured.directories);
+    request.backedUpFiles.push(...captured.files);
+    return request.finish();
+  } catch {
+    const removed = removeBackupEntryWithinDeadline(request.backupPath, request.deadlineMs);
+    return {
+      success: false,
+      backedUpDirs: [],
+      failedDirs: [...request.stateDirs],
+      backedUpFiles: [],
+      failedFiles: request.stateFiles.map((file) => file.path),
+      error:
+        "Stopped OpenClaw state capture could not be published safely. The source sandbox was preserved." +
+        (removed ? "" : ` The unpublished backup at '${request.backupPath}' requires cleanup.`),
+      ...(!removed && request.deferIncompleteBackupCleanup ? { manifest: request.manifest } : {}),
+    };
+  }
+}
+
 function validateSnapshotPublication(
   backupPath: string,
   validateBeforePublish: BackupOptions["validateBeforePublish"],
+  deferIncompleteBackupCleanup = false,
 ): string | null {
   if (!validateBeforePublish) return null;
   try {
@@ -1579,9 +1836,11 @@ function validateSnapshotPublication(
     return null;
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
+    const publicationError = `Snapshot authority changed during backup: ${detail}`;
+    if (deferIncompleteBackupCleanup) return publicationError;
     try {
       rmSync(backupPath, { recursive: true, force: true });
-      return `Snapshot authority changed during backup: ${detail}`;
+      return publicationError;
     } catch (cleanupError) {
       const cleanupDetail =
         cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
@@ -1607,6 +1866,42 @@ function parsePreBackupAuditEntries(output: string): PreBackupAuditEntry[] | nul
   return entries;
 }
 
+/**
+ * Log the accepted pre-backup audit rows and return the rejected ones.
+ * Whitelisted image symlinks and multiply-linked regular files are recorded
+ * for observability; only unsafe entries are returned to the caller.
+ */
+function reportPreBackupAuditEntries(
+  entries: readonly PreBackupAuditEntry[],
+  dirPrefix: string,
+): string[] {
+  const whitelisted: string[] = [];
+  const hardLinked: string[] = [];
+  const violations: string[] = [];
+  const rows = { whitelisted, hardLinked, violation: violations };
+  for (const entry of entries) {
+    // JSON escapes embedded controls before the entry reaches logs or the
+    // user-facing rejection detail.
+    rows[classifyPreBackupAuditEntry(entry, dirPrefix)].push(JSON.stringify(entry));
+  }
+  if (whitelisted.length > 0) {
+    _log(
+      `Pre-backup audit whitelisted ${whitelisted.length} entries (image npm symlinks): ${whitelisted.slice(0, 5).join("; ")}`,
+    );
+  }
+  if (hardLinked.length > 0) {
+    _log(
+      `Pre-backup audit accepted ${hardLinked.length} multiply-linked regular files (archived as plain files): ${hardLinked.slice(0, 5).join("; ")}`,
+    );
+  }
+  if (violations.length > 0) {
+    _log(
+      `SECURITY: Pre-backup audit found ${violations.length} unsafe entries: ${violations.slice(0, 5).join("; ")}`,
+    );
+  }
+  return violations;
+}
+
 /** Classify one strictly framed pre-backup audit entry. */
 function classifyPreBackupAuditEntry(
   [type, absPath, linkTarget]: PreBackupAuditEntry,
@@ -1621,7 +1916,22 @@ function classifyPreBackupAuditEntry(
   return "violation";
 }
 
+function backupDeadlineExpired(deadlineMs: number | undefined): boolean {
+  return deadlineMs !== undefined && (!Number.isFinite(deadlineMs) || deadlineMs <= Date.now());
+}
+
 export function backupSandboxState(sandboxName: string, options: BackupOptions = {}): BackupResult {
+  if (backupDeadlineExpired(options.deadlineMs)) {
+    return {
+      success: false,
+      backedUpDirs: [],
+      failedDirs: [],
+      backedUpFiles: [],
+      failedFiles: [],
+      unreachable: true,
+      error: "Sandbox backup deadline expired before backup started.",
+    };
+  }
   const sb = registry.getSandbox(sandboxName);
   const agentName = sb?.agent || "openclaw";
   const agent = loadAgent(agentName);
@@ -1729,7 +2039,19 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
 
   if (!hasBackupDirectories && stateFiles.length === 0) {
     _log("WARNING: Agent manifest declares no state_dirs or state_files — nothing to back up");
-    const publicationError = validateSnapshotPublication(backupPath, options.validateBeforePublish);
+    const publicationError = validateSnapshotPublication(
+      backupPath,
+      () => {
+        if (options.deadlineMs !== undefined && Date.now() >= options.deadlineMs) {
+          throw new Error("sandbox backup deadline expired");
+        }
+        options.validateBeforePublish?.();
+        if (options.deadlineMs !== undefined && Date.now() >= options.deadlineMs) {
+          throw new Error("sandbox backup deadline expired");
+        }
+      },
+      options.deferSanitizationDeadlineCleanup,
+    );
     if (publicationError) {
       return {
         success: false,
@@ -1738,6 +2060,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         backedUpFiles: [],
         failedFiles: [],
         error: publicationError,
+        ...(options.deferSanitizationDeadlineCleanup ? { manifest } : {}),
       };
     }
     manifest.backupComplete = true;
@@ -1753,12 +2076,27 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
   }
 
   const finishBackup = (): BackupResult => {
-    // SECURITY: Strip credentials from the local backup
-    sanitizeBackupDirectory(backupPath);
+    // SECURITY: Strip credentials from the local backup.
+    try {
+      sanitizeBackupDirectory(
+        backupPath,
+        {},
+        options.deadlineMs,
+        options.deferSanitizationDeadlineCleanup,
+      );
+    } catch (error) {
+      if (!isSnapshotSanitizationDeadlineError(error)) throw error;
+      return {
+        success: false,
+        backedUpDirs: [],
+        failedDirs: [...failedDirs, ...backedUpDirs],
+        backedUpFiles: [],
+        failedFiles: [...failedFiles, ...backedUpFiles],
+        error: "Snapshot sanitization skipped: backup deadline expired",
+        ...(options.deferSanitizationDeadlineCleanup ? { manifest } : {}),
+      };
+    }
 
-    // Record dynamically discovered directories in the manifest alongside the
-    // exact declarations so restoreSandboxState() can find them in backupPath.
-    // Preserve exact declaration order, followed by prefix-discovery order.
     const discoveredStateDirs = backedUpDirs.filter(
       (dirName) =>
         !stateDirs.includes(dirName) &&
@@ -1774,7 +2112,19 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
     );
     manifest.backupComplete = failedDirs.length === 0 && failedFiles.length === 0;
 
-    const publicationError = validateSnapshotPublication(backupPath, options.validateBeforePublish);
+    const publicationError = validateSnapshotPublication(
+      backupPath,
+      () => {
+        if (options.deadlineMs !== undefined && Date.now() >= options.deadlineMs) {
+          throw new Error("sandbox backup deadline expired");
+        }
+        options.validateBeforePublish?.();
+        if (options.deadlineMs !== undefined && Date.now() >= options.deadlineMs) {
+          throw new Error("sandbox backup deadline expired");
+        }
+      },
+      options.deferSanitizationDeadlineCleanup,
+    );
     if (publicationError) {
       return {
         success: false,
@@ -1783,6 +2133,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         backedUpFiles: [],
         failedFiles: [],
         error: publicationError,
+        ...(options.deferSanitizationDeadlineCleanup ? { manifest } : {}),
       };
     }
     writeManifest(backupPath, manifest);
@@ -1801,36 +2152,33 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
   };
 
   if (options.capturedOpenClawState) {
-    try {
-      if (agentName !== "openclaw" || options.capturedOpenClawState.sandboxName !== sandboxName)
-        throw new Error("Stopped state capture only supports OpenClaw.");
-      const captured = copyCapturedOpenClawState(
-        options.capturedOpenClawState,
-        backupPath,
-        stateDirs,
-        stateDirPrefixes,
-        stateFiles,
-      );
-      backedUpDirs.push(...captured.directories);
-      backedUpFiles.push(...captured.files);
-      return finishBackup();
-    } catch {
-      rmSync(backupPath, { recursive: true, force: true });
-      return {
-        success: false,
-        backedUpDirs: [],
-        failedDirs: [...stateDirs],
-        backedUpFiles: [],
-        failedFiles: stateFiles.map((file) => file.path),
-        error:
-          "Stopped OpenClaw state capture could not be published safely. The source sandbox was preserved.",
-      };
-    }
+    return backupCapturedOpenClawState({
+      captured: options.capturedOpenClawState,
+      sandboxName,
+      agentName,
+      backupPath,
+      stateDirs,
+      stateDirPrefixes,
+      stateFiles,
+      deadlineMs: options.deadlineMs,
+      deferIncompleteBackupCleanup: options.deferSanitizationDeadlineCleanup,
+      manifest,
+      backedUpDirs,
+      backedUpFiles,
+      finish: finishBackup,
+    });
   }
 
   // SSH+tar single-roundtrip download
   _log("Getting SSH config via openshell sandbox ssh-config");
-  const sshConfig = getSshConfig(sandboxName);
+  const sshConfigTimeoutMs = remainingBackupTimeoutMs(
+    options.deadlineMs,
+    OPENSHELL_PROBE_TIMEOUT_MS,
+  );
+  const sshConfig =
+    sshConfigTimeoutMs === null
+      ? null
+      : getSshConfig(sandboxName, { timeoutMs: sshConfigTimeoutMs });
   if (!sshConfig) {
     _log("FAILED: Could not get SSH config");
     // For a sandbox the registry reported as running, an unreachable
@@ -1876,10 +2224,23 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
       // this no-op can run.
       const fullCheckCmd = `{ ${discoveryCommands.join("; ")}; :; } 2>/dev/null`;
       _log(`Checking existing dirs via SSH: ${fullCheckCmd.substring(0, 100)}...`);
+      const discoveryTimeoutMs = remainingBackupTimeoutMs(options.deadlineMs, 30_000);
+      if (discoveryTimeoutMs === null) {
+        _log("FAILED: state dir discovery skipped — backup deadline expired");
+        return {
+          success: false,
+          manifest,
+          backedUpDirs,
+          failedDirs: [...stateDirs],
+          backedUpFiles,
+          failedFiles: stateFiles.map((f) => f.path),
+          error: "State dir discovery skipped: backup deadline expired",
+        };
+      }
       const existResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), fullCheckCmd], {
         encoding: "utf-8",
         stdio: ["ignore", "pipe", "pipe"],
-        timeout: 30000,
+        timeout: discoveryTimeoutMs,
       });
       _log(
         `Dir check: exit=${existResult.status}, stdout=${(existResult.stdout || "").trim().substring(0, 200)}, stderr=${(existResult.stderr || "").trim().substring(0, 200)}`,
@@ -1949,10 +2310,23 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
           )
           .join("; ");
         _log(`Pre-backup audit: checking for symlinks, hard links, and special files`);
+        const auditTimeoutMs = remainingBackupTimeoutMs(options.deadlineMs, 30_000);
+        if (auditTimeoutMs === null) {
+          _log("FAILED: Pre-backup audit skipped — backup deadline expired");
+          return {
+            success: false,
+            manifest,
+            backedUpDirs,
+            failedDirs: [...existingDirs],
+            backedUpFiles,
+            failedFiles: stateFiles.map((f) => f.path),
+            error: "Pre-backup audit skipped: backup deadline expired",
+          };
+        }
         const auditResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), auditCmd], {
           encoding: "utf-8",
           stdio: ["ignore", "pipe", "pipe"],
-          timeout: 30000,
+          timeout: auditTimeoutMs,
         });
         if (auditResult.status !== 0) {
           const stderr = (auditResult.stderr || "").trim();
@@ -1984,42 +2358,17 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
             error: "Pre-backup audit rejected malformed output",
           };
         }
-        if (allEntries.length > 0) {
-          const whitelisted: string[] = [];
-          const hardLinked: string[] = [];
-          const violations: string[] = [];
-          const dirPrefix = `${dir}/`;
-          const rows = { whitelisted, hardLinked, violation: violations };
-          for (const entry of allEntries) {
-            // JSON escapes embedded controls before the entry reaches logs or
-            // the user-facing rejection detail.
-            rows[classifyPreBackupAuditEntry(entry, dirPrefix)].push(JSON.stringify(entry));
-          }
-          if (whitelisted.length > 0) {
-            _log(
-              `Pre-backup audit whitelisted ${whitelisted.length} entries (image npm symlinks): ${whitelisted.slice(0, 5).join("; ")}`,
-            );
-          }
-          if (hardLinked.length > 0) {
-            _log(
-              `Pre-backup audit accepted ${hardLinked.length} multiply-linked regular files (archived as plain files): ${hardLinked.slice(0, 5).join("; ")}`,
-            );
-          }
-          if (violations.length > 0) {
-            // Non-whitelisted symlinks / special files — reject
-            _log(
-              `SECURITY: Pre-backup audit found ${violations.length} unsafe entries: ${violations.slice(0, 5).join("; ")}`,
-            );
-            return {
-              success: false,
-              manifest,
-              backedUpDirs,
-              failedDirs: [...existingDirs],
-              backedUpFiles,
-              failedFiles: stateFiles.map((f) => f.path),
-              error: `Pre-backup audit rejected: symlinks or special files found in state dirs: ${violations.slice(0, 3).join("; ")}`,
-            };
-          }
+        const auditViolations = reportPreBackupAuditEntries(allEntries, `${dir}/`);
+        if (auditViolations.length > 0) {
+          return {
+            success: false,
+            manifest,
+            backedUpDirs,
+            failedDirs: [...existingDirs],
+            backedUpFiles,
+            failedFiles: stateFiles.map((f) => f.path),
+            error: `Pre-backup audit rejected: symlinks or special files found in state dirs: ${auditViolations.slice(0, 3).join("; ")}`,
+          };
         }
         _log("Pre-backup audit passed — no unsafe symlinks or special files found");
 
@@ -2039,6 +2388,19 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         // linking out of its cache) already archives as a plain file.
         const tarCmd = `tar --hard-dereference -cf - -C ${shellQuote(dir)} -- ${existingDirs.map(shellQuote).join(" ")}`;
         _log(`Downloading via SSH+tar: ${tarCmd}`);
+        const downloadTimeoutMs = remainingBackupTimeoutMs(options.deadlineMs, 120_000);
+        if (downloadTimeoutMs === null) {
+          _log("FAILED: SSH+tar download skipped — backup deadline expired");
+          return {
+            success: false,
+            manifest,
+            backedUpDirs,
+            failedDirs: [...existingDirs],
+            backedUpFiles,
+            failedFiles: stateFiles.map((f) => f.path),
+            error: "State archive download skipped: backup deadline expired",
+          };
+        }
         let downloadedTarDir: string | undefined;
         let downloadedTarPath: string;
         let downloadedTarFd: number;
@@ -2066,7 +2428,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         try {
           result = spawnSync("ssh", [...sshArgs(configFile, sandboxName), tarCmd], {
             stdio: ["ignore", downloadedTarFd, "pipe"],
-            timeout: 120000,
+            timeout: downloadTimeoutMs,
             maxBuffer: 256 * 1024 * 1024,
           });
         } finally {
@@ -2096,13 +2458,35 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         try {
           if (tarExitedWithData) {
             // SECURITY: Validate tar entries, extract safely, audit symlinks.
-            extractResult = safeTarExtract({ filePath: downloadedTarPath }, backupPath);
+            extractResult = safeTarExtract(
+              { filePath: downloadedTarPath },
+              backupPath,
+              options.deadlineMs,
+              options.deferSanitizationDeadlineCleanup,
+            );
           }
         } finally {
           rmSync(downloadedTarDir, { recursive: true, force: true });
         }
 
         if (tarExitedWithData) {
+          if (extractResult?.cleanupDeferred) {
+            return {
+              success: false,
+              manifest,
+              backedUpDirs: [],
+              failedDirs: [...new Set([...failedDirs, ...backedUpDirs, ...existingDirs])],
+              backedUpFiles: [],
+              failedFiles: [
+                ...new Set([
+                  ...failedFiles,
+                  ...backedUpFiles,
+                  ...stateFiles.map((file) => file.path),
+                ]),
+              ],
+              error: extractResult.error ?? "Unsafe extracted backup tree requires cleanup",
+            };
+          }
           if (extractResult?.success) {
             const extractedDirs = new Set(existingBackupDirs(backupPath, existingDirs));
             if (result.status === 0) {
@@ -2160,7 +2544,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
       }
     }
 
-    retryPermissionDeniedDirectories(
+    const deferredExtractionError = retryPermissionDeniedDirectories(
       options.captureStateDirectories,
       sandboxName,
       dir,
@@ -2168,7 +2552,22 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
       failedDirs,
       backedUpDirs,
       failedDirReasons,
+      options.deadlineMs,
+      options.deferSanitizationDeadlineCleanup ?? false,
     );
+    if (deferredExtractionError) {
+      return {
+        success: false,
+        manifest,
+        backedUpDirs: [],
+        failedDirs: [...new Set([...failedDirs, ...backedUpDirs])],
+        backedUpFiles: [],
+        failedFiles: [
+          ...new Set([...failedFiles, ...backedUpFiles, ...stateFiles.map((file) => file.path)]),
+        ],
+        error: deferredExtractionError,
+      };
+    }
 
     for (const spec of stateFiles) {
       const result = backupStateFile(
@@ -2177,6 +2576,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         dir,
         spec,
         backupPath,
+        options.deadlineMs,
         options.captureStateFile,
       );
       if (result.outcome === "backed_up") {
@@ -2198,6 +2598,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         dir,
         manifest,
         failedFiles,
+        options.deadlineMs,
         options.captureStateFile,
       ) || unreachable;
   } finally {
@@ -3213,7 +3614,11 @@ function legacyStateFilesArePresent(backupPath: string, manifest: RebuildManifes
  * Remove one completed rebuild backup without allowing a caller-controlled
  * path to escape the sandbox's timestamped backup directory.
  */
-export function removeSandboxStateBackup(sandboxName: string, backupPath: string): boolean {
+export function removeSandboxStateBackup(
+  sandboxName: string,
+  backupPath: string,
+  deadlineMs?: number,
+): boolean {
   const rebuildBackupsRoot = path.resolve(REBUILD_BACKUPS_DIR);
   const sandboxBackupRoot = path.resolve(rebuildBackupsRoot, sandboxName);
   const candidateBackupPath = path.resolve(backupPath);
@@ -3228,8 +3633,7 @@ export function removeSandboxStateBackup(sandboxName: string, backupPath: string
 
   try {
     rejectSymlinksOnPath(candidateBackupPath);
-    rmSync(candidateBackupPath, { recursive: true, force: true });
-    return !existsSync(candidateBackupPath);
+    return removePathWithinDeadline(candidateBackupPath, deadlineMs);
   } catch {
     return false;
   }

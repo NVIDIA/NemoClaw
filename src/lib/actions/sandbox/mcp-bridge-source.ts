@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
+import {
+  executeSandboxExecCommand,
+  SandboxCommandTransportError,
+} from "../../adapters/sandbox/command-transport";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import type { CapturedOpenClawState } from "../../state/state-directory-restore";
@@ -24,10 +27,23 @@ import {
   inspectMcpProvider,
   type McpProviderInspectionRuntimeSelection,
 } from "./mcp-bridge-provider-inspection";
-import { executeSandboxExecCommand } from "../../adapters/sandbox/command-transport";
 import { quoteMcpBridgeShellArg } from "./mcp-bridge-runtime-command";
 import { redactBridgeFailureForDisplay } from "./mcp-bridge-output";
 import { buildMcpBridgeProviderName, normalizeMcpDenyTools } from "./mcp-bridge-validation";
+
+export type McpSourceObservationDeadline = Readonly<{
+  deadlineMs: number;
+  now?: () => number;
+}>;
+
+function remainingMcpObservationMs(
+  deadline: McpSourceObservationDeadline | undefined,
+): number | undefined {
+  if (!deadline) return undefined;
+  const remainingMs = Math.floor(deadline.deadlineMs - (deadline.now ?? Date.now)());
+  if (remainingMs <= 0) throw new McpBridgeError("MCP observation deadline expired.");
+  return remainingMs;
+}
 
 export function sameMcpRegistration(left: McpSourceEntry, right: McpSourceEntry): boolean {
   return (
@@ -388,15 +404,26 @@ function entryFromRecord(
 export async function inspectAgentMcpSources(
   sandbox: SandboxEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
+  deadline?: McpSourceObservationDeadline,
 ): Promise<AgentMcpSourceSnapshot> {
   if (sandbox.agent) {
-    return inspectAgentMcpSourcesForAgent(sandbox, loadAgent(sandbox.agent), runtimeSelection);
+    return inspectAgentMcpSourcesForAgent(
+      sandbox,
+      loadAgent(sandbox.agent),
+      runtimeSelection,
+      deadline,
+    );
   }
   const candidates = [];
   for (const name of ["openclaw", "hermes", "langchain-deepagents-code"]) {
     const agent = loadAgent(name);
     if (agent.mcpCapability.support !== "bridge" || !agent.mcpCapability.adapter) continue;
-    const sources = await inspectAgentMcpSourcesForAgent(sandbox, agent, runtimeSelection);
+    const sources = await inspectAgentMcpSourcesForAgent(
+      sandbox,
+      agent,
+      runtimeSelection,
+      deadline,
+    );
     if (Object.keys(sources.native).length > 0 || Object.keys(sources.legacy).length > 0) {
       candidates.push({ agent, sources });
     }
@@ -416,6 +443,7 @@ async function inspectAgentMcpSourcesForAgent(
   sandbox: SandboxEntry,
   agent: ReturnType<typeof loadAgent>,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
+  deadline?: McpSourceObservationDeadline,
 ): Promise<AgentMcpSourceSnapshot> {
   const adapter = agent.mcpCapability.adapter;
   if (agent.mcpCapability.support !== "bridge" || !adapter) return { native: {}, legacy: {} };
@@ -424,8 +452,11 @@ async function inspectAgentMcpSourcesForAgent(
     result = await executeSandboxExecCommand(
       sandbox.name,
       sourceCommand(adapter, agent.configPaths.dir),
-      undefined,
-      { runtimeSelection },
+      deadline ? remainingMcpObservationMs(deadline) : undefined,
+      {
+        runtimeSelection,
+        ...(deadline ? { honorCallerTimeout: true } : {}),
+      },
     );
   } catch (error) {
     if (!(error instanceof SandboxCommandTransportError)) throw error;
@@ -500,6 +531,7 @@ async function enrichFromPolicy(
   entry: McpSourceEntry,
   policy: Record<string, unknown> | null,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
+  deadline?: McpSourceObservationDeadline,
 ): Promise<McpSourceEntry> {
   const {
     providerName: _legacyProviderName,
@@ -512,7 +544,17 @@ async function enrichFromPolicy(
   if (!policy || !Array.isArray(policy.endpoints)) {
     const providerName =
       entry.providerName ?? buildMcpBridgeProviderName(sandboxName, entry.server);
-    const provider = await inspectMcpProvider(providerName, runtimeSelection);
+    const provider = await inspectMcpProvider(
+      providerName,
+      runtimeSelection,
+      undefined,
+      remainingMcpObservationMs(deadline),
+    );
+    if (provider.exists === null) {
+      throw new McpBridgeError(
+        `Could not inspect MCP provider '${providerName}': ${provider.error ?? "unknown provider inspection failure"}`,
+      );
+    }
     return provider.exists === true
       ? {
           ...entry,
@@ -531,7 +573,17 @@ async function enrichFromPolicy(
     ? endpoint.credential_binding.provider
     : undefined;
   const providerName = typeof binding === "string" && binding ? binding : undefined;
-  const provider = await inspectMcpProvider(providerName, runtimeSelection);
+  const provider = await inspectMcpProvider(
+    providerName,
+    runtimeSelection,
+    undefined,
+    remainingMcpObservationMs(deadline),
+  );
+  if (provider.exists === null) {
+    throw new McpBridgeError(
+      `Could not inspect MCP provider '${providerName ?? "unknown"}': ${provider.error ?? "unknown provider inspection failure"}`,
+    );
+  }
   const host = typeof endpoint.host === "string" ? endpoint.host.toLowerCase() : "";
   const sourceUrl = new URL(entry.url);
   const sourcePort = Number.parseInt(
@@ -578,11 +630,14 @@ export async function joinMcpEntriesToOpenShell(
   entries: Readonly<Record<string, McpSourceEntry>>,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
   operation = "inspect current MCP source state",
+  deadline?: McpSourceObservationDeadline,
 ): Promise<Record<string, McpSourceEntry>> {
   const policyDocument = await captureRecordedSandboxBasePolicy(
     sandbox.name,
     operation,
     runtimeSelection,
+    deadline?.deadlineMs,
+    deadline?.now,
   );
   return Object.fromEntries(
     await Promise.all(
@@ -595,6 +650,7 @@ export async function joinMcpEntriesToOpenShell(
               entry,
               policyEntryForServer(policyDocument, server),
               runtimeSelection,
+              deadline,
             ),
           ] as const,
       ),

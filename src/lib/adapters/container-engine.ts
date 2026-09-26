@@ -296,6 +296,7 @@ function defaultCapture(
     cwd: process.cwd(),
     env: environment ?? containerEngineCommandEnvironment(),
     encoding: "utf8",
+    killSignal: "SIGKILL",
     maxBuffer: MAX_OUTPUT_BYTES,
     shell: false,
     stdio: [input ? "pipe" : "ignore", "pipe", "pipe"],

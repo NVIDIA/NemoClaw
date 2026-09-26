@@ -873,9 +873,10 @@ describe("backupSandboxStateForRebuild failure safety", () => {
     expect(errorLines.some((line: string) => line.includes("workspace"))).toBe(true);
     expect(
       errorLines.some((line: string) =>
-        line.includes("Incomplete snapshot retained for manual recovery"),
+        line.includes("Incomplete snapshot retained for manual inspection and cleanup only"),
       ),
     ).toBe(true);
+    expect(errorLines.some((line: string) => line.includes("manual recovery"))).toBe(false);
     expect(
       errorLines.some((line: string) => line.includes("excluded from snapshot restore selection")),
     ).toBe(true);
@@ -1023,6 +1024,7 @@ describe("backupSandboxStateForRebuild stopped-container recovery (#11137)", () 
   let startSpy: MockInstance;
   let backupStartedSpy: MockInstance;
   let returnStoppedSpy: MockInstance;
+  let removeBackupSpy: MockInstance;
 
   beforeEach(() => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
@@ -1033,6 +1035,7 @@ describe("backupSandboxStateForRebuild stopped-container recovery (#11137)", () 
     startSpy = vi.spyOn(stoppedSandboxBackup, "startStoppedSandboxContainerForBackup");
     backupStartedSpy = vi.spyOn(stoppedSandboxBackup, "backupStartedSandboxState");
     returnStoppedSpy = vi.spyOn(stoppedSandboxBackup, "returnSandboxContainerToStopped");
+    removeBackupSpy = vi.spyOn(sandboxState, "removeSandboxStateBackup");
   });
 
   afterEach(() => {
@@ -1042,6 +1045,7 @@ describe("backupSandboxStateForRebuild stopped-container recovery (#11137)", () 
   const startedForBackup = { containerName: "openshell-alpha", runtimeProviderId: "docker" };
 
   it("recovers by starting the killed container, backing up, then returning it to stopped", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(1_000);
     backupSpy.mockReturnValue({
       success: false,
       backedUpDirs: [],
@@ -1064,9 +1068,21 @@ describe("backupSandboxStateForRebuild stopped-container recovery (#11137)", () 
     );
 
     expect(result).toEqual(makeBackupResult().manifest);
-    expect(startSpy).toHaveBeenCalledWith("alpha");
-    expect(backupStartedSpy).toHaveBeenCalledWith("alpha");
-    expect(returnStoppedSpy).toHaveBeenCalledWith(startedForBackup);
+    expect(backupSpy).toHaveBeenCalledWith(
+      "alpha",
+      { deadlineMs: 301_000 },
+      expect.objectContaining({ getSandbox: expect.any(Function) }),
+    );
+    expect(startSpy).toHaveBeenCalledWith("alpha", {
+      deadlineMs: 331_000,
+    });
+    expect(backupStartedSpy).toHaveBeenCalledWith("alpha", {
+      deadlineMs: 331_000,
+      deferSanitizationDeadlineCleanup: true,
+    });
+    expect(returnStoppedSpy).toHaveBeenCalledWith(startedForBackup, {
+      deadlineMs: 331_000,
+    });
   });
 
   it("does not attempt recovery for a non-transport backup failure", async () => {
@@ -1129,30 +1145,114 @@ describe("backupSandboxStateForRebuild stopped-container recovery (#11137)", () 
     await expect(
       backupSandboxStateForRebuild("alpha", makeSandboxEntry(), false, () => undefined, makeBail()),
     ).rejects.toThrow("bail: Failed to back up sandbox state.");
-    expect(returnStoppedSpy).toHaveBeenCalledWith(startedForBackup);
+    expect(returnStoppedSpy).toHaveBeenCalledWith(startedForBackup, {
+      deadlineMs: expect.any(Number),
+    });
   });
 
-  it("reports the still-running container when the retry and the return to stopped both fail", async () => {
-    backupSpy.mockReturnValue({
+  it("restores stopped state before removing a deadline-expired retry snapshot (#11936)", async () => {
+    const order: string[] = [];
+    vi.spyOn(Date, "now").mockReturnValueOnce(1_000).mockReturnValue(331_001);
+    const failedBackup = {
       success: false,
-      backedUpDirs: [],
-      backedUpFiles: [],
+      error: "Snapshot sanitization skipped: backup deadline expired",
+      backedUpDirs: ["memories"],
+      backedUpFiles: ["SOUL.md"],
       failedDirs: [".state"],
       failedFiles: [],
+      manifest: { ...makeBackupResult().manifest!, backupPath: "/backups/alpha/incomplete" },
+    };
+    backupSpy.mockReturnValue({
+      ...failedBackup,
       manifest: null,
       unreachable: true,
     });
     startSpy.mockReturnValue(startedForBackup);
-    backupStartedSpy.mockResolvedValue({
+    backupStartedSpy.mockImplementation(async () => {
+      order.push("backup");
+      return failedBackup;
+    });
+    returnStoppedSpy.mockImplementation(() => {
+      order.push("stop");
+      return true;
+    });
+    removeBackupSpy.mockImplementation(() => {
+      order.push("cleanup");
+      return true;
+    });
+
+    await expect(
+      backupSandboxStateForRebuild("alpha", makeSandboxEntry(), false, () => undefined, makeBail()),
+    ).rejects.toThrow("bail: Failed to back up sandbox state.");
+
+    expect(backupStartedSpy).toHaveBeenCalledWith("alpha", {
+      deadlineMs: expect.any(Number),
+      deferSanitizationDeadlineCleanup: true,
+    });
+    expect(order).toEqual(["backup", "stop", "cleanup"]);
+    expect(removeBackupSpy).toHaveBeenCalledWith("alpha", "/backups/alpha/incomplete", 361_001);
+    expect(vi.mocked(backupStartedSpy).mock.calls[0]?.[1]?.deadlineMs).toBe(661_001);
+    expect(vi.mocked(console.error).mock.calls.flat().join("\n")).not.toContain("loose file");
+  });
+
+  it("reports deferred snapshot cleanup failure after restoring stopped state (#11936)", async () => {
+    const failedBackup = {
       success: false,
+      error: "Snapshot sanitization skipped: backup deadline expired",
       backedUpDirs: [],
       backedUpFiles: [],
-      failedDirs: [".state"],
+      failedDirs: [],
       failedFiles: [],
+      manifest: { ...makeBackupResult().manifest!, backupPath: "/backups/alpha/incomplete" },
+    };
+    backupSpy.mockReturnValue({
+      ...failedBackup,
       manifest: null,
       unreachable: true,
     });
-    returnStoppedSpy.mockReturnValue(false);
+    startSpy.mockReturnValue(startedForBackup);
+    backupStartedSpy.mockResolvedValue(failedBackup);
+    returnStoppedSpy.mockReturnValue(true);
+    removeBackupSpy.mockReturnValue(false);
+
+    await expect(
+      backupSandboxStateForRebuild("alpha", makeSandboxEntry(), false, () => undefined, makeBail()),
+    ).rejects.toThrow("bail: Failed to back up sandbox state.");
+
+    const reported = vi.mocked(console.error).mock.calls.flat().join("\n");
+    expect(reported).toContain("could not be removed");
+    expect(reported).toContain(
+      "Incomplete snapshot retained for manual inspection and cleanup only",
+    );
+    expect(reported).not.toContain("manual recovery");
+  });
+
+  it("reports the still-running container when the retry and the return to stopped both fail", async () => {
+    const order: string[] = [];
+    const failedBackup = {
+      success: false,
+      error: "Snapshot sanitization skipped: backup deadline expired",
+      backedUpDirs: [],
+      backedUpFiles: [],
+      failedDirs: [],
+      failedFiles: [],
+      manifest: { ...makeBackupResult().manifest!, backupPath: "/backups/alpha/incomplete" },
+    };
+    backupSpy.mockReturnValue({
+      ...failedBackup,
+      manifest: null,
+      unreachable: true,
+    });
+    startSpy.mockReturnValue(startedForBackup);
+    backupStartedSpy.mockResolvedValue(failedBackup);
+    returnStoppedSpy.mockImplementation(() => {
+      order.push("stop");
+      return false;
+    });
+    removeBackupSpy.mockImplementation(() => {
+      order.push("cleanup");
+      return false;
+    });
 
     await expect(
       backupSandboxStateForRebuild("alpha", makeSandboxEntry(), false, () => undefined, makeBail()),
@@ -1163,6 +1263,13 @@ describe("backupSandboxStateForRebuild stopped-container recovery (#11137)", () 
     expect(reported).toContain("openshell-alpha");
     expect(reported).toContain("may still be running");
     expect(reported).toContain("The retried backup also failed");
+    expect(reported).toContain("could not be removed");
+    expect(order).toEqual(["stop", "cleanup"]);
+    expect(removeBackupSpy).toHaveBeenCalledWith(
+      "alpha",
+      "/backups/alpha/incomplete",
+      expect.any(Number),
+    );
     // The ordinary backup-failure diagnostic must not run: it would imply the
     // sandbox was left in its original stopped state.
     expect(reported).not.toContain("Failed to back up sandbox state.");
@@ -1187,6 +1294,8 @@ describe("backupSandboxStateForRebuild stopped-container recovery (#11137)", () 
     ).rejects.toThrow(
       "bail: Could not return the sandbox's recovered container to its stopped state.",
     );
-    expect(returnStoppedSpy).toHaveBeenCalledWith(startedForBackup);
+    expect(returnStoppedSpy).toHaveBeenCalledWith(startedForBackup, {
+      deadlineMs: expect.any(Number),
+    });
   });
 });

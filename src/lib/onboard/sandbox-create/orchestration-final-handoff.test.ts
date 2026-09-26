@@ -75,6 +75,7 @@ import { resolveLegacyCompatibilityFinalHandoffRuntime } from "./identity-bounda
 describe("compatibility create reconciliation", () => {
   it("allows same-identity NotReady reconciliation before cutover but withholds publication (#11905)", () => {
     const input = {
+      managedBootstrapCreateActive: false,
       managedBootstrapCreateFinished: false,
       createRoute: "compatibility" as const,
       currentCheckpoint: null,
@@ -83,6 +84,26 @@ describe("compatibility create reconciliation", () => {
 
     expect(allowsNotReadyCreatedSandboxReconciliation(input)).toBe(true);
     expect(allowsNotReadyCreatedSandboxRevalidation(input)).toBe(false);
+  });
+
+  it("allows same-identity NotReady reconciliation while native managed startup is applying", () => {
+    const input = {
+      managedBootstrapCreateActive: true,
+      managedBootstrapCreateFinished: false,
+      createRoute: "native" as const,
+      currentCheckpoint: null,
+      acceptedCheckpoint: null,
+    };
+
+    expect(allowsNotReadyCreatedSandboxReconciliation(input)).toBe(true);
+    expect(
+      allowsNotReadyCreatedSandboxRevalidation({
+        managedBootstrapCreateFinished: input.managedBootstrapCreateFinished,
+        createRoute: input.createRoute,
+        currentCheckpoint: input.currentCheckpoint,
+        acceptedCheckpoint: input.acceptedCheckpoint,
+      }),
+    ).toBe(false);
   });
 
   it("uses only the nonce-selected identity during the reversible cutover window (#11905)", () => {

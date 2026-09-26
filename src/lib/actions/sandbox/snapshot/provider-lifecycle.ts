@@ -130,19 +130,34 @@ function requireRestoreReceipt(
 export function captureSandboxRuntimeSnapshot(
   bundle: RuntimeProviderBundle,
   sandbox: SandboxEntry,
+  deadlineMs?: number,
 ): SandboxRuntimeSnapshot {
+  const remainingTimeoutMs = (): number | undefined => {
+    if (deadlineMs === undefined) return undefined;
+    const remainingMs = Math.floor(deadlineMs - Date.now());
+    if (remainingMs <= 0) {
+      throw new SandboxSnapshotProviderError("snapshot authority capture deadline expired");
+    }
+    return remainingMs;
+  };
   const surface = requireSnapshotSurface(bundle, "backup");
   const providerSandbox = cloneAndDeepFreeze(sandbox);
+  const preflightTimeoutMs = remainingTimeoutMs();
   const preflight = requirePreflight(
     bundle,
     sandbox,
     "backup",
-    surface.preflight("backup", providerSandbox),
+    preflightTimeoutMs === undefined
+      ? surface.preflight("backup", providerSandbox)
+      : surface.preflight("backup", providerSandbox, preflightTimeoutMs),
   );
   const immutablePreflight = cloneAndDeepFreeze(preflight);
+  const captureTimeoutMs = remainingTimeoutMs();
   const runtime = requireRuntimeReceipt(
     bundle,
-    surface.capture(providerSandbox, immutablePreflight),
+    captureTimeoutMs === undefined
+      ? surface.capture(providerSandbox, immutablePreflight)
+      : surface.capture(providerSandbox, immutablePreflight, captureTimeoutMs),
   );
   return cloneAndDeepFreeze({
     schemaVersion: SANDBOX_RUNTIME_SNAPSHOT_SCHEMA_VERSION,
