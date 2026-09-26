@@ -82,6 +82,7 @@ describe("onboard runtime control flow", () => {
       observabilityEnabled: true,
       provider: "nvidia",
       routerPid: 1234,
+      routerPort: 14000,
     });
     const before = structuredClone(session);
     const stopTrackedModelRouterForAgentChange = vi.fn(async () => undefined);
@@ -124,6 +125,7 @@ describe("onboard runtime control flow", () => {
       agent: "langchain-deepagents-code",
       provider: "nvidia",
       routerPid: 1234,
+      routerPort: 14000,
     });
     const before = structuredClone(session);
     const effects: string[] = [];
@@ -132,24 +134,26 @@ describe("onboard runtime control flow", () => {
       return mutator(session) ?? session;
     });
 
+    const stopTrackedModelRouterForAgentChange = vi.fn(async () => {
+      effects.push("stop-router");
+    });
     const plan = planSelectedAgentTransition(
       {
         resume: true,
         session,
         selectedAgentName: "openclaw",
-        routerPort: 4000,
+        routerPort: 15000,
         note: () => undefined,
       },
       {
-        stopTrackedModelRouterForAgentChange: async () => {
-          effects.push("stop-router");
-        },
+        stopTrackedModelRouterForAgentChange,
         updateSession,
       },
     );
 
     expect(plan.resumeAgentChanged).toBe(true);
     expect(plan.session.routerPid).toBeNull();
+    expect(plan.session.routerPort).toBeNull();
     expect(effects).toEqual([]);
     expect(updateSession).not.toHaveBeenCalled();
     expect(session).toEqual(before);
@@ -157,7 +161,9 @@ describe("onboard runtime control flow", () => {
     await plan.commit();
 
     expect(effects).toEqual(["stop-router", "update-session"]);
+    expect(stopTrackedModelRouterForAgentChange).toHaveBeenCalledWith(before, 14000);
     expect(session.routerPid).toBeNull();
+    expect(session.routerPort).toBeNull();
   });
 
   it("preserves durable session state when the Model Router stop fails", async () => {

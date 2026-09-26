@@ -7,7 +7,11 @@ import { VLLM_PORT } from "../../core/vllm-port";
 import { unsafeEndpointUrlViolation } from "../../core/endpoint-url-safety";
 import { LLAMA_CPP_PORT } from "../../inference/llama-cpp/contract";
 import { isLoopbackHostname } from "../../private-networks";
-import { listRecordedGatewayPorts, resolveHome } from "../../state/gateway-registry";
+import {
+  listRecordedGatewayPorts,
+  listRecordedModelRouterPorts,
+  resolveHome,
+} from "../../state/gateway-registry";
 import type { RunOpenshell, UpsertProvider, UpsertProviderResult } from "./types";
 
 // Keep this list aligned with the materialized host.openshell.internal endpoints
@@ -70,10 +74,11 @@ export function isLoopbackNoAuthCompatibleEndpointUrl(
   endpointUrl: string | null | undefined,
 ): boolean {
   const port = loopbackNoAuthCompatibleEndpointPort(provider, endpointUrl);
+  const home = resolveHome();
   return (
     port !== null &&
-    !isProtectedNemoClawHostPort(port) &&
-    !listRecordedGatewayPorts(resolveHome()).includes(port)
+    !isProtectedNemoClawHostPort(port, listRecordedModelRouterPorts(home)) &&
+    !listRecordedGatewayPorts(home).includes(port)
   );
 }
 

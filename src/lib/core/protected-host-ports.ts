@@ -64,7 +64,10 @@ export const HTTPS_PIN_RUNTIME_ADAPTER_PORT = parseServicePortOverride(
  * credential-injecting adapters, and defaults that stay reserved when an
  * adapter or proxy is moved with an environment override.
  */
-export function isProtectedNemoClawHostPort(port: number): boolean {
+export function isProtectedNemoClawHostPort(
+  port: number,
+  retainedModelRouterPorts: readonly number[] = [],
+): boolean {
   return (
     port === DEFAULT_GATEWAY_PORT ||
     port === CONFIGURED_GATEWAY_PORT ||
@@ -74,6 +77,7 @@ export function isProtectedNemoClawHostPort(port: number): boolean {
     isHermesApiPort(port) ||
     port === DEFAULT_MODEL_ROUTER_PORT ||
     port === CONFIGURED_MODEL_ROUTER_PORT ||
+    retainedModelRouterPorts.includes(port) ||
     port === OLLAMA_PROXY_PORT ||
     port === DEFAULT_OLLAMA_PROXY_PORT ||
     port === BEDROCK_RUNTIME_ADAPTER_PORT ||
