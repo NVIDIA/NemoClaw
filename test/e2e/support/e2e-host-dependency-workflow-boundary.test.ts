@@ -206,13 +206,16 @@ exit 64
         expect(rejected.status).toBe(1);
         expect(fs.existsSync(callsPath)).toBe(false);
 
-        const retried = runSetup("expect iptables", 3);
+        const retried = runSetup(
+          "expect iptables conmon fuse-overlayfs nftables runc slirp4netns uidmap",
+          3,
+        );
         expect(retried.status, retried.stderr).toBe(0);
         expect(fs.readFileSync(callsPath, "utf8").trim().split("\n")).toEqual([
           "apt-get update",
           "apt-get update",
           "apt-get update",
-          "apt-get install -y --no-install-recommends expect iptables",
+          "apt-get install -y --no-install-recommends expect iptables conmon fuse-overlayfs nftables runc slirp4netns uidmap",
         ]);
 
         const exhausted = runSetup("expect", 4);
