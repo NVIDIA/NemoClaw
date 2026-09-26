@@ -35,7 +35,7 @@ function runLegacyDashboardMigrationDeadline() {
           extractShellFunction(source, "migrate_legacy_hermes_dashboard_state"),
           'id() { [ "${1:-}" = "-u" ] && printf "1000\\n" || command id "$@"; }',
           `_HERMES_DASHBOARD_STATE_MIGRATION_TIMEOUT=(bash -c 'exit 124' bash)`,
-          `_HERMES_PYTHON=${shellQuote(process.env.PYTHON || "python3")}`,
+          "_HERMES_PYTHON=python3",
           `_HERMES_DASHBOARD_STATE_MIGRATOR=${shellQuote(DASHBOARD_STATE_MIGRATOR)}`,
           `HERMES_DIR=${shellQuote(hermesHome)}`,
           "STEP_DOWN_PREFIX_SANDBOX=(env)",

@@ -587,7 +587,6 @@ def _unlink_verified(
         if not _matches(before, moved):
             raise MigrationError(f"{display} changed while it was quarantined")
         os.unlink(quarantine, dir_fd=parent_fd)
-        quarantined = False
     except BaseException:
         if quarantined and _lookup(parent_fd, quarantine) is not None:
             if _lookup(parent_fd, name) is not None:
@@ -647,7 +646,6 @@ def _remove_verified_generated_shadow(
                 f"{source_display} changed before generated-state verification"
             )
         _unlink_verified(source_fd, quarantine, source_display, expected=before)
-        quarantined = False
     except BaseException:
         if quarantined and _lookup(source_fd, quarantine) is not None:
             if _lookup(source_fd, name) is not None:
