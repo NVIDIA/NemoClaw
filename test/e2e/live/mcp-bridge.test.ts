@@ -13,6 +13,7 @@ import { shellQuote } from "../../../src/lib/core/shell-quote";
 import type { McpSourceEntry } from "../../../src/lib/actions/sandbox/mcp-bridge-contracts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
+import { approveOpenClawAdminScope } from "./openclaw-admin-scope.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import { assertExitZero as expectExitZero, resultText } from "../fixtures/clients/command.ts";
@@ -751,10 +752,15 @@ test(
       ...bridge,
       artifactName: "onboard-openclaw-mcp-bridge",
     });
-    // Exercise the raw OpenShell `allowed_ips` boundary before any NemoClaw MCP
-    // mutation in full-scope topologies. The helper uses a direct curl request
-    // with a /** binary grant, then restores this sandbox's exact base policy
-    // before returning, so this proof is independent of the CLI and adapter.
+    await approveOpenClawAdminScope(
+      host,
+      sandbox,
+      OPENCLAW_SANDBOX_NAME,
+      buildAvailabilityProbeEnv(),
+      [COMPATIBLE_KEY, HOST_SECRET],
+    );
+    // Prove raw OpenShell allowed_ips with curl and a /** grant before MCP
+    // mutation. The helper restores the exact base policy before returning.
     await runFullMcpBridgeE2eCoverage(mcpBridgeE2eScope, () =>
       assertRawOpenShellAllowedIpsRebindingDenied({
         artifacts,
@@ -836,8 +842,7 @@ test(
     expect(aliasState.providerAbsent).toBe(true);
     expect(aliasState.policyAbsent).toBe(true);
     expect(aliasState.adapterAbsent).toBe(true);
-    // Distinguishable endpoints must coexist, not merely pass preflight. Exercise
-    // both native adapters while both credentials and policy entries are present.
+    // Exercise both native adapters with both credentials and policy entries present.
     const distinctMcp = await startFakeMcpHttpsServer({
       ...MCP_SERVER_OPTIONS,
       secret: ROTATED_HOST_SECRET,
@@ -1151,8 +1156,7 @@ mcpBridgeShardTest("hermes")(
     cleanup.add("remove Hermes MCP bridge", () =>
       cleanupMcpBridge(host, HERMES_SANDBOX_NAME, SERVER_NAME, "hermes-config"),
     );
-    // Cleanup is LIFO. Register evidence after bridge removal so failure state
-    // is captured before cleanup mutates the config and restarts the gateway.
+    // LIFO cleanup captures failure evidence before bridge removal changes the gateway.
     cleanup.add("capture Hermes MCP runtime evidence", async () => {
       await sandbox.execShell(
         HERMES_SANDBOX_NAME,

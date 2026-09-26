@@ -13,7 +13,7 @@
   },
   "limits": {
     "testFileCount": 79,
-    "liveFileCount": 190,
+    "liveFileCount": 191,
     "direct": {
       "expectCalls": 1392,
       "matcherAssertions": 1371,
@@ -83,7 +83,7 @@
       "test/e2e/live/managed-image-activation-e2e.test.ts": [0,0,13,28,0],
       "test/e2e/live/managed-image-multiarch-startup.test.ts": [1,1,1,7,0],
       "test/e2e/live/managed-image-protected-runtime.test.ts": [0,0,42,79,15],
-      "test/e2e/live/mcp-bridge.test.ts": [43,146,194,518,46],
+      "test/e2e/live/mcp-bridge.test.ts": [43,146,195,519,46],
       "test/e2e/live/messaging-compatible-endpoint.test.ts": [13,19,13,28,2],
       "test/e2e/live/messaging-providers.test.ts": [0,11,6,51,12],
       "test/e2e/live/model-router-provider-routed-inference.test.ts": [1,2,1,2,0],
@@ -98,7 +98,7 @@
       "test/e2e/live/openclaw-skill-cli.test.ts": [10,14,10,14,1],
       "test/e2e/live/openclaw-slack-pairing.test.ts": [11,18,26,84,10],
       "test/e2e/live/openclaw-tui-chat-correlation.test.ts": [40,46,40,52,4],
-      "test/e2e/live/openshell-credential-generation-window.test.ts": [43,93,43,112,18],
+      "test/e2e/live/openshell-credential-generation-window.test.ts": [43,93,44,113,18],
       "test/e2e/live/openshell-gateway-auth-source-contract.test.ts": [0,0,16,28,2],
       "test/e2e/live/openshell-gateway-upgrade.test.ts": [7,16,7,26,6],
       "test/e2e/live/overlayfs-autofix.test.ts": [22,25,22,28,2],

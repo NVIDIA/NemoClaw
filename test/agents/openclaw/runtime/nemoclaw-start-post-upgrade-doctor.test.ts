@@ -22,6 +22,7 @@ function doctorFunction(
     'normalize_mutable_config_perms() { printf \'normalize\\n\' >>"$NORMALIZE_CALLS"; return "${NORMALIZE_EXIT_CODE:-0}"; }',
     'STEP_DOWN_PREFIX_SANDBOX=("$STEP_DOWN")',
     extractShellFunctionFromSource(source, "_nemoclaw_safe_replace_tmp_file"),
+    extractShellFunctionFromSource(source, "run_openclaw_maintenance_owner_command"),
     extractShellFunctionFromSource(source, "run_requested_openclaw_post_upgrade_doctor")
       .replaceAll("/sandbox/.openclaw", configDir)
       .replaceAll("/tmp/nemoclaw-post-upgrade-doctor-ready", readyPath)
@@ -32,6 +33,7 @@ function doctorFunction(
 function backupQuiesceFunction(source: string, configDir: string, readyPath: string): string {
   return [
     extractShellFunctionFromSource(source, "_nemoclaw_safe_replace_tmp_file"),
+    extractShellFunctionFromSource(source, "run_openclaw_maintenance_owner_command"),
     extractShellFunctionFromSource(source, "run_requested_openclaw_backup_quiesce")
       .replaceAll("/sandbox/.openclaw", configDir)
       .replaceAll("/tmp/nemoclaw-post-upgrade-doctor-ready", readyPath),
@@ -115,6 +117,77 @@ function promoteAfterReady(f: ReturnType<typeof fixture>): string {
 }
 
 describe("nemoclaw-start post-upgrade doctor", () => {
+  it.each([
+    { operation: "release", publish: releaseAfterReady, expected: [] },
+    {
+      operation: "promote",
+      publish: promoteAfterReady,
+      expected: ["nemoclaw-openclaw-post-upgrade-doctor-v2\n"],
+    },
+  ])(
+    "processes $operation as the config owner when root cannot write the config directory",
+    ({ publish, expected }) => {
+      const source = fs.readFileSync(START_SCRIPT, "utf8");
+      const f = fixture();
+      try {
+        fs.writeFileSync(f.marker, "nemoclaw-openclaw-backup-quiesce-v1\n", { mode: 0o600 });
+        fs.writeFileSync(path.join(f.fakeBin, "id"), "#!/bin/sh\nprintf '0\\n'\n", { mode: 0o755 });
+        fs.writeFileSync(f.stepDown, '#!/bin/sh\nexport MAINTENANCE_OWNER=1\nexec "$@"\n', {
+          mode: 0o755,
+        });
+        fs.writeFileSync(
+          path.join(f.fakeBin, "rm"),
+          `#!/bin/sh
+for argument in "$@"; do
+  if [ "$argument" = "$MAINTENANCE_MARKER" ] && [ "\${MAINTENANCE_OWNER:-0}" != 1 ]; then
+    echo "Permission denied: maintenance marker" >&2
+    exit 1
+  fi
+done
+exec /bin/rm "$@"
+`,
+          { mode: 0o755 },
+        );
+        fs.writeFileSync(
+          path.join(f.fakeBin, "mktemp"),
+          `#!/bin/sh
+case "$1" in "$MAINTENANCE_CONFIG"/*)
+  [ "\${MAINTENANCE_OWNER:-0}" = 1 ] || { echo "Permission denied: maintenance staging" >&2; exit 1; } ;;
+esac
+exec /usr/bin/mktemp "$@"
+`,
+          { mode: 0o755 },
+        );
+        const result = spawnSync(
+          "bash",
+          [
+            "-c",
+            [
+              'STEP_DOWN_PREFIX_SANDBOX=("$STEP_DOWN")',
+              backupQuiesceFunction(source, f.configDir, f.ready),
+              publish(f),
+              "run_requested_openclaw_backup_quiesce",
+            ].join("\n"),
+          ],
+          {
+            encoding: "utf8",
+            timeout: 10_000,
+            env: fixtureEnv(f, { MAINTENANCE_MARKER: f.marker, MAINTENANCE_CONFIG: f.configDir }),
+          },
+        );
+        expect(result.status, result.stderr).toBe(0);
+        expect(
+          fs
+            .readdirSync(f.configDir)
+            .map((name) => fs.readFileSync(path.join(f.configDir, name), "utf8")),
+        ).toEqual(expected);
+        expect(fs.existsSync(f.ready)).toBe(false);
+      } finally {
+        fs.rmSync(f.root, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("holds backup state before startup mutation without invoking doctor", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf8");
     const f = fixture();

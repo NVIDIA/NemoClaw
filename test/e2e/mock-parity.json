@@ -80,7 +80,8 @@
         "test/e2e/fixtures/admin-request-selector.ts",
         "test/e2e/fixtures/issue-4462-admin-approval-evidence.ts",
         "test/e2e/lib/issue-4462-admin-request-selector.py",
-        "test/e2e/live/managed-image-activation-e2e-helpers.ts"
+        "test/e2e/live/managed-image-activation-e2e-helpers.ts",
+        "test/e2e/live/openclaw-admin-scope.ts"
       ],
       "fast": [
         "src/lib/onboard/command.test.ts",
@@ -305,7 +306,8 @@
       "live": "test/e2e/live/openshell-credential-generation-window.test.ts",
       "liveSources": [
         "test/e2e/live/openshell-credential-generation-window.ts",
-        "test/e2e/fixtures/owned-sandbox-cleanup.ts"
+        "test/e2e/fixtures/owned-sandbox-cleanup.ts",
+        "test/e2e/live/openclaw-admin-scope.ts"
       ],
       "fast": [
         "test/e2e/support/owned-sandbox-cleanup.test.ts",
@@ -313,7 +315,8 @@
         "test/mcp/mcp-artifact-secret-scan.test.ts",
         "test/mcp/mcp-agent-matrix-artifact-proof.test.ts",
         "test/e2e/support/mcp-workflow-boundary.test.ts",
-        "test/e2e/support/runtime-provider-fixture.test.ts"
+        "test/e2e/support/runtime-provider-fixture.test.ts",
+        "test/e2e/support/managed-image-activation-diagnostics.test.ts"
       ]
     },
     {
@@ -679,7 +682,8 @@
         "test/e2e/live/openshell-driver-config-test-wrapper.ts",
         "test/e2e/live/openshell-exact-main-exec.ts",
         "test/e2e/live/openshell-exact-main-runtime-contracts.ts",
-        "test/e2e/live/openclaw-stopped-recovery.ts"
+        "test/e2e/live/openclaw-stopped-recovery.ts",
+        "test/e2e/live/openclaw-admin-scope.ts"
       ],
       "fast": [
         "src/lib/actions/sandbox/mcp-bridge-state.test.ts",
@@ -708,7 +712,8 @@
         "test/mcp/mcp-bridge-servers.test.ts",
         "test/e2e/support/mcp-bridge-https-diagnostics.test.ts",
         "src/lib/onboard/runtime-provider/docker-stopped-state-capture.test.ts",
-        "test/state/snapshot-stopped-openclaw.test.ts"
+        "test/state/snapshot-stopped-openclaw.test.ts",
+        "test/e2e/support/managed-image-activation-diagnostics.test.ts"
       ]
     },
     {

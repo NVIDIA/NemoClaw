@@ -160,6 +160,10 @@ assembles one exact candidate catalog from the workflow's published contracts, u
 and sandbox, records the authenticated discovery diagnostics, scans the evidence for fixture
 credentials, and must pass.
 These are two required acceptance executions, not retries; either failure remains a failed check.
+OpenClaw MCP and credential-generation setup uses the shared explicit admin-approval fixture
+before mutating the bridge. It approves only the request ID emitted by the current sandbox's
+non-admin CLI, after the existing selector verifies that device and its requested scopes.
+The original MCP lifecycle and credential-revocation assertions remain unchanged.
 The concurrent-add probe retries only the rejected command after status proves that the other
 command committed one coherent bridge. The rejected command must report the exact portable
 host-lock timeout, optionally followed by the current recorded-owner-is-still-running remediation.

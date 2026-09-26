@@ -8,11 +8,11 @@ import path, { join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
+import { approveOpenClawAdminScope } from "../live/openclaw-admin-scope.ts";
 import { adminApprovalConnectScript } from "../fixtures/admin-approval-connect.ts";
 import { createHostProcessWorkspace } from "../../helpers/host-process-harness.ts";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import {
-  approveOpenClawAdminScope,
   captureManagedImageOnboardPairingDiagnostics,
   collectOnboardFailureDockerDiagnostics,
   managedActivationPostRestartAgentTurnScript,

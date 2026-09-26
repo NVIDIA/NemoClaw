@@ -5257,6 +5257,18 @@ PY_SQLITE_TMPDIR
   export SQLITE_TMPDIR="$sqlite_tmpdir"
 }
 
+run_openclaw_maintenance_owner_command() {
+  # Podman root can read the sandbox-owned config tree but cannot write it
+  # without DAC_OVERRIDE. Use the existing sandbox identity for marker writes.
+  if [ "$(id -u)" -eq 0 ]; then
+    "${STEP_DOWN_PREFIX_SANDBOX[@]}" /bin/bash -c \
+      "$(declare -f _nemoclaw_safe_replace_tmp_file); \"\$@\"" \
+      openclaw-maintenance "$@"
+  else
+    "$@"
+  fi
+}
+
 run_requested_openclaw_backup_quiesce() {
   local marker="/sandbox/.openclaw/.nemoclaw-post-upgrade-doctor"
   local expected="nemoclaw-openclaw-backup-quiesce-v1"
@@ -5337,7 +5349,7 @@ EOF
       fi
     } <"$marker" || return 1
     if [ "$marker_value" = "$release_expected" ]; then
-      rm -f -- "$marker" "$ready" || return 1
+      run_openclaw_maintenance_owner_command rm -f -- "$marker" "$ready" || return 1
       echo "[setup] OpenClaw source backup quiesce released gateway launch" >&2
       return 0
     fi
@@ -5349,12 +5361,12 @@ EOF
       # rather than a fresh tree that restore subsequently overwrites.
       rm -f -- "$ready" || return 1
       printf '%s\n' "$doctor_expected" \
-        | _nemoclaw_safe_replace_tmp_file "$marker" 600 "$marker_owner" required || return 1
+        | run_openclaw_maintenance_owner_command _nemoclaw_safe_replace_tmp_file "$marker" 600 "$marker_owner" required || return 1
       echo "[setup] OpenClaw restored state promoted to post-upgrade doctor" >&2
       return 0
     fi
     if [ "$marker_value" = "$abort_expected" ]; then
-      rm -f -- "$marker" "$ready" || return 1
+      run_openclaw_maintenance_owner_command rm -f -- "$marker" "$ready" || return 1
       echo "[setup] OpenClaw source backup quiesce aborted; sandbox remains stopped" >&2
       return 1
     fi
@@ -5365,7 +5377,7 @@ EOF
     sleep 1
   done
   echo "[SECURITY] Timed out waiting for source backup quiesce release" >&2
-  rm -f -- "$marker" "$ready" || return 1
+  run_openclaw_maintenance_owner_command rm -f -- "$marker" "$ready" || return 1
   return 1
 }
 
@@ -5404,7 +5416,7 @@ EOF
     fi
   } <"$marker" || return 1
   if [ "$marker_value" = "$abort_expected" ]; then
-    rm -f -- "$marker" "$ready" || return 1
+    run_openclaw_maintenance_owner_command rm -f -- "$marker" "$ready" || return 1
     echo "[setup] OpenClaw post-upgrade maintenance abort consumed; sandbox remains stopped" >&2
     return 1
   fi
@@ -5468,12 +5480,12 @@ EOF
       fi
     } <"$marker" || return 1
     if [ "$marker_value" = "$release_expected" ]; then
-      rm -f -- "$marker" "$ready" || return 1
+      run_openclaw_maintenance_owner_command rm -f -- "$marker" "$ready" || return 1
       echo "[setup] OpenClaw post-upgrade offline restore released gateway launch" >&2
       return 0
     fi
     if [ "$marker_value" = "$abort_expected" ]; then
-      rm -f -- "$marker" "$ready" || return 1
+      run_openclaw_maintenance_owner_command rm -f -- "$marker" "$ready" || return 1
       echo "[setup] OpenClaw post-upgrade offline restore aborted; sandbox remains stopped" >&2
       return 1
     fi
@@ -5484,7 +5496,7 @@ EOF
     sleep 1
   done
   echo "[SECURITY] Timed out waiting for post-upgrade offline restore release" >&2
-  rm -f -- "$marker" "$ready" || return 1
+  run_openclaw_maintenance_owner_command rm -f -- "$marker" "$ready" || return 1
   return 1
 }
 
