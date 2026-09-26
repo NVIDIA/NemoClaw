@@ -1447,6 +1447,12 @@ settle_custom_route_reconcile_marker() {
   fi
   if ! retire_custom_route_reconcile_marker; then
     printf '[SECURITY] Custom-image route receipt could not be retired after gateway readiness\n' >&2
+    # A successful launch with the pending receipt still present would keep
+    # later restarts pinned to the create-time route. Stop the proven child
+    # and fail this launch so the retained receipt remains a first-launch
+    # retry contract instead of becoming stale runtime authority.
+    stop_openclaw_gateway_fail_closed
+    return 1
   fi
   return 0
 }

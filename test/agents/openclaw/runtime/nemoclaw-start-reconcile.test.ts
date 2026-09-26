@@ -213,10 +213,11 @@ describe("agent identity reconciliation with provider (#3175)", () => {
     return { result, config, hash, expectedHash, customRoutePending };
   }
 
-  function runCustomRouteSettlement(gatewayReady: boolean) {
+  function runCustomRouteSettlement(gatewayReady: boolean, retirementFails = false) {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-route-settlement-"));
     const openclawDir = path.join(root, ".openclaw");
     const markerPath = path.join(openclawDir, ".nemoclaw-custom-route-pending");
+    const stoppedPath = path.join(root, "gateway-stopped");
     fs.mkdirSync(openclawDir, { recursive: true });
     fs.writeFileSync(markerPath, `${"a".repeat(64)}  openclaw.json\n`);
     const retireFn = extractShellFunction("retire_custom_route_reconcile_marker").replaceAll(
@@ -233,8 +234,11 @@ describe("agent identity reconciliation with provider (#3175)", () => {
       [
         "#!/usr/bin/env bash",
         "set -euo pipefail",
-        'run_openclaw_config_as_owner() { "$@"; }',
+        retirementFails
+          ? 'run_openclaw_config_as_owner() { [ "$1" != /bin/rm ] || return 29; "$@"; }'
+          : 'run_openclaw_config_as_owner() { "$@"; }',
         `wait_for_openclaw_gateway_internal() { return ${gatewayReady ? 0 : 23}; }`,
+        `stop_openclaw_gateway_fail_closed() { : >${JSON.stringify(stoppedPath)}; }`,
         retireFn,
         settleFn,
         'settle_custom_route_reconcile_marker "123" "pid-identity"',
@@ -243,8 +247,9 @@ describe("agent identity reconciliation with provider (#3175)", () => {
     );
     const result = spawnSync("bash", [script], { encoding: "utf-8" });
     const markerPending = fs.existsSync(markerPath);
+    const gatewayStopped = fs.existsSync(stoppedPath);
     fs.rmSync(root, { recursive: true, force: true });
-    return { result, markerPending };
+    return { result, markerPending, gatewayStopped };
   }
 
   it("aligns agents.defaults.model.primary to inference provider's first model when they drift", () => {
@@ -463,6 +468,17 @@ describe("agent identity reconciliation with provider (#3175)", () => {
       );
     },
   );
+
+  it("stops the ready gateway and fails when the custom-image route receipt cannot retire", () => {
+    const settled = runCustomRouteSettlement(true, true);
+
+    expect(settled.result.status).not.toBe(0);
+    expect(settled.markerPending).toBe(true);
+    expect(settled.gatewayStopped).toBe(true);
+    expect(settled.result.stderr).toContain(
+      "Custom-image route receipt could not be retired after gateway readiness",
+    );
+  });
 
   it("preserves an explicit model override when the live gateway reports a conflicting model", () => {
     const initial = {
