@@ -135,7 +135,7 @@ function pinnedConsumerEvidence(
   environment: NodeJS.ProcessEnv,
 ): PinnedV1ConsumerEvidence {
   return {
-    revision: "88c6600c06b0937907290362eef86912052c4ad0",
+    revision: "42a26d90f1f6207cc35b5053556db67c86ce759f",
     compiledSandboxes: 1,
     hermesNativeSettings: {
       hermes: expectedPinnedV1HermesNativeSettings({

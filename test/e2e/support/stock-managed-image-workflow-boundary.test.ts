@@ -27,6 +27,7 @@ const CATALOGUE_JOBS = [
   "catalogue-nvidia-inference",
   "catalogue-github-read",
   "catalogue-brave-nvidia-inference",
+  "catalogue-tavily-nvidia-inference",
 ] as const;
 
 function workflow(): OperationsWorkflow {

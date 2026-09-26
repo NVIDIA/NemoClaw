@@ -10,7 +10,7 @@ export const EXPECTED_NATIVE_SETTINGS = {
 } as const;
 
 export const PINNED_CONSUMER_EVIDENCE = {
-  revision: "88c6600c06b0937907290362eef86912052c4ad0" as const,
+  revision: "42a26d90f1f6207cc35b5053556db67c86ce759f" as const,
   compiledSandboxes: 1,
   contextWindows: [131_072],
   openclawNativeSettings: { sandbox: EXPECTED_NATIVE_SETTINGS },

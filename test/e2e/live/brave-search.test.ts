@@ -11,6 +11,7 @@ import { resultText } from "../fixtures/clients/index.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import { testTimeout } from "../../helpers/timeouts.ts";
+import { onboardTavilyExportSource } from "../fixtures/tavily-export-source.ts";
 import {
   assertBraveConfig,
   assertBraveExport,
@@ -223,5 +224,58 @@ test(
       { artifactName: "phase-6-reused-brave-egress", timeoutMs: 60_000 },
     );
     expect(resultText(reachable)).toMatch(/HTTP_STATUS:(?!000)[0-9]{3}/u);
+  },
+);
+
+test.for(["openclaw", "hermes"] as const)(
+  "%s Tavily export preserves source intent and credential isolation (#12138)",
+  {
+    timeout: testTimeout(35 * 60_000),
+    meta: {
+      e2ePhases: [
+        "check Tavily export prerequisites",
+        "install and onboard the Tavily source",
+        "validate the real staged export",
+        "record Tavily export evidence",
+      ],
+    },
+  },
+  async (
+    agent,
+    { artifacts, cleanup, configExportValidation, host, progress, runtimeProvider, secrets },
+  ) => {
+    const id = `tavily-export-${agent}`;
+    secrets.required("NVIDIA_INFERENCE_API_KEY");
+    secrets.required("TAVILY_API_KEY");
+    await artifacts.target.declare({
+      id,
+      boundary:
+        "local source installer + managed Tavily profile + real config export + retained YAML",
+      contracts: [
+        "the staged export preserves the selected Tavily provider, credential reference and primary-agent grant",
+        "the validated raw YAML omits credential values and leaves the source registry unchanged",
+      ],
+    });
+    await runtimeProvider.requireAvailable({
+      artifactName: "tavily-export-runtime",
+      scenarioLabel: id,
+    });
+    progress.phase("install and onboard the Tavily source");
+    const source = await onboardTavilyExportSource(agent, host, secrets, cleanup);
+    progress.phase("validate the real staged export");
+    const evidence = await configExportValidation.from(
+      {
+        id,
+        manifestPath: `test/e2e/manifests/${agent}-nvidia-tavily.yaml`,
+        configExport: { expectation: "required" },
+      },
+      source,
+    );
+    progress.phase("record Tavily export evidence");
+    await artifacts.target.complete({
+      id,
+      classification: evidence.classification,
+      producer: evidence.producer,
+    });
   },
 );

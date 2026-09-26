@@ -262,6 +262,7 @@ const CATALOGUE_ROUTED_JOB_NAMES = [
   "catalogue-nvidia-inference",
   "catalogue-github-read",
   "catalogue-brave-nvidia-inference",
+  "catalogue-tavily-nvidia-inference",
 ] as const;
 const CATALOGUE_RUNNER_EXPRESSION =
   "${{ matrix.runner_key != '' && fromJSON(needs.generate-matrix.outputs.runner_routing)[matrix.runner_key] || matrix.runner }}";

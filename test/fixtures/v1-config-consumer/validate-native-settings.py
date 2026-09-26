@@ -85,6 +85,32 @@ def validate_hermes(settings_by_sandbox):
     }
 
 
+def validate_web_search(settings_by_sandbox):
+    searches = {}
+    for name, entry in settings_by_sandbox.items():
+        settings = entry["settings"] or {}
+        search = settings.get("webSearch")
+        if search is None:
+            continue
+        if entry["runtime"] == "fabric-openclaw":
+            native = importlib.import_module("openclaw_adapter").native_configuration(
+                "primary", settings
+            )
+            native_provider = native["tools"]["web"]["search"]["provider"]
+        elif entry["runtime"] == "fabric-hermes":
+            native = importlib.import_module("hermes_adapter").native_configuration(settings)
+            native_provider = native["web"]["search_backend"]
+        else:
+            raise ValueError("exported web search requires OpenClaw or Hermes")
+        searches[name] = {
+            "provider": search["provider"],
+            "credentialReference": search["credential"]["env"],
+            "agentRefs": search["agentRefs"],
+            "nativeProvider": native_provider,
+        }
+    return {"webSearch": searches} if searches else {}
+
+
 def main():
     consumer = Path(sys.argv[1])
     settings_by_sandbox = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
@@ -94,6 +120,7 @@ def main():
         "compiledSandboxes": len(settings_by_sandbox),
         **validate_openclaw(settings_by_sandbox),
         **validate_hermes(settings_by_sandbox),
+        **validate_web_search(settings_by_sandbox),
     }
     print(json.dumps(result))
 

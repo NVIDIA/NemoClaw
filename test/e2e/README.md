@@ -437,6 +437,12 @@ of credential values. It then changes the fixture's recorded sandbox fingerprint
 launchers to fail without publishing a file before restoring the registry. The assertion budget is
 unchanged because this contract replaces a redundant nonempty-log assertion in the same scenario.
 
+The shared config-export evidence compares the selected search provider, credential reference, and
+primary-agent grant against registered source intent. Its producer-shape check admits OpenClaw
+Brave/Tavily and Hermes Tavily, and rejects dangling grants or unsupported agent/provider pairs.
+E2E-support tests own these mappings and refusals. A retained live artifact qualifies only the
+agent/provider pair and source/target revisions actually exercised; it does not qualify another pair.
+
 The `ubuntu-repo-cloud-langchain-deepagents-code` target owns live Deep Agents export evidence for
 Issue #11860. Its ordered checks first exercise opt-in observability and thread approval, then restore
 the disabled baseline. The TUI check then runs without changing that registry baseline. The installed
@@ -583,6 +589,40 @@ For manual PR qualification, select `jobs=brave-search` with Docker and leave `t
 Confirm that the target executes: an unavailable optional Brave credential can remove it from the plan.
 Trusted `main` controls the 45-minute job limit.
 Changes to `brave-search-helpers.ts` select the target through its catalogue ownership metadata.
+
+The Docker-only `tavily-export-openclaw` and `tavily-export-hermes` targets own the
+Tavily source-to-exporter boundary for #12138. Select either target explicitly with
+`jobs=<target-id>`. Changes to their exporter, consumer, fixtures or shared runner
+also select them; each manifest selects its owning agent. They remain outside the
+default release plan and release-required gate. Each target needs `TAVILY_API_KEY`
+and `NVIDIA_INFERENCE_API_KEY`. For changed-file selection, unavailable Tavily credentials
+remove these targets from the plan. Explicit selections remain scheduled and require
+both credentials. The
+dedicated Tavily execution profile passes these only through the existing trusted
+workflow credential guard. Untrusted calls receive no provider credentials.
+
+The Tavily cases in `brave-search.test.ts` install the selected local source with `install.sh`, onboard
+a uniquely named sandbox with Tavily and hosted compatible inference, then call the
+existing required config-export validation phase. That phase observes the real
+registry and policy, invokes the built CLI, and retains the validated raw YAML,
+producer revision, hash, selected search provider, credential reference and
+primary-agent grant in `config-export-evidence.v1.json`. It checks source-registry
+immutability and secret absence before retaining export bytes. The test registers
+destruction of only its owned sandbox before installation; failed installation
+retains that cleanup obligation.
+
+The distinct live proof is real onboarding/profile observation through the exporter
+and retained artifact. Deterministic mapping, disabled search, drift refusal and
+credential opacity remain owned by the exporter unit tests and `e2e-support`.
+The shared phase owns the smallest live assertion: a required export must match its
+observed source and pass artifact security validation. No equivalent assertions are
+copied into a second exporter harness. Onboarding, catalog and provider-reader
+failures remain failures; the scenario does not edit source state to bypass them.
+Managed-agent exports omit `image`. The shared phase requires the raw YAML to pass
+the pinned v1 consumer and compares its native settings with the observed source
+before retaining export bytes. This includes the compiled search provider,
+credential reference, agent grant and native provider selection. These targets do not deploy v1.
+Live qualification has not been run for these targets.
 
 ### Catalogue Execution Evidence
 

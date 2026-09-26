@@ -8,11 +8,13 @@ import { asExportedConfig } from "../../../../test/support/config-export-documen
 import { validateConfigExportWithPinnedV1 } from "../../../../test/support/v1-config-consumer";
 import { testTimeoutOptions } from "../../../../test/helpers/timeouts";
 import {
+  braveSnapshot,
   hermesImageRef,
   hermesProfileInput,
   hermesSnapshot,
   managedWorkload,
   snapshot,
+  tavilySnapshot,
   tunedSnapshot,
 } from "./export-source-test-fixture";
 
@@ -103,7 +105,7 @@ describe("effective v1alpha1 export defaults (#12132)", () => {
         },
       };
       expect(validateConfigExportWithPinnedV1(YAML.stringify(combined))).toEqual({
-        revision: "88c6600c06b0937907290362eef86912052c4ad0",
+        revision: "42a26d90f1f6207cc35b5053556db67c86ce759f",
         compiledSandboxes: 5,
         contextWindows: [131072, 131072],
         hermesNativeSettings: {
@@ -153,6 +155,43 @@ describe("effective v1alpha1 export defaults (#12132)", () => {
         },
         openclawNativeSettingsVerified: 2,
         hermesNativeSettingsVerified: 3,
+      });
+    },
+  );
+});
+
+describe("web-search v1alpha1 consumer compatibility (#12138)", () => {
+  it.runIf(process.env.NEMOCLAW_RUN_V1_CONFIG_COMPATIBILITY === "1").each([
+    {
+      name: "OpenClaw Brave",
+      source: braveSnapshot(),
+      provider: "brave",
+      credentialReference: "BRAVE_API_KEY",
+    },
+    {
+      name: "OpenClaw Tavily",
+      source: tavilySnapshot("openclaw"),
+      provider: "tavily",
+      credentialReference: "TAVILY_API_KEY",
+    },
+    {
+      name: "Hermes Tavily",
+      source: tavilySnapshot("hermes"),
+      provider: "tavily",
+      credentialReference: "TAVILY_API_KEY",
+    },
+  ] as const)(
+    "preserves $name provider, credential reference and grants through the pinned consumer (#12138)",
+    testTimeoutOptions(12 * 60_000),
+    async ({ source, provider, credentialReference }) => {
+      const exported = await exportSnapshots([source]);
+      expect(exported.outcome.ok).toBe(true);
+      const raw = exported.writeStdout.mock.calls[0]![0];
+      const evidence = validateConfigExportWithPinnedV1(raw);
+      expect(evidence.revision).toBe("42a26d90f1f6207cc35b5053556db67c86ce759f");
+      expect(evidence.compiledSandboxes).toBe(1);
+      expect(evidence.webSearch).toEqual({
+        alpha: { provider, credentialReference, agentRefs: ["primary"], nativeProvider: provider },
       });
     },
   );

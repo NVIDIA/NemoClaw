@@ -21,7 +21,10 @@ export const TAVILY_PROVIDER_PROFILE_AGENTS = [
   "langchain-deepagents-code",
 ] as const;
 
-export function webSearchProviderProfileId(provider: string, agentName?: string | null): string {
+export function webSearchProviderProfileId<Provider extends string>(
+  provider: Provider,
+  agentName?: string | null,
+): Provider | typeof HERMES_TAVILY_PROVIDER_PROFILE_ID {
   return provider === TAVILY_PROVIDER_PROFILE_ID && agentName?.trim().toLowerCase() === "hermes"
     ? HERMES_TAVILY_PROVIDER_PROFILE_ID
     : provider;

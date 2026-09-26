@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-import { managedBraveProfile } from "../../../../test/fixtures/openshell-provider-profile";
+import {
+  managedBraveProfile,
+  managedTavilyProfile,
+} from "../../../../test/fixtures/openshell-provider-profile";
 import { createProviders } from "./providers";
 import { createSandboxes } from "./sandboxes";
 import { createSandboxConfig } from "./sandbox-config";
@@ -89,6 +92,123 @@ function nativeNvidiaFixture() {
 }
 
 describe("OpenShell provider evidence", () => {
+  it.each(["openclaw", "hermes"] as const)(
+    "qualifies the %s Tavily rules without an access preset or credential reads (#12138)",
+    async (agent) => {
+      const { raw, connect } = fixture();
+      const profile = managedTavilyProfile(agent);
+      const profileContract = agent === "hermes" ? "tavily-hermes-v1" : "tavily";
+      const readCredential = vi.fn(() => {
+        throw new Error(canary);
+      });
+      raw.getProvider.mockResolvedValue({
+        provider: {
+          ...provider().provider,
+          type: profileContract,
+          profileWorkspace: "default",
+          credentials: Object.defineProperty({}, "TAVILY_API_KEY", {
+            enumerable: true,
+            get: readCredential,
+          }),
+          credentialHandles: {},
+          config: {},
+        },
+      });
+      raw.getProviderProfile.mockResolvedValue({ profile });
+      const input = { ...request(), configKeys: [], profileContract } as const;
+      const result = await createProviders(connect).get(input);
+      expect(result).toMatchObject({
+        type: profileContract,
+        credentialKeys: ["TAVILY_API_KEY"],
+        configKeys: [],
+        config: {},
+        profileWorkspace: "default",
+        managedProfile: {
+          id: profileContract,
+          source: "user",
+          scope: "workspace",
+          resourceVersion: "4",
+        },
+      });
+      expect(raw.getProviderProfile).toHaveBeenCalledExactlyOnceWith(
+        { id: profileContract, workspace: "default" },
+        { signal: input.signal },
+      );
+      expect(readCredential).not.toHaveBeenCalled();
+      expect(JSON.stringify(result)).not.toContain(canary);
+      expect(Object.isFrozen(result?.managedProfile)).toBe(true);
+    },
+  );
+
+  describe.each(["openclaw", "hermes"] as const)("%s Tavily profile contract", (agent) => {
+    const profileContract = agent === "hermes" ? "tavily-hermes-v1" : "tavily";
+    const profile = managedTavilyProfile(agent);
+    const credential = profile.credentials[0]!;
+    const endpoint = profile.endpoints[0]!;
+    it.each([
+      ["another agent's profile", { id: agent === "hermes" ? "tavily" : "tavily-hermes-v1" }],
+      ["an unknown profile source", { source: "foreign" }],
+      ["a different scope", { scope: "platform" }],
+      ["an unversioned user profile", { resourceVersion: 0n }],
+      ["discovery metadata", { discovery: {} }],
+      ["unknown profile fields", { $unknown: [{}] }],
+      ["inference capability", { inferenceCapable: true }],
+      [
+        "a different credential variable",
+        { credentials: [{ ...credential, envVars: ["OTHER_KEY"] }] },
+      ],
+      ["header authentication", { credentials: [{ ...credential, authStyle: "header" }] }],
+      [
+        "a different credential header",
+        { credentials: [{ ...credential, headerName: "x-unexpected" }] },
+      ],
+      ["credential refresh", { credentials: [{ ...credential, refresh: {} }] }],
+      ["a foreign endpoint", { endpoints: [{ ...endpoint, host: "foreign.example" }] }],
+      ["a read-write access preset", { endpoints: [{ ...endpoint, access: "read-write" }] }],
+      [
+        "disabled body rewriting",
+        { endpoints: [{ ...endpoint, requestBodyCredentialRewrite: false }] },
+      ],
+      ["missing request rules", { endpoints: [{ ...endpoint, rules: [] }] }],
+      [
+        "a wildcard request path",
+        {
+          endpoints: [
+            { ...endpoint, rules: [{ allow: { ...endpoint.rules[0]!.allow, path: "/*" } }] },
+          ],
+        },
+      ],
+      [
+        "unknown request rule fields",
+        {
+          endpoints: [
+            {
+              ...endpoint,
+              rules: [
+                { allow: { ...endpoint.rules[0]!.allow, $unknown: [{}] } },
+                endpoint.rules[1],
+              ],
+            },
+          ],
+        },
+      ],
+      [
+        "a different credential binding",
+        { endpoints: [{ ...endpoint, credentialBinding: { provider: "other" } }] },
+      ],
+      ["a different executable", { binaries: [{ path: "/usr/bin/python" }] }],
+    ] as const)("rejects %s (#12138)", async (_label, change) => {
+      const { raw, connect } = fixture();
+      raw.getProvider.mockResolvedValue({
+        provider: { ...provider().provider, type: profileContract, profileWorkspace: "default" },
+      });
+      raw.getProviderProfile.mockResolvedValue({ profile: { ...profile, ...change } });
+      await expect(
+        createProviders(connect).get({ ...request(), configKeys: [], profileContract }),
+      ).rejects.toMatchObject({ kind: "schema" });
+    });
+  });
+
   it("returns requested config values and credential names without secret material", async () => {
     const { connect, raw } = fixture();
     const input = request();
@@ -201,6 +321,10 @@ describe("OpenShell provider evidence", () => {
     { label: "missing credentials", change: { credentials: [] } },
     { label: "missing binaries", change: { binaries: [] } },
     { label: "discovery override", change: { discovery: {} } },
+    {
+      label: "an empty access preset",
+      change: { endpoints: [{ ...managedBraveProfile().endpoints[0], access: "" }] },
+    },
   ])("rejects managed Brave profiles with $label (#10904)", async ({ change }) => {
     const { connect, raw } = fixture();
     raw.getProvider.mockResolvedValue({

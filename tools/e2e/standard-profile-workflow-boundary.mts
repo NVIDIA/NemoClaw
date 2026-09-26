@@ -87,6 +87,19 @@ const PROFILE_JOBS = {
     githubToken: false,
     maxParallel: 2,
   },
+  "tavily-nvidia-inference": {
+    job: "catalogue-tavily-nvidia-inference",
+    matrix: "catalogue_tavily_nvidia_inference_matrix",
+    credentialBoundary: "Tavily and NVIDIA inference API keys",
+    secrets: [
+      "DOCKERHUB_TOKEN",
+      "DOCKERHUB_USERNAME",
+      "NVIDIA_INFERENCE_API_KEY",
+      "TAVILY_API_KEY",
+    ],
+    githubToken: false,
+    maxParallel: 2,
+  },
 } as const;
 
 function record(value: unknown): WorkflowRecord {
@@ -280,13 +293,14 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     "NVIDIA_API_KEY",
     "NVIDIA_INFERENCE_API_KEY",
     "BRAVE_API_KEY",
+    "TAVILY_API_KEY",
   ];
   const declaredSecrets = record(call.secrets);
   if (
     Object.keys(declaredSecrets).sort().join(",") !== acceptedSecrets.sort().join(",") ||
     acceptedSecrets.some((name) => record(declaredSecrets[name]).required !== false)
   ) {
-    errors.push("standard E2E profile must accept only its five optional profile secrets");
+    errors.push("standard E2E profile must accept only its declared optional profile secrets");
   }
   if (record(profile.permissions).contents !== "read") {
     errors.push("standard E2E profile permissions must be contents: read");
@@ -633,6 +647,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     executeEnv.COMPATIBLE_API_KEY !==
       "${{ inputs.compatible_api_key && inputs.trusted_main && secrets.NVIDIA_INFERENCE_API_KEY || '' }}" ||
     executeEnv.BRAVE_API_KEY !== "${{ inputs.trusted_main && secrets.BRAVE_API_KEY || '' }}" ||
+    executeEnv.TAVILY_API_KEY !== "${{ inputs.trusted_main && secrets.TAVILY_API_KEY || '' }}" ||
     executeEnv.GITHUB_TOKEN !==
       "${{ inputs.github_token && inputs.trusted_main && github.token || '' }}"
   ) {

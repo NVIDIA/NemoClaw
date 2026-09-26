@@ -63,6 +63,50 @@ const ManagedProfileIdentity = {
   resourceVersion: VersionSchema,
   discovery: Type.Optional(Type.Undefined()),
 };
+const ManagedRestEndpointFields = {
+  ...NoUnknownProfileFields,
+  port: Type.Literal(443),
+  ports: Type.Union([Type.Tuple([]), Type.Tuple([Type.Literal(443)])]),
+  protocol: Type.Literal("rest"),
+  tls: Type.Literal(""),
+  enforcement: Type.Literal("enforce"),
+  allowedIps: Type.Tuple([]),
+  denyRules: Type.Tuple([]),
+  allowEncodedSlash: Type.Literal(false),
+  persistedQueries: Type.Literal(""),
+  graphqlPersistedQueries: Type.Object({}, { additionalProperties: false }),
+  graphqlMaxBodyBytes: Type.Literal(0),
+  path: Type.Literal(""),
+  websocketCredentialRewrite: Type.Literal(false),
+  advisorProposed: Type.Literal(false),
+  credentialSigning: Type.Literal(""),
+  signingService: Type.Literal(""),
+  signingRegion: Type.Literal(""),
+  jsonRpcMaxBodyBytes: Type.Literal(0),
+  mcp: Type.Optional(Type.Undefined()),
+  credentialBinding: Type.Optional(Type.Undefined()),
+};
+const ManagedSearchCredentialFields = {
+  ...NoUnknownProfileFields,
+  name: Type.Literal("api_key"),
+  required: Type.Literal(true),
+  queryParam: Type.Literal(""),
+  pathTemplate: Type.Literal(""),
+  refresh: Type.Optional(Type.Undefined()),
+  tokenGrant: Type.Optional(Type.Undefined()),
+};
+function profileBinaries(paths: readonly string[]) {
+  return Type.Tuple(
+    paths.map((path) => Type.Object({ ...NoUnknownProfileFields, path: Type.Literal(path) })),
+  );
+}
+const WebClientBinaries = [
+  "/usr/local/bin/node",
+  "/usr/bin/node",
+  "/usr/local/bin/curl",
+  "/usr/bin/curl",
+] as const;
+
 // Match the current checked-in profiles, including credential rewriting and egress.
 export const ManagedBraveProfileResponseSchema = Type.Object({
   profile: Type.Object({
@@ -71,55 +115,77 @@ export const ManagedBraveProfileResponseSchema = Type.Object({
     inferenceCapable: Type.Literal(false),
     endpoints: Type.Tuple([
       Type.Object({
-        ...NoUnknownProfileFields,
+        ...ManagedRestEndpointFields,
         host: Type.Literal("api.search.brave.com"),
-        port: Type.Literal(443),
-        ports: Type.Union([Type.Tuple([]), Type.Tuple([Type.Literal(443)])]),
-        protocol: Type.Literal("rest"),
-        tls: Type.Literal(""),
-        enforcement: Type.Literal("enforce"),
         access: Type.Literal("read-write"),
         rules: Type.Tuple([]),
-        allowedIps: Type.Tuple([]),
-        denyRules: Type.Tuple([]),
-        allowEncodedSlash: Type.Literal(false),
-        persistedQueries: Type.Literal(""),
-        graphqlPersistedQueries: Type.Object({}, { additionalProperties: false }),
-        graphqlMaxBodyBytes: Type.Literal(0),
-        path: Type.Literal(""),
-        websocketCredentialRewrite: Type.Literal(false),
         requestBodyCredentialRewrite: Type.Literal(false),
-        advisorProposed: Type.Literal(false),
-        credentialSigning: Type.Literal(""),
-        signingService: Type.Literal(""),
-        signingRegion: Type.Literal(""),
-        jsonRpcMaxBodyBytes: Type.Literal(0),
-        mcp: Type.Optional(Type.Undefined()),
-        credentialBinding: Type.Optional(Type.Undefined()),
       }),
     ]),
     credentials: Type.Tuple([
       Type.Object({
-        ...NoUnknownProfileFields,
-        name: Type.Literal("api_key"),
+        ...ManagedSearchCredentialFields,
         envVars: Type.Tuple([Type.Literal("BRAVE_API_KEY")]),
-        required: Type.Literal(true),
         authStyle: Type.Literal("header"),
         headerName: Type.Literal("x-subscription-token"),
-        queryParam: Type.Literal(""),
-        pathTemplate: Type.Literal(""),
-        refresh: Type.Optional(Type.Undefined()),
-        tokenGrant: Type.Optional(Type.Undefined()),
       }),
     ]),
-    binaries: Type.Tuple([
-      Type.Object({ ...NoUnknownProfileFields, path: Type.Literal("/usr/local/bin/node") }),
-      Type.Object({ ...NoUnknownProfileFields, path: Type.Literal("/usr/bin/node") }),
-      Type.Object({ ...NoUnknownProfileFields, path: Type.Literal("/usr/local/bin/curl") }),
-      Type.Object({ ...NoUnknownProfileFields, path: Type.Literal("/usr/bin/curl") }),
-    ]),
+    binaries: profileBinaries(WebClientBinaries),
   }),
 });
+
+function tavilyRule(path: "/search" | "/extract") {
+  return Type.Object({
+    ...NoUnknownProfileFields,
+    allow: Type.Object({
+      ...NoUnknownProfileFields,
+      method: Type.Literal("POST"),
+      path: Type.Literal(path),
+      command: Type.Literal(""),
+      query: Type.Object({}, { additionalProperties: false }),
+      params: Type.Object({}, { additionalProperties: false }),
+      operationType: Type.Literal(""),
+      operationName: Type.Literal(""),
+      fields: Type.Tuple([]),
+    }),
+  });
+}
+function tavilyProfile(id: "tavily" | "tavily-hermes-v1", binaries: readonly string[]) {
+  return Type.Object({
+    profile: Type.Object({
+      ...ManagedProfileIdentity,
+      id: Type.Literal(id),
+      inferenceCapable: Type.Literal(false),
+      endpoints: Type.Tuple([
+        Type.Object({
+          ...ManagedRestEndpointFields,
+          host: Type.Literal("api.tavily.com"),
+          access: Type.Literal(""),
+          rules: Type.Tuple([tavilyRule("/search"), tavilyRule("/extract")]),
+          requestBodyCredentialRewrite: Type.Literal(true),
+        }),
+      ]),
+      credentials: Type.Tuple([
+        Type.Object({
+          ...ManagedSearchCredentialFields,
+          envVars: Type.Tuple([Type.Literal("TAVILY_API_KEY")]),
+          authStyle: Type.Literal("bearer"),
+          headerName: Type.Literal("authorization"),
+        }),
+      ]),
+      binaries: profileBinaries(binaries),
+    }),
+  });
+}
+export const ManagedTavilyProfileResponseSchema = tavilyProfile("tavily", [
+  "/opt/venv/bin/python3*",
+  ...WebClientBinaries,
+]);
+export const ManagedHermesTavilyProfileResponseSchema = tavilyProfile("tavily-hermes-v1", [
+  "/opt/hermes/.venv/bin/python",
+  "/usr/local/bin/curl",
+  "/usr/bin/curl",
+]);
 export const ManagedOpenAiProfileResponseSchema = Type.Object({
   profile: Type.Object({
     ...ManagedProfileIdentity,

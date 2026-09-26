@@ -116,6 +116,8 @@ on:
         required: false
       BRAVE_API_KEY:
         required: false
+      TAVILY_API_KEY:
+        required: false
 
 permissions:
   contents: read
@@ -507,7 +509,7 @@ jobs:
         run: |
           set -euo pipefail
           env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN \
-            -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u BRAVE_API_KEY -u GITHUB_TOKEN \
+            -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u BRAVE_API_KEY -u TAVILY_API_KEY -u GITHUB_TOKEN \
             -u COMPATIBLE_API_KEY bash scripts/install-openshell.sh
 
       - name: Run catalogue E2E target
@@ -519,6 +521,7 @@ jobs:
           NVIDIA_INFERENCE_API_KEY: ${{ inputs.trusted_main && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
           COMPATIBLE_API_KEY: ${{ inputs.compatible_api_key && inputs.trusted_main && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
           BRAVE_API_KEY: ${{ inputs.trusted_main && secrets.BRAVE_API_KEY || '' }}
+          TAVILY_API_KEY: ${{ inputs.trusted_main && secrets.TAVILY_API_KEY || '' }}
           GITHUB_TOKEN: ${{ inputs.github_token && inputs.trusted_main && github.token || '' }}
         run: |
           set -euo pipefail

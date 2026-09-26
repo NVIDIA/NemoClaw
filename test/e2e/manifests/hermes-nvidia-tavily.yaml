@@ -1,0 +1,25 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: nemoclaw.io/v1
+kind: NemoClawInstance
+metadata:
+  name: hermes-nvidia-tavily
+spec:
+  setup:
+    install:
+      source: repo-current
+    runtime:
+      containerEngine: docker
+    platform:
+      os: ubuntu
+  onboarding:
+    agent: hermes
+    provider: nvidia
+    policyTier: balanced
+    messaging: []
+    features:
+      webSearch: true
+  state:
+    credentialRefs:
+      - NVIDIA_INFERENCE_API_KEY
+      - TAVILY_API_KEY

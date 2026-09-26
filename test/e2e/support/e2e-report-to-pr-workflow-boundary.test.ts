@@ -322,6 +322,7 @@ it.each([
   ["catalogue-nvidia-inference", "NVIDIA inference API key"],
   ["catalogue-github-read", "GitHub read token"],
   ["catalogue-brave-nvidia-inference", "Brave and NVIDIA inference API keys"],
+  ["catalogue-tavily-nvidia-inference", "Tavily and NVIDIA inference API keys"],
 ])("attributes %s matrix failures to the catalogue profile", (profile, boundary) => {
   const report = renderE2eReport({
     needs: { "generate-matrix": { result: "success" }, [profile]: { result: "failure" } },

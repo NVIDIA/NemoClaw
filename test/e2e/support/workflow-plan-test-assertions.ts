@@ -18,6 +18,7 @@ export function expectedWorkflowPlanCiOutput(
     `catalogue_nvidia_inference_matrix=${JSON.stringify(plan.catalogueMatrices["nvidia-inference"])}`,
     `catalogue_github_read_matrix=${JSON.stringify(plan.catalogueMatrices["github-read"])}`,
     `catalogue_brave_nvidia_inference_matrix=${JSON.stringify(plan.catalogueMatrices["brave-nvidia-inference"])}`,
+    `catalogue_tavily_nvidia_inference_matrix=${JSON.stringify(plan.catalogueMatrices["tavily-nvidia-inference"])}`,
     `gateway_runtimes=${JSON.stringify(plan.gatewayRuntimes)}`,
     `runtime_providers_by_job=${JSON.stringify(plan.runtimeProvidersByJob)}`,
     `selected_jobs=${JSON.stringify(plan.selectedJobs)}`,

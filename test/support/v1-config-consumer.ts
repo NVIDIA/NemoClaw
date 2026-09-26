@@ -88,6 +88,15 @@ export interface PinnedV1ConsumerEvidence {
   openclawNativeSettings?: Record<string, PinnedV1OpenClawNativeSettings>;
   openclawNativeSettingsVerified?: number;
   hermesNativeSettingsVerified?: number;
+  webSearch?: Record<
+    string,
+    {
+      provider: "brave" | "tavily";
+      credentialReference: string;
+      agentRefs: string[];
+      nativeProvider: "brave" | "tavily";
+    }
+  >;
 }
 
 /** Parse an exact export and generate its native settings with the pinned v1 consumer. */
