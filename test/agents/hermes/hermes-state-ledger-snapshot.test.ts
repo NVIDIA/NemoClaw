@@ -399,6 +399,37 @@ describe("Hermes legacy dashboard-state migration", () => {
     expect(fs.readFileSync(legacyConfig, "utf8")).toBe("model: user-dashboard-edit\n");
   });
 
+  it("preserves legacy configuration with duplicate YAML keys at any mapping depth", () => {
+    const { hermes } = dashboardMigrationFixture();
+    const legacyConfig = path.join(hermes, "profiles/dashboard-home/config.yaml");
+    const nativeConfig = [
+      "model:",
+      "  default: nvidia/model",
+      "  provider: routed",
+      "  base_url: https://inference.local/v1",
+      "  api_key: sk-OPENSHELL-PROXY-REWRITE",
+      "",
+    ].join("\n");
+    const ambiguousConfig = [
+      "model:",
+      "  default: user-edited/model",
+      "  default: nvidia/model",
+      "  provider: routed",
+      "  base_url: https://inference.local/v1",
+      "  api_key: sk-OPENSHELL-PROXY-REWRITE",
+      "",
+    ].join("\n");
+    writeDashboardMigrationFile(path.join(hermes, "config.yaml"), nativeConfig);
+    writeDashboardMigrationFile(legacyConfig, ambiguousConfig);
+
+    const result = runDashboardMigration(hermes);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("conflicts with native state");
+    expect(fs.readFileSync(path.join(hermes, "config.yaml"), "utf8")).toBe(nativeConfig);
+    expect(fs.readFileSync(legacyConfig, "utf8")).toBe(ambiguousConfig);
+  });
+
   it("discards a verified generated dashboard projection that differs from native config", () => {
     const { hermes } = dashboardMigrationFixture();
     const legacy = path.join(hermes, "profiles/dashboard-home");
@@ -538,6 +569,36 @@ describe("Hermes legacy dashboard-state migration", () => {
     expect(fs.existsSync(path.join(hermes, "gateway_state.json"))).toBe(false);
     expect(fs.existsSync(legacy)).toBe(false);
   });
+
+  it.skipIf(!canRunSqlite)(
+    "backs up legacy dashboard SQLite state and retires runtime-only artifacts",
+    () => {
+      const { hermes } = dashboardMigrationFixture();
+      const legacy = path.join(hermes, "profiles/dashboard-home");
+      const runtime = path.join(hermes, "runtime");
+      const nativeLogs = path.join(hermes, "logs");
+      fs.mkdirSync(runtime);
+      fs.mkdirSync(nativeLogs);
+      fs.symlinkSync("runtime/state.db", path.join(hermes, "state.db"));
+      createLedger(path.join(legacy, "state.db"), "legacy-dashboard");
+      writeDashboardMigrationFile(path.join(legacy, "gateway.lock"), "stale lock\n");
+      writeDashboardMigrationFile(path.join(legacy, "gateway.pid"), "123\n");
+      writeDashboardMigrationFile(path.join(legacy, "state.db-wal"), "stale wal\n");
+      writeDashboardMigrationFile(path.join(legacy, "state.db-shm"), "stale shm\n");
+      writeDashboardMigrationFile(path.join(legacy, "logs/dashboard.log"), "stale log\n");
+      writeDashboardMigrationFile(path.join(nativeLogs, "gateway.log"), "native log\n");
+
+      const result = runDashboardMigration(hermes);
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(readLedger(path.join(runtime, "state.db"))).toBe("legacy-dashboard");
+      expect(fs.readlinkSync(path.join(hermes, "state.db"))).toBe("runtime/state.db");
+      expect(fs.readFileSync(path.join(nativeLogs, "gateway.log"), "utf8")).toBe("native log\n");
+      expect(fs.existsSync(legacy)).toBe(false);
+      expect(fs.existsSync(path.join(hermes, "gateway.lock"))).toBe(false);
+      expect(fs.existsSync(path.join(hermes, "gateway.pid"))).toBe(false);
+    },
+  );
 
   it("does not treat a generated-only legacy root as ambiguous user state", () => {
     const { hermes } = dashboardMigrationFixture();

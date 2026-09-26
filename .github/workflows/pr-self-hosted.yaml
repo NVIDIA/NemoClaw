@@ -54,9 +54,15 @@ jobs:
             echo "::error::Copied PR branch SHA does not match the current PR head" >&2
             exit 1
           }
-          if gh api --paginate --slurp \
+          changed_files="$(gh api --paginate --slurp \
             "repos/$GITHUB_REPOSITORY/pulls/$pr_number/files?per_page=100" \
-            | jq -e '
+          )"
+          jq -e '
+            type == "array"
+            and all(.[]; type == "array")
+            and all(.[][]; type == "object" and (.filename | type == "string"))
+          ' <<<"$changed_files" >/dev/null
+          if jq -e '
               flatten
               | any(
                   .filename == ".github/workflows/pr-self-hosted.yaml"
@@ -64,6 +70,7 @@ jobs:
                   or .filename == "package.json"
                   or .filename == "package-lock.json"
                   or .filename == "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.116.json"
+                  or .filename == "src/lib/actions/sandbox/runtime/hermes-lifecycle.ts"
                   or .filename == "test/e2e/live/hermes-root-entrypoint-smoke.test.ts"
                   or .filename == "test/e2e/live/hermes-sandbox-secret-boundary.test.ts"
                   or .filename == "test/e2e/mock-parity.json"
@@ -78,7 +85,7 @@ jobs:
                   or (.filename | startswith("tsconfig"))
                   or (.filename | startswith("vitest."))
                 )
-            ' >/dev/null; then
+            ' <<<"$changed_files" >/dev/null; then
             selected=true
           else
             selected=false
@@ -353,7 +360,6 @@ jobs:
           build_args=(--build-arg "BASE_IMAGE=${BASE_IMAGE}")
           scripts/check-production-build-args.sh "${build_args[@]}"
           docker build "${build_args[@]}" -t nemoclaw-production-arm64 .
-
 
   managed-image-openclaw-security:
     runs-on: linux-amd64-cpu4

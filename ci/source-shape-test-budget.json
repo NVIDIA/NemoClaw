@@ -148,6 +148,16 @@
     },
     {
       "file": "test/e2e/support/pr-self-hosted-llama-selector.test.ts",
+      "test": "selects Hermes qualification for a Hermes lifecycle source-only change",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/pr-self-hosted-llama-selector.test.ts",
+      "test": "fails Hermes qualification when changed files cannot be fetched",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/pr-self-hosted-llama-selector.test.ts",
       "test": "skips Hermes qualification for unrelated documentation",
       "category": "security"
     },

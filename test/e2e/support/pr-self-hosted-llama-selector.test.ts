@@ -132,6 +132,7 @@ async function executeSelector(
   changedFiles: readonly string[],
   copiedSha = CANDIDATE_SHA,
   baseSha = BASE_SHA,
+  filesRequestStatus = 0,
 ) {
   const directory = mkdtempSync(join(tmpdir(), `nemoclaw-${fixtureName}-selector-`));
   const binDirectory = join(directory, "bin");
@@ -146,6 +147,7 @@ if [[ "\${!#}" == "repos/NVIDIA/NemoClaw/pulls/8748" ]]; then
   printf '%s' "$PR_JSON"
 else
   printf '%s' "$PR_FILES_JSON"
+  exit "$PR_FILES_EXIT"
 fi
 `,
   );
@@ -165,6 +167,7 @@ fi
         GITHUB_SHA: copiedSha,
         PATH: `${binDirectory}:${process.env.PATH ?? ""}`,
         PR_FILES_JSON: JSON.stringify([changedFiles.map((filename) => ({ filename }))]),
+        PR_FILES_EXIT: String(filesRequestStatus),
         PR_JSON: JSON.stringify({
           number: 8748,
           base: { sha: baseSha },
@@ -172,8 +175,10 @@ fi
         }),
       },
     );
-    assert.equal(result.status, 0, result.stderr);
-    return readFileSync(outputPath, "utf8").trim();
+    assert.equal(result.status, filesRequestStatus, result.stderr);
+    return filesRequestStatus === 0
+      ? readFileSync(outputPath, "utf8").trim()
+      : `status=${result.status}`;
   } finally {
     rmSync(directory, { force: true, recursive: true });
   }
@@ -191,6 +196,7 @@ function selectHermesRootEntrypoint(
   changedFiles: readonly string[],
   copiedSha = CANDIDATE_SHA,
   baseSha = BASE_SHA,
+  filesRequestStatus = 0,
 ) {
   return executeSelector(
     hermesSelectorScript(),
@@ -198,6 +204,7 @@ function selectHermesRootEntrypoint(
     changedFiles,
     copiedSha,
     baseSha,
+    filesRequestStatus,
   );
 }
 
@@ -265,6 +272,22 @@ describe.concurrent("generic NVIDIA GPU PR selection", () => {
     await expect(selectHermesRootEntrypoint(["agents/hermes/start.sh"])).resolves.toBe(
       "selected=true",
     );
+  });
+
+  // source-shape-contract: security -- Hermes lifecycle source changes must retain copied-PR root-entrypoint qualification
+  it("selects Hermes qualification for a Hermes lifecycle source-only change", async ({
+    expect,
+  }) => {
+    await expect(
+      selectHermesRootEntrypoint(["src/lib/actions/sandbox/runtime/hermes-lifecycle.ts"]),
+    ).resolves.toBe("selected=true");
+  });
+
+  // source-shape-contract: security -- Changed-file discovery failures must stop trusted copied-PR qualification instead of silently skipping it
+  it("fails Hermes qualification when changed files cannot be fetched", async ({ expect }) => {
+    await expect(
+      selectHermesRootEntrypoint(["agents/hermes/start.sh"], CANDIDATE_SHA, BASE_SHA, 17),
+    ).resolves.toBe("status=17");
   });
 
   // source-shape-contract: security -- Executes the copied-PR selector to prove unrelated documentation cannot consume trusted Hermes image runners

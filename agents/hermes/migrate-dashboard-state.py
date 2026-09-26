@@ -18,7 +18,9 @@ import copy
 import errno
 import hashlib
 import os
+import secrets
 import signal
+import sqlite3
 import stat
 import sys
 from dataclasses import dataclass
@@ -42,6 +44,9 @@ MANAGED_SHADOW_FILES = frozenset(
     }
 )
 VERIFIABLE_SHADOW_FILES = frozenset({"config.yaml", ".env"})
+LEGACY_STATE_DATABASE = "state.db"
+STALE_RUNTIME_FILES = frozenset({"gateway.lock", "gateway.pid", "state.db-shm", "state.db-wal"})
+STALE_RUNTIME_DIRECTORIES = frozenset({"logs"})
 MAX_VERIFICATION_BYTES = 4 * 1024 * 1024
 LEGACY_PATHS = ("dashboard-home", "profiles/dashboard-home")
 DEFAULT_MAX_ENTRIES = 100_000
@@ -248,6 +253,44 @@ def _is_subset_equal(candidate: object, reference: object) -> bool:
     return candidate == reference
 
 
+def _load_unique_yaml(text: str) -> object:
+    import yaml
+
+    class UniqueKeyLoader(yaml.SafeLoader):
+        pass
+
+    def construct_unique_mapping(
+        loader: UniqueKeyLoader, node: yaml.nodes.MappingNode, deep: bool = False
+    ) -> dict:
+        mapping: dict = {}
+        for key_node, value_node in node.value:
+            key = loader.construct_object(key_node, deep=deep)
+            try:
+                duplicate = key in mapping
+            except TypeError as exc:
+                raise yaml.constructor.ConstructorError(
+                    "while constructing a mapping",
+                    node.start_mark,
+                    "found an unhashable mapping key",
+                    key_node.start_mark,
+                ) from exc
+            if duplicate:
+                raise yaml.constructor.ConstructorError(
+                    "while constructing a mapping",
+                    node.start_mark,
+                    f"found duplicate key {key!r}",
+                    key_node.start_mark,
+                )
+            mapping[key] = loader.construct_object(value_node, deep=deep)
+        return mapping
+
+    UniqueKeyLoader.add_constructor(
+        yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
+        construct_unique_mapping,
+    )
+    return yaml.load(text, Loader=UniqueKeyLoader)
+
+
 def _verified_generated_config(
     source_fd: int,
     source_name: str,
@@ -262,10 +305,8 @@ def _verified_generated_config(
     if source_text is None or target_text is None:
         return False
     try:
-        import yaml
-
-        source = yaml.safe_load(source_text)
-        target = yaml.safe_load(target_text)
+        source = _load_unique_yaml(source_text)
+        target = _load_unique_yaml(target_text)
     except Exception:
         return False
     if not isinstance(source, dict) or not isinstance(target, dict):
@@ -394,6 +435,14 @@ def _source_has_user_state(
             if not stat.S_ISREG(source.mode):
                 raise MigrationError(f"generated shadow path {source_path} is not a regular file")
             continue
+        if name in STALE_RUNTIME_FILES:
+            if not stat.S_ISREG(source.mode):
+                raise MigrationError(f"stale runtime path {source_path} is not a regular file")
+            continue
+        if name in STALE_RUNTIME_DIRECTORIES:
+            if not stat.S_ISDIR(source.mode):
+                raise MigrationError(f"stale runtime path {source_path} is not a directory")
+            continue
         if name in VERIFIABLE_SHADOW_FILES and stat.S_ISREG(source.mode):
             target_path = f"{target_display}/{name}"
             if _lookup(target_fd, name) is not None and _is_verified_generated_shadow(
@@ -417,6 +466,45 @@ def _lookup(parent_fd: int, name: str) -> os.stat_result | None:
         return None
 
 
+def _open_native_runtime_directory(target_fd: int, target_display: str) -> int:
+    runtime = _lookup(target_fd, "runtime")
+    if runtime is None:
+        raise MigrationError(f"native Hermes runtime directory is missing at {target_display}/runtime")
+    if not stat.S_ISDIR(runtime.st_mode):
+        raise MigrationError(
+            f"native Hermes runtime path is not a safe directory at {target_display}/runtime"
+        )
+    return _open_dir(target_fd, "runtime", f"{target_display}/runtime")
+
+
+def _validate_native_state_destination(target_fd: int, target_display: str) -> int:
+    compatibility = _lookup(target_fd, LEGACY_STATE_DATABASE)
+    if compatibility is not None:
+        if not stat.S_ISLNK(compatibility.st_mode):
+            raise MigrationError(
+                f"native Hermes state path conflicts at {target_display}/{LEGACY_STATE_DATABASE}"
+            )
+        try:
+            link_target = os.readlink(LEGACY_STATE_DATABASE, dir_fd=target_fd)
+        except OSError as exc:
+            raise MigrationError(
+                f"native Hermes state link could not be inspected: {exc.strerror}"
+            ) from exc
+        if link_target != "runtime/state.db":
+            raise MigrationError(
+                f"native Hermes state link has an unexpected target at "
+                f"{target_display}/{LEGACY_STATE_DATABASE}"
+            )
+    runtime_fd = _open_native_runtime_directory(target_fd, target_display)
+    if _lookup(runtime_fd, LEGACY_STATE_DATABASE) is not None:
+        os.close(runtime_fd)
+        raise MigrationError(
+            f"legacy dashboard state conflicts with native state at "
+            f"{target_display}/runtime/{LEGACY_STATE_DATABASE}"
+        )
+    return runtime_fd
+
+
 def _preflight_tree(
     source_fd: int,
     source_display: str,
@@ -432,6 +520,25 @@ def _preflight_tree(
         source = _identity(source_fd, name, source_path)
         budget.consume(source, source_path, depth)
         at_legacy_root = source_display.rsplit("/", 1)[-1] == "dashboard-home"
+        if at_legacy_root and name == LEGACY_STATE_DATABASE:
+            if not stat.S_ISREG(source.mode):
+                raise MigrationError(f"legacy state database {source_path} is not a regular file")
+            runtime_fd = _validate_native_state_destination(target_fd, target_display)
+            os.close(runtime_fd)
+            continue
+        if at_legacy_root and name in STALE_RUNTIME_FILES:
+            if not stat.S_ISREG(source.mode):
+                raise MigrationError(f"stale runtime path {source_path} is not a regular file")
+            continue
+        if at_legacy_root and name in STALE_RUNTIME_DIRECTORIES:
+            if not stat.S_ISDIR(source.mode):
+                raise MigrationError(f"stale runtime path {source_path} is not a directory")
+            child = _open_dir(source_fd, name, source_path)
+            try:
+                _preflight_tree(child, source_path, child, source_path, policy, budget, depth + 1)
+            finally:
+                os.close(child)
+            continue
         if at_legacy_root and name in MANAGED_SHADOW_FILES:
             if not stat.S_ISREG(source.mode):
                 raise MigrationError(f"generated shadow path {source_path} is not a regular file")
@@ -603,6 +710,138 @@ def _unlink_verified(
         raise
 
 
+def _migrate_legacy_state_database(
+    source_fd: int,
+    source_name: str,
+    source_display: str,
+    target_fd: int,
+    target_display: str,
+) -> None:
+    before = _identity(source_fd, source_name, source_display)
+    if not stat.S_ISREG(before.mode):
+        raise MigrationError(f"legacy state database {source_display} is not a regular file")
+    runtime_fd = _validate_native_state_destination(target_fd, target_display)
+    source_file_fd = -1
+    temporary_name: str | None = None
+    published = False
+    try:
+        source_file_fd = _open_file(source_fd, source_name, source_display)
+        if not _matches(before, os.fstat(source_file_fd)):
+            raise MigrationError(f"{source_display} changed before SQLite migration")
+        for _ in range(64):
+            candidate = f".nemoclaw-dashboard-state-{secrets.token_hex(12)}"
+            flags = os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+            flags |= getattr(os, "O_CLOEXEC", 0)
+            try:
+                temporary_fd = os.open(candidate, flags, 0o600, dir_fd=runtime_fd)
+            except FileExistsError:
+                continue
+            os.close(temporary_fd)
+            temporary_name = candidate
+            break
+        if temporary_name is None:
+            raise MigrationError("could not allocate a temporary native Hermes state database")
+
+        descriptor_root = "/proc/self/fd" if os.path.isdir("/proc/self/fd") else "/dev/fd"
+        source_path = f"{descriptor_root}/{source_file_fd}"
+        destination_path = f"{descriptor_root}/{runtime_fd}/{temporary_name}"
+        source_connection: sqlite3.Connection | None = None
+        destination_connection: sqlite3.Connection | None = None
+        try:
+            source_connection = sqlite3.connect(
+                f"file:{source_path}?mode=ro", uri=True, timeout=30
+            )
+            destination_connection = sqlite3.connect(destination_path, timeout=30)
+            destination_connection.execute("PRAGMA busy_timeout=30000")
+            source_connection.backup(destination_connection)
+            integrity = destination_connection.execute("PRAGMA quick_check").fetchone()
+            if integrity != ("ok",):
+                raise MigrationError(
+                    f"legacy state database failed SQLite quick_check: {integrity!r}"
+                )
+        except (OSError, sqlite3.Error) as exc:
+            raise MigrationError(
+                f"legacy state database could not be backed up safely: {exc}"
+            ) from exc
+        finally:
+            if destination_connection is not None:
+                destination_connection.close()
+            if source_connection is not None:
+                source_connection.close()
+
+        current = os.stat(source_name, dir_fd=source_fd, follow_symlinks=False)
+        if not _matches(before, os.fstat(source_file_fd)) or not _matches(before, current):
+            raise MigrationError(f"{source_display} changed during SQLite migration")
+        temporary_fd = _open_file(runtime_fd, temporary_name, destination_path)
+        try:
+            os.fchmod(temporary_fd, stat.S_IMODE(before.mode))
+        finally:
+            os.close(temporary_fd)
+        _rename_no_replace(
+            runtime_fd,
+            temporary_name,
+            runtime_fd,
+            LEGACY_STATE_DATABASE,
+        )
+        published = True
+        temporary_name = None
+        _unlink_verified(source_fd, source_name, source_display, expected=before)
+    except OSError as exc:
+        raise MigrationError(
+            f"legacy state database could not be published safely: {exc.strerror}"
+        ) from exc
+    finally:
+        if source_file_fd >= 0:
+            os.close(source_file_fd)
+        if temporary_name is not None and _lookup(runtime_fd, temporary_name) is not None:
+            os.unlink(temporary_name, dir_fd=runtime_fd)
+        os.close(runtime_fd)
+        if published and _lookup(source_fd, source_name) is not None:
+            raise MigrationError(
+                f"{source_display} was backed up to {target_display}/runtime/state.db but "
+                "the legacy copy could not be retired"
+            )
+
+
+def _discard_runtime_directory(
+    parent_fd: int,
+    name: str,
+    display: str,
+    budget: MigrationBudget,
+    depth: int,
+) -> None:
+    before = _identity(parent_fd, name, display)
+    if not stat.S_ISDIR(before.mode):
+        raise MigrationError(f"stale runtime path {display} is not a directory")
+    child_fd = _open_dir(parent_fd, name, display)
+    try:
+        if not _matches(before, os.fstat(child_fd)):
+            raise MigrationError(f"{display} changed before retirement")
+        for child_name in _entries(child_fd):
+            child_display = f"{display}/{child_name}"
+            child = _identity(child_fd, child_name, child_display)
+            budget.consume(child, child_display, depth)
+            if stat.S_ISDIR(child.mode):
+                _discard_runtime_directory(
+                    child_fd,
+                    child_name,
+                    child_display,
+                    budget,
+                    depth + 1,
+                )
+            else:
+                _unlink_verified(child_fd, child_name, child_display, expected=child)
+        current = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+        if not _matches(before, os.fstat(child_fd)) or not _matches(before, current):
+            raise MigrationError(f"{display} changed during retirement")
+    finally:
+        os.close(child_fd)
+    try:
+        os.rmdir(name, dir_fd=parent_fd)
+    except OSError as exc:
+        raise MigrationError(f"{display} could not be retired safely: {exc.strerror}") from exc
+
+
 def _remove_generated_file(parent_fd: int, name: str, display: str) -> None:
     _unlink_verified(parent_fd, name, display)
 
@@ -677,6 +916,27 @@ def _merge_tree(
         source = _identity(source_fd, name, source_path)
         budget.consume(source, source_path, depth)
         at_legacy_root = source_display.rsplit("/", 1)[-1] == "dashboard-home"
+        if at_legacy_root and name == LEGACY_STATE_DATABASE:
+            _migrate_legacy_state_database(
+                source_fd,
+                name,
+                source_path,
+                target_fd,
+                target_display,
+            )
+            continue
+        if at_legacy_root and name in STALE_RUNTIME_FILES:
+            _unlink_verified(source_fd, name, source_path, expected=source)
+            continue
+        if at_legacy_root and name in STALE_RUNTIME_DIRECTORIES:
+            _discard_runtime_directory(
+                source_fd,
+                name,
+                source_path,
+                budget,
+                depth + 1,
+            )
+            continue
         if at_legacy_root and name in MANAGED_SHADOW_FILES:
             _remove_generated_file(source_fd, name, source_path)
             continue
