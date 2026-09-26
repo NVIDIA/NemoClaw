@@ -80,6 +80,7 @@ vi.mock("./serving/vllm-managed-support", async (importOriginal) => {
 });
 
 import { detectVllmProfile, installVllm } from "./vllm";
+import { formatStorageBytes } from "./vllm-storage";
 import {
   applyVllmInstallProbeDefaults,
   createVllmInstallSpies,
@@ -106,6 +107,16 @@ async function resolveActualHostLocalSelection(
   });
   expect(selection.kind).toBe("selected");
   return selection as SelectedHostLocalVllm;
+}
+
+function declaredImageSize(selection: SelectedHostLocalVllm): string {
+  return formatStorageBytes(BigInt(selection.profile.imageDownloadSizeBytes));
+}
+
+function declaredModelSize(selection: SelectedHostLocalVllm): string {
+  return formatStorageBytes(
+    BigInt(selection.profile.modelDownloadSizeBytes ?? selection.model.downloadSizeBytes),
+  );
 }
 
 function vllmInstallTestReadinessAtMemory(profile: VllmProfile, availableMemoryBytes: number) {
@@ -464,6 +475,76 @@ describe("fixed catalog vLLM installs", () => {
     expect(checkpointInstallIntent).toHaveBeenCalledWith("QWEN3.6-35B-A3B-NVFP4");
     expect(checkpointInstallIntent.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.dockerPullWithProgressWatchdog.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("declares the profile and both download sizes before the install gate (#12207)", async () => {
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    const modelIntent = "nemotron-3-nano-4b";
+    const selectedByModel = await resolveActualHostLocalSelection(
+      profile,
+      { NEMOCLAW_VLLM_MODEL: modelIntent },
+      modelIntent,
+    );
+    process.env.NEMOCLAW_SERVING_PRESET = selectedByModel.presetId;
+    const selection = await resolveActualHostLocalSelection(profile, process.env, modelIntent);
+    const readinessReports = vllmInstallTestReadiness(profile, modelIntent);
+    mocks.resolveHostLocalVllmSelection.mockReturnValue(selection);
+    mockSuccessfulVllmInstall(mocks, selection.profile.containerName);
+    mockSuccessfulAuthenticatedReadiness(selection.model.servedModelId ?? selection.model.id);
+    const promptFn = vi.fn(async () => "y");
+
+    const result = await installVllm(profile, {
+      hasImage: false,
+      nonInteractive: false,
+      promptFn,
+      readinessReports,
+      resolveManagedBridgeHost: () => "172.18.0.1",
+    });
+
+    expect(result).toEqual({ ok: true });
+    const declaration = spies.logSpy.mock.calls.map(([line]) => String(line));
+    const gate = promptFn.mock.invocationCallOrder[0]!;
+    const declaredBeforeGate = spies.logSpy.mock.invocationCallOrder
+      .map((order, index) => (order < gate ? declaration[index]! : null))
+      .filter((line): line is string => line !== null);
+    expect(declaredBeforeGate).toContain(`    Serving profile: ${selection.presetId}`);
+    expect(declaredBeforeGate).toContain(`    Recipe: ${selection.recipeId}`);
+    expect(declaredBeforeGate).toContain(
+      `    Image download on first run (${declaredImageSize(selection)}), cached after`,
+    );
+    expect(declaredBeforeGate).toContain(
+      `    Model download on first run (${declaredModelSize(selection)}), cached after`,
+    );
+  });
+
+  it("omits the image size line when the pinned image is already cached", async () => {
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    const modelIntent = "nemotron-3-nano-4b";
+    const selectedByModel = await resolveActualHostLocalSelection(
+      profile,
+      { NEMOCLAW_VLLM_MODEL: modelIntent },
+      modelIntent,
+    );
+    process.env.NEMOCLAW_SERVING_PRESET = selectedByModel.presetId;
+    const selection = await resolveActualHostLocalSelection(profile, process.env, modelIntent);
+    mocks.resolveHostLocalVllmSelection.mockReturnValue(selection);
+    mockSuccessfulVllmInstall(mocks, selection.profile.containerName);
+    mockSuccessfulAuthenticatedReadiness(selection.model.servedModelId ?? selection.model.id);
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+      readinessReports: vllmInstallTestReadiness(profile, modelIntent),
+      resolveManagedBridgeHost: () => "172.18.0.1",
+    });
+
+    expect(result).toEqual({ ok: true });
+    const declaration = spies.logSpy.mock.calls.map(([line]) => String(line));
+    expect(declaration.filter((line) => line.includes("Image download on first run"))).toEqual([]);
+    expect(declaration).toContain(
+      `    Model download on first run (${declaredModelSize(selection)}), cached after`,
     );
   });
 
