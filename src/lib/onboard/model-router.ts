@@ -636,6 +636,12 @@ export async function reconcileModelRouter(): Promise<void> {
     ) {
       console.log(`  ✓ Model router is already healthy on port ${routerPort}`);
       await verifyModelRouterSandboxReachability(routerPort);
+      if (session?.routerPort !== routerPort) {
+        onboardSession.updateSession((current: Session) => {
+          current.routerPort = routerPort;
+          return current;
+        });
+      }
       return;
     }
     if (recordedProcessOwnsRouter) {
@@ -668,6 +674,7 @@ export async function reconcileModelRouter(): Promise<void> {
   console.log(`  ✓ Model router started (PID ${routerPid}) on port ${routerPort}`);
   onboardSession.updateSession((current: Session) => {
     current.routerPid = routerPid;
+    current.routerPort = routerPort;
     current.routerCredentialHash = routerCredentialHash;
     return current;
   });

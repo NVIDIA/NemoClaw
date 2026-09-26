@@ -13,6 +13,8 @@ const holder = vi.hoisted(() => ({
   snapshotCalls: 0,
   stopped: [] as Array<[number, number]>,
   reachabilityProbes: 0,
+  routerPort: 4000 as number | null,
+  updatedRouterPorts: [] as Array<number | null>,
 }));
 
 // `stopModelRouterProcess` throws a sentinel so each case ends at the
@@ -53,9 +55,14 @@ vi.mock("./credential-env", () => ({
 vi.mock("../state/onboard-session", () => ({
   loadSession: () => ({
     routerPid: RECORDED_ROUTER_PID,
+    routerPort: holder.routerPort,
     routerCredentialHash: "MATCHING-HASH",
   }),
-  updateSession: vi.fn(),
+  updateSession: vi.fn((update: (session: { routerPort: number | null }) => unknown) => {
+    const current = { routerPort: holder.routerPort };
+    update(current);
+    holder.updatedRouterPorts.push(current.routerPort);
+  }),
 }));
 
 vi.mock("../security/credential-hash", () => ({ hashCredential: () => "MATCHING-HASH" }));
@@ -75,6 +82,8 @@ describe("model router reconciliation", () => {
     holder.snapshotCalls = 0;
     holder.stopped = [];
     holder.reachabilityProbes = 0;
+    holder.routerPort = 4000;
+    holder.updatedRouterPorts = [];
   });
 
   it("reuses a recorded router whose health snapshot names a healthy endpoint", async () => {
@@ -87,6 +96,19 @@ describe("model router reconciliation", () => {
 
     expect(holder.stopped).toEqual([]);
     expect(holder.reachabilityProbes).toBe(1);
+    expect(holder.updatedRouterPorts).toEqual([]);
+  });
+
+  it("backfills the cleanup port when reusing a legacy router session", async () => {
+    holder.routerPort = null;
+    holder.snapshotBody = JSON.stringify({
+      healthy_endpoints: [{ api_base: "https://integrate.api.nvidia.com/v1" }],
+      unhealthy_endpoints: [],
+    });
+
+    await reconcileModelRouter();
+
+    expect(holder.updatedRouterPorts).toEqual([4000]);
   });
 
   it("restarts a recorded router that answers 2xx with no healthy endpoint (#9437)", async () => {

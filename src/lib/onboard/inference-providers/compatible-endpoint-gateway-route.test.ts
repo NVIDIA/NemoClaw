@@ -29,6 +29,7 @@ import {
 } from "../../core/ports";
 
 import {
+  assertLoopbackNoAuthCompatibleEndpointUrl,
   COMPATIBLE_ENDPOINT_GATEWAY_PORTS,
   gatewayReachableCompatibleEndpointUrl,
   isLoopbackNoAuthCompatibleEndpointUrl,
@@ -131,6 +132,7 @@ describe("compatible endpoint gateway routing", () => {
     ["userinfo", "http://user@localhost:12500/v1"],
     ["query", "http://localhost:12500/v1?tenant=other"],
     ["fragment", "http://localhost:12500/v1#models"],
+    ["dotted loopback", "http://localhost.:12500/v1"],
     ["encoded control", "http://localhost:12500/v1%0ax"],
     ["malformed URL", "not a URL"],
   ])(
@@ -139,6 +141,12 @@ describe("compatible endpoint gateway routing", () => {
       expect(isLoopbackNoAuthCompatibleEndpointUrl(provider, endpointUrl)).toBe(false);
     },
   );
+
+  it("rejects dotted loopback at the final proxy mutation boundary", () => {
+    expect(() => assertLoopbackNoAuthCompatibleEndpointUrl("http://localhost.:12500/v1")).toThrow(
+      /no longer eligible/,
+    );
+  });
 
   it.each(["localhost", "127.0.0.1", "[::1]"])(
     "rewrites exact HTTP loopback hosts on bundled local-inference ports [case %#] (#5744)",

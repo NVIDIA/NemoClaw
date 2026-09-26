@@ -21,11 +21,7 @@ import {
 import { type OpenRegularFile, openRegularFileNoFollow } from "../../adapters/fs/regular-file";
 import { type AgentBranding, getAgentBranding } from "../../cli/branding";
 import { isErrnoException } from "../../core/errno";
-import {
-  DEFAULT_GATEWAY_PORT,
-  GATEWAY_PORT,
-  resolveConfiguredModelRouterPort,
-} from "../../core/ports";
+import { DEFAULT_GATEWAY_PORT, GATEWAY_PORT } from "../../core/ports";
 import { isStdinTty, readLineFromStdin } from "../../core/stdin";
 import { sleepMs } from "../../core/wait";
 import {
@@ -195,7 +191,6 @@ export interface UninstallRunDeps {
   readLine?: () => string | null;
   requireCompleteGatewayProcessCleanup?: boolean;
   resolveGatewayTeardownAuthority?: GatewayTeardownAuthorityResolver;
-  resolveConfiguredModelRouterPort?: typeof resolveConfiguredModelRouterPort;
   retainedGatewayPorts?: readonly number[];
   rmSync?: typeof fs.rmSync;
   run?: (command: string, args: string[], options?: SpawnSyncOptions) => RunResult;
@@ -543,7 +538,6 @@ interface UninstallRuntime {
   readLine: () => string | null;
   requireCompleteGatewayProcessCleanup: boolean;
   resolveGatewayTeardownAuthority: GatewayTeardownAuthorityResolver;
-  resolveConfiguredModelRouterPort: typeof resolveConfiguredModelRouterPort;
   retainedGatewayPorts: readonly number[];
   rmSync: typeof fs.rmSync;
   run: (command: string, args: string[], options?: SpawnSyncOptions) => RunResult;
@@ -610,8 +604,6 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
     requireCompleteGatewayProcessCleanup: deps.requireCompleteGatewayProcessCleanup ?? false,
     resolveGatewayTeardownAuthority:
       deps.resolveGatewayTeardownAuthority ?? resolveGatewayTeardownAuthority,
-    resolveConfiguredModelRouterPort:
-      deps.resolveConfiguredModelRouterPort ?? resolveConfiguredModelRouterPort,
     retainedGatewayPorts: deps.retainedGatewayPorts ?? [],
     rmSync: deps.rmSync ?? fs.rmSync,
     run: deps.run ?? defaultRun,
@@ -1146,21 +1138,45 @@ function stopOllamaAuthProxy(
   if (stopped.size === 0) runtime.log("No Ollama auth proxy processes found");
 }
 
-function resolveModelRouterPort(runtime: UninstallRuntime): number {
-  return runtime.resolveConfiguredModelRouterPort();
+interface RecordedModelRouter {
+  pid: number | null;
+  port: number | null;
+  expected: boolean;
 }
 
-function readOnboardSessionRouterPid(paths: UninstallPaths): number | null {
+function readOnboardSessionModelRouter(paths: UninstallPaths): RecordedModelRouter {
   const sessionFile = path.join(paths.nemoclawStateDir, "onboard-session.json");
   try {
     const raw = fs.readFileSync(sessionFile, "utf-8");
-    const data = JSON.parse(raw) as { routerPid?: unknown };
-    const pid = data.routerPid;
-    if (typeof pid === "number" && Number.isInteger(pid) && pid > 0) return pid;
+    const data = JSON.parse(raw) as {
+      provider?: unknown;
+      routerCredentialHash?: unknown;
+      routerPid?: unknown;
+      routerPort?: unknown;
+    };
+    const pid =
+      typeof data.routerPid === "number" && Number.isInteger(data.routerPid) && data.routerPid > 0
+        ? data.routerPid
+        : null;
+    const port =
+      typeof data.routerPort === "number" &&
+      Number.isInteger(data.routerPort) &&
+      data.routerPort > 0 &&
+      data.routerPort <= 65535
+        ? data.routerPort
+        : null;
+    return {
+      pid,
+      port,
+      expected:
+        data.provider === "nvidia-router" ||
+        pid !== null ||
+        typeof data.routerCredentialHash === "string",
+    };
   } catch {
     /* ignore — State step deletes the file shortly anyway */
   }
-  return null;
+  return { pid: null, port: null, expected: false };
 }
 
 function tryStopModelRouterPid(pid: number, runtime: UninstallRuntime): boolean {
@@ -1183,15 +1199,25 @@ function stopModelRouter(
   runtime: UninstallRuntime,
   scanOrphans = true,
 ): void {
-  // The model router is a detached child started during routed onboard that
-  // listens on port 4000 by default. Without this cleanup, uninstall +
-  // reinstall fails with "Port 4000 already has a healthy router endpoint".
-  // The tracked PID lives in ~/.nemoclaw/onboard-session.json (routerPid), not
-  // a dedicated .pid file. Mirrors stopOllamaAuthProxy() and issue #5169.
+  // The model router is a detached child started during routed onboarding.
+  // Both its PID and exact bound port are recorded in onboard-session.json;
+  // cleanup must not guess from the current blueprint because that blueprint
+  // may have changed since the process started.
   const stopped = new Set<number>();
-  const routerPort = resolveModelRouterPort(runtime);
+  const recorded = readOnboardSessionModelRouter(paths);
+  if (recorded.port === null) {
+    if (recorded.expected) {
+      runtime.warn(
+        "Model Router cleanup is incomplete because its recorded port is missing; refusing to guess from the current blueprint.",
+      );
+    } else {
+      runtime.log("No model router processes found");
+    }
+    return;
+  }
+  const routerPort = recorded.port;
 
-  const recordedPid = readOnboardSessionRouterPid(paths);
+  const recordedPid = recorded.pid;
   if (
     recordedPid !== null &&
     pidOwnedByCurrentUser(recordedPid, runtime) &&

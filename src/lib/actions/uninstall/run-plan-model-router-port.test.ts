@@ -7,18 +7,23 @@ import path from "node:path";
 
 import { expect, it, vi } from "vitest";
 
-import { resolveConfiguredModelRouterPort } from "../../core/ports";
 import { runUninstallPlan, type RunResult } from "./run-plan";
 
 const ok = (stdout = ""): RunResult => ({ status: 0, stdout, stderr: "" });
 const missing = (): RunResult => ({ status: 1, stdout: "", stderr: "" });
 
-it("uses the routed blueprint port to stop an orphan model router", async () => {
+it("uses the recorded router port when the current blueprint changed", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-router-port-"));
   const blueprintDir = path.join(root, "nemoclaw-blueprint");
+  const stateDir = path.join(root, ".nemoclaw");
   const routerPort = 14000;
   const routerPid = 55680;
   fs.mkdirSync(blueprintDir, { recursive: true });
+  fs.mkdirSync(stateDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(stateDir, "onboard-session.json"),
+    JSON.stringify({ provider: "nvidia-router", routerPort }),
+  );
   fs.writeFileSync(
     path.join(blueprintDir, "blueprint.yaml"),
     [
@@ -29,7 +34,7 @@ it("uses the routed blueprint port to stop an orphan model router", async () => 
       "        model: test/model",
       "  router:",
       "    enabled: true",
-      `    port: ${String(routerPort)}`,
+      "    port: 15000",
       "",
     ].join("\n"),
   );
@@ -78,7 +83,6 @@ it("uses the routed blueprint port to stop an orphan model router", async () => 
           return true;
         },
         log: () => undefined,
-        resolveConfiguredModelRouterPort: () => resolveConfiguredModelRouterPort(root),
         resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
           endpoint: null,
           gatewayName,
@@ -99,7 +103,65 @@ it("uses the routed blueprint port to stop an orphan model router", async () => 
     expect(run).toHaveBeenCalledWith("lsof", ["-ti", `:${String(routerPort)}`], {
       env: expect.any(Object),
     });
+    expect(run).not.toHaveBeenCalledWith("lsof", ["-ti", ":15000"], expect.anything());
     expect(killed).toContain(routerPid);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+it("reports incomplete cleanup instead of guessing when a legacy router session has no port", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-router-no-port-"));
+  const stateDir = path.join(root, ".nemoclaw");
+  fs.mkdirSync(stateDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(stateDir, "onboard-session.json"),
+    JSON.stringify({ provider: "nvidia-router", routerPid: 55681 }),
+  );
+  const errors: string[] = [];
+  const killed: number[] = [];
+  const run = vi.fn((command: string, args: string[]): RunResult => {
+    return command === "openshell" && args[0] === "gateway" && args[1] === "list"
+      ? ok(JSON.stringify([{ name: "nemoclaw" }]))
+      : args[0] === "-c"
+        ? ok("/fake/bin/tool\n")
+        : ok();
+  });
+
+  try {
+    const result = await runUninstallPlan(
+      { assumeYes: true, deleteModels: false, keepOpenShell: true },
+      {
+        commandExists: () => true,
+        env: { HOME: root, LOGNAME: "testuser" } as NodeJS.ProcessEnv,
+        error: (message) => errors.push(message),
+        existsSync: () => false,
+        isTty: false,
+        kill: (pid) => {
+          killed.push(pid);
+          return true;
+        },
+        log: () => undefined,
+        resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
+          endpoint: null,
+          gatewayName,
+          gatewayPort,
+          mode: "nemoclaw-managed",
+          requiredCapabilities: [],
+          source: "packaged-service",
+          stateDir: null,
+          supervisor: null,
+        }),
+        rmSync: vi.fn(),
+        run,
+        runDocker: () => ok(),
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(errors).toContainEqual(expect.stringContaining("recorded port is missing"));
+    expect(run).not.toHaveBeenCalledWith("lsof", ["-ti", ":4000"], expect.anything());
+    expect(killed).toEqual([]);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

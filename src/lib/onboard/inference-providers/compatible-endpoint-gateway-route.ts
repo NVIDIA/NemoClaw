@@ -55,6 +55,7 @@ function loopbackNoAuthCompatibleEndpointPort(
     !parsed.password &&
     !parsed.search &&
     !parsed.hash &&
+    !parsed.hostname.endsWith(".") &&
     isLoopbackHostname(parsed.hostname) &&
     port !== null &&
     Number.isInteger(port) &&
