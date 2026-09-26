@@ -207,7 +207,7 @@ exit 64
         expect(fs.existsSync(callsPath)).toBe(false);
 
         const retried = runSetup(
-          "expect iptables conmon fuse-overlayfs nftables slirp4netns uidmap",
+          "expect iptables conmon fuse-overlayfs golang-github-containers-common nftables slirp4netns uidmap",
           3,
         );
         expect(retried.status, retried.stderr).toBe(0);
@@ -215,7 +215,7 @@ exit 64
           "apt-get update",
           "apt-get update",
           "apt-get update",
-          "apt-get install -y --no-remove --no-install-recommends expect iptables conmon fuse-overlayfs nftables slirp4netns uidmap",
+          "apt-get install -y --no-remove --no-install-recommends expect iptables conmon fuse-overlayfs golang-github-containers-common nftables slirp4netns uidmap",
         ]);
 
         const exhausted = runSetup("expect", 4);
