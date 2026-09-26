@@ -1936,8 +1936,10 @@ requests from the `cli`, `openclaw-cli`, and `openclaw-control-ui` clients when
 the requested scopes are limited to pairing, read, and write:
 
 ```bash
-$$nemoclaw my-assistant connect
+$$nemoclaw <name> connect
 ```
+
+Replace `<name>` with the sandbox name from the failed command.
 
 First rerun the original command unchanged. If it succeeds, no manual approval
 is required. If the command still reports a pending approval, such as a request
