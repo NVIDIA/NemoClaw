@@ -437,7 +437,12 @@ describe("uninstall across every gateway port (#7791)", () => {
     ],
     [
       "every passthrough flag",
-      { deleteModels: true, destroyUserData: true, keepOpenShell: true },
+      {
+        deleteModels: true,
+        destroyUserData: true,
+        forceFreshReset: true,
+        keepOpenShell: true,
+      },
       [
         "internal",
         "uninstall",
@@ -446,6 +451,7 @@ describe("uninstall across every gateway port (#7791)", () => {
         "--all-gateway-ports-child",
         "--delete-models",
         "--destroy-user-data",
+        "--force-fresh-reset",
         "--keep-openshell",
       ],
     ],

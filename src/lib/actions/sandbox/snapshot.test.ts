@@ -13,7 +13,7 @@ import {
   dcodeProbeOutput,
   framedDcodeProbeOutput,
 } from "./dcode-probe-test-fixture";
-import { SANDBOX_EXEC_STARTED_MARKER } from "./sandbox-exec-output";
+import { SANDBOX_EXEC_STARTED_MARKER } from "../../adapters/sandbox/sandbox-exec-output";
 import * as f from "./snapshot-restore-test-fixture";
 
 const dcodeSandboxEntry = {
@@ -638,8 +638,8 @@ describe("runSandboxSnapshot", () => {
       hostLocalInferenceReceipt,
       hostLocalInferenceProvenance,
     });
-    f.restoreSandboxStateMock.mockImplementation((_name, _path, options) => {
-      options?.validateBeforeMutation?.();
+    f.restoreSandboxStateMock.mockImplementation(async (_name, _path, options) => {
+      await options?.validateBeforeMutation?.();
       return {
         success: true,
         restoredDirs: [],
@@ -680,6 +680,7 @@ describe("runSandboxSnapshot", () => {
       gatewayName: "nemoclaw",
       gatewayPort: 8080,
       openshellDriver: "docker",
+      reservationSessionId: expect.stringMatching(/^[0-9a-f]{62}$/u),
       hostLocalInferenceReceipt,
       hostLocalInferenceProvenance,
     });

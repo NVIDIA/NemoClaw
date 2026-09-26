@@ -4,22 +4,19 @@
 import { waitUntilAsync } from "../core/wait";
 import { createGatewayHealthWaitOptions } from "./gateway-health-wait";
 
-type RunCaptureOpenshell = (args: string[], opts?: { ignoreError?: boolean }) => string;
-
 export type DockerDriverGatewayStartupResult = "healthy" | "exited" | "timeout";
 
 export async function waitForStandaloneDockerDriverGateway(options: {
+  observer: import("../adapters/openshell/gateway-reuse").OpenShellGatewayReuseObserver;
   childExited: () => boolean;
   childPid: number;
   gatewayName: string;
   healthPollCount: number;
   healthPollIntervalSeconds: number;
-  isGatewayHealthy: (status: string, namedInfo: string, currentInfo: string) => boolean;
-  isGatewayTcpReady: () => Promise<boolean>;
+  isGatewayTcpReady: () => boolean | Promise<boolean>;
   isPidAlive: (pid: number) => boolean;
-  onHealthy: () => Promise<void>;
-  registerGatewayEndpoint: () => boolean;
-  runCaptureOpenshell: RunCaptureOpenshell;
+  onHealthy: () => void | Promise<void>;
+  registerGatewayEndpoint: () => boolean | Promise<boolean>;
   sleepSeconds: (seconds: number) => void;
   now?: () => number;
 }): Promise<DockerDriverGatewayStartupResult> {
@@ -32,24 +29,24 @@ export async function waitForStandaloneDockerDriverGateway(options: {
   );
   if (!waitOptions) return result;
 
+  let registrationAttempt: Promise<boolean> | undefined;
   await waitUntilAsync(async () => {
     if (options.childExited() || !options.isPidAlive(options.childPid)) {
       result = "exited";
       return true;
     }
-    if (!options.registerGatewayEndpoint()) return false;
+    if (!(await (registrationAttempt ??= Promise.resolve(options.registerGatewayEndpoint()))))
+      return false;
 
-    const status = options.runCaptureOpenshell(["status"], { ignoreError: true });
-    const namedInfo = options.runCaptureOpenshell(["gateway", "info", "-g", options.gatewayName], {
-      ignoreError: true,
-    });
-    const currentInfo = options.runCaptureOpenshell(["gateway", "info"], {
-      ignoreError: true,
+    const observation = await options.observer.observeGatewayReuse({
+      target: { kind: "named", gatewayName: options.gatewayName },
     });
     // Probes take real wall-clock time. Reconfirm process liveness afterward
     // so a gateway that exits during migration cannot be reported as healthy.
     if (
-      options.isGatewayHealthy(status, namedInfo, currentInfo) &&
+      !observation.error &&
+      observation.healthy &&
+      observation.namedMetadata &&
       (await options.isGatewayTcpReady()) &&
       !options.childExited() &&
       options.isPidAlive(options.childPid)

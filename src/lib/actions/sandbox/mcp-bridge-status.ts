@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import { type AgentDefinition, type AgentMcpAdapter, loadAgent } from "../../agent/defs";
-import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import {
   buildDeepAgentsMcpStatusCommand,
   buildHermesMcpStatusCommand,
@@ -11,7 +11,12 @@ import {
   openClawConfigDir,
 } from "./mcp-bridge-adapters";
 import { parseUnsafeDeepAgentsMcpConfigResult } from "./mcp-bridge-adapter-status";
-import { isAgentMcpAdapter, McpBridgeError, type McpBridgeStatus } from "./mcp-bridge-contracts";
+import {
+  isAgentMcpAdapter,
+  McpBridgeError,
+  type McpSourceEntry,
+  type McpBridgeStatus,
+} from "./mcp-bridge-contracts";
 import { redactBridgeFailureForDisplay, redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import { getPolicyPresence } from "./mcp-bridge-policy";
 import {
@@ -45,12 +50,12 @@ import {
 } from "./mcp-bridge-url-validation";
 import {
   assertAuthenticatedBridgeEntry,
-  normalizeMcpServerUrl,
   resolvePersistedCredentialEnvForRedaction,
   validateMcpServerName,
   validateSandboxName,
 } from "./mcp-bridge-validation";
-import { executeSandboxCommand } from "./process-recovery";
+import { normalizeRecordedMcpServerUrl } from "./mcp-bridge/recorded-url";
+import { executeSandboxExecCommand } from "../../adapters/sandbox/command-transport";
 
 export interface McpBridgeJsonSummary {
   sandbox: string;
@@ -113,9 +118,7 @@ export async function assertUnchangedStableMcpCredentialAuthorized(
 
 function storedUrlWarning(entry: McpSourceEntry): string | undefined {
   try {
-    return normalizeMcpServerUrl(entry.url, {
-      trustedPrivateHosts: entry.trustedPrivateHost ? [entry.trustedPrivateHost] : undefined,
-    }) === entry.url
+    return normalizeRecordedMcpServerUrl(entry) === entry.url
       ? undefined
       : UNSUPPORTED_STORED_URL_WARNING;
   } catch {
@@ -161,9 +164,15 @@ async function getAdapterRegistration(
       : adapter === "hermes-config"
         ? buildHermesMcpStatusCommand(entry, credentialRevision)
         : buildDeepAgentsMcpStatusCommand(entry, credentialRevision);
-  const result = await executeSandboxCommand(sandboxName, command, { runtimeSelection });
-  if (!result)
-    return credentialInspectionFailure ?? { registered: null, detail: "sandbox unreachable" };
+  let result: Awaited<ReturnType<typeof executeSandboxExecCommand>>;
+  try {
+    result = await executeSandboxExecCommand(sandboxName, command, undefined, {
+      runtimeSelection,
+    });
+  } catch (error) {
+    if (!(error instanceof SandboxCommandTransportError)) throw error;
+    return credentialInspectionFailure ?? { registered: null, detail: error.message };
+  }
   const unsafeProjection =
     adapter === "deepagents-config" ? parseUnsafeDeepAgentsMcpConfigResult(result) : null;
   if (unsafeProjection) {
@@ -200,7 +209,7 @@ export interface McpBridgeStatusOptions {
   allowCredentialProbeWithAdapterMismatch?: boolean;
   /**
    * Run the wire-level credential-resolution probe for each entry (#6379).
-   * Costs one SSH round trip plus an in-sandbox MCP initialize per entry, so
+   * Costs one native command plus an in-sandbox MCP initialize per entry, so
    * the dispatch layer enables it only where the operator asked for it.
    */
   probeCredentialResolution?: boolean;

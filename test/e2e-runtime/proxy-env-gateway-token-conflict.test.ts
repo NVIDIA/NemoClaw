@@ -72,6 +72,9 @@ function runReconcile(scenario: Scenario): {
       '_PROXY_FIX_SCRIPT="/tmp/http-proxy-fix.js"',
       '_NEMOTRON_FIX_SCRIPT="/tmp/nemotron-fix.js"',
       "_TOOL_REDIRECTS=()",
+      scenario.sourceUrl
+        ? `OPENCLAW_GATEWAY_URL=${shellQuote(scenario.sourceUrl)}`
+        : "unset OPENCLAW_GATEWAY_URL",
       `OPENCLAW_GATEWAY_TOKEN=${shellQuote(scenario.intended)}`,
       "write_runtime_shell_env",
       "",
@@ -89,12 +92,11 @@ function runReconcile(scenario: Scenario): {
     scenario.shadowStatusCommands
       ? "function return { builtin return 0; }; function exit { builtin return 0; }; function echo { builtin return 0; }"
       : "",
-    scenario.sourceUrl ? `OPENCLAW_GATEWAY_URL=${shellQuote(scenario.sourceUrl)}` : "",
   ].filter(Boolean);
   const sourceAndPrint = [
     `. ${shellQuote(envFile)}`,
     "_nemoclaw_test_source_status=$?",
-    `case "$_nemoclaw_test_source_status" in 0) /usr/bin/printf 'TOKEN=[%s] PRIVATE=[%s]\\n' "\${OPENCLAW_GATEWAY_TOKEN-<UNSET>}" "\${_nemoclaw_gateway_token-<UNSET>}" ;; *) /usr/bin/false ;; esac`,
+    `case "$_nemoclaw_test_source_status" in 0) /usr/bin/printf 'TOKEN=[%s] PRIVATE=[%s] URL=[%s]\\n' "\${OPENCLAW_GATEWAY_TOKEN-<UNSET>}" "\${_nemoclaw_gateway_token-<UNSET>}" "\${OPENCLAW_GATEWAY_URL-<UNSET>}" ;; *) /usr/bin/false ;; esac`,
   ];
   const commands = scenario.repeatSources
     ? [...setup, ...sourceAndPrint, ...sourceAndPrint]
@@ -177,6 +179,7 @@ describe("proxy-env OPENCLAW_GATEWAY_TOKEN trust-anchor reconcile (#8428)", () =
     });
     expect(status).toBe(0);
     expect(stdout).toContain(`TOKEN=[${REAL_TOKEN}] PRIVATE=[CALLER-SENTINEL]`);
+    expect(stdout).toContain("URL=[<UNSET>]");
     expect(stderr).toBe("");
   });
 
@@ -187,6 +190,7 @@ describe("proxy-env OPENCLAW_GATEWAY_TOKEN trust-anchor reconcile (#8428)", () =
     });
     expect(status).toBe(0);
     expect(stdout).toContain("TOKEN=[]");
+    expect(stdout).toContain("URL=[wss://remote.example.test]");
     expect(stderr).toBe("");
   });
 

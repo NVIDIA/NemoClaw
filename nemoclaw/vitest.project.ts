@@ -21,6 +21,7 @@ const canonicalOpenShellPolicyBoundary = path.resolve(
   import.meta.dirname,
   "src/shared/openshell-policy-boundary.cts",
 );
+const canonicalPortBoundary = path.resolve(import.meta.dirname, "src/shared/port-boundary.cts");
 const canonicalPrivateNetworksBoundary = path.resolve(
   import.meta.dirname,
   "src/shared/private-networks-boundary.cts",
@@ -79,6 +80,10 @@ const pluginVitestProjectOptions = {
       {
         find: /^.*openshell-policy-boundary\.cjs$/,
         replacement: canonicalOpenShellPolicyBoundary,
+      },
+      {
+        find: /^.*port-boundary\.cjs$/,
+        replacement: canonicalPortBoundary,
       },
       {
         find: /^.*private-networks-boundary\.cjs$/,

@@ -173,12 +173,14 @@ const adapters = require("./src/lib/actions/sandbox/mcp-bridge-adapters.js");
 const policy = require("./src/lib/actions/sandbox/mcp-bridge-policy.js");
 const provider = require("./src/lib/actions/sandbox/mcp-bridge-provider.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
+const commandTransport = require("./src/lib/adapters/sandbox/command-transport.js");
 const state = require("./src/lib/actions/sandbox/mcp-bridge-state.js");
 const sourceState = require("./src/lib/actions/sandbox/mcp-bridge-source.js");
 const validation = require("./src/lib/actions/sandbox/mcp-bridge-validation.js");
 const trusted = require("./src/lib/security/trusted-private-endpoint.js");
 let admittedTarget;
 let registeredEntry;
+const nativeCommandCalls = [];
 let gatewayRestarted = false;
 replace(policies, "getPresetContentGatewayState", () => "absent");
 replace(adapters, "assertAgentMcpMutationRuntimeCapability", () => {});
@@ -205,16 +207,10 @@ replace(provider, "attachProvider", () => {});
 replace(provider, "refreshMcpProviderEnvironment", () => {});
 replace(provider, "observeMcpCredentialRevision", () => "v1");
 replace(provider, "waitForAttachedMcpCredential", () => "v1");
-replace(processRecovery, "executeSandboxCommand", (_sandbox, command) => ({
-  status: 0,
-  stdout: command === "command -v mcporter" ? "/usr/bin/mcporter\\n" : command.includes('"config", "get"') ? "registered\\n" : "",
-  stderr: "",
-}));
-replace(processRecovery, "executeSandboxExecCommand", () => ({
-  status: 0,
-  stdout: "v1\\n",
-  stderr: "",
-}));
+replace(commandTransport, "executeSandboxExecCommand", (...args) => {
+  nativeCommandCalls.push(args);
+  throw new Error("Trusted-private admission must not execute native sandbox commands");
+});
 replace(processRecovery, "restartSandboxGateway", () => {
   gatewayRestarted = true;
   return { ok: true, restarted: true, healthPassed: true, forwardRecovered: true };
@@ -235,7 +231,7 @@ require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
   trustedPrivateHosts: ["MCP.CORP.EXAMPLE."],
 }).then(() => {
   process.stdout.write(JSON.stringify({
-    entry: registeredEntry,
+    entry: registeredEntry, nativeCommandCalls,
     target: {
       addresses: admittedTarget.addresses,
       capability: trusted.isTrustedPrivateEndpointCapability(
@@ -264,6 +260,7 @@ require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
           timeout: 30_000,
         });
         expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+        expect(JSON.parse(result.stdout).nativeCommandCalls).toEqual([]);
         const admission = JSON.parse(result.stdout) as {
           entry: Record<string, unknown>;
           target: Record<string, unknown>;
@@ -416,6 +413,7 @@ const sourceState = require("./src/lib/actions/sandbox/mcp-bridge-source.js");
 const bridgeState = require("./src/lib/actions/sandbox/mcp-bridge-state.js");
 const validation = require("./src/lib/actions/sandbox/mcp-bridge-validation.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
+const commandTransport = require("./src/lib/adapters/sandbox/command-transport.js");
 const entry = () => ({
   server: "github", agent: "openclaw", adapter: "openclaw-config",
   url: "https://8.8.8.8/mcp", env: ["GITHUB_TOKEN"],

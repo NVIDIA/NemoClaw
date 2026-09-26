@@ -89,6 +89,20 @@ describe.concurrent("internal oclif namespace", () => {
       provider: { normalized: "build", raw: "cloud", valid: true },
       runtime: { ok: true },
     });
+
+    const deferred = await runWithEnvAsync(
+      "internal installer plan --defer-onboarding --deferred-onboarding-supported --registered-sandbox-count 0 --deferred-onboarding-decision",
+      {
+        NEMOCLAW_AGENT: "langchain-deepagents-code",
+        NEMOCLAW_PROVIDER: "build",
+        NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE: "",
+        NEMOCLAW_PROVIDER_KEY: "",
+        NVIDIA_API_KEY: "",
+        NVIDIA_INFERENCE_API_KEY: "",
+      },
+    );
+    expect(deferred.code).toBe(0);
+    expect(deferred.out.trim()).toBe("defer");
   });
 
   it("exposes installer ref and env normalization helpers through oclif routing", async () => {

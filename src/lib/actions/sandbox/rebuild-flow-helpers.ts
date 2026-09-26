@@ -48,6 +48,7 @@ import * as userManagedFilesProbe from "../../state/user-managed-files-probe";
 import {
   getReconciledSandboxGatewayState,
   printSandboxGatewayStateHint,
+  printGatewayLifecycleHint,
   printWrongGatewayActiveGuidance,
   usesLegacyRuntimeLifecycleCompatibility,
 } from "./gateway-state";
@@ -61,13 +62,32 @@ import {
 export { removeStaleRebuildDockerOrphan };
 export { replaceOpenShellRuntimeSelectionEnv, snapshotOpenShellEnv };
 export { resolveSandboxGatewayName };
+export { delegateRebuildToOwningRegistry } from "./rebuild/owning-registry";
 
 export type RebuildSandboxEntry = SandboxEntry & { agents?: unknown[] };
 
 export type RebuildLiveState = {
   staleRecovery: boolean;
   staleRegistrySnapshot: ReturnType<typeof loadRegistry> | null;
+  terminalPhase?: boolean;
 };
+
+/** Select the stopped-source backup path only for a fresh terminal-state rebuild. */
+export async function prepareRebuildStoppedOpenClawState(
+  entry: RebuildSandboxEntry,
+  liveState: RebuildLiveState,
+  hasRecoveryManifest: boolean,
+  getSandbox: Parameters<typeof snapshotBackup.prepareStoppedOpenClawState>[1],
+): Promise<snapshotBackup.PreparedStoppedOpenClawState | null> {
+  if (
+    !liveState.terminalPhase ||
+    liveState.staleRecovery ||
+    hasRecoveryManifest ||
+    (entry.agent ?? "openclaw") !== "openclaw"
+  )
+    return null;
+  return snapshotBackup.prepareStoppedOpenClawState(entry.name, getSandbox, loadAgent("openclaw"));
+}
 
 export type RebuildLiveStateOptions = {
   /** A digest-verified policy handoff bound to the prepared recovery manifest. */
@@ -211,20 +231,30 @@ export async function resolveRebuildLiveState(
 
   const liveNames = new Set(observed.value.sandboxes.map((sandbox) => sandbox.name));
   log(`Live sandboxes: ${Array.from(liveNames).join(", ") || "(none)"}`);
-  if (liveNames.has(sandboxName)) return { staleRecovery: false, staleRegistrySnapshot: null };
+  const liveSource = observed.value.sandboxes.find((sandbox) => sandbox.name === sandboxName);
+  if (liveSource)
+    return {
+      staleRecovery: false,
+      staleRegistrySnapshot: null,
+      ...(liveSource.readiness === "terminal" ? { terminalPhase: true } : {}),
+    };
 
   const reconciled = await getReconciledSandboxGatewayState(sandboxName);
   if (reconciled.state === "present") {
     const lifecycle = await getNamedGatewayLifecycleState(recordedGateway);
     if (lifecycle.state !== "healthy_named") {
-      printWrongGatewayActiveGuidance(
-        sandboxName,
-        lifecycle.activeGateway,
-        console.error,
-        "rebuild --yes",
-      );
+      if (lifecycle.state === "connected_other") {
+        printWrongGatewayActiveGuidance(
+          sandboxName,
+          lifecycle.activeGateway,
+          console.error,
+          "rebuild --yes",
+        );
+      } else {
+        printGatewayLifecycleHint(lifecycle, sandboxName, console.error);
+      }
       bail(
-        `Could not confirm '${sandboxName}' against gateway '${recordedGateway}' (gateway '${lifecycle.activeGateway ?? "unknown"}' is active).`,
+        `Could not confirm '${sandboxName}' against gateway '${recordedGateway}' (${lifecycle.state}).`,
       );
       return null;
     }
@@ -487,6 +517,7 @@ export async function backupSandboxStateForRebuild(
   staleRecovery: boolean,
   log: (msg: string) => void,
   bail: (msg: string, code?: number) => never,
+  capturedOpenClawState?: sandboxState.BackupOptions["capturedOpenClawState"],
 ): Promise<sandboxState.RebuildManifest | null | undefined> {
   if (staleRecovery) return null;
 
@@ -494,7 +525,7 @@ export async function backupSandboxStateForRebuild(
   log(`Agent type: ${sb.agent || "openclaw"}, stateDirs from manifest`);
   let backup = snapshotBackup.backupSandboxStateWithManagedAuthority(
     sandboxName,
-    {},
+    capturedOpenClawState ? { capturedOpenClawState } : {},
     {
       getSandbox: (name) => loadRegistry().sandboxes[name] ?? null,
     },
@@ -508,7 +539,7 @@ export async function backupSandboxStateForRebuild(
   // it to stopped. Any other failure (permission denied, absent state, audit
   // rejection) is not a transport problem and must not attempt this recovery.
   if (!backup.success && backup.unreachable) {
-    const started = startStoppedSandboxContainerForBackup(sandboxName);
+    const started = await startStoppedSandboxContainerForBackup(sandboxName);
     if (started) {
       console.log("  Sandbox container is stopped; starting it to back up state before rebuild...");
       log(`Started stopped container '${started.containerName}' to retry backup`);
@@ -519,7 +550,7 @@ export async function backupSandboxStateForRebuild(
           `Retry backup result: success=${backup.success}, backed=${backup.backedUpDirs.join(",")}; files=${backup.backedUpFiles.join(",")}, failed=${backup.failedDirs.join(",")}; failedFiles=${backup.failedFiles.join(",")}`,
         );
       } finally {
-        returnedToStopped = returnSandboxContainerToStopped(started);
+        returnedToStopped = await returnSandboxContainerToStopped(started);
         if (!returnedToStopped) {
           log(
             `Could not return '${sandboxName}' container to its stopped state after backup retry`,

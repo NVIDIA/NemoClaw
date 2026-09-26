@@ -60,10 +60,10 @@ describe("managed bootstrap sandbox registration", () => {
             resolveLifecycleRegistrationFields,
             lifecycle,
           ) => {
-            const verified = lifecycle.revalidate(
-              lifecycle.capture(resolveLifecycleRegistrationFields()),
+            const verified = await lifecycle.revalidate(
+              await lifecycle.capture(resolveLifecycleRegistrationFields()),
             );
-            publish(lifecycle.revalidate(verified));
+            publish(await lifecycle.revalidate(verified));
           },
         },
         cleanupBuildContext: vi.fn(),
@@ -162,6 +162,39 @@ describe("managed bootstrap sandbox registration", () => {
         checkpoint,
       ),
     ).toEqual(checkpoint);
+  });
+
+  it("backfills one bootstrap identity and rejects later identity drift", () => {
+    const checkpoint: PendingSandboxCreateIdentity = {
+      schemaVersion: 1,
+      state: "verified-create",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      sandboxName: "alpha",
+      lifecycleGeneration,
+      sandboxIdentityFingerprint: durableIdentity,
+      route: "native",
+    };
+    const managedBootstrapIdentity = "c".repeat(64);
+    const boundary = {
+      sandboxName: "alpha",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      lifecycleGeneration,
+      lifecycleLiveIdentityFingerprint: durableIdentity,
+      managedBootstrapIdentity,
+      route: "native" as const,
+    };
+
+    expect(pendingSandboxCreateIdentityForBoundary(boundary, checkpoint)).toMatchObject({
+      managedBootstrapIdentity,
+    });
+    expect(() =>
+      pendingSandboxCreateIdentityForBoundary(boundary, {
+        ...checkpoint,
+        managedBootstrapIdentity: "d".repeat(64),
+      }),
+    ).toThrow(/does not match/u);
   });
 
   it("does not publish a resumed recreation without a persisted final handoff (#10560)", async () => {

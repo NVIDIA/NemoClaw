@@ -25,7 +25,7 @@ const PATCH_SCRIPT = path.join(
 );
 
 /**
- * Mirrors the reviewed `openclaw@2026.7.1`
+ * Mirrors the reviewed `openclaw@2026.9.1`
  * `dist/agent-bundle-mcp-runtime-*.js` catalog shape, including its tab
  * indentation, so patch anchors are exercised against the real preimage.
  */
@@ -105,11 +105,80 @@ function bundleMcpRuntimeFixture(): string {
   ].join("\n");
 }
 
-function writeFixtureDist(version = "2026.7.1"): { dist: string; runtime: string; tmp: string } {
+/** Minimal reviewed 2026.9.1 shape used to exercise its scope-bearing anchors. */
+function bundleMcpRuntime20260901Fixture(): string {
+  return [
+    'import { a as logWarn, t as resolveMcpTransport, z as runTasksWithConcurrency } from "./runtime.js";',
+    "function createSessionMcpRuntime(params) {",
+    "\tconst { loaded, fingerprint: computedFingerprint } = loadSessionMcpConfig({",
+    "\t\tworkspaceDir: params.workspaceDir,",
+    "\t\tcfg: params.cfg,",
+    "\t});",
+    "\tlet catalog = null;",
+    "\tlet activeLeases = 0;",
+    "\tconst loadCatalog = async (retryBaseCatalog) => {",
+    "\t\tconst retryServerNames = new Set();",
+    "\t\tconst preparedEntries = [];",
+    "\t\t\t\tfor (const [serverName, rawServer] of Object.entries(loaded.mcpServers)) {",
+    "\t\t\t\t\tfailIfDisposed();",
+    "\t\t\t\t\tif (retryServerNames && !retryServerNames.has(serverName)) continue;",
+    "\t\t\t\t\tconst override = params.connectionOverrides?.get(serverName);",
+    "\t\t\t\t\tconst transportSource = override ? applyMcpConnectionOverride(rawServer, override) : rawServer;",
+    "\t\t\t\t\tconst dataDirOwnership = Object.hasOwn(loaded.prepareDataDirsByServer ?? {}, serverName) ? loaded.prepareDataDirsByServer?.[serverName] : void 0;",
+    "\t\t\t\t\tconst resolved = resolveMcpTransport(serverName, transportSource, {",
+    "\t\t\t\t\t\tcfg: params.cfg,",
+    "\t\t\t\t\t\tagentDir: params.agentDir,",
+    "\t\t\t\t\t\tprepareDataDir: dataDirOwnership?.dataDir,",
+    "\t\t\t\t\t\trequesterScope: params.requesterScope",
+    "\t\t\t\t\t});",
+    "\t\t\t\t\tif (!resolved) continue;",
+    "\t\t\t\t\tconst safeServerName = serverName;",
+    "\t\t\t\t\tconst launchDescription = resolved.description;",
+    "\t\t\t\t\tpreparedEntries.push({",
+    "\t\t\t\t\t\tserverName,",
+    "\t\t\t\t\t\trawServer,",
+    "\t\t\t\t\t\tresolved,",
+    "\t\t\t\t\t\tsafeServerName,",
+    "\t\t\t\t\t\tlaunchDescription",
+    "\t\t\t\t\t});",
+    "\t\t\t\t}",
+    "\t\t\t\tconst tasks = preparedEntries.map(({ serverName, rawServer, resolved, safeServerName, launchDescription }) => async () => {",
+    "\t\t\t\t\tlogWarn(launchDescription);",
+    '                  const client = new Client({ name: "openclaw-bundle-mcp" });',
+    "\t\t\t\t\ttry {",
+    "\t\t\t\t\t\treturn { diagnostics: [] };",
+    "\t\t\t\t\t} catch (error) {",
+    "\t\t\t\t\t\tconst diags = [error];",
+    "\t\t\t\t\t\tconst reusedSession = false;",
+    "\t\t\t\t\t\treturn {",
+    "\t\t\t\t\t\t\tserverName,",
+    "\t\t\t\t\t\t\tserverEntry: null,",
+    "\t\t\t\t\t\t\ttoolEntries: [],",
+    "\t\t\t\t\t\t\tpolicyToolEntries: [],",
+    "\t\t\t\t\t\t\tdiagnostics: diags",
+    "\t\t\t\t\t\t};",
+    "\t\t\t\t\t}",
+    "\t\t\t\t});",
+    "\t\t\t\tconst { results, firstError, hasError } = await runTasksWithConcurrency({",
+    "\t\t\t\t\ttasks",
+    "\t\t\t\t});",
+    "\t};",
+    "\treturn {",
+    "\t\tacquireLease() {",
+    "\t\t\tactiveLeases += 1;",
+    "\t\t},",
+    "\t\tloadCatalog",
+    "\t};",
+    "}",
+    "",
+  ].join("\n");
+}
+
+function writeFixtureDist(version = "2026.9.1"): { dist: string; runtime: string; tmp: string } {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-reliability-"));
   const dist = path.join(tmp, "dist");
   fs.mkdirSync(dist);
-  // The reviewed openclaw@2026.7.1 package declares "type": "module"; mirror it
+  // The reviewed openclaw@2026.9.1 package declares "type": "module"; mirror it
   // so the fixture carries the same module classification as the real package.
   fs.writeFileSync(path.join(tmp, "package.json"), JSON.stringify({ type: "module", version }));
   const runtime = path.join(dist, "agent-bundle-mcp-runtime-Fixture.js");
@@ -169,7 +238,7 @@ describe("OpenClaw MCP transient startup recovery patch (#7958)", () => {
     created.push(tmp);
 
     const first = patchOpenClawMcpReliability(dist);
-    expect(first).toMatchObject({ status: "patched", file: runtime, version: "2026.7.1" });
+    expect(first).toMatchObject({ status: "patched", file: runtime, version: "2026.9.1" });
 
     const patched = fs.readFileSync(runtime, "utf-8");
     expect(patched).toContain(MARKER);
@@ -221,6 +290,42 @@ describe("OpenClaw MCP transient startup recovery patch (#7958)", () => {
     );
   });
 
+  it("patches the reviewed 2026.9.1 shape only when its retry bindings share scope", () => {
+    const source = bundleMcpRuntime20260901Fixture();
+    const result = patchBundleMcpRuntimeText(source, "fixture-2026.9.1.js");
+
+    expect(result.patched).toBe(true);
+    expect(result.text).toContain(
+      "preparedEntries.map(({ serverName, rawServer, transportSource, resolved",
+    );
+    expect(result.text).toContain("cfg: params.cfg");
+    expect(result.text).toContain("prepareDataDir: loaded.prepareDataDirsByServer");
+  });
+
+  it.each([
+    [
+      "params",
+      "function createSessionMcpRuntime(params) {",
+      "function createSessionMcpRuntime(runtimeParams) {",
+    ],
+    [
+      "loaded",
+      "\tconst { loaded, fingerprint: computedFingerprint } = loadSessionMcpConfig({",
+      "\tconst { sessionLoaded, fingerprint: computedFingerprint } = loadSessionMcpConfig({",
+    ],
+    [
+      "transportSource",
+      "\t\t\t\t\tconst transportSource = override ? applyMcpConnectionOverride(rawServer, override) : rawServer;",
+      "\t\t\t\t\tconst sourceTransport = override ? applyMcpConnectionOverride(rawServer, override) : rawServer;",
+    ],
+  ])("rejects the 2026.9.1 shape without the %s scope binding", (_name, binding, replacement) => {
+    const source = bundleMcpRuntime20260901Fixture().replace(binding, replacement);
+
+    expect(() => patchBundleMcpRuntimeText(source, "fixture-2026.9.1.js")).toThrow(
+      /expected exactly one MCP startup recovery target, found 0/,
+    );
+  });
+
   it("fails closed when a marked runtime still carries an unpatched target", () => {
     const { dist, runtime, tmp } = writeFixtureDist();
     created.push(tmp);
@@ -255,7 +360,7 @@ describe("OpenClaw MCP transient startup recovery patch (#7958)", () => {
     });
     expect(applied.status).toBe(0);
     expect(applied.stdout).toContain("MCP startup recovery patched");
-    expect(applied.stdout).toContain("openclaw 2026.7.1");
+    expect(applied.stdout).toContain("openclaw 2026.9.1");
 
     const audited = spawnSync(process.execPath, [PATCH_SCRIPT, "--audit", dist], {
       encoding: "utf-8",

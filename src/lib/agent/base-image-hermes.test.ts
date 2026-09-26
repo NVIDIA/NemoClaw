@@ -41,6 +41,7 @@ describe("agent base image provisioning", () => {
         "-c",
       ]);
       expect(probeArgs.at(-1)).toContain("_MCP_HTTP_AVAILABLE");
+      expect(probeArgs.at(-1)).toContain('metadata.version("hermes-agent") == "0.21.3"');
       expect(probeArgs.at(-1)).toContain('metadata.version("agent-client-protocol") == "0.9.0"');
       expect(probeArgs.at(-1)).toContain("import acp");
       expect(probeArgs.at(-1)).toContain("from acp_adapter.server import HermesACPAgent");

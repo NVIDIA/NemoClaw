@@ -321,6 +321,12 @@ describe("trusted npm audit workflow (#5896)", () => {
     expect(cacheBucketStep.run).toContain(
       "const targetRoot = process.env.NEMOCLAW_REVIEWED_NPM_AUDIT_TARGET_ROOT;",
     );
+    expect(cacheBucketStep.run).toContain(
+      "const identity = parseReviewedNpmIdentityConfig(configSource);",
+    );
+    expect(cacheBucketStep.run).toContain(
+      'hash.update(JSON.stringify({ argv: ["audit", "--registry=https://registry.yarnpkg.com", "--omit=dev", "--json"], ...identity, registry: "https://registry.yarnpkg.com/", schemaVersion: 2 }));',
+    );
     expect(cacheBucketStep.run).not.toContain("${{ inputs.cache-directory }}");
     expect(cacheBucketStep.run).not.toContain("${{ inputs.target-root }}");
   });
@@ -470,11 +476,7 @@ describe("trusted npm audit workflow (#5896)", () => {
       const receiptOptions = {
         artifactDirectory: root,
         graphId: "temporary-graph",
-        reviewedNpmIdentity: {
-          npmArchiveSha256: "0".repeat(64),
-          npmIntegrity: `sha512-${Buffer.alloc(64).toString("base64")}`,
-          npmVersion: "10.9.4",
-        },
+        reviewedNpmIdentity: REVIEWED_AUDIT_CONFIG,
         packageJsonFile,
         packageLockFile,
         preserveInputs: true,
@@ -515,7 +517,7 @@ describe("trusted npm audit workflow (#5896)", () => {
     );
     expect(
       config.archivePackages.some(
-        ({ packageSpec }) => packageSpec === "@tencent-weixin/openclaw-weixin@2.4.3",
+        ({ packageSpec }) => packageSpec === "@tencent-weixin/openclaw-weixin@2.4.9",
       ),
     ).toBe(true);
     expect(config.lockedGraphs).toContainEqual(
@@ -523,7 +525,7 @@ describe("trusted npm audit workflow (#5896)", () => {
         id: "wechat-runtime",
         inputValidation: "wechat-runtime",
         installMode: "legacy-peer-deps",
-        lockSha256: "09a91cabd559ed2294fb263602009f9f79259e765281992e56961eed0e8c1ed9",
+        lockSha256: "84f2b731e9ffe731d29c28ebbe795116217771971c729b577df1a8816296f9b8",
         severityThreshold: "low",
         signatureAudit: "retry-download-failures",
       }),
@@ -1328,11 +1330,7 @@ describe("trusted npm audit workflow (#5896)", () => {
         directory: "/materialized",
         exceptionFile: "/exceptions.json",
         packageSpec: "nemoclaw@0.0.0",
-        reviewedNpmIdentity: {
-          npmArchiveSha256: "a".repeat(64),
-          npmIntegrity: `sha512-${Buffer.alloc(64).toString("base64")}`,
-          npmVersion: "10.9.4",
-        },
+        reviewedNpmIdentity: REVIEWED_AUDIT_CONFIG,
         threshold: "high",
       },
       {
@@ -1344,14 +1342,11 @@ describe("trusted npm audit workflow (#5896)", () => {
             graph: "nemoclaw-cli",
             provenance: {
               label: "NemoClaw CLI locked production graph",
-              npmVersion: "10.9.4",
+              npmIntegrity: REVIEWED_AUDIT_CONFIG.npmIntegrity,
+              npmVersion: REVIEWED_AUDIT_CONFIG.npmVersion,
               packageSpecs: ["nemoclaw@0.0.0"],
             },
-            reviewedNpmIdentity: {
-              npmArchiveSha256: "a".repeat(64),
-              npmIntegrity: `sha512-${Buffer.alloc(64).toString("base64")}`,
-              npmVersion: "10.9.4",
-            },
+            reviewedNpmIdentity: REVIEWED_AUDIT_CONFIG,
             reportFile: path.join("/artifacts", "source-graph.json"),
             resultFile: path.join("/artifacts", "source-graph-policy.json"),
             threshold: "high",

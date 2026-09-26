@@ -4,6 +4,7 @@
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 
+import { CorporateCaValidationError } from "../corporate-ca-types";
 import {
   isManagedImagePlatform,
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
@@ -120,6 +121,7 @@ async function withRegistryFetch<T>(
     const { createManagedImageRegistryFetchSession } = await import("./registry-fetch");
     session = createManagedImageRegistryFetchSession({ environment });
   } catch (error) {
+    if (error instanceof CorporateCaValidationError) throw error;
     return invalid("registry transport could not be configured", { cause: error });
   }
   try {

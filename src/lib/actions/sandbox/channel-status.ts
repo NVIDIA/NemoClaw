@@ -11,6 +11,7 @@
  * registry list. The diagnostic below has to fail loud for paired-but-idle.
  */
 
+import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import { type AgentDefinition, loadAgent } from "../../agent/defs";
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
 import { B, D, G, R, RD, YW } from "../../cli/terminal-style";
@@ -40,12 +41,9 @@ import * as policies from "../../policy";
 import * as registry from "../../state/registry";
 import { buildConfigStatusSignals } from "./channel-status-config";
 
-// runner.ts (which process-recovery transitively depends on) uses a few CJS
-// `require()` calls that vitest's CLI-test project cannot resolve at import
-// time. The default in-sandbox exec implementation lives in this lazy loader
-// so unit tests can inject an `execSandbox` mock without pulling the runner.
-function loadProcessRecovery(): typeof import("./process-recovery") {
-  return require("./process-recovery") as typeof import("./process-recovery");
+// Resolve the default native transport only when callers do not inject an executor.
+function loadCommandTransport(): typeof import("../../adapters/sandbox/command-transport") {
+  return require("../../adapters/sandbox/command-transport") as typeof import("../../adapters/sandbox/command-transport");
 }
 
 type ExecRunner = (
@@ -156,9 +154,17 @@ async function defaultExec(
   command: string,
   timeoutMs?: number,
 ): Promise<{ status: number; stdout: string; stderr: string } | null> {
-  return loadProcessRecovery().executeSandboxExecCommand(sandboxName, command, timeoutMs, {
-    localDockerFallbackPolicy: "read-only",
-  });
+  try {
+    return await loadCommandTransport().executeSandboxExecCommand(
+      sandboxName,
+      command,
+      timeoutMs,
+      {},
+    );
+  } catch (error) {
+    if (!(error instanceof SandboxCommandTransportError)) throw error;
+    return null;
+  }
 }
 
 function defaultDeps(deps: StatusDeps | undefined): Required<StatusDeps> {

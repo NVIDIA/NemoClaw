@@ -148,6 +148,7 @@ sandboxCommandCli.createCliOpenShellSandboxCommandExecutor = (deps) => {
     },
   };
 };
+fixtureMocks.mockManagedStateVolumeOnboardLifecycle();
 const managedWorkloadOnboard = require(${managedWorkloadOnboardPath});
 const createManagedStateVolumeLifecycle =
   managedWorkloadOnboard.createManagedStateVolumeOnboardLifecycle;
@@ -370,6 +371,7 @@ const { createSandbox } = require(${onboardPath});
     { scenario: "same-session", resumes: true },
     { scenario: "foreign-reservation", resumes: false },
     { scenario: "changed-checkpoint", resumes: false },
+    { scenario: "changed-gateway-directory", resumes: false },
   ] as const)(
     "recovers a verified create in a new process for $scenario authority (#9833)",
     { timeout: 90_000 },
@@ -377,6 +379,7 @@ const { createSandbox } = require(${onboardPath});
       const workspace = createOnboardProcessWorkspace("nemoclaw-onboard-verified-create-resume-");
       context.onTestFinished(() => workspace.remove());
       const scriptPath = workspace.path("verified-create-resume.js");
+      const customGatewayStateDir = workspace.path("custom-gateway-state");
       const createCountPath = workspace.path("sandbox-create-count.txt");
       const effectCountPath = workspace.path("deferred-effect-count.txt");
       const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
@@ -553,6 +556,7 @@ sandboxCommandCli.createCliOpenShellSandboxCommandExecutor = (deps) => {
     },
   };
 };
+fixtureMocks.mockManagedStateVolumeOnboardLifecycle();
 const managedWorkloadOnboard = require(${managedWorkloadOnboardPath});
 const createManagedStateVolumeLifecycle =
   managedWorkloadOnboard.createManagedStateVolumeOnboardLifecycle;
@@ -615,7 +619,10 @@ childProcess.spawn = (...args) => {
   };
   child.pid = 4248;
   createChild = child;
-  process.nextTick(() => child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n")));
+  process.nextTick(() => {
+    child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
+    child.emit("close", 0);
+  });
   return child;
 };
 
@@ -676,7 +683,7 @@ createArgs[16] = async () => {
       });
 
       const first = await runOnboardProcessAsync([scriptPath, "seed", scenario], {
-        env,
+        env: { ...env, NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: customGatewayStateDir },
         timeoutMs: 40_000,
         context,
       });
@@ -685,7 +692,7 @@ createArgs[16] = async () => {
         error: string;
         registryEntry: {
           pendingRouteReservation?: boolean;
-          pendingCreateIdentity?: unknown;
+          pendingCreateIdentity?: { openshellGatewayStateDir?: string };
           lifecycleLiveIdentityFingerprint?: string;
         };
         journal: { phase: string; targetLiveIdentityFingerprint?: string };
@@ -693,6 +700,10 @@ createArgs[16] = async () => {
       assert.match(retained.error, /automatic sandbox cleanup was not safe/u);
       assert.equal(retained.registryEntry.pendingRouteReservation, true);
       assert.ok(retained.registryEntry.pendingCreateIdentity);
+      assert.equal(
+        retained.registryEntry.pendingCreateIdentity.openshellGatewayStateDir,
+        customGatewayStateDir,
+      );
       assert.match(
         retained.registryEntry.lifecycleLiveIdentityFingerprint ?? "",
         /^[0-9a-f]{64}$/u,
@@ -704,7 +715,11 @@ createArgs[16] = async () => {
       );
 
       const second = await runOnboardProcessAsync([scriptPath, "resume", scenario], {
-        env,
+        env: {
+          ...env,
+          NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR:
+            scenario === "changed-gateway-directory" ? workspace.path("other-gateway-state") : "",
+        },
         timeoutMs: 40_000,
         context,
       });
@@ -713,6 +728,7 @@ createArgs[16] = async () => {
         sandboxName: string | null;
         error: string | null;
         registryEntry: {
+          openshellGatewayStateDir?: string;
           pendingRouteReservation?: boolean;
           pendingCreateIdentity?: unknown;
         };
@@ -733,6 +749,10 @@ createArgs[16] = async () => {
         resumes ? /^completed$/u : /changed|journal|reservation|checkpoint|authority/u,
       );
       assert.equal(recovered.sandboxName, resumes ? "my-assistant" : null);
+      assert.equal(
+        recovered.registryEntry.openshellGatewayStateDir,
+        resumes ? customGatewayStateDir : undefined,
+      );
       assert.equal(recovered.registryEntry.pendingRouteReservation, resumes ? undefined : true);
       assert.equal(Boolean(recovered.registryEntry.pendingCreateIdentity), !resumes);
       assert.deepEqual(effectEvents, resumes ? ["seed", "resume"] : ["seed"]);

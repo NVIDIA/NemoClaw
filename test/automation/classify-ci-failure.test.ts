@@ -7,6 +7,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   readdirSync,
   rmSync,
   statSync,
@@ -26,6 +27,9 @@ const script = resolve(
   ".agents/skills/nemoclaw-maintainer-classify-ci-failure/scripts/classify-ci-failure.mts",
 );
 const roots: string[] = [];
+// Ubuntu 26.04 exposes GNU tools separately from its default Rust coreutils.
+const gnuTool = (name: string) =>
+  realpathSync(existsSync(`/usr/bin/gnu${name}`) ? `/usr/bin/gnu${name}` : `/usr/bin/${name}`);
 const uid = process.getuid?.() ?? "unknown";
 const REDACTION_CASES = [
   [
@@ -111,7 +115,7 @@ function fixture(log: string, result?: Record<string, unknown>, archive?: Buffer
       `#!${process.execPath}`,
       "const {spawnSync}=require('node:child_process');",
       "if(process.env.FAIL_PROBE_DD && process.argv.includes('count=1')) process.exit(7);",
-      "const result=spawnSync('/usr/bin/dd',process.argv.slice(2),{stdio:'inherit'});",
+      `const result=spawnSync(${JSON.stringify(gnuTool("dd"))},process.argv.slice(2),{stdio:'inherit'});`,
       "process.exit(result.status ?? 1);",
     ].join("\n"),
   );
@@ -123,7 +127,7 @@ function fixture(log: string, result?: Record<string, unknown>, archive?: Buffer
       `#!${process.execPath}`,
       "const {spawnSync}=require('node:child_process');",
       "if(process.env.FAIL_PROBE_WC && process.argv.includes('-c')) process.exit(7);",
-      "const result=spawnSync('/usr/bin/wc',process.argv.slice(2),{stdio:'inherit'});",
+      `const result=spawnSync(${JSON.stringify(gnuTool("wc"))},process.argv.slice(2),{stdio:'inherit'});`,
       "process.exit(result.status ?? 1);",
     ].join("\n"),
   );
@@ -176,7 +180,7 @@ function importedClassifierArgs(env: NodeJS.ProcessEnv, extra: string[]): string
       `import { classifyCiFailureWithRuntimeForTest } from ${JSON.stringify(new URL("file://" + script).href)};`,
       `const input = ${JSON.stringify(input)};`,
       "const environment = { ...process.env };",
-      "const executables = { bash: '/usr/bin/bash', dd: process.env.TEST_DD || '/usr/bin/dd', gh: process.env.TEST_GH, stat: '/usr/bin/stat', tail: '/usr/bin/tail', wc: process.env.TEST_WC || '/usr/bin/wc' };",
+      `const executables = { bash: ${JSON.stringify(realpathSync("/usr/bin/bash"))}, dd: process.env.TEST_DD || ${JSON.stringify(gnuTool("dd"))}, gh: process.env.TEST_GH, stat: ${JSON.stringify(gnuTool("stat"))}, tail: ${JSON.stringify(gnuTool("tail"))}, wc: process.env.TEST_WC || ${JSON.stringify(gnuTool("wc"))} };`,
       "const timeouts = { metadataMs: process.env.TEST_METADATA_TIMEOUT_MS ? Number(process.env.TEST_METADATA_TIMEOUT_MS) : undefined, logMs: process.env.TEST_LOG_TIMEOUT_MS ? Number(process.env.TEST_LOG_TIMEOUT_MS) : undefined, artifactMs: process.env.TEST_ARTIFACT_TIMEOUT_MS ? Number(process.env.TEST_ARTIFACT_TIMEOUT_MS) : undefined };",
       "void classifyCiFailureWithRuntimeForTest(input, { executables, environment, timeouts }).then((value) => console.log(JSON.stringify(value, null, 2))).catch((error) => { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1; });",
     ].join("\n"),
@@ -204,6 +208,13 @@ function classifierTemporaryDirectories(prefix: "nemoclaw-ci-log." | "nemoclaw-c
 }
 async function waitForFile(path: string): Promise<void> {
   await vi.waitFor(() => expect(existsSync(path)).toBe(true), { timeout: 2_000, interval: 10 });
+}
+async function waitForProcessExit(pid: number): Promise<void> {
+  // A killed descendant can remain visible until the kernel and its reaper finish.
+  await vi.waitFor(() => expect(() => process.kill(pid, 0)).toThrow(), {
+    timeout: 2_000,
+    interval: 10,
+  });
 }
 type FakePath = {
   type: "directory" | "file" | "symlink";
@@ -1014,7 +1025,7 @@ describe.skipIf(process.platform !== "linux")("CI failure classifier process", (
     expect(Date.now() - started).toBeGreaterThanOrEqual(200);
     expect(result.exitCode).not.toBe(0);
     expect(result.timedOut).toBe(true);
-    expect(() => process.kill(descendantPid, 0)).toThrow();
+    await waitForProcessExit(descendantPid);
   });
 
   test("drains a process group whose command exits promptly on SIGTERM", async () => {
@@ -1047,8 +1058,8 @@ describe.skipIf(process.platform !== "linux")("CI failure classifier process", (
     );
     expect(result).toEqual({ code: 143, signal: null });
     expect(readFileSync(signals, "utf8").trim().split("\n")).toEqual(["SIGTERM"]);
-    expect(() => process.kill(wrapperPid, 0)).toThrow();
-    expect(() => process.kill(commandPid, 0)).toThrow();
+    await waitForProcessExit(wrapperPid);
+    await waitForProcessExit(commandPid);
     expect(classifierTemporaryDirectories("nemoclaw-ci-log.")).toEqual([]);
     expect(classifierTemporaryDirectories("nemoclaw-ci-classify.")).toEqual([]);
   });
@@ -1143,8 +1154,8 @@ describe.skipIf(process.platform !== "linux")("CI failure classifier process", (
           child.once("close", (code, closeSignal) => resolve({ code, signal: closeSignal })),
       );
       expect(result).toEqual({ code: exitCode, signal: null });
-      expect(() => process.kill(groupPid, 0)).toThrow();
-      expect(() => process.kill(descendantPid, 0)).toThrow();
+      await waitForProcessExit(groupPid);
+      await waitForProcessExit(descendantPid);
       expect(stderr.length).toBeLessThanOrEqual(2000);
       const temporaryRoot = `/tmp/nemoclaw-ci-classifier-${uid}`;
       const remaining = existsSync(temporaryRoot)
