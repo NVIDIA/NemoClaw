@@ -1,31 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import {
-  HERMES_DIRECTORY_CAPTURE_SCRIPT,
-  HERMES_STATE_CAPTURE_SCRIPT,
-  OPENCLAW_CONFIG_CAPTURE_SCRIPT,
-} from "./backup-authority";
+import { HERMES_STATE_CAPTURE_SCRIPT } from "./backup-authority";
 
-const CONFIG_NAME = "openclaw.json";
-const MAX_CONFIG_BYTES = 16 * 1024 * 1024;
-const HERMES_DIRECTORY_MAX_BYTES = 256 * 1024 * 1024;
-const PROTOCOL_PREFIX = "nemoclaw-openclaw-config-capture:";
 const fixtureRoots: string[] = [];
 const linuxIt = process.platform === "linux" ? it : it.skip;
-
-interface CaptureResult {
-  readonly status: number | null;
-  readonly stdout: Buffer;
-  readonly stderr: string;
-}
 
 function fixtureDirectory(): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-capture-"));
@@ -33,38 +19,6 @@ function fixtureDirectory(): string {
   const directory = path.join(root, ".openclaw");
   fs.mkdirSync(directory);
   return directory;
-}
-
-function runCapture(directory: string, script = OPENCLAW_CONFIG_CAPTURE_SCRIPT): CaptureResult {
-  const result = spawnSync("/usr/bin/python3", ["-I", "-S", "-c", script, directory, CONFIG_NAME], {
-    encoding: null,
-    timeout: 30_000,
-    maxBuffer: MAX_CONFIG_BYTES + 1024 * 1024,
-  });
-  return {
-    status: result.status,
-    stdout: Buffer.isBuffer(result.stdout) ? result.stdout : Buffer.alloc(0),
-    stderr: Buffer.isBuffer(result.stderr) ? result.stderr.toString("utf8") : "",
-  };
-}
-
-function mutationHarness(mutation: string): string {
-  return `import os, sys
-capture_script = ${JSON.stringify(OPENCLAW_CONFIG_CAPTURE_SCRIPT)}
-directory = sys.argv[1]
-name = sys.argv[2]
-real_read = os.read
-mutated = False
-def mutate_after_first_read(fd, size):
-    global mutated
-    data = real_read(fd, size)
-    if not mutated:
-        mutated = True
-${mutation}
-    return data
-os.read = mutate_after_first_read
-exec(capture_script)
-`;
 }
 
 function hermesCopyMutationHarness(mutation: string): string {
@@ -100,40 +54,6 @@ def mutate_before_connect(database, *args, **kwargs):
 ${mutation}
     return real_connect(database, *args, **kwargs)
 sqlite3.connect = mutate_before_connect
-exec(capture_script)
-`;
-}
-
-function hermesDirectoryMutationHarness(mutation: string): string {
-  return `import os, sys, tarfile
-capture_script = ${JSON.stringify(HERMES_DIRECTORY_CAPTURE_SCRIPT)}
-base = sys.argv[1]
-real_addfile = tarfile.TarFile.addfile
-mutated = False
-def mutate_before_file_read(archive, info, fileobj=None):
-    global mutated
-    if fileobj is not None and not mutated:
-        mutated = True
-${mutation}
-    return real_addfile(archive, info, fileobj)
-tarfile.TarFile.addfile = mutate_before_file_read
-exec(capture_script)
-`;
-}
-
-function hermesDirectoryListingMutationHarness(mutation: string): string {
-  return `import os, sys
-capture_script = ${JSON.stringify(HERMES_DIRECTORY_CAPTURE_SCRIPT)}
-real_listdir = os.listdir
-mutated = False
-def mutate_after_list(descriptor):
-    global mutated
-    entries = real_listdir(descriptor)
-    if not mutated:
-        mutated = True
-${mutation}
-    return entries
-os.listdir = mutate_after_list
 exec(capture_script)
 `;
 }
@@ -284,223 +204,5 @@ describe("Hermes privileged state capture scripts", () => {
 
     expect(captured.status).toBe(13);
     expect(captured.stdout).toEqual(Buffer.alloc(0));
-  });
-
-  it.each([
-    ["symbolic link", "os.symlink"],
-    ["hard link", "os.link"],
-  ])("rejects a directory file replaced with a %s during archive read", (_kind, replacement) => {
-    const directory = fixtureDirectory();
-    const workspace = path.join(directory, "workspace");
-    const marker = path.join(workspace, "marker");
-    const outside = path.join(path.dirname(directory), "outside-directory-file");
-    fs.mkdirSync(workspace);
-    fs.writeFileSync(marker, Buffer.alloc(128 * 1024, 0x61));
-    fs.writeFileSync(outside, "outside-secret");
-    const mutation =
-      `        original = os.path.join(base, "workspace", "marker")\n` +
-      `        os.rename(original, original + ".old")\n` +
-      `        replacement = ${replacement}\n` +
-      `        replacement(${JSON.stringify(outside)}, original)`;
-    const script = hermesDirectoryMutationHarness(mutation);
-
-    const captured = spawnSync(
-      "/usr/bin/python3",
-      ["-I", "-S", "-c", script, directory, String(HERMES_DIRECTORY_MAX_BYTES), "workspace"],
-      { encoding: null },
-    );
-
-    expect(captured.status).toBe(13);
-    expect(captured.stdout.includes(Buffer.from("outside-secret"))).toBe(false);
-  });
-
-  it("rejects a directory entry created after traversal starts", () => {
-    const directory = fixtureDirectory();
-    const workspace = path.join(directory, "workspace");
-    fs.mkdirSync(workspace);
-    fs.writeFileSync(path.join(workspace, "marker"), "state");
-    const script = hermesDirectoryListingMutationHarness(
-      `        descriptor = os.open("late-state", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=descriptor)\n` +
-        `        os.write(descriptor, b"late")\n` +
-        `        os.close(descriptor)`,
-    );
-
-    const captured = spawnSync(
-      "/usr/bin/python3",
-      ["-I", "-S", "-c", script, directory, String(HERMES_DIRECTORY_MAX_BYTES), "workspace"],
-      { encoding: null },
-    );
-
-    expect(captured.status).toBe(13);
-    expect(fs.readFileSync(path.join(workspace, "late-state"), "utf8")).toBe("late");
-    expect(captured.stdout.includes(Buffer.from("late"))).toBe(false);
-  });
-
-  it("rejects unsafe directory entries before streaming a tar archive", () => {
-    const directory = fixtureDirectory();
-    const workspace = path.join(directory, "workspace");
-    fs.mkdirSync(workspace);
-    fs.writeFileSync(path.join(workspace, "marker"), "state");
-    const captured = spawnSync(
-      "/usr/bin/python3",
-      [
-        "-I",
-        "-S",
-        "-c",
-        HERMES_DIRECTORY_CAPTURE_SCRIPT,
-        directory,
-        String(HERMES_DIRECTORY_MAX_BYTES),
-        "workspace",
-      ],
-      { encoding: null },
-    );
-    expect(captured.status).toBe(0);
-    expect(spawnSync("tar", ["-tf", "-"], { input: captured.stdout }).status).toBe(0);
-    const outside = path.join(path.dirname(directory), "outside-secret");
-    fs.writeFileSync(outside, "outside-secret");
-    fs.symlinkSync(outside, path.join(workspace, "unsafe"));
-    const unsafe = spawnSync(
-      "/usr/bin/python3",
-      [
-        "-I",
-        "-S",
-        "-c",
-        HERMES_DIRECTORY_CAPTURE_SCRIPT,
-        directory,
-        String(HERMES_DIRECTORY_MAX_BYTES),
-        "workspace",
-      ],
-      { encoding: null },
-    );
-    expect(unsafe.status).not.toBe(0);
-    expect(unsafe.stdout.includes(Buffer.from("outside-secret"))).toBe(false);
-  });
-
-  it("stops a directory archive before it exceeds the supplied byte limit", () => {
-    const directory = fixtureDirectory();
-    const workspace = path.join(directory, "workspace");
-    fs.mkdirSync(workspace);
-    fs.writeFileSync(path.join(workspace, "large-state"), Buffer.alloc(32 * 1024, 0xa5));
-    const maximum = 16 * 1024;
-
-    const captured = spawnSync(
-      "/usr/bin/python3",
-      ["-I", "-S", "-c", HERMES_DIRECTORY_CAPTURE_SCRIPT, directory, String(maximum), "workspace"],
-      { encoding: null },
-    );
-
-    expect(captured.status).toBe(14);
-    expect(captured.stdout.length).toBeLessThanOrEqual(maximum);
-  });
-});
-
-describe("OpenClaw privileged config capture script", () => {
-  it("returns bytes only for a stable regular file", () => {
-    const directory = fixtureDirectory();
-    const expected = Buffer.from('{"models":{"default":"nvidia/test"}}\n');
-    fs.writeFileSync(path.join(directory, CONFIG_NAME), expected);
-
-    const result = runCapture(directory);
-
-    expect(result).toEqual({ status: 0, stdout: expected, stderr: "" });
-  });
-
-  it("returns all bytes for a stable file at the 16 MiB limit", () => {
-    const directory = fixtureDirectory();
-    const expected = Buffer.alloc(MAX_CONFIG_BYTES, 0xa5);
-    fs.writeFileSync(path.join(directory, CONFIG_NAME), expected);
-
-    const result = runCapture(directory);
-
-    expect(result.status).toBe(0);
-    expect(result.stderr).toBe("");
-    expect(result.stdout).toHaveLength(expected.length);
-    expect(result.stdout.equals(expected)).toBe(true);
-  });
-
-  it.each([
-    {
-      kind: "symbolic link",
-      setup(directory: string) {
-        const target = path.join(path.dirname(directory), "target.json");
-        fs.writeFileSync(target, "target");
-        fs.symlinkSync(target, path.join(directory, CONFIG_NAME));
-      },
-    },
-    {
-      kind: "hard link",
-      setup(directory: string) {
-        const target = path.join(path.dirname(directory), "target.json");
-        fs.writeFileSync(target, "target");
-        fs.linkSync(target, path.join(directory, CONFIG_NAME));
-      },
-    },
-    {
-      kind: "FIFO",
-      setup(directory: string) {
-        const result = spawnSync("mkfifo", [path.join(directory, CONFIG_NAME)]);
-        expect(result.status).toBe(0);
-      },
-    },
-    {
-      kind: "directory",
-      setup(directory: string) {
-        fs.mkdirSync(path.join(directory, CONFIG_NAME));
-      },
-    },
-    {
-      kind: "oversized file",
-      setup(directory: string) {
-        const descriptor = fs.openSync(path.join(directory, CONFIG_NAME), "w");
-        try {
-          fs.ftruncateSync(descriptor, MAX_CONFIG_BYTES + 1);
-        } finally {
-          fs.closeSync(descriptor);
-        }
-      },
-    },
-  ])("rejects a $kind without returning captured bytes", ({ setup }) => {
-    const directory = fixtureDirectory();
-    setup(directory);
-
-    const result = runCapture(directory);
-
-    expect(result.status).not.toBe(0);
-    expect(result.stdout).toEqual(Buffer.alloc(0));
-    expect(result.stderr).toContain(PROTOCOL_PREFIX);
-  });
-
-  it("rejects a file replaced during the read without returning captured bytes", () => {
-    const directory = fixtureDirectory();
-    fs.writeFileSync(path.join(directory, CONFIG_NAME), "original");
-    const script = mutationHarness(
-      `        original = os.path.join(directory, name)\n` +
-        `        os.rename(original, original + ".old")\n` +
-        `        with open(original, "wb") as replacement:\n` +
-        `            replacement.write(b"replacement")`,
-    );
-
-    const result = runCapture(directory, script);
-
-    expect(result.status).toBe(13);
-    expect(result.stdout).toEqual(Buffer.alloc(0));
-    expect(result.stderr).toBe(`${PROTOCOL_PREFIX}file-changed-during-read\n`);
-  });
-
-  it("rejects a directory replaced during the read without returning captured bytes", () => {
-    const directory = fixtureDirectory();
-    fs.writeFileSync(path.join(directory, CONFIG_NAME), "original");
-    const script = mutationHarness(
-      `        os.rename(directory, directory + ".old")\n` +
-        `        os.mkdir(directory)\n` +
-        `        with open(os.path.join(directory, name), "wb") as replacement:\n` +
-        `            replacement.write(b"replacement")`,
-    );
-
-    const result = runCapture(directory, script);
-
-    expect(result.status).toBe(13);
-    expect(result.stdout).toEqual(Buffer.alloc(0));
-    expect(result.stderr).toBe(`${PROTOCOL_PREFIX}directory-changed-during-read\n`);
   });
 });

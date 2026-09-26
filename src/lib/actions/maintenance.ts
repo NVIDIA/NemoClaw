@@ -307,13 +307,9 @@ export async function backupAllUnderPortableHostFence(
       async (startedForBackup) => {
         const backupResult = await (startedForBackup
           ? backupStartedSandboxState(sb.name)
-          : snapshotBackup.backupSandboxStateWithManagedAuthority(
-              sb.name,
-              {},
-              {
-                getSandbox: registry.getSandbox,
-              },
-            ));
+          : snapshotBackup.backupSandboxStateWithManagedAuthority(sb.name, {
+              getSandbox: registry.getSandbox,
+            }));
         return retainPreUpgradePolicy
           ? retainStrictPreUpgradeRecoveryState(sb, backupResult, {
               gatewayName: resolveSandboxGatewayName(sb),

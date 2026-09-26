@@ -103,6 +103,18 @@ describe("prepared rebuild backup recovery validation (#6114)", () => {
     expect(sandboxState.getLatestBackup("alpha")).toBeNull();
   });
 
+  it("does not select a legacy selective backup for automatic restore", () => {
+    writeBackup("alpha", "2026-07-01T06-50-42-044Z", {
+      version: 1,
+      nativeState: undefined,
+      stateDirs: ["workspace"],
+      backedUpDirs: ["workspace"],
+    });
+
+    expect(sandboxState.listBackups("alpha")).toEqual([]);
+    expect(sandboxState.getLatestBackup("alpha")).toBeNull();
+  });
+
   it("accepts an exact sandbox and agent identity from its timestamped backup path", () => {
     writeBackup("alpha", "2026-07-01T06-50-42-044Z", {
       agentVersion: "2026.5.27",

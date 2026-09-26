@@ -516,19 +516,14 @@ export async function backupSandboxStateForRebuild(
   staleRecovery: boolean,
   log: (msg: string) => void,
   bail: (msg: string, code?: number) => never,
-  capturedOpenClawState?: sandboxState.BackupOptions["capturedOpenClawState"],
 ): Promise<sandboxState.RebuildManifest | null | undefined> {
   if (staleRecovery) return null;
 
   console.log("  Backing up sandbox state...");
   log(`Agent type: ${sb.agent || "openclaw"}, complete native home/workspace transfer`);
-  let backup = snapshotBackup.backupSandboxStateWithManagedAuthority(
-    sandboxName,
-    capturedOpenClawState ? { capturedOpenClawState } : {},
-    {
-      getSandbox: (name) => loadRegistry().sandboxes[name] ?? null,
-    },
-  );
+  let backup = snapshotBackup.backupSandboxStateWithManagedAuthority(sandboxName, {
+    getSandbox: (name) => loadRegistry().sandboxes[name] ?? null,
+  });
   log(
     `Backup result: success=${backup.success}, backed=${backup.backedUpDirs.join(",")}; files=${backup.backedUpFiles.join(",")}, failed=${backup.failedDirs.join(",")}; failedFiles=${backup.failedFiles.join(",")}`,
   );

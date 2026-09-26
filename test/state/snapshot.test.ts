@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -77,7 +78,7 @@ describe("complete native home persistence", () => {
     try {
       const binDir = path.join(fixture, "bin");
       const nativeRoot = path.join(fixture, "native-home");
-      const openshellPrivate = path.join(fixture, "openshell-private");
+      const openshellPrivate = path.join(fixture, ".openshell");
       fs.mkdirSync(binDir, { recursive: true });
       fs.mkdirSync(nativeRoot, { recursive: true });
       fs.mkdirSync(openshellPrivate, { recursive: true });
@@ -136,6 +137,13 @@ process.exit(93);
         root: "/sandbox",
         archive: "native-home.tar",
       });
+      const archivedPaths = spawnSync("tar", [
+        "-tf",
+        path.join(backup.manifest!.backupPath, "native-home.tar"),
+      ]);
+      expect(archivedPaths.status).toBe(0);
+      expect(archivedPaths.stdout.toString()).not.toContain(".openshell");
+      expect(archivedPaths.stdout.toString()).not.toContain("credential");
 
       fs.writeFileSync(path.join(nativeRoot, "unknown.txt"), "changed");
       fs.rmSync(path.join(nativeRoot, ".openclaw"), { recursive: true, force: true });

@@ -833,7 +833,7 @@ describe("deterministic PR risk plan", () => {
     {
       file: "src/lib/actions/upgrade-sandboxes.ts",
       family: "upgrade-rebuild",
-      jobs: ["rebuild-openclaw"],
+      jobs: ["rebuild-hermes", "rebuild-openclaw"],
     },
     {
       file: "src/lib/actions/sandbox/agents/apply.ts",
@@ -998,6 +998,7 @@ describe("deterministic PR risk plan", () => {
       "onboard-resume",
       "openclaw-discord-pairing",
       "openclaw-slack-pairing",
+      "rebuild-hermes",
       "rebuild-openclaw",
     ]);
   });

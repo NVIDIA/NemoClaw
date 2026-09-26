@@ -515,7 +515,7 @@ export async function executeSandboxDestroy({
           ok: false,
           deleteOutput:
             `Could not stop managed inference resources before sandbox deletion: ${redactDestroyError(error)}. ` +
-            "No workspace wipe, provider cleanup, or sandbox deletion was attempted.",
+            "No provider cleanup or sandbox deletion was attempted.",
           exitCode: 1,
           gatewayUnreachable: false,
           hostLocalInferenceOwnershipRequiresGateway: false,
@@ -548,7 +548,7 @@ export async function executeSandboxDestroy({
         "before provider cleanup",
         preProviderContinuity,
         mcpRecoveryFailure,
-        " Managed inference cleanup and workspace wipe may already have run; inspect those resources before retrying.",
+        " Managed inference cleanup may already have run; inspect those resources before retrying.",
       );
     }
     const detachOutcome: DetachSandboxProvidersResult = sandboxConfirmedAbsent
@@ -573,7 +573,7 @@ export async function executeSandboxDestroy({
         "at the delete boundary",
         deleteBoundaryContinuity,
         mcpRecoveryFailure,
-        ` Managed inference cleanup and workspace wipe may already have run; inspect those resources before retrying.${detachedDetail}`,
+        ` Managed inference cleanup may already have run; inspect those resources before retrying.${detachedDetail}`,
       );
     }
     if (

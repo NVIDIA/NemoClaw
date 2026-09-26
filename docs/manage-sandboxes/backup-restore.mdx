@@ -37,6 +37,8 @@ For a stopped eligible container, NemoClaw starts it through the OpenShell lifec
 
 `$$nemoclaw backup-all` remains an installer-facing safety operation. It captures the same complete native home/workspace for every eligible registered sandbox before an OpenShell upgrade. It is not a general snapshot create/list/restore interface.
 
+Backups created by older NemoClaw versions from a selective per-agent path inventory are not candidates for automatic rebuild or recreation restore. Recover files from those legacy backup directories manually, then create a current complete native-home backup before replacement.
+
 ## Destroy
 
 `$$nemoclaw <name> destroy` asks OpenShell to delete the sandbox and its native storage. Download files you need before destroy. To replace software while preserving the complete native state, use `$$nemoclaw <name> rebuild`.

@@ -294,8 +294,8 @@ NemoClaw separates provider credentials, host metadata, and sandbox state.
 | OpenShell gateway | Provider credentials and provider registrations | Reused when the gateway and provider binding remain available. Raw values cannot be read back. |
 | `~/.nemoclaw/` on the host | Sandbox registry, provider names, and onboarding session state | Preserved by normal updates. The directory contains no sandbox policy or provider credential values. |
 | Agent configuration in the sandbox | Generated inference routes, OpenShell resolver placeholders, and agent-specific settings | Regenerated from host registry and OpenShell state. Generated files are not a credential store. |
-| Manifest-defined sandbox state | Agent workspace, memory, skills, and agent-specific durable files | Snapshotted and restored according to the selected agent manifest. |
-| Arbitrary environment and profile edits | Direct shell exports and edits outside the manifest contract | Not guaranteed. Export host variables again and use documented host commands for durable configuration. |
+| OpenShell native home/workspace | The complete agent tree, including unknown files, configuration, histories, hooks, plugins, packages, cron data, and child-agent state | Transferred as one opaque archive without an agent-specific path inventory. |
+| State outside the native home/workspace | Container image and system paths, plus shell state that exists only in a running process | Not transferred. Download needed files before replacement and export host variables again. |
 
 NemoClaw holds an environment-supplied provider credential in memory while it registers the value with OpenShell. The sandbox receives a resolver placeholder, and OpenShell substitutes the raw value at egress. For details, refer to [Credential Storage](../security/credential-storage).
 
@@ -305,7 +305,7 @@ Install a declarative agent skill through the supported host command:
 $$nemoclaw headless-agent skill install ./my-skill/
 ```
 
-The skill directory must contain `SKILL.md` with a `name` field in its YAML frontmatter. Do not assume that packages, shell exports, or profile edits made by a skill survive a rebuild.
+The skill directory must contain `SKILL.md` with a `name` field in its YAML frontmatter. Files a skill writes under the native home/workspace survive a rebuild; process-only shell exports and changes elsewhere do not.
 
 ## Add a Least-Privilege Policy
 

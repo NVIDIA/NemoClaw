@@ -901,17 +901,6 @@ Before deleting an existing sandbox during recreation, NemoClaw transfers the co
 
 Before deletion, onboarding prints a `Journaled replacement` diagnostic with the replacement identifier, recorded OpenShell gateway, and current phase. If the process stops after this point, rerun the original onboarding command with the same target settings. The rerun continues the active replacement without requiring `--resume`. It accepts a same-name replacement only after its live identity and sandbox registry generation match the journal and it completes or verifies the recorded final handoff. A matching replacement can report not-ready after that handoff. It fails closed if the gateway, source, target, durable source registry fields, or replacement settings changed.
 
-<AgentOnly variant="openclaw">
-
-For OpenClaw, the backed-up paths include agents, extensions, workspace, skills, hooks, identity, devices, canvas, cron, memory, telegram, wechat, credentials, and `/sandbox/.openclaw/workspace/`.
-
-</AgentOnly>
-<AgentOnly variant="hermes">
-
-For Hermes, the backed-up paths come from `agents/hermes/manifest.yaml`, including `/sandbox/.hermes` state such as memories, sessions, skills, plugins, cron, scripts, logs, plans, workspace, messaging platform state, `runtime/state.db`, and the default kanban board in `kanban.db`. Kanban backup does not include named boards, attachments, worker logs, scratch workspaces under `kanban/`, or external directory or worktree targets.
-
-</AgentOnly>
-
 Before creating the gateway, the wizard runs preflight checks.
 Docker is the default runtime provider. It verifies that the selected provider is reachable and prints host remediation guidance when prerequisites are missing.
 On Linux, set `NEMOCLAW_GATEWAY_RUNTIME=podman` to select the qualified native rootless Podman provider for standard onboarding.
@@ -2050,12 +2039,6 @@ When cleanup comes from the platform default, the environment, or an accepted pr
 When you pass `--cleanup-gateway`, `destroy` exits nonzero and the message states that the flag was not applied.
 After that message, confirm that `openshell sandbox list -g <gateway-name>` reports no sandboxes.
 Then run `openshell gateway remove <gateway-name>` to remove the gateway.
-
-If the pre-delete workspace wipe exits nonzero, `destroy` continues, but the retained volume can still contain old files.
-Use a different sandbox name to avoid reusing that retained volume.
-If workspace cleanup reaches its 60-second timeout, NemoClaw cannot confirm the remote result.
-NemoClaw stops before provider cleanup and sandbox deletion and preserves the local registry entry.
-Run `$$nemoclaw <name> status` to check or start the recorded OpenShell gateway, then retry after the gateway is available.
 
 Cleaning up the gateway after the last sandbox also purges the shared cluster volume that retains the per-name persistent volume.
 If NemoClaw detects active SSH sessions before destroy, it warns that destroy terminates them with a `Broken pipe` error and lists their process IDs.

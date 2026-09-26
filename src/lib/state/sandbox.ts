@@ -44,7 +44,7 @@ import { GATEWAY_PORT } from "../core/ports.js";
 import { shellQuote } from "../runner.js";
 import { createTempSshConfig } from "../sandbox/temp-ssh-config.js";
 import { inspectMcpDeniedToolSelectors } from "../security/mcp-denied-tool-selector.js";
-import { isAllowedStateSymlink, type CapturedOpenClawState } from "./state-directory-restore.js";
+import { isAllowedStateSymlink } from "./state-directory-restore.js";
 import {
   extractPreservedEnvAssignments,
   HERMES_PRESERVED_ENV_INVENTORY,
@@ -174,8 +174,6 @@ export interface RebuildMcpHandoffEntry {
 export type SnapshotEntry = RebuildManifest;
 
 export interface BackupOptions {
-  /** Private, provider-verified source for OpenClaw recovery without container execution. */
-  capturedOpenClawState?: CapturedOpenClawState;
   runtimeSnapshot?: SandboxRuntimeSnapshot;
   workload?: SandboxWorkloadReceipt;
   hostLocalInferenceReceipt?: string;
@@ -192,12 +190,6 @@ export interface BackupOptions {
    * identity, and stable-read constraints before returning bytes.
    */
   captureStateFile?: StateFileCapture;
-  /**
-   * Internal privileged retry for state directories that the restricted tar
-   * path classified as permission denied. The state layer owns the temporary
-   * archive fd and validates the returned archive before publishing it.
-   */
-  captureStateDirectories?: StateDirectoryCapture;
 }
 
 export interface InstanceBackup {
@@ -226,23 +218,7 @@ export type StateFileCaptureResult =
   | { outcome: "missing" }
   | { outcome: "failed"; error?: string; unreachable?: boolean };
 
-export interface StateDirectoryCaptureRequest {
-  sandboxName: string;
-  dir: string;
-  dirs: readonly string[];
-  /** Maximum archive bytes the privileged producer may write to the owned fd. */
-  maxArchiveBytes: number;
-}
-
-export type StateDirectoryCaptureResult =
-  | { outcome: "backed_up" }
-  | { outcome: "failed"; error?: string; unreachable?: boolean };
-
 export type StateFileCapture = (request: StateFileCaptureRequest) => StateFileCaptureResult | null;
-export type StateDirectoryCapture = (
-  request: StateDirectoryCaptureRequest,
-  archiveFd: number,
-) => StateDirectoryCaptureResult | null;
 
 export interface BackupResult {
   success: boolean;
@@ -971,21 +947,6 @@ export function isDeclaredAgentStateFile(
   );
 }
 
-/** Check privileged directory requests against the owning agent manifest. */
-export function areDeclaredAgentStateDirectories(
-  agentName: string,
-  dir: string,
-  names: readonly string[],
-): boolean {
-  if (names.length === 0) return false;
-  const agent = loadAgent(agentName);
-  const allowed = new Set(agent.backupStateDirs);
-  return (
-    dir === agent.configPaths.dir &&
-    names.every((name) => allowed.has(name) && /^[A-Za-z0-9._-]+$/.test(name))
-  );
-}
-
 function stateFileRemotePath(dir: string, filePath: string): string {
   return `${dir.replace(/\/+$/, "")}/${filePath}`;
 }
@@ -1341,11 +1302,14 @@ function sha256Descriptor(descriptor: number): string {
 
 type OpenedNativeArchive = { descriptor: number } | { error: string };
 
-function copyNativeArchiveToPrivateDescriptor(sourceDescriptor: number): {
+function copyNativeArchiveToPrivateDescriptor(
+  sourceDescriptor: number,
+  stagingDirectory: string,
+): {
   descriptor: number;
   sha256: string;
 } {
-  const temporaryRoot = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-restore-"));
+  const temporaryRoot = mkdtempSync(path.join(stagingDirectory, ".native-restore-"));
   const privatePath = path.join(temporaryRoot, "archive.tar");
   let descriptor: number | null = null;
   try {
@@ -1388,7 +1352,10 @@ function openValidatedNativeArchive(
     sourceDescriptor = openSync(archivePath, constants.O_RDONLY | constants.O_NOFOLLOW);
     const sourceIdentity = fstatSync(sourceDescriptor);
     if (!sourceIdentity.isFile()) return { error: identityError };
-    const privateArchive = copyNativeArchiveToPrivateDescriptor(sourceDescriptor);
+    const privateArchive = copyNativeArchiveToPrivateDescriptor(
+      sourceDescriptor,
+      path.dirname(archivePath),
+    );
     restoreDescriptor = privateArchive.descriptor;
     if (
       fstatSync(restoreDescriptor).size !== sourceIdentity.size ||
@@ -1415,8 +1382,16 @@ function openValidatedNativeArchive(
     const descriptor = restoreDescriptor;
     restoreDescriptor = null;
     return { descriptor };
-  } catch {
-    return { error: "Native home/workspace archive is missing or unreadable" };
+  } catch (error) {
+    const code =
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      typeof error.code === "string" &&
+      /^[A-Z0-9_]+$/.test(error.code)
+        ? ` (${error.code})`
+        : "";
+    return { error: `Native home/workspace archive is missing or unreadable${code}` };
   } finally {
     if (sourceDescriptor !== null) closeSync(sourceDescriptor);
     if (restoreDescriptor !== null) closeSync(restoreDescriptor);
@@ -1460,7 +1435,7 @@ function backupNativeSandboxState(sandboxName: string, options: BackupOptions): 
     );
     let result: ReturnType<typeof spawnSync>;
     try {
-      const command = `set -eu; root=${shellQuote(rootResult.root)}; [ -d "$root" ] && [ ! -L "$root" ]; exec tar -C "$root" -cf - -- .`;
+      const command = `set -eu; root=${shellQuote(rootResult.root)}; { [ -d "$root" ] && [ ! -L "$root" ]; } || exit 20; exec tar -C "$root" -cf - -- .`;
       result = spawnSync("ssh", [...sshArgs(temporary.file, sandboxName), command], {
         stdio: ["ignore", archiveFd, "pipe"],
         timeout: NATIVE_STATE_CAPTURE_TIMEOUT_MS,
@@ -1748,7 +1723,9 @@ async function restoreNativeSandboxState(
   });
   const manifest = readManifest(backupPath);
   if (!manifest?.nativeState || manifest.version !== MANIFEST_VERSION) {
-    return failure("Backup does not contain a supported complete native home/workspace archive");
+    return failure(
+      "Backup does not contain a supported complete native home/workspace archive. Legacy selective backups require manual file recovery.",
+    );
   }
   if (manifest.agentType !== options.targetAgentType) {
     return failure(
@@ -1794,7 +1771,7 @@ async function restoreNativeSandboxState(
       const command = [
         "set -eu",
         `root=${root}`,
-        '[ -d "$root" ] && [ ! -L "$root" ]',
+        '{ [ -d "$root" ] && [ ! -L "$root" ]; } || exit 20',
         'find "$root" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +',
         'exec tar --no-same-owner -xf - -C "$root"',
       ].join("; ");
@@ -2334,6 +2311,8 @@ export function listBackups(sandboxName: string): SnapshotEntry[] {
     const m = readManifest(backupPath);
     if (
       m &&
+      m.version === MANIFEST_VERSION &&
+      m.nativeState !== undefined &&
       m.backupComplete !== false &&
       (m.failedBackupDirs?.length ?? 0) === 0 &&
       legacyStateFilesArePresent(backupPath, m)

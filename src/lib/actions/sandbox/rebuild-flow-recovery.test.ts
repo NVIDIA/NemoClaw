@@ -50,10 +50,7 @@ describe("rebuildSandbox flow: recovery", () => {
       await expect(
         harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
       ).resolves.toBeUndefined();
-      expect(harness.backupSandboxStateSpy).toHaveBeenCalledWith(
-        "alpha",
-        expect.objectContaining({ capturedOpenClawState: captured }),
-      );
+      expect(harness.backupSandboxStateSpy).toHaveBeenCalledWith("alpha");
       expect(harness.onboardSpy).toHaveBeenCalled();
       expect(openClawLifecycle.beginOpenClawBackupQuiesce).not.toHaveBeenCalled();
       expect(mcpBridgeSource.inspectAgentMcpSources).not.toHaveBeenCalled();

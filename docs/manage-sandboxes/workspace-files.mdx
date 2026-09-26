@@ -249,7 +249,7 @@ Runtime state, such as logs, memory, platform sessions, and the SQLite state dat
 Hermes state lives in the sandbox's persistent state volume, not in the container image alone.
 Normal restarts preserve that state.
 Rebuilds and upgrades transfer the complete OpenShell-provided native home, including `SOUL.md`, the Web Dashboard profile under `.hermes/profiles/dashboard-home/`, the SQLite database behind `.hermes/state.db`, and the default kanban board in `.hermes/kanban.db`.
-Named boards, attachments, worker logs, scratch workspaces under `.hermes/kanban/`, and external directory or worktree targets are not included in the kanban backup.
+Named boards, attachments, worker logs, and scratch workspaces under `.hermes/kanban/` are included because they are under the native home. External directory or worktree targets are included only when they are also under the OpenShell-provided native home/workspace.
 
 Running `$$nemoclaw <name> destroy` deletes the sandbox and its persistent state volume.
 Back up important state before destroying a Hermes sandbox.
