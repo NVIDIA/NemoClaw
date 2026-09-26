@@ -153,6 +153,78 @@ describe("runInferenceSet on a loopback no-auth compatible endpoint", () => {
     ]);
   });
 
+  it("keeps a recorded legacy no-auth route after the proxy port moves", async () => {
+    vi.stubEnv("NEMOCLAW_OLLAMA_PROXY_PORT", "12435");
+    vi.resetModules();
+    try {
+      const [{ runInferenceSet: runWithMovedProxy }, support] = await Promise.all([
+        import("./inference-set"),
+        import("./inference-set.test-support"),
+      ]);
+      const endpointUrl = "http://127.0.0.1:11435/v1";
+      const entry = {
+        ...noAuthEntry(),
+        endpointUrl,
+      } as SandboxEntry;
+      const session = support.baseSession({
+        provider: "compatible-endpoint",
+        model: "model-a",
+        endpointUrl,
+        credentialEnv: NO_AUTH_CREDENTIAL_ENV,
+        preferredInferenceApi: "openai-completions",
+      });
+      const captureOpenshell = support.createCompatibleProviderCapture({
+        name: "compatible-endpoint",
+        type: "openai",
+        credentialEnv: NO_AUTH_CREDENTIAL_ENV,
+        configKey: "OPENAI_BASE_URL",
+        initiallyPresent: true,
+      });
+      const deps = support.createDeps({
+        config: {
+          agents: { defaults: { model: { primary: "inference/model-a" } } },
+          models: { providers: { inference: { api: "openai-completions", models: [] } } },
+        },
+        entry,
+        session,
+        captureOpenshell,
+      });
+
+      await runWithMovedProxy({ provider: "compatible-endpoint", model: "model-b" }, deps);
+
+      expect(providerMutationArgs(captureOpenshell)).toEqual([]);
+      expect(inferenceSetArgs(captureOpenshell)).toEqual([
+        [
+          "inference",
+          "set",
+          "-g",
+          "nemoclaw",
+          "--provider",
+          "compatible-endpoint",
+          "--model",
+          "model-b",
+          "--no-verify",
+        ],
+      ]);
+      expect(deps.calls.probeSandboxRoute).toHaveBeenCalledWith({
+        sandboxName: "alpha",
+        provider: "compatible-endpoint",
+        model: "model-b",
+        preferredInferenceApi: "openai-completions",
+      });
+      expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
+        "alpha",
+        expect.objectContaining({
+          endpointUrl,
+          credentialEnv: NO_AUTH_CREDENTIAL_ENV,
+        }),
+      ]);
+    } finally {
+      vi.unstubAllEnvs();
+      vi.resetModules();
+    }
+  });
+
   it("removes the previous model's context window when the endpoint has no authoritative probe", async () => {
     const config = {
       agents: { defaults: { model: { primary: "inference/model-a" } } },
