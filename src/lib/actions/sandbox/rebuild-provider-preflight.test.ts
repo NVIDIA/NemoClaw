@@ -151,10 +151,10 @@ describe("checkRebuildGatewayCredentialReuseOrBail", () => {
   it("accepts the loopback no-auth proxy identity recorded by onboarding", async () => {
     const noAuthConfig = config({
       credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
-      endpointUrl: "http://localhost:12500/v1",
+      endpointUrl: "http://localhost:11434/v1",
       registryInferenceRoute: {
         ...config().registryInferenceRoute!,
-        endpointUrl: "http://localhost:12500/v1",
+        endpointUrl: "http://localhost:11434/v1",
       },
     });
 

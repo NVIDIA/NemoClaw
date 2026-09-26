@@ -352,7 +352,7 @@ describe("OpenAI-compatible no-auth provider registration", () => {
     sandboxName: SANDBOX,
     model: MODEL,
     provider: "compatible-endpoint",
-    endpointUrl: "http://localhost:12500/v1",
+    endpointUrl: "http://localhost:11434/v1",
     credentialEnv: NO_AUTH_ENV,
     preferredInferenceApi: "openai-completions",
     pinnedAddresses: ["127.0.0.1"],
@@ -376,7 +376,7 @@ describe("OpenAI-compatible no-auth provider registration", () => {
       done: false,
     });
 
-    expect(noAuthProxy).toHaveBeenCalledWith("http://localhost:12500/v1");
+    expect(noAuthProxy).toHaveBeenCalledWith("http://localhost:11434/v1");
     expect(withOllamaProxyLifecycleTransaction).toHaveBeenCalledOnce();
     expect(harness.upsertProvider).toHaveBeenCalledWith(
       "compatible-endpoint",
@@ -419,7 +419,7 @@ describe("OpenAI-compatible no-auth provider registration", () => {
       ),
     ).resolves.toEqual({ done: false });
 
-    expect(noAuthProxy).toHaveBeenCalledWith("http://localhost:12500/v1", {
+    expect(noAuthProxy).toHaveBeenCalledWith("http://localhost:11434/v1", {
       allowLegacyRecordedEndpoint: true,
     });
   });

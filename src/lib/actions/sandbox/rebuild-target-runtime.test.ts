@@ -159,7 +159,7 @@ describe("preflightRebuildTargetRuntime GPU route", () => {
   );
 
   it("uses the validated resume endpoint for credential preflight", async () => {
-    const endpointUrl = "http://localhost:12500/v1";
+    const endpointUrl = "http://localhost:11434/v1";
     const target = {
       ...TARGET,
       resumeConfig: {

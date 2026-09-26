@@ -91,6 +91,48 @@ describe("protected NemoClaw host ports", () => {
     ).toBe(false);
   });
 
+  it("rejects a legacy retained router endpoint before routerPort migration", async () => {
+    const root = tempHome();
+    const blueprintDir = path.join(root, "nemoclaw-blueprint");
+    const home = tempHome();
+    fs.mkdirSync(blueprintDir, { recursive: true });
+    fs.mkdirSync(path.join(home, ".nemoclaw"), { recursive: true });
+    fs.writeFileSync(
+      path.join(home, ".nemoclaw", "onboard-session.json"),
+      JSON.stringify({
+        provider: "nvidia-router",
+        endpointUrl: "http://host.openshell.internal:23007/v1",
+        routerPid: 4242,
+        routerCredentialHash: "legacy-hash",
+      }),
+    );
+    fs.writeFileSync(
+      path.join(blueprintDir, "blueprint.yaml"),
+      [
+        "components:",
+        "  inference:",
+        "    profiles:",
+        "      routed:",
+        "        model: test/model",
+        "  router:",
+        "    enabled: true",
+        "    port: 23006",
+        "",
+      ].join("\n"),
+    );
+    vi.stubEnv("HOME", home);
+    vi.stubEnv("NEMOCLAW_VLLM_PORT", "23007");
+    vi.doMock("./repository-root", () => ({ REPOSITORY_ROOT: root }));
+    vi.resetModules();
+
+    const { isLoopbackNoAuthCompatibleEndpointUrl } =
+      await import("../onboard/inference-providers/compatible-endpoint-gateway-route");
+
+    expect(
+      isLoopbackNoAuthCompatibleEndpointUrl("compatible-endpoint", "http://localhost:23007/v1"),
+    ).toBe(false);
+  });
+
   it("keeps the default and automatic gateway ports reserved under an override", async () => {
     vi.stubEnv("NEMOCLAW_GATEWAY_PORT", "18080");
     vi.resetModules();

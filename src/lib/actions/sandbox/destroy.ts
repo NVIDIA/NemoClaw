@@ -938,7 +938,8 @@ async function destroySandboxUnlocked(
         : {}),
       ...(portableContainerAuthority ? { portableContainerAuthority } : {}),
       verifyForwardPortsReleased: () => teardownSandboxDashboardForward(sandboxName),
-      stopInferenceResources: () => stopSandboxInferenceResources(sandboxName, sandbox),
+      stopInferenceResources: () =>
+        stopSandboxInferenceResources(sandboxName, sandbox, listRegisteredSandboxes),
     });
   } catch (error) {
     preparedManagedLlamaCppCleanup?.abort();

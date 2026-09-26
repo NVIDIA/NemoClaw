@@ -8,6 +8,7 @@ import { buildSelectedOpenShellSubprocessEnv } from "../../adapters/openshell/co
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { withModelRouterPortLifecycleLock } from "../../inference/gateway-route-mutation-lock";
+import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../inference/ollama/contract";
 import { DEFAULT_MODEL_ROUTER_PORT, isRoutedInferenceProvider } from "../../onboard/model-router";
 import {
   doesModelRouterProcessOwnPort,
@@ -111,6 +112,10 @@ export function resolveSandboxDestroyRuntimeSelection(
 export function stopSandboxInferenceResources(
   sandboxName: string,
   sandbox: SandboxEntry | null,
+  listSandboxes: typeof registry.listSandboxes = registry.listSandboxes,
+  deps: {
+    killStaleProxyIfUnused?: (hasRemainingOwner: () => boolean) => boolean;
+  } = {},
 ): void {
   const nim = require("../../inference/nim") as {
     stopNimContainer: (name: string, opts?: { silent?: boolean }) => void;
@@ -124,13 +129,24 @@ export function stopSandboxInferenceResources(
     nim.stopNimContainer(sandboxName, { silent: true });
   }
 
-  // The Ollama auth proxy is per-sandbox. GPU model unload happens during
-  // post-delete host cleanup, after the live sandbox is confirmed gone.
+  // The auth proxy is host-global. Keep it while any other durable route owns
+  // its credential; GPU model unload happens later, after confirmed deletion.
   if (sandbox?.provider?.includes("ollama")) {
-    const { killStaleProxy } = require("../../inference/ollama/proxy") as {
-      killStaleProxy: () => void;
-    };
-    killStaleProxy();
+    const killStaleProxyIfUnused =
+      deps.killStaleProxyIfUnused ??
+      (
+        require("../../inference/ollama/proxy") as {
+          killStaleProxyIfUnused: (hasRemainingOwner: () => boolean) => boolean;
+        }
+      ).killStaleProxyIfUnused;
+    killStaleProxyIfUnused(() =>
+      listSandboxes().sandboxes.some(
+        (entry) =>
+          entry.name !== sandboxName &&
+          (entry.provider?.includes("ollama") === true ||
+            entry.credentialEnv === OLLAMA_LOCAL_CREDENTIAL_ENV),
+      ),
+    );
   }
 }
 

@@ -482,6 +482,15 @@ function killStaleProxy(): void {
   }
 }
 
+/** Stop the host-global proxy only when a lock-scoped registry read finds no owner. */
+function killStaleProxyIfUnused(hasRemainingOwner: () => boolean): boolean {
+  return withOllamaProxyLifecycleLock(() => {
+    if (hasRemainingOwner()) return false;
+    killStaleProxy();
+    return true;
+  });
+}
+
 // ── Port-conflict diagnostics ────────────────────────────────────
 
 // Inspect what currently listens on the proxy port, excluding our own
@@ -1817,6 +1826,7 @@ export {
   isLocalOllamaRouteOwner,
   isProxyHealthy,
   killStaleProxy,
+  killStaleProxyIfUnused,
   loadPendingOllamaModelCleanup,
   loadPersistedOllamaHost,
   noAuthProxy,

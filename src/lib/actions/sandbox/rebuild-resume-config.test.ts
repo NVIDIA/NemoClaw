@@ -88,7 +88,7 @@ describe("getRebuildCredentialEnvFromRegistry", () => {
       getRebuildCredentialEnvFromRegistry(
         "compatible-endpoint",
         "NEMOCLAW_OLLAMA_PROXY_TOKEN",
-        "http://localhost:12500/v1",
+        "http://localhost:11434/v1",
       ),
     ).toBe("NEMOCLAW_OLLAMA_PROXY_TOKEN");
     expect(
@@ -220,7 +220,7 @@ describe("prepareRebuildResumeConfig", () => {
       entry({
         provider: "compatible-endpoint",
         model: "nvidia/model",
-        endpointUrl: "http://localhost:12500/v1",
+        endpointUrl: "http://localhost:11434/v1",
         credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
         preferredInferenceApi: "openai-completions",
       }),
@@ -232,12 +232,12 @@ describe("prepareRebuildResumeConfig", () => {
     expect(config).toMatchObject({
       provider: "compatible-endpoint",
       model: "nvidia/model",
-      endpointUrl: "http://localhost:12500/v1",
+      endpointUrl: "http://localhost:11434/v1",
       credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
       registryInferenceRoute: {
         provider: "compatible-endpoint",
         model: "nvidia/model",
-        endpointUrl: "http://localhost:12500/v1",
+        endpointUrl: "http://localhost:11434/v1",
         preferredInferenceApi: "openai-completions",
         source: "registry",
       },
@@ -249,7 +249,7 @@ describe("prepareRebuildResumeConfig", () => {
       sandboxName: "alpha",
       provider: "compatible-endpoint",
       model: "nvidia/model",
-      endpointUrl: "http://localhost:12500/v1",
+      endpointUrl: "http://localhost:11434/v1",
       credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
       preferredInferenceApi: "openai-completions",
     });
@@ -268,7 +268,7 @@ describe("prepareRebuildResumeConfig", () => {
     );
 
     expect(config).toMatchObject({
-      endpointUrl: "http://localhost:12500/v1",
+      endpointUrl: "http://localhost:11434/v1",
       credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
       pinEndpoint: false,
     });

@@ -26,6 +26,7 @@ import {
   HTTPS_PIN_RUNTIME_ADAPTER_PORT,
   OLLAMA_PROXY_PORT,
   OPENROUTER_RUNTIME_ADAPTER_PORT,
+  VLLM_PORT,
 } from "../../core/ports";
 
 import {
@@ -44,22 +45,28 @@ afterEach(() => {
 });
 
 describe("compatible endpoint gateway routing", () => {
-  it("recognizes protected no-auth proxy sources on unprivileged loopback ports", () => {
+  it("recognizes protected no-auth proxy sources on supported local-inference ports", () => {
     expect(
-      isLoopbackNoAuthCompatibleEndpointUrl("compatible-endpoint", "http://localhost:12500/v1"),
+      isLoopbackNoAuthCompatibleEndpointUrl("compatible-endpoint", "http://localhost:11434/v1"),
     ).toBe(true);
     expect(
-      isLoopbackNoAuthCompatibleEndpointUrl("compatible-endpoint", "http://127.0.0.1:19999/v1"),
+      isLoopbackNoAuthCompatibleEndpointUrl(
+        "compatible-endpoint",
+        `http://127.0.0.1:${String(VLLM_PORT)}/v1`,
+      ),
     ).toBe(true);
     expect(
-      isLoopbackNoAuthCompatibleEndpointUrl("compatible-endpoint", "http://[::1]:12500/v1"),
+      isLoopbackNoAuthCompatibleEndpointUrl("compatible-endpoint", "http://[::1]:11434/v1"),
     ).toBe(true);
+  });
+
+  it.each([1024, 12500, 19999, 65535])("rejects an unsupported no-auth proxy port: %i", (port) => {
     expect(
-      isLoopbackNoAuthCompatibleEndpointUrl("compatible-endpoint", "http://localhost:1024/v1"),
-    ).toBe(true);
-    expect(
-      isLoopbackNoAuthCompatibleEndpointUrl("compatible-endpoint", "http://localhost:65535/v1"),
-    ).toBe(true);
+      isLoopbackNoAuthCompatibleEndpointUrl(
+        "compatible-endpoint",
+        `http://localhost:${String(port)}/v1`,
+      ),
+    ).toBe(false);
   });
 
   it.each([
@@ -143,7 +150,7 @@ describe("compatible endpoint gateway routing", () => {
   );
 
   it("rejects dotted loopback at the final proxy mutation boundary", () => {
-    expect(() => assertLoopbackNoAuthCompatibleEndpointUrl("http://localhost.:12500/v1")).toThrow(
+    expect(() => assertLoopbackNoAuthCompatibleEndpointUrl("http://localhost.:11434/v1")).toThrow(
       /no longer eligible/,
     );
   });

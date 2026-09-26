@@ -279,6 +279,35 @@ export function listRecordedGatewayPorts(home: string): number[] {
   return [...ports].sort((left, right) => left - right);
 }
 
+/** Recover a pre-routerPort session's exact router port from retained identity. */
+function legacySessionModelRouterPort(session: Record<string, unknown>): number | null {
+  const hasRouterIdentity =
+    session.provider === "nvidia-router" ||
+    (typeof session.routerPid === "number" &&
+      Number.isInteger(session.routerPid) &&
+      session.routerPid > 0) ||
+    (typeof session.routerCredentialHash === "string" && session.routerCredentialHash.length > 0);
+  if (!hasRouterIdentity || typeof session.endpointUrl !== "string") return null;
+  try {
+    const endpoint = new URL(session.endpointUrl);
+    const port = endpoint.port ? Number(endpoint.port) : null;
+    return endpoint.protocol === "http:" &&
+      endpoint.hostname === "host.openshell.internal" &&
+      !endpoint.username &&
+      !endpoint.password &&
+      !endpoint.search &&
+      !endpoint.hash &&
+      port !== null &&
+      Number.isInteger(port) &&
+      port >= 1 &&
+      port <= 65535
+      ? port
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Enumerate exact Model Router ports retained by onboarding state on this host. */
 export function listRecordedModelRouterPorts(home: string): number[] {
   const ports = new Set<number>();
@@ -303,7 +332,11 @@ export function listRecordedModelRouterPorts(home: string): number[] {
       const parsed: unknown = JSON.parse(fs.readFileSync(fd, "utf8"));
       if (!isObjectRecord(parsed)) throw stateError(`${sessionFile} is not an object`);
       const routerPort = parsed.routerPort;
-      if (routerPort === undefined || routerPort === null) continue;
+      if (routerPort === undefined || routerPort === null) {
+        const legacyPort = legacySessionModelRouterPort(parsed);
+        if (legacyPort !== null) ports.add(legacyPort);
+        continue;
+      }
       if (
         typeof routerPort !== "number" ||
         !Number.isInteger(routerPort) ||

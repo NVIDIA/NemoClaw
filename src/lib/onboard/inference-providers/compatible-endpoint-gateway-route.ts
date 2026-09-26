@@ -77,6 +77,7 @@ export function isLoopbackNoAuthCompatibleEndpointUrl(
   const home = resolveHome();
   return (
     port !== null &&
+    COMPATIBLE_ENDPOINT_GATEWAY_PORT_SET.has(port) &&
     !isProtectedNemoClawHostPort(port, listRecordedModelRouterPorts(home)) &&
     !listRecordedGatewayPorts(home).includes(port)
   );

@@ -70,7 +70,7 @@ console.log(JSON.stringify({
     const result = spawnSync(process.execPath, [scriptPath], {
       cwd: repoRoot,
       encoding: "utf8",
-      env: { ...process.env, HOME: tmpDir },
+      env: { ...process.env, HOME: tmpDir, NEMOCLAW_VLLM_PORT: "18080" },
     });
 
     assert.equal(result.status, 0, result.stderr);

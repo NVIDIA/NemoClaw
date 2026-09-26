@@ -10,9 +10,7 @@ import {
   createDeps,
 } from "./inference-set.test-support";
 
-// The protected no-auth proxy may forward to an explicitly configured
-// unprivileged loopback port that is not a bundled direct bridge route.
-const NO_AUTH_ENDPOINT_URL = "http://127.0.0.1:12500/v1";
+const NO_AUTH_ENDPOINT_URL = "http://127.0.0.1:11434/v1";
 const NO_AUTH_CREDENTIAL_ENV = "NEMOCLAW_OLLAMA_PROXY_TOKEN";
 
 const CONFIG = {

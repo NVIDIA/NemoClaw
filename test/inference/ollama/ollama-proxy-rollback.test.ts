@@ -94,7 +94,11 @@ console.log(JSON.stringify({
 `;
     fs.writeFileSync(scriptPath, script);
 
-    const childEnv: NodeJS.ProcessEnv = { ...process.env, HOME: tmpDir };
+    const childEnv: NodeJS.ProcessEnv = {
+      ...process.env,
+      HOME: tmpDir,
+      NEMOCLAW_VLLM_PORT: "7000",
+    };
     delete childEnv.NEMOCLAW_OLLAMA_PROXY_PORT;
     delete childEnv.NEMOCLAW_OLLAMA_PORT;
 
