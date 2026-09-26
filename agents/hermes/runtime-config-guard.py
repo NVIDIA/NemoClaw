@@ -2201,9 +2201,16 @@ def _ensure_restart_orphan_marker(hermes_fd: int) -> None:
             dir_fd=hermes_fd,
         )
     except FileExistsError:
+        # This zero-byte marker carries authority entirely in its inode metadata.
+        # Rootless Podman can deny a data read across the user-namespace mapping
+        # even when the remapped root identity may inspect the inode.  O_PATH
+        # avoids requesting data access while retaining the no-follow + fstat
+        # validation below.  Non-Linux fixture hosts retain the read-only fallback.
         fd = os.open(
             RESTART_ORPHAN_MARKER_NAME,
-            os.O_RDONLY | _no_follow_flag() | _cloexec_flag(),
+            getattr(os, "O_PATH", os.O_RDONLY)
+            | _no_follow_flag()
+            | _cloexec_flag(),
             dir_fd=hermes_fd,
         )
         try:
