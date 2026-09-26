@@ -147,8 +147,8 @@ Follow the printed recovery guidance by running `$$nemoclaw <sandbox-name> stop`
 
 For Hermes, the entrypoint supervisor owns the gateway, dashboard process, internal API relay, dashboard relay, and gateway log stream.
 The nonroot managed supervisor repairs those processes continuously and stops an alive but deaf gateway after four consecutive failed health checks.
-Five status-75 service-managed restart requests within 60 seconds stop the supervisor before a sixth gateway launch.
-Run `$$nemoclaw <sandbox-name> stop` and `$$nemoclaw <sandbox-name> start` to reset the supervisor.
+A fifth status-75 service-managed restart request within 60 seconds starts a cooldown.
+The supervisor waits until the rolling window permits another restart, then relaunches the gateway automatically.
 If the requests recur, inspect the gateway logs and correct the action or configuration that requests each restart.
 Rebuild only if the sandbox still cannot start.
 

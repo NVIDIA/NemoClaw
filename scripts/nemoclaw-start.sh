@@ -5258,9 +5258,26 @@ PY_SQLITE_TMPDIR
 }
 
 run_openclaw_maintenance_owner_command() {
+  local config_owner seal_status=0
   # Podman root can read the sandbox-owned config tree but cannot write it
   # without DAC_OVERRIDE. Use the existing sandbox identity for marker writes.
   if [ "$(id -u)" -eq 0 ]; then
+    config_owner="$(stat -c '%u' /sandbox/.openclaw)" || return 1
+    if [ "$config_owner" = 0 ]; then
+      # Backup quiescence runs before normalization. Preserve only the existing
+      # descriptor-validated root-owned 0700/0600 recovery posture (status 1).
+      classify_openclaw_config_seal /sandbox/.openclaw || seal_status=$?
+      if [ "$seal_status" -ne 1 ]; then
+        echo "[SECURITY] Refusing maintenance marker mutation in an unverified root-owned config" >&2
+        return 1
+      fi
+      "$@"
+      return $?
+    fi
+    if [ "$config_owner" != "$(id -u sandbox)" ]; then
+      echo "[SECURITY] Refusing maintenance marker mutation for an unknown config owner" >&2
+      return 1
+    fi
     "${STEP_DOWN_PREFIX_SANDBOX[@]}" /bin/bash -c \
       "$(declare -f _nemoclaw_safe_replace_tmp_file); \"\$@\"" \
       openclaw-maintenance "$@"

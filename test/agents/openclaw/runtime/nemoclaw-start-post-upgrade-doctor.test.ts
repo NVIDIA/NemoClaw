@@ -22,7 +22,10 @@ function doctorFunction(
     'normalize_mutable_config_perms() { printf \'normalize\\n\' >>"$NORMALIZE_CALLS"; return "${NORMALIZE_EXIT_CODE:-0}"; }',
     'STEP_DOWN_PREFIX_SANDBOX=("$STEP_DOWN")',
     extractShellFunctionFromSource(source, "_nemoclaw_safe_replace_tmp_file"),
-    extractShellFunctionFromSource(source, "run_openclaw_maintenance_owner_command"),
+    extractShellFunctionFromSource(source, "run_openclaw_maintenance_owner_command").replaceAll(
+      "/sandbox/.openclaw",
+      configDir,
+    ),
     extractShellFunctionFromSource(source, "run_requested_openclaw_post_upgrade_doctor")
       .replaceAll("/sandbox/.openclaw", configDir)
       .replaceAll("/tmp/nemoclaw-post-upgrade-doctor-ready", readyPath)
@@ -33,7 +36,10 @@ function doctorFunction(
 function backupQuiesceFunction(source: string, configDir: string, readyPath: string): string {
   return [
     extractShellFunctionFromSource(source, "_nemoclaw_safe_replace_tmp_file"),
-    extractShellFunctionFromSource(source, "run_openclaw_maintenance_owner_command"),
+    extractShellFunctionFromSource(source, "run_openclaw_maintenance_owner_command").replaceAll(
+      "/sandbox/.openclaw",
+      configDir,
+    ),
     extractShellFunctionFromSource(source, "run_requested_openclaw_backup_quiesce")
       .replaceAll("/sandbox/.openclaw", configDir)
       .replaceAll("/tmp/nemoclaw-post-upgrade-doctor-ready", readyPath),
@@ -117,6 +123,67 @@ function promoteAfterReady(f: ReturnType<typeof fixture>): string {
 }
 
 describe("nemoclaw-start post-upgrade doctor", () => {
+  it.each(
+    ["release", "promote"].flatMap((operation) => [
+      {
+        operation,
+        owner: "0",
+        posture: "unsealed recovery",
+        classifierStatus: 1,
+        expectedStatus: 0,
+      },
+      { operation, owner: "0", posture: "sealed", classifierStatus: 0, expectedStatus: 1 },
+      { operation, owner: "0", posture: "indeterminate", classifierStatus: 2, expectedStatus: 1 },
+      {
+        operation,
+        owner: "424242",
+        posture: "unknown owner",
+        classifierStatus: 1,
+        expectedStatus: 1,
+      },
+    ]),
+  )(
+    "validates $posture ownership before $operation",
+    ({ operation, owner, classifierStatus, expectedStatus }) => {
+      const source = fs.readFileSync(START_SCRIPT, "utf8");
+      const f = fixture();
+      try {
+        fs.chmodSync(f.configDir, 0o700);
+        fs.writeFileSync(f.marker, "request\n", { mode: 0o600 });
+        const action =
+          operation === "release"
+            ? 'run_openclaw_maintenance_owner_command rm -f -- "$MARKER"'
+            : 'printf "doctor\\n" | run_openclaw_maintenance_owner_command _nemoclaw_safe_replace_tmp_file "$MARKER" 600 "" required';
+        const result = spawnSync(
+          "bash",
+          [
+            "-c",
+            [
+              "id() { printf '0\\n'; }",
+              `stat() { printf '${owner}\\n'; }`,
+              `classify_openclaw_config_seal() { return ${classifierStatus}; }`,
+              "STEP_DOWN_PREFIX_SANDBOX=(/bin/sh -c 'echo root-only-config-denied >&2; exit 77' --)",
+              extractShellFunctionFromSource(source, "_nemoclaw_safe_replace_tmp_file"),
+              extractShellFunctionFromSource(source, "run_openclaw_maintenance_owner_command"),
+              action,
+            ].join("\n"),
+          ],
+          { encoding: "utf8", env: { ...process.env, MARKER: f.marker }, timeout: 5_000 },
+        );
+        expect(result.status === 0, result.stderr).toBe(expectedStatus === 0);
+        expect(
+          fs
+            .readdirSync(f.configDir)
+            .map((name) => fs.readFileSync(path.join(f.configDir, name), "utf8")),
+        ).toEqual(
+          expectedStatus !== 0 ? ["request\n"] : operation === "release" ? [] : ["doctor\n"],
+        );
+      } finally {
+        fs.rmSync(f.root, { recursive: true, force: true });
+      }
+    },
+  );
+
   it.each([
     { operation: "release", publish: releaseAfterReady, expected: [] },
     {
@@ -131,7 +198,11 @@ describe("nemoclaw-start post-upgrade doctor", () => {
       const f = fixture();
       try {
         fs.writeFileSync(f.marker, "nemoclaw-openclaw-backup-quiesce-v1\n", { mode: 0o600 });
-        fs.writeFileSync(path.join(f.fakeBin, "id"), "#!/bin/sh\nprintf '0\\n'\n", { mode: 0o755 });
+        fs.writeFileSync(
+          path.join(f.fakeBin, "id"),
+          `#!/bin/sh\ncase "$*" in "-u sandbox") printf '${process.getuid?.()}\\n' ;; *) printf '0\\n' ;; esac\n`,
+          { mode: 0o755 },
+        );
         fs.writeFileSync(f.stepDown, '#!/bin/sh\nexport MAINTENANCE_OWNER=1\nexec "$@"\n', {
           mode: 0o755,
         });

@@ -3111,10 +3111,13 @@ nemohermes <name> rebuild --yes
 
 The Hermes entrypoint supervisor remains responsible for the gateway, dashboard, internal API relay, dashboard relay, and gateway log stream throughout recovery.
 In the OpenShell-managed topology, that nonroot supervisor repairs failed auxiliaries continuously and recovers a gateway after four consecutive failed listener or HTTP health checks.
-Five status-75 service-managed restart requests within 60 seconds stop the supervisor before a sixth gateway launch.
+A fifth status-75 service-managed restart request within 60 seconds starts a cooldown.
+The supervisor waits until the rolling window permits another restart, then relaunches the gateway automatically.
 The host repairs only the host-side OpenShell forwards after the supervised processes pass health checks.
 
-### Hermes Stops Repeated Service-Managed Restarts
+<a id="hermes-stops-repeated-service-managed-restarts"></a>
+
+### Repeated Hermes Service-Managed Restarts
 
 Valid Hermes config changes alone do not stop relaunch.
 The supervisor adopts a stable, secret-boundary-safe config snapshot before launching a replacement gateway. If the startup log reports `HERMES_RUNTIME_PREPARATION_FAILED stage=<stage>`, the named environment, config, dependency, provider, or messaging input still failed after five bounded preparation attempts. Correct that input through its supported host-side configuration or credential flow, then restart the sandbox:
@@ -3125,8 +3128,7 @@ nemohermes <name> stop
 nemohermes <name> start
 ```
 
-The supervisor stops before a sixth gateway launch after five status-75 service-managed restart requests within 60 seconds.
-Run `nemohermes <name> stop` followed by `nemohermes <name> start` to reset the supervisor.
+During a restart-rate cooldown, wait for the supervisor to relaunch the gateway automatically.
 If the requests recur, inspect the gateway logs and correct the action or configuration that requests each restart.
 Other unexpected gateway exit statuses fail immediately and do not consume this restart budget.
 
