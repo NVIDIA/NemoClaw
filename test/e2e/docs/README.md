@@ -150,6 +150,10 @@ OpenClaw failure probes read only regular, single-link log files without followi
 They omit log content above 16 KiB or changed during the read, so truncation cannot split a credential before host redaction.
 Oversized files retain size and permission metadata for diagnosis.
 
+When the missing-custom-presets target fails before its expected policy rejection, it captures these bounded, redacted failure probes before cleanup.
+The probes also capture unexpected JavaScript failures; they do not change the onboarding result or the required policy rejection.
+Container probes use a resolved full container ID and never delete resources or retry onboarding.
+
 The `full-e2e` restart probe selects a UUID-scoped native OpenClaw provider using the already-tested model through `inference.local`.
 After NemoClaw stop/start, a gateway-only turn must report that provider and model before the probe restores the original selection.
 The probe removes its temporary native entries before the launch checks.
