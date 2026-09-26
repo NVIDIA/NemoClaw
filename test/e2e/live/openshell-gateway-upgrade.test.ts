@@ -222,17 +222,18 @@ async function collectOpenClawCredentialBoundary(
   );
 
   const requestOffset = fake.requests().length;
-  const agent = await runInSurvivorSandbox(
-    host,
-    `openclaw agent --agent main --json --thinking off --session-id ${shellQuote(
-      `e2e-state-upgrade-${phase}`,
-    )} -m ${shellQuote("Reply with only: ok")}`,
-    {
-      artifactName: `state-upgrade-${phase}-agent`,
-      currentCli: phase === "upgraded",
-      timeoutMs: 120_000,
-    },
-  );
+  const agentCommand = `agent --agent main --json --thinking off --session-id ${shellQuote(
+    `e2e-state-upgrade-${phase}`,
+  )} -m ${shellQuote("Reply with only: ok")}`;
+  const agentOptions = {
+    artifactName: `state-upgrade-${phase}-agent`,
+    redactionValues: [GATEWAY_CREDENTIAL],
+    timeoutMs: 120_000,
+  };
+  const agent =
+    phase === "upgraded"
+      ? await bash(host, `nemoclaw ${shellQuote(SURVIVOR_SANDBOX)} ${agentCommand}`, agentOptions)
+      : await runInSurvivorSandbox(host, `openclaw ${agentCommand}`, agentOptions);
   const requests = fake
     .requests()
     .slice(requestOffset)
