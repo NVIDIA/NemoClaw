@@ -50,7 +50,7 @@ const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
 const providerInspection = require("./src/lib/actions/sandbox/mcp-bridge-provider-inspection.js");
 const policies = require("./src/lib/policy/index.js");
-const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
+const commandTransport = require("./src/lib/adapters/sandbox/command-transport.js");
 const sourceState = require("./src/lib/actions/sandbox/mcp-bridge-source.js");
 gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
   recovered: true,
@@ -128,7 +128,7 @@ let toolDiscoveryResult = {
   tools: ["alpha", "zeta"],
   truncated: false,
 };
-processRecovery.executeSandboxExecCommand = () => {
+const observeCredential = async () => {
   credentialObservationCount += 1;
   return {
     status: 0,
@@ -136,7 +136,7 @@ processRecovery.executeSandboxExecCommand = () => {
     stderr: "",
   };
 };
-processRecovery.executeSandboxCommand = (sandboxName, command) => {
+let executeAdapterCommand = async (sandboxName, command) => {
   executedSandboxCommands.push(command);
   if (command.includes("NEMOCLAW_MCP_PROBE")) {
     const resultMarker = command.match(/__NEMOCLAW_SANDBOX_EXEC_STARTED___[0-9a-f]{32}/)?.[0];
@@ -171,6 +171,10 @@ processRecovery.executeSandboxCommand = (sandboxName, command) => {
     stderr: "",
   };
 };
+commandTransport.executeSandboxExecCommand = async (sandboxName, command) =>
+  command.includes('valid_placeholder "$value" || exit 1')
+    ? observeCredential()
+    : executeAdapterCommand(sandboxName, command);
 const sourceEntry = {
     server: "github",
     agent: "openclaw",
@@ -417,13 +421,19 @@ describeConcurrentProbeSuite("MCP status wire-level credential-resolution probe"
     });
   });
 
-  it("reports a policy-derived entry as configured when direct adapter inspection succeeds", async (context) => {
-    const home = createTempHome("nemoclaw-mcp-resolution-policy-source-");
-    const { stdout } = await runHarness(
-      context,
-      home,
-      String.raw`
+  it.for([false, true])(
+    "reports policy-derived adapter availability (transport failure: %s)",
+    async (transportFailure, context) => {
+      const home = createTempHome("nemoclaw-mcp-resolution-policy-source-");
+      const { stdout } = await runHarness(
+        context,
+        home,
+        String.raw`
   policyOnlySourceEnabled = true;
+  if (${transportFailure}) {
+    const { SandboxCommandTransportError } = require("./src/lib/adapters/sandbox/command-transport.js");
+    executeAdapterCommand = async () => { throw new SandboxCommandTransportError("unavailable"); };
+  }
   const [status] = await bridge.statusMcpBridge("alpha", "github");
   writeHarnessResult(JSON.stringify({
     adapter: status.adapter,
@@ -431,16 +441,14 @@ describeConcurrentProbeSuite("MCP status wire-level credential-resolution probe"
     provider: status.provider,
   }));
 `,
-    );
-    const payload = JSON.parse(stdout) as {
-      adapter: { registered: boolean | null };
-      policy: { state: string };
-      provider: { state: string };
-    };
-    expect(payload.adapter.registered).toBe(true);
-    expect(payload.policy.state).toBe("configured");
-    expect(payload.provider.state).toBe("configured");
-  });
+      );
+      const payload = JSON.parse(stdout);
+      expect(payload.adapter.registered).toBe(transportFailure ? null : true);
+      expect(payload.adapter.detail ?? "").toContain(transportFailure ? "unavailable" : "");
+      expect(payload.policy.state).toBe(transportFailure ? "orphaned" : "configured");
+      expect(payload.provider.state).toBe(transportFailure ? "orphaned" : "configured");
+    },
+  );
 
   it("refuses status while a legacy source still requires explicit migration", async (context) => {
     const home = createTempHome("nemoclaw-mcp-resolution-legacy-");
@@ -532,12 +540,8 @@ describeConcurrentProbeSuite("MCP status wire-level credential-resolution probe"
       credentialObservationCount: number;
     }>;
 
-    expect(outcomes[0]?.probeCommand).toContain(
-      "authorization: Bearer openshell:resolve:env:v19_GITHUB_TOKEN",
-    );
-    expect(outcomes[0]?.probeCommand).not.toContain(
-      "authorization: Bearer openshell:resolve:env:GITHUB_TOKEN",
-    );
+    expect(outcomes[0]?.probeCommand).toContain("openshell:resolve:env:v19_GITHUB_TOKEN");
+    expect(outcomes[0]?.probeCommand).not.toContain("openshell:resolve:env:GITHUB_TOKEN");
     expect(outcomes[1]?.probeCommand).toBeNull();
     expect(outcomes[1]?.resolution.detail).toContain("identityless credential placeholder");
     expect(outcomes.map((outcome) => outcome.credentialObservationCount)).toEqual([1, 1]);
@@ -703,7 +707,7 @@ describeConcurrentProbeSuite("MCP status wire-level credential-resolution probe"
       process.exitCode = undefined;
       logLines.length = 0;
       errorLines.length = 0;
-      processRecovery.executeSandboxCommand = (_sandboxName, command) =>
+      executeAdapterCommand = async (_sandboxName, command) =>
         deepAgentsFixture.runDeepAgentsConfigCommand(
           command,
           fixture.config,
@@ -807,7 +811,7 @@ describeConcurrentProbeSuite("MCP status wire-level credential-resolution probe"
     env: ["v1_TOKEN"],
   });
   let inspected = false;
-  processRecovery.executeSandboxCommand = (_sandboxName, command) => {
+  executeAdapterCommand = async (_sandboxName, command) => {
     inspected = true;
     return deepAgentsFixture.runDeepAgentsConfigCommand(command, { mcpServers: {} }, "v2");
   };
@@ -851,7 +855,7 @@ describeConcurrentProbeSuite("MCP status wire-level credential-resolution probe"
   });
   providerCredentialObservation = "absent";
   let inspected = false;
-  processRecovery.executeSandboxCommand = (_sandboxName, command) => {
+  executeAdapterCommand = async (_sandboxName, command) => {
     inspected = true;
     return deepAgentsFixture.runDeepAgentsConfigCommand(
       command,
@@ -1388,12 +1392,8 @@ describeConcurrentProbeSuite("MCP add post-add credential-resolution probe", () 
       exitCode: number;
     };
     expect(payload.probed).toBe(true);
-    expect(payload.probeCommand).toContain(
-      "authorization: Bearer openshell:resolve:env:v11_GITHUB_TOKEN",
-    );
-    expect(payload.probeCommand).not.toContain(
-      "authorization: Bearer openshell:resolve:env:GITHUB_TOKEN",
-    );
+    expect(payload.probeCommand).toContain("openshell:resolve:env:v11_GITHUB_TOKEN");
+    expect(payload.probeCommand).not.toContain("openshell:resolve:env:GITHUB_TOKEN");
     expect(payload.logLines.some((line) => line.includes("MCP server 'github' added"))).toBe(true);
     expect(
       payload.errorLines.some(

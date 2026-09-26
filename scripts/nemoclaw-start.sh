@@ -74,6 +74,21 @@ unset NEMOCLAW_ENTRYPOINT_NORMALIZED_ARGC NEMOCLAW_ENTRYPOINT_NORMALIZED_ARGV \
 unset -f nemoclaw_normalize_entrypoint_env_wrapper
 # managed-entrypoint-env-wrapper end
 
+# OpenShell owns inference.local authentication. Clear its credential aliases
+# after entrypoint overrides are normalized, before setup can launch children.
+# Direct inference routes retain their credentials.
+is_managed_inference_route() {
+  # Match URL scheme and host case without spawning a credential-bearing child.
+  [[ "${NEMOCLAW_INFERENCE_BASE_URL:-}" =~ ^[Hh][Tt][Tt][Pp][Ss]://[Ii][Nn][Ff][Ee][Rr][Ee][Nn][Cc][Ee]\.[Ll][Oo][Cc][Aa][Ll](:443)?(/.*)?$ ]]
+}
+
+clear_managed_inference_credentials() {
+  if is_managed_inference_route; then
+    unset NVIDIA_INFERENCE_API_KEY NVIDIA_API_KEY
+  fi
+}
+clear_managed_inference_credentials
+
 # Reject an invalid explicit dashboard port before installing the tee/fd startup
 # capture below. Some CI Docker runners can drop very early fd4 output from
 # short-lived containers, and this validation is meant to be fail-fast and
@@ -653,14 +668,15 @@ PY_CLASSIFY_MUTABLE_CONFIG
 
 # OpenClaw 2026.9.1 requires its startup migration checkpoint to complete
 # without warnings before the gateway reports readiness. Older NemoClaw images
-# persisted update-check.json as update polling and notification cache. Empty
-# placeholders fail JSON parsing, while nonempty files cannot be archived by
-# the separate gateway user when a stale root-owned parent remains.
-# NemoClaw pins OpenClaw in the image, so discard only a descriptor-pinned,
-# stable regular cache file before the mandatory checkpoint.
+# persisted update-check.json as update polling and notification cache, and
+# older managed images created an empty exec-approvals.json placeholder. Empty
+# placeholders fail current migration parsing, while nonempty files can carry
+# real approvals and must remain for Doctor. NemoClaw pins OpenClaw in the
+# image, so discard only descriptor-pinned stable cache state and the exactly
+# empty approvals placeholder before the mandatory checkpoint.
 # Remove this repair after every supported upgrade source stops seeding the
 # cache or OpenClaw can migrate it across split users and a protected parent.
-remove_openclaw_legacy_update_check_state() {
+remove_openclaw_legacy_startup_state() {
   local config_dir="/sandbox/.openclaw"
   if [ ! -e "$config_dir" ] && [ ! -L "$config_dir" ]; then
     return 0
@@ -673,6 +689,10 @@ remove_openclaw_legacy_update_check_state() {
   fi
   if ! python3 -I "$normalizer" remove-legacy-update-check "$config_dir"; then
     printf '[SECURITY] Refusing legacy update-check repair — expected a stable regular file or no file\n' >&2
+    return 1
+  fi
+  if ! python3 -I "$normalizer" remove-empty-legacy-exec-approvals "$config_dir"; then
+    printf '[SECURITY] Refusing legacy exec-approvals repair — expected a stable regular file or no file\n' >&2
     return 1
   fi
 }
@@ -2405,8 +2425,140 @@ prepare_gateway_token_for_current_command() {
   fi
 }
 
-# Write an auth profile JSON for the NVIDIA API key so the gateway can authenticate.
+# Reconcile this function's legacy generated auth profile for the selected provider.
+# OpenShell authenticates managed inference.local routes on the host, so remove
+# that generated credential reference. Preserve other user-managed profiles.
+# Direct routes retain their existing profile-writing behavior.
 write_auth_profile() {
+  local provider_key="${NEMOCLAW_INFERENCE_PROVIDER_ID:-${NEMOCLAW_PROVIDER_KEY:-inference}}"
+
+  if is_managed_inference_route; then
+    # Remove only the exact entries this function historically generated.
+    # Preserve user-managed direct-provider profiles if they share the file.
+    python3 - "$provider_key" <<'PYAUTH'
+import json
+import os
+import secrets
+import stat
+import sys
+
+provider_key = sys.argv[1]
+managed_profile_id = f'{provider_key}:manual'
+profile_name = 'auth-profiles.json'
+openclaw_path = os.path.expanduser('~/.openclaw')
+directory_flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, 'O_NOFOLLOW', 0)
+
+def security_failure(detail):
+    print(f'[SECURITY] Refusing auth-profile cleanup: {detail}', file=sys.stderr)
+    raise SystemExit(1)
+
+def open_profile_directory():
+    try:
+        directory_fd = os.open(openclaw_path, directory_flags)
+    except FileNotFoundError:
+        raise SystemExit(0)
+    except OSError:
+        security_failure('the .openclaw root is not a trusted directory')
+
+    for component in ('agents', 'main', 'agent'):
+        try:
+            child_fd = os.open(component, directory_flags, dir_fd=directory_fd)
+        except FileNotFoundError:
+            os.close(directory_fd)
+            raise SystemExit(0)
+        except OSError:
+            os.close(directory_fd)
+            security_failure(f'{component} is not a trusted directory')
+        os.close(directory_fd)
+        directory_fd = child_fd
+    return directory_fd
+
+directory_fd = open_profile_directory()
+try:
+    try:
+        profile_fd = os.open(
+            profile_name,
+            os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_NONBLOCK', 0),
+            dir_fd=directory_fd,
+        )
+    except FileNotFoundError:
+        raise SystemExit(0)
+    except OSError:
+        security_failure('auth-profiles.json is not a trusted regular file')
+
+    if not stat.S_ISREG(os.fstat(profile_fd).st_mode):
+        os.close(profile_fd)
+        security_failure('auth-profiles.json is not a regular file')
+
+    try:
+        with os.fdopen(profile_fd, encoding='utf-8') as profile_file:
+            profiles = json.load(profile_file)
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        # Unknown or user-managed state is not ours to replace or delete.
+        raise SystemExit(0)
+
+    if not isinstance(profiles, dict):
+        raise SystemExit(0)
+
+    def is_legacy_managed_profile(profile_id, profile):
+        if profile_id != managed_profile_id or not isinstance(profile, dict):
+            return False
+        return profile == {
+            'type': 'api_key',
+            'provider': provider_key,
+            'keyRef': {'source': 'env', 'id': 'NVIDIA_INFERENCE_API_KEY'},
+            'profileId': managed_profile_id,
+        }
+
+    retained = {
+        profile_id: profile
+        for profile_id, profile in profiles.items()
+        if not is_legacy_managed_profile(profile_id, profile)
+    }
+    if retained == profiles:
+        raise SystemExit(0)
+    if not retained:
+        os.unlink(profile_name, dir_fd=directory_fd)
+        raise SystemExit(0)
+
+    temporary_name = f'.auth-profiles.{secrets.token_hex(16)}'
+    try:
+        temporary_fd = os.open(
+            temporary_name,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0),
+            mode=0o600,
+            dir_fd=directory_fd,
+        )
+    except OSError:
+        security_failure('could not create a private replacement file')
+
+    try:
+        with os.fdopen(temporary_fd, 'w', encoding='utf-8') as profile_file:
+            json.dump(retained, profile_file)
+            profile_file.flush()
+            os.fsync(profile_file.fileno())
+        os.replace(
+            temporary_name,
+            profile_name,
+            src_dir_fd=directory_fd,
+            dst_dir_fd=directory_fd,
+        )
+    except BaseException:
+        try:
+            os.close(temporary_fd)
+        except OSError:
+            pass
+        try:
+            os.unlink(temporary_name, dir_fd=directory_fd)
+        except FileNotFoundError:
+            pass
+        raise
+finally:
+    os.close(directory_fd)
+PYAUTH
+    return
+  fi
+
   if [ -z "${NVIDIA_INFERENCE_API_KEY:-}" ] && [ -n "${NVIDIA_API_KEY:-}" ]; then
     export NVIDIA_INFERENCE_API_KEY="$NVIDIA_API_KEY"
   fi
@@ -2422,7 +2574,6 @@ write_auth_profile() {
   # through v0.0.89 so pre-existing custom images keep routing. Remove this
   # fallback in v0.0.90.
   # See: https://github.com/NVIDIA/NemoClaw/issues/1332
-  local provider_key="${NEMOCLAW_INFERENCE_PROVIDER_ID:-${NEMOCLAW_PROVIDER_KEY:-inference}}"
   python3 - "$provider_key" <<'PYAUTH'
 import json
 import os
@@ -3633,7 +3784,7 @@ export JITI_FS_CACHE="false"
 PROXYEOF
     local _openclaw_env_name _openclaw_env_value _escaped_openclaw_env_value
     local _escaped_gateway_port _escaped_gateway_token _escaped_gateway_url
-    for _openclaw_env_name in OPENCLAW_HOME OPENCLAW_STATE_DIR OPENCLAW_CONFIG_PATH OPENCLAW_OAUTH_DIR OPENCLAW_WORKSPACE_DIR; do
+    for _openclaw_env_name in OPENCLAW_HOME OPENCLAW_STATE_DIR OPENCLAW_CONFIG_PATH OPENCLAW_OAUTH_DIR OPENCLAW_WORKSPACE_DIR SQLITE_TMPDIR; do
       _openclaw_env_value="${!_openclaw_env_name:-}"
       [ -n "$_openclaw_env_value" ] || continue
       _escaped_openclaw_env_value="$(printf '%s' "$_openclaw_env_value" | sed "s/'/'\\\\''/g")"
@@ -4731,6 +4882,7 @@ setup_auth_profile_as_sandbox() {
   run_step_down_as_sandbox \
     "export HOME=/sandbox; write_auth_profile; harden_auth_profiles" \
     openclaw_config_dir_owner \
+    is_managed_inference_route \
     write_auth_profile \
     harden_auth_profiles
 }
@@ -5359,7 +5511,7 @@ fi
 
 # Migrate legacy symlink layout before anything else reads .openclaw
 migrate_legacy_layout "/sandbox/.openclaw" "/sandbox/.openclaw-data" "openclaw" || exit 1
-remove_openclaw_legacy_update_check_state || exit 1
+remove_openclaw_legacy_startup_state || exit 1
 
 echo 'Setting up NemoClaw...' >&2
 # Best-effort: .env may not exist.
@@ -5401,6 +5553,10 @@ if [ "$(id -u)" -ne 0 ]; then
   # Apply manifest-declared runtime env aliases before any child inherits the
   # env. This covers both one-shot commands and the gateway launch.
   apply_messaging_runtime_env_aliases
+  if is_managed_inference_route; then
+    write_auth_profile
+    harden_auth_profiles
+  fi
 
   if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
     install_messaging_runtime_preloads
@@ -5439,7 +5595,9 @@ if [ "$(id -u)" -ne 0 ]; then
   fix_openclaw_ownership
   normalize_mutable_config_perms
   seed_default_workspace_templates /sandbox/.openclaw/workspace "" /sandbox/.openclaw/openclaw.json
-  write_auth_profile
+  if ! is_managed_inference_route; then
+    write_auth_profile
+  fi
   harden_auth_profiles
 
   prepare_auto_pair_log
@@ -5491,6 +5649,10 @@ apply_model_override
 reconcile_agent_model_with_provider
 apply_cors_override
 configure_messaging_channels
+# Remove the obsolete managed reference before Doctor can import it into SQLite.
+if is_managed_inference_route; then
+  setup_auth_profile_as_sandbox
+fi
 run_requested_openclaw_post_upgrade_doctor || exit 1
 refresh_openclaw_provider_placeholders
 ensure_mutable_openclaw_config_hash
@@ -5513,10 +5675,10 @@ apply_messaging_runtime_env_aliases
 install_messaging_runtime_preloads
 verify_messaging_runtime_secret_scans
 
-# Write auth profile as sandbox user and recursively re-tighten any
-# auth-profiles.json files under ~/.openclaw. See
-# setup_auth_profile_as_sandbox for the HOME-handling rationale.
-setup_auth_profile_as_sandbox
+# Write direct-route profiles after Doctor has migrated existing user profiles.
+if ! is_managed_inference_route; then
+  setup_auth_profile_as_sandbox
+fi
 
 # If a command was passed (e.g., "openclaw agent ..."), run it as sandbox user
 if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then

@@ -54,7 +54,7 @@ function scope(prefix: string) {
 
 function deps(host: ReturnType<typeof scope>): UninstallRunDeps {
   return {
-    commandExists: (command) => command === "openshell",
+    commandExists: (command) => command === "openshell" || command === "docker",
     env: { HOME: host.homeDir },
     hasPortableRuntimeCleanup,
     isTty: false,

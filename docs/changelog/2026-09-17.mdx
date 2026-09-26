@@ -25,7 +25,8 @@ It also improves sandbox startup and deletion convergence, configuration export,
   Related change: [PR #11929](https://github.com/NVIDIA/NemoClaw/pull/11929).
   For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
 - `nemoclaw config export` now accepts HTTP and HTTPS inference endpoints, retains supported managed vLLM execution and model settings, and exports the verified selected Ollama model with its SHA-256 digest.
-  Hosted OpenClaw exports also preserve every supported read-only secondary agent in runtime order and reject the complete document when any roster member conflicts with the verified primary route.
+  At that release, hosted OpenClaw exports preserved supported read-only secondary agents.
+  The current v1-aligned exporter instead rejects every secondary-agent roster without producing a document.
   Related changes: [PR #11789](https://github.com/NVIDIA/NemoClaw/pull/11789), [PR #11889](https://github.com/NVIDIA/NemoClaw/pull/11889), [PR #11891](https://github.com/NVIDIA/NemoClaw/pull/11891), and [PR #11900](https://github.com/NVIDIA/NemoClaw/pull/11900).
   For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands) and [Set Up Ollama](/user-guide/openclaw/inference/local-inference/set-up-ollama).
 - Pi rebuild now preserves recorded context-window, output-token, reasoning, and reasoning-effort settings, and its qualification path verifies context-free automation and interactive session persistence across onboarding, rebuild, and recovery.

@@ -1232,31 +1232,25 @@ describe("onboard session", () => {
     }
   });
 
-  it("treats recent malformed lock as transient and does not remove it", () => {
-    fs.mkdirSync(path.dirname(session.LOCK_FILE), { recursive: true });
-    // Write a malformed lock with the current timestamp (< 30 s old).
-    fs.writeFileSync(session.LOCK_FILE, "{not-json", { mode: 0o600 });
+  it.each(["", "{not-json"])(
+    "preserves a fresh incomplete lock and reclaims abandoned debris: %j",
+    (contents) => {
+      fs.mkdirSync(path.dirname(session.LOCK_FILE), { recursive: true });
+      fs.writeFileSync(session.LOCK_FILE, contents, { mode: 0o600 });
+      expect(session.acquireOnboardLock("nemoclaw onboard --resume")).toMatchObject({
+        acquired: false,
+        stale: true,
+      });
+      expect(fs.readFileSync(session.LOCK_FILE, "utf8")).toBe(contents);
 
-    const acquired = session.acquireOnboardLock("nemoclaw onboard --resume");
-    expect(acquired.acquired).toBe(false);
-    expect(acquired.stale).toBe(true);
-    // Recent malformed lock is preserved because another process may be mid-write.
-    expect(fs.existsSync(session.LOCK_FILE)).toBe(true);
-  });
-
-  it("removes a stale malformed lock file older than 30 seconds (#2765)", () => {
-    fs.mkdirSync(path.dirname(session.LOCK_FILE), { recursive: true });
-    fs.writeFileSync(session.LOCK_FILE, "{not-json", { mode: 0o600 });
-    const past = new Date(Date.now() - 60_000);
-    fs.utimesSync(session.LOCK_FILE, past, past);
-
-    const acquired = session.acquireOnboardLock("nemoclaw onboard --resume");
-    expect(acquired.acquired).toBe(true);
-    expect(fs.existsSync(session.LOCK_FILE)).toBe(true);
-    const written = JSON.parse(fs.readFileSync(session.LOCK_FILE, "utf8"));
-    expect(written.pid).toBe(process.pid);
-    session.releaseOnboardLock();
-  });
+      const past = new Date(Date.now() - 60_000);
+      fs.utimesSync(session.LOCK_FILE, past, past);
+      expect(session.acquireOnboardLock("nemoclaw onboard --resume").acquired).toBe(true);
+      expect(JSON.parse(fs.readFileSync(session.LOCK_FILE, "utf8")).pid).toBe(process.pid);
+      session.releaseOnboardLock();
+      expect(fs.existsSync(session.LOCK_FILE)).toBe(false);
+    },
+  );
 
   it("does not remove a fresh lock that replaces stale malformed lock debris during cleanup", () => {
     fs.mkdirSync(path.dirname(session.LOCK_FILE), { recursive: true });

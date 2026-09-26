@@ -185,6 +185,8 @@ export async function finalizeMcpBridgesAfterSandboxDelete(
   return finalizeMcpBridgesAfterSandboxDeleteLifecycle(sandboxName, preparation, options);
 }
 
+export { prepareMcpBridgesForStoppedSandboxRebuild } from "./mcp-bridge-rebuild";
+
 export async function prepareMcpBridgesForAbsentSandboxRebuild(
   sandboxName: string,
   runtimeSelection?: McpProviderInspectionRuntimeSelection,

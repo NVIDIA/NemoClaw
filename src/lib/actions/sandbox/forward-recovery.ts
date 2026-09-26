@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type {
-  OpenShellForwardAdapter,
-  OpenShellForwardIdentity,
-  OpenShellForwardObservation,
+import {
+  formatOpenShellForwardStartFailure,
+  type OpenShellForwardAdapter,
+  type OpenShellForwardIdentity,
+  type OpenShellForwardObservation,
 } from "../../adapters/openshell/forward";
 import {
   createOpenShellForwardAdapterForAuthority,
@@ -17,13 +18,14 @@ import {
   OPENSHELL_PROBE_TIMEOUT_MS,
 } from "../../adapters/openshell/command-execution";
 import * as agentRuntime from "../../agent/runtime";
-import { DASHBOARD_PORT, HERMES_OPENAI_API_PORT } from "../../core/ports";
+import { DASHBOARD_PORT, GATEWAY_PORT, HERMES_OPENAI_API_PORT } from "../../core/ports";
 import { getActiveMessagingHostForward } from "../../messaging/host-forward";
 import { hydrateDerivedSandboxMessagingPlanFields } from "../../messaging/hydration";
 import type { SandboxMessagingHostForwardPlan } from "../../messaging/manifest";
 import { parseSandboxMessagingPlan } from "../../messaging/plan-validation";
 import { isRemoteDashboardBindRequested } from "../../onboard/dockerfile-remote-dashboard-bind-contract";
 import {
+  resolveGatewayName,
   resolveGatewayPortFromName,
   resolveSandboxGatewayName,
 } from "../../onboard/gateway-binding";
@@ -63,6 +65,20 @@ export type {
   HermesPortableForwardVerificationResult,
   PreparedHermesPortableForwardRecovery,
 } from "./probe/hermes-portable-forward-adapter-recovery";
+
+/** Read forward authority from the registry root that owns the sandbox. */
+function readForwardSandbox(sandboxName: string): registry.SandboxEntry | null {
+  return registry.getSandboxAcrossGatewayRoots(sandboxName) ?? registry.getSandbox(sandboxName);
+}
+
+function getForwardSessionAgent(
+  sandboxName: string,
+): ReturnType<typeof agentRuntime.getSessionAgent> {
+  return agentRuntime.resolveRegisteredSandboxAgent(
+    sandboxName,
+    agentRuntime.getSessionAgent(sandboxName),
+  );
+}
 
 export interface HermesPortableForwardCommandAuthority {
   readonly env: NodeJS.ProcessEnv;
@@ -149,6 +165,104 @@ type SandboxForwardRecoveryOptions = {
   runtimeSelection?: OpenShellRuntimeSelection;
 };
 
+type InstallerLegacyForwardRetirementDeps = {
+  getRegisteredAgent?: typeof agentRuntime.getRegisteredAgent;
+  getSandbox?: typeof registry.getSandbox;
+  hasGatewayRuntime?: typeof agentRuntime.hasGatewayRuntime;
+  listSandboxes?: typeof registry.listSandboxes;
+  forwardAdapterForAuthority?: (
+    authority: OpenShellForwardRuntimeAuthority,
+  ) => Pick<OpenShellForwardAdapter, "retireLegacyForward">;
+  resolveForwardRuntimeAuthority?: typeof forwardRuntimeAuthority;
+  resolveSandboxDashboardPort?: typeof resolveSandboxDashboardPort;
+  selectedGatewayName?: string;
+};
+
+export type InstallerLegacyForwardRetirementSummary = Readonly<{
+  retired: number;
+  unchanged: number;
+  skipped: number;
+}>;
+
+function resolveSandboxForwardPortsFromAuthority(
+  sandboxName: string,
+  sandbox: NonNullable<ReturnType<typeof registry.getSandbox>>,
+  agent: SandboxPortAgent,
+  primaryPort: number,
+  hermesDashboardPort: number | null,
+): number[] {
+  const ports = new Set<number>([primaryPort]);
+  if (isValidPort(hermesDashboardPort)) ports.add(hermesDashboardPort);
+  const messagingForward = getSandboxMessagingHostForward(sandboxName, sandbox);
+  if (messagingForward) ports.add(messagingForward.port);
+  for (const port of resolveDeclaredAgentForwardPorts(
+    sandbox,
+    primaryPort,
+    agent,
+    hermesDashboardPort,
+  )) {
+    ports.add(port);
+  }
+  return [
+    primaryPort,
+    ...[...ports].filter((port) => port !== primaryPort).sort((first, second) => first - second),
+  ];
+}
+
+function registeredLegacyForwardIdentities(
+  sandboxName: string,
+  sandbox: NonNullable<ReturnType<typeof registry.getSandbox>>,
+  registeredAgent: SandboxPortAgent,
+  runtime: OpenShellForwardRuntimeAuthority,
+  resolvePort: typeof resolveSandboxDashboardPort,
+): OpenShellForwardIdentity[] {
+  const primaryPort = resolvePort(sandboxName, { getSandbox: () => sandbox });
+  const hermesDashboardPort =
+    sandbox.hermesDashboardEnabled === true && isValidPort(sandbox.hermesDashboardPort)
+      ? sandbox.hermesDashboardPort
+      : null;
+  const ports = resolveSandboxForwardPortsFromAuthority(
+    sandboxName,
+    sandbox,
+    registeredAgent,
+    primaryPort,
+    hermesDashboardPort,
+  );
+  const primaryBind = resolveDashboardForwardBind(sandbox, {
+    requestedBind: process.env.NEMOCLAW_DASHBOARD_BIND,
+    wsl: isWsl(),
+  });
+  return ports.map((port) =>
+    sandboxForwardIdentity(
+      runtime,
+      sandboxName,
+      port,
+      port === primaryPort ? primaryBind : "127.0.0.1",
+    ),
+  );
+}
+
+function sameForwardIdentities(
+  first: readonly OpenShellForwardIdentity[],
+  second: readonly OpenShellForwardIdentity[],
+): boolean {
+  return (
+    first.length === second.length &&
+    first.every((forward, index) => {
+      const other = second[index];
+      return (
+        other !== undefined &&
+        forward.gatewayEndpoint === other.gatewayEndpoint &&
+        forward.gatewayName === other.gatewayName &&
+        forward.localHost === other.localHost &&
+        forward.port === other.port &&
+        forward.sandboxName === other.sandboxName &&
+        forward.workspace === other.workspace
+      );
+    })
+  );
+}
+
 function selectedForwardRuntime(
   gatewayName: string,
   runtimeSelection?: OpenShellRuntimeSelection,
@@ -214,11 +328,102 @@ function assertSandboxForwardAuthorityCurrent(
   gatewayName: string,
   expected: ForwardGatewayAuthority,
 ): void {
-  const sandbox = registry.getSandbox(sandboxName);
+  const sandbox = readForwardSandbox(sandboxName);
   if (!sandbox || resolveSandboxGatewayName(sandbox) !== gatewayName) {
     throw new Error("Sandbox gateway changed during forward observation");
   }
   assertForwardGatewayAuthorityCurrent(gatewayName, expected);
+}
+
+/**
+ * Retire exact legacy dashboard forwards before an incompatible gateway upgrade.
+ */
+export async function retireRegisteredLegacyDashboardForwards(
+  deps: InstallerLegacyForwardRetirementDeps = {},
+): Promise<InstallerLegacyForwardRetirementSummary> {
+  const getSandbox = deps.getSandbox ?? registry.getSandbox;
+  const getRegisteredAgent = deps.getRegisteredAgent ?? agentRuntime.getRegisteredAgent;
+  const hasGatewayRuntime = deps.hasGatewayRuntime ?? agentRuntime.hasGatewayRuntime;
+  const resolvePort = deps.resolveSandboxDashboardPort ?? resolveSandboxDashboardPort;
+  const resolveRuntime = deps.resolveForwardRuntimeAuthority ?? forwardRuntimeAuthority;
+  const selectedGatewayName = deps.selectedGatewayName ?? resolveGatewayName(GATEWAY_PORT);
+  const adapterForAuthority =
+    deps.forwardAdapterForAuthority ??
+    ((authority: OpenShellForwardRuntimeAuthority) =>
+      createOpenShellForwardAdapterForAuthority(authority, {
+        legacyForwardWorkspaceSelection: "implicit-default",
+      }));
+  const sandboxes = [...(deps.listSandboxes ?? registry.listSandboxes)().sandboxes]
+    .filter((sandbox) => resolveSandboxGatewayName(sandbox) === selectedGatewayName)
+    .sort((a, b) => a.name.localeCompare(b.name));
+  let retired = 0;
+  let unchanged = 0;
+  let skipped = 0;
+
+  for (const sandbox of sandboxes) {
+    const registeredAgent = sandbox.agent ? getRegisteredAgent(sandbox) : null;
+    if (registeredAgent && !hasGatewayRuntime(registeredAgent)) {
+      skipped += 1;
+      continue;
+    }
+
+    const sandboxName = sandbox.name;
+    const gatewayName = resolveSandboxGatewayName(sandbox);
+    const { authority, runtime } = resolveRuntime(gatewayName);
+    const forwards = registeredLegacyForwardIdentities(
+      sandboxName,
+      sandbox,
+      registeredAgent,
+      runtime,
+      resolvePort,
+    );
+    const assertCurrent = async (): Promise<void> => {
+      const current = getSandbox(sandboxName);
+      if (!current || resolveSandboxGatewayName(current) !== gatewayName) {
+        throw new Error("Sandbox forward registration changed during installer retirement");
+      }
+      const currentRuntime = resolveRuntime(gatewayName);
+      if (!sameForwardGatewayAuthority(currentRuntime.authority, authority)) {
+        throw new Error("OpenShell forward authority changed during installer retirement");
+      }
+      const currentAgent = current.agent ? getRegisteredAgent(current) : null;
+      if (
+        !sameForwardIdentities(
+          forwards,
+          registeredLegacyForwardIdentities(
+            sandboxName,
+            current,
+            currentAgent,
+            currentRuntime.runtime,
+            resolvePort,
+          ),
+        )
+      ) {
+        throw new Error("Sandbox forward registration changed during installer retirement");
+      }
+    };
+    const adapter = adapterForAuthority(runtime);
+    for (const forward of forwards) {
+      const result = await adapter.retireLegacyForward({
+        forward,
+        assertCurrent,
+        authorize: async () => assertCurrent(),
+      });
+      if (result.state === "retired") {
+        retired += 1;
+        continue;
+      }
+      if (result.state === "not_needed") {
+        unchanged += 1;
+        continue;
+      }
+      throw new Error(
+        `Could not prove legacy forward retirement for sandbox '${sandboxName}' on port ${String(forward.port)}.`,
+      );
+    }
+  }
+
+  return { retired, unchanged, skipped };
 }
 
 function forwardRuntimeAuthority(
@@ -260,13 +465,13 @@ export function resolveSandboxDashboardPort(
   sandboxName: string,
   deps: SandboxPortDeps = {},
 ): number {
-  const getSandbox = deps.getSandbox ?? registry.getSandbox;
+  const getSandbox = deps.getSandbox ?? readForwardSandbox;
   const sandbox = getSandbox(sandboxName);
   if (isValidPort(sandbox?.dashboardPort)) {
     return sandbox.dashboardPort;
   }
 
-  const getSessionAgent = deps.getSessionAgent ?? agentRuntime.getSessionAgent;
+  const getSessionAgent = deps.getSessionAgent ?? getForwardSessionAgent;
   const agent = getSessionAgent(sandboxName);
   if (agent && agentRuntime.hasGatewayRuntime(agent) && isValidPort(agent.forwardPort)) {
     return agent.forwardPort;
@@ -283,11 +488,11 @@ export function resolveSandboxDashboardPort(
  * default port as unreachable.
  */
 export function resolveSandboxHealthProbeUrl(sandboxName: string): string {
-  const agent = agentRuntime.getSessionAgent(sandboxName);
+  const agent = getForwardSessionAgent(sandboxName);
   if (agent && agentRuntime.hasGatewayRuntime(agent)) {
     return retargetHermesApiPortInUrl(
       agentRuntime.getHealthProbeUrl(agent),
-      resolveSandboxHermesApiPort(registry.getSandbox(sandboxName) ?? {}),
+      resolveSandboxHermesApiPort(readForwardSandbox(sandboxName) ?? {}),
     );
   }
   return `http://127.0.0.1:${resolveSandboxDashboardPort(sandboxName)}/health`;
@@ -308,47 +513,22 @@ export async function teardownSandboxDashboardForward(
   } = {},
 ): Promise<boolean> {
   try {
-    const getSandbox = deps.getSandbox ?? registry.getSandbox;
+    const getSandbox = deps.getSandbox ?? readForwardSandbox;
     const sandbox = getSandbox(sandboxName);
     if (!sandbox) return true;
     const registeredAgent = sandbox.agent ? agentRuntime.getRegisteredAgent(sandbox) : null;
     if (registeredAgent && !agentRuntime.hasGatewayRuntime(registeredAgent)) return true;
     const resolvePort = deps.resolveSandboxDashboardPort ?? resolveSandboxDashboardPort;
-    const primaryPort = resolvePort(sandboxName, { getSandbox: () => sandbox });
-    const hermesDashboardPort =
-      sandbox.hermesDashboardEnabled === true && isValidPort(sandbox.hermesDashboardPort)
-        ? sandbox.hermesDashboardPort
-        : null;
-    const ports = new Set<number>([primaryPort]);
-    if (hermesDashboardPort !== null) ports.add(hermesDashboardPort);
-    const parsedMessaging = parseSandboxMessagingPlan(sandbox.messaging?.plan, { sandboxName });
-    const messagingForward = getActiveMessagingHostForward(
-      parsedMessaging ? hydrateDerivedSandboxMessagingPlanFields(parsedMessaging) : null,
-    );
-    if (messagingForward) ports.add(messagingForward.port);
-    for (const port of resolveDeclaredAgentForwardPorts(
-      sandbox,
-      primaryPort,
-      registeredAgent,
-      hermesDashboardPort,
-    )) {
-      ports.add(port);
-    }
     const gatewayName = resolveSandboxGatewayName(sandbox);
     const { authority, runtime } = (deps.resolveForwardRuntimeAuthority ?? forwardRuntimeAuthority)(
       gatewayName,
     );
-    const primaryBind = resolveDashboardForwardBind(sandbox, {
-      requestedBind: process.env.NEMOCLAW_DASHBOARD_BIND,
-      wsl: isWsl(),
-    });
-    const forwards = [...ports].map((port) =>
-      sandboxForwardIdentity(
-        runtime,
-        sandboxName,
-        port,
-        port === primaryPort ? primaryBind : "127.0.0.1",
-      ),
+    const forwards = registeredLegacyForwardIdentities(
+      sandboxName,
+      sandbox,
+      registeredAgent,
+      runtime,
+      resolvePort,
     );
     const release = await (
       deps.forwardAdapterForAuthority ?? createOpenShellForwardAdapterForAuthority
@@ -359,7 +539,9 @@ export async function teardownSandboxDashboardForward(
     });
     if (release.state !== "released") {
       const unreleasedPorts =
-        "forwards" in release ? release.forwards.map((forward) => forward.port) : [...ports];
+        "forwards" in release
+          ? release.forwards.map((forward) => forward.port)
+          : forwards.map((forward) => forward.port);
       console.error(
         `  ForwardTcp cleanup did not release registered host port(s): ${unreleasedPorts.join(", ")}.`,
       );
@@ -387,7 +569,7 @@ export async function ensureSandboxPortForward(
   options: SandboxForwardRecoveryOptions = {},
 ): Promise<boolean> {
   const port = resolveSandboxDashboardPort(sandboxName);
-  const sandbox = registry.getSandbox(sandboxName);
+  const sandbox = readForwardSandbox(sandboxName);
   const remoteBindRequested = isRemoteDashboardBindRequested(process.env.NEMOCLAW_DASHBOARD_BIND);
   const bind = resolveDashboardForwardBind(sandbox, {
     requestedBind: process.env.NEMOCLAW_DASHBOARD_BIND,
@@ -405,7 +587,7 @@ export async function ensureSandboxPortForward(
     afterSuccess: options.afterSuccess,
     beforeStart: () =>
       (!remoteBindRequested ||
-        registry.getSandbox(sandboxName)?.dashboardRemoteBindPrepared === true) &&
+        readForwardSandbox(sandboxName)?.dashboardRemoteBindPrepared === true) &&
       (options.beforeStart?.() ?? true),
     runtimeSelection: options.runtimeSelection,
   });
@@ -437,7 +619,7 @@ export async function describeSandboxForwardListener(
     runtimeSelection?: OpenShellRuntimeSelection;
   } = {},
 ): Promise<SandboxForwardListener> {
-  const bind = resolveDashboardForwardBind(registry.getSandbox(sandboxName), {
+  const bind = resolveDashboardForwardBind(readForwardSandbox(sandboxName), {
     requestedBind: process.env.NEMOCLAW_DASHBOARD_BIND,
     wsl: isWsl({ isWsl: options.isWsl }),
   });
@@ -483,7 +665,11 @@ function forwardOperationFailureMessage(
     | Awaited<ReturnType<OpenShellForwardAdapter["startForward"]>>
     | Awaited<ReturnType<OpenShellForwardAdapter["retireLegacyForward"]>>,
 ): string {
-  if ("error" in result) return result.error.message;
+  if ("error" in result) {
+    const failure = "failure" in result ? result.failure : undefined;
+    const suffix = failure ? ` [${formatOpenShellForwardStartFailure(failure)}]` : "";
+    return `${result.error.message}${suffix}`;
+  }
   if ("observation" in result && result.observation.state === "foreign") {
     return "The host port is owned by a foreign listener.";
   }
@@ -516,7 +702,7 @@ async function inspectSandboxPortForwardListener(
   forwardAdapterForAuthority: OpenShellForwardObservationAdapterFactory = createOpenShellForwardAdapterForAuthority,
   expectedListenerPid?: number,
 ): Promise<SandboxForwardListener> {
-  const sandbox = registry.getSandbox(sandboxName);
+  const sandbox = readForwardSandbox(sandboxName);
   if (!sandbox) return "absent";
   try {
     const gatewayName = runtimeSelection?.gatewayName ?? resolveSandboxGatewayName(sandbox);
@@ -588,7 +774,7 @@ export async function ensureSandboxPortForwardForPort(
   }
   if (!beforeStart()) return false;
   try {
-    const sandbox = registry.getSandbox(sandboxName);
+    const sandbox = readForwardSandbox(sandboxName);
     if (!sandbox) throw new Error(`Sandbox '${sandboxName}' is not registered`);
     const gatewayName = runtimeSelection?.gatewayName ?? resolveSandboxGatewayName(sandbox);
     const { authority, runtime } = forwardRuntimeAuthority(gatewayName, runtimeSelection);
@@ -632,6 +818,7 @@ export async function ensureHermesDashboardPortForwardIfEnabled(
   runtimeSelection?: OpenShellRuntimeSelection,
 ): Promise<boolean | null> {
   return ensureHermesDashboardPortForward(sandboxName, {
+    getRecoveryConfig: (name) => getHermesDashboardRecoveryConfig(name, readForwardSandbox),
     isPortForwardHealthy: (name, port) =>
       isSandboxPortForwardHealthy(name, port, undefined, runtimeSelection),
     ensurePortForward: (name, port) =>
@@ -641,7 +828,7 @@ export async function ensureHermesDashboardPortForwardIfEnabled(
 
 function getSandboxMessagingHostForward(
   sandboxName: string,
-  entry: ReturnType<typeof registry.getSandbox> = registry.getSandbox(sandboxName),
+  entry: ReturnType<typeof registry.getSandbox> = readForwardSandbox(sandboxName),
 ): SandboxMessagingHostForwardPlan | null {
   const parsed = parseSandboxMessagingPlan(entry?.messaging?.plan, { sandboxName });
   const plan = parsed ? hydrateDerivedSandboxMessagingPlanFields(parsed) : null;
@@ -720,10 +907,10 @@ export async function ensureDeclaredAgentForwardPortsHealthy(
   primaryPort: number,
   runtimeSelection?: OpenShellRuntimeSelection,
 ): Promise<boolean | null> {
-  const agent = agentRuntime.getSessionAgent(sandboxName);
+  const agent = getForwardSessionAgent(sandboxName);
   if (!agent) return null;
-  const hermesDashboard = getHermesDashboardRecoveryConfig(sandboxName);
-  const sandbox = registry.getSandbox(sandboxName);
+  const hermesDashboard = getHermesDashboardRecoveryConfig(sandboxName, readForwardSandbox);
+  const sandbox = readForwardSandbox(sandboxName);
   const ports = resolveDeclaredAgentForwardPorts(
     sandbox,
     primaryPort,
@@ -773,12 +960,12 @@ export async function areSandboxLaunchForwardsHealthy(
     ) => Pick<OpenShellForwardAdapter, "observeForwards">;
   } = {},
 ): Promise<boolean | null> {
-  const sandbox = registry.getSandbox(sandboxName);
+  const sandbox = readForwardSandbox(sandboxName);
   if (!sandbox) return false;
   try {
     const owningGatewayName = resolveSandboxGatewayName(sandbox);
     if (gatewayName && gatewayName !== owningGatewayName) return false;
-    const agent = agentRuntime.getSessionAgent(sandboxName);
+    const agent = getForwardSessionAgent(sandboxName);
     const primaryPort = resolveSandboxDashboardPort(sandboxName, {
       getSandbox: () => sandbox,
       getSessionAgent: () => agent,
@@ -790,11 +977,11 @@ export async function areSandboxLaunchForwardsHealthy(
       primaryPort,
     );
     const assertForwardPlanCurrent = (): void => {
-      const currentSandbox = registry.getSandbox(sandboxName);
+      const currentSandbox = readForwardSandbox(sandboxName);
       if (!currentSandbox || resolveSandboxGatewayName(currentSandbox) !== owningGatewayName) {
         throw new Error("Sandbox gateway changed during forward observation");
       }
-      const currentAgent = agentRuntime.getSessionAgent(sandboxName);
+      const currentAgent = getForwardSessionAgent(sandboxName);
       const currentPrimaryPort = resolveSandboxDashboardPort(sandboxName, {
         getSandbox: () => currentSandbox,
         getSessionAgent: () => currentAgent,
@@ -842,7 +1029,7 @@ export async function areSandboxLaunchForwardsHealthy(
     if (observations.some((observation) => observation.state !== "owned")) return false;
 
     assertForwardPlanCurrent();
-    const currentPrimaryBind = resolveDashboardForwardBind(registry.getSandbox(sandboxName), {
+    const currentPrimaryBind = resolveDashboardForwardBind(readForwardSandbox(sandboxName), {
       requestedBind: process.env.NEMOCLAW_DASHBOARD_BIND,
       wsl: isWsl(),
     });
@@ -864,27 +1051,21 @@ function resolveSandboxLaunchForwardPortsFromAuthority(
 ): number[] {
   if (agent && !agentRuntime.hasGatewayRuntime(agent)) return [];
 
-  const requiredPorts = new Set<number>([primaryPort]);
   const hermesDashboard = getHermesDashboardRecoveryConfig(sandboxName, () => sandbox);
-  if (hermesDashboard) requiredPorts.add(hermesDashboard.publicPort);
-  const messagingForward = getSandboxMessagingHostForward(sandboxName, sandbox);
-  if (messagingForward) requiredPorts.add(messagingForward.port);
-  for (const port of resolveDeclaredAgentForwardPorts(
+  return resolveSandboxForwardPortsFromAuthority(
+    sandboxName,
     sandbox,
-    primaryPort,
     agent,
+    primaryPort,
     hermesDashboard?.publicPort ?? null,
-  )) {
-    requiredPorts.add(port);
-  }
-  return [...requiredPorts];
+  );
 }
 
 /** Resolve the complete forward set used by launch-readiness health. */
 export function resolveSandboxLaunchForwardPorts(sandboxName: string): number[] | null {
-  const sandbox = registry.getSandbox(sandboxName);
+  const sandbox = readForwardSandbox(sandboxName);
   if (!sandbox) return null;
-  const agent = agentRuntime.getSessionAgent(sandboxName);
+  const agent = getForwardSessionAgent(sandboxName);
   const primaryPort = resolveSandboxDashboardPort(sandboxName, {
     getSandbox: () => sandbox,
     getSessionAgent: () => agent,

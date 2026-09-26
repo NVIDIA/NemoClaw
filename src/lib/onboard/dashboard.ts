@@ -4,9 +4,10 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type {
-  OpenShellForwardAdapter,
-  OpenShellForwardIdentity,
+import {
+  formatOpenShellForwardStartFailure,
+  type OpenShellForwardAdapter,
+  type OpenShellForwardIdentity,
 } from "../adapters/openshell/forward";
 import {
   createOpenShellForwardAdapterForAuthority,
@@ -393,7 +394,11 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       | Awaited<ReturnType<OpenShellForwardAdapter["startForward"]>>
       | Awaited<ReturnType<OpenShellForwardAdapter["retireLegacyForward"]>>,
   ): string {
-    if ("error" in result) return result.error.message;
+    if ("error" in result) {
+      const failure = "failure" in result ? result.failure : undefined;
+      const suffix = failure ? ` [${formatOpenShellForwardStartFailure(failure)}]` : "";
+      return `${result.error.message}${suffix}`;
+    }
     if ("observation" in result) {
       return result.observation.state === "foreign"
         ? "The host port is owned by a foreign listener."
@@ -889,4 +894,28 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     printDashboard,
     stopAllDashboardForwards,
   };
+}
+
+const HOST_PROBE_MAX_SECONDS = "3";
+
+/**
+ * Probe a dashboard-chain port on the host through its forward, for the
+ * onboarding deployment verification. Returns the HTTP status, or 0 when the
+ * forward is down.
+ */
+export function probeVerificationHostPort(port: number, probePath: string): number {
+  const result = defaultRunCapture(
+    [
+      "curl",
+      "-so",
+      "/dev/null",
+      "-w",
+      "%{http_code}",
+      "--max-time",
+      HOST_PROBE_MAX_SECONDS,
+      `http://127.0.0.1:${port}${probePath}`,
+    ],
+    { ignoreError: true },
+  );
+  return parseInt(result.trim(), 10) || 0;
 }

@@ -12,7 +12,7 @@ import { DEFAULT_MODEL_ROUTER_PORT, isRoutedInferenceProvider } from "../../onbo
 import {
   doesModelRouterProcessOwnPort,
   inspectModelRouterProcessForPort,
-  isRouterHealthy,
+  isRouterResponsive,
   stopModelRouterProcess,
 } from "../../onboard/model-router-process";
 import { listHostGatewayRegistryEntries } from "../../state/gateway-registry";
@@ -24,6 +24,12 @@ import type {
 } from "../../state/onboard-session";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
+import {
+  findSandboxAcrossGatewayRoots,
+  getSandboxAcrossGatewayRoots,
+  listPublishedSandboxesAcrossGatewayRoots,
+  removeSandboxFromOwningGatewayRegistry,
+} from "../../state/registry/cross-port";
 import { type DestroyRunOpenshell, selectGatewayForSandboxDestroy } from "./destroy-gateway";
 import { classifyDestroySandboxPresence, type DestroySandboxPresence } from "./destroy-presence";
 import {
@@ -43,6 +49,38 @@ export type SandboxDestroyPreflight = {
   sandboxConfirmedAbsent: boolean;
   sandboxPresence?: DestroySandboxPresence;
 };
+
+export type SandboxDestroyRegistryAuthority = {
+  entry: SandboxEntry | null;
+  getSandbox: typeof registry.getSandbox;
+  listSandboxes: typeof registry.listSandboxes;
+  removeSandbox: typeof registry.removeSandbox;
+};
+
+/** Pin destroy reads and mutation to the registry file that owns the named sandbox. */
+export function resolveSandboxDestroyRegistryAuthority(
+  sandboxName: string,
+): SandboxDestroyRegistryAuthority {
+  const hit = findSandboxAcrossGatewayRoots(sandboxName);
+  if (!hit) {
+    return {
+      entry: registry.getSandbox(sandboxName),
+      getSandbox: registry.getSandbox,
+      listSandboxes: registry.listSandboxes,
+      removeSandbox: registry.removeSandbox,
+    };
+  }
+  return {
+    entry: hit.entry,
+    getSandbox: getSandboxAcrossGatewayRoots,
+    listSandboxes: () => ({
+      sandboxes: listPublishedSandboxesAcrossGatewayRoots(),
+      defaultSandbox: null,
+    }),
+    removeSandbox: (name) =>
+      name === hit.entry.name ? removeSandboxFromOwningGatewayRegistry(hit) : false,
+  };
+}
 
 export function resolveSandboxDestroyGatewayName(
   sandboxName: string,
@@ -103,7 +141,7 @@ export type StopModelRouterForDestroyedSandboxDeps = {
   loadSession: () => Session | null;
   releaseOnboardLock: typeof releaseOnboardLock;
   inspectProcessForPort?: typeof inspectModelRouterProcessForPort;
-  isHealthy?: typeof isRouterHealthy;
+  isResponsive?: typeof isRouterResponsive;
   isRoutedProvider?: typeof isRoutedInferenceProvider;
   listHostRegistryEntries?: typeof listHostGatewayRegistryEntries;
   log?: (message: string) => void;
@@ -204,7 +242,7 @@ export async function stopModelRouterForDestroyedSandbox(
 
       const ownsPort = deps.ownsPort ?? doesModelRouterProcessOwnPort;
       const inspectProcessForPort = deps.inspectProcessForPort ?? inspectModelRouterProcessForPort;
-      const isHealthy = deps.isHealthy ?? isRouterHealthy;
+      const isResponsive = deps.isResponsive ?? isRouterResponsive;
       const recordedPid = sessionMatchesSandbox ? (session.routerPid ?? null) : null;
       const recordedCredentialHash = sessionMatchesSandbox
         ? (session.routerCredentialHash ?? null)
@@ -223,9 +261,9 @@ export async function stopModelRouterForDestroyedSandbox(
         }
         if (lookup.status === "found") {
           pid = lookup.pid;
-        } else if (await isHealthy(port, 1000)) {
+        } else if (await isResponsive(port, 1000)) {
           warn(
-            `No Model Router process could be confirmed for healthy port ${port}. ` +
+            `No Model Router process could be confirmed for responsive port ${port}. ` +
               "Keeping its session recovery identity; inspect the port listener before the next Model Router onboarding.",
           );
           return;
@@ -258,7 +296,7 @@ export async function stopModelRouterForDestroyedSandbox(
 
       // Clear when either field is set: a matching session with only a
       // credential hash still carries stale router identity after its sandbox
-      // is gone. A completed process scan plus an unhealthy port confirms that
+      // is gone. A completed process scan plus an unresponsive port confirms that
       // no router remains when no PID was found.
       if (sessionMatchesSandbox && (recordedPid !== null || recordedCredentialHash !== null)) {
         deps.compareAndSwapSession(
@@ -300,14 +338,16 @@ export async function stopModelRouterForDestroyedSandbox(
 export async function prepareSandboxDestroy(
   sandboxName: string,
   {
+    getSandbox = registry.getSandbox,
     retainedRecoveryGatewayName,
     operationRuntimeSelection,
   }: {
+    getSandbox?: typeof registry.getSandbox;
     retainedRecoveryGatewayName?: string;
     operationRuntimeSelection?: OpenShellRuntimeSelection;
   } = {},
 ): Promise<SandboxDestroyPreflight> {
-  const sandbox = registry.getSandbox(sandboxName);
+  const sandbox = getSandbox(sandboxName);
   console.log(`  Deleting sandbox '${sandboxName}'...`);
   const { captureOpenshell, runOpenshell } = require("../../adapters/openshell/runtime") as Pick<
     typeof import("../../adapters/openshell/runtime"),

@@ -25,14 +25,22 @@ describe.skipIf(!dockerClientAvailable)("managed vLLM Docker format boundary", (
     expect(fixture.run().serving.hostPort).toBe(18000);
   });
 
-  it("accepts Docker null defaults for unused runtime settings", () => {
+  it("accepts Docker-normalized runtime settings", () => {
     Object.assign(fixture.objects.container.HostConfig, {
       Devices: null,
       CapAdd: null,
-      SecurityOpt: null,
-      Tmpfs: null,
+      SecurityOpt: ["label=disable"],
+      Ulimits: null,
+      ShmSize: 64 * 1024 * 1024,
     });
+    Reflect.deleteProperty(fixture.objects.container.HostConfig, "Tmpfs");
     Object.assign(fixture.objects.container.HostConfig.DeviceRequests[0]!, { DeviceIDs: null });
+    fixture.objects.container.Config.Env.unshift("HF_HOME=/root/.cache/huggingface");
+    Object.assign(fixture.objects.container.Mounts[0]!, {
+      Source: "/home/fixture/.cache/huggingface",
+      Destination: "/root/.cache/huggingface",
+      RW: true,
+    });
     expect(fixture.run().serving.hostPort).toBe(18000);
   });
 
@@ -94,7 +102,7 @@ describe.skipIf(!dockerClientAvailable)("managed vLLM Docker format boundary", (
   it("keeps quoted image defaults literal and private authentication out of observations", () => {
     const literal = 'LITERAL={{printf "unsafe"}}';
     fixture.objects.image.Config.Env.push(literal);
-    fixture.objects.container.Config.Env.push(literal);
+    fixture.objects.container.Config.Env.push(literal, literal);
     const observation = JSON.stringify(fixture.run());
     expect(observation).not.toContain(fixture.key);
     expect(observation).not.toContain(fixture.fingerprint);

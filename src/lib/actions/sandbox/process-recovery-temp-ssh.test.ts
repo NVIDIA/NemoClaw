@@ -1,280 +1,97 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
-const runSshBuffered = vi.hoisted(() => vi.fn());
-const executePrivilegedSandboxCommand = vi.hoisted(() => vi.fn());
-const runBuffered = vi.hoisted(() => vi.fn());
-
+const { runBuffered, runSshBuffered, executePrivilegedSandboxCommand } = vi.hoisted(() => ({
+  runBuffered: vi.fn(),
+  runSshBuffered: vi.fn(),
+  executePrivilegedSandboxCommand: vi.fn(),
+}));
 vi.mock("../../adapters/openshell/sandbox-command-cli", () => ({
   runCliOpenShellBufferedCommand: runSshBuffered,
-  createCliOpenShellSandboxCommandExecutor: vi.fn(() => ({ runBuffered })),
+  createCliOpenShellSandboxCommandExecutor: () => ({ runBuffered }),
 }));
-
-vi.mock("../../adapters/openshell/resolve", () => ({
-  resolveOpenshell: () => "openshell",
-}));
-
-vi.mock("../../adapters/openshell/runtime", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../adapters/openshell/runtime")>()),
-  captureOpenshell: vi.fn(),
-  captureOpenshellForStatus: vi.fn(),
-  getOpenshellBinary: vi.fn(() => "openshell"),
-  isCommandTimeout: vi.fn(() => false),
-  runOpenshell: vi.fn(),
-}));
-
 vi.mock("../../sandbox/privileged-exec", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../sandbox/privileged-exec")>()),
   executePrivilegedSandboxCommand,
 }));
+import { executeSandboxExecCommand } from "../../adapters/sandbox/command-transport";
 
-vi.mock("../../runner", () => ({
-  ROOT: "/repo",
-  shellQuote: (value: string) => `'${value.replaceAll("'", "'\"'\"'")}'`,
-}));
-
-import { executeSandboxCommand, executeSandboxExecCommand } from "./process-recovery";
-
-describe("executeSandboxCommand temp SSH config", () => {
+describe("ordinary sandbox command execution", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    runSshBuffered.mockReset();
-    runBuffered.mockResolvedValue({
+    runBuffered.mockReset().mockResolvedValue({
       outcome: { kind: "completed", exitCode: 0 },
-      stdout: "",
+      stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nok\n",
       stderr: "",
     });
   });
+  afterEach(() => vi.unstubAllEnvs());
 
-  afterEach(() => {
-    vi.unstubAllEnvs();
-  });
-
-  it("pins SSH config and command execution to one authority-derived mTLS target (#10514)", async () => {
-    vi.stubEnv("OPENSHELL_GATEWAY", "ambient-gateway");
+  it("pins execution to the selected gateway and mTLS authority", async () => {
+    vi.stubEnv("OPENSHELL_GATEWAY", "ambient");
     vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://ambient.invalid");
     vi.stubEnv("OPENSHELL_GATEWAY_INSECURE", "true");
     vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/ambient/tls");
     vi.stubEnv("OPENSHELL_TOKEN", "ambient-token");
-    vi.stubEnv("OPENSHELL_WORKSPACE", "ambient-workspace");
-    runSshBuffered
-      .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" })
-      .mockResolvedValueOnce({
-        status: 0,
-        stderr: "",
-        stdout: "Host openshell-alpha.default\n  HostName 127.0.0.1\n",
-      });
-    runSshBuffered.mockResolvedValueOnce({
-      status: 0,
-      stdout: "ok\n",
-      stderr: "",
-      pid: 1234,
-      output: [],
-      signal: null,
+    const runtimeSelection = {
+      gatewayName: "recorded-gateway",
+      localTlsDir: "/authority/tls",
+      workspace: "default",
+    };
+    const result = await executeSandboxExecCommand("alpha", "echo ok", 2000, {
+      runtimeSelection,
     });
-
-    expect(
-      await executeSandboxCommand("alpha", "echo ok", {
-        runtimeSelection: {
-          gatewayName: "nemoclaw-8091",
-          localTlsDir: "/authority/tls",
-          workspace: "default",
-        },
-      }),
-    ).toEqual({ status: 0, stdout: "ok", stderr: "" });
-
-    const captureOptions = runSshBuffered.mock.calls[1]?.[2];
-    expect(captureOptions).toMatchObject({
-      environment: {
-        OPENSHELL_GATEWAY: "nemoclaw-8091",
-        OPENSHELL_LOCAL_TLS_DIR: "/authority/tls",
-        OPENSHELL_WORKSPACE: "default",
-      },
-    });
-    expect(captureOptions?.environment).not.toHaveProperty("OPENSHELL_GATEWAY_ENDPOINT");
-    expect(captureOptions?.environment).not.toHaveProperty("OPENSHELL_GATEWAY_INSECURE");
-    expect(captureOptions?.environment).not.toHaveProperty("OPENSHELL_TOKEN");
-    expect(runSshBuffered.mock.calls[2]?.[2]?.environment).toEqual(captureOptions?.environment);
-  });
-
-  it("removes ambient mTLS when the selected gateway does not use it (#10514)", async () => {
-    vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/ambient/tls");
-    runSshBuffered
-      .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" })
-      .mockResolvedValueOnce({
-        status: 0,
-        stderr: "",
-        stdout: "Host openshell-alpha.default\n  HostName 127.0.0.1\n",
-      });
-    runSshBuffered.mockResolvedValueOnce({
-      status: 0,
-      stdout: "ok\n",
-      stderr: "",
-      pid: 1234,
-      output: [],
-      signal: null,
-    });
-
-    await executeSandboxCommand("alpha", "echo ok", {
-      runtimeSelection: { gatewayName: "external-http", workspace: "default" },
-    });
-
-    expect(runSshBuffered.mock.calls[1]?.[2]?.environment).not.toHaveProperty(
-      "OPENSHELL_LOCAL_TLS_DIR",
-    );
-    expect(runSshBuffered.mock.calls[2]?.[2]?.environment).not.toHaveProperty(
-      "OPENSHELL_LOCAL_TLS_DIR",
-    );
-  });
-
-  it("pins strict OpenShell exec to the same authority-derived target (#10514)", async () => {
-    vi.stubEnv("OPENSHELL_GATEWAY", "ambient-gateway");
-    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://ambient.invalid");
-    vi.stubEnv("OPENSHELL_GATEWAY_INSECURE", "true");
-    vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/ambient/tls");
-    vi.stubEnv("OPENSHELL_TOKEN", "ambient-token");
-    vi.stubEnv("OPENSHELL_WORKSPACE", "ambient-workspace");
-    runBuffered.mockResolvedValue({
-      outcome: { kind: "completed", exitCode: 0 },
-      stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nrevision-1\n",
-      stderr: "",
-    });
-
-    await expect(
-      executeSandboxExecCommand("alpha", "printf revision-1", undefined, {
-        runtimeSelection: {
-          gatewayName: "nemoclaw-8091",
-          localTlsDir: "/authority/tls",
-          workspace: "default",
-        },
-      }),
-    ).resolves.toEqual({ status: 0, stdout: "revision-1", stderr: "" });
-
-    const request = runBuffered.mock.calls[0]?.[0];
+    expect(result).toEqual({ status: 0, stdout: "ok", stderr: "" });
+    expect(runBuffered).toHaveBeenCalledOnce();
+    const request = runBuffered.mock.calls[0][0];
     expect(request).toMatchObject({
       sandboxName: "alpha",
-      target: { kind: "named", gatewayName: "nemoclaw-8091" },
-      command: ["sh", "-c", expect.stringContaining("printf revision-1")],
+      target: { kind: "named", gatewayName: "recorded-gateway" },
+      timeoutMilliseconds: 2000,
     });
-    expect(request?.environment).toMatchObject({
-      OPENSHELL_GATEWAY: "nemoclaw-8091",
+    expect(request.environment).toMatchObject({
+      OPENSHELL_GATEWAY: "recorded-gateway",
       OPENSHELL_LOCAL_TLS_DIR: "/authority/tls",
       OPENSHELL_WORKSPACE: "default",
     });
-    expect(request?.environment).not.toHaveProperty("OPENSHELL_GATEWAY_ENDPOINT");
-    expect(request?.environment).not.toHaveProperty("OPENSHELL_GATEWAY_INSECURE");
-    expect(request?.environment).not.toHaveProperty("OPENSHELL_TOKEN");
+    expect(request.environment).not.toHaveProperty("OPENSHELL_GATEWAY_ENDPOINT");
+    expect(request.environment).not.toHaveProperty("OPENSHELL_GATEWAY_INSECURE");
+    expect(request.environment).not.toHaveProperty("OPENSHELL_TOKEN");
+    expect(request.command.slice(0, 5)).toEqual(["/bin/bash", "--noprofile", "--norc", "-p", "-c"]);
+    expect(request.command[5]).toBe('builtin unset OPENCLAW_GATEWAY_TOKEN; builtin exec -- "$@"');
+    expect(request.command.slice(7)).toEqual([
+      "sh",
+      "-c",
+      "printf '%s\\n' '__NEMOCLAW_SANDBOX_EXEC_STARTED__'; echo ok",
+    ]);
+    expect(runSshBuffered).not.toHaveBeenCalled();
     expect(executePrivilegedSandboxCommand).not.toHaveBeenCalled();
   });
 
-  it("fails closed instead of using a same-name local sandbox for selected exec (#10514)", async () => {
-    runBuffered.mockResolvedValue({
-      outcome: { kind: "completed", exitCode: 1 },
-      stdout: "selected gateway unavailable\n",
-      stderr: "",
+  it("removes ambient mTLS when the selected gateway does not use it", async () => {
+    vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/ambient/tls");
+    await executeSandboxExecCommand("alpha", "echo ok", undefined, {
+      runtimeSelection: { gatewayName: "external-http", workspace: "default" },
     });
-    executePrivilegedSandboxCommand.mockReturnValue({
-      status: 0,
-      stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nlocal-same-name\n",
-      stderr: "",
-    });
-
-    await expect(
-      executeSandboxExecCommand("alpha", "printf selected", undefined, {
-        localDockerFallbackPolicy: "read-only",
-        runtimeSelection: {
-          gatewayName: "recorded-gateway",
-          localTlsDir: "/authority/tls",
-          workspace: "default",
-        },
-      }),
-    ).resolves.toBeNull();
-    expect(executePrivilegedSandboxCommand).not.toHaveBeenCalled();
+    expect(runBuffered.mock.calls[0][0].environment).not.toHaveProperty("OPENSHELL_LOCAL_TLS_DIR");
   });
 
-  it("uses the exact legacy alias while backing up a pre-upgrade sandbox", async () => {
-    runSshBuffered
-      .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" })
-      .mockResolvedValueOnce({
-        status: 0,
+  it.each(["cancelled", "timeout", "capture", "invocation", "unavailable", "malformed"])(
+    "does not start SSH or privileged execution after %s",
+    async (kind) => {
+      runBuffered.mockResolvedValue({
+        outcome:
+          kind === "malformed"
+            ? { kind: "completed", exitCode: 1 }
+            : { kind: "failed", error: { kind, message: kind } },
+        stdout: "untrusted partial output",
         stderr: "",
-        stdout: "Host openshell-alpha\n  HostName 127.0.0.1\n",
       });
-    runSshBuffered.mockResolvedValueOnce({
-      status: 0,
-      stdout: "ok\n",
-      stderr: "",
-      pid: 1234,
-      output: [],
-      signal: null,
-    });
-
-    const result = await executeSandboxCommand("alpha", "echo ok");
-
-    expect(result).toEqual({ status: 0, stdout: "ok", stderr: "" });
-    const sshArgs = runSshBuffered.mock.calls[2]?.[1] as string[];
-    const configFile = sshArgs[sshArgs.indexOf("-F") + 1];
-    const configDir = path.dirname(configFile);
-    expect(configDir).not.toBe(os.tmpdir());
-    expect(path.basename(configDir)).toMatch(/^nemoclaw-ssh-/);
-    expect(path.basename(configFile)).toBe("ssh_config");
-    expect(sshArgs).toContain("openshell-alpha");
-    expect(sshArgs).not.toContain("openshell-alpha.default");
-    expect(fs.existsSync(configDir)).toBe(false);
-  });
-
-  it("uses the workspace-qualified alias emitted by OpenShell v0.0.99", async () => {
-    runSshBuffered
-      .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" })
-      .mockResolvedValueOnce({
-        status: 0,
-        stderr: "",
-        stdout: "Host openshell-alpha.default\n  HostName 127.0.0.1\n",
-      });
-    runSshBuffered.mockResolvedValueOnce({
-      status: 0,
-      stdout: "ok\n",
-      stderr: "",
-      pid: 1234,
-      output: [],
-      signal: null,
-    });
-
-    expect(await executeSandboxCommand("alpha", "echo ok")).toEqual({
-      status: 0,
-      stdout: "ok",
-      stderr: "",
-    });
-
-    const sshArgs = runSshBuffered.mock.calls[2]?.[1] as string[];
-    expect(sshArgs).toContain("openshell-alpha.default");
-    expect(sshArgs).not.toContain("openshell-alpha");
-  });
-
-  it("returns null without creating an SSH process when config capture fails", async () => {
-    runSshBuffered
-      .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" })
-      .mockResolvedValueOnce({ status: 1, stdout: "", stderr: "" });
-
-    expect(await executeSandboxCommand("alpha", "echo ok")).toBeNull();
-    expect(runSshBuffered).toHaveBeenCalledTimes(2);
-  });
-
-  it("returns null when the captured config declares no exact sandbox alias", async () => {
-    runSshBuffered
-      .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" })
-      .mockResolvedValueOnce({
-        status: 0,
-        stderr: "",
-        stdout: "Host openshell-*\n  HostName 127.0.0.1\n",
-      });
-
-    expect(await executeSandboxCommand("alpha", "echo ok")).toBeNull();
-    expect(runSshBuffered).toHaveBeenCalledTimes(2);
-  });
+      await expect(executeSandboxExecCommand("alpha", "mutate")).rejects.toMatchObject({ kind });
+      expect(runBuffered).toHaveBeenCalledOnce();
+      expect(runSshBuffered).not.toHaveBeenCalled();
+      expect(executePrivilegedSandboxCommand).not.toHaveBeenCalled();
+    },
+  );
 });

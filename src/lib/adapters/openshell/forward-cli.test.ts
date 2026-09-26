@@ -20,7 +20,6 @@ import {
   listHeader,
   missingCommand,
   noActiveForwards,
-  otherForward,
   runtimeSelection,
   throwSupersededWhen,
   type ForwardChild,
@@ -530,23 +529,40 @@ describe("CLI OpenShell forward observations", () => {
   });
 
   it.each([
-    ["remains the same", false, { state: "stale", forward }],
-    ["gains another listener", true, { state: "indeterminate", forward, error: errors.ownership }],
-  ] as const)(
-    "accepts Linux /proc legacy proof only when its sole PID %s",
-    async (_case, drift, expected) => {
-      const fixture = createLinuxProcFixture({ pid: 4_312 });
-      let probes = 0;
-      const hostProbe = vi.fn<HostProbe>(async () => {
-        probes += 1;
-        invokeWhen(drift && probes === 2, () => fixture.addSocketOwner(9_876));
-        return missingCommand();
-      });
+    {
+      case: "remains the same",
+      expected: { state: "stale", forward } as const,
+      incomplete: false,
+      drift: false,
+    },
+    {
+      case: "has an unreadable unrelated process",
+      expected: { state: "stale", forward } as const,
+      incomplete: true,
+      drift: false,
+    },
+    {
+      case: "gains another listener",
+      expected: { state: "indeterminate", forward, error: errors.ownership } as const,
+      incomplete: false,
+      drift: true,
+    },
+  ])(
+    "accepts Linux /proc legacy proof only when its sole PID $case",
+    async ({ drift, expected, incomplete }) => {
+      const fixture = createLinuxProcFixture({ incomplete, pid: 4_312 });
+      const hostProbe = vi.fn<HostProbe>(async () => missingCommand());
+      let nowCalls = 0;
       const adapter = createCliOpenShellForwardAdapter({
         environment: {},
         executable: fixture.executable,
         gatewayEndpoint: forward.gatewayEndpoint,
         hostProbe,
+        now: () => {
+          nowCalls += 1;
+          invokeWhen(drift && nowCalls === 4, () => fixture.addSocketOwner(9_876));
+          return 0;
+        },
         platform: "linux",
         procRoot: fixture.procRoot,
         run: async () => captured(0, legacyForwardList),
@@ -555,11 +571,7 @@ describe("CLI OpenShell forward observations", () => {
 
       try {
         await expect(adapter.observeForwards({ forwards: [forward] })).resolves.toEqual([expected]);
-        expect(hostProbe).toHaveBeenCalledTimes(2);
-        expect(hostProbe.mock.calls.map(([command, args]) => [command, args])).toEqual([
-          ["/usr/bin/lsof", ["-ti4TCP:18789", "-sTCP:LISTEN"]],
-          ["/usr/bin/lsof", ["-ti4TCP:18789", "-sTCP:LISTEN"]],
-        ]);
+        expect(hostProbe).not.toHaveBeenCalled();
       } finally {
         fixture.remove();
       }
@@ -647,6 +659,16 @@ describe("CLI OpenShell direct forward start", () => {
   });
 
   it("starts only after proving the owner, bound TCP port, and same owner", async () => {
+    const events = new EventEmitter();
+    const child = {
+      exitCode: null,
+      off: events.off.bind(events),
+      on: events.on.bind(events),
+      once: events.once.bind(events),
+      pid: 4_321,
+      signalCode: null,
+      unref: vi.fn(),
+    } as unknown as ForwardChild;
     const inspect = vi
       .fn<InspectListener>()
       .mockResolvedValueOnce({ state: "unbound" })
@@ -657,7 +679,7 @@ describe("CLI OpenShell direct forward start", () => {
       .mockResolvedValueOnce({ state: "unbound" })
       .mockResolvedValueOnce({ state: "bound" })
       .mockResolvedValueOnce({ state: "unbound" });
-    const { adapter, child, spawn, terminate } = createHarness({
+    const { adapter, spawn, terminate } = createHarness({
       environment: {
         HOME: "/home/tester",
         NVIDIA_INFERENCE_API_KEY: "provider-secret",
@@ -667,6 +689,7 @@ describe("CLI OpenShell direct forward start", () => {
       },
       inspect,
       probePort,
+      spawn: () => child,
     });
 
     const started = await adapter.startForward({ forward });
@@ -695,8 +718,11 @@ describe("CLI OpenShell direct forward start", () => {
     expect(probePort).toHaveBeenNthCalledWith(1, forward, 15_000);
     expect(probePort).toHaveBeenNthCalledWith(2, forward, 30_000);
     expect(inspect).toHaveBeenNthCalledWith(3, forward, child.pid, 30_000);
+    expect(events.listenerCount("exit")).toBe(0);
+    expect(events.listenerCount("error")).toBe(1);
     expect(child.unref).toHaveBeenCalledOnce();
     expect(started.state).toBe("started");
+    expect(() => events.emit("error", new Error("late private child diagnostic"))).not.toThrow();
     const cleanup = (started as Extract<typeof started, { state: "started" }>).cleanup;
     const assertCurrent = vi.fn(async () => undefined);
     await expect(cleanup({ assertCurrent })).resolves.toEqual({ state: "released" });
@@ -964,6 +990,7 @@ describe("CLI OpenShell direct forward start", () => {
     const invalidChild = {
       exitCode: null,
       off: events.off.bind(events),
+      on: events.on.bind(events),
       once: events.once.bind(events),
       pid: undefined,
       signalCode: null,
@@ -978,6 +1005,7 @@ describe("CLI OpenShell direct forward start", () => {
       forward,
       effect: "possible",
       error: errors.cleanup,
+      failure: { stage: "spawn", reason: "invalid_child_identity" },
     });
     expect(() => events.emit("error", new Error("delayed private spawn error"))).not.toThrow();
     expect(terminate).not.toHaveBeenCalled();
@@ -989,6 +1017,7 @@ describe("CLI OpenShell direct forward start", () => {
     const child = {
       exitCode: null,
       off: vi.fn(),
+      on: vi.fn(),
       once: vi.fn(),
       pid: 4_321,
       signalCode: null,
@@ -1031,6 +1060,7 @@ describe("CLI OpenShell direct forward start", () => {
     const child = {
       exitCode: null,
       off: vi.fn(),
+      on: vi.fn(),
       once: vi.fn(),
       pid: 4_321,
       signalCode: null,
@@ -1086,6 +1116,23 @@ describe("CLI OpenShell direct forward start", () => {
 });
 
 describe("CLI OpenShell legacy forward retirement", () => {
+  it("omits the workspace flag for legacy CLIs that predate workspace selection", async () => {
+    const run = vi.fn<RunCommand>(async (_executable, args) =>
+      args.includes("list") ? captured(0, legacyForwardList) : captured(0),
+    );
+    const { adapter } = createHarness({
+      legacyForwardWorkspaceSelection: "implicit-default",
+      run,
+    });
+
+    await expect(
+      adapter.retireLegacyForward({ forward, authorize: async () => {} }),
+    ).resolves.toEqual({ state: "retired", forward });
+    expect(run.mock.calls.filter(([, args]) => args.includes("list"))).not.toEqual([]);
+    expect(run.mock.calls.every(([, args]) => !args.includes("--workspace"))).toBe(true);
+    expect(run.mock.calls.filter(([, args]) => args.includes("stop"))).toHaveLength(1);
+  });
+
   it("checks authority again, stops once, and verifies release", async () => {
     const operations: string[] = [];
     const run: RunCommand = async (_executable, args) => {
@@ -1337,131 +1384,5 @@ describe("CLI OpenShell legacy forward retirement", () => {
       effect: "possible",
       error: errors.cleanup,
     });
-  });
-});
-
-describe("CLI OpenShell forward release verification", () => {
-  it("reports release only when every requested port is unbound", async () => {
-    const { adapter, probePort, run, spawn, terminate } = createHarness();
-
-    await expect(
-      adapter.verifyForwardRelease({ forwards: [forward, otherForward] }),
-    ).resolves.toEqual({ state: "released" });
-    expect(probePort).toHaveBeenCalledTimes(2);
-    expect(run).not.toHaveBeenCalled();
-    expect(spawn).not.toHaveBeenCalled();
-    expect(terminate).not.toHaveBeenCalled();
-  });
-
-  it("reports a port that remains bound", async () => {
-    const { adapter } = createHarness({
-      probePort: async (identity) =>
-        identity.port === forward.port ? { state: "bound" } : { state: "unbound" },
-    });
-
-    await expect(
-      adapter.verifyForwardRelease({
-        forwards: [forward, otherForward],
-        timeoutMs: 2,
-      }),
-    ).resolves.toEqual({ state: "bound", forwards: [forward] });
-  });
-
-  it("reports indeterminate release without treating the port as free", async () => {
-    const { adapter } = createHarness({
-      probePort: async (identity) =>
-        identity.port === forward.port
-          ? { state: "indeterminate", error: errors.transport }
-          : { state: "unbound" },
-    });
-
-    await expect(
-      adapter.verifyForwardRelease({ forwards: [forward, otherForward] }),
-    ).resolves.toEqual({
-      state: "indeterminate",
-      forwards: [forward],
-      error: errors.transport,
-    });
-  });
-
-  it("reports both bound and indeterminate ports as unreleased", async () => {
-    const { adapter, probePort, sleep } = createHarness({
-      probePort: async (identity) =>
-        identity.port === forward.port
-          ? { state: "bound" }
-          : { state: "indeterminate", error: errors.transport },
-    });
-
-    await expect(
-      adapter.verifyForwardRelease({ forwards: [forward, otherForward] }),
-    ).resolves.toEqual({
-      state: "indeterminate",
-      forwards: [forward, otherForward],
-      error: errors.transport,
-    });
-    expect(probePort).toHaveBeenCalledTimes(2);
-    expect(sleep).not.toHaveBeenCalled();
-  });
-
-  it("does not probe release when its initial currentness fence is stale", async () => {
-    const assertCurrent = vi.fn(async () => {
-      throw new Error("superseded generation");
-    });
-    const { adapter, probePort } = createHarness();
-
-    await expect(
-      adapter.verifyForwardRelease({ forwards: [forward, otherForward], assertCurrent }),
-    ).resolves.toEqual({
-      state: "indeterminate",
-      forwards: [forward, otherForward],
-      error: errors.authority,
-    });
-    expect(probePort).not.toHaveBeenCalled();
-  });
-
-  it("fences a completed release probe before trusting its result", async () => {
-    let current = true;
-    const assertCurrent = vi.fn(async () => {
-      throwSupersededWhen(!current);
-    });
-    const { adapter, probePort } = createHarness({
-      probePort: async () => {
-        current = false;
-        return { state: "unbound" };
-      },
-    });
-
-    await expect(
-      adapter.verifyForwardRelease({ forwards: [forward], assertCurrent }),
-    ).resolves.toEqual({
-      state: "indeterminate",
-      forwards: [forward],
-      error: errors.authority,
-    });
-    expect(probePort).toHaveBeenCalledExactlyOnceWith(forward, 5_000);
-    expect(assertCurrent).toHaveBeenCalledTimes(2);
-  });
-
-  it("fences each bounded release polling attempt", async () => {
-    let current = true;
-    const assertCurrent = vi.fn(async () => {
-      throwSupersededWhen(!current);
-    });
-    const { adapter, probePort } = createHarness({
-      probePort: async () => ({ state: "bound" }),
-      sleep: async () => {
-        current = false;
-      },
-    });
-
-    await expect(
-      adapter.verifyForwardRelease({ forwards: [forward], assertCurrent }),
-    ).resolves.toEqual({
-      state: "indeterminate",
-      forwards: [forward],
-      error: errors.authority,
-    });
-    expect(probePort).toHaveBeenCalledOnce();
-    expect(assertCurrent).toHaveBeenCalledTimes(3);
   });
 });

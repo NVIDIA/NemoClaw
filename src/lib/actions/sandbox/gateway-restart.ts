@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import { GATEWAY_RESTART_MARKERS as MARKERS } from "../../agent/gateway-restart-markers";
 import * as agentRuntime from "../../agent/runtime";
 import { G, R } from "../../cli/terminal-style";
@@ -87,6 +88,7 @@ export type GatewayRestartDeps = {
   getSessionAgent: typeof agentRuntime.getSessionAgent;
   getSandbox: SandboxAgentLookup;
   resolveSandboxDashboardPort: (sandboxName: string) => number;
+  buildOpenClawReadinessProbeCommand: (sandboxName: string) => string;
   executeSandboxExecCommand: SandboxExec;
   waitForSandboxControlPlaneReady: (sandboxName: string) => Promise<boolean>;
   waitForRecoveredSandboxGateway: (
@@ -96,6 +98,7 @@ export type GatewayRestartDeps = {
       timeoutSeconds?: number;
       initialManagedHealthPassed?: boolean;
       managedProbeImpl?: (sandboxName: string) => boolean | null;
+      probeImpl?: (sandboxName: string) => Promise<boolean | null>;
     },
   ) => Promise<boolean>;
   ensureSandboxPortForward: (sandboxName: string) => boolean | Promise<boolean>;
@@ -304,7 +307,12 @@ async function hermesGatewayLogTail(
   sandboxName: string,
   exec: (sandboxName: string, command: string) => Promise<GatewayRestartCommandResult | null>,
 ): Promise<string[]> {
-  const result = await exec(sandboxName, HERMES_GATEWAY_LOG_TAIL_COMMAND);
+  const result = await exec(sandboxName, HERMES_GATEWAY_LOG_TAIL_COMMAND).catch(
+    (error: unknown) => {
+      if (!(error instanceof SandboxCommandTransportError)) throw error;
+      return null;
+    },
+  );
   if (!result || result.status !== 0) return [];
   return sanitizeGatewayRestartFailureDetail(result.stdout)
     .split(/\r?\n/)
@@ -361,6 +369,26 @@ function failedAuxiliaryRecoveryDetail(results: RestartAuxiliaryRecoveryResult[]
     .map((result) => result.label);
   if (failed.length === 0) return null;
   return `gateway health passed but ${failed.join(", ")} could not be re-established`;
+}
+
+function openClawRestartReady(result: GatewayRestartCommandResult | null): boolean | null {
+  if (result === null) return null;
+  const output = result.stdout.trimEnd();
+  const separator = output.lastIndexOf("\n");
+  if (result.status !== 0 || separator < 0 || output.slice(separator + 1).trim() !== "200") {
+    return false;
+  }
+  try {
+    const document: unknown = JSON.parse(output.slice(0, separator));
+    return (
+      document !== null &&
+      typeof document === "object" &&
+      "ready" in document &&
+      document.ready === true
+    );
+  } catch {
+    return false;
+  }
 }
 
 export async function restartSandboxGatewayWithDeps(
@@ -429,7 +457,15 @@ export async function restartSandboxGatewayWithDeps(
     agentName === "openclaw"
       ? "env -u OPENCLAW_HOME -u OPENCLAW_STATE_DIR -u OPENCLAW_CONFIG_PATH openclaw gateway restart --safe --skip-deferral --json"
       : `${agentName} gateway restart`;
-  const restartResult = await deps.executeSandboxExecCommand(sandboxName, nativeCommand, 210000);
+  let restartResult: GatewayRestartCommandResult | null;
+  try {
+    restartResult = await deps.executeSandboxExecCommand(sandboxName, nativeCommand, 210000);
+  } catch (error) {
+    if (!(error instanceof SandboxCommandTransportError)) throw error;
+    const detail = sanitizeGatewayRestartFailureDetail(error.message);
+    printGatewayRestartFailure(sandboxName, "native agent command", detail);
+    return { ok: false, failureLayer: "native agent command", detail };
+  }
   if (!restartResult) {
     const detail = `${nativeCommand} did not return command output`;
     const gatewayLogTail =
@@ -469,9 +505,28 @@ export async function restartSandboxGatewayWithDeps(
       quiet,
       initialManagedHealthPassed: false,
       managedProbeImpl: () => null,
+      ...(agentName === "openclaw"
+        ? {
+            probeImpl: async (name: string) => {
+              // Liveness stays green while OpenClaw refuses work during restart.
+              // Readiness checks the same admission fence as user requests.
+              try {
+                const result = await deps.executeSandboxExecCommand(
+                  name,
+                  deps.buildOpenClawReadinessProbeCommand(name),
+                  10_000,
+                );
+                return openClawRestartReady(result);
+              } catch (error) {
+                if (!(error instanceof SandboxCommandTransportError)) throw error;
+                return null;
+              }
+            },
+          }
+        : {}),
     }))
   ) {
-    const detail = "gateway process restarted but health did not pass before timeout";
+    const detail = `gateway process restarted but ${agentName === "openclaw" ? "readiness" : "health"} did not pass before timeout`;
     printGatewayRestartFailure(sandboxName, "health timeout", detail);
     await deps.printGatewayWedgeDiagnostics(sandboxName, deps.executeSandboxExecCommand);
     return { ok: false, failureLayer: "health timeout", detail };
