@@ -52,6 +52,7 @@ $$nemoclaw inference set --provider <provider> --model <model> --sandbox <name>
 <AgentOnly variant="openclaw">
 
 For OpenClaw, NemoClaw updates the provider namespace and selected model in the running configuration.
+It adds or updates the requested model entry without removing other model entries in that provider.
 After any changed configuration sync, NemoClaw restarts only the OpenClaw gateway and verifies its health.
 The sandbox remains running, but agent requests are briefly interrupted.
 After every changed synchronized route, NemoClaw verifies that the local CLI device has the managed gateway's required pairing scopes before it reports success.

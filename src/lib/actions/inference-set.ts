@@ -634,31 +634,36 @@ function buildProviderConfig(
   upstreamProviderMarker?: string,
   reasoningEffort: ReasoningEffortRequest = { effort: null, explicit: false },
 ): ConfigObject {
-  const firstExistingModel = Array.isArray(existing.models)
-    ? cloneConfigObject(existing.models[0])
-    : {};
-  delete firstExistingModel.compat;
-  firstExistingModel.id = model;
-  firstExistingModel.name = route.primaryModelRef;
+  const existingModels = Array.isArray(existing.models) ? existing.models : [];
+  const selectedIndex = existingModels.findIndex(
+    (entry) => isConfigObject(entry) && entry.id === model,
+  );
+  const selectedModel = cloneConfigObject(existingModels[selectedIndex] ?? existingModels[0]);
+  delete selectedModel.compat;
+  selectedModel.id = model;
+  selectedModel.name = route.primaryModelRef;
   // Recompute for the new model rather than inheriting the prior model's window.
   // Omitted (undefined) → keep whatever the existing entry had.
   if (typeof contextWindow === "number") {
-    firstExistingModel.contextWindow = contextWindow;
+    selectedModel.contextWindow = contextWindow;
   }
   if (route.inferenceApi === "anthropic-messages") {
-    applyOpenClawAnthropicReplyBudget(firstExistingModel, inheritedMaxTokens);
+    applyOpenClawAnthropicReplyBudget(selectedModel, inheritedMaxTokens);
   }
   if (route.inferenceCompat) {
-    firstExistingModel.compat = asConfigObject(route.inferenceCompat);
+    selectedModel.compat = asConfigObject(route.inferenceCompat);
   }
-  applyReasoningEffortParams(firstExistingModel, provider, route, reasoningEffort);
+  applyReasoningEffortParams(selectedModel, provider, route, reasoningEffort);
 
   const providerConfig: ConfigObject = {
     ...existing,
     baseUrl: route.inferenceBaseUrl,
     apiKey: typeof existing.apiKey === "string" && existing.apiKey ? existing.apiKey : "unused",
     api: route.inferenceApi,
-    models: [firstExistingModel],
+    models:
+      selectedIndex < 0
+        ? [selectedModel, ...existingModels]
+        : existingModels.map((entry, index) => (index === selectedIndex ? selectedModel : entry)),
   };
   return upstreamProviderMarker
     ? withOpenClawUpstreamProviderHeader(providerConfig, upstreamProviderMarker)

@@ -2,11 +2,78 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
+import type { OpenClawConfigUpdate } from "../sandbox/config";
 import type { ConfigObject } from "../security/credential-filter";
 import { runInferenceSet } from "./inference-set";
 import { baseSession, createDeps } from "./inference-set.test-support";
 
 describe("runInferenceSet OpenClaw routing", () => {
+  it.each([
+    ["adding", false],
+    ["updating", true],
+  ] as const)(
+    "preserves other native models when %s the requested model",
+    async (_operation, alreadyExists) => {
+      const otherModel = {
+        id: "nvidia/other-model",
+        name: "Native custom model",
+        contextWindow: 65536,
+        compat: { supportsStore: false },
+        params: { temperature: 0.3 },
+      };
+      const requestedModel = {
+        id: "nvidia/new-model",
+        name: "Native selected model",
+        maxTokens: 8192,
+      };
+      const config: ConfigObject = {
+        agents: { defaults: { model: { primary: "inference/nvidia/other-model" } } },
+        models: {
+          providers: {
+            inference: {
+              api: "openai-completions",
+              models: alreadyExists ? [otherModel, requestedModel] : [otherModel],
+            },
+          },
+        },
+      };
+      const deps = createDeps({ config, session: baseSession() });
+
+      await runInferenceSet(
+        { provider: "nvidia-prod", model: "nvidia/new-model", noVerify: true },
+        deps,
+      );
+
+      const updates: OpenClawConfigUpdate[] | undefined =
+        deps.calls.setOpenClawConfigValues.mock.calls[0]?.[1];
+      const providerUpdate = updates?.find(
+        (update) => update.dotpath === "models.providers.inference",
+      );
+      const selectedModel = alreadyExists
+        ? { ...requestedModel, name: "inference/nvidia/new-model" }
+        : {
+            id: "nvidia/new-model",
+            name: "inference/nvidia/new-model",
+            contextWindow: 65536,
+            params: { temperature: 0.3 },
+          };
+      expect(providerUpdate?.value).toEqual({
+        api: "openai-completions",
+        baseUrl: "https://inference.local/v1",
+        apiKey: "unused",
+        headers: { "X-NemoClaw-Upstream-Provider": "nvidia-prod" },
+        models: alreadyExists ? [otherModel, selectedModel] : [selectedModel, otherModel],
+      });
+      expect(otherModel).toEqual({
+        id: "nvidia/other-model",
+        name: "Native custom model",
+        contextWindow: 65536,
+        compat: { supportsStore: false },
+        params: { temperature: 0.3 },
+      });
+    },
+  );
+
   it("keeps a large unrelated agent roster out of the native config transaction", async () => {
     const oversizedInstructions = "x".repeat(1_100_000);
     const config: ConfigObject = {
@@ -125,7 +192,10 @@ describe("runInferenceSet OpenClaw routing", () => {
         {
           dotpath: "models.providers.inference",
           value: expect.objectContaining({
-            models: [expect.objectContaining({ id: "nvidia/nemotron-3-super-120b-a12b" })],
+            models: [
+              expect.objectContaining({ id: "nvidia/nemotron-3-super-120b-a12b" }),
+              { id: "moonshotai/kimi-k2.6", name: "inference/moonshotai/kimi-k2.6" },
+            ],
           }),
         },
       ],
@@ -263,6 +333,10 @@ describe("runInferenceSet OpenClaw routing", () => {
             {
               id: "anthropic.claude-sonnet-4-6-20260101-v1:0",
               name: "inference/anthropic.claude-sonnet-4-6-20260101-v1:0",
+            },
+            {
+              id: "anthropic.claude-3-5-sonnet-20240620-v1:0",
+              name: "inference/anthropic.claude-3-5-sonnet-20240620-v1:0",
             },
           ],
         },
