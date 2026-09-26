@@ -18,7 +18,7 @@ const START_SCRIPT = path.join(
 
 interface RunReconcileOptions {
   /**
-   * Model the stubbed `openshell inference get` should print.
+   * Model the stubbed `openshell inference get -g nemoclaw` should print.
    * - undefined → no openshell on PATH (probe falls back to in-file logic).
    * - "" → openshell exists but returns an unconfigured inference section.
    * - non-empty string → openshell returns a configured inference section.
@@ -91,7 +91,7 @@ describe("agent identity reconciliation with provider (#3175)", () => {
       const stub = [
         "#!/usr/bin/env bash",
         'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
-        '  [ "$#" -eq 2 ] || exit 64',
+        '  [ "$#" -eq 4 ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw" ] || exit 64',
         options.gatewayDelaySeconds ? `  sleep ${options.gatewayDelaySeconds}` : "  :",
         `  printf '%b' ${JSON.stringify(payload)}`,
         `  exit ${options.gatewayExitCode ?? 0}`,

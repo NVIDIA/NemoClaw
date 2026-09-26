@@ -1167,7 +1167,7 @@ ansi_escape = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|[@-_])")
 
 try:
     result = subprocess.run(
-        ["openshell", "inference", "get"],
+        ["openshell", "inference", "get", "-g", "nemoclaw"],
         capture_output=True,
         encoding="utf-8",
         errors="replace",
