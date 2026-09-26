@@ -26,7 +26,7 @@ const ACTION_PATH = path.join(
 );
 const SCRIPT_PATH = path.join(REPO_ROOT, ".github", "scripts", "host-dependency-setup.sh");
 const ACTION_USES =
-  "NVIDIA/NemoClaw/.github/actions/host-dependency-setup@8bc41df0b926ee9af3b449e3a03b2f7dbe69e1ad";
+  "NVIDIA/NemoClaw/.github/actions/host-dependency-setup@cfa529171020ef6c2f3ad6ba0530ccec269d399f";
 
 interface WorkflowStep {
   if?: string;

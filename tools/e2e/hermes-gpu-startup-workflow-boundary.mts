@@ -218,7 +218,7 @@ export function validateHermesGpuStartupWorkflow(
       name: "Install native Podman host dependencies",
       if: "${{ matrix.runtime_provider == 'podman' }}",
       uses: E2E_ACTION_PROVENANCE.hostDependencies.reference,
-      with: { packages: "conmon fuse-overlayfs iptables nftables runc slirp4netns uidmap" },
+      with: { packages: "conmon fuse-overlayfs iptables nftables slirp4netns uidmap" },
     })
   ) {
     errors.push(

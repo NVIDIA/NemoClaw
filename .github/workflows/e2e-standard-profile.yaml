@@ -412,7 +412,7 @@ jobs:
 
       - name: Install target host dependencies
         if: ${{ inputs.host_packages != '' }}
-        uses: NVIDIA/NemoClaw/.github/actions/host-dependency-setup@8bc41df0b926ee9af3b449e3a03b2f7dbe69e1ad
+        uses: NVIDIA/NemoClaw/.github/actions/host-dependency-setup@cfa529171020ef6c2f3ad6ba0530ccec269d399f
         with:
           packages: ${{ inputs.host_packages }}
 
