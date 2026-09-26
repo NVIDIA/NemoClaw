@@ -574,7 +574,8 @@ export function queryOpenShellDockerSandboxRuntimeSnapshot(
   const remainingTimeoutMs = () => Math.floor(deadlineMs - now());
   const containers = queryOpenShellDockerSandboxContainers(sandboxName, deps, remainingTimeoutMs());
   if (!containers.ok) return { ok: false, error: containers.error };
-  if (remainingTimeoutMs() <= 0) {
+  const inspectTimeoutMs = remainingTimeoutMs();
+  if (inspectTimeoutMs <= 0) {
     return { ok: false, error: "Docker runtime snapshot deadline expired" };
   }
   const expectedContainerId = options.expectedContainerId;
@@ -606,7 +607,7 @@ export function queryOpenShellDockerSandboxRuntimeSnapshot(
     {
       ignoreError: true,
       suppressOutput: true,
-      timeout: remainingTimeoutMs(),
+      timeout: inspectTimeoutMs,
     },
   );
   if (Number(inspect.status ?? 1) !== 0) {

@@ -158,6 +158,28 @@ describe("queryOpenShellDockerSandboxRuntimeSnapshot", () => {
     expect(dockerRun).not.toHaveBeenCalled();
   });
 
+  it("reuses the validated remaining deadline for container inspection", () => {
+    const dockerRun = vi
+      .fn()
+      .mockReturnValueOnce({ status: 0, stdout: "container-a\n", stderr: "" })
+      .mockReturnValueOnce({ status: 0, stdout: JSON.stringify(EMPTY_RUNTIME_FIELDS), stderr: "" });
+    const now = vi
+      .fn()
+      .mockReturnValueOnce(1_000)
+      .mockReturnValueOnce(1_000)
+      .mockReturnValueOnce(1_000)
+      .mockReturnValue(1_001);
+
+    expect(
+      queryOpenShellDockerSandboxRuntimeSnapshot("alpha", { dockerRun }, { timeoutMs: 1, now }),
+    ).toEqual(expect.objectContaining({ ok: true, containerId: "container-a" }));
+    expect(dockerRun).toHaveBeenNthCalledWith(
+      2,
+      expect.arrayContaining(["inspect", "container-a"]),
+      expect.objectContaining({ timeout: 1 }),
+    );
+  });
+
   it("returns immutable identity, bookkeeping ref, and safe absence from one exact container", () => {
     const { dockerRun, result } = querySnapshot(EMPTY_RUNTIME_FIELDS);
 
