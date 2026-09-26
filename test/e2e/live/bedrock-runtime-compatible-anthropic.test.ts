@@ -4,6 +4,7 @@
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
+import { approveOpenClawAdminScope } from "./openclaw-admin-scope.ts";
 import * as http2 from "node:http2";
 import { createRequire } from "node:module";
 import net from "node:net";
@@ -960,6 +961,14 @@ test(
     if (AGENT === "hermes") {
       await assertHermesApiChat(sandbox, home);
     } else {
+      await approveOpenClawAdminScope(
+        host,
+        sandbox,
+        SANDBOX_NAME,
+        testEnv(home),
+        [COMPATIBLE_KEY],
+        false,
+      );
       await assertOpenClawAgentTurn(sandbox, home);
     }
 

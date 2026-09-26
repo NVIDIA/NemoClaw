@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { captureSandboxFailureDiagnostics } from "../fixtures/sandbox-failure-diagnostics.ts";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -51,7 +52,7 @@ import {
   assertHermesRemovalSurvivesGatewayRestart,
 } from "./mcp-bridge-hermes-lifecycle.ts";
 import {
-  assertMcpBridgeManagedImageReceipt,
+  assertMcpBridgeManagedRegistryReceipt,
   buildMcpBridgeOnboardArgs,
   buildMcpBridgeOnboardEnv,
   requireMcpBridgeTlsCaCert,
@@ -127,15 +128,6 @@ function mcpBridgeShardTest(shard: McpBridgeShard) {
 }
 const test = mcpBridgeShardTest("openclaw");
 type McpAgent = "openclaw" | "hermes" | "langchain-deepagents-code";
-function expectManagedImageQualificationReceipt(sandboxName: string, agent: McpAgent): void {
-  const registry = JSON.parse(fs.readFileSync(REGISTRY_FILE, "utf8")) as {
-    sandboxes?: Record<string, { workload?: Record<string, unknown> }>;
-  };
-  assertMcpBridgeManagedImageReceipt({
-    expectedAgent: agent,
-    workload: registry.sandboxes?.[sandboxName]?.workload,
-  });
-}
 async function onboardAgent(
   host: HostCliClient,
   sandbox: SandboxClient,
@@ -175,8 +167,14 @@ async function onboardAgent(
         artifactName: `${options.artifactName}-baseline-scope-retry`,
       }),
   });
+  await captureSandboxFailureDiagnostics(host, result, {
+    sandboxName: options.sandboxName,
+    artifactPrefix: `${options.artifactName}-failure`,
+    redactionValues: [COMPATIBLE_KEY],
+    captureGatewayLog: true,
+  });
   expectExitZero(result, `onboard ${options.agent} sandbox for MCP bridge`);
-  expectManagedImageQualificationReceipt(options.sandboxName, options.agent);
+  assertMcpBridgeManagedRegistryReceipt(options.sandboxName, options.agent, REGISTRY_FILE);
 }
 async function assertSecretAbsentFromSandbox(
   sandbox: SandboxClient,

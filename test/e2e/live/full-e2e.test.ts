@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { approveOpenClawAdminScope } from "./openclaw-admin-scope.ts";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -833,6 +834,7 @@ test(
       redactionValues,
       timeoutMs: 60_000,
     });
+    await approveOpenClawAdminScope(host, sandbox, SANDBOX_NAME, env(), redactionValues, false);
     await (coldOnboard
       ? assertColdOnboardPerformance({
           apiKey: hosted.apiKey,

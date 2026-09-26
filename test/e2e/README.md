@@ -160,10 +160,13 @@ assembles one exact candidate catalog from the workflow's published contracts, u
 and sandbox, records the authenticated discovery diagnostics, scans the evidence for fixture
 credentials, and must pass.
 These are two required acceptance executions, not retries; either failure remains a failed check.
-OpenClaw MCP and credential-generation setup uses the shared explicit admin-approval fixture
-before mutating the bridge. It approves only the request ID emitted by the current sandbox's
+OpenClaw feature tests use the shared explicit admin-approval fixture before native operations
+that require elevated scopes. It approves only the request ID emitted by the current sandbox's
 non-admin CLI, after the existing selector verifies that device and its requested scopes.
-The original MCP lifecycle and credential-revocation assertions remain unchanged.
+Managed-image activation retains its cron-consumer proof. Feature setup can stop after the exact
+approval and verify the grant through its own native operation, avoiding an unrelated cron job or
+agent session. Sessions/agents coverage requires the main session seed to succeed and does not
+approve arbitrary pending devices or silently skip the main-session cases.
 The concurrent-add probe retries only the rejected command after status proves that the other
 command committed one coherent bridge. The rejected command must report the exact portable
 host-lock timeout, optionally followed by the current recorded-owner-is-still-running remediation.
@@ -210,7 +213,10 @@ The collector also streams `/tmp/nemoclaw-start.log` from the stopped container 
 the bounded redactor, which retains the last 32 KiB and removes secret fragments at
 the capture boundary. It reads only that archive member without unpacking files on
 the host and includes the capture-omission notice in the retained artifact.
-Diagnostic acquisition does not retry the mutation or replace its result.
+The same collector retains startup, container, supervisor, and host gateway evidence after failed
+onboarding, restore, and rebuild operations. Expected nonzero outcomes can be declared so a normal
+refusal does not trigger collection; a timeout still captures evidence. Diagnostic acquisition does
+not retry the mutation or replace its result.
 OpenClaw launch evidence reports whether a SQLite rejection concerns file metadata or the transcript table, without exposing paths, identities, or session contents. The existing evidence checks remain required.
 A failed native weather-plugin invocation also records unauthenticated liveness and readiness HTTP status codes, bounded to two three-second probes. It does not repeat the tool invocation or replace its failure.
 
@@ -465,12 +471,13 @@ retain their existing bridge checks and record this additional Docker compatibil
 applicable. Capture validation, credential sanitization, source drift refusals and lifecycle-transition
 rules remain covered by source and component tests.
 
-The `sandbox-operations` target owns live final-gateway cleanup on the Docker-backed OpenShell
-boundary. It leaves one sandbox live after removing only its local registry entry, then requires a
+The `sandbox-operations` target owns live final-gateway cleanup on Docker and native Podman. It leaves one sandbox live after removing only its local registry entry, then requires a
 `destroy --cleanup-gateway` of the registered sandbox to preserve the gateway, report the live
 sandbox and recovery commands, and exit nonzero. After cleanup, it onboards and destroys one final
 sandbox,
 requires the bounded command to finish, and proves both the sandbox and gateway runtime are absent.
+The outer destroy command deadline is twice the CLI's heavy-operation deadline so the CLI can
+finish its own timeout, absence, and gateway checks. The survivor onboarding budget stays separate.
 Deterministic destroy tests own the exact 30-second retry schedule and delayed-list sequence.
 
 `deferred-onboarding-hermes` and `deferred-onboarding-langchain-deepagents-code` exercise the

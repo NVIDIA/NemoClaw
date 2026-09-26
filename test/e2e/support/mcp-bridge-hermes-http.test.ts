@@ -8,6 +8,7 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
+import { captureSandboxFailureDiagnostics } from "../fixtures/sandbox-failure-diagnostics.ts";
 import { HostCliClient } from "../fixtures/clients/host.ts";
 import { startTestProgress } from "../fixtures/progress.ts";
 import { redactString } from "../fixtures/redaction.ts";
@@ -40,6 +41,32 @@ function httpResult(status: number, body = "", result = "") {
 }
 
 describe("Hermes MCP HTTP failure diagnostics", () => {
+  it("captures gateway evidence after a timeout while preserving expected refusals", async () => {
+    const command = vi.fn().mockResolvedValue({ exitCode: 0, stdout: "" });
+    const host = { command, openshellCommandPath: "/reviewed/openshell" };
+    const options = {
+      sandboxName: "owned-openclaw",
+      artifactPrefix: "onboard-failure",
+      redactionValues: ["fixture-secret"],
+      captureGatewayLog: true,
+      expectedExitCode: 1,
+    };
+    await captureSandboxFailureDiagnostics(host, { exitCode: 1, timedOut: false }, options);
+    expect(command).not.toHaveBeenCalled();
+    await captureSandboxFailureDiagnostics(host, { exitCode: null, timedOut: true }, options);
+    expect(command).toHaveBeenCalledWith(
+      "cat",
+      [expect.stringMatching(/gateway\.log$/u)],
+      expect.objectContaining({
+        artifactName: "onboard-failure-gateway-log",
+        redactionValues: ["fixture-secret"],
+        captureLimitBytes: 32_768,
+        timeoutMs: 5_000,
+      }),
+    );
+    expect(command).toHaveBeenCalledTimes(3);
+  });
+
   it.each(["restart", "remove"] as const)(
     "captures bounded supervisor logs after %s failure without requiring sandbox exec",
     async (operation) => {
@@ -94,7 +121,7 @@ describe("Hermes MCP HTTP failure diagnostics", () => {
           "pipefail",
           "-c",
           expect.any(String),
-          "hermes-startup-diagnostics",
+          `hermes-mcp-${operation}-failure`,
           "docker",
           "cp",
           `${CONTAINER_ID}:/tmp/nemoclaw-start.log`,

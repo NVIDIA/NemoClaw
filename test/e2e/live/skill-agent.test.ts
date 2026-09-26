@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { approveOpenClawAdminScope } from "./openclaw-admin-scope.ts";
 import fs from "node:fs";
 import path from "node:path";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
@@ -291,6 +292,14 @@ test(
     }
     expect(onboard.exitCode, onboardText).toBe(0);
     sandboxProvisioned = true;
+    await approveOpenClawAdminScope(
+      host,
+      sandbox,
+      SANDBOX_NAME,
+      { ...buildAvailabilityProbeEnv(), ...hosted.env },
+      [apiKey],
+      false,
+    );
 
     progress.phase("install and confirm the skill fixture");
     const addSkill = await host.command("bash", [ADD_SKILL_SCRIPT], {

@@ -255,6 +255,51 @@ describe("managed image activation failure diagnostics", () => {
     }
   });
 
+  it("prepares feature approval without creating a cron job or an extra agent session", () => {
+    const fixture = createHostProcessWorkspace("nemoclaw-feature-admin-approval-");
+    const requestId = "4edc8df0-20d0-4308-b0e8-850843ae0cf4";
+    const commandLog = fixture.path("commands.log");
+    fixture.writeExecutable("nemoclaw", "#!/bin/sh\nexec /bin/bash\n");
+    fixture.writeExecutable(
+      "openclaw",
+      `#!/bin/sh
+printf '%s\\n' "$*" >>"$ADMIN_COMMAND_LOG"
+case "$1:$2" in
+  devices:list) cat "$FAKE_DEVICES_STATE"; exit 0 ;;
+  devices:approve) exit 0 ;;
+  *) exit 91 ;;
+esac
+`,
+    );
+    try {
+      const result = fixture.run(
+        "/bin/bash",
+        [
+          "-lc",
+          `PATH=${JSON.stringify(fixture.binDir)}:$PATH
+export PATH
+${adminApprovalConnectScript("nemoclaw", "fixture-sandbox", "feature-cron", requestId, false)}`,
+        ],
+        {
+          env: fixture.environment({
+            ...prepareManagedAdminState(fixture.root, requestId),
+            ADMIN_COMMAND_LOG: commandLog,
+            OPENCLAW_GATEWAY_PORT: "18789",
+            OPENCLAW_GATEWAY_TOKEN: "fixture-token",
+          }),
+          timeout: 10_000,
+        },
+      );
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("ISSUE_5324_ADMIN_APPROVAL_OK");
+      expect(fs.readFileSync(commandLog, "utf8")).toBe(
+        `devices list --json\ndevices approve ${requestId}\n`,
+      );
+    } finally {
+      fixture.remove();
+    }
+  });
+
   it("retains a fixed diagnostic without approval output secrets when approval fails", () => {
     const fixture = createHostProcessWorkspace("nemoclaw-managed-admin-approval-");
     const requestId = "4edc8df0-20d0-4308-b0e8-850843ae0cf4";

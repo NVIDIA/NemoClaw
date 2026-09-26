@@ -342,36 +342,147 @@ describe("Bedrock Runtime OpenAI adapter", () => {
     expect(response.choices[0].message.content).toBe("OK");
   });
 
-  it("exposes loopback health without leaking or requiring the adapter bearer token", async () => {
-    const server = createBedrockRuntimeAdapterServer({
-      token: "local-token",
-      endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
-      region: "us-east-1",
-      client: { send: vi.fn() },
-    });
-    const baseUrl = await listen(server);
-
-    const health = await fetch(`${baseUrl}/health`);
-    expect(health.status).toBe(200);
-    const body = (await health.json()) as any;
-    expect(body).toMatchObject({
-      ok: true,
-      endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
-      region: "us-east-1",
-    });
-    expect(body.tokenHash).toMatch(/^[a-f0-9]{64}$/);
-    expect(JSON.stringify(body)).not.toContain("local-token");
-
-    const chat = await fetch(`${baseUrl}/v1/chat/completions`, {
+  it("lists only models served successfully by the authenticated adapter", async () => {
+    const send = vi
+      .fn()
+      .mockResolvedValueOnce({
+        output: { message: { content: [{ text: "OK" }] } },
+        stopReason: "end_turn",
+      })
+      .mockRejectedValueOnce(new Error("model unavailable"));
+    const baseUrl = await listen(
+      createBedrockRuntimeAdapterServer({
+        token: "local-token",
+        endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+        region: "us-east-1",
+        client: { send },
+      }),
+    );
+    const headers = { Authorization: "Bearer local-token", "Content-Type": "application/json" };
+    expect((await fetch(`${baseUrl}/v1/models`)).status).toBe(401);
+    const empty = await fetch(`${baseUrl}/v1/models`, { headers });
+    expect(empty.status).toBe(200);
+    expect(await empty.json()).toEqual({ object: "list", data: [] });
+    const served = await fetch(`${baseUrl}/v1/chat/completions`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify({
-        model: "anthropic.claude",
+        model: "served-model",
         messages: [{ role: "user", content: "hello" }],
       }),
     });
-    expect(chat.status).toBe(401);
+    expect(served.status).toBe(200);
+    await served.json();
+    const rejected = await fetch(`${baseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model: "rejected-model",
+        messages: [{ role: "user", content: "hello" }],
+      }),
+    });
+    expect(rejected.status).toBe(502);
+    await rejected.json();
+    const catalog = await fetch(`${baseUrl}/v1/models`, { headers });
+    expect(await catalog.json()).toEqual({
+      object: "list",
+      data: [{ id: "served-model", object: "model", owned_by: "amazon-bedrock" }],
+    });
+    expect(send).toHaveBeenCalledTimes(2);
   });
+
+  it.each([
+    {
+      name: "completed",
+      send: async () => ({
+        stream: (async function* () {
+          yield { messageStart: { role: "assistant" } };
+          yield { contentBlockDelta: { contentBlockIndex: 0, delta: { text: "OK" } } };
+          yield { messageStop: { stopReason: "end_turn" } };
+        })(),
+      }),
+      expectedModels: ["stream-model"],
+    },
+    {
+      name: "failed",
+      send: async () => Promise.reject(new Error("upstream unavailable")),
+      expectedModels: [],
+    },
+  ])("tracks successful models after a $name stream", async ({ send, expectedModels }) => {
+    const baseUrl = await listen(
+      createBedrockRuntimeAdapterServer({
+        token: "local-token",
+        endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+        region: "us-east-1",
+        client: { send },
+      }),
+    );
+    const headers = { Authorization: "Bearer local-token", "Content-Type": "application/json" };
+    const response = await fetch(`${baseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model: "stream-model",
+        stream: true,
+        messages: [{ role: "user", content: "hello" }],
+      }),
+    });
+    await response.text();
+    const catalog = await fetch(`${baseUrl}/v1/models`, { headers });
+    const body = (await catalog.json()) as { data: Array<{ id: string }> };
+    expect(body.data.map((entry) => entry.id)).toEqual(expectedModels);
+  });
+
+  it("rejects reuse of a completions-only adapter through its capability health probe", async () => {
+    const tokenHash = crypto.createHash("sha256").update("local-token").digest("hex");
+    const baseUrl = await listen(
+      http.createServer((req, res) => {
+        res.writeHead(req.url === "/health" ? 200 : 404);
+        res.end(JSON.stringify({ ok: true, tokenHash }));
+      }),
+    );
+    const real = await vi.importActual<typeof import("./local-adapter-lifecycle")>(
+      "./local-adapter-lifecycle",
+    );
+    vi.mocked(probeLocalAdapterHealth).mockImplementationOnce(real.probeLocalAdapterHealth);
+    await expect(
+      __test.probeAdapterHealth({ port: Number(new URL(baseUrl).port), tokenHash }),
+    ).resolves.toBe(false);
+  });
+
+  it.each(["/health", "/health/model-catalog"])(
+    "exposes loopback %s without leaking or requiring the adapter bearer token",
+    async (healthPath) => {
+      const server = createBedrockRuntimeAdapterServer({
+        token: "local-token",
+        endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+        region: "us-east-1",
+        client: { send: vi.fn() },
+      });
+      const baseUrl = await listen(server);
+
+      const health = await fetch(`${baseUrl}${healthPath}`);
+      expect(health.status).toBe(200);
+      const body = (await health.json()) as any;
+      expect(body).toMatchObject({
+        ok: true,
+        endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+        region: "us-east-1",
+      });
+      expect(body.tokenHash).toMatch(/^[a-f0-9]{64}$/);
+      expect(JSON.stringify(body)).not.toContain("local-token");
+
+      const chat = await fetch(`${baseUrl}/v1/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "anthropic.claude",
+          messages: [{ role: "user", content: "hello" }],
+        }),
+      });
+      expect(chat.status).toBe(401);
+    },
+  );
 
   it("emits safe request breadcrumbs without tokens or upstream hostnames", async () => {
     const events: Array<{ event: string; fields?: Record<string, unknown> }> = [];

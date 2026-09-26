@@ -2023,6 +2023,10 @@ If the endpoint is correct but requests still fail, check for network policy rul
 
 If you entered an AWS Bedrock Runtime URL such as `https://bedrock-runtime.us-east-1.amazonaws.com` in the **Other Anthropic-compatible endpoint** flow, NemoClaw auto-detects it and routes sandbox traffic through a host-local adapter. Use the raw Bedrock Runtime host, not an Anthropic `/v1/messages` path, and verify that the model ID or inference profile ID is valid for that region. For auth, export `AWS_BEARER_TOKEN_BEDROCK`, `AWS_PROFILE`, or standard IAM environment credentials before onboarding; if you paste a key at the `COMPATIBLE_ANTHROPIC_API_KEY` prompt, NemoClaw uses it only as the adapter's Bedrock bearer token. Region errors usually mean the pasted endpoint region, `AWS_REGION`, `AWS_DEFAULT_REGION`, or the model/inference profile ID do not match.
 
+The adapter advertises model IDs to readiness checks only after that running adapter completes a successful inference request for them.
+Onboarding performs this request before checking sandbox readiness; failed requests do not add a model to the catalog.
+This uses the existing Bedrock Runtime inference permissions and does not query the Bedrock control-plane catalog.
+
 For Ollama, vLLM, NIM, and compatible-endpoint inference validation, the default timeout is 180 seconds. The managed NIM startup health wait uses a separate 15-minute (900-second) default and still exits early if the container stops before it becomes healthy. On Docker 29.x or hosts using the containerd image store, managed NIM onboarding resolves and pulls the host-platform image digest when NGC exposes a multi-architecture image index. If you still see NGC repository-format or attestation errors, confirm Docker can run `docker manifest inspect` for the selected image and that you are logged in to `nvcr.io`. If large prompts still cause timeouts, increase it with `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` before re-running onboard:
 
 ```bash

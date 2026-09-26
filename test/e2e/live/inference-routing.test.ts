@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { approveOpenClawAdminScope } from "./openclaw-admin-scope.ts";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -922,6 +923,14 @@ test(
       apiKey,
     ]);
     expectOnboardSuccess(onboard, "TC-INF-11 https-pin-endpoint placeholder onboard");
+    await approveOpenClawAdminScope(
+      host,
+      sandbox,
+      sandboxName,
+      buildAvailabilityProbeEnv(),
+      [apiKey],
+      false,
+    );
     progress.phase("switch to the DNS-backed HTTPS endpoint");
     const inferenceSet = await runNemoclawCli(
       [

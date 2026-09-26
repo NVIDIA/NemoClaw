@@ -19,6 +19,7 @@ export async function approveOpenClawAdminScope(
   sandboxName: string,
   env: NodeJS.ProcessEnv,
   redactionValues: readonly string[] = [],
+  verifyCronConsumer = true,
 ): Promise<void> {
   const cronName = `openclaw-admin-approval-${Date.now()}`;
   const trigger = await sandbox.exec(
@@ -49,7 +50,16 @@ export async function approveOpenClawAdminScope(
   const approval = requestId
     ? await host.command(
         "bash",
-        ["-lc", adminApprovalConnectScript(host.commandPath, sandboxName, cronName, requestId)],
+        [
+          "-lc",
+          adminApprovalConnectScript(
+            host.commandPath,
+            sandboxName,
+            cronName,
+            requestId,
+            verifyCronConsumer,
+          ),
+        ],
         {
           artifactName: "openclaw-explicit-admin-approval",
           captureLimitBytes: OPENCLAW_ADMIN_APPROVAL_CAPTURE_LIMIT_BYTES,
@@ -68,7 +78,7 @@ export async function approveOpenClawAdminScope(
   expect(
     approvalSucceeded,
     [
-      "OpenClaw explicit admin approval did not authorize the cron consumer",
+      "OpenClaw explicit admin approval did not complete",
       resultText(trigger),
       approval ? resultText(approval) : "request ID unavailable",
     ].join("\n"),

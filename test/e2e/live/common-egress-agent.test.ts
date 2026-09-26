@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { approveOpenClawAdminScope } from "./openclaw-admin-scope.ts";
 import fs from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 
@@ -636,6 +637,14 @@ describe.sequential("common-egress agent live targets", () => {
         extraRedactionValues: [braveApiKey],
       });
 
+      await approveOpenClawAdminScope(
+        host,
+        sandbox,
+        OPENCLAW_BALANCED_SANDBOX,
+        commandEnv(hosted.env),
+        [hosted.apiKey],
+        false,
+      );
       progress.phase("verify balanced egress excludes weather");
       expect(
         await listActivePolicyPresets(host, OPENCLAW_BALANCED_SANDBOX, "c1-balanced-initial"),
@@ -772,6 +781,14 @@ After it returns, reply with only WEATHER_AGENT_OK. Do not fetch any other URL.`
         skip,
         tier: "open",
       });
+      await approveOpenClawAdminScope(
+        host,
+        sandbox,
+        OPENCLAW_OPEN_SANDBOX,
+        commandEnv(hosted.env),
+        [hosted.apiKey],
+        false,
+      );
       progress.phase("verify public-reference egress policy");
       await assertPolicyContains(sandbox, OPENCLAW_OPEN_SANDBOX, "c2-policy", [
         "www.wikidata.org",
@@ -907,6 +924,14 @@ After web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched respons
         },
       });
 
+      await approveOpenClawAdminScope(
+        host,
+        sandbox,
+        OPENCLAW_PERSONAL_SANDBOX,
+        commandEnv(hosted.env),
+        [hosted.apiKey],
+        false,
+      );
       progress.phase("verify Personal policy and absent Brave Search or Tavily Search API keys");
       expect(
         await listActivePolicyPresets(host, OPENCLAW_PERSONAL_SANDBOX, "c4-personal-initial"),
