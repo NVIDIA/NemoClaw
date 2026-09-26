@@ -53,11 +53,41 @@ Each key bounds a different deadline.
 `models.providers.<provider-id>.timeoutSeconds` bounds one provider request, and no flag overrides it.
 Raise the provider key when a turn times out while waiting for the model server, because a longer `--timeout` does not extend the provider request.
 
-To change a deadline on an existing sandbox instead of recreating it, write the key directly.
+For an existing sandbox, identify the native provider used by the request:
+
+```bash
+$$nemoclaw <sandbox-name> exec -- \
+  openclaw config get agents.defaults.model.primary
+```
+
+In `provider/model`, the provider portion is the native provider key, such as `inference`, `openai`, or `anthropic`.
+It is not the OpenShell provider ID.
+If the affected agent uses another model, use that model's provider key.
+
+Replace `<provider-id>` below with that native key.
+Set both deadlines when you want a 1,800-second agent run and provider request:
 
 ```bash
 $$nemoclaw <sandbox-name> exec -- \
   openclaw config set agents.defaults.timeoutSeconds 1800 --strict-json
+$$nemoclaw <sandbox-name> exec -- \
+  openclaw config set 'models.providers["<provider-id>"].timeoutSeconds' 1800 --strict-json
+```
+
+Verify both values and validate the configuration:
+
+```bash
+$$nemoclaw <sandbox-name> exec -- \
+  openclaw config get agents.defaults.timeoutSeconds
+$$nemoclaw <sandbox-name> exec -- \
+  openclaw config get 'models.providers["<provider-id>"].timeoutSeconds'
+$$nemoclaw <sandbox-name> exec -- openclaw config validate
+```
+
+Both reads must return `1800`, and validation must succeed.
+Restart the gateway to apply the changes; this interrupts active agent requests.
+
+```bash
 $$nemoclaw <sandbox-name> gateway restart
 ```
 
