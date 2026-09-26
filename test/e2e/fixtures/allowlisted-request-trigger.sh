@@ -4,48 +4,21 @@
 
 set -euo pipefail
 selector_path="${ISSUE_4462_ALLOWLISTED_SELECTOR_PATH:-/tmp/issue-4462-pending-allowlisted-request.py}"
-devices_json="$(mktemp)"
-remove_output="$(mktemp)"
+client_state="${ISSUE_4462_ALLOWLISTED_CLIENT_STATE_DIR:-/tmp/issue-4462-allowlisted-client}"
 trigger_output="$(mktemp)"
-trap 'rm -f -- "$devices_json" "$remove_output" "$trigger_output"' EXIT
+trap 'rm -f -- "$trigger_output"' EXIT
 unset OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_PORT \
   OPENCLAW_GATEWAY_TOKEN OPENCLAW_GATEWAY_PASSWORD
-openclaw devices list --json >"$devices_json"
-device_id="$(
-  python3 - "$devices_json" <<'PY_DEVICE_ID'
-import json, sys
-from pathlib import Path
-
-data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-paired = data.get("paired") or []
-if not isinstance(paired, list):
-    raise SystemExit("paired device state is unavailable")
-matches = [
-    item
-    for item in paired
-    if isinstance(item, dict)
-    and item.get("clientId") in {"cli", "openclaw-cli"}
-    and item.get("clientMode") == "cli"
-]
-if len(matches) != 1:
-    raise SystemExit(f"expected one paired CLI device, found {len(matches)}")
-device_id = str(matches[0].get("deviceId") or "").strip()
-if not device_id:
-    raise SystemExit("paired CLI device has no deviceId")
-print(device_id)
-PY_DEVICE_ID
-)"
-set +e
-openclaw devices remove "$device_id" --json >"$remove_output" 2>&1
-remove_status=$?
-set -e
-if [ "$remove_status" -ne 0 ] && ! grep -Eqi 'device token .* denied' "$remove_output"; then
-  cat "$remove_output" >&2
+if [ -e "$client_state" ]; then
+  echo "allowlisted fixture client state already exists" >&2
   exit 32
 fi
+install -d -m 0700 -- "$client_state"
 params="$(printf '{"key":"agent:main:nemoclaw-e2e-allowlisted-%s-%s","agentId":"main"}' "$$" "$(date +%s)")"
 set +e
 NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING=1 \
+  OPENCLAW_STATE_DIR="$client_state" \
+  OPENCLAW_CONFIG_PATH=/sandbox/.openclaw/openclaw.json \
   openclaw gateway call sessions.create --params "$params" --json \
   >"$trigger_output" 2>&1
 trigger_status=$?
@@ -55,5 +28,5 @@ if [ "$trigger_status" -eq 0 ]; then
   echo "ALLOWLISTED_REQUEST_UNEXPECTED_SUCCESS" >&2
   exit 31
 fi
-python3 "$selector_path"
+OPENCLAW_STATE_DIR=/sandbox/.openclaw python3 "$selector_path"
 exit "$trigger_status"

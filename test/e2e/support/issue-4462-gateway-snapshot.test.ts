@@ -24,6 +24,7 @@ const ALLOWLISTED_REQUEST_SCRIPT = path.join(
 );
 const PUBLIC_KEY_BYTES = Buffer.from(Array.from({ length: 32 }, (_, index) => index + 1));
 const DEVICE_ID = createHash("sha256").update(PUBLIC_KEY_BYTES).digest("hex");
+const SECONDARY_DEVICE_ID = createHash("sha256").update("secondary-device").digest("hex");
 const PUBLIC_KEY = PUBLIC_KEY_BYTES.toString("base64url");
 const TOKEN = "fixture-device-token";
 
@@ -296,7 +297,7 @@ describe("fresh-agent gateway snapshot artifacts", () => {
       pending: {
         [requestId]: {
           requestId,
-          deviceId: DEVICE_ID,
+          deviceId: SECONDARY_DEVICE_ID,
           publicKey: PUBLIC_KEY,
           clientId: "openclaw-cli",
           clientMode: "cli",

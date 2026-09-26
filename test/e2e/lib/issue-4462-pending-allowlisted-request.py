@@ -54,14 +54,20 @@ if not isinstance(identity, dict) or not isinstance(pending, dict):
     raise SystemExit("canonical identity or pending state is unavailable")
 if any(not isinstance(request, dict) for request in pending.values()):
     raise SystemExit("canonical pending records must be objects")
-device_id = norm(identity.get("deviceId"))
+primary_device_id = norm(identity.get("deviceId"))
 matches = [
     request
     for request in pending.values()
-    if norm(request.get("deviceId")) == device_id
+    if norm(request.get("deviceId"))
+    and norm(request.get("deviceId")) != primary_device_id
+    and request.get("clientId") in ALLOWED_CLIENTS
+    and request.get("clientMode") == "cli"
+    and roles(request) == {"operator"}
+    and "operator.pairing" in requested_scopes(request)
+    and requested_scopes(request).issubset(ALLOWED_SCOPES)
 ]
-if not device_id or len(matches) != 1:
-    raise SystemExit(f"expected one pending request for the current CLI identity, found {len(matches)}")
+if not primary_device_id or len(matches) != 1:
+    raise SystemExit(f"expected one bounded secondary CLI request, found {len(matches)}")
 request = matches[0]
 request_id = norm(request.get("requestId"))
 if not re.fullmatch(
@@ -70,13 +76,4 @@ if not re.fullmatch(
     re.IGNORECASE,
 ):
     raise SystemExit("pending allowlisted request has an invalid requestId")
-scopes = requested_scopes(request)
-if (
-    request.get("clientId") not in ALLOWED_CLIENTS
-    or request.get("clientMode") != "cli"
-    or roles(request) != {"operator"}
-    or "operator.pairing" not in scopes
-    or not scopes.issubset(ALLOWED_SCOPES)
-):
-    raise SystemExit("pending request is outside the bounded allowlisted contract")
 print(f"ISSUE_4462_ALLOWLISTED_REQUEST_ID={request_id.lower()}")
