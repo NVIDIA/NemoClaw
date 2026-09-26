@@ -249,9 +249,7 @@ describe.concurrent("generic NVIDIA GPU PR selection", () => {
         "managed-image-openclaw-security",
         "port-override-image-contract",
       ].map((jobName) => reusable.jobs[jobName]?.if),
-    ).toEqual(
-      Array.from({ length: 5 }, () => expect.stringContaining("inputs.hermes_only != true")),
-    );
+    ).toEqual(Array.from({ length: 5 }, () => "${{ inputs.hermes_only != true }}"));
   });
 
   // source-shape-contract: security -- Executes the copied-PR selector to prove a Hermes runtime owner retains the trusted root-entrypoint qualification
