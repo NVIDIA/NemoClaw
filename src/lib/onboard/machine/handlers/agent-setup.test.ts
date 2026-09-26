@@ -67,7 +67,6 @@ function baseOptions(
     sandboxName: "my-assistant",
     model: "model",
     provider: "provider",
-    webSearchConfig: null,
     resume: false,
     session: createSession(),
     hermesAuthMethod: null,
@@ -152,7 +151,6 @@ describe("handleAgentSetupState", () => {
       "my-assistant",
       "model",
       "provider",
-      null,
       undefined,
       false,
     );
@@ -232,7 +230,6 @@ describe("handleAgentSetupState", () => {
     await handleAgentSetupState({
       ...baseOptions(deps),
       resume: true,
-      webSearchConfig: { fetchEnabled: false },
       revalidateSandboxIdentity,
     });
 
@@ -240,7 +237,6 @@ describe("handleAgentSetupState", () => {
       "my-assistant",
       "model",
       "provider",
-      { fetchEnabled: false },
       revalidateSandboxIdentity,
       false,
     );
@@ -265,7 +261,6 @@ describe("handleAgentSetupState", () => {
       "my-assistant",
       "model",
       "provider",
-      null,
       undefined,
       true,
     );
@@ -279,7 +274,6 @@ describe("handleAgentSetupState", () => {
         sandboxName: string,
         _model: string,
         _provider: string,
-        _webSearchConfig: { fetchEnabled?: boolean } | null,
         revalidate?: (operation: string) => void,
       ): Promise<void> => {
         revalidate?.(`synchronize OpenClaw config in sandbox '${sandboxName}'`);
@@ -334,7 +328,6 @@ describe("handleAgentSetupState", () => {
       "my-assistant",
       "model",
       "provider",
-      null,
       undefined,
     );
     expect(calls.configureOpenclaw).not.toHaveBeenCalled();
@@ -378,7 +371,6 @@ describe("handleAgentSetupState", () => {
       "my-assistant",
       "model",
       "provider",
-      null,
       revalidateSandboxIdentity,
       true,
     );

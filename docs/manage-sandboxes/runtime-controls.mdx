@@ -53,6 +53,7 @@ Onboarding metadata does not override the native provider, model, endpoint, or c
 
 When you rerun onboarding with the same sandbox name, NemoClaw compares your requested inference provider and model with the recorded onboarding selection, not the native model in `openclaw.json`.
 If that selection matches and no other setting requires recreation, onboarding reuses the ready sandbox and preserves native configuration edits.
+Reuse preserves native web-search settings, including when no web-search provider is selected during onboarding.
 Choosing a different provider or model follows the existing recreation flow: interactive onboarding asks for confirmation, while non-interactive onboarding recreates automatically when the recorded selection is readable and differs.
 If the recorded selection is missing or unreadable, NemoClaw does not use native configuration edits as a reason to recreate the sandbox.
 
