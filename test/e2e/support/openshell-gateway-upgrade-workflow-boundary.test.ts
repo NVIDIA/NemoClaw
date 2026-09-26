@@ -24,6 +24,9 @@ import {
   currentNemoclawUpgradeRef,
   gatewayCredentialNonExposureScript,
   gatewayUpgradeRecoverySucceeded,
+  gatewayUpgradeAgentResponseIsSuccessful,
+  gatewayUpgradeInstallerCommand,
+  prepareGatewayUpgradeUserManager,
   GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS,
   isolateGatewayUpgradeFixtureEnv,
   legacyGatewayUpgradeBaseImageOverrideEnabled,
@@ -35,6 +38,136 @@ import {
 } from "../live/openshell-gateway-upgrade-helpers.ts";
 
 describe("OpenShell gateway upgrade boundary", () => {
+  it.each([
+    { statuses: ["ok"], expected: true },
+    { statuses: ["error"], expected: false },
+    { statuses: ["timeout"], expected: false },
+    { statuses: ["accepted"], expected: false },
+    { statuses: ["error", "ok"], expected: false },
+    { statuses: [undefined], expected: false },
+    { statuses: [], expected: false },
+  ])("accepts only successful native agent responses: $statuses", ({ statuses, expected }) => {
+    const raw = [
+      JSON.stringify({ event: "diagnostic", status: "error" }),
+      ...statuses.map((status) =>
+        JSON.stringify({ status, result: { payloads: [{ text: "ok" }], meta: {} } }),
+      ),
+    ].join("\n");
+    expect(gatewayUpgradeAgentResponseIsSuccessful(raw)).toBe(expected);
+  });
+
+  const fragmentPath = "/home/runner/.config/systemd/user/nemoclaw-openshell-gateway.service";
+  const service = (invocation: string) => ({
+    exitCode: 0,
+    signal: null,
+    timedOut: false,
+    stdout: `FragmentPath=${fragmentPath}\nActiveState=active\nMainPID=123\nInvocationID=${invocation}\n`,
+  });
+  const beforeService = service("a".repeat(32));
+  const afterService = service("b".repeat(32));
+
+  it("requires a successful query and a new active service invocation for systemd recovery", () => {
+    const evidence = {
+      before: beforeService,
+      after: afterService,
+      expectedFragmentPath: fragmentPath,
+    };
+    expect(gatewayUpgradeRecoverySucceeded({ exitCode: 0 }, { valid: true }, [], evidence)).toBe(
+      true,
+    );
+    expect(
+      gatewayUpgradeRecoverySucceeded({ exitCode: 0 }, { valid: true }, [], {
+        ...evidence,
+        before: { ...beforeService, exitCode: 1 },
+      }),
+    ).toBe(false);
+  });
+
+  it.each([
+    { label: "missing observation", after: null },
+    { label: "failed query", after: { ...afterService, exitCode: 1 } },
+    { label: "timeout", after: { ...afterService, timedOut: true } },
+    { label: "termination", after: { ...afterService, signal: "SIGTERM" as const } },
+    {
+      label: "different unit",
+      after: {
+        ...afterService,
+        stdout: afterService.stdout.replace(fragmentPath, "/foreign.service"),
+      },
+    },
+    {
+      label: "inactive service",
+      after: { ...afterService, stdout: afterService.stdout.replace("=active", "=inactive") },
+    },
+    {
+      label: "missing process",
+      after: { ...afterService, stdout: afterService.stdout.replace("MainPID=123", "MainPID=0") },
+    },
+    {
+      label: "missing invocation",
+      after: { ...afterService, stdout: afterService.stdout.replace(/InvocationID=.*\n/, "") },
+    },
+    { label: "malformed invocation", after: service("invalid") },
+    {
+      label: "duplicate property",
+      after: { ...afterService, stdout: `${afterService.stdout}ActiveState=active\n` },
+    },
+    { label: "unchanged invocation", after: beforeService },
+  ])("rejects systemd recovery with $label", ({ after }) => {
+    expect(
+      gatewayUpgradeRecoverySucceeded({ exitCode: 0 }, { valid: true }, [], {
+        before: beforeService,
+        after,
+        expectedFragmentPath: fragmentPath,
+      }),
+    ).toBe(false);
+  });
+
+  it.each([
+    { label: "unselected fixture", enabled: false, exitCode: 1, calls: 0, failed: false },
+    { label: "ready manager", enabled: true, exitCode: 0, calls: 1, failed: false },
+    { label: "manager failure", enabled: true, exitCode: 1, calls: 1, failed: true },
+    { label: "missing exit status", enabled: true, exitCode: null, calls: 1, failed: true },
+  ])(
+    "prepares systemd only for its selected fixture: $label",
+    async ({ enabled, exitCode, calls, failed }) => {
+      const command = vi
+        .fn()
+        .mockResolvedValue({ exitCode, stdout: "", stderr: "fixture manager failure" });
+      const rejected = await prepareGatewayUpgradeUserManager({ command }, {}, enabled).then(
+        () => false,
+        () => true,
+      );
+      expect({ calls: command.mock.calls.length, failed: rejected }).toEqual({ calls, failed });
+    },
+  );
+
+  it.each([false, true])(
+    "preserves installer arguments and HOME spelling (redundant=%s)",
+    (redundant) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "gateway-upgrade-path-env-"));
+      const installer = path.join(root, "installer.sh");
+      const home = redundant ? `${root}/home with spaces//` : undefined;
+      fs.writeFileSync(installer, 'printf \'%s\\n\' "$HOME" "$XDG_CONFIG_HOME" "$1"\n');
+      try {
+        const result = spawnSync(
+          "bash",
+          ["-c", gatewayUpgradeInstallerCommand([installer, "literal $HOME"], home)],
+          {
+            encoding: "utf8",
+            env: { PATH: "/usr/bin:/bin", HOME: root },
+          },
+        );
+        expect(result.status, result.stderr).toBe(0);
+        expect(result.stdout).toBe(
+          `${home ?? root}\n${home ? `${home}/.config//` : ""}\nliteral $HOME\n`,
+        );
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("pins the retained gateway-upgrade fixture in the catalogue (#10517)", () => {
     expect(Object.isFrozen(REVIEWED_GATEWAY_UPGRADE_FIXTURE)).toBe(true);
     expect(Object.isFrozen(REVIEWED_GATEWAY_UPGRADE_FIXTURE.openClawArchive)).toBe(true);

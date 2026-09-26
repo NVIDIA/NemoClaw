@@ -16,6 +16,7 @@ function writeExecutable(target: string, contents: string): void {
 
 function runDarwinGatewayProcessStop(
   options: {
+    duplicateExecutableSlashes?: boolean;
     lsofDiagnostic?: string;
     psDiagnostic?: string;
     reusePidBeforeKill?: boolean;
@@ -29,6 +30,9 @@ function runDarwinGatewayProcessStop(
   const runtimeDir = path.join(tmp, "runtime");
   const gatewayBin = path.join(home, ".local", "bin", "openshell-gateway");
   const foreignGatewayBin = path.join(tmp, "foreign-gateway");
+  const observedGatewayBin = options.duplicateExecutableSlashes
+    ? `${home}//.local///bin/openshell-gateway`
+    : gatewayBin;
   const pidReused = path.join(tmp, "pid-reused");
   const signalLog = path.join(tmp, "signal.log");
   fs.mkdirSync(path.dirname(gatewayBin), { recursive: true });
@@ -70,7 +74,7 @@ esac
     `#!/usr/bin/env bash
 managed_pid="$(cat '${runtimeDir}/openshell-gateway.pid')" || exit 1
 [ "\${3:-}" = "$managed_pid" ] || exit 1
-printf 'p%s\nn%s\n' "$managed_pid" '${options.trustedExecutable === false ? foreignGatewayBin : gatewayBin}'
+printf 'p%s\nn%s\n' "$managed_pid" '${options.trustedExecutable === false ? foreignGatewayBin : observedGatewayBin}'
 [ -z '${options.lsofDiagnostic ?? ""}' ] || {
   printf '%s\n' '${options.lsofDiagnostic ?? ""}' >&2
   exit 2
@@ -132,6 +136,12 @@ gateway_pid=$!
 sleep 0.1
 kill -0 "$gateway_pid"
 printf '%s\n' "$gateway_pid" >"${runtimeDir}/openshell-gateway.pid"
+kill() {
+  if [ "\${1:-}" = "$gateway_pid" ]; then
+    printf 'TERM\n' >>'${signalLog}'
+  fi
+  command kill "$@"
+}
 stop_legacy_openshell_gateway_process
 wait "$gateway_pid" 2>/dev/null || true
 if kill -0 "$gateway_pid" 2>/dev/null; then exit 9; fi
@@ -142,7 +152,7 @@ test ! -e "${runtimeDir}/openshell-gateway.pid"`;
       ? rejectedProcessScript
       : successfulStopScript;
 
-  return spawnSync("bash", ["-c", script], {
+  const result = spawnSync("bash", ["-c", script], {
     encoding: "utf-8",
     env: {
       ...process.env,
@@ -150,6 +160,10 @@ test ! -e "${runtimeDir}/openshell-gateway.pid"`;
       XDG_BIN_HOME: "",
       PATH: `${bin}:${path.dirname(process.execPath)}:/usr/bin:/bin`,
     },
+  });
+  return Object.assign(result, {
+    signalLog,
+    pidFile: path.join(runtimeDir, "openshell-gateway.pid"),
   });
 }
 
@@ -527,6 +541,14 @@ describe("install.sh macOS OpenShell upgrade recovery", () => {
     const result = runDarwinGatewayProcessStop();
 
     expect(result.status, result.stdout + result.stderr).toBe(0);
+  });
+
+  it("retires the macOS gateway when lsof reports duplicate executable slashes (#10541)", () => {
+    const result = runDarwinGatewayProcessStop({ duplicateExecutableSlashes: true });
+
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(fs.readFileSync(result.signalLog, "utf-8")).toBe("TERM\n");
+    expect(fs.existsSync(result.pidFile)).toBe(false);
   });
 
   it("rejects a PID when the process identity does not match (#10369)", () => {

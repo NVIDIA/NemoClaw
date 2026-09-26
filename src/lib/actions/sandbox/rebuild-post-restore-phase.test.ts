@@ -7,6 +7,9 @@ import * as agentRuntime from "../../agent/runtime";
 import * as mutableConfigPerms from "../../sandbox/mutable-config-perms";
 import * as registry from "../../state/registry";
 import * as sandboxVersion from "../../sandbox/version";
+import * as pairingSettlement from "../../onboard/machine/finalization-deps";
+import * as launchReadiness from "./launch-readiness";
+import * as portableReceipts from "../../onboard/experimental/portable-runtime-receipt-readiness";
 import * as messagingHostForward from "./messaging-host-forward-lifecycle";
 import * as restoreWindow from "./runtime/openclaw-lifecycle";
 import * as rebuildConfigHash from "./rebuild-config-hash";
@@ -141,6 +144,15 @@ describe("rebuild post-restore phase", () => {
       () => ({ agent: agentName === "openclaw" ? null : agentName }) as never,
     );
     vi.spyOn(registry, "updateSandbox").mockReturnValue(true);
+    vi.spyOn(portableReceipts, "classifyPortableLifecycleReceipt").mockReturnValue({
+      kind: "absent",
+    });
+    vi.spyOn(pairingSettlement, "settleOrdinaryOpenClawPairing").mockResolvedValue({
+      kind: "settled",
+    });
+    vi.spyOn(launchReadiness, "settlePortableOpenClawPairing").mockResolvedValue({
+      kind: "not-portable",
+    });
     vi.spyOn(sandboxVersion, "checkAgentVersion").mockResolvedValue({
       sandboxVersion: null,
       expectedVersion: null,
@@ -202,6 +214,76 @@ describe("rebuild post-restore phase", () => {
     ).toHaveBeenCalledExactlyOnceWith("alpha", undefined);
     expect(processRecovery.finishUnregisteredOpenClawPostRestoreDoctor).toHaveBeenCalledOnce();
     expect(processRecovery.abortUnregisteredOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
+    expect(pairingSettlement.settleOrdinaryOpenClawPairing).not.toHaveBeenCalled();
+    expect(launchReadiness.settlePortableOpenClawPairing).not.toHaveBeenCalled();
+  });
+
+  it("settles baseline write pairing before completing prepared OpenClaw recovery", async () => {
+    const args = { ...input(), preparedBackupRecovery: true };
+    await runRebuildPostRestorePhase(args);
+    expect(pairingSettlement.settleOrdinaryOpenClawPairing).toHaveBeenCalledExactlyOnceWith(
+      "alpha",
+    );
+    expect(args.bail).not.toHaveBeenCalled();
+  });
+
+  it("rejects prepared recovery whose normal write pairing remains pending", async () => {
+    vi.mocked(pairingSettlement.settleOrdinaryOpenClawPairing).mockResolvedValue({
+      kind: "incomplete",
+      reason: "scope-upgrade-not-approved",
+    });
+    const args = { ...input(), preparedBackupRecovery: true };
+    const result = await runRebuildPostRestorePhase(args);
+    expect(args.bail).toHaveBeenCalledWith(
+      "OpenClaw pairing remained incomplete after prepared recovery.",
+    );
+    expect(result).toBeUndefined();
+    expect(vi.mocked(console.log).mock.calls.flat().join("\n")).not.toContain("rebuild completed");
+  });
+
+  it("keeps prepared Portable recovery with its existing pairing owner", async () => {
+    vi.mocked(registry.getSandbox).mockReturnValue({
+      agent: null,
+      lifecycleGeneration: "current-generation",
+    } as never);
+    vi.mocked(portableReceipts.classifyPortableLifecycleReceipt).mockReturnValue({
+      kind: "current",
+      registryGeneration: "current-generation",
+      runtimeAuthority: {} as never,
+    });
+    vi.mocked(launchReadiness.settlePortableOpenClawPairing).mockResolvedValue({ kind: "settled" });
+    const args = { ...input(), preparedBackupRecovery: true };
+    await runRebuildPostRestorePhase(args);
+    expect(pairingSettlement.settleOrdinaryOpenClawPairing).not.toHaveBeenCalled();
+    expect(launchReadiness.settlePortableOpenClawPairing).toHaveBeenCalledWith("alpha", {
+      portableRequired: true,
+    });
+    expect(args.bail).not.toHaveBeenCalled();
+  });
+
+  it("does not promote stale Portable authority into strict prepared recovery", async () => {
+    vi.mocked(registry.getSandbox).mockReturnValue({
+      agent: null,
+      lifecycleGeneration: "current-generation",
+    } as never);
+    vi.mocked(portableReceipts.classifyPortableLifecycleReceipt).mockReturnValue({
+      kind: "current",
+      registryGeneration: "old-generation",
+      runtimeAuthority: {} as never,
+    });
+    vi.mocked(launchReadiness.settlePortableOpenClawPairing).mockResolvedValue({
+      kind: "incomplete",
+      reason: "portable-runtime-identity-invalid",
+    });
+    const args = { ...input(), preparedBackupRecovery: true };
+    await runRebuildPostRestorePhase(args);
+    expect(launchReadiness.settlePortableOpenClawPairing).toHaveBeenCalledWith("alpha", {
+      portableRequired: false,
+    });
+    expect(pairingSettlement.settleOrdinaryOpenClawPairing).not.toHaveBeenCalled();
+    expect(args.bail).toHaveBeenCalledWith(
+      "OpenClaw pairing remained incomplete after prepared recovery.",
+    );
   });
 
   it("reuses the maintenance window established before filesystem restore", async () => {
