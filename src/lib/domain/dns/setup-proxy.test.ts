@@ -14,9 +14,15 @@ import {
 } from "./setup-proxy.js";
 
 describe("DNS setup proxy domain helpers", () => {
-  it("selects a sandbox pod using fixed-string style matching", () => {
+  it("selects exact sandbox pods and generated-suffix pods", () => {
+    expect(selectSandboxPod("box", "pod/alpha\npod/box\n")).toBe("box");
     expect(selectSandboxPod("box[1]", "pod/alpha\npod/box[1]-abc\n")).toBe("box[1]-abc");
     expect(selectSandboxPod("missing", "pod/alpha\n")).toBeNull();
+  });
+
+  it("does not select pods for similarly prefixed sandbox names", () => {
+    expect(selectSandboxPod("box1", "pod/box10-xyz12\n")).toBeNull();
+    expect(selectSandboxPod("box1", "pod/box1-extra-stale\n")).toBeNull();
   });
 
   it("falls back to the default veth gateway when discovery is empty", () => {
