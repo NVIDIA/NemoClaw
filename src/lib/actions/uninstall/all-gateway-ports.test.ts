@@ -15,6 +15,7 @@ import {
   uninstallChildEnv,
 } from "./all-gateway-ports";
 import type { UninstallRunDeps, UninstallRunOptions } from "./run-plan";
+import { readGatewayOpenShellStateDir } from "../../state/gateway-registry";
 
 const OPTIONS: UninstallRunOptions = {
   assumeYes: true,
@@ -29,13 +30,16 @@ afterEach(() => {
 
 function sweepDeps(overrides: AllGatewayPortsDeps = {}) {
   const error = vi.fn();
-  const runPortPass = vi.fn((_port: number) => 0);
+  const runPortPass = vi.fn(
+    (_port: number, _options: UninstallRunOptions, _env: NodeJS.ProcessEnv) => 0,
+  );
   const runSelectedPass = vi.fn(async (_options: UninstallRunOptions, _deps: UninstallRunDeps) => ({
     exitCode: 0,
   }));
   const deps: AllGatewayPortsDeps = {
     env: { HOME: "/home/tester" } as NodeJS.ProcessEnv,
     error,
+    gatewayStateDirForPort: () => null,
     home: "/home/tester",
     listGatewayPorts: () => [8080, 18080, 9000],
     log: vi.fn(),
@@ -101,6 +105,146 @@ describe("uninstall across every gateway port (#7791)", () => {
     expect(runPortPass).not.toHaveBeenCalled();
     expect(runSelectedPass).not.toHaveBeenCalled();
     expect(error).toHaveBeenCalledWith(expect.stringContaining("Refusing to uninstall gateway"));
+  });
+
+  it("restores each recorded custom state directory only for its gateway child (#10665)", async () => {
+    const { deps, runPortPass } = sweepDeps({
+      gatewayStateDirForPort: (_home, port) =>
+        port === 9000 ? "/home/tester/custom-gateway-9000" : null,
+    });
+
+    await runUninstallAllGatewayPorts(OPTIONS, deps);
+
+    const envByPort = new Map(
+      runPortPass.mock.calls.map(([port, _options, env]) => [
+        port,
+        env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
+      ]),
+    );
+    expect(envByPort.get(9000)).toBe("/home/tester/custom-gateway-9000");
+    expect(envByPort.get(18080)).toBeUndefined();
+  });
+
+  it.each([
+    ["incomplete create", {}, false],
+    [
+      "matching completed metadata",
+      { openshellGatewayStateDir: "/srv/nemoclaw/custom-9000" },
+      false,
+    ],
+    [
+      "conflicting completed metadata",
+      { openshellGatewayStateDir: "/srv/nemoclaw/other-9000" },
+      true,
+    ],
+    ["foreign sandbox", { name: "other" }, true],
+    ["foreign gateway", { gatewayName: "nemoclaw-18080", gatewayPort: 18080 }, true],
+    ["completed row with a checkpoint", { pendingRouteReservation: false }, true],
+    ["missing reservation owner", { reservationSessionId: undefined }, true],
+    ["changed lifecycle", { lifecycleGeneration: "changed" }, true],
+    [
+      "malformed checkpoint",
+      { pendingCreateIdentity: { openshellGatewayStateDir: "relative" } },
+      true,
+    ],
+  ] as const)(
+    "recovers checkpoint directories or rejects %s before any uninstall pass",
+    async (_scenario, override, reject) => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pending-uninstall-"));
+      try {
+        const root = path.join(home, ".nemoclaw", "gateways", "9000");
+        fs.mkdirSync(root, { recursive: true });
+        const entry = {
+          name: "pending",
+          gatewayName: "nemoclaw-9000",
+          gatewayPort: 9000,
+          pendingRouteReservation: true,
+          reservationSessionId: "session-owner",
+          lifecycleGeneration: "generation-1",
+          lifecycleLiveIdentityFingerprint: "a".repeat(64),
+          pendingCreateIdentity: {
+            schemaVersion: 1,
+            state: "verified-create",
+            sandboxName: "pending",
+            gatewayName: "nemoclaw-9000",
+            gatewayPort: 9000,
+            lifecycleGeneration: "generation-1",
+            sandboxIdentityFingerprint: "a".repeat(64),
+            route: "none",
+            openshellGatewayStateDir: "/srv/nemoclaw/custom-9000",
+          },
+          ...override,
+        };
+        fs.writeFileSync(
+          path.join(root, "sandboxes.json"),
+          JSON.stringify({ defaultSandbox: null, sandboxes: { [entry.name]: entry } }),
+        );
+        const { deps, runPortPass, runSelectedPass } = sweepDeps({
+          home,
+          env: { HOME: home },
+          listGatewayPorts: () => [8080, 9000],
+          gatewayStateDirForPort: readGatewayOpenShellStateDir,
+        });
+        const result = await runUninstallAllGatewayPorts(OPTIONS, deps);
+        expect(result.exitCode).toBe(reject ? 1 : 0);
+        expect(
+          runPortPass.mock.calls.map(([port, _options, env]) => [
+            port,
+            env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
+          ]),
+        ).toEqual(reject ? [] : [[9000, "/srv/nemoclaw/custom-9000"]]);
+        expect(runSelectedPass).toHaveBeenCalledTimes(reject ? 0 : 1);
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("restores a recorded custom state directory for the selected pass (#10665)", async () => {
+    const { deps, runSelectedPass } = sweepDeps({
+      gatewayStateDirForPort: (_home, port) =>
+        port === 8080 ? "/home/tester/custom-gateway-8080" : null,
+      listGatewayPorts: () => [8080],
+    });
+
+    await runUninstallAllGatewayPorts(OPTIONS, deps);
+
+    expect(runSelectedPass.mock.calls[0]?.[1].env).toMatchObject({
+      NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: "/home/tester/custom-gateway-8080",
+    });
+  });
+
+  it("keeps an explicit selected-port override ahead of recorded state (#10665)", async () => {
+    const { deps, runSelectedPass } = sweepDeps({
+      env: {
+        HOME: "/home/tester",
+        NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: "/home/tester/explicit-gateway-8080",
+      },
+      gatewayStateDirForPort: (_home, port) =>
+        port === 8080 ? "/home/tester/recorded-gateway-8080" : null,
+      listGatewayPorts: () => [8080],
+    });
+
+    await runUninstallAllGatewayPorts(OPTIONS, deps);
+
+    expect(runSelectedPass.mock.calls[0]?.[1].env).toMatchObject({
+      NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: "/home/tester/explicit-gateway-8080",
+    });
+  });
+
+  it("fails before any pass when recorded state directories conflict (#10665)", async () => {
+    const { deps, error, runPortPass, runSelectedPass } = sweepDeps({
+      gatewayStateDirForPort: () => {
+        throw new Error("conflicting OpenShell state directories");
+      },
+    });
+
+    const result = await runUninstallAllGatewayPorts(OPTIONS, deps);
+
+    expect(result).toEqual({ exitCode: 1, ports: [9000, 18080, 8080] });
+    expect(runPortPass).not.toHaveBeenCalled();
+    expect(runSelectedPass).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("conflicting OpenShell"));
   });
 
   it("reports a failed port pass and still finishes the remaining ports", async () => {
@@ -340,6 +484,23 @@ describe("uninstall across every gateway port (#7791)", () => {
 
     expect(childEnv.NEMOCLAW_GATEWAY_PORT).toBe("9000");
     expect(childEnv.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR).toBeUndefined();
+    expect(childEnv[ALL_GATEWAY_PORTS_ENV]).toBeUndefined();
+    expect(env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR).toBe("/srv/nemoclaw/selected-gateway");
+  });
+
+  it("binds a recorded custom state directory to the matching child only (#10665)", () => {
+    const env = {
+      HOME: "/home/tester",
+      NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: "/srv/nemoclaw/selected-gateway",
+      [ALL_GATEWAY_PORTS_ENV]: "1",
+    } as NodeJS.ProcessEnv;
+
+    const childEnv = uninstallChildEnv(env, 9000, "/srv/nemoclaw/recorded-gateway-9000");
+
+    expect(childEnv).toMatchObject({
+      NEMOCLAW_GATEWAY_PORT: "9000",
+      NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: "/srv/nemoclaw/recorded-gateway-9000",
+    });
     expect(childEnv[ALL_GATEWAY_PORTS_ENV]).toBeUndefined();
     expect(env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR).toBe("/srv/nemoclaw/selected-gateway");
   });

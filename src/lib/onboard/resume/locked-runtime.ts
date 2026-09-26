@@ -9,6 +9,7 @@ import type {
 import { requireReadOnlyHostMountRuntimeSupport } from "../host-mount";
 import {
   assertLockedResumeIntentSnapshot,
+  assertPortableOnboardProviderIntent,
   createDefaultResumeProfileEnvironmentScope,
   createPortableOnboardEnvironmentScope,
   preparePortableExperimentalHost,
@@ -24,6 +25,7 @@ export interface LockedOnboardRuntimePreparation {
   readonly portableRuntimeContext: PortableOnboardRuntimeContext | null;
 }
 
+/** Stop onboarding on denied consent; the caller owns its ordering relative to runtime preparation. */
 async function ensureNoticeAccepted(
   options: OnboardOptions,
   nonInteractive: boolean,
@@ -81,6 +83,7 @@ function resolveCheckpointProfile(
   return { checkpointProfile, expectedPortableAuthority };
 }
 
+/** Restore scoped environment values if Portable host preparation fails. */
 function prepareEnvironment(
   options: OnboardOptions,
   resume: boolean,
@@ -122,6 +125,7 @@ function prepareEnvironment(
   }
 }
 
+/** Prepare runtime authority with the consent ordering required by fresh and resumed runs. */
 export async function prepare(
   options: OnboardOptions,
   resume: boolean,
@@ -141,6 +145,11 @@ export async function prepare(
     options.hostMounts?.length ? options.hostMounts : storedSession?.metadata?.hostMounts,
     { experimentalProfile: checkpointProfile === "portable" ? "portable" : null },
   );
+  if (checkpointProfile === "portable") {
+    assertPortableOnboardProviderIntent(process.env, options.portableInferenceActivation ?? null, {
+      resume,
+    });
+  }
   let environmentScope: PortableOnboardEnvironmentScope | null = null;
   try {
     // Fresh runs obtain consent before bounded host preparation writes. Resumes
