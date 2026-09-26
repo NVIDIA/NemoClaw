@@ -155,6 +155,41 @@ describe("Docker startup-command sandbox creation", () => {
     expect(context.rolledBack).toBe(true);
   });
 
+  it("forwards the selected startup-command operation when commit races a pending reconnect (#12080)", async () => {
+    const deps = makeDeps();
+    const result = startupResult();
+    const finalizeBackup = vi.fn(async () => ({ backupRemoved: false, rolledBack: true }));
+    const onPatchFailureExit = vi.fn();
+    const patch = createDockerGpuSandboxCreatePatch({
+      route: "native",
+      persistStartupCommand: true,
+      sandboxName: "alpha",
+      openshellSandboxCommand: ["env", "nemoclaw-start"],
+      timeoutSecs: 60,
+      deps,
+      overrides: {
+        findContainerIds: vi.fn(() => ["existing-container"]),
+        recreateStartupPatch: vi.fn(() => result),
+        finalizeBackup,
+        onPatchFailureExit,
+      },
+    });
+
+    patch.maybeApplyDuringCreate();
+    await expect(patch.commitAfterReady()).rejects.toThrow(/reconnects/);
+    expect(onPatchFailureExit).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ message: expect.stringContaining("reconnects") }),
+      expect.objectContaining({
+        selectedMode: expect.objectContaining({ kind: "startup-command" }),
+        context: expect.objectContaining({
+          sandboxName: "alpha",
+          selectedMode: expect.objectContaining({ kind: "startup-command" }),
+        }),
+      }),
+    );
+  });
+
   it("defers a driver-owned managed cutover until the authoritative caller commits", async () => {
     const deps = makeDeps();
     let releaseCommit = () => {};
@@ -313,7 +348,13 @@ describe("Docker startup-command sandbox creation", () => {
     expect(onPatchFailureExit).toHaveBeenCalledWith(
       "alpha",
       expect.objectContaining({ message: "startup recreate failed" }),
-      expect.objectContaining({ runCaptureOpenshell: deps.runCaptureOpenshell }),
+      expect.objectContaining({
+        runCaptureOpenshell: deps.runCaptureOpenshell,
+        // The printer must see the selected non-GPU operation even when the
+        // recreation threw before producing a result (#12080).
+        selectedMode: expect.objectContaining({ kind: "startup-command" }),
+        context: expect.objectContaining({ sandboxName: "alpha" }),
+      }),
     );
   });
 });

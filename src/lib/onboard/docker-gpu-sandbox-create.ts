@@ -6,6 +6,7 @@ import { dockerCapture } from "../adapters/docker/run";
 import { getSandboxFailurePhase } from "../state/gateway";
 import type { SandboxGpuProofResult } from "../state/registry";
 import {
+  buildDockerGpuMode,
   getDockerGpuSupervisorReconnectTimeoutSecs,
   printDockerGpuPatchFailureAndExit,
   printDockerGpuProofFailure,
@@ -349,6 +350,18 @@ export function createDockerGpuSandboxCreatePatch(
     }
   };
 
+  const selectedMode = (): DockerGpuPatchMode | null =>
+    managedBootstrapCutover?.selectedMode ??
+    result?.mode ??
+    // A startup-command (non-GPU) recreation can fail before any replacement
+    // result exists; report the selected operation instead of assuming a GPU
+    // patch (#12080).
+    (options.persistStartupCommand === true && !routeAdapter.enabled
+      ? buildDockerGpuMode("startup-command")
+      : null);
+  const failureContext = (): DockerGpuPatchFailureContext =>
+    managedBootstrapCutover?.failureContext ?? buildFailureContext(options.sandboxName, result);
+
   const reportPatchErrorAndExit = async (): Promise<void> => {
     if (!patchError) return;
     const failure = patchError instanceof Error ? patchError : new Error(String(patchError));
@@ -360,12 +373,12 @@ export function createDockerGpuSandboxCreatePatch(
       runCaptureOpenshell: options.deps.runCaptureOpenshell,
       dockerCapture: options.deps.dockerCapture,
       additionalSummaryLines: routeAdapter.additionalSummaryLines,
+      // Carry the selected post-create operation into the failure printer so a
+      // startup-command (non-GPU) failure never wears GPU failure wording (#12080).
+      selectedMode: selectedMode(),
+      context: failureContext(),
     });
   };
-  const selectedMode = (): DockerGpuPatchMode | null =>
-    managedBootstrapCutover?.selectedMode ?? result?.mode ?? null;
-  const failureContext = (): DockerGpuPatchFailureContext =>
-    managedBootstrapCutover?.failureContext ?? buildFailureContext(options.sandboxName, result);
 
   return {
     maybeApplyDuringCreate() {
@@ -540,6 +553,10 @@ export function createDockerGpuSandboxCreatePatch(
           runCaptureOpenshell: options.deps.runCaptureOpenshell,
           dockerCapture: options.deps.dockerCapture,
           additionalSummaryLines: routeAdapter.additionalSummaryLines,
+          // A startup-command recreation failure must not fall back to GPU
+          // failure wording on this deferred-supervisor exit (#12080).
+          selectedMode: selectedMode(),
+          context: failureContext(),
         });
         throw failure;
       }
