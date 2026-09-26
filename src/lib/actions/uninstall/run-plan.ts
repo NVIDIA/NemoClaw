@@ -1198,7 +1198,7 @@ function stopModelRouter(
   paths: UninstallPaths,
   runtime: UninstallRuntime,
   scanOrphans = true,
-): void {
+): boolean {
   // The model router is a detached child started during routed onboarding.
   // Both its PID and exact bound port are recorded in onboard-session.json;
   // cleanup must not guess from the current blueprint because that blueprint
@@ -1207,13 +1207,16 @@ function stopModelRouter(
   const recorded = readOnboardSessionModelRouter(paths);
   if (recorded.port === null) {
     if (recorded.expected) {
+      const pidDetail =
+        recorded.pid === null ? "" : ` The recorded process is PID ${recorded.pid}.`;
       runtime.warn(
-        "Model Router cleanup is incomplete because its recorded port is missing; refusing to guess from the current blueprint.",
+        `Model Router cleanup is incomplete because its recorded port is missing; refusing to guess from the current blueprint.${pidDetail} Stop the verified Model Router process, then rerun nemoclaw uninstall. The onboarding session was retained for recovery.`,
       );
+      return false;
     } else {
       runtime.log("No model router processes found");
     }
-    return;
+    return true;
   }
   const routerPort = recorded.port;
 
@@ -1228,14 +1231,14 @@ function stopModelRouter(
 
   if (!scanOrphans) {
     if (stopped.size === 0) runtime.log("No selected-gateway model router found");
-    return;
+    return true;
   }
 
   if (!runtime.commandExists("lsof")) {
     if (stopped.size === 0) {
       runtime.warn("lsof not found; skipping orphan model router scan.");
     }
-    return;
+    return true;
   }
   const lsof = runtime.run("lsof", ["-ti", `:${routerPort}`], { env: runtime.env });
   const pids = splitNonEmptyLines(lsof.stdout).map(Number).filter(Number.isFinite);
@@ -1247,6 +1250,7 @@ function stopModelRouter(
   }
 
   if (stopped.size === 0) runtime.log("No model router processes found");
+  return true;
 }
 
 function stopOrphanedOpenShell(runtime: UninstallRuntime): void {
@@ -4346,7 +4350,9 @@ async function executePreparedPlan(
       } else {
         stopHttpsPinRuntimeAdapter(paths, runtime);
       }
-      stopModelRouter(paths, runtime, !scopedToSelectedGateway);
+      if (!stopModelRouter(paths, runtime, !scopedToSelectedGateway)) {
+        return { ok: false, scopedToSelectedGateway };
+      }
       stopBedrockRuntimeAdapterForUninstall(paths, runtime, scopedToSelectedGateway);
     } else if (step.name === "OpenShell resources") {
       if (openShellCleanup === "reservation-removed") {

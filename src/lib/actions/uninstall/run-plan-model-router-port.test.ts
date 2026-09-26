@@ -120,6 +120,7 @@ it("reports incomplete cleanup instead of guessing when a legacy router session 
   );
   const errors: string[] = [];
   const killed: number[] = [];
+  const logs: string[] = [];
   const run = vi.fn((command: string, args: string[]): RunResult => {
     return command === "openshell" && args[0] === "gateway" && args[1] === "list"
       ? ok(JSON.stringify([{ name: "nemoclaw" }]))
@@ -141,7 +142,7 @@ it("reports incomplete cleanup instead of guessing when a legacy router session 
           killed.push(pid);
           return true;
         },
-        log: () => undefined,
+        log: (message) => logs.push(message),
         resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
           endpoint: null,
           gatewayName,
@@ -152,16 +153,20 @@ it("reports incomplete cleanup instead of guessing when a legacy router session 
           stateDir: null,
           supervisor: null,
         }),
-        rmSync: vi.fn(),
+        rmSync: fs.rmSync,
         run,
         runDocker: () => ok(),
       },
     );
 
-    expect(result.exitCode).toBe(0);
+    expect(result.exitCode).toBe(1);
     expect(errors).toContainEqual(expect.stringContaining("recorded port is missing"));
+    expect(errors).toContainEqual(expect.stringContaining("PID 55681"));
+    expect(errors).toContainEqual(expect.stringContaining("rerun nemoclaw uninstall"));
     expect(run).not.toHaveBeenCalledWith("lsof", ["-ti", ":4000"], expect.anything());
     expect(killed).toEqual([]);
+    expect(logs.some((line) => line.endsWith("State and binaries"))).toBe(false);
+    expect(fs.existsSync(path.join(stateDir, "onboard-session.json"))).toBe(true);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
