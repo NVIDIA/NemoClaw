@@ -10,7 +10,6 @@ import { describe, expect, it } from "vitest";
 
 import { adminApprovalConnectScript } from "../fixtures/admin-approval-connect.ts";
 import { ISSUE_4462_PAIRING_SEED_PY } from "../fixtures/issue-4462-pairing-seed.ts";
-import { openClawGatewayOutputHasFailure } from "../fixtures/openclaw-agent-output.ts";
 import { ISSUE_4462_SCOPE_UPGRADE_PHASES } from "../live/issue-4462-admin-approval-helper.ts";
 
 const BEHAVIOR_HARNESS_PY = String.raw`
@@ -176,19 +175,6 @@ print('ISSUE_4462_FIXTURE_BEHAVIOR_OK')
 `;
 
 describe("scope-upgrade approval live fixture", () => {
-  it.each([
-    "gateway connect failed",
-    "scope upgrade pending approval",
-    "device pairing required",
-    "[agent/embedded] using local transport",
-  ])("rejects first-agent gateway failure evidence: %s", (evidence) => {
-    expect(openClawGatewayOutputHasFailure("4\n", evidence)).toBe(true);
-  });
-
-  it("accepts a successful first-agent result without gateway failure evidence", () => {
-    expect(openClawGatewayOutputHasFailure("4\n", "")).toBe(false);
-  });
-
   it("refuses removed private gateway aliases at the connect-shell boundary", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-4462-connect-"));
     const cli = path.join(root, "nemoclaw");

@@ -416,7 +416,10 @@
     },
     {
       "live": "test/e2e/live/snapshot-commands.test.ts",
-      "liveSources": ["test/e2e/live/snapshot-commands-helpers.ts"],
+      "liveSources": [
+        "test/e2e/fixtures/openclaw-agent-output.ts",
+        "test/e2e/live/snapshot-commands-helpers.ts"
+      ],
       "fast": [
         "src/lib/actions/sandbox/snapshot-command-host-local-authority.test.ts",
         "src/lib/actions/sandbox/snapshot-restore-lifecycle.test.ts",
@@ -424,6 +427,7 @@
         "src/lib/state/sandbox-backup-sanitization.test.ts",
         "test/agents/openclaw/openclaw-config-snapshot.test.ts",
         "test/state/snapshot.test.ts",
+        "test/e2e/support/openclaw-agent-output.test.ts",
         "test/e2e/support/snapshot-commands-helpers.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
@@ -635,6 +639,7 @@
         "test/e2e/fixtures/admin-approval-connect.ts",
         "test/e2e/fixtures/admin-request-selector.ts",
         "test/e2e/fixtures/issue-4462-admin-approval-evidence.ts",
+        "test/e2e/fixtures/openclaw-agent-output.ts",
         "test/e2e/lib/issue-4462-admin-request-selector.py",
         "test/e2e/live/issue-4462-admin-approval-helper.ts"
       ],
@@ -642,6 +647,7 @@
         "src/lib/actions/sandbox/agent/passthrough.test.ts",
         "test/security/admin-approval-helper.test.ts",
         "test/e2e/support/issue-4462-fixture-boundary.test.ts",
+        "test/e2e/support/openclaw-agent-output.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
@@ -780,13 +786,17 @@
     },
     {
       "live": "test/e2e/live/openclaw-inference-switch.test.ts",
-      "liveSources": ["test/e2e/live/openclaw-inference-switch-helpers.ts"],
+      "liveSources": [
+        "test/e2e/fixtures/openclaw-agent-output.ts",
+        "test/e2e/live/openclaw-inference-switch-helpers.ts"
+      ],
       "fast": [
         "src/lib/actions/inference-set-compatible-provider.test.ts",
         "test/e2e/support/retry-policy.test.ts",
         "test/e2e/support/compatible-anthropic-switch.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/openclaw-agent-output.test.ts",
         "test/e2e/support/openclaw-inference-switch-helpers.test.ts"
       ]
     },
