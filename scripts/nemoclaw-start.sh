@@ -5258,20 +5258,35 @@ PY_SQLITE_TMPDIR
 }
 
 run_openclaw_maintenance_owner_command() {
-  local config_owner seal_status=0
+  local config_owner normalizer
   # Podman root can read the sandbox-owned config tree but cannot write it
   # without DAC_OVERRIDE. Use the existing sandbox identity for marker writes.
   if [ "$(id -u)" -eq 0 ]; then
     config_owner="$(stat -c '%u' /sandbox/.openclaw)" || return 1
     if [ "$config_owner" = 0 ]; then
-      # Backup quiescence runs before normalization. Preserve only the existing
-      # descriptor-validated root-owned 0700/0600 recovery posture (status 1).
-      classify_openclaw_config_seal /sandbox/.openclaw || seal_status=$?
-      if [ "$seal_status" -ne 1 ]; then
-        echo "[SECURITY] Refusing maintenance marker mutation in an unverified root-owned config" >&2
-        return 1
-      fi
-      "$@"
+      normalizer="$(resolve_mutable_config_normalizer)" || return 1
+      (
+        # The cwd holds the directory inode across classification and dispatch.
+        # Root marker operations stay relative to that same directory even if
+        # the sandbox-owned parent entry is replaced after verification.
+        cd -P -- /sandbox/.openclaw || return 1
+        if ! python3 -I "$normalizer" check-unsealed-cwd /sandbox/.openclaw \
+          "$(id -u sandbox)" "$(id -g sandbox)"; then
+          echo "[SECURITY] Refusing maintenance marker mutation in an unverified root-owned config" >&2
+          return 1
+        fi
+        [ ! -L /sandbox/.openclaw ] && [ . -ef /sandbox/.openclaw ] || return 1
+        local argument
+        local -a pinned_arguments=()
+        for argument in "$@"; do
+          if [ "$argument" = /sandbox/.openclaw/.nemoclaw-post-upgrade-doctor ]; then
+            argument=.nemoclaw-post-upgrade-doctor
+          fi
+          pinned_arguments+=("$argument")
+        done
+        "${pinned_arguments[@]}" || return 1
+        [ ! -L /sandbox/.openclaw ] && [ . -ef /sandbox/.openclaw ]
+      )
       return $?
     fi
     if [ "$config_owner" != "$(id -u sandbox)" ]; then

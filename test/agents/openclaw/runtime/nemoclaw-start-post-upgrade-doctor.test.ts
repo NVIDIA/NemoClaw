@@ -161,10 +161,14 @@ describe("nemoclaw-start post-upgrade doctor", () => {
             [
               "id() { printf '0\\n'; }",
               `stat() { printf '${owner}\\n'; }`,
-              `classify_openclaw_config_seal() { return ${classifierStatus}; }`,
+              'resolve_mutable_config_normalizer() { printf "fixture-normalizer\\n"; }',
+              `python3() { return ${classifierStatus === 1 ? 0 : 1}; }`,
               "STEP_DOWN_PREFIX_SANDBOX=(/bin/sh -c 'echo root-only-config-denied >&2; exit 77' --)",
               extractShellFunctionFromSource(source, "_nemoclaw_safe_replace_tmp_file"),
-              extractShellFunctionFromSource(source, "run_openclaw_maintenance_owner_command"),
+              extractShellFunctionFromSource(
+                source,
+                "run_openclaw_maintenance_owner_command",
+              ).replaceAll("/sandbox/.openclaw", f.configDir),
               action,
             ].join("\n"),
           ],
@@ -183,6 +187,107 @@ describe("nemoclaw-start post-upgrade doctor", () => {
       }
     },
   );
+
+  it.each(
+    ["release", "promote"].flatMap((operation) =>
+      ["classification", "dispatch"].map((swapAt) => ({ operation, swapAt })),
+    ),
+  )("protects a replacement directory during $operation at $swapAt", ({ operation, swapAt }) => {
+    const source = fs.readFileSync(START_SCRIPT, "utf8");
+    const f = fixture();
+    const replacement = path.join(f.root, "replacement");
+    const retained = path.join(f.root, "retained");
+    try {
+      fs.mkdirSync(replacement, { mode: 0o700 });
+      fs.writeFileSync(f.marker, "request\n", { mode: 0o600 });
+      fs.writeFileSync(path.join(replacement, path.basename(f.marker)), "foreign\n", {
+        mode: 0o600,
+      });
+      const action =
+        operation === "release"
+          ? 'run_openclaw_maintenance_owner_command rm -f -- "$MARKER"'
+          : 'printf "doctor\\n" | run_openclaw_maintenance_owner_command _nemoclaw_safe_replace_tmp_file "$MARKER" 600 "" required';
+      const result = spawnSync(
+        "bash",
+        [
+          "-c",
+          [
+            "id() { printf '0\\n'; }",
+            "stat() { printf '0\\n'; }",
+            'replace_directory() { /bin/mv "$CONFIG_DIR" "$RETAINED"; /bin/ln -s "$REPLACEMENT" "$CONFIG_DIR"; }',
+            'classify_openclaw_config_seal() { [ "$SWAP_AT" != classification ] || replace_directory; return 1; }',
+            'resolve_mutable_config_normalizer() { printf "fixture-normalizer\\n"; }',
+            'python3() { [ "$SWAP_AT" != classification ] || replace_directory; return 0; }',
+            operation === "release"
+              ? 'rm() { [ "$SWAP_AT" != dispatch ] || replace_directory; command rm "$@"; }'
+              : 'mktemp() { [ "$SWAP_AT" != dispatch ] || replace_directory; command mktemp "$@"; }',
+            extractShellFunctionFromSource(source, "_nemoclaw_safe_replace_tmp_file"),
+            extractShellFunctionFromSource(
+              source,
+              "run_openclaw_maintenance_owner_command",
+            ).replaceAll("/sandbox/.openclaw", f.configDir),
+            action,
+          ].join("\n"),
+        ],
+        {
+          encoding: "utf8",
+          timeout: 5_000,
+          env: {
+            ...process.env,
+            CONFIG_DIR: f.configDir,
+            MARKER: f.marker,
+            RETAINED: retained,
+            REPLACEMENT: replacement,
+            SWAP_AT: swapAt,
+          },
+        },
+      );
+      const replacementMarker = path.join(replacement, path.basename(f.marker));
+      expect(
+        fs.existsSync(replacementMarker) ? fs.readFileSync(replacementMarker, "utf8") : "removed",
+      ).toBe("foreign\n");
+      expect(result.status, result.stderr).not.toBe(0);
+    } finally {
+      fs.rmSync(f.root, { recursive: true, force: true });
+    }
+  });
+
+  it("requires the classified directory to match the caller's pinned working directory", () => {
+    const f = fixture();
+    try {
+      const result = spawnSync(
+        "python3",
+        [
+          "-c",
+          String.raw`
+import json, os, runpy, sys
+module = runpy.run_path(sys.argv[1])
+scope = module["main"].__globals__
+# Ownership and Linux mount discovery are modeled; directory descriptors and
+# working-directory identity use the real filesystem on every test platform.
+scope["classify_seal"] = lambda *args: scope["UNSEALED"]
+scope["mutable_parent_matches"] = lambda *args: True
+scope["fd_mount_id"] = lambda *args: 1
+config_dir, parent = sys.argv[2:4]
+sys.argv = [sys.argv[1], "check-unsealed-cwd", config_dir, str(os.getuid()), str(os.getgid())]
+results = []
+for directory in [config_dir, parent]:
+    os.chdir(directory)
+    results.append(scope["main"]())
+print(json.dumps(results))
+`,
+          path.join(path.dirname(START_SCRIPT), "lib/normalize_mutable_config_perms.py"),
+          f.configDir,
+          f.root,
+        ],
+        { encoding: "utf8", timeout: 5_000 },
+      );
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual([0, 1]);
+    } finally {
+      fs.rmSync(f.root, { recursive: true, force: true });
+    }
+  });
 
   it.each([
     { operation: "release", publish: releaseAfterReady, expected: [] },

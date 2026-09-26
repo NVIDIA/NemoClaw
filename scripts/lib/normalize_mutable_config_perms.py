@@ -364,6 +364,8 @@ def classify_config_path(
     config_dir: str,
     sandbox_uid: int,
     sandbox_gid: int,
+    *,
+    require_cwd: bool = False,
 ) -> int:
     parent_fd = -1
     root_fd = -1
@@ -371,6 +373,8 @@ def classify_config_path(
         parent_fd, parent_metadata, root_fd, root_metadata, _name = (
             open_config_binding(config_dir)
         )
+        if require_cwd and inode_key(os.stat(".")) != inode_key(root_metadata):
+            return INDETERMINATE
         state = classify_seal(root_fd, root_metadata)
         if state != UNSEALED:
             return state
@@ -1797,7 +1801,7 @@ def main() -> int:
             return 1
         return remove_empty_legacy_exec_approvals(sys.argv[2])
 
-    if len(sys.argv) >= 2 and sys.argv[1] == "classify-seal":
+    if len(sys.argv) >= 2 and sys.argv[1] in {"classify-seal", "check-unsealed-cwd"}:
         if len(sys.argv) != 5:
             return 1
         config_dir = sys.argv[2]
@@ -1806,7 +1810,13 @@ def main() -> int:
             sandbox_gid = int(sys.argv[4])
         except ValueError:
             return INDETERMINATE
-        return classify_config_path(config_dir, sandbox_uid, sandbox_gid)
+        require_cwd = sys.argv[1] == "check-unsealed-cwd"
+        state = classify_config_path(
+            config_dir, sandbox_uid, sandbox_gid, require_cwd=require_cwd
+        )
+        # Verification succeeds only for the cwd-bound unsealed posture. An
+        # older helper that does not recognize this command exits nonzero.
+        return (0 if state == UNSEALED else 1) if require_cwd else state
 
     if len(sys.argv) >= 2 and sys.argv[1] == "reclaim-if-unsealed":
         if len(sys.argv) != 5:
