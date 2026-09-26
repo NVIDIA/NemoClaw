@@ -1930,6 +1930,7 @@ gateway connect failed: GatewayClientRequestError: scope upgrade pending approva
   (requestId: 4899d110-911f-4bc7-ac1a-85d76c7b366f)
 ```
 
+Record the `requestId` from this native failure.
 Open the prepared shell. During setup, `connect` automatically settles pending
 requests from the `cli`, `openclaw-cli`, and `openclaw-control-ui` clients when
 the requested scopes are limited to pairing, read, and write:
@@ -1946,8 +1947,9 @@ for `operator.admin`, list the remaining requests in the prepared shell:
 openclaw devices list --json
 ```
 
-Confirm the requesting client, device, and requested scopes.
-Approve only the request that matches the failed command:
+Find the pending entry whose `requestId` exactly matches the native failure.
+Confirm that entry's requesting client, device, and requested scopes, then
+approve only that same `requestId`:
 
 ```bash
 openclaw devices approve <requestId>

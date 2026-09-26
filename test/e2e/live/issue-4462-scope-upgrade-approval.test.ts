@@ -4,6 +4,7 @@
 import os from "node:os";
 import path from "node:path";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
+import { allowlistedApprovalConnectScript } from "../fixtures/allowlisted-approval-connect.ts";
 import { adminApprovalConnectScript } from "../fixtures/admin-approval-connect.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
@@ -95,7 +96,7 @@ async function cleanup(host: HostCliClient, sandbox: SandboxClient): Promise<voi
     .catch(() => undefined);
 }
 test(
-  "settles operator.write during onboarding and requires explicit operator.admin approval (#4462)",
+  "settles allowlisted requests through connect and requires explicit operator.admin approval (#4462)",
   {
     timeout: LIVE_TIMEOUT_MS,
     meta: { e2ePhases: ISSUE_4462_SCOPE_UPGRADE_PHASES },
@@ -116,6 +117,7 @@ test(
       contracts: [
         "install.sh creates a real OpenClaw sandbox",
         "fresh onboarding settles one CLI identity with operator.write and without a pending request or operator.admin",
+        "a post-onboarding allowlisted CLI request remains pending after exec and connect settles it through the real gateway before retry",
         "the issue 5324 nemoclaw <name> exec transport reaches the local OpenClaw CLI pairing path",
         "the prepared connect shell keeps the injected gateway URL private while retaining port and token",
         "operator.admin remains pending until explicit device approval",
@@ -218,6 +220,24 @@ test(
       "operator.write",
     ]);
 
+    progress.phase("settle a post-onboarding allowlisted request through connect");
+    const allowlistedConnect = await host.command(
+      "bash",
+      ["-lc", allowlistedApprovalConnectScript(host.commandPath, SANDBOX_NAME)],
+      {
+        artifactName: "phase-3-4-connect-allowlisted-approval",
+        captureLimitBytes: 64 * 1024,
+        env: env(),
+        redactionValues: [apiKey],
+        timeoutMs: 4 * 60_000,
+      },
+    );
+    const allowlistedConnectText = resultText(allowlistedConnect);
+    expect(
+      allowlistedConnectText,
+      `Connect allowlisted approval proof failed with exit ${String(allowlistedConnect.exitCode)}`,
+    ).toContain("ISSUE_4462_ALLOWLISTED_RETRY_OK");
+
     progress.phase("trigger and approve an operator.admin request through connect");
     const cronName = `issue-5324-admin-${Date.now()}-${process.pid}`;
     const cronTrigger = await host.command(
@@ -252,7 +272,7 @@ test(
       },
     );
     const cronTriggerEvidence = preApprovalAdminProbeEvidence(cronTrigger);
-    await artifacts.writeJson("phase-3-trigger-admin-cron.json", cronTriggerEvidence);
+    await artifacts.writeJson("phase-5-trigger-admin-cron.json", cronTriggerEvidence);
     const cronTriggerRequestId = pendingAdminRequestId(cronTrigger);
     expect(
       cronTriggerRequestId,
@@ -271,7 +291,7 @@ test(
         ),
       ],
       {
-        artifactName: "phase-4-connect-admin-approval",
+        artifactName: "phase-6-connect-admin-approval",
         captureLimitBytes: 64 * 1024,
         env: env(),
         redactionValues: [apiKey],
@@ -279,10 +299,6 @@ test(
       },
     );
     const adminConnectSucceeded = resultText(adminConnect).includes("ISSUE_5324_ADMIN_APPROVAL_OK");
-    expect(
-      adminConnect.exitCode,
-      "Explicit admin approval failed; inspect the phase artifact",
-    ).toBe(0);
     expect(adminConnectSucceeded, "Explicit admin approval did not reach the settled state").toBe(
       true,
     );

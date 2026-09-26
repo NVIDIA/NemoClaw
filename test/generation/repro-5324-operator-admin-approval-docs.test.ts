@@ -61,6 +61,11 @@ describe("operator.admin manual approval documentation (#5324)", () => {
     expect(connect).toBeGreaterThanOrEqual(0);
     expect(list).toBeGreaterThan(connect);
     expect(approve).toBeGreaterThan(list);
+    expect(troubleshootingSection).toContain("Record the `requestId` from this native failure.");
+    expect(troubleshootingSection).toContain(
+      "whose `requestId` exactly matches the native failure",
+    );
+    expect(troubleshootingSection).toContain("approve only that same `requestId`");
     expect(troubleshootingSection).not.toContain("exec -- openclaw devices approve");
   });
 });

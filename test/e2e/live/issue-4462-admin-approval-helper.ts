@@ -5,6 +5,7 @@ export const ISSUE_4462_SCOPE_UPGRADE_PHASES = [
   "confirm configured runtime availability and clear the scope-upgrade sandbox",
   "install the OpenClaw sandbox",
   "prove onboarding settled operator.write",
+  "settle a post-onboarding allowlisted request through connect",
   "trigger and approve an operator.admin request through connect",
   "record the approval contract",
 ] as const;
