@@ -7,7 +7,10 @@ import { resultText } from "../fixtures/clients/command.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requirePublicNvidiaInferenceKey } from "../fixtures/inference-adapter.ts";
 import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
-import { buildProviderRoutedEnv } from "./model-router-provider-routed-inference-helpers.ts";
+import {
+  buildProviderRoutedEnv,
+  retainRouterDiagnostics,
+} from "./model-router-provider-routed-inference-helpers.ts";
 
 // Focused direct CLI/sandbox test: the contract is the real provider-routed
 // onboard boundary plus one ordinary sandbox inference.local completion.
@@ -81,21 +84,26 @@ test(
         timeoutMs: ONBOARD_TIMEOUT_MS,
       },
     );
-    expect(onboard.exitCode, resultText(onboard)).toBe(0);
+    try {
+      expect(onboard.exitCode, resultText(onboard)).toBe(0);
 
-    progress.phase("request a routed inference.local completion");
-    await runtime.expectInferenceLocalChatCompletion(
-      { sandboxName: SANDBOX_NAME },
-      {
-        artifactName: "sandbox-inference-local-routed-completion",
-        curlMaxTimeSeconds: 90,
-        maxTokens: 128,
-        model: "nvidia-routed",
-        prompt: "Reply with a short greeting.",
-        redactionValues: [apiKey],
-        timeoutMs: 120_000,
-      },
-    );
+      progress.phase("request a routed inference.local completion");
+      await runtime.expectInferenceLocalChatCompletion(
+        { sandboxName: SANDBOX_NAME },
+        {
+          artifactName: "sandbox-inference-local-routed-completion",
+          curlMaxTimeSeconds: 90,
+          maxTokens: 128,
+          model: "nvidia-routed",
+          prompt: "Reply with a short greeting.",
+          redactionValues: [apiKey],
+          timeoutMs: 120_000,
+        },
+      );
+    } finally {
+      // Record bounded status evidence before cleanup stops the router.
+      await retainRouterDiagnostics(artifacts);
+    }
 
     progress.phase("record the routed inference contract result");
     await artifacts.target.complete({
