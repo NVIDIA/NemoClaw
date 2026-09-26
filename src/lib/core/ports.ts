@@ -21,6 +21,7 @@ import {
   HTTPS_PIN_RUNTIME_ADAPTER_PORT,
   isHermesApiPort,
   OPENROUTER_RUNTIME_ADAPTER_PORT,
+  resolveConfiguredModelRouterPort,
   SANDBOX_DASHBOARD_PORT,
 } from "./protected-host-ports";
 import { parseServicePortOverride } from "./service-port-boundary";
@@ -43,6 +44,7 @@ export {
   HTTPS_PIN_RUNTIME_ADAPTER_PORT,
   isHermesApiPort,
   OPENROUTER_RUNTIME_ADAPTER_PORT,
+  resolveConfiguredModelRouterPort,
 };
 
 /**

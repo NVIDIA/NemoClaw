@@ -23,6 +23,8 @@ export const COMPATIBLE_ENDPOINT_GATEWAY_PORTS = [11434, 11435, VLLM_PORT] as co
 
 const COMPATIBLE_ENDPOINT_GATEWAY_PORT_SET = new Set<number>(COMPATIBLE_ENDPOINT_GATEWAY_PORTS);
 const LOOPBACK_BRIDGE_PROVIDERS = new Set(["compatible-endpoint", "llama-cpp-local"]);
+const NO_AUTH_PROXY_ENDPOINT_INELIGIBLE_ERROR =
+  "The no-authentication endpoint is no longer eligible for proxy routing.";
 
 /**
  * Validate the source identity of a compatible endpoint onboarded through the
@@ -72,6 +74,13 @@ export function isLoopbackNoAuthCompatibleEndpointUrl(
     !isProtectedNemoClawHostPort(port) &&
     !listRecordedGatewayPorts(resolveHome()).includes(port)
   );
+}
+
+/** Revalidate the no-auth endpoint at the proxy's final mutation boundary. */
+export function assertLoopbackNoAuthCompatibleEndpointUrl(endpointUrl: string): void {
+  if (!isLoopbackNoAuthCompatibleEndpointUrl("compatible-endpoint", endpointUrl)) {
+    throw new Error(NO_AUTH_PROXY_ENDPOINT_INELIGIBLE_ERROR);
+  }
 }
 
 /**

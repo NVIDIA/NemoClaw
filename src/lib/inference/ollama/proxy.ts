@@ -67,6 +67,7 @@ const {
 } = require("../../state/mcp-lifecycle-lock");
 const { openRegularFileNoFollow } = require("../../adapters/fs/regular-file");
 const {
+  assertNoAuthProxyEndpointEligible,
   formatOllamaProxyUnreachableMessage,
   probeOllamaProxySandboxReachability,
 } = require("../../onboard/ollama-proxy-reachability");
@@ -706,6 +707,7 @@ function noAuthProxy(endpointUrl: string) {
     if (persistedToken && persistedBackend.url !== endpoint.origin) {
       throw sharedProxyBackendConflict();
     }
+    assertNoAuthProxyEndpointEligible(endpointUrl);
 
     const proxyToken = persistedToken ?? generateProxyToken();
     if (

@@ -5,7 +5,7 @@ import { DEFAULT_OLLAMA_PROXY_PORT, OLLAMA_PROXY_PORT } from "./ollama-proxy-por
 import { DEFAULT_MODEL_ROUTER_PORT, resolveConfiguredModelRouterPort } from "./model-router-port";
 import { parseServicePortOverride } from "./service-port-boundary";
 
-export { DEFAULT_MODEL_ROUTER_PORT };
+export { DEFAULT_MODEL_ROUTER_PORT, resolveConfiguredModelRouterPort };
 
 export const DEFAULT_GATEWAY_PORT = 8080;
 /** Keep aligned with find_safe_alternate_gateway_port() in scripts/install.sh. */

@@ -21,7 +21,11 @@ import {
 import { type OpenRegularFile, openRegularFileNoFollow } from "../../adapters/fs/regular-file";
 import { type AgentBranding, getAgentBranding } from "../../cli/branding";
 import { isErrnoException } from "../../core/errno";
-import { DEFAULT_GATEWAY_PORT, DEFAULT_MODEL_ROUTER_PORT, GATEWAY_PORT } from "../../core/ports";
+import {
+  DEFAULT_GATEWAY_PORT,
+  GATEWAY_PORT,
+  resolveConfiguredModelRouterPort,
+} from "../../core/ports";
 import { isStdinTty, readLineFromStdin } from "../../core/stdin";
 import { sleepMs } from "../../core/wait";
 import {
@@ -191,6 +195,7 @@ export interface UninstallRunDeps {
   readLine?: () => string | null;
   requireCompleteGatewayProcessCleanup?: boolean;
   resolveGatewayTeardownAuthority?: GatewayTeardownAuthorityResolver;
+  resolveConfiguredModelRouterPort?: typeof resolveConfiguredModelRouterPort;
   retainedGatewayPorts?: readonly number[];
   rmSync?: typeof fs.rmSync;
   run?: (command: string, args: string[], options?: SpawnSyncOptions) => RunResult;
@@ -538,6 +543,7 @@ interface UninstallRuntime {
   readLine: () => string | null;
   requireCompleteGatewayProcessCleanup: boolean;
   resolveGatewayTeardownAuthority: GatewayTeardownAuthorityResolver;
+  resolveConfiguredModelRouterPort: typeof resolveConfiguredModelRouterPort;
   retainedGatewayPorts: readonly number[];
   rmSync: typeof fs.rmSync;
   run: (command: string, args: string[], options?: SpawnSyncOptions) => RunResult;
@@ -604,6 +610,8 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
     requireCompleteGatewayProcessCleanup: deps.requireCompleteGatewayProcessCleanup ?? false,
     resolveGatewayTeardownAuthority:
       deps.resolveGatewayTeardownAuthority ?? resolveGatewayTeardownAuthority,
+    resolveConfiguredModelRouterPort:
+      deps.resolveConfiguredModelRouterPort ?? resolveConfiguredModelRouterPort,
     retainedGatewayPorts: deps.retainedGatewayPorts ?? [],
     rmSync: deps.rmSync ?? fs.rmSync,
     run: deps.run ?? defaultRun,
@@ -1138,10 +1146,8 @@ function stopOllamaAuthProxy(
   if (stopped.size === 0) runtime.log("No Ollama auth proxy processes found");
 }
 
-function resolveModelRouterPort(_runtime: UninstallRuntime): number {
-  // Routed onboard profiles use blueprint port 4000 by default; a custom port
-  // would require reading the blueprint, which uninstall does not do today.
-  return DEFAULT_MODEL_ROUTER_PORT;
+function resolveModelRouterPort(runtime: UninstallRuntime): number {
+  return runtime.resolveConfiguredModelRouterPort();
 }
 
 function readOnboardSessionRouterPid(paths: UninstallPaths): number | null {
