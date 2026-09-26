@@ -197,6 +197,29 @@ describe("managed bootstrap sandbox registration", () => {
     ).toThrow(/does not match/u);
   });
 
+  it("promotes a created-unverified receipt with its managed bootstrap identity", () => {
+    const managedBootstrapIdentity = "c".repeat(64);
+    const boundary = {
+      sandboxName: "alpha",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      lifecycleGeneration,
+      lifecycleLiveIdentityFingerprint: durableIdentity,
+      managedBootstrapIdentity,
+      route: "native" as const,
+    };
+    const createdUnverified = pendingSandboxCreateIdentityForBoundary(
+      boundary,
+      null,
+      "created-unverified",
+    );
+
+    expect(pendingSandboxCreateIdentityForBoundary(boundary, createdUnverified)).toMatchObject({
+      state: "verified-create",
+      managedBootstrapIdentity,
+    });
+  });
+
   it("does not publish a resumed recreation without a persisted final handoff (#10560)", async () => {
     const checkpoint: PendingSandboxCreateIdentity = {
       schemaVersion: 1,

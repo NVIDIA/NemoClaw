@@ -40,7 +40,7 @@ export function normalizePendingSandboxCreateIdentity(
     !isRecord(value) ||
     Object.keys(value).some((key) => !KEYS.has(key) && !LEGACY_POLICY_KEYS.has(key)) ||
     value.schemaVersion !== 1 ||
-    value.state !== "verified-create" ||
+    (value.state !== "created-unverified" && value.state !== "verified-create") ||
     typeof value.gatewayName !== "string" ||
     value.gatewayName.length === 0 ||
     !Number.isSafeInteger(value.gatewayPort) ||
@@ -72,6 +72,10 @@ export function normalizePendingSandboxCreateIdentity(
       value.exactFinalHandoffRuntimeId === undefined) ||
     (value.exactFinalHandoffAcknowledged === true &&
       value.exactFinalHandoffCommitStarted !== true) ||
+    (value.state === "created-unverified" &&
+      (value.exactFinalHandoffCommitStarted !== undefined ||
+        value.exactFinalHandoffRuntimeId !== undefined ||
+        value.exactFinalHandoffAcknowledged !== undefined)) ||
     (value.route !== "none" && value.route !== "native" && value.route !== "compatibility")
   ) {
     throw new Error(
@@ -80,7 +84,7 @@ export function normalizePendingSandboxCreateIdentity(
   }
   return {
     schemaVersion: 1,
-    state: "verified-create",
+    state: value.state,
     gatewayName: value.gatewayName,
     gatewayPort: Number(value.gatewayPort),
     sandboxName: value.sandboxName,

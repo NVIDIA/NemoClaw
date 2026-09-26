@@ -501,7 +501,9 @@ Use the result from `destroy` to choose the next action:
 - If OpenShell reports the sandbox present, `destroy` preserves the record and removes no resources. OpenShell exposes no atomic delete-by-identity primitive. Neither NemoClaw nor manual inspection can bind a later mutable-name delete to the durable identity fingerprint. You can inspect the owning gateway for diagnosis, but do not delete the sandbox by mutable name. Live retained-sandbox removal is not supported yet. Use a different explicit sandbox name while this record remains blocked.
 - If OpenShell cannot determine whether the sandbox is present, `destroy` reports unknown presence, removes no resources, and preserves the recovery record. Correct the OpenShell gateway or list failure, then rerun `destroy`.
 - If OpenShell confirms the sandbox is absent, `destroy` selects one retained record from its registry generation, gateway, create-attempt evidence, and available identity fingerprint.
-  Before pending identity publication, it can instead select one record with a durable identity fingerprint when the pending reservation belongs to the recorded onboarding session, the saved session recovery evidence matches the record, and the registry has no lifecycle identity evidence.
+  If post-create readiness fails, NemoClaw records the returned sandbox identity in the pending reservation.
+  `destroy` can use that record when its identity matches the retained recovery record.
+  For an older unowned pending reservation with no lifecycle identity, `destroy` can remove only local recovery state after OpenShell confirms absence.
   Provider and Docker cleanup then apply their own immutable identity checks.
   `destroy` removes only qualified residual resources and clears the matching recovery record only after verified cleanup.
 - If the recovery record is ambiguous or immutable runtime-identity verification fails, cleanup stops and the record remains. For Docker-backed sandboxes, a foreign container, changed Docker identity, or failed Docker probe has the same fail-closed result.

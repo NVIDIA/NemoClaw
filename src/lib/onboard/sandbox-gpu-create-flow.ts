@@ -200,6 +200,12 @@ export interface SandboxGpuCreateFlowInput {
     sandboxIdentityFingerprint?: string,
     createAttemptNonce?: string,
   ) => boolean;
+  /** Persist the exact identity returned for a failed create before readiness can complete. */
+  persistUnverifiedCreateIdentity?: (identity: {
+    readonly createAttemptNonce: string;
+    readonly liveIdentityFingerprint: string;
+    readonly route: SelectedDockerGpuRoute;
+  }) => void;
   provider: string;
   sandboxGpuConfig: SandboxGpuConfig;
   gpuRoutePlan: import("./docker-gpu-route").DockerGpuRoutePlan;
@@ -361,6 +367,9 @@ export async function runSandboxGpuCreateFlow(
   }
   if (input.verifyCreatedSandboxBeforeEffects && !input.persistRetainedSandboxRecovery) {
     throw new Error("Verified sandbox creation requires durable create-attempt recovery evidence.");
+  }
+  if (input.verifyCreatedSandboxBeforeEffects && !input.persistUnverifiedCreateIdentity) {
+    throw new Error("Verified sandbox creation requires a durable create identity receipt.");
   }
   const hermesPortableLifecycle = input.hermesPortableLifecycle === true;
   if (hermesPortableLifecycle && (!input.lifecycleGeneration || !input.portableRuntimeAuthority)) {

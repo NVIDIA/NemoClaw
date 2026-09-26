@@ -174,6 +174,9 @@ function assertPendingCreateIdentityMatchesRegistration(
       "Cannot publish a sandbox registration after its verified create checkpoint changed",
     );
   }
+  if (checkpoint.state !== "verified-create") {
+    throw new Error("Cannot publish a sandbox registration before its create identity is verified");
+  }
   const reservation = authority.reservation;
   if (
     !isCurrentPendingSandboxCreateReservation(reservation, reservation.entry) ||
@@ -234,7 +237,7 @@ function assertPendingCreateIdentityMatchesRegistration(
   }
 }
 
-/** Persist the exact verified create boundary before any unrelated post-create effect. */
+/** Persist one exact create boundary before any later create or post-create effect. */
 export function recordPendingSandboxCreateIdentity(
   reservation: QualifiedPendingSandboxCreateReservation,
   value: PendingSandboxCreateIdentity,
@@ -279,6 +282,8 @@ export function recordPendingSandboxCreateIdentity(
       }
     } else {
       const expectedEntry = pendingVerifiedCreateEntry(reservation, expected);
+      const { state: _expectedState, ...expectedIdentity } = expected;
+      const { state: _checkpointState, ...checkpointIdentity } = checkpoint;
       if (
         !recordedCheckpoint ||
         !isDeepStrictEqual(current, expectedEntry) ||
@@ -288,7 +293,16 @@ export function recordPendingSandboxCreateIdentity(
         checkpoint.sandboxName !== expected.sandboxName
       ) {
         throw new Error(
-          `Cannot replace sandbox '${name}' verified create checkpoint without exact authority`,
+          `Cannot replace sandbox '${name}' create checkpoint without exact authority`,
+        );
+      }
+      if (
+        expected.state === "created-unverified" &&
+        (checkpoint.state !== "verified-create" ||
+          !isDeepStrictEqual(checkpointIdentity, expectedIdentity))
+      ) {
+        throw new Error(
+          `Cannot promote sandbox '${name}' create checkpoint without its exact immutable receipt`,
         );
       }
     }

@@ -142,13 +142,17 @@ function selectRetainedSandboxRecoveryAuthority(
     const pending = sandbox.pendingCreateIdentity;
     if (pending) {
       return (
+        pending.sandboxName === sandbox.name &&
+        pending.gatewayName === sandbox.gatewayName &&
+        pending.gatewayPort === sandbox.gatewayPort &&
+        pending.lifecycleGeneration === sandbox.lifecycleGeneration &&
+        pending.sandboxIdentityFingerprint === sandbox.lifecycleLiveIdentityFingerprint &&
         record.gatewayName === pending.gatewayName &&
         record.gatewayPort === pending.gatewayPort &&
         record.lifecycleGeneration === pending.lifecycleGeneration &&
-        (record.sandboxIdentityFingerprint === null ||
-          record.sandboxIdentityFingerprint === pending.sandboxIdentityFingerprint) &&
-        (pending.createAttemptNonce === undefined ||
-          record.createAttemptNonce === pending.createAttemptNonce)
+        record.sandboxIdentityFingerprint !== null &&
+        record.sandboxIdentityFingerprint === pending.sandboxIdentityFingerprint &&
+        record.createAttemptNonce === pending.createAttemptNonce
       );
     }
     const sessionOwnedUnpublishedReservation =
@@ -163,6 +167,17 @@ function selectRetainedSandboxRecoveryAuthority(
       sandbox.lifecycleLiveIdentityFingerprint === undefined &&
       onboardSession.retainedSandboxRecoveryMatchesSession(record, session);
     if (sessionOwnedUnpublishedReservation) return true;
+    const legacyUnownedUnpublishedReservation =
+      record.sandboxIdentityFingerprint !== null &&
+      sandbox.pendingRouteReservation === true &&
+      sandbox.reservationSessionId === undefined &&
+      sandbox.name === record.sandboxName &&
+      sandbox.gatewayName === record.gatewayName &&
+      sandbox.gatewayPort === record.gatewayPort &&
+      sandbox.pendingCreateIdentity === undefined &&
+      sandbox.lifecycleGeneration === undefined &&
+      sandbox.lifecycleLiveIdentityFingerprint === undefined;
+    if (legacyUnownedUnpublishedReservation) return true;
     return (
       record.gatewayName === sandbox.gatewayName &&
       record.gatewayPort === sandbox.gatewayPort &&

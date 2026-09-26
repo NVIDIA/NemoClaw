@@ -12,7 +12,8 @@ import type { SandboxMessagingState } from "../registry-messaging";
 /** Bounded identity checkpoint for one incomplete sandbox create. */
 export interface PendingSandboxCreateIdentity {
   readonly schemaVersion: 1;
-  readonly state: "verified-create";
+  /** Creation reached an exact OpenShell identity, but readiness has not yet been verified. */
+  readonly state: "created-unverified" | "verified-create";
   readonly gatewayName: string;
   readonly gatewayPort: number;
   readonly sandboxName: string;

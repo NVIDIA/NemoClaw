@@ -690,6 +690,57 @@ describe("sandbox registry normalization", () => {
     });
   });
 
+  it("retains a created-but-unverified checkpoint without final-handoff state", async () => {
+    const { registry } = await loadRegistryDocument({
+      defaultSandbox: null,
+      sandboxes: {
+        alpha: {
+          name: "alpha",
+          pendingRouteReservation: true,
+          pendingCreateIdentity: {
+            schemaVersion: 1,
+            state: "created-unverified",
+            gatewayName: "nemoclaw",
+            gatewayPort: 8080,
+            sandboxName: "alpha",
+            lifecycleGeneration: "generation",
+            sandboxIdentityFingerprint: "a".repeat(64),
+            route: "native",
+          },
+        },
+      },
+    });
+
+    expect(registry.getSandbox("alpha")?.pendingCreateIdentity).toMatchObject({
+      state: "created-unverified",
+      sandboxIdentityFingerprint: "a".repeat(64),
+    });
+  });
+
+  it("rejects final-handoff state in a created-but-unverified checkpoint", async () => {
+    const registry = await loadRegistryWith({
+      alpha: {
+        name: "alpha",
+        pendingRouteReservation: true,
+        pendingCreateIdentity: {
+          schemaVersion: 1,
+          state: "created-unverified",
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+          sandboxName: "alpha",
+          lifecycleGeneration: "generation",
+          sandboxIdentityFingerprint: "a".repeat(64),
+          route: "native",
+          exactFinalHandoffCommitStarted: true,
+        },
+      },
+    });
+
+    expect(() => registry.getSandbox("alpha")).toThrow(
+      /invalid pending sandbox create verification/u,
+    );
+  });
+
   it.each([
     ["an acknowledgement without a commit fence", { exactFinalHandoffAcknowledged: true }],
     ["a false commit fence", { exactFinalHandoffCommitStarted: false }],
