@@ -365,19 +365,68 @@ export function openClawAgentResponseRecord(doc: unknown): UnknownRecord | null 
   return null;
 }
 
-/** The declared run-metadata record from an agent response envelope. */
-function agentResponseMetaRecord(doc: unknown): UnknownRecord | null {
-  const response = openClawAgentResponseRecord(doc);
-  return response && isObjectRecord(response.meta) ? response.meta : null;
-}
+type AgentResponse = { doc: unknown; response: UnknownRecord; meta: UnknownRecord };
 
 /** Select the final agent response without treating JSON log records as responses. */
-function finalAgentResponseMetaRecord(docs: unknown[]): UnknownRecord | null {
+function finalAgentResponse(docs: unknown[]): AgentResponse | null {
   for (let index = docs.length - 1; index >= 0; index -= 1) {
-    const meta = agentResponseMetaRecord(docs[index]);
-    if (meta) return meta;
+    const doc = docs[index];
+    const response = openClawAgentResponseRecord(doc);
+    if (response && isObjectRecord(response.meta)) return { doc, response, meta: response.meta };
   }
   return null;
+}
+
+const SETTLED_TOOL_FALLBACK_TEXT =
+  "The tool run finished, but no final summary was produced. I did not repeat any completed actions.";
+
+function isNonEmptyString(value: unknown): boolean {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+/** A payload with visible text or media that is not an error or reasoning. */
+function isDeliveredReply(payload: unknown): boolean {
+  if (!isObjectRecord(payload) || payload.isError === true || payload.isReasoning === true) {
+    return false;
+  }
+  return (
+    isNonEmptyString(payload.text) ||
+    isNonEmptyString(payload.mediaUrl) ||
+    (Array.isArray(payload.mediaUrls) && payload.mediaUrls.some(isNonEmptyString))
+  );
+}
+
+/** OpenClaw's fixed reply when a tool turn settles without a final answer. */
+function isSettledToolFallback(payload: unknown): boolean {
+  return isObjectRecord(payload) && String(payload.text).trim() === SETTLED_TOOL_FALLBACK_TEXT;
+}
+
+/**
+ * OpenClaw sets replayInvalid on every turn that ran a mutating tool, so it
+ * alone does not mean the turn is incomplete (#11844).
+ */
+function isCompletedToolTurn({ doc, response, meta }: AgentResponse): boolean {
+  if (
+    doc !== response &&
+    (!isObjectRecord(doc) || doc.status !== "ok" || doc.summary !== "completed")
+  ) {
+    return false;
+  }
+  const tools = meta.toolSummary;
+  return (
+    meta.livenessState === "working" &&
+    meta.stopReason === "stop" &&
+    meta.aborted !== true &&
+    meta.error === undefined &&
+    meta.continuationPending !== true &&
+    isObjectRecord(tools) &&
+    typeof tools.calls === "number" &&
+    tools.calls > 0 &&
+    tools.failures === 0 &&
+    Array.isArray(response.payloads) &&
+    response.payloads.some(isDeliveredReply) &&
+    !response.payloads.some(isSettledToolFallback)
+  );
 }
 
 /** The phase the run's deadline fired in, or null when the run did not time out. */
@@ -388,9 +437,12 @@ function timedOutPhase(meta: UnknownRecord): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+const REPLAY_INVALID_MARKER = "replayInvalid=true";
+
+/** The incomplete-turn markers present in the run metadata. */
 function turnMetaMarkers(meta: UnknownRecord): string[] {
   const markers: string[] = [];
-  if (meta.replayInvalid === true) markers.push("replayInvalid=true");
+  if (meta.replayInvalid === true) markers.push(REPLAY_INVALID_MARKER);
   if (normalized(meta.livenessState) === ABANDONED_LIVENESS_VALUE) {
     markers.push(`livenessState=${String(meta.livenessState)}`);
   }
@@ -414,10 +466,14 @@ export function openClawAgentIncompleteTurnSignal(
 ): OpenClawIncompleteTurnSignal | null {
   const docs = parseOpenClawJsonDocuments(raw);
   if (docs.length === 0) return null;
-  const meta = finalAgentResponseMetaRecord(docs);
-  if (!meta) return null;
+  const final = finalAgentResponse(docs);
+  if (!final) return null;
+  const { meta } = final;
   const markers = dedupe(turnMetaMarkers(meta));
   if (markers.length === 0) return null;
+  if (markers.length === 1 && markers[0] === REPLAY_INVALID_MARKER && isCompletedToolTurn(final)) {
+    return null;
+  }
   const timeoutPhase = timedOutPhase(meta);
   return timeoutPhase ? { markers, timeoutPhase } : { markers };
 }
