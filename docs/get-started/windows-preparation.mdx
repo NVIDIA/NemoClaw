@@ -208,7 +208,8 @@ The proof-backed GPU identity or a Windows chassis model that reports `RTX Spark
 The chassis model does not establish N1x WSL identity.
 Both providers run the same pinned CUDA workload and capacity query; their provider implementation owns the GPU injection arguments.
 When `qwen3.6:35b` is installed and that proof reports at least 30,000 MiB available, NemoClaw selects it before `qwen3.5:9b`.
-Other Windows on Arm GPUs remain compute-constrained and select `qwen3.5:9b` instead of the 30B and 35B starter models.
+A Windows on Arm host with multiple GPUs uses the provider proof to validate every reported device and its aggregate capacity, but that proof does not qualify a generic host for automatic 30B or 35B selection.
+Only the N1x qualification described above can select `qwen3.6:35b`; other Windows on Arm GPUs remain compute-constrained and select `qwen3.5:9b`.
 <AgentOnly variant="openclaw">
 For the selection boundary and remaining N1X limitations, refer to [Use Ollama for Local Inference](/user-guide/openclaw/inference/local-inference/set-up-ollama).
 </AgentOnly>

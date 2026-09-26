@@ -70,17 +70,15 @@ function buildPreamble({
   sandboxAgent = "openclaw",
   channelInRegistry = "whatsapp",
   sandboxExecResult = { status: 0, stdout: "NEMOCLAW_CHANNEL_CLEAR_OK", stderr: "" },
-  sshFallbackResult = null as { status: number; stdout: string; stderr: string } | null,
   stoppedDockerCleanupResult = {
     cleared: false,
-    failure: "state-resource-unavailable",
+    failure: "runtime-not-stopped",
   } as { cleared: true } | { cleared: false; failure: string; cleanupHelperName?: string },
 }: {
   presetNamesApplied?: string[];
   sandboxAgent?: MessagingAgentId;
   channelInRegistry?: string;
   sandboxExecResult?: { status: number; stdout: string; stderr: string } | null;
-  sshFallbackResult?: { status: number; stdout: string; stderr: string } | null;
   stoppedDockerCleanupResult?:
     | { cleared: true }
     | { cleared: false; failure: string; cleanupHelperName?: string };
@@ -115,26 +113,44 @@ function buildPreamble({
     });
   };
   return String.raw`
+const childProcess = require("node:child_process");
+const sandboxSshCalls = [];
+function rejectSsh(command, args) {
+  const executable = Array.isArray(command) ? command[0] : String(command).trim().split(/\s+/)[0];
+  if (require("node:path").basename(executable) !== "ssh") return;
+  sandboxSshCalls.push({ command, args });
+  throw new Error("unexpected SSH execution during channel removal");
+}
+for (const method of ["spawn", "spawnSync", "execFile", "execFileSync"]) {
+  const original = childProcess[method];
+  childProcess[method] = (command, ...args) => {
+    rejectSsh(command, args);
+    return original(command, ...args);
+  };
+}
+require("node:module").syncBuiltinESMExports();
+
 const resolver = require(${j("adapters/openshell/resolve.js")});
 resolver.resolveOpenshell = () => "/fake/openshell";
 
 const runner = require(${j("runner.js")});
-runner.run = () => ({ status: 0, stdout: "", stderr: "" });
-runner.runCapture = () => "";
+runner.run = (command) => {
+  rejectSsh(command);
+  return { status: 0, stdout: "", stderr: "" };
+};
+runner.runCapture = (command) => {
+  rejectSsh(command);
+  return "";
+};
 
 const adapterRuntime = require(${j("adapters/openshell/runtime.js")});
 adapterRuntime.runOpenshell = () => ({ status: 0, stdout: "", stderr: "" });
 
-const processRecovery = require(${j("actions/sandbox/process-recovery.js")});
+const commandTransport = require(${j("adapters/sandbox/command-transport.js")});
 const sandboxExecCalls = [];
-const sandboxSshCalls = [];
-processRecovery.executeSandboxExecCommand = (sandboxName, command) => {
+commandTransport.executeSandboxExecCommand = (sandboxName, command) => {
   sandboxExecCalls.push({ sandboxName, command });
   return ${JSON.stringify(sandboxExecResult)};
-};
-processRecovery.executeSandboxCommand = (sandboxName, command) => {
-  sandboxSshCalls.push({ sandboxName, command });
-  return ${JSON.stringify(sshFallbackResult)};
 };
 
 const gatewayRuntime = require(${j("gateway-runtime-action.js")});
@@ -282,7 +298,6 @@ const ctx = module.exports;
       sandboxAgent: "openclaw",
       channelInRegistry: "wechat",
       sandboxExecResult: { status: 1, stdout: "", stderr: "startup failed" },
-      sshFallbackResult: { status: 255, stdout: "", stderr: "sandbox stopped" },
       stoppedDockerCleanupResult: { cleared: true },
     })}
 const ctx = module.exports;
@@ -291,6 +306,7 @@ const ctx = module.exports;
     await ctx.channelModule.removeSandboxChannel("test-sb", { channel: "wechat" });
     process.stdout.write("\\n__RESULT__" + JSON.stringify({
       stoppedDockerCleanupCalls: ctx.stoppedDockerCleanupCalls,
+      sandboxExecCalls: ctx.sandboxExecCalls,
       removedPresets: ctx.removedPresets,
       registryUpdates: ctx.registryUpdates,
       exitCode: ctx.getExitCode(),
@@ -307,6 +323,11 @@ const ctx = module.exports;
     const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
     assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
     assert.equal(payload.exitCode, null);
+    assert.equal(
+      payload.sandboxExecCalls.length,
+      0,
+      "stopped-state cleanup must be selected before native execution",
+    );
     assert.deepEqual(payload.stoppedDockerCleanupCalls, [
       {
         sandboxName: "test-sb",
@@ -328,7 +349,6 @@ const ctx = module.exports;
       sandboxAgent: "openclaw",
       channelInRegistry: "telegram",
       sandboxExecResult: { status: 1, stdout: "", stderr: "sandbox stopped" },
-      sshFallbackResult: { status: 255, stdout: "", stderr: "sandbox stopped" },
       stoppedDockerCleanupResult: { cleared: true },
     })}
 const ctx = module.exports;
@@ -337,6 +357,7 @@ const ctx = module.exports;
     await ctx.channelModule.removeSandboxChannel("test-sb", { channel: "wechat" });
     process.stdout.write("\\n__RESULT__" + JSON.stringify({
       stoppedDockerCleanupCalls: ctx.stoppedDockerCleanupCalls,
+      sandboxExecCalls: ctx.sandboxExecCalls,
       exitCode: ctx.getExitCode(),
     }) + "\\n");
   } catch (err) {
@@ -399,7 +420,6 @@ const ctx = module.exports;
         sandboxAgent: "openclaw",
         channelInRegistry: "wechat",
         sandboxExecResult: { status: 1, stdout: "", stderr: "sandbox stopped" },
-        sshFallbackResult: { status: 255, stdout: "", stderr: "sandbox stopped" },
         stoppedDockerCleanupResult: cleanup,
       })}
 const ctx = module.exports;
@@ -514,62 +534,10 @@ const ctx = module.exports;
     },
   );
 
-  it("falls back to SSH when sandbox-exec wrapper does not return the sentinel", () => {
-    const script = `${buildPreamble({
-      sandboxAgent: "openclaw",
-      sandboxExecResult: null,
-      sshFallbackResult: { status: 0, stdout: "NEMOCLAW_CHANNEL_CLEAR_OK", stderr: "" },
-    })}
-const ctx = module.exports;
-(async () => {
-  try {
-    await ctx.channelModule.removeSandboxChannel("test-sb", { channel: "whatsapp" });
-    process.stdout.write("\\n__RESULT__" + JSON.stringify({
-      sandboxExecCalls: ctx.sandboxExecCalls,
-      sandboxSshCalls: ctx.sandboxSshCalls,
-      removedPresets: ctx.removedPresets,
-      callOrder: ctx.callOrder,
-      exitCode: ctx.getExitCode(),
-    }) + "\\n");
-  } catch (err) {
-    process.stdout.write("\\n__RESULT__" + JSON.stringify({ error: err.message, stack: err.stack }) + "\\n");
-  }
-})();
-`;
-    const result = runScript(script);
-    assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    assert.ok(marker >= 0, `no __RESULT__ marker:\n${result.stdout}`);
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
-
-    assert.equal(
-      payload.exitCode,
-      null,
-      `must not exit when SSH fallback recovers; got exitCode=${payload.exitCode}`,
-    );
-    assert.equal(payload.sandboxExecCalls.length, 1, "exec attempt must run first");
-    assert.equal(
-      payload.sandboxSshCalls.length,
-      1,
-      "SSH fallback must run once when exec returns null",
-    );
-    assert.deepEqual(
-      payload.removedPresets,
-      [{ sandboxName: "test-sb", presetName: "whatsapp" }],
-      "remove flow must continue after SSH-recovered cleanup",
-    );
-    assert.ok(
-      payload.callOrder.includes("promptAndRebuild"),
-      `rebuild must be queued after SSH-recovered cleanup; callOrder=${JSON.stringify(payload.callOrder)}`,
-    );
-  });
-
-  it("aborts before rebuild when both exec and SSH cleanup fail for a QR channel", () => {
+  it("aborts before rebuild after native cleanup fails without trying SSH", () => {
     const script = `${buildPreamble({
       sandboxAgent: "openclaw",
       sandboxExecResult: { status: 1, stdout: "", stderr: "sandbox is not running" },
-      sshFallbackResult: { status: 255, stdout: "", stderr: "ssh: connect to host ... failed" },
     })}
 const ctx = module.exports;
 (async () => {
@@ -621,12 +589,8 @@ const ctx = module.exports;
     assert.equal(cleanupCalls.length, 1, "expected the rm -rf attempt that failed");
     assert.equal(
       payload.sandboxSshCalls.length,
-      1,
-      `SSH fallback must be attempted before aborting; sandboxSshCalls=${JSON.stringify(payload.sandboxSshCalls)}`,
-    );
-    assert.ok(
-      payload.sandboxSshCalls[0].command.startsWith("rm -rf"),
-      `SSH fallback must invoke the rm -rf cleanup; got ${payload.sandboxSshCalls[0].command}`,
+      0,
+      "failed native cleanup must not retry through SSH",
     );
   });
 
@@ -636,7 +600,6 @@ const ctx = module.exports;
       sandboxAgent: "openclaw",
       channelInRegistry: "telegram",
       sandboxExecResult: { status: 1, stdout: "", stderr: "sandbox is not running" },
-      sshFallbackResult: { status: 255, stdout: "", stderr: "ssh: connect to host ... failed" },
     })}
 const ctx = module.exports;
 (async () => {

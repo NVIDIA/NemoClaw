@@ -743,10 +743,7 @@ export function createSetupInference(
           // refuses this one and blames a session that no longer exists
           // (#11051). Release it here, before the first write, so the refusal
           // is reserved for a reservation that is genuinely contended.
-          if (releaseAbandonedRouteReservation(name)) {
-            deps.log(`  Released an abandoned inference route reservation for sandbox '${name}'.`);
-          }
-          const reserved = deps.updateSandbox(name, {
+          const route: Parameters<SetupInferenceDeps["updateSandbox"]>[1] = {
             provider: selectedProvider,
             model: selectedModel,
             endpointUrl: hostLocalRoute?.applicationBaseUrl ?? endpointUrl,
@@ -763,7 +760,11 @@ export function createSetupInference(
             ...(hostLocalInferenceProvenance && hostLocalInferenceRuntimeProviderId
               ? { openshellDriver: hostLocalInferenceRuntimeProviderId }
               : {}),
-          });
+          };
+          if (releaseAbandonedRouteReservation(name, route)) {
+            deps.log(`  Released an abandoned inference route reservation for sandbox '${name}'.`);
+          }
+          const reserved = deps.updateSandbox(name, route);
           routeReserved = reserved;
           return reserved;
         };

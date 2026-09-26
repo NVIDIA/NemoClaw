@@ -162,8 +162,10 @@ credentials, and must pass.
 These are two required acceptance executions, not retries; either failure remains a failed check.
 The concurrent-add probe retries only the rejected command after status proves that the other
 command committed one coherent bridge. The rejected command must report the exact portable
-host-lock timeout. The retry runs once, has its own command artifact, and must succeed idempotently
-from the verified committed source. Production Hermes add owns reload-transport reconciliation, so
+host-lock timeout, optionally followed by the current recorded-owner-is-still-running remediation.
+Unknown or unverifiable-owner diagnostics remain failures. The deterministic classifier and one-retry
+bound are covered by `support/mcp-bridge-reliability.test.ts`. The retry has its own command artifact
+and must succeed idempotently from the verified committed source. Production Hermes add owns reload-transport reconciliation, so
 the E2E boundary does not retry a Hermes mutation after transport loss.
 The workflow records one publication cohort before its PR producer matrix runs. Failed-job reruns
 reuse that cohort and replace only the stable run-scoped artifact owned by each retried agent.
@@ -172,6 +174,34 @@ reject mixed cohorts, another run, a future attempt, and another candidate revis
 The managed-image scope does not claim trusted-private DNS-rebinding coverage: host and sandbox
 `/etc/hosts` fixtures do not control the OpenShell supervisor's egress resolver. Full MCP bridge E2E
 coverage retains that assertion for environments with supervisor-authoritative DNS.
+The trusted-private HTTPS fixture records bounded TLS, request-header, and completed-body counters
+before the status assertion and during final cleanup. TLS errors use fixed code buckets; these
+diagnostics contain no raw errors, request data, or credentials and do not establish successful
+authenticated discovery. The server and event streams close before final diagnostic persistence.
+Persistence has a 10-second deadline; a write failure or timeout is reported after resource cleanup,
+so later cleanup entries can continue.
+Onboarding repair and resume fixtures capture bounded, read-only Podman ownership observations
+before and after the resumed command. They retain only validated fixed-schema facts and never raw
+child output. These separate observations do not replace the production ownership decision or prove
+which predicate rejected an earlier invocation; command results and cleanup remain authoritative.
+
+Full MCP bridge E2E also owns the supervisor's corporate-CA TLS consumer check:
+onboarding receives the fixture CA through `NEMOCLAW_CORPORATE_CA_BUNDLE`, and the
+trusted-private probe must discover authenticated tools from the HTTPS fixture
+signed by that CA through supervisor egress. Cloud onboarding separately verifies
+installed bundle contents and permissions; file presence alone is not TLS-consumer
+evidence. The managed-startup unit tests own activation ordering and identity checks.
+
+If the Hermes replacement-credential restart or subsequent bridge removal fails, MCP E2E captures host-side
+OpenShell supervisor logs and the runtime container's state and startup output
+before asserting the original failure. These reads remain available when sandbox
+exec is rejected in `Error` state. Container reads require exactly one validated
+runtime resource handle. Each output stream is limited to 32 KiB and each command to 30 seconds; log
+capture retains at most 200 lines from the last two minutes for OpenShell and
+three minutes for the runtime container, with fixture credentials redacted.
+Diagnostic acquisition does not retry the mutation or replace its result.
+OpenClaw launch evidence reports whether a SQLite rejection concerns file metadata or the transcript table, without exposing paths, identities, or session contents. The existing evidence checks remain required.
+A failed native weather-plugin invocation also records unauthenticated liveness and readiness HTTP status codes, bounded to two three-second probes. It does not repeat the tool invocation or replace its failure.
 
 The same workflow publishes each Pi pull-request candidate by immutable digest after validating the
 local image, removes registry credentials, validates the anonymously pullable digest, and uploads a
@@ -415,6 +445,15 @@ credential reference, and independently observed effective policy.
 The fixture compares the registry before and after export, and state validation confirms that the
 sandbox remains ready after the read-only command.
 
+The OpenClaw shard of the pinned Docker `mcp-bridge` target also owns Error-state recovery for
+OpenShell 0.0.116. After its healthy-source rebuild checks, it kills only the runtime bound to the
+test-created native sandbox ID, observes Error, and rebuilds without reintroducing the MCP host
+secret. A different container must preserve a workspace marker and complete the authenticated MCP
+tool call with the existing denial rule. The Podman and explicit-only development-runtime targets
+retain their existing bridge checks and record this additional Docker compatibility proof as not
+applicable. Capture validation, credential sanitization, source drift refusals and lifecycle-transition
+rules remain covered by source and component tests.
+
 The `sandbox-operations` target owns live final-gateway cleanup on the Docker-backed OpenShell
 boundary. It leaves one sandbox live after removing only its local registry entry, then requires a
 `destroy --cleanup-gateway` of the registered sandbox to preserve the gateway, report the live
@@ -422,6 +461,14 @@ sandbox and recovery commands, and exit nonzero. After cleanup, it onboards and 
 sandbox,
 requires the bounded command to finish, and proves both the sandbox and gateway runtime are absent.
 Deterministic destroy tests own the exact 30-second retry schedule and delayed-list sequence.
+
+`deferred-onboarding-hermes` and `deferred-onboarding-langchain-deepagents-code` exercise the
+public installer and the installed `nemohermes` or `nemo-deepagents` command on Docker and Podman. The installer child receives
+none of the three accepted inference credential variables. The test verifies that installation does
+not create a sandbox, complete onboarding, or register a gateway, then supplies the public NVIDIA
+credential and completes onboarding in the same home. The `nvidia-api` profile owns that credential;
+the test uses it only for the continuation command. Installer-plan and installer integration tests
+own provider classification, invalid inputs, and the deterministic decision matrix.
 
 `tools/e2e/target-catalogue.mts` declares live E2E targets that share one execution shape.
 Each entry owns these target properties:
@@ -509,20 +556,14 @@ inference through the managed route and backend, replacing two duplicate raw cha
 The GPU memory-offload assertion also rejects a missing matching process because its memory value
 is then `NaN`; a separate process-existence assertion is unnecessary. Authentication denial,
 runtime ownership, Ready state, and cleanup assertions remain unchanged.
-The `gpu-e2e` target also verifies that attached-Ollama export remains refused while v1alpha1 compatibility is deferred.
-A separate OpenClaw scenario disables direct sandbox GPU and uses normal onboarding to create the
-managed proxy on the target's shared port. It stops the installer service before starting a fixture-owned
-daemon on port 11439 and preparing the selected `qwen2.5:0.5b` model.
-It invokes the candidate CLI and real SDK once, requires an unsupported-compatibility failure, and verifies that no YAML file is published.
-The export evidence JSON records only the sandbox name, deferred compatibility, and prevented publication.
-The scenario does not qualify successful export, a secondary-agent roster, repeated-document equality, or stopped-daemon refusal.
-Those outcomes remain required for #11858 after #11928 and #12012 provide the target contract and exporter mapping.
-The existing CUDA, authentication, and inference lifecycle scenarios remain separate.
-Onboarding and model preparation each have a 20-minute limit within the 75-minute test timeout; the catalogue allows 90 minutes for the target.
+The `gpu-e2e` target also qualifies attached-Ollama and fixed managed-vLLM configuration export on
+native Linux Docker. Each scenario runs the candidate CLI, checks its named service and `image: null`,
+rejects credential disclosure, and retains the generated YAML. The existing CUDA, authentication,
+and inference lifecycle scenarios remain separate. The catalogue allows 150 minutes for this target.
 The fixture retries read-only daemon readiness checks on connection refusal or curl
 timeout, for at most 20 reads. It records each attempt and stops on any other failure; model
 preparation, onboarding, and export mutations are not retried.
-Cleanup destroys the sandbox before stopping the fixture daemon and removes the private output directory.
+Cleanup destroys each sandbox before its inference runtime and removes private output files.
 Retained workflow jobs are exceptions to the catalogue shape.
 Keep one only for a multi-job handoff, an unrepresented credential boundary, or an execution contract the reusable profile cannot represent.
 
@@ -820,8 +861,16 @@ job and the image-ownership contract it existed to verify.
 The standard `full-e2e` target now owns native OpenClaw installation,
 invocation, update command access, local-source replacement, self-update dry
 run, restart survival, credential non-exposure, and removal in one sandbox.
+After replacing plugin v1 with v2, it restarts through the native gateway
+command and invokes the updated tool through the running gateway. A separate
+CLI inspection cannot prove that the gateway discarded its cached plugin code.
 `rebuild-openclaw` proves a user-installed native plugin survives rebuild with
-no NemoClaw ownership metadata. `rebuild-hermes` proves native user-plugin and
+no NemoClaw ownership metadata. On the pinned Docker runtime it then kills the exact test-owned
+container, observes `Error`, and requires a different container to restore both the workspace and
+native plugin, with the OpenClaw health endpoint ready. This uses the same identity-fenced disruption
+helper as the MCP target, but reaches recovery independently of MCP networking. The retained receipt
+identifies whether native readiness or provider-backed MCP was proved; neither substitutes for the
+other. The original healthy-source checks and all MCP assertions remain in place. `rebuild-hermes` proves native user-plugin and
 lazy-package state survive rebuild. Managed-image activation exercises native
 OpenClaw and Hermes discovery before and after gateway restart. Deterministic
 state-restore tests prove complete native directories are archived without
@@ -851,9 +900,14 @@ supported outcomes now have these owners:
 | Removed assertion | Retained owner |
 |---|---|
 | Install, PATH setup, list, status, hosted inference, and sandbox inference succeed. | `full-e2e` |
-| Sandbox state contains no `auth-profiles.json` or secret-shaped credential values. | `full-e2e` and `test/e2e/support/sandbox-credential-boundary.test.ts` |
+| Fresh managed sandbox state contains no `auth-profiles.json` or secret-shaped credential values. | `full-e2e` and `test/e2e/support/sandbox-credential-boundary.test.ts` |
 | Repository skills contain valid frontmatter and content. | `test/repository/repo-skills-validation.test.ts` |
 | `/sandbox/.openclaw` and `openclaw.json` have the required image layout. | `test/e2e-runtime/managed-image-openclaw-security.test.ts` |
+
+The fresh-sandbox check starts without user-managed profiles. Existing-state cleanup preserves
+unrelated profiles, as covered by `test/agents/openclaw/runtime/auth-profile-boundary.test.ts`.
+That component fixture also observes which profiles reach Doctor in root and non-root startup.
+`full-e2e` exercises native Doctor lint and agent turns.
 
 The optional `/sandbox/.openclaw/skills` directory had no pass or fail state.
 The deleted provider retry classifier and sandbox-layout wrapper served only the
@@ -1383,6 +1437,11 @@ series for one execution only; this telemetry does not maintain cross-run
 rolling history or write to the GitHub Actions step summary. Both output files
 are private regular files on the runner (`0600`) with strict per-line and total
 size limits.
+
+Cloud onboarding creates its disposable installer workspace and isolated `HOME`
+under the runner account's home directory. Native SDK lifecycle operations require
+trusted gateway-state ancestors, so this workspace must not live beneath the
+world-writable system temporary directory. The test cleanup removes the workspace.
 
 Raw cloud-onboard traces stay under the runner temporary directory. Before
 artifact upload, `scripts/e2e/sanitize-trace-timing.py` reduces them to the

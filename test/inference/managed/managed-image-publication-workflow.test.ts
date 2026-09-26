@@ -32,7 +32,7 @@ import type { Job, Workflow } from "../../helpers/managed-image-publication-work
 
 const fullShaAction = /^[^@]+@[0-9a-f]{40}$/iu;
 const reviewedAuditAction = "NVIDIA/NemoClaw/.github/actions/ci-reviewed-npm-audit@";
-const reviewedAuditSha = "5310ad0a5c25d49f06910525456ea2529506b3ae";
+const reviewedAuditSha = "8ed889c14ccd7e828a9fbc20606cc7c587e6ca31";
 
 function needsOutput(job: string, output: string): string {
   return `\${{ needs.${job}.outputs.${output} }}`;
@@ -777,21 +777,33 @@ describe("complete managed-image publication workflow", () => {
     const workflow = readWorkflow("managed-images.yaml");
     const activation = managedPrActivation(workflow);
     const steps = activation.steps ?? [];
+    const approvalFixturePaths = [
+      "test/e2e/fixtures/admin-approval-connect.sh",
+      "test/e2e/fixtures/admin-approval-connect.ts",
+      "test/e2e/fixtures/admin-request-selector.ts",
+      "test/e2e/fixtures/issue-4462-admin-approval-evidence.ts",
+      "test/e2e/lib/issue-4462-admin-request-selector.py",
+    ];
     expect(workflow.on?.pull_request?.paths).toEqual(
       expect.arrayContaining([
         "src/lib/actions/sandbox/**",
         "src/lib/onboard/**",
         "src/lib/adapters/openshell/**",
+        ...approvalFixturePaths,
         "test/e2e/fixtures/gateway-runtime-start.ts",
         "test/e2e/fixtures/phases/lifecycle.ts",
         "test/e2e/live/managed-image-activation-e2e*.ts",
       ]),
     );
-    expect(readWorkflow("base-image.yaml").on?.push?.paths).toEqual(
+    const baseImagePaths = readWorkflow("base-image.yaml").on?.push?.paths ?? [];
+    expect(baseImagePaths).toEqual(
       expect.arrayContaining([
         "test/e2e/fixtures/gateway-runtime-start.ts",
         "test/e2e/fixtures/phases/lifecycle.ts",
       ]),
+    );
+    expect(baseImagePaths.join("\n")).not.toMatch(
+      /admin-(?:approval-connect|request-selector)|issue-4462-(?:admin-approval-evidence|admin-request-selector)/u,
     );
     expect(activation.needs).toBe("pr-build-and-entrypoint");
     expect(activation.if).toContain(

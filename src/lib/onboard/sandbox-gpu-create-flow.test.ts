@@ -286,6 +286,31 @@ describe("runSandboxGpuCreateFlow proof authorization", () => {
 });
 
 describe("runSandboxGpuCreateFlow native failure and readiness", () => {
+  it("rejects APF policy authority before lifecycle submission or mutable-name cleanup (#12119)", async () => {
+    const input = createVerifiedNoGpuInput();
+    const startupCommand = [...input.createRequest!.startupCommand];
+    input.requirePolicylessCreate = true;
+    input.createRequest = {
+      ...input.createRequest!,
+      policyPath: "/tmp/caller-policy.yaml",
+      startupCommand,
+    };
+    const deps = createDeps();
+    deps.createSandbox = vi.fn();
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
+      "APF interceptor sandbox creation must not supply a caller policy",
+    );
+
+    expect(deps.createSandbox).not.toHaveBeenCalled();
+    expect(input.createRequest.startupCommand).toEqual(startupCommand);
+    expect(
+      vi
+        .mocked(deps.runOpenshell)
+        .mock.calls.filter(([args]) => (args as string[]).includes("delete")),
+    ).toHaveLength(0);
+  });
+
   it("settles an ambiguous create submission before post-create effects", async () => {
     let nonce = "";
     const input = createVerifiedNoGpuInput();
@@ -400,7 +425,6 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     };
     input.gpuRoutePlan = "none";
     input.initialGpuRoute = "none";
-    input.createArgv = ["openshell", "sandbox", "create"];
     input.createRequest = { ...input.createRequest!, gpu: undefined };
     input.persistStartupCommand = true;
     input.requiredUlimits = [
@@ -449,7 +473,6 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     };
     input.gpuRoutePlan = "none";
     input.initialGpuRoute = "none";
-    input.createArgv = ["openshell", "sandbox", "create"];
     input.createRequest = { ...input.createRequest!, gpu: undefined };
     input.persistStartupCommand = true;
     input.managedImage = true;
@@ -490,7 +513,6 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     };
     input.gpuRoutePlan = "none";
     input.initialGpuRoute = "none";
-    input.createArgv = ["openshell", "sandbox", "create"];
     input.persistStartupCommand = true;
     input.requiredUlimits = [
       { name: "nproc", soft: 512, hard: 512 },
@@ -543,7 +565,6 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     };
     input.gpuRoutePlan = "none";
     input.initialGpuRoute = "none";
-    input.createArgv = ["openshell", "sandbox", "create"];
     input.persistStartupCommand = true;
     input.requiredUlimits = [
       { name: "nproc", soft: 512, hard: 512 },
@@ -867,7 +888,7 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     expect(mocks.queryOpenShellDockerSandboxRuntimeSnapshot).not.toHaveBeenCalled();
     expect(mocks.streamSandboxCreate).toHaveBeenCalledWith(
       expect.stringMatching(/openshell$/u),
-      input.createArgv!.slice(1),
+      expect.arrayContaining(["sandbox", "create", "--name", input.sandboxName]),
       input.sandboxEnv,
       expect.objectContaining({ waitForReadyTermination: false }),
     );

@@ -13,7 +13,7 @@
     "@openclaw/msteams": "2026.9.1",
     "@openclaw/slack": "2026.9.1",
     "@openclaw/whatsapp": "2026.9.1",
-    "@tencent-weixin/openclaw-weixin": "2.4.3",
+    "@tencent-weixin/openclaw-weixin": "2.4.9",
     "agent-base": "6.0.2",
     "axios": "1.19.0",
     "https-proxy-agent": "5.0.1",

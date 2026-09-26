@@ -109,7 +109,6 @@ function noGpuInput() {
   };
   input.gpuRoutePlan = "none";
   input.initialGpuRoute = "none";
-  input.createArgv = ["openshell", "sandbox", "create", "--name", "alpha", "--", "agent"];
   input.persistRetainedSandboxRecovery = vi.fn(() => true);
   return input;
 }
