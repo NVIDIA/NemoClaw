@@ -31,6 +31,48 @@ const OPENCLAW_CONTAINER_KEYS = [
   "segments",
 ] as const;
 
+export type OpenClawGatewayFailureClassification =
+  | "embedded-fallback"
+  | "gateway-connect-failure"
+  | "scope-upgrade-pending"
+  | "device-pairing-required";
+
+const OPENCLAW_GATEWAY_FAILURES: ReadonlyArray<{
+  pattern: RegExp;
+  classification: OpenClawGatewayFailureClassification;
+}> = [
+  {
+    pattern: /scope upgrade pending approval|pairing required: device is asking for more scopes/i,
+    classification: "scope-upgrade-pending",
+  },
+  {
+    pattern: /device pairing required|pairing required/i,
+    classification: "device-pairing-required",
+  },
+  {
+    pattern: /gateway connect failed/i,
+    classification: "gateway-connect-failure",
+  },
+  {
+    pattern:
+      /EMBEDDED FALLBACK|\[agent\/embedded\]|fallbackFrom[": ]+gateway|transport[": ]+embedded/i,
+    classification: "embedded-fallback",
+  },
+];
+
+export function classifyOpenClawGatewayFailureOutput(
+  ...outputs: string[]
+): OpenClawGatewayFailureClassification | null {
+  const output = outputs.join("\n");
+  return (
+    OPENCLAW_GATEWAY_FAILURES.find(({ pattern }) => pattern.test(output))?.classification ?? null
+  );
+}
+
+export function openClawGatewayOutputHasFailure(...outputs: string[]): boolean {
+  return classifyOpenClawGatewayFailureOutput(...outputs) !== null;
+}
+
 function responseContainsToolCallStructure(
   document: unknown,
   response: Record<string, unknown>,

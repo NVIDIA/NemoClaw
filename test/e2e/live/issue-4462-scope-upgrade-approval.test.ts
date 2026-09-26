@@ -10,15 +10,13 @@ import { type HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { trackIssue4462FailureDiagnostics } from "../fixtures/issue-4462-diagnostics.ts";
+import { openClawGatewayOutputHasFailure } from "../fixtures/openclaw-agent-output.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import {
   pendingAdminRequestId,
   preApprovalAdminProbeEvidence,
 } from "../fixtures/issue-4462-admin-approval-evidence.ts";
-import {
-  hasIssue4462AgentGatewayFailureOutput,
-  ISSUE_4462_SCOPE_UPGRADE_PHASES,
-} from "./issue-4462-admin-approval-helper.ts";
+import { ISSUE_4462_SCOPE_UPGRADE_PHASES } from "./issue-4462-admin-approval-helper.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-issue-4462";
 const LIVE_TIMEOUT_MS = testTimeout(70 * 60_000);
@@ -174,7 +172,7 @@ test(
       },
     );
     expect(
-      agent.exitCode === 0 && !hasIssue4462AgentGatewayFailureOutput(agent.stdout, agent.stderr),
+      agent.exitCode === 0 && !openClawGatewayOutputHasFailure(agent.stdout, agent.stderr),
       "The first gateway-backed agent request failed or reported embedded fallback; inspect the phase artifact",
     ).toBe(true);
     expect(
