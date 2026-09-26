@@ -114,8 +114,8 @@ That flow prepares the current CLI before it replaces OpenShell.
 If it completes, do not run the manual steps below.
 Continue manually only when the automatic flow stops after preparing the CLI or a support workflow directs you to this recovery path.
 Set the prepared-upgrade state only after strict backup succeeds, every applicable registered legacy forward is retired, and the gateway is retired.
-Strict backup can report a confirmed stranded registry sandbox without creating a backup for it because both the selected gateway and the container provider prove that no sandbox runtime remains.
-That record requires the cleanup or recreation action printed by `$$nemoclaw backup-all`, but it does not block a prepared upgrade after the strict command succeeds.
+Strict backup reports a confirmed stranded registry sandbox without creating a backup for it because both the selected gateway and the container provider prove that no sandbox runtime remains.
+Strict backup counts that record as stranded and exits nonzero, so complete the cleanup or recreation action printed by `$$nemoclaw backup-all` and rerun the command before you retire the gateway.
 Run the backup and forward-retirement step with the current prepared NemoClaw CLI before you retire the gateway:
 
 ```bash
@@ -129,8 +129,8 @@ For a non-default gateway, replace `8080` with its port and set `gateway_name` t
 If an older OpenShell release rejects the named destroy command for the default `nemoclaw` gateway, run `openshell gateway destroy` instead.
 Do not substitute `openshell gateway remove`: removal can unregister a gateway without stopping its process.
 Set `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` only after the command pipeline exits successfully.
-Confirm that the strict backup summary reports `0 failed, 0 skipped` and that the `Legacy dashboard forwards:` summary appears before gateway destruction.
-A confirmed stranded record has no backup to reuse; complete the reported cleanup or recreation action during recovery.
+Confirm that the strict backup summary reports `0 failed, 0 skipped` with no stranded count and that the `Legacy dashboard forwards:` summary appears before gateway destruction.
+A confirmed stranded record has no backup to reuse; clear or recreate it before the strict command can succeed.
 If either command fails or cannot prove a retirement, resolve that failure while the completed backups remain intact.
 Set `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` on the `bash` side of the install pipeline when you rerun the installer.
 

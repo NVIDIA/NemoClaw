@@ -687,8 +687,8 @@ That flow prepares the current CLI before it replaces OpenShell.
 If it completes, do not run the manual steps below.
 Continue manually only when the automatic flow stops after preparing the CLI or a support workflow directs you to this recovery path.
 Use the prepared current CLI to require strict backup and retire all applicable registered legacy forwards before you retire the old gateway.
-Strict backup can report a confirmed stranded registry sandbox without creating a backup for it because both the selected gateway and the container provider prove that no sandbox runtime remains.
-That record requires the cleanup or recreation action printed by `$$nemoclaw backup-all`, but it does not block a prepared upgrade after the strict command succeeds:
+Strict backup reports a confirmed stranded registry sandbox without creating a backup for it because both the selected gateway and the container provider prove that no sandbox runtime remains.
+Strict backup counts that record as stranded and exits nonzero, so complete the cleanup or recreation action printed by `$$nemoclaw backup-all` and rerun the command before you retire the gateway:
 
 ```bash
 selected_port=8080
@@ -702,8 +702,8 @@ For a non-default gateway, replace `8080` with its port and set `gateway_name` t
 If an older OpenShell release rejects the named destroy command for the default `nemoclaw` gateway, run `openshell gateway destroy` instead.
 Do not substitute `openshell gateway remove`: removal can unregister a gateway without stopping its process.
 Set `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` only after the command pipeline exits successfully.
-Confirm that the strict backup summary reports `0 failed, 0 skipped` and that the `Legacy dashboard forwards:` summary appears before gateway destruction.
-A confirmed stranded record has no backup to reuse; complete the reported cleanup or recreation action during recovery.
+Confirm that the strict backup summary reports `0 failed, 0 skipped` with no stranded count and that the `Legacy dashboard forwards:` summary appears before gateway destruction.
+A confirmed stranded record has no backup to reuse; clear or recreate it before the strict command can succeed.
 If backup, forward retirement, or gateway retirement fails, resolve the failure while the completed backups remain intact.
 This environment variable asserts that strict backup, legacy-forward retirement, and gateway retirement are complete, so the installer skips that repeated preparation phase before it checks whether OpenShell is installed or whether its version is in range.
 For a non-default gateway, preserve the selected port on the `bash` side of the install pipeline.
@@ -3188,7 +3188,7 @@ A backup failure marks that sandbox as failed, and `backup-all` continues with t
 $$nemoclaw backup-all
 ```
 
-Before an OpenShell upgrade, the installer prepares the current release CLI and uses it to run `backup-all` in strict mode. Strict mode requires every registered sandbox that still has a runtime to produce a fresh backup and aborts before gateway changes if an ordinary sandbox is skipped or fails. When strict mode reports an ordinary skipped sandbox, start that sandbox or its container and rerun the installer or `$$nemoclaw backup-all`. A registry record that the selected gateway and container provider both prove has no remaining runtime is reported as confirmed stranded, produces no backup, and does not fail strict mode. Follow the reported cleanup or recreation action in [Resume a Manually Prepared Upgrade](../manage-sandboxes/operate-sandboxes/update-sandboxes#resume-a-manually-prepared-upgrade) before recovery.
+Before an OpenShell upgrade, the installer prepares the current release CLI and uses it to run `backup-all` in strict mode. Strict mode requires every registered sandbox that still has a runtime to produce a fresh backup and aborts before gateway changes if an ordinary sandbox is skipped or fails. When strict mode reports an ordinary skipped sandbox, start that sandbox or its container and rerun the installer or `$$nemoclaw backup-all`. A registry record that the selected gateway and container provider both prove has no remaining runtime is reported and counted as confirmed stranded, produces no backup, and fails strict mode because it was not backed up. Follow the reported cleanup or recreation action in [Resume a Manually Prepared Upgrade](../manage-sandboxes/operate-sandboxes/update-sandboxes#resume-a-manually-prepared-upgrade), then rerun the installer or `$$nemoclaw backup-all`.
 
 A running sandbox whose in-sandbox SSH endpoint does not answer fails its backup and aborts the run. For a standalone `$$nemoclaw backup-all` run, set `NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP=1` exactly to skip such sandboxes instead of failing. Other values such as `true`, `yes`, or `0` are not accepted. This variable does not weaken the installer's strict pre-upgrade requirement. A skipped sandbox's uncommitted state is not included in its last successful backup.
 
