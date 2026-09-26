@@ -724,6 +724,22 @@ describe("E2E workflow plan", () => {
   });
 
   it.each([
+    "test/e2e/fixtures/allowlisted-approval-connect.sh",
+    "test/e2e/fixtures/allowlisted-approval-connect.ts",
+    "test/e2e/fixtures/allowlisted-request-trigger.sh",
+    "test/e2e/lib/issue-4462-pending-allowlisted-request.py",
+  ])("selects the scope-upgrade journey when its fixture %s changes", (changedFile) => {
+    const plan = buildE2eWorkflowPlan({}, { changedFiles: [changedFile] });
+
+    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(
+      "issue-4462-scope-upgrade-approval",
+    );
+    expect(plan.catalogueMatrices["nvidia-inference"].map((row) => row.id)).toContain(
+      "issue-4462-scope-upgrade-approval",
+    );
+  });
+
+  it.each([
     "src/lib/actions/sandbox/gateway-state.ts",
     "src/lib/onboard/runtime-provider/docker.ts",
   ])("selects stopped-phase survival coverage when %s changes", (changedFile) => {

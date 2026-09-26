@@ -631,12 +631,16 @@
     {
       "live": "test/e2e/live/issue-4462-scope-upgrade-approval.test.ts",
       "liveSources": [
+        "test/e2e/fixtures/allowlisted-approval-connect.sh",
+        "test/e2e/fixtures/allowlisted-approval-connect.ts",
+        "test/e2e/fixtures/allowlisted-request-trigger.sh",
         "test/e2e/fixtures/admin-approval-connect.sh",
         "test/e2e/fixtures/admin-approval-connect.ts",
         "test/e2e/fixtures/admin-request-selector.ts",
         "test/e2e/fixtures/issue-4462-admin-approval-evidence.ts",
         "test/e2e/lib/issue-4462-admin-request-selector.py",
         "test/e2e/lib/issue-4462-fresh-agent-gateway-snapshot.py",
+        "test/e2e/lib/issue-4462-pending-allowlisted-request.py",
         "test/e2e/live/issue-4462-admin-approval-helper.ts"
       ],
       "fast": [

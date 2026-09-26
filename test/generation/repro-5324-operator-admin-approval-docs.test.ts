@@ -52,7 +52,7 @@ describe("operator.admin manual approval documentation (#5324)", () => {
   });
 
   it("routes troubleshooting approval through the prepared connect shell (#5324)", () => {
-    const connect = troubleshootingSection.indexOf("$$nemoclaw my-assistant connect");
+    const connect = troubleshootingSection.indexOf("$$nemoclaw <name> connect");
     const list = troubleshootingSection.indexOf("openclaw devices list --json");
     const approve = troubleshootingSection.indexOf("openclaw devices approve <requestId>");
 
@@ -61,6 +61,15 @@ describe("operator.admin manual approval documentation (#5324)", () => {
     expect(connect).toBeGreaterThanOrEqual(0);
     expect(list).toBeGreaterThan(connect);
     expect(approve).toBeGreaterThan(list);
+    expect(troubleshootingSection).toContain("$$nemoclaw <name> connect");
+    expect(troubleshootingSection).toContain(
+      "Replace `<name>` with the sandbox name from the failed command.",
+    );
+    expect(troubleshootingSection).toContain("Record the `requestId` from this native failure.");
+    expect(troubleshootingSection).toContain(
+      "whose `requestId` exactly matches the native failure",
+    );
+    expect(troubleshootingSection).toContain("approve only that same `requestId`");
     expect(troubleshootingSection).not.toContain("exec -- openclaw devices approve");
   });
 });

@@ -8,6 +8,10 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import {
+  ALLOWLISTED_REQUEST_TRIGGER_SH,
+  allowlistedApprovalConnectScript,
+} from "../fixtures/allowlisted-approval-connect.ts";
 import { adminApprovalConnectScript } from "../fixtures/admin-approval-connect.ts";
 import { ISSUE_4462_PAIRING_SEED_PY } from "../fixtures/issue-4462-pairing-seed.ts";
 import { ISSUE_4462_SCOPE_UPGRADE_PHASES } from "../live/issue-4462-admin-approval-helper.ts";
@@ -175,6 +179,97 @@ print('ISSUE_4462_FIXTURE_BEHAVIOR_OK')
 `;
 
 describe("scope-upgrade approval live fixture", () => {
+  it("publishes the canonical same-device request ID after a direct native pairing failure", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-4462-trigger-"));
+    const openclaw = path.join(root, "openclaw");
+    const selector = path.join(root, "selector.py");
+    const requestId = "12345678-1234-4123-8123-123456789abc";
+    fs.writeFileSync(
+      openclaw,
+      `#!/bin/bash
+set -euo pipefail
+case "$*" in
+  "devices list --json")
+    printf '%s\\n' '{"paired":[{"clientId":"cli","clientMode":"cli","deviceId":"fixture-device"}]}'
+    ;;
+  "devices remove fixture-device --json")
+    printf '%s\\n' 'device token fixture denied' >&2
+    exit 1
+    ;;
+  "gateway call sessions.create --params "*)
+    printf '%s\\n' 'pairing required' >&2
+    exit 17
+    ;;
+  *) exit 90 ;;
+esac
+`,
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(selector, `print("ISSUE_4462_ALLOWLISTED_REQUEST_ID=${requestId}")\n`);
+    try {
+      const result = spawnSync("bash", ["-c", ALLOWLISTED_REQUEST_TRIGGER_SH], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          ISSUE_4462_ALLOWLISTED_SELECTOR_PATH: selector,
+          PATH: `${root}:${process.env.PATH ?? ""}`,
+        },
+        timeout: 10_000,
+      });
+
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(17);
+      expect(result.stdout).toContain(`ISSUE_4462_ALLOWLISTED_REQUEST_ID=${requestId}`);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("passes the exact native allowlisted request into connect before retry", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-4462-allowlisted-"));
+    const cli = path.join(root, "nemoclaw");
+    const log = path.join(root, "calls.log");
+    const requestId = "12345678-1234-4123-8123-123456789abc";
+    fs.writeFileSync(
+      cli,
+      `#!/bin/bash
+set -euo pipefail
+sandbox="$1"
+action="$2"
+shift 2
+printf '%s:%s:%s\\n' "$sandbox" "$action" "$*" >>"$NEMOCLAW_STUB_LOG"
+if [ "$action" = connect ]; then
+  payload="$(cat)"
+  printf '%s\\n' "$payload" >>"$NEMOCLAW_STUB_LOG"
+  grep -Fq 'expected_request_id=${requestId}' <<<"$payload"
+  grep -Fq 'ISSUE_4462_ALLOWLISTED_GATEWAY_STATE_OK' <<<"$payload"
+  printf '%s\\n' 'ISSUE_4462_ALLOWLISTED_RETRY_OK'
+else
+  exit 91
+fi
+`,
+      { mode: 0o755 },
+    );
+    try {
+      const result = spawnSync(
+        "bash",
+        ["-c", allowlistedApprovalConnectScript(cli, "allowlisted sandbox", requestId)],
+        {
+          encoding: "utf8",
+          env: { ...process.env, NEMOCLAW_STUB_LOG: log },
+          timeout: 10_000,
+        },
+      );
+
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(result.stdout.trim()).toBe("ISSUE_4462_ALLOWLISTED_RETRY_OK");
+      expect(fs.readFileSync(log, "utf8")).toContain(
+        `allowlisted sandbox:connect:\nexpected_request_id=${requestId}`,
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("refuses removed private gateway aliases at the connect-shell boundary", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-4462-connect-"));
     const cli = path.join(root, "nemoclaw");

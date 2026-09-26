@@ -16,6 +16,12 @@ const SNAPSHOT_SCRIPT = path.join(
   "lib",
   "issue-4462-fresh-agent-gateway-snapshot.py",
 );
+const ALLOWLISTED_REQUEST_SCRIPT = path.join(
+  import.meta.dirname,
+  "..",
+  "lib",
+  "issue-4462-pending-allowlisted-request.py",
+);
 const PUBLIC_KEY_BYTES = Buffer.from(Array.from({ length: 32 }, (_, index) => index + 1));
 const DEVICE_ID = createHash("sha256").update(PUBLIC_KEY_BYTES).digest("hex");
 const PUBLIC_KEY = PUBLIC_KEY_BYTES.toString("base64url");
@@ -274,6 +280,61 @@ describe("fresh-agent gateway snapshot artifacts", () => {
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
       expect(readFileSync(requestIdPath, "utf8")).toBe(requestId);
       expect(`${result.stdout}\n${result.stderr}`).not.toContain(TOKEN);
+    } finally {
+      rmSync(fixtureRoot, { force: true, recursive: true });
+    }
+  });
+
+  it("selects one bounded allowlisted request from canonical map state (#4462)", () => {
+    const fixtureRoot = mkdtempSync(path.join(tmpdir(), "nemoclaw-issue-4462-allowlisted-"));
+    const stateRoot = path.join(fixtureRoot, "state-root");
+    const helperPath = path.join(fixtureRoot, "openclaw_pairing_state.py");
+    const requestId = "12345678-1234-4123-8123-123456789abc";
+    const records = {
+      identity: { deviceId: DEVICE_ID, publicKey: PUBLIC_KEY },
+      paired: {},
+      pending: {
+        [requestId]: {
+          requestId,
+          deviceId: DEVICE_ID,
+          publicKey: PUBLIC_KEY,
+          clientId: "cli",
+          clientMode: "cli",
+          role: "operator",
+          roles: ["operator"],
+          scopes: ["operator.pairing", "operator.write"],
+          requestedScopes: ["operator.pairing", "operator.write"],
+        },
+        unrelated: {
+          requestId: "87654321-4321-4321-8321-cba987654321",
+          deviceId: "other-device",
+        },
+      },
+    };
+    writeFileSync(
+      helperPath,
+      [
+        "import json",
+        `records = json.loads(${JSON.stringify(JSON.stringify(records))})`,
+        "def read_openclaw_pairing_state(state_dir, timeout=1):",
+        "    return records, {'stateDir': state_dir, 'timeout': timeout}",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    try {
+      const result = spawnSync("python3", [ALLOWLISTED_REQUEST_SCRIPT], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          NEMOCLAW_OPENCLAW_PAIRING_STATE_HELPER: helperPath,
+          OPENCLAW_STATE_DIR: stateRoot,
+        },
+        timeout: 10_000,
+      });
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(result.stdout.trim()).toBe(`ISSUE_4462_ALLOWLISTED_REQUEST_ID=${requestId}`);
+      expect(`${result.stdout}\n${result.stderr}`).not.toContain(PUBLIC_KEY);
     } finally {
       rmSync(fixtureRoot, { force: true, recursive: true });
     }

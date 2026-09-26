@@ -1930,23 +1930,41 @@ gateway connect failed: GatewayClientRequestError: scope upgrade pending approva
   (requestId: 4899d110-911f-4bc7-ac1a-85d76c7b366f)
 ```
 
-When you run an `openclaw` command through `$$nemoclaw <name> exec -- ...` and it exits non-zero, NemoClaw asks the sandbox whether any device request is pending. If one is, it appends the review path to stderr after the command's own output:
+Record the `requestId` from this native failure.
+Open the prepared shell. During setup, `connect` automatically settles pending
+requests from the `cli`, `openclaw-cli`, and `openclaw-control-ui` clients when
+the requested scopes are limited to pairing, read, and write and OpenClaw binds
+the request to the authenticated device identity. Allowlisted client metadata
+alone does not authorize approval for another device:
 
-```text
-$$nemoclaw: a device scope upgrade is waiting for approval inside sandbox 'my-assistant'.
-  The OpenClaw gateway refused the command until the requested scopes are approved.
-  Open a prepared shell:   $$nemoclaw my-assistant connect
-  In that shell, review:   openclaw devices list --json
-  Approve the one you recognize, after checking its device and requested scopes:
-                           openclaw devices approve <requestId>
-  Silence this hint:       export NEMOCLAW_NO_POLICY_HINT=1
+```bash
+$$nemoclaw <name> connect
 ```
 
-Enter the prepared `connect` shell, read `openclaw devices list --json`, confirm the requesting client, device, and requested scopes, approve that request by id in the same shell, then re-run the original command unchanged.
+Replace `<name>` with the sandbox name from the failed command.
 
-The hint never names a request id. NemoClaw cannot tell which pending request belongs to the failed command, so naming one would present an unrelated request — for example a different device asking for `operator.admin` — as this command's remedy. You make that decision from `devices list`.
+First rerun the original command unchanged. If it succeeds, no manual approval
+is required. If the command still reports a pending approval, such as a request
+for `operator.admin`, list the remaining requests in the prepared shell:
 
-The probe runs only for a failed `openclaw` command. A command that succeeds, a non-`openclaw` command, and a transport failure all print no hint. If the probe fails, or nothing is pending, no hint is added. An invalid sandbox name is shown as `<name>`. `NEMOCLAW_NO_POLICY_HINT` suppresses this hint on the same terms as the network-policy breadcrumb above.
+```bash
+openclaw devices list --json
+```
+
+Find the pending entry whose `requestId` exactly matches the native failure.
+Confirm that entry's requesting client, device, and requested scopes, then
+approve only that same `requestId`:
+
+```bash
+openclaw devices approve <requestId>
+```
+
+Then rerun the original command again.
+The `exec` command preserves the native command output and exit status. After
+`exec` fails, NemoClaw does not inspect pending requests automatically. The
+`connect` flow settles only allowlisted client identities requesting pairing,
+read, and write scopes with an authoritative device-identity binding; requests
+outside that bounded path remain available for manual review.
 
 </AgentOnly>
 
