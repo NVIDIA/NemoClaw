@@ -13,7 +13,7 @@ function providerModels(config: ConfigObject, providerKey: string): ConfigObject
 }
 
 describe("patchOpenClawInferenceConfig", () => {
-  it("writes provider-qualified model refs while preserving model metadata", () => {
+  it("writes provider-qualified model refs without preserving route-specific context", () => {
     const config: ConfigObject = {
       agents: { defaults: { model: { primary: "inference/moonshotai/kimi-k2.6" } } },
       models: {
@@ -59,7 +59,6 @@ describe("patchOpenClawInferenceConfig", () => {
             {
               id: "nvidia/nemotron-3-super-120b-a12b",
               name: "inference/nvidia/nemotron-3-super-120b-a12b",
-              contextWindow: 131072,
               maxTokens: 8192,
               reasoning: true,
             },

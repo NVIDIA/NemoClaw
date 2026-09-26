@@ -80,4 +80,35 @@ describe("runInferenceSet context window", () => {
     const logged = deps.calls.log.mock.calls.map((a) => String(a[0])).join("\n");
     expect(logged).toMatch(/keeping the existing same-route value/i);
   });
+
+  it("removes the old model's window when retrying after a registry-first partial switch", async () => {
+    const config = ollamaConfig();
+    const entry = {
+      name: "alpha",
+      agent: "openclaw",
+      provider: "ollama-local",
+      model: "qwen2.5:7b",
+      endpointUrl: null,
+      preferredInferenceApi: "openai-completions",
+    };
+    const deps = createDeps({
+      config,
+      entry,
+      session: baseSession({
+        provider: "ollama-local",
+        model: "qwen2.5:7b",
+        endpointUrl: null,
+        preferredInferenceApi: "openai-completions",
+      }),
+      contextWindow: null,
+    });
+
+    await runInferenceSet({ provider: "ollama-local", model: "qwen2.5:7b", noVerify: true }, deps);
+
+    expect(inferenceModels(config)[0]).toMatchObject({
+      id: "qwen2.5:7b",
+      name: "inference/qwen2.5:7b",
+    });
+    expect(inferenceModels(config)[0]).not.toHaveProperty("contextWindow");
+  });
 });

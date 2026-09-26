@@ -585,15 +585,17 @@ function buildProviderConfig(
   const firstExistingModel = Array.isArray(existing.models)
     ? cloneConfigObject(existing.models[0])
     : {};
+  const existingModelId = typeof firstExistingModel.id === "string" ? firstExistingModel.id : null;
   delete firstExistingModel.compat;
   firstExistingModel.id = model;
   firstExistingModel.name = route.primaryModelRef;
   // Recompute for the new model rather than inheriting the prior model's window.
-  // Omitted (undefined) preserves a same-route value; null explicitly removes
-  // an unqualified value when the route identity changed.
+  // Omitted (undefined) preserves a same-route value only when the sandbox
+  // config already has this model. A registry-first retry can report the route
+  // unchanged while the prior config write still contains the old model.
   if (typeof contextWindow === "number") {
     firstExistingModel.contextWindow = contextWindow;
-  } else if (contextWindow === null) {
+  } else if (contextWindow === null || existingModelId !== model) {
     delete firstExistingModel.contextWindow;
   }
   if (route.inferenceApi === "anthropic-messages") {
