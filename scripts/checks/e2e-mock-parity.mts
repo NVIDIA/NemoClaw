@@ -15,7 +15,7 @@ export const DEFAULT_PARITY_MANIFEST = "test/e2e/mock-parity.json";
 
 export type MockParityEntry = {
   live: string;
-  /** Live helpers and explicitly owned shared test/e2e/fixtures sources. */
+  /** Live helpers and explicitly owned shared E2E fixture or library sources. */
   liveSources?: string[];
   fast?: string[];
   liveOnlyReason?: string;
@@ -28,7 +28,7 @@ export type MockParityManifest = {
 
 const LIVE_TEST = /^test\/e2e\/live\/.+\.test\.ts$/u;
 const LIVE_HELPER = /^test\/e2e\/live\/(?!.*\.test\.ts$).+\.(?:py|ts)$/u;
-const SHARED_FIXTURE = /^test\/e2e\/fixtures\/(?!.*\.test\.ts$).+\.ts$/u;
+const SHARED_FIXTURE = /^test\/e2e\/(?:fixtures\/(?!.*\.test\.ts$).+\.(?:sh|ts)|lib\/.+\.py)$/u;
 const FAST_TESTS = [
   /^src\/.+\.test\.ts$/u,
   /^nemoclaw\/src\/.+\.test\.ts$/u,
@@ -144,7 +144,7 @@ export function validateMockParity(options: {
         entry.liveSources.some((file) => typeof file !== "string"))
     ) {
       errors.push(
-        `${entry.live}: liveSources must be an array of live E2E helper or shared fixture paths`,
+        `${entry.live}: liveSources must be an array of live E2E helper or shared source paths`,
       );
       continue;
     }
@@ -174,13 +174,13 @@ export function validateMockParity(options: {
         !(LIVE_HELPER.test(sourceFile) || SHARED_FIXTURE.test(sourceFile))
       ) {
         errors.push(
-          `${entry.live}: ${sourceFile} is not a test/e2e/live/**/*.py or *.ts helper or test/e2e/fixtures/**/*.ts fixture`,
+          `${entry.live}: ${sourceFile} is not a supported live E2E helper or shared fixture/library source`,
         );
         continue;
       }
       if (!fileExists(sourceFile)) {
         errors.push(
-          `${entry.live}: live E2E helper or shared fixture does not exist: ${sourceFile}`,
+          `${entry.live}: live E2E helper or shared source does not exist: ${sourceFile}`,
         );
       }
       const owners = sourceOwners.get(sourceFile) ?? [];
@@ -304,9 +304,9 @@ export function filterMockParityRelevantChangedFiles(
       !isFastPrTest(file)
     )
       return true;
-    // Python indentation is executable syntax, so the TypeScript token filter
-    // cannot safely classify any Python helper change as metadata-only.
-    if (LIVE_HELPER.test(file) && file.endsWith(".py")) return true;
+    // Python indentation and shell layout are executable syntax, so the
+    // TypeScript token filter cannot safely classify their changes as metadata-only.
+    if (file.endsWith(".py") || file.endsWith(".sh")) return true;
     return isMockParityRelevantSourceChange(sourceAtBase(file), sourceAtHead(file));
   });
 }
