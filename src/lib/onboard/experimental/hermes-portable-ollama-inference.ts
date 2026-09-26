@@ -86,6 +86,7 @@ import {
   type HermesPortableOllamaGatewayRunner,
 } from "./hermes-portable-ollama-gateway-transaction";
 import { qualifyHermesPortableOperatingAuthority } from "./hermes-portable-operating-authority";
+import { tryReuseHermesPortableOllamaStartup } from "./hermes-portable-ollama-startup-reuse";
 import { defaultPortableDemoStateDir } from "./portable-runtime-receipt-readiness";
 import {
   readHermesPortableLifecycleReceipt,
@@ -708,6 +709,7 @@ export interface HermesPortableOllamaPreparedProbeDependency {
 }
 
 interface HermesPortableOllamaRecoveryDeps {
+  readonly inspectReadinessRuntime: typeof inspectHermesPortableOllamaReadinessRuntime;
   readonly readReceipt: typeof readHermesPortableLifecycleReceipt;
   readonly qualifyOperatingAuthority: typeof qualifyHermesPortableOperatingAuthority;
   readonly prepareRecoveryEntry: typeof prepareHermesPortableOllamaRecoveryEntry;
@@ -720,6 +722,7 @@ interface HermesPortableOllamaRecoveryDeps {
 }
 
 const DEFAULT_RECOVERY_DEPS: HermesPortableOllamaRecoveryDeps = Object.freeze({
+  inspectReadinessRuntime: inspectHermesPortableOllamaReadinessRuntime,
   readReceipt: readHermesPortableLifecycleReceipt,
   qualifyOperatingAuthority: qualifyHermesPortableOperatingAuthority,
   prepareRecoveryEntry: prepareHermesPortableOllamaRecoveryEntry,
@@ -839,6 +842,8 @@ function inferenceLifecycleRow(
 export type HermesPortableOllamaReadinessRuntimeDisposition = Readonly<{
   kind: "running-current" | "stopped";
   assertCurrent: () => void;
+  /** Reobserve the exact runtime using the same still-current published authority. */
+  reinspect?: () => HermesPortableOllamaReadinessRuntimeDisposition;
 }>;
 
 interface HermesPortableOllamaReadinessRuntimeDeps {
@@ -935,18 +940,22 @@ export function inspectHermesPortableOllamaReadinessRuntime(
     }
     input.assertCallerCurrent();
   };
-  assertCurrent();
-  const inspected = deps.inspectRuntime({
-    engine: inspectionAuthority.engine,
-    persistedEngineAuthority: persisted,
-    serializedReceipt,
-    assertCurrent,
-  });
-  assertCurrent();
-  return Object.freeze({
-    kind: inspected.running ? "running-current" : "stopped",
-    assertCurrent,
-  });
+  const reinspect = (): HermesPortableOllamaReadinessRuntimeDisposition => {
+    assertCurrent();
+    const inspected = deps.inspectRuntime({
+      engine: inspectionAuthority.engine,
+      persistedEngineAuthority: persisted,
+      serializedReceipt,
+      assertCurrent,
+    });
+    assertCurrent();
+    return Object.freeze({
+      kind: inspected.running ? "running-current" : "stopped",
+      assertCurrent,
+      reinspect,
+    });
+  };
+  return reinspect();
 }
 
 function restoreStoppedRuntime(
@@ -991,6 +1000,26 @@ export async function recoverHermesPortableOllamaInference(
       fullCurrentnessCount,
       preparedAuthorityInspectionCount,
     });
+  try {
+    if (
+      await tryReuseHermesPortableOllamaStartup(input, {
+        ...deps,
+        measureEntry: (stage, operation) => {
+          if (stage === "exactRuntimeInspection") preparedAuthorityInspectionCount += 1;
+          return recoveryTiming.measureEntry(stage, operation);
+        },
+        measureAsync: recoveryTiming.measureAsync,
+      })
+    ) {
+      recoveryTiming.finishEntryAuthority();
+      recoveryTiming.finish("reused", timingCounts());
+      return "reused";
+    }
+  } catch (error) {
+    recoveryTiming.finishEntryAuthority();
+    recoveryTiming.finish(runtimeAction, timingCounts(), "failed");
+    throw error;
+  }
   const entry = (() => {
     try {
       input.assertCallerCurrent?.();
@@ -1001,6 +1030,7 @@ export async function recoverHermesPortableOllamaInference(
       const operating = recoveryTiming.measureEntry("operatingAuthority", () =>
         deps.qualifyOperatingAuthority(
           snapshot as typeof snapshot & { readonly receipt: HermesPortableConfiguredReceipt },
+          { env },
         ),
       );
       operating.assertTransactionCurrent();

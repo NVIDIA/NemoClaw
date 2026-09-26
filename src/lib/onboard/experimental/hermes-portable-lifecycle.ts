@@ -3,9 +3,12 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
-import { createOpenShellOperationDeadline } from "../../adapters/openshell/operation-deadline";
+import {
+  createOpenShellOperationDeadline,
+  OpenShellOperationAllowanceExhaustedError,
+} from "../../adapters/openshell/operation-deadline";
 import { createCliOpenShellSandboxLifecycle } from "../../adapters/openshell/sandbox-lifecycle-cli";
-import { TextDecoder } from "node:util";
+import { isDeepStrictEqual, TextDecoder } from "node:util";
 import { redactOnboardCommandDiagnosticText } from "../diagnostics/redaction";
 
 import {
@@ -67,6 +70,8 @@ import {
   type HermesPortableReceiptSnapshot,
 } from "./hermes-portable-receipt";
 import {
+  currentHermesPortableStartupOperation,
+  hermesPortableStartupReuseGateEnabled,
   qualifyHermesPortableOperatingAuthority,
   type HermesPortableOperatingAuthorityDeps,
 } from "./hermes-portable-operating-authority";
@@ -1523,7 +1528,10 @@ async function waitForHermesReadiness(
     );
     if (accepted) credentialFileUnavailable = false;
     lastWaiterCommandFailed = !accepted && (Boolean(result.error) || result.status !== 64);
-    if (accepted && receipt.result === "ready") return qualified;
+    if (accepted && receipt.result === "ready") {
+      timing.increment("authenticatedHealth");
+      return qualified;
+    }
     if (now() >= deadline) break;
     timing.measure("healthPollSleep", () =>
       sleep(
@@ -1569,12 +1577,171 @@ async function assertLiveHermesPortableStartupBinding(
   requireRegistry(qualified.receipt, liveIdentity.liveIdentityFingerprint, deps);
 }
 
+interface RetainedHermesPortableLifecycleStartup {
+  readonly context: PortableDemoLifecycleContext;
+  readonly env: NodeJS.ProcessEnv;
+  readonly commandEnv: NodeJS.ProcessEnv;
+  readonly entry: unknown;
+  readonly deps: HermesPortableLifecycleDeps;
+  readonly verify: () => Promise<boolean>;
+}
+
+const completedHermesPortableLifecycleStartups = new WeakMap<
+  NonNullable<ReturnType<typeof currentHermesPortableStartupOperation>>,
+  RetainedHermesPortableLifecycleStartup
+>();
+
+function currentHermesPortableLifecycleStartupScope(
+  sandboxName: string,
+  deps: HermesPortableLifecycleDeps,
+) {
+  const env = deps.env ?? process.env;
+  const scope = currentHermesPortableStartupOperation(sandboxName);
+  return (env.NEMOCLAW_EXPERIMENTAL_PROFILE === undefined ||
+    env.NEMOCLAW_EXPERIMENTAL_PROFILE === "portable") &&
+    hermesPortableStartupReuseGateEnabled(env) &&
+    scope?.stateDir === path.join(deps.stateDir ?? defaultPortableDemoStateDir(env), "state") &&
+    deps.startupTimeoutMs === undefined
+    ? scope
+    : undefined;
+}
+
+function retainHermesPortableLifecycleStartup(
+  sandboxName: string,
+  context: PortableDemoLifecycleContext,
+  deps: HermesPortableLifecycleDeps,
+  verify: () => Promise<boolean>,
+  commandEnv: NodeJS.ProcessEnv,
+): void {
+  const scope = currentHermesPortableLifecycleStartupScope(sandboxName, deps);
+  if (!scope) return;
+  completedHermesPortableLifecycleStartups.set(scope, {
+    context: structuredClone(context),
+    env: { ...(deps.env ?? process.env) },
+    commandEnv: { ...commandEnv },
+    entry: structuredClone(deps.readRegistry?.(sandboxName)),
+    deps: { ...deps },
+    verify,
+  });
+}
+
+async function tryReuseHermesPortableLifecycleStartup(
+  sandboxName: string,
+  context: PortableDemoLifecycleContext,
+  deps: HermesPortableLifecycleDeps,
+): Promise<boolean> {
+  const scope = currentHermesPortableLifecycleStartupScope(sandboxName, deps);
+  const retained = scope && completedHermesPortableLifecycleStartups.get(scope);
+  if (!scope || !retained) return false;
+  // Consume before verification: failures and incomplete observations cannot leave reusable proof.
+  completedHermesPortableLifecycleStartups.delete(scope);
+  if (
+    !isDeepStrictEqual(context, retained.context) ||
+    (!isDeepStrictEqual({ ...(deps.env ?? process.env) }, retained.env) &&
+      !isDeepStrictEqual({ ...(deps.env ?? process.env) }, retained.commandEnv)) ||
+    !isDeepStrictEqual({ ...(retained.deps.env ?? process.env) }, retained.env) ||
+    deps.container !== retained.deps.container ||
+    deps.operatingAuthority !== retained.deps.operatingAuthority ||
+    deps.podmanAuthorityDeps !== retained.deps.podmanAuthorityDeps
+  ) {
+    return false;
+  }
+  const assertRegistry = () => {
+    if (!isDeepStrictEqual(deps.readRegistry?.(sandboxName), retained.entry)) {
+      throw new Error("Hermes portable lifecycle registry changed after startup");
+    }
+  };
+  assertRegistry();
+  let ready: boolean;
+  try {
+    ready = await retained.verify();
+  } catch (error) {
+    if (error instanceof OpenShellOperationAllowanceExhaustedError) return false;
+    throw error;
+  }
+  assertRegistry();
+  if (!ready || currentHermesPortableLifecycleStartupScope(sandboxName, deps) !== scope) {
+    return false;
+  }
+  completedHermesPortableLifecycleStartups.set(scope, retained);
+  return true;
+}
+
+/** Retain construction work, while observing every mutable boundary again at consumption. */
+function retainSuccessfulStartup(
+  sandboxName: string,
+  context: PortableDemoLifecycleContext,
+  deps: HermesPortableLifecycleDeps,
+  qualified: QualifiedHermesPortableLifecycle,
+): void {
+  if (!qualified.hasTransactionAuthority) return;
+  const timing = createHermesPortableLifecycleTimingRecorder(undefined);
+  const currentness = createHermesPortableCurrentnessTimingRecorder(undefined);
+  retainHermesPortableLifecycleStartup(
+    sandboxName,
+    context,
+    deps,
+    async () => {
+      qualified.assertOperatingAuthority();
+      qualified.assertTransactionCurrent();
+      const container = assertCurrentHermesPortableContainer(
+        qualified.receipt,
+        qualified.containerDeps,
+      );
+      if (!container.authority.running || container.status !== "running") return false;
+      if (container.paused || container.authority.restartPolicy !== "unless-stopped") {
+        fail("container state changed after startup");
+      }
+      const live = observeOpenShellIdentity(qualified.receipt, qualified.capture, [
+        "Ready",
+        "Stopped",
+        "Error",
+      ]);
+      if (live.phase !== "Ready") return false;
+      requireRegistry(qualified.receipt, live.liveIdentityFingerprint, deps);
+      await proveHermesPortableLivePolicy({
+        gatewayName: qualified.receipt.gatewayName,
+        sandboxName,
+        capture: policyCapture(qualified.capture),
+      });
+      const ready =
+        observeHermesPortableAuthenticatedHealth(
+          qualified.receipt,
+          qualified.containerDeps,
+          container,
+        ) === "ready";
+      assertLifecycleTransactionCurrent(qualified, timing, true, currentness);
+      await assertLiveHermesPortableStartupBinding(qualified, deps, timing);
+      return ready;
+    },
+    buildHermesPortableOpenShellEnv(deps.env ?? process.env, qualified.receipt.runtimeAuthority),
+  );
+}
+
 /** Recover the exact receipt-owned container and manifest-owned Hermes startup. */
 export async function recoverHermesPortableSandboxLifecycle(
   sandboxName: string,
   context: PortableDemoLifecycleContext,
   deps: HermesPortableLifecycleDeps = {},
 ): Promise<PortableDemoLifecycleRecoveryResult> {
+  const retainedTiming = createHermesPortableLifecycleTimingRecorder(deps.recoveryTiming);
+  try {
+    if (
+      await retainedTiming.measureAsync("entryQualification", () =>
+        tryReuseHermesPortableLifecycleStartup(sandboxName, context, deps),
+      )
+    ) {
+      retainedTiming.setContainerAction("reused");
+      retainedTiming.increment("authenticatedHealth");
+      retainedTiming.increment("containerInspection");
+      retainedTiming.increment("containerInspection");
+      retainedTiming.finish("already-running");
+      return { kind: "already-running" };
+    }
+  } catch (error) {
+    retainedTiming.finish("failed");
+    throw error;
+  }
   // Preserve the existing 60s start + 90s exec + 90s health allowance as one ceiling.
   const deadline = createOpenShellOperationDeadline(deps.startupTimeoutMs ?? 240_000, deps.now);
   let startupEnforced = true;
@@ -1768,26 +1935,26 @@ export async function recoverHermesPortableSandboxLifecycle(
       commandBudget(1);
       fail("did not reconnect to the selected OpenShell gateway");
     }
-    qualified = await timing.measureAsync("preHealthCurrentness", () =>
-      refreshLifecycleCurrentness(
-        sandboxName,
-        context,
-        instrumentedDeps,
-        qualified,
-        timing,
-        true,
-        ["Ready"],
-        currentnessTiming,
-      ),
-    );
-    const transactionContainerDeps = measuredHealthContainerDeps(
-      qualified,
-      timing,
-      createAuthenticatedHealthCapture(qualified.receipt, capture),
-    );
     primaryFailureClass = "authenticated-health";
     // A container started by this recovery cannot be healthy until its managed startup is launched.
     if (!startedByRecovery) {
+      qualified = await timing.measureAsync("preHealthCurrentness", () =>
+        refreshLifecycleCurrentness(
+          sandboxName,
+          context,
+          instrumentedDeps,
+          qualified,
+          timing,
+          true,
+          ["Ready"],
+          currentnessTiming,
+        ),
+      );
+      const transactionContainerDeps = measuredHealthContainerDeps(
+        qualified,
+        timing,
+        createAuthenticatedHealthCapture(qualified.receipt, capture),
+      );
       timing.increment("authenticatedHealth");
       const initialHealth = timing.measure("authenticatedHealth", () =>
         observeHermesPortableAuthenticatedHealth(
@@ -1805,7 +1972,7 @@ export async function recoverHermesPortableSandboxLifecycle(
         commandBudget(1);
         primaryFailureClass = "final-authority";
         timing.increment("qualification");
-        await timing.measureAsync("finalQualification", () =>
+        qualified = await timing.measureAsync("finalQualification", () =>
           qualify(
             sandboxName,
             context,
@@ -1817,6 +1984,7 @@ export async function recoverHermesPortableSandboxLifecycle(
           ),
         );
         commandBudget(1);
+        retainSuccessfulStartup(sandboxName, context, deps, qualified);
         const result = !needsStart
           ? { kind: "already-running" as const }
           : { kind: "recovered" as const };
@@ -1881,20 +2049,11 @@ export async function recoverHermesPortableSandboxLifecycle(
       fail("managed startup did not pass authenticated health");
     }
     if (readyQualification) qualified = readyQualification;
+    // waitForHermesReadiness accepts the same authenticated credential and HTTP status as the
+    // observer, then re-proves retained transaction authority and the exact running container.
+    // Reuse that fresh evidence instead of immediately issuing the identical health request.
     const recovered = startedByRecovery
-      ? (() => {
-          const currentContainerDeps = measuredHealthContainerDeps(
-            qualified,
-            timing,
-            createAuthenticatedHealthCapture(qualified.receipt, capture),
-          );
-          timing.increment("authenticatedHealth");
-          return (
-            timing.measure("authenticatedHealth", () =>
-              observeHermesPortableAuthenticatedHealth(qualified.receipt, currentContainerDeps),
-            ) === "ready"
-          );
-        })()
+      ? true
       : await waitFor(
           commandBudget(STARTUP_TIMEOUT_MS),
           deps,
@@ -1939,7 +2098,7 @@ export async function recoverHermesPortableSandboxLifecycle(
     }
     primaryFailureClass = "final-authority";
     timing.increment("qualification");
-    await timing.measureAsync("finalQualification", () =>
+    qualified = await timing.measureAsync("finalQualification", () =>
       qualify(
         sandboxName,
         context,
@@ -1951,6 +2110,7 @@ export async function recoverHermesPortableSandboxLifecycle(
       ),
     );
     commandBudget(1);
+    retainSuccessfulStartup(sandboxName, context, deps, qualified);
     if (!needsStart) {
       inspectionTiming?.finish();
       currentnessTiming.finish();

@@ -12,6 +12,7 @@ import {
   portableLifecycleLockOptions,
   resolveHermesPortableLifecycleLockOptions,
 } from "../../../onboard/experimental/portable-lifecycle-lock";
+import { currentHermesPortableStartupOperation } from "../../../onboard/experimental/hermes-portable-startup-operation";
 import { isMcpLifecycleLockHeld } from "../../../state/mcp-lifecycle-lock-acquisition";
 import { portableHostFencePath } from "../../../state/portable-uninstall-retirement";
 import { withSandboxLifecycleLock, withSandboxLifecycleLockSync } from "./lock";
@@ -53,6 +54,35 @@ describe("Portable-aware sandbox lifecycle lock", () => {
     });
 
     expect(fs.existsSync(portableHostFencePath(homeDir))).toBe(false);
+  });
+
+  it("retains the persisted Portable opt-in when a later command has no profile environment", async () => {
+    vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", undefined);
+
+    await withSandboxLifecycleLock("alpha", () => {
+      expect(currentHermesPortableStartupOperation("alpha")).toBeDefined();
+    });
+  });
+
+  it("does not infer Portable startup reuse for an explicitly selected lock domain", async () => {
+    vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", undefined);
+    const explicitStateDir = path.join(homeDir, ".nemoclaw", "gateways", "18080", "state");
+
+    await withSandboxLifecycleLock(
+      "alpha",
+      () => {
+        expect(currentHermesPortableStartupOperation("alpha")).toBeUndefined();
+      },
+      { stateDir: explicitStateDir },
+    );
+  });
+
+  it("does not override an explicit non-Portable profile", async () => {
+    vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "default");
+
+    await withSandboxLifecycleLock("alpha", () => {
+      expect(currentHermesPortableStartupOperation("alpha")).toBeUndefined();
+    });
   });
 
   it("selects host receipt state only for a Hermes Portable candidate", () => {

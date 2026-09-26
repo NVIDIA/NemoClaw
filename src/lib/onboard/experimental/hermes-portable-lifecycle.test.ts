@@ -453,6 +453,9 @@ describe("Hermes portable lifecycle", () => {
     expect(evidence).toHaveBeenCalledWith(
       expect.objectContaining({
         qualificationCount: 2,
+        // Cold recovery performs its startup-launch currentness refresh below;
+        // it does not also issue the already-running pre-health inspection.
+        containerInspectionCount: 6,
         containerStartCount: 1,
         execReadyAttempts: 1,
         authenticatedHealthCount: 1,
@@ -848,7 +851,8 @@ describe("Hermes portable lifecycle", () => {
       const observer = commands.findIndex((args) =>
         args.includes(hermesPortableContainerInternals.authenticatedHealthScript),
       );
-      expect(observer).toBeGreaterThan(waiter);
+      expect(waiter).toBeGreaterThanOrEqual(0);
+      expect(observer).toBe(-1);
       expect(deps.now()).toBe(credentialWaits * 1_000);
       expect(openshellMutationCalls(captureOpenShell, "start")).toHaveLength(1);
     },
