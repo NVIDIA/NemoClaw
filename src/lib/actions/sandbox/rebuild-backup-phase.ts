@@ -182,6 +182,7 @@ export async function runRebuildBackupPhase(
         input.staleRecovery,
         input.log,
         input.bail,
+        input.stoppedNativeState,
       ));
     if (backupManifest === undefined) return null;
     const retainedPolicy = backupManifest ? readRebuildPolicyHandoff(backupManifest) : null;

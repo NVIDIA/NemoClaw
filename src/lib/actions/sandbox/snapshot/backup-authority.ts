@@ -197,6 +197,7 @@ export function backupSandboxStateWithManagedAuthority(
   sandboxName: string,
   overrides: Pick<SnapshotBackupAuthorityDependencies, "getSandbox"> &
     Partial<Omit<SnapshotBackupAuthorityDependencies, "getSandbox">>,
+  stoppedNativeState?: PreparedStoppedNativeState,
 ): sandboxState.BackupResult {
   const dependencies = { ...defaultDependencies, ...overrides };
   const entry = dependencies.getSandbox(sandboxName);
@@ -208,7 +209,20 @@ export function backupSandboxStateWithManagedAuthority(
   } catch (error) {
     return failure(error);
   }
-  return authority ? dependencies.backup(sandboxName, authority) : dependencies.backup(sandboxName);
+  if (!stoppedNativeState) {
+    return authority
+      ? dependencies.backup(sandboxName, authority)
+      : dependencies.backup(sandboxName);
+  }
+  return dependencies.backup(sandboxName, {
+    ...(authority ?? {}),
+    nativeStateSource: {
+      root: "/sandbox",
+      directory: stoppedNativeState.nativeDirectory,
+      assertCurrent: stoppedNativeState.assertCurrent,
+    },
+    validateBeforePublish: () => authority?.validateBeforePublish?.(),
+  });
 }
 
 function rejectStoppedState(message: string): never {

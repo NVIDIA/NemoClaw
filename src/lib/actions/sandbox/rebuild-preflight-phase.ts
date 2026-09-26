@@ -109,8 +109,10 @@ export function runHermesCronRestoreBackupPreflight({
   }
   const backupPath = backupManifest.backupPath;
   try {
-    const plan = inspectNativeSandboxState(backupPath, (nativeRoot) =>
-      validateHermesCronRestoreBackup(path.join(nativeRoot, ".hermes")),
+    const plan = inspectNativeSandboxState(
+      backupPath,
+      (nativeRoot) => validateHermesCronRestoreBackup(path.join(nativeRoot, ".hermes")),
+      ".hermes",
     );
     log(
       `Hermes cron restore preflight: activeJobs=${String(plan.activeJobs)}, scriptJobs=${String(plan.scriptJobs)}, gate=${String(plan.requiresDispatchGate)}`,

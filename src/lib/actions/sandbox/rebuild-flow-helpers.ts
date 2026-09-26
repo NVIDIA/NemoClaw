@@ -520,14 +520,19 @@ export async function backupSandboxStateForRebuild(
   staleRecovery: boolean,
   log: (msg: string) => void,
   bail: (msg: string, code?: number) => never,
+  stoppedNativeState?: PreparedStoppedNativeState,
 ): Promise<sandboxState.RebuildManifest | null | undefined> {
   if (staleRecovery) return null;
 
   console.log("  Backing up sandbox state...");
   log(`Agent type: ${sb.agent || "openclaw"}, complete native home/workspace transfer`);
-  let backup = snapshotBackup.backupSandboxStateWithManagedAuthority(sandboxName, {
-    getSandbox: (name) => loadRegistry().sandboxes[name] ?? null,
-  });
+  let backup = snapshotBackup.backupSandboxStateWithManagedAuthority(
+    sandboxName,
+    {
+      getSandbox: (name) => loadRegistry().sandboxes[name] ?? null,
+    },
+    stoppedNativeState,
+  );
   log(
     `Backup result: success=${backup.success}, backed=${backup.backedUpDirs.join(",")}; files=${backup.backedUpFiles.join(",")}, failed=${backup.failedDirs.join(",")}; failedFiles=${backup.failedFiles.join(",")}`,
   );
@@ -536,7 +541,7 @@ export async function backupSandboxStateForRebuild(
   // already recovers a stopped container (#6500): start it, retry, then return
   // it to stopped. Any other failure (permission denied, absent state, audit
   // rejection) is not a transport problem and must not attempt this recovery.
-  if (!backup.success && backup.unreachable) {
+  if (!stoppedNativeState && !backup.success && backup.unreachable) {
     const started = await startStoppedSandboxContainerForBackup(sandboxName);
     if (started) {
       console.log("  Sandbox container is stopped; starting it to back up state before rebuild...");

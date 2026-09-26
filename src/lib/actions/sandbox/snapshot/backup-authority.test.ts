@@ -208,6 +208,47 @@ describe("managed snapshot backup authority", () => {
     },
   );
 
+  it("backs up a stopped sandbox from its prepared native-state copy", () => {
+    const entry = sandbox("openclaw");
+    const assertCurrent = vi.fn();
+    const stoppedNativeState = {
+      sandboxName: "alpha",
+      nativeDirectory: "/private/stopped-native",
+      directory: "/private/stopped-native/.openclaw",
+      cleanupDirectory: "/private",
+      assertCurrent,
+      dispose: vi.fn(),
+    };
+    const backup = vi.fn((_name: string, options: BackupOptions = {}) => successfulBackup(options));
+
+    const result = backupSandboxStateWithManagedAuthority(
+      "alpha",
+      {
+        getSandbox: () => entry,
+        requireProvider: () => provider(),
+        captureRuntime: () => runtime(),
+        backup,
+      },
+      stoppedNativeState,
+    );
+
+    expect(result.success).toBe(true);
+    expect(backup).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({
+        nativeStateSource: {
+          root: "/sandbox",
+          directory: stoppedNativeState.nativeDirectory,
+          assertCurrent,
+        },
+        validateBeforePublish: expect.any(Function),
+      }),
+    );
+    const options = backup.mock.calls[0]?.[1];
+    options?.nativeStateSource?.assertCurrent();
+    expect(assertCurrent).toHaveBeenCalledOnce();
+  });
+
   it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
     "carries exact explicit llama.cpp authority through %s backup",
     (agent) => {

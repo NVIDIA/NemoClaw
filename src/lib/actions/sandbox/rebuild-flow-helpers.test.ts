@@ -913,6 +913,32 @@ describe("backupSandboxStateForRebuild stopped-container recovery (#11137)", () 
     runtimeProviderId: "docker",
   };
 
+  it("uses the prepared stopped native-state copy without starting the container", async () => {
+    const stoppedNativeState = {
+      sandboxName: "alpha",
+      nativeDirectory: "/private/stopped-native",
+      directory: "/private/stopped-native/.openclaw",
+      cleanupDirectory: "/private",
+      assertCurrent: vi.fn(),
+      dispose: vi.fn(),
+    };
+    backupSpy.mockReturnValue(makeBackupResult());
+
+    const result = await backupSandboxStateForRebuild(
+      "alpha",
+      makeSandboxEntry(),
+      false,
+      () => undefined,
+      makeBail(),
+      stoppedNativeState,
+    );
+
+    expect(result).toEqual(makeBackupResult().manifest);
+    expect(backupSpy).toHaveBeenCalledWith("alpha", expect.any(Object), stoppedNativeState);
+    expect(startSpy).not.toHaveBeenCalled();
+    expect(backupStartedSpy).not.toHaveBeenCalled();
+  });
+
   it("recovers by starting the killed container, backing up, then returning it to stopped", async () => {
     backupSpy.mockReturnValue({
       success: false,

@@ -131,6 +131,31 @@ describe("rebuild policy handoff", () => {
     });
   });
 
+  it("passes a prepared stopped native-state source into the rebuild backup", async () => {
+    const stoppedNativeState = {
+      sandboxName: "alpha",
+      nativeDirectory: "/private/stopped-native",
+      directory: "/private/stopped-native/.openclaw",
+      cleanupDirectory: "/private",
+      assertCurrent: vi.fn(),
+      dispose: vi.fn(),
+    };
+    const backup = vi.fn(async () => null);
+
+    await runRebuildBackupPhase(input({ stoppedNativeState }), backup);
+
+    expect(stoppedNativeState.assertCurrent).toHaveBeenCalledOnce();
+    expect(backup).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ name: "alpha" }),
+      false,
+      expect.any(Function),
+      expect.any(Function),
+      stoppedNativeState,
+    );
+    expect(mocks.beginOpenClawBackupQuiesce).not.toHaveBeenCalled();
+  });
+
   it("rejects a literal credential before creating a rebuild policy handoff", async () => {
     const credential = "opaque-url-credential";
     mocks.captureRecordedSandboxBasePolicy.mockReturnValue(

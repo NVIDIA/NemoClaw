@@ -8,7 +8,9 @@ import {
   closeSync,
   constants,
   existsSync,
+  fchmodSync,
   fstatSync,
+  futimesSync,
   lstatSync,
   mkdtempSync,
   mkdirSync,
@@ -172,6 +174,15 @@ export interface BackupOptions {
    * derives its bound from free space in the private backup filesystem.
    */
   nativeStateCaptureMaxBytes?: number;
+  /**
+   * Internal provider-owned complete native-state source for a stopped
+   * sandbox. The directory is already a private validated extraction.
+   */
+  nativeStateSource?: {
+    root: string;
+    directory: string;
+    assertCurrent(): void;
+  };
 }
 
 export interface BackupResult {
@@ -975,19 +986,76 @@ function structuredContentIsCredentialFree(fileName: string, raw: string): boole
   return isDeepStrictEqual(stripCredentials(value), value);
 }
 
-function readNativeArchiveEntry(archivePath: string, entry: string): Buffer | null {
+const NATIVE_RUNTIME_CONFIG_ROOTS = [".openclaw", ".hermes", ".pi/agent", ".deepagents"];
+const NATIVE_RUNTIME_NON_CONFIG_SEGMENTS = new Set([
+  ".cache",
+  ".venv",
+  "build",
+  "cache",
+  "dist",
+  "history",
+  "logs",
+  "node_modules",
+  "schema",
+  "schemas",
+  "sessions",
+  "site-packages",
+  "venv",
+  "workspace",
+]);
+const NATIVE_STRUCTURED_CONFIG_NAMES = new Set([
+  "accounts.json",
+  "auth-profiles.json",
+  "auth.json",
+  "channels.json",
+  "config.json",
+  "config.yaml",
+  "config.yml",
+  "credentials.json",
+  "hermes.json",
+  "mcp.json",
+  "models.json",
+  "openclaw.json",
+  "providers.json",
+  "settings.json",
+]);
+
+function shouldScanNativeStructuredConfig(entry: string, fileName: string): boolean {
+  const normalized = path.posix.normalize(entry.replace(/^\.\//u, ""));
+  const segments = normalized.split("/");
+  if (segments.some((segment) => NATIVE_RUNTIME_NON_CONFIG_SEGMENTS.has(segment))) return false;
+  if (
+    fileName === "package.json" ||
+    fileName === "tsconfig.json" ||
+    fileName.endsWith(".schema.json")
+  ) {
+    return false;
+  }
+  if (NATIVE_STRUCTURED_CONFIG_NAMES.has(fileName)) return true;
+  return NATIVE_RUNTIME_CONFIG_ROOTS.some(
+    (root) => normalized === root || normalized.startsWith(`${root}/`),
+  );
+}
+
+function readExtractedNativeCredentialCandidate(scanRoot: string, entry: string): Buffer | null {
+  const candidatePath = path.resolve(scanRoot, entry);
+  if (!isWithinRoot(candidatePath, scanRoot)) return null;
   let descriptor: number | null = null;
   try {
-    descriptor = openSync(archivePath, constants.O_RDONLY | constants.O_NOFOLLOW);
-    const result = spawnSync("tar", ["-xOf", "-", "--", entry], {
-      stdio: [descriptor, "pipe", "pipe"],
-      timeout: 60_000,
-      maxBuffer: NATIVE_STATE_CREDENTIAL_SCAN_MAX_BYTES + 1,
-    });
-    if (result.status !== 0 || result.error || result.signal || !Buffer.isBuffer(result.stdout)) {
-      return null;
-    }
-    return result.stdout;
+    const entryStat = lstatSync(candidatePath);
+    if (!entryStat.isFile() || entryStat.isSymbolicLink()) return null;
+    if (entryStat.size > NATIVE_STATE_CREDENTIAL_SCAN_MAX_BYTES) return null;
+    descriptor = openSync(
+      candidatePath,
+      constants.O_RDONLY |
+        constants.O_NOFOLLOW |
+        (typeof constants.O_NONBLOCK === "number" ? constants.O_NONBLOCK : 0),
+    );
+    const opened = fstatSync(descriptor);
+    if (!opened.isFile() || opened.size !== entryStat.size) return null;
+    return readFileSync(descriptor);
+  } catch {
+    return null;
   } finally {
     if (descriptor !== null) closeSync(descriptor);
   }
@@ -997,6 +1065,7 @@ function nativeArchiveCredentialViolation(
   archivePath: string,
   entries: readonly string[],
 ): string | null {
+  const candidates: Array<{ entry: string; fileName: string; isEnv: boolean }> = [];
   for (const entry of new Set(entries)) {
     if (entry.endsWith("/")) continue;
     const fileName = path.posix.basename(entry).toLowerCase();
@@ -1005,18 +1074,53 @@ function nativeArchiveCredentialViolation(
     const isEnv = fileName === ".env" || fileName.endsWith(".env");
     const isStructured =
       fileName.endsWith(".json") || fileName.endsWith(".yaml") || fileName.endsWith(".yml");
-    if (!isEnv && !isStructured) continue;
-    const content = readNativeArchiveEntry(archivePath, entry);
-    if (!content || content.byteLength > NATIVE_STATE_CREDENTIAL_SCAN_MAX_BYTES) return entry;
-    const raw = content.toString("utf8");
-    if (
-      (isEnv && sanitizeEnvFileContent(raw) !== raw) ||
-      (isStructured && !structuredContentIsCredentialFree(fileName, raw))
-    ) {
-      return entry;
-    }
+    if (!isEnv && (!isStructured || !shouldScanNativeStructuredConfig(entry, fileName))) continue;
+    candidates.push({ entry, fileName, isEnv });
   }
-  return null;
+  if (candidates.length === 0) return null;
+
+  const temporary = mkdtempSync(path.join(path.dirname(archivePath), ".native-scan-"));
+  const scanRoot = path.join(temporary, "root");
+  const memberList = path.join(temporary, "members");
+  let archiveDescriptor: number | null = null;
+  try {
+    mkdirSync(scanRoot, { mode: 0o700 });
+    writeFileSync(memberList, Buffer.from(`${candidates.map(({ entry }) => entry).join("\0")}\0`), {
+      mode: 0o600,
+    });
+    archiveDescriptor = openSync(archivePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const extracted = spawnSync(
+      "tar",
+      ["--no-same-owner", "--no-recursion", "--null", "-xf", "-", "-C", scanRoot, "-T", memberList],
+      {
+        stdio: [archiveDescriptor, "pipe", "pipe"],
+        timeout: NATIVE_STATE_CAPTURE_TIMEOUT_MS,
+        maxBuffer: 1024 * 1024,
+      },
+    );
+    closeSync(archiveDescriptor);
+    archiveDescriptor = null;
+    if (extracted.status !== 0 || extracted.error || extracted.signal) {
+      return candidates[0]?.entry ?? "native state credential scan";
+    }
+    for (const candidate of candidates) {
+      const content = readExtractedNativeCredentialCandidate(scanRoot, candidate.entry);
+      if (!content || content.byteLength > NATIVE_STATE_CREDENTIAL_SCAN_MAX_BYTES) {
+        return candidate.entry;
+      }
+      const raw = content.toString("utf8");
+      if (
+        (candidate.isEnv && sanitizeEnvFileContent(raw) !== raw) ||
+        (!candidate.isEnv && !structuredContentIsCredentialFree(candidate.fileName, raw))
+      ) {
+        return candidate.entry;
+      }
+    }
+    return null;
+  } finally {
+    if (archiveDescriptor !== null) closeSync(archiveDescriptor);
+    rmSync(temporary, { recursive: true, force: true });
+  }
 }
 
 function sha256Descriptor(descriptor: number): string {
@@ -1032,7 +1136,7 @@ function sha256Descriptor(descriptor: number): string {
   return hash.digest("hex");
 }
 
-type OpenedNativeArchive = { descriptor: number } | { error: string };
+type OpenedNativeArchive = { descriptor: number; entries: string[] } | { error: string };
 
 function copyNativeArchiveToPrivateDescriptor(
   sourceDescriptor: number,
@@ -1113,7 +1217,7 @@ function openValidatedNativeArchive(
     }
     const descriptor = restoreDescriptor;
     restoreDescriptor = null;
-    return { descriptor };
+    return { descriptor, entries: validation.entries };
   } catch (error) {
     const code =
       typeof error === "object" &&
@@ -1143,6 +1247,7 @@ function rejectNativeStateInspection(message: string): never {
 export function inspectNativeSandboxState<T>(
   backupPath: string,
   inspect: (nativeRoot: string) => T,
+  member?: string,
 ): T {
   const manifest = readManifest(backupPath);
   if (!manifest?.nativeState || manifest.version !== MANIFEST_VERSION) {
@@ -1157,17 +1262,63 @@ export function inspectNativeSandboxState<T>(
     manifest.nativeState.root,
   );
   if ("error" in openedArchive) rejectNativeStateInspection(openedArchive.error);
-  const temporary = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-inspect-"));
+  const temporary = mkdtempSync(path.join(backupPath, ".native-inspect-"));
+  const extractionRoot = path.join(temporary, "root");
   try {
-    const result = spawnSync("tar", ["--no-same-owner", "-xf", "-", "-C", temporary], {
+    mkdirSync(extractionRoot, { mode: 0o700 });
+    let tarArguments = ["--no-same-owner", "-xf", "-", "-C", extractionRoot];
+    if (member !== undefined) {
+      const normalizedMember = path.posix.normalize(member.replace(/^\.\//u, ""));
+      if (
+        normalizedMember === "." ||
+        path.posix.isAbsolute(normalizedMember) ||
+        normalizedMember === ".." ||
+        normalizedMember.startsWith("../")
+      ) {
+        throw new Error("Native home/workspace inspection member is invalid");
+      }
+      const matchingEntries = openedArchive.entries.filter((entry) => {
+        const normalizedEntry = path.posix
+          .normalize(entry.replace(/^\.\//u, ""))
+          .replace(/\/$/u, "");
+        return (
+          normalizedEntry === normalizedMember || normalizedEntry.startsWith(`${normalizedMember}/`)
+        );
+      });
+      if (matchingEntries.length === 0) {
+        mkdirSync(path.join(extractionRoot, normalizedMember), { recursive: true, mode: 0o700 });
+        return inspect(extractionRoot);
+      }
+      const memberList = path.join(temporary, "members");
+      writeFileSync(memberList, Buffer.from(`${matchingEntries.join("\0")}\0`), { mode: 0o600 });
+      tarArguments = [
+        "--no-same-owner",
+        "--no-recursion",
+        "--null",
+        "-xf",
+        "-",
+        "-C",
+        extractionRoot,
+        "-T",
+        memberList,
+      ];
+    }
+    const result = spawnSync("tar", tarArguments, {
       stdio: [openedArchive.descriptor, "pipe", "pipe"],
       timeout: NATIVE_STATE_CAPTURE_TIMEOUT_MS,
       maxBuffer: 1024 * 1024,
     });
     if (result.status !== 0 || result.error || result.signal) {
-      throw new Error("Native home/workspace archive could not be extracted for inspection");
+      const detail =
+        result.error?.message ??
+        (result.signal
+          ? `signal ${result.signal}`
+          : result.stderr?.toString().trim() || `exit ${String(result.status)}`);
+      throw new Error(
+        `Native home/workspace archive could not be extracted for inspection: ${detail.substring(0, 240)}`,
+      );
     }
-    return inspect(temporary);
+    return inspect(extractionRoot);
   } finally {
     closeSync(openedArchive.descriptor);
     rmSync(temporary, { recursive: true, force: true });
@@ -1196,6 +1347,106 @@ function nativeStateCaptureMaxBytes(backupPath: string, override?: number): numb
   );
 }
 
+function breakPreparedNativeStateHardLinks(root: string): void {
+  let replacementCounter = 0;
+  const visit = (directory: string): void => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const entryPath = path.join(directory, entry.name);
+      const entryStat = lstatSync(entryPath);
+      if (entryStat.isDirectory()) {
+        visit(entryPath);
+        continue;
+      }
+      if (!entryStat.isFile() || entryStat.nlink <= 1) continue;
+
+      const source = openSync(
+        entryPath,
+        constants.O_RDONLY |
+          constants.O_NOFOLLOW |
+          (typeof constants.O_NONBLOCK === "number" ? constants.O_NONBLOCK : 0),
+      );
+      const replacementPath = path.join(
+        directory,
+        `.nemoclaw-hardlink-${String(process.pid)}-${String(replacementCounter++)}`,
+      );
+      let replacement: number | null = null;
+      try {
+        replacement = openSync(
+          replacementPath,
+          constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW,
+          entryStat.mode & 0o7777,
+        );
+        const buffer = Buffer.allocUnsafe(64 * 1024);
+        let position = 0;
+        for (;;) {
+          const bytesRead = readSync(source, buffer, 0, buffer.byteLength, position);
+          if (bytesRead === 0) break;
+          let written = 0;
+          while (written < bytesRead) {
+            written += writeSync(
+              replacement,
+              buffer,
+              written,
+              bytesRead - written,
+              position + written,
+            );
+          }
+          position += bytesRead;
+        }
+        fchmodSync(replacement, entryStat.mode & 0o7777);
+        futimesSync(replacement, entryStat.atime, entryStat.mtime);
+        closeSync(replacement);
+        replacement = null;
+        renameSync(replacementPath, entryPath);
+      } finally {
+        closeSync(source);
+        if (replacement !== null) closeSync(replacement);
+        rmSync(replacementPath, { force: true });
+      }
+    }
+  };
+  visit(root);
+}
+
+function capturePreparedNativeState(
+  source: NonNullable<BackupOptions["nativeStateSource"]>,
+  archiveDescriptor: number,
+  maxBytes: number,
+): ReturnType<typeof spawnSync> {
+  source.assertCurrent();
+  const sourceStat = lstatSync(source.directory);
+  if (!sourceStat.isDirectory() || sourceStat.isSymbolicLink()) {
+    throw new Error("Prepared stopped native state root is not a directory");
+  }
+  breakPreparedNativeStateHardLinks(source.directory);
+  return spawnSync(
+    "bash",
+    [
+      "-o",
+      "pipefail",
+      "-c",
+      '"$@" | head -c "$NEMOCLAW_NATIVE_CAPTURE_LIMIT_PLUS_ONE"',
+      "nemoclaw-stopped-native-capture",
+      "tar",
+      "-C",
+      source.directory,
+      "-cf",
+      "-",
+      "--",
+      ".",
+    ],
+    {
+      env: {
+        ...process.env,
+        NEMOCLAW_NATIVE_CAPTURE_LIMIT_PLUS_ONE: String(maxBytes + 1),
+      },
+      stdio: ["ignore", archiveDescriptor, "pipe"],
+      timeout: NATIVE_STATE_CAPTURE_TIMEOUT_MS,
+      maxBuffer: 1024 * 1024,
+    },
+  );
+}
+
 /** Capture one opaque archive of the OpenShell-owned native home/workspace. */
 function backupNativeSandboxState(sandboxName: string, options: BackupOptions): BackupResult {
   const sandbox = registry.getSandbox(sandboxName);
@@ -1212,14 +1463,27 @@ function backupNativeSandboxState(sandboxName: string, options: BackupOptions): 
   mkdirSync(backupPath, { recursive: true, mode: 0o700 });
   rejectSymlinksOnPath(backupPath);
 
-  const sshConfig = getSshConfig(sandboxName);
-  if (!sshConfig) {
-    rmSync(backupPath, { recursive: true, force: true });
-    return nativeStateFailure("Could not get SSH configuration for native state capture", true);
-  }
-  const temporary = createTempSshConfig(sshConfig, "nemoclaw-native-state-");
+  let temporary: ReturnType<typeof createTempSshConfig> | null = null;
   try {
-    const rootResult = resolveNativeStateRoot(temporary.file, sandboxName);
+    let rootResult: { root: string } | { error: string; unreachable: boolean };
+    if (options.nativeStateSource) {
+      const root = options.nativeStateSource.root;
+      rootResult =
+        path.posix.isAbsolute(root) && root === path.posix.normalize(root) && root !== "/"
+          ? { root }
+          : {
+              error: "Prepared stopped native state has an invalid persistence root",
+              unreachable: false,
+            };
+    } else {
+      const sshConfig = getSshConfig(sandboxName);
+      if (!sshConfig) {
+        rmSync(backupPath, { recursive: true, force: true });
+        return nativeStateFailure("Could not get SSH configuration for native state capture", true);
+      }
+      temporary = createTempSshConfig(sshConfig, "nemoclaw-native-state-");
+      rootResult = resolveNativeStateRoot(temporary.file, sandboxName);
+    }
     if ("error" in rootResult) {
       rmSync(backupPath, { recursive: true, force: true });
       return nativeStateFailure(rootResult.error, rootResult.unreachable);
@@ -1249,52 +1513,62 @@ function backupNativeSandboxState(sandboxName: string, options: BackupOptions): 
     );
     let result: ReturnType<typeof spawnSync>;
     try {
-      // The SSH command runs as the sandbox user. Freeze every other process
-      // owned by that user before reading the complete native tree so SQLite,
-      // WAL, and ordinary files are captured at one process-quiescent point.
-      // Keep the SSH ancestry live so the archive can stream, and always resume
-      // processes through the EXIT trap, including tar failures and signals.
-      const command = [
-        "set -eu",
-        `root=${shellQuote(rootResult.root)}`,
-        '{ [ -d "$root" ] && [ ! -L "$root" ]; } || exit 20',
-        "uid=$(id -u)",
-        "self=$$",
-        'ancestors=" $self "',
-        "cursor=$PPID",
-        'while [ "$cursor" -gt 1 ] 2>/dev/null; do ancestors="$ancestors$cursor "; parent=""; while IFS=":" read -r key value; do if [ "$key" = "PPid" ]; then set -- $value; parent=${1:-}; break; fi; done < "/proc/$cursor/status"; cursor=$parent; [ -n "$cursor" ] || break; done',
-        'collect_candidates() { candidates=""; for proc in /proc/[0-9]*; do pid=${proc##*/}; case "$ancestors" in *" $pid "*) continue ;; esac; owner=""; while IFS=":" read -r key value; do if [ "$key" = "Uid" ]; then set -- $value; owner=${1:-}; break; fi; done < "$proc/status" 2>/dev/null || :; [ "$owner" = "$uid" ] && candidates="$candidates $pid"; done; }',
-        'stopped=""',
-        'resume() { [ -z "$stopped" ] || kill -CONT $stopped 2>/dev/null || :; }',
-        "trap resume EXIT HUP INT TERM",
-        "collect_candidates",
-        'for pid in $candidates; do if kill -STOP "$pid" 2>/dev/null; then stopped="$stopped $pid"; fi; done',
-        'for pid in $stopped; do attempts=0; while [ -r "/proc/$pid/status" ]; do state=""; while IFS=":" read -r key value; do if [ "$key" = "State" ]; then set -- $value; state=${1:-}; break; fi; done < "/proc/$pid/status"; case "$state" in T*) break ;; esac; attempts=$((attempts + 1)); [ "$attempts" -lt 100 ] || exit 21; sleep 0.01; done; done',
-        "collect_candidates",
-        'for pid in $candidates; do case " $stopped " in *" $pid "*) ;; *) exit 21 ;; esac; done',
-        'tar -C "$root" --hard-dereference -cf - -- .',
-      ].join("; ");
-      result = spawnSync(
-        "bash",
-        [
-          "-o",
-          "pipefail",
-          "-c",
-          '"$@" | head -c "$NEMOCLAW_NATIVE_CAPTURE_LIMIT_PLUS_ONE"',
-          "nemoclaw-native-capture",
-          "ssh",
-          ...sshArgs(temporary.file, sandboxName),
-          command,
-        ],
-        {
-          env: {
-            ...process.env,
-            NEMOCLAW_NATIVE_CAPTURE_LIMIT_PLUS_ONE: String(maxBytes + 1),
+      if (options.nativeStateSource) {
+        result = capturePreparedNativeState(options.nativeStateSource, archiveFd, maxBytes);
+      } else {
+        if (!temporary) throw new Error("Native state SSH configuration is unavailable");
+        // The SSH command runs as the sandbox user. Freeze every other process
+        // owned by that user before reading the complete native tree so SQLite,
+        // WAL, and ordinary files are captured at one process-quiescent point.
+        // Keep the SSH ancestry live so the archive can stream, and always resume
+        // processes through the EXIT trap, including tar failures and signals.
+        const command = [
+          "set -eu",
+          `root=${shellQuote(rootResult.root)}`,
+          '{ [ -d "$root" ] && [ ! -L "$root" ]; } || exit 20',
+          "uid=$(id -u)",
+          "self=$$",
+          'ancestors=" $self "',
+          "cursor=$PPID",
+          'while [ "$cursor" -gt 1 ] 2>/dev/null; do ancestors="$ancestors$cursor "; parent=""; while IFS=":" read -r key value; do if [ "$key" = "PPid" ]; then set -- $value; parent=${1:-}; break; fi; done < "/proc/$cursor/status"; cursor=$parent; [ -n "$cursor" ] || break; done',
+          'collect_candidates() { candidates=""; for proc in /proc/[0-9]*; do pid=${proc##*/}; case "$ancestors" in *" $pid "*) continue ;; esac; owner=""; while IFS=":" read -r key value; do if [ "$key" = "Uid" ]; then set -- $value; owner=${1:-}; break; fi; done < "$proc/status" 2>/dev/null || :; [ "$owner" = "$uid" ] && candidates="$candidates $pid"; done; }',
+          'stopped=""',
+          'resume() { [ -z "$stopped" ] || kill -CONT $stopped 2>/dev/null || :; }',
+          "trap resume EXIT HUP INT TERM",
+          "collect_candidates",
+          'for pid in $candidates; do if kill -STOP "$pid" 2>/dev/null; then stopped="$stopped $pid"; fi; done',
+          'for pid in $stopped; do attempts=0; while [ -r "/proc/$pid/status" ]; do state=""; while IFS=":" read -r key value; do if [ "$key" = "State" ]; then set -- $value; state=${1:-}; break; fi; done < "/proc/$pid/status"; case "$state" in T*) break ;; esac; attempts=$((attempts + 1)); [ "$attempts" -lt 100 ] || exit 21; sleep 0.01; done; done',
+          "collect_candidates",
+          'for pid in $candidates; do case " $stopped " in *" $pid "*) ;; *) exit 21 ;; esac; done',
+          'tar -C "$root" --hard-dereference -cf - -- .',
+        ].join("; ");
+        result = spawnSync(
+          "bash",
+          [
+            "-o",
+            "pipefail",
+            "-c",
+            '"$@" | head -c "$NEMOCLAW_NATIVE_CAPTURE_LIMIT_PLUS_ONE"',
+            "nemoclaw-native-capture",
+            "ssh",
+            ...sshArgs(temporary.file, sandboxName),
+            command,
+          ],
+          {
+            env: {
+              ...process.env,
+              NEMOCLAW_NATIVE_CAPTURE_LIMIT_PLUS_ONE: String(maxBytes + 1),
+            },
+            stdio: ["ignore", archiveFd, "pipe"],
+            timeout: NATIVE_STATE_CAPTURE_TIMEOUT_MS,
+            maxBuffer: 1024 * 1024,
           },
-          stdio: ["ignore", archiveFd, "pipe"],
-          timeout: NATIVE_STATE_CAPTURE_TIMEOUT_MS,
-          maxBuffer: 1024 * 1024,
-        },
+        );
+      }
+    } catch (error) {
+      rmSync(backupPath, { recursive: true, force: true });
+      return nativeStateFailure(
+        `Native home/workspace capture failed: ${error instanceof Error ? error.message : String(error)}`,
       );
     } finally {
       closeSync(archiveFd);
@@ -1314,12 +1588,14 @@ function backupNativeSandboxState(sandboxName: string, options: BackupOptions): 
           : result.stderr?.toString().trim() || `exit ${String(result.status)}`);
       rmSync(backupPath, { recursive: true, force: true });
       const changedDuringRead =
-        result.status === 1 && /file changed as we read it/iu.test(result.stderr?.toString() ?? "");
+        !options.nativeStateSource &&
+        result.status === 1 &&
+        /file changed as we read it/iu.test(result.stderr?.toString() ?? "");
       return nativeStateFailure(
         changedDuringRead
           ? "Native home/workspace capture changed while it was read after quiescing; no backup was published. Retry after stopping the sandbox."
           : `Native home/workspace capture failed: ${detail.substring(0, 240)}`,
-        isSshTransportFailure(result),
+        !options.nativeStateSource && isSshTransportFailure(result),
       );
     }
     const validation = validateTarEntries({ filePath: archivePath }, rootResult.root);
@@ -1327,6 +1603,13 @@ function backupNativeSandboxState(sandboxName: string, options: BackupOptions): 
       rmSync(backupPath, { recursive: true, force: true });
       return nativeStateFailure(
         `Native state archive validation failed: ${validation.violations.join("; ")}`,
+      );
+    }
+    const hardLinkViolations = rejectHardLinks({ filePath: archivePath });
+    if (hardLinkViolations.length > 0) {
+      rmSync(backupPath, { recursive: true, force: true });
+      return nativeStateFailure(
+        `Native state archive validation failed: ${hardLinkViolations.join("; ")}`,
       );
     }
     const credentialViolation = nativeArchiveCredentialViolation(archivePath, validation.entries);
@@ -1354,7 +1637,10 @@ function backupNativeSandboxState(sandboxName: string, options: BackupOptions): 
       blueprintDigest: computeBlueprintDigest(),
       ...authority,
     };
-    const publicationError = validateSnapshotPublication(backupPath, options.validateBeforePublish);
+    const publicationError = validateSnapshotPublication(backupPath, () => {
+      options.nativeStateSource?.assertCurrent();
+      options.validateBeforePublish?.();
+    });
     if (publicationError) return nativeStateFailure(publicationError);
     writeManifest(backupPath, manifest);
     return {
@@ -1367,7 +1653,7 @@ function backupNativeSandboxState(sandboxName: string, options: BackupOptions): 
     };
   } finally {
     try {
-      temporary.cleanup();
+      temporary?.cleanup();
     } catch {
       /* ignore */
     }
@@ -1624,12 +1910,12 @@ async function restoreNativeSandboxState(
         "set -eu",
         `root=${root}`,
         '{ [ -d "$root" ] && [ ! -L "$root" ]; } || exit 20',
-        'stage="$(mktemp -d "${TMPDIR:-/tmp}/nemoclaw-native-restore.XXXXXX")"',
+        'stage="$(mktemp -d "$root/.nemoclaw-native-restore.XXXXXX")"',
         "trap 'rm -rf -- \"$stage\"' EXIT HUP INT TERM",
         'tar --no-same-owner -xf - -C "$stage"',
         'if find "$stage" -type f -links +1 -print -quit | grep -q .; then echo "native restore archive contains a hard link" >&2; exit 21; fi',
-        'find "$root" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +',
-        'cp -a -- "$stage"/. "$root"/',
+        'find "$root" -mindepth 1 -maxdepth 1 ! -path "$stage" -exec rm -rf -- {} +',
+        'find "$stage" -mindepth 1 -maxdepth 1 -exec mv -- {} "$root"/ \\;',
       ].join("; ");
       const result = spawnSync("ssh", [...sshArgs(temporary.file, sandboxName), command], {
         ...(selectedEnv ? { env: selectedEnv } : {}),

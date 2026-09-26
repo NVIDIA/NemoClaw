@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const ORIGINAL_HOME = process.env.HOME;
 const TMP_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-state-"));
@@ -151,6 +151,61 @@ process.exit(93);
 }
 
 describe("complete native home persistence", () => {
+  it("captures a prepared stopped tree without SSH and inspects only a requested subtree", () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-stopped-native-state-"));
+    try {
+      const nativeRoot = path.join(fixture, "native-home");
+      const inspectionMarker = "not-part-of-hermes-inspection";
+      fs.mkdirSync(path.join(nativeRoot, ".hermes"), { recursive: true });
+      fs.mkdirSync(path.join(nativeRoot, "node_modules", "example"), { recursive: true });
+      fs.mkdirSync(path.join(nativeRoot, "schemas"), { recursive: true });
+      fs.writeFileSync(path.join(nativeRoot, ".hermes", "config.yaml"), "model: local\n");
+      fs.writeFileSync(path.join(nativeRoot, "payload.txt"), "payload");
+      fs.linkSync(path.join(nativeRoot, "payload.txt"), path.join(nativeRoot, "payload-copy.txt"));
+      fs.writeFileSync(
+        path.join(nativeRoot, "node_modules", "example", "package.json"),
+        JSON.stringify({ apiKey: "dependency-metadata-is-not-runtime-config" }),
+      );
+      fs.writeFileSync(
+        path.join(nativeRoot, "schemas", "config.schema.json"),
+        JSON.stringify({ apiKey: { type: "string" } }),
+      );
+      fs.writeFileSync(path.join(nativeRoot, inspectionMarker), "unrelated");
+      const assertCurrent = vi.fn();
+      writeOpenClawRegistry("alpha");
+
+      const backup = sandboxState.backupSandboxState("alpha", {
+        nativeStateSource: {
+          root: "/sandbox",
+          directory: nativeRoot,
+          assertCurrent,
+        },
+      });
+
+      expect(backup.success, backup.error).toBe(true);
+      expect(assertCurrent).toHaveBeenCalledTimes(2);
+      expect(fs.statSync(path.join(nativeRoot, "payload.txt")).nlink).toBe(1);
+      expect(fs.statSync(path.join(nativeRoot, "payload-copy.txt")).nlink).toBe(1);
+      const inspected = sandboxState.inspectNativeSandboxState(
+        backup.manifest!.backupPath,
+        (root: string) => ({
+          hermesPresent: fs.existsSync(path.join(root, ".hermes", "config.yaml")),
+          unrelatedPresent: fs.existsSync(path.join(root, inspectionMarker)),
+        }),
+        ".hermes",
+      );
+      expect(inspected.hermesPresent).toBe(true);
+      expect(inspected.unrelatedPresent).toBe(false);
+      expect(
+        fs
+          .readdirSync(backup.manifest!.backupPath)
+          .some((entry: string) => entry.startsWith(".native-inspect-")),
+      ).toBe(false);
+    } finally {
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
   it("round-trips unknown home, workspace, package, plugin, hook, cron, and child-agent state", async () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-home-"));
     const oldPath = process.env.PATH;
@@ -404,6 +459,9 @@ describe("complete native home persistence", () => {
       expect(commands).toContain('kill -STOP "$pid"');
       expect(commands).toContain("trap resume EXIT HUP INT TERM");
       expect(commands).toContain("-links +1");
+      expect(commands).toContain('mktemp -d "$root/.nemoclaw-native-restore.XXXXXX"');
+      expect(commands).toContain('! -path "$stage"');
+      expect(commands).toContain('mv -- {} "$root"/');
       expect(commands).not.toContain("native restore symlink escapes root");
     } finally {
       restoreEnv("NEMOCLAW_OPENSHELL_BIN", oldOpenshell);
