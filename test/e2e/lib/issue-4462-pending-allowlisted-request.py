@@ -44,10 +44,16 @@ spec.loader.exec_module(module)
 records, _metadata = module.read_openclaw_pairing_state(str(STATE_ROOT), timeout=1)
 identity = records.get("identity")
 pending = records.get("pending")
-if not isinstance(identity, dict) or not isinstance(pending, list):
+if not isinstance(identity, dict) or not isinstance(pending, dict):
     raise SystemExit("canonical identity or pending state is unavailable")
+if any(not isinstance(request, dict) for request in pending.values()):
+    raise SystemExit("canonical pending records must be objects")
 device_id = norm(identity.get("deviceId"))
-matches = [request for request in pending if norm(request.get("deviceId")) == device_id]
+matches = [
+    request
+    for request in pending.values()
+    if norm(request.get("deviceId")) == device_id
+]
 if not device_id or len(matches) != 1:
     raise SystemExit(f"expected one pending request for the current CLI identity, found {len(matches)}")
 request = matches[0]
