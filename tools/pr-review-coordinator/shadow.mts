@@ -15,6 +15,7 @@ import {
   parseAdvisorFindingLedger,
 } from "../pr-review-advisor/finding-ledger.mts";
 import {
+  type CoordinatorReviewHistory,
   type GitHubReviewContext,
   readPreparedGitHubContext,
 } from "../pr-review-advisor/github-context.mts";
@@ -31,6 +32,7 @@ type ShadowInput = Readonly<{
   prNumber: number;
   headSha: string;
   baseSha: string;
+  requiredChecks: "pass" | "pending" | "fail";
 }>;
 
 export function buildCoordinatorShadowSnapshot(input: ShadowInput): CoordinatorSnapshot {
@@ -46,6 +48,11 @@ export function buildCoordinatorShadowSnapshot(input: ShadowInput): CoordinatorS
   }
   const author = stringOrUndefined(getPath<unknown>(pullRequest, ["user", "login"]));
   if (!author) throw new Error("Coordinator shadow context is missing the pull request author");
+  const productScopeMissing = input.ledgers.some((ledger) =>
+    ledger.findings.some((finding) => finding.kind === "product-scope"),
+  );
+  const history = coordinatorHistory(input.context.coordinatorHistory);
+  const frozen = new Set(history.frozenContractKeys);
 
   const findings = input.ledgers.flatMap((ledger) =>
     ledger.findings.map((finding) => ({
@@ -54,10 +61,12 @@ export function buildCoordinatorShadowSnapshot(input: ShadowInput): CoordinatorS
       severity: finding.severity,
       summary: finding.summary,
       path: finding.path,
-      // Shadow mode preserves model findings as ambiguous evidence. A future
-      // writer must validate claims and reconstruct the frozen contract first.
-      validation: "ambiguous" as const,
-      relationship: "existing-contract" as const,
+      validation:
+        history.contractEvidence === "incomplete" ? ("ambiguous" as const) : ("validated" as const),
+      relationship:
+        history.contractEvidence === "complete" && !frozen.has(finding.id)
+          ? ("newly-proven-on-delta" as const)
+          : ("existing-contract" as const),
     })),
   );
   const advisor =
@@ -93,18 +102,13 @@ export function buildCoordinatorShadowSnapshot(input: ShadowInput): CoordinatorS
     },
     advisor,
     readiness: {
-      requiredChecks: "pass",
+      requiredChecks: input.requiredChecks,
       mergeability:
         mergeable === true ? "mergeable" : mergeable === false ? "conflicting" : "unknown",
-      // These gates intentionally remain closed until a reviewed writer owns
-      // their live evidence and exact-head write guard.
-      commitsVerified: false,
-      productScope: "missing",
+      commitsVerified: input.context.commitsVerified === true,
+      productScope: productScopeMissing ? "missing" : "accepted",
     },
-    history: {
-      frozenContractKeys: [],
-      writes: [],
-    },
+    history,
   };
 }
 
@@ -141,6 +145,44 @@ function record(value: unknown, label: string): Record<string, unknown> {
   return value;
 }
 
+function coordinatorHistory(value: unknown): CoordinatorReviewHistory {
+  const history = record(value, "review history");
+  const contractEvidence = history.contractEvidence;
+  if (
+    contractEvidence !== "none" &&
+    contractEvidence !== "complete" &&
+    contractEvidence !== "incomplete"
+  ) {
+    throw new Error("Coordinator shadow review history has invalid contract evidence");
+  }
+  if (
+    !Array.isArray(history.frozenContractKeys) ||
+    history.frozenContractKeys.some((key) => typeof key !== "string" || key.length === 0)
+  ) {
+    throw new Error("Coordinator shadow review history has invalid frozen contract keys");
+  }
+  if (!Array.isArray(history.writes)) {
+    throw new Error("Coordinator shadow review history has invalid writes");
+  }
+  const writes = history.writes.map((value): CoordinatorReviewHistory["writes"][number] => {
+    const write = record(value, "review history write");
+    const kind = write.kind;
+    if (
+      typeof write.headSha !== "string" ||
+      !/^[0-9a-f]{40}$/u.test(write.headSha) ||
+      (kind !== "request-changes" && kind !== "approve")
+    ) {
+      throw new Error("Coordinator shadow review history has an invalid write");
+    }
+    return { headSha: write.headSha, kind };
+  });
+  return {
+    contractEvidence,
+    frozenContractKeys: history.frozenContractKeys,
+    writes,
+  };
+}
+
 async function main(): Promise<void> {
   const artifactsRoot = path.resolve(requiredEnv("PR_REVIEW_ADVISOR_ARTIFACTS"));
   const contextPath = path.resolve(requiredEnv("PR_REVIEW_ADVISOR_GITHUB_CONTEXT_PATH"));
@@ -148,6 +190,7 @@ async function main(): Promise<void> {
   const headSha = requiredEnv("EXPECTED_HEAD_SHA");
   const baseSha = requiredEnv("EXPECTED_BASE_SHA");
   const repo = requiredEnv("TARGET_REPO");
+  const requiredChecks = requiredChecksFromEnvironment();
   const prNumber = Number.parseInt(requiredEnv("PR_NUMBER"), 10);
   if (!Number.isSafeInteger(prNumber) || prNumber <= 0) {
     throw new Error("Coordinator shadow requires a positive PR_NUMBER");
@@ -174,7 +217,15 @@ async function main(): Promise<void> {
       { headSha, interest },
     ),
   );
-  const result = evaluateCoordinatorShadow({ context, gate, ledgers, prNumber, headSha, baseSha });
+  const result = evaluateCoordinatorShadow({
+    context,
+    gate,
+    ledgers,
+    prNumber,
+    headSha,
+    baseSha,
+    requiredChecks,
+  });
   fs.mkdirSync(OUTPUT_DIRECTORY, { recursive: true });
   const outputPath = path.join(OUTPUT_DIRECTORY, "decision.json");
   fs.writeFileSync(outputPath, `${JSON.stringify(result, null, 2)}\n`, { flag: "wx", mode: 0o600 });
@@ -192,6 +243,14 @@ async function main(): Promise<void> {
   ].join("\n");
   console.log(summary);
   if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary);
+}
+
+function requiredChecksFromEnvironment(): "pass" | "pending" | "fail" {
+  const value = requiredEnv("COORDINATOR_REQUIRED_CHECKS");
+  if (value !== "pass" && value !== "pending" && value !== "fail") {
+    throw new Error("Coordinator shadow required-check state is invalid");
+  }
+  return value;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

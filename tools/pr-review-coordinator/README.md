@@ -19,9 +19,27 @@ App key. This makes it safe to exercise the policy directly.
 
 The checked-in Advisor workflow runs `shadow.mts` after every complete exact-head specialist run.
 That adapter verifies the shared exact-head artifacts and emits a retained decision artifact and job
-summary. It has read-only repository permissions. Model findings remain ambiguous in shadow mode,
-and commit-verification and product-scope gates remain closed, so the adapter cannot propose a
-review write or approval from evidence it does not yet own.
+summary. It has read-only repository permissions. It evaluates the same P0/P1 ledger, successful CI
+trigger, mergeability, commit verification, and product-scope evidence that a later writer would use,
+but it never performs the proposed review action.
+
+The shadow rollout collector is event-driven rather than scheduled. After the Advisor completes, it
+captures the first five distinct PR decisions in a serialized, artifact-backed sample and then stays
+quiet. Duplicate runs for one PR do not consume another slot. The collector has read-only repository
+permissions, posts no comments or reviews, and retains each sample for maintainers to compare with the
+expected outcome before phase 2 enables selected changes-requested reviews.
+
+Automatic runs inherit a passing required-check state only from the successful exact-head CI trigger;
+manual dispatches remain pending and cannot propose a review. The trusted aggregate makes surviving
+exact-head P0/P1 ledger entries eligible for the shadow decision. A `product-scope` finding keeps the
+approval gate closed; otherwise shadow mode records that no missing-scope defect was reported.
+
+Shadow mode reconstructs prior writes from trusted maintainer reviews and the dedicated coordinator
+bot. Future coordinator-generated changes-requested reviews must carry a hidden
+`nemoclaw-review-coordinator-finding` marker for every frozen finding. Those markers let a later
+exact-head run distinguish a repeated blocker from a newly proven blocker without repeating feedback.
+If unresolved older feedback has no marker, the contract is ambiguous and the coordinator stays quiet;
+it never treats that PR as a first review or proposes approval.
 
 The policy preserves the maintainer review loop's important behavior. Its input is reconciled
 Advisor evidence: the adapter must retain only P0/P1 ledger findings and label whether each finding

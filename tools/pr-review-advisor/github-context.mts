@@ -23,6 +23,9 @@ const OVERLAP_SAME_FILE_SAMPLE_LIMIT = 20;
 const OVERLAP_PATH_CHARACTER_LIMIT = 300;
 const BODY_CHARACTER_LIMIT = 20_000;
 const COMMENT_BODY_CHARACTER_LIMIT = 4_000;
+const COORDINATOR_REVIEWER_LOGIN = "nemoclaw-review-coordinator[bot]";
+const COORDINATOR_FINDING_MARKER =
+  /<!--\s*nemoclaw-review-coordinator-finding:([A-Za-z0-9][A-Za-z0-9._:-]{0,127})\s*-->/gu;
 
 export type OpenPrOverlap = {
   number: number;
@@ -48,11 +51,22 @@ export type GitHubReviewContext = {
   prNumber: number;
   fetchError?: string;
   pullRequest?: unknown;
+  commitsVerified?: boolean;
   issueReferenceLines?: string[];
   linkedIssues?: LinkedIssue[];
   openPrOverlaps?: OpenPrOverlap[];
   followUpReview?: FollowUpReview;
+  coordinatorHistory?: CoordinatorReviewHistory;
 };
+
+export type CoordinatorReviewHistory = Readonly<{
+  contractEvidence: "none" | "complete" | "incomplete";
+  frozenContractKeys: readonly string[];
+  writes: readonly Readonly<{
+    headSha: string;
+    kind: "request-changes" | "approve";
+  }>[];
+}>;
 
 export type FollowUpReview = {
   reviewId: number;
@@ -78,6 +92,12 @@ type TrustedReview = {
   authorAssociation: "OWNER" | "MEMBER" | "COLLABORATOR";
   body?: string;
 };
+
+type CoordinatorAuthoredReview = Omit<TrustedReview, "authorAssociation">;
+type ContractReview = Pick<
+  TrustedReview,
+  "id" | "state" | "reviewedHeadSha" | "submittedAt" | "reviewer" | "body"
+>;
 
 export function serializePreparedGitHubContext(context: GitHubReviewContext | null): string {
   const serialized = `${JSON.stringify(context, null, 2)}\n`;
@@ -170,7 +190,7 @@ export async function collectGitHubReviewContext(
   const signal = options.signal ?? AbortSignal.timeout(GITHUB_CONTEXT_DEADLINE_MS);
   const context: GitHubReviewContext = { repo, prNumber };
   try {
-    const [rawPullRequest, openPulls, reviews] = await Promise.all([
+    const [rawPullRequest, openPulls, reviews, commits] = await Promise.all([
       githubRest<unknown>(`repos/${repo}/pulls/${prNumber}`, token, signal),
       githubRestPaginated<unknown>(
         `repos/${repo}/pulls?state=open&sort=updated&direction=desc`,
@@ -184,10 +204,17 @@ export async function collectGitHubReviewContext(
         undefined,
         signal,
       ),
+      githubRestPaginated<unknown>(
+        `repos/${repo}/pulls/${prNumber}/commits`,
+        token,
+        undefined,
+        signal,
+      ),
     ]);
     context.pullRequest = summarizePullRequest(rawPullRequest);
     const currentHeadSha =
       stringOrUndefined(getPath<unknown>(rawPullRequest, ["head", "sha"])) ?? "";
+    context.commitsVerified = allPullRequestCommitsVerified(commits, currentHeadSha);
     const selectedReviewIds = selectContractReviews(
       reviews,
       currentHeadSha,
@@ -209,6 +236,11 @@ export async function collectGitHubReviewContext(
       reviewComments,
       currentHeadSha,
       env.PR_REVIEW_ADVISOR_REVIEWER_LOGIN,
+    );
+    context.coordinatorHistory = reconstructCoordinatorReviewHistory(
+      reviews,
+      reviewComments,
+      currentHeadSha,
     );
     const prTitle = stringOrUndefined(getPath<unknown>(rawPullRequest, ["title"])) || "";
     const prBody = stringOrUndefined(getPath<unknown>(rawPullRequest, ["body"])) || "";
@@ -244,6 +276,65 @@ export async function collectGitHubReviewContext(
         : String(error);
   }
   return context;
+}
+
+export function allPullRequestCommitsVerified(commits: unknown[], currentHeadSha: string): boolean {
+  if (!/^[0-9a-f]{40}$/u.test(currentHeadSha)) return false;
+  if (commits.length === 0 || commits.some((commit) => !isObjectRecord(commit))) return false;
+  const records = commits as Record<string, unknown>[];
+  const lastSha = stringOrUndefined(records.at(-1)?.sha);
+  return (
+    lastSha === currentHeadSha &&
+    records.every(
+      (commit) =>
+        /^[0-9a-f]{40}$/u.test(stringOrDefault(commit.sha, "")) &&
+        getPath<unknown>(commit, ["commit", "verification", "verified"]) === true,
+    )
+  );
+}
+
+export function reconstructCoordinatorReviewHistory(
+  reviews: unknown[],
+  comments: unknown[],
+  currentHeadSha: string,
+): CoordinatorReviewHistory {
+  if (!/^[0-9a-f]{40}$/u.test(currentHeadSha)) {
+    throw new Error("Coordinator review history requires a valid current head");
+  }
+  if (reviews.some((review) => !isObjectRecord(review))) {
+    throw new Error("Coordinator review history requires well-formed review entries");
+  }
+  const candidates = [...trustedReviews(reviews), ...coordinatorAuthoredReviews(reviews)].sort(
+    (left, right) => left.submittedAt.localeCompare(right.submittedAt) || left.id - right.id,
+  );
+  const unresolved = unresolvedContractReviews(candidates, currentHeadSha);
+  const commentsByReview = new Map<number, string[]>();
+  for (const comment of recordItems(comments)) {
+    const reviewId = comment.pull_request_review_id;
+    const body = stringOrUndefined(comment.body);
+    if (typeof reviewId !== "number" || !Number.isSafeInteger(reviewId) || !body) continue;
+    const bodies = commentsByReview.get(reviewId) ?? [];
+    bodies.push(body);
+    commentsByReview.set(reviewId, bodies);
+  }
+  const keys = new Set<string>();
+  let complete = true;
+  for (const review of unresolved) {
+    const reviewKeys = coordinatorFindingKeys([
+      ...(review.body ? [review.body] : []),
+      ...(commentsByReview.get(review.id) ?? []),
+    ]);
+    if (reviewKeys.length === 0) complete = false;
+    for (const key of reviewKeys) keys.add(key);
+  }
+  return {
+    contractEvidence: unresolved.length === 0 ? "none" : complete ? "complete" : "incomplete",
+    frozenContractKeys: [...keys].sort(),
+    writes: candidates.map((review) => ({
+      headSha: review.reviewedHeadSha,
+      kind: review.state === "APPROVED" ? "approve" : "request-changes",
+    })),
+  };
 }
 
 export function selectFollowUpReview(
@@ -295,7 +386,23 @@ function selectContractReviews(
   reviewerLogin?: string,
 ): TrustedReview[] {
   if (!/^[0-9a-f]{40}$/u.test(currentHeadSha)) return [];
-  const candidates = recordItems(reviews)
+  const candidates = trustedReviews(reviews);
+  const unresolved = unresolvedContractReviews(candidates, currentHeadSha);
+  if (unresolved.length > 0) return unresolved;
+  if (candidates.some(({ reviewedHeadSha }) => reviewedHeadSha === currentHeadSha)) return [];
+
+  const priorHeadCandidates = candidates.filter(
+    ({ reviewedHeadSha }) => reviewedHeadSha !== currentHeadSha,
+  );
+  const fallback = reviewerLogin
+    ? priorHeadCandidates.filter(({ reviewer }) => reviewer === reviewerLogin)
+    : priorHeadCandidates;
+  const latest = fallback.at(-1) ?? priorHeadCandidates.at(-1);
+  return latest ? [latest] : [];
+}
+
+function trustedReviews(reviews: unknown[]): TrustedReview[] {
+  return recordItems(reviews)
     .map((review): TrustedReview | undefined => {
       const id = review.id;
       const state = stringOrUndefined(review.state);
@@ -309,14 +416,13 @@ function selectContractReviews(
         !Number.isSafeInteger(id) ||
         id <= 0 ||
         (state !== "APPROVED" && state !== "CHANGES_REQUESTED") ||
+        !reviewedHeadSha ||
+        !/^[0-9a-f]{40}$/u.test(reviewedHeadSha) ||
+        !submittedAt ||
+        !reviewer ||
         (authorAssociation !== "OWNER" &&
           authorAssociation !== "MEMBER" &&
           authorAssociation !== "COLLABORATOR") ||
-        !reviewedHeadSha ||
-        !/^[0-9a-f]{40}$/u.test(reviewedHeadSha) ||
-        reviewedHeadSha === currentHeadSha ||
-        !submittedAt ||
-        !reviewer ||
         userType === "Bot" ||
         reviewer.endsWith("[bot]")
       ) {
@@ -334,8 +440,46 @@ function selectContractReviews(
     })
     .filter((review): review is TrustedReview => review !== undefined)
     .sort((left, right) => left.submittedAt.localeCompare(right.submittedAt) || left.id - right.id);
+}
 
-  const byReviewer = new Map<string, TrustedReview[]>();
+function coordinatorAuthoredReviews(reviews: unknown[]): CoordinatorAuthoredReview[] {
+  return recordItems(reviews)
+    .map((review): CoordinatorAuthoredReview | undefined => {
+      const id = review.id;
+      const state = stringOrUndefined(review.state);
+      const reviewedHeadSha = stringOrUndefined(review.commit_id);
+      const submittedAt = stringOrUndefined(review.submitted_at);
+      const reviewer = stringOrUndefined(getPath<unknown>(review, ["user", "login"]));
+      if (
+        typeof id !== "number" ||
+        !Number.isSafeInteger(id) ||
+        id <= 0 ||
+        (state !== "APPROVED" && state !== "CHANGES_REQUESTED") ||
+        !reviewedHeadSha ||
+        !/^[0-9a-f]{40}$/u.test(reviewedHeadSha) ||
+        !submittedAt ||
+        reviewer !== COORDINATOR_REVIEWER_LOGIN
+      ) {
+        return undefined;
+      }
+      return {
+        id,
+        state,
+        reviewedHeadSha,
+        submittedAt,
+        reviewer,
+        body: boundedText(review.body, BODY_CHARACTER_LIMIT, "review body"),
+      };
+    })
+    .filter((review): review is CoordinatorAuthoredReview => review !== undefined)
+    .sort((left, right) => left.submittedAt.localeCompare(right.submittedAt) || left.id - right.id);
+}
+
+function unresolvedContractReviews<T extends ContractReview>(
+  candidates: readonly T[],
+  currentHeadSha: string,
+): T[] {
+  const byReviewer = new Map<string, T[]>();
   for (const review of candidates) {
     const reviewerReviews = byReviewer.get(review.reviewer) ?? [];
     if (review.state === "APPROVED") reviewerReviews.length = 0;
@@ -344,14 +488,19 @@ function selectContractReviews(
   }
   const unresolved = [...byReviewer.values()]
     .flat()
+    .filter(({ reviewedHeadSha }) => reviewedHeadSha !== currentHeadSha)
     .sort((left, right) => left.submittedAt.localeCompare(right.submittedAt) || left.id - right.id);
-  if (unresolved.length > 0) return unresolved;
+  return unresolved;
+}
 
-  const fallback = reviewerLogin
-    ? candidates.filter(({ reviewer }) => reviewer === reviewerLogin)
-    : candidates;
-  const latest = fallback.at(-1) ?? candidates.at(-1);
-  return latest ? [latest] : [];
+function coordinatorFindingKeys(bodies: readonly string[]): string[] {
+  const keys = new Set<string>();
+  for (const body of bodies) {
+    for (const match of body.matchAll(COORDINATOR_FINDING_MARKER)) {
+      if (match[1]) keys.add(match[1]);
+    }
+  }
+  return [...keys];
 }
 
 function combinedReviewBody(reviews: readonly TrustedReview[]): string | undefined {

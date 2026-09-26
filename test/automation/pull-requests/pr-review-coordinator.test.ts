@@ -92,6 +92,20 @@ describe("repository-owned PR review coordination", () => {
     });
   });
 
+  it("stays quiet when prior review feedback cannot be reconstructed safely", () => {
+    const decision = decideReviewAction(
+      snapshot({
+        advisor: clear(),
+        contractEvidence: "incomplete",
+      }),
+    );
+
+    expect(decision).toMatchObject({
+      action: "stay-quiet",
+      reason: "ambiguous-follow-up",
+    });
+  });
+
   it("stays quiet until a complete Advisor result matches the current head and base", () => {
     const decision = decideReviewAction(
       snapshot({
@@ -124,6 +138,20 @@ describe("repository-owned PR review coordination", () => {
     const decision = decideReviewAction(
       snapshot({
         advisor: clear(),
+        readiness: { requiredChecks: "pending" },
+      }),
+    );
+
+    expect(decision).toMatchObject({
+      action: "stay-quiet",
+      reason: "prerequisites-not-ready",
+    });
+  });
+
+  it("waits for exact-head checks before proposing changes requested", () => {
+    const decision = decideReviewAction(
+      snapshot({
+        advisor: blocked([finding("state-ownership")]),
         readiness: { requiredChecks: "pending" },
       }),
     );
@@ -265,11 +293,17 @@ describe("repository-owned PR review coordination", () => {
     ).toThrow("Pull request head or base changed before the review write");
   });
 
-  it("keeps exact-head model findings read-only and ambiguous in workflow shadow mode", () => {
+  it("proposes one exact-head changes-requested review in workflow shadow mode", () => {
     const result = evaluateCoordinatorShadow({
       context: {
         repo: "NVIDIA/NemoClaw",
         prNumber: 123,
+        commitsVerified: true,
+        coordinatorHistory: {
+          contractEvidence: "none",
+          frozenContractKeys: [],
+          writes: [],
+        },
         pullRequest: {
           state: "open",
           draft: false,
@@ -315,18 +349,199 @@ describe("repository-owned PR review coordination", () => {
       prNumber: 123,
       headSha: HEAD,
       baseSha: BASE,
+      requiredChecks: "pass",
     });
 
     expect(result).toMatchObject({
       mode: "read-only-shadow",
       snapshot: {
         advisor: {
-          findings: [{ validation: "ambiguous" }],
+          findings: [{ validation: "validated" }],
         },
-        readiness: { commitsVerified: false, productScope: "missing" },
+        readiness: { commitsVerified: true, productScope: "accepted" },
       },
-      decision: { action: "stay-quiet", reason: "ambiguous-follow-up" },
+      decision: { action: "would-request-changes", reason: "advisor-blockers-first-review" },
     });
+  });
+
+  it("proposes exact-head approval only when every workflow shadow gate passes", () => {
+    const input = {
+      context: {
+        repo: "NVIDIA/NemoClaw",
+        prNumber: 123,
+        commitsVerified: true,
+        coordinatorHistory: {
+          contractEvidence: "none" as const,
+          frozenContractKeys: [],
+          writes: [],
+        },
+        pullRequest: {
+          state: "open",
+          draft: false,
+          mergeable: true,
+          user: { login: "contributor" },
+          head: { sha: HEAD },
+          base: { sha: BASE },
+        },
+      },
+      gate: {
+        status: "clear" as const,
+        findingCount: 0,
+        unresolvedRecommendationCount: 0,
+        findingInterests: [],
+        unresolvedInterests: [],
+      },
+      ledgers: [],
+      prNumber: 123,
+      headSha: HEAD,
+      baseSha: BASE,
+      requiredChecks: "pass" as const,
+    };
+
+    expect(evaluateCoordinatorShadow(input).decision).toMatchObject({
+      action: "would-approve",
+      reason: "advisor-clear-and-ready",
+    });
+    expect(
+      evaluateCoordinatorShadow({
+        ...input,
+        context: { ...input.context, commitsVerified: false },
+      }).decision,
+    ).toMatchObject({ action: "stay-quiet", reason: "prerequisites-not-ready" });
+    expect(
+      evaluateCoordinatorShadow({ ...input, requiredChecks: "pending" }).decision,
+    ).toMatchObject({ action: "stay-quiet", reason: "prerequisites-not-ready" });
+  });
+
+  it("fails the approval gate when the Advisor reports missing product scope", () => {
+    const result = evaluateCoordinatorShadow({
+      context: {
+        repo: "NVIDIA/NemoClaw",
+        prNumber: 123,
+        commitsVerified: true,
+        coordinatorHistory: {
+          contractEvidence: "none",
+          frozenContractKeys: [],
+          writes: [],
+        },
+        pullRequest: {
+          state: "open",
+          draft: false,
+          mergeable: true,
+          user: { login: "contributor" },
+          head: { sha: HEAD },
+          base: { sha: BASE },
+        },
+      },
+      gate: {
+        status: "blocked",
+        findingCount: 1,
+        unresolvedRecommendationCount: 0,
+        findingInterests: ["product"],
+        unresolvedInterests: [],
+      },
+      ledgers: [
+        {
+          version: 1,
+          revision: 1,
+          identity: "exact-head",
+          headSha: HEAD,
+          interest: "product",
+          status: "findings",
+          findings: [
+            {
+              id: "missing-product-scope",
+              interest: "product",
+              severity: "P1",
+              kind: "product-scope",
+              summary: "The new supported surface lacks an accepted product decision.",
+              path: "src/integration.ts",
+              line: 1,
+              impact: "Ownership and lifecycle are undefined.",
+              smallestSafeFix: "Obtain an accepted product decision.",
+              regressionTest: "Record the accepted scope before approval.",
+              exclusions: [],
+            },
+          ],
+          noFindingsReason: null,
+        },
+      ],
+      prNumber: 123,
+      headSha: HEAD,
+      baseSha: BASE,
+      requiredChecks: "pass",
+    });
+
+    expect(result.snapshot.readiness.productScope).toBe("missing");
+    expect(result.decision).toMatchObject({
+      action: "would-request-changes",
+      reason: "advisor-blockers-first-review",
+      findingIds: ["missing-product-scope"],
+    });
+  });
+
+  it("reuses reconstructed review history for repeated and newly proven findings", () => {
+    const repeated = evaluateCoordinatorShadow(
+      workflowShadowInput({
+        history: {
+          contractEvidence: "complete",
+          frozenContractKeys: ["F-architecture-standard-work-123"],
+          writes: [{ headSha: "4".repeat(40), kind: "request-changes" }],
+        },
+      }),
+    );
+    const delta = evaluateCoordinatorShadow(
+      workflowShadowInput({
+        history: {
+          contractEvidence: "complete",
+          frozenContractKeys: ["F-architecture-standard-work-123"],
+          writes: [{ headSha: "4".repeat(40), kind: "request-changes" }],
+        },
+        findingIds: ["F-architecture-standard-work-123", "F-security-456"],
+      }),
+    );
+
+    expect(repeated.decision).toMatchObject({
+      action: "stay-quiet",
+      reason: "repeated-contract-findings",
+    });
+    expect(delta.decision).toMatchObject({
+      action: "would-request-changes",
+      reason: "new-material-delta-blocker",
+      findingIds: ["F-security-456"],
+    });
+  });
+
+  it("fails quiet for incomplete or duplicate reconstructed review history", () => {
+    const incomplete = evaluateCoordinatorShadow(
+      workflowShadowInput({
+        history: { contractEvidence: "incomplete", frozenContractKeys: [], writes: [] },
+      }),
+    );
+    const duplicate = evaluateCoordinatorShadow(
+      workflowShadowInput({
+        history: {
+          contractEvidence: "none",
+          frozenContractKeys: [],
+          writes: [{ headSha: HEAD, kind: "request-changes" }],
+        },
+      }),
+    );
+
+    expect(incomplete.decision).toMatchObject({
+      action: "stay-quiet",
+      reason: "ambiguous-follow-up",
+    });
+    expect(duplicate.decision).toMatchObject({
+      action: "stay-quiet",
+      reason: "duplicate-current-head-write",
+    });
+    expect(() =>
+      evaluateCoordinatorShadow({
+        ...workflowShadowInput(),
+        context: { ...workflowShadowInput().context, coordinatorHistory: undefined },
+      }),
+    ).toThrow("review history must be an object");
   });
 });
 
@@ -335,6 +550,7 @@ function snapshot(
     headSha?: string;
     advisor?: CoordinatorSnapshot["advisor"];
     frozenContractKeys?: readonly string[];
+    contractEvidence?: CoordinatorSnapshot["history"]["contractEvidence"];
     writes?: CoordinatorSnapshot["history"]["writes"];
     readiness?: Partial<CoordinatorSnapshot["readiness"]>;
     reviewer?: string;
@@ -362,9 +578,74 @@ function snapshot(
       ...options.readiness,
     },
     history: {
+      contractEvidence: options.contractEvidence ?? "none",
       frozenContractKeys: options.frozenContractKeys ?? [],
       writes: options.writes ?? [],
     },
+  };
+}
+
+function workflowShadowInput(
+  options: {
+    findingIds?: readonly string[];
+    history?: CoordinatorSnapshot["history"];
+  } = {},
+): Parameters<typeof evaluateCoordinatorShadow>[0] {
+  const findingIds = options.findingIds ?? ["F-architecture-standard-work-123"];
+  return {
+    context: {
+      repo: "NVIDIA/NemoClaw",
+      prNumber: 123,
+      commitsVerified: true,
+      coordinatorHistory: options.history ?? {
+        contractEvidence: "none",
+        frozenContractKeys: [],
+        writes: [],
+      },
+      pullRequest: {
+        state: "open",
+        draft: false,
+        mergeable: true,
+        user: { login: "contributor" },
+        head: { sha: HEAD },
+        base: { sha: BASE },
+      },
+    },
+    gate: {
+      status: "blocked",
+      findingCount: findingIds.length,
+      unresolvedRecommendationCount: 0,
+      findingInterests: ["architecture-standard-work"],
+      unresolvedInterests: [],
+    },
+    ledgers: [
+      {
+        version: 1,
+        revision: 1,
+        identity: "exact-head",
+        headSha: HEAD,
+        interest: "architecture-standard-work",
+        status: "findings",
+        findings: findingIds.map((id) => ({
+          id,
+          interest: "architecture-standard-work",
+          severity: "P1",
+          kind: "design",
+          summary: "A material blocker",
+          path: "src/example.ts",
+          line: 1,
+          impact: "Impact",
+          smallestSafeFix: "Fix",
+          regressionTest: "Test",
+          exclusions: [],
+        })),
+        noFindingsReason: null,
+      },
+    ],
+    prNumber: 123,
+    headSha: HEAD,
+    baseSha: BASE,
+    requiredChecks: "pass",
   };
 }
 
