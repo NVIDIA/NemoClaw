@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { runBoundedRetry, type RetryEvidence } from "../../../tools/e2e/retry-evidence.mts";
+
 import { resolveMaxTokensField } from "../../../src/lib/inference/max-tokens-field.ts";
 import { containsAnswer, containsToolCallStructure } from "../../helpers/e2e-answer-assertions.ts";
 
@@ -166,6 +168,37 @@ export function parseFullE2eInferenceResponse(body: string): FullE2eInferenceRes
     reasoningContent,
     usage: isRecord(parsed.usage) ? parsed.usage : null,
   };
+}
+
+/** Retry only an unavailable HTTP service on the stateless arithmetic probe. */
+export async function runFullE2eInferenceCommand<Result extends InferenceCommandResult>(options: {
+  run: (attempt: number) => Promise<Result>;
+  onEvidence: (evidence: RetryEvidence) => Promise<void> | void;
+  sleep?: (milliseconds: number) => Promise<void>;
+}): Promise<Result> {
+  const execution = await runBoundedRetry({
+    operation: "full-e2e.inference-local.arithmetic",
+    owner: "full-e2e",
+    idempotence: "read-only",
+    maxAttempts: 2,
+    run: options.run,
+    classify: (result) => {
+      if (result?.exitCode === 0) return { outcome: "passed" };
+      const unavailable =
+        result?.exitCode === 22 &&
+        result.stdout.trim() === "" &&
+        result.stderr.trim() === "curl: (22) The requested URL returned error: 503";
+      return {
+        outcome: "failed",
+        failureClass: unavailable ? "transient-external" : "deterministic",
+      };
+    },
+    delayMs: 5_000,
+    sleep: options.sleep,
+    onEvidence: options.onEvidence,
+  });
+  // The callback returns a command result; runBoundedRetry throws if it rejects.
+  return execution.value!;
 }
 
 export async function runFullE2eInferenceProbe<Result extends InferenceCommandResult>(

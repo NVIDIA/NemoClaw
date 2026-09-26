@@ -1229,7 +1229,7 @@ it.runIf(process.platform === "linux").concurrent.for([
   { mismatch: "API", mode: "provider-wrong-api" },
   { mismatch: "route", mode: "provider-wrong-route" },
 ] as const)(
-  "does not retry a structured provider error with the wrong $mismatch identity (#10978)",
+  "preserves error metadata without retrying the wrong $mismatch identity (#10978)",
   { timeout: testTimeout(30_000) },
   async ({ mode }, { expect }) => {
     const produced = (await runLaunchSessionFixture(mode, "provider")).result;
@@ -1248,6 +1248,16 @@ it.runIf(process.platform === "linux").concurrent.for([
       openshellCommandPath: "/usr/bin/openshell",
     };
     expect(firstResult.stderr).toContain("ServiceUnavailableError");
+    const diagnostic = firstResult.stderr.split("\n").find((line) => line.startsWith('{"reason":'));
+    expect(JSON.parse(diagnostic ?? "null")).toMatchObject({
+      reason: "message_content_empty",
+      messageIndex: 1,
+      role: "assistant",
+      errorCode: "503",
+      errorType: "ServiceUnavailableError",
+      api: mode === "provider-wrong-api" ? "openai-responses" : "openai-completions",
+      managedProvider: mode !== "provider-wrong-route",
+    });
     expect(firstResult.stderr).not.toContain("nemoclaw.e2e.launch-failure=provider-unavailable");
     await expect(
       runOpenClawLaunchSession({

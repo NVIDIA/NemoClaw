@@ -49,6 +49,7 @@ import {
   FULL_E2E_INFERENCE_CAPTURE_LIMIT_BYTES,
   fullE2eInferenceProbeEvidence,
   runFullE2eInferenceProbe,
+  runFullE2eInferenceCommand,
 } from "./full-e2e-inference-probe.ts";
 import { readFullE2eColdWorkloadEvidence } from "./full-e2e-workload-evidence.ts";
 import { runOpenClawLaunchReadinessLeaseTurns } from "./launch-agent-turn.ts";
@@ -946,27 +947,41 @@ test(
     );
 
     const sandboxInference = await runFullE2eInferenceProbe(hosted.model, async (attempt) =>
-      sandbox.exec(
-        SANDBOX_NAME,
-        [
-          "curl",
-          "-fsS",
-          "--max-time",
-          "90",
-          "https://inference.local/v1/chat/completions",
-          "-H",
-          "Content-Type: application/json",
-          "--data-raw",
-          attempt.requestBody,
-        ],
-        {
-          artifactName: attempt.artifactName,
-          captureLimitBytes: FULL_E2E_INFERENCE_CAPTURE_LIMIT_BYTES,
-          env: env(),
-          redactionValues,
-          timeoutMs: 120_000,
+      runFullE2eInferenceCommand({
+        onEvidence: async (evidence) => {
+          await artifacts.writeJson(`${attempt.artifactName}-availability.json`, evidence);
+          // Brev retains the aggregate log after deleting the guest artifact directory.
+          console.log(
+            "NEMOCLAW_INFERENCE_AVAILABILITY",
+            JSON.stringify({
+              replyAttempt: attempt.attempt,
+              ...evidence,
+            }),
+          );
         },
-      ),
+        run: (availabilityAttempt) =>
+          sandbox.exec(
+            SANDBOX_NAME,
+            [
+              "curl",
+              "-fsS",
+              "--max-time",
+              "90",
+              "https://inference.local/v1/chat/completions",
+              "-H",
+              "Content-Type: application/json",
+              "--data-raw",
+              attempt.requestBody,
+            ],
+            {
+              artifactName: `${attempt.artifactName}-availability-${availabilityAttempt}`,
+              captureLimitBytes: FULL_E2E_INFERENCE_CAPTURE_LIMIT_BYTES,
+              env: env(),
+              redactionValues,
+              timeoutMs: 120_000,
+            },
+          ),
+      }),
     );
     const sandboxInferenceEvidence = fullE2eInferenceProbeEvidence(sandboxInference);
     await artifacts.writeJson(

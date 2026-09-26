@@ -656,6 +656,24 @@ do not join the default release matrix.
 
 The report also groups repeated observable outcomes. Those rows are retained only when agent runtime or environment provides distinct evidence. Validation rejects two rows with the same three coverage dimensions.
 
+## Full E2E inference availability
+
+`live/full-e2e.test.ts` owns the live sandbox `inference.local` arithmetic probe.
+It requires a successful response containing the expected answer; support tests
+in `support/full-e2e-inference-probe.test.ts` own parsing and retry decisions.
+The stateless request has no tools or conversation persistence, so repeating it
+has no application mutation. It may consume another inference request.
+
+The probe retries once after five seconds only when curl exits 22 with empty
+stdout and exactly reports HTTP 503. This reports service unavailability but
+does not identify whether the gateway or upstream produced it. Every request
+has its own command artifact and a 90-second curl limit. Each reply-budget
+attempt retains bounded availability evidence, including recovery or exhaustion,
+in its artifact and the aggregate log retained after Brev cleanup.
+The existing two reply budgets permit at most four requests in total.
+Persistent 503, other HTTP errors, transport failures, and unknown errors fail.
+The existing response validation and answer assertion remain unchanged.
+
 ## Launch-readiness locked-image acceptance
 
 Use the repository helper to test an existing OpenClaw sandbox without
@@ -682,6 +700,9 @@ Each successful real pseudo-terminal attempt sends two distinct messages and
 `/exit`, then requires process exit status `0`. The OpenClaw session store must
 append two nonempty `user` and `assistant` record pairs in one session. The helper
 does not compare message content. Terminal output is a bounded failure diagnostic only.
+`message_content_empty` diagnostics include the message index, role, and allowlisted
+provider error metadata from JSONL or SQLite. Provider error text and unknown field values
+are omitted. These diagnostics do not change failure classification or retries.
 Deterministic unit tests separately prove selection of the complete preflight
 and lease paths, stale-producer exclusion, the fixed time-unsafe quarantine,
 refusal to recover when prior evidence cannot be durably fenced, and the named

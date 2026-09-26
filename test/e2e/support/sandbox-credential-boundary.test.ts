@@ -60,6 +60,29 @@ function scanWithoutRootPrivileges(root: string): string {
 }
 
 describe("sandbox credential scan", () => {
+  it("accepts an auth reference and detects a credential added to the same file", () => {
+    const root = createScanRoot();
+    const canary = "nvapi-nemoclaw-auth-profile-credential-canary";
+    const file = path.join(root, ".openclaw/agents/main/agent/auth-profiles.json");
+    const profile: Record<string, Record<string, unknown>> = {
+      "inference:manual": {
+        type: "api_key",
+        provider: "inference",
+        keyRef: { source: "env", id: "NVIDIA_INFERENCE_API_KEY" },
+        profileId: "inference:manual",
+      },
+    };
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(profile));
+    expect(scan(root)).toBe("");
+
+    profile["inference:manual"].key = canary;
+    fs.writeFileSync(file, JSON.stringify(profile));
+    const output = scan(root);
+    expect(output.trim()).toBe(file);
+    expect(output).not.toContain(canary);
+  });
+
   it("rejects fixture paths outside the temporary scan root", () => {
     const root = createScanRoot();
 

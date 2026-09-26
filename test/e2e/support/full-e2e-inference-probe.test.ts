@@ -11,6 +11,7 @@ import {
   type InferenceCommandResult,
   parseFullE2eInferenceResponse,
   runFullE2eInferenceProbe,
+  runFullE2eInferenceCommand,
 } from "../live/full-e2e-inference-probe.ts";
 
 function commandResult(stdout: string, exitCode = 0, stderr = ""): InferenceCommandResult {
@@ -298,5 +299,104 @@ describe("full E2E sandbox inference probe", () => {
 
     expect(probe.outcome).toBe("semantic-mismatch");
     expect(calls).toBe(2);
+  });
+});
+
+describe("full E2E inference service availability", () => {
+  const unavailable = commandResult("", 22, "curl: (22) The requested URL returned error: 503\n");
+
+  it("retains both attempts when HTTP 503 recovers", async () => {
+    const attempts: number[] = [];
+    const delays: number[] = [];
+    const evidence: unknown[] = [];
+    const result = await runFullE2eInferenceCommand({
+      run: async (attempt) => {
+        attempts.push(attempt);
+        return attempt === 1 ? unavailable : commandResult(completion("42"));
+      },
+      sleep: async (ms) => {
+        delays.push(ms);
+      },
+      onEvidence: (value) => {
+        evidence.push(value);
+      },
+    });
+    expect(result.exitCode).toBe(0);
+    expect(attempts).toEqual([1, 2]);
+    expect(delays).toEqual([5_000]);
+    expect(evidence.at(-1)).toMatchObject({
+      outcome: "passed-after-retry",
+      maxAttempts: 2,
+      attempts: [
+        { attempt: 1, failureClass: "transient-external", retryScheduled: true },
+        { attempt: 2, outcome: "passed", retryScheduled: false },
+      ],
+    });
+  });
+
+  it("fails an execution exception without retrying or exposing its text", async () => {
+    let calls = 0;
+    const evidence: unknown[] = [];
+    await expect(
+      runFullE2eInferenceCommand({
+        run: async () => {
+          calls += 1;
+          throw new Error("sensitive unstructured error");
+        },
+        sleep: async () => {
+          throw new Error("unexpected retry");
+        },
+        onEvidence: (value) => {
+          evidence.push(value);
+        },
+      }),
+    ).rejects.toThrow("full-e2e.inference-local.arithmetic failed-no-retry");
+    expect(calls).toBe(1);
+    expect(evidence.at(-1)).toMatchObject({ outcome: "failed-no-retry" });
+    expect(JSON.stringify(evidence)).not.toContain("sensitive");
+  });
+
+  it("fails persistent HTTP 503 after two attempts", async () => {
+    let calls = 0;
+    const evidence: unknown[] = [];
+    const result = await runFullE2eInferenceCommand({
+      run: async () => {
+        calls += 1;
+        return unavailable;
+      },
+      sleep: async () => {},
+      onEvidence: (value) => {
+        evidence.push(value);
+      },
+    });
+    expect(result).toEqual(unavailable);
+    expect(calls).toBe(2);
+    expect(evidence.at(-1)).toMatchObject({ outcome: "exhausted" });
+  });
+
+  it.each([
+    commandResult("", 22, "curl: (22) The requested URL returned error: 401"),
+    commandResult("", 22, "curl: (22) The requested URL returned error: 403"),
+    commandResult("", 22, "curl: (22) The requested URL returned error: 500"),
+    commandResult("", 28, "curl: (28) Operation timed out"),
+    commandResult("", 1, "curl: (22) The requested URL returned error: 503"),
+    commandResult("policy denied", 22, unavailable.stderr),
+    commandResult("", 22, `${unavailable.stderr}authentication failed`),
+    commandResult("not json"),
+    commandResult(completion("41")),
+  ])("does not retry other command or semantic results: %j", async (input) => {
+    let calls = 0;
+    const result = await runFullE2eInferenceCommand({
+      run: async () => {
+        calls += 1;
+        return input;
+      },
+      sleep: async () => {
+        throw new Error("unexpected retry");
+      },
+      onEvidence: () => {},
+    });
+    expect(result).toEqual(input);
+    expect(calls).toBe(1);
   });
 });
