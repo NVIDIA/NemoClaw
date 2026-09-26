@@ -7,7 +7,11 @@ export function dockerHostRuntime(dockerHost: string | undefined): ContainerRunt
   if (!dockerHost) return null;
   if (
     dockerHost.includes("/.colima/default/docker.sock") ||
-    dockerHost.includes("/.config/colima/default/docker.sock")
+    dockerHost.includes("/.config/colima/default/docker.sock") ||
+    // Some Colima profiles place the socket at the top level rather than under
+    // `default/` (#3503). The shared socket candidate list offers that layout,
+    // so the runtime label has to recognise it too.
+    dockerHost.includes("/.colima/docker.sock")
   ) {
     return "colima";
   }

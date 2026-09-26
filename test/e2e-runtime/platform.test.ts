@@ -58,8 +58,53 @@ describe("platform helpers", () => {
 
     it("returns Linux Podman socket paths with uid", () => {
       expect(
-        getPodmanSocketCandidates({ platform: "linux", home: "/tmp/test-home", uid: 1001 }),
+        getPodmanSocketCandidates({
+          env: {},
+          platform: "linux",
+          home: "/tmp/test-home",
+          uid: 1001,
+        }),
       ).toEqual(["/run/user/1001/podman/podman.sock", "/run/podman/podman.sock"]);
+    });
+
+    it("prefers the runtime directory XDG_RUNTIME_DIR names over the uid-derived one", () => {
+      expect(
+        getPodmanSocketCandidates({
+          env: { XDG_RUNTIME_DIR: "/run/user/501" },
+          platform: "linux",
+          home: "/tmp/test-home",
+          uid: 1001,
+        }),
+      ).toEqual([
+        "/run/user/501/podman/podman.sock",
+        "/run/user/1001/podman/podman.sock",
+        "/run/podman/podman.sock",
+      ]);
+    });
+
+    it("does not repeat the runtime directory when XDG_RUNTIME_DIR is the uid-derived one", () => {
+      expect(
+        getPodmanSocketCandidates({
+          env: { XDG_RUNTIME_DIR: "/run/user/1001" },
+          platform: "linux",
+          home: "/tmp/test-home",
+          uid: 1001,
+        }),
+      ).toEqual(["/run/user/1001/podman/podman.sock", "/run/podman/podman.sock"]);
+    });
+
+    it("ignores XDG_RUNTIME_DIR on macOS, where Podman uses a machine socket", () => {
+      const home = "/tmp/test-home";
+      expect(
+        getPodmanSocketCandidates({
+          env: { XDG_RUNTIME_DIR: "/run/user/501" },
+          platform: "darwin",
+          home,
+        }),
+      ).toEqual([
+        path.join(home, ".local/share/containers/podman/machine/podman.sock"),
+        "/var/run/docker.sock",
+      ]);
     });
 
     it("returns no Podman socket paths on unsupported platforms", () => {
@@ -82,11 +127,34 @@ describe("platform helpers", () => {
 
     it("returns Linux candidates (native Docker > rootless Docker > Podman)", () => {
       expect(
-        getDockerSocketCandidates({ platform: "linux", home: "/tmp/test-home", uid: 1000 }),
+        getDockerSocketCandidates({
+          env: {},
+          platform: "linux",
+          home: "/tmp/test-home",
+          uid: 1000,
+        }),
       ).toEqual([
         "/run/docker.sock",
         "/var/run/docker.sock",
         "/run/user/1000/docker.sock",
+        "/run/user/1000/podman/podman.sock",
+        "/run/podman/podman.sock",
+      ]);
+    });
+
+    it("carries the XDG_RUNTIME_DIR Podman socket into the Linux candidates", () => {
+      expect(
+        getDockerSocketCandidates({
+          env: { XDG_RUNTIME_DIR: "/run/user/501" },
+          platform: "linux",
+          home: "/tmp/test-home",
+          uid: 1000,
+        }),
+      ).toEqual([
+        "/run/docker.sock",
+        "/var/run/docker.sock",
+        "/run/user/1000/docker.sock",
+        "/run/user/501/podman/podman.sock",
         "/run/user/1000/podman/podman.sock",
         "/run/podman/podman.sock",
       ]);
