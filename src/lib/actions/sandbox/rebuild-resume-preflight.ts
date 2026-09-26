@@ -210,7 +210,7 @@ export function assessRebuildAmbientEnv(
   return ambient;
 }
 
-/** Compute the credential, endpoint, and durable route inputs for rebuild preflight. */
+/** Compute endpoint and durable route inputs before final credential resolution. */
 export function assessRebuildInferencePreflight(options: {
   sandboxName: string;
   sessionMatchesSandbox: boolean;
@@ -218,7 +218,6 @@ export function assessRebuildInferencePreflight(options: {
   trustedSelection: InferenceSelection;
   env?: NodeJS.ProcessEnv;
 }): {
-  credentialEnv: string | null;
   rebuildEndpoint: RebuildEndpoint;
   explicitTargetEndpoint: string | null;
   registryInferenceRoute: RegistryInferenceRoute | null;
@@ -237,11 +236,6 @@ export function assessRebuildInferencePreflight(options: {
         )
       : null;
   return {
-    credentialEnv: getRebuildCredentialEnvFromRegistry(
-      options.trustedSelection.provider,
-      options.trustedSelection.credentialEnv,
-      options.registrySelection.endpointUrl,
-    ),
     rebuildEndpoint,
     explicitTargetEndpoint,
     registryInferenceRoute: getRegistryInferenceRoute(options.registrySelection, rebuildEndpoint),

@@ -124,7 +124,8 @@ const defaultContextWindowDeps: ContextWindowDeps = {
  * - llama-cpp-local: read authenticated native metadata for the served model;
  *   null when the server or its served context is unavailable.
  * - custom compatible providers: null, because the configured endpoint owns
- *   its context limit. The caller keeps the already-qualified value and warns.
+ *   its context limit. The caller preserves or clears an existing value based
+ *   on whether it was qualified for the same route.
  * - canonical cloud providers: the onboard default. Accuracy is bounded by the
  *   missing per-model cloud context metadata (tracked as a separate issue).
  */

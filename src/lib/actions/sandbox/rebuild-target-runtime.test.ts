@@ -158,6 +158,38 @@ describe("preflightRebuildTargetRuntime GPU route", () => {
     },
   );
 
+  it("uses the validated resume endpoint for credential preflight", async () => {
+    const endpointUrl = "http://localhost:12500/v1";
+    const target = {
+      ...TARGET,
+      resumeConfig: {
+        ...TARGET.resumeConfig,
+        provider: "compatible-endpoint",
+        endpointUrl,
+      },
+      credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+    } as RebuildTargetConfig;
+    const entry = {
+      ...ENTRY,
+      provider: "compatible-endpoint",
+      model: "test-model",
+      credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+    } as RebuildSandboxEntry;
+
+    await expect(
+      preflightRebuildTargetRuntime(target, entry, RECREATE_OPTIONS, vi.fn(), vi.fn() as never, {
+        skipImagePreflight: true,
+      }),
+    ).resolves.toMatchObject({ ok: true });
+
+    expect(mocks.preflightRebuildCredentials).toHaveBeenCalledWith(
+      expect.objectContaining({ endpointUrl }),
+      expect.any(Function),
+      expect.any(Function),
+      expect.any(Object),
+    );
+  });
+
   it("passes the immutable base provenance into replacement image preflight (#7144)", async () => {
     const metadata = {
       schema: 1,

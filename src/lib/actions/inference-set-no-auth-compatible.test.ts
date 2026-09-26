@@ -153,7 +153,7 @@ describe("runInferenceSet on a loopback no-auth compatible endpoint", () => {
     ]);
   });
 
-  it("keeps the qualified context window when the endpoint has no authoritative probe", async () => {
+  it("removes the previous model's context window when the endpoint has no authoritative probe", async () => {
     const config = {
       agents: { defaults: { model: { primary: "inference/model-a" } } },
       models: {
@@ -175,7 +175,7 @@ describe("runInferenceSet on a loopback no-auth compatible endpoint", () => {
 
     await runInferenceSet({ provider: "compatible-endpoint", model: "model-b" }, deps);
 
-    expect(config.models.providers.inference.models[0].contextWindow).toBe(16384);
+    expect(config.models.providers.inference.models[0]).not.toHaveProperty("contextWindow");
     expect(deps.calls.log.mock.calls.flat().join("\n")).toMatch(
       /could not determine the context window/i,
     );

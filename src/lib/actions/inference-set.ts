@@ -577,7 +577,7 @@ function buildProviderConfig(
   model: string,
   provider: string,
   route: SandboxInferenceConfig,
-  contextWindow?: number,
+  contextWindow?: number | null,
   inheritedMaxTokens?: number,
   upstreamProviderMarker?: string,
   reasoningEffort: ReasoningEffortRequest = { effort: null, explicit: false },
@@ -589,9 +589,12 @@ function buildProviderConfig(
   firstExistingModel.id = model;
   firstExistingModel.name = route.primaryModelRef;
   // Recompute for the new model rather than inheriting the prior model's window.
-  // Omitted (undefined) → keep whatever the existing entry had.
+  // Omitted (undefined) preserves a same-route value; null explicitly removes
+  // an unqualified value when the route identity changed.
   if (typeof contextWindow === "number") {
     firstExistingModel.contextWindow = contextWindow;
+  } else if (contextWindow === null) {
+    delete firstExistingModel.contextWindow;
   }
   if (route.inferenceApi === "anthropic-messages") {
     applyOpenClawAnthropicReplyBudget(firstExistingModel, inheritedMaxTokens);
@@ -618,7 +621,7 @@ export function patchOpenClawInferenceConfig(
   provider: string,
   model: string,
   preferredInferenceApi: string | null = null,
-  contextWindow?: number,
+  contextWindow?: number | null,
   upstreamProviderMarker?: string,
   reasoningEffort: ReasoningEffortRequest = { effort: null, explicit: false },
 ): { changed: boolean; route: SandboxInferenceConfig } {
@@ -679,6 +682,45 @@ function resolveHermesContextWindowForSwitch(
   deps.log(
     `  Warning: could not determine the context window for '${model}'; omitting ` +
       `context_length so Hermes can discover it from the selected model.`,
+  );
+  return undefined;
+}
+
+function resolveOpenClawContextWindowForSwitch(
+  options: {
+    provider: string;
+    model: string;
+    sandboxName: string;
+    previousProvider: string;
+    previousModel: string;
+    previousInferenceApi: string | null;
+    previousEndpointUrl: string | null;
+    inferenceApi: string | null;
+    endpointUrl: string | null;
+  },
+  deps: Pick<InferenceSetDeps, "resolveContextWindowForModel" | "log">,
+): number | null | undefined {
+  const contextWindow = deps.resolveContextWindowForModel(options.provider, options.model);
+  if (contextWindow != null) {
+    deps.log(`  Context window for '${options.model}': ${contextWindow} tokens`);
+    return contextWindow;
+  }
+  const routeChanged = [
+    [options.previousProvider, options.provider],
+    [options.previousModel, options.model],
+    [options.previousInferenceApi, options.inferenceApi],
+    [options.previousEndpointUrl, options.endpointUrl],
+  ].some(([previous, next]) => previous !== next);
+  if (routeChanged) {
+    deps.log(
+      `  Warning: could not determine the context window for '${options.model}'; removing the ` +
+        `previous route's value. Run '${CLI_NAME} ${options.sandboxName} rebuild' to re-probe it.`,
+    );
+    return null;
+  }
+  deps.log(
+    `  Warning: could not determine the context window for '${options.model}'; keeping the ` +
+      `existing same-route value. Run '${CLI_NAME} ${options.sandboxName} rebuild' to re-probe it.`,
   );
   return undefined;
 }
@@ -1417,21 +1459,26 @@ async function runInferenceSetWithoutHostLock(
     } else {
       // Recompute the context window for the model being switched to, so it does
       // not inherit the prior model's window (#context-window-on-switch).
-      const contextWindow = deps.resolveContextWindowForModel(provider, model);
-      if (contextWindow != null) {
-        deps.log(`  Context window for '${model}': ${contextWindow} tokens`);
-      } else {
-        deps.log(
-          `  Warning: could not determine the context window for '${model}'; keeping the ` +
-            `existing value. Run '${CLI_NAME} ${sandboxName} rebuild' to re-probe it.`,
-        );
-      }
+      const contextWindow = resolveOpenClawContextWindowForSwitch(
+        {
+          provider,
+          model,
+          sandboxName,
+          previousProvider,
+          previousModel,
+          previousInferenceApi,
+          previousEndpointUrl: entry.endpointUrl ?? null,
+          inferenceApi: preferredInferenceApi,
+          endpointUrl: effectiveRegistryMetadata.endpointUrl ?? null,
+        },
+        deps,
+      );
       patched = patchOpenClawInferenceConfig(
         config,
         provider,
         model,
         preferredInferenceApi || getPreferredInferenceApi(config),
-        contextWindow ?? undefined,
+        contextWindow,
         provider,
         reasoningEffortRequest,
       );

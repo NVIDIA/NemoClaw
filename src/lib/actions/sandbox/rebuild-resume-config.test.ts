@@ -244,6 +244,36 @@ describe("prepareRebuildResumeConfig", () => {
     });
   });
 
+  it("resolves a legacy no-auth credential from the matching session endpoint", () => {
+    vi.spyOn(onboardSession, "loadSession").mockReturnValue({
+      sandboxName: "alpha",
+      provider: "compatible-endpoint",
+      model: "nvidia/model",
+      endpointUrl: "http://localhost:12500/v1",
+      credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+      preferredInferenceApi: "openai-completions",
+    });
+
+    const config = prepareRebuildResumeConfig(
+      "alpha",
+      entry({
+        provider: "compatible-endpoint",
+        model: "nvidia/model",
+        credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+        preferredInferenceApi: "openai-completions",
+      }),
+      "openclaw",
+      noopLog,
+      throwingBail,
+    );
+
+    expect(config).toMatchObject({
+      endpointUrl: "http://localhost:12500/v1",
+      credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+      pinEndpoint: false,
+    });
+  });
+
   it("preserves a stale Hermes API marker so rebuild re-arms provider setup (#6289)", () => {
     vi.spyOn(onboardSession, "loadSession").mockReturnValue(null);
 
