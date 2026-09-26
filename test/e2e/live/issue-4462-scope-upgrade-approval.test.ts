@@ -10,7 +10,10 @@ import { type HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { trackIssue4462FailureDiagnostics } from "../fixtures/issue-4462-diagnostics.ts";
-import { openClawGatewayOutputHasFailure } from "../fixtures/openclaw-agent-output.ts";
+import {
+  openClawGatewayOutputHasFailure,
+  parseOpenClawAgentText,
+} from "../fixtures/openclaw-agent-output.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import {
   pendingAdminRequestId,
@@ -151,11 +154,15 @@ test(
       [
         CLI_ENTRYPOINT,
         SANDBOX_NAME,
-        "agent",
+        "exec",
         "--timeout",
         String(AGENT_COMMAND_TIMEOUT_SECS),
+        "--",
+        "openclaw",
+        "agent",
         "--agent",
         "main",
+        "--json",
         "--thinking",
         "off",
         "--session-id",
@@ -176,7 +183,7 @@ test(
       "The first gateway-backed agent request failed or reported embedded fallback; inspect the phase artifact",
     ).toBe(true);
     expect(
-      agent.stdout.trim(),
+      parseOpenClawAgentText(agent.stdout).trim(),
       "The first agent request did not return the expected gateway-backed answer",
     ).toBe("4");
 
