@@ -1360,9 +1360,19 @@ function classifyPresetEntries(currentPolicy: string, presetEntries: string): Pr
   }
 }
 
+/**
+ * Compare operator-owned policy documents. OpenShell `--base` readback can
+ * re-include `_provider_*` entries that `policy set` must never submit, so
+ * those keys are not part of a successful apply or remove result (#12048).
+ */
 function policyDocumentsMatch(left: string, right: string): boolean {
   try {
-    return isDeepStrictEqual(parseOpenShellPolicy(left).policy, parseOpenShellPolicy(right).policy);
+    const leftPolicy = parseOpenShellPolicy(left);
+    const rightPolicy = parseOpenShellPolicy(right);
+    return isDeepStrictEqual(
+      parseOpenShellPolicy(stripProviderComposedPolicies(leftPolicy.yamlBody)).policy,
+      parseOpenShellPolicy(stripProviderComposedPolicies(rightPolicy.yamlBody)).policy,
+    );
   } catch {
     return false;
   }

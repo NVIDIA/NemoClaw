@@ -184,6 +184,50 @@ describe("live OpenShell policy mutations", () => {
     expect(YAML.parse(livePolicy).network_policies).toEqual({ host_approval: hostEntry });
   });
 
+  it("verifies preset removal against operator-owned policy while ignoring provider readback (#12048)", async () => {
+    const providerEntry = { endpoints: [{ host: "provider.internal", port: 443 }] };
+    const weatherPolicy = YAML.stringify({
+      version: 1,
+      network_policies: {
+        host_approval: hostEntry,
+        weather: { endpoints: [{ host: "wttr.in", port: 443 }] },
+      },
+    });
+    livePolicy = weatherPolicy;
+    mocks.setSandboxPolicy.mockImplementation((request) => {
+      const parsed = YAML.parse(request.document);
+      parsed.network_policies._provider_token = providerEntry;
+      livePolicy = YAML.stringify(parsed);
+      return { outcome: { kind: "applied" }, status: 0 };
+    });
+    expect({
+      removed: await removePreset(sandboxName, "weather", {
+        nonFatal: true,
+        presetContent: preset,
+      }),
+      network_policies: YAML.parse(livePolicy).network_policies,
+    }).toEqual({
+      removed: true,
+      network_policies: { host_approval: hostEntry, _provider_token: providerEntry },
+    });
+
+    mocks.setSandboxPolicy.mockReset();
+    mocks.setSandboxPolicy.mockImplementation((request) => {
+      const parsed = YAML.parse(request.document);
+      delete parsed.network_policies.host_approval;
+      livePolicy = YAML.stringify(parsed);
+      return { outcome: { kind: "applied" }, status: 0 };
+    });
+    livePolicy = weatherPolicy;
+    vi.mocked(console.error).mockClear();
+    expect(
+      await removePreset(sandboxName, "weather", { nonFatal: true, presetContent: preset }),
+    ).toBe(false);
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining("the resulting base policy did not match the requested policy"),
+    );
+  });
+
   it("uses one initial base-policy read, one final recheck, and one write readback for a batch", async () => {
     expect(await applyPresets(sandboxName, ["weather"])).toBe(true);
 
