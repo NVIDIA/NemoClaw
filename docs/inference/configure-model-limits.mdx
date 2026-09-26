@@ -76,7 +76,8 @@ export NEMOCLAW_MAX_TOKENS=8192
 $$nemoclaw onboard
 ```
 
-NemoClaw ignores invalid values and uses the default instead.
+NemoClaw does not apply invalid values.
+For a custom image whose selected model changes, NemoClaw removes inherited limits instead of applying the managed-image defaults.
 
 </AgentOnly>
 
