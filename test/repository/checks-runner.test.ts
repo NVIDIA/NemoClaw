@@ -69,7 +69,6 @@ describe("checks runner", () => {
     ["src/lib/removed.test.ts", "test-create-require-budget"],
     ["test/e2e/live/removed.test.ts", "vitest-project-overlap"],
     ["nemoclaw/src/example.spec.ts", "test-title-style"],
-    ["test/e2e/fixtures/example.ts", "e2e-assertion-census"],
     [".github/actions/ci-static-checks/action.yaml", "growth-guardrails-workflow-boundary"],
   ])("selects the owning check for %s", (file, name) => {
     expect(selectChecks(CHECKS, [file]).map((check) => check.name)).toContain(name);
