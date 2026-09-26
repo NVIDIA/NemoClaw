@@ -9,6 +9,9 @@
  *   cancellation.
  * - #7439: Ctrl+C at a hidden credential prompt printed resume guidance and
  *   then leaked the rejected prompt error as a raw Node.js stack trace.
+ * - #12169: Ctrl+D typed on a real terminal between two onboarding questions
+ *   was dropped by readline's raw-mode switch, so the configuration-review
+ *   prompt never settled and onboarding never reported the cancellation.
  *
  * The tests use compiled artifacts (`dist/lib/...js`) to exercise the shipped
  * CLI path on the minimum supported Node.js runtime. They drive EOF through
@@ -97,6 +100,85 @@ runOnboardCommand({
     expect(`${result.stdout}${result.stderr}`).toContain("Installation cancelled");
     expect(`${result.stdout}${result.stderr}`).not.toContain("UNEXPECTED_");
   });
+
+  it.skipIf(process.platform === "win32")(
+    "cancels when stdin closes between two prompts on a terminal (#12169)",
+    () => {
+      const driver = `
+const { runOnboardCommand } = require(${JSON.stringify(COMMAND_PATH)});
+const { prompt } = require(${JSON.stringify(STORE_PATH)});
+runOnboardCommand({
+  flags: {},
+  env: process.env,
+  // Stand in for the reporter's flow: the model answer lands, onboarding works
+  // for a moment with nobody reading stdin, then the review prompt opens.
+  runOnboard: async () => {
+    await prompt("  Choose model [1]: ");
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    await prompt("  Choose [1]: ");
+  },
+  error: (message) => console.error(message),
+  exit: (code) => process.exit(code),
+});
+`;
+      const ptyRunner = `
+import os, pty, re, select, sys, time
+
+pid, fd = pty.fork()
+if pid == 0:
+    os.execvpe(os.environ["NODE_UNDER_TEST"], [os.environ["NODE_UNDER_TEST"], "-e", os.environ["DRIVER_SOURCE"]], os.environ)
+
+out = bytearray()
+answered = False
+closed = False
+exit_code = 124
+deadline = time.time() + 20
+os.set_blocking(fd, False)
+while time.time() < deadline:
+    ready, _, _ = select.select([fd], [], [], 0.1)
+    if ready:
+        try:
+            chunk = os.read(fd, 4096)
+        except (BlockingIOError, OSError):
+            chunk = b""
+        out.extend(chunk)
+    text = re.sub(rb"\\x1b\\[[0-9;?]*[a-zA-Z]", b"", bytes(out))
+    if not answered and b"Choose model [1]:" in text:
+        time.sleep(0.2)
+        os.write(fd, b"1\\n")
+        answered = True
+        continue
+    # Close stdin while onboarding is between questions: nothing is reading.
+    if answered and not closed:
+        time.sleep(0.3)
+        os.write(fd, b"\\x04")
+        closed = True
+    waited = os.waitpid(pid, os.WNOHANG)
+    if waited[0] == pid:
+        exit_code = os.waitstatus_to_exitcode(waited[1])
+        break
+else:
+    os.kill(pid, 9)
+    os.waitpid(pid, 0)
+
+sys.stdout.buffer.write(bytes(out))
+sys.exit(exit_code if exit_code >= 0 else 128 - exit_code)
+`;
+      const python =
+        spawnSync("bash", ["--noprofile", "--norc", "-c", "command -v python3"], {
+          encoding: "utf-8",
+        }).stdout.trim() || "python3";
+      const result = spawnSync(python, ["-c", ptyRunner], {
+        encoding: "utf-8",
+        timeout: 30000,
+        env: { ...process.env, DRIVER_SOURCE: driver, NODE_UNDER_TEST: process.execPath },
+      });
+      const output = `${result.stdout}${result.stderr}`;
+
+      expect(result.status, output).toBe(1);
+      expect(output).toContain("Installation cancelled");
+    },
+  );
 
   it.skipIf(process.platform === "win32")(
     "preserves SIGINT cancellation without a prompt stack trace (#7439)",

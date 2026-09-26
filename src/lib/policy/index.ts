@@ -26,6 +26,11 @@ import type { OpenShellRuntimeSelection } from "../adapters/openshell/runtime-se
 import { loadAgent, requireAgentPolicyAdditionsPath } from "../agent/defs";
 import { CLI_NAME } from "../cli/branding";
 import {
+  cancelPromptWithPendingEof,
+  pendingStdinEofError,
+  takePendingStdinEof,
+} from "../core/pending-stdin-eof";
+import {
   getMessagingPolicyKeyAliases,
   getMessagingPolicyPresetValidationWarnings,
   isMessagingChannelPolicyPreset,
@@ -2143,10 +2148,21 @@ type LiveBaselineEntryState =
  * This matches the `prompt()` contract in `credentials/store.ts` (#5976).
  */
 function askPreset(question: string): Promise<string> {
+  // Re-attach stdin to the event loop — unref() on exit is sticky and
+  // would otherwise leave a follow-up prompt waiting on a detached handle.
+  if (typeof process.stdin.ref === "function") process.stdin.ref();
+  // A Ctrl-D that arrived between questions is this prompt's cancellation;
+  // readline drops it when it switches the TTY to raw mode (#12169).
+  const pending = takePendingStdinEof();
+  if (pending === false) return readPresetAnswer(question);
+  return pending.then((ended) => {
+    if (ended) cancelPromptWithPendingEof(question);
+    return readPresetAnswer(question);
+  });
+}
+
+function readPresetAnswer(question: string): Promise<string> {
   return new Promise<string>((resolve, reject) => {
-    // Re-attach stdin to the event loop — unref() on exit is sticky and
-    // would otherwise leave a follow-up prompt waiting on a detached handle.
-    if (typeof process.stdin.ref === "function") process.stdin.ref();
     const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
     let finished = false;
     const finish = (settle: () => void) => {
@@ -2165,9 +2181,7 @@ function askPreset(question: string): Promise<string> {
       finish(() => reject(Object.assign(new Error("Prompt interrupted"), { code: "SIGINT" })));
       process.kill(process.pid, "SIGINT");
     });
-    rl.on("close", () =>
-      finish(() => reject(Object.assign(new Error("Prompt closed before input"), { code: "EOF" }))),
-    );
+    rl.on("close", () => finish(() => reject(pendingStdinEofError())));
     rl.question(question, (answer: string) => finish(() => resolve(answer)));
   });
 }
