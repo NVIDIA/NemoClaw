@@ -1950,7 +1950,10 @@ openclaw devices approve <requestId>
 ```
 
 Then rerun the original command unchanged.
-NemoClaw preserves the native command output and exit status and does not inspect pending requests automatically.
+The `exec` command preserves the native command output and exit status. After
+`exec` fails, NemoClaw does not inspect pending requests automatically. The
+`connect` flow can settle only allowlisted pairing, read, and write upgrades;
+requests outside that bounded path remain available for manual review.
 
 </AgentOnly>
 
