@@ -15,7 +15,10 @@ import {
   pendingAdminRequestId,
   preApprovalAdminProbeEvidence,
 } from "../fixtures/issue-4462-admin-approval-evidence.ts";
-import { ISSUE_4462_SCOPE_UPGRADE_PHASES } from "./issue-4462-admin-approval-helper.ts";
+import {
+  hasIssue4462AgentGatewayFailureOutput,
+  ISSUE_4462_SCOPE_UPGRADE_PHASES,
+} from "./issue-4462-admin-approval-helper.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-issue-4462";
 const LIVE_TIMEOUT_MS = testTimeout(70 * 60_000);
@@ -171,9 +174,9 @@ test(
       },
     );
     expect(
-      agent.exitCode,
-      "The first gateway-backed agent request failed; inspect the phase artifact",
-    ).toBe(0);
+      agent.exitCode === 0 && !hasIssue4462AgentGatewayFailureOutput(agent.stdout, agent.stderr),
+      "The first gateway-backed agent request failed or reported embedded fallback; inspect the phase artifact",
+    ).toBe(true);
     expect(
       agent.stdout.trim(),
       "The first agent request did not return the expected gateway-backed answer",

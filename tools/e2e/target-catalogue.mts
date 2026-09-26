@@ -938,7 +938,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   managedRuntimeTarget("issue-4462-scope-upgrade-approval", {
-    displayName: "Authorization: approves a write-scope upgrade without operator.admin",
+    displayName:
+      "Authorization: runs a bounded non-admin request before explicit operator.admin approval",
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
     profile: "nvidia-inference",
