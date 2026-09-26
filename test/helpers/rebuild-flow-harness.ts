@@ -66,6 +66,9 @@ export const portableAgentLifecycle = requireDist(
 );
 export const commandTransport = requireDist("../../adapters/sandbox/command-transport.js");
 export const processRecovery = requireDist("./process-recovery.js");
+export const portableReceiptReadiness = requireDist(
+  "../../onboard/experimental/portable-runtime-receipt-readiness.js",
+) as typeof import("../../src/lib/onboard/experimental/portable-runtime-receipt-readiness");
 export const pairingSettlement = requireDist(
   "../../onboard/machine/finalization-deps.js",
 ) as typeof import("../../src/lib/onboard/machine/finalization-deps");

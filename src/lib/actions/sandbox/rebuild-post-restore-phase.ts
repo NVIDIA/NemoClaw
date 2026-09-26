@@ -7,6 +7,10 @@ import { CLI_NAME } from "../../cli/branding";
 import { D, G, R, YW } from "../../cli/terminal-style";
 import type { SandboxMessagingPlan } from "../../messaging";
 import { settleOrdinaryOpenClawPairing } from "../../onboard/machine/finalization-deps";
+import {
+  classifyPortableLifecycleReceipt,
+  portableLifecycleReceiptMatchesGeneration,
+} from "../../onboard/experimental/portable-runtime-receipt-readiness";
 import * as sandboxVersion from "../../sandbox/version";
 import {
   inspectMutableHermesConfigPerms,
@@ -639,7 +643,11 @@ export async function runRebuildPostRestorePhase(
     // Legacy recovery can recreate a pairing-only device after onboarding's
     // finalization was deferred. Settle its normal write scope before the
     // prepared recovery transaction retires its backup handoff.
-    const portablePairing = await settlePortableOpenClawPairing(sandboxName);
+    const portableRequired = portableLifecycleReceiptMatchesGeneration(
+      classifyPortableLifecycleReceipt(sandboxName),
+      recreatedEntry.lifecycleGeneration,
+    );
+    const portablePairing = await settlePortableOpenClawPairing(sandboxName, { portableRequired });
     const pairing =
       portablePairing.kind === "not-portable"
         ? await settleOrdinaryOpenClawPairing(sandboxName)
