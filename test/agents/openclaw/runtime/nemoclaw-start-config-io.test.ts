@@ -25,7 +25,10 @@ describe("runtime model override (#759)", () => {
     return extractShellFunctionFromSource(src, name);
   }
 
-  function runApplyModelOverride(env: Record<string, string> = {}, userId = 0) {
+  function runApplyModelOverride(
+    env: Record<string, string> = {},
+    options: { userId?: number; useActualUser?: boolean } = {},
+  ) {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-model-override-"));
     const openclawDir = path.join(root, ".openclaw");
     fs.mkdirSync(openclawDir, { recursive: true });
@@ -65,16 +68,20 @@ describe("runtime model override (#759)", () => {
       hash: fs.fstatSync(hashFd).mode & 0o777,
     };
 
-    const helperFns = [extractShellFunction("openclaw_config_dir_owner")]
+    const helperFns = [
+      extractShellFunction("openclaw_config_dir_owner"),
+      options.useActualUser
+        ? extractShellFunction("run_openclaw_config_as_owner")
+        : 'run_openclaw_config_as_owner() { "$@"; }',
+    ]
       .join("\n")
       .replaceAll("/sandbox", root);
     const fn = extractShellFunction("apply_model_override").replaceAll("/sandbox", root);
     const wrapper = [
       "#!/usr/bin/env bash",
       "set -euo pipefail",
-      `id() { echo ${userId}; }`,
+      ...(options.useActualUser ? [] : [`id() { echo ${options.userId ?? 0}; }`]),
       "normalize_mutable_config_perms() { :; }",
-      'run_openclaw_config_as_owner() { "$@"; }',
       `ensure_mutable_openclaw_config_hash() { (cd ${JSON.stringify(openclawDir)} && sha256sum openclaw.json >.config-hash); }`,
       `stat() { if [ "$1" = "-c" ] && [ "$2" = "%U" ] && [ "$3" = ${JSON.stringify(openclawDir)} ]; then echo sandbox; return 0; fi; command stat "$@"; }`,
       helperFns,
@@ -137,21 +144,24 @@ describe("runtime model override (#759)", () => {
     expect(modes).toEqual(initialModes);
   });
 
-  it("applies an explicit model override as a non-root custom image user (#12033)", () => {
-    const { result, config, configDigest, hash, initialModes, modes } = runApplyModelOverride(
-      { NEMOCLAW_MODEL_OVERRIDE: "new-model" },
-      1000,
-    );
+  it.runIf(typeof process.getuid === "function" && process.getuid() !== 0)(
+    "applies an explicit model override as the current non-root custom image user (#12033)",
+    () => {
+      const { result, config, configDigest, hash, initialModes, modes } = runApplyModelOverride(
+        { NEMOCLAW_MODEL_OVERRIDE: "new-model" },
+        { useActualUser: true },
+      );
 
-    expect(result.status).toBe(0);
-    expect(config.agents.defaults.model.primary).toBe("new-model");
-    expect(config.models.providers.inference.models[0]).toMatchObject({
-      id: "new-model",
-      name: "new-model",
-    });
-    expect(hash.trim().split(/\s+/)).toEqual([configDigest, "openclaw.json"]);
-    expect(modes).toEqual(initialModes);
-  });
+      expect(result.status).toBe(0);
+      expect(config.agents.defaults.model.primary).toBe("new-model");
+      expect(config.models.providers.inference.models[0]).toMatchObject({
+        id: "new-model",
+        name: "new-model",
+      });
+      expect(hash.trim().split(/\s+/)).toEqual([configDigest, "openclaw.json"]);
+      expect(modes).toEqual(initialModes);
+    },
+  );
 
   it.each([
     {
