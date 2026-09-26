@@ -257,6 +257,9 @@ function markerValue(stdout: string, marker: string): ProbeMarkerValue | undefin
   return { index: matches[0].index, value: Number(matches[0][1]) };
 }
 
+export const MCP_CONNECT_403_POLICY_DETAIL =
+  "OpenShell denied the probe connection (CONNECT 403); check the generated MCP policy";
+
 function transportDetail(probeExit: number, stderr: string): string | undefined {
   if (
     probeExit === 56 &&
@@ -264,7 +267,7 @@ function transportDetail(probeExit: number, stderr: string): string | undefined 
       stderr,
     )
   ) {
-    return "OpenShell denied the probe connection (CONNECT 403); check the generated MCP policy";
+    return MCP_CONNECT_403_POLICY_DETAIL;
   }
   if (
     probeExit === 56 &&

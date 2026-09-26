@@ -8,6 +8,7 @@ import path from "node:path";
 import { describe, expect, it, type TestContext } from "vitest";
 import {
   expectTrustedPrivateStatusResult,
+  harnessPreludeTemplate,
   statusHarnessConfig,
   TRUSTED_PRIVATE_STATUS_HARNESS,
 } from "./mcp-bridge/status-resolution-test-fixture.js";
@@ -32,194 +33,6 @@ function describeConcurrentProbeSuite(name: string, factory: () => void): void {
 function createTempHome(prefix: string, root = os.tmpdir()): string {
   return fs.mkdtempSync(path.join(root, prefix));
 }
-
-// Healthy committed bridge with identical placeholder/control rejections: the #6379 "status lies
-// while wire fails" shape. __PROBE_HTTP_STATUS__ covers auth-shaped and ambiguous failures.
-const harnessPreludeTemplate = String.raw`
-const fs = require("node:fs");
-const path = require("node:path");
-const gatewayManagementPath = path.join(process.env.HOME, "gateway-management.json");
-fs.writeFileSync(gatewayManagementPath, JSON.stringify({
-  version: 1,
-  mode: "nemoclaw-managed",
-  requiredCapabilities: [],
-}));
-process.env.NEMOCLAW_GATEWAY_MANAGEMENT = gatewayManagementPath;
-const registry = require("./src/lib/state/registry.js");
-const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
-const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
-const providerInspection = require("./src/lib/actions/sandbox/mcp-bridge-provider-inspection.js");
-const policies = require("./src/lib/policy/index.js");
-const commandTransport = require("./src/lib/adapters/sandbox/command-transport.js");
-const sourceState = require("./src/lib/actions/sandbox/mcp-bridge-source.js");
-gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
-  recovered: true,
-  attempted: false,
-  before: { state: "healthy_named" },
-  after: { state: "healthy_named" },
-});
-providerInspection.getMcpProviderInspectionRuntimeSelection = () => ({
-  gatewayName: "nemoclaw",
-  workspace: "default",
-});
-let providerAttachmentState = "attached";
-let providerInspectionState = "present";
-let providerCredentialKey = "GITHUB_TOKEN";
-let persistedCredentialRevision = "v11";
-let includeSecondSource = false;
-let providerAttachmentInspectionCount = 0;
-const hermesIntentPayloads = [];
-providerCommands.runOpenshellProviderCommand = (args) => {
-  if (args[0] === "provider" && args[1] === "get") {
-    if (providerInspectionState === "absent") {
-      return { status: 1, stdout: "", stderr: "provider not found" };
-    }
-    const providerName = args[2];
-    const credentialKey = providerName === "alpha-mcp-slack" ? "SLACK_TOKEN" : providerCredentialKey;
-    return {
-      status: 0,
-      stdout: "Name: " + providerName + "\nId: 11111111-2222-4333-8444-555555555555\nType: nemoclaw-mcp-v1\nResource version: 4\nCredential keys: " + credentialKey + "\nConfig keys: <none>\n",
-      stderr: "",
-    };
-  }
-  if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "list") {
-    providerAttachmentInspectionCount += 1;
-    if (providerAttachmentState === "unknown") {
-      return { status: 1, stdout: "", stderr: "attachment inspection failed" };
-    }
-    if (providerAttachmentState === "absent") {
-      return { status: 0, stdout: "No providers attached to sandbox alpha\n", stderr: "" };
-    }
-    return {
-      status: 0,
-      stdout: "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\nalpha-mcp-github nemoclaw-mcp-v1 1 0\n" +
-        (includeSecondSource ? "alpha-mcp-slack nemoclaw-mcp-v1 1 0\n" : ""),
-      stderr: "",
-    };
-  }
-  if (args[0] === "sandbox" && args[1] === "exec" && args.includes("inspect")) {
-    const payload = JSON.parse(args[args.length - 1]);
-    hermesIntentPayloads.push(payload);
-    const authorization = payload.present?.github?.headers?.Authorization;
-    const matches = authorization ===
-      "Bearer openshell:resolve:env:" + persistedCredentialRevision + "_GITHUB_TOKEN";
-    return matches
-      ? { status: 0, stdout: '{"ok":true,"state":"matched"}\n', stderr: "" }
-      : { status: 2, stdout: "", stderr: "Hermes MCP config does not match the requested native entry" };
-  }
-  throw new Error("Unexpected OpenShell call: " + args.join(" "));
-};
-let activePolicyState = "match";
-policies.getPresetContentGatewayState = () => activePolicyState;
-policies.captureRecordedSandboxBasePolicy = () => {
-  if (activePolicyState === null) throw new Error("policy inspection failed");
-  return activePolicyState === "absent"
-    ? "network_policies: {}\n"
-    : "network_policies:\n  mcp_bridge_github: {}\n";
-};
-const executedSandboxCommands = [];
-let providerCredentialObservation = "v11";
-let credentialObservationCount = 0;
-let toolDiscoveryStatus = 0;
-let toolDiscoveryResult = {
-  protocol: 2,
-  ok: true,
-  count: 2,
-  tools: ["alpha", "zeta"],
-  truncated: false,
-};
-const observeCredential = async () => {
-  credentialObservationCount += 1;
-  return {
-    status: 0,
-    stdout: providerCredentialObservation,
-    stderr: "",
-  };
-};
-let executeAdapterCommand = async (sandboxName, command) => {
-  executedSandboxCommands.push(command);
-  if (command.includes("NEMOCLAW_MCP_PROBE")) {
-    const resultMarker = command.match(/__NEMOCLAW_SANDBOX_EXEC_STARTED___[0-9a-f]{32}/)?.[0];
-    if (!resultMarker) throw new Error("credential probe result marker missing");
-    return {
-      status: 0,
-      stdout: [
-        resultMarker,
-        "",
-        "NEMOCLAW_MCP_PROBE_HTTP_CODE=" + resultMarker + ":__PROBE_HTTP_STATUS__",
-        "NEMOCLAW_MCP_PROBE_CURL_EXIT=" + resultMarker + ":0",
-        "NEMOCLAW_MCP_CONTROL_HTTP_CODE=" + resultMarker + ":__CONTROL_HTTP_STATUS__",
-        "NEMOCLAW_MCP_CONTROL_CURL_EXIT=" + resultMarker + ":0",
-      ].join("\n"),
-      stderr: "",
-    };
-  }
-  if (command.includes("mcp-tool-discovery-runtime")) {
-    const resultMarker = command.match(/__NEMOCLAW_SANDBOX_EXEC_STARTED___[0-9a-f]{32}/)?.[0];
-    if (!resultMarker) throw new Error("tool discovery result marker missing");
-    return {
-      status: toolDiscoveryStatus,
-      stdout: resultMarker + "\n" + JSON.stringify(toolDiscoveryResult),
-      stderr: "",
-    };
-  }
-  const expectedAuthorization =
-    "openshell:resolve:env:" + persistedCredentialRevision + "_GITHUB_TOKEN";
-  return {
-    status: 0,
-    stdout: command.includes(expectedAuthorization) ? "registered" : "mismatch",
-    stderr: "",
-  };
-};
-commandTransport.executeSandboxExecCommand = async (sandboxName, command) =>
-  command.includes('valid_placeholder "$value" || exit 1')
-    ? observeCredential()
-    : executeAdapterCommand(sandboxName, command);
-const sourceEntry = {
-    server: "github",
-    agent: "openclaw",
-    adapter: "openclaw-config",
-    url: "https://api.githubcopilot.com/mcp/",
-    env: ["GITHUB_TOKEN"],
-    allowedIps: ["8.8.8.8"],
-    providerName: "alpha-mcp-github",
-    providerId: "11111111-2222-4333-8444-555555555555",
-    policyName: "mcp-bridge-github",
-};
-const secondSourceEntry = {
-  ...sourceEntry,
-  server: "slack",
-  env: ["SLACK_TOKEN"],
-  providerName: "alpha-mcp-slack",
-  policyName: "mcp-bridge-slack",
-};
-let legacySourceEnabled = false;
-let policyOnlySourceEnabled = false;
-sourceState.inspectSourceBridgeState = () => ({
-  bridges: {
-    github: policyOnlySourceEnabled ? { ...sourceEntry, source: "policy" } : sourceEntry,
-    ...(includeSecondSource ? { slack: secondSourceEntry } : {}),
-  },
-  sources: {
-    native: legacySourceEnabled || policyOnlySourceEnabled
-      ? {}
-      : { github: sourceEntry, ...(includeSecondSource ? { slack: secondSourceEntry } : {}) },
-    legacy: legacySourceEnabled ? { github: { ...sourceEntry, source: "legacy" } } : {},
-  },
-});
-registry.registerSandbox({ name: "alpha", agent: "openclaw" });
-const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
-const logLines = [];
-const errorLines = [];
-const originalStdoutWrite = process.stdout.write.bind(process.stdout);
-const writeHarnessResult = (value) => originalStdoutWrite(value);
-process.stdout.write = (value) => {
-  logLines.push(String(value).trimEnd());
-  return true;
-};
-console.log = (...parts) => logLines.push(parts.join(" "));
-console.error = (...parts) => errorLines.push(parts.join(" "));
-`;
 
 async function runHarness(
   context: Pick<TestContext, "signal" | "onTestFinished">,
@@ -503,6 +316,133 @@ describeConcurrentProbeSuite("MCP status wire-level credential-resolution probe"
       ),
     ).toBe(true);
     expect(payload.exitCode).toBe(0);
+  });
+
+  it("reports public pin drift and diagnoses only the matching CONNECT 403 (#10464)", async (context) => {
+    const home = createTempHome("nemoclaw-mcp-public-pin-drift-");
+    const { stdout } = await runHarness(
+      context,
+      home,
+      String.raw`
+  dns.lookup = async () => [{ address: "1.1.1.1", family: 4 }];
+  probeCurlExit = 56;
+  probeStderr = "curl: (56) CONNECT tunnel failed, response 403";
+  const [drifted] = await bridge.statusMcpBridge("alpha", "github", {
+    probeCredentialResolution: true,
+  });
+  dns.lookup = async () => [{ address: "8.8.8.8", family: 4 }];
+  const [matched] = await bridge.statusMcpBridge("alpha", "github", {
+    probeCredentialResolution: true,
+  });
+  writeHarnessResult(JSON.stringify({ drifted, matched }));
+`,
+    );
+    const payload = JSON.parse(stdout) as {
+      drifted: {
+        publicTarget?: { recordedPins: string[]; currentPins?: string[]; state: string };
+        warnings: string[];
+        provider: { credentialResolution?: { detail?: string } };
+      };
+      matched: { provider: { credentialResolution?: { detail?: string } } };
+    };
+
+    expect(payload.drifted.publicTarget).toEqual({
+      host: "api.githubcopilot.com",
+      recordedPins: ["8.8.8.8"],
+      currentPins: ["1.1.1.1"],
+      state: "drift",
+      detail: "Current public DNS answers differ from the recorded pins.",
+    });
+    expect(payload.drifted.warnings).toContain(
+      "Public DNS answers differ from the recorded pins. Run mcp update <server> --refresh-public-pins to refresh the live policy.",
+    );
+    expect(payload.drifted.provider.credentialResolution?.detail).toContain(
+      "current public DNS answers 1.1.1.1 do not match recorded pins 8.8.8.8",
+    );
+    expect(payload.matched.provider.credentialResolution?.detail).toBe(
+      "OpenShell denied the probe connection (CONNECT 403); check the generated MCP policy",
+    );
+  });
+
+  it("keeps status readable for invalid URLs and distinguishes rejected DNS from public pin drift (#10464)", async (context) => {
+    const home = createTempHome("nemoclaw-mcp-public-pin-invalid-");
+    const { stdout } = await runHarness(
+      context,
+      home,
+      String.raw`
+  sourceEntry.url = "invalid-url";
+  const [invalid] = await bridge.statusMcpBridge("alpha", "github");
+  sourceEntry.url = "https://api.githubcopilot.com/mcp/";
+  dns.lookup = async () => [{ address: "10.20.30.40", family: 4 }];
+  const [rejected] = await bridge.statusMcpBridge("alpha", "github");
+  sourceEntry.allowedIps = ["8.8.8.0/24"];
+  const [range] = await bridge.statusMcpBridge("alpha", "github");
+  writeHarnessResult(JSON.stringify({ invalid, rejected, range }));
+`,
+    );
+    const { invalid, rejected, range } = JSON.parse(stdout);
+    expect(invalid.warnings.join("\n")).toContain("authenticated endpoint boundary");
+    expect(invalid.publicTarget).toBeUndefined();
+    expect(rejected.publicTarget.state).toBe("rejected");
+    expect(rejected.warnings.join("\n")).toContain("live policy was not changed");
+    expect(rejected.warnings.join("\n")).not.toContain("--refresh-public-pins");
+    expect(range.publicTarget).toBeUndefined();
+  });
+
+  it("bounds public DNS work and continues after a timed-out lookup (#10464)", async (context) => {
+    const home = createTempHome("nemoclaw-mcp-public-pin-budget-");
+    const { stdout } = await runHarness(
+      context,
+      home,
+      String.raw`
+  const native = {
+    github: sourceEntry,
+    one: { ...sourceEntry, server: "one", url: "https://one.example.test/mcp" },
+    two: { ...sourceEntry, server: "two", url: "https://two.example.test/mcp" },
+    three: { ...sourceEntry, server: "three", url: "https://three.example.test/mcp" },
+    four: { ...sourceEntry, server: "four", url: "https://four.example.test/mcp" },
+  };
+  sourceState.inspectSourceBridgeState = () => ({ bridges: native, sources: { native, legacy: {} } });
+  const release = {};
+  const reject = {};
+  const started = [];
+  let active = 0;
+  let peak = 0;
+  const lookup = async (host) => {
+    active += 1;
+    peak = Math.max(peak, active);
+    started.push(host);
+    try {
+      return await new Promise((resolve, fail) => { release[host] = resolve; reject[host] = fail; });
+    } finally { active -= 1; }
+  };
+  dns.lookup = lookup;
+  require("./src/lib/adapters/dns/resolve.js").resolveHostAddressesBounded = lookup;
+  const pending = bridge.statusMcpBridge("alpha");
+  await new Promise(setImmediate);
+  const initial = started.length;
+  reject["api.githubcopilot.com"](new Error("DNS lookup timed out"));
+  await new Promise(setImmediate);
+  const afterTimeout = started.length;
+  const addresses = [{ address: "8.8.8.8", family: 4 }];
+  release["one.example.test"](addresses);
+  release["two.example.test"](addresses);
+  release["three.example.test"](addresses);
+  release["four.example.test"](addresses);
+  const statuses = await pending;
+  writeHarnessResult(JSON.stringify({ initial, afterTimeout, peak,
+    states: statuses.map((status) => status.publicTarget.state),
+    pins: statuses[0].publicTarget.recordedPins,
+  }));
+`,
+    );
+    expect(JSON.parse(stdout)).toEqual({
+      initial: 4,
+      afterTimeout: 5,
+      peak: 4,
+      states: ["unresolved", "match", "match", "match", "match"],
+      pins: ["8.8.8.8"],
+    });
   });
 
   it("sends the observed revision and rejects canonical probe authority (#10079)", async (context) => {

@@ -215,7 +215,8 @@ OpenShell re-resolves the hostname for each new connection, requires every curre
 
 A DNS change to a private, special-use, or otherwise unpinned address fails closed instead of widening the route.
 
-Cloudflare Quick Tunnels and other endpoints with rotating address sets are not durable managed MCP deployments.
+Cloudflare Quick Tunnels and other public endpoints can rotate their address sets.
+After each change, follow [Change Endpoint Pins](manage-mcp-servers#change-endpoint-pins) to refresh the validated public pins explicitly.
 A named tunnel can stabilize the hostname without stabilizing its address set.
 Use stable private DNS and a routed private HTTPS endpoint when you operate the MCP server locally.
 

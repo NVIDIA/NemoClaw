@@ -35,6 +35,7 @@ import {
   buildMcpBridgePolicyName,
   buildMcpBridgePolicyYaml,
   removeGeneratedPolicy,
+  refreshMcpPublicPolicyPins,
 } from "./mcp-bridge-policy";
 import {
   assertMcpProviderRecoverable,
@@ -58,6 +59,7 @@ import {
 } from "./mcp-bridge-provider";
 import {
   assertNoAmbiguousMcpCredentialTarget,
+  assertNoAmbiguousMcpCredentialTargets,
   assertNoDerivedResourceCollision,
   ensureSandboxGatewaySelected,
   getBridgeAdapter,
@@ -65,7 +67,13 @@ import {
   getSandboxOrThrow,
 } from "./mcp-bridge-state";
 import { observeSandboxOnGateway } from "../../onboard/sandbox-recreate-probe";
-import { inspectPolicyOnlyMcpEntry, inspectSourceBridgeState } from "./mcp-bridge-source";
+import {
+  assertNoLegacyMcpSources,
+  inspectAgentMcpSources,
+  inspectPolicyOnlyMcpEntry,
+  inspectSourceBridgeState,
+  sameMcpRegistration,
+} from "./mcp-bridge-source";
 import {
   type McpBridgeTargetValidation,
   parseMcpUrlWithValidatedTarget,
@@ -592,6 +600,55 @@ export async function updateMcpBridgeDenyTools(
   return withMcpLifecycleLock(sandboxName, () => {
     assertHermesPortableCommandUnavailable(sandboxName, "sandbox:mcp:update");
     return updateMcpBridgeDenyToolsUnlocked(sandboxName, server, denyTools);
+  });
+}
+
+/** Refresh public pins only through an explicit update of the live policy. */
+export async function refreshMcpBridgePublicPins(
+  sandboxName: string,
+  server: string,
+): Promise<void> {
+  return withMcpLifecycleLock(sandboxName, async () => {
+    assertHermesPortableCommandUnavailable(sandboxName, "sandbox:mcp:update");
+    validateSandboxName(sandboxName);
+    validateMcpServerName(server);
+    const sandbox = getSandboxOrThrow(sandboxName);
+    const runtimeSelection = getMcpProviderInspectionRuntimeSelection(sandbox);
+    const observed = await inspectSourceBridgeState(sandbox, runtimeSelection);
+    assertNoLegacyMcpSources(sandboxName, observed.sources.legacy, "refreshing public pins");
+    assertNoAmbiguousMcpCredentialTargets(Object.values(observed.bridges));
+    const entry = observed.bridges[server];
+    if (!entry)
+      throw new McpBridgeError(`MCP server '${server}' not found on sandbox '${sandboxName}'.`);
+    assertAuthenticatedBridgeEntry(entry);
+    if (entry.policyConflict) {
+      throw new McpBridgeError(
+        `MCP server '${server}' has conflicting live policy. Resolve it before refreshing public pins.`,
+        2,
+      );
+    }
+    if (entry.trustedPrivateHost) {
+      throw new McpBridgeError("Trusted-private pins require explicit remove-and-add approval.", 2);
+    }
+    const url = new URL(normalizeMcpServerUrl(entry.url));
+    const target = await preflightMcpServerUrlResolvedTarget(url);
+    assertMcpCredentialBoundaryRuntimeVersion();
+    await ensureSandboxGatewaySelected(sandboxName, runtimeSelection);
+    const provider = await assertMcpProviderRecoverable(entry, runtimeSelection);
+    if (provider.exists !== true) {
+      throw new McpBridgeError(
+        "The MCP provider is no longer present. Public-pin refresh does not recreate missing source state.",
+      );
+    }
+    const current = await inspectAgentMcpSources(sandbox, runtimeSelection);
+    assertNoLegacyMcpSources(sandboxName, current.legacy, "refreshing public pins");
+    if (!current.native[server] || !sameMcpRegistration(entry, current.native[server])) {
+      throw new McpBridgeError(
+        "The agent MCP registration changed during public-pin refresh. No policy was changed.",
+      );
+    }
+    await refreshMcpPublicPolicyPins(sandboxName, entry, target, runtimeSelection);
+    console.log(`  Refreshed public address pins for MCP server '${server}'.`);
   });
 }
 

@@ -68,6 +68,7 @@ import {
   runDeniedMcpToolCall,
   runMcpProviderRewriteProbe,
   runOpenClawDeniedToolUpdateProof,
+  runOpenClawPublicPinRefreshProof,
   restartBridgeWithoutHostSecret,
   rebuildWithoutMcpHostSecret,
   retryOpenClawBaselineScopeOnboardFailure,
@@ -1071,6 +1072,8 @@ test(
         deniedTool: MCP_BRIDGE_DENIED_TOOL_NAME,
       });
     };
+    await runOpenClawPublicPinRefreshProof(host, sandbox, OPENCLAW_SANDBOX_NAME, mcpUrl);
+    await proveRestoredBridge("openclaw-public-pin-refresh");
     await rebuildWithoutMcpHostSecret(host, OPENCLAW_SANDBOX_NAME, "openclaw");
     await proveRestoredBridge("openclaw");
     await proveKilledDockerOpenClawRecovery(
