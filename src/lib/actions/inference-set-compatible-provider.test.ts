@@ -131,10 +131,17 @@ async function runRejectedCompatibleSwitchScenario(options: {
 describe("runInferenceSet compatible providers", () => {
   afterEach(() => vi.unstubAllEnvs());
 
-  it("reuses durable endpoint metadata and restarts same-provider model switches", async () => {
+  it.each(["nvidia/model-a", "nvidia/model-b"])("preserves reasoning for %s", async (model) => {
     const config: ConfigObject = {
       agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } },
-      models: { providers: { inference: { api: "openai-completions", models: [] } } },
+      models: {
+        providers: {
+          inference: {
+            api: "openai-completions",
+            models: [{ id: "nvidia/model-a", reasoning: true }],
+          },
+        },
+      },
     };
     const deps = createDeps({
       config,
@@ -146,6 +153,7 @@ describe("runInferenceSet compatible providers", () => {
         endpointUrl: "https://inference-api.nvidia.com/v1",
         credentialEnv: "COMPATIBLE_API_KEY",
         preferredInferenceApi: "openai-completions",
+        compatibleEndpointReasoning: "true",
       },
       session: baseSession({
         provider: "compatible-endpoint",
@@ -159,18 +167,22 @@ describe("runInferenceSet compatible providers", () => {
     await runInferenceSet(
       {
         provider: "compatible-endpoint",
-        model: "nvidia/model-b",
+        model,
         noVerify: true,
       },
       deps,
     );
 
     expect(deps.calls.rewriteConfigUrlsWithDnsPinning).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox.mock.calls).toMatchObject([
+      ["alpha", { compatibleEndpointReasoning: "true" }],
+      ["alpha", { compatibleEndpointReasoning: "true" }],
+    ]);
     expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
       "alpha",
       expect.objectContaining({
         provider: "compatible-endpoint",
-        model: "nvidia/model-b",
+        model,
         endpointUrl: "https://inference-api.nvidia.com/v1",
         credentialEnv: "COMPATIBLE_API_KEY",
         preferredInferenceApi: "openai-completions",

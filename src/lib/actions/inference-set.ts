@@ -1332,6 +1332,7 @@ async function runInferenceSetWithoutHostLock(
         endpointSource: registryMetadata.endpointSource ?? null,
         credentialEnv: registryMetadata.credentialEnv ?? null,
         preferredInferenceApi,
+        compatibleEndpointReasoning: entry.compatibleEndpointReasoning,
         compatibleEndpointReasoningEffort:
           provider === "compatible-endpoint" && preferredInferenceApi === "openai-completions"
             ? reasoningEffortRequest.explicit
