@@ -7,6 +7,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ArtifactSink } from "../fixtures/artifacts.ts";
+import { HostCliClient } from "../fixtures/clients/host.ts";
+import { startTestProgress } from "../fixtures/progress.ts";
+import { redactString } from "../fixtures/redaction.ts";
+import { ShellProbe } from "../fixtures/shell-probe.ts";
 
 import {
   assertHermesMcpHttpResponse,
@@ -103,21 +108,47 @@ describe("Hermes MCP HTTP failure diagnostics", () => {
         }),
       );
       const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-hermes-startup-log-"));
+      const progress = startTestProgress(
+        "Hermes startup capture",
+        ["capture startup log", "verify retained evidence"],
+        { logLine: () => undefined },
+      );
       try {
-        const log = `${"x".repeat(40_000)}\n[CRITICAL] fixture startup failure\n`;
+        const log = `${"x".repeat(40_000)}\n[CRITICAL] fixture startup failure fixture-secret\n`;
         writeFileSync(path.join(directory, "nemoclaw-start.log"), log);
         const archive = path.join(directory, "startup.tar");
         const packed = spawnSync("tar", ["-cf", archive, "-C", directory, "nemoclaw-start.log"]);
         expect(packed.status).toBe(0);
         const startupArgs = command.mock.calls[4]?.[1] as string[];
-        const captured = spawnSync("bash", [...startupArgs.slice(0, 5), "cat", archive], {
-          encoding: "utf8",
-          timeout: TIMEOUT_MS,
-          cwd: directory,
-        });
-        expect(captured.status, captured.stderr).toBe(0);
-        expect(captured.stdout).toBe(log.slice(-32_768));
+        const artifacts = new ArtifactSink(path.join(directory, "artifacts"));
+        const captureHost = new HostCliClient(
+          new ShellProbe({
+            artifacts,
+            progress,
+            redact: redactString,
+            signal: new AbortController().signal,
+          }),
+          { cwd: directory },
+        );
+        progress.phase("capture startup log");
+        const captured = await captureHost.command(
+          "bash",
+          [...startupArgs.slice(0, 5), "cat", archive],
+          command.mock.calls[4]?.[2],
+        );
+        progress.phase("verify retained evidence");
+        expect(captured.exitCode, captured.stderr).toBe(0);
+        expect(captured.stdout).not.toContain("fixture-secret");
+        expect(captured.stdout).toContain("[CRITICAL] fixture startup failure [REDACTED]");
+        expect(Buffer.byteLength(captured.stdout)).toBeLessThanOrEqual(32_768);
+        expect(
+          readFileSync(
+            artifacts.pathFor(`shell/hermes-mcp-${operation}-failure-startup-log.stdout.txt`),
+            "utf8",
+          ),
+        ).toBe(captured.stdout);
       } finally {
+        progress.stop();
         rmSync(directory, { recursive: true, force: true });
       }
       expect(command).toHaveBeenCalledTimes(5);

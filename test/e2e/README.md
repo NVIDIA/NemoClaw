@@ -191,8 +191,8 @@ trusted-private probe must discover authenticated tools from the HTTPS fixture
 signed by that CA through supervisor egress. Cloud onboarding separately verifies
 installed bundle contents and permissions; file presence alone is not TLS-consumer
 evidence. The managed-startup unit tests own activation ordering and identity checks.
-Cloud onboarding checks that the migrated secret is absent from the remaining legacy
-entries. Credential-store tests own preservation of unrelated fields, complete-file
+Cloud onboarding checks that the migrated credential entry is absent from the remaining
+legacy entries. Credential-store tests own preservation of unrelated fields, complete-file
 deletion when no unrelated entries remain, and preservation after failed migration.
 
 If the Hermes replacement-credential restart or subsequent bridge removal fails, MCP E2E captures host-side

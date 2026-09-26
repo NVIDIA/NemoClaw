@@ -1185,12 +1185,11 @@ async function preflight(
 
   // Check explicit dashboard ports here; automatic allocation runs at sandbox
   // creation. Provider-owned reuse still requires a verified dashboard forward.
-  const dashboardPortToCheck = _preflightDashboardPort ?? null;
   // Reject explicit reserved ports; sandbox creation checks deferred ports (#4984).
-  preflightPorts.assertDashboardPortNotReserved(dashboardPortToCheck);
+  preflightPorts.assertDashboardPortNotReserved(_preflightDashboardPort);
   const requiredPorts = preflightPorts.buildRequiredPreflightPorts({
     gatewayPort: GATEWAY_PORT,
-    dashboardPort: dashboardPortToCheck,
+    dashboardPort: _preflightDashboardPort,
     dashboardLabel: `${cliDisplayName()} dashboard`,
   });
   for (const { kind, port, label, envVar } of requiredPorts) {
@@ -1231,11 +1230,8 @@ async function preflight(
       );
       const managedListenerAccepted = entryDecisions.acceptManagedListener(
         managedListenerPid,
-        (pid) => {
-          rememberDockerDriverGatewayPid(pid);
-          console.log(
-            `  ✓ Port ${port} already owned by NemoClaw OpenShell Docker gateway (${label})`,
-          );
+        () => {
+          console.log(`  ✓ Port ${port} already owned by NemoClaw OpenShell gateway (${label})`);
         },
       );
       if (managedListenerAccepted) {
@@ -2833,6 +2829,11 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         requestedGpuPassthrough: opts.gpu === true,
       };
       type InitialOnboardFlowContext = typeof initialFlowContext;
+      const preflightSandboxName = entryDecisions.selectPreflightSandboxName(
+        initialFlowContext.sandboxName,
+        isNonInteractive(),
+        () => getSandboxPromptDefault(agent),
+      );
       const [preflightPhase, gatewayPhase]: readonly [
         import("./onboard/machine/sequence-runner").OnboardSequencePhase<InitialOnboardFlowContext>,
         import("./onboard/machine/sequence-runner").OnboardSequencePhase<InitialOnboardFlowContext>,
@@ -2855,7 +2856,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           detectGpuForReadiness: () => nim.detectGpu({ proveArm64ContainerGpu: null }),
           detectGpu: fatalRuntimePreflight.detectGpuWithRuntimeProviderProof,
           runPreflight: (preflightOptions) =>
-            preflight({ ...opts, ...preflightOptions }, initialFlowContext.sandboxName),
+            preflight({ ...opts, ...preflightOptions }, preflightSandboxName),
           assessHost,
           providerNameToOptionKey: providerKey,
           assertOnboardHostReadiness: (host, gpu, options) =>

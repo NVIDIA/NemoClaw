@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { HERMES_OPENAI_API_PORT } from "../core/ports";
+import { acceptManagedListener, selectPreflightSandboxName } from "./gateway/entry-decisions";
 import {
   assertDashboardPortNotReserved,
   buildRequiredPreflightPorts,
@@ -17,6 +18,29 @@ const OWNED_FORWARD = {
   localHost: "127.0.0.1",
   port: 18789,
 } as const;
+
+it.each([null, 4242])(
+  "listener admission reports without publishing PID state [case %#]",
+  (pid) => {
+    const reportAccepted = vi.fn();
+    expect(acceptManagedListener(pid, reportAccepted)).toBe(pid !== null);
+    expect(reportAccepted.mock.calls).toEqual(pid === null ? [] : [[]]);
+  },
+);
+
+it.each([
+  { name: "requested", nonInteractive: true, expected: "requested" },
+  { name: "recorded", nonInteractive: false, expected: "recorded" },
+  { name: null, nonInteractive: true, expected: "my-assistant" },
+  { name: null, nonInteractive: false, expected: null },
+])(
+  "preflight resolves only a known or automatic sandbox name [case %#]",
+  ({ name, nonInteractive, expected }) => {
+    const readDefaultName = vi.fn(() => "my-assistant");
+    expect(selectPreflightSandboxName(name, nonInteractive, readDefaultName)).toBe(expected);
+    expect(readDefaultName).toHaveBeenCalledTimes(name === null && nonInteractive ? 1 : 0);
+  },
+);
 
 describe("registered dashboard forward preflight", () => {
   it.each(["owned", "absent", "stale", "foreign"] as const)(
