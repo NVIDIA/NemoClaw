@@ -506,9 +506,11 @@ jobs:
       - name: Resolve managed image release identity
         id: release
         shell: bash
+        env:
+          RELEASE: ${{ needs.publication-identity.outputs.release }}
         run: |
           set -euo pipefail
-          release="$(git describe --tags --match 'v*' "$CANDIDATE_SHA")"
+          release="$RELEASE"
           if [[ ! "$release" =~ ^v[0-9]+([.][0-9]+){1,3}([-.][0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
             echo "ERROR: managed image release identity is invalid: $release" >&2
             exit 1
@@ -1055,7 +1057,7 @@ jobs:
 
   pr-managed-activation:
     name: PR exact all-agent managed runtime activation
-    needs: pr-build-and-entrypoint
+    needs: [pr-build-and-entrypoint, publication-identity]
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-24.04
     timeout-minutes: 90
@@ -1120,6 +1122,28 @@ jobs:
             "$CANDIDATE_SHA" \
             "$NEMOCLAW_MANAGED_ACTIVATION_CATALOG" \
             "${contracts[@]}"
+
+      - name: Bind CLI to publication release
+        shell: bash
+        env:
+          RELEASE: ${{ needs.publication-identity.outputs.release }}
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse --verify HEAD)" == "$CANDIDATE_SHA" ]] || {
+            echo "ERROR: CLI checkout does not match the publication revision." >&2
+            exit 1
+          }
+          node --no-warnings -e '
+            const fs = require("node:fs");
+            const { validateBuildIdentity } = require("./src/lib/core/version.ts");
+            if (!process.env.RELEASE.startsWith("v")) throw new Error("Missing publication release prefix.");
+            const identity = validateBuildIdentity({
+              nemoclawVersion: process.env.RELEASE.slice(1),
+              sourceRevision: process.env.CANDIDATE_SHA,
+            });
+            fs.mkdirSync("dist", { recursive: true });
+            fs.writeFileSync("dist/build-identity.json", JSON.stringify(identity) + "\n");
+          '
 
       - name: Build exact candidate CLI
         run: npm run build:cli
@@ -1906,13 +1930,42 @@ jobs:
 
   publication-identity:
     name: Record managed image publication identity
-    # Failed-job reruns reuse this successful job and its cohort output. A
-    # retried producer lane therefore stays in the original publication cohort.
+    # Failed-job reruns retain the original cohort and release outputs, even if
+    # another tag arrives before a producer or activation job is retried.
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      contents: read
+    env:
+      CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     outputs:
       cohort: ${{ steps.identity.outputs.cohort }}
+      release: ${{ steps.release.outputs.value }}
     steps:
+      - name: Checkout publication revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Resolve managed image release identity
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse --verify HEAD)" == "$CANDIDATE_SHA" ]]
+          release="$(git describe --tags --match 'v*' "$CANDIDATE_SHA")"
+          if [[ ! "$release" =~ ^v[0-9]+([.][0-9]+){1,3}([-.][0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
+            echo "ERROR: managed image release identity is invalid." >&2
+            exit 1
+          fi
+          if [[ "$GITHUB_REF" == refs/tags/* && "$release" != "${GITHUB_REF#refs/tags/}" ]]; then
+            echo "ERROR: managed image release identity does not match the release tag." >&2
+            exit 1
+          fi
+          printf 'value=%s\n' "$release" >> "$GITHUB_OUTPUT"
+
       - name: Record publication identity
         id: identity
         shell: bash
@@ -2034,9 +2087,11 @@ jobs:
       - name: Resolve managed image release identity
         id: release
         shell: bash
+        env:
+          RELEASE: ${{ needs.publication-identity.outputs.release }}
         run: |
           set -euo pipefail
-          release="$(git describe --tags --match 'v*' "$GITHUB_SHA")"
+          release="$RELEASE"
           if [[ ! "$release" =~ ^v[0-9]+([.][0-9]+){1,3}([-.][0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
             echo "ERROR: managed image release identity is invalid: $release" >&2
             exit 1
