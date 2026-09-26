@@ -31,6 +31,20 @@ describe("custom OpenClaw Dockerfile model reconciliation", () => {
       expectedLimits: { contextWindow: 65_536, maxTokens: 8_192 },
     },
     {
+      behavior: "replaces only the explicit context window",
+      contextWindow: "65536",
+      maxTokens: "",
+      inheritedModelId: "baked-model",
+      expectedLimits: { contextWindow: 65_536 },
+    },
+    {
+      behavior: "replaces only the explicit maximum output-token count",
+      contextWindow: "",
+      maxTokens: "8192",
+      inheritedModelId: "baked-model",
+      expectedLimits: { maxTokens: 8_192 },
+    },
+    {
       behavior: "overrides inherited limits when the model already matches",
       contextWindow: "65536",
       maxTokens: "8192",

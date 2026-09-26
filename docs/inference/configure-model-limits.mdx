@@ -77,7 +77,7 @@ $$nemoclaw onboard
 ```
 
 NemoClaw does not apply invalid values.
-For a custom image whose selected model changes, NemoClaw removes inherited limits instead of applying the managed-image defaults.
+For a custom image whose selected model differs from the inherited image model, NemoClaw applies each valid explicit limit independently and removes each inherited limit that has no explicit replacement.
 
 </AgentOnly>
 
