@@ -15,6 +15,9 @@ import { basename, dirname, join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 import {
+  SECRET_BLOCK_PATTERNS,
+  STRUCTURED_TOKEN_PATTERNS,
+  TOKEN_PREFIX_PATTERNS,
   isConfigObject,
   isConfigValue,
   sanitizeEnvFileContent,
@@ -42,6 +45,23 @@ export type {
   ConfigObject,
   ConfigValue,
 } from "../../../nemoclaw/dist/shared/credential-filter-boundary.cjs";
+
+/** Detect standalone credential fingerprints without interpreting surrounding file structure. */
+export function textContainsHighConfidenceCredential(value: string): boolean {
+  const withoutPlaceholders = value
+    .replace(/(?:Bearer\s+)?openshell:resolve:env:[A-Za-z0-9_]+/giu, "unused")
+    .replace(/xox[bx]-OPENSHELL-RESOLVE-ENV-[A-Za-z0-9_]+/gu, "unused")
+    .replaceAll("[STRIPPED_BY_MIGRATION]", "unused");
+  for (const pattern of [
+    ...TOKEN_PREFIX_PATTERNS,
+    ...STRUCTURED_TOKEN_PATTERNS,
+    ...SECRET_BLOCK_PATTERNS,
+  ]) {
+    pattern.lastIndex = 0;
+    if (pattern.test(withoutPlaceholders)) return true;
+  }
+  return /-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----/u.test(withoutPlaceholders);
+}
 
 function parseJson<T>(text: string): T {
   return JSON.parse(text);

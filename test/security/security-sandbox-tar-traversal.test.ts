@@ -116,7 +116,7 @@ function buildTar(
  */
 type SandboxStateModule = Pick<
   typeof import("../../src/lib/state/sandbox.js"),
-  "validateTarEntries" | "safeTarExtract" | "rejectHardLinks"
+  "validateTarEntries" | "rejectHardLinks"
 >;
 
 function isSandboxStateModule(
@@ -125,7 +125,6 @@ function isSandboxStateModule(
   return (
     value !== null &&
     typeof Reflect.get(value, "validateTarEntries") === "function" &&
-    typeof Reflect.get(value, "safeTarExtract") === "function" &&
     typeof Reflect.get(value, "rejectHardLinks") === "function"
   );
 }
@@ -141,7 +140,6 @@ async function loadSandboxState(): Promise<SandboxStateModule> {
   }
   return {
     validateTarEntries: mod.validateTarEntries,
-    safeTarExtract: mod.safeTarExtract,
     rejectHardLinks: mod.rejectHardLinks,
   };
 }
@@ -186,7 +184,7 @@ describe("PoC: malicious tar archives contain path traversal entries", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════
-// 2. Fix — validateTarEntries and safeTarExtract reject malicious archives
+// 2. Fix — validateTarEntries rejects malicious archives
 // ═══════════════════════════════════════════════════════════════════
 describe("Fix: validateTarEntries rejects malicious tar entries", () => {
   it("rejects relative path traversal (../../.ssh/authorized_keys)", async () => {
@@ -277,342 +275,6 @@ describe("Fix: validateTarEntries rejects malicious tar entries", () => {
   });
 });
 
-describe("Fix: safeTarExtract blocks malicious archives and extracts safe ones", () => {
-  it.each([
-    ["path traversal", [{ path: "../escape.txt", content: "attacker-payload" }], "path traversal"],
-    [
-      "a hard link",
-      [{ path: "inside/link.json", type: "1", linkTarget: "../outside.json" }],
-      "hard link",
-    ],
-    [
-      "an escaping symlink",
-      [{ path: "escape-link", type: "2", linkTarget: "../outside.txt" }],
-      "symlink",
-    ],
-  ])("rejects a file-backed archive containing %s", async (_case, entries, expectedError) => {
-    const { safeTarExtract } = await loadSandboxState();
-    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-file-backed-hostile-"));
-    try {
-      const archivePath = path.join(workDir, "archive.tar");
-      const targetDir = path.join(workDir, "backup");
-      fs.mkdirSync(targetDir);
-      fs.writeFileSync(archivePath, buildTar(entries), { mode: 0o600 });
-
-      const result = safeTarExtract({ filePath: archivePath }, targetDir);
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain(expectedError);
-      expect(fs.readdirSync(targetDir)).toEqual([]);
-      expect(fs.existsSync(path.join(workDir, "escape.txt"))).toBe(false);
-      expect(fs.existsSync(path.join(workDir, "outside.json"))).toBe(false);
-      expect(fs.existsSync(path.join(workDir, "outside.txt"))).toBe(false);
-    } finally {
-      fs.rmSync(workDir, { recursive: true, force: true });
-    }
-  });
-
-  it("blocks archive with path traversal — no files written", async () => {
-    const { safeTarExtract } = await loadSandboxState();
-    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-safe-"));
-    try {
-      const targetDir = path.join(workDir, "backup");
-      fs.mkdirSync(targetDir, { recursive: true });
-
-      const tar = buildTar([{ path: "../../evil.txt", content: "attacker-payload" }]);
-
-      const result = safeTarExtract(tar, targetDir);
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain("path traversal");
-      // Confirm nothing was written outside targetDir
-      expect(fs.existsSync(path.join(workDir, "evil.txt"))).toBe(false);
-    } finally {
-      fs.rmSync(workDir, { recursive: true, force: true });
-    }
-  });
-
-  it("extracts legitimate archive successfully", async () => {
-    const { safeTarExtract } = await loadSandboxState();
-    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-safeok-"));
-    try {
-      const targetDir = path.join(workDir, "backup");
-      fs.mkdirSync(targetDir, { recursive: true });
-
-      const tar = buildTar([{ path: "config.json", content: '{"model": "test"}' }]);
-
-      const result = safeTarExtract(tar, targetDir);
-
-      expect(result.success).toBe(true);
-      expect(fs.existsSync(path.join(targetDir, "config.json"))).toBe(true);
-      expect(fs.readFileSync(path.join(targetDir, "config.json"), "utf-8")).toBe(
-        '{"model": "test"}',
-      );
-    } finally {
-      fs.rmSync(workDir, { recursive: true, force: true });
-    }
-  });
-
-  it("blocks symlink escaping target directory", async () => {
-    const { safeTarExtract } = await loadSandboxState();
-    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-symlink-"));
-    try {
-      const targetDir = path.join(workDir, "backup");
-      fs.mkdirSync(targetDir, { recursive: true });
-
-      const tar = buildTar([
-        {
-          path: "evil-link",
-          type: "2",
-          linkTarget: "../../.ssh/authorized_keys",
-        },
-      ]);
-
-      const result = safeTarExtract(tar, targetDir);
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain("symlink");
-      // Target dir should be cleaned after symlink violation
-      const entries = fs.existsSync(targetDir) ? fs.readdirSync(targetDir) : [];
-      expect(entries.length).toBe(0);
-    } finally {
-      fs.rmSync(workDir, { recursive: true, force: true });
-    }
-  });
-
-  // Regression for #2268 — the sandbox base image places intra-sandbox
-  // symlinks like /sandbox/.openclaw → /sandbox/.openclaw-data. When the
-  // backup tar is extracted on the host, those absolute symlinks point
-  // OUTSIDE the extraction temp dir, but INSIDE the canonical sandbox
-  // root — which is where they'll be legitimately resolved on restore.
-  // Treating them as escape violations breaks every rebuild / snapshot
-  // create on v0.0.22.
-  it("allows symlinks whose target resolves within /sandbox (intra-sandbox layout)", async () => {
-    const { safeTarExtract } = await loadSandboxState();
-    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sandbox-link-"));
-    try {
-      const targetDir = path.join(workDir, "backup");
-      fs.mkdirSync(targetDir, { recursive: true });
-
-      const tar = buildTar([
-        { path: "sandbox/.openclaw-data/", type: "5" },
-        {
-          path: "sandbox/.openclaw",
-          type: "2",
-          linkTarget: "/sandbox/.openclaw-data",
-        },
-      ]);
-
-      const result = safeTarExtract(tar, targetDir);
-
-      expect(result.success).toBe(true);
-      expect(result.error).toBeUndefined();
-    } finally {
-      fs.rmSync(workDir, { recursive: true, force: true });
-    }
-  });
-
-  // Security guardrail: /sandbox/ is allowed, but a crafted symlink whose
-  // target *looks* absolute must not escape beyond the sandbox root.
-  // /sandbox/../etc/passwd resolves to /etc/passwd — still must be blocked.
-  it("blocks symlinks that escape /sandbox even with an absolute target", async () => {
-    const { safeTarExtract } = await loadSandboxState();
-    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sandbox-escape-"));
-    try {
-      const targetDir = path.join(workDir, "backup");
-      fs.mkdirSync(targetDir, { recursive: true });
-
-      const tar = buildTar([
-        {
-          path: "evil-abs-link",
-          type: "2",
-          linkTarget: "/etc/passwd",
-        },
-      ]);
-
-      const result = safeTarExtract(tar, targetDir);
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain("symlink");
-    } finally {
-      fs.rmSync(workDir, { recursive: true, force: true });
-    }
-  });
-
-  // Regression #2317: /sandbox/.openclaw-data/* symlinks are created by
-  // Dockerfile.base for the .openclaw / .openclaw-data split. When a backup
-  // is extracted on the host, these absolute targets don't exist on the host
-  // and were falsely rejected as escapes. The fix maps /sandbox/ paths onto
-  // the extraction root before checking, matching the sandbox-internal view.
-  it("allows known-safe /sandbox/.openclaw-data symlinks in backup archives (#2317)", async () => {
-    const { safeTarExtract } = await loadSandboxState();
-    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-2317-"));
-    try {
-      const targetDir = path.join(workDir, "backup");
-      fs.mkdirSync(targetDir, { recursive: true });
-
-      // Simulate the workspace/media symlink created by Dockerfile.base
-      const tar = buildTar([
-        {
-          path: "workspace/media",
-          type: "2",
-          linkTarget: "/sandbox/.openclaw-data/media",
-        },
-      ]);
-
-      const result = safeTarExtract(tar, targetDir);
-      expect(result.success).toBe(true);
-    } finally {
-      fs.rmSync(workDir, { recursive: true, force: true });
-    }
-  });
-
-  it("still blocks absolute symlinks outside /sandbox/.openclaw-data (#2317)", async () => {
-    const { safeTarExtract } = await loadSandboxState();
-    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-2317-block-"));
-    try {
-      const targetDir = path.join(workDir, "backup");
-      fs.mkdirSync(targetDir, { recursive: true });
-
-      // /etc/passwd should still be rejected — not in /sandbox/.openclaw-data/
-      const tar = buildTar([
-        {
-          path: "evil-link",
-          type: "2",
-          linkTarget: "/etc/passwd",
-        },
-      ]);
-
-      const result = safeTarExtract(tar, targetDir);
-      expect(result.success).toBe(false);
-      expect(result.error).toContain("symlink");
-    } finally {
-      fs.rmSync(workDir, { recursive: true, force: true });
-    }
-  });
-
-  it.each([
-    ["weather", "/usr/local/lib/node_modules/openclaw"],
-    ["slack", "/usr/local/lib/node_modules/openclaw"],
-    ["whatsapp", "/usr/local/lib/nemoclaw/openclaw-runtime/node_modules/openclaw"],
-  ])(
-    "allows the %s OpenClaw extension peer link with an exact image package target",
-    async (extensionName, packageTarget) => {
-      const { safeTarExtract } = await loadSandboxState();
-      const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-audit-whitelist-extract-"));
-      try {
-        const targetDir = path.join(workDir, "backup");
-        fs.mkdirSync(targetDir, { recursive: true });
-
-        // Archive-installed plugins symlink their OpenClaw peer dependency to a
-        // trusted image package location. The exact target escapes both the
-        // archive and /sandbox/, so it requires the narrow peer-link exception.
-        const tar = buildTar([
-          {
-            path: `extensions/${extensionName}/node_modules/openclaw`,
-            type: "2",
-            linkTarget: packageTarget,
-          },
-        ]);
-
-        const result = safeTarExtract(tar, targetDir);
-        expect(result.success).toBe(true);
-      } finally {
-        fs.rmSync(workDir, { recursive: true, force: true });
-      }
-    },
-  );
-
-  it.each([
-    ["a tampered weather target", "extensions/weather/node_modules/openclaw", "/etc/passwd"],
-    ["a tampered slack target", "extensions/slack/node_modules/openclaw", "/etc/passwd"],
-    [
-      "a glob basename",
-      "extensions/*/node_modules/openclaw",
-      "/usr/local/lib/node_modules/openclaw",
-    ],
-    [
-      "a nested extension path",
-      "extensions/nested/weather/node_modules/openclaw",
-      "/usr/local/lib/node_modules/openclaw",
-    ],
-    [
-      "a noncanonical target",
-      "extensions/weather/node_modules/openclaw",
-      "/usr/local/lib/node_modules/openclaw/",
-    ],
-  ])("rejects an OpenClaw extension peer link with %s", async (_case, source, target) => {
-    const { safeTarExtract } = await loadSandboxState();
-    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-audit-target-tampered-"));
-    try {
-      const targetDir = path.join(workDir, "backup");
-      fs.mkdirSync(targetDir, { recursive: true });
-
-      const tar = buildTar([
-        {
-          path: source,
-          type: "2",
-          linkTarget: target,
-        },
-      ]);
-
-      const result = safeTarExtract(tar, targetDir);
-      expect(result.success).toBe(false);
-      expect(result.error).toContain("symlink");
-    } finally {
-      fs.rmSync(workDir, { recursive: true, force: true });
-    }
-  });
-
-  it("still rejects an absolute /usr/local symlink at a non-whitelisted path", async () => {
-    const { safeTarExtract } = await loadSandboxState();
-    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-audit-whitelist-block-"));
-    try {
-      const targetDir = path.join(workDir, "backup");
-      fs.mkdirSync(targetDir, { recursive: true });
-
-      // Same target, but the symlink path is NOT in the whitelist.
-      const tar = buildTar([
-        {
-          path: "workspace/sneaky-openclaw",
-          type: "2",
-          linkTarget: "/usr/local/lib/node_modules/openclaw",
-        },
-      ]);
-
-      const result = safeTarExtract(tar, targetDir);
-      expect(result.success).toBe(false);
-      expect(result.error).toContain("symlink");
-    } finally {
-      fs.rmSync(workDir, { recursive: true, force: true });
-    }
-  });
-
-  it("blocks path traversal within the allowed /sandbox/.openclaw-data prefix (#2317)", async () => {
-    const { safeTarExtract } = await loadSandboxState();
-    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-2317-traversal-"));
-    try {
-      const targetDir = path.join(workDir, "backup");
-      fs.mkdirSync(targetDir, { recursive: true });
-
-      // Crafted target starts with allowed prefix but traverses out of it
-      const tar = buildTar([
-        {
-          path: "evil-traversal",
-          type: "2",
-          linkTarget: "/sandbox/.openclaw-data/../../etc/passwd",
-        },
-      ]);
-
-      const result = safeTarExtract(tar, targetDir);
-      expect(result.success).toBe(false);
-      expect(result.error).toContain("symlink");
-    } finally {
-      fs.rmSync(workDir, { recursive: true, force: true });
-    }
-  });
-});
-
 describe("Fix: rejectHardLinks blocks hard-link entries at validation time", () => {
   it("rejects a hard-link entry targeting outside the archive", async () => {
     const { rejectHardLinks } = await loadSandboxState();
@@ -684,26 +346,6 @@ describe("Fix: rejectHardLinks blocks hard-link entries at validation time", () 
       expect(result.entries).toHaveLength(entries.length);
     } finally {
       fs.rmSync(targetDir, { recursive: true, force: true });
-    }
-  });
-
-  it("safeTarExtract rejects archive containing hard links", async () => {
-    const { safeTarExtract } = await loadSandboxState();
-    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hardlink-"));
-    try {
-      const targetDir = path.join(workDir, "backup");
-      fs.mkdirSync(targetDir, { recursive: true });
-
-      const tar = buildTar([
-        { path: "inside/link.json", type: "1", linkTarget: "../outside.json" },
-      ]);
-
-      const result = safeTarExtract(tar, targetDir);
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain("hard link");
-    } finally {
-      fs.rmSync(workDir, { recursive: true, force: true });
     }
   });
 });

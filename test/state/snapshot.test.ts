@@ -157,6 +157,7 @@ describe("complete native home persistence", () => {
       const nativeRoot = path.join(fixture, "native-home");
       const inspectionMarker = "not-part-of-hermes-inspection";
       fs.mkdirSync(path.join(nativeRoot, ".hermes"), { recursive: true });
+      fs.mkdirSync(path.join(nativeRoot, ".openclaw"), { recursive: true });
       fs.mkdirSync(path.join(nativeRoot, "node_modules", "example"), { recursive: true });
       fs.mkdirSync(path.join(nativeRoot, "schemas"), { recursive: true });
       fs.writeFileSync(path.join(nativeRoot, ".hermes", "config.yaml"), "model: local\n");
@@ -171,6 +172,10 @@ describe("complete native home persistence", () => {
         JSON.stringify({ apiKey: { type: "string" } }),
       );
       fs.writeFileSync(path.join(nativeRoot, inspectionMarker), "unrelated");
+      fs.writeFileSync(
+        path.join(nativeRoot, ".openclaw", "unknown-state.json"),
+        Buffer.alloc(16 * 1024 * 1024 + 1, 120),
+      );
       const assertCurrent = vi.fn();
       writeOpenClawRegistry("alpha");
 
@@ -384,7 +389,10 @@ describe("complete native home persistence", () => {
     }
   });
 
-  it("removes a credential-bearing native archive before publishing its manifest", () => {
+  it.each([
+    ["a recognized structured config", "config.json", JSON.stringify({ apiKey: "placeholder" })],
+    ["an arbitrary native file", "notes.txt", `ghp_${"0123456789abcdef"}`],
+  ])("removes a native archive containing a credential in %s", (_case, relativePath, content) => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-credential-"));
     const oldPath = process.env.PATH;
     const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
@@ -394,10 +402,7 @@ describe("complete native home persistence", () => {
       const nativeRoot = path.join(fixture, "native-home");
       fs.mkdirSync(binDir, { recursive: true });
       fs.mkdirSync(nativeRoot, { recursive: true });
-      fs.writeFileSync(
-        path.join(nativeRoot, "config.json"),
-        JSON.stringify({ apiKey: "placeholder" }),
-      );
+      fs.writeFileSync(path.join(nativeRoot, relativePath), content);
       writeFakeOpenshell(binDir);
       writeFakeSsh(binDir);
       process.env.NEMOCLAW_OPENSHELL_BIN = path.join(binDir, "openshell");
@@ -409,13 +414,43 @@ describe("complete native home persistence", () => {
 
       expect(backup.success).toBe(false);
       expect(backup.error).toContain("credential-bearing or uninspectable content");
-      expect(backup.error).toContain("./config.json");
+      expect(backup.error).toContain(`./${relativePath}`);
       const sandboxBackups = path.join(BACKUPS_ROOT, "alpha");
       expect(fs.existsSync(sandboxBackups) ? fs.readdirSync(sandboxBackups) : []).toEqual([]);
     } finally {
       restoreEnv("NEMOCLAW_OPENSHELL_BIN", oldOpenshell);
       restoreEnv("NEMOCLAW_TEST_NATIVE_ROOT", oldNativeRoot);
       restoreEnv("PATH", oldPath);
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it("removes an incomplete archive when manifest publication fails", () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-manifest-failure-"));
+    try {
+      const nativeRoot = path.join(fixture, "native-home");
+      fs.mkdirSync(nativeRoot, { recursive: true });
+      fs.writeFileSync(path.join(nativeRoot, "payload.txt"), "payload");
+      writeOpenClawRegistry("alpha");
+
+      const backup = sandboxState.backupSandboxState("alpha", {
+        nativeStateSource: {
+          root: "/sandbox",
+          directory: nativeRoot,
+          assertCurrent: () => undefined,
+        },
+        validateBeforePublish: () => {
+          const sandboxBackups = path.join(BACKUPS_ROOT, "alpha");
+          const [timestamp] = fs.readdirSync(sandboxBackups);
+          fs.mkdirSync(path.join(sandboxBackups, timestamp!, "rebuild-manifest.json"));
+        },
+      });
+
+      expect(backup.success).toBe(false);
+      expect(backup.error).toContain("Could not publish the native home/workspace backup manifest");
+      const sandboxBackups = path.join(BACKUPS_ROOT, "alpha");
+      expect(fs.existsSync(sandboxBackups) ? fs.readdirSync(sandboxBackups) : []).toEqual([]);
+    } finally {
       fs.rmSync(fixture, { recursive: true, force: true });
     }
   });

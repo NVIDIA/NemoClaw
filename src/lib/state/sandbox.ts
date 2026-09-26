@@ -53,10 +53,10 @@ import {
   isSensitiveFile,
   sanitizeEnvFileContent,
   stripCredentials,
+  textContainsHighConfidenceCredential,
   valueLooksLikeSecret,
 } from "../security/credential-filter.js";
 import { inspectMcpDeniedToolSelectors } from "../security/mcp-denied-tool-selector.js";
-import { isAllowedStateSymlink } from "./state-directory-restore.js";
 import {
   cloneSandboxRuntimeSnapshot,
   type SandboxRuntimeSnapshot,
@@ -254,11 +254,6 @@ export interface TarValidationResult {
   safe: boolean;
   entries: string[];
   violations: string[];
-}
-
-export interface SafeExtractResult {
-  success: boolean;
-  error?: string;
 }
 
 const REBUILD_MCP_ENTRY_KEYS = new Set([
@@ -556,85 +551,6 @@ export function validateTarEntries(
 }
 
 /**
- * Walk a directory and return violations for any symlinks whose
- * resolved targets don't land within any of the allowed roots.
- *
- * `allowedRoots` always includes the extraction directory (the local host
- * path). Callers pass additional roots — notably `/sandbox` — to permit
- * legitimate intra-sandbox symlinks baked into the sandbox base image
- * (e.g. `/sandbox/.openclaw` → `/sandbox/.openclaw-data`). Those look
- * like "escapes" relative to the extraction temp dir on the host, but
- * are intra-sandbox once the backup is restored. See issue #2268.
- */
-function auditExtractedSymlinks(dirPath: string, allowedRoots: string[]): string[] {
-  const violations: string[] = [];
-  if (!existsSync(dirPath)) return violations;
-
-  const walk = (current: string): void => {
-    for (const entry of readdirSync(current, { withFileTypes: true })) {
-      const fullPath = path.join(current, entry.name);
-      try {
-        const stat = lstatSync(fullPath);
-        if (stat.isSymbolicLink()) {
-          const linkTarget = readlinkSync(fullPath);
-
-          // Allowed npm symlinks baked into managed or custom images. The
-          // shared matcher checks both source shape and exact target so the
-          // pre-backup and post-extraction audits enforce the same contract.
-          // A recognized path with a tampered target falls through to the
-          // normal containment check.
-          const relFromDir = path.relative(dirPath, fullPath).split(path.sep).join("/");
-          if (isAllowedStateSymlink(relFromDir, linkTarget)) {
-            continue;
-          }
-
-          // Resolve relative to the symlink's containing directory (standard).
-          const resolvedRelative = path.resolve(path.dirname(fullPath), linkTarget);
-
-          // For absolute symlinks that point into the canonical sandbox data
-          // directory (/sandbox/.openclaw-data/** or /sandbox/.hermes-data/**),
-          // also check whether the target falls within the extraction root when
-          // the leading /sandbox/ prefix is mapped onto the archive root. This
-          // mirrors how the symlink resolves once the backup is restored inside
-          // the sandbox container (where /sandbox/.openclaw-data/* exists).
-          //
-          // Only /sandbox/ prefixed targets receive this treatment so that
-          // symlinks pointing to arbitrary absolute paths (e.g. /etc/passwd)
-          // are still rejected. Fixes #2317.
-          const SANDBOX_DATA_PREFIXES = ["/sandbox/.openclaw-data/", "/sandbox/.hermes-data/"];
-          // Normalize the target first to collapse any .. traversal segments
-          // (e.g. /sandbox/.openclaw-data/../../etc/passwd → /etc/passwd).
-          // Only then check the prefix — this prevents a traversal bypass
-          // where a crafted target starts with an allowed prefix but escapes it.
-          const normalizedTarget = path.posix.normalize(linkTarget);
-          const resolvedInArchive =
-            path.isAbsolute(normalizedTarget) &&
-            SANDBOX_DATA_PREFIXES.some((p) => normalizedTarget.startsWith(p))
-              ? path.resolve(dirPath, normalizedTarget.replace(/^\//, ""))
-              : null;
-
-          const inAnyAllowedRoot =
-            allowedRoots.some((root) => isWithinRoot(resolvedRelative, root)) ||
-            (resolvedInArchive !== null && isWithinRoot(resolvedInArchive, dirPath));
-
-          if (!inAnyAllowedRoot) {
-            violations.push(
-              `symlink escape: ${fullPath} -> ${linkTarget} (resolves to ${resolvedRelative})`,
-            );
-          }
-        } else if (stat.isDirectory()) {
-          walk(fullPath);
-        }
-      } catch {
-        /* skip unreadable entries */
-      }
-    }
-  };
-  walk(dirPath);
-  return violations;
-}
-
-/**
  * Detect hard-link entries in a tar archive using verbose listing.
  * Hard links are rejected entirely — sandbox state backups have no
  * legitimate reason to contain them, and they can be used to reference
@@ -652,80 +568,6 @@ export function rejectHardLinks(tarArchive: TarArchiveSource): string[] {
   if (listingFailure) return [listingFailure];
 
   return violations;
-}
-
-/**
- * SECURITY: Validate tar contents, extract with safety flags, then
- * audit for symlink escapes. Nukes the extraction on any violation.
- */
-export function safeTarExtract(tarArchive: TarArchiveSource, targetDir: string): SafeExtractResult {
-  // Phase 1a: Validate entry paths before extraction
-  const validation = validateTarEntries(tarArchive, targetDir);
-  if (!validation.safe) {
-    return {
-      success: false,
-      error: `tar entry validation failed: ${validation.violations.join("; ")}`,
-    };
-  }
-
-  // Phase 1b: Reject hard links (not detectable via tar -tf, require verbose listing)
-  const hardLinkViolations = rejectHardLinks(tarArchive);
-  if (hardLinkViolations.length > 0) {
-    return {
-      success: false,
-      error: `hard link rejected: ${hardLinkViolations.join("; ")}`,
-    };
-  }
-
-  // Phase 2: Extract with --no-same-owner to prevent ownership manipulation
-  let archiveFd: number | null = null;
-  let extractResult: ReturnType<typeof spawnSync>;
-  try {
-    extractResult = Buffer.isBuffer(tarArchive)
-      ? spawnSync("tar", ["-xf", "-", "--no-same-owner", "-C", targetDir], {
-          input: tarArchive,
-          stdio: ["pipe", "pipe", "pipe"],
-          timeout: 60000,
-        })
-      : (() => {
-          archiveFd = openSync(tarArchive.filePath, "r");
-          return spawnSync("tar", ["-xf", "-", "--no-same-owner", "-C", targetDir], {
-            stdio: [archiveFd, "pipe", "pipe"],
-            timeout: 60000,
-          });
-        })();
-  } finally {
-    if (archiveFd !== null) closeSync(archiveFd);
-  }
-
-  if (extractResult.status !== 0) {
-    return {
-      success: false,
-      error: `tar extraction failed (exit ${extractResult.status}): ${(extractResult.stderr?.toString() || "").substring(0, 200)}`,
-    };
-  }
-
-  // Phase 3: Post-extraction symlink audit (symlink targets are not
-  // visible in `tar -tf` output, so we must check after extraction).
-  // Allow targets inside either the host extraction dir OR the canonical
-  // sandbox root (/sandbox) — the latter covers legitimate intra-sandbox
-  // symlinks baked into the base image (see #2268).
-  const symlinkViolations = auditExtractedSymlinks(targetDir, [targetDir, "/sandbox"]);
-  if (symlinkViolations.length > 0) {
-    // Nuke the extraction — do not leave attacker-controlled symlinks on host
-    try {
-      rmSync(targetDir, { recursive: true, force: true });
-      mkdirSync(targetDir, { recursive: true, mode: 0o700 });
-    } catch {
-      /* best effort cleanup */
-    }
-    return {
-      success: false,
-      error: `post-extraction symlink audit failed: ${symlinkViolations.join("; ")}`,
-    };
-  }
-
-  return { success: true };
 }
 
 // ── Helpers ────────────────────────────────────────────────────────
@@ -986,7 +828,6 @@ function structuredContentIsCredentialFree(fileName: string, raw: string): boole
   return isDeepStrictEqual(stripCredentials(value), value);
 }
 
-const NATIVE_RUNTIME_CONFIG_ROOTS = [".openclaw", ".hermes", ".pi/agent", ".deepagents"];
 const NATIVE_RUNTIME_NON_CONFIG_SEGMENTS = new Set([
   ".cache",
   ".venv",
@@ -1032,19 +873,24 @@ function shouldScanNativeStructuredConfig(entry: string, fileName: string): bool
     return false;
   }
   if (NATIVE_STRUCTURED_CONFIG_NAMES.has(fileName)) return true;
-  return NATIVE_RUNTIME_CONFIG_ROOTS.some(
-    (root) => normalized === root || normalized.startsWith(`${root}/`),
-  );
+  return false;
 }
 
-function readExtractedNativeCredentialCandidate(scanRoot: string, entry: string): Buffer | null {
+type ExtractedNativeCredentialCandidate =
+  | { kind: "content"; content: Buffer }
+  | { kind: "oversize" };
+
+function readExtractedNativeCredentialCandidate(
+  scanRoot: string,
+  entry: string,
+): ExtractedNativeCredentialCandidate | null {
   const candidatePath = path.resolve(scanRoot, entry);
   if (!isWithinRoot(candidatePath, scanRoot)) return null;
   let descriptor: number | null = null;
   try {
     const entryStat = lstatSync(candidatePath);
     if (!entryStat.isFile() || entryStat.isSymbolicLink()) return null;
-    if (entryStat.size > NATIVE_STATE_CREDENTIAL_SCAN_MAX_BYTES) return null;
+    if (entryStat.size > NATIVE_STATE_CREDENTIAL_SCAN_MAX_BYTES) return { kind: "oversize" };
     descriptor = openSync(
       candidatePath,
       constants.O_RDONLY |
@@ -1053,9 +899,176 @@ function readExtractedNativeCredentialCandidate(scanRoot: string, entry: string)
     );
     const opened = fstatSync(descriptor);
     if (!opened.isFile() || opened.size !== entryStat.size) return null;
-    return readFileSync(descriptor);
+    return { kind: "content", content: readFileSync(descriptor) };
   } catch {
     return null;
+  } finally {
+    if (descriptor !== null) closeSync(descriptor);
+  }
+}
+
+const TAR_BLOCK_BYTES = 512;
+const NATIVE_CREDENTIAL_SCAN_CHUNK_BYTES = 64 * 1024;
+const NATIVE_CREDENTIAL_SCAN_OVERLAP_CHARS = 4096;
+const NATIVE_TAR_METADATA_MAX_BYTES = 1024 * 1024;
+const NATIVE_RAW_SCAN_EXCLUDED_SEGMENTS = new Set([
+  ".venv",
+  "node_modules",
+  "schema",
+  "schemas",
+  "site-packages",
+  "venv",
+]);
+
+function tarHeaderString(header: Buffer, start: number, length: number): string {
+  const end = header.indexOf(0, start);
+  return header
+    .subarray(start, end >= start && end < start + length ? end : start + length)
+    .toString("utf8");
+}
+
+function tarHeaderSize(header: Buffer): number | null {
+  const field = header.subarray(124, 136);
+  if ((field[0] ?? 0) & 0x80) {
+    let value = BigInt((field[0] ?? 0) & 0x7f);
+    for (const byte of field.subarray(1)) value = (value << 8n) | BigInt(byte);
+    return value <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(value) : null;
+  }
+  const text = field.toString("ascii").replace(/\0.*$/su, "").trim();
+  if (!/^[0-7]*$/u.test(text)) return null;
+  const value = text.length === 0 ? 0 : Number.parseInt(text, 8);
+  return Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
+
+function readArchiveRange(descriptor: number, position: number, length: number): Buffer | null {
+  const result = Buffer.alloc(length);
+  let read = 0;
+  while (read < length) {
+    const count = readSync(descriptor, result, read, length - read, position + read);
+    if (count === 0) return null;
+    read += count;
+  }
+  return result;
+}
+
+function paxPath(payload: Buffer): string | null | undefined {
+  let cursor = 0;
+  let result: string | null = null;
+  while (cursor < payload.byteLength) {
+    const separator = payload.indexOf(0x20, cursor);
+    if (separator < 0) return undefined;
+    const length = Number.parseInt(payload.subarray(cursor, separator).toString("ascii"), 10);
+    if (!Number.isSafeInteger(length) || length <= 0 || cursor + length > payload.byteLength) {
+      return undefined;
+    }
+    const record = payload.subarray(separator + 1, cursor + length - 1).toString("utf8");
+    const equals = record.indexOf("=");
+    if (equals > 0 && record.slice(0, equals) === "path") result = record.slice(equals + 1);
+    cursor += length;
+  }
+  return result;
+}
+
+function shouldSkipNativeRawCredentialScan(entry: string, fileName: string): boolean {
+  const normalized = path.posix.normalize(entry.replace(/^\.\//u, ""));
+  const segments = normalized.split("/");
+  return (
+    isDependencyLockfile(fileName) ||
+    fileName === "package.json" ||
+    fileName === "tsconfig.json" ||
+    fileName.endsWith(".schema.json") ||
+    segments.some((segment) => NATIVE_RAW_SCAN_EXCLUDED_SEGMENTS.has(segment))
+  );
+}
+
+function nativeRawChunkContainsCredential(raw: string, contextual: boolean): boolean {
+  const withoutPlaceholders = raw
+    .replace(/(?:Bearer\s+)?openshell:resolve:env:[A-Za-z0-9_]+/giu, "unused")
+    .replace(/xox[bx]-OPENSHELL-RESOLVE-ENV-[A-Za-z0-9_]+/gu, "unused")
+    .replaceAll("[STRIPPED_BY_MIGRATION]", "unused");
+  if (contextual) return valueLooksLikeSecret(withoutPlaceholders);
+  return textContainsHighConfidenceCredential(withoutPlaceholders);
+}
+
+function scanNativeTarFilePayload(
+  descriptor: number,
+  position: number,
+  size: number,
+  contextual: boolean,
+): boolean | null {
+  const chunk = Buffer.allocUnsafe(NATIVE_CREDENTIAL_SCAN_CHUNK_BYTES);
+  let remaining = size;
+  let offset = position;
+  let overlap = "";
+  while (remaining > 0) {
+    const requested = Math.min(remaining, chunk.byteLength);
+    const count = readSync(descriptor, chunk, 0, requested, offset);
+    if (count === 0) return null;
+    const raw = overlap + chunk.subarray(0, count).toString("utf8");
+    if (nativeRawChunkContainsCredential(raw, contextual)) return true;
+    overlap = raw.slice(-NATIVE_CREDENTIAL_SCAN_OVERLAP_CHARS);
+    offset += count;
+    remaining -= count;
+  }
+  return false;
+}
+
+function nativeArchiveRawCredentialViolation(archivePath: string): string | null {
+  let descriptor: number | null = null;
+  try {
+    descriptor = openSync(archivePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const archiveSize = fstatSync(descriptor).size;
+    let offset = 0;
+    let nextPath: string | null = null;
+    while (offset < archiveSize) {
+      const header = readArchiveRange(descriptor, offset, TAR_BLOCK_BYTES);
+      if (!header) return "native state credential scan";
+      if (header.every((byte) => byte === 0)) return null;
+      const size = tarHeaderSize(header);
+      if (size === null) return "native state credential scan";
+      const dataOffset = offset + TAR_BLOCK_BYTES;
+      const dataEnd = dataOffset + size;
+      const nextOffset = dataOffset + Math.ceil(size / TAR_BLOCK_BYTES) * TAR_BLOCK_BYTES;
+      if (!Number.isSafeInteger(dataEnd) || nextOffset > archiveSize) {
+        return "native state credential scan";
+      }
+      const type = String.fromCharCode(header[156] ?? 0);
+      const name = tarHeaderString(header, 0, 100);
+      const prefix = tarHeaderString(header, 345, 155);
+      const headerPath = prefix ? `${prefix}/${name}` : name;
+      if (type === "x" || type === "L") {
+        if (size > NATIVE_TAR_METADATA_MAX_BYTES) return "native state credential scan";
+        const metadata = readArchiveRange(descriptor, dataOffset, size);
+        if (!metadata) return "native state credential scan";
+        if (type === "x") {
+          const pathOverride = paxPath(metadata);
+          if (pathOverride === undefined) return "native state credential scan";
+          if (pathOverride !== null) nextPath = pathOverride;
+        } else {
+          nextPath = metadata.toString("utf8").replace(/\0.*$/su, "");
+          if (!nextPath) return "native state credential scan";
+        }
+      } else if (type !== "g") {
+        const entry = nextPath ?? headerPath;
+        nextPath = null;
+        if (type === "0" || type === "\0" || type === "7") {
+          const fileName = path.posix.basename(entry).toLowerCase();
+          if (!shouldSkipNativeRawCredentialScan(entry, fileName)) {
+            const contextual =
+              fileName === ".env" ||
+              fileName.endsWith(".env") ||
+              shouldScanNativeStructuredConfig(entry, fileName);
+            const violation = scanNativeTarFilePayload(descriptor, dataOffset, size, contextual);
+            if (violation === null) return "native state credential scan";
+            if (violation) return entry;
+          }
+        }
+      }
+      offset = nextOffset;
+    }
+    return offset === archiveSize ? null : "native state credential scan";
+  } catch {
+    return "native state credential scan";
   } finally {
     if (descriptor !== null) closeSync(descriptor);
   }
@@ -1065,6 +1078,8 @@ function nativeArchiveCredentialViolation(
   archivePath: string,
   entries: readonly string[],
 ): string | null {
+  const rawViolation = nativeArchiveRawCredentialViolation(archivePath);
+  if (rawViolation) return rawViolation;
   const candidates: Array<{ entry: string; fileName: string; isEnv: boolean }> = [];
   for (const entry of new Set(entries)) {
     if (entry.endsWith("/")) continue;
@@ -1104,11 +1119,12 @@ function nativeArchiveCredentialViolation(
       return candidates[0]?.entry ?? "native state credential scan";
     }
     for (const candidate of candidates) {
-      const content = readExtractedNativeCredentialCandidate(scanRoot, candidate.entry);
-      if (!content || content.byteLength > NATIVE_STATE_CREDENTIAL_SCAN_MAX_BYTES) {
+      const extractedCandidate = readExtractedNativeCredentialCandidate(scanRoot, candidate.entry);
+      if (!extractedCandidate) {
         return candidate.entry;
       }
-      const raw = content.toString("utf8");
+      if (extractedCandidate.kind === "oversize") continue;
+      const raw = extractedCandidate.content.toString("utf8");
       if (
         (candidate.isEnv && sanitizeEnvFileContent(raw) !== raw) ||
         (!candidate.isEnv && !structuredContentIsCredentialFree(candidate.fileName, raw))
@@ -1642,7 +1658,21 @@ function backupNativeSandboxState(sandboxName: string, options: BackupOptions): 
       options.validateBeforePublish?.();
     });
     if (publicationError) return nativeStateFailure(publicationError);
-    writeManifest(backupPath, manifest);
+    try {
+      writeManifest(backupPath, manifest);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      try {
+        rmSync(backupPath, { recursive: true, force: true });
+      } catch (cleanupError) {
+        return nativeStateFailure(
+          `Could not publish the native home/workspace backup manifest: ${detail}. The incomplete backup remains at '${backupPath}' because cleanup failed: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
+        );
+      }
+      return nativeStateFailure(
+        `Could not publish the native home/workspace backup manifest: ${detail}. The incomplete backup was removed.`,
+      );
+    }
     return {
       success: true,
       manifest,

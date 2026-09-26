@@ -16,7 +16,7 @@ OpenShell owns the sandbox lifecycle and its native home/workspace storage. Rout
 
 ## What Persists
 
-Everything the agent writes under its OpenShell-provided native home/workspace persists as ordinary sandbox state. This includes undeclared files as well as configuration, histories, hooks, plugins, packages, cron data, skills, memory, and child-agent state.
+Everything the agent writes under its OpenShell-provided native home/workspace persists as ordinary sandbox state during routine lifecycle operations. This includes undeclared files as well as configuration, histories, hooks, plugins, packages, cron data, skills, memory, and child-agent state.
 
 OpenShell-owned credential stores and host-only secrets are outside the agent home/workspace. NemoClaw does not copy those stores into agent-visible state. Continue to provision credentials through supported OpenShell providers and bindings.
 
@@ -24,14 +24,14 @@ OpenShell-owned credential stores and host-only secrets are outside the agent ho
 
 Most lifecycle operations do not need a backup or restore step. When `$$nemoclaw <name> rebuild` or onboarding must replace a sandbox, NemoClaw performs one bounded migration:
 
-1. Capture the complete native home/workspace as an opaque private archive.
+1. Capture the complete native home/workspace as an opaque private archive and verify that it does not contain credential material.
 2. Create the replacement through OpenShell.
 3. Clear the replacement's fresh native home/workspace and restore the complete archive.
 4. Validate the replacement before retiring the temporary handoff.
 
-The transfer does not sanitize, merge, or discard unknown agent paths. If the complete archive cannot be captured or restored, NemoClaw stops the replacement workflow and retains recovery information instead of publishing a partial migration.
+After the archive passes credential inspection, the transfer does not sanitize, merge, or discard unknown agent paths. A credential-bearing file, an uninspectable recognized configuration file, or any capture or restore failure stops the workflow before replacement instead of publishing a partial migration. Move credentials into supported OpenShell credential storage or bindings, remove them from the native home, and retry.
 
-For a stopped eligible container, NemoClaw starts it through the OpenShell lifecycle long enough to capture the workspace and then returns it to the stopped state. If it cannot restore that lifecycle state, the operation fails and reports the runtime that needs attention.
+For an eligible stopped container, NemoClaw captures the provider-owned stopped state without executing in the source sandbox. The operation fails before replacement if that stopped-state authority changes during capture.
 
 ## Backup Before Upgrade
 
