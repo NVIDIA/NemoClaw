@@ -8,6 +8,9 @@ Direct E2E coverage runs through Vitest.
 Interactive TUI targets require `expect`. The unified workflow installs it
 before those targets run; local runners must provide it themselves.
 
+The native Podman row of Hermes GPU startup installs its reviewed host prerequisites before candidate checkout.
+It uses the pinned host-dependency action for `conmon`, `fuse-overlayfs`, `iptables`, `nftables`, `runc`, `slirp4netns`, and `uidmap`.
+
 - `.github/workflows/e2e.yaml` compares the commits before and after each push to `main`.
   It selects targets and jobs that own changed files, then publishes the `Relevant E2E` check.
   It also supports trusted manual dispatches for the latest PR commit.

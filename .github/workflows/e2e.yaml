@@ -2790,7 +2790,7 @@ jobs:
       # expect or the acceptance check no longer requires a PTY.
       - name: Install Deep Agents Code TUI host dependencies
         if: ${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}
-        uses: NVIDIA/NemoClaw/.github/actions/host-dependency-setup@4def1501b34ce586f83b91af50a66b5d22b31d75
+        uses: NVIDIA/NemoClaw/.github/actions/host-dependency-setup@8bc41df0b926ee9af3b449e3a03b2f7dbe69e1ad
         with:
           packages: expect
 
@@ -5273,6 +5273,12 @@ jobs:
       NEMOCLAW_SANDBOX_NAME: ${{ matrix.scenario }}
       NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS: "60"
     steps:
+      - name: Install native Podman host dependencies
+        if: ${{ matrix.runtime_provider == 'podman' }}
+        uses: NVIDIA/NemoClaw/.github/actions/host-dependency-setup@8bc41df0b926ee9af3b449e3a03b2f7dbe69e1ad
+        with:
+          packages: conmon fuse-overlayfs iptables nftables runc slirp4netns uidmap
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ inputs.checkout_repository || github.repository }}
@@ -5636,7 +5642,7 @@ jobs:
       # removalCondition: remove when the hosted runner supplies expect or the
       # cloud-onboard acceptance check no longer requires a PTY.
       - name: Install cloud-onboard DCode TUI host dependencies
-        uses: NVIDIA/NemoClaw/.github/actions/host-dependency-setup@4def1501b34ce586f83b91af50a66b5d22b31d75
+        uses: NVIDIA/NemoClaw/.github/actions/host-dependency-setup@8bc41df0b926ee9af3b449e3a03b2f7dbe69e1ad
         with:
           packages: expect
 
