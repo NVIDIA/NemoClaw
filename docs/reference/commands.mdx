@@ -1141,7 +1141,7 @@ For an older OpenClaw registration without recorded lifecycle identity, `launch`
 If this identity check fails, `launch` stops before starting the agent.
 Run `$$nemoclaw <name> doctor`, resolve the reported issue, and retry `$$nemoclaw launch <name>`.
 
-`launch` returns the agent's exit code when the post-command OpenClaw permission cleanup succeeds. If that cleanup cannot inspect, restore, or verify the mutable config permission contract, `launch` fails closed with exit `1` and prints `OpenClaw permission cleanup failed (...)` to `stderr`.
+`launch` returns the OpenClaw process exit code.
 
 </AgentOnly>
 <AgentOnly variant="hermes,deepagents">
@@ -1245,9 +1245,9 @@ Everything after `--` is forwarded verbatim to the sandbox command, including fl
 
 <AgentOnly variant="openclaw">
 
-After an OpenClaw one-shot command exits, NemoClaw verifies and, when needed, restores the mutable config permission contract. When cleanup succeeds, `exec` returns the remote command's exit code. If cleanup cannot inspect, restore, or verify that contract, it fails closed and prints `OpenClaw permission cleanup failed (...)` to `stderr`. In that case, `exec` returns the cleanup failure instead of the remote command's status.
+After an OpenClaw one-shot command exits, `exec` returns the remote command's exit code.
 
-For a registered OpenClaw sandbox with a selected owning managed gateway, a successful direct `openclaw pairing approve googlechat <code>` command also restarts that gateway after cleanup so the new sender allowlist applies to the next message. If cleanup or restart fails after the approval commits, `exec` exits with status `1` and reports that the approval was not rolled back. When an owning gateway was selected, correct any reported cleanup problem, then run `$$nemoclaw <name> gateway restart` before testing the next message. Without an owning managed gateway, NemoClaw does not attempt activation or print a managed restart command; unregistered and non-OpenClaw sandboxes also do not receive the automatic restart.
+For a registered OpenClaw sandbox with a selected owning managed gateway, a successful direct `openclaw pairing approve googlechat <code>` command also restarts that gateway so the new sender allowlist applies to the next message. If restart fails after the approval commits, `exec` exits with status `1` and reports that the approval was not rolled back. Run `$$nemoclaw <name> gateway restart` before testing the next message. Without an owning managed gateway, NemoClaw does not attempt activation or print a managed restart command; unregistered and non-OpenClaw sandboxes also do not receive the automatic restart.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -1392,20 +1392,27 @@ $$nemoclaw my-assistant config get --key models.default --format yaml
 
 #### `$$nemoclaw <name> config set`
 
-<AgentOnly variant="openclaw,hermes">
+<AgentOnly variant="openclaw">
+
+This host command is not available for OpenClaw because OpenClaw owns `openclaw.json` after first launch.
+Connect to the sandbox and use `openclaw configure`, `openclaw config set`, or `openclaw config unset`.
+Use `$$nemoclaw inference set`, credential commands, and policy commands when the change also requires host-side OpenShell state.
+
+</AgentOnly>
+<AgentOnly variant="hermes">
 
 Write one value into the agent configuration in a sandbox. The command validates every HTTP and HTTPS URL in the value, including URLs nested inside JSON objects or arrays. It pins an HTTP host to the validated IP address.
 
 ```bash
-$$nemoclaw my-assistant config set --key agents.defaults.model.primary --value nvidia/nemotron
-$$nemoclaw my-assistant config set --key agents.defaults.timeoutSeconds --value 600 --restart
+$$nemoclaw my-assistant config set --key model.default --value openai:nvidia/nemotron
+$$nemoclaw my-assistant config set --key agent.max_turns --value 100 --restart
 ```
 
 | Flag | Description |
 | --- | --- |
 | `--key <dotpath>` | Dotpath to update in the config. Required |
 | `--value <value>` | Value to write. The command parses a JSON value when it can, and otherwise writes the text as a string. Required |
-| `--restart` | Restart a supported OpenClaw or Hermes gateway after writing |
+| `--restart` | Restart the Hermes gateway after writing |
 | `--config-accept-new-path` | Write a dotpath that does not already exist in the config |
 
 The command treats a dotpath that does not already exist in the config as a possible typo. An interactive run asks for confirmation before writing the new dotpath. A run without a TTY, or a run with `NEMOCLAW_NON_INTERACTIVE=1`, refuses the write. Pass `--config-accept-new-path`, or set `NEMOCLAW_CONFIG_ACCEPT_NEW_PATH=1`, to write the new dotpath without the confirmation. If the confirmation reaches the end of input, for example when you press `Ctrl-D` or run the command from a harness that closes stdin, the command exits non-zero without writing and repeats the same guidance.
@@ -1442,7 +1449,7 @@ The host selects the controller from the live container topology.
 In a direct root-entrypoint container, the request reaches the root PID 1 supervisor.
 In an OpenShell-managed container, the request enters the root-owned mode `0500` managed controller through a sanitized root exec while OpenShell remains PID 1.
 It does not use ordinary `openshell sandbox exec`, manual in-sandbox relaunch, or container replacement as a fallback.
-When `recover` repairs a stopped built-in OpenClaw or Hermes gateway, it repeats the recovery action only for these exact transient results:
+When `recover` repairs a stopped built-in OpenClaw or Hermes gateway, it repeats the managed-controller probe only while a bounded startup, discovery, lease-contention, or pinned-container restart transition remains unconfirmed. Any other result ends recovery.
 
 If the gateway is healthy, `recover` checks or repairs host-side forwards.
 It exits zero only when the required forward checks succeed.
@@ -1801,13 +1808,6 @@ For a sandbox that owns managed llama.cpp, `doctor` adds secret-free identity an
 
 <AgentOnly variant="openclaw">
 
-For OpenClaw sandboxes, `doctor` also checks the mutable config permission contract.
-When the existing config guard verifies a same-user nonroot launch, `/sandbox/.openclaw` uses `0700` and `openclaw.json` uses `0600`.
-Separate gateway identities and unverified layouts retain `2770/0660` for shared access.
-If `openclaw doctor --fix` removes required group access, `doctor` reports a `Config permissions` warning.
-Pass `--fix` to restore the permissions selected by the existing guard without rebuilding.
-Restarting the sandbox repairs the same drift when the config tree passes its safety checks.
-
 ```bash
 $$nemoclaw my-assistant doctor [--json | --fix]
 ```
@@ -1815,7 +1815,7 @@ $$nemoclaw my-assistant doctor [--json | --fix]
 | Flag | Description |
 | --- | --- |
 | `--json` | Emit the report as JSON |
-| `--fix` | Restore the mutable OpenClaw config permission contract. Mutually exclusive with `--json` |
+| `--fix` | Approve pending allowlisted dashboard and CLI tool-scope upgrades. Mutually exclusive with `--json` |
 
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -1836,9 +1836,9 @@ Run a command non-interactively inside a running sandbox through the OpenShell e
 
 <AgentOnly variant="openclaw">
 
-After the remote command exits, NemoClaw verifies and, when needed, restores the mutable OpenClaw config permission contract. When cleanup succeeds, `exec` preserves the remote command's exit code. When cleanup fails closed, `exec` returns the cleanup failure and reports both statuses on `stderr`.
+After the remote command exits, `exec` preserves its exit code.
 
-A successful direct `openclaw pairing approve googlechat <code>` command in a registered OpenClaw sandbox with a selected owning managed gateway restarts that gateway after cleanup, so the new sender allowlist applies to the next message. If the approval commits but cleanup or restart fails, `exec` exits with status `1` and reports that the approval was not rolled back. When an owning gateway was selected, it directs you to run `$$nemoclaw <name> gateway restart` after correcting any cleanup problem. Without an owning managed gateway, NemoClaw does not attempt activation or print a managed restart command; unregistered and non-OpenClaw sandboxes do not receive the automatic restart.
+A successful direct `openclaw pairing approve googlechat <code>` command in a registered OpenClaw sandbox with a selected owning managed gateway restarts that gateway, so the new sender allowlist applies to the next message. If the approval commits but restart fails, `exec` exits with status `1` and reports that the approval was not rolled back. When an owning gateway was selected, it directs you to run `$$nemoclaw <name> gateway restart`. Without an owning managed gateway, NemoClaw does not attempt activation or print a managed restart command; unregistered and non-OpenClaw sandboxes do not receive the automatic restart.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -2411,7 +2411,9 @@ $$nemoclaw my-assistant channels remove telegram
 
 As with `channels add`, `NEMOCLAW_NON_INTERACTIVE=1` or a run without a terminal on stdin skips the rebuild prompt and queues the change for a manual `$$nemoclaw <name> rebuild`. `channels start` and `channels stop` follow the same rule. If you omit the required `<channel>` argument, the CLI prints the `channels remove <channel>` usage with the supported channel list.
 
-Host-side removal is the supported path because managed startup (or an explicit custom image build) materializes agent channel config as image-owned state (`/sandbox/.openclaw/openclaw.json` for OpenClaw and `/sandbox/.hermes/.env` for Hermes); agent-specific channel removals inside the sandbox would modify the running config but not persist changes across rebuilds.
+Host-side removal is the supported path because it removes the OpenShell credential binding and policy with the channel configuration.
+For OpenClaw, NemoClaw restores the complete credential-sanitized native config across rebuilds, but an in-sandbox channel removal cannot update those host resources.
+For Hermes, managed startup regenerates `/sandbox/.hermes/.env` and the related config during rebuild.
 
 ### `$$nemoclaw <name> channels stop <channel>`
 
@@ -3110,7 +3112,9 @@ Refer to [Continue an Interrupted Replacement](../manage-sandboxes/operate-sandb
 
 <AgentOnly variant="openclaw">
 
-After restore, the command runs `openclaw doctor --fix` for cross-version structure repair.
+During restore, the command keeps the replacement OpenClaw gateway stopped while it restores state and writes host-managed messaging and MCP configuration.
+After those offline write steps, it runs `openclaw doctor --fix` while the gateway remains held down.
+It then releases that maintenance window for one native OpenClaw start.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -3231,7 +3235,25 @@ $$nemoclaw my-assistant snapshot list
 
 ### `$$nemoclaw <name> snapshot restore [selector] [--to <dst>] [--force] [--yes|-y]`
 
-Restore sandbox state from a snapshot. For an in-place restore, the sandbox must be running. If no selector is provided, the latest snapshot is used. Restore removes files added after the snapshot only from state directories selected for cleanup. It preserves directories that exist only in the target manifest or whose backup failed. State replacement and mutable-config permission repair run under the same per-sandbox mutation lock. When a restored `openclaw.json` cannot be repaired and verified against the mutable permission contract, the command reports that state was restored but exits nonzero and directs you to `doctor --fix` before running an agent. In-place restore does not change the OpenShell policy. A cross-sandbox clone reads the source live policy and hands that document to destination creation.
+Restore sandbox state from a snapshot.
+For an in-place restore, the sandbox must be running.
+If no selector is provided, the latest snapshot is used.
+Restore removes files added after the snapshot only from state directories selected for cleanup.
+It preserves directories that exist only in the target manifest or whose backup failed.
+State replacement runs under the per-sandbox mutation lock.
+
+<AgentOnly variant="openclaw">
+For OpenClaw, an in-place restore stops the sandbox before it changes state, installs the complete credential-sanitized native `openclaw.json` file without a selective merge or config hash, and runs `openclaw doctor --fix` while the gateway remains held down.
+This interrupts active agent work.
+It then releases the window for one native OpenClaw start.
+If restore fails after maintenance begins, the CLI reports whether the sandbox is stopped or its running state could not be verified.
+For a verified stopped sandbox, run `$$nemoclaw <name> start`.
+For an unverified running state, run `$$nemoclaw <name> stop`, then `$$nemoclaw <name> start`.
+Verify that the sandbox is ready, then retry the same snapshot restore command.
+</AgentOnly>
+
+In-place restore does not change the OpenShell policy.
+A cross-sandbox clone reads the source live policy and hands that document to destination creation.
 
 The selector accepts any of:
 
@@ -3257,9 +3279,11 @@ If the failure reports that the pending clone changed during registration, NemoC
 Recovery depends on the reported state. Follow [Recover a Failed Cross-Sandbox Clone](../manage-sandboxes/state-and-backups/create-and-restore-snapshots#recover-a-failed-cross-sandbox-clone) for every failed cross-sandbox clone before retrying or deleting a destination.
 
 <AgentOnly variant="openclaw">
-After NemoClaw creates the destination, it waits for the managed OpenClaw supervisor to pass a bounded readiness check before it applies snapshot state.
-If the check fails, the command leaves the destination registered without restored snapshot state and exits nonzero.
-Correct the reported supervisor failure, then run `$$nemoclaw <destination> destroy` or rerun the restore with `--force`.
+After NemoClaw creates the destination, it stops the sandbox and holds its OpenClaw gateway down while it restores state and runs `openclaw doctor --fix`.
+It then releases the maintenance window for one native OpenClaw start.
+If restoration or doctor fails, NemoClaw attempts to stop the destination and reports whether that stop was verified.
+After correcting the reported failure, retry with a new clone name.
+The incomplete clone remains registered; inspect it before deletion or replacement with `--force`.
 </AgentOnly>
 When `dst` already exists, `snapshot restore --to <dst>` refuses by default to avoid silently mutating the destination's filesystem.
 To overwrite an existing destination, pass `--force`: the command deletes `dst`, then recreates it from the source's image and restores the snapshot into the fresh copy.
@@ -3491,7 +3515,7 @@ $$nemoclaw my-assistant inference get
 
 <AgentOnly variant="openclaw">
 
-Switch the active inference provider or model for a NemoClaw-managed OpenClaw sandbox. The command updates the OpenShell gateway route, patches the selected running agent config so it matches the route, recomputes the config hash, and updates the NemoClaw registry. It is also available in sandbox-first form as `$$nemoclaw <name> inference set --provider <provider> --model <model>`. For OpenClaw, the patch updates the OpenClaw config provider namespace and selected model. After any changed config sync, NemoClaw uses the managed supervisor to restart only the OpenClaw gateway and verify its health and forwards. The sandbox remains running, but agent requests are briefly interrupted. If the restart fails, the route and config remain committed; run `$$nemoclaw <name> gateway restart` to finish applying the switch. After every changed synchronized route, NemoClaw also verifies that the local CLI device has the managed gateway's required pairing scopes before it reports success. If pairing does not converge, the route and config remain committed. Run `$$nemoclaw <name> doctor --fix`, then retry the agent turn.
+Switch the active inference provider or model for a NemoClaw-managed OpenClaw sandbox. The command updates the OpenShell gateway route, patches the selected running agent config so it matches the route, and updates the NemoClaw registry. It is also available in sandbox-first form as `$$nemoclaw <name> inference set --provider <provider> --model <model>`. For OpenClaw, the patch updates the OpenClaw config provider namespace and selected model without creating a config hash or ownership record. After any changed config sync, NemoClaw uses the managed supervisor to restart only the OpenClaw gateway and verify its health and forwards. The sandbox remains running, but agent requests are briefly interrupted. If the restart fails, the route and config remain committed; run `$$nemoclaw <name> gateway restart` to finish applying the switch. After every changed synchronized route, NemoClaw also verifies that the local CLI device has the managed gateway's required pairing scopes before it reports success. If pairing does not converge, the route and config remain committed. Run `$$nemoclaw <name> doctor --fix`, then retry the agent turn.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -3533,7 +3557,9 @@ Pass both `--provider` and `--model` when you want NemoClaw to update the OpenSh
 
 <AgentOnly variant="openclaw">
 
-If the in-sandbox config sync fails, NemoClaw keeps the gateway and registry aligned, warns that the running image may still need a rebuild, and points you to `$$nemoclaw <name> rebuild`.
+If NemoClaw cannot confirm the native OpenClaw config batch, the OpenShell route and registry remain committed, but `inference set` exits with status `1`.
+Rerun the same `inference set` command to converge the config.
+A rebuild restores the previous native `openclaw.json`, so it does not repair this failure.
 
 </AgentOnly>
 
@@ -3623,7 +3649,7 @@ Run read-only checks for the host and the NemoClaw gateway without selecting a s
 The command works before you create a sandbox.
 It checks the NemoClaw CLI build, the selected host runtime provider, the OpenShell CLI, the sandbox registry, and the gateway selected by `NEMOCLAW_GATEWAY_PORT`.
 It does not start, select, restart, or repair a gateway.
-It does not run sandbox, inference, messaging, agent-version, config-permission, or agent-service checks.
+It does not run sandbox, inference, messaging, agent-version, or agent-service checks.
 Use `$$nemoclaw <name> doctor` when you need those sandbox checks.
 If a sandbox is named `doctor`, the bare command still selects this global report. Use `$$nemoclaw doctor connect` to connect to that sandbox explicitly.
 
@@ -4539,8 +4565,8 @@ The following flags change defaults for commands that manage existing sandboxes.
 | --- | --- | --- |
 | `NEMOCLAW_CLEANUP_GATEWAY` | `1`, `true`, or `yes` to enable; `0`, `false`, or `no` to disable | Overrides the platform default (macOS unattended: cleanup; Linux/Windows: preserve) for whether `$$nemoclaw <name> destroy` removes the shared gateway when destroying the last sandbox. Command-line `--cleanup-gateway` and `--no-cleanup-gateway` still take precedence. |
 
-<AgentOnly variant="openclaw,hermes">
-| `NEMOCLAW_CONFIG_ACCEPT_NEW_PATH` | Exactly `"1"` to opt in (`true`, `yes`, `on` are not accepted) | Allows `$$nemoclaw <name> config set` to write a dotpath that does not already exist in the sandbox config, without the interactive confirmation. Equivalent to passing `--config-accept-new-path`, and it takes precedence over `NEMOCLAW_NON_INTERACTIVE=1`. Without it, a run without a TTY refuses the write instead. |
+<AgentOnly variant="hermes">
+| `NEMOCLAW_CONFIG_ACCEPT_NEW_PATH` | Exactly `"1"` to opt in (`true`, `yes`, `on` are not accepted) | Allows `nemohermes <name> config set` to write a dotpath that does not already exist in the sandbox config, without the interactive confirmation. Equivalent to passing `--config-accept-new-path`, and it takes precedence over `NEMOCLAW_NON_INTERACTIVE=1`. Without it, a run without a TTY refuses the write instead. |
 </AgentOnly>
 | `NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE` | JSON array of sandbox names | Confirms to the installer that the listed set of pre-fingerprint OpenClaw or Hermes sandboxes used NemoClaw-managed images, allowing recovery onto the current managed image. The normalized names must exactly match the installer's printed array. Set it only after verifying every named sandbox. Recorded custom-image evidence remains blocked. |
 | `NEMOCLAW_DISABLE_INFERENCE_ROUTE_REPAIR` | `1` to enable | Skips automatic DNS-proxy mutation for stale `inference.local` routes during `$$nemoclaw <name> connect` and `$$nemoclaw <name> connect --probe-only`. The command still probes the route and exits non-zero when the provider-specific requirement fails. An `ollama-local` route still requires a healthy authenticated proxy and HTTP 2xx from `inference.local/v1/models`. Use only as a troubleshooting escape hatch. |

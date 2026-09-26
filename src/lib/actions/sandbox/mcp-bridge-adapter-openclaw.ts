@@ -4,7 +4,12 @@
 import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import path from "node:path";
 
-import { readSandboxConfig, resolveAgentConfig, writeSandboxConfig } from "../../sandbox/config";
+import {
+  readSandboxConfig,
+  resolveAgentConfig,
+  setOpenClawConfigValues,
+  unsetOpenClawConfigValue,
+} from "../../sandbox/config";
 import type { ConfigObject } from "../../security/credential-filter";
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import {
@@ -48,11 +53,12 @@ function openClawConfigPath(root: string): string {
 function openClawConfigReadHelpers(): string[] {
   return [
     'const fs = require("node:fs");',
+    'const JSON5 = require("/usr/local/lib/node_modules/openclaw/node_modules/json5");',
     "const MAX_BYTES = 1048576;",
     "function fingerprint(value) { return value ? [value.dev, value.ino, value.size, value.mtimeMs, value.ctimeMs, value.mode, value.nlink, value.uid] : null; }",
     "function readConfig(configPath) {",
     "  let fd; try { fd = fs.openSync(configPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW); } catch (error) { if (error && error.code === 'ENOENT') return { data: {}, identity: null }; throw error; }",
-    "  try { const before = fs.fstatSync(fd); const linked = fs.lstatSync(configPath); if (!before.isFile() || !linked.isFile() || before.uid !== process.getuid() || before.nlink !== 1 || before.dev !== linked.dev || before.ino !== linked.ino || before.size > MAX_BYTES) throw new Error('OpenClaw configuration source is unsafe'); const raw = Buffer.alloc(before.size); let count = 0; while (count < raw.length) { const read = fs.readSync(fd, raw, count, raw.length - count, count); if (read === 0) break; count += read; } const after = fs.fstatSync(fd); if (count !== before.size || JSON.stringify(fingerprint(before)) !== JSON.stringify(fingerprint(after))) throw new Error('OpenClaw configuration changed while reading'); const data = before.size === 0 ? {} : JSON.parse(raw.toString('utf8')); if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('OpenClaw configuration must be an object'); return { data, identity: fingerprint(before) }; } finally { fs.closeSync(fd); }",
+    "  try { const before = fs.fstatSync(fd); const linked = fs.lstatSync(configPath); if (!before.isFile() || !linked.isFile() || before.uid !== process.getuid() || before.nlink !== 1 || before.dev !== linked.dev || before.ino !== linked.ino || before.size > MAX_BYTES) throw new Error('OpenClaw configuration source is unsafe'); const raw = Buffer.alloc(before.size); let count = 0; while (count < raw.length) { const read = fs.readSync(fd, raw, count, raw.length - count, count); if (read === 0) break; count += read; } const after = fs.fstatSync(fd); if (count !== before.size || JSON.stringify(fingerprint(before)) !== JSON.stringify(fingerprint(after))) throw new Error('OpenClaw configuration changed while reading'); const data = before.size === 0 ? {} : JSON5.parse(raw.toString('utf8')); if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('OpenClaw configuration must be an object'); return { data, identity: fingerprint(before) }; } finally { fs.closeSync(fd); }",
     "}",
   ];
 }
@@ -114,7 +120,7 @@ export async function registerOpenClawAdapter(
     if (target.agentName !== "openclaw" || target.configPath !== openClawConfigPath(root)) {
       throw new Error("OpenClaw MCP config target does not match the registered agent source");
     }
-    const current = readSandboxConfig(sandboxName, target);
+    const current = readSandboxConfig(sandboxName, target, runtimeSelection);
     if (
       current.mcp !== undefined &&
       (!current.mcp || typeof current.mcp !== "object" || Array.isArray(current.mcp))
@@ -133,12 +139,11 @@ export async function registerOpenClawAdapter(
       throw new Error(`MCP server '${entry.server}' already exists in OpenClaw configuration`);
     }
     const headers = entryHeaders(entry, credentialRevision);
-    servers[entry.server] = {
+    const serverConfig: ConfigObject = {
       transport: OPENCLAW_NATIVE_MCP_TRANSPORT,
       url: entry.url,
       ...(Object.keys(headers).length > 0 ? { headers } : {}),
     };
-    current.mcp = { ...mcp, servers };
     if (
       current.tools !== undefined &&
       (!current.tools || typeof current.tools !== "object" || Array.isArray(current.tools))
@@ -153,16 +158,20 @@ export async function registerOpenClawAdapter(
     ) {
       throw new Error("OpenClaw tools.alsoAllow configuration must be a string array");
     }
-    current.tools = {
-      ...tools,
-      alsoAllow: [
-        ...new Set([
-          ...((tools.alsoAllow as string[] | undefined) ?? []),
-          OPENCLAW_NATIVE_MCP_PLUGIN_ID,
-        ]),
+    const alsoAllow = [
+      ...new Set([
+        ...((tools.alsoAllow as string[] | undefined) ?? []),
+        OPENCLAW_NATIVE_MCP_PLUGIN_ID,
+      ]),
+    ];
+    setOpenClawConfigValues(
+      sandboxName,
+      [
+        { dotpath: "tools.alsoAllow", value: alsoAllow },
+        { dotpath: `mcp.servers.${entry.server}`, value: serverConfig },
       ],
-    };
-    writeSandboxConfig(sandboxName, target, current);
+      runtimeSelection,
+    );
   } catch (error) {
     const output = redactBridgeSecretsForDisplay(
       error instanceof Error ? error.message : String(error),
@@ -204,8 +213,11 @@ export async function registerOpenClawAdapter(
 }
 
 /** Make a verified config mutation visible to the long-lived OpenClaw gateway. */
-export async function reloadOpenClawGatewayAfterMcpMutation(sandboxName: string): Promise<void> {
-  const result = await restartSandboxGateway(sandboxName, { quiet: true });
+export async function reloadOpenClawGatewayAfterMcpMutation(
+  sandboxName: string,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
+): Promise<void> {
+  const result = await restartSandboxGateway(sandboxName, { quiet: true, runtimeSelection });
   if (result.ok) return;
   throw new McpBridgeError(
     `OpenClaw gateway did not activate the native MCP configuration (${result.failureLayer}: ${result.detail}).`,
@@ -224,7 +236,7 @@ export function unregisterOpenClawAdapter(
     if (target.agentName !== "openclaw" || target.configPath !== openClawConfigPath(root)) {
       throw new Error("OpenClaw MCP config target does not match the registered agent source");
     }
-    const current = readSandboxConfig(sandboxName, target);
+    const current = readSandboxConfig(sandboxName, target, runtimeSelection);
     const mcp = current.mcp;
     const servers =
       mcp && typeof mcp === "object" && !Array.isArray(mcp)
@@ -253,9 +265,7 @@ export function unregisterOpenClawAdapter(
         `Refusing to remove modified OpenClaw MCP server '${entry.server}'. Use --force to remove it.`,
       );
     }
-    delete entries[entry.server];
-    current.mcp = { ...(mcp as ConfigObject), servers: entries };
-    writeSandboxConfig(sandboxName, target, current);
+    unsetOpenClawConfigValue(sandboxName, `mcp.servers.${entry.server}`, runtimeSelection);
   } catch (error) {
     if (options.bestEffort) return;
     const output = redactBridgeSecretsForDisplay(

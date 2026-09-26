@@ -293,8 +293,13 @@ An unavailable or different version ends the rebuild with a nonzero status inste
 
 <AgentOnly variant="openclaw">
 
-After post-restore writes, rebuild verifies that the final `openclaw.json` and `.config-hash` pair match.
-If verification fails, NemoClaw exits nonzero and does not report a successful rebuild.
+Rebuild restores the complete credential-sanitized native `openclaw.json` file from the pre-rebuild snapshot.
+NemoClaw does not compare that file with a config hash, seal, last-good copy, recovery anchor, baseline, or selected-key registry.
+If the file cannot be restored safely, NemoClaw exits nonzero and does not report a successful rebuild.
+
+If rebuild keeps the source sandbox but cannot release it from backup maintenance, the warning names the retained sandbox and reports whether it verified that the sandbox stopped.
+If stopping is not verified, do not assume that the sandbox is stopped or ready to use.
+Preserve the retained sandbox and backup, and follow the recovery guidance printed with the warning.
 
 </AgentOnly>
 
@@ -331,18 +336,13 @@ A gateway that reports no live inference route does not stop the rebuild. Replac
 
 <AgentOnly variant="openclaw">
   The rebuild command preserves the mounted workspace and carries the complete current OpenShell
-  policy into sandbox recreation. For that one replacement create, NemoClaw adds baseline fields
-  required by the current replacement image when they are absent from the live policy. Existing
-  values, network keys, and same-name live network entries win, so host changes are not overwritten.
-  NemoClaw does not save a desired-policy copy or enforce that handoff after OpenShell creates the
   sandbox. When no host web-search key is staged, rebuild preflight reuses an existing Brave or
   Tavily credential only when the provider name, type, and credential key match the sandbox's
   binding on its recorded OpenShell gateway. A missing or mismatched binding stops before recreation
-  and requires the matching host environment variable before you retry. After state restoration,
-  NemoClaw clears a session's stale model and provider pin when it still targets the managed
-  `inference` provider but no longer matches the configured default model. The session then follows
-  the current default selected through `inference set`, while sessions pinned to another provider
-  remain unchanged.
+  and requires the matching host environment variable before you retry. Rebuild also restores the
+  complete credential-sanitized native `openclaw.json` file, so native OpenClaw configuration
+  changes survive sandbox replacement without a selective merge.
+  Rebuild preserves restored OpenClaw session model and provider selections, including selections that differ from the configured default.
 </AgentOnly>
 
 <AgentOnly variant="hermes">

@@ -39,7 +39,6 @@ import {
   writeHermesOperatorConfigHandoff,
   writeRebuildPolicyHandoff,
 } from "./rebuild-backup-phase";
-import { buildRefreshMutableOpenClawConfigHashCommand } from "./rebuild-config-hash";
 import { runRebuildDestroyPhase } from "./rebuild-destroy-phase";
 import {
   captureHermesOperatorConfigSnapshot,
@@ -100,7 +99,7 @@ import { runRebuildRecreatePhase } from "./rebuild-recreate-phase";
 import { createRebuildRegistryRollback } from "./rebuild-registry-rollback";
 import { runRebuildRestorePhase } from "./rebuild-restore-phase";
 
-export { buildRefreshMutableOpenClawConfigHashCommand, stageMessagingManifestPlanForRebuild };
+export { stageMessagingManifestPlanForRebuild };
 
 function runBestEffortRebuildCleanup(cleanup: () => boolean | void, warning: string): void {
   try {
@@ -1114,12 +1113,7 @@ async function rebuildSandboxUnlocked(
       retainPolicyHandoffForRecovery = false;
     } finally {
       if (sourceOpenClawDoctorWindow) {
-        const finished = await releaseRebuildSourceOpenClawWindow(sourceOpenClawDoctorWindow);
-        if (!finished.ok) {
-          console.error(
-            `  Warning: OpenClaw source maintenance cleanup did not return the retained sandbox healthy (${finished.stage}: ${finished.detail}).`,
-          );
-        }
+        await releaseRebuildSourceOpenClawWindow(sourceOpenClawDoctorWindow);
         sourceOpenClawDoctorWindow = null;
       }
       const handoffManifest = rebuildPolicyHandoffManifest;

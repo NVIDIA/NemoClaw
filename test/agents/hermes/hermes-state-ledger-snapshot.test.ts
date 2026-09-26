@@ -115,11 +115,10 @@ describe("Hermes 0.19 durable state ledgers", () => {
       "sh",
       [
         "-c",
-        buildStateFileRestoreCommand(
-          hermesHome,
-          { path: "runtime/cron-executions.db", strategy: "sqlite_backup" },
-          false,
-        ),
+        buildStateFileRestoreCommand(hermesHome, {
+          path: "runtime/cron-executions.db",
+          strategy: "sqlite_backup",
+        }),
       ],
       { input: fs.readFileSync(backupDb) },
     );
@@ -143,11 +142,10 @@ describe("Hermes 0.19 durable state ledgers", () => {
         "sh",
         [
           "-c",
-          buildStateFileRestoreCommand(
-            hermesHome,
-            { path: "gateway/discord_message_recovery.db", strategy: "sqlite_backup" },
-            false,
-          ),
+          buildStateFileRestoreCommand(hermesHome, {
+            path: "gateway/discord_message_recovery.db",
+            strategy: "sqlite_backup",
+          }),
         ],
         { input: fs.readFileSync(backupDb) },
       );

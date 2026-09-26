@@ -106,7 +106,7 @@ function hookOutputsFromBuildSteps(
   return { outputs };
 }
 
-/** Restore manifest-derived OpenClaw files before the final doctor/start boundary. */
+/** Restore manifest-derived OpenClaw files before the final native start. */
 export async function reapplyMessagingManifestBeforeOpenClawStart(
   sandboxName: string,
   plan: SandboxMessagingPlan | null,

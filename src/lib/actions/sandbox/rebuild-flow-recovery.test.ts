@@ -892,12 +892,6 @@ describe("rebuildSandbox flow: recovery", () => {
   it("fails the rebuild while surfacing incomplete OpenClaw post-restore work", async () => {
     const harness = createRebuildFlowHarness({
       sandboxEntry: {},
-      executeSandboxExecCommand: () => ({ status: 1, stdout: "", stderr: "hash refresh failed" }),
-      repairMutableConfigPerms: () => ({
-        applied: true,
-        verified: false,
-        errors: ["cannot stat mutable config"],
-      }),
       restoreSandboxState: () => ({
         success: false,
         restoredDirs: ["workspace"],
@@ -914,8 +908,6 @@ describe("rebuildSandbox flow: recovery", () => {
     const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
     expect(output).toContain("rebuilt but some post-restore steps were incomplete");
     expect(output).toContain("State restore was incomplete");
-    expect(output).toContain("Mutable config permissions were not verified");
-    expect(output).toContain("Mutable OpenClaw config hash was not refreshed");
     expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", {
       agentVersion: "0.2.0",
     });

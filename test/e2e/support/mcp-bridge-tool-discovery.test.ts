@@ -24,9 +24,118 @@ import {
   runHermesInitialMcpReadiness,
   shouldRetryMcpDiscoveryAfterRestart,
   shouldRetryMcpToolDiscoveryTransportFailure,
+  withMcpToolCallFailureEvidence,
+  buildHermesGatewayIdentityProbe,
+  buildDeepAgentsConfigProbe,
 } from "../live/mcp-bridge-tool-discovery.ts";
 
 const EXPECTED_SECRET = "expected-secret";
+
+describe("MCP failed tool-call evidence", () => {
+  it("keeps the existing config and process probes unchanged", () => {
+    expect(buildHermesGatewayIdentityProbe()).toBe(
+      [
+        "set -eu",
+        "/usr/bin/python3 -I -S - <<'PY'",
+        "import json, pathlib",
+        "record = json.loads(pathlib.Path('/sandbox/.hermes/runtime/gateway.pid').read_text())",
+        "pid = record if isinstance(record, int) else record['pid']",
+        "fields = pathlib.Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()",
+        "print(json.dumps({'pid': pid, 'start_time': int(fields[19])}, sort_keys=True))",
+        "PY",
+      ].join("\n"),
+    );
+    const probe = buildDeepAgentsConfigProbe("https://fixture.invalid/mcp", "fake", "secret");
+    expect(probe).toContain("entry = data['mcpServers'][\"fake\"]");
+    expect(probe).toContain("assert entry['type'] == 'http'");
+    expect(probe).toContain("assert entry['url'] == \"https://fixture.invalid/mcp\"");
+    expect(probe).toContain("assert re.fullmatch(");
+    expect(probe).toContain('assert "secret" not in text');
+  });
+  function setup() {
+    const requests: FakeMcpRequest[] = [];
+    const host = { nemoclaw: vi.fn().mockResolvedValue({ exitCode: 0 }) };
+    const artifacts = { writeJson: vi.fn().mockResolvedValue("evidence.json") };
+    const options = {
+      artifacts,
+      requests,
+      artifactPrefix: "distinct",
+      sandboxName: "openclaw",
+      serverName: "distinct",
+      credentialEnvName: "DISTINCT_MCP_SECRET",
+      expectedSecret: "secret",
+      redactionValues: ["secret"],
+    };
+    return { host, artifacts, options, requests };
+  }
+
+  it("does not probe or write evidence after a successful call", async () => {
+    const { host, artifacts, options } = setup();
+    await withMcpToolCallFailureEvidence(async () => {}, host, options);
+    expect(host.nemoclaw).not.toHaveBeenCalled();
+    expect(artifacts.writeJson).not.toHaveBeenCalled();
+  });
+
+  it("snapshots only failed-call metadata before probing the distinct server", async () => {
+    const { host, artifacts, options, requests } = setup();
+    requests.push(request("old-request"));
+    const failure = new Error("original tool assertion");
+    host.nemoclaw.mockImplementation(async () => {
+      requests.push(request("diagnostic-request"));
+    });
+    await expect(
+      withMcpToolCallFailureEvidence(
+        async () => {
+          requests.push(request("tools/list", { auth: "Bearer secret", body: "private-body" }));
+          throw failure;
+        },
+        host,
+        options,
+      ),
+    ).rejects.toBe(failure);
+    expect(artifacts.writeJson).toHaveBeenCalledExactlyOnceWith(
+      "distinct-failed-call-requests.json",
+      {
+        requests: [
+          {
+            httpMethod: "POST",
+            rpcMethod: "tools/list",
+            responseStatus: 200,
+            credentialKind: "resolved",
+          },
+        ],
+      },
+    );
+    expect(host.nemoclaw).toHaveBeenCalledWith(
+      ["openclaw", "mcp", "status", "distinct", "--tools", "--json"],
+      expect.objectContaining({
+        timeoutMs: 60000,
+        killGraceMs: 1000,
+        captureLimitBytes: 16384,
+        redactionValues: ["secret"],
+      }),
+    );
+    expect(JSON.stringify(artifacts.writeJson.mock.calls)).not.toContain("private-body");
+  });
+
+  it("preserves the original failure if both diagnostic operations fail", async () => {
+    const { host, artifacts, options } = setup();
+    host.nemoclaw.mockRejectedValue(new Error("status unavailable"));
+    artifacts.writeJson.mockImplementation(() => {
+      throw new Error("artifact unavailable");
+    });
+    const failure = new Error("original failure");
+    await expect(
+      withMcpToolCallFailureEvidence(
+        async () => {
+          throw failure;
+        },
+        host,
+        options,
+      ),
+    ).rejects.toBe(failure);
+  });
+});
 const EXPECTED_RESULT_TOKEN = "expected-result";
 const SESSION_ID = "fake-session-1";
 const LEGACY_SESSION_ID = "opaque-legacy-session";

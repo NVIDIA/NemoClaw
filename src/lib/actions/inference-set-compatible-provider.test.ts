@@ -177,7 +177,7 @@ describe("runInferenceSet compatible providers", () => {
       }),
     ]);
     expect(deps.calls.restartSandboxGateway).toHaveBeenCalledOnce();
-    expect(deps.calls.restartSandboxGateway).toHaveBeenCalledWith("alpha");
+    expect(deps.calls.restartSandboxGateway).toHaveBeenCalledWith("alpha", "nemoclaw");
   });
 
   it("rejects custom-compatible provider switches without trusted endpoint metadata", async () => {
@@ -832,7 +832,7 @@ describe("runInferenceSet compatible providers", () => {
       credentialEnv: "COMPATIBLE_API_KEY",
       preferredInferenceApi: "openai-responses",
     });
-    expect(deps.calls.restartSandboxGateway).toHaveBeenCalledWith("alpha");
+    expect(deps.calls.restartSandboxGateway).toHaveBeenCalledWith("alpha", "nemoclaw");
   });
 
   it("accepts explicit compatible Anthropic endpoint metadata for provider-family switches", async () => {

@@ -243,7 +243,7 @@
     {
       "name": "State migration",
       "status": "tested",
-      "notes": "Sandbox state migrates across rebuilds with credentials intentionally excluded. Hermes excludes `auth.json` and restores its SQLite session DB through the backup API. OpenClaw config merge prevents stale state from overwriting fresh values."
+      "notes": "Sandbox state migrates across rebuilds with credentials intentionally excluded. Hermes excludes `auth.json` and restores its SQLite session DB through the backup API. OpenClaw restores its complete credential-sanitized native configuration."
     },
     {
       "name": "Blueprint versioning",

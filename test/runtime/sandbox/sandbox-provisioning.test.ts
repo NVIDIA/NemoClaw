@@ -82,6 +82,7 @@ function runOpenclawRepairLayoutCase(
   legacy: boolean,
   options: {
     prepareLegacyFixture?: (tmp: string, dataDir: string) => void;
+    runtimeUser?: "root" | "sandbox";
   } = {},
 ) {
   const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
@@ -148,7 +149,11 @@ function runOpenclawRepairLayoutCase(
   const dirsAfterCleanup = [".", ...listRelativeEntries(openclawDir, "directory")];
   const filesAfterCleanup = listRelativeEntries(openclawDir, "file");
   fs.writeFileSync(path.join(openclawDir, "openclaw.json"), "{}\n");
-  const permission = runLoggedDockerShell(rewrite(permissionBlock), tmp, functionDefs);
+  const permission = runLoggedDockerShell(rewrite(permissionBlock), tmp, functionDefs, {
+    env: {
+      NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER: options.runtimeUser ?? "sandbox",
+    },
+  });
   const markerExistsAfterPermission = fs.existsSync(marker);
 
   try {
@@ -833,8 +838,21 @@ describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
         modern.openclawDir,
         "openclaw.json",
       )} ${modern.pluginRuntimeDeps}`,
-      `chmod 2770 ${modern.openclawDir} ${modern.pluginRuntimeDeps}`,
-      `chmod 660 ${path.join(modern.openclawDir, "openclaw.json")}`,
+      `chmod 2770 ${modern.pluginRuntimeDeps}`,
+      `chmod 700 ${modern.openclawDir}`,
+      `chmod 600 ${path.join(modern.openclawDir, "openclaw.json")}`,
+    ]);
+
+    const rootRuntime = runOpenclawRepairLayoutCase(false, { runtimeUser: "root" });
+    expect(rootRuntime.permission.result.status).toBe(0);
+    expect(rootRuntime.permission.calls.split("\n").filter(Boolean)).toEqual([
+      `chown sandbox:sandbox ${rootRuntime.openclawDir} ${path.join(
+        rootRuntime.openclawDir,
+        "openclaw.json",
+      )} ${rootRuntime.pluginRuntimeDeps}`,
+      `chmod 2770 ${rootRuntime.pluginRuntimeDeps}`,
+      `chmod 2770 ${rootRuntime.openclawDir}`,
+      `chmod 660 ${path.join(rootRuntime.openclawDir, "openclaw.json")}`,
     ]);
 
     const legacy = runOpenclawRepairLayoutCase(true);
@@ -853,6 +871,9 @@ describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
         `chown -R sandbox:sandbox ${legacy.openclawDir}`,
         `chmod -R g+rwX,o-rwx ${legacy.openclawDir}`,
         `find ${legacy.openclawDir} -type d -exec chmod g+s {} +`,
+        `chmod 2770 ${legacy.pluginRuntimeDeps}`,
+        `chmod 700 ${legacy.openclawDir}`,
+        `chmod 600 ${path.join(legacy.openclawDir, "openclaw.json")}`,
       ]),
     );
 
@@ -984,7 +1005,7 @@ describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
       const command = dockerRunCommandBetween(
         dockerfile,
         "# System-wide shell hooks",
-        "# Pin config hash at build time",
+        "# DAC-protect .nemoclaw directory",
       )
         .replaceAll("/usr/local/lib/nemoclaw/sandbox-rlimits.sh", rlimitLib)
         .replaceAll("/etc/profile.d/nemoclaw-rlimits.sh", rlimitHook)

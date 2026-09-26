@@ -6,7 +6,7 @@
 // actionable recovery guidance must survive non-empty OpenShell not-ready
 // details on stderr, including the phase and structured diagnostic forms.
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 const clientModulePath = require.resolve("../adapters/openshell/client");
 const configModulePath = require.resolve("./config");
@@ -53,7 +53,7 @@ const OPENCLAW_TARGET: import("./config").AgentConfigTarget = {
   configPath: "/sandbox/.openclaw/openclaw.json",
   configDir: "/sandbox/.openclaw",
   configFile: "openclaw.json",
-  format: "json",
+  format: "json5",
 };
 
 describe("readSandboxConfig stopped-sandbox detail (#10251)", () => {
@@ -61,6 +61,66 @@ describe("readSandboxConfig stopped-sandbox detail (#10251)", () => {
     client.captureOpenshellCommand = realCapture;
     delete require.cache[configModulePath];
     delete require.cache[inferenceSetModulePath];
+  });
+
+  it("reads the same recorded target used by native MCP updates (#11764)", () => {
+    vi.stubEnv("OPENSHELL_GATEWAY", "other-gateway");
+    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://other.invalid");
+    const capture = vi.fn(() => ({
+      status: 0,
+      signal: null,
+      stdout: "{}",
+      output: "{}",
+      stderr: "",
+    }));
+    client.captureOpenshellCommand = capture;
+    delete require.cache[configModulePath];
+    const { readSandboxConfig } = require(configModulePath) as typeof import("./config");
+    expect(
+      readSandboxConfig("alpha", OPENCLAW_TARGET, {
+        gatewayName: "nemoclaw-9090",
+        workspace: "recorded-workspace",
+        localTlsDir: "/recorded/tls",
+      }),
+    ).toEqual({});
+    expect(capture).toHaveBeenCalledWith(
+      expect.any(String),
+      [
+        "-g",
+        "nemoclaw-9090",
+        "sandbox",
+        "exec",
+        "--name",
+        "alpha",
+        "--",
+        "cat",
+        OPENCLAW_TARGET.configPath,
+      ],
+      expect.objectContaining({
+        replaceEnv: true,
+        env: expect.objectContaining({
+          OPENSHELL_GATEWAY: "nemoclaw-9090",
+          OPENSHELL_WORKSPACE: "recorded-workspace",
+          OPENSHELL_LOCAL_TLS_DIR: "/recorded/tls",
+        }),
+      }),
+    );
+  });
+
+  it("accepts native OpenClaw JSON5 when reading the owned config", () => {
+    const raw = "{ // native comment\n tools: { web: { search: { enabled: true, }, }, }, }";
+    client.captureOpenshellCommand = () => ({
+      status: 0,
+      signal: null,
+      stdout: raw,
+      output: raw,
+      stderr: "",
+    });
+    const { readSandboxConfig } = loadConfigReaders();
+
+    expect(readSandboxConfig("sandbox-a", { ...OPENCLAW_TARGET, agentName: "openclaw" })).toEqual({
+      tools: { web: { search: { enabled: true } } },
+    });
   });
 
   it.each([

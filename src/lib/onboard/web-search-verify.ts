@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import JSON5 from "json5";
 import YAML from "yaml";
 import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
 import { selectedOpenShellGateway } from "../adapters/openshell/sandbox-observer";
@@ -354,7 +355,7 @@ export async function verifyWebSearchInsideSandbox(
         return true;
       }
       try {
-        const parsed = JSON.parse(configCheck);
+        const parsed = JSON5.parse(configCheck);
         const search = parsed?.tools?.web?.search;
         if (!search?.enabled) {
           warn(

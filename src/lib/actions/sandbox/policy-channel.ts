@@ -3,7 +3,10 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { runOpenshell } from "../../adapters/openshell/runtime";
+import {
+  runOpenshell,
+  buildSelectedOpenShellSubprocessEnv,
+} from "../../adapters/openshell/runtime";
 import { type AgentDefinition, loadAgent } from "../../agent/defs";
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
 import { isNonInteractiveEnv, isNonInteractiveSession } from "../../core/non-interactive";
@@ -94,13 +97,6 @@ import { executeSandboxExecCommand } from "../../adapters/sandbox/command-transp
 import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 
 const isNonInteractive = () => isNonInteractiveSession();
-const runMessagingOpenshell: MessagingOpenShellRunner = (args, options = {}) =>
-  runOpenshell([...args], {
-    env: options.env as NodeJS.ProcessEnv | undefined,
-    ignoreError: options.ignoreError,
-    input: options.input,
-    stdio: options.stdio as never,
-  });
 
 function removeDisabledChannelAgentConfigOrExit(
   sandboxName: string,
@@ -108,6 +104,15 @@ function removeDisabledChannelAgentConfigOrExit(
   plan: SandboxMessagingPlan,
 ): void {
   try {
+    const runtime = policyChannelDependencies.resolveConfigRuntimeSelection(sandboxName);
+    const runMessagingOpenshell: MessagingOpenShellRunner = (args, options = {}) =>
+      runOpenshell(["-g", runtime.gatewayName, ...args], {
+        env: buildSelectedOpenShellSubprocessEnv(runtime, options.env),
+        replaceEnv: true,
+        ignoreError: options.ignoreError,
+        input: options.input,
+        stdio: options.stdio as never,
+      });
     MessagingSetupApplier.removeDisabledChannelAgentConfigAtOpenShell(plan, channelId, {
       runOpenshell: runMessagingOpenshell,
     });

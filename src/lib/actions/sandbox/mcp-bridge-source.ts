@@ -243,18 +243,19 @@ function buildHermesSourceCommand(configDir: string): string {
   ].join("\n");
 }
 
-function buildOpenClawSourceScript(configDir: string): string {
+function buildOpenClawSourceScript(configDir: string, json5ModulePath: string): string {
   const nativePath = path.posix.join(configDir, "openclaw.json");
   const legacyPath = path.posix.join(configDir, "workspace", "config", "mcporter.json");
   const payload = { nativePath, legacyPath };
   return [
     'const fs = require("node:fs");',
+    `const JSON5 = require(${JSON.stringify(json5ModulePath)});`,
     `const paths = JSON.parse(${sourcePayload(payload)});`,
     "const MAX_BYTES = 262144;",
     "const PREFIX = 'Bearer openshell:resolve:env:';",
     "function read(path) {",
     "  let fd; try { fd = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW); } catch (error) { if (error && error.code === 'ENOENT') return null; throw error; }",
-    "  try { const before = fs.fstatSync(fd); const linked = fs.lstatSync(path); if (!before.isFile() || !linked.isFile() || (before.uid !== 0 && before.uid !== process.getuid()) || before.nlink !== 1 || before.dev !== linked.dev || before.ino !== linked.ino || before.size > MAX_BYTES) throw new Error('unsafe MCP configuration source'); const raw = Buffer.alloc(before.size); let count = 0; while (count < raw.length) { const read = fs.readSync(fd, raw, count, raw.length - count, count); if (read === 0) break; count += read; } const after = fs.fstatSync(fd); if (count !== before.size || before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size || before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs) throw new Error('MCP configuration changed while reading'); return JSON.parse(raw.toString('utf8')); } finally { fs.closeSync(fd); }",
+    "  try { const before = fs.fstatSync(fd); const linked = fs.lstatSync(path); if (!before.isFile() || !linked.isFile() || (before.uid !== 0 && before.uid !== process.getuid()) || before.nlink !== 1 || before.dev !== linked.dev || before.ino !== linked.ino || before.size > MAX_BYTES) throw new Error('unsafe MCP configuration source'); const raw = Buffer.alloc(before.size); let count = 0; while (count < raw.length) { const read = fs.readSync(fd, raw, count, raw.length - count, count); if (read === 0) break; count += read; } const after = fs.fstatSync(fd); if (count !== before.size || before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size || before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs) throw new Error('MCP configuration changed while reading'); return path === paths.nativePath ? JSON5.parse(raw.toString('utf8')) : JSON.parse(raw.toString('utf8')); } finally { fs.closeSync(fd); }",
     "}",
     "function envName(headers) { if (!headers || typeof headers !== 'object' || Array.isArray(headers)) return null; const key = Object.keys(headers).find((name) => name.toLowerCase() === 'authorization'); const value = key ? headers[key] : null; if (typeof value !== 'string' || !value.startsWith(PREFIX)) return null; let suffix = value.slice(PREFIX.length); if (/^(?:v[0-9]{1,20}|s[a-f0-9]{64})_[A-Z_][A-Z0-9_]*$/.test(suffix)) suffix = suffix.slice(suffix.indexOf('_') + 1); return /^[A-Z_][A-Z0-9_]*$/.test(suffix) ? suffix : null; }",
     "const records = [];",
@@ -265,7 +266,11 @@ function buildOpenClawSourceScript(configDir: string): string {
 }
 
 function buildOpenClawSourceCommand(configDir: string): string {
-  return ["node - <<'NODE'", buildOpenClawSourceScript(configDir), "NODE"].join("\n");
+  return [
+    "node - <<'NODE'",
+    buildOpenClawSourceScript(configDir, "/usr/local/lib/node_modules/openclaw/node_modules/json5"),
+    "NODE",
+  ].join("\n");
 }
 
 function sourceCommand(adapter: AgentMcpAdapter, configDir: string): string {
@@ -465,7 +470,9 @@ export function inspectCapturedOpenClawMcpSources(
   source.assertCurrent();
   let output: string;
   try {
-    output = execFileSync(process.execPath, ["-e", buildOpenClawSourceScript(source.directory)], {
+    // Resolve from the CLI installation, never from provider-captured agent state.
+    const script = buildOpenClawSourceScript(source.directory, require.resolve("json5"));
+    output = execFileSync(process.execPath, ["-e", script], {
       encoding: "utf8",
       env: {},
       cwd: source.directory,

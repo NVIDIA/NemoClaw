@@ -50,40 +50,36 @@ To configure only `main`, use `agents.entries.main.memory.search` instead of `me
 Existing per-agent overrides take precedence; update them if they disable search or select another provider or model.
 
 ```bash
-nemoclaw my-assistant config set \
-  --key models.providers.ollama-mem \
-  --value '{"api":"ollama","baseUrl":"http://host.openshell.internal:8000","apiKey":"ollama-local","models":[{"id":"qwen3-embedding:0.6b","name":"Qwen3 Embedding 0.6B"}]}' \
-  --config-accept-new-path
+nemoclaw my-assistant exec -- \
+  openclaw config set models.providers.ollama-mem \
+  '{"api":"ollama","baseUrl":"http://host.openshell.internal:8000","apiKey":"ollama-local","models":[{"id":"qwen3-embedding:0.6b","name":"Qwen3 Embedding 0.6B"}]}' \
+  --strict-json \
+  --merge
 
 nemoclaw my-assistant exec -- openclaw plugins enable ollama
 
-nemoclaw my-assistant config set \
-  --key memory.search.enabled \
-  --value true \
-  --config-accept-new-path
+nemoclaw my-assistant exec -- \
+  openclaw config set memory.search.enabled true --strict-json
 
-nemoclaw my-assistant config set \
-  --key memory.search.provider \
-  --value ollama-mem \
-  --config-accept-new-path
+nemoclaw my-assistant exec -- \
+  openclaw config set memory.search.provider ollama-mem
 
-nemoclaw my-assistant config set \
-  --key memory.search.model \
-  --value qwen3-embedding:0.6b \
-  --config-accept-new-path
+nemoclaw my-assistant exec -- \
+  openclaw config set memory.search.model qwen3-embedding:0.6b
 
-nemoclaw my-assistant config set \
-  --key memory.search.fallback \
-  --value none \
-  --config-accept-new-path \
-  --restart
+nemoclaw my-assistant exec -- \
+  openclaw config set memory.search.fallback none
+
+nemoclaw my-assistant gateway restart
 ```
 
 `ollama-local` is a non-secret placeholder; it does not authenticate an otherwise protected server.
 Disabling fallback keeps verification on the selected embedding provider.
 The restart activates the plugin and memory settings.
-The host-side `config set` command accepts the bridge URL only for supported provider `baseUrl` fields.
-Generic configuration keys and other private URL shapes remain rejected.
+OpenClaw owns the native configuration after first launch.
+Restart and reconnect preserve the current native changes.
+Rebuild restores the sanitized configuration captured immediately before rebuild, while snapshot restore reapplies the settings from the selected snapshot.
+The `local-inference` OpenShell policy preset controls access to the private host bridge URL.
 
 ## Rebuild and Verify the Index
 

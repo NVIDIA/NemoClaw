@@ -214,6 +214,10 @@ policies.removePreset = (sandboxName, presetName) => {
 const callOrder = [];
 const stoppedDockerCleanupCalls = [];
 const policyChannelDeps = require(${j("actions/sandbox/policy-channel-dependencies.js")});
+policyChannelDeps.policyChannelDependencies.resolveConfigRuntimeSelection = () => ({
+  gatewayName: "nemoclaw",
+  workspace: "default",
+});
 policyChannelDeps.policyChannelDependencies.inspectMessagingProviderAttachmentTarget = () =>
   "fingerprint-1";
 policyChannelDeps.policyChannelDependencies.clearStoppedSandboxStateRoots = (sandboxName, paths) => {

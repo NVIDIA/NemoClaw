@@ -30,6 +30,11 @@ The token does not land in the image or on disk inside the running container.
 NemoClaw writes the non-secret `WECHAT_ACCOUNT_ID`, `WECHAT_BASE_URL`, and `WECHAT_USER_ID` metadata into the image's channel configuration.
 Together with the credential placeholder, this metadata lets the bridge start without another QR handshake.
 
+<AgentOnly variant="openclaw">
+NemoClaw applies the WeChat plugin settings through OpenClaw's native configuration writer.
+It changes the channel and plugin settings without replacing unrelated native configuration.
+</AgentOnly>
+
 ## Configure Access
 
 WeChat is DM-only with `allowIdsMode: "dm"`.

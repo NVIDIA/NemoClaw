@@ -2743,11 +2743,15 @@ async function restoreSandboxStateInternal(
     for (const spec of localFiles) {
       const targetStateFile = targetStateFiles.get(spec.path);
       if (!targetStateFile) throw new Error(`Validated target state file missing: ${spec.path}`);
+      const restoreSpec =
+        options.targetAgentType === "openclaw" && spec.path === "openclaw.json"
+          ? { ...spec, missingTargetMode: "runtime-parent" as const }
+          : spec;
       if (
         restoreStateFile(
           sshArgs(configFile, sandboxName),
           dir,
-          spec,
+          restoreSpec,
           backupPath,
           targetStateFile.restore,
           options.allowCustomImageWholeStateFileRestore === true,

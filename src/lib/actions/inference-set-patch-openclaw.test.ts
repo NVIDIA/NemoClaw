@@ -63,6 +63,14 @@ describe("patchOpenClawInferenceConfig", () => {
               maxTokens: 8192,
               reasoning: true,
             },
+            {
+              id: "moonshotai/kimi-k2.6",
+              name: "inference/moonshotai/kimi-k2.6",
+              contextWindow: 131072,
+              maxTokens: 8192,
+              reasoning: true,
+              compat: { supportsStore: false },
+            },
           ],
         },
       },
@@ -118,7 +126,11 @@ describe("patchOpenClawInferenceConfig", () => {
         baseUrl: "https://inference.local/v1",
         apiKey: "unused",
         api: "openai-completions",
-        models: [{ id: "nvidia/new-model", name: "inference/nvidia/new-model" }],
+        models: [
+          { id: "nvidia/new-model", name: "inference/nvidia/new-model" },
+          { id: "old-model", name: "inference/nvidia/old-model" },
+          { id: "secondary-model", name: "inference/nvidia/secondary-model" },
+        ],
       },
     });
   });
@@ -290,6 +302,7 @@ describe("patchOpenClawInferenceConfig", () => {
         name: "anthropic/claude-sonnet-4-6",
         maxTokens: 2048,
       },
+      { id: "old-model", name: "anthropic/old-model", maxTokens: 2048 },
     ]);
   });
 

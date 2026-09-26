@@ -152,6 +152,17 @@ const expectConfigured: Record<Agent, (config: any) => void> = {
     expect(config.model.api_key).toBe("sk-OPENSHELL-PROXY-REWRITE");
   },
 };
+type InferenceSetCalls = ReturnType<typeof createDeps>["calls"];
+const expectCommitted: Record<Agent, (calls: InferenceSetCalls) => void> = {
+  openclaw(calls) {
+    expect(calls.setOpenClawConfigValues).toHaveBeenCalled();
+    expect(calls.writeSandboxConfig).not.toHaveBeenCalled();
+  },
+  hermes(calls) {
+    expect(calls.setOpenClawConfigValues).not.toHaveBeenCalled();
+    expect(calls.writeSandboxConfig).toHaveBeenCalled();
+  },
+};
 
 describe.each<Agent>(["openclaw", "hermes"])("providerless %s configuration", (agent) => {
   it("generates configuration from the actual Dockerfile without a selected model", () => {
@@ -250,8 +261,7 @@ describe.each<Agent>(["openclaw", "hermes"])("providerless %s configuration", (a
     );
     expect(result.inSandboxConfigSynced).toBe(true);
     expectConfigured[agent](config);
-    expect(deps.calls.writeSandboxConfig).toHaveBeenCalled();
-    expect(deps.calls.recomputeSandboxConfigHash).toHaveBeenCalled();
+    expectCommitted[agent](deps.calls);
     expect(
       deps.calls.captureOpenshell.mock.calls.some(
         ([args]) => args[0] === "provider" && ["create", "update"].includes(args[1]),

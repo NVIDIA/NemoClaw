@@ -8,6 +8,8 @@ import path from "node:path";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const JSON5_MODULE_PATH = path.join(import.meta.dirname, "../../../..", "node_modules", "json5");
+
 const mocks = vi.hoisted(() => ({
   executeSandboxExecCommand: vi.fn(),
   capturePolicy: vi.fn(),
@@ -138,14 +140,23 @@ network_policies:
             headers: { Authorization: `Bearer openshell:resolve:env:${generation}_${key}` },
           },
         };
+        const contents = JSON.stringify(
+          agent === "openclaw" ? { mcp: { servers } } : { [serverMap]: servers },
+        );
         fs.writeFileSync(
           path.join(root, directory, file),
-          JSON.stringify(agent === "openclaw" ? { mcp: { servers } } : { [serverMap]: servers }),
+          agent === "openclaw" ? `// Native OpenClaw JSON5\n${contents}` : contents,
           { mode: 0o600 },
         );
         mocks.executeSandboxExecCommand.mockImplementation((_name: string, command: string) => {
           const marker = command.includes("<<'NODE'") ? "NODE" : "PY";
-          const program = command.split(`<<'${marker}'\n`)[1].split(`\n${marker}`)[0];
+          const program = command
+            .split(`<<'${marker}'\n`)[1]
+            .split(`\n${marker}`)[0]
+            .replaceAll(
+              "/usr/local/lib/node_modules/openclaw/node_modules/json5",
+              JSON5_MODULE_PATH,
+            );
           const result = spawnSync(
             marker === "NODE" ? process.execPath : "python3",
             marker === "NODE" ? ["-"] : ["-I", "-S", "-"],

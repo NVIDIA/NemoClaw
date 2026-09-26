@@ -356,7 +356,6 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
     expect(deps.calls.updateSession).not.toHaveBeenCalled();
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
-    expect(deps.calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
     expect(deps.calls.appendAuditEntry).not.toHaveBeenCalled();
   });
 
@@ -544,7 +543,6 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
     expect(deps.calls.updateSession).not.toHaveBeenCalled();
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
-    expect(deps.calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
     expect(deps.calls.appendAuditEntry).not.toHaveBeenCalled();
   });
 
@@ -698,7 +696,6 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
     expect(deps.calls.updateSession).not.toHaveBeenCalled();
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
-    expect(deps.calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
     expect(deps.calls.appendAuditEntry).not.toHaveBeenCalled();
   });
 

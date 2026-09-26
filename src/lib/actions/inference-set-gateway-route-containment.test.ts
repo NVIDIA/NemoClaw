@@ -55,7 +55,6 @@ describe("runtime shared gateway route containment", () => {
     expect(deps.calls.rewriteConfigUrlsWithDnsPinning).not.toHaveBeenCalled();
     expect(deps.calls.readSandboxConfig).not.toHaveBeenCalled();
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
-    expect(deps.calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
     expect(deps.calls.updateSession).not.toHaveBeenCalled();
   });
@@ -120,6 +119,7 @@ describe("runtime shared gateway route containment", () => {
   });
 
   it("targets the selected sandbox gateway and allows a conflicting route elsewhere (#6315)", async () => {
+    vi.stubEnv("OPENSHELL_GATEWAY", "other-gateway");
     const deps = createDeps({
       config: {},
       entries: [
@@ -149,6 +149,33 @@ describe("runtime shared gateway route containment", () => {
         "nvidia/model-b",
       ],
       expect.objectContaining({ ignoreError: true }),
+    );
+  });
+
+  it("writes native OpenClaw configuration to the recorded gateway (#11764)", async () => {
+    vi.stubEnv("OPENSHELL_GATEWAY", "other-gateway");
+    const deps = createDeps({
+      config: {},
+      entries: [entry("alpha", { gatewayName: "nemoclaw-9090", gatewayPort: 9090 })],
+      defaultSandbox: "alpha",
+    });
+    await runInferenceSet(
+      { provider: "nvidia-prod", model: "nvidia/model-b", sandboxName: "alpha" },
+      deps,
+    );
+    expect(deps.calls.setOpenClawConfigValues).toHaveBeenCalledWith(
+      "alpha",
+      expect.any(Array),
+      "nemoclaw-9090",
+    );
+    expect(deps.calls.readSandboxConfig).toHaveBeenCalledWith(
+      "alpha",
+      expect.any(Object),
+      "nemoclaw-9090",
+    );
+    expect(deps.calls.restartSandboxGateway).toHaveBeenCalledWith("alpha", "nemoclaw-9090");
+    expect(deps.calls.settleOpenClawPairing).toHaveBeenCalledWith(
+      expect.objectContaining({ sandboxName: "alpha", gatewayName: "nemoclaw-9090" }),
     );
   });
 

@@ -310,6 +310,13 @@ removed. Their production-image security coverage now belongs to
 installer, process, Docker, OpenShell, `/proc`, and sandbox boundaries in E2E tests when those
 boundaries are the behavior under test.
 
+The managed-image test retains final-image module loading, system shell environment loading,
+protected blueprint directories, and writable plugin state. Source tests own environment generation
+and blueprint apply/snapshot logic; the image test does not repeat the fake-OpenShell apply sequence
+or its progress messages. Configuration hash, seal, and normalizer checks ended with those retired
+implementations. `test/e2e-non-root-smoke.sh`, run by `pr-self-hosted.yaml`, retains the entrypoint
+check under `no-new-privileges`.
+
 ## Platform Evidence
 
 `.github/workflows/platform-vitest-main.yaml` publishes the `CI / Platform Compatibility` workflow.

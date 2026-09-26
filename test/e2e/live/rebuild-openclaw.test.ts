@@ -79,7 +79,7 @@ test(
       boundary: "exact managed OpenClaw rebuild state restoration and native readiness",
       contracts: [
         "rebuild uses the published exact managed image instead of constructing a stale base",
-        "workspace state and a native user-installed plugin survive the rebuild",
+        "workspace state, native configuration, and a native user-installed plugin survive the rebuild",
         "the native OpenClaw health endpoint is ready after restore",
         "Docker Error-state recovery preserves workspace and native plugin state",
       ],
@@ -124,6 +124,8 @@ test(
       trustedSandboxShellScript(
         [
           `umask 077; mkdir -p /sandbox/.openclaw/workspace; printf '%s\\n' '${marker}' > /sandbox/.openclaw/workspace/.rebuild-state-marker; sync`,
+          "HOME=/sandbox openclaw config set agents.defaults.timeoutSeconds 119",
+          "HOME=/sandbox openclaw config validate",
           nativePluginInstallScript(),
         ].join("\n"),
       ),
@@ -150,7 +152,7 @@ test(
       const read = await sandbox.execShell(
         SANDBOX_NAME,
         trustedSandboxShellScript(
-          'marker="$(cat /sandbox/.openclaw/workspace/.rebuild-state-marker)"; HOME=/sandbox openclaw plugins inspect e2e-rebuild-plugin --runtime --json >/dev/null; printf "%s\\n" "$marker"',
+          'marker="$(cat /sandbox/.openclaw/workspace/.rebuild-state-marker)"; timeout="$(HOME=/sandbox openclaw config get agents.defaults.timeoutSeconds --json)"; HOME=/sandbox openclaw plugins inspect e2e-rebuild-plugin --runtime --json >/dev/null; printf "%s\\n%s\\n" "$marker" "$timeout"',
         ),
         {
           artifactName: `${artifactPrefix}-read-marker`,
@@ -159,7 +161,7 @@ test(
         },
       );
       assertExitZero(read, "read restored OpenClaw marker");
-      expect(read.stdout.trim(), resultText(read)).toBe(marker);
+      expect(read.stdout.trim(), resultText(read)).toBe(`${marker}\n119`);
     };
 
     progress.phase("rebuild the sandbox");
@@ -184,6 +186,7 @@ test(
       id: "rebuild-openclaw",
       status: "passed",
       stateRestored: true,
+      nativeConfigurationRestored: true,
       nativeReady: true,
       staleBaseConstructed: false,
     });

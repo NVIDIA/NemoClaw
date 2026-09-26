@@ -31,9 +31,9 @@ import { OnboardRestoreSnapshotDriftError } from "./session-bootstrap";
 const fixtures: string[] = [];
 
 beforeEach(() => {
-  vi.spyOn(restoreWindow, "beginUnregisteredOpenClawPostRestoreDoctor").mockResolvedValue({
+  vi.spyOn(restoreWindow, "beginUnregisteredOpenClawBackupQuiesce").mockResolvedValue({
     ok: true,
-    window: { sandboxName: "spark-box" },
+    window: { sandboxName: "spark-box", kind: "backup" },
   });
   vi.spyOn(restoreWindow, "finishUnregisteredOpenClawPostRestoreDoctor").mockResolvedValue({
     ok: true,
@@ -814,15 +814,13 @@ describe("created OpenClaw sandbox finalization", () => {
 
   it("restores through a revalidated target row before publishing it (#10546)", async () => {
     const order: string[] = [];
-    vi.mocked(restoreWindow.beginUnregisteredOpenClawPostRestoreDoctor).mockImplementation(
-      async () => {
-        order.push("doctor-begin");
-        return { ok: true, window: { sandboxName: "openclaw" } };
-      },
-    );
+    vi.mocked(restoreWindow.beginUnregisteredOpenClawBackupQuiesce).mockImplementation(async () => {
+      order.push("maintenance-begin");
+      return { ok: true, window: { sandboxName: "openclaw", kind: "backup" } };
+    });
     vi.mocked(restoreWindow.finishUnregisteredOpenClawPostRestoreDoctor).mockImplementation(
       async () => {
-        order.push("doctor-finish");
+        order.push("native-start");
         return { ok: true };
       },
     );
@@ -883,10 +881,10 @@ describe("created OpenClaw sandbox finalization", () => {
     expect(result).toBe(publishedTarget);
     expect(order).toEqual([
       "prepare",
-      "doctor-begin",
+      "maintenance-begin",
       "restore",
       "revalidate",
-      "doctor-finish",
+      "native-start",
       "revalidate",
       "register",
     ]);

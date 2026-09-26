@@ -190,7 +190,10 @@ describe("OpenClaw MCP partial-mutation recovery", () => {
 
     expect(mocks.register).toHaveBeenCalledTimes(2);
     expect(mocks.reload).toHaveBeenCalledOnce();
-    expect(mocks.reload).toHaveBeenCalledWith("alpha", ["openclaw-config", "openclaw-config"]);
+    expect(mocks.reload).toHaveBeenCalledWith("alpha", ["openclaw-config", "openclaw-config"], {
+      gatewayName: "nemoclaw",
+      workspace: "default",
+    });
   });
 
   it("restarts an unchanged Hermes adapter through the authenticated supervisor", async () => {
@@ -224,13 +227,39 @@ describe("OpenClaw MCP partial-mutation recovery", () => {
   });
 
   it("reloads every attempted OpenClaw restoration mutation before propagating failure", async () => {
-    await expect(restoreExistingMcpBridgeRuntime("alpha", entries)).rejects.toThrow(
-      "post-write verification failed",
-    );
+    const runtimeSelection = {
+      gatewayName: "recorded-gateway",
+      workspace: "recorded-workspace",
+      localTlsDir: "/recorded/tls",
+    };
+    vi.stubEnv("OPENSHELL_GATEWAY", "other-gateway");
+    await expect(
+      restoreExistingMcpBridgeRuntime("alpha", entries, { runtimeSelection }),
+    ).rejects.toThrow("post-write verification failed");
 
     expect(mocks.register).toHaveBeenCalledTimes(2);
     expect(mocks.reload).toHaveBeenCalledOnce();
-    expect(mocks.reload).toHaveBeenCalledWith("alpha", ["openclaw-config", "openclaw-config"]);
+    expect(mocks.reload).toHaveBeenCalledWith(
+      "alpha",
+      ["openclaw-config", "openclaw-config"],
+      runtimeSelection,
+    );
+  });
+
+  it("reloads successful restoration using its recorded runtime", async () => {
+    const runtimeSelection = {
+      gatewayName: "recorded-gateway",
+      workspace: "recorded-workspace",
+      localTlsDir: "/recorded/tls",
+    };
+    vi.stubEnv("OPENSHELL_GATEWAY", "other-gateway");
+    mocks.register.mockReset().mockResolvedValue(undefined);
+    await restoreExistingMcpBridgeRuntime("alpha", entries, { runtimeSelection });
+    expect(mocks.reload).toHaveBeenCalledExactlyOnceWith(
+      "alpha",
+      ["openclaw-config", "openclaw-config"],
+      runtimeSelection,
+    );
   });
 
   it("requires current Hermes mutation capability before replacement restore", async () => {

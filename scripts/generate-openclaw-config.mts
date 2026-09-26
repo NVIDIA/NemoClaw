@@ -83,7 +83,7 @@ const MANAGED_INFERENCE_HOSTNAME = "inference.local";
 // NemoClaw hands off this config.
 // NemoClaw does not own that runtime, so this is a generator-side mitigation,
 // not a source fix.
-// The runtime-overrides E2E validates this object with the pinned OpenClaw CLI;
+// The managed-image security E2E loads this value through the pinned OpenClaw CLI;
 // that does not prove live token reduction, so keep #4781 open. Remove this
 // override only after a newer pinned OpenClaw runtime has managed-inference
 // regression evidence that `/compact` completes and leaves a no-larger active

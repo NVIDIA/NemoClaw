@@ -678,9 +678,7 @@ COPY scripts/lib/entrypoint-env-wrapper.sh /usr/local/lib/nemoclaw/entrypoint-en
 COPY scripts/lib/sandbox-rlimits.sh /usr/local/lib/nemoclaw/sandbox-rlimits.sh
 COPY scripts/lib/openclaw_device_approval_policy.py /usr/local/lib/nemoclaw/openclaw_device_approval_policy.py
 COPY scripts/lib/openclaw_pairing_state.py /usr/local/lib/nemoclaw/openclaw_pairing_state.py
-COPY scripts/lib/normalize_mutable_config_perms.py /usr/local/lib/nemoclaw/normalize_mutable_config_perms.py
 COPY scripts/lib/refresh-openclaw-wechat-placeholder.py /usr/local/lib/nemoclaw/refresh-openclaw-wechat-placeholder.py
-COPY scripts/openclaw-config-guard.py /usr/local/lib/nemoclaw/openclaw-config-guard.py
 COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start
 COPY scripts/managed-startup-hold.sh /usr/local/bin/nemoclaw-managed-startup-hold
 COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/
@@ -1760,7 +1758,10 @@ COPY scripts/openclaw-cli-wrapper.sh /usr/local/lib/nemoclaw/openclaw-cli-wrappe
 RUN rm -f /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/.bin/openclaw \
     && install -o root -g root -m 0755 \
         /usr/local/lib/nemoclaw/openclaw-cli-wrapper.sh \
-        /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/.bin/openclaw
+        /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/.bin/openclaw \
+    && node -e 'const JSON5=require("/usr/local/lib/node_modules/openclaw/node_modules/json5"); if (typeof JSON5.parse !== "function") process.exit(1)' \
+    && openclaw_json5_unsafe="$(find -L /usr/local/lib/node_modules/openclaw/node_modules/json5 \( ! -user root -o -perm /022 \) -print -quit)" \
+    && test -z "$openclaw_json5_unsafe"
 
 WORKDIR /sandbox
 RUN test "$(id -u sandbox):$(id -g sandbox):$(pwd)" = "998:998:/sandbox" \
@@ -2009,13 +2010,10 @@ RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \
         /scripts/validate-openclaw-tool-search.mts /src /src/lib \
     && chmod 444 /src/lib/*.ts \
         /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh \
-    && chown root:root /usr/local/lib/nemoclaw/openclaw-config-guard.py \
     && chmod 444 /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh \
         /usr/local/lib/nemoclaw/sandbox-rlimits.sh \
     && chmod 644 /usr/local/lib/nemoclaw/openclaw_device_approval_policy.py \
         /usr/local/lib/nemoclaw/openclaw_pairing_state.py \
-    && chmod 555 /usr/local/lib/nemoclaw/openclaw-config-guard.py \
-        /usr/local/lib/nemoclaw/normalize_mutable_config_perms.py \
     && if [ -d /usr/local/lib/nemoclaw/preloads-compiled-channels ]; then \
         find /usr/local/lib/nemoclaw/preloads-compiled-channels -path '*/runtime/*.js' -type f \
             -exec sh -c 'for file do cp "$file" "/usr/local/lib/nemoclaw/preloads/$(basename "$file")"; done' sh {} +; \
@@ -2280,10 +2278,11 @@ RUN if id gateway >/dev/null 2>&1 && id sandbox >/dev/null 2>&1; then \
         fi; \
     fi
 
-# Keep the image readable to the root entrypoint after capabilities are dropped.
-# Current base images already have a unified .openclaw tree. Avoid walking
-# plugin-runtime-deps on every build; only fall back to the broad repair when
-# the stale .openclaw-data migration path actually ran.
+# Keep the image readable to the root entrypoint. Current bases have a unified .openclaw tree.
+# Avoid walking plugin-runtime-deps on every build; only fall back to broad repair when
+# the stale .openclaw-data migration path actually ran. The sandbox-user image
+# starts with OpenClaw's native private modes. Root-mode images retain shared
+# access for the separate gateway identity.
 RUN set -eu; \
     if [ -e /tmp/nemoclaw-legacy-openclaw-layout ]; then \
         chown -R sandbox:sandbox /sandbox/.openclaw; \
@@ -2295,7 +2294,13 @@ RUN set -eu; \
             /sandbox/.openclaw \
             /sandbox/.openclaw/openclaw.json \
             /sandbox/.openclaw/plugin-runtime-deps; \
-        chmod 2770 /sandbox/.openclaw /sandbox/.openclaw/plugin-runtime-deps; \
+    fi; \
+    chmod 2770 /sandbox/.openclaw/plugin-runtime-deps; \
+    if [ "$NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER" = "sandbox" ]; then \
+        chmod 700 /sandbox/.openclaw; \
+        chmod 600 /sandbox/.openclaw/openclaw.json; \
+    else \
+        chmod 2770 /sandbox/.openclaw; \
         chmod 660 /sandbox/.openclaw/openclaw.json; \
     fi
 
@@ -2338,11 +2343,6 @@ RUN chmod 444 /usr/local/lib/nemoclaw/sandbox-rlimits.sh \
     && mv /etc/bash.bashrc.new /etc/bash.bashrc \
     && chmod 444 /etc/bash.bashrc
 
-# Pin config hash at build time so the entrypoint can verify integrity.
-RUN sha256sum /sandbox/.openclaw/openclaw.json > /sandbox/.openclaw/.config-hash \
-    && chmod 660 /sandbox/.openclaw/.config-hash \
-    && chown sandbox:sandbox /sandbox/.openclaw/.config-hash
-
 # DAC-protect .nemoclaw directory: /sandbox/.nemoclaw is Landlock read_write
 # (for plugin state/config), but the parent and blueprints are immutable at
 # runtime. Root ownership on the parent prevents the agent from renaming or
@@ -2370,7 +2370,7 @@ RUN chown root:root /sandbox/.nemoclaw \
 RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]; then \
         chmod -R a+rwX /sandbox/.openclaw; \
         find /sandbox/.openclaw -type d -exec chmod a+rwx {} +; \
-        chmod a+rw /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash; \
+        chmod a+rw /sandbox/.openclaw/openclaw.json; \
         for p in /sandbox/.nemoclaw/state /sandbox/.nemoclaw/migration /sandbox/.nemoclaw/snapshots /sandbox/.nemoclaw/staging; do \
             chmod -R a+rwX "$p"; \
             find "$p" -type d -exec chmod a+rwx {} +; \

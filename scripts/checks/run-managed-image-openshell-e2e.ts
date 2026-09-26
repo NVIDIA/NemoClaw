@@ -527,7 +527,6 @@ export function assertOpenClawHeartbeatStart(
 export function managedOpenClawHeartbeatProbe(
   configPath: string = managedConfigPath("openclaw"),
   nodeExecutable = "/usr/local/bin/node",
-  sha256sumExecutable = "sha256sum",
 ): string {
   const shellQuote = (value: string): string => `'${value.replace(/'/gu, `'\\''`)}'`;
   const configProbe = [
@@ -539,11 +538,7 @@ export function managedOpenClawHeartbeatProbe(
     shellQuote(configPath),
     shellQuote(MANAGED_STARTUP_E2E_OPENCLAW_HEARTBEAT_EVERY),
   ].join(" ");
-  return [
-    configProbe,
-    `cd ${shellQuote(path.dirname(configPath))}`,
-    `${shellQuote(sha256sumExecutable)} --check .config-hash >/dev/null`,
-  ].join(" && ");
+  return configProbe;
 }
 
 export function managedImageOpenShellProbe(
@@ -589,12 +584,7 @@ export function managedImageOpenShellProbe(
       `grep -F ${JSON.stringify(model)} ${JSON.stringify(managedConfigPath(agent))} >/dev/null`,
     ),
     ...(agent === "openclaw"
-      ? [
-          probeStep(
-            "OpenClaw managed isolated heartbeat and configuration hash",
-            managedOpenClawHeartbeatProbe(),
-          ),
-        ]
+      ? [probeStep("OpenClaw managed isolated heartbeat", managedOpenClawHeartbeatProbe())]
       : []),
     probeStep(
       "managed runtime environment must not be a symbolic link",

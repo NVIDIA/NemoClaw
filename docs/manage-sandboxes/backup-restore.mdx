@@ -54,6 +54,12 @@ Before NemoClaw marks a snapshot complete, it strips recognized credential value
 
 Dependency names in lockfile maps do not count as credential fields. NemoClaw also preserves valid, credential-free `node_modules/**/package.json` manifests byte for byte because dependency names can match credential field names. It omits an installed package manifest when the file contains invalid JSON, a credential or authentication field, a provider-shaped secret, or a credential-bearing URL. It continues to sanitize configuration and `.env` files inside installed dependency trees. It preserves OpenShell credential placeholders so rebuild can reattach the host-side provider. If NemoClaw cannot sanitize a copied configuration or environment file, it omits that file from the snapshot. If it cannot remove the unsafe file, snapshot creation returns an error. It deletes the incomplete backup when cleanup succeeds and reports when the backup remains. This sanitization uses an isolated `python3` helper on POSIX hosts to keep reads, replacements, and removals anchored to opened directory descriptors. If a copied file or parent directory changes identity during the operation, snapshot creation fails closed instead of following the changed path.
 
+<AgentOnly variant="openclaw">
+  NemoClaw parses native `openclaw.json` as JSON5 and serializes it as standard JSON before it
+  stores the sanitized snapshot copy. JSON5 comments and formatting do not survive snapshot
+  creation, so a credential written only in a comment is not retained.
+</AgentOnly>
+
 <AgentOnly variant="hermes">
 A previous release sanitized dependency lockfiles and installed package manifests.
 It replaced package versions in the Hermes WhatsApp bridge with the `[STRIPPED_BY_MIGRATION]` marker and left a tree that `npm install` rejects.
@@ -91,7 +97,9 @@ Snapshot clone reads the source sandbox policy from OpenShell and passes it to d
 
 The target sandbox's current agent manifest remains authoritative for directory and state-file restore behavior. NemoClaw rejects the restore when the snapshot's agent, config directory, any snapshot directory, state-file path, or state-file strategy conflicts with that manifest. Restore limits directory cleanup to state directories authorized by both the snapshot and the current manifest. It preserves target-only directories and directories whose backup failed.
 
-For managed images, NemoClaw applies the current manifest's managed config merge rules by default and does not fall back to whole-file replacement. For Deep Agents targets, whole-file config replacement is limited to sandboxes created from a custom Dockerfile.
+For OpenClaw, NemoClaw restores the complete credential-sanitized native config file.
+For other managed images, NemoClaw applies the current manifest's managed config merge rules and does not fall back to whole-file replacement.
+For Deep Agents targets, whole-file config replacement is limited to sandboxes created from a custom Dockerfile.
 
 ## Create and List Snapshots
 
@@ -123,6 +131,16 @@ The state-file-presence check does not exclude an otherwise complete legacy snap
 
 ## Restore a Snapshot
 
+<AgentOnly variant="openclaw">
+An in-place OpenClaw restore stops the sandbox before it changes state.
+This interrupts active agent work.
+After restored state is present, NemoClaw runs `openclaw doctor --fix` while the gateway remains held down, then releases the maintenance window for one native OpenClaw start.
+If restore fails after maintenance begins, the CLI reports whether the sandbox is stopped or its running state could not be verified.
+For a verified stopped sandbox, run `$$nemoclaw my-assistant start`.
+For an unverified running state, run `$$nemoclaw my-assistant stop`, then `$$nemoclaw my-assistant start`.
+Verify that the sandbox is ready, then retry the same snapshot restore command.
+</AgentOnly>
+
 Restore the latest snapshot:
 
 ```bash
@@ -137,7 +155,8 @@ $$nemoclaw my-assistant snapshot restore before-upgrade
 $$nemoclaw my-assistant snapshot restore 2026-04-14T09-40-09-760Z
 ```
 
-In-place restore does not mutate the OpenShell policy. Cross-sandbox clone reads the source live policy and uses it only as the destination creation handoff.
+In-place restore does not mutate the OpenShell policy.
+Cross-sandbox clone reads the source live policy and uses it only as the destination creation handoff.
 
 <AgentOnly variant="hermes">
 A running Hermes gateway keeps serving its pre-restore state databases until it reopens them.
@@ -200,9 +219,11 @@ For dashboard-enabled agents, NemoClaw allocates the destination sandbox its own
 </AgentOnly>
 
 <AgentOnly variant="openclaw">
-After NemoClaw creates the destination, it waits for the managed OpenClaw supervisor to pass a bounded readiness check before it applies snapshot state.
-If the check fails, the command leaves the destination registered without restored snapshot state and exits nonzero.
-Correct the reported supervisor failure, then run `$$nemoclaw <destination> destroy` or rerun the restore with `--force`.
+After NemoClaw creates the destination, it stops the sandbox and holds its OpenClaw gateway down while it restores state and runs `openclaw doctor --fix`.
+It then releases the maintenance window for one native OpenClaw start.
+If restoration or doctor fails, NemoClaw attempts to stop the destination and reports whether that stop was verified.
+After correcting the reported failure, retry with a new clone name.
+The incomplete clone remains registered; inspect it before deletion or replacement with `--force`.
 </AgentOnly>
 
 The force-overwrite path revalidates the exact destination before deletion and creates the same-name replacement only after deletion succeeds.
@@ -213,9 +234,14 @@ The `$$nemoclaw <name> rebuild` command uses the same snapshot mechanism automat
 
 <AgentOnly variant="openclaw">
 Snapshot restore performs a targeted repair for legacy `.openclaw-data` symlinks that older images created.
-Snapshots also preserve user-owned `openclaw.json` settings.
-
-During rebuild or restore, NemoClaw merges those settings with the freshly generated runtime config so current provider placeholders, messaging enablement, and gateway state win over stale snapshot values. If the restored config cannot be parsed or applied safely, NemoClaw stops the restore instead of replacing the generated config with an unsafe fallback.
+Snapshots preserve the complete credential-sanitized `openclaw.json` file.
+Rebuild and restore replace the generated file with that native backup instead of reconstructing selected settings.
+This preserves OpenClaw-owned providers, tools, plugins, hooks, cron jobs, and gateway settings.
+During rebuild, NemoClaw then reapplies the entries owned by the current host-side messaging plan, so restored native channel values do not replace that plan.
+Use `$$nemoclaw <sandbox> channels` commands to change messaging channels.
+If the config cannot be restored safely, NemoClaw stops the restore instead of applying a partial fallback.
+Restore does not change OpenShell policy, credential bindings, or the host-side inference route.
+Reconcile those host resources when the restored configuration expects different values, then restart the gateway when OpenClaw requires it.
 
 OpenClaw's device identity keys and paired-device tokens are intentionally excluded from snapshots because backup sanitization scrubs them beyond use. Snapshot state replacement does not overwrite the destination sandbox's gateway pairing files, even when an older snapshot still contains them. After a cross-sandbox restore creates the destination, NemoClaw establishes gateway pairing and verifies it with an authenticated agent run. If verification fails, the restored state remains in the destination and the command exits nonzero. Run `$$nemoclaw <destination> connect` to retry pairing before you run an agent. OpenClaw regenerates its device identity on demand.
 

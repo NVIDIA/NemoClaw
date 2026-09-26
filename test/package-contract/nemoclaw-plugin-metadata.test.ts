@@ -81,9 +81,36 @@ describe("packed NemoClaw plugin metadata", () => {
     const pluginModule = await import(pathToFileURL(extensionPath).href);
     expect(pluginModule.default).toBeTypeOf("function");
     const { api, registrations } = createMinimumOpenClawPluginApi();
+    api.config = {
+      agents: { defaults: { model: { primary: "inference/nvidia/package-model" } } },
+      models: {
+        providers: {
+          inference: {
+            baseUrl: "https://inference.local/v1",
+            apiKey: "${PACKAGE_INFERENCE_KEY}",
+            models: [{ id: "nvidia/package-model", contextWindow: 64000, maxTokens: 4000 }],
+          },
+        },
+      },
+    };
     expect(() => pluginModule.default(api)).not.toThrow();
     expect(registrations.commands).toEqual([expect.objectContaining({ name: "nemoclaw" })]);
-    expect(registrations.providers).toEqual([expect.objectContaining({ id: "inference" })]);
+    expect(registrations.providers).toEqual([
+      expect.objectContaining({
+        id: "inference",
+        envVars: ["PACKAGE_INFERENCE_KEY"],
+        models: {
+          chat: [
+            {
+              id: "inference/nvidia/package-model",
+              label: "nvidia/package-model",
+              contextWindow: 64000,
+              maxOutput: 4000,
+            },
+          ],
+        },
+      }),
+    ]);
     expect(registrations.hookNames).toEqual(
       expect.arrayContaining(["before_prompt_build", "before_tool_call"]),
     );
@@ -108,6 +135,20 @@ describe("packed NemoClaw plugin metadata", () => {
     expect(gatewayMinimum).toEqual(minimumHostApi);
     expect(compareRelease(buildVersion, pluginApiMinimum)).toBeGreaterThanOrEqual(0);
     expect(compareRelease(buildVersion, gatewayMinimum)).toBeGreaterThanOrEqual(0);
+  });
+
+  it("registers commands and hooks without a fallback provider when native primary is absent", async () => {
+    const packageJson = readPluginPackage();
+    const [extension] = requireStringArray(packageJson.openclaw?.extensions, "openclaw.extensions");
+    const pluginModule = await import(pathToFileURL(path.join(pluginRoot, extension!)).href);
+    const { api, registrations } = createMinimumOpenClawPluginApi();
+
+    expect(() => pluginModule.default(api)).not.toThrow();
+    expect(registrations.providers).toEqual([]);
+    expect(registrations.commands).toEqual([expect.objectContaining({ name: "nemoclaw" })]);
+    expect(registrations.hookNames).toEqual(
+      expect.arrayContaining(["before_prompt_build", "before_tool_call"]),
+    );
   });
 
   it("includes every declared extension in the npm package", () => {

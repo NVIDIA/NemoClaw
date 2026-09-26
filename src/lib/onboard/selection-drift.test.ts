@@ -12,6 +12,7 @@ import {
   getSelectionDrift,
   readSandboxSelectionConfig,
 } from "./selection-drift";
+import { requiresSelectionRecreate } from "./dcode-selection-drift";
 
 const tmpRoots: string[] = [];
 
@@ -28,6 +29,23 @@ afterEach(() => {
 });
 
 describe("selection drift helpers", () => {
+  it("preserves native OpenClaw model edits when the requested onboarding selection is unchanged", () => {
+    const runOpenshell = vi.fn((args: string[]) => {
+      fs.writeFileSync(
+        path.join(args[4], "config.json"),
+        JSON.stringify({ provider: "compatible-endpoint", model: "model-a" }),
+      );
+      return { status: 0 };
+    });
+    expect(
+      getSelectionDrift("alpha", "compatible-endpoint", "model-a", { runOpenshell }),
+    ).toMatchObject({ changed: false, unknown: false });
+    expect(runOpenshell).toHaveBeenCalledExactlyOnceWith(
+      ["sandbox", "download", "alpha", "/sandbox/.nemoclaw/config.json", expect.any(String)],
+      { ignoreError: true, stdio: ["ignore", "ignore", "ignore"] },
+    );
+  });
+
   it("finds nested config.json files", () => {
     const root = tmpRoot();
     const nested = path.join(root, "sandbox", ".nemoclaw");
@@ -82,6 +100,22 @@ describe("selection drift helpers", () => {
     expect(fs.existsSync(String(downloadedParent))).toBe(false);
   });
 
+  it.each([
+    { provider: "inference", model: "model-a\u001b]52;c;attack\u0007" },
+    { provider: "inference\nforged-output", model: "model-a" },
+    { provider: "inference", model: "a".repeat(513) },
+    { provider: "inference", model: "" },
+    { provider: "inference", model: 42 },
+  ])("rejects unsafe or invalid sandbox-owned selection state: %j", (selection) => {
+    const runOpenshell = vi.fn((args: string[]) => {
+      fs.writeFileSync(path.join(args[4], "config.json"), JSON.stringify(selection));
+      return { status: 0 };
+    });
+
+    expect(readSandboxSelectionConfig("alpha", { runOpenshell })).toBeNull();
+    expect(fs.existsSync(runOpenshell.mock.calls[0][0][4])).toBe(false);
+  });
+
   it("reports unknown drift when no readable selection config exists", () => {
     expect(
       getSelectionDrift("alpha", "compatible-endpoint", "model-a", {
@@ -93,6 +127,8 @@ describe("selection drift helpers", () => {
       modelChanged: false,
       existingProvider: null,
       existingModel: null,
+      requestedProvider: "compatible-endpoint",
+      requestedModel: "model-a",
       unknown: true,
     });
   });
@@ -115,7 +151,43 @@ describe("selection drift helpers", () => {
       modelChanged: true,
       existingProvider: "old-provider",
       existingModel: "old-model",
+      requestedProvider: "new-provider",
+      requestedModel: "new-model",
       unknown: false,
     });
   });
+
+  it.each([
+    ["other-provider", "model-a", true, false],
+    ["compatible-endpoint", "model-b", false, true],
+  ] as const)(
+    "requires recreation for an explicit selection change to %s/%s",
+    (provider, model, providerChanged, modelChanged) => {
+      const drift = getSelectionDrift("alpha", provider, model, {
+        runOpenshell: (args) => {
+          fs.writeFileSync(
+            path.join(args[4], "config.json"),
+            JSON.stringify({ provider: "compatible-endpoint", model: "model-a" }),
+          );
+          return { status: 0 };
+        },
+      });
+      expect(drift).toMatchObject({ changed: true, providerChanged, modelChanged, unknown: false });
+      expect(requiresSelectionRecreate(drift, false)).toBe(true);
+    },
+  );
+
+  it.each(["not json", "{}"])(
+    "does not authorize recreation without a readable selection record: %s",
+    (record) => {
+      const drift = getSelectionDrift("alpha", "compatible-endpoint", "model-a", {
+        runOpenshell: (args) => {
+          fs.writeFileSync(path.join(args[4], "config.json"), record);
+          return { status: 0 };
+        },
+      });
+      expect(drift).toMatchObject({ changed: true, unknown: true });
+      expect(requiresSelectionRecreate(drift, false)).toBe(false);
+    },
+  );
 });

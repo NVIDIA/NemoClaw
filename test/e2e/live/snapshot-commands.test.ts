@@ -45,6 +45,7 @@ const OPENCLAW_WORKSPACE_PATH = "/sandbox/.openclaw/workspace";
 const MARKER_FILE = `${OPENCLAW_WORKSPACE_PATH}/snapshot-marker.txt`;
 const SNAPSHOT_NAME = "lifecycle";
 const BASELINE_EXCLUSION_KEY = "openclaw_docs";
+const NATIVE_GATEWAY_ORIGIN = "https://snapshot-native.example.test";
 const LIVE_TIMEOUT_MS = 36 * 60_000;
 const INFERENCE_API_KEY = "nvapi-snapshot-commands-fixture-credential";
 const INFERENCE_MODEL = "snapshot-commands-model";
@@ -116,6 +117,47 @@ async function expectSandboxFileContent(
   expect(result.stdout.trim()).toBe(expected);
 }
 
+async function inspectNativeGatewayOrigin(
+  sandbox: SandboxClient,
+  sandboxName: string,
+  artifactLabel: string,
+): Promise<{ ok: boolean; diagnostic: string }> {
+  const nativeConfig = await sandbox.exec(
+    sandboxName,
+    [
+      "/usr/bin/env",
+      "HOME=/sandbox",
+      "/usr/local/bin/openclaw",
+      "config",
+      "get",
+      "gateway.controlUi.allowedOrigins",
+      "--json",
+    ],
+    {
+      artifactName: `phase-4-read-${artifactLabel}-native-gateway-origins`,
+      env: commandEnv(undefined, sandboxName),
+      timeoutMs: 30_000,
+    },
+  );
+  const parsedOrigins = nativeConfig.exitCode === 0 ? JSON.parse(nativeConfig.stdout) : null;
+  const validateConfig = await sandbox.exec(
+    sandboxName,
+    ["/usr/bin/env", "HOME=/sandbox", "/usr/local/bin/openclaw", "config", "validate"],
+    {
+      artifactName: `phase-4-validate-${artifactLabel}-native-gateway-config`,
+      env: commandEnv(undefined, sandboxName),
+      timeoutMs: 30_000,
+    },
+  );
+  return {
+    ok:
+      Array.isArray(parsedOrigins) &&
+      parsedOrigins.some((origin) => origin === NATIVE_GATEWAY_ORIGIN) &&
+      validateConfig.exitCode === 0,
+    diagnostic: [nativeConfig, validateConfig].map(resultText).join("\n"),
+  };
+}
+
 async function expectAuthenticatedGatewayPairing(
   sandbox: SandboxClient,
   sandboxName: string,
@@ -123,6 +165,7 @@ async function expectAuthenticatedGatewayPairing(
   artifactName: string,
 ): Promise<string> {
   const sessionId = `snapshot-restore-verify-${randomUUID()}`;
+  const nativeConfig = await inspectNativeGatewayOrigin(sandbox, sandboxName, "clone");
   const result = await sandbox.execShell(
     sandboxName,
     trustedSandboxShellScript(`
@@ -139,7 +182,10 @@ openclaw agent --agent main --json -m "ping" \
       timeoutMs: 60_000,
     },
   );
-  expect(classifySnapshotGatewayProbe(result)).toBe("authenticated");
+  expect(
+    classifySnapshotGatewayProbe(result) === "authenticated" && nativeConfig.ok,
+    `${resultText(result)}\n${nativeConfig.diagnostic}`,
+  ).toBe(true);
   return sessionId;
 }
 
@@ -195,15 +241,16 @@ async function expectLiveBaselineExcluded(
 }
 
 test(
-  "snapshot commands restore source state without credential leaks and verify clone behavior for the selected workload source",
+  "snapshot commands restore native state without credential leaks and verify clone behavior for the selected workload source",
   {
     timeout: LIVE_TIMEOUT_MS,
     meta: {
       e2ePhases: [
         "confirm the selected runtime and start hermetic inference",
         "onboard the snapshot sandbox",
+        "write workspace and native gateway configuration",
         "create one snapshot",
-        "destroy, freshly onboard, and restore workspace state",
+        "destroy, freshly onboard, and restore native state",
         "restore the snapshot into a clone",
         "verify the restored clone state and gateway pairing",
         "back up credential state without secret leaks",
@@ -220,7 +267,7 @@ test(
       contracts: [
         "install.sh onboards a live OpenClaw sandbox",
         "snapshot create captures workspace state without credential material",
-        "snapshot restore recovers workspace state after destroy and fresh same-name onboarding",
+        "snapshot restore recovers workspace and complete credential-sanitized native configuration after destroy and fresh same-name onboarding",
         "snapshot restore preserves the destination OpenShell policy",
         "legacy snapshot restore --to carries the source live OpenShell policy into the clone; managed snapshots refuse before destination effects until clone rebind is activated",
         "a restored legacy clone owns its authenticated gateway session",
@@ -315,6 +362,7 @@ test(
     expect(excludeBaseline.exitCode, resultText(excludeBaseline)).toBe(0);
     await expectLiveBaselineExcluded(sandbox, SANDBOX_NAME, "phase-2-after-exclude");
 
+    progress.phase("write workspace and native gateway configuration");
     const markerContent = `SNAPSHOT_E2E_${Date.now()}`;
 
     const writeMarker = await sandbox.exec(
@@ -333,7 +381,64 @@ printf '%s' ${JSON.stringify(markerContent)} > ${JSON.stringify(MARKER_FILE)}`,
         timeoutMs: 60_000,
       },
     );
-    expect(writeMarker.exitCode, resultText(writeMarker)).toBe(0);
+    const originalOrigins = await sandbox.exec(
+      SANDBOX_NAME,
+      [
+        "/usr/bin/env",
+        "HOME=/sandbox",
+        "/usr/local/bin/openclaw",
+        "config",
+        "get",
+        "gateway.controlUi.allowedOrigins",
+        "--json",
+      ],
+      {
+        artifactName: "phase-2-read-native-gateway-origins",
+        env: commandEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    const parsedOriginalOrigins =
+      originalOrigins.exitCode === 0 ? JSON.parse(originalOrigins.stdout) : null;
+    const updatedOrigins = Array.isArray(parsedOriginalOrigins)
+      ? [...new Set([...parsedOriginalOrigins, NATIVE_GATEWAY_ORIGIN])]
+      : null;
+    const writeNativeConfig = await sandbox.exec(
+      SANDBOX_NAME,
+      [
+        "/usr/bin/env",
+        "HOME=/sandbox",
+        "/usr/local/bin/openclaw",
+        "config",
+        "set",
+        "gateway.controlUi.allowedOrigins",
+        JSON.stringify(updatedOrigins),
+        "--strict-json",
+      ],
+      {
+        artifactName: "phase-2-write-native-gateway-origins",
+        env: commandEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    const validateNativeConfig = await sandbox.exec(
+      SANDBOX_NAME,
+      ["/usr/bin/env", "HOME=/sandbox", "/usr/local/bin/openclaw", "config", "validate"],
+      {
+        artifactName: "phase-2-validate-native-gateway-config",
+        env: commandEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    expect(
+      writeMarker.exitCode === 0 &&
+        updatedOrigins !== null &&
+        writeNativeConfig.exitCode === 0 &&
+        validateNativeConfig.exitCode === 0,
+      [writeMarker, originalOrigins, writeNativeConfig, validateNativeConfig]
+        .map(resultText)
+        .join("\n"),
+    ).toBe(true);
     await expectSandboxFileContent(
       sandbox,
       SANDBOX_NAME,
@@ -362,7 +467,7 @@ printf '%s' ${JSON.stringify(markerContent)} > ${JSON.stringify(MARKER_FILE)}`,
       process.env.E2E_WORKLOAD_SOURCE,
     );
 
-    progress.phase("destroy, freshly onboard, and restore workspace state");
+    progress.phase("destroy, freshly onboard, and restore native state");
     const destroySource = await host.command("nemoclaw", [SANDBOX_NAME, "destroy", "--yes"], {
       artifactName: "phase-4-destroy-source",
       env: commandEnv(),
@@ -407,10 +512,34 @@ printf '%s' ${JSON.stringify(markerContent)} > ${JSON.stringify(MARKER_FILE)}`,
         timeoutMs: 30_000,
       },
     );
+    const replacementOrigins = await sandbox.exec(
+      SANDBOX_NAME,
+      [
+        "/usr/bin/env",
+        "HOME=/sandbox",
+        "/usr/local/bin/openclaw",
+        "config",
+        "get",
+        "gateway.controlUi.allowedOrigins",
+        "--json",
+      ],
+      {
+        artifactName: "phase-4-read-fresh-native-gateway-origins",
+        env: commandEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    const parsedReplacementOrigins =
+      replacementOrigins.exitCode === 0 ? JSON.parse(replacementOrigins.stdout) : null;
+    const replacementHasNativeOrigin =
+      Array.isArray(parsedReplacementOrigins) &&
+      parsedReplacementOrigins.some((origin) => origin === NATIVE_GATEWAY_ORIGIN);
     expect(
-      replacementHasNoSnapshotMarkers.exitCode,
-      resultText(replacementHasNoSnapshotMarkers),
-    ).toBe(0);
+      replacementHasNoSnapshotMarkers.exitCode === 0 &&
+        Array.isArray(parsedReplacementOrigins) &&
+        !replacementHasNativeOrigin,
+      `${resultText(replacementHasNoSnapshotMarkers)}\n${resultText(replacementOrigins)}`,
+    ).toBe(true);
 
     const replacementRestore = await host.command(
       "nemoclaw",
@@ -421,7 +550,6 @@ printf '%s' ${JSON.stringify(markerContent)} > ${JSON.stringify(MARKER_FILE)}`,
         timeoutMs: 120_000,
       },
     );
-    expect(classifySnapshotRestoreResult(replacementRestore)).toBe("restored");
     await expectSandboxFileContent(
       sandbox,
       SANDBOX_NAME,
@@ -429,6 +557,15 @@ printf '%s' ${JSON.stringify(markerContent)} > ${JSON.stringify(MARKER_FILE)}`,
       markerContent,
       "phase-4-read-restored-source-marker",
     );
+    const restoredNativeConfig = await inspectNativeGatewayOrigin(
+      sandbox,
+      SANDBOX_NAME,
+      "restored",
+    );
+    expect(
+      classifySnapshotRestoreResult(replacementRestore) === "restored" && restoredNativeConfig.ok,
+      `${resultText(replacementRestore)}\n${restoredNativeConfig.diagnostic}`,
+    ).toBe(true);
     await expectLiveBaselineExcluded(
       sandbox,
       SANDBOX_NAME,
@@ -563,6 +700,7 @@ printf '%s' ${JSON.stringify(markerContent)} > ${JSON.stringify(MARKER_FILE)}`,
       cloneSandboxName: CLONE_SANDBOX_NAME,
       cloneRestoreResult,
       credentialSecretsExcluded: true,
+      nativeGatewayConfigurationRestored: true,
     });
   },
 );

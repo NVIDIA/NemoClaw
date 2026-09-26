@@ -65,7 +65,9 @@ Refer to [Set Up Google Chat](set-up-google-chat) for topic publishing, pull sub
 
 <AgentOnly variant="openclaw">
 Use host-side `$$nemoclaw <sandbox> channels` commands.
-Do not run `openclaw channels add` or `openclaw channels remove` inside the sandbox because NemoClaw generates `/sandbox/.openclaw/openclaw.json` at image build time, and changes inside the running container do not persist across rebuilds.
+OpenClaw owns `/sandbox/.openclaw/openclaw.json`, and NemoClaw restores the complete credential-sanitized native config across rebuilds.
+OpenShell credential bindings and policy remain host-owned.
+Use the host-side channel commands because an in-sandbox config change cannot create the matching OpenShell credential binding or policy.
 </AgentOnly>
 <AgentOnly variant="hermes">
 Use host-side `$$nemoclaw <sandbox> channels` commands.

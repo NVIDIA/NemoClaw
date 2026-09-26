@@ -6,30 +6,13 @@
 # gateway as the 'gateway' user, then drops to 'sandbox' for agent commands.
 #
 # SECURITY: The gateway runs as a separate user so the sandboxed agent cannot
-# kill it or restart it with a tampered config (CVE: fake-HOME bypass).
-# The config hash is verified at startup to detect tampering.
+# kill it or replace the supervised process (CVE: fake-HOME bypass).
 #
 # Optional env:
 #   NVIDIA_INFERENCE_API_KEY                API key for NVIDIA-hosted inference
 #   CHAT_UI_URL                   Browser origin that will access the forwarded dashboard
 #   NEMOCLAW_DISABLE_DEVICE_AUTH  Retired compatibility build input. OpenClaw 2026.9.1
 #                                 requires pairing, and NemoClaw emits no bypass key.
-#   NEMOCLAW_MODEL_OVERRIDE       Override the primary model at startup without rebuilding
-#                                 the sandbox image. Must match the model configured on
-#                                 the gateway via `openshell inference set`.
-#   NEMOCLAW_INFERENCE_API_OVERRIDE  Override the inference API type when switching between
-#                                 provider families (e.g., "anthropic-messages" or
-#                                 "openai-completions"). Only needed for cross-provider switches.
-#   NEMOCLAW_CONTEXT_WINDOW        Override the model's context window size (e.g., "32768").
-#   NEMOCLAW_MAX_TOKENS            Override the model's max output tokens (e.g., "8192").
-#   NEMOCLAW_REASONING             Set to "true" to enable reasoning mode for the model.
-#   NEMOCLAW_REASONING_EFFORT     Build-time reasoning effort ("low", "medium", or "high")
-#                                 for a compatible OpenAI endpoint. Startup preserves the
-#                                 persisted value so `inference set` changes survive restarts.
-#   NEMOCLAW_CORS_ORIGIN           Add a browser origin to allowedOrigins at startup without
-#                                 rebuilding. Useful for custom domains/ports (e.g.,
-#                                 "https://my-server.example.com:8443").
-
 set -euo pipefail
 
 _nemoclaw_capture_epoch_realtime() {
@@ -448,7 +431,7 @@ function parseConfig(text) {
     return JSON.parse(text);
   } catch (jsonError) {
     try {
-      return require("/opt/nemoclaw/node_modules/json5").parse(text);
+      return require("/usr/local/lib/node_modules/openclaw/node_modules/json5").parse(text);
     } catch {
       throw jsonError;
     }
@@ -534,223 +517,11 @@ export OPENCLAW_STATE_DIR="${_OPENCLAW_STATE_DIR}"
 export OPENCLAW_CONFIG_PATH="${_OPENCLAW_STATE_DIR}/openclaw.json"
 export OPENCLAW_OAUTH_DIR="${_OPENCLAW_CREDENTIALS_DIR}"
 
-# ── Mutable config permission normalize (#2681) ─────────────────
-# The descriptor-safe owner selects native private modes for proven same-user
-# startup. Separate gateway identities retain group access. Config recovery,
-# baseline capture, startup, and host repair use that same decision.
-resolve_mutable_config_normalizer() {
-  local normalizer="/usr/local/lib/nemoclaw/normalize_mutable_config_perms.py"
-  if [ -f "$normalizer" ]; then
-    printf '%s\n' "$normalizer"
-    return 0
-  fi
-  # A privileged repair may execute only the immutable helper installed in the
-  # image. The environment and checkout fallbacks below exist solely for
-  # non-root developer/test harnesses, where they cannot change ownership.
-  if [ "$(id -u)" -eq 0 ]; then
-    return 1
-  fi
-  if [ -n "${NEMOCLAW_MUTABLE_CONFIG_NORMALIZER:-}" ] \
-    && [ -f "${NEMOCLAW_MUTABLE_CONFIG_NORMALIZER}" ]; then
-    printf '%s\n' "${NEMOCLAW_MUTABLE_CONFIG_NORMALIZER}"
-    return 0
-  fi
-  if [ -f "scripts/lib/normalize_mutable_config_perms.py" ]; then
-    printf '%s\n' "scripts/lib/normalize_mutable_config_perms.py"
-    return 0
-  fi
-  normalizer="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/normalize_mutable_config_perms.py"
-  if [ -f "$normalizer" ]; then
-    printf '%s\n' "$normalizer"
-    return 0
-  fi
-  return 1
-}
-
-normalize_mutable_config_perms() {
-  local config_dir="/sandbox/.openclaw"
-  local operation="${1:-normalize}"
-
-  if [ "$operation" != "normalize" ] \
-    && [ "$operation" != "capture" ] \
-    && [ "$operation" != "recover" ]; then
-    printf '[SECURITY] Refusing mutable config permission normalization — invalid operation %s\n' "$operation" >&2
-    return 1
-  fi
-
-  local config_dir_uid
-  if ! config_dir_uid="$(
-    python3 -I - "$config_dir" <<'PY_CLASSIFY_MUTABLE_CONFIG'
-import os
-import stat
-import sys
-
-try:
-    metadata = os.lstat(sys.argv[1])
-except FileNotFoundError:
-    print("missing")
-    raise SystemExit(0)
-if not stat.S_ISDIR(metadata.st_mode):
-    raise SystemExit(1)
-print(metadata.st_uid)
-PY_CLASSIFY_MUTABLE_CONFIG
-  )"; then
-    printf '[SECURITY] Refusing mutable config permission normalization — descriptor-safe classification failed\n' >&2
-    return 1
-  fi
-  [ "$config_dir_uid" = "missing" ] && return 0
-  if [ "$config_dir_uid" = "0" ]; then
-    [ "$operation" = "normalize" ] || return 0
-    # Dockerfile and policy sources establish sandbox:sandbox 2770/660 as the
-    # mutable default. #6300 establishes the root-ownership/write regression,
-    # but not a broader safe-to-repair state; no in-repo producer has been
-    # identified. This compatibility path therefore accepts only the narrow
-    # root:root 0700/0600 fixture, under a sandbox:sandbox 0755 parent. That is
-    # distinct from #6047's sandbox-owned mode collapse, which the owner-UID
-    # normalizer below repairs. Every other root-owned state fails closed.
-    # Remove this path once the runtime preserves the declared ownership.
-    reclaim_collapsed_mutable_config "$config_dir" || return 1
-    return 0
-  fi
-
-  local expected_config_dir_uid expected_config_dir_gid
-  if [ "$(id -u)" -eq 0 ]; then
-    if ! expected_config_dir_uid="$(id -u sandbox)" \
-      || ! expected_config_dir_gid="$(id -g sandbox)"; then
-      printf '[SECURITY] Refusing mutable config permission normalization — sandbox identity lookup failed\n' >&2
-      return 1
-    fi
-  else
-    expected_config_dir_uid="$(id -u)"
-    expected_config_dir_gid="$(id -g)"
-  fi
-  if [ "$config_dir_uid" != "$expected_config_dir_uid" ]; then
-    printf '[SECURITY] Refusing mutable config permission normalization — config directory owner UID %s does not match sandbox UID %s\n' \
-      "$config_dir_uid" "$expected_config_dir_uid" >&2
-    return 1
-  fi
-
-  local normalizer
-  if ! normalizer="$(resolve_mutable_config_normalizer)"; then
-    printf '[SECURITY] Refusing mutable config permission normalization — trusted normalizer is missing\n' >&2
-    return 1
-  fi
-
-  # Root supervises an owner-UID child and receives the still-open config
-  # directory descriptor over a private authenticated socket. The descriptor
-  # stays pinned across the privilege boundary, so inode reuse cannot make the
-  # root baseline phase act on a substituted tree.
-  local -a normalizer_args=(
-    "$config_dir"
-    "$expected_config_dir_uid"
-    "$expected_config_dir_gid"
-  )
-  if [ "$operation" = "capture" ]; then
-    local node_binary
-    if ! node_binary="$(command -v node)" || [ -z "$node_binary" ]; then
-      printf '[config] ERROR: JSON5 baseline validator failed for openclaw.json\n' >&2
-      return 1
-    fi
-    normalizer_args+=(
-      capture
-      "$node_binary"
-      /opt/nemoclaw/node_modules/json5
-    )
-  elif [ "$operation" = "recover" ]; then
-    normalizer_args+=(recover)
-  fi
-
-  if ! python3 -I "$normalizer" "${normalizer_args[@]}"; then
-    printf '[SECURITY] Refusing mutable config permission normalization — descriptor-safe repair detected an unsafe link, race, owner, or metadata state\n' >&2
-    return 1
-  fi
-}
-
-# OpenClaw 2026.9.1 requires its startup migration checkpoint to complete
-# without warnings before the gateway reports readiness. Older NemoClaw images
-# persisted update-check.json as update polling and notification cache, and
-# older managed images created an empty exec-approvals.json placeholder. Empty
-# placeholders fail current migration parsing, while nonempty files can carry
-# real approvals and must remain for Doctor. NemoClaw pins OpenClaw in the
-# image, so discard only descriptor-pinned stable cache state and the exactly
-# empty approvals placeholder before the mandatory checkpoint.
-# Remove this repair after every supported upgrade source stops seeding the
-# cache or OpenClaw can migrate it across split users and a protected parent.
-remove_openclaw_legacy_startup_state() {
-  local config_dir="/sandbox/.openclaw"
-  if [ ! -e "$config_dir" ] && [ ! -L "$config_dir" ]; then
-    return 0
-  fi
-
-  local normalizer
-  if ! normalizer="$(resolve_mutable_config_normalizer)"; then
-    printf '[SECURITY] Refusing legacy update-check repair — trusted normalizer is missing\n' >&2
-    return 1
-  fi
-  if ! python3 -I "$normalizer" remove-legacy-update-check "$config_dir"; then
-    printf '[SECURITY] Refusing legacy update-check repair — expected a stable regular file or no file\n' >&2
-    return 1
-  fi
-  if ! python3 -I "$normalizer" remove-empty-legacy-exec-approvals "$config_dir"; then
-    printf '[SECURITY] Refusing legacy exec-approvals repair — expected a stable regular file or no file\n' >&2
-    return 1
-  fi
-}
-
-classify_openclaw_config_seal() {
-  local config_dir="$1"
-  local sandbox_uid sandbox_gid
-  if [ "$(id -u)" -eq 0 ]; then
-    sandbox_uid="$(id -u sandbox)" || return 2
-    sandbox_gid="$(id -g sandbox)" || return 2
-  else
-    sandbox_uid="$(id -u)"
-    sandbox_gid="$(id -g)"
-  fi
-  local normalizer
-  normalizer="$(resolve_mutable_config_normalizer)" || return 2
-  python3 -I "$normalizer" classify-seal \
-    "$config_dir" "$sandbox_uid" "$sandbox_gid" >/dev/null
-}
-
-reclaim_collapsed_mutable_config() {
-  local config_dir="$1"
-
-  if [ "$(id -u)" -ne 0 ]; then
-    if classify_openclaw_config_seal "$config_dir"; then
-      return 0
-    fi
-    printf '[SECURITY] Refusing mutable config reclaim — root privileges are required\n' >&2
-    return 1
-  fi
-
-  local sandbox_uid sandbox_gid
-  if ! sandbox_uid="$(id -u sandbox)" || ! sandbox_gid="$(id -g sandbox)"; then
-    printf '[SECURITY] Refusing mutable config reclaim — sandbox identity lookup failed\n' >&2
-    return 1
-  fi
-
-  local normalizer
-  if ! normalizer="$(resolve_mutable_config_normalizer)"; then
-    printf '[SECURITY] Refusing mutable config reclaim — trusted normalizer is missing\n' >&2
-    return 1
-  fi
-
-  if ! python3 -I "$normalizer" reclaim-if-unsealed "$config_dir" "$sandbox_uid" "$sandbox_gid" >/dev/null; then
-    printf '[SECURITY] Refusing mutable config reclaim — descriptor-safe reclaim detected an unsafe link, race, owner, or metadata state\n' >&2
-    return 1
-  fi
-}
-
-# Keep command signals and status intact while the descriptor-safe owner checks
-# the resulting state. Separate gateway identities still need shared access
-# after native commands tighten permissions (#4538, #6047).
 run_oneshot_command() {
   local _nemoclaw_runtime_env_file="${_RUNTIME_SHELL_ENV_FILE:-/tmp/nemoclaw-proxy-env.sh}"
   local _nemoclaw_oneshot_child_pid=""
   local _nemoclaw_oneshot_signal=""
   local _nemoclaw_oneshot_wait_rc=0
-  local _nemoclaw_oneshot_cleanup_rc=0
 
   # Bash gives asynchronous commands /dev/null stdin and an ignored SIGINT
   # when job control is off. The explicit stdin and signal reset preserve the
@@ -788,45 +559,8 @@ run_oneshot_command() {
     [ -n "$_nemoclaw_oneshot_signal" ] || break
   done
   _nemoclaw_oneshot_child_pid=""
-
-  if normalize_mutable_config_perms; then
-    _nemoclaw_oneshot_cleanup_rc=0
-  else
-    _nemoclaw_oneshot_cleanup_rc=$?
-  fi
   trap - TERM INT
-
-  if [ "$_nemoclaw_oneshot_cleanup_rc" -ne 0 ]; then
-    printf '[one-shot] command status=%s; permission cleanup status=%s; returning cleanup failure\n' \
-      "$_nemoclaw_oneshot_wait_rc" "$_nemoclaw_oneshot_cleanup_rc" >&2
-    return "$_nemoclaw_oneshot_cleanup_rc"
-  fi
   return "$_nemoclaw_oneshot_wait_rc"
-}
-
-openclaw_config_dir_owner() {
-  local config_dir="$1"
-  stat -c '%U' "$config_dir" 2>/dev/null || stat -f '%Su' "$config_dir" 2>/dev/null || echo unknown
-}
-
-prepare_openclaw_config_startup() {
-  run_openclaw_config_guard revoke-startup-ready --startup-owner || return 1
-
-  # Repair only the known #6300 root:root 0700/0600 mutable tree. Any other
-  # root-owned posture requires rebuild or recreation.
-  if [ "$(openclaw_config_dir_owner /sandbox/.openclaw)" = "root" ]; then
-    local seal_state=0
-    classify_openclaw_config_seal /sandbox/.openclaw || seal_state=$?
-    case "$seal_state" in
-      2) ;;
-      1) reclaim_collapsed_mutable_config /sandbox/.openclaw || return 1 ;;
-      *)
-        printf '[SECURITY] Existing OpenClaw config is not in the supported mutable posture. Rebuild or recreate the sandbox.\n' >&2
-        return 1
-        ;;
-    esac
-  fi
-  run_openclaw_config_guard recover --startup-owner || return 1
 }
 
 run_openclaw_config_as_owner() {
@@ -845,530 +579,8 @@ run_openclaw_config_as_owner() {
   "$@"
 }
 
-# ── Empty-config recovery and baseline (#3118) ──────────────────
-# Upstream OpenShell's `openshell inference set` (run inside the sandbox to
-# change the runtime model) can truncate /sandbox/.openclaw/openclaw.json to
-# 0 bytes when its write fails partway through. The corrupted file then
-# breaks `openclaw doctor --fix` (its own JSON5.parse crashes on empty
-# input) and any other consumer of the config.
-#
-# These two functions are NemoClaw's defensive recovery — they don't fix the
-# upstream bugs (which still need to be filed against OpenShell and OpenClaw)
-# but they let a sandbox restart restore working state instead of leaving the
-# sandbox unusable. The recovery applies only to the supported mutable config
-# posture required by the #3118 trigger.
-# Remove this recovery only after upstream writes can no longer truncate
-# openclaw.json and regression coverage proves the empty-config state cannot
-# recur at any supported inference-update boundary.
-
-# Capture a known-good copy of openclaw.json for later restore. A pristine
-# root-owned baseline is retained; a sandbox-owned candidate is replaced from
-# the exact validated active-config descriptor. Runs at root after
-# apply_model_override and apply_cors_override so the baseline reflects the
-# post-override config that the user actually started with. Refuses to capture
-# broken state (empty, whitespace-only, or unparseable input).
-write_openclaw_config_baseline() {
-  local config_dir="/sandbox/.openclaw"
-  local config_file="$config_dir/openclaw.json"
-  local baseline_file="$config_dir/openclaw.json.nemoclaw-baseline"
-
-  [ -d "$config_dir" ] || return 0
-  [ -f "$config_file" ] || return 0
-  [ "$(id -u)" -eq 0 ] || return 0
-
-  local baseline_existed=0
-  [ -e "$baseline_file" ] && baseline_existed=1
-
-  # Capture and lock through the same pinned directory descriptor used by
-  # permission normalization. The permanently dropped child validates and
-  # pins the exact active config; root copies that descriptor into a fresh
-  # inode. No root path-based cp/chown/chmod operation follows an
-  # attacker-swappable entry in the mutable directory.
-  normalize_mutable_config_perms capture || return 1
-  if [ "$baseline_existed" -eq 0 ] && [ -f "$baseline_file" ]; then
-    printf '[config] Baseline snapshot created: %s\n' "$baseline_file" >&2
-  fi
-}
-
-# Restore openclaw.json from a baseline when the active file has been
-# truncated to 0 bytes / whitespace-only. Prefers OpenClaw's own
-# openclaw.json.last-good (if it exists and is non-empty) over our
-# nemoclaw-baseline so we ride OpenClaw's recovery convention when both
-# are available. Recomputes .config-hash on success so subsequent
-# integrity checks pass.
-recover_openclaw_config_if_empty() {
-  local config_dir="/sandbox/.openclaw"
-  local config_file="$config_dir/openclaw.json"
-
-  [ -d "$config_dir" ] || return 0
-  [ -f "$config_file" ] || return 0
-
-  # The owner-identity phase pins the mutable directory and recovery source,
-  # then installs fresh sandbox-owned config/hash inodes with dir-fd-relative
-  # atomic replaces. Root never follows, writes, chowns, or chmods an existing
-  # sandbox-controlled pathname.
-  normalize_mutable_config_perms recover
-}
-
-# Refresh the mutable-default .config-hash so it matches the current
-# openclaw.json. Independent of the #3118 recovery above — this runs on
-# every start after the override pipeline to keep the hash in sync with
-# any in-flight config edits (model override, CORS override, provider
-# placeholder refresh).
-ensure_mutable_openclaw_config_hash() {
-  local config_dir="/sandbox/.openclaw"
-  local config_file="${config_dir}/openclaw.json"
-  local hash_file="${config_dir}/.config-hash"
-
-  [ -f "$config_file" ] || return 0
-  if [ -L "$config_dir" ] || [ -L "$config_file" ] || [ -L "$hash_file" ]; then
-    printf '[SECURITY] Refusing mutable config hash refresh — config directory or file path is a symlink\n' >&2
-    return 1
-  fi
-
-  # Root cannot bypass the sandbox owner's write permissions after dropping
-  # CAP_DAC_OVERRIDE, so perform the write as that owner.
-  # shellcheck disable=SC2016  # positional params are expanded by the inner sh
-  if [ "$(id -u)" -eq 0 ]; then
-    if ! /usr/bin/env -i HOME=/sandbox PATH=/usr/local/bin:/usr/bin:/bin \
-      "${STEP_DOWN_PREFIX_SANDBOX[@]}" /bin/sh -c '
-      cd "$1" || exit 1
-      /usr/bin/sha256sum openclaw.json >".config-hash" || exit 1
-    ' _ "$config_dir"; then
-      printf '[SECURITY] Failed to refresh mutable OpenClaw config hash\n' >&2
-      return 1
-    fi
-  elif ! sh -c '
-    cd "$1" || exit 1
-    /usr/bin/sha256sum openclaw.json >".config-hash" || exit 1
-  ' _ "$config_dir"; then
-    printf '[SECURITY] Failed to refresh mutable OpenClaw config hash\n' >&2
-    return 1
-  fi
-  normalize_mutable_config_perms
-}
-
-# ── Runtime model/provider override ──────────────────────────────
-# Patches openclaw.json at startup when NEMOCLAW_MODEL_OVERRIDE is set,
-# allowing model or provider changes without rebuilding the sandbox image.
-# Runs AFTER integrity check (detects build-time tampering). Recomputes
-# the config hash so future integrity checks pass.
-#
-# SECURITY: These env vars come from the host (Docker/OpenShell), not from
-# inside the sandbox. The agent cannot set them.
-# Ref: https://github.com/NVIDIA/NemoClaw/issues/759
-
-apply_model_override() {
-  # Only explicit override env vars trigger a config patch. NEMOCLAW_CONTEXT_WINDOW,
-  # NEMOCLAW_MAX_TOKENS, NEMOCLAW_REASONING, and NEMOCLAW_REASONING_EFFORT are
-  # promoted from Dockerfile build ARGs to ENV and are always set. They should only
-  # take effect when accompanied by an explicit model or API override. Reasoning
-  # effort is deliberately not replayed here: `inference set` owns the persisted
-  # runtime value, which must survive an ordinary container restart. Ref: #2653
-  [ -n "${NEMOCLAW_MODEL_OVERRIDE:-}" ] \
-    || [ -n "${NEMOCLAW_INFERENCE_API_OVERRIDE:-}" ] \
-    || return 0
-
-  # Host overrides require root startup authority.
-  if [ "$(id -u)" -ne 0 ]; then
-    printf '[SECURITY] Model/inference overrides ignored — requires root (non-root mode cannot write to config)\n' >&2
-    return 0
-  fi
-
-  local config_file="/sandbox/.openclaw/openclaw.json"
-  local hash_file="/sandbox/.openclaw/.config-hash"
-
-  # SECURITY: Refuse to write through symlinks to prevent symlink-following attacks.
-  # Legacy-layout migration rejects symlinked config paths before overrides; guard here too.
-  if [ -L "$config_file" ] || [ -L "$hash_file" ]; then
-    printf '[SECURITY] Refusing model override — config or hash path is a symlink\n' >&2
-    return 1
-  fi
-
-  local model_override="${NEMOCLAW_MODEL_OVERRIDE:-}"
-  local api_override="${NEMOCLAW_INFERENCE_API_OVERRIDE:-}"
-
-  # SECURITY: Validate inputs — reject control characters and enforce length limit.
-  if printf '%s' "$model_override" | grep -qP '[\x00-\x1f\x7f]'; then
-    printf '[SECURITY] NEMOCLAW_MODEL_OVERRIDE contains control characters — refusing\n' >&2
-    return 1
-  fi
-  if [ "${#model_override}" -gt 256 ]; then
-    printf '[SECURITY] NEMOCLAW_MODEL_OVERRIDE exceeds 256 characters — refusing\n' >&2
-    return 1
-  fi
-
-  # SECURITY: Allowlist inference API types to prevent unexpected routing.
-  if [ -n "$api_override" ]; then
-    case "$api_override" in
-      openai-completions | anthropic-messages) ;;
-      *)
-        printf '[SECURITY] NEMOCLAW_INFERENCE_API_OVERRIDE must be "openai-completions" or "anthropic-messages", got "%s" — skipping override\n' "$api_override" >&2
-        return 0
-        ;;
-    esac
-  fi
-
-  local context_window="${NEMOCLAW_CONTEXT_WINDOW:-}"
-  local max_tokens="${NEMOCLAW_MAX_TOKENS:-}"
-  local reasoning="${NEMOCLAW_REASONING:-}"
-
-  # Validate supplemental override values before relaxing or writing config.
-  if [ -n "$context_window" ] && ! printf '%s' "$context_window" | grep -qE '^[1-9][0-9]*$'; then
-    printf '[SECURITY] NEMOCLAW_CONTEXT_WINDOW must be a positive integer, got "%s" — skipping override\n' "$context_window" >&2
-    return 0
-  fi
-  if [ -n "$max_tokens" ] && ! printf '%s' "$max_tokens" | grep -qE '^[1-9][0-9]*$'; then
-    printf '[SECURITY] NEMOCLAW_MAX_TOKENS must be a positive integer, got "%s" — skipping override\n' "$max_tokens" >&2
-    return 0
-  fi
-  if [ -n "$reasoning" ]; then
-    case "$reasoning" in
-      true | false) ;;
-      *)
-        printf '[SECURITY] NEMOCLAW_REASONING must be "true" or "false", got "%s" — skipping override\n' "$reasoning" >&2
-        return 0
-        ;;
-    esac
-  fi
-  [ -n "$model_override" ] && printf '[config] Applying model override: %s\n' "$model_override" >&2
-  [ -n "$api_override" ] && printf '[config] Applying inference API override: %s\n' "$api_override" >&2
-  [ -n "$context_window" ] && printf '[config] Applying context window override: %s\n' "$context_window" >&2
-  [ -n "$max_tokens" ] && printf '[config] Applying max tokens override: %s\n' "$max_tokens" >&2
-  [ -n "$reasoning" ] && printf '[config] Applying reasoning override: %s\n' "$reasoning" >&2
-
-  # Pin and normalize the mutable tree before delegating config I/O to its
-  # sandbox owner; root never mutates a sandbox-controlled pathname here.
-  normalize_mutable_config_perms || return 1
-  local _write_rc=0
-
-  run_openclaw_config_as_owner /usr/bin/env \
-    NEMOCLAW_CONTEXT_WINDOW="$context_window" \
-    NEMOCLAW_MAX_TOKENS="$max_tokens" \
-    NEMOCLAW_REASONING="$reasoning" \
-    /usr/bin/python3 -I - "$config_file" "$model_override" "$api_override" <<'PYOVERRIDE' || _write_rc=$?
-import json, os, sys
-
-config_file, model_override, api_override = sys.argv[1], sys.argv[2], sys.argv[3]
-context_window = os.environ.get("NEMOCLAW_CONTEXT_WINDOW", "")
-max_tokens = os.environ.get("NEMOCLAW_MAX_TOKENS", "")
-reasoning = os.environ.get("NEMOCLAW_REASONING", "")
-
-with open(config_file) as f:
-    cfg = json.load(f)
-
-# Patch primary model reference
-if model_override:
-    cfg["agents"]["defaults"]["model"]["primary"] = model_override
-
-# Patch model properties in provider config
-for pkey, pval in cfg.get("models", {}).get("providers", {}).items():
-    # Apply the route override before deciding whether reasoning effort is
-    # valid for the resulting provider API.
-    if api_override:
-        pval["api"] = api_override
-    effective_api = pval.get("api")
-    for m in pval.get("models", []):
-        if model_override:
-            m["id"] = model_override
-            m["name"] = model_override
-        if context_window:
-            m["contextWindow"] = int(context_window)
-        if max_tokens:
-            m["maxTokens"] = int(max_tokens)
-        if reasoning:
-            m["reasoning"] = reasoning == "true"
-        # The image-baked NEMOCLAW_REASONING_EFFORT is an onboarding input, not
-        # a startup override. Preserve the persisted model value so a runtime
-        # `inference set --reasoning-effort` mutation survives restart. An
-        # explicit API switch still clears an effort that the resulting API
-        # cannot carry.
-        if api_override and effective_api != "openai-completions":
-            params = m.get("params")
-            if isinstance(params, dict):
-                extra_body = params.get("extra_body")
-                if isinstance(extra_body, dict):
-                    extra_body.pop("reasoning_effort", None)
-                    if not extra_body:
-                        params.pop("extra_body", None)
-                if not params:
-                    m.pop("params", None)
-
-with open(config_file, "w") as f:
-    json.dump(cfg, f, indent=2)
-PYOVERRIDE
-
-  if [ "$_write_rc" -eq 0 ]; then
-    # Recompute config hash so integrity check passes on next startup
-    if ensure_mutable_openclaw_config_hash; then
-      printf '[SECURITY] Config hash recomputed after model override\n' >&2
-    else
-      _write_rc=$?
-    fi
-  fi
-
-  # Always revalidate and normalize the tree, even on write/hash failure.
-  normalize_mutable_config_perms || _write_rc=$?
-  [ "$_write_rc" -eq 0 ] || return "$_write_rc"
-}
-
-# ── Agent identity reconciliation with provider routing ───────────
-# After the host-side `openshell inference set` swaps the gateway's
-# inference provider entry, agents.defaults.model.primary AND the
-# in-sandbox models.providers.inference.models[0] entry can both go
-# stale: openshell only updates the gateway, not /sandbox/.openclaw/
-# openclaw.json. The gateway routes requests to the new model but
-# the agent self-reports the old one, and on the next gateway
-# reconciliation the file's stale entry can be pushed back, reverting
-# the route.
-#
-# Probe the live gateway via `openshell inference get --json` and
-# treat it as the source of truth: when the gateway model differs
-# from the file, align both primary and the inference provider's
-# first model entry so the agent identity and the gateway route stay
-# consistent across the next reconcile cycle.
-#
-# When the gateway probe is unavailable (no openshell binary, gateway
-# unreachable, malformed output), fall back to the legacy in-file
-# reconcile so the function still closes primary↔models[0] drift.
-#
-# Runs after apply_model_override so explicit NEMOCLAW_MODEL_OVERRIDE
-# values still win. No-op when already in sync.
-# Ref: https://github.com/NVIDIA/NemoClaw/issues/3175
-
-reconcile_agent_model_with_provider() {
-  # apply_model_override already won; reconciling against the gateway would
-  # overwrite the user's explicit choice with an inference/-prefixed variant.
-  [ -z "${NEMOCLAW_MODEL_OVERRIDE:-}" ] || return 0
-
-  if [ "$(id -u)" -ne 0 ]; then
-    return 0
-  fi
-
-  local config_file="/sandbox/.openclaw/openclaw.json"
-  local hash_file="/sandbox/.openclaw/.config-hash"
-
-  [ -f "$config_file" ] || return 0
-
-  if [ -L "$config_file" ] || [ -L "$hash_file" ]; then
-    return 0
-  fi
-
-  local gateway_model=""
-  if command -v openshell >/dev/null 2>&1; then
-    gateway_model="$(
-      python3 - <<'PYPROBE'
-import json, subprocess
-try:
-    result = subprocess.run(
-        ["openshell", "inference", "get", "--json"],
-        capture_output=True,
-        timeout=3,
-        check=False,
-    )
-except Exception:
-    raise SystemExit(0)
-if result.returncode != 0:
-    raise SystemExit(0)
-try:
-    data = json.loads(result.stdout)
-except Exception:
-    raise SystemExit(0)
-model = data.get("model") if isinstance(data, dict) else None
-if isinstance(model, str) and model:
-    print(model)
-PYPROBE
-    )"
-  fi
-
-  local provider_model_ref
-  provider_model_ref="$(
-    run_openclaw_config_as_owner /usr/bin/env GATEWAY_MODEL="${gateway_model:-}" \
-      /usr/bin/python3 -I - "$config_file" <<'PYRECONCILE_READ'
-import json, os, sys
-
-try:
-    with open(sys.argv[1]) as f:
-        cfg = json.load(f)
-except Exception:
-    sys.exit(0)
-
-primary = cfg.get("agents", {}).get("defaults", {}).get("model", {}).get("primary")
-provider = cfg.get("models", {}).get("providers", {}).get("inference", {})
-models = provider.get("models") if isinstance(provider, dict) else None
-first = (
-    models[0]
-    if isinstance(models, list) and models and isinstance(models[0], dict)
-    else None
-)
-
-
-def qualify(model_id):
-    if not isinstance(model_id, str) or not model_id:
-        return None
-    return model_id if model_id.startswith("inference/") else f"inference/{model_id}"
-
-
-gateway_target = qualify(os.environ.get("GATEWAY_MODEL", ""))
-if gateway_target is not None:
-    bare = gateway_target[len("inference/"):]
-    first_name = first.get("name") if first is not None else None
-    first_id = first.get("id") if first is not None else None
-    primary_ok = isinstance(primary, str) and primary == gateway_target
-    first_name_ok = isinstance(first_name, str) and first_name == gateway_target
-    first_id_ok = isinstance(first_id, str) and (first_id == bare or first_id == gateway_target)
-    if primary_ok and first_name_ok and first_id_ok:
-        sys.exit(0)
-    print(f"gateway\t{gateway_target}")
-    sys.exit(0)
-
-# Legacy fallback: gateway probe is unavailable. Align primary with
-# the in-file provider entry only (models[0] is treated as the
-# source). Preserves pre-gateway-probe behavior for environments
-# without openshell.
-if first is None:
-    sys.exit(0)
-legacy_target = qualify(first.get("name") or first.get("id"))
-if legacy_target is None:
-    sys.exit(0)
-if isinstance(primary, str) and primary == legacy_target:
-    sys.exit(0)
-print(f"legacy\t{legacy_target}")
-PYRECONCILE_READ
-  )"
-
-  if [ -z "$provider_model_ref" ]; then
-    return 0
-  fi
-
-  local source_mode="${provider_model_ref%%$'\t'*}"
-  provider_model_ref="${provider_model_ref#*$'\t'}"
-
-  printf '[config] Reconciling agent identity with provider model: %s (source=%s, #3175)\n' \
-    "$provider_model_ref" "$source_mode" >&2
-
-  normalize_mutable_config_perms || return 1
-  local _write_rc=0
-
-  run_openclaw_config_as_owner /usr/bin/env RECONCILE_SOURCE="$source_mode" \
-    /usr/bin/python3 -I - "$config_file" "$provider_model_ref" <<'PYRECONCILE_WRITE' || _write_rc=$?
-import json, os, sys
-config_file, provider_model = sys.argv[1], sys.argv[2]
-with open(config_file) as f:
-    cfg = json.load(f)
-cfg.setdefault("agents", {}).setdefault("defaults", {}).setdefault("model", {})["primary"] = provider_model
-if os.environ.get("RECONCILE_SOURCE") == "gateway":
-    bare = (
-        provider_model[len("inference/"):]
-        if provider_model.startswith("inference/")
-        else provider_model
-    )
-    models_root = cfg.setdefault("models", {})
-    providers_root = models_root.setdefault("providers", {})
-    inference = providers_root.setdefault("inference", {})
-    models_list = inference.get("models")
-    if not isinstance(models_list, list) or not models_list:
-        models_list = [{}]
-        inference["models"] = models_list
-    first = models_list[0]
-    if not isinstance(first, dict):
-        first = {}
-        models_list[0] = first
-    first["id"] = bare
-    first["name"] = provider_model
-with open(config_file, "w") as f:
-    json.dump(cfg, f, indent=2)
-PYRECONCILE_WRITE
-
-  if [ "$_write_rc" -eq 0 ]; then
-    if ensure_mutable_openclaw_config_hash; then
-      printf '[SECURITY] Config hash recomputed after agent identity reconciliation\n' >&2
-    else
-      _write_rc=$?
-    fi
-  fi
-
-  normalize_mutable_config_perms || _write_rc=$?
-  [ "$_write_rc" -eq 0 ] || return "$_write_rc"
-}
-
-# ── Runtime CORS origin override ──────────────────────────────────
-# Adds a browser origin to gateway.controlUi.allowedOrigins at startup
-# without rebuilding the sandbox image. Useful for custom domains/ports.
-# Same trust model as model override: host-set env var, applied before
-# the config hash is recomputed.
-# Ref: https://github.com/NVIDIA/NemoClaw/issues/719
-
-apply_cors_override() {
-  [ -n "${NEMOCLAW_CORS_ORIGIN:-}" ] || return 0
-
-  if [ "$(id -u)" -ne 0 ]; then
-    printf '[SECURITY] NEMOCLAW_CORS_ORIGIN ignored — requires root (non-root mode cannot write to config)\n' >&2
-    return 0
-  fi
-
-  local config_file="/sandbox/.openclaw/openclaw.json"
-  local hash_file="/sandbox/.openclaw/.config-hash"
-
-  if [ -L "$config_file" ] || [ -L "$hash_file" ]; then
-    printf '[SECURITY] Refusing CORS override — config or hash path is a symlink\n' >&2
-    return 1
-  fi
-
-  local cors_origin="$NEMOCLAW_CORS_ORIGIN"
-
-  if printf '%s' "$cors_origin" | grep -qP '[\x00-\x1f\x7f]'; then
-    printf '[SECURITY] NEMOCLAW_CORS_ORIGIN contains control characters — refusing\n' >&2
-    return 1
-  fi
-  if [ "${#cors_origin}" -gt 256 ]; then
-    printf '[SECURITY] NEMOCLAW_CORS_ORIGIN exceeds 256 characters — refusing\n' >&2
-    return 1
-  fi
-  if ! printf '%s' "$cors_origin" | grep -qE '^https?://'; then
-    printf '[SECURITY] NEMOCLAW_CORS_ORIGIN must start with http:// or https://, got "%s" — skipping override\n' "$cors_origin" >&2
-    return 0
-  fi
-
-  printf '[config] Adding CORS origin: %s\n' "$cors_origin" >&2
-
-  normalize_mutable_config_perms || return 1
-  local _write_rc=0
-
-  run_openclaw_config_as_owner /usr/bin/python3 -I - \
-    "$config_file" "$cors_origin" <<'PYCORS' || _write_rc=$?
-import json, sys
-
-config_file, cors_origin = sys.argv[1], sys.argv[2]
-
-with open(config_file) as f:
-    cfg = json.load(f)
-
-origins = cfg.get("gateway", {}).get("controlUi", {}).get("allowedOrigins", [])
-if cors_origin not in origins:
-    origins.append(cors_origin)
-    cfg.setdefault("gateway", {}).setdefault("controlUi", {})["allowedOrigins"] = origins
-
-with open(config_file, "w") as f:
-    json.dump(cfg, f, indent=2)
-PYCORS
-
-  if [ "$_write_rc" -eq 0 ]; then
-    if ensure_mutable_openclaw_config_hash; then
-      printf '[config] Config hash recomputed after CORS override\n' >&2
-    else
-      _write_rc=$?
-    fi
-  fi
-
-  # Always revalidate and normalize the tree, even on write/hash failure.
-  normalize_mutable_config_perms || _write_rc=$?
-  [ "$_write_rc" -eq 0 ] || return "$_write_rc"
-}
-
 refresh_openclaw_provider_placeholders() {
   local config_file="/sandbox/.openclaw/openclaw.json"
-  local hash_file="/sandbox/.openclaw/.config-hash"
   [ -f "$config_file" ] || return 0
 
   local keys
@@ -1381,6 +593,7 @@ import base64
 import json
 import os
 import re
+import subprocess
 import sys
 
 config_file = sys.argv[1]
@@ -1417,7 +630,21 @@ def walk(value):
 
 try:
     with open(config_file, encoding="utf-8") as f:
-        walk(json.load(f))
+        source = f.read()
+    parsed = subprocess.run(
+        [
+            "/usr/local/bin/node",
+            "-e",
+            'const JSON5=require("/usr/local/lib/node_modules/openclaw/node_modules/json5");'
+            'process.stdout.write(JSON.stringify(JSON5.parse(require("node:fs").readFileSync(0,"utf8"))));',
+        ],
+        input=source,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        check=True,
+    )
+    walk(json.loads(parsed.stdout))
 except Exception:
     pass
 
@@ -1570,12 +797,11 @@ PYPLACEHOLDERSTATE
     )" || return 1
   fi
 
-  if [ -L "$config_file" ] || [ -L "$hash_file" ]; then
-    printf '[SECURITY] Refusing provider placeholder refresh — config or hash path is a symlink\n' >&2
+  if [ -L "$config_file" ]; then
+    printf '[SECURITY] Refusing provider placeholder refresh — config path is a symlink\n' >&2
     return 1
   fi
 
-  normalize_mutable_config_perms || return 1
   local _write_rc=0
   local _placeholder_report=""
 
@@ -1587,6 +813,7 @@ PYPLACEHOLDERSTATE
 import json
 import os
 import re
+import subprocess
 import sys
 
 config_file = sys.argv[1]
@@ -1622,7 +849,21 @@ for key in keys:
         replacements[f"{prefix}{key}"] = (key, value)
 
 with open(config_file, encoding="utf-8") as f:
-    config = json.load(f)
+    source = f.read()
+parsed = subprocess.run(
+    [
+        "/usr/local/bin/node",
+        "-e",
+        'const JSON5=require("/usr/local/lib/node_modules/openclaw/node_modules/json5");'
+        'process.stdout.write(JSON.stringify(JSON5.parse(require("node:fs").readFileSync(0,"utf8"))));',
+    ],
+    input=source,
+    text=True,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.DEVNULL,
+    check=True,
+)
+config = json.loads(parsed.stdout)
 
 refreshed = set()
 
@@ -1769,18 +1010,13 @@ PYPLACEHOLDERS
     local _refreshed_keys
     _refreshed_keys="$(printf '%s\n' "$_placeholder_report" | sed -n 's/^refreshed=//p' | tail -n 1)"
     if [ -n "$_refreshed_keys" ]; then
-      if ensure_mutable_openclaw_config_hash; then
-        printf '[config] Refreshed provider placeholders from OpenShell runtime env: %s\n' "$_refreshed_keys" >&2
-      else
-        _write_rc=$?
-      fi
+      printf '[config] Refreshed provider placeholders from OpenShell runtime env: %s\n' "$_refreshed_keys" >&2
     fi
     printf '%s\n' "$_placeholder_report" | sed -n 's/^warning=//p' | while IFS= read -r _warning; do
       [ -n "$_warning" ] && printf '%s\n' "$_warning" >&2
     done
   fi
 
-  normalize_mutable_config_perms || _write_rc=$?
   [ "$_write_rc" -eq 0 ] || return "$_write_rc"
   return 0
 }
@@ -2213,7 +1449,7 @@ const configPath = "/sandbox/.openclaw/openclaw.json";
 
 function loadJson5() {
   try {
-    const JSON5 = require("/opt/nemoclaw/node_modules/json5");
+    const JSON5 = require("/usr/local/lib/node_modules/openclaw/node_modules/json5");
     if (JSON5 && typeof JSON5.parse === "function") {
       return JSON5;
     }
@@ -2246,17 +1482,12 @@ NODETOKEN
 
 ensure_gateway_token() {
   local config_file="/sandbox/.openclaw/openclaw.json"
-  local hash_file="/sandbox/.openclaw/.config-hash"
   local config_dir
   config_dir="$(dirname "$config_file")"
 
-  if [ -L "$config_dir" ] || [ -L "$config_file" ] || [ -L "$hash_file" ]; then
-    printf '[SECURITY] Refusing gateway token generation — config or hash path is a symlink\n' >&2
+  if [ -L "$config_dir" ] || [ -L "$config_file" ]; then
+    printf '[SECURITY] Refusing gateway token generation — config path is a symlink\n' >&2
     return 1
-  fi
-
-  if [ "$(id -u)" -eq 0 ]; then
-    normalize_mutable_config_perms || return 1
   fi
 
   local _write_rc=0
@@ -2269,7 +1500,7 @@ const pathModule = require("path");
 const path = process.argv[2];
 
 function loadJson5() {
-  const candidate = "/opt/nemoclaw/node_modules/json5";
+  const candidate = "/usr/local/lib/node_modules/openclaw/node_modules/json5";
   const JSON5 = require(candidate);
   if (!JSON5 || typeof JSON5.parse !== "function") {
     throw new Error(`JSON5 parser at ${candidate} is missing parse()`);
@@ -2369,20 +1600,14 @@ try {
 }
 NODETOKEN
 
-  if [ "$_write_rc" -eq 0 ] && [ -f "$hash_file" ]; then
-    ensure_mutable_openclaw_config_hash || _write_rc=$?
-  fi
-
-  if [ "$(id -u)" -eq 0 ]; then
-    normalize_mutable_config_perms || _write_rc=$?
-  fi
-
   [ "$_write_rc" -eq 0 ] || return "$_write_rc"
   printf '[token] Gateway auth token refreshed for startup\n' >&2
 }
 
 ensure_gateway_token_if_missing() {
-  if [ -n "$(_read_gateway_token)" ]; then
+  local token
+  token="$(_read_gateway_token)"
+  if [ -n "$token" ] && [ "$token" != "[STRIPPED_BY_MIGRATION]" ]; then
     return 0
   fi
 
@@ -3851,23 +3076,6 @@ PROXYEOF
     )
     cat <<'GUARDENVEOF'
 # nemoclaw-configure-guard begin
-# Use the same descriptor-safe mode decision as startup and host repair.
-# The caller UID supplies file ownership, not runtime topology.
-_nemoclaw_restore_mutable_config_perms() {
-  local _nemoclaw_oc_dir="/sandbox/.openclaw" _nemoclaw_oc_owner
-  [ -d "$_nemoclaw_oc_dir" ] || return 0
-  _nemoclaw_oc_owner="$(stat -c '%U' "$_nemoclaw_oc_dir" 2>/dev/null || stat -f '%Su' "$_nemoclaw_oc_dir" 2>/dev/null || echo unknown)"
-  # A root-owned config belongs to a host transaction; never write its hash.
-  [ "$_nemoclaw_oc_owner" = "root" ] && return 0
-  if [ ! -L "$_nemoclaw_oc_dir" ] \
-    && [ ! -L "$_nemoclaw_oc_dir/openclaw.json" ] \
-    && [ ! -L "$_nemoclaw_oc_dir/.config-hash" ] \
-    && [ -f "$_nemoclaw_oc_dir/openclaw.json" ]; then
-    (cd "$_nemoclaw_oc_dir" && sha256sum openclaw.json >.config-hash) 2>/dev/null || true
-  fi
-  python3 -I /usr/local/lib/nemoclaw/normalize_mutable_config_perms.py \
-    "$_nemoclaw_oc_dir" "$(id -u)" "$(id -g)" || true
-}
 _nemoclaw_messaging_connect_node_options() {
   local _nemoclaw_preload _nemoclaw_options=""
   [ -f "/tmp/nemoclaw-messaging-connect-preloads.list" ] || return 0
@@ -3895,30 +3103,6 @@ openclaw() {
     return "$_nemoclaw_approve_rc"
   fi
   case "$1" in
-    configure)
-      echo "Error: 'openclaw configure' cannot modify config inside the sandbox." >&2
-      echo "Changes inside the sandbox do not persist across rebuilds." >&2
-      echo "" >&2
-      echo "To change your configuration, exit the sandbox and run:" >&2
-      echo "  nemoclaw onboard --resume" >&2
-      echo "" >&2
-      echo "This rebuilds the sandbox with your updated settings." >&2
-      return 1
-      ;;
-    config)
-      case "$2" in
-        set | unset)
-          echo "Error: 'openclaw config $2' cannot modify config inside the sandbox." >&2
-          echo "Changes inside the sandbox do not persist across rebuilds." >&2
-          echo "" >&2
-          echo "To change your configuration, exit the sandbox and run:" >&2
-          echo "  nemoclaw onboard --resume" >&2
-          echo "" >&2
-          echo "This rebuilds the sandbox with your updated settings." >&2
-          return 1
-          ;;
-      esac
-      ;;
     channels)
       # `status` is read-only diagnostics. `login` is only allowed for
       # WhatsApp, whose QR pairing intentionally happens inside the sandbox.
@@ -3968,7 +3152,7 @@ openclaw() {
             0:whatsapp | 1:*) ;;
             *)
               echo "Error: 'openclaw channels login' is only supported inside the sandbox for WhatsApp." >&2
-              echo "Changes inside the sandbox do not persist across rebuilds." >&2
+              echo "Native OpenClaw config cannot reconcile the matching OpenShell credential binding and network policy." >&2
               echo "" >&2
               echo "To add or remove messaging channels, exit the sandbox and run:" >&2
               echo "  nemoclaw <sandbox> channels add <channel>" >&2
@@ -4145,7 +3329,7 @@ openclaw() {
               ;;
           esac
           echo "Error: 'openclaw channels $_nemoclaw_channel_operation_hint' cannot modify channels inside the sandbox." >&2
-          echo "Changes inside the sandbox do not persist across rebuilds." >&2
+          echo "Native OpenClaw config cannot reconcile the matching OpenShell credential binding and network policy." >&2
           echo "Run 'nemoclaw $(_nemoclaw_policy_denial_hint_label) channels $_nemoclaw_channel_operation_hint $_nemoclaw_channel_name_hint' on the host." >&2
           return 1
           ;;
@@ -4184,8 +3368,7 @@ openclaw() {
       esac
       ;;
     *)
-      # Preserve the native command status after shared-owner permission repair
-      # and hash refresh, including failed commands (#4538).
+      # Preserve the native command status, including failed commands.
       local _nemoclaw_oc_errexit=0
       case $- in *e*) _nemoclaw_oc_errexit=1 ;; esac
       set +e
@@ -4204,7 +3387,6 @@ openclaw() {
         *) /usr/bin/env -u OPENCLAW_GATEWAY_TOKEN openclaw "$@" ;;
       esac
       local _nemoclaw_oc_status=$?
-      _nemoclaw_restore_mutable_config_perms
       case "$_nemoclaw_oc_errexit" in
         1) set -e ;;
       esac
@@ -4639,7 +3821,7 @@ seed_default_workspace_templates() {
   if ! command -v node >/dev/null 2>&1; then
     return 0
   fi
-  local skip_bootstrap_check='const fs = require("fs"); const configPath = process.argv[1]; const cfg = JSON.parse(fs.readFileSync(configPath, "utf8")); process.exit(cfg?.agents?.defaults?.skipBootstrap === true ? 0 : 1);'
+  local skip_bootstrap_check='const fs = require("fs"); const configPath = process.argv[1]; const source = fs.readFileSync(configPath, "utf8"); let cfg; try { cfg = JSON.parse(source); } catch { cfg = require("/usr/local/lib/node_modules/openclaw/node_modules/json5").parse(source); } process.exit(cfg?.agents?.defaults?.skipBootstrap === true ? 0 : 1);'
   if ! node -e "$skip_bootstrap_check" "$config_file" >/dev/null 2>&1; then
     return 0
   fi
@@ -4881,7 +4063,6 @@ seed_default_workspace_templates_as_sandbox() {
 setup_auth_profile_as_sandbox() {
   run_step_down_as_sandbox \
     "export HOME=/sandbox; write_auth_profile; harden_auth_profiles" \
-    openclaw_config_dir_owner \
     is_managed_inference_route \
     write_auth_profile \
     harden_auth_profiles
@@ -5159,47 +4340,6 @@ cleanup_openclaw_on_signal() {
   cleanup_on_signal
 }
 
-_OPENCLAW_CONFIG_GUARD=/usr/local/lib/nemoclaw/openclaw-config-guard.py
-OPENCLAW_CONFIG_GUARD_LAST_OUTPUT=""
-run_openclaw_config_guard() {
-  local action="$1"
-  local startup_owner=0
-  local arg output_file rc
-  shift
-  for arg in "$@"; do
-    [ "$arg" = "--startup-owner" ] && startup_owner=1
-  done
-  if [ "$startup_owner" -eq 1 ]; then
-    # The readiness contract authenticates this helper as a direct PID 1
-    # child. A `timeout` wrapper or command substitution would become Python's
-    # parent and invalidate that identity, so capture through a root-private
-    # file while invoking Python directly.
-    install -d -o root -g root -m 755 /run/nemoclaw || return 1
-    install -d -o root -g root -m 700 /run/nemoclaw/openclaw-config-guard || return 1
-    output_file="/run/nemoclaw/openclaw-config-guard/.$$.output"
-    : >"$output_file"
-    chmod 600 "$output_file"
-    rc=0
-    python3 -I "$_OPENCLAW_CONFIG_GUARD" "$action" \
-      --config-dir /sandbox/.openclaw "$@" >"$output_file" 2>&1 || rc=$?
-    OPENCLAW_CONFIG_GUARD_LAST_OUTPUT="$(<"$output_file")"
-    rm -f "$output_file"
-    if [ "$rc" -ne 0 ]; then
-      printf '[config-guard] %s failed: %s\n' "$action" "$OPENCLAW_CONFIG_GUARD_LAST_OUTPUT" >&2
-      return "$rc"
-    fi
-    return 0
-  fi
-  OPENCLAW_CONFIG_GUARD_LAST_OUTPUT="$(
-    timeout --signal=TERM --kill-after=5s 5m \
-      python3 -I "$_OPENCLAW_CONFIG_GUARD" "$action" \
-      --config-dir /sandbox/.openclaw "$@" 2>&1
-  )" || {
-    printf '[config-guard] %s failed: %s\n' "$action" "$OPENCLAW_CONFIG_GUARD_LAST_OUTPUT" >&2
-    return 1
-  }
-}
-
 # OpenShell confines newly-created SQLite temporary files more narrowly than
 # ordinary container execution. FTS5 schema initialization otherwise falls
 # back to a denied host temporary directory and reports the misleading error
@@ -5369,6 +4509,67 @@ EOF
   return 1
 }
 
+# v0.0.123 seeded an empty approvals file that OpenClaw cannot migrate.
+# Retain nonempty files for native migration, including malformed user data.
+remove_empty_legacy_exec_approvals() {
+  python3 -I - /sandbox/.openclaw <<'PY'
+import os
+import stat
+import sys
+
+def identity(value):
+    return value.st_dev, value.st_ino, value.st_mode
+
+def stable(value):
+    return (identity(value), value.st_nlink, value.st_uid, value.st_gid,
+            value.st_size, value.st_mtime_ns, value.st_ctime_ns)
+
+fds = []
+try:
+    config = os.path.normpath(sys.argv[1])
+    parent = os.path.dirname(config)
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    parent_fd = os.open(parent, directory_flags)
+    fds.append(parent_fd)
+    root_fd = os.open(os.path.basename(config), directory_flags, dir_fd=parent_fd)
+    fds.append(root_fd)
+    name = 'exec-approvals.json'
+    try:
+        before = os.stat(name, dir_fd=root_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        sys.exit(0)
+    if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
+        raise ValueError('unsafe approvals file')
+    if before.st_size != 0:
+        sys.exit(0)
+    target_fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=root_fd)
+    fds.append(target_fd)
+    if (before.st_dev != os.fstat(root_fd).st_dev
+            or stable(os.fstat(target_fd)) != stable(before)
+            or os.read(target_fd, 1)
+            or identity(os.stat(parent, follow_symlinks=False)) != identity(os.fstat(parent_fd))
+            or identity(os.stat(os.path.basename(config), dir_fd=parent_fd, follow_symlinks=False)) != identity(os.fstat(root_fd))
+            or stable(os.stat(name, dir_fd=root_fd, follow_symlinks=False)) != stable(before)
+            or stable(os.fstat(target_fd)) != stable(before)):
+        raise ValueError('approvals file changed')
+    os.unlink(name, dir_fd=root_fd)
+    os.fsync(root_fd)
+    try:
+        os.stat(name, dir_fd=root_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        pass
+    else:
+        raise ValueError('approvals file reappeared')
+    print('[migration] Removed empty legacy exec-approvals.json placeholder', file=sys.stderr)
+except (OSError, ValueError):
+    print('[SECURITY] Refusing unsafe legacy approvals migration', file=sys.stderr)
+    sys.exit(1)
+finally:
+    for fd in reversed(fds):
+        os.close(fd)
+PY
+}
+
 run_requested_openclaw_post_upgrade_doctor() {
   local marker="/sandbox/.openclaw/.nemoclaw-post-upgrade-doctor"
   local expected="nemoclaw-openclaw-post-upgrade-doctor-v2"
@@ -5414,7 +4615,7 @@ EOF
   }
   # A prior interrupted attempt must not satisfy this start's maintenance
   # handshake. Remove the ephemeral receipt before running doctor and publish
-  # a fresh one only after doctor and permission normalization both succeed.
+  # a fresh one only after doctor succeeds.
   rm -f -- "$ready" || return 1
 
   echo "[setup] running requested OpenClaw post-upgrade doctor before gateway launch" >&2
@@ -5424,10 +4625,6 @@ EOF
   else
     "$OPENCLAW" doctor --fix --yes --non-interactive || return 1
   fi
-  # Doctor may restore OpenClaw's owner-only defaults. Reapply NemoClaw's
-  # mutable modes before the native sandbox-user gateway starts, and keep the
-  # request retryable if that fails.
-  normalize_mutable_config_perms || return 1
   if [ "$(id -u)" -eq 0 ]; then
     ready_owner="$marker_owner"
   fi
@@ -5436,7 +4633,7 @@ EOF
   echo "[setup] OpenClaw post-upgrade doctor completed; gateway held for offline restore" >&2
 
   # The host rebuild removes the validated request marker only after session,
-  # messaging, MCP, and permission writes finish. Keep the gateway absent until
+  # messaging and MCP writes finish. Keep the gateway absent until
   # that release, and fail closed on marker replacement or an abandoned gate.
   gate_attempt=0
   while [ "$gate_attempt" -lt 600 ]; do
@@ -5498,20 +4695,9 @@ unset NEMOCLAW_OPENCLAW_SHARED_STATE
 run_requested_openclaw_backup_quiesce || exit 1
 prepare_openshell_sqlite_tmpdir || exit 1
 
-# Begin the root PID 1 readiness lease before any startup path reads or mutates
-# OpenClaw config so a prior config write or restart can recover before reads.
-if [ "$(id -u)" -eq 0 ]; then
-  prepare_openclaw_config_startup || exit 1
-fi
-
-if [ "$(openclaw_config_dir_owner /sandbox/.openclaw)" = "root" ]; then
-  echo "[SECURITY] Existing OpenClaw config is not in the supported mutable posture. Rebuild or recreate the sandbox." >&2
-  exit 1
-fi
-
 # Migrate legacy symlink layout before anything else reads .openclaw
 migrate_legacy_layout "/sandbox/.openclaw" "/sandbox/.openclaw-data" "openclaw" || exit 1
-remove_openclaw_legacy_startup_state || exit 1
+remove_empty_legacy_exec_approvals || exit 1
 
 echo 'Setting up NemoClaw...' >&2
 # Best-effort: .env may not exist.
@@ -5530,22 +4716,11 @@ if [ "$(id -u)" -ne 0 ]; then
   echo "[gateway] Running as non-root (uid=$(id -u)) — privilege separation disabled" >&2
   export HOME=/sandbox
   export PATH="$PATH:/sandbox/.local/bin"
-  # Restore a #3118 truncation before later config reads.
   _nemoclaw_capture_epoch_realtime _NEMOCLAW_GATEWAY_CONFIG_STARTED_EPOCH
-  recover_openclaw_config_if_empty
-  normalize_mutable_config_perms
   _nemoclaw_capture_epoch_realtime _NEMOCLAW_GATEWAY_CONFIG_FINISHED_EPOCH
-  apply_model_override
-  reconcile_agent_model_with_provider
-  apply_cors_override
   _nemoclaw_capture_epoch_realtime _NEMOCLAW_GATEWAY_PROVIDER_FINISHED_EPOCH
   refresh_openclaw_provider_placeholders
-  ensure_mutable_openclaw_config_hash
   prepare_gateway_token_for_current_command
-  # Capture baseline for next start's recovery — only after overrides and
-  # placeholder refresh have produced the post-startup config the user
-  # actually runs with.
-  write_openclaw_config_baseline
   export_gateway_token
   _nemoclaw_capture_epoch_realtime _NEMOCLAW_GATEWAY_TOKEN_FINISHED_EPOCH
   write_messaging_runtime_setup_plan
@@ -5569,8 +4744,6 @@ if [ "$(id -u)" -ne 0 ]; then
   configure_messaging_channels
   run_requested_openclaw_post_upgrade_doctor || exit 1
   refresh_openclaw_provider_placeholders
-  ensure_mutable_openclaw_config_hash
-  write_openclaw_config_baseline
   install_messaging_runtime_preloads
   verify_messaging_runtime_secret_scans
   _nemoclaw_capture_epoch_realtime _NEMOCLAW_GATEWAY_MESSAGING_FINISHED_EPOCH
@@ -5593,7 +4766,6 @@ if [ "$(id -u)" -ne 0 ]; then
     fi
   }
   fix_openclaw_ownership
-  normalize_mutable_config_perms
   seed_default_workspace_templates /sandbox/.openclaw/workspace "" /sandbox/.openclaw/openclaw.json
   if ! is_managed_inference_route; then
     write_auth_profile
@@ -5640,14 +4812,6 @@ fi
 
 echo "[gateway] NEMOCLAW_ENTRYPOINT_MODE=root" >&2
 
-# Empty-config recovery runs before integrity check so a #3118 truncation
-# (openshell inference set inside the sandbox) is restored from baseline
-# rather than failing the integrity hash for the empty file.
-recover_openclaw_config_if_empty
-normalize_mutable_config_perms
-apply_model_override
-reconcile_agent_model_with_provider
-apply_cors_override
 configure_messaging_channels
 # Remove the obsolete managed reference before Doctor can import it into SQLite.
 if is_managed_inference_route; then
@@ -5655,12 +4819,7 @@ if is_managed_inference_route; then
 fi
 run_requested_openclaw_post_upgrade_doctor || exit 1
 refresh_openclaw_provider_placeholders
-ensure_mutable_openclaw_config_hash
 prepare_gateway_token_for_current_command
-# Capture baseline for next start's recovery — only after overrides and
-# placeholder refresh have produced the post-startup config the user
-# actually runs with.
-write_openclaw_config_baseline
 export_gateway_token
 write_messaging_runtime_setup_plan
 write_runtime_shell_env
@@ -5670,7 +4829,7 @@ write_runtime_shell_env
 apply_messaging_runtime_env_aliases
 
 # Messaging channel config was announced before placeholder refresh so the
-# baseline captures the same provider placeholders the gateway will use.
+# gateway receives the same provider placeholders.
 # Install manifest-declared Node runtime preloads before starting OpenClaw.
 install_messaging_runtime_preloads
 verify_messaging_runtime_secret_scans
@@ -5723,8 +4882,9 @@ provision_agent_workspaces() {
     config_names="$(
       node - "$config_dir/openclaw.json" <<'NODE' 2>/dev/null || true
   const fs = require("fs");
+  const JSON5 = require("/usr/local/lib/node_modules/openclaw/node_modules/json5");
   const configPath = process.argv[2];
-  const cfg = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  const cfg = JSON5.parse(fs.readFileSync(configPath, "utf8"));
   const names = new Set();
   const workspacePattern = /^workspace-[A-Za-z0-9._-]+$/;
   function addWorkspace(value) {
@@ -5822,12 +4982,6 @@ start_auto_pair
 refresh_openclaw_supervised_child_pids
 # shellcheck disable=SC2034  # read by cleanup_on_signal from sandbox-init.sh
 SANDBOX_WAIT_PID="$GATEWAY_PID"
-if ! run_openclaw_config_guard publish-startup-ready --startup-owner; then
-  echo "[SECURITY] OpenClaw config readiness lease could not be published; refusing to keep the gateway running" >&2
-  stop_openclaw_supervised_gateway \
-    "${GATEWAY_PID:-0}" "${GATEWAY_PID_START_IDENTITY:-}" || true
-  exit 1
-fi
 print_dashboard_urls
 
 wait "$GATEWAY_PID"
