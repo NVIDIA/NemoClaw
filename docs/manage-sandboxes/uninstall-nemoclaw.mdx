@@ -198,7 +198,7 @@ Valid gateways created before the state-root marker existed retain the same reco
 The whole-host sweep restores each port's custom state directory from its sandbox registry or verified incomplete-create checkpoint.
 An explicit `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR` overrides the recorded directory only for the port selected by `NEMOCLAW_GATEWAY_PORT`.
 If recorded directories are invalid or conflict, the sweep exits before any port cleanup.
-Ports without recorded directories use their default per-port directories.
+Ports without recorded directories use their per-port defaults, except when the selected port has an explicit override.
 For an older custom gateway whose directory was not recorded, rerun its failed pass with the original directory:
 
 ```bash

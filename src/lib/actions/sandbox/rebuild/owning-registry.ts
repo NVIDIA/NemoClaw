@@ -16,6 +16,7 @@ import {
   isValidName,
   listGatewayStateRoots,
   registryEntryGatewayPort,
+  resolveHome,
 } from "../../../state/gateway-registry";
 import { isCurrentPortableHostFenceHeld } from "../../../state/portable-uninstall-retirement";
 import { buildSubprocessEnv } from "../../../subprocess-env";
@@ -103,7 +104,6 @@ const REBUILD_ENV_NAMES = [
 /** Recover the recorded gateway location before rebuild can start or replace it. */
 export function restoreRecordedRebuildGatewayStateDir(
   entry: SandboxEntry | null | undefined,
-  home: string,
   env: NodeJS.ProcessEnv = process.env,
 ): void {
   if (env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR?.trim() || entry?.openshellGatewayStateDir == null)
@@ -114,7 +114,7 @@ export function restoreRecordedRebuildGatewayStateDir(
   }
   env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR = resolveGatewayStateDirForPort({
     configured: recorded,
-    home,
+    home: resolveHome(env),
     port: registryEntryGatewayPort({
       name: entry.name,
       gatewayName: entry.gatewayName,

@@ -32,6 +32,7 @@ import {
   type RebuildLiveState,
   type RebuildSandboxEntry,
   resolveRebuildLiveState,
+  restoreRecordedRebuildGatewayStateDir,
 } from "./rebuild-flow-helpers";
 import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
 import {
@@ -146,6 +147,7 @@ export async function runRebuildPreflightPhase(
   const sandboxEntry = getRebuildSandboxEntryOrBail(sandboxName, bail);
   if (!sandboxEntry) return null;
   if (blockRebuildOnRetainedSandboxRecovery(sandboxEntry, bail)) return null;
+  restoreRecordedRebuildGatewayStateDir(sandboxEntry);
   const confirmedEntrySnapshot = JSON.stringify(sandboxEntry);
   const allowLegacyManagedImageRecovery =
     opts.recoveryManifest !== undefined && opts.allowLegacyManagedImageRecovery === true;

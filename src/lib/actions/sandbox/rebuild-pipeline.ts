@@ -52,7 +52,6 @@ import {
   prepareRebuildStoppedOpenClawState,
   removeStaleRebuildDockerOrphan,
   snapshotOpenShellEnv,
-  restoreRecordedRebuildGatewayStateDir,
 } from "./rebuild-flow-helpers";
 import { observeMcpStateForRebuild } from "./rebuild-mcp-phase";
 import { stageMessagingManifestPlanForRebuild } from "./rebuild-messaging-phase";
@@ -166,7 +165,6 @@ export async function rebuildSandbox(
         ];
         const savedEnv = scopedEnvKeys.map((key) => [key, process.env[key]] as const);
         try {
-          restoreRecordedRebuildGatewayStateDir(registry.getSandbox(sandboxName), homeDir);
           await rebuildSandboxUnlocked(
             sandboxName,
             normalizedOptions,
