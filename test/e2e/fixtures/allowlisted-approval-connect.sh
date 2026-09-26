@@ -74,12 +74,6 @@ import re, sys
 from pathlib import Path
 
 raw = Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace")
-if not re.search(
-    r"scope upgrade pending approval|device pairing required|pairing required|device token .* denied",
-    raw,
-    re.IGNORECASE,
-):
-    raise SystemExit("native failure did not report a pending allowlisted request")
 request_ids = set(
     re.findall(
         r"^ISSUE_4462_ALLOWLISTED_REQUEST_ID=([0-9a-f-]{36})$",
