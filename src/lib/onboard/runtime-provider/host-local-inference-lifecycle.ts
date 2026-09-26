@@ -227,6 +227,7 @@ function requireRuntime(
   receipt: ManagedHostLocalInferenceReceipt,
   sandbox: HostLocalInferenceLifecycleSandbox,
   options: HostLocalInferenceLifecycleOptions,
+  mode: "preserve" | "destroy" = "preserve",
   authorityMode: "current" | "published-recovery" = "current",
   publishedRecoveryOperation?: HostLocalInferenceOperation,
 ): {
@@ -279,6 +280,7 @@ function requireRuntime(
       expectedModel: exactText(sandbox.model, "sandbox model"),
       expectedReceipt: receipt,
       gatewayPort: sandbox.gatewayPort!,
+      allowNonLocalDockerAuthorityForCleanup: mode === "destroy",
       ...(options.homeDir === undefined ? {} : { homeDir: options.homeDir }),
       ...(options.environment === undefined ? {} : { environment: options.environment }),
       operation,
@@ -334,6 +336,7 @@ function prepare(
     receipt,
     sandbox,
     options,
+    mode,
     authorityMode,
     publishedRecoveryOperation,
   );

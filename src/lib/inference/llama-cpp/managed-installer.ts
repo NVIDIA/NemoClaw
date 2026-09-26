@@ -18,6 +18,7 @@ import type {
 import {
   createFilePersistedEngineAuthorityStore,
   createPersistedEngineAuthority,
+  requirePersistedEngineAuthority,
 } from "../../onboard/runtime-provider/persisted-engine-authority";
 import { requireRuntimeProviderHostLocalInferenceOperation } from "../../onboard/runtime-provider/registry";
 import { isLlamaCppServingRecipe } from "../serving/adapter-registry";
@@ -31,6 +32,7 @@ import type {
   LlamaCppHostLocalLaunchContract,
   VerifiedLocalModelArtifact,
 } from "./host-local-runtime";
+import { managedLlamaCppHostLocalDockerAuthorityFailure } from "./managed-selection";
 import {
   claimManagedLlamaCppOwner,
   createManagedLlamaCppReceiptWriter,
@@ -93,6 +95,7 @@ export interface ManagedLlamaCppExactInspectionOptions {
 export interface ManagedLlamaCppLifecycleRehydrationOptions {
   readonly runtimeProvider: RuntimeProviderBundle;
   readonly runtimeOwnerSandboxName: string;
+  readonly allowNonLocalDockerAuthorityForCleanup?: boolean;
   readonly gatewayPort?: number;
   readonly homeDir?: string;
   readonly env?: NodeJS.ProcessEnv;
@@ -106,6 +109,43 @@ export interface ManagedLlamaCppLifecycleRehydration {
   readonly paths: ManagedLlamaCppStatePaths;
   readonly receipt: HostLocalInferenceReceipt;
   readonly selection: ResolvedLlamaCppInferenceSelection;
+}
+
+function cleanupOnlyLlamaCppLifecycle(
+  lifecycle: HostLocalLlamaCppLifecycle,
+  authorityFailure: string,
+): HostLocalLlamaCppLifecycle {
+  const unavailable = (): never => {
+    throw new Error(
+      `${authorityFailure} Existing non-local managed llama.cpp authority is available only for destroy cleanup.`,
+    );
+  };
+  const runtime = lifecycle.runtime;
+  const preparePublishedRecoveryEntry = runtime.preparePublishedRecoveryEntry;
+  return Object.freeze({
+    recoverUnfinished: unavailable,
+    resume: unavailable,
+    start: unavailable,
+    runtime: Object.freeze({
+      providerId: runtime.providerId,
+      authorityId: runtime.authorityId,
+      services: runtime.services,
+      translateContainerArgs: (args: readonly string[]) => runtime.translateContainerArgs(args),
+      qualifyOllama: unavailable,
+      startManaged: unavailable,
+      inspectManaged: unavailable,
+      stopManaged: unavailable,
+      preserveForRebuild: unavailable,
+      ...(preparePublishedRecoveryEntry
+        ? {
+            preparePublishedRecoveryEntry: (receipt: HostLocalInferenceReceipt) =>
+              preparePublishedRecoveryEntry(receipt),
+          }
+        : {}),
+      prepareDestroy: (receipt: HostLocalInferenceReceipt) => runtime.prepareDestroy(receipt),
+      destroy: (receipt: HostLocalInferenceReceipt) => runtime.destroy(receipt),
+    }),
+  });
 }
 
 interface DockerNetworkInspection {
@@ -572,6 +612,15 @@ export function rehydrateManagedLlamaCppLifecycle(
   const receipt = loadManagedLlamaCppReceipt(paths);
   if (!receipt) throw new Error("Managed llama.cpp private receipt is unavailable.");
   const selection = resolveManagedLlamaCppOwnerSelection(owner);
+  const authorityFailure = managedLlamaCppHostLocalDockerAuthorityFailure(
+    selection.recipe.metadata.id,
+    options.env ?? process.env,
+  );
+  if (authorityFailure && options.allowNonLocalDockerAuthorityForCleanup !== true) {
+    throw new Error(
+      `${authorityFailure} Restore the Docker selector used during onboarding and run 'nemoclaw ${owner.sandboxName} destroy' to remove the existing runtime.`,
+    );
+  }
   const operation = requireRuntimeProviderHostLocalInferenceOperation(
     options.runtimeProvider,
     "llama-cpp",
@@ -579,15 +628,40 @@ export function rehydrateManagedLlamaCppLifecycle(
     options.operation,
   );
   operation.assertAuthority();
+  try {
+    requirePersistedEngineAuthority(
+      receipt.engineAuthority,
+      operation.providerId,
+      operation.engine,
+      operation.bindingSha256,
+    );
+  } catch (error) {
+    if (
+      authorityFailure &&
+      options.allowNonLocalDockerAuthorityForCleanup === true &&
+      error instanceof Error &&
+      error.message.startsWith("Qualified ")
+    ) {
+      throw new Error(
+        `Managed llama.cpp cleanup could not verify the selected Docker authority. Restore the Docker selector used during onboarding and run 'nemoclaw ${owner.sandboxName} destroy' again.`,
+        { cause: error },
+      );
+    }
+    throw error;
+  }
   const current = currentManagedLlamaCppArtifact(selection, homeDir);
+  const lifecycle = lifecycleFor({
+    selection,
+    paths,
+    cacheRoot: current.cacheRoot,
+    artifact: current.artifact,
+    operation,
+  });
   return Object.freeze({
-    lifecycle: lifecycleFor({
-      selection,
-      paths,
-      cacheRoot: current.cacheRoot,
-      artifact: current.artifact,
-      operation,
-    }),
+    lifecycle:
+      authorityFailure && options.allowNonLocalDockerAuthorityForCleanup === true
+        ? cleanupOnlyLlamaCppLifecycle(lifecycle, authorityFailure)
+        : lifecycle,
     operation,
     owner,
     paths,
@@ -795,6 +869,11 @@ export async function resumeManagedLlamaCppRuntime(
   }
 
   const selection = resolveManagedLlamaCppOwnerSelection(owner);
+  const authorityFailure = managedLlamaCppHostLocalDockerAuthorityFailure(
+    selection.recipe.metadata.id,
+    env,
+  );
+  if (authorityFailure) throw new Error(authorityFailure);
   const operation = requireRuntimeProviderHostLocalInferenceOperation(
     options.runtimeProvider,
     "llama-cpp",

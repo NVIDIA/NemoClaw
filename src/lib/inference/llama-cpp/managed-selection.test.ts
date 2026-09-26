@@ -160,13 +160,15 @@ describe("managed llama.cpp selection", () => {
       },
     );
 
-    expect(resolveManagedLlamaCppSelection({}, catalog, report).kind).toBe("selected");
+    expect(resolveManagedLlamaCppSelection({}, catalog, report, LOCAL_DOCKER_SELECTION).kind).toBe(
+      "selected",
+    );
   });
 
   it("selects Nemotron by default on a qualified DGX Spark (#10239)", () => {
     const { catalog, report } = fixture();
 
-    const resolved = resolveManagedLlamaCppSelection({}, catalog, report);
+    const resolved = resolveManagedLlamaCppSelection({}, catalog, report, LOCAL_DOCKER_SELECTION);
 
     expect(resolved).toMatchObject({
       kind: "selected",
@@ -240,6 +242,55 @@ describe("managed llama.cpp selection", () => {
         "Managed N1x WSL llama.cpp requires DOCKER_HOST to be unset and the effective Docker context to be default.",
     });
     expect(dockerContextIsDefault).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["automatic selection with remote DOCKER_HOST", { DOCKER_HOST: "ssh://gpu.example.test" }],
+    ["automatic selection with a non-default context", { DOCKER_CONTEXT: "remote-builder" }],
+  ])("rejects generic Linux %s before adding a menu choice", (_case, env) => {
+    const { catalog, report } = fixture(GENERIC_PRESET_ID);
+
+    const discovery = discoverManagedLlamaCppSelections(env, catalog, report);
+
+    expect(discovery.resolution).toEqual({
+      kind: "rejected",
+      reason:
+        "Managed llama.cpp requires DOCKER_HOST to be unset and the effective Docker context to be default.",
+    });
+    expect(discovery.choices).toEqual([]);
+  });
+
+  it("omits generic Linux managed llama.cpp below its GPU-memory floor", () => {
+    const { catalog, report } = fixture(GENERIC_PRESET_ID);
+    const belowMemoryFloor = {
+      ...report,
+      observations: report.observations.map((observation) =>
+        observation.id === "host.gpu.memory_per_device_bytes"
+          ? { ...observation, value: 50_331_647_999 }
+          : observation,
+      ),
+    };
+
+    expect(discoverManagedLlamaCppSelections({}, catalog, belowMemoryFloor).choices).toEqual([]);
+  });
+
+  it.each([
+    [
+      "explicit selection with remote DOCKER_HOST",
+      { [LLAMA_CPP_RECIPE_ENV]: RECIPE_ID, DOCKER_HOST: "ssh://gpu.example.test" },
+    ],
+    [
+      "explicit selection with a non-default context",
+      { [LLAMA_CPP_RECIPE_ENV]: RECIPE_ID, DOCKER_CONTEXT: "remote-builder" },
+    ],
+  ])("rejects generic Linux %s before installation", (_case, env) => {
+    const { catalog, report } = fixture(GENERIC_PRESET_ID);
+
+    expect(resolveManagedLlamaCppSelection(env, catalog, report)).toEqual({
+      kind: "rejected",
+      reason:
+        "Managed llama.cpp requires DOCKER_HOST to be unset and the effective Docker context to be default.",
+    });
   });
 
   it.each([
@@ -440,7 +491,12 @@ describe("managed llama.cpp selection", () => {
     const { catalog, report } = fixture();
     const synthetic = withSyntheticRecipe(catalog, 550);
 
-    const resolved = resolveManagedLlamaCppSelection({}, synthetic.catalog, report);
+    const resolved = resolveManagedLlamaCppSelection(
+      {},
+      synthetic.catalog,
+      report,
+      LOCAL_DOCKER_SELECTION,
+    );
 
     expect(resolved).toMatchObject({
       kind: "selected",
@@ -478,6 +534,7 @@ describe("managed llama.cpp selection", () => {
       { [LLAMA_CPP_RECIPE_ENV]: MUSE_RECIPE_ID },
       synthetic.catalog,
       report,
+      LOCAL_DOCKER_SELECTION,
     );
 
     expect(resolved).toMatchObject({
@@ -563,6 +620,7 @@ describe("managed llama.cpp selection", () => {
         { [NEMOCLAW_SERVING_PRESET_ENV]: vllmPreset!.metadata.id },
         catalog,
         report,
+        LOCAL_DOCKER_SELECTION,
       ),
     ).toMatchObject({
       kind: "selected",
@@ -614,7 +672,7 @@ describe("managed llama.cpp selection", () => {
           nvidiaPlatform: "linux",
           productName: "NVIDIA RTX PRO 6000 Blackwell Server Edition",
         }),
-        detectGpu: () => ({ count: 1 }),
+        detectGpu: () => ({ count: 1, totalMemoryMB: 48_000, perGpuMB: 48_000 }),
         detectHostGpuPlatform: () => "linux",
         detectNvidiaDriverVersion: () => "595.84",
       },
@@ -624,6 +682,7 @@ describe("managed llama.cpp selection", () => {
       { [LLAMA_CPP_RECIPE_ENV]: RECIPE_ID },
       catalog,
       report,
+      LOCAL_DOCKER_SELECTION,
     );
 
     expect(resolved).toMatchObject({
@@ -661,6 +720,7 @@ describe("managed llama.cpp selection", () => {
       { [LLAMA_CPP_RECIPE_ENV]: RECIPE_ID },
       catalog,
       report,
+      LOCAL_DOCKER_SELECTION,
     );
 
     expect(resolved.kind).toBe("selected");

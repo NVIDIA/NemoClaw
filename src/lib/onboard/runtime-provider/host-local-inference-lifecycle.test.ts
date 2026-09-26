@@ -344,6 +344,7 @@ describe("host-local inference lifecycle authority", () => {
       });
       expect(createLlamaCppAdapter).toHaveBeenCalledWith(
         expect.objectContaining({
+          allowNonLocalDockerAuthorityForCleanup: false,
           runtimeOwnerSandboxName: "alpha",
           gatewayPort: 8080,
           expectedReceipt: llamaCppReceipt(),
@@ -434,6 +435,10 @@ describe("host-local inference lifecycle authority", () => {
     const lifecycleOptions = { createLlamaCppAdapter };
     const prepared = requiredPrepared(
       prepareSandboxHostLocalInferenceDestroyAuthority(qualified.bundle, entry, lifecycleOptions),
+    );
+
+    expect(createLlamaCppAdapter).toHaveBeenCalledWith(
+      expect.objectContaining({ allowNonLocalDockerAuthorityForCleanup: true }),
     );
 
     expect(

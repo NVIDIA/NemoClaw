@@ -112,11 +112,13 @@ The Muse Glimmer profile remains Experimental after bounded physical DGX Spark q
 
 Before you start, confirm these prerequisites:
 
-- Use a qualified DGX Spark Arm64 host, a Linux x86_64 host with one NVIDIA GPU, or a qualifying Windows WSL N1x host.
+- Use a qualified DGX Spark Arm64 host, a qualified Linux x86_64 host with at least one NVIDIA GPU, or a qualifying Windows WSL N1x host.
 - Use NVIDIA driver version `580.65.06` or later on each managed host profile.
 - Confirm that Docker is operational on the host.
+- Use Docker's effective local `default` context. Export `DOCKER_CONTEXT=default`. If `DOCKER_CONTEXT` is unset, unset `DOCKER_HOST` and select the `default` context.
 - Confirm that the NVIDIA Container Toolkit is operational.
 - Confirm that NVIDIA Container Device Interface support is healthy.
+- On Linux x86_64, provide at least 48,000 MiB per NVIDIA GPU.
 - Stop any process that uses host port `8081`.
 - Allow capacity for the pinned images, the GGUF file, and same-filesystem download staging.
 - Export `HF_TOKEN` only when the YAML-declared Hugging Face source requires authentication.
@@ -125,7 +127,6 @@ For Windows WSL N1x, also confirm these requirements:
 
 - Use Arm64 WSL with one GPU whose normalized identity is either `NVIDIA RTX Spark N1X` or `NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU)`.
 - Use the default local Docker Desktop context with at least 48,000 MiB of Docker memory.
-- Unset `DOCKER_HOST` and select Docker's `default` context before you select the managed recipe.
 - Provide at least 48,000 MiB of GPU memory.
 - Pass Docker storage, runtime, NVIDIA GPU integration, and Docker Desktop GPU passthrough readiness.
 
@@ -325,6 +326,11 @@ Upgrade or roll back that server and its model through the operator-owned proces
 The managed path does not provide an in-place model, image, recipe upgrade, downgrade, or rollback command.
 The installed runtime remains bound to the repository YAML authority recorded during onboarding.
 Do not edit the ownership, receipt, or recipe-digest state to force a migration.
+
+If an existing managed runtime used a non-default Docker context or `DOCKER_HOST`, NemoClaw refuses to resume or rebuild it.
+Restore the Docker selector used during onboarding, then run `$$nemoclaw <sandbox-name> destroy`.
+Cleanup proceeds only when the selected Docker authority matches the recorded receipt.
+After cleanup succeeds, select the local `default` context before you run onboarding again.
 
 If an updated NemoClaw release changes that authority, resume fails closed and preserves the existing state.
 NemoClaw does not currently define a managed llama.cpp migration procedure for that case.

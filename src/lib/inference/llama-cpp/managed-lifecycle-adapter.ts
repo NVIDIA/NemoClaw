@@ -25,6 +25,7 @@ import { managedLlamaCppStatePaths } from "./managed-state";
 export interface ManagedLlamaCppLifecycleAdapterOptions {
   readonly runtimeProvider: RuntimeProviderBundle;
   readonly runtimeOwnerSandboxName: string;
+  readonly allowNonLocalDockerAuthorityForCleanup?: boolean;
   readonly expectedModel: string;
   readonly expectedReceipt: HostLocalInferenceReceipt;
   readonly gatewayPort: number;
@@ -147,6 +148,11 @@ export function createManagedLlamaCppLifecycleAdapter(
   const rehydrated = (options.rehydrate ?? rehydrateManagedLlamaCppLifecycle)({
     runtimeProvider: options.runtimeProvider,
     runtimeOwnerSandboxName: options.runtimeOwnerSandboxName,
+    ...(options.allowNonLocalDockerAuthorityForCleanup === undefined
+      ? {}
+      : {
+          allowNonLocalDockerAuthorityForCleanup: options.allowNonLocalDockerAuthorityForCleanup,
+        }),
     gatewayPort,
     ...(options.homeDir === undefined ? {} : { homeDir: options.homeDir }),
     ...(options.environment === undefined ? {} : { env: options.environment }),
