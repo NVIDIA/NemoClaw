@@ -284,10 +284,13 @@ test(
       },
     );
     const allowlistedConnectText = resultText(allowlistedConnect);
+    const allowlistedConnectSucceeded =
+      allowlistedConnect.exitCode === 0 &&
+      allowlistedConnectText.includes("ISSUE_4462_ALLOWLISTED_RETRY_OK");
     expect(
-      allowlistedConnectText,
+      allowlistedConnectSucceeded,
       `Connect allowlisted approval proof failed with exit ${String(allowlistedConnect.exitCode)}`,
-    ).toContain("ISSUE_4462_ALLOWLISTED_RETRY_OK");
+    ).toBe(true);
 
     progress.phase("trigger and approve an operator.admin request through connect");
     const cronName = `issue-5324-admin-${Date.now()}-${process.pid}`;
@@ -349,7 +352,9 @@ test(
         timeoutMs: 4 * 60_000,
       },
     );
-    const adminConnectSucceeded = resultText(adminConnect).includes("ISSUE_5324_ADMIN_APPROVAL_OK");
+    const adminConnectSucceeded =
+      adminConnect.exitCode === 0 &&
+      resultText(adminConnect).includes("ISSUE_5324_ADMIN_APPROVAL_OK");
     expect(adminConnectSucceeded, "Explicit admin approval did not reach the settled state").toBe(
       true,
     );

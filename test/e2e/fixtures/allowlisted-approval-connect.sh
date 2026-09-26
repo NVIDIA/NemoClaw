@@ -10,7 +10,9 @@ request_id=__NEMOCLAW_ALLOWLISTED_REQUEST_ID__
   printf 'expected_request_id=%q\n' "$request_id"
   cat <<'NEMOCLAW_ALLOWLISTED_APPROVAL'
 set -euo pipefail
-python3 - "$expected_request_id" <<'PY_ALLOWLISTED_STATE'
+state_attempt=1
+while [ "$state_attempt" -le 30 ]; do
+  if python3 - "$expected_request_id" <<'PY_ALLOWLISTED_STATE'; then
 import importlib.util, sys
 
 helper_path = "/usr/local/lib/nemoclaw/openclaw_pairing_state.py"
@@ -91,6 +93,15 @@ if not required.issubset(scope_set(active[0].get("scopes"))):
     raise SystemExit("operator token scopes are not active after connect")
 print("ISSUE_4462_ALLOWLISTED_GATEWAY_STATE_OK")
 PY_ALLOWLISTED_STATE
+    break
+  fi
+  if [ "$state_attempt" -eq 30 ]; then
+    echo "ALLOWLISTED_REQUEST_SETTLEMENT_TIMEOUT" >&2
+    exit 31
+  fi
+  state_attempt=$((state_attempt + 1))
+  sleep 1
+done
 unset OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_PORT \
   OPENCLAW_GATEWAY_TOKEN OPENCLAW_GATEWAY_PASSWORD
 client_state=/tmp/issue-4462-allowlisted-client
