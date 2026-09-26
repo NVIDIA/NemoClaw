@@ -55,7 +55,7 @@ export const E2E_ACTION_PROVENANCE = {
   },
   hostDependencies: {
     reference:
-      "NVIDIA/NemoClaw/.github/actions/host-dependency-setup@cfa529171020ef6c2f3ad6ba0530ccec269d399f",
+      "NVIDIA/NemoClaw/.github/actions/host-dependency-setup@d511d704980d651909b52b18ee42fad41a017b7d",
     actionSha256: "6eabd4f7f0d1eb0d3e1788323a0222173dc574f1f722c0ae302cacb268327154",
     scriptSha256: "13211c558ff3c7816fe3b3936a0d62f87c28ebd721b295f4571431d59cfcc04a",
   },

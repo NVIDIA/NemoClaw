@@ -144,6 +144,15 @@ describe("Hermes GPU boundary", () => {
       },
     ],
     [
+      "missing Podman configuration package",
+      (job: Doc) => {
+        job.steps[0].with.packages = job.steps[0].with.packages.replace(
+          "golang-github-containers-common ",
+          "",
+        );
+      },
+    ],
+    [
       "unreviewed packages",
       (job: Doc) => {
         job.steps[0].with.packages = "curl";
