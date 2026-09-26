@@ -783,7 +783,6 @@ describe("complete managed-image publication workflow", () => {
       "test/e2e/fixtures/admin-request-selector.ts",
       "test/e2e/fixtures/issue-4462-admin-approval-evidence.ts",
       "test/e2e/lib/issue-4462-admin-request-selector.py",
-      "test/e2e/lib/issue-4462-fresh-agent-gateway-snapshot.py",
     ];
     expect(workflow.on?.pull_request?.paths).toEqual(
       expect.arrayContaining([
@@ -804,7 +803,7 @@ describe("complete managed-image publication workflow", () => {
       ]),
     );
     expect(baseImagePaths.join("\n")).not.toMatch(
-      /admin-(?:approval-connect|request-selector)|issue-4462-(?:admin-approval-evidence|admin-request-selector|fresh-agent-gateway-snapshot)/u,
+      /admin-(?:approval-connect|request-selector)|issue-4462-(?:admin-approval-evidence|admin-request-selector)/u,
     );
     expect(activation.needs).toBe("pr-build-and-entrypoint");
     expect(activation.if).toContain(

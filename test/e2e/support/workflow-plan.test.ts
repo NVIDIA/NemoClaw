@@ -264,6 +264,12 @@ describe("E2E workflow plan", () => {
     expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-nvidia-inference"]);
   });
 
+  it("describes the issue-4462 target's bounded request and explicit admin approval", () => {
+    expect(catalogueTarget("issue-4462-scope-upgrade-approval").displayName).toBe(
+      "Authorization: runs a bounded non-admin request before explicit operator.admin approval",
+    );
+  });
+
   it("routes Pi lifecycle qualification through the AMD64 NVIDIA API key profile (#7926)", () => {
     const targetId = "pi-agent-qualification-amd64";
     const plan = buildE2eWorkflowPlan({ targets: targetId });
@@ -682,6 +688,16 @@ describe("E2E workflow plan", () => {
       "rebuild-openclaw",
     );
     expect(selectedWorkflowJobs(plan)).toContain("mcp-bridge");
+  });
+
+  it("selects every live consumer when the shared gateway classifier changes", () => {
+    const changedFile = "test/e2e/fixtures/openclaw-agent-output.ts";
+
+    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toEqual([
+      "issue-4462-scope-upgrade-approval",
+      "openclaw-inference-switch",
+      "snapshot-commands",
+    ]);
   });
 
   it("selects only catalogue targets that own changed files", () => {

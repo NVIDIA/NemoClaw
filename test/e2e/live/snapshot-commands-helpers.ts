@@ -6,7 +6,10 @@ import {
   parseOpenClawJsonDocuments,
 } from "../../../src/lib/openclaw/agent-json-provenance.ts";
 import { sandboxCommandEnvironment } from "../fixtures/environment-profiles.ts";
-import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
+import {
+  classifyOpenClawGatewayFailureOutput,
+  parseOpenClawAgentText,
+} from "../fixtures/openclaw-agent-output.ts";
 
 export interface SnapshotInferenceFixture {
   apiKey: string;
@@ -45,28 +48,6 @@ export function expectedSnapshotCloneRestoreResult(
   }
 }
 
-const SNAPSHOT_GATEWAY_PROBE_REJECTIONS: ReadonlyArray<{
-  pattern: RegExp;
-  classification: SnapshotGatewayProbeClassification;
-}> = [
-  {
-    pattern: /scope upgrade pending approval|pairing required: device is asking for more scopes/i,
-    classification: "scope-upgrade-pending",
-  },
-  {
-    pattern: /device pairing required|pairing required/i,
-    classification: "device-pairing-required",
-  },
-  {
-    pattern: /gateway connect failed/i,
-    classification: "gateway-connect-failure",
-  },
-  {
-    pattern: /EMBEDDED FALLBACK|fallbackFrom[": ]+gateway|transport[": ]+embedded/i,
-    classification: "embedded-fallback",
-  },
-];
-
 function isSuccessfulSnapshotGatewayResponse(raw: string): boolean {
   const documents = parseOpenClawJsonDocuments(raw);
   for (let index = documents.length - 1; index >= 0; index -= 1) {
@@ -85,8 +66,8 @@ export function classifySnapshotGatewayProbe(result: {
   stderr: string;
 }): SnapshotGatewayProbeClassification {
   const output = `${result.stdout}\n${result.stderr}`;
-  const rejection = SNAPSHOT_GATEWAY_PROBE_REJECTIONS.find(({ pattern }) => pattern.test(output));
-  if (rejection) return rejection.classification;
+  const rejection = classifyOpenClawGatewayFailureOutput(output);
+  if (rejection) return rejection;
   if (result.exitCode !== 0) return "command-failure";
   if (!output.trim()) return "empty-output";
   return isSuccessfulSnapshotGatewayResponse(result.stdout) ? "authenticated" : "invalid-response";

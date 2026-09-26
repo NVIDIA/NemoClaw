@@ -39,6 +39,7 @@ import {
   startFakeOpenAiCompatibleServer,
 } from "../fixtures/fake-openai-compatible.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
+import { openClawGatewayOutputHasFailure } from "../fixtures/openclaw-agent-output.ts";
 import {
   inferenceResponseModel,
   inferenceSetAttemptCount,
@@ -811,10 +812,7 @@ exit "$rc"
   const [raw = "", warnings = ""] = result.stdout.split("\n__NEMOCLAW_AGENT_STDERR__\n", 2);
   const modelRun = parseOpenClawGatewayModelRun(raw);
   const reply = modelRun?.text ?? "";
-  const fallbackOrPairing =
-    /EMBEDDED FALLBACK|gateway connect failed|scope upgrade pending approval|device pairing required|pairing required|fallbackFrom[": ]+gateway|transport[": ]+embedded/i.test(
-      [raw, warnings, result.stderr].filter(Boolean).join("\n"),
-    );
+  const fallbackOrPairing = openClawGatewayOutputHasFailure(raw, warnings, result.stderr);
   const mockRequestMatched =
     !mockProvider ||
     (mockRequests.length > 0 &&

@@ -5,13 +5,32 @@ import { describe, expect, it } from "vitest";
 
 import { containsAnswer } from "../../helpers/e2e-answer-assertions.ts";
 import {
+  classifyOpenClawGatewayFailureOutput,
   nativeStateDoctorReportIsValid,
   nativeStateProcessIdentitiesAreValid,
+  openClawGatewayOutputHasFailure,
   parseOpenClawAgentText,
 } from "../fixtures/openclaw-agent-output.ts";
 import { buildOpenClawFirstTurnLatencyEvidence } from "../live/agent-turn-latency-helpers.ts";
 
 describe("OpenClaw agent-output fixture", () => {
+  it.each([
+    ["gateway connect failed", "gateway-connect-failure"],
+    ["scope upgrade pending approval", "scope-upgrade-pending"],
+    ["device pairing required", "device-pairing-required"],
+    ["[agent/embedded] using local transport", "embedded-fallback"],
+    ['{"fallbackFrom":"gateway"}', "embedded-fallback"],
+    ['{"transport":"embedded"}', "embedded-fallback"],
+  ] as const)("classifies gateway failure evidence: %s", (output, classification) => {
+    expect(classifyOpenClawGatewayFailureOutput("4", output)).toBe(classification);
+    expect(openClawGatewayOutputHasFailure("4", output)).toBe(true);
+  });
+
+  it("accepts output without gateway failure evidence", () => {
+    expect(classifyOpenClawGatewayFailureOutput("4", "")).toBeNull();
+    expect(openClawGatewayOutputHasFailure("4", "")).toBe(false);
+  });
+
   it("preserves one hosted JSON reply and its agent-duration evidence", () => {
     const output = JSON.stringify({
       status: "ok",

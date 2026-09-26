@@ -207,8 +207,12 @@ describe("scope-upgrade approval live fixture", () => {
 
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     expect(result.stdout.trim()).toBe("ISSUE_4462_FIXTURE_BEHAVIOR_OK");
-    expect(ISSUE_4462_SCOPE_UPGRADE_PHASES[0]).toBe(
+    expect(ISSUE_4462_SCOPE_UPGRADE_PHASES).toEqual([
       "confirm configured runtime availability and clear the scope-upgrade sandbox",
-    );
+      "install the OpenClaw sandbox",
+      "prove the first agent request needs no admin approval",
+      "trigger and approve an operator.admin request through connect",
+      "record the approval contract",
+    ]);
   });
 });
