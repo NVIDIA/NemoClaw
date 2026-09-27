@@ -60,9 +60,10 @@ Before destructive replacement, run `$$nemoclaw <sandbox-name> status`. If the o
 reports the registered sandbox missing, NemoClaw leaves any provider container and registry entry
 untouched. Retry after the gateway reconnects. If the sandbox was intentionally deleted, preserve
 any separate backup and use `$$nemoclaw <sandbox-name> destroy --yes` to retire the stale entry
-when the command can prove the OpenShell resource absent. Then onboard a clean replacement and
-restore the backup if one is available. Rebuild cannot recover a workspace or live OpenShell
-policy that no longer exists.
+when the command can prove the OpenShell resource absent. Then onboard a clean replacement and use
+the [manual transfer workflow](../state-and-backups/transfer-state-manually) to copy only reviewed,
+credential-free user data from an independently maintained backup. Rebuild cannot recover a
+workspace or live OpenShell policy that no longer exists.
 
 <AgentOnly variant="openclaw,hermes">
 The `start` command repairs the agent runtime and host-side port forwards.
