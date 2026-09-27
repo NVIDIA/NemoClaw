@@ -8,11 +8,6 @@ Direct E2E coverage runs through Vitest.
 Interactive TUI targets require `expect`. The unified workflow installs it
 before those targets run; local runners must provide it themselves.
 
-The native Podman row of Hermes GPU startup installs its reviewed host prerequisites before candidate checkout.
-It uses the pinned host-dependency action for `conmon`, `fuse-overlayfs`, `golang-github-containers-common`, `iptables`, `nftables`, `slirp4netns`, and `uidmap`.
-The container configuration package supplies Podman's standard image policy and seccomp files.
-The install refuses package removals, preserving the runner's Docker and containerd packages and their supplied runtime.
-
 - `.github/workflows/e2e.yaml` compares the commits before and after each push to `main`.
   It selects targets and jobs that own changed files, then publishes the `Relevant E2E` check.
   It also supports trusted manual dispatches for the latest PR commit.
@@ -172,11 +167,6 @@ Managed-image activation retains its cron-consumer proof. Feature setup can stop
 approval and verify the grant through its own native operation, avoiding an unrelated cron job or
 agent session. Sessions/agents coverage requires the main session seed to succeed and does not
 approve arbitrary pending devices or silently skip the main-session cases.
-The feature tests exercise the CLI instead of separately asserting that its source and compiled files exist.
-The full onboarding test relies on its existing status poll, which fails when status never succeeds.
-MCP tests retain live allow/deny enforcement and credential-rotation checks without asserting policy
-serialization or the provider-update success message. Approval phase labels live with the existing
-fixture evidence helpers; moving these labels does not move live assertions.
 The concurrent-add probe retries only the rejected command after status proves that the other
 command committed one coherent bridge. The rejected command must report the exact portable
 host-lock timeout, optionally followed by the current recorded-owner-is-still-running remediation.
