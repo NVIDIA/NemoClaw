@@ -27,7 +27,7 @@
       "src/lib/messaging/channels/index.ts": 23,
       "src/lib/onboard/gateway-binding.ts": 51,
       "src/lib/platform.ts": 21,
-      "src/lib/runner.ts": 81,
+      "src/lib/runner.ts": 80,
       "src/lib/sandbox-name-contract.ts": 20,
       "src/lib/security/redact.ts": 50,
       "src/lib/state/mcp-lifecycle-lock.ts": 20,

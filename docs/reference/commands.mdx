@@ -1185,7 +1185,15 @@ $$nemoclaw my-assistant connect [--probe-only]
 $$nemoclaw connect
 ```
 
-On Linux, the `--probe-only` flag is the infrastructure producer for launch-readiness evidence. It validates a usable lease and exits without duplicate recovery. Otherwise, it fences prior evidence, waits for the sandbox, verifies or repairs its in-sandbox agent process and host-side forwards, and publishes evidence only after every probe succeeds. When it finds a stopped registered sandbox, it starts that sandbox through its recorded OpenShell gateway before recovery. It rechecks the sandbox on its recorded OpenShell gateway after the readiness wait and never restarts the shared host gateway. If an old runtime epoch might exist and cannot be durably rotated, the command exits nonzero before complete preflight or recovery and gives redacted repair guidance. A securely absent runtime authority and receipt let ordinary `launch` run the complete preflight without optimization if new authority creation fails, but on Linux `connect --probe-only` still exits nonzero because it could not publish launch-readiness evidence. A runtime failure and, on Linux, a failure to publish evidence for an otherwise healthy runtime also exit nonzero with different diagnostics.
+On Linux, the `--probe-only` flag is the infrastructure producer for launch-readiness evidence.
+It validates a usable lease and exits without duplicate recovery.
+Otherwise, it fences prior evidence, waits for the sandbox, verifies the in-sandbox agent process, repairs supported state for a running gateway and host-side forwards, and publishes evidence only after every probe succeeds.
+It reports a stopped built-in native agent gateway and does not relaunch it.
+When it finds a stopped registered sandbox, it starts that sandbox through its recorded OpenShell gateway before recovery.
+It rechecks the sandbox on its recorded OpenShell gateway after the readiness wait and never restarts the shared host gateway.
+If an old runtime epoch might exist and cannot be durably rotated, the command exits nonzero before complete preflight or recovery and gives redacted repair guidance.
+A securely absent runtime authority and receipt let ordinary `launch` run the complete preflight without optimization if new authority creation fails, but on Linux `connect --probe-only` still exits nonzero because it could not publish launch-readiness evidence.
+A runtime failure and, on Linux, a failure to publish evidence for an otherwise healthy runtime also exit nonzero with different diagnostics.
 
 Infrastructure must run the command as the same final numeric user that later runs `launch`. Run it only after the final durable home and state volume is mounted and after policy and network provisioning is complete. On Linux, that user also needs a secure, independently writable OS per-user runtime authority under `/run/user/<numeric-uid>`. Do not redirect this authority with caller environment variables. Do not use a graphical or login-session identifier as the deployment ordering boundary. On macOS, `connect --probe-only` runs the complete preflight, including recovery and probes. After a successful probe and recovery, it prints a note that launch-readiness evidence is unavailable on this platform and exits zero. The next `launch` runs the complete preflight. On Linux, the publication-failure diagnostic is redacted and does not print filesystem paths or environment values.
 
@@ -1444,12 +1452,13 @@ For a stopped standard sandbox, `recover` asks OpenShell to start that exact san
 
 `recover` waits up to 30 seconds to acquire the per-sandbox lifecycle lock. After acquisition, it holds the lock until gateway recovery and forward repair finish.
 
-After the sandbox is available, `recover` sends authenticated requests only to repair supported in-sandbox agent processes and host forwards. Standard sandbox start and stop remain OpenShell-owned.
+After the sandbox is available, `recover` sends authenticated requests only to verify supported in-sandbox agent processes and repair supported state for a running gateway and host forwards.
+Standard sandbox start and stop remain OpenShell-owned.
 The host selects the controller from the live container topology.
 In a direct root-entrypoint container, the request reaches the root PID 1 supervisor.
 In an OpenShell-managed container, the request enters the root-owned mode `0500` managed controller through a sanitized root exec while OpenShell remains PID 1.
 It does not use ordinary `openshell sandbox exec`, manual in-sandbox relaunch, or container replacement as a fallback.
-When `recover` repairs a stopped built-in OpenClaw or Hermes gateway, it repeats the managed-controller probe only while a bounded startup, discovery, lease-contention, or pinned-container restart transition remains unconfirmed. Any other result ends recovery.
+When `recover` finds a stopped built-in OpenClaw or Hermes agent gateway, it reports the stopped gateway and does not relaunch it.
 
 If the gateway is healthy, `recover` checks or repairs host-side forwards.
 It exits zero only when the required forward checks succeed.
@@ -1491,7 +1500,8 @@ NemoClaw does not signal, authorize, or respawn an agent-owned process.
 
 For Hermes, the entrypoint supervisor also owns the dashboard process, internal API relay, dashboard relay, and gateway log stream.
 The managed nonroot supervisor continuously repairs those processes and stops an alive but deaf gateway after four consecutive failed health checks.
-If the gateway requests a service-managed restart with status 75 five times within 60 seconds, the supervisor stops before a sixth launch.
+If the gateway requests a fifth service-managed restart with status 75 within 60 seconds, the supervisor waits until the rolling window permits a relaunch.
+The sandbox remains active during this cooldown.
 Clean exits and status 79 wait for authenticated recovery, while other exit statuses fail immediately.
 If the Hermes restart closes the OpenShell exec relay before it returns status, NemoClaw waits for the selected sandbox control plane to become ready again.
 

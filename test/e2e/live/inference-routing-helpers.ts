@@ -12,7 +12,7 @@ import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import { captureIssue4462FailureDiagnostics } from "../fixtures/issue-4462-diagnostics.ts";
-import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT } from "../fixtures/paths.ts";
+import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 import type { RuntimeProviderPrerequisite } from "../fixtures/runtime-provider.ts";
 import {
   type RawRunOptions,
@@ -24,7 +24,6 @@ import {
 // probes, with local helpers only where raw in-memory output is required to
 // prove credential non-exposure before redacted artifacts are written.
 
-const DIST_ENTRYPOINT = CLI_DIST_ENTRYPOINT;
 const NEMOCLAW_STATE_DIR = path.join(os.homedir(), ".nemoclaw");
 const ONBOARD_SESSION_FILE = path.join(NEMOCLAW_STATE_DIR, "onboard-session.json");
 const ONBOARD_LOCK_FILE = path.join(NEMOCLAW_STATE_DIR, "onboard.lock");
@@ -120,11 +119,6 @@ async function requireLivePrerequisites(
   host: HostCliClient,
   runtimeProvider: RuntimeProviderPrerequisite,
 ): Promise<void> {
-  expect(
-    fs.existsSync(DIST_ENTRYPOINT),
-    "run `npm run build:cli` before live inference-routing targets",
-  ).toBe(true);
-
   await runtimeProvider.requireAvailable({
     artifactName: "prereq-docker-info-inference-routing",
     scenarioLabel: "inference routing",

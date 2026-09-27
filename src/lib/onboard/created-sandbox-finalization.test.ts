@@ -891,49 +891,63 @@ describe("created OpenClaw sandbox finalization", () => {
     expect(register).toHaveBeenCalledWith(publishedTarget);
   });
 
-  it("does not publish the prepared target when managed restore fails (#10546)", async () => {
-    const prepared = { name: "openclaw" } as SandboxEntry;
-    const register = vi.fn();
+  it.each([
+    { failure: "state copy", copySuccess: false, doctorCalls: 0 },
+    { failure: "post-restore doctor", copySuccess: true, doctorCalls: 1 },
+  ])(
+    "does not publish the prepared target after $failure fails (#10546)",
+    async ({ copySuccess, doctorCalls }) => {
+      const prepared = { name: "openclaw" } as SandboxEntry;
+      const register = vi.fn();
+      vi.mocked(restoreWindow.finishUnregisteredOpenClawPostRestoreDoctor).mockResolvedValue({
+        ok: false,
+        stage: "doctor",
+        detail: "doctor did not complete on restored state",
+      });
 
-    await expect(
-      finalizeCreatedSandbox(
-        {
-          sandboxName: "openclaw",
-          restoreBackupPath: "/tmp/managed-openclaw-backup",
-          preUpgradeBackup: true,
-          targetAgentType: "openclaw",
-          validateManagedDcode: false,
-          provider: "compatible-endpoint",
-          model: "demo",
-          preferredInferenceApi: "openai-completions",
-        },
-        {
-          prepareRegistration: () => prepared,
-          revalidatePreparedRegistration: () => prepared,
-          restoreRecreatedSandboxState: async (_name, _backupPath, _options, resolveTarget) => {
-            expect(await resolveTarget?.()).toBe(prepared);
-            return {
-              success: false,
-              restoredDirs: [],
-              failedDirs: ["workspace"],
-              restoredFiles: [],
-              failedFiles: [],
-              error: "copy failed",
-            };
+      await expect(
+        finalizeCreatedSandbox(
+          {
+            sandboxName: "openclaw",
+            restoreBackupPath: "/tmp/managed-openclaw-backup",
+            preUpgradeBackup: true,
+            targetAgentType: "openclaw",
+            validateManagedDcode: false,
+            provider: "compatible-endpoint",
+            model: "demo",
+            preferredInferenceApi: "openai-completions",
           },
-          getDcodeSelectionDrift: vi.fn(),
-          register,
-          note: vi.fn(),
-          error: vi.fn(),
-          exitProcess: (code): never => {
-            throw new Error(`exit ${code}`);
+          {
+            prepareRegistration: () => prepared,
+            revalidatePreparedRegistration: () => prepared,
+            restoreRecreatedSandboxState: async (_name, _backupPath, _options, resolveTarget) => {
+              expect(await resolveTarget?.()).toBe(prepared);
+              return {
+                success: copySuccess,
+                restoredDirs: [],
+                failedDirs: ["workspace"],
+                restoredFiles: [],
+                failedFiles: [],
+                error: "copy failed",
+              };
+            },
+            getDcodeSelectionDrift: vi.fn(),
+            register,
+            note: vi.fn(),
+            error: vi.fn(),
+            exitProcess: (code): never => {
+              throw new Error(`exit ${code}`);
+            },
           },
-        },
-      ),
-    ).rejects.toThrow("exit 1");
+        ),
+      ).rejects.toThrow("exit 1");
 
-    expect(register).not.toHaveBeenCalled();
-  });
+      expect(register).not.toHaveBeenCalled();
+      expect(restoreWindow.finishUnregisteredOpenClawPostRestoreDoctor).toHaveBeenCalledTimes(
+        doctorCalls,
+      );
+    },
+  );
 
   it("fails closed before restore when prepared registration authority is unavailable", async () => {
     const register = vi.fn();

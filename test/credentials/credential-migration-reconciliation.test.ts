@@ -35,7 +35,6 @@ const REGISTRATION_SCENARIOS = [
         "Failed to create messaging provider 'legacy-openai': registration failed",
       );
     },
-    expectedFilePresent: true,
     expectedMigrated: false,
   },
   {
@@ -47,7 +46,6 @@ const REGISTRATION_SCENARIOS = [
         { name: "legacy-openai", type: "generic", credentialEnv: "OPENAI_API_KEY" },
       ]);
     },
-    expectedFilePresent: true,
     expectedMigrated: true,
   },
 ] as const;
@@ -242,11 +240,9 @@ describe("legacy credential reconciliation", () => {
             NODE_OPTIONS: "--require=/tmp/tampered.js",
           });
           expect(
-            fs.existsSync(legacyFile),
-            scenario.expectedFilePresent
-              ? "failed registration must preserve the legacy file"
-              : "successful registration must retire migrated values",
-          ).toBe(scenario.expectedFilePresent);
+            Object.hasOwn(JSON.parse(fs.readFileSync(legacyFile, "utf8")), "OPENAI_API_KEY"),
+            "only successful registration retires the migrated credential entry",
+          ).toBe(!scenario.expectedMigrated);
         },
       );
     } finally {
