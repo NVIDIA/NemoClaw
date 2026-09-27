@@ -313,6 +313,8 @@ if os.path.exists(config_path):
                 or marker_metadata.st_nlink != 1
             ):
                 raise OSError("custom route receipt is not a trusted regular file")
+            os.fchown(marker_fd, metadata.st_uid, metadata.st_gid)
+            os.fchmod(marker_fd, stat.S_IMODE(metadata.st_mode))
             with os.fdopen(marker_fd, "w", encoding="ascii", closefd=False) as marker_file:
                 marker_file.write(f"{config_digest}  openclaw.json\\n")
                 marker_file.flush()
@@ -327,9 +329,7 @@ RUN if [ -f /sandbox/.openclaw/openclaw.json ]; then \\
         rm -f -- .config-hash; \\
         sha256sum openclaw.json > .config-hash; \\
         chown --reference=openclaw.json .config-hash; \\
-        chown --reference=openclaw.json .nemoclaw-custom-route-pending; \\
         chmod --reference=openclaw.json .config-hash; \\
-        chmod --reference=openclaw.json .nemoclaw-custom-route-pending; \\
     fi${restoreUser}
 `;
 }

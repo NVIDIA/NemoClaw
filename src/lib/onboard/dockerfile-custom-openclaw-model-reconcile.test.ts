@@ -167,6 +167,7 @@ describe("custom OpenClaw Dockerfile model reconciliation", () => {
           },
         }),
       );
+      fs.chmodSync(configPath, 0o640);
       const program = embedded!.replace(
         'config_path = "/sandbox/.openclaw/openclaw.json"',
         `config_path = ${JSON.stringify(configPath)}`,
@@ -198,9 +199,15 @@ describe("custom OpenClaw Dockerfile model reconciliation", () => {
         },
       });
       const configBytes = fs.readFileSync(configPath);
-      expect(fs.readFileSync(path.join(root, ".nemoclaw-custom-route-pending"), "utf8")).toBe(
+      const markerPath = path.join(root, ".nemoclaw-custom-route-pending");
+      expect(fs.readFileSync(markerPath, "utf8")).toBe(
         `${createHash("sha256").update(configBytes).digest("hex")}  openclaw.json\n`,
       );
+      const configMetadata = fs.statSync(configPath);
+      const markerMetadata = fs.statSync(markerPath);
+      expect(markerMetadata.mode & 0o777).toBe(configMetadata.mode & 0o777);
+      expect(markerMetadata.uid).toBe(configMetadata.uid);
+      expect(markerMetadata.gid).toBe(configMetadata.gid);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
