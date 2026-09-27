@@ -45,7 +45,7 @@ function makeFakeAgent(): AgentInstance {
     },
     inferenceProviderOptions: [],
     stateDirs: [],
-    stateFiles: [],
+    stateFiles: [{ path: "config.toml", strategy: "copy" }],
     stateDirectories: [],
     backupStateDirs: ["memories", "sessions"],
     backupStateDirPrefixes: [],
@@ -65,11 +65,17 @@ export interface RestoreWarningBehavior {
   localTar: SpawnResult;
 }
 
+export interface StateFileFixture {
+  path: string;
+  strategy: string;
+  contents: string;
+}
+
 export interface RestoreWarningHarness {
   agent: AgentInstance;
   behavior: RestoreWarningBehavior;
   recordedSshCommands: string[];
-  writeBackup(): string;
+  writeBackup(extraFiles?: StateFileFixture[]): string;
   spawnHandler(command: string, args?: readonly string[]): SpawnResult | undefined;
   dispose(): void;
 }
@@ -87,12 +93,17 @@ export function createRestoreWarningHarness(): RestoreWarningHarness {
     agent: makeFakeAgent(),
     behavior,
     recordedSshCommands,
-    writeBackup() {
+    writeBackup(extraFiles: StateFileFixture[] = []) {
       const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-restore-warning-"));
       fixtures.push(backupPath);
       for (const dirName of ["memories", "sessions"]) {
         fs.mkdirSync(path.join(backupPath, dirName), { recursive: true });
         fs.writeFileSync(path.join(backupPath, dirName, "state.txt"), "backed-up state\n");
+      }
+      for (const file of extraFiles) {
+        const target = path.join(backupPath, file.path);
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.writeFileSync(target, file.contents);
       }
       fs.writeFileSync(
         path.join(backupPath, "rebuild-manifest.json"),
@@ -105,7 +116,10 @@ export function createRestoreWarningHarness(): RestoreWarningHarness {
           expectedVersion: null,
           stateDirs: ["memories", "sessions"],
           backedUpDirs: ["memories", "sessions"],
-          stateFiles: [],
+          stateFiles: extraFiles.map(({ path: filePath, strategy }) => ({
+            path: filePath,
+            strategy,
+          })),
           dir: "/sandbox/.fake",
           backupPath,
           blueprintDigest: null,

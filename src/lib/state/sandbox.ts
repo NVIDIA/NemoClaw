@@ -2696,7 +2696,13 @@ async function restoreSandboxStateInternal(
         !extractClean && sshResult.status === 1 && !sshResult.error && !sshResult.signal;
       if (!extractClean && !extractWarningOnly) {
         _log(`FAILED: state archive extraction failed: ${extractSummary}`);
-        failedDirs.push(...localDirs);
+        return {
+          success: false,
+          restoredDirs,
+          failedDirs: [...cleanupStateDirs],
+          restoredFiles,
+          failedFiles: localFiles.map((f) => f.path),
+        };
       } else {
         if (extractWarningOnly) {
           _log(

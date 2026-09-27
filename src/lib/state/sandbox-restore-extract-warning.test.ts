@@ -145,6 +145,35 @@ describe("restoreSandboxState tar-warning handling (#12358)", () => {
     );
   });
 
+  it("marks state files failed when extraction exits 2 and the backup contains state files", async () => {
+    harness.behavior.extract = spawnResult(
+      2,
+      "tar: sessions: Cannot open: Permission denied\ntar: Exiting with failure status due to previous errors\n",
+    );
+
+    const result = await restoreRecreatedSandboxState(
+      "alpha",
+      harness.writeBackup([
+        { path: "config.toml", strategy: "copy", contents: "backed-up state\n" },
+      ]),
+      { targetAgentType: "fake-agent" },
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.restoredDirs).toEqual([]);
+    expect(result.failedDirs).toEqual(["memories", "sessions"]);
+    expect(result.restoredFiles).toEqual([]);
+    expect(result.failedFiles).toEqual(["config.toml"]);
+    expect(
+      harness.recordedSshCommands.some(
+        (command) =>
+          command.includes("[ -d ") ||
+          command.includes("chown -R") ||
+          command.includes("config.toml"),
+      ),
+    ).toBe(false);
+  });
+
   it("fails closed without touching the sandbox when local archive creation fails", async () => {
     vi.stubEnv("NEMOCLAW_REBUILD_VERBOSE", "1");
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
