@@ -303,6 +303,9 @@ export async function prepareStoppedOpenClawState(
     fs.mkdirSync(raw, { mode: 0o700 });
     const validation = sandboxState.validateTarEntries(archive, raw);
     if (!validation.safe) rejectStoppedState("Stopped state archive failed snapshot validation.");
+    if (sandboxState.rejectSymlinkExtractionTraversal(archive, validation.entries).length > 0) {
+      rejectStoppedState("Stopped state archive contains an unsafe symlink extraction layout.");
+    }
     // This provider-owned stream has already containment-checked hard-link
     // targets and limited headers to files, directories, and links. Extract
     // into a new private directory without resolving symlink targets: absolute

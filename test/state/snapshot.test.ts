@@ -240,6 +240,19 @@ describe("complete native home persistence", () => {
         [".openclaw/hooks/preflight.sh", "hook"],
         [".openclaw/cron/jobs.json", '{"jobs":[]}'],
         [".openclaw/agents/child/history.jsonl", "child-agent"],
+        [
+          "node_modules/example/package-lock.json",
+          JSON.stringify({
+            lockfileVersion: 3,
+            packages: {
+              "node_modules/cookie": {
+                version: "1.0.0",
+                resolved: "https://registry.example.test/cookie.tgz",
+                integrity: "sha512-cHVibGljLXBhY2thZ2UtaW50ZWdyaXR5",
+              },
+            },
+          }),
+        ],
       ]);
       for (const [relativePath, contents] of expected) {
         const target = path.join(nativeRoot, relativePath);
@@ -393,6 +406,18 @@ describe("complete native home persistence", () => {
     ["a recognized structured config", "config.json", JSON.stringify({ apiKey: "placeholder" })],
     ["an arbitrary native file", "notes.txt", `ghp_${"0123456789abcdef"}`],
     ["an arbitrary dependency file", "node_modules/example/token.txt", `ghp_${"fedcba9876543210"}`],
+    [
+      "a dependency lockfile",
+      "package-lock.json",
+      JSON.stringify({
+        lockfileVersion: 3,
+        packages: {
+          "node_modules/example": {
+            resolved: `https://build-user:ghp_${"abcdef0123456789"}@registry.example.test/example.tgz`,
+          },
+        },
+      }),
+    ],
   ])("removes a native archive containing a credential in %s", (_case, relativePath, content) => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-credential-"));
     const oldPath = process.env.PATH;

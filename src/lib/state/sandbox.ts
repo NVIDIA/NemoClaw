@@ -49,6 +49,7 @@ import { shellQuote } from "../runner.js";
 import { createTempSshConfig } from "../sandbox/temp-ssh-config.js";
 import {
   isConfigValue,
+  isCredentialField,
   isDependencyLockfile,
   isSensitiveFile,
   sanitizeEnvFileContent,
@@ -551,6 +552,51 @@ export function validateTarEntries(
 }
 
 /**
+ * Reject archive layouts that create a symlink and then extract another
+ * member through that path. Standalone symlinks remain native state, including
+ * absolute links and links whose targets are outside the native root; only a
+ * later archive write through the link is unsafe at the host extraction
+ * boundary.
+ */
+export function rejectSymlinkExtractionTraversal(
+  tarArchive: TarArchiveSource,
+  entries: readonly string[],
+): string[] {
+  const symlinks: Array<{ entry: string; index: number }> = [];
+  let index = 0;
+  const listingFailure = runTarListing(tarArchive, ["-tvf", "-"], "tar symlink listing", (line) => {
+    const entry = entries[index];
+    if (entry === undefined) return;
+    if (line.startsWith("l")) symlinks.push({ entry, index });
+    index += 1;
+  });
+  if (listingFailure) return [listingFailure];
+  if (index !== entries.length) return ["tar symlink listing did not match archive inventory"];
+
+  const normalizedEntries = entries.map((entry) =>
+    path.posix.normalize(entry.replace(/^\.\//u, "")).replace(/\/$/u, ""),
+  );
+  const violations: string[] = [];
+  for (const symlink of symlinks) {
+    const linkPath = normalizedEntries[symlink.index];
+    if (!linkPath || linkPath === ".") {
+      violations.push(`unsafe symlink entry: ${symlink.entry}`);
+      continue;
+    }
+    for (let later = symlink.index + 1; later < normalizedEntries.length; later += 1) {
+      const candidate = normalizedEntries[later];
+      if (candidate === linkPath || candidate?.startsWith(`${linkPath}/`)) {
+        violations.push(
+          `archive member '${entries[later]}' would extract through symlink '${symlink.entry}'`,
+        );
+        break;
+      }
+    }
+  }
+  return violations;
+}
+
+/**
  * Detect hard-link entries in a tar archive using verbose listing.
  * Hard links are rejected entirely — sandbox state backups have no
  * legitimate reason to contain them, and they can be used to reference
@@ -919,6 +965,73 @@ const NATIVE_RAW_SCAN_EXCLUDED_SEGMENTS = new Set([
   "venv",
 ]);
 
+const DEPENDENCY_NAME_MAP_FIELDS = new Set([
+  "dependencies",
+  "devDependencies",
+  "optionalDependencies",
+  "peerDependencies",
+  "peerDependenciesMeta",
+  "packages",
+]);
+
+function isDependencyCredentialField(key: string): boolean {
+  const normalized = key.replace(/^_+/u, "");
+  return normalized.toLowerCase() === "auth" || isCredentialField(normalized);
+}
+
+function dependencyStringContainsCredential(value: string): boolean {
+  const candidates = value.match(/https?:\/\/[^\s"'<>]+/gu) ?? [];
+  let nonUrlContent = value;
+  for (const candidate of candidates) {
+    try {
+      const url = new URL(candidate);
+      if (url.username || url.password) return true;
+      for (const [key, queryValue] of url.searchParams) {
+        if (queryValue && isDependencyCredentialField(key)) return true;
+      }
+      nonUrlContent = nonUrlContent.replace(candidate, "");
+    } catch {
+      // Package managers own malformed dependency URL validation. The bounded
+      // detector below still rejects high-confidence credential material.
+    }
+  }
+  return valueLooksLikeSecret(nonUrlContent);
+}
+
+function dependencyValueContainsCredential(value: unknown, parentField?: string): boolean {
+  if (typeof value === "string") return dependencyStringContainsCredential(value);
+  if (Array.isArray(value)) return value.some((entry) => dependencyValueContainsCredential(entry));
+  if (value === null || typeof value !== "object") return false;
+
+  const keysAreDependencyNames =
+    parentField !== undefined && DEPENDENCY_NAME_MAP_FIELDS.has(parentField);
+  for (const [key, child] of Object.entries(value)) {
+    if (
+      !keysAreDependencyNames &&
+      isDependencyCredentialField(key) &&
+      child !== null &&
+      child !== undefined &&
+      child !== ""
+    ) {
+      return true;
+    }
+    if (dependencyValueContainsCredential(child, key)) return true;
+  }
+  return false;
+}
+
+function dependencyLockfileContainsCredential(name: string, raw: string): boolean {
+  if (dependencyStringContainsCredential(raw)) return true;
+  try {
+    const parsed: unknown = name.endsWith(".json") ? JSON.parse(raw) : parseYaml(raw);
+    return dependencyValueContainsCredential(parsed);
+  } catch {
+    // A recognized lockfile must be structurally inspectable before its opaque
+    // contents can cross the host-side persistence boundary.
+    return true;
+  }
+}
+
 function tarHeaderString(header: Buffer, start: number, length: number): string {
   const end = header.indexOf(0, start);
   return header
@@ -1079,17 +1192,28 @@ function nativeArchiveCredentialViolation(
 ): string | null {
   const rawViolation = nativeArchiveRawCredentialViolation(archivePath);
   if (rawViolation) return rawViolation;
-  const candidates: Array<{ entry: string; fileName: string; isEnv: boolean }> = [];
+  const candidates: Array<{
+    entry: string;
+    fileName: string;
+    isEnv: boolean;
+    isLockfile: boolean;
+  }> = [];
   for (const entry of new Set(entries)) {
     if (entry.endsWith("/")) continue;
     const fileName = path.posix.basename(entry).toLowerCase();
-    if (isDependencyLockfile(fileName)) continue;
+    const isLockfile = isDependencyLockfile(fileName);
     if (isSensitiveFile(fileName)) return entry;
     const isEnv = fileName === ".env" || fileName.endsWith(".env");
     const isStructured =
       fileName.endsWith(".json") || fileName.endsWith(".yaml") || fileName.endsWith(".yml");
-    if (!isEnv && (!isStructured || !shouldScanNativeStructuredConfig(entry, fileName))) continue;
-    candidates.push({ entry, fileName, isEnv });
+    if (
+      !isLockfile &&
+      !isEnv &&
+      (!isStructured || !shouldScanNativeStructuredConfig(entry, fileName))
+    ) {
+      continue;
+    }
+    candidates.push({ entry, fileName, isEnv, isLockfile });
   }
   if (candidates.length === 0) return null;
 
@@ -1122,11 +1246,17 @@ function nativeArchiveCredentialViolation(
       if (!extractedCandidate) {
         return candidate.entry;
       }
-      if (extractedCandidate.kind === "oversize") continue;
+      if (extractedCandidate.kind === "oversize") {
+        if (candidate.isLockfile) return candidate.entry;
+        continue;
+      }
       const raw = extractedCandidate.content.toString("utf8");
       if (
-        (candidate.isEnv && sanitizeEnvFileContent(raw) !== raw) ||
-        (!candidate.isEnv && !structuredContentIsCredentialFree(candidate.fileName, raw))
+        (candidate.isLockfile && dependencyLockfileContainsCredential(candidate.fileName, raw)) ||
+        (!candidate.isLockfile && candidate.isEnv && sanitizeEnvFileContent(raw) !== raw) ||
+        (!candidate.isLockfile &&
+          !candidate.isEnv &&
+          !structuredContentIsCredentialFree(candidate.fileName, raw))
       ) {
         return candidate.entry;
       }

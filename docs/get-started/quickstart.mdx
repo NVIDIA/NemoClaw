@@ -387,7 +387,7 @@ Use these details when your first-run path needs more control.
     When the selector is unset, OpenClaw chooses Brave Search when `BRAVE_API_KEY` is available, then Tavily Search when only `TAVILY_API_KEY` is available.
     Brave Search wins when both keys are available.
     Changing or disabling web search requires re-running onboarding with the new selection and accepting sandbox recreation, or passing `--recreate-sandbox`.
-    NemoClaw backs up supported workspace state before recreation and restores it into the replacement sandbox.
+    NemoClaw transfers the complete native home/workspace before recreation, including unknown files and agent-managed state. If that tree contains credential-bearing or uninspectable content, recreation stops before replacement; move credentials to supported OpenShell storage or bindings, then retry.
 
     The onboarding flow also offers Telegram, Discord, Slack, WeChat, WhatsApp, Microsoft Teams, and Google Chat.
     Press a channel number to toggle it, then press Enter to continue.

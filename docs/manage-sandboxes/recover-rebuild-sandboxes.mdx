@@ -448,7 +448,32 @@ openshell status
 $$nemoclaw <sandbox-name> destroy --yes
 ```
 
-Do not use `--force` for this recovery. If deletion is unconfirmed, preserve the local recovery state and restore gateway access. After confirmed deletion, run `$$nemoclaw onboard --name <new-sandbox-name>` and recover any required data from the retained backup. Use a new sandbox name: recovery retirement refuses while the failed sandbox name is still present on its recorded gateway.
+Do not use `--force` for this recovery. If deletion is unconfirmed, preserve the local recovery state and restore gateway access. After confirmed deletion, run `$$nemoclaw onboard --name <new-sandbox-name>`. Use a new sandbox name: recovery retirement refuses while the failed sandbox name is still present on its recorded gateway.
+
+The printed backup path contains a validated `native-home.tar` and its bound `rebuild-manifest.json`. Before uploading any required data, verify that the retained archive still matches the manifest, extract it into a new private host directory, and inspect the paths you intend to recover:
+
+```bash
+BACKUP=<printed-backup-path>
+RECOVERY_DIR="$(mktemp -d "${TMPDIR:-/tmp}/nemoclaw-native-recovery.XXXXXX")"
+chmod 700 "$RECOVERY_DIR"
+EXPECTED_SHA256="$(node -e 'const m=require(process.argv[1]); process.stdout.write(m.nativeState.sha256)' "$BACKUP/rebuild-manifest.json")"
+ACTUAL_SHA256="$(node -e 'const c=require("node:crypto"),f=require("node:fs"),h=c.createHash("sha256"),s=f.createReadStream(process.argv[1]); s.on("data",d=>h.update(d)); s.on("end",()=>process.stdout.write(h.digest("hex"))); s.on("error",e=>{console.error(e.message);process.exitCode=1})' "$BACKUP/native-home.tar")"
+test "$ACTUAL_SHA256" = "$EXPECTED_SHA256"
+tar --no-same-owner -xf "$BACKUP/native-home.tar" -C "$RECOVERY_DIR"
+find "$RECOVERY_DIR" -mindepth 1 -maxdepth 3 -print
+```
+
+Stop if the digest differs, the manifest has no `nativeState.sha256`, or extraction fails. The archive was published only after NemoClaw's credential scan passed; do not copy the adjacent policy handoff, recovery marker, manifest, or any newly added credential material into the replacement. For each reviewed regular file or directory you need—including an unknown benign native-home path—use the validated upload wrapper and preserve its path below `/sandbox`:
+
+```bash
+$$nemoclaw <new-sandbox-name> upload "$RECOVERY_DIR/<relative-path>" "/sandbox/<destination>"
+```
+
+The upload wrapper refuses symbolic links and special files. Preserve the retained backup and ask a NemoClaw maintainer to review those entries instead of bypassing that check. Verify the recovered files in the replacement before continuing. Remove the private extraction only after verification:
+
+```bash
+rm -rf -- "$RECOVERY_DIR"
+```
 
 Only after the old sandbox is confirmed absent and required data recovery is complete, retire the exact failed transaction printed by rebuild:
 

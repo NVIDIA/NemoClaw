@@ -748,7 +748,7 @@ The output should include a `web` mapping with `backend: tavily`. If it does not
 
 <AgentOnly variant="openclaw,hermes">
 
-Rerunning onboarding with a different provider recreates the sandbox because the provider configuration and credential attachment are build-time inputs. NemoClaw validates the replacement key before it removes the existing sandbox, then backs up and restores the supported workspace state during recreation. If the configuration is correct but the egress probe fails, keep the matching preset applied and inspect the blocked request with `openshell term` before widening any policy rule.
+Rerunning onboarding with a different provider recreates the sandbox because the provider configuration and credential attachment are build-time inputs. NemoClaw validates the replacement key before it removes the existing sandbox, then transfers the complete native home/workspace during recreation. Credential-bearing or uninspectable native content stops recreation before replacement instead of being stripped from the transfer. Move credentials to supported OpenShell storage or bindings and retry. If the configuration is correct but the egress probe fails, keep the matching preset applied and inspect the blocked request with `openshell term` before widening any policy rule.
 
 </AgentOnly>
 

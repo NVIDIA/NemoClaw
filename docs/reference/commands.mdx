@@ -2986,7 +2986,7 @@ $$nemoclaw my-assistant upload ./agent-skills/ /sandbox/.deepagents/agent/skills
 
 ### `$$nemoclaw <name> rebuild`
 
-Upgrade a sandbox to the current agent version while preserving workspace state. The command backs up workspace state, captures the current OpenShell policy into a private temporary handoff, destroys the old sandbox, recreates it with the current image, and restores workspace state.
+Upgrade a sandbox to the current agent version while preserving its complete native home/workspace. The command captures that complete tree and the current OpenShell policy in private temporary handoffs, destroys the old sandbox, recreates it with the current image, and restores the complete tree.
 
 If the sandbox or its retained recovery record belongs to another local OpenShell gateway registry, NemoClaw runs the rebuild or recovery retirement from that registry.
 It asks for confirmation before it starts the delegated rebuild worker unless you pass `--yes` or `--force`.
@@ -2999,7 +2999,7 @@ It stops before deletion if that handoff is missing or changed.
 
 </AgentOnly>
 
-Credentials are stripped from backups before storage.
+NemoClaw inspects the complete native-home archive before replacement. Credential-bearing or uninspectable content stops the rebuild and removes the unpublished archive; it is not stripped from an otherwise published transfer. Move credentials to supported OpenShell credential storage or bindings, then retry.
 The replacement receives the captured OpenShell document directly; NemoClaw does not reconstruct policy from preset records.
 The replacement uses the recorded compatible-endpoint reasoning mode, reasoning effort, web search selection, and serving-profile provenance instead of ambient shell values.
 When same-gateway legacy sandbox records use the selected supported provider but omit its credential environment-variable name, rebuild fills only those missing names from the provider's canonical configuration.

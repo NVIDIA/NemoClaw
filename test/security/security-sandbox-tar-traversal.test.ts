@@ -116,7 +116,7 @@ function buildTar(
  */
 type SandboxStateModule = Pick<
   typeof import("../../src/lib/state/sandbox.js"),
-  "validateTarEntries" | "rejectHardLinks"
+  "validateTarEntries" | "rejectHardLinks" | "rejectSymlinkExtractionTraversal"
 >;
 
 function isSandboxStateModule(
@@ -125,7 +125,8 @@ function isSandboxStateModule(
   return (
     value !== null &&
     typeof Reflect.get(value, "validateTarEntries") === "function" &&
-    typeof Reflect.get(value, "rejectHardLinks") === "function"
+    typeof Reflect.get(value, "rejectHardLinks") === "function" &&
+    typeof Reflect.get(value, "rejectSymlinkExtractionTraversal") === "function"
   );
 }
 
@@ -141,6 +142,7 @@ async function loadSandboxState(): Promise<SandboxStateModule> {
   return {
     validateTarEntries: mod.validateTarEntries,
     rejectHardLinks: mod.rejectHardLinks,
+    rejectSymlinkExtractionTraversal: mod.rejectSymlinkExtractionTraversal,
   };
 }
 
@@ -347,5 +349,33 @@ describe("Fix: rejectHardLinks blocks hard-link entries at validation time", () 
     } finally {
       fs.rmSync(targetDir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("Fix: stopped-state extraction cannot write through archive symlinks", () => {
+  it("rejects a symlink followed by a nested archive member", async () => {
+    const { rejectSymlinkExtractionTraversal, validateTarEntries } = await loadSandboxState();
+    const tar = buildTar([
+      { path: "redirect", type: "2", linkTarget: "../outside" },
+      { path: "redirect/payload.txt", content: "must stay contained" },
+    ]);
+    const validation = validateTarEntries(tar, "/tmp/private-stopped-state");
+
+    expect(validation.safe).toBe(true);
+    expect(rejectSymlinkExtractionTraversal(tar, validation.entries)).toEqual([
+      "archive member 'redirect/payload.txt' would extract through symlink 'redirect'",
+    ]);
+  });
+
+  it("preserves a standalone native symlink when no archive member traverses it", async () => {
+    const { rejectSymlinkExtractionTraversal, validateTarEntries } = await loadSandboxState();
+    const tar = buildTar([
+      { path: "workspace/settings.json", content: "{}" },
+      { path: "current-logs", type: "2", linkTarget: "/var/log/agent" },
+    ]);
+    const validation = validateTarEntries(tar, "/tmp/private-stopped-state");
+
+    expect(validation.safe).toBe(true);
+    expect(rejectSymlinkExtractionTraversal(tar, validation.entries)).toEqual([]);
   });
 });
