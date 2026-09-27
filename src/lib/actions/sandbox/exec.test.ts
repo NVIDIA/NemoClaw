@@ -292,10 +292,11 @@ describe("execSandbox scope-upgrade hint wiring (#9744)", () => {
     vi.restoreAllMocks();
   });
 
-  it("names the review command and preserves the exit code when a request is pending", async () => {
+  it("names the prepared review shell and preserves the exit code when a request is pending", async () => {
     const { exitCode, stderr } = await runOpenClawExec(1, UNRELATED_ADMIN_PENDING);
     expect(exitCode).toBe(1);
-    expect(stderr).toContain("nemoclaw wire-sbx exec -- openclaw devices list");
+    expect(stderr).toContain("nemoclaw wire-sbx connect");
+    expect(stderr).toContain("openclaw devices list --json");
   });
 
   it.each([
@@ -305,6 +306,7 @@ describe("execSandbox scope-upgrade hint wiring (#9744)", () => {
   ])("never presents %s as this command's remedy", async (_label, leaked) => {
     const { stderr } = await runOpenClawExec(1, UNRELATED_ADMIN_PENDING);
     expect(stderr).toContain("openclaw devices approve <requestId>");
+    expect(stderr).not.toContain("exec -- openclaw devices approve");
     expect(stderr).not.toContain(leaked);
   });
 

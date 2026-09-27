@@ -98,6 +98,7 @@ describe("onboard policy preset suggestions", () => {
     "pypi",
     "huggingface",
     "brew",
+    "brew-balanced",
     "brave",
     "tavily",
     "slack",
@@ -293,7 +294,7 @@ describe("onboard policy preset suggestions", () => {
     ).not.toContain("observability-otlp-local");
   });
 
-  it("balanced OpenClaw with web search returns exactly brave brew huggingface npm openclaw-pricing pypi and excludes weather", () => {
+  it("balanced OpenClaw selects development presets and pricing without weather", () => {
     const knownWithPricing = [...known, "openclaw-pricing"];
     const suggestions = computeSetupPresetSuggestions("balanced", {
       enabledChannels: [],
@@ -304,7 +305,7 @@ describe("onboard policy preset suggestions", () => {
     });
     expect([...suggestions].sort()).toEqual([
       "brave",
-      "brew",
+      "brew-balanced",
       "huggingface",
       "npm",
       "openclaw-pricing",
@@ -414,7 +415,7 @@ describe("onboard policy preset suggestions", () => {
       enabledChannels: [],
       knownPresetNames: known,
     });
-    expect(suggestions).toEqual(["npm", "pypi", "huggingface", "brew", "brave"]);
+    expect(suggestions).toEqual(["npm", "pypi", "huggingface", "brew-balanced", "brave"]);
   });
 
   it("keeps Brave in balanced tier defaults when built-in search is configured", () => {
@@ -424,7 +425,7 @@ describe("onboard policy preset suggestions", () => {
       webSearchConfig: { fetchEnabled: true },
       webSearchSupported: true,
     });
-    expect(suggestions).toEqual(["npm", "pypi", "huggingface", "brew", "brave"]);
+    expect(suggestions).toEqual(["npm", "pypi", "huggingface", "brew-balanced", "brave"]);
   });
 
   it.each(["balanced", "open"])(
@@ -490,7 +491,7 @@ describe("onboard policy preset suggestions", () => {
       enabledChannels: [],
       knownPresetNames: known.filter((name) => name !== "brave"),
     });
-    expect(suggestions).toEqual(["npm", "pypi", "huggingface", "brew"]);
+    expect(suggestions).toEqual(["npm", "pypi", "huggingface", "brew-balanced"]);
   });
 
   it("omits web-search presets when web search is unsupported", () => {
@@ -513,7 +514,7 @@ describe("onboard policy preset suggestions", () => {
       knownPresetNames: known,
       webSearchSupported: false,
     });
-    expect(suggestions).toEqual(["npm", "pypi", "huggingface", "brew"]);
+    expect(suggestions).toEqual(["npm", "pypi", "huggingface", "brew-balanced"]);
   });
 
   it("adds all Hermes Nous tool policy presets for Hermes open tier only", () => {

@@ -85,7 +85,7 @@ import {
   buildSandboxExecMarkedCommand,
   createSandboxExecMarker,
   extractSandboxExecCommandStdoutFromStreams,
-} from "./sandbox-exec-output";
+} from "../../adapters/sandbox/sandbox-exec-output";
 import {
   probeGatewayRunning,
   selectSandboxGatewayIfRegistered,

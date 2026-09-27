@@ -20,7 +20,7 @@ It also updates the managed OpenClaw and Hermes runtimes and improves inference 
   For more information, refer to [Understand Gateway Lifecycle Control](/user-guide/openclaw/manage-sandboxes/configure-sandboxes/understand-gateway-lifecycle-control), [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes), and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
 - Managed images now include OpenClaw 2026.9.1 and Hermes 0.21.3.
   Fresh Hermes installs preserve the forwards created during onboarding, and credential changes accept the expected OpenShell relay disconnect only after the native gateway recovers and its messaging forward returns.
-  OpenClaw device approval now exits after writing its local-fallback result instead of waiting on leftover gateway handles.
+  OpenClaw device approval now exits after both direct-gateway and local-fallback output drains; a drain failure or timeout exits nonzero instead of waiting on leftover gateway handles.
   Related changes: [PR #11105](https://github.com/NVIDIA/NemoClaw/pull/11105), [PR #11817](https://github.com/NVIDIA/NemoClaw/pull/11817), [PR #12102](https://github.com/NVIDIA/NemoClaw/pull/12102), [PR #12101](https://github.com/NVIDIA/NemoClaw/pull/12101), and [PR #12178](https://github.com/NVIDIA/NemoClaw/pull/12178).
   For more information, refer to the [OpenClaw Quickstart](/user-guide/openclaw/get-started/quickstart), [Quickstart with Hermes](/user-guide/hermes/get-started/quickstart), and [Troubleshooting for Hermes](/user-guide/hermes/reference/troubleshooting).
 - `nemoclaw status` now reports each sandbox's configured inference provider and model separately from the shared gateway's live route.

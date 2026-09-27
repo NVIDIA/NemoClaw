@@ -8,6 +8,11 @@ Direct E2E coverage runs through Vitest.
 Interactive TUI targets require `expect`. The unified workflow installs it
 before those targets run; local runners must provide it themselves.
 
+The native Podman row of Hermes GPU startup installs its reviewed host prerequisites before candidate checkout.
+It uses the pinned host-dependency action for `conmon`, `fuse-overlayfs`, `golang-github-containers-common`, `iptables`, `nftables`, `slirp4netns`, and `uidmap`.
+The container configuration package supplies Podman's standard image policy and seccomp files.
+The install refuses package removals, preserving the runner's Docker and containerd packages and their supplied runtime.
+
 - `.github/workflows/e2e.yaml` compares the commits before and after each push to `main`.
   It selects targets and jobs that own changed files, then publishes the `Relevant E2E` check.
   It also supports trusted manual dispatches for the latest PR commit.
@@ -160,10 +165,24 @@ assembles one exact candidate catalog from the workflow's published contracts, u
 and sandbox, records the authenticated discovery diagnostics, scans the evidence for fixture
 credentials, and must pass.
 These are two required acceptance executions, not retries; either failure remains a failed check.
+OpenClaw feature tests use the shared explicit admin-approval fixture before native operations
+that require elevated scopes. It approves only the request ID emitted by the current sandbox's
+non-admin CLI, after the existing selector verifies that device and its requested scopes.
+Managed-image activation retains its cron-consumer proof. Feature setup can stop after the exact
+approval and verify the grant through its own native operation, avoiding an unrelated cron job or
+agent session. Sessions/agents coverage requires the main session seed to succeed and does not
+approve arbitrary pending devices or silently skip the main-session cases.
+The feature tests exercise the CLI instead of separately asserting that its source and compiled files exist.
+The full onboarding test relies on its existing status poll, which fails when status never succeeds.
+MCP tests retain live allow/deny enforcement and credential-rotation checks without asserting policy
+serialization or the provider-update success message. Approval phase labels live with the existing
+fixture evidence helpers; moving these labels does not move live assertions.
 The concurrent-add probe retries only the rejected command after status proves that the other
 command committed one coherent bridge. The rejected command must report the exact portable
-host-lock timeout. The retry runs once, has its own command artifact, and must succeed idempotently
-from the verified committed source. Production Hermes add owns reload-transport reconciliation, so
+host-lock timeout, optionally followed by the current recorded-owner-is-still-running remediation.
+Unknown or unverifiable-owner diagnostics remain failures. The deterministic classifier and one-retry
+bound are covered by `support/mcp-bridge-reliability.test.ts`. The retry has its own command artifact
+and must succeed idempotently from the verified committed source. Production Hermes add owns reload-transport reconciliation, so
 the E2E boundary does not retry a Hermes mutation after transport loss.
 The workflow records one publication cohort before its PR producer matrix runs. Failed-job reruns
 reuse that cohort and replace only the stable run-scoped artifact owned by each retried agent.
@@ -172,6 +191,45 @@ reject mixed cohorts, another run, a future attempt, and another candidate revis
 The managed-image scope does not claim trusted-private DNS-rebinding coverage: host and sandbox
 `/etc/hosts` fixtures do not control the OpenShell supervisor's egress resolver. Full MCP bridge E2E
 coverage retains that assertion for environments with supervisor-authoritative DNS.
+The trusted-private HTTPS fixture records bounded TLS, request-header, and completed-body counters
+before the status assertion and during final cleanup. TLS errors use fixed code buckets; these
+diagnostics contain no raw errors, request data, or credentials and do not establish successful
+authenticated discovery. The server and event streams close before final diagnostic persistence.
+Persistence has a 10-second deadline; a write failure or timeout is reported after resource cleanup,
+so later cleanup entries can continue.
+Onboarding repair and resume fixtures capture bounded, read-only Podman ownership observations
+before and after the resumed command. They retain only validated fixed-schema facts and never raw
+child output. These separate observations do not replace the production ownership decision or prove
+which predicate rejected an earlier invocation; command results and cleanup remain authoritative.
+
+Full MCP bridge E2E also owns the supervisor's corporate-CA TLS consumer check:
+onboarding receives the fixture CA through `NEMOCLAW_CORPORATE_CA_BUNDLE`, and the
+trusted-private probe must discover authenticated tools from the HTTPS fixture
+signed by that CA through supervisor egress. Cloud onboarding separately verifies
+installed bundle contents and permissions; file presence alone is not TLS-consumer
+evidence. The managed-startup unit tests own activation ordering and identity checks.
+Cloud onboarding checks that migrated credentials are removed and unrelated legacy entries
+remain, with redaction applied before assertion formatting. Credential-store tests cover
+equal-valued unrelated fields, complete-file deletion when no unrelated entries remain,
+and preservation after failed migration.
+
+If the Hermes replacement-credential restart or subsequent bridge removal fails, MCP E2E captures host-side
+OpenShell supervisor logs and the runtime container's state and startup output
+before asserting the original failure. These reads remain available when sandbox
+exec is rejected in `Error` state. Container reads require exactly one validated
+runtime resource handle. Each output stream uses a 32 KiB capture buffer and each command has a 30-second limit; log
+capture retains at most 200 lines from the last two minutes for OpenShell and
+three minutes for the runtime container, with fixture credentials redacted.
+The collector also streams `/tmp/nemoclaw-start.log` from the stopped container into
+the bounded redactor, which retains the last 32 KiB and removes secret fragments at
+the capture boundary. It reads only that archive member without unpacking files on
+the host and includes the capture-omission notice in the retained artifact.
+The same collector retains startup, container, supervisor, and host gateway evidence after failed
+onboarding, restore, rebuild, and cloud security checks. Expected nonzero outcomes can be declared so a normal
+refusal does not trigger collection; a timeout still captures evidence. Diagnostic acquisition does
+not retry the mutation or replace its result.
+OpenClaw launch evidence reports whether a SQLite rejection concerns file metadata or the transcript table, without exposing paths, identities, or session contents. The existing evidence checks remain required.
+A failed native weather-plugin invocation also records unauthenticated liveness and readiness HTTP status codes, bounded to two three-second probes. It does not repeat the tool invocation or replace its failure.
 
 The same workflow publishes each Pi pull-request candidate by immutable digest after validating the
 local image, removes registry credentials, validates the anonymously pullable digest, and uploads a
@@ -415,12 +473,39 @@ credential reference, and independently observed effective policy.
 The fixture compares the registry before and after export, and state validation confirms that the
 sandbox remains ready after the read-only command.
 
-The `sandbox-operations` target owns live final-gateway cleanup on the Docker-backed OpenShell
-boundary. It leaves one sandbox live after removing only its local registry entry, then requires a
+The OpenClaw shard of the pinned Docker `mcp-bridge` target also owns Error-state recovery for
+OpenShell 0.0.116. After its healthy-source rebuild checks, it kills only the runtime bound to the
+test-created native sandbox ID, observes Error, and rebuilds without reintroducing the MCP host
+secret. A different container must preserve a workspace marker and complete the authenticated MCP
+tool call with the existing denial rule. The Podman and explicit-only development-runtime targets
+retain their existing bridge checks and record this additional Docker compatibility proof as not
+applicable. Capture validation, credential sanitization, source drift refusals and lifecycle-transition
+rules remain covered by source and component tests.
+
+The OpenClaw `mcp-bridge` shard also owns public pin recovery for #10464. After proving the existing
+credential rotation and denied-tool behavior, it replaces only the live endpoint pins with an
+unrelated public address and requires a policy denial. It then runs
+`mcp update fake --refresh-public-pins` and requires an authenticated native tool call while the
+denied tool remains blocked. Existing restart and rebuild checks retain their own assertions.
+Source tests own public-target validation, source conflicts, and preservation of every policy field
+except `allowed_ips`. This live step proves that OpenShell enforces the refreshed policy; it does not
+depend on an external DNS rotation happening during the test. A failed step restores the captured
+policy before normal sandbox cleanup.
+
+The pin-recovery proof stays within the existing assertion budget by retiring fixture-detail checks:
+the probe's fixed HTTP method and JSON-RPC fields, and the removed proxy's `enc:v1:` and `proxy.pid`
+markers. `test/mcp/mcp-bridge-servers.test.ts` owns the fake server's protocol behavior, and
+`test/state/registry.test.ts` proves legacy MCP state is omitted from runtime and disk. Live checks
+still verify the authenticated request, policy denials, absence of MCP URLs, provider names and
+credentials from the registry, and restart, rebuild and cleanup outcomes.
+
+The `sandbox-operations` target owns live final-gateway cleanup on Docker and native Podman. It leaves one sandbox live after removing only its local registry entry, then requires a
 `destroy --cleanup-gateway` of the registered sandbox to preserve the gateway, report the live
 sandbox and recovery commands, and exit nonzero. After cleanup, it onboards and destroys one final
 sandbox,
 requires the bounded command to finish, and proves both the sandbox and gateway runtime are absent.
+The outer destroy command deadline is twice the CLI's heavy-operation deadline so the CLI can
+finish its own timeout, absence, and gateway checks. The survivor onboarding budget stays separate.
 Deterministic destroy tests own the exact 30-second retry schedule and delayed-list sequence.
 
 `deferred-onboarding-hermes` and `deferred-onboarding-langchain-deepagents-code` exercise the
@@ -831,7 +916,12 @@ After replacing plugin v1 with v2, it restarts through the native gateway
 command and invokes the updated tool through the running gateway. A separate
 CLI inspection cannot prove that the gateway discarded its cached plugin code.
 `rebuild-openclaw` proves a user-installed native plugin survives rebuild with
-no NemoClaw ownership metadata. `rebuild-hermes` proves native user-plugin and
+no NemoClaw ownership metadata. On the pinned Docker runtime it then kills the exact test-owned
+container, observes `Error`, and requires a different container to restore both the workspace and
+native plugin, with the OpenClaw health endpoint ready. This uses the same identity-fenced disruption
+helper as the MCP target, but reaches recovery independently of MCP networking. The retained receipt
+identifies whether native readiness or provider-backed MCP was proved; neither substitutes for the
+other. The original healthy-source checks and all MCP assertions remain in place. `rebuild-hermes` proves native user-plugin and
 lazy-package state survive rebuild. Managed-image activation exercises native
 OpenClaw and Hermes discovery before and after gateway restart. Deterministic
 state-restore tests prove complete native directories are archived without
@@ -861,9 +951,14 @@ supported outcomes now have these owners:
 | Removed assertion | Retained owner |
 |---|---|
 | Install, PATH setup, list, status, hosted inference, and sandbox inference succeed. | `full-e2e` |
-| Sandbox state contains no `auth-profiles.json` or secret-shaped credential values. | `full-e2e` and `test/e2e/support/sandbox-credential-boundary.test.ts` |
+| Fresh managed sandbox state contains no `auth-profiles.json` or secret-shaped credential values. | `full-e2e` and `test/e2e/support/sandbox-credential-boundary.test.ts` |
 | Repository skills contain valid frontmatter and content. | `test/repository/repo-skills-validation.test.ts` |
 | `/sandbox/.openclaw` and `openclaw.json` have the required image layout. | `test/e2e-runtime/managed-image-openclaw-security.test.ts` |
+
+The fresh-sandbox check starts without user-managed profiles. Existing-state cleanup preserves
+unrelated profiles, as covered by `test/agents/openclaw/runtime/auth-profile-boundary.test.ts`.
+That component fixture also observes which profiles reach Doctor in root and non-root startup.
+`full-e2e` exercises native Doctor lint and agent turns.
 
 The optional `/sandbox/.openclaw/skills` directory had no pass or fail state.
 The deleted provider retry classifier and sandbox-layout wrapper served only the
@@ -1393,6 +1488,11 @@ series for one execution only; this telemetry does not maintain cross-run
 rolling history or write to the GitHub Actions step summary. Both output files
 are private regular files on the runner (`0600`) with strict per-line and total
 size limits.
+
+Cloud onboarding creates its disposable installer workspace and isolated `HOME`
+under the runner account's home directory. Native SDK lifecycle operations require
+trusted gateway-state ancestors, so this workspace must not live beneath the
+world-writable system temporary directory. The test cleanup removes the workspace.
 
 Raw cloud-onboard traces stay under the runner temporary directory. Before
 artifact upload, `scripts/e2e/sanitize-trace-timing.py` reduces them to the

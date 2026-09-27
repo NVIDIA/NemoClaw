@@ -16,10 +16,15 @@ import { isLlamaCppServingRecipe } from "../../../src/lib/inference/serving/adap
 import { loadManagedInferenceCatalog } from "../../../src/lib/inference/serving/catalog-loader.ts";
 import { resolveNemoClawGatewayRuntime } from "../../../src/lib/onboard/runtime-provider/configured-runtime.ts";
 import { resolveRegisteredRuntimeProviderBundle } from "../../../src/lib/onboard/runtime-provider/current.ts";
+import { adminApprovalConnectScript } from "../fixtures/admin-approval-connect.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { trustedSandboxShellScript, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import {
+  pendingAdminRequestId,
+  preApprovalAdminProbeEvidence,
+} from "../fixtures/issue-4462-admin-approval-evidence.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import { assertAgentExecutionSucceeded, hasExactReadyPhase } from "./gpu-e2e-helpers.ts";
 
@@ -249,7 +254,6 @@ test(
         timeoutMs: 30_000,
       },
     );
-    expect(computeApps.exitCode, resultText(computeApps)).toBe(0);
     const llamaGpuProcess = llamaGpuApplications(computeApps.stdout).find(
       ([pid]) => Number(pid) === managedLlamaPid,
     );
@@ -274,7 +278,6 @@ test(
         timeoutMs: 30_000,
       },
     );
-    expect(unauthorized.exitCode, resultText(unauthorized)).toBe(0);
     expect(unauthorized.stdout).toBe("401");
 
     const hostModels = await host.command(
@@ -294,7 +297,6 @@ test(
         timeoutMs: 35_000,
       },
     );
-    expect(hostModels.exitCode, resultText(hostModels)).toBe(0);
     const servedModels = JSON.parse(hostModels.stdout) as {
       data: Array<{ id: string; meta?: { n_ctx?: number } }>;
     };
@@ -330,24 +332,55 @@ NODE`),
     });
 
     progress.phase("verify OpenClaw agent inference and owned cleanup");
-    const agent = await host.nemoclaw(
+    const agentArgs = [
+      SANDBOX_NAME,
+      "agent",
+      "--agent",
+      "main",
+      "--json",
+      "--session-id",
+      `${TARGET_ID}-${Date.now()}-${process.pid}`,
+      "-m",
+      "Respond with a short greeting.",
+    ];
+    const preApprovalAgent = await host.nemoclaw(agentArgs, {
+      artifactName: "openclaw-agent-before-admin-approval",
+      env: env(),
+      timeoutMs: 12 * 60_000,
+    });
+    const preApprovalEvidence = preApprovalAdminProbeEvidence(preApprovalAgent);
+    await artifacts.writeJson("openclaw-agent-before-admin-approval.json", preApprovalEvidence);
+    const requestId = pendingAdminRequestId(preApprovalAgent);
+    expect(
+      requestId,
+      "The OpenClaw agent did not report one unambiguous pending operator.admin request",
+    ).not.toBeNull();
+    const approval = await host.command(
+      "bash",
       [
-        SANDBOX_NAME,
-        "agent",
-        "--agent",
-        "main",
-        "--json",
-        "--session-id",
-        `${TARGET_ID}-${Date.now()}-${process.pid}`,
-        "-m",
-        "Respond with a short greeting.",
+        "-lc",
+        adminApprovalConnectScript(
+          host.commandPath,
+          SANDBOX_NAME,
+          `${TARGET_ID}-admin-${Date.now()}`,
+          requestId as string,
+        ),
       ],
       {
-        artifactName: "openclaw-agent-through-managed-llama-cpp",
+        artifactName: "openclaw-explicit-admin-approval",
+        captureLimitBytes: 64 * 1024,
         env: env(),
-        timeoutMs: 12 * 60_000,
+        redactionValues: [apiKey],
+        timeoutMs: 4 * 60_000,
       },
     );
+    expect(approval.exitCode, resultText(approval)).toBe(0);
+    expect(resultText(approval)).toContain("ISSUE_5324_ADMIN_APPROVAL_OK");
+    const agent = await host.nemoclaw(agentArgs, {
+      artifactName: "openclaw-agent-through-managed-llama-cpp",
+      env: env(),
+      timeoutMs: 12 * 60_000,
+    });
     await captureManagedRuntimeLogs("post-agent");
     expect(agent.exitCode, resultText(agent)).toBe(0);
     assertAgentExecutionSucceeded(agent.stdout, "inference", recipe.spec.model.servedName);

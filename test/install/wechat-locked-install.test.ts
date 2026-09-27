@@ -15,9 +15,9 @@ import {
 } from "../../src/lib/messaging/applier/build/messaging-build-applier.mts";
 
 const WECHAT_INTEGRITY =
-  "sha512-dPQbidUNWigC6V10vGW4i+GLH09x+6zUhafZRjuxkJ9GDu8o62WBsnUTojp4KqUH756hz+t2v9khiCRSi0dBDw==";
+  "sha512-SfaYehR1Cwq2VV5HxJBp9sVilMms420VfZlMbF4YjRbWomr5+GxfXp9HkeU6y5TbnOc4Ysq0qPw1yBvJwbenBA==";
 const WECHAT_TARBALL =
-  "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.3.tgz";
+  "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.9.tgz";
 
 function executable(file: string, contents: string): void {
   fs.writeFileSync(file, contents, { mode: 0o755 });
@@ -142,7 +142,7 @@ printf 'verify|%s|%s|openclaw=%s|offline=%s|cache=%s\n' "$2" "$3" "$4" "$NPM_CON
           required: true,
           value: {
             manager: "openclaw-plugin",
-            spec: "npm:@tencent-weixin/openclaw-weixin@2.4.3",
+            spec: "npm:@tencent-weixin/openclaw-weixin@2.4.9",
           },
         },
       ],
@@ -164,10 +164,10 @@ printf 'verify|%s|%s|openclaw=%s|offline=%s|cache=%s\n' "$2" "$3" "$4" "$NPM_CON
       const calls = fs.readFileSync(trace, "utf8");
       expect(calls).toContain("install|--force|--accept-capabilities|npm-pack:");
       expect(calls).toContain(
-        `npm|view|@tencent-weixin/openclaw-weixin@2.4.3|cache=${fs.realpathSync(installCache)}|offline=true`,
+        `npm|view|@tencent-weixin/openclaw-weixin@2.4.9|cache=${fs.realpathSync(installCache)}|offline=true`,
       );
       expect(calls).toContain(
-        `npm|pack|@tencent-weixin/openclaw-weixin@2.4.3|cache=${fs.realpathSync(installCache)}|offline=true`,
+        `npm|pack|@tencent-weixin/openclaw-weixin@2.4.9|cache=${fs.realpathSync(installCache)}|offline=true`,
       );
       expect(calls).toContain(`offline=true|peer=true|cache=${fs.realpathSync(installCache)}`);
       expect(calls).toContain(
@@ -216,7 +216,7 @@ printf 'verify|%s|%s|openclaw=%s|offline=%s|cache=%s\n' "$2" "$3" "$4" "$NPM_CON
             required: true,
             value: {
               manager: "openclaw-plugin",
-              spec: "npm:@tencent-weixin/openclaw-weixin@2.4.3",
+              spec: "npm:@tencent-weixin/openclaw-weixin@2.4.9",
             },
           },
         ],

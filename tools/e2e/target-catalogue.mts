@@ -1215,6 +1215,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     installNonInteractive: true,
     restoreCli: true,
     exposeCliBin: true,
+    prAdvisorSelectable: true,
     runner: "ubuntu-24.04",
     shard: "linux-amd64",
     owningPaths: [
@@ -1240,6 +1241,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   ...GATEWAY_UPGRADE_TARGETS,
   dockerOnlyTarget("rebuild-openclaw", {
     displayName: "Rebuild: restores OpenClaw state and native readiness",
+    owningPaths: ["test/e2e/live/openclaw-stopped-recovery.ts"],
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
     profile: "nvidia-inference",
