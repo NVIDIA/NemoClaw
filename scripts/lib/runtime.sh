@@ -238,11 +238,13 @@ select_openshell_cluster_container() {
 _validate_port() {
   local name="$1" value="$2"
   case "$value" in
-    '' | 0* | *[!0-9]*)
+    '' | *[!0-9]*)
       printf 'Invalid %s=%s (expected 1024-65535)\n' "$name" "$value" >&2
       return 1
       ;;
   esac
+  # Check fixed-port conflicts, including a leading-zero value, before the
+  # general leading-zero rejection below so the specific message wins.
   local fixed fixed_port fixed_label
   for fixed in "8081 llama.cpp" "17434 llmman"; do
     read -r fixed_port fixed_label <<<"$fixed"
@@ -252,6 +254,12 @@ _validate_port() {
       return 1
     fi
   done
+  case "$value" in
+    0*)
+      printf 'Invalid %s=%s (expected 1024-65535)\n' "$name" "$value" >&2
+      return 1
+      ;;
+  esac
   if ! { [ "$value" -ge 1024 ] && [ "$value" -le 65535 ]; }; then
     printf 'Invalid %s=%s (expected 1024-65535)\n' "$name" "$value" >&2
     return 1

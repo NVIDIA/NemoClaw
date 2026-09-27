@@ -6,7 +6,7 @@ import { expect, vi } from "vitest";
 import { getWindowsHostOllamaDockerRequirement } from "../local-inference-topology";
 import type { InferenceProviderHostState } from "../provider-host-state";
 import { createDockerRuntimeProviderBundle } from "../runtime-provider/docker";
-import type { SetupNimFlowDeps } from "../setup-nim-flow";
+import { createSetupNim, type SetupNimFlowDeps } from "../setup-nim-flow";
 
 const REMOTE_PROVIDER_CONFIG: SetupNimFlowDeps["remoteProviderConfig"] = {
   build: {
@@ -85,6 +85,39 @@ export function makeHostState(
 
 export function unexpected(name: string): never {
   throw new Error(`Unexpected ${name} call`);
+}
+
+/**
+ * Dispatch a fixed-port existing-server provider and confirm no runtime provider resolves.
+ * `fields` are the values the handler sets on the selection; `preselected` are values the
+ * handler expects the dependency wiring already set. The resolved provider is their union.
+ */
+export async function expectExistingServerDispatch(
+  depName: "handleLlamaCppSelection" | "handleLlmmanSelection",
+  providerKey: string,
+  requestedModel: string,
+  fields: Record<string, unknown>,
+  preselected: Record<string, unknown> | undefined = undefined,
+) {
+  const handler = vi.fn(async (selection: Record<string, unknown>, actualModel: string) => {
+    expect(actualModel).toBe(requestedModel);
+    if (preselected) expect(selection).toMatchObject(preselected);
+    Object.assign(selection, fields);
+    return "selected";
+  });
+  const runtimeProvider = makeDeps().getRuntimeProvider();
+  const getRuntimeProvider = vi.fn(() => runtimeProvider);
+  const overrides = {
+    isNonInteractive: () => true,
+    getNonInteractiveProvider: () => providerKey,
+    getNonInteractiveModel: () => requestedModel,
+    getRuntimeProvider,
+    [depName]: handler,
+  } as unknown as Partial<SetupNimFlowDeps>;
+  const setupNim = createSetupNim(makeDeps(overrides));
+  await expect(setupNim(null)).resolves.toMatchObject({ ...preselected, ...fields });
+  expect(handler).toHaveBeenCalledOnce();
+  expect(getRuntimeProvider).not.toHaveBeenCalled();
 }
 
 function selectFromNumberedMenu(
