@@ -25,6 +25,16 @@ const ROUTE_DELAY_MS = 2_000;
 const INVALID_REBUILD_TIMEOUT_MS = 3 * 60_000;
 const SUCCESSFUL_REBUILD_TIMEOUT_MS = 20 * 60_000;
 const DCODE_ACTION_TIMEOUT_MS = 2 * 60_000;
+const NATIVE_STATE_CASES = [
+  ["/sandbox/.nemoclaw-dcode-unknown.txt", "unknown-home"],
+  ["/sandbox/workspace/nemoclaw-dcode/project.txt", "workspace"],
+  ["/sandbox/.local/share/nemoclaw-dcode/packages/tool.txt", "package"],
+  ["/sandbox/.deepagents/plugins/nemoclaw-dcode/plugin.txt", "plugin"],
+  ["/sandbox/.deepagents/hooks/nemoclaw-dcode/preflight.sh", "hook"],
+  ["/sandbox/.deepagents/cron/nemoclaw-dcode/jobs.json", "cron"],
+  ["/sandbox/.deepagents/agents/nemoclaw-child/history.jsonl", "child-agent"],
+  ["/sandbox/.deepagents/nemoclaw-dcode-config/config.json", "configuration"],
+] as const;
 
 export interface DcodeInvalidCredentialRebuildOptions {
   gatewayName: string;
@@ -384,6 +394,25 @@ export async function simulateDcodeInvalidCredentialRebuild(
   assertExitZero(markerWrite, "write DCode rebuild marker");
   record("marker-write", markerWrite);
 
+  const nativeStateWrite = await deps.sandbox.exec(
+    instance.sandboxName,
+    [
+      "sh",
+      "-c",
+      'set -eu; shift; while [ "$#" -gt 0 ]; do path="$1"; value="$2"; shift 2; mkdir -p "$(dirname "$path")"; printf \'%s\' "$value" > "$path"; done',
+      "sh",
+      ...NATIVE_STATE_CASES.flatMap(([statePath, value]) => [statePath, value]),
+    ],
+    {
+      artifactName: "lifecycle-dcode-native-state-write",
+      env: gatewayEnv(options.gatewayName),
+      redactionValues: baseRedactions,
+      timeoutMs: 30_000,
+    },
+  );
+  assertExitZero(nativeStateWrite, "write representative DCode native state");
+  record("native-state-write", nativeStateWrite);
+
   const idsBeforeResult = await managedContainerIds(
     deps,
     instance.sandboxName,
@@ -552,6 +581,31 @@ export async function simulateDcodeInvalidCredentialRebuild(
     throw new Error("DCode marker changed or disappeared after successful rebuild");
   }
   record("marker-read:rebuilt", rebuiltMarker);
+
+  const rebuiltNativeState = await deps.sandbox.exec(
+    instance.sandboxName,
+    [
+      "sh",
+      "-c",
+      'set -eu; shift; while [ "$#" -gt 0 ]; do path="$1"; expected="$2"; shift 2; actual="$(cat "$path")"; [ "$actual" = "$expected" ] || { echo "native state mismatch: $path" >&2; exit 41; }; printf \'%s\\n\' "$actual"; done',
+      "sh",
+      ...NATIVE_STATE_CASES.flatMap(([statePath, value]) => [statePath, value]),
+    ],
+    {
+      artifactName: "lifecycle-dcode-native-state-read-rebuilt",
+      env: gatewayEnv(options.gatewayName),
+      redactionValues,
+      timeoutMs: 30_000,
+    },
+  );
+  assertExitZero(rebuiltNativeState, "read representative DCode native state after rebuild");
+  const expectedNativeState = `${NATIVE_STATE_CASES.map(([, value]) => value).join("\n")}\n`;
+  if (rebuiltNativeState.stdout !== expectedNativeState) {
+    throw new Error(
+      `DCode representative native state changed after successful rebuild: ${resultText(rebuiltNativeState)}`,
+    );
+  }
+  record("native-state-read:rebuilt", rebuiltNativeState);
   record(
     "sandbox-ready:rebuilt",
     await assertReady(deps, instance.sandboxName, options, "rebuilt", redactionValues),

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -34,6 +35,52 @@ function restoreEnv(name: string, value: string | undefined): void {
   value === undefined
     ? Reflect.deleteProperty(process.env, name)
     : Reflect.set(process.env, name, value);
+}
+
+function tarHeader(
+  entryPath: string,
+  content: Buffer,
+  options: { type?: string; linkTarget?: string } = {},
+): Buffer {
+  const header = Buffer.alloc(512, 0);
+  const type = options.type ?? "0";
+  header.write(entryPath, 0, Math.min(entryPath.length, 100), "utf8");
+  header.write("0000644\0", 100, 8, "utf8");
+  header.write("0001000\0", 108, 8, "utf8");
+  header.write("0001000\0", 116, 8, "utf8");
+  const size = type === "0" ? content.length : 0;
+  header.write(`${size.toString(8).padStart(11, "0")}\0`, 124, 12, "utf8");
+  header.write(
+    `${Math.floor(Date.now() / 1000)
+      .toString(8)
+      .padStart(11, "0")}\0`,
+    136,
+    12,
+    "utf8",
+  );
+  header.write(type, 156, 1, "utf8");
+  if (options.linkTarget) {
+    header.write(options.linkTarget, 157, Math.min(options.linkTarget.length, 100), "utf8");
+  }
+  header.write("ustar\0", 257, 6, "utf8");
+  header.write("00", 263, 2, "utf8");
+  header.fill(0x20, 148, 156);
+  let checksum = 0;
+  for (const byte of header) checksum += byte;
+  header.write(`${checksum.toString(8).padStart(6, "0")}\0 `, 148, 8, "utf8");
+  return header;
+}
+
+function buildSymlinkTraversalTar(): Buffer {
+  const payload = Buffer.from("must stay contained", "utf8");
+  const paddedPayload = Buffer.alloc(Math.ceil(payload.length / 512) * 512, 0);
+  payload.copy(paddedPayload);
+  return Buffer.concat([
+    tarHeader("redirect", Buffer.alloc(0), { type: "2", linkTarget: "../outside" }),
+    tarHeader("redirect/payload.txt", payload),
+    paddedPayload,
+    Buffer.alloc(1024, 0),
+  ]);
 }
 
 function writeOpenClawRegistry(sandboxName: string): void {
@@ -530,6 +577,62 @@ describe("complete native home persistence", () => {
       expect(commands).toContain('! -path "$stage"');
       expect(commands).toContain('mv -- {} "$root"/');
       expect(commands).not.toContain("native restore symlink escapes root");
+    } finally {
+      restoreEnv("NEMOCLAW_OPENSHELL_BIN", oldOpenshell);
+      restoreEnv("NEMOCLAW_TEST_NATIVE_ROOT", oldNativeRoot);
+      restoreEnv("NEMOCLAW_TEST_SSH_COMMAND_LOG", oldCommandLog);
+      restoreEnv("PATH", oldPath);
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a symlink write-through archive before SSH extraction", async () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-link-traversal-"));
+    const oldPath = process.env.PATH;
+    const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
+    const oldNativeRoot = process.env.NEMOCLAW_TEST_NATIVE_ROOT;
+    const oldCommandLog = process.env.NEMOCLAW_TEST_SSH_COMMAND_LOG;
+    try {
+      const binDir = path.join(fixture, "bin");
+      const nativeRoot = path.join(fixture, "native-home");
+      const commandLog = path.join(fixture, "ssh-commands.log");
+      fs.mkdirSync(binDir, { recursive: true });
+      fs.mkdirSync(nativeRoot, { recursive: true });
+      fs.writeFileSync(path.join(nativeRoot, "original.txt"), "payload");
+      writeFakeOpenshell(binDir);
+      writeFakeSsh(binDir);
+      process.env.NEMOCLAW_OPENSHELL_BIN = path.join(binDir, "openshell");
+      process.env.NEMOCLAW_TEST_NATIVE_ROOT = nativeRoot;
+      process.env.NEMOCLAW_TEST_SSH_COMMAND_LOG = commandLog;
+      process.env.PATH = `${binDir}:${oldPath ?? ""}`;
+      writeOpenClawRegistry("alpha");
+
+      const backup = sandboxState.backupSandboxState("alpha", {
+        nativeStateSource: {
+          root: "/sandbox",
+          directory: nativeRoot,
+          assertCurrent: () => undefined,
+        },
+      });
+      expect(backup.success, backup.error).toBe(true);
+      const archivePath = path.join(backup.manifest!.backupPath, "native-home.tar");
+      const archive = buildSymlinkTraversalTar();
+      fs.writeFileSync(archivePath, archive);
+      const manifestPath = path.join(backup.manifest!.backupPath, "rebuild-manifest.json");
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as {
+        nativeState: { sha256: string };
+      };
+      manifest.nativeState.sha256 = createHash("sha256").update(archive).digest("hex");
+      fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+
+      const restore = await sandboxState.restoreSandboxState("alpha", backup.manifest!.backupPath);
+
+      expect(restore.success).toBe(false);
+      expect(restore.error).toContain(
+        "archive member 'redirect/payload.txt' would extract through symlink 'redirect'",
+      );
+      expect(fs.existsSync(commandLog)).toBe(false);
+      expect(fs.readFileSync(path.join(nativeRoot, "original.txt"), "utf8")).toBe("payload");
     } finally {
       restoreEnv("NEMOCLAW_OPENSHELL_BIN", oldOpenshell);
       restoreEnv("NEMOCLAW_TEST_NATIVE_ROOT", oldNativeRoot);

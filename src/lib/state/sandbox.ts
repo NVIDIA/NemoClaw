@@ -559,7 +559,7 @@ export function validateTarEntries(
  * boundary.
  */
 export function rejectSymlinkExtractionTraversal(
-  tarArchive: TarArchiveSource,
+  tarArchive: TarListingSource,
   entries: readonly string[],
 ): string[] {
   const symlinks: Array<{ entry: string; index: number }> = [];
@@ -1280,9 +1280,12 @@ type OpenedNativeArchive = { descriptor: number; entries: string[] } | { error: 
 function copyNativeArchiveToPrivateDescriptor(
   sourceDescriptor: number,
   stagingDirectory: string,
+  nativeRoot: string,
 ): {
   descriptor: number;
   sha256: string;
+  entries: string[];
+  violations: string[];
 } {
   const temporaryRoot = mkdtempSync(path.join(stagingDirectory, ".native-restore-"));
   const privatePath = path.join(temporaryRoot, "archive.tar");
@@ -1306,7 +1309,16 @@ function copyNativeArchiveToPrivateDescriptor(
       }
       position += bytesRead;
     }
-    const result = { descriptor, sha256: hash.digest("hex") };
+    const validation = validateTarEntries({ filePath: privatePath }, nativeRoot);
+    const symlinkViolations = validation.safe
+      ? rejectSymlinkExtractionTraversal({ filePath: privatePath }, validation.entries)
+      : [];
+    const result = {
+      descriptor,
+      sha256: hash.digest("hex"),
+      entries: validation.entries,
+      violations: [...validation.violations, ...symlinkViolations],
+    };
     descriptor = null;
     return result;
   } finally {
@@ -1330,6 +1342,7 @@ function openValidatedNativeArchive(
     const privateArchive = copyNativeArchiveToPrivateDescriptor(
       sourceDescriptor,
       path.dirname(archivePath),
+      nativeRoot,
     );
     restoreDescriptor = privateArchive.descriptor;
     if (
@@ -1338,7 +1351,6 @@ function openValidatedNativeArchive(
     ) {
       return { error: identityError };
     }
-    const validation = validateTarEntries({ fileDescriptor: sourceDescriptor }, nativeRoot);
     const finalIdentity = fstatSync(sourceDescriptor);
     if (
       finalIdentity.dev !== sourceIdentity.dev ||
@@ -1349,14 +1361,14 @@ function openValidatedNativeArchive(
     ) {
       return { error: identityError };
     }
-    if (!validation.safe) {
+    if (privateArchive.violations.length > 0) {
       return {
-        error: `Native home/workspace archive is unsafe: ${validation.violations.join("; ")}`,
+        error: `Native home/workspace archive is unsafe: ${privateArchive.violations.join("; ")}`,
       };
     }
     const descriptor = restoreDescriptor;
     restoreDescriptor = null;
-    return { descriptor, entries: validation.entries };
+    return { descriptor, entries: privateArchive.entries };
   } catch (error) {
     const code =
       typeof error === "object" &&

@@ -539,6 +539,7 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
     runner.enqueue(shellResult(0, `${sandboxName}\n`));
     runner.enqueue(shellResult(0, `NAME PHASE\n${sandboxName} Ready\n`));
     runner.enqueue(shellResult(0)); // marker write
+    runner.enqueue(shellResult(0)); // representative native-state write
     runner.enqueue(shellResult(0, "container-a\ncontainer-b\n"));
     runner.enqueue(shellResult(0, "200"));
   }
@@ -592,6 +593,12 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
         runner.enqueue(shellResult(0, "rebuild complete"));
         runner.enqueue(shellResult(0, "container-c\n"));
         runner.enqueue(shellResult(0, "NEMOCLAW_DCODE_REBUILD_MARKER"));
+        runner.enqueue(
+          shellResult(
+            0,
+            "unknown-home\nworkspace\npackage\nplugin\nhook\ncron\nchild-agent\nconfiguration\n",
+          ),
+        );
         runner.enqueue(shellResult(0, `NAME PHASE\n${sandboxName} Ready\n`));
         runner.enqueue(
           shellResult(
@@ -629,6 +636,7 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
             "nemoclaw-rebuild:valid-credential",
             "container-ids:rebuilt",
             "marker-read:rebuilt",
+            "native-state-read:rebuilt",
             "sandbox-ready:rebuilt",
             "dcode-action:rebuilt",
           ]),
@@ -655,6 +663,52 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
             call.options?.artifactName === "lifecycle-dcode-rebuild-valid-credential",
         );
         expect(successfulRebuild?.options?.env).not.toHaveProperty("COMPATIBLE_API_KEY");
+        const nativeStateWrite = runner.calls.find(
+          (call) => call.options?.artifactName === "lifecycle-dcode-native-state-write",
+        );
+        const nativeStateRead = runner.calls.find(
+          (call) => call.options?.artifactName === "lifecycle-dcode-native-state-read-rebuilt",
+        );
+        expect(nativeStateWrite?.args).toContain("/sandbox/.nemoclaw-dcode-unknown.txt");
+        expect(nativeStateWrite?.args).toContain("/sandbox/workspace/nemoclaw-dcode/project.txt");
+        expect(nativeStateWrite?.args).toContain(
+          "/sandbox/.local/share/nemoclaw-dcode/packages/tool.txt",
+        );
+        expect(nativeStateWrite?.args).toContain(
+          "/sandbox/.deepagents/plugins/nemoclaw-dcode/plugin.txt",
+        );
+        expect(nativeStateWrite?.args).toContain(
+          "/sandbox/.deepagents/hooks/nemoclaw-dcode/preflight.sh",
+        );
+        expect(nativeStateWrite?.args).toContain(
+          "/sandbox/.deepagents/cron/nemoclaw-dcode/jobs.json",
+        );
+        expect(nativeStateWrite?.args).toContain(
+          "/sandbox/.deepagents/agents/nemoclaw-child/history.jsonl",
+        );
+        expect(nativeStateWrite?.args).toContain(
+          "/sandbox/.deepagents/nemoclaw-dcode-config/config.json",
+        );
+        expect(nativeStateRead?.args).toContain("/sandbox/.nemoclaw-dcode-unknown.txt");
+        expect(nativeStateRead?.args).toContain("/sandbox/workspace/nemoclaw-dcode/project.txt");
+        expect(nativeStateRead?.args).toContain(
+          "/sandbox/.local/share/nemoclaw-dcode/packages/tool.txt",
+        );
+        expect(nativeStateRead?.args).toContain(
+          "/sandbox/.deepagents/plugins/nemoclaw-dcode/plugin.txt",
+        );
+        expect(nativeStateRead?.args).toContain(
+          "/sandbox/.deepagents/hooks/nemoclaw-dcode/preflight.sh",
+        );
+        expect(nativeStateRead?.args).toContain(
+          "/sandbox/.deepagents/cron/nemoclaw-dcode/jobs.json",
+        );
+        expect(nativeStateRead?.args).toContain(
+          "/sandbox/.deepagents/agents/nemoclaw-child/history.jsonl",
+        );
+        expect(nativeStateRead?.args).toContain(
+          "/sandbox/.deepagents/nemoclaw-dcode-config/config.json",
+        );
         const dcodeAction = runner.calls.find(
           (call) => call.options?.artifactName === "lifecycle-dcode-action-rebuilt",
         );
