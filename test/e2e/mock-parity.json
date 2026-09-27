@@ -732,7 +732,7 @@
         "test/mcp/mcp-bridge-servers.test.ts",
         "test/e2e/support/mcp-bridge-https-diagnostics.test.ts",
         "src/lib/onboard/runtime-provider/docker-stopped-state-capture.test.ts",
-        "test/state/snapshot-stopped-openclaw.test.ts",
+        "test/state/snapshot.test.ts",
         "test/e2e/support/managed-image-activation-diagnostics.test.ts"
       ]
     },
