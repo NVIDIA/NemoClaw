@@ -201,27 +201,34 @@ export function createFinalOnboardFlowPhases<
   return [branchSetupPhase, policiesPhase, finalizationPhase, postVerifyPhase];
 }
 
-function isPoliciesAppliedResult(result: OnboardStateResult): boolean {
+function isSuccessfulFinalVerification(result: OnboardStateHandlerResult): boolean {
+  const results = Array.isArray(result)
+    ? (result as readonly OnboardStateResult[])
+    : [result as OnboardStateResult];
   return (
-    result.type === "transition" &&
-    result.next === "finalizing" &&
-    result.metadata?.state === "policies"
+    results.length === 1 &&
+    results[0].type === "complete" &&
+    results[0].metadata?.state === "post_verify"
   );
 }
 
-function withAfterPoliciesReady(
-  runtime: OnboardMachineRunnerRuntime,
-  afterPoliciesReady: (() => void | Promise<void>) | undefined,
-): OnboardMachineRunnerRuntime {
-  if (!afterPoliciesReady) return runtime;
-  return {
-    session: runtime.session.bind(runtime),
-    async applyResult(result) {
-      const session = await runtime.applyResult(result);
-      if (isPoliciesAppliedResult(result)) await afterPoliciesReady();
-      return session;
-    },
-  };
+function withAfterVerified<Context extends OnboardFlowContext>(
+  phases: readonly OnboardSequencePhase<Context>[],
+  afterVerified: (() => void | Promise<void>) | undefined,
+): readonly OnboardSequencePhase<Context>[] {
+  if (!afterVerified) return phases;
+  return phases.map((phase) =>
+    phase.state === "post_verify"
+      ? {
+          ...phase,
+          async run(context) {
+            const result = await phase.run(context);
+            if (isSuccessfulFinalVerification(result.result)) await afterVerified();
+            return result;
+          },
+        }
+      : phase,
+  );
 }
 
 function withContextObserver<Context extends OnboardFlowContext>(
@@ -329,7 +336,6 @@ async function runFinalFlowPrerequisiteRepairs<Context extends OnboardFlowContex
   runtime: OnboardMachineRunnerRuntime;
   phases: readonly OnboardSequencePhase<Context>[];
   recordRepairEvent: FinalFlowRepairEventRecorder;
-  afterPoliciesReady?(): void | Promise<void>;
   onContextUpdated?(context: Context): void;
 }): Promise<{ context: Context; pause?: OnboardStatePauseResult }> {
   const entryIndex = options.phases.findIndex((phase) => phase.state === options.entryState);
@@ -385,7 +391,6 @@ async function runFinalFlowPrerequisiteRepairs<Context extends OnboardFlowContex
         state: phase.state,
         metadata,
       });
-      if (phase.state === "policies") await options.afterPoliciesReady?.();
       nextContext = phaseResult.context;
       options.onContextUpdated?.(nextContext);
     } catch (error) {
@@ -406,7 +411,7 @@ export async function runFinalOnboardFlowSlice<Context extends OnboardFlowContex
   runtime: OnboardMachineRunnerRuntime;
   phases: readonly OnboardSequencePhase<Context>[];
   recordRepairEvent: FinalFlowRepairEventRecorder;
-  afterPoliciesReady?(): void | Promise<void>;
+  afterVerified?(): void | Promise<void>;
   onContextUpdated?(context: Context): void;
 }) {
   const canonicalFlow = canonicalFinalFlowPhases(options.phases);
@@ -430,7 +435,6 @@ export async function runFinalOnboardFlowSlice<Context extends OnboardFlowContex
         runtime: options.runtime,
         phases,
         recordRepairEvent: options.recordRepairEvent,
-        afterPoliciesReady: options.afterPoliciesReady,
         onContextUpdated: options.onContextUpdated,
       })
     : { context: options.context };
@@ -441,7 +445,10 @@ export async function runFinalOnboardFlowSlice<Context extends OnboardFlowContex
   }
   return runFinalOnboardFlowSequence({
     context: repaired.context,
-    runtime: withAfterPoliciesReady(options.runtime, options.afterPoliciesReady),
-    phases: withContextObserver(phases, options.onContextUpdated),
+    runtime: options.runtime,
+    phases: withAfterVerified(
+      withContextObserver(phases, options.onContextUpdated),
+      options.afterVerified,
+    ),
   });
 }

@@ -3297,7 +3297,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         runtime: onboardRuntimeBoundary.getRuntime(),
         phases: finalFlowPhases,
         recordRepairEvent,
-        afterPoliciesReady: () => sandboxCreate.retireRoute(sandboxRuntime, finalContext, agent),
+        afterVerified: () => sandboxCreate.retireRoute(sandboxRuntime, finalContext, agent),
         onContextUpdated: (context) => {
           liveFinalFlowContext = context;
         },

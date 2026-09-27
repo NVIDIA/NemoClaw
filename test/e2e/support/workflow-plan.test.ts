@@ -751,8 +751,11 @@ describe("E2E workflow plan", () => {
 
   it.each([
     "scripts/nemoclaw-start.sh",
+    "src/lib/onboard.ts",
+    "src/lib/onboard/created-sandbox-finalization.ts",
     "src/lib/onboard/docker-startup-command-env.ts",
     "src/lib/onboard/dockerfile-patch.ts",
+    "src/lib/onboard/machine/final-flow-phases.ts",
     "src/lib/onboard/managed-workload/onboard-orchestration.ts",
     "src/lib/onboard/sandbox-create/orchestration.ts",
     "src/lib/onboard/sandbox-create-launch.ts",
