@@ -34,6 +34,9 @@
  * Let those turns use OpenClaw's method-specific scope selection, as remote
  * CLI turns already do. Keep the explicit admin branch for model overrides
  * and session resets, and leave gateway authorization and approval unchanged.
+ * After explicit admin approval, confirm that grant through the same gateway
+ * before the approving CLI exits. This refreshes its rotated device token with
+ * admin connection scopes before an ordinary turn can cache narrower scopes.
  * The ordinary patch tests and pinned real-dist proof cover this paired
  * pre-convergence transition separately from a cold clone, which has no paired
  * record and must not select stored device authentication.
@@ -2542,6 +2545,45 @@ const AGENT_SCOPE_SPEC: FileSpec = {
   },
 };
 
+const ADMIN_CONFIRM_MARKER = "nemoclaw: confirm explicitly approved admin token before exit";
+const ADMIN_CONFIRM_TARGET = "\tconst exitAfterDevicesApproveOutput = () => {";
+const ADMIN_CONFIRM_REPLACEMENT = [
+  "\tif (Array.isArray(result?.device?.scopes) && result.device.scopes.includes(ADMIN_SCOPE)) {",
+  '\t\tawait callGatewayCli("device.pair.list", opts, {}, { scopes: [ADMIN_SCOPE] });',
+  `\t} // ${ADMIN_CONFIRM_MARKER}`,
+  ADMIN_CONFIRM_TARGET,
+].join("\n");
+const ADMIN_CONFIRM_SPEC: FileSpec = {
+  id: "explicit-admin-token-confirmation",
+  label: "explicit admin approval token handoff",
+  marker: ADMIN_CONFIRM_MARKER,
+  selector(source) {
+    return source.includes("async function runDevicesApproveCommand(requestId, opts) {");
+  },
+  patch(source, file) {
+    if (source.includes(ADMIN_CONFIRM_MARKER)) {
+      return countOccurrences(source, ADMIN_CONFIRM_REPLACEMENT) === 1 &&
+        countOccurrences(source, ADMIN_CONFIRM_MARKER) === 1
+        ? { source, status: "already-applied" }
+        : {
+            source,
+            status: "no-match",
+            error: `explicit admin token handoff in ${file}: structurally changed patch`,
+          };
+    }
+    const result = replaceExactlyOnce(
+      source,
+      ADMIN_CONFIRM_TARGET,
+      ADMIN_CONFIRM_REPLACEMENT,
+      "explicit admin token handoff",
+      file,
+    );
+    return result.error
+      ? { source, status: "no-match", error: result.error }
+      : { source: result.source, status: "would-apply" };
+  },
+};
+
 const hasSqlitePairingPersistence = listJsFiles(distDir).some((file) => {
   const source = fs.readFileSync(file, "utf8");
   return source.includes(
@@ -2550,7 +2592,9 @@ const hasSqlitePairingPersistence = listJsFiles(distDir).some((file) => {
 });
 const FILE_SPECS: FileSpec[] = [
   ...BASE_FILE_SPECS,
-  ...(hasSqlitePairingPersistence ? [SQLITE_PERSISTENCE_SPEC, AGENT_SCOPE_SPEC] : []),
+  ...(hasSqlitePairingPersistence
+    ? [SQLITE_PERSISTENCE_SPEC, AGENT_SCOPE_SPEC, ADMIN_CONFIRM_SPEC]
+    : []),
 ];
 
 function resolveSpecFile(spec: FileSpec, dryRun: boolean): ResolvedSpecFile {

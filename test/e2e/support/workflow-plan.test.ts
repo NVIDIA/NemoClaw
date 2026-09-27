@@ -313,6 +313,9 @@ describe("E2E workflow plan", () => {
     ).toEqual([
       "agent-turn-latency-default-docker",
       "agent-turn-latency-default-podman",
+      "full-e2e-default-docker",
+      "full-e2e-default-podman",
+      "llama-cpp-generic-gpu-default-docker",
       "messaging-compatible-endpoint-default-docker",
       "messaging-compatible-endpoint-default-podman",
       "openclaw-inference-switch-default-docker",
