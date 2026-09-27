@@ -56,6 +56,8 @@ describe("restoreSandboxState tar-warning handling (#12358)", () => {
   });
 
   it("marks dirs restored when tar exits 1 but every dir is usable", async () => {
+    vi.stubEnv("NEMOCLAW_REBUILD_VERBOSE", "1");
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     harness.behavior.extract = spawnResult(
       1,
       "tar: sessions: Cannot utime: Operation not permitted\ntar: Exiting with failure status due to previous errors\n",
@@ -69,6 +71,11 @@ describe("restoreSandboxState tar-warning handling (#12358)", () => {
     expect(result.success).toBe(true);
     expect(result.restoredDirs).toEqual(["memories", "sessions"]);
     expect(result.failedDirs).toEqual([]);
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "WARNING: state archive extraction reported a non-zero result: exit=1 signal=none error=none stderr=tar: sessions: Cannot utime: Operation not permitted",
+      ),
+    );
   });
 
   it("marks dirs failed when tar exits non-zero and usability fails", async () => {
@@ -114,6 +121,8 @@ describe("restoreSandboxState tar-warning handling (#12358)", () => {
   });
 
   it("fails closed without touching the sandbox when local archive creation fails", async () => {
+    vi.stubEnv("NEMOCLAW_REBUILD_VERBOSE", "1");
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     harness.behavior.localTar = spawnResult(
       2,
       "tar: /tmp/missing: Cannot stat: No such file or directory\n",
@@ -126,5 +135,10 @@ describe("restoreSandboxState tar-warning handling (#12358)", () => {
     expect(result.success).toBe(false);
     expect(result.failedDirs).toEqual(["memories", "sessions"]);
     expect(harness.recordedSshCommands).toEqual([]);
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "FAILED: local restore archive creation failed: tar: /tmp/missing: Cannot stat: No such file or directory",
+      ),
+    );
   });
 });
