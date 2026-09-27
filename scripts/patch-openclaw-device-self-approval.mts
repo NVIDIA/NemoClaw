@@ -34,8 +34,8 @@
  * Let those turns use OpenClaw's method-specific scope selection, as remote
  * CLI turns already do. Keep the explicit admin branch for model overrides
  * and session resets, and leave gateway authorization and approval unchanged.
- * After explicit admin approval, confirm that grant through the same gateway
- * before the approving CLI exits. This refreshes its rotated device token with
+ * After explicit admin approval of this CLI's own device, confirm that grant
+ * through the same gateway before exiting. This refreshes its rotated token with
  * admin connection scopes before an ordinary turn can cache narrower scopes.
  * The ordinary patch tests and pinned real-dist proof cover this paired
  * pre-convergence transition separately from a cold clone, which has no paired
@@ -2547,33 +2547,81 @@ const AGENT_SCOPE_SPEC: FileSpec = {
 
 const ADMIN_CONFIRM_MARKER = "nemoclaw: confirm explicitly approved admin token before exit";
 const ADMIN_CONFIRM_TARGET = "\tconst exitAfterDevicesApproveOutput = () => {";
-const ADMIN_CONFIRM_REPLACEMENT = [
+const ADMIN_CONFIRM_PREVIOUS_REPLACEMENT = [
   "\tif (Array.isArray(result?.device?.scopes) && result.device.scopes.includes(ADMIN_SCOPE)) {",
   '\t\tawait callGatewayCli("device.pair.list", opts, {}, { scopes: [ADMIN_SCOPE] });',
   `\t} // ${ADMIN_CONFIRM_MARKER}`,
   ADMIN_CONFIRM_TARGET,
 ].join("\n");
+const ADMIN_CONFIRM_REPLACEMENT = [
+  "\tif (Array.isArray(result?.device?.scopes) && result.device.scopes.includes(ADMIN_SCOPE)) {",
+  "\t\tlet nemoclawApprovingIdentity;",
+  "\t\ttry { nemoclawApprovingIdentity = loadDeviceIdentityIfPresent(); } catch {}",
+  "\t\tif (nemoclawApprovingIdentity && result.device.deviceId === nemoclawApprovingIdentity.deviceId) {",
+  '\t\t\tawait callGatewayCli("device.pair.list", opts, {}, { scopes: [ADMIN_SCOPE] });',
+  "\t\t}",
+  `\t} // ${ADMIN_CONFIRM_MARKER}`,
+  ADMIN_CONFIRM_TARGET,
+].join("\n");
+const ADMIN_CONFIRM_FUNCTION = "async function runDevicesApproveCommand(requestId, opts) {";
 const ADMIN_CONFIRM_SPEC: FileSpec = {
   id: "explicit-admin-token-confirmation",
   label: "explicit admin approval token handoff",
   marker: ADMIN_CONFIRM_MARKER,
   selector(source) {
-    return source.includes("async function runDevicesApproveCommand(requestId, opts) {");
+    return source.includes(ADMIN_CONFIRM_FUNCTION);
   },
   patch(source, file) {
+    const gatewayCall = listJsFiles(distDir)
+      .map((candidate) => fs.readFileSync(candidate, "utf8"))
+      .find((candidate) =>
+        candidate.includes("function resolveDeviceIdentityForGatewayCall(sharedStateMode) {"),
+      );
+    const identityImport = gatewayCall?.match(
+      /^import \{ ([^}\n]*\bloadDeviceIdentityIfPresent\b[^}\n]*) \} from "(\.\/[^"\n]+)";/m,
+    );
+    const binding = identityImport?.[1]
+      ?.split(", ")
+      .find((entry) => /(?:^| as )loadDeviceIdentityIfPresent$/.test(entry));
+    if (!binding || !identityImport)
+      return {
+        source,
+        status: "no-match",
+        error: `explicit admin token handoff in ${file}: canonical identity import is unavailable`,
+      };
+    const importedFunction = `import { ${binding} } from "${identityImport[2]}";\n${ADMIN_CONFIRM_FUNCTION}`;
+    const previous = countOccurrences(source, ADMIN_CONFIRM_PREVIOUS_REPLACEMENT) === 1;
     if (source.includes(ADMIN_CONFIRM_MARKER)) {
-      return countOccurrences(source, ADMIN_CONFIRM_REPLACEMENT) === 1 &&
-        countOccurrences(source, ADMIN_CONFIRM_MARKER) === 1
-        ? { source, status: "already-applied" }
-        : {
-            source,
-            status: "no-match",
-            error: `explicit admin token handoff in ${file}: structurally changed patch`,
-          };
+      if (
+        countOccurrences(source, ADMIN_CONFIRM_MARKER) === 1 &&
+        countOccurrences(source, ADMIN_CONFIRM_REPLACEMENT) === 1 &&
+        countOccurrences(source, importedFunction) === 1
+      )
+        return { source, status: "already-applied" };
+      if (!previous || countOccurrences(source, ADMIN_CONFIRM_MARKER) !== 1)
+        return {
+          source,
+          status: "no-match",
+          error: `explicit admin token handoff in ${file}: structurally changed patch`,
+        };
     }
-    const result = replaceExactlyOnce(
+    if (source.includes(importedFunction))
+      return {
+        source,
+        status: "no-match",
+        error: `explicit admin token handoff in ${file}: partial identity import`,
+      };
+    const imported = replaceExactlyOnce(
       source,
-      ADMIN_CONFIRM_TARGET,
+      ADMIN_CONFIRM_FUNCTION,
+      importedFunction,
+      "explicit admin token identity reader",
+      file,
+    );
+    if (imported.error) return { source, status: "no-match", error: imported.error };
+    const result = replaceExactlyOnce(
+      imported.source,
+      previous ? ADMIN_CONFIRM_PREVIOUS_REPLACEMENT : ADMIN_CONFIRM_TARGET,
       ADMIN_CONFIRM_REPLACEMENT,
       "explicit admin token handoff",
       file,

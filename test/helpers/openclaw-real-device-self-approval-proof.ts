@@ -1347,9 +1347,18 @@ export async function proveRealOpenClawAdminApprovalHandoff(dist: string): Promi
     scopes: string[],
   ) => { storedToken: string; storedScopes: string[] };
   const adminScopes = ["operator.admin", "operator.read", "operator.write"];
-  for (const outcome of ["admin", "baseline", "missing", "confirmation-denied"] as const) {
+  for (const outcome of [
+    "admin",
+    "other-device",
+    "missing-identity",
+    "unreadable-identity",
+    "baseline",
+    "missing",
+    "confirmation-denied",
+  ] as const) {
     const events: string[] = [];
-    const approved = outcome === "admin" || outcome === "confirmation-denied";
+    const approved = !["baseline", "missing"].includes(outcome);
+    const confirmationRequired = outcome === "admin" || outcome === "confirmation-denied";
     const options = { json: true, url: "wss://reviewed-gateway.example" };
     let cached = {
       storedToken: "previous-token",
@@ -1357,12 +1366,21 @@ export async function proveRealOpenClawAdminApprovalHandoff(dist: string): Promi
     };
     const run = runInNewContext(`${command}\nrunDevicesApproveCommand`, {
       ADMIN_SCOPE: "operator.admin",
+      loadDeviceIdentityIfPresent: () => {
+        if (outcome === "unreadable-identity") throw new Error("identity unavailable");
+        return outcome === "missing-identity" ? null : { deviceId: "calling-device" };
+      },
       resolveApprovePairingGatewayContext: async () => ({}),
       approvePairingWithFallback: async () => {
         events.push("approve-exact-request");
         return outcome === "missing"
           ? null
-          : { device: { scopes: approved ? ["operator.admin"] : ["operator.write"] } };
+          : {
+              device: {
+                deviceId: outcome === "other-device" ? "other-device" : "calling-device",
+                scopes: approved ? ["operator.admin"] : ["operator.write"],
+              },
+            };
       },
       callGatewayCli: async (method: string, opts: unknown, _params: unknown, call: unknown) => {
         requireLiveProof(opts === options, "approval confirmation changed the gateway options");
@@ -1400,7 +1418,7 @@ export async function proveRealOpenClawAdminApprovalHandoff(dist: string): Promi
           ? ["approve-exact-request", "device.pair.list"]
           : [
               "approve-exact-request",
-              ...(approved ? ["device.pair.list"] : []),
+              ...(confirmationRequired ? ["device.pair.list"] : []),
               "output",
               "exit-0",
             ];
