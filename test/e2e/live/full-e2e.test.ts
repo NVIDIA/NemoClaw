@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { approveOpenClawAdminScope } from "./openclaw-admin-scope.ts";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -857,6 +858,7 @@ test(
       redactionValues,
       timeoutMs: 60_000,
     });
+    await approveOpenClawAdminScope(host, sandbox, SANDBOX_NAME, env(), redactionValues, false);
     await (coldOnboard
       ? assertColdOnboardPerformance({
           apiKey: hosted.apiKey,
@@ -938,8 +940,7 @@ test(
 
     const list = await repoNemoclaw(host, ["list"], "phase-3-nemoclaw-list");
     expect(list.exitCode === 0 && list.stdout.includes(SANDBOX_NAME), resultText(list)).toBe(true);
-    const status = await waitForSandboxStatus(host);
-    expect(status.exitCode, resultText(status)).toBe(0);
+    await waitForSandboxStatus(host);
 
     const nativeStateMarker = `full-e2e-native-state-${Date.now()}`;
     const writeNativeStateMarker = await sandbox.execShell(

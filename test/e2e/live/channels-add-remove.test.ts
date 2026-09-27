@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { captureSandboxFailureDiagnostics } from "../fixtures/sandbox-failure-diagnostics.ts";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -592,6 +593,12 @@ test(
       env: channelEnv({ COMPATIBLE_API_KEY: apiKey }),
       redactionValues: secretsToRedact,
       timeoutMs: REBUILD_TIMEOUT_MS,
+    });
+    await captureSandboxFailureDiagnostics(host, rebuildRemove, {
+      sandboxName: SANDBOX_NAME,
+      artifactPrefix: "phase-5-rebuild-remove-failure",
+      redactionValues: secretsToRedact,
+      captureGatewayLog: true,
     });
     assertExitZero(rebuildRemove, `nemoclaw ${SANDBOX_NAME} rebuild --yes after remove`);
     await lifecycle.assertSandboxReadyAfterRebuild(SANDBOX_NAME, {

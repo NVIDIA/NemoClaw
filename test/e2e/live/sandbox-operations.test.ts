@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { testTimeout } from "../../helpers/timeouts.ts";
+import { OPENSHELL_HEAVY_TIMEOUT_MS } from "../../../src/lib/adapters/openshell/timeouts.ts";
+import { captureSandboxFailureDiagnostics } from "../fixtures/sandbox-failure-diagnostics.ts";
 import { removeSandbox } from "../../../src/lib/state/registry.ts";
 import { assertExitCode, assertExitZero, resultText } from "../fixtures/clients/command.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
@@ -21,7 +23,8 @@ const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-sb-ops";
 const SURVIVOR_SANDBOX_NAME = `${SANDBOX_NAME}-survivor`;
 const DASHBOARD_PORT = 18_791;
 const SURVIVOR_DASHBOARD_PORT = 18_792;
-const FINAL_DESTROY_TIMEOUT_MS = 60_000;
+// The CLI has its own heavy-operation deadline, followed by absence and gateway checks.
+const FINAL_DESTROY_TIMEOUT_MS = 2 * OPENSHELL_HEAVY_TIMEOUT_MS;
 
 test(
   "OpenShell preserves sandbox lifecycle and fail-closed final gateway cleanup",
@@ -174,7 +177,7 @@ test(
       artifactName: "sandbox-operations-survivor-onboard",
       env: survivorEnv,
       redactionValues: redactions,
-      timeoutMs: FINAL_DESTROY_TIMEOUT_MS * 10,
+      timeoutMs: 10 * 60_000,
     });
     survivorOnboard.exitCode !== 0 &&
       isNvidiaEndpointRateLimitFailure(resultText(survivorOnboard)) &&
@@ -195,6 +198,13 @@ test(
       timeoutMs: FINAL_DESTROY_TIMEOUT_MS,
     });
     const preservedText = resultText(preserved);
+    await captureSandboxFailureDiagnostics(host, preserved, {
+      sandboxName: SANDBOX_NAME,
+      artifactPrefix: "sandbox-operations-preserve-failure",
+      redactionValues: redactions,
+      captureGatewayLog: true,
+      expectedExitCode: 1,
+    });
     assertExitCode(preserved, 1, "destroy with an unregistered live sandbox");
     expect(preservedText).toMatch(
       new RegExp(
