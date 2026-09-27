@@ -3,8 +3,9 @@
 
 import { vi } from "vitest";
 import { resolveTestAgentBaselinePolicy } from "../../../../test/support/snapshot-policy-test-fixture";
-import type { MutableConfigRepairResult } from "../../sandbox/mutable-config-perms";
+import type { StreamSandboxCreateCommand } from "../../adapters/openshell/sandbox-lifecycle-cli";
 import type { OpenShellSandboxPolicyReader } from "../../adapters/openshell/sandbox-policy";
+import type { MutableConfigRepairResult } from "../../sandbox/mutable-config-perms";
 import type {
   SandboxEntry,
   SandboxHostLocalInferenceProvenance,
@@ -12,8 +13,7 @@ import type {
 } from "../../state/registry/types";
 import type { SnapshotRestoreOptions } from "../../state/sandbox";
 import { dcodeProbeOutput } from "./dcode-probe-test-fixture";
-import { SANDBOX_EXEC_STARTED_MARKER } from "./sandbox-exec-output";
-import type { SnapshotStreamSandboxCreateMock } from "./snapshot-create-stream-test-types";
+import { SANDBOX_EXEC_STARTED_MARKER } from "../../adapters/sandbox/sandbox-exec-output";
 
 export type OpenshellCaptureResult = {
   status: number | null;
@@ -73,6 +73,25 @@ export function openshellResponses(
   responses: Record<string, OpenshellCaptureResult>,
 ): OpenshellCaptureResult {
   const command = `${args[0] ?? ""} ${args[1] ?? ""}`;
+  const selectorIndex = args.indexOf("--selector");
+  if (command === "sandbox list" && selectorIndex >= 0) {
+    const selector = args[selectorIndex + 1] ?? "";
+    const separatorIndex = selector.indexOf("=");
+    return {
+      status: 0,
+      output: JSON.stringify([
+        {
+          id: "beta-live-id",
+          name: "beta",
+          labels: { [selector.slice(0, separatorIndex)]: selector.slice(separatorIndex + 1) },
+          resource_version: 1,
+          created_at: "2026-09-22T00:00:00.000Z",
+          phase: "Ready",
+          current_policy_version: 1,
+        },
+      ]),
+    };
+  }
   const sandboxName = String(args.at(-1) ?? "sandbox");
   const result =
     responses[command] ??
@@ -197,7 +216,9 @@ export const registerSandboxMock = vi.fn();
 export const reserveSandboxInferenceRouteMock = vi.fn(() => true);
 export const removeSandboxMock = vi.fn();
 export const updateSandboxMock = vi.fn();
+export const finalizeSandboxRouteReservationMock = vi.fn();
 export const finalizePendingSandboxRegistrationMock = vi.fn();
+export const finalizePendingSandboxRegistrationIfCurrentMock = vi.fn();
 export const restoreSandboxStateMock = vi.fn();
 export const restoreDeepAgentsNativeMcpConfigMock = vi.fn();
 export const getMcpProviderInspectionRuntimeSelectionMock = vi.fn(() => ({
@@ -228,7 +249,7 @@ export const runOpenshellMock = vi.fn((args: string[]) => {
       return { status: 0, output: "", stdout: "", stderr: "" };
   }
 });
-export const streamSandboxCreateMock = vi.fn<SnapshotStreamSandboxCreateMock>(async () => ({
+export const streamSandboxCreateMock = vi.fn<StreamSandboxCreateCommand>(async () => ({
   status: 0,
   output: "",
   sawProgress: false,
@@ -366,7 +387,9 @@ vi.mock("../../state/registry", () => ({
   reserveSandboxInferenceRoute: reserveSandboxInferenceRouteMock,
   removeSandbox: removeSandboxMock,
   updateSandbox: updateSandboxMock,
+  finalizeSandboxRouteReservation: finalizeSandboxRouteReservationMock,
   finalizePendingSandboxRegistration: finalizePendingSandboxRegistrationMock,
+  finalizePendingSandboxRegistrationIfCurrent: finalizePendingSandboxRegistrationIfCurrentMock,
 }));
 
 vi.mock("../../state/sandbox", () => ({
@@ -473,7 +496,9 @@ export function resetSnapshotRestoreMocks(): void {
   removeSandboxMock.mockReset();
   removeSandboxRegistryEntryOutcomeMock.mockReturnValue({ status: "complete", removed: true });
   updateSandboxMock.mockReset().mockReturnValue(true);
+  finalizeSandboxRouteReservationMock.mockReset().mockReturnValue(true);
   finalizePendingSandboxRegistrationMock.mockReset().mockReturnValue(true);
+  finalizePendingSandboxRegistrationIfCurrentMock.mockReset().mockReturnValue(true);
   restoreSandboxStateMock.mockReturnValue({
     success: true,
     restoredDirs: [],

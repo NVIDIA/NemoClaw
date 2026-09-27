@@ -21,6 +21,7 @@ import {
   type DashboardPortReservationScope,
   findAvailableDashboardPortFromObservations,
   getRegistryOccupiedDashboardPorts,
+  hasExplicitDashboardPortOverride,
   preflightDashboardPortRangeAvailability,
   reserveCreateSandboxDashboardPort,
   reserveDashboardPort,
@@ -29,6 +30,18 @@ import {
   withDashboardPortReservationLock,
   withDashboardPortReservationScope,
 } from "./dashboard-port";
+
+describe("dashboard-port override intent", () => {
+  it.each([
+    [undefined, false],
+    ["", false],
+    [" \t ", false],
+    ["18789", true],
+    [" 18789 ", true],
+  ] as const)("classifies %j as explicit=%s", (value, expected) => {
+    expect(hasExplicitDashboardPortOverride(value)).toBe(expected);
+  });
+});
 
 function forwardObservation(
   sandboxName: string,

@@ -451,6 +451,10 @@ describe("OpenShell snapshot observation", () => {
         acceleration: liveAcceleration,
       },
     });
+    expect(capture).toHaveBeenCalledWith(
+      ["sandbox", "get", "-g", "nemoclaw-18080", "alpha"],
+      expect.anything(),
+    );
     expect(observeAcceleration).toHaveBeenCalledWith(
       expect.objectContaining({ name: "alpha" }),
       "openshell-alpha-id",
@@ -649,6 +653,47 @@ function dockerSnapshotSurface(
 }
 
 describe("Docker provider snapshot evidence", () => {
+  it("restores a stopped OpenClaw capture into a running replacement without rewriting source evidence", () => {
+    const target = sandbox({ openshellDriver: "docker" });
+    const sourceSurface = dockerSnapshotSurface(
+      dockerSnapshot(),
+      dockerLifecycleCapture(undefined, { status: "exited" }),
+    );
+    const captured = sourceSurface.preflight("backup", target);
+    const source = snapshotSource(captured, sourceSurface.capture(target, captured));
+    const original = structuredClone(source);
+    const targetSurface = dockerSnapshotSurface(dockerSnapshot());
+    const receipt = targetSurface.restore(
+      target,
+      targetSurface.preflight("restore", target),
+      source,
+      managedProfile,
+    );
+    expect(receipt.lifecycleState).toBe("running");
+    expect(source).toEqual(original);
+    expect(source.lifecycleState).toBe("stopped");
+  });
+
+  it.each(["hermes", "langchain-deepagents-code"])(
+    "retains lifecycle mismatch refusal for %s",
+    (agent) => {
+      const target = sandbox({ agent, openshellDriver: "docker" });
+      const sourceSurface = dockerSnapshotSurface(
+        dockerSnapshot(),
+        dockerLifecycleCapture(undefined, { status: "exited" }),
+      );
+      const captured = sourceSurface.preflight("backup", target);
+      const source = snapshotSource(captured, sourceSurface.capture(target, captured));
+      const targetSurface = dockerSnapshotSurface(dockerSnapshot());
+      expect(() =>
+        targetSurface.restore(target, targetSurface.preflight("restore", target), source, {
+          ...managedProfile,
+          agent,
+        }),
+      ).toThrow("cannot represent the snapshot lifecycle state");
+    },
+  );
+
   it.each([
     ["exact CDI", ["nvidia.com/gpu=0"], "nvidia.com/gpu=0"],
     ["all-GPU", ["nvidia.com/gpu=all"], "nvidia.com/gpu=all"],

@@ -29,10 +29,7 @@ import { ExportSourceValuesSchema } from "./export-evidence";
 import { describe, expect, it } from "vitest";
 import { exportSnapshots } from "../../actions/config/export-test-fixture";
 import type { V1Alpha1Export } from "../../config/v1alpha1-export";
-import {
-  asExportedConfig,
-  exportedAgentList,
-} from "../../../../test/support/config-export-document";
+import { asExportedConfig } from "../../../../test/support/config-export-document";
 import { observeStableExportSource } from "../../actions/config/observe-export-source";
 import type { ManagedStartupProfileBuilderInput } from "../../onboard/managed-startup/profile-builder";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
@@ -51,8 +48,7 @@ function verifiedSource(result: ReturnType<typeof verifyExportSource>) {
 function primaryOpenClawAgent(config: V1Alpha1Export) {
   const sandbox = config.spec.sandboxes[0]!;
   expect(sandbox.harness.kind).toBe("openclaw");
-  const agents = exportedAgentList(sandbox);
-  return { ...agents[0]!, ...sandbox.harness };
+  return { ...sandbox.agent, ...sandbox.harness };
 }
 
 describe("config export source verification (#10938)", () => {
@@ -256,26 +252,6 @@ describe("config export source verification (#10938)", () => {
     },
   );
 
-  it("preserves canonical output when all six settings use their defaults", async () => {
-    const baseline = await exportSnapshots([snapshot()]);
-    const explicit = await exportSnapshots([
-      tunedSnapshot({
-        NEMOCLAW_CONTEXT_WINDOW: "131072",
-        NEMOCLAW_MAX_TOKENS: "4096",
-        NEMOCLAW_REASONING: "false",
-        NEMOCLAW_REASONING_EFFORT: "default",
-        NEMOCLAW_AGENT_TIMEOUT: "600",
-      }),
-    ]);
-    expect(explicit.outcome.ok).toBe(true);
-    expect(explicit.writeStdout.mock.calls).toEqual(baseline.writeStdout.mock.calls);
-    const config = asExportedConfig(YAML.parse(explicit.writeStdout.mock.calls[0]![0]));
-    expect(primaryOpenClawAgent(config).inference.routes[0]!.overrides).toEqual({
-      model: "gpt-5",
-    });
-    expect(config.spec.sandboxes[0]!.harness).not.toHaveProperty("execution");
-  });
-
   it("retains an explicit zero heartbeat duration", async () => {
     const result = await exportSnapshots([tunedSnapshot({ NEMOCLAW_AGENT_HEARTBEAT_EVERY: "0m" })]);
     expect(result.outcome.ok).toBe(true);
@@ -322,8 +298,8 @@ describe("config export source verification (#10938)", () => {
     ).inference.routes[0]!;
     expect(route.overrides).toEqual(
       reasoning === "true"
-        ? { model: "gpt-5", reasoning: true, reasoningEffort: "high" }
-        : { model: "gpt-5" },
+        ? { model: "gpt-5", contextWindow: 131072, reasoning: true, reasoningEffort: "high" }
+        : { model: "gpt-5", contextWindow: 131072 },
     );
   });
 
@@ -629,7 +605,7 @@ describe("config export source verification (#10938)", () => {
       expect(config.spec.inferenceProviders[0]).toMatchObject({ endpoint });
       const sandbox = config.spec.sandboxes[0]!;
       expect(sandbox.harness.kind).toBe("hermes");
-      expect(exportedAgentList(sandbox)[0]).not.toHaveProperty("tools");
+      expect(sandbox.agent).not.toHaveProperty("tools");
       expect(sandbox.network.policy.explicit).toMatchObject({
         process: { run_as_user: "1000", run_as_group: "1000" },
         filesystem_policy: {
@@ -696,7 +672,7 @@ describe("config export source verification (#10938)", () => {
     expect(result.publish).not.toHaveBeenCalled();
     const [yaml] = result.writeStdout.mock.calls[0]!;
     const document = asExportedConfig(YAML.parse(yaml));
-    expect(exportedAgentList(document.spec.sandboxes[0]!)[0]!.auth).toEqual({
+    expect(document.spec.sandboxes[0]!.agent.auth).toEqual({
       method: "api-key",
     });
     expect(document.spec.inferenceProviders[0]).toMatchObject({
@@ -735,7 +711,7 @@ describe("config export source verification (#10938)", () => {
         findings: expect.arrayContaining([
           expect.objectContaining({
             category,
-            field: "spec.sandboxes[].agents[0].auth",
+            field: "spec.sandboxes[].agent.auth",
           }),
         ]),
       },
@@ -798,15 +774,11 @@ describe("config export source verification (#10938)", () => {
   });
 
   it.each([
-    [
-      "Hermes tool gateways",
-      { hermesToolGateways: ["browser"] },
-      "spec.sandboxes[].agents[0].tools",
-    ],
+    ["Hermes tool gateways", { hermesToolGateways: ["browser"] }, "spec.sandboxes[].agent.tools"],
     [
       "Hermes inference provider",
       { hermesInferenceProvider: "hermes-provider" },
-      "spec.sandboxes[].agents[0].auth",
+      "spec.sandboxes[].agent.auth",
     ],
   ])("rejects excluded %s state (#11286)", (_case, registryOverrides, field) => {
     expect(findings(verify(hermesSnapshot(registryOverrides)))).toContainEqual(
@@ -1243,12 +1215,15 @@ function dashboardSnapshot(
 }
 
 describe("dashboard settings export", () => {
-  it("keeps canonical Hermes export free of dashboard interfaces (#10904)", async () => {
+  it("disables the target-default Hermes dashboard for a canonical source (#12132)", async () => {
     const exported = await exportSnapshots([hermesSnapshot()]);
     expect(exported.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
     const document = asExportedConfig(YAML.parse(exported.writeStdout.mock.calls[0]![0]));
-    expect(document.spec.sandboxes[0]!.harness).toEqual({ kind: "hermes" });
-    expect(exportedAgentList(document.spec.sandboxes[0]!)[0]).toEqual({
+    expect(document.spec.sandboxes[0]!.harness).toEqual({
+      kind: "hermes",
+      interfaces: { dashboard: { enabled: false } },
+    });
+    expect(document.spec.sandboxes[0]!.agent).toEqual({
       name: "primary",
       inference: {
         routes: [
@@ -1269,7 +1244,7 @@ describe("dashboard settings export", () => {
           findings: expect.arrayContaining([
             expect.objectContaining({
               category: "unsupported",
-              field: "spec.sandboxes[].agents[0].dashboard",
+              field: "spec.sandboxes[].harness.interfaces.dashboard",
             }),
           ]),
         },
@@ -1320,12 +1295,15 @@ describe("dashboard settings export", () => {
     });
   });
 
-  it("keeps explicit and legacy canonical dashboard exports identical (#10904)", async () => {
+  it("keeps explicit and legacy canonical dashboard exports identical (#10904, #12132)", async () => {
     const legacy = await exportSnapshots([snapshot()]);
     const explicit = await exportSnapshots([dashboardSnapshot(18789, "127.0.0.1")]);
     expect(explicit.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
     expect(explicit.writeStdout.mock.calls).toEqual(legacy.writeStdout.mock.calls);
-    expect(explicit.writeStdout.mock.calls[0]![0]).not.toContain("interfaces:");
+    const document = asExportedConfig(YAML.parse(explicit.writeStdout.mock.calls[0]![0]));
+    expect(document.spec.sandboxes[0]!.harness.interfaces).toEqual({
+      dashboard: { port: 18789 },
+    });
   });
 
   it("preserves inference and execution tuning alongside dashboard settings (#10904)", async () => {
@@ -1342,7 +1320,7 @@ describe("dashboard settings export", () => {
       interfaces: { dashboard: { port: 19000, bind: "0.0.0.0" } },
       execution: { timeoutSeconds: 900, heartbeatEvery: "30m" },
     });
-    expect(exportedAgentList(document.spec.sandboxes[0]!)[0]).toMatchObject({
+    expect(document.spec.sandboxes[0]!.agent).toMatchObject({
       inference: { routes: [{ overrides: { contextWindow: 65536, maxTokens: 8192 } }] },
     });
   });

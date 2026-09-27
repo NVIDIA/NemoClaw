@@ -202,6 +202,20 @@ describe("parseTelegramBreadcrumbs", () => {
     ).toMatchObject({ credentialUnresolved: true });
   });
 
+  it.each([
+    "[telegram] [default] credential placeholder configured but TELEGRAM_BOT_TOKEN is missing from runtime env",
+    "[telegram] [default] credential placeholder mismatch: openclaw.json botToken does not match runtime TELEGRAM_BOT_TOKEN placeholder",
+    "[telegram] [default] runtime TELEGRAM_BOT_TOKEN is an identityless canonical placeholder; a revision-scoped OpenShell credential is required",
+    "[telegram] [default] runtime TELEGRAM_BOT_TOKEN placeholder is malformed",
+    "[telegram] [default] runtime credential available from a non-placeholder source",
+  ])("classifies an invalid runtime credential diagnostic [case %#]", (line) => {
+    const bc = parseTelegramBreadcrumbs([line]);
+    expect(bc).toMatchObject({ credentialUnresolved: true });
+    expect(evaluateTelegramDiagnostics(baseInput({ breadcrumbs: bc })).verdict).toBe(
+      "token_rejected",
+    );
+  });
+
   it("captures a non-auth HTTP startup error code", () => {
     expect(
       parseTelegramBreadcrumbs(["[telegram] [default] Bot API startup probe returned HTTP 502"]),

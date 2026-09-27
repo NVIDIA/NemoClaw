@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
 import type { ShippedManagedImageAgent } from "../../../src/lib/onboard/managed-image/contract.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertManagedImageReceiptMatchesSelectedCohort } from "../fixtures/managed-image-receipt.ts";
@@ -127,4 +128,18 @@ export function requireMcpBridgeTlsCaCert(env: NodeJS.ProcessEnv = process.env):
     throw new Error("NEMOCLAW_MCP_TLS_CA_CERT is required for routed-private MCP validation");
   }
   return corporateCaBundle;
+}
+
+export function assertMcpBridgeManagedRegistryReceipt(
+  sandboxName: string,
+  agent: ShippedManagedImageAgent,
+  registryFile: string,
+): void {
+  const registry = JSON.parse(fs.readFileSync(registryFile, "utf8")) as {
+    sandboxes?: Record<string, { workload?: Record<string, unknown> }>;
+  };
+  assertMcpBridgeManagedImageReceipt({
+    expectedAgent: agent,
+    workload: registry.sandboxes?.[sandboxName]?.workload,
+  });
 }

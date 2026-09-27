@@ -7,7 +7,11 @@ import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { dockerExecFileSync } from "../adapters/docker/exec";
-import { resolveOpenshellSandboxSshHost } from "../adapters/openshell/sandbox-ssh-host";
+import {
+  executeOrdinarySandboxCommand,
+  SandboxCommandTransportError,
+} from "../adapters/sandbox/ordinary-command";
+import { OpenShellGatewayEndpointOverrideError } from "../openshell-gateway-endpoint-guard";
 import { DASHBOARD_PORT } from "../core/ports";
 import { redactFullWithUrls } from "../security/redact";
 import { createTarball as createDiagnosticsTarball } from "./tarball";
@@ -346,65 +350,53 @@ function collectOpenshell(
   }
 }
 
-function collectSandboxInternals(
+async function collectSandboxInternals(
   collectDir: string,
   sandboxName: string,
   gatewayName: string | undefined,
   quick: boolean,
-): void {
+): Promise<void> {
   if (!commandExists("openshell")) return;
 
   section("Sandbox Internals");
 
-  // Generate temporary SSH config in a private directory.
-  const sshConfigDir = mkdtempSync(join(tmpdir(), "nemoclaw-ssh-"));
-  const sshConfigPath = join(sshConfigDir, "config");
-  try {
-    const gatewayArgs = gatewayName ? ["-g", gatewayName] : [];
-    const sshResult = spawnSync(
-      "openshell",
-      ["sandbox", "ssh-config", ...gatewayArgs, sandboxName],
-      {
-        timeout: TIMEOUT_MS,
-        stdio: ["ignore", "pipe", "ignore"],
-        encoding: "utf-8",
-      },
-    );
-    if (sshResult.status !== 0) {
-      warn(`Could not generate SSH config for sandbox '${sandboxName}', skipping internals`);
-      return;
+  const commands = [
+    ["sandbox-ps", ["ps", "-ef"]],
+    ["sandbox-free", ["free", "-m"]],
+    ...(!quick
+      ? [
+          ["sandbox-top", ["top", "-b", "-n", "1"]],
+          ["sandbox-gateway-log", ["tail", "-200", "/tmp/gateway.log"]],
+        ]
+      : []),
+  ] as [string, string[]][];
+  for (const [label, command] of commands) {
+    let result: Awaited<ReturnType<typeof executeOrdinarySandboxCommand>>;
+    try {
+      result = await executeOrdinarySandboxCommand(
+        sandboxName,
+        command.map((argument) => `'${argument.replaceAll("'", `'\\''`)}'`).join(" "),
+        TIMEOUT_MS,
+        {
+          honorCallerTimeout: true,
+          ...(gatewayName ? { gatewayName } : {}),
+        },
+      );
+    } catch (error) {
+      if (error instanceof OpenShellGatewayEndpointOverrideError) {
+        warn(`Sandbox internals skipped: ${redact(error.message)}`);
+        return;
+      }
+      if (error instanceof SandboxCommandTransportError && error.kind !== "cancelled") {
+        warn(`Sandbox internals skipped: ${redact(error.message)}`);
+        return;
+      }
+      throw error;
     }
-    const sshConfig = sshResult.stdout ?? "";
-    const sshHost = resolveOpenshellSandboxSshHost(sandboxName, sshConfig);
-    if (!sshHost) {
-      warn(`SSH config did not declare sandbox '${sandboxName}', skipping internals`);
-      return;
-    }
-    writeFileSync(sshConfigPath, sshConfig);
-    const sshBase = [
-      "-F",
-      sshConfigPath,
-      "-o",
-      "StrictHostKeyChecking=no",
-      "-o",
-      "ConnectTimeout=10",
-      sshHost,
-    ];
-
-    // Use collect() with array args — no shell interpolation of sandboxName
-    collect(collectDir, "sandbox-ps", "ssh", [...sshBase, "ps", "-ef"]);
-    collect(collectDir, "sandbox-free", "ssh", [...sshBase, "free", "-m"]);
-    if (!quick) {
-      collect(collectDir, "sandbox-top", "ssh", [...sshBase, "top", "-b", "-n", "1"]);
-      collect(collectDir, "sandbox-gateway-log", "ssh", [
-        ...sshBase,
-        "tail",
-        "-200",
-        "/tmp/gateway.log",
-      ]);
-    }
-  } finally {
-    rmSync(sshConfigDir, { force: true, recursive: true });
+    const redacted = redact(`${result.stdout}\n${result.stderr}`);
+    writeFileSync(join(collectDir, `${label}.txt`), redacted);
+    console.log(redacted.trimEnd());
+    if (result.status !== 0) console.log("  (command exited with non-zero status)");
   }
 }
 
@@ -505,7 +497,7 @@ export function getDebugCompletionMessages(output?: string): string[] {
  * Collect local and sandbox diagnostics for a NemoClaw environment and
  * optionally bundle the results into a tarball for issue reporting.
  */
-export function runDebug(opts: DebugOptions = {}): void {
+export async function runDebug(opts: DebugOptions = {}): Promise<void> {
   const quick = opts.quick ?? false;
   const output = opts.output ?? "";
   // Compiled location: dist/lib/diagnostics/debug.js → repo root is 3 levels up
@@ -533,7 +525,7 @@ export function runDebug(opts: DebugOptions = {}): void {
     collectDocker(collectDir, quick);
     collectOpenshell(collectDir, sandboxName, opts.gatewayName, quick);
     collectOnboardSession(collectDir, repoDir);
-    collectSandboxInternals(collectDir, sandboxName, opts.gatewayName, quick);
+    await collectSandboxInternals(collectDir, sandboxName, opts.gatewayName, quick);
 
     if (!quick) {
       collectNetwork(collectDir);

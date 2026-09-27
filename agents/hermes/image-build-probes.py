@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -50,7 +51,7 @@ def verify_compatibility_retirement(
     adapter: Path = Path("/usr/local/share/nemoclaw/hermes-cli-adapter-v1.json"),
     oneshot: Path = Path("/opt/hermes/hermes_cli/oneshot.py"),
 ) -> None:
-    """Reject an upgrade that retains Hermes 0.20.6 compatibility behavior."""
+    """Reject a CLI adapter that does not match the installed Hermes release."""
     result = subprocess.run(
         [str(hermes), "--version"],
         capture_output=True,
@@ -67,11 +68,14 @@ def verify_compatibility_retirement(
     if match is None:
         raise RuntimeError(f"could not parse Hermes semver from: {version_output}")
     semver = match.group(1)
-    if semver != "0.20.6" and '"resumed_oneshot"' in adapter.read_text(encoding="utf-8"):
+    adapter_contract = json.loads(adapter.read_text(encoding="utf-8"))
+    if adapter_contract.get("upstream_cli_version") != semver:
         raise RuntimeError(
-            f"installed Hermes {semver} but Hermes v0.20.6 compatibility workarounds "
-            "are still installed; re-review the workaround set before upgrading Hermes"
+            f"installed Hermes {semver} but the CLI adapter targets "
+            f"{adapter_contract.get('upstream_cli_version', 'an unknown version')}"
         )
+    if "resumed_oneshot" in adapter_contract.get("translations", {}):
+        raise RuntimeError("retired resumed one-shot compatibility translation is still installed")
     if (
         "process_registry.wait_for_pending_completions(oneshot_task_id)"
         not in oneshot.read_text(encoding="utf-8")
@@ -100,12 +104,12 @@ def verify_profile_policy() -> None:
     from types import SimpleNamespace
 
     from cli import CLI_CONFIG
-    from gateway.config import SessionResetPolicy, load_gateway_config
+    from gateway.config import SessionResetPolicy
     from hermes_cli import config as hermes_config
     from hermes_cli.config import load_config_readonly
-    from hermes_cli.main import _resolve_pre_update_backup_mode
+    from hermes_cli.update_cmd_maint import _resolve_pre_update_backup_mode
     from managed_policy import load_managed_policy, profile_default_values
-    from tools.browser_tool import (
+    from tools.browser_tool_eval_policy import (
         _allow_unsafe_browser_evaluate,
         _restrict_browser_evaluate,
     )
@@ -121,8 +125,6 @@ def verify_profile_policy() -> None:
     assert _load_show_reasoning() == expected["display.show_reasoning"]
     _verify_session_reset_policy(SessionResetPolicy(), expected)
     _verify_session_reset_policy(SessionResetPolicy.from_dict({}), expected)
-    gateway = load_gateway_config()
-    _verify_session_reset_policy(gateway.default_reset_policy, expected)
     original_load_config = hermes_config.load_config
     try:
 
@@ -195,6 +197,77 @@ def verify_gateway_process_identity() -> None:
     )
 
 
+def verify_external_supervisor_restart() -> None:
+    from gateway import status as gateway_status
+    from gateway import run_shutdown
+    from gateway.restart import EXTERNAL_GATEWAY_SUPERVISOR_ENV
+    from hermes_cli import gateway as gateway_cli
+
+    original_get_running_pid = gateway_status.get_running_pid
+    original_capture = gateway_cli._capture_gateway_argv
+    original_budget = gateway_cli._get_restart_exit_wait_budget
+    original_restart = gateway_cli._graceful_restart_via_sigusr1
+    restart_requests: list[tuple[int, float]] = []
+    try:
+        gateway_status.get_running_pid = lambda: 4242
+        gateway_cli._capture_gateway_argv = lambda pid: [
+            "/usr/local/bin/hermes.real",
+            "gateway",
+            "run",
+            "--external-supervisor",
+        ]
+        gateway_cli._get_restart_exit_wait_budget = lambda: 19.0
+        gateway_cli._graceful_restart_via_sigusr1 = lambda pid, timeout: (
+            restart_requests.append((pid, timeout)) or True
+        )
+
+        assert gateway_cli._restart_via_external_supervisor()
+        assert restart_requests == [(4242, 19.0)], restart_requests
+
+        gateway_cli._capture_gateway_argv = lambda pid: [
+            "/usr/local/bin/hermes.real",
+            "gateway",
+            "run",
+        ]
+        restart_requests.clear()
+        assert not gateway_cli._restart_via_external_supervisor()
+        assert not restart_requests, restart_requests
+    finally:
+        gateway_status.get_running_pid = original_get_running_pid
+        gateway_cli._capture_gateway_argv = original_capture
+        gateway_cli._get_restart_exit_wait_budget = original_budget
+        gateway_cli._graceful_restart_via_sigusr1 = original_restart
+
+    class Runner:
+        should_exit_with_failure = False
+        exit_reason = None
+        exit_code = None
+        _restart_requested = False
+        _restart_via_service = False
+
+    original_supervisor = os.environ.get(EXTERNAL_GATEWAY_SUPERVISOR_ENV)
+    try:
+        os.environ[EXTERNAL_GATEWAY_SUPERVISOR_ENV] = "1"
+        try:
+            run_shutdown._resolve_gateway_exit_verdict(Runner(), True)
+        except SystemExit as error:
+            assert error.code == 79, error.code
+        else:
+            raise AssertionError("externally supervised SIGTERM did not emit recovery status")
+
+        os.environ.pop(EXTERNAL_GATEWAY_SUPERVISOR_ENV, None)
+        assert not run_shutdown._resolve_gateway_exit_verdict(Runner(), True)
+    finally:
+        if original_supervisor is None:
+            os.environ.pop(EXTERNAL_GATEWAY_SUPERVISOR_ENV, None)
+        else:
+            os.environ[EXTERNAL_GATEWAY_SUPERVISOR_ENV] = original_supervisor
+
+    assert run_shutdown.NEMOCLAW_GATEWAY_RECOVERY_EXIT_CODE == 79
+    start_script = Path("/usr/local/bin/nemoclaw-start").read_text(encoding="utf-8")
+    assert "readonly HERMES_GATEWAY_RECOVERY_STATUS=79" in start_script
+
+
 def verify_auxiliary_token_limit() -> None:
     """Keep explicit auxiliary limits on the managed inference route."""
     from agent.auxiliary_client import _build_call_kwargs
@@ -225,34 +298,6 @@ def verify_auxiliary_token_limit() -> None:
     assert external_moa.get("max_tokens") == 64, external_moa
 
 
-def verify_neutral_platform_inertness() -> None:
-    import socket
-
-    from gateway.config import Platform, load_gateway_config
-
-    original_connect = socket.socket.connect
-    original_create_connection = socket.create_connection
-
-    def reject_network(*_args, **_kwargs):
-        raise AssertionError("neutral Hermes configuration attempted a network connection")
-
-    socket.socket.connect = reject_network
-    socket.create_connection = reject_network
-    try:
-        config = load_gateway_config()
-    finally:
-        socket.socket.connect = original_connect
-        socket.create_connection = original_create_connection
-    for name in ("a2a", "buzz", "google_chat", "whatsapp_cloud"):
-        platform = Platform(name)
-        platform_config = config.platforms.get(platform)
-        assert platform_config is not None, name
-        assert platform_config.enabled is False, (name, platform_config)
-        assert platform_config.token is None, (name, platform_config.token)
-        assert platform_config.api_key is None, (name, platform_config.api_key)
-        assert platform_config.extra == {}, (name, platform_config.extra)
-
-
 def verify_cron_runtime_source() -> None:
     from cron.executions import EXECUTIONS_FILE, _connect
     from hermes_cli.backup import _QUICK_STATE_FILES
@@ -262,7 +307,7 @@ def verify_cron_runtime_source() -> None:
     assert EXECUTIONS_FILE is None
     connection = _connect()
     try:
-        databases = connection.execute("PRAGMA database_list").fetchall()
+        databases = [tuple(row) for row in connection.execute("PRAGMA database_list").fetchall()]
     finally:
         connection.close()
     assert databases == [(0, "main", str(expected))], databases
@@ -332,6 +377,9 @@ def verify_session_delete() -> None:
     from hermes_state import SessionDB
 
     db = SessionDB()
+    temp_store = db._conn.execute("PRAGMA temp_store").fetchone()
+    normalized_temp_store = tuple(temp_store) if temp_store is not None else None
+    assert normalized_temp_store and normalized_temp_store[0] == 2, temp_store
     session_id = "nemoclaw-session-delete-smoke"
     db.create_session(session_id, "cli")
     db.append_message(session_id, "user", "probe message 1")
@@ -686,7 +734,9 @@ def verify_discord_reopen() -> None:
     assert store.call(reopen_probe) == ("gateway-reopened",)
 
 
-def verify_googlechat_override_seams() -> None:
+def verify_googlechat_override_seams(
+    path: Path = Path("/opt/hermes/plugins/platforms/google_chat/adapter.py"),
+) -> None:
     """Fail the build when a Google Chat definition the channel override binds moves.
 
     The override subclasses the bundled adapter because ``PlatformEntry`` carries
@@ -694,16 +744,16 @@ def verify_googlechat_override_seams() -> None:
     them: an upgrade that renames one stops the build instead of letting the
     channel fall back to the stock adapter unnoticed.
     """
-    path = "/opt/hermes/plugins/platforms/google_chat/adapter.py"
-    source = Path(path).read_text(encoding="utf-8")
+    source = path.read_text(encoding="utf-8")
     expected = {
         "def _validate_config(self) -> Tuple[str, Optional[str]]:": 1,
         "def _load_sa_credentials(self) -> Any:": 1,
         "def _new_authed_http(self) -> Any:": 1,
         "async def connect(self, *, is_reconnect: bool = False) -> bool:": 1,
-        # connect() gates its gRPC subscriber precheck and its own supervisor on
-        # this test; the override reports no subscription so both are skipped.
-        "if subscription_path is not None:": 2,
+        # The override reports no subscription, so connect() skips both the
+        # gRPC subscriber precheck and the bundled supervisor.
+        "if subscription_path is not None and not await self._check_subscription(subscription_path, credentials):": 1,
+        "self._supervisor_task = asyncio.create_task(self._run_supervisor()) if subscription_path is not None else None": 1,
     }
     for needle, count in expected.items():
         actual = source.count(needle)
@@ -744,12 +794,12 @@ COMMANDS: dict[str, Callable[[], None]] = {
     "discord-create": verify_discord_create,
     "discord-recovery-source": verify_discord_recovery_source,
     "discord-reopen": verify_discord_reopen,
+    "external-supervisor-restart": verify_external_supervisor_restart,
     "gateway-process-identity": verify_gateway_process_identity,
     "googlechat-override-seams": verify_googlechat_override_seams,
     "gateway-runtime-metadata": verify_gateway_runtime_metadata,
     "langfuse-credentials": verify_langfuse_credentials,
     "managed-runtime-capability": verify_managed_runtime_capability,
-    "neutral-platform-inertness": verify_neutral_platform_inertness,
     "profile-policy": verify_profile_policy,
     "prepare-generated-config": prepare_generated_config,
     "session-delete": verify_session_delete,

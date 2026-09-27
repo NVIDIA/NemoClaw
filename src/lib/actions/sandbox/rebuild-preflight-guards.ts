@@ -401,7 +401,7 @@ export function expectedRebuildEntryAfterVersionCheck(
   confirmedEntrySnapshot: string,
   versionCheck: RebuildVersionCheck,
 ): RebuildSandboxEntry {
-  if (versionCheck.detectionMethod !== "ssh-exec" || versionCheck.sandboxVersion === null) {
+  if (versionCheck.detectionMethod !== "openshell-exec" || versionCheck.sandboxVersion === null) {
     return confirmedEntry;
   }
   const expectedEntry = JSON.parse(confirmedEntrySnapshot) as RebuildSandboxEntry;

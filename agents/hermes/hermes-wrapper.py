@@ -512,7 +512,6 @@ def _load_cli_adapter(path: str) -> dict:
     translations = adapter.get("translations")
     if not isinstance(translations, dict) or set(translations) != {
         "provider_model_composition",
-        "resumed_oneshot",
     }:
         raise _CliAdapterError("Hermes CLI adapter has invalid translation metadata")
     return adapter
@@ -716,55 +715,6 @@ def _provider_model_composition(parsed: dict) -> tuple[dict, dict, str] | None:
     return provider, model, _merged_model(provider["value"], model["value"])
 
 
-def _translate_resumed_oneshot(
-    parsed: dict,
-    composition: tuple[dict, dict, str] | None,
-) -> list[str] | None:
-    oneshots = _occurrences(parsed, "oneshot")
-    resumes = _occurrences(parsed, "resume")
-    continues = _occurrences(parsed, "continue")
-    if (
-        len(oneshots) != 1
-        or len(resumes) + len(continues) != 1
-        or parsed["command"] is not None
-        or parsed["terminated"]
-        or parsed["unknown_option"]
-    ):
-        return None
-    if _occurrences(parsed, "usage_file"):
-        raise _UnsupportedResumedOneshotUsageFile
-
-    translated: list[str] = []
-    profiles = _occurrences(parsed, "profile")
-    if profiles:
-        translated.extend([profiles[0]["canonical"], profiles[0]["value"]])
-    translated.extend(["chat", "--query", oneshots[0]["value"], "--quiet"])
-
-    session = resumes[0] if resumes else continues[0]
-    translated.append(session["canonical"])
-    if session["value"] is not None:
-        translated.append(session["value"])
-
-    provider_occurrence = composition[0] if composition else None
-    model_occurrence = composition[1] if composition else None
-    merged_model = composition[2] if composition else None
-    excluded = {"continue", "oneshot", "profile", "resume", "usage_file"}
-    for occurrence in parsed["occurrences"]:
-        if occurrence["id"] in excluded or occurrence is provider_occurrence:
-            continue
-        if occurrence is model_occurrence:
-            translated.extend([occurrence["canonical"], merged_model])
-        elif occurrence["value"] is None:
-            translated.append(occurrence["name"])
-        else:
-            translated.extend([occurrence["canonical"], occurrence["value"]])
-    return translated
-
-
-class _UnsupportedResumedOneshotUsageFile(Exception):
-    """Signal a valid resumed one-shot form whose usage report would be lost."""
-
-
 class _AmbiguousProviderModelSession(Exception):
     """Signal provider/model flags after an unquoted multi-word session name."""
 
@@ -792,9 +742,6 @@ def _adapt_cli_argv(argv: list[str], adapter: dict) -> tuple[str, list[str]]:
     if parsed is None:
         return "passthrough", argv
     composition = _provider_model_composition(parsed)
-    translated = _translate_resumed_oneshot(parsed, composition)
-    if translated is not None:
-        return "translated", translated
     if composition is not None:
         return "translated", _apply_provider_model_composition(parsed, composition)
     return "passthrough", argv
@@ -867,20 +814,6 @@ def main(argv: list[str]) -> int:
         adapter_result, exec_argv = _adapt_cli_argv(argv, adapter)
         if adapter_result == "translated":
             _require_upstream_cli_version(real_hermes, adapter["upstream_cli_version"])
-    except _UnsupportedResumedOneshotUsageFile:
-        try:
-            _require_upstream_cli_version(real_hermes, adapter["upstream_cli_version"])
-        except _CliAdapterError as exc:
-            return _report_cli_adapter_error(exc)
-        print(
-            "[COMPATIBILITY] Refusing resumed one-shot with --usage-file: "
-            "Hermes 0.19 writes usage reports only on its native one-shot path, "
-            "while NemoClaw routes this form through chat --query to append to "
-            "the selected or most recent session. Run the resumed turn without "
-            "--usage-file.",
-            file=sys.stderr,
-        )
-        return 2
     except _AmbiguousProviderModelSession:
         try:
             _require_upstream_cli_version(real_hermes, adapter["upstream_cli_version"])

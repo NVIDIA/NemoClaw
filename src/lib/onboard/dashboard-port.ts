@@ -45,6 +45,11 @@ type SandboxRegistryEntry = {
 
 export type ListSandboxesFn = () => { sandboxes: SandboxRegistryEntry[] };
 
+/** Blank environment values deliberately request automatic dashboard-port allocation. */
+export function hasExplicitDashboardPortOverride(value: string | undefined): boolean {
+  return Boolean(value?.trim());
+}
+
 /**
  * Read-only OpenShell forward observation bound to one authoritative runtime
  * scope by the caller. Keeping identity construction outside the allocator

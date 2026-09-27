@@ -280,7 +280,10 @@ describe("connect route containment", () => {
     await expect(connect).rejects.toThrow("process.exit(1)");
     const routeReadCalls = harness.captureOpenshellSpy.mock.calls.filter((call) => {
       const argv = Array.isArray(call?.[0]) ? (call[0] as string[]) : [];
-      return argv[0] === "sandbox" && argv[1] !== "list";
+      return (
+        argv[0] === "inference" ||
+        (argv[0] === "sandbox" && argv[1] === "exec" && argv.join(" ").includes("inference.local"))
+      );
     });
     expect(routeReadCalls).toHaveLength(0);
     expect(harness.runOpenshellSpy).not.toHaveBeenCalled();

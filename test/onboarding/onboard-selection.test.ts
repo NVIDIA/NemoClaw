@@ -66,10 +66,8 @@ import {
   runOllamaPullScenario,
 } from "../support/onboard-selection-test-helpers.js";
 
-const CREDENTIAL_RETRY_PROMPT =
-  "  Options: retry (re-enter key), back (change provider), exit [retry]: ";
-const CREDENTIAL_RETRY_PROMPT_RE =
-  /Options: retry \(re-enter key\), back \(change provider\), exit \[retry\]: /;
+const CREDENTIAL_RETRY_PROMPT = "  Options: retry, back, exit [retry]: ";
+const CREDENTIAL_RETRY_PROMPT_RE = /Options: retry, back, exit \[retry\]: /;
 const OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE =
   '{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"type":"function","function":{"name":"emit_ok","arguments":"{\\"ok\\":true}"}}]}}]}';
 const PROVIDER_SELECTION_TEST_TIMEOUT_MS = testTimeout(60_000);
@@ -355,6 +353,7 @@ function makeRemoteModelValidatorDeps(
 function makeInteractiveValidationRecovery() {
   return createValidationRecoveryPromptHelpers({
     isNonInteractive: () => false,
+    isSecretPromptAvailable: () => true,
     prompt: async () => "",
     validateNvidiaApiKeyValue: () => null,
     getTransportRecoveryMessage: () => "  Validation hit a network or transport error.",
@@ -914,6 +913,7 @@ async function runCredentialRetryScenario(scenario: CredentialRetryScenario) {
   };
   const recovery = createValidationRecoveryPromptHelpers({
     isNonInteractive: () => false,
+    isSecretPromptAvailable: () => true,
     prompt,
     validateNvidiaApiKeyValue: (value, credentialEnv) =>
       credentialEnv === "NVIDIA_INFERENCE_API_KEY" && !value.startsWith("nvapi-")
@@ -1032,8 +1032,8 @@ describe("onboard provider selection UX", { timeout: PROVIDER_SELECTION_TEST_TIM
     assert.doesNotMatch(buildOption?.label || "", /recommended/i);
   });
 
-  it("filters retired Kimi K2.6 from the NVIDIA Endpoints featured model list", async () => {
-    const answers = ["3"];
+  it("filters retired routes from the NVIDIA Endpoints featured model list (#11364)", async () => {
+    const answers = ["2"];
     const messages: string[] = [];
     const lines: string[] = [];
     const model = await promptCloudModel({
@@ -1081,17 +1081,16 @@ describe("onboard provider selection UX", { timeout: PROVIDER_SELECTION_TEST_TIM
       }),
     );
 
-    assert.equal(model, "minimaxai/minimax-m3");
+    assert.equal(model, "nvidia/nemotron-3-super-120b-a12b");
     assert.equal(validated.result, "selected");
     assert.equal(state.provider, "nvidia-prod");
     assert.equal(state.preferredInferenceApi, "openai-completions");
     assert.match(messages[0], /Choose model \[2\]/);
-    assert.ok(!lines.some((line) => line.includes("Kimi K2.6")));
-    assert.ok(!lines.some((line) => line.includes("GLM 5.1")));
+    assert.ok(!lines.some((line) => /Kimi K2\.6|GLM 5\.1|Minimax M3/.test(line)));
     assert.ok(validated.lines.some((line) => line.includes("Chat Completions API available")));
     expect(probeOpenAiLikeEndpoint).toHaveBeenCalledWith(
       "https://integrate.api.nvidia.com/v1",
-      "minimaxai/minimax-m3",
+      "nvidia/nemotron-3-super-120b-a12b",
       "nvapi-test",
       expect.any(Object),
     );
@@ -3142,7 +3141,7 @@ const runner = require(${runnerPath});
 
 const { messages, prompts } = installPromptQueue(credentials, ["", "", "retry", "nvapi-good"]);
 runner.runCapture = () => "";
-
+[process.stdin, process.stderr].forEach((stream) => Object.assign(stream, { isTTY: true }));
 const { setupNim } = require(${onboardPath});
 
 reportChildScenario(async () => {
@@ -3276,7 +3275,7 @@ const runner = require(${runnerPath});
 
 const { messages } = installPromptQueue(credentials, ["4", "https://proxy.example.com/v1/chat/completions", "custom-model", "retry", "proxy-good", "custom-model"]);
 runner.runCapture = () => "";
-
+[process.stdin, process.stderr].forEach((stream) => Object.assign(stream, { isTTY: true }));
 const { setupNim } = require(${onboardPath});
 
 reportChildScenario(async () => {

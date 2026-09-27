@@ -111,6 +111,7 @@ const MANAGED_POLICY_PATHS = [
   "approvals.mode",
   "browser.allow_unsafe_evaluate",
   "browser.restrict_evaluate",
+  "database.temp_store",
   "session_reset.mode",
   "session_reset.at_hour",
   "session_reset.idle_minutes",
@@ -127,6 +128,7 @@ type HermesManagedConfigBase = Record<string, unknown> & {
   _config_version: number;
   approvals: { mode: "manual" | "smart" | "off" };
   browser: { allow_unsafe_evaluate: boolean; restrict_evaluate: boolean };
+  database: { temp_store: 2 };
   display: {
     compact: boolean;
     tool_progress: string;
@@ -195,6 +197,10 @@ export function buildHermesManagedPolicy(
       // Keep unsafe and sensitive browser evaluation restricted for hostile pages.
       allow_unsafe_evaluate: false,
       restrict_evaluate: true,
+    },
+    database: {
+      // OpenShell blocks SQLite temp-file creation on the managed CLI path.
+      temp_store: 2,
     },
     session_reset: {
       // Preserve the prior daily and idle expiry instead of inheriting an

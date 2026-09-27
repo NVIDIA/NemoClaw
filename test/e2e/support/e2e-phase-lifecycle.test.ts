@@ -244,7 +244,7 @@ describe("LifecyclePhaseFixture rebuild helpers", () => {
     runner.enqueue(shellResult(0, "NAME  PHASE\ne2e-x  Ready\n"));
     const cleanup = new FakeCleanup();
 
-    const result = await fixture(runner, cleanup).assertSandboxReadyAfterGatewayRestart("e2e-x", {
+    const result = await fixture(runner, cleanup).waitForSandboxReadyAfterGatewayRestart("e2e-x", {
       attempts: 2,
       delayMs: 0,
     });
@@ -544,7 +544,13 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
   }
 
   it.each([
-    ["Docker", { NEMOCLAW_GATEWAY_RUNTIME: "docker" }, "docker", ["ps"]],
+    [
+      "Docker",
+      { NEMOCLAW_GATEWAY_RUNTIME: "docker" },
+      "docker",
+      ["ps"],
+      "label=openshell.ai/managed-by=openshell",
+    ],
     [
       "Podman",
       {
@@ -556,10 +562,11 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
       },
       "podman",
       ["--url", "unix:///run/user/1001/podman/podman.sock", "ps"],
+      "label=openshell.managed=true",
     ],
   ] as const)(
     "proves 2xx→401→rejected rebuild without mutation through %s, then restores 2xx",
-    async (_displayName, runtimeEnvironment, runtimeCommand, runtimeArgsPrefix) => {
+    async (_displayName, runtimeEnvironment, runtimeCommand, runtimeArgsPrefix, managedLabel) => {
       const home = fs.mkdtempSync(path.join(os.tmpdir(), "dcode-lifecycle-home-"));
       const previousHome = process.env.HOME;
       process.env.HOME = home;
@@ -620,7 +627,17 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
           (call) => call.options?.artifactName === "lifecycle-dcode-container-ids-before",
         );
         expect(containerIds?.command).toBe(runtimeCommand);
-        expect(containerIds?.args.slice(0, runtimeArgsPrefix.length)).toEqual(runtimeArgsPrefix);
+        expect(containerIds?.args).toEqual([
+          ...runtimeArgsPrefix,
+          "-a",
+          "--no-trunc",
+          "--filter",
+          managedLabel,
+          "--filter",
+          `label=openshell.ai/sandbox-name=${sandboxName}`,
+          "--format",
+          "{{.ID}}",
+        ]);
         expect(cleanup.calls).toHaveLength(1);
 
         const callCount = runner.calls.length;

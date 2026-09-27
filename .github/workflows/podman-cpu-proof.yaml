@@ -11,13 +11,20 @@ on:
     paths:
       - ".github/workflows/podman-cpu-proof.yaml"
       - "src/lib/adapters/container-engine.ts"
+      - "src/lib/adapters/openshell/sandbox-lifecycle-sdk.ts"
+      - "src/lib/adapters/openshell/sdk.ts"
       - "src/lib/adapters/podman/**"
       - "src/lib/onboard/docker-driver-gateway-*.ts"
-      - "src/lib/onboard/managed-bootstrap/podman-*.ts"
       - "src/lib/onboard/experimental/portable-cpu-delegation-preflight*.ts"
       - "src/lib/onboard/experimental/portable-demo-lifecycle.ts"
       - "src/lib/onboard/experimental/portable-runtime-*.ts"
       - "src/lib/onboard/portable-retirement-authority.ts"
+      - "src/lib/onboard/managed-startup/**"
+      - "src/lib/onboard/sandbox-create/**"
+      - "src/lib/onboard/sandbox-create-launch.ts"
+      - "src/lib/onboard/sandbox-create-step.ts"
+      - "src/lib/onboard/sandbox-gpu-create-flow.ts"
+      - "src/lib/onboard/sandbox-gpu-create-run-attempt.ts"
       - "src/lib/onboard.ts"
       - "src/lib/actions/uninstall/portable-runtime-cleanup.ts"
       - "src/lib/actions/uninstall/all-gateway-ports.ts"
@@ -27,6 +34,7 @@ on:
       - "src/lib/state/registry/lock.ts"
       - "src/lib/onboard/experimental/portable-host-preparation*.ts"
       - "src/lib/onboard/experimental/portable-profile.ts"
+      - "src/lib/onboard/runtime-provider/contract.ts"
       - "src/lib/onboard/runtime-provider/podman*.ts"
       - "scripts/install-openshell.sh"
       - "scripts/checks/run-portable-cpu-delegation-proof.mts"
@@ -76,7 +84,10 @@ jobs:
         uses: ./.github/actions/setup-reviewed-npm
 
       - name: Install locked test dependencies
-        run: npm ci --ignore-scripts
+        run: |
+          node scripts/lib/openshell-sdk-install.mts prepare
+          npm ci --ignore-scripts --prefer-offline --omit=optional --include=optional --@nvidia:registry=https://npm.pkg.github.com
+          node scripts/lib/openshell-sdk-install.mts check
 
       - name: Build CLI for the CPU delegation proof
         run: npm run build:cli
@@ -146,7 +157,10 @@ jobs:
         uses: ./.github/actions/setup-reviewed-npm
 
       - name: Install locked test dependencies
-        run: npm ci --ignore-scripts
+        run: |
+          node scripts/lib/openshell-sdk-install.mts prepare
+          npm ci --ignore-scripts --prefer-offline --omit=optional --include=optional --@nvidia:registry=https://npm.pkg.github.com
+          node scripts/lib/openshell-sdk-install.mts check
 
       - name: Build and link candidate CLI
         run: |

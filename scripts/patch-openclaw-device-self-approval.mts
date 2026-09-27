@@ -34,10 +34,15 @@
  * pre-convergence transition separately from a cold clone, which has no paired
  * record and must not select stored device authentication.
  *
+ * Both gateway and local-fallback approvals can leave handles open after the
+ * command prints Approved. Exit 0 only after stdout and stderr report that
+ * output drained. Exit 1 when either callback fails or does not complete
+ * within one second (#12064).
+ *
  * Remove this patch when upstream OpenClaw supports same-device, operator-only
  * scope approval through the gateway using the already-approved pairing scope
  * and publishes the pending/paired transition atomically or with equivalent
- * durable restart recovery.
+ * durable restart recovery, and when `devices approve` exits after Approved.
  */
 
 import fs from "node:fs";
@@ -56,6 +61,8 @@ const CLI_LIST_MARKER = "nemoclaw: preflight bounded stored device auth before l
 const CLI_SETTLEMENT_LIST_MARKER = "nemoclaw: use stored device auth for pairing settlement list";
 const CLI_BOOTSTRAP_AUTH_STORE_MARKER = "nemoclaw: persist canonical CLI bootstrap credential";
 const CLI_PAIRED_TOKEN_MARKER = "nemoclaw: preflight bounded paired token before live pairing list";
+const CLI_APPROVE_EXIT_MARKER =
+  "nemoclaw: exit after devices approve so leftover gateway handles cannot hang";
 const CALL_FORCE_IDENTITY_MARKER = "nemoclaw: force device identity for loopback pairing bootstrap";
 const CALL_STORED_IDENTITY_MARKER =
   "nemoclaw: retain stored CLI device identity for loopback shared-token scope enforcement";
@@ -79,6 +86,8 @@ const AUTH_SCOPE_UPGRADE_MARKER =
   "nemoclaw: route bounded CLI device-token scope upgrade into pairing";
 const AUTH_DEFER_SILENT_SCOPE_UPGRADE_MARKER =
   "nemoclaw: defer bounded silent CLI scope upgrade to pairing watcher";
+const AUTH_REQUIRE_EXPLICIT_ADMIN_UPGRADE_MARKER =
+  "nemoclaw: require explicit approval for CLI operator.admin upgrade";
 const HANDLER_MARKER = "nemoclaw: bounded same-device scope approval";
 const STATE_MARKER = "nemoclaw: validate bounded self-approval inside pairing lock";
 const STATE_TRANSACTION_MARKER = "nemoclaw: recover bounded self-approval state transaction";
@@ -372,6 +381,102 @@ function replaceExactlyOnce(
     };
   }
   return { source: source.replace(needle, replacement) };
+}
+
+const CLI_APPROVE_EXIT_TARGET = [
+  "\tif (opts.json) {",
+  "\t\tdefaultRuntime.writeJson(result);",
+  "\t\treturn;",
+  "\t}",
+  "\tconst resultRequestId = result?.requestId;",
+  '\tconst approvedRequestId = typeof resultRequestId === "string" && resultRequestId.trim().length > 0 ? resultRequestId : resolvedRequestId;',
+  "\tconst deviceId = result?.device?.deviceId;",
+  '\tdefaultRuntime.log(`${theme.success("Approved")} ${theme.command(deviceId ?? "ok")} ${theme.muted(`(${approvedRequestId})`)}`);',
+  "}",
+].join("\n");
+const CLI_APPROVE_EXIT_REPLACEMENT_UNBOUNDED = [
+  "\tconst exitAfterDevicesApproveOutput = () => {",
+  "\t\tlet remaining = 2;",
+  "\t\tconst done = () => {",
+  "\t\t\tremaining -= 1;",
+  "\t\t\tif (remaining === 0) defaultRuntime.exit(0);",
+  "\t\t};",
+  "\t\tfor (const stream of [process.stdout, process.stderr]) {",
+  "\t\t\ttry {",
+  '\t\t\t\tstream.write("", done);',
+  "\t\t\t} catch {",
+  "\t\t\t\tdone();",
+  "\t\t\t}",
+  "\t\t}",
+  `\t}; // ${CLI_APPROVE_EXIT_MARKER} (#12064)`,
+  "\tif (opts.json) {",
+  "\t\tdefaultRuntime.writeJson(result);",
+  "\t\texitAfterDevicesApproveOutput();",
+  "\t\treturn;",
+  "\t}",
+  "\tconst resultRequestId = result?.requestId;",
+  '\tconst approvedRequestId = typeof resultRequestId === "string" && resultRequestId.trim().length > 0 ? resultRequestId : resolvedRequestId;',
+  "\tconst deviceId = result?.device?.deviceId;",
+  '\tdefaultRuntime.log(`${theme.success("Approved")} ${theme.command(deviceId ?? "ok")} ${theme.muted(`(${approvedRequestId})`)}`);',
+  "\texitAfterDevicesApproveOutput();",
+  "}",
+].join("\n");
+const CLI_APPROVE_EXIT_REPLACEMENT = CLI_APPROVE_EXIT_REPLACEMENT_UNBOUNDED.replace(
+  [
+    "\t\tlet remaining = 2;",
+    "\t\tconst done = () => {",
+    "\t\t\tremaining -= 1;",
+    "\t\t\tif (remaining === 0) defaultRuntime.exit(0);",
+    "\t\t};",
+  ].join("\n"),
+  [
+    "\t\tlet remaining = 2;",
+    "\t\tlet exited = false;",
+    "\t\tconst exit = (code) => {",
+    "\t\t\tif (exited) return;",
+    "\t\t\texited = true;",
+    "\t\t\tdefaultRuntime.exit(code);",
+    "\t\t};",
+    "\t\tconst timeout = setTimeout(() => exit(1), 1000); // nemoclaw: report uncertain approval output as failure (#12064)",
+    "\t\tconst done = (error) => {",
+    "\t\t\tif (error) {",
+    "\t\t\t\tclearTimeout(timeout);",
+    "\t\t\t\texit(1);",
+    "\t\t\t\treturn;",
+    "\t\t\t}",
+    "\t\t\tremaining -= 1;",
+    "\t\t\tif (remaining === 0) {",
+    "\t\t\t\tclearTimeout(timeout);",
+    "\t\t\t\texit(0);",
+    "\t\t\t}",
+    "\t\t};",
+  ].join("\n"),
+).replace(
+  "\t\t\t} catch {\n\t\t\t\tdone();",
+  "\t\t\t} catch {\n\t\t\t\tclearTimeout(timeout);\n\t\t\t\texit(1);",
+);
+
+function applyDevicesApproveExitPatch(source: string, file: string): ReplacementResult {
+  const exitMarkerCount = countOccurrences(source, CLI_APPROVE_EXIT_MARKER);
+  if (exitMarkerCount === 1 && source.includes(CLI_APPROVE_EXIT_REPLACEMENT)) {
+    return { source };
+  }
+  const isFresh = exitMarkerCount === 0 && source.includes(CLI_APPROVE_EXIT_TARGET);
+  const isUnbounded =
+    exitMarkerCount === 1 && source.includes(CLI_APPROVE_EXIT_REPLACEMENT_UNBOUNDED);
+  if (!isFresh && !isUnbounded) {
+    return {
+      source,
+      error: `devices CLI approve exit patch in ${file}: partial, duplicate, or structurally changed patch (${exitMarkerCount} markers)`,
+    };
+  }
+  return replaceExactlyOnce(
+    source,
+    isUnbounded ? CLI_APPROVE_EXIT_REPLACEMENT_UNBOUNDED : CLI_APPROVE_EXIT_TARGET,
+    CLI_APPROVE_EXIT_REPLACEMENT,
+    "devices CLI approve success exit target",
+    file,
+  );
 }
 
 const CLI_TARGET = [
@@ -800,7 +905,7 @@ const AUTH_DEVICE_TOKEN_TARGET = [
   "\t\t\tauthOk = true;",
   '\t\t\tauthMethod = "device-token";',
 ].join("\n");
-const AUTH_DEVICE_TOKEN_REPLACEMENT = [
+const AUTH_DEVICE_TOKEN_REPLACEMENT_PREVIOUS = [
   '\t\tconst nemoclawAllowedUpgradeScopes = new Set(["operator.pairing", "operator.read", "operator.write"]);',
   '\t\tconst nemoclawScopeUpgradeScopes = Array.isArray(params.scopes) ? params.scopes.map((scope) => typeof scope === "string" ? scope.trim() : "") : [];',
   "\t\tconst nemoclawCliScopeUpgrade =",
@@ -816,6 +921,10 @@ const AUTH_DEVICE_TOKEN_REPLACEMENT = [
   "\t\t\tauthOk = true;",
   '\t\t\tauthMethod = "device-token";',
 ].join("\n");
+const AUTH_DEVICE_TOKEN_REPLACEMENT = AUTH_DEVICE_TOKEN_REPLACEMENT_PREVIOUS.replace(
+  'new Set(["operator.pairing", "operator.read", "operator.write"])',
+  'new Set(["operator.pairing", "operator.read", "operator.write", "operator.admin"])',
+);
 const AUTH_DEVICE_TOKEN_SQLITE_TARGET = [
   "\t\tasync verifyDeviceToken(paramsLocal) {",
   "\t\t\treturn await verifyDeviceToken({",
@@ -824,7 +933,7 @@ const AUTH_DEVICE_TOKEN_SQLITE_TARGET = [
   "\t\t\t});",
   "\t\t}",
 ].join("\n");
-const AUTH_DEVICE_TOKEN_SQLITE_REPLACEMENT = [
+const AUTH_DEVICE_TOKEN_SQLITE_REPLACEMENT_PREVIOUS = [
   "\t\tasync verifyDeviceToken(paramsLocal) {",
   "\t\t\tconst nemoclawTokenCheck = await verifyDeviceToken({",
   "\t\t\t\t...paramsLocal,",
@@ -844,10 +953,14 @@ const AUTH_DEVICE_TOKEN_SQLITE_REPLACEMENT = [
   `\t\t\treturn nemoclawCliScopeUpgrade ? { ...nemoclawTokenCheck, ok: true } : nemoclawTokenCheck; // ${AUTH_SCOPE_UPGRADE_MARKER} (#4462)`,
   "\t\t}",
 ].join("\n");
+const AUTH_DEVICE_TOKEN_SQLITE_REPLACEMENT = AUTH_DEVICE_TOKEN_SQLITE_REPLACEMENT_PREVIOUS.replace(
+  'new Set(["operator.pairing", "operator.read", "operator.write"])',
+  'new Set(["operator.pairing", "operator.read", "operator.write", "operator.admin"])',
+);
 
 const AUTH_INLINE_APPROVAL_TARGET =
   "\t\t\tconst inlineApprovalAttempted = trustedProxyApprovalScopes !== null || pairing.request.silent === true;";
-const AUTH_INLINE_APPROVAL_REPLACEMENT = [
+const AUTH_INLINE_APPROVAL_REPLACEMENT_PREVIOUS = [
   "\t\t\tconst nemoclawExistingScopes = normalizeSortedUniqueTrimmedStringList(existingPairedDevice ? resolvePairedAccessScopes(existingPairedDevice) : []);",
   "\t\t\tconst nemoclawRequestedScopes = normalizeSortedUniqueTrimmedStringList(scopes);",
   '\t\t\tconst nemoclawAllowedUpgradeScopes = new Set(["operator.pairing", "operator.read", "operator.write"]);',
@@ -869,6 +982,40 @@ const AUTH_INLINE_APPROVAL_REPLACEMENT = [
   "\t\t\t\tnemoclawRequestedScopes.every((scope) => nemoclawAllowedUpgradeScopes.has(scope));",
   `\t\t\tconst inlineApprovalAttempted = trustedProxyApprovalScopes !== null || pairing.request.silent === true && !nemoclawDeferSilentCliScopeUpgrade; // ${AUTH_DEFER_SILENT_SCOPE_UPGRADE_MARKER} (#9844)`,
 ].join("\n");
+const AUTH_INLINE_APPROVAL_REPLACEMENT = AUTH_INLINE_APPROVAL_REPLACEMENT_PREVIOUS.replace(
+  '\t\t\tconst nemoclawAllowedUpgradeScopes = new Set(["operator.pairing", "operator.read", "operator.write"]);',
+  [
+    '\t\t\tconst nemoclawAllowedUpgradeScopes = new Set(["operator.pairing", "operator.read", "operator.write"]);',
+    '\t\t\tconst nemoclawAllowedAdminUpgradeScopes = new Set([...nemoclawAllowedUpgradeScopes, "operator.admin"]);',
+  ].join("\n"),
+).replace(
+  [
+    "\t\t\t\tnemoclawExistingScopes.length === 1 &&",
+    '\t\t\t\tnemoclawExistingScopes[0] === "operator.pairing" &&',
+    "\t\t\t\tArray.isArray(scopes) &&",
+    "\t\t\t\tnemoclawRequestedScopes.length > 0 &&",
+    "\t\t\t\tnemoclawRequestedScopes.length === scopes.length &&",
+    "\t\t\t\tnemoclawRequestedScopes.every((scope) => nemoclawAllowedUpgradeScopes.has(scope));",
+  ].join("\n"),
+  [
+    "\t\t\t\tArray.isArray(scopes) &&",
+    "\t\t\t\tnemoclawRequestedScopes.length > 0 &&",
+    "\t\t\t\tnemoclawRequestedScopes.length === scopes.length &&",
+    "\t\t\t\t(",
+    "\t\t\t\t\t(",
+    "\t\t\t\t\t\tnemoclawExistingScopes.length === 1 &&",
+    '\t\t\t\t\t\tnemoclawExistingScopes[0] === "operator.pairing" &&',
+    "\t\t\t\t\t\tnemoclawRequestedScopes.every((scope) => nemoclawAllowedUpgradeScopes.has(scope))",
+    "\t\t\t\t\t) ||",
+    "\t\t\t\t\t(",
+    '\t\t\t\t\t\tnemoclawExistingScopes.includes("operator.pairing") &&',
+    "\t\t\t\t\t\tnemoclawExistingScopes.every((scope) => nemoclawAllowedUpgradeScopes.has(scope)) &&",
+    '\t\t\t\t\t\tnemoclawRequestedScopes.includes("operator.admin") &&',
+    `\t\t\t\t\t\tnemoclawRequestedScopes.every((scope) => nemoclawAllowedAdminUpgradeScopes.has(scope)) // ${AUTH_REQUIRE_EXPLICIT_ADMIN_UPGRADE_MARKER} (#12064)`,
+    "\t\t\t\t\t)",
+    "\t\t\t\t);",
+  ].join("\n"),
+);
 
 const HANDLER_HELPER = [
   "function resolveNemoClawSelfApprovalIdentity(pending, authz, client) {",
@@ -1635,7 +1782,10 @@ function patchCurrentDevicesCli(source: string, file: string): PatchResult {
     result = replaceExactlyOnce(result.source, target, replacement, label, file);
     if (result.error) return { source, status: "no-match", error: result.error };
   }
-  return { source: result.source, status: "would-apply" };
+  result = applyDevicesApproveExitPatch(result.source, file);
+  return result.error
+    ? { source, status: "no-match", error: result.error }
+    : { source: result.source, status: "would-apply" };
 }
 
 function patchCurrentPairingState(source: string, file: string): PatchResult {
@@ -1898,6 +2048,13 @@ const BASE_FILE_SPECS: FileSpec[] = [
             upgradedSource = result.source;
             changed = true;
           }
+          const approvalExitSource = upgradedSource;
+          const approvalExitResult = applyDevicesApproveExitPatch(upgradedSource, file);
+          if (approvalExitResult.error) {
+            return { source, status: "no-match", error: approvalExitResult.error };
+          }
+          upgradedSource = approvalExitResult.source;
+          changed ||= upgradedSource !== approvalExitSource;
           return {
             source: upgradedSource,
             status: changed ? "would-apply" : "already-applied",
@@ -1990,6 +2147,8 @@ const BASE_FILE_SPECS: FileSpec[] = [
         "devices CLI stored-auth fail-closed retry target",
         file,
       );
+      if (result.error) return { source, status: "no-match", error: result.error };
+      result = applyDevicesApproveExitPatch(result.source, file);
       return result.error
         ? { source, status: "no-match", error: result.error }
         : { source: result.source, status: "would-apply" };
@@ -2020,6 +2179,32 @@ const BASE_FILE_SPECS: FileSpec[] = [
         result.source.includes(AUTH_DEVICE_TOKEN_SQLITE_TARGET) ||
         result.source.includes(AUTH_INLINE_APPROVAL_TARGET) ||
         result.source.includes(AUTH_DEFER_SILENT_SCOPE_UPGRADE_MARKER);
+      if (result.source.includes(AUTH_SCOPE_UPGRADE_MARKER)) {
+        const appliedReplacement = sqliteLayout
+          ? AUTH_DEVICE_TOKEN_SQLITE_REPLACEMENT
+          : AUTH_DEVICE_TOKEN_REPLACEMENT;
+        const previousReplacement = sqliteLayout
+          ? AUTH_DEVICE_TOKEN_SQLITE_REPLACEMENT_PREVIOUS
+          : AUTH_DEVICE_TOKEN_REPLACEMENT_PREVIOUS;
+        if (!result.source.includes(appliedReplacement)) {
+          if (!result.source.includes(previousReplacement)) {
+            return {
+              source,
+              status: "no-match",
+              error: `gateway device-token scope-upgrade patch in ${file}: structurally changed patch`,
+            };
+          }
+          result = replaceExactlyOnce(
+            result.source,
+            previousReplacement,
+            appliedReplacement,
+            "gateway device-token admin scope-upgrade target",
+            file,
+          );
+          if (result.error) return { source, status: "no-match", error: result.error };
+          changed = true;
+        }
+      }
       if (!result.source.includes(AUTH_SCOPE_UPGRADE_MARKER) && sqliteLayout) {
         result = replaceExactlyOnce(
           result.source,
@@ -2042,6 +2227,37 @@ const BASE_FILE_SPECS: FileSpec[] = [
         if (result.error) return { source, status: "no-match", error: result.error };
         changed = true;
       }
+      const explicitAdminMarkerCount = countOccurrences(
+        result.source,
+        AUTH_REQUIRE_EXPLICIT_ADMIN_UPGRADE_MARKER,
+      );
+      if (
+        sqliteLayout &&
+        explicitAdminMarkerCount > 0 &&
+        (explicitAdminMarkerCount !== 1 ||
+          !result.source.includes(AUTH_INLINE_APPROVAL_REPLACEMENT))
+      ) {
+        return {
+          source,
+          status: "no-match",
+          error: `SQLite gateway explicit admin scope-upgrade patch in ${file}: duplicate or structurally changed patch`,
+        };
+      }
+      if (
+        sqliteLayout &&
+        result.source.includes(AUTH_DEFER_SILENT_SCOPE_UPGRADE_MARKER) &&
+        explicitAdminMarkerCount === 0
+      ) {
+        result = replaceExactlyOnce(
+          result.source,
+          AUTH_INLINE_APPROVAL_REPLACEMENT_PREVIOUS,
+          AUTH_INLINE_APPROVAL_REPLACEMENT,
+          "SQLite gateway explicit admin scope-upgrade target",
+          file,
+        );
+        if (result.error) return { source, status: "no-match", error: result.error };
+        changed = true;
+      }
       if (sqliteLayout) {
         return {
           source: result.source,
@@ -2049,7 +2265,10 @@ const BASE_FILE_SPECS: FileSpec[] = [
         };
       }
       if (result.source.includes(AUTH_SCOPE_UPGRADE_MARKER)) {
-        return { source, status: "already-applied" };
+        return {
+          source: result.source,
+          status: changed ? "would-apply" : "already-applied",
+        };
       }
       result = replaceExactlyOnce(
         result.source,

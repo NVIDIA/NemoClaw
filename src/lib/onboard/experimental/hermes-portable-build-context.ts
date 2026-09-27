@@ -29,6 +29,9 @@ const OPEN_READ_FLAGS =
 const SOURCE_DOCKERFILE_RELATIVE_PATH = "agents/hermes/Dockerfile" as const;
 const CONTEXT_DOCKERFILE_RELATIVE_PATH = "Dockerfile" as const;
 
+// Portable retains the same image-owned non-root startup hold even though its
+// host lifecycle remains independently receipt-bound, so its staged context
+// must carry that hold and its identity-bound completion/release protocol.
 const LOCAL_COPY_SOURCES = [
   "agents/hermes/a2a-neutral.patch",
   "agents/hermes/config/",
@@ -49,17 +52,18 @@ const LOCAL_COPY_SOURCES = [
   "agents/hermes/patch-cron-execution-runtime.py",
   "agents/hermes/patch-cron-restore-drain.py",
   "agents/hermes/patch-discord-recovery-permissions.py",
+  "agents/hermes/patch-external-supervisor-recovery.py",
+  "agents/hermes/patch-external-supervisor-restart.py",
   "agents/hermes/patch-gateway-process-identity.py",
   "agents/hermes/patch-gateway-runtime-metadata.py",
   "agents/hermes/patch-hermes-sqlite-temp-store.py",
   "agents/hermes/patch-langfuse-credentials.mts",
-  "agents/hermes/patch-neutral-platform-env-activation.py",
+  "agents/hermes/patch-mcp-http-proxy.py",
   "agents/hermes/patch-profile-policy-defaults.py",
   "agents/hermes/patch-session-list-preview.py",
   "agents/hermes/plugin/__init__.py",
   "agents/hermes/plugin/plugin.yaml",
   "agents/hermes/runtime-config-guard.py",
-  "agents/hermes/secure-dir-skip-chmod.patch",
   "agents/hermes/seed-dashboard-config.py",
   "agents/hermes/start.sh",
   "agents/hermes/validate-cli-adapter.py",
@@ -76,8 +80,6 @@ const LOCAL_COPY_SOURCES = [
   "scripts/lib/reviewed-npm-identity.mts",
   "scripts/lib/sandbox-init.sh",
   "scripts/lib/sandbox-rlimits.sh",
-  "scripts/managed-bootstrap-entrypoint.c",
-  "scripts/managed-bootstrap-trampoline.sh",
   "scripts/managed-startup-hold.sh",
   "scripts/patch-bundled-npm-brace-expansion.mts",
   "scripts/patch-bundled-npm-tar.mts",
@@ -90,7 +92,7 @@ const LOCAL_COPY_SOURCES = [
   "src/lib/tool-disclosure.ts",
   "src/lib/providerless-inference.ts",
   "tools/mcp-tool-discovery-runtime/npm-cache-seed/tar-7.5.21.tgz",
-  "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-image-runtime.bundle",
+  "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-direct-image-runtime.bundle",
   "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/BUNDLED_PACKAGES.json",
   "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/THIRD_PARTY_LICENSES.txt",
   "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/mcp-tool-discovery.bundle",

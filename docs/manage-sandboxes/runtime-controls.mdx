@@ -46,11 +46,12 @@ The runtime source of truth is `/sandbox/.openclaw/openclaw.json`. The host regi
 
 Host-side OpenClaw config writes run under the per-sandbox transition lock and bind the replacement to the SHA-256 digest of the matching read. Before `config set` replaces the live file, NemoClaw validates the complete candidate with the installed OpenClaw runtime. If candidate validation fails, the command preserves the existing config and does not reach the gateway restart path. The root-only config guard validates bounded JSON input, transactionally publishes fresh config and hash inodes, and restores the prior mutable posture without adopting concurrent path changes.
 
-In the direct root-entrypoint topology, gateway restart performs a read-only config and hash preflight and temporarily seals fresh inodes while the root PID 1 supervisor replaces the gateway child.
-In the OpenShell-managed topology, the installed root controller performs the config preflight while the nonroot `nemoclaw-start` supervisor replaces the gateway child.
+`gateway restart` invokes OpenClaw's native safe restart command in the selected OpenShell sandbox.
+The native runtime owns restart admission and gateway replacement.
+NemoClaw does not signal or respawn the gateway.
 
-Mutable config in the managed topology keeps the same trust and time-of-check/time-of-use limits as a managed cold start and does not receive the direct root-entrypoint restart seal.
-If preflight detects an unsafe path, invalid config, invalid ownership posture, or hash drift, restart refuses while the old healthy gateway is still serving.
+If the native command rejects the active configuration or the replacement does not become ready, NemoClaw reports the failed command or readiness check instead of success.
+After the native restart, NemoClaw requires OpenClaw `/readyz` to return HTTP `200` with JSON `{"ready":true}` before it repairs host-side forwards.
 
 </AgentOnly>
 <AgentOnly variant="hermes">

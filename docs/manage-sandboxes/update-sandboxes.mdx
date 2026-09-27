@@ -29,7 +29,7 @@ The `min_openclaw_version` field in `nemoclaw-blueprint/blueprint.yaml` is the c
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-The Hermes agent manifest declares the expected Hermes version and the `hermes --version` probe command.
+The Hermes agent manifest expects Hermes `0.21.3` from release tag `v2026.9.14` and declares the `hermes --version` probe command.
 
 </AgentOnly>
 <AgentOnly variant="deepagents">
@@ -85,6 +85,8 @@ If any sandbox is skipped or fails, the installer exits before it changes the ga
 For a failed required pre-upgrade backup, NemoClaw removes the incomplete timestamped backup directory so it cannot appear as a recovery point.
 If that removal fails, the installer reports the retained path; preserve it and do not use it for recovery.
 After backup, the installer requires any existing OpenShell executable it will use to report a version, then compares that version with the supported range declared by the prepared current source.
+Before it retires an out-of-range gateway, the installer retires every applicable registered legacy forward through its exact sandbox, bind, port, process, gateway, and workspace identity, including Hermes dashboard, active messaging, and declared agent forwards.
+If it cannot prove that retirement, it exits before retiring the gateway and preserves every completed backup.
 It retires the running gateway before replacing an out-of-range OpenShell installation, keeps the gateway when the installed version is supported, and stops without retiring it when the installed version or supported range cannot be validated.
 If OpenShell lifecycle commands cannot retire the gateway, the installer can use verified service or PID-file evidence on Linux and macOS.
 For the default gateway on port `8080`, Linux first checks verified systemd service evidence for `nemoclaw-openshell-gateway.service`, while macOS first checks verified Homebrew gateway service evidence.
@@ -101,12 +103,39 @@ If the forced installation fails, the installer does not stage a gateway service
 
 ## Resume a Manually Prepared Upgrade
 
-Use this path only after you back up every registered sandbox and retire the gateway.
-Set `NEMOCLAW_GATEWAY_PORT` to the port for the gateway that you retired.
+Use this path only with the current release CLI.
+If the installer has not already reported that it prepared the current CLI, start the supported automatic flow first:
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1 bash
+```
+
+That flow prepares the current CLI before it replaces OpenShell.
+If it completes, do not run the manual steps below.
+Continue manually only when the automatic flow stops after preparing the CLI or a support workflow directs you to this recovery path.
+Set the prepared-upgrade state only after strict backup succeeds, every applicable registered legacy forward is retired, and the gateway is retired.
+Strict backup can report a confirmed stranded registry sandbox without creating a backup for it because both the selected gateway and the container provider prove that no sandbox runtime remains.
+That record requires the cleanup or recreation action printed by `$$nemoclaw backup-all`, but it does not block a prepared upgrade after the strict command succeeds.
+Run the backup and forward-retirement step with the current prepared NemoClaw CLI before you retire the gateway:
+
+```bash
+selected_port=8080
+gateway_name=nemoclaw
+NEMOCLAW_GATEWAY_PORT="$selected_port" NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS=1 $$nemoclaw backup-all --retire-legacy-forwards && \
+  openshell gateway destroy -g "$gateway_name"
+```
+
+For a non-default gateway, replace `8080` with its port and set `gateway_name` to `nemoclaw-<selected-port>`.
+If an older OpenShell release rejects the named destroy command for the default `nemoclaw` gateway, run `openshell gateway destroy` instead.
+Do not substitute `openshell gateway remove`: removal can unregister a gateway without stopping its process.
+Set `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` only after the command pipeline exits successfully.
+Confirm that the strict backup summary reports `0 failed, 0 skipped` and that the `Legacy dashboard forwards:` summary appears before gateway destruction.
+A confirmed stranded record has no backup to reuse; complete the reported cleanup or recreation action during recovery.
+If either command fails or cannot prove a retirement, resolve that failure while the completed backups remain intact.
 Set `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` on the `bash` side of the install pipeline when you rerun the installer.
 
 ```bash
-curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_GATEWAY_PORT=<selected-port> NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_GATEWAY_PORT="$selected_port" NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 bash
 ```
 
 Set `NEMOCLAW_GATEWAY_PORT=8080` when you prepared the default gateway.
@@ -144,6 +173,9 @@ OpenClaw's native plugin and package state is restored with the rest of its decl
 
 The installer attempts every eligible recovery and exits with a nonzero status if any recovery fails.
 Recovery preserves each sandbox's recorded GPU selection and runs before generic host admission.
+When recovery rebuilds an intentionally stopped sandbox, NemoClaw returns the replacement to `Stopped`.
+Recovery fails if OpenShell cannot confirm that phase or a required post-stop reconciliation fails.
+Rerun the installer to reconcile the stopped state without rebuilding a current replacement again.
 Fresh onboarding and required DGX Station reconciliation still require host admission.
 
 ### Interpret Automatic Recovery Results

@@ -5,10 +5,59 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createConfigureOpenclawSandbox,
   createOpenclawSetup,
+  isOpenclawGatewayReady,
   reconcileOpenClawWebSearchForReuse,
 } from "./openclaw-setup";
 
 describe("OpenClaw sandbox setup", () => {
+  it.each([200, 401])("accepts OpenClaw gateway HTTP %i as ready", async (httpCode) => {
+    const runBuffered = vi.fn(async () => ({
+      outcome: { kind: "completed" as const, exitCode: 0 },
+      stdout: String(httpCode),
+      stderr: "",
+    }));
+
+    await expect(
+      isOpenclawGatewayReady("spark-box", 18_789, { runBuffered } as never),
+    ).resolves.toBe(true);
+    expect(runBuffered).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxName: "spark-box",
+        command: expect.arrayContaining(["http://127.0.0.1:18789/health"]),
+      }),
+    );
+  });
+
+  it("keeps OpenClaw startup pending until the health endpoint responds", async () => {
+    const runBuffered = vi.fn(async () => ({
+      outcome: { kind: "completed" as const, exitCode: 0 },
+      stdout: "000",
+      stderr: "",
+    }));
+
+    await expect(
+      isOpenclawGatewayReady("spark-box", 18_789, { runBuffered } as never),
+    ).resolves.toBe(false);
+  });
+
+  it("bounds the gateway probe by the caller's remaining startup deadline", async () => {
+    const runBuffered = vi.fn(async () => ({
+      outcome: { kind: "completed" as const, exitCode: 0 },
+      stdout: "000",
+      stderr: "",
+    }));
+
+    await expect(
+      isOpenclawGatewayReady("spark-box", 18_789, { runBuffered } as never, 750),
+    ).resolves.toBe(false);
+
+    expect(runBuffered).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: expect.arrayContaining(["--max-time", "0.75"]),
+      }),
+    );
+  });
+
   it("waits for config sync before web-search reconciliation", async () => {
     let finishConfigSync!: () => void;
     const configSync = new Promise<void>((resolve) => {
@@ -35,6 +84,7 @@ describe("OpenClaw sandbox setup", () => {
       "provider",
       "model",
       revalidateSandboxIdentity,
+      false,
     );
     expect(reconcileWebSearch).not.toHaveBeenCalled();
 

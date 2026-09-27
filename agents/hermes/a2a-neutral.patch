@@ -25,19 +25,18 @@ diff --git a/plugins/platforms/a2a/plugin.yaml b/plugins/platforms/a2a/plugin.ya
 diff --git a/plugins/platforms/a2a/__init__.py b/plugins/platforms/a2a/__init__.py
 --- a/plugins/platforms/a2a/__init__.py
 +++ b/plugins/platforms/a2a/__init__.py
-@@ -97,14 +97,6 @@ def interactive_setup() -> None:
+@@ -78,13 +78,7 @@ def interactive_setup() -> None:
+
+
  def register(ctx) -> None:
-     """Plugin entry point — called by the Hermes plugin system."""
--    # 1) Client tools (outbound). Registering these even when the inbound
--    #    platform is disabled lets the agent call peers without exposing itself.
+-    """Plugin entry point. Client tools register even when the inbound platform is disabled
+-    so the agent can call peers without exposing itself."""
 -    try:
 -        from .tools import register_tools
 -        register_tools(ctx)
 -    except Exception:
 -        logger.warning("A2A: failed to register client tools", exc_info=True)
--
--    # 2) Inbound platform adapter.
-+    # The managed policy keeps this inbound adapter disabled.
++    """Register only the inbound adapter, which managed policy keeps disabled."""
      try:
          from .adapter import A2AAdapter
          ctx.register_platform(

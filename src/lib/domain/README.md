@@ -54,11 +54,12 @@ depends on the named-service contract in #11928 and the exporter mapping in #120
 The source checks retain the selected model, shared tuning, external daemon ownership, and
 NemoClaw-managed proxy ownership. Export does not change either resource.
 
-Managed OpenClaw exports `agents[].interfaces.dashboard` when the retained port agrees with the
-registry and remote bind agrees with recorded preparation. Port 18789 and loopback bind are omitted.
-Legacy registry entries may omit the port only for the canonical loopback/default-port profile.
-Custom URLs, WSL exposure and device-auth changes remain unsupported. Export does not establish
-that a dashboard listener is currently running.
+Managed OpenClaw exports `harness.interfaces.dashboard` when the retained port agrees with the
+registry and remote bind agrees with recorded preparation. It retains the port 18789 dashboard
+marker because the v1alpha1 target disables the dashboard when the block is absent. Loopback bind
+remains implicit. Legacy registry entries may omit the port only for the canonical
+loopback/default-port profile. Custom URLs, WSL exposure and device-auth changes remain unsupported.
+Export does not establish that a dashboard listener is currently running.
 
 `config/verify-agent-interfaces.ts` owns retained dashboard and API checks for both agents.
 Each agent has a closed `interfaces` schema; Hermes adds dashboard enablement, internal port,
@@ -67,11 +68,13 @@ allocated API port. The existing registry row publishes that allocation with the
 generation and sandbox fingerprint, which the export verifier checks against live identity.
 Pending reservations and mismatched or changing evidence cannot authorize export.
 
-Hermes omits disabled dashboards, false TUI, public port 18789, internal port 19119 and API port
-8642 from canonical output. Legacy disabled profiles may omit the API allocation; enabling the
-dashboard requires an explicit allocation. Dashboard ports retain the onboarding parser's
-restrictions, including API ports 8642–8652, port 18642 and equal public/internal ports. Export
-describes retained intent and does not inspect current processes or require a running host forward.
+Hermes emits an explicit disabled dashboard or false TUI because the v1alpha1 target enables both
+when they are absent. Public port 18789, internal port 19119 and API port 8642 remain implicit when
+their effective source values match the target defaults. Legacy disabled profiles may omit the API
+allocation; enabling the dashboard requires an explicit allocation. Dashboard ports retain the
+onboarding parser's restrictions, including API ports 8642–8652, port 18642 and equal
+public/internal ports. Export describes retained intent and does not inspect current processes or
+require a running host forward.
 
 OpenClaw telemetry supports an enabled local OTLP/HTTP collector at
 `http://host.openshell.internal:4318`, a printable ASCII service name of 1–256 characters without

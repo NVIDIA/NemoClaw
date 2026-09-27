@@ -63,6 +63,14 @@ function removeLegacyUpdateCheck(configDir: string) {
   });
 }
 
+function removeEmptyLegacyExecApprovals(configDir: string) {
+  return spawnSync(
+    "python3",
+    ["-I", normalizerFixture, "remove-empty-legacy-exec-approvals", configDir],
+    { encoding: "utf-8", timeout: 5000 },
+  );
+}
+
 function replaceRequired(source: string, target: string, replacement: string): string {
   const parts = source.split(target);
   expect(parts, `Expected exactly one replacement target: ${target}`).toHaveLength(2);
@@ -121,6 +129,31 @@ describe("legacy OpenClaw update-check repair", () => {
         }
 
         expect(removeLegacyUpdateCheck(configDir).status).toBe(1);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+});
+
+describe("legacy OpenClaw exec-approvals repair", () => {
+  it.each([
+    ["", false],
+    ['{"allow":[]}', true],
+  ] as const)(
+    "preserves populated approvals while removing empty content %j",
+    (content, exists) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-exec-approvals-"));
+      const configDir = path.join(root, ".openclaw");
+      const statePath = path.join(configDir, "exec-approvals.json");
+      try {
+        fs.mkdirSync(configDir);
+        fs.writeFileSync(statePath, content, { mode: 0o660 });
+
+        const result = removeEmptyLegacyExecApprovals(configDir);
+
+        expect(result.status, result.stderr).toBe(0);
+        expect(fs.existsSync(statePath)).toBe(exists);
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }

@@ -63,6 +63,8 @@ import {
   buildRestoreCleanupCommand,
   buildRestoreTarArgs,
   isAllowedStateSymlink,
+  copyCapturedOpenClawState,
+  type CapturedOpenClawState,
 } from "./state-directory-restore.js";
 import {
   extractPreservedEnvAssignments,
@@ -188,6 +190,8 @@ export interface RebuildMcpHandoffEntry {
 export type SnapshotEntry = RebuildManifest & { snapshotVersion: number };
 
 export interface BackupOptions {
+  /** Private, provider-verified source for OpenClaw recovery without container execution. */
+  capturedOpenClawState?: CapturedOpenClawState;
   name?: string | null;
   runtimeSnapshot?: SandboxRuntimeSnapshot;
   workload?: SandboxWorkloadReceipt;
@@ -1748,6 +1752,82 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
     };
   }
 
+  const finishBackup = (): BackupResult => {
+    // SECURITY: Strip credentials from the local backup
+    sanitizeBackupDirectory(backupPath);
+
+    // Record dynamically discovered directories in the manifest alongside the
+    // exact declarations so restoreSandboxState() can find them in backupPath.
+    // Preserve exact declaration order, followed by prefix-discovery order.
+    const discoveredStateDirs = backedUpDirs.filter(
+      (dirName) =>
+        !stateDirs.includes(dirName) &&
+        stateDirPrefixes.some((prefix) => dirName.startsWith(prefix)),
+    );
+    if (discoveredStateDirs.length > 0) {
+      manifest.stateDirs = [...stateDirs, ...discoveredStateDirs];
+      _log(`Manifest stateDirs extended with prefix matches: [${discoveredStateDirs.join(",")}]`);
+    }
+    manifest.backedUpDirs = backedUpDirs;
+    manifest.failedBackupDirs = failedDirs.filter((failedDir) =>
+      manifest.stateDirs.includes(failedDir),
+    );
+    manifest.backupComplete = failedDirs.length === 0 && failedFiles.length === 0;
+
+    const publicationError = validateSnapshotPublication(backupPath, options.validateBeforePublish);
+    if (publicationError) {
+      return {
+        success: false,
+        backedUpDirs: [],
+        failedDirs: [],
+        backedUpFiles: [],
+        failedFiles: [],
+        error: publicationError,
+      };
+    }
+    writeManifest(backupPath, manifest);
+    manifest.backupPath = backupPath;
+
+    return {
+      success: failedDirs.length === 0 && failedFiles.length === 0,
+      unreachable,
+      manifest,
+      backedUpDirs,
+      failedDirs,
+      ...(Object.keys(failedDirReasons).length > 0 ? { failedDirReasons } : {}),
+      backedUpFiles,
+      failedFiles,
+    };
+  };
+
+  if (options.capturedOpenClawState) {
+    try {
+      if (agentName !== "openclaw" || options.capturedOpenClawState.sandboxName !== sandboxName)
+        throw new Error("Stopped state capture only supports OpenClaw.");
+      const captured = copyCapturedOpenClawState(
+        options.capturedOpenClawState,
+        backupPath,
+        stateDirs,
+        stateDirPrefixes,
+        stateFiles,
+      );
+      backedUpDirs.push(...captured.directories);
+      backedUpFiles.push(...captured.files);
+      return finishBackup();
+    } catch {
+      rmSync(backupPath, { recursive: true, force: true });
+      return {
+        success: false,
+        backedUpDirs: [],
+        failedDirs: [...stateDirs],
+        backedUpFiles: [],
+        failedFiles: stateFiles.map((file) => file.path),
+        error:
+          "Stopped OpenClaw state capture could not be published safely. The source sandbox was preserved.",
+      };
+    }
+  }
+
   // SSH+tar single-roundtrip download
   _log("Getting SSH config via openshell sandbox ssh-config");
   const sshConfig = getSshConfig(sandboxName);
@@ -2128,50 +2208,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
     }
   }
 
-  // SECURITY: Strip credentials from the local backup
-  sanitizeBackupDirectory(backupPath);
-
-  // Record dynamically discovered directories in the manifest alongside the
-  // exact declarations so restoreSandboxState() can find them in backupPath.
-  // Preserve exact declaration order, followed by prefix-discovery order.
-  const discoveredStateDirs = backedUpDirs.filter(
-    (dirName) =>
-      !stateDirs.includes(dirName) && stateDirPrefixes.some((prefix) => dirName.startsWith(prefix)),
-  );
-  if (discoveredStateDirs.length > 0) {
-    manifest.stateDirs = [...stateDirs, ...discoveredStateDirs];
-    _log(`Manifest stateDirs extended with prefix matches: [${discoveredStateDirs.join(",")}]`);
-  }
-  manifest.backedUpDirs = backedUpDirs;
-  manifest.failedBackupDirs = failedDirs.filter((failedDir) =>
-    manifest.stateDirs.includes(failedDir),
-  );
-  manifest.backupComplete = failedDirs.length === 0 && failedFiles.length === 0;
-
-  const publicationError = validateSnapshotPublication(backupPath, options.validateBeforePublish);
-  if (publicationError) {
-    return {
-      success: false,
-      backedUpDirs: [],
-      failedDirs: [],
-      backedUpFiles: [],
-      failedFiles: [],
-      error: publicationError,
-    };
-  }
-  writeManifest(backupPath, manifest);
-  manifest.backupPath = backupPath;
-
-  return {
-    success: failedDirs.length === 0 && failedFiles.length === 0,
-    unreachable,
-    manifest,
-    backedUpDirs,
-    failedDirs,
-    ...(Object.keys(failedDirReasons).length > 0 ? { failedDirReasons } : {}),
-    backedUpFiles,
-    failedFiles,
-  };
+  return finishBackup();
 }
 
 // ── Restore ────────────────────────────────────────────────────────

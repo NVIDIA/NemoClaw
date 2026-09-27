@@ -263,7 +263,7 @@ test(
     assertExitZero(start, "OpenShell sandbox start");
 
     progress.phase("recheck native agent readiness and state");
-    await lifecycle.assertSandboxReadyAfterGatewayRestart(instance, {
+    await lifecycle.waitForSandboxReadyAfterGatewayRestart(instance, {
       artifactNamePrefix: "post-openshell-start-ready",
     });
     await expectSandboxExecAlive(SANDBOX_NAME, execShell, "post-openshell-start-sandbox-exec");

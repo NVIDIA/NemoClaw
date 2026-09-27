@@ -107,6 +107,10 @@ Review the [Prerequisites](prerequisites) before you begin.
     nemohermes my-hermes connect
     hermes
     ```
+
+    When `launch` or `connect` finds the retired `nemoclaw-light` skin, NemoClaw removes its configuration selection and skin file.
+    A cleanup failure produces a warning and does not stop the terminal session.
+    Hermes supplies native terminal appearance behavior, and NemoClaw leaves every other `display.skin` selection unchanged.
   </Step>
 </Steps>
 
@@ -196,6 +200,8 @@ Use these details when your first-run path needs more control.
     ```
 
     This path does not inspect, start, or use a host Ollama process.
+    Leave port `11434` free on `127.0.0.1` and on the Portable host-gateway listener IP.
+    A host Ollama service or leftover Portable container on those published addresses fails inference create before the Portable Ollama runner starts.
     It does not use the default Docker runtime.
     Before the provider-selection step completes, NemoClaw creates the receipt-owned runner, sends one validation request for the selected model, and confirms that the model is loaded.
     NemoClaw records the provider selection only after those checks pass.

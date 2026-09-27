@@ -2351,17 +2351,19 @@ def _restore_restart_seal(
         for fd, file_state in file_fds:
             _set_inode_flags(fd, int(file_state.get("flags", 0)))
 
-        # Restore the directories while the persistent root-owned marker still
-        # identifies this transaction. Chown can clear setgid, so chmod follows
-        # chown. The marker is removed only after every mode/owner/flag is exact;
-        # losing rootfs-local /run state at any earlier point remains detectable.
+        # Retire the file marker while its directory is still owned by this
+        # process. Podman root lacks DAC_OVERRIDE, so unlinking after restoring
+        # sandbox ownership fails. The root-owned parent remains the durable
+        # orphan marker until every directory mode/owner/flag is restored.
+        if not retain_transaction:
+            _remove_restart_orphan_marker(hermes_fd)
+        # Chown can clear setgid, so chmod follows chown.
         os.fchown(hermes_fd, hermes_meta["uid"], hermes_meta["gid"])
         os.fchmod(hermes_fd, hermes_meta["mode"])
         _set_inode_flags(hermes_fd, int(state_data.get("hermes_flags", 0)))
         if not retain_transaction:
             os.fchmod(parent_fd, parent_meta["mode"])
             _set_inode_flags(parent_fd, int(state_data.get("parent_flags", 0)))
-            _remove_restart_orphan_marker(hermes_fd)
             # Seal rejects set-id parent modes, so this final ownership change
             # cannot silently clear a mode bit. Before it succeeds, root parent
             # ownership remains the durable orphan marker; afterward metadata

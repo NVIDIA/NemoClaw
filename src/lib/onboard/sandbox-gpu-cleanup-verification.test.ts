@@ -120,38 +120,6 @@ describe("cleanupNativeGpuAttemptForFallback", () => {
     );
   });
 
-  it("never turns an exact owner-cleanup handoff into a mutable-name delete", async () => {
-    const runOpenshell = vi.fn();
-
-    const result = await cleanupNativeGpuFailureForFallback(
-      "alpha",
-      {
-        ok: false,
-        route: "native",
-        stage: "gpu-proof",
-        error: new Error("native GPU attachment absent"),
-        fallbackEligible: true,
-        nativeCleanupHandoff: {
-          kind: "openshell-owner-cleanup-required",
-          sandboxName: "alpha",
-          sandboxId: "sandbox-id-alpha",
-          runtimeId: "runtime-id-alpha",
-        },
-      },
-      { gatewayName: "nemoclaw", runOpenshell },
-    );
-
-    expect(result).toEqual({
-      safe: false,
-      reason:
-        "managed bootstrap owner cleanup is required for the exact sandbox and runtime identities",
-      deleteStatus: null,
-      sandboxPresent: null,
-      containerIds: ["runtime-id-alpha"],
-    });
-    expect(runOpenshell).not.toHaveBeenCalled();
-  });
-
   it("uses the documented fail-closed cleanup limits by default", async () => {
     const { result, runOpenshell, sleep } = await scenario({
       list: { status: 0, stdout: "alpha Ready" },

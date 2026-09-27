@@ -69,16 +69,22 @@ function childDispatch(
 
 describe.skipIf(process.platform === "win32")("agent dispatch stdin", () => {
   it.each(
-    (["inline", "redirected", "symlink"] as const).flatMap((input) =>
-      [false, true].map((json) => ({ input, json })),
+    (["inline", "redirected", "stdin-symlink", "regular-file-symlink-chain"] as const).flatMap(
+      (input) => [false, true].map((json) => ({ input, json })),
     ),
-  )("dispatches $input input (JSON: $json) (#11371)", async ({ input, json }) => {
+  )("dispatches $input input (JSON: $json) (#11371, #12230)", async ({ input, json }) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-agent-stdin-"));
     const inputPath = path.join(root, "input");
     let closeInput = () => {};
     try {
-      const messageFile = input === "symlink" ? path.join(root, "message-chain") : undefined;
-      fs.symlinkSync("/dev/stdin", path.join(root, "source"));
+      const messageFile =
+        input === "stdin-symlink" || input === "regular-file-symlink-chain"
+          ? path.join(root, "message-chain")
+          : undefined;
+      const sourceTarget =
+        input === "regular-file-symlink-chain" ? "message source with spaces.txt" : "/dev/stdin";
+      fs.writeFileSync(path.join(root, "message source with spaces.txt"), "FILE_MESSAGE");
+      fs.symlinkSync(sourceTarget, path.join(root, "source"));
       fs.symlinkSync("source", path.join(root, "message-chain"));
       const inputFd = input === "inline" ? openPipe(inputPath) : finiteInput(inputPath);
       closeInput = () => fs.closeSync(inputFd);
@@ -113,7 +119,13 @@ console.log(JSON.stringify({payloads: [{text: JSON.stringify({input, args: proce
         }),
       ).rejects.toThrow("exit:0");
       const received = JSON.parse(JSON.parse(stdout.join("")).payloads[0].text);
-      expect(received.input).toBe(input === "inline" ? "" : "PIPED_INPUT");
+      expect(received.input).toBe(
+        input === "inline"
+          ? ""
+          : input === "regular-file-symlink-chain"
+            ? "FILE_MESSAGE"
+            : "PIPED_INPUT",
+      );
       expect(received.args.slice(-command.length)).toEqual(command);
       expect(stderr.join("")).toBe("");
     } finally {

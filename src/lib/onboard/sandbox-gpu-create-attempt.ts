@@ -2,14 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { getSandboxFailurePhase, hasSandboxListEntry, isSandboxReady } from "../state/gateway";
-import { createCliOpenShellSandboxLifecycleFromRunner } from "../adapters/openshell/sandbox-lifecycle-cli";
+import {
+  createCliOpenShellSandboxLifecycleFromRunner,
+  isNativeGpuCreatePreBuildRejection,
+} from "../adapters/openshell/sandbox-lifecycle-cli";
 import {
   canFallbackToDockerGpuCompatibility,
   type DockerGpuRoutePlan,
   initialDockerGpuRoute,
   type SelectedDockerGpuRoute,
 } from "./docker-gpu-route";
-import type { ManagedBootstrapNativeGpuFallbackOwnerCleanupHandoff } from "./managed-bootstrap/runtime-create";
 import {
   type OpenShellDockerSandboxContainerQuery,
   queryOpenShellDockerSandboxContainers,
@@ -22,7 +24,7 @@ import {
 
 export type SandboxGpuCreateFailureStage = "create" | "readiness" | "gpu-proof";
 
-export { getSandboxFailurePhase, isSandboxReady };
+export { getSandboxFailurePhase, hasSandboxListEntry, isSandboxReady };
 
 export type SandboxGpuCreateAttemptSuccess<T> = {
   ok: true;
@@ -42,7 +44,6 @@ export type SandboxGpuCreateAttemptFailure = {
   };
   /** Strict native `--gpu` parser rejection observed before build or create progress. */
   nativeCreateRejectedBeforeProgress?: true;
-  nativeCleanupHandoff?: ManagedBootstrapNativeGpuFallbackOwnerCleanupHandoff;
 };
 
 export type SandboxGpuCreateAttemptResult<T> =
@@ -90,32 +91,7 @@ export type NativeGpuFallbackCleanupDeps = {
  * Ordinary Linux also requires explicit `NEMOCLAW_DOCKER_GPU_PATCH=fallback`; WSL/Jetson are
  * separately gated, and unrelated create/readiness failures retain their existing paths.
  */
-export function isNativeGpuCreatePreBuildRejection(output: string): boolean {
-  const text = String(output ?? "");
-  if (text.length > 4096) return false;
-  const lines = text
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  if (lines.length === 0 || lines.length > 4) return false;
-  const [errorLine, ...envelope] = lines;
-  const exactError =
-    /^error:\s+(?:unexpected|unrecognized|unknown|unsupported)\s+(?:argument|option|flag)(?:\s+|:\s*)['"`]?--gpu['"`]?(?:\s+(?:found|provided|specified))?\.?$/i.test(
-      errorLine,
-    ) ||
-    /^error:\s+(?:argument|option|flag)\s+['"`]?--gpu['"`]?\s+(?:is not supported|was rejected)\.?$/i.test(
-      errorLine,
-    );
-  return (
-    exactError &&
-    envelope.every(
-      (line) =>
-        /^tip:\s+to pass ['"`]--gpu['"`] as a value, use ['"`]-- --gpu['"`]\.?$/i.test(line) ||
-        /^Usage:\s+openshell sandbox create(?:\s|$)/.test(line) ||
-        /^For more information, try ['"`]--help['"`]\.?$/i.test(line),
-    )
-  );
-}
+export { isNativeGpuCreatePreBuildRejection };
 
 export function isNativeGpuCreateRoutingFailure(
   output: string,
@@ -281,7 +257,6 @@ export function verifyRejectedNativeGpuAttemptAbsentForFallback(
   });
 }
 
-/** Keep owner-managed runtimes out of the generic mutable-name cleanup path. */
 export async function cleanupNativeGpuFailureForFallback(
   sandboxName: string,
   failure: SandboxGpuCreateAttemptFailure,
@@ -289,16 +264,6 @@ export async function cleanupNativeGpuFailureForFallback(
 ): Promise<NativeGpuFallbackCleanupResult> {
   if (failure.nativeCreateRejectedBeforeProgress) {
     return verifyRejectedNativeGpuAttemptAbsentForFallback(sandboxName, deps);
-  }
-  if (failure.nativeCleanupHandoff) {
-    return {
-      safe: false,
-      reason:
-        "managed bootstrap owner cleanup is required for the exact sandbox and runtime identities",
-      deleteStatus: null,
-      sandboxPresent: null,
-      containerIds: [failure.nativeCleanupHandoff.runtimeId],
-    };
   }
   return cleanupNativeGpuAttemptForFallback(sandboxName, deps);
 }
