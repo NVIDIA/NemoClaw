@@ -422,9 +422,11 @@ if (process.argv.includes("--output")) {
     },
   );
   it("publishes exact bytes only when pinned native settings match (#11485)", async () => {
-    const raw = `${JSON.stringify(
-      document({ gatewayEndpoint: "http://127.0.0.1:8080/export-evidence" }),
-    )}\n`;
+    const exported = document({ gatewayEndpoint: "http://127.0.0.1:8080/export-evidence" });
+    Object.assign(exported.spec.sandboxes[0]!.network.policy, {
+      explicit: { ...POLICY, landlock: { compatibility: "hard_requirement" } },
+    });
+    const raw = `${JSON.stringify(exported)}\n`;
     const publishedExport = {
       bytes: raw,
       byteLength: Buffer.byteLength(raw, "utf8"),
@@ -437,7 +439,7 @@ if (process.argv.includes("--output")) {
     const test = fixture({
       artifacts: new ArtifactSink(artifactRoot),
       dependencies: independentDependencies,
-      host: successfulHost(raw),
+      host: successfulHost(raw, { ...POLICY, landlock: { compatibility: "strict" } }),
     });
 
     const evidence = await test.phase.from(target("required"), instance());

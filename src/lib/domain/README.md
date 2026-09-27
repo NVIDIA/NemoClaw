@@ -22,6 +22,8 @@ src/lib/domain/<area>/<topic>.ts
 
 Configuration export represents retained startup intent from a validated managed-image receipt.
 Preserve image authority and full residual profile comparison when admitting a supported setting.
+Export translates Landlock `strict` to the pinned v1 consumer's `hard_requirement` value.
+Keep fail-closed enforcement and preserve `best_effort` unchanged.
 
 Web-search export preserves Brave for OpenClaw and admits Tavily for OpenClaw and Hermes.
 The verifier checks the registered provider, its actual profile binding, credential names, and sandbox attachments.
