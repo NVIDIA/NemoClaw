@@ -25,6 +25,7 @@ fi
 }
 cron_name=__NEMOCLAW_ADMIN_CRON_NAME__
 expected_request_id=__NEMOCLAW_ADMIN_EXPECTED_REQUEST_ID__
+verify_cron=__NEMOCLAW_ADMIN_VERIFY_CRON__
 emit_admin_diagnostic() {
   python3 - "$1" <<'PY_ADMIN_DIAGNOSTIC'
 import re, sys
@@ -101,6 +102,12 @@ if ! run_with_bounded_output "$approve_output" openclaw devices approve "$reques
   echo "ADMIN_APPROVE_FAILED" >&2
   emit_admin_diagnostic "$approve_output"
   exit 27
+fi
+# Feature tests verify the approved scope through their own native operation.
+# Avoid an unrelated cron job and agent session in those scenarios.
+if [ "$verify_cron" = 0 ]; then
+  echo "ISSUE_5324_ADMIN_APPROVAL_OK"
+  exit
 fi
 if ! run_with_bounded_output "$cron_output" openclaw cron add --name "$cron_name" --every 2h --agent main --session isolated --message "hello"; then
   echo "ADMIN_CRON_RETRY_FAILED" >&2

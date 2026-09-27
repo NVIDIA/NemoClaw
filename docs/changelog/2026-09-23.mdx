@@ -113,3 +113,7 @@ It also strengthens host OS reporting and Windows WSL GPU verification.
   On Linux, rootless Podman discovery also checks the socket under `XDG_RUNTIME_DIR`.
   Related change: [PR #12348](https://github.com/NVIDIA/NemoClaw/pull/12348).
   Refer to [Troubleshooting](/user-guide/openclaw/reference/troubleshooting#coredns-crashloop-after-onboarding) for CoreDNS recovery.
+- Hermes now waits through a restart-rate cooldown and restarts its gateway automatically.
+  The Bedrock Runtime adapter lists models only after it successfully serves an inference request.
+  Related change: [PR #12343](https://github.com/NVIDIA/NemoClaw/pull/12343).
+  Refer to [Understand Gateway Lifecycle Control](/user-guide/hermes/manage-sandboxes/configure-sandboxes/understand-gateway-lifecycle-control) for Hermes recovery behavior.

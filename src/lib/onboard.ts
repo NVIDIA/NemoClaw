@@ -456,8 +456,7 @@ const {
   withDashboardPortReservationScope: withSandboxPortReservationScope,
 } = require("./onboard/dashboard-port") as typeof import("./onboard/dashboard-port");
 const rebuildTarget: typeof import("./onboard/authoritative-rebuild-target") = require("./onboard/authoritative-rebuild-target");
-const { assertDashboardPortNotReserved, buildRequiredPreflightPorts } =
-  require("./onboard/preflight-ports") as typeof import("./onboard/preflight-ports");
+const preflightPorts: typeof import("./onboard/preflight-ports") = require("./onboard/preflight-ports");
 const { printPortConflictReport } =
   require("./onboard/port-conflict-report") as typeof import("./onboard/port-conflict-report");
 const { runPreflightGatewaySequence } =
@@ -1134,6 +1133,7 @@ const preflightGateway = preflightGatewayAuthority.createOnboardPreflightGateway
 
 async function preflight(
   preflightOpts: PreflightOptions = {},
+  sandboxName: string | null = null,
 ): Promise<ReturnType<typeof nim.detectGpu>> {
   step(1, 8, "Preflight checks");
   const { gpu, host, sandboxGpuConfig, gpuTrustGateRejection } =
@@ -1183,21 +1183,13 @@ async function preflight(
     warn: console.warn,
   });
 
-  // Required ports — gateway, plus the dashboard port when an explicit one
-  // is requested. envVar is the override env var documented in
-  // src/lib/core/ports.ts; surfacing it in the preflight error gives users a clear
-  // escape hatch when an unrelated process is holding the default port
-  // (closes #2497). When --control-ui-port is set, check that port instead
-  // of the default. When auto-allocation is possible (no explicit port),
-  // skip the dashboard port check entirely — ensureDashboardForward will
-  // find a free port.
-  const dashboardPortToCheck = _preflightDashboardPort ?? null;
-  // #4984 — fail fast on an explicit reserved dashboard port; deferred paths
-  // (CHAT_UI_URL / persisted) are caught at createSandbox.
-  assertDashboardPortNotReserved(dashboardPortToCheck);
-  const requiredPorts = buildRequiredPreflightPorts({
+  // Check explicit dashboard ports here; automatic allocation runs at sandbox
+  // creation. Provider-owned reuse still requires a verified dashboard forward.
+  // Reject explicit reserved ports; sandbox creation checks deferred ports (#4984).
+  preflightPorts.assertDashboardPortNotReserved(_preflightDashboardPort);
+  const requiredPorts = preflightPorts.buildRequiredPreflightPorts({
     gatewayPort: GATEWAY_PORT,
-    dashboardPort: dashboardPortToCheck,
+    dashboardPort: _preflightDashboardPort,
     dashboardLabel: `${cliDisplayName()} dashboard`,
   });
   for (const { kind, port, label, envVar } of requiredPorts) {
@@ -1216,6 +1208,11 @@ async function preflight(
         gatewayReuseState: reuseState,
         externallySupervised: gatewayExternallySupervised,
         managedGatewayObservationAuthoritative,
+        verifyDashboardForward: (dashboardPort) =>
+          preflightPorts.isRegisteredDashboardForwardOwned(sandboxName, dashboardPort, {
+            getSandbox: registry.getSandbox.bind(registry),
+            createForwardPortObserver,
+          }),
         portCheckOptions,
         supportsLifecycleCommands,
         destroyGateway,
@@ -1233,11 +1230,8 @@ async function preflight(
       );
       const managedListenerAccepted = entryDecisions.acceptManagedListener(
         managedListenerPid,
-        (pid) => {
-          rememberDockerDriverGatewayPid(pid);
-          console.log(
-            `  ✓ Port ${port} already owned by NemoClaw OpenShell Docker gateway (${label})`,
-          );
+        () => {
+          console.log(`  ✓ Port ${port} already owned by NemoClaw OpenShell gateway (${label})`);
         },
       );
       if (managedListenerAccepted) {
@@ -2835,6 +2829,11 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         requestedGpuPassthrough: opts.gpu === true,
       };
       type InitialOnboardFlowContext = typeof initialFlowContext;
+      const preflightSandboxName = entryDecisions.selectPreflightSandboxName(
+        initialFlowContext.sandboxName,
+        isNonInteractive(),
+        () => getSandboxPromptDefault(agent),
+      );
       const [preflightPhase, gatewayPhase]: readonly [
         import("./onboard/machine/sequence-runner").OnboardSequencePhase<InitialOnboardFlowContext>,
         import("./onboard/machine/sequence-runner").OnboardSequencePhase<InitialOnboardFlowContext>,
@@ -2856,7 +2855,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           getResumeSandboxGpuOverrides,
           detectGpuForReadiness: () => nim.detectGpu({ proveArm64ContainerGpu: null }),
           detectGpu: fatalRuntimePreflight.detectGpuWithRuntimeProviderProof,
-          runPreflight: (preflightOptions) => preflight({ ...opts, ...preflightOptions }),
+          runPreflight: (preflightOptions) =>
+            preflight({ ...opts, ...preflightOptions }, preflightSandboxName),
           assessHost,
           providerNameToOptionKey: providerKey,
           assertOnboardHostReadiness: (host, gpu, options) =>
