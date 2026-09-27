@@ -1426,37 +1426,6 @@ PYRECONCILE_WRITE
   [ "$_write_rc" -eq 0 ] || return "$_write_rc"
 }
 
-retire_custom_route_reconcile_marker() {
-  local marker="/sandbox/.openclaw/.nemoclaw-custom-route-pending"
-  [ -e "$marker" ] || [ -L "$marker" ] || return 0
-  if [ -L "$marker" ] || [ ! -f "$marker" ]; then
-    printf '[SECURITY] Refusing unsafe custom-image route receipt retirement\n' >&2
-    return 1
-  fi
-  run_openclaw_config_as_owner /bin/rm -f -- "$marker"
-}
-
-settle_custom_route_reconcile_marker() {
-  local pid="$1"
-  local expected_identity="$2"
-  local marker="/sandbox/.openclaw/.nemoclaw-custom-route-pending"
-  [ -e "$marker" ] || [ -L "$marker" ] || return 0
-  if ! wait_for_openclaw_gateway_internal "$pid" "$expected_identity"; then
-    printf '[config] Custom-image route receipt retained because the first gateway launch did not become ready\n' >&2
-    return 0
-  fi
-  if ! retire_custom_route_reconcile_marker; then
-    printf '[SECURITY] Custom-image route receipt could not be retired after gateway readiness\n' >&2
-    # A successful launch with the pending receipt still present would keep
-    # later restarts pinned to the create-time route. Stop the proven child
-    # and fail this launch so the retained receipt remains a first-launch
-    # retry contract instead of becoming stale runtime authority.
-    stop_openclaw_gateway_fail_closed
-    return 1
-  fi
-  return 0
-}
-
 # ── Runtime CORS origin override ──────────────────────────────────
 # Adds a browser origin to gateway.controlUi.allowedOrigins at startup
 # without rebuilding the sandbox image. Useful for custom domains/ports.
@@ -5240,7 +5209,6 @@ launch_openclaw_gateway() {
     exit 1
   fi
   record_gateway_pid "$GATEWAY_PID" "$GATEWAY_PID_START_IDENTITY"
-  settle_custom_route_reconcile_marker "$GATEWAY_PID" "$GATEWAY_PID_START_IDENTITY"
   # shellcheck disable=SC2034  # read by cleanup_on_signal from sandbox-init.sh
   SANDBOX_WAIT_PID="$GATEWAY_PID"
   echo "[gateway] openclaw gateway launched as native 'sandbox' agent user (pid $GATEWAY_PID)" >&2
@@ -5253,7 +5221,6 @@ launch_openclaw_gateway_non_root() {
     "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" || return 1
   capture_openclaw_pid_start_identity "$GATEWAY_PID" GATEWAY_PID_START_IDENTITY || exit 1
   record_gateway_pid "$GATEWAY_PID" "$GATEWAY_PID_START_IDENTITY"
-  settle_custom_route_reconcile_marker "$GATEWAY_PID" "$GATEWAY_PID_START_IDENTITY"
   _nemoclaw_capture_epoch_realtime _NEMOCLAW_GATEWAY_SPAWN_FINISHED_EPOCH
   record_portable_openclaw_gateway_startup_timing
   echo "[gateway] openclaw gateway launched (pid $GATEWAY_PID)" >&2

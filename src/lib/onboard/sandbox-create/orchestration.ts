@@ -118,6 +118,39 @@ function cancelRecoveryIdentity(
   };
 }
 
+export async function retireRoute(
+  runtime: SandboxCreateOrchestrationRuntime,
+  context: { readonly sandboxName: string; readonly fromDockerfile: string | null },
+  agent: AgentDefinition | null,
+): Promise<void> {
+  const { sandboxName } = context;
+  const revalidateSandboxIdentity = (operation: string): void => {
+    const registered = runtime.registry.getSandbox(sandboxName);
+    if (!registered?.lifecycleGeneration || !registered.lifecycleLiveIdentityFingerprint) {
+      throw new Error(
+        `Cannot ${operation}: sandbox '${sandboxName}' has no registered lifecycle identity.`,
+      );
+    }
+    runtime.sandboxRecreateTransaction.revalidateCreatedSandboxLifecycleRegistration(
+      { sandboxName, gatewayName: runtime.GATEWAY_NAME },
+      {
+        lifecycleGeneration: registered.lifecycleGeneration,
+        lifecycleLiveIdentityFingerprint: registered.lifecycleLiveIdentityFingerprint,
+      },
+      runtime.getSandboxRecreateObservation,
+    );
+  };
+  await runtime.retireCustomOpenClawRouteReceiptAfterPolicies({
+    sandboxName,
+    gatewayName: runtime.GATEWAY_NAME,
+    customOpenClawImage:
+      Boolean(context.fromDockerfile) && runtime.getRequestedSandboxAgentName(agent) === "openclaw",
+    sandboxCommandExecutor: runtime.sandboxCommandExecutor,
+    revalidateSandboxIdentity,
+  });
+  runtime.sandboxCancelRollback.disarm();
+}
+
 /** Finalize provider arguments from the exact policy that creation consumes. */
 type ManagedBootstrapRuntimePatch = Readonly<{
   allowsNotReadyLifecycleRevalidation?(): boolean;

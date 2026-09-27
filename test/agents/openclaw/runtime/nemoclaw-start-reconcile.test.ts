@@ -39,7 +39,7 @@ interface RunReconcileOptions {
   configWritable?: boolean;
   hashFailure?: boolean | "once";
   customRoutePending?: boolean | "directory" | "invalid";
-  retireCustomRouteBeforeRetry?: boolean;
+  retireCustomRouteAfterProtectedCommands?: boolean;
   env?: Record<string, string>;
 }
 
@@ -153,17 +153,12 @@ describe("agent identity reconciliation with provider (#3175)", () => {
       "/sandbox",
       root,
     );
-    const retireFn = extractShellFunction("retire_custom_route_reconcile_marker").replaceAll(
-      "/sandbox",
-      root,
-    );
     const wrapper = [
       "#!/usr/bin/env bash",
       "set -euo pipefail",
       ...(options.useActualUser ? [] : [`id() { echo ${options.userId ?? 0}; }`]),
       helperFns,
       fn,
-      retireFn,
       ...(options.hashFailure === "once"
         ? [
             "_first_reconcile_rc=0",
@@ -171,8 +166,12 @@ describe("agent identity reconciliation with provider (#3175)", () => {
             '[ "$_first_reconcile_rc" -eq 19 ] || exit 91',
           ]
         : []),
-      ...(options.retireCustomRouteBeforeRetry
-        ? ["reconcile_agent_model_with_provider", "retire_custom_route_reconcile_marker"]
+      ...(options.retireCustomRouteAfterProtectedCommands
+        ? [
+            "reconcile_agent_model_with_provider",
+            "reconcile_agent_model_with_provider",
+            `/bin/rm -f -- ${JSON.stringify(customRouteMarkerPath)}`,
+          ]
         : []),
       "reconcile_agent_model_with_provider",
     ].join("\n");
@@ -211,45 +210,6 @@ describe("agent identity reconciliation with provider (#3175)", () => {
     const expectedHash = `${createHash("sha256").update(configRaw).digest("hex")}  openclaw.json\n`;
     fs.rmSync(root, { recursive: true, force: true });
     return { result, config, hash, expectedHash, customRoutePending };
-  }
-
-  function runCustomRouteSettlement(gatewayReady: boolean, retirementFails = false) {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-route-settlement-"));
-    const openclawDir = path.join(root, ".openclaw");
-    const markerPath = path.join(openclawDir, ".nemoclaw-custom-route-pending");
-    const stoppedPath = path.join(root, "gateway-stopped");
-    fs.mkdirSync(openclawDir, { recursive: true });
-    fs.writeFileSync(markerPath, `${"a".repeat(64)}  openclaw.json\n`);
-    const retireFn = extractShellFunction("retire_custom_route_reconcile_marker").replaceAll(
-      "/sandbox",
-      root,
-    );
-    const settleFn = extractShellFunction("settle_custom_route_reconcile_marker").replaceAll(
-      "/sandbox",
-      root,
-    );
-    const script = path.join(root, "run.sh");
-    fs.writeFileSync(
-      script,
-      [
-        "#!/usr/bin/env bash",
-        "set -euo pipefail",
-        retirementFails
-          ? 'run_openclaw_config_as_owner() { [ "$1" != /bin/rm ] || return 29; "$@"; }'
-          : 'run_openclaw_config_as_owner() { "$@"; }',
-        `wait_for_openclaw_gateway_internal() { return ${gatewayReady ? 0 : 23}; }`,
-        `stop_openclaw_gateway_fail_closed() { : >${JSON.stringify(stoppedPath)}; }`,
-        retireFn,
-        settleFn,
-        'settle_custom_route_reconcile_marker "123" "pid-identity"',
-      ].join("\n"),
-      { mode: 0o700 },
-    );
-    const result = spawnSync("bash", [script], { encoding: "utf-8" });
-    const markerPending = fs.existsSync(markerPath);
-    const gatewayStopped = fs.existsSync(stoppedPath);
-    fs.rmSync(root, { recursive: true, force: true });
-    return { result, markerPending, gatewayStopped };
   }
 
   it("aligns agents.defaults.model.primary to inference provider's first model when they drift", () => {
@@ -424,7 +384,7 @@ describe("agent identity reconciliation with provider (#3175)", () => {
     expect(customRoutePending).toBe(true);
   });
 
-  it("uses the live gateway after the first custom-image launch retires its receipt", () => {
+  it("protects startup and smoke boundaries before host-observed receipt retirement", () => {
     const { result, config, hash, customRoutePending } = runReconcile(
       {
         agents: { defaults: { model: { primary: "inference/custom/selected" } } },
@@ -439,7 +399,7 @@ describe("agent identity reconciliation with provider (#3175)", () => {
       {
         customRoutePending: true,
         gatewayModel: "provider/switched",
-        retireCustomRouteBeforeRetry: true,
+        retireCustomRouteAfterProtectedCommands: true,
       },
     );
 
@@ -451,33 +411,6 @@ describe("agent identity reconciliation with provider (#3175)", () => {
     });
     expect(hash).not.toBe("oldhash\n");
     expect(customRoutePending).toBe(false);
-  });
-
-  it.each([
-    { gatewayReady: true, markerPending: false },
-    { gatewayReady: false, markerPending: true },
-  ])(
-    "retires the custom-image route receipt only after gateway readiness: $gatewayReady",
-    ({ gatewayReady, markerPending }) => {
-      const settled = runCustomRouteSettlement(gatewayReady);
-
-      expect(settled.result.status, settled.result.stderr || settled.result.stdout).toBe(0);
-      expect(settled.markerPending).toBe(markerPending);
-      expect(settled.result.stderr).toContain(
-        gatewayReady ? "" : "first gateway launch did not become ready",
-      );
-    },
-  );
-
-  it("stops the ready gateway and fails when the custom-image route receipt cannot retire", () => {
-    const settled = runCustomRouteSettlement(true, true);
-
-    expect(settled.result.status).not.toBe(0);
-    expect(settled.markerPending).toBe(true);
-    expect(settled.gatewayStopped).toBe(true);
-    expect(settled.result.stderr).toContain(
-      "Custom-image route receipt could not be retired after gateway readiness",
-    );
   });
 
   it("preserves an explicit model override when the live gateway reports a conflicting model", () => {

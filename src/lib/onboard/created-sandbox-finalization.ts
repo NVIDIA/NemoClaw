@@ -168,6 +168,50 @@ export interface CreatedSandboxCompletionActions {
   ): Promise<SandboxEntry | void>;
 }
 
+const CUSTOM_OPENCLAW_ROUTE_RECEIPT = "/sandbox/.openclaw/.nemoclaw-custom-route-pending";
+
+/**
+ * Retire the build-time custom-route receipt only after the host has observed
+ * the sandbox inference boundary succeed. The OpenShell exec enters through
+ * nemoclaw-start, so the still-present receipt protects this command's own
+ * startup reconciliation before the command removes it.
+ */
+export async function retireCustomOpenClawRouteReceiptAfterPolicies(input: {
+  readonly sandboxName: string;
+  readonly gatewayName: string;
+  readonly customOpenClawImage: boolean;
+  readonly sandboxCommandExecutor: OpenShellSandboxBufferedCommandExecutor;
+  readonly revalidateSandboxIdentity: (operation: string) => void;
+}): Promise<void> {
+  if (!input.customOpenClawImage) return;
+
+  input.revalidateSandboxIdentity(
+    `retiring custom-image route receipt for sandbox '${input.sandboxName}'`,
+  );
+  const completion = await input.sandboxCommandExecutor.runBuffered({
+    sandboxName: input.sandboxName,
+    target: { kind: "named", gatewayName: input.gatewayName },
+    command: ["/bin/rm", "-f", "--", CUSTOM_OPENCLAW_ROUTE_RECEIPT],
+    tty: false,
+    timeoutMilliseconds: 30_000,
+    timeoutKillSignal: "SIGKILL",
+    outputLimitBytes: 4_096,
+  });
+  if (completion.outcome.kind !== "completed") {
+    throw new Error(
+      `Custom-image route receipt retirement could not run for sandbox '${input.sandboxName}': ${completion.outcome.error.kind}.`,
+    );
+  }
+  if (completion.outcome.exitCode !== 0) {
+    throw new Error(
+      `Custom-image route receipt retirement failed for sandbox '${input.sandboxName}' with exit code ${String(completion.outcome.exitCode)}.`,
+    );
+  }
+  input.revalidateSandboxIdentity(
+    `confirming custom-image route receipt retirement for sandbox '${input.sandboxName}'`,
+  );
+}
+
 type OnboardCreatedSandboxRegistration = (
   created: SandboxGpuCreateFlowResult | null,
   configuredReceipt: HermesPortableConfiguredReceipt | null,

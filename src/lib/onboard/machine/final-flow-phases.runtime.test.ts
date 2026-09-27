@@ -355,6 +355,52 @@ describe("final onboard flow runtime boundary", () => {
     expect(order).toEqual(["openclaw", "agent-forward", "policies"]);
   });
 
+  it("waits for asynchronous policy-boundary cleanup before finalization", async () => {
+    const order: string[] = [];
+    const harness = createRuntimeHarness(sessionAt("openclaw"));
+    const recorders = harness.boundary.recorders();
+    const phases = createPhases("openclaw", order, {
+      loadSession: harness.getSession,
+      recordStepSkipped: recorders.recordStepSkipped,
+      recordStateSkipped: recorders.recordStateSkipped,
+      startRecordedStep: recorders.startRecordedStep,
+      recordStepComplete: recorders.recordStepComplete,
+    });
+    let releaseCleanup!: () => void;
+    const cleanupPending = new Promise<void>((resolve) => {
+      releaseCleanup = resolve;
+    });
+
+    const flow = runFinalOnboardFlowSlice({
+      context: context({ session: harness.getSession() }),
+      runtime: harness.boundary.getRuntime(),
+      phases,
+      recordRepairEvent: recorders.recordRepairEvent,
+      afterPoliciesReady: async () => {
+        order.push("cleanup-start");
+        await cleanupPending;
+        order.push("cleanup-complete");
+      },
+    });
+    await vi.waitFor(() => expect(order).toContain("cleanup-start"));
+
+    expect(order).toEqual(["openclaw", "agent-forward", "policies", "cleanup-start"]);
+    expect(harness.getSession().machine.state).toBe("finalizing");
+
+    releaseCleanup();
+    await flow;
+
+    expect(order).toEqual([
+      "openclaw",
+      "agent-forward",
+      "policies",
+      "cleanup-start",
+      "cleanup-complete",
+      "set-default",
+      "verify",
+    ]);
+  });
+
   it("keeps rollback armed when a policies prerequisite repair fails", async () => {
     const order: string[] = [];
     const harness = createRuntimeHarness(sessionAt("post_verify"));

@@ -211,14 +211,14 @@ function isPoliciesAppliedResult(result: OnboardStateResult): boolean {
 
 function withAfterPoliciesReady(
   runtime: OnboardMachineRunnerRuntime,
-  afterPoliciesReady: (() => void) | undefined,
+  afterPoliciesReady: (() => void | Promise<void>) | undefined,
 ): OnboardMachineRunnerRuntime {
   if (!afterPoliciesReady) return runtime;
   return {
     session: runtime.session.bind(runtime),
     async applyResult(result) {
       const session = await runtime.applyResult(result);
-      if (isPoliciesAppliedResult(result)) afterPoliciesReady();
+      if (isPoliciesAppliedResult(result)) await afterPoliciesReady();
       return session;
     },
   };
@@ -329,7 +329,7 @@ async function runFinalFlowPrerequisiteRepairs<Context extends OnboardFlowContex
   runtime: OnboardMachineRunnerRuntime;
   phases: readonly OnboardSequencePhase<Context>[];
   recordRepairEvent: FinalFlowRepairEventRecorder;
-  afterPoliciesReady?(): void;
+  afterPoliciesReady?(): void | Promise<void>;
   onContextUpdated?(context: Context): void;
 }): Promise<{ context: Context; pause?: OnboardStatePauseResult }> {
   const entryIndex = options.phases.findIndex((phase) => phase.state === options.entryState);
@@ -385,7 +385,7 @@ async function runFinalFlowPrerequisiteRepairs<Context extends OnboardFlowContex
         state: phase.state,
         metadata,
       });
-      if (phase.state === "policies") options.afterPoliciesReady?.();
+      if (phase.state === "policies") await options.afterPoliciesReady?.();
       nextContext = phaseResult.context;
       options.onContextUpdated?.(nextContext);
     } catch (error) {
@@ -406,7 +406,7 @@ export async function runFinalOnboardFlowSlice<Context extends OnboardFlowContex
   runtime: OnboardMachineRunnerRuntime;
   phases: readonly OnboardSequencePhase<Context>[];
   recordRepairEvent: FinalFlowRepairEventRecorder;
-  afterPoliciesReady?(): void;
+  afterPoliciesReady?(): void | Promise<void>;
   onContextUpdated?(context: Context): void;
 }) {
   const canonicalFlow = canonicalFinalFlowPhases(options.phases);
