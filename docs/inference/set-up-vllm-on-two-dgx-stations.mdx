@@ -42,6 +42,10 @@ After qualification, the installer prepares the peer with the same reviewed help
 
 No managed-vLLM image or model download starts before the pair qualification or single-Station fallback decision completes.
 If no trusted pair qualifies, Express retains the single-Station Ultra recipe.
+When Express recognizes an existing legacy single-Station workload, that workload must remain unchanged during peer discovery.
+If it changes, the installer stops and reports the image and ownership-contract mismatch instead of continuing the upgrade.
+Inspect the `nemoclaw-vllm` container with `docker inspect nemoclaw-vllm`.
+Restore the original single-Station workload before retrying, or stop the upgrade if the change was intentional.
 If the read-only preparation check finds an active vLLM workload on an automatically discovered peer, Express leaves that peer unchanged.
 It retains the single-Station Ultra recipe.
 

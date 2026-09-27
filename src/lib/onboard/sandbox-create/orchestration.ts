@@ -93,6 +93,20 @@ import {
   readValidatedRebuildPolicySource,
 } from "./rebuild-policy-handoff";
 
+function recordedOpenShellGatewayStateDir(
+  resolveStateDir: () => string,
+  checkpoint: PendingSandboxCreateIdentity | null,
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
+  const configured = env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR?.trim() ? resolveStateDir() : null;
+  const recorded = checkpoint?.openshellGatewayStateDir;
+  if (recorded && configured && recorded !== configured) {
+    throw new Error("Custom OpenShell gateway state directory changed since sandbox creation.");
+  }
+  // Legacy checkpoints cannot prove which custom directory was used at creation.
+  return checkpoint ? (recorded ?? null) : configured;
+}
+
 function cancelRecoveryIdentity(
   liveExists: boolean,
   requireVerifiedCreateBoundary: () => VerifiedSandboxCreateBoundary,
@@ -1052,6 +1066,69 @@ export function releaseManagedStartupHoldWithRetry(release: () => void): void {
   throw failure;
 }
 
+export async function activateManagedStartupCorporateCaTrustBeforeIdentityRevalidation(input: {
+  readonly corporateCaB64: string | null;
+  readonly sandboxName: string;
+  readonly boundary: Pick<
+    VerifiedSandboxCreateBoundary,
+    "gatewayName" | "lifecycleLiveIdentityFingerprint"
+  >;
+  readonly refreshCorporateCaTrust: (request: {
+    readonly sandboxName: string;
+    readonly sandboxIdentityFingerprint: string;
+    readonly target: { readonly kind: "named"; readonly gatewayName: string };
+  }) => Promise<void>;
+  readonly revalidateSandboxIdentity: (operation: string) => void;
+}): Promise<void> {
+  if (input.corporateCaB64 !== null) {
+    await input.refreshCorporateCaTrust({
+      sandboxName: input.sandboxName,
+      sandboxIdentityFingerprint: input.boundary.lifecycleLiveIdentityFingerprint,
+      target: { kind: "named", gatewayName: input.boundary.gatewayName },
+    });
+  }
+  input.revalidateSandboxIdentity(
+    `confirming managed startup profile for sandbox '${input.sandboxName}'`,
+  );
+}
+
+export async function activateManagedStartupCorporateCaTrustAfterSandboxCreate<T>(input: {
+  readonly create: Promise<T>;
+  readonly corporateCaB64: string | null;
+  readonly sandboxName: string;
+  readonly requireVerifiedCreateBoundary: () => VerifiedSandboxCreateBoundary;
+  readonly refreshCorporateCaTrust: (request: {
+    readonly sandboxName: string;
+    readonly sandboxIdentityFingerprint: string;
+    readonly target: { readonly kind: "named"; readonly gatewayName: string };
+  }) => Promise<void>;
+  readonly revalidateSandboxIdentity: (
+    boundary: VerifiedSandboxCreateBoundary,
+    operation: string,
+  ) => void;
+  readonly recordRecovery: () => void;
+  readonly noteActivation?: () => void;
+}): Promise<T> {
+  // OpenShell treats a lifecycle stop during its create-readiness transaction
+  // as cancellation and removes the pending sandbox. Do not mutate lifecycle
+  // state until the create RPC has returned and the sandbox is durable.
+  const created = await input.create;
+  if (!input.corporateCaB64) return created;
+  await runAsyncWithPostCreateRecovery(async () => {
+    input.noteActivation?.();
+    const boundary = input.requireVerifiedCreateBoundary();
+    await activateManagedStartupCorporateCaTrustBeforeIdentityRevalidation({
+      corporateCaB64: input.corporateCaB64,
+      sandboxName: input.sandboxName,
+      boundary,
+      refreshCorporateCaTrust: input.refreshCorporateCaTrust,
+      revalidateSandboxIdentity: (operation) =>
+        input.revalidateSandboxIdentity(boundary, operation),
+    });
+  }, input.recordRecovery);
+  return created;
+}
+
 /**
  * Keep every effect after an unverified create behind one exact-identity gate.
  *
@@ -1628,6 +1705,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       readDcodeSelectionDrift,
       sandboxCommandExecutor,
       getDefaultSandboxNameForAgent,
+      getDockerDriverGatewayStateDir,
       getHermesToolGatewayBroker,
       getRequestedSandboxAgentName,
       getSandboxAgentDrift,
@@ -2011,6 +2089,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       readEntry: () => registry.getSandbox(sandboxName),
     });
     const resumingVerifiedCreate = acceptedTargetPendingIdentity !== null;
+    const openshellGatewayStateDir = recordedOpenShellGatewayStateDir(
+      getDockerDriverGatewayStateDir,
+      acceptedTargetPendingIdentity,
+    );
     const restoreReusedSandboxDashboard = async (selectionVerified: boolean): Promise<void> => {
       ({ chatUiUrl } = await sandboxReuse.restoreReusedSandboxDashboardState({
         sandboxName,
@@ -3006,6 +3088,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             sandboxName,
             gatewayName: GATEWAY_NAME,
             gatewayPort: GATEWAY_PORT,
+            ...(openshellGatewayStateDir ? { openshellGatewayStateDir } : {}),
             lifecycleGeneration: createdSandboxLifecycle.generation,
             lifecycleLiveIdentityFingerprint: identity.liveIdentityFingerprint,
             createAttemptNonce: identity.createAttemptNonce,
@@ -3296,7 +3379,11 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       },
       { plannedMessagingState, hermesToolGateways },
       hermesApiPortReservationScope.effectivePort,
-      { gatewayName: GATEWAY_NAME, gatewayPort: GATEWAY_PORT },
+      {
+        gatewayName: GATEWAY_NAME,
+        gatewayPort: GATEWAY_PORT,
+        openshellGatewayStateDir,
+      },
       {
         initialSandboxPolicy,
         compatibilityPolicyPath,
@@ -3501,20 +3588,33 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         compatibility: initialGpuRoute === "compatibility",
         rebuildPolicySourcePath: createIntent?.rebuildPolicySourcePath,
       });
-      const created = await runSandboxCreateWithProviderEffects({
-        resumingVerifiedCreate: Boolean(resumeVerifiedCreateInput),
-        providerEffectBoundary,
-        create: (runAfterVerifiedCreate) =>
-          runCreateFlow(
-            routedCreateRequest,
-            undefined,
-            undefined,
-            undefined,
-            undefined,
-            runAfterVerifiedCreate,
-          ),
-      });
       try {
+        const created = await activateManagedStartupCorporateCaTrustAfterSandboxCreate({
+          create: runSandboxCreateWithProviderEffects({
+            resumingVerifiedCreate: Boolean(resumeVerifiedCreateInput),
+            providerEffectBoundary,
+            create: (runAfterVerifiedCreate) =>
+              runCreateFlow(
+                routedCreateRequest,
+                undefined,
+                undefined,
+                undefined,
+                undefined,
+                runAfterVerifiedCreate,
+              ),
+          }),
+          corporateCaB64: managedStartupRootApplyRequest?.corporateCaB64 ?? null,
+          sandboxName,
+          requireVerifiedCreateBoundary,
+          refreshCorporateCaTrust: (request) =>
+            managedWorkloadOnboard.refreshManagedStartupCorporateCaTrust(request),
+          revalidateSandboxIdentity: (boundary, operation) => {
+            revalidateVerifiedCreateIdentity(boundary, operation);
+          },
+          recordRecovery: () => recordPostCreateRecovery("onboarding finalization"),
+          noteActivation: () =>
+            console.log("  Activating corporate CA trust in the OpenShell supervisor..."),
+        });
         await finalizeCreatedSandboxBeforeHermesCredentialReconciliation(
           async () => {
             const registration = await runAsyncWithPostCreateRecovery(

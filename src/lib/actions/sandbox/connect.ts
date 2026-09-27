@@ -111,6 +111,7 @@ import { printGatewayWedgeDiagnostics } from "./gateway-wedge-diagnostics";
 import {
   createProbeTimingRecorder,
   createBoundLaunchReadinessDeps,
+  formatLaunchReadinessUnsafeAuthorityEvidence,
   inspectLaunchReadiness,
   portableOpenClawPairingIncompleteMessage,
   type ProbeTimingRecorder,
@@ -127,7 +128,6 @@ import type { HermesPortableContainerInspectionTimingEvidence } from "../../onbo
 import {
   checkAndRecoverSandboxProcesses,
   createHermesPortableForwardRecoveryInput,
-  executeSandboxExecCommand,
   type GatewayRestartFailureLayer,
   HermesPortableForwardRecoveryError,
   type HermesPortableForwardRecoveryContext,
@@ -353,11 +353,7 @@ async function exitOnGatewayRecoveryFailure(
   );
   console.error(`  Recovery detail: ${safeDetail}${terminalPunctuation}`);
   if (showWedgeDiagnostics) {
-    await printGatewayWedgeDiagnostics(sandboxName, (name, command) =>
-      executeSandboxExecCommand(name, command, undefined, {
-        localDockerFallbackPolicy: "read-only",
-      }),
-    );
+    await printGatewayWedgeDiagnostics(sandboxName);
     console.error("  Check /tmp/gateway.log inside the sandbox for details.");
   }
   process.exit(1);
@@ -554,11 +550,7 @@ async function runSandboxConnectProbe(
   // Surface the #4710 wedge signature: recovery ran with quiet=true, so this
   // is the operator's only window into a gateway that served briefly and
   // then dropped its listener.
-  await printGatewayWedgeDiagnostics(sandboxName, (name, command) =>
-    executeSandboxExecCommand(name, command, undefined, {
-      localDockerFallbackPolicy: "read-only",
-    }),
-  );
+  await printGatewayWedgeDiagnostics(sandboxName);
   console.error("  Check /tmp/gateway.log inside the sandbox for details.");
   process.exit(1);
 }
@@ -3031,7 +3023,7 @@ async function prepareConnectSandboxWithinLifecycleFence(
       if (gated.kind === "unsafe") {
         probeTiming!.markFailureStage("publication");
         console.error(
-          "  Probe failed: complete probe and recovery did not run because the current launch-readiness epoch could not be safely revalidated. Repair the current user's secure OS runtime authority and NemoClaw state permissions, then retry.",
+          `  Probe failed: complete probe and recovery did not run because the current launch-readiness epoch could not be safely revalidated.${formatLaunchReadinessUnsafeAuthorityEvidence(gated.evidence)}`,
         );
         process.exit(1);
       }

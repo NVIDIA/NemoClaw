@@ -13,7 +13,7 @@ import type {
 } from "../../state/registry/types";
 import type { SnapshotRestoreOptions } from "../../state/sandbox";
 import { dcodeProbeOutput } from "./dcode-probe-test-fixture";
-import { SANDBOX_EXEC_STARTED_MARKER } from "./sandbox-exec-output";
+import { SANDBOX_EXEC_STARTED_MARKER } from "../../adapters/sandbox/sandbox-exec-output";
 
 export type OpenshellCaptureResult = {
   status: number | null;

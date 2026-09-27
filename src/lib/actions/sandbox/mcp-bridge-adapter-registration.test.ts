@@ -7,7 +7,6 @@ import type { AgentMcpAdapter } from "../../agent/defs";
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
 
 const mocks = vi.hoisted(() => ({
-  executeSandboxCommand: vi.fn(),
   executeSandboxExecCommand: vi.fn(),
   executeGatewaySupervisorAction: vi.fn(),
   getSandbox: vi.fn(),
@@ -29,11 +28,13 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("./process-recovery", () => ({
-  executeSandboxCommand: mocks.executeSandboxCommand,
-  executeSandboxExecCommand: mocks.executeSandboxExecCommand,
   executeGatewaySupervisorAction: mocks.executeGatewaySupervisorAction,
   restartSandboxGateway: mocks.restartSandboxGateway,
   waitForManagedGatewaySupervisor: mocks.waitForManagedGatewaySupervisor,
+}));
+vi.mock("../../adapters/sandbox/command-transport", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../adapters/sandbox/command-transport")>()),
+  executeSandboxExecCommand: mocks.executeSandboxExecCommand,
 }));
 
 vi.mock("../../sandbox/config", () => ({
@@ -128,7 +129,7 @@ const adapterCases: AdapterCase[] = [
     entry: baseEntry,
     arrangeInspection: (result) => {
       mocks.runOpenshellProviderCommand.mockReturnValue(lifecycleSuccess);
-      mocks.executeSandboxCommand.mockReturnValue(result);
+      mocks.executeSandboxExecCommand.mockReturnValue(result);
     },
     statusCommand: buildHermesMcpStatusCommand,
   },
@@ -141,7 +142,9 @@ const adapterCases: AdapterCase[] = [
       adapter: "deepagents-config",
     },
     arrangeInspection: (result) => {
-      mocks.executeSandboxCommand.mockReturnValueOnce(commandSuccess).mockReturnValueOnce(result);
+      mocks.executeSandboxExecCommand
+        .mockReturnValueOnce(commandSuccess)
+        .mockReturnValueOnce(result);
     },
     statusCommand: buildDeepAgentsMcpStatusCommand,
   },
@@ -161,7 +164,7 @@ const reconciliationCases: ReconciliationCase[] = [
     adapter: "openclaw-config",
     entry: { ...baseEntry, agent: "openclaw", adapter: "openclaw-config" },
     arrange: () => {
-      mocks.executeSandboxCommand.mockImplementation((_sandbox, command: string) =>
+      mocks.executeSandboxExecCommand.mockImplementation((_sandbox, command: string) =>
         command === "command -v mcporter"
           ? { status: 0, stdout: "/usr/bin/mcporter\n", stderr: "" }
           : command.includes("config' 'add")
@@ -169,7 +172,7 @@ const reconciliationCases: ReconciliationCase[] = [
             : registered,
       );
     },
-    mutationCalls: () => JSON.stringify(mocks.executeSandboxCommand.mock.calls),
+    mutationCalls: () => JSON.stringify(mocks.executeSandboxExecCommand.mock.calls),
   },
   {
     name: "Hermes",
@@ -177,7 +180,7 @@ const reconciliationCases: ReconciliationCase[] = [
     entry: baseEntry,
     arrange: () => {
       mocks.runOpenshellProviderCommand.mockReturnValue(lifecycleSuccess);
-      mocks.executeSandboxCommand.mockReturnValue(registered);
+      mocks.executeSandboxExecCommand.mockReturnValue(registered);
     },
     mutationCalls: () => JSON.stringify(mocks.runOpenshellProviderCommand.mock.calls),
   },
@@ -190,19 +193,18 @@ const reconciliationCases: ReconciliationCase[] = [
       adapter: "deepagents-config",
     },
     arrange: () => {
-      mocks.executeSandboxCommand
+      mocks.executeSandboxExecCommand
         .mockReturnValueOnce(commandSuccess)
         .mockReturnValueOnce(registered)
         .mockReturnValueOnce(commandSuccess)
         .mockReturnValueOnce(registered);
     },
-    mutationCalls: () => JSON.stringify(mocks.executeSandboxCommand.mock.calls),
+    mutationCalls: () => JSON.stringify(mocks.executeSandboxExecCommand.mock.calls),
   },
 ];
 
 describe.each(adapterCases)("$name MCP adapter registration", (adapterCase) => {
   beforeEach(() => {
-    mocks.executeSandboxCommand.mockReset();
     mocks.executeSandboxExecCommand.mockReset();
     mocks.executeGatewaySupervisorAction.mockReset();
     mocks.runOpenshellProviderCommand.mockReset();
@@ -218,13 +220,16 @@ describe.each(adapterCases)("$name MCP adapter registration", (adapterCase) => {
       }),
     ).resolves.toBeUndefined();
 
-    expect(mocks.executeSandboxCommand).toHaveBeenLastCalledWith(
+    expect(mocks.executeSandboxExecCommand).toHaveBeenLastCalledWith(
       "alpha",
       adapterCase.statusCommand(adapterCase.entry),
+      undefined,
       { runtimeSelection },
     );
-    expect(mocks.executeSandboxCommand.mock.calls.map((call) => call[2])).toEqual(
-      Array(mocks.executeSandboxCommand.mock.calls.length).fill({ runtimeSelection }),
+    expect(mocks.executeSandboxExecCommand.mock.calls.map((call) => call[3])).toEqual(
+      Array(mocks.executeSandboxExecCommand.mock.calls.length).fill({
+        runtimeSelection,
+      }),
     );
   });
 
@@ -243,13 +248,13 @@ describe.each(adapterCases)("$name MCP adapter registration", (adapterCase) => {
 
 describe("Hermes MCP reload finality", () => {
   beforeEach(() => {
-    mocks.executeSandboxCommand.mockReset();
+    mocks.executeSandboxExecCommand.mockReset();
     mocks.runOpenshellProviderCommand.mockReset();
     mocks.getSandbox.mockReset().mockReturnValue(sandbox);
   });
 
   it("forwards a caller deadline to the adapter inspection transport", async () => {
-    mocks.executeSandboxCommand.mockReturnValue(registered);
+    mocks.executeSandboxExecCommand.mockReturnValue(registered);
 
     await inspectAgentAdapterRegistration(
       "alpha",
@@ -260,10 +265,11 @@ describe("Hermes MCP reload finality", () => {
       4_321,
     );
 
-    expect(mocks.executeSandboxCommand).toHaveBeenLastCalledWith(
+    expect(mocks.executeSandboxExecCommand).toHaveBeenLastCalledWith(
       "alpha",
       buildHermesMcpStatusCommand(baseEntry),
-      { runtimeSelection, timeout: 4_321 },
+      4_321,
+      { runtimeSelection },
     );
   });
 
@@ -505,7 +511,7 @@ describe("Hermes MCP reload finality", () => {
 
 describe("OpenClaw MCP adapter registration", () => {
   beforeEach(() => {
-    mocks.executeSandboxCommand.mockReset();
+    mocks.executeSandboxExecCommand.mockReset();
     mocks.getSandbox.mockReset().mockReturnValue(sandbox);
     resetOpenClawConfigMocks();
     mocks.restartSandboxGateway.mockReset();
@@ -554,7 +560,7 @@ describe("OpenClaw MCP adapter registration", () => {
     const verification = openClawHeadersMatchExpected(actualV11Headers, entryHeaders(entry, "v12"))
       ? registered
       : mismatch;
-    mocks.executeSandboxCommand.mockReturnValueOnce(verification);
+    mocks.executeSandboxExecCommand.mockReturnValueOnce(verification);
 
     await expect(
       registerOpenClawAdapter(
@@ -567,7 +573,7 @@ describe("OpenClaw MCP adapter registration", () => {
       ),
     ).rejects.toThrow("OpenClaw MCP config verification failed after adding 'github': mismatch");
 
-    expect(mocks.executeSandboxCommand.mock.calls[0]?.[1]).toContain(
+    expect(mocks.executeSandboxExecCommand.mock.calls[0]?.[1]).toContain(
       "openshell:resolve:env:v12_GITHUB_TOKEN",
     );
     expect(mocks.writeSandboxConfig).toHaveBeenCalledWith(
@@ -656,7 +662,7 @@ describe("OpenClaw MCP adapter registration", () => {
       adapter: "openclaw-config",
     };
     mocks.readSandboxConfig.mockReturnValue({});
-    mocks.executeSandboxCommand.mockReturnValue(registered);
+    mocks.executeSandboxExecCommand.mockReturnValue(registered);
 
     await registerOpenClawAdapter("alpha", entry, runtimeSelection, {}, false, "v12");
 
@@ -670,7 +676,7 @@ describe("OpenClaw MCP adapter registration", () => {
 
 describe("Deep Agents MCP adapter credential revision", () => {
   beforeEach(() => {
-    mocks.executeSandboxCommand.mockReset();
+    mocks.executeSandboxExecCommand.mockReset();
     mocks.getSandbox.mockReset().mockReturnValue(sandbox);
   });
 
@@ -680,7 +686,9 @@ describe("Deep Agents MCP adapter credential revision", () => {
       agent: "langchain-deepagents-code",
       adapter: "deepagents-config",
     };
-    mocks.executeSandboxCommand.mockReturnValueOnce(commandSuccess).mockReturnValueOnce(registered);
+    mocks.executeSandboxExecCommand
+      .mockReturnValueOnce(commandSuccess)
+      .mockReturnValueOnce(registered);
 
     await expect(
       registerAgentAdapter(
@@ -693,13 +701,13 @@ describe("Deep Agents MCP adapter credential revision", () => {
       ),
     ).resolves.toBeUndefined();
 
-    expect(mocks.executeSandboxCommand.mock.calls[0]?.[1]).toContain(
+    expect(mocks.executeSandboxExecCommand.mock.calls[0]?.[1]).toContain(
       "Bearer openshell:resolve:env:v12_GITHUB_TOKEN",
     );
-    expect(mocks.executeSandboxCommand.mock.calls[1]?.[1]).toContain(
+    expect(mocks.executeSandboxExecCommand.mock.calls[1]?.[1]).toContain(
       "Bearer openshell:resolve:env:v12_GITHUB_TOKEN",
     );
-    expect(JSON.stringify(mocks.executeSandboxCommand.mock.calls)).not.toContain(
+    expect(JSON.stringify(mocks.executeSandboxExecCommand.mock.calls)).not.toContain(
       "host-only-secret",
     );
   });
@@ -707,7 +715,6 @@ describe("Deep Agents MCP adapter credential revision", () => {
 
 describe("Hermes MCP adapter credential revision", () => {
   beforeEach(() => {
-    mocks.executeSandboxCommand.mockReset();
     mocks.executeSandboxExecCommand.mockReset();
     mocks.runOpenshellProviderCommand.mockReset();
     mocks.getSandbox.mockReset().mockReturnValue(sandbox);
@@ -715,12 +722,15 @@ describe("Hermes MCP adapter credential revision", () => {
 
   it("writes and verifies the readiness-proven revision", async () => {
     mocks.runOpenshellProviderCommand.mockReturnValue(lifecycleSuccess);
-    mocks.executeSandboxCommand.mockReturnValue(registered);
-    mocks.executeSandboxExecCommand.mockReturnValue({
-      status: 0,
-      stdout: "v12\n",
-      stderr: "",
-    });
+    mocks.executeSandboxExecCommand.mockImplementation((_sandbox, command: string) =>
+      command === buildHermesMcpStatusCommand(baseEntry, "v12")
+        ? registered
+        : {
+            status: 0,
+            stdout: "v12\n",
+            stderr: "",
+          },
+    );
 
     await expect(
       registerAgentAdapter(
@@ -736,7 +746,7 @@ describe("Hermes MCP adapter credential revision", () => {
     expect(JSON.stringify(mocks.runOpenshellProviderCommand.mock.calls[0]?.[0])).toContain(
       "Bearer openshell:resolve:env:v12_GITHUB_TOKEN",
     );
-    expect(mocks.executeSandboxCommand.mock.calls[0]?.[1]).toContain(
+    expect(mocks.executeSandboxExecCommand.mock.calls[0]?.[1]).toContain(
       "Bearer openshell:resolve:env:v12_GITHUB_TOKEN",
     );
     expect(JSON.stringify(mocks.runOpenshellProviderCommand.mock.calls)).not.toContain(
@@ -749,7 +759,7 @@ describe.each(reconciliationCases)(
   "$name MCP credential revision reconciliation",
   (adapterCase) => {
     beforeEach(() => {
-      mocks.executeSandboxCommand.mockReset();
+      mocks.executeSandboxExecCommand.mockReset();
       mocks.runOpenshellProviderCommand.mockReset();
       mocks.getSandbox.mockReset();
       mocks.getSandbox.mockReturnValue(sandbox);
@@ -783,7 +793,7 @@ describe.each(reconciliationCases)(
 
 describe("MCP adapter credential revision reconciliation failures", () => {
   beforeEach(() => {
-    mocks.executeSandboxCommand.mockReset();
+    mocks.executeSandboxExecCommand.mockReset();
     mocks.runOpenshellProviderCommand.mockReset();
     mocks.getSandbox.mockReset().mockReturnValue(sandbox);
     mocks.observeMcpCredentialRevision.mockReset();
@@ -801,7 +811,7 @@ describe("MCP adapter credential revision reconciliation failures", () => {
       agent: "openclaw",
       adapter: "openclaw-config",
     };
-    mocks.executeSandboxCommand.mockImplementation((_sandbox, command: string) =>
+    mocks.executeSandboxExecCommand.mockImplementation((_sandbox, command: string) =>
       command.includes("servers[payload.server]") ? commandSuccess : registered,
     );
     mocks.observeMcpCredentialRevision.mockImplementation(async () => {
@@ -824,9 +834,9 @@ describe("MCP adapter credential revision reconciliation failures", () => {
       ),
     ).resolves.toBe("v11");
     expect(mocks.getSandbox()).toMatchObject({ gatewayName: "foreign-gateway" });
-    expect(mocks.executeSandboxCommand.mock.calls.map((call) => call[2]?.runtimeSelection)).toEqual(
-      Array(mocks.executeSandboxCommand.mock.calls.length).fill(operationSelection),
-    );
+    expect(
+      mocks.executeSandboxExecCommand.mock.calls.map((call) => call[3]?.runtimeSelection),
+    ).toEqual(Array(mocks.executeSandboxExecCommand.mock.calls.length).fill(operationSelection));
     expect(mocks.observeMcpCredentialRevision.mock.calls.map((call) => call[2])).toEqual(
       Array(mocks.observeMcpCredentialRevision.mock.calls.length).fill(operationSelection),
     );
@@ -836,7 +846,7 @@ describe("MCP adapter credential revision reconciliation failures", () => {
     "fails closed when reconciliation observes %s credential authority",
     async (observation) => {
       mocks.observeMcpCredentialRevision.mockResolvedValue(observation);
-      mocks.executeSandboxCommand.mockImplementation((_sandbox, command: string) =>
+      mocks.executeSandboxExecCommand.mockImplementation((_sandbox, command: string) =>
         command === "command -v mcporter"
           ? { status: 0, stdout: "/usr/bin/mcporter\n", stderr: "" }
           : command.includes("config' 'add")
@@ -860,7 +870,7 @@ describe("MCP adapter credential revision reconciliation failures", () => {
   it("fails closed when the credential revision never stabilizes", async () => {
     let revision = 10;
     mocks.observeMcpCredentialRevision.mockImplementation(async () => `v${(revision += 1)}`);
-    mocks.executeSandboxCommand.mockImplementation((_sandbox, command: string) =>
+    mocks.executeSandboxExecCommand.mockImplementation((_sandbox, command: string) =>
       command === "command -v mcporter"
         ? { status: 0, stdout: "/usr/bin/mcporter\n", stderr: "" }
         : command.includes("config' 'add")
@@ -923,7 +933,7 @@ describe("MCP adapter credential revision reconciliation failures", () => {
       .mockResolvedValueOnce("v11")
       .mockResolvedValueOnce("v11")
       .mockResolvedValue("v12");
-    mocks.executeSandboxCommand.mockImplementation((_sandbox, command: string) =>
+    mocks.executeSandboxExecCommand.mockImplementation((_sandbox, command: string) =>
       command === "command -v mcporter"
         ? { status: 0, stdout: "/usr/bin/mcporter\n", stderr: "" }
         : command.includes("config' 'add")

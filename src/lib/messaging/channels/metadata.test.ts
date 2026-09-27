@@ -244,7 +244,7 @@ describe("built-in messaging channel metadata", () => {
       ),
     ).toMatchObject({
       discord: "npm:@openclaw/discord@{{openclaw.version}}",
-      wechat: "npm:@tencent-weixin/openclaw-weixin@2.4.3",
+      wechat: "npm:@tencent-weixin/openclaw-weixin@2.4.9",
       slack: "npm:@openclaw/slack@{{openclaw.version}}",
       whatsapp: "npm:@openclaw/whatsapp@{{openclaw.version}}",
       teams: "npm:@openclaw/msteams@{{openclaw.version}}",
@@ -309,7 +309,7 @@ describe("built-in messaging channel metadata", () => {
       {
         packageKey: "wechat/openclawPluginPackage",
         committedIntegrity:
-          "sha512-dPQbidUNWigC6V10vGW4i+GLH09x+6zUhafZRjuxkJ9GDu8o62WBsnUTojp4KqUH756hz+t2v9khiCRSi0dBDw==",
+          "sha512-SfaYehR1Cwq2VV5HxJBp9sVilMms420VfZlMbF4YjRbWomr5+GxfXp9HkeU6y5TbnOc4Ysq0qPw1yBvJwbenBA==",
       },
       {
         packageKey: "slack/openclawPluginPackage",
