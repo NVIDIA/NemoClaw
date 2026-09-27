@@ -896,6 +896,8 @@ If you enable Telegram during onboarding, the wizard can also prompt for whether
 
 </AgentOnly>
 
+Closing stdin during onboarding cancels the run: NemoClaw prints `Installation cancelled`, exits non-zero, and keeps the resumable onboarding session so `nemoclaw onboard --resume` can continue. This holds whether you press `Ctrl-D` while a question is on screen or while the wizard is working between questions, and whether stdin is a terminal or a harness pipe that closes.
+
 If you cancel a brand-new onboarding run at the policy-tier selector or either policy-preset selector after sandbox creation, NemoClaw preserves the incomplete sandbox, registry entry, and onboarding session for retained recovery.
 NemoClaw reports the durable sandbox identity fingerprint when it is available.
 It does not run OpenShell's mutable-name deletion command because the name may now identify a replacement sandbox.

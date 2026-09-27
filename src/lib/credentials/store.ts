@@ -14,6 +14,11 @@ import path from "node:path";
 import readline from "node:readline";
 
 import { isErrnoException } from "../core/errno";
+import {
+  cancelPromptWithPendingEof,
+  pendingStdinEofError,
+  takePendingStdinEof,
+} from "../core/pending-stdin-eof";
 import { GATEWAY_PORT } from "../core/ports";
 import { createPromptActivityCleanup } from "../core/prompt-activity";
 import { listMessagingCredentialMetadata } from "../messaging/channels";
@@ -626,6 +631,17 @@ export function removeLegacyCredentialsFileIfEmpty(): boolean {
  * rejects with `code: "SIGINT"` on Ctrl-C.
  */
 export function promptSecret(question: string, maskCap?: number): Promise<string> {
+  // A Ctrl-D typed before this prompt started would otherwise be dropped by
+  // the raw-mode switch below and the read would never settle (#12169).
+  const pending = takePendingStdinEof();
+  if (pending === false) return readSecretAnswer(question, maskCap);
+  return pending.then((ended) => {
+    if (ended) cancelPromptWithPendingEof(question);
+    return readSecretAnswer(question, maskCap);
+  });
+}
+
+function readSecretAnswer(question: string, maskCap?: number): Promise<string> {
   return new Promise((resolve, reject) => {
     const input = process.stdin;
     const output = process.stderr;
@@ -677,7 +693,7 @@ export function promptSecret(question: string, maskCap?: number): Promise<string
     }
 
     function onInputClosed() {
-      rejectPrompt(Object.assign(new Error("Prompt closed before input"), { code: "EOF" }));
+      rejectPrompt(pendingStdinEofError());
     }
 
     // With maskCap set, cap the asterisks and add an "(and N more characters)"
@@ -806,6 +822,26 @@ export function prompt(
   question: string,
   opts: { secret?: boolean; maskCap?: number } = {},
 ): Promise<string> {
+  // Re-attach stdin before the pending-input window: takePendingStdinEof()
+  // reads the terminal, and a detached handle would not deliver that read.
+  if (typeof process.stdin.ref === "function") {
+    process.stdin.ref();
+  }
+  // Cancellation that reached the terminal between questions belongs to this
+  // prompt: readline would drop it when it switches the TTY to raw mode and
+  // then wait forever for an answer (#12169).
+  const pending = takePendingStdinEof();
+  if (pending === false) return askQuestion(question, opts);
+  return pending.then((ended) => {
+    if (ended) cancelPromptWithPendingEof(question);
+    return askQuestion(question, opts);
+  });
+}
+
+function askQuestion(
+  question: string,
+  opts: { secret?: boolean; maskCap?: number },
+): Promise<string> {
   return new Promise((resolve, reject) => {
     // Re-attach stdin to the event loop before any prompt path. unref() in
     // cleanup (below, and in the secret path) is sticky — neither
@@ -817,7 +853,7 @@ export function prompt(
     }
     const silent = opts.secret === true && isSecureCredentialPromptAvailable();
     if (silent) {
-      promptSecret(question, opts.maskCap)
+      readSecretAnswer(question, opts.maskCap)
         .then(resolve)
         .catch((error: NodeJS.ErrnoException) => {
           if (error && error.code === "SIGINT") {
@@ -874,7 +910,7 @@ export function prompt(
       // post-answer close is ignored and only a premature EOF rejects here.
       rl.on("close", () => {
         if (finished) return;
-        rejectPrompt(Object.assign(new Error("Prompt closed before input"), { code: "EOF" }));
+        rejectPrompt(pendingStdinEofError());
       });
       rl.question(question, (answer) => {
         resolvePrompt(answer.trim());
