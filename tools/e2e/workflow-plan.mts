@@ -23,7 +23,10 @@ import {
   discoverCredentialFreeTests,
   SHARED_E2E_JOB_ID,
 } from "./credential-free-tests.mts";
-import { JETSON_DISPATCH_TARGET } from "./jetson-dispatch-contract.mts";
+import {
+  DGX_STATION_DISPATCH_TARGET,
+  JETSON_DISPATCH_TARGET,
+} from "./jetson-dispatch-contract.mts";
 import { normalizeE2eSelectorIds } from "./selector-aliases.mts";
 import {
   catalogueExclusionReason,
@@ -627,6 +630,16 @@ export function buildE2eWorkflowPlan(
   const gatewayRuntimes = e2eGatewayRuntimes((options.gatewayRuntimes ?? ["docker"]).join(","));
   const jobs = selectorIds(selectors.jobs, "jobs");
   const targets = selectorIds(selectors.targets, "targets");
+
+  if (
+    (jobs.includes(DGX_STATION_DISPATCH_TARGET) || targets.includes(DGX_STATION_DISPATCH_TARGET)) &&
+    !(
+      (selectors.jobs === DGX_STATION_DISPATCH_TARGET && !selectors.targets) ||
+      (selectors.targets === DGX_STATION_DISPATCH_TARGET && !selectors.jobs)
+    )
+  ) {
+    throw new Error(`${DGX_STATION_DISPATCH_TARGET} must be selected by itself`);
+  }
 
   if (jobs.includes(STAGING_BREV_IDENTITY_JOB_ID) && (jobs.length !== 1 || targets.length !== 0)) {
     throw new Error(`${STAGING_BREV_IDENTITY_JOB_ID} must be selected by itself`);

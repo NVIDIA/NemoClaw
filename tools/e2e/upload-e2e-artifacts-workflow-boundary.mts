@@ -139,6 +139,13 @@ function isExactOpenShellSdkE2ePackageUpload(jobName: string, step: WorkflowStep
 
 const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
   [
+    "dgx-station-express",
+    {
+      name: "e2e-dgx-station-express",
+      path: "${{ runner.temp }}/e2e-artifacts/live/dgx-station-express/",
+    },
+  ],
+  [
     "external-gateway-health",
     {
       name: "e2e-external-gateway-health",
