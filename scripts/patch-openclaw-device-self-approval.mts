@@ -30,6 +30,13 @@
  * descriptor-backed preflight before one canonical approval can run. Then let
  * the gateway's canonical approveDevicePairing path reload, lock, rotate the
  * token, persist, broadcast, and respond.
+ * Ordinary local CLI agent turns also force operator.admin in 2026.9.1.
+ * Let those turns use OpenClaw's method-specific scope selection, as remote
+ * CLI turns already do. Keep the explicit admin branch for model overrides
+ * and session resets, and leave gateway authorization and approval unchanged.
+ * After explicit admin approval of this CLI's own device, confirm that grant
+ * through the same gateway before exiting. This refreshes its rotated token with
+ * admin connection scopes before an ordinary turn can cache narrower scopes.
  * The ordinary patch tests and pinned real-dist proof cover this paired
  * pre-convergence transition separately from a cold clone, which has no paired
  * record and must not select stored device authentication.
@@ -2488,6 +2495,164 @@ const SQLITE_PERSISTENCE_SPEC: FileSpec = {
   },
 };
 
+const AGENT_SCOPE_MARKER = "nemoclaw: use method scopes for ordinary CLI agent turns";
+const AGENT_IDENTITY_TARGET = [
+  "\tconst gatewayIdentity = Boolean(modelOverride) || isSessionResetCommand(body) ? {",
+  "\t\tclientName: GATEWAY_CLIENT_NAMES.GATEWAY_CLIENT,",
+  "\t\tmode: GATEWAY_CLIENT_MODES.BACKEND,",
+  "\t\tscopes: [ADMIN_SCOPE]",
+  "\t} : {",
+  "\t\tclientName: GATEWAY_CLIENT_NAMES.CLI,",
+  "\t\tmode: GATEWAY_CLIENT_MODES.CLI,",
+  "\t\t...remoteGateway ? {} : { scopes: [ADMIN_SCOPE] }",
+  "\t};",
+].join("\n");
+const AGENT_IDENTITY_REPLACEMENT = AGENT_IDENTITY_TARGET.replace(
+  "\t\t...remoteGateway ? {} : { scopes: [ADMIN_SCOPE] }",
+  `\t\t// ${AGENT_SCOPE_MARKER}`,
+);
+const AGENT_SCOPE_SPEC: FileSpec = {
+  id: "agent-cli-method-scopes",
+  label: "ordinary CLI agent method scopes",
+  marker: AGENT_SCOPE_MARKER,
+  selector(source) {
+    return source.includes(
+      "async function agentViaGatewayCommand(opts, runtime, signalBridge, runContext) {",
+    );
+  },
+  patch(source, file) {
+    if (source.includes(AGENT_SCOPE_MARKER)) {
+      return countOccurrences(source, AGENT_IDENTITY_REPLACEMENT) === 1 &&
+        countOccurrences(source, AGENT_SCOPE_MARKER) === 1 &&
+        !source.includes(AGENT_IDENTITY_TARGET)
+        ? { source, status: "already-applied" }
+        : {
+            source,
+            status: "no-match",
+            error: `ordinary CLI agent scope patch in ${file}: structurally changed patch`,
+          };
+    }
+    const result = replaceExactlyOnce(
+      source,
+      AGENT_IDENTITY_TARGET,
+      AGENT_IDENTITY_REPLACEMENT,
+      "ordinary CLI agent scope selection",
+      file,
+    );
+    return result.error
+      ? { source, status: "no-match", error: result.error }
+      : { source: result.source, status: "would-apply" };
+  },
+};
+
+const ADMIN_CONFIRM_MARKER = "nemoclaw: confirm explicitly approved admin token before exit";
+const ADMIN_CONFIRM_TARGET = "\tconst exitAfterDevicesApproveOutput = () => {";
+const ADMIN_CONFIRM_PREVIOUS_REPLACEMENT = [
+  "\tif (Array.isArray(result?.device?.scopes) && result.device.scopes.includes(ADMIN_SCOPE)) {",
+  '\t\tawait callGatewayCli("device.pair.list", opts, {}, { scopes: [ADMIN_SCOPE] });',
+  `\t} // ${ADMIN_CONFIRM_MARKER}`,
+  ADMIN_CONFIRM_TARGET,
+].join("\n");
+const ADMIN_CONFIRM_SILENT_IDENTITY_REPLACEMENT = [
+  "\tif (Array.isArray(result?.device?.scopes) && result.device.scopes.includes(ADMIN_SCOPE)) {",
+  "\t\tlet nemoclawApprovingIdentity;",
+  "\t\ttry { nemoclawApprovingIdentity = loadDeviceIdentityIfPresent(); } catch {}",
+  "\t\tif (nemoclawApprovingIdentity && result.device.deviceId === nemoclawApprovingIdentity.deviceId) {",
+  '\t\t\tawait callGatewayCli("device.pair.list", opts, {}, { scopes: [ADMIN_SCOPE] });',
+  "\t\t}",
+  `\t} // ${ADMIN_CONFIRM_MARKER}`,
+  ADMIN_CONFIRM_TARGET,
+].join("\n");
+const ADMIN_CONFIRM_READONLY_REPLACEMENT = ADMIN_CONFIRM_SILENT_IDENTITY_REPLACEMENT.replace(
+  "catch {}",
+  'catch { throw new Error("Admin approval completed, but its token handoff could not read the local device identity. Repair local OpenClaw state, then retry the intended admin command."); }',
+);
+const ADMIN_CONFIRM_REPLACEMENT = ADMIN_CONFIRM_READONLY_REPLACEMENT.replace(
+  'await callGatewayCli("device.pair.list", opts, {}, { scopes: [ADMIN_SCOPE] });',
+  'await callGatewayFromCliWithTransport("device.pair.list", opts, {}, { label: "Devices device.pair.list", defaultTimeoutMs: DEFAULT_DEVICES_TIMEOUT_MS, scopes: [ADMIN_SCOPE] });',
+);
+const ADMIN_CONFIRM_FUNCTION = "async function runDevicesApproveCommand(requestId, opts) {";
+const ADMIN_CONFIRM_SPEC: FileSpec = {
+  id: "explicit-admin-token-confirmation",
+  label: "explicit admin approval token handoff",
+  marker: ADMIN_CONFIRM_MARKER,
+  selector(source) {
+    return source.includes(ADMIN_CONFIRM_FUNCTION);
+  },
+  patch(source, file) {
+    const gatewayCall = listJsFiles(distDir)
+      .map((candidate) => fs.readFileSync(candidate, "utf8"))
+      .find((candidate) =>
+        candidate.includes("function resolveDeviceIdentityForGatewayCall(sharedStateMode) {"),
+      );
+    const identityImport = gatewayCall?.match(
+      /^import \{ ([^}\n]*\bloadDeviceIdentityIfPresent\b[^}\n]*) \} from "(\.\/[^"\n]+)";/m,
+    );
+    const binding = identityImport?.[1]
+      ?.split(", ")
+      .find((entry) => /(?:^| as )loadDeviceIdentityIfPresent$/.test(entry));
+    if (!binding || !identityImport)
+      return {
+        source,
+        status: "no-match",
+        error: `explicit admin token handoff in ${file}: canonical identity import is unavailable`,
+      };
+    const importedFunction = `import { ${binding} } from "${identityImport[2]}";\n${ADMIN_CONFIRM_FUNCTION}`;
+    const previous = countOccurrences(source, ADMIN_CONFIRM_PREVIOUS_REPLACEMENT) === 1;
+    const previousIdentity = [
+      ADMIN_CONFIRM_SILENT_IDENTITY_REPLACEMENT,
+      ADMIN_CONFIRM_READONLY_REPLACEMENT,
+    ].find((replacement) => countOccurrences(source, replacement) === 1);
+    if (source.includes(ADMIN_CONFIRM_MARKER)) {
+      if (
+        countOccurrences(source, ADMIN_CONFIRM_MARKER) === 1 &&
+        countOccurrences(source, ADMIN_CONFIRM_REPLACEMENT) === 1 &&
+        countOccurrences(source, importedFunction) === 1
+      )
+        return { source, status: "already-applied" };
+      if (
+        countOccurrences(source, ADMIN_CONFIRM_MARKER) === 1 &&
+        previousIdentity &&
+        countOccurrences(source, importedFunction) === 1
+      )
+        return {
+          source: source.replace(previousIdentity, ADMIN_CONFIRM_REPLACEMENT),
+          status: "would-apply",
+        };
+      if (!previous || countOccurrences(source, ADMIN_CONFIRM_MARKER) !== 1)
+        return {
+          source,
+          status: "no-match",
+          error: `explicit admin token handoff in ${file}: structurally changed patch`,
+        };
+    }
+    if (source.includes(importedFunction))
+      return {
+        source,
+        status: "no-match",
+        error: `explicit admin token handoff in ${file}: partial identity import`,
+      };
+    const imported = replaceExactlyOnce(
+      source,
+      ADMIN_CONFIRM_FUNCTION,
+      importedFunction,
+      "explicit admin token identity reader",
+      file,
+    );
+    if (imported.error) return { source, status: "no-match", error: imported.error };
+    const result = replaceExactlyOnce(
+      imported.source,
+      previous ? ADMIN_CONFIRM_PREVIOUS_REPLACEMENT : ADMIN_CONFIRM_TARGET,
+      ADMIN_CONFIRM_REPLACEMENT,
+      "explicit admin token handoff",
+      file,
+    );
+    return result.error
+      ? { source, status: "no-match", error: result.error }
+      : { source: result.source, status: "would-apply" };
+  },
+};
+
 const hasSqlitePairingPersistence = listJsFiles(distDir).some((file) => {
   const source = fs.readFileSync(file, "utf8");
   return source.includes(
@@ -2496,7 +2661,9 @@ const hasSqlitePairingPersistence = listJsFiles(distDir).some((file) => {
 });
 const FILE_SPECS: FileSpec[] = [
   ...BASE_FILE_SPECS,
-  ...(hasSqlitePairingPersistence ? [SQLITE_PERSISTENCE_SPEC] : []),
+  ...(hasSqlitePairingPersistence
+    ? [SQLITE_PERSISTENCE_SPEC, AGENT_SCOPE_SPEC, ADMIN_CONFIRM_SPEC]
+    : []),
 ];
 
 function resolveSpecFile(spec: FileSpec, dryRun: boolean): ResolvedSpecFile {
