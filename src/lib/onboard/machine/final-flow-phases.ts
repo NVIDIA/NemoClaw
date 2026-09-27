@@ -40,6 +40,7 @@ export interface FinalOnboardFlowPhaseOptions<
   VerificationResult = unknown,
 > {
   branchState: "agent_setup" | "openclaw";
+  managedOpenclawStartup?: boolean;
   preserveRebuildLivePolicy?: boolean;
   agentSetupDeps: AgentSetupStateOptions<Context["agent"]>["deps"];
   policiesDeps: PoliciesStateOptions<Context["agent"], WebSearchConfig>["deps"];
@@ -87,6 +88,7 @@ export function createFinalOnboardFlowPhases<
       session: context.session,
       hermesAuthMethod: context.hermesAuthMethod,
       hermesToolGateways: context.hermesToolGateways,
+      managedOpenclawStartup: options.managedOpenclawStartup === true,
       deps: options.agentSetupDeps,
     });
     return {
@@ -150,6 +152,7 @@ export function createFinalOnboardFlowPhases<
       portableProfileSelected: context.session?.checkpoint?.profile.value === "portable",
       externalComponent: context.externalComponent,
       providerless: isProviderlessComponentOnboarding(context),
+      deferRuntimeVerification: options.preserveRebuildLivePolicy === true,
       deps: finalizationDeps,
     });
     if (
@@ -189,6 +192,7 @@ export function createFinalOnboardFlowPhases<
           : null,
       portableProfileSelected: context.session?.checkpoint?.profile.value === "portable",
       externalComponent: null,
+      deferRuntimeVerification: options.preserveRebuildLivePolicy === true,
       deps: finalizationDeps,
     });
     return { result: postVerifyResult.stateResult };

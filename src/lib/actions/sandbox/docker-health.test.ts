@@ -1,10 +1,26 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
-import * as registry from "../../state/registry";
 import type { SandboxEntry } from "../../state/registry";
 import { getSandboxDockerHealth, getSandboxDockerRuntime } from "./docker-health";
+
+function writeRegistry(
+  home: string,
+  relativeDirectory: string,
+  sandboxes: Record<string, unknown>,
+): void {
+  const directory = path.join(home, ".nemoclaw", relativeDirectory);
+  fs.mkdirSync(directory, { recursive: true });
+  fs.writeFileSync(
+    path.join(directory, "sandboxes.json"),
+    JSON.stringify({ defaultSandbox: null, defaultSelectionRevision: 1, sandboxes }),
+  );
+}
 
 function fixture({
   driver = "docker",
@@ -62,28 +78,29 @@ function fixture({
 
 describe("getSandboxDockerHealth", () => {
   it("excludes created pending registrations from container ownership (#9733)", () => {
-    const listSpy = vi.spyOn(registry, "listSandboxes").mockReturnValue({
-      sandboxes: [
-        { name: "my", pendingRouteReservation: undefined },
-        {
-          name: "my-assistant",
-          pendingRouteReservation: true,
-          createdAt: "2026-08-20T00:00:00.000Z",
-        },
-      ],
-      defaultSandbox: null,
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-health-pending-"));
+    writeRegistry(home, "", {
+      my: { name: "my" },
+      "my-assistant": {
+        name: "my-assistant",
+        pendingRouteReservation: true,
+        createdAt: "2026-08-20T00:00:00.000Z",
+      },
     });
+    vi.stubEnv("HOME", home);
     const { listSandboxNames: _listSandboxNames, ...deps } = fixture({
       psNames: "openshell-my-assistant-12ab",
       healthRaw: "healthy",
     });
-    const result = getSandboxDockerHealth("my", deps);
-    listSpy.mockRestore();
-
-    expect(result).toEqual({
-      state: "healthy",
-      containerName: "openshell-my-assistant-12ab",
-    });
+    try {
+      expect(getSandboxDockerHealth("my", deps)).toEqual({
+        state: "healthy",
+        containerName: "openshell-my-assistant-12ab",
+      });
+    } finally {
+      vi.unstubAllEnvs();
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it("returns the docker container health when the sandbox runs on the docker driver", () => {
@@ -197,6 +214,39 @@ describe("getSandboxDockerHealth", () => {
 });
 
 describe("getSandboxDockerRuntime (#4495)", () => {
+  it("resolves an owned container from a sibling gateway registry by default", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-health-cross-root-"));
+    writeRegistry(home, path.join("gateways", "8081"), {
+      "my-assistant": {
+        name: "my-assistant",
+        gatewayPort: 8081,
+        openshellDriver: "docker",
+      },
+    });
+    vi.stubEnv("HOME", home);
+    const {
+      getSandbox: _getSandbox,
+      listSandboxNames: _listSandboxNames,
+      ...dockerObservations
+    } = fixture({
+      psNames: "openshell-my-assistant-live",
+      psAllNames: "openshell-my-assistant-live",
+      healthRaw: "healthy",
+    });
+    try {
+      expect(getSandboxDockerRuntime("my-assistant", dockerObservations)).toEqual({
+        health: "healthy",
+        paused: false,
+        running: true,
+        containerName: "openshell-my-assistant-live",
+        containerAbsenceConfirmed: false,
+      });
+    } finally {
+      vi.unstubAllEnvs();
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("ignores matching container names without OpenShell ownership labels", () => {
     const deps = fixture({
       psNames: "openshell-my-assistant-live\n",
@@ -208,6 +258,7 @@ describe("getSandboxDockerRuntime (#4495)", () => {
       paused: false,
       running: false,
       containerName: null,
+      containerAbsenceConfirmed: true,
     });
   });
 
@@ -222,6 +273,7 @@ describe("getSandboxDockerRuntime (#4495)", () => {
       paused: true,
       running: true,
       containerName: "openshell-my-assistant-live",
+      containerAbsenceConfirmed: false,
     });
   });
 
@@ -236,6 +288,7 @@ describe("getSandboxDockerRuntime (#4495)", () => {
       paused: false,
       running: false,
       containerName: "openshell-my-assistant-12ab",
+      containerAbsenceConfirmed: false,
     });
   });
 
@@ -246,6 +299,7 @@ describe("getSandboxDockerRuntime (#4495)", () => {
       paused: true,
       running: true,
       containerName: "openshell-my-assistant-12ab",
+      containerAbsenceConfirmed: false,
     });
   });
 
@@ -291,17 +345,71 @@ describe("getSandboxDockerRuntime (#4495)", () => {
       paused: false,
       running: false,
       containerName: null,
+      containerAbsenceConfirmed: false,
     });
     expect(findLabeledSandboxContainers).not.toHaveBeenCalled();
   });
 
   it("returns health 'none', paused false when no container is found", () => {
-    const deps = fixture({ psNames: "openshell-cluster-nemoclaw\n" });
+    const deps = fixture({
+      psNames: "openshell-cluster-nemoclaw\n",
+      labeledContainers: [],
+    });
     expect(getSandboxDockerRuntime("my-assistant", deps)).toEqual({
       health: "none",
       paused: false,
       running: false,
       containerName: null,
+      containerAbsenceConfirmed: true,
+    });
+  });
+
+  it("does not confirm absence when Docker driver metadata is missing", () => {
+    const findLabeledSandboxContainers = vi.fn(() => []);
+    const deps = {
+      ...fixture({ driver: null }),
+      findLabeledSandboxContainers,
+    };
+
+    expect(getSandboxDockerRuntime("my-assistant", deps)).toEqual({
+      health: "none",
+      paused: false,
+      running: false,
+      containerName: null,
+      containerAbsenceConfirmed: false,
+    });
+    expect(findLabeledSandboxContainers).not.toHaveBeenCalled();
+  });
+
+  it("does not confirm absence when container observation fails", () => {
+    const deps = {
+      ...fixture(),
+      findLabeledSandboxContainers: () => {
+        throw new Error("Docker observation failed");
+      },
+    };
+
+    expect(getSandboxDockerRuntime("my-assistant", deps)).toEqual({
+      health: "none",
+      paused: false,
+      running: false,
+      containerName: null,
+      containerAbsenceConfirmed: false,
+    });
+  });
+
+  it("does not confirm absence when container ownership is ambiguous", () => {
+    const deps = fixture({
+      psNames: "openshell-my-assistant-a\nopenshell-my-assistant-b",
+      psAllNames: "openshell-my-assistant-a\nopenshell-my-assistant-b",
+    });
+
+    expect(getSandboxDockerRuntime("my-assistant", deps)).toEqual({
+      health: "none",
+      paused: false,
+      running: false,
+      containerName: null,
+      containerAbsenceConfirmed: false,
     });
   });
 

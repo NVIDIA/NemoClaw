@@ -275,7 +275,7 @@ async function removeExactVllmContainer(
 }
 
 test(
-  "DGX Spark Express option 2 releases and reacquires managed vLLM on a recorded custom port",
+  "DGX Spark Express option 2 releases and reacquires managed vLLM on a custom port",
   {
     timeout: TEST_TIMEOUT_MS,
     meta: {
@@ -283,7 +283,7 @@ test(
         "qualify the physical DGX Spark host",
         "select Spark Express option 2 and onboard on a custom port",
         "verify catalog-owned vLLM runtime configuration",
-        "verify status, doctor, connect, and inference use the recorded port",
+        "verify status, doctor, connect, and inference on the custom port",
         "destroy the final consumer and verify managed vLLM retirement",
         "onboard a replacement after the GPU resource is released",
         "prove replacement inference and unrelated egress denial",
@@ -428,7 +428,7 @@ test(
       HostPort: String(CUSTOM_VLLM_PORT),
     });
 
-    progress.phase("verify status, doctor, connect, and inference use the recorded port");
+    progress.phase("verify status, doctor, connect, and inference on the custom port");
     const status = await runCandidateNemoClaw(
       host,
       [SANDBOX_NAME, "status", "--json"],
@@ -437,7 +437,12 @@ test(
     expect(JSON.parse(status.stdout)).toMatchObject({
       inferenceHealth: {
         ok: true,
-        endpoint: `http://127.0.0.1:${String(CUSTOM_VLLM_PORT)}/v1/models`,
+        subprobes: expect.arrayContaining([
+          expect.objectContaining({
+            ok: true,
+            endpoint: `http://127.0.0.1:${String(CUSTOM_VLLM_PORT)}/v1/models`,
+          }),
+        ]),
       },
     });
     const doctor = await runCandidateNemoClaw(
@@ -449,7 +454,7 @@ test(
       checks: expect.arrayContaining([
         expect.objectContaining({
           group: "Inference",
-          label: "Provider health",
+          label: "Provider health (vllm backend)",
           status: "ok",
           detail: `http://127.0.0.1:${String(CUSTOM_VLLM_PORT)}/v1/models reachable`,
         }),

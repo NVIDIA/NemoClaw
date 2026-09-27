@@ -2,9 +2,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isDeepStrictEqual } from "node:util";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import { dockerSpawnSync } from "../../../adapters/docker/exec";
+import type { AgentDefinition } from "../../../agent/definition-types";
+import {
+  copyCapturedOpenClawState,
+  type CapturedOpenClawState,
+} from "../../../state/state-directory-restore";
+import { runTarListing } from "../../../state/tar-listing";
 import type { RuntimeProviderBundle } from "../../../onboard/runtime-provider/contract";
+import { managedStartupStateRootOwnership } from "../../../onboard/managed-startup/state-roots";
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "../../../onboard/runtime-provider/current";
 import {
   confirmHostLocalInferenceAuthority,
@@ -20,7 +30,10 @@ import {
 } from "../../../sandbox/privileged-exec";
 import { sanitizeReadinessText } from "../../../readiness/sanitize";
 import { readManagedSnapshotProfileAuthority } from "./managed-profile";
-import { captureSandboxRuntimeSnapshot } from "./provider-lifecycle";
+import {
+  captureSandboxRuntimeSnapshot,
+  prepareSandboxStoppedStateCapture,
+} from "./provider-lifecycle";
 
 type SnapshotBackupAuthority = Pick<
   sandboxState.BackupOptions,
@@ -553,10 +566,11 @@ function backupStateOnly(
   sandboxName: string,
   options: Pick<
     sandboxState.BackupOptions,
-    "name" | "captureStateFile" | "captureStateDirectories"
+    "name" | "captureStateFile" | "captureStateDirectories" | "capturedOpenClawState"
   >,
 ): sandboxState.BackupResult {
   return options.name === undefined &&
+    options.capturedOpenClawState === undefined &&
     options.captureStateFile === undefined &&
     options.captureStateDirectories === undefined
     ? dependencies.backup(sandboxName)
@@ -692,7 +706,7 @@ function captureSnapshotAuthority(
  */
 export function backupSandboxStateWithManagedAuthority(
   sandboxName: string,
-  options: Pick<sandboxState.BackupOptions, "name"> = {},
+  options: Pick<sandboxState.BackupOptions, "name" | "capturedOpenClawState"> = {},
   overrides: Pick<SnapshotBackupAuthorityDependencies, "getSandbox"> &
     Partial<Omit<SnapshotBackupAuthorityDependencies, "getSandbox">>,
 ): sandboxState.BackupResult {
@@ -728,4 +742,114 @@ export function backupSandboxStateWithManagedAuthority(
   return authority
     ? dependencies.backup(sandboxName, { ...backupOptions, ...authority })
     : backupStateOnly(dependencies, sandboxName, backupOptions);
+}
+
+export interface PreparedStoppedOpenClawState extends CapturedOpenClawState {
+  readonly cleanupDirectory: string;
+  dispose(): void;
+}
+
+/** Prepare a private, declared-state copy before inspecting MCP or deleting an Error source. */
+export async function prepareStoppedOpenClawState(
+  sandboxName: string,
+  getSandbox: SnapshotBackupAuthorityDependencies["getSandbox"],
+  agent: AgentDefinition,
+): Promise<PreparedStoppedOpenClawState | null> {
+  const dependencies = { ...defaultDependencies, getSandbox };
+  const entry = getSandbox(sandboxName);
+  if (!entry || (entry.agent ?? "openclaw") !== "openclaw") return null;
+  const authority = captureSnapshotAuthority(entry, dependencies);
+  const runtime = authority?.runtimeSnapshot;
+  if (!runtime || runtime.lifecycleState !== "stopped" || !authority.workload) return null;
+  const capture = prepareSandboxStoppedStateCapture(
+    dependencies.requireProvider(entry),
+    entry,
+    runtime,
+    {
+      directories: agent.backupStateDirs,
+      prefixes: agent.backupStateDirPrefixes,
+      files: agent.stateFiles.map((file) => (typeof file === "string" ? file : file.path)),
+      managedStateRoots:
+        authority.workload.kind === "managed-image"
+          ? managedStartupStateRootOwnership({ agent: "openclaw", sandboxName })
+          : [],
+    },
+  );
+  if (!capture) return null;
+  const assertCurrent = (): void => {
+    const current = getSandbox(sandboxName);
+    if (
+      !current ||
+      current.gatewayName !== entry.gatewayName ||
+      current.lifecycleLiveIdentityFingerprint !== entry.lifecycleLiveIdentityFingerprint
+    ) {
+      throw new Error("Stopped source registration changed during recovery.");
+    }
+    authority.validateBeforePublish?.();
+    capture.assertCurrent();
+  };
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-stopped-state-"));
+  fs.chmodSync(temporary, 0o700);
+  const archivePath = path.join(temporary, "source.tar");
+  const raw = path.join(temporary, "raw");
+  const directory = path.join(temporary, "state");
+  const cleanupOnExit = (): void => {
+    try {
+      fs.rmSync(temporary, { recursive: true, force: true });
+    } catch {
+      /* private files remain owner-only */
+    }
+  };
+  const dispose = (): void => {
+    fs.rmSync(temporary, { recursive: true, force: true });
+    process.removeListener("exit", cleanupOnExit);
+  };
+  process.once("exit", cleanupOnExit);
+  try {
+    const descriptor = fs.openSync(archivePath, "wx", 0o600);
+    try {
+      await capture.capture(descriptor);
+    } finally {
+      fs.closeSync(descriptor);
+    }
+    const archive = { filePath: archivePath };
+    let unsupported = false;
+    const listingFailure = runTarListing(
+      archive,
+      ["-tvf", "-"],
+      "stopped state inventory",
+      (line) => {
+        if (!["-", "d", "l"].includes(line[0] ?? "")) unsupported = true;
+      },
+    );
+    if (listingFailure || unsupported)
+      throw new Error("Stopped state contains an unsupported archive entry.");
+    fs.mkdirSync(raw, { mode: 0o700 });
+    const extracted = sandboxState.safeTarExtract(archive, raw);
+    if (!extracted.success) throw new Error("Stopped state archive failed snapshot validation.");
+    const sourceDirectory = raw;
+    const sourceRoot = fs.lstatSync(sourceDirectory);
+    if (!sourceRoot.isDirectory() || sourceRoot.isSymbolicLink())
+      throw new Error("Stopped OpenClaw state root is not a directory.");
+    fs.chmodSync(sourceDirectory, 0o700);
+    fs.mkdirSync(directory, { mode: 0o700 });
+    copyCapturedOpenClawState(
+      { sandboxName, directory: sourceDirectory, assertCurrent },
+      directory,
+      agent.backupStateDirs,
+      agent.backupStateDirPrefixes,
+      agent.stateFiles.map((file) =>
+        typeof file === "string"
+          ? { path: file, strategy: "copy" }
+          : { path: file.path, strategy: file.strategy ?? "copy" },
+      ),
+    );
+    fs.rmSync(raw, { recursive: true, force: true });
+    fs.unlinkSync(archivePath);
+    assertCurrent();
+    return { sandboxName, directory, cleanupDirectory: temporary, assertCurrent, dispose };
+  } catch (error) {
+    dispose();
+    throw error;
+  }
 }

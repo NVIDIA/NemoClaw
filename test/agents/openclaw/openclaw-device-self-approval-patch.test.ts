@@ -79,6 +79,10 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
 
       const apply = runPatch(dist);
       expect(apply.status, `${apply.stdout}${apply.stderr}`).toBe(0);
+      const patchedCli = fs.readFileSync(path.join(dist, "devices-cli.runtime-fixture.js"), "utf8");
+      expect(patchedCli).toContain(
+        "nemoclaw: exit after devices approve so leftover gateway handles cannot hang",
+      );
       const appliedAudit = runPatch(dist, true);
       expect(appliedAudit.status, `${appliedAudit.stdout}${appliedAudit.stderr}`).toBe(0);
       expect(appliedAudit.stdout.match(/already-applied/gu)).toHaveLength(6);
@@ -402,7 +406,6 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
   it.each([
     { client: { id: "control-ui", mode: "ui" }, role: "operator", scopes: ["operator.write"] },
     { client: { id: "cli", mode: "cli" }, role: "node", scopes: ["operator.write"] },
-    { client: { id: "cli", mode: "cli" }, role: "operator", scopes: ["operator.admin"] },
     {
       client: { id: "cli", mode: "cli" },
       role: "operator",
@@ -428,6 +431,12 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
         await expect(
           connect(
             { client: { id: "cli", mode: "cli" }, role: "operator", scopes: ["operator.write"] },
+            scopeMismatch,
+          ),
+        ).resolves.toMatchObject({ authOk: true, authMethod: "device-token" });
+        await expect(
+          connect(
+            { client: { id: "cli", mode: "cli" }, role: "operator", scopes: ["operator.admin"] },
             scopeMismatch,
           ),
         ).resolves.toMatchObject({ authOk: true, authMethod: "device-token" });

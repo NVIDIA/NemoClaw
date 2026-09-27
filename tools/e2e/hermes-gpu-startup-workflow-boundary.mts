@@ -212,6 +212,22 @@ export function validateHermesGpuStartupWorkflow(
       step.uses === CHECKOUT &&
       asRecord(step.with).ref === "${{ inputs.checkout_sha || github.sha }}",
   );
+  if (
+    prI !== 1 ||
+    !isDeepStrictEqual(steps[0], {
+      name: "Install native Podman host dependencies",
+      if: "${{ matrix.runtime_provider == 'podman' }}",
+      uses: E2E_ACTION_PROVENANCE.hostDependencies.reference,
+      with: {
+        packages:
+          "conmon fuse-overlayfs golang-github-containers-common iptables nftables slirp4netns uidmap",
+      },
+    })
+  ) {
+    errors.push(
+      `${JOB_NAME} must install reviewed Podman host dependencies before candidate checkout`,
+    );
+  }
   const ci = steps.findIndex((step) => step.name === "Checkout trusted Hermes GPU runtime fixture");
   const checkout = steps[ci];
   const ii = steps.findIndex((step) => step.name === "Install trusted Hermes GPU runtime fixture");

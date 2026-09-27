@@ -280,21 +280,17 @@ describe("gateway observations and recovery", () => {
     expect(process.env.OPENSHELL_GATEWAY).toBe("nemoclaw-8090");
   });
 
-  it("starts a missing gateway after selection confirms its registration is absent (#11326)", async () => {
+  it("starts a registry-confirmed missing gateway before selection (#11898)", async () => {
     observe
       .mockResolvedValueOnce(observation("missing_named"))
-      .mockResolvedValueOnce(observation("missing_named"))
       .mockResolvedValueOnce(observation("healthy_named"));
-    run
-      .mockResolvedValueOnce({ ok: true, state: "absent" } as never)
-      .mockResolvedValueOnce({ ok: true, state: "completed" } as never);
 
     await expect(
       gatewayRuntime.recoverNamedGatewayRuntime({ gatewayName: "nemoclaw-8090" }),
     ).resolves.toMatchObject({ recovered: true, attempted: true, via: "start" });
     expect(start).toHaveBeenCalledWith({ gatewayName: "nemoclaw-8090", gatewayPort: 8090 });
-    expect(run).toHaveBeenCalledTimes(2);
-    expect(start.mock.invocationCallOrder[0]).toBeLessThan(run.mock.invocationCallOrder[1]);
+    expect(run).toHaveBeenCalledOnce();
+    expect(start.mock.invocationCallOrder[0]).toBeLessThan(run.mock.invocationCallOrder[0]);
     expect(process.env.OPENSHELL_GATEWAY).toBe("nemoclaw-8090");
   });
 

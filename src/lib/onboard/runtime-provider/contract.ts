@@ -2,12 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
-import type {
-  ManagedBootstrapRuntimeCreateLifecycle,
-  ManagedBootstrapRuntimeCreateLifecycleInput,
-  ManagedBootstrapRuntimeOnboardRouting,
-  ManagedBootstrapRuntimeOnboardRoutingInput,
-} from "../managed-bootstrap/runtime-create";
 import type { NativeArtifactWorkloadReceiptV1 } from "../workload/native-artifact";
 import type { PortableAgentRuntimeProviderSupport } from "../workload/portable-agent-runtime";
 import type { ManagedImageSelectionPolicy } from "../workload/source";
@@ -37,8 +31,6 @@ export type RuntimeProviderLifecycleAction = "start" | "stop";
 export type RuntimeProviderChannelStopTransport = "docker-kubectl-first" | "openshell";
 export type RuntimeProviderMutationOperation =
   | "registration"
-  | "start"
-  | "stop"
   | "inference-set"
   | "rebuild"
   | "clone"
@@ -51,6 +43,11 @@ export type RuntimeProviderContainerEngineOperation =
   | "host-local-inference"
   | "sandbox-lifecycle"
   | "workload-cleanup";
+
+export function normalizeRuntimeProviderIdentity(driverName: string | null | undefined): string {
+  const normalized = driverName?.trim().toLowerCase();
+  return !normalized || normalized === "vm" ? "docker" : normalized;
+}
 
 export interface RuntimeProviderIdentity {
   readonly contractVersion: typeof RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION;
@@ -116,6 +113,7 @@ export interface RuntimeProviderOwnedGatewayReadinessInput {
   readonly gatewayName: string;
   readonly gatewayPort: number;
   readonly expectedEndpoint: string;
+  readonly runtimeSocketPath: string | null;
   readonly managedGatewayEndpoints: readonly (string | null)[];
   readonly portAvailable: boolean;
   readonly installedOpenShellVersion: string | null;
@@ -170,7 +168,10 @@ export interface RuntimeProviderGatewayHostRuntime {
     run(
       args: readonly string[],
       timeoutMs: number,
-      options?: { maxOutputBytes: number; environment?: Record<string, string> },
+      options?: {
+        maxOutputBytes: number;
+        environment?: Record<string, string>;
+      },
     ): RuntimeProviderGatewayCommandResult;
     ensureProbeImageCached(image: string): RuntimeProviderGatewayImageCacheResult;
   };
@@ -188,7 +189,6 @@ export type RuntimeProviderReadOnlyHostMountCapability =
 
 export interface RuntimeProviderNormalizedCapabilities {
   readonly hostLocalInference: boolean;
-  readonly directLifecycle: boolean;
   readonly legacyGatewayContainerInspection: boolean;
   readonly workloadImageCleanup: boolean;
   readonly readOnlyHostMounts: RuntimeProviderReadOnlyHostMountCapability;
@@ -355,6 +355,8 @@ export interface RuntimeProviderLifecycleInput {
   /** Required by portable lifecycle operations to recheck authority after awaiting observations. */
   readonly readRegistry?: (sandboxName: string) => SandboxEntry | null;
   readonly environment: NodeJS.ProcessEnv;
+  /** Canonical gateway name resolved by the action that owns the persisted row. */
+  readonly gatewayName?: string;
   readonly log: (message: string) => void;
   readonly sandbox: SandboxEntry;
   readonly sandboxName: string;
@@ -446,10 +448,6 @@ export interface RuntimeProviderPrivilegedSandboxControl {
   buildLegacyDockerArgv?(
     input: Omit<RuntimeProviderPrivilegedSandboxCommandInput, "timeoutMs">,
   ): string[];
-}
-
-export interface RuntimeProviderLifecycleStopHooks {
-  readonly beforeStop: () => void;
 }
 
 export type RuntimeProviderProviderDetachResult = {
@@ -561,6 +559,23 @@ export interface RuntimeProviderSnapshotRestoreSource {
   readonly runtime: RuntimeProviderRuntimeReceipt;
 }
 
+export interface RuntimeProviderStoppedStateProjection {
+  readonly directories: readonly string[];
+  readonly prefixes: readonly string[];
+  readonly files: readonly string[];
+  readonly managedStateRoots?: readonly {
+    readonly mountTarget: string;
+    readonly resourceIdentity: string;
+    readonly ownershipLabels: Readonly<Record<string, string>>;
+  }[];
+}
+
+export interface RuntimeProviderStoppedStateCapture {
+  /** The caller owns the private destination fd and archive validation. */
+  capture(archiveFd: number): Promise<void>;
+  assertCurrent(): void;
+}
+
 export interface RuntimeProviderSnapshotRestoreReceipt {
   readonly schemaVersion: 1;
   readonly providerId: string;
@@ -631,20 +646,9 @@ export type RuntimeProviderHostLocalInferenceSurface =
 export type RuntimeProviderLifecycleSurface =
   | RuntimeProviderSupportedSurface<{
       readonly channelStopTransport: RuntimeProviderChannelStopTransport;
-      /** Provider-owned timeout for direct container lifecycle mutations. */
+      /** Provider-owned timeout for exact privileged container mutations. */
       readonly containerMutationTimeoutMs?: number;
       readonly privilegedSandboxControl: RuntimeProviderPrivilegedSandboxControl;
-      start(
-        input: RuntimeProviderLifecycleInput,
-      ): RuntimeProviderLifecycleResult | Promise<RuntimeProviderLifecycleResult>;
-      verifyStarted(
-        input: RuntimeProviderLifecycleInput,
-        verifyGateway: (sandboxName: string) => Promise<void>,
-      ): Promise<void>;
-      stop(
-        input: RuntimeProviderLifecycleInput,
-        hooks: RuntimeProviderLifecycleStopHooks,
-      ): RuntimeProviderLifecycleStopOutcome | Promise<RuntimeProviderLifecycleStopOutcome>;
     }>
   | RuntimeProviderUnsupportedSurface;
 
@@ -653,19 +657,6 @@ export type RuntimeProviderMutationAuthoritySurface =
       readonly operations: readonly RuntimeProviderMutationOperation[];
     }>
   | RuntimeProviderUnsupportedSurface;
-
-export type RuntimeProviderManagedImageBootstrapSurface = RuntimeProviderSupportedSurface<{
-  readonly bootstrapKind: "managed-image";
-  createAuthorityStore(input: {
-    readonly stateRoot: string;
-  }): import("../managed-bootstrap/adapter").ManagedBootstrapAuthorityStore;
-  createLifecycle(
-    input: ManagedBootstrapRuntimeCreateLifecycleInput,
-  ): ManagedBootstrapRuntimeCreateLifecycle;
-  createOnboardRouting(
-    input: ManagedBootstrapRuntimeOnboardRoutingInput,
-  ): ManagedBootstrapRuntimeOnboardRouting;
-}>;
 
 export type RuntimeProviderNativeArtifactBootstrapSurface = RuntimeProviderSupportedSurface<{
   readonly bootstrapKind: "native-artifact";
@@ -680,7 +671,6 @@ export type RuntimeProviderNativeArtifactBootstrapSurface = RuntimeProviderSuppo
 }>;
 
 export type RuntimeProviderBootstrapSurface =
-  | RuntimeProviderManagedImageBootstrapSurface
   | RuntimeProviderNativeArtifactBootstrapSurface
   | RuntimeProviderUnsupportedSurface;
 
@@ -705,10 +695,22 @@ export type RuntimeProviderSnapshotSurface =
         sandbox: SandboxEntry,
         preflight: RuntimeProviderSnapshotPreflightReceipt,
       ): RuntimeProviderRuntimeReceipt;
+      /** Optional read-only filesystem capture from an identified stopped runtime. */
+      prepareStoppedStateCapture?(
+        sandbox: SandboxEntry,
+        source: RuntimeProviderSnapshotRestoreSource,
+        projection: RuntimeProviderStoppedStateProjection,
+      ): RuntimeProviderStoppedStateCapture | null;
       /** Compare provider-owned acceleration encodings without widening central authority. */
       canRepresentAcceleration?(
         source: RuntimeProviderRuntimeReceipt["acceleration"],
         target: RuntimeProviderRuntimeReceipt["acceleration"],
+      ): boolean;
+      /** An explicit provider-owned transition for restoring captured filesystem state. */
+      canRestoreLifecycle?(
+        sandbox: SandboxEntry,
+        source: RuntimeProviderSnapshotLifecycleState,
+        target: RuntimeProviderSnapshotLifecycleState,
       ): boolean;
       validateRestore(
         sandbox: SandboxEntry,

@@ -102,7 +102,7 @@ describe("destroySandbox managed vLLM retirement", () => {
 
     expect(harness.retireHostLocalVllmRuntimeSpy).not.toHaveBeenCalled();
     expect(loggedLines(harness)).toContain(
-      "preserved: 1 other registered sandbox(es) use Local vLLM",
+      "preserved: 1 other registered sandbox(es) use provider 'vllm-local'",
     );
   });
 

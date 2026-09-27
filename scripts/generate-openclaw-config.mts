@@ -978,6 +978,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
 
   const pluginEntries: JsonObject = {
     bonjour: { enabled: false },
+    nemoclaw: { enabled: true },
   };
   const managedImageCapabilityUnion = readBooleanBuildFlag(
     env,

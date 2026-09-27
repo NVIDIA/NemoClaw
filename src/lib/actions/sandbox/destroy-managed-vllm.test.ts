@@ -338,7 +338,7 @@ describe("managed vLLM retirement report", () => {
 
   it("reports remaining consumers, the keep option, or distributed ownership as preservation", () => {
     expect(render({ kind: "kept", reason: "consumers", consumers: 2 }).logs).toEqual([
-      "  Managed vLLM container 'nemoclaw-vllm' preserved: 2 other registered sandbox(es) use Local vLLM.",
+      "  Managed vLLM container 'nemoclaw-vllm' preserved: 2 other registered sandbox(es) use provider 'vllm-local'.",
     ]);
     expect(render({ kind: "kept", reason: "option" }).logs).toEqual([
       "  Managed vLLM container 'nemoclaw-vllm' preserved (--keep-vllm).",
@@ -383,6 +383,7 @@ describe("managed vLLM retirement report", () => {
     expect(partial.logs).toEqual([]);
     expect(partial.warnings[0]).toContain(`was removed (${CONTAINER_ID.slice(0, 12)})`);
     expect(partial.warnings[0]).toContain("private state cleanup is incomplete");
-    expect(partial.warnings[0]).toContain("Re-run uninstall");
+    expect(partial.warnings[0]).toContain("rerun the same destroy command");
+    expect(partial.warnings[0]).not.toContain("uninstall");
   });
 });

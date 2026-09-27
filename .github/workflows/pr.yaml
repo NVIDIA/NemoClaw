@@ -106,7 +106,7 @@ jobs:
     needs: [changes, openshell-sdk-package]
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -153,6 +153,18 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         uses: ./.trusted-ci-actions/.github/actions/ci-static-checks
+
+      - name: Set up pinned v1 compatibility toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          toolchain: 1.98.1
+          cache: false
+          rustflags: ""
+
+      - name: Verify exported defaults with the pinned v1 consumer
+        env:
+          NEMOCLAW_RUN_V1_CONFIG_COMPATIBILITY: "1"
+        run: ./node_modules/.bin/vitest run --project cli src/lib/domain/config/verify-export-defaults.test.ts
 
   hugging-face-models:
     needs: changes
@@ -519,7 +531,7 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Audit reviewed production npm graphs
-        uses: NVIDIA/NemoClaw/.github/actions/ci-reviewed-npm-audit@5310ad0a5c25d49f06910525456ea2529506b3ae
+        uses: NVIDIA/NemoClaw/.github/actions/ci-reviewed-npm-audit@8ed889c14ccd7e828a9fbc20606cc7c587e6ca31
         with:
           target-root: ${{ github.workspace }}
           report-dir: artifacts/reviewed-npm-audit

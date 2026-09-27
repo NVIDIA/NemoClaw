@@ -58,8 +58,11 @@ const managedHermesWorkload = {
 describe("destroySandbox flow", () => {
   let exitSpy: MockInstance;
   let originalGatewayEnv: string | undefined;
+  let testHome: string;
 
   beforeEach(() => {
+    testHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-destroy-flow-home-"));
+    vi.stubEnv("HOME", testHome);
     originalGatewayEnv = process.env.OPENSHELL_GATEWAY;
     exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number | string | null) => {
       throw new Error(`process.exit(${code ?? 0})`);
@@ -73,6 +76,7 @@ describe("destroySandbox flow", () => {
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
     resetDestroyModuleCache();
+    fs.rmSync(testHome, { force: true, recursive: true });
   });
 
   it("trusts absence only from a successful, error-free sandbox list", { timeout: 30_000 }, () => {
@@ -807,13 +811,7 @@ describe("destroySandbox flow", () => {
     await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
 
     expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
-    expect(harness.withGatewayRouteMutationLockSpy).toHaveBeenCalledWith(
-      "nemoclaw-19080",
-      expect.any(Function),
-    );
-    expect(harness.removeSandboxSpy.mock.invocationCallOrder[0]).toBeLessThan(
-      harness.withGatewayRouteMutationLockSpy.mock.invocationCallOrder[0],
-    );
+    expect(harness.withGatewayRouteMutationLockSpy).not.toHaveBeenCalled();
     expect(harness.stopModelRouterForDestroyedSandboxSpy).not.toHaveBeenCalled();
   });
 

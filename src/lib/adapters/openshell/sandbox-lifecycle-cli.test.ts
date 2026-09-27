@@ -13,8 +13,200 @@ const request = {
   target: { kind: "named", gatewayName: "nemoclaw-8091" },
 } as const;
 
+const createRequest = {
+  sandboxName: "alpha",
+  target: { kind: "named", gatewayName: "nemoclaw-8091" },
+  source: { reference: "/tmp/context/Dockerfile" },
+  policyPath: "/tmp/policy.yaml",
+  driverConfigJson: '{"docker":{"mounts":[]}}',
+  gpu: { device: "nvidia.com/gpu=all" },
+  resources: { cpu: "2", memory: "4Gi" },
+  providers: ["nvidia"],
+  labels: { "nemoclaw.dev/create-attempt": "abc123" },
+  startupCommand: ["env", "MODE=test", "nemoclaw-start"],
+  environment: { PATH: "/usr/bin", NVIDIA_API_KEY: "must-not-leak" },
+} as const;
+
 describe("OpenShell sandbox lifecycle CLI", () => {
   afterEach(() => vi.unstubAllEnvs());
+
+  it("renders and streams one semantic create request through the named gateway", async () => {
+    const streamCreate = vi.fn().mockResolvedValue({
+      status: 0,
+      output: "Created sandbox: alpha",
+      sawProgress: true,
+    });
+    const result = await createCliOpenShellSandboxLifecycle({
+      capture: vi.fn(),
+      streamCreate,
+      resolveBinary: () => "/qualified/openshell",
+    }).createSandbox(createRequest, { initialPhase: "create" });
+
+    expect(result).toMatchObject({ status: 0, ambiguous: false });
+    expect(streamCreate).toHaveBeenCalledOnce();
+    const [binary, args, environment, options] = streamCreate.mock.calls[0];
+    expect(binary).toBe("/qualified/openshell");
+    expect(args).toEqual([
+      "sandbox",
+      "create",
+      "-g",
+      "nemoclaw-8091",
+      "--from",
+      "/tmp/context/Dockerfile",
+      "--name",
+      "alpha",
+      "--policy",
+      "/tmp/policy.yaml",
+      "--driver-config-json",
+      '{"docker":{"mounts":[]}}',
+      "--gpu",
+      "--gpu-device",
+      "nvidia.com/gpu=all",
+      "--cpu",
+      "2",
+      "--memory",
+      "4Gi",
+      "--label",
+      "nemoclaw.dev/create-attempt=abc123",
+      "--provider",
+      "nvidia",
+      "--",
+      "env",
+      "MODE=test",
+      "nemoclaw-start",
+    ]);
+    expect(args).not.toContain("must-not-leak");
+    expect(environment).toEqual({ PATH: "/usr/bin" });
+    expect(options).toMatchObject({ initialPhase: "create" });
+  });
+
+  it("renders snapshot-owned automatic provider selection semantically", async () => {
+    const streamCreate = vi.fn().mockResolvedValue({ status: 0, output: "created" });
+
+    await createCliOpenShellSandboxLifecycle({ capture: vi.fn(), streamCreate }).createSandbox({
+      ...createRequest,
+      providers: undefined,
+      autoProviders: true,
+    });
+
+    expect(streamCreate.mock.calls[0]![1]).toContain("--auto-providers");
+    expect(streamCreate.mock.calls[0]![1]).not.toContain("--provider");
+  });
+
+  it("does not restore ambient credentials while pinning create runtime selection", async () => {
+    vi.stubEnv("KUBECONFIG", "/host/kubeconfig");
+    vi.stubEnv("SSH_AUTH_SOCK", "/host/ssh.sock");
+    const streamCreate = vi.fn().mockResolvedValue({ status: 0, output: "created" });
+
+    await createCliOpenShellSandboxLifecycle({ capture: vi.fn(), streamCreate }).createSandbox({
+      ...createRequest,
+      runtimeSelection: { gatewayName: "nemoclaw-8091", workspace: "recorded" },
+    });
+
+    const environment = streamCreate.mock.calls[0]![2];
+    expect(environment).toMatchObject({
+      OPENSHELL_GATEWAY: "nemoclaw-8091",
+      OPENSHELL_WORKSPACE: "recorded",
+    });
+    expect(environment).not.toHaveProperty("KUBECONFIG");
+    expect(environment).not.toHaveProperty("SSH_AUTH_SOCK");
+  });
+
+  it("preserves only the explicitly prepared credential-free Docker config", async () => {
+    const streamCreate = vi.fn().mockResolvedValue({ status: 0, output: "created" });
+
+    await createCliOpenShellSandboxLifecycle({ capture: vi.fn(), streamCreate }).createSandbox({
+      ...createRequest,
+      environment: { ...createRequest.environment, DOCKER_CONFIG: "/host/docker-config" },
+      dockerClientConfigDirectory: "/tmp/nemoclaw-credential-free-docker",
+    });
+
+    expect(streamCreate.mock.calls[0]![2]).toMatchObject({
+      DOCKER_CONFIG: "/tmp/nemoclaw-credential-free-docker",
+    });
+    expect(streamCreate.mock.calls[0]![2].DOCKER_CONFIG).not.toBe("/host/docker-config");
+  });
+
+  it("rejects malformed create input and ambient endpoint overrides before spawn", async () => {
+    const streamCreate = vi.fn();
+    const lifecycle = createCliOpenShellSandboxLifecycle({ capture: vi.fn(), streamCreate });
+
+    await expect(
+      lifecycle.createSandbox({ ...createRequest, source: { reference: "bad\nsource" } }),
+    ).resolves.toMatchObject({ status: 1, ambiguous: false });
+    await expect(
+      lifecycle.createSandbox({
+        ...createRequest,
+        environment: { ...createRequest.environment, OPENSHELL_GATEWAY_ENDPOINT: "https://drift" },
+      }),
+    ).resolves.toMatchObject({ status: 1, ambiguous: false });
+    await expect(
+      lifecycle.createSandbox({ ...createRequest, workingDirectory: "/tmp/bad\0directory" }),
+    ).resolves.toMatchObject({ status: 1, ambiguous: false });
+    await expect(
+      lifecycle.createSandbox({ ...createRequest, autoProviders: true }),
+    ).resolves.toMatchObject({ status: 1, ambiguous: false });
+    expect(streamCreate).not.toHaveBeenCalled();
+  });
+
+  it("classifies executable resolution failure as definite before spawn", async () => {
+    const streamCreate = vi.fn();
+    const result = await createCliOpenShellSandboxLifecycle({
+      capture: vi.fn(),
+      streamCreate,
+      resolveBinary: () => {
+        throw new Error("OpenShell executable selection returned an empty command.");
+      },
+    }).createSandbox(createRequest);
+
+    expect(result).toMatchObject({ status: 1, ambiguous: false });
+    expect(streamCreate).not.toHaveBeenCalled();
+  });
+
+  it("classifies a post-spawn ready handoff timeout as ambiguous and redacts its result", async () => {
+    const streamCreate = vi.fn().mockResolvedValue({
+      status: 1,
+      output: "NVIDIA_API_KEY=must-not-leak",
+      sawProgress: true,
+      readyTerminationTimedOut: true,
+    });
+    const result = await createCliOpenShellSandboxLifecycle({
+      capture: vi.fn(),
+      streamCreate,
+    }).createSandbox(createRequest);
+
+    expect(result).toMatchObject({ status: 1, ambiguous: true });
+    expect(JSON.stringify(result)).not.toContain("must-not-leak");
+  });
+
+  it("classifies every post-spawn nonzero result as ambiguous", async () => {
+    const streamCreate = vi.fn().mockResolvedValue({
+      status: 1,
+      output: "gateway returned an ordinary command failure",
+      sawProgress: true,
+    });
+    const result = await createCliOpenShellSandboxLifecycle({
+      capture: vi.fn(),
+      streamCreate,
+    }).createSandbox(createRequest);
+
+    expect(result).toMatchObject({ status: 1, ambiguous: true });
+    expect(streamCreate).toHaveBeenCalledOnce();
+  });
+
+  it("keeps an exact pre-submission CLI parser rejection definite", async () => {
+    const streamCreate = vi.fn().mockResolvedValue({
+      status: 2,
+      output: "error: unexpected argument '--gpu' found",
+      sawProgress: false,
+    });
+    const result = await createCliOpenShellSandboxLifecycle({
+      capture: vi.fn(),
+      streamCreate,
+    }).createSandbox(createRequest);
+
+    expect(result).toMatchObject({ status: 2, ambiguous: false });
+  });
 
   it("submits one explicitly targeted delete without retrying", async () => {
     const capture = vi.fn().mockResolvedValue({ status: 0, output: "deleted" });

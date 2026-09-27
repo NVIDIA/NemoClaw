@@ -136,7 +136,23 @@ function inspectOwnedResource(
     ignoreError: true,
     timeout: 10_000,
   }).trim();
-  if (!source) return { kind: "absent" };
+  if (!source) {
+    const inventory = capture(
+      [
+        kind,
+        "ls",
+        ...(kind === "container" ? ["--all"] : []),
+        "--no-trunc",
+        "--filter",
+        `name=^${kind === "container" ? "/" : ""}${name}$`,
+        "--format",
+        "{{.ID}}",
+      ],
+      { ignoreError: false, timeout: 10_000 },
+    ).trim();
+    if (inventory) throw new Error(`${kind} ${name} absence could not be proven`);
+    return { kind: "absent" };
+  }
   let parsed: unknown;
   try {
     parsed = JSON.parse(source);
@@ -200,7 +216,7 @@ function cleanupRetiredHostLocalVllmState(
         `${path.basename(filePath)}: ${error instanceof Error ? error.message : String(error)}`,
       );
       // The runtime receipt is last and remains durable authority whenever an
-      // earlier cleanup step fails. A later uninstall can therefore prove and
+      // earlier cleanup step fails. A destroy retry or later uninstall can
       // finish cleanup after the container is already absent.
       break;
     }

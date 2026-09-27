@@ -30,6 +30,7 @@ CONFIG_NAME = "openclaw.json"
 HASH_NAME = ".config-hash"
 LAST_GOOD_NAME = "openclaw.json.last-good"
 LEGACY_UPDATE_CHECK_NAME = "update-check.json"
+LEGACY_EXEC_APPROVALS_NAME = "exec-approvals.json"
 
 JSON5_VALIDATOR = r"""
 const fs = require("fs");
@@ -831,8 +832,13 @@ def cleanup_staged_file(
         os.close(temp_fd)
 
 
-def remove_legacy_update_check(config_dir: str) -> int:
-    """Remove only a stable regular legacy update-check cache file."""
+def remove_legacy_state_file(
+    config_dir: str, file_name: str, *, require_empty: bool = False
+) -> int:
+    """Remove only a stable regular legacy state file."""
+
+    if file_name not in {LEGACY_UPDATE_CHECK_NAME, LEGACY_EXEC_APPROVALS_NAME}:
+        return 1
 
     parent_fd = -1
     root_fd = -1
@@ -847,7 +853,7 @@ def remove_legacy_update_check(config_dir: str) -> int:
         ) = open_config_binding(config_dir)
         try:
             before = os.stat(
-                LEGACY_UPDATE_CHECK_NAME,
+                file_name,
                 dir_fd=root_fd,
                 follow_symlinks=False,
             )
@@ -860,9 +866,11 @@ def remove_legacy_update_check(config_dir: str) -> int:
             or before.st_size > MAX_BASELINE_BYTES
         ):
             raise UnsafeTree()
+        if require_empty and before.st_size != 0:
+            return 0
 
         target_fd, opened = open_pinned(
-            root_fd, LEGACY_UPDATE_CHECK_NAME, file_flags(), before
+            root_fd, file_name, file_flags(), before
         )
         if (
             stable_file_key(opened) != stable_file_key(before)
@@ -884,7 +892,7 @@ def remove_legacy_update_check(config_dir: str) -> int:
         )
         current_root = os.stat(config_name, dir_fd=parent_fd, follow_symlinks=False)
         current_target = os.stat(
-            LEGACY_UPDATE_CHECK_NAME,
+            file_name,
             dir_fd=root_fd,
             follow_symlinks=False,
         )
@@ -896,12 +904,12 @@ def remove_legacy_update_check(config_dir: str) -> int:
         ):
             raise UnsafeTree()
 
-        os.unlink(LEGACY_UPDATE_CHECK_NAME, dir_fd=root_fd)
+        os.unlink(file_name, dir_fd=root_fd)
         os.fsync(root_fd)
 
         try:
             os.stat(
-                LEGACY_UPDATE_CHECK_NAME,
+                file_name,
                 dir_fd=root_fd,
                 follow_symlinks=False,
             )
@@ -910,7 +918,7 @@ def remove_legacy_update_check(config_dir: str) -> int:
         else:
             raise UnsafeTree()
         print(
-            f"[migration] Removed legacy {config_dir}/{LEGACY_UPDATE_CHECK_NAME} "
+            f"[migration] Removed legacy {config_dir}/{file_name} "
             "before the OpenClaw startup checkpoint",
             file=sys.stderr,
         )
@@ -924,6 +932,20 @@ def remove_legacy_update_check(config_dir: str) -> int:
             os.close(root_fd)
         if parent_fd >= 0:
             os.close(parent_fd)
+
+
+def remove_legacy_update_check(config_dir: str) -> int:
+    """Remove only a stable regular legacy update-check cache file."""
+
+    return remove_legacy_state_file(config_dir, LEGACY_UPDATE_CHECK_NAME)
+
+
+def remove_empty_legacy_exec_approvals(config_dir: str) -> int:
+    """Remove only the historical empty exec-approvals placeholder."""
+
+    return remove_legacy_state_file(
+        config_dir, LEGACY_EXEC_APPROVALS_NAME, require_empty=True
+    )
 
 
 def recover_empty_config(
@@ -1769,6 +1791,11 @@ def main() -> int:
         if len(sys.argv) != 3:
             return 1
         return remove_legacy_update_check(sys.argv[2])
+
+    if len(sys.argv) >= 2 and sys.argv[1] == "remove-empty-legacy-exec-approvals":
+        if len(sys.argv) != 3:
+            return 1
+        return remove_empty_legacy_exec_approvals(sys.argv[2])
 
     if len(sys.argv) >= 2 and sys.argv[1] == "classify-seal":
         if len(sys.argv) != 5:

@@ -286,7 +286,7 @@
     {
       "name": "Other Windows-on-ARM GPU paths",
       "status": "unsupported",
-      "notes": "Windows-on-ARM CPU paths run under WSL2 'tested with limitations'. The qualifying Windows WSL N1x paths remain pending dedicated CI and physical end-to-end validation. Other Windows-on-ARM GPU routes remain Unsupported. An unqualified container provider, multiple reported GPU rows, an implausible GPU name, or a failed provider-owned bounded CUDA proof remains rejected. See closed issue #4565."
+      "notes": "Windows-on-ARM CPU paths run under WSL2 'tested with limitations'. The qualifying Windows WSL N1x paths remain pending dedicated CI and physical end-to-end validation. A matching provider proof can establish GPU availability for multiple plausible NVIDIA rows, but it does not qualify a generic host for automatic large-model selection. Unqualified providers, mismatched rows, implausible names, or failed bounded CUDA proof remain rejected. See closed issue #4565 and #12073."
     },
     {
       "name": "Non-NVIDIA GPUs (AMD/ROCm, Intel Arc, Apple Metal)",

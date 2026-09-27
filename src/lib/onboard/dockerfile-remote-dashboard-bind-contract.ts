@@ -109,6 +109,17 @@ const CANONICAL_POST_GENERATOR_INSTRUCTION_SHA256 = new Set([
   // The reviewed scratch payload has no /sandbox/.openclaw content, so this
   // exact late copy preserves the generated remote-dashboard configuration.
   "0416afe770a7a4281aca9db4cf13d58f90bbf2b46e8225cbd4d6c2571eb7a9c0",
+  // Direct managed-startup runtime validation, modes, and metadata after
+  // retiring the standard managed-bootstrap payload.
+  "bf6df41d55eb02903bb30facc2cd4952cc0a947ae22eab171ecb7e08f14939d6",
+  "8f73b4550983c6eaef623d5a23ffdbdbde46e96ea301f98c6ffcf29c1ba4843b",
+  "53b08d415b78bfdebf6939f38293041af436b38f8ae890c409c32aad9a8a3e04",
+  // Exact metadata normalization after the managed-bootstrap binary and
+  // trampoline were retired; it preserves the generated dashboard config.
+  "e24efa55ce02a2d625f14b176393e2000c48a69e55a07ee71200d721dbcad1d1",
+  // Exact non-root startup hold copy and image-mode normalization.
+  "d54adeffc53c42612daf871fc0d46e2e782976ce8629bebe27758a63065476f0",
+  "5966651fd0de01944c8c30587ff99b3f45f69659a7a4b62ed1369a8236d098b7",
 ]);
 
 function instructionSha256(text: string): string {

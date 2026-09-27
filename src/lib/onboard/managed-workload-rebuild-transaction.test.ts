@@ -189,7 +189,6 @@ function bundle(providerId: string): RuntimeProviderBundle {
       providerId,
       supported: true,
       hostLocalInference: false,
-      directLifecycle: false,
       legacyGatewayContainerInspection: false,
       workloadImageCleanup: false,
       readOnlyHostMounts: {

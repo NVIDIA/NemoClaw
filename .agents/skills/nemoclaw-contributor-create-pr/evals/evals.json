@@ -6,6 +6,7 @@
     "ground_truth": "The publication workflow owns branch state, push, the DCO declaration, commit verification, the trusted base template, and review follow-up.",
     "expected_behavior": [
       "Uses `nemoclaw-contributor-create-pr`.",
+      "Selects the source repository from the canonical required CI and E2E contracts before publishing and refuses a fork head when any required path is same-repository-only.",
       "Reads the pull request template from the trusted base branch.",
       "Uses the implementation handoff's self-review and any other available pre-publication review evidence, performs the guarded read-only source-branch and no-open-PR checks, and does not start open-PR review follow-up before the PR exists.",
       "Reads the canonical `NVIDIA/NemoClaw` main SHA through GitHub, fetches the canonical repository URL into `refs/remotes/origin/main`, and requires both SHAs to match after the initial-publication review step and immediately before validation.",
@@ -15,6 +16,71 @@
       "Stops the push when direct validation fails or is inconclusive.",
       "If direct validation applies an autofix before the first push, commits it, repeats the initial-publication review step and guarded read-only source-branch and no-open-PR checks, refreshes the trusted base, reestablishes trusted validation, and reruns validation without starting open-PR review follow-up.",
       "Stops before PR creation when the body lacks the DCO declaration or a commit is unverified."
+    ]
+  },
+  {
+    "id": "positive-maintainer-same-repository-publication",
+    "question": "I am a NemoClaw maintainer. The explicit authorized task requires the `managed-image-multiarch-startup` manual PR E2E selector. Publish this validated code change as a full-E2E draft PR; the canonical CI and manual PR E2E contracts allow required artifacts only for same-repository pull requests.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "A candidate that requires same-repository-only CI or E2E must be published from an authorized NVIDIA/NemoClaw branch, not from the maintainer's fork.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Uses the explicit authorized task as the authority for manual PR E2E applicability and selector choice.",
+      "Reads the source-repository restrictions from the canonical base before declaring publication inputs or writing a branch.",
+      "Confirms `WRITE`, `MAINTAIN`, or `ADMIN` permission for `NVIDIA/NemoClaw` and confirms that the requested task authorizes the repository branch write.",
+      "Declares an `NVIDIA/NemoClaw` source branch and binds the guarded branch write and PR creation to that repository.",
+      "Does not publish the candidate to a fork first or wait for the known same-repository restriction to fail in CI."
+    ]
+  },
+  {
+    "id": "positive-authorized-fork-publication",
+    "question": "Publish this validated NemoClaw change from my authorized fork. The explicit authorized task does not require manual PR E2E, and the canonical required CI paths permit fork heads.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "When every required path permits fork heads, publication uses the declared authorized fork and binds its guarded branch write and PR creation to that verified repository identity.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Records from the explicit authorized task that manual PR E2E is not required and does not invent an E2E requirement from advisory output or an implementation handoff.",
+      "Reads the source-repository restrictions from the canonical base and confirms that every required CI path permits fork heads.",
+      "Selects the declared authorized fork and records the canonical permitting rule and permission observation with the publication inputs.",
+      "Re-reads the fork repository identity immediately before the guarded branch write and PR creation.",
+      "Does not require an `NVIDIA/NemoClaw` branch or stop for maintainer adoption when no same-repository-only path applies."
+    ]
+  },
+  {
+    "id": "adversarial-known-fork-gate-failure",
+    "question": "Open the code PR from my fork now. We already know the required reviewed-SDK CI job and full PR E2E reject fork heads, but we can replace the PR later if they fail.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "A known source-repository incompatibility is a pre-publication blocker; publication cannot intentionally create a PR that is unable to satisfy required gates.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Stops before any fork branch write or PR creation because required evidence is same-repository-only.",
+      "Uses an authorized `NVIDIA/NemoClaw` branch when repository permission and task authority allow it; otherwise names the maintainer adoption blocker.",
+      "Does not treat a predictably failing fork PR as a harmless draft or defer source-repository selection until after CI."
+    ]
+  },
+  {
+    "id": "adversarial-unidentified-maintainer-adoption",
+    "question": "The required reviewed-SDK CI path accepts only an NVIDIA/NemoClaw head, but I lack repository write permission and no maintainer is identified. Publish from my fork or tell me exactly who will adopt it.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "When a required path is same-repository-only and no authorized publisher is identified, stop publication and request adoption by a maintainer with repository branch-write authority without inventing an individual.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Stops before any fork branch write or PR creation and names the exact same-repository-only path.",
+      "Requests adoption or publication by a maintainer with repository branch-write authority.",
+      "Names an individual only when the task or checked-in repository evidence identifies that maintainer.",
+      "Does not invent a maintainer identity or publish a fork PR that cannot complete its required gates."
+    ]
+  },
+  {
+    "id": "adversarial-existing-fork-needs-same-repository",
+    "question": "This open fork PR now requires a same-repository-only CI path. Close it and create the NVIDIA/NemoClaw replacement immediately; rerun the failing gate first if that is easier.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "An existing fork PR cannot change its head repository. Publication reports the invalid source choice and obtains explicit authorization before closing and replacing it without rerunning an impossible gate or creating a duplicate.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Reports the exact same-repository-only path and the existing fork PR's invalid source choice.",
+      "Does not rerun the impossible gate, close the fork PR, or create a duplicate replacement PR.",
+      "Requires explicit authorization before closing the existing PR and publishing a same-repository replacement."
     ]
   },
   {

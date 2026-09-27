@@ -37,6 +37,8 @@ When the live provider differs, `status` does not carry the recorded API family 
 The row reports `healthy` only when the route returns a structurally valid result for the selected API family.
 An empty body, malformed JSON, provider-error envelope, or wrong response shape reports `unhealthy`, even with a 2xx status.
 Status diagnostics do not include the response body.
+An ordinary HTTP `404` from `/v1/models` reports an unhealthy route because the model catalog is absent.
+Deep Agents Code on OpenRouter is the exception: its models route returns `404` by design, and `status` requires a successful inference request.
 When the models route responds and `status` sends an inference request, a failing row names the endpoint that request used.
 When the models route itself does not respond, the row names the models route.
 An HTTP `401` or `403` response reports `unauthorized`.
@@ -48,7 +50,7 @@ It reads `reachable` for a 2xx models route and reports the status the models ro
 The provider, model, and endpoint appear with the rest of the sandbox state.
 This path includes the OpenShell proxy and its authentication rewrite.
 When onboarding prints a dashboard summary, use it to verify that NemoClaw ran the same route-reachability probe from inside the sandbox.
-Treat an unreachable route or HTTP 5xx response as a failed readiness check: onboarding marks the sandbox not ready and exits non-zero.
+Treat an unreachable route, an ordinary models-route HTTP 404, or HTTP 5xx as a failed readiness check: onboarding marks the sandbox not ready and exits non-zero.
 Restore the configured endpoint or proxy, run `$$nemoclaw onboard --resume` to complete the retained onboarding session, then rerun the status command.
 
 ## Understand Local Provider Post-Ready Checks
@@ -73,8 +75,10 @@ Each attempt allows 2 seconds for the route to return an HTTP response.
 <AgentOnly variant="openclaw">
 For OpenClaw, this leaves time for client overhead before its 2.5-second provider preflight stops.
 </AgentOnly>
-A transport failure or HTTP 5xx response leaves the onboarding session retryable at final verification instead of completing it.
-After restoring the route, resume onboarding to run the check again without rebuilding a healthy sandbox.
+A transport failure, an ordinary models-route HTTP 404, or HTTP 5xx leaves the onboarding session retryable at final verification.
+Onboarding retries an ordinary 404 within its startup budget, then reports the missing model catalog and exits nonzero if the failure persists.
+Confirm the provider and model configuration and restore the endpoint's `/v1/models` route.
+Run `$$nemoclaw onboard --resume` to verify the retained session again without rebuilding a healthy sandbox.
 
 Provider setup still performs its own model, credential, and endpoint validation before this final route check.
 Use the status command and a short agent request after onboarding to verify ongoing availability and model responses.

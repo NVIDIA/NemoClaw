@@ -4,6 +4,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { createPodmanHostLocalInferenceTestHarness } from "../../../../test/helpers/podman-host-local-inference-test-harness";
 import type { OpenShellSandboxObserver } from "../../adapters/openshell/sandbox-observer";
+import { fingerprintOpenShellSandboxId } from "../../adapters/openshell/sandbox-identity";
+import type { OpenShellSandboxStateLifecycle } from "../../adapters/openshell/sandbox-lifecycle-sdk";
 import { startSandbox } from "../../actions/sandbox/start";
 import { stopSandbox } from "../../actions/sandbox/stop";
 import { withCurrentPortableHostFence } from "../../state/portable-uninstall-retirement";
@@ -265,10 +267,31 @@ function providerHarness(agent: (typeof AGENTS)[number]) {
   const providers = createRuntimeProviderBundleRegistry([["podman", bundle]]);
   const entry: SandboxEntry = {
     agent,
+    lifecycleLiveIdentityFingerprint: fingerprintOpenShellSandboxId(`id-${sandboxName}`)!,
     name: sandboxName,
     openshellDriver: "podman",
   };
-  return { entry, lifecycle, providers, sandboxName };
+  const startOpenShellSandbox = vi.fn<OpenShellSandboxStateLifecycle["startSandbox"]>(async () => {
+    lifecycle.capture(["start", CONTAINER_ID]);
+    return { kind: "accepted" };
+  });
+  const stopOpenShellSandbox = vi.fn<OpenShellSandboxStateLifecycle["stopSandbox"]>(async () => {
+    lifecycle.capture(["stop", CONTAINER_ID]);
+    return { kind: "accepted" };
+  });
+  const openShellLifecycle: OpenShellSandboxStateLifecycle = {
+    startSandbox: startOpenShellSandbox,
+    stopSandbox: stopOpenShellSandbox,
+  };
+  return {
+    entry,
+    lifecycle,
+    openShellLifecycle,
+    providers,
+    sandboxName,
+    startOpenShellSandbox,
+    stopOpenShellSandbox,
+  };
 }
 
 function readyObserver(sandboxName: string): OpenShellSandboxObserver {
@@ -294,6 +317,7 @@ describe("managed Podman runtime provider", () => {
       await expect(
         startSandbox(runtime.sandboxName, {
           getSandbox: () => runtime.entry,
+          openShellLifecycle: runtime.openShellLifecycle,
           observer: readyObserver(runtime.sandboxName),
           updateSandbox,
           runtimeProviders: runtime.providers,
@@ -305,6 +329,7 @@ describe("managed Podman runtime provider", () => {
         withCurrentPortableHostFence(() =>
           stopSandbox(runtime.sandboxName, {
             getSandbox: () => runtime.entry,
+            openShellLifecycle: runtime.openShellLifecycle,
             updateSandbox,
             runtimeProviders: runtime.providers,
             stopSandboxChannels,
@@ -333,6 +358,7 @@ describe("managed Podman runtime provider", () => {
     await expect(
       startSandbox(runtime.sandboxName, {
         getSandbox: () => runtime.entry,
+        openShellLifecycle: runtime.openShellLifecycle,
         observer: readyObserver(runtime.sandboxName),
         runtimeProviders: runtime.providers,
         verifyGateway,
@@ -340,11 +366,9 @@ describe("managed Podman runtime provider", () => {
       }),
     ).rejects.toBe(gatewayFailure);
     expect(verifyGateway).toHaveBeenCalledExactlyOnceWith(runtime.sandboxName);
-    expect(
-      (runtime.lifecycle.capture as ReturnType<typeof vi.fn>).mock.calls.some(
-        ([args]) => (args as readonly string[])[0] === "start",
-      ),
-    ).toBe(true);
+    expect(runtime.startOpenShellSandbox).toHaveBeenCalledWith(
+      expect.objectContaining({ sandboxName: runtime.sandboxName }),
+    );
   });
 
   it("executes privileged control through the lifecycle-bound Podman engine", () => {
@@ -356,12 +380,7 @@ describe("managed Podman runtime provider", () => {
       { readonly supported: true }
     >;
 
-    supportedLifecycle.start({
-      environment: {},
-      log: vi.fn(),
-      sandbox: runtime.entry,
-      sandboxName: runtime.sandboxName,
-    });
+    runtime.lifecycle.capture(["start", CONTAINER_ID]);
     const target = supportedLifecycle.privilegedSandboxControl.resolveTarget({
       registeredSandboxNames: [runtime.sandboxName],
       sandbox: runtime.entry,

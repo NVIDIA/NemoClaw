@@ -325,6 +325,34 @@ describe("declared and cleanup forward sets", () => {
     expect(mocks.startForward.mock.calls[0]?.[0].forward.port).toBe(8_643);
   });
 
+  it("reports the classified child exit when declared forward recovery fails", async () => {
+    mocks.getSandbox.mockReturnValue(
+      sandboxEntry({
+        agent: "hermes",
+        dashboardPort: 18_790,
+        hermesApiPort: 8_643,
+      }),
+    );
+    states.set(8_643, "absent");
+    mocks.startForward.mockImplementationOnce(async (request: StartOpenShellForwardRequest) => ({
+      state: "failed",
+      forward: request.forward,
+      effect: "none",
+      error: {
+        kind: "transport",
+        message: "The OpenShell forward transport failed.",
+      },
+      failure: { stage: "startup", reason: "child_exited", exitStatus: 17 },
+    }));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { ensureDeclaredAgentForwardPortsHealthy } = await import("./forward-recovery");
+
+    await expect(ensureDeclaredAgentForwardPortsHealthy("box", 18_790)).resolves.toBe(false);
+    expect(consoleError).toHaveBeenCalledExactlyOnceWith(
+      "  Warning: OpenShell ForwardTcp 8643 for box did not start: The OpenShell forward transport failed. [forward-start startup/child_exited status=17]",
+    );
+  });
+
   it("pins declared recovery to the selected gateway and workspace", async () => {
     mocks.getSandbox.mockReturnValue(
       sandboxEntry({

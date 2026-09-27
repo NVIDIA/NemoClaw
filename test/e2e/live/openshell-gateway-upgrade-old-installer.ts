@@ -2,19 +2,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
-import { REVIEWED_GATEWAY_UPGRADE_FIXTURE } from "../../../tools/e2e/openshell-gateway-upgrade-fixture.mts";
+import {
+  type ReviewedGatewayUpgradeFixture,
+  REVIEWED_GATEWAY_UPGRADE_FIXTURES,
+} from "../../../tools/e2e/openshell-gateway-upgrade-fixture.mts";
 
-type ReviewedOldOpenClawArchive = typeof REVIEWED_GATEWAY_UPGRADE_FIXTURE.openClawArchive;
+type ReviewedOldOpenClawArchive = ReviewedGatewayUpgradeFixture["openClawArchive"];
 type OldInstallerFixtureIdentity = Readonly<{
+  installerSha256?: string;
   nemoclawCommit: string;
   nemoclawRef: string;
   openclawVersion: string;
+  openShellVersion?: string;
 }>;
-type ReviewedOldInstallerProfile = Pick<
-  typeof REVIEWED_GATEWAY_UPGRADE_FIXTURE,
-  "expectedAdvisoryAuditCount" | "nemoclawCommit" | "nemoclawRef" | "openclawVersion"
->;
-
 export const OLD_INSTALLER_BOOTSTRAP_NEEDLE = '  legacy_script="${source_root}/install.sh"\n';
 export const OLD_INSTALLER_CLONE_NEEDLE =
   '    spin "Cloning ${_CLI_DISPLAY} source" clone_nemoclaw_ref "$release_ref" "$nemoclaw_src"\n';
@@ -23,21 +23,27 @@ export const OLD_INSTALLER_ADVISORY_AUDIT =
 export const OLD_INSTALLER_ARCHIVE_CONTEXT_PATH = "nemoclaw/src/.nemoclaw-e2e-old-openclaw.tgz";
 
 export function reviewedOldOpenClawArchive(version: string): ReviewedOldOpenClawArchive {
-  if (version !== REVIEWED_GATEWAY_UPGRADE_FIXTURE.openclawVersion) {
+  const fixture = REVIEWED_GATEWAY_UPGRADE_FIXTURES.find(
+    (candidate) => candidate.openclawVersion === version,
+  );
+  if (!fixture) {
     throw new Error(`Historical gateway upgrade OpenClaw ${version} has no reviewed archive pin`);
   }
-  return REVIEWED_GATEWAY_UPGRADE_FIXTURE.openClawArchive;
+  return fixture.openClawArchive;
 }
 
 export function reviewedOldInstallerProfile(
   identity: OldInstallerFixtureIdentity,
-): ReviewedOldInstallerProfile {
-  const profile = REVIEWED_GATEWAY_UPGRADE_FIXTURE;
-  if (
-    profile.nemoclawRef !== identity.nemoclawRef ||
-    profile.nemoclawCommit !== identity.nemoclawCommit ||
-    profile.openclawVersion !== identity.openclawVersion
-  ) {
+): ReviewedGatewayUpgradeFixture {
+  const profile = REVIEWED_GATEWAY_UPGRADE_FIXTURES.find(
+    (candidate) =>
+      candidate.nemoclawRef === identity.nemoclawRef &&
+      candidate.nemoclawCommit === identity.nemoclawCommit &&
+      candidate.openclawVersion === identity.openclawVersion &&
+      (!identity.installerSha256 || candidate.installerSha256 === identity.installerSha256) &&
+      (!identity.openShellVersion || candidate.openShellVersion === identity.openShellVersion),
+  );
+  if (!profile) {
     throw new Error(
       `Historical gateway upgrade fixture must match the reviewed descriptor's ref, commit, and OpenClaw version; got ${identity.nemoclawRef}/${identity.nemoclawCommit}/${identity.openclawVersion}`,
     );
