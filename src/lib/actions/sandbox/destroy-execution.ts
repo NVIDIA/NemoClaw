@@ -61,6 +61,41 @@ export function redactDestroyError(error: unknown): string {
   return redactFull(error instanceof Error ? error.message : String(error));
 }
 
+const DEEP_AGENTS_NATIVE_ROOT = "/sandbox";
+
+function wipeDeepAgentsNativeHome(sandboxName: string, runOpenshell: DestroyRunOpenshell): void {
+  const script = [
+    "set -eu",
+    `root=${DEEP_AGENTS_NATIVE_ROOT}`,
+    'if [ ! -d "$root" ] || [ -L "$root" ]; then echo "unsafe Deep Agents native root" >&2; exit 20; fi',
+    'find "$root" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +',
+    'if find "$root" -mindepth 1 -maxdepth 1 -print -quit | grep -q .; then echo "Deep Agents native root is not empty" >&2; exit 21; fi',
+  ].join("\n");
+  const result = runOpenshell(
+    ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-c", script],
+    {
+      ignoreError: true,
+      killSignal: "SIGKILL",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: SANDBOX_DESTROY_TIMEOUT_MS,
+    },
+  );
+  if ((result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT") {
+    throw new Error(
+      `Deep Agents native-home cleanup timed out after ${String(SANDBOX_DESTROY_TIMEOUT_MS / 1000)} seconds; its result is unknown.`,
+    );
+  }
+  if (result.status !== 0 || result.error) {
+    const detail = `${result.stderr ?? ""}\n${result.stdout ?? ""}`
+      .replace(/\s+/gu, " ")
+      .trim()
+      .slice(0, 500);
+    throw new Error(
+      `Could not remove the complete Deep Agents native home before sandbox deletion${detail ? `: ${detail}` : "."}`,
+    );
+  }
+}
+
 export function retirePortableLifecycleAuthority(sandboxName: string): void {
   removePortableDemoSandboxLifecycleReceipt(sandboxName);
 }
@@ -90,6 +125,7 @@ type SandboxDestroyExecutionInput = {
   deps?: {
     hostLocalInferenceLifecycleOptions?: HostLocalInferenceLifecycleOptions;
     inspectOpenShellSandboxIdentityFingerprint?: typeof inspectOpenShellSandboxIdentityFingerprint;
+    wipeDeepAgentsNativeHome?: typeof wipeDeepAgentsNativeHome;
     deleteConvergence?: {
       now?: () => number;
       sleep?: (milliseconds: number) => void;
@@ -534,8 +570,30 @@ export async function executeSandboxDestroy({
         " Managed inference cleanup may already be partial; inspect or restart its resources before retrying.",
       );
     }
-    // OpenShell owns workspace deletion together with sandbox deletion. Do not
-    // mutate the agent home independently before the provider accepts delete.
+    const sandboxRuntimeConfirmedAbsent =
+      expectedContainerIdentities?.length === 0 ||
+      (expectedContainerIdentities === undefined && sandboxConfirmedAbsent);
+    if (sandbox?.agent === "langchain-deepagents-code" && !sandboxRuntimeConfirmedAbsent) {
+      try {
+        (deps.wipeDeepAgentsNativeHome ?? wipeDeepAgentsNativeHome)(
+          sandboxName,
+          selectedRunOpenshell,
+        );
+      } catch (error) {
+        const mcpRecoveryFailure = await restoreMcpForAbort();
+        return {
+          ok: false,
+          deleteOutput:
+            `${redactDestroyError(error)} No provider cleanup or sandbox deletion was attempted. ` +
+            "The sandbox registry entry was preserved so exact cleanup can be retried.",
+          exitCode: 1,
+          gatewayUnreachable: false,
+          hostLocalInferenceOwnershipRequiresGateway: false,
+          mcpOwnershipRequiresGateway: false,
+          mcpRecoveryFailure,
+        };
+      }
+    }
     const detachProviders = (): Promise<DetachSandboxProvidersResult> =>
       runSandboxProviderPreDeleteCleanup(sandboxName, {
         runOpenshell: selectedRunOpenshell,

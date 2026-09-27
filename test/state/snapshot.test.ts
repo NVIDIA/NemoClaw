@@ -392,6 +392,7 @@ describe("complete native home persistence", () => {
   it.each([
     ["a recognized structured config", "config.json", JSON.stringify({ apiKey: "placeholder" })],
     ["an arbitrary native file", "notes.txt", `ghp_${"0123456789abcdef"}`],
+    ["an arbitrary dependency file", "node_modules/example/token.txt", `ghp_${"fedcba9876543210"}`],
   ])("removes a native archive containing a credential in %s", (_case, relativePath, content) => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-credential-"));
     const oldPath = process.env.PATH;
@@ -402,6 +403,7 @@ describe("complete native home persistence", () => {
       const nativeRoot = path.join(fixture, "native-home");
       fs.mkdirSync(binDir, { recursive: true });
       fs.mkdirSync(nativeRoot, { recursive: true });
+      fs.mkdirSync(path.dirname(path.join(nativeRoot, relativePath)), { recursive: true });
       fs.writeFileSync(path.join(nativeRoot, relativePath), content);
       writeFakeOpenshell(binDir);
       writeFakeSsh(binDir);

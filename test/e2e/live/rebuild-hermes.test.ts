@@ -123,10 +123,7 @@ test(
       timeoutMs: 20 * 60_000,
     });
     const rebuildOutput = resultText(rebuild);
-    expect(
-      rebuild.exitCode === 0 || /Restore result: success=true/u.test(rebuildOutput),
-      rebuildOutput,
-    ).toBe(true);
+    expect(rebuild.exitCode, rebuildOutput).toBe(0);
 
     progress.phase("verify restored state and native readiness");
     await lifecycle.assertSandboxReadyAfterRebuild(SANDBOX_NAME, {

@@ -310,7 +310,7 @@ Memory files such as `/sandbox/.deepagents/agent/AGENTS.md` and `/sandbox/.deepa
 
 They transfer with the complete native home during rebuild. Copy them manually with `$$nemoclaw <name> download` before destroying the sandbox when you also need an independent backup.
 
-Running `$$nemoclaw <name> destroy` deletes the sandbox and its persistent state volume.
+Running `$$nemoclaw <name> destroy` clears the complete Deep Agents `/sandbox` persistence root before it asks OpenShell to delete the sandbox. If NemoClaw cannot prove that cleanup completed, it preserves the registry entry and stops before deletion so you can retry safely.
 Back up important Deep Agents state before destroying the sandbox.
 
 ## Editing State

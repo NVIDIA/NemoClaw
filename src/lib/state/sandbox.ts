@@ -913,7 +913,6 @@ const NATIVE_CREDENTIAL_SCAN_OVERLAP_CHARS = 4096;
 const NATIVE_TAR_METADATA_MAX_BYTES = 1024 * 1024;
 const NATIVE_RAW_SCAN_EXCLUDED_SEGMENTS = new Set([
   ".venv",
-  "node_modules",
   "schema",
   "schemas",
   "site-packages",

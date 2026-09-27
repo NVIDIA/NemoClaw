@@ -84,7 +84,7 @@ export type DestroyHarness = {
 
 type DestroyHarnessOptions = {
   callThroughGatewaySelection?: boolean;
-  agent?: "openclaw" | "hermes";
+  agent?: "openclaw" | "hermes" | "langchain-deepagents-code";
   deleteError?: Error;
   deleteConvergenceAttempts?: number;
   deleteOutput?: string;

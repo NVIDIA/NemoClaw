@@ -41,7 +41,7 @@ Backups created by older NemoClaw versions from a selective per-agent path inven
 
 ## Destroy
 
-`$$nemoclaw <name> destroy` asks OpenShell to delete the sandbox and its native storage. Download files you need before destroy. To replace software while preserving the complete native state, use `$$nemoclaw <name> rebuild`.
+`$$nemoclaw <name> destroy` removes NemoClaw-owned managed state volumes and, for Deep Agents Code, clears the complete retained `/sandbox` root before asking OpenShell to delete the sandbox. Download files you need before destroy. To replace software while preserving the complete native state, use `$$nemoclaw <name> rebuild`.
 
 ## Related Topics
 

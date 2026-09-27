@@ -1981,7 +1981,7 @@ If `destroy` warns that it could not identify or stop a listener for the deleted
 4. Do not stop a previously reported process ID if its command line no longer matches.
 
 <Warning>
-OpenShell sandbox deletion removes the native home/workspace storage. Download any files you need before destroying the sandbox; do not rely on deleted OpenShell storage as a backup.
+Download any files you need before destroying the sandbox; do not rely on retained OpenShell storage as a backup. NemoClaw removes managed OpenClaw and Hermes state volumes after confirmed deletion. Because OpenShell can retain the same-name `/sandbox` volume, Deep Agents Code destroy clears that complete persistence root before deletion and stops with the registry entry intact if cleanup cannot be confirmed.
 If you want to upgrade the sandbox while preserving state, use `$$nemoclaw <name> rebuild` instead.
 </Warning>
 
