@@ -1931,11 +1931,13 @@ gateway connect failed: GatewayClientRequestError: scope upgrade pending approva
 ```
 
 Record the `requestId` from this native failure.
-Open the prepared shell. During setup, `connect` automatically settles pending
-requests from the `cli`, `openclaw-cli`, and `openclaw-control-ui` clients when
-the requested scopes are limited to pairing, read, and write and OpenClaw binds
-the request to the authenticated device identity. Allowlisted client metadata
-alone does not authorize approval for another device:
+Open the prepared shell. During setup, `connect` makes a bounded, best-effort
+attempt to settle pending requests from the `cli`, `openclaw-cli`, and
+`openclaw-control-ui` clients when the requested scopes are limited to pairing,
+read, and write and OpenClaw binds the request to the authenticated device
+identity. If that pass times out or an approval operation fails, an eligible
+request can remain pending. Allowlisted client metadata alone does not authorize
+approval for another device:
 
 ```bash
 $$nemoclaw <name> connect
@@ -1962,9 +1964,10 @@ openclaw devices approve <requestId>
 Then rerun the original command again.
 The `exec` command preserves the native command output and exit status. After
 `exec` fails, NemoClaw does not inspect pending requests automatically. The
-`connect` flow settles only allowlisted client identities requesting pairing,
-read, and write scopes with an authoritative device-identity binding; requests
-outside that bounded path remain available for manual review.
+`connect` flow attempts automatic settlement only for allowlisted client
+identities requesting pairing, read, and write scopes with an authoritative
+device-identity binding; requests that remain pending are available for manual
+review.
 
 </AgentOnly>
 
