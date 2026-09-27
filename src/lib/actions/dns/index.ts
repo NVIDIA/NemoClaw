@@ -18,6 +18,7 @@ import {
 } from "../../domain/dns/coredns";
 import type {
   ContainerRuntime as PlatformContainerRuntime,
+  CurrentDockerContextInspector,
   DockerHostProbe,
   DockerHostProbeResult,
 } from "../../platform";
@@ -42,6 +43,7 @@ export interface FixCoreDnsDeps {
   log?: (message: string) => void;
   platform?: NodeJS.Platform;
   probeDockerHost?: DockerHostProbe;
+  inspectCurrentDockerContext?: CurrentDockerContextInspector;
   readFile?: (filePath: string) => string;
   run?: (command: string, args: string[], options?: { env?: NodeJS.ProcessEnv }) => CommandResult;
   runDocker?: (args: string[], options?: { env?: NodeJS.ProcessEnv }) => CommandResult;
@@ -146,6 +148,7 @@ function resolveDockerAuthority(env: NodeJS.ProcessEnv, deps: FixCoreDnsDeps): D
     home: env.HOME || os.tmpdir(),
     platform: deps.platform,
     probeDockerHost: probeOnce,
+    inspectCurrentDockerContext: deps.inspectCurrentDockerContext,
     uid: parseUid(deps.uid?.()),
   });
 

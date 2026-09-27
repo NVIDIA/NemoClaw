@@ -53,6 +53,7 @@ describe("Docker authority readiness", () => {
       platform: "linux",
       uid: 1000,
       existsSync: (candidate) => sockets.has(candidate),
+      inspectCurrentDockerContext: () => null,
       probeDockerHost: (dockerHost) =>
         dockerHost
           ? dockerHost.includes("podman")

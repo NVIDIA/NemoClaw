@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 
 import { detectDockerHost, observeDockerAuthorityConflict } from "../platform";
@@ -134,6 +138,130 @@ describe("Docker context authority selection (#11719)", () => {
       ],
     });
   });
+});
+
+// The OpenShell gateway reads DOCKER_HOST, not the Docker CLI's current context.
+describe("persisted current Docker context authority", () => {
+  const COLIMA_HOST = "unix:///Users/me/.colima/default/docker.sock";
+
+  function answeringDefaultHost(
+    env: NodeJS.ProcessEnv,
+    current: { name: string; host: string } | null,
+    defaultSocketTarget: string | null = null,
+  ) {
+    const probeDockerHost = vi.fn(() => ({ reachable: true, identity: "docker" as const }));
+    const inspectCurrentDockerContext = vi.fn(() => current);
+    return {
+      inspectCurrentDockerContext,
+      opts: {
+        env,
+        platform: "darwin" as const,
+        home: "/Users/me",
+        existsSync: () => false,
+        probeDockerHost,
+        inspectCurrentDockerContext,
+        resolveSocketPath: (socketPath: string) =>
+          socketPath === "/var/run/docker.sock" ? defaultSocketTarget : null,
+      },
+    };
+  }
+
+  it("records the socket of a non-default current context the default answers through", () => {
+    const { opts } = answeringDefaultHost({}, { name: "colima", host: COLIMA_HOST });
+
+    expect(detectDockerHost(opts)).toEqual({
+      dockerHost: COLIMA_HOST,
+      source: "context",
+      socketPath: null,
+    });
+  });
+
+  it("records the context socket when the default socket reaches a different daemon", () => {
+    const { opts } = answeringDefaultHost(
+      {},
+      { name: "rootless", host: "unix:///run/user/1000/docker.sock" },
+      "/var/run/docker.sock",
+    );
+
+    expect(detectDockerHost(opts)?.dockerHost).toBe("unix:///run/user/1000/docker.sock");
+  });
+
+  it("keeps the host default when the default socket already reaches the context socket", () => {
+    const { opts } = answeringDefaultHost(
+      {},
+      { name: "desktop-linux", host: "unix:///Users/me/.docker/run/docker.sock" },
+      "/Users/me/.docker/run/docker.sock",
+    );
+
+    expect(detectDockerHost(opts)).toBeNull();
+  });
+
+  it("follows a real default-socket symlink to the context socket", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-context-"));
+    try {
+      const contextSocket = path.join(dir, "docker.sock");
+      const defaultSocket = path.join(dir, "default.sock");
+      fs.writeFileSync(contextSocket, "");
+      fs.symlinkSync(contextSocket, defaultSocket);
+      const { opts } = answeringDefaultHost(
+        {},
+        { name: "desktop-linux", host: `unix://${contextSocket}` },
+      );
+      const resolveSocketPath = (socketPath: string) => {
+        try {
+          return fs.realpathSync(
+            socketPath === "/var/run/docker.sock" ? defaultSocket : socketPath,
+          );
+        } catch {
+          return null;
+        }
+      };
+
+      expect(detectDockerHost({ ...opts, resolveSocketPath })).toBeNull();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not inspect the current context when the default does not answer", () => {
+    const inspectCurrentDockerContext = vi.fn(() => ({ name: "colima", host: COLIMA_HOST }));
+
+    detectDockerHost({
+      env: {},
+      platform: "darwin",
+      home: "/Users/me",
+      existsSync: () => false,
+      probeDockerHost: () => ({ reachable: false, identity: "unknown" }),
+      inspectCurrentDockerContext,
+    });
+
+    expect(inspectCurrentDockerContext).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["the default context", { name: "default", host: "unix:///var/run/docker.sock" }],
+    ["a context with an empty endpoint", { name: "colima", host: "" }],
+    ["a remote context", { name: "builder", host: "ssh://builder@192.0.2.10" }],
+    ["a context that cannot be inspected", null],
+  ])("keeps the host default for %s", (_label, current) => {
+    const { opts } = answeringDefaultHost({}, current);
+
+    expect(detectDockerHost(opts)).toBeNull();
+  });
+
+  it.each([{ DOCKER_HOST: "unix:///var/run/docker.sock" }, { DOCKER_CONTEXT: "colima" }])(
+    "does not inspect the current context when the environment selects one: %j",
+    (env) => {
+      const { opts, inspectCurrentDockerContext } = answeringDefaultHost(env, {
+        name: "colima",
+        host: COLIMA_HOST,
+      });
+
+      detectDockerHost({ ...opts, resolveDockerContextHost: () => COLIMA_HOST });
+
+      expect(inspectCurrentDockerContext).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe("assessHost Docker context endpoint (#11719)", () => {

@@ -106,6 +106,9 @@ A context that resolves to an absolute local `unix://` socket becomes the select
 A context that does not resolve, or that names any other endpoint, is reported through `host.docker.host_invalid` and the `invalid_docker_host` advisory instead of falling back to the default Docker socket.
 
 When neither variable is set, NemoClaw first probes the Docker CLI's selected authority, including its `DOCKER_CONFIG` directory when set, without a host override.
+If that authority answers through a current context other than `default`, such as the `colima` context, and the context resolves to an absolute local `unix://` socket, that socket becomes the selected `DOCKER_HOST`.
+The OpenShell gateway reads `DOCKER_HOST` and not Docker contexts, so it then uses the same daemon as the Docker CLI.
+NemoClaw keeps the default authority when `/var/run/docker.sock` already links to that socket, as Docker Desktop configures it.
 If that authority completes with an unreachable result, NemoClaw probes a bounded set of local Unix sockets and accepts only an endpoint with valid server-version evidence.
 On Linux, the set includes the rootless Docker socket at `/run/user/<UID>/docker.sock`.
 If the probe times out or cannot start, NemoClaw keeps the selected authority. `host probe` reports `host.docker.probe_inconclusive`; onboarding reports the `docker_probe_inconclusive` advisory with a command to verify that authority.
