@@ -674,7 +674,7 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
         executeSandboxExecCommand: execute,
         now: () => currentMs,
         sleep: vi.fn(async (seconds: number) => {
-          currentMs += seconds * 1_000;
+          currentMs += Math.max(seconds, 30) * 1_000;
         }),
       }),
     ).resolves.toEqual({
@@ -682,7 +682,7 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
       stage: "doctor",
       detail: "startup did not prove doctor completion with the gateway held down",
     });
-    expect(currentMs).toBe(3 * 60_000);
+    expect(currentMs).toBe(6 * 60_000);
   });
 
   it("does not replay startup after an unready replacement and stops the aborted sandbox", async () => {
@@ -691,7 +691,7 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
       .fn()
       .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" })
       .mockImplementation(async () => ({
-        status: currentMs >= 180_000 ? 0 : 20,
+        status: currentMs >= 6 * 60_000 ? 0 : 20,
         stdout: "",
         stderr: "",
       }));
@@ -706,7 +706,7 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
         executeSandboxExecCommand: execute,
         now: () => currentMs,
         sleep: vi.fn(async (seconds: number) => {
-          currentMs += seconds * 1_000;
+          currentMs += Math.max(seconds, 30) * 1_000;
         }),
       }),
     ).resolves.toEqual({
@@ -762,7 +762,7 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
       .fn()
       .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" })
       .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" });
-    const now = vi.fn().mockReturnValueOnce(0).mockReturnValue(179_000);
+    const now = vi.fn().mockReturnValueOnce(0).mockReturnValue(359_000);
 
     await expect(
       beginOpenClawPostRestoreDoctor("alpha", undefined, {

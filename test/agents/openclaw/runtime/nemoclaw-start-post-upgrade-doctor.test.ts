@@ -99,6 +99,7 @@ function doctorFunction(
   return [
     'STEP_DOWN_PREFIX_SANDBOX=("$STEP_DOWN")',
     extractShellFunctionFromSource(source, "_nemoclaw_safe_replace_tmp_file"),
+    extractShellFunctionFromSource(source, "wait_for_openclaw_startup_migration_lease"),
     extractShellFunctionFromSource(source, "run_requested_openclaw_post_upgrade_doctor")
       .replaceAll("/sandbox/.openclaw", configDir)
       .replaceAll("/tmp/nemoclaw-post-upgrade-doctor-ready", readyPath)
@@ -125,8 +126,19 @@ function fixture() {
   const fakeBin = path.join(root, "bin");
   const stepDown = path.join(root, "step-down");
   const stepDownCalls = path.join(root, "step-down-calls");
+  const leaseActive = path.join(root, "lease-active");
+  const leaseViolation = path.join(root, "lease-violation");
   fs.mkdirSync(configDir);
   fs.mkdirSync(fakeBin);
+  fs.mkdirSync(path.join(root, "dist"));
+  fs.writeFileSync(
+    path.join(root, "package.json"),
+    JSON.stringify({ name: "openclaw", type: "module" }),
+  );
+  fs.writeFileSync(
+    path.join(root, "dist", "startup-migration-checkpoint-test.js"),
+    `import fs from "node:fs";\nexport function hasActiveStartupMigrationLease() { return fs.existsSync(${JSON.stringify(leaseActive)}); }\n`,
+  );
   fs.writeFileSync(
     openclaw,
     `#!/bin/sh\nprintf '%s\\n' "$*" >>${JSON.stringify(calls)}\nexit "\${DOCTOR_EXIT_CODE:-0}"\n`,
@@ -139,13 +151,15 @@ function fixture() {
   );
   fs.writeFileSync(
     stepDown,
-    `#!/bin/sh\nprintf 'HOME=%s\\nPATH=%s\\n' "$HOME" "$PATH" >${JSON.stringify(stepDownCalls)}\nprintf 'ARG=%s\\n' "$@" >>${JSON.stringify(stepDownCalls)}\nexec "$@"\n`,
+    `#!/bin/sh\nprintf 'HOME=%s\\nPATH=%s\\n' "$HOME" "$PATH" >>${JSON.stringify(stepDownCalls)}\nprintf 'ARG=%s\\n' "$@" >>${JSON.stringify(stepDownCalls)}\nexec "$@"\n`,
     { mode: 0o755 },
   );
   return {
     calls,
     configDir,
     fakeBin,
+    leaseActive,
+    leaseViolation,
     marker,
     openclaw,
     ready,
@@ -302,6 +316,44 @@ describe("nemoclaw-start post-upgrade doctor", () => {
       expect(result.status, result.stderr).toBe(0);
       expect(fs.existsSync(f.marker)).toBe(false);
       expect(fs.readFileSync(f.calls, "utf8")).toBe("doctor --fix --yes --non-interactive\n");
+    } finally {
+      fs.rmSync(f.root, { recursive: true, force: true });
+    }
+  });
+
+  it("publishes doctor readiness only after OpenClaw releases its startup lease", () => {
+    const source = fs.readFileSync(START_SCRIPT, "utf8");
+    const f = fixture();
+    try {
+      fs.writeFileSync(f.marker, "nemoclaw-openclaw-post-upgrade-doctor-v2\n", { mode: 0o600 });
+      fs.writeFileSync(f.leaseActive, "active\n");
+      const staged = `${f.marker}.release`;
+      const releaseAfterLease = [
+        `(while [ ! -f ${JSON.stringify(f.calls)} ]; do /bin/sleep 0.01; done`,
+        `/bin/sleep 0.5`,
+        `[ ! -e ${JSON.stringify(f.ready)} ] || : >${JSON.stringify(f.leaseViolation)}`,
+        `rm -f -- ${JSON.stringify(f.leaseActive)}`,
+        `while [ ! -f ${JSON.stringify(f.ready)} ]; do /bin/sleep 0.01; done`,
+        `printf '%s\\n' nemoclaw-openclaw-post-upgrade-doctor-release-v1 >${JSON.stringify(staged)}`,
+        `chmod 600 ${JSON.stringify(staged)}`,
+        `mv -f -- ${JSON.stringify(staged)} ${JSON.stringify(f.marker)}) &`,
+      ].join("; ");
+      const result = spawnSync(
+        "bash",
+        [
+          "-c",
+          `${doctorFunction(source, f.configDir, f.ready)}\nsleep() { /bin/sleep 0.01; }\n${releaseAfterLease}\nrun_requested_openclaw_post_upgrade_doctor`,
+        ],
+        { encoding: "utf8", env: fixtureEnv(f) },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.existsSync(f.leaseViolation)).toBe(false);
+      expect(result.stderr).toContain(
+        "waiting for OpenClaw startup migrations to release their native lease",
+      );
+      expect(fs.existsSync(f.marker)).toBe(false);
+      expect(fs.existsSync(f.ready)).toBe(false);
     } finally {
       fs.rmSync(f.root, { recursive: true, force: true });
     }

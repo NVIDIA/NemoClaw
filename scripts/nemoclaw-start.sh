@@ -4570,6 +4570,80 @@ finally:
 PY
 }
 
+wait_for_openclaw_startup_migration_lease() {
+  local node_bin lease_rc lease_attempt=0
+  local -a lease_command
+  node_bin="$(command -v node 2>/dev/null)" || {
+    echo "[SECURITY] Cannot inspect the OpenClaw startup-migration lease without Node.js" >&2
+    return 1
+  }
+
+  # Doctor and gateway startup share OpenClaw's native startup-migration
+  # lease. A successful Doctor can briefly return before that lease is
+  # released. Use OpenClaw's read-only lease check, including its PID-liveness
+  # rules, rather than reading or changing the native state database here.
+  lease_command=("$node_bin" - "$OPENCLAW")
+  if [ "$(id -u)" -eq 0 ]; then
+    lease_command=(
+      "${STEP_DOWN_PREFIX_SANDBOX[@]}" /usr/bin/env
+      HOME=/sandbox PATH="$PATH:/sandbox/.local/bin"
+      "${lease_command[@]}"
+    )
+  fi
+  while [ "$lease_attempt" -lt 330 ]; do
+    lease_attempt=$((lease_attempt + 1))
+    lease_rc=0
+    "${lease_command[@]}" <<'NODELEASE' || lease_rc=$?
+const fs = require("node:fs");
+const path = require("node:path");
+const { pathToFileURL } = require("node:url");
+
+(async () => {
+  let packageRoot = path.dirname(fs.realpathSync(process.argv[2]));
+  for (let depth = 0; depth < 6; depth += 1) {
+    try {
+      const manifest = JSON.parse(fs.readFileSync(path.join(packageRoot, "package.json"), "utf8"));
+      if (manifest.name === "openclaw") break;
+    } catch {}
+    const parent = path.dirname(packageRoot);
+    if (parent === packageRoot) throw new Error("OpenClaw package root not found");
+    packageRoot = parent;
+  }
+  const dist = path.join(packageRoot, "dist");
+  const candidates = fs
+    .readdirSync(dist)
+    .filter((name) => /^startup-migration-checkpoint-.*\.js$/.test(name))
+    .sort();
+  for (const candidate of candidates) {
+    const loaded = await import(pathToFileURL(path.join(dist, candidate)).href);
+    if (typeof loaded.hasActiveStartupMigrationLease !== "function") continue;
+    process.exit(loaded.hasActiveStartupMigrationLease({ env: process.env }) ? 10 : 0);
+  }
+  throw new Error("OpenClaw startup-migration lease check not found");
+})().catch((error) => {
+  console.error(`[SECURITY] Could not inspect the OpenClaw startup-migration lease: ${error.message}`);
+  process.exit(1);
+});
+NODELEASE
+    case "$lease_rc" in
+      0)
+        return 0
+        ;;
+      10)
+        [ "$lease_attempt" -eq 1 ] \
+          && echo "[setup] waiting for OpenClaw startup migrations to release their native lease" >&2
+        sleep 1
+        ;;
+      *)
+        echo "[SECURITY] OpenClaw startup-migration lease inspection failed" >&2
+        return 1
+        ;;
+    esac
+  done
+  echo "[SECURITY] Timed out waiting for the OpenClaw startup-migration lease" >&2
+  return 1
+}
+
 run_requested_openclaw_post_upgrade_doctor() {
   local marker="/sandbox/.openclaw/.nemoclaw-post-upgrade-doctor"
   local expected="nemoclaw-openclaw-post-upgrade-doctor-v2"
@@ -4625,6 +4699,7 @@ EOF
   else
     "$OPENCLAW" doctor --fix --yes --non-interactive || return 1
   fi
+  wait_for_openclaw_startup_migration_lease || return 1
   if [ "$(id -u)" -eq 0 ]; then
     ready_owner="$marker_owner"
   fi

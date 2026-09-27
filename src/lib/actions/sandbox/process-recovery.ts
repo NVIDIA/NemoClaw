@@ -220,6 +220,9 @@ const OPENCLAW_POST_UPGRADE_DOCTOR_READY = "/tmp/nemoclaw-post-upgrade-doctor-re
 const OPENCLAW_POST_UPGRADE_DOCTOR_READY_CONTENT = "nemoclaw-openclaw-post-upgrade-doctor-ready-v1";
 const OPENCLAW_DOCTOR_RESTART_TIMEOUT_MS = 12 * 60_000;
 const OPENCLAW_DOCTOR_RECONCILIATION_TIMEOUT_MS = 3 * 60_000;
+// OpenClaw's native startup-migration lease has a five-minute TTL. Only Doctor
+// readiness needs the longer window; later release and health probes do not.
+const OPENCLAW_DOCTOR_READY_TIMEOUT_MS = 6 * 60_000;
 
 export type OpenClawPostRestoreDoctorResult =
   | { ok: true; window: OpenClawPostRestoreDoctorWindow }
@@ -801,7 +804,7 @@ export async function beginOpenClawPostRestoreDoctor(
     lifecycleOptions,
   );
 
-  const reconciliationDeadlineMs = deps.now() + OPENCLAW_DOCTOR_RECONCILIATION_TIMEOUT_MS;
+  const reconciliationDeadlineMs = deps.now() + OPENCLAW_DOCTOR_READY_TIMEOUT_MS;
   const ready = await waitUntilAsync(
     async () => {
       const remainingMs = reconciliationDeadlineMs - deps.now();
@@ -950,7 +953,7 @@ async function promoteOpenClawBackupQuiesceToDoctor(
     };
   }
 
-  const reconciliationDeadlineMs = deps.now() + OPENCLAW_DOCTOR_RECONCILIATION_TIMEOUT_MS;
+  const reconciliationDeadlineMs = deps.now() + OPENCLAW_DOCTOR_READY_TIMEOUT_MS;
   const ready = await waitUntilAsync(
     async () => {
       const remainingMs = reconciliationDeadlineMs - deps.now();
