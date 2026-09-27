@@ -61,6 +61,7 @@ function makeFakeAgent(): AgentInstance {
 export interface RestoreWarningBehavior {
   extract: SpawnResult;
   usability: SpawnResult;
+  usabilityByDir: Record<string, SpawnResult>;
   localTar: SpawnResult;
 }
 
@@ -79,6 +80,7 @@ export function createRestoreWarningHarness(): RestoreWarningHarness {
   const behavior: RestoreWarningBehavior = {
     extract: spawnResult(0),
     usability: spawnResult(0),
+    usabilityByDir: {},
     localTar: spawnResult(0),
   };
   return {
@@ -118,7 +120,12 @@ export function createRestoreWarningHarness(): RestoreWarningHarness {
         const remoteCommand = argList[argList.length - 1] ?? "";
         recordedSshCommands.push(remoteCommand);
         if (remoteCommand.includes("tar --no-same-owner -xf")) return behavior.extract;
-        if (remoteCommand.includes("[ -d ")) return behavior.usability;
+        if (remoteCommand.includes("[ -d ")) {
+          const perDir = Object.entries(behavior.usabilityByDir).find(([dirName]) =>
+            remoteCommand.includes(`/${dirName}`),
+          )?.[1];
+          return perDir ?? behavior.usability;
+        }
         return spawnResult(0);
       }
       return undefined;

@@ -97,6 +97,22 @@ describe("restoreSandboxState tar-warning handling (#12358)", () => {
     expect(result.failedDirs).toEqual([]);
   });
 
+  it("splits dirs when one dir is usable and another is not", async () => {
+    harness.behavior.extract = spawnResult(0);
+    harness.behavior.usabilityByDir = {
+      memories: spawnResult(0),
+      sessions: spawnResult(1, "sessions: Permission denied\n"),
+    };
+
+    const result = await restoreRecreatedSandboxState("alpha", harness.writeBackup(), {
+      targetAgentType: "fake-agent",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.restoredDirs).toEqual(["memories"]);
+    expect(result.failedDirs).toEqual(["sessions"]);
+  });
+
   it("fails closed without touching the sandbox when local archive creation fails", async () => {
     harness.behavior.localTar = spawnResult(
       2,
