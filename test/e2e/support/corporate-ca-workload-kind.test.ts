@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { managedStartupE2eProfile } from "../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import {
@@ -17,6 +17,9 @@ import {
 import { encodeManagedStartupProfile } from "../../../src/lib/onboard/managed-startup/profile.ts";
 import { nemoclawStateRoot } from "../../../src/lib/state/state-root.ts";
 import { registeredCorporateCaWorkloadKind } from "../fixtures/corporate-ca.ts";
+import { createPublicInstallWorkspace } from "../fixtures/public-install-workspace.ts";
+import { CleanupRegistry } from "../fixtures/cleanup.ts";
+import { connectManagedOpenShellSdk } from "../../../src/lib/adapters/openshell/sdk.ts";
 
 const SANDBOX_NAME = "corporate-ca-authority";
 const GATEWAY_PORT = 7443;
@@ -26,6 +29,40 @@ afterEach(() => {
   for (const home of temporaryHomes.splice(0)) {
     fs.rmSync(home, { force: true, recursive: true });
   }
+});
+
+describe("corporate CA public installer workspace", () => {
+  it.each([
+    { mode: 0o700, accepted: true, label: "accepts a private fixture home" },
+    { mode: 0o777, accepted: false, label: "rejects fixture homes with writable ancestors" },
+  ])("$label", async ({ mode, accepted }) => {
+    const cleanup = new CleanupRegistry();
+    const workspace = createPublicInstallWorkspace(cleanup);
+    try {
+      fs.chmodSync(workspace, mode);
+      const home = path.join(workspace, "home");
+      const stateDir = path.join(home, ".local/state/nemoclaw/openshell-docker-gateway");
+      fs.mkdirSync(path.join(stateDir, "tls/client"), { recursive: true, mode: 0o700 });
+      fs.writeFileSync(path.join(stateDir, "tls/ca.crt"), "fixture-ca", { mode: 0o600 });
+      fs.writeFileSync(path.join(stateDir, "tls/client/tls.crt"), "fixture-cert", { mode: 0o600 });
+      fs.writeFileSync(path.join(stateDir, "tls/client/tls.key"), "fixture-key", { mode: 0o600 });
+      const connect = vi.fn(async () => ({}));
+      const outcome = await connectManagedOpenShellSdk(
+        { kind: "named", gatewayName: "nemoclaw" },
+        { env: { HOME: home }, loadSdk: async () => ({ OpenShellClient: { connect } }) },
+      ).then(
+        () => ({ accepted: true, error: "" }),
+        (error: Error) => ({ accepted: false, error: error.message }),
+      );
+      expect(outcome.accepted).toBe(accepted);
+      expect(connect).toHaveBeenCalledTimes(accepted ? 1 : 0);
+      expect(outcome.error).toEqual(
+        accepted ? "" : expect.stringContaining("without group or world write access"),
+      );
+    } finally {
+      expect((await cleanup.runAll()).failures).toEqual([]);
+    }
+  });
 });
 
 function writeRegistry(entry: Record<string, unknown> | null): string {

@@ -6,12 +6,18 @@ import * as agentRuntime from "../../agent/runtime";
 import { CLI_NAME } from "../../cli/branding";
 import { D, G, R, YW } from "../../cli/terminal-style";
 import type { SandboxMessagingPlan } from "../../messaging";
+import { settleOrdinaryOpenClawPairing } from "../../onboard/machine/finalization-deps";
+import {
+  classifyPortableLifecycleReceipt,
+  portableLifecycleReceiptMatchesGeneration,
+} from "../../onboard/experimental/portable-runtime-receipt-readiness";
 import * as sandboxVersion from "../../sandbox/version";
 import {
   inspectMutableHermesConfigPerms,
   repairMutableConfigPerms,
 } from "../../sandbox/mutable-config-perms";
 import * as registry from "../../state/registry";
+import { settlePortableOpenClawPairing } from "./launch-readiness";
 import { ensureMessagingHostForwardAfterRebuild } from "./messaging-host-forward-lifecycle";
 import type { RebuildBackupManifest } from "./rebuild-backup-phase";
 import {
@@ -633,6 +639,31 @@ export async function runRebuildPostRestorePhase(
     log(`Verified the rebuilt ${targetAgentName} terminal-agent mutable posture`);
   }
   const postRestoreComplete = genericPostRestoreComplete && mutableConfigPermissionsVerified;
+  if (preparedBackupRecovery && postRestoreComplete && targetAgentName === "openclaw") {
+    // Legacy recovery can recreate a pairing-only device after onboarding's
+    // finalization was deferred. Settle its normal write scope before the
+    // prepared recovery transaction retires its backup handoff.
+    const portableRequired = portableLifecycleReceiptMatchesGeneration(
+      classifyPortableLifecycleReceipt(sandboxName),
+      recreatedEntry.lifecycleGeneration,
+    );
+    const portablePairing = await settlePortableOpenClawPairing(sandboxName, { portableRequired });
+    const pairing =
+      portablePairing.kind === "not-portable"
+        ? await settleOrdinaryOpenClawPairing(sandboxName)
+        : portablePairing;
+    if (pairing.kind !== "settled") {
+      console.error(
+        `  OpenClaw pairing remains incomplete after prepared recovery: ${pairing.reason}`,
+      );
+      if (backupManifest) console.error(`  Backup is preserved at: ${backupManifest.backupPath}`);
+      console.error(
+        `  Resolve the pairing failure, then rerun \`${CLI_NAME} ${sandboxName} rebuild --yes\`.`,
+      );
+      bail("OpenClaw pairing remained incomplete after prepared recovery.");
+      return;
+    }
+  }
   if (postRestoreComplete) {
     console.log(`  ${G}✓${R} Sandbox '${sandboxName}' rebuild completed`);
     if (versionCheck.expectedVersion) {

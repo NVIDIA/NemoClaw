@@ -1257,6 +1257,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     installNonInteractive: true,
     restoreCli: true,
     exposeCliBin: true,
+    prAdvisorSelectable: true,
     runner: "ubuntu-24.04",
     shard: "linux-amd64",
     owningPaths: [

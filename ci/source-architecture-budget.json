@@ -26,6 +26,7 @@
       "src/lib/inference/config.ts": 28,
       "src/lib/messaging/channels/index.ts": 24,
       "src/lib/onboard/gateway-binding.ts": 51,
+      "src/lib/platform.ts": 21,
       "src/lib/runner.ts": 81,
       "src/lib/sandbox-name-contract.ts": 20,
       "src/lib/security/redact.ts": 51,

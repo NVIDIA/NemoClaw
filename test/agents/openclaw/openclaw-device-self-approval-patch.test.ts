@@ -406,7 +406,6 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
   it.each([
     { client: { id: "control-ui", mode: "ui" }, role: "operator", scopes: ["operator.write"] },
     { client: { id: "cli", mode: "cli" }, role: "node", scopes: ["operator.write"] },
-    { client: { id: "cli", mode: "cli" }, role: "operator", scopes: ["operator.admin"] },
     {
       client: { id: "cli", mode: "cli" },
       role: "operator",
@@ -432,6 +431,12 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
         await expect(
           connect(
             { client: { id: "cli", mode: "cli" }, role: "operator", scopes: ["operator.write"] },
+            scopeMismatch,
+          ),
+        ).resolves.toMatchObject({ authOk: true, authMethod: "device-token" });
+        await expect(
+          connect(
+            { client: { id: "cli", mode: "cli" }, role: "operator", scopes: ["operator.admin"] },
             scopeMismatch,
           ),
         ).resolves.toMatchObject({ authOk: true, authMethod: "device-token" });

@@ -9,6 +9,7 @@ import {
   warnIfDockerBuildEnvironmentCleanupFailed,
 } from "../adapters/docker/client-isolation";
 import {
+  CreatedSandboxIdentityError,
   NEMOCLAW_CREATE_ATTEMPT_LABEL,
   NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH,
   parseOpenShellSandboxId,
@@ -637,8 +638,9 @@ export function createSandboxGpuCreateAttemptRunner(
     let readyCheckCreatedSandboxId: string | null = null;
     let readyCheckCreatedIdentityFailure: unknown = null;
     const failReadyCheckCreatedIdentity = (diagnostic: string): true => {
-      readyCheckCreatedIdentityFailure = new Error(
-        `OpenShell did not return the exact created identity for sandbox '${input.sandboxName}'. Diagnostic class: ${diagnostic}.`,
+      readyCheckCreatedIdentityFailure = new CreatedSandboxIdentityError(
+        input.sandboxName,
+        diagnostic,
       );
       return true;
     };
@@ -673,7 +675,7 @@ export function createSandboxGpuCreateAttemptRunner(
       } catch (error) {
         persistIdentitySettlementRecovery();
         throw new Error(
-          `Sandbox '${input.sandboxName}' was created, but OpenShell did not return one exact durable sandbox identity before post-create effects.`,
+          `Sandbox '${input.sandboxName}' was created, but OpenShell did not return one exact durable sandbox identity before post-create effects${error instanceof CreatedSandboxIdentityError ? ` (${error.diagnostic})` : ""}.`,
           { cause: error },
         );
       }
@@ -997,7 +999,7 @@ export function createSandboxGpuCreateAttemptRunner(
       } catch (error) {
         persistIdentitySettlementRecovery();
         throw new Error(
-          `Sandbox '${input.sandboxName}' was created, but OpenShell did not return one exact durable sandbox identity before post-create effects.`,
+          `Sandbox '${input.sandboxName}' was created, but OpenShell did not return one exact durable sandbox identity before post-create effects${error instanceof CreatedSandboxIdentityError ? ` (${error.diagnostic})` : ""}.`,
           { cause: error },
         );
       }

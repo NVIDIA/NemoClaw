@@ -370,12 +370,15 @@ const PR_METADATA_EDIT_JOB_NAMES = new Set([
   "checks",
   "cli-test-shards",
   "cli-tests",
+  "compile-artifacts",
   "docs-only-checks",
+  "hugging-face-models",
   "installer-integration",
+  "openshell-sdk-package",
   "plugin-tests",
+  "real-openclaw-dist-harness",
   "reviewed-npm-audit",
   "static-checks",
-  "wechat-runtime-audit",
 ]);
 const PR_REVIEW_ADVISOR_WORKFLOW_NAME = "Automation / PR Review Advisor";
 const PR_REVIEW_ADVISOR_WORKFLOW_PATH = ".github/workflows/pr-review-advisor.yaml";

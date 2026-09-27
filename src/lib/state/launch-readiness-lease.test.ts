@@ -509,6 +509,127 @@ describe("launch readiness lease storage", () => {
     ).toBe("changed");
   });
 
+  it("reports bounded persistent receipt permission evidence without authorizing mutation (#10638)", () => {
+    publish();
+    const receiptPath = launchReadinessReceiptPath(SANDBOX, GATEWAY_PORT, home);
+    const uid = process.getuid?.() ?? 0;
+    fs.chmodSync(receiptPath, 0o640);
+
+    expect(
+      checkLaunchReadinessMutationAuthority(SANDBOX, GATEWAY_NAME, GATEWAY_PORT, null, options()),
+    ).toEqual({
+      kind: "unsafe",
+      evidence: {
+        resource: "persistent receipt",
+        path: receiptPath,
+        expectedUid: uid,
+        observedUid: uid,
+        expectedMode: "0600",
+        observedMode: "0640",
+        operation: "inspect",
+        errorCode: null,
+        repair: "chmod",
+      },
+    });
+
+    fs.chmodSync(receiptPath, 0o600);
+  });
+
+  it.each(["receipt", "persistent ancestor", "runtime ancestor"] as const)(
+    "identifies the unsafe %s directory without blaming its safe child (#10638)",
+    (target) => {
+      publish();
+      const receiptPath = launchReadinessReceiptPath(SANDBOX, GATEWAY_PORT, home);
+      const receiptDir =
+        target === "receipt"
+          ? path.dirname(receiptPath)
+          : target === "persistent ancestor"
+            ? path.join(home, ".nemoclaw")
+            : path.join(runtimeRoot, "nemoclaw");
+      const mode = target === "persistent ancestor" ? 0o777 : 0o750;
+      const uid = process.getuid?.() ?? 0;
+      fs.chmodSync(receiptDir, mode);
+
+      try {
+        expect(
+          checkLaunchReadinessMutationAuthority(
+            SANDBOX,
+            GATEWAY_NAME,
+            GATEWAY_PORT,
+            null,
+            options(),
+          ),
+        ).toEqual({
+          kind: "unsafe",
+          evidence: {
+            resource:
+              target === "runtime ancestor"
+                ? "runtime authority directory"
+                : "persistent receipt directory",
+            path: receiptDir,
+            expectedUid: uid,
+            observedUid: uid,
+            expectedMode: target === "persistent ancestor" ? "no group/other write bits" : "0700",
+            observedMode: mode.toString(8).padStart(4, "0"),
+            operation: "inspect",
+            errorCode: null,
+            repair: "manual",
+          },
+        });
+      } finally {
+        fs.chmodSync(receiptDir, 0o700);
+      }
+    },
+  );
+
+  it("does not suggest chmod for malformed authority with correct permissions (#10638)", () => {
+    publish();
+    const authorityPath = launchReadinessAuthorityPath(SANDBOX, runtimeRoot);
+    fs.writeFileSync(authorityPath, "invalid authority", { mode: 0o600 });
+    expect(
+      checkLaunchReadinessMutationAuthority(SANDBOX, GATEWAY_NAME, GATEWAY_PORT, null, options()),
+    ).toMatchObject({
+      kind: "unsafe",
+      evidence: {
+        path: authorityPath,
+        expectedMode: "0600",
+        observedMode: "0600",
+        repair: "manual",
+      },
+    });
+  });
+
+  it.each(["EROFS", "ENOENT", "private-message=do-not-display"])(
+    "retains only a bounded write error code (%s) without suggesting chmod (#10638)",
+    (code) => {
+      const fence = fenceLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options());
+      const authorityPath = launchReadinessAuthorityPath(SANDBOX, runtimeRoot);
+      vi.spyOn(fs, "fsyncSync").mockImplementation(() => {
+        throw Object.assign(new Error("private-message=do-not-display"), { code });
+      });
+      const result = checkLaunchReadinessMutationAuthority(
+        SANDBOX,
+        GATEWAY_NAME,
+        GATEWAY_PORT,
+        fence.epochId,
+        options(),
+      );
+      expect(result).toMatchObject({
+        kind: "unsafe",
+        evidence: {
+          path: authorityPath,
+          expectedMode: "0600",
+          observedMode: "0600",
+          operation: "write",
+          errorCode: code === "private-message=do-not-display" ? null : code,
+          repair: "manual",
+        },
+      });
+      expect(JSON.stringify(result)).not.toContain("private-message=do-not-display");
+      expect(fs.readdirSync(path.dirname(authorityPath))).toEqual([path.basename(authorityPath)]);
+    },
+  );
+
   it("rejects a copied fence after the state volume changes during preflight", () => {
     const fence = fenceLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options());
     const stateRoot = path.join(home, ".nemoclaw");

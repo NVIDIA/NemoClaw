@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
+import { isIP } from "node:net";
+import { resolveHostAddressesBounded } from "../../adapters/dns/resolve";
 import { type AgentDefinition, type AgentMcpAdapter, loadAgent } from "../../agent/defs";
 import {
   buildDeepAgentsMcpStatusCommand,
@@ -34,6 +36,7 @@ import type {
 } from "./mcp-bridge-provider-readiness";
 import {
   credentialResolutionWarning,
+  MCP_CONNECT_403_POLICY_DETAIL,
   probeCredentialResolution,
 } from "./mcp-bridge-resolution-probe";
 import {
@@ -45,8 +48,10 @@ import {
 import { inspectPolicyOnlyMcpEntry, inspectSourceBridgeState } from "./mcp-bridge-source";
 import { discoverMcpTools, mcpToolDiscoveryPreconditionFailure } from "./mcp-bridge-tool-discovery";
 import {
+  inspectMcpRecordedPublicTargetPins,
   inspectMcpRecordedTargetPins,
   type McpBridgeRecordedPinStatus,
+  type McpBridgePublicPinStatus,
 } from "./mcp-bridge-url-validation";
 import {
   assertAuthenticatedBridgeEntry,
@@ -333,17 +338,38 @@ export async function statusMcpBridge(
     }
   }
   const privatePinStatusByServer = new Map<string, McpBridgeRecordedPinStatus>();
+  const publicPinStatusByServer = new Map<string, McpBridgePublicPinStatus>();
+  const publicPinQueues = Array.from({ length: 4 }, () => Promise.resolve());
+  let nextPublicQueue = 0;
   await Promise.all(
     entries.map(async ([name, entry]) => {
-      if (!entry?.trustedPrivateHost || !entry.allowedIps) return;
-      privatePinStatusByServer.set(
-        name,
-        await inspectMcpRecordedTargetPins(
-          new URL(entry.url),
-          entry.trustedPrivateHost,
-          entry.allowedIps,
-        ),
-      );
+      if (!entry?.allowedIps) return;
+      let parsed: URL;
+      try {
+        parsed = new URL(entry.url);
+      } catch {
+        return;
+      }
+      if (entry.trustedPrivateHost) {
+        privatePinStatusByServer.set(
+          name,
+          await inspectMcpRecordedTargetPins(parsed, entry.trustedPrivateHost, entry.allowedIps),
+        );
+        return;
+      }
+      if (entry.allowedIps.some((address) => isIP(address) === 0)) return;
+      const pins = entry.allowedIps;
+      const slot = nextPublicQueue++ % publicPinQueues.length;
+      const inspection = publicPinQueues[slot].then(async () => {
+        publicPinStatusByServer.set(
+          name,
+          await inspectMcpRecordedPublicTargetPins(parsed, pins, (hostname) =>
+            resolveHostAddressesBounded(hostname, 2_000),
+          ),
+        );
+      });
+      publicPinQueues[slot] = inspection;
+      return inspection;
     }),
   );
 
@@ -398,6 +424,7 @@ export async function statusMcpBridge(
         if (entry.policyConflict) warnings.push(entry.policyConflict);
       }
       const privatePinStatus = privatePinStatusByServer.get(name);
+      const publicPinStatus = publicPinStatusByServer.get(name);
       if (privatePinStatus?.state === "drift") {
         warnings.push(
           "Trusted-private DNS answers differ from the recorded pins. Remove and re-add this server to approve changed pins.",
@@ -405,6 +432,20 @@ export async function statusMcpBridge(
       } else if (privatePinStatus?.state === "unresolved") {
         warnings.push(
           "Trusted-private DNS resolution is unavailable. The recorded policy pins were not changed.",
+        );
+      }
+      if (publicPinStatus?.state === "drift") {
+        warnings.push(
+          "Public DNS answers differ from the recorded pins. Run mcp update <server> --refresh-public-pins to refresh the live policy.",
+        );
+      } else if (publicPinStatus?.state === "unresolved") {
+        warnings.push(
+          "Public DNS resolution is unavailable. The recorded policy pins were not changed.",
+        );
+      }
+      if (publicPinStatus?.state === "rejected") {
+        warnings.push(
+          `Public DNS target was rejected: ${publicPinStatus.detail ?? "the current addresses are not public"} The live policy was not changed.`,
         );
       }
       const unsafeCredentialMayBeAttached =
@@ -452,8 +493,22 @@ export async function statusMcpBridge(
                     credentialRevision,
                   )
           : undefined;
-      const resolutionWarning = credentialResolution
-        ? credentialResolutionWarning(entry?.env[0], credentialResolution)
+      // Name observed pin drift when it can explain the CONNECT denial (#10464).
+      const diagnosedCredentialResolution =
+        credentialResolution?.detail === MCP_CONNECT_403_POLICY_DETAIL &&
+        entry?.allowedIps &&
+        publicPinStatus?.state === "drift" &&
+        publicPinStatus.currentAddresses
+          ? {
+              ...credentialResolution,
+              detail:
+                `OpenShell denied the probe connection (CONNECT 403): current public DNS answers ` +
+                `${publicPinStatus.currentAddresses.join(", ")} do not match recorded pins ` +
+                `${entry.allowedIps.join(", ")}. Run mcp update <server> --refresh-public-pins to refresh the live policy.`,
+            }
+          : credentialResolution;
+      const resolutionWarning = diagnosedCredentialResolution
+        ? credentialResolutionWarning(entry?.env[0], diagnosedCredentialResolution)
         : undefined;
       if (resolutionWarning) warnings.push(resolutionWarning);
       const toolDiscovery =
@@ -489,6 +544,19 @@ export async function statusMcpBridge(
               },
             }
           : {}),
+        ...(entry && !entry.trustedPrivateHost && entry.allowedIps && publicPinStatus
+          ? {
+              publicTarget: {
+                host: new URL(entry.url).hostname,
+                recordedPins: [...entry.allowedIps],
+                ...(publicPinStatus.currentAddresses
+                  ? { currentPins: publicPinStatus.currentAddresses }
+                  : {}),
+                state: publicPinStatus.state,
+                ...(publicPinStatus.detail ? { detail: publicPinStatus.detail } : {}),
+              },
+            }
+          : {}),
         env: {
           names: entry?.env ?? [],
           missing: missingEnv,
@@ -512,7 +580,9 @@ export async function statusMcpBridge(
                     : "configured"
                   : "conflict",
           ...(providerDetail ? { detail: providerDetail } : {}),
-          ...(credentialResolution ? { credentialResolution } : {}),
+          ...(diagnosedCredentialResolution
+            ? { credentialResolution: diagnosedCredentialResolution }
+            : {}),
         },
         policy: {
           name: entry?.policyName,
