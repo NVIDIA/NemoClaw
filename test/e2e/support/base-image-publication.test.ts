@@ -1,13 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-
 import { describe, expect, it, vi } from "vitest";
-
 import {
   baseImageInputsChanged,
   collectPaginated,
@@ -26,7 +23,6 @@ import {
   waitForBaseImagePublication,
   writePublicationRunOutputs,
 } from "../../../tools/e2e/base-image-publication.mts";
-
 const EXPECTED_SHA = "a".repeat(40);
 const DESCENDANT_SHA = "b".repeat(40);
 const RELEVANT_SHA = "c".repeat(40);

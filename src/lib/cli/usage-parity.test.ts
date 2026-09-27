@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, test } from "vitest";
 
 import { PUBLIC_DISPLAY_ENTRIES } from "./public-display-defaults";
 
@@ -49,46 +49,43 @@ function missingUsageFlags(commandId: string, documentedFlags: string | undefine
   return flagTokens(staticUsage(commandId).join(" ")).filter((token) => !documented.has(token));
 }
 
+function visibleEntries() {
+  return Object.entries(PUBLIC_DISPLAY_ENTRIES)
+    .filter(([commandId]) => !USAGE_NOT_IN_COMMAND_SOURCE.has(commandId))
+    .flatMap(([commandId, entries]) =>
+      entries
+        .filter((entry) => !entry.hidden || HIDDEN_COMMAND_IDS_WITH_PARITY.has(commandId))
+        .map((entry) => ({ commandId, usage: entry.usage, flags: entry.flags })),
+    );
+}
+
+function parseUsageHints() {
+  const source = fs.readFileSync(POLICY_CHANNEL_SOURCE, "utf8");
+  const hints: string[] = [
+    ...source.matchAll(/const usage = `\$\{CLI_NAME\} <sandbox> ([^`]+)`/gu),
+    ...source.matchAll(/Usage: \$\{CLI_NAME\} <sandbox> ([^`]+)`/gu),
+  ].map((match) => match[1]);
+  return hints.flatMap((hint) => {
+    const [topic, subcommandToken] = hint.split(" ");
+    if (!topic || !subcommandToken) return [];
+    const subcommands = subcommandToken === "${verb}" ? ["start", "stop"] : [subcommandToken];
+    return subcommands.map((subcommand) => ({ commandId: `sandbox:${topic}:${subcommand}`, hint }));
+  });
+}
+
 describe("public display usage parity", () => {
-  it("documents every usage flag of each root-help row", () => {
-    const drifted: string[] = [];
-    for (const [commandId, entries] of Object.entries(PUBLIC_DISPLAY_ENTRIES)) {
-      if (USAGE_NOT_IN_COMMAND_SOURCE.has(commandId)) continue;
-      for (const entry of entries) {
-        if (entry.hidden && !HIDDEN_COMMAND_IDS_WITH_PARITY.has(commandId)) continue;
-        const missing = missingUsageFlags(commandId, entry.flags);
-        if (missing.length > 0) {
-          drifted.push(`${commandId} (${entry.usage}) is missing ${missing.join(", ")}`);
-        }
-      }
-    }
-    expect(drifted).toEqual([]);
-  });
+  for (const { commandId, usage, flags } of visibleEntries()) {
+    it(`documents every usage flag of ${commandId} (${usage})`, () => {
+      const missing = missingUsageFlags(commandId, flags);
+      expect(missing).toEqual([]);
+    });
+  }
 
-  it("documents every usage flag in the usage hints printed for missing arguments", () => {
-    const source = fs.readFileSync(POLICY_CHANNEL_SOURCE, "utf8");
-    const hints = [
-      ...source.matchAll(/const usage = `\$\{CLI_NAME\} <sandbox> ([^`]+)`/gu),
-      ...source.matchAll(/Usage: \$\{CLI_NAME\} <sandbox> ([^`]+)`/gu),
-    ].map((match) => match[1]);
-    expect(hints.length).toBeGreaterThan(0);
-
-    const drifted: string[] = [];
-    for (const hint of hints) {
-      const [topic, subcommandToken] = hint.split(" ");
-      if (!topic || !subcommandToken) {
-        drifted.push(`usage hint does not name a command: '${hint}'`);
-        continue;
-      }
-      const subcommands = subcommandToken === "${verb}" ? ["start", "stop"] : [subcommandToken];
-      for (const subcommand of subcommands) {
-        const commandId = `sandbox:${topic}:${subcommand}`;
-        const missing = missingUsageFlags(commandId, hint);
-        if (missing.length > 0) {
-          drifted.push(`${commandId} hint '${hint}' is missing ${missing.join(", ")}`);
-        }
-      }
-    }
-    expect(drifted).toEqual([]);
-  });
+  test.each(parseUsageHints())(
+    "documents every usage flag in hint for %s (%s)",
+    ({ commandId, hint }) => {
+      const missing = missingUsageFlags(commandId, hint);
+      expect(missing).toEqual([]);
+    },
+  );
 });

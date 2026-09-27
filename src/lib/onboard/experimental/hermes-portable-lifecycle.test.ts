@@ -1,13 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
 import { loadAgent } from "../../agent/defs";
 import DebugCliCommand from "../../../commands/debug";
 import type { SandboxEntry } from "../../state/registry";
@@ -49,7 +46,6 @@ import {
   readHermesPortableLifecycleReceiptForRequalification,
   type HermesPortableConfiguredReceipt,
 } from "./hermes-portable-receipt";
-
 // Lifecycle qualification re-reads the current Hermes manifest, so resolve it
 // from an owner-only copy instead of the checkout's group-writable modes. The
 // manifest bytes are unchanged, so digests and reviewed-version checks still
@@ -65,7 +61,6 @@ vi.mock("../../agent/defs", async (importOriginal) => {
         : original.loadAgent(name, env),
   };
 });
-
 let stateDir: string;
 let policyPath: string;
 function activeReceipt(homeDir = "/home/test"): HermesPortableConfiguredReceipt {
@@ -106,19 +101,16 @@ function lifecycleContext() {
     provider: "ollama",
   };
 }
-
 beforeEach(() => {
   stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-lifecycle-"));
   policyPath = path.join(stateDir, "policy.yaml");
   fs.writeFileSync(policyPath, POLICY, { mode: 0o600 });
 });
-
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
   fs.rmSync(stateDir, { recursive: true, force: true });
 });
-
 function recoverWithLifecycleLock(deps: HermesPortableLifecycleDeps) {
   return withMcpLifecycleLock(
     SANDBOX,
@@ -126,7 +118,6 @@ function recoverWithLifecycleLock(deps: HermesPortableLifecycleDeps) {
     { stateDir: path.join(stateDir, "state") },
   );
 }
-
 describe("Hermes portable lifecycle", () => {
   it.each([
     { outcome: "resolve", settle: () => undefined },
@@ -194,7 +185,6 @@ describe("Hermes portable lifecycle", () => {
       expect(fixture.launchOpenShell).toHaveBeenCalledTimes(outcome === "resolve" ? 1 : 0);
     },
   );
-
   it("collects an offline public debug bundle for an actual receipt without exposing authority (#11651)", async () => {
     const home = stateDir;
     stateDir = path.join(home, ".nemoclaw");
@@ -223,7 +213,6 @@ describe("Hermes portable lifecycle", () => {
       stateDir = home;
     }
   });
-
   it("preserves sanitized command diagnostics and reports an attempted start (#11651)", async () => {
     const receipt = activeReceipt();
     const fixture = lifecycleDeps(receipt, false);
@@ -263,7 +252,6 @@ describe("Hermes portable lifecycle", () => {
       }),
     );
   });
-
   it("rejects late exec readiness and rolls back (#11652)", async () => {
     const fixture = lifecycleDeps(activeReceipt(), false);
     const capture = fixture.captureOpenShell.getMockImplementation()!;
@@ -277,7 +265,6 @@ describe("Hermes portable lifecycle", () => {
     );
     expect(openshellMutationCalls(fixture.captureOpenShell, "stop")).toHaveLength(1);
   });
-
   it.each([
     [20, "authenticated-health", 80, [20], 1],
     [100, "entry-qualification", undefined, [], 0],
