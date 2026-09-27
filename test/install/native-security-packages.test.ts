@@ -101,6 +101,55 @@ function runLibssh2Harness(nestedFailure = false) {
   return { fixture, harnessLog, result };
 }
 
+function runPythonFixPackageHarness(architecture: "amd64" | "arm64", sourceHashFailure = false) {
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-python-fix-harness-"));
+  const outputDir = path.join(fixture, "out");
+  const harnessLog = path.join(fixture, "harness-log");
+  fs.mkdirSync(outputDir);
+  fs.mkdirSync(harnessLog);
+
+  const result = spawnSync(
+    "bash",
+    [
+      "-c",
+      [
+        "set -euo pipefail",
+        'harness_output="$1"',
+        'architecture="$2"',
+        'set -- "$harness_output"',
+        "source scripts/security/build-native-security-packages.sh",
+        'download() { printf "download %s\\n" "$1" >>"$HARNESS_LOG/calls"; : >"$2"; }',
+        'verify_sha256() { printf "verify %s %s\\n" "$1" "${2##*/}" >>"$HARNESS_LOG/calls"; if [[ "${FAIL_SOURCE_HASH:-0}" == "1" && "$2" == *python-stdlib-original.deb ]]; then return 1; fi; }',
+        "dpkg-deb() {",
+        '  case "$1" in',
+        '    -x) mkdir -p "$3/usr/lib/python3.13/html"; printf "original parser\\n" >"$3/usr/lib/python3.13/html/parser.py" ;;',
+        '    -f) if [[ "$3" == "Package" ]]; then printf "libpython3.13-stdlib\\n"; elif [[ "$2" == "$output_dir/nemoclaw-python3.13-htmlparser-fix.deb" ]]; then printf "%s\\n" "$PYTHON_FIX_VERSION"; else printf "%s\\n" "$PYTHON_DEBIAN_VERSION"; fi ;;',
+        '    --build) : >"$4"; printf "build %s\\n" "${4##*/}" >>"$HARNESS_LOG/calls" ;;',
+        "    *) return 64 ;;",
+        "  esac",
+        "}",
+        'git() { printf "git %s\\n" "$*" >>"$HARNESS_LOG/calls"; }',
+        "refresh_md5sums() { :; }",
+        'build_python_fix_package "$architecture"',
+        'cp "$build_root/python-htmlparser-fix/DEBIAN/control" "$HARNESS_LOG/control"',
+      ].join("\n"),
+      "python-fix-harness",
+      outputDir,
+      architecture,
+    ],
+    {
+      cwd: ROOT,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        FAIL_SOURCE_HASH: sourceHashFailure ? "1" : "0",
+        HARNESS_LOG: harnessLog,
+      },
+    },
+  );
+  return { fixture, harnessLog, outputDir, result };
+}
+
 describe("native security package remediation", () => {
   it("keeps the package builder syntactically valid", () => {
     const result = spawnSync("bash", ["-n", BUILD_SCRIPT], { encoding: "utf-8" });
@@ -139,6 +188,54 @@ describe("native security package remediation", () => {
     try {
       expect(result.status).toBe(1);
       expect(result.stderr).toContain("A nested libssh2 TAP test reported a failure.");
+    } finally {
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ["amd64", "db161322a3481d2c0c3b9a3b9a03c3ab0e2b1718f54b88755fb4a3f939165b84"],
+    ["arm64", "d1178d24e4d143cc6c577d9dc0f26dd982efccc2e600d25ce86361f168a22be0"],
+  ] as const)(
+    "builds the Python fix from the reviewed %s snapshot artifact",
+    (architecture, hash) => {
+      const { fixture, harnessLog, outputDir, result } = runPythonFixPackageHarness(architecture);
+      try {
+        expect({ status: result.status, stderr: result.stderr }).toEqual({
+          status: 0,
+          stderr: "",
+        });
+        const calls = fs.readFileSync(path.join(harnessLog, "calls"), "utf-8");
+        expect(calls).toContain(
+          `download https://snapshot.debian.org/archive/debian/20260906T023042Z/pool/main/p/python3.13/libpython3.13-stdlib_3.13.5-2+deb13u5_${architecture}.deb`,
+        );
+        expect(calls).toContain(`verify ${hash} python-stdlib-original.deb`);
+        expect(calls).toContain(
+          "verify f91ec3de6331206bbe2ec3e54a05f646bd23d3c61a18d4a01b25164e070bacc9 parser.py",
+        );
+        expect(calls).toContain(
+          "verify 4ff43a8578bda2f14686c67911b64c18e869841973722b1c623b5727491bdaf7 parser.py",
+        );
+        expect(calls).toContain("build nemoclaw-python3.13-htmlparser-fix.deb");
+        expect(fs.readFileSync(path.join(harnessLog, "control"), "utf-8")).toContain(
+          "Depends: libpython3.13-stdlib (= 3.13.5-2+deb13u5)",
+        );
+        expect(fs.existsSync(path.join(outputDir, "nemoclaw-python3.13-htmlparser-fix.deb"))).toBe(
+          true,
+        );
+      } finally {
+        fs.rmSync(fixture, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("stops before producing a Python fix package when the source hash is invalid", () => {
+    const { fixture, outputDir, result } = runPythonFixPackageHarness("amd64", true);
+    try {
+      expect(result.status).toBe(1);
+      expect(fs.existsSync(path.join(outputDir, "nemoclaw-python3.13-htmlparser-fix.deb"))).toBe(
+        false,
+      );
     } finally {
       fs.rmSync(fixture, { recursive: true, force: true });
     }
@@ -205,7 +302,7 @@ describe("native security package remediation", () => {
     );
     expect(content).toContain("libssh2-1t64=1.11.1-1+deb13u1+nemoclaw2");
     expect(content).toContain("libssl3t64=3.5.7-1~deb13u2");
-    expect(content).toContain("nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1");
+    expect(content).toContain("nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u5+nemoclaw1");
     expect(content).toContain("4ff43a8578bda2f14686c67911b64c18e869841973722b1c623b5727491bdaf7");
     expect(content).toContain("[p.feed('') for _ in range(20000)]");
     expect(content).toContain("or sys.exit('empty feeds accumulated pending entries')");

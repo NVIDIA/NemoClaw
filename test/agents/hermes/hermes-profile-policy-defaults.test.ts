@@ -30,6 +30,11 @@ const MANAGED_POLICY = buildHermesManagedPolicy(POLICY_SETTINGS, {});
 
 const configFixture = `\
 DEFAULT_CONFIG = {
+    "database": {
+        "journal_mode": "wal",
+        "wal_autocheckpoint": None,
+        "journal_size_limit": None,
+    },
     "browser": {
         "allow_unsafe_evaluate": False,
         "restrict_evaluate": False,
@@ -55,18 +60,24 @@ _BROWSER_PASSTHROUGH_KEYS = ("npm_config_offline",)
 
 def _build_browser_env() -> dict:
     env = {}
-    for _key in _BROWSER_PASSTHROUGH_KEYS:
-        if _key in os.environ:
-            env[_key] = os.environ[_key]
+    env.update({k: os.environ[k] for k in _BROWSER_PASSTHROUGH_KEYS if k in os.environ})
     return env
+`;
+
+const browserPolicyFixture = `\
+def _origin():
+    return origin
+
+def _browser_eval_flag(key: str) -> bool:
+    """Read boolean \`\`browser.<key>\`\` (default False) through the origin's config reader."""
+    _bt = _origin()
+    return _bt._browser_cfg(key, False, lambda v: is_truthy_value(v, default=False), f"browser.{key} from config")
+
+def _allow_unsafe_browser_evaluate() -> bool:
+    return _browser_eval_flag("allow_unsafe_evaluate")
 
 def _restrict_browser_evaluate() -> bool:
-    try:
-        cfg = {}
-        return is_truthy_value(cfg_get(cfg, "browser", "restrict_evaluate"), default=False)
-    except Exception as e:
-        logger.debug("Could not read browser.restrict_evaluate from config: %s", e)
-        return False
+    return _browser_eval_flag("restrict_evaluate")
 `;
 
 const gatewayFixture = `\
@@ -74,14 +85,11 @@ from dataclasses import dataclass
 
 @dataclass
 class SessionResetPolicy:
-    mode: str = "none"  # "daily", "idle", "both", or "none"
+    mode: str = "none"
 
     @classmethod
     def from_dict(cls, data):
-        mode = data.get("mode")
-        return cls(
-            mode=mode if mode is not None else "none",
-        )
+        return cls() if data.get("mode") is None else cls(mode=data["mode"])
 `;
 
 const cliFixture = `\
@@ -94,50 +102,56 @@ CLI_CONFIG = {
 
 const tuiFixture = `\
 def _load_show_reasoning():
-    # Fallback True — keep in sync with DEFAULT_CONFIG display.show_reasoning
-    # (this loader reads the raw user YAML without the DEFAULT_CONFIG merge).
-    return bool((_load_cfg().get("display") or {}).get("show_reasoning", True))
+    # Fallback True — keep in sync with DEFAULT_CONFIG display.show_reasoning (no DEFAULT_CONFIG merge here).
+    return bool(_display_cfg().get("show_reasoning", True))
 `;
 
 const tuiConfigFixture = `\
 def _get_reasoning_status(cfg):
-    return (
-        "show"
-        if bool((cfg.get("display") or {}).get("show_reasoning", True))
-        else "hide"
-    )
+    display = "show" if (cfg.get("display") or {}).get("show_reasoning", True) else "hide"
+    return display
 `;
 
 const agentFixture = `\
-# Codex commentary visibility (display.show_commentary, default true).
-agent.show_commentary = True
-try:
-    _display_section = _agent_cfg.get("display", {})
-    if isinstance(_display_section, dict):
-        agent.show_commentary = bool(_display_section.get("show_commentary", True))
-except Exception:
-    agent.show_commentary = True
+def _cfg_dict(cfg, key):
+    return cfg.get(key, {})
+
+def apply(agent, _agent_cfg):
+    # show_commentary: Codex phase=commentary → interim path (true) or reasoning channel.
+    agent.show_commentary = bool(_cfg_dict(_agent_cfg, "display").get("show_commentary", True))
 `;
 
 const mainFixture = `\
-def _resolve_pre_update_backup_mode():
-    updates_cfg = {}
-    raw = updates_cfg.get("pre_update_backup", "quick")
+def _load_updates_cfg():
+    return {}
+
+def _resolve_pre_update_backup_mode(args=None):
+    try:
+        raw = _load_updates_cfg().get("pre_update_backup", "quick")
+    except Exception:
+        raw = "quick"
+
+    if raw is True:
+        return "full"
     return raw
 
 def _refresh():
-    if True:
-        if True:
-            refresh_cua_driver = True
-            _update_cfg = {}
-            refresh_cua_driver = bool(
-                _update_cfg.get("refresh_cua_driver", True)
-            )
-            return refresh_cua_driver
+    refresh_cua_driver = True
+    refresh_cua_driver = bool(_load_updates_cfg().get("refresh_cua_driver", True))
+    return refresh_cua_driver
 `;
 
 function patchSource(
-  kind: "config" | "browser" | "gateway" | "cli" | "tui" | "tui_config" | "agent" | "main",
+  kind:
+    | "config"
+    | "browser"
+    | "browser_policy"
+    | "gateway"
+    | "cli"
+    | "tui"
+    | "tui_config"
+    | "agent"
+    | "main",
   source: string,
 ) {
   const harness = `\
@@ -201,37 +215,46 @@ describe("Hermes profile policy defaults", () => {
     expect(JSON.parse(probe.stdout)).toEqual({
       approvals: { mode: "manual" },
       browser: { allow_unsafe_evaluate: false, restrict_evaluate: true },
+      database: {
+        journal_mode: "wal",
+        journal_size_limit: null,
+        temp_store: 2,
+        wal_autocheckpoint: null,
+      },
       display: { show_commentary: false, show_reasoning: false },
       updates: { pre_update_backup: false, refresh_cua_driver: false },
     });
   });
 
-  it("keeps the browser loader restricted and its runtime npx fallback offline", () => {
+  it("keeps the browser runtime npx fallback offline", () => {
     const result = patchSource("browser", browserFixture);
 
     expect(result.status, result.stderr).toBe(0);
     const probe = runPatchedPython(
       result.stdout,
-      `
-import json
-namespace["logger"] = type("Logger", (), {"debug": lambda *args: None})()
-restricted_on_error = namespace["_restrict_browser_evaluate"]()
-namespace["cfg_get"] = lambda *_args: None
-namespace["is_truthy_value"] = lambda value, default: default if value is None else bool(value)
-restricted_when_missing = namespace["_restrict_browser_evaluate"]()
-print(json.dumps({
-    "offline": namespace["_build_browser_env"]()["npm_config_offline"],
-    "restricted_on_error": restricted_on_error,
-    "restricted_when_missing": restricted_when_missing,
-}))`,
+      'print(namespace["_build_browser_env"]()["npm_config_offline"])',
       { ...process.env, npm_config_offline: "false" },
     );
     expect(probe.status, probe.stderr).toBe(0);
-    expect(JSON.parse(probe.stdout)).toEqual({
-      offline: "true",
-      restricted_on_error: true,
-      restricted_when_missing: true,
-    });
+    expect(probe.stdout.trim()).toBe("true");
+  });
+
+  it("keeps browser evaluation restricted while unsafe evaluation stays opt-in", () => {
+    const result = patchSource("browser_policy", browserPolicyFixture);
+
+    expect(result.status, result.stderr).toBe(0);
+    const probe = runPatchedPython(
+      result.stdout,
+      `
+import types
+namespace["is_truthy_value"] = lambda value, default: default if value is None else bool(value)
+namespace["origin"] = types.SimpleNamespace(
+    _browser_cfg=lambda key, default, convert, _label: convert(None)
+)
+print(namespace["_restrict_browser_evaluate"](), namespace["_allow_unsafe_browser_evaluate"]())`,
+    );
+    expect(probe.status, probe.stderr).toBe(0);
+    expect(probe.stdout.trim()).toBe("True False");
   });
 
   it("keeps the gateway reset policy fail-safe without config.yaml", () => {
@@ -264,7 +287,7 @@ print(json.dumps({
     expect(result.status, result.stderr).toBe(0);
     const probe = runPatchedPython(
       result.stdout,
-      'namespace["_load_cfg"] = lambda: {}; print(namespace["_load_show_reasoning"]())',
+      'namespace["_display_cfg"] = lambda: {}; print(namespace["_load_show_reasoning"]())',
     );
     expect(probe.status, probe.stderr).toBe(0);
     expect(probe.stdout.trim()).toBe("False");
@@ -279,7 +302,7 @@ print(json.dumps({
     expect(probe.stdout.trim()).toBe("hide");
   });
 
-  it("keeps all agent commentary fallbacks private", () => {
+  it("keeps the agent commentary fallback private", () => {
     const result = patchSource("agent", agentFixture);
 
     expect(result.status, result.stderr).toBe(0);
@@ -291,11 +314,9 @@ source = sys.stdin.read()
 def evaluate(config):
     scope = {"agent": types.SimpleNamespace(), "_agent_cfg": config}
     exec(compile(source, "<agent>", "exec"), scope)
+    scope["apply"](scope["agent"], config)
     return scope["agent"].show_commentary
-class BrokenConfig:
-    def get(self, *_args):
-        raise RuntimeError("broken")
-print(evaluate({}), evaluate(BrokenConfig()))
+print(evaluate({}))
 `;
     const probe = spawnSync("python3", ["-I", "-c", probeScript], {
       encoding: "utf8",
@@ -303,7 +324,7 @@ print(evaluate({}), evaluate(BrokenConfig()))
       timeout: 5000,
     });
     expect(probe.status, probe.stderr).toBe(0);
-    expect(probe.stdout.trim()).toBe("False False");
+    expect(probe.stdout.trim()).toBe("False");
   });
 
   it("keeps update backup and CUA refresh fallbacks off", () => {

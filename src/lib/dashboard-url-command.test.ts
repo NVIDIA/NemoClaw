@@ -33,12 +33,12 @@ describe("dashboard-url command helpers", () => {
     expect(() => buildDashboardUrl("", 18790)).toThrow(/token is required/);
   });
 
-  it("prints only the URL in quiet mode", () => {
+  it("prints only the URL in quiet mode", async () => {
     const sinks = makeSinks();
     const fetchToken = vi.fn(() => "secret-token");
     const getSandbox = vi.fn(() => ({ agent: "openclaw", dashboardPort: 19000 }));
 
-    runDashboardUrlCommand(
+    await runDashboardUrlCommand(
       "alpha",
       { quiet: true },
       { fetchToken, getSandbox, log: sinks.log, error: sinks.error },
@@ -50,10 +50,10 @@ describe("dashboard-url command helpers", () => {
     expect(sinks.err).toEqual([]);
   });
 
-  it("prints the resolved access URL when provided", () => {
+  it("prints the resolved access URL when provided", async () => {
     const sinks = makeSinks();
 
-    runDashboardUrlCommand(
+    await runDashboardUrlCommand(
       "alpha",
       { quiet: true },
       {
@@ -68,9 +68,9 @@ describe("dashboard-url command helpers", () => {
     expect(sinks.out).toEqual(["http://172.22.1.1:19000/#token=secret-token"]);
   });
 
-  it("prints a human label and warning outside quiet mode", () => {
+  it("prints a human label and warning outside quiet mode", async () => {
     const sinks = makeSinks();
-    runDashboardUrlCommand(
+    await runDashboardUrlCommand(
       "alpha",
       { quiet: false },
       {
@@ -86,9 +86,9 @@ describe("dashboard-url command helpers", () => {
     expect(sinks.err.join("\n")).toContain("Treat this URL like a password");
   });
 
-  it("appends an SSH port-forward hint when run over SSH (#5925)", () => {
+  it("appends an SSH port-forward hint when run over SSH (#5925)", async () => {
     const sinks = makeSinks();
-    runDashboardUrlCommand(
+    await runDashboardUrlCommand(
       "alpha",
       { quiet: false },
       {
@@ -104,11 +104,11 @@ describe("dashboard-url command helpers", () => {
     expect(sinks.out).toContain("      ssh -L 18790:127.0.0.1:18790 spark@<host>");
   });
 
-  it("appends the SSH hint in the plain-URL (session-auth) branch over SSH (#5925)", () => {
+  it("appends the SSH hint in the plain-URL (session-auth) branch over SSH (#5925)", async () => {
     const sinks = makeSinks();
     const fetchToken = vi.fn(() => "should-not-fetch");
 
-    runDashboardUrlCommand(
+    await runDashboardUrlCommand(
       "hermes",
       { quiet: false },
       {
@@ -128,9 +128,9 @@ describe("dashboard-url command helpers", () => {
     expect(sinks.out).toContain("      ssh -L 18790:127.0.0.1:18790 spark@<host>");
   });
 
-  it("omits the SSH port-forward hint outside an SSH session", () => {
+  it("omits the SSH port-forward hint outside an SSH session", async () => {
     const sinks = makeSinks();
-    runDashboardUrlCommand(
+    await runDashboardUrlCommand(
       "alpha",
       { quiet: false },
       {
@@ -145,9 +145,9 @@ describe("dashboard-url command helpers", () => {
     expect(sinks.out.join("\n")).not.toContain("Remote access");
   });
 
-  it("does not print the SSH hint in quiet mode even over SSH (#5925)", () => {
+  it("does not print the SSH hint in quiet mode even over SSH (#5925)", async () => {
     const sinks = makeSinks();
-    runDashboardUrlCommand(
+    await runDashboardUrlCommand(
       "alpha",
       { quiet: true },
       {
@@ -162,11 +162,11 @@ describe("dashboard-url command helpers", () => {
     expect(sinks.out).toEqual(["http://127.0.0.1:18790/#token=secret-token"]);
   });
 
-  it("prints a plain dashboard URL for session-auth non-OpenClaw agents without fetching a token", () => {
+  it("prints a plain dashboard URL for session-auth non-OpenClaw agents without fetching a token", async () => {
     const sinks = makeSinks();
     const fetchToken = vi.fn(() => "should-not-fetch");
 
-    runDashboardUrlCommand(
+    await runDashboardUrlCommand(
       "hermes",
       { quiet: true },
       {
@@ -183,11 +183,11 @@ describe("dashboard-url command helpers", () => {
     expect(sinks.err).toEqual([]);
   });
 
-  it("fetches a token for non-OpenClaw agents with token-auth dashboards", () => {
+  it("fetches a token for non-OpenClaw agents with token-auth dashboards", async () => {
     const sinks = makeSinks();
     const fetchToken = vi.fn(() => "agent-token");
 
-    runDashboardUrlCommand(
+    await runDashboardUrlCommand(
       "agent-ui",
       { quiet: true },
       {
@@ -203,10 +203,10 @@ describe("dashboard-url command helpers", () => {
     expect(sinks.out).toEqual(["http://127.0.0.1:19001/#token=agent-token"]);
   });
 
-  it("fails when non-OpenClaw agent dashboard metadata cannot be resolved", () => {
+  it("fails when non-OpenClaw agent dashboard metadata cannot be resolved", async () => {
     const sinks = makeSinks();
 
-    expect(() =>
+    await expect(
       runDashboardUrlCommand(
         "agent-ui",
         { quiet: true },
@@ -218,15 +218,15 @@ describe("dashboard-url command helpers", () => {
           error: sinks.error,
         },
       ),
-    ).toThrow(/Could not resolve dashboard metadata/);
+    ).rejects.toThrow(/Could not resolve dashboard metadata/);
     expect(sinks.out).toEqual([]);
   });
 
-  it("explains terminal-runtime sandboxes have no dashboard instead of a token error (#5727)", () => {
+  it("explains terminal-runtime sandboxes have no dashboard instead of a token error (#5727)", async () => {
     const sinks = makeSinks();
     const fetchToken = vi.fn(() => null);
 
-    expect(() =>
+    await expect(
       runDashboardUrlCommand(
         "dcode-status",
         { quiet: false },
@@ -241,14 +241,16 @@ describe("dashboard-url command helpers", () => {
           error: sinks.error,
         },
       ),
-    ).toThrow(/terminal runtime \(LangChain Deep Agents Code\) and does not have a dashboard/);
+    ).rejects.toThrow(
+      /terminal runtime \(LangChain Deep Agents Code\) and does not have a dashboard/,
+    );
     expect(fetchToken).not.toHaveBeenCalled();
     expect(sinks.out).toEqual([]);
   });
 
-  it("fails when the token cannot be retrieved", () => {
+  it("fails when the token cannot be retrieved", async () => {
     const sinks = makeSinks();
-    expect(() =>
+    await expect(
       runDashboardUrlCommand(
         "alpha",
         { quiet: false },
@@ -259,7 +261,7 @@ describe("dashboard-url command helpers", () => {
           error: sinks.error,
         },
       ),
-    ).toThrow(/Could not retrieve/);
+    ).rejects.toThrow(/Could not retrieve/);
     expect(sinks.out).toEqual([]);
   });
 });

@@ -676,7 +676,7 @@ describe("PR merge conflict fixer", () => {
 
   it("runs sandbox phases without host credentials (#7542)", () => {
     const env = resolverEnvironment();
-    const tools = resolverTools(["", "", "", "", "sandbox-test\n", ""]);
+    const tools = resolverTools(["", "", "", "", "", "sandbox-test\n", ""]);
 
     createResolutionSandbox(env, tools);
     runResolutionTask(env, tools);
@@ -684,7 +684,7 @@ describe("PR merge conflict fixer", () => {
     deleteResolutionSandbox(env, tools);
 
     const calls = vi.mocked(tools.run).mock.calls;
-    expect(calls).toHaveLength(6);
+    expect(calls).toHaveLength(7);
     expect(required(calls[0], "missing sandbox create call")[1]).toEqual(
       expect.arrayContaining([
         "sandbox",
@@ -700,7 +700,20 @@ describe("PR merge conflict fixer", () => {
         "--no-git-ignore",
       ]),
     );
-    expect(required(calls[1], "missing Pi task call")[1]).toEqual(
+    expect(required(calls[0], "missing sandbox create call")[1]).not.toContain("--");
+    expect(required(calls[1], "missing startup check call")[1]).toEqual([
+      "sandbox",
+      "exec",
+      "--name",
+      "sandbox-test",
+      "--",
+      "/usr/bin/git",
+      "-C",
+      "/sandbox/repo",
+      "status",
+      "--short",
+    ]);
+    expect(required(calls[2], "missing Pi task call")[1]).toEqual(
       expect.arrayContaining([
         "sandbox",
         "exec",
@@ -714,7 +727,7 @@ describe("PR merge conflict fixer", () => {
         "--offline",
       ]),
     );
-    const exportArgs = required(calls[2], "missing patch export call")[1];
+    const exportArgs = required(calls[3], "missing patch export call")[1];
     expect(exportArgs).toEqual(
       expect.arrayContaining([
         "sandbox",
@@ -726,15 +739,15 @@ describe("PR merge conflict fixer", () => {
     );
     expect(exportArgs.join("\n")).toContain("git ls-files -u");
     expect(exportArgs.join("\n")).toContain("git diff --binary");
-    expect(required(calls[3], "missing patch download call")[1]).toEqual([
+    expect(required(calls[4], "missing patch download call")[1]).toEqual([
       "sandbox",
       "download",
       "sandbox-test",
       "/sandbox/resolution.patch",
       `${required(env.ARTIFACT_DIR, "ARTIFACT_DIR")}/`,
     ]);
-    expect(required(calls[4], "missing sandbox list call")[2].capture).toBe(true);
-    expect(required(calls[5], "missing sandbox delete call")[1]).toEqual([
+    expect(required(calls[5], "missing sandbox list call")[2].capture).toBe(true);
+    expect(required(calls[6], "missing sandbox delete call")[1]).toEqual([
       "sandbox",
       "delete",
       "sandbox-test",

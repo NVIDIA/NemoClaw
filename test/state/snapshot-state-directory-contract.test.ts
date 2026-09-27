@@ -101,7 +101,7 @@ beforeEach(() => {
 });
 
 describe("snapshot state-directory authorization", () => {
-  it("refuses a snapshot directory removed from the current agent contract (#8006)", () => {
+  it("refuses a snapshot directory removed from the current agent contract (#8006)", async () => {
     const manifest = writeBackup("test-sandbox", "2026-04-21T14-00-00-000Z", {
       stateDirs: ["retired-state"],
       backedUpDirs: ["retired-state"],
@@ -109,7 +109,10 @@ describe("snapshot state-directory authorization", () => {
     fs.mkdirSync(path.join(String(manifest.backupPath), "retired-state"));
     writeAgentRegistry("test-sandbox", "openclaw");
 
-    const restore = sandboxState.restoreSandboxState("test-sandbox", String(manifest.backupPath));
+    const restore = await sandboxState.restoreSandboxState(
+      "test-sandbox",
+      String(manifest.backupPath),
+    );
 
     expect(restore).toMatchObject({
       success: false,
@@ -131,7 +134,7 @@ describe("snapshot state-directory authorization", () => {
     ],
   ])(
     "authorizes only a top-level concrete match for a dynamic state prefix: %s (#8006)",
-    (stateDir, expected) => {
+    async (stateDir, expected) => {
       const manifest = writeBackup("test-sandbox", "2026-04-21T14-00-00-000Z", {
         stateDirs: [stateDir],
         backedUpDirs: [],
@@ -139,7 +142,10 @@ describe("snapshot state-directory authorization", () => {
       });
       writeAgentRegistry("test-sandbox", "openclaw");
 
-      const restore = sandboxState.restoreSandboxState("test-sandbox", String(manifest.backupPath));
+      const restore = await sandboxState.restoreSandboxState(
+        "test-sandbox",
+        String(manifest.backupPath),
+      );
 
       expect(restore).toMatchObject(expected);
     },

@@ -41,6 +41,7 @@ describe("security-posture catalogue boundary", () => {
         testFile: "test/e2e/live/hermes-e2e.test.ts",
         hostPreparation: "hermes-swap",
         runnerComparison: true,
+        environment: { NEMOCLAW_E2E_INFERENCE_MODE: "internal-nvidia" },
       });
     },
   );

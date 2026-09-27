@@ -73,6 +73,7 @@ function runProcessGroup(
   }).then((result) => ({
     error:
       result.spawnError ??
+      result.cleanupError ??
       (result.timedOut
         ? new Error(`${command} timed out after ${options.timeoutMs}ms`)
         : outputAbort.signal.reason instanceof Error
@@ -255,6 +256,7 @@ describe("public compiled CLI contracts", () => {
           "custom-help\tplaceholder-sandbox\tagents\tlist\t--help",
           "custom-help\tplaceholder-sandbox\tmcp\tadd\t--help",
           "custom-help\tplaceholder-sandbox\tmcp\tlist\t--help",
+          "custom-help\tplaceholder-sandbox\tmcp\tmigrate\t--help",
           "custom-help\tplaceholder-sandbox\tmcp\tremove\t--help",
           "custom-help\tplaceholder-sandbox\tmcp\trestart\t--help",
           "custom-help\tplaceholder-sandbox\tmcp\tstatus\t--help",

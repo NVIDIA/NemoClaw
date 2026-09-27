@@ -1,13 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { cliOpenShellSandboxSettings } from "../../adapters/openshell/sandbox-settings-cli";
+
 import { captureOpenshell } from "../../adapters/openshell/runtime";
 import type { SandboxLogsOptions } from "../../domain/sandbox/log-options";
-import {
-  buildEnableSandboxAuditLogsArgs,
-  buildSandboxLogsArgs,
-  getLogsProbeTimeoutMs,
-} from "../../domain/sandbox/logs";
+import { buildSandboxLogsArgs, getLogsProbeTimeoutMs } from "../../domain/sandbox/logs";
 import { findRecentPolicyDenial, type PolicyDenialMatch } from "./exec-policy-hint-detection";
 import {
   buildPolicyDenialExecHint,
@@ -38,7 +36,10 @@ export const POLICY_HINT_MAX_RUNTIME_TIMEOUT_MS = 1_000;
 export const POLICY_HINT_DEVICE_PROBE_TIMEOUT_MS = 5_000;
 
 export type PolicyDenialLogProbe = (sandboxName: string, gatewayName?: string) => string;
-export type PolicyDenialAuditEnabler = (sandboxName: string, gatewayName?: string) => void;
+export type PolicyDenialAuditEnabler = (
+  sandboxName: string,
+  gatewayName?: string,
+) => void | Promise<void>;
 
 export type PendingDeviceProbe = (sandboxName: string, gatewayName?: string) => string;
 
@@ -65,15 +66,13 @@ function runtimeTimeoutMs(): number {
   return Math.min(getLogsProbeTimeoutMs(), POLICY_HINT_MAX_RUNTIME_TIMEOUT_MS);
 }
 
-function defaultEnableAudit(sandboxName: string, gatewayName?: string): void {
-  const result = captureOpenshell(buildEnableSandboxAuditLogsArgs(sandboxName, gatewayName), {
-    ignoreError: true,
-    includeStderr: true,
-    timeout: runtimeTimeoutMs(),
+async function defaultEnableAudit(sandboxName: string, gatewayName?: string): Promise<void> {
+  const result = await cliOpenShellSandboxSettings.enableAuditLogs({
+    target: gatewayName ? { kind: "named", gatewayName } : { kind: "selected" },
+    sandboxName,
+    timeoutMs: runtimeTimeoutMs(),
   });
-  if (result.error || result.status !== 0) {
-    throw result.error ?? new Error(`failed to enable audit logs (exit ${result.status})`);
-  }
+  if (!result.ok) throw new Error(result.error.message);
 }
 
 function defaultProbeLogs(sandboxName: string, gatewayName?: string): string {
@@ -185,7 +184,7 @@ export async function maybeEmitPolicyDenialHint(
   const retryDelayMs = deps.retryDelayMs ?? POLICY_HINT_PROBE_RETRY_MS;
 
   try {
-    enableAudit(sandboxName, gatewayName);
+    await enableAudit(sandboxName, gatewayName);
   } catch {
     // Deliberately silent: audit setup is optional and retained logs may still
     // contain the denial. Printing this diagnostic, even under a new debug

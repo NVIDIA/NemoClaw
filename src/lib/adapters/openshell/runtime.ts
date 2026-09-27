@@ -10,10 +10,11 @@ import {
   captureOpenshellCommandAsync,
   captureSandboxSshConfigCommand,
   getInstalledOpenshellVersion,
+  OPENSHELL_OPERATION_TIMEOUT_MS,
+  OPENSHELL_PROBE_TIMEOUT_MS,
   runOpenshellCommand,
-} from "./client";
+} from "./command-execution";
 import { buildOpenShellSubprocessEnv, resolveOpenshellBinaryOrNull } from "./resolve-shared";
-import { OPENSHELL_OPERATION_TIMEOUT_MS, OPENSHELL_PROBE_TIMEOUT_MS } from "./timeouts";
 
 type CommandArgs = string[];
 
@@ -30,7 +31,7 @@ export {
 } from "./command-argv";
 
 export { buildOpenShellSubprocessEnv, OPENSHELL_OPERATION_TIMEOUT_MS, OPENSHELL_PROBE_TIMEOUT_MS };
-export { classifyManagedGatewayEndpointBinding } from "./client";
+export { classifyManagedGatewayEndpointBinding } from "./command-execution";
 export { runCaptureEx } from "../../runner";
 
 type RunnerOptions = {
@@ -48,6 +49,10 @@ type RunnerOptions = {
   killSignal?: NodeJS.Signals;
   killProcessTreeOnTimeout?: boolean;
   maxBuffer?: number;
+};
+
+type AsyncRunnerOptions = Omit<RunnerOptions, "maxBuffer"> & {
+  outputLimitBytes?: number;
 };
 
 let openshellBin: string | null = null;
@@ -140,6 +145,31 @@ export function captureSandboxSshConfig(sandboxName: string, opts: RunnerOptions
   });
 }
 
+/** Capture a resolved command asynchronously with bounded output and no process exit. */
+export function captureResolvedOpenshellAsync(args: CommandArgs, opts: AsyncRunnerOptions = {}) {
+  const openshell = opts.openshellBinary ?? resolveOpenshellBinaryOrNull();
+  if (!openshell) throw new Error("OpenShell is unavailable");
+  if (!path.isAbsolute(openshell)) throw new Error("OpenShell executable must be absolute");
+  return captureOpenshellCommandAsync(openshell, args, {
+    cwd: ROOT,
+    env: opts.env,
+    replaceEnv: opts.replaceEnv,
+    ignoreError: opts.ignoreError,
+    includeStderr: opts.includeStderr,
+    includeStreams: opts.includeStreams,
+    timeout: opts.timeout,
+    outputLimitBytes: opts.outputLimitBytes,
+    signalSource: {
+      add: (signal, listener) => {
+        process.on(signal, listener);
+      },
+      remove: (signal, listener) => {
+        process.removeListener(signal, listener);
+      },
+    },
+  });
+}
+
 /** Resolve the status-probe timeout (ms) from env, falling back to the default. */
 export function getStatusProbeTimeoutMs(): number {
   const raw = process.env.NEMOCLAW_STATUS_PROBE_TIMEOUT_MS;
@@ -148,7 +178,7 @@ export function getStatusProbeTimeoutMs(): number {
 }
 
 /** Async variant of {@link captureOpenshell} for status probes, with a kill grace period. */
-export function captureOpenshellForStatus(args: CommandArgs, opts: RunnerOptions = {}) {
+export function captureOpenshellForStatus(args: CommandArgs, opts: AsyncRunnerOptions = {}) {
   return captureOpenshellCommandAsync(getOpenshellBinary(), args, {
     cwd: ROOT,
     env: opts.env,
@@ -157,6 +187,7 @@ export function captureOpenshellForStatus(args: CommandArgs, opts: RunnerOptions
     includeStreams: opts.includeStreams,
     timeout: opts.timeout ?? getStatusProbeTimeoutMs(),
     killGraceMs: 1000,
+    outputLimitBytes: opts.outputLimitBytes,
   });
 }
 

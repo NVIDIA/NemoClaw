@@ -280,7 +280,7 @@ function resolveContentAddressedLocalOverride(
       );
     }
   }
-  if (options.validateImage && !options.validateImage(imageRef)) {
+  if (options.validateImage && !options.validateImage(imageRef, { source: "local" })) {
     throw new SandboxBaseImageResolutionError(
       `${options.label || "Sandbox base image"} local override '${imageRef}' lacks ` +
         `${options.validationDescription || "a required runtime capability"}.`,
@@ -313,7 +313,15 @@ function validatePulledCandidate(
     }
   }
 
-  if (options.validateImage && !options.validateImage(imageRef)) {
+  if (
+    options.validateImage &&
+    !options.validateImage(imageRef, {
+      source,
+      ...(candidateOptions.pinnedRemoteRef
+        ? { pinnedRemoteRef: candidateOptions.pinnedRemoteRef }
+        : {}),
+    })
+  ) {
     if (warn) {
       console.warn("  Warning: sandbox base image lacks a required runtime capability.");
     }
@@ -407,7 +415,10 @@ function resolveLocalCandidate(
       const check = options.requireOpenshellSandboxAbi
         ? imageMeetsMinimumGlibc(imageRef, options.minGlibcVersion || OPENSHELL_SANDBOX_MIN_GLIBC)
         : { ok: true, version: null };
-      if (check.ok && (!options.validateImage || options.validateImage(imageRef))) {
+      if (
+        check.ok &&
+        (!options.validateImage || options.validateImage(imageRef, { source: "local" }))
+      ) {
         addTraceEvent("nemoclaw.sandbox_base_image.local_fallback_reuse");
         return { ref: imageRef, digest: null, source: "local", glibcVersion: check.version };
       }
@@ -456,7 +467,7 @@ function resolveLocalCandidate(
     return null;
   }
 
-  if (options.validateImage && !options.validateImage(imageRef)) {
+  if (options.validateImage && !options.validateImage(imageRef, { source: "local" })) {
     console.error("  Local sandbox base image lacks a required runtime capability.");
     return null;
   }

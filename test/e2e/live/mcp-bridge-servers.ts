@@ -6,7 +6,6 @@ import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import https from "node:https";
-import type { AddressInfo } from "node:net";
 import os from "node:os";
 
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
@@ -19,8 +18,6 @@ import {
 import { spawnObservedChild } from "../fixtures/observed-child-process.ts";
 import type { TestProgress, TestProgressCapability } from "../fixtures/progress.ts";
 
-type TestServer = http.Server | https.Server;
-
 export const HERMES_DEFERRED_TOOL_SEARCH_MISS =
   "Hermes tool_search did not return the deferred target";
 
@@ -30,6 +27,7 @@ export interface StartedHttpServer {
 }
 
 export const FAKE_MCP_STATUS_RESULT_TOKEN = "MCP_STATUS_OK";
+const MCP_DIAGNOSTIC_PERSIST_TIMEOUT_MS = 10_000;
 
 export interface FakeMcpRequest {
   method: string;
@@ -51,7 +49,21 @@ export interface FakeMcpRequest {
   rpcId?: string | number | null;
 }
 
+export interface FakeMcpHttpsDiagnostics {
+  secureConnections: number;
+  requestHeaders: number;
+  requestBodiesComplete: number;
+  tlsClientErrors: {
+    ERR_SSL_HTTP_REQUEST: number;
+    ERR_SSL_WRONG_VERSION_NUMBER: number;
+    ERR_SSL_UNEXPECTED_EOF_WHILE_READING: number;
+    ECONNRESET: number;
+    OTHER: number;
+  };
+}
+
 export interface FakeMcpHttpsServer extends StartedHttpServer {
+  diagnostics(): FakeMcpHttpsDiagnostics;
   setSecret(secret: string): void;
   observations: FakeMcpRequest[];
   requests: FakeMcpRequest[];
@@ -156,14 +168,6 @@ const MCP_EMPTY_RESULT_BY_METHOD: Record<string, unknown> = {
   },
   "messages/listen": {},
 };
-
-function requireTcpPort(server: TestServer, label: string): number {
-  const address = server.address();
-  if (!address || typeof address === "string") {
-    throw new Error(`${label} did not bind to a TCP port`);
-  }
-  return (address as AddressInfo).port;
-}
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -524,6 +528,7 @@ export async function startCompatibleMock(options: {
   toolNames?: string[];
   deferredToolName?: string;
   progressiveToolSearch?: { toolName: string; query: string };
+  openClawToolSearch?: { toolNames: string[]; query: string };
   deniedToolProbe?:
     | { mode: "bridge"; promptMarker: string; resultToken: string; toolName: string }
     | {
@@ -534,6 +539,7 @@ export async function startCompatibleMock(options: {
         toolName: string;
       };
 }): Promise<StartedHttpServer> {
+  let selectedOpenClawToolName: string | undefined;
   const server = http.createServer(async (req, res) => {
     const requestPath = new URL(req.url ?? "/", "http://compatible.mock").pathname;
     const auth = req.headers.authorization === `Bearer ${options.apiKey}`;
@@ -585,19 +591,40 @@ export async function startCompatibleMock(options: {
           requiredContent.every((value) => content.includes(value))
         );
       };
+      const parseToolResultRecord = (
+        value: unknown,
+        depth = 0,
+      ): Record<string, unknown> | undefined => {
+        if (depth > 4) return undefined;
+        if (typeof value === "string") {
+          try {
+            return parseToolResultRecord(JSON.parse(value), depth + 1);
+          } catch {
+            return undefined;
+          }
+        }
+        if (Array.isArray(value)) {
+          for (const entry of value) {
+            const parsed = parseToolResultRecord(entry, depth + 1);
+            if (parsed) return parsed;
+          }
+          return undefined;
+        }
+        if (!value || typeof value !== "object") return undefined;
+        const record = value as Record<string, unknown>;
+        for (const key of ["details", "payload", "text", "content"] as const) {
+          if (!Object.hasOwn(record, key)) continue;
+          const parsed = parseToolResultRecord(record[key], depth + 1);
+          if (parsed) return parsed;
+        }
+        return record;
+      };
       const parsedToolResult = (index: number, toolCallId: string) => {
         const message = toolResults[index];
-        if (message?.tool_call_id !== toolCallId || typeof message.content !== "string") {
+        if (message?.tool_call_id !== toolCallId) {
           return undefined;
         }
-        try {
-          const parsed = JSON.parse(message.content);
-          return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-            ? (parsed as Record<string, unknown>)
-            : undefined;
-        } catch {
-          return undefined;
-        }
+        return parseToolResultRecord(message.content);
       };
       const isDeniedBridgeToolResult = (index: number, toolCallId: string) => {
         const message = toolResults[index];
@@ -676,10 +703,58 @@ export async function startCompatibleMock(options: {
           Object.hasOwn(properties, "challenge")
         );
       };
+      const classifyOpenClawSearchResult = (index: number): "target" | "miss" | "invalid" => {
+        const search = options.openClawToolSearch;
+        const message = toolResults[index];
+        if (!search || !message) return "invalid";
+        const content = JSON.stringify(message.content);
+        selectedOpenClawToolName = search.toolNames.find((name) => content.includes(name));
+        return selectedOpenClawToolName ? "target" : "miss";
+      };
+      const hasExpectedOpenClawDescription = (index: number): boolean => {
+        const message = toolResults[index];
+        if (!message || !selectedOpenClawToolName) {
+          return false;
+        }
+        const content = JSON.stringify(message.content);
+        return content.includes(selectedOpenClawToolName) && content.includes("challenge");
+      };
+      const collectOpenClawSearchIdentifiers = (
+        value: unknown,
+        identifiers: string[] = [],
+        depth = 0,
+      ): string[] => {
+        if (depth > 6) return identifiers;
+        if (typeof value === "string") {
+          try {
+            return collectOpenClawSearchIdentifiers(JSON.parse(value), identifiers, depth + 1);
+          } catch {
+            return identifiers;
+          }
+        }
+        if (Array.isArray(value)) {
+          for (const entry of value) {
+            collectOpenClawSearchIdentifiers(entry, identifiers, depth + 1);
+          }
+          return identifiers;
+        }
+        if (!value || typeof value !== "object") return identifiers;
+        const record = value as Record<string, unknown>;
+        for (const key of ["name", "id"] as const) {
+          if (typeof record[key] === "string" && !identifiers.includes(record[key])) {
+            identifiers.push(record[key]);
+          }
+        }
+        for (const nested of Object.values(record)) {
+          collectOpenClawSearchIdentifiers(nested, identifiers, depth + 1);
+        }
+        return identifiers;
+      };
       let plannedToolCall:
         | { id: string; name: string; arguments: Record<string, unknown> }
         | undefined;
       let protocolError: string | undefined;
+      let openClawSearchDiagnostic = "";
       let deniedToolProbeComplete = false;
 
       if (deniedToolProbeRequested && deniedToolProbe) {
@@ -732,6 +807,64 @@ export async function startCompatibleMock(options: {
           }
         } else {
           protocolError = "denied progressive tool returned an unexpected result sequence";
+        }
+      } else if (!sawAuthenticatedToolResult && options.openClawToolSearch) {
+        const bridgeNames = ["tool_search", "tool_describe", "tool_call"];
+        const missingBridges = bridgeNames.filter((name) => !visibleToolNames.has(name));
+        if (options.openClawToolSearch.toolNames.some((name) => visibleToolNames.has(name))) {
+          protocolError = "OpenClaw deferred MCP target leaked into model tools";
+        } else if (missingBridges.length > 0) {
+          protocolError = `OpenClaw tool catalog bridges missing: ${missingBridges.join(", ")}`;
+        } else if (toolResultCount === 0) {
+          plannedToolCall = {
+            id: "call_openclaw_tool_search",
+            name: "tool_search",
+            arguments: { query: options.openClawToolSearch.query, limit: 8 },
+          };
+        } else if (toolResultCount === 1) {
+          const searchResult = classifyOpenClawSearchResult(0);
+          if (searchResult === "miss") {
+            const identifiers = collectOpenClawSearchIdentifiers(toolResults[0]?.content);
+            const terms = options.openClawToolSearch.query
+              .toLowerCase()
+              .split(/[^a-z0-9]+/u)
+              .filter(Boolean);
+            selectedOpenClawToolName = identifiers.find((identifier) => {
+              const normalized = identifier.toLowerCase().replace(/[^a-z0-9]+/gu, " ");
+              return terms.every((term) => normalized.includes(term));
+            });
+            openClawSearchDiagnostic =
+              identifiers.length > 0
+                ? identifiers.join(", ").slice(0, 512)
+                : JSON.stringify(toolResults[0]?.content).replace(/\s+/gu, " ").slice(0, 512);
+          }
+          if (searchResult === "target" || selectedOpenClawToolName) {
+            plannedToolCall = {
+              id: "call_openclaw_tool_describe",
+              name: "tool_describe",
+              arguments: { id: selectedOpenClawToolName },
+            };
+          } else {
+            protocolError =
+              searchResult === "miss"
+                ? `OpenClaw tool_search did not find the deferred MCP target; observed ${openClawSearchDiagnostic || "no identifiers"}`
+                : "OpenClaw returned an invalid tool_search result";
+          }
+        } else if (toolResultCount === 2) {
+          if (hasExpectedOpenClawDescription(1) && selectedOpenClawToolName) {
+            plannedToolCall = {
+              id: "call_openclaw_tool_call",
+              name: "tool_call",
+              arguments: {
+                id: selectedOpenClawToolName,
+                args: { challenge: options.toolChallenge },
+              },
+            };
+          } else {
+            protocolError = "OpenClaw tool_describe did not return the deferred MCP schema";
+          }
+        } else {
+          protocolError = "OpenClaw returned an unexpected tool catalog result sequence";
         }
       } else if (!sawAuthenticatedToolResult && options.progressiveToolSearch) {
         const { query, toolName } = options.progressiveToolSearch;
@@ -910,9 +1043,9 @@ export async function startCompatibleMock(options: {
     jsonResponse(res, 404, { error: { message: "not found" } });
   });
 
-  await listenOnRandomPort(server);
+  const port = await listenOnRandomPort(server);
   return {
-    port: requireTcpPort(server, "compatible endpoint mock"),
+    port,
     close: () => closeServer(server),
   };
 }
@@ -922,6 +1055,7 @@ export async function startFakeMcpHttpsServer(options: {
   challenge?: string;
   resultToken?: string;
   tls?: { cert: Buffer; key: Buffer };
+  onCloseDiagnostics?: (diagnostics: FakeMcpHttpsDiagnostics) => Promise<void>;
 }): Promise<FakeMcpHttpsServer> {
   let expectedSecret = options.secret;
   let nextSessionId = 1;
@@ -942,7 +1076,25 @@ export async function startFakeMcpHttpsServer(options: {
     })();
   const requests: FakeMcpRequest[] = [];
   const observations: FakeMcpRequest[] = [];
+  const diagnostics: FakeMcpHttpsDiagnostics = {
+    secureConnections: 0,
+    requestHeaders: 0,
+    requestBodiesComplete: 0,
+    tlsClientErrors: {
+      ERR_SSL_HTTP_REQUEST: 0,
+      ERR_SSL_WRONG_VERSION_NUMBER: 0,
+      ERR_SSL_UNEXPECTED_EOF_WHILE_READING: 0,
+      ECONNRESET: 0,
+      OTHER: 0,
+    },
+  };
+  const increment = (value: number): number => Math.min(value + 1, 65_535);
+  const snapshot = (): FakeMcpHttpsDiagnostics => ({
+    ...diagnostics,
+    tlsClientErrors: { ...diagnostics.tlsClientErrors },
+  });
   const server = https.createServer(tls, async (req, res) => {
+    diagnostics.requestHeaders = increment(diagnostics.requestHeaders);
     const requestUrl = new URL(req.url ?? "/", "https://fake-mcp.local");
     const requestPath = requestUrl.pathname;
     const legacySessionId = requestUrl.searchParams.get("legacySessionId") ?? "";
@@ -968,6 +1120,7 @@ export async function startFakeMcpHttpsServer(options: {
     };
     observations.push(recordedObservation);
     const body = await readRequestBody(req);
+    diagnostics.requestBodiesComplete = increment(diagnostics.requestBodiesComplete);
     recordedObservation.body = body;
     let parsedPayload: McpRequestPayload | null = null;
     try {
@@ -1313,9 +1466,21 @@ export async function startFakeMcpHttpsServer(options: {
     });
   });
 
-  await listenOnRandomPort(server);
+  server.on("secureConnection", () => {
+    diagnostics.secureConnections = increment(diagnostics.secureConnections);
+  });
+  server.on("tlsClientError", (error: NodeJS.ErrnoException) => {
+    const code = error.code;
+    const bucket =
+      code && Object.hasOwn(diagnostics.tlsClientErrors, code)
+        ? (code as keyof FakeMcpHttpsDiagnostics["tlsClientErrors"])
+        : "OTHER";
+    diagnostics.tlsClientErrors[bucket] = increment(diagnostics.tlsClientErrors[bucket]);
+  });
+  const port = await listenOnRandomPort(server);
   return {
-    port: requireTcpPort(server, "fake MCP endpoint"),
+    diagnostics: snapshot,
+    port,
     observations,
     requests,
     activeLegacySessionCount: () => legacySessions.size,
@@ -1323,10 +1488,45 @@ export async function startFakeMcpHttpsServer(options: {
       expectedSecret = secret;
     },
     close: async () => {
-      for (const response of serverEventStreams) response.destroy();
-      await closeServer(server);
-      for (const session of legacySessions.values()) session.phase = "closed";
-      legacySessions.clear();
+      const errors: unknown[] = [];
+      try {
+        for (const response of serverEventStreams) response.destroy();
+        await closeServer(server);
+      } catch (error) {
+        errors.push(error);
+      } finally {
+        for (const session of legacySessions.values()) session.phase = "closed";
+        legacySessions.clear();
+      }
+      const persistDiagnostics = options.onCloseDiagnostics;
+      if (persistDiagnostics) {
+        let deadline: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await Promise.race([
+            Promise.resolve().then(() => persistDiagnostics(snapshot())),
+            new Promise<never>((_resolve, reject) => {
+              deadline = setTimeout(
+                () =>
+                  reject(
+                    new Error(
+                      `MCP HTTPS diagnostic persistence timed out after ${MCP_DIAGNOSTIC_PERSIST_TIMEOUT_MS} ms`,
+                    ),
+                  ),
+                MCP_DIAGNOSTIC_PERSIST_TIMEOUT_MS,
+              );
+            }),
+          ]);
+        } catch (error) {
+          errors.push(error);
+        } finally {
+          clearTimeout(deadline);
+        }
+      }
+      if (errors.length > 0) {
+        throw errors.length === 1
+          ? errors[0]
+          : new AggregateError(errors, "MCP HTTPS shutdown and diagnostic persistence failed");
+      }
     },
   };
 }

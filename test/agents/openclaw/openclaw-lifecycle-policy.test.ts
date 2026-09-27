@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import policy from "../../../ci/reviewed-npm-lifecycle-allowlist.json";
@@ -89,12 +91,14 @@ console.log(JSON.stringify({
   baseLifecycleScripts: explicitLifecycleScripts(baseBlock),
   scriptsSuppressed: {
     codex: /npm install -g --offline --no-audit --no-fund --no-progress --ignore-scripts/.test(codexBlock),
-    runtime: /npm install -g --no-audit --no-fund --no-progress --ignore-scripts "\$OPENCLAW_PACK_PATH"/.test(runtimeBlock),
-    base: /npm install -g --ignore-scripts "\$OPENCLAW_PACK_PATH"/.test(baseBlock),
-    optionalPlugin: /NPM_CONFIG_IGNORE_SCRIPTS=true npm_config_ignore_scripts=true\s+\\\s*openclaw plugins install "npm-pack:/.test(optionalPluginBlock) &&
-      optionalPluginBlock.includes('openclaw plugins install "npm-pack:\${plugin_install_archive}"'),
+    runtime: /npm install -g --no-audit --no-fund --no-progress --ignore-scripts --allow-git=root "\$OPENCLAW_PACK_PATH"/.test(runtimeBlock),
+    base: /npm install -g --ignore-scripts --allow-git=root "\$OPENCLAW_PACK_PATH"/.test(baseBlock),
+    optionalPlugin: /NPM_CONFIG_IGNORE_SCRIPTS=true npm_config_ignore_scripts=true\s+\\\s*openclaw plugins install --force --accept-capabilities "npm-pack:/.test(optionalPluginBlock) &&
+      optionalPluginBlock.includes('openclaw plugins install --force --accept-capabilities "npm-pack:\${plugin_install_archive}"'),
     messagingPlugin: [
-      '["openclaw", "plugins", "install", \`npm-pack:\${packed.archivePath}\`]',
+      '"--force",',
+      '"--accept-capabilities",',
+      '\`npm-pack:\${packed.archivePath}\`',
       'NPM_CONFIG_IGNORE_SCRIPTS: "true"',
       'npm_config_ignore_scripts: "true"',
     ].every((marker) => messagingInstallBlock.includes(marker)),
@@ -109,6 +113,54 @@ console.log(JSON.stringify({
 `;
 
 describe("reviewed npm lifecycle policy", () => {
+  it("selects the system npm owner only for native OpenClaw self-update", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-wrapper-"));
+    const fakeNode = path.join(root, "node");
+    const wrapper = path.join(root, "openclaw");
+    const source = fs
+      .readFileSync(path.join(REPO_ROOT, "scripts", "openclaw-cli-wrapper.sh"), "utf8")
+      .replace("/usr/local/bin/node", fakeNode)
+      .replace(
+        "/usr/local/lib/node_modules/openclaw/openclaw.mjs",
+        "/reviewed/openclaw/openclaw.mjs",
+      );
+    fs.writeFileSync(
+      fakeNode,
+      [
+        "#!/bin/sh",
+        'printf "upper=%s\\nlower=%s\\n" "${NPM_CONFIG_PREFIX-}" "${npm_config_prefix-}"',
+        'printf "arg=%s\\n" "$@"',
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(wrapper, source, { mode: 0o755 });
+
+    try {
+      const update = spawnSync(wrapper, ["update", "--dry-run"], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          NPM_CONFIG_PREFIX: "/sandbox/.local",
+          npm_config_prefix: "/hostile/lowercase",
+        },
+      });
+      expect(update.status, update.stderr).toBe(0);
+      expect(update.stdout).toContain("upper=/usr/local\nlower=\n");
+      expect(update.stdout).toContain("arg=/reviewed/openclaw/openclaw.mjs\n");
+      expect(update.stdout).toContain("arg=update\narg=--dry-run\n");
+
+      const list = spawnSync(wrapper, ["agents", "list"], {
+        encoding: "utf8",
+        env: { ...process.env, NPM_CONFIG_PREFIX: "/sandbox/.local" },
+      });
+      expect(list.status, list.stderr).toBe(0);
+      expect(list.stdout).toContain("upper=/sandbox/.local\n");
+      expect(list.stdout).toContain("arg=agents\narg=list\n");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   // source-shape-contract: security -- Every executable archive install must match the reviewed fail-closed lifecycle allowlist
   it("cross-checks the allowlist against every production archive install boundary", () => {
     expect(policy).toMatchObject({ schemaVersion: 1, defaultPolicy: "deny" });
@@ -122,7 +174,9 @@ describe("reviewed npm lifecycle policy", () => {
     ).toBe(true);
 
     const messagingPackageSpecs = Object.keys(
-      reviewedOpenClawPluginIntegrityByPackageSpec({ OPENCLAW_VERSION: "2026.7.1" }),
+      reviewedOpenClawPluginIntegrityByPackageSpec({
+        OPENCLAW_VERSION: "2026.9.1",
+      }),
     );
     const result = spawnSync(process.execPath, ["-e", PRODUCTION_BOUNDARY_AUDIT], {
       cwd: REPO_ROOT,
@@ -148,7 +202,10 @@ describe("reviewed npm lifecycle policy", () => {
       messagingPlugin: true,
     });
     const allowedLifecycleScripts = policy.allowedLifecycleScripts
-      .map(({ packageSpec, explicitCommand }) => ({ packageSpec, explicitCommand }))
+      .map(({ packageSpec, explicitCommand }) => ({
+        packageSpec,
+        explicitCommand,
+      }))
       .sort((left, right) => left.packageSpec.localeCompare(right.packageSpec));
     expect(audit.runtimeLifecycleScripts).toEqual(audit.baseLifecycleScripts);
     expect(audit.runtimeLifecycleScripts).toEqual(allowedLifecycleScripts);

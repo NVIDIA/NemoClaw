@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Buffer } from "node:buffer";
+import { hasProviderlessInferenceEnvironment } from "../../../src/lib/providerless-inference.ts";
 
 import { normalizeProviderPlaceholderForEnvKey } from "../../../src/lib/messaging/provider-placeholders.ts";
 import { readToolDisclosureEnv } from "../../../src/lib/tool-disclosure.ts";
@@ -13,7 +14,7 @@ export type HermesWebSearchProvider = "tavily";
 export const MIN_HERMES_CONTEXT_WINDOW = 64_000;
 
 export type HermesBuildSettings = {
-  model: string;
+  model: string | null;
   baseUrl: string;
   providerKey: string;
   upstreamProvider: string;
@@ -35,8 +36,9 @@ export type HermesBuildSettings = {
 
 /** Read and validate the environment consumed by the Hermes config generator. */
 export function readHermesBuildSettings(env: NodeJS.ProcessEnv): HermesBuildSettings {
-  const model = readRequiredEnv(env, "NEMOCLAW_MODEL");
-  const baseUrl = readRequiredEnv(env, "NEMOCLAW_INFERENCE_BASE_URL");
+  const providerless = hasProviderlessInferenceEnvironment(env);
+  const model = providerless ? null : readRequiredEnv(env, "NEMOCLAW_MODEL");
+  const baseUrl = providerless ? "" : readRequiredEnv(env, "NEMOCLAW_INFERENCE_BASE_URL");
 
   return {
     model,

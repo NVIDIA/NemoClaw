@@ -6,7 +6,6 @@ import Ajv from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
 import { renderCanonicalNemoClawConfig, validateNemoClawConfig } from "./index";
 import {
-  EXPORTED_OLLAMA_MODEL,
   EXPORTED_VLLM_PROFILE_ID,
   EXPORTED_VLLM_RECIPE_ID,
   isCredentialEnvironmentReferenceName,
@@ -94,6 +93,13 @@ function twoAgentConfig() {
   return { value, primary, secondary };
 }
 
+function threeAgentConfig() {
+  const context = twoAgentConfig();
+  const reviewer = { ...structuredClone(context.secondary), name: "reviewer" };
+  context.value.spec.sandboxes[0]!.agents.push(reviewer);
+  return { ...context, reviewer };
+}
+
 describe("NemoClawConfig v1", () => {
   it.each(["researcher", "reviewer-2", "a", "a".repeat(32)])(
     "accepts secondary agent %s on the primary hosted route (#11434)",
@@ -104,6 +110,12 @@ describe("NemoClawConfig v1", () => {
       expect(validateNemoClawConfig(value)).toEqual(value);
     },
   );
+
+  it("accepts an ordered read-only roster on the primary hosted route (#11854)", () => {
+    const { value, primary } = threeAgentConfig();
+    Object.assign(primary, { tools: { disclosure: "direct" } });
+    expect(validateNemoClawConfig(value)).toEqual(value);
+  });
 
   it.each(["main", "primary", "0agent", "with_underscore", "with.dot", "agent-", "a".repeat(33)])(
     "rejects unrepresentable secondary name %s (#11434)",
@@ -155,12 +167,6 @@ describe("NemoClawConfig v1", () => {
       },
     },
     {
-      field: "count",
-      mutate: ({ value, secondary }) => {
-        value.spec.sandboxes[0]!.agents.push({ ...secondary, name: "third" });
-      },
-    },
-    {
       field: "order",
       mutate: ({ value }) => {
         value.spec.sandboxes[0]!.agents.reverse();
@@ -178,12 +184,57 @@ describe("NemoClawConfig v1", () => {
         Object.assign(secondary, { execution: { timeoutSeconds: 1 } });
       },
     },
+    {
+      field: "interfaces",
+      mutate: ({ secondary }) => {
+        Object.assign(secondary, { interfaces: { dashboard: { port: 19000 } } });
+      },
+    },
+    {
+      field: "observability",
+      mutate: ({ secondary }) => {
+        Object.assign(secondary, {
+          observability: {
+            otlp: {
+              enabled: true,
+              endpoint: "http://host.openshell.internal:4318",
+              serviceName: "researcher",
+              sampleRate: 0.5,
+            },
+          },
+        });
+      },
+    },
   ])("rejects secondary configuration with incompatible $field (#11434)", ({ mutate }) => {
     const context = twoAgentConfig();
     mutate(context);
     const { value } = context;
     expect(() => validateNemoClawConfig(value)).toThrow(
-      "/spec/sandboxes/0/agents must pair primary with one read-only OpenClaw agent sharing its hosted route",
+      "/spec/sandboxes/0/agents must contain primary followed by uniquely named read-only OpenClaw agents sharing its hosted or attached-Ollama route",
+    );
+  });
+
+  it("rejects duplicate secondary names through sandbox-wide validation (#11854)", () => {
+    const { value, secondary } = twoAgentConfig();
+    value.spec.sandboxes[0]!.agents.push(structuredClone(secondary));
+    expect(() => validateNemoClawConfig(value)).toThrow(
+      "/spec/sandboxes/0/agents contains a duplicate name",
+    );
+  });
+
+  it("rejects secondary authentication through agent-wide validation (#11854)", () => {
+    const { value, secondary } = twoAgentConfig();
+    Object.assign(secondary, { auth: { method: "api-key", providerRef: "hosted-openai" } });
+    expect(() => validateNemoClawConfig(value)).toThrow(
+      "/spec/sandboxes/0/agents/1/auth is supported only for a Hermes agent",
+    );
+  });
+
+  it("rejects a divergent route anywhere in a read-only roster (#11854)", () => {
+    const { value, reviewer } = threeAgentConfig();
+    reviewer.inference.routes[0]!.overrides.model = "other";
+    expect(() => validateNemoClawConfig(value)).toThrow(
+      "/spec/sandboxes/0/agents must contain primary followed by uniquely named read-only OpenClaw agents sharing its hosted or attached-Ollama route",
     );
   });
 
@@ -683,7 +734,7 @@ describe("NemoClawConfig v1", () => {
   it("rejects unsafe endpoints without including their contents in diagnostics (#10938)", () => {
     const canary = "DO_NOT_LOG_ENDPOINT_SECRET";
     const value = structuredClone(config()) as unknown as Record<string, any>;
-    value.spec.inferenceProviders[0].endpoint = `https://user:${canary}@api.example.com/v1`;
+    value.spec.inferenceProviders[0].endpoint = `http://user:${canary}@api.example.com/v1`;
     try {
       validateNemoClawConfig(value);
       throw new Error("Expected validation to fail");
@@ -693,7 +744,7 @@ describe("NemoClawConfig v1", () => {
     }
   });
 
-  it.each(["http://api.example.com/v1", `https://api.example.com/${"a".repeat(2049)}`])(
+  it.each(["ftp://api.example.com/v1", `https://api.example.com/${"a".repeat(2049)}`])(
     "rejects an endpoint outside the complete v1 contract",
     (endpoint) => {
       const value = structuredClone(config()) as unknown as Record<string, any>;
@@ -704,6 +755,8 @@ describe("NemoClawConfig v1", () => {
 
   it("uses the model guard for complete inference-endpoint semantics", () => {
     expect(isValidNemoClawInferenceEndpoint("https://api.example.com/v1")).toBe(true);
+    expect(isValidNemoClawInferenceEndpoint("http://api.example.com/v1")).toBe(true);
+    expect(isValidNemoClawInferenceEndpoint("http://host.openshell.internal:35271/v1")).toBe(true);
     expect(isValidNemoClawInferenceEndpoint("https://user:secret@api.example.com/v1")).toBe(false);
     expect(isValidNemoClawInferenceEndpoint(42)).toBe(false);
   });
@@ -973,9 +1026,18 @@ describe("fixed managed serving public contract", () => {
   });
 });
 
-function ollamaConfig() {
+function ollamaConfig(model = "qwen3.5:9b", names: string[] = [], tuning = {}) {
   const value = config();
-  value.spec.sandboxes[0]!.agents[0]!.inference.routes[0]!.overrides.model = EXPORTED_OLLAMA_MODEL;
+  const agents = value.spec.sandboxes[0]!.agents;
+  const primary = agents[0]!;
+  Object.assign(primary.inference.routes[0]!.overrides, { model, ...tuning });
+  agents.push(
+    ...names.map((name) => ({
+      ...structuredClone(primary),
+      name,
+      tools: { allow: ["read"] },
+    })),
+  );
   return {
     ...value,
     spec: {
@@ -989,7 +1051,7 @@ function ollamaConfig() {
             backend: "ollama",
             daemon: { management: "external", hostPort: 11439 },
             proxy: { management: "nemoclaw", hostPort: 11440 },
-            model: { servedName: EXPORTED_OLLAMA_MODEL, digest: `sha256:${"a".repeat(64)}` },
+            model: { servedName: model, digest: `sha256:${"a".repeat(64)}` },
           },
         },
       ],
@@ -998,11 +1060,80 @@ function ollamaConfig() {
 }
 
 describe("attached Ollama serving public contract", () => {
-  it("round trips the external daemon separately from its managed proxy (#11435)", () => {
-    const value = ollamaConfig();
-    const rendered = renderCanonicalNemoClawConfig(validateNemoClawConfig(value));
-    expect(validateNemoClawConfig(YAML.parse(rendered.yaml))).toEqual(value);
+  it("round trips an ordered Ollama roster with identical tuning (#11858)", () => {
+    const value = ollamaConfig("qwen2.5:0.5b", ["researcher", "reviewer"], {
+      contextWindow: 32768,
+      maxTokens: 8192,
+      reasoning: true,
+      reasoningEffort: "high",
+    });
+    expect(validateNemoClawConfig(YAML.parse(renderInput(value).yaml))).toEqual(value);
   });
+
+  it.each([
+    { field: "execution", change: { execution: { timeoutSeconds: 1 } } },
+    { field: "interfaces", change: { interfaces: { dashboard: { port: 19000 } } } },
+    {
+      field: "authentication",
+      change: { auth: { method: "api-key", providerRef: "hosted-openai" } },
+    },
+    {
+      field: "observability",
+      change: {
+        observability: {
+          otlp: {
+            enabled: true,
+            endpoint: "http://host.openshell.internal:4318",
+            serviceName: "reviewer",
+            sampleRate: 1,
+          },
+        },
+      },
+    },
+  ])("rejects secondary $field on the shared Ollama route (#11858)", ({ change }) => {
+    const value = ollamaConfig("qwen2.5:0.5b", ["researcher", "reviewer"]);
+    Object.assign(value.spec.sandboxes[0]!.agents[2]!, change);
+    expect(() => validateNemoClawConfig(value)).toThrow();
+  });
+
+  it.each([
+    { model: "qwen3.5:9b" },
+    { contextWindow: 32768 },
+    { maxTokens: 4096 },
+    { reasoning: false },
+    { reasoningEffort: "low" },
+  ])("rejects divergent Ollama model or tuning on the last agent %# (#11858)", (change) => {
+    const value = ollamaConfig("qwen2.5:0.5b", ["researcher", "reviewer"]);
+    Object.assign(value.spec.sandboxes[0]!.agents[2]!.inference.routes[0]!.overrides, change);
+    expect(() => validateNemoClawConfig(value)).toThrow();
+  });
+
+  it("keeps managed vLLM rosters outside the supported contract (#11858)", () => {
+    const { value } = managedServingConfig();
+    const primary = value.spec.sandboxes[0]!.agents[0]!;
+    value.spec.sandboxes[0]!.agents.push({
+      ...structuredClone(primary),
+      name: "researcher",
+      ...{ tools: { allow: ["read"] } },
+    });
+    expect(() => validateNemoClawConfig(value)).toThrow("hosted or attached-Ollama route");
+  });
+
+  it.each(["qwen3.5:9b", "qwen2.5:0.5b"])(
+    "round trips the selected model %s and external daemon (#11857)",
+    (model) => {
+      const value = ollamaConfig(model);
+      const rendered = renderCanonicalNemoClawConfig(validateNemoClawConfig(value));
+      expect(validateNemoClawConfig(YAML.parse(rendered.yaml))).toEqual(value);
+    },
+  );
+
+  it.each(["", "qwen2.5:0.5b\n", "qwen\u200b2.5:0.5b", "m".repeat(513)])(
+    "rejects an invalid selected model even when the route agrees %# (#11857)",
+    (model) => {
+      expect(() => validateNemoClawConfig(ollamaConfig(model))).toThrow();
+    },
+  );
 
   it.each([
     { daemon: { management: "nemoclaw", hostPort: 11439 } },
@@ -1010,7 +1141,7 @@ describe("attached Ollama serving public contract", () => {
     { proxy: { management: "external", hostPort: 11440 } },
     { proxy: { management: "nemoclaw", hostPort: 65536 } },
     { model: { servedName: "other:tag", digest: `sha256:${"a".repeat(64)}` } },
-    { model: { servedName: EXPORTED_OLLAMA_MODEL, digest: "not-a-digest" } },
+    { model: { servedName: "qwen3.5:9b", digest: "not-a-digest" } },
     { runtime: { image: { ref: "ollama:latest" } } },
   ])("rejects unsupported lifecycle or model declarations %# (#11435)", (change) => {
     const value = ollamaConfig();
@@ -1031,8 +1162,8 @@ describe("attached Ollama serving public contract", () => {
   );
 
   it.each([
-    { agent: "hermes", runtime: "docker", model: EXPORTED_OLLAMA_MODEL },
-    { agent: "openclaw", runtime: "remote", model: EXPORTED_OLLAMA_MODEL },
+    { agent: "hermes", runtime: "docker", model: "qwen3.5:9b" },
+    { agent: "openclaw", runtime: "remote", model: "qwen3.5:9b" },
     { agent: "openclaw", runtime: "docker", model: "different-model" },
   ])("rejects an unsupported local consumer %s (#11435)", (change) => {
     const value = ollamaConfig();

@@ -3,6 +3,7 @@
 
 import { LLAMA_CPP_PORT } from "../inference/llama-cpp/contract";
 import { LLMMAN_PORT } from "../inference/llmman/contract";
+import { parseServicePortOverride } from "./service-port-boundary";
 
 /**
  * Central port configuration — override any port via environment variables.
@@ -18,17 +19,7 @@ export function parsePort(
   fallback: number,
   env: NodeJS.ProcessEnv = process.env,
 ): number {
-  const raw = env[envVar];
-  if (raw === undefined || raw === "") return fallback;
-  const trimmed = String(raw).trim();
-  if (!/^\d+$/.test(trimmed)) {
-    throw new Error(`Invalid port: ${envVar}="${raw}" — must be an integer between 1024 and 65535`);
-  }
-  const parsed = Number(trimmed);
-  if (parsed < 1024 || parsed > 65535) {
-    throw new Error(`Invalid port: ${envVar}="${raw}" — must be an integer between 1024 and 65535`);
-  }
-  return parsed;
+  return parseServicePortOverride(envVar, env[envVar], fallback);
 }
 
 export interface GatewayPortValidationOptions {

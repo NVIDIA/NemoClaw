@@ -75,8 +75,8 @@ function entry(
     workload,
     lifecycleGeneration: `generation-${name}`,
     lifecycleLiveIdentityFingerprint: createHash("sha256").update(name).digest("hex"),
-    provider: profile.inference.upstreamProvider,
-    model: profile.inference.model,
+    provider: profile.inference!.upstreamProvider,
+    model: profile.inference!.model,
     ...overrides,
   };
 }

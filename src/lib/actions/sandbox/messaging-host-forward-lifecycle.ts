@@ -9,14 +9,14 @@ import {
 } from "../../onboard/messaging-host-forward";
 import { ensureSandboxPortForwardForPort, isSandboxPortForwardHealthy } from "./forward-recovery";
 
-export function ensureMessagingHostForwardAfterRebuild(
+export async function ensureMessagingHostForwardAfterRebuild(
   sandboxName: string,
   plan: SandboxMessagingPlan | null | undefined,
   runtimeSelection?: OpenShellRuntimeSelection,
-): boolean {
+): Promise<boolean> {
   const forward = resolveMessagingHostForward(plan);
   if (!forward) return true;
-  const health = isSandboxPortForwardHealthy(
+  const health = await isSandboxPortForwardHealthy(
     sandboxName,
     forward.port,
     undefined,

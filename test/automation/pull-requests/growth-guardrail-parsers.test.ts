@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -24,9 +25,13 @@ function fixtureDiff(
   files: GrowthGuardrailDiff["files"],
   base: Readonly<Record<string, string>>,
   head: Readonly<Record<string, string>>,
+  pullRequestNumber: number | null = null,
+  exceptionPolicySource: "base" | "head" = pullRequestNumber === null ? "head" : "base",
 ): GrowthGuardrailDiff {
   return {
     files,
+    pullRequestNumber,
+    exceptionPolicySource,
     /**
      * Return each requested base-revision fixture file.
      *
@@ -99,6 +104,15 @@ function e2eAssertionBudget(
 
 /** Register synthetic cases for the growth guardrail parsers and diagnostics. */
 function defineCodebaseGrowthGuardrailTestSupport(): void {
+  it.each([
+    ["pull_request", "head"],
+    ["pull_request_target", "base"],
+    ["workflow_dispatch", "base"],
+    [undefined, "base"],
+  ] as const)("selects %s exception policy from %s", (eventName, expected) => {
+    expect(diffTestOnly.pullRequestExceptionPolicySource(eventName)).toBe(expected);
+  });
+
   it("caches repeated blob reads across guardrail checks", () => {
     const read = vi.fn((file: string) => `${file} content`);
     const cache = new Map<string, string | null>();
@@ -199,6 +213,83 @@ function defineCodebaseGrowthGuardrailTestSupport(): void {
 
   it("allows the root Dockerfile budget to shrink", allowDockerfileBudgetShrinkage);
 
+  it("allows the trusted-base Dockerfile ceiling only (#11105)", async () => {
+    const policy = JSON.stringify({
+      schemaVersion: 1,
+      exceptions: [{ pullRequest: 11105, maxLines: 4, maxBytes: 51 }],
+    });
+    const files = [{ filename: "Dockerfile", status: "modified" }] as const;
+    const base = {
+      Dockerfile: "FROM scratch\nRUN true\n",
+      "ci/dockerfile-growth-exceptions.json": policy,
+    };
+    const head = {
+      Dockerfile: "FROM scratch\nRUN true\nCOPY setup /setup\nRUN /setup\n",
+    };
+
+    expect(await dockerfileBudgetGrowthViolations(fixtureDiff(files, base, head, 11105))).toEqual(
+      [],
+    );
+    expect(await dockerfileBudgetGrowthViolations(fixtureDiff(files, base, head, 11106))).toEqual([
+      "Dockerfile line budget increased from 2 to 4",
+      "Dockerfile byte budget increased from 22 to 51",
+    ]);
+  });
+
+  it("rejects either approved Dockerfile ceiling when exceeded (#11105)", async () => {
+    const policy = JSON.stringify({
+      schemaVersion: 1,
+      exceptions: [{ pullRequest: 11105, maxLines: 3, maxBytes: 40 }],
+    });
+    const diff = fixtureDiff(
+      [{ filename: "Dockerfile", status: "modified" }],
+      {
+        Dockerfile: "FROM scratch\nRUN true\n",
+        "ci/dockerfile-growth-exceptions.json": policy,
+      },
+      { Dockerfile: "FROM scratch\nRUN true\nCOPY setup /setup\nRUN /setup\n" },
+      11105,
+    );
+
+    expect(await dockerfileBudgetGrowthViolations(diff)).toEqual([
+      "Dockerfile line budget exceeded the PR #11105 maximum of 3 with 4",
+      "Dockerfile byte budget exceeded the PR #11105 maximum of 40 with 51",
+    ]);
+  });
+
+  it("does not let a candidate revision add its own Dockerfile exception", async () => {
+    const candidatePolicy = JSON.stringify({
+      schemaVersion: 1,
+      exceptions: [{ pullRequest: 11106, maxLines: 4, maxBytes: 51 }],
+    });
+    const diff = fixtureDiff(
+      [
+        { filename: "Dockerfile", status: "modified" },
+        {
+          filename: "ci/dockerfile-growth-exceptions.json",
+          status: "modified",
+        },
+      ],
+      {
+        Dockerfile: "FROM scratch\nRUN true\n",
+        "ci/dockerfile-growth-exceptions.json": JSON.stringify({
+          schemaVersion: 1,
+          exceptions: [],
+        }),
+      },
+      {
+        Dockerfile: "FROM scratch\nRUN true\nCOPY setup /setup\nRUN /setup\n",
+        "ci/dockerfile-growth-exceptions.json": candidatePolicy,
+      },
+      11106,
+    );
+
+    expect(await dockerfileBudgetGrowthViolations(diff)).toEqual([
+      "Dockerfile line budget increased from 2 to 4",
+      "Dockerfile byte budget increased from 22 to 51",
+    ]);
+  });
+
   /** The remediation text records the escalation path for intentional growth. */
   function requireDockerfileBudgetDecision(): void {
     const message = diagnostics.dockerfileBudget(["Dockerfile byte budget increased"]);
@@ -255,6 +346,98 @@ function defineCodebaseGrowthGuardrailTestSupport(): void {
     expect(violations).toContain(
       "test/e2e/live/example.test.ts directExpectCalls increased from 1 to 2",
     );
+  });
+
+  it.each([
+    { label: "approved PR", pr: 10341, policyAtHead: false, change: "none", approved: true },
+    { label: "local hook", pr: null, policyAtHead: false, change: "none", approved: true },
+    {
+      label: "local candidate policy",
+      pr: null,
+      policyAtHead: true,
+      change: "none",
+      approved: true,
+    },
+    { label: "another PR", pr: 10342, policyAtHead: false, change: "none", approved: false },
+    { label: "candidate policy", pr: 10341, policyAtHead: true, change: "none", approved: false },
+    { label: "changed base", pr: 10341, policyAtHead: false, change: "base", approved: false },
+    { label: "changed candidate", pr: 10341, policyAtHead: false, change: "head", approved: false },
+  ])("matches an approved E2E budget transition: $label", async (scenario) => {
+    const base = e2eAssertionBudget(1);
+    const head = e2eAssertionBudget(2);
+    const policy = JSON.stringify({
+      schemaVersion: 1,
+      exceptions: [
+        {
+          pullRequest: 10341,
+          baseBudgetSha256: createHash("sha256").update(base).digest("hex"),
+          headBudgetSha256: createHash("sha256").update(head).digest("hex"),
+        },
+      ],
+    });
+    const policyPath = "ci/e2e-assertion-growth-exceptions.json";
+    const diff = fixtureDiff(
+      [{ filename: "ci/e2e-assertion-budget.json", status: "modified" }],
+      {
+        "ci/e2e-assertion-budget.json": scenario.change === "base" ? `${base}\n` : base,
+        ...(!scenario.policyAtHead ? { [policyPath]: policy } : {}),
+      },
+      {
+        "ci/e2e-assertion-budget.json": scenario.change === "head" ? e2eAssertionBudget(3) : head,
+        [policyPath]: policy,
+      },
+      scenario.pr,
+    );
+    const violations = await e2eAssertionBudgetGrowthViolations(diff);
+    expect(violations.length === 0).toBe(scenario.approved);
+  });
+
+  it("allows the approved branch policy in candidate CI while enforcing the PR identity", async () => {
+    const base = e2eAssertionBudget(1);
+    const head = e2eAssertionBudget(2);
+    const policy = JSON.stringify({
+      schemaVersion: 1,
+      exceptions: [
+        {
+          pullRequest: 10341,
+          baseBudgetSha256: createHash("sha256").update(base).digest("hex"),
+          headBudgetSha256: createHash("sha256").update(head).digest("hex"),
+        },
+      ],
+    });
+    const diff = fixtureDiff(
+      [{ filename: "ci/e2e-assertion-budget.json", status: "modified" }],
+      { "ci/e2e-assertion-budget.json": base },
+      {
+        "ci/e2e-assertion-budget.json": head,
+        "ci/e2e-assertion-growth-exceptions.json": policy,
+      },
+      10341,
+      diffTestOnly.pullRequestExceptionPolicySource("pull_request"),
+    );
+    expect(await e2eAssertionBudgetGrowthViolations(diff)).toEqual([]);
+    expect(
+      await e2eAssertionBudgetGrowthViolations({ ...diff, pullRequestNumber: 10342 }),
+    ).not.toEqual([]);
+  });
+
+  it.each([
+    { schemaVersion: 2, exceptions: [] },
+    { schemaVersion: 1, exceptions: null },
+    { schemaVersion: 1, exceptions: [null] },
+    { schemaVersion: 1, exceptions: [{ pullRequest: 0 }] },
+    { schemaVersion: 1, exceptions: [{ pullRequest: 10341, baseBudgetSha256: "invalid" }] },
+  ])("rejects malformed trusted E2E exception policy: %j", async (policy) => {
+    const diff = fixtureDiff(
+      [{ filename: "ci/e2e-assertion-budget.json", status: "modified" }],
+      {
+        "ci/e2e-assertion-budget.json": e2eAssertionBudget(1),
+        "ci/e2e-assertion-growth-exceptions.json": JSON.stringify(policy),
+      },
+      { "ci/e2e-assertion-budget.json": e2eAssertionBudget(2) },
+      10341,
+    );
+    await expect(e2eAssertionBudgetGrowthViolations(diff)).rejects.toThrow();
   });
 
   it("rejects an omitted live E2E assertion budget unless its test was removed", async () => {

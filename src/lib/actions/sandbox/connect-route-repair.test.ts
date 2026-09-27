@@ -12,7 +12,8 @@ const runBuffered = vi.hoisted(() =>
   vi.fn<OpenShellSandboxBufferedCommandExecutor["runBuffered"]>(),
 );
 
-vi.mock("../../adapters/openshell/sandbox-command-cli", () => ({
+vi.mock("../../adapters/openshell/sandbox-command-cli", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../adapters/openshell/sandbox-command-cli")>()),
   createCliOpenShellSandboxCommandExecutor: vi.fn(() => ({ runBuffered })),
 }));
 
@@ -23,7 +24,13 @@ vi.mock("../../adapters/openshell/runtime", () => ({
 }));
 
 vi.mock("../../gateway-runtime-action", () => ({
-  getNamedGatewayLifecycleState: vi.fn(() => ({ kind: "healthy_named" })),
+  getNamedGatewayLifecycleState: vi.fn().mockResolvedValue({
+    state: "healthy_named",
+    activeGateway: "nemoclaw",
+    diagnostic: "Connected.",
+    recoveryBlocked: false,
+    unavailable: false,
+  }),
 }));
 
 vi.mock("../../inference/local", () => ({

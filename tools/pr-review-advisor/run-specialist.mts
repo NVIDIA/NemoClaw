@@ -6,6 +6,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { redactAdvisorDiagnostic } from "./failure-artifacts.mts";
+
 import { getChangedFiles, getDiff, getHeadSha } from "../advisors/git.mts";
 import { parseArgs, parsePositiveInt } from "../advisors/io.mts";
 import {
@@ -17,8 +19,17 @@ import {
   type RunReadOnlyAdvisorOptions,
 } from "../advisors/session.mts";
 import { collectDeterministicContext } from "./deterministic-context.mts";
+import {
+  createAdvisorFindingToolController,
+  type AdvisorFindingToolController,
+  writeAdvisorFindingLedger,
+} from "./finding-ledger.mts";
 import { trustedE2eRecommendationInventory } from "../advisors/e2e-recommendations.mts";
-import { buildSpecialistE2eReceipt, createE2eRecommendationRecorder } from "./e2e-receipt.mts";
+import {
+  buildReviewQueueContext,
+  buildSpecialistE2eReceipt,
+  createE2eRecommendationRecorder,
+} from "./e2e-receipt.mts";
 import { collectGitHubReviewContext } from "./github-context.mts";
 import {
   ADVISOR_SPECIALISTS,
@@ -27,7 +38,10 @@ import {
 } from "./specialist-catalog.mts";
 import { buildSpecialistInvestigateTurn } from "./specialists.mts";
 import { specialistCustomTools } from "./specialist-tools.mts";
-import { SPECIALIST_DIFF_FILE_NAME } from "./specialist-context.mts";
+import {
+  SPECIALIST_DIFF_FILE_NAME,
+  SPECIALIST_FOLLOW_UP_DIFF_FILE_NAME,
+} from "./specialist-context.mts";
 import { buildSystemPrompt, readTrustedControlledWords } from "./trusted-guidance.mts";
 import {
   buildCorrectnessTurnContext,
@@ -58,17 +72,57 @@ export function writeSpecialistSummary(
 
 export function runSpecialistAdvisor(
   interest: AdvisorInterest,
-  refs: { baseRef: string; headRef: string },
+  refs: { baseRef: string; headRef: string; headSha: string },
   options: RunReadOnlyAdvisorOptions,
   run: (options: RunReadOnlyAdvisorOptions) => Promise<RunAdvisorResult> = runReadOnlyAdvisor,
+  findingController: AdvisorFindingToolController = createAdvisorFindingToolController({
+    headSha: refs.headSha,
+    interest,
+  }),
 ): Promise<RunAdvisorResult> {
   return run({
     ...options,
     customTools: [
       ...specialistCustomTools(interest, { ...refs, cwd: options.cwd }),
       ...(options.customTools ?? []),
+      ...findingController.tools,
     ],
   });
+}
+
+export function preserveSpecialistRun(
+  outDir: string,
+  interest: AdvisorInterest,
+  run: RunAdvisorResult,
+): void {
+  const errors = advisorRunErrors(run);
+  // Failed output is diagnostic evidence, never a complete review or a clear ledger.
+  if (errors.length > 0) {
+    fs.writeFileSync(path.join(outDir, "failed-analysis.txt"), redactAdvisorDiagnostic(run.text), {
+      mode: 0o600,
+    });
+  }
+  try {
+    if (!run.sessionFile) throw new Error("Pi did not persist a specialist JSONL session");
+    const sessionStat = fs.lstatSync(run.sessionFile);
+    if (!sessionStat.isFile() || sessionStat.isSymbolicLink()) {
+      throw new Error("Pi specialist session must be a regular file");
+    }
+    fs.copyFileSync(run.sessionFile, path.join(outDir, `pr-review-${interest}-session.jsonl`));
+  } catch (error) {
+    if (!errors.length) throw error;
+    errors.push(
+      `Session preservation failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (errors.length) {
+    fs.writeFileSync(
+      path.join(outDir, "failure.json"),
+      JSON.stringify({ status: "failed", errors: errors.map(redactAdvisorDiagnostic) }, null, 2),
+      { mode: 0o600 },
+    );
+    throw new Error(errors.join("; "));
+  }
 }
 
 async function main(): Promise<void> {
@@ -105,6 +159,19 @@ async function main(): Promise<void> {
   if (!diffStat.isFile() || diffStat.isSymbolicLink()) {
     throw new Error("Prepared specialist diff must be a regular file");
   }
+  const followUpReview = deterministic.github?.followUpReview;
+  const followUpDiffPath = followUpReview
+    ? path.join(
+        process.env.PR_REVIEW_ADVISOR_CONTEXT_DIR || "/pr-review-advisor-context/specialist",
+        SPECIALIST_FOLLOW_UP_DIFF_FILE_NAME,
+      )
+    : undefined;
+  if (followUpDiffPath) {
+    const followUpDiffStat = fs.lstatSync(followUpDiffPath);
+    if (!followUpDiffStat.isFile() || followUpDiffStat.isSymbolicLink()) {
+      throw new Error("Prepared specialist follow-up diff must be a regular file");
+    }
+  }
 
   const turn = buildSpecialistInvestigateTurn(interest, {
     metadata: JSON.stringify({ version: 1, baseRef, headRef, headSha, changedFiles }, null, 2),
@@ -121,12 +188,34 @@ async function main(): Promise<void> {
     tests: buildTestsTurnContext(deterministic),
     operations: buildOperationsTurnContext(deterministic),
     reconciliation: buildReconciliationTurnContext(deterministic),
+    followUp:
+      followUpReview && followUpDiffPath
+        ? { review: followUpReview, diffPath: followUpDiffPath }
+        : undefined,
   });
   const inventory = trustedE2eRecommendationInventory();
   const recommendations = createE2eRecommendationRecorder(inventory);
+  const findingController = createAdvisorFindingToolController({
+    headSha,
+    interest,
+    validatePrerequisites: () => {
+      recommendations.snapshot();
+    },
+  });
+  const evidenceContext = {
+    baseSha: getHeadSha(baseRef),
+    expectedSpecialists: ADVISOR_SPECIALISTS.map((specialist) => specialist.interest),
+    riskPlan: deterministic.riskPlan,
+    inventory,
+  };
+  fs.writeFileSync(
+    path.join(outDir, "review-queue-context.json"),
+    `${JSON.stringify(buildReviewQueueContext(evidenceContext, process.env), null, 2)}\n`,
+    { flag: "wx", mode: 0o600 },
+  );
   const run = await runSpecialistAdvisor(
     interest,
-    { baseRef, headRef },
+    { baseRef, headRef, headSha },
     {
       cwd: process.cwd(),
       additionalReadRoots: [path.dirname(diffPath)],
@@ -146,16 +235,14 @@ async function main(): Promise<void> {
       logPrefix: `pr-review-${interest}`,
       logProgress: (message) => console.log(`[pr-review-${interest}] ${message}`),
     },
+    runReadOnlyAdvisor,
+    findingController,
   );
-  const errors = advisorRunErrors(run);
-  if (errors.length > 0) throw new Error(errors.join("; "));
+  preserveSpecialistRun(outDir, interest, run);
   const receipt = buildSpecialistE2eReceipt({
-    baseSha: getHeadSha(baseRef),
+    ...evidenceContext,
     interest,
-    expectedSpecialists: ADVISOR_SPECIALISTS.map((specialist) => specialist.interest),
-    riskPlan: deterministic.riskPlan,
     advisor: recommendations.snapshot(),
-    inventory,
   });
   fs.writeFileSync(
     path.join(outDir, `pr-review-${interest}-e2e.json`),
@@ -163,12 +250,7 @@ async function main(): Promise<void> {
     { flag: "wx", mode: 0o600 },
   );
   writeSpecialistSummary(outDir, interest, run.text);
-  if (!run.sessionFile) throw new Error("Pi did not persist a specialist JSONL session");
-  const sessionStat = fs.lstatSync(run.sessionFile);
-  if (!sessionStat.isFile() || sessionStat.isSymbolicLink()) {
-    throw new Error("Pi specialist session must be a regular file");
-  }
-  fs.copyFileSync(run.sessionFile, path.join(outDir, `pr-review-${interest}-session.jsonl`));
+  writeAdvisorFindingLedger(outDir, interest, findingController.snapshot());
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

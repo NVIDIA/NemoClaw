@@ -22,17 +22,17 @@ const compiledPreload = path.join(
 
 // Reviewed from the published @openclaw/msteams artifact, not inferred from
 // NemoClaw source. The integrity is npm's dist.integrity; the SHA-256 values
-// identify the exact runtime entry and plugin entry reviewed for 2026.7.1.
+// identify the exact runtime entry and plugin entry reviewed for 2026.9.1.
 // This fixture intentionally models only that package/load boundary. It does
 // not vendor or claim to test the upstream Bot Framework send/parser code.
 const REVIEWED_MSTEAMS_CONTRACT = {
-  version: "2026.7.1",
+  version: "2026.9.1",
   npmIntegrity:
-    "sha512-gG/Yk6HZAguHwrmKjsqdONbFz5WNy126PEAXQWNW/TulO1kIifQ6tktM16BQPNLnkmWqLbj+TrrO55Cjas1aFg==",
-  runtimeExtension: "./dist/index.js",
-  pluginSpecifier: "./channel-plugin-api.js",
-  indexSha256: "2a83ee979d5ee9f12c7ac507ebd87024be3315de3f2cc87c81effc9ca85246d1",
-  pluginEntrySha256: "3f155003264d64d92f780eae17eab48ebe18d56e67dacdc8f0587a1f09266165",
+    "sha512-seRGr9/X6Vk9xU5elLVpDwq8R+TO0QFvUmxPEitqkngqDnMoXW0LEEXkriG6jgue74w2YLcNnAv/Rjf0a9jong==",
+  runtimeExtension: "./dist/index.cjs",
+  pluginSpecifier: "./channel-plugin-api.cjs",
+  indexSha256: "7b5ba63fb0abc15c606c95b165e50e09bb31c37036489781cfcca685ae1d79dd",
+  pluginEntrySha256: "aae2fdcaa996a98f3887c7417e2f7480fe7d8fc2436165a94697a690fd45993e",
 } as const;
 
 function readPinnedOpenClawVersion(): string {
@@ -56,40 +56,39 @@ function writeReviewedPackageShape(root: string, version: string): string {
     }),
   );
   fs.writeFileSync(
-    path.join(distDir, "reviewed-channel-entry-contract.js"),
+    path.join(distDir, "reviewed-channel-entry-contract.cjs"),
     // The published package's runtime extension delegates to
-    // defineBundledChannelEntry. OpenClaw 2026.7.1 then uses createRequire for
-    // built dist/*.js plugin entries. Preserve that reviewed loader seam here
+    // defineBundledChannelEntry. OpenClaw 2026.9.1 then uses CommonJS require for
+    // built dist/*.cjs plugin entries. Preserve that reviewed loader seam here
     // without copying the upstream Teams sender or parser implementation.
     [
-      'import { createRequire } from "node:module";',
-      'import { fileURLToPath } from "node:url";',
-      "const nodeRequire = createRequire(import.meta.url);",
-      "export function defineBundledChannelEntry({ importMetaUrl, plugin }) {",
+      'const { fileURLToPath } = require("node:url");',
+      "function defineBundledChannelEntry({ importMetaUrl, plugin }) {",
       "  return {",
       "    loadChannelPlugin() {",
       "      const modulePath = fileURLToPath(new URL(plugin.specifier, importMetaUrl));",
-      "      const loaded = nodeRequire(modulePath);",
+      "      const loaded = require(modulePath);",
       "      return loaded[plugin.exportName];",
       "    },",
       "  };",
       "}",
+      "module.exports = { defineBundledChannelEntry };",
       "",
     ].join("\n"),
   );
   fs.writeFileSync(
-    path.join(distDir, "index.js"),
+    path.join(distDir, "index.cjs"),
     [
-      'import { defineBundledChannelEntry } from "./reviewed-channel-entry-contract.js";',
-      "export default defineBundledChannelEntry({",
-      "  importMetaUrl: import.meta.url,",
+      'const { defineBundledChannelEntry } = require("./reviewed-channel-entry-contract.cjs");',
+      "module.exports = defineBundledChannelEntry({",
+      '  importMetaUrl: require("node:url").pathToFileURL(__filename).href,',
       `  plugin: { specifier: ${JSON.stringify(REVIEWED_MSTEAMS_CONTRACT.pluginSpecifier)}, exportName: "msteamsPlugin" },`,
       "});",
       "",
     ].join("\n"),
   );
   fs.writeFileSync(
-    path.join(distDir, "channel-plugin-api.js"),
+    path.join(distDir, "channel-plugin-api.cjs"),
     [
       "const msteamsPlugin = {",
       "  agentPrompt: {",
@@ -99,7 +98,7 @@ function writeReviewedPackageShape(root: string, version: string): string {
       "    ],",
       "  },",
       "};",
-      "export { msteamsPlugin };",
+      "module.exports = { msteamsPlugin };",
       "",
     ].join("\n"),
   );

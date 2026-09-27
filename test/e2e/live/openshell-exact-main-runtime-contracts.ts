@@ -19,6 +19,7 @@ import {
   trustedSandboxShellScript,
 } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
+import { MCP_BRIDGE_TEST_CREDENTIALS } from "../fixtures/mcp-bridge-credentials.ts";
 
 const EXACT_MAIN_POLICY_KEY = "exact_main_live_exe_identity";
 const LIVE_EXE_PATH = "/tmp/nemoclaw-exact-main-live-exe/live-bash";
@@ -723,6 +724,22 @@ async function assertDirectBypassDenied(options: {
         timeoutMs: 30_000,
       },
     );
+    if (probe.exitCode !== 0) {
+      await Promise.allSettled([
+        Promise.resolve().then(() =>
+          options.sandbox.openshell(
+            ["logs", options.sandboxName, "-n", "500", "--since", "2m", "--source", "all"],
+            {
+              artifactName: "exact-main-post-restart-failure-logs",
+              captureLimitBytes: 32_768,
+              env: sandboxAccessEnv(),
+              redactionValues: Object.values(MCP_BRIDGE_TEST_CREDENTIALS),
+              timeoutMs: 30_000,
+            },
+          ),
+        ),
+      ]);
+    }
     expectExitZero(probe, "deny direct IPv4 TCP and UDP bypass to controlled listeners");
     const parsed: unknown = JSON.parse(probe.stdout);
     if (!isRecord(parsed)) throw new Error("direct bypass probe must return a JSON object");
@@ -754,7 +771,7 @@ export async function assertExactMainPolicyNftAndIdentityContracts(options: {
   const restorePolicy = async () => {
     if (!restoreRequired) return;
     expect(
-      setPolicyDocument(options.sandboxName, basePolicyYaml, {
+      await setPolicyDocument(options.sandboxName, basePolicyYaml, {
         nonFatal: true,
         operation: "restore the exact-main policy proof",
       }),
@@ -783,10 +800,14 @@ export async function assertExactMainPolicyNftAndIdentityContracts(options: {
     );
     restoreRequired = true;
     expect(
-      setPolicyDocument(options.sandboxName, buildIdentityPolicy(basePolicyYaml, options.mcpUrl), {
-        nonFatal: true,
-        operation: "apply the exact-main live-exe identity policy",
-      }),
+      await setPolicyDocument(
+        options.sandboxName,
+        buildIdentityPolicy(basePolicyYaml, options.mcpUrl),
+        {
+          nonFatal: true,
+          operation: "apply the exact-main live-exe identity policy",
+        },
+      ),
       "exact-main-policy-hot-update",
     ).toBe(true);
     const effective = await readPolicyStatus(
@@ -823,12 +844,16 @@ export async function assertExactMainPolicyNftAndIdentityContracts(options: {
       containerId,
       "exact-main-nft-rules-before-restart",
     );
-    const restart = await options.host.command("docker", ["restart", containerId], {
-      artifactName: "exact-main-sandbox-container-restart",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: POLICY_TIMEOUT_MS,
-    });
-    expectExitZero(restart, "restart exact-main OpenShell sandbox container");
+    // OpenShell 0.0.116 treats an unexpected main-process exit as terminal Error.
+    // Its lifecycle commands retain the container and wait for Stopped/Ready.
+    for (const operation of ["stop", "start"]) {
+      const result = await options.sandbox.openshell(["sandbox", operation, options.sandboxName], {
+        artifactName: `exact-main-sandbox-container-${operation}`,
+        env: sandboxAccessEnv(),
+        timeoutMs: POLICY_TIMEOUT_MS,
+      });
+      expectExitZero(result, `${operation} exact-main OpenShell sandbox container`);
+    }
     const restartedContainerId = await findSandboxContainer(
       options.host,
       options.sandboxName,

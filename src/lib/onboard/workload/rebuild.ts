@@ -293,8 +293,11 @@ export function managedWorkloadRebuildProfileEnvironment(
     if (reasoning !== null) result.NEMOCLAW_REASONING = String(reasoning);
     const reasoningEffort = overrides.openClawReasoningEffort ?? previous.tuning.reasoningEffort;
     if (reasoningEffort !== null) result.NEMOCLAW_REASONING_EFFORT = reasoningEffort;
-    if (previous.inference.inputModalities !== null) {
+    if (previous.inference?.inputModalities != null) {
       result.NEMOCLAW_INFERENCE_INPUTS = previous.inference.inputModalities.join(",");
+    }
+    if (previous.inference?.servingPreset) {
+      result.NEMOCLAW_SERVING_PRESET = previous.inference.servingPreset;
     }
     result.NEMOCLAW_AGENT_TIMEOUT = String(config.agentTimeoutSeconds);
     if (config.heartbeatEvery !== null) {
@@ -311,6 +314,16 @@ export function managedWorkloadRebuildProfileEnvironment(
     result.NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE = String(config.otel.sampleRate);
   } else if (previous.agent === "hermes" && previous.tuning.contextWindow !== null) {
     result.NEMOCLAW_CONTEXT_WINDOW = String(previous.tuning.contextWindow);
+  } else if (previous.agent === "pi") {
+    if (previous.tuning.contextWindow !== null) {
+      result.NEMOCLAW_CONTEXT_WINDOW = String(previous.tuning.contextWindow);
+    }
+    if (previous.tuning.maxTokens !== null) {
+      result.NEMOCLAW_MAX_TOKENS = String(previous.tuning.maxTokens);
+    }
+    if (previous.tuning.reasoning !== null) {
+      result.NEMOCLAW_REASONING = String(previous.tuning.reasoning);
+    }
   }
 
   if (handoff.previousReceipt.credentialProxyReplayRequired) {

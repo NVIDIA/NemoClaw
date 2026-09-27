@@ -10,6 +10,7 @@
  * window kept for a cloud model → silent under-utilization).
  */
 
+import { getScopedCredentialOverride } from "../credentials/scoped-overrides";
 import { DEFAULT_CONTEXT_WINDOW } from "./config";
 import {
   createOllamaApiCaptureEx,
@@ -36,6 +37,8 @@ export interface ContextWindowDeps {
   probeOllamaContextWindow: (model: string) => number | null;
   /** Read the running vLLM server's max_model_len for the model; null when unavailable. */
   probeVllmContextWindow: (model: string) => number | null;
+  /** Read the authenticated llama.cpp server's served context size. */
+  probeLlamaCppContextWindow?: (model: string) => number | null;
   /** Fallback window for providers without a per-model runtime signal (cloud). */
   defaultCloudContextWindow: () => number;
 }
@@ -90,6 +93,23 @@ const defaultContextWindowDeps: ContextWindowDeps = {
     return resolveVllmContextWindowFromModels(parsed, model);
   },
   defaultCloudContextWindow: (): number => DEFAULT_CONTEXT_WINDOW,
+  /** Read the selected model's served context using the scoped or staged credential. */
+  probeLlamaCppContextWindow: (model: string): number | null => {
+    const { LLAMA_CPP_CREDENTIAL_ENV, probeLlamaCppAttachment } = require("./llama-cpp") as {
+      LLAMA_CPP_CREDENTIAL_ENV: string;
+      probeLlamaCppAttachment: (
+        apiKey: string,
+        options?: { requestedModel?: string | null },
+      ) => { ok: boolean; contextWindow?: number };
+    };
+    const apiKey =
+      getScopedCredentialOverride(LLAMA_CPP_CREDENTIAL_ENV) ??
+      process.env[LLAMA_CPP_CREDENTIAL_ENV]?.replace(/\r/g, "").trim() ??
+      null;
+    if (!apiKey) return null;
+    const result = probeLlamaCppAttachment(apiKey, { requestedModel: model });
+    return result.ok ? (result.contextWindow ?? null) : null;
+  },
 };
 
 /**
@@ -101,6 +121,8 @@ const defaultContextWindowDeps: ContextWindowDeps = {
  *   returns null if the load has not finished.
  * - vllm-local: read the running server's max_model_len from /v1/models (the
  *   same source onboard uses); null when the server is unreachable.
+ * - llama-cpp-local: read authenticated native metadata for the served model;
+ *   null when the server or its served context is unavailable.
  * - cloud providers: the onboard default. Accuracy is bounded by the missing
  *   per-model cloud context metadata (tracked as a separate issue).
  */
@@ -115,6 +137,9 @@ export function resolveContextWindowForModel(
   }
   if (provider === "vllm-local") {
     return deps.probeVllmContextWindow(model);
+  }
+  if (provider === "llama-cpp-local") {
+    return deps.probeLlamaCppContextWindow?.(model) ?? null;
   }
   return deps.defaultCloudContextWindow();
 }

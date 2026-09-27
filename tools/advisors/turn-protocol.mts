@@ -58,7 +58,8 @@ export type AdvisorPromptTurn = {
   /**
    * Terminal submit tool that may follow context, reads, prose, and other active draft tools.
    * With repair enabled, the turn permits settled failed attempts with exactly one success.
-   * Only failed duplicate submit calls may follow a success.
+   * Only failed duplicate submit calls may follow a success in that model turn. A configured,
+   * tool-disabled assistant-text repair may follow when required analysis was omitted.
    */
   terminalSubmitToolName?: string;
   /** Opt into repeated submits or one continuation after omission or settled failures. */
@@ -103,6 +104,96 @@ export type AdvisorTurnFlowEvent =
     }
   | { type: "tool_start"; toolName: string }
   | { type: "tool_end"; toolName: string; isError: boolean };
+
+export type AdvisorTurnFlowDiagnostics = {
+  textEvents: number;
+  readEvents: number;
+  toolStarts: number;
+  toolEnds: number;
+  toolFailures: number;
+  failedToolNames: string[];
+  unmatchedToolEndNames: string[];
+  unsettledToolNames: string[];
+  missingRequiredToolNames: string[];
+};
+
+export class AdvisorTurnFlowDiagnosticAccumulator {
+  readonly #availableToolNames: ReadonlySet<string>;
+  readonly #failedToolNames = new Set<string>();
+  readonly #openCalls = new Map<string, number>();
+  readonly #successfulToolNames = new Set<string>();
+  readonly #unmatchedToolEndNames = new Set<string>();
+  #readEvents = 0;
+  #textEvents = 0;
+  #toolEnds = 0;
+  #toolFailures = 0;
+  #toolStarts = 0;
+
+  constructor(availableToolNames: ReadonlySet<string>) {
+    this.#availableToolNames = availableToolNames;
+  }
+
+  record(event: AdvisorTurnFlowEvent): void {
+    if (event.type === "text") {
+      this.#textEvents += 1;
+      return;
+    }
+    if (event.type === "read") {
+      this.#readEvents += 1;
+      return;
+    }
+    const toolName = this.#availableToolNames.has(event.toolName) ? event.toolName : "<unknown>";
+    if (event.type === "tool_start") {
+      this.#toolStarts += 1;
+      this.#openCalls.set(toolName, (this.#openCalls.get(toolName) ?? 0) + 1);
+      return;
+    }
+    this.#toolEnds += 1;
+    if (event.isError) {
+      this.#toolFailures += 1;
+      this.#failedToolNames.add(toolName);
+    } else if (this.#availableToolNames.has(event.toolName)) {
+      this.#successfulToolNames.add(event.toolName);
+    }
+    const openCount = this.#openCalls.get(toolName) ?? 0;
+    if (openCount === 0) {
+      this.#unmatchedToolEndNames.add(toolName);
+      return;
+    }
+    this.#openCalls.set(toolName, openCount - 1);
+  }
+
+  snapshot(requiredToolNames: string[]): AdvisorTurnFlowDiagnostics {
+    const unsettledToolNames = [...this.#openCalls]
+      .filter(([, count]) => count > 0)
+      .map(([toolName]) => toolName)
+      .sort();
+    return {
+      textEvents: this.#textEvents,
+      readEvents: this.#readEvents,
+      toolStarts: this.#toolStarts,
+      toolEnds: this.#toolEnds,
+      toolFailures: this.#toolFailures,
+      failedToolNames: [...this.#failedToolNames].sort(),
+      unmatchedToolEndNames: [...this.#unmatchedToolEndNames].sort(),
+      unsettledToolNames,
+      missingRequiredToolNames: missingRequiredAdvisorToolNames(
+        requiredToolNames,
+        this.#successfulToolNames,
+      ).sort(),
+    };
+  }
+}
+
+export function advisorTurnFlowDiagnostics(
+  events: AdvisorTurnFlowEvent[],
+  requiredToolNames: string[],
+  availableToolNames: ReadonlySet<string>,
+): AdvisorTurnFlowDiagnostics {
+  const accumulator = new AdvisorTurnFlowDiagnosticAccumulator(availableToolNames);
+  for (const event of events) accumulator.record(event);
+  return accumulator.snapshot(requiredToolNames);
+}
 
 export function resolveAdvisorTurnTools(
   turn: AdvisorPromptTurn,
@@ -362,7 +453,10 @@ export function advisorTurnFlowErrors(
     }
   }
   const oneOfReads = events.flatMap((event, index) =>
-    event.type === "read" && tools.requiredReadOneOfPaths?.includes(event.path)
+    event.type === "read" &&
+    tools.requiredReadOneOfPaths?.includes(event.path) &&
+    event.fileSize > 0 &&
+    (event.endOffset === null || event.endOffset >= event.offset)
       ? [{ event, index }]
       : [],
   );
@@ -552,8 +646,27 @@ export function sanitizeToolName(name: string): string {
   );
 }
 
-export function promptWithRequiredContextTools(prompt: string, toolNames: string[]): string {
-  if (toolNames.length === 0) return prompt;
-  const tools = toolNames.map((name) => `\`${name}\``).join(", ");
-  return `${prompt.trimEnd()}\n\nRequired context tools: ${tools}. Their results are not preloaded; call each before answering.`;
+export function promptWithRequiredContextTools(
+  prompt: string,
+  toolNames: string[],
+  requiredReadOneOfPaths: string[] = [],
+): string {
+  const requirements: string[] = [];
+  if (toolNames.length > 0) {
+    const tools = toolNames.map((name) => `\`${name}\``).join(", ");
+    requirements.push(
+      `Required context tools: ${tools}. Their results are not preloaded; call each before answering.`,
+    );
+  }
+  if (requiredReadOneOfPaths.length > 0) {
+    for (const requiredPath of requiredReadOneOfPaths) {
+      if (/[\r\n\0]/u.test(requiredPath)) {
+        throw new Error("Advisor required-read paths cannot contain line breaks or NUL bytes");
+      }
+    }
+    requirements.push(
+      `Required files:\n${requiredReadOneOfPaths.map((requiredPath) => `- ${requiredPath}`).join("\n")}\nRead at least one exact path above with \`read\` before writing analysis.`,
+    );
+  }
+  return requirements.length > 0 ? `${prompt.trimEnd()}\n\n${requirements.join("\n\n")}` : prompt;
 }

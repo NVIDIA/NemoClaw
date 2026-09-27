@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { AgentMcpAdapter } from "../../agent/defs";
-import type { McpBridgeEntry, SandboxEntry } from "../../state/registry";
+import type { SandboxEntry } from "../../state/registry";
+import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import {
   assertAgentMcpMutationRuntimeCapability,
   assertAgentMcpTeardownRuntimeCapability,
@@ -13,7 +14,7 @@ import { getBridgeAdapter, getSandboxAgent } from "./mcp-bridge-state";
 
 function adaptersForEntries(
   sandbox: SandboxEntry,
-  entries: readonly McpBridgeEntry[],
+  entries: readonly McpSourceEntry[],
 ): Set<AgentMcpAdapter> {
   return new Set(
     entries.map((entry) =>
@@ -25,7 +26,7 @@ function adaptersForEntries(
 export async function assertMcpAdapterMutationRuntimeCapabilities(
   sandboxName: string,
   sandbox: SandboxEntry,
-  entries: readonly McpBridgeEntry[],
+  entries: readonly McpSourceEntry[],
   runtimeSelection: McpProviderInspectionRuntimeSelection,
 ): Promise<void> {
   for (const adapter of adaptersForEntries(sandbox, entries)) {
@@ -42,7 +43,7 @@ export async function assertMcpAdapterMutationRuntimeCapabilities(
 export async function assertMcpAdapterTeardownRuntimeCapabilities(
   sandboxName: string,
   sandbox: SandboxEntry,
-  entries: readonly McpBridgeEntry[],
+  entries: readonly McpSourceEntry[],
   runtimeSelection: McpProviderInspectionRuntimeSelection,
 ): Promise<void> {
   for (const adapter of adaptersForEntries(sandbox, entries)) {

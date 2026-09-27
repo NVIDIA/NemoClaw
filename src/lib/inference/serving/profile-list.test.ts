@@ -10,8 +10,63 @@ import {
   renderServingProfiles,
   resolveServingProfileSelection,
 } from "./profile-list";
+import { readinessReportForPreset } from "./readiness-report.test-support";
+
+const MUSE_LLAMA_CPP_PROFILE_ID = "llama-cpp.dgx-spark-gb10.single.muse-glimmer-30b";
+const N1X_LLAMA_CPP_PROFILE_ID = "llama-cpp.n1x-wsl-arm64.single.qwen3-6-35b-a3b";
 
 describe("serving profile discovery", () => {
+  it("lists a managed llama.cpp profile as compatible on a host that meets its requirements", () => {
+    const catalog = loadServingCatalog();
+    const preset = catalog.presets.find(
+      ({ metadata }) => metadata.id === MUSE_LLAMA_CPP_PROFILE_ID,
+    );
+    expect(preset, "Shipped managed llama.cpp preset is missing.").toBeDefined();
+    const entries = listServingProfiles(catalog, {
+      readinessReports: [{ nodeId: "spark-host", report: readinessReportForPreset(preset!) }],
+    });
+
+    expect(entries.find(({ id }) => id === MUSE_LLAMA_CPP_PROFILE_ID)).toMatchObject({
+      backend: "install-llama-cpp",
+      selectionMode: "explicit-only",
+      compatible: true,
+      incompatibilityReason: null,
+    });
+    expect(
+      resolveServingProfileSelection(MUSE_LLAMA_CPP_PROFILE_ID, {
+        catalog,
+        listProfiles: () => entries,
+      }),
+    ).toBe(MUSE_LLAMA_CPP_PROFILE_ID);
+    expect(entries.find(({ id }) => id === N1X_LLAMA_CPP_PROFILE_ID)).toMatchObject({
+      backend: "install-llama-cpp",
+      compatible: false,
+      incompatibilityReason: expect.stringMatching(/^Readiness requirement .* did not match\.$/u),
+    });
+  });
+
+  it("keeps a profile whose backend onboarding cannot configure incompatible", () => {
+    const catalog = loadServingCatalog();
+    const patched = {
+      ...catalog,
+      recipes: catalog.recipes.map((recipe) => ({
+        ...recipe,
+        spec: { ...recipe.spec, backend: "future-backend" },
+      })),
+    };
+    const entries = listServingProfiles(patched as never, { readinessReports: [] }).filter(
+      ({ supportState }) => supportState !== "disabled",
+    );
+
+    expect(entries.length).toBeGreaterThan(0);
+    entries.forEach((entry) => {
+      expect(entry).toMatchObject({
+        compatible: false,
+        incompatibilityReason: "Backend future-backend is not available through onboarding.",
+      });
+    });
+  });
+
   it(
     "lists every compiled preset with stable selection metadata (#8384)",
     { timeout: 30_000 },

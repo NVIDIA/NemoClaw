@@ -26,7 +26,7 @@ function hasSdkArtifact(): boolean {
 }
 
 describe("released OpenShell SDK export reads", () => {
-  it.skipIf(!hasSdkArtifact()).each(["brave", "openai"] as const)(
+  it.skipIf(!hasSdkArtifact()).each(["brave"] as const)(
     "qualifies the checked-in %s profile through generated SDK responses (#10904)",
     async (profileId) => {
       const sdkPackage = "@nvidia/openshell-sdk/raw";

@@ -864,10 +864,7 @@ describe("Windows-host Ollama transport", () => {
     expect(capture).toHaveBeenCalledTimes(4);
   });
 
-  it.each([
-    ["DOCKER_CONTEXT", "remote-builders"],
-    ["DOCKER_HOST", "tcp://remote.example:2376"],
-  ])("rejects a cached Windows route when %s changes before a model probe", (name, value) => {
+  it("rejects a cached Windows route when DOCKER_CONTEXT changes before a model probe", () => {
     const stateRoot = mkdtempSync(join(tmpdir(), "nemoclaw-ollama-context-switch-"));
     try {
       const discoveryCapture = vi.fn((command: readonly string[]) => {
@@ -889,7 +886,7 @@ describe("Windows-host Ollama transport", () => {
       ).toBe(OLLAMA_HOST_DOCKER_INTERNAL);
       expect(getResolvedOllamaHost()).toBe(OLLAMA_HOST_DOCKER_INTERNAL);
 
-      vi.stubEnv(name, value);
+      vi.stubEnv("DOCKER_CONTEXT", "remote-builders");
       const requestCapture = vi.fn(() => JSON.stringify({ capabilities: ["tools"] }));
       expect(probeOllamaModelCapabilities("qwen3.5:9b", requestCapture)).toMatchObject({
         source: "unknown",
@@ -897,6 +894,35 @@ describe("Windows-host Ollama transport", () => {
       });
       expect(requestCapture).not.toHaveBeenCalled();
       expect(getResolvedOllamaHost()).toBe("127.0.0.1");
+    } finally {
+      rmSync(stateRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a cached Windows route when DOCKER_HOST changes beneath the default context", () => {
+    const stateRoot = mkdtempSync(join(tmpdir(), "nemoclaw-ollama-host-switch-"));
+    try {
+      const discoveryCapture = respondsOnlyThroughDockerDesktop(
+        "/api/tags",
+        JSON.stringify({ models: [] }),
+      );
+      expect(
+        findReachableOllamaHost(discoveryCapture, { isWsl: true }, stateRoot, {
+          runtime: "docker-desktop",
+          prepareDockerEnvironment: isolatedDockerEnvironment,
+        }),
+      ).toBe(OLLAMA_HOST_DOCKER_INTERNAL);
+
+      vi.stubEnv("DOCKER_HOST", "tcp://remote.example:2376");
+      const requestCapture = respondsOnlyThroughDockerDesktop(
+        "/api/show",
+        JSON.stringify({ capabilities: ["tools"] }),
+      );
+      expect(probeOllamaModelCapabilities("qwen3.5:9b", requestCapture)).toMatchObject({
+        source: "api",
+        supportsTools: true,
+      });
+      expect(getResolvedOllamaHost()).toBe(OLLAMA_HOST_DOCKER_INTERNAL);
     } finally {
       rmSync(stateRoot, { recursive: true, force: true });
     }

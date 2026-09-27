@@ -19,7 +19,6 @@ import {
 const {
   getChatCompletionsProbeCurlArgs,
   getChatCompletionsProbePayload,
-  getDeepSeekV4ProValidationProbeCurlArgs,
   getProbeExtraHeaders,
   getKimiK26ValidationProbeCurlArgs,
   hasChatCompletionsToolCall,
@@ -311,7 +310,7 @@ describe("OpenAI-compatible inference probes", () => {
     });
   });
 
-  it("serializes the Nemotron 3 Super validation request parameters (#10880)", () => {
+  it("serializes the Nemotron 3 Super validation request parameters (#10880, #11965)", () => {
     const args = getChatCompletionsProbeCurlArgs({
       credentialArgs: FAKE_CREDENTIAL_ARGS,
       model: "nvidia/nemotron-3-super-120b-a12b",
@@ -327,7 +326,7 @@ describe("OpenAI-compatible inference probes", () => {
       max_tokens: 16,
       temperature: 1,
       top_p: 0.95,
-      chat_template_kwargs: { enable_thinking: false },
+      reasoning_effort: "none",
     });
   });
 

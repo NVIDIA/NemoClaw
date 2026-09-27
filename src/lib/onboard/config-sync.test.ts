@@ -204,7 +204,7 @@ describe("sandbox config sync helpers", () => {
     [0o700, 0o600, 0o755],
     [0o2770, 0o660, 0o2770],
   ])(
-    "writes selection and initializes native state with owner-selected modes [case %#]",
+    "writes selection and validates native state with owner-selected modes [case %#]",
     (directoryMode, fileMode, nestedMode) => {
       const homeDir = createConfigSyncHome();
       const nemoclawDir = path.join(homeDir, ".nemoclaw");
@@ -243,16 +243,28 @@ describe("sandbox config sync helpers", () => {
       expect(fs.readFileSync(openclawHash, "utf8")).toBe(
         `${createHash("sha256").update(fs.readFileSync(openclawConfig)).digest("hex")}  openclaw.json\n`,
       );
-      expect(nativeCalls).toEqual([
-        `config validate|${openclawDir}|${openclawConfig}|${homeDir}`,
-        `setup --baseline|${openclawDir}|${openclawConfig}|${homeDir}`,
-      ]);
+      expect(nativeCalls).toEqual([`config validate|${openclawDir}|${openclawConfig}|${homeDir}`]);
       expect(fs.statSync(openclawDir).mode & 0o7777).toBe(directoryMode);
       expect(fs.statSync(nestedOpenclawDir).mode & 0o7777).toBe(nestedMode);
       expect(modeBits(openclawConfig)).toBe(fileMode);
       expect(modeBits(openclawHash)).toBe(fileMode);
     },
   );
+
+  itUnix("syncs selection metadata and completes managed OpenClaw session state", () => {
+    const homeDir = createConfigSyncHome();
+    const openclawDir = path.join(homeDir, ".openclaw");
+    fs.mkdirSync(openclawDir, { mode: 0o700 });
+    const script = buildSandboxConfigSyncScript(selection, true);
+
+    const { nativeCalls } = runConfigSyncScript(script, homeDir, String(process.getuid?.()));
+
+    expect(
+      JSON.parse(fs.readFileSync(path.join(homeDir, ".nemoclaw", "config.json"), "utf8")),
+    ).toEqual(selection);
+    expect(nativeCalls).toEqual([]);
+    expect(modeBits(path.join(openclawDir, "agents", "main", "sessions"))).toBe(0o700);
+  });
 
   itUnix("propagates a real config normalizer ownership refusal", () => {
     const homeDir = createConfigSyncHome();
@@ -268,10 +280,7 @@ describe("sandbox config sync helpers", () => {
       { modes: [0o700, 0o600], expectedStatus: 1 },
     );
     expect(result.stderr).toContain("UnsafeTree");
-    expect(nativeCalls.map((call) => call.split("|")[0])).toEqual([
-      "config validate",
-      "setup --baseline",
-    ]);
+    expect(nativeCalls.map((call) => call.split("|")[0])).toEqual(["config validate"]);
     expect(fs.statSync(configDir).uid).toBe(process.getuid?.());
   });
 

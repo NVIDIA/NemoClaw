@@ -62,9 +62,7 @@ describe("buildPolicyDenialExecHint (#5978)", () => {
     const hint = buildPolicyDenialExecHint("nemoclaw", unsafe, "example.com:443");
     expect(hint).toContain("nemoclaw <name> logs --tail 50");
     expect(hint).toContain("nemoclaw <name> policy add <preset>");
-    expect(buildScopeUpgradeExecHint("nemoclaw", unsafe)).toContain(
-      "nemoclaw <name> exec -- openclaw devices list",
-    );
+    expect(buildScopeUpgradeExecHint("nemoclaw", unsafe)).toContain("nemoclaw <name> connect");
     expect(hint).not.toContain(unsafe);
     expect(hint).not.toContain("");
   });
@@ -75,10 +73,11 @@ describe("buildScopeUpgradeExecHint (#9744)", () => {
 
   it.each([
     ["the sandbox name", "waiting for approval inside sandbox 'my-assistant'"],
-    ["the devices-list review breadcrumb", "nemoclaw my-assistant exec -- openclaw devices list"],
+    ["the prepared connect shell", "nemoclaw my-assistant connect"],
+    ["the devices-list review command", "openclaw devices list --json"],
     [
       "the devices-approve remedy with the literal placeholder",
-      `nemoclaw my-assistant exec -- openclaw devices approve ${SCOPE_UPGRADE_REQUEST_PLACEHOLDER}`,
+      `openclaw devices approve ${SCOPE_UPGRADE_REQUEST_PLACEHOLDER}`,
     ],
     ["the review-before-approve instruction", "Approve the one you recognize"],
     ["the opt-out env", POLICY_HINT_SUPPRESS_ENV],
@@ -88,6 +87,7 @@ describe("buildScopeUpgradeExecHint (#9744)", () => {
 
   it("never resolves the placeholder to a concrete request id", () => {
     expect(hint).not.toContain(REQUEST_ID);
+    expect(hint).not.toContain("exec -- openclaw devices approve");
     expect(buildScopeUpgradeExecHint("nemoclaw", "my-assistant")).toBe(hint);
   });
 });

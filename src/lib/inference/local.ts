@@ -7,7 +7,6 @@
  */
 
 import fs from "node:fs";
-import os from "node:os";
 import nodePath from "node:path";
 import {
   detectContainerRuntimeFromDockerInfo,

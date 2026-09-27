@@ -687,7 +687,7 @@ function atOllamaRecoveryPhase<T>(phase: HermesPortableOllamaRecoveryPhase, oper
 }
 
 export interface HermesPortableOllamaRecoveryInput {
-  readonly intent: "connect-probe-only";
+  readonly intent: "connect-probe-only" | "connect-interactive";
   readonly sandboxName: string;
   readonly entry: SandboxEntry;
   readonly env?: NodeJS.ProcessEnv;
@@ -695,14 +695,16 @@ export interface HermesPortableOllamaRecoveryInput {
   readonly runGatewayOpenshell: HermesPortableOllamaGatewayRunner;
   readonly readRegistry: (sandboxName: string) => SandboxEntry | null;
   readonly verifyRoute: () => Promise<SandboxEntry>;
-  readonly prepareProbeDependency?: () => HermesPortableOllamaPreparedProbeDependency;
+  readonly prepareProbeDependency?: () =>
+    | HermesPortableOllamaPreparedProbeDependency
+    | Promise<HermesPortableOllamaPreparedProbeDependency>;
   readonly assertCallerTransactionCurrent?: () => void;
   readonly assertCallerCurrent?: () => void;
 }
 
 export interface HermesPortableOllamaPreparedProbeDependency {
   readonly release: () => void;
-  readonly rollback: () => void;
+  readonly rollback: () => void | Promise<void>;
 }
 
 interface HermesPortableOllamaRecoveryDeps {
@@ -972,8 +974,8 @@ export async function recoverHermesPortableOllamaInference(
   input: HermesPortableOllamaRecoveryInput,
   overrides: Partial<HermesPortableOllamaRecoveryDeps> = {},
 ): Promise<HermesPortableOllamaRecoveryResult> {
-  if (input.intent !== "connect-probe-only") {
-    failRecovery("recovery is restricted to connect --probe-only");
+  if (input.intent !== "connect-probe-only" && input.intent !== "connect-interactive") {
+    failRecovery("recovery requires a supported connect intent");
   }
   const deps = { ...DEFAULT_RECOVERY_DEPS, ...overrides };
   const recoveryTiming = createHermesPortableOllamaRecoveryTimingRecorder(deps.recoveryTiming);
@@ -1227,9 +1229,9 @@ export async function recoverHermesPortableOllamaInference(
           requireRetainedCurrent();
         });
         await recoveryTiming.measureAsync("route", verifyFinalRoute);
-        preparedDependency = recoveryTiming.measure(
+        preparedDependency = await recoveryTiming.measureAsync(
           "dependency",
-          () => input.prepareProbeDependency?.() ?? null,
+          async () => (await input.prepareProbeDependency?.()) ?? null,
         );
         recoveryTiming.measure("finalCurrentness", requireCompletionCurrent);
         registryRecovery.release();
@@ -1239,7 +1241,7 @@ export async function recoverHermesPortableOllamaInference(
       } catch (error) {
         if (preparedDependency) {
           try {
-            preparedDependency.rollback();
+            await preparedDependency.rollback();
           } catch (rollbackError) {
             throw rollbackError;
           }
@@ -1297,9 +1299,9 @@ export async function recoverHermesPortableOllamaInference(
         requireRetainedCurrent();
       });
       await recoveryTiming.measureAsync("route", verifyFinalRoute);
-      preparedDependency = recoveryTiming.measure(
+      preparedDependency = await recoveryTiming.measureAsync(
         "dependency",
-        () => input.prepareProbeDependency?.() ?? null,
+        async () => (await input.prepareProbeDependency?.()) ?? null,
       );
       const finalizePublishedResume = prepared.finalizePublishedResume;
       if (!finalizePublishedResume) {
@@ -1321,7 +1323,7 @@ export async function recoverHermesPortableOllamaInference(
       let dependencyRollbackError: unknown = null;
       if (preparedDependency) {
         try {
-          preparedDependency.rollback();
+          await preparedDependency.rollback();
         } catch (rollbackError) {
           dependencyRollbackError = rollbackError;
         }

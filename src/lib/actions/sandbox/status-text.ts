@@ -344,7 +344,7 @@ export async function printSandboxDetails(
   console.log(
     `    OpenShell: ${sb.openshellVersion || "unknown"} (${sb.openshellDriver || "unknown"})`,
   );
-  const livePolicies = getGatewayPresets(sandboxName);
+  const livePolicies = await getGatewayPresets(sandboxName);
   console.log(
     `    Policies: ${livePolicies === null ? "unavailable" : livePolicies.join(", ") || "none"}`,
   );

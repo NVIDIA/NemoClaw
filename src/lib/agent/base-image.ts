@@ -37,12 +37,16 @@ import {
   SANDBOX_BASE_RESOLUTION_SCHEMA,
   SANDBOX_BASE_TAG,
   type SandboxBaseImageResolution,
+  type SandboxBaseImageValidationContext,
   SandboxBaseImageResolutionError,
   type SandboxBaseImageResolutionMetadata,
   type TrustedLocalBaseImageOverride,
   versionGte,
 } from "../sandbox-base-image";
-import { sandboxBaseImageHasSecurityInventory } from "../sandbox-base-image/security-inventory";
+import {
+  hermesSandboxBaseImageHasSecurityInventory,
+  sandboxBaseImageHasSecurityInventory,
+} from "../sandbox-base-image/security-inventory";
 import { getAgentSandboxBaseImageEnvVar } from "./base-image-env";
 import { createDeepAgentsCodeBaseImageResolutionOptions } from "./deep-agents-code-base-image";
 import type { AgentDefinition } from "./defs";
@@ -304,7 +308,8 @@ function hermesFinalDockerfileAcceptsBase(
  * insufficient because these dependencies are installed through optional
  * upstream extras.
  */
-export function hermesBaseImageSupportsMcp(imageRef: string): boolean {
+export function hermesBaseImageSupportsRuntime(imageRef: string, expectedVersion: string): boolean {
+  const quotedExpectedVersion = JSON.stringify(expectedVersion);
   const output = dockerCapture(
     [
       "run",
@@ -315,7 +320,7 @@ export function hermesBaseImageSupportsMcp(imageRef: string): boolean {
       imageRef,
       "-I",
       "-c",
-      `import importlib.metadata as metadata; import sys; import acp; import mcp; from acp_adapter.server import HermesACPAgent; from tools import mcp_tool; metadata.version("agent-client-protocol") == "0.9.0" or sys.exit(1); mcp_tool._ensure_mcp_sdk() or sys.exit(1); getattr(mcp_tool, "_MCP_AVAILABLE", False) or sys.exit(1); getattr(mcp_tool, "_MCP_HTTP_AVAILABLE", False) or sys.exit(1); print("${HERMES_MCP_RUNTIME_PROBE_OK}")`,
+      `import importlib.metadata as metadata; import sys; import acp; import mcp; from acp_adapter.server import HermesACPAgent; from tools import mcp_tool; metadata.version("hermes-agent") == ${quotedExpectedVersion} or sys.exit(1); metadata.version("agent-client-protocol") == "0.9.0" or sys.exit(1); mcp_tool._ensure_mcp_sdk() or sys.exit(1); getattr(mcp_tool, "_MCP_AVAILABLE", False) or sys.exit(1); getattr(mcp_tool, "_MCP_HTTP_AVAILABLE", False) or sys.exit(1); print("${HERMES_MCP_RUNTIME_PROBE_OK}")`,
     ],
     { ignoreError: true, timeout: 20_000 },
   );
@@ -328,13 +333,23 @@ function createAgentBaseImageResolutionOptions(
   options: EnsureAgentBaseImageOptions,
 ): ResolveBaseImageOptions {
   const imageName = `ghcr.io/nvidia/nemoclaw/${agent.name}-sandbox-base`;
+  const pinnedRemoteRef = getHermesPinnedRemoteBaseRef(agent) ?? undefined;
+  const expectedHermesVersion = agent.expectedVersion?.trim();
+  if (agent.name === "hermes" && !expectedHermesVersion) {
+    throw new Error(
+      `Agent '${agent.name}' (${agent.displayName}) manifest is missing expected_version required for base-image validation`,
+    );
+  }
   const validationOptions =
     agent.name === "hermes"
       ? {
-          validateImage: (imageRef: string) =>
-            hermesBaseImageSupportsMcp(imageRef) && sandboxBaseImageHasSecurityInventory(imageRef),
-          validationDescription:
-            "the required MCP Streamable HTTP and ACP runtimes and the immutable security package inventory",
+          validateImage: (imageRef: string, context?: SandboxBaseImageValidationContext) =>
+            hermesBaseImageSupportsRuntime(imageRef, expectedHermesVersion!) &&
+            hermesSandboxBaseImageHasSecurityInventory(
+              imageRef,
+              context?.source === "pinned" && context.pinnedRemoteRef === pinnedRemoteRef,
+            ),
+          validationDescription: `Hermes ${expectedHermesVersion} with the required MCP Streamable HTTP and ACP runtimes and the immutable security package inventory`,
         }
       : agent.name === "pi"
         ? {
@@ -342,7 +357,6 @@ function createAgentBaseImageResolutionOptions(
             validationDescription: "the immutable security package inventory",
           }
         : createDeepAgentsCodeBaseImageResolutionOptions(agent, dockerfilePath);
-  const pinnedRemoteRef = getHermesPinnedRemoteBaseRef(agent) ?? undefined;
   return {
     imageName,
     dockerfilePath,
@@ -417,7 +431,12 @@ export function bindLocalAgentBaseImageToPinnedProvenance(
   ) {
     return null;
   }
-  if (resolutionOptions.validateImage && !resolutionOptions.validateImage(imageRef)) return null;
+  if (
+    resolutionOptions.validateImage &&
+    !resolutionOptions.validateImage(imageRef, { source: "pinned", pinnedRemoteRef })
+  ) {
+    return null;
+  }
   const digest = resolvedRemoteRef.slice(resolvedRemoteRef.indexOf("@") + 1);
   const metadata = createSandboxBaseImageResolutionMetadata(
     resolutionOptions,

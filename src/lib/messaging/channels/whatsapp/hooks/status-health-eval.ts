@@ -15,11 +15,7 @@
  * paired-but-idle channel cannot be mistaken for working.
  */
 
-import type {
-  ChannelHealthReport,
-  DiagnosticSeverity,
-  DiagnosticSignal,
-} from "../../channel-health";
+import type { ChannelHealthReport, DiagnosticSignal } from "../../channel-health";
 
 export type { DiagnosticSeverity, DiagnosticSignal } from "../../channel-health";
 

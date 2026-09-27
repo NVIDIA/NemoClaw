@@ -193,7 +193,7 @@ export class DockerProbe {
       });
       rawCommandResult = {
         command,
-        exitCode: supervised.exitCode,
+        exitCode: supervised.cleanupError ? -1 : supervised.exitCode,
         signal: supervised.signal,
         stdout: outputExceeded
           ? "[docker-probe output exceeded safe capture limit]"
@@ -203,6 +203,7 @@ export class DockerProbe {
           : stderr.toString("utf8"),
         error:
           supervised.spawnError?.message ??
+          supervised.cleanupError?.message ??
           (outputExceeded ? "Docker output exceeded the safe capture limit" : undefined),
       };
     }

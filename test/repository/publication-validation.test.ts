@@ -29,6 +29,11 @@ afterEach(() => {
 
 const hookCases = [
   {
+    id: "publication-validation",
+    source: { entry: "npx tsx scripts/checks/validate-pr.mts --pre-push" },
+    expected: { entry: "true" },
+  },
+  {
     id: "spdx-headers",
     source: { entry: "bash scripts/check-spdx-headers.sh --fix" },
     expected: { entry: "bash scripts/check-spdx-headers.sh" },
@@ -106,7 +111,7 @@ describe("read-only publication checks", () => {
         return 0;
       });
     expect(validatePr(root, execute)).toBe(0);
-    expect(execute).toHaveBeenCalledTimes(3);
+    expect(execute).toHaveBeenCalledTimes(5);
   });
 
   it.each(["new-hook", "renamed-oxfmt"])("rejects unclassified hook %s before execution", (id) => {
@@ -156,10 +161,10 @@ sys.exit(checker.check_files(fix, [sys.argv[2]]))`,
     expect(result.stdout).toContain(`Formatting required: ${file}`);
   });
 
-  it("runs all three validation stages and removes its temporary configuration", () => {
+  it("builds artifacts, runs all validation stages, and removes its temporary configuration", () => {
     const execute = vi.fn(() => 0);
     expect(validatePr(root, execute)).toBe(0);
-    expect(execute.mock.calls).toHaveLength(3);
+    expect(execute.mock.calls).toHaveLength(5);
     expect(execute).toHaveBeenNthCalledWith(2, "npx", [
       "--no-install",
       "commitlint",
@@ -168,9 +173,18 @@ sys.exit(checker.check_files(fix, [sys.argv[2]]))`,
       "--to",
       "HEAD",
     ]);
+    expect(execute).toHaveBeenNthCalledWith(3, "npm", ["run", "build:cli"]);
+    expect(execute).toHaveBeenNthCalledWith(4, "npm", ["--prefix", "nemoclaw", "run", "build"]);
     const args = execute.mock.calls[0] as unknown as [string, string[]];
     expect(existsSync(args[1][3])).toBe(false);
     expect(fixtureGit(root, "status", "--porcelain")).toBe("");
+  });
+
+  it("leaves compiler checks to the outer pre-push hook", () => {
+    const execute = vi.fn((_command: string, _args: string[]) => 0);
+    expect(validatePr(root, execute, { includePrePush: false })).toBe(0);
+    expect(execute).toHaveBeenCalledTimes(4);
+    expect(execute.mock.calls.flatMap(([, args]) => args)).not.toContain("pre-push");
   });
 
   it("stops after a failed check without invoking later stages", () => {

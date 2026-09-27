@@ -24,6 +24,11 @@ const {
 
 import { hasMigratableLegacySandbox, migrateLegacyPortState } from "../state/legacy-port-migration";
 import {
+  findSandboxAcrossGatewayRoots,
+  listPendingSandboxNamesAcrossGatewayRoots,
+  listPublishedSandboxNamesAcrossGatewayRoots,
+} from "../state/registry/cross-port";
+import {
   isGlobalCommandInvocation,
   type NormalizedArgv,
   type NormalizedGlobalArgv,
@@ -80,9 +85,14 @@ function isPublicSandboxConnectFlag(arg: string | undefined): boolean {
   return sandboxConnect().isSandboxConnectFlag(arg);
 }
 
+/** A sandbox registered under any gateway-port root on this host is addressable by name. */
+function findKnownSandboxEntry(name: string): import("../state/registry").SandboxEntry | null {
+  return findSandboxAcrossGatewayRoots(name)?.entry ?? null;
+}
+
 function hasRegisteredSandbox(name: string): boolean {
   try {
-    return registry().getSandbox(name) !== null;
+    return findKnownSandboxEntry(name) !== null;
   } catch {
     // Global doctor owns the registry-readability diagnostic. If dispatch
     // cannot inspect the registry, keep routing the bare token there.
@@ -146,6 +156,29 @@ function hasPublicSandboxHelpFlag(action: string, args: readonly string[]): bool
   return hasHelpFlag(argsBeforeSeparator(args));
 }
 
+const REBUILD_RECOVERY_RETIREMENT_FLAG = "--retire-recovery";
+
+/**
+ * `rebuild --retire-recovery <transaction-id>` retires a recorded rebuild
+ * recovery. Its identity is the backup record on disk plus the gateway that
+ * record names, not the registry row: rebuild's own guidance runs it after
+ * `destroy --yes` has already removed that row (#11394).
+ *
+ * Only tokens before the option separator count. oclif owns flag parsing and
+ * treats everything after `--` as positional, so a retirement flag placed
+ * there is an ordinary rebuild invocation and keeps the registry gate.
+ */
+function isRebuildRecoveryRetirement(action: string, actionArgs: readonly string[]): boolean {
+  return (
+    action === "rebuild" &&
+    argsBeforeSeparator(actionArgs).some(
+      (arg) =>
+        arg === REBUILD_RECOVERY_RETIREMENT_FLAG ||
+        arg.startsWith(`${REBUILD_RECOVERY_RETIREMENT_FLAG}=`),
+    )
+  );
+}
+
 function isMigrationRecoveryInvocation(argv: readonly string[]): boolean {
   if (argv[0] === "internal") {
     const isStatefulUninstall =
@@ -164,10 +197,22 @@ function sandboxRegistrationNames(): { published: string[]; pending: string[] } 
   const sandboxes = registryApi.listSandboxes().sandboxes;
   return {
     // Suggestions must use the same published inventory as `list` and global `status`.
-    published: sandboxes.filter(registryApi.isPublishedSandboxRegistration).map(({ name }) => name),
-    pending: sandboxes
-      .filter(({ pendingRouteReservation }) => pendingRouteReservation === true)
-      .map(({ name }) => name),
+    // Sandboxes registered under a sibling gateway-port root are reachable through
+    // their recorded binding, so they belong in diagnostics too.
+    published: [
+      ...new Set([
+        ...sandboxes.filter(registryApi.isPublishedSandboxRegistration).map(({ name }) => name),
+        ...listPublishedSandboxNamesAcrossGatewayRoots(),
+      ]),
+    ],
+    pending: [
+      ...new Set([
+        ...sandboxes
+          .filter(({ pendingRouteReservation }) => pendingRouteReservation === true)
+          .map(({ name }) => name),
+        ...listPendingSandboxNamesAcrossGatewayRoots(),
+      ]),
+    ],
   };
 }
 
@@ -336,7 +381,7 @@ async function recoverRequestedSandboxIfNeeded(
   action: string,
   rawArgsAfterSandboxName: string[],
 ): Promise<void> {
-  if (registry().getSandbox(sandboxName)) return;
+  if (findKnownSandboxEntry(sandboxName)) return;
   const namesSandboxAction = isKnownSandboxAction(sandboxName);
   const hasExplicitSandboxAction =
     rawArgsAfterSandboxName.length > 0 && isKnownSandboxAction(rawArgsAfterSandboxName[0] ?? "");
@@ -353,7 +398,7 @@ async function recoverRequestedSandboxIfNeeded(
 
   validateName(sandboxName, "sandbox name");
   await registryRecovery().recoverRegistryEntries({ requestedSandboxName: sandboxName });
-  if (registry().getSandbox(sandboxName)) return;
+  if (findKnownSandboxEntry(sandboxName)) return;
 
   // Recovery runs first so a live sandbox named after an action stays reachable
   // through the name-first grammar. A token that recovery cannot resolve is a
@@ -467,6 +512,11 @@ async function dispatchGlobalArgv(normalized: NormalizedGlobalArgv): Promise<voi
   await runPublicTranslationResult(translatePublicGlobalArgv(normalized.command, normalized.args));
 }
 
+/**
+ * Route a `nemoclaw <sandbox-name> <action>` invocation to its oclif command.
+ * Resolves bare-connect grammar, renders sandbox-scoped help, and applies the
+ * registry-aware missing-sandbox checks before translation.
+ */
 async function dispatchSandboxArgv(
   normalized: NormalizedSandboxArgv,
   argv: string[],
@@ -505,13 +555,31 @@ async function dispatchSandboxArgv(
     return;
   }
 
+  // #11394 — recovery retirement is not gated on the registry row. The retire
+  // path resolves its record from the rebuild-backups directory by sandbox
+  // name and transaction id, then requires the recorded gateway to report the
+  // sandbox missing. The printed guidance runs it after `destroy --yes`
+  // removed the registry entry, so registry recovery here can only exit with
+  // "does not exist" or start a gateway the retirement never needs.
+  if (
+    isRebuildRecoveryRetirement(requestedSandboxAction, requestedSandboxActionArgs) &&
+    !registry().getSandbox(cmd)
+  ) {
+    validateName(cmd, "sandbox name");
+    await runPublicTranslationResult(
+      translatePublicSandboxArgv(cmd, requestedSandboxAction, requestedSandboxActionArgs),
+      { sandboxName: cmd },
+    );
+    return;
+  }
+
   // #3447 — when the typed command matches an OpenShell-owned operation
   // (term / policy set / gateway stop) and there is no sandbox by that name,
   // point users at the correct tool. Must run before recovery so bare
   // `nemoclaw term` (which normalizes to sandboxName=term, action=connect)
   // doesn't get swallowed by the recovery's "Sandbox does not exist" exit.
   const openshellHint = getOpenShellCommandHint(argv);
-  if (openshellHint && !registry().getSandbox(cmd)) {
+  if (openshellHint && !findKnownSandboxEntry(cmd)) {
     printOpenShellCommandHint(openshellHint);
   }
 
@@ -519,7 +587,7 @@ async function dispatchSandboxArgv(
   // command, attempt recovery — the sandbox may still be live with a stale registry.
   await recoverRequestedSandboxIfNeeded(cmd, requestedSandboxAction, rawArgsAfterCmd);
 
-  const sandbox = registry().getSandbox(cmd);
+  const sandbox = findKnownSandboxEntry(cmd);
   if (!sandbox) {
     const suggestion = suggestGlobalCommand(cmd);
     if (suggestion) {

@@ -1,12 +1,51 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFile, execFileSync, spawnSync } from "node:child_process";
+import { once } from "node:events";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
 import path from "node:path";
+import { promisify } from "node:util";
 
 import { describe, expect, it } from "vitest";
 
 describe("compiled inference CommonJS contracts", () => {
+  it("runs the private bridge probe entry point with the maximum readiness budget (#11823)", async () => {
+    const requests: string[] = [];
+    const server = http.createServer((request, response) => {
+      requests.push(request.url ?? "");
+      response.writeHead(200).end();
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+
+    try {
+      const { port } = server.address() as AddressInfo;
+      const { stdout, stderr } = await promisify(execFile)(
+        process.execPath,
+        [
+          path.join(
+            process.cwd(),
+            "dist/lib/onboard/runtime-provider/docker-llama-cpp-private-bridge-probe-process.js",
+          ),
+          `http://127.0.0.1:${port}/health`,
+          "86400",
+        ],
+        { timeout: 5_000, env: { ...process.env, NODE_OPTIONS: "" } },
+      );
+
+      expect(requests).toEqual(["/health"]);
+      expect(stdout).toBe("");
+      expect(stderr).toBe("");
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
   it("rejects non-WSL Ollama when the backend and proxy ports collide", () => {
     const output = execFileSync(
       process.execPath,

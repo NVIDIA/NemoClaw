@@ -112,7 +112,7 @@ export async function captureSandboxListWithGatewayPreflightOrExit(
   options: CaptureSandboxListWithGatewayRecoveryOptions = {},
 ): Promise<OpenShellSandboxInventory> {
   const preflightOptions = options.gatewayName ? { gatewayName: options.gatewayName } : {};
-  const preflightIssue = detectOpenShellStateRpcPreflightIssue(preflightOptions);
+  const preflightIssue = await detectOpenShellStateRpcPreflightIssue(preflightOptions);
   if (preflightIssue) {
     printOpenShellStateRpcIssue(preflightIssue, context);
     process.exit(1);
@@ -151,7 +151,7 @@ export async function captureNamedGatewaySandboxListReadOnly(
   }),
 ): Promise<OpenShellSandboxInventory> {
   const options: CaptureSandboxListWithGatewayRecoveryOptions = { gatewayName };
-  const preflightIssue = detectOpenShellStateRpcPreflightIssue(options);
+  const preflightIssue = await detectOpenShellStateRpcPreflightIssue(options);
   if (preflightIssue) {
     printOpenShellStateRpcIssue(preflightIssue, context);
     process.exit(1);

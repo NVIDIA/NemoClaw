@@ -150,7 +150,7 @@ export const wechatManifest = {
         {
           envKey: "WECHAT_BOT_TOKEN",
           targetEnvKey: "WEIXIN_TOKEN",
-          match: "^openshell:resolve:env:v[0-9]+_WECHAT_BOT_TOKEN$",
+          match: "^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_WECHAT_BOT_TOKEN$",
           value: "openshell:resolve:env:WECHAT_BOT_TOKEN",
         },
       ],
@@ -161,12 +161,12 @@ export const wechatManifest = {
       id: "openclawPluginPackage",
       agent: "openclaw",
       manager: "openclaw-plugin",
-      spec: "npm:@tencent-weixin/openclaw-weixin@2.4.3",
+      spec: "npm:@tencent-weixin/openclaw-weixin@2.4.9",
       pin: true,
       integrity:
-        "sha512-dPQbidUNWigC6V10vGW4i+GLH09x+6zUhafZRjuxkJ9GDu8o62WBsnUTojp4KqUH756hz+t2v9khiCRSi0dBDw==",
+        "sha512-SfaYehR1Cwq2VV5HxJBp9sVilMms420VfZlMbF4YjRbWomr5+GxfXp9HkeU6y5TbnOc4Ysq0qPw1yBvJwbenBA==",
       tarballUrl:
-        "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.3.tgz",
+        "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.9.tgz",
       runtimeLock: {
         cachePath: "/usr/local/share/nemoclaw/wechat-npm-cache",
         installCacheEnvKey: "NEMOCLAW_WECHAT_NPM_INSTALL_CACHE",

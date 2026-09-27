@@ -5,7 +5,6 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { loadManifestsFromDir, validateManifest } from "../registry/manifests.ts";
-import { listTargets } from "../registry/registry.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const E2E_SUITE_DIR = path.join(REPO_ROOT, "test/e2e");

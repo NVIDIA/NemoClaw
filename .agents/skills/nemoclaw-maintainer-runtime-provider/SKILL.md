@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-runtime-provider
-description: Implement or review a NemoClaw managed runtime provider through RuntimeProviderBundle, qualification-backed activation, provider-neutral orchestration, and E2E qualification. Use for a new native provider, provider activation, or runtime-provider architecture work. Do not use for the portable experimental profile.
+description: "Implement or review a native managed NemoClaw runtime provider and its activation or qualification. Excludes the portable experimental profile."
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->

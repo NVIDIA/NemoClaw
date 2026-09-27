@@ -114,13 +114,15 @@ export function buildSubprocessEnvFrom(
 
 /**
  * Build the environment for a Docker CLI command against one explicit
- * authority. The default authority keeps its context and config selection;
- * an explicit socket removes both so they cannot override `DOCKER_HOST`.
+ * authority. The default authority keeps its context and config selection.
+ * An explicit socket removes both unless the caller proves it was resolved
+ * from the selected context and still needs that context's config directory.
  */
 export function buildDockerSubprocessEnv(
   source: NodeJS.ProcessEnv,
   dockerHost: string | undefined,
   extra?: Record<string, string>,
+  options: { preserveDockerConfig?: boolean } = {},
 ): Record<string, string> {
   const env = buildSubprocessEnvFrom(source, extra);
   delete env.DOCKER_HOST;
@@ -133,6 +135,12 @@ export function buildDockerSubprocessEnv(
     if (dockerContext !== undefined) env.DOCKER_CONTEXT = dockerContext;
   } else {
     env.DOCKER_HOST = dockerHost;
+    // A context-resolved host still depends on the config directory that owns
+    // the context and its registry credential helpers. Keep that directory
+    // only when the caller proves this host came from the selected context.
+    if (options.preserveDockerConfig && source.DOCKER_CONFIG !== undefined) {
+      env.DOCKER_CONFIG = source.DOCKER_CONFIG;
+    }
   }
   return env;
 }

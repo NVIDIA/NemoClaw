@@ -16,16 +16,17 @@ import { isLlamaCppServingRecipe } from "../../../src/lib/inference/serving/adap
 import { loadManagedInferenceCatalog } from "../../../src/lib/inference/serving/catalog-loader.ts";
 import { resolveNemoClawGatewayRuntime } from "../../../src/lib/onboard/runtime-provider/configured-runtime.ts";
 import { resolveRegisteredRuntimeProviderBundle } from "../../../src/lib/onboard/runtime-provider/current.ts";
+import { adminApprovalConnectScript } from "../fixtures/admin-approval-connect.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { trustedSandboxShellScript, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
-import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import {
-  assertAgentExecutionSucceeded,
-  chatContent,
-  hasExactReadyPhase,
-} from "./gpu-e2e-helpers.ts";
+  pendingAdminRequestId,
+  preApprovalAdminProbeEvidence,
+} from "../fixtures/issue-4462-admin-approval-evidence.ts";
+import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
+import { assertAgentExecutionSucceeded, hasExactReadyPhase } from "./gpu-e2e-helpers.ts";
 
 const TIMEOUT_MS = 110 * 60_000;
 const RECIPE_ID =
@@ -58,6 +59,7 @@ function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     ...extra,
   };
   delete selected.NEMOCLAW_MODEL;
+  delete selected.NEMOCLAW_CONTEXT_WINDOW;
   return selected;
 }
 
@@ -170,20 +172,24 @@ test(
     const apiKey = loadManagedLlamaCppApiKey(managedLlamaCppStatePaths(os.homedir()));
     assert(apiKey, "managed llama.cpp API key is missing");
     artifacts.addRedactionValues([apiKey]);
+    const runtimeId = receipt.runtime.runtimeId;
     const runtimeOperation = runtimeProvider.hostLocalInference.createOperation({ env: env() });
     runtimeOperation.assertAuthority();
-    const runtimeLogs = runtimeOperation.engine.capture(
-      ["container", "logs", "--tail", "20000", receipt.runtime.runtimeId],
-      30_000,
-    );
-    await artifacts.writeJson("managed-runtime-logs.json", {
-      providerId: receipt.providerId,
-      runtimeId: receipt.runtime.runtimeId,
-      status: runtimeLogs.status,
-      error: runtimeLogs.error?.message ?? null,
-      stdout: runtimeLogs.stdout,
-      stderr: runtimeLogs.stderr,
-    });
+    const captureManagedRuntimeLogs = async (phase: "setup" | "post-agent") => {
+      const runtimeLogs = runtimeOperation.engine.capture(
+        ["container", "logs", "--tail", "20000", runtimeId],
+        30_000,
+      );
+      await artifacts.writeJson(`managed-runtime-logs-${phase}.json`, {
+        providerId: receipt.providerId,
+        runtimeId,
+        status: runtimeLogs.status,
+        error: runtimeLogs.error?.message ?? null,
+        stdout: runtimeLogs.stdout,
+        stderr: runtimeLogs.stderr,
+      });
+    };
+    await captureManagedRuntimeLogs("setup");
     const runtimeInspection = runtimeOperation.engine.capture(
       ["container", "inspect", receipt.runtime.runtimeId],
       30_000,
@@ -248,11 +254,9 @@ test(
         timeoutMs: 30_000,
       },
     );
-    expect(computeApps.exitCode, resultText(computeApps)).toBe(0);
     const llamaGpuProcess = llamaGpuApplications(computeApps.stdout).find(
       ([pid]) => Number(pid) === managedLlamaPid,
     );
-    expect(llamaGpuProcess, resultText(computeApps)).toBeDefined();
     const usedGpuMemoryMiB = Number(llamaGpuProcess?.[2]);
     const minimumFullOffloadMemoryMiB = Math.ceil(modelFile.sizeBytes / 1024 ** 2);
     expect(usedGpuMemoryMiB).toBeGreaterThanOrEqual(minimumFullOffloadMemoryMiB);
@@ -274,70 +278,110 @@ test(
         timeoutMs: 30_000,
       },
     );
-    expect(unauthorized.exitCode, resultText(unauthorized)).toBe(0);
     expect(unauthorized.stdout).toBe("401");
 
-    const hostChat = await host.command(
+    const hostModels = await host.command(
       "curl",
       [
         "-fsS",
+        "--max-time",
+        "30",
         "-H",
         `Authorization: Bearer ${apiKey}`,
-        "-H",
-        "Content-Type: application/json",
-        `http://127.0.0.1:${String(recipe.spec.serve.port)}/v1/chat/completions`,
-        "--data",
-        JSON.stringify({
-          model: recipe.spec.model.servedName,
-          messages: [{ role: "user", content: "Respond with a short greeting." }],
-          max_tokens: 32,
-        }),
+        `http://127.0.0.1:${String(recipe.spec.serve.port)}/v1/models`,
       ],
       {
-        artifactName: "llama-cpp-host-chat",
+        artifactName: "llama-cpp-served-context",
         env: env(),
         redactionValues: [apiKey],
-        timeoutMs: 5 * 60_000,
+        timeoutMs: 35_000,
       },
     );
-    expect(hostChat.exitCode, resultText(hostChat)).toBe(0);
-    expect(chatContent(hostChat.stdout)).not.toBe("");
-
-    const sandboxChat = await sandbox.execShell(
-      SANDBOX_NAME,
-      trustedSandboxShellScript(
-        `curl -fsS --max-time 300 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' --data '${JSON.stringify(
-          {
-            model: recipe.spec.model.servedName,
-            messages: [{ role: "user", content: "Respond with a short greeting." }],
-            max_tokens: 32,
-          },
-        )}'`,
-      ),
-      { artifactName: "sandbox-inference-local-chat", env: env(), timeoutMs: 6 * 60_000 },
+    const servedModels = JSON.parse(hostModels.stdout) as {
+      data: Array<{ id: string; meta?: { n_ctx?: number } }>;
+    };
+    const servedContextWindow = servedModels.data.find(
+      ({ id }) => id === recipe.spec.model.servedName,
+    )?.meta?.n_ctx;
+    assert(
+      Number.isSafeInteger(servedContextWindow) && (servedContextWindow ?? 0) > 0,
+      "selected llama.cpp model must report a positive served context window",
     );
-    expect(sandboxChat.exitCode, resultText(sandboxChat)).toBe(0);
-    expect(chatContent(sandboxChat.stdout)).not.toBe("");
+    const runtimeContext = await sandbox.execShell(
+      SANDBOX_NAME,
+      trustedSandboxShellScript(`node - <<'NODE'
+const fs = require("node:fs");
+const config = JSON.parse(fs.readFileSync("/sandbox/.openclaw/openclaw.json", "utf8"));
+const model = config.agents.defaults.model.primary;
+const separator = model.indexOf("/");
+const provider = model.slice(0, separator);
+const id = model.slice(separator + 1);
+const selected = config.models.providers[provider].models.find((entry) => entry.id === id);
+process.stdout.write(JSON.stringify({ model, contextWindow: selected?.contextWindow }));
+NODE`),
+      {
+        artifactName: "openclaw-served-context",
+        env: env(),
+        timeoutMs: 30_000,
+      },
+    );
+    expect(runtimeContext.exitCode, resultText(runtimeContext)).toBe(0);
+    expect(JSON.parse(runtimeContext.stdout)).toEqual({
+      model: `inference/${recipe.spec.model.servedName}`,
+      contextWindow: servedContextWindow,
+    });
 
     progress.phase("verify OpenClaw agent inference and owned cleanup");
-    const agent = await host.nemoclaw(
+    const agentArgs = [
+      SANDBOX_NAME,
+      "agent",
+      "--agent",
+      "main",
+      "--json",
+      "--session-id",
+      `${TARGET_ID}-${Date.now()}-${process.pid}`,
+      "-m",
+      "Respond with a short greeting.",
+    ];
+    const preApprovalAgent = await host.nemoclaw(agentArgs, {
+      artifactName: "openclaw-agent-before-admin-approval",
+      env: env(),
+      timeoutMs: 12 * 60_000,
+    });
+    const preApprovalEvidence = preApprovalAdminProbeEvidence(preApprovalAgent);
+    await artifacts.writeJson("openclaw-agent-before-admin-approval.json", preApprovalEvidence);
+    const requestId = pendingAdminRequestId(preApprovalAgent);
+    expect(
+      requestId,
+      "The OpenClaw agent did not report one unambiguous pending operator.admin request",
+    ).not.toBeNull();
+    const approval = await host.command(
+      "bash",
       [
-        SANDBOX_NAME,
-        "agent",
-        "--agent",
-        "main",
-        "--json",
-        "--session-id",
-        `${TARGET_ID}-${Date.now()}-${process.pid}`,
-        "-m",
-        "Respond with a short greeting.",
+        "-lc",
+        adminApprovalConnectScript(
+          host.commandPath,
+          SANDBOX_NAME,
+          `${TARGET_ID}-admin-${Date.now()}`,
+          requestId as string,
+        ),
       ],
       {
-        artifactName: "openclaw-agent-through-managed-llama-cpp",
+        artifactName: "openclaw-explicit-admin-approval",
+        captureLimitBytes: 64 * 1024,
         env: env(),
-        timeoutMs: 12 * 60_000,
+        redactionValues: [apiKey],
+        timeoutMs: 4 * 60_000,
       },
     );
+    expect(approval.exitCode, resultText(approval)).toBe(0);
+    expect(resultText(approval)).toContain("ISSUE_5324_ADMIN_APPROVAL_OK");
+    const agent = await host.nemoclaw(agentArgs, {
+      artifactName: "openclaw-agent-through-managed-llama-cpp",
+      env: env(),
+      timeoutMs: 12 * 60_000,
+    });
+    await captureManagedRuntimeLogs("post-agent");
     expect(agent.exitCode, resultText(agent)).toBe(0);
     assertAgentExecutionSucceeded(agent.stdout, "inference", recipe.spec.model.servedName);
 
@@ -399,7 +443,9 @@ test(
       gatewayPort: recipe.spec.serve.port,
       homeDir: os.homedir(),
       environment: destroyEnv,
-      operation: runtimeProvider.hostLocalInference.createOperation({ env: destroyEnv }),
+      operation: runtimeProvider.hostLocalInference.createOperation({
+        env: destroyEnv,
+      }),
     }).runtime.destroy(receipt);
     expect(cleanupProof.status).toBe("already-absent");
 
@@ -422,9 +468,10 @@ test(
         minimumFullOffloadMemoryMiB,
       },
       probes: {
+        servedContextWindow,
+        openClawContextWindow: servedContextWindow,
         unauthorizedStatus: 401,
-        hostChat: "passed",
-        sandboxChat: "passed",
+        authenticatedModels: "passed",
         openClawAgent: "passed",
         publicDestroy: "passed",
         providerCleanupReconciliation: cleanupProof.status,

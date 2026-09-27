@@ -213,8 +213,10 @@ NemoClaw also records an owner-only, credential-free runtime receipt that binds 
 If an existing `nemoclaw-vllm` container does not carry that label, NemoClaw preserves it and asks you to remove or rename it before installing managed vLLM.
 On hosts other than N1x, if another vLLM server already occupies the configured vLLM port and no managed GPU selection accompanies explicit managed-install intent, NemoClaw selects the existing-server path and applies the model-identity checks described above.
 On N1x, NemoClaw stops managed onboarding and requires you to stop that server before trying the Deferred preview again.
-If another process holds the configured single-host port, NemoClaw stops the managed install before it persists a bearer key or records the selected model.
-NemoClaw also stops before storage prompts, cache creation, image pull, or container start.
+Except for the interrupted managed install described below, an occupied single-host port stops installation before NemoClaw persists a bearer key or records the selected model.
+For an interrupted install, it can remove and replace only a running `nemoclaw-vllm` container that has the NemoClaw ownership label and publishes container port `8000` to the requested host port on `127.0.0.1` or `0.0.0.0` through the selected local Docker connection.
+It refuses an unlabeled, stopped, distributed, ambiguous, differently mapped, or differently addressed container.
+For every other port holder, NemoClaw also stops before storage prompts, cache creation, image pull, or container start.
 Stop the process, then run onboarding again.
 Docker reports a bind failure if another process claims the port after this preflight.
 Managed profiles and model-specific recipes use immutable image digests:
@@ -518,7 +520,8 @@ On a host that still meets the N1x identity checks, `rebuild` reuses the recorde
 - The registry records model `nvidia/Qwen3.6-35B-A3B-NVFP4`.
 - If the registry records `endpointUrl` as `null`, NemoClaw derives `http://host.openshell.internal:${NEMOCLAW_VLLM_PORT:-8000}/v1`; otherwise, `endpointUrl` must equal that URL.
 - The registry records `openshellDriver` as `docker`.
-- The registry records `endpointSource` as `onboard`, or records both route fields as `null` and either `deferredN1xManagedVllmAccepted: true` or the current process supplies the one-time `NEMOCLAW_PROVIDER=install-vllm` recovery decision below.
+- The registry records `endpointSource` as `onboard`, or records `deferredN1xManagedVllmAccepted: true`. The latter accepts either a `null` endpoint or the canonical local endpoint.
+- A legacy record with both `endpointUrl` and `endpointSource` set to `null` can instead use the one-time `NEMOCLAW_PROVIDER=install-vllm` recovery decision below.
 - The replacement keeps the recorded provider and model, then re-derives the canonical local endpoint.
 - `hostLocalInferenceReceipt` is absent or `null`, or contains a canonical vLLM receipt for `host.openshell.internal:${NEMOCLAW_VLLM_PORT:-8000}` and the same model.
 

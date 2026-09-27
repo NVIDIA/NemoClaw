@@ -5,14 +5,16 @@ import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   inferenceInvocationStubLines,
-  runWithEnv,
+  runWithEnvAsync,
   testTimeoutOptions,
   writeSandboxRegistry,
 } from "./helpers";
+
+vi.setConfig({ maxConcurrency: 4 });
 
 function createInferenceRouteStatusSetup(options: {
   executeRouteCommand?: boolean;
@@ -110,8 +112,8 @@ function createInferenceRouteStatusSetup(options: {
   return { home, localBin, sandboxName };
 }
 
-describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
-  it("sandbox status --json emits structured per-sandbox report", () => {
+describe.concurrent("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
+  it("sandbox status --json emits structured per-sandbox report", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sandbox-status-json-"));
     const localBin = path.join(home, "bin");
     const sandboxName = `a-${process.pid.toString(36).slice(-3)}-${Date.now().toString(36).slice(-8)}`;
@@ -172,7 +174,7 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
       { mode: 0o755 },
     );
 
-    const r = runWithEnv(`${sandboxName} status --json`, {
+    const r = await runWithEnvAsync(`${sandboxName} status --json`, {
       HOME: home,
       PATH: `${localBin}:${process.env.PATH || ""}`,
     });
@@ -239,10 +241,10 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
       expectedFailure: undefined,
       expectedProbed: false,
     },
-  ])("sandbox status --json fails for $name on inference.local (#6192)", (testCase) => {
+  ])("sandbox status --json fails for $name on inference.local (#6192)", async (testCase) => {
     const { home, localBin, sandboxName } = createInferenceRouteStatusSetup(testCase);
 
-    const result = runWithEnv(`${sandboxName} status --json`, {
+    const result = await runWithEnvAsync(`${sandboxName} status --json`, {
       HOME: home,
       PATH: `${localBin}:${process.env.PATH || ""}`,
     });
@@ -260,14 +262,14 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
     ]);
   });
 
-  it("sandbox status --json reports a missing upstream credential as not probed when inference.local is reachable (#6192)", () => {
+  it("sandbox status --json reports a missing upstream credential as not probed when inference.local is reachable (#6192)", async () => {
     const { home, localBin, sandboxName } = createInferenceRouteStatusSetup({
       routeOutput: "OK 200",
       upstreamHttpStatus: "000",
       upstreamExit: 7,
     });
 
-    const result = runWithEnv(`${sandboxName} status --json`, {
+    const result = await runWithEnvAsync(`${sandboxName} status --json`, {
       HOME: home,
       PATH: `${localBin}:${process.env.PATH || ""}`,
     });
@@ -284,7 +286,7 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
     );
   });
 
-  it("sandbox status --json names the NVIDIA Build account entitlement behind a 404 (#10879)", () => {
+  it("sandbox status --json names the NVIDIA Build account entitlement behind a 404 (#10879)", async () => {
     const { home, localBin, sandboxName } = createInferenceRouteStatusSetup({
       routeOutput: "OK 200",
       invocationHttpStatus: "404",
@@ -292,7 +294,7 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
       invocationClassification: "nemoclaw-probe:nvcf-function-not-found",
     });
 
-    const result = runWithEnv(`${sandboxName} status --json`, {
+    const result = await runWithEnvAsync(`${sandboxName} status --json`, {
       HOME: home,
       PATH: `${localBin}:${process.env.PATH || ""}`,
     });
@@ -312,14 +314,14 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
 
   it.each([401, 403])(
     "sandbox status --json fails an inference.local HTTP %s that rejects an agent request",
-    (httpStatus) => {
+    async (httpStatus) => {
       const { home, localBin, sandboxName } = createInferenceRouteStatusSetup({
         routeOutput: `OK ${httpStatus}`,
         invocationHttpStatus: String(httpStatus),
         invocationExit: 1,
       });
 
-      const result = runWithEnv(`${sandboxName} status --json`, {
+      const result = await runWithEnvAsync(`${sandboxName} status --json`, {
         HOME: home,
         PATH: `${localBin}:${process.env.PATH || ""}`,
       });
@@ -348,12 +350,12 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
 
   it.each([401, 403])(
     "sandbox status --json keeps an inference.local HTTP %s reachable when it still serves an agent request (#6192)",
-    (httpStatus) => {
+    async (httpStatus) => {
       const { home, localBin, sandboxName } = createInferenceRouteStatusSetup({
         routeOutput: `OK ${httpStatus}`,
       });
 
-      const result = runWithEnv(`${sandboxName} status --json`, {
+      const result = await runWithEnvAsync(`${sandboxName} status --json`, {
         HOME: home,
         PATH: `${localBin}:${process.env.PATH || ""}`,
       });
@@ -369,13 +371,13 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
     },
   );
 
-  it("sandbox status --json fails closed when the injected CA bundle is missing (#6192)", () => {
+  it("sandbox status --json fails closed when the injected CA bundle is missing (#6192)", async () => {
     const { home, localBin, sandboxName } = createInferenceRouteStatusSetup({
       executeRouteCommand: true,
       routeOutput: "",
     });
 
-    const result = runWithEnv(`${sandboxName} status --json`, {
+    const result = await runWithEnvAsync(`${sandboxName} status --json`, {
       CURL_CA_BUNDLE: path.join(home, "missing-openshell-ca.pem"),
       HOME: home,
       PATH: `${localBin}:${process.env.PATH || ""}`,
@@ -392,7 +394,7 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
     expect(parsed.inferenceHealth).not.toHaveProperty("failureLabel");
   });
 
-  it("sandbox status --json defaults openshell driver/version to 'unknown' strings", () => {
+  it("sandbox status --json defaults openshell driver/version to 'unknown' strings", async () => {
     const home = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-cli-sandbox-status-json-unknown-"),
     );
@@ -413,7 +415,7 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
       { mode: 0o755 },
     );
 
-    const r = runWithEnv("alpha status --json", {
+    const r = await runWithEnvAsync("alpha status --json", {
       HOME: home,
       PATH: `${localBin}:${process.env.PATH || ""}`,
     });
@@ -426,7 +428,7 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
     expect(typeof parsed.openshellVersion).toBe("string");
   });
 
-  it("sandbox status --json surfaces rpcIssue and exits 1 on protobuf mismatch", () => {
+  it("sandbox status --json surfaces rpcIssue and exits 1 on protobuf mismatch", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sandbox-status-json-rpc-"));
     const localBin = path.join(home, "bin");
     fs.mkdirSync(localBin, { recursive: true });
@@ -453,7 +455,7 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
       { mode: 0o755 },
     );
 
-    const r = runWithEnv("alpha status --json", {
+    const r = await runWithEnvAsync("alpha status --json", {
       HOME: home,
       PATH: `${localBin}:${process.env.PATH || ""}`,
     });
@@ -466,7 +468,7 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
     expect(parsed.provider).toBe("nvidia-prod");
   });
 
-  it("sandbox status --json reports found:false and exits 1 for unknown sandbox via canonical form", () => {
+  it("sandbox status --json reports found:false and exits 1 for unknown sandbox via canonical form", async () => {
     const home = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-cli-sandbox-status-json-notfound-"),
     );
@@ -498,7 +500,7 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
       { mode: 0o755 },
     );
 
-    const r = runWithEnv("sandbox status ghost --json", {
+    const r = await runWithEnvAsync("sandbox status ghost --json", {
       HOME: home,
       PATH: `${localBin}:${process.env.PATH || ""}`,
     });
@@ -515,7 +517,7 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
     expect(parsed.openshellVersion).toBe("unknown");
   });
 
-  it("sandbox status --json reports gatewayState!=present and exits 1 when sandbox is registered but gateway lookup is missing", () => {
+  it("sandbox status --json reports gatewayState!=present and exits 1 when sandbox is registered but gateway lookup is missing", async () => {
     const home = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-cli-sandbox-status-json-nonpresent-"),
     );
@@ -549,7 +551,7 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
       { mode: 0o755 },
     );
 
-    const r = runWithEnv("alpha status --json", {
+    const r = await runWithEnvAsync("alpha status --json", {
       HOME: home,
       PATH: `${localBin}:${process.env.PATH || ""}`,
     });
@@ -567,7 +569,7 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
     expect(parsed.inferenceHealth).toBeNull();
   });
 
-  it("sandbox status --json sets failureLayer=docker_unreachable, suppresses inferenceHealth, and exits 1 when the host Docker daemon is unreachable", () => {
+  it("sandbox status --json sets failureLayer=docker_unreachable, suppresses inferenceHealth, and exits 1 when the host Docker daemon is unreachable", async () => {
     const home = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-cli-sandbox-status-json-docker-unreachable-"),
     );
@@ -606,7 +608,7 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
       { mode: 0o755 },
     );
 
-    const r = runWithEnv("alpha status --json", {
+    const r = await runWithEnvAsync("alpha status --json", {
       HOME: home,
       PATH: `${localBin}:${process.env.PATH || ""}`,
     });
@@ -619,7 +621,7 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
     expect(parsed.found).toBe(true);
   });
 
-  it("sandbox status --json sets failureLayer=sandbox_container_stopped when the per-sandbox container is stopped", () => {
+  it("sandbox status --json sets failureLayer=sandbox_container_stopped when the per-sandbox container is stopped", async () => {
     const home = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-cli-sandbox-status-json-container-stopped-"),
     );
@@ -672,7 +674,7 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
       { mode: 0o755 },
     );
 
-    const r = runWithEnv("alpha status --json", {
+    const r = await runWithEnvAsync("alpha status --json", {
       HOME: home,
       PATH: `${localBin}:${process.env.PATH || ""}`,
     });
@@ -684,7 +686,7 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
     expect(parsed.inferenceHealth).toBeNull();
   });
 
-  it("sandbox status --json reports terminal runtime OOM degradation and exits 1 (#5796)", () => {
+  it("sandbox status --json reports terminal runtime OOM degradation and exits 1 (#5796)", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-status-json-dcode-oom-"));
     const localBin = path.join(home, "bin");
     fs.mkdirSync(localBin, { recursive: true });
@@ -744,7 +746,7 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
       { mode: 0o755 },
     );
 
-    const r = runWithEnv("alpha status --json", {
+    const r = await runWithEnvAsync("alpha status --json", {
       HOME: home,
       PATH: `${localBin}:${process.env.PATH || ""}`,
     });
@@ -828,7 +830,7 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
         { mode: 0o755 },
       );
 
-      const r = runWithEnv("alpha status --json", {
+      const r = await runWithEnvAsync("alpha status --json", {
         HOME: home,
         PATH: `${localBin}:${process.env.PATH || ""}`,
       });
@@ -843,7 +845,7 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
     }
   });
 
-  it("sandbox status --json sets failureLayer=null when no preflight failure applies", () => {
+  it("sandbox status --json sets failureLayer=null when no preflight failure applies", async () => {
     const home = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-cli-sandbox-status-json-failure-layer-null-"),
     );
@@ -878,7 +880,7 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
       { mode: 0o755 },
     );
 
-    const r = runWithEnv("alpha status --json", {
+    const r = await runWithEnvAsync("alpha status --json", {
       HOME: home,
       PATH: `${localBin}:${process.env.PATH || ""}`,
     });

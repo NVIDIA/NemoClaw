@@ -1346,7 +1346,7 @@ describe("release-latest-tag.sh", () => {
       "orphan previous release",
     ]).trim();
     pushTag(fixture, "v0.0.1", orphanRelease);
-    const releaseCommit = commit(fixture, "planned release commit");
+
     const planPath = path.join(fixture.root, "release", "plan.json");
 
     const result = runScript(

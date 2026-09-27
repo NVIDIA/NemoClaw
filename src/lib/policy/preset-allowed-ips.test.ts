@@ -210,7 +210,7 @@ describe("networkPoliciesHasAllowedIps prototype-chain guard (#6072)", () => {
 describe("applyPresetContent private endpoint guard", () => {
   it.each(["127.0.0.1", "169.254.169.254", "metadata.google.internal"])(
     "rejects an untrusted private or special-use endpoint host %s before side effects",
-    (host) => {
+    async (host) => {
       const content = `preset:
   name: private-host
 network_policies:
@@ -223,7 +223,7 @@ network_policies:
       const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
       expect(
-        applyPresetContent("test-sandbox", "private-host", content, {
+        await applyPresetContent("test-sandbox", "private-host", content, {
           custom: { sourcePath: "private-host.yaml" },
         }),
       ).toBe(false);
@@ -239,7 +239,7 @@ network_policies:
 });
 
 describe("applyPresetContent allowed_ips guard (#6073)", () => {
-  it("rejects a custom preset when the full YAML document is invalid (#9406)", () => {
+  it("rejects a custom preset when the full YAML document is invalid (#9406)", async () => {
     const content = `preset: corp
 preset: corp
 network_policies:
@@ -250,7 +250,7 @@ network_policies:
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     expect(
-      applyPresetContent("test-sandbox", "invalid-full-document", content, {
+      await applyPresetContent("test-sandbox", "invalid-full-document", content, {
         custom: { sourcePath: "invalid.yaml" },
       }),
     ).toBe(false);
@@ -261,11 +261,11 @@ network_policies:
     error.mockRestore();
   });
 
-  it("rejects custom preset content containing allowed_ips before any side effects", () => {
+  it("rejects custom preset content containing allowed_ips before any side effects", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     expect(
-      applyPresetContent("test-sandbox", "evil-preset", UNTRUSTED_ALLOWED_IPS_PRESET, {
+      await applyPresetContent("test-sandbox", "evil-preset", UNTRUSTED_ALLOWED_IPS_PRESET, {
         custom: { sourcePath: "evil-preset.yaml" },
       }),
     ).toBe(false);
@@ -276,7 +276,7 @@ network_policies:
     error.mockRestore();
   });
 
-  it("rejects a forged process-local pin capability before any side effects (#8176)", () => {
+  it("rejects a forged process-local pin capability before any side effects (#8176)", async () => {
     const content = `preset:
   name: forged-private
 network_policies:
@@ -294,7 +294,7 @@ network_policies:
     };
 
     expect(
-      applyPresetContent("test-sandbox", "forged-private", content, {
+      await applyPresetContent("test-sandbox", "forged-private", content, {
         custom: {
           sourcePath: "forged-private.yaml",
           trustedPrivatePinCapability: forged as never,
@@ -303,7 +303,7 @@ network_policies:
     ).toBe(false);
   });
 
-  it("rejects a custom hostless endpoint with broad address ranges", () => {
+  it("rejects a custom hostless endpoint with broad address ranges", async () => {
     const content = `\
 preset:
   name: hostless-in-memory
@@ -316,7 +316,7 @@ network_policies:
           - 1.0.0.0/8
 `;
     expect(
-      applyPresetContent("test-sandbox", "hostless-in-memory", content, {
+      await applyPresetContent("test-sandbox", "hostless-in-memory", content, {
         custom: { sourcePath: "hostless.yaml" },
       }),
     ).toBe(false);

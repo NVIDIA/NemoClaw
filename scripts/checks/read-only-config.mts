@@ -51,6 +51,9 @@ export function readOnlyHookConfiguration(source: string): string {
         case "source-shape-test-budget":
         case "codebase-growth-guardrails":
           break;
+        case "publication-validation":
+          replaceEntry(hook, "npx tsx scripts/checks/validate-pr.mts --pre-push", "true");
+          break;
         case "trailing-whitespace":
         case "end-of-file-fixer":
         case "mixed-line-ending":

@@ -7,11 +7,19 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readOnlyHookConfiguration } from "./read-only-config.mts";
-import { executeValidationCommand } from "./validation-command.mts";
+import { executeValidationCommand, withValidationNodeHeap } from "./validation-command.mts";
 
 type Execute = (command: string, args: string[]) => number;
 
-export function validatePr(root: string, execute: Execute): number {
+type ValidatePrOptions = {
+  includePrePush?: boolean;
+};
+
+export function validatePr(
+  root: string,
+  execute: Execute,
+  options: ValidatePrOptions = {},
+): number {
   const status = spawnSync("git", ["status", "--porcelain", "--untracked-files=all"], {
     cwd: root,
     encoding: "utf8",
@@ -38,10 +46,21 @@ export function validatePr(root: string, execute: Execute): number {
     const checks = [
       [...prek, "--stage", "pre-commit"],
       ["commitlint", "--from", "origin/main", "--to", "HEAD"],
-      [...prek, "--stage", "pre-push"],
     ];
     for (const args of checks) {
       const result = execute("npx", ["--no-install", ...args]);
+      if (result !== 0) return result;
+    }
+    const preparations = [
+      ["npm", ["run", "build:cli"]],
+      ["npm", ["--prefix", "nemoclaw", "run", "build"]],
+    ] as const;
+    for (const [command, args] of preparations) {
+      const result = execute(command, [...args]);
+      if (result !== 0) return result;
+    }
+    if (options.includePrePush !== false) {
+      const result = execute("npx", ["--no-install", ...prek, "--stage", "pre-push"]);
       if (result !== 0) return result;
     }
     const after = spawnSync("git", ["status", "--porcelain", "--untracked-files=all"], {
@@ -57,11 +76,19 @@ export function validatePr(root: string, execute: Execute): number {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const arguments_ = process.argv.slice(2);
+  if (arguments_.some((argument) => argument !== "--pre-push") || arguments_.length > 1)
+    throw new Error("Expected no arguments or --pre-push");
   const root = path.resolve(import.meta.dirname, "../..");
-  process.exitCode = validatePr(root, (command, args) => {
-    // Prek 0.3.6 otherwise substitutes native fixers for the copy wrappers.
-    const env =
-      args.at(-1) === "pre-commit" ? { ...process.env, PREK_NO_FAST_PATH: "1" } : process.env;
-    return executeValidationCommand(root, [command, ...args], env);
-  });
+  process.exitCode = validatePr(
+    root,
+    (command, args) => {
+      // Prek 0.3.6 otherwise substitutes native fixers for the copy wrappers.
+      const env = withValidationNodeHeap(
+        args.at(-1) === "pre-commit" ? { ...process.env, PREK_NO_FAST_PATH: "1" } : process.env,
+      );
+      return executeValidationCommand(root, [command, ...args], env);
+    },
+    { includePrePush: arguments_[0] !== "--pre-push" },
+  );
 }

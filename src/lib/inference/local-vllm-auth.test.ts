@@ -428,7 +428,7 @@ describe("managed vLLM authentication", () => {
   });
 
   it("keeps authenticated model inventory authoritative for configured-model health", () => {
-    const runCurlProbeImpl = vi.fn((argv: string[]) => ({
+    const runCurlProbeImpl = vi.fn((_argv: string[]) => ({
       ok: true,
       httpStatus: 200,
       curlStatus: 0,

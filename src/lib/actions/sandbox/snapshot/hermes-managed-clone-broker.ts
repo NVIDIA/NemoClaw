@@ -4,17 +4,8 @@
 import { randomBytes } from "node:crypto";
 
 import type { OpenShellProviderAdapter } from "../../../adapters/openshell/provider-adapter";
-import { endpointlessProviderProfilePath } from "../../../adapters/openshell/provider-profile";
-import {
-  createManagedProviderAdapter,
-  managedProviderGatewayTarget,
-} from "../../../adapters/openshell/managed-provider-adapter";
-import {
-  endpointlessProviderProfileFailureMessages,
-  OPENAI_GATEWAY_PROVIDER_TYPE,
-} from "../../../adapters/openshell/provider-profile-registration";
+import { createManagedProviderAdapter } from "../../../adapters/openshell/managed-provider-adapter";
 import { cloneAndDeepFreeze } from "../../../core/immutable";
-import { REPOSITORY_ROOT } from "../../../core/repository-root";
 import {
   getHermesToolGatewayCloneBroker,
   type HermesToolGatewayCloneBroker,
@@ -26,7 +17,6 @@ import {
   cleanupManagedCloneProviderTransaction,
   type ManagedCloneProviderBinding,
   type ManagedCloneProviderCleanupResult,
-  MANAGED_CLONE_PROVIDER_CREATE_TIMEOUT_MS,
   type ManagedCloneProviderRunner,
   type ManagedCloneProviderTransactionReceipt,
   type PreparedManagedCloneProviderTransaction,
@@ -211,26 +201,6 @@ function isUnknownActivationOutcome(error: unknown): boolean {
   );
 }
 
-async function ensureHermesCloneInferenceProviderProfile(
-  providerAdapter: OpenShellProviderAdapter,
-): Promise<void> {
-  const profile = await providerAdapter.importProviderProfile({
-    profilePath: endpointlessProviderProfilePath(REPOSITORY_ROOT, OPENAI_GATEWAY_PROVIDER_TYPE),
-    target: managedProviderGatewayTarget,
-    timeoutMs: MANAGED_CLONE_PROVIDER_CREATE_TIMEOUT_MS,
-  });
-  if (profile.ok) return;
-  const reason =
-    profile.error.kind === "command" && profile.error.reason === "profile_incompatible"
-      ? "incompatible"
-      : profile.operation === "import"
-        ? "import-failed"
-        : "export-failed";
-  throw new HermesManagedCloneBrokerTransactionError(
-    endpointlessProviderProfileFailureMessages(reason).join("\n"),
-  );
-}
-
 export async function provisionHermesManagedCloneBrokerTransaction(
   prepared: PreparedHermesManagedCloneBrokerTransaction,
   input: {
@@ -255,7 +225,6 @@ export async function provisionHermesManagedCloneBrokerTransaction(
 
   const providerAdapter = input.providerAdapter ?? createManagedProviderAdapter(input.runOpenshell);
   revalidateManagedCloneMutationAuthority(prepared.providerTransaction, input);
-  await ensureHermesCloneInferenceProviderProfile(providerAdapter);
   let staged: ReturnType<HermesToolGatewayCloneBroker["stageHermesToolGatewayCloneBinding"]>;
   try {
     staged = broker.stageHermesToolGatewayCloneBinding(

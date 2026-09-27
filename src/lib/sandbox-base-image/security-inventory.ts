@@ -4,6 +4,10 @@
 import { dockerCapture } from "../adapters/docker";
 
 const SECURITY_INVENTORY_PROBE_OK = "nemoclaw-security-inventory-ok";
+const CURRENT_PYTHON_HTMLPARSER_FIX_PACKAGE =
+  "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u5+nemoclaw1";
+const PINNED_HERMES_BASE_PYTHON_HTMLPARSER_FIX_PACKAGE =
+  "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1";
 
 export const SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY = [
   "libexpat1=2.8.3-1",
@@ -14,10 +18,17 @@ export const SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY = [
   "vim-tiny=2:9.2.0858-1",
   "libssh2-1t64=1.11.1-1+deb13u1+nemoclaw2",
   "libssl3t64=3.5.7-1~deb13u2",
-  "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1",
+  CURRENT_PYTHON_HTMLPARSER_FIX_PACKAGE,
   "perl-base=5.44.0-1nemoclaw1",
   "perl=5.44.0-1nemoclaw1",
 ] as const;
+
+const PINNED_HERMES_BASE_SECURITY_PACKAGE_INVENTORY = SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY.map(
+  (packageSpec) =>
+    packageSpec === CURRENT_PYTHON_HTMLPARSER_FIX_PACKAGE
+      ? PINNED_HERMES_BASE_PYTHON_HTMLPARSER_FIX_PACKAGE
+      : packageSpec,
+);
 
 export const OPENCLAW_SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY = [
   ...SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY,
@@ -68,6 +79,18 @@ function sandboxBaseImageHasPackageInventory(
 
 export function sandboxBaseImageHasSecurityInventory(imageRef: string): boolean {
   return sandboxBaseImageHasPackageInventory(imageRef, SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY);
+}
+
+/** Accept the reviewed older inventory only with pinned-base provenance. */
+export function hermesSandboxBaseImageHasSecurityInventory(
+  imageRef: string,
+  allowPinnedInventory = false,
+): boolean {
+  return (
+    sandboxBaseImageHasSecurityInventory(imageRef) ||
+    (allowPinnedInventory &&
+      sandboxBaseImageHasPackageInventory(imageRef, PINNED_HERMES_BASE_SECURITY_PACKAGE_INVENTORY))
+  );
 }
 
 export function openClawSandboxBaseImageHasSecurityInventory(imageRef: string): boolean {

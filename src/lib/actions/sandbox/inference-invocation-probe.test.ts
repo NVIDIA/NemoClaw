@@ -1,8 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -86,6 +95,30 @@ const NVCF_BODY_VARIANTS = [
 ] as const;
 
 describe("sandbox inference invocation probe", () => {
+  it("ignores personal curl configuration when an inference request fails (#11520)", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "nemoclaw-curl-config-"));
+    try {
+      const trace = path.join(dir, "hostile-trace");
+      writeFileSync(path.join(dir, ".curlrc"), `trace = "${trace}"\n`);
+      // Keep the real curl process local; this tests config loading, not routing.
+      const command = buildSandboxInferenceInvocationCommand(input).replace(
+        "https://inference.local/v1/chat/completions",
+        "http://127.0.0.1:1/v1/chat/completions",
+      );
+      const result = spawnSync("/bin/sh", ["-c", command], {
+        encoding: "utf8",
+        env: { PATH: process.env.PATH, HOME: dir, CURL_HOME: dir, XDG_CONFIG_HOME: dir },
+        timeout: 10_000,
+      });
+
+      expect(result.status).not.toBe(0);
+      expect(result.stdout).toMatch(/^curl-error:\d+\n$/);
+      expect(existsSync(trace)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("probes the recorded model through inference.local without embedding a credential (#6195)", () => {
     const command = buildSandboxInferenceInvocationCommand(input);
 
@@ -265,7 +298,7 @@ describe("sandbox inference invocation probe", () => {
       "dcode-workspace",
       expect.any(String),
       expect.any(Number),
-      { gatewayName: "recorded-gateway", localDockerFallbackPolicy: "never" },
+      { gatewayName: "recorded-gateway" },
     );
   });
 
@@ -291,7 +324,7 @@ describe("sandbox inference invocation probe", () => {
       "hermes-workspace",
       expect.any(String),
       expect.any(Number),
-      { gatewayName: "nemoclaw-19080", localDockerFallbackPolicy: "never" },
+      { gatewayName: "nemoclaw-19080" },
     );
     expect(execute).toHaveBeenCalledOnce();
   });
@@ -333,6 +366,35 @@ describe("sandbox inference invocation probe", () => {
     ]);
     expect(execute).not.toHaveBeenCalled();
   });
+
+  it.each([false, true])(
+    "preserves filtered runtime authority for Deep Agents Code (selected=%s)",
+    (selected) => {
+      vi.stubEnv("OPENSHELL_GATEWAY", "ambient-gateway");
+      vi.stubEnv("OPENSHELL_WORKSPACE", "/ambient-workspace");
+      vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/ambient-tls");
+      vi.stubEnv("GITHUB_TOKEN", "fixture-private-token");
+      try {
+        const runtimeSelection = selected
+          ? { gatewayName: "recorded-gateway", workspace: "/recorded-workspace" }
+          : undefined;
+        const request = buildDcodeSandboxInferenceInvocationRequest(
+          { ...input, runtimeSelection },
+          100_000,
+        );
+        expect(request.environment).toMatchObject({
+          OPENSHELL_GATEWAY: selected ? "recorded-gateway" : "ambient-gateway",
+          OPENSHELL_WORKSPACE: selected ? "/recorded-workspace" : "/ambient-workspace",
+        });
+        expect(request.environment?.OPENSHELL_LOCAL_TLS_DIR).toBe(
+          selected ? undefined : "/ambient-tls",
+        );
+        expect(request.environment).not.toHaveProperty("GITHUB_TOKEN");
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    },
+  );
 
   it("rejects startup output before Deep Agents Code invocation evidence (#10080)", async () => {
     const runBuffered = vi.fn(async () =>
@@ -547,4 +609,25 @@ describe("sandbox inference invocation probe", () => {
       expect(Number(budget?.[1])).toBeGreaterThanOrEqual(endpointMinimumReplyTokens);
     },
   );
+});
+
+describe("native inference transport failures", () => {
+  it.each(["cancelled", "capture", "invocation", "timeout", "unavailable", "malformed"] as const)(
+    "returns unavailable for %s without retry",
+    async (kind) => {
+      const execute = vi.fn().mockRejectedValue(new SandboxCommandTransportError(kind));
+      await expect(probeSandboxInferenceInvocation(input, { execute })).resolves.toMatchObject({
+        ok: false,
+        detail: "sandbox inference invocation probe was unavailable",
+        httpStatus: null,
+      });
+      expect(execute).toHaveBeenCalledOnce();
+    },
+  );
+  it("propagates unexpected errors", async () => {
+    const error = new Error("authority refusal");
+    await expect(
+      probeSandboxInferenceInvocation(input, { execute: vi.fn().mockRejectedValue(error) }),
+    ).rejects.toBe(error);
+  });
 });

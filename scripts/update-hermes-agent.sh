@@ -198,10 +198,9 @@ installed_copy_schema_error() {
     for item in \
       "validate-hermes-env-secret-boundary.py" \
       "seed-hermes-dashboard-config.py" \
-      "COPY agents/hermes/build-mcp-digest.py /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py" \
-      "/opt/hermes/.venv/bin/python -I /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py --guard /usr/local/lib/nemoclaw/hermes-runtime-config-guard.py" \
+      "sha256sum /sandbox/.hermes/config.yaml /sandbox/.hermes/.env" \
       "hermes-mcp-config-transaction.py" \
-      "openshell-child-visible-credentials.v0.0.106.json" \
+      "openshell-child-visible-credentials.v0.0.116.json" \
       "HERMES_HOME=/sandbox/.hermes /usr/local/bin/hermes doctor --fix" \
       "node /opt/nemoclaw-hermes-config/generate-config.ts" \
       "/sandbox/.hermes/profiles/dashboard-home"; do
@@ -248,6 +247,14 @@ apply_manifest_pin() {
   sed -i.bak "s|^expected_version: \".*\"|expected_version: \"${SEMVER}\"|" "$manifest"
   rm -f "${manifest}.bak"
   grep -q "^expected_version: \"${SEMVER}\"$" "$manifest"
+}
+
+require_reviewed_release_identity() {
+  local release_identity="${TAG}|${SEMVER}|${TARBALL_SHA256}|${NPM_INTEGRITY}"
+  if ! grep -Fq -- "'${release_identity}')" "$DOCKERFILE_BASE"; then
+    echo "ERROR: Hermes release ${TAG} / ${SEMVER} does not have a reviewed four-field identity in ${DOCKERFILE_BASE}" >&2
+    exit 1
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -356,6 +363,10 @@ if ! [[ "$NPM_INTEGRITY" =~ ^sha512- ]]; then
   exit 1
 fi
 echo "npm dist.integrity: ${NPM_INTEGRITY}"
+
+# Refuse to mutate either pin source until the complete GitHub and registry
+# identity has a reviewed branch in the base-image release guard.
+require_reviewed_release_identity
 
 # ---------------------------------------------------------------------------
 # Rewrite agents/hermes/Dockerfile.base and agents/hermes/manifest.yaml

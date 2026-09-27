@@ -3,9 +3,9 @@
 
 # Root-Cause and Sensitive-Workflow State Checks
 
-Apply these checks while planning, implementing, and reviewing a change. Record the results in the
-output that the current workflow already owns; do not produce a separate report. State why a check
-does not apply when the omission could hide risk.
+Use sibling-path checks for a defect that may share a cause across entry points. Use the state
+matrix when changing a sensitive workflow listed below. Record material results in the task evidence;
+ordinary changes do not require an empty matrix or a separate report.
 
 ## Authority
 

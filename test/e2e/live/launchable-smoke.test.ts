@@ -93,6 +93,7 @@ async function preseedBootstrapClone(
   cloneDir: string,
   artifacts: ArtifactSink,
 ): Promise<void> {
+  const reviewedSdk = path.join(REPO_ROOT, "node_modules", "@nvidia", "openshell-sdk");
   await artifacts.writeJson("bootstrap-clone.json", { cloneDir, ref: "main" });
   const result = await runBash(
     host,
@@ -101,6 +102,9 @@ async function preseedBootstrapClone(
       `git clone --local --no-hardlinks ${JSON.stringify(REPO_ROOT)} ${JSON.stringify(cloneDir)}`,
       `git -C ${JSON.stringify(cloneDir)} checkout -B main HEAD`,
       `git -C ${JSON.stringify(cloneDir)} remote set-url origin ${JSON.stringify(cloneDir)}`,
+      `test -f ${JSON.stringify(path.join(reviewedSdk, "package.json"))}`,
+      `install -d -m 0755 ${JSON.stringify(path.join(cloneDir, "node_modules", "@nvidia"))}`,
+      `cp -aL ${JSON.stringify(reviewedSdk)} ${JSON.stringify(path.join(cloneDir, "node_modules", "@nvidia", "openshell-sdk"))}`,
     ].join(" && "),
     {
       artifactName: "phase-0-preseed-bootstrap-clone",

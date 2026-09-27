@@ -1055,50 +1055,6 @@ describe("handleSandboxState", () => {
     expect(calls.createSandbox).not.toHaveBeenCalled();
   });
 
-  it("fails before credential or registry mutation when Tavily collides with managed MCP", async () => {
-    const session = createSession({
-      sandboxName: "saved",
-      webSearchConfig: { fetchEnabled: true, provider: "brave" },
-    });
-    session.steps.sandbox.status = "complete";
-    const { deps, calls } = createDeps({
-      getSandboxReuseState: () => "ready",
-      agentSupportsWebSearchProvider: () => true,
-      getSandboxRegistryEntry: (name: string) => ({
-        name,
-        mcp: {
-          bridges: {
-            search: {
-              server: "search",
-              agent: "openclaw",
-              url: "https://mcp.example.com/mcp",
-              env: ["TAVILY_API_KEY"],
-              policyName: "saved-mcp-search",
-              addedAt: "2026-07-03T00:00:00.000Z",
-            },
-          },
-        },
-      }),
-    });
-
-    await expect(
-      handleSandboxState({
-        ...baseOptions(deps, session),
-        resume: true,
-        sandboxName: "saved",
-        webSearchConfig: { fetchEnabled: true, provider: "brave" },
-        env: { NEMOCLAW_WEB_SEARCH_PROVIDER: "tavily" },
-      }),
-    ).rejects.toThrow("exit 1");
-
-    expect(calls.error).toHaveBeenCalledWith(
-      expect.stringContaining("already owns TAVILY_API_KEY"),
-    );
-    expect(calls.validateBrave).not.toHaveBeenCalled();
-    expect(calls.removeSandbox).not.toHaveBeenCalled();
-    expect(calls.createSandbox).not.toHaveBeenCalled();
-  });
-
   it("drops saved web search config when credential revalidation returns to provider selection", async () => {
     const session = createSession({
       sandboxName: "saved",

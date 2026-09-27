@@ -3,7 +3,6 @@
 
 import type * as TypeBoxValueModule from "typebox/value" with { "resolution-mode": "import" };
 import { isDeepStrictEqual } from "node:util";
-import { validateExtraAgents, type NormalizedExtraAgent } from "../../extra-agents-validation";
 import { cloneAndDeepFreeze } from "../../core/immutable";
 import { resolveManagedStartupInferenceRoute } from "../../inference/gateway/route-contract";
 import { normalizeInferenceSelection } from "../../inference/selection";
@@ -27,18 +26,19 @@ import {
   isValidNemoClawRuntimeProvider,
   isValidNemoClawSandboxName,
   isSupportedInferenceApi,
+  NemoClawManagedVllmServingSchema,
+  NemoClawOllamaServingSchema,
   NemoClawAgentToolsConfigSchema,
-  NemoClawAdditionalAgentSchema,
   NemoClawOpenClawObservabilitySchema,
   NemoClawInferenceTuningSchema,
   NemoClawAgentExecutionSchema,
 } from "../../config/model";
 import { fingerprintOpenShellSandboxId } from "../sandbox/openshell-identity";
 import { HERMES_PROVIDER_NAME } from "../../onboard/inference-providers/hermes-provider-identity";
+import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../inference/ollama/contract";
 import { ExportSourceValuesSchema } from "./export-evidence";
-import { validateManagedServing } from "./verify-managed-serving";
-import { validateOllamaServing } from "./verify-ollama-serving";
 import { inspectAgentInterfaces } from "./verify-agent-interfaces";
+import { V1ALPHA1_RUNTIME_DEFAULTS } from "./v1alpha1-runtime-defaults";
 import type {
   CanonicalExportPolicy,
   ExportFinding,
@@ -54,7 +54,7 @@ const { Check } = require("typebox/value") as typeof TypeBoxValueModule;
 const DEFAULT_DASHBOARD_URL = "http://127.0.0.1:18789";
 const HERMES_API_KEY_ENDPOINT = "https://inference-api.nousresearch.com/v1";
 
-type SupportedExportAgent = "hermes" | "openclaw";
+type SupportedExportAgent = "hermes" | "langchain-deepagents-code" | "openclaw";
 type ManagedStartupInferenceRoute = ReturnType<typeof resolveManagedStartupInferenceRoute>;
 interface ExportAgentProfileProjection {
   readonly compatibility: Readonly<Record<string, unknown>> | null;
@@ -91,11 +91,21 @@ const EXPORT_AGENT_PROFILE_PROJECTIONS: Record<
       tuiEnabled: false,
     },
   }),
+  "langchain-deepagents-code": (_route) => ({
+    primaryModelRef: null,
+    compatibility: null,
+    dashboard: { agent: "langchain-deepagents-code", mode: "disabled" },
+  }),
 };
+
+function isSupportedExportAgent(value: unknown): value is SupportedExportAgent {
+  return (
+    typeof value === "string" && ["hermes", "langchain-deepagents-code", "openclaw"].includes(value)
+  );
+}
 
 type VerifiedExportSourceData = Pick<
   VerifiedExportSource,
-  | "additionalAgents"
   | "agent"
   | "execution"
   | "auth"
@@ -148,13 +158,13 @@ function hasBraveSearch(entry: ObservedExportRegistry): boolean {
 function classifyHermesExcludedCapabilities(entry: ObservedExportRegistry): ExportFinding[] {
   const excluded: Array<[string, unknown, string]> = [
     [
-      "spec.sandboxes[].agents[0].tools.disclosure",
+      "spec.sandboxes[].agent.tools.disclosure",
       entry.agent === "hermes" && entry.toolDisclosure === "direct",
       "direct tool disclosure for Hermes",
     ],
-    ["spec.sandboxes[].agents[0].tools", entry.hermesToolGateways, "enabled Hermes tool gateways"],
+    ["spec.sandboxes[].agent.tools", entry.hermesToolGateways, "enabled Hermes tool gateways"],
     [
-      "spec.sandboxes[].agents[0].dashboard",
+      "spec.sandboxes[].harness.interfaces.dashboard",
       entry.agent !== "hermes" &&
         [
           entry.hermesApiPort,
@@ -165,7 +175,7 @@ function classifyHermesExcludedCapabilities(entry: ObservedExportRegistry): Expo
         ].some(hasEntries),
       "a non-default Hermes dashboard",
     ],
-    ["spec.sandboxes[].agents[0].auth", entry.hermesInferenceProvider, "Hermes clone inference"],
+    ["spec.sandboxes[].agent.auth", entry.hermesInferenceProvider, "Hermes clone inference"],
   ];
   const present = excluded.filter(([, value]) => hasEntries(value));
   if (entry.agent !== "hermes") {
@@ -185,12 +195,97 @@ function classifyHermesExcludedCapabilities(entry: ObservedExportRegistry): Expo
   if (entry.hermesAuthMethod === "oauth")
     findings.push(
       finding(
-        "spec.sandboxes[].agents[0].auth",
+        "spec.sandboxes[].agent.auth",
         "unsupported",
         "V1 export does not support Hermes OAuth authentication.",
       ),
     );
   return findings;
+}
+
+function staleDeepAgentsRegistryFinding(entry: ObservedExportRegistry): ExportFinding[] {
+  if (entry.dcodeAutoApprovalMode === undefined) return [];
+  return [
+    finding(
+      "source.registry",
+      "unsupported",
+      "V1alpha1 export does not support stale agent-specific registry state.",
+    ),
+  ];
+}
+
+function deepAgentsApprovalFinding(entry: ObservedExportRegistry): ExportFinding[] {
+  if (entry.dcodeAutoApprovalMode === "disabled") return [];
+  return [
+    finding(
+      "source.registry.dcodeAutoApprovalMode",
+      entry.dcodeAutoApprovalMode === undefined ? "missing-provenance" : "unsupported",
+      "Deep Agents export requires automatic approval to be explicitly disabled.",
+    ),
+  ];
+}
+
+function deepAgentsObservabilityFinding(entry: ObservedExportRegistry): ExportFinding[] {
+  if (entry.observabilityEnabled === false) return [];
+  return [
+    finding(
+      "source.registry.observabilityEnabled",
+      entry.observabilityEnabled === undefined ? "missing-provenance" : "unsupported",
+      "Deep Agents export requires observability to be explicitly disabled.",
+    ),
+  ];
+}
+
+function deepAgentsInferenceFinding(entry: ObservedExportRegistry): ExportFinding[] {
+  const findings: ExportFinding[] = [];
+  if (entry.preferredInferenceApi !== "openai-completions")
+    findings.push(
+      finding(
+        "spec.inferenceProviders[].api",
+        entry.preferredInferenceApi === undefined || entry.preferredInferenceApi === null
+          ? "missing-provenance"
+          : "unsupported",
+        "Deep Agents export requires hosted OpenAI-completions inference.",
+      ),
+    );
+  if (!entry.credentialEnv)
+    findings.push(
+      finding(
+        "spec.inferenceProviders[].credential.env",
+        "missing-provenance",
+        "Deep Agents export requires a retained credential environment reference.",
+      ),
+    );
+  return findings;
+}
+
+function classifyDeepAgentsBaseline(entry: ObservedExportRegistry): ExportFinding[] {
+  if (entry.agent !== "langchain-deepagents-code") return staleDeepAgentsRegistryFinding(entry);
+  return [
+    ...deepAgentsApprovalFinding(entry),
+    ...deepAgentsObservabilityFinding(entry),
+    ...deepAgentsInferenceFinding(entry),
+    ...(entry.toolDisclosure !== undefined && entry.toolDisclosure !== "progressive"
+      ? [
+          finding(
+            "spec.sandboxes[].agent.tools",
+            "unsupported",
+            "Deep Agents export does not support retained tool disclosure settings.",
+          ),
+        ]
+      : []),
+    ...(entry.webSearchEnabled !== false || entry.webSearchProvider !== null
+      ? [
+          finding(
+            "spec.sandboxes[].integrations.webSearch",
+            entry.webSearchEnabled === undefined || entry.webSearchProvider === undefined
+              ? "missing-provenance"
+              : "unsupported",
+            "Deep Agents export requires web search to be explicitly disabled.",
+          ),
+        ]
+      : []),
+  ];
 }
 
 function validateHermesAuthentication(snapshot: QualifiedExportSnapshot): ExportFinding[] {
@@ -202,7 +297,7 @@ function validateHermesAuthentication(snapshot: QualifiedExportSnapshot): Export
     return hasNousBinding
       ? [
           finding(
-            "spec.sandboxes[].agents[0].auth",
+            "spec.sandboxes[].agent.auth",
             "missing-provenance",
             "Explicit retained Hermes API-key authentication provenance is required.",
           ),
@@ -230,7 +325,7 @@ function validateHermesAuthentication(snapshot: QualifiedExportSnapshot): Export
   ) {
     return [
       finding(
-        "spec.sandboxes[].agents[0].auth",
+        "spec.sandboxes[].agent.auth",
         "drifted",
         "Retained Hermes authentication and the verified live inference binding differ.",
       ),
@@ -259,14 +354,8 @@ function classifyExcludedCapabilities(entry: ObservedExportRegistry): ExportFind
       "web search",
     ],
     ["spec.sandboxes[].integrations.messaging", entry.messaging, "messaging"],
-    ["spec.sandboxes[].integrations.mcp", entry.mcp, "managed tools"],
     [
-      "spec.sandboxes[].agents.secondary",
-      entry.openclawImagePluginInstalls,
-      "secondary agents or added agent plugins",
-    ],
-    [
-      "spec.sandboxes[].agents[0].dashboard",
+      "spec.sandboxes[].harness.interfaces.dashboard",
       entry.agent !== "openclaw" && entry.dashboardRemoteBindPrepared,
       "remote dashboard exposure",
     ],
@@ -276,7 +365,11 @@ function classifyExcludedCapabilities(entry: ObservedExportRegistry): ExportFind
     .map(([field, , capability]) =>
       finding(field, "unsupported", "V1 export does not support " + capability + "."),
     );
-  return [...findings, ...classifyHermesExcludedCapabilities(entry)];
+  return [
+    ...findings,
+    ...classifyHermesExcludedCapabilities(entry),
+    ...classifyDeepAgentsBaseline(entry),
+  ];
 }
 
 function classifyRegistryProvenance(entry: ObservedExportRegistry): ExportFinding[] {
@@ -287,7 +380,7 @@ function classifyRegistryProvenance(entry: ObservedExportRegistry): ExportFindin
   )
     findings.push(
       finding(
-        "spec.sandboxes[].agents[0].tools.disclosure",
+        "spec.sandboxes[].agent.tools.disclosure",
         "unsupported",
         "The persisted tool disclosure is not a supported mode.",
       ),
@@ -371,26 +464,18 @@ function classifyWorkload(entry: ObservedExportRegistry): ExportFinding[] {
         "V1 export does not support host proxy credential replay.",
       ),
     );
-  if (entry.workload.corporateCaB64 !== undefined)
-    findings.push(
-      finding(
-        "spec.sandboxes[].runtime.corporateCa",
-        "unsupported",
-        "V1 export does not support a custom corporate CA bundle.",
-      ),
-    );
   return findings;
 }
 
 /** Report every v1-excluded capability represented by the registry row. */
 export function classifyExportRegistry(entry: ObservedExportRegistry): ExportFinding[] {
   const findings = classifyExcludedCapabilities(entry);
-  if (entry.agent !== "openclaw" && entry.agent !== "hermes")
+  if (!isSupportedExportAgent(entry.agent))
     findings.push(
       finding(
-        "spec.sandboxes[].agents[0].type",
+        "spec.sandboxes[].harness.kind",
         "unsupported",
-        "V1 export requires OpenClaw or Hermes.",
+        "V1alpha1 export requires OpenClaw, Hermes, or Deep Agents.",
       ),
     );
   if (entry.pendingRouteReservation === true)
@@ -419,8 +504,27 @@ function registeredToolDisclosure(
   return entry.agent === "openclaw" ? (entry.toolDisclosure ?? "progressive") : "progressive";
 }
 
+function deepAgentsUpstreamEndpoint(
+  agent: SupportedExportAgent,
+  selected: ReturnType<typeof normalizeInferenceSelection>,
+): string | null {
+  return agent === "langchain-deepagents-code" ? selected.endpointUrl : null;
+}
+
+function deepAgentsApprovalMode(
+  agent: SupportedExportAgent,
+): ManagedStartupProfileBuilderInput["dcodeAutoApprovalMode"] {
+  return agent === "langchain-deepagents-code" ? "disabled" : null;
+}
+
+function deepAgentsObservability(
+  agent: SupportedExportAgent,
+): ManagedStartupProfileBuilderInput["observabilityEnabled"] {
+  return agent === "langchain-deepagents-code" ? false : null;
+}
+
 function expectedManagedStartupProfile(entry: ObservedExportRegistry): ManagedStartupProfile {
-  if (entry.agent !== "openclaw" && entry.agent !== "hermes") {
+  if (!isSupportedExportAgent(entry.agent)) {
     throw new Error("The agent is unsupported.");
   }
   const agent = entry.agent;
@@ -447,7 +551,7 @@ function expectedManagedStartupProfile(entry: ObservedExportRegistry): ManagedSt
       upstreamProvider: selected.provider,
       model: selected.model,
       routedBaseUrl: inference.inferenceBaseUrl,
-      upstreamEndpointUrl: null,
+      upstreamEndpointUrl: deepAgentsUpstreamEndpoint(agent, selected),
       api: selected.preferredInferenceApi,
       primaryModelRef: projection.primaryModelRef,
       compatibility: projection.compatibility,
@@ -457,11 +561,13 @@ function expectedManagedStartupProfile(entry: ObservedExportRegistry): ManagedSt
     toolDisclosure: registeredToolDisclosure(entry),
     hermesToolGateways: [],
     messagingPlan: null,
-    dcodeAutoApprovalMode: null,
-    observabilityEnabled: null,
+    dcodeAutoApprovalMode: deepAgentsApprovalMode(agent),
+    observabilityEnabled: deepAgentsObservability(agent),
     environment:
       entry.servingProfileProvenance?.preset.id === EXPORTED_VLLM_PROFILE_ID
-        ? { NEMOCLAW_CONTEXT_WINDOW: String(EXPORTED_VLLM_CONTEXT_WINDOW) }
+        ? {
+            NEMOCLAW_CONTEXT_WINDOW: String(EXPORTED_VLLM_CONTEXT_WINDOW),
+          }
         : {},
     corporateCa: null,
   }).profile;
@@ -477,23 +583,26 @@ function exportedObservability(
   return Check(NemoClawOpenClawObservabilitySchema, value) ? value : undefined;
 }
 
-function projectAgentSettings(profile: ManagedStartupProfile, defaults: ManagedStartupProfile) {
-  if (profile.agentConfig.agent !== "openclaw" || defaults.agentConfig.agent !== "openclaw") {
+function projectAgentSettings(profile: ManagedStartupProfile) {
+  if (profile.agentConfig.agent !== "openclaw") {
     return {};
   }
+  const defaults = V1ALPHA1_RUNTIME_DEFAULTS.openclaw;
   const overrides = Object.fromEntries(
     Object.entries(profile.tuning).filter(
       ([key, value]) => value !== defaults.tuning[key as keyof typeof defaults.tuning],
     ),
   );
-  const execution = {
-    ...(profile.agentConfig.agentTimeoutSeconds === defaults.agentConfig.agentTimeoutSeconds
-      ? {}
-      : { timeoutSeconds: profile.agentConfig.agentTimeoutSeconds }),
-    ...(profile.agentConfig.heartbeatEvery === defaults.agentConfig.heartbeatEvery
-      ? {}
-      : { heartbeatEvery: profile.agentConfig.heartbeatEvery }),
-  };
+  const execution: { timeoutSeconds?: number; heartbeatEvery?: string } = {};
+  if (profile.agentConfig.agentTimeoutSeconds !== defaults.execution.timeoutSeconds) {
+    execution.timeoutSeconds = profile.agentConfig.agentTimeoutSeconds;
+  }
+  if (
+    profile.agentConfig.heartbeatEvery !== defaults.execution.heartbeatEvery &&
+    profile.agentConfig.heartbeatEvery !== null
+  ) {
+    execution.heartbeatEvery = profile.agentConfig.heartbeatEvery;
+  }
   return {
     ...(Object.keys(overrides).length === 0 ? {} : { overrides }),
     ...(Object.keys(execution).length === 0 ? {} : { execution }),
@@ -519,7 +628,7 @@ function classifyReasoningAgreement(
     return [];
   return [
     finding(
-      "spec.sandboxes[].agents[0].inference.routes[].overrides",
+      "spec.sandboxes[].agent.inference.routes[].overrides",
       "drifted",
       "Registered reasoning overrides and the managed startup profile differ.",
     ),
@@ -536,7 +645,7 @@ function classifyToolDisclosureAgreement(
   }
   return [
     finding(
-      "spec.sandboxes[].agents[0].tools.disclosure",
+      "spec.sandboxes[].agent.tools.disclosure",
       entry.toolDisclosure === undefined ? "missing-provenance" : "drifted",
       "The retained tool disclosure and the registry selection do not agree.",
     ),
@@ -546,12 +655,15 @@ function classifyToolDisclosureAgreement(
 function supportedAgentSettingsProfile(
   profile: ManagedStartupProfile,
   expected: ManagedStartupProfile,
-  additionalAgents?: VerifiedExportSource["additionalAgents"],
 ): ManagedStartupProfile | null {
-  if (profile.agentConfig.agent === "hermes" && expected.agentConfig.agent === "hermes") {
+  const agent = profile.agentConfig.agent;
+  if (
+    agent === expected.agentConfig.agent &&
+    (agent === "hermes" || agent === "langchain-deepagents-code")
+  ) {
     return expected;
   }
-  const settings = projectAgentSettings(profile, expected);
+  const settings = projectAgentSettings(profile);
   if (
     !Check(NemoClawInferenceTuningSchema, profile.tuning) ||
     (settings.execution !== undefined &&
@@ -572,22 +684,8 @@ function supportedAgentSettingsProfile(
       ...expected.agentConfig,
       agentTimeoutSeconds: profile.agentConfig.agentTimeoutSeconds,
       heartbeatEvery: profile.agentConfig.heartbeatEvery,
-      extraAgents: additionalAgents
-        ? profile.agentConfig.extraAgents
-        : expected.agentConfig.extraAgents,
     },
   };
-}
-
-function isSupportedAdditionalAgent(
-  secondary: NormalizedExtraAgent,
-  primaryModelRef: string | null,
-): boolean {
-  return (
-    secondary.subagents === undefined &&
-    secondary.description === undefined &&
-    (secondary.model === undefined || secondary.model === primaryModelRef)
-  );
 }
 
 function supportedHostProfile(
@@ -602,44 +700,6 @@ function supportedHostProfile(
       managedPort: profile.proxy.managedPort,
     },
   };
-}
-
-function supportsAdditionalAgents(
-  entry: ObservedExportRegistry,
-  manifest: ReturnType<typeof validateExtraAgents>,
-): boolean {
-  return (
-    entry.openshellDriver === "docker" &&
-    entry.servingProfileProvenance === undefined &&
-    manifest.agents.length === 1 &&
-    Object.keys(manifest.defaults.subagents).length === 0 &&
-    Object.keys(manifest.main).length === 0
-  );
-}
-
-function projectAdditionalAgents(
-  entry: ObservedExportRegistry,
-  profile: ManagedStartupProfile,
-): VerifiedExportSource["additionalAgents"] | null {
-  if (profile.agentConfig.agent !== "openclaw") return undefined;
-  try {
-    const manifest = validateExtraAgents(
-      profile.agentConfig.extraAgents,
-      profile.inference.routeProvider,
-    );
-    if (manifest.agents.length === 0) return undefined;
-    const [secondary] = manifest.agents;
-    if (!secondary || !supportsAdditionalAgents(entry, manifest)) return null;
-    const exported = { name: secondary.id, tools: secondary.tools };
-    if (
-      !isSupportedAdditionalAgent(secondary, profile.inference.primaryModelRef) ||
-      !Check(NemoClawAdditionalAgentSchema, exported)
-    )
-      return null;
-    return [exported];
-  } catch {
-    return null;
-  }
 }
 
 function classifyProfileEquality(
@@ -686,7 +746,19 @@ function expectedProfileWithObservedHostSettings(
   profile: ManagedStartupProfile,
 ): ManagedStartupProfile | null {
   try {
-    return supportedHostProfile(profile, expectedManagedStartupProfile(entry));
+    let expected = supportedHostProfile(profile, expectedManagedStartupProfile(entry));
+    const servingPreset = profile.inference?.servingPreset;
+    if (
+      expected.inference &&
+      (servingPreset === undefined ||
+        servingPreset === null ||
+        servingPreset === EXPORTED_VLLM_PROFILE_ID)
+    ) {
+      expected = { ...expected, inference: { ...expected.inference, servingPreset } };
+    }
+    // Managed workload authority validates the CA bundle and digest before this comparison.
+    // V1 omits the source host's CA trust; all other profile fields remain checked.
+    return { ...expected, corporateCa: profile.corporateCa };
   } catch {
     return null;
   }
@@ -695,7 +767,6 @@ function expectedProfileWithObservedHostSettings(
 function classifyManagedStartupProfile(
   entry: ObservedExportRegistry,
   profile: ManagedStartupProfile,
-  additionalAgents?: VerifiedExportSource["additionalAgents"],
 ): ExportFinding[] {
   let expected = expectedProfileWithObservedHostSettings(entry, profile);
   if (!expected) {
@@ -715,21 +786,23 @@ function classifyManagedStartupProfile(
     ...classifyReasoningAgreement(entry, profile),
     ...classifyToolDisclosureAgreement(entry, profile, expected),
   ];
-  if (entry.servingProfileProvenance?.preset.id !== EXPORTED_VLLM_PROFILE_ID) {
-    const supported = supportedAgentSettingsProfile(profile, expected, additionalAgents);
-    if (!supported) {
-      return [
-        ...findings,
-        finding(
-          "source.workload.startupProfile",
-          "unsupported",
-          "The managed agent settings cannot be represented by v1 export.",
-        ),
-      ];
-    }
-    expected = supported;
+  const supported = supportedAgentSettingsProfile(profile, expected);
+  if (
+    !supported ||
+    ((entry.servingProfileProvenance?.preset.id === EXPORTED_VLLM_PROFILE_ID ||
+      profile.inference?.servingPreset === EXPORTED_VLLM_PROFILE_ID) &&
+      profile.tuning.contextWindow !== EXPORTED_VLLM_CONTEXT_WINDOW)
+  ) {
+    return [
+      ...findings,
+      finding(
+        "source.workload.startupProfile",
+        "unsupported",
+        "The managed agent settings cannot be represented by v1 export.",
+      ),
+    ];
   }
-  return [...findings, ...classifyProfileEquality(profile, expected)];
+  return [...findings, ...classifyProfileEquality(profile, supported)];
 }
 
 function endpointEvidenceMatchesRoute(inference: QualifiedExportSnapshot["inference"]): boolean {
@@ -815,6 +888,14 @@ function validateSandboxConfiguration(snapshot: QualifiedExportSnapshot): Export
         "source.sandbox.workspace",
         "unsupported",
         "V1 export requires the default workspace.",
+      ),
+    );
+  if (entry.openshellDriver !== "docker")
+    findings.push(
+      finding(
+        "spec.sandboxes[].runtime.provider",
+        "unsupported",
+        "V1alpha1 export currently supports the Docker runtime; Podman compatibility is deferred.",
       ),
     );
   if (entry.workload?.kind === "managed-image" && sandbox.imageRef !== entry.workload.reference)
@@ -925,7 +1006,11 @@ function validateGateway(snapshot: QualifiedExportSnapshot): ExportFinding[] {
     );
   if (entry.gatewayName !== gateway.name || entry.gatewayPort !== gateway.port)
     findings.push(finding("spec.gateway", "drifted", "Registry and live gateway bindings differ."));
-  if (!isValidNemoClawLocalResourceName(gateway.name) || !isValidNemoClawPort(gateway.port)) {
+  if (
+    !isValidNemoClawLocalResourceName(gateway.name) ||
+    !isValidNemoClawPort(gateway.port) ||
+    gateway.port < 1024
+  ) {
     findings.push(
       finding(
         "spec.gateway",
@@ -949,7 +1034,7 @@ function validateInferenceSelection(snapshot: QualifiedExportSnapshot): ExportFi
       finding(
         "spec.inferenceProviders",
         "unsupported",
-        "This local inference topology is not represented by v1 export.",
+        "This local inference topology is not represented by v1alpha1 export.",
       ),
     );
 
@@ -993,11 +1078,71 @@ function validateInferenceSelection(snapshot: QualifiedExportSnapshot): ExportFi
   return findings;
 }
 
-function validateInferenceRepresentation(snapshot: QualifiedExportSnapshot): ExportFinding[] {
+function validateManagedVllmRepresentation(snapshot: QualifiedExportSnapshot): ExportFinding[] {
   const { inference } = snapshot;
-  if (inference.provider === "ollama-local" || inference.ollamaServing)
-    return validateOllamaServing(snapshot);
-  if (inference.topology === "managed") return validateManagedServing(snapshot);
+  const serving = inference.managedServing?.serving;
+  if (
+    inference.provider !== "vllm-local" ||
+    inference.api !== "openai-completions" ||
+    inference.credentialEnv !== null ||
+    !serving ||
+    !Check(NemoClawManagedVllmServingSchema, serving) ||
+    inference.model !== serving.model.servedName ||
+    inference.endpoint !== `http://host.openshell.internal:${String(serving.hostPort)}/v1`
+  ) {
+    return [
+      finding(
+        "spec.services",
+        "missing-provenance",
+        "Managed vLLM export requires the fixed verified serving deployment.",
+      ),
+    ];
+  }
+  return [];
+}
+
+function validateOllamaRepresentation(snapshot: QualifiedExportSnapshot): ExportFinding[] {
+  const { inference } = snapshot;
+  const serving = inference.ollamaServing?.serving;
+  const validServing = serving === undefined ? false : Check(NemoClawOllamaServingSchema, serving);
+  const representationMatches = isDeepStrictEqual(
+    [
+      inference.topology,
+      inference.provider,
+      inference.api,
+      [null, OLLAMA_LOCAL_CREDENTIAL_ENV].includes(inference.credentialEnv),
+      validServing,
+      inference.model,
+      inference.endpoint,
+      serving?.model.servedName,
+      serving?.daemon.hostPort === serving?.proxy.hostPort,
+    ],
+    [
+      "local",
+      "ollama-local",
+      "openai-completions",
+      true,
+      true,
+      serving?.model.servedName,
+      `http://host.openshell.internal:${String(serving?.proxy.hostPort)}/v1`,
+      serving?.model.servedName,
+      false,
+    ],
+  );
+  if (!representationMatches) {
+    return [
+      finding(
+        "spec.services[].upstream",
+        "drifted",
+        "The attached Ollama daemon, managed proxy, model, or sandbox route could not be verified.",
+      ),
+    ];
+  }
+  return [];
+}
+
+function validateHostedInferenceRepresentation(snapshot: QualifiedExportSnapshot): ExportFinding[] {
+  const { inference } = snapshot;
   const findings: ExportFinding[] = [];
   if (
     [inference.provider, inference.model, inference.api, inference.endpoint].some((value) => !value)
@@ -1031,6 +1176,14 @@ function validateInferenceRepresentation(snapshot: QualifiedExportSnapshot): Exp
       ),
     );
   return findings;
+}
+
+function validateInferenceRepresentation(snapshot: QualifiedExportSnapshot): ExportFinding[] {
+  const { inference } = snapshot;
+  if (inference.provider === "ollama-local" || inference.ollamaServing)
+    return validateOllamaRepresentation(snapshot);
+  if (inference.topology === "managed") return validateManagedVllmRepresentation(snapshot);
+  return validateHostedInferenceRepresentation(snapshot);
 }
 
 function validateEndpointEvidence(snapshot: QualifiedExportSnapshot): ExportFinding[] {
@@ -1101,6 +1254,14 @@ function validateCredentialReference(snapshot: QualifiedExportSnapshot): ExportF
         "The credential environment identifier is invalid or reserved for internal use.",
       ),
     );
+  if (inference.credentialEnv !== null && inference.endpoint?.toLowerCase().startsWith("http:"))
+    findings.push(
+      finding(
+        "spec.inferenceProviders[].credential",
+        "unsupported",
+        "V1alpha1 requires HTTPS when an inference provider declares a credential.",
+      ),
+    );
   return findings;
 }
 
@@ -1139,6 +1300,35 @@ function validatePolicyIdentity(snapshot: QualifiedExportSnapshot): ExportFindin
   return findings;
 }
 
+function validateTargetPolicy(snapshot: QualifiedExportSnapshot): ExportFinding[] {
+  if (snapshot.policy.kind !== "verified") return [];
+  const policy = snapshot.policy.canonical;
+  const process = policy.process as Record<string, unknown> | undefined;
+  const filesystem = policy.filesystem_policy as Record<string, unknown> | undefined;
+  const findings: ExportFinding[] = [];
+  if (
+    !process ||
+    !["sandbox", "1000"].includes(String(process.run_as_user)) ||
+    !["sandbox", "1000"].includes(String(process.run_as_group))
+  )
+    findings.push(
+      finding(
+        "spec.sandboxes[].network.policy.explicit.process",
+        "unsupported",
+        "The source process principal cannot be projected to the v1 Fabric 1000:1000 principal.",
+      ),
+    );
+  if (!filesystem)
+    findings.push(
+      finding(
+        "spec.sandboxes[].network.policy.explicit.filesystem_policy",
+        "unsupported",
+        "An explicit filesystem policy is required to grant the v1 Fabric runtime roots.",
+      ),
+    );
+  return findings;
+}
+
 function validateAgreement(
   requestedSandboxName: string,
   snapshot: QualifiedExportSnapshot,
@@ -1155,29 +1345,30 @@ function validateAgreement(
     ...validateCredentialReference(snapshot),
     ...validateHermesAuthentication(snapshot),
     ...validatePolicyIdentity(snapshot),
+    ...validateTargetPolicy(snapshot),
   ];
 }
 
 function inspectWorkload(entry: ObservedExportRegistry) {
   let authority: NonNullable<ReturnType<typeof readManagedWorkloadAuthority>> | null = null;
-  let additionalAgents: VerifiedExportSource["additionalAgents"];
   const findings: ExportFinding[] = [];
   if (entry.workload?.kind === "managed-image") {
     try {
       authority = readManagedWorkloadAuthority(entry);
       if (authority) {
-        const projected = projectAdditionalAgents(entry, authority.profile);
-        if (projected === null) {
+        if (
+          authority.profile.agentConfig.agent === "openclaw" &&
+          authority.profile.agentConfig.extraAgents.agents.length > 0
+        ) {
           findings.push(
             finding(
-              "spec.sandboxes[].agents",
+              "spec.sandboxes[].agent",
               "unsupported",
-              "The retained secondary-agent manifest cannot be represented by v1 export.",
+              "V1alpha1 export does not support an OpenClaw sandbox with secondary agents.",
             ),
           );
         } else {
-          additionalAgents = projected;
-          findings.push(...classifyManagedStartupProfile(entry, authority.profile, projected));
+          findings.push(...classifyManagedStartupProfile(entry, authority.profile));
         }
       }
     } catch {
@@ -1190,7 +1381,7 @@ function inspectWorkload(entry: ObservedExportRegistry) {
       );
     }
   }
-  return { authority, additionalAgents, findings };
+  return { authority, findings };
 }
 
 function projectVerifiedInference(
@@ -1235,7 +1426,12 @@ function projectVerifiedTools(
   entry: ObservedExportRegistry,
   authority: NonNullable<ReturnType<typeof readManagedWorkloadAuthority>> | null,
 ) {
-  if (entry.agent !== "openclaw" || authority?.profile.tools.disclosure !== "direct") return {};
+  if (
+    entry.agent !== "openclaw" ||
+    authority === null ||
+    authority.profile.tools.disclosure === V1ALPHA1_RUNTIME_DEFAULTS.openclaw.tools.disclosure
+  )
+    return {};
   return { tools: { disclosure: authority.profile.tools.disclosure } };
 }
 
@@ -1265,19 +1461,14 @@ function completeVerifiedSource(
   snapshot: QualifiedExportSnapshot,
   authority: NonNullable<ReturnType<typeof readManagedWorkloadAuthority>> | null,
   policy: CanonicalExportPolicy,
-  additionalAgents?: VerifiedExportSource["additionalAgents"],
 ): ExportSourceVerificationResult {
   const entry = snapshot.registry;
   const observability = authority ? exportedObservability(authority.profile) : undefined;
   const selected = normalizeInferenceSelection(entry);
-  const settings =
-    authority && snapshot.inference.topology !== "managed"
-      ? projectAgentSettings(authority.profile, expectedManagedStartupProfile(entry))
-      : {};
+  const settings = authority ? projectAgentSettings(authority.profile) : {};
   const values = {
     ...(observability ? { observability } : {}),
     sandboxName: requestedSandboxName,
-    ...(additionalAgents ? { additionalAgents } : {}),
     agent: entry.agent,
     ...projectVerifiedExecution(settings),
     ...projectVerifiedWebSearch(entry),
@@ -1309,7 +1500,7 @@ export function verifyExportSource(
 ): ExportSourceVerificationResult {
   const entry = snapshot.registry;
   const findings = validateAgreement(requestedSandboxName, snapshot);
-  const { authority, additionalAgents, findings: workloadFindings } = inspectWorkload(entry);
+  const { authority, findings: workloadFindings } = inspectWorkload(entry);
   findings.push(...workloadFindings);
   const policy = snapshot.policy.kind === "verified" ? snapshot.policy.canonical : undefined;
   if (snapshot.policy.kind === "not-representable") {
@@ -1323,11 +1514,5 @@ export function verifyExportSource(
   }
   if (findings.length > 0 || !policy) return { kind: "rejected", findings: nonEmpty(findings) };
 
-  return completeVerifiedSource(
-    requestedSandboxName,
-    snapshot,
-    authority,
-    policy,
-    additionalAgents,
-  );
+  return completeVerifiedSource(requestedSandboxName, snapshot, authority, policy);
 }

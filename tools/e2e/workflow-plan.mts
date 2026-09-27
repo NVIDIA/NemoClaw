@@ -7,7 +7,6 @@ import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 
 import {
-  buildLiveTargetInventory,
   buildLiveTargetMatrix,
   liveTargetGatewayRuntimes,
   type LiveTargetMatrixEntry,
@@ -25,7 +24,6 @@ import {
   SHARED_E2E_JOB_ID,
 } from "./credential-free-tests.mts";
 import { JETSON_DISPATCH_TARGET } from "./jetson-dispatch-contract.mts";
-import { selectedRetiredControllerJobs } from "./retired-selector-compatibility.mts";
 import { normalizeE2eSelectorIds } from "./selector-aliases.mts";
 import {
   catalogueExclusionReason,
@@ -89,16 +87,9 @@ type WorkflowPlanCliOptions = WorkflowPlanSelectors & {
   summary: boolean;
 };
 
-type TrustedControllerSelectorMap = {
-  retiredSelectorSelected: boolean;
-  selectors: WorkflowPlanSelectors;
-};
-
 const SAFE_SELECTOR_LIST_PATTERN = /^[A-Za-z0-9_-]+(?:,[A-Za-z0-9_-]+)*$/;
 const HERMES_JOB_ID = "hermes-e2e";
 const STAGING_BREV_IDENTITY_JOB_ID = "staging-brev-launchable-identity";
-const LEGACY_BOOTSTRAP_INSTALL_JOB_ID = "launchable-smoke";
-const BOOTSTRAP_INSTALL_JOB_ID = "bootstrap-install-smoke";
 const COMMIT_SHA_PATTERN = /^[a-f0-9]{40}$/;
 const INFERENCE_MODES = new Set(["mock", "internal-nvidia", "public-nvidia"]);
 const CATALOGUE_JOB_BY_PROFILE: Record<E2eExecutionProfile, string> = {
@@ -114,6 +105,7 @@ const REGISTRY_OWNING_PATHS = [
   "test/e2e/fixtures/",
   "test/e2e/live/registry-targets.test.ts",
   "test/e2e/registry/",
+  "tools/e2e/onboard-timeout-contract.mts",
 ] as const;
 const DCODE_SKILL_OWNING_PATHS = [
   "agents/langchain-deepagents-code/manifest.yaml",
@@ -195,8 +187,6 @@ function isLiveTargetMatrixEntry(value: unknown): value is LiveTargetMatrixEntry
       "runner",
       "runtime",
       "suites",
-      "supportReasons",
-      "supported",
       "timeout_minutes",
       "unresolvedReason",
     ])
@@ -225,13 +215,11 @@ function isLiveTargetMatrixEntry(value: unknown): value is LiveTargetMatrixEntry
     typeof value.observableOutcome === "string" &&
     typeof value.environmentOrInferenceEndpoint === "string" &&
     typeof value.unresolvedReason === "string" &&
-    typeof value.supported === "boolean" &&
     typeof value.timeout_minutes === "number" &&
     Number.isSafeInteger(value.timeout_minutes) &&
     value.timeout_minutes > 0 &&
     isStringArray(value.suites) &&
     isStringArray(value.requiredSecrets) &&
-    isStringArray(value.supportReasons) &&
     isStringArray(value.pendingRuntimeSuites) &&
     hasValidExecutionMetadata(value)
   );
@@ -345,9 +333,7 @@ function isCatalogueMatrixRow(value: unknown): value is E2eCatalogueMatrixRow {
     typeof value.shard === "string" &&
     /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(value.shard) &&
     (value.artifact_layout === "target-shard" || value.artifact_layout === "flat-shard") &&
-    (value.host_preparation === "none" ||
-      value.host_preparation === "hermes-swap" ||
-      value.host_preparation === "rebuild-swap") &&
+    (value.host_preparation === "none" || value.host_preparation === "hermes-swap") &&
     (value.install_mode === "none" ||
       value.install_mode === "authenticated" ||
       value.install_mode === "credential-free") &&
@@ -540,66 +526,6 @@ function selectTestRows(
   if (ids.length === 0) return [...rows];
   const selected = new Set(ids);
   return rows.filter((row) => selected.has(row.id));
-}
-
-function mapTrustedControllerJobs(
-  selectors: WorkflowPlanSelectors,
-  environment: NodeJS.ProcessEnv,
-): TrustedControllerSelectorMap {
-  if (!COMMIT_SHA_PATTERN.test(environment.NEMOCLAW_E2E_EXPECTED_SHA ?? "")) {
-    return { retiredSelectorSelected: false, selectors };
-  }
-
-  const inventory = readFreeStandingJobsInventory();
-  const jobs = selectorIds(selectors.jobs, "jobs").map((job) =>
-    job === LEGACY_BOOTSTRAP_INSTALL_JOB_ID &&
-    E2E_TARGET_CATALOGUE.some((target) => target.targetId === BOOTSTRAP_INSTALL_JOB_ID)
-      ? BOOTSTRAP_INSTALL_JOB_ID
-      : job,
-  );
-  const targets = selectorIds(selectors.targets, "targets");
-  const retiredJobs = new Set<string>(
-    selectedRetiredControllerJobs({
-      allowedJobs: inventory.allowedJobs,
-      expectedSha: environment.NEMOCLAW_E2E_EXPECTED_SHA,
-      jobs: jobs.join(","),
-    }),
-  );
-  const retiredTargets = new Set<string>(
-    selectedRetiredControllerJobs({
-      allowedJobs: inventory.allowedJobs,
-      expectedSha: environment.NEMOCLAW_E2E_EXPECTED_SHA,
-      targets: targets.join(","),
-    }),
-  );
-  const compatibleJobs = jobs.filter((job) => !retiredJobs.has(job));
-  const compatibleTargets = targets.filter((target) => !retiredTargets.has(target));
-
-  // Trusted main can select a renamed or newly retired job until the candidate
-  // workflow becomes the controller. Keep the raw IDs for evidence, but plan
-  // only jobs that still execute in the candidate.
-  return {
-    retiredSelectorSelected: retiredJobs.size > 0 || retiredTargets.size > 0,
-    selectors: {
-      ...selectors,
-      jobs: compatibleJobs.join(","),
-      targets: compatibleTargets.join(","),
-    },
-  };
-}
-
-function emptyE2eWorkflowPlan(gatewayRuntimes: readonly E2eGatewayRuntime[]): E2eWorkflowPlan {
-  return {
-    gatewayRuntimes: [...gatewayRuntimes],
-    matrix: [],
-    testMatrix: [],
-    catalogueMatrices: emptyCatalogueMatrices(),
-    coverageMatrix: [],
-    selectedJobs: [],
-    runtimeProvidersByJob: {},
-    hermesSelected: false,
-    explicitOnlyJobs: readFreeStandingJobsInventory().explicitOnlyJobs,
-  };
 }
 
 type E2eWorkflowPlanWithoutCoverage = Omit<E2eWorkflowPlan, "coverageMatrix">;
@@ -1045,15 +971,12 @@ export function validateE2eWorkflowPlan(plan: unknown): E2eWorkflowPlan {
   return plan as E2eWorkflowPlan;
 }
 
-function expectedHermesSelection(
-  selectors: WorkflowPlanSelectors,
-  retiredSelectorSelected: boolean,
-): boolean {
+function expectedHermesSelection(selectors: WorkflowPlanSelectors): boolean {
   const selected = [
     ...selectorIds(selectors.jobs, "jobs"),
     ...selectorIds(selectors.targets, "targets"),
   ];
-  return (selected.length === 0 && !retiredSelectorSelected) || selected.includes(HERMES_JOB_ID);
+  return selected.length === 0 || selected.includes(HERMES_JOB_ID);
 }
 
 export function withoutUnavailableOptionalCredentialTargets(
@@ -1159,7 +1082,6 @@ export function renderE2eWorkflowPlanSummary(
     plan.explicitOnlyJobs.includes(row.id),
   );
   const runtimeExclusions = runtimeExclusionsForPlan(plan, inventory);
-  const unsupportedDeclarations = buildLiveTargetInventory().filter((row) => !row.supported);
   const outcomeRows = new Map<string, E2eExecutionRow[]>();
   for (const row of plan.coverageMatrix) {
     const rows = outcomeRows.get(row.observableOutcome) ?? [];
@@ -1208,24 +1130,6 @@ export function renderE2eWorkflowPlanSummary(
       `| \`${e2eExecutionLabel(row)}\` | ${row.agentRuntime} | ${row.observableOutcome} | ${row.environmentOrInferenceEndpoint} | Explicit dispatch only; excluded from the default release matrix | ${row.unresolvedReason} |`,
     );
   }
-  lines.push(
-    "",
-    "### Unsupported or unresolved typed declarations",
-    "",
-    "| Declaration | Agent runtime | Observable outcome | Environment or inference endpoint | Missing executable ownership |",
-    "| --- | --- | --- | --- | --- |",
-  );
-  for (const row of unsupportedDeclarations) {
-    lines.push(
-      `| \`${row.id}\` | ${row.agentRuntime} | ${row.observableOutcome} | ${row.environmentOrInferenceEndpoint} | ${row.supportReasons.join("; ")} |`,
-    );
-  }
-  lines.push(
-    "",
-    "### Combinatorial gaps",
-    "",
-    `The ${unsupportedDeclarations.length} inert typed declarations above are not executable matrix cells. #8285 owns the decision on the inert cross-runtime foundation, and #8286 owns executable-only registry cleanup after that decision. Unlisted Cartesian-product cells are not required without an accepted supported combination. This migration removes no execution, so no duplicate-to-retained-evidence mapping is required.`,
-  );
   return `${lines.join("\n")}\n`;
 }
 
@@ -1243,17 +1147,12 @@ export function writeE2eWorkflowPlanCiOutput(
   ) {
     throw new Error("Manual PR E2E requires an authorized source branch in NVIDIA/NemoClaw");
   }
-  const controllerMap = mapTrustedControllerJobs(selectors, environment);
-  const plannerSelectors = controllerMap.selectors;
   const gatewayRuntimes = e2eGatewayRuntimes(
     environment.NEMOCLAW_GATEWAY_RUNTIMES ?? environment.NEMOCLAW_GATEWAY_RUNTIME,
   );
-  const hasPlannerSelectors = Boolean(plannerSelectors.jobs || plannerSelectors.targets);
+  const hasPlannerSelectors = Boolean(selectors.jobs || selectors.targets);
   const changedFiles = hasPlannerSelectors ? undefined : changedFilesFromEnvironment(environment);
-  const planned =
-    controllerMap.retiredSelectorSelected && !hasPlannerSelectors
-      ? emptyE2eWorkflowPlan(gatewayRuntimes)
-      : buildE2eWorkflowPlan(plannerSelectors, { changedFiles, gatewayRuntimes });
+  const planned = buildE2eWorkflowPlan(selectors, { changedFiles, gatewayRuntimes });
   const availableOptionalCredentials = new Set<E2eOptionalCredential>(
     E2E_OPTIONAL_CREDENTIALS.filter(
       (credential) => environment[`NEMOCLAW_E2E_${credential}_AVAILABLE`] !== "false",
@@ -1263,10 +1162,7 @@ export function writeE2eWorkflowPlanCiOutput(
     ? planned
     : withoutUnavailableOptionalCredentialTargets(planned, availableOptionalCredentials);
   const plan = validateE2eWorkflowPlan(availabilityScopedPlan);
-  const expectedHermes = expectedHermesSelection(
-    plannerSelectors,
-    controllerMap.retiredSelectorSelected,
-  );
+  const expectedHermes = expectedHermesSelection(selectors);
   if (!changedFiles && plan.hermesSelected !== expectedHermes) {
     throw new Error("E2E planner changed the trusted Hermes selection");
   }

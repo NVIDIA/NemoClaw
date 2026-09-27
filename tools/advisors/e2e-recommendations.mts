@@ -7,7 +7,6 @@ import path from "node:path";
 // These modules resolve relative to the trusted advisor implementation, not
 // the analyzed PR worktree. PR-provided TypeScript is never imported.
 import { getTarget, listTargets } from "../../test/e2e/registry/registry.ts";
-import { liveTargetSupport } from "../../test/e2e/registry/runtime-support.ts";
 import {
   credentialFreeTestProjectForFile,
   credentialFreeTestRowFromModule,
@@ -98,8 +97,7 @@ export function isSupportedE2eSelector(
   if (item.selectorType === "all") return item.id === E2E_ALL_ID;
   if (item.selectorType === "job") return allowedJobIds.has(item.id);
   if (supportedTargetIds) return supportedTargetIds.includes(item.id);
-  const target = getTarget(item.id);
-  return target !== undefined && liveTargetSupport(target).supported;
+  return getTarget(item.id) !== undefined;
 }
 
 export type E2eChangedCredentialFreeTest = {
@@ -175,7 +173,6 @@ export function trustedE2eRecommendationInventory(): TrustedE2eRecommendationInv
     allowedJobIds: allJobIds.filter((id) => candidateJobIds.has(id) && isPrE2ePlanningJob(id)),
     manualOnlyJobIds: allJobIds.filter((id) => !candidateJobIds.has(id) || !isPrE2ePlanningJob(id)),
     liveSupportedTargetIds: listTargets()
-      .filter((target) => liveTargetSupport(target).supported)
       .map((target) => target.id)
       .sort(),
   };
@@ -633,8 +630,7 @@ export function deterministicRiskRecommendations(
   const targets = riskPlan.requiredTargets
     .filter((target) => {
       if (!context) return true;
-      const definition = getTarget(target.id);
-      return definition !== undefined && liveTargetSupport(definition).supported;
+      return getTarget(target.id) !== undefined;
     })
     .map((target) => ({
       id: target.id,

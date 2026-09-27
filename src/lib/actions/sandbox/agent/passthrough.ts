@@ -110,22 +110,20 @@ import { performance } from "node:perf_hooks";
 import { signalExitCode } from "../../../core/process-exit";
 import { type AgentDefinition, isTerminalAgent, listAgents, loadAgent } from "../../../agent/defs";
 import { CLI_NAME } from "../../../cli/branding";
-import { createCliOpenShellSandboxSessionExecutor } from "../../../adapters/openshell/sandbox-command-cli";
 import { resolveSandboxHermesApiPort } from "../../../onboard/hermes-api-port";
 import * as registry from "../../../state/registry";
-import { execSandbox, wrapOpenClawAgentCommandWithRuntimeEnv } from "../exec";
+import { execSandbox } from "../exec";
 import { ensureLiveSandboxOrExit } from "../gateway-state";
-import { getKnownSandboxTargetGatewayName } from "../gateway-target";
 import {
-  type AgentDispatchRunner,
-  agentDispatchDeadlineSeconds,
-  isSilentAgentDispatch,
-  isTimedOutAgentDispatch,
-  OPENCLAW_AGENT_BOOLEAN_FLAGS,
-  OPENCLAW_AGENT_VALUE_FLAGS,
+  type OpenClawAgentDispatchDeps,
+  hasOpenClawAgentSelector,
+  requestsOpenClawJsonOutput,
+  requestsOpenClawLocalMode,
   replaceRequestedAgentTimeoutSeconds,
   requestedAgentTimeoutSeconds,
-  runAgentDispatch,
+  runOpenClawAgentDispatch,
+  isSilentAgentDispatch,
+  isTimedOutAgentDispatch,
   SILENT_AGENT_DISPATCH_EXIT_CODE,
   TIMED_OUT_AGENT_TURN_EXIT_CODE,
 } from "./passthrough-dispatch";
@@ -136,6 +134,7 @@ import {
   writeTimedOutAgentTurnFailure,
 } from "./passthrough-help";
 import { type AgentJsonPassthroughProcess, runAgentJsonPassthrough } from "./passthrough-json";
+
 import { OLLAMA_LOCAL_PROVIDER, runOllamaRestartRecovery } from "./passthrough-ollama-recovery";
 
 export { hasAgentPassthroughHelpToken, printAgentPassthroughHelp } from "./passthrough-help";
@@ -149,12 +148,7 @@ export { hasAgentPassthroughHelpToken, printAgentPassthroughHelp } from "./passt
 const OPENCLAW_EMBEDDED_FALLBACK_PATTERN =
   /EMBEDDED FALLBACK|\[agent\/embedded\]|fallbackFrom[": ]+gateway|transport[": ]+embedded/i;
 
-export type AgentNonJsonPassthroughDeps = {
-  getOpenshellBinary?: () => string;
-  getGatewayName?: (sandboxName: string) => string | null;
-  runDispatch?: AgentDispatchRunner;
-  stdinIsTty?: () => boolean;
-};
+export type AgentNonJsonPassthroughDeps = OpenClawAgentDispatchDeps;
 
 export async function runAgentNonJsonPassthrough(
   sandboxName: string,
@@ -162,26 +156,7 @@ export async function runAgentNonJsonPassthrough(
   proc: NonNullable<AgentPassthroughDeps["process"]>,
   deps: AgentNonJsonPassthroughDeps = {},
 ): Promise<never> {
-  const gatewayName = (deps.getGatewayName ?? getKnownSandboxTargetGatewayName)(sandboxName);
-  const runDispatch: AgentDispatchRunner =
-    deps.runDispatch ??
-    ((request) =>
-      runAgentDispatch(
-        request,
-        createCliOpenShellSandboxSessionExecutor({
-          resolveBinary: deps.getOpenshellBinary,
-          stdinIsTty: deps.stdinIsTty,
-        }),
-      ));
-  const result = await runDispatch({
-    kind: "command",
-    sandboxName,
-    target: gatewayName ? { kind: "named", gatewayName } : { kind: "selected" },
-    command: wrapOpenClawAgentCommandWithRuntimeEnv(command),
-    tty: false,
-    output: "capture",
-    timeoutSeconds: agentDispatchDeadlineSeconds(command),
-  });
+  const result = await runOpenClawAgentDispatch(sandboxName, command, deps);
   const { stderr, stdout } = result;
 
   if (isSilentAgentDispatch(result, stdout, stderr)) {
@@ -189,7 +164,10 @@ export async function runAgentNonJsonPassthrough(
     return proc.exit(SILENT_AGENT_DISPATCH_EXIT_CODE);
   }
 
-  if (OPENCLAW_EMBEDDED_FALLBACK_PATTERN.test(`${stdout}\n${stderr}`)) {
+  if (
+    !requestsOpenClawLocalMode(command) &&
+    OPENCLAW_EMBEDDED_FALLBACK_PATTERN.test(`${stdout}\n${stderr}`)
+  ) {
     proc.stderr.write(
       `  OpenClaw is running in embedded-fallback mode in sandbox '${sandboxName}': gateway pairing is broken or missing.\n`,
     );
@@ -458,60 +436,6 @@ function rejectRegistryReadError(
   return proc.exit(2);
 }
 
-function requestsOpenClawJsonOutput(extraArgs: readonly string[]): boolean {
-  // Invalid state: the host wrapper must pick captured JSON transport only for
-  // the top-level OpenClaw output flag, not for a literal "--json" consumed as
-  // a value by another OpenClaw option. Source boundary: upstream OpenClaw owns
-  // the complete argv grammar; NemoClaw mirrors documented flags only to choose
-  // the host transport path. Unknown options fail conservative to normal
-  // passthrough, where OpenClaw parses argv itself. Any newly documented value
-  // flag, including a `--json-*` name, must be added to the value-flag set and
-  // its tests together. Regression tests cover each documented value flag,
-  // documented equals-form value flags, documented boolean flags, unknown flag
-  // fallback, and the `--` terminator. Removal
-  // condition: OpenClaw exposes a machine-readable argv schema or NemoClaw stops
-  // special-casing the JSON transport path.
-  let skipNextValue = false;
-  for (const arg of extraArgs) {
-    if (skipNextValue) {
-      skipNextValue = false;
-      continue;
-    }
-    if (arg === "--") return false;
-    if (arg === "--json") return true;
-    if (arg.startsWith("--json=")) {
-      return !["0", "false", "no", "off"].includes(arg.slice("--json=".length).toLowerCase());
-    }
-    if (OPENCLAW_AGENT_VALUE_FLAGS.has(arg)) {
-      skipNextValue = true;
-      continue;
-    }
-    const equalsIndex = arg.indexOf("=");
-    if (
-      equalsIndex > 0 &&
-      arg.startsWith("--") &&
-      OPENCLAW_AGENT_VALUE_FLAGS.has(arg.slice(0, equalsIndex))
-    ) {
-      continue;
-    }
-    if (OPENCLAW_AGENT_BOOLEAN_FLAGS.has(arg)) continue;
-    if (arg.startsWith("-")) return false;
-  }
-  return false;
-}
-
-const TARGET_SELECTOR_FLAGS = ["--agent", "--session-id", "--session-key", "--to"] as const;
-
-function hasTargetSelector(args: readonly string[]): boolean {
-  for (const arg of args) {
-    if (arg === "--") return false;
-    if (TARGET_SELECTOR_FLAGS.some((flag) => arg === flag || arg.startsWith(`${flag}=`))) {
-      return true;
-    }
-  }
-  return false;
-}
-
 function rejectNoTargetSelector(proc: NonNullable<AgentPassthroughDeps["process"]>): never {
   proc.stderr.write(
     "  No target session selected. Use --agent <id>, --session-key <key>, --session-id <id>, or --to <E.164>.\n",
@@ -578,7 +502,7 @@ export async function runAgentPassthrough(
   if (phase !== "Ready" && phase !== "Running") {
     rejectNotReadyForAgent(sandboxName, phase, proc);
   }
-  if (isOpenClawPassthroughCommand(command) && !hasTargetSelector(extraArgs)) {
+  if (isOpenClawPassthroughCommand(command) && hasOpenClawAgentSelector(command) === false) {
     rejectNoTargetSelector(proc);
   }
   let dispatchCommand: readonly string[] = command;
@@ -599,7 +523,7 @@ export async function runAgentPassthrough(
     }
     dispatchCommand = commandWithRemainingDeadline(command, commandDeadline, now);
   }
-  if (isOpenClawPassthroughCommand(command) && requestsOpenClawJsonOutput(extraArgs)) {
+  if (isOpenClawPassthroughCommand(command) && requestsOpenClawJsonOutput(command)) {
     const execJson = deps.execJson ?? runAgentJsonPassthrough;
     await execJson(sandboxName, dispatchCommand, {
       exit: proc.exit.bind(proc),

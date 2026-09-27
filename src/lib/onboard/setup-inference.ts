@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { OpenShellGatewayLifecycle } from "../adapters/openshell/gateway-lifecycle";
 import { canonicalEndpoint } from "../core/url-utils";
 import { isBedrockRuntimeEndpoint } from "../inference/bedrock-runtime";
 import {
@@ -127,11 +128,6 @@ import type {
   VllmDeps,
 } from "./inference-providers";
 import * as inferenceProviders from "./inference-providers";
-import {
-  ensureOpenAiInferenceProviderProfile,
-  type InferenceProviderProfileDeps,
-  OPENAI_GATEWAY_PROVIDER_TYPE,
-} from "./inference-providers/provider-profile";
 import { createLocalInferenceRouteApplier } from "./local-inference-route";
 import type { ProviderInferenceSetupOptions } from "./machine/handlers/provider-inference";
 import {
@@ -270,30 +266,9 @@ export function bindGatewayUpsertProvider(
       : upsertProvider(name, type, credentialEnv, baseUrl, env, gatewayName);
 }
 
-export function bindOpenAiProviderProfile(
-  upsertProvider: CommonDeps["upsertProvider"],
-  runOpenshell: InferenceProviderProfileDeps["runOpenshell"],
-  error: CommonDeps["error"],
-  exitProcess: CommonDeps["exitProcess"],
-): CommonDeps["upsertProvider"] {
-  return (name, type, ...rest) => {
-    if (type === OPENAI_GATEWAY_PROVIDER_TYPE) {
-      ensureOpenAiInferenceProviderProfile({
-        runOpenshell,
-        log: error,
-        exit: exitProcess,
-      });
-    }
-    return upsertProvider(name, type, ...rest);
-  };
-}
-
 export function createRoutedResumeProviderUpsert(deps: {
   upsertProvider: SetupInferenceDeps["upsertProvider"];
-  runGatewayOpenshell: InferenceProviderProfileDeps["runOpenshell"];
   hydrateCredentialEnv: RoutedProviderDeps["hydrateCredentialEnv"];
-  error?: CommonDeps["error"];
-  exitProcess?: CommonDeps["exitProcess"];
 }) {
   return async (
     gatewayName: string,
@@ -302,12 +277,7 @@ export function createRoutedResumeProviderUpsert(deps: {
     credentialEnv: string | null,
   ) => {
     const result = await upsertRoutedInferenceProvider(provider, endpointUrl, credentialEnv, {
-      upsertProvider: bindOpenAiProviderProfile(
-        bindGatewayUpsertProvider(deps.upsertProvider, gatewayName),
-        deps.runGatewayOpenshell,
-        deps.error ?? console.error,
-        deps.exitProcess ?? ((code) => process.exit(code)),
-      ),
+      upsertProvider: bindGatewayUpsertProvider(deps.upsertProvider, gatewayName),
       hydrateCredentialEnv: deps.hydrateCredentialEnv,
     });
     return {
@@ -319,19 +289,21 @@ export function createRoutedResumeProviderUpsert(deps: {
   };
 }
 
-export function selectGatewayForFollowupOrExit(
+export async function selectGatewayForFollowupOrExit(
   gatewayName: string,
-  runOpenshell: SetupInferenceDeps["runOpenshell"],
+  lifecycle: Pick<OpenShellGatewayLifecycle, "selectGateway">,
   error: (message: string) => void = console.error,
   exitProcess: (code: number) => never = (code) => process.exit(code),
-): void {
-  const selected = runOpenshell(["gateway", "select", gatewayName], { ignoreError: true });
-  if (selected.status === 0) return;
+): Promise<void> {
+  const selected = await lifecycle.selectGateway({
+    target: { kind: "named", gatewayName },
+  });
+  if (selected.ok) return;
   error(
     `  Error: OpenShell could not select managed gateway '${gatewayName}' after onboarding. ` +
       "No follow-up operations were run against an ambient gateway.",
   );
-  exitProcess(typeof selected.status === "number" && selected.status !== 0 ? selected.status : 1);
+  exitProcess(1);
 }
 
 function resolveLocalInferenceRouteApplier(
@@ -771,10 +743,7 @@ export function createSetupInference(
           // refuses this one and blames a session that no longer exists
           // (#11051). Release it here, before the first write, so the refusal
           // is reserved for a reservation that is genuinely contended.
-          if (releaseAbandonedRouteReservation(name)) {
-            deps.log(`  Released an abandoned inference route reservation for sandbox '${name}'.`);
-          }
-          const reserved = deps.updateSandbox(name, {
+          const route: Parameters<SetupInferenceDeps["updateSandbox"]>[1] = {
             provider: selectedProvider,
             model: selectedModel,
             endpointUrl: hostLocalRoute?.applicationBaseUrl ?? endpointUrl,
@@ -791,7 +760,11 @@ export function createSetupInference(
             ...(hostLocalInferenceProvenance && hostLocalInferenceRuntimeProviderId
               ? { openshellDriver: hostLocalInferenceRuntimeProviderId }
               : {}),
-          });
+          };
+          if (releaseAbandonedRouteReservation(name, route)) {
+            deps.log(`  Released an abandoned inference route reservation for sandbox '${name}'.`);
+          }
+          const reserved = deps.updateSandbox(name, route);
           routeReserved = reserved;
           return reserved;
         };
@@ -811,20 +784,14 @@ export function createSetupInference(
               hostLocalProviderErrors.push(message);
             }
           : deps.error;
-        const profiledUpsertProvider = bindOpenAiProviderProfile(
-          async (...args) => {
-            revalidateSandboxIdentity?.("register the inference provider");
-            const selectedUpsertProvider =
-              hostLocalGatewayMutation?.upsertProvider ?? defaultUpsertProvider;
-            return await selectedUpsertProvider(...args);
-          },
-          runGatewayOpenshell,
-          providerError,
-          providerExitProcess,
-        );
+        const selectedUpsertProvider: CommonDeps["upsertProvider"] = async (...args) => {
+          revalidateSandboxIdentity?.("register the inference provider");
+          const upsertProvider = hostLocalGatewayMutation?.upsertProvider ?? defaultUpsertProvider;
+          return await upsertProvider(...args);
+        };
         const commonDeps = {
           runOpenshell: runGatewayOpenshell,
-          upsertProvider: profiledUpsertProvider,
+          upsertProvider: selectedUpsertProvider,
           verifyInferenceRoute: (selectedProvider: string, selectedModel: string) => {
             if (!hostLocalRoute && sandboxName) {
               reserveRoute(sandboxName, selectedProvider, selectedModel);

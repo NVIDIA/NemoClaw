@@ -5,8 +5,6 @@ import { describe, expect, it } from "vitest";
 import type { SystemReadinessReport } from "../../readiness/types.js";
 import type { VllmProfile } from "../vllm.js";
 import {
-  HOST_LOCAL_VLLM_LIFECYCLE_REF,
-  HOST_LOCAL_VLLM_MATERIALIZER_REF,
   isHostLocalInferenceServingRecipe,
   isManagedClusterInferenceServingRecipe,
 } from "./adapter-registry.js";

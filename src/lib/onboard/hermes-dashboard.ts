@@ -25,7 +25,7 @@ type EnsureForward = (
   port: number,
   label: string,
   revalidateSandboxIdentity?: RevalidateSandboxIdentity,
-) => boolean;
+) => boolean | Promise<boolean>;
 
 export function resolveHermesDashboardOnboardState({
   agentName,
@@ -140,7 +140,7 @@ export function appendHermesDashboardEnvArgs(
   }
 }
 
-export function ensureHermesDashboardForwardIfEnabled({
+export async function ensureHermesDashboardForwardIfEnabled({
   state,
   sandboxName,
   ensureForward,
@@ -152,10 +152,15 @@ export function ensureHermesDashboardForwardIfEnabled({
   ensureForward: EnsureForward;
   note: (message: string) => void;
   revalidateSandboxIdentity?: RevalidateSandboxIdentity;
-}): boolean {
+}): Promise<boolean> {
   if (!state.enabled || !state.config) return true;
   if (
-    !ensureForward(sandboxName, state.config.port, "Hermes dashboard", revalidateSandboxIdentity)
+    !(await ensureForward(
+      sandboxName,
+      state.config.port,
+      "Hermes dashboard",
+      revalidateSandboxIdentity,
+    ))
   ) {
     return false;
   }
@@ -188,13 +193,13 @@ export function createHermesDashboardForwardEnsurer({
   sandboxName: string,
   rollback?: boolean,
   revalidateSandboxIdentity?: RevalidateSandboxIdentity,
-) => void {
-  return (
+) => Promise<void> {
+  return async (
     sandboxName: string,
     rollback = false,
     revalidateSandboxIdentity?: RevalidateSandboxIdentity,
-  ): void => {
-    const ok = ensureHermesDashboardForwardIfEnabled({
+  ): Promise<void> => {
+    const ok = await ensureHermesDashboardForwardIfEnabled({
       state,
       sandboxName,
       ensureForward,

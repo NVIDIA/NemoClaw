@@ -1,7 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -87,7 +95,7 @@ describe("createTarball", () => {
     process.exitCode = undefined;
   });
 
-  it("sets process.exitCode = 1 and returns false when tar fails on invalid output path", () => {
+  it("sets process.exitCode = 1 and returns false for an invalid output path", () => {
     tempDir = mkdtempSync(join(tmpdir(), "debug-test-"));
     writeFileSync(join(tempDir, "dummy.txt"), "test data");
     const ok = createTarball(tempDir, "/nonexistent/path/debug.tar.gz");
@@ -129,6 +137,8 @@ describe("createTarball", () => {
     expect(ok).toBe(true);
     expect(process.exitCode).toBeUndefined();
     expect(existsSync(output)).toBe(true);
+    expect(statSync(output).mode & 0o777).toBe(0o600);
+    expect(readdirSync(outputDir)).toEqual(["output.tar.gz"]);
   });
 });
 

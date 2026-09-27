@@ -106,8 +106,8 @@ function hookOutputsFromBuildSteps(
   return { outputs };
 }
 
-/** Reapply OpenClaw messaging files that doctor may have rewritten. */
-export async function reapplyMessagingManifestAfterOpenClawDoctor(
+/** Restore manifest-derived OpenClaw files before the final doctor/start boundary. */
+export async function reapplyMessagingManifestBeforeOpenClawStart(
   sandboxName: string,
   plan: SandboxMessagingPlan | null,
   log: (message: string) => void,
@@ -118,7 +118,7 @@ export async function reapplyMessagingManifestAfterOpenClawDoctor(
     return;
   }
 
-  log("Reapplying messaging manifest render and post-agent-install hooks after doctor");
+  log("Reapplying messaging manifest render and post-agent-install hooks before gateway start");
   const runMessagingOpenshell = createRunMessagingOpenshell(runtimeSelection);
   const result = await MessagingSetupApplier.applyAgentConfigAtOpenShell(plan, {
     runOpenshell: runMessagingOpenshell,

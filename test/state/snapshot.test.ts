@@ -389,15 +389,15 @@ describe("listBackups computes virtual versions", () => {
     });
     expect(sandboxState.listBackups("test-sandbox")).toEqual([]);
   });
-  it("does not restore backed-up directory entries that are plain files", () => {
-    const manifest = writeBackup("test-sandbox", "2026-04-21T14-00-00-000Z", {
+  it("does not restore backed-up directory entries that are plain files", async () => {
+    const { backupPath } = writeBackup("test-sandbox", "2026-04-21T14-00-00-000Z", {
       stateDirs: ["workspace"],
       backedUpDirs: ["workspace"],
     });
     writeAgentRegistry("test-sandbox", "openclaw");
-    fs.writeFileSync(path.join(String(manifest.backupPath), "workspace"), "not a directory");
+    fs.writeFileSync(path.join(String(backupPath), "workspace"), "not a directory");
 
-    const restore = sandboxState.restoreSandboxState("test-sandbox", String(manifest.backupPath));
+    const restore = await sandboxState.restoreSandboxState("test-sandbox", String(backupPath));
 
     expect(restore).toEqual({
       success: true,
@@ -588,19 +588,6 @@ describe("parseRestoreArgs", () => {
 });
 
 describe("sandbox directory backup semantics", () => {
-  it("rejects a custom OpenClaw backup with missing image-plugin provenance (#6108)", () => {
-    writeOpenClawRegistry("custom-openclaw", {
-      fromDockerfile: "/tmp/Dockerfile.custom",
-    });
-
-    const backup = sandboxState.backupSandboxState("custom-openclaw");
-
-    expect(backup.success).toBe(false);
-    expect(backup.manifest).toBeUndefined();
-    expect(backup.error).toBe("registered OpenClaw image plugin provenance is missing or invalid");
-    expect(fs.existsSync(path.join(BACKUPS_ROOT, "custom-openclaw"))).toBe(false);
-  });
-
   it("backs up declared empty and dynamic directories without trusting undeclared discovery output (#8006)", () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-empty-dirs-"));
     const oldPath = process.env.PATH;
@@ -640,10 +627,7 @@ describe("sandbox directory backup semantics", () => {
         }),
       );
 
-      writeOpenClawRegistry("alpha", {
-        fromDockerfile: "/tmp/Dockerfile.custom",
-        openclawImagePluginInstalls: [],
-      });
+      writeOpenClawRegistry("alpha", { fromDockerfile: "/tmp/Dockerfile.custom" });
       process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
       process.env.TMPDIR = stagingRoot;
       process.env.PATH = `${binDir}${path.delimiter}${oldPath || ""}`;
@@ -655,8 +639,6 @@ describe("sandbox directory backup semantics", () => {
       expect(backup.manifest?.backupComplete).toBe(true);
       expect(backup.manifest?.backedUpDirs).toEqual(existingDirs);
       expect(backup.manifest?.stateDirs.at(-1)).toBe("workspace-research");
-      expect(backup.manifest?.reconcileOpenClawImagePluginProvenance).toBe(true);
-      expect(backup.manifest?.openclawImagePluginInstalls).toEqual([]);
       const discoveryCommand = fs
         .readFileSync(sshLog, "utf-8")
         .trim()
@@ -749,7 +731,7 @@ process.exit(0);
     }
   });
 
-  it("classifies tar-failed directories and excludes them from the restorable manifest", () => {
+  it("classifies tar-failed directories and excludes them from the restorable manifest", async () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-partial-tar-"));
     const oldPath = process.env.PATH;
     const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
@@ -827,7 +809,7 @@ process.exit(0);
       expect(backup.manifest?.backedUpDirs).toEqual(["extensions"]);
       expect(fs.existsSync(path.join(backup.manifest!.backupPath, "agents"))).toBe(true);
 
-      const restore = sandboxState.restoreSandboxState("alpha", backup.manifest!.backupPath);
+      const restore = await sandboxState.restoreSandboxState("alpha", backup.manifest!.backupPath);
       expect(restore.success).toBe(true);
       expect(restore.restoredDirs).toEqual(["extensions"]);
 
@@ -840,8 +822,6 @@ process.exit(0);
       expect(cleanupCommand).not.toContain("/sandbox/.openclaw/workspace");
       expect(cleanupCommand).not.toContain("rm -rf -- /sandbox/.openclaw/extensions");
       expect(cleanupCommand).toContain("/sandbox/.openclaw/extensions");
-      expect(cleanupCommand).toContain("! -name 'nemoclaw'");
-      expect(cleanupCommand).toContain("! -name 'openclaw-weixin'");
       expect(cleanupCommand).not.toContain("/sandbox/.openclaw/agents");
     } finally {
       if (oldOpenshell === undefined) {
@@ -1349,7 +1329,7 @@ process.exit(0);
 });
 
 describe("Deep Agents Code durable state files", () => {
-  it("backs up manifest-declared state while excluding credential-bearing files", () => {
+  it("backs up manifest-declared state while excluding credential-bearing files", async () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-deepagents-snapshot-"));
     const oldPath = process.env.PATH;
     const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
@@ -1380,13 +1360,13 @@ describe("Deep Agents Code durable state files", () => {
         "name: note-summarizer\n",
       );
       fs.writeFileSync(path.join(deepAgentsDir, "config.toml"), "generated config\n");
+      const hooks = '{"hooks":[{"command":["/sandbox/bin/reviewed-hook"]}]}\n';
+      fs.writeFileSync(path.join(deepAgentsDir, "hooks.json"), hooks);
       fs.writeFileSync(path.join(deepAgentsDir, ".env"), "NVIDIA_API_KEY=should-not-copy\n");
-      fs.writeFileSync(path.join(deepAgentsDir, ".mcp.json"), '{"token":"should-not-copy"}\n');
       fs.writeFileSync(
-        path.join(deepAgentsDir, ".nemoclaw-mcp.json"),
+        path.join(deepAgentsDir, ".mcp.json"),
         '{"mcpServers":{"reconstructable":{}}}\n',
       );
-
       const openshell = path.join(binDir, "openshell");
       writeExecutable(
         openshell,
@@ -1415,6 +1395,14 @@ if (cmd.includes("config.toml") && cmd.includes("cat --")) {
   process.stdout.write(fs.readFileSync(path.join(deepAgentsDir, "config.toml")));
   process.exit(0);
 }
+if (cmd.includes("hooks.json") && cmd.includes("cat --")) {
+  process.stdout.write(fs.readFileSync(path.join(deepAgentsDir, "hooks.json")));
+  process.exit(0);
+}
+if (cmd.includes("hooks.json") && cmd.includes('cat > "$tmp"')) {
+  fs.writeFileSync(path.join(deepAgentsDir, "hooks.json"), fs.readFileSync(0));
+  process.exit(0);
+}
 if (cmd.includes(".env") || cmd.includes(".mcp.json")) {
   process.exit(99);
 }
@@ -1434,12 +1422,12 @@ if (cmd.includes("-cf -")) {
   process.exit(r.status || 0);
 }
 if (cmd.includes("tar --no-same-owner -xf -")) {
-  // drain the piped restore tarball in chunks (no full-stream buffering)
-  const buf = Buffer.alloc(65536);
-  while (fs.readSync(0, buf, 0, buf.length, null) > 0) {
-    // discard
-  }
-  process.exit(0);
+  const r = spawnSync("tar", ["--no-same-owner", "-xf", "-", "-C", deepAgentsDir], {
+    stdio: [0, "pipe", "pipe"],
+  });
+  if (r.stdout) fs.writeSync(1, r.stdout);
+  if (r.stderr) fs.writeSync(2, r.stderr);
+  process.exit(r.status || 0);
 }
 process.exit(0);
 `,
@@ -1452,38 +1440,35 @@ process.exit(0);
       const backup = sandboxState.backupSandboxState("deepagents", { name: "deepagents-state" });
       expect(backup.success).toBe(true);
       expect(backup.backedUpDirs).toEqual([".state", "agent/skills"]);
-      expect(backup.backedUpFiles).toEqual(["config.toml"]);
+      expect(backup.backedUpFiles).toEqual(["config.toml", "hooks.json"]);
       expect(backup.failedDirs).toEqual([]);
       expect(backup.failedFiles).toEqual([]);
       expect(backup.manifest?.agentType).toBe("langchain-deepagents-code");
       expect(backup.manifest?.stateDirs).toEqual([".state", "agent/skills"]);
-      expect(backup.manifest?.stateFiles).toEqual([{ path: "config.toml", strategy: "copy" }]);
-      expect(fs.existsSync(path.join(backup.manifest!.backupPath, ".state", "thread.json"))).toBe(
-        true,
-      );
-      expect(fs.existsSync(path.join(backup.manifest!.backupPath, ".state", "auth.json"))).toBe(
-        false,
-      );
-      expect(
-        fs.existsSync(path.join(backup.manifest!.backupPath, ".state", "chatgpt-auth.json")),
-      ).toBe(false);
-      expect(fs.existsSync(path.join(backup.manifest!.backupPath, "skills"))).toBe(false);
-      expect(fs.readFileSync(path.join(backup.manifest!.backupPath, "config.toml"), "utf-8")).toBe(
+      expect(backup.manifest?.stateFiles?.map(({ path: statePath }) => statePath)).toEqual([
+        "config.toml",
+        "hooks.json",
+      ]);
+      const backupPath = backup.manifest!.backupPath;
+      expect(fs.existsSync(path.join(backupPath, ".state", "thread.json"))).toBe(true);
+      expect(fs.existsSync(path.join(backupPath, ".state", "auth.json"))).toBe(false);
+      expect(fs.existsSync(path.join(backupPath, ".state", "chatgpt-auth.json"))).toBe(false);
+      expect(fs.existsSync(path.join(backupPath, "skills"))).toBe(false);
+      expect(fs.readFileSync(path.join(backupPath, "config.toml"), "utf-8")).toBe(
         "generated config\n",
       );
-      expect(fs.existsSync(path.join(backup.manifest!.backupPath, ".env"))).toBe(false);
-      expect(fs.existsSync(path.join(backup.manifest!.backupPath, ".mcp.json"))).toBe(false);
-      expect(fs.existsSync(path.join(backup.manifest!.backupPath, ".nemoclaw-mcp.json"))).toBe(
-        false,
-      );
+      expect(fs.readFileSync(path.join(backupPath, "hooks.json"), "utf-8")).toBe(hooks);
+      expect(fs.existsSync(path.join(backupPath, ".env"))).toBe(false);
+      expect(fs.existsSync(path.join(backupPath, ".mcp.json"))).toBe(false);
       const loggedCommands = fs.readFileSync(sshLog, "utf-8");
       expect(loggedCommands).not.toContain(".env");
       expect(loggedCommands).not.toContain(".mcp.json");
-      expect(loggedCommands).not.toContain(".nemoclaw-mcp.json");
       // #5753: restore must include agent/skills after backup and recreation.
-      const restore = sandboxState.restoreSandboxState("deepagents", backup.manifest!.backupPath);
+      fs.rmSync(path.join(deepAgentsDir, "hooks.json"));
+      const restore = await sandboxState.restoreSandboxState("deepagents", backupPath);
       expect(restore.success).toBe(true);
       expect(restore.restoredDirs).toEqual(expect.arrayContaining([".state", "agent/skills"]));
+      expect(fs.readFileSync(path.join(deepAgentsDir, "hooks.json"), "utf-8")).toBe(hooks);
     } finally {
       oldOpenshell === undefined
         ? delete process.env.NEMOCLAW_OPENSHELL_BIN

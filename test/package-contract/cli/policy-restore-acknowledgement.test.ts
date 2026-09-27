@@ -24,6 +24,9 @@ const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 const CLI_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "nemoclaw.js"));
 const POLICIES_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "policy", "index.js"));
 const REGISTRY_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "state", "registry.js"));
+const CROSS_PORT_PATH = JSON.stringify(
+  path.join(REPO_ROOT, "dist", "lib", "state", "registry", "cross-port.js"),
+);
 
 const RESTORED_MARKER = "restore-baseline-entry-reached";
 const USAGE = "Usage: nemoclaw <sandbox> policy restore <key> [--yes|-y] [--force] [--dry-run]";
@@ -33,9 +36,14 @@ function runPolicyRestore({ input, nonInteractive }: { input: string; nonInterac
   const scriptPath = path.join(tmpDir, "policy-restore-acknowledgement-check.js");
   const script = String.raw`
 const registry = require(${REGISTRY_PATH});
+const crossPort = require(${CROSS_PORT_PATH});
 const policies = require(${POLICIES_PATH});
 registry.getSandbox = (name) => (name === "test-sandbox" ? { name, agent: "hermes" } : null);
 registry.listSandboxes = () => ({ sandboxes: [{ name: "test-sandbox" }] });
+crossPort.findSandboxAcrossGatewayRoots = (name) =>
+  name === "test-sandbox"
+    ? { entry: { name, agent: "hermes" }, gatewayPort: null, registryFile: "test-registry" }
+    : null;
 policies.resolveSandboxBaselinePolicy = () => ({
   agent: "hermes",
   policyPath: "/policy-additions.yaml",

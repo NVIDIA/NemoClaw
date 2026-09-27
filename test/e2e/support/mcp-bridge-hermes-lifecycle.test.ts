@@ -151,10 +151,13 @@ describe("Hermes MCP live rollback inspection", () => {
 });
 
 describe("Hermes MCP managed configuration assertion", () => {
-  it("accepts a revision-scoped credential placeholder through the sandbox boundary (#10155)", async () => {
+  it("accepts a stable-handle credential placeholder through the sandbox boundary (#10155)", async () => {
     const temp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-config-assertion-"));
     const configPath = path.join(temp, "config.yaml");
-    writeHermesConfig(configPath, "Bearer openshell:resolve:env:v12_FAKE_MCP_SECRET");
+    writeHermesConfig(
+      configPath,
+      `Bearer openshell:resolve:env:s${"a".repeat(64)}_FAKE_MCP_SECRET`,
+    );
 
     try {
       await expect(

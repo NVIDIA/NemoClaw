@@ -2,9 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { CLI_NAME } from "../cli/branding";
-import type { ConfigObject } from "../security/credential-filter";
 import type { OperationalAuditEntry } from "../state/audit/operational";
-import { type InferenceApi, readOpenClawPrimaryRouteApi } from "./inference-route-api";
 import { InferenceSetError } from "./inference-set-error";
 import {
   runPortableOpenClawPairingApproval,
@@ -147,31 +145,25 @@ export interface InferenceMutation<T extends InferenceResultForGateway> {
 }
 
 // SOURCE_OF_TRUTH_REVIEW (OpenClaw post-switch convergence; gateway regressions
-// #4504 and #9527): OpenClaw 2026.6.10 adopted in #5595 hot-reloads model
-// identity but retains request shaping when the API family changes. NemoClaw
-// restarts only after the route, config, and integrity hash commit. Every
+// #4504 and #9527): generated OpenClaw config pins gateway.reload.mode to off.
+// NemoClaw restarts after every changed route, config, and integrity-hash commit
+// so the running gateway cannot retain the prior model or request shaping. Every
 // changed OpenClaw route then requires exact local device-scope convergence
 // before the command reports success. Both operations run outside the config
 // transition lock and inside the sandbox lifecycle lock. Unit coverage proves
-// restart, no-restart, scope convergence, redaction, audit-failure, and
+// restart, no-change behavior, scope convergence, redaction, audit-failure, and
 // post-commit recovery behavior. The openclaw-inference-switch live target
-// proves gateway health and forwarding. Remove the restart when the minimum
-// supported OpenClaw hot-reloads request shaping across API-family changes.
-// Remove pairing settlement when OpenClaw no longer requires a separate
-// allowlisted device-scope upgrade after a route change.
+// proves gateway health and forwarding. Remove the restart only when the
+// minimum supported OpenClaw applies all generated inference config changes
+// while reload mode remains off. Remove pairing settlement when OpenClaw no
+// longer requires a separate allowlisted device-scope upgrade after a route
+// change.
 
 export async function defaultInferenceGatewayRestart(
   sandboxName: string,
 ): Promise<GatewayRestartResult> {
   const recovery: typeof import("./sandbox/process-recovery") = require("./sandbox/process-recovery");
   return recovery.restartSandboxGateway(sandboxName, { quiet: true });
-}
-
-export function readPreviousOpenClawInferenceApi(
-  agentName: string,
-  config: ConfigObject,
-): InferenceApi | null {
-  return agentName === "openclaw" ? readOpenClawPrimaryRouteApi(config) : null;
 }
 
 function appendPostCommitInferenceAudit(
@@ -194,20 +186,14 @@ export function finalizeInferenceMutation<T extends InferenceResultForGateway>(
   options: {
     agentName: string;
     configChanged: boolean;
-    nextApi: string;
     openClawPairingTarget?: InferenceSetOpenClawPairingTarget;
-    previousApi: InferenceApi | null;
     result: T;
   },
   deps: Pick<InferenceGatewayRestartDeps, "appendAuditEntry" | "log">,
 ): InferenceMutation<T> {
-  const { agentName, configChanged, nextApi, openClawPairingTarget, previousApi, result } = options;
+  const { agentName, configChanged, openClawPairingTarget, result } = options;
   const openClawGatewayRestartRequired =
-    agentName === "openclaw" &&
-    configChanged &&
-    result.inSandboxConfigSynced &&
-    previousApi !== null &&
-    previousApi !== nextApi;
+    agentName === "openclaw" && configChanged && result.inSandboxConfigSynced;
   const openClawPairingConvergenceRequired =
     agentName === "openclaw" && configChanged && result.inSandboxConfigSynced;
 
@@ -265,7 +251,7 @@ export async function completeInferencePostCommit<T extends InferenceResultForGa
   const { result } = mutation;
   if (mutation.openClawGatewayRestartRequired) {
     deps.log(
-      `  Restarting the OpenClaw gateway in '${result.sandboxName}' to apply the new inference API family...`,
+      `  Restarting the OpenClaw gateway in '${result.sandboxName}' to apply the updated inference configuration...`,
     );
     let restartFailure: string | null = null;
     try {

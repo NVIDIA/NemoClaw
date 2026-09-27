@@ -6,7 +6,7 @@ import type { AgentStateDirectory, AgentStateDirectoryPath } from "./definition-
 type UnknownRecord = Record<string, unknown>;
 
 const CONTROL_CHAR_RE = /[\x00-\x1f\x7f]/;
-const STATE_DIRECTORY_FIELDS = new Set(["path", "prefix", "backup"]);
+const STATE_DIRECTORY_FIELDS = new Set(["path", "prefix", "backup", "clear_when_absent"]);
 const SAFE_LOCK_NAME_RE = /^[A-Za-z0-9._-]+$/;
 
 function isRecord(value: unknown): value is UnknownRecord {
@@ -43,7 +43,7 @@ function readStateDirectory(entry: unknown, index: number): AgentStateDirectory 
   const field = `state_dirs[${String(index)}]`;
   if (typeof entry === "string") {
     assertCanonicalPath(entry, field);
-    return { kind: "path", path: entry, backup: true };
+    return { kind: "path", path: entry, backup: true, clearWhenAbsent: true };
   }
   if (!isRecord(entry)) {
     throw new Error(`Agent manifest field '${field}' must be a string or object`);
@@ -63,20 +63,24 @@ function readStateDirectory(entry: unknown, index: number): AgentStateDirectory 
   if (entry.backup !== undefined && typeof entry.backup !== "boolean") {
     throw new Error(`Agent manifest field '${field}.backup' must be a boolean`);
   }
+  if (entry.clear_when_absent !== undefined && typeof entry.clear_when_absent !== "boolean") {
+    throw new Error(`Agent manifest field '${field}.clear_when_absent' must be a boolean`);
+  }
   const backup = entry.backup !== false;
+  const clearWhenAbsent = entry.clear_when_absent !== false;
   if (hasPath) {
     if (typeof path !== "string") {
       throw new Error(`Agent manifest field '${field}.path' must be a string`);
     }
     assertCanonicalPath(path, `${field}.path`);
-    return { kind: "path", path, backup };
+    return { kind: "path", path, backup, clearWhenAbsent };
   }
   if (typeof prefix !== "string" || !SAFE_LOCK_NAME_RE.test(prefix)) {
     throw new Error(
       `Agent manifest field '${field}.prefix' must contain only letters, digits, '.', '_', or '-'`,
     );
   }
-  return { kind: "prefix", prefix, backup };
+  return { kind: "prefix", prefix, backup, clearWhenAbsent };
 }
 
 export function readStateDirectories(record: UnknownRecord): AgentStateDirectory[] {

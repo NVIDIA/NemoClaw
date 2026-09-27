@@ -25,6 +25,8 @@ import type { TrustedShellCommand } from "./shell/trusted-command.ts";
  */
 
 export interface ShellProbeRunOptions {
+  /** Supply finite input, hold an empty pipe open, or default to immediate EOF. */
+  stdin?: "open-pipe" | { text: string };
   cwd?: string;
   env?: NodeJS.ProcessEnv;
   timeoutMs?: number;
@@ -97,6 +99,8 @@ export function resolveLiveE2eWorkloadSourceEnv(input: NodeJS.ProcessEnv): NodeJ
 
 export interface ShellProbeResult {
   command: string[];
+  startedAt?: string;
+  finishedAt?: string;
   /** Wall-clock command duration, persisted for CI bottleneck analysis. */
   durationMs?: number;
   exitCode: number | null;
@@ -258,6 +262,28 @@ export class ShellProbe {
       result: Omit<ShellProbeResult, "artifacts">,
     ): Promise<ShellProbeResult["artifacts"]> => {
       if (options.persistArtifacts === false) return { stdout: "", stderr: "", result: "" };
+      if (process.env.NEMOCLAW_E2E_COMMAND_EVIDENCE === "1") {
+        // Preserve completed command metadata through the existing remote log transport.
+        // Output bodies stay in redacted guest artifacts, outside this metadata-only stream.
+        const record = {
+          schemaVersion: 1,
+          artifactName: this.artifacts.redact(activityName).slice(0, 256),
+          command: result.command.map((argument) => this.artifacts.redact(argument)),
+          startedAt: result.startedAt,
+          finishedAt: result.finishedAt,
+          durationMs: result.durationMs,
+          exitCode: result.exitCode,
+          signal: result.signal,
+          timedOut: result.timedOut,
+        };
+        let encoded = this.artifacts.redact(JSON.stringify(record));
+        if (Buffer.byteLength(encoded) > 65_536) {
+          encoded = this.artifacts.redact(
+            JSON.stringify({ ...record, command: [], commandOmitted: "size-limit" }),
+          );
+        }
+        process.stderr.write(`NEMOCLAW_E2E_COMMAND ${encoded}\n`);
+      }
       return {
         stdout: await this.artifacts.writeText(`${artifactBase}.stdout.txt`, result.stdout),
         stderr: await this.artifacts.writeText(`${artifactBase}.stderr.txt`, result.stderr),
@@ -281,10 +307,11 @@ export class ShellProbe {
         cwd: options.cwd,
         detached: true,
         env: commandEnv,
-        stdio: ["ignore", "pipe", "pipe"],
+        stdio: [options.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
       },
     });
     const supervised = await superviseChild(child, {
+      stdin: typeof options.stdin === "object" ? options.stdin.text : undefined,
       timeoutMs,
       killGraceMs,
       signal,
@@ -308,25 +335,31 @@ export class ShellProbe {
 
     const redactedStdout = renderCapturedText(stdout);
     const redactedStderr = renderCapturedText(stderr);
-    const durationMs = Date.now() - startedAtMs;
-    if (supervised.spawnError) {
-      const redactedMessage = redactProbeText(errorMessage(supervised.spawnError));
+    const finishedAtMs = Date.now();
+    const timing = {
+      startedAt: new Date(startedAtMs).toISOString(),
+      finishedAt: new Date(finishedAtMs).toISOString(),
+      durationMs: finishedAtMs - startedAtMs,
+    };
+    const superviseError = supervised.spawnError ?? supervised.cleanupError;
+    if (superviseError) {
+      const redactedMessage = redactProbeText(errorMessage(superviseError));
       const stderrWithError = [redactedStderr, redactedMessage].filter(Boolean).join("\n");
       await writeArtifacts({
         command: redactedCommand,
-        durationMs,
-        exitCode: null,
-        signal: null,
+        ...timing,
+        exitCode: supervised.exitCode,
+        signal: supervised.signal,
         timedOut: supervised.timedOut,
         stdout: redactedStdout,
         stderr: stderrWithError,
       });
-      throw redactedError(supervised.spawnError, redactedMessage);
+      throw redactedError(superviseError, redactedMessage);
     }
 
     const result: Omit<ShellProbeResult, "artifacts"> = {
       command: redactedCommand,
-      durationMs,
+      ...timing,
       exitCode: supervised.exitCode,
       signal: supervised.signal,
       timedOut: supervised.timedOut,
