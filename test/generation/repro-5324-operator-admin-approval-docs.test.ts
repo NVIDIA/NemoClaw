@@ -31,6 +31,15 @@ describe("operator.admin manual approval documentation (#5324)", () => {
     expect(sectionEnd).toBeGreaterThan(sectionStart);
     expect(section).toContain("`operator.pairing`, `operator.read`, and `operator.write`");
     expect(section).toContain("It never automatically approves `operator.admin`.");
+    expect(section).toContain("bounded, best-effort approval attempts");
+    expect(section).toContain("If an allowlisted request remains pending");
+    expect(section).toContain(
+      "../reference/troubleshooting#an-openclaw-command-inside-the-sandbox-fails-with-scope-upgrade-pending-approval",
+    );
+    expect(section).toContain(
+      "Unknown clients and non-allowlisted scopes are never automatically approved.",
+    );
+    expect(section).not.toContain("No action needed.");
     expect(section).toMatch(/cron/i);
   });
 
