@@ -105,13 +105,32 @@ function applyPersistedAutomaticGatewayPort() {
   throw new Error(SAFE_AUTOMATIC_GATEWAY_PORT_DIAGNOSTIC);
 }
 
-try {
-  applyPersistedAutomaticGatewayPort();
-} catch (error) {
-  handleTopLevelError(error);
+// A bare version request needs only the build identity, so answer it before the
+// gateway-port resolver and the compiled CLI start any child process (#12002).
+function printVersionWithoutStartup() {
+  const args = process.argv.slice(2);
+  if (args.length !== 1 || !["--version", "-v", "version"].includes(args[0])) return false;
+  try {
+    const { CLI_NAME } = require("../dist/lib/cli/branding");
+    const { getVersion } = require("../dist/lib/core/version");
+    process.stdout.write(`${CLI_NAME} v${getVersion()}\n`);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
-if (!process.exitCode) {
+const versionPrinted = printVersionWithoutStartup();
+
+if (!versionPrinted) {
+  try {
+    applyPersistedAutomaticGatewayPort();
+  } catch (error) {
+    handleTopLevelError(error);
+  }
+}
+
+if (!versionPrinted && !process.exitCode) {
   try {
     topLevelLog = require("../dist/lib/cli/logger").log;
   } catch {
@@ -121,7 +140,7 @@ if (!process.exitCode) {
 
 let compiledCliPath;
 try {
-  if (!process.exitCode) compiledCliPath = require.resolve("../dist/nemoclaw");
+  if (!versionPrinted && !process.exitCode) compiledCliPath = require.resolve("../dist/nemoclaw");
 } catch (error) {
   // Resolving the entrypoint does not execute it, so MODULE_NOT_FOUND here
   // identifies the incomplete-install case without hiding a nested dependency failure.
