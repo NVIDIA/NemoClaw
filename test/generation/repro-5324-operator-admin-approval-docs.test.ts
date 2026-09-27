@@ -69,8 +69,12 @@ describe("operator.admin manual approval documentation (#5324)", () => {
     expect(troubleshootingSection).toMatch(
       /`connect` makes a bounded, best-effort\s+attempt to settle pending requests/,
     );
-    expect(troubleshootingSection).toMatch(/an eligible\s+request can remain pending/);
+    expect(troubleshootingSection).toMatch(/an eligible\s+request can remain\s+pending/);
     expect(troubleshootingSection).not.toContain("`connect` automatically settles");
+    expect(troubleshootingSection).toContain("does not authenticate that client metadata");
+    expect(troubleshootingSection).not.toMatch(
+      /authenticated device\s+identity|authoritative\s+device-identity binding/,
+    );
     expect(troubleshootingSection).toContain(
       "whose `requestId` exactly matches the native failure",
     );
