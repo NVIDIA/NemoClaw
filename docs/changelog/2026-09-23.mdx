@@ -108,3 +108,8 @@ It also strengthens host OS reporting and Windows WSL GPU verification.
   It rejects private or special-use DNS answers and address ranges.
   Related change: [PR #10781](https://github.com/NVIDIA/NemoClaw/pull/10781).
   Refer to [Manage MCP Servers](/user-guide/openclaw/manage-sandboxes/mcp-servers/manage-mcp-servers#change-endpoint-pins) for recovery and verification.
+- CoreDNS repair uses a responding Docker authority.
+  A stale Podman socket does not redirect repair from a working Docker CLI default.
+  On Linux, rootless Podman discovery also checks the socket under `XDG_RUNTIME_DIR`.
+  Related change: [PR #12348](https://github.com/NVIDIA/NemoClaw/pull/12348).
+  Refer to [Troubleshooting](/user-guide/openclaw/reference/troubleshooting#coredns-crashloop-after-onboarding) for CoreDNS recovery.
