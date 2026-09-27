@@ -12,6 +12,7 @@ The native Podman row of Hermes GPU startup installs its reviewed host prerequis
 It uses the pinned host-dependency action for `conmon`, `fuse-overlayfs`, `golang-github-containers-common`, `iptables`, `nftables`, `slirp4netns`, and `uidmap`.
 The container configuration package supplies Podman's standard image policy and seccomp files.
 The install refuses package removals, preserving the runner's Docker and containerd packages and their supplied runtime.
+The native Podman rows of GPU re-onboarding and Hermes Slack use the same pinned prerequisite setup before workspace preparation.
 
 - `.github/workflows/e2e.yaml` compares the commits before and after each push to `main`.
   It selects targets and jobs that own changed files, then publishes the `Relevant E2E` check.

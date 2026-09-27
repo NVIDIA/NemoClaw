@@ -416,6 +416,12 @@ jobs:
         with:
           packages: ${{ inputs.host_packages }}
 
+      - name: Install scoped native Podman host dependencies
+        if: ${{ inputs.runtime_provider == 'podman' && (inputs.target_id == 'gpu-double-onboard' || inputs.target_id == 'hermes-slack') }}
+        uses: NVIDIA/NemoClaw/.github/actions/host-dependency-setup@d511d704980d651909b52b18ee42fad41a017b7d
+        with:
+          packages: conmon fuse-overlayfs golang-github-containers-common iptables nftables slirp4netns uidmap
+
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
         with:

@@ -337,6 +337,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     undefined,
     "Authenticate to Docker Hub",
     "Install target host dependencies",
+    "Install scoped native Podman host dependencies",
     "Prepare E2E workspace",
     "Download reviewed OpenShell SDK archive",
     "Install reviewed OpenShell SDK archive without package credentials",
@@ -468,6 +469,27 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   }
 
   const prepare = requireStep(errors, workflowSteps, "Prepare E2E workspace");
+
+  const podmanDependencies = requireStep(
+    errors,
+    workflowSteps,
+    "Install scoped native Podman host dependencies",
+  );
+  if (
+    !isDeepStrictEqual(podmanDependencies, {
+      name: "Install scoped native Podman host dependencies",
+      if: "${{ inputs.runtime_provider == 'podman' && (inputs.target_id == 'gpu-double-onboard' || inputs.target_id == 'hermes-slack') }}",
+      uses: E2E_ACTION_PROVENANCE.hostDependencies.reference,
+      with: {
+        packages:
+          "conmon fuse-overlayfs golang-github-containers-common iptables nftables slirp4netns uidmap",
+      },
+    })
+  ) {
+    errors.push(
+      "standard E2E profile must scope reviewed native Podman host dependencies to GPU re-onboarding and Hermes Slack",
+    );
+  }
 
   const hostDependencies = requireStep(errors, workflowSteps, "Install target host dependencies");
   if (

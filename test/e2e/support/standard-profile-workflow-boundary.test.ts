@@ -417,6 +417,11 @@ describe("standard E2E execution profile", () => {
     )!;
     hostDependencies.uses =
       "NVIDIA/NemoClaw/.github/actions/host-dependency-setup@0000000000000000000000000000000000000000";
+    const podmanDependencies = steps.find(
+      (step) => step.name === "Install scoped native Podman host dependencies",
+    )!;
+    podmanDependencies.if = "${{ inputs.runtime_provider == 'podman' }}";
+    podmanDependencies.with!.packages = "runc";
     const prepareIndex = steps.findIndex((step) => step.name === "Prepare E2E workspace");
     const hostDependenciesIndex = steps.indexOf(hostDependencies);
     steps.splice(hostDependenciesIndex, 1);
@@ -449,6 +454,7 @@ describe("standard E2E execution profile", () => {
           "standard E2E profile Docker Hub auth-required must be guarded by trusted_main",
           "standard E2E profile must install only the planned host packages with the reviewed action",
           "standard E2E profile must install host dependencies before workspace prep",
+          "standard E2E profile must scope reviewed native Podman host dependencies to GPU re-onboarding and Hermes Slack",
           "standard E2E profile must run the planned catalogue target with guarded secrets",
           "standard E2E profile must set NEMOCLAW_E2E_EXPECTED_SHA",
           "standard E2E profile must set NEMOCLAW_E2E_CORRELATION_ID",
