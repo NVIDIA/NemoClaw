@@ -6,7 +6,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { REVIEWED_GATEWAY_UPGRADE_FIXTURE } from "../../../tools/e2e/openshell-gateway-upgrade-fixture.mts";
+import {
+  type ReviewedGatewayUpgradeFixture,
+  REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE,
+  REVIEWED_GATEWAY_UPGRADE_FIXTURE,
+  REVIEWED_GATEWAY_UPGRADE_FIXTURES,
+} from "../../../tools/e2e/openshell-gateway-upgrade-fixture.mts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import {
   OLD_INSTALLER_ADVISORY_AUDIT,
@@ -19,6 +24,7 @@ import {
 
 const temporaryDirectories: string[] = [];
 const HISTORICAL_BUILD_CONTEXT_MODULE = "src/lib/sandbox/build-context.ts";
+const SYNC_SUBPROCESS_TIMEOUT_MS = 30_000;
 
 function historicalReleaseCommitRef(nemoclawRef: string): string {
   return `refs/tags/${nemoclawRef}^{commit}`;
@@ -38,7 +44,7 @@ function assertHistoricalReleaseIdentity(identity: {
       "--end-of-options",
       historicalReleaseCommitRef(identity.nemoclawRef),
     ],
-    { encoding: "utf8" },
+    { encoding: "utf8", killSignal: "SIGKILL", timeout: SYNC_SUBPROCESS_TIMEOUT_MS },
   );
   expect(
     resolved.status,
@@ -120,7 +126,7 @@ function writeHistoricalFixture(advisoryAuditCount = 1): {
   return writeInstallerHarness(sourceRoot);
 }
 
-function extractReviewedHistoricalSource(): string {
+function extractReviewedHistoricalSource(fixture: ReviewedGatewayUpgradeFixture): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-old-upgrade-source-"));
   temporaryDirectories.push(root);
   const sourceRoot = path.join(root, "source");
@@ -128,23 +134,22 @@ function extractReviewedHistoricalSource(): string {
 
   const archive = spawnSync(
     "git",
-    [
-      "-C",
-      REPO_ROOT,
-      "archive",
-      historicalReleaseCommitRef(REVIEWED_GATEWAY_UPGRADE_FIXTURE.nemoclawRef),
-    ],
+    ["-C", REPO_ROOT, "archive", historicalReleaseCommitRef(fixture.nemoclawRef)],
     {
+      killSignal: "SIGKILL",
       maxBuffer: 128 * 1024 * 1024,
+      timeout: SYNC_SUBPROCESS_TIMEOUT_MS,
     },
   );
   expect(
     archive.status,
-    `Historical NemoClaw release ${REVIEWED_GATEWAY_UPGRADE_FIXTURE.nemoclawRef} could not be archived from its tag`,
+    `Historical NemoClaw release ${fixture.nemoclawRef} could not be archived from its tag`,
   ).toBe(0);
   const extract = spawnSync("tar", ["-xf", "-", "-C", sourceRoot], {
     input: archive.stdout,
+    killSignal: "SIGKILL",
     maxBuffer: 128 * 1024 * 1024,
+    timeout: SYNC_SUBPROCESS_TIMEOUT_MS,
   });
   expect(extract.status, extract.stderr.toString()).toBe(0);
   return sourceRoot;
@@ -162,12 +167,15 @@ const sourceRoot = process.argv[2];
 const temporaryRoot = process.argv[3];
 const outputPath = process.argv[4];
 const buildContext = await import(pathToFileURL(modulePath).href);
-const staged = buildContext.stageOptimizedSandboxBuildContext(sourceRoot, temporaryRoot);
+const buildContextExports = buildContext.default ?? buildContext;
+const staged = buildContextExports.stageOptimizedSandboxBuildContext(sourceRoot, temporaryRoot);
 writeFileSync(outputPath, staged.buildCtx);
 `;
   const result = spawnSync(
     process.execPath,
     [
+      "--import",
+      "tsx",
       "--no-warnings",
       "--input-type=module",
       "--eval",
@@ -177,23 +185,32 @@ writeFileSync(outputPath, staged.buildCtx);
       path.dirname(sourceRoot),
       outputPath,
     ],
-    { encoding: "utf8" },
+    {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+      killSignal: "SIGKILL",
+      timeout: SYNC_SUBPROCESS_TIMEOUT_MS,
+    },
   );
   expect(result.status, result.stderr).toBe(0);
   return fs.readFileSync(outputPath, "utf8");
 }
 
-function runReviewedHistoricalFixture(): string {
-  const fixture = writeInstallerHarness(extractReviewedHistoricalSource());
-  patchOldInstallerFixture(fixture.installer, REVIEWED_GATEWAY_UPGRADE_FIXTURE);
+function runReviewedHistoricalFixture(
+  profile: ReviewedGatewayUpgradeFixture = REVIEWED_GATEWAY_UPGRADE_FIXTURE,
+): string {
+  const fixture = writeInstallerHarness(extractReviewedHistoricalSource(profile));
+  patchOldInstallerFixture(fixture.installer, profile);
 
   const result = spawnSync("bash", [fixture.installer], {
     encoding: "utf8",
     env: {
       ...process.env,
       NEMOCLAW_OLD_OPENCLAW_ARCHIVE: fixture.archive,
-      NEMOCLAW_OLD_OPENCLAW_VERSION: REVIEWED_GATEWAY_UPGRADE_FIXTURE.openclawVersion,
+      NEMOCLAW_OLD_OPENCLAW_VERSION: profile.openclawVersion,
     },
+    killSignal: "SIGKILL",
+    timeout: SYNC_SUBPROCESS_TIMEOUT_MS,
   });
   expect(result.status, result.stderr).toBe(0);
 
@@ -207,7 +224,7 @@ function runReviewedHistoricalFixture(): string {
     "npm install -g --ignore-scripts --no-audit --no-fund --no-progress /tmp/nemoclaw-e2e-old-openclaw.tgz",
   );
   expect(dockerfile).toContain(
-    `test "$(openclaw --version | awk '{print $2}')" = "${REVIEWED_GATEWAY_UPGRADE_FIXTURE.openclawVersion}"`,
+    `test "$(openclaw --version | awk '{print $2}')" = "${profile.openclawVersion}"`,
   );
 
   const stagedContext = stageFrozenOptimizedBuildContext(fixture.sourceRoot);
@@ -221,12 +238,15 @@ afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) {
     fs.rmSync(directory, { force: true, recursive: true });
   }
-});
+}, 60_000);
 
 describe("historical OpenShell gateway upgrade installer adapter", () => {
-  it("binds the retained NemoClaw release tag to its reviewed commit (#10517)", () => {
-    expect(() => assertHistoricalReleaseIdentity(REVIEWED_GATEWAY_UPGRADE_FIXTURE)).not.toThrow();
-  });
+  it.each(REVIEWED_GATEWAY_UPGRADE_FIXTURES)(
+    "binds retained NemoClaw release $nemoclawRef to its reviewed commit (#11898)",
+    (fixture) => {
+      expect(() => assertHistoricalReleaseIdentity(fixture)).not.toThrow();
+    },
+  );
 
   it("rejects a retained NemoClaw release tag paired with another commit (#10517)", () => {
     expect(() =>
@@ -246,6 +266,14 @@ describe("historical OpenShell gateway upgrade installer adapter", () => {
     expect(dockerfile).toContain("audit signatures");
   }, 30_000);
 
+  it("accepts the v0.0.123 zero-advisory upgrade boundary (#11898)", () => {
+    const dockerfile = runReviewedHistoricalFixture(REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE);
+    expect(dockerfile).not.toContain("audit --omit=dev --audit-level=low");
+    expect(dockerfile).not.toContain(
+      "Skipping current advisory audit for the immutable historical mcporter lock",
+    );
+  }, 30_000);
+
   it("rejects an ambiguous historical advisory boundary", () => {
     const fixture = writeHistoricalFixture(2);
     patchOldInstallerFixture(fixture.installer, REVIEWED_GATEWAY_UPGRADE_FIXTURE);
@@ -258,6 +286,8 @@ describe("historical OpenShell gateway upgrade installer adapter", () => {
         NEMOCLAW_OLD_OPENCLAW_ARCHIVE: fixture.archive,
         NEMOCLAW_OLD_OPENCLAW_VERSION: REVIEWED_GATEWAY_UPGRADE_FIXTURE.openclawVersion,
       },
+      killSignal: "SIGKILL",
+      timeout: SYNC_SUBPROCESS_TIMEOUT_MS,
     });
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("historical mcporter advisory audits; expected 1");
@@ -276,6 +306,8 @@ describe("historical OpenShell gateway upgrade installer adapter", () => {
         NEMOCLAW_OLD_OPENCLAW_ARCHIVE: fixture.archive,
         NEMOCLAW_OLD_OPENCLAW_VERSION: REVIEWED_GATEWAY_UPGRADE_FIXTURE.openclawVersion,
       },
+      killSignal: "SIGKILL",
+      timeout: SYNC_SUBPROCESS_TIMEOUT_MS,
     });
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("found 0 historical mcporter advisory audits; expected 1");
@@ -296,11 +328,12 @@ describe("historical OpenShell gateway upgrade installer adapter", () => {
     expect(fs.readFileSync(fixture.installer, "utf8")).toBe(originalInstaller);
   });
 
-  it("binds the retained historical OpenClaw version to its reviewed archive", () => {
-    expect(reviewedOldOpenClawArchive(REVIEWED_GATEWAY_UPGRADE_FIXTURE.openclawVersion)).toBe(
-      REVIEWED_GATEWAY_UPGRADE_FIXTURE.openClawArchive,
-    );
-  });
+  it.each(REVIEWED_GATEWAY_UPGRADE_FIXTURES)(
+    "binds historical OpenClaw $openclawVersion to its reviewed archive",
+    (fixture) => {
+      expect(reviewedOldOpenClawArchive(fixture.openclawVersion)).toBe(fixture.openClawArchive);
+    },
+  );
 
   it("rejects an unreviewed historical OpenClaw version", () => {
     expect(() => reviewedOldOpenClawArchive("2026.5.28")).toThrow(/no reviewed archive pin/);

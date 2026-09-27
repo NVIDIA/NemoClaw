@@ -103,6 +103,8 @@ OpenShell withholds the credential before the binding is active and outside the 
 
 Credential keys must still be unique across providers attached to the same sandbox.
 NemoClaw rejects managed MCP credential-key reuse and requires a unique least-privilege token and environment key for each server.
+It also rejects credential-bound definitions for the same normalized endpoint URL when their credential bindings differ, because OpenShell cannot choose between credentials for otherwise indistinguishable requests.
+Entries that intentionally share one credential binding are not ambiguous; otherwise, keep one managed definition for that URL or use distinct endpoint URLs.
 
 A managed MCP provider created by an earlier NemoClaw build can have the profile-less `generic` type and cannot satisfy this binding contract.
 NemoClaw refuses to restart or rebuild that registration.
@@ -123,7 +125,9 @@ This does not expose the raw credential to the sandbox before the request is aut
 ## Agent Adapters
 
 <AgentOnly variant="openclaw">
-OpenClaw writes the native `openclaw.json` `mcp.servers` map in the sandbox. Older managed Mcporter entries are accepted only by the explicit `mcp migrate` path.
+OpenClaw writes the native `openclaw.json` `mcp.servers` map in the sandbox.
+Use `mcp migrate --apply` to convert older managed Mcporter entries to native configuration.
+To discard an entry instead, follow [Remove a Server](manage-mcp-servers#remove-a-server); removal requires proven registry ownership.
 </AgentOnly>
 <AgentOnly variant="hermes">
 Hermes writes managed HTTP entries under `/sandbox/.hermes/config.yaml`.
@@ -158,7 +162,8 @@ The command carries no MCP traffic or raw service credential, and its payload co
 </AgentOnly>
 <AgentOnly variant="openclaw">
 
-OpenClaw stores MCP servers in the native `openclaw.json` `mcp.servers` map. Run `nemoclaw <name> mcp migrate` before the first mutation when an older sandbox still contains a managed Mcporter entry. The migration preview calls out that materializing the native entry activates behavior OpenClaw previously did not load.
+Before converting an older managed Mcporter entry, run `nemoclaw <name> mcp migrate` to preview the change.
+The preview explains that creating the native entry activates behavior OpenClaw previously did not load.
 
 </AgentOnly>
 <AgentOnly variant="deepagents">

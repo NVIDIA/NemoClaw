@@ -78,8 +78,6 @@ const standardRouting = {
   "mcp-bridge-deepagents": "ubuntu-latest",
   "mcp-bridge-hermes": "ubuntu-latest",
   "mcp-bridge-openclaw": "ubuntu-latest",
-  "rebuild-hermes": "ubuntu-latest",
-  "rebuild-hermes-stale-base": "ubuntu-latest",
   "security-posture-hermes": "ubuntu-latest",
 };
 
@@ -143,8 +141,6 @@ describe("larger-runner workflow routing boundary", () => {
       "hermes-inference-switch": largerRunner,
       "mcp-bridge-deepagents": largerRunner,
       "mcp-bridge-hermes": largerRunner,
-      "rebuild-hermes": largerRunner,
-      "rebuild-hermes-stale-base": largerRunner,
       "security-posture-hermes": largerRunner,
     });
   });

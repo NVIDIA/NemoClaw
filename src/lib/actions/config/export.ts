@@ -8,7 +8,6 @@ import {
   type NemoClawConfigDocumentUid,
 } from "../../config/model";
 import { renderCanonicalNemoClawConfig } from "../../config/canonical";
-import { validateNemoClawConfig } from "../../config/schema";
 import type { NonEmptyExportFindings } from "../../domain/config/export-evidence";
 import { buildExportConfig } from "../../domain/config/export-document";
 import type {
@@ -86,12 +85,10 @@ export async function runConfigExport(
       },
     };
   }
-  const config = validateNemoClawConfig(
-    buildExportConfig(observation.source, {
-      documentName: request.documentName,
-      documentUid: dependencies.createDocumentUid(),
-    }),
-  );
+  const config = buildExportConfig(observation.source, {
+    documentName: request.documentName,
+    documentUid: dependencies.createDocumentUid(),
+  });
   const rendered = renderCanonicalNemoClawConfig(config);
 
   if (request.target.kind === "stdout") {

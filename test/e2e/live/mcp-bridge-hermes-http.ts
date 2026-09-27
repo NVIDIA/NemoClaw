@@ -2,7 +2,71 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { shellQuote } from "../../../src/lib/core/shell-quote";
+import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import type { HostCliClient } from "../fixtures/clients/host.ts";
+import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { redactString } from "../fixtures/redaction.ts";
+import { RuntimeProviderPrerequisite } from "../fixtures/runtime-provider.ts";
+
+/** Capture supervisor evidence even when sandbox exec is unavailable; never replace the failure. */
+export async function captureHermesMcpLifecycleFailure(
+  host: Pick<HostCliClient, "command" | "openshellCommandPath">,
+  result: { exitCode: number | null; timedOut: boolean },
+  options: {
+    agent: string;
+    sandboxName: string;
+    redactionValues: string[];
+    operation: "restart" | "remove";
+  },
+): Promise<void> {
+  if (options.agent !== "hermes" || (result.exitCode === 0 && !result.timedOut)) return;
+  await host
+    .command(
+      host.openshellCommandPath,
+      ["logs", options.sandboxName, "-n", "200", "--source", "all", "--since", "2m"],
+      {
+        artifactName: `hermes-mcp-${options.operation}-failure-supervisor-logs`,
+        env: buildAvailabilityProbeEnv(),
+        redactionValues: options.redactionValues,
+        captureLimitBytes: 32_768,
+        timeoutMs: 30_000,
+      },
+    )
+    .catch(() => undefined);
+  // OpenShell's event stream does not include the Hermes entrypoint's stderr.
+  // Read the stopped container through the existing runtime owner instead of
+  // depending on an exec service that died with the supervisor.
+  try {
+    const runtime = new RuntimeProviderPrerequisite(host);
+    const diagnosticOptions = {
+      redactionValues: options.redactionValues,
+      captureLimitBytes: 32_768,
+      timeoutMs: 30_000,
+    };
+    const prefix = `hermes-mcp-${options.operation}-failure`;
+    const containerId = await runtime.resolveSandboxResourceHandle(options.sandboxName, {
+      ...diagnosticOptions,
+      artifactName: `${prefix}-container-identity`,
+    });
+    await Promise.allSettled([
+      runtime.command(
+        [
+          "inspect",
+          "--format",
+          "{{.State.Status}}\t{{.State.OOMKilled}}\t{{.State.ExitCode}}\t{{.State.FinishedAt}}",
+          containerId,
+        ],
+        { ...diagnosticOptions, artifactName: `${prefix}-container-state` },
+      ),
+      runtime.command(["logs", "--tail", "200", "--since", "3m", containerId], {
+        ...diagnosticOptions,
+        artifactName: `${prefix}-container-logs`,
+      }),
+    ]);
+  } catch {
+    // Failure-only evidence must preserve the original lifecycle assertion.
+  }
+}
 
 export const HERMES_MCP_HTTP_STATUS_MARKER = "NEMOCLAW_HERMES_MCP_HTTP_STATUS=";
 export const HERMES_MCP_RESULT_TOKEN_MARKER = "NEMOCLAW_HERMES_MCP_RESULT_TOKEN=";
@@ -130,4 +194,27 @@ export function assertHermesMcpHttpResponse(
   if (result.stdout !== "") {
     throw new Error("Hermes real MCP tool call success path emitted response contents");
   }
+}
+
+export async function readHermesGatewayIdentity(
+  sandbox: SandboxClient,
+  sandboxName: string,
+  artifactName: string,
+) {
+  return sandbox.execShell(
+    sandboxName,
+    trustedSandboxShellScript(
+      [
+        "set -eu",
+        "/usr/bin/python3 -I -S - <<'PY'",
+        "import json, pathlib",
+        "record = json.loads(pathlib.Path('/sandbox/.hermes/runtime/gateway.pid').read_text())",
+        "pid = record if isinstance(record, int) else record['pid']",
+        "fields = pathlib.Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()",
+        "print(json.dumps({'pid': pid, 'start_time': int(fields[19])}, sort_keys=True))",
+        "PY",
+      ].join("\n"),
+    ),
+    { artifactName, env: buildAvailabilityProbeEnv(), timeoutMs: 60_000 },
+  );
 }

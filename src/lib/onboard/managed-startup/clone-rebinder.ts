@@ -154,6 +154,7 @@ function currentInference(
   return {
     routeProvider: resolved.providerKey,
     upstreamProvider: provider,
+    servingPreset: profile.inference?.servingPreset ?? null,
     model,
     routedBaseUrl: resolved.inferenceBaseUrl,
     upstreamEndpointUrl,

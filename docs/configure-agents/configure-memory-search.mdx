@@ -4,7 +4,7 @@
 title: "Configure Memory Search"
 sidebar-title: "Configure Memory Search"
 description: "Configure OpenClaw memory search to use an embedding model from a host Ollama container."
-description-agent: "Configures OpenClaw memory search with a host Ollama embedding provider, including policy access, provider settings, index rebuild, and verification. Use when setting agents.defaults.memorySearch.provider."
+description-agent: "Configures OpenClaw memory search with a host Ollama embedding provider, including policy access, plugin activation, model selection, index rebuild, and verification. Use when setting memory.search.provider and memory.search.model."
 keywords: ["openclaw memory search", "ollama embeddings", "qwen3 embedding"]
 agent-variants: ["openclaw"]
 content:
@@ -12,62 +12,107 @@ content:
 ---
 
 Configure OpenClaw memory search to use an embedding model from a host Ollama container.
-This setup lets another local server, such as managed vLLM, continue to serve the chat model.
+The embedding provider is separate from your chat-model provider.
 
 ## Prepare the Embedding Server
 
-Before you continue, ensure that a host Ollama container is running on port `11434` and has the `qwen3-embedding:4b` model available.
+Before you continue, ensure that a separate host Ollama container is reachable on port `8000` and has the `qwen3-embedding:0.6b` model available.
 This procedure does not start the container or pull the model.
+Port `8000` must be unused before you start that container; do not replace an existing vLLM, NIM, or other inference service.
+Keep the managed Ollama daemon and authenticated proxy on their existing ports, normally `11434` and `11435`.
 
-The sandbox reaches the container through `http://host.openshell.internal:11434`.
-Keep the container bound to the local host or a reviewed host interface.
-Port `11434` is commonly unauthenticated.
-Allow it only from the OpenShell Docker bridge or an equivalent local container network.
+The sandbox reaches the container through `http://host.openshell.internal:8000`.
+Bind its published port to the Docker bridge or another reviewed interface reachable from the sandbox.
+Allow access only from that local container network; Ollama endpoints are commonly unauthenticated.
+Do not change the managed Ollama daemon's loopback binding to follow this example.
 
 ## Permit the Bridge Route
 
 The `local-inference` policy preset permits the sandbox to reach the host bridge.
+If `NEMOCLAW_VLLM_PORT` differs from `8000`, the preset replaces its `8000` route with that port.
+In that case, [add a custom preset](../network-policy/configure-policies/create-custom-policy-presets) for `host.openshell.internal:8000` that permits the embedding server's required GET and POST routes before running the probe.
 Apply the preset, then verify the Ollama API from the sandbox.
 
 ```bash
 nemoclaw my-assistant policy add local-inference --yes
-nemoclaw my-assistant exec -- curl -fsS http://host.openshell.internal:11434/api/tags
+nemoclaw my-assistant exec -- curl -fsS http://host.openshell.internal:8000/api/tags
 ```
 
-Continue only when the returned JSON `models` array contains an entry whose `name` is `qwen3-embedding:4b`.
+Continue only when the returned JSON `models` array contains an entry whose `name` is `qwen3-embedding:0.6b`.
 
 ## Configure the Embedding Provider
 
-Define an Ollama provider, select it for memory search, and restart OpenClaw.
+Define an Ollama provider, enable the native plugin, and select the memory provider and model.
+OpenClaw 2026.9.1 uses `memory.search` for shared memory settings.
+Listing an embedding model under `models.providers` does not select it for memory search.
+The following settings apply to every agent without a per-agent override.
+To configure only `main`, use `agents.entries.main.memory.search` instead of `memory.search` in these commands.
+Existing per-agent overrides take precedence; update them if they disable search or select another provider or model.
 
 ```bash
 nemoclaw my-assistant config set \
   --key models.providers.ollama-mem \
-  --value '{"api":"ollama","baseUrl":"http://host.openshell.internal:11434","apiKey":"x","models":[{"id":"qwen3-embedding:4b","name":"Qwen3 embedding 4B"}]}' \
+  --value '{"api":"ollama","baseUrl":"http://host.openshell.internal:8000","apiKey":"ollama-local","models":[{"id":"qwen3-embedding:0.6b","name":"Qwen3 Embedding 0.6B"}]}' \
+  --config-accept-new-path
+
+nemoclaw my-assistant exec -- openclaw plugins enable ollama
+
+nemoclaw my-assistant config set \
+  --key memory.search.enabled \
+  --value true \
   --config-accept-new-path
 
 nemoclaw my-assistant config set \
-  --key agents.defaults.memorySearch.provider \
+  --key memory.search.provider \
   --value ollama-mem \
+  --config-accept-new-path
+
+nemoclaw my-assistant config set \
+  --key memory.search.model \
+  --value qwen3-embedding:0.6b \
+  --config-accept-new-path
+
+nemoclaw my-assistant config set \
+  --key memory.search.fallback \
+  --value none \
   --config-accept-new-path \
   --restart
 ```
 
+`ollama-local` is a non-secret placeholder; it does not authenticate an otherwise protected server.
+Disabling fallback keeps verification on the selected embedding provider.
+The restart activates the plugin and memory settings.
 The host-side `config set` command accepts the bridge URL only for supported provider `baseUrl` fields.
 Generic configuration keys and other private URL shapes remain rejected.
 
 ## Rebuild and Verify the Index
 
-An existing index can report an identity mismatch after its embedding provider changes.
-Inspect the index, rebuild it, and verify the configured memory provider.
+An existing index can report an identity mismatch after its embedding provider or model changes.
+Reindexing replaces the derived index and sends indexed memory text to the configured embedding server.
+It preserves the source memory files.
+Rebuild the index, then probe the embedding provider and vector store:
 
 ```bash
-nemoclaw my-assistant exec -- openclaw memory status --index
-nemoclaw my-assistant exec -- openclaw memory index --force
-nemoclaw my-assistant exec -- openclaw memory status --deep
+nemoclaw my-assistant exec -- openclaw memory index --agent main --force
+nemoclaw my-assistant exec -- openclaw memory status --agent main --deep --json
 ```
 
-Add `--agent <id>` to each `openclaw memory` command for a non-default OpenClaw agent.
+For each selected agent, confirm that `embeddingProbe.ok` and `status.vector.semanticAvailable` are `true`.
+Confirm that `status.model` is `qwen3-embedding:0.6b` and `status.vector.index.state` is `complete` for a nonempty corpus.
+An empty memory corpus produces no search results; add a memory before testing retrieval.
+
+Managed startup exports `SQLITE_TMPDIR` to standalone OpenClaw commands.
+Search for a fact from an existing memory, using different wording to check semantic retrieval.
+
+```bash
+nemoclaw my-assistant exec -- openclaw memory search --agent main \
+  --query 'a description of a fact saved in your memory' --json
+```
+
+Confirm that the returned file and snippet contain the expected fact.
+Results report `vectorScore` and `textScore`; a positive vector score with a zero text score demonstrates retrieval without keyword contribution.
+Replace `main` with your intended agent ID in each memory command.
+Omitting `--agent` from index or status processes every configured agent.
 
 ## Related Topics
 

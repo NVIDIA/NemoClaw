@@ -65,10 +65,10 @@ describe("state-file restore target contract", () => {
         { path: "./config.toml", strategy: "copy" as const },
       ],
     },
-  ])("rejects repeated backup state-file $description", ({ stateFiles }) => {
+  ])("rejects repeated backup state-file $description", async ({ stateFiles }) => {
     const backupPath = writeBackup({ stateFiles });
 
-    const result = restoreRecreatedSandboxState("alpha", backupPath, {
+    const result = await restoreRecreatedSandboxState("alpha", backupPath, {
       targetAgentType: "langchain-deepagents-code",
     });
 
@@ -77,12 +77,12 @@ describe("state-file restore target contract", () => {
     expect(result.failedFiles).toContain("config.toml");
   });
 
-  it("rejects a backup agent that does not match the recreated target", () => {
+  it("rejects a backup agent that does not match the recreated target", async () => {
     const backupPath = writeBackup({
       stateFiles: [{ path: "config.toml", strategy: "copy" }],
     });
 
-    const result = restoreRecreatedSandboxState("alpha", backupPath, {
+    const result = await restoreRecreatedSandboxState("alpha", backupPath, {
       targetAgentType: "openclaw",
     });
 
@@ -91,12 +91,12 @@ describe("state-file restore target contract", () => {
     expect(result.failedFiles).toEqual(["config.toml"]);
   });
 
-  it("rejects a stale backup file that the target manifest does not declare", () => {
+  it("rejects a stale backup file that the target manifest does not declare", async () => {
     const backupPath = writeBackup({
       stateFiles: [{ path: "stale.toml", strategy: "copy" }],
     });
 
-    const result = restoreRecreatedSandboxState("alpha", backupPath, {
+    const result = await restoreRecreatedSandboxState("alpha", backupPath, {
       targetAgentType: "langchain-deepagents-code",
     });
 
@@ -105,12 +105,12 @@ describe("state-file restore target contract", () => {
     expect(result.failedFiles).toEqual(["stale.toml"]);
   });
 
-  it("rejects a backup state-file strategy that differs from the target manifest", () => {
+  it("rejects a backup state-file strategy that differs from the target manifest", async () => {
     const backupPath = writeBackup({
       stateFiles: [{ path: "config.toml", strategy: "sqlite_backup" }],
     });
 
-    const result = restoreRecreatedSandboxState("alpha", backupPath, {
+    const result = await restoreRecreatedSandboxState("alpha", backupPath, {
       targetAgentType: "langchain-deepagents-code",
     });
 
@@ -119,13 +119,13 @@ describe("state-file restore target contract", () => {
     expect(result.failedFiles).toEqual(["config.toml"]);
   });
 
-  it("rejects a backup state directory that differs from the current target manifest", () => {
+  it("rejects a backup state directory that differs from the current target manifest", async () => {
     const backupPath = writeBackup({
       dir: "/sandbox/.unexpected",
       stateFiles: [{ path: "config.toml", strategy: "copy" }],
     });
 
-    const result = restoreRecreatedSandboxState("alpha", backupPath, {
+    const result = await restoreRecreatedSandboxState("alpha", backupPath, {
       targetAgentType: "langchain-deepagents-code",
     });
 

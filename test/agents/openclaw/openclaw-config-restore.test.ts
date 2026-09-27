@@ -132,14 +132,14 @@ function staleBackupConfig(): string {
   );
 }
 
-function restoreOpenClawStateFileWithFakeSsh(options: {
+async function restoreOpenClawStateFileWithFakeSsh(options: {
   backupContents: string;
   currentContents: string;
   currentReadMode?: CurrentOpenClawReadMode;
-}): {
-  restore: ReturnType<SandboxStateModule["restoreSandboxState"]>;
+}): Promise<{
+  restore: Awaited<ReturnType<SandboxStateModule["restoreSandboxState"]>>;
   currentContents: string;
-} {
+}> {
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-restore-fixture-"));
   const oldPath = process.env.PATH;
   const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
@@ -194,7 +194,7 @@ process.exit(0);
     const { backupPath } = writeBackup("alpha", "2026-06-10T20-00-00-000Z");
     fs.writeFileSync(path.join(backupPath, "openclaw.json"), options.backupContents);
 
-    const restore = sandboxState.restoreSandboxState("alpha", backupPath);
+    const restore = await sandboxState.restoreSandboxState("alpha", backupPath);
     return {
       restore,
       currentContents: fs.readFileSync(path.join(openclawDir, "openclaw.json"), "utf-8"),
@@ -211,8 +211,8 @@ process.exit(0);
 }
 
 describe("OpenClaw config restore failure modes", () => {
-  it("fails closed when the current rebuilt openclaw.json cannot be read", () => {
-    const { restore, currentContents } = restoreOpenClawStateFileWithFakeSsh({
+  it("fails closed when the current rebuilt openclaw.json cannot be read", async () => {
+    const { restore, currentContents } = await restoreOpenClawStateFileWithFakeSsh({
       backupContents: staleBackupConfig(),
       currentContents: freshRuntimeConfig(),
       currentReadMode: "missing",
@@ -225,8 +225,8 @@ describe("OpenClaw config restore failure modes", () => {
     expect(JSON.parse(currentContents).channels.slack).toBeUndefined();
   });
 
-  it("fails closed when the current rebuilt openclaw.json is invalid JSON", () => {
-    const { restore, currentContents } = restoreOpenClawStateFileWithFakeSsh({
+  it("fails closed when the current rebuilt openclaw.json is invalid JSON", async () => {
+    const { restore, currentContents } = await restoreOpenClawStateFileWithFakeSsh({
       backupContents: staleBackupConfig(),
       currentContents: freshRuntimeConfig(),
       currentReadMode: "invalid-json",
@@ -241,8 +241,8 @@ describe("OpenClaw config restore failure modes", () => {
     );
   });
 
-  it("fails closed when the backed-up openclaw.json is invalid JSON", () => {
-    const { restore, currentContents } = restoreOpenClawStateFileWithFakeSsh({
+  it("fails closed when the backed-up openclaw.json is invalid JSON", async () => {
+    const { restore, currentContents } = await restoreOpenClawStateFileWithFakeSsh({
       backupContents: "{ invalid backup json",
       currentContents: freshRuntimeConfig(),
     });

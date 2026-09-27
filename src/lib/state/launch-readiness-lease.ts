@@ -104,7 +104,7 @@ export interface LaunchReadinessUnsafeAuthorityEvidence {
   path: string;
   expectedUid: number;
   observedUid: number | null;
-  expectedMode: "0600" | "0700";
+  expectedMode: "0600" | "0700" | "no group/other write bits";
   observedMode: string | null;
   operation: "inspect" | "write";
   errorCode: string | null;
@@ -184,7 +184,15 @@ interface SecureDirectory {
 
 class MissingStoreError extends Error {}
 class UnsupportedAuthorityError extends Error {}
-class UnsafeReceiptError extends Error {}
+class UnsafeReceiptError extends Error {
+  constructor(
+    readonly diagnosticCode: string | null = null,
+    readonly directoryPath?: string,
+    readonly privateDirectory = true,
+  ) {
+    super();
+  }
+}
 class MalformedReceiptError extends Error {}
 
 export class LaunchReadinessFenceError extends Error {
@@ -797,8 +805,7 @@ function ensureSecureDirectory(
         throw new MissingStoreError();
       }
       if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") {
-        if (error instanceof UnsafeReceiptError) throw error;
-        throw new UnsafeReceiptError();
+        throw new UnsafeReceiptError(boundedErrorCode(error), candidate, privateDirectory);
       }
       if (index === 0) throw new UnsafeReceiptError();
       try {
@@ -819,9 +826,11 @@ function ensureSecureDirectory(
   let fd: number;
   try {
     fd = fs.openSync(directoryPath, fs.constants.O_RDONLY | noFollow | directoryOnly);
-  } catch {
-    throw new UnsafeReceiptError();
+  } catch (error) {
+    throw new UnsafeReceiptError(boundedErrorCode(error), directoryPath);
   }
+  let inspectedPath = directoryPath;
+  let privateDirectory = true;
   try {
     const descriptorStat = fs.fstatSync(fd);
     const pathStat = fs.lstatSync(directoryPath);
@@ -829,6 +838,8 @@ function ensureSecureDirectory(
     assertSecureDirectoryStat(pathStat, context.uid, true);
     if (!sameIdentity(descriptorStat, pathStat)) throw new UnsafeReceiptError();
     for (const ancestor of ancestors) {
+      inspectedPath = ancestor.path;
+      privateDirectory = ancestor.privateDirectory;
       const current = fs.lstatSync(ancestor.path);
       assertSecureDirectoryStat(current, context.uid, ancestor.privateDirectory);
       if (!sameIdentity(ancestor.stat, current)) throw new UnsafeReceiptError();
@@ -836,16 +847,23 @@ function ensureSecureDirectory(
     return { fd, stat: descriptorStat, path: directoryPath, ancestors };
   } catch (error) {
     fs.closeSync(fd);
-    if (error instanceof UnsafeReceiptError) throw error;
-    throw new UnsafeReceiptError();
+    throw new UnsafeReceiptError(boundedErrorCode(error), inspectedPath, privateDirectory);
   }
 }
 
 function revalidateDirectory(context: BaseContext, directory: SecureDirectory): void {
   for (const ancestor of directory.ancestors) {
-    const current = fs.lstatSync(ancestor.path);
-    assertSecureDirectoryStat(current, context.uid, ancestor.privateDirectory);
-    if (!sameIdentity(ancestor.stat, current)) throw new UnsafeReceiptError();
+    try {
+      const current = fs.lstatSync(ancestor.path);
+      assertSecureDirectoryStat(current, context.uid, ancestor.privateDirectory);
+      if (!sameIdentity(ancestor.stat, current)) throw new UnsafeReceiptError();
+    } catch (error) {
+      throw new UnsafeReceiptError(
+        boundedErrorCode(error),
+        ancestor.path,
+        ancestor.privateDirectory,
+      );
+    }
   }
   const descriptorStat = fs.fstatSync(directory.fd);
   const pathStat = fs.lstatSync(directory.path);
@@ -957,14 +975,15 @@ function proveWritable(context: BaseContext, directory: SecureDirectory, filePat
     revalidateDirectory(context, directory);
     fs.unlinkSync(candidate);
     fs.fsyncSync(directory.fd);
-  } catch {
+  } catch (error) {
     if (fd !== null) fs.closeSync(fd);
     try {
       fs.unlinkSync(candidate);
     } catch {
       // The store is already classified unsafe; cleanup is best effort.
     }
-    throw new UnsafeReceiptError();
+    if (error instanceof UnsafeReceiptError) throw error;
+    throw new UnsafeReceiptError(boundedErrorCode(error));
   }
 }
 
@@ -1086,6 +1105,7 @@ type AuthorityInspection =
     };
 
 function boundedErrorCode(error: unknown): string | null {
+  if (error instanceof UnsafeReceiptError) return error.diagnosticCode;
   const code = error instanceof Error && "code" in error ? error.code : null;
   return typeof code === "string" && /^[A-Z0-9_]{1,32}$/.test(code) ? code : null;
 }
@@ -1098,6 +1118,13 @@ function unsafePathEvidence(
   operation: LaunchReadinessUnsafeAuthorityEvidence["operation"],
   error: unknown,
 ): LaunchReadinessUnsafeAuthorityEvidence {
+  if (error instanceof UnsafeReceiptError && error.directoryPath) {
+    path = error.directoryPath;
+    resource = resource.startsWith("runtime")
+      ? "runtime authority directory"
+      : "persistent receipt directory";
+    expectedMode = error.privateDirectory ? "0700" : "no group/other write bits";
+  }
   try {
     // This post-failure snapshot is diagnostic only; a concurrent repair can make it newer than the rejected state.
     const stat = fs.lstatSync(path);
@@ -1111,11 +1138,13 @@ function unsafePathEvidence(
       operation,
       errorCode: boundedErrorCode(error),
       repair:
+        operation === "inspect" &&
         stat.isFile() &&
         !stat.isSymbolicLink() &&
         stat.nlink === 1 &&
         stat.uid === expectedUid &&
-        expectedMode === "0600"
+        expectedMode === "0600" &&
+        (stat.mode & 0o777) !== 0o600
           ? "chmod"
           : "manual",
     };

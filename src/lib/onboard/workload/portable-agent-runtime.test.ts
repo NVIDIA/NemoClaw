@@ -18,11 +18,12 @@ const IMAGE_DIGEST = `sha256:${"a".repeat(64)}` as const;
 
 function hermesContract(): PortableAgentRuntimeContractV1 {
   const agent = loadAgent("hermes");
+  expect(agent.expectedVersion).not.toBeNull();
   return {
     contractVersion: 1,
     capabilityContractVersion: 1,
     agent: "hermes",
-    agentVersion: "0.20.6",
+    agentVersion: agent.expectedVersion as string,
     agentDefinitionSha256: portableAgentDefinitionSha256(agent),
     platform: "linux/amd64",
     image: {

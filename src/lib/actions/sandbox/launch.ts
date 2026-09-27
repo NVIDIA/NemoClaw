@@ -190,7 +190,7 @@ async function inspectLaunchReadinessForLaunch(
   let active = requireHermesPortableActiveLifecycleAuthority(sandboxName, undefined, lifecycleDeps);
   let qualified = qualifyHermesPortableAcceptedReadinessAuthority(sandboxName);
   if (qualified.kind === "requalification-required") {
-    const requalified = requalifyPortableAgentSandboxAuthority(sandboxName, lifecycleDeps);
+    const requalified = await requalifyPortableAgentSandboxAuthority(sandboxName, lifecycleDeps);
     if (requalified.kind === "not-installed" || requalified.kind === "not-hermes") {
       throw new Error("Hermes portable lifecycle authority changed before launch readiness.");
     }
@@ -362,7 +362,7 @@ async function startAgentWithPortableAuthority(
     acceptedHermesAuthority.command.assertCurrent();
     return startHermesPortableAgent(gatewayName, acceptedHermesAuthority.command);
   }
-  const recovery = recoverPortableDemoSandboxLifecycleForConnect(
+  const recovery = await recoverPortableDemoSandboxLifecycleForConnect(
     sandboxName,
     registered,
     gatewayName,

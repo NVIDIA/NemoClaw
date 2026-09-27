@@ -32,6 +32,7 @@ import {
   type RebuildLiveState,
   type RebuildSandboxEntry,
   resolveRebuildLiveState,
+  restoreRecordedRebuildGatewayStateDir,
 } from "./rebuild-flow-helpers";
 import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
 import {
@@ -56,6 +57,7 @@ import {
 import {
   pinRebuildTargetGatewayForReadiness,
   prepareRebuildTargetPreflights,
+  type RebuildPreparedTarget,
 } from "./rebuild-preflight-target-phase";
 import { disposePreparedBuildContext } from "./rebuild-prepared-image-context";
 import {
@@ -74,6 +76,7 @@ export interface RebuildPreflightPhaseResult {
   targetConfig: RebuildTargetConfig;
   recreateOptions: RebuildRecreateOnboardOpts;
   messagingPlan: SandboxMessagingPlan | null;
+  recheckMessagingConflicts: RebuildPreparedTarget["recheckMessagingConflicts"];
   baseImagePreflight: RebuildAgentBaseImagePreflight;
   liveState: RebuildLiveState;
   recoveryManifest: RebuildManifest | null;
@@ -144,6 +147,7 @@ export async function runRebuildPreflightPhase(
   const sandboxEntry = getRebuildSandboxEntryOrBail(sandboxName, bail);
   if (!sandboxEntry) return null;
   if (blockRebuildOnRetainedSandboxRecovery(sandboxEntry, bail)) return null;
+  restoreRecordedRebuildGatewayStateDir(sandboxEntry);
   const confirmedEntrySnapshot = JSON.stringify(sandboxEntry);
   const allowLegacyManagedImageRecovery =
     opts.recoveryManifest !== undefined && opts.allowLegacyManagedImageRecovery === true;
@@ -198,9 +202,14 @@ export async function runRebuildPreflightPhase(
   }
   const activeSessionCount = countActiveSandboxSessionsForRebuild(sandboxName);
   const versionCheck = await runRebuildGatewayIntentPreflight({
-    checkGatewaySchema: () =>
+    checkGatewaySchema: async () =>
       isDcodeRebuildAgent(rebuildAgent) ||
-      checkRebuildGatewaySchemaPreflight(sandboxName, sandboxEntry, bail, mcpRuntimeSelection),
+      (await checkRebuildGatewaySchemaPreflight(
+        sandboxName,
+        sandboxEntry,
+        bail,
+        mcpRuntimeSelection,
+      )),
     confirmIntent: () =>
       confirmRebuildIntent(
         sandboxName,

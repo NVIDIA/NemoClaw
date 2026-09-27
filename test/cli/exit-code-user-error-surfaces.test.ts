@@ -267,6 +267,7 @@ describe("onboard dashboard-port exhaustion exits non-zero (#5974)", () => {
           "# openshell capabilities: request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods",
           'if [ "${1:-}" = status ]; then printf "No active gateway\\n"; exit 1; fi',
           'if [ "${1:-}" = gateway ] && [ "${2:-}" = info ]; then printf "No gateway metadata found\\n"; exit 1; fi',
+          'if [ "${1:-}" = gateway ] && [ "${2:-}" = list ]; then printf "[]\\n"; exit 0; fi',
           'case "${1:-}" in',
           '  -V|--version) printf "%s 0.0.116\\n" "${0##*/}"; exit 0;;',
           "esac",

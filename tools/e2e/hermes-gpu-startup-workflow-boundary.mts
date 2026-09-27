@@ -274,18 +274,21 @@ if ! @run restore`;
   const restoreI = steps.findIndex((step) => step.name === CLI_ARTIFACT_RESTORE_STEP);
   const ni = steps.findIndex((step) => step.name === "Reassert trusted Node runtime");
   const node = steps[ni];
-  const staleDockerRestore = steps[ni + 1];
-  const nativePodmanRuntime = steps[ni + 2];
+  const reviewedNpm = steps[ni + 1];
+  const staleDockerRestore = steps[ni + 2];
+  const nativePodmanRuntime = steps[ni + 3];
   if (
     runStep.shell !== BASH ||
     !trustedEnv(runStep) ||
     pi < 0 ||
     restoreI <= pi ||
     ni !== restoreI + 1 ||
-    ni + 3 !== steps.indexOf(runStep) ||
+    ni + 4 !== steps.indexOf(runStep) ||
     node?.uses !== "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020" ||
     !trustedEnv(node) ||
     asRecord(node?.env).NODE_OPTIONS !== "" ||
+    reviewedNpm?.name !== "Reinstall reviewed npm after Node reassertion" ||
+    reviewedNpm?.uses !== E2E_ACTION_PROVENANCE.reviewedNpmSetup.reference ||
     staleDockerRestore?.name !== "Recover Docker CLI before native Podman E2E" ||
     staleDockerRestore?.uses !== E2E_ACTION_PROVENANCE.restoreNativePodmanRuntime.reference ||
     staleDockerRestore?.if !== "${{ matrix.runtime_provider == 'podman' }}" ||

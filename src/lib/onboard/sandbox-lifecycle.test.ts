@@ -174,7 +174,7 @@ describe("sandbox lifecycle MCP destroy boundaries", () => {
     const helpers = createSandboxLifecycleHelpers({
       runCaptureOpenshell: () => null,
       getGatewayName: () => "nemoclaw-18081",
-      fetchGatewayAuthTokenFromSandbox: () => null,
+      fetchGatewayAuthTokenFromSandbox: async () => null,
       agentProductName: () => "OpenClaw",
       prompt: async () => "no",
       isAffirmativeAnswer: () => false,
@@ -193,7 +193,7 @@ describe("sandbox lifecycle MCP destroy boundaries", () => {
     const helpers = createSandboxLifecycleHelpers({
       runCaptureOpenshell,
       getGatewayName: () => "nemoclaw-18081",
-      fetchGatewayAuthTokenFromSandbox: () => null,
+      fetchGatewayAuthTokenFromSandbox: async () => null,
       agentProductName: () => "OpenClaw",
       prompt: async () => "no",
       isAffirmativeAnswer: () => false,

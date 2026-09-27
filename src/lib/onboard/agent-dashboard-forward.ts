@@ -81,7 +81,7 @@ export async function ensureAgentDashboardForward(options: {
     // so forward the allocated port instead of the sibling sandbox's default.
     const resolveDeclaredPort = (port: number): number =>
       port === HERMES_OPENAI_API_PORT
-        ? (hermesApiPort ?? resolveOnboardHermesApiPort(sandboxName, { warn }))
+        ? (hermesApiPort ?? resolveOnboardHermesApiPort(sandboxName))
         : port;
     const declaredPrimaryPort = getAgentPrimaryForwardPort(agent, DASHBOARD_PORT);
     const usesFixedApiPort = agent.dashboard?.kind === "api";

@@ -91,21 +91,6 @@ function clearOnboardState(): void {
   fs.rmSync(ONBOARD_SESSION_FILE, { force: true });
 }
 
-function writeFakeOpenShellForBlueprintFailClosed(binDir: string): string {
-  const commandLogPath = path.join(binDir, "openshell-commands.jsonl");
-  const scriptPath = path.join(binDir, "openshell");
-  fs.writeFileSync(
-    scriptPath,
-    `#!/usr/bin/env node
-const fs = require("node:fs");
-fs.appendFileSync(${JSON.stringify(commandLogPath)}, JSON.stringify({ args: process.argv.slice(2) }) + "\\n");
-process.exit(0);
-`,
-    { mode: 0o755 },
-  );
-  return commandLogPath;
-}
-
 async function runNemoclawCli(
   args: readonly string[],
   options: RawRunOptions,
@@ -513,5 +498,4 @@ export {
   runRawCommand,
   skipLive,
   TRANSPORT_CLASSIFICATION_PATTERN,
-  writeFakeOpenShellForBlueprintFailClosed,
 };

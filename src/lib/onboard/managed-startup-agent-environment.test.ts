@@ -36,11 +36,7 @@ const UNSUPPORTED_AGENT_RUNTIME_UNSETS = [
   "NEMOCLAW_DASHBOARD_BIND",
   "NEMOCLAW_MINIMAL_BOOTSTRAP",
 ] as const;
-const HERMES_FIXED_RUNTIME_NAMES = [
-  "HERMES_BUNDLED_PLUGINS",
-  "HERMES_HOME",
-  "HERMES_LAZY_INSTALL_TARGET",
-] as const;
+const HERMES_FIXED_RUNTIME_NAMES = ["HERMES_HOME", "HERMES_LAZY_INSTALL_TARGET"] as const;
 
 function messagingPlan(agent: "openclaw" | "hermes"): ManagedStartupJsonObject {
   return {
@@ -91,7 +87,6 @@ function openClawProfile(): ManagedStartupProfile {
         defaults: { subagents: { maxSpawnDepth: 3 } },
         main: { tools: { profile: "minimal", allow: ["read"], deny: ["exec"] } },
       },
-      deviceAuth: { disabled: true, optOutSource: "managed-onboard" },
       minimalBootstrap: true,
     },
     inference: {
@@ -305,7 +300,7 @@ describe("managed startup agent environment", () => {
       NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "6e2",
     });
 
-    expect(result.schemaVersion).toBe(1);
+    expect(result.schemaVersion).toBe(MANAGED_STARTUP_PROFILE_SCHEMA_VERSION);
     expect(result.agent).toBe("openclaw");
     expect(result.configurationEnvironment).toEqual({
       CHAT_UI_URL: "https://dashboard.example.test:18789",
@@ -313,8 +308,6 @@ describe("managed startup agent environment", () => {
       NEMOCLAW_AGENT_TIMEOUT: "900",
       NEMOCLAW_CONTEXT_WINDOW: "131072",
       NEMOCLAW_DASHBOARD_BIND: "0.0.0.0",
-      NEMOCLAW_DISABLE_DEVICE_AUTH: "1",
-      NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE: "managed-onboard",
       NEMOCLAW_EXTRA_AGENTS_JSON_B64: expect.any(String),
       NEMOCLAW_INFERENCE_API: "openai-responses",
       NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
@@ -333,6 +326,7 @@ describe("managed startup agent environment", () => {
       NEMOCLAW_PROXY_PORT: "3128",
       NEMOCLAW_REASONING: "true",
       NEMOCLAW_REASONING_EFFORT: "high",
+      NEMOCLAW_SERVING_PRESET: "",
       NEMOCLAW_TOOL_DISCLOSURE: "progressive",
       NEMOCLAW_UPSTREAM_PROVIDER: "nvidia-prod",
       NEMOCLAW_WEB_SEARCH_ENABLED: "1",
@@ -534,7 +528,6 @@ describe("managed startup agent environment", () => {
       NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
       NEMOCLAW_INFERENCE_PROVIDER_ID: "custom",
       NEMOCLAW_MODEL: "claude-sonnet-4-5",
-      HERMES_BUNDLED_PLUGINS: "/opt/hermes/plugins",
       HERMES_HOME: "/sandbox/.hermes",
       HERMES_LAZY_INSTALL_TARGET: "/sandbox/.hermes/lazy-packages",
       NEMOCLAW_PROXY_HOST: "proxy_name",
@@ -844,7 +837,10 @@ describe("managed startup agent environment", () => {
           subagents: { maxSpawnDepth: 3 },
           timeoutSeconds: 900,
         },
-        list: [{ default: true, id: "main" }, { id: "reviewer" }],
+        entries: {
+          main: { default: true },
+          reviewer: {},
+        },
       },
       models: {
         providers: {

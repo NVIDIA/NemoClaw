@@ -3,6 +3,10 @@
 
 import path from "node:path";
 
+import {
+  resolveSandboxGatewayName,
+  type SandboxGatewayBinding,
+} from "../../onboard/gateway-binding";
 import { buildOpenShellSubprocessEnv, resolveOpenshellBinaryOrNull } from "./resolve-shared";
 import * as openshellRuntime from "./runtime";
 import type { CapturedOpenShellCommandResult } from "./sandbox-observer-cli";
@@ -17,10 +21,25 @@ type SanitizedCaptureOptions = Readonly<{
   replaceEnv?: true;
 }>;
 
-type SanitizedAsyncCaptureOptions = Omit<SanitizedCaptureOptions, "maxBuffer"> &
-  Readonly<{ outputLimitBytes: number }>;
+type SanitizedAsyncCaptureOptions = Omit<SanitizedCaptureOptions, "maxBuffer" | "env"> &
+  Readonly<{ outputLimitBytes: number }> &
+  (
+    | Readonly<{ openshellBinary?: never; env?: Record<string, string> }>
+    | Readonly<{ openshellBinary: string; env: NodeJS.ProcessEnv }>
+  );
 
-/** Capture a bounded OpenShell read with a credential-minimizing environment. */
+export function buildGatewayScopedSandboxCommand(
+  sandbox: SandboxGatewayBinding & { readonly name: string },
+  subcommand: string,
+): { readonly args: string[]; readonly gatewayName: string } {
+  const gatewayName = resolveSandboxGatewayName(sandbox);
+  return {
+    args: ["sandbox", subcommand, "-g", gatewayName, sandbox.name],
+    gatewayName,
+  };
+}
+
+/** Capture a bounded OpenShell command with a credential-minimizing environment. */
 function resolveCapture(args: string[]) {
   const env = buildOpenShellSubprocessEnv();
   for (const name of ["XDG_CONFIG_HOME", "OPENSHELL_WORKSPACE"] as const) {
@@ -64,7 +83,10 @@ export async function captureSanitizedResolvedOpenshellAsync(
   args: string[],
   opts: SanitizedAsyncCaptureOptions,
 ): Promise<CapturedOpenShellCommandResult> {
-  const resolved = resolveCapture(args);
+  const resolved =
+    opts.openshellBinary !== undefined
+      ? { openshell: opts.openshellBinary, env: opts.env }
+      : resolveCapture(args);
   if (!resolved) return missingBinary();
   return openshellRuntime.captureResolvedOpenshellAsync(args, {
     ...opts,

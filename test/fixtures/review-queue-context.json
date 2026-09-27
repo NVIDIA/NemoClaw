@@ -17,7 +17,7 @@
     "workflow": "e2e.yaml",
     "fanoutId": "e2e-all",
     "selectorTypes": ["all", "job", "target"],
-    "allowedJobIds": ["device-auth-health"],
+    "allowedJobIds": ["openclaw-inference-switch"],
     "manualOnlyJobIds": ["hardware-check"],
     "liveSupportedTargetIds": ["sample-target"]
   },

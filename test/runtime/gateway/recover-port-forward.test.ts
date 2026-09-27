@@ -358,6 +358,7 @@ function runRecover(fixture: Fixture, ownerProof: ForwardOwnerProof = "synthetic
           process.env.NODE_OPTIONS,
           ownerProof,
         ),
+        NEMOCLAW_OPENSHELL_BIN: path.join(fixture.tmpDir, ".local", "bin", "openshell"),
         PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
         NEMOCLAW_NO_CONNECT_HINT: "1",
         NEMOCLAW_FORWARD_RECOVERY_WAIT_MS: fixture.recoveryWaitMs,
@@ -377,7 +378,7 @@ describe("nemoclaw <name> recover", () => {
         gatewayProbe: "RUNNING",
         forwardListStatus: "dead",
       });
-      const result = runRecover(fixture);
+      const result = runRecover(fixture, "adaptive");
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
 
       const combined = (result.stdout || "") + (result.stderr || "");
@@ -404,7 +405,7 @@ describe("nemoclaw <name> recover", () => {
         forwardStartDelayPolls: 3,
         recoveryWaitMs: "2000",
       });
-      const result = runRecover(fixture);
+      const result = runRecover(fixture, "adaptive");
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
 
       const calls = fs.readFileSync(fixture.invocationLog, "utf-8").split("\n");

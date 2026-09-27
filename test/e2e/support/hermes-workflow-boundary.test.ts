@@ -211,6 +211,54 @@ describe("Hermes GPU boundary", () => {
     );
   });
 
+  it("requires the reviewed OpenShell SDK for live config export", () => {
+    const missingNeed = wfErrors((workflow) => {
+      workflow.jobs["hermes-e2e"].needs = ["base-image-publication", "generate-matrix"];
+    }, validateE2eWorkflowBoundary);
+    const wrongArtifact = wfErrors((workflow) => {
+      step(workflow.jobs["hermes-e2e"], "Download reviewed OpenShell SDK archive").with.name =
+        "unreviewed-sdk";
+    }, validateE2eWorkflowBoundary);
+    const unsafeInstall = wfErrors((workflow) => {
+      step(
+        workflow.jobs["hermes-e2e"],
+        "Install reviewed OpenShell SDK archive without package credentials",
+      ).uses = "./.github/actions/install-reviewed-openshell-sdk";
+    }, validateE2eWorkflowBoundary);
+
+    expect(missingNeed).toContain(
+      "hermes-e2e job must depend on publication, generate-matrix validation, and reviewed SDK packaging",
+    );
+    expect(wrongArtifact).toContain(
+      "hermes-e2e job must download the run-scoped reviewed SDK archive",
+    );
+    expect(unsafeInstall).toContain(
+      "hermes-e2e job must install the reviewed SDK archive without credentials or package scripts",
+    );
+  });
+
+  it("requires the shared reviewed SDK installer for external gateway health", () => {
+    const wrongArtifact = wfErrors((workflow) => {
+      step(
+        workflow.jobs["external-gateway-health"],
+        "Download reviewed OpenShell SDK archive",
+      ).with.path = "${{ runner.temp }}/unreviewed-sdk";
+    }, validateE2eWorkflowBoundary);
+    const unsafeInstall = wfErrors((workflow) => {
+      step(
+        workflow.jobs["external-gateway-health"],
+        "Install reviewed OpenShell SDK archive without package credentials",
+      ).uses = "./.github/actions/install-reviewed-openshell-sdk";
+    }, validateE2eWorkflowBoundary);
+
+    expect(wrongArtifact).toContain(
+      "external-gateway-health job must download the run-scoped reviewed SDK archive",
+    );
+    expect(unsafeInstall).toContain(
+      "external-gateway-health job must install the reviewed SDK with the shared action",
+    );
+  });
+
   const hermesTimeoutBoundaries = HERMES_TIMEOUT_CONTRACTS.map(
     ({ innerTest, innerTimeoutMinutes, jobName, jobTimeoutMinutes }) => ({
       jobName,

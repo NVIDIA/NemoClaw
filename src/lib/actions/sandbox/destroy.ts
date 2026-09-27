@@ -12,6 +12,7 @@ import {
   normalizeDestroySandboxOptions,
 } from "../../domain/lifecycle/options";
 import {
+  type DestroyGatewayCleanupDecision,
   isDestroyNonInteractiveEnv,
   resolveDestroyGatewayCleanupDecision,
   shouldStopHostServicesAfterDestroy,
@@ -32,8 +33,10 @@ import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   normalizeRuntimeProviderIdentity,
   type RuntimeProviderBundleRegistry,
+  type RuntimeProviderChannelStopTransport,
   type RuntimeProviderWorkloadCleanupResult,
   requireRuntimeProviderDestructiveCleanupAuthority,
+  resolveRuntimeProviderBundle,
 } from "../../onboard/runtime-provider/access";
 import {
   emitProviderDetachResidualHint,
@@ -62,7 +65,11 @@ import {
   cleanupGatewayAfterLastSandbox,
   resolveGatewayCleanupRuntimeProviderId,
 } from "./destroy-gateway";
-import { shouldCleanupGatewayAfterConfirmedFinalDestroy } from "./destroy-gateway-cleanup";
+import {
+  type FinalDestroyGatewayCleanupDeps,
+  type FinalDestroyGatewayCleanupVerdict,
+  resolveFinalDestroyGatewayCleanup,
+} from "./destroy-gateway-cleanup";
 import {
   assertUnambiguousDestroyContainerIdentity,
   classifyDestroyContainerIdentity,
@@ -72,6 +79,7 @@ import {
 } from "./destroy-presence";
 import {
   prepareSandboxDestroy,
+  resolveSandboxDestroyRegistryAuthority,
   resolveSandboxDestroyGatewayName,
   resolveSandboxDestroyRuntimeSelection,
   stopModelRouterForDestroyedSandbox,
@@ -103,6 +111,7 @@ function selectRetainedSandboxRecoveryAuthority(
   sandboxName: string,
   sandbox: registry.SandboxEntry | null,
   records: readonly onboardSession.RetainedSandboxRecoveryRecord[],
+  session: Pick<onboardSession.Session, "sessionId" | "cancellationRecovery"> | null,
 ): onboardSession.RetainedSandboxRecoveryRecord | null {
   const candidates = records.filter((record) => record.sandboxName === sandboxName);
   if (!sandbox) {
@@ -142,6 +151,18 @@ function selectRetainedSandboxRecoveryAuthority(
           record.createAttemptNonce === pending.createAttemptNonce)
       );
     }
+    const sessionOwnedUnpublishedReservation =
+      record.sandboxIdentityFingerprint !== null &&
+      session?.cancellationRecovery?.reason === record.reason &&
+      registry.isPendingReservationForSession(sandbox, session?.sessionId) &&
+      sandbox.name === record.sandboxName &&
+      sandbox.gatewayName === record.gatewayName &&
+      sandbox.gatewayPort === record.gatewayPort &&
+      sandbox.pendingCreateIdentity === undefined &&
+      sandbox.lifecycleGeneration === undefined &&
+      sandbox.lifecycleLiveIdentityFingerprint === undefined &&
+      onboardSession.retainedSandboxRecoveryMatchesSession(record, session);
+    if (sessionOwnedUnpublishedReservation) return true;
     return (
       record.gatewayName === sandbox.gatewayName &&
       record.gatewayPort === sandbox.gatewayPort &&
@@ -184,6 +205,7 @@ export type CleanupSandboxServicesDeps = {
   listSandboxes?: typeof registry.listSandboxes;
   stopAll?: (opts: {
     sandboxName: string;
+    channelStopTransport?: RuntimeProviderChannelStopTransport;
     cleanupOllamaModels?: boolean;
     unloadOllamaModels?: () => OllamaUnloadResult | void;
   }) => OllamaUnloadResult | void;
@@ -202,11 +224,9 @@ export type CleanupSandboxServicesDeps = {
   googlechatWebhookTunnelPidDir?: (servicePidDir: string) => string;
 };
 
-async function resolveCleanupGatewayDecision(options: DestroySandboxOptions): Promise<boolean> {
-  const decision = resolveDestroyGatewayCleanupDecision(options, {
-    nonInteractive: isDestroyNonInteractiveEnv(),
-    platform: process.platform,
-  });
+async function confirmCleanupGatewayDecision(
+  decision: DestroyGatewayCleanupDecision,
+): Promise<boolean> {
   if (decision === "cleanup") return true;
   if (decision === "preserve") return false;
 
@@ -222,9 +242,48 @@ async function resolveCleanupGatewayDecision(options: DestroySandboxOptions): Pr
   return trimmed === "y" || trimmed === "yes";
 }
 
+function reportGatewayPreserved(gatewayName: string): void {
+  // `gateway remove <name>` is the modern OpenShell subcommand on every
+  // platform; the old `gateway destroy -g` was pre-0.0.44 only and current
+  // OpenShell rejects it as unrecognized, so never recommend it (#6569).
+  const gatewayRemovalHint = `openshell gateway remove ${gatewayName}`;
+  console.log(`  Shared NemoClaw gateway preserved. Re-run '${gatewayRemovalHint}' to remove it,`);
+  console.log(`  or pass '--cleanup-gateway' / set NEMOCLAW_CLEANUP_GATEWAY=1 next time. (#2166)`);
+}
+
+function reportFinalGatewayLeftRunning(
+  gatewayName: string,
+  verdict: Extract<
+    FinalDestroyGatewayCleanupVerdict,
+    { status: "live-list-unavailable" | "live-sandboxes" | "not-final" }
+  >,
+  cleanupRequested: boolean,
+): void {
+  const cause =
+    verdict.status === "not-final"
+      ? "the local sandbox registry no longer confirms this was the last sandbox"
+      : verdict.status === "live-list-unavailable"
+        ? "'openshell sandbox list' failed, so NemoClaw could not confirm that no sandbox remains"
+        : `OpenShell still reports ${verdict.sandboxNames.length === 1 ? "sandbox" : "sandboxes"} ${verdict.sandboxNames
+            .map((name) => `'${name}'`)
+            .join(", ")}`;
+  console.warn(
+    `  ${YW}⚠${R} Shared NemoClaw gateway left running${cleanupRequested ? "; --cleanup-gateway was not applied" : ""}: ${cause}.`,
+  );
+  console.warn(
+    `  ${YW}⚠${R} After 'openshell sandbox list -g ${gatewayName}' reports no sandboxes, run 'openshell gateway remove ${gatewayName}' to remove it.`,
+  );
+}
+
 export async function cleanupSandboxServices(
   sandboxName: string,
-  { stopHostServices = false }: { stopHostServices?: boolean } = {},
+  {
+    stopHostServices = false,
+    channelStopTransport,
+  }: {
+    stopHostServices?: boolean;
+    channelStopTransport?: RuntimeProviderChannelStopTransport;
+  } = {},
   deps: CleanupSandboxServicesDeps = {},
 ): Promise<void> {
   // Source boundary: this exported helper can be called independently of CLI
@@ -241,12 +300,14 @@ export async function cleanupSandboxServices(
     deps.stopAll ??
     ((opts: {
       sandboxName: string;
+      channelStopTransport?: RuntimeProviderChannelStopTransport;
       cleanupOllamaModels?: boolean;
       unloadOllamaModels?: () => OllamaUnloadResult | void;
     }) => {
       const services = require("../../tunnel/services") as {
         stopAll: (opts: {
           sandboxName: string;
+          channelStopTransport?: RuntimeProviderChannelStopTransport;
           cleanupOllamaModels?: boolean;
           unloadOllamaModels?: () => OllamaUnloadResult | void;
         }) => OllamaUnloadResult | void;
@@ -359,6 +420,7 @@ export async function cleanupSandboxServices(
         );
         return stopAll({
           sandboxName: validatedSandboxName,
+          ...(channelStopTransport ? { channelStopTransport } : {}),
           cleanupOllamaModels,
           unloadOllamaModels: () => unloadOllamaModels(),
         });
@@ -591,6 +653,9 @@ function requestSandboxDestroyExit(exitCode: number): never {
 export async function destroySandbox(
   sandboxName: string,
   options: string[] | DestroySandboxOptions = {},
+  deps: {
+    finalGatewayCleanup?: FinalDestroyGatewayCleanupDeps;
+  } = {},
 ): Promise<void> {
   try {
     return await withMcpLifecycleLock(sandboxName, () => {
@@ -603,6 +668,7 @@ export async function destroySandbox(
         sandboxName,
         options,
         removedImmutabilityMigration.stateRecord !== null,
+        deps,
       );
     });
   } catch (error) {
@@ -615,9 +681,15 @@ async function destroySandboxUnlocked(
   sandboxName: string,
   options: string[] | DestroySandboxOptions = {},
   retireRemovedImmutabilityState = false,
+  deps: {
+    finalGatewayCleanup?: FinalDestroyGatewayCleanupDeps;
+  } = {},
 ): Promise<void> {
   const normalized = normalizeDestroySandboxOptions(options);
-  const registeredSandbox = registry.getSandbox(sandboxName);
+  const registryAuthority = resolveSandboxDestroyRegistryAuthority(sandboxName);
+  const getRegisteredSandbox = registryAuthority.getSandbox;
+  const listRegisteredSandboxes = registryAuthority.listSandboxes;
+  const registeredSandbox = registryAuthority.entry;
   const operationRuntimeSelection = resolveSandboxDestroyRuntimeSelection(registeredSandbox);
   if (!(await confirmSandboxDestroy(sandboxName, normalized, operationRuntimeSelection))) return;
   if (registeredSandbox) {
@@ -629,13 +701,28 @@ async function destroySandboxUnlocked(
     sandboxName,
     registeredSandbox,
     retainedRecoveryRecords,
+    destroySession,
   );
   if (
     !retainedRecoveryAuthority &&
     retainedRecoveryRecords.some((record) => record.sandboxName === sandboxName)
   ) {
+    const diagnosticRecordIds = retainedRecoveryRecords
+      .filter((record) => record.sandboxName === sandboxName)
+      .map((record) => record.recordId)
+      .sort()
+      .join(", ");
     console.error(
-      `  Refusing to destroy retained sandbox '${sandboxName}': NemoClaw could not select exactly one recovery record from the current immutable registry and Docker identities. No sandbox resources were removed. Resolve the identity conflict, then rerun '${CLI_NAME} ${sandboxName} destroy'.`,
+      `  Cause: Refusing to destroy retained sandbox '${sandboxName}' because NemoClaw could not select exactly one recovery record from the current registry, onboarding session, and immutable recovery evidence.`,
+    );
+    console.error(
+      "  Retained state: No sandbox resources were removed. The registry, onboarding session, and recovery records remain unchanged.",
+    );
+    console.error(
+      "  Next action: Preserve this state and do not delete by mutable sandbox name. This build has no supported automatic repair for conflicting recovery authority.",
+    );
+    console.error(
+      `  Diagnostic reference: retained recovery record ID${diagnosticRecordIds.includes(",") ? "s" : ""} ${diagnosticRecordIds}.`,
     );
     requestSandboxDestroyExit(1);
   }
@@ -650,10 +737,18 @@ async function destroySandboxUnlocked(
     destroyGatewayName,
     registeredSandbox?.openshellDriver,
   );
+  const destroyRuntimeProvider = resolveRuntimeProviderBundle(
+    destroyRuntimeProviderId,
+    CURRENT_RUNTIME_PROVIDER_BUNDLES,
+  );
+  const destroyChannelStopTransport =
+    destroyRuntimeProvider?.lifecycle.supported === true
+      ? destroyRuntimeProvider.lifecycle.channelStopTransport
+      : undefined;
   let portableContainerAuthority: ReturnType<typeof preparePortableDemoSandboxDestroyAuthority>;
   try {
     portableContainerAuthority = preparePortableDemoSandboxDestroyAuthority(sandboxName, () => {
-      const current = registry.getSandbox(sandboxName);
+      const current = getRegisteredSandbox(sandboxName);
       return current
         ? {
             agent: current.agent,
@@ -669,7 +764,7 @@ async function destroySandboxUnlocked(
   }
 
   const inspectContainerIdentity = () => {
-    const registeredSandbox = registry.getSandbox(sandboxName);
+    const registeredSandbox = getRegisteredSandbox(sandboxName);
     return assertUnambiguousDestroyContainerIdentity(sandboxName, {
       cliName: CLI_NAME,
       providerId: destroyRuntimeProviderId ?? normalizeRuntimeProviderIdentity(null),
@@ -745,13 +840,18 @@ async function destroySandboxUnlocked(
       throw error;
     }
   };
-  let destroyPreflight: ReturnType<typeof prepareSandboxDestroy>;
-  destroyPreflight = abortPreparedCleanupOnError(() =>
-    prepareSandboxDestroy(sandboxName, {
+  let destroyPreflight: Awaited<ReturnType<typeof prepareSandboxDestroy>>;
+  try {
+    destroyPreflight = await prepareSandboxDestroy(sandboxName, {
+      getSandbox: getRegisteredSandbox,
       retainedRecoveryGatewayName: retainedRecoveryAuthority?.gatewayName,
       operationRuntimeSelection,
-    }),
-  );
+    });
+  } catch (error) {
+    preparedManagedLlamaCppCleanup?.abort();
+    throw error;
+  }
+
   const {
     cleanupGatewayName,
     runOpenshell,
@@ -821,8 +921,9 @@ async function destroySandboxUnlocked(
   try {
     destructiveResult = await executeSandboxDestroy({
       force: normalized.force === true,
-      getSandbox: registry.getSandbox,
-      listSandboxes: registry.listSandboxes,
+      getSandbox: getRegisteredSandbox,
+      listSandboxes: listRegisteredSandboxes,
+      deleteGatewayName: cleanupGatewayName,
       runOpenshell,
       ...(mcpRuntimeSelection ? { mcpRuntimeSelection } : {}),
       sandbox,
@@ -958,7 +1059,7 @@ async function destroySandboxUnlocked(
   // gateway. Gate that teardown on the *confirmed* delete state only — never on
   // forcedLocalCleanup — so a forced cleanup of the last registered sandbox does
   // not shut down services for a sandbox we never confirmed deleted (#6046).
-  const deleteSucceededOrAlreadyGone = deleteResult.status === 0 || alreadyGone;
+  const deleteSucceededOrAlreadyGone = deleteResult.kind !== "failed" || alreadyGone;
   if (!deleteSucceededOrAlreadyGone) {
     preparedManagedLlamaCppCleanup?.abort();
   }
@@ -1000,15 +1101,20 @@ async function destroySandboxUnlocked(
   try {
     const shouldStopHostServices = shouldStopHostServicesAfterDestroy({
       deleteSucceededOrAlreadyGone,
-      registeredSandboxCount: registry.listSandboxes().sandboxes.length,
-      sandboxStillRegistered: !!registry.getSandbox(sandboxName),
+      registeredSandboxCount: listRegisteredSandboxes().sandboxes.length,
+      sandboxStillRegistered: !!getRegisteredSandbox(sandboxName),
     });
     await cleanupSandboxServices(
       sandboxName,
       {
         stopHostServices: shouldStopHostServices,
+        ...(destroyChannelStopTransport
+          ? { channelStopTransport: destroyChannelStopTransport }
+          : {}),
       },
       {
+        getSandbox: getRegisteredSandbox,
+        listSandboxes: listRegisteredSandboxes,
         runOpenshell: cleanupRunOpenshell,
       },
     );
@@ -1056,15 +1162,19 @@ async function destroySandboxUnlocked(
   if (deleteSucceededOrAlreadyGone && retireRemovedImmutabilityState) {
     retireRemovedImmutabilityStateRecord(sandboxName, "sandbox-destroyed");
   }
-  const removalOutcome = removeSandboxRegistryEntryOutcome(sandboxName);
+  const removalOutcome = removeSandboxRegistryEntryOutcome(sandboxName, {
+    removeImage: (name) => removeSandboxImage(name, { getSandbox: getRegisteredSandbox }),
+    removeSandbox: registryAuthority.removeSandbox,
+  });
   const removed = removalOutcome.removed;
   // A retry after successful registry removal still owns final gateway cleanup.
   // The gateway runtime marker captured its provider before the first delete.
   const registryEntryAbsent =
-    removalOutcome.status === "complete" || removalOutcome.status === "not-found";
+    removalOutcome.status === "complete" ||
+    (removalOutcome.status === "not-found" && !getRegisteredSandbox(sandboxName));
   if (removalOutcome.status === "blocked") {
     const providerId = normalizeRuntimeProviderIdentity(
-      (registry.getSandbox(sandboxName) ?? sandbox)?.openshellDriver,
+      (getRegisteredSandbox(sandboxName) ?? sandbox)?.openshellDriver,
     );
     console.warn(
       `  ${YW}⚠${R} Sandbox '${sandboxName}' cleanup is incomplete for runtime provider ` +
@@ -1099,7 +1209,7 @@ async function destroySandboxUnlocked(
         await withOllamaModelOwnershipTransaction(() => {
           const selectedHost = loadPersistedOllamaHost();
           if (!isLocalOllamaRouteOwner(sandbox, selectedHost)) return;
-          const remainingSandboxes = registry.listSandboxes().sandboxes;
+          const remainingSandboxes = listRegisteredSandboxes().sandboxes;
           localInference.clearPersistedOllamaHostIfUnused(remainingSandboxes);
         });
       } catch (error) {
@@ -1110,7 +1220,9 @@ async function destroySandboxUnlocked(
     }
   }
   if (deleteSucceededOrAlreadyGone && removed && priorHttpsPinRouteId) {
-    await revokeDestroyedSandboxHttpsPinRoute(cleanupGatewayName, priorHttpsPinRouteId);
+    await revokeDestroyedSandboxHttpsPinRoute(cleanupGatewayName, priorHttpsPinRouteId, {
+      listSandboxes: listRegisteredSandboxes,
+    });
   }
   let routedSessionCleanupHandled = false;
   if (deleteSucceededOrAlreadyGone && removed) {
@@ -1190,36 +1302,50 @@ async function destroySandboxUnlocked(
       requestSandboxDestroyExit(1);
     }
   }
-  if (
-    shouldCleanupGatewayAfterConfirmedFinalDestroy(
-      {
-        deleteSucceededOrAlreadyGone,
-        removedRegistryEntry: registryEntryAbsent,
-        ...(destroyRuntimeProviderId ? { runtimeProviderId: destroyRuntimeProviderId } : {}),
-      },
-      cleanupCaptureOpenshell ? { captureOpenshell: cleanupCaptureOpenshell } : {},
-    )
-  ) {
-    const shouldCleanupGateway = await resolveCleanupGatewayDecision(normalized);
-    if (shouldCleanupGateway) {
-      if (destroyRuntimeProviderId) {
-        cleanupGatewayAfterLastSandbox(cleanupGatewayName, cleanupRunOpenshell, {
-          runtimeProviderId: destroyRuntimeProviderId,
+  const cleanupDecision =
+    deleteSucceededOrAlreadyGone &&
+    registryEntryAbsent &&
+    listRegisteredSandboxes().sandboxes.length === 0
+      ? resolveDestroyGatewayCleanupDecision(normalized, {
+          nonInteractive: isDestroyNonInteractiveEnv(),
+          platform: process.platform,
+        })
+      : null;
+  if (cleanupDecision !== null && !(await confirmCleanupGatewayDecision(cleanupDecision))) {
+    reportGatewayPreserved(cleanupGatewayName);
+  } else if (cleanupDecision !== null) {
+    const finalGatewayCleanup = await withGatewayRouteMutationLock(cleanupGatewayName, async () => {
+      const verdict = await resolveFinalDestroyGatewayCleanup(
+        {
+          deleteSucceededOrAlreadyGone,
+          removedRegistryEntry: registryEntryAbsent,
+          sandboxName,
+          ...(destroyRuntimeProviderId ? { runtimeProviderId: destroyRuntimeProviderId } : {}),
+        },
+        {
+          ...deps.finalGatewayCleanup,
+          listSandboxes: listRegisteredSandboxes,
+          ...(cleanupCaptureOpenshell ? { captureOpenshell: cleanupCaptureOpenshell } : {}),
+        },
+      );
+      if (verdict.status !== "cleanup") return verdict;
+      if (destroyRuntimeProviderId || destroyRuntimeSelection) {
+        await cleanupGatewayAfterLastSandbox(cleanupGatewayName, cleanupRunOpenshell, {
+          ...(destroyRuntimeProviderId ? { runtimeProviderId: destroyRuntimeProviderId } : {}),
+          ...(destroyRuntimeSelection ? { runtimeSelection: destroyRuntimeSelection } : {}),
         });
       } else {
-        cleanupGatewayAfterLastSandbox(cleanupGatewayName, cleanupRunOpenshell);
+        await cleanupGatewayAfterLastSandbox(cleanupGatewayName, cleanupRunOpenshell);
       }
-    } else {
-      // `gateway remove <name>` is the modern OpenShell subcommand on every
-      // platform; the old `gateway destroy -g` was pre-0.0.44 only and current
-      // OpenShell rejects it as unrecognized, so never recommend it (#6569).
-      const gatewayRemovalHint = `openshell gateway remove ${cleanupGatewayName}`;
-      console.log(
-        `  Shared NemoClaw gateway preserved. Re-run '${gatewayRemovalHint}' to remove it,`,
+      return verdict;
+    });
+    if (finalGatewayCleanup.status !== "cleanup") {
+      reportFinalGatewayLeftRunning(
+        cleanupGatewayName,
+        finalGatewayCleanup,
+        normalized.cleanupGateway === true,
       );
-      console.log(
-        `  or pass '--cleanup-gateway' / set NEMOCLAW_CLEANUP_GATEWAY=1 next time. (#2166)`,
-      );
+      if (normalized.cleanupGateway === true) requestSandboxDestroyExit(1);
     }
   }
   if (alreadyGone) {

@@ -50,7 +50,6 @@ It also hardens messaging providers, Windows and WSL inference, sandbox recovery
   For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands), [Set Up vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm), and [Use Google Gemini](/user-guide/openclaw/inference/hosted-inference/use-google-gemini).
 - Managed OpenClaw and Hermes recovery now waits within a 210-second budget for a typed delayed managed-container discovery result.
   Other privileged-control, identity, and diagnostic failures remain terminal.
-  Hermes Portable recovery reports failed host-forward operations and does not publish readiness after a failed repair.
   Related change: [PR #11236](https://github.com/NVIDIA/NemoClaw/pull/11236).
   For more information, refer to [Recover and Rebuild Sandboxes](/user-guide/hermes/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes).
 - Hermes rebuild now preserves supported configuration values recorded through `nemohermes <name> config set`.

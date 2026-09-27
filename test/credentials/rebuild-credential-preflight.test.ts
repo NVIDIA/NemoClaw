@@ -19,9 +19,9 @@ import { execTimeout, testTimeoutOptions } from "../helpers/timeouts";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../..");
 const NODE_BIN = path.dirname(process.execPath);
+const IS_WSL = os.release().toLowerCase().includes("microsoft");
 const DOCKER_OPERATING_SYSTEM =
-  ({ darwin: "Docker Desktop" } as Partial<Record<NodeJS.Platform, string>>)[process.platform] ??
-  "Docker Engine";
+  process.platform === "darwin" || IS_WSL ? "Docker Desktop" : "Docker Engine";
 const tmpFixtures: string[] = [];
 const gatewayProcesses: ReturnType<typeof spawn>[] = [];
 
@@ -41,6 +41,7 @@ function createFixture(opts: {
   provider?: string;
   credentialEnv?: string;
   providerRegistered?: boolean;
+  credentialExpiresAtMs?: number;
   inferenceProbeHttpStatus?: number | null;
 }) {
   const {
@@ -53,8 +54,6 @@ function createFixture(opts: {
   const sandboxName = "my-assistant";
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-2273-"));
   tmpFixtures.push(tmpDir);
-  const nemoclawDir = path.join(tmpDir, ".nemoclaw");
-  fs.mkdirSync(nemoclawDir, { recursive: true, mode: 0o700 });
 
   const gatewayReadyMarker = path.join(tmpDir, "gateway-ready");
   const gatewayProcess = spawn(
@@ -82,6 +81,8 @@ wait();`,
   const gatewayPort = Number(gatewayPortText);
   expect(gatewayPort).toBeLessThanOrEqual(65_535);
   const gatewayName = `nemoclaw-${gatewayPort}`;
+  const nemoclawDir = path.join(tmpDir, ".nemoclaw", "gateways", String(gatewayPort));
+  fs.mkdirSync(nemoclawDir, { recursive: true, mode: 0o700 });
 
   fs.writeFileSync(
     path.join(nemoclawDir, "sandboxes.json"),
@@ -208,6 +209,7 @@ if (a[0] === "sandbox" && a[1] === "exec") {
 }
 if (a[0] === "status") { process.stdout.write("Server Status\\n  Gateway: ${gatewayName}\\n  Status: Connected\\n"); process.exit(0); }
 if (a[0] === "gateway" && a[1] === "info") { process.stdout.write("Gateway Info\\n\\nGateway: ${gatewayName}\\nGateway endpoint: https://127.0.0.1:${gatewayPort}\\n"); process.exit(0); }
+if (a[0] === "gateway" && a[1] === "list") { process.stdout.write(JSON.stringify([{name:"${gatewayName}",endpoint:"https://127.0.0.1:${gatewayPort}",active:true}]) + "\\n"); process.exit(0); }
 if (a[0] === "gateway" && a[1] === "select") process.exit(0);
 if (a[0] === "inference" && a[1] === "get") { process.stdout.write("Gateway inference:\\n  Provider: ${provider}\\n  Model: meta/llama-3.3-70b-instruct\\n"); process.exit(0); }
 if (a[0] === "inference" && a[1] === "set") process.exit(0);
@@ -217,6 +219,10 @@ if (a[0] === "provider" && a[1] === "get") {
     process.exit(1);
   }
   process.stdout.write("Name: ${provider}\\nType: openai\\nCredential keys: ${credentialEnv}\\nConfig keys: OPENAI_BASE_URL\\n");
+  process.exit(0);
+}
+if (a[0] === "provider" && a[1] === "list") {
+  process.stdout.write(${JSON.stringify(JSON.stringify(providerRegistered ? [{ name: provider, credential_keys: [credentialEnv], credential_expires_at_ms: { [credentialEnv]: opts.credentialExpiresAtMs } }] : []) + "\n")});
   process.exit(0);
 }
 if (a[0] === "provider") process.exit(0);
@@ -328,7 +334,7 @@ process.exit(0);
     { mode: 0o755 },
   );
 
-  return { tmpDir, nemoclawDir, sandboxName, deleteMarker };
+  return { tmpDir, nemoclawDir, sandboxName, deleteMarker, gatewayPort };
 }
 
 function runCli(
@@ -343,6 +349,7 @@ function runCli(
     input,
     env: {
       HOME: fixture.tmpDir,
+      NEMOCLAW_GATEWAY_PORT: String(fixture.gatewayPort),
       PATH: fixture.tmpDir + ":" + NODE_BIN + ":/usr/bin:/bin",
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
       NEMOCLAW_SKIP_HOST_DNS_PREFLIGHT: "1",
@@ -372,6 +379,34 @@ function registryHasSandbox(fixture: ReturnType<typeof createFixture>): boolean 
 }
 
 describe("atomic rebuild process contracts (#2273)", () => {
+  it(
+    "rejects expired credentials through the CLI before backup or deletion (#10394)",
+    testTimeoutOptions(30_000),
+    () => {
+      const fixture = createFixture({
+        agent: "langchain-deepagents-code",
+        credentialExpiresAtMs: 1,
+      });
+      const result = runCli(fixture, [fixture.sandboxName, "rebuild", "--yes", "--force"]);
+      const output = `${result.stderr || ""}${result.stdout || ""}`;
+      expect(result.status, output).not.toBe(0);
+      expect(output).toContain("expired");
+      expect(output).not.toContain("Backing up sandbox state");
+      expect(output).not.toContain("Deleting old sandbox");
+      expect(fs.existsSync(fixture.deleteMarker)).toBe(false);
+      expect(registryHasSandbox(fixture)).toBe(true);
+      const marker = runCli(fixture, [
+        fixture.sandboxName,
+        "exec",
+        "--",
+        "cat",
+        "/sandbox/rebuild-atomicity-marker.txt",
+      ]);
+      expect(marker.status, marker.stderr).toBe(0);
+      expect(marker.stdout).toContain("dcode-atomicity-marker");
+    },
+  );
+
   it(
     "cancels interactive rebuild through stdin without entering preflight or backup",
     testTimeoutOptions(30_000),

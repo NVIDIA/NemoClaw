@@ -7,10 +7,13 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
+import * as processRecovery from "../../actions/sandbox/process-recovery";
+import { createHermesCredentialEnvReconciliationRuntime } from "../../actions/sandbox/runtime/hermes-lifecycle";
 import type { SandboxEntry } from "../../state/registry";
 import { runSandboxProviderPreDeleteCleanup } from "../sandbox-provider-cleanup";
 import {
   assertApfCreateIntent,
+  activateManagedStartupCorporateCaTrustAfterSandboxCreate,
   completeHermesPortableSandboxRegistration,
   createProviderEffectBoundary,
   finalizeCreatedSandboxBeforeHermesCredentialReconciliation,
@@ -21,21 +24,113 @@ import {
   readManagedDcodeCreateSelectionDrift,
   readSandboxRecreateRegistryEntry,
   reconcileCreatedHermesCredentialEnvironment,
+  releaseManagedStartupHoldWithRetry,
   runAuthorityBoundProviderCleanup,
   runAsyncWithPostCreateRecovery,
   runSandboxCreateWithIdentityVerification,
   runWithPostCreateRecovery,
 } from "./orchestration";
-
 const UNVERIFIED_RECOVERY_CONTEXT = {
   gatewayName: "nemoclaw",
   gatewayPort: 8080,
   lifecycleGeneration: "generation-1",
   createAttemptNonce: "a".repeat(62),
 } as const;
-
+describe("managed startup corporate CA onboarding orchestration", () => {
+  it("wires the verified create boundary into the corporate CA refresh", async () => {
+    const events: string[] = [];
+    const boundary = {
+      sandboxName: "alpha",
+      gatewayName: "owned-gateway",
+      gatewayPort: 8080,
+      lifecycleGeneration: "generation-1",
+      lifecycleLiveIdentityFingerprint: "a".repeat(64),
+      route: "none" as const,
+    };
+    const refreshCorporateCaTrust = vi.fn(async () => {
+      events.push("refresh");
+    });
+    await activateManagedStartupCorporateCaTrustAfterSandboxCreate({
+      create: Promise.resolve().then(() => events.push("create")),
+      corporateCaB64: "Y2EtYnVuZGxl",
+      sandboxName: "alpha",
+      requireVerifiedCreateBoundary: () => boundary,
+      refreshCorporateCaTrust,
+      revalidateSandboxIdentity: (verified) => expect(verified).toBe(boundary),
+      recordRecovery: vi.fn(),
+    });
+    expect(refreshCorporateCaTrust).toHaveBeenCalledExactlyOnceWith({
+      sandboxName: "alpha",
+      sandboxIdentityFingerprint: "a".repeat(64),
+      target: { kind: "named", gatewayName: "owned-gateway" },
+    });
+    expect(events).toEqual(["create", "refresh"]);
+  });
+});
+describe("managed startup hold release", () => {
+  it("retries a transient exact-container release failure before retained recovery", () => {
+    const release = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        throw new Error("release unavailable");
+      })
+      .mockImplementationOnce(() => undefined);
+    expect(() => releaseManagedStartupHoldWithRetry(release)).not.toThrow();
+    expect(release).toHaveBeenCalledTimes(2);
+  });
+  it("bounds persistent release failures", () => {
+    const release = vi.fn(() => {
+      throw new Error("release unavailable");
+    });
+    expect(() => releaseManagedStartupHoldWithRetry(release)).toThrow("release unavailable");
+    expect(release).toHaveBeenCalledTimes(3);
+  });
+});
 describe("created Hermes credential environment reconciliation", () => {
   const plan = { agent: "hermes" } as never;
+  it("uses the native restart recovery path after the secret boundary", async () => {
+    const events: string[] = [];
+    const restart = vi
+      .spyOn(processRecovery, "restartSandboxGateway")
+      .mockImplementation(async () => {
+        events.push("restart");
+        return { ok: true, restarted: true, healthPassed: true, forwardRecovered: true };
+      });
+    const runtime = createHermesCredentialEnvReconciliationRuntime(vi.fn() as never, vi.fn());
+
+    await expect(
+      runtime.restartGateway("alpha", (operation) => events.push(`identity:${operation}`)),
+    ).resolves.toEqual({
+      status: 0,
+      stdout: "Hermes gateway restarted and forwards recovered.",
+      stderr: "",
+    });
+
+    expect(events).toEqual([
+      "identity:restarting Hermes gateway for sandbox 'alpha'",
+      "restart",
+      "identity:confirming Hermes gateway restart for sandbox 'alpha'",
+    ]);
+    expect(restart).toHaveBeenCalledWith("alpha", { quiet: true });
+    restart.mockRestore();
+  });
+
+  it("preserves native restart recovery failures for onboarding", async () => {
+    const restart = vi.spyOn(processRecovery, "restartSandboxGateway").mockResolvedValueOnce({
+      ok: false,
+      failureLayer: "health timeout",
+      detail: "gateway process restarted but health did not pass before timeout",
+    });
+    const runtime = createHermesCredentialEnvReconciliationRuntime(vi.fn() as never, vi.fn());
+
+    await expect(runtime.restartGateway("alpha", vi.fn())).resolves.toEqual({
+      status: 1,
+      stdout: "",
+      stderr: "health timeout: gateway process restarted but health did not pass before timeout",
+    });
+
+    restart.mockRestore();
+  });
 
   it("finalizes sandbox registration before reconciling credentials (#9833)", async () => {
     const events: string[] = [];
@@ -59,7 +154,7 @@ describe("created Hermes credential environment reconciliation", () => {
     ]);
   });
 
-  it("restarts and rechecks the managed gateway after changing the env file", async () => {
+  it("accepts the native restart recovery result without a second health wait", async () => {
     const events: string[] = [];
     const restart = { status: 0, stdout: "managed completion", stderr: "" };
 
@@ -71,17 +166,9 @@ describe("created Hermes credential environment reconciliation", () => {
           events.push("reconcile");
           return { changed: true };
         },
-        restartGateway: () => {
+        restartGateway: async () => {
           events.push("restart");
           return restart;
-        },
-        parseRestartCompletion: (result) => {
-          events.push("parse");
-          return result === restart ? {} : null;
-        },
-        waitForGateway: async () => {
-          events.push("wait");
-          return true;
         },
       },
       vi.fn(),
@@ -92,15 +179,12 @@ describe("created Hermes credential environment reconciliation", () => {
       "reconcile",
       expect.stringMatching(/^identity:confirming/u),
       "restart",
-      "parse",
-      "wait",
       expect.stringMatching(/^identity:completing/u),
     ]);
   });
 
   it("does not restart when the env file was already reconciled", async () => {
     const restartGateway = vi.fn();
-    const waitForGateway = vi.fn();
 
     await reconcileCreatedHermesCredentialEnvironment(
       { sandboxName: "alpha", plan },
@@ -108,14 +192,11 @@ describe("created Hermes credential environment reconciliation", () => {
         revalidateSandboxIdentity: vi.fn(),
         reconcileCredentialEnv: () => ({ changed: false }),
         restartGateway,
-        parseRestartCompletion: vi.fn(),
-        waitForGateway,
       },
       vi.fn(),
     );
 
     expect(restartGateway).not.toHaveBeenCalled();
-    expect(waitForGateway).not.toHaveBeenCalled();
   });
 
   it("refuses a same-name replacement at the credential mutation edge (#9833)", async () => {
@@ -141,8 +222,6 @@ describe("created Hermes credential environment reconciliation", () => {
             return { changed: true };
           }) as never,
           restartGateway: vi.fn(),
-          parseRestartCompletion: vi.fn(),
-          waitForGateway: vi.fn(),
         },
         vi.fn(),
       ),
@@ -150,7 +229,7 @@ describe("created Hermes credential environment reconciliation", () => {
     expect(mutations).toEqual([]);
   });
 
-  it("fails onboarding when the changed gateway cannot prove restart completion", async () => {
+  it("fails onboarding when the native gateway restart fails", async () => {
     const recordRecovery = vi.fn();
     await expect(
       reconcileCreatedHermesCredentialEnvironment(
@@ -158,13 +237,15 @@ describe("created Hermes credential environment reconciliation", () => {
         {
           revalidateSandboxIdentity: vi.fn(),
           reconcileCredentialEnv: () => ({ changed: true }),
-          restartGateway: () => ({ status: 1, stdout: "", stderr: "failed" }),
-          parseRestartCompletion: () => null,
-          waitForGateway: vi.fn(),
+          restartGateway: async () => ({
+            status: 1,
+            stdout: "",
+            stderr: "failed",
+          }),
         },
         recordRecovery,
       ),
-    ).rejects.toThrow("managed gateway restart did not complete");
+    ).rejects.toThrow("native Hermes restart failed");
     expect(recordRecovery).toHaveBeenCalledOnce();
   });
 });
@@ -648,7 +729,10 @@ describe("managed MCP rebuild handoff", () => {
 
 describe("sandbox recreate registry authority", () => {
   it("re-reads the durable source row for Hermes portable recreation (#10056)", () => {
-    const durable = { name: "alpha", lifecycleGeneration: "source-generation" } as SandboxEntry;
+    const durable = {
+      name: "alpha",
+      lifecycleGeneration: "source-generation",
+    } as SandboxEntry;
     const readRegistry = vi.fn(() => durable);
 
     expect(
@@ -1135,7 +1219,9 @@ describe("sandbox create identity checks", () => {
     expect((error as AggregateError).errors).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ message: "temporary source cleanup failed" }),
-        expect.objectContaining({ message: expect.stringContaining("left sandbox 'alpha'") }),
+        expect.objectContaining({
+          message: expect.stringContaining("left sandbox 'alpha'"),
+        }),
       ]),
     );
   });
@@ -1148,7 +1234,9 @@ describe("sandbox create identity checks", () => {
       revalidate: (sandboxIsLive) => events.push(sandboxIsLive ? "identity" : "preflight"),
       create: async (verifyCreatedSandbox) => {
         events.push("create");
-        await verifyCreatedSandbox({ sandboxName: "alpha" });
+        await verifyCreatedSandbox({ sandboxName: "alpha" }, () => {
+          events.push("pre-effects-cutover");
+        });
         return "complete";
       },
       runVerifiedCreateEffects: async () => {
@@ -1180,6 +1268,7 @@ describe("sandbox create identity checks", () => {
       "identity",
       "checkpoint",
       "checkpoint-revalidate",
+      "pre-effects-cutover",
       "provider-effects",
       "identity",
       "identity",
@@ -1212,7 +1301,9 @@ describe("sandbox create identity checks", () => {
     expect(error).toBeInstanceOf(AggregateError);
     expect((error as AggregateError).errors).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ message: "identity boundary capture failed" }),
+        expect.objectContaining({
+          message: "identity boundary capture failed",
+        }),
       ]),
     );
     expect(persistCreateIdentity).not.toHaveBeenCalled();
@@ -1395,7 +1486,9 @@ describe("sandbox create identity checks", () => {
     );
     expect((error as AggregateError).errors).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ message: expect.stringContaining("post-create verification") }),
+        expect.objectContaining({
+          message: expect.stringContaining("post-create verification"),
+        }),
       ]),
     );
     expect(cleanupTemporarySources).toHaveBeenCalledOnce();

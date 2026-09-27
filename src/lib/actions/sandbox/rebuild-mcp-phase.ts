@@ -9,6 +9,7 @@ import { explicitObservabilityFlag } from "../../onboard/observability-command-f
 import type { ToolDisclosure } from "../../tool-disclosure";
 import {
   prepareMcpBridgesForAbsentSandboxRebuild,
+  prepareMcpBridgesForStoppedSandboxRebuild,
   prepareMcpBridgesForRebuild,
   reattachMcpProvidersAfterRebuildAbort,
   restoreMcpBridgesAfterRebuild,
@@ -17,7 +18,12 @@ import type { RebuildBail } from "./rebuild-credential-preflight";
 import { type RebuildSandboxEntry, resolveSandboxGatewayName } from "./rebuild-flow-helpers";
 import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider";
 import { getMcpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider";
-import { inspectAgentMcpSources, joinMcpEntriesToOpenShell } from "./mcp-bridge-source";
+import {
+  assertNoLegacyMcpSources,
+  inspectAgentMcpSources,
+  inspectCapturedOpenClawMcpSources,
+  joinMcpEntriesToOpenShell,
+} from "./mcp-bridge-source";
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
 
 export type McpRebuildPreparation = Awaited<ReturnType<typeof prepareMcpBridgesForRebuild>>;
@@ -26,6 +32,7 @@ export async function observeMcpStateForRebuild(
   sandbox: RebuildSandboxEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection | undefined,
   inspectCurrentSource: boolean,
+  capturedOpenClawState?: import("../../state/state-directory-restore").CapturedOpenClawState,
 ): Promise<{
   entries: McpSourceEntry[];
   runtimeSelection?: McpProviderInspectionRuntimeSelection;
@@ -35,7 +42,10 @@ export async function observeMcpStateForRebuild(
     gatewayName: resolveSandboxGatewayName(sandbox),
     workspace: OPENSHELL_DEFAULT_WORKSPACE,
   };
-  const sources = await inspectAgentMcpSources(sandbox, sourceRuntime);
+  const sources = capturedOpenClawState
+    ? inspectCapturedOpenClawMcpSources(capturedOpenClawState)
+    : await inspectAgentMcpSources(sandbox, sourceRuntime);
+  assertNoLegacyMcpSources(sandbox.name, sources.legacy, "rebuilding");
   if (Object.keys(sources.native).length === 0) return { entries: [] };
   const selectedRuntime = runtimeSelection ?? getMcpProviderInspectionRuntimeSelection(sandbox);
   const entries = Object.values(
@@ -53,11 +63,19 @@ export async function prepareMcpForRebuild(
   bail: RebuildBail,
   frozenRuntimeSelection?: McpProviderInspectionRuntimeSelection,
   sourceEntries: readonly McpSourceEntry[] = [],
+  capturedOpenClawState?: import("../../state/state-directory-restore").CapturedOpenClawState,
 ): Promise<McpRebuildPreparation | null> {
   // Source inspection resolves OpenShell authority lazily only after it finds
   // MCP intent. A retained recovery handoff is the sole eager authority input.
   const runtimeSelection = frozenRuntimeSelection;
   try {
+    if (capturedOpenClawState)
+      return await prepareMcpBridgesForStoppedSandboxRebuild(
+        sandboxName,
+        sourceEntries,
+        capturedOpenClawState,
+        runtimeSelection,
+      );
     return await (staleRecovery
       ? runtimeSelection
         ? prepareMcpBridgesForAbsentSandboxRebuild(sandboxName, runtimeSelection, sourceEntries)

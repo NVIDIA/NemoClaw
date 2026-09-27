@@ -15,7 +15,7 @@ type DashboardAuth = "url_token" | "session" | "none";
 
 export interface DashboardUrlCommandDeps {
   /** Pull gateway.auth.token from the sandbox config (host-side helper). */
-  fetchToken: (sandboxName: string) => string | null;
+  fetchToken: (sandboxName: string) => Promise<string | null> | string | null;
   /** Read sandbox metadata such as agent name and recorded dashboard port. */
   getSandbox?: (sandboxName: string) => Pick<SandboxEntry, "agent" | "dashboardPort"> | null;
   /** Resolve the browser-facing dashboard base URL for this host, when known. */
@@ -126,11 +126,11 @@ function resolveTerminalRuntime(
   return null;
 }
 
-export function runDashboardUrlCommand(
+export async function runDashboardUrlCommand(
   sandboxName: string,
   options: DashboardUrlCommandOptions,
   deps: DashboardUrlCommandDeps,
-): void {
+): Promise<void> {
   const log = deps.log ?? ((m: string) => console.log(m));
   const error = deps.error ?? ((m: string) => console.error(m));
 
@@ -184,7 +184,7 @@ export function runDashboardUrlCommand(
 
   let token: string | null;
   try {
-    token = deps.fetchToken(sandboxName);
+    token = await deps.fetchToken(sandboxName);
   } catch {
     token = null;
   }

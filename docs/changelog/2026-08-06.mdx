@@ -28,10 +28,6 @@ It also improves Hermes configuration safety, MCP diagnostics, credential isolat
 - Gateway and sandbox recovery now waits for the managed gateway lease, resumes journaled rebuild recreation, and applies compatibility decisions before rejecting a restored sandbox as not ready.
   Malformed sandbox registry data fails closed, gateways that never served receive bounded boot-grace recovery, and registry repair remains scoped to the target gateway.
   For more information, refer to [Understand Gateway Lifecycle Control](/user-guide/openclaw/manage-sandboxes/configure-sandboxes/understand-gateway-lifecycle-control), [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes), and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
-- Portable experimental-profile recovery can now restart a receipt-owned user-local Ollama executable after a semantic `/api/tags` health check.
-  When an unhealthy API requires a user-local start, recovery requires a valid ownership receipt or explicit re-enrollment for a pre-receipt installation.
-  It rejects symbolic links, refuses to launch a duplicate Ollama process, does not take over a system service or unrelated user-managed daemon, and verifies both the authenticated proxy and the sandbox `inference.local` route before reporting success.
-  For more information, refer to [Set Up Ollama](/user-guide/openclaw/inference/local-inference/set-up-ollama) and [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes).
 - Scoped uninstall now deletes the sandbox before removing its unit and preserves the gateway and unit when sandbox deletion fails, leaving a retryable state instead of partial teardown.
   Desktop metadata no longer blocks uninstall when the managed runtime state is otherwise valid.
   For more information, refer to [Uninstall NemoClaw](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/uninstall-nemoclaw) and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).

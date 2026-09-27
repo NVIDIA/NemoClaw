@@ -1,8 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import { describe, expect, it, vi } from "vitest";
 import { createInMemoryRuntimeProviderBundle } from "../../../test/helpers/runtime-provider-bundle";
+import {
+  aggregateVerifiedGpuCapacity,
+  NVIDIA_CONTAINER_GPU_PROOF_SCRIPT,
+  NVIDIA_CONTAINER_GPU_SNAPSHOT_AWK,
+} from "../container-gpu-proof";
 import { selectDefaultOllamaModel } from "../inference/local";
 import { detectGpu } from "../inference/nim";
 
@@ -24,13 +30,15 @@ import {
   containerGpuProofTimeoutMs,
   createArm64ContainerGpuProver,
   isExecFormatErrorDiagnostic,
-  parseContainerGpuProofCapacity,
+  parseContainerGpuProofDevices,
 } from "./runtime-provider/nvidia-container-proof";
 import { createPodmanRuntimeProviderBundle } from "./runtime-provider/podman";
 
 const PROOF_WORKLOAD_PROFILE = createDockerRuntimeProviderBundle().workload.profile;
 const GPU_PROOF_NAME_PATTERN =
   /^nemoclaw-gpu-proof-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const GPU_UUID_0 = "GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeee0";
+const GPU_UUID_1 = "GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeee1";
 
 function proofProvider(providerId: "docker" | "podman") {
   return createInMemoryRuntimeProviderBundle({
@@ -69,6 +77,40 @@ function podmanProofProvider(
 }
 
 describe("WSL Docker Desktop GPU compatibility helpers", () => {
+  const validateGpuSnapshot = (snapshot: string) =>
+    spawnSync("awk", ["-F,", NVIDIA_CONTAINER_GPU_SNAPSHOT_AWK], {
+      input: snapshot,
+      encoding: "utf8",
+    });
+
+  it("executes the generated GPU snapshot validator against bounded device sets", () => {
+    const valid = validateGpuSnapshot(
+      `${GPU_UUID_0}, 0, NVIDIA RTX PRO 4000 Blackwell, 24467, 24000\n${GPU_UUID_1}, 1, NVIDIA GB300, 256703, 250000\n`,
+    );
+    expect(valid.status).toBe(0);
+    expect(valid.stdout).toBe(`${GPU_UUID_0}\n${GPU_UUID_1}\n`);
+  });
+
+  it.each([
+    ["empty", ""],
+    [
+      "duplicate index",
+      `${GPU_UUID_0}, 0, NVIDIA GB300, 10, 1\n${GPU_UUID_1}, 0, NVIDIA RTX, 10, 1\n`,
+    ],
+    [
+      "duplicate UUID",
+      `${GPU_UUID_0}, 0, NVIDIA GB300, 10, 1\n${GPU_UUID_0}, 1, NVIDIA RTX, 10, 1\n`,
+    ],
+    ["malformed UUID", "gpu0, 0, NVIDIA GB300, 10, 1\n"],
+    ["malformed index", `${GPU_UUID_0}, gpu0, NVIDIA GB300, 10, 1\n`],
+    [
+      "over limit",
+      `${Array.from({ length: 17 }, (_, index) => `GPU-${String(index).padStart(32, "a")}, ${String(index)}, NVIDIA GB300, 10, 1`).join("\n")}\n`,
+    ],
+  ])("rejects a %s generated GPU snapshot", (_scenario, snapshot) => {
+    expect(validateGpuSnapshot(snapshot).status).not.toBe(0);
+  });
+
   it("only matches Docker Desktop-backed WSL host assessments", () => {
     expect(isWslDockerDesktopRuntime({ isWsl: true, runtime: "docker-desktop" })).toBe(true);
     expect(isWslDockerDesktopRuntime({ isWsl: true, runtime: "docker" })).toBe(false);
@@ -232,7 +274,7 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
     const base = proofProvider("podman");
     const captureNvidiaContainer = vi.fn(() => ({
       status: 0,
-      stdout: "Test PASSED\nNEMOCLAW_GPU_MEMORY_MIB=63936, 60000\n",
+      stdout: `Test PASSED\nNEMOCLAW_GPU_DEVICE=${GPU_UUID_0}, 0, NVIDIA RTX Spark N1X, 63936, 60000\n`,
       stderr: "",
     }));
     const provider = {
@@ -253,10 +295,14 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
       log: () => undefined,
     });
 
-    expect(prover(["JMJWOA-Generic-GPU"])).toMatchObject({
+    const result = prover(["JMJWOA-Generic-GPU"]);
+    expect(result).toMatchObject({
       providerId: "podman",
       passed: true,
-      verifiedCapacity: { totalMemoryMB: 63_936, availableMemoryMB: 60_000 },
+    });
+    expect(aggregateVerifiedGpuCapacity(result?.verifiedDevices)).toEqual({
+      totalMemoryMB: 63_936,
+      availableMemoryMB: 60_000,
     });
     expect(captureNvidiaContainer).toHaveBeenCalledWith(
       "host-local-inference",
@@ -264,10 +310,73 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
         image:
           "nvcr.io/nvidia/k8s/cuda-sample@sha256:7c7540bdf1f942d4fb6db97069fd6c289471b54ac29e3c7fcdf914cf77af7d41",
         entrypoint: "/bin/sh",
-        command: ["-c", expect.stringContaining("NEMOCLAW_GPU_MEMORY_MIB")],
+        command: ["-c", expect.stringContaining("NEMOCLAW_GPU_DEVICE")],
       }),
       expect.any(Number),
     );
+  });
+
+  it("rejects CUDA success without valid provider-visible device rows", () => {
+    const base = proofProvider("docker");
+    const provider = {
+      ...base,
+      containerEngine: {
+        ...base.containerEngine,
+        nvidiaContainer: {
+          ...base.containerEngine.nvidiaContainer!,
+          capture: () => ({ status: 0, stdout: "Test PASSED\n", stderr: "" }),
+          cleanup: () => ({ status: "absent" as const }),
+        },
+      },
+    };
+    const result = createArm64ContainerGpuProver({
+      platform: "linux",
+      arch: "arm64",
+      resolveRuntimeProvider: () => provider,
+      log: () => undefined,
+    })(["NVIDIA RTX Spark N1X"]);
+    expect(result).toMatchObject({ passed: false });
+    expect(result).not.toHaveProperty("verifiedDevices");
+  });
+
+  it("aggregates multiple device rows from the provider-owned capture", () => {
+    const base = proofProvider("docker");
+    const capture = vi.fn(() => ({
+      status: 0,
+      stdout:
+        `NEMOCLAW_GPU_DEVICE=${GPU_UUID_0}, 0, NVIDIA RTX PRO 4000 Blackwell, 24467, 10000\n` +
+        `NEMOCLAW_GPU_DEVICE=${GPU_UUID_1}, 1, NVIDIA GB300, 256703, 240000\n`,
+      stderr: "",
+    }));
+    const provider = {
+      ...base,
+      containerEngine: {
+        ...base.containerEngine,
+        nvidiaContainer: {
+          ...base.containerEngine.nvidiaContainer!,
+          capture,
+          cleanup: () => ({ status: "absent" as const }),
+        },
+      },
+    };
+    const result = createArm64ContainerGpuProver({
+      platform: "linux",
+      arch: "arm64",
+      resolveRuntimeProvider: () => provider,
+      log: () => undefined,
+    })(["NVIDIA RTX PRO 4000 Blackwell", "NVIDIA GB300"]);
+    expect(result).toMatchObject({
+      passed: true,
+      verifiedDevices: [
+        { name: "NVIDIA RTX PRO 4000 Blackwell", totalMemoryMB: 24467 },
+        { name: "NVIDIA GB300", totalMemoryMB: 256703 },
+      ],
+    });
+    expect(result).not.toHaveProperty("verifiedCapacity");
+    expect(aggregateVerifiedGpuCapacity(result?.verifiedDevices)).toEqual({
+      totalMemoryMB: 281170,
+      availableMemoryMB: 250000,
+    });
   });
 
   it("carries a real Podman capture through GPU detection to Ollama selection", () => {
@@ -278,7 +387,7 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
       .fn()
       .mockReturnValueOnce({
         status: 0,
-        stdout: "Test PASSED\nNEMOCLAW_GPU_MEMORY_MIB=63936, 60000\n",
+        stdout: `Test PASSED\nNEMOCLAW_GPU_DEVICE=${GPU_UUID_0}, 0, NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU), 63936, 60000\n`,
         stderr: "",
       })
       .mockReturnValueOnce({
@@ -304,7 +413,7 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
         proveArm64ContainerGpu: prover,
         runCaptureImpl: vi.fn((command: readonly string[]) =>
           command[0] === "nvidia-smi"
-            ? "NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU), 999999, 999999\n"
+            ? "NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU), 63936, 999999\n"
             : "",
         ),
         isWsl: true,
@@ -331,7 +440,7 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
     }
   });
 
-  it("carries a real Docker capture through GPU detection to Ollama selection", () => {
+  it("carries two Docker GPU rows through detection to larger Ollama selection (#12073)", () => {
     const uuid = "123e4567-e89b-42d3-a456-426614174011";
     const resourceName = `nemoclaw-gpu-proof-${uuid}`;
     const containerId = "e".repeat(64);
@@ -339,7 +448,9 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
       .fn()
       .mockReturnValueOnce({
         status: 0,
-        stdout: "Test PASSED\nNEMOCLAW_GPU_MEMORY_MIB=63936, 60000\n",
+        stdout:
+          `NEMOCLAW_GPU_DEVICE=${GPU_UUID_0}, 0, NVIDIA RTX PRO 4000 Blackwell, 24467, 10000\n` +
+          `NEMOCLAW_GPU_DEVICE=${GPU_UUID_1}, 1, NVIDIA GB300, 256703, 240000\n`,
         stderr: "",
       })
       .mockReturnValueOnce({
@@ -365,7 +476,7 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
         proveArm64ContainerGpu: prover,
         runCaptureImpl: vi.fn((command: readonly string[]) =>
           command[0] === "nvidia-smi"
-            ? "NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU), 999999, 999999\n"
+            ? "NVIDIA GB300, 256703, 240000\nNVIDIA RTX PRO 4000 Blackwell, 24467, 10000\n"
             : "",
         ),
         isWsl: true,
@@ -374,8 +485,13 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
 
       expect(gpu).toMatchObject({
         containerGpuProof: { providerId: "docker", passed: true },
-        totalMemoryMB: 63_936,
-        availableMemoryMB: 60_000,
+        totalMemoryMB: 281_170,
+        availableMemoryMB: 250_000,
+        count: 2,
+        gpus: [
+          { name: "NVIDIA GB300", memoryMB: 256_703 },
+          { name: "NVIDIA RTX PRO 4000 Blackwell", memoryMB: 24_467 },
+        ],
       });
       expect(selectDefaultOllamaModel(["qwen3.5:9b", "qwen3.6:35b"], gpu)).toBe("qwen3.6:35b");
       expect(captureHostCommand).toHaveBeenCalledWith(
@@ -442,7 +558,7 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
           nvidiaContainer: {
             capture: () => ({
               status: 0,
-              stdout: "Test PASSED\nNEMOCLAW_GPU_MEMORY_MIB=63936, 60000\n",
+              stdout: `Test PASSED\nNEMOCLAW_GPU_DEVICE=${GPU_UUID_0}, 0, NVIDIA RTX Spark N1X, 63936, 60000\n`,
               stderr: "",
             }),
             cleanup: () => ({ status: "failed" }),
@@ -499,7 +615,7 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
           nvidiaContainer: {
             capture: () => ({
               status: 1,
-              stdout: "NEMOCLAW_GPU_MEMORY_MIB=63936, 60000\n",
+              stdout: `NEMOCLAW_GPU_DEVICE=${GPU_UUID_0}, 0, NVIDIA RTX Spark N1X, 63936, 60000\n`,
               stderr: "",
               error: timeout,
             }),
@@ -685,24 +801,38 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
     expect(`nemoclaw-gpu-proof-${uuid}`).not.toBe(`nemoclaw-gpu-proof-${String(process.pid)}`);
   });
 
-  it("parses one capacity row from the container-bound CUDA proof", () => {
+  it("parses multiple container-bound GPU device rows", () => {
     expect(
-      parseContainerGpuProofCapacity("Test PASSED\nNEMOCLAW_GPU_MEMORY_MIB=63936, 60000\n"),
-    ).toEqual({ totalMemoryMB: 63_936, availableMemoryMB: 60_000 });
+      parseContainerGpuProofDevices(
+        `NEMOCLAW_GPU_DEVICE=${GPU_UUID_0}, 0, NVIDIA RTX PRO 4000 Blackwell, 24467, 24000\n` +
+          `NEMOCLAW_GPU_DEVICE=${GPU_UUID_1}, 1, NVIDIA GB300, 256703, 250000\n`,
+      ),
+    ).toEqual([
+      { name: "NVIDIA RTX PRO 4000 Blackwell", totalMemoryMB: 24467, availableMemoryMB: 24000 },
+      { name: "NVIDIA GB300", totalMemoryMB: 256703, availableMemoryMB: 250000 },
+    ]);
   });
 
   it.each([
-    ["a missing marker", "Test PASSED\n"],
+    ["missing rows", "Test PASSED\n"],
+    ["malformed UUID", "NEMOCLAW_GPU_DEVICE=gpu0, 0, NVIDIA GB300, 10, 1\n"],
+    ["malformed index", `NEMOCLAW_GPU_DEVICE=${GPU_UUID_0}, x, NVIDIA GB300, 10, 1\n`],
     [
-      "duplicate markers",
-      "NEMOCLAW_GPU_MEMORY_MIB=63936, 60000\nNEMOCLAW_GPU_MEMORY_MIB=63936, 60000\n",
+      "duplicate index",
+      `NEMOCLAW_GPU_DEVICE=${GPU_UUID_0}, 0, NVIDIA GB300, 10, 1\nNEMOCLAW_GPU_DEVICE=${GPU_UUID_1}, 0, NVIDIA RTX, 10, 1\n`,
     ],
-    ["multiple device rows", "NEMOCLAW_GPU_MEMORY_MIB=63936, 60000\n63936, 60000\n"],
-    ["free memory above total memory", "NEMOCLAW_GPU_MEMORY_MIB=63936, 70000\n"],
-    ["zero total memory", "NEMOCLAW_GPU_MEMORY_MIB=0, 0\n"],
-    ["nonnumeric memory", "NEMOCLAW_GPU_MEMORY_MIB=not-a-number\n"],
-  ])("rejects container capacity with %s", (_scenario, output) => {
-    expect(parseContainerGpuProofCapacity(output)).toBeNull();
+    [
+      "duplicate UUID",
+      `NEMOCLAW_GPU_DEVICE=${GPU_UUID_0}, 0, NVIDIA GB300, 10, 1\nNEMOCLAW_GPU_DEVICE=${GPU_UUID_0}, 1, NVIDIA RTX, 10, 1\n`,
+    ],
+    ["malformed capacity", `NEMOCLAW_GPU_DEVICE=${GPU_UUID_0}, 0, NVIDIA GB300, nope, 1\n`],
+    ["empty total memory", `NEMOCLAW_GPU_DEVICE=${GPU_UUID_0}, 0, NVIDIA GB300, , 1\n`],
+    ["empty free memory", `NEMOCLAW_GPU_DEVICE=${GPU_UUID_0}, 0, NVIDIA GB300, 10, \n`],
+    ["hexadecimal total memory", `NEMOCLAW_GPU_DEVICE=${GPU_UUID_0}, 0, NVIDIA GB300, 0xa, 1\n`],
+    ["scientific free memory", `NEMOCLAW_GPU_DEVICE=${GPU_UUID_0}, 0, NVIDIA GB300, 1000, 1e3\n`],
+    ["free memory above total", `NEMOCLAW_GPU_DEVICE=${GPU_UUID_0}, 0, NVIDIA GB300, 10, 11\n`],
+  ])("rejects per-device proof evidence with %s", (_scenario, output) => {
+    expect(parseContainerGpuProofDevices(output)).toBeNull();
   });
 
   it("escapes terminal controls in a denylisted GPU name before logging", () => {
@@ -730,9 +860,33 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
       "nvcr.io/nvidia/k8s/cuda-sample@sha256:7c7540bdf1f942d4fb6db97069fd6c289471b54ac29e3c7fcdf914cf77af7d41",
     );
     expect(WSL_DOCKER_DESKTOP_GPU_PROOF_COMMAND).toContain("--entrypoint /bin/sh");
-    expect(WSL_DOCKER_DESKTOP_GPU_PROOF_COMMAND).toContain("NEMOCLAW_GPU_MEMORY_MIB");
+    expect(WSL_DOCKER_DESKTOP_GPU_PROOF_COMMAND).toContain("NEMOCLAW_GPU_DEVICE");
+    expect(WSL_DOCKER_DESKTOP_GPU_PROOF_COMMAND.match(/nvidia-smi --query-gpu=/gu)).toHaveLength(1);
+    expect(WSL_DOCKER_DESKTOP_GPU_PROOF_COMMAND).toContain("--query-gpu=uuid,index,name");
+    expect(WSL_DOCKER_DESKTOP_GPU_PROOF_COMMAND).toContain('CUDA_VISIBLE_DEVICES="$device_uuid"');
+    expect(WSL_DOCKER_DESKTOP_GPU_PROOF_COMMAND).toContain("seen_uuid[device_uuid]++");
+    expect(WSL_DOCKER_DESKTOP_GPU_PROOF_COMMAND).toContain("seen_index[device_index]++");
+    expect(WSL_DOCKER_DESKTOP_GPU_PROOF_COMMAND).toContain("count > 16");
     expect(WSL_DOCKER_DESKTOP_GPU_PROOF_COMMAND).not.toContain("vectoradd-cuda12.5.0");
     expect(WSL_DOCKER_DESKTOP_GPU_PROOF_COMMAND).not.toContain("nbody");
+  });
+
+  it("passes the complete proof script as one shell argument in the displayed command", () => {
+    const parsed = spawnSync(
+      "bash",
+      [
+        "--noprofile",
+        "--norc",
+        "-c",
+        `set -- ${WSL_DOCKER_DESKTOP_GPU_PROOF_COMMAND}; printf '%s\\0' "$@"`,
+      ],
+      { encoding: "buffer" },
+    );
+    expect(parsed.status).toBe(0);
+    const argv = parsed.stdout.toString("utf8").split("\0").slice(0, -1);
+    const commandIndex = argv.indexOf("-c");
+    expect(commandIndex).toBeGreaterThanOrEqual(0);
+    expect(argv[commandIndex + 1]).toBe(NVIDIA_CONTAINER_GPU_PROOF_SCRIPT);
   });
 
   it("returns the failed bounded proof result on Docker Desktop WSL", () => {

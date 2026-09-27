@@ -107,7 +107,7 @@ if [ -e /etc/openshell-tls/ca-bundle.pem ] \
   || [ -L /etc/openshell-tls/ca-bundle.pem ]; then
   readonly MANAGED_FETCH_CA_BUNDLE_FILE="/etc/openshell-tls/ca-bundle.pem"
 else
-  readonly MANAGED_FETCH_CA_BUNDLE_FILE="/run/nemoclaw/managed-startup-ca-bundle.pem"
+  readonly MANAGED_FETCH_CA_BUNDLE_FILE="/tmp/nemoclaw-managed-startup-ca-bundle.pem"
 fi
 readonly MANAGED_PROXY_OWNER_UID=0
 

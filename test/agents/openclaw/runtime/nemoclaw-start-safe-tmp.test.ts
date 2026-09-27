@@ -268,7 +268,7 @@ describe("nemoclaw-start safe tmp file creation", () => {
     }
   });
 
-  it("refuses a planted gateway-log symlink during automatic respawn", () => {
+  it("refuses a planted gateway-log symlink during native relaunch", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-start-safe-tmp-"));
     const gatewayLog = path.join(tmpDir, "gateway.log");
     const symlinkTarget = path.join(tmpDir, "symlink-target.log");

@@ -33,6 +33,7 @@ import { warnAboutArm64NimImageCompatibility } from "./nim-image-compat-warning"
 import { type OllamaInstallMenuResult, resolveOllamaInstallMenuEntry } from "./ollama-install-menu";
 import { buildVllmMenuEntries, type VllmMenuEntry } from "./vllm-menu";
 import { detectWindowsHostOllama, type WindowsHostOllamaState } from "./windows-host-ollama";
+import { NEMOCLAW_GATEWAY_RUNTIME_ENV } from "./runtime-provider/configured-runtime";
 
 type DockerCapture = RunCaptureFn;
 
@@ -187,7 +188,10 @@ export function detectInferenceProviderHostState(
   let discoveredOllamaHost = input.probeOllama === false ? null : deps.findReachableOllamaHost();
   const vllmRunning = input.probeVllm === false ? false : probeVllmRunning(deps);
   const vllmProfile = deps.detectVllmProfile(input.gpu);
-  const dockerAvailable = deps.hostCommandExists("docker");
+  const dockerAvailable =
+    input.env?.[NEMOCLAW_GATEWAY_RUNTIME_ENV]?.trim().toLowerCase() === "podman"
+      ? false
+      : deps.hostCommandExists("docker");
   const hasVllmImage = !!(
     dockerAvailable &&
     vllmProfile &&

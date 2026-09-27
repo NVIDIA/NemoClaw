@@ -60,4 +60,40 @@ describe("onboard lock ownership", () => {
       command: "replacement owner",
     });
   });
+
+  it("removes a quarantined replacement when link-back loses a race (#11395)", () => {
+    expect(session.acquireOnboardLock("nemoclaw onboard").acquired).toBe(true);
+    const renameSync = fs.renameSync.bind(fs);
+    const replacementContents = JSON.stringify({
+      command: "replacement owner",
+      pid: process.pid,
+      startedAt: new Date().toISOString(),
+    });
+    const concurrentContents = JSON.stringify({
+      command: "concurrent owner",
+      pid: process.pid,
+      startedAt: new Date().toISOString(),
+    });
+    vi.spyOn(fs, "renameSync").mockImplementation((source, destination) => {
+      const replacement = `${String(source)}.replacement`;
+      fs.writeFileSync(replacement, replacementContents, { mode: 0o600 });
+      renameSync(replacement, source);
+      renameSync(source, destination);
+    });
+    vi.spyOn(fs, "linkSync").mockImplementation((_existingPath, newPath) => {
+      fs.writeFileSync(newPath, concurrentContents, { mode: 0o600 });
+      throw Object.assign(new Error("destination exists"), { code: "EEXIST" });
+    });
+
+    session.releaseOnboardLock();
+
+    expect(JSON.parse(fs.readFileSync(session.LOCK_FILE, "utf8"))).toMatchObject({
+      command: "concurrent owner",
+    });
+    expect(
+      fs
+        .readdirSync(path.dirname(session.LOCK_FILE))
+        .filter((entry) => entry.includes(".release-")),
+    ).toEqual([]);
+  });
 });

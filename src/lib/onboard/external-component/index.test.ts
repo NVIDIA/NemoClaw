@@ -3,6 +3,7 @@
 
 import fs from "node:fs";
 import net from "node:net";
+import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -65,8 +66,8 @@ async function closeServer(server: net.Server): Promise<void> {
 }
 
 async function preparedFixture() {
-  const ancestors = path
-    .dirname(process.cwd())
+  const fixtureParent = fs.realpathSync(os.homedir());
+  const ancestors = fixtureParent
     .split(path.sep)
     .map((_part, index, parts) => parts.slice(0, index + 1).join(path.sep) || path.sep);
   for (const ancestor of ancestors) {
@@ -78,7 +79,7 @@ async function preparedFixture() {
       `External component fixtures require a protected ancestor: ${ancestor}`,
     ).toBe(true);
   }
-  const root = fs.mkdtempSync(path.join(path.dirname(process.cwd()), "nc-component-test-"));
+  const root = fs.mkdtempSync(path.join(fixtureParent, "nc-component-test-"));
   roots.push(root);
   fs.chmodSync(root, 0o700);
   const homeDirectory = path.join(root, "home");

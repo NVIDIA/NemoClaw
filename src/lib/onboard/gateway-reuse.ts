@@ -2,40 +2,35 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
-import {
-  type OpenShellRuntimeSelection,
-  withSelectedOpenShellCommandOptions,
-} from "../adapters/openshell/command-argv";
-import {
-  getGatewayReuseState,
-  type GatewayReuseState,
-  shouldSelectNamedGatewayForReuse,
-} from "../state/gateway";
+import type { OpenShellGatewayLifecycle } from "../adapters/openshell/gateway-lifecycle";
+import type {
+  OpenShellGatewayReuseObservation,
+  OpenShellGatewayReuseObserver,
+} from "../adapters/openshell/gateway-reuse";
+import { type OpenShellRuntimeSelection } from "../adapters/openshell/command-argv";
+import { type GatewayReuseState } from "../state/gateway";
 import * as dockerDriverGatewayLaunch from "./docker-driver-gateway-launch";
 import { configuredRuntimeProviderOwnsHostReadiness } from "./docker-driver-gateway-env";
 import * as gatewayService from "./docker-driver-gateway-service";
 import type { PortProbeResult } from "./preflight";
 
-export type GatewayReuseSnapshot = {
-  gatewayStatus: string;
-  gwInfo: string;
-  activeGatewayInfo: string;
-  gatewayReuseState: ReturnType<typeof getGatewayReuseState>;
-};
+export type GatewayReuseSnapshot = OpenShellGatewayReuseObservation;
 
 export interface GatewayReuseDeps {
   gatewayName: string | (() => string);
-  runCaptureOpenshell(args: string[], opts?: Record<string, unknown>): string;
-  runOpenshell(args: string[], opts?: Record<string, unknown>): { status: number | null };
+  observer: OpenShellGatewayReuseObserver;
+  lifecycle: Pick<OpenShellGatewayLifecycle, "selectGateway">;
   cliDisplayName(): string;
 }
 
 export interface GatewayReuseHelpers {
-  getGatewayReuseSnapshot(runtimeSelection?: OpenShellRuntimeSelection): GatewayReuseSnapshot;
+  getGatewayReuseSnapshot(
+    runtimeSelection?: OpenShellRuntimeSelection,
+  ): Promise<GatewayReuseSnapshot>;
   selectNamedGatewayForReuseIfNeeded(
     snapshot: GatewayReuseSnapshot,
     runtimeSelection?: OpenShellRuntimeSelection,
-  ): GatewayReuseSnapshot;
+  ): Promise<GatewayReuseSnapshot>;
 }
 
 export interface DockerDriverGatewayReuseApplicationDeps {
@@ -253,84 +248,34 @@ export function createDockerDriverGatewayReuseApplication(
 export function createGatewayReuseHelpers(deps: GatewayReuseDeps): GatewayReuseHelpers {
   const currentGatewayName = () =>
     typeof deps.gatewayName === "function" ? deps.gatewayName() : deps.gatewayName;
-
-  function getGatewayReuseSnapshot(
+  async function getGatewayReuseSnapshot(
     runtimeSelection?: OpenShellRuntimeSelection,
-  ): GatewayReuseSnapshot {
-    const gatewayName = currentGatewayName();
-    if (runtimeSelection && runtimeSelection.gatewayName !== gatewayName) {
-      throw new Error(
-        `Gateway reuse target '${gatewayName}' does not match runtime selection '${runtimeSelection.gatewayName}'`,
-      );
-    }
-    const runtimeOptions = withSelectedOpenShellCommandOptions({}, runtimeSelection);
-    const probeOptions = {
-      ...runtimeOptions,
-      ignoreError: true,
-      timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-    };
-    // OpenShell 0.0.99 omits the gateway name when connection setup fails, so
-    // bind the probe explicitly and carry that authority into classification.
-    const gatewayStatus = deps.runCaptureOpenshell(["status", "-g", gatewayName], {
-      ...probeOptions,
-      includeStderr: true,
+  ): Promise<GatewayReuseSnapshot> {
+    const snapshot = await deps.observer.observeGatewayReuse({
+      target: { kind: "named", gatewayName: currentGatewayName() },
+      runtimeSelection,
     });
-    const gwInfo = deps.runCaptureOpenshell(["gateway", "info", "-g", gatewayName], {
-      ...probeOptions,
-    });
-    const activeGatewayInfo = deps.runCaptureOpenshell(["gateway", "info"], probeOptions);
-    return {
-      gatewayStatus,
-      gwInfo,
-      activeGatewayInfo,
-      gatewayReuseState: getGatewayReuseState(
-        gatewayStatus,
-        gwInfo,
-        activeGatewayInfo,
-        gatewayName,
-        gatewayName,
-      ),
-    };
+    if (snapshot.error) throw new Error(snapshot.error.message);
+    return snapshot;
   }
-
-  function selectNamedGatewayForReuseIfNeeded(
+  async function selectNamedGatewayForReuseIfNeeded(
     snapshot: GatewayReuseSnapshot,
     runtimeSelection?: OpenShellRuntimeSelection,
-  ): GatewayReuseSnapshot {
+  ): Promise<GatewayReuseSnapshot> {
+    if (snapshot.error) throw new Error(snapshot.error.message);
+    if (!snapshot.shouldSelect) return snapshot;
     const gatewayName = currentGatewayName();
-    if (runtimeSelection && runtimeSelection.gatewayName !== gatewayName) {
-      throw new Error(
-        `Gateway reuse target '${gatewayName}' does not match runtime selection '${runtimeSelection.gatewayName}'`,
-      );
-    }
-    if (
-      !shouldSelectNamedGatewayForReuse(
-        snapshot.gatewayStatus,
-        snapshot.gwInfo,
-        snapshot.activeGatewayInfo,
-        gatewayName,
-      )
-    ) {
-      return snapshot;
-    }
-
-    const runtimeOptions = withSelectedOpenShellCommandOptions({}, runtimeSelection);
-    const selectResult = deps.runOpenshell(["gateway", "select", gatewayName], {
-      ...runtimeOptions,
-      ignoreError: true,
-      suppressOutput: true,
+    const selected = await deps.lifecycle.selectGateway({
+      target: { kind: "named", gatewayName },
+      runtimeSelection,
     });
-    if (selectResult.status !== 0) {
-      return snapshot;
-    }
-
-    const refreshed = getGatewayReuseSnapshot(runtimeSelection);
+    if (!selected.ok) throw new Error(selected.error.message);
+    const refreshed = await getGatewayReuseSnapshot(runtimeSelection);
     if (refreshed.gatewayReuseState === "healthy") {
       process.env.OPENSHELL_GATEWAY = gatewayName;
       console.log(`  ✓ Selected existing ${deps.cliDisplayName()} gateway`);
     }
     return refreshed;
   }
-
   return { getGatewayReuseSnapshot, selectNamedGatewayForReuseIfNeeded };
 }

@@ -30,6 +30,8 @@ $$nemoclaw "$SANDBOX" download /sandbox/.openclaw/workspace/SOUL.md "$BACKUP_DIR
 $$nemoclaw "$SANDBOX" download /sandbox/.openclaw/workspace/USER.md "$BACKUP_DIR/"
 $$nemoclaw "$SANDBOX" download /sandbox/.openclaw/workspace/IDENTITY.md "$BACKUP_DIR/"
 $$nemoclaw "$SANDBOX" download /sandbox/.openclaw/workspace/AGENTS.md "$BACKUP_DIR/"
+$$nemoclaw "$SANDBOX" download /sandbox/.openclaw/workspace/TOOLS.md "$BACKUP_DIR/"
+$$nemoclaw "$SANDBOX" download /sandbox/.openclaw/workspace/HEARTBEAT.md "$BACKUP_DIR/"
 ```
 
 OpenClaw creates `MEMORY.md` and `memory/` only after it stores memory.
@@ -39,6 +41,9 @@ Run each applicable command only when that sandbox path exists:
 $$nemoclaw "$SANDBOX" download /sandbox/.openclaw/workspace/MEMORY.md "$BACKUP_DIR/"
 $$nemoclaw "$SANDBOX" download /sandbox/.openclaw/workspace/memory/ "$BACKUP_DIR/memory/"
 ```
+
+The same directory also holds `POLICY.md`. NemoClaw writes that file during the onboarding policy step and refreshes it when you add or remove a network-policy preset.
+Download it for reference only, and do not upload a saved copy. See [Explain Network Policy to Agents](../../network-policy/explain-network-policy-to-agents).
 
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -110,6 +115,8 @@ $$nemoclaw "$SANDBOX" upload "$BACKUP_DIR/SOUL.md" /sandbox/.openclaw/workspace/
 $$nemoclaw "$SANDBOX" upload "$BACKUP_DIR/USER.md" /sandbox/.openclaw/workspace/
 $$nemoclaw "$SANDBOX" upload "$BACKUP_DIR/IDENTITY.md" /sandbox/.openclaw/workspace/
 $$nemoclaw "$SANDBOX" upload "$BACKUP_DIR/AGENTS.md" /sandbox/.openclaw/workspace/
+$$nemoclaw "$SANDBOX" upload "$BACKUP_DIR/TOOLS.md" /sandbox/.openclaw/workspace/
+$$nemoclaw "$SANDBOX" upload "$BACKUP_DIR/HEARTBEAT.md" /sandbox/.openclaw/workspace/
 ```
 
 Upload each optional memory path only when the backup contains it:
@@ -179,9 +186,10 @@ Back up a workspace:
 ./scripts/backup-workspace.sh backup my-assistant
 ```
 
-The helper requires `SOUL.md`, `USER.md`, `IDENTITY.md`, and `AGENTS.md`.
+The helper requires `SOUL.md`, `USER.md`, `IDENTITY.md`, `AGENTS.md`, `TOOLS.md`, and `HEARTBEAT.md`.
 It skips `MEMORY.md` and `memory/` when those optional paths do not exist.
-A backup contains four to six items, depending on which optional paths exist.
+It does not back up `POLICY.md`.
+A backup contains six to eight items, depending on which optional paths exist.
 
 Both optional paths exist in this example.
 
@@ -189,7 +197,7 @@ Expected output:
 
 ```text
 Backing up workspace from sandbox 'my-assistant'...
-Backup saved to /home/user/.nemoclaw/backups/20260320-120000/ (6 items)
+Backup saved to /home/user/.nemoclaw/backups/20260320-120000/ (8 items)
 ```
 
 If a required file cannot download, the helper deletes the new timestamped backup and exits.
@@ -216,9 +224,11 @@ Expected output:
 
 ```text
 AGENTS.md
+HEARTBEAT.md
 IDENTITY.md
 MEMORY.md
 SOUL.md
+TOOLS.md
 USER.md
 memory/
 ```

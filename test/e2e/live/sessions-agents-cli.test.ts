@@ -18,7 +18,7 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { registerSandboxCleanupUnlessKept } from "../fixtures/cleanup-resources.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
-import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
+import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
@@ -125,7 +125,11 @@ async function ensureOpenshellAvailable(host: HostCliClient): Promise<void> {
   ).toBe(0);
 }
 
-async function precleanSandbox(host: HostCliClient, hosted: HostedInferenceConfig): Promise<void> {
+async function precleanSandbox(
+  host: HostCliClient,
+  sandbox: SandboxClient,
+  hosted: HostedInferenceConfig,
+): Promise<void> {
   if (process.env.NEMOCLAW_E2E_KEEP_SANDBOX === "1") return;
 
   const destroy = await runNemoclaw(host, [SANDBOX_NAME, "destroy", "--yes"], hosted, {
@@ -137,15 +141,13 @@ async function precleanSandbox(host: HostCliClient, hosted: HostedInferenceConfi
     `cleanup NemoClaw destroy failed\n${resultText(destroy)}`,
   ).toBe(true);
 
-  const openshellDelete = await host.command("openshell", ["sandbox", "delete", SANDBOX_NAME], {
-    artifactName: "cleanup-openshell-sandbox-delete-sessions-agents-cli",
-    env: commandEnv(),
-    timeoutMs: 60_000,
-  });
-  expect(
-    openshellDelete.exitCode === 0 || isMissingSandboxCleanupOutput(resultText(openshellDelete)),
-    `cleanup OpenShell sandbox delete failed\n${resultText(openshellDelete)}`,
-  ).toBe(true);
+  await expect(
+    sandbox.cleanupSandboxBeforeOnboard(SANDBOX_NAME, {
+      artifactName: "cleanup-openshell-sandbox-delete-sessions-agents-cli",
+      env: commandEnv(),
+      timeoutMs: 60_000,
+    }),
+  ).resolves.toBeUndefined();
 }
 
 function isMissingSandboxCleanupOutput(text: string): boolean {
@@ -358,7 +360,7 @@ test(
         timeoutMs: 5 * 60_000,
       });
     });
-    await precleanSandbox(host, hosted);
+    await precleanSandbox(host, sandbox, hosted);
     fs.rmSync(path.join(process.env.HOME ?? "", ".nemoclaw", "onboard.lock"), { force: true });
 
     progress.phase("onboard the sessions and agents sandbox");

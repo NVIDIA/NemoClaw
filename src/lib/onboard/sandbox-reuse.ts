@@ -12,6 +12,7 @@ import {
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 import {
   isExplicitMissingSandboxGatewayOutput,
+  observeLegacySandboxOnGateway,
   SANDBOX_RECREATE_PROBE_TIMEOUT_MS,
 } from "./sandbox-recreate-probe";
 import {
@@ -261,6 +262,18 @@ export function createSandboxReuseHelpers(deps: SandboxReuseDeps): SandboxReuseH
       includeStreams: true,
       timeout: SANDBOX_RECREATE_PROBE_TIMEOUT_MS,
     });
+    const legacy = observeLegacySandboxOnGateway(
+      { sandboxName, gatewayName: recordedGatewayName ?? deps.getGatewayName?.() ?? "" },
+      probe,
+      deps.captureOpenshell,
+      {
+        ignoreError: true,
+        includeStderr: true,
+        includeStreams: true,
+        timeout: SANDBOX_RECREATE_PROBE_TIMEOUT_MS,
+      },
+    );
+    if (legacy) return legacy;
     const { combined, stdout } = capturedProbeOutput(probe);
     if (isCleanFailedProbe(probe) && isExplicitMissingSandboxGatewayOutput(combined, sandboxName)) {
       return { state: "missing", liveIdentityFingerprint: null };

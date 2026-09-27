@@ -8,6 +8,7 @@ import {
   mkdirSync,
   mkdtempSync,
   openSync,
+  realpathSync,
   readdirSync,
   readFileSync,
   rmSync,
@@ -36,7 +37,7 @@ import { makeSnapshotManifest } from "./migration-state-test-fixtures.js";
 const roots: string[] = [];
 
 function makeHome(): string {
-  const home = mkdtempSync(path.join(tmpdir(), "nemoclaw-migration-state-security-"));
+  const home = realpathSync(mkdtempSync(path.join(tmpdir(), "nemoclaw-migration-state-security-")));
   roots.push(home);
   return home;
 }

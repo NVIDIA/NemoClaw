@@ -8,10 +8,14 @@ const mocks = vi.hoisted(() => ({
   listSandboxes: vi.fn(),
 }));
 
-vi.mock("../../adapters/openshell/sandbox-observer-cli", () => ({
-  createCliOpenShellSandboxObserver: () => ({ listSandboxes: mocks.listSandboxes }),
-  stripOpenShellCliAnsi: (value: string) => value,
-}));
+vi.mock("../../adapters/openshell/sandbox-observer-cli", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../adapters/openshell/sandbox-observer-cli")>();
+  return {
+    ...actual,
+    createCliOpenShellSandboxObserver: () => ({ listSandboxes: mocks.listSandboxes }),
+  };
+});
 
 vi.mock("../../adapters/openshell/resolve", () => ({
   resolveOpenshell: () => "/usr/bin/openshell",

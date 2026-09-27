@@ -7,14 +7,6 @@ import { DEFAULT_SANDBOX_LOG_LINES } from "./log-options";
 export const DEFAULT_LOGS_PROBE_TIMEOUT_MS = 5000;
 export const LOGS_PROBE_TIMEOUT_ENV = "NEMOCLAW_LOGS_PROBE_TIMEOUT_MS";
 
-export type LogProbeResult = {
-  status: number | null;
-  stdout?: string;
-  stderr?: string;
-  error?: Error;
-  signal?: NodeJS.Signals | null;
-};
-
 export function getLogsProbeTimeoutMs(
   env: Record<string, string | undefined> = process.env,
 ): number {
@@ -25,16 +17,6 @@ export function getLogsProbeTimeoutMs(
   const parsed = Number(rawValue);
   const timeoutMs = Number.isFinite(parsed) ? Math.floor(parsed) : Number.NaN;
   return timeoutMs > 0 ? timeoutMs : DEFAULT_LOGS_PROBE_TIMEOUT_MS;
-}
-
-export function describeLogProbeResult(result: LogProbeResult): string {
-  if (result.error) {
-    return result.error.message;
-  }
-  if (result.signal) {
-    return `signal ${result.signal}`;
-  }
-  return `exit ${result.status ?? "unknown"}`;
 }
 
 export function normalizeSandboxLogsOptions(
@@ -50,18 +32,7 @@ export function normalizeSandboxLogsOptions(
   };
 }
 
-export function buildSandboxOpenclawGatewayLogsArgs(
-  sandboxName: string,
-  options: SandboxLogsOptions,
-): string[] {
-  const args = ["sandbox", "exec", "-n", sandboxName, "--", "tail", "-n", options.lines];
-  if (options.follow) {
-    args.push("-f");
-  }
-  args.push("/tmp/gateway.log");
-  return args;
-}
-
+/** Legacy argv owner retained for the deferred policy-denial log consumer. */
 export function buildSandboxLogsArgs(
   sandboxName: string,
   options: SandboxLogsOptions,
@@ -70,12 +41,8 @@ export function buildSandboxLogsArgs(
   const args = ["logs"];
   if (gatewayName) args.push("-g", gatewayName);
   args.push(sandboxName, "-n", options.lines, "--source", "all");
-  if (options.since) {
-    args.push("--since", options.since);
-  }
-  if (options.follow) {
-    args.push("--tail");
-  }
+  if (options.since) args.push("--since", options.since);
+  if (options.follow) args.push("--tail");
   return args;
 }
 

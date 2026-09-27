@@ -11,11 +11,7 @@ import {
 } from "../../adapters/openshell/sandbox-policy-cli";
 import type { AgentDefinition } from "../../agent/defs";
 import { log } from "../../cli/logger";
-import {
-  buildGatewayInferenceGetArgs,
-  parseGatewayInference,
-  planInferenceRouteReconcile,
-} from "../../inference/config";
+import { planInferenceRouteReconcile } from "../../inference/config";
 import { withGatewayRouteMutationLock } from "../../inference/gateway-route-mutation-lock";
 import { normalizeInferenceSelection } from "../../inference/selection";
 import { parseServingProfileProvenance } from "../../inference/serving/profile-provenance";
@@ -61,6 +57,7 @@ import {
 import {
   captureLaunchReadiness,
   createBoundLaunchReadinessDeps,
+  createLaunchReadinessInferenceRouteObserver,
   LaunchReadinessEvidenceError,
   type LaunchReadinessFailedCheck,
   type LaunchReadinessHealthDeps,
@@ -81,6 +78,7 @@ import {
   OPENCLAW_ONBOARDING_PAIRING_POLL_MS,
   OPENCLAW_ONBOARDING_PAIRING_SETTLEMENT_TIMEOUT_MS,
   OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS,
+  parseOpenClawVersionFromText,
   type OpenClawPairingRepairObservation,
   type OpenClawPairingSettlementObservation,
 } from "./launch-readiness/openclaw-pairing-qualification";
@@ -89,6 +87,8 @@ export { createProbeTimingRecorder, type ProbeTimingRecorder } from "./probe/tim
 export { createBoundLaunchReadinessDeps };
 
 const LIVE_POLICY_MAX_BYTES = 2 * 1_024 * 1_024;
+const LIVE_AGENT_VERSION_MAX_BYTES = 4 * 1_024;
+const LIVE_AGENT_VERSION_TIMEOUT_MS = 10_000;
 
 export type LaunchReadinessPerformanceStage =
   | "storage-read"
@@ -186,12 +186,16 @@ export function formatLaunchReadinessUnsafeAuthorityEvidence(
   const observedMode = evidence.observedMode ?? "unavailable";
   const repair =
     evidence.repair === "chmod"
-      ? `chmod ${evidence.expectedMode} -- ${shellQuote(evidence.path)}`
+      ? `Repair it with: chmod ${evidence.expectedMode} -- ${shellQuote(evidence.path)}.`
       : "Repair this path only after verifying it is owned by the current user and has no links.";
+  const writeGuidance =
+    evidence.operation === "write"
+      ? " Check that the containing directory and filesystem allow writes and have free space."
+      : "";
   const errorCode = evidence.errorCode
     ? ` (${evidence.operation} error ${evidence.errorCode})`
     : "";
-  return ` ${evidence.resource} ${displayPath} is unsafe: expected current-user UID ${evidence.expectedUid}, observed owner UID ${observedUid}; expected mode ${evidence.expectedMode}, observed mode ${observedMode}${errorCode}. Repair it with: ${repair}. Then retry.`;
+  return ` ${evidence.resource} ${displayPath} is unsafe: expected current-user UID ${evidence.expectedUid}, observed owner UID ${observedUid}; expected mode ${evidence.expectedMode}, observed mode ${observedMode}${errorCode}. ${repair}${writeGuidance} Then retry.`;
 }
 
 export type PortableOpenClawPairingSettlementResult =
@@ -631,11 +635,6 @@ export function buildLaunchReadinessRegistryProjection(
     hermesDashboardTui: entry.hermesDashboardTui === true,
     dashboardPort: entry.dashboardPort ?? null,
     dashboardRemoteBindPrepared: entry.dashboardRemoteBindPrepared === true,
-    openclawImagePluginInstalls: (entry.openclawImagePluginInstalls ?? []).map((install) => ({
-      id: install.id,
-      installPath: install.installPath,
-      loadPaths: install.loadPaths ? [...install.loadPaths] : null,
-    })),
   };
 }
 
@@ -673,24 +672,39 @@ async function validateLivePolicy(
   }
 }
 
+async function resolveOpenClawPairingVersion(
+  sandboxName: string,
+  gatewayName: string,
+  entry: SandboxEntry,
+  agent: AgentDefinition,
+  deps: LaunchReadinessDeps,
+): Promise<string | null> {
+  const recordedVersion = normalizedString(entry.agentVersion);
+  if (recordedVersion) return recordedVersion;
+  if (!normalizedString(entry.fromDockerfile)) return null;
+
+  const commandExecutor = deps.commandExecutor;
+  if (!commandExecutor) return null;
+  try {
+    const observed = await commandExecutor.runBuffered({
+      sandboxName,
+      target: namedOpenShellGateway(gatewayName),
+      command: ["sh", "-lc", agent.versionCommand],
+      timeoutMilliseconds: LIVE_AGENT_VERSION_TIMEOUT_MS,
+      outputLimitBytes: LIVE_AGENT_VERSION_MAX_BYTES,
+    });
+    return observed.outcome.kind === "completed" && observed.outcome.exitCode === 0
+      ? parseOpenClawVersionFromText(observed.stdout)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 class LaunchReadinessPolicyObservationError extends Error {
   constructor(readonly policyError: OpenShellSandboxError) {
     super(policyError.message);
   }
-}
-
-function reportsInferenceNotConfigured(output: string): boolean {
-  const lines = output.replace(/\u001b\[[0-9;]*m/g, "").split("\n");
-  let inGatewayInference = false;
-  for (const line of lines) {
-    if (/^(?:Gateway )?Inference:\s*$/i.test(line)) {
-      inGatewayInference = true;
-      continue;
-    }
-    if (inGatewayInference && /^\S.*:$/.test(line)) return false;
-    if (inGatewayInference && /^Not configured$/i.test(line.trim())) return true;
-  }
-  return false;
 }
 
 async function captureLaunchIdentity(
@@ -783,30 +797,31 @@ async function captureLaunchIdentity(
   const inferenceSelection = normalizeInferenceSelection(entry);
   const inference = registry.getSandboxEntryInference(entry);
   const inferenceGetStartedAt = performance.now();
-  let inferenceResult: ReturnType<typeof captureLaunchReadiness>;
+  let inferenceResult: Awaited<
+    ReturnType<NonNullable<LaunchReadinessDeps["inferenceRouteObserver"]>["observeInferenceRoute"]>
+  >;
   try {
-    inferenceResult = (deps.capture ?? ((args) => captureLaunchReadiness(args)))(
-      buildGatewayInferenceGetArgs(gatewayName),
-    );
+    const observer =
+      deps.inferenceRouteObserver ??
+      createLaunchReadinessInferenceRouteObserver(
+        deps.capture ?? ((args, options) => captureLaunchReadiness(args, options)),
+      );
+    inferenceResult = await observer.observeInferenceRoute({
+      target: namedOpenShellGateway(gatewayName),
+    });
   } catch (error) {
     recordLaunchReadinessObservationFailure(deps, "inference-get");
     throw error;
   } finally {
     recordObservationTiming(deps, "inference-get", inferenceGetStartedAt);
   }
-  if (inferenceResult.status !== 0) {
+  if (!inferenceResult.ok) {
     recordLaunchReadinessObservationFailure(deps, "inference-get");
     throw new LaunchReadinessEvidenceError();
   }
-  let liveInference: ReturnType<typeof parseGatewayInference>;
-  let liveInferenceAbsent: boolean;
-  try {
-    liveInference = parseGatewayInference(inferenceResult.output);
-    liveInferenceAbsent = reportsInferenceNotConfigured(inferenceResult.output);
-  } catch (error) {
-    recordLaunchReadinessObservationFailure(deps, "inference-get");
-    throw error;
-  }
+  const liveInference =
+    inferenceResult.value.state === "configured" ? inferenceResult.value.route : null;
+  const liveInferenceAbsent = inferenceResult.value.state === "unconfigured";
   if (inference.kind === "configured") {
     if (!liveInference && !liveInferenceAbsent) {
       recordLaunchReadinessObservationFailure(deps, "inference-get");
@@ -839,7 +854,16 @@ async function captureLaunchIdentity(
 
   let session: LaunchReadinessIdentity["session"] = null;
   if (agentName === "openclaw") {
-    const openclawVersion = normalizedString(entry.agentVersion);
+    // A custom Dockerfile intentionally has no managed version in the registry.
+    // Bind its readiness lease to the version observed from the exact live
+    // sandbox without promoting that observation into managed-image provenance.
+    const openclawVersion = await resolveOpenClawPairingVersion(
+      sandboxName,
+      gatewayName,
+      entry,
+      agent,
+      deps,
+    );
     const stateDirectory = normalizedString(agent.config?.dir);
     // Pairing qualification requires a versioned trusted definition. The
     // receipt binds the sandbox's recorded version, including supported stale

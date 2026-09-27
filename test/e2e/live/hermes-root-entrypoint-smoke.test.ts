@@ -369,10 +369,14 @@ async function runCleanVariant(
     [
       "run",
       "-d",
+      "--user",
+      "root",
       "--name",
       container,
       "--env",
       "HERMES_KANBAN_DISPATCH_IN_GATEWAY=1",
+      "--user",
+      "root",
       image,
       "/usr/local/bin/nemoclaw-start",
     ],
@@ -413,7 +417,19 @@ exec /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-start`;
 
   containers.push(container);
   await probe.expect(
-    ["run", "-d", "--name", container, "--entrypoint", "/bin/bash", image, "-lc", legacyBootstrap],
+    [
+      "run",
+      "-d",
+      "--user",
+      "root",
+      "--name",
+      container,
+      "--entrypoint",
+      "/bin/bash",
+      image,
+      "-lc",
+      legacyBootstrap,
+    ],
     { artifactName: "start-legacy-layout-root-entrypoint-container", timeoutMs: RUN_TIMEOUT_MS },
   );
   await waitForHealth(probe, container);
@@ -448,7 +464,18 @@ exec ${entrypoint} >/tmp/nemoclaw-refusal.log 2>&1`;
 
   containers.push(container);
   const result = await probe.run(
-    ["run", "--name", container, "--entrypoint", "/bin/bash", image, "-lc", bootstrap],
+    [
+      "run",
+      "--user",
+      "root",
+      "--name",
+      container,
+      "--entrypoint",
+      "/bin/bash",
+      image,
+      "-lc",
+      bootstrap,
+    ],
     { artifactName: `start-${container}`, timeoutMs: RUN_TIMEOUT_MS },
   );
   // Establish the expected exit before restarting; an interrupted Docker client
