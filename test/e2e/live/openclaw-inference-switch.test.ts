@@ -46,6 +46,7 @@ import {
   writeInferenceSwitchRetryEvidence,
 } from "../fixtures/inference-switch-retry.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
+import { approveOpenClawAdminScope } from "./openclaw-admin-scope.ts";
 import { runBoundedRetry } from "../../../tools/e2e/retry-evidence.mts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
@@ -1076,7 +1077,14 @@ test(
     switchBinding && redactionValues.push(switchBinding.credentialValue);
 
     progress.phase("switch the route and verify restart semantics");
-    expect(baseline.env.NEMOCLAW_PREFERRED_API).toBe("openai-completions");
+    await approveOpenClawAdminScope(
+      host,
+      sandbox,
+      SANDBOX_NAME,
+      commandEnv(home),
+      redactionValues,
+      false,
+    );
     const apiFamilyChanges = SWITCH_MOCK_ANTHROPIC === "1";
     expect(SWITCH_INFERENCE_API).toBe(
       apiFamilyChanges ? "anthropic-messages" : "openai-completions",

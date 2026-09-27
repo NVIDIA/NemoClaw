@@ -8,6 +8,7 @@ import { asExportedConfig } from "../../../../test/support/config-export-documen
 import { validateConfigExportWithPinnedV1 } from "../../../../test/support/v1-config-consumer";
 import { testTimeoutOptions } from "../../../../test/helpers/timeouts";
 import {
+  dcodeSnapshot,
   hermesImageRef,
   hermesProfileInput,
   hermesSnapshot,
@@ -153,6 +154,25 @@ describe("effective v1alpha1 export defaults (#12132)", () => {
         },
         openclawNativeSettingsVerified: 2,
         hermesNativeSettingsVerified: 3,
+      });
+    },
+  );
+  it.runIf(process.env.NEMOCLAW_RUN_V1_CONFIG_COMPATIBILITY === "1")(
+    "compiles strict Deep Agents policy with the pinned v1 consumer",
+    testTimeoutOptions(12 * 60_000),
+    async () => {
+      const dcode = dcodeSnapshot();
+      const strictDcode = {
+        ...dcode,
+        policy: {
+          ...dcode.policy,
+          document: dcode.policy.document + "landlock:\n  compatibility: strict\n",
+        },
+      };
+      const result = await exportSnapshots([strictDcode]);
+      expect(result.outcome.ok).toBe(true);
+      expect(validateConfigExportWithPinnedV1(result.writeStdout.mock.calls[0]![0])).toMatchObject({
+        compiledSandboxes: 1,
       });
     },
   );
