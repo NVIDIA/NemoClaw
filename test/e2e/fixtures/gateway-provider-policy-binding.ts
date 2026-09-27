@@ -87,6 +87,24 @@ export function unbindProviderPolicyEndpoints(policyFile: string, providerName: 
   fs.chmodSync(policyFile, 0o600);
 }
 
+export function unbindFixtureProviderPolicyEndpoint(
+  policyFile: string,
+  providerName: string,
+  host: string,
+  port: number,
+  protocol: string,
+): void {
+  const policy = readPolicy(policyFile);
+  const { endpoint } = findFixturePolicyEndpoint(policy, host, port, protocol);
+  const binding = endpoint.credential_binding as { provider?: unknown } | undefined;
+  if (binding?.provider !== providerName) {
+    throw new Error("fixture endpoint credential binding belongs to another provider");
+  }
+  delete endpoint.credential_binding;
+  fs.writeFileSync(policyFile, YAML.stringify(policy));
+  fs.chmodSync(policyFile, 0o600);
+}
+
 export function assertFixtureProviderPolicyEndpointBinaries(
   policyFile: string,
   host: string,

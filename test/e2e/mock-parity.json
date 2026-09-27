@@ -509,7 +509,9 @@
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/mcp-bridge-hermes-http.test.ts",
         "src/lib/messaging/channels/openclaw-bridge-health.test.ts",
-        "test/runtime/messaging/telegram-diagnostics.test.ts"
+        "test/runtime/messaging/telegram-diagnostics.test.ts",
+        "test/e2e/support/messaging-providers-runtime-proofs.test.ts",
+        "test/e2e/support/hermes-discord-policy-binding.test.ts"
       ],
       "liveSources": [
         "test/e2e/fixtures/sandbox-failure-diagnostics.ts",

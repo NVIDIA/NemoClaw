@@ -12,6 +12,7 @@ import { expect } from "./e2e-test.ts";
 import {
   assertFixtureProviderPolicyEndpointBinaries,
   bindFixtureProviderPolicyEndpoint,
+  unbindFixtureProviderPolicyEndpoint,
 } from "./gateway-provider-policy-binding.ts";
 import type { ShellProbeResult } from "./shell-probe.ts";
 
@@ -83,6 +84,7 @@ async function setFixtureProviderPolicyBinding(
       readonly protocol: "rest" | "websocket";
     };
     readonly expectedBinaries?: readonly string[];
+    readonly removeBinding?: boolean;
   },
 ): Promise<void> {
   const policy = await host.command(
@@ -101,7 +103,10 @@ async function setFixtureProviderPolicyBinding(
   const boundPolicy = path.join(temporary, "bound-policy.yaml");
   try {
     fs.writeFileSync(boundPolicy, policy.stdout, { mode: 0o600 });
-    bindFixtureProviderPolicyEndpoint(
+    const updateBinding = options.removeBinding
+      ? unbindFixtureProviderPolicyEndpoint
+      : bindFixtureProviderPolicyEndpoint;
+    updateBinding(
       boundPolicy,
       options.providerName,
       options.endpoint.host,
@@ -125,6 +130,20 @@ async function setFixtureProviderPolicyBinding(
   } finally {
     fs.rmSync(temporary, { force: true, recursive: true });
   }
+}
+
+/** Remove only the temporary endpoint's binding before testing provider removal. */
+export async function clearFixtureProviderPolicyEndpoint(
+  host: HostCliClient,
+  sandboxName: string,
+  options: FixtureProviderCommandOptions & {
+    readonly endpoint: { readonly host: string; readonly port: number; readonly protocol: "rest" };
+  },
+): Promise<void> {
+  await setFixtureProviderPolicyBinding(host, sandboxName, {
+    ...options,
+    removeBinding: true,
+  });
 }
 
 /** Bind a fixture endpoint without rotating the already-attached provider credential revision. */

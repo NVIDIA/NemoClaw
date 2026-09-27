@@ -17,7 +17,10 @@ import {
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeDockerApi } from "../fixtures/fake-docker-api.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
-import { applyFixtureProviderPolicyEndpoint } from "../fixtures/gateway-providers.ts";
+import {
+  applyFixtureProviderPolicyEndpoint,
+  clearFixtureProviderPolicyEndpoint,
+} from "../fixtures/gateway-providers.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   openClawHasConfiguredTelegram,
@@ -611,6 +614,17 @@ test(
     });
     await artifacts.writeJson("phase-4-fake-telegram-requests.json", telegramCaptureRows);
     scanArtifactCredentialLeak(artifacts.rootDir);
+    await clearFixtureProviderPolicyEndpoint(host, SANDBOX_NAME, {
+      artifactName: "phase-4-clear-fake-telegram-binding",
+      endpoint: {
+        host: "host.openshell.internal",
+        port: Number(fakeTelegram.port),
+        protocol: "rest",
+      },
+      env: channelEnv(),
+      providerName: PROVIDER_NAME,
+      redactionValues: secretsToRedact,
+    });
 
     progress.phase("remove Telegram and rebuild sandbox");
     const remove = await host.nemoclaw([SANDBOX_NAME, "channels", "remove", "telegram"], {
