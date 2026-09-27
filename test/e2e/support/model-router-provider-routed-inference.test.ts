@@ -6,12 +6,21 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { resolveModelRouterLogPath } from "../../../src/lib/onboard/model-router.ts";
+import { DEFAULT_GATEWAY_PORT } from "../../../src/lib/core/ports.ts";
+import { CleanupRegistry } from "../fixtures/cleanup.ts";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 
 import {
   buildProviderRoutedEnv,
   retainRouterDiagnostics,
+  registerRouterDiagnostics,
 } from "../live/model-router-provider-routed-inference-helpers.ts";
+
+// Model a test process configured for a different gateway than its filtered child.
+vi.mock("../../../src/lib/core/ports.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../src/lib/core/ports.ts")>()),
+  GATEWAY_PORT: 9123,
+}));
 
 describe("Model Router provider-routed live support", () => {
   it("builds the routed onboard environment with both NVIDIA credential names", () => {
@@ -111,6 +120,40 @@ describe("Model Router provider-routed live support", () => {
       expect(
         JSON.parse(await fs.readFile(sink.pathFor("router-diagnostics.json"), "utf8")),
       ).toMatchObject({ available: true, completionResponses: 1 });
+    } finally {
+      vi.restoreAllMocks();
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("captures the onboard child's log when the parent gateway port is filtered out", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "router-child-path-"));
+    try {
+      vi.spyOn(os, "homedir").mockReturnValue(directory);
+      const onboardEnv = buildProviderRoutedEnv("nvapi-test-key", "e2e-router", {
+        NEMOCLAW_GATEWAY_PORT: "9123",
+      });
+      expect(onboardEnv.NEMOCLAW_GATEWAY_PORT).toBeUndefined();
+      const childLog = resolveModelRouterLogPath(directory, DEFAULT_GATEWAY_PORT);
+      const parentLog = resolveModelRouterLogPath(directory, 9123);
+      await fs.mkdir(path.dirname(childLog), { recursive: true });
+      await fs.mkdir(path.dirname(parentLog), { recursive: true });
+      await fs.writeFile(childLog, '"POST /v1/chat/completions HTTP/1.1" 200 OK');
+      await fs.writeFile(parentLog, "AuthenticationError");
+      const sink = new ArtifactSink(path.join(directory, "artifacts"));
+      const cleanup = new CleanupRegistry();
+      registerRouterDiagnostics(cleanup, sink, onboardEnv);
+      expect(await cleanup.runAll()).toEqual({
+        passed: ["retain Model Router diagnostics"],
+        failures: [],
+      });
+      expect(
+        JSON.parse(await fs.readFile(sink.pathFor("router-diagnostics.json"), "utf8")),
+      ).toMatchObject({
+        available: true,
+        completionResponses: 1,
+        authenticationErrorReported: false,
+      });
     } finally {
       vi.restoreAllMocks();
       await fs.rm(directory, { recursive: true, force: true });

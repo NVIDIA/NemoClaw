@@ -67,7 +67,8 @@ test(
       timeoutMs: 120_000,
     });
 
-    registerRouterDiagnostics(cleanup, artifacts);
+    const onboardEnv = buildProviderRoutedEnv(apiKey, SANDBOX_NAME);
+    registerRouterDiagnostics(cleanup, artifacts, onboardEnv);
 
     progress.phase("onboard the routed provider");
     const onboard = await host.command(
@@ -81,7 +82,7 @@ test(
       ],
       {
         artifactName: "onboard-model-router-provider-routed",
-        env: buildProviderRoutedEnv(apiKey, SANDBOX_NAME),
+        env: onboardEnv,
         redactionValues: [apiKey],
         timeoutMs: ONBOARD_TIMEOUT_MS,
       },

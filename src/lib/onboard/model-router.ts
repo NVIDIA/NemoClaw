@@ -69,8 +69,11 @@ const MODEL_ROUTER_VENV_DIR = path.join(
   nemoclawStateRoot(os.homedir(), GATEWAY_PORT),
   "model-router-venv",
 );
-export function resolveModelRouterLogPath(homeDir = os.homedir()): string {
-  return path.join(nemoclawStateRoot(homeDir, GATEWAY_PORT), "state", "model-router.log");
+export function resolveModelRouterLogPath(
+  homeDir = os.homedir(),
+  gatewayPort = GATEWAY_PORT,
+): string {
+  return path.join(nemoclawStateRoot(homeDir, gatewayPort), "state", "model-router.log");
 }
 
 export const DEFAULT_MODEL_ROUTER_CREDENTIAL_ENV = "NVIDIA_INFERENCE_API_KEY";

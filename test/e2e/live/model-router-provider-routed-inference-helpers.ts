@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import { DEFAULT_GATEWAY_PORT, parsePort } from "../../../src/lib/core/ports.ts";
 import { resolveModelRouterLogPath } from "../../../src/lib/onboard/model-router.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
@@ -55,9 +56,18 @@ export async function retainRouterDiagnostics(
   await artifacts.writeJson("router-diagnostics.json", summary);
 }
 
-export function registerRouterDiagnostics(cleanup: CleanupRegistry, artifacts: ArtifactSink): void {
+export function registerRouterDiagnostics(
+  cleanup: CleanupRegistry,
+  artifacts: ArtifactSink,
+  onboardEnv: NodeJS.ProcessEnv,
+): void {
+  // The filtered child environment can select a different port than the test process.
+  const logPath = resolveModelRouterLogPath(
+    undefined,
+    parsePort("NEMOCLAW_GATEWAY_PORT", DEFAULT_GATEWAY_PORT, onboardEnv),
+  );
   // Register after sandbox cleanup so the LIFO registry captures the log before destruction.
-  cleanup.add("retain Model Router diagnostics", () => retainRouterDiagnostics(artifacts));
+  cleanup.add("retain Model Router diagnostics", () => retainRouterDiagnostics(artifacts, logPath));
 }
 
 export function buildProviderRoutedEnv(

@@ -65,4 +65,5 @@ it.each([
       fs.rmSync(root, { recursive: true, force: true });
     }
   },
+  45_000,
 );

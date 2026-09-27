@@ -27,7 +27,7 @@ test.runIf(Boolean(scenario))(
         await fs.readFile(artifacts.pathFor("diagnostics-attempted.txt"), "utf8"),
       );
     });
-    registerRouterDiagnostics(cleanup, artifacts);
+    registerRouterDiagnostics(cleanup, artifacts, {});
     progress.phase("record E2E fixture support outcome");
     operations[scenario!]!();
   },
