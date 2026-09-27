@@ -3116,7 +3116,7 @@ setTimeout(() => {}, 5);
         [
           "-e",
           `
-${telegramDiagnosticsScript}
+process.title = 'openclaw-gateway'; ${telegramDiagnosticsScript}
 setTimeout(() => {}, 5);
 `,
         ],
