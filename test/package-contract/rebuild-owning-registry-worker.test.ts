@@ -53,7 +53,6 @@ function writeRecoveryFixture(home: string) {
       archive: "native-home.tar" as const,
       sha256: archiveSha256,
     },
-    dir: "/sandbox",
     backupPath,
     blueprintDigest: null,
     rebuildPolicyHandoff: { file: path.basename(handoffPath), sha256 },

@@ -108,8 +108,6 @@ export interface RebuildManifest {
     archive: typeof NATIVE_STATE_ARCHIVE;
     sha256: string;
   };
-  /** Canonical native home/workspace root. */
-  dir: string;
   backupPath: string;
   blueprintDigest: string | null;
   /** Bounded live-policy handoff retained only while a rebuild transaction is recoverable. */
@@ -369,7 +367,6 @@ function isRebuildManifest(value: unknown): value is RebuildManifest {
     "agentVersion",
     "backupPath",
     "blueprintDigest",
-    "dir",
     "expectedVersion",
     "hostLocalInferenceProvenance",
     "hostLocalInferenceReceipt",
@@ -416,7 +413,6 @@ function isRebuildManifest(value: unknown): value is RebuildManifest {
     typeof value.agentType === "string" &&
     (value.agentVersion === null || typeof value.agentVersion === "string") &&
     (value.expectedVersion === null || typeof value.expectedVersion === "string") &&
-    typeof value.dir === "string" &&
     typeof value.backupPath === "string" &&
     (value.nativeState === undefined ||
       (isObjectRecord(value.nativeState) &&
@@ -1756,6 +1752,16 @@ function backupNativeSandboxState(sandboxName: string, options: BackupOptions): 
         `Native state archive validation failed: ${validation.violations.join("; ")}`,
       );
     }
+    const symlinkTraversalViolations = rejectSymlinkExtractionTraversal(
+      { filePath: archivePath },
+      validation.entries,
+    );
+    if (symlinkTraversalViolations.length > 0) {
+      rmSync(backupPath, { recursive: true, force: true });
+      return nativeStateFailure(
+        `Native state archive validation failed: ${symlinkTraversalViolations.join("; ")}`,
+      );
+    }
     const hardLinkViolations = rejectHardLinks({ filePath: archivePath });
     if (hardLinkViolations.length > 0) {
       rmSync(backupPath, { recursive: true, force: true });
@@ -1783,7 +1789,6 @@ function backupNativeSandboxState(sandboxName: string, options: BackupOptions): 
         archive: NATIVE_STATE_ARCHIVE,
         sha256: sha256File(archivePath),
       },
-      dir: rootResult.root,
       backupPath,
       blueprintDigest: computeBlueprintDigest(),
       ...authority,

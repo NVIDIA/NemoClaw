@@ -83,6 +83,21 @@ function buildSymlinkTraversalTar(): Buffer {
   ]);
 }
 
+function buildSymlinkCredentialTraversalTar(): Buffer {
+  const payload = Buffer.from('{"enabled":true}', "utf8");
+  const paddedPayload = Buffer.alloc(Math.ceil(payload.length / 512) * 512, 0);
+  payload.copy(paddedPayload);
+  return Buffer.concat([
+    tarHeader("redirect", Buffer.alloc(0), {
+      type: "2",
+      linkTarget: "../../outside-native-scan",
+    }),
+    tarHeader("redirect/config.json", payload),
+    paddedPayload,
+    Buffer.alloc(1024, 0),
+  ]);
+}
+
 function writeOpenClawRegistry(sandboxName: string): void {
   fs.mkdirSync(path.join(TMP_HOME, ".nemoclaw"), { recursive: true });
   fs.writeFileSync(
@@ -318,6 +333,7 @@ describe("complete native home persistence", () => {
       expect(backup.success, backup.error).toBe(true);
       expect(backup.manifest).not.toHaveProperty("stateDirs");
       expect(backup.manifest).not.toHaveProperty("stateFiles");
+      expect(backup.manifest).not.toHaveProperty("dir");
       expect(backup.manifest?.nativeState).toMatchObject({
         root: "/sandbox",
         archive: "native-home.tar",
@@ -581,6 +597,65 @@ describe("complete native home persistence", () => {
       restoreEnv("NEMOCLAW_OPENSHELL_BIN", oldOpenshell);
       restoreEnv("NEMOCLAW_TEST_NATIVE_ROOT", oldNativeRoot);
       restoreEnv("NEMOCLAW_TEST_SSH_COMMAND_LOG", oldCommandLog);
+      restoreEnv("PATH", oldPath);
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects symlink write-through before credential-scan extraction", () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-scan-traversal-"));
+    const oldPath = process.env.PATH;
+    const oldCraftedArchive = process.env.NEMOCLAW_TEST_CRAFTED_ARCHIVE;
+    const oldTarLog = process.env.NEMOCLAW_TEST_TAR_LOG;
+    try {
+      const binDir = path.join(fixture, "bin");
+      const nativeRoot = path.join(fixture, "native-home");
+      const craftedArchive = path.join(fixture, "crafted.tar");
+      const tarLog = path.join(fixture, "tar.log");
+      const systemTar = spawnSync("sh", ["-c", "command -v tar"], {
+        encoding: "utf8",
+      }).stdout.trim();
+      expect(systemTar).not.toBe("");
+      fs.mkdirSync(binDir, { recursive: true });
+      fs.mkdirSync(nativeRoot, { recursive: true });
+      fs.writeFileSync(path.join(nativeRoot, "original.txt"), "payload");
+      fs.writeFileSync(craftedArchive, buildSymlinkCredentialTraversalTar());
+      writeExecutable(
+        path.join(binDir, "tar"),
+        `#!/usr/bin/env node
+const fs = require("node:fs");
+const { spawnSync } = require("node:child_process");
+const args = process.argv.slice(2);
+fs.appendFileSync(process.env.NEMOCLAW_TEST_TAR_LOG, JSON.stringify(args) + "\\n");
+if (args.includes("-C")) {
+  process.stdout.write(fs.readFileSync(process.env.NEMOCLAW_TEST_CRAFTED_ARCHIVE));
+  process.exit(0);
+}
+const result = spawnSync(${JSON.stringify(systemTar)}, args, { stdio: "inherit" });
+process.exit(result.status ?? 90);
+`,
+      );
+      process.env.NEMOCLAW_TEST_CRAFTED_ARCHIVE = craftedArchive;
+      process.env.NEMOCLAW_TEST_TAR_LOG = tarLog;
+      process.env.PATH = `${binDir}:${oldPath ?? ""}`;
+      writeOpenClawRegistry("alpha");
+
+      const backup = sandboxState.backupSandboxState("alpha", {
+        nativeStateSource: {
+          root: "/sandbox",
+          directory: nativeRoot,
+          assertCurrent: () => undefined,
+        },
+      });
+
+      expect(backup.success).toBe(false);
+      expect(backup.error).toContain(
+        "archive member 'redirect/config.json' would extract through symlink 'redirect'",
+      );
+      expect(fs.readFileSync(tarLog, "utf8")).not.toContain("--no-recursion");
+    } finally {
+      restoreEnv("NEMOCLAW_TEST_CRAFTED_ARCHIVE", oldCraftedArchive);
+      restoreEnv("NEMOCLAW_TEST_TAR_LOG", oldTarLog);
       restoreEnv("PATH", oldPath);
       fs.rmSync(fixture, { recursive: true, force: true });
     }

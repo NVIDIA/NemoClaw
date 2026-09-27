@@ -731,7 +731,6 @@ describe("rebuild replacement recovery backup", () => {
       agentType: "openclaw",
       agentVersion: null,
       expectedVersion: null,
-      dir: "/sandbox/.openclaw",
       backupPath,
       blueprintDigest: null,
     };

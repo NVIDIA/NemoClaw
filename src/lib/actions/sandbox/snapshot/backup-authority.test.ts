@@ -114,7 +114,6 @@ function successfulBackup(options: BackupOptions): BackupResult {
       agentType: "openclaw",
       agentVersion: null,
       expectedVersion: null,
-      dir: "/sandbox",
       backupPath: "/tmp/alpha",
       blueprintDigest: null,
     },

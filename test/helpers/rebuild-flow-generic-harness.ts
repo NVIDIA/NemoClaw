@@ -686,7 +686,6 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
           archive: "native-home.tar",
           sha256: nativeArchiveSha256,
         },
-        dir: "/sandbox",
         backupPath,
         timestamp: "2026-06-01T00:00:00.000Z",
         blueprintDigest: null,

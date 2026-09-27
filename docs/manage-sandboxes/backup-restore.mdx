@@ -35,7 +35,7 @@ For an eligible stopped container, NemoClaw captures the provider-owned stopped 
 
 ## Backup Before Upgrade
 
-`$$nemoclaw backup-all` remains an installer-facing safety operation. It captures the same complete native home/workspace for every eligible registered sandbox before an OpenShell upgrade. It is not a general snapshot create/list/restore interface.
+`$$nemoclaw backup-all` remains an installer-facing safety operation. It normally captures the same complete native home/workspace for every eligible registered sandbox before an OpenShell upgrade. A standalone run with `NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP=1` can skip a running sandbox whose SSH endpoint is unreachable; changes in that skipped sandbox are absent from the new backup. The installer uses strict pre-upgrade mode, which rejects ordinary skipped or failed sandboxes instead of treating the batch as complete. Refer to [`$$nemoclaw backup-all`](../../reference/commands#$$nemoclaw-backup-all) for the exact skip and strict-mode behavior. It is not a general snapshot create/list/restore interface.
 
 Backups created by older NemoClaw versions from a selective per-agent path inventory are not candidates for automatic rebuild or recreation restore. Recover files from those legacy backup directories manually, then create a current complete native-home backup before replacement.
 

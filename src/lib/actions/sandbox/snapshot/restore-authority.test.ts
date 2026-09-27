@@ -71,7 +71,6 @@ function manifest(agent: ShippedManagedImageAgent): RebuildManifest {
     agentType: agent,
     agentVersion: null,
     expectedVersion: null,
-    dir: "/sandbox",
     backupPath: "/tmp/alpha",
     blueprintDigest: null,
     workload: workload(agent),

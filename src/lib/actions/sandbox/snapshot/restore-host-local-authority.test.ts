@@ -123,7 +123,6 @@ function manifest(agent: Agent, service: Service, port = 8000): RebuildManifest 
     agentType: agent,
     agentVersion: null,
     expectedVersion: null,
-    dir: "/sandbox",
     backupPath: "/tmp/alpha",
     blueprintDigest: null,
     hostLocalInferenceReceipt: serializeHostLocalInferenceReceipt(receipt(service, port)),

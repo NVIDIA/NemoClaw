@@ -27,7 +27,6 @@ function manifest(backupPath: string): RebuildManifest {
     agentType: "openclaw",
     agentVersion: null,
     expectedVersion: null,
-    dir: "/sandbox",
     backupPath,
     blueprintDigest: "digest",
   };

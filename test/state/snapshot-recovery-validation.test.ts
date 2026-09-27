@@ -41,7 +41,6 @@ function writeBackup(
       archive: "native-home.tar",
       sha256: createHash("sha256").update(fs.readFileSync(archivePath)).digest("hex"),
     },
-    dir: "/sandbox",
     backupPath,
     blueprintDigest: null,
     ...overrides,
