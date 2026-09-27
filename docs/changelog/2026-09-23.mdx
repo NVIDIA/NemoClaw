@@ -117,3 +117,15 @@ It also strengthens host OS reporting and Windows WSL GPU verification.
   The Bedrock Runtime adapter lists models only after it successfully serves an inference request.
   Related change: [PR #12343](https://github.com/NVIDIA/NemoClaw/pull/12343).
   Refer to [Understand Gateway Lifecycle Control](/user-guide/hermes/manage-sandboxes/configure-sandboxes/understand-gateway-lifecycle-control) for Hermes recovery behavior.
+- Linux launch-readiness failures can identify the unsafe authority path, owner UID, permissions, bounded error code, and supported repair guidance.
+  Diagnostics exclude receipt contents, environment values, and raw operating-system error messages.
+  Related change: [PR #10851](https://github.com/NVIDIA/NemoClaw/pull/10851).
+  Refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes#understand-launch-readiness-leases).
+- OpenClaw Telegram channel status detects missing, malformed, mismatched, identityless, or non-OpenShell runtime credentials without exposing the credential value.
+  It reports these states as `token_rejected`.
+  Related change: [PR #10860](https://github.com/NVIDIA/NemoClaw/pull/10860).
+  Refer to the [CLI Commands Reference](/user-guide/openclaw/reference/commands#nemoclaw-name-channels-status).
+- When `connect` or `start` reaches a terminal phase for a Docker sandbox with no matching managed container, NemoClaw identifies containers that carry the sandbox-name label.
+  Resolve each listed container through its owning workflow, then rerun the command.
+  Related change: [PR #12355](https://github.com/NVIDIA/NemoClaw/pull/12355).
+  Refer to the [CLI Commands Reference](/user-guide/openclaw/reference/commands#nemoclaw-name-connect).
