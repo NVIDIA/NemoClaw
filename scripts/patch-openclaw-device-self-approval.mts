@@ -2563,9 +2563,13 @@ const ADMIN_CONFIRM_SILENT_IDENTITY_REPLACEMENT = [
   `\t} // ${ADMIN_CONFIRM_MARKER}`,
   ADMIN_CONFIRM_TARGET,
 ].join("\n");
-const ADMIN_CONFIRM_REPLACEMENT = ADMIN_CONFIRM_SILENT_IDENTITY_REPLACEMENT.replace(
+const ADMIN_CONFIRM_READONLY_REPLACEMENT = ADMIN_CONFIRM_SILENT_IDENTITY_REPLACEMENT.replace(
   "catch {}",
   'catch { throw new Error("Admin approval completed, but its token handoff could not read the local device identity. Repair local OpenClaw state, then retry the intended admin command."); }',
+);
+const ADMIN_CONFIRM_REPLACEMENT = ADMIN_CONFIRM_READONLY_REPLACEMENT.replace(
+  'await callGatewayCli("device.pair.list", opts, {}, { scopes: [ADMIN_SCOPE] });',
+  'await callGatewayFromCliWithTransport("device.pair.list", opts, {}, { label: "Devices device.pair.list", defaultTimeoutMs: DEFAULT_DEVICES_TIMEOUT_MS, scopes: [ADMIN_SCOPE] });',
 );
 const ADMIN_CONFIRM_FUNCTION = "async function runDevicesApproveCommand(requestId, opts) {";
 const ADMIN_CONFIRM_SPEC: FileSpec = {
@@ -2595,6 +2599,10 @@ const ADMIN_CONFIRM_SPEC: FileSpec = {
       };
     const importedFunction = `import { ${binding} } from "${identityImport[2]}";\n${ADMIN_CONFIRM_FUNCTION}`;
     const previous = countOccurrences(source, ADMIN_CONFIRM_PREVIOUS_REPLACEMENT) === 1;
+    const previousIdentity = [
+      ADMIN_CONFIRM_SILENT_IDENTITY_REPLACEMENT,
+      ADMIN_CONFIRM_READONLY_REPLACEMENT,
+    ].find((replacement) => countOccurrences(source, replacement) === 1);
     if (source.includes(ADMIN_CONFIRM_MARKER)) {
       if (
         countOccurrences(source, ADMIN_CONFIRM_MARKER) === 1 &&
@@ -2604,14 +2612,11 @@ const ADMIN_CONFIRM_SPEC: FileSpec = {
         return { source, status: "already-applied" };
       if (
         countOccurrences(source, ADMIN_CONFIRM_MARKER) === 1 &&
-        countOccurrences(source, ADMIN_CONFIRM_SILENT_IDENTITY_REPLACEMENT) === 1 &&
+        previousIdentity &&
         countOccurrences(source, importedFunction) === 1
       )
         return {
-          source: source.replace(
-            ADMIN_CONFIRM_SILENT_IDENTITY_REPLACEMENT,
-            ADMIN_CONFIRM_REPLACEMENT,
-          ),
+          source: source.replace(previousIdentity, ADMIN_CONFIRM_REPLACEMENT),
           status: "would-apply",
         };
       if (!previous || countOccurrences(source, ADMIN_CONFIRM_MARKER) !== 1)

@@ -1336,7 +1336,16 @@ export async function proveRealOpenClawAdminApprovalHandoff(dist: string): Promi
   const cache = client.match(
     /const scopes = tokenRole === role && authInfo\.deviceToken === assembled\.storedToken[^;]+;/,
   )?.[0];
-  if (!command || !cache) throw new Error("reviewed device approval handoff could not be isolated");
+  const deviceCall = cli.match(/^const callGatewayCli = async [\s\S]*?^}\);/m)?.[0];
+  const storage = client.match(/^function createOpenClawGatewayClientHostDeps\([\s\S]*?^}/m)?.[0];
+  const transportSource = requireExactlyOneDistSource(sources, "gateway CLI transport", [
+    "async function callGatewayFromCliRuntime(method, opts, params, extra) {",
+  ]).source;
+  const transport = transportSource.match(
+    /^async function callGatewayFromCliRuntime\([\s\S]*?^}/m,
+  )?.[0];
+  if (!command || !cache || !deviceCall || !storage || !transport)
+    throw new Error("reviewed device approval handoff could not be isolated");
   const receiveToken = runInNewContext(`(assembled, connectionScopes) => {
     const role = "operator", tokenRole = role;
     const authInfo = { deviceToken: "rotated-token", scopes: connectionScopes };
@@ -1364,50 +1373,100 @@ export async function proveRealOpenClawAdminApprovalHandoff(dist: string): Promi
       storedToken: "previous-token",
       storedScopes: ["operator.pairing", "operator.read", "operator.write"],
     };
-    const run = runInNewContext(`${command}\nrunDevicesApproveCommand`, {
-      ADMIN_SCOPE: "operator.admin",
-      loadDeviceIdentityIfPresent: () => {
-        if (outcome === "unreadable-identity") throw new Error("identity unavailable");
-        return outcome === "missing-identity" ? null : { deviceId: "calling-device" };
+    let cacheWrites = 0;
+    const noop = () => {};
+    const runtime = runInNewContext(
+      `${storage}\n${transport}\nconst callGatewayFromCliWithTransport = callGatewayFromCliRuntime;\n${deviceCall}\n${command}\n({ run: runDevicesApproveCommand, read: callGatewayCli, storage: (mode) => createOpenClawGatewayClientHostDeps(void 0, void 0, false, mode) })`,
+      {
+        ADMIN_SCOPE: "operator.admin",
+        DEFAULT_DEVICES_TIMEOUT_MS: 10_000,
+        GATEWAY_CLIENT_NAMES: { CLI: "cli" },
+        GATEWAY_CLIENT_MODES: { CLI: "cli" },
+        resolveGatewayLocalPortOverride: noop,
+        parseTimeoutMsWithFallback: (_value: unknown, fallback: number) => fallback,
+        withProgress: (_options: unknown, operation: () => Promise<unknown>) => operation(),
+        loadDeviceAuthToken: noop,
+        loadDeviceAuthTokenReadOnly: noop,
+        clearDeviceAuthToken: noop,
+        loadOrCreateDeviceIdentity: noop,
+        signDevicePayload: noop,
+        publicKeyRawBase64UrlFromPem: noop,
+        ensureInheritedManagedProxyRoutingActive: noop,
+        registerManagedProxyGatewayLoopbackBypass: noop,
+        logDebug: noop,
+        logError: noop,
+        redactToolPayloadText: noop,
+        storeDeviceAuthToken: (value: { token: string; scopes: string[] }) => {
+          cacheWrites += 1;
+          cached = { storedToken: value.token, storedScopes: value.scopes };
+        },
+        loadDeviceIdentityIfPresent: () => {
+          if (outcome === "unreadable-identity") throw new Error("identity unavailable");
+          return outcome === "missing-identity" ? null : { deviceId: "calling-device" };
+        },
+        resolveApprovePairingGatewayContext: async () => ({}),
+        approvePairingWithFallback: async () => {
+          events.push("approve-exact-request");
+          return outcome === "missing"
+            ? null
+            : {
+                device: {
+                  deviceId: outcome === "other-device" ? "other-device" : "calling-device",
+                  scopes: approved ? ["operator.admin"] : ["operator.write"],
+                },
+              };
+        },
+        callGateway: async (call: {
+          method: string;
+          url: string;
+          scopes: string[];
+          timeoutMs: number;
+          sharedStateMode?: string;
+        }) => {
+          requireLiveProof(
+            call.url === options.url && call.timeoutMs === 10_000,
+            "approval confirmation changed gateway or timeout",
+          );
+          requireJsonEqual(call.scopes, ["operator.admin"], "approval confirmation scope");
+          events.push(call.method);
+          if (outcome === "confirmation-denied") throw new Error("confirmation denied");
+          const next = receiveToken(cached, adminScopes);
+          runtime
+            .storage(call.sharedStateMode)
+            .storeDeviceAuthToken({ token: next.storedToken, scopes: next.storedScopes });
+        },
+        isScopeUpgradePendingApproval: () => false,
+        sanitizeForLog: (value: string) => value,
+        formatCliCommand: (value: string) => value,
+        findQueryPendingNodeApprovalNotices: () => [],
+        defaultRuntime: {
+          writeJson: () => events.push("output"),
+          error: () => events.push("error"),
+          exit: (code: number) => events.push(`exit-${code}`),
+        },
+        process: {
+          env: {},
+          stdout: { write: (_value: string, done: () => void) => done() },
+          stderr: { write: (_value: string, done: () => void) => done() },
+        },
+        setTimeout,
+        clearTimeout,
       },
-      resolveApprovePairingGatewayContext: async () => ({}),
-      approvePairingWithFallback: async () => {
-        events.push("approve-exact-request");
-        return outcome === "missing"
-          ? null
-          : {
-              device: {
-                deviceId: outcome === "other-device" ? "other-device" : "calling-device",
-                scopes: approved ? ["operator.admin"] : ["operator.write"],
-              },
-            };
-      },
-      callGatewayCli: async (method: string, opts: unknown, _params: unknown, call: unknown) => {
-        requireLiveProof(opts === options, "approval confirmation changed the gateway options");
-        requireJsonEqual(call, { scopes: ["operator.admin"] }, "approval confirmation scope");
-        events.push(method);
-        if (outcome === "confirmation-denied") throw new Error("confirmation denied");
-        cached = receiveToken(cached, adminScopes);
-      },
-      isScopeUpgradePendingApproval: () => false,
-      sanitizeForLog: (value: string) => value,
-      formatCliCommand: (value: string) => value,
-      findQueryPendingNodeApprovalNotices: () => [],
-      defaultRuntime: {
-        writeJson: () => events.push("output"),
-        error: () => events.push("error"),
-        exit: (code: number) => events.push(`exit-${code}`),
-      },
-      process: {
-        stdout: { write: (_value: string, done: () => void) => done() },
-        stderr: { write: (_value: string, done: () => void) => done() },
-      },
-      setTimeout,
-      clearTimeout,
-    }) as (request: string, opts: typeof options) => Promise<void>;
+    ) as {
+      run: (request: string, opts: typeof options) => Promise<void>;
+      read: (
+        method: string,
+        opts: typeof options,
+        params: object,
+        call: { scopes: string[] },
+      ) => Promise<void>;
+      storage: (mode?: string) => {
+        storeDeviceAuthToken: (value: { token: string; scopes: string[] }) => void;
+      };
+    };
     let failure = "";
     try {
-      await run("exact-approved-request", options);
+      await runtime.run("exact-approved-request", options);
     } catch (error) {
       failure = String(error);
     }
@@ -1440,6 +1499,9 @@ export async function proveRealOpenClawAdminApprovalHandoff(dist: string): Promi
         adminScopes,
         "ordinary agent retains explicitly approved token metadata",
       );
+      requireLiveProof(cacheWrites === 1, "admin confirmation did not persist exactly one token");
+      await runtime.read("device.pair.list", options, {}, { scopes: ["operator.admin"] });
+      requireLiveProof(cacheWrites === 1, "ordinary device query changed the stored token");
     }
   }
 }
