@@ -454,6 +454,23 @@ retain their existing bridge checks and record this additional Docker compatibil
 applicable. Capture validation, credential sanitization, source drift refusals and lifecycle-transition
 rules remain covered by source and component tests.
 
+The OpenClaw `mcp-bridge` shard also owns public pin recovery for #10464. After proving the existing
+credential rotation and denied-tool behavior, it replaces only the live endpoint pins with an
+unrelated public address and requires a policy denial. It then runs
+`mcp update fake --refresh-public-pins` and requires an authenticated native tool call while the
+denied tool remains blocked. Existing restart and rebuild checks retain their own assertions.
+Source tests own public-target validation, source conflicts, and preservation of every policy field
+except `allowed_ips`. This live step proves that OpenShell enforces the refreshed policy; it does not
+depend on an external DNS rotation happening during the test. A failed step restores the captured
+policy before normal sandbox cleanup.
+
+The pin-recovery proof stays within the existing assertion budget by retiring fixture-detail checks:
+the probe's fixed HTTP method and JSON-RPC fields, and the removed proxy's `enc:v1:` and `proxy.pid`
+markers. `test/mcp/mcp-bridge-servers.test.ts` owns the fake server's protocol behavior, and
+`test/state/registry.test.ts` proves legacy MCP state is omitted from runtime and disk. Live checks
+still verify the authenticated request, policy denials, absence of MCP URLs, provider names and
+credentials from the registry, and restart, rebuild and cleanup outcomes.
+
 The `sandbox-operations` target owns live final-gateway cleanup on the Docker-backed OpenShell
 boundary. It leaves one sandbox live after removing only its local registry entry, then requires a
 `destroy --cleanup-gateway` of the registered sandbox to preserve the gateway, report the live

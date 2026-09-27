@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { expect } from "vitest";
+import YAML from "yaml";
+import { inspectPolicyMutationContext, setPolicyDocument } from "../../../src/lib/policy";
 import { buildMcpBridgeExactMainEnv } from "./mcp-bridge-onboard-env.ts";
 import { MCP_MUTATION_TIMEOUT_MS, type McpAdapter } from "./mcp-bridge-cleanup.ts";
 import { applyMcpHostPolicyEdit } from "./mcp-bridge-sandbox.ts";
@@ -376,6 +378,50 @@ export async function runOpenClawDeniedToolUpdateProof(
     lastCall: calls.at(-1),
     replace,
   };
+}
+
+/** Reproduce stale public pins independently of Cloudflare's DNS rotation schedule. */
+export async function runOpenClawPublicPinRefreshProof(
+  host: HostCliClient,
+  sandbox: SandboxClient,
+  sandboxName: string,
+  mcpUrl: string,
+): Promise<void> {
+  const context = await inspectPolicyMutationContext(
+    sandboxName,
+    "exercise public MCP pin refresh",
+  );
+  const policy = YAML.parseDocument(context.basePolicyDocument);
+  policy.setIn(["network_policies", "mcp_bridge_fake", "endpoints", 0, "allowed_ips"], ["8.8.8.8"]);
+  try {
+    expect(
+      await setPolicyDocument(sandboxName, policy.toString(), { context, nonFatal: true }),
+    ).toBe(true);
+    const denied = await runMcpProviderRewriteProbe(
+      sandbox,
+      sandboxName,
+      mcpUrl,
+      "tools/list",
+      "deny-strict",
+      "openclaw-stale-public-pins",
+    );
+    assertExitZero(denied, "stale public pins deny the MCP connection");
+    const refreshed = await host.nemoclaw(
+      [sandboxName, "mcp", "update", "fake", "--refresh-public-pins"],
+      {
+        artifactName: "openclaw-refresh-public-pins",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 90_000,
+      },
+    );
+    assertExitZero(refreshed, "refresh live public MCP pins");
+  } catch (error) {
+    // Restore only on failure; the caller must prove the refreshed policy works.
+    expect(
+      await setPolicyDocument(sandboxName, context.basePolicyDocument, { nonFatal: true }),
+    ).toBe(true);
+    throw error;
+  }
 }
 
 export async function runMcpProviderRewriteProbe(
