@@ -2690,61 +2690,69 @@ async function restoreSandboxStateInternal(
       }
 
       const extractClean = sshResult.status === 0 && !sshResult.error && !sshResult.signal;
-      if (!extractClean) {
-        const extractStderr = (sshResult.stderr?.toString() || "").trim();
-        _log(
-          `WARNING: state archive extraction reported a non-zero result: exit=${String(sshResult.status)} signal=${sshResult.signal ?? "none"} error=${sshResult.error?.message ?? "none"} stderr=${extractStderr.substring(0, 200)}; verifying restored state usability per directory`,
-        );
-      }
-      const restoredPaths = localDirs.map((d) => `${dir}/${d}`);
-
-      // Best-effort only: OpenShell exec/SSH normally runs as the sandbox user,
-      // which cannot chown even files it owns. The tar restore above runs as the
-      // same user, so the real restore gate is whether the restored state dirs
-      // are usable by that user.
-      const chownCmd = `chown -R sandbox:sandbox -- ${restoredPaths.map(shellQuote).join(" ")} 2>/dev/null || true`;
-      _log(`Best-effort ownership repair: ${chownCmd}`);
-      const chownResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), chownCmd], {
-        ...(selectedSshEnv ? { env: selectedSshEnv } : {}),
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: 30000,
-      });
-      if (chownResult.error || chownResult.signal) {
-        const detail =
-          chownResult.error?.message ||
-          (chownResult.signal ? `signal ${chownResult.signal}` : "unknown error");
-        _log(
-          `WARNING: post-restore ownership repair did not complete: ${detail.substring(0, 200)}`,
-        );
-      }
-
-      for (const dirName of localDirs) {
-        const targetPath = `${dir}/${dirName}`;
-        const usabilityCmd = `[ -d ${shellQuote(targetPath)} ] && [ ! -L ${shellQuote(targetPath)} ] && [ -r ${shellQuote(targetPath)} ] && [ -w ${shellQuote(targetPath)} ]`;
-        _log(`Verifying restored state usability: ${usabilityCmd}`);
-        const usabilityResult = spawnSync(
-          "ssh",
-          [...sshArgs(configFile, sandboxName), usabilityCmd],
-          {
-            ...(selectedSshEnv ? { env: selectedSshEnv } : {}),
-            stdio: ["ignore", "pipe", "pipe"],
-            timeout: 30000,
-          },
-        );
-        if (usabilityResult.status === 0 && !usabilityResult.error && !usabilityResult.signal) {
-          restoredDirs.push(dirName);
-        } else {
-          const stderr = (usabilityResult.stderr?.toString() || "").trim();
-          const detail =
-            stderr ||
-            usabilityResult.error?.message ||
-            (usabilityResult.signal
-              ? `signal ${usabilityResult.signal}`
-              : `exit ${String(usabilityResult.status)}`);
+      const extractStderr = (sshResult.stderr?.toString() || "").trim();
+      const extractSummary = `exit=${String(sshResult.status)} signal=${sshResult.signal ?? "none"} error=${sshResult.error?.message ?? "none"} stderr=${extractStderr.substring(0, 200)}`;
+      const extractWarningOnly =
+        !extractClean && sshResult.status === 1 && !sshResult.error && !sshResult.signal;
+      if (!extractClean && !extractWarningOnly) {
+        _log(`FAILED: state archive extraction failed: ${extractSummary}`);
+        failedDirs.push(...localDirs);
+      } else {
+        if (extractWarningOnly) {
           _log(
-            `FAILED: restored state usability check failed for '${dirName}': ${detail.substring(0, 200)}`,
+            `WARNING: state archive extraction reported a non-zero result: ${extractSummary}; verifying restored state usability per directory`,
           );
-          failedDirs.push(dirName);
+        }
+        const restoredPaths = localDirs.map((d) => `${dir}/${d}`);
+
+        // Best-effort only: OpenShell exec/SSH normally runs as the sandbox user,
+        // which cannot chown even files it owns. The tar restore above runs as the
+        // same user, so the real restore gate is whether the restored state dirs
+        // are usable by that user.
+        const chownCmd = `chown -R sandbox:sandbox -- ${restoredPaths.map(shellQuote).join(" ")} 2>/dev/null || true`;
+        _log(`Best-effort ownership repair: ${chownCmd}`);
+        const chownResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), chownCmd], {
+          ...(selectedSshEnv ? { env: selectedSshEnv } : {}),
+          stdio: ["ignore", "pipe", "pipe"],
+          timeout: 30000,
+        });
+        if (chownResult.error || chownResult.signal) {
+          const detail =
+            chownResult.error?.message ||
+            (chownResult.signal ? `signal ${chownResult.signal}` : "unknown error");
+          _log(
+            `WARNING: post-restore ownership repair did not complete: ${detail.substring(0, 200)}`,
+          );
+        }
+
+        for (const dirName of localDirs) {
+          const targetPath = `${dir}/${dirName}`;
+          const usabilityCmd = `[ -d ${shellQuote(targetPath)} ] && [ ! -L ${shellQuote(targetPath)} ] && [ -r ${shellQuote(targetPath)} ] && [ -w ${shellQuote(targetPath)} ]`;
+          _log(`Verifying restored state usability: ${usabilityCmd}`);
+          const usabilityResult = spawnSync(
+            "ssh",
+            [...sshArgs(configFile, sandboxName), usabilityCmd],
+            {
+              ...(selectedSshEnv ? { env: selectedSshEnv } : {}),
+              stdio: ["ignore", "pipe", "pipe"],
+              timeout: 30000,
+            },
+          );
+          if (usabilityResult.status === 0 && !usabilityResult.error && !usabilityResult.signal) {
+            restoredDirs.push(dirName);
+          } else {
+            const stderr = (usabilityResult.stderr?.toString() || "").trim();
+            const detail =
+              stderr ||
+              usabilityResult.error?.message ||
+              (usabilityResult.signal
+                ? `signal ${usabilityResult.signal}`
+                : `exit ${String(usabilityResult.status)}`);
+            _log(
+              `FAILED: restored state usability check failed for '${dirName}': ${detail.substring(0, 200)}`,
+            );
+            failedDirs.push(dirName);
+          }
         }
       }
     }

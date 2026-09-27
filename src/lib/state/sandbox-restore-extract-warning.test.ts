@@ -120,6 +120,31 @@ describe("restoreSandboxState tar-warning handling (#12358)", () => {
     expect(result.failedDirs).toEqual(["sessions"]);
   });
 
+  it("fails closed without usability checks when extraction exits 2", async () => {
+    vi.stubEnv("NEMOCLAW_REBUILD_VERBOSE", "1");
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    harness.behavior.extract = spawnResult(
+      2,
+      "tar: sessions: Cannot open: Permission denied\ntar: Exiting with failure status due to previous errors\n",
+    );
+
+    const result = await restoreRecreatedSandboxState("alpha", harness.writeBackup(), {
+      targetAgentType: "fake-agent",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.restoredDirs).toEqual([]);
+    expect(result.failedDirs).toEqual(["memories", "sessions"]);
+    expect(
+      harness.recordedSshCommands.some(
+        (command) => command.includes("[ -d ") || command.includes("chown -R"),
+      ),
+    ).toBe(false);
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("FAILED: state archive extraction failed: exit=2"),
+    );
+  });
+
   it("fails closed without touching the sandbox when local archive creation fails", async () => {
     vi.stubEnv("NEMOCLAW_REBUILD_VERBOSE", "1");
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
