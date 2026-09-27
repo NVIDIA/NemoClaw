@@ -2627,6 +2627,12 @@ async function restoreSandboxStateInternal(
       }
 
       if (tarResult.status !== 0 || tarResult.error || tarResult.signal) {
+        const stderr = (tarResult.stderr?.toString() || "").trim();
+        const detail =
+          stderr ||
+          tarResult.error?.message ||
+          (tarResult.signal ? `signal ${tarResult.signal}` : `exit ${String(tarResult.status)}`);
+        _log(`FAILED: local restore archive creation failed: ${detail.substring(0, 200)}`);
         return {
           success: false,
           restoredDirs,
@@ -2683,59 +2689,66 @@ async function restoreSandboxStateInternal(
         closeSync(archiveFd);
       }
 
-      if (sshResult.status === 0) {
-        const restoredPaths = localDirs.map((d) => `${dir}/${d}`);
+      const extractClean = sshResult.status === 0 && !sshResult.error && !sshResult.signal;
+      if (!extractClean) {
+        const stderr = (sshResult.stderr?.toString() || "").trim();
+        const detail =
+          stderr ||
+          sshResult.error?.message ||
+          (sshResult.signal ? `signal ${sshResult.signal}` : `exit ${String(sshResult.status)}`);
+        _log(
+          `WARNING: state archive extraction reported a non-zero result (${detail.substring(0, 200)}); verifying restored state usability per directory`,
+        );
+      }
+      const restoredPaths = localDirs.map((d) => `${dir}/${d}`);
 
-        // Best-effort only: OpenShell exec/SSH normally runs as the sandbox user,
-        // which cannot chown even files it owns. The tar restore above runs as the
-        // same user, so the real restore gate is whether the restored state dirs
-        // are usable by that user.
-        const chownCmd = `chown -R sandbox:sandbox -- ${restoredPaths.map(shellQuote).join(" ")} 2>/dev/null || true`;
-        _log(`Best-effort ownership repair: ${chownCmd}`);
-        const chownResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), chownCmd], {
+      // Best-effort only: OpenShell exec/SSH normally runs as the sandbox user,
+      // which cannot chown even files it owns. The tar restore above runs as the
+      // same user, so the real restore gate is whether the restored state dirs
+      // are usable by that user.
+      const chownCmd = `chown -R sandbox:sandbox -- ${restoredPaths.map(shellQuote).join(" ")} 2>/dev/null || true`;
+      _log(`Best-effort ownership repair: ${chownCmd}`);
+      const chownResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), chownCmd], {
+        ...(selectedSshEnv ? { env: selectedSshEnv } : {}),
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 30000,
+      });
+      if (chownResult.error || chownResult.signal) {
+        const detail =
+          chownResult.error?.message ||
+          (chownResult.signal ? `signal ${chownResult.signal}` : "unknown error");
+        _log(
+          `WARNING: post-restore ownership repair did not complete: ${detail.substring(0, 200)}`,
+        );
+      }
+
+      const usabilityCmd = restoredPaths
+        .map(
+          (p) =>
+            `[ -d ${shellQuote(p)} ] && [ ! -L ${shellQuote(p)} ] && [ -r ${shellQuote(p)} ] && [ -w ${shellQuote(p)} ]`,
+        )
+        .join(" && ");
+      _log(`Verifying restored state usability: ${usabilityCmd}`);
+      const usabilityResult = spawnSync(
+        "ssh",
+        [...sshArgs(configFile, sandboxName), usabilityCmd],
+        {
           ...(selectedSshEnv ? { env: selectedSshEnv } : {}),
           stdio: ["ignore", "pipe", "pipe"],
           timeout: 30000,
-        });
-        if (chownResult.error || chownResult.signal) {
-          const detail =
-            chownResult.error?.message ||
-            (chownResult.signal ? `signal ${chownResult.signal}` : "unknown error");
-          _log(
-            `WARNING: post-restore ownership repair did not complete: ${detail.substring(0, 200)}`,
-          );
-        }
-
-        const usabilityCmd = restoredPaths
-          .map(
-            (p) =>
-              `[ -d ${shellQuote(p)} ] && [ ! -L ${shellQuote(p)} ] && [ -r ${shellQuote(p)} ] && [ -w ${shellQuote(p)} ]`,
-          )
-          .join(" && ");
-        _log(`Verifying restored state usability: ${usabilityCmd}`);
-        const usabilityResult = spawnSync(
-          "ssh",
-          [...sshArgs(configFile, sandboxName), usabilityCmd],
-          {
-            ...(selectedSshEnv ? { env: selectedSshEnv } : {}),
-            stdio: ["ignore", "pipe", "pipe"],
-            timeout: 30000,
-          },
-        );
-        if (usabilityResult.status === 0 && !usabilityResult.error && !usabilityResult.signal) {
-          restoredDirs.push(...localDirs);
-        } else {
-          const stderr = (usabilityResult.stderr?.toString() || "").trim();
-          const detail =
-            stderr ||
-            usabilityResult.error?.message ||
-            (usabilityResult.signal
-              ? `signal ${usabilityResult.signal}`
-              : `exit ${String(usabilityResult.status)}`);
-          _log(`FAILED: restored state usability check failed: ${detail.substring(0, 200)}`);
-          failedDirs.push(...localDirs);
-        }
+        },
+      );
+      if (usabilityResult.status === 0 && !usabilityResult.error && !usabilityResult.signal) {
+        restoredDirs.push(...localDirs);
       } else {
+        const stderr = (usabilityResult.stderr?.toString() || "").trim();
+        const detail =
+          stderr ||
+          usabilityResult.error?.message ||
+          (usabilityResult.signal
+            ? `signal ${usabilityResult.signal}`
+            : `exit ${String(usabilityResult.status)}`);
+        _log(`FAILED: restored state usability check failed: ${detail.substring(0, 200)}`);
         failedDirs.push(...localDirs);
       }
     }
