@@ -3,12 +3,9 @@
 
 import { OLLAMA_PORT } from "../core/ports";
 import { sleepSeconds, waitForHttp } from "../core/wait";
-import {
-  MIN_AUTODETECTED_OLLAMA_CONTEXT_WINDOW,
-  resolveOllamaContextWindowFloor,
-} from "../inference/ollama-runtime-context";
+import { startDetachedOllamaServe } from "./ollama-startup";
 
-const { run, runShell }: typeof import("../runner") = require("../runner");
+const { run }: typeof import("../runner") = require("../runner");
 const {
   setResolvedOllamaHost,
 }: typeof import("../inference/local") = require("../inference/local");
@@ -21,7 +18,7 @@ export interface InstallOllamaMacOSOptions {
   /** Minimum daemon context length to request for the selected agent. */
   contextWindowFloor?: number;
   runImpl?: typeof run;
-  runShellImpl?: typeof runShell;
+  startOllamaServeImpl?: typeof startDetachedOllamaServe;
   waitForHttpImpl?: typeof waitForHttp;
   sleepSecondsImpl?: typeof sleepSeconds;
   log?: (message: string) => void;
@@ -45,7 +42,7 @@ export function installOllamaOnMacOS(opts: InstallOllamaMacOSOptions): InstallOl
   const log = opts.log ?? ((m: string) => console.log(m));
   const errorLog = opts.errorLog ?? ((m: string) => console.error(m));
   const runImpl = opts.runImpl ?? run;
-  const runShellImpl = opts.runShellImpl ?? runShell;
+  const startOllamaServeImpl = opts.startOllamaServeImpl ?? startDetachedOllamaServe;
   const waitForHttpImpl = opts.waitForHttpImpl ?? waitForHttp;
   const sleepSecondsImpl = opts.sleepSecondsImpl ?? sleepSeconds;
 
@@ -66,12 +63,7 @@ export function installOllamaOnMacOS(opts: InstallOllamaMacOSOptions): InstallOl
   }
 
   log("  Starting Ollama...");
-  runShellImpl(
-    `${ollamaContextLengthEnvPrefix(opts)}OLLAMA_HOST=127.0.0.1:${OLLAMA_PORT} ollama serve > /dev/null 2>&1 &`,
-    {
-      ignoreError: true,
-    },
-  );
+  startOllamaServeImpl({ port: OLLAMA_PORT, contextWindowFloor: opts.contextWindowFloor });
   if (!waitForHttpImpl(`http://127.0.0.1:${OLLAMA_PORT}/`, 10)) {
     errorLog(`  Ollama did not become ready on :${OLLAMA_PORT} within timeout.`);
     return { ok: false };
@@ -79,12 +71,4 @@ export function installOllamaOnMacOS(opts: InstallOllamaMacOSOptions): InstallOl
   // Pin to local loopback so any stale resolved host is overwritten.
   setResolvedOllamaHost("127.0.0.1");
   return { ok: true };
-}
-
-/** Return the `OLLAMA_CONTEXT_LENGTH` prefix only when the agent needs a higher floor. */
-function ollamaContextLengthEnvPrefix(
-  opts: Pick<InstallOllamaMacOSOptions, "contextWindowFloor">,
-): string {
-  const floor = resolveOllamaContextWindowFloor(opts.contextWindowFloor);
-  return floor > MIN_AUTODETECTED_OLLAMA_CONTEXT_WINDOW ? `OLLAMA_CONTEXT_LENGTH=${floor} ` : "";
 }

@@ -56,7 +56,7 @@ type WizardResult = {
     credentialEnv: string | null;
   } | null;
   lines: string[];
-  shellCommands: string[];
+  ollamaServeLaunches: string[];
   waitForHttpCalls: string[];
   processExitCalled: number;
   selectAndValidateOllamaModelCalled: boolean;
@@ -154,8 +154,14 @@ const localInference = require(${localInferencePath});
 const child_process = require("child_process");
 
 // Background process spawn: never let a real ollama serve fork off in the
-// test harness (defense in depth — the spawn path uses runShell, not spawn).
-child_process.spawn = () => ({ pid: 99999, unref() {}, on() {} });
+// test harness; record each detached launch so scenarios can assert on it.
+const ollamaServeLaunches = [];
+child_process.spawn = (file, args, options) => {
+  if (Array.isArray(args) && args[0] === "serve") {
+    ollamaServeLaunches.push("OLLAMA_HOST=" + (options?.env?.OLLAMA_HOST ?? "") + " " + file + " serve");
+  }
+  return { pid: 99999, unref() {}, on() {} };
+};
 const originalSpawnSync = child_process.spawnSync;
 child_process.spawnSync = (cmd, args, opts) => {
   if (cmd === "nc" && args && args.includes("11435")) {
@@ -169,7 +175,6 @@ child_process.spawnSync = (cmd, args, opts) => {
 
 const ollamaRunning = ${JSON.stringify(opts.ollamaRunning)};
 const ollamaInventory = ${JSON.stringify(ollamaInventory)};
-const shellCommands = [];
 const waitForHttpCalls = [];
 const lines = [];
 let processExitCalled = 0;
@@ -221,10 +226,7 @@ runner.runCapture = (command) => {
   return "";
 };
 runner.run = () => ({ status: 0 });
-runner.runShell = (command) => {
-  shellCommands.push(command);
-  return { status: 0 };
-};
+runner.runShell = () => ({ status: 0 });
 
 wait.sleepSeconds = () => {};
 const originalWaitForHttp = wait.waitForHttp;
@@ -306,7 +308,7 @@ process.exit = (code) => {
   originalLog(JSON.stringify({
     result,
     lines,
-    shellCommands,
+    ollamaServeLaunches,
     waitForHttpCalls,
     processExitCalled,
     selectAndValidateOllamaModelCalled,
@@ -367,8 +369,8 @@ describe("nemoclaw onboard --no-ollama-autostart (#3751)", () => {
 
       // No ollama serve spawn, no waitForHttp probe to :11434.
       assert.ok(
-        !payload.shellCommands.some((cmd) => cmd.includes("ollama serve")),
-        `runShell must not be invoked with 'ollama serve' when the gate is set; got: ${JSON.stringify(payload.shellCommands)}`,
+        payload.ollamaServeLaunches.length === 0,
+        `ollama serve must not be launched when the gate is set; got: ${JSON.stringify(payload.ollamaServeLaunches)}`,
       );
       assert.ok(
         !payload.waitForHttpCalls.some((url) => url.includes("127.0.0.1:11434")),
@@ -422,10 +424,10 @@ describe("nemoclaw onboard --no-ollama-autostart (#3751)", () => {
       });
 
       assert.ok(
-        payload.shellCommands.some(
-          (cmd) => cmd.includes("OLLAMA_HOST=127.0.0.1:") && cmd.includes("ollama serve"),
+        payload.ollamaServeLaunches.some(
+          (launch) => launch.includes("OLLAMA_HOST=127.0.0.1:") && launch.includes("ollama serve"),
         ),
-        `expected the legacy spawn to fire; got: ${JSON.stringify(payload.shellCommands)}`,
+        `expected the managed spawn to fire; got: ${JSON.stringify(payload.ollamaServeLaunches)}`,
       );
       assert.ok(
         payload.lines.some((line) => line.includes("Starting Ollama...")),
@@ -458,7 +460,7 @@ describe("nemoclaw onboard --no-ollama-autostart (#3751)", () => {
       });
 
       assert.ok(
-        !payload.shellCommands.some((cmd) => cmd.includes("ollama serve")),
+        payload.ollamaServeLaunches.length === 0,
         "no spawn expected when Ollama is already reachable",
       );
       assert.ok(
@@ -491,7 +493,7 @@ describe("nemoclaw onboard --no-ollama-autostart (#3751)", () => {
       });
 
       assert.ok(
-        !payload.shellCommands.some((cmd) => cmd.includes("ollama serve")),
+        payload.ollamaServeLaunches.length === 0,
         "no spawn expected when Ollama is already reachable, regardless of flag",
       );
       assert.ok(
@@ -534,7 +536,7 @@ describe("nemoclaw onboard --no-ollama-autostart (#3751)", () => {
         `expected gated warning in non-interactive mode; lines:\n${payload.lines.join("\n")}`,
       );
       assert.ok(
-        !payload.shellCommands.some((cmd) => cmd.includes("ollama serve")),
+        payload.ollamaServeLaunches.length === 0,
         "no spawn expected with the gate set, even in non-interactive mode",
       );
       assert.ok(payload.result, "non-interactive wizard should still produce a result");

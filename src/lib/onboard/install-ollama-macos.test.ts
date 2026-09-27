@@ -10,7 +10,7 @@ function makeOpts(overrides: Partial<InstallOllamaMacOSOptions>): InstallOllamaM
   return {
     isNonInteractive: () => false,
     runImpl: vi.fn(),
-    runShellImpl: vi.fn(),
+    startOllamaServeImpl: vi.fn(),
     waitForHttpImpl: vi.fn().mockReturnValue(true),
     sleepSecondsImpl: vi.fn(),
     log: vi.fn(),
@@ -33,10 +33,10 @@ describe("installOllamaOnMacOS", () => {
 
   it("runs brew upgrade and stops the stale daemon before relaunching", () => {
     const runImpl = vi.fn();
-    const runShellImpl = vi.fn();
+    const startOllamaServeImpl = vi.fn();
     const sleepSecondsImpl = vi.fn();
     const result = installOllamaOnMacOS(
-      makeOpts({ runImpl, runShellImpl, sleepSecondsImpl, isUpgrade: true }),
+      makeOpts({ runImpl, startOllamaServeImpl, sleepSecondsImpl, isUpgrade: true }),
     );
     expect(result.ok).toBe(true);
     const callOrder = runImpl.mock.calls.map((call) =>
@@ -48,28 +48,27 @@ describe("installOllamaOnMacOS", () => {
     expect(pkillIndex).toBeGreaterThan(brewUpgradeIndex);
     const brewUpgradeOpts = runImpl.mock.calls[brewUpgradeIndex]?.[1];
     expect(brewUpgradeOpts).toEqual({ ignoreError: false });
-    const serveCall = runShellImpl.mock.calls.find(
-      (call) => typeof call[0] === "string" && call[0].includes("ollama serve"),
+    expect(startOllamaServeImpl).toHaveBeenCalledTimes(1);
+    expect(startOllamaServeImpl.mock.invocationCallOrder[0]).toBeGreaterThan(
+      runImpl.mock.invocationCallOrder[pkillIndex],
     );
-    expect(serveCall).toBeDefined();
-    expect(serveCall?.[0]).not.toContain("OLLAMA_CONTEXT_LENGTH=");
     expect(sleepSecondsImpl).toHaveBeenCalled();
   });
 
   it("starts Ollama with the requested Hermes context floor", () => {
-    const runShellImpl = vi.fn();
+    const startOllamaServeImpl = vi.fn();
     const result = installOllamaOnMacOS(
       makeOpts({
-        runShellImpl,
+        startOllamaServeImpl,
         isUpgrade: false,
         contextWindowFloor: MIN_HERMES_OLLAMA_CONTEXT_WINDOW,
       }),
     );
     expect(result.ok).toBe(true);
-    const serveCall = runShellImpl.mock.calls.find(
-      (call) => typeof call[0] === "string" && call[0].includes("ollama serve"),
-    );
-    expect(serveCall?.[0]).toContain(`OLLAMA_CONTEXT_LENGTH=${MIN_HERMES_OLLAMA_CONTEXT_WINDOW}`);
+    expect(startOllamaServeImpl).toHaveBeenCalledWith({
+      port: 11434,
+      contextWindowFloor: MIN_HERMES_OLLAMA_CONTEXT_WINDOW,
+    });
   });
 
   it("does not stop a daemon on a fresh install", () => {
