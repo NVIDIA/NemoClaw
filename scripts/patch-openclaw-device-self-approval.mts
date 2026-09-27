@@ -2553,7 +2553,7 @@ const ADMIN_CONFIRM_PREVIOUS_REPLACEMENT = [
   `\t} // ${ADMIN_CONFIRM_MARKER}`,
   ADMIN_CONFIRM_TARGET,
 ].join("\n");
-const ADMIN_CONFIRM_REPLACEMENT = [
+const ADMIN_CONFIRM_SILENT_IDENTITY_REPLACEMENT = [
   "\tif (Array.isArray(result?.device?.scopes) && result.device.scopes.includes(ADMIN_SCOPE)) {",
   "\t\tlet nemoclawApprovingIdentity;",
   "\t\ttry { nemoclawApprovingIdentity = loadDeviceIdentityIfPresent(); } catch {}",
@@ -2563,6 +2563,10 @@ const ADMIN_CONFIRM_REPLACEMENT = [
   `\t} // ${ADMIN_CONFIRM_MARKER}`,
   ADMIN_CONFIRM_TARGET,
 ].join("\n");
+const ADMIN_CONFIRM_REPLACEMENT = ADMIN_CONFIRM_SILENT_IDENTITY_REPLACEMENT.replace(
+  "catch {}",
+  'catch { throw new Error("Admin approval completed, but its token handoff could not read the local device identity. Repair local OpenClaw state, then retry the intended admin command."); }',
+);
 const ADMIN_CONFIRM_FUNCTION = "async function runDevicesApproveCommand(requestId, opts) {";
 const ADMIN_CONFIRM_SPEC: FileSpec = {
   id: "explicit-admin-token-confirmation",
@@ -2598,6 +2602,18 @@ const ADMIN_CONFIRM_SPEC: FileSpec = {
         countOccurrences(source, importedFunction) === 1
       )
         return { source, status: "already-applied" };
+      if (
+        countOccurrences(source, ADMIN_CONFIRM_MARKER) === 1 &&
+        countOccurrences(source, ADMIN_CONFIRM_SILENT_IDENTITY_REPLACEMENT) === 1 &&
+        countOccurrences(source, importedFunction) === 1
+      )
+        return {
+          source: source.replace(
+            ADMIN_CONFIRM_SILENT_IDENTITY_REPLACEMENT,
+            ADMIN_CONFIRM_REPLACEMENT,
+          ),
+          status: "would-apply",
+        };
       if (!previous || countOccurrences(source, ADMIN_CONFIRM_MARKER) !== 1)
         return {
           source,

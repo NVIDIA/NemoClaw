@@ -1414,17 +1414,24 @@ export async function proveRealOpenClawAdminApprovalHandoff(dist: string): Promi
     const expected =
       outcome === "missing"
         ? ["approve-exact-request", "error", "exit-1"]
-        : outcome === "confirmation-denied"
-          ? ["approve-exact-request", "device.pair.list"]
-          : [
-              "approve-exact-request",
-              ...(confirmationRequired ? ["device.pair.list"] : []),
-              "output",
-              "exit-0",
-            ];
+        : outcome === "unreadable-identity"
+          ? ["approve-exact-request"]
+          : outcome === "confirmation-denied"
+            ? ["approve-exact-request", "device.pair.list"]
+            : [
+                "approve-exact-request",
+                ...(confirmationRequired ? ["device.pair.list"] : []),
+                "output",
+                "exit-0",
+              ];
     requireJsonEqual(events, expected, `explicit approval handoff ${outcome}`);
     requireLiveProof(
-      outcome === "confirmation-denied" ? failure.includes("confirmation denied") : failure === "",
+      outcome === "confirmation-denied"
+        ? failure.includes("confirmation denied")
+        : outcome === "unreadable-identity"
+          ? failure.includes("Admin approval completed") &&
+            failure.includes("Repair local OpenClaw state")
+          : failure === "",
       `explicit approval handoff ${outcome}: unexpected failure ${failure}`,
     );
     if (outcome === "admin") {
