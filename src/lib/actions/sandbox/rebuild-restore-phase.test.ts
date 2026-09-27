@@ -16,7 +16,7 @@ import * as snapshotRestore from "./snapshot/restore-authority";
 
 const backupManifest = {
   agentType: "openclaw",
-  backupPath: "/tmp/rebuild-backup",
+  backupPath: "/backups/alpha/timestamp",
 } as never;
 
 describe("rebuild filesystem restore", () => {
