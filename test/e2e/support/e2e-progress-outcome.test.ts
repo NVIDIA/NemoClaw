@@ -203,4 +203,44 @@ describe.concurrent("automatic E2E phase outcomes", () => {
       }
     },
   );
+
+  it.for([
+    ["router-primary", "original completion failure"],
+    ["router-success", "diagnostic storage unavailable"],
+  ] as const)(
+    "preserves diagnostic failure and sandbox cleanup after %s",
+    async ([mode, expectedFailure], context) => {
+      const artifactDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-router-outcome-"));
+      const slug = "router-diagnostic-failure-preserves-the-test-outcome-and-sandbox-cleanup";
+      try {
+        const result = await runFixture(
+          {
+            ...process.env,
+            E2E_ARTIFACT_DIR: artifactDir,
+            NEMOCLAW_E2E_PROGRESS_OUTCOME_FIXTURE: mode,
+            NEMOCLAW_RUN_LIVE_E2E: "1",
+          },
+          context,
+        );
+        const { expect } = context;
+        const output = `${result.stdout}\n${result.stderr}`;
+        expect(result.status, output).toBe(1);
+        expect(output).toContain(expectedFailure);
+        expect(output).toContain("diagnostic storage unavailable");
+        expect(fs.readFileSync(path.join(artifactDir, slug, "sandbox-destroyed.txt"), "utf8")).toBe(
+          "before destruction",
+        );
+        expect(
+          JSON.parse(fs.readFileSync(path.join(artifactDir, slug, "cleanup.json"), "utf8")),
+        ).toEqual({
+          passed: ["destroy fake sandbox"],
+          failures: [
+            { name: "retain Model Router diagnostics", message: "diagnostic storage unavailable" },
+          ],
+        });
+      } finally {
+        fs.rmSync(artifactDir, { recursive: true, force: true });
+      }
+    },
+  );
 });
