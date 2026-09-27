@@ -221,13 +221,21 @@ async function runReadTask(
   return proof;
 }
 
-async function sessionInventory(sandbox: SandboxClient, env: NodeJS.ProcessEnv, phase: string) {
+async function persistentStateInventory(
+  sandbox: SandboxClient,
+  env: NodeJS.ProcessEnv,
+  phase: string,
+  seedNativeSettings = false,
+) {
+  const settingsFixture = seedNativeSettings
+    ? `printf '%s\\n' '{"futurePiSetting":{"enabled":true},"theme":"nvidia-dark"}' > /sandbox/.pi/agent/settings.json; chmod 600 /sandbox/.pi/agent/settings.json; `
+    : "";
   const result = await execPiShell(
     sandbox,
     trustedSandboxShellScript(
-      "find /sandbox/.pi/agent/sessions -type f -name '*.jsonl' -print0 | sort -z | xargs -0 -r sha256sum",
+      `${settingsFixture}{ [ ! -f /sandbox/.pi/agent/settings.json ] || sha256sum /sandbox/.pi/agent/settings.json; find /sandbox/.pi/agent/sessions -type f -name '*.jsonl' -exec sha256sum {} +; } | sort`,
     ),
-    { artifactName: `pi-${phase}-session-inventory`, env, timeoutMs: 30_000 },
+    { artifactName: `pi-${phase}-persistent-state-inventory`, env, timeoutMs: 30_000 },
   );
   expect(result.exitCode, resultText(result)).toBe(0);
   return result.stdout.trim();
@@ -282,7 +290,7 @@ test(
       e2ePhases: [
         "validate the exact Pi candidate receipt",
         "onboard Pi without a Dockerfile build",
-        "run interactive Pi and preserve its session through rebuild",
+        "run interactive Pi and preserve its native state through rebuild",
         "recover Pi after sandbox and gateway restarts",
         "prove Pi policy and credential boundaries",
         "destroy Pi and publish bounded evidence",
@@ -399,13 +407,13 @@ test(
     });
 
     const onboardProof = await runReadTask(artifacts, host, sandbox, env, "before-rebuild");
-    const sessionsAfterOnboard = await sessionInventory(sandbox, env, "after-onboard");
+    const stateAfterOnboard = await persistentStateInventory(sandbox, env, "after-onboard");
 
-    progress.phase("run interactive Pi and preserve its session through rebuild");
+    progress.phase("run interactive Pi and preserve its native state through rebuild");
     await runInteractiveTask(artifacts, host, progress, env);
-    const sessionsBeforeRebuild = await sessionInventory(sandbox, env, "before-rebuild");
-    expect(sessionsBeforeRebuild.split("\n").filter(Boolean).length).toBeGreaterThan(
-      sessionsAfterOnboard.split("\n").filter(Boolean).length,
+    const stateBeforeRebuild = await persistentStateInventory(sandbox, env, "before-rebuild", true);
+    expect(stateBeforeRebuild.split("\n").filter(Boolean).length).toBeGreaterThan(
+      stateAfterOnboard.split("\n").filter(Boolean).length,
     );
 
     const rebuild = await host.nemoclaw([SANDBOX_NAME, "rebuild", "--yes"], {
@@ -415,8 +423,8 @@ test(
       timeoutMs: 20 * 60_000,
     });
     expect(rebuild.exitCode, resultText(rebuild)).toBe(0);
-    const sessionsAfterRebuild = await sessionInventory(sandbox, env, "after-rebuild");
-    expect(sessionsAfterRebuild).toBe(sessionsBeforeRebuild);
+    const stateAfterRebuild = await persistentStateInventory(sandbox, env, "after-rebuild");
+    expect(stateAfterRebuild).toBe(stateBeforeRebuild);
     const rebuildProof = await runReadTask(artifacts, host, sandbox, env, "after-rebuild");
 
     progress.phase("recover Pi after sandbox and gateway restarts");
@@ -566,6 +574,7 @@ test(
         headlessAfterRebuild: rebuildProof,
         headlessAfterRecovery: recoveryProof,
         interactive: true,
+        nativeSettingsPreservedAcrossRebuild: true,
         sessionStatePreservedAcrossRebuild: true,
       },
       lifecycle: ["onboard", "interactive", "rebuild", "gateway-recovery", "destroy"],
