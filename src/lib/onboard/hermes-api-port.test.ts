@@ -137,8 +137,8 @@ describe("findAvailableHermesApiPortFromObservations", () => {
     ).toBe(8643);
   });
 
-  it("blocks allocation when ownership is indeterminate", () => {
-    expect(() =>
+  it("keeps an unprovable port occupied and allocates the next free port (#11979)", () => {
+    expect(
       findAvailableHermesApiPortFromObservations(
         "beta",
         8642,
@@ -148,7 +148,7 @@ describe("findAvailableHermesApiPortFromObservations", () => {
         ],
         new Map(),
       ),
-    ).toThrow(/could not prove OpenShell forward ownership/i);
+    ).toBe(8643);
   });
 });
 

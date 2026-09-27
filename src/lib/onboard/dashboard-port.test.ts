@@ -169,13 +169,42 @@ describe("typed OpenShell dashboard-port observation", () => {
     ).toBe(18790);
   });
 
-  it("blocks allocation when ownership is indeterminate", () => {
-    expect(() =>
+  it("keeps an unprovable port occupied and allocates the next free port (#11979)", () => {
+    expect(
       findAvailableDashboardPortFromObservations("cursor", 18789, [
         forwardObservation("cursor", 18789, "indeterminate"),
         forwardObservation("cursor", 18790, "absent"),
       ]),
-    ).toThrow(/could not prove OpenShell forward ownership/i);
+    ).toBe(18790);
+  });
+
+  it("names every unprovable port when no dashboard port can be verified (#11979)", () => {
+    const observations = Array.from({ length: 11 }, (_, index) =>
+      forwardObservation("cursor", 18789 + index, "indeterminate"),
+    );
+    expect(() => findAvailableDashboardPortFromObservations("cursor", 18789, observations)).toThrow(
+      /All dashboard ports in range 18789-18799 are occupied:\n {2}18789 → unverified OpenShell forward ownership/,
+    );
+  });
+
+  it("still blocks allocation when a forward observation fails for another reason", () => {
+    expect(() =>
+      findAvailableDashboardPortFromObservations("cursor", 18789, [
+        {
+          state: "indeterminate",
+          forward: {
+            gatewayEndpoint: "https://127.0.0.1:9090",
+            gatewayName: "nemoclaw-9090",
+            workspace: "default",
+            sandboxName: "cursor",
+            localHost: "127.0.0.1",
+            port: 18789,
+          },
+          error: { kind: "timeout", message: "The OpenShell forward operation timed out." },
+        },
+        forwardObservation("cursor", 18790, "absent"),
+      ]),
+    ).toThrow(/Cannot allocate dashboard port: The OpenShell forward operation timed out/);
   });
 
   it("treats missing observations as unverified instead of absent", () => {

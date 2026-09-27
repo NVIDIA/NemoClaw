@@ -363,7 +363,13 @@ export function findAvailablePortInRangeFromObservations(
   range: HostPortRange,
   registryOccupiedPorts: ReadonlyMap<string, string> = new Map(),
 ): number {
-  const indeterminate = observations.find((observation) => observation.state === "indeterminate");
+  // An unprovable owner on one port only keeps that port occupied below. Any other
+  // indeterminate result means the observation itself failed, so stop (#11979).
+  const indeterminate = observations.find(
+    (observation) =>
+      observation.state === "indeterminate" &&
+      !("error" in observation && observation.error.kind === "ownership"),
+  );
   if (indeterminate) {
     const message =
       "error" in indeterminate ? indeterminate.error.message : "Invalid forward request.";
