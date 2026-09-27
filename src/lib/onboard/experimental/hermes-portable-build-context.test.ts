@@ -25,19 +25,52 @@ const BUILD_SETTINGS = {
 let stateDir: string;
 
 function emulatePrivateSourceAncestor(): void {
-  const original = fs.lstatSync;
+  const originalLstat = fs.lstatSync;
+  const originalFstat = fs.fstatSync;
+  const originalOpen = fs.openSync;
   const sharedTemporaryRoots = new Set([path.resolve("/tmp"), fs.realpathSync("/tmp")]);
+  // The reviewed source is the repository working tree itself, and a checkout
+  // created under a permissive umask (for example 0002) leaves it and its
+  // ancestors group-writable. Emulate owner-only modes for that chain and for
+  // every path inside the checkout, exactly as for the shared temp roots.
+  const sourceRoot = path.resolve(ROOT);
+  for (let directory = sourceRoot; ; directory = path.dirname(directory)) {
+    sharedTemporaryRoots.add(directory);
+    if (path.dirname(directory) === directory) break;
+  }
+  // Track file descriptors opened from masked paths to also mask fstatSync.
+  const maskedFds = new Set<number>();
+  const emulateOwnerOnlyMode = (target: unknown): boolean => {
+    const resolved = path.resolve(String(target));
+    return sharedTemporaryRoots.has(resolved) || resolved.startsWith(`${sourceRoot}${path.sep}`);
+  };
+  const wrapStat = (stat: fs.Stats): fs.Stats =>
+    new Proxy(stat, {
+      get(value, property) {
+        const mode = BigInt(Reflect.get(value, "mode", value));
+        return property === "mode" ? mode & ~0o22n : Reflect.get(value, property, value);
+      },
+    });
   vi.spyOn(fs, "lstatSync").mockImplementation(((target, options) => {
-    const stat = original(target, options as never);
-    return sharedTemporaryRoots.has(path.resolve(String(target)))
-      ? new Proxy(stat, {
-          get(value, property) {
-            const mode = BigInt(Reflect.get(value, "mode", value));
-            return property === "mode" ? mode & ~0o22n : Reflect.get(value, property, value);
-          },
-        })
-      : stat;
+    const stat = originalLstat(target, options as never);
+    return emulateOwnerOnlyMode(target) ? wrapStat(stat) : stat;
   }) as typeof fs.lstatSync);
+  vi.spyOn(fs, "openSync").mockImplementation(((path_, flags, mode) => {
+    const fd = originalOpen(path_, flags, mode);
+    if (emulateOwnerOnlyMode(path_)) maskedFds.add(fd);
+    return fd;
+  }) as typeof fs.openSync);
+  vi.spyOn(fs, "fstatSync").mockImplementation(((fd, options) => {
+    const stat = originalFstat(fd, options as never);
+    if (maskedFds.has(fd)) return wrapStat(stat);
+    return stat;
+  }) as typeof fs.fstatSync);
+  // Clean up fd tracking on close (best effort)
+  const originalClose = fs.closeSync;
+  vi.spyOn(fs, "closeSync").mockImplementation(((fd) => {
+    maskedFds.delete(fd);
+    return originalClose(fd);
+  }) as typeof fs.closeSync);
 }
 
 function contextInput() {

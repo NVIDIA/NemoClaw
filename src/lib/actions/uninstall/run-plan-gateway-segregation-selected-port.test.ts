@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -116,7 +117,7 @@ afterEach(() => {
 
 describe("uninstall selected gateway-port segregation (#3053)", () => {
   it("does not treat the selected gateway's own port directory as a sibling (#7987)", async () => {
-    const tmpHome = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-uninstall-self-sibling-"));
+    const tmpHome = fs.mkdtempSync(path.join(os.homedir(), "nemoclaw-uninstall-self-sibling-"));
     try {
       const stateDir = path.join(tmpHome, ".nemoclaw");
       // The selected gateway runs on the default port, so its state root is the
@@ -167,9 +168,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
   });
 
   it("still detects a live sibling alongside the selected gateway's own port directory (#7987)", async () => {
-    const tmpHome = fs.mkdtempSync(
-      path.join(process.cwd(), "nemoclaw-uninstall-self-and-sibling-"),
-    );
+    const tmpHome = fs.mkdtempSync(path.join(os.homedir(), "nemoclaw-uninstall-self-and-sibling-"));
     try {
       const stateDir = path.join(tmpHome, ".nemoclaw");
       fs.mkdirSync(path.join(stateDir, "gateways", "8080"), { recursive: true });
@@ -247,7 +246,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
   ])(
     "$scenario without a registered sandbox (#10544)",
     async ({ expectedExit, liveGatewayNames, processProven, siblingKept }) => {
-      const tmpHome = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-uninstall-custom-state-"));
+      const tmpHome = fs.mkdtempSync(path.join(os.homedir(), "nemoclaw-uninstall-custom-state-"));
       const port = 9123;
       try {
         vi.stubEnv("NEMOCLAW_GATEWAY_PORT", String(port));
@@ -340,7 +339,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
       stateKept: true,
     },
   ])("$scenario (#10544)", async ({ expectedExit, gatewayRemoved, portFree, stateKept }) => {
-    const tmpHome = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-uninstall-stopped-state-"));
+    const tmpHome = fs.mkdtempSync(path.join(os.homedir(), "nemoclaw-uninstall-stopped-state-"));
     const port = 9123;
     try {
       vi.stubEnv("NEMOCLAW_GATEWAY_PORT", String(port));
@@ -680,7 +679,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
       stateKept,
     }) => {
       const tmpHome = fs.mkdtempSync(
-        path.join(process.cwd(), "nemoclaw-uninstall-pre-gateway-state-"),
+        path.join(os.homedir(), "nemoclaw-uninstall-pre-gateway-state-"),
       );
       const port = 9123;
       try {
@@ -794,7 +793,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
   );
 
   it("removes a marker-only configured reservation without OpenShell gateway cleanup", async () => {
-    const tmpHome = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-uninstall-reservation-"));
+    const tmpHome = fs.mkdtempSync(path.join(os.homedir(), "nemoclaw-uninstall-reservation-"));
     const port = 9123;
     try {
       vi.stubEnv("NEMOCLAW_GATEWAY_PORT", String(port));
@@ -846,7 +845,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
   });
 
   it("preserves a marker-only reservation while onboarding holds its lifecycle lock (#10544)", async () => {
-    const tmpHome = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-uninstall-onboard-lock-"));
+    const tmpHome = fs.mkdtempSync(path.join(os.homedir(), "nemoclaw-uninstall-onboard-lock-"));
     const port = 9123;
     const customGatewayState = path.join(tmpHome, "reserved-gateway-state");
     try {
@@ -904,7 +903,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
   });
 
   it("holds the configured state lifecycle lock through destructive cleanup (#10544)", async () => {
-    const tmpHome = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-uninstall-plan-lock-"));
+    const tmpHome = fs.mkdtempSync(path.join(os.homedir(), "nemoclaw-uninstall-plan-lock-"));
     const port = 9123;
     const customGatewayState = path.join(tmpHome, "managed-gateway-state");
     try {
@@ -984,7 +983,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
     "reports $scenario instead of misdiagnosing active onboarding (#10544)",
     async ({ expectedDiagnostic, mutate }) => {
       const tmpHome = fs.mkdtempSync(
-        path.join(process.cwd(), "nemoclaw-uninstall-invalid-lifecycle-lock-"),
+        path.join(os.homedir(), "nemoclaw-uninstall-invalid-lifecycle-lock-"),
       );
       const port = 9123;
       const customGatewayState = path.join(tmpHome, "state-parent", "reserved-gateway-state");
@@ -1044,9 +1043,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
   );
 
   it("revalidates state ancestry immediately before reservation removal (#10544)", async () => {
-    const tmpHome = fs.mkdtempSync(
-      path.join(process.cwd(), "nemoclaw-uninstall-revalidate-state-"),
-    );
+    const tmpHome = fs.mkdtempSync(path.join(os.homedir(), "nemoclaw-uninstall-revalidate-state-"));
     const port = 9123;
     const customGatewayState = path.join(tmpHome, "reserved-gateway-state");
     try {
@@ -1150,7 +1147,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
       writeEvidence,
     }) => {
       const tmpHome = fs.mkdtempSync(
-        path.join(process.cwd(), "nemoclaw-uninstall-reservation-evidence-"),
+        path.join(os.homedir(), "nemoclaw-uninstall-reservation-evidence-"),
       );
       const port = 9123;
       try {
@@ -1209,7 +1206,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
   it.each(["relative", "shared-root", "shared-parent"])(
     "rejects an unsafe %s gateway state override before cleanup",
     async (scenario) => {
-      const tmpHome = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-uninstall-unsafe-state-"));
+      const tmpHome = fs.mkdtempSync(path.join(os.homedir(), "nemoclaw-uninstall-unsafe-state-"));
       const port = 9123;
       try {
         const configured =
@@ -1258,7 +1255,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
   );
 
   it("refuses a registered-sandbox cleanup when the override belongs to another gateway", async () => {
-    const tmpHome = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-uninstall-wrong-state-"));
+    const tmpHome = fs.mkdtempSync(path.join(os.homedir(), "nemoclaw-uninstall-wrong-state-"));
     const selectedPort = 9123;
     try {
       vi.stubEnv("NEMOCLAW_GATEWAY_PORT", String(selectedPort));
@@ -1336,7 +1333,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
   });
 
   it("preserves selected state when a gateway-scoped sandbox deletion fails", async () => {
-    const tmpHome = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-uninstall-select-fail-"));
+    const tmpHome = fs.mkdtempSync(path.join(os.homedir(), "nemoclaw-uninstall-select-fail-"));
     const port = 9123;
     try {
       vi.stubEnv("NEMOCLAW_GATEWAY_PORT", String(port));
@@ -1412,7 +1409,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
   });
 
   it("prunes selected rows after recovering an abandoned registry lock", async () => {
-    const tmpHome = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-uninstall-stale-lock-"));
+    const tmpHome = fs.mkdtempSync(path.join(os.homedir(), "nemoclaw-uninstall-stale-lock-"));
     const port = 8080;
     const siblingPort = 9125;
     try {

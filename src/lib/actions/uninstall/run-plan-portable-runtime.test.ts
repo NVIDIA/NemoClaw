@@ -421,7 +421,7 @@ describe("portable runtime cleanup in the uninstall run plan", testTimeoutOption
     const registeredSandboxes = new Set(["alpha", "unrelated"]);
     const { homeDir, sharedPaths: sharedOpenShellPaths } = sharedOpenShellFixture(
       "nemoclaw-portable-success-",
-      process.cwd(),
+      os.homedir(),
     );
     const gatewayStateDir = path.join(homeDir, "external-gateway-state");
     const gatewayStateMarker = path.join(gatewayStateDir, "keep");

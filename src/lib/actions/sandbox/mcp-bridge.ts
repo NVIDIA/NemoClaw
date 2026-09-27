@@ -22,7 +22,10 @@ import {
   restoreMcpBridgesAfterDestroyAbort as restoreMcpBridgesAfterDestroyAbortLifecycle,
 } from "./mcp-bridge-destroy";
 import type { McpDestroyPreparation } from "./mcp-bridge-destroy-preflight";
-import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
+import {
+  redactBridgeSecretsForDisplay,
+  redactMcpMigrationPlanForDisplay,
+} from "./mcp-bridge-output";
 import {
   type McpRebuildPreparation,
   prepareMcpBridgesForAbsentSandboxRebuild as prepareMcpBridgesForAbsentSandboxRebuildLifecycle,
@@ -319,20 +322,26 @@ function renderMcpHelp(subcommand: string): void {
   switch (subcommand) {
     case "add":
       console.log(`USAGE
-  nemoclaw <name> mcp add <server> --url <https-mcp-url> --env KEY [--deny-tool TOOL ...] [--trusted-private-host HOST]
+  nemoclaw <name> mcp add <server> --url <https-mcp-url> --env KEY [--deny-tool TOOL ...] [--allow-tool TOOL ...] [--trusted-private-host HOST] [--server-identity sha256:...] [--transport sse|stdio] [--require-oauth] [--no-probe]
 
 FLAGS
-  --url URL        MCP Streamable HTTP endpoint
-  --env KEY        Required host credential reference registered with OpenShell
-  --deny-tool TOOL Deny an exact tool name or glob at the OpenShell MCP proxy; repeatable
+  --url URL                 MCP Streamable HTTP endpoint
+  --env KEY                 Required host credential reference registered with OpenShell
+  --deny-tool TOOL          Deny an exact tool name or glob at the OpenShell MCP proxy; repeatable
+  --allow-tool TOOL         Allow only this tool name or glob (deny-by-default mode); repeatable
   --trusted-private-host HOST
-                   Trust the exact URL host when it resolves only to routed private addresses
-  --no-probe       Skip the post-add wire-level credential-resolution probe
+                            Trust the exact URL host when it resolves only to routed private addresses
+  --server-identity DIGEST  Pin the server binary digest for supply-chain verification (format: sha256:...)
+  --transport sse|stdio     Transport protocol (default: sse for HTTPS URLs)
+  --require-oauth           Require OAuth authentication for the MCP endpoint
+  --no-probe                Skip the post-add wire-level credential-resolution probe
 
 SECURITY
   Credentials are registered as an OpenShell provider and appear inside the
   sandbox only as openshell:resolve:env:KEY placeholders. OpenShell resolves
-  them at egress while enforcing the generated protocol: mcp policy.`);
+  them at egress while enforcing the generated protocol: mcp policy.
+  When --allow-tool is specified, deny-by-default mode is enabled: only the
+  explicitly allowed tools are permitted.`);
       return;
     case "list":
       console.log(`USAGE
@@ -343,12 +352,14 @@ FLAGS
       return;
     case "update":
       console.log(`USAGE
-  nemoclaw <name> mcp update <server> (--deny-tool TOOL [...] | --clear-deny-tools | --refresh-public-pins)
+  nemoclaw <name> mcp update <server> (--deny-tool TOOL [...] | --clear-deny-tools | --refresh-public-pins | --allow-tool TOOL [...] | --clear-allow-tools)
 
 FLAGS
-  --deny-tool TOOL    Replace the denied-tool list with exact names or globs; repeatable
-  --clear-deny-tools  Remove every denied-tool rule
-  --refresh-public-pins  Refresh existing public address pins in live OpenShell policy`);
+  --deny-tool TOOL         Replace the denied-tool list with exact names or globs; repeatable
+  --allow-tool TOOL        Replace the allowlist with exact names or globs; repeatable
+  --clear-deny-tools       Remove every denied-tool rule
+  --clear-allow-tools      Remove the allowlist and return to denylist mode
+  --refresh-public-pins    Refresh existing public address pins in live OpenShell policy`);
       return;
     case "status":
       console.log(`USAGE
@@ -405,7 +416,7 @@ export async function dispatchMcpBridgeCommand(
         const { probe, rest: addRest } = parseProbeFlags(rest);
         if (probe === true)
           throw new McpBridgeError(
-            "Usage: nemoclaw <sandbox> mcp add <server> --url <https-mcp-url> --env KEY [--deny-tool TOOL ...] [--trusted-private-host HOST] [--no-probe]",
+            "Usage: nemoclaw <sandbox> mcp add <server> --url <https-mcp-url> --env KEY [--deny-tool TOOL ...] [--allow-tool TOOL ...] [--trusted-private-host HOST] [--server-identity sha256:...] [--transport sse|stdio] [--require-oauth] [--no-probe]",
             2,
           );
         const options = parseMcpAddArgs(addRest);
@@ -488,15 +499,18 @@ export async function dispatchMcpBridgeCommand(
           apply,
           rebuildSandbox: dependencies.rebuildForMigration,
         });
+        // Legacy URLs can embed credentials, so every migration output stays
+        // redacted before it reaches the terminal or a JSON consumer.
+        const displayPlan = redactMcpMigrationPlanForDisplay(plan);
         if (json) {
-          process.stdout.write(`${JSON.stringify(plan, null, 2)}\n`);
+          process.stdout.write(`${JSON.stringify(displayPlan, null, 2)}\n`);
           return;
         }
-        if (plan.items.length === 0) {
+        if (displayPlan.items.length === 0) {
           console.log(`  No legacy MCP agent configuration found on '${sandboxName}'.`);
           return;
         }
-        for (const item of plan.items) {
+        for (const item of displayPlan.items) {
           console.log(
             `  ${item.action === "migrate" ? "Migrate" : "Verify"} '${item.server}': legacy -> native (${item.url})`,
           );
@@ -507,7 +521,7 @@ export async function dispatchMcpBridgeCommand(
           }
         }
         console.log(
-          plan.applied
+          displayPlan.applied
             ? "  MCP migration completed and legacy registry fields were retired."
             : "  Preview only. Rerun with --apply to authorize native materialization.",
         );

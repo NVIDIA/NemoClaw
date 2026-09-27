@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isDeepStrictEqual } from "node:util";
 import type { AgentMcpAdapter } from "../../agent/defs";
 import * as policies from "../../policy";
 import {
@@ -91,6 +92,12 @@ import {
   validateMcpServerName,
   validateSandboxName,
 } from "./mcp-bridge-validation";
+import {
+  verifyMcpServerIdentity,
+  enforceTransportTrust,
+  computeToolPolicy,
+  inferTransportFromUrl,
+} from "./mcp-bridge-supply-chain";
 import { waitForMcpBridgeConditionAsync } from "./mcp-bridge/timing";
 
 function sameMcpAddIntent(existing: McpSourceEntry, requested: McpSourceEntry): boolean {
@@ -104,12 +111,17 @@ function sameMcpAddIntent(existing: McpSourceEntry, requested: McpSourceEntry): 
     existing.trustedPrivateHost === requested.trustedPrivateHost &&
     (existing.denyTools?.length ?? 0) === (requested.denyTools?.length ?? 0) &&
     (existing.denyTools ?? []).every((tool, index) => tool === requested.denyTools?.[index]) &&
+    (existing.allowTools?.length ?? 0) === (requested.allowTools?.length ?? 0) &&
+    (existing.allowTools ?? []).every((tool, index) => tool === requested.allowTools?.[index]) &&
     (existing.allowedIps?.length ?? 0) === (requested.allowedIps?.length ?? 0) &&
     (existing.allowedIps ?? []).every(
       (address, index) => address === requested.allowedIps?.[index],
     ) &&
     existing.env.length === requested.env.length &&
-    existing.env.every((name, index) => name === requested.env[index])
+    existing.env.every((name, index) => name === requested.env[index]) &&
+    existing.transport === requested.transport &&
+    existing.requireOAuth === requested.requireOAuth &&
+    existing.serverIdentity?.digest === requested.serverIdentity?.digest
   );
 }
 
@@ -173,6 +185,7 @@ async function recoverCommittedPolicyTarget(
       currentTarget,
       requestedEntry.providerName ?? "",
       requestedEntry.denyTools,
+      requestedEntry.allowTools,
     ),
     undefined,
     runtimeSelection,
@@ -185,6 +198,7 @@ async function recoverCommittedPolicyTarget(
       adapter,
       currentTarget,
       requestedEntry.denyTools,
+      requestedEntry.allowTools,
     ),
     undefined,
     runtimeSelection,
@@ -402,6 +416,7 @@ async function inspectMcpAddRecovery(
     target,
     entry.providerName ?? "",
     entry.denyTools,
+    entry.allowTools,
   );
   const boundPolicyState = await policies.getPresetContentGatewayState(
     sandboxName,
@@ -418,7 +433,14 @@ async function inspectMcpAddRecovery(
   } else {
     const capabilityPolicyState = await policies.getPresetContentGatewayState(
       sandboxName,
-      buildMcpBridgeCapabilityPolicyYaml(entry.server, entry.url, adapter, target, entry.denyTools),
+      buildMcpBridgeCapabilityPolicyYaml(
+        entry.server,
+        entry.url,
+        adapter,
+        target,
+        entry.denyTools,
+        entry.allowTools,
+      ),
       undefined,
       providerRuntimeSelection,
       deadline ? remainingHermesMcpFinalityMs(deadline.deadlineMs) : undefined,
@@ -681,6 +703,27 @@ async function updateMcpBridgeDenyToolsUnlocked(
       `MCP server '${server}' has no validated address pins. No policy was changed.`,
     );
   }
+  // Public-pin drift check: if the live DNS answer for a public endpoint no longer
+  // matches the originally admitted address pins, refuse the update unless the
+  // caller explicitly requests a pin refresh. This preserves the guaranteed
+  // address set across credential rotations and policy updates. Trusted-private
+  // pins are intentionally excluded; they are managed by explicit remove-and-add.
+  if (
+    !storedEntry.trustedPrivateHost &&
+    storedEntry.allowedIps &&
+    storedEntry.allowedIps.length > 0
+  ) {
+    const recordedPins = [
+      ...new Set(storedEntry.allowedIps.map((address) => address.toLowerCase())),
+    ].sort();
+    const freshPins = [...new Set(target.addresses.map((address) => address.toLowerCase()))].sort();
+    if (!isDeepStrictEqual(recordedPins, freshPins)) {
+      throw new McpBridgeError(
+        `MCP server '${server}' has drifted public address pins. To apply the current DNS answer, rerun with \`--refresh-public-pins\`; the existing pins remain enforced until then.`,
+        2,
+      );
+    }
+  }
   const { denyTools: _previousDenyTools, ...entryWithoutDenyTools } = storedEntry;
   const updatedEntry: McpSourceEntry = {
     ...entryWithoutDenyTools,
@@ -804,13 +847,29 @@ async function addMcpBridgeUnlocked(
     providerName,
   );
   assertNoDerivedResourceCollision(observed.bridges, options.server, providerName, policyName);
+
+  // Compute tool policy (allowlist vs denylist)
+  const toolPolicy = computeToolPolicy(options.allowTools, denyTools);
+
+  // Build server identity if provided
+  const serverIdentity = options.serverIdentity
+    ? {
+        digest: options.serverIdentity,
+        transport: options.transport ?? inferTransportFromUrl(normalizedUrl),
+        verifiedAt: Date.now(),
+      }
+    : undefined;
+
   let requestedEntry: McpSourceEntry = {
     server: options.server,
     agent: agent.name,
     adapter,
     url: normalizedUrl,
     env: envNames,
-    ...(denyTools.length > 0 ? { denyTools } : {}),
+    ...(toolPolicy.mode === "denylist" && toolPolicy.denyTools.length > 0
+      ? { denyTools: [...toolPolicy.denyTools] }
+      : {}),
+    ...(toolPolicy.mode === "allowlist" ? { allowTools: [...toolPolicy.allowTools] } : {}),
     allowedIps: [...target.addresses],
     ...(target.trustedPrivateHost
       ? {
@@ -819,7 +878,18 @@ async function addMcpBridgeUnlocked(
       : {}),
     ...(providerName ? { providerName } : {}),
     policyName,
+    ...(serverIdentity ? { serverIdentity } : {}),
+    transport: serverIdentity?.transport,
+    ...(options.requireOAuth ? { requireOAuth: true } : {}),
   };
+
+  // Supply-chain verification: if an existing entry has a pinned identity, verify it matches
+  if (existingEntry?.serverIdentity && options.serverIdentity) {
+    await verifyMcpServerIdentity(existingEntry, options.serverIdentity);
+  }
+
+  // Enforce transport-specific trust policies
+  enforceTransportTrust(requestedEntry, options.requireOAuth ?? false);
 
   if (existingEntry && !sameMcpAddIntent(existingEntry, requestedEntry)) {
     throw new McpBridgeError(

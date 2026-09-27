@@ -431,7 +431,7 @@ async function addSandboxPolicyUnlocked(
     }
     answer = preset.name;
   } else {
-    const usage = `${CLI_NAME} <sandbox> policy add <preset> [--yes] [--dry-run]`;
+    const usage = `${CLI_NAME} <sandbox> policy add <preset> [--yes|-y] [--dry-run] [--from-file <path>] [--from-dir <path>] [--trusted-private-host <host>]`;
     if (isNonInteractiveEnv()) {
       exitPresetNameRequired(usage);
     }
@@ -1402,7 +1402,7 @@ async function addSandboxChannelUnlocked(
   const force = Boolean(options.force);
   const rawChannelArg = options.channel;
   if (!rawChannelArg) {
-    console.error(`  Usage: ${CLI_NAME} <sandbox> channels add <channel> [--dry-run]`);
+    console.error(`  Usage: ${CLI_NAME} <sandbox> channels add <channel> [--dry-run] [--force]`);
     console.error(`  Valid channels: ${knownManifestChannelNames().join(", ")}`);
     process.exit(1);
   }
@@ -2224,7 +2224,7 @@ async function removeSandboxPolicyUnlocked(
     }
     answer = preset.name;
   } else {
-    const usage = `${CLI_NAME} <sandbox> policy remove <preset> [--yes] [--dry-run]`;
+    const usage = `${CLI_NAME} <sandbox> policy remove <preset> [--yes|-y] [--dry-run]`;
     if (isNonInteractiveEnv()) {
       exitPresetNameRequired(usage);
     }
@@ -2287,7 +2287,9 @@ async function excludeSandboxBaselineUnlocked(
   const key = options.key?.trim();
   if (!key) {
     console.error("  A baseline key is required.");
-    console.error(`  Usage: ${CLI_NAME} <sandbox> policy exclude <key> [--force] [--dry-run]`);
+    console.error(
+      `  Usage: ${CLI_NAME} <sandbox> policy exclude <key> [--force] [--yes|-y] [--dry-run]`,
+    );
     process.exit(1);
   }
 

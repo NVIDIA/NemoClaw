@@ -190,13 +190,21 @@ describe("generated MCP policy", () => {
     ) as {
       network_policies: Record<
         string,
-        { endpoints: Array<{ deny_rules?: Array<{ method: string; tool: string }> }> }
+        {
+          endpoints: Array<{
+            rules?: Array<{ allow?: { method: string }; deny?: { method: string; tool: string } }>;
+          }>;
+        }
       >;
     };
 
-    expect(parsed.network_policies.mcp_bridge_github.endpoints[0].deny_rules).toEqual([
-      { method: "tools/call", tool: "delete_*" },
-      { method: "tools/call", tool: "doordash_submit_order" },
+    const rules = parsed.network_policies.mcp_bridge_github.endpoints[0].rules ?? [];
+    const denyRules = rules.filter(
+      (r): r is { deny: { method: string; tool: string } } => "deny" in r,
+    );
+    expect(denyRules).toEqual([
+      { deny: { method: "tools/call", tool: "delete_*" } },
+      { deny: { method: "tools/call", tool: "doordash_submit_order" } },
     ]);
   });
 
@@ -212,6 +220,61 @@ describe("generated MCP policy", () => {
     ) as { network_policies: Record<string, { endpoints: Array<Record<string, unknown>> }> };
 
     expect(parsed.network_policies.mcp_bridge_github.endpoints[0]).not.toHaveProperty("deny_rules");
+  });
+
+  it("renders allowed tool names as tools/call allow rules in allowlist mode", () => {
+    const parsed = YAML.parse(
+      buildMcpBridgePolicyYaml(
+        entry.server,
+        entry.url,
+        "openclaw-config",
+        { addresses: ["8.8.8.8"] },
+        "mcp-github",
+        [],
+        ["read_repo", "list_issues"],
+      ),
+    ) as {
+      network_policies: Record<
+        string,
+        { endpoints: Array<{ rules?: Array<{ allow?: { method: string; tool: string } }> }> }
+      >;
+    };
+
+    const rules = parsed.network_policies.mcp_bridge_github.endpoints[0].rules ?? [];
+    const allowRules = rules.filter(
+      (r): r is { allow: { method: string; tool: string } } => "allow" in r && r.allow.tool,
+    );
+    expect(allowRules).toEqual([
+      { allow: { method: "tools/call", tool: "list_issues" } },
+      { allow: { method: "tools/call", tool: "read_repo" } },
+    ]);
+  });
+
+  it("excludes standard MCP methods from allowlist tool rules", () => {
+    const parsed = YAML.parse(
+      buildMcpBridgePolicyYaml(
+        entry.server,
+        entry.url,
+        "openclaw-config",
+        { addresses: ["8.8.8.8"] },
+        "mcp-github",
+        [],
+        ["read_repo"],
+      ),
+    ) as {
+      network_policies: Record<
+        string,
+        { endpoints: Array<{ rules?: Array<{ allow?: { method: string; tool: string } }> }> }
+      >;
+    };
+
+    const rules = parsed.network_policies.mcp_bridge_github.endpoints[0].rules ?? [];
+    const standardMethods = rules.filter((r) => "allow" in r && !r.allow.tool);
+    expect(standardMethods.length).toBeGreaterThan(20);
+    // Standard MCP methods like initialize, ping, tools/list should be allowed
+    expect(standardMethods.some((r) => r.allow.method === "initialize")).toBe(true);
+    expect(standardMethods.some((r) => r.allow.method === "ping")).toBe(true);
+    expect(standardMethods.some((r) => r.allow.method === "tools/list")).toBe(true);
   });
 
   it("applies directly to live OpenShell policy without a custom-policy registry row", async () => {

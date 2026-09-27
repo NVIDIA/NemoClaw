@@ -54,6 +54,7 @@ export async function applyGeneratedPolicy(
           adapter,
           target,
           entry.denyTools,
+          entry.allowTools,
         )
       : buildMcpBridgePolicyYaml(
           entry.server,
@@ -62,6 +63,7 @@ export async function applyGeneratedPolicy(
           target,
           entry.providerName ?? "",
           entry.denyTools,
+          entry.allowTools,
         );
   await applyGeneratedPolicyContent(sandboxName, entry, content, options.runtimeSelection);
 }

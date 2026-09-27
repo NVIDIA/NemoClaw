@@ -309,6 +309,7 @@ describe("base-image publication evidence", () => {
       git("init", "-b", "main");
       git("config", "user.name", "NemoClaw Test");
       git("config", "user.email", "test@example.com");
+      git("config", "commit.gpgsign", "false");
       write("Dockerfile.base", "base\n");
       commit("base");
       write("unrelated.txt", "main\n");

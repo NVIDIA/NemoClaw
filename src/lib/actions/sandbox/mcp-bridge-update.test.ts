@@ -216,4 +216,91 @@ describe("source-backed MCP denied-tool policy updates", () => {
     expect(mocks.removeGeneratedPolicy).not.toHaveBeenCalled();
     expect(mocks.applyGeneratedPolicy).not.toHaveBeenCalled();
   });
+
+  it("accepts deny-tool update when recorded public pins match fresh DNS answer", async () => {
+    const lookup = vi
+      .spyOn(dns, "lookup")
+      .mockResolvedValue([{ address: "8.8.8.8", family: 4 }] as never);
+    try {
+      await updateMcpBridgeDenyTools("alpha", "github", ["delete_repo"]);
+      expect(mocks.applyGeneratedPolicy).toHaveBeenCalled();
+      expect(mocks.removeGeneratedPolicy).toHaveBeenCalled();
+    } finally {
+      lookup.mockRestore();
+    }
+  });
+
+  it("rejects deny-tool update when public pins drift without --refresh-public-pins", async () => {
+    const lookup = vi
+      .spyOn(dns, "lookup")
+      .mockResolvedValue([{ address: "1.1.1.1", family: 4 }] as never);
+    mocks.preflightMcpEntryTargets.mockResolvedValueOnce(
+      new Map([["github", { addresses: ["1.1.1.1"] }]]),
+    );
+    try {
+      await expect(updateMcpBridgeDenyTools("alpha", "github", ["delete_repo"])).rejects.toThrow(
+        /drifted public address pins.*--refresh-public-pins/,
+      );
+      expect(mocks.removeGeneratedPolicy).not.toHaveBeenCalled();
+      expect(mocks.applyGeneratedPolicy).not.toHaveBeenCalled();
+    } finally {
+      lookup.mockRestore();
+    }
+  });
+
+  it("explicit --refresh-public-pins updates public pins and then allows deny-tool update", async () => {
+    const lookup = vi
+      .spyOn(dns, "lookup")
+      .mockResolvedValue([{ address: "1.1.1.1", family: 4 }] as never);
+    try {
+      await dispatchMcpBridgeCommand("alpha", ["update", "github", "--refresh-public-pins"]);
+      expect(mocks.refreshMcpPublicPolicyPins).toHaveBeenCalled();
+      expect(mocks.applyGeneratedPolicy).not.toHaveBeenCalled();
+      expect(mocks.removeGeneratedPolicy).not.toHaveBeenCalled();
+
+      // After refresh, a deny-tool update should succeed with the new pins
+      vi.clearAllMocks();
+      mocks.inspectSourceBridgeState.mockReturnValue({
+        bridges: { github: { ...entry, allowedIps: ["1.1.1.1"] } },
+        sources: { native: { github: { ...entry, allowedIps: ["1.1.1.1"] } }, legacy: {} },
+      });
+      mocks.inspectAgentMcpSources.mockResolvedValue({
+        native: { github: { ...entry, allowedIps: ["1.1.1.1"] } },
+        legacy: {},
+      });
+      mocks.preflightMcpEntryTargets.mockResolvedValue(
+        new Map([["github", { addresses: ["1.1.1.1"] }]]),
+      );
+
+      await updateMcpBridgeDenyTools("alpha", "github", ["delete_repo"]);
+      expect(mocks.applyGeneratedPolicy).toHaveBeenCalled();
+      expect(mocks.removeGeneratedPolicy).toHaveBeenCalled();
+    } finally {
+      lookup.mockRestore();
+    }
+  });
+
+  it("excludes trusted-private registrations from public-pin drift check", async () => {
+    const privateEntry = {
+      ...entry,
+      allowedIps: ["10.20.30.40"],
+      trustedPrivateHost: "mcp.example.test",
+    };
+    mocks.inspectSourceBridgeState.mockReturnValueOnce({
+      bridges: { github: privateEntry },
+      sources: { native: { github: privateEntry }, legacy: {} },
+    });
+    mocks.inspectAgentMcpSources.mockResolvedValueOnce({
+      native: { github: privateEntry },
+      legacy: {},
+    });
+    mocks.preflightMcpEntryTargets.mockResolvedValueOnce(
+      new Map([["github", { addresses: ["192.0.2.1"] }]]),
+    );
+
+    // Should NOT throw drift error for trusted-private
+    await updateMcpBridgeDenyTools("alpha", "github", ["delete_repo"]);
+    expect(mocks.applyGeneratedPolicy).toHaveBeenCalled();
+    expect(mocks.removeGeneratedPolicy).toHaveBeenCalled();
+  });
 });

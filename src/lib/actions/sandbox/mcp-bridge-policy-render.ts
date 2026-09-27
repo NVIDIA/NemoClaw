@@ -87,6 +87,7 @@ function renderMcpBridgePolicyYaml(
   target: McpBridgeTargetValidation,
   providerName?: string,
   denyTools: readonly string[] = [],
+  allowTools?: readonly string[],
 ): string {
   const parsed = parseMcpUrlWithValidatedTarget(url, target);
   const key = buildMcpBridgePolicyKey(server);
@@ -94,6 +95,15 @@ function renderMcpBridgePolicyYaml(
   // current answer against allowed_ips, and connects to that validated list.
   const allowedIps = [...target.addresses];
   const normalizedDenyTools = normalizeMcpDenyTools(denyTools);
+  const normalizedAllowTools = allowTools ? [...allowTools].sort() : [];
+  const isAllowlistMode = normalizedAllowTools.length > 0;
+
+  // In allowlist mode, we generate explicit allow rules for each tool.
+  // In denylist mode (default), we generate deny rules for each tool.
+  const toolRules = isAllowlistMode
+    ? normalizedAllowTools.map((tool) => ({ allow: { method: "tools/call", tool } }))
+    : normalizedDenyTools.map((tool) => ({ deny: { method: "tools/call", tool } }));
+
   return YAML.stringify({
     preset: {
       name: buildMcpBridgePolicyName(server),
@@ -116,15 +126,10 @@ function renderMcpBridgePolicyYaml(
               strict_tool_names: true,
               allow_all_known_mcp_methods: false,
             },
-            rules: MCP_BRIDGE_ALLOWED_METHODS.map((method) => ({ allow: { method } })),
-            ...(normalizedDenyTools.length > 0
-              ? {
-                  deny_rules: normalizedDenyTools.map((tool) => ({
-                    method: "tools/call",
-                    tool,
-                  })),
-                }
-              : {}),
+            rules: [
+              ...MCP_BRIDGE_ALLOWED_METHODS.map((method) => ({ allow: { method } })),
+              ...toolRules,
+            ],
           },
         ],
         binaries: binariesForAdapter(adapter),
@@ -140,11 +145,20 @@ export function buildMcpBridgePolicyYaml(
   target: McpBridgeTargetValidation,
   providerName: string,
   denyTools: readonly string[] = [],
+  allowTools?: readonly string[],
 ): string {
   if (providerName.trim() !== providerName || providerName.length === 0) {
     throw new Error("Generated MCP credential binding requires an exact provider name.");
   }
-  return renderMcpBridgePolicyYaml(server, url, adapter, target, providerName, denyTools);
+  return renderMcpBridgePolicyYaml(
+    server,
+    url,
+    adapter,
+    target,
+    providerName,
+    denyTools,
+    allowTools,
+  );
 }
 
 /** Render the temporary credential-free policy used before first provider attachment. */
@@ -154,6 +168,7 @@ export function buildMcpBridgeCapabilityPolicyYaml(
   adapter: AgentMcpAdapter,
   target: McpBridgeTargetValidation,
   denyTools: readonly string[] = [],
+  allowTools?: readonly string[],
 ): string {
-  return renderMcpBridgePolicyYaml(server, url, adapter, target, undefined, denyTools);
+  return renderMcpBridgePolicyYaml(server, url, adapter, target, undefined, denyTools, allowTools);
 }

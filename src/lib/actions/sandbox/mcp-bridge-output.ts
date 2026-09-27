@@ -4,6 +4,7 @@
 import { stripAnsi } from "../../adapters/openshell/client";
 import { redactFullWithUrls, redactStandaloneSecretsFull } from "../../security/redact";
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
+import type { McpMigrationPlan } from "./mcp-bridge-migration";
 
 export type OpenShellCommandResult = {
   status: number | null;
@@ -188,6 +189,14 @@ export function redactCredentialValuesForDisplay(
   envValues: Record<string, string>,
 ): string {
   return redactMcpOutput(value, undefined, envValues);
+}
+
+/** Return a display-safe copy of a migration plan with legacy URLs redacted. */
+export function redactMcpMigrationPlanForDisplay(plan: McpMigrationPlan): McpMigrationPlan {
+  return {
+    ...plan,
+    items: plan.items.map((item) => ({ ...item, url: redactFullWithUrls(item.url) })),
+  };
 }
 
 export function commandOutput(

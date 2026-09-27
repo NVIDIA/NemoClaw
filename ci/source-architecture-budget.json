@@ -3,7 +3,7 @@
   "fanIn": {
     "defaultMax": 20,
     "maxByFile": {
-      "src/lib/actions/sandbox/mcp-bridge-contracts.ts": 24,
+      "src/lib/actions/sandbox/mcp-bridge-contracts.ts": 25,
       "src/lib/actions/sandbox/process-recovery.ts": 13,
       "src/lib/adapters/docker/index.ts": 41,
       "src/lib/adapters/openshell/client.ts": 17,
@@ -67,7 +67,7 @@
   "maxRootFiles": {
     "src/lib/onboard": 299,
     "src/lib/actions": 18,
-    "src/lib/actions/sandbox": 173,
+    "src/lib/actions/sandbox": 174,
     "src/lib/state": 36,
     "src/lib/inference": 63,
     "scripts": 42

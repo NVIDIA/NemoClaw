@@ -262,12 +262,19 @@ export function validatePersistedMcpCredentialEnvName(name: string): void {
   }
 }
 
+const VALID_ALLOW_TOOL_RE = /^[A-Za-z][A-Za-z0-9._-]{0,127}$/;
+const VALID_IDENTITY_RE = /^sha256:[a-f0-9]{64}$/;
+
 export function parseMcpAddArgs(argv: string[]): ParsedMcpAddArgs {
   const env: ParsedEnvReference[] = [];
   const denyTools: string[] = [];
+  const allowTools: string[] = [];
   const trustedPrivateHosts: string[] = [];
   let server = "";
   let rawUrl = "";
+  let serverIdentity = "";
+  let transport: "sse" | "stdio" | undefined;
+  let requireOAuth = false;
 
   for (let i = 0; i < argv.length; i++) {
     const token = argv[i];
@@ -317,6 +324,28 @@ export function parseMcpAddArgs(argv: string[]): ParsedMcpAddArgs {
       denyTools.push(token.slice("--deny-tool=".length));
       continue;
     }
+    if (token === "--allow-tool") {
+      const tool = argv[++i] ?? "";
+      if (!VALID_ALLOW_TOOL_RE.test(tool)) {
+        throw new McpBridgeError(
+          `Invalid --allow-tool selector '${tool}'. Use 1-128 letters, digits, dots, underscores, or hyphens starting with a letter.`,
+          2,
+        );
+      }
+      allowTools.push(tool);
+      continue;
+    }
+    if (token?.startsWith("--allow-tool=")) {
+      const tool = token.slice("--allow-tool=".length);
+      if (!VALID_ALLOW_TOOL_RE.test(tool)) {
+        throw new McpBridgeError(
+          `Invalid --allow-tool selector '${tool}'. Use 1-128 letters, digits, dots, underscores, or hyphens starting with a letter.`,
+          2,
+        );
+      }
+      allowTools.push(tool);
+      continue;
+    }
     if (token?.startsWith("--url=")) {
       rawUrl = token.slice("--url=".length);
       continue;
@@ -339,6 +368,48 @@ export function parseMcpAddArgs(argv: string[]): ParsedMcpAddArgs {
       }
       continue;
     }
+    if (token === "--server-identity") {
+      const identity = argv[++i] ?? "";
+      if (!VALID_IDENTITY_RE.test(identity)) {
+        throw new McpBridgeError(
+          "Invalid --server-identity. Expected format: sha256:<64-hex-chars>.",
+          2,
+        );
+      }
+      serverIdentity = identity;
+      continue;
+    }
+    if (token?.startsWith("--server-identity=")) {
+      const identity = token.slice("--server-identity=".length);
+      if (!VALID_IDENTITY_RE.test(identity)) {
+        throw new McpBridgeError(
+          "Invalid --server-identity. Expected format: sha256:<64-hex-chars>.",
+          2,
+        );
+      }
+      serverIdentity = identity;
+      continue;
+    }
+    if (token === "--transport") {
+      const t = argv[++i] ?? "";
+      if (t !== "sse" && t !== "stdio") {
+        throw new McpBridgeError("Invalid --transport. Must be 'sse' or 'stdio'.", 2);
+      }
+      transport = t;
+      continue;
+    }
+    if (token?.startsWith("--transport=")) {
+      const t = token.slice("--transport=".length);
+      if (t !== "sse" && t !== "stdio") {
+        throw new McpBridgeError("Invalid --transport. Must be 'sse' or 'stdio'.", 2);
+      }
+      transport = t;
+      continue;
+    }
+    if (token === "--require-oauth") {
+      requireOAuth = true;
+      continue;
+    }
     if (token?.startsWith("-")) {
       throw new McpBridgeError(`Unknown mcp add option: ${token}`, 2);
     }
@@ -348,14 +419,14 @@ export function parseMcpAddArgs(argv: string[]): ParsedMcpAddArgs {
       continue;
     }
     throw new McpBridgeError(
-      "Usage: nemoclaw <sandbox> mcp add <server> --url <https-mcp-url> --env KEY [--deny-tool TOOL ...] [--trusted-private-host HOST]",
+      "Usage: nemoclaw <sandbox> mcp add <server> --url <https-mcp-url> --env KEY [--deny-tool TOOL ...] [--allow-tool TOOL ...] [--trusted-private-host HOST] [--server-identity sha256:...] [--transport sse|stdio] [--require-oauth]",
       2,
     );
   }
 
   if (!server) {
     throw new McpBridgeError(
-      "Usage: nemoclaw <sandbox> mcp add <server> --url <https-mcp-url> --env KEY [--deny-tool TOOL ...] [--trusted-private-host HOST]",
+      "Usage: nemoclaw <sandbox> mcp add <server> --url <https-mcp-url> --env KEY [--deny-tool TOOL ...] [--allow-tool TOOL ...] [--trusted-private-host HOST] [--server-identity sha256:...] [--transport sse|stdio] [--require-oauth]",
       2,
     );
   }
@@ -365,6 +436,12 @@ export function parseMcpAddArgs(argv: string[]): ParsedMcpAddArgs {
   if (new Set(trustedPrivateHosts).size !== trustedPrivateHosts.length) {
     throw new McpBridgeError(
       "Duplicate --trusted-private-host declarations are not accepted after normalization.",
+      2,
+    );
+  }
+  if (allowTools.length > 0 && denyTools.length > 0) {
+    throw new McpBridgeError(
+      "Cannot specify both --deny-tool and --allow-tool. Choose one mode: explicit denials or explicit allowlist (deny-by-default).",
       2,
     );
   }
@@ -393,23 +470,33 @@ export function parseMcpAddArgs(argv: string[]): ParsedMcpAddArgs {
       2,
     );
   }
+  if (requireOAuth && !url.startsWith("https://")) {
+    throw new McpBridgeError("--require-oauth is only valid for HTTPS MCP endpoints.", 2);
+  }
 
   const normalizedDenyTools = normalizeMcpDenyTools(denyTools);
+  const normalizedAllowTools = allowTools.length > 0 ? [...new Set(allowTools)].sort() : undefined;
 
   return {
     server,
     url,
     env,
     ...(normalizedDenyTools.length > 0 ? { denyTools: normalizedDenyTools } : {}),
+    ...(normalizedAllowTools ? { allowTools: normalizedAllowTools } : {}),
     ...(trustedPrivateHosts.length > 0 ? { trustedPrivateHosts } : {}),
+    ...(serverIdentity ? { serverIdentity } : {}),
+    ...(transport ? { transport } : {}),
+    ...(requireOAuth ? { requireOAuth: true } : {}),
   };
 }
 
 export function parseMcpUpdateArgs(argv: string[]): ParsedMcpUpdateArgs {
   const denyTools: string[] = [];
+  const allowTools: string[] = [];
   let server = "";
   let clearDenyTools = false;
   let refreshPublicPins = false;
+  let clearAllowTools = false;
 
   for (let i = 0; i < argv.length; i++) {
     const token = argv[i];
@@ -421,8 +508,34 @@ export function parseMcpUpdateArgs(argv: string[]): ParsedMcpUpdateArgs {
       denyTools.push(token.slice("--deny-tool=".length));
       continue;
     }
+    if (token === "--allow-tool") {
+      const tool = argv[++i] ?? "";
+      if (!VALID_ALLOW_TOOL_RE.test(tool)) {
+        throw new McpBridgeError(
+          `Invalid --allow-tool selector '${tool}'. Use 1-128 letters, digits, dots, underscores, or hyphens starting with a letter.`,
+          2,
+        );
+      }
+      allowTools.push(tool);
+      continue;
+    }
+    if (token?.startsWith("--allow-tool=")) {
+      const tool = token.slice("--allow-tool=".length);
+      if (!VALID_ALLOW_TOOL_RE.test(tool)) {
+        throw new McpBridgeError(
+          `Invalid --allow-tool selector '${tool}'. Use 1-128 letters, digits, dots, underscores, or hyphens starting with a letter.`,
+          2,
+        );
+      }
+      allowTools.push(tool);
+      continue;
+    }
     if (token === "--clear-deny-tools") {
       clearDenyTools = true;
+      continue;
+    }
+    if (token === "--clear-allow-tools") {
+      clearAllowTools = true;
       continue;
     }
     if (token === "--refresh-public-pins") {
@@ -438,25 +551,59 @@ export function parseMcpUpdateArgs(argv: string[]): ParsedMcpUpdateArgs {
       continue;
     }
     throw new McpBridgeError(
-      "Usage: nemoclaw <sandbox> mcp update <server> (--deny-tool TOOL [...] | --clear-deny-tools | --refresh-public-pins)",
+      "Usage: nemoclaw <sandbox> mcp update <server> (--deny-tool TOOL [...] | --clear-deny-tools | --refresh-public-pins | --allow-tool TOOL [...] | --clear-allow-tools)",
       2,
     );
   }
 
-  if (!server || (denyTools.length === 0 && !clearDenyTools && !refreshPublicPins)) {
+  if (
+    !server ||
+    (denyTools.length === 0 &&
+      !clearDenyTools &&
+      !refreshPublicPins &&
+      allowTools.length === 0 &&
+      !clearAllowTools)
+  ) {
     throw new McpBridgeError(
-      "Usage: nemoclaw <sandbox> mcp update <server> (--deny-tool TOOL [...] | --clear-deny-tools | --refresh-public-pins)",
+      "Usage: nemoclaw <sandbox> mcp update <server> (--deny-tool TOOL [...] | --clear-deny-tools | --refresh-public-pins | --allow-tool TOOL [...] | --clear-allow-tools)",
       2,
     );
   }
   if (refreshPublicPins) {
-    if (denyTools.length > 0 || clearDenyTools) {
+    if (denyTools.length > 0 || clearDenyTools || allowTools.length > 0 || clearAllowTools) {
       throw new McpBridgeError(
-        "Choose one update mode: public-pin refresh or denied-tool replacement.",
+        "Choose one update mode: public-pin refresh or denied-tool/allow-tool replacement.",
         2,
       );
     }
     return { server, refreshPublicPins: true };
+  }
+  if (clearAllowTools) {
+    if (denyTools.length > 0 || clearDenyTools || allowTools.length > 0) {
+      throw new McpBridgeError(
+        "Pass --clear-allow-tools alone to remove the allowlist and return to deny-by-default mode.",
+        2,
+      );
+    }
+    return { server, clearAllowTools: true };
+  }
+  if (allowTools.length > 0) {
+    if (denyTools.length > 0 || clearDenyTools) {
+      throw new McpBridgeError(
+        "Pass repeated --allow-tool options or --clear-allow-tools, but not with --deny-tool.",
+        2,
+      );
+    }
+    const normalizedAllowTools = [...new Set(allowTools)].sort();
+    for (const tool of normalizedAllowTools) {
+      if (!VALID_ALLOW_TOOL_RE.test(tool)) {
+        throw new McpBridgeError(
+          `Invalid --allow-tool selector '${tool}'. Use 1-128 letters, digits, dots, underscores, or hyphens starting with a letter.`,
+          2,
+        );
+      }
+    }
+    return { server, allowTools: normalizedAllowTools };
   }
   if (denyTools.length > 0 && clearDenyTools) {
     throw new McpBridgeError(

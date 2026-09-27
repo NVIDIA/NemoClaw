@@ -50,6 +50,22 @@ import {
   type HermesPortableConfiguredReceipt,
 } from "./hermes-portable-receipt";
 
+// Lifecycle qualification re-reads the current Hermes manifest, so resolve it
+// from an owner-only copy instead of the checkout's group-writable modes. The
+// manifest bytes are unchanged, so digests and reviewed-version checks still
+// apply.
+vi.mock("../../agent/defs", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../../agent/defs")>();
+  const { privateHermesManifestAgent } = await import("./__test-helpers__/hermes-manifest-agent");
+  return {
+    ...original,
+    loadAgent: (name: string, env?: NodeJS.ProcessEnv) =>
+      name === "hermes"
+        ? privateHermesManifestAgent(original.loadAgent(name, env))
+        : original.loadAgent(name, env),
+  };
+});
+
 let stateDir: string;
 let policyPath: string;
 function activeReceipt(homeDir = "/home/test"): HermesPortableConfiguredReceipt {
