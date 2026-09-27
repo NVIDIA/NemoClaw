@@ -204,7 +204,8 @@ describe.concurrent("automatic E2E phase outcomes", () => {
     },
   );
 
-  it.for([
+  // Router fixtures load production dependencies; keep them out of the deadline-test batch.
+  it.sequential.for([
     ["router-primary", "original completion failure"],
     ["router-success", "diagnostic storage unavailable"],
   ] as const)(

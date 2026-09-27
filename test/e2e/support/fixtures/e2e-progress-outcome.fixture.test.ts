@@ -5,10 +5,12 @@ import fs from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { vi } from "vitest";
-import { registerRouterDiagnostics } from "../../live/model-router-provider-routed-inference-helpers.ts";
 import { test } from "../../fixtures/e2e-test.ts";
 
 const outcome = process.env.NEMOCLAW_E2E_PROGRESS_OUTCOME_FIXTURE;
+const routerDiagnostics = outcome?.startsWith("router-")
+  ? await import("../../live/model-router-provider-routed-inference-helpers.ts")
+  : undefined;
 
 test.runIf(outcome === "failed")(
   "records failed phase outcome",
@@ -128,7 +130,7 @@ test.runIf(outcome?.startsWith("router-"))(
         fs.readFileSync(artifacts.pathFor("diagnostics-attempted.txt"), "utf8"),
       );
     });
-    registerRouterDiagnostics(cleanup, artifacts, {});
+    routerDiagnostics!.registerRouterDiagnostics(cleanup, artifacts, {});
     progress.phase("record E2E fixture support outcome");
     routerOutcomes[outcome!]!();
   },
