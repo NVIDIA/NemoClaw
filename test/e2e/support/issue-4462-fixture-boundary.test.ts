@@ -8,11 +8,9 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { adminApprovalConnectScript } from "../fixtures/admin-approval-connect.ts";
 import { ISSUE_4462_PAIRING_SEED_PY } from "../fixtures/issue-4462-pairing-seed.ts";
-import {
-  adminApprovalConnectScript,
-  ISSUE_4462_SCOPE_UPGRADE_PHASES,
-} from "../live/issue-4462-admin-approval-helper.ts";
+import { ISSUE_4462_SCOPE_UPGRADE_PHASES } from "../live/issue-4462-admin-approval-helper.ts";
 
 const BEHAVIOR_HARNESS_PY = String.raw`
 import base64

@@ -4,6 +4,7 @@
 import os from "node:os";
 import path from "node:path";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
+import { adminApprovalConnectScript } from "../fixtures/admin-approval-connect.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import { type HostCliClient } from "../fixtures/clients/host.ts";
@@ -12,10 +13,10 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import { trackIssue4462FailureDiagnostics } from "../fixtures/issue-4462-diagnostics.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import {
-  adminApprovalConnectScript,
-  ISSUE_4462_SCOPE_UPGRADE_PHASES,
+  pendingAdminRequestId,
   preApprovalAdminProbeEvidence,
-} from "./issue-4462-admin-approval-helper.ts";
+} from "../fixtures/issue-4462-admin-approval-evidence.ts";
+import { ISSUE_4462_SCOPE_UPGRADE_PHASES } from "./issue-4462-admin-approval-helper.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-issue-4462";
 const LIVE_TIMEOUT_MS = testTimeout(70 * 60_000);
@@ -252,14 +253,23 @@ test(
     );
     const cronTriggerEvidence = preApprovalAdminProbeEvidence(cronTrigger);
     await artifacts.writeJson("phase-3-trigger-admin-cron.json", cronTriggerEvidence);
+    const cronTriggerRequestId = pendingAdminRequestId(cronTrigger);
     expect(
-      cronTriggerEvidence.outcome,
-      "The operator.admin probe did not stop at the explicit approval boundary",
-    ).toBe("approval-required");
+      cronTriggerRequestId,
+      "The operator.admin probe did not report one unambiguous pending request ID",
+    ).not.toBeNull();
 
     const adminConnect = await host.command(
       "bash",
-      ["-lc", adminApprovalConnectScript(host.commandPath, SANDBOX_NAME, cronName)],
+      [
+        "-lc",
+        adminApprovalConnectScript(
+          host.commandPath,
+          SANDBOX_NAME,
+          cronName,
+          cronTriggerRequestId as string,
+        ),
+      ],
       {
         artifactName: "phase-4-connect-admin-approval",
         captureLimitBytes: 64 * 1024,

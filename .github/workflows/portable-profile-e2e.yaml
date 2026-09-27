@@ -18,6 +18,8 @@ on:
       - "src/lib/actions/sandbox/launch-readiness/**"
       - "src/lib/actions/sandbox/gateway-state.ts"
       - "src/lib/onboard/portable-retirement-authority.ts"
+      - "src/lib/onboard/session-bootstrap.ts"
+      - "src/lib/onboard/resume/locked-runtime.ts"
       - "src/lib/onboard/docker-driver-platform.ts"
       - "src/lib/onboard/experimental/docker-network-authority.ts"
       - "src/lib/onboard/experimental/portable-cpu-delegation-preflight.ts"

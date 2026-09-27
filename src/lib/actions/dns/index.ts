@@ -115,6 +115,7 @@ function parseUid(uid: string | undefined): number | undefined {
 
 interface DockerAuthority {
   dockerHost?: string;
+  socketIdentity?: DockerHostProbeResult["identity"];
   probeDefault: () => DockerHostProbeResult;
 }
 
@@ -148,7 +149,12 @@ function resolveDockerAuthority(env: NodeJS.ProcessEnv, deps: FixCoreDnsDeps): D
     uid: parseUid(deps.uid?.()),
   });
 
-  return { dockerHost: detection?.dockerHost, probeDefault: () => probeOnce(undefined) };
+  return {
+    dockerHost: detection?.dockerHost,
+    socketIdentity:
+      detection?.source === "socket" ? observed.get(detection.dockerHost)?.identity : undefined,
+    probeDefault: () => probeOnce(undefined),
+  };
 }
 
 // `inferContainerRuntime` reports the engine families the whole CLI recognises;
@@ -165,18 +171,16 @@ const DEFAULT_HOST_RUNTIMES: Record<PlatformContainerRuntime, ContainerRuntime> 
 /**
  * Label the runtime behind the selected authority.
  *
- * When the selector hands back a socket, the socket path names the runtime and
- * the probe has already confirmed a daemon answering there. When it keeps the
- * CLI default there is no path to read, so ask the daemon instead: the probe's
- * `docker version` banner names Podman even behind its Docker-compatible socket
- * (#7320), and `docker info` separates the Docker-family engines the banner
- * reports alike, the same way onboarding's own CoreDNS gate reads them.
+ * Prefer the selected socket's probed Podman identity over its pathname.
+ * A working CLI default has no selected path, so its cached version probe
+ * identifies Podman and `docker info` distinguishes the Docker-family engines.
  */
 function detectRuntime(
   authority: DockerAuthority,
   env: NodeJS.ProcessEnv,
   runDocker: NonNullable<FixCoreDnsDeps["runDocker"]>,
 ): ContainerRuntime {
+  if (authority.socketIdentity === "podman") return "podman";
   const fromSocket = dockerHostRuntime(authority.dockerHost);
   if (fromSocket) return fromSocket;
   const observation = authority.probeDefault();

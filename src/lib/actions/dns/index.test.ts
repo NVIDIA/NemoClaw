@@ -177,6 +177,34 @@ describe("runFixCoreDns", () => {
     expect(calls.every((call) => call.env?.DOCKER_HOST === `unix://${PODMAN_SOCKET}`)).toBe(true);
   });
 
+  it("keeps a discovered Podman identity behind the Docker compatibility socket (#10632)", () => {
+    const compatibilitySocket = "/var/run/docker.sock";
+    const { calls, runDocker } = patchingRunDocker("");
+    const result = runFixCoreDns(
+      { gatewayName: "nemoclaw" },
+      {
+        env: LINUX_ENV,
+        existsSocket: (socketPath) =>
+          socketPath === compatibilitySocket || socketPath === PODMAN_SOCKET,
+        log: vi.fn(),
+        platform: "linux",
+        probeDockerHost: probeAnswers({
+          [`unix://${compatibilitySocket}`]: "podman",
+          [`unix://${PODMAN_SOCKET}`]: "podman",
+        }),
+        readFile: () => "nameserver 1.1.1.1\n",
+        runDocker,
+        uid: () => "1000",
+      },
+    );
+
+    expect(result).toMatchObject({ exitCode: 0, runtime: "podman", upstreamDns: "9.9.9.9" });
+    expect(calls.some((call) => call.args.includes("patch"))).toBe(true);
+    expect(calls.every((call) => call.env?.DOCKER_HOST === `unix://${compatibilitySocket}`)).toBe(
+      true,
+    );
+  });
+
   it("locates the rootless Podman socket under XDG_RUNTIME_DIR", () => {
     const xdgSocket = "/run/user/501/podman/podman.sock";
     const { calls, runDocker } = patchingRunDocker("");

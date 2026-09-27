@@ -1306,8 +1306,58 @@ export async function runRealOpenClawDeviceSelfApprovalProof(options: ProofOptio
   ]) {
     requireIncludes(audit.stdout, marker, "device self-approval audit");
   }
+  const auditSpecIds = [
+    "device-identity",
+    "gateway-call-device-identity",
+    "devices-cli",
+    "gateway-auth-scope-upgrade",
+    "gateway-handler",
+    "pairing-state",
+    ...(audit.stdout.includes("canonical device pairing SQLite persistence runtime:")
+      ? ["pairing-state-sqlite-persistence"]
+      : []),
+  ];
+  for (const id of auditSpecIds) {
+    requireIncludes(audit.stdout, `${id}: already-applied`, "device self-approval audit state");
+  }
 
   const sources = readDistSources(options.dist);
+  const gatewayAuthSource = requireExactlyOneDistSource(
+    sources,
+    "patched device-token admin scope-upgrade runtime",
+    [
+      "nemoclaw: route bounded CLI device-token scope upgrade into pairing",
+      'new Set(["operator.pairing", "operator.read", "operator.write", "operator.admin"])',
+    ],
+  );
+  const tamperedGatewayAuth = gatewayAuthSource.source.replace(
+    'new Set(["operator.pairing", "operator.read", "operator.write", "operator.admin"])',
+    'new Set(["operator.pairing", "operator.read", "operator.write", "operator.superadmin"])',
+  );
+  requireLiveProof(
+    tamperedGatewayAuth !== gatewayAuthSource.source,
+    "real-dist explicit-admin audit tamper did not change the gateway runtime",
+  );
+  fs.writeFileSync(gatewayAuthSource.file, tamperedGatewayAuth);
+  try {
+    const tamperedAudit = spawnSync(
+      options.nodeExecutable,
+      [options.patchScript, "--audit", options.dist],
+      { encoding: "utf8", timeout: options.timeoutMs },
+    );
+    requireLiveProof(
+      tamperedAudit.status !== 0,
+      "real-dist explicit-admin patch drift unexpectedly passed audit",
+    );
+    requireIncludes(
+      `${tamperedAudit.stdout}${tamperedAudit.stderr}`,
+      "structurally changed patch",
+      "real-dist explicit-admin patch drift audit",
+    );
+  } finally {
+    fs.writeFileSync(gatewayAuthSource.file, gatewayAuthSource.source);
+  }
+
   for (const marker of [
     "nemoclaw: force device identity for loopback pairing bootstrap",
     "nemoclaw: persist canonical CLI bootstrap credential",

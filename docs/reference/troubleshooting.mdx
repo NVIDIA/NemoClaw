@@ -1289,6 +1289,31 @@ bash uninstall.sh --yes
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
+<AgentOnly variant="openclaw,hermes">
+
+### Onboarding fails because the inference route served no model catalog
+
+Onboarding verifies the sandbox inference route before it reports the deployment healthy.
+When `https://inference.local/v1/models` keeps returning `HTTP 404`, the route answered but served no model catalog, so nothing validated your selected model against the provider.
+Onboarding retries for the usual startup budget, then marks the `inference` check failed and exits nonzero instead of reporting a verified deployment.
+
+Re-check the route and the recorded provider and model:
+
+```bash
+$$nemoclaw <name> status
+```
+
+`$$nemoclaw <name> status` applies the same HTTP 404 rule, so onboarding and status agree about the model catalog.
+
+Confirm the provider and model are configured for this sandbox and that the endpoint serves `/v1/models`.
+This result is resumable, so correct the endpoint and continue the recorded session:
+
+```bash
+$$nemoclaw onboard --resume
+```
+
+</AgentOnly>
+
 ## Runtime
 
 <AgentOnly variant="openclaw">
@@ -1910,13 +1935,14 @@ When you run an `openclaw` command through `$$nemoclaw <name> exec -- ...` and i
 ```text
 $$nemoclaw: a device scope upgrade is waiting for approval inside sandbox 'my-assistant'.
   The OpenClaw gateway refused the command until the requested scopes are approved.
-  Review pending requests: $$nemoclaw my-assistant exec -- openclaw devices list
+  Open a prepared shell:   $$nemoclaw my-assistant connect
+  In that shell, review:   openclaw devices list --json
   Approve the one you recognize, after checking its device and requested scopes:
-                           $$nemoclaw my-assistant exec -- openclaw devices approve <requestId>
+                           openclaw devices approve <requestId>
   Silence this hint:       export NEMOCLAW_NO_POLICY_HINT=1
 ```
 
-Read `openclaw devices list`, confirm the requesting device and the requested scopes, approve that request by id, then re-run the original command unchanged.
+Enter the prepared `connect` shell, read `openclaw devices list --json`, confirm the requesting client, device, and requested scopes, approve that request by id in the same shell, then re-run the original command unchanged.
 
 The hint never names a request id. NemoClaw cannot tell which pending request belongs to the failed command, so naming one would present an unrelated request — for example a different device asking for `operator.admin` — as this command's remedy. You make that decision from `devices list`.
 
