@@ -85,6 +85,7 @@ async function setFixtureProviderPolicyBinding(
     };
     readonly expectedBinaries?: readonly string[];
     readonly removeBinding?: boolean;
+    readonly restMethods?: readonly ("GET" | "POST")[];
   },
 ): Promise<void> {
   const policy = await host.command(
@@ -112,6 +113,7 @@ async function setFixtureProviderPolicyBinding(
       options.endpoint.host,
       options.endpoint.port,
       options.endpoint.protocol,
+      options.restMethods,
     );
     if (options.expectedBinaries) {
       assertFixtureProviderPolicyEndpointBinaries(
@@ -247,6 +249,7 @@ export async function applyFixtureProviderPolicyEndpoint(
     artifactName: `${options.artifactName}-credential-binding`,
     endpoint: { host: policyHost, port: endpointPort, protocol: options.protocol },
     expectedBinaries: allowedBinaries,
+    restMethods: options.protocol === "rest" ? (options.restMethods ?? ["GET", "POST"]) : undefined,
   });
 }
 

@@ -53,10 +53,15 @@ export function bindFixtureProviderPolicyEndpoint(
   host: string,
   port: number,
   protocol: string,
+  restMethods?: readonly ("GET" | "POST")[],
 ): void {
   const policy = readPolicy(policyFile);
   const { endpoint } = findFixturePolicyEndpoint(policy, host, port, protocol);
   endpoint.credential_binding = { provider: providerName };
+  if (restMethods) {
+    delete endpoint.access;
+    endpoint.rules = restMethods.map((method) => ({ allow: { method, path: "/**" } }));
+  }
   fs.writeFileSync(policyFile, YAML.stringify(policy));
   fs.chmodSync(policyFile, 0o600);
 }
