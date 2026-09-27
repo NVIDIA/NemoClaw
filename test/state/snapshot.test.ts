@@ -407,6 +407,11 @@ describe("complete native home persistence", () => {
     ["an arbitrary native file", "notes.txt", `ghp_${"0123456789abcdef"}`],
     ["an arbitrary dependency file", "node_modules/example/token.txt", `ghp_${"fedcba9876543210"}`],
     [
+      "a Python virtual-environment file",
+      ".venv/lib/python3.13/site-packages/example/token.txt",
+      `ghp_${"13579bdf2468ace0"}`,
+    ],
+    [
       "a dependency lockfile",
       "package-lock.json",
       JSON.stringify({

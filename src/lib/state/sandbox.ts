@@ -957,13 +957,7 @@ const TAR_BLOCK_BYTES = 512;
 const NATIVE_CREDENTIAL_SCAN_CHUNK_BYTES = 64 * 1024;
 const NATIVE_CREDENTIAL_SCAN_OVERLAP_CHARS = 4096;
 const NATIVE_TAR_METADATA_MAX_BYTES = 1024 * 1024;
-const NATIVE_RAW_SCAN_EXCLUDED_SEGMENTS = new Set([
-  ".venv",
-  "schema",
-  "schemas",
-  "site-packages",
-  "venv",
-]);
+const NATIVE_RAW_SCAN_EXCLUDED_SEGMENTS = new Set(["schema", "schemas"]);
 
 const DEPENDENCY_NAME_MAP_FIELDS = new Set([
   "dependencies",

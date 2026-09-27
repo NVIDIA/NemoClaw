@@ -18,11 +18,13 @@ import type { NemoClawInstance } from "./onboarding.ts";
 import { latestRebuildBackupDir } from "./state-validation.ts";
 
 const AGENT = "langchain-deepagents-code";
-const MARKER_PATH = "/sandbox/.deepagents/.state/nemoclaw-invalid-credential-rebuild-marker";
-const MARKER_VALUE = "NEMOCLAW_DCODE_INVALID_CREDENTIAL_REBUILD_MARKER";
+const MARKER_PATH = "/sandbox/.nemoclaw-dcode-rebuild-marker";
+const MARKER_VALUE = "NEMOCLAW_DCODE_REBUILD_MARKER";
 const ROUTE_ATTEMPTS = 8;
 const ROUTE_DELAY_MS = 2_000;
-const REBUILD_TIMEOUT_MS = 3 * 60_000;
+const INVALID_REBUILD_TIMEOUT_MS = 3 * 60_000;
+const SUCCESSFUL_REBUILD_TIMEOUT_MS = 20 * 60_000;
+const DCODE_ACTION_TIMEOUT_MS = 2 * 60_000;
 
 export interface DcodeInvalidCredentialRebuildOptions {
   gatewayName: string;
@@ -292,6 +294,41 @@ function assertFailedBeforeDestructiveWork(result: ShellProbeResult): void {
   }
 }
 
+function assertDcodeActionSucceeded(result: ShellProbeResult): void {
+  assertExitZero(result, "run DCode action after successful rebuild");
+  let envelope: unknown;
+  try {
+    envelope = JSON.parse(result.stdout);
+  } catch {
+    throw new Error(
+      `DCode action did not return JSON after successful rebuild: ${resultText(result)}`,
+    );
+  }
+  if (envelope === null || typeof envelope !== "object" || Array.isArray(envelope)) {
+    throw new Error("DCode action returned a non-object JSON envelope after successful rebuild");
+  }
+  const record = envelope as Record<string, unknown>;
+  const data = record.data;
+  if (
+    record.schema_version !== 1 ||
+    record.command !== "non-interactive" ||
+    data === null ||
+    typeof data !== "object" ||
+    Array.isArray(data)
+  ) {
+    throw new Error("DCode action returned an invalid JSON envelope after successful rebuild");
+  }
+  const action = data as Record<string, unknown>;
+  if (
+    action.status !== "success" ||
+    action.exit_code !== 0 ||
+    typeof action.response !== "string" ||
+    action.response.trim() !== "PONG"
+  ) {
+    throw new Error(`DCode action was not usable after successful rebuild: ${resultText(result)}`);
+  }
+}
+
 export async function simulateDcodeInvalidCredentialRebuild(
   instance: NemoClawInstance,
   options: DcodeInvalidCredentialRebuildOptions,
@@ -427,7 +464,7 @@ export async function simulateDcodeInvalidCredentialRebuild(
         artifactName: "lifecycle-dcode-rebuild-invalid-credential",
         env: gatewayEnv(options.gatewayName),
         redactionValues,
-        timeoutMs: REBUILD_TIMEOUT_MS,
+        timeoutMs: INVALID_REBUILD_TIMEOUT_MS,
       },
     );
     record("nemoclaw-rebuild:invalid-credential", rebuild);
@@ -479,6 +516,59 @@ export async function simulateDcodeInvalidCredentialRebuild(
   }
   if (primaryError) throw primaryError;
   if (restorationError) throw restorationError;
+
+  const successfulRebuild = await deps.host.nemoclaw(
+    [instance.sandboxName, "rebuild", "--yes", "--verbose"],
+    {
+      artifactName: "lifecycle-dcode-rebuild-valid-credential",
+      env: gatewayEnv(options.gatewayName),
+      redactionValues,
+      timeoutMs: SUCCESSFUL_REBUILD_TIMEOUT_MS,
+    },
+  );
+  assertExitZero(successfulRebuild, "rebuild DCode with the restored valid credential");
+  record("nemoclaw-rebuild:valid-credential", successfulRebuild);
+
+  const idsRebuiltResult = await managedContainerIds(
+    deps,
+    instance.sandboxName,
+    "rebuilt",
+    redactionValues,
+  );
+  const idsRebuilt = sortedLines(idsRebuiltResult.stdout);
+  if (idsRebuilt.length === 0 || sameStrings(idsRebuilt, idsBefore)) {
+    throw new Error("DCode successful rebuild did not create a replacement managed container");
+  }
+  record("container-ids:rebuilt", idsRebuiltResult);
+
+  const rebuiltMarker = await deps.sandbox.exec(instance.sandboxName, ["cat", MARKER_PATH], {
+    artifactName: "lifecycle-dcode-marker-read-rebuilt",
+    env: gatewayEnv(options.gatewayName),
+    redactionValues,
+    timeoutMs: 30_000,
+  });
+  assertExitZero(rebuiltMarker, "read DCode marker after successful rebuild");
+  if (rebuiltMarker.stdout !== MARKER_VALUE) {
+    throw new Error("DCode marker changed or disappeared after successful rebuild");
+  }
+  record("marker-read:rebuilt", rebuiltMarker);
+  record(
+    "sandbox-ready:rebuilt",
+    await assertReady(deps, instance.sandboxName, options, "rebuilt", redactionValues),
+  );
+
+  const dcodeAction = await deps.sandbox.exec(
+    instance.sandboxName,
+    ["dcode", "-n", "Reply with exactly one word: PONG", "--json"],
+    {
+      artifactName: "lifecycle-dcode-action-rebuilt",
+      env: gatewayEnv(options.gatewayName),
+      redactionValues,
+      timeoutMs: DCODE_ACTION_TIMEOUT_MS,
+    },
+  );
+  assertDcodeActionSucceeded(dcodeAction);
+  record("dcode-action:rebuilt", dcodeAction);
 
   return { profile: "dcode-rebuild-invalid-credential", steps };
 }

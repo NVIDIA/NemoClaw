@@ -565,7 +565,7 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
       "label=openshell.managed=true",
     ],
   ] as const)(
-    "proves 2xx→401→rejected rebuild without mutation through %s, then restores 2xx",
+    "proves rejected and successful state-preserving rebuilds through %s",
     async (_displayName, runtimeEnvironment, runtimeCommand, runtimeArgsPrefix, managedLabel) => {
       const home = fs.mkdtempSync(path.join(os.tmpdir(), "dcode-lifecycle-home-"));
       const previousHome = process.env.HOME;
@@ -585,10 +585,29 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
           ),
         );
         runner.enqueue(shellResult(0, "container-b\ncontainer-a\n"));
-        runner.enqueue(shellResult(0, "NEMOCLAW_DCODE_INVALID_CREDENTIAL_REBUILD_MARKER"));
+        runner.enqueue(shellResult(0, "NEMOCLAW_DCODE_REBUILD_MARKER"));
         runner.enqueue(shellResult(0, `NAME PHASE\n${sandboxName} Ready\n`));
         runner.enqueue(shellResult(0)); // restore valid provider credential
         runner.enqueue(shellResult(0, "200"));
+        runner.enqueue(shellResult(0, "rebuild complete"));
+        runner.enqueue(shellResult(0, "container-c\n"));
+        runner.enqueue(shellResult(0, "NEMOCLAW_DCODE_REBUILD_MARKER"));
+        runner.enqueue(shellResult(0, `NAME PHASE\n${sandboxName} Ready\n`));
+        runner.enqueue(
+          shellResult(
+            0,
+            JSON.stringify({
+              schema_version: 1,
+              command: "non-interactive",
+              data: {
+                status: "success",
+                exit_code: 0,
+                response: "PONG",
+                completion: { thread_id: "thread-1", duration_ms: 1, response_bytes: 4 },
+              },
+            }),
+          ),
+        );
         const cleanup = new FakeCleanup();
 
         const result = await fixture(runner, cleanup, runtimeEnvironment).simulate(
@@ -607,6 +626,11 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
             "marker-read:after",
             "sandbox-ready:after",
             "inference-route:restored",
+            "nemoclaw-rebuild:valid-credential",
+            "container-ids:rebuilt",
+            "marker-read:rebuilt",
+            "sandbox-ready:rebuilt",
+            "dcode-action:rebuilt",
           ]),
         );
         const providerUpdates = runner.calls.filter(
@@ -620,9 +644,31 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
         expect(providerUpdates[0].options?.redactionValues).toContain(invalidCredential);
         expect(providerUpdates[1].options?.env?.COMPATIBLE_API_KEY).toBe(validCredential);
         const rebuild = runner.calls.find(
-          (call) => call.command === "nemoclaw" && call.args.includes("rebuild"),
+          (call) =>
+            call.command === "nemoclaw" &&
+            call.options?.artifactName === "lifecycle-dcode-rebuild-invalid-credential",
         );
         expect(rebuild?.options?.env).not.toHaveProperty("COMPATIBLE_API_KEY");
+        const successfulRebuild = runner.calls.find(
+          (call) =>
+            call.command === "nemoclaw" &&
+            call.options?.artifactName === "lifecycle-dcode-rebuild-valid-credential",
+        );
+        expect(successfulRebuild?.options?.env).not.toHaveProperty("COMPATIBLE_API_KEY");
+        const dcodeAction = runner.calls.find(
+          (call) => call.options?.artifactName === "lifecycle-dcode-action-rebuilt",
+        );
+        expect(dcodeAction?.args).toEqual([
+          "sandbox",
+          "exec",
+          "-n",
+          sandboxName,
+          "--",
+          "dcode",
+          "-n",
+          "Reply with exactly one word: PONG",
+          "--json",
+        ]);
         const containerIds = runner.calls.find(
           (call) => call.options?.artifactName === "lifecycle-dcode-container-ids-before",
         );
