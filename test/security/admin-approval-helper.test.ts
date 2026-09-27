@@ -128,6 +128,7 @@ function runAdminApprovalScript(
   failureCommand?: FakeFailureCommand,
   failureOutputPaddingBytes = 0,
   requestId = EXPECTED_REQUEST_ID,
+  options: { expectedRequestId?: string; verifyCronConsumer?: boolean } = {},
 ): {
   commands: string[];
   capturedApprovalBytes: number;
@@ -211,7 +212,13 @@ esac
     const result = spawnSync("bash", [], {
       encoding: "utf-8",
       env: childEnv,
-      input: adminApprovalConnectScript(cliPath, "e2e-issue-4462", "admin-cron"),
+      input: adminApprovalConnectScript(
+        cliPath,
+        "e2e-issue-4462",
+        "admin-cron",
+        options.expectedRequestId,
+        options.verifyCronConsumer,
+      ),
     });
     const commands = fs.existsSync(commandLogPath)
       ? fs.readFileSync(commandLogPath, "utf8").trim().split("\n")
@@ -315,6 +322,26 @@ describe("prepared connect-shell administrative approval", () => {
       "cron run cron-1",
     ]);
   });
+
+  it.each([
+    [EXPECTED_REQUEST_ID, 0],
+    [VERSION_ONE_REQUEST_ID, 26],
+  ] as const)(
+    "binds feature approval to request %s without running cron",
+    (expectedRequestId, status) => {
+      const { commands, result } = runAdminApprovalScript("cron:add", 0, EXPECTED_REQUEST_ID, {
+        expectedRequestId,
+        verifyCronConsumer: false,
+      });
+
+      expect(result.status, result.stderr).toBe(status);
+      expect(commands).toEqual([
+        "devices list --json",
+        ...(status === 0 ? [`devices approve ${EXPECTED_REQUEST_ID}`] : []),
+      ]);
+      expect(result.stdout.includes("ISSUE_5324_ADMIN_APPROVAL_OK")).toBe(status === 0);
+    },
+  );
 
   it("accepts the same non-v4 request IDs in the trigger parser and canonical selector (#5324)", () => {
     const triggeredRequestId = pendingAdminRequestId({

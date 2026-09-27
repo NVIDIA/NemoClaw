@@ -15,7 +15,9 @@ It also strengthens host OS reporting and Windows WSL GPU verification.
 - OpenClaw device approval exits successfully only after direct-gateway or local-fallback output drains.
   A callback failure or a one-second timeout exits nonzero instead.
   A same-device CLI request for `operator.admin` requires explicit approval; bounded non-administrative scope upgrades remain automatic.
-  Related change: [PR #12197](https://github.com/NVIDIA/NemoClaw/pull/12197).
+  After approving the local CLI device for `operator.admin`, the CLI confirms the grant through the gateway before reporting success.
+  Ordinary local agent turns use OpenClaw's native method scopes, while model overrides and session resets retain administrative scope.
+  Related changes: [PR #12197](https://github.com/NVIDIA/NemoClaw/pull/12197) and [PR #12354](https://github.com/NVIDIA/NemoClaw/pull/12354).
   Refer to [Gateway Authentication Controls](/user-guide/openclaw/security/security-controls/gateway-authentication-controls#approve-administrative-scopes-manually).
 - Configuration export preserves effective OpenClaw and Hermes settings when v1alpha1 omission defaults would change behavior.
   Supported OpenClaw exports for attached Ollama with a managed proxy and the fixed managed vLLM profile now include local inference service templates.

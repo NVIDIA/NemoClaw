@@ -297,6 +297,34 @@ describe("E2E workflow plan", () => {
     );
   });
 
+  it("selects ordinary agent consumers and inference restart for a scope patch", () => {
+    const plan = buildE2eWorkflowPlan(
+      {},
+      {
+        changedFiles: ["scripts/patch-openclaw-device-self-approval.mts"],
+        gatewayRuntimes: ["docker", "podman"],
+      },
+    );
+    expect(
+      Object.values(plan.catalogueMatrices)
+        .flat()
+        .map((row) => row.execution_id)
+        .sort(),
+    ).toEqual([
+      "agent-turn-latency-default-docker",
+      "agent-turn-latency-default-podman",
+      "full-e2e-default-docker",
+      "full-e2e-default-podman",
+      "llama-cpp-generic-gpu-default-docker",
+      "messaging-compatible-endpoint-default-docker",
+      "messaging-compatible-endpoint-default-podman",
+      "openclaw-inference-switch-default-docker",
+      "openclaw-inference-switch-default-podman",
+      "openclaw-skill-cli-default-docker",
+      "openclaw-skill-cli-default-podman",
+    ]);
+  });
+
   it("emits required fields and catalogue workflow jobs for migrated targets", () => {
     const plan = buildE2eWorkflowPlan({
       jobs: "hermes-slack,network-policy,openclaw-inference-switch,openclaw-tui-chat-correlation,sandbox-operations",
