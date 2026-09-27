@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { runInNewContext } from "node:vm";
 
 interface ProofOptions {
   dist: string;
@@ -1276,6 +1277,51 @@ if (!finalList.pending.some((pending) => pending.requestId === staleRequest.requ
   requireSuccess(proof, "prove real SQLite bounded device self-approval");
 }
 
+export function proveRealOpenClawAgentScopes(dist: string): void {
+  const sources = readDistSources(dist);
+  const agent = requireExactlyOneDistSource(sources, "CLI agent gateway request", [
+    "async function agentViaGatewayCommand(opts, runtime, signalBridge, runContext) {",
+    "const gatewayIdentity =",
+    "...gatewayIdentity",
+  ]).source;
+  const policy = requireExactlyOneDistSource(sources, "agent method scope policy", [
+    "function resolveDynamicLeastPrivilegeOperatorScopesForMethod(method, params) {",
+    "const AGENT_SESSION_RESET_COMMAND_RE =",
+  ]).source;
+  const identity = agent.match(/^\tconst gatewayIdentity = [\s\S]*?^\t};/m)?.[0];
+  const reset = agent.match(/^function isSessionResetCommand\(message\) \{[\s\S]*?^}/m)?.[0];
+  const policyReset = policy.match(/^const AGENT_SESSION_RESET_COMMAND_RE = [\s\S]*?^}/m)?.[0];
+  const methodScopes = policy.match(
+    /^function resolveDynamicLeastPrivilegeOperatorScopesForMethod\(method, params\) \{[\s\S]*?^}/m,
+  )?.[0];
+  if (!identity || !reset || !policyReset || !methodScopes) {
+    throw new Error("reviewed OpenClaw agent scope selection could not be isolated");
+  }
+  const observe = runInNewContext(
+    `${reset}\n${policyReset}\n${methodScopes}\n(remoteGateway, modelOverride, body) => {\n${identity}\nreturn gatewayIdentity.scopes ?? resolveDynamicLeastPrivilegeOperatorScopesForMethod("agent", { message: body });\n}`,
+    {
+      ADMIN_SCOPE: "operator.admin",
+      WRITE_SCOPE: "operator.write",
+      GATEWAY_CLIENT_NAMES: { CLI: "cli", GATEWAY_CLIENT: "gateway-client" },
+      GATEWAY_CLIENT_MODES: { CLI: "cli", BACKEND: "backend" },
+    },
+  ) as (remote: boolean, model: string, message: string) => string[];
+  for (const remote of [false, true]) {
+    for (const [model, message, scope] of [
+      ["", "Reply with only 4", "operator.write"],
+      ["override-model", "Reply with only 4", "operator.admin"],
+      ["", "/new", "operator.admin"],
+      ["", "/reset", "operator.admin"],
+    ]) {
+      if (JSON.stringify(observe(remote, model, message)) !== JSON.stringify([scope])) {
+        throw new Error(
+          `OpenClaw agent scope mismatch: remote=${remote} model=${model} message=${message}; expected ${scope}`,
+        );
+      }
+    }
+  }
+}
+
 export async function runRealOpenClawDeviceSelfApprovalProof(options: ProofOptions): Promise<void> {
   const patch = spawnSync(options.nodeExecutable, [options.patchScript, options.dist], {
     encoding: "utf8",
@@ -1294,7 +1340,7 @@ export async function runRealOpenClawDeviceSelfApprovalProof(options: ProofOptio
   });
   requireSuccess(audit, "audit bounded device self-approval patch");
   const auditSummary = audit.stdout.includes("canonical device pairing SQLite persistence runtime:")
-    ? "Summary: 7 OK · 0 missing"
+    ? "Summary: 8 OK · 0 missing"
     : "Summary: 6 OK · 0 missing";
   for (const marker of [
     "gateway call device-identity runtime:",
@@ -1314,7 +1360,7 @@ export async function runRealOpenClawDeviceSelfApprovalProof(options: ProofOptio
     "gateway-handler",
     "pairing-state",
     ...(audit.stdout.includes("canonical device pairing SQLite persistence runtime:")
-      ? ["pairing-state-sqlite-persistence"]
+      ? ["pairing-state-sqlite-persistence", "agent-cli-method-scopes"]
       : []),
   ];
   for (const id of auditSpecIds) {
@@ -1401,6 +1447,7 @@ export async function runRealOpenClawDeviceSelfApprovalProof(options: ProofOptio
   requireRealStoredDeviceAuthLinkage(sources, cliSource);
   const deviceHandlerFile = requireRealDeviceTokenAuthLinkage(sources);
   if (sqlitePairingLayout) {
+    proveRealOpenClawAgentScopes(options.dist);
     requireExactlyOneDistSource(sources, "patched atomic SQLite pairing persistence runtime", [
       "function persistDevicePairingStoreState(state, baseDir, target, options)",
       "nemoclaw: recover bounded self-approval state transaction",

@@ -5,6 +5,9 @@
 
 Direct E2E coverage runs through Vitest.
 
+OpenClaw inference switching explicitly approves the sandbox CLI's matching admin request before switching providers, because applying the new configuration restarts the gateway.
+Ordinary agent-turn targets run without that approval; they must succeed with the native method's write scope.
+
 Interactive TUI targets require `expect`. The unified workflow installs it
 before those targets run; local runners must provide it themselves.
 

@@ -30,6 +30,10 @@
  * descriptor-backed preflight before one canonical approval can run. Then let
  * the gateway's canonical approveDevicePairing path reload, lock, rotate the
  * token, persist, broadcast, and respond.
+ * Ordinary local CLI agent turns also force operator.admin in 2026.9.1.
+ * Let those turns use OpenClaw's method-specific scope selection, as remote
+ * CLI turns already do. Keep the explicit admin branch for model overrides
+ * and session resets, and leave gateway authorization and approval unchanged.
  * The ordinary patch tests and pinned real-dist proof cover this paired
  * pre-convergence transition separately from a cold clone, which has no paired
  * record and must not select stored device authentication.
@@ -2488,6 +2492,56 @@ const SQLITE_PERSISTENCE_SPEC: FileSpec = {
   },
 };
 
+const AGENT_SCOPE_MARKER = "nemoclaw: use method scopes for ordinary CLI agent turns";
+const AGENT_IDENTITY_TARGET = [
+  "\tconst gatewayIdentity = Boolean(modelOverride) || isSessionResetCommand(body) ? {",
+  "\t\tclientName: GATEWAY_CLIENT_NAMES.GATEWAY_CLIENT,",
+  "\t\tmode: GATEWAY_CLIENT_MODES.BACKEND,",
+  "\t\tscopes: [ADMIN_SCOPE]",
+  "\t} : {",
+  "\t\tclientName: GATEWAY_CLIENT_NAMES.CLI,",
+  "\t\tmode: GATEWAY_CLIENT_MODES.CLI,",
+  "\t\t...remoteGateway ? {} : { scopes: [ADMIN_SCOPE] }",
+  "\t};",
+].join("\n");
+const AGENT_IDENTITY_REPLACEMENT = AGENT_IDENTITY_TARGET.replace(
+  "\t\t...remoteGateway ? {} : { scopes: [ADMIN_SCOPE] }",
+  `\t\t// ${AGENT_SCOPE_MARKER}`,
+);
+const AGENT_SCOPE_SPEC: FileSpec = {
+  id: "agent-cli-method-scopes",
+  label: "ordinary CLI agent method scopes",
+  marker: AGENT_SCOPE_MARKER,
+  selector(source) {
+    return source.includes(
+      "async function agentViaGatewayCommand(opts, runtime, signalBridge, runContext) {",
+    );
+  },
+  patch(source, file) {
+    if (source.includes(AGENT_SCOPE_MARKER)) {
+      return countOccurrences(source, AGENT_IDENTITY_REPLACEMENT) === 1 &&
+        countOccurrences(source, AGENT_SCOPE_MARKER) === 1 &&
+        !source.includes(AGENT_IDENTITY_TARGET)
+        ? { source, status: "already-applied" }
+        : {
+            source,
+            status: "no-match",
+            error: `ordinary CLI agent scope patch in ${file}: structurally changed patch`,
+          };
+    }
+    const result = replaceExactlyOnce(
+      source,
+      AGENT_IDENTITY_TARGET,
+      AGENT_IDENTITY_REPLACEMENT,
+      "ordinary CLI agent scope selection",
+      file,
+    );
+    return result.error
+      ? { source, status: "no-match", error: result.error }
+      : { source: result.source, status: "would-apply" };
+  },
+};
+
 const hasSqlitePairingPersistence = listJsFiles(distDir).some((file) => {
   const source = fs.readFileSync(file, "utf8");
   return source.includes(
@@ -2496,7 +2550,7 @@ const hasSqlitePairingPersistence = listJsFiles(distDir).some((file) => {
 });
 const FILE_SPECS: FileSpec[] = [
   ...BASE_FILE_SPECS,
-  ...(hasSqlitePairingPersistence ? [SQLITE_PERSISTENCE_SPEC] : []),
+  ...(hasSqlitePairingPersistence ? [SQLITE_PERSISTENCE_SPEC, AGENT_SCOPE_SPEC] : []),
 ];
 
 function resolveSpecFile(spec: FileSpec, dryRun: boolean): ResolvedSpecFile {

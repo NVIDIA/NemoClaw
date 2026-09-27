@@ -1147,7 +1147,13 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     installMode: "none",
     restoreCli: true,
     exposeCliBin: true,
-    owningPaths: ["test/e2e/live/openclaw-inference-switch-helpers.ts"],
+    owningPaths: [
+      "test/e2e/live/openclaw-inference-switch-helpers.ts",
+      "test/e2e/live/openclaw-admin-scope.ts",
+      "test/e2e/fixtures/admin-approval-connect.ts",
+      "test/e2e/fixtures/admin-approval-connect.sh",
+      "test/e2e/fixtures/issue-4462-admin-approval-evidence.ts",
+    ],
     environment: {
       ...nonInteractive,
       NEMOCLAW_AGENT: "openclaw",
