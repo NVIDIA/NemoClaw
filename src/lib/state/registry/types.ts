@@ -15,10 +15,14 @@ export interface PendingSandboxCreateIdentity {
   readonly state: "verified-create";
   readonly gatewayName: string;
   readonly gatewayPort: number;
+  /** Custom gateway state directory retained across interrupted creation. */
+  readonly openshellGatewayStateDir?: string;
   readonly sandboxName: string;
   readonly lifecycleGeneration: string;
   readonly sandboxIdentityFingerprint: string;
   readonly createAttemptNonce?: string;
+  /** Exact managed-startup hold identity reused by an interrupted create resume. */
+  readonly managedBootstrapIdentity?: string;
   readonly route: "none" | "native" | "compatibility";
   /** The exact final handoff crossed its durable commit fence. */
   readonly exactFinalHandoffCommitStarted?: true;
@@ -122,6 +126,8 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
    * through per-sandbox image deletion.
    */
   workload?: SandboxWorkloadReceipt;
+  /** Image-owned startup handshake used by managed-image onboarding finalization. */
+  managedStartupProtocol?: "identity-bound" | "legacy-unbound";
   /** Canonical provider-neutral receipt for an out-of-sandbox inference runtime. */
   hostLocalInferenceReceipt?: string | null;
   /** Explicit hidden-lifecycle provenance; absence keeps llama.cpp on its legacy path. */
@@ -156,8 +162,12 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   // different NEMOCLAW_GATEWAY_PORT no longer recreates/kills the first (#4422).
   gatewayName?: string | null;
   gatewayPort?: number | null;
+  /** Resolved custom OpenShell gateway state directory used when this sandbox was onboarded. */
+  openshellGatewayStateDir?: string | null;
   /** Whether the sandbox was intentionally stopped via the stop command (#11025). */
   stopped?: boolean;
+  /** Explicit retained Portable lifecycle owner; absent for every standard sandbox. */
+  portableLifecycleProfile?: "openclaw" | "hermes";
 }
 
 export type SandboxWorkloadReceipt =

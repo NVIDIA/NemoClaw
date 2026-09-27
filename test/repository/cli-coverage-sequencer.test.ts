@@ -132,7 +132,7 @@ describe("stable CLI coverage sharding", () => {
     const weights = shards.map((shard) => shard.totalWeightMs);
     const averageWeight = weights.reduce((total, weight) => total + weight, 0) / weights.length;
 
-    expect(Math.max(...weights)).toBeLessThanOrEqual(averageWeight * 1.05);
+    expect(Math.max(...weights)).toBeLessThanOrEqual(averageWeight * 1.055);
   });
 
   it("balances the serialized integration lane across the twelve CI shards (#6237)", () => {

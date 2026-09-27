@@ -10,8 +10,7 @@ import { describe, it } from "vitest";
 
 import { testTimeout } from "../helpers/timeouts";
 
-const CREDENTIAL_RETRY_PROMPT_RE =
-  /Options: retry \(re-enter key\), back \(change provider\), exit \[retry\]: /;
+const CREDENTIAL_RETRY_PROMPT_RE = /Options: retry, back, exit \[retry\]: /;
 
 const PROVIDER_SELECTION_TEST_TIMEOUT_MS = testTimeout(60_000);
 
@@ -113,6 +112,8 @@ credentials.prompt = async (message) => {
 };
 runner.runCapture = () => "";
 require("node:dns/promises").lookup = async () => [{ address: "93.184.216.34", family: 4 }];
+Object.defineProperty(process.stdin, "isTTY", { value: true });
+Object.defineProperty(process.stderr, "isTTY", { value: true });
 
 const { setupNim } = require(${onboardPath});
 
@@ -200,6 +201,8 @@ credentials.prompt = async (message) => {
 runner.runCapture = () => "";
 
 require("node:dns/promises").lookup = async () => [{ address: "93.184.216.34", family: 4 }];
+Object.defineProperty(process.stdin, "isTTY", { value: true });
+Object.defineProperty(process.stderr, "isTTY", { value: true });
 const { setupNim } = require(${onboardPath});
 
 (async () => {

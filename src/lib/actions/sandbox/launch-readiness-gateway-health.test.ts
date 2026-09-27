@@ -14,9 +14,31 @@ import {
   requireLaunchSemanticHealth,
   type LaunchReadinessHealthDeps,
 } from "./launch-readiness/health";
-import { isSandboxGatewayRunningForStatus } from "./process-recovery";
+import {
+  isSandboxGatewayRunningForStatus,
+  waitForStartedHermesGatewayProcess,
+} from "./process-recovery";
 
 describe("launch-readiness gateway health scope", () => {
+  it.each([
+    ["becomes observable", [null, null, null, null, null, true], true],
+    ["remains unavailable", [null, null, null, null, null, null], false],
+  ] as const)(
+    "bounds a managed Hermes startup observation that %s",
+    async (_case, results, expected) => {
+      const observations = [...results];
+      const probe = vi.fn(async () => observations.shift() ?? null);
+      const sleep = vi.fn(async () => {});
+
+      await expect(
+        waitForStartedHermesGatewayProcess("alpha", "nemoclaw-19080", { probe, sleep }),
+      ).resolves.toBe(expected);
+
+      expect(probe).toHaveBeenCalledTimes(6);
+      expect(sleep.mock.calls).toEqual([[2_000], [2_000], [2_000], [2_000], [2_000]]);
+    },
+  );
+
   it("pins the semantic gateway probe to the owning OpenShell gateway (#8942)", async () => {
     const runBuffered = vi.fn<OpenShellSandboxBufferedCommandExecutor["runBuffered"]>(async () => ({
       outcome: { kind: "completed", exitCode: 0 },
@@ -37,7 +59,11 @@ describe("launch-readiness gateway health scope", () => {
       expect.objectContaining({
         sandboxName: "alpha",
         target: { kind: "named", gatewayName: "nemoclaw-8091" },
-        command: ["sh", "-c", expect.stringContaining("http://127.0.0.1:18789/health")],
+        command: expect.arrayContaining([
+          "sh",
+          "-c",
+          expect.stringContaining("http://127.0.0.1:18789/health"),
+        ]),
       }),
     );
   });
@@ -57,8 +83,8 @@ describe("launch-readiness gateway health scope", () => {
       }),
     ).resolves.toBeNull();
 
-    expect(runBuffered.mock.calls[0]?.[0].command[2]).toContain("echo UNAVAILABLE");
-    expect(runBuffered.mock.calls[0]?.[0].command[2]).not.toContain("echo STOPPED");
+    expect(runBuffered.mock.calls[0]?.[0].command.at(-1)).toContain("echo UNAVAILABLE");
+    expect(runBuffered.mock.calls[0]?.[0].command.at(-1)).not.toContain("echo STOPPED");
   });
 
   it.each([
@@ -75,7 +101,7 @@ describe("launch-readiness gateway health scope", () => {
           outcome: { kind: "completed", exitCode: 0 },
           stdout: execFileSync(
             "sh",
-            ["-c", `curl() { printf '%s' '${http}'; return ${code}; }; ${request.command[2]}`],
+            ["-c", `curl() { printf '%s' '${http}'; return ${code}; }; ${request.command.at(-1)}`],
             { encoding: "utf8" },
           ),
           stderr: "",
@@ -133,7 +159,11 @@ describe("launch-readiness gateway health scope", () => {
       expect.objectContaining({
         sandboxName: "alpha",
         target: { kind: "named", gatewayName: "nemoclaw-19080" },
-        command: ["sh", "-c", expect.stringContaining("http://127.0.0.1:18789/health")],
+        command: expect.arrayContaining([
+          "sh",
+          "-c",
+          expect.stringContaining("http://127.0.0.1:18789/health"),
+        ]),
       }),
     );
   });

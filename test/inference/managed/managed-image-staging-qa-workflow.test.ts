@@ -135,6 +135,11 @@ describe("managed-image staging QA workflow", () => {
       writeOverlayFixture(candidateRoot, dockerfile, "candidate Dockerfile\n");
       writeOverlayFixture(candidateRoot, packageBuilder, "exit 42\n");
       writeOverlayFixture(candidateRoot, requirements, "candidate requirements\n");
+      writeOverlayFixture(
+        candidateRoot,
+        "agents/langchain-deepagents-code/validate-runtime-contract.py",
+        "candidate runtime validator\n",
+      );
       writeOverlayFixture(candidateRoot, perlPatch, "candidate Perl patch\n");
       writeOverlayFixture(stagingRoot, dockerfile, "staging Dockerfile\n");
       writeOverlayFixture(stagingRoot, packageBuilder, "exit 41\n");

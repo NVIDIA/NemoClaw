@@ -77,8 +77,14 @@ function messagingPlanner(): MessagingWorkflowPlanner {
 describe("generate-openclaw-config.mts: default plugin entries", () => {
   it("adds the installed NemoClaw plugin to the default OpenClaw allowlist (#8975)", () => {
     const config = buildConfig({ ...BASE_ENV });
+    expect(config.plugins.entries.nemoclaw).toEqual({ enabled: true });
     expect(config.plugins.allow).toBeUndefined();
     expect(config.tools.alsoAllow).toEqual(["bundle-mcp"]);
+  });
+
+  it("omits stale disabled entries for optional bundled plugins", () => {
+    const config = buildConfig({ ...BASE_ENV, NEMOCLAW_PROVIDER_KEY: "inference" });
+    expect(Object.keys(config.plugins.entries)).toEqual(["bonjour", "nemoclaw"]);
   });
 
   it("allows the enabled diagnostics plugin (#8975)", () => {

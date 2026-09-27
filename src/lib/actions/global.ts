@@ -46,8 +46,17 @@ export async function runOnboardAction(
   completeAutomaticGatewayPortAfterOnboard();
 }
 
-export async function runBackupAllAction(): Promise<void> {
+export async function runBackupAllAction(
+  options: { retireLegacyForwards?: boolean } = {},
+): Promise<void> {
   await executeBackupAllAction();
+  if (options.retireLegacyForwards) {
+    const { retireRegisteredLegacyDashboardForwards } = await import("./sandbox/forward-recovery");
+    const result = await retireRegisteredLegacyDashboardForwards();
+    console.log(
+      `Legacy dashboard forwards: ${result.retired} retired, ${result.unchanged} unchanged, ${result.skipped} skipped.`,
+    );
+  }
 }
 
 export async function runUpgradeSandboxesAction(

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
 import path from "node:path";
 
 import { shellQuote } from "../core/shell-quote.js";
@@ -91,4 +92,73 @@ export function buildRestoreCleanupCommand(
     commands.push(buildStaleStateDirContentsCleanupCommand(dir, dirName));
   }
   return commands.length > 0 ? commands.join(" && ") : ":";
+}
+
+/** Internal capture capability; never populated from command arguments or a persisted manifest. */
+export interface CapturedOpenClawState {
+  readonly sandboxName: string;
+  readonly directory: string;
+  assertCurrent(): void;
+}
+
+export function copyCapturedOpenClawState(
+  source: CapturedOpenClawState,
+  destination: string,
+  directories: readonly string[],
+  prefixes: readonly string[],
+  files: readonly { path: string; strategy: string }[],
+): { directories: string[]; files: string[] } {
+  source.assertCurrent();
+  const root = fs.lstatSync(source.directory);
+  if (
+    !root.isDirectory() ||
+    root.isSymbolicLink() ||
+    (root.mode & 0o077) !== 0 ||
+    root.uid !== process.getuid?.()
+  ) {
+    throw new Error("Stopped state capture is not an owned private directory.");
+  }
+  const inspectTree = (relative: string): void => {
+    const location = path.join(source.directory, relative);
+    const entry = fs.lstatSync(location);
+    if (entry.isSymbolicLink()) {
+      if (!isAllowedStateSymlink(relative.split(path.sep).join("/"), fs.readlinkSync(location))) {
+        throw new Error("Stopped state contains an unsupported symbolic link.");
+      }
+      return;
+    }
+    if (entry.isDirectory()) {
+      for (const child of fs.readdirSync(location)) inspectTree(path.join(relative, child));
+    } else if (!entry.isFile() || entry.nlink !== 1) {
+      throw new Error("Stopped state contains an unsupported filesystem entry.");
+    }
+  };
+  const copiedDirectories: string[] = [];
+  const copiedFiles: string[] = [];
+  for (const entry of fs.readdirSync(source.directory, { withFileTypes: true })) {
+    const selectedDirectory =
+      directories.includes(entry.name) || prefixes.some((prefix) => entry.name.startsWith(prefix));
+    const selectedFile = files.find((file) => file.path === entry.name);
+    if (!selectedDirectory && !selectedFile) continue;
+    if (!/^[A-Za-z0-9._-]+$/u.test(entry.name) || entry.name === "." || entry.name === "..") {
+      throw new Error("Stopped state contains an invalid declared state path.");
+    }
+    if (
+      (selectedDirectory && !entry.isDirectory()) ||
+      (selectedFile && (!entry.isFile() || selectedFile.strategy !== "copy"))
+    ) {
+      throw new Error("Stopped state does not match the declared OpenClaw backup contract.");
+    }
+    inspectTree(entry.name);
+    fs.cpSync(path.join(source.directory, entry.name), path.join(destination, entry.name), {
+      recursive: true,
+      dereference: false,
+      verbatimSymlinks: true,
+      force: false,
+      errorOnExist: true,
+    });
+    (selectedDirectory ? copiedDirectories : copiedFiles).push(entry.name);
+  }
+  source.assertCurrent();
+  return { directories: copiedDirectories, files: copiedFiles };
 }

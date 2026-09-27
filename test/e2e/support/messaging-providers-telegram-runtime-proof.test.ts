@@ -35,6 +35,7 @@ it("transmits and runs the installed Telegram proof atomically with redaction", 
 
   const proof = await sendWithInstalledTelegramRuntime(
     sandbox,
+    "e2e-channels-selected",
     { port: "32123" },
     "42424242",
     "credential rewrite proof",
@@ -49,7 +50,7 @@ it("transmits and runs the installed Telegram proof atomically with redaction", 
   });
   expect(upload).not.toHaveBeenCalled();
   expect(exec).toHaveBeenCalledWith(
-    `e2e-msg-${process.pid}`,
+    "e2e-channels-selected",
     [
       "sh",
       "-lc",

@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
+import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 
 import {
   abortOpenClawPostRestoreDoctor,
@@ -35,15 +36,17 @@ function fakeGnuStatEnv(root: string): NodeJS.ProcessEnv {
 }
 
 describe("OpenClaw post-upgrade recovery doctor", () => {
-  it("publishes an owner-only one-shot marker atomically", () => {
+  it("retires a stale ready receipt before publishing an owner-only one-shot marker", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-doctor-marker-"));
+    const ready = path.join(root, "doctor-ready");
     try {
-      const command = buildOpenClawPostUpgradeDoctorMarkerCommand().replaceAll(
-        "/sandbox/.openclaw",
-        root,
-      );
+      fs.writeFileSync(ready, "nemoclaw-openclaw-post-upgrade-doctor-ready-v1\n", { mode: 0o600 });
+      const command = buildOpenClawPostUpgradeDoctorMarkerCommand()
+        .replaceAll("/sandbox/.openclaw", root)
+        .replaceAll("/tmp/nemoclaw-post-upgrade-doctor-ready", ready);
       execFileSync("bash", ["-c", command]);
 
+      expect(fs.existsSync(ready)).toBe(false);
       const marker = path.join(root, ".nemoclaw-post-upgrade-doctor");
       expect(fs.readFileSync(marker, "utf8")).toBe("nemoclaw-openclaw-post-upgrade-doctor-v2\n");
       expect(fs.statSync(marker).mode & 0o777).toBe(0o600);
@@ -52,15 +55,14 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
     }
   });
 
-  it.each(["chmod", "printf", "mv"])(
+  it.each(["rm", "chmod", "printf", "mv"])(
     "fails closed when the atomic marker %s operation fails",
     (operation) => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-doctor-marker-failure-"));
       try {
-        const command = buildOpenClawPostUpgradeDoctorMarkerCommand().replaceAll(
-          "/sandbox/.openclaw",
-          root,
-        );
+        const command = buildOpenClawPostUpgradeDoctorMarkerCommand()
+          .replaceAll("/sandbox/.openclaw", root)
+          .replaceAll("/tmp/nemoclaw-post-upgrade-doctor-ready", path.join(root, "doctor-ready"));
         const result = spawnSync("bash", ["-c", `${operation}() { return 19; }; ${command}`], {
           encoding: "utf8",
         });
@@ -319,7 +321,7 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
       "alpha",
       expect.stringContaining("nemoclaw-openclaw-post-upgrade-doctor-v2"),
       30_000,
-      { localDockerFallbackPolicy: "never", runtimeSelection },
+      { runtimeSelection },
     );
     expect(execute.mock.calls[1]?.[1]).toContain("nemoclaw-openclaw-post-upgrade-doctor-ready-v1");
     expect(execute.mock.calls[3]?.[1]).toBe(buildOpenClawPostUpgradeDoctorReleaseCommand());
@@ -409,7 +411,7 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
       "alpha",
       buildOpenClawPostUpgradeDoctorReleaseCommand(),
       30_000,
-      { localDockerFallbackPolicy: "never" },
+      {},
     );
     expect(execute.mock.calls[1]?.[1]).not.toContain("curl");
     expect(execute.mock.calls[2]?.[1]).not.toContain("curl");
@@ -435,7 +437,7 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
       "alpha",
       buildOpenClawPostUpgradeDoctorDeleteRetirementCommand("nemoclaw-openclaw-backup-quiesce-v1"),
       30_000,
-      { localDockerFallbackPolicy: "never" },
+      {},
     );
     expect(capture).toHaveBeenCalledExactlyOnceWith(
       ["sandbox", "stop", "alpha"],
@@ -477,14 +479,14 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
       "alpha",
       expect.not.stringContaining("curl"),
       30_000,
-      { localDockerFallbackPolicy: "never" },
+      {},
     );
     expect(execute).toHaveBeenNthCalledWith(
       2,
       "alpha",
       expect.stringContaining("curl"),
       expect.any(Number),
-      { localDockerFallbackPolicy: "never" },
+      {},
     );
     expect(executePrivileged).toHaveBeenCalledTimes(5);
     const expectedDirectCall = [
@@ -512,7 +514,11 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
     await expect(
       beginOpenClawPostRestoreDoctor("alpha", undefined, {
         captureOpenshell: capture as never,
-        executeSandboxExecCommand: vi.fn(async () => null),
+        executeSandboxExecCommand: vi.fn(async () => ({
+          status: 1,
+          stdout: "",
+          stderr: "marker write failed",
+        })),
         now: () => 0,
         sleep: vi.fn(async () => undefined),
       }),
@@ -758,4 +764,66 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
     });
     expect(execute).toHaveBeenCalledOnce();
   });
+});
+
+describe.each([
+  "cancelled",
+  "timeout",
+  "capture",
+  "invocation",
+  "unavailable",
+  "malformed",
+] as const)("doctor maintenance transport failure: %s", (kind) => {
+  it("reports an unverified marker without restarting or trying privilege", async () => {
+    const error = new SandboxCommandTransportError(kind);
+    const execute = vi.fn().mockRejectedValue(error);
+    const capture = vi.fn();
+    const privileged = vi.fn();
+    await expect(
+      beginOpenClawPostRestoreDoctor("alpha", undefined, {
+        captureOpenshell: capture as never,
+        executeSandboxExecCommand: execute,
+        executePrivilegedSandboxCommand: privileged,
+        now: () => 0,
+        sleep: vi.fn(),
+      }),
+    ).resolves.toEqual({ ok: false, stage: "mark", detail: error.message });
+    expect(execute).toHaveBeenCalledOnce();
+    expect(capture).not.toHaveBeenCalled();
+    expect(privileged).not.toHaveBeenCalled();
+  });
+
+  it("reports an unverified native release without polling or retrying", async () => {
+    const execute = vi.fn().mockRejectedValue(new SandboxCommandTransportError(kind));
+    const capture = vi.fn();
+    const sleep = vi.fn();
+    await expect(
+      releaseOpenClawPostRestoreDoctorForDelete(
+        { sandboxName: "alpha" },
+        {
+          captureOpenshell: capture as never,
+          executeSandboxExecCommand: execute,
+          now: () => 0,
+          sleep,
+        },
+      ),
+    ).resolves.toMatchObject({ ok: false, stage: "release" });
+    expect(execute).toHaveBeenCalledOnce();
+    expect(capture).not.toHaveBeenCalled();
+    expect(sleep).not.toHaveBeenCalled();
+  });
+});
+
+it("propagates unexpected maintenance authority errors", async () => {
+  const error = new Error("maintenance authority refused");
+  const deps = {
+    captureOpenshell: vi.fn() as never,
+    executeSandboxExecCommand: vi.fn().mockRejectedValue(error),
+    now: () => 0,
+    sleep: vi.fn(),
+  };
+  await expect(beginOpenClawPostRestoreDoctor("alpha", undefined, deps)).rejects.toBe(error);
+  await expect(
+    releaseOpenClawPostRestoreDoctorForDelete({ sandboxName: "alpha" }, deps),
+  ).rejects.toBe(error);
 });

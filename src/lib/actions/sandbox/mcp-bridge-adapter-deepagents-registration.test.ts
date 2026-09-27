@@ -10,13 +10,14 @@ import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import { buildDeepAgentsMcpRegisterCommand } from "./mcp-bridge-adapter-deepagents";
 import { restoreDeepAgentsNativeMcpConfig } from "./mcp-bridge-adapter-deepagents-registration";
 import { buildDeepAgentsMcpRuntimeKindCommand } from "./mcp-bridge-adapter-status";
-import { executeSandboxCommand } from "./process-recovery";
+import { executeSandboxExecCommand } from "../../adapters/sandbox/command-transport";
 
-vi.mock("./process-recovery", () => ({
-  executeSandboxCommand: vi.fn(),
+vi.mock("../../adapters/sandbox/command-transport", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../adapters/sandbox/command-transport")>()),
+  executeSandboxExecCommand: vi.fn(),
 }));
 
-const executeSandboxCommandMock = vi.mocked(executeSandboxCommand);
+const executeSandboxCommandMock = vi.mocked(executeSandboxExecCommand);
 const runtimeSelection = { gatewayName: "nemoclaw-8091", workspace: "default" } as const;
 
 function jiraEntry(): McpSourceEntry {
@@ -371,7 +372,7 @@ describe("Deep Agents MCP config adapter registration", () => {
     expect(executeSandboxCommandMock).toHaveBeenCalledTimes(5);
     expect(
       executeSandboxCommandMock.mock.calls.every((call) => {
-        const options = call[2];
+        const options = call[3];
         return typeof options === "object" && options?.runtimeSelection === runtimeSelection;
       }),
     ).toBe(true);
@@ -382,7 +383,7 @@ describe("Deep Agents MCP config adapter registration", () => {
     expect(commands[3]).toContain("github");
     expect(commands[4]).toContain("jira");
     expect(commands.filter((command) => command.includes("allowRevisioned"))).toHaveLength(2);
-    expect(executeSandboxCommandMock.mock.calls.map(([, , options]) => options)).toEqual(
+    expect(executeSandboxCommandMock.mock.calls.map(([, , , options]) => options)).toEqual(
       Array.from({ length: 5 }, () => ({ runtimeSelection })),
     );
   });

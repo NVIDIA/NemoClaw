@@ -4,13 +4,7 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
-import YAML from "yaml";
-import { asExportedConfig, exportedAgentList } from "../../support/config-export-document.ts";
 import { fingerprintOpenShellSandboxId } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
-import {
-  namedOpenShellGateway,
-  cliOpenShellSandboxPolicyReader,
-} from "../../../src/lib/adapters/openshell/sandbox-policy-cli.ts";
 import { load, save } from "../../../src/lib/state/registry/persistence.ts";
 import { createServer, type Server } from "node:http";
 import path from "node:path";
@@ -33,7 +27,6 @@ import {
   parseNetworkPolicyCurlOutput,
 } from "../support/network-policy-probe.ts";
 import { runRestrictedOnboardWithRetry } from "./restricted-onboard-helpers.ts";
-import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-net-policy";
 const SUPPRESSION_SANDBOX_NAME =
@@ -372,46 +365,15 @@ test(
     );
     const registry = load();
     const entry = registry.sandboxes[SANDBOX_NAME];
-    const policy = await cliOpenShellSandboxPolicyReader.readSandboxPolicy({
-      target: namedOpenShellGateway(entry.gatewayName ?? ""),
-      sandboxName: SANDBOX_NAME,
-      scope: "effective",
-    });
     const outputPath = path.join(exportDirectory, "config.yaml");
-    const exported = await runNemoclaw(
+    const refused = await runNemoclaw(
       host,
       ["config", "export", SANDBOX_NAME, "--output", outputPath, "--json"],
-      { artifactName: "config-export-live-success", redactionValues: [apiKey] },
+      { artifactName: "config-export-live-secondary-agents-refusal", redactionValues: [apiKey] },
     );
-    expect(exported.exitCode, text(exported)).toBe(0);
-    const raw = fs.readFileSync(outputPath, "utf8");
-    expect(raw.includes(apiKey), "Export must omit credential values").toBe(false);
-    const document = asExportedConfig(YAML.parse(raw));
-    const exportedSandbox = document.spec.sandboxes[0];
-    const agents = exportedAgentList(exportedSandbox);
-    const [primary] = agents;
-    const primaryInference = JSON.stringify(primary?.inference);
-    const roster = agents.map((agent) => {
-      const toolsConfig = "tools" in agent ? agent.tools : undefined;
-      const tools = toolsConfig && "allow" in toolsConfig ? toolsConfig.allow.join(",") : "primary";
-      const route = JSON.stringify(agent.inference) === primaryInference ? "shared" : "different";
-      return `${agent.name}:${tools}:${route}`;
-    });
-    expect(`${exportedSandbox.name}|${roster.join("|")}`).toBe(
-      `${SANDBOX_NAME}|primary:primary:shared|researcher:read:shared|reviewer:read:shared`,
-    );
-    expect(exportedSandbox).not.toHaveProperty("image");
-    const exportedProvider = document.spec.inferenceProviders[0];
-    const exportedEndpoint = "endpoint" in exportedProvider ? exportedProvider.endpoint : undefined;
-    expect(exportedEndpoint).toBe(requireHostedInferenceConfig(secrets).endpointUrl);
-    expect(
-      (document.spec.sandboxes[0].network.policy.explicit as { network_policies?: unknown })
-        .network_policies,
-    ).toEqual(
-      policy.ok
-        ? (YAML.parse(policy.value.document) as { network_policies?: unknown }).network_policies
-        : undefined,
-    );
+    expect(refused.exitCode, text(refused)).not.toBe(0);
+    expect(text(refused)).toContain("unsupported");
+    expect(fs.existsSync(outputPath), "Secondary agents must prevent publication").toBe(false);
 
     const mismatchPath = path.join(exportDirectory, "must-not-exist.yaml");
     try {
@@ -438,10 +400,8 @@ test(
     }
     await artifacts.writeJson("config-export-live-evidence.json", {
       sandboxName: SANDBOX_NAME,
-      agentNames: agents.map((agent) => agent.name),
-      image: "v1-default",
-      endpoint: exportedEndpoint,
-      effectivePolicyMatches: true,
+      secondaryAgentExportRefused: true,
+      secondaryAgentOutputWithheld: true,
       identityDriftPreventedPublication: true,
     });
 

@@ -18,60 +18,14 @@ COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery
 COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/mcp-tool-discovery.bundle /opt/mcp-tool-discovery-runtime/dist/mcp-tool-discovery.mjs
 
 FROM scratch AS managed-startup-runtime-builder
-COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-image-runtime.bundle /out/managed-startup-image-runtime.cjs
-
-# Compile the bootstrap boundary on the target platform. The output is a
-# freestanding static ELF; only its reviewed, non-executable Bash body remains
-# interpreted at runtime after the native boundary has scrubbed process control.
-FROM node:24.18.1-trixie@sha256:dfa43abae25030f5456007944f725379d1f5be4bb723bd501ac39ac72ffa5474 AS managed-bootstrap-entrypoint-builder
-ARG TARGETARCH
-WORKDIR /opt/nemoclaw-managed-bootstrap-build
-COPY scripts/managed-bootstrap-entrypoint.c ./
-COPY scripts/managed-bootstrap-trampoline.sh ./
-# hadolint ignore=DL4006
-RUN set -eu; \
-    target_arch="${TARGETARCH:-$(dpkg --print-architecture)}"; \
-    case "$target_arch" in \
-        amd64) expected_machine='Advanced Micro Devices X86-64' ;; \
-        arm64) expected_machine='AArch64' ;; \
-        *) echo "ERROR: unsupported managed bootstrap target architecture: $target_arch" >&2; exit 1 ;; \
-    esac; \
-    install -d -o root -g root -m 0755 /out/usr/local/bin /out/usr/local/lib/nemoclaw; \
-    gcc \
-        -std=c11 -O2 -Wall -Wextra -Werror \
-        -DNEMOCLAW_MANAGED_BOOTSTRAP_FREESTANDING=1 \
-        -ffreestanding -fno-asynchronous-unwind-tables -fno-builtin -fno-ident \
-        -fno-pie -fno-stack-protector -fno-unwind-tables \
-        -no-pie -nostdlib -static \
-        -Wl,--build-id=none -Wl,-z,noexecstack \
-        managed-bootstrap-entrypoint.c -o /tmp/nemoclaw-managed-bootstrap; \
-    install -o root -g root -m 0755 \
-        /tmp/nemoclaw-managed-bootstrap /out/usr/local/bin/nemoclaw-managed-bootstrap; \
-    install -o root -g root -m 0444 \
-        managed-bootstrap-trampoline.sh \
-        /out/usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh; \
-    binary=/out/usr/local/bin/nemoclaw-managed-bootstrap; \
-    body=/out/usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh; \
-    test -f "$binary" && test ! -L "$binary"; \
-    test -f "$body" && test ! -L "$body"; \
-    test "$(stat -c '%u:%g:%a' "$binary")" = '0:0:755'; \
-    test "$(stat -c '%u:%g:%a' "$body")" = '0:0:444'; \
-    /bin/bash -n "$body"; \
-    test "$(readelf -hW "$binary" | sed -n 's/^[[:space:]]*Class:[[:space:]]*//p')" = 'ELF64'; \
-    test "$(readelf -hW "$binary" | sed -n 's/^[[:space:]]*Type:[[:space:]]*//p')" = 'EXEC (Executable file)'; \
-    test "$(readelf -hW "$binary" | sed -n 's/^[[:space:]]*Machine:[[:space:]]*//p')" = "$expected_machine"; \
-    program_headers="$(readelf -lW "$binary")"; \
-    case "$program_headers" in *INTERP*) echo 'ERROR: managed bootstrap ELF has an interpreter' >&2; exit 1 ;; esac; \
-    readelf -dW "$binary" | grep -Fq 'There is no dynamic section'; \
-    test -z "$(nm --undefined-only "$binary")"; \
-    strings "$binary" | grep -Fq '/usr/local/bin/nemoclaw-managed-bootstrap'; \
-    strings "$binary" | grep -Fq '/usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh'
+COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-direct-image-runtime.bundle /out/managed-startup-image-runtime.cjs
 
 # hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
 
 # The supplied base may end as a non-root runtime user. Reset the build user
 # explicitly before installing the root-owned managed-startup handoff.
+# hadolint ignore=DL3066
 USER root
 
 ARG NEMOCLAW_CORPORATE_CA_B64
@@ -217,8 +171,6 @@ COPY agents/langchain-deepagents-code/dcode-session-supervisor.py /usr/local/lib
 COPY scripts/lib/entrypoint-env-wrapper.sh /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh
 COPY agents/langchain-deepagents-code/start.sh /usr/local/bin/nemoclaw-start
 COPY scripts/managed-startup-hold.sh /usr/local/bin/nemoclaw-managed-startup-hold
-COPY --from=managed-bootstrap-entrypoint-builder /out/usr/local/bin/nemoclaw-managed-bootstrap /usr/local/bin/nemoclaw-managed-bootstrap
-COPY --from=managed-bootstrap-entrypoint-builder /out/usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh
 COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
 # The first-party profile plugin uses Deep Agents' supported entry-point hook to
 # register managed aliases without modifying third-party package source. The
@@ -231,14 +183,8 @@ COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
 # regressionTest: the stripped-base gate must reach this marker, then fail import.
 # removalCondition: remove when installation validates dependencies atomically.
 # hadolint ignore=DL4006
-RUN test -f /usr/local/bin/nemoclaw-managed-bootstrap \
-    && test ! -L /usr/local/bin/nemoclaw-managed-bootstrap \
-    && test "$(stat -c '%u:%g:%a' /usr/local/bin/nemoclaw-managed-bootstrap)" = '0:0:755' \
-    && test -f /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh \
-    && test ! -L /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh \
-    && test "$(stat -c '%u:%g:%a' /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh)" = '0:0:444' \
-    && chmod 444 /opt/nemoclaw-deepagents-code/generate-config.ts /opt/nemoclaw-deepagents-code/agents/langchain-deepagents-code/generate-config.ts /opt/nemoclaw-deepagents-code/src/lib/inference/managed-dcode/identity.ts /opt/nemoclaw-deepagents-code/managed-dcode-runtime.py /opt/nemoclaw-deepagents-code/patch-managed-deepagents-code.py /opt/nemoclaw-deepagents-code/patch-managed-quickjs.py /opt/nemoclaw-deepagents-code/validate-nemotron-ultra-profile.py /opt/nemoclaw-deepagents-code/progressive_tool_disclosure.py /opt/nemoclaw-deepagents-code/nemoclaw_observability.py /opt/nemoclaw-deepagents-code/validate-progressive-tool-disclosure.py /opt/nemoclaw-deepagents-code/validate-observability.py /opt/nemoclaw-deepagents-code/validate-read-only-mcp-call.py /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh /etc/profile.d/nemoclaw-dcode.sh /usr/local/lib/nemoclaw/nemoclaw_read_only_mcp.py \
-    && chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-managed-startup-hold /usr/local/bin/nemoclaw-managed-bootstrap /usr/local/lib/nemoclaw/dcode-wrapper.sh /usr/local/lib/nemoclaw/dcode-launcher.sh /usr/local/lib/nemoclaw/dcode-session-supervisor.py \
+RUN chmod 444 /opt/nemoclaw-deepagents-code/generate-config.ts /opt/nemoclaw-deepagents-code/agents/langchain-deepagents-code/generate-config.ts /opt/nemoclaw-deepagents-code/src/lib/inference/managed-dcode/identity.ts /opt/nemoclaw-deepagents-code/managed-dcode-runtime.py /opt/nemoclaw-deepagents-code/patch-managed-deepagents-code.py /opt/nemoclaw-deepagents-code/patch-managed-quickjs.py /opt/nemoclaw-deepagents-code/validate-nemotron-ultra-profile.py /opt/nemoclaw-deepagents-code/progressive_tool_disclosure.py /opt/nemoclaw-deepagents-code/nemoclaw_observability.py /opt/nemoclaw-deepagents-code/validate-progressive-tool-disclosure.py /opt/nemoclaw-deepagents-code/validate-observability.py /opt/nemoclaw-deepagents-code/validate-read-only-mcp-call.py /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh /etc/profile.d/nemoclaw-dcode.sh /usr/local/lib/nemoclaw/nemoclaw_read_only_mcp.py \
+    && chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-managed-startup-hold /usr/local/lib/nemoclaw/dcode-wrapper.sh /usr/local/lib/nemoclaw/dcode-launcher.sh /usr/local/lib/nemoclaw/dcode-session-supervisor.py \
     && test "$(stat -c '%u:%g:%a' /usr/local/lib/nemoclaw/dcode-session-supervisor.py)" = "0:0:755" \
     && install -o root -g root -m 0755 /usr/local/lib/nemoclaw/dcode-launcher.sh /usr/local/lib/nemoclaw/dcode-managed-exec \
     && test -f /usr/local/lib/nemoclaw/dcode-managed-exec \
@@ -249,7 +195,8 @@ RUN test -f /usr/local/bin/nemoclaw-managed-bootstrap \
     && test "$(find /opt/nemoclaw-deepagents-profile-plugin -type f -print | LC_ALL=C sort)" = "$(printf '%s\n' '/opt/nemoclaw-deepagents-profile-plugin/pyproject.toml' '/opt/nemoclaw-deepagents-profile-plugin/src/nemoclaw_deepagents_profile/__init__.py')" \
     && printf '%s  %s\n' '97eaed5781f9c7df4478c96263b0742fb545b322846fe0c73c39a3bfba4553a9' '/opt/nemoclaw-deepagents-profile-plugin/src/nemoclaw_deepagents_profile/__init__.py' '7be3f7972d7cd78d3ddaf66e2ff8b07a5e6af3611034b956cf0475ba78f5a576' '/opt/nemoclaw-deepagents-profile-plugin/pyproject.toml' | sha256sum -c - \
     && /opt/venv/bin/pip3 install --no-index --no-cache-dir --no-deps --no-build-isolation /opt/nemoclaw-deepagents-profile-plugin \
-    && /opt/venv/bin/python3 -I -c 'import nemoclaw_deepagents_profile; print("NEMOCLAW_DCODE_PROFILE_" + "IMPORT_GATE", flush=True); import deepagents; import deepagents_code' \
+    && /opt/venv/bin/python3 -I -c 'import nemoclaw_deepagents_profile; print("NEMOCLAW_DCODE_PROFILE_" + "IMPORT_GATE", flush=True)' \
+    && /opt/venv/bin/python3 -I /usr/local/lib/nemoclaw/validate-dcode-runtime-contract.py \
     && /opt/venv/bin/pip3 check \
     && rm -rf /opt/nemoclaw-deepagents-profile-plugin \
     && python3 /opt/nemoclaw-deepagents-code/patch-managed-quickjs.py \
@@ -335,6 +282,7 @@ RUN install -d -m 0755 /usr/local/share/nemoclaw \
     && env -i /usr/local/bin/dcode.real --version \
     && env -i /usr/local/bin/deepagents-code --version
 
+# hadolint ignore=DL3064
 ENV HOME=/sandbox \
     VIRTUAL_ENV=/opt/venv \
     PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin" \
@@ -368,6 +316,7 @@ ENV HOME=/sandbox \
 
 WORKDIR /sandbox
 RUN test "$(id -u sandbox):$(id -g sandbox):$(pwd)" = "999:999:/sandbox"
+# hadolint ignore=DL3066
 USER sandbox
 
 RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
@@ -375,6 +324,7 @@ RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
     && node /opt/nemoclaw-deepagents-code/generate-config.ts \
     && chmod 660 /sandbox/.deepagents/config.toml
 
+# hadolint ignore=DL3066
 USER root
 RUN chown root:sandbox /sandbox \
     && chmod 1775 /sandbox \
@@ -404,14 +354,6 @@ RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]; then \
     && chown sandbox:sandbox /sandbox/.deepagents/conversation_history \
     && chmod 0700 /sandbox/.deepagents/conversation_history \
     && test "$(stat -c '%U:%G:%a' /sandbox/.deepagents/conversation_history)" = 'sandbox:sandbox:700'
-
-# Verify the managed bootstrap files in dynamically built images.
-RUN test -f /usr/local/bin/nemoclaw-managed-bootstrap \
-    && test ! -L /usr/local/bin/nemoclaw-managed-bootstrap \
-    && test "$(stat -c '%U:%G:%a' /usr/local/bin/nemoclaw-managed-bootstrap)" = 'root:root:755' \
-    && test -f /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh \
-    && test ! -L /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh \
-    && test "$(stat -c '%U:%G:%a' /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh)" = 'root:root:444'
 
 # Verify the immutable security package inventory in the completed image.
 # hadolint ignore=DL4006

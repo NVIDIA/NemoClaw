@@ -59,6 +59,7 @@ const runner = require(${runnerPath});
 const registry = require(${registryPath});
 const fixtureMocks = require(${onboardScriptMocksPath});
 fixtureMocks.mockStandaloneGatewayTeardownAuthority();
+fixtureMocks.mockManagedStateVolumeOnboardLifecycle();
 const agentDefs = require(${agentDefsPath});
 const agentOnboard = require(${agentOnboardPath});
 const dockerGpuSandboxCreate = require(${dockerGpuSandboxCreatePath});

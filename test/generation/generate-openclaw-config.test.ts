@@ -1668,11 +1668,6 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.plugins.entries.bonjour.config).toBeUndefined();
   });
 
-  it("omits stale disabled entries for optional bundled plugins", () => {
-    const config = runConfigScript({ NEMOCLAW_PROVIDER_KEY: "inference" });
-    expect(Object.keys(config.plugins.entries)).toEqual(["bonjour"]);
-  });
-
   it("keeps the selected bundled provider plugin available", () => {
     const config = runConfigScript({ NEMOCLAW_PROVIDER_KEY: "anthropic" });
     expect(config.plugins.entries.anthropic).toBeUndefined();

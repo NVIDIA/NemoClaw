@@ -23,23 +23,15 @@ export function createHermesCredentialEnvReconciliationRuntime(
       }),
     restartGateway: async (sandboxName: string, revalidate: (operation: string) => void) => {
       revalidate(`restarting Hermes gateway for sandbox '${sandboxName}'`);
-      const result = await processRecovery.executeSandboxExecCommand(
-        sandboxName,
-        "hermes gateway restart",
-        210000,
-      );
+      const result = await processRecovery.restartSandboxGateway(sandboxName, { quiet: true });
       revalidate(`confirming Hermes gateway restart for sandbox '${sandboxName}'`);
-      return result;
-    },
-    waitForGateway: async (sandboxName: string, revalidate: (operation: string) => void) => {
-      revalidate(`checking Hermes gateway health for sandbox '${sandboxName}'`);
-      const healthy = await processRecovery.waitForRecoveredSandboxGateway(sandboxName, {
-        quiet: true,
-        initialManagedHealthPassed: false,
-        managedProbeImpl: () => null,
-      });
-      revalidate(`confirming Hermes gateway health for sandbox '${sandboxName}'`);
-      return healthy;
+      return result.ok
+        ? { status: 0, stdout: "Hermes gateway restarted and forwards recovered.", stderr: "" }
+        : {
+            status: 1,
+            stdout: "",
+            stderr: `${result.failureLayer}: ${result.detail}`,
+          };
     },
     revalidateSandboxIdentity,
   };
@@ -85,4 +77,4 @@ export async function waitForGatedHermesGatewayRecovery(sandboxName: string): Pr
   });
 }
 
-export type SandboxCommandResult = processRecovery.SandboxCommandResult;
+export type { SandboxCommandResult } from "../../../adapters/sandbox/command-transport";

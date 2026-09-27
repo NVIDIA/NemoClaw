@@ -89,6 +89,7 @@ export interface CreatedSandboxRegistryEntryInput {
   lifecycleLiveIdentityFingerprint?: string;
   gatewayName: string;
   gatewayPort: number;
+  openshellGatewayStateDir?: string | null;
   hostMounts?: readonly import("../state/registry/types").SandboxHostMount[];
 }
 
@@ -277,8 +278,12 @@ export function buildCreatedSandboxRegistryEntry(
     dashboardRemoteBindPrepared: input.dashboardRemoteBindPrepared === true,
     lifecycleGeneration: input.lifecycleGeneration,
     lifecycleLiveIdentityFingerprint: input.lifecycleLiveIdentityFingerprint,
+    ...(input.hermesPortableLifecycle === true
+      ? { portableLifecycleProfile: "hermes" as const }
+      : {}),
     gatewayName: input.gatewayName,
     gatewayPort: input.gatewayPort,
+    openshellGatewayStateDir: input.openshellGatewayStateDir ?? undefined,
     ...(input.hostMounts && input.hostMounts.length > 0
       ? { hostMounts: cloneSandboxHostMounts(input.hostMounts) }
       : {}),
@@ -344,6 +349,7 @@ export function prepareCreatedSandboxRegistration(
       );
     }
     entry.agent = "openclaw";
+    entry.portableLifecycleProfile = "openclaw";
   }
   const provider = requireRuntimeProviderBundleForSandbox(
     entry,

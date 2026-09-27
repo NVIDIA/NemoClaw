@@ -16,6 +16,8 @@ import {
 } from "./hermes-portable-contract";
 
 const SANDBOX = "alpha";
+const PRE_DEFERRED_ONBOARDING_MANIFEST_SHA256 =
+  "4600403d80c0ca038a89ac627f248a41148f1d97f649a49588a06b29427cee6c";
 const PRE_UPGRADE_MANIFEST_SHA256 =
   "27453a10ca2e75f16ce5a1487192d11ac92b4d1752e8538131b5233c17a89d85";
 const PRE_SKILLS_MANIFEST_SHA256 =
@@ -60,7 +62,16 @@ function setExpectedManifestVersion(
   agent.expected_version = expectedVersion;
 }
 
+function removeDeferredOnboardingMetadata(agent: AgentDefinition): void {
+  const source = fs.readFileSync(agent.manifestPath, "utf8");
+  const marker = "deferred_onboarding: true\n";
+  expect(source.split(marker)).toHaveLength(2);
+  fs.writeFileSync(agent.manifestPath, source.replace(marker, ""), { mode: 0o644 });
+  agent.deferred_onboarding = false;
+}
+
 function restorePreviousReviewedManifest(agent: AgentDefinition): void {
+  removeDeferredOnboardingMetadata(agent);
   const source = fs.readFileSync(agent.manifestPath, "utf8");
   const previous = source
     .replace('expected_version: "0.21.3"', 'expected_version: "0.20.6"')
@@ -243,6 +254,11 @@ describe("Hermes portable startup contract", () => {
   });
 
   it.each([
+    {
+      expectedManifestSha256: PRE_DEFERRED_ONBOARDING_MANIFEST_SHA256,
+      prepare: removeDeferredOnboardingMetadata,
+      startupDescriptorChanged: false,
+    },
     {
       expectedManifestSha256: PRE_UPGRADE_MANIFEST_SHA256,
       prepare: restorePreviousReviewedManifest,

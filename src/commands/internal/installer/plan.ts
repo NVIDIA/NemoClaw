@@ -18,6 +18,9 @@ export default class InternalInstallerPlanCommand extends NemoClawCommand {
     "<%= config.bin %> internal installer plan --json --provider nim --install-ref v0.1.0",
   ];
   static flags = {
+    "defer-onboarding": Flags.boolean({ hidden: true }),
+    "deferred-onboarding-decision": Flags.boolean({ hidden: true }),
+    "deferred-onboarding-supported": Flags.boolean({ hidden: true }),
     json: jsonFlag("Print the installer plan as JSON"),
     "install-ref": Flags.string({ description: "Install ref override" }),
     "install-tag": Flags.string({ description: "Install tag fallback" }),
@@ -33,12 +36,15 @@ export default class InternalInstallerPlanCommand extends NemoClawCommand {
       hidden: true,
     }),
     provider: Flags.string({ description: "Installer provider value" }),
+    "registered-sandbox-count": Flags.integer({ default: 0, hidden: true, min: 0 }),
     "stamped-version": Flags.string({ description: "Stamped .version fallback", hidden: true }),
   };
 
   public async run(): Promise<void> {
     const { flags } = await this.parse(InternalInstallerPlanCommand);
     const plan = buildInstallerPlan({
+      deferredOnboardingRequested: flags["defer-onboarding"],
+      deferredOnboardingRuntimeSupported: flags["deferred-onboarding-supported"],
       env: {
         ...process.env,
         NEMOCLAW_INSTALL_REF: flags["install-ref"] ?? process.env.NEMOCLAW_INSTALL_REF,
@@ -50,10 +56,13 @@ export default class InternalInstallerPlanCommand extends NemoClawCommand {
       npmPrefix: flags["npm-prefix"],
       npmVersion: flags["npm-version"],
       packageJsonVersion: flags["package-json-version"],
+      registeredSandboxCount: flags["registered-sandbox-count"],
       stampedVersion: flags["stamped-version"],
     });
 
-    if (flags.json) this.logJson(plan);
+    if (flags["deferred-onboarding-decision"]) {
+      console.log(plan.deferredOnboarding.decision);
+    } else if (flags.json) this.logJson(plan);
     else console.log("Installer plan built. Re-run with --json for redacted details.");
   }
 }

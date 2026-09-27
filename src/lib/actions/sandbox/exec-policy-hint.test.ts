@@ -268,7 +268,7 @@ describe("maybeEmitScopeUpgradeHint (#9744)", () => {
     };
   };
 
-  it("names the devices-list review command after a failed openclaw command", async () => {
+  it("names the prepared connect shell after a failed openclaw command", async () => {
     const h = harness();
     const hint = await maybeEmitScopeUpgradeHint(
       "nemoclaw",
@@ -278,7 +278,8 @@ describe("maybeEmitScopeUpgradeHint (#9744)", () => {
       OPENCLAW_CRON_ADD,
       h.base,
     );
-    expect(hint).toContain("nemoclaw my-assistant exec -- openclaw devices list");
+    expect(hint).toContain("nemoclaw my-assistant connect");
+    expect(hint).toContain("openclaw devices list --json");
     expect(h.lines).toEqual([hint]);
   });
 
@@ -301,7 +302,8 @@ describe("maybeEmitScopeUpgradeHint (#9744)", () => {
         OPENCLAW_CRON_ADD,
         h.base,
       );
-      expect(hint).toContain("nemoclaw my-assistant exec -- openclaw devices approve <requestId>");
+      expect(hint).toContain("openclaw devices approve <requestId>");
+      expect(hint).not.toContain("exec -- openclaw devices approve");
       expect(hint).not.toContain(leakedId);
       expect(hint).not.toContain("operator.admin");
       expect(hint).not.toContain("unrelated-device-fingerprint");

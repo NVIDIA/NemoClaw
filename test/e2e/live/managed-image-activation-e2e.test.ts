@@ -14,24 +14,24 @@ test(
       e2ePhases: [
         "validate exact candidate catalog and host runtime",
         "onboard and exercise OpenClaw",
-        "restart OpenShell gateway and recheck OpenClaw",
+        "stop and start OpenClaw through public NemoClaw lifecycle",
         "destroy and verify OpenClaw cleanup",
         "onboard and exercise Hermes",
         "prove Hermes secret-boundary refusal before native restart",
-        "restart OpenShell gateway and recheck Hermes",
+        "stop and start Hermes through public NemoClaw lifecycle",
         "destroy and verify Hermes cleanup",
         "onboard and exercise Deep Agents Code",
-        "restart OpenShell gateway and recheck Deep Agents Code",
+        "stop and start Deep Agents Code through public NemoClaw lifecycle",
         "destroy and verify Deep Agents Code cleanup",
         "prove buildless all-agent activation",
       ],
     },
   },
   async ({ artifacts, cleanup, host, lifecycle, progress, sandbox }) => {
+    const containerEngine = process.env.NEMOCLAW_GATEWAY_RUNTIME === "podman" ? "Podman" : "Docker";
     await artifacts.target.declare({
       id: "managed-image-activation",
-      boundary:
-        "exact candidate CLI and published all-agent managed-image digests through real Docker, OpenShell, agent turns, gateway restart readiness, and exact cleanup",
+      boundary: `exact candidate CLI and published all-agent managed-image digests through real ${containerEngine}, OpenShell, agent turns, gateway restart readiness, and exact cleanup`,
       agents: ["openclaw", "hermes", "langchain-deepagents-code"],
       syntheticBoundary:
         "Only the OpenAI-compatible inference response is synthetic; runtime construction and agent execution are real.",

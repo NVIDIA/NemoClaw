@@ -636,11 +636,11 @@ exit 0
       expect(result.status).toBe(0);
       const output = `${result.stdout}${result.stderr}`;
       expect(output).toMatch(/NemoHermes Uninstaller/);
-      expect(output).toMatch(/\[3\/6\] NemoHermes CLI/);
+      expect(output).toMatch(/\[4\/6\] NemoHermes CLI/);
       expect(output).toMatch(/Removed global NemoHermes CLI package/);
       expect(output).toMatch(/Hermes has left the tidepool/);
       expect(output).not.toMatch(/NemoClaw Uninstaller/);
-      expect(output).not.toMatch(/\[3\/6\] NemoClaw CLI/);
+      expect(output).not.toMatch(/\[4\/6\] NemoClaw CLI/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

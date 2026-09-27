@@ -15,8 +15,10 @@ export type InstalledTelegramRuntimeProof = {
   messageId: string;
 };
 
-const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? `e2e-msg-${process.pid}`;
-const LOCAL_PROOF_SCRIPT = path.join(REPO_ROOT, "test/e2e/lib/installed-telegram-runtime-proof.ts");
+const LOCAL_PROOF_SCRIPT = path.join(
+  REPO_ROOT,
+  "test/e2e/fixtures/installed-telegram-runtime-proof.ts",
+);
 const REMOTE_PROOF_SCRIPT = `/tmp/nemoclaw-installed-telegram-runtime-proof-${process.pid}.ts`;
 const ATOMIC_PROOF_RUNNER = [
   "set -eu",
@@ -50,6 +52,7 @@ function parseInstalledTelegramProof(stdout: string): InstalledTelegramRuntimePr
 
 export async function sendWithInstalledTelegramRuntime(
   sandbox: SandboxClient,
+  sandboxName: string,
   fakeTelegram: { port: string },
   target: string,
   text: string,
@@ -59,7 +62,7 @@ export async function sendWithInstalledTelegramRuntime(
     "base64",
   );
   const result = await sandbox.exec(
-    SANDBOX_NAME,
+    sandboxName,
     [
       "sh",
       "-lc",

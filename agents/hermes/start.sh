@@ -1921,6 +1921,31 @@ hermes_tracked_service_owns_listener() {
   esac
 }
 
+hermes_find_reparented_role_listener_pid() {
+  local role="$1"
+  local service_user="$2"
+  local port="$3"
+  local previous_pid="${4:-}"
+  local proc_dir pid
+  local matched_pid=""
+
+  for proc_dir in "${_HERMES_PROC_ROOT}"/[0-9]*; do
+    [ -d "$proc_dir" ] || continue
+    pid="${proc_dir##*/}"
+    [ "$pid" != "$previous_pid" ] || continue
+    hermes_process_role_identity "$role" "$pid" "$service_user" "$port" >/dev/null 2>&1 \
+      || continue
+    hermes_tracked_service_owns_listener "$pid" "$port" "$service_user" || continue
+    # A unique role-and-listener match is the only safe launcher handoff. An
+    # ambiguous match stays fail-closed so a sibling process is never adopted.
+    [ -z "$matched_pid" ] || return 1
+    matched_pid="$pid"
+  done
+
+  [ -n "$matched_pid" ] || return 1
+  printf '%s' "$matched_pid"
+}
+
 start_socat_forwarder() {
   local public_port="$1"
   local internal_port="$2"
@@ -1931,6 +1956,8 @@ start_socat_forwarder() {
   local _socat_pid
   local _socat_role=""
   local owner_role=""
+  local adopted_owner_pid=""
+  local adopted_owner_identity=""
 
   case "$owner_user" in
     gateway) owner_role=gateway ;;
@@ -1955,8 +1982,20 @@ start_socat_forwarder() {
       if [ -z "$owner_role" ] \
         || ! hermes_tracked_role_is_current \
           "$owner_role" "$owner_pid" "$owner_user" "$internal_port"; then
-        echo "[gateway] ${label} service owner pid ${owner_pid} exited before binding 127.0.0.1:${internal_port}" >&2
-        return 1
+        if [ "$owner_role" = dashboard ]; then
+          if adopted_owner_pid="$(hermes_find_reparented_role_listener_pid \
+            "$owner_role" "$owner_user" "$internal_port" "$owner_pid")" \
+            && adopted_owner_identity="$(hermes_process_role_identity \
+              "$owner_role" "$adopted_owner_pid" "$owner_user" "$internal_port")"; then
+            owner_pid="$adopted_owner_pid"
+            hermes_set_role_identity "$owner_role" "$adopted_owner_identity"
+            DASHBOARD_PID="$owner_pid"
+            echo "[gateway] ${label} service handed off to verified listener owner pid ${owner_pid}" >&2
+          fi
+        else
+          echo "[gateway] ${label} service owner pid ${owner_pid} exited before binding 127.0.0.1:${internal_port}" >&2
+          return 1
+        fi
       fi
       if hermes_tracked_service_owns_listener "$owner_pid" "$internal_port" "$owner_user"; then
         internal_ready=1
@@ -2945,7 +2984,7 @@ launch_hermes_gateway_current_user() {
 
 # With --external-supervisor, Hermes 0.21.3 handles SIGUSR1 by exiting with
 # EX_TEMPFAIL (75). In the non-root OpenShell topology, this entrypoint remains
-# alive and relaunches the gateway immediately for that status. The image patch
+# alive and relaunches the gateway within its rate limit for that status. The image patch
 # maps an unplanned SIGTERM under this external supervisor to private status 79.
 # A clean stop or that exact status is held until the privileged recovery
 # transaction restores its cron gate. Other failures propagate to OpenShell.
@@ -3121,7 +3160,7 @@ relaunch_hermes_gateway_current_user() {
 }
 
 supervise_hermes_service_restarts_current_user() {
-  local gateway_status=0 restart_time
+  local gateway_status=0 restart_time restart_delay
   local -a service_restart_times=()
 
   while :; do
@@ -3136,11 +3175,19 @@ supervise_hermes_service_restarts_current_user() {
         && [ "$((restart_time - service_restart_times[0]))" -gt "$HERMES_SERVICE_RESTART_WINDOW_SECONDS" ]; do
         service_restart_times=("${service_restart_times[@]:1}")
       done
+      # Native MCP/config changes use the same restart status as Hermes itself.
+      # Preserve the rate limit without killing the sandbox after a valid burst.
+      while [ "${#service_restart_times[@]}" -ge "$((HERMES_SERVICE_RESTART_MAX - 1))" ]; do
+        restart_delay=$((service_restart_times[0] + HERMES_SERVICE_RESTART_WINDOW_SECONDS + 1 - restart_time))
+        echo "[gateway] Hermes service-managed restart rate limit reached; waiting ${restart_delay} seconds before relaunch" >&2
+        sleep "$restart_delay" || return 1
+        restart_time="$SECONDS"
+        while [ "${#service_restart_times[@]}" -gt 0 ] \
+          && [ "$((restart_time - service_restart_times[0]))" -gt "$HERMES_SERVICE_RESTART_WINDOW_SECONDS" ]; do
+          service_restart_times=("${service_restart_times[@]:1}")
+        done
+      done
       service_restart_times+=("$restart_time")
-      if [ "${#service_restart_times[@]}" -ge "$HERMES_SERVICE_RESTART_MAX" ]; then
-        echo "[CRITICAL] Hermes gateway pid ${GATEWAY_PID} start identity ${GATEWAY_PID_START_IDENTITY:-unknown} requested ${HERMES_SERVICE_RESTART_MAX} service-managed restarts within ${HERMES_SERVICE_RESTART_WINDOW_SECONDS} seconds; relaunch is stopped for this supervisor instance; run 'nemoclaw <name> stop' followed by 'nemoclaw <name> start' to reset the supervisor, then inspect gateway logs if restart requests recur" >&2
-        return 1
-      fi
       echo "[gateway] Hermes requested a service-managed restart; relaunching under the existing OpenShell entrypoint" >&2
     else
       return "$gateway_status"

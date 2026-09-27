@@ -3,7 +3,10 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import * as dockerContainer from "../adapters/docker/container";
+import * as dockerRun from "../adapters/docker/run";
 import type { DockerGpuPatchFailureContext, DockerGpuPatchResult } from "./docker-gpu-patch";
+import type { DockerGpuPatchDeps } from "./docker-gpu-patch-types";
 import { createDockerGpuSandboxCreatePatch } from "./docker-gpu-sandbox-create";
 
 function deferredCreateResult(): DockerGpuPatchResult {
@@ -25,10 +28,10 @@ function deferredCreateResult(): DockerGpuPatchResult {
 
 function makeDeps() {
   return {
-    runOpenshell: vi.fn(() => ({ status: 0 })),
-    runCaptureOpenshell: vi.fn(() => ""),
-    sleep: vi.fn(),
-    dockerCapture: vi.fn(() => ""),
+    runOpenshell: vi.fn<NonNullable<DockerGpuPatchDeps["runOpenshell"]>>(() => ({ status: 0 })),
+    runCaptureOpenshell: vi.fn<NonNullable<DockerGpuPatchDeps["runCaptureOpenshell"]>>(() => ""),
+    sleep: vi.fn<NonNullable<DockerGpuPatchDeps["sleep"]>>(),
+    dockerCapture: vi.fn<NonNullable<DockerGpuPatchDeps["dockerCapture"]>>(() => ""),
   };
 }
 
@@ -240,7 +243,9 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
 
     patch.maybeApplyDuringCreate();
     await patch.waitForSupervisorReconnectIfNeeded();
-    await patch.rollbackManagedStartupAfterCreateFailure();
+    await expect(patch.rollbackManagedStartupAfterCreateFailure()).rejects.toThrow(
+      "pre-patch container was not restored",
+    );
 
     expect(finalizeBackup).toHaveBeenCalledWith({ result, supervisorReady: false }, deps);
     expect(onPatchFailureExit).toHaveBeenCalledWith(
@@ -357,13 +362,13 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     patch.maybeApplyDuringCreate();
 
     const failure = (await patch.commitAfterReady().catch((error: unknown) => error)) as Error & {
-      managedBootstrapRollbackError?: unknown;
+      runtimeRollbackError?: unknown;
     };
 
     expect(onPatchFailureExit).toHaveBeenCalledWith("alpha", failure, expect.any(Object));
-    expect(failure.managedBootstrapRollbackError).toBe(rollbackError);
+    expect(failure.runtimeRollbackError).toBe(rollbackError);
     expect(failure.message).toContain(
-      "Managed bootstrap rollback requires attention: Rollback failed: <REDACTED>",
+      "Runtime rollback requires attention: Rollback failed: <REDACTED>",
     );
     expect(failure.message).not.toContain(secret);
     expect(rollbackError.message).toBe("Rollback failed: <REDACTED>");
@@ -416,6 +421,144 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     expect(context.rolledBack).toBe(true);
     expect(context.newContainerId).toBe("new-container-id");
     expect(context.backupContainerName).toBe(result.backupContainerName);
+  });
+
+  it("uses production Docker evidence to reconcile one stale OpenShell Error row (#11905)", async () => {
+    const injected = makeDeps();
+    const deps = {
+      runOpenshell: injected.runOpenshell,
+      runCaptureOpenshell: injected.runCaptureOpenshell,
+      sleep: injected.sleep,
+    };
+    const result = deferredCreateResult();
+    const inspectResponses = new Map([
+      ["{{json .State}}", JSON.stringify({ Running: true, Status: "running" })],
+      ["{{.Name}}", `/${result.originalName}\n`],
+    ]);
+    const capture = vi
+      .spyOn(dockerRun, "dockerCapture")
+      .mockImplementation(
+        (args: readonly string[]) => inspectResponses.get(String(args[2] ?? "")) ?? "",
+      );
+    const logs = vi
+      .spyOn(dockerContainer, "dockerLogs")
+      .mockReturnValue("OpenShell Sandbox Supervisor success\n");
+    const waitForSupervisor = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    const finalizeBackup = vi.fn();
+    const onPatchFailureExit = vi.fn();
+    const patch = createDockerGpuSandboxCreatePatch({
+      route: "compatibility",
+      sandboxName: "alpha",
+      timeoutSecs: 60,
+      deps,
+      overrides: {
+        findContainerIds: vi.fn(() => ["existing-container"]),
+        recreatePatch: vi.fn(() => result),
+        waitForSupervisor,
+        finalizeBackup,
+        onPatchFailureExit,
+      },
+    });
+
+    patch.maybeApplyDuringCreate();
+    await patch.waitForSupervisorReconnectIfNeeded();
+
+    expect(waitForSupervisor).toHaveBeenCalledTimes(2);
+    expect(capture).toHaveBeenCalledTimes(2);
+    expect(logs).toHaveBeenCalledWith(result.newContainerId, {
+      tail: 256,
+      timeout: 60_000,
+    });
+    expect(deps.runOpenshell).toHaveBeenNthCalledWith(
+      1,
+      ["sandbox", "stop", "alpha"],
+      expect.objectContaining({ timeout: 60_000 }),
+    );
+    expect(deps.runOpenshell).toHaveBeenNthCalledWith(
+      2,
+      ["sandbox", "start", "alpha"],
+      expect.objectContaining({ timeout: 60_000 }),
+    );
+    expect(finalizeBackup).not.toHaveBeenCalled();
+    expect(onPatchFailureExit).not.toHaveBeenCalled();
+  });
+
+  it("attempts the bounded start after a stale Error row rejects stop (#11905)", async () => {
+    const deps = makeDeps();
+    const result = deferredCreateResult();
+    deps.dockerCapture.mockImplementation((args: readonly string[]) =>
+      args.includes("{{json .State}}")
+        ? JSON.stringify({ Running: true, Status: "running" })
+        : `/${result.originalName}\n`,
+    );
+    deps.runOpenshell.mockReturnValue({ status: 1 });
+    const waitForSupervisor = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    const patch = createDockerGpuSandboxCreatePatch({
+      route: "compatibility",
+      sandboxName: "alpha",
+      timeoutSecs: 60,
+      deps: { ...deps, dockerLogs: vi.fn(() => "OpenShell Sandbox Supervisor success\n") },
+      overrides: {
+        findContainerIds: vi.fn(() => ["existing-container"]),
+        recreatePatch: vi.fn(() => result),
+        waitForSupervisor,
+        finalizeBackup: vi.fn(),
+        onPatchFailureExit: vi.fn(),
+      },
+    });
+
+    patch.maybeApplyDuringCreate();
+    await patch.waitForSupervisorReconnectIfNeeded();
+
+    expect(deps.runOpenshell).toHaveBeenNthCalledWith(
+      1,
+      ["sandbox", "stop", "alpha"],
+      expect.objectContaining({ timeout: 60_000 }),
+    );
+    expect(deps.runOpenshell).toHaveBeenNthCalledWith(
+      2,
+      ["sandbox", "start", "alpha"],
+      expect.objectContaining({ timeout: 60_000 }),
+    );
+    expect(waitForSupervisor).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not reconcile a stale row without exact replacement supervisor evidence (#11905)", async () => {
+    const deps = makeDeps();
+    const result = deferredCreateResult();
+    deps.dockerCapture.mockImplementation((args: readonly string[]) =>
+      args.includes("{{json .State}}")
+        ? JSON.stringify({ Running: true, Status: "running" })
+        : `/${result.originalName}\n`,
+    );
+    const waitForSupervisor = vi.fn(async () => false);
+    const finalizeBackup = vi.fn(async () => ({ backupRemoved: false, rolledBack: true }));
+    const onPatchFailureExit = vi.fn();
+    const patch = createDockerGpuSandboxCreatePatch({
+      route: "compatibility",
+      sandboxName: "alpha",
+      timeoutSecs: 60,
+      deps: { ...deps, dockerLogs: vi.fn(() => "supervisor still starting\n") },
+      overrides: {
+        findContainerIds: vi.fn(() => ["existing-container"]),
+        recreatePatch: vi.fn(() => result),
+        waitForSupervisor,
+        finalizeBackup,
+        capturePreRollbackDiagnostics: vi.fn(() => null),
+        onPatchFailureExit,
+      },
+    });
+
+    patch.maybeApplyDuringCreate();
+    await patch.waitForSupervisorReconnectIfNeeded();
+
+    expect(waitForSupervisor).toHaveBeenCalledOnce();
+    expect(deps.runOpenshell).not.toHaveBeenCalled();
+    expect(finalizeBackup).toHaveBeenCalledWith(
+      { result, supervisorReady: false },
+      expect.anything(),
+    );
+    expect(onPatchFailureExit).toHaveBeenCalledOnce();
   });
 
   it("reports rolledBack=false in diagnostics when rollback itself fails", async () => {
@@ -527,7 +670,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     const rollbackError = new Error(`Rollback failed: ${secret}`);
     rollbackError.stack = `Rollback stack: ${secret}`;
     const patchError = new Error("docker rename failed") as Error & {
-      managedBootstrapRollbackError?: unknown;
+      runtimeRollbackError?: unknown;
     };
     const onPatchFailureExit = vi.fn();
     const patch = createDockerGpuSandboxCreatePatch({
@@ -569,9 +712,9 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     await patch.exitOnPatchError();
 
     expect(onPatchFailureExit).toHaveBeenCalledWith("alpha", patchError, expect.any(Object));
-    expect(patchError.managedBootstrapRollbackError).toBe(rollbackError);
+    expect(patchError.runtimeRollbackError).toBe(rollbackError);
     expect(patchError.message).toContain(
-      "Managed bootstrap rollback requires attention: Rollback failed: <REDACTED>",
+      "Runtime rollback requires attention: Rollback failed: <REDACTED>",
     );
     expect(patchError.message).not.toContain(secret);
     expect(rollbackError.message).toBe("Rollback failed: <REDACTED>");
@@ -674,8 +817,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     const failure = await patch.verifyGpuOrExit(verifyGpu).catch((error: unknown) => error);
 
     expect(failure).toBeInstanceOf(Error);
-    const stored = (failure as Error & { managedBootstrapRollbackError?: unknown })
-      .managedBootstrapRollbackError;
+    const stored = (failure as Error & { runtimeRollbackError?: unknown }).runtimeRollbackError;
     const output = vi.mocked(console.error).mock.calls.flat().join("\n");
     expect(verifyGpu).not.toHaveBeenCalled();
     expect(output).not.toContain(secret);
@@ -693,7 +835,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     rollbackError.stack = `Rollback stack: ${secret}`;
     Object.freeze(rollbackError);
     const proofError = new Error("nvidia-smi failed") as Error & {
-      managedBootstrapRollbackError?: unknown;
+      runtimeRollbackError?: unknown;
     };
     const patch = createDockerGpuSandboxCreatePatch({
       route: "native",
@@ -732,13 +874,13 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     const output = vi.mocked(console.error).mock.calls.flat().join("\n");
     expect(output).not.toContain(secret);
     expect(output).toContain("diagnostic details were redacted");
-    expect(proofError.managedBootstrapRollbackError).toBeInstanceOf(Error);
-    expect(proofError.managedBootstrapRollbackError).not.toBe(rollbackError);
+    expect(proofError.runtimeRollbackError).toBeInstanceOf(Error);
+    expect(proofError.runtimeRollbackError).not.toBe(rollbackError);
     expect(proofError.message).toContain(
-      "Managed bootstrap rollback requires attention: Onboarding failed; diagnostic details were redacted",
+      "Runtime rollback requires attention: Onboarding failed; diagnostic details were redacted",
     );
     expect(proofError.message).not.toContain(secret);
-    expect((proofError.managedBootstrapRollbackError as Error).message).not.toContain(secret);
+    expect((proofError.runtimeRollbackError as Error).message).not.toContain(secret);
     expect(rollbackError.message).toContain(secret);
     expect(rollbackError.stack).toContain(secret);
   });

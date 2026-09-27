@@ -51,7 +51,7 @@ function probeStdout(
 }
 
 describe("MCP credential-resolution probe command security", () => {
-  it("validates and silences proxy env before framing nonce-bound runtime curls (#6379)", () => {
+  it("validates and silences proxy env before framing nonce-bound adapter HTTP (#6379)", () => {
     const built = buildCredentialResolutionProbeCommand(baseEntry, "openclaw-config", "v11");
     expect(built).not.toBeNull();
     const command = built?.command ?? "";
@@ -59,7 +59,7 @@ describe("MCP credential-resolution probe command security", () => {
     const sourceIndex = command.indexOf('. "$proxy_env"');
     const unsetIndex = command.indexOf(`unset ${PROBE_SANITIZED_ENV_VARS.join(" ")}`);
     const frameIndex = command.indexOf(built?.resultMarker ?? "missing-result-marker");
-    const firstChildIndex = command.indexOf("curl");
+    const runtimeIndex = command.indexOf("nemoclaw-start node -e");
 
     expect(command).toContain("expected regular root-owned mode 444 file");
     expect(command).toContain('. "$proxy_env" >/dev/null 2>&1');
@@ -67,29 +67,44 @@ describe("MCP credential-resolution probe command security", () => {
     expect(sourceIndex).toBeGreaterThan(validationIndex);
     expect(unsetIndex).toBeGreaterThan(sourceIndex);
     expect(frameIndex).toBeGreaterThan(unsetIndex);
-    expect(firstChildIndex).toBeGreaterThan(frameIndex);
-    expect(command).toContain("nemoclaw-start node -e");
-    expect(command).toContain("'authorization: Bearer openshell:resolve:env:v11_GITHUB_TOKEN'");
-    expect(command).not.toContain("'authorization: Bearer openshell:resolve:env:GITHUB_TOKEN'");
-    expect(command).toContain(`'authorization: Bearer ${MCP_PROBE_CONTROL_BEARER}'`);
-    expect(command).toContain('"method":"initialize"');
+    expect(runtimeIndex).toBeGreaterThan(frameIndex);
+    expect(command).toContain("openshell:resolve:env:v11_GITHUB_TOKEN");
+    expect(command).not.toContain("openshell:resolve:env:GITHUB_TOKEN");
+    expect(command).toContain(MCP_PROBE_CONTROL_BEARER);
+    expect(command).toContain('\\"method\\":\\"initialize\\"');
     expect(command).toContain(`${MCP_PROBE_HTTP_MARKER}${built?.resultMarker}:`);
     expect(command).toContain(`${MCP_PROBE_CONTROL_HTTP_MARKER}${built?.resultMarker}:`);
     expect(command.trimEnd().endsWith("exit 0")).toBe(true);
   });
 
   it.each([
-    { adapter: "openclaw-config" as const, runtime: "nemoclaw-start node -e" },
-    { adapter: "hermes-config" as const, runtime: "/opt/hermes/.venv/bin/python -I -c" },
-    { adapter: "deepagents-config" as const, runtime: "/opt/venv/bin/python3 -I -c" },
+    {
+      adapter: "openclaw-config" as const,
+      runtime: "nemoclaw-start node -e",
+      client: "fetch(url",
+    },
+    {
+      adapter: "hermes-config" as const,
+      runtime: "/opt/hermes/.venv/bin/python -I -c",
+      client: "urllib.request.Request",
+    },
+    {
+      adapter: "deepagents-config" as const,
+      runtime: "/opt/venv/bin/python3 -I -c",
+      client: "urllib.request.Request",
+    },
   ])(
-    "uses the $adapter runtime without capturing endpoint bodies (#6379)",
-    ({ adapter, runtime }) => {
+    "uses the $adapter runtime as the socket-owning HTTP client without capturing bodies (#6379)",
+    ({ adapter, runtime, client }) => {
       const command =
         buildCredentialResolutionProbeCommand(baseEntry, adapter, "v11")?.command ?? "";
 
       expect(command).toContain(runtime);
-      expect(command).toContain("'/dev/null'");
+      expect(command).toContain(client);
+      expect(command).not.toMatch(/(?:^|[\s'"=/])curl(?:[\s'"-]|$)/u);
+      expect(command).not.toContain("arrayBuffer");
+      expect(command).not.toContain("resp.read()");
+      expect(command).not.toContain("err.read()");
       expect(command).not.toContain("head -c");
       expect(command).not.toContain("mktemp");
     },
@@ -134,7 +149,7 @@ describe("MCP credential-resolution probe command security", () => {
     );
     expect(built).not.toBeNull();
     expect(built?.command).toContain("https://172.17.0.2:8443/mcp");
-    expect(built?.command).toContain("'authorization: Bearer openshell:resolve:env:v11_MCP_KEY'");
+    expect(built?.command).toContain("openshell:resolve:env:v11_MCP_KEY");
     expect(
       buildCredentialResolutionProbeCommand(unrecordedPrivateEntry, "openclaw-config", "v11"),
     ).toBeNull();

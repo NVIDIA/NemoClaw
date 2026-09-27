@@ -162,15 +162,33 @@ Cross-sandbox restore from a stopped source is available for Docker- and VM-driv
 
 For a new destination, NemoClaw waits for the owning gateway to report the sandbox as Ready with a valid live identity. It checks that identity again immediately before registration. NemoClaw assigns the destination a new lifecycle generation instead of copying the source sandbox's generation.
 
+### Recover a Failed Cross-Sandbox Clone
+
 If NemoClaw cannot securely remove the temporary clone policy after destination creation, it leaves the destination as a pending clone and does not restore snapshot state. Inspect and remove the task-owned file identified by the error, then rerun the same restore without `--force` so NemoClaw can reconcile the destination without deleting or recreating it.
 
-If the destination is not Ready with the same valid identity, the restore exits nonzero before registration or state restore. The OpenShell sandbox remains created but unregistered, so `--force` cannot select it for deletion. Run the exact owner-scoped deletion command printed by the failure:
+If NemoClaw cannot confirm the same valid destination identity after a clone create-attempt, it prints a create-attempt label.
+NemoClaw also keeps the clone's exact route and create-attempt record.
+Run the printed selector command.
+Do not retry the restore while the selector reports a sandbox or OpenShell cannot confirm the result.
+Retry only when the selector and destination name are absent and the retained route reservation still matches the snapshot source.
+If NemoClaw reports a route mismatch, preserve the recovery record and stop.
+NemoClaw removes only the matching retained route reservation before it starts a new create attempt.
+If the selector identifies a sandbox, resolve that retained sandbox through its owning gateway before you retry.
+
+If NemoClaw confirms the destination identity but cannot register or publish it, the restore exits nonzero before state restore.
+If the failure reports that the pending clone changed during registration, NemoClaw preserves the current registry row.
+If the pending row and live destination still match this restore, retry the same command without `--force` so NemoClaw can reconcile them.
+If you cannot prove that match, preserve the error and pending row for maintainer review.
+Do not use `--force` or delete the destination by name when ownership is uncertain.
+If the failure confirms an unregistered destination, run the owner-scoped deletion command that it prints:
 
 ```bash
 openshell sandbox delete -g '<owning-gateway>' '<destination>'
 ```
 
 After OpenShell deletes the destination, rerun the original `snapshot restore --to` command.
+
+Use this name-based deletion only when the error confirms that OpenShell created an unregistered destination. Do not use it for an ambiguous create result.
 
 For dashboard-enabled agents, NemoClaw allocates the destination sandbox its own dashboard port instead of reusing the source port. If no port is available, restore stops before deleting an existing `--force` destination.
 
@@ -257,10 +275,10 @@ Run `$$nemoclaw backup-all` before broad maintenance such as `$$nemoclaw update`
 $$nemoclaw backup-all
 ```
 
-`backup-all` walks the sandboxes registered on the host, creates a snapshot for each eligible running or temporarily started sandbox, and stores the snapshot bundles under `~/.nemoclaw/rebuild-backups/<name>/`. If a registered docker-driver sandbox's container is stopped, `backup-all` starts the container for the duration of the backup and returns it to its stopped state afterward. If the container cannot be returned to the stopped state, the backup run fails and reports that the container was left running. If a sandbox is not running and its container cannot be started this way, start the sandbox or its container and rerun `$$nemoclaw backup-all`.
+`backup-all` walks the sandboxes registered on the host, creates a snapshot for each eligible running or temporarily started sandbox, and stores the snapshot bundles under `~/.nemoclaw/rebuild-backups/<name>/`. If a registered standard sandbox is stopped, `backup-all` asks OpenShell to start that exact sandbox for the duration of the backup and asks OpenShell to return it to `Stopped` afterward. If either lifecycle transition fails, the backup run fails with the affected sandbox named. Correct the reported OpenShell lifecycle problem, run `$$nemoclaw <name> start` when appropriate, and rerun `$$nemoclaw backup-all`; do not start or stop the provider container directly.
 
 For each eligible sandbox, `backup-all` holds one lifecycle transaction through the complete backup.
-Within that transaction, it starts a stopped container when required, copies sandbox state, and returns any container it started to the stopped state.
+Within that transaction, it asks OpenShell to start a stopped sandbox when required, copies sandbox state, and asks OpenShell to return that sandbox to `Stopped`.
 A backup failure marks that sandbox as failed, and `backup-all` continues with the next sandbox.
 
 When a backup fails, NemoClaw identifies the affected state item and reports `permission denied`, `tar read error`, or `absent after extraction` when available. Use `$$nemoclaw <name> snapshot list` and `$$nemoclaw <name> snapshot restore` to inspect or restore one sandbox's bundles later.

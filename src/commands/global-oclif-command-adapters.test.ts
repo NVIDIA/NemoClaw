@@ -217,11 +217,11 @@ describe("global oclif command adapters", () => {
   });
 
   it("maps maintenance flags to typed action options", async () => {
-    await BackupAllCommand.run([], rootDir);
+    await BackupAllCommand.run(["--retire-legacy-forwards"], rootDir);
     await UpgradeSandboxesCommand.run(["--check", "--yes"], rootDir);
     await GarbageCollectImagesCommand.run(["--dry-run", "--force"], rootDir);
 
-    expect(mocks.runBackupAllAction).toHaveBeenCalledWith();
+    expect(mocks.runBackupAllAction).toHaveBeenCalledWith({ retireLegacyForwards: true });
     expect(mocks.runUpgradeSandboxesAction).toHaveBeenCalledWith({
       auto: false,
       check: true,
