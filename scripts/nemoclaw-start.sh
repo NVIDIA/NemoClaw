@@ -4599,22 +4599,38 @@ const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 
 (async () => {
-  let packageRoot = path.dirname(fs.realpathSync(process.argv[2]));
-  for (let depth = 0; depth < 6; depth += 1) {
-    try {
-      const manifest = JSON.parse(fs.readFileSync(path.join(packageRoot, "package.json"), "utf8"));
-      if (manifest.name === "openclaw") break;
-    } catch {}
-    const parent = path.dirname(packageRoot);
-    if (parent === packageRoot) throw new Error("OpenClaw package root not found");
-    packageRoot = parent;
+  const executable = fs.realpathSync(process.argv[2]);
+  let current = fs.statSync(executable).isDirectory() ? executable : path.dirname(executable);
+  let packageRoot;
+  while (true) {
+    const candidates = [current];
+    if (path.basename(current) === "node_modules") {
+      candidates.unshift(path.join(current, "openclaw"));
+    }
+    for (const candidate of candidates) {
+      let manifest;
+      try {
+        manifest = JSON.parse(fs.readFileSync(path.join(candidate, "package.json"), "utf8"));
+      } catch {
+        continue;
+      }
+      if (manifest.name === "openclaw") {
+        packageRoot = candidate;
+        break;
+      }
+    }
+    if (packageRoot) break;
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
   }
+  if (!packageRoot) throw new Error("OpenClaw package root not found");
   const dist = path.join(packageRoot, "dist");
-  const candidates = fs
+  const leaseModules = fs
     .readdirSync(dist)
     .filter((name) => /^startup-migration-checkpoint-.*\.js$/.test(name))
     .sort();
-  for (const candidate of candidates) {
+  for (const candidate of leaseModules) {
     const loaded = await import(pathToFileURL(path.join(dist, candidate)).href);
     if (typeof loaded.hasActiveStartupMigrationLease !== "function") continue;
     process.exit(loaded.hasActiveStartupMigrationLease({ env: process.env }) ? 10 : 0);

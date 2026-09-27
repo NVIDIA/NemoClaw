@@ -47,6 +47,9 @@ const SNAPSHOT_NAME = "lifecycle";
 const BASELINE_EXCLUSION_KEY = "openclaw_docs";
 const NATIVE_GATEWAY_ORIGIN = "https://snapshot-native.example.test";
 const LIVE_TIMEOUT_MS = 36 * 60_000;
+// Restoring OpenClaw state can wait up to 330 seconds for the native startup-
+// migration lease before the gateway is released and its health is verified.
+const OPENCLAW_SNAPSHOT_RESTORE_TIMEOUT_MS = 8 * 60_000;
 const INFERENCE_API_KEY = "nvapi-snapshot-commands-fixture-credential";
 const INFERENCE_MODEL = "snapshot-commands-model";
 const OPENCLAW_MAIN_SESSION_STORE = "/sandbox/.openclaw/agents/main/sessions/sessions.json";
@@ -547,7 +550,7 @@ printf '%s' ${JSON.stringify(markerContent)} > ${JSON.stringify(MARKER_FILE)}`,
       {
         artifactName: "phase-4-restore-source-after-fresh-onboard",
         env: commandEnv(),
-        timeoutMs: 120_000,
+        timeoutMs: OPENCLAW_SNAPSHOT_RESTORE_TIMEOUT_MS,
       },
     );
     await expectSandboxFileContent(
@@ -579,7 +582,7 @@ printf '%s' ${JSON.stringify(markerContent)} > ${JSON.stringify(MARKER_FILE)}`,
       {
         artifactName: "phase-4-snapshot-restore-to-clone",
         env: commandEnv(),
-        timeoutMs: 5 * 60_000,
+        timeoutMs: OPENCLAW_SNAPSHOT_RESTORE_TIMEOUT_MS,
       },
     );
     const cloneRestoreResult = classifySnapshotRestoreResult(cloneRestore);

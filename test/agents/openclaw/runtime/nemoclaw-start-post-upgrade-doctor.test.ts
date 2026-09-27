@@ -122,7 +122,9 @@ function fixture() {
   const marker = path.join(configDir, ".nemoclaw-post-upgrade-doctor");
   const ready = path.join(root, "doctor-ready");
   const calls = path.join(root, "calls");
-  const openclaw = path.join(root, "openclaw-cli");
+  const nodeModules = path.join(root, "node_modules");
+  const packageRoot = path.join(nodeModules, "openclaw");
+  const openclaw = path.join(nodeModules, ".bin", "openclaw");
   const fakeBin = path.join(root, "bin");
   const stepDown = path.join(root, "step-down");
   const stepDownCalls = path.join(root, "step-down-calls");
@@ -130,13 +132,14 @@ function fixture() {
   const leaseViolation = path.join(root, "lease-violation");
   fs.mkdirSync(configDir);
   fs.mkdirSync(fakeBin);
-  fs.mkdirSync(path.join(root, "dist"));
+  fs.mkdirSync(path.dirname(openclaw), { recursive: true });
+  fs.mkdirSync(path.join(packageRoot, "dist"), { recursive: true });
   fs.writeFileSync(
-    path.join(root, "package.json"),
+    path.join(packageRoot, "package.json"),
     JSON.stringify({ name: "openclaw", type: "module" }),
   );
   fs.writeFileSync(
-    path.join(root, "dist", "startup-migration-checkpoint-test.js"),
+    path.join(packageRoot, "dist", "startup-migration-checkpoint-test.js"),
     `import fs from "node:fs";\nexport function hasActiveStartupMigrationLease() { return fs.existsSync(${JSON.stringify(leaseActive)}); }\n`,
   );
   fs.writeFileSync(
