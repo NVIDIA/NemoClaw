@@ -721,6 +721,8 @@ describe("connectSandbox flow", () => {
       "process.exit(1)",
     );
 
+    expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
+    expect(harness.ensureLiveSandboxSpy).not.toHaveBeenCalled();
     expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
     const errors = harness.errorSpy.mock.calls.flat().join("\n");
     expect(errors).toContain("current launch-readiness epoch could not be safely revalidated");
