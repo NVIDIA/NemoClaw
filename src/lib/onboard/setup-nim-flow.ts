@@ -1398,6 +1398,9 @@ export function createSetupNim(
         }
         if (selected.key === "vllm") {
           const state = preparedVllmState ?? createSelectionState();
+          const requestedServingProfile = requestedVllmServingProfileModel(
+            deps.resolveRequestedServingProfileModel,
+          );
           state.model = resolveInitialVllmSelectionModel({
             preparedState: preparedVllmState,
             requestedProvider,
@@ -1414,9 +1417,7 @@ export function createSetupNim(
           const result = await deps.handleVllmSelection(state, {
             managedInstall: preparedVllmState !== null,
             sparkHost: gpu?.spark === true,
-            servingProfileModel: requestedVllmServingProfileModel(
-              deps.resolveRequestedServingProfileModel,
-            ),
+            servingProfileModel: requestedServingProfile,
           });
           ({
             model,
@@ -1429,6 +1430,7 @@ export function createSetupNim(
           } = state);
           vllmModelIdentity = state.vllmModelIdentity;
           if (result === "retry-selection") continue selectionLoop;
+          selectedServingProfileProvenance = requestedServingProfile?.provenance ?? null;
           break;
         } else if (selected.key === "routed") {
           const state = createSelectionState();
