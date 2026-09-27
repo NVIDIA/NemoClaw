@@ -21,6 +21,7 @@ import { applyFixtureProviderPolicyEndpoint } from "../fixtures/gateway-provider
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   openClawHasConfiguredTelegram,
+  telegramArtifactContainsCredential,
   type OpenClawTelegramState,
 } from "./channels-add-remove-helpers.ts";
 import { sendWithInstalledTelegramRuntime } from "./messaging-providers-telegram-runtime-proof.ts";
@@ -361,10 +362,7 @@ function artifactFiles(root: string): string[] {
 function scanArtifactCredentialLeak(root: string): void {
   for (const file of artifactFiles(root)) {
     const content = fs.readFileSync(file, "utf8");
-    if (
-      content.includes(TELEGRAM_TOKEN) ||
-      /openshell:resolve:env:|OPENSHELL-RESOLVE-ENV-/.test(content)
-    ) {
+    if (telegramArtifactContainsCredential(content, TELEGRAM_TOKEN)) {
       throw new Error(`Telegram credential material persisted in ${path.basename(file)}`);
     }
   }

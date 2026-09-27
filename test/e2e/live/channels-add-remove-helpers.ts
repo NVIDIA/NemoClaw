@@ -26,3 +26,13 @@ export function openClawHasConfiguredTelegram(state: OpenClawTelegramState): boo
     state.pluginEnabled
   );
 }
+
+export function telegramArtifactContainsCredential(content: string, token: string): boolean {
+  // Match complete credential references, not the regex source retained in probe arguments.
+  return (
+    content.includes(token) ||
+    /(?:openshell:resolve:env:|OPENSHELL-RESOLVE-ENV-)(?:(?:v[0-9]+|s[a-f0-9]{64})_)?[A-Z][A-Z0-9_]*/u.test(
+      content,
+    )
+  );
+}
