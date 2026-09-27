@@ -507,9 +507,18 @@
         "test/e2e/support/channels-add-remove-helpers.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
-        "test/e2e/support/mcp-bridge-hermes-http.test.ts"
+        "test/e2e/support/mcp-bridge-hermes-http.test.ts",
+        "src/lib/messaging/channels/openclaw-bridge-health.test.ts",
+        "test/runtime/messaging/telegram-diagnostics.test.ts",
+        "test/e2e/support/messaging-providers-runtime-proofs.test.ts",
+        "test/e2e/support/hermes-discord-policy-binding.test.ts"
       ],
-      "liveSources": ["test/e2e/fixtures/sandbox-failure-diagnostics.ts"]
+      "liveSources": [
+        "test/e2e/fixtures/sandbox-failure-diagnostics.ts",
+        "test/e2e/live/channels-add-remove-helpers.ts",
+        "test/e2e/live/messaging-providers-telegram-runtime-proof.ts",
+        "test/e2e/fixtures/installed-telegram-runtime-proof.ts"
+      ]
     },
     {
       "live": "test/e2e/live/cloud-onboard.test.ts",
@@ -768,7 +777,8 @@
         "test/e2e/live/phase6-messaging-helpers.ts",
         "test/e2e/live/messaging-providers-slack-runtime-proof.ts",
         "test/e2e/live/messaging-providers-telegram-runtime-proof.ts",
-        "test/e2e/live/messaging-providers-wechat-runtime-proof.ts"
+        "test/e2e/live/messaging-providers-wechat-runtime-proof.ts",
+        "test/e2e/fixtures/installed-telegram-runtime-proof.ts"
       ],
       "fast": [
         "src/lib/messaging/channels/discord/credential-injection.test.ts",
@@ -783,7 +793,8 @@
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
         "test/agents/openclaw/runtime/nemoclaw-start-wechat-placeholder.test.ts",
-        "test/onboarding/effective-policy-contracts.test.ts"
+        "test/onboarding/effective-policy-contracts.test.ts",
+        "test/e2e/support/messaging-providers-telegram-runtime-proof.test.ts"
       ]
     },
     {
