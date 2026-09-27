@@ -64,10 +64,9 @@ The primary orchestration model remains responsible for conversation, planning, 
 ## Update the Sandbox Config
 
 <Note>
-  Finish the [Quickstart](../get-started/quickstart) and start the target sandbox before you run the
-  `docker exec` commands in this section. These commands run on the host that owns the sandbox
-  containers and discover the running sandbox container from the `openshell.ai/sandbox-name` Docker
-  label. If you have not created a sandbox yet, onboard one first, such as `my-assistant`.
+  Finish the [Quickstart](../get-started/quickstart) and start the target sandbox before you run the `docker exec` commands in this section.
+  These commands run on the host that owns the sandbox containers and discover the running sandbox container from the `openshell.ai/sandbox-name` Docker label.
+  If you have not created a sandbox yet, onboard one first, such as `my-assistant`.
 </Note>
 
 Fetch the current OpenClaw config from the sandbox.
@@ -109,8 +108,7 @@ Start the sandbox, confirm that `docker ps` shows the matching `openshell.ai/san
 
 Create `openclaw.updated.json` in the private temporary directory with the OpenClaw sub-agent config.
 For the Omni example, the demo provides `vlm-demo/vlm-subagent/openclaw-patch.py`.
-The helper expects strict JSON, so first use OpenClaw's pinned JSON5 parser to normalize the exported
-config without putting its contents in an argument or environment variable.
+The helper expects strict JSON, so first use OpenClaw's pinned JSON5 parser to normalize the exported config without putting its contents in an argument or environment variable.
 The wrapper reads the key without echoing it and keeps the value out of the child process's operating-system argument list.
 Set `VLM_DEMO_DIR` to the local `vlm-demo` directory from the demo assets, then run the patch helper.
 
@@ -217,8 +215,7 @@ Do not restart the gateway while the update result is uncertain.
 Reconnect and inspect the intended non-secret settings.
 Resolve the reported error before repeating this section.
 Restart the gateway only after the update succeeds.
-On success, OpenClaw serializes the complete config as standard JSON, so JSON5 comments and formatting
-in the original file are removed.
+On success, OpenClaw serializes the complete config as standard JSON, so JSON5 comments and formatting in the original file are removed.
 
 After the patch succeeds, restart the managed gateway.
 The restart verifies gateway health before it exits successfully.
@@ -280,10 +277,8 @@ The Omni demo helper stores the real provider key in two persistent sandbox file
 
 OpenClaw and any other process running as the sandbox user can read these files.
 Container root and administrators of the Docker host can also read them.
-The files remain across gateway restarts and for the life of the current sandbox container until you
-replace the key, remove the provider, or delete the sandbox.
-They do not survive a NemoClaw rebuild or snapshot restore: those flows strip credential values from
-`openclaw.json` and omit `auth-profiles.json`.
+The files remain across gateway restarts and for the life of the current sandbox container until you replace the key, remove the provider, or delete the sandbox.
+They do not survive a NemoClaw rebuild or snapshot restore: those flows strip credential values from `openclaw.json` and omit `auth-profiles.json`.
 Re-provision both copies before using the auxiliary provider after a rebuild or restore.
 
 When you remove `vision-operator`, first remove it from `agents.list`.
@@ -299,8 +294,7 @@ nemoclaw "$SANDBOX" gateway restart
 
 If you retarget `vision-operator` to another provider, do not delete the whole credential file.
 Remove only the retired `providers.nvidia-omni` entry and preserve every other provider entry.
-Then remove the retired provider from the native config with the `openclaw config unset` command above
-and restart the gateway.
+Then remove the retired provider from the native config with the `openclaw config unset` command above and restart the gateway.
 
 Removing the two active entries does not remove credentials from OpenClaw backups or rejected payloads.
 Replace the key in any other clients that still need it.

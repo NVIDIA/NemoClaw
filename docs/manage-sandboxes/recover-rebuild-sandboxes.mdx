@@ -335,13 +335,10 @@ Use the recovery guidance that matches the reported check:
 A gateway that reports no live inference route does not stop the rebuild. Replacement onboarding configures and verifies the recorded route before it recreates the sandbox.
 
 <AgentOnly variant="openclaw">
-  The rebuild command preserves the mounted workspace and carries the complete current OpenShell
-  sandbox. When no host web-search key is staged, rebuild preflight reuses an existing Brave or
-  Tavily credential only when the provider name, type, and credential key match the sandbox's
-  binding on its recorded OpenShell gateway. A missing or mismatched binding stops before recreation
-  and requires the matching host environment variable before you retry. Rebuild also restores the
-  complete credential-sanitized native `openclaw.json` file, so native OpenClaw configuration
-  changes survive sandbox replacement without a selective merge.
+  The rebuild command preserves the mounted workspace and carries the complete current OpenShell policy into sandbox recreation.
+  When no host web-search key is staged, rebuild preflight reuses an existing Brave or Tavily credential only when the provider name, type, and credential key match the sandbox's binding on its recorded OpenShell gateway.
+  A missing or mismatched binding stops before recreation and requires the matching host environment variable before you retry.
+  Rebuild also restores the complete credential-sanitized native `openclaw.json` file, so native OpenClaw configuration changes survive sandbox replacement without a selective merge.
   Rebuild preserves restored OpenClaw session model and provider selections, including selections that differ from the configured default.
 </AgentOnly>
 
