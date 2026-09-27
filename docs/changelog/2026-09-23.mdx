@@ -99,3 +99,8 @@ It also strengthens host OS reporting and Windows WSL GPU verification.
   If either action fails, onboarding retains the sandbox for recovery.
   Related change: [PR #12181](https://github.com/NVIDIA/NemoClaw/pull/12181).
   Refer to [Configure Corporate CA Trust](/user-guide/openclaw/security/configure-corporate-ca-trust) for the trust boundary.
+- MCP status reports public DNS pin drift without changing the live policy.
+  Refresh verified public pins with `nemoclaw <sandbox> mcp update <server> --refresh-public-pins`; the command replaces only the endpoint's `allowed_ips`.
+  It rejects private or special-use DNS answers and address ranges.
+  Related change: [PR #10781](https://github.com/NVIDIA/NemoClaw/pull/10781).
+  Refer to [Manage MCP Servers](/user-guide/openclaw/manage-sandboxes/mcp-servers/manage-mcp-servers#change-endpoint-pins) for recovery and verification.

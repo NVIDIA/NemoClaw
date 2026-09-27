@@ -15,6 +15,7 @@ import {
   mcpBridgeSource,
   openClawLifecycle,
   snapshotBackup,
+  pairingSettlement,
 } from "../../../../test/helpers/rebuild-flow-harness";
 import os from "node:os";
 import * as sandboxState from "../../state/sandbox";
@@ -26,6 +27,27 @@ import {
 
 describe("rebuildSandbox flow: recovery", () => {
   installRebuildFlowTestHooks();
+
+  it("retains prepared recovery when baseline write pairing is still pending", async () => {
+    const manifest = makePreparedRecoveryManifest();
+    const harness = createRebuildFlowHarness();
+    vi.mocked(pairingSettlement.settleOrdinaryOpenClawPairing).mockResolvedValue({
+      kind: "incomplete",
+      reason: "scope-upgrade-not-approved",
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], {
+        throwOnError: true,
+        recoveryManifest: manifest,
+      }),
+    ).rejects.toThrow("OpenClaw pairing remained incomplete after prepared recovery.");
+
+    expect(fs.existsSync(path.join(manifest.backupPath, ".nemoclaw-rebuild-recovery.json"))).toBe(
+      true,
+    );
+    expect(harness.logSpy.mock.calls.flat().join("\n")).not.toContain("rebuild completed");
+  });
 
   function stoppedRecoveryHarness() {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-stopped-source-"));
