@@ -9,7 +9,7 @@ import { requirePublicNvidiaInferenceKey } from "../fixtures/inference-adapter.t
 import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 import {
   buildProviderRoutedEnv,
-  retainRouterDiagnostics,
+  registerRouterDiagnostics,
 } from "./model-router-provider-routed-inference-helpers.ts";
 
 // Focused direct CLI/sandbox test: the contract is the real provider-routed
@@ -67,6 +67,8 @@ test(
       timeoutMs: 120_000,
     });
 
+    registerRouterDiagnostics(cleanup, artifacts);
+
     progress.phase("onboard the routed provider");
     const onboard = await host.command(
       "node",
@@ -84,26 +86,21 @@ test(
         timeoutMs: ONBOARD_TIMEOUT_MS,
       },
     );
-    try {
-      expect(onboard.exitCode, resultText(onboard)).toBe(0);
+    expect(onboard.exitCode, resultText(onboard)).toBe(0);
 
-      progress.phase("request a routed inference.local completion");
-      await runtime.expectInferenceLocalChatCompletion(
-        { sandboxName: SANDBOX_NAME },
-        {
-          artifactName: "sandbox-inference-local-routed-completion",
-          curlMaxTimeSeconds: 90,
-          maxTokens: 128,
-          model: "nvidia-routed",
-          prompt: "Reply with a short greeting.",
-          redactionValues: [apiKey],
-          timeoutMs: 120_000,
-        },
-      );
-    } finally {
-      // Record bounded status evidence before cleanup stops the router.
-      await retainRouterDiagnostics(artifacts);
-    }
+    progress.phase("request a routed inference.local completion");
+    await runtime.expectInferenceLocalChatCompletion(
+      { sandboxName: SANDBOX_NAME },
+      {
+        artifactName: "sandbox-inference-local-routed-completion",
+        curlMaxTimeSeconds: 90,
+        maxTokens: 128,
+        model: "nvidia-routed",
+        prompt: "Reply with a short greeting.",
+        redactionValues: [apiKey],
+        timeoutMs: 120_000,
+      },
+    );
 
     progress.phase("record the routed inference contract result");
     await artifacts.target.complete({

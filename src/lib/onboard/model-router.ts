@@ -69,6 +69,10 @@ const MODEL_ROUTER_VENV_DIR = path.join(
   nemoclawStateRoot(os.homedir(), GATEWAY_PORT),
   "model-router-venv",
 );
+export function resolveModelRouterLogPath(homeDir = os.homedir()): string {
+  return path.join(nemoclawStateRoot(homeDir, GATEWAY_PORT), "state", "model-router.log");
+}
+
 export const DEFAULT_MODEL_ROUTER_CREDENTIAL_ENV = "NVIDIA_INFERENCE_API_KEY";
 
 export type BlueprintRouterConfig = {
@@ -402,7 +406,7 @@ export async function startModelRouter(
   // #8962: capture the router's own output; with stdio "ignore" the actual
   // startup error (for example an endpoint authentication failure) was
   // unreadable.
-  const logPath = path.join(stateDir, "model-router.log");
+  const logPath = resolveModelRouterLogPath(deps.homeDir);
   const routerLog = deps.openRouterLog(logPath);
   let child: ModelRouterSpawnedProcess;
   try {

@@ -4,7 +4,8 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { resolveModelRouterLogPath } from "../../../src/lib/onboard/model-router.ts";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 
 import {
@@ -94,6 +95,24 @@ describe("Model Router provider-routed live support", () => {
         JSON.parse(await fs.readFile(sink.pathFor("router-diagnostics.json"), "utf8")),
       ).toEqual({ available: false });
     } finally {
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("reads the production router log path by default", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "router-path-"));
+    try {
+      vi.spyOn(os, "homedir").mockReturnValue(directory);
+      const log = resolveModelRouterLogPath(directory);
+      await fs.mkdir(path.dirname(log), { recursive: true });
+      await fs.writeFile(log, '"POST /v1/chat/completions HTTP/1.1" 200 OK');
+      const sink = new ArtifactSink(path.join(directory, "artifacts"));
+      await retainRouterDiagnostics(sink);
+      expect(
+        JSON.parse(await fs.readFile(sink.pathFor("router-diagnostics.json"), "utf8")),
+      ).toMatchObject({ available: true, completionResponses: 1 });
+    } finally {
+      vi.restoreAllMocks();
       await fs.rm(directory, { recursive: true, force: true });
     }
   });

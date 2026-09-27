@@ -2,9 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import { resolveNemoclawStateDir } from "../../../src/lib/state/paths.ts";
+import { resolveModelRouterLogPath } from "../../../src/lib/onboard/model-router.ts";
+import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 
@@ -27,7 +26,7 @@ export function summarizeRouterLog(text: string) {
 
 export async function retainRouterDiagnostics(
   artifacts: ArtifactSink,
-  logPath = path.join(resolveNemoclawStateDir(os.homedir()), "model-router.log"),
+  logPath = resolveModelRouterLogPath(),
 ): Promise<void> {
   let descriptor: number | undefined;
   let summary: object;
@@ -54,6 +53,11 @@ export async function retainRouterDiagnostics(
     if (descriptor !== undefined) fs.closeSync(descriptor);
   }
   await artifacts.writeJson("router-diagnostics.json", summary);
+}
+
+export function registerRouterDiagnostics(cleanup: CleanupRegistry, artifacts: ArtifactSink): void {
+  // Register after sandbox cleanup so the LIFO registry captures the log before destruction.
+  cleanup.add("retain Model Router diagnostics", () => retainRouterDiagnostics(artifacts));
 }
 
 export function buildProviderRoutedEnv(

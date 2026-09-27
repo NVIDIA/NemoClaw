@@ -978,6 +978,7 @@ describe("onboard Model Router setup", () => {
     const expectedStateDir = path.join(homeDir, ".nemoclaw", "gateways", "9123", "state");
     const expectedConfig = path.join(expectedStateDir, "litellm-proxy.yaml");
     const mkdirSync = vi.fn();
+    const openRouterLog = vi.fn(() => null);
     const proxyConfigArgs: string[][] = [];
     const proxyArgs: string[][] = [];
     vi.stubEnv("HOME", homeDir);
@@ -992,6 +993,7 @@ describe("onboard Model Router setup", () => {
         homeDir,
         ensureModelRouterCommand: () => "/test/model-router",
         mkdirSync,
+        openRouterLog,
         runProxyConfig: (_command, args) => {
           proxyConfigArgs.push(args);
           return { status: 0 };
@@ -1017,6 +1019,13 @@ describe("onboard Model Router setup", () => {
     );
 
     assert.equal(pid, 12_345);
+    assert.equal(
+      freshModelRouter.resolveModelRouterLogPath(homeDir),
+      path.join(expectedStateDir, "model-router.log"),
+    );
+    assert.deepEqual(openRouterLog.mock.calls, [
+      [freshModelRouter.resolveModelRouterLogPath(homeDir)],
+    ]);
     assert.deepEqual(mkdirSync.mock.calls, [[expectedStateDir]]);
     assert.equal(proxyConfigArgs[0]?.at(-1), expectedConfig);
     assert.equal(proxyArgs[0]?.[2], expectedConfig);
