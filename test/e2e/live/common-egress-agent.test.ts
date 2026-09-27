@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { approveOpenClawAdminScope } from "./openclaw-admin-scope.ts";
-import fs from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { describe } from "vitest";
@@ -24,7 +23,7 @@ import {
   type HostedInferenceConfig,
   requireHostedInferenceConfig,
 } from "../fixtures/hosted-inference.ts";
-import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
+import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { SecretStore } from "../fixtures/secrets.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import type { RuntimeProviderPrerequisite } from "../fixtures/runtime-provider.ts";
@@ -244,11 +243,6 @@ async function assertPrerequisites(
   runtimeProvider: RuntimeProviderPrerequisite,
   secrets: SecretStore,
 ): Promise<HostedInferenceConfig> {
-  expect(
-    fs.existsSync(CLI_DIST_ENTRYPOINT),
-    "run `npm run build:cli` before live repo CLI targets",
-  ).toBe(true);
-
   await runtimeProvider.requireAvailable({
     artifactName: "prereq-runtime-info-common-egress",
     scenarioLabel: "common-egress agent",

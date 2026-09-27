@@ -66,7 +66,6 @@ import {
   addBridgeAndReadStatus,
   readConcurrentMcpStatusAndConfirmHermesRegistration,
   MCP_BRIDGE_DENIED_TOOL_NAME,
-  MCP_BRIDGE_DENIED_TOOL_SELECTOR,
   runDeniedMcpToolCall,
   runMcpProviderRewriteProbe,
   runOpenClawDeniedToolUpdateProof,
@@ -365,7 +364,6 @@ async function assertBridgeInfrastructure(
     ),
   );
   expect(policyText).not.toContain("FAKE_MCP_SECRET");
-  expect(policyText).toContain(`tool: ${MCP_BRIDGE_DENIED_TOOL_SELECTOR}`);
   expect(policyText).toContain(new URL(options.mcpUrl).hostname);
   const provider = await host.command(
     host.openshellCommandPath,

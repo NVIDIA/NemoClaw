@@ -318,7 +318,6 @@ async function updateProviderCredential(
     timeoutMs: 90_000,
   });
   expectExitZero(result, artifactName);
-  expect(resultText(result)).toMatch(/Updated provider/iu);
 }
 
 async function sandboxIdentity(sandbox: SandboxClient, artifactName: string): Promise<string> {

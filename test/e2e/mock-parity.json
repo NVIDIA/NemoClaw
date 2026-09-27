@@ -671,8 +671,7 @@
         "test/e2e/fixtures/admin-request-selector.ts",
         "test/e2e/fixtures/issue-4462-admin-approval-evidence.ts",
         "test/e2e/lib/issue-4462-admin-request-selector.py",
-        "test/e2e/lib/issue-4462-fresh-agent-gateway-snapshot.py",
-        "test/e2e/live/issue-4462-admin-approval-helper.ts"
+        "test/e2e/lib/issue-4462-fresh-agent-gateway-snapshot.py"
       ],
       "fast": [
         "test/e2e/support/issue-4462-fixture-boundary.test.ts",
