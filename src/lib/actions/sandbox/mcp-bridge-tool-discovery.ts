@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
+
 import type { AgentMcpAdapter } from "../../agent/defs";
 import { shellQuote } from "../../core/shell-quote";
 import {
@@ -17,12 +19,15 @@ import {
   wrapMcpRuntimeCommand,
 } from "./mcp-bridge-runtime-command";
 import { normalizeRecordedMcpServerUrl } from "./mcp-bridge/recorded-url";
-import { executeSandboxCommand, type SandboxCommandResult } from "./process-recovery";
+import {
+  executeSandboxExecCommand,
+  type SandboxCommandResult,
+} from "../../adapters/sandbox/command-transport";
 import {
   buildSandboxExecMarkedCommand,
   createSandboxExecMarker,
   extractSandboxExecCommandStdoutFromStreams,
-} from "./sandbox-exec-output";
+} from "../../adapters/sandbox/sandbox-exec-output";
 import { buildTrustedProxyEnvSourceShell } from "./trusted-proxy-env";
 
 export const MCP_TOOL_DISCOVERY_RUNTIME_PATH =
@@ -170,11 +175,10 @@ function compareNames(left: string, right: string): number {
 }
 
 export function classifyMcpToolDiscoveryResult(
-  result: SandboxCommandResult | null,
+  result: SandboxCommandResult,
   entry: Pick<McpSourceEntry, "env">,
   resultMarker: string,
 ): NonNullable<McpBridgeStatus["toolDiscovery"]> {
-  if (result === null) return failure("sandbox unreachable", "runtime", "runtime", null);
   if (result.status !== 0) {
     const safeFailure = `${result.stderr}\n${result.stdout}`
       .split(/\r?\n/u)
@@ -336,9 +340,16 @@ export async function discoverMcpTools(
       "tool discovery skipped: no valid managed endpoint is available",
     );
   }
-  return classifyMcpToolDiscoveryResult(
-    await executeSandboxCommand(sandboxName, discoveryCommand.command, { runtimeSelection }),
-    entry,
-    discoveryCommand.resultMarker,
-  );
+  try {
+    return classifyMcpToolDiscoveryResult(
+      await executeSandboxExecCommand(sandboxName, discoveryCommand.command, undefined, {
+        runtimeSelection,
+      }),
+      entry,
+      discoveryCommand.resultMarker,
+    );
+  } catch (error) {
+    if (!(error instanceof SandboxCommandTransportError)) throw error;
+    return failure(error.message, "runtime", "runtime", null);
+  }
 }

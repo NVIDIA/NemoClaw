@@ -279,6 +279,7 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("scripts", "patch-openclaw-tool-catalog.mts"));
     writeFixture(path.join("scripts", "lib", "patch-openclaw-npm12-pack-json.mts"));
     writeFixture(path.join("scripts", "patch-openclaw-chat-send.mts"));
+    writeFixture(path.join("scripts", "lib", "patch-openclaw-container-restart.mts"));
     writeFixture(path.join("scripts", "patch-openclaw-mcp-npx.mts"));
     writeFixture(path.join("scripts", "patch-openclaw-mcp-reliability.mts"));
     writeFixture(path.join("scripts", "patch-openclaw-mcp-tools-list-timeout.mts"));

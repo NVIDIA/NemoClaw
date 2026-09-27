@@ -30,6 +30,10 @@ Use the canonical NVIDIA/NemoClaw base, template, sensitive-path policy, and tru
 surface described in the references. Publish from a clean feature branch. Every published commit
 must be GitHub `Verified`; the PR body must contain the configured identity's DCO declaration.
 
+Before declaring the source repository, apply the trusted-base source-repository eligibility gate in
+[Publication](references/publication.md#select-the-source-repository). Never open a fork PR when a
+required CI or E2E path for the candidate is restricted to same-repository pull requests.
+
 Bind branch writes to the declared repository, branch, local commit, and expected remote state.
 Preserve the atomic prior-state guard, fast-forward ancestry check, and readback requirements.
 Reconcile inconclusive writes before any permitted bounded retry. Never infer success from a write

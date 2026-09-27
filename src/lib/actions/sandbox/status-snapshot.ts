@@ -30,15 +30,19 @@ import {
   type ProviderHealthStatus,
   probeProviderHealth,
 } from "../../inference/health";
-import type { ServingProfileProvenance } from "../../inference/serving/types";
 import {
   type DcodeAutoApprovalMode,
   normalizeDcodeAutoApprovalMode,
 } from "../../onboard/dcode-auto-approval";
 import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
-import { getGatewayPresets } from "../../policy";
 import { redact } from "../../security/redact";
 import * as registry from "../../state/registry";
+import {
+  findSandboxAcrossGatewayRoots,
+  listPublishedSandboxNamesAcrossGatewayRoots,
+  listPublishedSandboxesAcrossGatewayRoots,
+  recordSandboxStopIntentAcrossGatewayRoots,
+} from "../../state/registry/cross-port";
 import { canSandboxGatewayRouteRealign } from "./connect-inference-gateway";
 import { getSandboxDockerRuntime } from "./docker-health";
 import type { SandboxGatewayState } from "./gateway-state";
@@ -76,6 +80,7 @@ type ProbeSandboxInferenceGatewayHealth = (
   ...args: Parameters<typeof probeSandboxInferenceGatewayHealth>
 ) => ReturnType<typeof probeSandboxInferenceGatewayHealth>;
 type DelayInferenceRecoveryProbe = (delayMs: number) => Promise<void>;
+type GetGatewayPresets = (typeof import("../../policy"))["getGatewayPresets"];
 
 const INFERENCE_PROBE_ATTEMPTS = 3;
 const INFERENCE_PROBE_RETRY_DELAY_MS = 2_000;
@@ -169,7 +174,7 @@ export interface SandboxStatusReport {
   agentLoadError?: string;
   model: string;
   provider: string;
-  servingProfileProvenance: ServingProfileProvenance | null;
+  servingProfileProvenance: NonNullable<registry.SandboxEntry["servingProfileProvenance"]> | null;
   llamaCpp?: LlamaCppRouteDetails | null;
   recordedRoute: RecordedInferenceRoute | null;
   liveRoute: GatewayInference | null;
@@ -301,9 +306,12 @@ function loadRecoverSandboxProcesses(): RecoverSandboxProcesses {
 }
 
 interface CollectSandboxStatusSnapshotDeps {
+  findSandboxAcrossGatewayRoots?: typeof findSandboxAcrossGatewayRoots;
+  listPublishedSandboxNamesAcrossGatewayRoots?: typeof listPublishedSandboxNamesAcrossGatewayRoots;
+  listPublishedSandboxesAcrossGatewayRoots?: typeof listPublishedSandboxesAcrossGatewayRoots;
   getSandbox?: typeof registry.getSandbox;
-  updateSandbox?: typeof registry.updateSandbox;
-  listSandboxes?: typeof registry.listSandboxes;
+  recordSandboxStopIntent?: typeof recordSandboxStopIntentAcrossGatewayRoots;
+  captureOpenshellForStatusImpl?: typeof captureOpenshellForStatus;
   inferenceRouteObserver?: OpenShellInferenceRouteObserver;
   probeProviderHealthImpl?: ProbeProviderHealth;
   probeSandboxInferenceGatewayHealthImpl?: ProbeSandboxInferenceGatewayHealth;
@@ -315,7 +323,7 @@ interface CollectSandboxStatusSnapshotDeps {
   recoverSandboxProcesses?: RecoverSandboxProcesses;
   reconcile?: ReconcileSandboxGatewayState;
   getSandboxStatusPreflightImpl?: typeof getSandboxStatusPreflight;
-  getGatewayPresets?: typeof getGatewayPresets;
+  getGatewayPresets?: GetGatewayPresets;
   inspectManagedLlamaCppOwnership?: typeof inspectManagedLlamaCppOwnership;
 }
 
@@ -431,6 +439,7 @@ function reportInferenceProbeRetry(
 export async function collectSandboxStatusSnapshot(
   sandboxName: string,
   opts: {
+    sandboxEntry?: registry.SandboxEntry | null;
     suppressInferenceProbe?: boolean;
     preflight?: SandboxStatusPreflightResult;
     deps?: CollectSandboxStatusSnapshotDeps;
@@ -442,7 +451,9 @@ export async function collectSandboxStatusSnapshot(
       const entry = registry.getSandbox(name);
       return entry && registry.isPublishedSandboxRegistration(entry) ? entry : null;
     });
-  const sb = getSandbox(sandboxName);
+  const sb = Object.hasOwn(opts, "sandboxEntry")
+    ? (opts.sandboxEntry ?? null)
+    : getSandbox(sandboxName);
   const initialPreflight =
     opts.preflight ??
     (sb?.stopped
@@ -473,10 +484,9 @@ export async function collectSandboxStatusSnapshot(
     (lookup.phase === "Ready" || lookup.phase === "Running") &&
     !initialPreflight?.failure &&
     !initialPreflight?.intentionalStopConfirmed &&
-    !registry.recordSandboxStopIntent(
+    !(opts.deps?.recordSandboxStopIntent ?? recordSandboxStopIntentAcrossGatewayRoots)(
       sandboxName,
       false,
-      opts.deps?.updateSandbox ?? registry.updateSandbox,
     )
   ) {
     lookup = {
@@ -605,7 +615,10 @@ export async function collectSandboxStatusSnapshot(
               sandboxName,
               sb,
               gatewayName,
-              (opts.deps?.listSandboxes ?? registry.listSandboxes)().sandboxes,
+              (
+                opts.deps?.listPublishedSandboxesAcrossGatewayRoots ??
+                listPublishedSandboxesAcrossGatewayRoots
+              )(),
             ),
           ),
         }
@@ -790,14 +803,17 @@ async function buildSandboxStatusReport(
   const getSandbox =
     deps.getSandbox ??
     ((name: string) => {
-      const entry = registry.getSandbox(name);
+      const entry =
+        (deps.findSandboxAcrossGatewayRoots ?? findSandboxAcrossGatewayRoots)(name)?.entry ?? null;
       return entry && registry.isPublishedSandboxRegistration(entry) ? entry : null;
     });
+  const sandboxEntry = getSandbox(sandboxName);
   const preflight = await (deps.getSandboxStatusPreflightImpl ?? getSandboxStatusPreflight)(
-    getSandbox(sandboxName),
+    sandboxEntry,
   );
   const snapshot = await collectSandboxStatusSnapshot(sandboxName, {
     preflight,
+    sandboxEntry,
     deps,
   });
   const {
@@ -815,7 +831,12 @@ async function buildSandboxStatusReport(
   } = snapshot;
   const dockerRuntime =
     lookup.state === "present" && hasLegacyStatusRuntimeObservation(sb)
-      ? getSandboxDockerRuntime(sandboxName)
+      ? getSandboxDockerRuntime(sandboxName, {
+          getSandbox: () => sb,
+          listSandboxNames:
+            deps.listPublishedSandboxNamesAcrossGatewayRoots ??
+            listPublishedSandboxNamesAcrossGatewayRoots,
+        })
       : null;
   const observedPhase = lookup.state === "present" ? (lookup.phase ?? null) : null;
   const phase = resolveSandboxStatusPhase(
@@ -828,7 +849,11 @@ async function buildSandboxStatusReport(
   );
   const sandboxGpuEnabled = sb ? (sb.sandboxGpuEnabled ?? sb.gpuEnabled === true) : false;
   const hostMounts = normalizeSandboxStatusHostMounts(sb?.hostMounts);
-  const livePolicies = sb ? await (deps.getGatewayPresets ?? getGatewayPresets)(sandboxName) : [];
+  // The outer status action owns the live policy reader. Direct snapshot callers
+  // without that boundary report policy availability honestly instead of
+  // reaching into policy state through a second orchestration path.
+  const livePolicies =
+    sb && deps.getGatewayPresets ? await deps.getGatewayPresets(sandboxName, undefined, sb) : [];
   const agent = resolveSandboxStatusAgent(sb?.agent || "openclaw");
   return {
     schemaVersion: 1,
@@ -863,7 +888,7 @@ async function buildSandboxStatusReport(
     openshellDriver: (sb && sb.openshellDriver) || "unknown",
     openshellVersion: (sb && sb.openshellVersion) || "unknown",
     policies: livePolicies ?? [],
-    policiesAvailable: livePolicies !== null,
+    policiesAvailable: !sb || Boolean(deps.getGatewayPresets) ? livePolicies !== null : false,
     failureLayer: effectivePreflight.failureLayer,
     terminalRuntimeHealth,
     dockerPaused: !!dockerRuntime?.paused,

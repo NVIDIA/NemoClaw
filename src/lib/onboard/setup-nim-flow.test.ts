@@ -45,16 +45,19 @@ describe("withServingPortGuard", () => {
 });
 
 describe("createSetupNim", () => {
-  it("passes the Deep Agents manifest default to shared NVIDIA/OpenRouter model selection", async () => {
+  it("passes the Deep Agents default to provider-scoped model selection", async () => {
     const ultra = "nvidia/nemotron-3-ultra-550b-a55b";
     const log = vi.fn();
-    const sharedSession = { select: async () => unexpected("featured model selection") };
-    const createNvidiaFeaturedModelSession = vi.fn<
-      SetupNimFlowDeps["createNvidiaFeaturedModelSession"]
-    >(() => sharedSession);
+    const nvidiaSession = { select: async () => unexpected("NVIDIA model selection") };
+    const openRouterSession = { select: async () => unexpected("OpenRouter model selection") };
+    const createNvidiaFeaturedModelSession = vi
+      .fn<SetupNimFlowDeps["createNvidiaFeaturedModelSession"]>()
+      .mockReturnValueOnce(nvidiaSession)
+      .mockReturnValueOnce(openRouterSession);
     const handleRemoteProviderSelection = vi.fn<SetupNimFlowDeps["handleRemoteProviderSelection"]>(
       async (_args, state) => {
-        expect(state.openRouterFeaturedModels).toBe(state.nvidiaFeaturedModels);
+        expect(state.nvidiaFeaturedModels).toBe(nvidiaSession);
+        expect(state.openRouterFeaturedModels).toBe(openRouterSession);
         state.model = ultra;
         state.provider = "nvidia-prod";
         state.endpointUrl = "https://integrate.api.nvidia.com/v1";
@@ -72,9 +75,25 @@ describe("createSetupNim", () => {
 
     await setupNim(null, null, dcodeAgent);
 
-    expect(createNvidiaFeaturedModelSession).toHaveBeenCalledTimes(1);
-    expect(createNvidiaFeaturedModelSession).toHaveBeenCalledWith({
+    expect(createNvidiaFeaturedModelSession).toHaveBeenCalledTimes(2);
+    expect(createNvidiaFeaturedModelSession).toHaveBeenNthCalledWith(1, {
       defaultModel: ultra,
+      writeLine: log,
+    });
+    expect(createNvidiaFeaturedModelSession).toHaveBeenNthCalledWith(2, {
+      defaultModel: ultra,
+      fallbackModelOptions: [
+        {
+          id: "nvidia/nemotron-3-ultra-550b-a55b",
+          label: "Nemotron 3 Ultra 550B",
+        },
+        {
+          id: "nvidia/nemotron-3-super-120b-a12b",
+          label: "Nemotron 3 Super 120B",
+        },
+        { id: "minimaxai/minimax-m3", label: "Minimax M3" },
+      ],
+      retiredModelIds: [],
       writeLine: log,
     });
   });

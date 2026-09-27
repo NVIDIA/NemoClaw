@@ -7,10 +7,23 @@ import { describe, expect, it } from "vitest";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../..");
 const DOC = path.join(REPO_ROOT, "docs", "security", "gateway-authentication-controls.mdx");
+const TROUBLESHOOTING_DOC = path.join(REPO_ROOT, "docs", "reference", "troubleshooting.mdx");
 const text = fs.readFileSync(DOC, "utf-8");
+const troubleshootingText = fs.readFileSync(TROUBLESHOOTING_DOC, "utf-8");
 const sectionStart = text.indexOf("## Auto-Pair Client Allowlist");
 const sectionEnd = text.indexOf("</AgentOnly>", sectionStart);
 const section = text.slice(sectionStart, sectionEnd);
+const troubleshootingSectionStart = troubleshootingText.indexOf(
+  "### An `openclaw` command inside the sandbox fails with `scope upgrade pending approval`",
+);
+const troubleshootingSectionEnd = troubleshootingText.indexOf(
+  "</AgentOnly>",
+  troubleshootingSectionStart,
+);
+const troubleshootingSection = troubleshootingText.slice(
+  troubleshootingSectionStart,
+  troubleshootingSectionEnd,
+);
 
 describe("operator.admin manual approval documentation (#5324)", () => {
   it("limits automatic approval to pairing, read, and write scopes (#5324)", () => {
@@ -36,5 +49,18 @@ describe("operator.admin manual approval documentation (#5324)", () => {
     expect(section).toContain(
       "Approve only the `requestId` emitted by your command and only the client, device, and scopes you expect.",
     );
+  });
+
+  it("routes troubleshooting approval through the prepared connect shell (#5324)", () => {
+    const connect = troubleshootingSection.indexOf("$$nemoclaw my-assistant connect");
+    const list = troubleshootingSection.indexOf("openclaw devices list --json");
+    const approve = troubleshootingSection.indexOf("openclaw devices approve <requestId>");
+
+    expect(troubleshootingSectionStart).toBeGreaterThanOrEqual(0);
+    expect(troubleshootingSectionEnd).toBeGreaterThan(troubleshootingSectionStart);
+    expect(connect).toBeGreaterThanOrEqual(0);
+    expect(list).toBeGreaterThan(connect);
+    expect(approve).toBeGreaterThan(list);
+    expect(troubleshootingSection).not.toContain("exec -- openclaw devices approve");
   });
 });

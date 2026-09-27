@@ -45,11 +45,17 @@ export function createGpuFlowInput(): SandboxGpuCreateFlowInput {
     gatewayName: "nemoclaw",
     gatewayPort: 8080,
     sandboxReadyTimeoutSecs: 60,
-    createArgv: ["openshell", "sandbox", "create", "--gpu"],
+    createRequest: {
+      sandboxName: "alpha",
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      source: { reference: "openshell/sandbox-from:test" },
+      gpu: {},
+      startupCommand: ["nemoclaw-start"],
+      environment: {},
+    },
     sandboxEnv: {},
     sandboxStartupCommand: ["nemoclaw-start"],
     prebuild: {
-      createArgs: ["--from", "openshell/sandbox-from:test", "--name", "alpha", "--gpu"],
       imageRef: "openshell/sandbox-from:test",
       imageId: GPU_IMAGE_ID,
     },
@@ -309,7 +315,7 @@ export function createGpuFlowTestHarness(mocks: Record<string, ReturnType<typeof
   function createSourceInput(): SandboxGpuCreateFlowInput {
     const input = createGpuFlowInput();
     input.prebuild = {
-      createArgs: ["--from", "/tmp/build/Dockerfile", "--name", "alpha", "--gpu"],
+      sourceReference: "/tmp/build/Dockerfile",
       imageRef: null,
       imageId: null,
     };

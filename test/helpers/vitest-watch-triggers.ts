@@ -163,6 +163,10 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/agents/hermes/hermes-external-supervisor-restart-patch.test.ts"),
   },
   {
+    pattern: /(?:^|\/)agents\/hermes\/patch-mcp-http-proxy\.py$/,
+    testsToRun: runTests("test/agents/hermes/hermes-mcp-http-proxy-patch.test.ts"),
+  },
+  {
     pattern: /(?:^|\/)agents\/hermes\/patch-session-list-preview\.py$/,
     testsToRun: runTests("test/agents/hermes/hermes-session-list-preview-patch.test.ts"),
   },
@@ -257,8 +261,16 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/e2e/support/jetson-dispatch-client.test.ts"),
   },
   {
-    pattern:
-      /(?:^|\/)(?:\.github\/workflows\/base-image\.yaml|scripts\/export-managed-base-image-contract\.sh)$/,
+    pattern: /(?:^|\/)\.github\/workflows\/base-image\.yaml$/,
+    testsToRun: runTests(
+      "test/inference/managed/managed-base-image-contract.test.ts",
+      "test/inference/managed/managed-image-mcp-bridge-publication.test.ts",
+      "test/inference/managed/managed-image-publication-workflow.test.ts",
+      "test/agents/deepagents/dcode-base-image-workflow.test.ts",
+    ),
+  },
+  {
+    pattern: /(?:^|\/)scripts\/export-managed-base-image-contract\.sh$/,
     testsToRun: runTests(
       "test/inference/managed/managed-base-image-contract.test.ts",
       "test/inference/managed/managed-image-publication-workflow.test.ts",
@@ -268,6 +280,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern: /(?:^|\/)\.github\/workflows\/managed-images\.yaml$/,
     testsToRun: runTests(
+      "test/inference/managed/managed-image-mcp-bridge-publication.test.ts",
       "test/inference/managed/managed-image-publication-workflow.test.ts",
       "test/e2e-runtime/pull-public-exact-digest.test.ts",
     ),

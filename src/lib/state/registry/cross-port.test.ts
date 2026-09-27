@@ -109,6 +109,57 @@ describe("findSandboxAcrossGatewayRoots", () => {
   });
 });
 
+describe("owning registry mutations", () => {
+  it("removes a sibling-root sandbox and advances its default-pointer revision", async () => {
+    const registryFile = writeRegistry(path.join("gateways", "8245"), {
+      "owner-a": { name: "owner-a", gatewayPort: 8245 },
+      "owner-b": { name: "owner-b", gatewayPort: 8245 },
+    });
+    fs.writeFileSync(
+      registryFile,
+      JSON.stringify({
+        defaultSandbox: "owner-a",
+        defaultSelectionRevision: 4,
+        sandboxes: {
+          "owner-a": { name: "owner-a", gatewayPort: 8245 },
+          "owner-b": { name: "owner-b", gatewayPort: 8245 },
+        },
+      }),
+    );
+    const { removeSandboxAcrossGatewayRoots } = await loadModule();
+
+    expect(removeSandboxAcrossGatewayRoots("owner-a")).toBe(true);
+
+    const persisted = JSON.parse(fs.readFileSync(registryFile, "utf8"));
+    expect(persisted).toMatchObject({
+      defaultSandbox: "owner-b",
+      defaultSelectionRevision: 5,
+      sandboxes: { "owner-b": { name: "owner-b", gatewayPort: 8245 } },
+    });
+    expect(persisted.sandboxes).not.toHaveProperty("owner-a");
+  });
+
+  it("rejects an invalid default-pointer revision before mutating a sibling registry", async () => {
+    const registryFile = writeRegistry(path.join("gateways", "8245"), {
+      "owner-a": { name: "owner-a", gatewayPort: 8245 },
+    });
+    fs.writeFileSync(
+      registryFile,
+      JSON.stringify({
+        defaultSandbox: "owner-a",
+        defaultSelectionRevision: -1,
+        sandboxes: { "owner-a": { name: "owner-a", gatewayPort: 8245 } },
+      }),
+    );
+    const { removeSandboxAcrossGatewayRoots } = await loadModule();
+
+    expect(() => removeSandboxAcrossGatewayRoots("owner-a")).toThrow(
+      "invalid defaultSelectionRevision",
+    );
+    expect(JSON.parse(fs.readFileSync(registryFile, "utf8")).sandboxes).toHaveProperty("owner-a");
+  });
+});
+
 describe("listSandboxNamesAcrossGatewayRoots", () => {
   it("aggregates published names across roots, keeping order stable and deduplicated", async () => {
     writeRegistry("", {
@@ -122,20 +173,33 @@ describe("listSandboxNamesAcrossGatewayRoots", () => {
     });
     const {
       listPublishedSandboxNamesAcrossGatewayRoots,
+      listPublishedSandboxesAcrossGatewayRoots,
       listPendingSandboxNamesAcrossGatewayRoots,
     } = await loadModule();
 
     expect(listPublishedSandboxNamesAcrossGatewayRoots()).toEqual(["owner-b", "owner-a"]);
+    expect(
+      listPublishedSandboxesAcrossGatewayRoots().map(({ name, gatewayPort }) => ({
+        name,
+        gatewayPort,
+      })),
+    ).toEqual([
+      { name: "owner-b", gatewayPort: 8080 },
+      { name: "owner-a", gatewayPort: 8245 },
+      { name: "owner-b", gatewayPort: 8245 },
+    ]);
     expect(listPendingSandboxNamesAcrossGatewayRoots()).toEqual(["reserved", "pending"]);
   });
 
   it("returns empty lists when no registry roots exist", async () => {
     const {
       listPublishedSandboxNamesAcrossGatewayRoots,
+      listPublishedSandboxesAcrossGatewayRoots,
       listPendingSandboxNamesAcrossGatewayRoots,
     } = await loadModule();
 
     expect(listPublishedSandboxNamesAcrossGatewayRoots()).toEqual([]);
+    expect(listPublishedSandboxesAcrossGatewayRoots()).toEqual([]);
     expect(listPendingSandboxNamesAcrossGatewayRoots()).toEqual([]);
   });
 });

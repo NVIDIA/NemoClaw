@@ -1,9 +1,25 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { shellQuote } from "../fixtures/clients/command.ts";
+import { resultText, shellQuote } from "../fixtures/clients/command.ts";
+import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { reviewedOldInstallerProfile } from "./openshell-gateway-upgrade-old-installer.ts";
+import {
+  openClawAgentResponseRecord,
+  parseOpenClawJsonDocuments,
+} from "../../../src/lib/openclaw/agent-json-provenance.ts";
+
+/** A successful RPC transport can still carry a failed agent run. */
+export function gatewayUpgradeAgentResponseIsSuccessful(raw: string): boolean {
+  const responses = parseOpenClawJsonDocuments(raw).filter(
+    (document) => openClawAgentResponseRecord(document) !== null,
+  );
+  return (
+    responses.length > 0 &&
+    responses.every((document) => (document as { status?: unknown }).status === "ok")
+  );
+}
 
 const NON_INTERACTIVE_INSTALLER_ARGS = ["--non-interactive", "--yes-i-accept-third-party-software"];
 const GATEWAY_VOLUME_PREFIX = "openshell-cluster-nemoclaw";
@@ -15,6 +31,98 @@ const MANAGED_IMAGE_QUALIFICATION_ENV_KEYS = [
   "NEMOCLAW_E2E_MANAGED_IMAGE_REVISION",
 ] as const;
 export const GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS = 35 * 60_000;
+
+/** Apply path spelling at the installer boundary, after login-shell startup. */
+export function gatewayUpgradeInstallerCommand(args: readonly string[], home?: string): string {
+  const prefix = home
+    ? `HOME=${shellQuote(home)} XDG_CONFIG_HOME=${shellQuote(`${home}/.config//`)} `
+    : "";
+  return `${prefix}bash ${args.map(shellQuote).join(" ")}`;
+}
+
+/** Prepare the disposable runner's user manager before the historical install. */
+export async function prepareGatewayUpgradeUserManager(
+  host: Pick<HostCliClient, "command">,
+  env: NodeJS.ProcessEnv,
+  enabled: boolean,
+): Promise<void> {
+  if (!enabled) return;
+  const result = await host.command(
+    "sudo",
+    ["-n", "systemctl", "start", `user@${process.getuid?.()}.service`],
+    {
+      artifactName: "prepare-systemd-user-manager",
+      env,
+      timeoutMs: 30_000,
+    },
+  );
+  if (result.exitCode !== 0)
+    throw new Error(`Cannot prepare the systemd user manager: ${resultText(result)}`);
+}
+
+/** Retain real systemd metadata for revision-bound manual verification. */
+export async function captureGatewayUpgradeService(
+  host: HostCliClient,
+  phase: string,
+  env: NodeJS.ProcessEnv,
+  enabled: boolean,
+): Promise<ShellProbeResult | null> {
+  if (!enabled) return null;
+  return host.command(
+    "systemctl",
+    [
+      "--user",
+      "show",
+      "nemoclaw-openshell-gateway.service",
+      "--property=FragmentPath,ActiveState,MainPID,InvocationID",
+    ],
+    {
+      artifactName: `${phase}-systemd-gateway`,
+      env,
+      timeoutMs: 30_000,
+    },
+  );
+}
+
+type ServiceObservation = Pick<ShellProbeResult, "exitCode" | "stdout" | "signal" | "timedOut">;
+export interface GatewayUpgradeServiceEvidence {
+  before: ServiceObservation | null;
+  after: ServiceObservation | null;
+  expectedFragmentPath: string;
+}
+
+function activeServiceInvocation(
+  observation: ServiceObservation | null,
+  fragmentPath: string,
+): string | null {
+  if (!observation || observation.exitCode !== 0 || observation.signal || observation.timedOut)
+    return null;
+  const lines = observation.stdout.trim().split(/\r?\n/);
+  const properties = new Map(
+    lines.map((line) => {
+      const separator = line.indexOf("=");
+      return [line.slice(0, separator), line.slice(separator + 1)];
+    }),
+  );
+  const invocation = properties.get("InvocationID") ?? "";
+  const pid = properties.get("MainPID") ?? "";
+  return lines.length === 4 &&
+    properties.size === 4 &&
+    properties.get("FragmentPath") === fragmentPath &&
+    properties.get("ActiveState") === "active" &&
+    /^[1-9][0-9]*$/.test(pid) &&
+    Number.isSafeInteger(Number(pid)) &&
+    /^[0-9a-f]{32}$/.test(invocation) &&
+    invocation !== "0".repeat(32)
+    ? invocation
+    : null;
+}
+
+function gatewayServiceWasReplaced(evidence: GatewayUpgradeServiceEvidence): boolean {
+  const before = activeServiceInvocation(evidence.before, evidence.expectedFragmentPath);
+  const after = activeServiceInvocation(evidence.after, evidence.expectedFragmentPath);
+  return before !== null && after !== null && before !== after;
+}
 
 export async function captureGatewayUpgradeFailureDiagnostics(
   exitCode: number | null,
@@ -79,6 +187,47 @@ export async function captureGatewayUpgradeProbeEvidence(
   ] as const;
   const results = await Promise.allSettled(probes.map(async ([name, args]) => capture(name, args)));
   return results.every((result) => result.status === "fulfilled" && result.value.exitCode === 0);
+}
+
+/** Accept recovery only when the command, listener, and restored sandbox checks all succeed. */
+export function gatewayUpgradeRecoverySucceeded(
+  recovery: Pick<ShellProbeResult, "exitCode">,
+  forward: { readonly valid: boolean },
+  stateChecks: readonly Pick<ShellProbeResult, "exitCode">[],
+  service?: GatewayUpgradeServiceEvidence,
+): boolean {
+  return (
+    recovery.exitCode === 0 &&
+    forward.valid &&
+    stateChecks.every((result) => result.exitCode === 0) &&
+    (service === undefined || gatewayServiceWasReplaced(service))
+  );
+}
+
+/** Accept credential non-exposure only when both inspections complete with no match. */
+export function gatewayCredentialNonExposureScript(
+  credential: string,
+  managedPaths: readonly string[] = [
+    "/sandbox/.openclaw/openclaw.json",
+    "/sandbox/.openclaw/agents",
+  ],
+): string {
+  const quotedCredential = shellQuote(credential);
+  const quotedManagedPaths = managedPaths.map(shellQuote).join(" ");
+  return `env | grep -qF -- ${quotedCredential}
+environment_status=$?
+case "$environment_status" in
+  1) ;;
+  0) printf '%s\\n' 'ERROR: gateway credential is exposed in the sandbox environment' >&2; exit 1 ;;
+  *) printf 'ERROR: sandbox environment credential inspection failed (grep exit %s)\\n' "$environment_status" >&2; exit "$environment_status" ;;
+esac
+grep -rqF -- ${quotedCredential} ${quotedManagedPaths}
+managed_files_status=$?
+case "$managed_files_status" in
+  1) ;;
+  0) printf '%s\\n' 'ERROR: gateway credential is exposed in managed OpenClaw files' >&2; exit 1 ;;
+  *) printf 'ERROR: managed OpenClaw credential inspection failed (grep exit %s)\\n' "$managed_files_status" >&2; exit "$managed_files_status" ;;
+esac`;
 }
 
 export function oldGatewayUpgradeInstallerArgs(installer: string): string[] {

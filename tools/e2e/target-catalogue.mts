@@ -350,7 +350,9 @@ function commonEgressTarget(options: {
 const GATEWAY_UPGRADE_OWNING_PATHS = Object.freeze([
   "scripts/install.sh",
   "src/lib/actions/global.ts",
+  "src/lib/actions/maintenance.ts",
   "src/lib/actions/sandbox/forward-recovery.ts",
+  "src/lib/actions/upgrade-sandboxes.ts",
   "tools/e2e/openshell-gateway-upgrade-fixture.mts",
   "test/e2e/live/openshell-gateway-upgrade-helpers.ts",
   "test/e2e/live/openshell-gateway-upgrade-old-installer.ts",
@@ -751,6 +753,41 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       },
     }),
   ),
+  ...(
+    [
+      ["hermes", "Hermes", "e2e-defer-hermes"],
+      ["langchain-deepagents-code", "Deep Agents Code", "e2e-defer-dcode"],
+    ] as const
+  ).map(([agent, displayName, sandboxName]) =>
+    managedRuntimeTarget(`deferred-onboarding-${agent}`, {
+      targetId: "deferred-onboarding",
+      displayName: `Installation: ${displayName} onboards after credentials arrive`,
+      agentRuntime: agent,
+      environmentOrInferenceEndpoint: "Ubuntu; deferred NVIDIA hosted inference onboarding",
+      profile: "nvidia-api",
+      prAdvisorSelectable: true,
+      testFile: "test/e2e/live/deferred-onboarding.test.ts",
+      timeoutMinutes: 60,
+      installMode: "credential-free",
+      installNonInteractive: true,
+      restoreCli: true,
+      exposeCliBin: true,
+      shard: agent,
+      owningPaths: [
+        "install.sh",
+        "scripts/install.sh",
+        "src/lib/actions/installer/",
+        "src/commands/internal/installer/plan.ts",
+        "src/lib/inference/provider-key/contract.ts",
+        `agents/${agent}/manifest.yaml`,
+      ],
+      environment: {
+        ...nonInteractive,
+        NEMOCLAW_AGENT: agent,
+        NEMOCLAW_SANDBOX_NAME: sandboxName,
+      },
+    }),
+  ),
   managedRuntimeTarget("gpu-double-onboard", {
     displayName: "Onboarding: preserves Ollama authentication after GPU re-onboarding",
     agentRuntime: "openclaw",
@@ -769,13 +806,13 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       NEMOCLAW_OLLAMA_PROXY_PORT: "11435",
     },
   }),
-  managedRuntimeTarget("gpu-e2e", {
-    displayName: "Inference: validates OpenClaw and Hermes turns through GPU Ollama",
+  dockerOnlyTarget("gpu-e2e", {
+    displayName: "Inference: validates GPU Ollama plus Ollama and vLLM configuration export",
     agentRuntime: "openclaw",
-    environmentOrInferenceEndpoint: "NVIDIA GPU runner; local Ollama",
+    environmentOrInferenceEndpoint: "NVIDIA GPU runner; local Ollama and managed vLLM",
     profile: "standard",
     runner: "linux-amd64-gpu-rtxpro6000-latest-1",
-    timeoutMinutes: 90,
+    timeoutMinutes: 150,
     installMode: "authenticated",
     restoreCli: true,
     exposeCliBin: true,
@@ -788,6 +825,11 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       "src/lib/adapters/config/live-export-source.ts",
       "src/lib/config/model.ts",
       "src/lib/config/schema.ts",
+      "src/lib/config/v1alpha1-export.ts",
+      "src/lib/domain/config/export-document.ts",
+      "src/lib/domain/config/verify-export-source.ts",
+      "src/lib/inference/local-model-profile/cleanup.ts",
+      "src/lib/inference/serving/vllm-export-runtime.ts",
     ],
     environment: {
       ...nonInteractive,
@@ -808,6 +850,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     restoreCli: true,
     exposeCliBin: true,
     owningPaths: [
+      "scripts/lib/patch-openclaw-container-restart.mts",
       "test/e2e/live/launch-agent-turn.ts",
       "test/e2e/live/pr-base-comparison.ts",
       "src/lib/tunnel/gateway-stop-script.ts",
@@ -961,12 +1004,16 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint: "Ubuntu; NVIDIA API and Model Router",
     profile: "nvidia-api",
+    prAdvisorSelectable: true,
     timeoutMinutes: 45,
     installMode: "none",
     restoreCli: true,
     exposeCliBin: true,
     owningPaths: [
       "nemoclaw-blueprint/router/pool-config.yaml",
+      "src/lib/actions/sandbox/destroy-preflight.ts",
+      "src/lib/onboard/model-router-process.ts",
+      "src/lib/onboard/model-router.ts",
       "test/e2e/live/model-router-provider-routed-inference-helpers.ts",
     ],
     environment: { OPENSHELL_GATEWAY: "nemoclaw" },
@@ -1168,6 +1215,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     installNonInteractive: true,
     restoreCli: true,
     exposeCliBin: true,
+    prAdvisorSelectable: true,
     runner: "ubuntu-24.04",
     shard: "linux-amd64",
     owningPaths: [
@@ -1193,6 +1241,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   ...GATEWAY_UPGRADE_TARGETS,
   dockerOnlyTarget("rebuild-openclaw", {
     displayName: "Rebuild: restores OpenClaw state and native readiness",
+    owningPaths: ["test/e2e/live/openclaw-stopped-recovery.ts"],
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
     profile: "nvidia-inference",

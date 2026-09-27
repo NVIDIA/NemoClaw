@@ -10,6 +10,7 @@ import { pathToFileURL } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
+import { patchOpenClawContainerRestart } from "../../../scripts/lib/patch-openclaw-container-restart.mts";
 import { runRealOpenClawDeviceSelfApprovalProof } from "../../helpers/openclaw-real-device-self-approval-proof";
 import { runRealOpenClawInstallPathProof } from "../../helpers/openclaw-real-install-path-proof";
 import { runRealOpenClawMcpStartRetryProof } from "../../helpers/openclaw-real-mcp-start-retry-proof";
@@ -702,6 +703,9 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
           "1",
           "embedded-agent retry persistence legacy-or-native guard count",
         );
+
+        patchOpenClawContainerRestart(dist);
+        patchOpenClawContainerRestart(dist, true);
 
         const chatPatch = spawnSync(nodeRuntime.executable, [PATCH_OPENCLAW_CHAT_SEND, dist], {
           encoding: "utf-8",

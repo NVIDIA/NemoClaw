@@ -19,6 +19,8 @@ import {
   MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY,
 } from "./managed-startup/shared-state-transaction";
 import { prepareInitialSandboxCreatePolicy } from "./initial-policy";
+import { resolveTierPresets } from "../policy/tiers";
+import { listPresets } from "../policy";
 
 type PolicyRule = {
   allow?: {
@@ -659,6 +661,68 @@ describe("initial sandbox policy real preset merge", () => {
       }
     },
   );
+
+  function readDcodeTierPolicy(tier: string): PolicyDocument {
+    const available = new Set(
+      listPresets({ agent: "langchain-deepagents-code" }).map(({ name }) => name),
+    );
+    return readPreparedPolicy(
+      prepareInitialSandboxCreatePolicy(
+        repoPath("agents", "langchain-deepagents-code", "policy-additions.yaml"),
+        [],
+        {
+          agentName: "langchain-deepagents-code",
+          additionalPresets: resolveTierPresets(tier)
+            .map(({ name }) => name)
+            .filter((name) => available.has(name)),
+        },
+      ),
+    );
+  }
+
+  it("keeps every raw GitHub route read-only in Balanced (#10380)", () => {
+    const policies = readDcodeTierPolicy("balanced").network_policies ?? {};
+    const rawEndpoints = Object.values(policies).flatMap(({ endpoints }) =>
+      (endpoints ?? []).filter(({ host }) => host === "raw.githubusercontent.com"),
+    );
+    const readOnly = {
+      host: "raw.githubusercontent.com",
+      port: 443,
+      protocol: "rest",
+      enforcement: "enforce",
+      rules: [
+        { allow: { method: "GET", path: "/**" } },
+        { allow: { method: "HEAD", path: "/**" } },
+      ],
+    };
+    expect(rawEndpoints).toEqual([readOnly, readOnly]);
+    expect(policies["brew-balanced"]?.binaries).toContainEqual({ path: "/usr/bin/curl" });
+  });
+
+  it("preserves unrestricted raw GitHub access through Homebrew in Open (#10380)", () => {
+    const brew = readDcodeTierPolicy("open").network_policies?.brew;
+    expect(brew?.binaries).toContainEqual({ path: "/usr/bin/curl" });
+    expect(brew?.endpoints?.find(({ host }) => host === "raw.githubusercontent.com")).toEqual({
+      host: "raw.githubusercontent.com",
+      port: 443,
+      access: "full",
+    });
+  });
+
+  it("preserves Personal's broad web access without raw GitHub method rules (#10380)", () => {
+    const policies = readDcodeTierPolicy("personal").network_policies ?? {};
+    expect(
+      Object.values(policies).flatMap(({ endpoints }) =>
+        (endpoints ?? []).filter(({ host }) => host === "raw.githubusercontent.com"),
+      ),
+    ).toEqual([]);
+    expect(policies.personal_open_internet).toMatchObject({
+      endpoints: [{ ports: [80, 443] }],
+      binaries: [{ path: "/**" }],
+    });
+    expect(policies.personal_open_internet.endpoints?.[0]).not.toHaveProperty("rules");
+    expect(policies.personal_open_internet.endpoints?.[0]).not.toHaveProperty("protocol");
+  });
 
   it("keeps the Restricted OpenClaw npm baseline inspected and GET-only (#8497)", () => {
     const baselinePath = repoPath("nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml");

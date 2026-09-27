@@ -90,7 +90,8 @@ import { getSandboxTargetGatewayName } from "./gateway-target";
 import { ensureMessagingHostForwardAfterRebuild } from "./messaging-host-forward-lifecycle";
 import { policyChannelDependencies } from "./policy-channel-dependencies";
 import { refreshSandboxPolicyContextFile } from "./policy-context-refresh";
-import { executeSandboxCommand, executeSandboxExecCommand } from "./process-recovery";
+import { executeSandboxExecCommand } from "../../adapters/sandbox/command-transport";
+import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 
 const isNonInteractive = () => isNonInteractiveSession();
 const runMessagingOpenshell: MessagingOpenShellRunner = (args, options = {}) =>
@@ -1139,9 +1140,7 @@ async function runMessagingHealthChecksAfterRebuild(
     openclawBridgeHealth: {
       sandboxName,
       executeSandboxCommand: (command, timeoutMs) =>
-        executeSandboxExecCommand(sandboxName, command, timeoutMs, {
-          localDockerFallbackPolicy: "read-only",
-        }),
+        executeSandboxExecCommand(sandboxName, command, timeoutMs, {}),
     },
   });
   try {
@@ -1813,14 +1812,13 @@ function stoppedWechatCleanupFailureGuidance(
 
 /**
  * Wipe durable channel state before rebuild can preserve an obsolete auth blob.
- * OpenShell exec runs first. A permitted reconciled runtime-provider retry runs before SSH.
- * OpenClaw WeChat stopped-state cleanup runs last.
+ * OpenShell owns running-sandbox execution.
+ * OpenClaw WeChat selects its owned stopped-state cleanup before command execution.
  * Fixes #3998.
  */
 async function clearSandboxChannelDurableState(
   sandboxName: string,
   channelName: string,
-  options: { readonly allowAbsentStoppedState?: boolean } = {},
 ): Promise<boolean> {
   const agent = resolveAgentForSandbox(sandboxName);
   const paths = getSandboxChannelStatePaths(agent, channelName);
@@ -1832,16 +1830,13 @@ async function clearSandboxChannelDurableState(
 
   const quoted = paths.map((p) => shellQuote(p)).join(" ");
   const cmd = `rm -rf -- ${quoted} && printf '%s\\n' ${shellQuote(CHANNEL_CLEAR_SENTINEL)}`;
-  const sentinelSeen = (result: { stdout?: string | null } | null): boolean =>
-    !!result && typeof result.stdout === "string" && result.stdout.includes(CHANNEL_CLEAR_SENTINEL);
+  const sentinelSeen = (result: { status: number; stdout?: string | null } | null): boolean =>
+    !!result &&
+    result.status === 0 &&
+    typeof result.stdout === "string" &&
+    result.stdout.includes(CHANNEL_CLEAR_SENTINEL);
 
-  let result = await executeSandboxExecCommand(sandboxName, cmd, undefined, {
-    localDockerFallbackPolicy: "reconciled",
-  });
-  if (!sentinelSeen(result)) {
-    result = await executeSandboxCommand(sandboxName, cmd);
-  }
-  if (!sentinelSeen(result) && agent.name === "openclaw" && channelName === "wechat") {
+  if (agent.name === "openclaw" && channelName === "wechat") {
     const stoppedCleanup = policyChannelDependencies.clearStoppedSandboxStateRoots(
       sandboxName,
       paths,
@@ -1851,19 +1846,32 @@ async function clearSandboxChannelDurableState(
       return true;
     }
     if (
-      options.allowAbsentStoppedState &&
-      [
-        "sandbox-registry-unavailable",
+      ![
+        "runtime-not-stopped",
         "provider-cleanup-unavailable",
+        "sandbox-registry-unavailable",
         "no-eligible-stopped-runtime",
       ].includes(stoppedCleanup.failure)
     ) {
-      return true;
+      console.error(
+        `  ${YW}⚠${R} Stopped-runtime cleanup failed (${stoppedCleanup.failure}). ` +
+          `${stoppedWechatCleanupFailureGuidance(sandboxName, stoppedCleanup)} Then retry removal.`,
+      );
+      return false;
     }
+  }
+  let result: Awaited<ReturnType<typeof executeSandboxExecCommand>>;
+  try {
+    result = await executeSandboxExecCommand(sandboxName, cmd);
+  } catch (error) {
+    if (!(error instanceof SandboxCommandTransportError)) throw error;
     console.error(
-      `  ${YW}⚠${R} Stopped-runtime cleanup failed (${stoppedCleanup.failure}). ` +
-        `${stoppedWechatCleanupFailureGuidance(sandboxName, stoppedCleanup)} Then retry removal.`,
+      `  ${YW}⚠${R} Could not clear in-sandbox '${channelName}' channel state: ${error.message}`,
     );
+    console.error(
+      `    Restore sandbox lifecycle access, then re-run: ${CLI_NAME} ${sandboxName} channels remove ${channelName}`,
+    );
+    return false;
   }
   if (!sentinelSeen(result)) {
     console.error(
@@ -1982,14 +1990,11 @@ async function removeSandboxChannelUnlocked(
   // Bailing here is the only way to keep #3998 from recurring on cleanup
   // error. OpenClaw WeChat also checks for physical residue after an earlier
   // interrupted removal erased its logical plan or policy record. A missing
-  // registry, unavailable provider cleanup, or absent stopped runtime remains a quiet
-  // no-op only when no logical residue exists (#4001 review).
+  // registry or unavailable stopped-state cleanup does not prove durable state is absent.
   if (
     requiresStateCleanupBeforeTeardown &&
     (hasChannelResidue || recoverPhysicalWechatResidue) &&
-    !(await clearSandboxChannelDurableState(sandboxName, canonical, {
-      allowAbsentStoppedState: !hasChannelResidue,
-    }))
+    !(await clearSandboxChannelDurableState(sandboxName, canonical))
   ) {
     console.error(
       `  Refusing to proceed: '${canonical}' session state is still inside the sandbox.`,

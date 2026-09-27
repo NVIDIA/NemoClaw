@@ -83,15 +83,28 @@ jobs:
       contents: read
       packages: read
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Run static checks
         uses: ./.github/actions/ci-static-checks
+
+      - name: Set up pinned v1 compatibility toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          toolchain: 1.98.1
+          cache: false
+          rustflags: ""
+
+      - name: Verify exported defaults with the pinned v1 consumer
+        env:
+          NEMOCLAW_RUN_V1_CONFIG_COMPATIBILITY: "1"
+        run: ./node_modules/.bin/vitest run --project cli src/lib/domain/config/verify-export-defaults.test.ts
 
   compile-artifacts:
     permissions:
