@@ -86,6 +86,10 @@ It also strengthens host OS reporting and Windows WSL GPU verification.
   For a nondefault gateway whose runtime is gone, `--destroy-user-data` can purge retained Docker registry and backup data after it verifies that the selected containers are absent.
   Related changes: [PR #10478](https://github.com/NVIDIA/NemoClaw/pull/10478) and [PR #12299](https://github.com/NVIDIA/NemoClaw/pull/12299).
   Refer to [Uninstall NemoClaw](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/uninstall-nemoclaw) for verification and retry conditions.
+- The `--all-gateway-ports` sweep restores each gateway's recorded custom OpenShell state directory.
+  It preserves the affected state when recorded directories conflict or cannot be read.
+  Related change: [PR #10774](https://github.com/NVIDIA/NemoClaw/pull/10774).
+  Refer to [Uninstall NemoClaw](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/uninstall-nemoclaw) for gateway-state recovery.
 - DGX Station Express preserves a recognized legacy single-Station workload when automatic peer discovery cannot qualify a trusted pair.
   If the workload changes during discovery, installation stops rather than continuing the upgrade.
   Related change: [PR #12296](https://github.com/NVIDIA/NemoClaw/pull/12296).
