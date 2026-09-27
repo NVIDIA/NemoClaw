@@ -220,7 +220,6 @@ function makeRestoreFixture(): {
         archive: "native-home.tar",
         sha256: archiveSha256,
       },
-      dir: "/sandbox",
       backupPath,
       blueprintDigest: null,
     }),

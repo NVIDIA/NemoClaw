@@ -274,7 +274,6 @@ describe("rebuild resume snapshot repair", () => {
             archive: "native-home.tar",
             sha256: "a".repeat(64),
           },
-          dir: "/sandbox",
           blueprintDigest: null,
         },
       } as never),

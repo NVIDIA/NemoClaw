@@ -43,7 +43,6 @@ function makeBackupResult(): ReturnType<typeof sandboxState.backupSandboxState> 
         archive: "native-home.tar",
         sha256: "a".repeat(64),
       },
-      dir: "/sandbox",
       backupPath: "/tmp/nemoclaw-rebuild-backup",
       blueprintDigest: null,
     } as ReturnType<typeof sandboxState.backupSandboxState>["manifest"],
