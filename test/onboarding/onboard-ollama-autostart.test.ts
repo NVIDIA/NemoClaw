@@ -226,7 +226,11 @@ runner.runCapture = (command) => {
   return "";
 };
 runner.run = () => ({ status: 0 });
-runner.runShell = () => ({ status: 0 });
+runner.runShell = (command) => {
+  // The detached spawn replaced the shell launch (#11984); a shell launch is a regression.
+  if (command.includes("ollama serve")) throw new Error("superseded shell Ollama launch");
+  return { status: 0 };
+};
 
 wait.sleepSeconds = () => {};
 const originalWaitForHttp = wait.waitForHttp;
