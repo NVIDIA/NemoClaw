@@ -32,6 +32,7 @@ function runLegacyDashboardMigrationDeadline() {
         "-c",
         [
           "set -euo pipefail",
+          extractShellFunction(source, "ensure_hermes_cross_uid_state_dir"),
           extractShellFunction(source, "migrate_legacy_hermes_dashboard_state"),
           'id() { [ "${1:-}" = "-u" ] && printf "1000\\n" || command id "$@"; }',
           `_HERMES_DASHBOARD_STATE_MIGRATION_TIMEOUT=(bash -c 'exit 124' bash)`,
@@ -50,6 +51,39 @@ function runLegacyDashboardMigrationDeadline() {
 }
 
 describe("Hermes legacy dashboard migration startup", () => {
+  it("creates the native runtime directory before migration", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-migration-runtime-"));
+    const hermesHome = path.join(tmpDir, ".hermes");
+    const source = fs.readFileSync(START_SCRIPT, "utf-8");
+    fs.mkdirSync(hermesHome, { recursive: true });
+    try {
+      const result = spawnSync(
+        "bash",
+        [
+          "-c",
+          [
+            "set -euo pipefail",
+            extractShellFunction(source, "ensure_hermes_cross_uid_state_dir"),
+            extractShellFunction(source, "migrate_legacy_hermes_dashboard_state"),
+            `export HERMES_DIR=${shellQuote(hermesHome)}`,
+            `_HERMES_DASHBOARD_STATE_MIGRATION_TIMEOUT=(bash -c 'test -d "$HERMES_DIR/runtime"' bash)`,
+            "_HERMES_PYTHON=python3",
+            `_HERMES_DASHBOARD_STATE_MIGRATOR=${shellQuote(DASHBOARD_STATE_MIGRATOR)}`,
+            "STEP_DOWN_PREFIX_SANDBOX=(env)",
+            "migrate_legacy_hermes_dashboard_state",
+          ].join("\n"),
+        ],
+        { encoding: "utf-8", timeout: 5000 },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.statSync(path.join(hermesHome, "runtime")).isDirectory()).toBe(true);
+      expect(fs.statSync(path.join(hermesHome, "runtime")).mode & 0o7777).toBe(0o2770);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("fails with retained-state reconciliation guidance when migration times out", () => {
     const result = runLegacyDashboardMigrationDeadline();
 

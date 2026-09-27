@@ -2940,6 +2940,9 @@ prepare_hermes_nonroot_runtime() {
 
 migrate_legacy_hermes_dashboard_state() {
   local rc=0
+  # The migrator can move a legacy state.db into the native runtime directory.
+  # Establish that descriptor-verified destination before migration preflight.
+  ensure_hermes_cross_uid_state_dir runtime || return 1
   if [ "$(id -u)" -eq 0 ]; then
     "${_HERMES_DASHBOARD_STATE_MIGRATION_TIMEOUT[@]}" \
       "${STEP_DOWN_PREFIX_SANDBOX[@]}" "$_HERMES_PYTHON" -I \

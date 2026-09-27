@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
-import type { SandboxCommandResult } from "../../adapters/sandbox/command-transport";
+import type {
+  SandboxCommandResult,
+  SandboxExecCommandExecutionOptions,
+} from "../../adapters/sandbox/command-transport";
 import { executeOrdinarySandboxCommand } from "../../adapters/sandbox/ordinary-command";
 
 export const HERMES_DASHBOARD_STATE_MIGRATION_COMMAND =
@@ -16,6 +19,10 @@ export function hermesDashboardStateMigrationRecoveryGuidance(sandboxName: strin
 export function migrateHermesLegacyDashboardState(
   sandboxName: string,
   runtimeSelection?: OpenShellRuntimeSelection,
+  executionOptions: Pick<
+    SandboxExecCommandExecutionOptions,
+    "commandExecutor" | "gatewayName"
+  > = {},
 ): Promise<SandboxCommandResult | null> {
   return executeOrdinarySandboxCommand(
     sandboxName,
@@ -23,6 +30,7 @@ export function migrateHermesLegacyDashboardState(
     HERMES_DASHBOARD_STATE_MIGRATION_TIMEOUT_MS,
     {
       honorCallerTimeout: true,
+      ...executionOptions,
       ...(runtimeSelection ? { runtimeSelection } : {}),
     },
   );

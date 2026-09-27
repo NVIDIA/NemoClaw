@@ -229,6 +229,9 @@ OpenClaw's device identity keys and paired-device tokens are intentionally exclu
 Credential-bearing Hermes files such as `auth.json` are intentionally excluded from snapshots.
 NemoClaw-regenerated Hermes config files, including `config.yaml` and `.env`, are also excluded.
 NemoClaw recreates model, provider, and messaging credentials from host-side onboarding and OpenShell provider state during rebuild.
+During rebuild, NemoClaw restores supported credential-free Hermes settings that you applied with `config set`.
+It excludes managed route values and drops any setting that contains credential material.
+The rebuild report lists the restored and dropped setting keys.
 
 If a Hermes rebuild cannot validate or release its NemoClaw cron restore gate, NemoClaw preserves the state backup. If the rebuild already accepted the replacement sandbox, it also preserves the replacement journal. New Hermes turns and cron dispatch remain blocked while the gate exists.
 
