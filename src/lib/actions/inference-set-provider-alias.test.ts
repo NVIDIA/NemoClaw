@@ -210,7 +210,9 @@ describe("runInferenceSet accepts the installer provider name — facet 1 (#6321
       ],
       expect.objectContaining({ ignoreError: true }),
     );
-    expect((config.models as Record<string, ConfigValue>).providers).toMatchObject({
+    expect(deps.calls.writeSandboxConfig).toHaveBeenCalledTimes(1);
+    const writtenConfig = deps.calls.writeSandboxConfig.mock.calls[0]?.[2] as ConfigObject;
+    expect((writtenConfig.models as Record<string, ConfigValue>).providers).toMatchObject({
       [provider]: nativeProviderConfig,
     });
     expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
