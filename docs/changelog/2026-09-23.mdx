@@ -19,6 +19,10 @@ It also strengthens host OS reporting and Windows WSL GPU verification.
   Ordinary local agent turns use OpenClaw's native method scopes, while model overrides and session resets retain administrative scope.
   Related changes: [PR #12197](https://github.com/NVIDIA/NemoClaw/pull/12197) and [PR #12354](https://github.com/NVIDIA/NemoClaw/pull/12354).
   Refer to [Gateway Authentication Controls](/user-guide/openclaw/security/security-controls/gateway-authentication-controls#approve-administrative-scopes-manually).
+- `nemoclaw <sandbox> exec -- ...` no longer runs `openclaw devices list --json` after a command.
+  When a command reports a pending scope approval, use the native request ID to review and approve the matching request in a prepared `connect` shell.
+  Related change: [PR #12332](https://github.com/NVIDIA/NemoClaw/pull/12332).
+  Refer to [Troubleshooting](/user-guide/openclaw/reference/troubleshooting#an-openclaw-command-inside-the-sandbox-fails-with-scope-upgrade-pending-approval).
 - Configuration export preserves effective OpenClaw and Hermes settings when v1alpha1 omission defaults would change behavior.
   Supported OpenClaw exports for attached Ollama with a managed proxy and the fixed managed vLLM profile now include local inference service templates.
   These templates contain `image: null`; replace that value with an official, immutable, compatible v1 runtime image before v1 parsing or planning.
