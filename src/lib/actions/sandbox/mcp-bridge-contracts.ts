@@ -4,6 +4,8 @@
 import type { AgentMcpAdapter } from "../../agent/defs";
 
 export const MCP_BRIDGE_POLICY_SOURCE = "generated:nemoclaw-mcp-bridge";
+/** The one supported subcommand list, shared by every mcp usage string. */
+export const MCP_BRIDGE_SUBCOMMANDS_USAGE = "<add|update|list|status|restart|remove|migrate>";
 export type McpBridgeErrorReasonCode = "rejected" | "unresolved";
 export class McpBridgeError extends Error {
   constructor(
