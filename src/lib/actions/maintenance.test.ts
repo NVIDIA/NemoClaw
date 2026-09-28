@@ -1138,11 +1138,12 @@ describe("backupAll", () => {
     },
   );
 
-  it("skips a stranded orphan sandbox without failing strict backup (#6520)", async () => {
-    // Uninstall + reinstall strands a sandbox: gateway registration and
-    // container removed, sandboxes.json preserved. There is nothing left to
-    // back up, so strict backup-all must warn and move on instead of aborting
-    // before the installer's recovery phase can surface the orphan.
+  it("fails strict backup and counts a confirmed stranded sandbox that was not backed up (#11795)", async () => {
+    // A sandbox whose container was removed out of band is unobserved on its
+    // gateway and has nothing left to back up. Strict backup-all must count
+    // it, print the destroy/onboard guidance, and fail closed instead of
+    // reporting a clean backup and letting the installer continue (#6520
+    // classification, #11795 gate).
     mocks.listSandboxes.mockReturnValue({
       sandboxes: [{ name: "sb-good" }, { name: "sb-stranded" }],
       defaultSandbox: null,
@@ -1167,18 +1168,19 @@ describe("backupAll", () => {
     });
     process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS = "1";
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
       throw new Error(`exit:${code}`);
     }) as never);
 
-    await backupAll();
+    await expect(backupAll()).rejects.toThrow("exit:1");
 
-    expect(exitSpy).not.toHaveBeenCalled();
+    expect(exitSpy).toHaveBeenCalledWith(1);
     expect(mocks.backupSandboxState).toHaveBeenCalledWith("sb-good");
     expect(mocks.backupStartedSandboxState).not.toHaveBeenCalled();
     expect(mocks.withSandboxMutationLock).toHaveBeenCalledTimes(1);
     expect(mocks.withSandboxMutationLock).toHaveBeenCalledWith("sb-good", expect.any(Function));
-    // The exemption requires a confirming second pinned listing after the loop.
+    // The classification requires a confirming second pinned listing after the loop.
     expect(mocks.captureSandboxListWithGatewayPreflightOrExit).toHaveBeenCalledTimes(2);
     expect(mocks.captureSandboxListWithGatewayPreflightOrExit).toHaveBeenNthCalledWith(
       2,
@@ -1194,8 +1196,106 @@ describe("backupAll", () => {
     );
     expect(logOutput).toContain("destroy` to clear a stranded record");
     expect(logOutput).toContain("onboard` to rebuild it");
-    expect(logOutput).toContain("1 backed up, 0 failed, 0 skipped");
+    expect(logOutput).toContain("1 backed up, 0 failed, 0 skipped, 1 stranded");
     expect(logOutput).not.toContain("Skipping 'sb-stranded'");
+    const errorOutput = errorSpy.mock.calls.flat().join("\n");
+    expect(errorOutput).toContain(
+      "Strict pre-upgrade backup requires every registered sandbox to be backed up; 1 stranded sandbox(es) have no container left to back up.",
+    );
+    expect(errorOutput).toContain(
+      "Clear or rebuild each stranded sandbox using the guidance above",
+    );
+    expect(errorOutput).not.toContain("sandbox(es) were skipped");
+  });
+
+  it("counts a confirmed stranded sandbox in the summary when strict mode is off (#11795)", async () => {
+    // Without the strict gate the run must still not read as a clean backup:
+    // the stranded sandbox was never captured, so the summary names it.
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "sb-good" }, { name: "sb-stranded" }],
+      defaultSandbox: null,
+    });
+    readySandboxNames = new Set(["sb-good"]);
+    liveSandboxNames = new Set(["sb-good"]);
+    mocks.isSandboxContainerDefinitivelyAbsent.mockImplementation(
+      (name: string) => name === "sb-stranded",
+    );
+    mocks.withSandboxMutationLock.mockImplementation((name: string, action: () => unknown) =>
+      name === "sb-stranded"
+        ? Promise.reject(new Error("Sandbox mutation lock is unavailable"))
+        : action(),
+    );
+    mocks.backupSandboxState.mockReturnValue({
+      success: true,
+      backedUpDirs: ["workspace"],
+      failedDirs: [],
+      backedUpFiles: [],
+      failedFiles: [],
+      manifest: { backupPath: "/backups/sb-good/timestamp" },
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`);
+    }) as never);
+
+    await backupAll();
+
+    expect(exitSpy).not.toHaveBeenCalled();
+    const logOutput = logSpy.mock.calls.flat().join("\n");
+    expect(logOutput).toContain("1 backed up, 0 failed, 0 skipped, 1 stranded");
+    expect(logOutput).toContain(
+      "1 recorded sandbox(es) were not found on their recorded gateway: sb-stranded.",
+    );
+    expect(errorSpy.mock.calls.flat().join("\n")).not.toContain(
+      "requires every registered sandbox",
+    );
+  });
+
+  it("reports a confirmed stranded sandbox without failing strict pre-uninstall backup (#7290)", async () => {
+    // Uninstall preserves sandboxes.json, so a stranded record needs no
+    // backup and must not block uninstall. The summary still counts it.
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "sb-good" }, { name: "sb-stranded" }],
+      defaultSandbox: null,
+    });
+    readySandboxNames = new Set(["sb-good"]);
+    liveSandboxNames = new Set(["sb-good"]);
+    mocks.isSandboxContainerDefinitivelyAbsent.mockImplementation(
+      (name: string) => name === "sb-stranded",
+    );
+    mocks.withSandboxMutationLock.mockImplementation((name: string, action: () => unknown) =>
+      name === "sb-stranded"
+        ? Promise.reject(new Error("Sandbox mutation lock is unavailable"))
+        : action(),
+    );
+    mocks.backupSandboxState.mockReturnValue({
+      success: true,
+      backedUpDirs: ["workspace"],
+      failedDirs: [],
+      backedUpFiles: [],
+      failedFiles: [],
+      manifest: { backupPath: "/backups/sb-good/timestamp" },
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`);
+    }) as never);
+
+    await backupAllUnderPortableHostFence({ purpose: "pre-uninstall", requireAll: true });
+
+    expect(exitSpy).not.toHaveBeenCalled();
+    const logOutput = logSpy.mock.calls.flat().join("\n");
+    expect(logOutput).toContain(
+      "Pre-uninstall backup: 1 backed up, 0 failed, 0 skipped, 1 stranded",
+    );
+    expect(logOutput).toContain(
+      "1 recorded sandbox(es) were not found on their recorded gateway: sb-stranded.",
+    );
+    expect(errorSpy.mock.calls.flat().join("\n")).not.toContain(
+      "stranded sandbox(es) have no container",
+    );
   });
 
   it("keeps the strict abort for an absent sandbox bound to a different gateway (#6520)", async () => {
