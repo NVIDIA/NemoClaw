@@ -15,6 +15,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   resolveTrustedSnapshotSanitizerPythonPath,
+  SnapshotSanitizerHelperError,
   setSnapshotSanitizerPythonPathForTest,
 } from "../shared/snapshot-sanitizer-boundary.cjs";
 import { sanitizeMigrationDirectory, sanitizeOpenClawConfigFile } from "./snapshot-sanitizer.js";
@@ -59,6 +60,40 @@ describe("migration snapshot sanitizer", () => {
       "BENIGN_NAME=[STRIPPED_BY_MIGRATION]",
     );
     expect(readFileSync(path.join(root, "service.env"), "utf-8")).toContain("LOG_LEVEL=info");
+  });
+
+  it("sanitizes credentials in entries whose names contain a backslash", () => {
+    const root = makeRoot();
+    const directory = path.join(root, "05-\u{1F6E0}\u{FE0F}\\ Systems\\ \\&\\ Templates");
+    const nestedConfigPath = path.join(directory, "config.json");
+    const namedConfigPath = path.join(root, "back\\slash.json");
+    const notesPath = path.join(directory, "notes.md");
+    mkdirSync(directory);
+    const token = "ghp_abcdefghijklmnopqrstuvwxyz0123456789";
+    writeFileSync(nestedConfigPath, JSON.stringify({ customValue: token }));
+    writeFileSync(namedConfigPath, JSON.stringify({ customValue: token }));
+    writeFileSync(notesPath, "retained context\n");
+
+    sanitizeMigrationDirectory(root);
+
+    expect(readFileSync(nestedConfigPath, "utf-8")).not.toContain("ghp_");
+    expect(readFileSync(namedConfigPath, "utf-8")).not.toContain("ghp_");
+    expect(readFileSync(notesPath, "utf-8")).toBe("retained context\n");
+  });
+
+  it("reports the total size limit without an entry path when scanned files exceed 32 MiB", () => {
+    const root = makeRoot();
+    const artifact = Buffer.alloc(11 * 1024 * 1024);
+    writeFileSync(path.join(root, "a.json"), artifact);
+    writeFileSync(path.join(root, "b.json"), artifact);
+    writeFileSync(path.join(root, "c.json"), artifact);
+
+    expect(() => sanitizeMigrationDirectory(root)).toThrow(
+      expect.objectContaining({
+        name: "SnapshotSanitizerHelperError",
+        message: "snapshot artifacts exceed the 32 MiB total sanitization size limit",
+      }),
+    );
   });
 
   it("sanitizes secret-shaped scalar JSON and preserves benign scalar JSON", () => {
@@ -203,9 +238,7 @@ describe("migration snapshot sanitizer", () => {
       chmodSync(wrapper, 0o755);
       setSnapshotSanitizerPythonPathForTest(wrapper);
 
-      expect(() => sanitizeMigrationDirectory(root)).toThrow(
-        /Failed to sanitize migration artifacts safely/u,
-      );
+      expect(() => sanitizeMigrationDirectory(root)).toThrow(SnapshotSanitizerHelperError);
       expect(readFileSync(outsideConfig, "utf-8")).toBe(
         JSON.stringify({ apiKey: "outside-must-not-change" }),
       );
