@@ -94,7 +94,8 @@ export type HermesConfigExportLiveEvidence =
 
 const CREDENTIAL_HTTP_REFUSAL =
   "V1alpha1 requires HTTPS when an inference provider declares a credential.";
-const CREDENTIAL_HTTP_REFUSAL_DIAGNOSTIC = `Config export failed (unsupported).\n${CREDENTIAL_HTTP_REFUSAL}`;
+const PODMAN_REFUSAL =
+  "V1alpha1 export currently supports the Docker runtime; Podman compatibility is deferred.";
 
 function normalizeCommandDiagnostics(stdout: string, stderr: string): string {
   return [stdout, stderr]
@@ -339,21 +340,28 @@ export async function verifyHermesConfigExportLive(
         output.includes(value),
       ),
   );
-  if (!launchersSucceeded) {
-    const expectsCredentialHttpRefusal =
-      typeof entry.credentialEnv === "string" &&
-      entry.credentialEnv.length > 0 &&
-      entry.endpointUrl?.toLowerCase().startsWith("http:") === true;
-    if (expectsCredentialHttpRefusal) {
+  const expectsCredentialHttpRefusal =
+    typeof entry.credentialEnv === "string" &&
+    entry.credentialEnv.length > 0 &&
+    entry.endpointUrl?.toLowerCase().startsWith("http:") === true;
+  const expectedRefusals = [
+    ...(entry.openshellDriver === "podman" ? [PODMAN_REFUSAL] : []),
+    ...(expectsCredentialHttpRefusal ? [CREDENTIAL_HTTP_REFUSAL] : []),
+  ];
+  if (expectedRefusals.length > 0 || !launchersSucceeded) {
+    if (expectedRefusals.length > 0) {
+      const expectedDiagnostic = ["Config export failed (unsupported).", ...expectedRefusals].join(
+        "\n",
+      );
       const refusalDiagnosticMatches = [nemoclawDiagnostics, nemohermesDiagnostics].every(
-        (diagnostic) => diagnostic === CREDENTIAL_HTTP_REFUSAL_DIAGNOSTIC,
+        (diagnostic) => diagnostic === expectedDiagnostic,
       );
       const refusalCategory = refusalDiagnosticMatches ? "unsupported" : null;
       const evidence: HermesConfigExportExpectedRefusalEvidence = {
         outcome: "expected-refusal",
         aliasesEquivalent:
-          nemoclaw.exitCode !== 0 &&
-          nemohermes.exitCode !== 0 &&
+          nemoclaw.exitCode === 2 &&
+          nemohermes.exitCode === 2 &&
           nemoclawDiagnostics === nemohermesDiagnostics,
         checked: true,
         credentialValuesOmitted: !containsCredential,

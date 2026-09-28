@@ -30,8 +30,10 @@ export type {
 export type { PortableAgentRuntimeProviderSupport } from "../workload/portable-agent-runtime";
 export {
   applyProviderManagedStartupRootRequest,
+  completeProviderManagedStartup,
   finalizeProviderManagedStartupSharedState,
   releaseProviderManagedStartupHold,
+  refreshManagedStartupCorporateCaTrust,
   type ProviderManagedStartupTransaction,
 } from "../managed-startup/provider-root-apply";
 export {

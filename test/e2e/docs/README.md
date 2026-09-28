@@ -146,6 +146,28 @@ secrets and internal credential transport markers before publication.
 The secret scan covers registered fixture values, not arbitrary unregistered
 secrets. Review selected exports before retaining them as migration fixtures.
 
+OpenClaw failure probes read only regular, single-link log files without following symlinks.
+They omit log content above 16 KiB or changed during the read, so truncation cannot split a credential before host redaction.
+Oversized files retain size and permission metadata for diagnosis.
+
+When the missing-custom-presets target fails before its expected policy rejection, it captures these bounded, redacted failure probes before cleanup.
+The probes also capture unexpected JavaScript failures; they do not change the onboarding result or the required policy rejection.
+Container probes use a resolved full container ID and never delete resources or retry onboarding.
+
+The `full-e2e` restart probe selects a UUID-scoped native OpenClaw provider using the already-tested model through `inference.local`.
+After NemoClaw stop/start, a gateway-only turn must report that provider and model before the probe restores the original selection.
+The probe removes its temporary native entries before the launch checks.
+The fixture contains no provider credentials. It sends a JSON patch to native OpenClaw through stdin.
+
+The restart probe no longer rereads native configuration to clone and validate a provider.
+The preceding inference turn already verifies the selected model and route.
+Native `config validate` and the post-restart gateway turn retain the live configuration and inference checks.
+UUID-scoped names replace the fixed-name collision checks; the fixture does not copy existing aliases or credentials.
+Patch construction and unique names are tested in `full-e2e-native-model.test.ts` in `e2e-support`.
+The removed config-reader and child-error-redaction checks belonged to the deleted cloning command.
+Native CLI output still uses the fixture's redaction path.
+The live credential scan, launch-readiness checks, restoration, and temporary-entry cleanup remain unchanged.
+
 After a live target succeeds, the E2E workflow requires
 `config-export-evidence.v1.json`. It also requires `config-export.yaml` when
 the evidence classification is `success`; `expected-refusal` and
@@ -411,7 +433,12 @@ The retired `--emit-matrix` and `--plan-only` paths must not be reintroduced.
 
 When you add or make a non-comment source change to a live E2E test or a
 `test/e2e/live/` helper, update `test/e2e/mock-parity.json`. List each changed
-helper under `liveSources` for its owning live test. If the entry has mapped
+helper under `liveSources` for its owning live test. Also list each explicitly
+owned `test/e2e/fixtures/` source under `liveSources` for every owning live test.
+The same mapped fast-test rule applies to changes in those shared fixtures.
+Removing an owner in the same PR does not remove its base-manifest fast-test
+requirement for a changed or deleted fixture.
+Unrelated fixtures do not need an owner. If the entry has mapped
 fast tests, make a non-comment source change to at least one mapped fast test
 in the same PR. Use
 `liveOnlyReason` only when no fast test can reproduce the contract. The PR and

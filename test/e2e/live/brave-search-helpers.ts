@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import YAML from "yaml";
+import type { ArtifactSink } from "../fixtures/artifacts.ts";
+import type { E2eRuntimeProviderId } from "../fixtures/runtime-provider.ts";
 import { asExportedConfig } from "../../support/config-export-document.ts";
 import { inspectConfigExportArtifactSafety } from "../fixtures/phases/config-export-validation.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -181,6 +183,25 @@ export async function exportBraveConfig(
     [CLI_ENTRYPOINT, "config", "export", SANDBOX_NAME, "--output", outputPath, "--json"],
     { artifactName, cwd: REPO_ROOT, env: commandEnv(), redactionValues, timeoutMs: 60_000 },
   );
+}
+
+/** The live test keeps its Docker assertions; Podman records its verified refusal. */
+export async function completeBraveConfigExport(
+  runtimeProvider: E2eRuntimeProviderId,
+  artifacts: ArtifactSink,
+  verifyDockerExport: () => Promise<void>,
+): Promise<void> {
+  if (runtimeProvider === "podman") {
+    await artifacts.writeJson("brave-config-export-evidence.json", {
+      sandboxName: SANDBOX_NAME,
+      runtimeProvider: "podman",
+      classification: "expected-refusal",
+      refusalCategory: "unsupported",
+      outputPublished: false,
+    });
+  } else {
+    await verifyDockerExport();
+  }
 }
 
 /** Validate private export output before retaining only public spec evidence. */

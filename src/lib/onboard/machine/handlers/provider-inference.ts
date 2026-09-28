@@ -47,6 +47,7 @@ import {
   hostLocalInferenceRequestToolCalling,
   hostLocalInferenceSandboxProofAuthority,
 } from "../../runtime-provider/host-local-inference-routing";
+import { reserveRecoveredSandboxInferenceRoute } from "../../sandbox-lifecycle";
 import { withInferenceTrace, withProviderSelectionTrace } from "../../tracing";
 import { advanceTo, type OnboardStateTransitionResult, retryTo } from "../result";
 import { createRecovery, type RecoveryAuthority } from "./provider-inference-recovery";
@@ -1768,16 +1769,20 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
             );
             const reserved =
               reupserted.ok && resumeReservationName
-                ? deps.reserveSandboxInferenceRoute(resumeReservationName, {
-                    provider: selectedProvider,
-                    model: selectedModel,
-                    endpointUrl: reupserted.endpointUrl,
-                    endpointSource: reservationEndpointSource,
-                    credentialEnv,
-                    preferredInferenceApi,
-                    gatewayName,
-                    reservationSessionId: session?.sessionId,
-                  })
+                ? reserveRecoveredSandboxInferenceRoute(
+                    deps.reserveSandboxInferenceRoute,
+                    resumeReservationName,
+                    {
+                      provider: selectedProvider,
+                      model: selectedModel,
+                      endpointUrl: reupserted.endpointUrl,
+                      endpointSource: reservationEndpointSource,
+                      credentialEnv,
+                      preferredInferenceApi,
+                      gatewayName,
+                      reservationSessionId: session?.sessionId,
+                    },
+                  )
                 : null;
             return { reupserted, reservationEndpointSource, reserved };
           }),
@@ -1806,16 +1811,20 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
             credentialEnv,
             preferredInferenceApi,
           });
-          return deps.reserveSandboxInferenceRoute(resumeReservationName, {
-            provider: selectedProvider,
-            model: selectedModel,
-            endpointUrl,
-            endpointSource,
-            credentialEnv,
-            preferredInferenceApi,
-            gatewayName,
-            reservationSessionId: session?.sessionId,
-          });
+          return reserveRecoveredSandboxInferenceRoute(
+            deps.reserveSandboxInferenceRoute,
+            resumeReservationName,
+            {
+              provider: selectedProvider,
+              model: selectedModel,
+              endpointUrl,
+              endpointSource,
+              credentialEnv,
+              preferredInferenceApi,
+              gatewayName,
+              reservationSessionId: session?.sessionId,
+            },
+          );
         });
         if (!reserved) {
           deps.error(`  Failed to reserve inference route for sandbox '${resumeReservationName}'.`);

@@ -27,3 +27,21 @@ export function resolveNemoClawGatewayRuntime(
 export function isPodmanGatewayRuntimeEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return resolveNemoClawGatewayRuntime(env) === "podman";
 }
+
+/** Host lifecycle context, separate from generic OpenShell client target selection. */
+export const GATEWAY_HOST_RUNTIME_ENV_KEYS = [
+  NEMOCLAW_GATEWAY_RUNTIME_ENV,
+  "OPENSHELL_PODMAN_SOCKET",
+  "CONTAINERS_CONF",
+  "CONTAINERS_STORAGE_CONF",
+  "XDG_RUNTIME_DIR",
+  "DBUS_SESSION_BUS_ADDRESS",
+] as const;
+
+export function gatewayHostRuntimeEnvironment(source: NodeJS.ProcessEnv): Record<string, string> {
+  return Object.fromEntries(
+    GATEWAY_HOST_RUNTIME_ENV_KEYS.flatMap((name) =>
+      source[name] === undefined ? [] : [[name, source[name]]],
+    ),
+  );
+}

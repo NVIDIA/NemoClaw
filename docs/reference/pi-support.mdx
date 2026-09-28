@@ -15,26 +15,29 @@ content:
   type: "reference"
 agent-variants: ["pi"]
 ---
+
 Pi is a NemoClaw agent runtime. Docker is the initial compute runtime. Pi-specific code does not own Docker lifecycle, snapshot, recovery, or cleanup behaviour.
 
 <Warning>
-The Pi runtime remains a release candidate until final activation adds it to the supported inventory and complete managed-image cohort. Published candidate images and qualification evidence do not make Pi selectable in an ordinary installation.
+  The Pi runtime remains a release candidate until final activation adds it to the supported
+  inventory and complete managed-image cohort. Published candidate images and qualification evidence
+  do not make Pi selectable in an ordinary installation.
 </Warning>
 
 ## Initial Support Matrix
 
-| Dimension | Accepted value |
-|---|---|
-| Agent ID | `pi` |
-| Pi package | `@earendil-works/pi-coding-agent` 0.84.1 |
-| Node.js | 22.19 or later |
-| Host platform | Linux AMD64 or Linux ARM64 |
-| Compute runtime | Docker |
-| Managed API | OpenAI Chat Completions |
-| Sandbox route | `https://inference.local/v1` |
-| Qualification model | `nvidia/nemotron-3-super-120b-a12b` |
-| Interactive command | `pi` |
-| Headless command | `pi --no-approve --print` |
+| Dimension           | Accepted value                           |
+| ------------------- | ---------------------------------------- |
+| Agent ID            | `pi`                                     |
+| Pi package          | `@earendil-works/pi-coding-agent` 0.84.1 |
+| Node.js             | 22.19 or later                           |
+| Host platform       | Linux AMD64 or Linux ARM64               |
+| Compute runtime     | Docker                                   |
+| Managed API         | OpenAI Chat Completions                  |
+| Sandbox route       | `https://inference.local/v1`             |
+| Qualification model | `nvidia/nemotron-3-super-120b-a12b`      |
+| Interactive command | `pi`                                     |
+| Headless command    | `pi --no-approve --print`                |
 
 Podman, macOS, Windows, WSL, messaging, dashboards, device pairing, managed MCP, host mounts, and automatic third-party package installation are outside the initial matrix.
 

@@ -19,6 +19,7 @@ import {
 import type { ExternalImageAgent } from "../../../src/lib/onboard/workload/source.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { approveOpenClawAdminScope } from "./openclaw-admin-scope.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import {
   assertExitZero,
@@ -838,6 +839,9 @@ async function qualifyAgent(
     await collectOnboardFailureDockerDiagnostics(artifacts, host, agent, sandboxName, env);
   }
   expect(onboard.exitCode, resultText(onboard)).toBe(0);
+  if (agent === "openclaw") {
+    await approveOpenClawAdminScope(host, sandbox, sandboxName, env, [API_KEY]);
+  }
   await runAgentTurn(sandbox, agent, sandboxName, "before", env);
   if (agent === "openclaw") await runOpenClawSubagentTurn(sandbox, sandboxName, env);
   if (agent === "hermes") {
@@ -1091,9 +1095,9 @@ export async function qualifyManagedImageActivation(fixtures: RuntimeFixtures): 
   const chatRequests = inference
     .requests()
     .filter((request) => request.method === "POST" && request.path === "/v1/chat/completions");
-  expect(chatRequests.length).toBeGreaterThanOrEqual(SHIPPED_MANAGED_IMAGE_AGENTS.length * 2);
   expect(
-    chatRequests.every((request) => request.auth === "ok" && request.model === MODEL) &&
+    chatRequests.length >= SHIPPED_MANAGED_IMAGE_AGENTS.length * 2 &&
+      chatRequests.every((request) => request.auth === "ok" && request.model === MODEL) &&
       chatRequests.some((request) => request.requestCanaryPresent === true) &&
       chatRequests.some((request) => request.toolResultPresent === true) &&
       externalImages.every((image) => image.verified),

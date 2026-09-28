@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
+import { approveOpenClawAdminScope } from "./openclaw-admin-scope.ts";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { describe } from "vitest";
@@ -23,7 +23,7 @@ import {
   type HostedInferenceConfig,
   requireHostedInferenceConfig,
 } from "../fixtures/hosted-inference.ts";
-import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
+import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { SecretStore } from "../fixtures/secrets.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import type { RuntimeProviderPrerequisite } from "../fixtures/runtime-provider.ts";
@@ -243,11 +243,6 @@ async function assertPrerequisites(
   runtimeProvider: RuntimeProviderPrerequisite,
   secrets: SecretStore,
 ): Promise<HostedInferenceConfig> {
-  expect(
-    fs.existsSync(CLI_DIST_ENTRYPOINT),
-    "run `npm run build:cli` before live repo CLI targets",
-  ).toBe(true);
-
   await runtimeProvider.requireAvailable({
     artifactName: "prereq-runtime-info-common-egress",
     scenarioLabel: "common-egress agent",
@@ -636,6 +631,14 @@ describe.sequential("common-egress agent live targets", () => {
         extraRedactionValues: [braveApiKey],
       });
 
+      await approveOpenClawAdminScope(
+        host,
+        sandbox,
+        OPENCLAW_BALANCED_SANDBOX,
+        commandEnv(hosted.env),
+        [hosted.apiKey],
+        false,
+      );
       progress.phase("verify balanced egress excludes weather");
       expect(
         await listActivePolicyPresets(host, OPENCLAW_BALANCED_SANDBOX, "c1-balanced-initial"),
@@ -772,6 +775,14 @@ After it returns, reply with only WEATHER_AGENT_OK. Do not fetch any other URL.`
         skip,
         tier: "open",
       });
+      await approveOpenClawAdminScope(
+        host,
+        sandbox,
+        OPENCLAW_OPEN_SANDBOX,
+        commandEnv(hosted.env),
+        [hosted.apiKey],
+        false,
+      );
       progress.phase("verify public-reference egress policy");
       await assertPolicyContains(sandbox, OPENCLAW_OPEN_SANDBOX, "c2-policy", [
         "www.wikidata.org",
@@ -907,6 +918,14 @@ After web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched respons
         },
       });
 
+      await approveOpenClawAdminScope(
+        host,
+        sandbox,
+        OPENCLAW_PERSONAL_SANDBOX,
+        commandEnv(hosted.env),
+        [hosted.apiKey],
+        false,
+      );
       progress.phase("verify Personal policy and absent Brave Search or Tavily Search API keys");
       expect(
         await listActivePolicyPresets(host, OPENCLAW_PERSONAL_SANDBOX, "c4-personal-initial"),

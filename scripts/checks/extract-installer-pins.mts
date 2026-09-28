@@ -511,8 +511,12 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       "98c46cfee5bc38cd378a991a7c60573836a6c774008caf5c5dd7bc6a1910e1ce",
       // Exact #12192 bootstrap diagnostics template; release pins stay unchanged.
       "336065ba8f55f686e3dedec9109b2dfeff16e9256e7a1be135bd32b1db0c4bee",
-      // Exact #12192 Advisor repair; release pins stay unchanged.
-      "d5694e92c90523573163236b8e637cc8daaf0427bda9348dfb0cfe6d0a6e140e",
+      // Exact self-contained #12192 npm diagnostics; release pins stay unchanged.
+      "60aa3d473597638b50bc9ba637a86dee08aed5727c1d0297f72476c0c6690f2f",
+      // Exact #12192 secure npm diagnostics; release pins stay unchanged.
+      "67bc3071e844cbe4cbc8c94084523804fab3d59b0c705077cdda822ce66fd1db",
+      // Exact #12192 shared npm diagnostics; release pins stay unchanged.
+      "9bb436b8a08b085c5f7ca8a98bf1bc0cddc3cd51a792f897c6593499ab0b2da0",
     ],
     formula: {
       asset: "openshell.rb",
@@ -526,6 +530,8 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       "2b6ad3e0730d3220da05d13b88fdba4458de46840bad57942ecad26a5d606017",
       // Exact #11251 template after immutable stable-override validation.
       "24cb9e67b855e8a69df32aae992f4756ef2b29bcdc7846ef57bcfeacb3c1a9a3",
+      // Exact #12374 curl timeout/retry template; release pins and verification stay unchanged.
+      "6808b7c667aef5c9ebdfe269ae1f9b4c181b5de6a6e62bdb526fac4338f5ee4f",
     ],
     manifests: [
       {

@@ -233,11 +233,27 @@ export function wrapOnboardDeferredExit<TOptions extends DeferredExitOptions>(
   };
 }
 
+/** Reject conflicting fresh provider intent without changing the caller environment. */
+export function assertPortableOnboardProviderIntent(
+  env: NodeJS.ProcessEnv,
+  activation: PortableInferenceActivation | null,
+  options: { readonly resume?: boolean } = {},
+): void {
+  const requestedProvider = env.NEMOCLAW_PROVIDER?.trim();
+  if (!options.resume && !activation && requestedProvider && requestedProvider !== "ollama") {
+    throw new Error(
+      "Portable onboarding uses Ollama. Set NEMOCLAW_PROVIDER=ollama and choose an Ollama model, or remove --experimental-profile portable to use another provider.",
+    );
+  }
+}
+
+/** Scope Portable environment changes while preserving activation and checkpoint authority. */
 export function createPortableOnboardEnvironmentScope(
   env: NodeJS.ProcessEnv,
   activation: PortableInferenceActivation | null,
   options: { readonly resume?: boolean } = {},
 ): PortableOnboardEnvironmentScope {
+  assertPortableOnboardProviderIntent(env, activation, options);
   const previous = new Map<string, PreviousEnvironmentValue>();
   for (const key of PORTABLE_OWNED_ENV_KEYS) {
     previous.set(key, {

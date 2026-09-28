@@ -63,6 +63,8 @@ import {
   buildRestoreCleanupCommand,
   buildRestoreTarArgs,
   isAllowedStateSymlink,
+  copyCapturedAgentState,
+  type CapturedAgentState,
 } from "./state-directory-restore.js";
 import {
   extractPreservedEnvAssignments,
@@ -188,6 +190,8 @@ export interface RebuildMcpHandoffEntry {
 export type SnapshotEntry = RebuildManifest & { snapshotVersion: number };
 
 export interface BackupOptions {
+  /** Private, provider-verified source for OpenClaw recovery without container execution. */
+  capturedAgentState?: CapturedAgentState;
   name?: string | null;
   runtimeSnapshot?: SandboxRuntimeSnapshot;
   workload?: SandboxWorkloadReceipt;
@@ -315,12 +319,15 @@ export interface RecreatedSandboxRestoreOptions extends SnapshotRestoreOptions {
   allowCustomImageWholeStateFileRestore?: true;
   /** Exact OpenShell target frozen by the enclosing rebuild transaction. */
   runtimeSelection?: OpenShellRuntimeSelection;
+  /** Non-backup legacy directories restored only for an immediate validated migration. */
+  restoreLegacyMigrationStateDirs?: readonly string[];
 }
 
 interface InternalRestoreOptions {
   targetAgentType: string;
   allowCustomImageWholeStateFileRestore?: true;
   runtimeSelection?: OpenShellRuntimeSelection;
+  restoreLegacyMigrationStateDirs?: readonly string[];
   authority?: SnapshotRestoreAuthority;
   validateBeforeMutation?: () => void | Promise<void>;
 }
@@ -1748,6 +1755,85 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
     };
   }
 
+  const finishBackup = (): BackupResult => {
+    // SECURITY: Strip credentials from the local backup
+    sanitizeBackupDirectory(backupPath);
+
+    // Record dynamically discovered directories in the manifest alongside the
+    // exact declarations so restoreSandboxState() can find them in backupPath.
+    // Preserve exact declaration order, followed by prefix-discovery order.
+    const discoveredStateDirs = backedUpDirs.filter(
+      (dirName) =>
+        !stateDirs.includes(dirName) &&
+        stateDirPrefixes.some((prefix) => dirName.startsWith(prefix)),
+    );
+    if (discoveredStateDirs.length > 0) {
+      manifest.stateDirs = [...stateDirs, ...discoveredStateDirs];
+      _log(`Manifest stateDirs extended with prefix matches: [${discoveredStateDirs.join(",")}]`);
+    }
+    manifest.backedUpDirs = backedUpDirs;
+    manifest.failedBackupDirs = failedDirs.filter((failedDir) =>
+      manifest.stateDirs.includes(failedDir),
+    );
+    manifest.backupComplete = failedDirs.length === 0 && failedFiles.length === 0;
+
+    const publicationError = validateSnapshotPublication(backupPath, options.validateBeforePublish);
+    if (publicationError) {
+      return {
+        success: false,
+        backedUpDirs: [],
+        failedDirs: [],
+        backedUpFiles: [],
+        failedFiles: [],
+        error: publicationError,
+      };
+    }
+    writeManifest(backupPath, manifest);
+    manifest.backupPath = backupPath;
+
+    return {
+      success: failedDirs.length === 0 && failedFiles.length === 0,
+      unreachable,
+      manifest,
+      backedUpDirs,
+      failedDirs,
+      ...(Object.keys(failedDirReasons).length > 0 ? { failedDirReasons } : {}),
+      backedUpFiles,
+      failedFiles,
+    };
+  };
+
+  if (options.capturedAgentState) {
+    try {
+      if (
+        agentName !== options.capturedAgentState.agentName ||
+        options.capturedAgentState.sandboxName !== sandboxName
+      )
+        throw new Error("Stopped state capture does not match the registered agent.");
+      const captured = copyCapturedAgentState(
+        options.capturedAgentState,
+        backupPath,
+        stateDirs,
+        stateDirPrefixes,
+        stateFiles,
+      );
+      backedUpDirs.push(...captured.directories);
+      backedUpFiles.push(...captured.files);
+      return finishBackup();
+    } catch {
+      rmSync(backupPath, { recursive: true, force: true });
+      return {
+        success: false,
+        backedUpDirs: [],
+        failedDirs: [...stateDirs],
+        backedUpFiles: [],
+        failedFiles: stateFiles.map((file) => file.path),
+        error:
+          "Stopped agent state capture could not be published safely. The source sandbox was preserved.",
+      };
+    }
+  }
+
   // SSH+tar single-roundtrip download
   _log("Getting SSH config via openshell sandbox ssh-config");
   const sshConfig = getSshConfig(sandboxName);
@@ -2128,50 +2214,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
     }
   }
 
-  // SECURITY: Strip credentials from the local backup
-  sanitizeBackupDirectory(backupPath);
-
-  // Record dynamically discovered directories in the manifest alongside the
-  // exact declarations so restoreSandboxState() can find them in backupPath.
-  // Preserve exact declaration order, followed by prefix-discovery order.
-  const discoveredStateDirs = backedUpDirs.filter(
-    (dirName) =>
-      !stateDirs.includes(dirName) && stateDirPrefixes.some((prefix) => dirName.startsWith(prefix)),
-  );
-  if (discoveredStateDirs.length > 0) {
-    manifest.stateDirs = [...stateDirs, ...discoveredStateDirs];
-    _log(`Manifest stateDirs extended with prefix matches: [${discoveredStateDirs.join(",")}]`);
-  }
-  manifest.backedUpDirs = backedUpDirs;
-  manifest.failedBackupDirs = failedDirs.filter((failedDir) =>
-    manifest.stateDirs.includes(failedDir),
-  );
-  manifest.backupComplete = failedDirs.length === 0 && failedFiles.length === 0;
-
-  const publicationError = validateSnapshotPublication(backupPath, options.validateBeforePublish);
-  if (publicationError) {
-    return {
-      success: false,
-      backedUpDirs: [],
-      failedDirs: [],
-      backedUpFiles: [],
-      failedFiles: [],
-      error: publicationError,
-    };
-  }
-  writeManifest(backupPath, manifest);
-  manifest.backupPath = backupPath;
-
-  return {
-    success: failedDirs.length === 0 && failedFiles.length === 0,
-    unreachable,
-    manifest,
-    backedUpDirs,
-    failedDirs,
-    ...(Object.keys(failedDirReasons).length > 0 ? { failedDirReasons } : {}),
-    backedUpFiles,
-    failedFiles,
-  };
+  return finishBackup();
 }
 
 // ── Restore ────────────────────────────────────────────────────────
@@ -2341,6 +2384,7 @@ export async function restoreSandboxState(
   return restoreSandboxStateInternal(sandboxName, backupPath, {
     targetAgentType: String(target.agent || "openclaw"),
     ...(target.fromDockerfile ? { allowCustomImageWholeStateFileRestore: true } : {}),
+    ...(target.agent === "hermes" ? { restoreLegacyMigrationStateDirs: ["dashboard-home"] } : {}),
     ...(options.authority ? { authority: options.authority } : {}),
     ...(options.validateBeforeMutation
       ? { validateBeforeMutation: options.validateBeforeMutation }
@@ -2359,6 +2403,9 @@ export async function restoreRecreatedSandboxState(
       ? { allowCustomImageWholeStateFileRestore: true }
       : {}),
     ...(options.runtimeSelection ? { runtimeSelection: options.runtimeSelection } : {}),
+    ...(options.restoreLegacyMigrationStateDirs
+      ? { restoreLegacyMigrationStateDirs: options.restoreLegacyMigrationStateDirs }
+      : {}),
     ...(options.authority ? { authority: options.authority } : {}),
     ...(options.validateBeforeMutation
       ? { validateBeforeMutation: options.validateBeforeMutation }
@@ -2467,6 +2514,15 @@ async function restoreSandboxStateInternal(
   const isTargetBackupDir = (dirName: string): boolean =>
     !isTargetNonBackupDir(dirName) &&
     isAllowedDiscoveredStateDir(dirName, targetBackupDirs, targetBackupPrefixes);
+  const restoreLegacyMigrationStateDirs = new Set(options.restoreLegacyMigrationStateDirs ?? []);
+  const invalidLegacyMigrationDirs = [...restoreLegacyMigrationStateDirs].filter(
+    (dirName) => !isTargetNonBackupDir(dirName),
+  );
+  if (invalidLegacyMigrationDirs.length > 0) {
+    return failRestoreContract(
+      `Legacy migration directories are not declared non-backup state for target agent '${options.targetAgentType}': ${invalidLegacyMigrationDirs.join(", ")}`,
+    );
+  }
   const undeclaredSnapshotDirs = manifest.stateDirs.filter(
     (dirName) => !isTargetBackupDir(dirName) && !isTargetNonBackupDir(dirName),
   );
@@ -2475,7 +2531,9 @@ async function restoreSandboxStateInternal(
       `Backup state directories are not declared by target agent '${options.targetAgentType}': ${undeclaredSnapshotDirs.join(", ")}`,
     );
   }
-  const skippedNonBackupDirs = localDirs.filter(isTargetNonBackupDir);
+  const skippedNonBackupDirs = localDirs.filter(
+    (dirName) => isTargetNonBackupDir(dirName) && !restoreLegacyMigrationStateDirs.has(dirName),
+  );
   if (skippedNonBackupDirs.length > 0) {
     _log(`Skipping non-backup state dirs from restore: [${skippedNonBackupDirs.join(",")}]`);
     for (const d of skippedNonBackupDirs) {
@@ -2706,11 +2764,15 @@ async function restoreSandboxStateInternal(
     for (const spec of localFiles) {
       const targetStateFile = targetStateFiles.get(spec.path);
       if (!targetStateFile) throw new Error(`Validated target state file missing: ${spec.path}`);
+      const restoreSpec =
+        options.targetAgentType === "openclaw" && spec.path === "openclaw.json"
+          ? { ...spec, missingTargetMode: "runtime-parent" as const }
+          : spec;
       if (
         restoreStateFile(
           sshArgs(configFile, sandboxName),
           dir,
-          spec,
+          restoreSpec,
           backupPath,
           targetStateFile.restore,
           options.allowCustomImageWholeStateFileRestore === true,

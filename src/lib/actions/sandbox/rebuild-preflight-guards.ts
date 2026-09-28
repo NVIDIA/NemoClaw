@@ -380,6 +380,12 @@ export function acquireRebuildOnboardLock(
     );
     return null;
   }
+  try {
+    onboardSession.selectRebuildSession(sandboxName);
+  } catch (error) {
+    onboardSession.releaseOnboardLock();
+    throw error;
+  }
   let released = false;
   const release = () => {
     if (released) return;
@@ -401,7 +407,7 @@ export function expectedRebuildEntryAfterVersionCheck(
   confirmedEntrySnapshot: string,
   versionCheck: RebuildVersionCheck,
 ): RebuildSandboxEntry {
-  if (versionCheck.detectionMethod !== "ssh-exec" || versionCheck.sandboxVersion === null) {
+  if (versionCheck.detectionMethod !== "openshell-exec" || versionCheck.sandboxVersion === null) {
     return confirmedEntry;
   }
   const expectedEntry = JSON.parse(confirmedEntrySnapshot) as RebuildSandboxEntry;

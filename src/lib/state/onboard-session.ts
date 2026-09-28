@@ -65,6 +65,8 @@ import {
   recordRetainedSandboxRecovery as writeRetainedSandboxRecovery,
   retainedSandboxRecoveryAuthorityIsCurrent,
   retainedSandboxRecoveryFile,
+  retainedRebuildSessionFileName,
+  readRetainedRebuildSession,
   resolveRetainedSandboxRecovery as retireRetainedSandboxRecovery,
   type RecordRetainedSandboxRecoveryInput,
   type RetainedSandboxRecoveryRecord,
@@ -1260,6 +1262,10 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
 }
 
 export function loadSession(): Session | null {
+  return loadSessionFile(SESSION_FILE);
+}
+
+function loadSessionFile(filePath: string): Session | null {
   const lockOwned = heldLockHandle !== null;
   let descriptor: number | null = null;
   try {
@@ -1268,22 +1274,22 @@ export function loadSession(): Session | null {
     if (lockOwned) {
       try {
         descriptor = fs.openSync(
-          SESSION_FILE,
-          fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
+          filePath,
+          fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0),
         );
       } catch (error) {
         if (isErrnoException(error) && error.code === "ENOENT") {
-          assertOnboardLockOwned();
+          if (lockOwned) assertOnboardLockOwned();
           return null;
         }
         throw error;
       }
-      assertSessionFileIdentity(descriptor, SESSION_FILE);
+      assertSessionFileIdentity(descriptor, filePath);
       contents = String(fs.readFileSync(descriptor, "utf-8"));
-      assertSessionFileIdentity(descriptor, SESSION_FILE);
+      assertSessionFileIdentity(descriptor, filePath);
     } else {
-      if (!fs.existsSync(SESSION_FILE)) return null;
-      contents = fs.readFileSync(SESSION_FILE, "utf-8");
+      if (!fs.existsSync(filePath)) return null;
+      contents = fs.readFileSync(filePath, "utf-8");
     }
     const parsed = JSON.parse(contents);
     const normalized = normalizeSession(parsed);
@@ -1300,6 +1306,102 @@ export function loadSession(): Session | null {
     return null;
   } finally {
     if (descriptor !== null) fs.closeSync(descriptor);
+  }
+}
+
+function rebuildSessionFile(sandboxName: string): string {
+  return path.join(SESSION_DIR, retainedRebuildSessionFileName(sandboxName));
+}
+
+function loadRetainedRebuildSession(sandboxName: string): Session | null {
+  if (heldLockHandle !== null) assertOnboardLockOwned();
+  const value = readRetainedRebuildSession(SESSION_DIR, sandboxName);
+  if (heldLockHandle !== null) assertOnboardLockOwned();
+  if (value === null) return null;
+  const retained = normalizeSession(value);
+  if (!retained) {
+    throw new Error(`Retained rebuild recovery does not identify sandbox '${sandboxName}'.`);
+  }
+  return retained;
+}
+
+/** Read the target's recovery before preflight acquires the onboarding lock. */
+export function loadRebuildSession(sandboxName: string): Session | null {
+  const current = loadSession();
+  return current?.checkpoint?.sandboxRecreate?.sandboxName === sandboxName
+    ? current
+    : (loadRetainedRebuildSession(sandboxName) ?? current);
+}
+
+function moveSessionFile(source: string, target: string): void {
+  assertOnboardLockOwned();
+  const descriptor = fs.openSync(
+    source,
+    fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0),
+  );
+  try {
+    assertSessionFileIdentity(descriptor, source);
+    fs.fchmodSync(descriptor, 0o600);
+    fs.fsyncSync(descriptor);
+    assertOnboardLockOwned();
+    fs.renameSync(source, target);
+    assertOnboardLockOwned();
+    assertSessionFileIdentity(descriptor, target);
+    fs.fsyncSync(heldLockHandle!.directoryDescriptor);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
+/** Select one rebuild's session without discarding another sandbox's recovery. */
+export function selectRebuildSession(sandboxName: string): void {
+  assertOnboardLockOwned();
+  const targetFile = rebuildSessionFile(sandboxName);
+  const current = loadSession();
+  if (current?.externalComponentActivation) {
+    throw new Error(
+      "Cannot select rebuild recovery while external component activation is incomplete. " +
+        "Preserve the current session, sandbox registry, and sandbox.",
+    );
+  }
+  if (!current && fs.existsSync(SESSION_FILE)) {
+    throw new Error("Cannot select rebuild recovery: the current onboarding session is invalid.");
+  }
+  const retained = loadRetainedRebuildSession(sandboxName);
+  const transaction = current?.checkpoint?.sandboxRecreate;
+  if (retained && !transaction && current?.resumable) {
+    throw new Error(
+      `Cannot select rebuild recovery for '${sandboxName}': ` +
+        `onboarding for ${JSON.stringify(current.sandboxName ?? "(unnamed)")} is unfinished. ` +
+        "Resume or clear that onboarding session before retrying.",
+    );
+  }
+  if (transaction?.sandboxName === sandboxName) {
+    if (retained) {
+      throw new Error(`Sandbox '${sandboxName}' has conflicting rebuild recovery sessions.`);
+    }
+    return;
+  }
+  if (transaction) {
+    const sourceFile = rebuildSessionFile(transaction.sandboxName);
+    // Refuse an existing destination, including a dangling symlink.
+    try {
+      fs.lstatSync(sourceFile);
+      throw new Error(
+        `Sandbox '${transaction.sandboxName}' already has retained rebuild recovery.`,
+      );
+    } catch (error) {
+      if (!(isErrnoException(error) && error.code === "ENOENT")) throw error;
+    }
+    // Renaming leaves one owner. If the process stops before selection finishes,
+    // the next rebuild can recover this session from its sandbox's file.
+    moveSessionFile(SESSION_FILE, sourceFile);
+  }
+  if (retained) {
+    moveSessionFile(targetFile, SESSION_FILE);
+  } else if (transaction || !current) {
+    // Preflight has not started onboarding or recorded a rebuild transaction yet.
+    saveSession({ ...createSession({ sandboxName }), resumable: false });
   }
 }
 
@@ -1428,7 +1530,7 @@ export function assertOnboardLockOwned(): void {
 }
 
 const ONBOARD_LOCK_CONTENTION_LEAD =
-  "Cannot update onboarding recovery while another onboarding run owns the lock.";
+  "Cannot update onboarding recovery because the onboarding lock is unavailable.";
 
 type OnboardLockContentionDetails = Pick<
   OnboardLockResult,
@@ -1436,7 +1538,7 @@ type OnboardLockContentionDetails = Pick<
 >;
 
 /**
- * Format holder-identity guidance for a live onboarding-lock contender.
+ * Format recorded ownership details without assuming the identity was verified.
  *
  * The caller's lead sentence stays first so the original internal wording is
  * preserved, then the recorded holder details and a remediation step follow.
@@ -1446,13 +1548,13 @@ function onboardLockContentionGuidance(
   lead: string = ONBOARD_LOCK_CONTENTION_LEAD,
 ): string {
   const holderDetails = [
-    lock.holderPid ? `Lock holder PID: ${lock.holderPid}.` : "",
+    lock.holderPid ? `Recorded lock PID: ${lock.holderPid}.` : "",
     lock.holderStartedAt ? `Started: ${lock.holderStartedAt}.` : "",
-    lock.holderCommand ? `Lock holder command: ${lock.holderCommand}.` : "",
+    lock.holderCommand ? `Recorded lock command: ${lock.holderCommand}.` : "",
   ].filter((detail) => detail.length > 0);
   const remediation = lock.stale
-    ? "Wait briefly, then rerun so verified stale-lock cleanup can finish."
-    : "Wait for the other run to finish, then rerun.";
+    ? "Wait briefly, then rerun to retry lock acquisition."
+    : "Wait for any active onboarding run to finish, then rerun.";
   return [lead, ...holderDetails, remediation].join(" ");
 }
 
@@ -2362,7 +2464,7 @@ export function reconcileStationExpressReceiptRetirement(expectedGeneration: str
       throw new Error(
         onboardLockContentionGuidance(
           lock,
-          "Cannot reconcile DGX Station Express receipt retirement while another onboarding run is in progress.",
+          "Cannot reconcile DGX Station Express receipt retirement because the onboarding lock is unavailable.",
         ),
       );
     }

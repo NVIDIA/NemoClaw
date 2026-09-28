@@ -569,6 +569,24 @@ describe("sandbox inference route reservation", () => {
         reservationSessionId: "session-owner",
       });
 
+      const stale = registry.getSandbox("alpha")!;
+      registry.updateSandbox("alpha", { dashboardPort: 19876 });
+      expect(
+        registry.reserveSandboxInferenceRoute(
+          "alpha",
+          {
+            provider: "compatible-endpoint",
+            model: "model-a",
+            endpointUrl: "https://api.example.test/v1",
+            credentialEnv: "CUSTOM_API_KEY",
+            preferredInferenceApi: "openai-responses",
+            gatewayName: "nemoclaw",
+            reservationSessionId: "session-next",
+          },
+          { reclaimAbandoned: stale },
+        ),
+      ).toBe(false);
+      expect(registry.getSandbox("alpha")?.dashboardPort).toBe(19876);
       expect(registry.finalizeSandboxRouteReservation("alpha", "session-other")).toBe(false);
       expect(registry.getSandbox("alpha")).toMatchObject({
         pendingRouteReservation: true,

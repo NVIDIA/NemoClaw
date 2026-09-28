@@ -1,14 +1,19 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { wrapOrdinarySandboxCommand } from "../adapters/sandbox/command-transport.js";
+import {
+  buildSandboxExecMarkedCommand,
+  SANDBOX_EXEC_STARTED_MARKER,
+} from "../adapters/sandbox/sandbox-exec-output.js";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { runSsh } = vi.hoisted(() => ({ runSsh: vi.fn() }));
-vi.mock("../adapters/openshell/sandbox-ssh-cli.js", () => ({
-  createCliOpenShellSandboxSshExecutor: () => ({ run: runSsh }),
+const { runBuffered } = vi.hoisted(() => ({ runBuffered: vi.fn() }));
+vi.mock("../adapters/openshell/sandbox-command-cli.js", () => ({
+  createCliOpenShellSandboxCommandExecutor: () => ({ runBuffered }),
 }));
 
 vi.mock("../adapters/openshell/client.js", () => ({
@@ -68,6 +73,10 @@ const { checkAgentVersion, formatStalenessWarning } = await import("./version.js
 
 const TEST_REGISTRY_FILE = join(TEST_HOME, ".nemoclaw", "sandboxes.json");
 
+function framedOutput(output: string): string {
+  return `${SANDBOX_EXEC_STARTED_MARKER}\n${output}`;
+}
+
 function resetTestRegistry(): void {
   mkdirSync(dirname(TEST_REGISTRY_FILE), { recursive: true });
   writeFileSync(TEST_REGISTRY_FILE, JSON.stringify({ sandboxes: {}, defaultSandbox: null }));
@@ -88,7 +97,11 @@ describe("registry isolation", async () => {
 describe("checkAgentVersion", async () => {
   beforeEach(() => {
     resetTestRegistry();
-    runSsh.mockReset().mockResolvedValue({ kind: "failed", reason: "configuration" });
+    runBuffered.mockReset().mockResolvedValue({
+      outcome: { kind: "failed", error: { kind: "invocation", message: "unavailable" } },
+      stdout: "",
+      stderr: "",
+    });
   });
 
   afterEach(() => {
@@ -132,29 +145,36 @@ describe("checkAgentVersion", async () => {
     expect(result.isStale).toBe(false);
   });
 
-  it("slow path: probes via SSH when no cached version", async () => {
+  it("slow path: probes via OpenShell when no cached version", async () => {
     registry.registerSandbox({ name: "test-sb", agent: null });
 
-    runSsh.mockResolvedValue({
-      kind: "completed",
-      exitCode: 0,
-      stdout: "OpenClaw 2026.5.27 (abc123)\n",
+    runBuffered.mockResolvedValue({
+      outcome: { kind: "completed", exitCode: 0 },
+      stdout: framedOutput("OpenClaw 2026.5.27 (abc123)\n"),
       stderr: "",
     });
 
     const result = await checkAgentVersion("test-sb");
-    expect(result.detectionMethod).toBe("ssh-exec");
+    expect(result.detectionMethod).toBe("openshell-exec");
     expect(result.sandboxVersion).toBe("2026.5.27");
     expect(result.isStale).toBe(false);
     // A row that pre-dates the per-port migration resolves to the canonical
     // default gateway, and the probe pins to it explicitly rather than
     // inheriting OpenShell's current selection (#7429).
 
-    expect(runSsh).toHaveBeenCalledWith({
-      sandboxName: "test-sb",
-      target: { kind: "named", gatewayName: "nemoclaw" },
-      command: "openclaw --version",
-    });
+    expect(runBuffered).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxName: "test-sb",
+        target: { kind: "named", gatewayName: "nemoclaw" },
+        command: wrapOrdinarySandboxCommand([
+          "sh",
+          "-c",
+          buildSandboxExecMarkedCommand("openclaw --version"),
+        ]),
+        timeoutMilliseconds: 15000,
+      }),
+    );
+    expect(JSON.stringify(runBuffered.mock.calls)).not.toContain("nemoclaw-proxy-env.sh");
 
     // Should have cached the version in registry
     const updated = registry.getSandbox("test-sb");
@@ -176,15 +196,14 @@ describe("checkAgentVersion", async () => {
         defaultSandbox: "test-sb",
       };
       writeFileSync(TEST_REGISTRY_FILE, JSON.stringify(document));
-      runSsh.mockResolvedValue({
-        kind: "completed",
-        exitCode: 0,
-        stdout: "OpenClaw 2026.5.27",
+      runBuffered.mockResolvedValue({
+        outcome: { kind: "completed", exitCode: 0 },
+        stdout: framedOutput("OpenClaw 2026.5.27"),
         stderr: "",
       });
       expect(await checkAgentVersion("test-sb")).toMatchObject({
         sandboxVersion: "2026.5.27",
-        detectionMethod: "ssh-exec",
+        detectionMethod: "openshell-exec",
         verificationFailed: false,
       });
       expect(JSON.parse(readFileSync(TEST_REGISTRY_FILE, "utf8"))).toMatchObject(document);
@@ -201,17 +220,16 @@ describe("checkAgentVersion", async () => {
     // gateway-scoped sandbox listing observed it as live.
     registry.registerSandbox({ name: "test-sb", agent: null, gatewayPort: 18080 });
 
-    runSsh.mockResolvedValue({
-      kind: "completed",
-      exitCode: 0,
-      stdout: "OpenClaw 2026.5.27 (abc123)\n",
+    runBuffered.mockResolvedValue({
+      outcome: { kind: "completed", exitCode: 0 },
+      stdout: framedOutput("OpenClaw 2026.5.27 (abc123)\n"),
       stderr: "",
     });
 
     const result = await checkAgentVersion("test-sb", { forceProbe: true });
 
-    expect(result.detectionMethod).toBe("ssh-exec");
-    expect(runSsh).toHaveBeenCalledWith(
+    expect(result.detectionMethod).toBe("openshell-exec");
+    expect(runBuffered).toHaveBeenCalledWith(
       expect.objectContaining({ target: { kind: "named", gatewayName: "nemoclaw-18080" } }),
     );
   });
@@ -223,25 +241,31 @@ describe("checkAgentVersion", async () => {
     // `upgrade-sandboxes --check` printed `v? → v0.18.0`.
     registry.registerSandbox({ name: "hermes-sb", agent: "hermes", gatewayPort: 18080 });
 
-    runSsh.mockResolvedValue({
-      kind: "completed",
-      exitCode: 0,
-      stdout: "Hermes Agent 0.17.0\n",
+    runBuffered.mockResolvedValue({
+      outcome: { kind: "completed", exitCode: 0 },
+      stdout: framedOutput("Hermes Agent 0.17.0\n"),
       stderr: "",
     });
 
     const result = await checkAgentVersion("hermes-sb", { forceProbe: true });
 
     // The version resolves instead of landing in the "Unknown version" bucket.
-    expect(result.detectionMethod).toBe("ssh-exec");
+    expect(result.detectionMethod).toBe("openshell-exec");
     expect(result.sandboxVersion).toBe("0.17.0");
     expect(result.verificationFailed).toBe(false);
     // The Hermes agent definition drives the probe, not the openclaw default.
-    expect(runSsh).toHaveBeenCalledWith({
-      sandboxName: "hermes-sb",
-      target: { kind: "named", gatewayName: "nemoclaw-18080" },
-      command: "hermes --version",
-    });
+    expect(runBuffered).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxName: "hermes-sb",
+        target: { kind: "named", gatewayName: "nemoclaw-18080" },
+        command: wrapOrdinarySandboxCommand([
+          "sh",
+          "-c",
+          buildSandboxExecMarkedCommand("hermes --version"),
+        ]),
+        timeoutMilliseconds: 15000,
+      }),
+    );
   });
 
   it("does not probe at all when the persisted gateway binding is corrupted (#7429)", async () => {
@@ -255,7 +279,7 @@ describe("checkAgentVersion", async () => {
 
     const result = await checkAgentVersion("test-sb", { forceProbe: true });
 
-    expect(runSsh).not.toHaveBeenCalled();
+    expect(runBuffered).not.toHaveBeenCalled();
     // No probe was attempted, so the contract's `unavailable` applies —
     // `unknown`/`probe-failed` would claim a probe ran and failed.
     expect(result.detectionMethod).toBe("unavailable");
@@ -273,11 +297,15 @@ describe("checkAgentVersion", async () => {
     expect(result.isStale).toBe(false);
   });
 
-  it.each(["configuration", "unavailable", "timeout", "cancelled", "transport", "capture"])(
+  it.each(["unavailable", "timeout", "cancelled", "invocation", "capture"])(
     "leaves the cached version unchanged after a %s failure",
     async (reason) => {
       registry.registerSandbox({ name: "test-sb", agent: null, agentVersion: "2026.3.11" });
-      runSsh.mockResolvedValue({ kind: "failed", reason });
+      runBuffered.mockResolvedValue({
+        outcome: { kind: "failed", error: { kind: reason, message: reason } },
+        stdout: "",
+        stderr: "",
+      });
       expect(await checkAgentVersion("test-sb", { forceProbe: true })).toMatchObject({
         detectionMethod: "unknown",
         unavailableReason: "probe-failed",
@@ -293,7 +321,11 @@ describe("checkAgentVersion", async () => {
     { exitCode: 0, stdout: "unknown" },
   ])("does not cache an unsuccessful version observation %j", async (result) => {
     registry.registerSandbox({ name: "test-sb", agent: null });
-    runSsh.mockResolvedValue({ kind: "completed", stderr: "", ...result });
+    runBuffered.mockResolvedValue({
+      outcome: { kind: "completed", exitCode: result.exitCode },
+      stderr: "",
+      stdout: framedOutput(result.stdout),
+    });
     expect(await checkAgentVersion("test-sb")).toMatchObject({
       verificationFailed: true,
       sandboxVersion: null,
@@ -309,7 +341,7 @@ describe("checkAgentVersion", async () => {
     expect(result.detectionMethod).toBe("unavailable");
     expect(result.sandboxVersion).toBeNull();
     expect(result.isStale).toBe(false);
-    expect(runSsh).not.toHaveBeenCalled();
+    expect(runBuffered).not.toHaveBeenCalled();
   });
 
   it("force probe bypasses cached version", async () => {
@@ -319,15 +351,14 @@ describe("checkAgentVersion", async () => {
       agentVersion: "2026.3.11",
     });
 
-    runSsh.mockResolvedValue({
-      kind: "completed",
-      exitCode: 0,
-      stdout: "OpenClaw 2026.5.27 (abc123)\n",
+    runBuffered.mockResolvedValue({
+      outcome: { kind: "completed", exitCode: 0 },
+      stdout: framedOutput("OpenClaw 2026.5.27 (abc123)\n"),
       stderr: "",
     });
 
     const result = await checkAgentVersion("test-sb", { forceProbe: true });
-    expect(result.detectionMethod).toBe("ssh-exec");
+    expect(result.detectionMethod).toBe("openshell-exec");
     expect(result.sandboxVersion).toBe("2026.5.27");
   });
 
@@ -479,15 +510,14 @@ describe("checkAgentVersion", async () => {
   it("flags a scheme mismatch discovered during an ssh probe as stale (#6049)", async () => {
     registry.registerSandbox({ name: "hermes-sb", agent: "hermes-calendar-pin" });
 
-    runSsh.mockResolvedValue({
-      kind: "completed",
-      exitCode: 0,
-      stdout: "hermes 0.17.0\n",
+    runBuffered.mockResolvedValue({
+      outcome: { kind: "completed", exitCode: 0 },
+      stdout: framedOutput("hermes 0.17.0\n"),
       stderr: "",
     });
 
     const result = await checkAgentVersion("hermes-sb");
-    expect(result.detectionMethod).toBe("ssh-exec");
+    expect(result.detectionMethod).toBe("openshell-exec");
     expect(result.sandboxVersion).toBe("0.17.0");
     expect(result.schemeMismatch).toBe(true);
     expect(result.isStale).toBe(true);
@@ -505,15 +535,14 @@ describe("checkAgentVersion", async () => {
   it("probes a hermes runtime over ssh and does not flag a matching semver", async () => {
     registry.registerSandbox({ name: "hermes-sb", agent: "hermes" });
 
-    runSsh.mockResolvedValue({
-      kind: "completed",
-      exitCode: 0,
-      stdout: "hermes 0.17.0\n",
+    runBuffered.mockResolvedValue({
+      outcome: { kind: "completed", exitCode: 0 },
+      stdout: framedOutput("hermes 0.17.0\n"),
       stderr: "",
     });
 
     const result = await checkAgentVersion("hermes-sb");
-    expect(result.detectionMethod).toBe("ssh-exec");
+    expect(result.detectionMethod).toBe("openshell-exec");
     expect(result.sandboxVersion).toBe("0.17.0");
     expect(result.isStale).toBe(false);
   });
@@ -522,7 +551,11 @@ describe("checkAgentVersion", async () => {
 describe("formatStalenessWarning", async () => {
   beforeEach(() => {
     resetTestRegistry();
-    runSsh.mockReset().mockResolvedValue({ kind: "failed", reason: "configuration" });
+    runBuffered.mockReset().mockResolvedValue({
+      outcome: { kind: "failed", error: { kind: "invocation", message: "unavailable" } },
+      stdout: "",
+      stderr: "",
+    });
     registry.registerSandbox({ name: "my-sb", agent: null });
   });
 

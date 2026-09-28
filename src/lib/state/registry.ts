@@ -202,6 +202,11 @@ function assertPendingCreateIdentityMatchesRegistration(
     ["gateway name", checkpoint.gatewayName === requestedEntry.gatewayName],
     ["gateway port", checkpoint.gatewayPort === requestedEntry.gatewayPort],
     [
+      "gateway state directory",
+      (checkpoint.openshellGatewayStateDir ?? null) ===
+        (requestedEntry.openshellGatewayStateDir ?? null),
+    ],
+    [
       "requested lifecycle generation",
       checkpoint.lifecycleGeneration === requestedEntry.lifecycleGeneration,
     ],
@@ -536,6 +541,7 @@ export function registerSandbox(
       dashboardRemoteBindPrepared: entry.dashboardRemoteBindPrepared === true ? true : undefined,
       gatewayName: entry.gatewayName ?? undefined,
       gatewayPort: entry.gatewayPort ?? undefined,
+      openshellGatewayStateDir: entry.openshellGatewayStateDir ?? undefined,
       pendingRouteReservation: options.pending === true ? true : undefined,
       reservationSessionId: options.pending === true ? options.reservationSessionId : undefined,
     };
@@ -573,6 +579,8 @@ type SandboxInferenceRouteReservation = Pick<
 interface SandboxInferenceRouteReservationOptions {
   /** Refuse instead of changing any existing registry row. */
   requireAbsent?: boolean;
+  /** Caller-qualified abandoned registered row; compare and replace without publishing it. */
+  reclaimAbandoned?: SandboxEntry;
 }
 
 /**
@@ -585,10 +593,27 @@ export function reserveSandboxInferenceRoute(
   route: SandboxInferenceRouteReservation,
   options: SandboxInferenceRouteReservationOptions = {},
 ): boolean {
+  const abandoned = options.reclaimAbandoned
+    ? structuredClone(options.reclaimAbandoned)
+    : undefined;
   return withLock(() => {
     const data = load();
     const existing = data.sandboxes[name];
     if (options.requireAbsent === true && existing !== undefined) return false;
+    if (
+      abandoned &&
+      (!isDeepStrictEqual(existing, abandoned) ||
+        abandoned.pendingRouteReservation !== true ||
+        abandoned.pendingCreateIdentity !== undefined ||
+        typeof abandoned.createdAt !== "string" ||
+        !Number.isFinite(Date.parse(abandoned.createdAt)) ||
+        !route.reservationSessionId ||
+        typeof abandoned.reservationSessionId !== "string" ||
+        !abandoned.reservationSessionId ||
+        abandoned.reservationSessionId === route.reservationSessionId ||
+        abandoned.gatewayName !== route.gatewayName)
+    )
+      return false;
     const normalized = normalizeInferenceSelection(route);
     const provenance = cloneSandboxHostLocalInferenceProvenance(route.hostLocalInferenceProvenance);
     if (
@@ -629,7 +654,7 @@ export function reserveSandboxInferenceRoute(
     if (existing?.hostLocalInferenceProvenance !== undefined && !sameExplicitHostLocalRoute) {
       throw new Error("Cannot change an explicit host-local inference lifecycle reservation");
     }
-    if (existing?.pendingRouteReservation === true) {
+    if (existing?.pendingRouteReservation === true && !abandoned) {
       const sameReservation =
         (sameExplicitHostLocalRoute &&
           existing.reservationSessionId === undefined &&

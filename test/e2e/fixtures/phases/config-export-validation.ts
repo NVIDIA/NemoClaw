@@ -46,6 +46,7 @@ import {
 } from "../hosted-inference.ts";
 import { CLI_DIST_ENTRYPOINT, REPO_ROOT } from "../paths.ts";
 import type { SecretStore } from "../secrets.ts";
+import type { ShellProbeResult } from "../shell-probe.ts";
 import type { NemoClawInstance } from "./onboarding.ts";
 
 const { Type } = require("typebox") as typeof TypeBoxModule;
@@ -647,6 +648,8 @@ function comparablePinnedV1Evidence(
 
 function targetPolicyForV1Alpha1(value: unknown, agent: string | null | undefined): unknown {
   const policy = structuredClone(requiredRecord(value, "effective policy"));
+  const landlock = policy.landlock as Record<string, unknown> | undefined;
+  if (landlock?.compatibility === "strict") landlock.compatibility = "hard_requirement";
   const process = policy.process as Record<string, unknown> | undefined;
   if (process && typeof process === "object" && !Array.isArray(process)) {
     if (process.run_as_user === "sandbox") process.run_as_user = "1000";
@@ -911,6 +914,27 @@ function boundedDiagnostic(secretStore: SecretStore, value: unknown): string {
   return secretStore.redact(raw).slice(0, MAX_DIAGNOSTIC_LENGTH);
 }
 
+/** Both callers use --json; match only the current runtime-specific refusal. */
+export function isPodmanConfigExportRefusal(
+  result: Pick<ShellProbeResult, "exitCode" | "signal" | "timedOut" | "stdout" | "stderr">,
+  outputExists: boolean,
+): boolean {
+  try {
+    const output = JSON.parse(resultText(result)) as { error?: { message?: unknown } };
+    // oclif JSON mode exits 1; error.oclif.exit records the underlying error code.
+    return (
+      result.exitCode === 1 &&
+      result.signal === null &&
+      !result.timedOut &&
+      !outputExists &&
+      output?.error?.message ===
+        "Config export failed (unsupported).\nV1alpha1 export currently supports the Docker runtime; Podman compatibility is deferred."
+    );
+  } catch {
+    return false;
+  }
+}
+
 function refusalCategory(output: string): string | undefined {
   return /Config export failed \(([a-z-]+)\)/u.exec(output)?.[1];
 }
@@ -1044,7 +1068,12 @@ export class ConfigExportValidationPhaseFixture {
   ): Promise<ConfigExportEvidenceEnvelope> {
     const startedAt = this.dependencies.now();
     const producer = this.dependencies.producer();
-    const expectation = target.configExport.expectation;
+    let expectation = target.configExport.expectation;
+    let expectedRefusalCategory =
+      target.configExport.expectation === "expected-refusal"
+        ? target.configExport.failureCategory
+        : undefined;
+    let podmanRefusal = false;
     if (expectation === "no-usable-sandbox") {
       if (!instance.expectedFailure) {
         throw new Error(
@@ -1107,6 +1136,11 @@ export class ConfigExportValidationPhaseFixture {
         }
         expectedConsumerEvidence = expectedPinnedV1Evidence(sourceEntry);
         registryBeforeExport = structuredClone(registry.sandboxes);
+        podmanRefusal = expected.runtimeProvider === "podman";
+        if (podmanRefusal) {
+          expectation = "expected-refusal";
+          expectedRefusalCategory = "unsupported";
+        }
       }
       failureStage = "transport";
       const result = await this.host.nemoclaw(
@@ -1139,10 +1173,13 @@ export class ConfigExportValidationPhaseFixture {
         if (result.exitCode === 0 || outputExists) {
           throw new Error("config export unexpectedly succeeded or published a file");
         }
-        if (observedRefusalCategory !== target.configExport.failureCategory) {
+        if (observedRefusalCategory !== expectedRefusalCategory) {
           throw new Error(
-            `config export refused with '${observedRefusalCategory ?? "unclassified"}', expected '${target.configExport.failureCategory}'`,
+            `config export refused with '${observedRefusalCategory ?? "unclassified"}', expected '${expectedRefusalCategory}'`,
           );
+        }
+        if (podmanRefusal && !isPodmanConfigExportRefusal(result, outputExists)) {
+          throw new Error("config export did not report the expected Podman refusal");
         }
         classification = "expected-refusal";
         diagnostic = boundedDiagnostic(this.secrets, resultText(result));
@@ -1278,9 +1315,7 @@ export class ConfigExportValidationPhaseFixture {
       classification,
       passed: passed && cleanupSucceeded,
       producer,
-      ...(target.configExport.expectation === "expected-refusal"
-        ? { expectedRefusalCategory: target.configExport.failureCategory }
-        : {}),
+      ...(expectedRefusalCategory ? { expectedRefusalCategory } : {}),
       ...(observedRefusalCategory ? { observedRefusalCategory } : {}),
       ...(expected ? { expected } : {}),
       ...(observed ? { observed } : {}),
