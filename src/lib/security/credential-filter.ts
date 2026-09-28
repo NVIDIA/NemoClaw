@@ -87,15 +87,21 @@ function textWithoutSafeCredentialFixtures(value: string): string {
 }
 
 /** Detect standalone and context-anchored credentials in opaque file content. */
-export function textContainsCredential(value: string): boolean {
+export function textContainsCredential(
+  value: string,
+  options: { opaqueAssignments?: boolean } = {},
+): boolean {
   const withoutPlaceholders = textWithoutSafeCredentialFixtures(value);
   if (textContainsHighConfidenceCredential(withoutPlaceholders)) return true;
   const authorization =
-    /\b(?:Proxy-)?Authorization[ \t]*[:=][ \t]*["']?Bearer[ \t]+([A-Za-z0-9_.+/=-]{10,})/gimu;
+    /\b(?:Proxy-)?Authorization["']?[ \t]*[:=][ \t]*["']?Bearer[ \t]+([A-Za-z0-9_.+/=-]{10,})/gimu;
   if (authorization.test(withoutPlaceholders)) return true;
+  if (options.opaqueAssignments === false) return false;
   const assignment =
-    /^[ \t]*["']?([A-Za-z][A-Za-z0-9._-]{0,127})["']?[ \t]*[:=][ \t]*(?:"([^"\r\n]*)"|'([^'\r\n]*)'|([^\s,;}]+))/gmu;
-  for (const match of value.matchAll(assignment)) {
+    /(?<![A-Za-z0-9_.-])["']?([A-Za-z][A-Za-z0-9._-]{0,127})["']?[ \t]*[:=][ \t]*(?:"([^"\r\n]*)"|'([^'\r\n]*)'|([^\s,;{}]+))/gu;
+  for (;;) {
+    const match = assignment.exec(value);
+    if (!match) break;
     const field = match[1]!;
     const candidate = match[2] ?? match[3] ?? match[4] ?? "";
     if (
@@ -106,6 +112,9 @@ export function textContainsCredential(value: string): boolean {
     ) {
       return true;
     }
+    // A non-credential outer JSON key can contain a nested credential key.
+    // Advance one character so the bounded scan considers that inner object.
+    assignment.lastIndex = match.index + 1;
   }
   return false;
 }

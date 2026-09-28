@@ -736,6 +736,16 @@ describe("complete native home persistence", () => {
       ".openclaw/agents/child/session.log",
       "sessionToken=opaqueCredentialPayloadZ1234567890",
     ],
+    [
+      "an opaque credential in a JSON schema",
+      "schemas/config.schema.json",
+      JSON.stringify({ default: { authorization: "Bearer opaqueCredentialPayloadZ1234567890" } }),
+    ],
+    [
+      "an opaque credential in TypeScript configuration",
+      "workspace/project/tsconfig.json",
+      JSON.stringify({ compilerOptions: { sessionToken: "opaqueCredentialPayloadZ1234567890" } }),
+    ],
     ["a schema directory file", "schemas/token.txt", `ghp_${"02468ace13579bdf"}`],
     [
       "an agent-owned package manifest",

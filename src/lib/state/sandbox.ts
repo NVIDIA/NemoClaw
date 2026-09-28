@@ -1222,18 +1222,15 @@ function sanitizeMachineLocalArchiveConfig(archivePath: string): string | null {
   }
 }
 
-function shouldSkipNativeRawCredentialScan(_entry: string, fileName: string): boolean {
-  return (
-    isDependencyLockfile(fileName) ||
-    fileName === "tsconfig.json" ||
-    fileName.endsWith(".schema.json")
-  );
+function shouldSkipNativeRawCredentialScan(fileName: string): boolean {
+  return isDependencyLockfile(fileName);
 }
 
 function scanNativeTarFilePayload(
   descriptor: number,
   position: number,
   size: number,
+  opaqueAssignments: boolean,
 ): boolean | null {
   const chunk = Buffer.allocUnsafe(NATIVE_CREDENTIAL_SCAN_CHUNK_BYTES);
   let remaining = size;
@@ -1244,7 +1241,7 @@ function scanNativeTarFilePayload(
     const count = readSync(descriptor, chunk, 0, requested, offset);
     if (count === 0) return null;
     const raw = overlap + chunk.subarray(0, count).toString("utf8");
-    if (textContainsCredential(raw)) return true;
+    if (textContainsCredential(raw, { opaqueAssignments })) return true;
     overlap = raw.slice(-NATIVE_CREDENTIAL_SCAN_OVERLAP_CHARS);
     offset += count;
     remaining -= count;
@@ -1296,8 +1293,16 @@ function nativeArchiveRawCredentialViolation(archivePath: string): string | null
         nextPath = null;
         if (type === "0" || type === "\0" || type === "7") {
           const fileName = path.posix.basename(entry).toLowerCase();
-          if (!shouldSkipNativeRawCredentialScan(entry, fileName)) {
-            const violation = scanNativeTarFilePayload(descriptor, dataOffset, size);
+          if (!shouldSkipNativeRawCredentialScan(fileName)) {
+            // Package manifests carry descriptive credential-field schemas and
+            // receive a separate structure-aware scan below. Raw recognizable
+            // secrets and Authorization headers remain enabled here.
+            const violation = scanNativeTarFilePayload(
+              descriptor,
+              dataOffset,
+              size,
+              fileName !== "package.json",
+            );
             if (violation === null) return "native state credential scan";
             if (violation) return entry;
           }

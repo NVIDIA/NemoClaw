@@ -242,6 +242,7 @@ describe("textContainsCredential", () => {
     "request failed: Authorization: Bearer opaqueCredentialPayloadZ1234567890",
     "sessionToken=opaqueCredentialPayloadZ1234567890",
     '  "client_secret": "opaqueCredentialPayloadZ1234567890"',
+    '{"nested":{"sessionToken":"opaqueCredentialPayloadZ1234567890"}}',
   ])("flags opaque credential context in arbitrary text: %s", (value) => {
     expect(textContainsCredential(value)).toBe(true);
   });
