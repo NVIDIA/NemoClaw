@@ -154,3 +154,7 @@ It also strengthens host OS reporting and Windows WSL GPU verification.
   NemoClaw anchors that path before it checks and transfers the source, so OpenShell treats it as a path rather than an option.
   Related change: [PR #12391](https://github.com/NVIDIA/NemoClaw/pull/12391).
   Refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands#nemoclaw-name-download-sandbox-path-host-dest).
+- An interrupted rebuild retains recovery state separately for each sandbox.
+  Rerun the affected sandbox's rebuild with the same settings; do not delete its recovery files.
+  Related change: [PR #11389](https://github.com/NVIDIA/NemoClaw/pull/11389).
+  Refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes#continue-an-interrupted-replacement).
