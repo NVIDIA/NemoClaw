@@ -184,6 +184,16 @@ describe("full-uninstall bulk sandbox cleanup", () => {
             env.OPENSHELL_GATEWAY_ENDPOINT === undefined,
         ),
       ).toBe(true);
+      const gatewayRemoveInvocations = commandInvocations.filter(
+        ({ args }) => args.join(" ") === "gateway remove nemoclaw",
+      );
+      expect(gatewayRemoveInvocations).toHaveLength(1);
+      expect(gatewayRemoveInvocations[0]?.env).toMatchObject({
+        OPENSHELL_GATEWAY: "nemoclaw",
+        OPENSHELL_LOCAL_TLS_DIR: selectedGatewayTlsDir,
+        OPENSHELL_WORKSPACE: "default",
+      });
+      expect(gatewayRemoveInvocations[0]?.env?.OPENSHELL_GATEWAY_ENDPOINT).toBeUndefined();
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }

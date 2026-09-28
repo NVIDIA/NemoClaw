@@ -1642,7 +1642,10 @@ async function removeOpenShellResources(
     else runtime.warn(providerDeleteSkipMessage(providerName));
   }
   return removeGatewayRegistration(
-    runtime,
+    {
+      ...runtime,
+      gatewayLifecycle: createUninstallGatewayLifecycle(runtime.run, runtime.env, runtimeSelection),
+    },
     gatewayLabel,
     !externallySupervised,
     resolveGatewayPortFromName(gatewayLabel) ?? GATEWAY_PORT,

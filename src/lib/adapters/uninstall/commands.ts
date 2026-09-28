@@ -64,9 +64,17 @@ export function createUninstallProviderAdapter(
   });
 }
 
-export function createUninstallGatewayLifecycle(run: typeof defaultRun, env: NodeJS.ProcessEnv) {
+export function createUninstallGatewayLifecycle(
+  run: typeof defaultRun,
+  env: NodeJS.ProcessEnv,
+  runtimeSelection?: OpenShellRuntimeSelection,
+) {
+  const filteredEnv = buildSubprocessEnvFrom(env);
+  const childEnv = runtimeSelection
+    ? buildOpenShellRuntimeSelectionEnv(filteredEnv, runtimeSelection)
+    : filteredEnv;
   return createCliOpenShellGatewayLifecycleFromRunner((args, options) =>
-    run("openshell", args, { ...options, env }),
+    run("openshell", args, { ...options, env: childEnv }),
   );
 }
 
