@@ -8,6 +8,15 @@
 NemoClaw v0.0.129 extends configuration export and deferred onboarding, improves OpenClaw restart readiness, and corrects recovery across local gateways.
 It also strengthens host OS reporting and Windows WSL GPU verification.
 
+- OpenClaw owns `/sandbox/.openclaw/openclaw.json` after first launch.
+  Configure it inside the sandbox with `openclaw configure`, `openclaw config set`, or `openclaw config unset`.
+  Rebuild and snapshot restore preserve only credential-sanitized native configuration; they do not reconcile OpenShell inference routes, credential bindings, or network policy.
+  Related change: [PR #12120](https://github.com/NVIDIA/NemoClaw/pull/12120).
+  Refer to [Troubleshooting](/user-guide/openclaw/reference/troubleshooting#change-openclaw-configuration-inside-the-sandbox).
+- Windows WSL GPU qualification recognizes the exact normalized `NVIDIA RTX Spark N1X (5120-core Blackwell RTX GPU)` identity.
+  The existing WSL, CUDA proof, Docker Desktop, and capacity requirements still apply.
+  Related change: [PR #12407](https://github.com/NVIDIA/NemoClaw/pull/12407).
+  Refer to [System Readiness](/user-guide/openclaw/reference/system-readiness#interpret-platform-qualification).
 - Configuration export translates a source Landlock `strict` compatibility setting to v1alpha1 `hard_requirement`, preserving fail-closed enforcement.
   It preserves `best_effort` unchanged.
   Related change: [PR #12312](https://github.com/NVIDIA/NemoClaw/pull/12312).

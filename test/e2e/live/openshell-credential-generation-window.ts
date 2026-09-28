@@ -134,9 +134,15 @@ const request = (step) => new Promise((resolve) => {
     },
   }, (response) => {
     response.resume();
-    response.on("end", () => resolve(response.statusCode === 200 ? "allowed" : "denied"));
+    response.on("end", () => resolve({
+      outcome: response.statusCode === 200 ? "allowed" : "denied",
+      httpStatus: response.statusCode,
+    }));
   });
-  outbound.on("error", () => resolve("denied"));
+  outbound.on("error", (error) => {
+    const knownCodes = new Set(["ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "ENOTFOUND", "EAI_AGAIN", "CERT_HAS_EXPIRED", "UNABLE_TO_VERIFY_LEAF_SIGNATURE", "SELF_SIGNED_CERT_IN_CHAIN"]);
+    resolve({ outcome: "denied", transportCode: knownCodes.has(error.code) ? error.code : "OTHER" });
+  });
   outbound.setTimeout(30_000, () => outbound.destroy());
   outbound.end(body);
 });
@@ -153,7 +159,9 @@ const deadline = Date.now() + config.maxRuntimeMs;
       stopped = true;
     } else if (requestSteps.has(step) && !seen.has(step)) {
       seen.add(step);
-      const outcome = await request(step);
+      const observation = await request(step);
+      process.stderr.write(JSON.stringify({ step, ...observation }) + "\\n");
+      const outcome = observation.outcome;
       outcomes.push({ step, outcome });
       writePrivateJson(config.acknowledgementPath, { step, outcome });
     }
