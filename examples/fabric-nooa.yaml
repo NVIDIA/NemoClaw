@@ -26,7 +26,10 @@ spec:
       network:
         tier: isolated
       harness:
-        kind: nooa
+        kind: nvidia.fabric.nooa
+        config:
+          workflow:
+            target_id: nvidia.nooa.coding-agent
       agent:
         name: main
         inference:

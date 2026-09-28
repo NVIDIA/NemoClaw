@@ -16,7 +16,8 @@ spec:
   services:
     ollama-server:
       kind: ollama
-      hardware: {profile: dgx-spark}
+      hardware:
+        profile: dgx-spark
       image: nc-prototype-ollama@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
       model:
         name: qwen3:0.6b
@@ -26,24 +27,24 @@ spec:
       memory:
         gpuMemoryGiB: 16
   inferenceProviders:
-    - name: local
-      provider: openai
-      serviceRef: ollama-server
+  - name: local
+    provider: openai
+    serviceRef: ollama-server
   sandboxes:
-    - name: assistant
-      image:
-        ref: nc-multi-models@sha256:3ab70ded67440e838a37d6c9f0e3b08b95e2acf416c6076f8817bac190525cf0
-      runtime:
-        provider: docker
-      network:
-        tier: isolated
-      harness:
-        kind: openclaw
-      agent:
-        name: main
-        inference:
-          routes:
-            - name: primary
-              providerRef: local
-              overrides:
-                model: qwen3:0.6b
+  - name: assistant
+    image:
+      ref: nc-multi-models@sha256:3ab70ded67440e838a37d6c9f0e3b08b95e2acf416c6076f8817bac190525cf0
+    runtime:
+      provider: docker
+    network:
+      tier: isolated
+    harness:
+      kind: nvidia.fabric.openclaw
+    agent:
+      name: main
+      inference:
+        routes:
+        - name: primary
+          providerRef: local
+          overrides:
+            model: qwen3:0.6b

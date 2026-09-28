@@ -3,7 +3,7 @@
 
 use nemoclaw_sdk::{
     CancellationToken, Deployment,
-    config::{ComputeDriver, Document, HarnessKind},
+    config::{ComputeDriver, Document},
 };
 use std::{
     collections::BTreeMap,
@@ -80,8 +80,8 @@ async fn owned_kubernetes_gateway_applies_invokes_exports_reapplies_and_destroys
     for sandbox in &document.spec.sandboxes {
         assert_eq!(sandbox.runtime.provider, ComputeDriver::Kubernetes);
         assert_eq!(
-            document.sandbox_harness(sandbox).unwrap().kind,
-            HarnessKind::OpenClaw
+            document.sandbox_harness(sandbox).unwrap().kind.as_str(),
+            "nvidia.fabric.openclaw"
         );
     }
     assert!(document.spec.services.is_empty());
@@ -102,8 +102,9 @@ async fn owned_kubernetes_gateway_applies_invokes_exports_reapplies_and_destroys
     deployment.plan(&document, &cancel).await.unwrap();
     deployment.apply(&document, &cancel).await.unwrap();
     let original_ids = resource_ids(&state);
-    // The SDK validates each agent response, allowing only FOUR with its
-    // documented punctuation/case normalization; it rejects echoed prompts.
+    // This explicit E2E invocation goes through the existing Fabric runtime.
+    // Its adapter-specific test oracle accepts FOUR, never an echoed prompt;
+    // it does not introduce a model-only probe or SDK health contract.
     let responses = nemoclaw_e2e::verify_agents(&document, &state).await;
     assert_eq!(responses.len(), document.spec.sandboxes.len());
     for (sandbox, response) in responses {
@@ -165,7 +166,12 @@ async fn owned_kubernetes_gateway_applies_invokes_exports_reapplies_and_destroys
     for resource in destroyed["resources"].as_array().unwrap() {
         if matches!(
             resource["type"].as_str(),
-            Some("nemoclaw_sandbox" | "nemoclaw_provider" | "nemoclaw_provider_profile")
+            Some(
+                "nemoclaw_sandbox"
+                    | "nemoclaw_provider"
+                    | "nemoclaw_provider_profile"
+                    | "nemoclaw_agent_configuration"
+            )
         ) {
             assert!(
                 resource["instances"].as_array().unwrap().is_empty(),

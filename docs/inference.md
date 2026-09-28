@@ -19,7 +19,8 @@ See [state migration](state.md#native-inference-migration) before changing an ex
 
 ## Give an Agent Multiple Model Choices
 
-OpenClaw and Pi agents can select different models from one or more providers.
+Declare model choices for an adapter that advertises native model selection.
+The SDK preserves the choices; parser acceptance does not establish native model-switching support.
 Declare named `inference.routes` and set `inference.default` to the initial choice when there is more than one route.
 Omitting `default` selects the sole route; duplicate names and missing defaults are errors.
 Use `inferenceRef` to reuse the whole selection without repeating it.
@@ -28,22 +29,23 @@ The [multiple-model example](../examples/multiple-models.yaml) gives a researche
 It assumes an existing endpoint serving both model IDs; it does not provision that server or download either model.
 Select a gateway, current agent image, endpoint, and models using the prerequisites below before applying it with a fresh deployment UID and state directory.
 
-The adapter configures each agent's native model aliases, initial model, and model-selection policy.
-The model-selection policy restricts the native agent; OpenShell enforces provider access at its sandbox boundary.
+The SDK preserves named models and maps the selected initial route to the public Fabric `default` model role.
+Fabric owns native aliases and model-selection behavior; OpenShell enforces provider access at the sandbox boundary.
 This configuration supplies no automatic fallback, consultation between models, or agent delegation behavior.
 Apply installs provider attachments and checks the declared agent configuration without requesting model responses.
 Missing credential references still fail deployment; actual endpoint authentication and model compatibility require explicit inference verification.
 Use native requests to verify model selection through the agent interface separately.
 Parser and native configuration tests do not establish model quality or live-provider compatibility.
 
-OpenClaw and Pi support up to 32 routes per inference definition.
-Other harnesses keep one choice.
-For OpenClaw, `reasoningEffort` sets the agent's initial default reasoning level; other choices must omit it or use `default`.
-Native reasoning changes remain a harness operation.
+An inference definition accepts up to 32 named routes.
+That structural limit does not establish that an adapter can switch models.
+The SDK preserves native reasoning identifiers without treating them as advertised capabilities.
+An option without a confirmed mapping to the selected Fabric adapter remains unverified.
+Native reasoning changes remain an adapter operation.
 Each managed `service` serves one pinned model; routes must use its declared served model.
 An Ollama proxy also selects one externally managed model.
 Additional models can use external providers alongside that managed provider.
-Changing OpenClaw model choices changes the sandbox launch specification and requires a fresh deployment.
+Changing model configuration reconciles the owned agent-configuration resource and restarts the runtime inside the existing sandbox when provider attachments and sandbox policy remain unchanged.
 For Pi, see [model selection and updates](agents.md#pi-model-selection).
 
 ## Combine Local and Hosted Providers
@@ -101,13 +103,18 @@ An accepted example is a configuration contract; [validation records](validation
 Set `api` on the selected provider, whether inline or referenced, to the request API your endpoint accepts.
 OpenShell authorizes native endpoint access and substitutes the provider credential; selecting an API does not translate requests into a different protocol.
 
-| Harness | API when omitted | Explicit API choices |
-|---|---|---|
-| OpenClaw, Hermes | `openai-completions` | `openai-completions`, `openai-responses`, `anthropic-messages` |
-| Claude | `anthropic-messages` | `anthropic-messages` |
-| Codex | `openai-responses` | `openai-responses` |
-| Deep Agents, Mini SWE Agent, Nooa, Nooa Bench, Remote Agent | `openai-completions` | `openai-completions` |
-| Pi | Native model metadata | Omit provider `api`; see [Pi model selection](agents.md#pi-model-selection) |
+| Provider transport | API when omitted |
+|---|---|
+| `openai` | `openai-completions` |
+| `anthropic` | `anthropic-messages` |
+
+An explicit `api` can select `openai-completions`, `openai-responses`, or `anthropic-messages` with the matching provider transport.
+For example, configure `api: openai-responses` explicitly when an adapter expects the Responses protocol.
+The harness name does not change these defaults.
+The selected image's Fabric metadata supplies adapter capabilities; known conflicts stop planning, and missing metadata leaves compatibility unverified.
+Fabric validates its own configuration against the installed descriptor.
+The SDK forwards the selected protocol as the public model `api` extension.
+Fabric validates that extension against its canonical descriptor; a missing extension contract remains unknown, while an explicitly excluded protocol is unsupported.
 
 Use `provider: anthropic` with `anthropic-messages` and `provider: openai` with either OpenAI API.
 The provider name is the local reference used by routes; it does not select a vendor.
@@ -116,7 +123,8 @@ For example, a Nous endpoint using the OpenAI protocol still uses `provider: ope
 ### Prepare an External Endpoint
 
 Before writing its provider declaration, obtain the base URL, API, exact model ID, required credential, and model limits from the endpoint operator.
-Confirm that the selected harness accepts that API in the table above.
+Confirm that the selected image's Fabric descriptor accepts that API.
+Catalog metadata and `/models` responses do not establish successful inference.
 For a credentialed endpoint, declare an HTTPS URL and an environment reference; [credential ownership](security.md#credentials-and-authentication) describes where the resolved key persists.
 Uncredentialed HTTP inference endpoints must use literal private or loopback addresses.
 
@@ -138,22 +146,24 @@ Follow the [agent image build prerequisites](build.md#build-agent-images), then 
 
 ```sh
 # On Linux ARM64:
-AGENT_PLATFORM=linux/arm64 docker buildx bake openclaw --load
+python3 image/build_fabric.py --platform linux/arm64 openclaw
 # For Hermes:
-AGENT_PLATFORM=linux/arm64 docker buildx bake hermes --load
+python3 image/build_fabric.py --platform linux/arm64 hermes
 # On Linux AMD64:
-AGENT_PLATFORM=linux/amd64 docker buildx bake deepagents --load
+python3 image/build_fabric.py --platform linux/amd64 deepagents
 ```
 
-These commands load `nc-fabric:openclaw`, `nc-fabric:hermes`, and `nc-fabric:deepagents` locally.
-Linux AMD64 also supports the OpenClaw target through the same `AGENT_PLATFORM` selector.
+These commands load `nc-fabric:openclaw`, `nc-fabric:hermes`, and `nc-fabric:deepagents` locally and attach catalog metadata obtained through the installed Fabric discovery API.
+Direct Docker Bake builds do not attach that metadata.
+Linux AMD64 also supports the OpenClaw target through the same `--platform` selector.
 Follow [image digest selection](build.md#build-agent-images) and use the matching immutable reference in `sandboxes[].image.ref`.
 The sandbox compute daemon must have access to the built image under that digest; a build on another Docker daemon does not make it available to the gateway.
 The [tuning example](../examples/inference-tuning.yaml) and [Hermes authentication example](../examples/hermes-auth.yaml) contain zero-digest placeholders that must be replaced before deployment.
 Set their gateway and inference endpoints and model IDs for your services, and assign a fresh deployment UID.
 
-Changing an existing sandbox's image, API, tuning, or authentication intent requires replacement.
-Ordinary apply rejects these changes rather than replacing the sandbox automatically.
+Changing an existing sandbox's image, provider attachments, or security policy can require replacement.
+Ordinary apply rejects sandbox replacement rather than destroying it automatically.
+Model and native settings updates use the owned agent-configuration resource and restart the runtime without replacing its sandbox.
 Use a separate deployment when moving from an older image; changing YAML does not migrate native agent state.
 For incomplete creation, use the retained state to inspect or destroy the owned resources before starting the new deployment.
 See [deployment recovery](usage.md) for the operation workflow.
@@ -182,7 +192,8 @@ Use the immutable image digest from that build in `spec.services.<name>.image` a
 The example image digest is a placeholder; a bare upstream `ollama/ollama` image lacks the required supervisor.
 The [ARM64 notice](../runtimes/ollama/NOTICE.md) and [AMD64 notice](../runtimes/ollama-amd64/NOTICE.md) identify the pinned upstream image and retained sources.
 
-The provider uses `provider: openai` and `api: openai-completions`; Pi requires omission of `api` and compatible native model metadata.
+The provider uses `provider: openai` and `api: openai-completions`.
+Select an adapter whose Fabric contract accepts that protocol.
 Omit the provider's `endpoint` and `credential` when using `serviceRef`.
 The service publishes its private `/v1` endpoint through the shared placement contract.
 Ollama has no native bearer authentication in this adapter; restrict access through the host's existing network controls.
@@ -278,8 +289,9 @@ With a managed Docker gateway, the proxy inherits `gateway.engine`.
 With an external gateway, declare the proxy service's `engine` as an explicit local Docker Unix socket and make its published endpoint reachable from OpenShell.
 Ollama must listen only on a loopback address.
 NemoClaw observes its model inventory and never installs, stops, or deletes the daemon or model.
-OpenClaw, Hermes, Deep Agents, and Pi can use this proxy with `openai-completions`.
-For Pi, omit provider `api` and supply `piModel` metadata when the model is absent from its registry; see the [Pi example](../examples/fabric-pi.yaml).
+The proxy exposes `openai-completions`; its service contract does not restrict the harness identifier.
+The selected adapter must accept that protocol and model configuration.
+For Pi models absent from its native registry, supply `overrides.settings.model_metadata` as shown in the [Pi example](../examples/fabric-pi.yaml).
 
 Use a Docker image store that records a repository digest for locally built images, as described in the [image build prerequisites](#build-an-image-with-the-configuration-interface).
 Build the proxy image from the repository root, explicitly selecting the native host platform (`linux/arm64` below, or `linux/amd64`):
@@ -338,31 +350,29 @@ Remove the retained credential volume explicitly when retiring the deployment.
 
 ## Tune OpenClaw's Primary Route
 
-Declare tuning in `agent.inference.routes[].overrides`:
+Set the public model output limit with `maxTokens`; put native model settings in `overrides.settings`.
+The [tuning example](../examples/inference-tuning.yaml) uses:
 
 ```yaml
 overrides:
   model: example-reasoning-model
-  contextWindow: 65536
   maxTokens: 8192
-  reasoning: true
-  reasoningEffort: high
+  settings:
+    model_metadata:
+      contextWindow: 65536
+      reasoning: true
+    reasoning_effort: high
 ```
 
-`contextWindow` describes model capacity, and `maxTokens` sets OpenClaw's model output limit.
+The SDK forwards `settings` unchanged into the public Fabric model configuration.
+The selected adapter's canonical model schema and implementation own the meanings, accepted values, and defaults.
 These settings do not resize a managed inference server; configure that service's limits separately.
-`reasoning` declares model capability.
-`reasoningEffort` sets OpenClaw's default thinking level; `default` leaves the native choice in place.
+The SDK does not infer native support from an adapter name or from accepting the YAML structure.
 
-Omitted fields retain the recipe defaults: 32,768 context tokens, 4,096 output tokens, and reasoning disabled.
-Explicit `false` remains distinct from omission in the exported document.
-Choose limits and reasoning capabilities that your model supports; the parser checks bounds, not model capabilities.
-See the generated [field reference](reference/configuration.md) for accepted ranges.
-
-Deep Agents, mini-swe-agent, and remote-agent also accept `maxTokens`, which is passed through Fabric to the native model client.
-The other tuning fields remain OpenClaw-specific; Pi accepts its native model metadata through `piModel`.
-The SDK verifies the configured OpenClaw API, model limits, and explicitly selected thinking level without rewriting drifted configuration.
-Unrelated native settings, including channels and plugins, remain owned by OpenClaw.
+Pi's native model metadata likewise belongs in `overrides.settings.model_metadata`; see the [Pi example](../examples/fabric-pi.yaml).
+Nested null values remain intact in opaque native settings.
+Fields formerly named `piModel`, `contextWindow`, `reasoning`, and `reasoningEffort` at the route override level are no longer accepted.
+Move their native intent into the schema accepted by the selected Fabric adapter before creating a new deployment.
 
 ## Authenticate Hermes through the Provider
 
@@ -424,7 +434,8 @@ Use the gateway operator's authorization for each workspace and [select the matc
 Giving two documents the same UID does not create independent deployments.
 
 Use checked `nemoclaw export` to inspect provider, sandbox, and native agent configuration against retained intent.
-Ambient provider or native-configuration edits can produce drift; they are not a NemoClaw reconnect or model-switch procedure.
+Observed provider or public-configuration mismatches can produce drift; they are not a NemoClaw reconnect or model-switch procedure.
+Native file changes require an owner observation contract and are not detected by comparing remembered public configuration.
 Follow [the change path](usage.md#choose-the-change-path) to update desired state and verify a reply afterward.
 The [compiler](../crates/nemoclaw-sdk/src/compile.rs) and [resource mutation](../crates/nemoclaw-sdk/src/openshell/mutation.rs) define workspace ownership.
 
@@ -434,14 +445,12 @@ Choose the budget for the phase that failed; extending an agent turn does not ex
 
 | Phase | Current budget and setting |
 |---|---|
-| OpenClaw agent turn and native provider request | Selected harness's `execution.timeoutSeconds`; defaults to 600 seconds; see [execution defaults](agents.md#openclaw-execution-settings) |
+| Fabric runtime request | `harness.execution.timeoutSeconds` maps to public Fabric `runtime.timeout_seconds`; omitted values use Fabric defaults |
 | Managed service loading | `spec.services.<name>.serving.startupTimeoutSeconds`; omitted or zero selects 1,800 seconds; explicit values 60–3,600 |
 | Managed service readiness from the SDK, including model preparation | Fixed 9-hour wait; expiration leaves the owned container and data in place |
 | Each packaged recipe preparation or verification execution | Fixed 8-hour limit; staged data remains after failure |
 | Managed gateway readiness | Fixed 90-second wait |
-| Sandbox/agent readiness | Fixed 120-second wait |
-| Explicit SDK API probe (`OpenShell::inference_ready`) | Fixed 90-second sandbox execution; non-Pi HTTP probes abort after 80 seconds |
-| Explicit SDK agent probe (`OpenShell::agent_response`, OpenClaw/Hermes) | OpenClaw: 300-second native turn; local Hermes: 280-second HTTP request within a 300-second Fabric probe; Relay Hermes: 300-second Fabric probe; all have a 360-second sandbox-execution bound |
+| Sandbox/agent readiness | Fixed 300-second wait |
 
 These are phase limits, not a promised total duration for apply.
 Other bounded observations can fail earlier, and request or transport failures are not automatically retried as mutations.
@@ -453,7 +462,8 @@ For a stopped managed service, inspect its [retained status](models.md#diagnose-
 
 Apply checks resource ownership, agent configuration, and readiness without requesting model or agent responses.
 Managed services retain startup, model-inventory, capacity, and memory-supervision checks.
-Export compares the retained intent with the observed launch settings and agent configuration.
+Export compares retained intent with observed deployment launch settings and the runtime host's remembered public Fabric configuration.
+This does not audit native files or establish native process health.
 Changed or missing settings stop export and preserve deployment state for inspection.
 An unchanged exported document can be reapplied without restarting the sandbox.
 
@@ -468,7 +478,8 @@ An empty `changes` list on apply does not skip configuration or readiness checks
 Operation results no longer contain `agentResponse`.
 After apply, send a short prompt through the [native agent interface](agents.md#choose-native-access), or explicitly select an [owned live smoke test](testing/live.md).
 Those checks can incur inference charges and may affect agent history; failure does not undo a successful deployment.
-The SDK retains `OpenShell::inference_ready` and the OpenClaw/Hermes `OpenShell::agent_response` checks for explicit callers with a verified sandbox binding; the CLI has no separate verification command.
+The legacy `OpenShell::inference_ready` and `OpenShell::agent_response` methods report an unsupported probe because no generic Fabric contract establishes their request and response semantics.
+Use the selected adapter's public input and output contract for an explicit invocation; the CLI has no separate verification command.
 Changing a model can expose API, context, or tool-format incompatibility even when the endpoint is reachable.
 Use [change constraints](usage.md#choose-the-change-path) before changing the API or agent launch settings.
 

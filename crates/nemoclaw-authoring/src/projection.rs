@@ -3,8 +3,10 @@
 
 use crate::diagnostics::diagnostic;
 use crate::{Answers, AuthoredDocument, Capabilities, CompletionBoundary, Diagnostic, Diagnostics};
-use nemoclaw_sdk::config::Document;
-use serde_json::json;
+use nemoclaw_sdk::config::{
+    API_VERSION, Agent, ComputeDriver, Credential, Document, Gateway, Harness, Inference,
+    InferenceProvider, ManagedGateway, Metadata, Network, Overrides, Route, Runtime, Sandbox, Spec,
+};
 
 /// Holds one deployment identity across projections and draft edits.
 #[derive(Clone, Debug)]
@@ -54,10 +56,16 @@ impl Session {
         Ok(Self { uid: uid.into() })
     }
 
+    /// Starts a new deployment from the complete template without changing its desired state.
+    pub fn draft_from_template(&self, mut document: Document) -> Result<crate::Draft, Diagnostics> {
+        document.metadata.uid = self.uid.clone();
+        crate::Draft::from_document(document)
+    }
+
     /// Builds YAML and validates it with the SDK parser without deploying resources.
     pub fn project(
         &self,
-        capabilities: &Capabilities,
+        _capabilities: &Capabilities,
         answers: &Answers,
     ) -> Result<AuthoredDocument, Diagnostics> {
         let mut items = Vec::new();
@@ -74,87 +82,89 @@ impl Session {
                 });
             }
         }
-        if !valid_environment_name(&answers.credential_env) {
+        if !answers.credential_env.is_empty() && !valid_environment_name(&answers.credential_env) {
             items.push(Diagnostic {
                 field: "credential-env",
                 message: "must be an uppercase environment variable name".into(),
             });
         }
-        let scenario = capabilities.scenario(
-            answers.harness,
-            answers.runtime,
-            answers.inference,
-            answers.api,
-        );
-        match scenario {
-            Some(scenario) if !scenario.models.contains(&answers.model.as_str()) => {
-                items.push(Diagnostic {
-                    field: "model",
-                    message: "is not available for the selected harness, runtime, inference provider, and API"
-                        .into(),
-                });
-            }
-            None => items.push(Diagnostic {
-                field: capabilities.unavailable_field(answers),
-                message:
-                    "the selected harness, runtime, inference provider, and API are not available"
-                        .into(),
-            }),
-            Some(_) => {}
+        if !answers.inference.apis().contains(&answers.api) {
+            items.push(Diagnostic {
+                field: "api",
+                message: "the selected API does not match this endpoint preset".into(),
+            });
         }
         if !items.is_empty() {
             return Err(Diagnostics { items });
         }
-        let scenario = scenario.expect("validated scenario capability");
-        let read_only = [
-            "/usr",
-            "/opt/fabric",
-            "/opt/nemoclaw",
-            scenario.filesystem_read_only,
-        ];
-
-        let source = json!({
-            "apiVersion": nemoclaw_sdk::config::API_VERSION,
-            "kind": "NemoClawConfig",
-            "metadata": {"name": answers.deployment_name, "uid": self.uid},
-            "spec": {
-                "gateway": {"management": "managed"},
-                "inferenceProviders": [{
-                    "name": answers.provider_name,
-                    "provider": scenario.provider_kind,
-                    "api": scenario.provider_api,
-                    "endpoint": scenario.endpoint,
-                    "credential": {"env": answers.credential_env}
+        let mut gateway = if answers.runtime == ComputeDriver::Podman {
+            Gateway::Managed(ManagedGateway {
+                endpoint: "http://127.0.0.1:17681".into(),
+                engine: "unix:///run/user/1000/podman/podman.sock".into(),
+                ..ManagedGateway::default()
+            })
+        } else {
+            Gateway::Managed(ManagedGateway::default())
+        };
+        if let Some(engine) = &answers.engine {
+            gateway.as_managed_mut().unwrap().engine = engine.clone();
+        }
+        let source = Document {
+            api_version: API_VERSION.into(),
+            kind: "NemoClawConfig".into(),
+            metadata: Metadata {
+                name: answers.deployment_name.clone(),
+                uid: self.uid.clone(),
+            },
+            spec: Spec {
+                gateway,
+                inference_providers: vec![InferenceProvider {
+                    name: answers.provider_name.clone(),
+                    provider: answers.inference.profile().kind,
+                    api: answers.provider_api.map(|_| answers.api),
+                    endpoint: answers.endpoint.clone(),
+                    credential: (!answers.credential_env.is_empty()).then(|| Credential {
+                        env: answers.credential_env.clone(),
+                    }),
+                    service_ref: None,
                 }],
-                "sandboxes": [{
-                    "name": answers.sandbox_name,
-                    "harness": {"kind": scenario.harness_kind},
-                    "runtime": {"provider": "docker"},
-                    "network": {"policy": {"explicit": {
-                        "version": 1,
-                        "process": {"run_as_user": "1000", "run_as_group": "1000"},
-                        "network_policies": {"hosted-inference": {
-                            "name": "hosted-inference",
-                            "endpoints": [{"host": "integrate.api.nvidia.com", "port": 443}],
-                            "binaries": [{"path": scenario.network_binary}]
-                        }},
-                        "filesystem_policy": {
-                            "include_workdir": true,
-                            "read_only": read_only,
-                            "read_write": ["/sandbox"]
-                        }
-                    }}},
-                    "agent": {
-                        "name": answers.agent_name,
-                        "inference": {"routes": [{
-                            "name": "primary",
-                            "providerRef": answers.provider_name,
-                            "overrides": {"model": answers.model}
-                        }]}
-                    }
-                }]
-            }
-        });
+                sandboxes: vec![Sandbox {
+                    harness: Some(Harness {
+                        kind: answers.harness.clone(),
+                        settings: answers.harness_settings.clone(),
+                        config: answers.harness_config.clone(),
+                        execution: None,
+                    }),
+                    image: nemoclaw_sdk::config::Image {
+                        ref_: answers.image.clone(),
+                    },
+                    name: answers.sandbox_name.clone(),
+                    runtime: Runtime {
+                        provider: answers.runtime,
+                    },
+                    network: Network::default(),
+                    agent: Agent {
+                        name: answers.agent_name.clone(),
+                        inference: Some(Inference {
+                            default: None,
+                            routes: vec![Route {
+                                name: "primary".into(),
+                                provider_ref: Some(answers.provider_name.clone()),
+                                provider: None,
+                                overrides: Overrides {
+                                    model: answers.model.clone(),
+                                    settings: answers.model_settings.clone(),
+                                    ..Overrides::default()
+                                },
+                            }],
+                        }),
+                        ..Agent::default()
+                    },
+                    ..Sandbox::default()
+                }],
+                ..Spec::default()
+            },
+        };
         let yaml = serde_saphyr::to_string(&source)
             .map_err(|_| diagnostic("document", "could not serialize configuration"))?;
         let document = Document::parse(yaml.as_bytes())

@@ -11,24 +11,24 @@ spec:
     management: external
     endpoint: http://127.0.0.1:17681
   inferenceProviders:
-    - name: local
-      provider: openai
-      endpoint: http://172.20.0.1:11446/v1
+  - name: local
+    provider: openai
+    endpoint: http://172.20.0.1:11446/v1
   sandboxes:
-    - name: assistant
-      image:
-        ref: nc-prototype-fabric@sha256:a6a0e5cf53501e765ae43457212989ff4716c6224352dc109ebd49c3780450cd
-      runtime:
-        provider: docker
-      network:
-        tier: isolated
-      harness:
-        kind: deepagents
-      agent:
-        name: main
-        inference:
-          routes:
-            - name: primary
-              providerRef: local
-              overrides:
-                model: qwen3:1.7b
+  - name: assistant
+    image:
+      ref: nc-prototype-fabric@sha256:a6a0e5cf53501e765ae43457212989ff4716c6224352dc109ebd49c3780450cd
+    runtime:
+      provider: docker
+    network:
+      tier: isolated
+    harness:
+      kind: nvidia.fabric.langchain.deepagents
+    agent:
+      name: main
+      inference:
+        routes:
+        - name: primary
+          providerRef: local
+          overrides:
+            model: qwen3:1.7b

@@ -1,0 +1,33 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "nemoclaw-onboarding"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+nemoclaw-authoring = { path = "../../crates/nemoclaw-authoring" }
+nemoclaw-sdk = { path = "../../crates/nemoclaw-sdk" }
+clap.workspace = true
+crossterm.workspace = true
+ratatui.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal"] }
+
+[dev-dependencies]
+serde_json.workspace = true
+serde-saphyr.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+rustix.workspace = true
+
+[[bin]]
+name = "nemoclaw-onboarding"
+path = "src/main.rs"
+
+[lints]
+workspace = true

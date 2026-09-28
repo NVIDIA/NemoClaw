@@ -184,7 +184,7 @@ def configuration(image, address, harness):
                     "image": {"ref": image},
                     "runtime": {"provider": "kubernetes"},
                     "network": {"tier": "isolated"},
-                    "harness": {"kind": harness},
+                    "harness": {"kind": "nvidia.fabric." + harness},
                     "agent": {
                         "name": "main",
                         "inference": {

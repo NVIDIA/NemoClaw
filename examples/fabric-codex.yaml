@@ -16,6 +16,7 @@ spec:
   inferenceProviders:
     - name: local
       provider: openai
+      api: openai-responses
       endpoint: http://172.20.0.1:11446/v1
   sandboxes:
     - name: assistant
@@ -26,7 +27,7 @@ spec:
       network:
         tier: isolated
       harness:
-        kind: codex
+        kind: nvidia.fabric.codex
       agent:
         name: main
         inference:

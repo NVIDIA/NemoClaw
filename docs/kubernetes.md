@@ -7,7 +7,8 @@ Select `runtime.provider: kubernetes` to deploy agents on an explicitly selected
 Use a managed development gateway to provision the platform and agents with one YAML and `nemoclaw apply`, or supply an existing external OpenShell gateway.
 Both paths use the SDK’s plan, apply, export, recovery, and destroy lifecycle and have no kind dependency.
 The [branch scope decision](design/scope.md#kubernetes-development-branch) separates this deployment path from the optional [local kind test fixture](testing/kubernetes-kind.md).
-The [managed lifecycle validation](validation/kubernetes-managed-kind-linux-amd64.md) and [external gateway validation](validation/kubernetes-kind-linux-amd64.md) cover Linux AMD64 on kind; other cluster environments still need their own validation.
+The [managed lifecycle validation](validation/kubernetes-managed-kind-linux-amd64.md) and [external gateway validation](validation/kubernetes-kind-linux-amd64.md) cover their earlier Linux AMD64 kind revisions, before integration with the current Fabric runtime.
+Those live results do not qualify the integrated revision or other cluster environments.
 
 ## Ownership and Boundaries
 
@@ -59,6 +60,9 @@ The managed development path creates its own retained encryption key and binds i
 
 Start with [managed-development.yaml](../examples/kubernetes/managed-development.yaml).
 This example defines three independent OpenClaw agents and the hosted NVIDIA Ultra model.
+The harness identifier is `nvidia.fabric.openclaw`, matching the installed Fabric adapter.
+Build the bundle and agent image from the same source revision.
+Existing deployment state is not migrated across incompatible revisions; retain its original bundle for recovery and teardown, then use fresh state for the new deployment.
 The selected cluster must already provide an enforcing CNI, a compatible default StorageClass, sufficient capacity, and the runtime prerequisites above.
 Use a [verified native bundle](build.md) with its `bin` directory on `PATH`.
 The managed path requires existing `python3` (3.12 or newer), `kubectl`, `helm`, and `openssl` executables on the client.
@@ -197,7 +201,7 @@ Before applying, replace the image placeholder in every sandbox and supply one f
 Use one SDK state directory for all three sandboxes in that deployment.
 Before the first apply, choose the agent count by adding or removing complete `spec.sandboxes` entries; keep sandbox names unique and retain the selected network policy on each entry.
 The examples are checked by the schema and parser.
-The [fresh three-agent live validation](validation/kubernetes-managed-three-agents-linux-amd64.md) covers managed provisioning, a real hosted response from every agent, export, unchanged reapply, and destroy.
+The [three-agent live validation](validation/kubernetes-managed-three-agents-linux-amd64.md) records managed provisioning, a real hosted response from every agent, export, unchanged reapply, and destroy before integration with the current Fabric runtime.
 
 ### Reuse the Docker Hosted NVIDIA Profile
 
@@ -211,9 +215,8 @@ The [recorded live test](validation/kubernetes-kind-linux-amd64.md#observed-resu
 
 ## Validate and Retire a Deployment
 
-For an external gateway with an authenticated OpenShell CLI connection, use [headless OpenClaw invocation](agents.md#run-one-headless-openclaw-request) to verify an actual model response separately from apply.
-A managed gateway closes its tunnel after each SDK operation and does not configure the OpenShell CLI.
-For an already applied managed deployment, use the [response-only SDK test](testing/live.md#kubernetes), which opens one authenticated tunnel and verifies a real response from every declared agent.
+For an already applied external or managed gateway deployment, use the [response-only SDK test](testing/live.md#kubernetes) to verify a real response from every declared agent through its installed Fabric runtime.
+For a managed gateway, the test opens one authenticated tunnel for those requests and closes it afterward; it does not configure the OpenShell CLI.
 For a disposable deployment, including the three-agent sample, the opt-in [Kubernetes lifecycle test](testing/live.md#kubernetes) checks apply, every agent’s model response, a no-op plan, export with the original configuration digest, unchanged resource IDs on reapply, and teardown of every sandbox through the supplied gateway.
 It does not create or delete a cluster.
 

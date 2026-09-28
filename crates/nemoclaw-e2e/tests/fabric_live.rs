@@ -1,6 +1,5 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use nemoclaw_sdk::config::HarnessKind;
 
 use nemoclaw_sdk::{
     CancellationToken, Deployment, OperationResult, Outcome,
@@ -15,60 +14,44 @@ use std::{
     sync::Arc,
 };
 
-fn confirmed_reply(harness: &str, response: &[u8]) -> bool {
-    let Ok(value) = serde_json::from_slice::<Value>(response) else {
-        return false;
-    };
-    if !value["error"].is_null() {
-        return false;
-    }
-    let text = if harness == "openclaw" {
-        let Some(payloads) = value["result"]["payloads"].as_array() else {
-            return false;
-        };
-        if value["status"] != "ok"
-            || payloads.is_empty()
-            || payloads.iter().any(|p| p["isError"] == true)
-        {
-            return false;
-        }
-        payloads[0]["text"].as_str()
-    } else {
-        if value["status"] != "succeeded" {
-            return false;
-        }
-        value["output"]["response"].as_str()
-    };
-    text.is_some_and(|text| {
-        text.trim()
-            .trim_end_matches(['.', '!'])
-            .eq_ignore_ascii_case("FOUR")
+// These opt-in tests qualify deployment lifecycle and explicit invocation transport.
+// Adapter-owned input/output meaning and native inference quality belong to Fabric.
+fn successful_invocation(response: &[u8]) -> bool {
+    serde_json::from_slice::<Value>(response).is_ok_and(|value| {
+        value["status"] == "succeeded" && value["error"].is_null() && value.get("output").is_some()
     })
 }
+
 #[test]
-fn a_prompt_echo_or_failed_result_is_not_an_agent_reply() {
+fn failed_or_incomplete_results_are_not_successful_invocations() {
     for response in [
-        json!({"status":"failed","input":"Reply FOUR","output":{"response":"FOUR"}}),
-        json!({"status":"succeeded","output":{"response":"NO"},"input":"Reply FOUR"}),
-        json!({"status":"succeeded","output":{"response":"FOUR"},"error":{"message":"failed"}}),
+        json!({"status":"failed","output":"anything"}),
+        json!({"status":"succeeded"}),
+        json!({"status":"succeeded","output":null,"error":{"message":"failed"}}),
     ] {
-        assert!(!confirmed_reply(
-            "deepagents",
+        assert!(!successful_invocation(
             &serde_json::to_vec(&response).unwrap()
         ));
     }
-    assert!(confirmed_reply(
-        "hermes",
-        br#"{"status":"succeeded","output":{"response":"FOUR"},"error":null}"#
-    ));
-    assert!(confirmed_reply(
-        "openclaw",
-        br#"{"status":"ok","result":{"payloads":[{"text":"FOUR"}]}}"#
-    ));
-    assert!(!confirmed_reply(
-        "openclaw",
-        br#"{"status":"ok","result":{"payloads":[{"text":"FOUR","isError":true}]}}"#
-    ));
+}
+
+#[test]
+fn successful_fabric_results_allow_adapter_owned_output_shapes() {
+    for output in [
+        json!("native"),
+        json!([1, 2]),
+        json!({"artifact":"owned"}),
+        Value::Null,
+    ] {
+        let result = json!({"status":"succeeded","output":output,"error":null});
+        assert!(successful_invocation(&serde_json::to_vec(&result).unwrap()));
+    }
+}
+
+fn invocation_input(variable: &str) -> Value {
+    let path = PathBuf::from(std::env::var_os(variable).expect(variable));
+    assert!(path.is_absolute(), "{variable} must be absolute");
+    serde_json::from_slice(&fs::read(path).unwrap()).unwrap()
 }
 
 fn bindings(directory: &Path) -> (Value, Row) {
@@ -134,22 +117,16 @@ async fn exec(client: &OpenShell, binding: &Row, command: Vec<String>) -> Vec<u8
     assert_eq!(exit, 0, "native runtime command failed");
     output
 }
-async fn openclaw_reply(client: &OpenShell, binding: &Row, name: &str, key: &str) -> Vec<u8> {
-    let params = json!({"agentId":name,"sessionKey":format!("agent:{name}:{key}"),"message":"Reply with exactly the word FOUR.","idempotencyKey":key,"deliver":false}).to_string();
+async fn invoke(client: &OpenShell, binding: &Row, name: &str, input: &Value) -> Vec<u8> {
     exec(
         client,
         binding,
         [
-            "openclaw",
-            "gateway",
-            "call",
-            "agent",
-            "--params",
-            &params,
-            "--expect-final",
-            "--json",
-            "--timeout",
-            "280000",
+            "/opt/fabric/bin/python",
+            "/opt/nemoclaw/fabric.py",
+            "invoke",
+            name,
+            &input.to_string(),
         ]
         .map(String::from)
         .to_vec(),
@@ -158,7 +135,7 @@ async fn openclaw_reply(client: &OpenShell, binding: &Row, name: &str, key: &str
 }
 
 async fn runtime_id(client: &OpenShell, binding: &Row) -> String {
-    let output = exec(client, binding, ["/opt/fabric/bin/python", "-c", "import socket; s=socket.socket(socket.AF_UNIX); s.connect('/sandbox/fabric.sock'); s.sendall(b'{\"operation\":\"check\"}\\n'); print(s.makefile().readline())"].map(String::from).to_vec()).await;
+    let output = exec(client, binding, ["/opt/fabric/bin/python", "-c", "import socket; s=socket.socket(socket.AF_UNIX); s.connect('/sandbox/fabric.sock'); s.sendall(b'{\"operation\":\"status\"}\\n'); print(s.makefile().readline())"].map(String::from).to_vec()).await;
     let value: Value = serde_json::from_slice(&output).unwrap();
     assert_eq!(value["ready"], true);
     let id = value["runtime_id"].as_str().unwrap();
@@ -167,7 +144,7 @@ async fn runtime_id(client: &OpenShell, binding: &Row) -> String {
 }
 
 #[tokio::test]
-#[ignore = "requires explicit NEMOCLAW_LIVE_FABRIC_CONFIG, NEMOCLAW_LIVE_FABRIC_STATE, NEMOCLAW_TEST_BUNDLE; creates and destroys only that owned deployment"]
+#[ignore = "requires explicit NEMOCLAW_LIVE_FABRIC_CONFIG, NEMOCLAW_LIVE_FABRIC_STATE, NEMOCLAW_LIVE_FABRIC_INPUT, NEMOCLAW_TEST_BUNDLE; creates and destroys only that owned deployment"]
 async fn fabric_native_access_and_reconciliation_preserve_the_hosted_runtime() {
     let explicit = |name| {
         let path = PathBuf::from(std::env::var_os(name).expect(name));
@@ -178,6 +155,8 @@ async fn fabric_native_access_and_reconciliation_preserve_the_hosted_runtime() {
         Document::parse(fs::File::open(explicit("NEMOCLAW_LIVE_FABRIC_CONFIG")).unwrap()).unwrap();
     let directory = explicit("NEMOCLAW_LIVE_FABRIC_STATE");
     let bundle = explicit("NEMOCLAW_TEST_BUNDLE");
+    let input = invocation_input("NEMOCLAW_LIVE_FABRIC_INPUT");
+    assert!(uses_independent_inference(&document));
     let provider = document.inference_provider().unwrap();
     let agent = &document.spec.sandboxes[0].agent;
     assert!(matches!(document.spec.gateway, Gateway::External(_)));
@@ -205,28 +184,6 @@ async fn fabric_native_access_and_reconciliation_preserve_the_hosted_runtime() {
         );
     }
     let hosted = runtime_id(&client, &binding).await;
-    if document
-        .sandbox_harness(&document.spec.sandboxes[0])
-        .unwrap()
-        .kind
-        == HarnessKind::OpenClaw
-    {
-        exec(
-            &client,
-            &binding,
-            [
-                "openclaw",
-                "config",
-                "set",
-                "--strict-json",
-                "session.dmScope",
-                "\"per-channel-peer\"",
-            ]
-            .map(String::from)
-            .to_vec(),
-        )
-        .await;
-    }
     let unchanged = deployment.apply(&document, &cancel).await.unwrap();
     assert!(unchanged.changes.is_empty());
     let exported = deployment.export(&cancel).await.unwrap();
@@ -242,57 +199,24 @@ async fn fabric_native_access_and_reconciliation_preserve_the_hosted_runtime() {
     assert_eq!(bindings(&directory).0, before);
     assert_eq!(managed_bindings(&directory), managed_before);
     assert_eq!(runtime_id(&client, &binding).await, hosted);
-    let response = if document
-        .sandbox_harness(&document.spec.sandboxes[0])
-        .unwrap()
-        .kind
-        == HarnessKind::OpenClaw
-    {
-        let setting = exec(
-            &client,
-            &binding,
-            ["openclaw", "config", "get", "session.dmScope"]
-                .map(String::from)
-                .to_vec(),
-        )
-        .await;
-        assert!(String::from_utf8_lossy(&setting).contains("per-channel-peer"));
-        // Check the Fabric-hosted agent before using the native interface.
-        let reply = client.agent_response(&binding).await.unwrap();
-        assert!(!reply.trim().is_empty());
-        assert_eq!(runtime_id(&client, &binding).await, hosted);
-        openclaw_reply(
-            &client,
-            &binding,
-            &agent.name,
-            &format!("{}-native-live", document.metadata.uid),
-        )
-        .await
-    } else {
-        // This is a one-shot Fabric SDK call, not a conversation injected into
-        // the hosted runtime by plan/apply or a new NemoClaw invocation API.
-        exec(&client, &binding, ["/opt/fabric/bin/python", "-c", "import sys,asyncio,json; sys.path.insert(0,'/opt/nemoclaw'); from fabric import configuration; from nemo_fabric import Fabric,FabricConfig; c=configuration(sys.argv[1]) if sys.argv[2]=='deepagents' else configuration(sys.argv[1],sys.argv[2]); c['runtime']['artifacts']='/sandbox/sdk-smoke'; print(json.dumps(asyncio.run(Fabric().run(FabricConfig.model_validate(c),input='Reply with exactly the word FOUR.',base_dir='/sandbox')).to_mapping()))", &agent.name, document.sandbox_harness(&document.spec.sandboxes[0]).unwrap().kind.as_str()].map(String::from).to_vec()).await
-    };
+    assert!(matches!(
+        client.agent_response(&binding).await,
+        Err(nemoclaw_sdk::Error::Conflict(
+            "Fabric does not expose a normalized text probe contract; resources retained"
+        ))
+    ));
+    let response = invoke(&client, &binding, &agent.name, &input).await;
     assert!(
-        confirmed_reply(
-            document
-                .sandbox_harness(&document.spec.sandboxes[0])
-                .unwrap()
-                .kind
-                .as_str(),
-            &response
-        ),
-        "no confirmed successful native reply"
+        successful_invocation(&response),
+        "Fabric invocation did not succeed"
     );
     assert_eq!(runtime_id(&client, &binding).await, hosted);
     let destroyed = deployment.destroy(&cancel).await.unwrap();
     assert_eq!(destroyed.outcome, Outcome::Destroyed);
 }
 
-fn uses_independent_openclaw_inference(document: &Document) -> bool {
-    document
-        .sandbox_harness(&document.spec.sandboxes[0])
-        .is_ok_and(|harness| harness.kind == HarnessKind::OpenClaw)
+fn uses_independent_inference(document: &Document) -> bool {
+    document.spec.sandboxes.len() == 1
         && document
             .selected_inference_providers()
             .is_ok_and(|providers| {
@@ -304,7 +228,7 @@ fn uses_independent_openclaw_inference(document: &Document) -> bool {
 }
 
 #[test]
-fn apply_exit_test_requires_independent_openclaw_inference() {
+fn apply_exit_test_requires_independent_inference() {
     for (input, accepted) in [
         (include_str!("../../../examples/fabric-openclaw.yaml"), true),
         (
@@ -313,17 +237,17 @@ fn apply_exit_test_requires_independent_openclaw_inference() {
         ),
         (include_str!("../../../examples/managed-ollama.yaml"), false),
         (include_str!("../../../examples/spark/vllm.yaml"), false),
-        (include_str!("../../../examples/fabric-hermes.yaml"), false),
+        (include_str!("../../../examples/fabric-hermes.yaml"), true),
     ] {
         assert_eq!(
-            uses_independent_openclaw_inference(&Document::parse(input.as_bytes()).unwrap()),
+            uses_independent_inference(&Document::parse(input.as_bytes()).unwrap()),
             accepted
         );
     }
 }
 
 #[tokio::test]
-#[ignore = "requires explicit NEMOCLAW_UPGRADE_CONFIG, fresh NEMOCLAW_UPGRADE_STATE, and NEMOCLAW_TEST_BUNDLE; real independent inference and owned deployment"]
+#[ignore = "requires explicit NEMOCLAW_UPGRADE_CONFIG, fresh NEMOCLAW_UPGRADE_STATE, NEMOCLAW_UPGRADE_INPUT, and NEMOCLAW_TEST_BUNDLE; real independent inference and owned deployment"]
 async fn dependency_upgrade_survives_apply_process_exit() {
     let explicit = |name| {
         let path = PathBuf::from(std::env::var_os(name).expect(name));
@@ -335,9 +259,10 @@ async fn dependency_upgrade_survives_apply_process_exit() {
     let bundle = explicit("NEMOCLAW_TEST_BUNDLE");
     let document = Document::parse(fs::File::open(&config).unwrap()).unwrap();
     assert!(
-        uses_independent_openclaw_inference(&document),
-        "use one OpenClaw agent and one independent inference provider"
+        uses_independent_inference(&document),
+        "use one agent and one independent inference provider"
     );
+    let input = invocation_input("NEMOCLAW_UPGRADE_INPUT");
     fs::create_dir(&directory).expect("test requires a fresh owned state directory");
     let executable = bundle
         .join("bin")
@@ -366,16 +291,16 @@ async fn dependency_upgrade_survives_apply_process_exit() {
         .unwrap();
     let (before, binding) = bindings(&directory);
     let hosted = runtime_id(&client, &binding).await;
-    let reply = openclaw_reply(
+    let reply = invoke(
         &client,
         &binding,
         &document.spec.sandboxes[0].agent.name,
-        &format!("{}-upgrade", document.metadata.uid),
+        &input,
     )
     .await;
     assert!(
-        confirmed_reply("openclaw", &reply),
-        "no confirmed hosted agent reply"
+        successful_invocation(&reply),
+        "Fabric invocation did not succeed"
     );
     let exported = deployment.export(&cancel).await.unwrap();
     assert_eq!(exported, document);

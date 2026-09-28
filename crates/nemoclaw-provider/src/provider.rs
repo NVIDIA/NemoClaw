@@ -134,6 +134,30 @@ impl Provider for NemoClawProvider {
     ) -> Option<HashMap<String, Box<dyn DynamicDataSource>>> {
         Some(HashMap::from([
             (
+                "inference_capabilities".into(),
+                Box::new(crate::inference_discovery::InferenceDataSource)
+                    as Box<dyn DynamicDataSource>,
+            ),
+            (
+                "target_hardware".into(),
+                Box::new(crate::hardware::HardwareDataSource(self.backend.clone()))
+                    as Box<dyn DynamicDataSource>,
+            ),
+            (
+                "engine_capabilities".into(),
+                Box::new(crate::discovery::DiscoveryDataSource {
+                    backend: self.backend.clone(),
+                    fabric: false,
+                }) as Box<dyn DynamicDataSource>,
+            ),
+            (
+                "fabric_capabilities".into(),
+                Box::new(crate::discovery::DiscoveryDataSource {
+                    backend: self.backend.clone(),
+                    fabric: true,
+                }) as Box<dyn DynamicDataSource>,
+            ),
+            (
                 "sandbox_readiness".into(),
                 Box::new(crate::sandbox_readiness::SandboxReadinessDataSource(
                     self.backend.clone(),
@@ -232,7 +256,7 @@ impl Provider for NemoClawProvider {
                 &config.tls_certificate_env,
                 &config.tls_key_env,
             ]
-            .iter()
+            .into_iter()
             .any(|value| matches!(value, Value::Value(_)))
             {
                 diags.root_error_short("Platform-only provider configuration cannot include gateway connection settings");
@@ -242,6 +266,22 @@ impl Provider for NemoClawProvider {
                 matches!(config.destroy, Value::Value(true)),
                 Ordering::Release,
             );
+            return Some(());
+        }
+        if matches!(config.endpoint, Value::Null) {
+            if [
+                &config.credential_env,
+                &config.tls_ca_env,
+                &config.tls_certificate_env,
+                &config.tls_key_env,
+            ]
+            .into_iter()
+            .any(|value| matches!(value, Value::Value(value) if !value.is_empty()))
+                || matches!(config.destroy, Value::Value(true))
+            {
+                diags.root_error_short("Gateway credentials and teardown require an endpoint");
+                return None;
+            }
             return Some(());
         }
         let mut gateway = nemoclaw_sdk::config::ExternalGateway {
@@ -320,17 +360,17 @@ impl Provider for NemoClawProvider {
                 &[],
             ),
             Definition::new(
-                "pi_configuration",
+                "agent_configuration",
                 &[
                     "workspace",
                     "name",
                     "owner",
                     "generation",
                     "sandbox_id",
-                    "model_json",
+                    "config_json",
                     "running",
                 ],
-                &["model_json", "running"],
+                &["config_json", "running"],
             ),
             Definition::new("workspace", &["name", "owner", "generation"], &[]),
             Definition::new(
@@ -363,7 +403,7 @@ impl Provider for NemoClawProvider {
                     "policy_json",
                     "proxy_host",
                     "proxy_port",
-                    "inference_json",
+                    "provider_names_json",
                 ],
                 &[],
             ),
@@ -396,7 +436,7 @@ mod tests {
 
     #[tokio::test]
     async fn unknown_connection_inputs_clear_old_clients_and_only_defer_fresh_planning() {
-        for field in 0..6 {
+        for field in 0..7 {
             let provider = NemoClawProvider::default();
             let mut diagnostics = Diagnostics::default();
             provider
@@ -412,7 +452,8 @@ mod tests {
                 2 => config.tls_ca_env = Value::Unknown,
                 3 => config.tls_certificate_env = Value::Unknown,
                 4 => config.tls_key_env = Value::Unknown,
-                _ => config.destroy = Value::Unknown,
+                5 => config.destroy = Value::Unknown,
+                _ => config.platform_only = Value::Unknown,
             }
             provider
                 .configure(&mut diagnostics, String::new(), config)
@@ -454,6 +495,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn discovery_only_configuration_clears_gateway_client_and_teardown_permission() {
+        let provider = NemoClawProvider::default();
+        let mut diagnostics = Diagnostics::default();
+        provider
+            .configure(&mut diagnostics, String::new(), known())
+            .await
+            .unwrap();
+        provider
+            .configure(&mut diagnostics, String::new(), ProviderConfig::default())
+            .await
+            .unwrap();
+        assert!(diagnostics.errors.is_empty());
+        assert!(provider.backend.client().is_err());
+        assert!(!provider.destroying.load(Ordering::Acquire));
+        assert!(
+            provider
+                .backend
+                .plan("workspace", &Row::new(), None)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
     async fn invalid_known_configuration_clears_previous_client_without_deferring() {
         for endpoint in [Value::Null, Value::Value("invalid".into())] {
             let provider = NemoClawProvider::default();
@@ -482,6 +547,30 @@ mod tests {
                     .await
                     .is_err()
             );
+        }
+    }
+
+    #[tokio::test]
+    async fn endpoint_free_teardown_requires_explicit_platform_mode() {
+        let provider = NemoClawProvider::default();
+        for platform_only in [Value::Null, Value::Value(false), Value::Value(true)] {
+            let allowed = matches!(platform_only, Value::Value(true));
+            let mut diagnostics = Diagnostics::default();
+            let configured = provider
+                .configure(
+                    &mut diagnostics,
+                    String::new(),
+                    ProviderConfig {
+                        destroy: Value::Value(true),
+                        platform_only,
+                        ..Default::default()
+                    },
+                )
+                .await;
+            assert_eq!(configured.is_some(), allowed);
+            assert_eq!(diagnostics.errors.is_empty(), allowed);
+            assert_eq!(provider.destroying.load(Ordering::Acquire), allowed);
+            assert!(provider.backend.client().is_err());
         }
     }
 

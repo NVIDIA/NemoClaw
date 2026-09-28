@@ -42,49 +42,33 @@ fn multiple_models_preserve_named_choices_and_each_agents_default() {
     let runtime: Value = serde_json::from_str(
         &rows
             .iter()
-            .find(|row| row.kind == "sandbox")
+            .find(|row| row.kind == "agent_configuration")
             .unwrap()
-            .values["inference_json"],
+            .values["config_json"],
     )
     .unwrap();
-    assert_eq!(runtime["connection"]["model"], "fast-model");
-    let descriptor: Value = serde_json::from_str(include_str!(
-        "../../../image/fabric/openclaw.fabric-adapter.json"
-    ))
-    .unwrap();
-    jsonschema::validator_for(&descriptor["settings_schema"])
-        .unwrap()
-        .validate(&json!({"agent_name": "main", "inference": runtime}))
-        .expect("compiled settings must satisfy the Fabric adapter contract");
-    assert_eq!(runtime["agents"][0]["inference"]["default"], "fast");
+    assert_eq!(runtime["models"]["default"]["model"], "fast-model");
+    assert_eq!(runtime["models"]["default"], runtime["models"]["fast"]);
     let other_runtime: Value = serde_json::from_str(
         &rows
             .iter()
-            .find(|row| row.kind == "sandbox" && row.values["name"] == "other")
+            .find(|row| row.kind == "agent_configuration" && row.values["name"] == "other")
             .unwrap()
-            .values["inference_json"],
+            .values["config_json"],
     )
     .unwrap();
-    assert_eq!(runtime["agents"].as_array().unwrap().len(), 1);
-    assert_eq!(other_runtime["agents"].as_array().unwrap().len(), 1);
     assert_eq!(
-        other_runtime["agents"][0]["inference"]["default"],
-        "primary"
+        other_runtime["models"]["default"],
+        other_runtime["models"]["primary"]
     );
-    assert_eq!(
-        runtime["agents"][0]["inference"]["models"]
-            .as_object()
-            .unwrap()
-            .len(),
-        2
-    );
+    assert_eq!(runtime["models"].as_object().unwrap().len(), 3);
     assert_eq!(
         Document::parse(doc.yaml().unwrap().as_bytes()).unwrap(),
         doc
     );
 }
 #[test]
-fn ambiguous_defaults_duplicate_choices_and_unsupported_harnesses_are_rejected() {
+fn ambiguous_defaults_and_duplicate_choices_are_rejected() {
     let mut missing = choices();
     missing["spec"]["sandboxes"][0]["agent"]["inference"]
         .as_object_mut()
@@ -96,7 +80,8 @@ fn ambiguous_defaults_duplicate_choices_and_unsupported_harnesses_are_rejected()
     duplicate["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][1]["name"] = json!("primary");
     let mut hermes = choices();
     hermes["spec"]["sandboxes"][0]["harness"]["kind"] = json!("hermes");
-    for value in [missing, unknown, duplicate, hermes] {
+    assert!(Document::parse(hermes.to_string().as_bytes()).is_ok());
+    for value in [missing, unknown, duplicate] {
         assert!(Document::parse(value.to_string().as_bytes()).is_err());
     }
 }
@@ -118,7 +103,7 @@ fn pi_choices_preserve_native_metadata_and_provider_credentials() {
     hosted["name"] = json!("smart");
     hosted["providerRef"] = json!("hosted");
     hosted["overrides"]["model"] = json!("custom-smart");
-    hosted["overrides"]["piModel"]["maxTokens"] = json!(4096);
+    hosted["overrides"]["settings"]["model_metadata"]["maxTokens"] = json!(4096);
     inference["routes"].as_array_mut().unwrap().push(hosted);
     inference["default"] = json!("primary");
     let doc = Document::parse(value.to_string().as_bytes()).expect("Pi supports model choices");
@@ -127,14 +112,21 @@ fn pi_choices_preserve_native_metadata_and_provider_credentials() {
         .into();
     let rows = targets(&doc, &generations).unwrap();
     let settings: Value = serde_json::from_str(
-        &rows.iter().find(|t| t.kind == "sandbox").unwrap().values["inference_json"],
+        &rows
+            .iter()
+            .find(|t| t.kind == "agent_configuration")
+            .unwrap()
+            .values["config_json"],
     )
     .unwrap();
-    let choices = &settings["agents"][0]["inference"]["models"];
-    assert_eq!(choices["smart"]["pi"]["model"], "custom-smart");
-    assert_eq!(choices["smart"]["pi"]["piModel"]["maxTokens"], 4096);
+    let choices = &settings["models"];
+    assert_eq!(choices["smart"]["model"], "custom-smart");
     assert_eq!(
-        choices["smart"]["connection"]["api_key_env"],
+        choices["smart"]["settings"]["model_metadata"]["maxTokens"],
+        4096
+    );
+    assert_eq!(
+        choices["smart"]["api_key_env"],
         "NEMOCLAW_INFERENCE_HOSTED_KEY"
     );
     assert_eq!(

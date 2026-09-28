@@ -7,42 +7,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from fabric import configuration
-from nemo_fabric_adapter_contract.models import AgentModelConfig
 from wheel_lock import requirements
 
 
 class RecipeCoverage(unittest.TestCase):
-    def test_adapter_contract_preserves_and_validates_sampling_controls(self):
-        model = AgentModelConfig.from_mapping(
-            {
-                "provider": "openai",
-                "model": "primary",
-                "top_p": 0.8,
-                "max_tokens": 37,
-            }
-        )
-        self.assertEqual((model.top_p, model.max_tokens), (0.8, 37))
-        self.assertEqual(AgentModelConfig.from_mapping(model.to_mapping()), model)
-        for invalid in ({"max_tokens": 0}, {"top_p": 1.1}):
-            with self.assertRaises(ValueError):
-                AgentModelConfig.from_mapping({"provider": "openai", "model": "primary", **invalid})
-
-    def test_protocol_specific_configuration(self):
-        remote = configuration("coverage", "remote-agent")
-        self.assertNotIn("base_url", remote["models"]["default"])
-        self.assertEqual(remote["harness"]["settings"]["api_type"], "openai-completions")
-        self.assertEqual(
-            configuration("coverage", "nooa")["workflow"]["target_id"], "nvidia.nooa.coding-agent"
-        )
-        for harness in ("codex", "nooa", "nooa-bench", "remote-agent", "pi"):
-            self.assertNotIn(
-                "max_turns",
-                configuration(
-                    "coverage", harness, {"model": "gpt-4o-mini"} if harness == "pi" else None
-                )["runtime"],
-            )
-
     def test_wheel_lock_binds_installs_to_the_exact_compiled_bytes(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

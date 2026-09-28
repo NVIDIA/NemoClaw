@@ -23,7 +23,7 @@ async fn run(root: &Path, bundle: &Path, command: &str, file: &str, success: boo
         .arg("--state-dir")
         .arg(root.join("deployment"))
         .arg(command);
-    if command == "plan" {
+    if matches!(command, "plan" | "apply" | "destroy") {
         process.args(["-o", "json"]);
     }
     if !file.is_empty() {
@@ -80,39 +80,39 @@ async fn run(root: &Path, bundle: &Path, command: &str, file: &str, success: boo
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit NEMOCLAW_TEST_BUNDLE; isolated SSH/Docker and OpenShell fixtures"]
 async fn remote_model_lifecycle_preserves_data_and_stops_on_observation_failure() {
-    lifecycle("openclaw", false, "vllm", false).await;
+    lifecycle("nvidia.fabric.openclaw", false, "vllm", false).await;
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated fixtures"]
 async fn managed_hermes_model_lifecycle_preserves_data_without_generation() {
-    lifecycle("hermes", false, "vllm", false).await;
+    lifecycle("nvidia.fabric.hermes", false, "vllm", false).await;
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated credential and SSH fixtures"]
 async fn managed_bearer_credentials_survive_export_reapply_and_destroy() {
-    lifecycle("hermes", true, "vllm", false).await;
+    lifecycle("nvidia.fabric.hermes", true, "vllm", false).await;
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated SSH/Docker and OpenShell fixtures"]
 async fn managed_pi_model_lifecycle_preserves_data_without_generation() {
-    lifecycle("pi", false, "vllm", false).await;
+    lifecycle("nvidia.fabric.pi", false, "vllm", false).await;
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated Docker and application-health fixtures"]
 async fn remote_ollama_lifecycle_preserves_data_and_stops_on_observation_failure() {
-    lifecycle("openclaw", false, "ollama", false).await;
+    lifecycle("nvidia.fabric.openclaw", false, "ollama", false).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; protocol-only partial deployment fixtures"]
 async fn partial_runtime_destroy_retains_storage_without_creating_network() {
-    lifecycle("openclaw", false, "vllm", true).await;
+    lifecycle("nvidia.fabric.openclaw", false, "vllm", true).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated partial deployment fixtures"]
 async fn partial_ollama_destroy_retains_storage_without_creating_network() {
-    lifecycle("openclaw", false, "ollama", true).await;
+    lifecycle("nvidia.fabric.openclaw", false, "ollama", true).await;
 }
 
 async fn lifecycle(harness: &str, authenticated: bool, kind: &str, partial_destroy: bool) {
@@ -143,7 +143,7 @@ async fn lifecycle(harness: &str, authenticated: bool, kind: &str, partial_destr
         value["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]["model"] =
             json!("qwen3:0.6b");
     }
-    let check_pulls = harness == "openclaw" && !authenticated;
+    let check_pulls = harness == "nvidia.fabric.openclaw" && !authenticated;
     if check_pulls {
         value["spec"]["services"]["qwen"]["imagePullPolicy"] = json!("IfNotPresent");
     }
@@ -199,7 +199,29 @@ async fn lifecycle(harness: &str, authenticated: bool, kind: &str, partial_destr
         save(root, "control.json", &json!({}));
         // OpenTofu can tear down the recorded subset without creating missing
         // compute or deleting retained data after a failed runtime operation.
-        run(root, &bundle, "destroy", "", true).await;
+        // Recovery uses current bindings and a fresh teardown plan even when
+        // the failed operation's plan artifact is no longer available.
+        fs::remove_file(root.join("deployment/runtime/apply.plan")).unwrap();
+        let result: Value =
+            serde_json::from_slice(&run(root, &bundle, "destroy", "", true).await).unwrap();
+        let graph = read(root, "deployment/runtime/main.tf.json");
+        let mut retained: Vec<String> = graph["resource"]
+            .as_object()
+            .unwrap()
+            .iter()
+            .flat_map(|(kind, instances)| {
+                instances
+                    .as_object()
+                    .unwrap()
+                    .keys()
+                    .map(move |name| format!("{kind}.{name}"))
+            })
+            .collect();
+        retained.sort();
+        assert_eq!(result["retained"], json!(retained));
+        let repeated: Value =
+            serde_json::from_slice(&run(root, &bundle, "destroy", "", true).await).unwrap();
+        assert_eq!(repeated["retained"], result["retained"]);
         let destroyed = read(root, "engine.json");
         assert_eq!(destroyed["volume"], partial["volume"]);
         assert!(destroyed["network"].is_null());
@@ -326,7 +348,7 @@ async fn lifecycle(harness: &str, authenticated: bool, kind: &str, partial_destr
     run(root, &bundle, "apply", "export.yaml", true).await;
     assert_eq!(read(root, "engine.json"), stable);
     let state = fs::read(root.join("deployment/runtime/terraform.tfstate")).unwrap();
-    if harness == "openclaw" && !authenticated {
+    if harness == "nvidia.fabric.openclaw" && !authenticated {
         let original = read(root, "config.yaml");
         let mut changed = original.clone();
         changed["spec"]["services"]["qwen"]["image"] =

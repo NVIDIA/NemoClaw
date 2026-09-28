@@ -18,7 +18,7 @@ spec:
       endpoint: http://172.20.0.1:11434/v1
   harnesses:
     assistant:
-      kind: openclaw
+      kind: nvidia.fabric.openclaw
   inferences:
     smart-and-fast:
       default: smart
@@ -27,12 +27,16 @@ spec:
           providerRef: local
           overrides:
             model: qwen3:32b
-            contextWindow: 32768
+            settings:
+              model_metadata:
+                contextWindow: 32768
         - name: fast
           providerRef: local
           overrides:
             model: qwen3:4b
-            contextWindow: 8192
+            settings:
+              model_metadata:
+                contextWindow: 8192
   sandboxes:
     - name: researcher
       harnessRef: assistant
@@ -49,4 +53,6 @@ spec:
               providerRef: local
               overrides:
                 model: qwen3:4b
-                contextWindow: 8192
+                settings:
+                  model_metadata:
+                    contextWindow: 8192

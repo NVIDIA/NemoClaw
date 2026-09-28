@@ -27,14 +27,14 @@ impl Deployment {
         runtime: bool,
         cancel: &CancellationToken,
     ) -> Result<BTreeMap<String, Value>, Error> {
-        let graph = if runtime {
-            compile::compile_runtime(
+        let (graph, targets) = if runtime {
+            compile::compiled_runtime(
                 &record.document,
                 &record.generations,
                 &bundle.manifest.version,
             )?
         } else {
-            compile::compile(
+            compile::deployment_graph(
                 &record.document,
                 &record.generations,
                 &bundle.manifest.version,
@@ -50,27 +50,16 @@ impl Deployment {
             stage.directory.join("terraform.tfstate"),
         )
         .map_err(|_| Error::State("export requires readable deployment state"))?;
-        self.prepare(
+        self.initialize(
             bundle,
             &stage,
             &json!({"terraform":graph["terraform"], "provider":graph["provider"]}),
-        )?;
-        let schema_environment = crate::state::schema_environment(&stage.directory);
-        crate::process::run(
-            &stage.directory,
-            &bundle.tofu(),
-            &["init", "-upgrade", "-input=false", "-no-color"],
-            &schema_environment,
             cancel,
         )
         .await?;
+        let schema_environment = crate::state::schema_environment(&stage.directory);
         let bindings = stage.bindings(&bundle.tofu(), cancel).await?;
         settled(&bindings)?;
-        let targets = if runtime {
-            compile::runtime_targets(&record.document, &record.generations)?
-        } else {
-            compile::targets(&record.document, &record.generations)?
-        };
         let targets: Vec<_> = targets
             .iter()
             .filter(|target| !target.address.starts_with("data."))
@@ -160,17 +149,17 @@ impl Deployment {
         let record = store.load()?.ok_or(Error::Conflict(
             "no saved deployment configuration; apply a configuration before exporting",
         ))?;
-        if record.pending {
+        if record.pending() {
             return Err(Error::Conflict(
                 "cannot export while apply is unfinished; run apply again with the same configuration and state directory",
             ));
         }
-        if record.destroying {
+        if record.destroying() {
             return Err(Error::Conflict(
                 "cannot export while destroy is unfinished; run destroy again with the same state directory",
             ));
         }
-        if record.destroyed {
+        if record.destroyed() {
             return Err(Error::Conflict(
                 "cannot export a destroyed deployment; apply its configuration again using the same state directory before exporting",
             ));
@@ -325,7 +314,7 @@ fn export_sandbox(expected: &Row, observed: &Row) -> Result<(), Error> {
         "policy_json",
         "proxy_host",
         "proxy_port",
-        "inference_json",
+        "provider_names_json",
     ]
     .iter()
     .any(|key| {
@@ -346,13 +335,13 @@ mod tests {
     #[test]
     fn export_rejects_configuration_and_intent_identity_drift_from_provider_observations() {
         let target = Target {
-            address: "nemoclaw_pi_configuration.agent".into(),
-            kind: "pi_configuration".into(),
+            address: "nemoclaw_agent_configuration.agent".into(),
+            kind: "agent_configuration".into(),
             values: Row::from([
                 ("owner".into(), "deployment".into()),
                 ("generation".into(), "generation".into()),
                 ("name".into(), "agent".into()),
-                ("model_json".into(), r#"{"model":"wanted"}"#.into()),
+                ("config_json".into(), r#"{"model":"wanted"}"#.into()),
             ]),
         };
         let observed = serde_json::to_value(&target.values).unwrap();
@@ -360,14 +349,14 @@ mod tests {
         for (key, value) in [
             ("owner", "foreign"),
             ("generation", "foreign"),
-            ("model_json", r#"{"model":"changed"}"#),
+            ("config_json", r#"{"model":"changed"}"#),
         ] {
             let mut changed = observed.clone();
             changed[key] = json!(value);
             assert!(validate_projection(&target, &changed).is_err(), "{key}");
         }
         let mut reformatted = observed;
-        reformatted["model_json"] = json!(r#"{ "model": "wanted" }"#);
+        reformatted["config_json"] = json!(r#"{ "model": "wanted" }"#);
         validate_projection(&target, &reformatted).unwrap();
     }
 
@@ -425,9 +414,15 @@ mod tests {
             let intent = state.path().join("intent.json");
             if let Some((pending, destroying, destroyed)) = flags {
                 let mut record = Record::new(document.clone()).unwrap();
-                record.pending = pending;
-                record.destroying = destroying;
-                record.destroyed = destroyed;
+                if pending {
+                    record.begin_runtime_apply(&document);
+                }
+                if destroying {
+                    record.begin_destroy();
+                }
+                if destroyed {
+                    record.finish_destroy();
+                }
                 Store::open(state.path()).unwrap().save(&record).unwrap();
             }
             let before = fs::read(&intent).ok();

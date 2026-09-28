@@ -4,18 +4,11 @@
 use super::*;
 
 impl OpenShell {
-    pub(super) async fn update_resource(
+    pub(super) async fn update_provider(
         &self,
-        kind: &str,
         want: &Row,
         live: &Row,
     ) -> Result<(), ObservationError> {
-        if kind == "provider" {
-            self.update_provider(want, live).await?;
-        }
-        Ok(())
-    }
-    async fn update_provider(&self, want: &Row, live: &Row) -> Result<(), ObservationError> {
         let name = value(want, "name");
         let workspace = value(want, "workspace");
         if value(live, "credential_source") != value(want, "credential_source")
@@ -29,7 +22,8 @@ impl OpenShell {
         {
             // This direct read supplies the version used for the conditional write.
             let current = self
-                .grpc()
+                .client
+                .raw_grpc()
                 .get_provider(self.request(proto::GetProviderRequest {
                     name: name.into(),
                     workspace_scope: Some(proto::workspace_selector(workspace)),
@@ -52,7 +46,8 @@ impl OpenShell {
             metadata.id = meta.id;
             metadata.resource_version = meta.resource_version;
             provider.metadata = Some(metadata);
-            self.grpc()
+            self.client
+                .raw_grpc()
                 .update_provider(self.request(proto::UpdateProviderRequest {
                     provider: Some(provider),
                     workspace_scope: Some(proto::workspace_selector(workspace)),

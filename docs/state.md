@@ -72,13 +72,13 @@ Use authenticated [native access](interfaces.md) for the selected deployment.
 |---|---|
 | OpenClaw configuration and native state | `/sandbox/.openclaw`; includes `openclaw.json` and, when a dashboard is declared, `interface-token` |
 | Declared OpenClaw agent’s working files | `/sandbox/workspaces/<agent-name>` |
-| Default local Hermes API/native state | `/sandbox/.hermes`; includes the API `interface-token` |
-| Default local Hermes dashboard and browser-chat state | `/sandbox/.hermes/profiles/dashboard-home`; separate from the API conversation |
-| Experimental Hermes Relay traces | `/sandbox/artifacts/relay`; per-session event/trajectory files; deleted with the sandbox |
-| Experimental Hermes Relay native home with both explicit interfaces and Tavily search omitted | `.fabric/hermes/runtimes/<runtime-id>` under the configured Fabric artifact root; distinct from the local Hermes API/dashboard homes |
+| Hermes service mode API/native state | `/sandbox/.hermes`; includes the API `interface-token` |
+| Hermes service mode dashboard and browser-chat state | `/sandbox/.hermes/profiles/dashboard-home`; separate from the API conversation |
+| Hermes Relay traces | `/sandbox/artifacts/relay`; per-session event/trajectory files; deleted with the sandbox |
+| Hermes session mode native home | `.fabric/hermes/runtimes/<runtime-id>` under the configured Fabric artifact root; distinct from the local Hermes API/dashboard homes |
 | Pi conversation | Held in the running Pi process; switching declared choices preserves it, while applying configuration changes or restarting the runtime loses it |
 
-The [OpenClaw adapter](../image/fabric/openclaw_adapter.py) and [interface guide](interfaces.md) define these locations.
+The [OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/tree/24f068c895e5cbc30286bc743498be4e5014d658/adapters/python/openclaw) and [interface guide](interfaces.md) define these locations.
 Native state can survive a process restart while its files remain; deleting the sandbox deletes its files.
 Each declared agent runs in its own OpenShell sandbox; workspace directories do not further isolate processes within that sandbox.
 File/history locations and restoration procedures for the other harnesses: **TBD**.

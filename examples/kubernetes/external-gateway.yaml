@@ -35,7 +35,7 @@ spec:
       network:
         tier: isolated
       harness:
-        kind: openclaw
+        kind: nvidia.fabric.openclaw
       agent:
         name: main
         inferenceRef: chat
@@ -47,7 +47,7 @@ spec:
       network:
         tier: isolated
       harness:
-        kind: openclaw
+        kind: nvidia.fabric.openclaw
       agent:
         name: researcher
         inferenceRef: chat
@@ -59,7 +59,7 @@ spec:
       network:
         tier: isolated
       harness:
-        kind: openclaw
+        kind: nvidia.fabric.openclaw
       agent:
         name: reviewer
         inferenceRef: chat

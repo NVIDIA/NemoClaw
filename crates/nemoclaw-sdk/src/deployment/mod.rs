@@ -4,8 +4,13 @@
 #[cfg(test)]
 mod tests;
 
+mod apply;
 mod export;
 mod plan;
+mod reporting;
+pub use reporting::{
+    DiscoveryObservation, DiscoveryReport, DiscoveryScope, DiscoveryTarget, ResourceInventoryEntry,
+};
 mod runtime;
 mod timing;
 use crate::{
@@ -35,6 +40,9 @@ pub enum Progress {
     /// A resource operation observed in OpenTofu's machine-readable UI.
     Resource {
         resource: &'static str,
+        /// Native graph identity when it is a bounded, safe resource address.
+        /// Unlike the kind label, this distinguishes concurrent resources.
+        address: Option<String>,
         action: &'static str,
         status: &'static str,
         elapsed: std::time::Duration,
@@ -80,6 +88,8 @@ pub struct OperationResult {
     pub retained: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub health: Vec<crate::SandboxHealth>,
+    #[serde(default, skip_serializing_if = "DiscoveryReport::is_empty")]
+    pub discovery: DiscoveryReport,
 }
 impl OperationResult {
     fn planned(changes: Vec<Change>) -> Self {
@@ -89,6 +99,7 @@ impl OperationResult {
             deferred: Vec::new(),
             retained: Vec::new(),
             health: Vec::new(),
+            discovery: DiscoveryReport::default(),
         }
     }
 }
@@ -211,7 +222,7 @@ impl Deployment {
             Some(record) => record,
             None => Record::new(document.clone())?,
         };
-        if record.destroying {
+        if record.destroying() {
             return Err(Error::Conflict(
                 "unfinished destroy; rerun destroy before another operation",
             ));
@@ -234,11 +245,17 @@ impl Deployment {
             }
         }
         record.validate_pending_intent(&document)?;
-        let (runtime_changes, deferred) = self
+        let (runtime_changes, deferred, runtime_discovery, mut discovery) = self
             .runtime_stage(&bundle, &store, &document, &mut record, apply, cancel)
             .await?;
         if deferred {
             let mut result = OperationResult::planned(runtime_changes);
+            result.deferred = runtime_discovery;
+            discovery.credentials =
+                crate::inference_discovery::observe_credentials(&document, self.secrets.as_ref())?;
+            append_credential_deferrals(&mut result.deferred, &discovery.credentials);
+            discovery.gateway_target(&document);
+            result.discovery = discovery;
             result
                 .deferred
                 .push("OpenShell registration and sandbox require the managed gateway".into());
@@ -247,17 +264,13 @@ impl Deployment {
         let (operation, _connection) = self
             .connected(&document, &record.generations, cancel)
             .await?;
-        let bindings = operation
-            .state_bindings(
-                &bundle,
-                &store,
-                &document,
-                &record.generations,
-                false,
-                cancel,
-            )
+        let (graph, targets) =
+            compile::deployment_graph(&document, &record.generations, &bundle.manifest.version)?;
+        (operation.progress)(Progress::Validating);
+        operation
+            .initialize(&bundle, &store, &graph, cancel)
             .await?;
-        let targets = compile::targets(&document, &record.generations)?;
+        let bindings = store.bindings(&bundle.tofu(), cancel).await?;
         let allowed = allowed(&targets);
         if bindings.iter().any(|(address, binding)| {
             (!allowed.contains_key(address)
@@ -269,21 +282,6 @@ impl Deployment {
                 "undeclared resource binding in deployment state",
             ));
         }
-        (operation.progress)(Progress::Validating);
-        operation.prepare(
-            &bundle,
-            &store,
-            &compile::compile(&document, &record.generations, &bundle.manifest.version)?,
-        )?;
-        operation
-            .tofu(
-                &bundle,
-                &store,
-                &document,
-                &["init", "-upgrade", "-input=false", "-no-color"],
-                cancel,
-            )
-            .await?;
         (operation.progress)(Progress::Planning);
         let plan = operation
             .saved_plan(&bundle, &store, &document, "apply.plan", cancel)
@@ -301,18 +299,39 @@ impl Deployment {
         changes.extend(root_changes);
         let mut result = OperationResult::planned(changes);
         if !apply {
+            let retained = compile::compile_teardown(
+                &document,
+                &record.generations,
+                &bundle.manifest.version,
+                &bindings.keys().cloned().collect(),
+                false,
+            )?
+            .retained;
+            discovery.extend(plan.discovery_report(
+                DiscoveryScope::Deployment,
+                &bindings,
+                &retained,
+            )?);
+            discovery.credentials =
+                crate::inference_discovery::observe_credentials(&document, self.secrets.as_ref())?;
+            result.deferred = if discovery.observations.is_empty() {
+                let mut deferred = runtime_discovery;
+                deferred.extend(plan.discovery_deferred());
+                deferred
+            } else {
+                discovery.deferred()
+            };
+            append_credential_deferrals(&mut result.deferred, &discovery.credentials);
+            discovery.gateway_target(&document);
+            result.discovery = discovery;
+            result.deferred.sort();
+            result.deferred.dedup();
             if fresh {
                 store.save(&record)?;
             }
             return Ok(result);
         }
-        record.document = document.clone();
-        record.digest = document.digest();
-        record.begin_apply(creations);
-        record.succeeded = false;
-        record.destroyed = false;
-        record.destroy_runtime = false;
-        record.plan_digest = crate::bundle::hash_file(&store.directory.join("apply.plan"))?;
+        record.begin_apply(&document, creations);
         store.save(&record)?;
         (operation.progress)(Progress::Applying);
         let applied = operation
@@ -324,65 +343,29 @@ impl Deployment {
                 cancel,
             )
             .await;
-        if let Err(error) = applied {
-            // Only a complete UI stream proving exclusively data postcondition
-            // failures can settle durable mutations. Never replace an unrelated
-            // apply error with a health report retained from an earlier apply.
-            if let Error::Execution {
-                postcondition_failures: Some(addresses),
-                ..
-            } = &error
-                && let Ok(observations) = operation
-                    .sandbox_observations(&bundle, &store, &document, &plan, cancel)
-                    .await
-                && !addresses.is_empty()
-                && addresses.iter().all(|address| {
-                    observations.iter().any(|(sandbox, observed)| {
-                        *address == format!("data.nemoclaw_sandbox_readiness.{sandbox}")
-                            && observed["ready"] == false
-                    })
-                })
-            {
-                record.finish_apply();
-                store.save(&record)?;
-                if let Some(health) = observations.iter().find_map(|(name, observed)| {
-                    let health =
-                        crate::RuntimeHealth::decode(observed["health_json"].as_str()?.as_bytes())
-                            .ok()?;
-                    let agent = document.sandbox(name).ok()?.agent.name.clone();
-                    (!health.allows_apply_completion()).then(|| crate::SandboxHealth {
-                        sandbox: name.clone(),
-                        agents: vec![agent],
-                        health,
-                    })
-                }) {
-                    return Err(Error::Health {
-                        health: Box::new(health),
-                    });
-                }
-            }
-            return Err(error);
+        let mutations_settled = applied.is_ok();
+        if mutations_settled {
+            // Persist known mutation completion before an interruptible health read.
+            record.finish_apply();
+            store.save(&record)?;
         }
-        record.finish_apply();
-        store.save(&record)?;
-        result.health = operation
+        let applied = match applied {
+            Err(error) if apply::readiness_failures(&error).is_none() => return Err(error),
+            applied => applied,
+        };
+        let observations = operation
             .sandbox_observations(&bundle, &store, &document, &plan, cancel)
-            .await?
-            .into_iter()
-            .map(|(name, observed)| {
-                Ok(crate::SandboxHealth {
-                    agents: vec![document.sandbox(&name)?.agent.name.clone()],
-                    sandbox: name,
-                    health: crate::RuntimeHealth::decode(
-                        observed["health_json"]
-                            .as_str()
-                            .ok_or(Error::State("sandbox health observation is absent"))?
-                            .as_bytes(),
-                    )?,
-                })
-            })
-            .collect::<Result<_, Error>>()?;
-        record.succeeded = true;
+            .await;
+        let health = match apply::ApplyOutcome::classify(applied, observations) {
+            apply::ApplyOutcome::Unsettled(error) => return Err(error),
+            apply::ApplyOutcome::Settled(health) => health,
+        };
+        if !mutations_settled {
+            record.finish_apply();
+            store.save(&record)?;
+        }
+        result.health = health?;
+        record.mark_succeeded();
         store.save(&record)?;
         result.outcome = Outcome::Succeeded;
         Ok(result)
@@ -394,47 +377,11 @@ impl Deployment {
         document: &Document,
         plan: &Plan,
         cancel: &CancellationToken,
-    ) -> Result<Vec<(String, Value)>, Error> {
+    ) -> Result<apply::Readiness, Error> {
         let bytes = self
             .tofu(bundle, store, document, &["show", "-json"], cancel)
             .await?;
-        let state: Value = serde_json::from_slice(&bytes)
-            .map_err(|_| Error::State("invalid OpenTofu health observations"))?;
-        if state["format_version"]
-            .as_str()
-            .is_none_or(|version| version.split('.').next() != Some("1"))
-        {
-            return Err(Error::State("unsupported OpenTofu state JSON version"));
-        }
-        let observations = crate::state::parse_resources(&state["values"])?;
-        document
-            .spec
-            .sandboxes
-            .iter()
-            .map(|sandbox| {
-                let address = format!("data.nemoclaw_sandbox_readiness.{}", sandbox.name);
-                let observed = observations
-                    .get(&address)
-                    .ok_or(Error::State("sandbox readiness observation is absent"))?;
-                let previous = plan
-                    .resource_changes
-                    .iter()
-                    .find(|change| change.address == address)
-                    .ok_or(Error::State("sandbox readiness was not scheduled"))?;
-                let token = observed["read_trigger"]
-                    .as_str()
-                    .filter(|value| !value.is_empty())
-                    .ok_or(Error::State(
-                        "sandbox readiness observation has no operation identity",
-                    ))?;
-                if previous.change.before["read_trigger"].as_str() == Some(token) {
-                    return Err(Error::State(
-                        "sandbox readiness observation predates this apply",
-                    ));
-                }
-                Ok((sandbox.name.clone(), observed.clone()))
-            })
-            .collect()
+        apply::Readiness::decode(document, plan, &bytes)
     }
     async fn state_bindings(
         &self,
@@ -460,16 +407,29 @@ impl Deployment {
         } else {
             compile::compile(document, generations, &bundle.manifest.version)?
         };
-        self.prepare(bundle, store, &graph)?;
-        crate::process::run(
-            &store.directory,
-            &bundle.tofu(),
-            &["init", "-upgrade", "-input=false", "-no-color"],
-            &crate::state::schema_environment(&store.directory),
-            cancel,
+        self.initialize(bundle, store, &graph, cancel).await?;
+        store.bindings(&bundle.tofu(), cancel).await
+    }
+    async fn initialize(
+        &self,
+        bundle: &Bundle,
+        store: &Store,
+        graph: &Value,
+        cancel: &CancellationToken,
+    ) -> Result<(), Error> {
+        self.prepare(bundle, store, graph)?;
+        self.timed(
+            "tofu.init",
+            crate::process::run(
+                &store.directory,
+                &bundle.tofu(),
+                &["init", "-upgrade", "-input=false", "-no-color"],
+                &crate::state::schema_environment(&store.directory),
+                cancel,
+            ),
         )
         .await?;
-        store.bindings(&bundle.tofu(), cancel).await
+        Ok(())
     }
     fn prepare(&self, bundle: &Bundle, store: &Store, graph: &Value) -> Result<(), Error> {
         for entry in fs::read_dir(&store.directory)
@@ -639,4 +599,18 @@ fn credential_environment<'a>(
         env.insert(name.into(), secrets.resolve(name)?);
     }
     Ok(env)
+}
+
+fn append_credential_deferrals(
+    deferred: &mut Vec<String>,
+    credentials: &[crate::inference_discovery::CredentialObservation],
+) {
+    for credential in credentials {
+        if credential.status != crate::discovery::ObservationStatus::Available {
+            deferred.push(format!(
+                "Credential reference {} is unavailable or unverified; resolve it before apply.",
+                credential.reference
+            ));
+        }
+    }
 }

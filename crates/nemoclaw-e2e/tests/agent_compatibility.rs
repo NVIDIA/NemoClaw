@@ -3,32 +3,23 @@
 use nemoclaw_sdk::openshell::{command, environment, policy, policy_matches};
 
 #[test]
-fn fabric_launch_selects_the_harness_and_caller_identity_without_invoking_an_agent() {
-    for harness in ["deepagents", "openclaw", "mini-swe-agent", "pi"] {
-        let runtime = format!("fabric-{harness}");
-        let launch = command(&runtime);
-        assert_eq!(launch.last().map(String::as_str), Some("serve"));
-        assert!(
-            !launch
-                .iter()
-                .any(|arg| matches!(arg.as_str(), "invoke" | "probe" | "--message"))
-        );
-        for name in ["researcher", "writer"] {
-            let env = environment(name, &runtime);
-            assert_eq!(env["NEMOCLAW_AGENT_NAME"], name);
-            assert_eq!(env["NEMOCLAW_ANONYMOUS_API_KEY"], "unused");
-            if harness == "mini-swe-agent" {
-                assert_eq!(env["MSWEA_COST_TRACKING"], "ignore_errors");
-            }
-            for secret in ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "NVIDIA_API_KEY"] {
-                assert!(!env.contains_key(secret));
-            }
-            if harness == "deepagents" {
-                assert!(!env.contains_key("NEMOCLAW_FABRIC_HARNESS"));
-            } else {
-                assert_eq!(env["NEMOCLAW_FABRIC_HARNESS"], harness);
-            }
+fn fabric_launch_preserves_caller_identity_without_selecting_or_invoking_an_adapter() {
+    let launch = command("fabric");
+    assert_eq!(launch.last().map(String::as_str), Some("serve"));
+    assert!(
+        !launch
+            .iter()
+            .any(|arg| matches!(arg.as_str(), "invoke" | "probe" | "--message"))
+    );
+    for name in ["researcher", "writer"] {
+        let env = environment(name, "fabric");
+        assert_eq!(env["NEMOCLAW_AGENT_NAME"], name);
+        assert_eq!(env["NEMOCLAW_ANONYMOUS_API_KEY"], "unused");
+        for secret in ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "NVIDIA_API_KEY"] {
+            assert!(!env.contains_key(secret));
         }
+        assert!(!env.contains_key("NEMOCLAW_FABRIC_HARNESS"));
+        assert!(!env.contains_key("MSWEA_COST_TRACKING"));
     }
     assert!(command("").is_empty());
     assert!(environment("main", "").is_empty());

@@ -19,10 +19,10 @@ fn api_and_tuning_survive_compilation_and_yaml() {
     let mut v = input("openclaw");
     v["spec"]["inferenceProviders"][0]["api"] = json!("openai-responses");
     let route = &mut v["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"];
-    route["contextWindow"] = json!(65536);
+    route["settings"]["contextWindow"] = json!(65536);
     route["maxTokens"] = json!(8192);
-    route["reasoning"] = json!(true);
-    route["reasoningEffort"] = json!("high");
+    route["settings"]["reasoning"] = json!(true);
+    route["settings"]["reasoning_effort"] = json!("high");
     let d = parse(&v).expect("API and tuning must parse");
     assert!(
         jsonschema::validator_for(&input_schema())
@@ -34,10 +34,23 @@ fn api_and_tuning_survive_compilation_and_yaml() {
         .map(|k| (k.into(), format!("{k}-generation")))
         .into();
     let rows = targets(&d, &g).unwrap();
-    let settings: Value = serde_json::from_str(&rows[3].values["inference_json"]).unwrap();
-    assert_eq!(settings["api"], "openai-responses");
-    assert_eq!(settings["tuning"]["contextWindow"], 65536);
-    assert_eq!(settings["tuning"]["reasoningEffort"], "high");
+    let settings: Value = serde_json::from_str(
+        &rows
+            .iter()
+            .find(|row| row.kind == "agent_configuration")
+            .unwrap()
+            .values["config_json"],
+    )
+    .unwrap();
+    assert_eq!(settings["models"]["default"]["api"], "openai-responses");
+    assert_eq!(
+        settings["models"]["default"]["settings"]["contextWindow"],
+        65536
+    );
+    assert_eq!(
+        settings["models"]["default"]["settings"]["reasoning_effort"],
+        "high"
+    );
 }
 #[test]
 fn hermes_auth_requires_the_routed_credential_provider() {
@@ -54,9 +67,9 @@ fn hermes_auth_requires_the_routed_credential_provider() {
 fn unsupported_or_out_of_range_options_fail_before_deployment() {
     for (field, value) in [
         ("contextWindow", json!(0)),
-        ("contextWindow", json!(4194305)),
-        ("maxTokens", json!(1000000001u64)),
-        ("reasoningEffort", json!("extreme")),
+        ("contextWindow", json!(4294967296u64)),
+        ("maxTokens", json!(4294967296u64)),
+        ("reasoningEffort", json!("")),
     ] {
         let mut v = input("openclaw");
         v["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"][field] = value;
@@ -68,12 +81,12 @@ fn unsupported_or_out_of_range_options_fail_before_deployment() {
         );
     }
     let mut v = input("deepagents");
-    v["spec"]["inferenceProviders"][0]["api"] = json!("openai-responses");
+    v["spec"]["inferenceProviders"][0]["api"] = json!("unrecognized-protocol");
     assert!(parse(&v).is_err());
 }
 
 #[test]
-fn schema_checks_explicit_api_families_and_rust_checks_resolved_harness_limits() {
+fn explicit_apis_validate_transport_families_and_native_wire_requirements() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
     for harness in ["openclaw", "hermes", "claude", "codex", "deepagents", "pi"] {
         for api in [
@@ -89,13 +102,7 @@ fn schema_checks_explicit_api_families_and_rust_checks_resolved_harness_limits()
                 } else {
                     "openai"
                 });
-            let accepted = matches!(harness, "openclaw" | "hermes")
-                || matches!(
-                    (harness, api),
-                    ("claude", "anthropic-messages")
-                        | ("codex", "openai-responses")
-                        | ("deepagents", "openai-completions")
-                );
+            let accepted = true;
             assert_eq!(parse(&v).is_ok(), accepted, "{harness}/{api}");
             assert!(validator.is_valid(&v), "structural schema {harness}/{api}");
             v["spec"]["inferenceProviders"][0]["provider"] =
@@ -114,12 +121,13 @@ fn schema_checks_explicit_api_families_and_rust_checks_resolved_harness_limits()
 fn explicit_false_and_default_survive_and_auth_cannot_bypass_credentials() {
     let mut v = input("openclaw");
     let overrides = &mut v["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"];
-    overrides["reasoning"] = json!(false);
-    overrides["reasoningEffort"] = json!("default");
+    overrides["settings"]["reasoning"] = json!(false);
+    overrides["settings"]["reasoning_effort"] = json!("default");
     let d = parse(&v).unwrap();
     let exported: Value = serde_saphyr::from_str(&d.yaml().unwrap()).unwrap();
     assert_eq!(
-        exported["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]["reasoning"],
+        exported["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]["settings"]
+            ["reasoning"],
         false
     );
     for harness in ["hermes", "openclaw"] {
@@ -149,7 +157,7 @@ fn explicit_false_and_default_survive_and_auth_cannot_bypass_credentials() {
 }
 
 #[test]
-fn completion_adapters_accept_output_limits_without_openclaw_only_tuning() {
+fn native_tuning_is_preserved_for_adapter_validation() {
     let schema = jsonschema::validator_for(&input_schema()).unwrap();
     for harness in ["deepagents", "mini-swe-agent", "remote-agent"] {
         let mut v = input(harness);
@@ -158,9 +166,9 @@ fn completion_adapters_accept_output_limits_without_openclaw_only_tuning() {
         let doc = parse(&v).unwrap();
         assert!(schema.is_valid(&v), "{harness}");
         assert_eq!(parse(&serde_json::to_value(&doc).unwrap()).unwrap(), doc);
-        v["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]["reasoningEffort"] =
+        v["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]["settings"]["reasoning_effort"] =
             json!("high");
-        assert!(parse(&v).is_err());
+        assert!(parse(&v).is_ok());
         assert!(schema.is_valid(&v));
     }
 }

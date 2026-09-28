@@ -104,3 +104,29 @@ fn unconsumed_local_services_cannot_inherit_a_podman_engine() {
         assert!(Document::parse(value.to_string().as_bytes()).is_err());
     }
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn resolved_backend_can_be_used_directly_and_preserves_explicit_destroy_guard() {
+    use nemoclaw_sdk::{ObservationError, backend::Backend};
+    let connections = nemoclaw_sdk::docker::Connections::default();
+    let registry = nemoclaw_sdk::services::BackendRegistry::new(&connections);
+    let directory = tempfile::tempdir().unwrap();
+    let socket = directory.path().join("engine.sock");
+    let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let row = [("engine".into(), format!("unix://{}", socket.display()))].into();
+    for kind in ["ollama_proxy_storage", "ollama_external_model"] {
+        let backend: Box<dyn Backend> = registry.resolve(kind, &row).unwrap().unwrap();
+        assert_eq!(
+            backend.remove(kind, &row, false).await,
+            Err(ObservationError::Backend(
+                "proxy deletion requires explicit destroy"
+            ))
+        );
+    }
+    assert_eq!(
+        listener.accept().unwrap_err().kind(),
+        std::io::ErrorKind::WouldBlock
+    );
+}

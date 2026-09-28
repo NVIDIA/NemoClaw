@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use super::{AgentTools, ConfigError, Credential, Document, Sandbox};
-use crate::config::HarnessKind;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -14,7 +13,7 @@ pub enum Integration {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-/// Managed web search through a supported native agent integration.
+/// Managed search credentials and network grants. Native integration is configured through Fabric.
 pub struct WebSearch {
     /// Supported search service.
     pub provider: SearchProvider,
@@ -99,16 +98,6 @@ impl Sandbox {
                     "agent integration references must be unique",
                 ));
             }
-            match definition {
-                Integration::WebSearch(_)
-                    if matches!(agent.tools, Some(AgentTools::ReadOnly { .. })) =>
-                {
-                    return Err(ConfigError::new(
-                        "web search requires an unrestricted agent",
-                    ));
-                }
-                Integration::WebSearch(_) => {}
-            }
             bindings
                 .entry((owner, name))
                 .or_insert_with(|| IntegrationBinding {
@@ -158,7 +147,7 @@ fn validate_definitions(definitions: &BTreeMap<String, Integration>) -> Result<(
     super::schema::validate_property("Spec", "integrations", &definitions)
 }
 
-// Preserve the native adapter wire contract while deriving grants from agent references.
+// Resolve managed credential and network grants from explicit agent references.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct RuntimeWebSearch {
@@ -218,29 +207,18 @@ impl SearchProvider {
 impl RuntimeWebSearch {
     pub(crate) fn validate<'a>(
         &self,
-        harness: HarnessKind,
         agents: impl Iterator<Item = (&'a str, Option<&'a AgentTools>)>,
     ) -> Result<(), ConfigError> {
         let agents: std::collections::BTreeMap<_, _> = agents.collect();
         let mut names = std::collections::BTreeSet::new();
-        let supported = match self.provider {
-            SearchProvider::Brave => {
-                matches!(harness, HarnessKind::OpenClaw | HarnessKind::DeepAgents)
-            }
-            SearchProvider::Tavily => {
-                matches!(harness, HarnessKind::OpenClaw | HarnessKind::Hermes)
-            }
-        };
-        if !supported
-            || self.agent_refs.is_empty()
-            || self.agent_refs.iter().any(|name| {
-                !names.insert(name)
-                    || !agents.contains_key(name.as_str())
-                    || matches!(agents[name.as_str()], Some(AgentTools::ReadOnly { .. }))
-            })
+        if self.agent_refs.is_empty()
+            || self
+                .agent_refs
+                .iter()
+                .any(|name| !names.insert(name) || !agents.contains_key(name.as_str()))
         {
             return Err(ConfigError::new(
-                "web search requires unique unrestricted references to a supported harness",
+                "web search requires unique references to configured agents",
             ));
         }
         super::validation::credential(&Some(self.credential.clone()))

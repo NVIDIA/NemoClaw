@@ -26,7 +26,7 @@ pub fn openshell_lifecycle(kind: &str) -> Option<OpenShellLifecycle> {
     match kind.strip_prefix("nemoclaw_").unwrap_or(kind) {
         "workspace" => Some(OpenShellLifecycle::Retained),
         "sandbox" => Some(OpenShellLifecycle::Stateful),
-        "provider" | "provider_profile" | "pi_configuration" => {
+        "provider" | "provider_profile" | "agent_configuration" => {
             Some(OpenShellLifecycle::Reconstructible)
         }
         _ => None,

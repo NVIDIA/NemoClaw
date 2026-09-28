@@ -11,6 +11,89 @@ use nemoclaw_sdk::{
 use std::sync::Arc;
 
 #[tokio::test]
+async fn sandbox_teardown_requires_owned_identity_but_not_its_previous_configuration() {
+    let fixture = Fixture::start().await;
+    let mut document = Document::parse(
+        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+    )
+    .unwrap();
+    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+    let client = OpenShell::connect(&document.spec.gateway, Arc::new(EnvironmentSecrets)).unwrap();
+    let generations = ["workspace", "provider", "sandbox"]
+        .map(|key| (key.into(), format!("{key}-generation")))
+        .into();
+    let mut binding = None;
+    for target in targets(&document, &generations)
+        .unwrap()
+        .into_iter()
+        .filter(|target| target.kind != "agent_configuration")
+    {
+        let result = client.ensure(&target.kind, &target.values).await;
+        assert!(result.error().is_none());
+        if target.kind == "sandbox" {
+            binding = result.into_parts().0;
+        }
+    }
+    let binding = binding.unwrap();
+    let key = format!("{}/{}", binding["workspace"], binding["name"]);
+    let original = fixture.state.lock().unwrap().sandboxes[&key].clone();
+    for field in ["id", "owner", "generation"] {
+        let mut changed = original.clone();
+        let metadata = changed.metadata.as_mut().unwrap();
+        match field {
+            "id" => metadata.id = "replacement".into(),
+            "owner" => metadata
+                .labels
+                .remove(nemoclaw_sdk::openshell::OWNER)
+                .map(|_| ())
+                .unwrap(),
+            _ => metadata
+                .labels
+                .remove(nemoclaw_sdk::openshell::GENERATION)
+                .map(|_| ())
+                .unwrap(),
+        }
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .sandboxes
+            .insert(key.clone(), changed);
+        assert!(client.remove("sandbox", &binding, true).await.is_err());
+        assert_eq!(fixture.state.lock().unwrap().delete_calls, 0);
+    }
+    fixture
+        .state
+        .lock()
+        .unwrap()
+        .sandboxes
+        .insert(key.clone(), original.clone());
+    fixture.state.lock().unwrap().fail_read = Some(("sandbox", tonic::Code::Unauthenticated));
+    assert!(client.remove("sandbox", &binding, true).await.is_err());
+    assert_eq!(fixture.state.lock().unwrap().delete_calls, 0);
+    {
+        let mut state = fixture.state.lock().unwrap();
+        state.fail_read = None;
+        state.sandboxes.get_mut(&key).unwrap().spec = None;
+    }
+    client.remove("sandbox", &binding, true).await.unwrap();
+    assert!(!fixture.state.lock().unwrap().sandboxes.contains_key(&key));
+    assert_eq!(fixture.state.lock().unwrap().delete_calls, 1);
+    client.remove("sandbox", &binding, true).await.unwrap();
+    assert_eq!(fixture.state.lock().unwrap().delete_calls, 1);
+    {
+        let mut state = fixture.state.lock().unwrap();
+        state.sandboxes.insert(key, original);
+        state.lose_delete = true;
+    }
+    let error = client.remove("sandbox", &binding, true).await.unwrap_err();
+    assert!(!error.to_string().contains("secret-sentinel"));
+    assert_eq!(fixture.state.lock().unwrap().delete_calls, 2);
+    client.remove("sandbox", &binding, true).await.unwrap();
+    assert_eq!(fixture.state.lock().unwrap().delete_calls, 2);
+}
+
+#[tokio::test]
 async fn owning_api_reconciles_lost_create_reply_and_checks_conditional_updates() {
     for driver in [ComputeDriver::Docker, ComputeDriver::Kubernetes] {
         provider_credentials_and_conditional_updates(driver).await;
@@ -186,9 +269,16 @@ async fn sandbox_launch_policy_and_provider_identity_survive_read_failures() {
         .into_iter()
         .map(|k| (k.into(), format!("{k}-generation")))
         .collect();
-    let targets = targets(&document, &generations).unwrap();
+    let targets: Vec<_> = targets(&document, &generations)
+        .unwrap()
+        .into_iter()
+        .filter(|target| target.kind != "agent_configuration")
+        .collect();
     let mut rows = Vec::new();
-    for target in &targets {
+    for target in targets
+        .iter()
+        .filter(|target| target.kind != "agent_configuration")
+    {
         let result = client.ensure(&target.kind, &target.values).await;
         assert!(
             result.error().is_none(),
@@ -199,7 +289,11 @@ async fn sandbox_launch_policy_and_provider_identity_survive_read_failures() {
         rows.push(result.into_parts().0.unwrap());
     }
     let effects = fixture.state.lock().unwrap().effects;
-    for (target, row) in targets.iter().zip(&rows) {
+    for (target, row) in targets
+        .iter()
+        .filter(|target| target.kind != "agent_configuration")
+        .zip(&rows)
+    {
         assert!(client.ensure(&target.kind, row).await.error().is_none());
     }
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
@@ -286,7 +380,11 @@ async fn sandbox_exec_deadline_bounds_a_stream_that_never_finishes() {
         .map(|k| (k.into(), format!("{k}-generation")))
         .collect();
     let mut sandbox = None;
-    for target in targets(&document, &generations).unwrap() {
+    for target in targets(&document, &generations)
+        .unwrap()
+        .into_iter()
+        .filter(|target| target.kind != "agent_configuration")
+    {
         let result = client.ensure(&target.kind, &target.values).await;
         assert!(result.error().is_none());
         if target.kind == "sandbox" {
@@ -352,7 +450,11 @@ async fn failed_readback_retains_each_created_identity_until_explicit_recovery()
             .into_iter()
             .map(|kind| (kind.into(), format!("{kind}-generation")))
             .collect();
-        for target in targets(&document, &generations).unwrap() {
+        for target in targets(&document, &generations)
+            .unwrap()
+            .into_iter()
+            .filter(|target| target.kind != "agent_configuration")
+        {
             if target.kind != failed_kind {
                 assert!(
                     client
@@ -402,7 +504,10 @@ async fn explicit_policy_and_proxy_reach_the_gateway_and_detect_drift() {
         .into();
     let targets = targets(&document, &generations).unwrap();
     let mut rows = Vec::new();
-    for target in &targets {
+    for target in targets
+        .iter()
+        .filter(|target| target.kind != "agent_configuration")
+    {
         let result = client.ensure(&target.kind, &target.values).await;
         assert!(
             result.error().is_none(),
@@ -494,13 +599,13 @@ async fn explicit_policy_and_proxy_reach_the_gateway_and_detect_drift() {
 }
 
 #[tokio::test]
-async fn agent_policy_refresh_verifies_native_policy_without_mutation() {
+async fn public_configuration_refresh_verifies_runtime_intent_without_mutation() {
     let fixture = Fixture::start().await;
     let mut document =
         Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
-    document.spec.sandboxes[0].agent.tools = Some(nemoclaw_sdk::config::AgentTools::ReadOnly {
-        allow: [nemoclaw_sdk::config::AllowedTool::Read],
+    document.spec.sandboxes[0].agent.tools = Some(nemoclaw_sdk::config::AgentTools {
+        allow: vec!["read".into()],
     });
     let client = OpenShell::connect(&document.spec.gateway, Arc::new(EnvironmentSecrets)).unwrap();
     let generations: Generations = ["workspace", "provider", "sandbox"]
@@ -510,53 +615,69 @@ async fn agent_policy_refresh_verifies_native_policy_without_mutation() {
     let mut rows = Vec::new();
     // Native startup can lag behind sandbox creation; SDK readiness waits separately.
     fixture.state.lock().unwrap().exec_exit = 2;
-    for target in &targets {
+    for target in targets
+        .iter()
+        .filter(|target| target.kind != "agent_configuration")
+    {
         let result = client.ensure(&target.kind, &target.values).await;
         assert!(result.error().is_none(), "{:?}", result.error());
         rows.push(result.into_parts().0.unwrap());
     }
     fixture.state.lock().unwrap().exec_exit = 0;
+    let mut desired = targets
+        .iter()
+        .find(|target| target.kind == "agent_configuration")
+        .unwrap()
+        .values
+        .clone();
+    desired.insert("sandbox_id".into(), rows[3]["id"].clone());
+    let configured = client.ensure("agent_configuration", &desired).await;
+    assert!(configured.error().is_none(), "{:?}", configured.error());
+    let binding = configured.into_parts().0.unwrap();
     let effects = fixture.state.lock().unwrap().effects;
+    let writes = fixture
+        .state
+        .lock()
+        .unwrap()
+        .exec_calls
+        .iter()
+        .filter(|command| command.get(2).is_some_and(|arg| arg == "configure"))
+        .count();
     client
-        .read("sandbox", &rows[3], false)
+        .read("agent_configuration", &binding, false)
         .await
         .unwrap()
         .unwrap();
     {
         let state = fixture.state.lock().unwrap();
         assert_eq!(state.effects, effects);
+        assert_eq!(
+            state
+                .exec_calls
+                .iter()
+                .filter(|command| command.get(2).is_some_and(|arg| arg == "configure"))
+                .count(),
+            writes
+        );
         assert!(
             state
                 .exec_calls
                 .iter()
-                .any(|c| c.iter().any(|a| a == "--inference"))
+                .any(|command| command.get(2).is_some_and(|arg| arg == "check"))
         );
     }
     fixture.state.lock().unwrap().exec_exit = 2;
-    assert!(client.read("sandbox", &rows[3], false).await.is_err());
-    assert_eq!(fixture.state.lock().unwrap().effects, effects);
-    // An unavailable runtime cannot establish its tool restrictions either.
-    let key = format!(
-        "{}/{}",
-        document.workspace(),
-        document.spec.sandboxes[0].name
-    );
-    fixture
-        .state
-        .lock()
-        .unwrap()
-        .sandboxes
-        .get_mut(&key)
-        .unwrap()
-        .status
-        .as_mut()
-        .unwrap()
-        .phase = openshell_core::proto::SandboxPhase::Stopped as i32;
-    assert!(client.read("sandbox", &rows[3], false).await.is_err());
-    // Broken native configuration must not prevent deliberate teardown.
     assert!(
         client
-            .read("sandbox", &rows[3], true)
+            .read("agent_configuration", &binding, false)
+            .await
+            .is_err()
+    );
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    // An unavailable configuration observation does not prevent owned teardown.
+    assert!(
+        client
+            .read("agent_configuration", &binding, true)
             .await
             .unwrap()
             .is_some()
@@ -581,7 +702,10 @@ async fn native_provider_union_is_attached_and_attachment_drift_is_rejected() {
         .map(|key| (key.into(), "a".repeat(32)))
         .into();
     let targets = targets(&document, &generations).unwrap();
-    for target in targets.iter().filter(|target| target.kind != "sandbox") {
+    for target in targets
+        .iter()
+        .filter(|target| target.kind != "sandbox" && target.kind != "agent_configuration")
+    {
         assert!(
             client
                 .ensure(&target.kind, &target.values)
@@ -612,7 +736,7 @@ async fn native_provider_union_is_attached_and_attachment_drift_is_rejected() {
             .spec
             .as_mut()
             .unwrap();
-        assert_eq!(sandbox.providers, vec!["local", "hosted"]);
+        assert_eq!(sandbox.providers, vec!["hosted", "local"]);
         sandbox.providers.pop();
     }
     assert!(client.read("sandbox", &row, false).await.is_err());
@@ -629,7 +753,11 @@ async fn terminal_startup_reports_phase_and_exit_without_echoing_backend_text() 
         .map(|key| (key.into(), format!("{key}-generation")))
         .into();
     let mut binding = None;
-    for target in targets(&document, &generations).unwrap() {
+    for target in targets(&document, &generations)
+        .unwrap()
+        .into_iter()
+        .filter(|target| target.kind != "agent_configuration")
+    {
         let result = client.ensure(&target.kind, &target.values).await;
         assert!(result.error().is_none());
         if target.kind == "sandbox" {

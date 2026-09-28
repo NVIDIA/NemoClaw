@@ -3,7 +3,7 @@
 use nemoclaw_sdk::{
     CancellationToken, Change, Deployment, OperationResult, Outcome,
     backend::Row,
-    config::{ComputeDriver, Document, Gateway, HarnessKind},
+    config::{ComputeDriver, Document, Gateway},
     openshell::{EnvironmentSecrets, OpenShell},
 };
 use serde_json::{Value, json};
@@ -223,7 +223,7 @@ async fn runtime_id(client: &OpenShell, binding: &Row) -> String {
         [
             "/opt/fabric/bin/python",
             "-c",
-            "import socket; s=socket.socket(socket.AF_UNIX); s.connect('/sandbox/fabric.sock'); s.sendall(b'{\"operation\":\"check\"}\\n'); print(s.makefile().readline())",
+            "import socket; s=socket.socket(socket.AF_UNIX); s.connect('/sandbox/fabric.sock'); s.sendall(b'{\"operation\":\"status\"}\\n'); print(s.makefile().readline())",
         ]
         .map(String::from)
         .to_vec(),
@@ -349,7 +349,7 @@ async fn bare_brev_hosted_openclaw_lifecycle() {
             .sandbox_harness(&document.spec.sandboxes[0])
             .unwrap()
             .kind,
-        HarnessKind::OpenClaw
+        "nvidia.fabric.openclaw".parse().unwrap()
     );
     let providers = document.selected_inference_providers().unwrap();
     assert_eq!(providers.len(), 1);

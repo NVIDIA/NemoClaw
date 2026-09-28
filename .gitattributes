@@ -1,3 +1,5 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 * text=auto eol=lf
+# Preserve upstream license notices byte-for-byte, including their whitespace.
+crates/vendor/openshell-sdk/THIRD-PARTY-NOTICES -text -whitespace

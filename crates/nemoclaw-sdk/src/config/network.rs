@@ -1,6 +1,5 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use crate::config::HarnessKind;
 // Input contract adapted from NVIDIA/NemoClaw at be46805b51b0d626466538e9f8fe56c8ad157549:
 // schemas/network-policy.schema.json and src/lib/config/model.ts (Apache-2.0).
 // 2026-09-15: represented the export fields as strict Rust types, added explicit
@@ -8,8 +7,9 @@ use crate::config::HarnessKind;
 // 2026-09-19: removed the main-branch Landlock spelling translation and the
 // redundant external-proxy ownership annotation.
 // 2026-09-21: made policy selection exclusive in Rust while preserving the input shape.
+// 2026-09-23: obtain protocol types through the pinned OpenShell SDK's raw API.
 use super::ConfigError;
-use openshell_core::proto;
+use openshell_sdk::raw::proto;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -348,14 +348,14 @@ impl Proxy {
     }
 }
 impl Network {
-    pub(crate) fn validate_runtime_access(&self, harness: HarnessKind) -> Result<(), ConfigError> {
+    pub(crate) fn validate_runtime_access(&self) -> Result<(), ConfigError> {
         let NetworkPolicy::Explicit(policy) = &self.policy else {
             return Ok(());
         };
         let Some(filesystem) = &policy.filesystem_policy else {
             return Ok(());
         };
-        for (required, diagnostic) in crate::openshell::runtime_read_requirements(harness) {
+        for (required, diagnostic) in crate::openshell::runtime_read_requirements() {
             let covered = filesystem
                 .read_only
                 .iter()

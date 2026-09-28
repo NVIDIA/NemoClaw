@@ -11,6 +11,16 @@ from pathlib import Path
 
 
 class AgentImage(unittest.TestCase):
+    def test_label_matches_discovery_from_installed_fabric(self):
+        from catalog import snapshot
+
+        provenance = json.loads(Path("/opt/nemoclaw/provenance.json").read_text())
+        actual = snapshot(
+            provenance["fabric_revision"], provenance["source_sha256"], installed_only=True
+        )
+        self.assertTrue(actual["adapters"], "image installs no discoverable Fabric adapter")
+        self.assertEqual(json.loads(os.environ["NEMOCLAW_TEST_CATALOG"]), actual)
+
     def test_runtime_retains_matching_sources_without_build_toolchains(self):
         root = Path("/opt/nemoclaw")
         manifest = json.loads((root / "provenance.json").read_text())

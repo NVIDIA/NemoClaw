@@ -3,25 +3,39 @@
 
 //! Frontend-independent authoring of NemoClaw desired-state documents.
 //!
-//! Draft edits validate before replacing answers. Generated YAML is checked by
-//! the SDK parser; credential references never require loading credential values.
+//! A [`Draft`] owns the SDK's complete configuration [`nemoclaw_sdk::config::Document`].
+//! Guided fields are a fallible view over curated presets, not a parallel schema.
+//! Edits validate before replacing desired state, and generated YAML is checked by
+//! the SDK parser. Credential references never require loading credential values.
 //! Prompts, rendering, file I/O, and deployment execution belong to consumers.
 
 mod answers;
 mod capabilities;
+mod delegation;
+mod deployment;
 mod diagnostics;
 mod draft;
+mod evidence;
+mod facts;
+mod graph;
+mod guided;
 mod projection;
 
 pub use answers::{
-    AnswerOverrides, Answers, ApiChoice, HarnessChoice, InferenceChoice, RuntimeChoice,
+    AnswerOverrides, Answers, ApiChoice, HarnessChoice, ProviderPreset, RuntimeChoice,
 };
-pub use capabilities::{Capabilities, Scenario};
+pub use capabilities::Capabilities;
 pub use diagnostics::{Diagnostic, Diagnostics};
 pub use draft::{
     AuthoredDocument, CompletionBoundary, Draft, IdentityEdits, InferenceEdits, Review,
 };
+pub use evidence::{
+    CompatibilityStatus, DiscoveryAssessment, DiscoveryEvidence, DiscoveryKey, DiscoveryQuery,
+};
+pub use facts::{AuthoringFacts, EndpointEvidence, GatewayEvidence, HardwareEvidence};
+pub use graph::{AnswerStatus, DependencyGraph};
+pub use guided::{AnswerChange, EditableField, FieldValue, GuidedEdit, GuidedField};
 pub use projection::Session;
 
-#[cfg(test)]
-mod tests;
+mod settings;
+pub use settings::SettingQuestion;

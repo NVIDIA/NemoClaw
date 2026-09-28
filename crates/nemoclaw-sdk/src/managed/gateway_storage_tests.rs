@@ -184,3 +184,23 @@ async fn missing_persistent_key_never_imports_or_generates_for_an_existing_gatew
         }
     }
 }
+
+#[tokio::test]
+async fn gateway_prerequisites_can_be_checked_without_storage_or_resource_reads() {
+    let fixture = Fixture::start(|request| {
+        assert_eq!(request.method, "GET");
+        assert_eq!(request.path, "/info");
+        Some((200, br#"{"ID":"engine"}"#.to_vec()))
+    })
+    .await;
+    let engine = fixture.engine_for("unix:///var/run/docker.sock");
+    assert_eq!(
+        engine
+            .gateway_engine_info(ComputeDriver::Docker)
+            .await
+            .unwrap()
+            .id
+            .as_deref(),
+        Some("engine")
+    );
+}

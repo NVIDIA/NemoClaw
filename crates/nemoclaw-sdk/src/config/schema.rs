@@ -63,6 +63,6 @@ fn remove_serde_defaults(schema: &mut serde_json::Value) {
 
 mod runtime;
 pub(crate) use runtime::{
-    validate_definition, validate_document, validate_harness_field, validate_input,
-    validate_property, validate_service, validate_tuning,
+    validate_definition, validate_document, validate_input, validate_property, validate_service,
+    validate_tuning,
 };

@@ -13,9 +13,15 @@ from pathlib import Path
 
 class KubernetesAgentImage(unittest.TestCase):
     def test_runtime_python_sources_are_readable_by_sandbox_identity(self):
-        for name in ("fabric.py", "health.py", "interfaces.py", "openclaw_adapter.py"):
+        for name in ("fabric.py", "health.py", "catalog.py"):
             path = Path("/opt/nemoclaw") / name
             compile(path.read_text(), str(path), "exec")
+
+    def test_installed_fabric_adapter_is_readable_by_sandbox_identity(self):
+        import nemo_fabric_adapters.openclaw.adapter as adapter
+
+        path = Path(adapter.__file__)
+        compile(path.read_text(), str(path), "exec")
 
     def test_runtime_identity_matches_kubernetes_sandbox(self):
         self.assertEqual((os.getuid(), os.getgid()), (10001, 10001))

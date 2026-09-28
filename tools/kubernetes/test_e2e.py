@@ -166,6 +166,12 @@ class LocalTestTests(unittest.TestCase):
                 lifecycle = next(c for c in calls if c[0] == "Run full Kubernetes lifecycle")
                 self.assertTrue(lifecycle[2]["inference"])
                 self.assertEqual(lifecycle[1][0], str(state / "kubernetes-live-test"))
+                build = next(c for c in calls if c[0] == "Build Kubernetes agent image")
+                self.assertIn(str(e2e.REPO / "image/build_fabric.py"), build[1])
+                self.assertEqual(
+                    build[1][-3:], ["--platform", "linux/arm64", "openclaw-kubernetes"]
+                )
+                self.assertNotIn("bake", build[1])
                 retry = (state / "retry-inference.sh").read_text()
                 self.assertNotIn("cargo", retry)
                 self.assertNotIn("private-test-key", retry)

@@ -1,42 +1,66 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::capabilities::NVIDIA_MODEL;
+use nemoclaw_sdk::config::{ComputeDriver, HarnessKind, InferenceApi};
+
+pub type HarnessChoice = HarnessKind;
+pub type RuntimeChoice = ComputeDriver;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum HarnessChoice {
-    OpenClaw,
-    Hermes,
+/// Branded endpoint preset offered by guided authoring.
+///
+/// This is not a document-model provider kind. Each choice projects to the
+/// SDK's generic provider kind, API, endpoint, and credential reference.
+pub enum ProviderPreset {
+    NvidiaEndpoints,
+    OpenRouter,
+    OpenAi,
+    OpenAiCompatible,
+    Anthropic,
+    AnthropicCompatible,
+    Gemini,
+    Nous,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RuntimeChoice {
-    Docker,
+impl ProviderPreset {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::NvidiaEndpoints => "NVIDIA Endpoints",
+            Self::OpenRouter => "OpenRouter",
+            Self::OpenAi => "OpenAI",
+            Self::OpenAiCompatible => "Other OpenAI-compatible endpoint",
+            Self::Anthropic => "Anthropic",
+            Self::AnthropicCompatible => "Other Anthropic-compatible endpoint",
+            Self::Gemini => "Google Gemini",
+            Self::Nous => "Nous Research",
+        }
+    }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum InferenceChoice {
-    NvidiaHosted,
-}
+pub type ApiChoice = InferenceApi;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ApiChoice {
-    OpenAiCompletions,
-    OpenAiResponses,
-}
-
-/// Complete authoring inputs, validated when projected or reviewed.
+/// Inputs for one curated guided-onboarding projection.
+///
+/// This is a frontend view, not a second desired-state schema. [`crate::Draft`]
+/// owns the SDK's complete [`nemoclaw_sdk::config::Document`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Answers {
     pub deployment_name: String,
     pub sandbox_name: String,
     pub agent_name: String,
     pub harness: HarnessChoice,
+    pub image: String,
+    pub harness_settings: Option<serde_json::Map<String, serde_json::Value>>,
+    pub harness_config: Option<serde_json::Map<String, serde_json::Value>>,
     pub runtime: RuntimeChoice,
-    pub inference: InferenceChoice,
+    pub engine: Option<String>,
+    pub inference: ProviderPreset,
     pub api: ApiChoice,
+    pub provider_api: Option<InferenceApi>,
     pub provider_name: String,
+    pub endpoint: String,
     pub model: String,
+    pub model_settings: Option<serde_json::Map<String, serde_json::Value>>,
     pub credential_env: String,
 }
 
@@ -48,28 +72,22 @@ pub struct AnswerOverrides {
     pub agent_name: Option<String>,
     pub harness: Option<HarnessChoice>,
     pub runtime: Option<RuntimeChoice>,
-    pub inference: Option<InferenceChoice>,
+    pub inference: Option<ProviderPreset>,
     pub api: Option<ApiChoice>,
     pub provider_name: Option<String>,
+    pub endpoint: Option<String>,
     pub model: Option<String>,
     pub credential_env: Option<String>,
 }
 
 impl Answers {
-    /// Returns the CLI's OpenClaw, Docker, and NVIDIA-hosted inference preset.
+    /// Read the default preset as configuration data using the same projection
+    /// as any other template. Harness behavior remains owned by the SDK/Fabric.
     pub fn onboarding_defaults() -> Self {
-        Self {
-            deployment_name: "openclaw-nvidia-hosted".into(),
-            sandbox_name: "assistant".into(),
-            agent_name: "primary".into(),
-            harness: HarnessChoice::OpenClaw,
-            runtime: RuntimeChoice::Docker,
-            inference: InferenceChoice::NvidiaHosted,
-            api: ApiChoice::OpenAiCompletions,
-            provider_name: "hosted-nvidia-prod".into(),
-            model: NVIDIA_MODEL.into(),
-            credential_env: "NVIDIA_INFERENCE_API_KEY".into(),
-        }
+        crate::Draft::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .expect("bundled onboarding template is valid")
+            .guided_answers(&crate::Capabilities::available())
+            .expect("bundled onboarding template can be authored")
     }
 
     /// Replaces supplied fields without validating; projection checks the result.
@@ -79,11 +97,34 @@ impl Answers {
         self.agent_name = inputs.agent_name.unwrap_or(self.agent_name);
         self.harness = inputs.harness.unwrap_or(self.harness);
         self.runtime = inputs.runtime.unwrap_or(self.runtime);
-        self.inference = inputs.inference.unwrap_or(self.inference);
-        self.api = inputs.api.unwrap_or(self.api);
+        if let Some(provider) = inputs.inference {
+            self = self.for_provider(provider);
+        }
+        if let Some(api) = inputs.api {
+            self.api = api;
+            self.provider_api = Some(api);
+        }
         self.provider_name = inputs.provider_name.unwrap_or(self.provider_name);
+        self.endpoint = inputs.endpoint.unwrap_or(self.endpoint);
         self.model = inputs.model.unwrap_or(self.model);
         self.credential_env = inputs.credential_env.unwrap_or(self.credential_env);
+        self
+    }
+
+    /// Apply an endpoint preset without making a native compatibility claim.
+    pub fn for_provider(mut self, provider: ProviderPreset) -> Self {
+        let profile = provider.profile();
+        self.inference = provider;
+        if !provider.apis().contains(&self.api) {
+            self.api = provider.apis()[0];
+        }
+        self.provider_api = Some(self.api);
+        self.provider_name = profile.name.into();
+        self.endpoint = profile.endpoint.into();
+        self.credential_env = profile.credential.into();
+        if let Some(model) = profile.default_model {
+            self.model = model.into();
+        }
         self
     }
 }

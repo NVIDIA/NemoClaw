@@ -102,9 +102,7 @@ fn standalone_harness_validation_uses_the_same_contract_as_documents() {
     let harness = baseline.spec.sandboxes[0].harness.as_ref().unwrap();
     for invalid in [
         json!({"execution":{"timeoutSeconds":0}}),
-        json!({"execution":{"heartbeatEvery":"30m\n"}}),
-        json!({"interfaces":{"dashboard":{"port":8642}}}),
-        json!({"observability":{"relay":{"enabled":true}}}),
+        json!({"execution":{"timeoutSeconds":1000000001_u64}}),
     ] {
         let mut value = serde_json::to_value(harness).unwrap();
         value

@@ -19,7 +19,7 @@ It does not create a cluster.
 The external path requires no local Kubernetes tools; the managed path requires the explicit kubeconfig and client tools in the [managed gateway procedure](../kubernetes.md#provision-a-managed-development-gateway).
 Use the [existing-cluster prerequisites](../kubernetes.md#cluster-prerequisites) or the optional [local kind fixture](kubernetes-kind.md) to prepare the platform.
 
-Provide one or more OpenClaw sandboxes with `runtime.provider: kubernetes`, explicit immutable images, an external inference endpoint, the selected gateway configuration, a fresh deployment UID, and a new absolute state-directory path whose parent exists and is private.
+Provide one or more OpenClaw sandboxes with `harness.kind: nvidia.fabric.openclaw`, `runtime.provider: kubernetes`, explicit immutable images, an external inference endpoint, the selected gateway configuration, a fresh deployment UID, and a new absolute state-directory path whose parent exists and is private.
 The three-agent [managed development example](../../examples/kubernetes/managed-development.yaml) can be used after replacing its deployment and cluster inputs.
 Supply the YAML's credential environment references to the test process using the [shared credential mechanism](../kubernetes.md#supply-credentials-as-on-docker).
 The test creates every declared sandbox and the provider registrations, verifies a real model response from each agent, requires a no-op plan, exports through the CLI with an unchanged configuration digest, and reapplies without changes.
@@ -50,15 +50,17 @@ NEMOCLAW_TEST_KUBERNETES_STATE=/absolute/path/to/retained-state \
 ```
 
 Both tests require the exact declared sandbox bindings in retained state before invoking any agent.
-The response test invokes every agent through OpenShell, may run its tools, and does not delete resources.
+The response test uses OpenShell exec to invoke every agent through its installed Fabric runtime, may run its tools, and does not delete resources.
+It checks the retained Fabric configuration before invocation and validates an OpenClaw response of `FOUR`; this response check belongs to the explicit test, not ordinary SDK apply or readiness.
 For a managed gateway, the SDK holds one authenticated tunnel across the sequential agent requests and closes it afterward.
 Do not run another command using the same managed loopback port concurrently.
-The recorded [three-agent managed](../validation/kubernetes-managed-three-agents-linux-amd64.md) and [external gateway](../validation/kubernetes-kind-linux-amd64.md) results cover the local Linux AMD64 kind profile only.
+The recorded [three-agent managed](../validation/kubernetes-managed-three-agents-linux-amd64.md) and [external gateway](../validation/kubernetes-kind-linux-amd64.md) results cover their earlier Linux AMD64 kind revisions; they do not qualify the integration with the current Fabric runtime.
 
 ## Dependency Upgrade Test
 
 Before accepting an OpenShell or Fabric/image upgrade, use the small `dependency_upgrade_survives_apply_process_exit` test.
-It requires one OpenClaw agent and one already-running external inference provider; it rejects managed inference services, Ollama, and proxies.
+It requires one agent and one already-running external inference provider; it rejects managed inference services.
+Supply a JSON input accepted by the selected Fabric adapter through `NEMOCLAW_UPGRADE_INPUT`.
 Run from the checkout that built the candidate bundle: the initial apply uses the bundled CLI, and subsequent checks use the checkout's SDK.
 Provide a dedicated deployment UID, an unused state directory whose parent exists, and an immutable candidate bundle.
 Use either an external gateway at the candidate SDK's pinned OpenShell version or a managed gateway with a free port and subnet.
@@ -71,18 +73,20 @@ From the repository root, with absolute paths:
 ```sh
 NEMOCLAW_UPGRADE_CONFIG=/absolute/path/to/owned-deployment.yaml \
 NEMOCLAW_UPGRADE_STATE=/absolute/path/to/new-state \
+NEMOCLAW_UPGRADE_INPUT=/absolute/path/to/adapter-input.json \
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/immutable/candidate-bundle \
   cargo test --workspace --test fabric_live \
     dependency_upgrade_survives_apply_process_exit -- --ignored --test-threads=1
 ```
 
-The test waits for the real apply CLI to exit, then requires a reply from the hosted agent through OpenShell.
+The test waits for the real apply CLI to exit, then explicitly invokes the hosted Fabric runtime through OpenShell.
+It requires a successful Fabric result without assuming an adapter-specific output shape or qualifying response quality.
 It checks export/reapply and stable resource/runtime identities before destroying its owned workloads and registrations.
 It retains the workspace and persistent storage; failures retain state and resources for diagnosis and explicit cleanup.
 CLI failures appear in the test output.
 It never starts inference or substitutes another agent process through exec.
 
-The test passed with OpenShell `1fe79f539` on Linux ARM64; see the [recorded upgrade results and limits](../validation/rust-managed-podman-linux-arm64.md#docker-regression-checks).
+An earlier version of the test passed with OpenShell `1fe79f539` on Linux ARM64; see the [recorded upgrade results and limits](../validation/rust-managed-podman-linux-arm64.md#docker-regression-checks).
 The [earlier main-process failure](../validation/rust-native-inference-linux-arm64.md#live-attempt-and-blocker) remains specific to its recorded revision.
 If this test fails, passing lower-level fixture tests does not establish compatibility.
 Run it explicitly for candidate dependency upgrades, outside the default build; ordinary CI retains the fast descriptor, reference, and protocol tests.
@@ -132,10 +136,11 @@ Storage retention and watchdog recovery have separate tests under [runtime bound
 Use an immutable bundle copy for a long live run.
 Rebuilding `dist` replaces development artifacts; keep the selected bundle unchanged until the operation ends.
 
-The optional `fabric_live` test accepts absolute `NEMOCLAW_LIVE_FABRIC_CONFIG`, `NEMOCLAW_LIVE_FABRIC_STATE`, and `NEMOCLAW_TEST_BUNDLE` paths.
+The optional `fabric_live` test accepts absolute `NEMOCLAW_LIVE_FABRIC_CONFIG`, `NEMOCLAW_LIVE_FABRIC_STATE`, `NEMOCLAW_LIVE_FABRIC_INPUT`, and `NEMOCLAW_TEST_BUNDLE` paths.
+The input file contains JSON accepted by the selected Fabric adapter.
 Use a dedicated UID and state directory with an external gateway and inference endpoint.
-It applies the deployment, checks unchanged apply and export/reapply, exercises the native agent/Fabric SDK, and destroys its owned registrations and sandbox.
-The hosted Fabric runtime must keep its identity throughout native access and reapply.
+It applies the deployment, checks unchanged apply and export/reapply, explicitly invokes the hosted Fabric runtime, and destroys its owned registrations and sandbox.
+The hosted Fabric runtime must keep its identity throughout invocation and reapply.
 This test makes a real model request and reports assertion failures through the test runner.
 The workspace remains after destroy.
 
@@ -222,7 +227,7 @@ Select it explicitly; do not run live tests as an ignored-test aggregate.
 ## Hosted NVIDIA Hermes Parity
 
 The [hosted Hermes test](../validation/scenarios/hermes-nvidia-hosted-linux-docker.md) compares an exact-hash historical export with separately authored v1 YAML through a test-only projection.
-It checks expected plan and apply results, a real Hermes reply, unchanged apply with stable resource identities, export/reapply, and destroy.
+It checks expected plan and apply results, the explicit unsupported text-probe contract, unchanged apply with stable resource identities, export/reapply, and destroy.
 It requires an owned Linux Docker deployment, a new state-directory path, a verified bundle, the immutable Hermes image, and the declared NVIDIA credential.
 Select `authored_v1_intent_preserves_v0_export_through_hosted_hermes_lifecycle` explicitly; the test writes no separate report.
 This scenario does not qualify Relay or Switchyard.
@@ -240,8 +245,8 @@ The caller owns fixture setup and cleanup; never target an unrelated container.
 The SDK `ssh_capacity` live test exercises the fixed collector on an explicitly selected Linux ARM64 or AMD64 NVIDIA host without provisioning resources.
 It checks that the collected architecture matches the selected Docker daemon's reported architecture.
 
-The existing `fabric_live` test also accepts an external gateway with a managed SSH inference service.
-The live test requests an agent reply separately from apply.
+The `fabric_live` test requires external inference and does not install managed SSH inference services.
+It invokes the hosted runtime separately from apply with caller-supplied input.
 The test checks managed runtime bindings as well as the hosted agent identity across export/reapply and destroys only the supplied deployment.
 
 The [two-daemon test results](../validation/rust-dual-daemon-linux-arm64.json) describe the earlier custom-controller path, including live rootless Podman, controlled download interruption, watchdog stop, engine retarget rejection, and retained model data.

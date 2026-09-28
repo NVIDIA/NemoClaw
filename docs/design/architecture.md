@@ -11,32 +11,127 @@ The [accepted scope](scope.md) defines the invariants; this page explains the re
 | Component | Responsibility |
 |---|---|
 | CLI | Arguments, prompts, credential acquisition, and output |
-| Authoring library | Presets, draft edits, and review data |
+| Authoring library | Configuration constraints, question dependencies, validated draft edits, and review data |
 | SDK | Configuration validation, graph compilation, deployment locking, plan policy, and recovery across stages |
 | OpenTofu | Dependency ordering, concurrent resource reconciliation, and resource state |
 | Docker provider | Docker containers, images, model-cache volumes, and service networks |
 | NemoClaw provider | OpenShell operations, Podman gateway processes, durable storage contracts, and readiness observations |
 | Hosted runtime | Model preparation, startup, application health, and protective shutdown |
+| Fabric | Adapter and target discovery, native schemas, native configuration validation and mapping, and agent execution |
 
 Operation coordination belongs in the SDK so applications and the CLI share the same recovery behavior.
 The SDK checks deployment scope and recovery constraints; providers decide resource transitions and verify remote identity before mutation.
+For reconstructible OpenShell resources and non-retained disposable Docker resources, apply and teardown report OpenTofu's actions without reconstructing absence or replacement cleanup from plan history.
+Durable identity, retained storage, and undeclared-resource checks remain deployment constraints.
 OpenTofu executes the graph with its default parallelism.
 The SDK and NemoClaw provider share backend library code.
 
 The [provider reference](../provider.md) owns resource-specific contracts and protocol details.
 Implementation starts at [Deployment](../../crates/nemoclaw-sdk/src/deployment/mod.rs), [graph compilation](../../crates/nemoclaw-sdk/src/compile.rs), and [backend contracts](../../crates/nemoclaw-sdk/src/backend.rs).
 
+## OpenShell SDK Boundary
+
+NemoClaw's [OpenShell adapter](../../crates/nemoclaw-sdk/src/openshell/mod.rs) reconciles deployment ownership and desired state against the gateway.
+NemoClaw uses the SDK's public operations directly where they cover the deployment contract.
+Sandbox teardown uses workspace-scoped `get_sandbox`, `delete_sandbox`, and `wait_deleted`; it checks ownership before deletion and requires confirmed absence afterward.
+Teardown does not require the sandbox's old image, command, or policy to remain intact.
+The reconciliation code retains the SDK's raw API only for operations or fields missing from the high-level interface, without a separate raw-client wrapper.
+The Rust SDK uses gRPC; adopting it does not remove the gateway RPC boundary.
+NemoClaw supplies the channel to preserve mutual TLS, lazy connection, and timeout settings that the pinned SDK configuration cannot express.
+
+At the pinned OpenShell revision `1fe79f53991debf32776853a60f0cbd4e127dcfb`, the SDK has these integration limits:
+
+| Requirement | SDK limit | Consequence |
+|---|---|---|
+| Telemetry disabled at build time | Its manifest enables `openshell-core` default features, including telemetry | Use a [vendored manifest patch](../../crates/vendor/openshell-sdk/NOTICE.md) with unchanged Rust source to disable core default features |
+| Mutual TLS and bounded lazy connections | `ClientConfig` lacks client certificate/key fields, lazy connection configuration, and request timeouts | Retain custom channel construction through `OpenShellClient::from_parts` |
+| Complete workspace identity | `WorkspaceRef` omits the physical ID, resource version, and deletion timestamp | Use the SDK's supported `raw_grpc()` escape hatch for workspace observations and creation readback |
+| Sandbox creation with explicit policy | `SandboxSpec` has no policy field; the policy-bearing template API requires a separate workload template | Retain raw creation so the declared policy applies in the initial request |
+| Sandbox drift and startup checks | `SandboxRef` omits the specification, deletion timestamp, and startup conditions | Keep full protobuf observations through the raw SDK client |
+| Conditional provider updates | The curated client has no provider update method | Preserve raw requests carrying the verified physical ID and resource version |
+| Providers, provider profiles, policy status, and gateway capabilities | The curated client has no equivalent methods for these operations | Use the raw SDK client; provider readiness helpers do not replace provider/profile reconciliation |
+| Bounded exec against a verified identity | High-level exec resolves the sandbox by name again, buffers output without a size cap, and does not reject every malformed event sequence | Retain ID-bound streaming, the local deadline, output limits, and event validation |
+| Secret-safe diagnostics | SDK bearer construction does not mark metadata sensitive; SDK errors can retain upstream diagnostic text | Preserve sensitive metadata and NemoClaw's redacted error mapping |
+
+These limits are verified against the pinned [SDK manifest](https://github.com/NVIDIA/OpenShell/blob/1fe79f53991debf32776853a60f0cbd4e127dcfb/crates/openshell-sdk/Cargo.toml), [configuration](https://github.com/NVIDIA/OpenShell/blob/1fe79f53991debf32776853a60f0cbd4e127dcfb/crates/openshell-sdk/src/config.rs), [client](https://github.com/NVIDIA/OpenShell/blob/1fe79f53991debf32776853a60f0cbd4e127dcfb/crates/openshell-sdk/src/client.rs), [types](https://github.com/NVIDIA/OpenShell/blob/1fe79f53991debf32776853a60f0cbd4e127dcfb/crates/openshell-sdk/src/types.rs), and [authentication interceptor](https://github.com/NVIDIA/OpenShell/blob/1fe79f53991debf32776853a60f0cbd4e127dcfb/crates/openshell-sdk/src/auth.rs).
+The supported raw escape hatch provides an SDK integration point but still exposes protobuf compatibility risk.
+NemoClaw constructs the client without a token refresher; neither the selected high-level operations nor raw calls automatically retry mutations.
+An [artifact test](../../crates/nemoclaw-sdk/tests/artifact_pins.rs) checks revision alignment and proves telemetry remains disabled even when the process environment requests it.
+Deletion remains name-addressed in the pinned protocol; neither client offers an atomic ID/version precondition, so NemoClaw verifies identity immediately before deletion and never retries an ambiguous mutation automatically.
+Ownership checks, retained bindings, and desired-state comparison remain NemoClaw responsibilities even when the SDK gains broader coverage.
+
+## Terminal Presentation
+
+The CLI renders SDK progress through an inline Ratatui display or plain lines for redirected output.
+Both consume the same typed observations; neither queries resources or interprets runtime logs.
+OpenTofu supplies resource operations and identities, while readiness and health remain with their existing owners.
+The renderer tracks active work and elapsed time without treating animation as evidence of progress.
+It finishes before the CLI writes the final text or JSON result.
+Unsupported health, incomplete plans, and unconfirmed state after failure remain explicit in both formats.
+See [CLI output](../reference/cli.md#output-and-failure) for the user contract.
+
 ## Configuration
 
-The [authoring library](../../crates/nemoclaw-authoring/src/lib.rs) turns onboarding answers and draft edits into YAML without terminal dependencies or deployment operations.
-It retains credential references, not values, and supports a subset of SDK configuration.
-Both authored and directly supplied YAML pass through the SDK's [configuration validation](../configuration-schema.md).
+Desired-state YAML passes through the SDK's [configuration validation](../configuration-schema.md).
+Configuration retains credential references, not values.
+
+The [authoring library](../../crates/nemoclaw-authoring/src/lib.rs) owns an SDK `Document` while a frontend edits or reviews it.
+It has no terminal or deployment operations.
+Its guided API consumes Fabric descriptor schemas and preserves explicit choices independently of target availability.
+Provider presets supply presentation defaults; they do not form a compatibility matrix.
+The SDK owns deployment references, credentials, security grants, and resource lifecycle.
+Fabric owns adapter identity, native capability claims, accepted settings, configuration validation, and native mapping.
+Image builds call Fabric discovery in the installed environment and attach canonical records to the image.
+The bundled snapshot is provisional offline metadata.
+Harness identifiers are opaque strings.
+Authoring derives questions, choices, defaults, and conditional requirements from the selected settings schema.
+The SDK projects deployment references into one public Fabric configuration; both planning and execution consume that configuration.
+The selected-image descriptor snapshot is validated by Fabric's planner, without starting adapters or reading their native code.
+An unavailable or incompatible metadata version leaves native validation unknown.
+Generic field validation helps the interview; Fabric's planner owns validation of the complete native configuration.
+
+The authoring dependency graph relates fields independently of their screen order.
+The next-question heuristic considers unresolved fields whose active prerequisites are resolved, then prefers the field that constrains the most remaining decisions.
+Ties retain presentation order; inactive fields and choices with only one valid answer do not require a question.
+The authoring API distinguishes suggested, accepted, delegated, implied, and inactive answers.
+Delegation accepts the current suggestion; later dependency changes can reopen it.
+Changes to accepted dependent answers still require confirmation, while unrelated accepted answers remain intact.
+These answer states describe user intent, separately from evidence about a target.
+
+With a verified native bundle, the CLI reads discovery through the same provider data sources used by planning.
+An SDK discovery session initializes a disposable OpenTofu directory once and runs fresh read-only plans as selections change.
+It does not create deployment state.
+Discovery evidence is keyed by engine endpoint, compute driver, image, and selected harness.
+Changing the engine invalidates target observations; changing the compute driver invalidates the engine check, and changing the image invalidates its catalog observation.
+Changing only the harness re-evaluates the existing image catalog; unrelated identity or inference edits preserve those observations.
+Independent engine, hardware, image, and endpoint reads can share one OpenTofu discovery plan.
+Known engine incompatibility or conflicting image/adapter requirements block review and saving.
+Engine or image uncertainty remains explicit and permits offline authoring; the bundled catalog supplies provisional choices when target inspection is unavailable.
+Onboarding and planning share engine, hardware-advertisement, image, adapter, and model-catalog observations.
+Gateway checks and existing-resource refresh retain their existing owners and failure rules.
+Credential availability and explicit host collectors remain direct operations; neither introduces a second provider-state owner.
+Observed model identifiers supplement suggestions without replacing accepted intent or proving inference behavior.
+See [provider discovery](../provider.md#engine-and-fabric-discovery) for observation status and planning policy.
+
+Native interface, tool-disclosure, and reasoning settings are authored through Fabric's configuration and adapter settings.
+Managed search credentials, endpoint protocols, and network grants remain SDK deployment behavior.
+The reconstructible `agent_configuration` resource applies canonical Fabric configuration after provider routes are established.
+It restarts the Fabric runtime inside its retained sandbox when configuration changes; it does not replace the sandbox.
+A restarted host waits for explicit apply before starting a runtime, because persisted intent does not prove that current gateway routes match.
+The host calls Fabric's public plan/start/invoke/stop APIs and transports health reports when Fabric provides them.
+Native model or agent probes with no Fabric contract remain unavailable.
+
+The authoring dependency graph and OpenTofu execution graph have different jobs.
+The former chooses questions and invalidates dependent answers; the latter schedules provider reads and resource operations for concrete desired state.
+
 The native [bundle](../build.md#build-a-native-bundle) ships the matching CLI, schema, OpenTofu, and providers; source-derived provider versions prevent stale installations from being reused.
 
 ## Why Managed Apply Has Two Stages
 
 OpenShell needs a reachable gateway to refresh resources and plan changes.
 A managed deployment therefore establishes its runtime infrastructure before planning OpenShell resources.
+Deferred provider configuration supports fresh bootstrap, but an unavailable gateway still blocks refresh of existing OpenShell bindings before a combined graph can restore it.
+The runtime stage preserves that recovery path.
 The SDK coordinates two graphs:
 
 ```mermaid
@@ -56,6 +151,9 @@ Apply obtains and checks new plans; a previous preview is not an approval artifa
 
 Destroy reverses the stage order so workloads are removed while their gateway is still available.
 The SDK checks both teardown plans before deleting anything and records completed stages so an interrupted destroy can resume.
+The compiler builds teardown configuration from retained intent and the established resource inventory, keeping storage and workspace declarations while removing workload and readiness declarations.
+It returns the retained addresses with that graph; plan validation and destroy reporting use the same result.
+Storage that was never established is omitted, so partial teardown does not finish creating it.
 For commands and deletion effects, see [deployment lifecycle](../usage.md).
 
 ## State and Recovery
@@ -84,12 +182,17 @@ Older pending records without per-target evidence require the entire original co
 
 Failures involving only observations, established updates or deletions, or disposable compute permit revised intent or teardown using recorded bindings.
 They cannot clear earlier unresolved OpenShell creations; those must be reconciled before teardown.
+An OpenShell-stage apply without non-disposable resource creations does not start a pending-creation guard; export can verify its established bindings through OpenTofu even after that apply fails.
+Managed-runtime failures retain their separate stage recovery evidence.
+Teardown recovery validates current bindings and fresh plans; the failed apply's saved plan file and hash do not authorize the next operation.
 The [recovery guide](../usage.md#recover-an-interrupted-operation) describes the caller's next steps.
 
 ## Storage and Resource Lifetimes
 
 Processes and their data have different lifetimes.
 Separate storage bindings let compute change while gateway signing keys, credentials, and model files survive.
+OpenTofu selects Podman gateway replacement through the provider contract, without an SDK whitelist inferred from specification changes.
+The SDK requires the gateway's independent storage binding, the compiler orders the dependency and protects retained storage, and the provider rechecks identity before replacing the process.
 Missing or substituted bound credentials and gateway storage stop planning; reproducible model caches can be rebuilt.
 
 The shared [OpenShell lifecycle contract](../../crates/nemoclaw-sdk/src/backend.rs) distinguishes retained workspace identity, stateful sandboxes, and reconstructible registrations and configuration.
@@ -101,7 +204,8 @@ The [retention reference](../state.md#deletion-and-retention) lists what survive
 ## Readiness and Export
 
 Required service and sandbox readiness runs through provider data sources in the graph, including on unchanged applies.
-Sandbox completion checks configuration, startup, and Fabric health without invoking an agent or requesting model responses.
+Sandbox completion checks deployment configuration and runtime startup, then requests Fabric health when supported, without invoking an agent or model.
+A remembered active handle does not establish fresh native health or native file validation; see [observation limits](fabric-management.md#observation-limits).
 The SDK reports the fresh OpenTofu observations; it does not repeat those probes.
 Only failures proven to be exclusively completion observations can clear the pending-mutation guard.
 Readiness failure retains resource state and persistent data.

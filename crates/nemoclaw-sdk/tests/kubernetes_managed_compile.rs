@@ -100,3 +100,40 @@ fn managed_kubernetes_stages_owned_platform_before_authenticated_agents() {
     );
     assert!(agents["provider"].get("docker").is_none());
 }
+
+#[test]
+fn managed_kubernetes_discovery_never_uses_a_local_container_engine() {
+    let document = document();
+    let generations = [
+        "workspace",
+        "provider",
+        "sandbox",
+        "kubernetes_gateway",
+        "kubernetes_storage",
+    ]
+    .map(|kind| (kind.into(), "a".repeat(32)))
+    .into();
+    let agents = compile(&document, &generations, "0.1.0").unwrap();
+    for data_source in [
+        "nemoclaw_engine_capabilities",
+        "nemoclaw_target_hardware",
+        "nemoclaw_fabric_capabilities",
+    ] {
+        assert!(
+            agents["data"].get(data_source).is_none(),
+            "Kubernetes discovery must not contact the client engine: {data_source}"
+        );
+    }
+    assert!(
+        agents["data"]
+            .get("nemoclaw_gateway_capabilities")
+            .is_some()
+    );
+    assert!(
+        agents["data"]
+            .get("nemoclaw_inference_capabilities")
+            .is_some()
+    );
+    let platform = compile_runtime(&document, &generations, "0.1.0").unwrap();
+    assert!(platform.get("output").is_none());
+}

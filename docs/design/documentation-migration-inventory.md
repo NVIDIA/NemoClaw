@@ -283,9 +283,9 @@ These references support the coverage column; owning guides provide the specific
 [bundle-builder]: ../../crates/nemoclaw-build/src/lib.rs
 [gateway-probes]: ../../crates/nemoclaw-sdk/src/openshell/probes.rs
 [resource-management-tests]: ../../crates/nemoclaw-sdk/tests/resource_management.rs
-[openclaw-adapter]: ../../image/fabric/openclaw_adapter.py
-[hermes-adapter]: ../../image/fabric/hermes_adapter.py
-[pi-host]: ../../image/fabric/pi_host.py
+[openclaw-adapter]: https://github.com/NVIDIA/NemoClaw/blob/9146224da4/image/fabric/openclaw_adapter.py
+[hermes-adapter]: https://github.com/NVIDIA/NemoClaw/blob/9146224da4/image/fabric/hermes_adapter.py
+[pi-host]: https://github.com/NVIDIA/NemoClaw/blob/9146224da4/image/fabric/pi_host.py
 [agent-tools-tests]: ../../crates/nemoclaw-sdk/tests/agent_tools.rs
 [inference-settings-tests]: ../../crates/nemoclaw-sdk/tests/inference_settings.rs
 [inference-connection-tests]: ../../crates/nemoclaw-sdk/tests/inference_connection.rs

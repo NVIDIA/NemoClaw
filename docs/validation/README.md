@@ -7,6 +7,8 @@ These records describe tests of specific behaviors, revisions, and environments 
 They do not establish that every backend works on every host.
 Commit bodies retain the test-first implementation decisions.
 
+The [Fabric ownership qualification](fabric-ownership-linux-arm64.md) records schema-driven onboarding, actual provider planning, Fabric-only adapter execution and retained SDK lifecycle behavior.
+
 The [hosted NVIDIA OpenClaw Linux/Docker scenario](scenarios/openclaw-nvidia-hosted-linux-docker.md) defines the first comparison for NVIDIA/NemoClaw issue #11810 as a reviewed historical export matched to separately authored current v1 intent, followed by a new v1 lifecycle.
 Candidate exports enter the v1 fixtures through review rather than a v0-to-v1 pipeline dependency; source metadata is optional audit context.
 The scenario requires an explicitly configured live run on native Linux.
@@ -28,6 +30,7 @@ The [managed Kubernetes validation](kubernetes-managed-kind-linux-amd64.md) reco
 The [fresh three-agent Kubernetes validation](kubernetes-managed-three-agents-linux-amd64.md) records a full managed lifecycle with a real hosted response from every agent.
 The [single-command Kubernetes validation](kubernetes-script-linux-amd64.md) records automatic builds, fresh kind setup, the three-agent lifecycle, and ownership-checked cluster cleanup.
 The [inference authentication preflight](kubernetes-inference-preflight-linux-amd64.md) records the direct host check that now runs before local setup.
+The [current v1 integration](kubernetes-v1-integration-linux-amd64.md) records regression and real OpenTofu fixture checks after adopting upstream Fabric ownership; live inference on that merged revision remains untested.
 
 | Behavior | Tests and Results |
 |---|---|

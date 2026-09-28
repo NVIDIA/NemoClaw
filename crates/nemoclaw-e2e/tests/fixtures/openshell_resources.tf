@@ -45,16 +45,6 @@ resource "nemoclaw_sandbox" "agent" {
   generation    = "sandbox-generation"
   image         = var.image
   agent_name    = "assistant"
-  agent_runtime = "fabric-openclaw"
-  inference_json = jsonencode({
-    provider = nemoclaw_provider.inference[0].name
-    connection = {
-      provider    = "openai"
-      model       = "fixture-model"
-      base_url    = nemoclaw_provider.inference[0].endpoint
-      api_key_env = "NEMOCLAW_ANONYMOUS_API_KEY"
-    }
-    api    = "openai-completions"
-    tuning = {}
-  })
+  agent_runtime = "fabric"
+  provider_names_json = jsonencode([nemoclaw_provider.inference[0].name])
 }

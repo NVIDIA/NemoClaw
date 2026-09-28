@@ -99,14 +99,20 @@ fn extracted_sources_build_without_git_and_ignore_generated_outputs() {
         "tools/kubernetes/sources.json",
         "LICENSE",
         "crates/sdk/src/lib.rs",
+        "examples/onboarding-tui/src/lib.rs",
+        "examples/onboarding/openclaw.yaml",
         "runtimes/example/Dockerfile",
+        "image/fabric/catalog.json",
+        "image/fabric/Dockerfile",
+        "image/fabric/FABRIC-LICENSE",
+        "image/NOTICE.md",
     ] {
         let file = root.path().join(name);
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
         std::fs::write(file, name).unwrap();
     }
     let first = nemoclaw_build::source_inputs(root.path()).unwrap();
-    assert_eq!(first.len(), 8);
+    assert_eq!(first.len(), 14);
     for name in [
         "target/output",
         ".local/secret",
@@ -127,6 +133,26 @@ fn extracted_sources_build_without_git_and_ignore_generated_outputs() {
         nemoclaw_build::source_version(&first),
         nemoclaw_build::source_version(&nemoclaw_build::source_inputs(root.path()).unwrap())
     );
+    std::fs::write(
+        root.path().join("examples/onboarding/openclaw.yaml"),
+        "changed onboarding defaults",
+    )
+    .unwrap();
+    let changed_defaults = nemoclaw_build::source_inputs(root.path()).unwrap();
+    assert_ne!(
+        nemoclaw_build::source_version(&first),
+        nemoclaw_build::source_version(&changed_defaults)
+    );
+    std::fs::write(
+        root.path().join("examples/onboarding-tui/src/lib.rs"),
+        "changed questionnaire",
+    )
+    .unwrap();
+    let changed = nemoclaw_build::source_inputs(root.path()).unwrap();
+    assert_ne!(
+        nemoclaw_build::source_version(&first),
+        nemoclaw_build::source_version(&changed)
+    );
 }
 
 #[test]
@@ -140,6 +166,24 @@ fn runtime_build_inputs_are_selected_by_the_artifact_manifest() {
         value["files"][0] = bad.into();
         assert!(
             nemoclaw_build::RuntimeArtifact::parse(&serde_json::to_vec(&value).unwrap()).is_err()
+        );
+    }
+}
+
+#[test]
+fn retained_sources_include_the_patched_sdk_and_its_license() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let inputs = nemoclaw_build::source_inputs(&root).unwrap();
+    let archive = nemoclaw_build::supervisor_source_files(&root).unwrap();
+    for suffix in ["Cargo.toml", "src/lib.rs", "LICENSE", "NOTICE.md"] {
+        let name = format!("crates/vendor/openshell-sdk/{suffix}");
+        assert!(
+            inputs.iter().any(|(path, _)| path == &name),
+            "build identity must include {name}"
+        );
+        assert!(
+            archive.iter().any(|(path, _)| path == &name),
+            "retained builds must include {name}"
         );
     }
 }
@@ -173,7 +217,7 @@ fn runtime_manifest_errors_distinguish_json_identity_paths_and_downloads() {
 }
 
 #[test]
-fn supervisor_archive_excludes_every_recipe_and_retains_rust_sources_and_notices() {
+fn supervisor_archive_excludes_inference_recipes_and_retains_catalog_build_inputs() {
     let root = tempfile::tempdir().unwrap();
     let retained = [
         "Cargo.toml",
@@ -184,6 +228,12 @@ fn supervisor_archive_excludes_every_recipe_and_retains_rust_sources_and_notices
         "LICENSE",
         "crates/runtime/src/main.rs",
         "crates/sdk/NOTICE.md",
+        "image/fabric/catalog.json",
+        "image/fabric/Dockerfile",
+        "image/fabric/FABRIC-LICENSE",
+        "image/NOTICE.md",
+        "examples/onboarding-tui/src/lib.rs",
+        "examples/onboarding/openclaw.yaml",
     ];
     for name in retained.into_iter().chain([
         "runtimes/qwen38/verify_packed.py",

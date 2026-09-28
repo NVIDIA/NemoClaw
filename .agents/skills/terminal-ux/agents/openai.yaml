@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+interface:
+  display_name: "Terminal UX"
+  short_description: "Design clear CLI output, progress, and errors"
+  default_prompt: "Use $terminal-ux to design or review a consistent command-line experience."

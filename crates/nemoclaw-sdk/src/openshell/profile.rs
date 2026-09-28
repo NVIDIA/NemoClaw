@@ -193,7 +193,8 @@ impl OpenShell {
         name: &str,
     ) -> Result<Option<Row>, ObservationError> {
         authoritative(
-            self.grpc()
+            self.client
+                .raw_grpc()
                 .get_provider_profile(self.request(proto::GetProviderProfileRequest {
                     id: name.into(),
                     workspace: workspace.into(),
@@ -216,7 +217,8 @@ impl OpenShell {
             return Err(ObservationError::Query);
         }
         let response = self
-            .grpc()
+            .client
+            .raw_grpc()
             .import_provider_profiles(self.request(proto::ImportProviderProfilesRequest {
                 workspace: want["workspace"].clone(),
                 profiles: vec![proto::ProviderProfileImportItem {

@@ -27,6 +27,13 @@ class ModelTests(unittest.TestCase):
         route = config["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]
         self.assertEqual(route["overrides"]["model"], model.MODEL)
 
+    def test_configuration_uses_the_installed_fabric_adapter_identifier(self):
+        for harness in ["openclaw", "deepagents"]:
+            config = model.configuration("nc-test@sha256:" + "a" * 64, "10.96.1.2", harness)
+            self.assertEqual(
+                config["spec"]["sandboxes"][0]["harness"]["kind"], "nvidia.fabric." + harness
+            )
+
     def test_manifest_verification_tracks_the_selected_model_tag(self):
         calls = []
 

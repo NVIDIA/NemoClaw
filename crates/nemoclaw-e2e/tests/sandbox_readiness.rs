@@ -129,6 +129,7 @@ async fn standalone_sandbox_completion_runs_in_apply_and_retains_failed_health_o
     assert_eq!(observation["values"]["ready"], true);
     // Teardown omits observations so an unavailable runtime cannot block deletion.
     graph.as_object_mut().unwrap().remove("data");
+    graph.as_object_mut().unwrap().remove("output");
     graph["provider"]["nemoclaw"]["destroy"] = json!(true);
     let mut workspace = graph["resource"]["nemoclaw_workspace"].clone();
     workspace["deployment"]

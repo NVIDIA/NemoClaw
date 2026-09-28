@@ -90,16 +90,17 @@ async fn spark_yaml_plans_and_applies_expected_resources() {
     addresses.sort();
     let expected_runtime = creates(&addresses);
     let plan = deployment.plan(&document, &cancel).await.unwrap();
-    assert_eq!(
-        plan,
-        OperationResult {
-            outcome: Outcome::Planned,
-            changes: expected_runtime.clone(),
-            deferred: vec!["OpenShell registration and sandbox require the managed gateway".into(),],
-            retained: vec![],
-            health: vec![],
-        }
+    assert_eq!(plan.outcome, Outcome::Planned);
+    assert_eq!(plan.changes, expected_runtime);
+    assert!(
+        plan.deferred
+            .iter()
+            .any(|message| message
+                == "OpenShell registration and sandbox require the managed gateway")
     );
+    assert!(plan.retained.is_empty());
+    assert!(plan.health.is_empty());
+    assert!(!plan.discovery.resources.is_empty());
 
     let mut expected_apply = expected_runtime;
     expected_apply.extend(creates(&[
@@ -112,16 +113,11 @@ async fn spark_yaml_plans_and_applies_expected_resources() {
     assert_applied(&applied, &expected_apply);
 
     let unchanged = deployment.plan(&document, &cancel).await.unwrap();
-    assert_eq!(
-        unchanged,
-        OperationResult {
-            outcome: Outcome::Planned,
-            changes: vec![],
-            deferred: vec![],
-            retained: vec![],
-            health: vec![],
-        }
-    );
+    assert_eq!(unchanged.outcome, Outcome::Planned);
+    assert!(unchanged.changes.is_empty());
+    assert!(unchanged.retained.is_empty());
+    assert!(unchanged.health.is_empty());
+    assert!(!unchanged.discovery.resources.is_empty());
     let reapplied = deployment.apply(&document, &cancel).await.unwrap();
     assert_applied(&reapplied, &[]);
 }
@@ -175,16 +171,11 @@ async fn spark_image_change_plans_and_applies_replacement() {
     }
     expected_changes.sort_by(|a, b| a.resource.cmp(&b.resource));
     let plan = deployment.plan(&document, &cancel).await.unwrap();
-    assert_eq!(
-        plan,
-        OperationResult {
-            outcome: Outcome::Planned,
-            changes: expected_changes.clone(),
-            deferred: vec![],
-            retained: vec![],
-            health: vec![],
-        }
-    );
+    assert_eq!(plan.outcome, Outcome::Planned);
+    assert_eq!(plan.changes, expected_changes);
+    assert!(plan.retained.is_empty());
+    assert!(plan.health.is_empty());
+    assert!(!plan.discovery.resources.is_empty());
     let applied = deployment.apply(&document, &cancel).await.unwrap();
     assert_applied(&applied, &expected_changes);
 }

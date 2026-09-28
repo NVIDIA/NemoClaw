@@ -5,61 +5,6 @@ use nemoclaw_sdk::{CancellationToken, Error, config::Document};
 use std::{fs::File, io::Write, path::Path};
 use tokio::io::{AsyncRead, AsyncReadExt};
 
-#[cfg(unix)]
-/// Read a terminal through OS readiness so cancellation does not leave Tokio's
-/// blocking stdin worker waiting after SIGINT or SIGTERM.
-pub(crate) struct TerminalInput {
-    input: tokio::io::unix::AsyncFd<File>,
-    original_flags: rustix::fs::OFlags,
-}
-
-#[cfg(unix)]
-impl TerminalInput {
-    pub(crate) fn open() -> std::io::Result<Self> {
-        let input = File::open("/dev/stdin")?;
-        let original_flags = rustix::fs::fcntl_getfl(&input)?;
-        let input = tokio::io::unix::AsyncFd::new(input)?;
-        rustix::fs::fcntl_setfl(
-            input.get_ref(),
-            original_flags | rustix::fs::OFlags::NONBLOCK,
-        )?;
-        Ok(Self {
-            input,
-            original_flags,
-        })
-    }
-}
-
-#[cfg(unix)]
-impl Drop for TerminalInput {
-    fn drop(&mut self) {
-        let _ = rustix::fs::fcntl_setfl(self.input.get_ref(), self.original_flags);
-    }
-}
-
-#[cfg(unix)]
-impl AsyncRead for TerminalInput {
-    fn poll_read(
-        mut self: std::pin::Pin<&mut Self>,
-        context: &mut std::task::Context<'_>,
-        buffer: &mut tokio::io::ReadBuf<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        loop {
-            let mut ready = std::task::ready!(self.input.poll_read_ready_mut(context))?;
-            match ready.try_io(|input| {
-                let unfilled = buffer.initialize_unfilled();
-                let mut file = input.get_ref();
-                let read = std::io::Read::read(&mut file, unfilled)?;
-                buffer.advance(read);
-                Ok(())
-            }) {
-                Ok(result) => return std::task::Poll::Ready(result),
-                Err(_) => continue,
-            }
-        }
-    }
-}
-
 pub(crate) async fn document<R: AsyncRead + Unpin>(
     file: &Path,
     stdin: R,

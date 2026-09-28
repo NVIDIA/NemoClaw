@@ -63,22 +63,38 @@ fn a_sandbox_attaches_the_union_of_selected_providers_with_bound_credentials() {
         2
     );
     let sandbox = rows.iter().find(|row| row.kind == "sandbox").unwrap();
-    let settings: Value = serde_json::from_str(&sandbox.values["inference_json"]).unwrap();
-    assert_eq!(settings["provider"], "hosted");
+    let settings: Value = serde_json::from_str(
+        &rows
+            .iter()
+            .find(|row| {
+                row.kind == "agent_configuration" && row.values["name"] == sandbox.values["name"]
+            })
+            .unwrap()
+            .values["config_json"],
+    )
+    .unwrap();
+    assert!(sandbox.values["provider_names_json"].contains("hosted"));
     assert_eq!(
-        settings["agents"][0]["inference"]["models"]["smart"]["connection"]["api_key_env"],
+        settings["models"]["smart"]["api_key_env"],
         "NEMOCLAW_INFERENCE_HOSTED_KEY"
     );
     let other = rows
         .iter()
         .find(|row| row.kind == "sandbox" && row.values["name"] == "other")
         .unwrap();
-    let other_settings: Value = serde_json::from_str(&other.values["inference_json"]).unwrap();
+    let other_settings: Value = serde_json::from_str(
+        &rows
+            .iter()
+            .find(|row| row.kind == "agent_configuration" && row.values["name"] == "other")
+            .unwrap()
+            .values["config_json"],
+    )
+    .unwrap();
     assert_eq!(
-        other_settings["agents"][0]["inference"]["models"]["primary"]["connection"]["api_key_env"],
+        other_settings["models"]["primary"]["api_key_env"],
         "NEMOCLAW_ANONYMOUS_API_KEY"
     );
-    assert!(other_settings["agents"][0]["inference"]["models"]["smart"].is_null());
+    assert!(other_settings["models"]["smart"].is_null());
     let other_policy: Value = serde_json::from_str(&other.values["policy_json"]).unwrap();
     assert_eq!(
         other_policy["network_policies"].as_object().unwrap().len(),

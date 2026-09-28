@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! Dispatch for service definitions and installer-owned resource backends.
-use crate::config::{ComputeDriver, HarnessKind};
+use crate::config::ComputeDriver;
 
 use super::{
     ManagedOllama, OllamaProxy,
@@ -42,11 +42,9 @@ pub enum ServiceDefinition {
     Vllm(Box<installers::vllm::Service>),
 }
 
-/// OpenTofu schema behavior owned by a service installer resource.
+/// Retention and process roles of a service installer resource.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ResourceBehavior {
-    pub computed_digest: bool,
-    pub observed_running: bool,
     pub retained_storage: bool,
     pub runtime_process: bool,
 }
@@ -104,14 +102,6 @@ pub fn resource_schemas() -> Vec<ResourceSchema> {
 
 pub fn resource_behavior(kind: &str) -> ResourceBehavior {
     ResourceBehavior {
-        computed_digest: false,
-        observed_running: matches!(
-            kind,
-            installers::ollama::SERVICE_KIND
-                | installers::vllm::SERVICE_KIND
-                | crate::kubernetes::GATEWAY_KIND
-                | crate::kubernetes::STORAGE_KIND
-        ),
         retained_storage: matches!(
             kind,
             installers::ollama::STORAGE_KIND
@@ -156,36 +146,11 @@ pub(crate) fn constrain_schema(
     }
 }
 
-trait InferenceCapability {
-    fn resolve(&self, document: &Document, name: &str) -> Result<ResolvedInference, ConfigError>;
-
-    fn validate_route(
-        &self,
-        provider: &InferenceProvider,
-        sandbox_runtime: ComputeDriver,
-        harness: HarnessKind,
-        model: &str,
-    ) -> Result<(), ConfigError>;
-
-    fn credential_source(
-        &self,
-        document: &Document,
-        name: &str,
-        generations: &Generations,
-    ) -> Result<Option<String>, crate::Error>;
-}
-
 impl ServiceDefinition {
     fn stage(&self) -> InstallStage {
         match self {
             Self::Ollama(_) | Self::Vllm(_) => InstallStage::Runtime,
             Self::OllamaProxy(_) => InstallStage::Deployment,
-        }
-    }
-
-    fn inference(&self) -> Option<&dyn InferenceCapability> {
-        match self {
-            Self::Ollama(_) | Self::OllamaProxy(_) | Self::Vllm(_) => Some(self),
         }
     }
 
@@ -282,7 +247,7 @@ impl Installer for ServiceDefinition {
     }
 }
 
-impl InferenceCapability for ServiceDefinition {
+impl ServiceDefinition {
     fn resolve(&self, document: &Document, name: &str) -> Result<ResolvedInference, ConfigError> {
         Ok(match self {
             ServiceDefinition::Ollama(service) => ResolvedInference {
@@ -324,7 +289,6 @@ impl InferenceCapability for ServiceDefinition {
         &self,
         provider: &InferenceProvider,
         sandbox_runtime: ComputeDriver,
-        harness: HarnessKind,
         model: &str,
     ) -> Result<(), ConfigError> {
         match self {
@@ -333,7 +297,7 @@ impl InferenceCapability for ServiceDefinition {
                     || provider.api == Some(crate::config::InferenceApi::OpenaiCompletions),
                 "managed Ollama requires the OpenAI Completions API",
             ),
-            ServiceDefinition::OllamaProxy(service) => service.validate(provider, model, harness),
+            ServiceDefinition::OllamaProxy(service) => service.validate(provider, model),
             ServiceDefinition::Vllm(service) => crate::config::validation::require(
                 sandbox_runtime == ComputeDriver::Docker || service.placement.is_some(),
                 "vLLM service requires compatible sandbox placement",
@@ -364,6 +328,34 @@ struct NetworkAllocation {
     network_cidr: String,
     bind_address: String,
     port: i64,
+}
+
+/// Execution engines selected by service owners, without inferring the caller's host.
+pub(crate) fn discovery_engines(document: &Document) -> Result<BTreeSet<String>, ConfigError> {
+    document
+        .spec
+        .services
+        .values()
+        .map(|service| {
+            if let Some(allocation) = service.allocation(&document.spec.gateway)? {
+                return Ok(allocation.engine);
+            }
+            let ServiceDefinition::OllamaProxy(proxy) = service else {
+                unreachable!()
+            };
+            proxy
+                .engine
+                .clone()
+                .or_else(|| {
+                    document
+                        .spec
+                        .gateway
+                        .as_managed()
+                        .map(|gateway| gateway.engine.clone())
+                })
+                .ok_or(ConfigError::new("service engine is not configured"))
+        })
+        .collect()
 }
 
 pub(crate) fn defaults(definition: &mut ServiceDefinition) {
@@ -407,11 +399,7 @@ pub(crate) fn resolve(
     let Some((name, definition)) = definition(document, provider)? else {
         return Ok(None);
     };
-    definition
-        .inference()
-        .ok_or_else(|| ConfigError::new("serviceRef must name an inference-capable service"))?
-        .resolve(document, name)
-        .map(Some)
+    definition.resolve(document, name).map(Some)
 }
 
 pub(crate) fn provider_authenticated(
@@ -500,37 +488,25 @@ pub(crate) fn validate_provider(
     document: &Document,
     provider: &InferenceProvider,
 ) -> Result<bool, ConfigError> {
-    use crate::config::validation::require;
-    let Some((_, definition)) = definition(document, provider)? else {
-        return Ok(false);
-    };
-    require(
-        definition.inference().is_some(),
-        "serviceRef must name an inference-capable service",
-    )?;
-    Ok(true)
+    Ok(definition(document, provider)?.is_some())
 }
 
 pub(crate) fn validate_route(
     document: &Document,
     provider: &InferenceProvider,
     sandbox_runtime: ComputeDriver,
-    harness: HarnessKind,
     model: &str,
 ) -> Result<(), ConfigError> {
     use crate::config::validation::require;
     let Some((name, definition)) = definition(document, provider)? else {
         return Ok(());
     };
-    let inference = definition
-        .inference()
-        .ok_or_else(|| ConfigError::new("serviceRef must name an inference-capable service"))?;
-    let resolved = inference.resolve(document, name)?;
+    let resolved = definition.resolve(document, name)?;
     require(
         model == resolved.served_model,
         "service requires its declared served model",
     )?;
-    inference.validate_route(provider, sandbox_runtime, harness, model)
+    definition.validate_route(provider, sandbox_runtime, model)
 }
 
 pub(crate) fn credential_source_json(
@@ -542,8 +518,6 @@ pub(crate) fn credential_source_json(
         return Ok(None);
     };
     definition
-        .inference()
-        .ok_or_else(|| ConfigError::new("serviceRef must name an inference-capable service"))?
         .credential_source(document, name, generations)
         .map_err(|_| ConfigError::new("invalid managed credential source"))
 }
@@ -607,14 +581,12 @@ impl<'a> BackendRegistry<'a> {
         &self,
         kind: &str,
         row: &Row,
-    ) -> Result<Option<RegisteredBackend>, ObservationError> {
+    ) -> Result<Option<Box<dyn Backend>>, ObservationError> {
         if matches!(
             kind,
             crate::kubernetes::STORAGE_KIND | crate::kubernetes::GATEWAY_KIND
         ) {
-            return Ok(Some(RegisteredBackend(Box::new(
-                crate::kubernetes::KubernetesBackend::new(),
-            ))));
+            return Ok(Some(Box::new(crate::kubernetes::KubernetesBackend::new())));
         }
         if matches!(
             kind,
@@ -637,16 +609,15 @@ impl<'a> BackendRegistry<'a> {
             };
             let engine = crate::managed::runtime_engine(self.connections, kind, row)
                 .map_err(|_| ObservationError::Backend("engine connection unavailable"))?;
-            return Ok(Some(RegisteredBackend(Box::new(
-                crate::managed::ManagedBackend::storage(engine, storage_kind),
+            return Ok(Some(Box::new(crate::managed::ManagedBackend::storage(
+                engine,
+                storage_kind,
             ))));
         }
         if crate::managed::ManagedBackend::supports(kind) {
             let engine = crate::managed::runtime_engine(self.connections, kind, row)
                 .map_err(|_| ObservationError::Backend("engine connection unavailable"))?;
-            return Ok(Some(RegisteredBackend(Box::new(
-                crate::managed::ManagedBackend::new(engine),
-            ))));
+            return Ok(Some(Box::new(crate::managed::ManagedBackend::new(engine))));
         }
         if installers::ollama::ProxyBackend::supports(kind) {
             let endpoint = row
@@ -657,53 +628,33 @@ impl<'a> BackendRegistry<'a> {
                 .connections
                 .resolve(endpoint)
                 .map_err(|_| ObservationError::Backend("engine connection unavailable"))?;
-            return Ok(Some(RegisteredBackend(Box::new(
-                installers::ollama::ProxyBackend::new(engine),
+            return Ok(Some(Box::new(installers::ollama::ProxyBackend::new(
+                engine,
             ))));
         }
         Ok(None)
     }
 }
 
-pub struct RegisteredBackend(Box<dyn Backend>);
-
-#[async_trait::async_trait]
-impl Backend for RegisteredBackend {
-    async fn plan(
-        &self,
-        kind: &str,
-        desired: &Row,
-        prior: Option<&Row>,
-    ) -> Result<(), crate::Error> {
-        self.0.plan(kind, desired, prior).await
-    }
-
-    async fn read(
-        &self,
-        kind: &str,
-        prior: &Row,
-        removing: bool,
-    ) -> Result<Option<Row>, ObservationError> {
-        self.0.read(kind, prior, removing).await
-    }
-
-    async fn ensure(&self, kind: &str, desired: &Row) -> crate::backend::Mutation {
-        self.0.ensure(kind, desired).await
-    }
-
-    async fn remove(
-        &self,
-        kind: &str,
-        prior: &Row,
-        destroying: bool,
-    ) -> Result<(), ObservationError> {
-        self.0.remove(kind, prior, destroying).await
-    }
-}
-
 #[cfg(test)]
 mod lifecycle_tests {
     use super::*;
+
+    #[test]
+    fn kubernetes_platform_resources_resolve_without_an_engine_or_gateway() {
+        let schemas = resource_schemas();
+        let connections = crate::docker::Connections::default();
+        let registry = BackendRegistry::new(&connections);
+        for kind in [
+            crate::kubernetes::STORAGE_KIND,
+            crate::kubernetes::GATEWAY_KIND,
+        ] {
+            assert!(schemas.iter().any(|schema| schema.kind == kind));
+            assert!(registry.resolve(kind, &Row::new()).unwrap().is_some());
+        }
+        assert!(resource_behavior(crate::kubernetes::STORAGE_KIND).retained_storage);
+        assert!(!resource_behavior(crate::kubernetes::GATEWAY_KIND).retained_storage);
+    }
 
     #[test]
     fn migrated_compute_is_not_a_custom_provider_resource_or_backend() {

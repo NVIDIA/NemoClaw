@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+use super::source::DefinitionSource;
 use super::{ConfigError, Document, Harness, Inference, Route, Sandbox};
 
 // Borrow authored inference together with its declaration scope and diagnostic path.
 // A shared deployment definition cannot see a consuming sandbox's local providers.
-pub(super) struct ScopedInference<'a> {
+pub(crate) struct ScopedInference<'a> {
     pub inference: &'a Inference,
     pub sandbox: Option<&'a Sandbox>,
     pub path: String,
@@ -48,14 +49,20 @@ impl Document {
         Ok(self.scoped_inference(sandbox)?.inference)
     }
 
-    pub(super) fn scoped_inference<'a>(
+    pub(crate) fn scoped_inference<'a>(
         &'a self,
         sandbox: &'a Sandbox,
     ) -> Result<ScopedInference<'a>, ConfigError> {
         let agent = &sandbox.agent;
-        match (&agent.inference, &agent.inference_ref) {
-            (Some(inference), None) => Ok(ScopedInference::new(inference, Some(sandbox), None)),
-            (None, Some(name)) => {
+        match DefinitionSource::from_parts(
+            agent.inference.as_ref(),
+            agent.inference_ref.as_deref(),
+            "agent requires exactly one of inference or inferenceRef",
+        )? {
+            DefinitionSource::Inline(inference) => {
+                Ok(ScopedInference::new(inference, Some(sandbox), None))
+            }
+            DefinitionSource::Reference(name) => {
                 if let Some(inference) = self.spec.inferences.get(name) {
                     return Ok(ScopedInference::new(inference, None, Some(name)));
                 }
@@ -79,9 +86,6 @@ impl Document {
                         )
                     })
             }
-            _ => Err(ConfigError::new(
-                "agent requires exactly one of inference or inferenceRef",
-            )),
         }
     }
 
@@ -131,32 +135,7 @@ impl Document {
 impl Document {
     /// Resolve the sandbox's harness without replacing its authored selection.
     pub fn sandbox_harness<'a>(&'a self, sandbox: &'a Sandbox) -> Result<&'a Harness, ConfigError> {
-        match (&sandbox.harness, &sandbox.harness_ref) {
-            (Some(harness), None) => Ok(harness),
-            (None, Some(name)) => self
-                .spec
-                .harnesses
-                .get(name)
-                .or_else(|| sandbox.harnesses.get(name))
-                .ok_or_else(|| {
-                    missing_reference(
-                        &format!(
-                            "spec.sandboxes[{}].harnessRef",
-                            diagnostic_name(&sandbox.name)
-                        ),
-                        "harness",
-                        name,
-                        self.spec
-                            .harnesses
-                            .keys()
-                            .chain(sandbox.harnesses.keys())
-                            .map(String::as_str),
-                    )
-                }),
-            _ => Err(ConfigError::new(
-                "sandbox requires exactly one of harness or harnessRef",
-            )),
-        }
+        sandbox.resolve_harness(&self.spec.harnesses)
     }
 
     pub(super) fn validate_harness_references(&self) -> Result<(), ConfigError> {
@@ -187,14 +166,11 @@ impl Document {
 
 impl Harness {
     pub fn runtime(&self) -> String {
-        format!("fabric-{}", self.kind)
+        "fabric".into()
     }
 
     pub fn validate(&self) -> Result<(), ConfigError> {
         super::schema::validate_definition("Harness", self)?;
-        if let Some(interfaces) = &self.interfaces {
-            interfaces.validate(self.kind)?;
-        }
         Ok(())
     }
 }
@@ -224,21 +200,7 @@ impl Inference {
             if !names.insert(&route.name) {
                 return Err(ConfigError::new("inference choices require unique names"));
             }
-            route
-                .overrides
-                .tuning
-                .validate(super::HarnessKind::OpenClaw)?;
-            if self.default_route()?.name != route.name
-                && route
-                    .overrides
-                    .tuning
-                    .reasoning_effort
-                    .is_some_and(|effort| effort != super::ReasoningEffort::Default)
-            {
-                return Err(ConfigError::new(
-                    "reasoningEffort configures the initial default model; omit it on other choices",
-                ));
-            }
+            super::schema::validate_tuning(&route.overrides.tuning)?;
         }
         Ok(())
     }
@@ -268,4 +230,33 @@ pub(crate) fn missing_reference<'a>(
         "{path}: unknown {kind} {name:?}; visible definitions: {choices}",
         name = diagnostic_name(name)
     ))
+}
+
+impl Sandbox {
+    pub(super) fn resolve_harness<'a>(
+        &'a self,
+        harnesses: &'a std::collections::BTreeMap<String, Harness>,
+    ) -> Result<&'a Harness, ConfigError> {
+        match DefinitionSource::from_parts(
+            self.harness.as_ref(),
+            self.harness_ref.as_deref(),
+            "sandbox requires exactly one of harness or harnessRef",
+        )? {
+            DefinitionSource::Inline(harness) => Ok(harness),
+            DefinitionSource::Reference(name) => harnesses
+                .get(name)
+                .or_else(|| self.harnesses.get(name))
+                .ok_or_else(|| {
+                    missing_reference(
+                        &format!("spec.sandboxes[{}].harnessRef", diagnostic_name(&self.name)),
+                        "harness",
+                        name,
+                        harnesses
+                            .keys()
+                            .chain(self.harnesses.keys())
+                            .map(String::as_str),
+                    )
+                }),
+        }
+    }
 }

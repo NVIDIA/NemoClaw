@@ -142,8 +142,11 @@ async fn harness_preserves_conversations_and_rejects_runtime_drift(harness: &str
             .unwrap()
             .routes[0]
             .overrides
-            .pi_model
-            .as_mut()
+            .settings
+            .get_or_insert_with(Default::default)
+            .entry("model_metadata".to_owned())
+            .or_insert_with(|| serde_json::json!({}))
+            .as_object_mut()
             .unwrap()
             .insert(
                 "annotation".into(),
@@ -152,7 +155,7 @@ async fn harness_preserves_conversations_and_rejects_runtime_drift(harness: &str
         let planned = deployment.plan(&changed_model, &cancel).await.unwrap();
         assert!(planned.changes.iter().any(|change| change.resource
             == format!(
-                "nemoclaw_pi_configuration.{}",
+                "nemoclaw_agent_configuration.{}",
                 document.spec.sandboxes[0].name
             )));
         assert_eq!(writes(), initial_writes, "plan must not configure Pi");
@@ -214,9 +217,9 @@ async fn harness_preserves_conversations_and_rejects_runtime_drift(harness: &str
     let state = fs::read(directory.path().join("terraform.tfstate")).unwrap();
     let mut changed = document.clone();
     changed.spec.sandboxes[0].harness.as_mut().unwrap().kind = if harness == "deepagents" {
-        nemoclaw_sdk::config::HarnessKind::Hermes
+        "nvidia.fabric.hermes".parse().unwrap()
     } else {
-        nemoclaw_sdk::config::HarnessKind::DeepAgents
+        "nvidia.fabric.langchain.deepagents".parse().unwrap()
     };
     changed.spec.inference_providers[0].provider = InferenceProviderKind::Openai;
     assert!(

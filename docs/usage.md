@@ -4,7 +4,7 @@
 # Use Desired State
 
 Use a [verified native bundle](build.md) with its `bin` directory on `PATH`.
-For a first deployment, follow [get started](get-started.md) or [interactive onboarding](reference/cli.md#commands).
+For a first deployment, follow [get started](get-started.md).
 When copying an [example](../examples/), assign a fresh UUID and replace endpoints and image pins with values for your resources.
 Keep the matching bundle and the same state directory throughout the deployment.
 
@@ -38,7 +38,7 @@ Export is not a backup of agent files or conversations.
 
 Without `--state-dir`, state defaults to `.nemoclaw` in the working directory.
 Plan and apply require a YAML path or explicit `-` for stdin; export and destroy accept no YAML.
-Plan prints text by default; scripts should select `-o json`.
+Plan, apply, and destroy print text by default; scripts should select `-o json`.
 See [CLI options and output](reference/cli.md) for bundle selection, formats, and exit codes.
 
 ## Configure Sandboxes and Inference
@@ -95,7 +95,7 @@ Use an [agent image built from this revision](build.md#build-agent-images); an o
 Image changes require the [separate-deployment path](#choose-the-change-path); keep existing deployments' original bundles and state.
 
 Not-ready or unknown supported health, transport failures, and malformed reports fail apply and retain resources.
-For a supported health failure, the CLI writes structured JSON to stderr and exits with status 1.
+For a supported health failure, the CLI exits with status 1 and reports the observation in the selected [output format](reference/cli.md#output-and-failure).
 Keep state, diagnose the failure, and explicitly reapply after recovery.
 Health is an observation at its recorded time, not a guarantee of future availability.
 
@@ -228,10 +228,9 @@ Existing state needs the [named-resource transition](state.md#named-sandbox-reso
 
 | Proposed change | Current behavior and next step |
 |---|---|
-| OpenClaw model choices or a Pi catalog with multiple choices or a tool policy | Change the sandbox launch specification; use a separate deployment and verify the selected models through the native agent |
-| Pi model or native model metadata with one declared choice and no tool policy | Restarts the Pi runtime inside the existing sandbox; its in-memory conversation is lost; see [Pi model selection](agents.md#pi-model-selection) |
+| Models, native model settings, adapter settings, or public Fabric configuration | Reconciles the owned agent-configuration resource and restarts the runtime inside the existing sandbox when its image, provider attachments, and policy remain unchanged; in-memory conversations can be lost |
 | External inference endpoint, provider implementation, or authenticated/anonymous mode | Changes a selected provider's profile and registration; changes to an existing sandbox's launch specification still require a separate deployment |
-| Sandbox image, harness, API, OpenClaw tuning, agent/tools, execution settings, interfaces, or attached integration settings | Changes the sandbox launch specification; ordinary apply refuses replacement; use a separate deployment with a fresh UID and state |
+| Sandbox image, agent identity, or provider attachments | Changes the immutable sandbox specification; ordinary apply refuses replacement; use a separate deployment with a fresh UID and state |
 | Sandbox network policy or proxy | Changes the sandbox specification; follow [policy change constraints](sandbox-network.md) and use a separate deployment when replacement is required |
 | Managed inference or proxy image or serving specification | Docker-provider reconciliation may replace the container while retaining its independently bound storage; review the plan and [model constraints](models.md) |
 | Deployment UID, established gateway endpoint, or bound credential/gateway engine | Cannot retarget the existing state; create a separate deployment |
@@ -279,16 +278,18 @@ Older unfinished records without per-resource recovery evidence still require th
 If managed gateway or inference runtime apply fails, revised intent or teardown can proceed using recorded bindings and the existing ownership checks.
 The same applies when an OpenShell-graph apply only observes resources, updates or deletes established bindings, or changes disposable compute.
 Runtime recovery does not clear pending OpenShell creations.
-Export remains unavailable while either operation is unfinished.
+Export remains unavailable during pending creation recovery, unfinished managed-runtime apply, or unfinished teardown.
+If an OpenShell-stage apply planned no non-disposable resource creations, a later export can verify its established bindings without another successful apply; incomplete or inconsistent observations still fail export.
 If readiness fails after resource creation, provider state and persistent data remain recorded.
 A later explicit apply may replace or recreate disposable service compute.
 Authentication, transport, and incomplete observations remain failures; missing or changed bound credentials and gateway storage never authorize their automatic recreation.
 A missing model-cache volume may be recreated during apply, followed by model download and preparation; its separate credential volume must still match.
 
 To retire instead of recover after an interrupted apply, first run `nemoclaw plan --destroy` with the same state directory.
-The SDK permits this path when its recovery evidence identifies either a matching runtime-stage plan with at least one validated runtime binding, or a matching OpenShell-stage plan with established bindings and no potentially unrecorded durable creation.
+After unfinished managed-runtime apply, this path requires nonempty validated runtime bindings and fresh teardown plans; it does not require the failed apply's plan file.
+An OpenShell-stage apply that planned no non-disposable resource creations leaves reconciliation of its established bindings to OpenTofu; it does not add a pending-creation guard.
 OpenShell bindings established before a failed runtime stage may remain; every recorded binding must belong to the current intent, each saved storage specification must match, and a recorded managed process also requires its independent storage binding.
-Empty applicable state, a plan mismatch, undeclared or drifted bindings, a process without its storage binding, and ambiguous unfinished creations still require reapplying the exact original YAML before destroy.
+Empty applicable state during managed-runtime recovery, undeclared or drifted bindings, a process without its storage binding, and ambiguous unfinished creations still require recovery before destroy.
 Destroy changes the operation to resumable teardown only after both resource graphs are planned, so a planning failure leaves the unfinished-apply recovery state in place.
 
 Export requires complete observations and agent configuration checks, but does not invoke inference.

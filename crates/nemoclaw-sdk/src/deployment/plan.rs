@@ -2,12 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-#[derive(Deserialize, Default)]
+#[derive(Deserialize)]
 pub(super) struct Plan {
     #[serde(default)]
     pub resource_changes: Vec<ResourceChange>,
     #[serde(default)]
     pub resource_drift: Vec<ResourceChange>,
+    #[serde(default)]
+    pub planned_values: Value,
 }
 #[derive(Deserialize)]
 pub(super) struct ResourceChange {
@@ -18,11 +20,10 @@ pub(super) struct ResourceChange {
     pub deposed: Option<String>,
     pub change: PlannedChange,
 }
-pub(super) fn observation(
+fn observation(
     change: &ResourceChange,
     seen: &mut BTreeSet<String>,
     allowed: &BTreeMap<String, Row>,
-    gateway: bool,
     destroying: bool,
 ) -> Result<bool, Error> {
     if change.mode.as_deref() != Some("data") {
@@ -35,7 +36,8 @@ pub(super) fn observation(
     }
     let expected = (change.address.starts_with("data.docker_image.")
         && allowed.contains_key(&change.address))
-        || (gateway && crate::compile::is_gateway_observation(&change.address))
+        || crate::compile::is_gateway_observation(&change.address)
+        || crate::discovery_graph::is_observation(&change.address)
         || allowed.keys().any(|address| {
             address
                 .strip_prefix("nemoclaw_sandbox.")
@@ -92,9 +94,7 @@ fn identity(change: &ResourceChange, expected: &Row, binding: &StateBinding) -> 
     }
     Ok(())
 }
-pub(super) fn disposable(address: &str) -> bool {
-    crate::docker_compute::is_disposable(address)
-}
+pub(super) use crate::docker_compute::is_disposable as disposable;
 
 pub(super) fn reconstructible(address: &str) -> bool {
     address.split_once('.').is_some_and(|(kind, _)| {
@@ -119,38 +119,6 @@ fn standard_actions(actions: &[String]) -> bool {
     )
 }
 
-// OpenTofu may retain an old object after create-before-destroy replacement.
-// It owns retrying that deletion; the SDK only verifies the recorded identity.
-fn cleanup(
-    change: &ResourceChange,
-    bindings: &BTreeMap<String, StateBinding>,
-    seen: &mut BTreeSet<(String, String)>,
-) -> Result<Option<Change>, Error> {
-    let Some(key) = &change.deposed else {
-        return Ok(None);
-    };
-    let id = bindings
-        .get(&change.address)
-        .and_then(|binding| binding.deposed.get(key));
-    let absent = change.change.actions == ["no-op"]
-        && change.change.before.is_null()
-        && change.change.after.is_null();
-    if !(disposable(&change.address) || reconstructible(&change.address))
-        || change.address.starts_with("docker_volume.")
-        || id.is_none()
-        || (!absent
-            && (id.is_some_and(|id| change.change.before["id"] != *id)
-                || change.change.actions != ["delete"]))
-        || !seen.insert((change.address.clone(), key.clone()))
-    {
-        return Err(Error::Conflict("plan contains invalid replacement cleanup"));
-    }
-    Ok(Some(Change {
-        resource: format!("{} (deposed {key})", change.address),
-        actions: change.change.actions.clone(),
-    }))
-}
-
 pub(super) fn check_plan(
     plan: &Plan,
     allowed: &BTreeMap<String, Row>,
@@ -160,94 +128,55 @@ pub(super) fn check_plan(
     let mut changes = Vec::new();
     let mut observations = BTreeSet::new();
     let mut cleanup_seen = BTreeSet::new();
-    let mut absent = BTreeSet::new();
-    for drift in &plan.resource_drift {
-        if reconstructible(&drift.address) && drift.change.actions == ["delete"] {
-            let binding = bindings.get(&drift.address).ok_or(Error::Conflict(
-                "plan reports absence without a saved resource identity",
-            ))?;
-            if drift.deposed.is_some()
-                || !drift.change.after.is_null()
-                || drift.change.before["id"] != binding.id
-                || !absent.insert(drift.address.clone())
-            {
-                return Err(Error::Conflict("plan changed a recorded resource identity"));
-            }
-        }
-    }
     for change in &plan.resource_changes {
-        if observation(change, &mut observations, allowed, true, false)? {
+        if observation(change, &mut observations, allowed, false)? {
             continue;
         }
-        if let Some(cleanup) = cleanup(change, bindings, &mut cleanup_seen)? {
-            if cleanup.actions != ["no-op"] {
-                changes.push(cleanup);
+        if reconstructible(&change.address) || disposable(&change.address) {
+            // OpenTofu state and provider refresh own physical identities,
+            // absence and replacement cleanup. The SDK only checks graph scope.
+            if !allowed.contains_key(&change.address) && !bindings.contains_key(&change.address) {
+                return Err(Error::Conflict("plan contains an undeclared resource"));
             }
-            continue;
-        }
-        if reconstructible(&change.address) {
-            let declared = allowed.contains_key(&change.address);
-            let binding = bindings.get(&change.address);
-            let removed_and_absent = !declared
-                && absent.contains(&change.address)
-                && change.change.actions == ["no-op"]
-                && change.change.before.is_null()
-                && change.change.after.is_null();
-            if (!declared && binding.is_none())
-                || !seen.insert(&change.address)
-                || !standard_actions(&change.change.actions)
-                || (!declared && change.change.actions != ["delete"] && !removed_and_absent)
-            {
-                return Err(Error::Conflict(
-                    "plan contains invalid or undeclared resource transitions",
-                ));
-            }
-            if removed_and_absent {
-                continue;
-            }
-            if change.change.actions == ["create"] {
-                if !change.change.before.is_null()
-                    || (binding.is_some() && !absent.contains(&change.address))
+            let resource = if let Some(key) = &change.deposed {
+                if change.address.starts_with("docker_volume.")
+                    || !cleanup_seen.insert((change.address.clone(), key.clone()))
                 {
-                    return Err(Error::Conflict(
-                        "resource recreation lacks confirmed absence",
-                    ));
+                    return Err(Error::Conflict("plan contains invalid replacement cleanup"));
                 }
-            } else if binding.is_none_or(|binding| change.change.before["id"] != binding.id) {
-                return Err(Error::Conflict("plan changed a recorded resource identity"));
+                format!("{} (deposed {key})", change.address)
+            } else {
+                if !seen.insert(&change.address) {
+                    return Err(Error::Conflict("plan contains a duplicate resource"));
+                }
+                change.address.clone()
+            };
+            if !standard_actions(&change.change.actions) {
+                return Err(Error::Conflict(
+                    "plan contains unsupported resource actions",
+                ));
             }
             if change.change.actions != ["no-op"] {
                 changes.push(Change {
-                    resource: change.address.clone(),
+                    resource,
                     actions: change.change.actions.clone(),
                 });
             }
             continue;
         }
-        if disposable(&change.address) {
-            if (!allowed.contains_key(&change.address) && !bindings.contains_key(&change.address))
-                || !seen.insert(&change.address)
-                || !standard_actions(&change.change.actions)
-                || (!allowed.contains_key(&change.address) && change.change.actions != ["delete"])
-            {
-                return Err(Error::Conflict(
-                    "plan contains invalid or undeclared disposable compute",
-                ));
-            }
-            if change.change.actions != ["no-op"] {
-                changes.push(Change {
-                    resource: change.address.clone(),
-                    actions: change.change.actions.clone(),
-                });
-            }
-            continue;
+        if change.deposed.is_some() {
+            return Err(Error::Conflict("plan contains invalid replacement cleanup"));
         }
         let expected = allowed
             .get(&change.address)
             .ok_or(Error::Conflict("plan contains an undeclared resource"))?;
+        let replacement = change.change.actions == ["delete", "create"]
+            && change.address.starts_with("nemoclaw_managed_gateway.")
+            && bindings.contains_key(&change.address);
         if !seen.insert(&change.address)
-            || change.change.actions.len() != 1
-            || !["no-op", "create", "update"].contains(&change.change.actions[0].as_str())
+            || (!replacement
+                && (change.change.actions.len() != 1
+                    || !["no-op", "create", "update"].contains(&change.change.actions[0].as_str())))
         {
             return Err(Error::Conflict(
                 "plan would remove, replace, or duplicate a resource",
@@ -268,13 +197,6 @@ pub(super) fn check_plan(
             });
         }
     }
-    if bindings.keys().any(|address| {
-        reconstructible(address) && !seen.contains(address) && !absent.contains(address)
-    }) {
-        return Err(Error::Conflict(
-            "plan omitted a bound resource without confirmed absence",
-        ));
-    }
     if allowed
         .keys()
         .filter(|address| !address.starts_with("data."))
@@ -294,18 +216,25 @@ pub(super) fn check_destroy_plan(
     let mut seen = BTreeSet::new();
     let mut changes = Vec::new();
     let mut observations = BTreeSet::new();
-    let mut cleanup_absent = BTreeSet::new();
+    let delegated = |address: &str| {
+        !retained.contains(address) && (reconstructible(address) || disposable(address))
+    };
     for drift in &plan.resource_drift {
-        if observation(drift, &mut observations, allowed, true, true)? {
-            continue;
-        }
-        if cleanup(drift, bindings, &mut cleanup_absent)?.is_some() {
+        if observation(drift, &mut observations, allowed, true)? {
             continue;
         }
         if !allowed.contains_key(&drift.address) {
             return Err(Error::Conflict(
                 "destroy plan reports changes to an undeclared resource",
             ));
+        }
+        // OpenTofu refresh owns absence and old replacement objects for these
+        // resources. Retained data and durable identities still require proof.
+        if delegated(&drift.address) {
+            continue;
+        }
+        if drift.deposed.is_some() {
+            return Err(Error::Conflict("plan contains invalid replacement cleanup"));
         }
         if !bindings.contains_key(&drift.address) {
             return Err(Error::Conflict(
@@ -325,23 +254,47 @@ pub(super) fn check_destroy_plan(
     let mut observations = BTreeSet::new();
     let mut cleanup_seen = BTreeSet::new();
     for change in &plan.resource_changes {
-        if observation(change, &mut observations, allowed, true, true)? {
-            continue;
-        }
-        if let Some(cleanup) = cleanup(change, bindings, &mut cleanup_seen)? {
-            if cleanup_absent.contains(&(change.address.clone(), change.deposed.clone().unwrap())) {
-                return Err(Error::Conflict(
-                    "destroy plan duplicated replacement cleanup",
-                ));
-            }
-            if cleanup.actions != ["no-op"] {
-                changes.push(cleanup);
-            }
+        if observation(change, &mut observations, allowed, true)? {
             continue;
         }
         let expected = allowed.get(&change.address).ok_or(Error::Conflict(
             "destroy plan contains an undeclared resource",
         ))?;
+        if delegated(&change.address) {
+            let resource = if let Some(key) = &change.deposed {
+                if change.address.starts_with("docker_volume.")
+                    || !cleanup_seen.insert((change.address.clone(), key.clone()))
+                {
+                    return Err(Error::Conflict("plan contains invalid replacement cleanup"));
+                }
+                format!("{} (deposed {key})", change.address)
+            } else {
+                if !seen.insert(&change.address) {
+                    return Err(Error::Conflict(
+                        "destroy plan contains a duplicate resource",
+                    ));
+                }
+                change.address.clone()
+            };
+            let absent = change.change.actions == ["no-op"]
+                && change.change.before.is_null()
+                && change.change.after.is_null();
+            if change.change.actions != ["delete"] && !absent {
+                return Err(Error::Conflict(
+                    "destroy plan would create, update, replace, forget, or delete retained data",
+                ));
+            }
+            if !absent {
+                changes.push(Change {
+                    resource,
+                    actions: change.change.actions.clone(),
+                });
+            }
+            continue;
+        }
+        if change.deposed.is_some() {
+            return Err(Error::Conflict("plan contains invalid replacement cleanup"));
+        }
         let binding = bindings.get(&change.address).ok_or(Error::Conflict(
             "destroy plan contains a resource without a saved ID",
         ))?;
@@ -371,11 +324,124 @@ pub(super) fn check_destroy_plan(
         }
     }
     if bindings.iter().any(|(key, binding)| {
-        !binding.id.is_empty() && !seen.contains(key) && !absent.contains(key)
+        !delegated(key) && !binding.id.is_empty() && !seen.contains(key) && !absent.contains(key)
     }) {
         return Err(Error::Conflict(
             "destroy plan omitted a resource without confirmed absence",
         ));
     }
     Ok(changes)
+}
+
+impl Plan {
+    pub(super) fn discovery_deferred(&self) -> Vec<String> {
+        let observations = self.discovery_values();
+        if observations.is_empty()
+            && self.planned_values.pointer("/outputs/discovery").is_some()
+            && self
+                .planned_values
+                .pointer("/outputs/discovery/value")
+                .is_none()
+        {
+            return vec![
+                "Target discovery remains unknown until its provider inputs can be resolved."
+                    .into(),
+            ];
+        }
+        observations
+            .iter()
+            .filter_map(|(name, value)| {
+                let observation = value
+                    .as_str()
+                    .and_then(|encoded| serde_json::from_str::<Value>(encoded).ok());
+                let resolved = observation.as_ref().is_some_and(|value| {
+                    value["status"] == "available"
+                        && (name != "gateway" || value["compatible"] == true)
+                        && (!name.starts_with("sandbox_")
+                            || value["compatibility"]["status"] == "supported")
+                });
+                if resolved || (name.starts_with("service_") && value["ready"] == true) {
+                    return None;
+                }
+                Some(super::reporting::unverified_message(name))
+            })
+            .collect()
+    }
+}
+
+#[cfg(test)]
+mod discovery_tests {
+    use super::*;
+
+    #[test]
+    fn an_unknown_discovery_output_cannot_make_the_plan_complete() {
+        let plan: Plan = serde_json::from_value(json!({
+            "planned_values": {"outputs": {"discovery": {"sensitive": false}}}
+        }))
+        .unwrap();
+        assert!(!plan.discovery_deferred().is_empty());
+    }
+
+    #[test]
+    fn unknown_and_absent_image_evidence_remain_unresolved_without_exposing_raw_diagnostics() {
+        let plan: Plan = serde_json::from_value(json!({
+            "planned_values": {"outputs": {"discovery": {"value": {
+                "engine": "{\"status\":\"available\"}",
+                "sandbox_0": "{\"status\":\"unknown\",\"reason\":\"secret-sentinel\"}",
+                "sandbox_1": "{\"status\":\"unavailable\"}"
+            }}}}
+        }))
+        .unwrap();
+        let deferred = plan.discovery_deferred();
+        assert_eq!(deferred.len(), 2);
+        assert!(deferred.iter().all(|message| message.contains("Fabric")));
+        assert!(!format!("{deferred:?}").contains("secret-sentinel"));
+    }
+}
+
+#[cfg(test)]
+mod reporting_tests {
+    use super::*;
+    #[test]
+    fn inventory_reports_validated_actions_and_retention_without_copying_private_state() {
+        let plan:Plan=serde_json::from_value(json!({"resource_changes":[{"mode":"managed","address":"nemoclaw_gateway_storage.runtime","change":{"actions":["no-op"],"before":{"id":"PRIVATE_SENTINEL","spec":"PRIVATE_SENTINEL"},"after":{"id":"PRIVATE_SENTINEL"}}}],"resource_drift":[{"mode":"managed","address":"nemoclaw_gateway_storage.runtime","change":{"actions":["update"],"before":{},"after":{}}}]})).unwrap();
+        let report = plan
+            .discovery_report(
+                super::super::DiscoveryScope::Runtime,
+                &BTreeMap::new(),
+                &BTreeSet::from(["nemoclaw_gateway_storage.runtime".into()]),
+            )
+            .unwrap();
+        assert_eq!(report.resources.len(), 1);
+        assert!(report.resources[0].existed);
+        assert!(report.resources[0].drifted);
+        assert!(report.resources[0].retained);
+        assert!(!report.resources[0].reuse_planned);
+        assert!(
+            !serde_json::to_string(&report)
+                .unwrap()
+                .contains("PRIVATE_SENTINEL")
+        );
+    }
+    #[test]
+    fn unknown_gateway_does_not_hide_already_observed_endpoint_and_hardware_categories() {
+        let plan:Plan=serde_json::from_value(json!({"planned_values":{"outputs":{"discovery":{"sensitive":false}},"root_module":{"resources":[{"address":"data.nemoclaw_inference_capabilities.endpoint_0","values":{"observation_json":"{\"status\":\"unknown\"}"}},{"address":"data.nemoclaw_target_hardware.target_0","values":{"observation_json":"{\"status\":\"unknown\"}"}},{"address":"data.nemoclaw_gateway_capabilities.current","values":{"observation_json":null}}]}}})).unwrap();
+        let messages = plan.discovery_deferred();
+        assert!(messages.iter().any(|message| message.contains("Inference")));
+        assert!(messages.iter().any(|message| message.contains("hardware")));
+        assert!(messages.iter().any(|message| message.contains("Gateway")));
+    }
+}
+
+#[cfg(test)]
+mod nested_discovery_tests {
+    use super::*;
+    #[test]
+    fn a_readable_image_is_not_a_verified_fabric_configuration() {
+        let plan:Plan=serde_json::from_value(json!({"planned_values":{"outputs":{"discovery":{"value":{"sandbox_0":"{\"status\":\"available\",\"compatibility\":{\"status\":\"unknown\"}}","gateway":"{\"status\":\"available\",\"compatible\":false}"}}}}})).unwrap();
+        let deferred = plan.discovery_deferred();
+        assert_eq!(deferred.len(), 2);
+        assert!(deferred.iter().any(|message| message.contains("Fabric")));
+        assert!(deferred.iter().any(|message| message.contains("Gateway")));
+    }
 }

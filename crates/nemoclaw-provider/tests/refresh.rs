@@ -160,13 +160,13 @@ async fn omitted_optional_computed_values_get_defaults_when_the_proposed_value_i
 async fn removing_image_pull_policy_restores_the_default_without_replacement() {
     let resource = ResourceAdapter::new(
         Definition::new(
-            "inference_service",
+            "managed_gateway",
             &["spec", "running", "image_pull_policy"],
             &["running", "image_pull_policy"],
         ),
         Arc::new(Fixture(Ok(None))),
     );
-    let encoded = support::specification().to_string();
+    let encoded = support::specification("managed_gateway").to_string();
     let prior: State = [
         ("id", "physical"),
         ("spec", encoded.as_str()),
@@ -206,7 +206,7 @@ async fn failed_and_partial_observations_retain_protocol_state() {
         "provider_profile",
         "provider",
         "sandbox",
-        "pi_configuration",
+        "agent_configuration",
     ] {
         for observation in [
             Err(ObservationError::Transport),
@@ -235,7 +235,7 @@ async fn confirmed_absence_reconciles_registrations_but_preserves_stateful_bindi
         "provider_profile",
         "provider",
         "sandbox",
-        "pi_configuration",
+        "agent_configuration",
     ] {
         for destroying in [false, true] {
             let resource = ResourceAdapter::new(
@@ -250,8 +250,10 @@ async fn confirmed_absence_reconciles_registrations_but_preserves_stateful_bindi
             let result = resource
                 .read(&mut diagnostics, prior.clone(), Value::Null, Value::Null)
                 .await;
-            if matches!(kind, "provider_profile" | "provider" | "pi_configuration")
-                || (destroying && kind == "sandbox")
+            if matches!(
+                kind,
+                "provider_profile" | "provider" | "agent_configuration"
+            ) || (destroying && kind == "sandbox")
             {
                 assert!(result.is_none());
                 assert!(diagnostics.errors.is_empty());
@@ -319,14 +321,14 @@ impl Backend for ExitedAfterStart {
 #[tokio::test]
 async fn immediate_exit_establishes_state_and_restart_preserves_identity() {
     let resource = ResourceAdapter::new(
-        Definition::new("inference_service", &["spec", "running"], &["running"]),
+        Definition::new("managed_gateway", &["spec", "running"], &["running"]),
         Arc::new(ExitedAfterStart),
     );
     let mut diagnostics = Diagnostics::default();
     let configured = State::from([
         (
             "spec".into(),
-            Value::Value(support::specification().to_string()),
+            Value::Value(support::specification("managed_gateway").to_string()),
         ),
         ("running".into(), Value::Null),
         ("id".into(), Value::Null),
@@ -388,7 +390,7 @@ async fn reconstructible_resources_plan_replacement_and_deletion_without_teardow
         "provider_profile",
         "provider",
         "sandbox",
-        "pi_configuration",
+        "agent_configuration",
     ] {
         let resource = ResourceAdapter::new(
             Definition::new(kind, &["name", "owner", "generation"], &[]),
@@ -408,7 +410,10 @@ async fn reconstructible_resources_plan_replacement_and_deletion_without_teardow
                 Value::Null,
             )
             .await;
-        let reconstructible = matches!(kind, "provider_profile" | "provider" | "pi_configuration");
+        let reconstructible = matches!(
+            kind,
+            "provider_profile" | "provider" | "agent_configuration"
+        );
         assert_eq!(result.is_some(), reconstructible, "{kind}");
         assert_eq!(diagnostics.errors.is_empty(), reconstructible, "{kind}");
         if let Some((_, _, replacements)) = result {

@@ -40,40 +40,44 @@ spec:
         freeGateGiB: 12
         consecutiveSamples: 5
   inferenceProviders:
-  - name: local
-    provider: openai
-    serviceRef: local
-  - name: hosted
-    provider: openai
-    endpoint: https://hosted.example/v1
-    credential:
-      env: HOSTED_API_KEY
+    - name: local
+      provider: openai
+      serviceRef: local
+    - name: hosted
+      provider: openai
+      endpoint: https://hosted.example/v1
+      credential:
+        env: HOSTED_API_KEY
   sandboxes:
-  - name: assistant
-    image:
-      ref: nc-fabric@sha256:a4402fa5dc8b020551f1e3bde409c8079767e53fcba7bd98b32197f82a9355a8
-    runtime:
-      provider: docker
-    network:
-      tier: isolated
-    harness:
-      kind: openclaw
-      execution:
-        timeoutSeconds: 300
-    agent:
-      name: assistant
-      inference:
-        routes:
-        - name: local
-          providerRef: local
-          overrides:
-            model: nvidia/Qwen3.8-27B-NVFP4
-            contextWindow: 32768
-            maxTokens: 2048
-        - name: hosted
-          providerRef: hosted
-          overrides:
-            model: replace-with-your-hosted-model
-            contextWindow: 32768
-            maxTokens: 2048
-        default: local
+    - name: assistant
+      image:
+        ref: nc-fabric@sha256:a4402fa5dc8b020551f1e3bde409c8079767e53fcba7bd98b32197f82a9355a8
+      runtime:
+        provider: docker
+      network:
+        tier: isolated
+      harness:
+        kind: nvidia.fabric.openclaw
+        execution:
+          timeoutSeconds: 300
+      agent:
+        name: assistant
+        inference:
+          routes:
+            - name: local
+              providerRef: local
+              overrides:
+                model: nvidia/Qwen3.8-27B-NVFP4
+                maxTokens: 2048
+                settings:
+                  model_metadata:
+                    contextWindow: 32768
+            - name: hosted
+              providerRef: hosted
+              overrides:
+                model: replace-with-your-hosted-model
+                maxTokens: 2048
+                settings:
+                  model_metadata:
+                    contextWindow: 32768
+          default: local

@@ -8,7 +8,7 @@ use std::{collections::BTreeMap, fmt, io::Write, sync::Arc};
 use tokio::io::{AsyncBufRead, Lines};
 
 #[derive(Debug)]
-struct FulfillmentError(String);
+pub(crate) struct FulfillmentError(String);
 impl fmt::Display for FulfillmentError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(&self.0)

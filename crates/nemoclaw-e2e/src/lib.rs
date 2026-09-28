@@ -51,18 +51,8 @@ fn select_sandbox_bindings(
         let binding: nemoclaw_sdk::backend::Row =
             serde_json::from_value(instance["attributes"].clone())
                 .map_err(|_| "invalid sandbox binding")?;
-        for field in [
-            "name",
-            "workspace",
-            "owner",
-            "generation",
-            "agent_name",
-            "agent_runtime",
-            "inference_json",
-        ] {
-            if target.get(field).is_none_or(String::is_empty)
-                || binding.get(field) != target.get(field)
-            {
+        for (field, expected) in *target {
+            if binding.get(field) != Some(expected) {
                 return Err("sandbox binding disagrees with declared ownership or agent");
             }
         }
@@ -78,6 +68,50 @@ fn select_sandbox_bindings(
         return Err("missing declared sandbox binding");
     }
     Ok(bindings)
+}
+
+fn invocation_command(binding: &nemoclaw_sdk::backend::Row) -> Result<Vec<String>, &'static str> {
+    if binding.get("agent_runtime").map(String::as_str) != Some("fabric") {
+        return Err("explicit invocation requires the Fabric runtime");
+    }
+    let agent = binding
+        .get("agent_name")
+        .filter(|name| !name.is_empty())
+        .ok_or("explicit invocation requires the bound agent name")?;
+    Ok([
+        "/opt/fabric/bin/python",
+        "/opt/nemoclaw/fabric.py",
+        "invoke",
+        agent,
+        "\"Reply with the word FOUR.\"",
+    ]
+    .map(String::from)
+    .to_vec())
+}
+
+fn invocation_response(bytes: &[u8], harness: &str) -> Result<String, &'static str> {
+    if bytes.len() > 1 << 20 {
+        return Err("agent invocation result exceeds the test limit");
+    }
+    let result: serde_json::Value = serde_json::from_slice(bytes)
+        .map_err(|_| "agent invocation returned an invalid Fabric result")?;
+    // This is an explicit test oracle for the pinned Fabric OpenClaw/Hermes
+    // adapters, not an SDK health check or a normalized Fabric probe contract.
+    // Fabric owns invocation and the shape of its adapter result.
+    if result["status"] != "succeeded"
+        || !result["error"].is_null()
+        || result["output"]["harness"] != harness
+    {
+        return Err("agent invocation did not return a successful expected adapter result");
+    }
+    let text = result["output"]["response"].as_str().unwrap_or("").trim();
+    if !text
+        .trim_matches([' ', '\n', '\r', '\t', '.', '!', '\"', '\''])
+        .eq_ignore_ascii_case("FOUR")
+    {
+        return Err("agent invocation did not answer the test prompt");
+    }
+    Ok(text.into())
 }
 
 #[test]
@@ -128,7 +162,9 @@ fn multiple_sandbox_selection_requires_exact_owned_bindings() {
         "/resources/0/instances/0/attributes/workspace",
         "/resources/0/instances/0/attributes/agent_name",
         "/resources/0/instances/0/attributes/agent_runtime",
-        "/resources/0/instances/0/attributes/inference_json",
+        "/resources/0/instances/0/attributes/provider_names_json",
+        "/resources/0/instances/0/attributes/policy_json",
+        "/resources/0/instances/0/attributes/image",
     ] {
         let mut invalid = state.clone();
         *invalid.pointer_mut(path).unwrap() = json!("foreign");
@@ -178,25 +214,69 @@ fn multiple_sandbox_selection_requires_exact_owned_bindings() {
     );
 }
 
+#[test]
+fn explicit_openclaw_invocation_targets_the_bound_fabric_runtime() {
+    let binding = [
+        ("agent_runtime".into(), "fabric".into()),
+        ("agent_name".into(), "primary".into()),
+        ("name".into(), "assistant".into()),
+    ]
+    .into();
+    assert_eq!(
+        invocation_command(&binding).unwrap(),
+        [
+            "/opt/fabric/bin/python",
+            "/opt/nemoclaw/fabric.py",
+            "invoke",
+            "primary",
+            "\"Reply with the word FOUR.\"",
+        ]
+    );
+    for field in ["agent_runtime", "agent_name"] {
+        let mut invalid = binding.clone();
+        invalid.insert(field.into(), String::new());
+        assert!(invocation_command(&invalid).is_err());
+    }
+}
+
+#[test]
+fn explicit_response_oracle_accepts_only_successful_expected_agent_output() {
+    use serde_json::json;
+    let valid = json!({"status":"succeeded", "error":null,
+        "output":{"harness":"openclaw","response":"FOUR"}});
+    assert_eq!(
+        invocation_response(&valid.to_string().into_bytes(), "openclaw"),
+        Ok("FOUR".into())
+    );
+    for response in ["four", "FOUR.", "  FOUR!\n"] {
+        let mut value = valid.clone();
+        value["output"]["response"] = json!(response);
+        assert!(invocation_response(&value.to_string().into_bytes(), "openclaw").is_ok());
+    }
+    for value in [
+        json!({"status":"failed","output":{"harness":"openclaw","response":"FOUR"}}),
+        json!({"status":"succeeded","error":{"message":"secret-sentinel"},"output":{"harness":"openclaw","response":"FOUR"}}),
+        json!({"status":"succeeded","output":{"harness":"hermes","response":"FOUR"}}),
+        json!({"status":"succeeded","output":{"harness":"openclaw","response":"Reply with the word FOUR."}}),
+        json!({"status":"succeeded","output":{"harness":"openclaw","response":"secret-sentinel"}}),
+        json!({"status":"succeeded","output":{"harness":"openclaw","response":""}}),
+        json!({"status":"succeeded","output":{"harness":"openclaw"}}),
+    ] {
+        let error = invocation_response(&value.to_string().into_bytes(), "openclaw").unwrap_err();
+        assert!(!error.contains("secret-sentinel"));
+    }
+    assert!(invocation_response(b"not JSON secret-sentinel", "openclaw").is_err());
+    assert!(invocation_response(&vec![b' '; (1 << 20) + 1], "openclaw").is_err());
+}
+
 /// Explicit, opt-in generation check for one owned OpenClaw or Hermes deployment.
 /// Preserves the single-sandbox contract used by existing lifecycle tests.
 pub async fn verify_agent(
     document: &nemoclaw_sdk::config::Document,
     directory: &std::path::Path,
 ) -> String {
-    let state: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(directory.join("terraform.tfstate")).unwrap())
-            .unwrap();
-    let sandboxes: Vec<_> = state["resources"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|resource| resource["type"] == "nemoclaw_sandbox")
-        .collect();
-    assert_eq!(sandboxes.len(), 1);
-    let binding =
-        serde_json::from_value(sandboxes[0]["instances"][0]["attributes"].clone()).unwrap();
-    verify_bound_agents(document, directory, [(String::new(), binding)].into())
+    assert_eq!(document.spec.sandboxes.len(), 1);
+    verify_agents(document, directory)
         .await
         .pop_first()
         .unwrap()
@@ -264,15 +344,46 @@ async fn verify_bound_agents(
         .unwrap()
     };
     let mut responses = std::collections::BTreeMap::new();
-    for (name, binding) in bindings {
+    for (name, mut binding) in bindings {
+        let sandbox = document
+            .spec
+            .sandboxes
+            .iter()
+            .find(|sandbox| sandbox.name == name)
+            .expect("binding must name a declared sandbox");
+        let harness = document.sandbox_harness(sandbox).unwrap();
+        let output_harness = match harness.kind.as_str() {
+            "nvidia.fabric.openclaw" => "openclaw",
+            "nvidia.fabric.hermes" => "hermes",
+            _ => panic!("explicit response test requires OpenClaw or Hermes"),
+        };
+        binding.insert(
+            "config_json".into(),
+            nemoclaw_sdk::fabric_config::for_sandbox(document, sandbox)
+                .unwrap()
+                .to_string(),
+        );
         client
-            .inference_ready(&binding)
+            .configuration(&binding)
             .await
-            .unwrap_or_else(|error| panic!("sandbox {name}: inference readiness failed: {error}"));
-        let response = client
-            .agent_response(&binding)
+            .unwrap_or_else(|error| panic!("sandbox {name}: Fabric configuration failed: {error}"));
+        let (exit, output) = client
+            .exec_bound(
+                &binding,
+                invocation_command(&binding).unwrap(),
+                Default::default(),
+                360,
+            )
             .await
-            .unwrap_or_else(|error| panic!("sandbox {name}: agent response failed: {error}"));
+            .unwrap_or_else(|error| {
+                panic!("sandbox {name}: explicit Fabric invocation failed: {error}")
+            });
+        assert_eq!(
+            exit, 0,
+            "sandbox {name}: explicit Fabric invocation failed; resources retained"
+        );
+        let response = invocation_response(&output, output_harness)
+            .unwrap_or_else(|error| panic!("sandbox {name}: {error}; resources retained"));
         responses.insert(name, response);
     }
     responses

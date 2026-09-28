@@ -27,7 +27,7 @@ spec:
       network:
         tier: isolated
       harness:
-        kind: deepagents
+        kind: nvidia.fabric.langchain.deepagents
       agent:
         name: main
         inference:

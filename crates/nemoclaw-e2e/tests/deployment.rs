@@ -1,12 +1,100 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use nemoclaw_sdk::config::HarnessKind;
 
 use nemoclaw_e2e::{
     assert_same_deployment_state, assert_same_managed_resources, openshell::Fixture,
 };
 use nemoclaw_sdk::{CancellationToken, Deployment, Outcome, config::Document};
 use std::{fs, path::PathBuf, process::Command};
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
+async fn cli_terminal_outputs_preserve_lifecycle_and_json_contract() {
+    let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
+    let directory = tempfile::tempdir().unwrap();
+    let fixture = Fixture::start().await;
+    let mut document = Document::parse(
+        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+    )
+    .unwrap();
+    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+    let input = directory.path().join("deployment.yaml");
+    let state = directory.path().join("state");
+    fs::write(&input, document.yaml().unwrap()).unwrap();
+    let invoke = |operation: &str, format: &str| {
+        let mut command = Command::new(
+            bundle
+                .join("bin")
+                .join(nemoclaw_sdk::bundle::executable("nemoclaw")),
+        );
+        command
+            .args([
+                operation,
+                "-o",
+                format,
+                "--progress",
+                "plain",
+                "--state-dir",
+            ])
+            .arg(&state);
+        if operation != "destroy" {
+            command.arg(&input).arg("--non-interactive");
+        }
+        let output = command.output().unwrap();
+        assert!(
+            output.status.success(),
+            "{operation}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(!output.stdout.contains(&0x1b));
+        assert!(!output.stderr.contains(&0x1b));
+        output
+    };
+    let planned = invoke("plan", "text");
+    let preview = String::from_utf8(planned.stdout).unwrap();
+    assert!(preview.contains("sandbox/assistant"), "{preview}");
+    assert!(preview.contains("No runtime resources changed"));
+    assert_eq!(fixture.state.lock().unwrap().effects, 0);
+
+    let applied = invoke("apply", "json");
+    let result: serde_json::Value = serde_json::from_slice(&applied.stdout).unwrap();
+    assert_eq!(result["outcome"], "succeeded");
+    assert!(!result["changes"].as_array().unwrap().is_empty());
+    let effects = fixture.state.lock().unwrap().effects;
+    let planned = invoke("plan", "json");
+    let result: serde_json::Value = serde_json::from_slice(&planned.stdout).unwrap();
+    assert_eq!(result["complete"], false);
+    assert!(
+        !result["discovery"]["targets"]
+            .as_object()
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(result["changes"], serde_json::json!([]));
+    let applied = invoke("apply", "text");
+    let summary = String::from_utf8(applied.stdout).unwrap();
+    assert!(summary.contains("Apply complete"), "{summary}");
+    assert!(summary.contains("No resource changes"));
+    assert!(summary.contains("Model and agent responses were not tested"));
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+
+    let destroyed = invoke("destroy", "text");
+    let summary = String::from_utf8(destroyed.stdout).unwrap();
+    assert!(summary.contains("Destroy complete"), "{summary}");
+    assert!(summary.contains("Sandbox files and conversation history deleted"));
+    assert!(summary.contains("OpenShell workspace"));
+    assert!(summary.contains(
+        "Retaining the workspace does not preserve sandbox files or conversation history."
+    ));
+    let repeated = invoke("destroy", "json");
+    let result: serde_json::Value = serde_json::from_slice(&repeated.stdout).unwrap();
+    assert_eq!(result["outcome"], "destroyed");
+    assert_eq!(result["changes"], serde_json::json!([]));
+    let observed = fixture.state.lock().unwrap();
+    assert!(observed.sandboxes.is_empty());
+    assert!(observed.providers.is_empty());
+    assert_eq!(observed.workspaces.len(), 1);
+}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
@@ -160,6 +248,13 @@ async fn gateway_change_between_plan_and_apply_preserves_resources_and_allows_te
     // This apply planned no managed-resource mutations, so a failed read
     // must not impose the original-intent guard for ambiguous OpenShell writes.
     fixture.state.lock().unwrap().driver = None;
+    let failed_state = fs::read(directory.path().join("terraform.tfstate")).unwrap();
+    assert_eq!(deployment.export(&cancel).await.unwrap(), document);
+    assert_eq!(
+        fs::read(directory.path().join("terraform.tfstate")).unwrap(),
+        failed_state,
+        "export verifies established bindings without completing another apply"
+    );
     document.metadata.name = "corrected-observation-intent".into();
     assert!(
         deployment
@@ -214,7 +309,7 @@ async fn interrupted_create_preserves_pending_targets_allows_unrelated_intent_an
     let effects = fixture.state.lock().unwrap().effects;
     assert_eq!(effects, 4);
     let preview = deployment.plan_destroy(&cancel).await.unwrap();
-    assert_eq!(preview.changes.len(), 3);
+    assert_eq!(preview.changes.len(), 4);
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
     let destroyed = Command::new(
         bundle
@@ -247,7 +342,7 @@ async fn interrupted_create_preserves_pending_targets_allows_unrelated_intent_an
             .unwrap()
             .changes
             .len(),
-        3
+        4
     );
 }
 
@@ -283,8 +378,8 @@ async fn separate_agent_sandboxes_cli_export_reapply_and_policy_drift() {
         let mut sandbox = primary.clone();
         sandbox.name = name.into();
         sandbox.agent.name = name.into();
-        sandbox.agent.tools = Some(nemoclaw_sdk::config::AgentTools::ReadOnly {
-            allow: [nemoclaw_sdk::config::AllowedTool::Read],
+        sandbox.agent.tools = Some(nemoclaw_sdk::config::AgentTools {
+            allow: vec!["read".into()],
         });
         document.spec.sandboxes.push(sandbox);
     }
@@ -294,15 +389,11 @@ async fn separate_agent_sandboxes_cli_export_reapply_and_policy_drift() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
 async fn tool_disclosure_cli_export_reapply_and_drift() {
-    for mode in [
-        nemoclaw_sdk::config::ToolDisclosure::Direct,
-        nemoclaw_sdk::config::ToolDisclosure::Progressive,
-    ] {
+    for mode in ["direct".to_owned(), "progressive".to_owned()] {
         let mut document =
             Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes())
                 .unwrap();
-        document.spec.sandboxes[0].agent.tools =
-            Some(nemoclaw_sdk::config::AgentTools::Disclosure { disclosure: mode });
+        document.spec.sandboxes[0].harness.as_mut().unwrap().settings = Some(serde_json::from_value(serde_json::json!({"native_config":{"tools":{"toolSearch":if mode == "direct" { serde_json::json!(false) } else { serde_json::json!({"mode":"tools","searchDefaultLimit":8,"maxSearchLimit":20}) }}}})).unwrap());
         // Exercise the existing launch-setting drift assertions as well as export/reapply.
         document.spec.inference_providers[0].api =
             Some(nemoclaw_sdk::config::InferenceApi::OpenaiCompletions);
@@ -323,8 +414,10 @@ async fn execution_settings_cli_export_reapply_and_drift() {
             .unwrap()
             .execution = Some(nemoclaw_sdk::config::AgentExecution {
             timeout_seconds: Some(900),
-            heartbeat_every: heartbeat.map(String::from),
         });
+        if let Some(every) = heartbeat {
+            document.spec.sandboxes[0].harness.as_mut().unwrap().settings = Some(serde_json::from_value(serde_json::json!({"native_config":{"agents":{"defaults":{"heartbeat":{"every":every,"isolatedSession":true}}}}})).unwrap());
+        }
         lifecycle(&document.yaml().unwrap()).await;
     }
 }
@@ -338,10 +431,10 @@ async fn observability_cli_export_reapply_and_drift() {
         .harness
         .as_mut()
         .unwrap()
-        .observability = Some(
+        .settings = Some(
         serde_json::from_value(serde_json::json!({
-        "otlp":{"enabled":true,"endpoint":"http://host.openshell.internal:4318",
-                "serviceName":"agent ${fixture} %{literal}","sampleRate":0.5}}))
+        "native_config":{"diagnostics":{"enabled":true,"otel":{"enabled":true,"endpoint":"http://host.openshell.internal:4318",
+                "serviceName":"agent ${fixture} %{literal}","sampleRate":0.5}}}}))
         .unwrap(),
     );
     lifecycle(&document.yaml().unwrap()).await;
@@ -636,7 +729,14 @@ async fn lifecycle_with_rejected_annotations(input: &str, reject_annotations: bo
         let state = fs::read(directory.path().join("terraform.tfstate")).unwrap();
         let mut broadened = document.clone();
         broadened.spec.sandboxes[1].agent.tools = None;
-        assert!(deployment.plan(&broadened, &cancel).await.is_err());
+        let plan = deployment.plan(&broadened, &cancel).await.unwrap();
+        assert_eq!(plan.changes.len(), 1);
+        assert!(
+            plan.changes[0]
+                .resource
+                .starts_with("nemoclaw_agent_configuration.")
+        );
+        assert_eq!(plan.changes[0].actions, ["update"]);
         fixture.state.lock().unwrap().exec_exit = 2;
         assert!(deployment.plan(&document, &cancel).await.is_err());
         assert!(deployment.export(&cancel).await.is_err());
@@ -660,7 +760,7 @@ async fn lifecycle_with_rejected_annotations(input: &str, reject_annotations: bo
             .harness
             .as_mut()
             .unwrap()
-            .observability
+            .settings
             .is_some()
     {
         let key = format!(
@@ -668,13 +768,19 @@ async fn lifecycle_with_rejected_annotations(input: &str, reject_annotations: bo
             document.workspace(),
             document.spec.sandboxes[0].name
         );
-        let original = fixture.state.lock().unwrap().sandboxes[&key]
-            .spec
+        let sandbox_id = fixture.state.lock().unwrap().sandboxes[&key]
+            .metadata
             .as_ref()
             .unwrap()
-            .environment["NEMOCLAW_INFERENCE_CONFIG"]
+            .id
             .clone();
-        assert!(!original.contains("fixture-only-inference-key"));
+        let original = fixture.state.lock().unwrap().fabric_configurations[&sandbox_id].clone();
+        assert_eq!(
+            original,
+            nemoclaw_sdk::fabric_config::for_sandbox(&document, &document.spec.sandboxes[0])
+                .unwrap()
+        );
+        assert!(!original.to_string().contains("fixture-only-inference-key"));
         assert!(
             fixture
                 .state
@@ -682,63 +788,40 @@ async fn lifecycle_with_rejected_annotations(input: &str, reject_annotations: bo
                 .unwrap()
                 .exec_calls
                 .iter()
-                .any(|cmd| cmd.ends_with(&["--inference".into(), original.clone()]))
+                .any(|command| {
+                    command
+                        .get(2)
+                        .is_some_and(|operation| operation == "configure")
+                        && command
+                            .get(4)
+                            .and_then(|value| serde_json::from_str::<serde_json::Value>(value).ok())
+                            .as_ref()
+                            == Some(&original)
+                })
         );
-        let mut changed = document.clone();
-        if let Some(execution) = &mut changed.spec.sandboxes[0]
-            .harness
-            .as_mut()
-            .unwrap()
-            .execution
-        {
-            execution.timeout_seconds = Some(1200);
-        } else if let Some(nemoclaw_sdk::config::AgentObservability::Otlp(otlp)) =
-            &mut changed.spec.sandboxes[0]
-                .harness
-                .as_mut()
-                .unwrap()
-                .observability
-        {
-            otlp.sample_rate = 1.into();
-        } else {
-            changed.inference_provider_mut().unwrap().api = Some(
-                if document.inference_provider().unwrap().api
-                    == Some(nemoclaw_sdk::config::InferenceApi::OpenaiCompletions)
-                {
-                    nemoclaw_sdk::config::InferenceApi::OpenaiResponses
-                } else {
-                    nemoclaw_sdk::config::InferenceApi::OpenaiCompletions
-                },
-            );
-        }
-        assert!(deployment.plan(&changed, &cancel).await.is_err());
+        // Native settings belong to the owned Fabric configuration. Refresh must
+        // detect drift without mutating either the host or durable deployment.
         fixture
             .state
             .lock()
             .unwrap()
-            .sandboxes
-            .get_mut(&key)
-            .unwrap()
-            .spec
-            .as_mut()
-            .unwrap()
-            .environment
-            .remove("NEMOCLAW_INFERENCE_CONFIG");
+            .fabric_configurations
+            .get_mut(&sandbox_id)
+            .unwrap()["models"]["default"]["model"] = serde_json::json!("foreign-model");
         assert!(deployment.export(&cancel).await.is_err());
-        assert!(deployment.plan(&document, &cancel).await.is_err());
+        let plan = deployment.plan(&document, &cancel).await.unwrap();
+        assert!(
+            plan.changes
+                .iter()
+                .any(|change| change.resource.starts_with("nemoclaw_agent_configuration."))
+        );
         assert_eq!(fixture.state.lock().unwrap().effects, effects);
         fixture
             .state
             .lock()
             .unwrap()
-            .sandboxes
-            .get_mut(&key)
-            .unwrap()
-            .spec
-            .as_mut()
-            .unwrap()
-            .environment
-            .insert("NEMOCLAW_INFERENCE_CONFIG".into(), original);
+            .fabric_configurations
+            .insert(sandbox_id, original);
     }
     if matches!(
         document.spec.sandboxes[0].network.policy,
@@ -842,7 +925,7 @@ async fn readiness_and_observation_failures_retain_bindings_and_recover_without_
         .await
         .unwrap_err()
         .to_string();
-    assert!(error.contains("ControlSupervisorExited"));
+    assert!(error.contains("ControlSupervisorExited"), "{error}");
     assert!(!error.contains("private-backend-diagnostic"));
     let state_path = directory.path().join("terraform.tfstate");
     let established = fs::read(&state_path).unwrap();
@@ -850,7 +933,7 @@ async fn readiness_and_observation_failures_retain_bindings_and_recover_without_
     assert_eq!(effects, 4);
     let intent: serde_json::Value =
         serde_json::from_slice(&fs::read(directory.path().join("intent.json")).unwrap()).unwrap();
-    assert_eq!(intent["pending"], false);
+    assert_eq!(intent["pending"], true);
     assert_eq!(intent["succeeded"], false);
     let error = deployment
         .apply(&document, &cancel)
@@ -864,17 +947,27 @@ async fn readiness_and_observation_failures_retain_bindings_and_recover_without_
     for sandbox in fixture.state.lock().unwrap().sandboxes.values_mut() {
         sandbox.status.as_mut().unwrap().phase = openshell_core::proto::SandboxPhase::Ready as i32;
     }
-    assert!(
-        deployment
-            .apply(&document, &cancel)
-            .await
-            .unwrap()
-            .changes
-            .is_empty()
-    );
+    let recovery = deployment.apply(&document, &cancel).await.unwrap();
+    assert_eq!(recovery.changes.len(), 1);
+    assert!(recovery.changes[0].resource.contains("agent_configuration"));
+    let intent: serde_json::Value =
+        serde_json::from_slice(&fs::read(directory.path().join("intent.json")).unwrap()).unwrap();
+    assert_eq!(intent["pending"], false);
+    assert_eq!(intent["succeeded"], true);
     let recovered = fs::read(&state_path).unwrap();
-    assert_same_managed_resources(&recovered, &established);
     let observed: serde_json::Value = serde_json::from_slice(&recovered).unwrap();
+    let mut existing_resources = observed.clone();
+    let resources = existing_resources["resources"].as_array_mut().unwrap();
+    let configuration_count = resources
+        .iter()
+        .filter(|resource| resource["type"] == "nemoclaw_agent_configuration")
+        .count();
+    assert_eq!(configuration_count, 1);
+    resources.retain(|resource| resource["type"] != "nemoclaw_agent_configuration");
+    assert_same_managed_resources(
+        &serde_json::to_vec(&existing_resources).unwrap(),
+        &established,
+    );
     let readiness = observed["resources"]
         .as_array()
         .unwrap()
@@ -943,7 +1036,7 @@ async fn destroy_does_not_require_the_inference_credential_or_rewrite_its_refere
             .unwrap()
             .changes
             .len(),
-        3
+        4
     );
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
     assert_eq!(
@@ -1112,17 +1205,26 @@ async fn apply_health_failure_retains_resources_and_unchanged_apply_checks_again
             .join("bin")
             .join(nemoclaw_sdk::bundle::executable("nemoclaw")),
     )
-    .arg("apply")
+    .args(["apply", "-o", "json", "--progress", "off"])
     .arg(&input)
     .arg("--state-dir")
     .arg(directory.path())
     .output()
     .unwrap();
     assert_eq!(failed.status.code(), Some(1));
-    assert!(failed.stdout.is_empty());
-    let diagnostic: serde_json::Value = serde_json::from_slice(&failed.stderr).unwrap();
-    assert_eq!(diagnostic["health"]["reason_code"], "fabric_health_timeout");
-    assert_eq!(diagnostic["resourcesRetained"], true);
+    assert!(failed.stderr.is_empty());
+    let diagnostic: serde_json::Value = serde_json::from_slice(&failed.stdout).unwrap();
+    assert_eq!(diagnostic["outcome"], "failed");
+    assert_eq!(
+        diagnostic["error"]["health"]["reason_code"],
+        "fabric_health_timeout"
+    );
+    assert!(
+        diagnostic["remainingState"]
+            .as_str()
+            .unwrap()
+            .contains("Resources retained")
+    );
     fixture.state.lock().unwrap().health_report = None;
     let result = deployment.apply(&document, &cancel).await.unwrap();
     assert!(result.changes.is_empty());
@@ -1167,12 +1269,12 @@ async fn mixed_sandboxes_reorder_add_recover_export_and_destroy_independently() 
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
     let mut other = document.spec.sandboxes[0].clone();
     other.name = "research".into();
-    other.harness.as_mut().unwrap().kind = HarnessKind::DeepAgents;
+    other.harness.as_mut().unwrap().kind = "nvidia.fabric.langchain.deepagents".parse().unwrap();
     document.spec.sandboxes.push(other.clone());
     let deployment = Deployment::new(directory.path(), &bundle);
     let cancel = CancellationToken::new();
     let preview = deployment.plan(&document, &cancel).await.unwrap();
-    assert_eq!(preview.changes.len(), 5);
+    assert_eq!(preview.changes.len(), 7);
     assert_eq!(fixture.state.lock().unwrap().effects, 0);
     let applied = deployment.apply(&document, &cancel).await.unwrap();
     assert_eq!(applied.health.len(), 2);
@@ -1199,8 +1301,19 @@ async fn mixed_sandboxes_reorder_add_recover_export_and_destroy_independently() 
     other.name = "third".into();
     document.spec.sandboxes.push(other);
     let added = deployment.plan(&document, &cancel).await.unwrap();
-    assert_eq!(added.changes.len(), 1);
-    assert_eq!(added.changes[0].resource, "nemoclaw_sandbox.third");
+    assert_eq!(added.changes.len(), 2);
+    assert!(
+        added
+            .changes
+            .iter()
+            .any(|change| change.resource == "nemoclaw_sandbox.third")
+    );
+    assert!(
+        added
+            .changes
+            .iter()
+            .any(|change| change.resource == "nemoclaw_agent_configuration.third")
+    );
     fixture.state.lock().unwrap().sandbox_phase = Some(openshell_core::proto::SandboxPhase::Error);
     assert!(deployment.apply(&document, &cancel).await.is_err());
     {
@@ -1247,4 +1360,71 @@ async fn mixed_sandboxes_reorder_add_recover_export_and_destroy_independently() 
     );
     deployment.destroy(&cancel).await.unwrap();
     assert!(fixture.state.lock().unwrap().sandboxes.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
+async fn successful_apply_checkpoints_mutations_before_reading_health() {
+    use nemoclaw_sdk::{Progress, StepOutcome};
+    use std::sync::{Arc, Mutex};
+    let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
+    let directory = tempfile::tempdir().unwrap();
+    let fixture = Fixture::start().await;
+    let mut document = Document::parse(
+        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+    )
+    .unwrap();
+    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+    let cancel = CancellationToken::new();
+    let interrupt = cancel.clone();
+    let observed = Arc::new(Mutex::new((false, None)));
+    let captured = observed.clone();
+    let intent = directory.path().join("intent.json");
+    let deployment =
+        Deployment::new(directory.path(), &bundle).with_progress(Arc::new(move |event| {
+            let mut observed = captured.lock().unwrap();
+            match event {
+                Progress::Completed {
+                    operation: "tofu.apply",
+                    outcome: StepOutcome::Succeeded,
+                    ..
+                } => observed.0 = true,
+                Progress::Waiting {
+                    operation: "tofu.show",
+                    ..
+                } if observed.0 => {
+                    observed.1 = Some(
+                        serde_json::from_slice::<serde_json::Value>(&fs::read(&intent).unwrap())
+                            .unwrap(),
+                    );
+                    interrupt.cancel();
+                }
+                _ => {}
+            }
+        }));
+    assert!(matches!(
+        deployment.apply(&document, &cancel).await,
+        Err(nemoclaw_sdk::Error::Cancelled)
+    ));
+    let record = observed
+        .lock()
+        .unwrap()
+        .1
+        .clone()
+        .expect("post-apply health observation");
+    assert_eq!(
+        record["pending"], false,
+        "mutation checkpoint must precede the health read"
+    );
+    assert_eq!(
+        record["succeeded"], false,
+        "health has not established success"
+    );
+    let effects = fixture.state.lock().unwrap().effects;
+    let result = Deployment::new(directory.path(), &bundle)
+        .apply(&document, &CancellationToken::new())
+        .await
+        .unwrap();
+    assert!(result.changes.is_empty());
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
 }

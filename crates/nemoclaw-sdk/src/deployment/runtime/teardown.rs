@@ -57,53 +57,55 @@ impl Deployment {
         } else {
             BTreeMap::new()
         };
-        let matches_pending_plan = |stage: &Store| {
-            !record.plan_digest.is_empty()
-                && crate::bundle::hash_file(&stage.directory.join("apply.plan"))
-                    .is_ok_and(|digest| digest == record.plan_digest)
-        };
-        let pending_root_plan = matches_pending_plan(&store);
-        let pending_runtime_plan = runtime.as_ref().is_some_and(matches_pending_plan);
-        validate_teardown_state(
-            &record,
-            &bindings,
-            &runtime_bindings,
-            pending_root_plan,
-            pending_runtime_plan,
+        validate_teardown_state(&record, &bindings, &runtime_bindings)?;
+        let root_graph = compile::compile_teardown(
+            &record.document,
+            &record.generations,
+            &bundle.manifest.version,
+            &bindings.keys().cloned().collect(),
+            false,
         )?;
+        let runtime_graph = runtime
+            .as_ref()
+            .map(|_| {
+                compile::compile_teardown(
+                    &record.document,
+                    &record.generations,
+                    &bundle.manifest.version,
+                    &runtime_bindings.keys().cloned().collect(),
+                    true,
+                )
+            })
+            .transpose()?;
         let mut result = OperationResult::planned(Vec::new());
-        result
-            .retained
-            .extend(retained_bindings(&record, &bindings, false)?);
-        if runtime.is_some() {
-            result
-                .retained
-                .extend(retained_bindings(&record, &runtime_bindings, true)?);
+        result.retained.extend(root_graph.retained.iter().cloned());
+        if let Some(graph) = &runtime_graph {
+            result.retained.extend(graph.retained.iter().cloned());
         }
-        if record.destroyed {
+        if record.destroyed() {
             if !preview {
                 result.outcome = Outcome::Destroyed;
             }
             return Ok(result);
         }
         // Observe and validate both complete saved plans before the first delete.
-        let (operation, _connection) = if !record.destroy_runtime && !bindings.is_empty() {
+        let (operation, _connection) = if !record.root_destroyed() && !bindings.is_empty() {
             self.connected(&record.document, &record.generations, cancel)
                 .await?
         } else {
             (self.clone(), None)
         };
         let mut stages = Vec::new();
-        if !record.destroy_runtime {
+        if !record.root_destroyed() {
             let (changes, planned) = operation
-                .plan_teardown_stage(&bundle, &store, &record, false, cancel)
+                .plan_teardown_stage(&bundle, &store, &record, false, &root_graph, cancel)
                 .await?;
             result.changes.extend(changes);
             stages.push((&store, false, planned));
         }
-        if let Some(stage) = &runtime {
+        if let Some((stage, graph)) = runtime.as_ref().zip(runtime_graph.as_ref()) {
             let (changes, planned) = operation
-                .plan_teardown_stage(&bundle, stage, &record, true, cancel)
+                .plan_teardown_stage(&bundle, stage, &record, true, graph, cancel)
                 .await?;
             result.changes.extend(changes);
             stages.push((stage, true, planned));
@@ -113,9 +115,7 @@ impl Deployment {
         }
         // Both teardown graphs now account for every saved identity, so destroy
         // owns recovery from this point and can resume at its recorded boundary.
-        record.destroying = true;
-        record.pending = false;
-        record.succeeded = false;
+        record.begin_destroy();
         store.save(&record)?;
         (self.progress)(Progress::Destroying);
         for (stage, is_runtime, planned) in stages {
@@ -131,14 +131,11 @@ impl Deployment {
                     .await?;
             }
             if !is_runtime {
-                record.destroy_runtime = true;
+                record.finish_root_destroy();
                 store.save(&record)?;
             }
         }
-        record.finish_apply();
-        record.destroying = false;
-        record.destroyed = true;
-        record.plan_digest.clear();
+        record.finish_destroy();
         store.save(&record)?;
         result.outcome = Outcome::Destroyed;
         Ok(result)
@@ -149,6 +146,7 @@ impl Deployment {
         store: &Store,
         record: &Record,
         runtime: bool,
+        compiled: &compile::CompiledTeardown,
         cancel: &CancellationToken,
     ) -> Result<(Vec<Change>, bool), Error> {
         let bindings = self
@@ -162,7 +160,7 @@ impl Deployment {
             )
             .await?;
         if bindings.is_empty() {
-            if record.succeeded || record.destroying {
+            if record.succeeded() || record.destroying() {
                 return Err(Error::Conflict(
                     "established state is missing; destroy cannot infer unbound resources",
                 ));
@@ -170,16 +168,7 @@ impl Deployment {
             return Ok((Vec::new(), false));
         }
         let expected = teardown_expected(record, &bindings, runtime)?;
-        let retained = retained_addresses(record, &bindings, runtime)?;
-        let graph = teardown_graph(
-            record,
-            &bundle.manifest.version,
-            &expected,
-            &bindings,
-            &retained,
-            runtime,
-        )?;
-        self.prepare(bundle, store, &graph)?;
+        self.prepare(bundle, store, &compiled.graph)?;
         self.tofu(
             bundle,
             store,
@@ -198,33 +187,10 @@ impl Deployment {
             )
             .await?;
         Ok((
-            check_destroy_plan(&plan, &expected, &bindings, &retained)?,
+            check_destroy_plan(&plan, &expected, &bindings, &compiled.retained)?,
             true,
         ))
     }
-}
-
-fn retained_addresses(
-    record: &Record,
-    bindings: &BTreeMap<String, StateBinding>,
-    runtime: bool,
-) -> Result<BTreeSet<String>, Error> {
-    let mut retained: BTreeSet<_> =
-        crate::services::remove_plans(&record.document, &record.generations)?
-            .into_iter()
-            .flat_map(|plan| plan.retained)
-            .filter(|address| bindings.contains_key(address))
-            .collect();
-    retained.insert(if runtime {
-        GATEWAY_STORAGE.into()
-    } else {
-        "nemoclaw_workspace.deployment".into()
-    });
-    if runtime {
-        retained.insert(KUBERNETES_STORAGE.into());
-    }
-    retained.retain(|address| bindings.contains_key(address));
-    Ok(retained)
 }
 
 fn teardown_expected(
@@ -319,54 +285,24 @@ fn bind_teardown_processes(
     Ok(())
 }
 
-fn teardown_graph(
-    record: &Record,
-    version: &str,
-    expected: &BTreeMap<String, Row>,
-    bindings: &BTreeMap<String, StateBinding>,
-    retained: &BTreeSet<String>,
-    runtime: bool,
-) -> Result<Value, Error> {
-    let mut graph = if runtime {
-        compile::compile_runtime(&record.document, &record.generations, version)?
-    } else {
-        compile::compile(&record.document, &record.generations, version)?
-    };
-    // Teardown must remain available when gateway capabilities or host capacity change.
-    graph.as_object_mut().unwrap().remove("data");
-    graph["provider"]["nemoclaw"]["destroy"] = json!(true);
-    let compiled_resources = graph["resource"].take();
-    graph["resource"] = json!({});
-    for address in retained {
-        if bindings.contains_key(address) {
-            let (kind, name) = address
-                .split_once('.')
-                .ok_or(Error::State("invalid resource address"))?;
-            let retained_values = if address.starts_with("docker_volume.") {
-                compiled_resources[kind][name].clone()
-            } else {
-                serde_json::to_value(&expected[address])
-                    .map_err(|_| Error::State("cannot encode retained resource"))?
-            };
-            let mut attrs = retained_values;
-            attrs["lifecycle"] = json!({"prevent_destroy":true});
-            graph["resource"][kind][name] = attrs;
-        }
-    }
-    Ok(graph)
-}
-
 fn validate_teardown_state(
     record: &Record,
     bindings: &BTreeMap<String, StateBinding>,
     runtime_bindings: &BTreeMap<String, StateBinding>,
-    pending_root_plan: bool,
-    pending_runtime_plan: bool,
 ) -> Result<(), Error> {
-    if record.pending {
-        let saved_plan_has_state = (pending_root_plan && !bindings.is_empty())
-            || (pending_runtime_plan && runtime_bindings_safe(record, runtime_bindings)?);
-        if !record.runtime_pending || !saved_plan_has_state {
+    if record.pending() {
+        let applicable_state_is_safe = if !record.runtime_pending() {
+            false
+        } else if record.document.has_runtime() {
+            runtime_bindings_safe(record, runtime_bindings)?
+        } else if !bindings.is_empty() {
+            // Older records used runtime_pending for bound-only OpenShell apply.
+            teardown_expected(record, bindings, false)?;
+            true
+        } else {
+            false
+        };
+        if !applicable_state_is_safe {
             return Err(Error::Conflict(
                 "unfinished apply may have created resources whose IDs were not saved; apply the original configuration again before destroy",
             ));
@@ -398,17 +334,6 @@ fn runtime_bindings_safe(
     Ok(true)
 }
 
-fn retained_bindings(
-    record: &Record,
-    bindings: &BTreeMap<String, StateBinding>,
-    runtime: bool,
-) -> Result<Vec<String>, Error> {
-    Ok(retained_addresses(record, bindings, runtime)?
-        .into_iter()
-        .filter(|address| bindings.contains_key(address))
-        .collect())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -423,7 +348,7 @@ mod tests {
         }
         let (document, _) = crate::deployment::runtime::tests::kubernetes_context();
         let mut record = Record::new(document).unwrap();
-        record.begin_runtime_apply();
+        record.begin_runtime_apply(&record.document.clone());
         let directory = tempfile::tempdir().unwrap();
         let store = Store::open(directory.path()).unwrap();
         let bundle = Bundle {
@@ -437,8 +362,23 @@ mod tests {
         };
         let deployment =
             Deployment::new(directory.path(), &bundle.directory).with_secrets(Arc::new(NoSecrets));
+        let compiled = compile::compile_teardown(
+            &record.document,
+            &record.generations,
+            &bundle.manifest.version,
+            &BTreeSet::new(),
+            false,
+        )
+        .unwrap();
         let (changes, planned) = deployment
-            .plan_teardown_stage(&bundle, &store, &record, false, &CancellationToken::new())
+            .plan_teardown_stage(
+                &bundle,
+                &store,
+                &record,
+                false,
+                &compiled,
+                &CancellationToken::new(),
+            )
             .await
             .unwrap();
         assert!(changes.is_empty());
@@ -464,11 +404,20 @@ mod tests {
                 )
             })
             .collect();
-        let expected = teardown_expected(&record, &bindings, true).unwrap();
-        let retained = retained_addresses(&record, &bindings, true).unwrap();
-        assert_eq!(retained, BTreeSet::from([KUBERNETES_STORAGE.into()]));
-        let graph =
-            teardown_graph(&record, "0.1.0", &expected, &bindings, &retained, true).unwrap();
+        teardown_expected(&record, &bindings, true).unwrap();
+        let compiled = compile::compile_teardown(
+            &record.document,
+            &record.generations,
+            "0.1.0",
+            &bindings.keys().cloned().collect(),
+            true,
+        )
+        .unwrap();
+        assert_eq!(
+            compiled.retained,
+            BTreeSet::from([KUBERNETES_STORAGE.into()])
+        );
+        let graph = compiled.graph;
         assert_eq!(graph["provider"]["nemoclaw"]["platform_only"], true);
         assert_eq!(graph["provider"]["nemoclaw"]["destroy"], true);
         assert_eq!(graph["resource"].as_object().unwrap().len(), 1);
@@ -490,10 +439,12 @@ mod tests {
         .unwrap();
         let mut record = Record::new(document).unwrap();
         let bindings = BTreeMap::new();
-        validate_teardown_state(&record, &bindings, &bindings, false, false).unwrap();
-        record.pending = true;
+        validate_teardown_state(&record, &bindings, &bindings).unwrap();
+        let mut saved = serde_json::to_value(&record).unwrap();
+        saved["pending"] = serde_json::json!(true);
+        record = serde_json::from_value(saved).unwrap();
         assert_eq!(
-            validate_teardown_state(&record, &bindings, &bindings, false, false)
+            validate_teardown_state(&record, &bindings, &bindings)
                 .unwrap_err()
                 .to_string(),
             "unfinished apply may have created resources whose IDs were not saved; apply the original configuration again before destroy"
@@ -507,7 +458,7 @@ mod tests {
         )
         .unwrap();
         let mut record = Record::new(document).unwrap();
-        record.begin_runtime_apply();
+        record.begin_runtime_apply(&record.document.clone());
         let bindings = [
             (
                 "nemoclaw_workspace.deployment".into(),
@@ -525,7 +476,7 @@ mod tests {
             ),
         ]
         .into();
-        validate_teardown_state(&record, &bindings, &BTreeMap::new(), true, false).unwrap();
+        validate_teardown_state(&record, &bindings, &BTreeMap::new()).unwrap();
         assert!(
             teardown_expected(&record, &bindings, false)
                 .unwrap()
@@ -585,19 +536,24 @@ mod tests {
     }
 
     #[test]
+    fn runtime_recovery_uses_current_bindings_without_the_failed_apply_plan() {
+        let (mut record, runtime_bindings) = runtime_state();
+        record.begin_runtime_apply(&record.document.clone());
+        // A preview can replace apply.plan after a failed apply. Current resource
+        // bindings and a fresh teardown plan must determine the next operation.
+        validate_teardown_state(&record, &BTreeMap::new(), &runtime_bindings)
+            .expect("an obsolete or missing apply plan cannot veto bound-resource recovery");
+    }
+
+    #[test]
     fn unfinished_runtime_apply_can_destroy_only_its_safe_saved_bindings() {
         let (mut record, runtime_bindings) = runtime_state();
-        record.pending = true;
-        record.runtime_pending = true;
+        record.begin_runtime_apply(&record.document.clone());
         let bindings = BTreeMap::new();
-        validate_teardown_state(&record, &bindings, &runtime_bindings, false, true).unwrap();
+        validate_teardown_state(&record, &bindings, &runtime_bindings).unwrap();
 
         assert!(
-            validate_teardown_state(&record, &bindings, &runtime_bindings, false, false).is_err(),
-            "a saved plan mismatch must remain fail-closed"
-        );
-        assert!(
-            validate_teardown_state(&record, &bindings, &BTreeMap::new(), false, true).is_err(),
+            validate_teardown_state(&record, &bindings, &BTreeMap::new()).is_err(),
             "an empty state cannot prove that a successful mutation was recorded"
         );
 
@@ -606,7 +562,7 @@ mod tests {
             storage.clone(),
             runtime_bindings.get(&storage).unwrap().clone(),
         )]);
-        validate_teardown_state(&record, &bindings, &partial, false, true)
+        validate_teardown_state(&record, &bindings, &partial)
             .expect("a recorded retained volume is a safe partial runtime state");
 
         let process = service_process(&record);
@@ -615,7 +571,7 @@ mod tests {
             runtime_bindings.get(&process).unwrap().clone(),
         )]);
         assert!(
-            validate_teardown_state(&record, &bindings, &missing_storage, false, true).is_err(),
+            validate_teardown_state(&record, &bindings, &missing_storage).is_err(),
             "a process cannot be removed without its independent storage binding"
         );
 
@@ -627,7 +583,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        validate_teardown_state(&record, &root_bindings, &runtime_bindings, false, true)
+        validate_teardown_state(&record, &root_bindings, &runtime_bindings)
             .expect("root bindings predate a pending runtime-stage apply");
     }
 
@@ -681,9 +637,7 @@ mod tests {
                     )
                 })
                 .collect();
-        let expected = teardown_expected(&record, &bindings, true).unwrap();
-        let retained = retained_addresses(&record, &bindings, true).unwrap();
-        assert_eq!(retained.len(), 5);
+        teardown_expected(&record, &bindings, true).unwrap();
         let storage_kind = service_storage(&record)
             .split_once('.')
             .unwrap()
@@ -694,8 +648,17 @@ mod tests {
             .unwrap()
             .0
             .to_owned();
-        let graph =
-            teardown_graph(&record, "0.1.0", &expected, &bindings, &retained, true).unwrap();
+        let compiled = compile::compile_teardown(
+            &record.document,
+            &record.generations,
+            "0.1.0",
+            &bindings.keys().cloned().collect(),
+            true,
+        )
+        .unwrap();
+        let graph = compiled.graph;
+        let retained = compiled.retained;
+        assert_eq!(retained.len(), 5);
         assert_eq!(
             graph["resource"][&storage_kind].as_object().unwrap().len(),
             2
@@ -742,9 +705,15 @@ mod tests {
         let retained_storage = service_storage(&record);
         assert!(bindings[&process].spec.is_empty());
         assert!(!expected[&process]["spec"].is_empty());
-        let retained = retained_addresses(&record, &bindings, true).unwrap();
-        let graph =
-            teardown_graph(&record, "0.1.0", &expected, &bindings, &retained, true).unwrap();
+        let compiled = compile::compile_teardown(
+            &record.document,
+            &record.generations,
+            "0.1.0",
+            &bindings.keys().cloned().collect(),
+            true,
+        )
+        .unwrap();
+        let graph = compiled.graph;
         assert!(graph.get("data").is_none());
         assert_eq!(graph["provider"]["nemoclaw"]["destroy"], true);
         assert_eq!(graph["resource"].as_object().unwrap().len(), 3);

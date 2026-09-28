@@ -54,9 +54,9 @@ Keep the matching bundle and checkout available for that retry.
 A new `e2e.py` invocation always starts a fresh test and leaves earlier failures intact.
 Cleanup refuses deletion if a partially created cluster cannot prove its saved ownership.
 
-The probe reports fixed failure categories such as missing credentials, TLS or DNS failure, timeout, malformed response, or selected HTTP statuses, together with the affected sandbox name.
-These messages do not reveal upstream response content.
-Older agent images retain the previous generic failure; this runner builds the current image.
+The response test invokes the installed Fabric runtime and reports the affected sandbox when configuration, execution, or response validation fails.
+It does not print arbitrary agent output or upstream error bodies.
+The separate host authentication check reports bounded diagnostics such as HTTP 401, transport failure, or invalid response.
 
 For an inference `HTTP 401`, check the key exported in this shell without building or creating a cluster:
 
@@ -68,10 +68,11 @@ A direct `HTTP 401` means the hosted endpoint rejected that request's authentica
 Enter the replacement key privately using the initial `getpass` export command in this section and repeat the check.
 After correcting the key, run the full test again to install it in a fresh deployment, or follow the [existing-deployment credential update procedure](../kubernetes.md#supply-credentials-as-on-docker).
 The inference-only retry does not perform that update.
-If the direct check passes but a fresh deployment still returns `HTTP 401`, retain that deployment for investigation of the sandbox credential path; do not assume the key is invalid.
+If the direct check passes but a fresh deployment's agent invocation fails, retain that deployment for investigation of the sandbox credential and runtime path; do not assume the key is invalid.
 The failed cluster remains until its printed ownership-checked cleanup command is run.
 
-The automated runner [passed on Linux AMD64](../validation/kubernetes-script-linux-amd64.md); Apple silicon still needs a live run on that host.
+The recorded [Linux AMD64 runner result](../validation/kubernetes-script-linux-amd64.md) predates the integration with the current Fabric runtime.
+Rebuild the bundle and agent image together; the earlier live result does not qualify this integration.
 
 ## Test the Managed YAML Path
 
@@ -79,20 +80,20 @@ Use this manual procedure when you want to run each lifecycle command separately
 The SDK can provision the gateway and agents through one managed manifest.
 For that path, this helper prepares only a disposable kind cluster and enforcing CNI; `nemoclaw apply` owns OpenShell and agent deployment.
 Use a fresh private cluster state directory, a verified native bundle, and the tools listed below.
-On Apple silicon, build the native bundle with `--platform darwin_arm64` under the pinned Rust toolchain and build the agent image with `AGENT_PLATFORM=linux/arm64`.
+On Apple silicon, build the native bundle with `--platform darwin_arm64` under the pinned Rust toolchain and build the agent image with `--platform linux/arm64`.
 The [managed lifecycle test](../validation/kubernetes-managed-kind-linux-amd64.md) passed on Linux AMD64.
 The Apple silicon instructions have not been qualified by that run.
 
 For Apple silicon, build the Kubernetes agent target from the repository root before loading it:
 
 ```sh
-AGENT_PLATFORM=linux/arm64 IMAGE_PREFIX=nc-kubernetes-dev \
-  docker buildx bake openclaw-kubernetes --load
+IMAGE_PREFIX=nc-kubernetes-dev \
+  python3 image/build_fabric.py --platform linux/arm64 openclaw-kubernetes
 docker image inspect nc-kubernetes-dev:openclaw-kubernetes \
   --format '{{index .RepoDigests 0}}'
 ```
 
-On Linux AMD64, use `AGENT_PLATFORM=linux/amd64` instead.
+On Linux AMD64, use `--platform linux/amd64` instead.
 Keep the printed repository digest for the manifest; the image store must retain repository digests as described in the [agent image procedure](../build.md#build-agent-images).
 Create the cluster and load that image from the repository root:
 
@@ -200,14 +201,14 @@ Retire the stack and create a fresh one with a new private state directory when 
 ## Run a Local Agent and CPU Model
 
 The Docker image store must retain repository digests for local builds, as described in [agent image prerequisites](../build.md#build-agent-images).
-If Docker requires sudo, run the build command with `sudo -n env AGENT_PLATFORM=linux/amd64 IMAGE_PREFIX=nc-kubernetes-dev docker buildx bake openclaw-kubernetes --load` and prefix the inspect command with `sudo -n`.
+If Docker requires sudo, run the build command with `sudo -n env IMAGE_PREFIX=nc-kubernetes-dev python3 image/build_fabric.py --platform linux/amd64 openclaw-kubernetes` and prefix the inspect command with `sudo -n`.
 Build the AMD64 OpenClaw Kubernetes target and load it into the owned kind cluster.
 This target uses UID and GID `10001` for the sandbox runtime and retains mode `0700` on its sandbox directory.
 The existing Docker and Podman image targets retain their original identity.
 
 ```sh
-AGENT_PLATFORM=linux/amd64 IMAGE_PREFIX=nc-kubernetes-dev \
-  docker buildx bake openclaw-kubernetes --load
+IMAGE_PREFIX=nc-kubernetes-dev \
+  python3 image/build_fabric.py --platform linux/amd64 openclaw-kubernetes
 python3 tools/kubernetes/stack.py load-image --image nc-kubernetes-dev:openclaw-kubernetes
 docker image inspect nc-kubernetes-dev:openclaw-kubernetes --format '{{index .RepoDigests 0}}'
 ```

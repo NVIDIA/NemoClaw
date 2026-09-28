@@ -51,7 +51,7 @@ spec:
                 binaries:
                   - path: /usr/bin/curl
       harness:
-        kind: openclaw
+        kind: nvidia.fabric.openclaw
       agent:
         name: main
         inference:

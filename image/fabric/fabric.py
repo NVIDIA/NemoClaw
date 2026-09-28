@@ -1,472 +1,152 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Start sandbox-owned Fabric runtime and expose private readiness and health probes."""
+"""Reconcile a sandbox-owned runtime through Fabric's public configuration API."""
 
 import asyncio
 import copy
 import json
 import os
-import re
 import signal
 import sys
-from contextlib import asynccontextmanager
 from pathlib import Path
 
+from nemo_fabric import Fabric, FabricConfig
+
 SOCKET = "/sandbox/fabric.sock"
-REQUEST_LIMIT = 512 * 1024  # accommodates JSON escaping of a 64 KiB prompt
+REQUEST_LIMIT = 512 * 1024
 RESULT_LIMIT = 4 * 1024 * 1024
 
 
-def execution_settings(inference=None, harness="openclaw"):
-    execution = (inference or {}).get("execution", {})
-    if (
-        not isinstance(execution, dict)
-        or set(execution) - {"timeoutSeconds", "heartbeatEvery"}
-        or (inference is not None and "execution" in inference and not execution)
-    ):
-        raise ValueError("invalid harness execution settings")
-    seconds = execution.get("timeoutSeconds", 600 if harness == "openclaw" else 300)
-    heartbeat = execution.get("heartbeatEvery")
-    if (
-        type(seconds) is not int
-        or not 1 <= seconds <= 1000000000
-        or (
-            "heartbeatEvery" in execution
-            and (
-                harness != "openclaw"
-                or not isinstance(heartbeat, str)
-                or len(heartbeat) > 256
-                or not re.fullmatch(r"[0-9]+[smh]", heartbeat)
-            )
-        )
-    ):
-        raise ValueError("invalid harness execution settings")
-    return {
-        "timeoutSeconds": seconds,
-        **({"heartbeatEvery": heartbeat} if heartbeat is not None else {}),
-    }
+class RuntimeHost:
+    def __init__(self, name, directory=Path("/sandbox")):
+        self.name = name
+        self.directory = directory
+        self.fabric = Fabric()
+        self.config = None
+        self.runtime = None
+        self.stopping = False
+        self.lock = asyncio.Lock()
 
-
-def openclaw_execution(inference=None):
-    return execution_settings(inference)
-
-
-def hermes_relay_enabled(inference=None):
-    observability = (inference or {}).get("observability")
-    if not isinstance(observability, dict) or "relay" not in observability:
-        return False
-    if observability != {"relay": {"enabled": True}}:
-        raise ValueError("Hermes Relay tracing requires the exact enabled setting")
-    return True
-
-
-def relay_configuration(name):
-    output = "/sandbox/artifacts/relay"
-    return {
-        "telemetry": {"providers": {"relay": {}}},
-        "relay": {
-            "project": name,
-            "output_dir": output,
-            "observability": {
-                "version": 3,
-                "atof": {
-                    "enabled": True,
-                    "sinks": [
-                        {
-                            "type": "file",
-                            "output_directory": output,
-                            "filename": "events.atof.jsonl",
-                            "mode": "overwrite",
-                        }
-                    ],
-                },
-                "atif": {
-                    "enabled": True,
-                    "agent_name": name,
-                    "agent_version": "nemoclaw-v1alpha1",
-                    "model_name": "primary",
-                    "output_directory": output,
-                    "filename_template": "trajectory-{session_id}.atif.json",
-                },
-                "enable_full_payloads": False,
-            },
-            "components": [],
-        },
-    }
-
-
-def model_connection(inference=None, model=None):
-    connection = (inference or {}).get("connection")
-    if connection is None:
+    def status(self):
         return {
-            "provider": "openai",
-            "model": "primary",
-            "base_url": "https://inference.local/v1",
-            "api_key_env": "OPENAI_API_KEY",
+            "config": self.config,
+            "runtime_id": self.runtime.runtime_id if self.runtime else None,
+            "ready": self.runtime is not None
+            and not self.stopping
+            and self.runtime.status == "active",
         }
-    if model is not None and isinstance(connection, dict):
-        connection = {**connection, "model": model}
-    if (
-        not isinstance(connection, dict)
-        or set(connection) != {"provider", "model", "base_url", "api_key_env"}
-        or connection["provider"] not in ("openai", "anthropic")
-        or not isinstance(connection["model"], str)
-        or not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}", connection["model"])
-        or not isinstance(connection["base_url"], str)
-        or not connection["base_url"].startswith(("http://", "https://"))
-        or not isinstance(connection["api_key_env"], str)
-        or (
-            connection["api_key_env"]
-            and connection["api_key_env"] != "NEMOCLAW_ANONYMOUS_API_KEY"
-            and not re.fullmatch(r"NEMOCLAW_INFERENCE_[A-Z0-9_]+_KEY", connection["api_key_env"])
-        )
-    ):
-        raise ValueError("invalid native inference connection")
-    return dict(connection)
 
+    def validate(self, config):
+        typed = FabricConfig.model_validate(config)
+        if typed.metadata.name != self.name:
+            raise ValueError("configuration belongs to a different agent")
+        self.fabric.plan(typed, base_dir=self.directory)
+        return typed
 
-def model_credential(inference=None):
-    if "connection" not in (inference or {}):
-        return "openshell-placeholder"
-    key = model_connection(inference)["api_key_env"]
-    if not key:
-        return "unused"
-    value = os.environ.get(key)
-    if not value:
-        raise ValueError("attached inference credential is unavailable")
-    return value
+    async def stop(self):
+        if self.runtime is not None:
+            self.stopping = True
+            await self.runtime.stop()
+            self.runtime = None
+            self.stopping = False
 
+    async def prepare(self, config):
+        self.validate(config)
+        async with self.lock:
+            if self.config != config:
+                await self.stop()
+            return {"prepared": True}
 
-def configured_agent(name, inference, *, match_name=True):
-    agents = (inference or {}).get("agents")
-    if agents is None or agents == []:
-        return {"name": name}
-    if not isinstance(agents, list) or len(agents) != 1:
-        raise ValueError("each sandbox requires exactly one agent")
-    agent = agents[0]
-    if not isinstance(agent, dict) or (match_name and agent.get("name") != name):
-        raise ValueError("runtime name must match the declared agent")
-    return agent
+    async def configure(self, config):
+        typed = self.validate(config)
+        async with self.lock:
+            if self.status()["ready"] and self.config == config:
+                return self.status()
+            # OpenTofu retains desired configuration. A new host waits for
+            # explicit apply so startup cannot outrun current gateway routes.
+            await self.stop()
+            self.config = copy.deepcopy(config)
+            self.runtime = await self.fabric.start_runtime(typed, base_dir=self.directory)
+            return self.status()
 
-
-def configuration(name, harness="deepagents", model=None, inference=None):
-    if inference is None and os.environ.get("NEMOCLAW_INFERENCE_CONFIG"):
-        inference = json.loads(os.environ["NEMOCLAW_INFERENCE_CONFIG"])
-    agent = configured_agent(name, inference, match_name=harness != "openclaw")
-    if harness == "deepagents":
-        if choices := agent.get("inference"):
-            inference = {**inference, **choices["models"][choices["default"]]}
-    if harness == "pi":
-        if model is None:
-            from pi_host import MODEL_PATH
-
-            if not MODEL_PATH.exists():
-                raise ValueError("Pi requires the configured route model")
-            model = json.loads(MODEL_PATH.read_text())
+    async def handle(self, request):
+        if request == {"operation": "status"}:
+            return self.status()
         if (
-            not isinstance(model, dict)
-            or set(model) - {"model", "piModel"}
-            or not isinstance(model.get("model"), str)
-            or not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}", model["model"])
+            isinstance(request, dict)
+            and request.get("operation") == "health"
+            and set(request) <= {"operation", "agent"}
         ):
-            raise ValueError("Pi requires a valid configured route model")
-    relay = harness == "hermes" and hermes_relay_enabled(inference)
-    adapter = {
-        "deepagents": "nvidia.fabric.langchain.deepagents",
-        "hermes": "nemoclaw.local.hermes",
-        "openclaw": "nemoclaw.local.openclaw",
-        "claude": "nvidia.fabric.claude",
-        "codex": "nvidia.fabric.codex",
-        "mini-swe-agent": "nvidia.fabric.mini-swe-agent",
-        "nooa": "nvidia.fabric.nooa",
-        "nooa-bench": "nvidia.fabric.nooa.bench-agent",
-        "remote-agent": "nvidia.fabric.remote-agent",
-        "pi": "nvidia.fabric.pi",
-    }[harness]
-    native_interfaces = harness == "hermes" and (
-        (inference or {}).get("interfaces") is not None
-        or (inference or {}).get("webSearch") is not None
-    )
-    if relay and not native_interfaces:
-        adapter = "nvidia.fabric.hermes"
-    config = {
-        **(
-            {"discovery": {"local_paths": ["/opt/nemoclaw/openclaw.fabric-adapter.json"]}}
-            if harness == "openclaw"
-            else {}
-        ),
-        **(
-            {"discovery": {"local_paths": ["/opt/nemoclaw/hermes.fabric-adapter.json"]}}
-            if harness == "hermes" and (not relay or native_interfaces)
-            else {}
-        ),
-        **(
-            {
-                "discovery": {
-                    "local_paths": [
-                        "/opt/fabric-source/adapters/typescript/pi/pi.fabric-adapter.json"
-                    ]
-                }
-            }
-            if harness == "pi"
-            else {}
-        ),
-        "metadata": {"name": name},
-        **({"workflow": {"target_id": "nvidia.nooa.coding-agent"}} if harness == "nooa" else {}),
-        "harness": {
-            "adapter_id": adapter,
-            **(
-                {
-                    "settings": {
-                        "base_url": "https://inference.local/v1",
-                        "api_type": "openai-completions",
-                    }
-                }
-                if harness == "remote-agent"
-                else {}
-            ),
-            **(
-                {"settings": {"agent_name": name}}
-                if harness == "openclaw" or harness == "hermes" and (not relay or native_interfaces)
-                else {}
-            ),
-        },
-        "models": {
-            "default": {
-                "provider": "openai",
-                "model": model["model"] if harness == "pi" else "primary",
-                **(
-                    {"settings": {"model_metadata": model["piModel"]}}
-                    if harness == "pi" and "piModel" in model
-                    else {}
-                ),
-                **({"base_url": "https://inference.local/v1"} if harness != "remote-agent" else {}),
-                **(
-                    {"settings": {"client_type": "completion"}}
-                    if harness in ("nooa", "nooa-bench")
-                    else {}
-                ),
-                "api_key_env": "OPENAI_API_KEY",
-            }
-        },
-        "environment": {"workspace": "/sandbox/workspace"},
-        "runtime": {
-            **(
-                {"max_turns": 8}
-                if harness in ("deepagents", "claude", "mini-swe-agent")
-                or relay
-                and not native_interfaces
-                else {}
-            ),
-            "timeout_seconds": execution_settings(inference, harness)["timeoutSeconds"]
-            + (60 if harness == "openclaw" else 0),
-            "artifacts": "/sandbox/artifacts",
-        },
-        **(relay_configuration(name) if relay else {}),
-    }
+            from health import runtime_health, unavailable
 
-    if inference is not None:
-        api = inference["api"]
-        if harness in ("deepagents", "mini-swe-agent", "remote-agent"):
-            limit = inference.get("tuning", {}).get("maxTokens")
-            if limit is not None:
-                config["models"]["default"]["max_tokens"] = limit
-        if harness == "openclaw":
-            config["harness"]["settings"]["inference"] = inference
-        elif harness == "hermes":
-            settings = config["harness"].setdefault("settings", {})
-            settings.update(
-                {
-                    **({} if relay and not native_interfaces else {"inference": inference}),
-                    "api_mode": {
-                        "openai-completions": "chat_completions",
-                        "openai-responses": "codex_responses",
-                        "anthropic-messages": "anthropic_messages",
-                    }[api],
-                }
+            runtime = self.runtime if request.get("agent", self.name) == self.name else None
+            response = await runtime_health(runtime)
+            return (
+                unavailable("runtime_changed")
+                if self.runtime is not runtime or self.stopping
+                else response
             )
-            config["models"]["default"]["provider"] = (
-                "anthropic" if api == "anthropic-messages" else "openai"
-            )
-    if "connection" in (inference or {}):
-        config["models"]["default"].update(
-            model_connection(inference, model["model"] if harness == "pi" else None)
-        )
-        if harness == "remote-agent":
-            config["harness"]["settings"]["base_url"] = config["models"]["default"].pop("base_url")
-    if harness in ("deepagents", "pi") and (inference or {}).get("agents"):
-        if agent.get("tools") is not None:
-            if agent["tools"] != {"allow": ["read"]}:
-                raise ValueError("unsupported native tool policy")
-            config["tools"] = {"enabled": ["read_file" if harness == "deepagents" else "read"]}
-    if harness == "deepagents" and name in (inference or {}).get("webSearch", {}).get(
-        "agentRefs", []
-    ):
-        config["mcp"] = {
-            "servers": {
-                "brave": {
-                    "transport": "stdio",
-                    "url": "/opt/fabric/bin/python",
-                    "args": ["/opt/nemoclaw/brave_search.py"],
-                    "env": {
-                        key: os.environ[key]
-                        for key in (
-                            "BRAVE_API_KEY",
-                            "SSL_CERT_FILE",
-                            "HTTPS_PROXY",
-                            "HTTP_PROXY",
-                            "ALL_PROXY",
-                            "NO_PROXY",
-                        )
-                        if key in os.environ
-                    },
-                }
-            }
-        }
-    if harness == "pi" and (inference or {}).get("agents"):
-        choices = agent["inference"]
-        for alias, route in choices["models"].items():
-            native = route["pi"]
-            config["models"][f"route_{alias}"] = {
-                **model_connection(route, native["model"]),
-                **(
-                    {"settings": {"model_metadata": native["piModel"]}}
-                    if "piModel" in native
-                    else {}
-                ),
-            }
-        if choices["models"][choices["default"]]["pi"] != model:
-            raise ValueError("Pi configured default differs from the declared choice")
-        config["models"]["default"] = dict(config["models"][f"route_{choices['default']}"])
-    return config
-
-
-def configuration_matches(observed, expected):
-    def intent(config):
-        config = copy.deepcopy(config)
-        env = config.get("mcp", {}).get("servers", {}).get("brave", {}).get("env", {})
-        value = env.get("BRAVE_API_KEY")
-        # Snapshot revisions are OpenShell runtime handles, not desired credential changes.
-        if isinstance(value, str) and re.fullmatch(
-            r"openshell:resolve:env:v[0-9]+_BRAVE_API_KEY", value
+        if isinstance(request, dict) and set(request) == {"operation", "config"}:
+            if request["operation"] == "prepare":
+                return await self.prepare(request["config"])
+            if request["operation"] == "configure":
+                return await self.configure(request["config"])
+        if (
+            isinstance(request, dict)
+            and set(request) == {"operation", "input", "agent"}
+            and request["operation"] == "invoke"
         ):
-            env["BRAVE_API_KEY"] = {"env": "BRAVE_API_KEY"}
-        return config
-
-    return isinstance(observed, dict) and intent(observed) == intent(expected)
-
-
-async def native_health(config, inference):
-    if config["harness"]["adapter_id"] != "nemoclaw.local.hermes":
-        return None
-    from hermes_adapter import healthy
-
-    return await asyncio.to_thread(healthy, inference)
-
-
-@asynccontextmanager
-async def hosted_runtime(config, start):
-    runtime = await start(config)
-    try:
-        yield runtime
-    finally:
-        await runtime.stop()
+            if request["agent"] != self.name:
+                raise ValueError("request belongs to a different agent")
+            async with self.lock:
+                if not self.status()["ready"]:
+                    raise ValueError("runtime is not ready")
+                return (await self.runtime.invoke(input=request["input"])).to_mapping()
+        if request == {"operation": "probe"}:
+            return {"supported": False, "reason_code": "fabric_probe_unsupported"}
+        raise ValueError("invalid runtime request")
 
 
 async def serve():
-    if os.environ.get("NEMOCLAW_FABRIC_HARNESS") == "pi":
-        from pi_host import serve as serve_pi
-
-        return await serve_pi(configuration)
-    from nemo_fabric import Fabric, FabricConfig, RuntimeStatus
-
     os.umask(0o077)
+    host = RuntimeHost(os.environ["NEMOCLAW_AGENT_NAME"])
     for directory in ("/sandbox/tmp", "/sandbox/workspace", "/sandbox/artifacts"):
         Path(directory).mkdir(parents=True, exist_ok=True)
-    inference = (
-        json.loads(os.environ["NEMOCLAW_INFERENCE_CONFIG"])
-        if "NEMOCLAW_INFERENCE_CONFIG" in os.environ
-        else None
-    )
-    name = os.environ["NEMOCLAW_AGENT_NAME"]
-    config = configuration(
-        name, os.environ.get("NEMOCLAW_FABRIC_HARNESS", "deepagents"), inference=inference
-    )
 
-    async def start(config):
-        Path(config["environment"]["workspace"]).mkdir(parents=True, exist_ok=True)
-        return await Fabric().start_runtime(
-            FabricConfig.model_validate(config), base_dir="/sandbox"
-        )
-
-    async with hosted_runtime(config, start) as runtime:
-
-        async def handle(reader, writer):
-            try:
-                raw = await asyncio.wait_for(reader.readline(), 10)
-                request = json.loads(raw)
-                if (
-                    isinstance(request, dict)
-                    and request.get("operation") == "health"
-                    and set(request) <= {"operation", "agent"}
-                ):
-                    from health import runtime_health
-
-                    response = await runtime_health(
-                        runtime if request.get("agent", name) == name else None
-                    )
-                elif request == {"operation": "check"}:
-                    response = {
-                        "config": config,
-                        "runtime_id": runtime.runtime_id,
-                        "ready": runtime.status == RuntimeStatus.ACTIVE,
-                        "inference": inference,
-                    }
-                    if (healthy := await native_health(config, inference)) is not None:
-                        response["native_healthy"] = healthy
-                elif request == {"operation": "probe"} and config["harness"]["adapter_id"] in (
-                    "nemoclaw.local.hermes",
-                    "nvidia.fabric.hermes",
-                ):
-                    probe = (
-                        {"probe": True}
-                        if config["harness"]["adapter_id"] == "nemoclaw.local.hermes"
-                        else "Reply with the word FOUR."
-                    )
-                    response = (
-                        await asyncio.wait_for(runtime.invoke(input=probe), 300)
-                    ).to_mapping()
-                else:
-                    raise ValueError("invalid request")
-                encoded = json.dumps(response).encode() + b"\n"
-                if len(encoded) > RESULT_LIMIT:
-                    raise ValueError("result exceeded limit; invocation may have had effects")
-            except Exception as error:
-                encoded = json.dumps({"error": str(error)}).encode() + b"\n"
-            try:
-                writer.write(encoded)
-                await writer.drain()
-            finally:
-                writer.close()
-                await writer.wait_closed()
-
-        stop = asyncio.Event()
-        loop = asyncio.get_running_loop()
-        for sig in (signal.SIGINT, signal.SIGTERM):
-            loop.add_signal_handler(sig, stop.set)
-        # A stale socket can remain after process death. No retry/replay of invocations.
-        Path(SOCKET).unlink(missing_ok=True)
+    async def handle(reader, writer):
         try:
-            async with await asyncio.start_unix_server(handle, SOCKET, limit=REQUEST_LIMIT):
-                await stop.wait()
+            request = json.loads(await asyncio.wait_for(reader.readline(), 10))
+            response = await host.handle(request)
+            encoded = json.dumps(response).encode() + b"\n"
+            if len(encoded) > RESULT_LIMIT:
+                raise ValueError("result exceeds transport limit")
+        except Exception:
+            # Fabric errors may contain authored settings or endpoint details.
+            encoded = b'{"error":"Fabric runtime operation failed"}\n'
+        try:
+            writer.write(encoded)
+            await writer.drain()
         finally:
-            Path(SOCKET).unlink(missing_ok=True)
+            writer.close()
+            await writer.wait_closed()
+
+    stop = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, stop.set)
+    Path(SOCKET).unlink(missing_ok=True)
+    try:
+        async with await asyncio.start_unix_server(handle, SOCKET, limit=REQUEST_LIMIT):
+            await stop.wait()
+    finally:
+        async with host.lock:
+            await host.stop()
+        Path(SOCKET).unlink(missing_ok=True)
 
 
-async def client(operation, argument, harness="deepagents", model=None, inference=None):
-    if inference is None and os.environ.get("NEMOCLAW_INFERENCE_CONFIG"):
-        inference = json.loads(os.environ["NEMOCLAW_INFERENCE_CONFIG"])
-    expected = configuration(argument, harness, model, inference)
+async def client(operation, name, config=None, input=None):
+    if config is not None and config.get("metadata", {}).get("name") != name:
+        raise ValueError("configuration belongs to a different agent")
     deadline = asyncio.get_running_loop().time() + 90
     while True:
         try:
@@ -474,39 +154,29 @@ async def client(operation, argument, harness="deepagents", model=None, inferenc
             break
         except (FileNotFoundError, ConnectionRefusedError):
             if (
-                operation not in ("configure", "prepare")
+                operation not in ("prepare", "configure")
                 or asyncio.get_running_loop().time() >= deadline
             ):
                 raise
             await asyncio.sleep(0.1)
     try:
-        request = {"operation": operation}
-        if operation in ("configure", "prepare"):
-            request.update(name=argument, model=model)
+        request = {"operation": "status" if operation == "check" else operation}
+        if operation in ("prepare", "configure"):
+            request["config"] = config
+        elif operation == "invoke":
+            request["agent"] = name
+            request["input"] = input
         writer.write(json.dumps(request).encode() + b"\n")
         await writer.drain()
         result = json.loads(await asyncio.wait_for(reader.readline(), 320))
         if operation == "prepare":
             return 0 if result == {"prepared": True} else 2
         if operation in ("check", "configure"):
-            if harness == "hermes" and expected["harness"]["adapter_id"] == "nemoclaw.local.hermes":
-                if result.get("native_healthy") is not True:
-                    return 2
-            if harness == "openclaw":
-                from openclaw_adapter import healthy
-
-                if not await asyncio.to_thread(
-                    healthy, argument, result.get("runtime_id", ""), inference
-                ):
-                    return 2
             return (
                 0
-                if (
-                    result.get("ready")
-                    and result.get("runtime_id")
-                    and configuration_matches(result.get("config"), expected)
-                    and result.get("inference") == inference
-                )
+                if result.get("ready")
+                and result.get("runtime_id")
+                and result.get("config") == config
                 else 2
             )
         print(json.dumps(result))
@@ -517,11 +187,7 @@ async def client(operation, argument, harness="deepagents", model=None, inferenc
 
 
 if __name__ == "__main__":
-    inference = None
-    if len(sys.argv) >= 3 and sys.argv[-2] == "--inference":
-        inference = json.loads(sys.argv[-1])
-        del sys.argv[-2:]
-    if len(sys.argv) == 2 and sys.argv[1] == "serve":
+    if sys.argv[1:] == ["serve"]:
         asyncio.run(serve())
     elif len(sys.argv) in (2, 3) and sys.argv[1] == "health":
         from health import request_health
@@ -531,35 +197,13 @@ if __name__ == "__main__":
                 asyncio.run(request_health(SOCKET, sys.argv[2] if len(sys.argv) == 3 else None))
             )
         )
-    elif (
-        len(sys.argv) == 5
-        and sys.argv[1] in ("configure", "prepare", "check")
-        and sys.argv[3] == "pi"
-    ):
-        sys.exit(
-            asyncio.run(
-                client(sys.argv[1], sys.argv[2], "pi", json.loads(sys.argv[4]), inference=inference)
-            )
-        )
-    elif len(sys.argv) == 3 and sys.argv[1] == "check":
-        sys.exit(asyncio.run(client("check", sys.argv[2], inference=inference)))
-    elif (
-        len(sys.argv) == 4
-        and sys.argv[1] in ("check", "probe")
-        and sys.argv[3]
-        in (
-            "deepagents",
-            "hermes",
-            "openclaw",
-            "claude",
-            "codex",
-            "mini-swe-agent",
-            "nooa",
-            "nooa-bench",
-            "remote-agent",
-            "pi",
-        )
-    ):
-        sys.exit(asyncio.run(client(sys.argv[1], sys.argv[2], sys.argv[3], inference=inference)))
+    elif len(sys.argv) == 4 and sys.argv[1] in ("prepare", "configure", "check"):
+        sys.exit(asyncio.run(client(sys.argv[1], sys.argv[2], json.loads(sys.argv[3]))))
+    elif len(sys.argv) == 3 and sys.argv[1] == "probe":
+        sys.exit(asyncio.run(client("probe", sys.argv[2])))
+    elif len(sys.argv) == 4 and sys.argv[1] == "invoke":
+        sys.exit(asyncio.run(client("invoke", sys.argv[2], input=json.loads(sys.argv[3]))))
     else:
-        sys.exit("usage: fabric.py serve | check NAME [HARNESS]")
+        raise SystemExit(
+            "usage: fabric.py serve | health [NAME] | {prepare,configure,check} NAME CONFIG_JSON | invoke NAME INPUT_JSON | probe NAME"
+        )

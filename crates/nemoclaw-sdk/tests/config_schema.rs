@@ -162,7 +162,7 @@ fn input_schema_preserves_defaults_strict_objects_and_opaque_pi_metadata() {
     value["spec"]["gateway"]["surprise"] = json!(true);
     agrees(&validator, &value, false);
     let mut value = input("fabric-pi.yaml");
-    let path = "/spec/sandboxes/0/agent/inference/routes/0/overrides/piModel";
+    let path = "/spec/sandboxes/0/agent/inference/routes/0/overrides/settings";
     *value.pointer_mut(path).unwrap() = json!({"future": [null, {"value": null}]});
     agrees(&validator, &value, true);
     *value.pointer_mut(path).unwrap() = Value::Null;
@@ -370,21 +370,6 @@ fn documented_parser_checks_remain_required_after_schema_validation() {
     let validator = jsonschema::validator_for(&schema).unwrap();
     for (file, path, replacement) in [
         ("local.yaml", "/spec/inferenceProviders", json!([])),
-        (
-            "local.yaml",
-            "/spec/sandboxes/0/harness/kind",
-            json!("claude"),
-        ),
-        (
-            "fabric-claude.yaml",
-            "/spec/inferenceProviders/0/provider",
-            json!("openai"),
-        ),
-        (
-            "fabric-pi.yaml",
-            "/spec/sandboxes/0/harness/kind",
-            json!("codex"),
-        ),
         (
             "local.yaml",
             "/spec/sandboxes/0/agent/inference/routes/0/providerRef",

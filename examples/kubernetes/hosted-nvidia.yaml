@@ -30,7 +30,7 @@ spec:
   sandboxes:
     - name: assistant
       harness:
-        kind: openclaw
+        kind: nvidia.fabric.openclaw
       image:
         ref: registry.example.com/nemoclaw/openclaw-kubernetes@sha256:0000000000000000000000000000000000000000000000000000000000000000
       runtime:
@@ -64,7 +64,7 @@ spec:
         inferenceRef: chat
     - name: researcher
       harness:
-        kind: openclaw
+        kind: nvidia.fabric.openclaw
       image:
         ref: registry.example.com/nemoclaw/openclaw-kubernetes@sha256:0000000000000000000000000000000000000000000000000000000000000000
       runtime:
@@ -98,7 +98,7 @@ spec:
         inferenceRef: chat
     - name: reviewer
       harness:
-        kind: openclaw
+        kind: nvidia.fabric.openclaw
       image:
         ref: registry.example.com/nemoclaw/openclaw-kubernetes@sha256:0000000000000000000000000000000000000000000000000000000000000000
       runtime:

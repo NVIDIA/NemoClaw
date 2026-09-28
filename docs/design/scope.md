@@ -29,7 +29,7 @@ Backward compatibility with earlier schemas, SDK APIs, or state formats is not r
 - Lock deployment state during operations; retain provider state and progress for partial-creation and deletion recovery.
 - Verify ownership, generation, and durable identity before modifying gateway storage, credentials, Podman gateway processes, or OpenShell resources.
 - Let the Docker provider reconcile disposable containers, service networks, and reproducible caches during explicit apply without requiring stable physical IDs.
-- Let OpenTofu reconcile reconstructible OpenShell profiles, registrations, and Pi configuration through provider lifecycle contracts.
+- Let OpenTofu reconcile reconstructible OpenShell profiles, registrations, and Fabric configuration through provider lifecycle contracts.
 - Protect sandbox replacement and missing bindings: ordinary apply must not discard files or conversation history that lack separate retained storage.
 - Only confirmed absence may remove a resource from state; authentication, transport, extension, query, and incomplete-observation failures must stop planning and preserve bindings.
 - Retain storage on destroy by default, and persistent data and provider state after readiness failure; recovery need not reuse the same container.
@@ -50,7 +50,8 @@ Model-specific tools belong to versioned recipe artifacts with their upstream li
 See [runtime](runtime.md), [execution targets](execution-targets.md), and [recipes](recipes.md) for rationale.
 
 SDK errors and progress must not expose secrets.
-OpenShell transport must use pinned generated clients with telemetry disabled, mTLS, bearer credential references, bounded calls, and no automatic mutation retry.
+OpenShell transport must use the pinned Rust SDK, with its supported raw clients where the high-level API omits required operations or fields, telemetry disabled, mTLS, bearer credential references, bounded calls, and no automatic mutation retry.
+Call supported SDK operations directly; keep NemoClaw code for deployment ownership and reconciliation, without pass-through client wrappers.
 Verify certificate trust in both directions independently of plaintext protocol tests.
 
 ## Validation

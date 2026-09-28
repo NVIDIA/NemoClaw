@@ -90,9 +90,7 @@ impl Backend for Fixture {
         let mut row = want.clone();
         row.insert("id".into(), "fixture-id".into());
         let incomplete = self.mode() == format!("create-error-{kind}");
-        if kind == "inference_service"
-            || nemoclaw_sdk::kubernetes::KubernetesBackend::supports(kind)
-        {
+        if nemoclaw_sdk::kubernetes::KubernetesBackend::supports(kind) {
             row.insert("running".into(), "true".into());
         }
         if incomplete && nemoclaw_sdk::kubernetes::KubernetesBackend::supports(kind) {
@@ -141,7 +139,7 @@ impl Provider for FixtureProvider {
             (
                 "inference_service".into(),
                 Box::new(ResourceAdapter::new(
-                    Definition::new("inference_service", &["spec", "running"], &["running"]),
+                    Definition::new("inference_service", &["spec"], &[]),
                     self.backend.clone(),
                 )) as Box<dyn DynamicResource>,
             ),

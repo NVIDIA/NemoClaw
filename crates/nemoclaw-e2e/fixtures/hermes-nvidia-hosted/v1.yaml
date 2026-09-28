@@ -25,10 +25,12 @@ spec:
   sandboxes:
     - name: assistant
       harness:
-        kind: hermes
-        interfaces:
-          api:
-            port: 8643
+        kind: nvidia.fabric.hermes
+        settings:
+          mode: service
+          interfaces:
+            api:
+              port: 8643
       image:
         ref: nc-fabric@sha256:f7a96a028a031048e6b3919b85cad253ec584e0df86011a5937ae8ff5c1125d8
       runtime:

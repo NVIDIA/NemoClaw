@@ -333,20 +333,20 @@ class Runner:
         test_binary.chmod(0o700)
         prefix = "nc-k8s-e2e-" + uuid.uuid4().hex[:12]
         image_tag = prefix + ":openclaw-kubernetes"
-        # sudo normally removes environment variables; these nonsecret bake
-        # inputs must be supplied after it for the selected image architecture.
+        # Use the upstream packaging entry point so the final image records
+        # discovery from its installed Fabric adapter. sudo normally strips
+        # environment variables; supply this nonsecret image name after it.
         self.run(
             "Build Kubernetes agent image",
             docker[:-1]
             + [
                 "env",
-                "AGENT_PLATFORM=" + agent,
                 "IMAGE_PREFIX=" + prefix,
-                "docker",
-                "buildx",
-                "bake",
+                PYTHON,
+                str(REPO / "image/build_fabric.py"),
+                "--platform",
+                agent,
                 "openclaw-kubernetes",
-                "--load",
             ],
         )
         inspected = json.loads(

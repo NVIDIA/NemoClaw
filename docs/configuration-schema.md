@@ -63,7 +63,8 @@ Keep its coverage table accurate when adding a family or changing supported scop
 Schemars derives names, types, and unknown-field rejection from Serde declarations.
 Schema annotations restore required fields that Serde otherwise defaults during deserialization.
 They also distinguish an omitted option from an explicit null value.
-The Pi metadata object is the one location that accepts nested nulls.
+Pi metadata and the opaque `harness.settings` object accept nested nulls.
+Fabric owns validation of adapter-specific settings against its selected descriptor; the SDK validates the enclosing configuration object.
 
 Defaults come from SDK normalization, which can replace an omitted value, empty string, or zero where documented.
 A JSON Schema `default` is an annotation; validation does not insert it.

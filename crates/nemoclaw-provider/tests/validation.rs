@@ -29,8 +29,8 @@ fn resource() -> ResourceAdapter {
     ResourceAdapter::new(
         Definition::new(
             "inference_service",
-            &["spec", "running", "image_pull_policy"],
-            &["running", "image_pull_policy"],
+            &["spec", "image_pull_policy"],
+            &["image_pull_policy"],
         ),
         Arc::new(Offline),
     )
@@ -70,11 +70,11 @@ async fn planning_blocks_incompatible_creates_and_updates_but_defers_unknown_con
     use tf_provider::value::Value as TofuValue;
     let backend = Arc::new(IncompatibleHost(AtomicUsize::new(0)));
     let resource = ResourceAdapter::new(
-        Definition::new("inference_service", &["spec", "running"], &["running"]),
+        Definition::new("inference_service", &["spec"], &[]),
         backend.clone(),
     );
     let config: State = serde_json::from_value(
-        json!({"spec":specification().to_string(), "running":null, "id":null}),
+        json!({"spec":specification("inference_service").to_string(), "id":null}),
     )
     .unwrap();
     let mut diagnostics = Diagnostics::default();
@@ -91,7 +91,6 @@ async fn planning_blocks_incompatible_creates_and_updates_but_defers_unknown_con
     assert!(diagnostics.errors[0].detail.contains("observed 570"));
     let mut prior = config.clone();
     prior.insert("id".into(), TofuValue::Value("retained-id".into()));
-    prior.insert("running".into(), TofuValue::Value("true".into()));
     let mut diagnostics = Diagnostics::default();
     assert!(
         resource
@@ -136,13 +135,12 @@ async fn planning_blocks_incompatible_creates_and_updates_but_defers_unknown_con
 async fn offline_validation_rejects_invalid_hardware_at_the_spec_attribute() {
     let resource = resource();
     let mut diagnostics = Diagnostics::default();
-    let mut spec = specification();
+    let mut spec = specification("inference_service");
     let mut configuration: Value =
         serde_json::from_str(spec["process"]["configuration"].as_str().unwrap()).unwrap();
     configuration["hardware"] = json!({"profile":"h100"});
     spec["process"]["configuration"] = json!(configuration.to_string());
-    let state =
-        json!({"spec":spec.to_string(), "id":null, "running":null, "image_pull_policy":null});
+    let state = json!({"spec":spec.to_string(), "id":null, "image_pull_policy":null});
     resource
         .validate(
             &mut diagnostics,
@@ -161,7 +159,7 @@ async fn offline_validation_rejects_invalid_hardware_at_the_spec_attribute() {
 async fn offline_validation_accepts_valid_hardware_without_configuring_or_observing_a_host() {
     let resource = resource();
     let mut diagnostics = Diagnostics::default();
-    let state = json!({"spec":specification().to_string(), "id":null, "running":null, "image_pull_policy":null});
+    let state = json!({"spec":specification("inference_service").to_string(), "id":null, "image_pull_policy":null});
     resource
         .validate(
             &mut diagnostics,
@@ -176,7 +174,7 @@ async fn unknown_optional_configuration_is_preserved_and_malformed_specs_do_not_
     use tf_provider::value::Value as TofuValue;
     let resource = resource();
     let mut config: State = serde_json::from_value(
-        json!({"spec":specification().to_string(), "running":null, "id":null}),
+        json!({"spec":specification("inference_service").to_string(), "id":null}),
     )
     .unwrap();
     config.insert("image_pull_policy".into(), TofuValue::Unknown);

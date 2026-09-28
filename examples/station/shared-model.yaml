@@ -13,7 +13,8 @@ spec:
     management: managed
     endpoint: http://127.0.0.1:17697
     engine: unix:///var/run/docker.sock
-    image: ghcr.io/nvidia/openshell/gateway@sha256:ec2b0efea84fff198e888e97c85befb9c908acde92e8256f9b527877ed182d66
+    image:
+      ghcr.io/nvidia/openshell/gateway@sha256:ec2b0efea84fff198e888e97c85befb9c908acde92e8256f9b527877ed182d66
     networkCIDR: 172.30.132.0/24
   services:
     shared:
@@ -43,54 +44,57 @@ spec:
         freeGateGiB: 12
         consecutiveSamples: 5
   inferenceProviders:
-  - name: shared
-    provider: openai
-    serviceRef: shared
+    - name: shared
+      provider: openai
+      serviceRef: shared
   sandboxes:
-  - name: openclaw
-    image:
-      ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
-    runtime:
-      provider: docker
-    network:
-      tier: isolated
-    harness:
-      kind: openclaw
-      execution:
-        timeoutSeconds: 300
-    agent:
-      name: assistant
-      inference:
-        routes:
-        - name: primary
-          providerRef: shared
-          overrides:
-            model: Qwen/Qwen3-4B
-            contextWindow: 32768
-            maxTokens: 2048
-  - name: pi
-    image:
-      ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
-    runtime:
-      provider: docker
-    network:
-      tier: isolated
-    harness:
-      kind: pi
-      execution:
-        timeoutSeconds: 300
-    agent:
-      name: assistant
-      inference:
-        routes:
-        - name: primary
-          providerRef: shared
-          overrides:
-            model: Qwen/Qwen3-4B
-            piModel:
-              api: openai-completions
-              contextWindow: 32768
-              maxTokens: 2048
-              reasoning: false
-              input:
-              - text
+    - name: openclaw
+      image:
+        ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      runtime:
+        provider: docker
+      network:
+        tier: isolated
+      harness:
+        kind: nvidia.fabric.openclaw
+        execution:
+          timeoutSeconds: 300
+      agent:
+        name: assistant
+        inference:
+          routes:
+            - name: primary
+              providerRef: shared
+              overrides:
+                model: Qwen/Qwen3-4B
+                maxTokens: 2048
+                settings:
+                  model_metadata:
+                    contextWindow: 32768
+    - name: pi
+      image:
+        ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      runtime:
+        provider: docker
+      network:
+        tier: isolated
+      harness:
+        kind: nvidia.fabric.pi
+        execution:
+          timeoutSeconds: 300
+      agent:
+        name: assistant
+        inference:
+          routes:
+            - name: primary
+              providerRef: shared
+              overrides:
+                model: Qwen/Qwen3-4B
+                settings:
+                  model_metadata:
+                    api: openai-completions
+                    contextWindow: 32768
+                    maxTokens: 2048
+                    reasoning: false
+                    input:
+                      - text

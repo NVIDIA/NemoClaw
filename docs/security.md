@@ -57,10 +57,10 @@ A complete credential-rotation runbook for every credential type: **TBD**.
 Use each existing guide's current lifecycle constraints; do not infer a rotation command.
 
 Keep credential values out of YAML, shell arguments, shared URLs, and published diagnostics.
-Onboarding saves credential references in YAML before requesting their values.
-Generation-only onboarding never resolves credentials.
-In composed interactive onboarding, accepting the authored YAML does not authorize apply: inspect the secret-free plan preview and answer the separate apply prompt.
-`--non-interactive` is an explicit automation choice that requires environment-provided credentials and proceeds from a successful plan to apply without prompting.
+The example authoring TUI saves credential references and never resolves their values.
+Authoring and lifecycle operations are separate commands; accepting an authored document does not authorize apply.
+Inspect a secret-free plan before invoking apply.
+For `plan` or `apply`, `--non-interactive` requires environment-provided credentials and fails instead of prompting when a reference is unresolved.
 Use environment references for provider secrets and protected files for gateway TLS keys.
 Configuration export preserves references; it cannot recover a lost credential value.
 Retiring a deployment requires separate decisions about upstream revocation, retained gateway/model/proxy storage, and caller-owned files.

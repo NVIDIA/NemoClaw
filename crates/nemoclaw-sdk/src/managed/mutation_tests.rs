@@ -291,7 +291,38 @@ async fn gateway_failed_startup_and_explicit_recovery_keep_container_and_storage
     assert_eq!(recovered.id, first.id);
     engine.ensure_gateway(&spec, &first.id).await.unwrap();
     assert_eq!(state.lock().unwrap().starts, 2);
-    engine.remove_gateway(&spec, &first.id).await.unwrap();
+    // The provider repeats the storage and process identity checks at mutation
+    // time. OpenTofu may select replacement without an SDK eligibility list.
+    let backend = crate::managed::ManagedBackend::new(engine.clone());
+    let prior = crate::backend::Row::from([
+        ("spec".into(), spec.json().unwrap()),
+        ("id".into(), first.id.clone()),
+    ]);
+    let retained = state.lock().unwrap().volume.clone().unwrap();
+    let mut substituted = retained.clone();
+    substituted["CreatedAt"] = json!("2026-09-15T00:00:00Z");
+    let mut foreign = retained.clone();
+    foreign["Labels"][crate::managed::OWNER_LABEL] = json!("foreign");
+    for unavailable in [None, Some(substituted), Some(foreign)] {
+        state.lock().unwrap().volume = unavailable;
+        assert!(
+            crate::backend::Backend::remove(&backend, GATEWAY_KIND, &prior, false)
+                .await
+                .is_err()
+        );
+        let current = state.lock().unwrap();
+        assert_eq!(current.removes, 0);
+        assert!(
+            current.container.as_ref().unwrap()["State"]["Running"]
+                .as_bool()
+                .unwrap()
+        );
+    }
+    state.lock().unwrap().volume = Some(retained.clone());
+    crate::backend::Backend::remove(&backend, GATEWAY_KIND, &prior, false)
+        .await
+        .unwrap();
+    assert_eq!(state.lock().unwrap().volume, Some(retained));
     engine.remove_gateway(&spec, &first.id).await.unwrap();
     assert_eq!(state.lock().unwrap().removes, 1);
     assert!(state.lock().unwrap().volume.is_some());

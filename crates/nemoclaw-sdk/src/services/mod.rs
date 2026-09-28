@@ -28,13 +28,13 @@ pub use installers::ollama::{
 };
 pub(crate) use registry::InstallPlans;
 pub use registry::{
-    BackendRegistry, RegisteredBackend, ResourceBehavior, ResourceSchema, ServiceDefinition,
-    resource_behavior, resource_schemas,
+    BackendRegistry, ResourceBehavior, ResourceSchema, ServiceDefinition, resource_behavior,
+    resource_schemas,
 };
 pub(crate) use registry::{
-    constrain_schema, credential_source_json, defaults, generation_kinds, has_runtime,
-    install_plans, provider_authenticated, remove_plans, required_storage_address, resolve,
-    resource_label, validate, validate_provider, validate_route,
+    constrain_schema, credential_source_json, defaults, discovery_engines, generation_kinds,
+    has_runtime, install_plans, provider_authenticated, remove_plans, required_storage_address,
+    resolve, resource_label, validate, validate_provider, validate_route,
 };
 
 /// Run the package implementation encoded in `NEMOCLAW_RUNTIME_SPEC`.

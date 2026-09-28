@@ -60,7 +60,7 @@ spec:
       network:
         tier: isolated
       harness:
-        kind: openclaw
+        kind: nvidia.fabric.openclaw
       agent:
         name: assistant
         inference:

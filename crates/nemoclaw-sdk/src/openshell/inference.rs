@@ -1,120 +1,59 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
-use crate::config::SandboxRuntimeSettings;
+pub(super) const PROVIDERS_ENV: &str = "NEMOCLAW_PROVIDER_NAMES";
 
-pub(super) const INFERENCE_ENV: &str = "NEMOCLAW_INFERENCE_CONFIG";
-pub(super) fn inference_settings(
-    text: &str,
-    runtime: &str,
-) -> Result<Option<SandboxRuntimeSettings>, ObservationError> {
-    if text.is_empty() {
-        return Ok(None);
+pub(super) fn provider_names(text: &str, runtime: &str) -> Result<Vec<String>, ObservationError> {
+    if runtime != "fabric" {
+        return Err(ObservationError::Query);
     }
-    let settings: SandboxRuntimeSettings =
-        serde_json::from_str(text).map_err(|_| ObservationError::Query)?;
-    settings
-        .validate(
-            runtime
-                .strip_prefix("fabric-")
-                .ok_or(ObservationError::Query)?
-                .parse()
-                .map_err(|_| ObservationError::Query)?,
-        )
-        .map_err(|_| ObservationError::Query)?;
-    Ok(Some(settings))
+    let names: Vec<String> = serde_json::from_str(text).map_err(|_| ObservationError::Query)?;
+    let unique: std::collections::BTreeSet<_> = names.iter().collect();
+    if names.is_empty()
+        || names.len() > 128
+        || unique.len() != names.len()
+        || names
+            .iter()
+            .any(|name| !crate::config::validation::valid_name(name))
+    {
+        return Err(ObservationError::Query);
+    }
+    Ok(names)
 }
+
 pub(super) fn inference_environment(row: &Row) -> Result<Row, ObservationError> {
     let runtime = row.get("agent_runtime").map(String::as_str).unwrap_or("");
-    let text = row.get("inference_json").map(String::as_str).unwrap_or("");
+    let text = row
+        .get("provider_names_json")
+        .map(String::as_str)
+        .unwrap_or("");
+    provider_names(text, runtime)?;
     let mut env = launch_environment(
         row.get("agent_name").map(String::as_str).unwrap_or(""),
         runtime,
         row_proxy(row)?.as_ref(),
     );
-    if inference_settings(text, runtime)?.is_some() {
-        env.insert(INFERENCE_ENV.into(), text.into());
-    }
+    env.insert(PROVIDERS_ENV.into(), text.into());
     Ok(env)
-}
-
-pub(super) fn provider_names(text: &str, runtime: &str) -> Result<Vec<String>, ObservationError> {
-    let settings = inference_settings(text, runtime)?.ok_or(ObservationError::Incomplete)?;
-    let mut selected = std::collections::BTreeSet::new();
-    for agent in &settings.agents {
-        if let Some(inference) = &agent.inference {
-            selected.extend(
-                inference
-                    .models
-                    .values()
-                    .map(|model| model.provider.clone()),
-            );
-        }
-    }
-    selected.remove(&settings.provider);
-    let mut providers = vec![settings.provider];
-    providers.extend(selected);
-    if let Some(search) = &settings.web_search {
-        providers.push(crate::config::search_provider_name(
-            search.provider,
-            &search.credential.env,
-        ));
-    }
-    Ok(providers)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
-    fn tavily_is_attached_only_when_selected_by_the_sandbox_agent() {
-        let mut settings = serde_json::json!({
-            "provider": "local",
-            "connection": {"provider":"openai", "model":"fixture-model",
-                "base_url":"http://127.0.0.1:11434/v1", "api_key_env":"NEMOCLAW_ANONYMOUS_API_KEY"},
-            "api":"openai-completions", "tuning":{}, "agents":[{"name":"main"}]
-        });
+    fn provider_attachments_are_deployment_references_not_fabric_transports() {
         assert_eq!(
-            provider_names(&settings.to_string(), "fabric-hermes").unwrap(),
-            ["local"]
+            provider_names(r#"["owned-registration"]"#, "fabric").unwrap(),
+            ["owned-registration"]
         );
-        settings["webSearch"] = serde_json::json!({
-            "provider":"tavily", "agentRefs":["main"], "credential":{"env":"SEARCH_KEY"}
-        });
-        for harness in ["fabric-openclaw", "fabric-hermes"] {
-            assert_eq!(
-                provider_names(&settings.to_string(), harness).unwrap(),
-                [
-                    "local".to_owned(),
-                    crate::config::search_provider_name(
-                        crate::config::SearchProvider::Tavily,
-                        "SEARCH_KEY"
-                    )
-                ]
-            );
-        }
-    }
-
-    #[test]
-    fn inference_json_accepts_hcl_encoding_and_rejects_invalid_settings() {
-        let valid = serde_json::json!({
-            "provider": "local",
-            "connection": {"provider":"openai", "model":"fixture-model",
-                "base_url":"http://127.0.0.1:11434/v1", "api_key_env":"NEMOCLAW_ANONYMOUS_API_KEY"},
-            "api":"openai-completions", "tuning":{}
-        });
-        for encoded in [
-            valid.to_string(),
-            serde_json::to_string_pretty(&valid).unwrap(),
+        for invalid in [
+            "[]",
+            r#"["duplicate","duplicate"]"#,
+            r#"["bad name"]"#,
+            r#"{"provider":"openai"}"#,
         ] {
-            assert!(inference_settings(&encoded, "fabric-openclaw").is_ok());
+            assert!(provider_names(invalid, "fabric").is_err());
         }
-        let mut unknown = valid.clone();
-        unknown["unexpected"] = true.into();
-        let mut invalid = valid;
-        invalid["connection"]["api_key_env"] = "INVALID".into();
-        for encoded in [unknown.to_string(), invalid.to_string(), "{".into()] {
-            assert!(inference_settings(&encoded, "fabric-openclaw").is_err());
-        }
+        assert!(provider_names(r#"["valid"]"#, "fabric-pi").is_err());
     }
 }

@@ -26,7 +26,7 @@ spec:
   sandboxes:
     - name: assistant
       harness:
-        kind: openclaw
+        kind: nvidia.fabric.openclaw
       image:
         ref: nc-multi-models@sha256:3ab70ded67440e838a37d6c9f0e3b08b95e2acf416c6076f8817bac190525cf0
       runtime:

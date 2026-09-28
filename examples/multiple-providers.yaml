@@ -25,7 +25,7 @@ spec:
         env: HOSTED_API_KEY
   harnesses:
     assistant:
-      kind: openclaw
+      kind: nvidia.fabric.openclaw
   inferences:
     smart-and-fast:
       default: smart
@@ -34,12 +34,16 @@ spec:
           providerRef: hosted
           overrides:
             model: replace-with-supported-model
-            contextWindow: 32768
+            settings:
+              model_metadata:
+                contextWindow: 32768
         - name: fast
           providerRef: local
           overrides:
             model: qwen3:4b
-            contextWindow: 8192
+            settings:
+              model_metadata:
+                contextWindow: 8192
   sandboxes:
     - name: researcher
       harnessRef: assistant
@@ -56,4 +60,6 @@ spec:
               providerRef: local
               overrides:
                 model: qwen3:4b
-                contextWindow: 8192
+                settings:
+                  model_metadata:
+                    contextWindow: 8192

@@ -110,11 +110,11 @@ fn hermes_auth_uses_the_selected_inline_provider_without_a_second_reference() {
         .into();
     let rows = targets(&doc, &generations).unwrap();
     let settings: Value = serde_json::from_str(
-        &rows.iter().find(|r| r.kind == "sandbox").unwrap().values["inference_json"],
+        &rows.iter().find(|r| r.kind == "sandbox").unwrap().values["provider_names_json"],
     )
     .unwrap();
     assert_eq!(
-        settings["auth"]["providerRef"],
+        settings[0],
         rows.iter()
             .find(|row| row.kind == "provider")
             .unwrap()
@@ -189,4 +189,43 @@ fn inline_managed_providers_reuse_named_service_runtime_and_defaults() {
             local
         );
     }
+}
+
+#[test]
+fn selected_route_provider_updates_its_declared_scope_without_flattening() {
+    let mut document = nemoclaw_sdk::config::Document::parse(
+        include_bytes!("../../../examples/multiple-providers.yaml").as_slice(),
+    )
+    .unwrap();
+    let sandbox = &document.spec.sandboxes[0];
+    let inference = document.sandbox_inference(sandbox).unwrap();
+    let route = inference
+        .routes
+        .iter()
+        .find(|route| route.name == "fast")
+        .unwrap();
+    assert_eq!(
+        document
+            .sandbox_route_provider(sandbox, route)
+            .unwrap()
+            .name,
+        "local"
+    );
+    document
+        .sandbox_route_provider_mut("researcher", "fast")
+        .unwrap()
+        .endpoint = "http://127.0.0.1:9000/v1".into();
+    assert_eq!(
+        document.spec.inference_providers[0].endpoint,
+        "http://127.0.0.1:9000/v1"
+    );
+    assert_eq!(
+        document.spec.inference_providers[1].endpoint,
+        "https://hosted.example/v1"
+    );
+    assert_eq!(
+        document.spec.sandboxes[0].agent.inference_ref.as_deref(),
+        Some("smart-and-fast")
+    );
+    document.validate().unwrap();
 }
