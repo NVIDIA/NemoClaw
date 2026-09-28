@@ -422,6 +422,14 @@ describe("complete native home persistence", () => {
         path.join(nativeRoot, ".openclaw", "unknown-state.json"),
         Buffer.alloc(16 * 1024 * 1024 + 1, 120),
       );
+      const arbitraryConfig = path.join(
+        nativeRoot,
+        ".deepagents",
+        "nemoclaw-dcode-config",
+        "config.json",
+      );
+      fs.mkdirSync(path.dirname(arbitraryConfig), { recursive: true });
+      fs.writeFileSync(arbitraryConfig, "configuration");
       const assertCurrent = vi.fn();
       writeOpenClawRegistry("alpha");
 
@@ -549,6 +557,105 @@ describe("complete native home persistence", () => {
         ".hermes/.env",
       );
       expect(fs.readFileSync(envPath, "utf8")).toBe(source);
+    } finally {
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it("scrubs generated native authority while preserving benign rotated state", () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-generated-authority-state-"));
+    try {
+      const nativeRoot = path.join(fixture, "native-home");
+      const files = new Map<string, unknown>([
+        [
+          ".openclaw/openclaw.json.bak.1",
+          {
+            gateway: { auth: { token: "gateway-token" }, port: 18789 },
+            agents: { defaults: { model: "nvidia/test-model" } },
+          },
+        ],
+        [
+          ".openclaw/devices/paired.json",
+          {
+            device: {
+              deviceId: "device-1",
+              publicKey: "public-verification-material",
+              tokens: { operator: { token: "rotated-device-token", scopes: ["operator.read"] } },
+            },
+          },
+        ],
+        [
+          ".openclaw/identity/device-auth.json",
+          {
+            deviceId: "device-1",
+            tokens: { operator: { token: "identity-device-token" } },
+          },
+        ],
+        [
+          ".openclaw/credentials/whatsapp/default/creds.json",
+          { registrationId: 42, authToken: "whatsapp-session-authority" },
+        ],
+        [
+          ".pi/agent/auth.json",
+          { account: "managed-inference", apiKey: `nvapi-${"a".repeat(24)}` },
+        ],
+        [
+          ".hermes/backups/config/config.yaml.good.20260928-213216",
+          { model: "nvidia/test-model", api_key: `nvapi-${"b".repeat(24)}` },
+        ],
+      ]);
+      for (const [relativePath, value] of files) {
+        const target = path.join(nativeRoot, relativePath);
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.writeFileSync(target, JSON.stringify(value, null, 2));
+      }
+      writeOpenClawRegistry("alpha");
+
+      const backup = sandboxState.backupSandboxState("alpha", {
+        nativeStateSource: {
+          root: "/sandbox",
+          directory: nativeRoot,
+          assertCurrent: vi.fn(),
+        },
+      });
+
+      expect(backup.success, backup.error).toBe(true);
+      sandboxState.inspectNativeSandboxState(backup.manifest!.backupPath, (root: string) => {
+        const read = (relativePath: string): any =>
+          JSON.parse(fs.readFileSync(path.join(root, relativePath), "utf8"));
+        const openClawBackup = read(".openclaw/openclaw.json.bak.1");
+        expect(openClawBackup.gateway).toEqual({ port: 18789 });
+        expect(openClawBackup.agents.defaults.model).toBe("nvidia/test-model");
+
+        const paired = read(".openclaw/devices/paired.json");
+        expect(paired.device.deviceId).toBe("device-1");
+        expect(paired.device.publicKey).toBe("public-verification-material");
+        expect(paired.device.tokens.operator.token).toBe("[STRIPPED_BY_MIGRATION]");
+        expect(paired.device.tokens.operator.scopes).toEqual(["operator.read"]);
+
+        const identity = read(".openclaw/identity/device-auth.json");
+        expect(identity.deviceId).toBe("device-1");
+        expect(identity.tokens.operator.token).toBe("[STRIPPED_BY_MIGRATION]");
+
+        const whatsapp = read(".openclaw/credentials/whatsapp/default/creds.json");
+        expect(whatsapp).toEqual({
+          registrationId: 42,
+          authToken: "[STRIPPED_BY_MIGRATION]",
+        });
+        expect(read(".pi/agent/auth.json")).toEqual({
+          account: "managed-inference",
+          apiKey: "[STRIPPED_BY_MIGRATION]",
+        });
+        expect(read(".hermes/backups/config/config.yaml.good.20260928-213216")).toEqual({
+          model: "nvidia/test-model",
+          api_key: "[STRIPPED_BY_MIGRATION]",
+        });
+      });
+      for (const [relativePath, value] of files) {
+        expect(JSON.parse(fs.readFileSync(path.join(nativeRoot, relativePath), "utf8"))).toEqual(
+          value,
+        );
+      }
     } finally {
       fs.rmSync(fixture, { recursive: true, force: true });
     }
@@ -994,8 +1101,8 @@ describe("complete native home persistence", () => {
     }
   });
 
-  it.each(["directory-child", "regular-file"] as const)(
-    "fails restore instead of dropping archived state at an image-owned %s",
+  it.each(["directory-child", "regular-file", "identical-file"] as const)(
+    "handles archived state at an image-owned %s without data loss",
     async (collisionKind) => {
       const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-image-owned-"));
       const oldPath = process.env.PATH;
@@ -1042,7 +1149,7 @@ process.stdout.write(String(uid) + "\\n");
         fs.rmSync(imageOwned, { recursive: true, force: true });
         if (collisionKind === "directory-child") {
           fs.mkdirSync(imageOwned, { mode: 0o555 });
-        } else {
+        } else if (collisionKind === "regular-file") {
           fs.writeFileSync(imageOwned, "replacement image authority");
         }
 
@@ -1051,12 +1158,17 @@ process.stdout.write(String(uid) + "\\n");
           backup.manifest!.backupPath,
         );
 
-        expect(restore.success).toBe(false);
-        expect(restore.error).toContain("native restore could not preserve archived state");
-        if (collisionKind === "directory-child") {
-          expect(fs.existsSync(path.join(imageOwned, "archived-child.txt"))).toBe(false);
+        if (collisionKind === "identical-file") {
+          expect(restore.success, restore.error).toBe(true);
+          expect(fs.readFileSync(imageOwned, "utf8")).toBe("archived file must not be dropped");
         } else {
-          expect(fs.readFileSync(imageOwned, "utf8")).toBe("replacement image authority");
+          expect(restore.success).toBe(false);
+          expect(restore.error).toContain("native restore could not preserve archived state");
+          if (collisionKind === "directory-child") {
+            expect(fs.existsSync(path.join(imageOwned, "archived-child.txt"))).toBe(false);
+          } else {
+            expect(fs.readFileSync(imageOwned, "utf8")).toBe("replacement image authority");
+          }
         }
         expect(fs.existsSync(backup.manifest!.backupPath)).toBe(true);
       } finally {

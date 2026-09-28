@@ -113,6 +113,12 @@ describe.concurrent("CLI dispatch", () => {
       expect(config.out).toContain("$ nemoclaw alpha config get");
       expect(config.out).not.toContain("$ nemoclaw sandbox config get");
       expect(config.out).toContain("--format json|yaml");
+
+      const rebuild = await runWithEnvAsync("alpha rebuild --help", testHome.environment());
+      expect(rebuild.code).toBe(0);
+      expect(rebuild.out).toContain(
+        "Back up, recreate, and restore a sandbox using the current agent image.",
+      );
     },
   );
 

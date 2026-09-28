@@ -46,6 +46,7 @@ import { GATEWAY_PORT } from "../core/ports.js";
 import { shellQuote } from "../runner.js";
 import { createTempSshConfig } from "../sandbox/temp-ssh-config.js";
 import {
+  CREDENTIAL_PLACEHOLDER,
   isConfigValue,
   isCredentialField,
   isDependencyLockfile,
@@ -892,51 +893,6 @@ function dependencyPackageManifestIsCredentialFree(raw: string): boolean {
   return inspect(value);
 }
 
-const NATIVE_RUNTIME_NON_CONFIG_SEGMENTS = new Set([
-  ".cache",
-  ".venv",
-  "build",
-  "cache",
-  "dist",
-  "history",
-  "logs",
-  "node_modules",
-  "schema",
-  "schemas",
-  "sessions",
-  "site-packages",
-  "venv",
-  "workspace",
-]);
-const NATIVE_STRUCTURED_CONFIG_NAMES = new Set([
-  "accounts.json",
-  "auth-profiles.json",
-  "auth.json",
-  "channels.json",
-  "config.json",
-  "config.yaml",
-  "config.yml",
-  "credentials.json",
-  "hermes.json",
-  "mcp.json",
-  "models.json",
-  "openclaw.json",
-  "providers.json",
-  "settings.json",
-]);
-
-function shouldScanNativeStructuredConfig(entry: string, fileName: string): boolean {
-  const normalized = path.posix.normalize(entry.replace(/^\.\//u, ""));
-  const segments = normalized.split("/");
-  if (fileName === "package.json") return !segments.includes("node_modules");
-  if (segments.some((segment) => NATIVE_RUNTIME_NON_CONFIG_SEGMENTS.has(segment))) return false;
-  if (fileName === "tsconfig.json" || fileName.endsWith(".schema.json")) {
-    return false;
-  }
-  if (NATIVE_STRUCTURED_CONFIG_NAMES.has(fileName)) return true;
-  return false;
-}
-
 type ExtractedNativeCredentialCandidate =
   | { kind: "content"; content: Buffer }
   | { kind: "oversize" };
@@ -1124,6 +1080,104 @@ function withoutHermesMachineLocalApiKey(payload: Buffer): Buffer {
   return sanitized === source ? payload : Buffer.from(sanitized, "latin1");
 }
 
+type NativeStructuredAuthorityKind = "openclaw-config" | "credential-json" | "credential-yaml";
+
+function nativeStructuredAuthorityKind(
+  normalized: string,
+  fileName: string,
+): NativeStructuredAuthorityKind | null {
+  if (/^\.openclaw\/openclaw\.json(?:\.bak\.[^/]*)?$/u.test(normalized)) {
+    return "openclaw-config";
+  }
+  if (
+    isSensitiveFile(fileName) ||
+    /^\.openclaw\/(?:devices|identity)\/(?:device(?:-auth)?|paired|pending)\.json$/u.test(
+      normalized,
+    ) ||
+    (!fileName.startsWith("._") && /^\.openclaw\/credentials\/.+\.json$/u.test(normalized))
+  ) {
+    return "credential-json";
+  }
+  if (
+    normalized === ".hermes/config.yaml" ||
+    normalized === ".hermes/config.yml" ||
+    /^\.hermes\/backups\/config\/config\.ya?ml\.[^/]+$/u.test(normalized)
+  ) {
+    return "credential-yaml";
+  }
+  return null;
+}
+
+const OMIT_STRIPPED_CREDENTIAL = Symbol("omit stripped credential");
+
+function withoutStrippedCredentialFields(value: unknown): unknown {
+  if (value === CREDENTIAL_PLACEHOLDER) return OMIT_STRIPPED_CREDENTIAL;
+  if (Array.isArray(value)) {
+    return value.map((child) => {
+      const sanitized = withoutStrippedCredentialFields(child);
+      return sanitized === OMIT_STRIPPED_CREDENTIAL ? null : sanitized;
+    });
+  }
+  if (!isObjectRecord(value)) return value;
+  return Object.fromEntries(
+    Object.entries(value).flatMap(([key, child]) => {
+      const sanitized = withoutStrippedCredentialFields(child);
+      return sanitized === OMIT_STRIPPED_CREDENTIAL ? [] : [[key, sanitized]];
+    }),
+  );
+}
+
+function sanitizedStructuredAuthority(
+  payload: Buffer,
+  size: number,
+  normalized: string,
+  kind: NativeStructuredAuthorityKind,
+): Buffer | string {
+  let config: unknown;
+  try {
+    config =
+      kind === "credential-yaml"
+        ? parseYaml(payload.toString("utf8"))
+        : JSON.parse(payload.toString("utf8"));
+  } catch {
+    return `the machine-local configuration at '${normalized}' is not valid structured data`;
+  }
+  if (!isConfigValue(config)) {
+    return `the machine-local configuration at '${normalized}' is not a plain configuration value`;
+  }
+
+  let sanitized: unknown = config;
+  if (kind === "openclaw-config") {
+    if (!isObjectRecord(config)) {
+      return `the OpenClaw configuration at '${normalized}' is not an object`;
+    }
+    const gateway = config.gateway;
+    if (isObjectRecord(gateway) && Object.hasOwn(gateway, "auth")) {
+      sanitized = structuredClone(config);
+      const sanitizedGateway = (sanitized as Record<string, unknown>).gateway;
+      if (isObjectRecord(sanitizedGateway)) delete sanitizedGateway.auth;
+    }
+  } else {
+    sanitized = stripCredentials(config);
+  }
+  if (isDeepStrictEqual(sanitized, config)) return payload;
+
+  let serialized = Buffer.from(JSON.stringify(sanitized), "utf8");
+  if (serialized.byteLength > size && kind !== "openclaw-config") {
+    const compact = withoutStrippedCredentialFields(sanitized);
+    serialized = Buffer.from(
+      JSON.stringify(compact === OMIT_STRIPPED_CREDENTIAL ? null : compact),
+      "utf8",
+    );
+  }
+  if (serialized.byteLength > size) {
+    return `the machine-local configuration at '${normalized}' cannot be sanitized in place`;
+  }
+  const replacement = Buffer.alloc(size, 0x20);
+  serialized.copy(replacement);
+  return replacement;
+}
+
 /**
  * Remove machine-local runtime authority from the private archive copy. The
  * live native tree is never modified, and all other native state is retained.
@@ -1131,7 +1185,6 @@ function withoutHermesMachineLocalApiKey(payload: Buffer): Buffer {
  * single-copy operation. Replacement startup creates fresh local authority.
  */
 function sanitizeMachineLocalArchiveConfig(archivePath: string): string | null {
-  const openClawTarget = ".openclaw/openclaw.json";
   const hermesTarget = ".hermes/.env";
   let descriptor: number | null = null;
   try {
@@ -1171,7 +1224,9 @@ function sanitizeMachineLocalArchiveConfig(archivePath: string): string | null {
         const entry = nextPath ?? headerPath;
         nextPath = null;
         const normalized = path.posix.normalize(entry.replace(/^\.\//u, ""));
-        if (normalized === openClawTarget || normalized === hermesTarget) {
+        const fileName = path.posix.basename(normalized).toLowerCase();
+        const structuredKind = nativeStructuredAuthorityKind(normalized, fileName);
+        if (structuredKind || normalized === hermesTarget) {
           if (found.has(normalized)) {
             return `the native archive contains duplicate machine-local configuration at '${normalized}'`;
           }
@@ -1188,23 +1243,14 @@ function sanitizeMachineLocalArchiveConfig(archivePath: string): string | null {
           if (normalized === hermesTarget) {
             replacement = withoutHermesMachineLocalApiKey(payload);
           } else {
-            let config: unknown;
-            try {
-              config = JSON.parse(payload.toString("utf8"));
-            } catch {
-              return "the OpenClaw configuration is not valid JSON";
-            }
-            if (!isObjectRecord(config)) return "the OpenClaw configuration is not an object";
-            const gateway = config.gateway;
-            if (isObjectRecord(gateway) && Object.hasOwn(gateway, "auth")) {
-              delete gateway.auth;
-              const sanitized = Buffer.from(`${JSON.stringify(config)}\n`, "utf8");
-              if (sanitized.byteLength > size) {
-                return "the OpenClaw configuration cannot be sanitized in place";
-              }
-              replacement = Buffer.alloc(size, 0x20);
-              sanitized.copy(replacement);
-            }
+            const sanitized = sanitizedStructuredAuthority(
+              payload,
+              size,
+              normalized,
+              structuredKind!,
+            );
+            if (typeof sanitized === "string") return sanitized;
+            replacement = sanitized;
           }
           if (replacement !== payload) {
             if (!writeArchiveRange(descriptor, dataOffset, replacement)) {
@@ -1375,16 +1421,9 @@ function nativeArchiveCredentialViolation(
     const isLockfile = isDependencyLockfile(fileName);
     const segments = path.posix.normalize(entry.replace(/^\.\//u, "")).split("/");
     const isDependencyPackage = fileName === "package.json" && segments.includes("node_modules");
-    if (isSensitiveFile(fileName)) return entry;
+    const isSensitive = isSensitiveFile(fileName);
     const isEnv = fileName === ".env" || fileName.endsWith(".env");
-    const isStructured =
-      fileName.endsWith(".json") || fileName.endsWith(".yaml") || fileName.endsWith(".yml");
-    if (
-      !isLockfile &&
-      !isDependencyPackage &&
-      !isEnv &&
-      (!isStructured || !shouldScanNativeStructuredConfig(entry, fileName))
-    ) {
+    if (!isLockfile && !isDependencyPackage && !isEnv && !isSensitive) {
       continue;
     }
     candidates.push({
@@ -1824,14 +1863,14 @@ function backupNativeSandboxState(sandboxName: string, options: BackupOptions): 
           "self=$$",
           'ancestors=" $self "',
           "cursor=$PPID",
-          'while [ "$cursor" -gt 1 ] 2>/dev/null; do ancestors="$ancestors$cursor "; parent=""; while IFS=":" read -r key value; do if [ "$key" = "PPid" ]; then set -- $value; parent=${1:-}; break; fi; done < "/proc/$cursor/status"; cursor=$parent; [ -n "$cursor" ] || break; done',
+          'while [ "$cursor" -gt 1 ] 2>/dev/null; do ancestors="$ancestors$cursor "; parent=""; { while IFS=":" read -r key value; do if [ "$key" = "PPid" ]; then set -- $value; parent=${1:-}; break; fi; done < "/proc/$cursor/status"; } 2>/dev/null || break; cursor=$parent; [ -n "$cursor" ] || break; done',
           'collect_candidates() { candidates=""; for proc in /proc/[0-9]*; do pid=${proc##*/}; case "$ancestors" in *" $pid "*) continue ;; esac; owner=""; while IFS=":" read -r key value; do if [ "$key" = "Uid" ]; then set -- $value; owner=${1:-}; break; fi; done < "$proc/status" 2>/dev/null || :; [ "$owner" = "$uid" ] && candidates="$candidates $pid"; done; }',
           'stopped=""',
           'resume() { [ -z "$stopped" ] || kill -CONT $stopped 2>/dev/null || :; }',
           "trap resume EXIT HUP INT TERM",
           "collect_candidates",
           'for pid in $candidates; do if kill -STOP "$pid" 2>/dev/null; then stopped="$stopped $pid"; fi; done',
-          'for pid in $stopped; do attempts=0; while [ -r "/proc/$pid/status" ]; do state=""; while IFS=":" read -r key value; do if [ "$key" = "State" ]; then set -- $value; state=${1:-}; break; fi; done < "/proc/$pid/status"; case "$state" in T*) break ;; esac; attempts=$((attempts + 1)); [ "$attempts" -lt 100 ] || exit 21; sleep 0.01; done; done',
+          'for pid in $stopped; do attempts=0; while [ -r "/proc/$pid/status" ]; do state=""; { while IFS=":" read -r key value; do if [ "$key" = "State" ]; then set -- $value; state=${1:-}; break; fi; done < "/proc/$pid/status"; } 2>/dev/null || break; case "$state" in T*) break ;; esac; attempts=$((attempts + 1)); [ "$attempts" -lt 100 ] || exit 21; sleep 0.01; done; done',
           "collect_candidates",
           'for pid in $candidates; do case " $stopped " in *" $pid "*) ;; *) exit 21 ;; esac; done',
           // Expand hard links into independent file content without following
@@ -2252,9 +2291,14 @@ async function restoreNativeSandboxState(
         '    [ "$target_item" = "$stage" ] && continue',
         '    name="${target_item##*/}"',
         '    source_item="$source_dir/$name"',
+        '    { [ -e "$source_item" ] || [ -L "$source_item" ]; } || continue',
         '    owner="$(stat -c %u -- "$target_item")"',
         '    if [ "$owner" = "$uid" ] && [ -w "$target_dir" ]; then',
         '      rm -rf -- "$target_item"',
+        '    elif [ -f "$target_item" ] && [ ! -L "$target_item" ] && [ -f "$source_item" ] && [ ! -L "$source_item" ] && cmp -s -- "$source_item" "$target_item"; then',
+        '      rm -f -- "$source_item"',
+        '    elif [ -L "$target_item" ] && [ -L "$source_item" ] && [ "$(readlink -- "$source_item")" = "$(readlink -- "$target_item")" ]; then',
+        '      rm -f -- "$source_item"',
         '    elif [ -d "$target_item" ] && [ ! -L "$target_item" ] && [ -d "$source_item" ] && [ ! -L "$source_item" ]; then',
         '      restore_dir "$source_item" "$target_item"',
         '      rmdir -- "$source_item"',

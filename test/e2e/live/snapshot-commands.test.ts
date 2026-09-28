@@ -4,7 +4,6 @@
 import { testTimeout } from "../../helpers/timeouts.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
-import { REPO_ROOT } from "../fixtures/paths.ts";
 
 test(
   "retired snapshot commands expose complete-state backup and rebuild replacements",
@@ -30,9 +29,8 @@ test(
     });
 
     progress.phase("inspect the exact candidate CLI surface");
-    const help = await host.command("node", ["bin/nemoclaw.js", "help"], {
+    const help = await host.nemoclaw(["help"], {
       artifactName: "snapshot-retirement-cli-help",
-      cwd: REPO_ROOT,
       timeoutMs: 60_000,
     });
     expect(help.exitCode, resultText(help)).toBe(0);
@@ -44,15 +42,10 @@ test(
     progress.phase("verify complete-state backup and rebuild replacements are discoverable");
     expect(helpText).toContain("nemoclaw backup-all");
     expect(helpText).toContain("nemoclaw <name> rebuild");
-    const rebuildHelp = await host.command(
-      "node",
-      ["bin/nemoclaw.js", "e2e-snapshot", "rebuild", "--help"],
-      {
-        artifactName: "complete-native-rebuild-cli-help",
-        cwd: REPO_ROOT,
-        timeoutMs: 60_000,
-      },
-    );
+    const rebuildHelp = await host.nemoclaw(["e2e-snapshot", "rebuild", "--help"], {
+      artifactName: "complete-native-rebuild-cli-help",
+      timeoutMs: 60_000,
+    });
     expect(rebuildHelp.exitCode, resultText(rebuildHelp)).toBe(0);
     expect(resultText(rebuildHelp)).toContain(
       "Back up, recreate, and restore a sandbox using the current agent image.",
