@@ -7,6 +7,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, expect, it } from "vitest";
+import { prepareNonRootChildProcess } from "../../../helpers/non-root-child-process";
 
 const START_SCRIPT = path.join(
   import.meta.dirname,
@@ -93,16 +94,24 @@ describe("agent identity reconciliation with provider (#3175)", () => {
       "/sandbox",
       root,
     );
+    const runAsActualNonRoot = options.uid !== undefined && options.uid !== 0;
     const wrapper = [
       "#!/usr/bin/env bash",
       "set -euo pipefail",
-      `id() { echo ${options.uid ?? 0}; }`,
+      runAsActualNonRoot
+        ? 'id() { command /usr/bin/id "$@"; }'
+        : `id() { echo ${options.uid ?? 0}; }`,
       helperFns,
       fn,
       "reconcile_agent_model_with_provider",
     ].join("\n");
     const script = path.join(root, "run.sh");
     fs.writeFileSync(script, wrapper, { mode: 0o700 });
+    const childCredentials = prepareNonRootChildProcess({
+      enabled: runAsActualNonRoot,
+      ownedPaths: [openclawDir, configPath, hashPath, script],
+      traversalRoot: root,
+    });
     // Build PATH: when the test installs an openshell stub, prepend its
     // bin dir; otherwise scrub openshell from the inherited PATH so the
     // probe deterministically reports "not installed".
@@ -123,6 +132,7 @@ describe("agent identity reconciliation with provider (#3175)", () => {
     const result = spawnSync("bash", [script], {
       encoding: "utf-8",
       env: { ...process.env, ...options.env, PATH: pathValue },
+      ...childCredentials,
     });
     const configRaw = fs.readFileSync(configPath, "utf-8");
     const config = JSON.parse(configRaw);
@@ -573,5 +583,25 @@ describe("agent identity reconciliation with provider (#3175)", () => {
     // model, models[0] stays untouched (same shape as the empty-probe case).
     expect(config.agents.defaults.model.primary).toBe("inference/nvidia/new-model");
     expect(config.models.providers.inference.models[0].id).toBe("nvidia/new-model");
+  });
+
+  it("rejects a gateway inference section without a provider", () => {
+    const { result, config } = runReconcile(
+      {
+        agents: { defaults: { model: { primary: "inference/old-model" } } },
+        models: {
+          providers: {
+            inference: {
+              models: [{ id: "file-model", name: "inference/file-model" }],
+            },
+          },
+        },
+      },
+      { gatewayRawOutput: "Inference:\n  Model: untrusted-gateway-model\n" },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(config.agents.defaults.model.primary).toBe("inference/file-model");
+    expect(config.models.providers.inference.models[0].id).toBe("file-model");
   });
 });

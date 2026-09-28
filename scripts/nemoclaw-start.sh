@@ -1184,6 +1184,7 @@ ansi_escape = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|[@-_])")
 lines = ansi_escape.sub("", result.stdout).splitlines()
 section_count = 0
 in_inference_section = False
+providers = []
 models = []
 for line in lines:
     if re.fullmatch(r"(?:Gateway )?Inference:\s*", line, re.IGNORECASE):
@@ -1195,14 +1196,24 @@ for line in lines:
         continue
     if not in_inference_section:
         continue
+    match = re.fullmatch(r"\s*Provider:\s*(.+?)\s*", line)
+    if match:
+        providers.append(match.group(1))
+        continue
     match = re.fullmatch(r"\s*Model:\s*(.+?)\s*", line)
     if match:
         models.append(match.group(1))
 
-if section_count != 1 or len(models) != 1:
+if section_count != 1 or len(providers) != 1 or len(models) != 1:
     raise SystemExit(0)
+provider = providers[0]
 model = models[0]
-if len(model) <= 512 and re.fullmatch(r"[A-Za-z0-9._:/-]+", model):
+if (
+    len(provider) <= 512
+    and re.fullmatch(r"[A-Za-z0-9._:/-]+", provider)
+    and len(model) <= 512
+    and re.fullmatch(r"[A-Za-z0-9._:/-]+", model)
+):
     print(model)
 PYPROBE
     )"

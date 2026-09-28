@@ -279,12 +279,6 @@ try:
         config = json.load(config_file)
         qualified_model = model if model.startswith("inference/") else f"inference/{model}"
         bare_model = model.removeprefix("inference/")
-        previous_primary = (
-            config.get("agents", {})
-            .get("defaults", {})
-            .get("model", {})
-            .get("primary")
-        )
         config.setdefault("agents", {}).setdefault("defaults", {}).setdefault("model", {})[
             "primary"
         ] = qualified_model
@@ -313,12 +307,7 @@ try:
             else:
                 selected = {}
                 models.append(selected)
-        previous_bare_model = (
-            previous_primary.removeprefix("inference/")
-            if isinstance(previous_primary, str)
-            else None
-        )
-        model_changed = previous_bare_model != bare_model
+        model_changed = selected.get("id") not in (bare_model, qualified_model)
         selected["id"] = bare_model
         selected["name"] = qualified_model
         for field in ("contextWindow", "maxTokens"):

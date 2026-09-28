@@ -8,6 +8,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { prepareNonRootChildProcess } from "../../../helpers/non-root-child-process";
 import { extractShellFunctionFromSource } from "../../../helpers/shell-source";
 
 const START_SCRIPT = path.join(
@@ -65,10 +66,13 @@ describe("runtime model override (#759)", () => {
       .join("\n")
       .replaceAll("/sandbox", root);
     const fn = extractShellFunction("apply_model_override").replaceAll("/sandbox", root);
+    const runAsActualNonRoot = options.uid !== undefined && options.uid !== 0;
     const wrapper = [
       "#!/usr/bin/env bash",
       "set -euo pipefail",
-      `id() { echo ${options.uid ?? 0}; }`,
+      runAsActualNonRoot
+        ? 'id() { command /usr/bin/id "$@"; }'
+        : `id() { echo ${options.uid ?? 0}; }`,
       "normalize_mutable_config_perms() { :; }",
       'run_openclaw_config_as_owner() { "$@"; }',
       `ensure_mutable_openclaw_config_hash() { (cd ${JSON.stringify(openclawDir)} && sha256sum openclaw.json >.config-hash); }`,
@@ -79,9 +83,15 @@ describe("runtime model override (#759)", () => {
     ].join("\n");
     const script = path.join(root, "run.sh");
     fs.writeFileSync(script, wrapper, { mode: 0o700 });
+    const childCredentials = prepareNonRootChildProcess({
+      enabled: runAsActualNonRoot,
+      ownedPaths: [openclawDir, configPath, hashPath, script],
+      traversalRoot: root,
+    });
     const result = spawnSync("bash", [script], {
       encoding: "utf-8",
       env: { ...process.env, ...env },
+      ...childCredentials,
     });
     const configRaw = fs.readFileSync(configPath, "utf-8");
     const config = JSON.parse(configRaw);

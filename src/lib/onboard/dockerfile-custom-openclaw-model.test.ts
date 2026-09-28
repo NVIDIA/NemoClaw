@@ -180,8 +180,26 @@ describe("custom OpenClaw model reconciliation", () => {
       {
         id: "selected-model",
         name: "inference/selected-model",
+        contextWindow: 65_536,
+        maxTokens: 2048,
       },
     ]);
+  });
+
+  it("removes stale limits when primary matches but the selected entry does not (#12033)", () => {
+    const { configPath, dockerfilePath } = fixture();
+    const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    config.agents.defaults.model.primary = "inference/selected-model";
+    fs.writeFileSync(configPath, JSON.stringify(config));
+    const { result } = patchAndRun(dockerfilePath, configPath, "selected-model");
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(
+      JSON.parse(fs.readFileSync(configPath, "utf8")).models.providers.inference.models[0],
+    ).toEqual({
+      id: "selected-model",
+      name: "inference/selected-model",
+    });
   });
 
   it("appends a selected model when a multi-model config does not contain it (#12033)", () => {
