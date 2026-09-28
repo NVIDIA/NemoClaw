@@ -474,10 +474,14 @@ unchanged because this contract replaces a redundant nonempty-log assertion in t
 The `ubuntu-repo-cloud-langchain-deepagents-code` target owns live Deep Agents export evidence for
 Issue #11860. Its ordered checks first exercise opt-in observability and thread approval, then restore
 the disabled baseline. The TUI check then runs without changing that registry baseline. The installed
-CLI must emit a v1alpha1 document with the `deepagents` harness, hosted OpenAI-compatible route,
+CLI on Docker must emit a v1alpha1 document with the `deepagents` harness, hosted OpenAI-compatible route,
 credential reference, and independently observed effective policy.
-The fixture compares the registry before and after export, and state validation confirms that the
+On Docker, the fixture compares the registry before and after export. State validation confirms that the
 sandbox remains ready after the read-only command.
+Registry targets on Podman require the unsupported-runtime refusal and no output file.
+They retain source identity observations, state checks, target-specific checks, and cleanup.
+Successful-export schema, secret, and pinned-consumer checks remain on Docker because v1alpha1 export does not support Podman.
+The fixture contract is covered in `support/e2e-phase-config-export-validation.test.ts`; runtime refusal and Brave gating are covered in `support/podman-config-export-refusal.test.ts`.
 
 The OpenClaw shard of the pinned Docker `mcp-bridge` target also owns Error-state recovery for
 OpenShell 0.0.116. After its healthy-source rebuild checks, it kills only the runtime bound to the
@@ -622,7 +626,8 @@ Retained workflow jobs are exceptions to the catalogue shape.
 Keep one only for a multi-job handoff, an unrepresented credential boundary, or an execution contract the reusable profile cannot represent.
 
 The `brave-search` target qualifies configuration export after normal Brave-enabled OpenClaw onboarding.
-It validates two exports through the public schema, compares their specs, and requires a `BRAVE_API_KEY` reference without credential values or internal transports.
+On Docker, it validates two exports through the public schema, compares their specs, and requires a `BRAVE_API_KEY` reference without credential values or internal transports.
+On Podman, it requires the unsupported-runtime refusal and no output file before continuing the Brave lifecycle.
 The target retains checks of the materialized OpenClaw search configuration, credential isolation, real agent search, direct Brave API results, and disabled-search reuse.
 Private YAML files are removed during cleanup; artifacts retain redacted command results and an allowlisted qualification summary.
 The export assertions replace redundant checks within the same Brave lifecycle.
