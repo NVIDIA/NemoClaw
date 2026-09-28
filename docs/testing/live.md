@@ -16,11 +16,12 @@ It does not create a cluster.
 The external path requires no local Kubernetes tools; the managed path requires the explicit kubeconfig and client tools in the [managed gateway procedure](../kubernetes.md#provision-a-managed-development-gateway).
 Use the [existing-cluster prerequisites](../kubernetes.md#cluster-prerequisites) or the optional [local kind fixture](kubernetes-kind.md) to prepare the platform.
 
-Provide one OpenClaw sandbox with `runtime.provider: kubernetes`, an explicit immutable image, an external inference endpoint, the selected gateway configuration, a fresh deployment UID, and a new absolute state-directory path whose parent exists and is private.
-The deployment name is arbitrary; when adapting a multi-agent example, retain exactly one sandbox for this test.
+Provide one or more OpenClaw sandboxes with `runtime.provider: kubernetes`, explicit immutable images, an external inference endpoint, the selected gateway configuration, a fresh deployment UID, and a new absolute state-directory path whose parent exists and is private.
+The three-agent [managed development example](../../examples/kubernetes/managed-development.yaml) can be used after replacing its deployment and cluster inputs.
 Supply the YAML's credential environment references to the test process using the [shared credential mechanism](../kubernetes.md#supply-credentials-as-on-docker).
-The test creates the sandbox and provider registrations, invokes the model, exports through the CLI, requires an unchanged reapply, and destroys the owned workload on success.
-It makes a real model request and may incur provider charges.
+The test creates every declared sandbox and the provider registrations, verifies a real model response from each agent, requires a no-op plan, exports through the CLI with an unchanged configuration digest, and reapplies without changes.
+It verifies that sandbox and managed platform resource IDs remain unchanged across export and reapply, then destroys every owned sandbox and provider registration on success.
+Each agent request may incur provider charges.
 The cluster, OpenShell workspace, and SDK state remain; failures retain resources and state for explicit recovery.
 An external gateway remains under its existing owner.
 For a managed gateway, the test installs the platform during apply and uninstalls its owned OpenShell release after agent teardown while retaining credentials, storage, and prerequisites.
@@ -36,7 +37,7 @@ NEMOCLAW_TEST_KUBERNETES_STATE=/absolute/path/to/new-state \
 ```
 
 Do not reuse a deployment UID that was applied manually or by another test with a new state directory.
-To verify a model response from an already applied, idle deployment, retain its original state and run only the response test:
+To verify a model response from every agent in an already applied, idle deployment, retain its original state and run only the response test:
 
 ```sh
 NEMOCLAW_TEST_KUBERNETES_CONFIG=/absolute/path/to/owned-deployment.yaml \
@@ -45,10 +46,11 @@ NEMOCLAW_TEST_KUBERNETES_STATE=/absolute/path/to/retained-state \
     owned_kubernetes_agent_response_from_retained_state -- --ignored --exact
 ```
 
-This invokes the agent through OpenShell, may run its tools, and does not delete resources.
-For a managed gateway, the SDK holds the authenticated tunnel for the request and closes it afterward.
+Both tests require the exact declared sandbox bindings in retained state before invoking any agent.
+The response test invokes every agent through OpenShell, may run its tools, and does not delete resources.
+For a managed gateway, the SDK holds one authenticated tunnel across the sequential agent requests and closes it afterward.
 Do not run another command using the same managed loopback port concurrently.
-The recorded [managed](../validation/kubernetes-managed-kind-linux-amd64.md) and [external gateway](../validation/kubernetes-kind-linux-amd64.md) results cover the local Linux AMD64 kind profile only.
+The recorded [three-agent managed](../validation/kubernetes-managed-three-agents-linux-amd64.md) and [external gateway](../validation/kubernetes-kind-linux-amd64.md) results cover the local Linux AMD64 kind profile only.
 
 ## Dependency Upgrade Test
 

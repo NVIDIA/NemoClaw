@@ -197,7 +197,7 @@ Before applying, replace the image placeholder in every sandbox and supply one f
 Use one SDK state directory for all three sandboxes in that deployment.
 Before the first apply, choose the agent count by adding or removing complete `spec.sandboxes` entries; keep sandbox names unique and retain the selected network policy on each entry.
 The examples are checked by the schema and parser.
-The [managed live validation](validation/kubernetes-managed-kind-linux-amd64.md) covers three OpenClaw sandboxes through apply, export, unchanged reapply, and destroy, with one real agent response.
+The [fresh three-agent live validation](validation/kubernetes-managed-three-agents-linux-amd64.md) covers managed provisioning, a real hosted response from every agent, export, unchanged reapply, and destroy.
 
 ### Reuse the Docker Hosted NVIDIA Profile
 
@@ -213,9 +213,8 @@ The [recorded live test](validation/kubernetes-kind-linux-amd64.md#observed-resu
 
 For an external gateway with an authenticated OpenShell CLI connection, use [headless OpenClaw invocation](agents.md#run-one-headless-openclaw-request) to verify an actual model response separately from apply.
 A managed gateway closes its tunnel after each SDK operation and does not configure the OpenShell CLI.
-For an already applied managed deployment containing exactly one sandbox, use the [response-only SDK test](testing/live.md#kubernetes), which opens its own authenticated tunnel.
-That test does not accept the three-sandbox sample; select one sandbox before the first apply when preparing an inference qualification run.
-For a disposable single-agent deployment, the opt-in [Kubernetes lifecycle test](testing/live.md#kubernetes) checks apply, a model response, export, unchanged reapply, and destroy through the supplied gateway.
+For an already applied managed deployment, use the [response-only SDK test](testing/live.md#kubernetes), which opens one authenticated tunnel and verifies a real response from every declared agent.
+For a disposable deployment, including the three-agent sample, the opt-in [Kubernetes lifecycle test](testing/live.md#kubernetes) checks apply, every agent’s model response, a no-op plan, export with the original configuration digest, unchanged resource IDs on reapply, and teardown of every sandbox through the supplied gateway.
 It does not create or delete a cluster.
 
 To remove all agents and owned provider registrations in the deployment, run from the directory containing its original state:

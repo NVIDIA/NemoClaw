@@ -8,16 +8,182 @@ pub mod openshell;
 #[path = "../../test-support/docker.rs"]
 pub mod docker;
 
-/// Explicit, opt-in generation check for an owned live OpenClaw or Hermes deployment.
-/// Reads its durable sandbox binding; does not run as part of apply.
+fn select_sandbox_bindings(
+    targets: &[nemoclaw_sdk::compile::Target],
+    state: &serde_json::Value,
+) -> Result<std::collections::BTreeMap<String, nemoclaw_sdk::backend::Row>, &'static str> {
+    use std::collections::{BTreeMap, BTreeSet};
+    let expected: BTreeMap<_, _> = targets
+        .iter()
+        .filter(|target| target.kind == "sandbox")
+        .map(|target| (target.address.as_str(), &target.values))
+        .collect();
+    if expected.is_empty() {
+        return Err("expected at least one declared sandbox");
+    }
+    let mut bindings = BTreeMap::new();
+    let mut ids = BTreeSet::new();
+    for resource in state["resources"]
+        .as_array()
+        .ok_or("missing resources")?
+        .iter()
+        .filter(|resource| resource["type"] == "nemoclaw_sandbox")
+    {
+        if resource["mode"] != "managed" || !resource["module"].is_null() {
+            return Err("unexpected sandbox resource address");
+        }
+        let address = format!(
+            "nemoclaw_sandbox.{}",
+            resource["name"].as_str().ok_or("missing sandbox address")?
+        );
+        let target = expected
+            .get(address.as_str())
+            .ok_or("undeclared sandbox binding")?;
+        let instances = resource["instances"]
+            .as_array()
+            .ok_or("missing sandbox instances")?;
+        let [instance] = instances.as_slice() else {
+            return Err("expected one current sandbox instance");
+        };
+        if !instance["deposed"].is_null() || !instance["index_key"].is_null() {
+            return Err("unexpected sandbox instance address");
+        }
+        let binding: nemoclaw_sdk::backend::Row =
+            serde_json::from_value(instance["attributes"].clone())
+                .map_err(|_| "invalid sandbox binding")?;
+        for field in [
+            "name",
+            "workspace",
+            "owner",
+            "generation",
+            "agent_name",
+            "agent_runtime",
+            "inference_json",
+        ] {
+            if target.get(field).is_none_or(String::is_empty)
+                || binding.get(field) != target.get(field)
+            {
+                return Err("sandbox binding disagrees with declared ownership or agent");
+            }
+        }
+        let id = binding
+            .get("id")
+            .filter(|id| !id.is_empty())
+            .ok_or("missing sandbox ID")?;
+        if !ids.insert(id.clone()) || bindings.insert(binding["name"].clone(), binding).is_some() {
+            return Err("duplicate sandbox binding");
+        }
+    }
+    if bindings.len() != expected.len() {
+        return Err("missing declared sandbox binding");
+    }
+    Ok(bindings)
+}
+
+#[test]
+fn multiple_sandbox_selection_requires_exact_owned_bindings() {
+    use nemoclaw_sdk::{compile, config::Document};
+    use serde_json::json;
+    let document = Document::parse(
+        include_str!("../../../examples/kubernetes/managed-development.yaml").as_bytes(),
+    )
+    .unwrap();
+    let generations = ["workspace", "provider", "sandbox"]
+        .into_iter()
+        .map(|kind| (kind.into(), format!("{kind}-generation")))
+        .collect();
+    let targets: Vec<_> = compile::targets(&document, &generations)
+        .unwrap()
+        .into_iter()
+        .filter(|target| target.kind == "sandbox")
+        .collect();
+    assert_eq!(targets.len(), 3);
+    let resources: Vec<_> = targets
+        .iter()
+        .rev()
+        .map(|target| {
+            let mut attributes = target.values.clone();
+            attributes.insert("id".into(), format!("physical-{}", attributes["name"]));
+            json!({
+                "mode": "managed", "type": "nemoclaw_sandbox",
+                "name": target.values["name"], "instances": [{"attributes": attributes}]
+            })
+        })
+        .collect();
+    let state = json!({"resources": resources});
+    let selected = select_sandbox_bindings(&targets, &state).unwrap();
+    assert_eq!(
+        selected.keys().map(String::as_str).collect::<Vec<_>>(),
+        ["assistant", "researcher", "reviewer"]
+    );
+    for (name, binding) in &selected {
+        assert_eq!(binding["id"], format!("physical-{name}"));
+    }
+    for path in [
+        "/resources/0/name",
+        "/resources/0/mode",
+        "/resources/0/instances/0/attributes/name",
+        "/resources/0/instances/0/attributes/owner",
+        "/resources/0/instances/0/attributes/generation",
+        "/resources/0/instances/0/attributes/workspace",
+        "/resources/0/instances/0/attributes/agent_name",
+        "/resources/0/instances/0/attributes/agent_runtime",
+        "/resources/0/instances/0/attributes/inference_json",
+    ] {
+        let mut invalid = state.clone();
+        *invalid.pointer_mut(path).unwrap() = json!("foreign");
+        assert!(
+            select_sandbox_bindings(&targets, &invalid).is_err(),
+            "{path}"
+        );
+    }
+    for id in [
+        json!(""),
+        state["resources"][1]["instances"][0]["attributes"]["id"].clone(),
+    ] {
+        let mut invalid = state.clone();
+        invalid["resources"][0]["instances"][0]["attributes"]["id"] = id;
+        assert!(select_sandbox_bindings(&targets, &invalid).is_err());
+    }
+    let mut missing = state.clone();
+    missing["resources"].as_array_mut().unwrap().pop();
+    assert!(select_sandbox_bindings(&targets, &missing).is_err());
+    let mut duplicate = state.clone();
+    duplicate["resources"]
+        .as_array_mut()
+        .unwrap()
+        .push(state["resources"][0].clone());
+    assert!(select_sandbox_bindings(&targets, &duplicate).is_err());
+    let mut extra_instance = state.clone();
+    extra_instance["resources"][0]["instances"]
+        .as_array_mut()
+        .unwrap()
+        .push(state["resources"][0]["instances"][0].clone());
+    assert!(select_sandbox_bindings(&targets, &extra_instance).is_err());
+    let mut deposed = state.clone();
+    deposed["resources"][0]["instances"][0]["deposed"] = json!("old");
+    assert!(select_sandbox_bindings(&targets, &deposed).is_err());
+    let mut indexed = state.clone();
+    indexed["resources"][0]["instances"][0]["index_key"] = json!(0);
+    assert!(select_sandbox_bindings(&targets, &indexed).is_err());
+    let mut module = state.clone();
+    module["resources"][0]["module"] = json!("module.foreign");
+    assert!(select_sandbox_bindings(&targets, &module).is_err());
+    let single = json!({"resources": [state["resources"][2].clone()]});
+    assert_eq!(
+        select_sandbox_bindings(&targets[..1], &single)
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+/// Explicit, opt-in generation check for one owned OpenClaw or Hermes deployment.
+/// Preserves the single-sandbox contract used by existing lifecycle tests.
 pub async fn verify_agent(
     document: &nemoclaw_sdk::config::Document,
     directory: &std::path::Path,
 ) -> String {
-    use nemoclaw_sdk::{
-        backend::Row,
-        openshell::{EnvironmentSecrets, OpenShell},
-    };
     let state: serde_json::Value =
         serde_json::from_slice(&std::fs::read(directory.join("terraform.tfstate")).unwrap())
             .unwrap();
@@ -25,11 +191,49 @@ pub async fn verify_agent(
         .as_array()
         .unwrap()
         .iter()
-        .filter(|r| r["type"] == "nemoclaw_sandbox")
+        .filter(|resource| resource["type"] == "nemoclaw_sandbox")
         .collect();
     assert_eq!(sandboxes.len(), 1);
-    let binding: Row =
+    let binding =
         serde_json::from_value(sandboxes[0]["instances"][0]["attributes"].clone()).unwrap();
+    verify_bound_agents(document, directory, [(String::new(), binding)].into())
+        .await
+        .pop_first()
+        .unwrap()
+        .1
+}
+
+/// Verify one real response per declared sandbox using its exact retained binding.
+/// Holds one managed gateway tunnel across all requests; never runs as part of apply.
+pub async fn verify_agents(
+    document: &nemoclaw_sdk::config::Document,
+    directory: &std::path::Path,
+) -> std::collections::BTreeMap<String, String> {
+    use nemoclaw_sdk::config::Document;
+    let state: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(directory.join("terraform.tfstate")).unwrap())
+            .unwrap();
+    let intent: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(directory.join("intent.json")).unwrap()).unwrap();
+    let retained: Document = serde_json::from_value(intent["document"].clone()).unwrap();
+    assert_eq!(
+        retained.digest(),
+        document.digest(),
+        "configuration must match retained intent"
+    );
+    let generations = serde_json::from_value(intent["generations"].clone()).unwrap();
+    let targets = nemoclaw_sdk::compile::targets(document, &generations).unwrap();
+    // Validate the complete set before opening a tunnel or invoking any agent.
+    let bindings = select_sandbox_bindings(&targets, &state).unwrap();
+    verify_bound_agents(document, directory, bindings).await
+}
+
+async fn verify_bound_agents(
+    document: &nemoclaw_sdk::config::Document,
+    directory: &std::path::Path,
+    bindings: std::collections::BTreeMap<String, nemoclaw_sdk::backend::Row>,
+) -> std::collections::BTreeMap<String, String> {
+    use nemoclaw_sdk::openshell::{EnvironmentSecrets, OpenShell};
     let connection = if document.spec.gateway.as_kubernetes().is_some() {
         let intent: serde_json::Value =
             serde_json::from_slice(&std::fs::read(directory.join("intent.json")).unwrap()).unwrap();
@@ -59,8 +263,12 @@ pub async fn verify_agent(
         )
         .unwrap()
     };
-    client.inference_ready(&binding).await.unwrap();
-    client.agent_response(&binding).await.unwrap()
+    let mut responses = std::collections::BTreeMap::new();
+    for (name, binding) in bindings {
+        client.inference_ready(&binding).await.unwrap();
+        responses.insert(name, client.agent_response(&binding).await.unwrap());
+    }
+    responses
 }
 
 /// OpenTofu may reorder cached precondition results and advance the serial on

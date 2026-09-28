@@ -191,7 +191,7 @@ python3 -m unittest discover -s tools/kubernetes -p 'test_*.py'
 ```
 
 Run the [Kubernetes lifecycle test](live.md#kubernetes) with this fixture's private configuration and a new state directory.
-The generated CPU configuration contains one OpenClaw sandbox, as required by that test.
+The generated CPU configuration contains one OpenClaw sandbox.
 Supply its three absolute paths as shown in the test guide.
 The test destroys the agent workload on success and retains the platform and SDK state.
 

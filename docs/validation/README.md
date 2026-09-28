@@ -25,6 +25,7 @@ The [harness and provider expansion](rust-harness-expansion-linux-arm64.md) reco
 The subsequent [managed Podman qualification](rust-managed-podman-linux-arm64.md) records the upstream TLS fix, real Deep Agents inference, lifecycle checks, and Docker upgrade results.
 The [Kubernetes kind development validation](kubernetes-kind-linux-amd64.md) records the local Linux AMD64 external-gateway stack, lifecycle checks, immutable artifacts, and upstream reliability limit.
 The [managed Kubernetes validation](kubernetes-managed-kind-linux-amd64.md) records SDK platform provisioning, three-agent lifecycle checks, hosted inference, and retained-storage teardown.
+The [fresh three-agent Kubernetes validation](kubernetes-managed-three-agents-linux-amd64.md) records a full managed lifecycle with a real hosted response from every agent.
 
 | Behavior | Tests and Results |
 |---|---|
