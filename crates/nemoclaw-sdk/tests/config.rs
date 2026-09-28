@@ -54,6 +54,41 @@ fn ownership_identity_depends_on_uid_while_intent_tracks_configuration() {
 }
 
 #[test]
+fn managed_gateway_preserves_an_external_component_requirement() {
+    let base = include_str!("fixtures/config/spark.yaml");
+    let source = base.replace(
+        "management: managed",
+        "management: managed\n    externalComponentRef: policy-governance",
+    );
+    assert_ne!(source, base);
+    let document = Document::parse(source.as_bytes()).unwrap();
+    let gateway = document.spec.gateway.as_managed().unwrap();
+    assert_eq!(
+        gateway.external_component_ref.as_deref(),
+        Some("policy-governance")
+    );
+    assert_eq!(
+        Document::parse(document.yaml().unwrap().as_bytes()).unwrap(),
+        document
+    );
+
+    let too_long = "a".repeat(65);
+    for invalid in ["", "openshell/system", "space name", too_long.as_str()] {
+        let candidate = source.replace("policy-governance", &format!("\"{invalid}\""));
+        assert!(
+            Document::parse(candidate.as_bytes()).is_err(),
+            "{invalid:?}"
+        );
+    }
+    assert!(Document::parse(source.replace("policy-governance", "42").as_bytes()).is_err());
+    let external = include_str!("fixtures/config/local.yaml").replace(
+        "management: external",
+        "management: external\n    externalComponentRef: policy-governance",
+    );
+    assert!(Document::parse(external.as_bytes()).is_err());
+}
+
+#[test]
 fn unsafe_yaml_and_secret_values_are_rejected_without_echoing_input() {
     let base = include_str!("fixtures/config/local.yaml");
     let changes = [

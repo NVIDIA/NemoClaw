@@ -291,6 +291,11 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
             json!({"description": "Whether this deployment manages the gateway."}),
         );
         if gateway["properties"]["management"]["const"] == "managed" {
+            property(
+                gateway,
+                "externalComponentRef",
+                json!({"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$", "maxLength": 64}),
+            );
             for (field, rule) in [
                 (
                     "endpoint",

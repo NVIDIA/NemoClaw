@@ -440,6 +440,12 @@
               "type": "string",
               "x-nemoclaw-default-rule": "Omitted or empty selects the default."
             },
+            "externalComponentRef": {
+              "description": "Operator-registered external component required by an exported deployment. The SDK does not install or activate it.",
+              "maxLength": 64,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+              "type": "string"
+            },
             "image": {
               "default": "ghcr.io/nvidia/openshell/gateway@sha256:ec2b0efea84fff198e888e97c85befb9c908acde92e8256f9b527877ed182d66",
               "description": "Managed gateway image pinned by the SDK.",

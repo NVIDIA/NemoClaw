@@ -163,6 +163,16 @@ impl Deployment {
         let mut document = document.clone();
         document.defaults();
         document.validate()?;
+        if document
+            .spec
+            .gateway
+            .as_managed()
+            .is_some_and(|gateway| gateway.external_component_ref.is_some())
+        {
+            return Err(Error::Conflict(
+                "external component activation is not supported by v1 plan or apply",
+            ));
+        }
         if cancel.is_cancelled() {
             return Err(Error::Cancelled);
         }

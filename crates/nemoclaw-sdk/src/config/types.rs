@@ -124,6 +124,13 @@ impl Default for Gateway {
 /// Managed Podman targets local rootless Linux; rootful, remote, and other platforms are unqualified.
 /// Installation settings for a managed local gateway.
 pub struct ManagedGateway {
+    #[serde(
+        rename = "externalComponentRef",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(default)]
+    /// Operator-registered external component required by an exported deployment. The SDK does not install or activate it.
+    pub external_component_ref: Option<String>,
     #[serde(rename = "endpoint")]
     #[schemars(default)]
     /// Local gateway HTTP origin with an unprivileged loopback port.
