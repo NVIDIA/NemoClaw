@@ -6,6 +6,10 @@ import { isDeepStrictEqual } from "node:util";
 
 import { restoreRecreatedSandboxStateWithManagedAuthority } from "../actions/sandbox/snapshot/restore-authority";
 import {
+  hermesDashboardStateMigrationRecoveryGuidance,
+  migrateHermesLegacyDashboardState,
+} from "../actions/sandbox/snapshot-hermes-gateway-hint";
+import {
   abortUnregisteredOpenClawPostRestoreDoctor,
   beginUnregisteredOpenClawBackupQuiesce,
   finishUnregisteredOpenClawPostRestoreDoctor,
@@ -74,6 +78,9 @@ export type CreatedSandboxFinalizationDeps = {
     options: RecreatedSandboxRestoreOptions,
     resolveTarget?: () => SandboxEntry | Promise<SandboxEntry>,
   ): RestoreResult | Promise<RestoreResult>;
+  migrateHermesLegacyDashboardState?(
+    sandboxName: string,
+  ): ReturnType<typeof migrateHermesLegacyDashboardState>;
   getDcodeSelectionDrift(
     sandboxName: string,
     provider: string,
@@ -790,6 +797,11 @@ export function createOnboardCreatedSandboxCompletion(
         commandExecutor,
         () => gateway.gatewayName,
       ),
+      migrateHermesLegacyDashboardState: (name) =>
+        migrateHermesLegacyDashboardState(name, undefined, {
+          commandExecutor,
+          gatewayName: gateway.gatewayName,
+        }),
       note,
       error: console.error,
       exitProcess: (code) => process.exit(code),
@@ -859,6 +871,9 @@ export async function finalizeCreatedSandbox(
     const restoreOptions = {
       targetAgentType: options.targetAgentType,
       ...(options.customImage ? { allowCustomImageWholeStateFileRestore: true } : {}),
+      ...(options.targetAgentType === "hermes"
+        ? { restoreLegacyMigrationStateDirs: ["dashboard-home"] }
+        : {}),
     } satisfies RecreatedSandboxRestoreOptions;
     const resolveTarget = async () => {
       preparedRegistration = await deps.revalidatePreparedRegistration!(preparedRegistration!);
@@ -880,6 +895,34 @@ export async function finalizeCreatedSandbox(
       `reporting restored state for sandbox '${options.sandboxName}'`,
     );
     if (restore.success) {
+      if (options.targetAgentType === "hermes") {
+        deps.revalidateSandboxIdentity?.(
+          `migrating restored Hermes dashboard state for sandbox '${options.sandboxName}'`,
+        );
+        const migrate = deps.migrateHermesLegacyDashboardState ?? migrateHermesLegacyDashboardState;
+        let migration: Awaited<ReturnType<typeof migrateHermesLegacyDashboardState>> = null;
+        try {
+          migration = await migrate(options.sandboxName);
+        } catch (error) {
+          deps.error(
+            `  Hermes legacy dashboard-state migration transport failed: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        }
+        if (migration?.status !== 0) {
+          deps.error(
+            "  Restored state could not be published because Hermes legacy dashboard-state migration did not complete.",
+          );
+          deps.error("  Registry metadata was not updated.");
+          const detail = migration?.stderr.trim();
+          if (detail) deps.error(`  ${detail.slice(0, 500)}`);
+          deps.error(`  ${hermesDashboardStateMigrationRecoveryGuidance(options.sandboxName)}`);
+          reportUnregisteredSandboxRecovery();
+          deps.error(`  Keep the snapshot for manual recovery: ${options.restoreBackupPath}`);
+          return deps.exitProcess(1);
+        }
+      }
       deps.note(
         `  ✓ State restored (${restore.restoredDirs.length} directories, ${restore.restoredFiles.length} files)`,
       );

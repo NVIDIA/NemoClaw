@@ -89,7 +89,7 @@ describe("runInferenceSet Hermes routing", () => {
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
   });
 
-  it("updates OpenShell, Hermes config.yaml, registry, and the matching onboard session", async () => {
+  it("updates OpenShell, Hermes config.yaml, and the registry without rewriting onboarding", async () => {
     const config: ConfigObject = {
       model: {
         default: "moonshotai/kimi-k2.6",
@@ -182,10 +182,10 @@ describe("runInferenceSet Hermes routing", () => {
       }),
     );
     expect(deps.getSession()).toMatchObject({
-      provider: "hermes-provider",
-      model: "openai/gpt-5.4-mini",
+      provider: "nvidia-prod",
+      model: "moonshotai/kimi-k2.6",
       endpointUrl: "https://inference.local/v1",
-      preferredInferenceApi: "openai-completions",
+      preferredInferenceApi: null,
     });
     expect(deps.calls.appendAuditEntry).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -201,7 +201,6 @@ describe("runInferenceSet Hermes routing", () => {
       primaryModelRef: "inference/openai/gpt-5.4-mini",
       providerKey: "inference",
       configChanged: true,
-      sessionUpdated: true,
     });
     expect(deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
     expect(deps.calls.resolveContextWindowForModel).toHaveBeenCalledWith(
@@ -248,46 +247,6 @@ describe("runInferenceSet Hermes routing", () => {
     expect(logs).toContain("omitting context_length so Hermes can discover it");
   });
 
-  it("re-seeds the isolated Hermes dashboard config after an in-place switch (#6893)", async () => {
-    const config: ConfigObject = {
-      model: {
-        default: "moonshotai/kimi-k2.6",
-        provider: "custom",
-        base_url: "https://inference.local/v1",
-      },
-    };
-    const deps = createDeps({
-      config,
-      entry: {
-        name: "hermes",
-        agent: "hermes",
-        provider: "hermes-provider",
-        model: "moonshotai/kimi-k2.6",
-      },
-      defaultSandbox: "hermes",
-      target: HERMES_TARGET,
-      session: baseSession({ agent: "hermes", sandboxName: "hermes" }),
-    });
-
-    await runInferenceSet(
-      {
-        provider: "hermes-provider",
-        model: "openai/gpt-5.4-mini",
-        sandboxName: "hermes",
-        noVerify: true,
-      },
-      deps,
-    );
-
-    // The dashboard-home config only re-mirrors the gateway model routing at
-    // startup, so the in-place switch must re-seed it or Dashboard Chat stays on
-    // the previous model. It must run after the gateway config was written.
-    expect(deps.calls.seedHermesDashboardConfig).toHaveBeenCalledWith("hermes", HERMES_TARGET);
-    const writeOrder = deps.calls.writeSandboxConfig.mock.invocationCallOrder[0];
-    const seedOrder = deps.calls.seedHermesDashboardConfig.mock.invocationCallOrder[0];
-    expect(seedOrder).toBeGreaterThan(writeOrder);
-  });
-
   it("fails after commit when the in-sandbox config write fails (#7083)", async () => {
     const config: ConfigObject = {
       model: { default: "moonshotai/kimi-k2.6", provider: "custom" },
@@ -324,9 +283,8 @@ describe("runInferenceSet Hermes routing", () => {
       message: expect.stringMatching(/Hermes inference route synchronization did not complete/),
     });
 
-    // A failed in-sandbox Hermes config write leaves the old config in place; re-seeding the
-    // dashboard from it would be pointless. The host route remains committed, but
-    // the command must fail so automation cannot accept a partial switch.
+    // The host route remains committed, but the command must fail so automation
+    // cannot accept a partial switch.
     expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
       "hermes",
       expect.objectContaining({
@@ -334,7 +292,6 @@ describe("runInferenceSet Hermes routing", () => {
         model: "openai/gpt-5.4-mini",
       }),
     );
-    expect(deps.calls.seedHermesDashboardConfig).not.toHaveBeenCalled();
   });
 
   it("fails after commit when the config hash refresh fails (#7083)", async () => {
@@ -381,97 +338,10 @@ describe("runInferenceSet Hermes routing", () => {
         model: "openai/gpt-5.4-mini",
       }),
     );
-    expect(deps.calls.seedHermesDashboardConfig).not.toHaveBeenCalled();
     const logs = deps.calls.log.mock.calls.map((call) => String(call[0]));
     expect(logs.some((line) => line.includes("failed to refresh its integrity hash"))).toBe(true);
     expect(logs.some((line) => line.includes("rebuild"))).toBe(true);
     expect(logs.some((line) => line.includes("Inference route synced"))).toBe(false);
-  });
-
-  it("fails after commit when the dashboard does not converge (#6893)", async () => {
-    const config: ConfigObject = {
-      model: {
-        default: "moonshotai/kimi-k2.6",
-        provider: "custom",
-        base_url: "https://inference.local/v1",
-      },
-    };
-    const deps = createDeps({
-      config,
-      entry: {
-        name: "hermes",
-        agent: "hermes",
-        provider: "hermes-provider",
-        model: "moonshotai/kimi-k2.6",
-      },
-      defaultSandbox: "hermes",
-      target: HERMES_TARGET,
-      session: baseSession({ agent: "hermes", sandboxName: "hermes" }),
-      seedHermesDashboardConfigResult: "failed",
-    });
-
-    await expect(
-      runInferenceSet(
-        {
-          provider: "hermes-provider",
-          model: "openai/gpt-5.4-mini",
-          sandboxName: "hermes",
-          noVerify: true,
-        },
-        deps,
-      ),
-    ).rejects.toMatchObject({
-      name: "InferenceSetError",
-      exitCode: 1,
-      message: expect.stringMatching(/committed route was not rolled back.*Restart the sandbox/u),
-    });
-
-    // The route, main config, durable session, and audit are already committed,
-    // but the command must fail instead of claiming complete convergence.
-    expect(deps.getSession()?.model).toBe("openai/gpt-5.4-mini");
-    expect(deps.calls.appendAuditEntry).toHaveBeenCalledOnce();
-    const logs = deps.calls.log.mock.calls.map((c) => String(c[0]));
-    expect(logs.some((l) => l.includes("Inference route synced"))).toBe(false);
-    expect(logs.some((l) => l.includes("could not refresh the dashboard"))).toBe(true);
-  });
-
-  it("still reports synced when the dashboard profile is absent (Dashboard disabled) (#6893)", async () => {
-    const config: ConfigObject = {
-      model: {
-        default: "moonshotai/kimi-k2.6",
-        provider: "custom",
-        base_url: "https://inference.local/v1",
-      },
-    };
-    const deps = createDeps({
-      config,
-      entry: {
-        name: "hermes",
-        agent: "hermes",
-        provider: "hermes-provider",
-        model: "moonshotai/kimi-k2.6",
-      },
-      defaultSandbox: "hermes",
-      target: HERMES_TARGET,
-      session: baseSession({ agent: "hermes", sandboxName: "hermes" }),
-      seedHermesDashboardConfigResult: "absent",
-    });
-
-    await runInferenceSet(
-      {
-        provider: "hermes-provider",
-        model: "openai/gpt-5.4-mini",
-        sandboxName: "hermes",
-        noVerify: true,
-      },
-      deps,
-    );
-
-    // Nothing to converge — the switch is fully applied, so it still reports synced
-    // and does not warn.
-    const logs = deps.calls.log.mock.calls.map((c) => String(c[0]));
-    expect(logs.some((l) => l.includes("Inference route synced"))).toBe(true);
-    expect(logs.some((l) => l.includes("could not refresh the dashboard"))).toBe(false);
   });
 
   it("keeps Hermes custom Anthropic switches off the managed Anthropic SSE frontend (#6289)", async () => {
@@ -547,11 +417,6 @@ describe("runInferenceSet Hermes routing", () => {
         preferredInferenceApi: "openai-completions",
       }),
     ]);
-    expect(deps.getSession()).toMatchObject({
-      provider: "compatible-anthropic-endpoint",
-      model: "claude-sonnet-proxy",
-      preferredInferenceApi: "openai-completions",
-    });
     expect(result).toMatchObject({
       providerKey: "inference",
       primaryModelRef: "inference/claude-sonnet-proxy",
