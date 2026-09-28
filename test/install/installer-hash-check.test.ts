@@ -421,6 +421,7 @@ const trustAlternateRelease = (source: string): string => {
       "98c46cfee5bc38cd378a991a7c60573836a6c774008caf5c5dd7bc6a1910e1ce",
       "60aa3d473597638b50bc9ba637a86dee08aed5727c1d0297f72476c0c6690f2f",
       "67bc3071e844cbe4cbc8c94084523804fab3d59b0c705077cdda822ce66fd1db",
+      "9bb436b8a08b085c5f7ca8a98bf1bc0cddc3cd51a792f897c6593499ab0b2da0",
     ],
     formula: {
       asset: "openshell.rb",
