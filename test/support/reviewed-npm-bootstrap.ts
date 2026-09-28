@@ -24,6 +24,7 @@ type FixtureOptions = {
   configFile?: (root: string) => string;
   environment?: (root: string) => NodeJS.ProcessEnv;
   installedVersion?: string;
+  packFailure?: boolean;
   mutateIdentity?: (identity: ReviewedNpmIdentity) => ReviewedNpmIdentity;
   prepare?: (root: string) => void;
 };
@@ -76,6 +77,10 @@ set -euo pipefail
 printf '%s\\n' "$*" >> "$NEMOCLAW_TEST_NPM_LOG"
 case "$1" in
   pack)
+    if [ "$NEMOCLAW_TEST_PACK_FAILURE" = "1" ]; then
+      printf 'npm error code E_FIXTURE_PACK\\n'
+      exit 47
+    fi
     pack_args="$*"
     while [ "$#" -gt 1 ]; do
       if [ "$1" = "--pack-destination" ]; then
@@ -110,6 +115,7 @@ esac
         NEMOCLAW_TEST_INSTALL_MARKER: installMarker,
         NEMOCLAW_TEST_INSTALLED_VERSION: options.installedVersion ?? "12.0.2",
         NEMOCLAW_TEST_NPM_LOG: npmLog,
+        NEMOCLAW_TEST_PACK_FAILURE: options.packFailure ? "1" : "0",
         PATH: `${bin}:${process.env.PATH ?? ""}`,
         RUNNER_TEMP: root,
       },

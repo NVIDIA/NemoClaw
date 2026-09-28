@@ -8,6 +8,18 @@ import { runReviewedNpmBootstrap } from "../../support/reviewed-npm-bootstrap";
 type BootstrapOptions = Parameters<typeof runReviewedNpmBootstrap>[0];
 
 describe("reviewed npm bootstrap", () => {
+  it("preserves a pack failure reported on stdout and its original status (#12192)", () => {
+    const fixture = runReviewedNpmBootstrap({ packFailure: true });
+    try {
+      expect(fixture.result.status).toBe(47);
+      expect(fixture.result.stdout).toContain("npm error code E_FIXTURE_PACK");
+      expect(fixture.npmInvocations).toHaveLength(1);
+      expect(fixture.installCalled).toBe(false);
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
   it.each([
     [
       "malformed version",

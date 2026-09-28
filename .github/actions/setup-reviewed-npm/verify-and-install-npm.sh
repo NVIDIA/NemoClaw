@@ -35,7 +35,7 @@ npm pack "npm@$version" \
   --pack-destination "$download_dir" \
   --userconfig /dev/null \
   --registry https://registry.npmjs.org/ \
-  --ignore-scripts --no-audit --no-fund >/dev/null
+  --ignore-scripts --no-audit --no-fund
 
 archive="$download_dir/npm-$version.tgz"
 actual_hashes="$download_dir/actual-hashes"
