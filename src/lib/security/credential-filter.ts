@@ -81,15 +81,14 @@ export function textContainsCredential(
   const assignment =
     /(?<![A-Za-z0-9_.-])["']?([_A-Za-z][_A-Za-z0-9.-]{0,127})["']?[ \t]*[:=][ \t]*(?:"([^"\r\n]*)"|'([^'\r\n]*)'|([^\s,;{}]+))/gu;
   for (;;) {
-    const match = assignment.exec(value);
+    const match = assignment.exec(withoutPlaceholders);
     if (!match) break;
     const field = match[1]!.replace(/^_+/u, "");
     const candidate = match[2] ?? match[3] ?? match[4] ?? "";
     if (
       !/^(?:module\.)?exports\./u.test(field) &&
       isCredentialField(field) &&
-      !isSafeCredentialPlaceholder(candidate) &&
-      textWithoutSafeCredentialFixtures(candidate).length >= 10
+      !isSafeCredentialPlaceholder(candidate)
     ) {
       return true;
     }

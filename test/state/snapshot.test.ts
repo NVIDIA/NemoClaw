@@ -742,6 +742,7 @@ describe("complete native home persistence", () => {
       ".openclaw/agents/child/session.log",
       "sessionToken=opaqueCredentialPayloadZ1234567890",
     ],
+    ["a short opaque credential assignment", "workspace/notes.txt", "password=abc"],
     [
       "an opaque npm registry credential",
       ".npmrc",

@@ -232,6 +232,7 @@ describe("textContainsHighConfidenceCredential", () => {
 describe("textContainsCredential", () => {
   it.each([
     "request failed: Authorization: Bearer opaqueCredentialPayloadZ1234567890",
+    "password=abc",
     "sessionToken=opaqueCredentialPayloadZ1234567890",
     '  "client_secret": "opaqueCredentialPayloadZ1234567890"',
     '{"nested":{"sessionToken":"opaqueCredentialPayloadZ1234567890"}}',
