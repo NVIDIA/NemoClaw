@@ -507,7 +507,6 @@ const providerModels: typeof import("./inference/provider-models") = require("./
 const validationRecovery: typeof import("./validation-recovery") = require("./validation-recovery");
 const openshellInstallFlow: typeof import("./onboard/openshell-install") = require("./onboard/openshell-install");
 const openshellPinFlow: typeof import("./onboard/openshell-pin") = require("./onboard/openshell-pin");
-
 import type { AgentDefinition } from "./agent/defs";
 import { isWebSearchEnabled } from "./inference/web-search";
 import {
@@ -2969,6 +2968,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             checkGatewayRouteCompatibility,
             preflightGatewayRouteDiscovery,
             getSandboxRecoveryAuthority: providerRecovery.getSandboxRecoveryAuthority,
+            withSandboxMutationLock: sandboxMutationLock.withSandboxMutationLock,
             withGatewayRouteMutationLock: gatewayRouteMutationLock.withGatewayRouteMutationLock,
             normalizeHermesAuthMethod,
             setupNim: (

@@ -168,6 +168,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
       sandboxName: string,
       sessionId: string | null | undefined,
     ): RecoveryAuthority;
+    withSandboxMutationLock?<T>(sandboxName: string, operation: () => Promise<T> | T): Promise<T>;
     withGatewayRouteMutationLock<T>(
       gatewayName: string,
       operation: () => Promise<T> | T,
@@ -377,26 +378,35 @@ async function retireFreshHostLocalInferenceState(input: {
   model: string;
   acceleration: HostLocalOllamaAccelerationAuthority;
   requireToolCalling: boolean;
+  withSandboxMutationLock?: <T>(sandboxName: string, operation: () => Promise<T> | T) => Promise<T>;
   hasSandboxLifecycleAuthority: (sandboxName: string) => boolean;
   retire?: (selection: HostLocalInferenceStartupSelectionInput) => Promise<boolean>;
   onRetired: () => void;
 }): Promise<void> {
-  if (!input.fresh || !input.sandboxName || !isHostLocalInferenceProvider(input.provider)) {
+  const sandboxName = input.sandboxName;
+  const retire = input.retire;
+  const withSandboxMutationLock = input.withSandboxMutationLock;
+  if (!input.fresh || !sandboxName || !isHostLocalInferenceProvider(input.provider)) {
     return;
   }
-  if (input.hasSandboxLifecycleAuthority(input.sandboxName)) return;
-  if (!input.retire) return;
-  const retired = await input.retire({
-    application: input.application,
-    sandboxName: input.sandboxName,
-    provider: input.provider,
-    model: input.model,
-    acceleration: input.acceleration,
-    requireToolCalling: input.requireToolCalling,
-    allowPublishedResume: false,
-    recover: false,
+  if (!retire) return;
+  if (!withSandboxMutationLock) {
+    throw new Error("Fresh host-local inference retirement requires sandbox lifecycle locking.");
+  }
+  await withSandboxMutationLock(sandboxName, async () => {
+    if (input.hasSandboxLifecycleAuthority(sandboxName)) return;
+    const retired = await retire({
+      application: input.application,
+      sandboxName,
+      provider: input.provider,
+      model: input.model,
+      acceleration: input.acceleration,
+      requireToolCalling: input.requireToolCalling,
+      allowPublishedResume: false,
+      recover: false,
+    });
+    if (retired) input.onRetired();
   });
-  if (retired) input.onRetired();
 }
 
 type HostLocalInferenceSetupOptions = {
@@ -1644,6 +1654,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       model: selectedModel,
       acceleration: selectedHostLocalOllamaAcceleration(gpu, gpuPassthrough),
       requireToolCalling: !allowToolsIncompatible,
+      withSandboxMutationLock: deps.withSandboxMutationLock,
       hasSandboxLifecycleAuthority: deps.hasSandboxLifecycleAuthority,
       retire: deps.retireHostLocalInferenceFreshState,
       onRetired: () => {
