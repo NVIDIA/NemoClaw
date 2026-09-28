@@ -18,24 +18,28 @@ afterEach(() => {
 });
 
 /** Exercise the installer output boundary without downloading or installing binaries. */
-function runInstall(tty: boolean, failed = false, existing = false) {
+function runInstall(tty: boolean, failed = false, existing = false, recovery = false) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-output-"));
   roots.push(root);
   fs.mkdirSync(path.join(root, "scripts"));
   fs.writeFileSync(
     path.join(root, "scripts/install-openshell.sh"),
-    failed
-      ? "#!/bin/bash\nprintf 'SHA-256 checksum verification failed\\n' >&2\nexit 7\n"
-      : "#!/bin/bash\nprintf 'openshell-cli.tar.gz: OK\\nopenshell-gateway.tar.gz: OK\\n'\n",
+    recovery
+      ? '#!/bin/bash\nif [ ! -f "$FIXTURE_ROOT/attempted" ]; then touch "$FIXTURE_ROOT/attempted"; exit 7; fi\nprintf "OpenShell Homebrew formula SHA-256 verified\\n"\n'
+      : failed
+        ? "#!/bin/bash\nprintf 'SHA-256 checksum verification failed\\n' >&2\nexit 7\n"
+        : "#!/bin/bash\nprintf 'openshell-cli.tar.gz: OK\\nopenshell-gateway.tar.gz: OK\\n'\n",
   );
   const probe = path.join(root, "probe.sh");
   fs.writeFileSync(
     probe,
     `source "$INSTALLER_UNDER_TEST" >/dev/null
-uname() { printf 'Linux\\n'; }
+uname() { printf '${recovery ? "Darwin" : "Linux"}\\n'; }
+observed_macos_openshell_install_method() { printf 'homebrew\\n'; }
+FORCE_FRESH_INSTALL=${recovery ? "1" : "0"}
 command_exists() { ${existing ? "return 0" : "return 1"}; }
 prefer_user_local_openshell() { return 0; }
-prefer_homebrew_openshell() { return 1; }
+prefer_homebrew_openshell() { return ${recovery ? "0" : "1"}; }
 install_nemoclaw_openshell_gateway_user_service() { printf 'SERVICE_INSTALLED\\n'; }
 NEMOCLAW_SOURCE_ROOT="$FIXTURE_ROOT"
 maybe_install_openshell_during_install ${existing ? "if-missing" : "force"}
@@ -59,6 +63,16 @@ maybe_install_openshell_during_install ${existing ? "if-missing" : "force"}
 }
 
 describe.each([false, true])("OpenShell installation output with terminal=%s", (tty) => {
+  it.skipIf(tty && !hasPty)(
+    "retains Homebrew recovery verification output before service setup",
+    () => {
+      const result = runInstall(tty, false, false, true);
+      expect(result.status, result.stderr).toBe(0);
+      const verification = result.stdout.indexOf("OpenShell Homebrew formula SHA-256 verified");
+      expect(verification).toBeGreaterThanOrEqual(0);
+      expect(result.stdout.indexOf("SERVICE_INSTALLED")).toBeGreaterThan(verification);
+    },
+  );
   it.skipIf(tty && !hasPty)("retains successful asset verification output (#12275)", () => {
     const result = runInstall(tty);
     expect(result.status, result.stderr).toBe(0);
