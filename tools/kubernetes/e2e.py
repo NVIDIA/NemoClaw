@@ -26,6 +26,8 @@ import uuid
 import zipfile
 from pathlib import Path
 
+from inference_check import InferenceCheckError, check_inference
+
 REPO = Path(__file__).resolve().parents[2]
 PYTHON = sys.executable
 KEY = "NVIDIA_INFERENCE_API_KEY"
@@ -458,9 +460,13 @@ class Runner:
             )
         if (self.state / "retry-inference.sh").is_file():
             self.emit(
-                "After resolving the failure, retry inference against retained state (keep the key exported):\n"
+                "For a transient inference failure, retry against the installed provider credential:\n"
                 + shlex.join(["sh", str(self.state / "retry-inference.sh")])
                 + "\n"
+            )
+            self.emit(
+                "Changing an exported key does not update the installed provider credential.\n"
+                "For HTTP 401, validate the key with e2e.py --check-inference, then start a fresh test if correcting the key.\n"
             )
         if self.cluster is None and (kind / "ownership.json").is_file():
             try:
@@ -490,15 +496,26 @@ class Runner:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument(
         "--keep-cluster",
         action="store_true",
         help="retain the disposable cluster after success; SDK destroy still runs",
+    )
+    modes.add_argument(
+        "--check-inference",
+        action="store_true",
+        help="check the exported key and sample model directly; do not build or create a cluster",
     )
     args = parser.parse_args()
     runner = None
     try:
         key, env = environ(os.environ)
+        print("Check hosted inference authentication", flush=True)
+        check_inference(key)
+        print("Hosted inference accepted the key and returned a valid result.", flush=True)
+        if args.check_inference:
+            return 0
         os.umask(0o077)
 
         def interrupted(signum, frame):
@@ -509,7 +526,7 @@ def main():
         runner.emit(f"Private test directory: {runner.state}\n")
         runner.execute(keep_cluster=args.keep_cluster)
         return 0
-    except (Error, OSError, ValueError, KeyboardInterrupt) as error:
+    except (Error, InferenceCheckError, OSError, ValueError, KeyboardInterrupt) as error:
         message = (
             "interrupted; resources retained"
             if isinstance(error, KeyboardInterrupt)

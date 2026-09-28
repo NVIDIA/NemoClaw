@@ -16,7 +16,9 @@ The script detects macOS or Linux and ARM64 or AMD64, prepares the pinned Rust a
 It does not change system packages, Docker permissions, or the default kubeconfig.
 
 The only required configuration input is `NVIDIA_INFERENCE_API_KEY`.
-This opt-in test creates a fresh disposable cluster and sends real requests to the hosted NVIDIA model configured in the [three-agent sample](../../examples/kubernetes/managed-development.yaml).
+This opt-in test first checks the key and model directly against the hosted NVIDIA endpoint, then creates a fresh disposable cluster and sends real requests from the agents configured in the [three-agent sample](../../examples/kubernetes/managed-development.yaml).
+If the direct request fails, the runner stops before building or creating cluster resources.
+The direct check uses verified HTTPS, refuses redirects, and sends one bounded request; it does not establish that inference inside a sandbox will succeed.
 On success, it destroys the deployment and deletes its owned cluster, including that cluster's volumes and Secrets.
 On failure or interruption, it retains the cluster and private state for diagnosis.
 Previous clusters are preserved.
@@ -32,7 +34,7 @@ If the key is already exported, run only the second command.
 The runner creates a private directory under `$HOME/.local/state/nemoclaw/k8s-e2e-*` and prints its path.
 It generates `deployment.yaml` from the managed example, selects an available loopback port, and uses the cluster's explicit private kubeconfig.
 No bundle, image, context, state-directory, or test configuration exports are needed.
-The inference key is passed only to the compiled lifecycle test; build tools and cluster setup do not receive it.
+The runner uses the inference key for the direct check and passes it to the compiled lifecycle test; build tools and cluster setup do not receive it.
 Generated manifests and retry commands contain environment references, never the key value.
 The log redacts the supplied key, and SDK diagnostics do not include upstream response bodies or credentials.
 Generated development authentication and retained SDK state remain private and outside Git.
@@ -45,7 +47,8 @@ Use `python3 tools/kubernetes/e2e.py --keep-cluster` to keep the cluster after a
 If the test fails, use the exact inspection and cleanup commands printed by the runner.
 The inspection command includes `--kubeconfig`; your default `kubectl` context remains unchanged.
 When a manifest has been generated, the runner also prints a single `sh .../retry-inference.sh` command that uses the retained test binary, manifest, and SDK state.
-Use it only after apply has completed, while the deployment is retained and the key remains exported.
+Use it only after apply has completed and the deployment is retained.
+This retry uses the provider credential already installed in OpenShell; re-exporting a different key does not update that credential.
 It invokes inference without rerunning apply or destroy and does not resume the remaining lifecycle assertions.
 Keep the matching bundle and checkout available for that retry.
 A new `e2e.py` invocation always starts a fresh test and leaves earlier failures intact.
@@ -54,6 +57,19 @@ Cleanup refuses deletion if a partially created cluster cannot prove its saved o
 The probe reports fixed failure categories such as missing credentials, TLS or DNS failure, timeout, malformed response, or selected HTTP statuses, together with the affected sandbox name.
 These messages do not reveal upstream response content.
 Older agent images retain the previous generic failure; this runner builds the current image.
+
+For an inference `HTTP 401`, check the key exported in this shell without building or creating a cluster:
+
+```sh
+python3 tools/kubernetes/e2e.py --check-inference
+```
+
+A direct `HTTP 401` means the hosted endpoint rejected that request's authentication; check for an incorrect, expired, or revoked key.
+Enter the replacement key privately using the initial `getpass` export command in this section and repeat the check.
+After correcting the key, run the full test again to install it in a fresh deployment, or follow the [existing-deployment credential update procedure](../kubernetes.md#supply-credentials-as-on-docker).
+The inference-only retry does not perform that update.
+If the direct check passes but a fresh deployment still returns `HTTP 401`, retain that deployment for investigation of the sandbox credential path; do not assume the key is invalid.
+The failed cluster remains until its printed ownership-checked cleanup command is run.
 
 The automated runner [passed on Linux AMD64](../validation/kubernetes-script-linux-amd64.md); Apple silicon still needs a live run on that host.
 

@@ -235,6 +235,57 @@ class LocalTestTests(unittest.TestCase):
             self.assertIn("fixture compiler diagnostic", (state / "test.log").read_text())
             self.assertNotIn("compiler-message", output.getvalue())
 
+    def test_check_only_validates_key_without_creating_state_or_building(self):
+        with (
+            patch.dict(os.environ, {e2e.KEY: "private-test-key"}, clear=True),
+            patch("sys.argv", ["e2e.py", "--check-inference"]),
+            patch("sys.stdout", io.StringIO()) as output,
+            patch.object(e2e, "check_inference", create=True) as check,
+            patch.object(e2e, "new_state") as create,
+            patch.object(e2e.Runner, "execute") as execute,
+        ):
+            self.assertEqual(e2e.main(), 0)
+        check.assert_called_once_with("private-test-key")
+        create.assert_not_called()
+        execute.assert_not_called()
+        self.assertNotIn("private-test-key", output.getvalue())
+        self.assertIn("accepted", output.getvalue())
+
+    def test_rejected_key_stops_before_build_and_cluster_for_both_modes(self):
+        for arguments in [[], ["--check-inference"]]:
+            with (
+                self.subTest(arguments=arguments),
+                patch.dict(os.environ, {e2e.KEY: "private-test-key"}, clear=True),
+                patch("sys.argv", ["e2e.py", *arguments]),
+                patch("sys.stdout", io.StringIO()) as output,
+                patch("sys.stderr", io.StringIO()) as error,
+                patch.object(
+                    e2e,
+                    "check_inference",
+                    side_effect=e2e.InferenceCheckError(
+                        "HTTP 401: inference authentication rejected"
+                    ),
+                ) as check,
+                patch.object(e2e, "new_state") as create,
+                patch.object(e2e.Runner, "execute") as execute,
+            ):
+                self.assertEqual(e2e.main(), 1)
+            create.assert_not_called()
+            execute.assert_not_called()
+            check.assert_called_once_with("private-test-key")
+            self.assertIn("HTTP 401", error.getvalue())
+            self.assertNotIn("private-test-key", output.getvalue() + error.getvalue())
+
+    def test_inference_retry_guidance_does_not_claim_to_refresh_key(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            (state / "retry-inference.sh").write_text("#!/bin/sh\n")
+            runner = e2e.Runner(state, "private-test-key", {})
+            with patch("sys.stdout", io.StringIO()) as output:
+                runner.failure("HTTP 401")
+            self.assertIn("does not update the installed provider credential", output.getvalue())
+            self.assertIn("--check-inference", output.getvalue())
+
     def test_missing_key_fails_before_creating_state_or_starting_processes(self):
         with (
             patch.dict(os.environ, {}, clear=True),
