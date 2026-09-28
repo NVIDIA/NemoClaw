@@ -100,8 +100,8 @@ Do not use `observedAt` as build identity.
 When `DOCKER_CONTEXT` is unset, the report rejects an unsupported explicit `DOCKER_HOST` before it uses Docker daemon evidence.
 `host.docker.host_invalid` records whether the configured endpoint is invalid, `host.docker.endpoint_supported` is absent when a configured endpoint is not an absolute local `unix://` socket, and the blocking `host.docker.host_invalid` finding identifies that condition.
 TCP, SSH, relative Unix socket, and unsafe path values do not fall back to the default Docker socket.
-`DOCKER_CONTEXT` overrides `DOCKER_HOST`, matching the Docker CLI, and NemoClaw never replaces a selected context with a discovered fallback socket.
-When `DOCKER_CONTEXT` names a context, NemoClaw resolves that context to its endpoint, so readiness, onboarding, and every later Docker command measure the daemon you selected.
+`DOCKER_HOST` overrides `DOCKER_CONTEXT`, matching Docker CLI behavior when both variables are set.
+When `DOCKER_HOST` is unset and `DOCKER_CONTEXT` names a context, NemoClaw resolves that context to its endpoint, so readiness, onboarding, and every later Docker command measure the daemon you selected.
 A context that resolves to an absolute local `unix://` socket becomes the selected `DOCKER_HOST`.
 A context that does not resolve, or that names any other endpoint, is reported through `host.docker.host_invalid` and the `invalid_docker_host` advisory instead of falling back to the default Docker socket.
 
