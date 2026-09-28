@@ -9,6 +9,7 @@ import { isDeepStrictEqual } from "node:util";
 import { capturePodmanSocketAuthority, type PodmanSocketAuthority } from "../../adapters/podman";
 import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../inference/ollama/contract";
 import type { SandboxEntry } from "../../state/registry";
+import { assertCurrentPortableHostFenceHeld } from "../../state/portable-uninstall-retirement";
 import {
   inspectHermesPortableUninstallDirectoryAuthority,
   retireHermesPortableUninstallDirectory,
@@ -176,6 +177,7 @@ export async function retireHermesPortableOllamaFreshState(
   requirePortableOllamaModel(input.model);
 
   const runtimeContext = options.runtimeContext;
+  assertCurrentPortableHostFenceHeld(runtimeContext.authority.homeDir);
   if (!runtimeContext.environmentScope) {
     throw new Error("Hermes Portable inference has no active environment authority.");
   }
