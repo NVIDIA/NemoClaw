@@ -99,7 +99,7 @@ describe("E2E workflow plan", () => {
       }),
     ]);
     expect(plan.hermesSelected).toBe(true);
-    expect(plan.coverageMatrix).toHaveLength(78);
+    expect(plan.coverageMatrix).toHaveLength(77);
     expect(selectedWorkflowJobs(plan)).toEqual([
       "catalogue-brave-nvidia-inference",
       "catalogue-github-read",
@@ -158,7 +158,7 @@ describe("E2E workflow plan", () => {
       "ubuntu-repo-cloud-openclaw",
     ]);
     expect(plan.testMatrix).toEqual([]);
-    expect(catalogueIds).toHaveLength(47);
+    expect(catalogueIds).toHaveLength(46);
     expect(catalogueIds).not.toEqual(
       expect.arrayContaining([
         "bootstrap-install-smoke",
@@ -327,7 +327,7 @@ describe("E2E workflow plan", () => {
 
   it("emits required fields and catalogue workflow jobs for migrated targets", () => {
     const plan = buildE2eWorkflowPlan({
-      jobs: "hermes-slack,network-policy,openclaw-inference-switch,openclaw-tui-chat-correlation,sandbox-operations",
+      jobs: "hermes-slack,network-policy,openclaw-inference-switch,sandbox-operations",
     });
 
     expect(plan.catalogueMatrices["nvidia-inference"]).toEqual(
@@ -344,10 +344,6 @@ describe("E2E workflow plan", () => {
           install_non_interactive: true,
           shard: "live-probes",
           timeout_minutes: 90,
-        }),
-        expect.objectContaining({
-          id: "openclaw-tui-chat-correlation",
-          host_packages: "expect",
         }),
         expect.objectContaining({
           id: "sandbox-operations",
@@ -393,6 +389,41 @@ describe("E2E workflow plan", () => {
     });
   });
 
+  it("plans native Podman packages only for GPU re-onboarding and Hermes Slack", () => {
+    const plan = buildE2eWorkflowPlan({}, { gatewayRuntimes: ["docker", "podman"] });
+    const packages =
+      "conmon fuse-overlayfs golang-github-containers-common iptables nftables slirp4netns uidmap";
+    expect(
+      Object.values(validateE2eWorkflowPlan(plan).catalogueMatrices)
+        .flat()
+        .filter((row) => row.host_packages !== "")
+        .map((row) => [row.id, row.runtime_provider, row.host_packages])
+        .sort(),
+    ).toEqual(
+      [
+        ["gpu-double-onboard", "podman", packages],
+        ["hermes-slack", "podman", packages],
+      ].sort(),
+    );
+  });
+
+  it.each([
+    ["gpu-double-onboard", "docker", "podman-packages"],
+    ["hermes-slack", "docker", "podman-packages"],
+    ["network-policy", "podman", "podman-packages"],
+    ["gpu-double-onboard", "podman", ""],
+    ["hermes-slack", "podman", "runc"],
+  ])("rejects altered host packages for %s on %s", (id, runtime, packages) => {
+    const plan = buildE2eWorkflowPlan({}, { gatewayRuntimes: ["docker", "podman"] });
+    const rows = Object.values(plan.catalogueMatrices).flat();
+    const nativePackages = rows.find(
+      (row) => row.id === "gpu-double-onboard" && row.runtime_provider === "podman",
+    )!.host_packages;
+    rows.find((row) => row.id === id && row.runtime_provider === runtime)!.host_packages =
+      packages === "podman-packages" ? nativePackages : packages;
+    expect(() => validateE2eWorkflowPlan(plan)).toThrow("invalid output schema");
+  });
+
   it("rejects unreviewed catalogue execution metadata", () => {
     const target = catalogueTarget("network-policy");
     expect(() => validateE2eTargetCatalogue([{ ...target, runnerKey: "unknown-runner" }])).toThrow(
@@ -400,6 +431,9 @@ describe("E2E workflow plan", () => {
     );
     expect(() =>
       validateE2eTargetCatalogue([{ ...target, hostPackages: ["curl"] as never }]),
+    ).toThrow("invalid or duplicate host packages");
+    expect(() =>
+      validateE2eTargetCatalogue([{ ...target, podmanHostPackages: ["runc"] as never }]),
     ).toThrow("invalid or duplicate host packages");
     expect(() => validateE2eTargetCatalogue([{ ...target, selector: "safe; sudo true" }])).toThrow(
       "invalid test selector",

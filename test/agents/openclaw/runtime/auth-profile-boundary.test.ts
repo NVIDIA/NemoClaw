@@ -114,7 +114,6 @@ function runStartupCredentialBoundary(
     '_RUNTIME_SHELL_ENV_FILE="$HOME/no-runtime-env"',
     "STEP_DOWN_PREFIX_SANDBOX=(env)",
     "apply_messaging_runtime_env_aliases() { :; }",
-    "openclaw_config_dir_owner() { echo sandbox; }",
     `write_auth_profile() { ${credentialProbe}; return ${failCleanup ? 41 : 0}; }`,
     "harden_auth_profiles() { :; }",
     "install_messaging_runtime_preloads() { :; }",

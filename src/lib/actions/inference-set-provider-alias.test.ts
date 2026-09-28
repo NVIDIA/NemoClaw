@@ -17,7 +17,7 @@ import { shellQuote } from "../core/shell-quote";
 // stay in sync with. Imported here (test only — not into the inference-set hot
 // path) to drive the parity check below. providers.ts is a CJS module.
 import * as onboardProvidersNs from "../onboard/providers";
-import type { ConfigValue } from "../security/credential-filter";
+import type { ConfigObject, ConfigValue } from "../security/credential-filter";
 import {
   INFERENCE_SET_INSTALLER_PROVIDER_ALIASES,
   INFERENCE_SET_SUPPORTED_PROVIDER_NAMES,
@@ -41,8 +41,8 @@ function expectNoInferenceMutation(calls: ReturnType<typeof createDeps>["calls"]
   expect(calls.captureOpenshell).not.toHaveBeenCalled();
   expect(calls.updateSandbox).not.toHaveBeenCalled();
   expect(calls.writeSandboxConfig).not.toHaveBeenCalled();
-  expect(calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
   expect(calls.updateSession).not.toHaveBeenCalled();
+  expect(calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
   expect(calls.restartSandboxGateway).not.toHaveBeenCalled();
 }
 
@@ -73,7 +73,7 @@ describe("normalizeInferenceSetProvider — facet 1 provider-name drift (#6321)"
     },
   );
 
-  it("passes an unrecognized provider through unchanged (validation still rejects it later)", () => {
+  it("passes an unrecognized provider through unchanged for gateway validation", () => {
     expect(normalizeInferenceSetProvider("totally-made-up")).toBe("totally-made-up");
   });
 
@@ -150,7 +150,7 @@ describe("runInferenceSet accepts the installer provider name — facet 1 (#6321
       runInferenceSet({ provider: "totally-made-up", model: "nvidia/model-a" }, deps),
     ).rejects.toThrow(
       "Unsupported provider 'totally-made-up'. Selectable providers registered on gateway " +
-        "'nemoclaw-18080': compatible-endpoint, llama-cpp-local, nvidia-prod, ollama-local.",
+        "'nemoclaw-18080': compatible-endpoint, llama-cpp-local, nvidia-prod, ollama-local, qa-non-inference.",
     );
     expect(captureOpenshell).toHaveBeenCalledWith(
       ["provider", "list", "-g", "nemoclaw-18080", "--names"],
@@ -158,9 +158,82 @@ describe("runInferenceSet accepts the installer provider name — facet 1 (#6321
     );
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
-    expect(deps.calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
     expect(deps.calls.updateSession).not.toHaveBeenCalled();
+    expect(deps.calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
     expect(deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
+  });
+
+  it("accepts an additional registered provider without replacing its native config", async () => {
+    const provider = "native-extra";
+    const nativeProviderConfig = {
+      api: "openai-completions",
+      apiKey: "native-owned-reference",
+      baseUrl: "https://native.example/v1",
+      models: [{ id: "vendor/model-a", name: "vendor/model-a" }],
+    };
+    const output = `nvidia-prod\n${provider}\n`;
+    const captureOpenshell = vi.fn(() => ({ status: 0, output, stdout: output, stderr: "" }));
+    const config: ConfigObject = {
+      agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } },
+      models: {
+        providers: {
+          inference: { api: "openai-completions", models: [] },
+          [provider]: nativeProviderConfig,
+        },
+      },
+    };
+    const deps = createDeps({
+      config,
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        gatewayName: "nemoclaw-18080",
+        provider: "nvidia-prod",
+        model: "nvidia/model-a",
+      },
+      captureOpenshell,
+    });
+
+    await expect(
+      runInferenceSet({ provider, model: "vendor/model-b", noVerify: true }, deps),
+    ).resolves.toMatchObject({ provider, model: "vendor/model-b" });
+
+    expect(captureOpenshell).toHaveBeenCalledWith(
+      [
+        "inference",
+        "set",
+        "-g",
+        "nemoclaw-18080",
+        "--provider",
+        provider,
+        "--model",
+        "vendor/model-b",
+        "--no-verify",
+      ],
+      expect.objectContaining({ ignoreError: true }),
+    );
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+    expect(deps.calls.setOpenClawConfigValues).toHaveBeenCalledOnce();
+    expect(deps.calls.setOpenClawConfigValues).toHaveBeenCalledWith(
+      "alpha",
+      expect.arrayContaining([
+        expect.objectContaining({
+          dotpath: "models.providers.inference",
+          value: expect.objectContaining({
+            models: expect.arrayContaining([expect.objectContaining({ id: "vendor/model-b" })]),
+          }),
+        }),
+      ]),
+      "nemoclaw-18080",
+    );
+    expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
+      "alpha",
+      expect.objectContaining({
+        provider,
+        endpointUrl: null,
+        credentialEnv: null,
+      }),
+    ]);
   });
 
   it("hands OpenShell the exact `compatible-anthropic-endpoint` name, never the `anthropicCompatible` alias (#6321)", async () => {

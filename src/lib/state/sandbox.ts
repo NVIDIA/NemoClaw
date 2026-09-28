@@ -63,8 +63,8 @@ import {
   buildRestoreCleanupCommand,
   buildRestoreTarArgs,
   isAllowedStateSymlink,
-  copyCapturedOpenClawState,
-  type CapturedOpenClawState,
+  copyCapturedAgentState,
+  type CapturedAgentState,
 } from "./state-directory-restore.js";
 import {
   extractPreservedEnvAssignments,
@@ -191,7 +191,7 @@ export type SnapshotEntry = RebuildManifest & { snapshotVersion: number };
 
 export interface BackupOptions {
   /** Private, provider-verified source for OpenClaw recovery without container execution. */
-  capturedOpenClawState?: CapturedOpenClawState;
+  capturedAgentState?: CapturedAgentState;
   name?: string | null;
   runtimeSnapshot?: SandboxRuntimeSnapshot;
   workload?: SandboxWorkloadReceipt;
@@ -319,12 +319,15 @@ export interface RecreatedSandboxRestoreOptions extends SnapshotRestoreOptions {
   allowCustomImageWholeStateFileRestore?: true;
   /** Exact OpenShell target frozen by the enclosing rebuild transaction. */
   runtimeSelection?: OpenShellRuntimeSelection;
+  /** Non-backup legacy directories restored only for an immediate validated migration. */
+  restoreLegacyMigrationStateDirs?: readonly string[];
 }
 
 interface InternalRestoreOptions {
   targetAgentType: string;
   allowCustomImageWholeStateFileRestore?: true;
   runtimeSelection?: OpenShellRuntimeSelection;
+  restoreLegacyMigrationStateDirs?: readonly string[];
   authority?: SnapshotRestoreAuthority;
   validateBeforeMutation?: () => void | Promise<void>;
 }
@@ -1800,12 +1803,15 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
     };
   };
 
-  if (options.capturedOpenClawState) {
+  if (options.capturedAgentState) {
     try {
-      if (agentName !== "openclaw" || options.capturedOpenClawState.sandboxName !== sandboxName)
-        throw new Error("Stopped state capture only supports OpenClaw.");
-      const captured = copyCapturedOpenClawState(
-        options.capturedOpenClawState,
+      if (
+        agentName !== options.capturedAgentState.agentName ||
+        options.capturedAgentState.sandboxName !== sandboxName
+      )
+        throw new Error("Stopped state capture does not match the registered agent.");
+      const captured = copyCapturedAgentState(
+        options.capturedAgentState,
         backupPath,
         stateDirs,
         stateDirPrefixes,
@@ -1823,7 +1829,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         backedUpFiles: [],
         failedFiles: stateFiles.map((file) => file.path),
         error:
-          "Stopped OpenClaw state capture could not be published safely. The source sandbox was preserved.",
+          "Stopped agent state capture could not be published safely. The source sandbox was preserved.",
       };
     }
   }
@@ -2378,6 +2384,7 @@ export async function restoreSandboxState(
   return restoreSandboxStateInternal(sandboxName, backupPath, {
     targetAgentType: String(target.agent || "openclaw"),
     ...(target.fromDockerfile ? { allowCustomImageWholeStateFileRestore: true } : {}),
+    ...(target.agent === "hermes" ? { restoreLegacyMigrationStateDirs: ["dashboard-home"] } : {}),
     ...(options.authority ? { authority: options.authority } : {}),
     ...(options.validateBeforeMutation
       ? { validateBeforeMutation: options.validateBeforeMutation }
@@ -2396,6 +2403,9 @@ export async function restoreRecreatedSandboxState(
       ? { allowCustomImageWholeStateFileRestore: true }
       : {}),
     ...(options.runtimeSelection ? { runtimeSelection: options.runtimeSelection } : {}),
+    ...(options.restoreLegacyMigrationStateDirs
+      ? { restoreLegacyMigrationStateDirs: options.restoreLegacyMigrationStateDirs }
+      : {}),
     ...(options.authority ? { authority: options.authority } : {}),
     ...(options.validateBeforeMutation
       ? { validateBeforeMutation: options.validateBeforeMutation }
@@ -2504,6 +2514,15 @@ async function restoreSandboxStateInternal(
   const isTargetBackupDir = (dirName: string): boolean =>
     !isTargetNonBackupDir(dirName) &&
     isAllowedDiscoveredStateDir(dirName, targetBackupDirs, targetBackupPrefixes);
+  const restoreLegacyMigrationStateDirs = new Set(options.restoreLegacyMigrationStateDirs ?? []);
+  const invalidLegacyMigrationDirs = [...restoreLegacyMigrationStateDirs].filter(
+    (dirName) => !isTargetNonBackupDir(dirName),
+  );
+  if (invalidLegacyMigrationDirs.length > 0) {
+    return failRestoreContract(
+      `Legacy migration directories are not declared non-backup state for target agent '${options.targetAgentType}': ${invalidLegacyMigrationDirs.join(", ")}`,
+    );
+  }
   const undeclaredSnapshotDirs = manifest.stateDirs.filter(
     (dirName) => !isTargetBackupDir(dirName) && !isTargetNonBackupDir(dirName),
   );
@@ -2512,7 +2531,9 @@ async function restoreSandboxStateInternal(
       `Backup state directories are not declared by target agent '${options.targetAgentType}': ${undeclaredSnapshotDirs.join(", ")}`,
     );
   }
-  const skippedNonBackupDirs = localDirs.filter(isTargetNonBackupDir);
+  const skippedNonBackupDirs = localDirs.filter(
+    (dirName) => isTargetNonBackupDir(dirName) && !restoreLegacyMigrationStateDirs.has(dirName),
+  );
   if (skippedNonBackupDirs.length > 0) {
     _log(`Skipping non-backup state dirs from restore: [${skippedNonBackupDirs.join(",")}]`);
     for (const d of skippedNonBackupDirs) {
@@ -2743,11 +2764,15 @@ async function restoreSandboxStateInternal(
     for (const spec of localFiles) {
       const targetStateFile = targetStateFiles.get(spec.path);
       if (!targetStateFile) throw new Error(`Validated target state file missing: ${spec.path}`);
+      const restoreSpec =
+        options.targetAgentType === "openclaw" && spec.path === "openclaw.json"
+          ? { ...spec, missingTargetMode: "runtime-parent" as const }
+          : spec;
       if (
         restoreStateFile(
           sshArgs(configFile, sandboxName),
           dir,
-          spec,
+          restoreSpec,
           backupPath,
           targetStateFile.restore,
           options.allowCustomImageWholeStateFileRestore === true,

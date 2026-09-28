@@ -1069,22 +1069,39 @@ describe("backupSandboxStateForRebuild stopped-container recovery (#11137)", () 
     expect(returnStoppedSpy).toHaveBeenCalledWith(startedForBackup);
   });
 
-  it("does not attempt recovery for a non-transport backup failure", async () => {
-    backupSpy.mockReturnValue({
-      success: false,
-      backedUpDirs: [],
-      backedUpFiles: [],
-      failedDirs: [".state"],
-      failedFiles: [],
-      manifest: null,
-      unreachable: false,
-    });
+  it.each(["non-transport", "captured"] as const)(
+    "does not start the source after a %s backup failure (#11165)",
+    async (kind) => {
+      backupSpy.mockReturnValue({
+        success: false,
+        backedUpDirs: [],
+        backedUpFiles: [],
+        failedDirs: [".state"],
+        failedFiles: [],
+        manifest: null,
+        unreachable: kind === "captured",
+      });
 
-    await expect(
-      backupSandboxStateForRebuild("alpha", makeSandboxEntry(), false, () => undefined, makeBail()),
-    ).rejects.toThrow("bail: Failed to back up sandbox state.");
-    expect(startSpy).not.toHaveBeenCalled();
-  });
+      await expect(
+        backupSandboxStateForRebuild(
+          "alpha",
+          makeSandboxEntry(),
+          false,
+          () => undefined,
+          makeBail(),
+          kind === "captured"
+            ? {
+                sandboxName: "alpha",
+                agentName: "openclaw",
+                directory: "/private/captured",
+                assertCurrent: vi.fn(),
+              }
+            : undefined,
+        ),
+      ).rejects.toThrow("bail: Failed to back up sandbox state.");
+      expect(startSpy).not.toHaveBeenCalled();
+    },
+  );
 
   it("falls through to the original abort when no stopped container can be found", async () => {
     backupSpy.mockReturnValue({

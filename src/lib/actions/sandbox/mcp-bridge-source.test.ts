@@ -8,6 +8,8 @@ import path from "node:path";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const JSON5_MODULE_PATH = path.join(import.meta.dirname, "../../../..", "node_modules", "json5");
+
 const mocks = vi.hoisted(() => ({
   executeSandboxExecCommand: vi.fn(),
   capturePolicy: vi.fn(),
@@ -51,6 +53,7 @@ vi.mock("../../adapters/sandbox/command-transport", async (importOriginal) => ({
 
 import {
   inspectAgentMcpSources,
+  inspectCapturedAgentMcpSources,
   inspectLegacyBridgeState,
   inspectPolicyOnlyMcpEntry,
   inspectSourceBridgeState,
@@ -65,6 +68,44 @@ const sandbox = {
 const runtimeSelection = { gatewayName: "nemoclaw", workspace: "default" };
 
 describe("source-backed MCP inventory", () => {
+  it.each(["native", "legacy"] as const)(
+    "reads captured Deep Agents %s MCP from the native file without sandbox execution (#11165)",
+    (kind) => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-captured-dcode-mcp-"));
+      const assertCurrent = vi.fn();
+      try {
+        fs.writeFileSync(
+          path.join(directory, kind === "native" ? ".mcp.json" : ".nemoclaw-mcp.json"),
+          JSON.stringify({
+            mcpServers: {
+              github: {
+                url: "https://api.githubcopilot.com/mcp/",
+                headers: { Authorization: "Bearer openshell:resolve:env:GITHUB_TOKEN" },
+              },
+            },
+          }),
+        );
+        const observed = inspectCapturedAgentMcpSources({
+          sandboxName: "alpha",
+          agentName: "langchain-deepagents-code",
+          directory,
+          assertCurrent,
+        });
+        expect(observed[kind].github).toMatchObject({
+          agent: "langchain-deepagents-code",
+          adapter: "deepagents-config",
+          url: "https://api.githubcopilot.com/mcp/",
+          env: ["GITHUB_TOKEN"],
+        });
+        expect(Object.keys(observed[kind === "native" ? "legacy" : "native"])).toEqual([]);
+        expect(mocks.executeSandboxExecCommand).not.toHaveBeenCalled();
+        expect(assertCurrent).toHaveBeenCalledTimes(2);
+      } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.capturePolicy.mockResolvedValue(`version: 1
@@ -138,14 +179,23 @@ network_policies:
             headers: { Authorization: `Bearer openshell:resolve:env:${generation}_${key}` },
           },
         };
+        const contents = JSON.stringify(
+          agent === "openclaw" ? { mcp: { servers } } : { [serverMap]: servers },
+        );
         fs.writeFileSync(
           path.join(root, directory, file),
-          JSON.stringify(agent === "openclaw" ? { mcp: { servers } } : { [serverMap]: servers }),
+          agent === "openclaw" ? `// Native OpenClaw JSON5\n${contents}` : contents,
           { mode: 0o600 },
         );
         mocks.executeSandboxExecCommand.mockImplementation((_name: string, command: string) => {
           const marker = command.includes("<<'NODE'") ? "NODE" : "PY";
-          const program = command.split(`<<'${marker}'\n`)[1].split(`\n${marker}`)[0];
+          const program = command
+            .split(`<<'${marker}'\n`)[1]
+            .split(`\n${marker}`)[0]
+            .replaceAll(
+              "/usr/local/lib/node_modules/openclaw/node_modules/json5",
+              JSON5_MODULE_PATH,
+            );
           const result = spawnSync(
             marker === "NODE" ? process.execPath : "python3",
             marker === "NODE" ? ["-"] : ["-I", "-S", "-"],

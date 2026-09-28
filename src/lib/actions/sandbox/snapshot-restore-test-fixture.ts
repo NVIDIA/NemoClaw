@@ -5,7 +5,6 @@ import { vi } from "vitest";
 import { resolveTestAgentBaselinePolicy } from "../../../../test/support/snapshot-policy-test-fixture";
 import type { StreamSandboxCreateCommand } from "../../adapters/openshell/sandbox-lifecycle-cli";
 import type { OpenShellSandboxPolicyReader } from "../../adapters/openshell/sandbox-policy";
-import type { MutableConfigRepairResult } from "../../sandbox/mutable-config-perms";
 import type {
   SandboxEntry,
   SandboxHostLocalInferenceProvenance,
@@ -120,15 +119,6 @@ export function defaultOpenshellResponses(args: string[]): OpenshellCaptureResul
   });
 }
 
-const mutableConfigMock = vi.hoisted(() => {
-  const repairMutableConfigPermsMock = vi.fn<() => MutableConfigRepairResult>(() => ({
-    applied: true,
-    verified: true,
-    errors: [],
-  }));
-  return { repairMutableConfigPermsMock };
-});
-
 const lifecycleMock = vi.hoisted(() => {
   const events: string[] = [];
   return { events };
@@ -220,6 +210,14 @@ export const finalizeSandboxRouteReservationMock = vi.fn();
 export const finalizePendingSandboxRegistrationMock = vi.fn();
 export const finalizePendingSandboxRegistrationIfCurrentMock = vi.fn();
 export const restoreSandboxStateMock = vi.fn();
+export const beginOpenClawBackupQuiesceMock = vi.fn();
+export const finishOpenClawPostRestoreDoctorMock = vi.fn();
+export const abortOpenClawPostRestoreDoctorMock = vi.fn();
+export const migrateHermesLegacyDashboardStateMock = vi.fn(async () => ({
+  status: 0,
+  stdout: "",
+  stderr: "",
+}));
 export const restoreDeepAgentsNativeMcpConfigMock = vi.fn();
 export const getMcpProviderInspectionRuntimeSelectionMock = vi.fn(() => ({
   gatewayName: "nemoclaw-8091",
@@ -267,7 +265,7 @@ export const latestBackupFixture = {
   backupPath: "/tmp/backup-alpha",
 };
 
-export { lifecycleMock, mutableConfigMock };
+export { lifecycleMock };
 
 vi.mock("../../adapters/docker", () => ({
   dockerCapture: vi.fn(() => ""),
@@ -340,10 +338,6 @@ vi.mock("../../runtime-recovery", () => ({
 
 vi.mock("../../onboard/initial-policy", () => ({
   prepareInitialSandboxCreatePolicy: prepareInitialSandboxCreatePolicyMock,
-}));
-
-vi.mock("../../sandbox/mutable-config-perms", () => ({
-  repairMutableConfigPerms: mutableConfigMock.repairMutableConfigPermsMock,
 }));
 
 vi.mock("../../sandbox/create-stream", () => ({
@@ -423,6 +417,17 @@ vi.mock("./restore-gateway-pairing", () => ({
   waitForRestoredSandboxGatewaySupervisor: waitForRestoredSandboxGatewaySupervisorMock,
 }));
 
+vi.mock("./runtime/openclaw-lifecycle", () => ({
+  abortOpenClawPostRestoreDoctor: abortOpenClawPostRestoreDoctorMock,
+  beginOpenClawBackupQuiesce: beginOpenClawBackupQuiesceMock,
+  finishOpenClawPostRestoreDoctor: finishOpenClawPostRestoreDoctorMock,
+}));
+
+vi.mock("./snapshot-hermes-gateway-hint", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./snapshot-hermes-gateway-hint")>()),
+  migrateHermesLegacyDashboardState: migrateHermesLegacyDashboardStateMock,
+}));
+
 vi.mock("./snapshot/forward-port-allocation", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./snapshot/forward-port-allocation")>()),
   allocateSnapshotCloneForwardPorts: allocateSnapshotCloneForwardPortsMock,
@@ -452,11 +457,6 @@ export function resetSnapshotRestoreMocks(): void {
     schemaVersion: 1,
     backupPath: "/tmp/backup-alpha",
     contentSha256: "a".repeat(64),
-  });
-  mutableConfigMock.repairMutableConfigPermsMock.mockReturnValue({
-    applied: true,
-    verified: true,
-    errors: [],
   });
   lifecycleMock.events.length = 0;
   captureOpenshellMock.mockImplementation((args) => defaultOpenshellResponses(args));
@@ -505,6 +505,23 @@ export function resetSnapshotRestoreMocks(): void {
     restoredFiles: [],
     failedDirs: [],
     failedFiles: [],
+  });
+  beginOpenClawBackupQuiesceMock.mockImplementation(async () => {
+    lifecycleMock.events.push("begin-openclaw-backup-quiesce");
+    return { ok: true, window: { sandboxName: "alpha", kind: "backup" } };
+  });
+  finishOpenClawPostRestoreDoctorMock.mockImplementation(async () => {
+    lifecycleMock.events.push("finish-openclaw-native-start");
+    return { ok: true };
+  });
+  abortOpenClawPostRestoreDoctorMock.mockImplementation(async () => {
+    lifecycleMock.events.push("abort-openclaw-backup-quiesce");
+    return { ok: true };
+  });
+  migrateHermesLegacyDashboardStateMock.mockReset().mockResolvedValue({
+    status: 0,
+    stdout: "",
+    stderr: "",
   });
   restoreDeepAgentsNativeMcpConfigMock.mockReset();
   getMcpProviderInspectionRuntimeSelectionMock.mockClear();

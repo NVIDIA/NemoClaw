@@ -35,13 +35,6 @@ beforeEach(() => {
     ok: true,
     window: { sandboxName: "spark-box", kind: "backup" },
   });
-  vi.spyOn(
-    restoreWindow,
-    "promoteUnregisteredOpenClawBackupQuiesceToPostRestoreDoctor",
-  ).mockResolvedValue({
-    ok: true,
-    window: { sandboxName: "spark-box" },
-  });
   vi.spyOn(restoreWindow, "finishUnregisteredOpenClawPostRestoreDoctor").mockResolvedValue({
     ok: true,
   });
@@ -822,18 +815,12 @@ describe("created OpenClaw sandbox finalization", () => {
   it("restores through a revalidated target row before publishing it (#10546)", async () => {
     const order: string[] = [];
     vi.mocked(restoreWindow.beginUnregisteredOpenClawBackupQuiesce).mockImplementation(async () => {
-      order.push("quiesce");
+      order.push("maintenance-begin");
       return { ok: true, window: { sandboxName: "openclaw", kind: "backup" } };
-    });
-    vi.mocked(
-      restoreWindow.promoteUnregisteredOpenClawBackupQuiesceToPostRestoreDoctor,
-    ).mockImplementation(async () => {
-      order.push("doctor-on-restored-state");
-      return { ok: true, window: { sandboxName: "openclaw" } };
     });
     vi.mocked(restoreWindow.finishUnregisteredOpenClawPostRestoreDoctor).mockImplementation(
       async () => {
-        order.push("doctor-finish");
+        order.push("native-start");
         return { ok: true };
       },
     );
@@ -894,15 +881,120 @@ describe("created OpenClaw sandbox finalization", () => {
     expect(result).toBe(publishedTarget);
     expect(order).toEqual([
       "prepare",
-      "quiesce",
+      "maintenance-begin",
       "restore",
       "revalidate",
-      "doctor-on-restored-state",
-      "doctor-finish",
+      "native-start",
       "revalidate",
       "register",
     ]);
     expect(register).toHaveBeenCalledWith(publishedTarget);
+  });
+
+  it("migrates restored legacy Hermes dashboard state before registration", async () => {
+    const order: string[] = [];
+    const register = vi.fn((target) => {
+      order.push("register");
+      return target;
+    });
+
+    await finalizeCreatedSandbox(
+      {
+        sandboxName: "hermes",
+        restoreBackupPath: "/tmp/hermes-backup",
+        preUpgradeBackup: true,
+        targetAgentType: "hermes",
+        validateManagedDcode: false,
+        provider: "compatible-endpoint",
+        model: "demo",
+        preferredInferenceApi: "openai-completions",
+      },
+      {
+        ...preparedRestoreAuthority("hermes"),
+        restoreRecreatedSandboxState: async (_name, _backupPath, options) => {
+          order.push("restore");
+          expect(options.restoreLegacyMigrationStateDirs).toEqual(["dashboard-home"]);
+          return {
+            success: true,
+            restoredDirs: ["dashboard-home"],
+            failedDirs: [],
+            restoredFiles: [],
+            failedFiles: [],
+          };
+        },
+        migrateHermesLegacyDashboardState: async (name) => {
+          order.push("migrate");
+          expect(name).toBe("hermes");
+          return { status: 0, stdout: "", stderr: "" };
+        },
+        getDcodeSelectionDrift: vi.fn(),
+        register,
+        note: vi.fn(),
+        error: vi.fn(),
+        exitProcess: (code): never => {
+          throw new Error(`exit ${code}`);
+        },
+      },
+    );
+
+    expect(register).toHaveBeenCalledWith({ name: "hermes" });
+    expect(order).toEqual(["restore", "migrate", "register"]);
+  });
+
+  it.each([
+    {
+      failure: "remote exit",
+      migrate: async () => ({ status: 1, stdout: "", stderr: "migration collision" }),
+    },
+    {
+      failure: "transport failure",
+      migrate: async () => {
+        throw new Error("gateway unavailable");
+      },
+    },
+  ])("does not register Hermes after dashboard migration $failure", async ({ migrate }) => {
+    const register = vi.fn();
+    const error = vi.fn();
+
+    await expect(
+      finalizeCreatedSandbox(
+        {
+          sandboxName: "hermes",
+          restoreBackupPath: "/tmp/hermes-backup",
+          preUpgradeBackup: true,
+          targetAgentType: "hermes",
+          validateManagedDcode: false,
+          provider: "compatible-endpoint",
+          model: "demo",
+          preferredInferenceApi: "openai-completions",
+        },
+        {
+          ...preparedRestoreAuthority("hermes"),
+          restoreRecreatedSandboxState: async () => ({
+            success: true,
+            restoredDirs: ["dashboard-home"],
+            failedDirs: [],
+            restoredFiles: [],
+            failedFiles: [],
+          }),
+          migrateHermesLegacyDashboardState: migrate,
+          getDcodeSelectionDrift: vi.fn(),
+          register,
+          note: vi.fn(),
+          error,
+          exitProcess: (code): never => {
+            throw new Error(`exit ${code}`);
+          },
+        },
+      ),
+    ).rejects.toThrow("exit 1");
+
+    expect(register).not.toHaveBeenCalled();
+    expect(error.mock.calls.flat().join("\n")).toContain("Hermes legacy dashboard-state migration");
+    expect(error.mock.calls.flat().join("\n")).toContain("Registry metadata was not updated");
+    expect(error.mock.calls.flat().join("\n")).toContain(
+      "Keep the snapshot for manual recovery: /tmp/hermes-backup",
+    );
   });
 
   it.each([
@@ -913,9 +1005,7 @@ describe("created OpenClaw sandbox finalization", () => {
     async ({ copySuccess, doctorCalls }) => {
       const prepared = { name: "openclaw" } as SandboxEntry;
       const register = vi.fn();
-      vi.mocked(
-        restoreWindow.promoteUnregisteredOpenClawBackupQuiesceToPostRestoreDoctor,
-      ).mockResolvedValue({
+      vi.mocked(restoreWindow.finishUnregisteredOpenClawPostRestoreDoctor).mockResolvedValue({
         ok: false,
         stage: "doctor",
         detail: "doctor did not complete on restored state",
@@ -959,10 +1049,9 @@ describe("created OpenClaw sandbox finalization", () => {
       ).rejects.toThrow("exit 1");
 
       expect(register).not.toHaveBeenCalled();
-      expect(
-        restoreWindow.promoteUnregisteredOpenClawBackupQuiesceToPostRestoreDoctor,
-      ).toHaveBeenCalledTimes(doctorCalls);
-      expect(restoreWindow.finishUnregisteredOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
+      expect(restoreWindow.finishUnregisteredOpenClawPostRestoreDoctor).toHaveBeenCalledTimes(
+        doctorCalls,
+      );
     },
   );
 

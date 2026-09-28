@@ -55,6 +55,14 @@ type TelegramHttpRequestLike = (
       : null;
   }
 
+  function parseOpenClawConfig(source: string): unknown {
+    try {
+      return JSON.parse(source);
+    } catch {
+      return require("/usr/local/lib/node_modules/openclaw/node_modules/json5").parse(source);
+    }
+  }
+
   function sanitize(value: unknown): string {
     var text = String(value || "");
     text = text.replace(/\/bot[^/\s"']+/g, "/bot<redacted>");
@@ -172,7 +180,7 @@ type TelegramHttpRequestLike = (
     var configPath = process.env.OPENCLAW_CONFIG_PATH || "/sandbox/.openclaw/openclaw.json";
     try {
       var fs = require("fs");
-      var account = readTelegramAccount(JSON.parse(fs.readFileSync(configPath, "utf8")));
+      var account = readTelegramAccount(parseOpenClawConfig(fs.readFileSync(configPath, "utf8")));
       if (!account || account.dmPolicy !== "allowlist") return "not-applicable";
       var allowFrom = Array.isArray(account.allowFrom) ? account.allowFrom.map(String) : [];
       return allowFrom.indexOf(String(senderId)) === -1 ? "false" : "true";
@@ -255,7 +263,7 @@ type TelegramHttpRequestLike = (
     var account: TelegramJsonObject | null = null;
     try {
       var fs = require("fs");
-      account = readTelegramAccount(JSON.parse(fs.readFileSync(configPath, "utf8")));
+      account = readTelegramAccount(parseOpenClawConfig(fs.readFileSync(configPath, "utf8")));
     } catch (_e) {
       return;
     }
@@ -287,7 +295,7 @@ type TelegramHttpRequestLike = (
     var configToken = "";
     try {
       var fs = require("fs");
-      var config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      var config = parseOpenClawConfig(fs.readFileSync(configPath, "utf8"));
       var root = asObject(config);
       var channels = root ? asObject(root.channels) : null;
       var channel = channels ? asObject(channels.telegram) : null;
@@ -435,7 +443,7 @@ type TelegramHttpRequestLike = (
     var configPath = process.env.OPENCLAW_CONFIG_PATH || "/sandbox/.openclaw/openclaw.json";
     try {
       var fs = require("fs");
-      var cfg = asObject(JSON.parse(fs.readFileSync(configPath, "utf8")));
+      var cfg = asObject(parseOpenClawConfig(fs.readFileSync(configPath, "utf8")));
       var channels = cfg ? asObject(cfg.channels) : null;
       var telegram = channels ? asObject(channels.telegram) : null;
       if (!telegram || telegram.enabled === false) return;

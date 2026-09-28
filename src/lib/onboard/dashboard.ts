@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import JSON5 from "json5";
 import {
   formatOpenShellForwardStartFailure,
   type OpenShellForwardAdapter,
@@ -724,7 +725,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       if (completion.wasInterrupted()) return null;
       const jsonPath = findOpenclawJsonPath(tmpDir);
       if (!jsonPath) return null;
-      const cfg = JSON.parse(fs.readFileSync(jsonPath, "utf-8"));
+      const cfg = JSON5.parse(fs.readFileSync(jsonPath, "utf-8"));
       const parsedToken = cfg && cfg.gateway && cfg.gateway.auth && cfg.gateway.auth.token;
       token = typeof parsedToken === "string" && parsedToken.length > 0 ? parsedToken : null;
     } catch {
