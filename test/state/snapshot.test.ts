@@ -176,7 +176,11 @@ if (command.includes("tar -C")) {
     for (const name of fs.readdirSync(root)) {
       copyTree(path.join(root, name), path.join(copyRoot, name));
     }
-    process.exit(spawnSync("tar", ["-C", copyRoot, "-cf", "-", "--", "."], { stdio: ["ignore", "inherit", "inherit"] }).status ?? 91);
+    const hardDereferenceSupported = spawnSync("tar", ["--hard-dereference", "-cf", "-", "--files-from", "/dev/null"], { stdio: "ignore" }).status === 0;
+    const tarArgs = hardDereferenceSupported
+      ? ["-C", copyRoot, "--hard-dereference", "-cf", "-", "--", "."]
+      : ["-C", copyRoot, "-cf", "-", "--", "."];
+    process.exit(spawnSync("tar", tarArgs, { stdio: ["ignore", "inherit", "inherit"] }).status ?? 91);
   } finally {
     fs.rmSync(copyRoot, { recursive: true, force: true });
   }

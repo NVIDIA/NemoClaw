@@ -1497,7 +1497,8 @@ function capturePreparedNativeState(
   if (!sourceStat.isDirectory() || sourceStat.isSymbolicLink()) {
     throw new Error("Prepared stopped native state root is not a directory");
   }
-  // GNU tar can emit each hard-linked file as independent archive content.
+  // GNU tar can emit each hard-linked file as independent archive content
+  // without following symbolic links (`--hard-dereference` is hard-link-only).
   // BSD tar cannot, so stage a metadata-preserving private copy there; cp does
   // not preserve hard-link identity unless explicitly requested to do so.
   return spawnSync(
@@ -1624,6 +1625,8 @@ function backupNativeSandboxState(sandboxName: string, options: BackupOptions): 
           'for pid in $stopped; do attempts=0; while [ -r "/proc/$pid/status" ]; do state=""; while IFS=":" read -r key value; do if [ "$key" = "State" ]; then set -- $value; state=${1:-}; break; fi; done < "/proc/$pid/status"; case "$state" in T*) break ;; esac; attempts=$((attempts + 1)); [ "$attempts" -lt 100 ] || exit 21; sleep 0.01; done; done',
           "collect_candidates",
           'for pid in $candidates; do case " $stopped " in *" $pid "*) ;; *) exit 21 ;; esac; done',
+          // Expand hard links into independent file content without following
+          // symbolic links; GNU tar's --hard-dereference is hard-link-only.
           'tar -C "$root" --hard-dereference -cf - -- .',
         ].join("; ");
         result = spawnSync(
