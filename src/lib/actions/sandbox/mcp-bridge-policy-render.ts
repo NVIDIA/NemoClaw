@@ -4,6 +4,7 @@
 import YAML from "yaml";
 
 import type { AgentMcpAdapter } from "../../agent/defs";
+import type { McpServerIdentity } from "./mcp-bridge-contracts";
 import {
   type McpBridgeTargetValidation,
   parseMcpUrlWithValidatedTarget,
@@ -84,6 +85,9 @@ function renderMcpBridgePolicyYaml(
   providerName?: string,
   denyTools: readonly string[] = [],
   allowTools?: readonly string[],
+  serverIdentity?: McpServerIdentity,
+  transport?: McpTransport,
+  requireOAuth?: boolean,
 ): string {
   const parsed = parseMcpUrlWithValidatedTarget(url, target);
   const key = buildMcpBridgePolicyKey(server);
@@ -95,19 +99,23 @@ function renderMcpBridgePolicyYaml(
   // OpenShell 0.0.116 reads:
   // - tool names from allow.params.name (in allowlist mode)
   // - denials from endpoint.deny_rules (in denylist mode)
-  const denyRules = normalizedDenyTools.map((tool) => ({
-    method: "tools/call",
-    params: { name: tool },
-  }));
+  const denyRules = normalizedDenyTools.map((tool) => {
+    return {
+      method: "tools/call",
+      params: { name: tool },
+    };
+  });
 
   const allowedMethods = isAllowlistMode
     ? MCP_BRIDGE_ALLOWED_METHODS.filter((m) => m !== "tools/call")
     : MCP_BRIDGE_ALLOWED_METHODS;
 
   // In allowlist mode, emit explicit allow rules using params.name
-  const allowRules = normalizedAllowTools.map((tool) => ({
-    allow: { method: "tools/call", params: { name: tool } },
-  }));
+  const allowRules = normalizedAllowTools.map((tool) => {
+    return {
+      allow: { method: "tools/call", params: { name: tool } },
+    };
+  });
 
   // In denylist mode, emit deny rules at endpoint level (deny_rules)
   // Do NOT emit deny entries in the rules array — not part of schema
@@ -119,6 +127,21 @@ function renderMcpBridgePolicyYaml(
 
   // In denylist mode, emit deny rules at endpoint level
   const endpointDenyRules = isAllowlistMode || denyRules.length === 0 ? undefined : denyRules;
+
+  // Store serverIdentity, transport, and requireOAuth in mcp config for persistence
+  const mcpExtras: Record<string, unknown> = {};
+  if (serverIdentity) {
+    mcpExtras.allow = [
+      ...(mcpConfig.allow || []),
+      { params: { name: "__server_identity__", identity: serverIdentity } },
+    ];
+  }
+  if (transport) {
+    mcpExtras.transport = transport;
+  }
+  if (requireOAuth !== undefined) {
+    mcpExtras.requireOAuth = requireOAuth;
+  }
 
   return YAML.stringify({
     preset: {
@@ -142,6 +165,7 @@ function renderMcpBridgePolicyYaml(
               strict_tool_names: true,
               allow_all_known_mcp_methods: false,
               ...mcpConfig,
+              ...mcpExtras,
             },
             ...(endpointDenyRules ? { deny_rules: endpointDenyRules } : {}),
             rules: [...allowedMethods.map((method) => ({ allow: { method } })), ...allowRules],
@@ -161,6 +185,9 @@ export function buildMcpBridgePolicyYaml(
   providerName: string,
   denyTools: readonly string[] = [],
   allowTools?: readonly string[],
+  serverIdentity?: McpServerIdentity,
+  transport?: McpTransport,
+  requireOAuth?: boolean,
 ): string {
   if (providerName.trim() !== providerName || providerName.length === 0) {
     throw new Error("Generated MCP credential binding requires an exact provider name.");
@@ -173,6 +200,9 @@ export function buildMcpBridgePolicyYaml(
     providerName,
     denyTools,
     allowTools,
+    serverIdentity,
+    transport,
+    requireOAuth,
   );
 }
 
@@ -183,6 +213,20 @@ export function buildMcpBridgeCapabilityPolicyYaml(
   target: McpBridgeTargetValidation,
   denyTools: readonly string[] = [],
   allowTools?: readonly string[],
+  serverIdentity?: McpServerIdentity,
+  transport?: McpTransport,
+  requireOAuth?: boolean,
 ): string {
-  return renderMcpBridgePolicyYaml(server, url, adapter, target, undefined, denyTools, allowTools);
+  return renderMcpBridgePolicyYaml(
+    server,
+    url,
+    adapter,
+    target,
+    undefined,
+    denyTools,
+    allowTools,
+    serverIdentity,
+    transport,
+    requireOAuth,
+  );
 }

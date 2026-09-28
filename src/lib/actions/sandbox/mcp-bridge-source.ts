@@ -567,8 +567,51 @@ async function enrichFromPolicy(
           : [],
       )
     : [];
+
+  // Read deny rules from legacy format (for backward compatibility)
+  const legacyRawDenyTools = Array.isArray(endpoint.deny_rules)
+    ? endpoint.deny_rules.flatMap((rule): string[] =>
+        isObjectRecord(rule) && rule.method === "tools/call" && typeof rule.tool === "string"
+          ? [rule.tool]
+          : [],
+      )
+    : [];
+  const legacyDeniedToolInspection = inspectMcpDeniedToolSelectors(legacyRawDenyTools);
+  const legacyDenyTools = legacyDeniedToolInspection.ok ? legacyDeniedToolInspection.selectors : [];
+
   const deniedToolInspection = inspectMcpDeniedToolSelectors(rawDenyTools);
-  const denyTools = deniedToolInspection.ok ? deniedToolInspection.selectors : [];
+  // Read allow rules from the new schema (rules[].allow.params.name)
+  const allowRules = Array.isArray(endpoint.rules)
+    ? endpoint.rules
+        .filter(
+          (rule): rule is { allow: { method: string; params: { name: string } } } =>
+            "allow" in rule &&
+            rule.allow &&
+            rule.allow.params &&
+            typeof rule.allow.params.name === "string",
+        )
+        .map((rule) => rule.allow.params.name)
+    : [];
+
+  // Read deny rules from the new schema (endpoint.deny_rules with params.name)
+  const denyRulesFromEndpoint = Array.isArray(endpoint.deny_rules)
+    ? endpoint.deny_rules
+        .filter(
+          (rule) =>
+            rule.method === "tools/call" && rule.params && typeof rule.params.name === "string",
+        )
+        .map((rule) => rule.params.name)
+    : [];
+
+  const denyTools =
+    denyRulesFromEndpoint.length > 0
+      ? denyRulesFromEndpoint
+      : legacyDenyTools.length > 0
+        ? legacyDenyTools
+        : [];
+  const rawAllowTools = allowRules;
+  const allowTools = rawAllowTools.length > 0 ? rawAllowTools : undefined;
+
   const policyConflict = !deniedToolInspection.ok
     ? "Live policy contains invalid denied-tool selectors."
     : endpointConflict;
@@ -584,6 +627,7 @@ async function enrichFromPolicy(
     ...(providerName ? { providerName } : {}),
     ...(provider.exists === true && provider.id ? { providerId: provider.id } : {}),
     ...(denyTools.length > 0 && entry.source !== "legacy-registry" ? { denyTools } : {}),
+    ...(allowTools ? { allowTools } : {}),
     ...(policyConflict ? { policyConflict } : {}),
   };
 }
