@@ -213,6 +213,23 @@ describe("pre-backup audit — multiply-linked regular files (#9314)", () => {
     expect(backup.error).toMatch(/Pre-backup audit rejected/);
     expect(backup.error).toContain("agent.sock");
   });
+
+  it("keeps nested unreadable dirs when the audit also rejects unsafe entries (#12069)", () => {
+    const backup = backupWithAuditOutput(
+      encodePreBackupAuditEntries([
+        ["u", "/sandbox/.openclaw/workspace/restricted", ""],
+        ["l", "/sandbox/.openclaw/workspace/escape", "../openclaw.json"],
+      ]),
+    );
+
+    expect(backup.success).toBe(false);
+    expect(backup.error).toMatch(/Pre-backup audit rejected/);
+    expect(backup.error).toContain("workspace/escape");
+    expect(backup.failedDirs).toEqual(["workspace/restricted", "workspace"]);
+    expect(backup.failedDirReasons).toEqual({
+      "workspace/restricted": "permission denied",
+    });
+  });
 });
 
 describe("pre-backup audit record framing", () => {

@@ -2065,11 +2065,13 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
           _log(
             `SECURITY: Pre-backup audit found ${violations.length} unsafe entries: ${violations.slice(0, 5).join("; ")}`,
           );
+          for (const d of existingDirs) recordFailedBackupDir(failedDirs, d);
           return {
             success: false,
             manifest,
             backedUpDirs,
-            failedDirs: [...existingDirs],
+            failedDirs: [...failedDirs],
+            ...(Object.keys(failedDirReasons).length > 0 ? { failedDirReasons } : {}),
             backedUpFiles,
             failedFiles: stateFiles.map((f) => f.path),
             error: `Pre-backup audit rejected: symlinks or special files found in state dirs: ${violations.slice(0, 3).join("; ")}`,
