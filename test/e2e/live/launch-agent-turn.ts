@@ -1453,17 +1453,20 @@ cleanup() {
     wait "$session_pid" 2>/dev/null || true
   fi
   echo "nemoclaw.e2e.launch-cleanup=child-reaped" >&2
-  if ! remove_session_baseline >/dev/null 2>&1; then
+  # A fatal shell error in one cleanup call must not skip the remaining cleanup.
+  if ! (remove_session_baseline) >/dev/null 2>"$evidence_error"; then
     echo "structured session baseline cleanup failed" >&2
+    tail -c 2048 "$evidence_error" >&2 || true
+    cleanup_status=1
+  fi
+  wait_for_pty_monitor_exit
+  if ! (remove_pty_monitor) >/dev/null 2>"$evidence_error"; then
+    echo "launch PTY monitor cleanup failed" >&2
+    tail -c 2048 "$evidence_error" >&2 || true
     cleanup_status=1
   fi
   if ! rm -rf -- "$session_dir"; then
     echo "launch host session cleanup failed" >&2
-    cleanup_status=1
-  fi
-  wait_for_pty_monitor_exit
-  if ! remove_pty_monitor >/dev/null 2>&1; then
-    echo "launch PTY monitor cleanup failed" >&2
     cleanup_status=1
   fi
   printf 'nemoclaw.e2e.launch-cleanup=completed status=%s\n' "$cleanup_status" >&2

@@ -1206,6 +1206,30 @@ it.runIf(process.platform === "linux").concurrent(
 );
 
 it.runIf(process.platform === "linux").concurrent(
+  "continues PTY cleanup after a fatal baseline shell error",
+  async ({ expect }) => {
+    // Inject a shell failure inside the cleanup call, after normal qualification.
+    const script = LAUNCH_TURN_SCRIPT.replace(
+      "session_evidence cleanup-baseline",
+      "unset NEMOCLAW_LAUNCH_RUN_ID\n  session_evidence cleanup-baseline",
+    );
+    const fixture = await runLaunchSessionFixture("provider-empty-message", "provider", {
+      args: ["-c", script],
+    });
+    expect(fixture.result.status).toBe(1);
+    expect(fixture.result.stderr).toContain("structured session baseline cleanup failed");
+    expect(fixture.result.stderr).toContain("NEMOCLAW_LAUNCH_RUN_ID: unbound variable");
+    expect(fixture.result.stderr).toContain("nemoclaw.e2e.launch-cleanup=completed status=1");
+    expect(fixture.result.stderr).not.toContain(OPENCLAW_PROVIDER_UNAVAILABLE_MARKER);
+    expect(fixture.ptyMonitorRemoved).toBe(true);
+    expect(fixture.hostSessionResidue).toEqual([]);
+    expect(fixture.orphanedMonitorProcessIds).toEqual([]);
+    expect(fixture.orphanedTuiProcessIds).toEqual([]);
+  },
+  testTimeout(30_000),
+);
+
+it.runIf(process.platform === "linux").concurrent(
   "does not retry when terminal output mimics provider unavailability (#10978)",
   async ({ expect }) => {
     const produced = (await runLaunchSessionFixture("provider-terminal-spoof", "provider")).result;

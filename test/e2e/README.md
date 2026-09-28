@@ -730,8 +730,9 @@ The probe retries once after five seconds only when curl exits 22 with empty
 stdout and exactly reports HTTP 503. This reports service unavailability but
 does not identify whether the gateway or upstream produced it. Every request
 has its own command artifact and a 90-second curl limit. Each reply-budget
-attempt retains bounded availability evidence, including recovery or exhaustion,
-in its artifact and the aggregate log retained after Brev cleanup.
+attempt logs bounded availability evidence, including recovery or exhaustion,
+before writing its artifact. The aggregate log survives an artifact-write failure
+and is retained after Brev cleanup; the artifact exists only when its write succeeds.
 The existing two reply budgets permit at most four requests in total.
 Persistent 503, other HTTP errors, transport failures, and unknown errors fail.
 The existing response validation and answer assertion remain unchanged.
@@ -773,6 +774,9 @@ are omitted. These diagnostics do not change failure classification or retries.
 Failed launch attempts also retain the last turn-verifier exit status and fixed
 cleanup stages: started, child reaped, and completed with cleanup status. Only the
 existing final provider marker authorizes a retry after successful cleanup.
+Baseline and PTY cleanup calls run independently so a fatal shell error in one
+cannot skip the other. Failed calls retain their last 2 KiB of error output through
+the fixture's normal redaction boundary, and any cleanup failure prevents retry.
 Deterministic unit tests separately prove selection of the complete preflight
 and lease paths, stale-producer exclusion, the fixed time-unsafe quarantine,
 refusal to recover when prior evidence cannot be durably fenced, and the named
