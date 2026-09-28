@@ -213,7 +213,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
     }
   });
 
-  it("does not use legacy gateway destroy when external registration removal is unsupported (#6576)", async () => {
+  it("does not mutate an external gateway registration when bulk cleanup is not owned (#11831)", async () => {
     const calls: Array<{ args: string[]; command: string }> = [];
     const responses = new Map<string, RunResult>([
       ["openshell gateway list -o json", ok(JSON.stringify([{ name: "nemoclaw" }]))],
@@ -256,7 +256,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
     const openshellCalls = calls
       .filter(({ command }) => command === "openshell")
       .map(({ args }) => args);
-    expect(openshellCalls).toContainEqual(["gateway", "remove", "nemoclaw"]);
+    expect(openshellCalls).not.toContainEqual(["gateway", "remove", "nemoclaw"]);
     expect(openshellCalls).not.toContainEqual(["gateway", "destroy", "-g", "nemoclaw"]);
   });
 

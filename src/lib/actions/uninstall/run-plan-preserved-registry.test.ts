@@ -125,9 +125,9 @@ describe("uninstall messaging for a preserved-but-orphaned sandbox registry (#65
     "uses the 'already removed' wording when the $kind absence post-condition is verified",
     async ({ destroyDiagnostic, expectedDestroy, removeDiagnostic }) => {
       // Same defect family as the gateway wording fix (#3456 sub-bug 4): when
-      // `openshell provider delete <name>` or `openshell sandbox delete --all`
-      // no-ops (target already gone), `Deleted provider 'X' skipped` reads as if
-      // the deletion both happened and was skipped.
+      // `openshell provider delete <name>` no-ops (target already gone),
+      // `Deleted provider 'X' skipped` reads as if the deletion both happened
+      // and was skipped.
       const warnings: string[] = [];
       const logs: string[] = [];
       const calls: string[][] = [];
@@ -160,14 +160,16 @@ describe("uninstall messaging for a preserved-but-orphaned sandbox registry (#65
             const key = [command, ...args].join(" ");
             return key === "openshell gateway list -o json"
               ? nextGatewayList()
-              : key === "openshell sandbox list"
-                ? ok("No sandboxes found.\n")
-                : (responses.get(key) ??
-                  (command === "openshell"
-                    ? notFound()
-                    : args[0] === "-c"
-                      ? ok("/fake/bin/tool\n")
-                      : ok()));
+              : key === "openshell sandbox delete --all"
+                ? ok()
+                : key === "openshell sandbox list"
+                  ? ok("No sandboxes found.\n")
+                  : (responses.get(key) ??
+                    (command === "openshell"
+                      ? notFound()
+                      : args[0] === "-c"
+                        ? ok("/fake/bin/tool\n")
+                        : ok()));
           },
           runDocker: () => ok(""),
         },
@@ -176,7 +178,7 @@ describe("uninstall messaging for a preserved-but-orphaned sandbox registry (#65
       expect(result.exitCode).toBe(0);
       const combined = `${warnings.join("\n")}\n${logs.join("\n")}`;
       expect(warnings.join("\n")).toContain("Provider 'nvidia-nim' already removed or unreachable");
-      expect(warnings.join("\n")).toContain("OpenShell sandboxes already removed or unreachable");
+      expect(logs).toContain("Deleted all OpenShell sandboxes");
       expect(warnings.join("\n")).toContain("Gateway 'nemoclaw' is already absent");
       expect(
         calls.some(

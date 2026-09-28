@@ -114,8 +114,8 @@ export function dockerDriverGatewayLocalTlsAuthorityIsConfigured(stateDir: strin
       config.includes("[openshell.gateway.mtls_auth]") ||
       config.includes("require_client_auth = true")
     );
-  } catch {
-    return false;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ENOENT";
   }
 }
 

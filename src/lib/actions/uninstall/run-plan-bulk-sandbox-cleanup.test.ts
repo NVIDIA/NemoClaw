@@ -189,4 +189,51 @@ describe("full-uninstall bulk sandbox cleanup", () => {
       fs.rmSync(home, { recursive: true, force: true });
     }
   });
+
+  it("refuses bulk sandbox cleanup for an externally supervised gateway (#11831)", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-bulk-external-"));
+    try {
+      const registryFile = writeFullCleanupState(home);
+      const gatewayStateDir = path.join(
+        home,
+        ".local",
+        "state",
+        "nemoclaw",
+        resolveGatewayStateDirName(8080),
+      );
+      const calls: string[][] = [];
+      const deps = fullCleanupDeps(home, calls, "No sandboxes found.\n");
+      const result = await runUninstallPlan(
+        { assumeYes: true, deleteModels: false, destroyUserData: true, keepOpenShell: false },
+        {
+          ...deps,
+          resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
+            gatewayName,
+            gatewayPort,
+            mode: "externally-supervised",
+            source: "declared",
+            endpoint: `http://127.0.0.1:${String(gatewayPort)}`,
+            stateDir: gatewayStateDir,
+            supervisor: {
+              kind: "systemd-user",
+              serviceName: "openshell-gateway.service",
+              execPath: "/usr/local/bin/openshell-gateway",
+            },
+            requiredCapabilities: [],
+          }),
+        },
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(calls.some((args) => args.join(" ") === "sandbox delete --all")).toBe(false);
+      expect(calls.some((args) => args[0] === "provider" && args[1] === "delete")).toBe(false);
+      expect(calls.some((args) => args[0] === "gateway" && args[1] === "remove")).toBe(false);
+      expect(deps.error).toHaveBeenCalledWith(
+        "Refusing bulk sandbox cleanup for an externally supervised gateway; preserving its state for retry.",
+      );
+      expect(fs.existsSync(registryFile)).toBe(true);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
 });

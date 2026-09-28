@@ -1593,6 +1593,12 @@ async function removeOpenShellResources(
       return false;
     }
   } else {
+    if (externallySupervised) {
+      runtime.warn(
+        "Refusing bulk sandbox cleanup for an externally supervised gateway; preserving its state for retry.",
+      );
+      return false;
+    }
     runtimeSelection = selectedGatewayCleanupRuntimeSelection(
       gatewayLabel,
       paths.selectedGatewayLocalStateDir,

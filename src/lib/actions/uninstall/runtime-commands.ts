@@ -11,7 +11,6 @@ import {
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import { OPENSHELL_DEFAULT_WORKSPACE } from "../../adapters/openshell/sandbox-ssh-host";
 import {
-  OPENSHELL_SANDBOXES_DELETE_SKIP_MESSAGE,
   sandboxDeleteAbsentMessage,
   sandboxDeleteFailureMessage,
 } from "../../domain/uninstall/messaging";
@@ -139,12 +138,12 @@ export async function deleteAllSelectedGatewaySandboxes(
   const result = await createUninstallSandboxLifecycle(runtime.run, runtime.env).deleteAllSandboxes(
     { target: { kind: "selected" }, runtimeSelection },
   );
-  if (
-    result.kind === "failed" &&
-    result.error.kind === "command" &&
-    result.error.reason === "invalid_request"
-  ) {
-    runtime.warn("OpenShell rejected the selected-gateway sandbox cleanup request.");
+  if (result.kind !== "accepted") {
+    runtime.warn(
+      result.error.kind === "command" && result.error.reason === "invalid_request"
+        ? "OpenShell rejected the selected-gateway sandbox cleanup request."
+        : "OpenShell sandbox cleanup was not accepted; preserving its state for retry.",
+    );
     return false;
   }
 
@@ -157,8 +156,7 @@ export async function deleteAllSelectedGatewaySandboxes(
     consecutiveEmptyObservations =
       observed.ok && observed.value.sandboxes.length === 0 ? consecutiveEmptyObservations + 1 : 0;
     if (consecutiveEmptyObservations >= BULK_DELETE_REQUIRED_EMPTY_OBSERVATIONS) {
-      if (result.kind === "accepted") runtime.log("Deleted all OpenShell sandboxes");
-      else runtime.warn(OPENSHELL_SANDBOXES_DELETE_SKIP_MESSAGE);
+      runtime.log("Deleted all OpenShell sandboxes");
       return true;
     }
     if (attempt < BULK_DELETE_MAX_OBSERVATIONS - 1) runtime.sleep?.(200);

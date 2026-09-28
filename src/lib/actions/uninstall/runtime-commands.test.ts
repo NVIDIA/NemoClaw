@@ -20,6 +20,18 @@ function result(status: number | null, stdout = "", stderr = "", error?: Error):
 }
 
 describe("uninstall bulk sandbox cleanup", () => {
+  it("uses the selected gateway when no local TLS authority is configured (#11831)", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-tls-"));
+    try {
+      expect(selectedGatewayCleanupRuntimeSelection("nemoclaw-8091", stateDir)).toEqual({
+        gatewayName: "nemoclaw-8091",
+        workspace: "default",
+      });
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
   it("uses complete selected-gateway TLS state for deletion and inventory (#11831)", async () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-tls-"));
     const calls: Array<{ args: string[]; env: NodeJS.ProcessEnv | undefined }> = [];
@@ -67,6 +79,12 @@ describe("uninstall bulk sandbox cleanup", () => {
           path.join(stateDir, "openshell-gateway.toml"),
           "[openshell.gateway.mtls_auth]\nenabled = true\n",
         );
+      },
+    ],
+    [
+      "the gateway configuration cannot be read",
+      (stateDir: string) => {
+        fs.mkdirSync(path.join(stateDir, "openshell-gateway.toml"));
       },
     ],
   ])("rejects selected-gateway cleanup when %s (#11831)", async (_case, arrangeState) => {
@@ -140,7 +158,13 @@ describe("uninstall bulk sandbox cleanup", () => {
     expect(logs).toContain("Deleted all OpenShell sandboxes");
   });
 
-  it("reconciles an ambiguous deletion without submitting it again (#11831)", async () => {
+  it.each([
+    [
+      "the submission is ambiguous",
+      result(null, "", "", Object.assign(new Error("timed out"), { code: "ETIMEDOUT" })),
+    ],
+    ["OpenShell rejects the command", result(1, "", "cleanup failed")],
+  ])("preserves cleanup authority when %s (#11831)", async (_case, deleteResult) => {
     const calls: string[][] = [];
     const warnings: string[] = [];
     const runtime = {
@@ -148,9 +172,7 @@ describe("uninstall bulk sandbox cleanup", () => {
       log: vi.fn(),
       run: (_command: string, args: string[]) => {
         calls.push(args);
-        return args[1] === "delete"
-          ? result(null, "", "", Object.assign(new Error("timed out"), { code: "ETIMEDOUT" }))
-          : result(0, "No sandboxes found.\n");
+        return args[1] === "delete" ? deleteResult : result(0, "No sandboxes found.\n");
       },
       sleep: vi.fn(),
       warn: (message: string) => warnings.push(message),
@@ -161,11 +183,13 @@ describe("uninstall bulk sandbox cleanup", () => {
         gatewayName: "nemoclaw-8091",
         workspace: "default",
       }),
-    ).resolves.toBe(true);
+    ).resolves.toBe(false);
 
     expect(calls.filter((args) => args[1] === "delete")).toHaveLength(1);
-    expect(calls.filter((args) => args[1] === "list")).toHaveLength(2);
-    expect(warnings).toContain("OpenShell sandboxes already removed or unreachable");
+    expect(calls.filter((args) => args[1] === "list")).toHaveLength(0);
+    expect(warnings).toContain(
+      "OpenShell sandbox cleanup was not accepted; preserving its state for retry.",
+    );
   });
 
   it("preserves cleanup authority when empty inventory is not stable (#11831)", async () => {
