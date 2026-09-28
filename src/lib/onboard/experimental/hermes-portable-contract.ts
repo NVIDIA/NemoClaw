@@ -12,12 +12,10 @@ import {
   readBoolean,
   readHealthProbe,
   readObject,
-  readStateFiles,
   readString,
   readUserManagedFiles,
 } from "../../agent/manifest-readers";
 import { readAgentRuntime } from "../../agent/runtime-manifest";
-import { readStateDirectories } from "../../agent/state-directory-contract";
 import { readWebAuth } from "../../agent/web-auth";
 import {
   buildCurrentHermesPortableRuntimeEnvArgs,
@@ -54,7 +52,9 @@ const REVIEWED_HERMES_MANIFEST_VERSIONS = new Set(["0.20.6", "0.21.3"]);
 // the historical rootless lifecycle fixture have advanced past these hashes.
 const REVIEWED_INSTALLED_STATE_IDENTITY =
   "1cadfa0a741b4e66b5599a5edede99c2ef9cb00ef59c9814f164f95a89957140";
-const CURRENT_STATE_IDENTITY = "60ee30ca30cf989b0eb9ab67ed9633f470ad05b2c9c92f5e576d2ea8a6db3c64";
+const PRE_NATIVE_INVENTORY_STATE_IDENTITY =
+  "60ee30ca30cf989b0eb9ab67ed9633f470ad05b2c9c92f5e576d2ea8a6db3c64";
+const CURRENT_STATE_IDENTITY = "573a0bfbf320b397bcd1d159662bb7d8c849d926f789f1af5b0ebfbb70de4da1";
 const REVIEWED_INSTALLED_MANIFEST_STATE_IDENTITIES = new Map([
   [
     "c7bcd6e0616904ab66c1f2f39a670d920cfb1b7ef7c1edc496e20e554db6a6c2",
@@ -64,10 +64,19 @@ const REVIEWED_INSTALLED_MANIFEST_STATE_IDENTITIES = new Map([
     "e78822837d5530f61a26ea1d554d7f9b21be13e3e223e294f0999187dc0fa71e",
     REVIEWED_INSTALLED_STATE_IDENTITY,
   ],
-  ["27453a10ca2e75f16ce5a1487192d11ac92b4d1752e8538131b5233c17a89d85", CURRENT_STATE_IDENTITY],
-  ["4600403d80c0ca038a89ac627f248a41148f1d97f649a49588a06b29427cee6c", CURRENT_STATE_IDENTITY],
+  [
+    "27453a10ca2e75f16ce5a1487192d11ac92b4d1752e8538131b5233c17a89d85",
+    PRE_NATIVE_INVENTORY_STATE_IDENTITY,
+  ],
+  [
+    "4600403d80c0ca038a89ac627f248a41148f1d97f649a49588a06b29427cee6c",
+    PRE_NATIVE_INVENTORY_STATE_IDENTITY,
+  ],
+  ["32491879c546bac2dd5f92abecc3e25f05bc4fb25f924b2b114b90aa1ed501a3", CURRENT_STATE_IDENTITY],
+  ["9773457ced4ace14ee6418f02eff55ec77a7345775e1adc49fd21757910aeb3b", CURRENT_STATE_IDENTITY],
+  ["632a183c7fbf796b0b37d255fa7f61d4a84f32df7b5a3d1a3914f82bae4c889b", CURRENT_STATE_IDENTITY],
 ]);
-const CURRENT_MANIFEST = "3f19946aa05920ef90ae0651e2da123ad8b13bedff6e0dd8c1b9f5cb20024af5";
+const CURRENT_MANIFEST = "11e7474a3c9a4ea1d9808bc05626bcc97fe7d34c1956600544abae9b88d93a8f";
 
 export interface ResolveHermesPortableStartupContractInput {
   readonly agent: AgentDefinition;
@@ -172,7 +181,6 @@ function manifestConfigPaths(config: ManifestRecord | undefined) {
 
 function manifestProjection(record: ManifestRecord) {
   const config = readObject(record, "config");
-  const stateDirectories = readStateDirectories(record);
   return {
     name: readString(record, "name"),
     expectedVersion: readString(record, "expected_version"),
@@ -182,8 +190,6 @@ function manifestProjection(record: ManifestRecord) {
     devicePairing: readBoolean(record, "device_pairing"),
     webAuth: readWebAuth(record),
     configPaths: manifestConfigPaths(config),
-    stateDirectories,
-    stateFiles: readStateFiles(record) ?? [],
     userManagedFiles: readUserManagedFiles(record) ?? [],
   };
 }
@@ -198,8 +204,6 @@ function agentProjection(agent: AgentDefinition): ReturnType<typeof manifestProj
     devicePairing: agent.device_pairing,
     webAuth: agent.webAuth,
     configPaths: agent.configPaths,
-    stateDirectories: agent.stateDirectories,
-    stateFiles: agent.stateFiles,
     userManagedFiles: agent.userManagedFiles,
   };
 }
@@ -324,8 +328,6 @@ function stateIdentity(projection: ReturnType<typeof manifestProjection>): strin
     JSON.stringify(
       canonical({
         configPaths: projection.configPaths,
-        stateDirectories: projection.stateDirectories,
-        stateFiles: projection.stateFiles,
         userManagedFiles: projection.userManagedFiles,
       }),
     ),

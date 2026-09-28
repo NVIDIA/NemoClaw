@@ -29,8 +29,6 @@ import type {
   AgentHealthProbe,
   AgentLegacyPaths,
   AgentMcpCapability,
-  AgentStateDirectory,
-  AgentStateFile,
   AgentVersionScheme,
 } from "./definition-types";
 import {
@@ -43,7 +41,6 @@ import {
   readMcpCapability,
   readObject,
   readPortArray,
-  readStateFiles,
   readString,
   readStringArray,
   readStringMap,
@@ -52,7 +49,6 @@ import {
 } from "./manifest-readers";
 import { readAgentRuntime } from "./runtime-manifest";
 import { type AgentSkillIntegration, readAgentSkillIntegration } from "./skill-integration";
-import { readStateDirectories, stateDirectoryPaths } from "./state-directory-contract";
 import { type AgentWebAuth, readWebAuth } from "./web-auth";
 
 export type {
@@ -67,11 +63,6 @@ export type {
   AgentMcpAdapter,
   AgentMcpCapability,
   AgentMcpSupport,
-  AgentStateDirectory,
-  AgentStateDirectoryPath,
-  AgentStateDirectoryPrefix,
-  AgentStateFile,
-  AgentStateFileStrategy,
   AgentVersionScheme,
 } from "./definition-types";
 export type { AgentSkillIntegration } from "./skill-integration";
@@ -171,14 +162,14 @@ export function loadAgent(name: string, env: NodeJS.ProcessEnv = process.env): A
   const inference = readInference(raw);
   const mcp = readMcpCapability(raw);
   const skillIntegration = readAgentSkillIntegration(raw);
-  if (raw.runtime_auth_state_dirs !== undefined) {
+  const retiredStateInventoryField = ["state_dirs", "state_files", "runtime_auth_state_dirs"].find(
+    (field) => raw[field] !== undefined,
+  );
+  if (retiredStateInventoryField) {
     throw new Error(
-      "Agent manifest field 'runtime_auth_state_dirs' was replaced by state_dirs entries with backup: false",
+      `Agent manifest field '${retiredStateInventoryField}' is retired; native rebuilds persist the complete agent home`,
     );
   }
-  const stateDirectories = readStateDirectories(raw);
-  const stateDirs = stateDirectoryPaths(stateDirectories);
-  const stateFiles = readStateFiles(raw);
   const userManagedFiles = readUserManagedFiles(raw);
   const phoneHomeHosts = readStringArray(raw, "phone_home_hosts");
   const legacyPathConfig = readStringMap(raw, "_legacy_paths");
@@ -204,7 +195,6 @@ export function loadAgent(name: string, env: NodeJS.ProcessEnv = process.env): A
     deferred_onboarding: deferredOnboarding,
     inference,
     mcp,
-    state_files: stateFiles,
     user_managed_files: userManagedFiles,
     _legacy_paths: legacyPathConfig,
     agentDir,
@@ -265,18 +255,6 @@ export function loadAgent(name: string, env: NodeJS.ProcessEnv = process.env): A
 
     get skillIntegration(): AgentSkillIntegration | null {
       return skillIntegration;
-    },
-
-    get stateDirectories(): AgentStateDirectory[] {
-      return stateDirectories;
-    },
-
-    get stateDirs(): string[] {
-      return stateDirs;
-    },
-
-    get stateFiles(): AgentStateFile[] {
-      return stateFiles ?? [];
     },
 
     get userManagedFiles(): string[] {

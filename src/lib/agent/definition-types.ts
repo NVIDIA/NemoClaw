@@ -24,30 +24,6 @@ export interface AgentConfigPaths {
   format: string;
 }
 
-interface AgentStateDirectoryBehavior {
-  backup: boolean;
-  clearWhenAbsent: boolean;
-}
-
-export interface AgentStateDirectoryPath extends AgentStateDirectoryBehavior {
-  kind: "path";
-  path: string;
-}
-
-export interface AgentStateDirectoryPrefix extends AgentStateDirectoryBehavior {
-  kind: "prefix";
-  prefix: string;
-}
-
-export type AgentStateDirectory = AgentStateDirectoryPath | AgentStateDirectoryPrefix;
-
-export type AgentStateFileStrategy = "copy" | "sqlite_backup";
-
-export interface AgentStateFile {
-  path: string;
-  strategy: AgentStateFileStrategy;
-}
-
 export type AgentDashboardKind = "ui" | "api";
 
 export interface AgentDashboard {
@@ -101,7 +77,6 @@ export interface AgentDefinition {
   deferred_onboarding?: boolean;
   inference?: AgentInference;
   mcp?: AgentMcpCapability;
-  state_files?: AgentStateFile[];
   user_managed_files?: string[];
   _legacy_paths?: StringMap;
   agentDir: string;
@@ -116,9 +91,6 @@ export interface AgentDefinition {
   readonly inferenceProviderOptions: string[];
   readonly mcpCapability: AgentMcpCapability;
   readonly skillIntegration?: AgentSkillIntegration | null;
-  readonly stateDirectories: AgentStateDirectory[];
-  readonly stateDirs: string[];
-  readonly stateFiles: AgentStateFile[];
   readonly userManagedFiles: string[];
   readonly versionCommand: string;
   readonly expectedVersion: string | null;

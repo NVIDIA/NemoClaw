@@ -44,21 +44,10 @@ skills:
   list_command: [skills, list, --agent, agent]
   remove_command: [skills, delete, "{name}", --agent, agent, --force, --json]
 
-# ── State directories ──────────────────────────────────────────
-# dcode runs with HOME=/sandbox, so its state dirs resolve under
-# /sandbox/.deepagents. The built-in skill-creator writes user skills to
-# agent/skills (per its init_skill.py), so that agent-owned root is preserved.
-state_dirs:
-  - .state
-  - agent/skills
-
 # .deepagents/.mcp.json is the agent-owned MCP source. NemoClaw writes only
 # direct-HTTP endpoint config and OpenShell placeholders, preserves unrelated
 # native entries, and carries managed entries through the bounded rebuild
 # handoff instead of a host-side registry projection.
-state_files:
-  - path: config.toml
-  - hooks.json
 user_managed_files:
   - .deepagents/.env
   - .deepagents/.mcp.json

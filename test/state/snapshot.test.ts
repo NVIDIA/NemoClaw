@@ -743,6 +743,11 @@ describe("complete native home persistence", () => {
       "sessionToken=opaqueCredentialPayloadZ1234567890",
     ],
     [
+      "an opaque npm registry credential",
+      ".npmrc",
+      "//registry.example/:_authToken=opaqueCredentialPayloadZ1234567890",
+    ],
+    [
       "an opaque credential in a JSON schema",
       "schemas/config.schema.json",
       JSON.stringify({ default: { authorization: "Bearer opaqueCredentialPayloadZ1234567890" } }),

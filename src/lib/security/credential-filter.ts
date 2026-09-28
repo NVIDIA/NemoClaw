@@ -98,11 +98,11 @@ export function textContainsCredential(
   if (authorization.test(withoutPlaceholders)) return true;
   if (options.opaqueAssignments === false) return false;
   const assignment =
-    /(?<![A-Za-z0-9_.-])["']?([A-Za-z][A-Za-z0-9._-]{0,127})["']?[ \t]*[:=][ \t]*(?:"([^"\r\n]*)"|'([^'\r\n]*)'|([^\s,;{}]+))/gu;
+    /(?<![A-Za-z0-9_.-])["']?([_A-Za-z][_A-Za-z0-9.-]{0,127})["']?[ \t]*[:=][ \t]*(?:"([^"\r\n]*)"|'([^'\r\n]*)'|([^\s,;{}]+))/gu;
   for (;;) {
     const match = assignment.exec(value);
     if (!match) break;
-    const field = match[1]!;
+    const field = match[1]!.replace(/^_+/u, "");
     const candidate = match[2] ?? match[3] ?? match[4] ?? "";
     if (
       !/^(?:module\.)?exports\./u.test(field) &&
@@ -115,6 +115,20 @@ export function textContainsCredential(
     // A non-credential outer JSON key can contain a nested credential key.
     // Advance one character so the bounded scan considers that inner object.
     assignment.lastIndex = match.index + 1;
+  }
+  return false;
+}
+
+/** Detect npm registry credential directives even when their values are opaque. */
+export function npmConfigContainsCredentialDirective(value: string): boolean {
+  for (const line of value.split(/\r?\n/u)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith(";")) continue;
+    const separator = trimmed.indexOf("=");
+    if (separator <= 0) continue;
+    const key = trimmed.slice(0, separator).trim();
+    const directive = key.slice(key.lastIndexOf(":") + 1);
+    if (/^_?(?:auth(?:token)?|password|username)$/iu.test(directive)) return true;
   }
   return false;
 }

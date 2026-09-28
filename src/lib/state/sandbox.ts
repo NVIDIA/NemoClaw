@@ -50,6 +50,7 @@ import {
   isCredentialField,
   isDependencyLockfile,
   isSensitiveFile,
+  npmConfigContainsCredentialDirective,
   sanitizeEnvFileContent,
   stripCredentials,
   textContainsCredential,
@@ -1231,6 +1232,7 @@ function scanNativeTarFilePayload(
   position: number,
   size: number,
   opaqueAssignments: boolean,
+  npmConfig: boolean,
 ): boolean | null {
   const chunk = Buffer.allocUnsafe(NATIVE_CREDENTIAL_SCAN_CHUNK_BYTES);
   let remaining = size;
@@ -1241,6 +1243,7 @@ function scanNativeTarFilePayload(
     const count = readSync(descriptor, chunk, 0, requested, offset);
     if (count === 0) return null;
     const raw = overlap + chunk.subarray(0, count).toString("utf8");
+    if (npmConfig && npmConfigContainsCredentialDirective(raw)) return true;
     if (textContainsCredential(raw, { opaqueAssignments })) return true;
     overlap = raw.slice(-NATIVE_CREDENTIAL_SCAN_OVERLAP_CHARS);
     offset += count;
@@ -1302,6 +1305,7 @@ function nativeArchiveRawCredentialViolation(archivePath: string): string | null
               dataOffset,
               size,
               fileName !== "package.json",
+              fileName === ".npmrc",
             );
             if (violation === null) return "native state credential scan";
             if (violation) return entry;

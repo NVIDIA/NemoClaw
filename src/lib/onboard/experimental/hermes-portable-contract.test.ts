@@ -17,13 +17,11 @@ import {
 
 const SANDBOX = "alpha";
 const PRE_DEFERRED_ONBOARDING_MANIFEST_SHA256 =
-  "4600403d80c0ca038a89ac627f248a41148f1d97f649a49588a06b29427cee6c";
+  "32491879c546bac2dd5f92abecc3e25f05bc4fb25f924b2b114b90aa1ed501a3";
 const PRE_UPGRADE_MANIFEST_SHA256 =
-  "27453a10ca2e75f16ce5a1487192d11ac92b4d1752e8538131b5233c17a89d85";
+  "9773457ced4ace14ee6418f02eff55ec77a7345775e1adc49fd21757910aeb3b";
 const PRE_SKILLS_MANIFEST_SHA256 =
-  "c7bcd6e0616904ab66c1f2f39a670d920cfb1b7ef7c1edc496e20e554db6a6c2";
-const PRE_NATIVE_OWNERSHIP_MANIFEST_SHA256 =
-  "e78822837d5530f61a26ea1d554d7f9b21be13e3e223e294f0999187dc0fa71e";
+  "632a183c7fbf796b0b37d255fa7f61d4a84f32df7b5a3d1a3914f82bae4c889b";
 const temporaryDirectories: string[] = [];
 
 function startupArgv(...extra: string[]): string[] {
@@ -95,25 +93,6 @@ function removeReviewedSkillsMetadata(agent: AgentDefinition): void {
   ].join("\n");
   expect(source.split(metadata)).toHaveLength(2);
   fs.writeFileSync(agent.manifestPath, source.replace(metadata, ""), { mode: 0o644 });
-}
-
-function removeReviewedNativeOwnershipMetadata(agent: AgentDefinition): void {
-  const source = fs.readFileSync(agent.manifestPath, "utf8");
-  const previous = source
-    .replace("  - path: lazy-packages\n    clear_when_absent: false\n", "  - lazy-packages\n")
-    .replace("  - path: plugins\n    clear_when_absent: false\n", "  - plugins\n");
-  expect(previous).not.toBe(source);
-  fs.writeFileSync(agent.manifestPath, previous, { mode: 0o644 });
-  Object.defineProperty(agent, "stateDirectories", {
-    configurable: true,
-    enumerable: true,
-    writable: true,
-    value: agent.stateDirectories.map((entry) =>
-      entry.kind === "path" && ["lazy-packages", "plugins"].includes(entry.path)
-        ? { ...entry, clearWhenAbsent: true }
-        : entry,
-    ),
-  });
 }
 
 function expectStartupCandidatesRejected(
@@ -269,17 +248,8 @@ describe("Hermes portable startup contract", () => {
       prepare: (agent: AgentDefinition) => {
         restorePreviousReviewedManifest(agent);
         removeReviewedSkillsMetadata(agent);
-        removeReviewedNativeOwnershipMetadata(agent);
       },
-      startupDescriptorChanged: true,
-    },
-    {
-      expectedManifestSha256: PRE_NATIVE_OWNERSHIP_MANIFEST_SHA256,
-      prepare: (agent: AgentDefinition) => {
-        restorePreviousReviewedManifest(agent);
-        removeReviewedNativeOwnershipMetadata(agent);
-      },
-      startupDescriptorChanged: true,
+      startupDescriptorChanged: false,
     },
   ])(
     "accepts reviewed manifest metadata transition $expectedManifestSha256 when startup authority is unchanged (#11248, #11766)",
@@ -314,7 +284,6 @@ describe("Hermes portable startup contract", () => {
     const installedAgent = copyAgent();
     restorePreviousReviewedManifest(installedAgent);
     removeReviewedSkillsMetadata(installedAgent);
-    removeReviewedNativeOwnershipMetadata(installedAgent);
     const installed = resolveHermesPortableStartupContract({
       agent: installedAgent,
       sandboxName,
@@ -327,7 +296,7 @@ describe("Hermes portable startup contract", () => {
     };
     const current = resolveHermesPortableStartupContract(input);
 
-    expect(installed.startupDescriptorSha256).not.toBe(current.startupDescriptorSha256);
+    expect(installed.startupDescriptorSha256).toBe(current.startupDescriptorSha256);
     expect(() =>
       assertCurrentHermesPortableStoredStartupContract(installed, sandboxName),
     ).not.toThrow();

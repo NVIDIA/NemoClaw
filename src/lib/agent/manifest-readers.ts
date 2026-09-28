@@ -10,7 +10,6 @@ import type {
   AgentHealthProbe,
   AgentInference,
   AgentMcpCapability,
-  AgentStateFile,
   AgentVersionScheme,
   ManifestRecord,
   ManifestValue,
@@ -108,65 +107,6 @@ export function readUserManagedFiles(record: ManifestRecord): string[] | undefin
       );
     }
     return entry;
-  });
-}
-
-const STATE_FILE_FIELDS = new Set(["path", "strategy"]);
-
-function assertStateFilePath(value: string, field: string): void {
-  if (value.length === 0) {
-    throw new Error(`Agent manifest field '${field}' must not be empty`);
-  }
-  if (CONTROL_CHAR_RE.test(value)) {
-    throw new Error(`Agent manifest field '${field}' must not contain control characters`);
-  }
-  if (value.startsWith("/")) {
-    throw new Error(`Agent manifest field '${field}' must be a relative path, not absolute`);
-  }
-  if (value.includes("\\")) {
-    throw new Error(`Agent manifest field '${field}' must use canonical forward slashes`);
-  }
-  if (value.split("/").some((segment) => segment === "" || segment === "." || segment === "..")) {
-    throw new Error(
-      `Agent manifest field '${field}' must be a canonical relative path without empty, '.', or '..' components`,
-    );
-  }
-}
-
-export function readStateFiles(record: ManifestRecord): AgentStateFile[] | undefined {
-  const value = record.state_files;
-  if (value === undefined) return undefined;
-  if (!Array.isArray(value)) {
-    throw new Error("Agent manifest field 'state_files' must be an array");
-  }
-
-  return value.map((entry, index) => {
-    const field = `state_files[${String(index)}]`;
-    if (typeof entry === "string") {
-      assertStateFilePath(entry, field);
-      return { path: entry, strategy: "copy" };
-    }
-    if (!isManifestRecord(entry)) {
-      throw new Error(`Agent manifest field '${field}' must be a string or object`);
-    }
-    for (const key of Object.keys(entry)) {
-      if (!STATE_FILE_FIELDS.has(key)) {
-        throw new Error(`Agent manifest field '${field}.${key}' is not allowed`);
-      }
-    }
-    const statePath = readString(entry, "path");
-    if (!statePath) {
-      throw new Error(`Agent manifest field '${field}.path' is required`);
-    }
-    assertStateFilePath(statePath, `${field}.path`);
-    if (entry.strategy !== undefined && typeof entry.strategy !== "string") {
-      throw new Error(`Agent manifest field '${field}.strategy' must be copy or sqlite_backup`);
-    }
-    const strategy = readString(entry, "strategy") ?? "copy";
-    if (strategy !== "copy" && strategy !== "sqlite_backup") {
-      throw new Error(`Agent manifest field '${field}.strategy' must be copy or sqlite_backup`);
-    }
-    return { path: statePath, strategy };
   });
 }
 

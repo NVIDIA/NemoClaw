@@ -17,6 +17,7 @@ import {
   isConfigValue,
   isSafeCredentialPlaceholder,
   isSensitiveFile,
+  npmConfigContainsCredentialDirective,
   sanitizeConfigFile,
   sanitizeEnvFile,
   sanitizeEnvFileContent,
@@ -243,6 +244,7 @@ describe("textContainsCredential", () => {
     "sessionToken=opaqueCredentialPayloadZ1234567890",
     '  "client_secret": "opaqueCredentialPayloadZ1234567890"',
     '{"nested":{"sessionToken":"opaqueCredentialPayloadZ1234567890"}}',
+    "//registry.example/:_authToken=opaqueCredentialPayloadZ1234567890",
   ])("flags opaque credential context in arbitrary text: %s", (value) => {
     expect(textContainsCredential(value)).toBe(true);
   });
@@ -253,6 +255,27 @@ describe("textContainsCredential", () => {
     "sessionToken=[STRIPPED_BY_MIGRATION]",
   ])("preserves non-secret source or placeholder text: %s", (value) => {
     expect(textContainsCredential(value)).toBe(false);
+  });
+});
+
+describe("npmConfigContainsCredentialDirective", () => {
+  it.each(["_auth", "_authToken", "username", "password", "_password"])(
+    "rejects the npm credential directive %s",
+    (directive) => {
+      expect(
+        npmConfigContainsCredentialDirective(
+          `//registry.example/:${directive}=opaqueCredentialPayloadZ1234567890`,
+        ),
+      ).toBe(true);
+    },
+  );
+
+  it("allows non-credential npm registry configuration", () => {
+    expect(
+      npmConfigContainsCredentialDirective(
+        ["registry=https://registry.npmjs.org/", "always-auth=false"].join("\n"),
+      ),
+    ).toBe(false);
   });
 });
 
