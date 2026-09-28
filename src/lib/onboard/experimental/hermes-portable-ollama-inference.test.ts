@@ -281,6 +281,36 @@ describe("Hermes Portable Ollama inference activation", () => {
     expect(fs.existsSync(directory)).toBe(true);
   });
 
+  it("preserves private state when receipt authority changes during provider retirement (#12291)", async () => {
+    const fixture = createRuntimeFixture();
+    await publishPortableInference(fixture);
+    const receiptPath = inferenceReceiptPath(fixture);
+    const directory = path.dirname(receiptPath);
+    const mutateAfterCommand: Readonly<Record<string, () => void>> = Object.freeze({
+      "provider delete": () => fs.appendFileSync(receiptPath, "\n"),
+    });
+    const runGatewayOpenshell: typeof fixture.resolverOptions.runGatewayOpenshell = vi.fn(
+      (args, options) => {
+        const result = fixture.gatewayProvider.run(args, options);
+        mutateAfterCommand[`${String(args[0])} ${String(args[1])}`]?.();
+        return result;
+      },
+    );
+
+    await expect(
+      withPortableHostFence(fixture.homeDir, () =>
+        retireHermesPortableOllamaFreshState(
+          { ...fixture.resolverOptions, runGatewayOpenshell },
+          freshPortableInput,
+        ),
+      ),
+    ).rejects.toThrow("published receipt authority changed");
+
+    expect(fixture.gatewayProvider.isPresent()).toBe(false);
+    expect(fixture.harness.container()).not.toBeNull();
+    expect(fs.existsSync(directory)).toBe(true);
+  });
+
   it("resumes fresh retirement after the exact provider was already removed (#12291)", async () => {
     const fixture = createRuntimeFixture();
     await publishPortableInference(fixture);

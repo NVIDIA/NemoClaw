@@ -183,7 +183,9 @@ export async function retireHermesPortableOllamaFreshState(
   }
   const root = options.stateDir ?? defaultPortableDemoStateDir(process.env);
   const inferenceStateDir = hermesPortableInferenceStateDir(root, input.sandboxName);
-  if (inspectHermesPortableUninstallDirectoryAuthority(inferenceStateDir) === null) return false;
+  const initialDirectoryAuthority =
+    inspectHermesPortableUninstallDirectoryAuthority(inferenceStateDir);
+  if (initialDirectoryAuthority === null) return false;
   if (!fs.existsSync(path.join(inferenceStateDir, "portable-inference.json"))) return false;
 
   const published = prepareHermesPortableOllamaPublishedReceiptAuthority({
@@ -293,17 +295,14 @@ export async function retireHermesPortableOllamaFreshState(
 
   await provider.removeAndVerify();
   provider.verifyAbsent();
+  published.assertCurrent();
   const retired = retirePreparedHostLocalInferenceAuthority(bundle, lifecycleRow, preparedRuntime, [
     lifecycleRow,
   ]);
   if (retired.status === "shared" || retired.status === "retained") {
     throw new Error("Hermes Portable fresh start could not retire its exact managed runtime.");
   }
-  const directoryAuthority = inspectHermesPortableUninstallDirectoryAuthority(inferenceStateDir);
-  if (directoryAuthority === null) {
-    throw new Error("Hermes Portable fresh-start state disappeared before retirement.");
-  }
-  retireHermesPortableUninstallDirectory(inferenceStateDir, directoryAuthority);
+  retireHermesPortableUninstallDirectory(inferenceStateDir, initialDirectoryAuthority);
   return true;
 }
 
