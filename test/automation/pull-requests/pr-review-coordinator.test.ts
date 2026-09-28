@@ -543,6 +543,27 @@ describe("repository-owned PR review coordination", () => {
       }),
     ).toThrow("review history must be an object");
   });
+
+  it("rejects contract evidence that contradicts its frozen keys", () => {
+    expect(() =>
+      evaluateCoordinatorShadow(
+        workflowShadowInput({
+          history: {
+            contractEvidence: "none",
+            frozenContractKeys: ["F-security-1"],
+            writes: [],
+          },
+        }),
+      ),
+    ).toThrow("review history has inconsistent contract evidence");
+    expect(() =>
+      evaluateCoordinatorShadow(
+        workflowShadowInput({
+          history: { contractEvidence: "complete", frozenContractKeys: [], writes: [] },
+        }),
+      ),
+    ).toThrow("review history has inconsistent contract evidence");
+  });
 });
 
 function snapshot(

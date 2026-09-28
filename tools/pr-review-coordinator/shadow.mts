@@ -161,6 +161,12 @@ function coordinatorHistory(value: unknown): CoordinatorReviewHistory {
   ) {
     throw new Error("Coordinator shadow review history has invalid frozen contract keys");
   }
+  if (
+    (contractEvidence === "none" && history.frozenContractKeys.length !== 0) ||
+    (contractEvidence === "complete" && history.frozenContractKeys.length === 0)
+  ) {
+    throw new Error("Coordinator shadow review history has inconsistent contract evidence");
+  }
   if (!Array.isArray(history.writes)) {
     throw new Error("Coordinator shadow review history has invalid writes");
   }

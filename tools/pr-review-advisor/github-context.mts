@@ -482,8 +482,11 @@ function unresolvedContractReviews<T extends ContractReview>(
   const byReviewer = new Map<string, T[]>();
   for (const review of candidates) {
     const reviewerReviews = byReviewer.get(review.reviewer) ?? [];
-    if (review.state === "APPROVED") reviewerReviews.length = 0;
-    else reviewerReviews.push(review);
+    if (review.state === "APPROVED") {
+      if (review.reviewedHeadSha === currentHeadSha) reviewerReviews.length = 0;
+    } else {
+      reviewerReviews.push(review);
+    }
     byReviewer.set(review.reviewer, reviewerReviews);
   }
   const unresolved = [...byReviewer.values()]

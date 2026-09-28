@@ -244,6 +244,40 @@ describe("PR review advisor", () => {
     ).toMatchObject({ contractEvidence: "none", frozenContractKeys: [] });
   });
 
+  it("does not let a stale approval clear an unresolved change request", () => {
+    const requestedHead = "a".repeat(40);
+    const approvedHead = "b".repeat(40);
+    const currentHead = "c".repeat(40);
+    const history = reconstructCoordinatorReviewHistory(
+      [
+        {
+          id: 31,
+          state: "CHANGES_REQUESTED",
+          commit_id: requestedHead,
+          submitted_at: "2026-09-20T10:00:00Z",
+          author_association: "MEMBER",
+          user: { login: "maintainer", type: "User" },
+          body: "Please fix this.\n\n<!-- nemoclaw-review-coordinator-finding:F-security-1 -->",
+        },
+        {
+          id: 32,
+          state: "APPROVED",
+          commit_id: approvedHead,
+          submitted_at: "2026-09-20T11:00:00Z",
+          author_association: "MEMBER",
+          user: { login: "maintainer", type: "User" },
+        },
+      ],
+      [],
+      currentHead,
+    );
+
+    expect(history).toMatchObject({
+      contractEvidence: "complete",
+      frozenContractKeys: ["F-security-1"],
+    });
+  });
+
   it("cancels a delayed pagination request at the shared context deadline", async () => {
     const currentHead = "c".repeat(40);
     let delayedSignal: AbortSignal | undefined;
