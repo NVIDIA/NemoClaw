@@ -44,7 +44,12 @@ afterEach(() => {
 describe("Brave runtime credential boundary probes", () => {
   it.each([
     ["", 0],
+    ["BRAVE_API_KEY=openshell:resolve:env:BRAVE_API_KEY", 0],
     ["BRAVE_API_KEY=openshell:resolve:env:v1_BRAVE_API_KEY", 0],
+    [`BRAVE_API_KEY=openshell:resolve:env:s${"a".repeat(64)}_BRAVE_API_KEY`, 0],
+    ["BRAVE_API_KEY=openshell:resolve:env:v1_BRAVE_API_KEYraw-secret", 98],
+    ["BRAVE_API_KEY=openshell:resolve:env:v1_NVIDIA_API_KEY", 98],
+    ["BRAVE_API_KEY=openshell:resolve:env:v1_BRAVE_API_KEY\n", 98],
     ["BRAVE_API_KEY=synthetic-raw-key", 98],
     ["BRAVE_API_KEY=openshell:resolve:env:v1_BRAVE_API_KEY\0BRAVE_API_KEY=synthetic-raw-key", 98],
   ])("classifies a running agent environment without exposing %s", (environment, status) => {
@@ -144,7 +149,12 @@ with patch.object(pathlib.Path, "read_bytes", read):
 
   it.each([
     ["", 0],
+    ["openshell:resolve:env:BRAVE_API_KEY", 0],
     ["openshell:resolve:env:v1_BRAVE_API_KEY", 0],
+    [`openshell:resolve:env:s${"a".repeat(64)}_BRAVE_API_KEY`, 0],
+    ["openshell:resolve:env:v1_BRAVE_API_KEYraw-secret", 98],
+    ["openshell:resolve:env:v1_NVIDIA_API_KEY", 98],
+    ["openshell:resolve:env:v1_BRAVE_API_KEY\n", 98],
     ["synthetic-raw-key", 98],
   ])("classifies fresh shell environment %s", (value, status) => {
     const result = spawnSync("sh", ["-c", BRAVE_SHELL_BOUNDARY], {

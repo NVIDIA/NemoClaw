@@ -1,11 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+const BRAVE_REFERENCE_PATTERN = String.raw`openshell:resolve:env:(?:(?:v[0-9]{1,20}|s[a-f0-9]{64})_)?BRAVE_API_KEY`;
+
 // Launch the real agent and inspect its owned child after the wrapper execs
 // Node. Cross-tree gateway environ reads are blocked by Yama; the original
 // #7425 regression observes this agent child and a fresh login shell.
 export const BRAVE_AGENT_BOUNDARY = String.raw`
-import os, pathlib, signal, subprocess, sys, time
+import os, pathlib, re, signal, subprocess, sys, time
 
 def inspect(process):
     try:
@@ -19,7 +21,7 @@ def inspect(process):
     except (FileNotFoundError, ProcessLookupError, PermissionError):
         return 97
     values = [entry.split(b"=", 1)[1] for entry in entries if entry.startswith(b"BRAVE_API_KEY=")]
-    return 98 if any(value and not value.startswith(b"openshell:resolve:env:") for value in values) else 0
+    return 98 if any(value and not re.fullmatch(rb"${BRAVE_REFERENCE_PATTERN}", value) for value in values) else 0
 
 if len(sys.argv) > 1 and sys.argv[1] == "--inspect-process":
     status = inspect(pathlib.Path(sys.argv[2]))
@@ -48,9 +50,9 @@ sys.exit(status)
 `;
 
 export const BRAVE_SHELL_BOUNDARY = String.raw`
-value="$(printenv BRAVE_API_KEY 2>/dev/null || true)"
-case "$value" in
-  ''|openshell:resolve:env:*) exit 0 ;;
-  *) exit 98 ;;
-esac
+python3 - <<'PY'
+import os, re, sys
+value = os.environ.get("BRAVE_API_KEY", "")
+sys.exit(0 if not value or re.fullmatch(r"${BRAVE_REFERENCE_PATTERN}", value) else 98)
+PY
 `;
