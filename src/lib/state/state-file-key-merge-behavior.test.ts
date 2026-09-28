@@ -4,6 +4,7 @@
 import { stringify } from "smol-toml";
 import { describe, expect, it } from "vitest";
 
+import { loadAgent } from "../agent/defs";
 import type { StateFileKeyAllowlistRestoreOwnership } from "../agent/defs";
 import {
   DCODE_OWNERSHIP,
@@ -15,6 +16,54 @@ import {
 } from "./state-file-key-merge-test-fixture";
 
 describe("key-allowlist state-file merge", () => {
+  it("preserves supported Deep Agents local settings and hook configuration across rebuilds", () => {
+    expect(loadAgent("langchain-deepagents-code").stateFiles).toContainEqual({
+      path: "hooks.json",
+      strategy: "copy",
+    });
+    const backup = {
+      interpreter: {
+        enable_interpreter: true,
+        timeout_seconds: 4.5,
+        memory_limit_mb: 128,
+        max_ptc_calls: 32,
+        max_result_chars: 8000,
+        ptc: "safe",
+        ptc_acknowledge_unsafe: false,
+      },
+      startup: { mode: "auto" },
+    };
+    const fresh = {
+      models: { default: "openai:nvidia/new-model" },
+      update: { check: false, auto_update: false },
+    };
+
+    const result = runMergeScript(stringify(backup), generatedCurrent(fresh), DCODE_OWNERSHIP);
+
+    expect(result.status).toBe(0);
+    expect(mergedToml(result.current)).toEqual({ ...fresh, ...backup });
+  });
+
+  it("drops restored Deep Agents interpreter resource settings above managed bounds", () => {
+    const backup = {
+      interpreter: {
+        timeout_seconds: 61,
+        memory_limit_mb: 513,
+        max_ptc_calls: 257,
+        max_result_chars: 65537,
+      },
+    };
+    const fresh = {
+      models: { default: "openai:nvidia/new-model" },
+      update: { check: false, auto_update: false },
+    };
+
+    const result = runMergeScript(stringify(backup), generatedCurrent(fresh), DCODE_OWNERSHIP);
+
+    expect(result.status).toBe(0);
+    expect(mergedToml(result.current)).toEqual(fresh);
+  });
+
   it("uses the shipped Deep Agents ownership policy to restore display preferences with fresh managed routing", () => {
     const backup = {
       models: { default: "openai:nvidia/old-model" },

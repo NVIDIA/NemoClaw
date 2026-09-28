@@ -647,6 +647,8 @@ main() {
 
   # 5. The same login-shell path runs dcode and returns a JSON PONG envelope.
   headless_output="$(sandbox_login_exec "cd /sandbox && timeout ${HEADLESS_TIMEOUT} dcode -n 'Reply with exactly one word: PONG' --json; echo \"DCODE_EXIT:\$?\"" || true)"
+  printf '%s\n' "${PREFIX}: login-shell stdout/stderr:" "$headless_output" \
+    | node --no-warnings "${REPO:-.}/test/e2e/fixtures/redaction.ts"
   dcode_exit="$(printf '%s' "$headless_output" | sed -n 's/.*DCODE_EXIT:\([0-9]\+\).*/\1/p' | tail -n1)"
   if classification="$(classify_headless_output "${dcode_exit:-unknown}" "$headless_output")"; then
     pass "login-shell dcode -n reached managed inference with ${classification} (exit ${dcode_exit:-unknown}; direct DNS/hosts ${direct_dns_state})"
@@ -662,6 +664,8 @@ main() {
   fi
   direct_headless_output="${direct_output}
 DCODE_EXIT:${direct_exit}"
+  printf '%s\n' "${PREFIX}: direct-exec stdout/stderr:" "$direct_headless_output" \
+    | node --no-warnings "${REPO:-.}/test/e2e/fixtures/redaction.ts"
   if direct_classification="$(classify_headless_output "$direct_exit" "$direct_headless_output" "$skill_marker_v1")"; then
     pass "direct-exec dcode -n reached managed inference; fresh direct-exec dcode session retained only the original skill (${direct_classification}; exit ${direct_exit})"
   else

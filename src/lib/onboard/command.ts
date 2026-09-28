@@ -10,6 +10,7 @@ import { loadServingCatalog } from "../inference/serving/catalog-loader";
 import { NEMOCLAW_SERVING_PRESET_ENV } from "../inference/serving/managed-cluster-discovery";
 import {
   resolveServingProfileSelection,
+  servingBackendProviderKey,
   type ServingProfileListEntry,
   ServingProfileSelectionError,
 } from "../inference/serving/profile-list";
@@ -30,6 +31,7 @@ import {
 } from "../tool-disclosure";
 import { applyAgentsManifestEnv, assertNoPerAgentMaxSpawnDepthJson } from "./agents-manifest";
 import type { OnboardFlags } from "./command-support";
+import { handleOnboardCommandError, reportOnboardCommandError } from "./command/error-reporting";
 import {
   type ExperimentalOnboardProfile,
   PORTABLE_EXPERIMENTAL_PROFILE,
@@ -38,10 +40,7 @@ import {
   loadPortableInferenceDescriptor,
   PORTABLE_INFERENCE_CREDENTIAL_ENV,
   type PortableInferenceActivation,
-  PortableInferenceDescriptorError,
 } from "./experimental/portable-inference-descriptor";
-import { GatewayManagementDeclarationError } from "./gateway-management";
-import { GatewayAuthorityError, gatewayAuthorityFailureLines } from "./gateway-teardown-authority";
 import {
   LOCAL_MODEL_PROFILE_ENABLED_ENV,
   LOCAL_MODEL_PROFILE_RUNTIME_ENV,
@@ -53,13 +52,11 @@ import { DCODE_OBSERVABILITY_FEATURE } from "./observability-policy-presets";
 import { isOpenclawAgent } from "./openclaw-otel-policy-presets";
 import { NOTICE_ACCEPT_ENV, NOTICE_ACCEPT_FLAG_NAME } from "./usage-notice";
 import {
-  OnboardRestoreSnapshotDriftError,
   OnboardResumeIntentError,
-  isOnboardResumeIntentRaceError,
   resolveOnboardResumeIntent,
   type OnboardResumeIntentSnapshot,
   type ResolvedOnboardResumeIntent,
-  isOnboardDeferredExitError,
+  isTrustedOnboardError,
   redactOnboardDiagnosticText,
 } from "./session-bootstrap";
 
@@ -284,12 +281,14 @@ const PROFILE_CONFLICT_ENV = [
   "NEMOCLAW_MODEL",
   "NEMOCLAW_VLLM_MODEL",
   VLLM_EXTRA_ARGS_ENV,
+  "NEMOCLAW_LLAMACPP_RECIPE",
   "NEMOCLAW_MANAGED_CLUSTER_PEERS",
 ] as const;
 
 function validateServingProfileConflicts(
   selectedProfileId: string,
   deps: ResolveOnboardOptionsDeps,
+  allowedLlamaCppRecipeId?: string,
 ): void {
   const existingPreset = String(deps.env[NEMOCLAW_SERVING_PRESET_ENV] ?? "").trim();
   if (existingPreset && existingPreset !== selectedProfileId) {
@@ -298,7 +297,11 @@ function validateServingProfileConflicts(
       `  --profile ${selectedProfileId} conflicts with ${NEMOCLAW_SERVING_PRESET_ENV}=${existingPreset}.`,
     );
   }
-  const conflicts = PROFILE_CONFLICT_ENV.filter((name) => String(deps.env[name] ?? "").trim());
+  const conflicts = PROFILE_CONFLICT_ENV.filter((name) => {
+    const value = String(deps.env[name] ?? "").trim();
+    if (!value) return false;
+    return name !== "NEMOCLAW_LLAMACPP_RECIPE" || value !== allowedLlamaCppRecipeId;
+  });
   if (conflicts.length > 0) {
     fail(deps, `  --profile cannot be combined with inference overrides: ${conflicts.join(", ")}.`);
   }
@@ -398,16 +401,7 @@ function activeServingProfileId(provenance: ServingProfileProvenance | null): st
  * provider wired up, which the caller reports rather than silently ignoring.
  */
 export function servingProfileProviderKey(provenance: ServingProfileProvenance): string | null {
-  switch (provenance.recipe.backend) {
-    // Kept as literals so this module does not take a dependency on the
-    // provider menu; `command.test.ts` asserts they match its exported keys.
-    case "vllm":
-      return "install-vllm";
-    case "install-llama-cpp":
-      return "install-llama-cpp";
-    default:
-      return null;
-  }
+  return servingBackendProviderKey(provenance.recipe.backend);
 }
 
 function resolveResumedServingProfile(
@@ -439,7 +433,11 @@ function resolveResumedServingProfile(
       `  --profile ${requested.preset.id} does not match resumed profile ${current.preset.id}.`,
     );
   }
-  validateServingProfileConflicts(current.preset.id, deps);
+  validateServingProfileConflicts(
+    current.preset.id,
+    deps,
+    current.recipe.backend === "install-llama-cpp" ? current.recipe.id : undefined,
+  );
   return current;
 }
 
@@ -524,56 +522,33 @@ export function resolveOnboardOptions(
 // rejects these with a code so callers can treat them as deliberate
 // cancellation rather than a crash. See src/lib/credentials/store.ts.
 function promptCancellationCode(error: unknown): "EOF" | "SIGINT" | null {
-  const code = (error as NodeJS.ErrnoException | null)?.code;
+  if (!isTrustedOnboardError(error)) return null;
+  const descriptor = Object.getOwnPropertyDescriptor(error, "code");
+  if (!descriptor || !("value" in descriptor)) return null;
+  const code = descriptor.value;
   return code === "EOF" || code === "SIGINT" ? code : null;
 }
 
-function reportOnboardCommandError(deps: RunOnboardCommandDeps, message: string): number {
-  const redacted = message.split("\n").map(redactOnboardDiagnosticText).join("\n");
-  (deps.error ?? console.error)(redacted);
-  return 1;
+/** Read one trusted Error data property without consulting accessors or its prototype. */
+function ownErrorData(error: Error, key: PropertyKey): unknown {
+  const descriptor = Object.getOwnPropertyDescriptor(error, key);
+  return descriptor && "value" in descriptor ? descriptor.value : undefined;
 }
 
-function handleOnboardCommandError(error: unknown, deps: RunOnboardCommandDeps): number | null {
-  const cancellationCode = promptCancellationCode(error);
-  if (cancellationCode === "SIGINT") {
-    // The prompt has already restored terminal state and re-raised SIGINT.
-    // Let the onboard signal handler print resumable-step guidance and
-    // preserve status 130 without leaking this rejected prompt error through
-    // oclif as a raw stack trace (#7439).
-    return null;
-  }
-  // A rejected NEMOCLAW_GATEWAY_MANAGEMENT contract is operator input error,
-  // not a crash: print the validation reason as a clean single-line CLI error
-  // and exit nonzero instead of re-throwing it into a Node.js stack trace
-  // (#7627).
-  if (error instanceof GatewayManagementDeclarationError) {
-    return reportOnboardCommandError(deps, `  ${error.message}`);
-  }
-  if (error instanceof PortableInferenceDescriptorError) {
-    return reportOnboardCommandError(deps, `  ${error.message}`);
-  }
-  if (error instanceof OnboardRestoreSnapshotDriftError) {
-    return reportOnboardCommandError(deps, `  ${error.message}`);
-  }
-  // Gateway-authority refusals are reported, never rethrown. Recreation is not
-  // selected in one place: `--recreate-sandbox` sets the flag, but `runOnboard`
-  // independently honours NEMOCLAW_RECREATE_SANDBOX and reaches the same
-  // journal when it detects sandbox drift. Keying this branch on the flag left
-  // both of those paths emitting a raw stack trace (#8103). Within onboarding
-  // the recreate journal's authority revalidation is the only source of this
-  // typed error, so the operation label holds however recreation was selected.
-  if (error instanceof GatewayAuthorityError) {
-    return reportOnboardCommandError(
-      deps,
-      gatewayAuthorityFailureLines(error, "sandbox recreate").join("\n"),
-    );
-  }
-  // Stdin EOF at any onboarding prompt is a cancellation, not a failure:
-  // print a clear message and exit non-zero instead of either crashing with
-  // a stack trace or — as in the original bug — exiting 0 silently (#5976).
-  if (cancellationCode !== "EOF") throw error;
-  return reportOnboardCommandError(deps, "  Installation cancelled");
+/** Recognize the internal resume race marker without consulting untrusted inherited state. */
+function isSafeResumeIntentRaceError(error: unknown): boolean {
+  return (
+    isTrustedOnboardError(error) && ownErrorData(error, "nemoclawOnboardResumeIntentRace") === true
+  );
+}
+
+/** Recover a deferred exit only from the internal Error's safe own data fields. */
+function safeDeferredExitCode(error: unknown): number | null {
+  if (!isTrustedOnboardError(error)) return null;
+  if (ownErrorData(error, Symbol.for("nemoclaw.onboard.deferred-exit-error")) !== true) return null;
+  if (ownErrorData(error, "name") !== "OnboardDeferredExitError") return null;
+  const code = ownErrorData(error, "code");
+  return typeof code === "number" && Number.isInteger(code) ? code : null;
 }
 
 function applyServingProfileEnvironment(
@@ -682,15 +657,16 @@ function handleOnboardCommandAttemptError(
   deps: RunOnboardCommandDeps,
   attempt: number,
 ): OnboardCommandAttemptResult {
-  if (isOnboardResumeIntentRaceError(error)) {
+  if (isSafeResumeIntentRaceError(error)) {
     if (attempt === 0) return "retry";
     return reportOnboardCommandError(
       deps,
       "  The onboarding checkpoint changed while resume acquired its lock. Retry the command.",
     );
   }
-  if (isOnboardDeferredExitError(error)) return error.code;
-  return handleOnboardCommandError(error, deps) ?? "complete";
+  const deferredExitCode = safeDeferredExitCode(error);
+  if (deferredExitCode !== null) return deferredExitCode;
+  return handleOnboardCommandError(error, deps, promptCancellationCode(error)) ?? "complete";
 }
 
 function restoreOnboardCommandEnvironment(

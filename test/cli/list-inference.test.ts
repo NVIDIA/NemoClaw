@@ -7,13 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import {
-  execTimeout,
-  HERMES_CLI,
-  runAsync,
-  runWithEnvAsync,
-  testTimeout,
-} from "./helpers";
+import { execTimeout, HERMES_CLI, runAsync, runWithEnvAsync, testTimeout } from "./helpers";
 
 function runHermes(args: string[]): Promise<{ code: number; out: string }> {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemohermes-cli-test-"));

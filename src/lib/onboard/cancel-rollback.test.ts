@@ -302,11 +302,9 @@ describe("makeOnboardCancelExit", () => {
 
 describe("buildCancelRollbackMessage", () => {
   it("preserves identity-bound recovery guidance", () => {
-    const message = buildCancelRollbackMessage(
-      "sb",
-      SANDBOX_FINGERPRINT,
-      RECOVERY_CONTEXT,
-    ).join("\n");
+    const message = buildCancelRollbackMessage("sb", SANDBOX_FINGERPRINT, RECOVERY_CONTEXT).join(
+      "\n",
+    );
 
     expect(message).toContain("preserved incomplete sandbox 'sb'");
     expect(message).toContain(SANDBOX_FINGERPRINT);

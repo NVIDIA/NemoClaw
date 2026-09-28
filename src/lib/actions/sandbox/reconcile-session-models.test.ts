@@ -20,16 +20,20 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { executeSandboxCommand } from "./process-recovery";
+import { executeSandboxExecCommand } from "../../adapters/sandbox/command-transport";
+import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import {
   buildSessionStoreReplaceCommand,
   reconcilePinnedSessionModels,
   reconcileStalePinnedSessionModelsAfterRebuild,
 } from "./reconcile-session-models";
 
-vi.mock("./process-recovery", () => ({ executeSandboxCommand: vi.fn() }));
+vi.mock("../../adapters/sandbox/command-transport", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../adapters/sandbox/command-transport")>()),
+  executeSandboxExecCommand: vi.fn(),
+}));
 
-const executeSandboxCommandMock = vi.mocked(executeSandboxCommand);
+const executeSandboxCommandMock = vi.mocked(executeSandboxExecCommand);
 
 beforeEach(() => {
   executeSandboxCommandMock.mockReset();
@@ -272,14 +276,14 @@ describe("reconcileStalePinnedSessionModelsAfterRebuild", () => {
     },
   });
 
-  it("reads restored state and dispatches a guarded write for stale pins (#7102)", () => {
+  it("reads restored state and dispatches a guarded write for stale pins (#7102)", async () => {
     executeSandboxCommandMock
-      .mockReturnValueOnce({ status: 0, stdout: config, stderr: "" })
-      .mockReturnValueOnce({ status: 0, stdout: staleStore, stderr: "" })
-      .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" });
+      .mockResolvedValueOnce({ status: 0, stdout: config, stderr: "" })
+      .mockResolvedValueOnce({ status: 0, stdout: staleStore, stderr: "" })
+      .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" });
     const log = vi.fn();
 
-    reconcileStalePinnedSessionModelsAfterRebuild("alpha", log);
+    await reconcileStalePinnedSessionModelsAfterRebuild("alpha", log);
 
     expect(executeSandboxCommandMock).toHaveBeenCalledTimes(3);
     expect(executeSandboxCommandMock.mock.calls[0]).toEqual([
@@ -295,36 +299,36 @@ describe("reconcileStalePinnedSessionModelsAfterRebuild", () => {
     );
   });
 
-  it("reuses the rebuild target for every restored session read and write (#10514)", () => {
+  it("reuses the rebuild target for every restored session read and write (#10514)", async () => {
     executeSandboxCommandMock
-      .mockReturnValueOnce({ status: 0, stdout: config, stderr: "" })
-      .mockReturnValueOnce({ status: 0, stdout: staleStore, stderr: "" })
-      .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" });
+      .mockResolvedValueOnce({ status: 0, stdout: config, stderr: "" })
+      .mockResolvedValueOnce({ status: 0, stdout: staleStore, stderr: "" })
+      .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" });
     const runtimeSelection = {
       gatewayName: "recorded-gateway",
       workspace: "default",
       localTlsDir: "/authority/tls",
     };
 
-    reconcileStalePinnedSessionModelsAfterRebuild("alpha", vi.fn(), runtimeSelection);
+    await reconcileStalePinnedSessionModelsAfterRebuild("alpha", vi.fn(), runtimeSelection);
 
     expect(executeSandboxCommandMock).toHaveBeenCalledTimes(3);
-    expect(executeSandboxCommandMock.mock.calls.map((call) => call[2])).toEqual([
+    expect(executeSandboxCommandMock.mock.calls.map((call) => call[3])).toEqual([
       { runtimeSelection },
       { runtimeSelection },
       { runtimeSelection },
     ]);
   });
 
-  it("stops when the restored config has no primary model (#7102)", () => {
-    executeSandboxCommandMock.mockReturnValueOnce({
+  it("stops when the restored config has no primary model (#7102)", async () => {
+    executeSandboxCommandMock.mockResolvedValueOnce({
       status: 0,
       stdout: '{"agents":{"defaults":{}}}',
       stderr: "",
     });
     const log = vi.fn();
 
-    reconcileStalePinnedSessionModelsAfterRebuild("alpha", log);
+    await reconcileStalePinnedSessionModelsAfterRebuild("alpha", log);
 
     expect(executeSandboxCommandMock).toHaveBeenCalledTimes(1);
     expect(log).toHaveBeenLastCalledWith(
@@ -332,8 +336,8 @@ describe("reconcileStalePinnedSessionModelsAfterRebuild", () => {
     );
   });
 
-  it("rejects a restored primary model with terminal control characters (#7102)", () => {
-    executeSandboxCommandMock.mockReturnValueOnce({
+  it("rejects a restored primary model with terminal control characters (#7102)", async () => {
+    executeSandboxCommandMock.mockResolvedValueOnce({
       status: 0,
       stdout: JSON.stringify({
         agents: { defaults: { model: { primary: "inference/model\u001b[2J" } } },
@@ -342,7 +346,7 @@ describe("reconcileStalePinnedSessionModelsAfterRebuild", () => {
     });
     const log = vi.fn();
 
-    reconcileStalePinnedSessionModelsAfterRebuild("alpha", log);
+    await reconcileStalePinnedSessionModelsAfterRebuild("alpha", log);
 
     expect(executeSandboxCommandMock).toHaveBeenCalledTimes(1);
     expect(log).toHaveBeenLastCalledWith(
@@ -351,13 +355,13 @@ describe("reconcileStalePinnedSessionModelsAfterRebuild", () => {
     expect(log.mock.calls.flat().join(" ")).not.toContain("\u001b");
   });
 
-  it("stops when the restored session store cannot be read (#7102)", () => {
+  it("stops when the restored session store cannot be read (#7102)", async () => {
     executeSandboxCommandMock
-      .mockReturnValueOnce({ status: 0, stdout: config, stderr: "" })
-      .mockReturnValueOnce({ status: 1, stdout: "", stderr: "missing" });
+      .mockResolvedValueOnce({ status: 0, stdout: config, stderr: "" })
+      .mockResolvedValueOnce({ status: 1, stdout: "", stderr: "missing" });
     const log = vi.fn();
 
-    reconcileStalePinnedSessionModelsAfterRebuild("alpha", log);
+    await reconcileStalePinnedSessionModelsAfterRebuild("alpha", log);
 
     expect(executeSandboxCommandMock).toHaveBeenCalledTimes(2);
     expect(log).toHaveBeenLastCalledWith(
@@ -365,19 +369,60 @@ describe("reconcileStalePinnedSessionModelsAfterRebuild", () => {
     );
   });
 
-  it("reports an atomic write failure without retrying or claiming success (#7102)", () => {
+  it("reports an atomic write failure without retrying or claiming success (#7102)", async () => {
     executeSandboxCommandMock
-      .mockReturnValueOnce({ status: 0, stdout: config, stderr: "" })
-      .mockReturnValueOnce({ status: 0, stdout: staleStore, stderr: "" })
-      .mockReturnValueOnce({ status: 9, stdout: "", stderr: "refused" });
+      .mockResolvedValueOnce({ status: 0, stdout: config, stderr: "" })
+      .mockResolvedValueOnce({ status: 0, stdout: staleStore, stderr: "" })
+      .mockResolvedValueOnce({ status: 9, stdout: "", stderr: "refused" });
     const log = vi.fn();
 
-    reconcileStalePinnedSessionModelsAfterRebuild("alpha", log);
+    await reconcileStalePinnedSessionModelsAfterRebuild("alpha", log);
 
     expect(executeSandboxCommandMock).toHaveBeenCalledTimes(3);
     expect(log).toHaveBeenLastCalledWith(
       "Session model reconcile: failed to write /sandbox/.openclaw/agents/main/sessions/sessions.json (status=9)",
     );
     expect(log.mock.calls.flat()).not.toContainEqual(expect.stringContaining("cleared stale"));
+  });
+
+  describe.each([
+    "cancelled",
+    "timeout",
+    "capture",
+    "invocation",
+    "unavailable",
+    "malformed",
+  ] as const)("best-effort reconciliation after %s", (kind) => {
+    it.each([0, 1, 2])(
+      "stops after failed command %i without retrying or claiming success",
+      async (completedCommands) => {
+        const error = new SandboxCommandTransportError(kind);
+        const successes = [config, staleStore];
+        successes
+          .slice(0, completedCommands)
+          .forEach((stdout) =>
+            executeSandboxCommandMock.mockResolvedValueOnce({ status: 0, stdout, stderr: "" }),
+          );
+        executeSandboxCommandMock.mockRejectedValue(error);
+        const log = vi.fn();
+        await expect(
+          reconcileStalePinnedSessionModelsAfterRebuild("alpha", log),
+        ).resolves.toBeUndefined();
+        expect(executeSandboxCommandMock).toHaveBeenCalledTimes(completedCommands + 1);
+        expect(log).toHaveBeenLastCalledWith(
+          `Session model reconcile incomplete: ${error.message}`,
+        );
+        expect(log.mock.calls.flat()).not.toContainEqual(expect.stringContaining("cleared stale"));
+      },
+    );
+  });
+
+  it("propagates unexpected restoration authority errors", async () => {
+    const error = new Error("restoration authority refused");
+    executeSandboxCommandMock.mockRejectedValue(error);
+    await expect(reconcileStalePinnedSessionModelsAfterRebuild("alpha", vi.fn())).rejects.toBe(
+      error,
+    );
+    expect(executeSandboxCommandMock).toHaveBeenCalledOnce();
   });
 });

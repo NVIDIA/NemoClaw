@@ -168,14 +168,16 @@ describe("host gateway cleanup boundaries", () => {
   });
 
   it("rejects a discovered live process that claims the selected gateway", () => {
+    // Match the other process fixtures: avoid a real Linux PID overriding mocked ps output.
+    const pid = 9999434;
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-live-gateway-proof-"));
     try {
       const { run } = makeRun(
         new Map([
-          [PGREP_KEY, ok("4343\n")],
-          ["ps -p 4343 -o stat=", ok("S\n")],
-          ["ps -p 4343 -o uid=", notFound()],
-          ["ps -p 4343 -o args=", ok("openshell-gateway[nemoclaw=nemoclaw-9123;port=9123]\n")],
+          [PGREP_KEY, ok(`${pid}\n`)],
+          [`ps -p ${pid} -o stat=`, ok("S\n")],
+          [`ps -p ${pid} -o uid=`, notFound()],
+          [`ps -p ${pid} -o args=`, ok("openshell-gateway[nemoclaw=nemoclaw-9123;port=9123]\n")],
         ]),
       );
 
@@ -188,7 +190,7 @@ describe("host gateway cleanup boundaries", () => {
             stateDir,
           },
         ),
-      ).toContain("live gateway process 4343");
+      ).toContain(`live gateway process ${pid}`);
     } finally {
       fs.rmSync(stateDir, { force: true, recursive: true });
     }

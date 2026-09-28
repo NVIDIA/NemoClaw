@@ -1,10 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { McpBridgeEntry } from "../../state/registry";
+import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
+
+import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
-import { executeSandboxCommand, type SandboxCommandResult } from "./process-recovery";
+import { restartSandboxGateway } from "./process-recovery";
+import {
+  executeSandboxExecCommand,
+  type SandboxCommandResult,
+} from "../../adapters/sandbox/command-transport";
 
 export type AdapterRegistrationInspection =
   | { state: "absent" | "registered" | "mismatch" }
@@ -21,7 +27,7 @@ export type AdapterRemovalOutcome = "removed" | "absent" | "unowned";
 
 export function parseAdapterRegistrationInspection(
   result: SandboxCommandResult,
-  entry: McpBridgeEntry,
+  entry: McpSourceEntry,
 ): AdapterRegistrationInspection {
   const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
   if (result.status !== 0) {
@@ -47,13 +53,24 @@ export function parseAdapterRegistrationInspection(
   };
 }
 
-export function inspectAdapterRegistrationCommand(
+export async function inspectAdapterRegistrationCommand(
   sandboxName: string,
-  entry: McpBridgeEntry,
+  entry: McpSourceEntry,
   command: string,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
-): AdapterRegistrationInspection {
-  const result = executeSandboxCommand(sandboxName, command, { runtimeSelection });
-  if (!result) return { state: "error", detail: "sandbox unreachable" };
-  return parseAdapterRegistrationInspection(result, entry);
+  timeoutMs?: number,
+): Promise<AdapterRegistrationInspection> {
+  try {
+    const result = await executeSandboxExecCommand(sandboxName, command, timeoutMs, {
+      runtimeSelection,
+    });
+    return parseAdapterRegistrationInspection(result, entry);
+  } catch (error) {
+    if (!(error instanceof SandboxCommandTransportError)) throw error;
+    return { state: "error", detail: error.message };
+  }
+}
+
+export async function restartMcpGatewayThroughSupervisor(sandboxName: string) {
+  return restartSandboxGateway(sandboxName, { quiet: true });
 }

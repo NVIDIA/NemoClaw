@@ -677,9 +677,14 @@ describe("llama.cpp image PR workflow", () => {
       .flatMap((job) => job.steps ?? [])
       .map((step) => step.uses)
       .filter((uses): uses is string => uses !== undefined);
-    actions.forEach((action) => {
-      expect(action).toMatch(fullShaAction);
-    });
+    expect(actions.filter((action) => action.startsWith("./"))).toEqual([
+      "./.github/actions/setup-reviewed-npm",
+    ]);
+    actions
+      .filter((action) => !action.startsWith("./"))
+      .forEach((action) => {
+        expect(action).toMatch(fullShaAction);
+      });
 
     expect(buildStep.with?.platforms).toBe("${{ matrix.platform }}");
     expect(buildStep.with?.provenance).toBe(false);

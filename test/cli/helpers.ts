@@ -8,7 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
 
-import { SANDBOX_EXEC_STARTED_MARKER } from "../../src/lib/actions/sandbox/sandbox-exec-output";
+import { SANDBOX_EXEC_STARTED_MARKER } from "../../src/lib/adapters/sandbox/sandbox-exec-output";
 import type { OwnedTestResources } from "../helpers/owned-test-resources";
 import { execTimeout, testTimeout, testTimeoutOptions } from "../helpers/timeouts";
 
@@ -41,6 +41,12 @@ export const OPENCLAW_EXPECTED_VERSION = readOpenClawExpectedVersion();
 export type CliRunResult = {
   code: number;
   out: string;
+};
+
+export type CliScriptRunOptions = {
+  env?: Record<string, string | undefined>;
+  timeout?: number;
+  removeImplicitHome?: (home: string) => void;
 };
 
 export type CliErrorShape = {
@@ -176,6 +182,21 @@ export function runWithEnvAsync(
   return runWithEnvInternalAsync(args, env, timeout);
 }
 
+export function runCliScriptAsync(
+  script: string,
+  args: string,
+  options: CliScriptRunOptions = {},
+): Promise<CliRunResult> {
+  return runWithEnvInternalAsync(
+    args,
+    options.env ?? {},
+    options.timeout ?? execTimeout(),
+    undefined,
+    script,
+    options.removeImplicitHome,
+  );
+}
+
 export function runWithInput(
   args: string,
   input: string,
@@ -183,6 +204,15 @@ export function runWithInput(
   timeout: number = execTimeout(),
 ): CliRunResult {
   return runWithEnvInternal(args, env, timeout, input);
+}
+
+export function runWithInputAsync(
+  args: string,
+  input: string,
+  env: Record<string, string | undefined> = {},
+  timeout: number = execTimeout(),
+): Promise<CliRunResult> {
+  return runWithEnvInternalAsync(args, env, timeout, input);
 }
 
 function runWithEnvInternal(
@@ -233,6 +263,10 @@ async function runWithEnvInternalAsync(
   args: string,
   env: Record<string, string | undefined>,
   timeout: number,
+  input?: string,
+  script: string = CLI,
+  removeImplicitHome: (home: string) => void = (home) =>
+    fs.rmSync(home, { force: true, recursive: true }),
 ): Promise<CliRunResult> {
   const parsedArgs = splitCliArgs(args);
   const mergeStderrOnSuccess = parsedArgs.includes("2>&1");
@@ -244,7 +278,7 @@ async function runWithEnvInternalAsync(
     return await new Promise<CliRunResult>((resolve) => {
       const child = execFile(
         process.execPath,
-        [CLI, ...cliArgs],
+        [script, ...cliArgs],
         {
           encoding: "utf-8",
           timeout,
@@ -267,10 +301,10 @@ async function runWithEnvInternalAsync(
           resolve({ code, out: `${stdout}${stderr}${errorOutput}` });
         },
       );
-      child.stdin?.end();
+      child.stdin?.end(input);
     });
   } finally {
-    if (implicitHome) fs.rmSync(implicitHome, { force: true, recursive: true });
+    if (implicitHome) removeImplicitHome(implicitHome);
   }
 }
 
@@ -376,7 +410,12 @@ export function writeHealthyDockerStub(localBin: string): void {
  * stub. The general sandbox transport writes an exec marker before the HTTP
  * response. The managed DCode launcher returns the HTTP response directly.
  */
-export function inferenceInvocationStubLines(httpStatus = "200", exitCode = 0): string[] {
+export function inferenceInvocationStubLines(
+  httpStatus = "200",
+  exitCode = 0,
+  /** Extra probe stdout after the status line, e.g. a failure classification token. */
+  extraStdout: readonly string[] = [],
+): string[] {
   const bodyLines =
     new Map<number, string[]>([
       [
@@ -407,6 +446,7 @@ export function inferenceInvocationStubLines(httpStatus = "200", exitCode = 0): 
     "      esac",
     `      printf '%s\\n' ${JSON.stringify(httpStatus)}`,
     ...bodyLines,
+    ...extraStdout.map((line) => `      printf '%s\\n' ${JSON.stringify(line)}`),
     `      exit ${String(exitCode)}`,
     "      ;;",
     "  esac",
@@ -568,11 +608,15 @@ export function createDebugCommandTestEnv(
   options: { extraSandboxNames?: string[]; gatewayPort?: number; openshellArgsLog?: string } = {},
 ): Record<string, string> {
   const { home, bin: localBin } = resources.home(prefix);
-  const sandboxName = `${prefix}${process.pid.toString(36)}-${Date.now().toString(36)}`;
+  const sandboxName = `${prefix.slice(0, 5)}${process.pid.toString(36)}-${Date.now().toString(36)}`;
   fs.mkdirSync(localBin, { recursive: true });
   // Register the env-sourced sandbox plus any extra names supplied via the
   // --sandbox flag so the validation gate accepts them.
-  writeSandboxRegistry(home, sandboxName, options.gatewayPort ? { gatewayPort: options.gatewayPort } : {});
+  writeSandboxRegistry(
+    home,
+    sandboxName,
+    options.gatewayPort ? { gatewayPort: options.gatewayPort } : {},
+  );
   if (options.extraSandboxNames && options.extraSandboxNames.length > 0) {
     const registryPath = path.join(home, ".nemoclaw", "sandboxes.json");
     const current = JSON.parse(fs.readFileSync(registryPath, "utf-8")) as {

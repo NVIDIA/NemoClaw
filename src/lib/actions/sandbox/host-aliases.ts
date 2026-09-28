@@ -435,12 +435,10 @@ export function removeSandboxHostAliasWithDeps(
   const buildAliases: BuildHostAliases = (currentResource) => {
     const original = normalizeHostAliases(currentResource);
     const aliases = original
-      .map(
-        (alias): HostAlias => ({
-          ip: alias.ip,
-          hostnames: alias.hostnames.filter((name) => name !== hostname),
-        }),
-      )
+      .map((alias): HostAlias => ({
+        ip: alias.ip,
+        hostnames: alias.hostnames.filter((name) => name !== hostname),
+      }))
       .filter((alias) => alias.ip && alias.hostnames.length > 0);
 
     const existed = original.some((alias) => alias.hostnames.includes(hostname));

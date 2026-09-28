@@ -163,11 +163,7 @@ export function findUntrustedPrivatePolicyEndpointHost(
   trustedHosts?: ReadonlySet<string>,
 ): string | null {
   for (const { host } of collectEndpointReferences(document)) {
-    if (
-      !isHostGatewayBridge(host) &&
-      isPrivateHostname(host) &&
-      trustedHosts?.has(host) !== true
-    ) {
+    if (!isHostGatewayBridge(host) && isPrivateHostname(host) && trustedHosts?.has(host) !== true) {
       return host;
     }
   }
@@ -221,10 +217,7 @@ export async function prepareTrustedPrivatePolicyPresets(
         );
       }
     }
-    const untrustedPrivateHost = findUntrustedPrivatePolicyEndpointHost(
-      document,
-      trustedHostSet,
-    );
+    const untrustedPrivateHost = findUntrustedPrivatePolicyEndpointHost(document, trustedHostSet);
     if (untrustedPrivateHost) {
       throw new Error(
         `Preset '${preset.presetName}' endpoint host '${untrustedPrivateHost}' is rejected. Add explicit trust only for RFC1918, CGNAT, or IPv6 unique local destinations.`,

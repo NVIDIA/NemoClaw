@@ -27,11 +27,7 @@ function git(cwd: string, ...args: string[]): string {
 }
 
 function runCli(cwd: string, ...args: string[]) {
-  return spawnSync(
-    process.execPath,
-    ["--no-warnings", SCRIPT, ...args],
-    { cwd, encoding: "utf8" },
-  );
+  return spawnSync(process.execPath, ["--no-warnings", SCRIPT, ...args], { cwd, encoding: "utf8" });
 }
 
 function expectMarkdownList(markdown: string, values: string[]): void {

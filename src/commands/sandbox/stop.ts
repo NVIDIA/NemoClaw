@@ -21,6 +21,6 @@ export default class SandboxStopCommand extends NemoClawCommand {
 
   public async run(): Promise<void> {
     const { args } = await this.parse(SandboxStopCommand);
-    this.applyExitResult(stopSandbox(args.sandboxName));
+    this.applyExitResult(await stopSandbox(args.sandboxName));
   }
 }

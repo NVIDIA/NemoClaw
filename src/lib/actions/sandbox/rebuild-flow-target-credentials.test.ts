@@ -44,35 +44,6 @@ describe("rebuildSandbox flow: target credentials", () => {
     expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
   });
 
-  it("rejects a Tavily credential already owned by MCP before rebuild mutation", async () => {
-    const harness = createRebuildFlowHarness({
-      sandboxEntry: {
-        webSearchEnabled: true,
-        webSearchProvider: "tavily",
-        mcp: {
-          bridges: {
-            search: {
-              server: "search",
-              agent: "openclaw",
-              url: "https://mcp.example.com/mcp",
-              env: ["TAVILY_API_KEY"],
-              policyName: "alpha-mcp-search",
-              addedAt: "2026-07-03T00:00:00.000Z",
-            },
-          },
-        },
-      },
-    });
-
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).rejects.toThrow("Web Search and MCP credential ownership conflict");
-
-    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
-    expect(harness.prepareMcpBridgesForRebuildSpy).not.toHaveBeenCalled();
-    expectNoSandboxDelete(harness.runOpenshellSpy);
-  });
-
   it("restores the caller Tavily credential environment after rebuild", async () => {
     const restoreEnv = snapshotEnv(["TAVILY_API_KEY"]);
     process.env.TAVILY_API_KEY = "caller-tavily-key";

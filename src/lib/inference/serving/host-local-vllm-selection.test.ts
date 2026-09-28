@@ -32,6 +32,12 @@ vi.mock("./resolver.js", () => ({
   resolveManagedInferenceServing: mocks.resolveManagedInferenceServing,
 }));
 
+vi.mock("../../readiness/host.js", () => ({
+  createHostReadinessReport() {
+    throw new Error("Host readiness must be supplied by the test");
+  },
+}));
+
 function hostLocalSelection(): ResolvedHostLocalInferenceSelection {
   const managed = fixtureManagedClusterSelection();
   const { topologyQualification: _topology, ...selection } = managed;
@@ -94,9 +100,7 @@ function recipeWithGpuMemoryUtilization(
       serve: {
         ...recipe.spec.serve,
         arguments: [
-          ...recipe.spec.serve.arguments.filter(
-            ({ name }) => name !== "--gpu-memory-utilization",
-          ),
+          ...recipe.spec.serve.arguments.filter(({ name }) => name !== "--gpu-memory-utilization"),
           ...values.map((value) => ({ name: "--gpu-memory-utilization", value })),
         ],
       },
@@ -134,9 +138,9 @@ describe("host-local vLLM GPU memory materialization", () => {
   it("rejects duplicate utilization arguments", () => {
     const recipe = recipeWithGpuMemoryUtilization(0.75, 0.8);
 
-    expect(() =>
-      hostLocalVllmGpuMemoryUtilization(recipe),
-    ).toThrow("has duplicate --gpu-memory-utilization arguments");
+    expect(() => hostLocalVllmGpuMemoryUtilization(recipe)).toThrow(
+      "has duplicate --gpu-memory-utilization arguments",
+    );
     expect(() => hostLocalVllmModelArguments(recipe)).toThrow(
       "has duplicate --gpu-memory-utilization arguments",
     );
@@ -149,15 +153,16 @@ describe("host-local vLLM selection", () => {
   it("resolves an explicit preset into the catalog-derived Spark profile", () => {
     const selection = hostLocalSelection();
     const gpuMemoryUtilization = Number(
-      selection.recipe.spec.serve.arguments.find(
-        ({ name }) => name === "--gpu-memory-utilization",
-      )?.value,
+      selection.recipe.spec.serve.arguments.find(({ name }) => name === "--gpu-memory-utilization")
+        ?.value,
     );
     mocks.resolveManagedInferenceServing.mockReturnValue(selection);
 
-    const result = resolveHostLocalVllmSelection(baseProfile(), {
-      NEMOCLAW_SERVING_PRESET: selection.preset.metadata.id,
-    });
+    const result = resolveHostLocalVllmSelection(
+      baseProfile(),
+      { NEMOCLAW_SERVING_PRESET: selection.preset.metadata.id },
+      { readinessReports: [] },
+    );
 
     expect(result).toMatchObject({
       kind: "selected",
@@ -189,10 +194,7 @@ describe("host-local vLLM selection", () => {
         intent: { preset: selection.preset.metadata.id },
       }),
     );
-    assert(
-      result.kind === "selected",
-      "expected a selected host-local profile",
-    );
+    assert(result.kind === "selected", "expected a selected host-local profile");
     expect(result.model.runtime?.dockerRunArgs).toContain(
       `type=bind,source=${path.join(os.homedir(), ".cache", "huggingface", "hub")},target=${selection.recipe.spec.runtime.modelCache.target}/hub,readonly`,
     );
@@ -209,11 +211,7 @@ describe("host-local vLLM selection", () => {
       managedBearerAuth: true,
     });
     expect(
-      computeCapabilityPreflight(
-        result.model,
-        [1],
-        result.profile.minComputeCapability,
-      ),
+      computeCapabilityPreflight(result.model, [1], result.profile.minComputeCapability),
     ).toMatchObject({ ok: false });
   });
 
@@ -221,9 +219,11 @@ describe("host-local vLLM selection", () => {
     const selection = hostLocalSelection();
     mocks.resolveManagedInferenceServing.mockReturnValue(selection);
 
-    const result = resolveHostLocalVllmSelection(baseProfile(), {
-      NEMOCLAW_VLLM_MODEL: selection.recipe.spec.model.environmentValue,
-    });
+    const result = resolveHostLocalVllmSelection(
+      baseProfile(),
+      { NEMOCLAW_VLLM_MODEL: selection.recipe.spec.model.environmentValue },
+      { readinessReports: [] },
+    );
 
     expect(result).toMatchObject({
       kind: "selected",
@@ -244,7 +244,7 @@ describe("host-local vLLM selection", () => {
     mocks.resolveManagedInferenceServing.mockReturnValue(selection);
 
     expect(
-      resolveHostLocalVllmSelection(baseProfile(), {}, { automatic: true }),
+      resolveHostLocalVllmSelection(baseProfile(), {}, { automatic: true, readinessReports: [] }),
     ).toMatchObject({
       kind: "selected",
     });
@@ -263,28 +263,25 @@ describe("host-local vLLM selection", () => {
     ],
     [{ NEMOCLAW_VLLM_EXTRA_ARGS_JSON: "[]" }],
   ])("defers operator-owned serve arguments to the established installer", (env) => {
-    expect(
-      resolveHostLocalVllmSelection(baseProfile(), env, { automatic: true }),
-    ).toEqual({ kind: "not-selected" });
+    expect(resolveHostLocalVllmSelection(baseProfile(), env, { automatic: true })).toEqual({
+      kind: "not-selected",
+    });
     expect(mocks.resolveManagedInferenceServing).not.toHaveBeenCalled();
   });
 
   it.each([
     ["NEMOCLAW_VLLM_MODEL", "another-model"],
     ["NEMOCLAW_VLLM_EXTRA_ARGS_JSON", '["--max-model-len","4096"]'],
-  ] as const)(
-    "rejects a preset conflict with %s before catalog resolution",
-    (name, value) => {
-      const result = resolveHostLocalVllmSelection(baseProfile(), {
-        NEMOCLAW_SERVING_PRESET: "spark.host-local",
-        [name]: value,
-      });
+  ] as const)("rejects a preset conflict with %s before catalog resolution", (name, value) => {
+    const result = resolveHostLocalVllmSelection(baseProfile(), {
+      NEMOCLAW_SERVING_PRESET: "spark.host-local",
+      [name]: value,
+    });
 
-      expect(result).toEqual({
-        kind: "rejected",
-        reason: `NEMOCLAW_SERVING_PRESET conflicts with ${name}`,
-      });
-      expect(mocks.resolveManagedInferenceServing).not.toHaveBeenCalled();
-    },
-  );
+    expect(result).toEqual({
+      kind: "rejected",
+      reason: `NEMOCLAW_SERVING_PRESET conflicts with ${name}`,
+    });
+    expect(mocks.resolveManagedInferenceServing).not.toHaveBeenCalled();
+  });
 });

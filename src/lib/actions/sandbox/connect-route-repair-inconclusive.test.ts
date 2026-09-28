@@ -10,7 +10,13 @@ vi.mock("../../adapters/openshell/runtime", () => ({
   runOpenshell: vi.fn(() => ({ status: 0 })),
 }));
 vi.mock("../../gateway-runtime-action", () => ({
-  getNamedGatewayLifecycleState: vi.fn(() => ({ kind: "healthy_named" })),
+  getNamedGatewayLifecycleState: vi.fn().mockResolvedValue({
+    state: "healthy_named",
+    activeGateway: "nemoclaw",
+    diagnostic: "Connected.",
+    recoveryBlocked: false,
+    unavailable: false,
+  }),
 }));
 vi.mock("../../inference/local", () => ({
   findReachableOllamaHost: vi.fn(() => "127.0.0.1"),

@@ -31,10 +31,7 @@ describe("inference set provider diagnostics", () => {
 
     await expect(
       queryRegisteredGatewayProviders("non-default-gateway", { providerAdapter, log }),
-    ).resolves.toEqual([
-      "anthropic-prod",
-      "nvidia-prod",
-    ]);
+    ).resolves.toEqual(["anthropic-prod", "nvidia-prod"]);
     expect(providerAdapter.listProviders).toHaveBeenCalledExactlyOnceWith({
       target: { kind: "named", gatewayName: "non-default-gateway" },
       timeoutMs: 5_000,

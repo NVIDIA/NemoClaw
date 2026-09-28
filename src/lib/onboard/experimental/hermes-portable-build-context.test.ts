@@ -142,6 +142,9 @@ describe("Hermes portable staged build context", testTimeoutOptions(30_000), () 
     expect(stagedDockerfile).toMatch(
       /^ADD --checksum=sha256:[a-f0-9]{64} https:\/\/files[.]pythonhosted[.]org\//mu,
     );
+    expect(stagedDockerfile).toContain(
+      "ADD --checksum=sha256:5dbb86c71d07a1957f2e90734092dd6a58bdcd9ebc2d8d41ca1c6e6a21d364e1 https://registry.npmjs.org/npm/-/npm-12.0.2.tgz /npm-12.0.2.tgz",
+    );
     expect(stagedDockerfile).not.toMatch(/^RUN\s+--/mu);
     expect(stagedDockerfile).toContain(
       "COPY --from=hermes-managed-teams-wheels / /opt/nemoclaw-hermes-teams-wheels/",
@@ -177,9 +180,7 @@ describe("Hermes portable staged build context", testTimeoutOptions(30_000), () 
       fs.existsSync(path.join(first.buildContextPath, "agents/hermes/plugin/__pycache__")),
     ).toBe(false);
     expect(
-      fs.existsSync(
-        path.join(first.buildContextPath, "agents/hermes/security-dependencies.patch"),
-      ),
+      fs.existsSync(path.join(first.buildContextPath, "agents/hermes/security-dependencies.patch")),
     ).toBe(false);
 
     const reused = plan.materialize(contextInput());
@@ -412,6 +413,18 @@ describe("Hermes portable staged build context", testTimeoutOptions(30_000), () 
       "unsupported local or unpinned ADD instruction",
     );
     expect(fs.existsSync(reservationRoot)).toBe(reservationExistedBefore);
+  });
+
+  it("rejects a remote npm archive that disagrees with the reviewed identity", () => {
+    const source = primaryCloneFixture();
+    const configPath = path.join(source, "ci/reviewed-npm-audit.json");
+    const identity = JSON.parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
+    identity.npmArchiveSha256 = "0".repeat(64);
+    fs.writeFileSync(configPath, `${JSON.stringify(identity, null, 2)}\n`, { mode: 0o644 });
+
+    expect(() => createHermesPortableBuildContextPlan(source, BUILD_SETTINGS)).toThrow(
+      "unsupported local or unpinned ADD instruction",
+    );
   });
 
   it.each([

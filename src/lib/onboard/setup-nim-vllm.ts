@@ -336,9 +336,9 @@ export function createSetupNimVllmHandler(
       console.error(
         managedEndpoint
           ? `  Serving profile '${servingProfile.presetId}' ${declared}, but the managed vLLM ` +
-            `endpoint reports '${detectedModel}'.`
+              `endpoint reports '${detectedModel}'.`
           : `  Serving profile '${servingProfile.presetId}' ${declared}, but vLLM on ` +
-            `localhost:${deps.VLLM_PORT} reports '${detectedModel}'.`,
+              `localhost:${deps.VLLM_PORT} reports '${detectedModel}'.`,
       );
       console.error(
         "  Onboarding would store that model as the sandbox's recorded route, so the agent " +
@@ -348,7 +348,7 @@ export function createSetupNimVllmHandler(
         managedEndpoint
           ? "  Stop the managed vLLM deployment, then rerun the original install/onboard command."
           : `  Stop the existing vLLM server on localhost:${deps.VLLM_PORT}, then rerun the ` +
-            "original install/onboard command.",
+              "original install/onboard command.",
       );
       console.error(
         `  To keep '${detectedModel}' instead, start detailed setup without a profile:`,

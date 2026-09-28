@@ -15,6 +15,17 @@ export const WEB_SEARCH_PROVIDER_PROFILE_IDS = [
   HERMES_TAVILY_PROVIDER_PROFILE_ID,
 ] as const;
 export type WebSearchProviderProfileId = (typeof WEB_SEARCH_PROVIDER_PROFILE_IDS)[number];
+export const TAVILY_PROVIDER_PROFILE_AGENTS = [
+  "openclaw",
+  "hermes",
+  "langchain-deepagents-code",
+] as const;
+
+export function webSearchProviderProfileId(provider: string, agentName?: string | null): string {
+  return provider === TAVILY_PROVIDER_PROFILE_ID && agentName?.trim().toLowerCase() === "hermes"
+    ? HERMES_TAVILY_PROVIDER_PROFILE_ID
+    : provider;
+}
 
 export function webSearchProviderProfilePath(
   root: string,

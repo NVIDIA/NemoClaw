@@ -329,7 +329,7 @@ export default function register(api: OpenClawPluginApi): void {
   // 2. Register nvidia-nim provider from the active OpenClaw config, falling
   // back to the onboard snapshot and then the NemoClaw default.
   const onboardCfg = loadOnboardConfig();
-  const activeModel = readOpenClawPrimaryModel(api.logger) || onboardCfg?.model || "";
+  const activeModel = readOpenClawPrimaryModel(api.logger) || (onboardCfg?.model ?? "");
 
   // 4. Register runtime context injection (sandbox-awareness hook)
   const pluginConfig = getPluginConfig(api);

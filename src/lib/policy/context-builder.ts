@@ -114,13 +114,13 @@ function resolveVerification(
  * Custom and built-in preset presence is derived from the current OpenShell
  * policy. NemoClaw does not maintain a second activation list.
  */
-function partitionPresets(
+async function partitionPresets(
   sandboxName: string,
   applied: ReadonlySet<string>,
   gatewayPresets: ReadonlyArray<string> | null,
-): { active: PolicyContextPreset[]; unapplied: PolicyContextPreset[] } {
+): Promise<{ active: PolicyContextPreset[]; unapplied: PolicyContextPreset[] }> {
   const builtin = listPresets();
-  const customInfo = listCustomPresets(sandboxName);
+  const customInfo = await listCustomPresets(sandboxName);
   const active: PolicyContextPreset[] = [];
   const unapplied: PolicyContextPreset[] = [];
   for (const info of builtin) {
@@ -129,7 +129,7 @@ function partitionPresets(
     const entry = presetEntry(
       info,
       "builtin",
-      loadPresetForSandbox(sandboxName, info.name),
+      await loadPresetForSandbox(sandboxName, info.name),
       verification,
     );
     if (isApplied) {
@@ -141,7 +141,7 @@ function partitionPresets(
   for (const info of customInfo) {
     const verification = resolveVerification(info.name, gatewayPresets);
     active.push(
-      presetEntry(info, "custom", loadPresetForSandbox(sandboxName, info.name), verification),
+      presetEntry(info, "custom", await loadPresetForSandbox(sandboxName, info.name), verification),
     );
   }
   return { active, unapplied };
@@ -199,14 +199,14 @@ export interface BuildPolicyContextOptions {
   skipGatewayProbe?: boolean;
 }
 
-function probeGatewayPresets(
+async function probeGatewayPresets(
   sandboxName: string,
   options: BuildPolicyContextOptions,
-): ReadonlyArray<string> | null {
+): Promise<ReadonlyArray<string> | null> {
   if (options.gatewayPresets !== undefined) return options.gatewayPresets;
   if (options.skipGatewayProbe) return null;
   try {
-    return getGatewayPresets(sandboxName);
+    return await getGatewayPresets(sandboxName);
   } catch {
     return null;
   }
@@ -237,13 +237,13 @@ function probeGatewayPresets(
  *   the verification annotation or redaction set changes, update those
  *   tests in the same patch.
  */
-export function buildPolicyContext(
+export async function buildPolicyContext(
   sandboxName: string,
   options: BuildPolicyContextOptions = {},
-): PolicyContext {
-  const gatewayPresets = probeGatewayPresets(sandboxName, options);
+): Promise<PolicyContext> {
+  const gatewayPresets = await probeGatewayPresets(sandboxName, options);
   const appliedNames = new Set<string>(gatewayPresets ?? []);
-  const { active, unapplied } = partitionPresets(sandboxName, appliedNames, gatewayPresets);
+  const { active, unapplied } = await partitionPresets(sandboxName, appliedNames, gatewayPresets);
 
   return {
     sandboxName,

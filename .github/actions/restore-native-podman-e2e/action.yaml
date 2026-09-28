@@ -101,7 +101,10 @@ runs:
           remove_user_file "$RUNNER_TEMP/native-podman-e2e-info.json"
           service_unit_directory_preexisting="$(sudo -n jq -r '.serviceUnitDirectoryPreexisting' "$cleanup_state_path")"
           if [[ "$service_unit_directory_preexisting" == "false" && -d "$service_unit_directory" ]]; then
-            rmdir -- "$service_unit_directory"
+            if ! rmdir -- "$service_unit_directory" 2>/dev/null; then
+              [[ -d "$service_unit_directory" && ! -L "$service_unit_directory" ]]
+              [[ -n "$(find -P "$service_unit_directory" -mindepth 1 -maxdepth 1 -print -quit)" ]]
+            fi
           fi
           if [[ "$current_user_manager" == "active" ]]; then
             env \

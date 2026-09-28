@@ -398,12 +398,6 @@ export function createCurrentPodmanOperationEngine(
         HOME: environment.HOME ?? os.homedir(),
         PATH: environment.PATH ?? "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
         ...(environment.XDG_RUNTIME_DIR ? { XDG_RUNTIME_DIR: environment.XDG_RUNTIME_DIR } : {}),
-        ...(operation === "managed-bootstrap" && environment.CONTAINERS_CONF
-          ? { CONTAINERS_CONF: environment.CONTAINERS_CONF }
-          : {}),
-        ...(operation === "managed-bootstrap" && environment.CONTAINERS_STORAGE_CONF
-          ? { CONTAINERS_STORAGE_CONF: environment.CONTAINERS_STORAGE_CONF }
-          : {}),
       }),
     });
     return bound;
@@ -426,36 +420,6 @@ export function createCurrentPodmanOperationEngine(
       timeout?: number,
     ) => resolve().captureHost(args, timeout),
     assertAuthority: () => resolve().assertAuthority(),
-    ...(operation === "managed-bootstrap"
-      ? {
-          prepareManagedWorkspaceRoot: (
-            input: Parameters<
-              NonNullable<PodmanBoundContainerEngine["prepareManagedWorkspaceRoot"]>
-            >[0],
-          ) => {
-            const prepare = resolve().prepareManagedWorkspaceRoot;
-            if (!prepare) {
-              throw new Error(
-                "Podman managed-bootstrap engine did not expose workspace-root preparation.",
-              );
-            }
-            return prepare(input);
-          },
-          prepareManagedVolumeRoot: (
-            input: Parameters<
-              NonNullable<PodmanBoundContainerEngine["prepareManagedVolumeRoot"]>
-            >[0],
-          ) => {
-            const prepare = resolve().prepareManagedVolumeRoot;
-            if (!prepare) {
-              throw new Error(
-                "Podman managed-bootstrap engine did not expose volume-root preparation.",
-              );
-            }
-            return prepare(input);
-          },
-        }
-      : {}),
   });
 }
 

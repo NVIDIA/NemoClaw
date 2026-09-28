@@ -438,28 +438,6 @@ See [Missing Other Page](../other/missing).
   });
 });
 
-describe("Pi documentation routes", () => {
-  const index = buildPublishedRouteIndex();
-
-  it("publishes the Pi quickstart, operations, and support reference only in the Pi guide", () => {
-    expect(index.routes.has("/user-guide/pi/get-started/quickstart")).toBe(true);
-    expect(index.routes.has("/user-guide/pi/manage-sandboxes/run-pi")).toBe(true);
-    expect(index.routes.has("/user-guide/pi/reference/commands")).toBe(true);
-    expect(index.routes.has("/user-guide/pi/reference/pi-support")).toBe(true);
-    expect([
-      index.routes.has("/user-guide/openclaw/get-started/quickstart-pi"),
-      index.routes.has("/user-guide/openclaw/manage-sandboxes/run-pi"),
-      index.routes.has("/user-guide/openclaw/reference/pi-support"),
-      index.routes.has("/user-guide/hermes/get-started/quickstart-pi"),
-      index.routes.has("/user-guide/hermes/manage-sandboxes/run-pi"),
-      index.routes.has("/user-guide/hermes/reference/pi-support"),
-      index.routes.has("/user-guide/deepagents/get-started/quickstart-pi"),
-      index.routes.has("/user-guide/deepagents/manage-sandboxes/run-pi"),
-      index.routes.has("/user-guide/deepagents/reference/pi-support"),
-    ]).toEqual([false, false, false, false, false, false, false, false, false]);
-  });
-});
-
 describe("Manage Sandboxes extension routes", () => {
   const index = buildPublishedRouteIndex();
 
@@ -532,6 +510,41 @@ describe("Manage Sandboxes extension routes", () => {
 
     expect(quickstartPage.body.match(/<a\s+id=["']use-the-harness["']\s*><\/a>/g)).toHaveLength(1);
   });
+});
+
+describe("Pi documentation routes", () => {
+  const index = buildPublishedRouteIndex();
+
+  it("publishes every Pi page in the Pi guide", () => {
+    expect(index.routes.has("/user-guide/pi/get-started/quickstart")).toBe(true);
+    expect(index.routes.has("/user-guide/pi/inference/configure-model-limits")).toBe(true);
+    expect(index.routes.has("/user-guide/pi/manage-sandboxes/run-pi")).toBe(true);
+    expect(index.routes.has("/user-guide/pi/reference/commands")).toBe(true);
+    expect(index.routes.has("/user-guide/pi/reference/pi-support")).toBe(true);
+  });
+
+  it("maps Pi-only onboarding and commands exclusively to the Pi guide", () => {
+    expect(
+      index.sourceToRoutes.get("get-started/quickstart-pi.mdx")?.map(({ route }) => route),
+    ).toEqual(["/user-guide/pi/get-started/quickstart"]);
+    expect(
+      index.sourceToRoutes.get("reference/pi-commands.mdx")?.map(({ route }) => route),
+    ).toEqual(["/user-guide/pi/reference/commands"]);
+  });
+
+  it.each(["openclaw", "hermes", "deepagents"])(
+    "keeps Pi-only pages out of the %s guide",
+    (variant) => {
+      expect(index.routes.has(`/user-guide/${variant}/get-started/quickstart-pi`)).toBe(false);
+      expect(index.routes.has(`/user-guide/${variant}/manage-sandboxes/run-pi`)).toBe(false);
+      expect(index.routes.has(`/user-guide/${variant}/reference/pi-support`)).toBe(false);
+      expect(
+        index.routes.has(
+          `/user-guide/${variant}/inference/manage-inference/configure-model-limits`,
+        ),
+      ).toBe(true);
+    },
+  );
 });
 
 describe("Documentation Engineering routes", () => {

@@ -147,8 +147,8 @@ describe("blueprint/state", () => {
       expect(write?.path.endsWith(".tmp")).toBe(true);
       expect(write?.options).toMatchObject({ mode: 0o600 });
       expect(rename).toEqual({ from: write?.path, to: STATE_PATH });
-      expect(store.has(write?.path || "")).toBe(false);
-      expect(JSON.parse(store.get(STATE_PATH) || "{}").lastAction).toBeNull();
+      expect(store.has(write?.path ?? "")).toBe(false);
+      expect(JSON.parse(store.get(STATE_PATH) ?? "{}").lastAction).toBeNull();
     });
   });
 });

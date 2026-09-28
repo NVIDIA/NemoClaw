@@ -146,6 +146,35 @@ const workflowMutations: Array<[string, (value: Workflow) => void, string]> = [
 ];
 
 describe("staging Brev Launchable identity workflow boundary", () => {
+  it.each(["staging-brev-launchable", JOB])(
+    "rejects %s scheduling that replaces waiting jobs or cancels an active job",
+    (jobName) => {
+      const value = workflow();
+      const validationError =
+        jobName === JOB
+          ? `${JOB} must share the Launchable concurrency group with queue: max and no cancellation`
+          : "staging-brev-launchable concurrency must queue pending jobs in its Launchable group without cancelling the running job";
+      expect(validateE2eWorkflow(value)).not.toContain(validationError);
+
+      delete value.jobs[jobName]!.concurrency!.queue;
+      expect(validateE2eWorkflow(value)).toContain(validationError);
+
+      value.jobs[jobName]!.concurrency!.queue = "max";
+      value.jobs[jobName]!.concurrency!["cancel-in-progress"] = true;
+      expect(validateE2eWorkflow(value)).toContain(validationError);
+    },
+  );
+
+  it("rejects outer concurrency that lets focused Launchable dispatches replace each other", () => {
+    const value = readWorkflow();
+    const validationError =
+      "workflow concurrency must isolate each Launchable dispatch with github.run_id";
+    expect(validateE2eWorkflow(value)).not.toContain(validationError);
+    (value.concurrency as Record<string, unknown>).group =
+      "e2e-${{ github.ref }}-${{ inputs.jobs }}";
+    expect(validateE2eWorkflow(value)).toContain(validationError);
+  });
+
   it("keeps the explicit trusted-main identity job valid (#9925)", () => {
     expect(validateE2eWorkflow(workflow())).toEqual([]);
   });

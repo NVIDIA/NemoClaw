@@ -129,7 +129,7 @@ describe("connectSandbox route lifecycle", () => {
     expect(harness.probeOllamaAuthProxyHealthSpy).toHaveBeenCalled();
   });
 
-  it("shell-quotes hostile route values in drift recovery commands (#3726)", async () => {
+  it("rejects hostile observed route values before drift recovery (#3726)", async () => {
     const sandboxName = "alpha's-box";
     const harness = createConnectHarness({
       inferenceGetOutput:
@@ -141,11 +141,16 @@ describe("connectSandbox route lifecycle", () => {
       },
     });
 
-    await expect(harness.connectSandbox(sandboxName, { probeOnly: true })).resolves.toBeUndefined();
+    await expect(harness.connectSandbox(sandboxName, { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
 
     const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
-    expect(errorOutput).toContain(
-      "nemoclaw inference set --provider 'openai; touch /tmp/pwn' --model '$(id) model' --sandbox 'alpha'\\''s-box'",
+    expect(errorOutput).not.toContain("openai; touch /tmp/pwn");
+    expect(errorOutput).not.toContain("$(id) model");
+    expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+      expect.arrayContaining(["inference", "set"]),
+      expect.any(Object),
     );
   });
 

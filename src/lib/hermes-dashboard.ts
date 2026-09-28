@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { parseServicePortOverride } from "./core/service-port-boundary";
+
 export const HERMES_DASHBOARD_ENABLE_ENV = "NEMOCLAW_HERMES_DASHBOARD";
 export const HERMES_DASHBOARD_PORT_ENV = "NEMOCLAW_HERMES_DASHBOARD_PORT";
 export const HERMES_DASHBOARD_INTERNAL_PORT_ENV = "NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT";
@@ -29,28 +31,19 @@ export function isTruthyEnv(value: string | undefined): boolean {
   }
 }
 
-function parsePortEnv(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
-  const raw = env[name];
-  if (raw === undefined || raw.trim() === "") return fallback;
-  if (!/^\d+$/.test(raw.trim())) {
-    throw new Error(`Invalid port: ${name}="${raw}" must be an integer between 1024 and 65535`);
-  }
-  const parsed = Number(raw.trim());
-  if (parsed < 1024 || parsed > 65535) {
-    throw new Error(`Invalid port: ${name}="${raw}" must be an integer between 1024 and 65535`);
-  }
-  return parsed;
-}
-
 export function readHermesDashboardConfig(
   env: NodeJS.ProcessEnv = process.env,
 ): HermesDashboardConfig {
   return {
     enabled: isTruthyEnv(env[HERMES_DASHBOARD_ENABLE_ENV]),
-    port: parsePortEnv(env, HERMES_DASHBOARD_PORT_ENV, HERMES_DASHBOARD_DEFAULT_PORT),
-    internalPort: parsePortEnv(
-      env,
+    port: parseServicePortOverride(
+      HERMES_DASHBOARD_PORT_ENV,
+      env[HERMES_DASHBOARD_PORT_ENV],
+      HERMES_DASHBOARD_DEFAULT_PORT,
+    ),
+    internalPort: parseServicePortOverride(
       HERMES_DASHBOARD_INTERNAL_PORT_ENV,
+      env[HERMES_DASHBOARD_INTERNAL_PORT_ENV],
       HERMES_DASHBOARD_DEFAULT_INTERNAL_PORT,
     ),
     tuiEnabled: isTruthyEnv(env[HERMES_DASHBOARD_TUI_ENV]),

@@ -13,9 +13,8 @@ import {
 } from "../../../scripts/patch-openclaw-managed-transport-diagnostics.mts";
 
 /**
- * Mirrors the reviewed `openclaw@2026.7.1`
- * `dist/agent-bundle-mcp-runtime-*.js` transport factory, including its tab
- * indentation, so the patch anchor is exercised against the real preimage.
+ * Mirrors the legacy in-bundle transport factory, retained for supported
+ * pre-2026.9.1 layouts and patch-order composition tests.
  */
 function bundleMcpRuntimeFixture(): string {
   return [
@@ -41,6 +40,34 @@ function bundleMcpRuntimeFixture(): string {
     "\t\ttransport: new SSEClientTransport(new URL(resolved.url), {",
     "\t\t\tfetch: httpFetch,",
     "\t\t\tauthProvider",
+    "\t\t}),",
+    '\t\ttransportType: "sse"',
+    "\t};",
+    "}",
+  ].join("\n");
+}
+
+/** Mirrors OpenClaw 2026.9.1's split `dist/mcp-transport-*.js` factory. */
+function currentMcpTransportFixture(): string {
+  return [
+    'import { OpenClawStreamableHTTPClientTransport } from "./transport.js";',
+    'import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";',
+    "function resolveMcpTransport(serverName, rawServer, options) {",
+    "\tvoid rawServer;",
+    "\tvoid options;",
+    '\tconst resolved = { auth: undefined, transportType: "streamable-http", url: "https://mcp.test/rpc", connectionTimeoutMs: 30_000, requestTimeoutMs: 60_000 };',
+    "\tconst headers = undefined;",
+    "\tconst httpFetch = fetch;",
+    '\tif (resolved.transportType === "streamable-http") return {',
+    "\t\ttransport: new OpenClawStreamableHTTPClientTransport(new URL(resolved.url), {",
+    '\t\t\trequestInit: resolved.auth === "oauth" || !headers ? void 0 : { headers },',
+    "\t\t\tfetch: httpFetch",
+    "\t\t}),",
+    '\t\ttransportType: "streamable-http"',
+    "\t};",
+    "\treturn {",
+    "\t\ttransport: new SSEClientTransport(new URL(resolved.url), {",
+    "\t\t\tfetch: httpFetch",
     "\t\t}),",
     '\t\ttransportType: "sse"',
     "\t};",
@@ -154,6 +181,17 @@ describe("patchManagedTransportDiagnosticsText", () => {
     expect(result.text).toContain(MARKER);
     expect(result.text).toContain("\t\t\tfetch: nemoClawManagedTransportFetch(httpFetch, {");
     expect(result.text).toContain("\t\t\t\tcatalogListTimeoutMs: getCatalogListTimeoutMs(");
+  });
+
+  it("patches the split OpenClaw 2026.9.1 transport factory (#7957)", () => {
+    const once = patchManagedTransportDiagnosticsText(currentMcpTransportFixture(), "fixture.js");
+    const twice = patchManagedTransportDiagnosticsText(once.text, "fixture.js");
+
+    expect(once.status).toBe("patched");
+    expect(once.text).toContain("\t\t\tfetch: nemoClawManagedTransportFetch(httpFetch, {");
+    expect(once.text).toContain("\t\t\t\tcatalogListTimeoutMs: void 0");
+    expect(twice.status).toBe("already-patched");
+    expect(twice.text).toBe(once.text);
   });
 
   it("leaves the SSE transport boundary untouched (#7957)", () => {

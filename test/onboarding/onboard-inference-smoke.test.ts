@@ -43,9 +43,19 @@ describe("onboard inference smoke guard (#3253)", () => {
       );
 
       fs.mkdirSync(fakeBin, { recursive: true });
-      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
-        mode: 0o755,
-      });
+      fs.writeFileSync(
+        path.join(fakeBin, "openshell"),
+        [
+          "#!/usr/bin/env bash",
+          'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
+          "  echo 'Gateway inference:'",
+          "  echo '  Provider: compatible-endpoint'",
+          "  echo '  Model: broken-model'",
+          "fi",
+          "exit 0",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
       fs.writeFileSync(
         path.join(fakeBin, "curl"),
         String.raw`#!/usr/bin/env bash
@@ -99,21 +109,6 @@ runner.run = (command) => {
     };
   }
   return { status: 0, stdout: "", stderr: "" };
-};
-runner.runCapture = (command) => {
-  const text = normalize(command);
-  calls.push(["runCapture", text]);
-  if (text.includes("inference") && text.includes("get")) {
-    return [
-      "Gateway inference:",
-      "",
-      "  Route: inference.local",
-      "  Provider: compatible-endpoint",
-      "  Model: broken-model",
-      "  Version: 1",
-    ].join("\n");
-  }
-  return "";
 };
 registry.updateSandbox = (_name, patch) => calls.push(["registry.updateSandbox", JSON.stringify(patch)]);
 

@@ -4,6 +4,8 @@
 import { createHash } from "node:crypto";
 
 import { describe, expect, it, vi } from "vitest";
+import { LEAF_PEM, tmpDir, writeCa } from "./__test-helpers__/corporate-ca-fixtures";
+import { CorporateCaValidationError } from "./corporate-ca-types";
 import {
   ManagedImageCatalogError,
   ManagedImageCatalogUnavailableError,
@@ -305,6 +307,15 @@ describe("managed image GHCR catalog", () => {
     ).rejects.toBeInstanceOf(ManagedImageCatalogUnavailableError);
   });
 
+  it("preserves an invalid explicit corporate CA rejection before registry access (#12059)", async () => {
+    await expect(
+      resolveManagedImageCatalogFromGhcr({
+        release: RELEASE,
+        environment: { NEMOCLAW_CORPORATE_CA_BUNDLE: writeCa(tmpDir(), LEAF_PEM) },
+      }),
+    ).rejects.toBeInstanceOf(CorporateCaValidationError);
+  });
+
   it.each(MANAGED_IMAGE_PLATFORMS)(
     "selects and validates the exact %s child manifest",
     async (platform) => {
@@ -523,22 +534,19 @@ describe("managed image GHCR catalog", () => {
     ).toEqual(SHIPPED_MANAGED_IMAGE_AGENTS.map(() => RELEASE));
   });
 
-  it.each(["", "0.0.97", "latest"])(
-    "rejects malformed image release label %j",
-    async (release) => {
-      const fixture = registryFixture("openclaw", {
-        labels: { "org.opencontainers.image.version": release },
-      });
+  it.each(["", "0.0.97", "latest"])("rejects malformed image release label %j", async (release) => {
+    const fixture = registryFixture("openclaw", {
+      labels: { "org.opencontainers.image.version": release },
+    });
 
-      await expect(
-        resolveManagedImageContractFromGhcr({
-          agent: "openclaw",
-          release: RELEASE,
-          fetchImpl: fixture.fetchImpl,
-        }),
-      ).rejects.toThrow(/image release is not a supported release version/);
-    },
-  );
+    await expect(
+      resolveManagedImageContractFromGhcr({
+        agent: "openclaw",
+        release: RELEASE,
+        fetchImpl: fixture.fetchImpl,
+      }),
+    ).rejects.toThrow(/image release is not a supported release version/);
+  });
 
   it("fails closed when a dependent cohort alias is torn or absent", async () => {
     const fixture = catalogFixture({ hermes: { missingRoot: true } });

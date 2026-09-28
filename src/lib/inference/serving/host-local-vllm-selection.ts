@@ -6,7 +6,7 @@ import os from "node:os";
 import { getBuildIdentity } from "../../core/version.js";
 import { createHostReadinessReport } from "../../readiness/host.js";
 import type { VllmProfile } from "../vllm.js";
-import type { VllmModelDef } from "../vllm-models.js";
+import type { VllmModelDef, VllmPlatform } from "../vllm-models.js";
 import { VLLM_EXTRA_ARGS_ENV } from "../vllm-models.js";
 import {
   HOST_LOCAL_VLLM_LIFECYCLE_REF,
@@ -24,6 +24,7 @@ import type {
   HostLocalInferenceServingRecipe,
   ManagedInferenceReadinessSource,
   ResolvedHostLocalInferenceSelection,
+  VllmDirectInstallPolicy,
 } from "./types.js";
 
 export interface MaterializedHostLocalVllmSelection {
@@ -38,13 +39,8 @@ export type HostLocalVllmSelectionResult =
   | { readonly kind: "rejected"; readonly reason: string }
   | ({ readonly kind: "selected" } & MaterializedHostLocalVllmSelection);
 
-function positiveIntegerArgument(
-  selection: ResolvedHostLocalInferenceSelection,
-  name: string,
-): number {
-  const matches = selection.recipe.spec.serve?.arguments?.filter(
-    (argument) => argument.name === name,
-  );
+function positiveIntegerArgument(recipe: HostLocalInferenceServingRecipe, name: string): number {
+  const matches = recipe.spec.serve?.arguments?.filter((argument) => argument.name === name);
   const value = matches?.length === 1 ? matches[0]!.value : undefined;
   const parsed =
     typeof value === "number"
@@ -58,6 +54,51 @@ function positiveIntegerArgument(
   return parsed;
 }
 
+/** Materialize the same fixed model command for installation and read-only runtime verification. */
+export function materializeHostLocalVllmModel(
+  recipe: HostLocalInferenceServingRecipe,
+  directInstall: VllmDirectInstallPolicy,
+  platform: VllmPlatform,
+): VllmModelDef {
+  const runtime = recipe.spec.runtime;
+  const serveEnvironment = {
+    ...runtime.environment,
+    HF_HOME: runtime.modelCache.target,
+    HF_HUB_OFFLINE: "1",
+    TRANSFORMERS_OFFLINE: "1",
+  };
+  const gpuMemoryUtilization = hostLocalVllmGpuMemoryUtilization(recipe);
+  return {
+    id: recipe.spec.model.id,
+    label: recipe.spec.model.displayName,
+    envValue: recipe.spec.model.environmentValue,
+    downloadSizeBytes: recipe.spec.model.downloadSizeBytes,
+    maxModelLen: positiveIntegerArgument(recipe, "--max-model-len"),
+    revision: recipe.spec.model.revision,
+    servedModelId: recipe.spec.model.servedName,
+    modelArgs: hostLocalVllmModelArguments(recipe),
+    gated: recipe.spec.model.gated,
+    platforms: [platform],
+    minComputeCapability: runtime.minimumComputeCapability,
+    ...(Object.keys(serveEnvironment).length > 0 ? { serveEnv: serveEnvironment } : {}),
+    runtime: {
+      image: runtime.image,
+      imageDownloadSizeBytes: runtime.imageDownloadSizeBytes,
+      modelDownloadSizeBytes: recipe.spec.model.downloadSizeBytes,
+      loadTimeoutSec: recipe.spec.readiness.timeoutSeconds,
+      pullTimeoutSec: runtime.pullTimeoutSeconds,
+      minComputeCapability: runtime.minimumComputeCapability,
+      minGpuMemoryBytes: runtime.minimumGpuMemoryBytes,
+      gpuMemoryUtilization,
+      dockerRunArgs: hostLocalVllmDockerRunArguments(recipe),
+      dockerRunArgsMode: "replace",
+    },
+    installFastSafetensors: recipe.spec.model.installFastSafetensors,
+    ...(directInstall.authentication === "bearer" ? { managedBearerAuth: true as const } : {}),
+    ...(directInstall.fixedArguments ? { fixedServeCommand: true as const } : {}),
+  };
+}
+
 export function materializeHostLocalVllmSelection(
   selection: ResolvedHostLocalInferenceSelection,
   baseProfile: VllmProfile,
@@ -65,8 +106,7 @@ export function materializeHostLocalVllmSelection(
   const { recipe, preset } = selection;
   if (
     recipe.spec.backend !== "vllm" ||
-    recipe.spec.execution.materializerRef !==
-      HOST_LOCAL_VLLM_MATERIALIZER_REF ||
+    recipe.spec.execution.materializerRef !== HOST_LOCAL_VLLM_MATERIALIZER_REF ||
     recipe.spec.execution.lifecycleRef !== HOST_LOCAL_VLLM_LIFECYCLE_REF
   ) {
     throw new Error("selected serving preset is not a host-local vLLM recipe");
@@ -77,15 +117,8 @@ export function materializeHostLocalVllmSelection(
     : recipe.spec.serve.directInstall;
   const hostArchitecture = baseProfile.architecture ?? process.arch;
   const expectedRuntimeArchitecture =
-    hostArchitecture === "x64"
-      ? "amd64"
-      : hostArchitecture === "arm64"
-        ? "arm64"
-        : null;
-  if (
-    !expectedRuntimeArchitecture ||
-    runtime.architecture !== expectedRuntimeArchitecture
-  ) {
+    hostArchitecture === "x64" ? "amd64" : hostArchitecture === "arm64" ? "arm64" : null;
+  if (!expectedRuntimeArchitecture || runtime.architecture !== expectedRuntimeArchitecture) {
     throw new Error(
       `host-local vLLM recipe architecture ${runtime.architecture} does not match host architecture ${hostArchitecture}`,
     );
@@ -102,52 +135,10 @@ export function materializeHostLocalVllmSelection(
     !directInstall ||
     !recipe.spec.readiness?.timeoutSeconds
   ) {
-    throw new Error(
-      "host-local vLLM recipe is missing required runtime or model fields",
-    );
+    throw new Error("host-local vLLM recipe is missing required runtime or model fields");
   }
-  const serveEnvironment = {
-    ...runtime.environment,
-    HF_HOME: runtime.modelCache.target,
-    HF_HUB_OFFLINE: "1",
-    TRANSFORMERS_OFFLINE: "1",
-  };
+  const model = materializeHostLocalVllmModel(recipe, directInstall, baseProfile.platform);
   const gpuMemoryUtilization = hostLocalVllmGpuMemoryUtilization(recipe);
-  const model: VllmModelDef = {
-    id: recipe.spec.model.id,
-    label: recipe.spec.model.displayName,
-    envValue: recipe.spec.model.environmentValue,
-    downloadSizeBytes: recipe.spec.model.downloadSizeBytes,
-    maxModelLen: positiveIntegerArgument(selection, "--max-model-len"),
-    revision: recipe.spec.model.revision,
-    servedModelId,
-    modelArgs: hostLocalVllmModelArguments(recipe),
-    gated: recipe.spec.model.gated,
-    platforms: [baseProfile.platform],
-    minComputeCapability: runtime.minimumComputeCapability,
-    ...(Object.keys(serveEnvironment).length > 0
-      ? { serveEnv: serveEnvironment }
-      : {}),
-    runtime: {
-      image: runtime.image,
-      imageDownloadSizeBytes: runtime.imageDownloadSizeBytes,
-      modelDownloadSizeBytes: recipe.spec.model.downloadSizeBytes,
-      loadTimeoutSec: recipe.spec.readiness.timeoutSeconds,
-      pullTimeoutSec: runtime.pullTimeoutSeconds,
-      minComputeCapability: runtime.minimumComputeCapability,
-      minGpuMemoryBytes: runtime.minimumGpuMemoryBytes,
-      gpuMemoryUtilization,
-      dockerRunArgs: hostLocalVllmDockerRunArguments(recipe),
-      dockerRunArgsMode: "replace",
-    },
-    installFastSafetensors: recipe.spec.model.installFastSafetensors,
-    ...(directInstall.authentication === "bearer"
-      ? { managedBearerAuth: true as const }
-      : {}),
-    ...(directInstall.fixedArguments
-      ? { fixedServeCommand: true as const }
-      : {}),
-  };
   return {
     presetId: preset.metadata.id,
     recipeId: recipe.metadata.id,
@@ -158,9 +149,7 @@ export function materializeHostLocalVllmSelection(
       imageDownloadSizeBytes: runtime.imageDownloadSizeBytes,
       imageUnpackedSizeBytes:
         runtime.imageUnpackedSizeBytes ??
-        (runtime.image === baseProfile.image
-          ? baseProfile.imageUnpackedSizeBytes
-          : undefined),
+        (runtime.image === baseProfile.image ? baseProfile.imageUnpackedSizeBytes : undefined),
       pullTimeoutSec: runtime.pullTimeoutSeconds,
       loadTimeoutSec: recipe.spec.readiness.timeoutSeconds,
       modelDownloadSizeBytes: recipe.spec.model.downloadSizeBytes,
@@ -191,8 +180,7 @@ export function resolveHostLocalVllmSelection(
 ): HostLocalVllmSelectionResult {
   const presetId = String(env.NEMOCLAW_SERVING_PRESET ?? "").trim();
   const model = String(env.NEMOCLAW_VLLM_MODEL ?? "").trim();
-  if (!presetId && !model && !options.automatic)
-    return { kind: "not-selected" };
+  if (!presetId && !model && !options.automatic) return { kind: "not-selected" };
   if (presetId && model) {
     return {
       kind: "rejected",

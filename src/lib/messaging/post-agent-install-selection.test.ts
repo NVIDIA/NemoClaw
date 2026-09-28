@@ -84,11 +84,7 @@ describe("post-agent-install messaging selection", () => {
     const moduleUrl = new URL("./post-agent-install-selection.ts", import.meta.url).href;
     const result = spawnSync(
       process.execPath,
-      [
-        "--input-type=module",
-        "--eval",
-        `import(${JSON.stringify(moduleUrl)})`,
-      ],
+      ["--input-type=module", "--eval", `import(${JSON.stringify(moduleUrl)})`],
       { encoding: "utf8" },
     );
 

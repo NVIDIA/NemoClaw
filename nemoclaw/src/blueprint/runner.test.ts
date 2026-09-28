@@ -1067,7 +1067,7 @@ describe("runner", () => {
       expect(mockedValidateEndpoint).toHaveBeenCalledWith("https://93.184.216.34/v1");
     });
 
-    it("fails closed before provider creation for DNS-backed HTTPS endpoint overrides", async () => {
+    it("fails closed before OpenShell handoff for DNS-backed HTTPS endpoint overrides (#10517)", async () => {
       mockedValidateEndpoint.mockResolvedValueOnce({
         url: "https://override.example.com/v1",
         pinnedUrl: "https://93.184.216.34/v1",
@@ -1081,9 +1081,7 @@ describe("runner", () => {
           endpointUrl: "https://override.example.com/v1",
         }),
       ).rejects.toThrow(/DNS-backed HTTPS endpoint/);
-      expect(
-        mockExeca.mock.calls.some((c) => Array.isArray(c[1]) && c[1].includes("provider")),
-      ).toBe(false);
+      expect(mockExeca).not.toHaveBeenCalled();
     });
 
     it("passes --timeout when timeout_secs is set in profile", async () => {
@@ -1458,6 +1456,23 @@ describe("runner", () => {
       await main(["apply", "--profile", "default", "--endpoint-url", "https://override.test/v1"]);
       expect(mockedValidateEndpoint).toHaveBeenCalledWith("https://override.test/v1");
       expect(stdoutText()).toContain("PROGRESS:100:Apply complete");
+    });
+
+    it("fails closed before OpenShell handoff for a DNS-backed HTTPS blueprint endpoint (#10517)", async () => {
+      const blueprint = minimalBlueprint();
+      const components = blueprint.components as {
+        inference: { profiles: { default: { endpoint: string } } };
+      };
+      components.inference.profiles.default.endpoint = "https://profile.example.com/v1";
+      seedBlueprintFile(blueprint);
+      mockedValidateEndpoint.mockResolvedValueOnce({
+        ...resolvedEndpointFor("https://profile.example.com/v1"),
+        dnsResolved: true,
+      });
+
+      await expect(main(["apply", "--profile", "default"])).rejects.toThrow(/DNS-backed HTTPS/);
+      expect(mockedValidateEndpoint).toHaveBeenCalledWith("https://profile.example.com/v1");
+      expect(mockExeca).not.toHaveBeenCalled();
     });
 
     it("rejects --plan flag (not yet implemented)", async () => {

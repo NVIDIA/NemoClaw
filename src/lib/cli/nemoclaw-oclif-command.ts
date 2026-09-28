@@ -9,14 +9,13 @@ import {
   HERMES_PORTABLE_UNSUPPORTED_COMMAND_MESSAGE,
   HERMES_PORTABLE_UNSUPPORTED_DOCTOR_FIX_MESSAGE,
 } from "../onboard/experimental/portable-agent-lifecycle";
-import { hasHermesPortableReceiptCandidate } from "../onboard/experimental/hermes-portable-receipt";
 import { defaultPortableDemoStateDir } from "../onboard/experimental/portable-runtime-receipt-readiness";
 import { redactForLog } from "../security/redact";
 import {
   assertNoHermesPortableHostAuthority,
   withCurrentPortableHostFence,
 } from "../state/portable-uninstall-retirement";
-import { withMcpLifecycleLock } from "../state/mcp-lifecycle-lock";
+import { withSandboxLifecycleLock } from "../actions/sandbox/lifecycle/lock";
 import {
   enforceRemovedImmutabilityMigrationBoundary,
   reportRemovedImmutabilityUpgrade,
@@ -31,7 +30,7 @@ export type CommandExitResult = {
 
 export { HERMES_PORTABLE_UNSUPPORTED_COMMAND_MESSAGE };
 export { assertHermesPortableCommandUnavailable };
-export const withSandboxCommandLifecycleLock = withMcpLifecycleLock;
+export const withSandboxCommandLifecycleLock = withSandboxLifecycleLock;
 export { HERMES_PORTABLE_UNSUPPORTED_DOCTOR_FIX_MESSAGE };
 
 const REMOVED_IMMUTABILITY_REMEDIATION_COMMANDS = new Set([
@@ -106,6 +105,7 @@ export abstract class NemoClawCommand extends Command {
   }
 
   protected override async _run<T>(): Promise<T> {
+    if (await this.runBeforeLifecycleBoundary()) return undefined as T;
     const commandId = this.id;
     const portablePolicy =
       typeof commandId === "string" ? classifyHermesPortableCommand(commandId, this.argv) : null;
@@ -130,7 +130,7 @@ export abstract class NemoClawCommand extends Command {
     enforceRemovedImmutabilityMigrationBoundary(sandboxName, {
       allowStateRecord: allowRemovedImmutabilityStateRecord,
     });
-    if (this.isInteractiveConnect(commandId)) {
+    if (this.isInteractiveSession(commandId)) {
       return await super._run<T>();
     }
     const runLocked = () => {
@@ -142,27 +142,31 @@ export abstract class NemoClawCommand extends Command {
       }
       return super._run<T>();
     };
-    const runWithLifecycleFence = async () => {
-      return await withMcpLifecycleLock(sandboxName, runLocked);
-    };
-    if (
-      this.isProbeOnlyConnect(commandId) &&
-      hasHermesPortableReceiptCandidate(sandboxName, defaultPortableDemoStateDir(process.env))
-    ) {
-      return await withCurrentPortableHostFence(runWithLifecycleFence);
-    }
-    return await runWithLifecycleFence();
+    return await withSandboxLifecycleLock(sandboxName, runLocked);
   }
 
-  private isProbeOnlyConnect(commandId: string | undefined): boolean {
-    return (
-      commandId === "sandbox:connect" && this.lifecycleParserOutput?.flags["probe-only"] === true
-    );
+  /** Allow a command to transfer complete ownership before host-wide fences are acquired. */
+  protected async runBeforeLifecycleBoundary(): Promise<boolean> {
+    return false;
   }
 
-  private isInteractiveConnect(commandId: string | undefined): boolean {
+  /** Reuse an early command parse when the ordinary lifecycle wrapper continues. */
+  protected retainLifecycleParserOutput<
+    F extends Interfaces.OutputFlags<Interfaces.FlagInput>,
+    B extends Interfaces.OutputFlags<Interfaces.FlagInput>,
+    A extends Interfaces.OutputArgs<Interfaces.ArgInput>,
+  >(parsed: Interfaces.ParserOutput<F, B, A>): void {
+    this.lifecycleParserOutput = parsed as Interfaces.ParserOutput<
+      Interfaces.OutputFlags<Interfaces.FlagInput>,
+      Interfaces.OutputFlags<Interfaces.FlagInput>,
+      Interfaces.OutputArgs<Interfaces.ArgInput>
+    >;
+  }
+
+  private isInteractiveSession(commandId: string | undefined): boolean {
     return (
-      commandId === "sandbox:connect" && this.lifecycleParserOutput?.flags["probe-only"] !== true
+      commandId === "launch" ||
+      (commandId === "sandbox:connect" && this.lifecycleParserOutput?.flags["probe-only"] !== true)
     );
   }
 
@@ -228,6 +232,11 @@ export abstract class NemoClawCommand extends Command {
     });
 
     return parsed;
+  }
+
+  protected override toErrorJson(error: unknown): unknown {
+    // Error.message is not enumerable, so retain it before JSON redaction.
+    return super.toErrorJson(error instanceof Error ? { ...error, message: error.message } : error);
   }
 
   protected logJson(json: unknown): void {

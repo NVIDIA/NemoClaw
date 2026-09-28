@@ -349,7 +349,7 @@ function hermesConfiguredSessionPathCommand(): string {
     "import json",
     "from pathlib import Path",
     "import yaml",
-    `config = yaml.safe_load(Path(${JSON.stringify(HERMES_CONFIG_PATH)}).read_text(encoding=\"utf-8\"))`,
+    `config = yaml.safe_load(Path(${JSON.stringify(HERMES_CONFIG_PATH)}).read_text(encoding="utf-8"))`,
     "def child(value, key):",
     "    return value.get(key) if isinstance(value, dict) else None",
     "node = config",
@@ -514,7 +514,7 @@ type WhatsappStateLookup =
   | { readonly kind: "invalid" };
 
 /**
- * OpenClaw 2026.7.1 exposes live per-account state under
+ * OpenClaw 2026.9.1 exposes live per-account state under
  * `channelAccounts.whatsapp` and names the authoritative account through
  * `channelDefaultAccountId.whatsapp`. Select that exact account rather than
  * trusting array order or the channel-level summary. Every supported OpenClaw

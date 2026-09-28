@@ -15,6 +15,7 @@ import {
   getPodmanSocketCandidates,
   inferContainerRuntime,
   isWsl,
+  observeDockerAuthorityConflict,
   shouldPatchCoredns,
 } from "../../src/lib/platform";
 
@@ -57,8 +58,53 @@ describe("platform helpers", () => {
 
     it("returns Linux Podman socket paths with uid", () => {
       expect(
-        getPodmanSocketCandidates({ platform: "linux", home: "/tmp/test-home", uid: 1001 }),
+        getPodmanSocketCandidates({
+          env: {},
+          platform: "linux",
+          home: "/tmp/test-home",
+          uid: 1001,
+        }),
       ).toEqual(["/run/user/1001/podman/podman.sock", "/run/podman/podman.sock"]);
+    });
+
+    it("prefers the runtime directory XDG_RUNTIME_DIR names over the uid-derived one", () => {
+      expect(
+        getPodmanSocketCandidates({
+          env: { XDG_RUNTIME_DIR: "/run/user/501" },
+          platform: "linux",
+          home: "/tmp/test-home",
+          uid: 1001,
+        }),
+      ).toEqual([
+        "/run/user/501/podman/podman.sock",
+        "/run/user/1001/podman/podman.sock",
+        "/run/podman/podman.sock",
+      ]);
+    });
+
+    it("does not repeat the runtime directory when XDG_RUNTIME_DIR is the uid-derived one", () => {
+      expect(
+        getPodmanSocketCandidates({
+          env: { XDG_RUNTIME_DIR: "/run/user/1001" },
+          platform: "linux",
+          home: "/tmp/test-home",
+          uid: 1001,
+        }),
+      ).toEqual(["/run/user/1001/podman/podman.sock", "/run/podman/podman.sock"]);
+    });
+
+    it("ignores XDG_RUNTIME_DIR on macOS, where Podman uses a machine socket", () => {
+      const home = "/tmp/test-home";
+      expect(
+        getPodmanSocketCandidates({
+          env: { XDG_RUNTIME_DIR: "/run/user/501" },
+          platform: "darwin",
+          home,
+        }),
+      ).toEqual([
+        path.join(home, ".local/share/containers/podman/machine/podman.sock"),
+        "/var/run/docker.sock",
+      ]);
     });
 
     it("returns no Podman socket paths on unsupported platforms", () => {
@@ -81,11 +127,34 @@ describe("platform helpers", () => {
 
     it("returns Linux candidates (native Docker > rootless Docker > Podman)", () => {
       expect(
-        getDockerSocketCandidates({ platform: "linux", home: "/tmp/test-home", uid: 1000 }),
+        getDockerSocketCandidates({
+          env: {},
+          platform: "linux",
+          home: "/tmp/test-home",
+          uid: 1000,
+        }),
       ).toEqual([
         "/run/docker.sock",
         "/var/run/docker.sock",
         "/run/user/1000/docker.sock",
+        "/run/user/1000/podman/podman.sock",
+        "/run/podman/podman.sock",
+      ]);
+    });
+
+    it("carries the XDG_RUNTIME_DIR Podman socket into the Linux candidates", () => {
+      expect(
+        getDockerSocketCandidates({
+          env: { XDG_RUNTIME_DIR: "/run/user/501" },
+          platform: "linux",
+          home: "/tmp/test-home",
+          uid: 1000,
+        }),
+      ).toEqual([
+        "/run/docker.sock",
+        "/var/run/docker.sock",
+        "/run/user/1000/docker.sock",
+        "/run/user/501/podman/podman.sock",
         "/run/user/1000/podman/podman.sock",
         "/run/podman/podman.sock",
       ]);
@@ -451,6 +520,159 @@ describe("platform helpers", () => {
               : { reachable: false, identity: "unknown", inconclusive: true },
         }),
       ).toBe(null);
+    });
+  });
+
+  describe("observeDockerAuthorityConflict (#10622)", () => {
+    const unreachableDefault = { reachable: false, identity: "unknown" as const };
+
+    it("reports both engines in probe order when mixed fallbacks answer and the default is unreachable", () => {
+      const dockerSocket = "/var/run/docker.sock";
+      const podmanSocket = "/run/user/1000/podman/podman.sock";
+      const sockets = new Set([dockerSocket, podmanSocket]);
+      const answers = new Map([
+        [`unix://${dockerSocket}`, { reachable: true, identity: "docker" as const }],
+        [`unix://${podmanSocket}`, { reachable: true, identity: "podman" as const }],
+      ]);
+      const opts = {
+        env: {},
+        platform: "linux" as const,
+        uid: 1000,
+        existsSync: (candidate: string) => sockets.has(candidate),
+        probeDockerHost: (dockerHost: string | undefined) =>
+          answers.get(dockerHost ?? "") ?? unreachableDefault,
+      };
+
+      expect(observeDockerAuthorityConflict(opts)).toEqual({
+        candidates: [
+          { socketPath: dockerSocket, identity: "docker" },
+          { socketPath: podmanSocket, identity: "podman" },
+        ],
+      });
+      expect(detectDockerHost(opts)).toBe(null);
+    });
+
+    it("lists the Podman candidate first when it is probed before the Docker candidate", () => {
+      const home = "/tmp/test-home";
+      const podmanSocket = path.join(home, ".local/share/containers/podman/machine/podman.sock");
+      const dockerDesktopSocket = path.join(home, ".docker/run/docker.sock");
+      const sockets = new Set([podmanSocket, dockerDesktopSocket]);
+      const answers = new Map([
+        [`unix://${podmanSocket}`, { reachable: true, identity: "podman" as const }],
+        [`unix://${dockerDesktopSocket}`, { reachable: true, identity: "docker" as const }],
+      ]);
+
+      expect(
+        observeDockerAuthorityConflict({
+          env: {},
+          platform: "darwin",
+          home,
+          existsSync: (candidate) => sockets.has(candidate),
+          probeDockerHost: (dockerHost) => answers.get(dockerHost ?? "") ?? unreachableDefault,
+        }),
+      ).toEqual({
+        candidates: [
+          { socketPath: podmanSocket, identity: "podman" },
+          { socketPath: dockerDesktopSocket, identity: "docker" },
+        ],
+      });
+    });
+
+    it("returns null when two reachable candidates identify as the same engine", () => {
+      const sockets = new Set(["/run/docker.sock", "/var/run/docker.sock"]);
+
+      expect(
+        observeDockerAuthorityConflict({
+          env: {},
+          platform: "linux",
+          uid: 1000,
+          existsSync: (candidate) => sockets.has(candidate),
+          probeDockerHost: reachableDockerFallback,
+        }),
+      ).toBe(null);
+    });
+
+    it("returns null and probes no candidate when the default authority is reachable", () => {
+      const sockets = new Set(["/var/run/docker.sock", "/run/user/1000/podman/podman.sock"]);
+      const probes: Array<string | undefined> = [];
+
+      expect(
+        observeDockerAuthorityConflict({
+          env: {},
+          platform: "linux",
+          uid: 1000,
+          existsSync: (candidate) => sockets.has(candidate),
+          probeDockerHost: (dockerHost) => {
+            probes.push(dockerHost);
+            return { reachable: true, identity: "docker" };
+          },
+        }),
+      ).toBe(null);
+      expect(probes).toEqual([undefined]);
+    });
+
+    it("returns null when the default authority probe is inconclusive", () => {
+      const sockets = new Set(["/var/run/docker.sock", "/run/user/1000/podman/podman.sock"]);
+
+      expect(
+        observeDockerAuthorityConflict({
+          env: {},
+          platform: "linux",
+          uid: 1000,
+          existsSync: (candidate) => sockets.has(candidate),
+          probeDockerHost: (dockerHost) =>
+            dockerHost
+              ? { reachable: true, identity: dockerHost.includes("podman") ? "podman" : "docker" }
+              : { reachable: false, identity: "unknown", inconclusive: true },
+        }),
+      ).toBe(null);
+    });
+
+    it("returns null when the differing candidate has an unknown engine identity", () => {
+      const dockerSocket = "/var/run/docker.sock";
+      const podmanSocket = "/run/user/1000/podman/podman.sock";
+      const sockets = new Set([dockerSocket, podmanSocket]);
+      const answers = new Map([
+        [`unix://${dockerSocket}`, { reachable: true, identity: "docker" as const }],
+        [`unix://${podmanSocket}`, { reachable: true, identity: "unknown" as const }],
+      ]);
+      const opts = {
+        env: {},
+        platform: "linux" as const,
+        uid: 1000,
+        existsSync: (candidate: string) => sockets.has(candidate),
+        probeDockerHost: (dockerHost: string | undefined) =>
+          answers.get(dockerHost ?? "") ?? unreachableDefault,
+      };
+
+      expect(observeDockerAuthorityConflict(opts)).toBe(null);
+      expect(detectDockerHost(opts)).toEqual({
+        dockerHost: `unix://${dockerSocket}`,
+        source: "socket",
+        socketPath: dockerSocket,
+      });
+    });
+
+    it("returns null and probes nothing when DOCKER_HOST is set", () => {
+      const sockets = new Set(["/var/run/docker.sock", "/run/user/1000/podman/podman.sock"]);
+      const probes: Array<string | undefined> = [];
+
+      expect(
+        observeDockerAuthorityConflict({
+          env: { DOCKER_HOST: "unix:///custom/docker.sock" },
+          platform: "linux",
+          uid: 1000,
+          existsSync: (candidate) => sockets.has(candidate),
+          probeDockerHost: (dockerHost) => {
+            probes.push(dockerHost);
+            return {
+              reachable: true,
+              identity: dockerHost?.includes("podman") ? "podman" : "docker",
+            };
+          },
+        }),
+      ).toBe(null);
+      expect(probes).toEqual([]);
     });
   });
 

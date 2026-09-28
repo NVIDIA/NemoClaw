@@ -415,7 +415,7 @@ export async function pollJetsonDispatch(options: {
       }
       consecutiveFailures = 0;
       console.log(`Jetson dispatch state: ${status.state}`);
-    } catch (error) {
+    } catch {
       consecutiveFailures += 1;
       if (consecutiveFailures >= MAX_CONSECUTIVE_POLL_FAILURES) {
         const cancellation = await cancel("status-request-failures");

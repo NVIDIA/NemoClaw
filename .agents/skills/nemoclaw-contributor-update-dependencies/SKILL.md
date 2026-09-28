@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-contributor-update-dependencies
-description: Audit and implement a dependency upgrade as a semantic migration. Use when changing a library, CLI, service, image, runtime, installer artifact, or transitive dependency, including a Hermes release. Trace upstream changes into current NemoClaw consumers, resolve security and lifecycle concerns, and verify the artifacts that NemoClaw uses. Trigger keywords - update dependency, upgrade dependency, bump version, dependency migration, release audit, update Hermes, upgrade Hermes, review Hermes release, publish Hermes base image.
+description: "Audit and implement a NemoClaw dependency version upgrade, including Hermes and base images. Use when the dependency itself is changing."
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
@@ -73,7 +73,7 @@ Follow the current collector help when those controls evolve.
 
 ## Keep Point-in-Time Review Records out of the Repository
 
-Do not commit point-in-time release ledgers, concern records, review reports, or qualification reports anywhere in the repository. Encode durable claims in executable configuration and tests. For a user-visible change, update the canonical `docs/` page with current supported behavior and operator action. Preserve historical executable fixtures only when they still support a current test.
+Do not commit or update point-in-time release ledgers, concern records, dependency-review reports, review reports, or qualification reports anywhere in the repository. This prohibition does not apply to durable, code-synchronized dependency contract documents owned by a component. Encode durable claims in executable configuration and tests. For a user-visible change, update the canonical `docs/` page with current supported behavior and operator action. Preserve historical executable fixtures only when they still support a current test.
 
 ## Resolve concerns
 

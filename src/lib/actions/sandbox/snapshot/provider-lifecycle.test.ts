@@ -13,6 +13,7 @@ import {
   captureSandboxRuntimeSnapshot,
   confirmSandboxRuntimeRestore,
   prepareSandboxRuntimeRestore,
+  prepareSandboxStoppedStateCapture,
 } from "./provider-lifecycle";
 
 function sandbox(name = "alpha"): SandboxEntry {
@@ -111,6 +112,44 @@ describe("snapshot provider lifecycle", () => {
     });
     expect(preflight).toHaveBeenCalledWith("backup", expect.objectContaining({ name: "alpha" }));
     expect(capture).toHaveBeenCalledOnce();
+  });
+
+  it("keeps stopped capture optional and passes detached frozen authority to its owner", async () => {
+    const { bundle } = provider();
+    const surface = bundle.snapshot as Extract<typeof bundle.snapshot, { supported: true }>;
+    const target = sandbox();
+    const source = {
+      ...captureSandboxRuntimeSnapshot(bundle, target),
+      lifecycleState: "stopped" as const,
+    };
+    const projection = { directories: ["workspace"], prefixes: [], files: ["openclaw.json"] };
+    expect(prepareSandboxStoppedStateCapture(bundle, target, source, projection)).toBeNull();
+    const capture = vi.fn(async (_fd: number) => undefined);
+    const assertCurrent = vi.fn();
+    const prepare = vi.fn((entry, snapshot, layout) => {
+      expect(entry).not.toBe(target);
+      expect(snapshot).not.toBe(source);
+      expect(layout).not.toBe(projection);
+      expect(Object.isFrozen(entry)).toBe(true);
+      expect(Object.isFrozen(snapshot.runtime.runtime)).toBe(true);
+      expect(Object.isFrozen(layout.directories)).toBe(true);
+      return { capture, assertCurrent };
+    });
+    const owner = { ...bundle, snapshot: { ...surface, prepareStoppedStateCapture: prepare } };
+    const prepared = prepareSandboxStoppedStateCapture(owner, target, source, projection)!;
+    await prepared.capture(123);
+    prepared.assertCurrent();
+    expect(capture).toHaveBeenCalledWith(123);
+    expect(assertCurrent).toHaveBeenCalledOnce();
+    expect(() =>
+      prepareSandboxStoppedStateCapture(
+        owner,
+        target,
+        { ...source, providerId: "other" },
+        projection,
+      ),
+    ).toThrow("does not match the owning provider");
+    expect(prepare).toHaveBeenCalledOnce();
   });
 
   it("preflights before restore and revalidates through the same injected facet", () => {
@@ -218,6 +257,36 @@ describe("snapshot provider lifecycle", () => {
     expect(restore).not.toHaveBeenCalled();
   });
 
+  it("requires explicit provider approval for a stopped-to-running restore transition", () => {
+    const { bundle } = provider();
+    const surface = bundle.snapshot as Extract<typeof bundle.snapshot, { supported: true }>;
+    const source = {
+      schemaVersion: 1,
+      providerId: "mxc",
+      providerHandle: "opaque-source",
+      lifecycleState: "stopped",
+      lifecycleGeneration: "source-generation",
+      runtime: runtime(),
+    };
+    expect(() =>
+      prepareSandboxRuntimeRestore(bundle, sandbox("target"), source, managedProfile),
+    ).toThrow("cannot represent the snapshot lifecycle state");
+    const approvedSurface = { ...surface, canRestoreLifecycle: vi.fn(() => true) };
+    const prepared = prepareSandboxRuntimeRestore(
+      { ...bundle, snapshot: approvedSurface },
+      sandbox("target"),
+      source,
+      managedProfile,
+    );
+    expect(prepared.source.lifecycleState).toBe("stopped");
+    expect(prepared.preflight.lifecycleState).toBe("running");
+    expect(approvedSurface.canRestoreLifecycle).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "target" }),
+      "stopped",
+      "running",
+    );
+  });
+
   it("propagates provider restore refusal from the read-only preflight edge", () => {
     const { bundle, validateRestore, restore } = provider();
     validateRestore.mockImplementationOnce(() => {
@@ -315,40 +384,40 @@ describe("snapshot provider lifecycle", () => {
   it.each([
     { field: "lifecycle state", lifecycleState: "stopped", lifecycleGeneration: "generation-1" },
     { field: "lifecycle generation", lifecycleState: "running", lifecycleGeneration: "changed" },
-  ] as const)("rejects restore proof with changed $field", ({
-    lifecycleState,
-    lifecycleGeneration,
-  }) => {
-    const { bundle, restore } = provider();
-    const target = sandbox("target");
-    const prepared = prepareSandboxRuntimeRestore(
-      bundle,
-      target,
-      {
+  ] as const)(
+    "rejects restore proof with changed $field",
+    ({ lifecycleState, lifecycleGeneration }) => {
+      const { bundle, restore } = provider();
+      const target = sandbox("target");
+      const prepared = prepareSandboxRuntimeRestore(
+        bundle,
+        target,
+        {
+          schemaVersion: 1,
+          providerId: "mxc",
+          providerHandle: "opaque-source",
+          lifecycleState: "running",
+          lifecycleGeneration: "source-generation",
+          runtime: runtime(),
+        },
+        managedProfile,
+      );
+      restore.mockReturnValueOnce({
         schemaVersion: 1,
         providerId: "mxc",
-        providerHandle: "opaque-source",
-        lifecycleState: "running",
-        lifecycleGeneration: "source-generation",
+        sandboxName: "target",
+        providerHandle: "provider-owned-restore-handle",
+        lifecycleState,
+        lifecycleGeneration,
         runtime: runtime(),
-      },
-      managedProfile,
-    );
-    restore.mockReturnValueOnce({
-      schemaVersion: 1,
-      providerId: "mxc",
-      sandboxName: "target",
-      providerHandle: "provider-owned-restore-handle",
-      lifecycleState,
-      lifecycleGeneration,
-      runtime: runtime(),
-      managedProfile,
-    });
+        managedProfile,
+      });
 
-    expect(() => confirmSandboxRuntimeRestore(bundle, target, prepared)).toThrow(
-      /invalid managed restore proof/u,
-    );
-  });
+      expect(() => confirmSandboxRuntimeRestore(bundle, target, prepared)).toThrow(
+        /invalid managed restore proof/u,
+      );
+    },
+  );
 
   it("rejects restore proof that changes acceleration authority", () => {
     const { bundle } = provider();
@@ -372,6 +441,45 @@ describe("snapshot provider lifecycle", () => {
 
     expect(() => confirmSandboxRuntimeRestore(bundle, target, prepared)).toThrow(
       /invalid managed restore proof/u,
+    );
+  });
+
+  it("accepts a provider-verified canonical acceleration receipt for a legacy source", () => {
+    const legacyAcceleration = {
+      kind: "gpu" as const,
+      vendor: "nvidia",
+      devices: ["docker-device-id:nvidia.com/gpu=all"],
+    };
+    const canonicalAcceleration = {
+      kind: "gpu" as const,
+      vendor: "nvidia",
+      devices: ["nvidia.com/gpu=all"],
+    };
+    const canRepresentAcceleration = vi.fn((source: object, target: object) => {
+      expect(Object.isFrozen(source)).toBe(true);
+      expect(Object.isFrozen(target)).toBe(true);
+      return true;
+    });
+    const { bundle, restore } = provider();
+    Object.assign(bundle.snapshot, { canRepresentAcceleration });
+    const target = sandbox("target");
+    const source = {
+      ...captureSandboxRuntimeSnapshot(bundle, target),
+      runtime: { ...runtime(), acceleration: legacyAcceleration },
+    };
+    const prepared = prepareSandboxRuntimeRestore(bundle, target, source, managedProfile);
+    restore.mockReturnValueOnce({
+      ...prepared.preflight,
+      runtime: { ...runtime(), acceleration: canonicalAcceleration },
+      managedProfile,
+    });
+
+    expect(confirmSandboxRuntimeRestore(bundle, target, prepared)).toMatchObject({
+      restoreReceipt: { runtime: { acceleration: canonicalAcceleration } },
+    });
+    expect(canRepresentAcceleration).toHaveBeenCalledWith(
+      legacyAcceleration,
+      canonicalAcceleration,
     );
   });
 

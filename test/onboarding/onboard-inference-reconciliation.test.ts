@@ -200,6 +200,7 @@ describe("onboard helpers", () => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-hermes-resume-"));
       const fakeBin = path.join(tmpDir, "bin");
       const scriptPath = path.join(tmpDir, "hermes-resume-sandbox-name-check.js");
+      const inferenceReadLogPath = path.join(tmpDir, "inference-get.log");
       const openshellPath = JSON.stringify(path.join(fakeBin, "openshell"));
       const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
       const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
@@ -239,7 +240,14 @@ describe("onboard helpers", () => {
       );
 
       fs.mkdirSync(fakeBin, { recursive: true });
-      writeOkOpenshell(fakeBin);
+      writeOkOpenshell(fakeBin, {
+        inferenceRoute: {
+          gatewayName: "nemoclaw",
+          provider: "hermes-provider",
+          model: "moonshotai/kimi-k2.6",
+          commandLogPath: inferenceReadLogPath,
+        },
+      });
       fs.writeFileSync(path.join(fakeBin, "brew"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
 
       const script = String.raw`
@@ -497,6 +505,12 @@ const { onboard } = require(${onboardPath});
       });
 
       assert.equal(result.status, 0, result.stderr);
+      const inferenceReads = fs.readFileSync(inferenceReadLogPath, "utf8").trim().split("\n");
+      assert.ok(inferenceReads.length > 0, "expected at least one inference route read");
+      assert.ok(
+        inferenceReads.every((command) => command === "inference get -g nemoclaw"),
+        `expected only scoped inference reads, received ${JSON.stringify(inferenceReads)}`,
+      );
       assert.doesNotMatch(
         `${result.stderr}\n${result.stdout}`,
         /Hermes Provider requires a sandbox name/,
@@ -606,21 +620,10 @@ const { onboard } = require(${onboardPath});
           overrides: { applyLocalInferenceRoute },
         });
         await harness.setupInference("test-box", "meta-llama", "vllm-local");
-        const profileCommandIndex = harness.commands.findIndex(
-          (entry) => entry.command === "provider profile -g nemoclaw export openai --output json",
-        );
-        const providerCommandIndex = harness.commands.findIndex((entry) =>
-          entry.command.includes("provider create"),
-        );
         const providerCommand = harness.commands.find((entry) =>
           entry.command.includes("provider create"),
         );
         assert.ok(providerCommand, "expected local vLLM provider create command");
-        assert.ok(profileCommandIndex >= 0, "expected OpenAI profile validation");
-        assert.ok(
-          profileCommandIndex < providerCommandIndex,
-          "OpenAI profile validation must precede local vLLM registration",
-        );
         assert.match(providerCommand.command, /--credential NEMOCLAW_VLLM_LOCAL_TOKEN/);
         assert.doesNotMatch(providerCommand.command, /--credential OPENAI_API_KEY/);
         assert.equal(providerCommand.env?.NEMOCLAW_VLLM_LOCAL_TOKEN, "dummy");
@@ -663,23 +666,11 @@ const { onboard } = require(${onboardPath});
       warn.mockRestore();
     }
     assert.deepEqual(proxyCalls, ["ensure", "healthy", "persist:proxy-token"]);
-    const profileCommandIndex = harness.commands.findIndex(
-      (entry) => entry.command === "provider profile -g nemoclaw export openai --output json",
-    );
-    const providerCommandIndex = harness.commands.findIndex(
-      (entry) =>
-        entry.command.includes("provider create") && entry.command.includes("ollama-local"),
-    );
     const providerCommand = harness.commands.find(
       (entry) =>
         entry.command.includes("provider create") && entry.command.includes("ollama-local"),
     );
     assert.ok(providerCommand, "expected ollama-local provider create command");
-    assert.ok(profileCommandIndex >= 0, "expected OpenAI profile validation");
-    assert.ok(
-      profileCommandIndex < providerCommandIndex,
-      "OpenAI profile validation must precede Ollama registration",
-    );
     assert.match(providerCommand.command, /--credential NEMOCLAW_OLLAMA_PROXY_TOKEN/);
     assert.equal(providerCommand.env?.NEMOCLAW_OLLAMA_PROXY_TOKEN, "proxy-token");
     assert.doesNotMatch(providerCommand.command, /proxy-token/);
@@ -881,9 +872,14 @@ exit 1
       scriptPath,
       `
 const { isOpenclawReady } = require(${onboardPath});
-console.log(JSON.stringify({
-  ready: isOpenclawReady("my-assistant"),
-}));
+(async () => {
+  console.log(JSON.stringify({
+    ready: await isOpenclawReady("my-assistant"),
+  }));
+})().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
 `,
     );
 
@@ -950,12 +946,11 @@ console.log(JSON.stringify({
       );
 
       const commands = harness.commands;
-      assert.equal(commands.length, 4);
-      assert.equal(commands[0].command, "provider profile -g nemoclaw export openai --output json");
-      assert.match(commands[1].command, /^provider get -g nemoclaw /);
-      assert.match(commands[2].command, /^provider update -g nemoclaw openai-api/);
-      assert.doesNotMatch(commands[2].command, /--type/);
-      assert.match(commands[3].command, /^inference set -g nemoclaw --no-verify/);
+      assert.equal(commands.length, 3);
+      assert.match(commands[0].command, /^provider get -g nemoclaw /);
+      assert.match(commands[1].command, /^provider update -g nemoclaw openai-api/);
+      assert.doesNotMatch(commands[1].command, /--type/);
+      assert.match(commands[2].command, /^inference set -g nemoclaw --no-verify/);
     });
   });
   it("re-prompts for credentials when openshell inference set fails with authorization errors", async () => {

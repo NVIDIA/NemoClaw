@@ -7,7 +7,7 @@
 // applicability criteria are surfaced for awareness, never turned into npm
 // package matches. Reconciliations are purely informational annotations — they
 // never change a signal's action or confidence, and enforcement stays with the
-// reviewed npm audit gate.
+// npm audit gate.
 
 import type { AdvisorySignal } from "./advisory-early-warning.mts";
 

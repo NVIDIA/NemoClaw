@@ -5,6 +5,8 @@ import { loadServingCatalog } from "./catalog-loader.js";
 import { NEMOCLAW_SERVING_PRESET_ENV } from "./managed-cluster-discovery.js";
 import type { CompiledServingCatalog } from "./types.js";
 
+export { NEMOCLAW_SERVING_PRESET_ENV };
+
 /** The identifiers under which a running endpoint can report a requested profile's model. */
 export interface RequestedServingProfileModel {
   readonly presetId: string;

@@ -445,6 +445,20 @@ describe("CLI OpenShell sandbox command executor", () => {
     expect(result.error).toBeUndefined();
   });
 
+  it("sanitizes the default environment for direct buffered CLI calls", async () => {
+    vi.stubEnv("NVIDIA_INFERENCE_API_KEY", "must-not-leak");
+    const result = await runCliOpenShellBufferedCommand(
+      process.execPath,
+      [
+        "-e",
+        "process.stdout.write(JSON.stringify({ secret: process.env.NVIDIA_INFERENCE_API_KEY, path: process.env.PATH }))",
+      ],
+      { timeoutMilliseconds: 5000 },
+    );
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({ path: process.env.PATH });
+  });
+
   it("uses a sanitized host environment when none is supplied", async () => {
     vi.stubEnv("NVIDIA_INFERENCE_API_KEY", "must-not-leak");
     const runBuffered = vi.fn<OpenShellBufferedCommandRunner>(async () => ({
@@ -667,7 +681,7 @@ describe("CLI OpenShell sandbox command executor", () => {
     ]);
   });
 
-  it("holds TERM handlers until command-dependent cleanup releases the stream", async () => {
+  it("preserves interactive SIGINT and holds TERM handlers through cleanup", async () => {
     const childEvents = new EventEmitter();
     const signalEvents = new EventEmitter();
     const child: OpenShellCommandChild = {
@@ -696,6 +710,8 @@ describe("CLI OpenShell sandbox command executor", () => {
       target: selectedOpenShellGateway(),
       command: ["sleep", "30"],
     });
+    signalEvents.emit("SIGINT");
+    expect(child.kill).not.toHaveBeenCalled();
     signalEvents.emit("SIGTERM");
     const completed = await pending;
 

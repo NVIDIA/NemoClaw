@@ -16,13 +16,15 @@ const { DirectSandboxContainerNotFoundError, DirectSandboxFallbackUnavailableErr
   ) as typeof import("../../src/lib/onboard/runtime-provider/privileged-sandbox-control-errors.js");
 const {
   executeGatewaySupervisorAction,
-  executeSandboxCommand,
-  executeSandboxExecCommand,
   resolveSandboxDashboardPort,
   waitForManagedGatewaySupervisor,
 } = requireSource(
   "../../src/lib/actions/sandbox/process-recovery.ts",
 ) as typeof import("../../src/lib/actions/sandbox/process-recovery.js");
+
+const { executeSandboxExecCommand } = requireSource(
+  "../../src/lib/adapters/sandbox/command-transport.ts",
+) as typeof import("../../src/lib/adapters/sandbox/command-transport.js");
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -580,11 +582,11 @@ describe("executeSandboxExecCommand", () => {
 
     try {
       const startedAt = Date.now();
-      const result = await withFakeOpenshellBinary("sleep 10", () =>
-        executeSandboxExecCommand("alpha", "printf RUNNING"),
-      );
-
-      expect(result).toBeNull();
+      await expect(
+        withFakeOpenshellBinary("sleep 10", () =>
+          executeSandboxExecCommand("alpha", "printf RUNNING"),
+        ),
+      ).rejects.toMatchObject({ kind: "timeout" });
       expect(Date.now() - startedAt).toBeLessThan(2_000);
       expect(executePrivileged).not.toHaveBeenCalled();
     } finally {
@@ -612,7 +614,7 @@ describe("executeSandboxExecCommand", () => {
         "printf '%s\\n' 'operator preamble mentions __NEMOCLAW_SANDBOX_EXEC_STARTED__ before child stdout' 'stdout: RUNNING'",
         () => executeSandboxExecCommand("hermes-box", "echo RUNNING"),
       ),
-    ).resolves.toBeNull();
+    ).rejects.toMatchObject({ kind: "malformed" });
     expect(executePrivileged).not.toHaveBeenCalled();
   });
 
@@ -649,15 +651,12 @@ describe("executeSandboxExecCommand", () => {
     const captureFile = path.join(dir, "args.txt");
 
     try {
-      const result = await withFakeOpenshellBinary(
-        `printf '%s\n' "$@" > '${captureFile}'\nexit 1`,
-        () =>
-          executeSandboxExecCommand("hermes-box", '[ -z "${FAKE_MCP_SECRET+x}" ]', undefined, {
-            localDockerFallbackPolicy: "never",
-          }),
-      );
+      await expect(
+        withFakeOpenshellBinary(`printf '%s\n' "$@" > '${captureFile}'\nexit 1`, () =>
+          executeSandboxExecCommand("hermes-box", '[ -z "${FAKE_MCP_SECRET+x}" ]'),
+        ),
+      ).rejects.toMatchObject({ kind: "malformed" });
 
-      expect(result).toBeNull();
       expect(executePrivileged).not.toHaveBeenCalled();
       const shellPayload = fs.readFileSync(captureFile, "utf8").trim().split(/\r?\n/u).at(-1) ?? "";
       expect(shellPayload).not.toMatch(/[\r\n]/u);
@@ -668,41 +667,28 @@ describe("executeSandboxExecCommand", () => {
   });
 });
 
-describe("executeSandboxCommand", () => {
-  it("does not forward an MCP credential to the SSH child process", () => {
-    const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.ts");
-    const childProcess = requireSource("node:child_process");
-    vi.spyOn(openshellRuntime, "captureSandboxSshConfig").mockReturnValue({
-      status: 0,
-      output: "Host openshell-alpha\n  HostName 127.0.0.1\n",
-    } as never);
-    const spawn = vi.spyOn(childProcess, "spawnSync").mockReturnValue({
-      status: 0,
-      stdout: "registered\n",
-      stderr: "",
-    } as never);
+describe("executeSandboxExecCommand", () => {
+  it("uses one native execution with a sanitized host environment", async () => {
+    const privilegedExec = requireSource("../../src/lib/sandbox/privileged-exec.ts");
+    const executePrivileged = vi.spyOn(privilegedExec, "executePrivilegedSandboxCommand");
     const priorSecret = process.env.TEST_MCP_RAW_TOKEN;
-    const priorGateway = process.env.OPENSHELL_GATEWAY;
     process.env.TEST_MCP_RAW_TOKEN = "must-reach-only-provider-mutation";
-    process.env.OPENSHELL_GATEWAY = "nemoclaw-19080";
-
     try {
-      expect(executeSandboxCommand("alpha", "mcporter config get fake --json")).toEqual({
-        status: 0,
-        stdout: "registered",
-        stderr: "",
-      });
-      const options = spawn.mock.calls[0]?.[2] as { env?: NodeJS.ProcessEnv };
-      expect(options.env?.TEST_MCP_RAW_TOKEN).toBeUndefined();
-      expect(options.env?.OPENSHELL_GATEWAY).toBe("nemoclaw-19080");
-      expect(options.env?.PATH).toBe(process.env.PATH);
+      await expect(
+        withFakeOpenshellBinary(
+          [
+            'test -z "${TEST_MCP_RAW_TOKEN+x}" || exit 90',
+            'test "$1 $2" = "sandbox exec" || exit 91',
+            "printf '%s\\n' '__NEMOCLAW_SANDBOX_EXEC_STARTED__' 'registered'",
+          ].join("\n"),
+          () => executeSandboxExecCommand("alpha", "mcporter config get fake --json"),
+        ),
+      ).resolves.toEqual({ status: 0, stdout: "registered", stderr: "" });
+      expect(executePrivileged).not.toHaveBeenCalled();
     } finally {
       priorSecret === undefined
         ? delete process.env.TEST_MCP_RAW_TOKEN
         : (process.env.TEST_MCP_RAW_TOKEN = priorSecret);
-      priorGateway === undefined
-        ? delete process.env.OPENSHELL_GATEWAY
-        : (process.env.OPENSHELL_GATEWAY = priorGateway);
     }
   });
 });

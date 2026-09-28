@@ -516,7 +516,7 @@ function slackWaitHarness(
 }
 
 function waitForSlack(
-  deps: ReturnType<typeof slackWaitHarness>["deps"],
+  deps: NonNullable<Parameters<typeof showSandboxChannelStatus>[1]>["deps"],
   timeoutSeconds = 10,
   pollIntervalMs = 5_000,
 ) {
@@ -664,4 +664,20 @@ describe("showSandboxChannelStatus unsupported readiness wait", () => {
     ).toHaveLength(1);
     expect(sleep).not.toHaveBeenCalled();
   });
+});
+
+it("returns the status timeout when an applied-policy read remains pending", async () => {
+  vi.useFakeTimers();
+  try {
+    const { deps } = slackWaitHarness([{ connected: false }]);
+    const getAppliedPresets = vi.fn(() => new Promise<string[]>(() => {}));
+    const pending = waitForSlack({ ...deps, nowMs: () => Date.now(), getAppliedPresets }, 1);
+    await vi.advanceTimersByTimeAsync(1_000);
+    const result = await pending;
+    expect(result).toMatchObject({ readiness: { state: "timeout" } });
+    expect(getAppliedPresets).toHaveBeenCalledWith("alpha", 1_000);
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    vi.useRealTimers();
+  }
 });

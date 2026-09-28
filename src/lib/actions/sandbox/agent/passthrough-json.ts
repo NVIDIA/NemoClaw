@@ -1,23 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { isStdinTty } from "../../../core/stdin";
 import {
   openClawAgentIncompleteTurnSignal,
   type OpenClawIncompleteTurnSignal,
   openClawAgentJsonProvenanceLines,
 } from "../../../openclaw/agent-json-provenance";
 import {
-  buildOpenshellExecArgs,
-  computeExitCode,
-  wrapOpenClawAgentCommandWithRuntimeEnv,
-} from "../exec";
-import { getKnownSandboxTargetGatewayName } from "../gateway-target";
-import {
-  type AgentDispatchRunner,
-  agentDispatchDeadlineSeconds,
+  type OpenClawAgentDispatchDeps,
+  runOpenClawAgentDispatch,
   isSilentAgentDispatch,
-  runAgentDispatch,
   SILENT_AGENT_DISPATCH_EXIT_CODE,
 } from "./passthrough-dispatch";
 import {
@@ -35,23 +27,10 @@ export type AgentJsonPassthroughProcess = {
   stderr: { write(s: string): unknown };
 };
 
-export type AgentJsonPassthroughDeps = {
-  getOpenshellBinary?: () => string;
-  getGatewayName?: (sandboxName: string) => string | null;
-  stdinIsTty?: () => boolean;
+export type AgentJsonPassthroughDeps = OpenClawAgentDispatchDeps & {
   provenanceLines?: (raw: string) => string[];
   incompleteTurnSignal?: (raw: string) => OpenClawIncompleteTurnSignal | null;
-  runDispatch?: AgentDispatchRunner;
 };
-
-export function defaultGetOpenshellBinary(): string {
-  // Lazy require keeps this module unit-testable under Vitest's TS loader; the
-  // OpenShell runtime imports runner/platform modules that only exist in built
-  // CLI layouts.
-  const runtime =
-    require("../../../adapters/openshell/runtime") as typeof import("../../../adapters/openshell/runtime");
-  return runtime.getOpenshellBinary();
-}
 
 function writeProvenanceBlock(
   proc: AgentJsonPassthroughProcess,
@@ -68,19 +47,7 @@ export async function runAgentJsonPassthrough(
   proc: AgentJsonPassthroughProcess = process,
   deps: AgentJsonPassthroughDeps = {},
 ): Promise<never> {
-  const binary = (deps.getOpenshellBinary ?? defaultGetOpenshellBinary)();
-  const result = await (deps.runDispatch ?? runAgentDispatch)(
-    binary,
-    buildOpenshellExecArgs(
-      sandboxName,
-      wrapOpenClawAgentCommandWithRuntimeEnv(command),
-      { tty: false, timeoutSeconds: agentDispatchDeadlineSeconds(command) },
-      (deps.getGatewayName ?? getKnownSandboxTargetGatewayName)(sandboxName) ?? undefined,
-    ),
-    {
-      stdinIsTty: (deps.stdinIsTty ?? isStdinTty)(),
-    },
-  );
+  const result = await runOpenClawAgentDispatch(sandboxName, command, deps);
   const { stderr, stdout } = result;
 
   // Ahead of the stdout write so machine-readable stdout stays byte-empty and
@@ -105,8 +72,9 @@ export async function runAgentJsonPassthrough(
     ]);
   }
 
-  const { code, errorMessage } = computeExitCode(result);
-  if (errorMessage) {
+  const code = result.outcome.exitCode;
+  if (result.outcome.kind === "failed" && result.outcome.reason !== "transport") {
+    const errorMessage = result.outcome.message;
     proc.stderr.write(`  Failed to invoke openshell: ${errorMessage}\n`);
     proc.stderr.write("  Ensure 'openshell' is installed and on PATH.\n");
   }

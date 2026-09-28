@@ -28,6 +28,7 @@ import {
 import {
   onboardSession as sessionDependency,
   rebuildPreflightPhase,
+  registerHarnessRebuildBackup,
 } from "../../../../test/helpers/rebuild-flow-harness";
 
 const onboardSession = sessionDependency as typeof import("../../state/onboard-session");
@@ -154,17 +155,26 @@ describe("rebuild with independent recovery sessions", () => {
       onboard,
     });
     useRealSessions();
-    const preflight = vi.spyOn(rebuildPreflightPhase, "runRebuildPreflightPhase");
+    // Production discovery rereads the persisted manifest, including later handoff writes.
+    registerHarnessRebuildBackup(manifest);
+    const runPreflight = rebuildPreflightPhase.runRebuildPreflightPhase;
+    const preflight = vi
+      .spyOn(rebuildPreflightPhase, "runRebuildPreflightPhase")
+      .mockImplementation((...args) => {
+        // Successful rebuilds retire the MCP handoff in place after preflight.
+        expect(args).toEqual([
+          "alpha",
+          { yes: true, force: false, verbose: false },
+          expect.objectContaining({ recoveryManifest: manifest }),
+        ]);
+        return runPreflight(...args);
+      });
 
     await expect(
       resumed.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
     ).resolves.toBeUndefined();
 
-    expect(preflight).toHaveBeenCalledWith(
-      "alpha",
-      ["--yes"],
-      expect.objectContaining({ recoveryManifest: manifest }),
-    );
+    expect(preflight).toHaveBeenCalledOnce();
     expect(onboard).toHaveBeenCalledTimes(2);
     expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
     expect(onboardSession.loadSession()?.checkpoint?.sandboxRecreate?.id).toBe(

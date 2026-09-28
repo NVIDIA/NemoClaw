@@ -5,6 +5,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { buildListCommandDeps } from "./list-command-deps";
+import { buildStatusCommandDeps } from "./status-command-deps";
+
+vi.mock("./core/ports", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./core/ports")>()),
+  GATEWAY_PORT: 19_090,
+}));
 
 function writeExecutable(target: string, body: string): void {
   fs.writeFileSync(target, body, { mode: 0o755 });
@@ -16,7 +23,6 @@ describe("inference route command dependencies", () => {
   let openshell: string;
 
   beforeEach(() => {
-    vi.resetModules();
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-inference-route-deps-"));
     callsFile = path.join(tmp, "openshell.calls");
     openshell = path.join(tmp, "openshell");
@@ -35,7 +41,6 @@ fi
 exit 0
 `,
     );
-    vi.stubEnv("NEMOCLAW_GATEWAY_PORT", "19090");
     vi.stubEnv("NEMOCLAW_OPENSHELL_BIN", openshell);
   });
 
@@ -46,9 +51,7 @@ exit 0
   });
 
   it("routes list inference reads through the selected gateway (#10671)", async () => {
-    const { buildListCommandDeps } = await import("./list-command-deps");
-
-    expect(buildListCommandDeps().getLiveInference()).toEqual({
+    await expect(buildListCommandDeps().getLiveInference()).resolves.toEqual({
       provider: "selected-provider",
       model: "selected-model",
     });
@@ -56,9 +59,7 @@ exit 0
   });
 
   it("routes global status inference reads through the selected gateway (#10671)", async () => {
-    const { buildStatusCommandDeps } = await import("./status-command-deps");
-
-    expect(buildStatusCommandDeps(tmp).getLiveInference()).toEqual({
+    await expect(buildStatusCommandDeps(tmp).getLiveInference()).resolves.toEqual({
       provider: "selected-provider",
       model: "selected-model",
     });

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { recoverNamedGatewayRuntime } from "../actions/global";
+import { type GatewayRecovery, recoverNamedGatewayRuntime } from "../actions/global";
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../cli/branding";
 import { GATEWAY_PORT } from "../core/ports";
 import { gatewayStartGuidance } from "../gateway-start-guidance";
@@ -18,7 +18,9 @@ export function printCredentialsUsage(log: (message?: string) => void = console.
   log(
     "    list                            List provider credentials registered with the OpenShell gateway",
   );
-  log("    add <PROVIDER> --type <TYPE>    Register a provider credential (reads value from env)");
+  log(
+    "    add <PROVIDER> --type <TYPE> [--agent <AGENT>]    Register a provider credential (reads value from env)",
+  );
   log("    reset <PROVIDER> [--yes]        Remove a provider credential so onboard re-prompts");
   log("");
   log("  Credentials live in the OpenShell gateway. Inspect with `openshell provider list`.");
@@ -31,6 +33,22 @@ export function credentialsGatewayRecoveryFailureLines(kind: "query" | "reach"):
   return [
     `  Could not ${action} the ${CLI_DISPLAY_NAME} OpenShell gateway. Is it running?`,
     `  ${gatewayStartGuidance(resolveGatewayName(GATEWAY_PORT))}`,
+  ];
+}
+
+export function credentialsGatewayIdentityFailureLines(kind: "query" | "reach"): string[] {
+  const action = kind === "query" ? "query" : "reach";
+  return [
+    `  Could not ${action} the ${CLI_DISPLAY_NAME} OpenShell gateway because the selected endpoint did not prove the expected gateway identity.`,
+    `  Restore the recorded gateway selection or run '${CLI_NAME} onboard' to bind the current gateway before retrying.`,
+  ];
+}
+
+export function credentialsGatewayEndpointOverrideFailureLines(kind: "query" | "reach"): string[] {
+  const action = kind === "query" ? "query" : "reach";
+  return [
+    `  Could not ${action} the ${CLI_DISPLAY_NAME} OpenShell gateway because OPENSHELL_GATEWAY_ENDPOINT overrides the recorded gateway selection.`,
+    `  Unset OPENSHELL_GATEWAY_ENDPOINT before retrying.`,
   ];
 }
 
@@ -47,6 +65,22 @@ export function credentialsGatewayAuthorityFailureLines(
   ];
 }
 
+function hasGatewayIdentityMismatch(
+  observation: GatewayRecovery["before"] | GatewayRecovery["after"],
+): boolean {
+  return (
+    observation?.error?.kind === "transport" && observation.error.reason === "identity_mismatch"
+  );
+}
+
+function hasGatewayEndpointOverride(
+  observation: GatewayRecovery["before"] | GatewayRecovery["after"],
+): boolean {
+  return (
+    observation?.error?.kind === "transport" && observation.error.reason === "endpoint_override"
+  );
+}
+
 export async function recoverGatewayOrExit(
   kind: "query" | "reach",
   reportFailure: (lines: readonly string[]) => void = (lines) =>
@@ -55,7 +89,17 @@ export async function recoverGatewayOrExit(
   const recovery = await recoverNamedGatewayRuntime();
   if (recovery.recovered) return true;
 
-  reportFailure(credentialsGatewayRecoveryFailureLines(kind));
+  const identityUnproven =
+    hasGatewayIdentityMismatch(recovery.before) || hasGatewayIdentityMismatch(recovery.after);
+  const endpointOverride =
+    hasGatewayEndpointOverride(recovery.before) || hasGatewayEndpointOverride(recovery.after);
+  reportFailure(
+    endpointOverride
+      ? credentialsGatewayEndpointOverrideFailureLines(kind)
+      : identityUnproven
+        ? credentialsGatewayIdentityFailureLines(kind)
+        : credentialsGatewayRecoveryFailureLines(kind),
+  );
   return false;
 }
 

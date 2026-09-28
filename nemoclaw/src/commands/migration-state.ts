@@ -117,7 +117,8 @@ function readString(value: unknown): string | null {
 
 function readTrimmedString(value: unknown): string | null {
   const trimmed = readString(value)?.trim();
-  return trimmed ? trimmed : null;
+  if (!trimmed) return null;
+  return trimmed;
 }
 
 function readRecord(value: unknown): UnknownRecord | null {
@@ -144,7 +145,8 @@ function parseConfigDocument(value: unknown, context: string): OpenClawConfigDoc
 }
 
 function resolveHostHome(env: NodeJS.ProcessEnv = process.env): string {
-  const fallbackHome = env.HOME?.trim() || env.USERPROFILE?.trim() || os.homedir();
+  const fallbackHome =
+    readTrimmedString(env.HOME) ?? readTrimmedString(env.USERPROFILE) ?? os.homedir();
   const explicitHome = env.OPENCLAW_HOME?.trim();
   if (explicitHome) {
     if (explicitHome === "~") {
@@ -291,7 +293,7 @@ function defaultWorkspacePath(env: NodeJS.ProcessEnv = process.env): string {
   return path.join(home, ".openclaw", "workspace");
 }
 
-function collectExternalRoots(
+export function collectExternalRoots(
   config: OpenClawConfigDocument | null,
   stateDir: string,
   env: NodeJS.ProcessEnv = process.env,
@@ -302,6 +304,7 @@ function collectExternalRoots(
 
   const agents = readRecordKey(config, "agents");
   const agentDefaults = readRecordKey(agents, "defaults");
+  const agentEntries = readRecordKey(agents, "entries");
   const agentList = readArrayKey(agents, "list");
   const skillLoad = readRecordKey(readRecordKey(config, "skills"), "load");
 
@@ -320,7 +323,44 @@ function collectExternalRoots(
     env,
   );
 
-  if (agentList) {
+  if (agentEntries) {
+    Object.entries(agentEntries).forEach(([agentId, entry]) => {
+      const agent = readRecord(entry);
+      if (!agent) return;
+      const workspace = readTrimmedString(agent.workspace);
+      const agentDir = readTrimmedString(agent.agentDir);
+
+      if (workspace) {
+        registerRoot(
+          rootMap,
+          {
+            pathValue: workspace,
+            kind: "workspace",
+            label: `${agentId}-workspace`,
+            bindingPath: `agents.entries.${agentId}.workspace`,
+            sandboxGroup: "workspaces",
+            required: true,
+          },
+          env,
+        );
+      }
+
+      if (agentDir) {
+        registerRoot(
+          rootMap,
+          {
+            pathValue: agentDir,
+            kind: "agentDir",
+            label: `${agentId}-agent-dir`,
+            bindingPath: `agents.entries.${agentId}.agentDir`,
+            sandboxGroup: "agent-dirs",
+            required: true,
+          },
+          env,
+        );
+      }
+    });
+  } else if (agentList) {
     agentList.forEach((entry, index) => {
       const agent = readRecord(entry);
       if (!agent) {
@@ -670,7 +710,7 @@ function loadCopiedConfigDocument(configPath: string): OpenClawConfigDocument {
     path.basename(configPath),
   );
   const scanned = scan?.files[0];
-  if (scan === null || scan.files.length !== 1 || scanned?.path !== path.basename(configPath)) {
+  if (scan?.files.length !== 1 || scanned?.path !== path.basename(configPath)) {
     throw new Error(`Failed descriptor-bound scan of copied OpenClaw config: ${configPath}`);
   }
   const raw = decodeDescriptorSnapshotContent(scanned.content);
@@ -725,9 +765,7 @@ export function setConfigValue(document: UnknownRecord, configPath: string, valu
     if (isArrayIndex) {
       const array = requireArray(current, configPath);
       const arrayIndex = Number.parseInt(token, 10);
-      if (array[arrayIndex] == null) {
-        array[arrayIndex] = isArrayIndexToken(nextToken) ? [] : {};
-      }
+      array[arrayIndex] ??= isArrayIndexToken(nextToken) ? [] : {};
       current = array[arrayIndex];
       continue;
     }

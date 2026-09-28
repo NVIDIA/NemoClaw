@@ -12,6 +12,7 @@ import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
 import { auditOpenShellPolicyBoundaryDependencies } from "../../scripts/checks/verify-openshell-policy-boundary-dependencies.mts";
+import { npmPackFilePaths } from "../helpers/npm-pack-result";
 import { createPackageFixture } from "./helpers/package-fixture";
 
 const repoRoot = path.join(import.meta.dirname, "..", "..");
@@ -30,17 +31,14 @@ function collectPackedPaths(): ReadonlySet<string> {
     entries: ["agents"],
   });
   try {
-    const output = JSON.parse(
+    const paths = npmPackFilePaths(
       execFileSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], {
         cwd: fixtureRoot,
         encoding: "utf8",
         maxBuffer: 10 * 1024 * 1024,
       }),
-    ) as
-      | Array<{ files?: Array<{ path?: string }> }>
-      | Record<string, { files?: Array<{ path?: string }> }>;
-    const report = Array.isArray(output) ? output[0] : Object.values(output)[0];
-    return new Set((report?.files ?? []).flatMap((entry) => (entry.path ? [entry.path] : [])));
+    );
+    return new Set(paths);
   } finally {
     fs.rmSync(fixtureRoot, { recursive: true, force: true });
   }
@@ -118,7 +116,9 @@ describe("OpenShell policy boundary package contract", () => {
       network_policies: { safe: {} },
     };
     expect(YAML.parse(cliPolicy.stripProviderComposedPolicies(policy))).toEqual(expectedPolicy);
-    expect(YAML.parse(pluginBoundary.stripProviderComposedPolicies(policy))).toEqual(expectedPolicy);
+    expect(YAML.parse(pluginBoundary.stripProviderComposedPolicies(policy))).toEqual(
+      expectedPolicy,
+    );
     expect(() => cliPolicy.stripProviderComposedPolicies("version: [unterminated")).toThrow();
     expect(() => pluginBoundary.stripProviderComposedPolicies("version: [unterminated")).toThrow();
 

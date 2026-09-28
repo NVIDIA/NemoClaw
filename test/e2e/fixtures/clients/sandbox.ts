@@ -29,15 +29,78 @@ const OPENCLAW_STATE_DIR = "/sandbox/.openclaw";
 const WAIT_FOR_INITIAL_OPENCLAW_PAIRING_PROGRAM = String.raw`
 const fs = require("node:fs");
 const path = require("node:path");
+const { DatabaseSync } = require("node:sqlite");
 const deadline = Date.now() + Number(process.argv[1]);
 const stateDir = process.argv[2];
-function wait() {
+const databasePath = path.join(stateDir, "state/openclaw.sqlite");
+function sqlitePairingStatus() {
+  let metadata;
+  try {
+    metadata = fs.lstatSync(databasePath);
+  } catch (error) {
+    if (error?.code === "ENOENT") return { present: false, ready: false };
+    return { present: true, ready: false };
+  }
+  if (!metadata.isFile() || metadata.isSymbolicLink()) return { present: true, ready: false };
+  let database;
+  try {
+    database = new DatabaseSync(databasePath, {
+      allowExtension: false,
+      open: true,
+      readOnly: true,
+      timeout: 2_000,
+    });
+    database.exec("PRAGMA query_only = ON; PRAGMA trusted_schema = OFF;");
+    const identity = database
+      .prepare("SELECT device_id AS deviceId FROM device_identities WHERE identity_key = 'primary'")
+      .get();
+    if (typeof identity?.deviceId !== "string" || identity.deviceId.length === 0) {
+      return { present: true, ready: false };
+    }
+    const auth = database
+      .prepare("SELECT token FROM device_auth_tokens WHERE device_id = ? AND role = 'operator'")
+      .get(identity.deviceId);
+    const paired = database
+      .prepare("SELECT client_id AS clientId, client_mode AS clientMode, tokens_json AS tokensJson FROM device_pairing_paired WHERE device_id = ?")
+      .get(identity.deviceId);
+    let pairedToken;
+    try {
+      pairedToken = JSON.parse(paired?.tokensJson ?? "null")?.operator?.token;
+    } catch {}
+    return {
+      present: true,
+      ready:
+        paired?.clientId === "cli" &&
+        paired.clientMode === "cli" &&
+        typeof auth?.token === "string" &&
+        auth.token.length > 0 &&
+        pairedToken === auth.token,
+    };
+  } catch {
+    return { present: true, ready: false };
+  } finally {
+    try { database?.close(); } catch {}
+  }
+}
+function legacyPairingReady() {
   try {
     const identity = JSON.parse(fs.readFileSync(path.join(stateDir, "identity/device.json"), "utf8"));
     const auth = JSON.parse(fs.readFileSync(path.join(stateDir, "identity/device-auth.json"), "utf8"));
     const paired = Object.values(JSON.parse(fs.readFileSync(path.join(stateDir, "devices/paired.json"), "utf8")));
-    if (paired.some((device) => device?.deviceId === identity.deviceId && device.clientId === "cli" && device.clientMode === "cli" && device.tokens?.operator?.token && device.tokens.operator.token === auth.tokens?.operator?.token)) process.exit(0);
-  } catch {}
+    const ready = paired.some((device) => device?.deviceId === identity.deviceId && device.clientId === "cli" && device.clientMode === "cli" && device.tokens?.operator?.token && device.tokens.operator.token === auth.tokens?.operator?.token);
+    try {
+      fs.lstatSync(databasePath);
+      return false;
+    } catch (error) {
+      return error?.code === "ENOENT" && ready;
+    }
+  } catch {
+    return false;
+  }
+}
+function wait() {
+  const sqlite = sqlitePairingStatus();
+  if (sqlite.ready || (!sqlite.present && legacyPairingReady())) process.exit(0);
   if (Date.now() >= deadline) process.exit(1);
   setTimeout(wait, 250);
 }
@@ -73,6 +136,11 @@ declare const trustedSandboxShellScriptBrand: unique symbol;
 export type TrustedSandboxShellScript = string & {
   readonly [trustedSandboxShellScriptBrand]: true;
 };
+
+// OpenShell records the create argv as the sandbox's canonical main process.
+// Historical rebuild fixtures therefore need a non-terminal process until the
+// real rebuild flow takes ownership of the sandbox lifecycle.
+export const HISTORICAL_SANDBOX_MAIN_PROCESS = ["sleep", "infinity"] as const;
 
 export function trustedSandboxShellScript(script: string): TrustedSandboxShellScript {
   if (script.length === 0) {
@@ -120,6 +188,75 @@ export class SandboxClient {
       artifactName: `sandbox-status-${name}`,
       ...options,
     });
+  }
+
+  /** Initial cleanup may run before onboarding registers the isolated job's gateway. */
+  async hasGatewayForInitialCleanup(
+    gatewayName: string,
+    options: ShellProbeRunOptions = {},
+  ): Promise<boolean> {
+    validateSandboxName(gatewayName);
+    const result = await this.openshell(["gateway", "info", "-g", gatewayName, "-o", "json"], {
+      ...options,
+      artifactName: `${options.artifactName ?? "precleanup"}-gateway-info`,
+    });
+    const lines = result.stderr
+      .trim()
+      .split(/\r?\n/u)
+      .map((line) => line.trim());
+    const diagnostic = lines
+      .shift()
+      ?.replace(/^Error:\s*/u, "")
+      .replace(/^×\s*/u, "");
+    // Pinned OpenShell gateway info maps an unresolved explicit -g lookup to
+    // this diagnostic; other commands' generic absence messages are not evidence here.
+    const notConfigured = diagnostic === "No gateway configured.";
+    const missing = diagnostic === `Unknown gateway '${gatewayName}'.` || notConfigured;
+    const expectedGuidance = notConfigured
+      ? ["│ Register a gateway with: openshell gateway add <endpoint>"]
+      : [
+          `│ Register it first: openshell gateway add <endpoint> --name ${gatewayName}`,
+          "│ Or list available gateways: openshell gateway select",
+        ];
+    const guidanceOnly =
+      lines.length === expectedGuidance.length &&
+      lines.every((line, index) => line === expectedGuidance[index]);
+    if (
+      result.exitCode === 1 &&
+      !result.timedOut &&
+      result.signal === null &&
+      result.stdout.trim() === "" &&
+      missing &&
+      guidanceOnly
+    )
+      return false;
+    assertExitZero(result, `inspect initial cleanup gateway ${gatewayName}`);
+    const info: unknown = JSON.parse(result.stdout);
+    if (
+      result.timedOut ||
+      result.signal !== null ||
+      result.stderr.trim() !== "" ||
+      !info ||
+      typeof info !== "object" ||
+      Array.isArray(info) ||
+      !("gateway" in info) ||
+      info.gateway !== gatewayName ||
+      "error" in info
+    ) {
+      throw new Error(`Initial cleanup could not verify gateway ${gatewayName}`);
+    }
+    return true;
+  }
+
+  async cleanupSandboxBeforeOnboard(
+    name: string,
+    options: ShellProbeRunOptions = {},
+  ): Promise<void> {
+    validateSandboxName(name);
+    const gatewayName = options.env?.OPENSHELL_GATEWAY ?? "nemoclaw";
+    if (await this.hasGatewayForInitialCleanup(gatewayName, options)) {
+      await this.cleanupSandbox(name, options);
+    }
   }
 
   async cleanupSandbox(name: string, options: ShellProbeRunOptions = {}): Promise<void> {
@@ -209,6 +346,16 @@ export class SandboxClient {
     return result;
   }
 
+  async expectAbsent(name: string, options: ShellProbeRunOptions = {}): Promise<ShellProbeResult> {
+    validateSandboxName(name);
+    const result = await this.list({ env: openshellProbeEnv(), ...options });
+    assertExitZero(result, "openshell sandbox list");
+    if (outputContainsSandbox(result, name)) {
+      throw new Error(`openshell sandbox list still included '${name}'.`);
+    }
+    return result;
+  }
+
   /**
    * Disruption helper: simulate the post-pod-recreate /tmp wipe by removing
    * the guard chain files. After this, a sandbox containing a running gateway
@@ -217,7 +364,7 @@ export class SandboxClient {
    *
    * Used exclusively by recovery E2E targets (#2701). Removes:
    *   - /tmp/nemoclaw-proxy-env.sh (the NODE_OPTIONS chain export file)
-   *   - the five --require preload guard scripts written by the entrypoint
+   *   - the four --require preload guard scripts written by the entrypoint
    */
   async wipeGuardChain(
     name: string,
@@ -229,7 +376,6 @@ export class SandboxClient {
       "-f",
       "/tmp/nemoclaw-proxy-env.sh",
       "/tmp/nemoclaw-sandbox-safety-net.js",
-      "/tmp/nemoclaw-ciao-network-guard.js",
       "/tmp/nemoclaw-slack-channel-guard.js",
       "/tmp/nemoclaw-http-proxy-fix.js",
       "/tmp/nemoclaw-nemotron-inference-fix.js",

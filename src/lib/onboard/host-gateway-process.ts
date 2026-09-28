@@ -16,7 +16,6 @@ import {
   getDockerDriverGatewayRuntimeMarkerPath,
   parseDockerDriverGatewayRuntimeMarker,
   readOwnedDockerDriverGatewayRuntimeFile,
-  resolveDockerDriverGatewayPidFile,
   resolveDockerDriverGatewayStateDir,
 } from "./docker-driver-gateway-runtime-marker";
 import { resolveRegisteredRuntimeProvider } from "./runtime-provider/selection";

@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { discoverStationGb300SysfsReadOnlyPaths } from "../onboard/initial-policy";
 import {
@@ -135,6 +138,162 @@ describe("platform readiness qualification (#7410)", () => {
     expect(capability(result, "host.platform.supported")).toBe("present");
     expect(result.qualifications).toEqual([]);
     expect(result.evidence).toEqual([]);
+  });
+
+  it("collects OS release identity for a generic Linux host (#11026)", () => {
+    const missing = (): never => {
+      const error = new Error("missing fixture") as NodeJS.ErrnoException;
+      error.code = "ENOENT";
+      throw error;
+    };
+    const files = new Map([
+      ["/fixtures/os-release", 'ID=ubuntu\nVERSION_ID="24.04"\nPRETTY_NAME="Ubuntu 24.04.4 LTS"\n'],
+    ]);
+    const identity = collectPlatformIdentity({
+      osReleasePath: "/fixtures/os-release",
+      readFile: (filePath) => files.get(filePath) ?? missing(),
+      readdir: missing,
+      openFile: missing,
+    });
+
+    expect(identity).toMatchObject({
+      osId: "ubuntu",
+      osVersionId: "24.04",
+      osPrettyName: "Ubuntu 24.04.4 LTS",
+    });
+  });
+
+  it("collects OS release identity through the descriptor-backed reader (#11026)", () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-os-release-"));
+    const osReleasePath = path.join(fixtureRoot, "os-release");
+    try {
+      fs.writeFileSync(
+        osReleasePath,
+        'ID=ubuntu\nVERSION_ID="24.04"\nPRETTY_NAME="Ubuntu 24.04.4 LTS"\n',
+      );
+      const identity = collectPlatformIdentity({ osReleasePath });
+
+      expect(identity).toMatchObject({
+        osId: "ubuntu",
+        osVersionId: "24.04",
+        osPrettyName: "Ubuntu 24.04.4 LTS",
+      });
+    } finally {
+      fs.rmSync(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("uses the standard OS release fallback when the primary file is absent (#11026)", () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-os-release-"));
+    const primaryPath = path.join(fixtureRoot, "etc", "os-release");
+    const fallbackPath = path.join(fixtureRoot, "usr", "lib", "os-release");
+    try {
+      fs.mkdirSync(path.dirname(fallbackPath), { recursive: true });
+      fs.writeFileSync(fallbackPath, 'ID=ubuntu\nVERSION_ID="24.04"\n');
+
+      expect(
+        collectPlatformIdentity({
+          osReleasePath: primaryPath,
+          osReleaseFallbackPath: fallbackPath,
+        }),
+      ).toMatchObject({ osId: "ubuntu", osVersionId: "24.04" });
+    } finally {
+      fs.rmSync(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts only the standard relative OS release symlink (#11026)", () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-os-release-"));
+    const primaryPath = path.join(fixtureRoot, "etc", "os-release");
+    const fallbackPath = path.join(fixtureRoot, "usr", "lib", "os-release");
+    const outsidePath = path.join(fixtureRoot, "outside");
+    try {
+      fs.mkdirSync(path.dirname(primaryPath), { recursive: true });
+      fs.mkdirSync(path.dirname(fallbackPath), { recursive: true });
+      fs.writeFileSync(fallbackPath, 'ID=ubuntu\nVERSION_ID="24.04"\n');
+      fs.writeFileSync(outsidePath, 'ID=ubuntu\nVERSION_ID="24.04"\n');
+      fs.symlinkSync("../usr/lib/os-release", primaryPath);
+
+      expect(
+        collectPlatformIdentity({
+          osReleasePath: primaryPath,
+          osReleaseFallbackPath: fallbackPath,
+        }),
+      ).toMatchObject({ osId: "ubuntu", osVersionId: "24.04" });
+
+      fs.unlinkSync(primaryPath);
+      fs.symlinkSync("../outside", primaryPath);
+      const rejected = collectPlatformIdentity({
+        osReleasePath: primaryPath,
+        osReleaseFallbackPath: fallbackPath,
+      });
+      expect(rejected.osId).toBeUndefined();
+      expect(rejected.osVersionId).toBeUndefined();
+    } finally {
+      fs.rmSync(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects oversized descriptor-backed OS release evidence (#11026)", () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-os-release-"));
+    const osReleasePath = path.join(fixtureRoot, "os-release");
+    try {
+      fs.writeFileSync(osReleasePath, `ID=ubuntu\nVERSION_ID="24.04"\n${"#".repeat(4096)}`);
+      const identity = collectPlatformIdentity({ osReleasePath });
+
+      expect(identity.osId).toBeUndefined();
+      expect(identity.osVersionId).toBeUndefined();
+    } finally {
+      fs.rmSync(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects NUL-bearing OS release evidence as malformed (#11026)", () => {
+    const missing = (): never => {
+      const error = new Error("missing fixture") as NodeJS.ErrnoException;
+      error.code = "ENOENT";
+      throw error;
+    };
+    const identity = collectPlatformIdentity({
+      readFile: () => "",
+      readdir: () => [],
+      openFile: missing,
+      readBoundedOsRelease: () => 'ID=ubu\0ntu\nVERSION_ID="24.04"\n',
+    });
+
+    expect(identity.osId).toBeUndefined();
+    expect(identity.osVersionId).toBeUndefined();
+  });
+
+  it("rejects carriage-return OS release evidence from an injected reader (#11026)", () => {
+    const identity = collectPlatformIdentity({
+      readFile: (filePath) =>
+        filePath === "/fixtures/os-release"
+          ? 'ID=ubuntu\nVERSION_ID="24.04"\r'
+          : unexpectedFixturePath(filePath),
+      osReleasePath: "/fixtures/os-release",
+      readdir: () => [],
+      openFile: () => {
+        throw Object.assign(new Error("missing fixture"), { code: "ENOENT" });
+      },
+    });
+
+    expect(identity.osId).toBeUndefined();
+    expect(identity.osVersionId).toBeUndefined();
+  });
+
+  it("rejects carriage-return OS release evidence from the descriptor-backed reader (#11026)", () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-os-release-"));
+    const osReleasePath = path.join(fixtureRoot, "os-release");
+    try {
+      fs.writeFileSync(osReleasePath, 'ID=ubuntu\nVERSION_ID="24.04"\r');
+      const identity = collectPlatformIdentity({ osReleasePath });
+
+      expect(identity.osId).toBeUndefined();
+      expect(identity.osVersionId).toBeUndefined();
+    } finally {
+      fs.rmSync(fixtureRoot, { recursive: true, force: true });
+    }
   });
 
   it.each([

@@ -46,6 +46,15 @@ export function readBoolean(record: ManifestRecord, key: string): boolean | unde
   return typeof value === "boolean" ? value : undefined;
 }
 
+export function readDeferredOnboarding(record: ManifestRecord): boolean {
+  const value = record.deferred_onboarding;
+  if (value === undefined) return false;
+  if (typeof value !== "boolean") {
+    throw new Error("Agent manifest field 'deferred_onboarding' must be a boolean");
+  }
+  return value;
+}
+
 export function readVersionScheme(record: ManifestRecord): AgentVersionScheme | undefined {
   const value = record.version_scheme;
   if (value === "semver" || value === "calendar") return value;
@@ -316,12 +325,12 @@ export function readMcpCapability(record: ManifestRecord): AgentMcpCapability {
   const adapter = readString(mcp, "adapter");
   if (
     adapter !== undefined &&
-    adapter !== "mcporter" &&
+    adapter !== "openclaw-config" &&
     adapter !== "hermes-config" &&
     adapter !== "deepagents-config"
   ) {
     throw new Error(
-      "Agent manifest field 'mcp.adapter' must be mcporter, hermes-config, or deepagents-config",
+      "Agent manifest field 'mcp.adapter' must be openclaw-config, hermes-config, or deepagents-config",
     );
   }
   if (support === "bridge" && !adapter) {

@@ -57,15 +57,15 @@ function expectServiceUserProofCommand(command: readonly string[], serviceUser: 
   ]);
   expect(command).toEqual(
     expect.arrayContaining([
-    "--wait",
-    "--pipe",
-    "--collect",
-    "--service-type=exec",
-    `--uid=${serviceUser}`,
-    "--property=KillMode=control-group",
-    "--property=RuntimeMaxSec=15s",
-    "--property=TimeoutStopSec=250ms",
-    "--property=SendSIGKILL=yes",
+      "--wait",
+      "--pipe",
+      "--collect",
+      "--service-type=exec",
+      `--uid=${serviceUser}`,
+      "--property=KillMode=control-group",
+      "--property=RuntimeMaxSec=15s",
+      "--property=TimeoutStopSec=250ms",
+      "--property=SendSIGKILL=yes",
     ]),
   );
   expect(command.slice(-2)).toEqual([executablePath, "--version"]);

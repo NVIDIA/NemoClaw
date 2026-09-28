@@ -10,16 +10,22 @@
 // restart." to /tmp/gateway.log.
 // Source boundary: that park-alive behavior lives in OpenClaw's gateway run
 // loop, outside NemoClaw; NemoClaw can only detect it and hand recovery back
-// to its supervisor. The sandbox-side prevention (gateway.reload.mode=hot pin
+// to its supervisor. The sandbox-side prevention (gateway.reload.mode=off pin
 // and the serving watchdog) ships separately in the #4710 sandbox PR.
 // Removal condition: when sandbox images pin an OpenClaw release whose failed
 // in-process restart exits non-zero (so the PID-wait supervisor respawns it),
 // this detection can be narrowed and the recovery settle window shortened or
 // defaulted off.
 
+import type { OpenShellGatewayTarget } from "../../adapters/openshell/sandbox-observer";
+import { cliOpenShellSandboxLogs } from "../../adapters/openshell/sandbox-logs-cli";
+import type { OpenShellSandboxLogs } from "../../adapters/openshell/sandbox-logs";
 import { shellQuote } from "../../runner";
 import { redactFull } from "../../security/redact";
-import type { SandboxCommandResult } from "./process-recovery";
+import {
+  executeSandboxExecCommand,
+  type SandboxCommandResult,
+} from "../../adapters/sandbox/command-transport";
 
 export type SandboxExec = (
   sandboxName: string,
@@ -44,6 +50,34 @@ export function sanitizeWedgeLogLine(line: string): string {
   sanitized = sanitized.replace(AUTHORIZATION_PATTERN, "$1 [REDACTED]");
   sanitized = sanitized.replace(NVAPI_PATTERN, "[REDACTED]");
   return sanitized.replace(/\r/g, "").trim();
+}
+
+/** Read a bounded, sanitized tail from OpenShell's retained sandbox log buffer. */
+export async function collectRedactedOpenShellSandboxLogs(
+  sandboxName: string,
+  target: OpenShellGatewayTarget,
+  logs: OpenShellSandboxLogs = cliOpenShellSandboxLogs,
+): Promise<string[]> {
+  try {
+    const result = await logs.read({
+      target,
+      sandboxName,
+      source: "openshell",
+      lines: "120",
+      since: null,
+      timeoutMs: 15_000,
+    });
+    if (
+      result.outcome.kind !== "completed" ||
+      result.outcome.exitCode !== 0 ||
+      !result.content.trim()
+    ) {
+      return [];
+    }
+    return result.content.split("\n").map(sanitizeWedgeLogLine).filter(Boolean).slice(-60);
+  } catch {
+    return [];
+  }
 }
 
 /**
@@ -77,7 +111,7 @@ export async function collectGatewayWedgeDiagnostics(
  */
 export async function printGatewayWedgeDiagnostics(
   sandboxName: string,
-  exec: SandboxExec,
+  exec: SandboxExec = executeSandboxExecCommand,
 ): Promise<boolean> {
   const wedgeLines = await collectGatewayWedgeDiagnostics(sandboxName, exec);
   if (wedgeLines.length === 0) {

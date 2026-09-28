@@ -436,7 +436,8 @@ nvidia_firmware_product_class() {
   local product=${1:-}
   if [[ "$product" =~ [Dd][Gg][Xx]([_[:space:]-]+)[Ss][Pp][Aa][Rr][Kk] ]]; then
     printf '%s' spark
-  elif [[ "$product" =~ (^|[^[:alnum:]])[Ss][Tt][Aa][Tt][Ii][Oo][Nn]([_[:space:]-]+)[Gg][Bb]300($|[^[:alnum:]]) ]]; then
+  elif [[ "$product" =~ (^|[^[:alnum:]])[Ss][Tt][Aa][Tt][Ii][Oo][Nn]([_[:space:]-]+)([Dd][Gg][Xx]([_[:space:]-]+))?[Gg][Bb]300($|[^[:alnum:]]) ||
+    "$product" =~ (^|[^[:alnum:]])[Gg][Bb]300([_[:space:]-]+)([Dd][Gg][Xx]([_[:space:]-]+))?[Ss][Tt][Aa][Tt][Ii][Oo][Nn]($|[^[:alnum:]]) ]]; then
     printf '%s' station-gb300
   elif [[ "$product" =~ (^|[^[:alnum:]])[Pp]3830($|[^[:alnum:]]) || "$product" =~ [Dd][Gg][Xx]([_[:space:]-]+)[Ss][Tt][Aa][Tt][Ii][Oo][Nn] ]]; then
     printf '%s' station-other
@@ -1506,7 +1507,7 @@ agent_process_conflicts() {
 check_agent_and_inference_conflicts() {
   local processes agent_matches inference_matches listeners vllm_port
   vllm_port="$(printf '%s' "${NEMOCLAW_VLLM_PORT:-8000}" | awk '{gsub(/^[[:space:]]+|[[:space:]]+$/, ""); print}')"
-  if [[ ! "$vllm_port" =~ ^[0-9]{4,5}$ ]] \
+  if [[ ! "$vllm_port" =~ ^[1-9][0-9]{3,4}$ ]] \
     || ((10#$vllm_port < 1024 || 10#$vllm_port > 65535)); then
     fatal "NEMOCLAW_VLLM_PORT must be an integer from 1024 to 65535."
   fi

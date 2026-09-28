@@ -329,7 +329,7 @@ function parseRuntimeIdentityEndpoint(
     typeof host !== "string" ||
     host.length === 0 ||
     host.length > 253 ||
-    /[\/@?#\s]/u.test(host)
+    /[/@?#\s]/u.test(host)
   ) {
     throw new Error(`${label} must declare a valid host`);
   }

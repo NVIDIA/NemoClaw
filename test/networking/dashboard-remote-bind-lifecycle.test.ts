@@ -548,7 +548,7 @@ describe("remote dashboard bind production lifecycle", () => {
     }
   });
 
-  it("fails closed when connect requests remote exposure for a local-only sandbox (#6024)", () => {
+  it("fails closed when connect requests remote exposure for a local-only sandbox (#6024)", async () => {
     const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.js");
     const registry = requireSource("../../src/lib/state/registry.js");
     vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
@@ -559,14 +559,14 @@ describe("remote dashboard bind production lifecycle", () => {
     const runOpenshell = vi.spyOn(openshellRuntime, "runOpenshell");
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
 
-    expect(ensureSandboxPortForward("beta")).toBe(false);
+    expect(await ensureSandboxPortForward("beta")).toBe(false);
     expect(runOpenshell).not.toHaveBeenCalled();
     expect(error).toHaveBeenCalledWith(expect.stringContaining("not prepared for remote exposure"));
   });
 
-  it("refuses to reuse a local-only sandbox for remote exposure during onboarding (#6024)", () => {
+  it("refuses to reuse a local-only sandbox for remote exposure during onboarding (#6024)", async () => {
     const ensureDashboardForward = vi.fn();
-    expect(() =>
+    await expect(
       applyReusedSandboxDashboardState({
         sandboxName: "beta",
         chatUiUrl: "http://127.0.0.1:18789",
@@ -586,7 +586,7 @@ describe("remote dashboard bind production lifecycle", () => {
         },
         updateReusedSandboxMetadata: vi.fn(),
       }),
-    ).toThrow(/--recreate-sandbox/);
+    ).rejects.toThrow(/--recreate-sandbox/);
     expect(ensureDashboardForward).not.toHaveBeenCalled();
   });
 });

@@ -42,11 +42,12 @@ function runApplierProcess(
   agent: "hermes" | "openclaw",
   phase: MessagingBuildPhase,
 ) {
-  return spawnSync(
-    "node",
-    [SCRIPT_PATH, "--agent", agent, "--phase", phase],
-    { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"], env, timeout: 10_000 },
-  );
+  return spawnSync("node", [SCRIPT_PATH, "--agent", agent, "--phase", phase], {
+    encoding: "utf-8",
+    stdio: ["pipe", "pipe", "pipe"],
+    env,
+    timeout: 10_000,
+  });
 }
 
 describe("messaging-build-applier.mts: credential env cleanup", () => {

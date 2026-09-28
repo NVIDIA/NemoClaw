@@ -31,8 +31,15 @@
 
 skip-features:
   - "config-show"                        # plugin config-show command, experimental
+  - "portable"                           # intentionally undocumented internal feature
+  - "Portable"                           # intentionally undocumented internal feature
+  - "experimental-profile"               # hidden profile-selection surface
 
 skip-terms:
   - "permissive mode"                    # do not reference this concept in docs
   - "config rotate-token"                # experimental config command, not advertised
   - "rotate-token"                       # experimental config command, not advertised
+  - "Portable"                           # intentionally undocumented feature name
+  - "portable"                           # intentionally undocumented feature name
+  - "--experimental-profile"             # hidden feature flag
+  - "NEMOCLAW_PORTABLE_"                 # internal feature environment variables

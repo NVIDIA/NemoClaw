@@ -8,10 +8,12 @@ import {
   RUNTIME_PROVIDER_NATIVE_ARTIFACT_BOOTSTRAP_CONTRACT_VERSION,
   RUNTIME_PROVIDER_SNAPSHOT_CONTRACT_VERSION,
   RUNTIME_PROVIDER_SNAPSHOT_PREFLIGHT_SCHEMA_VERSION,
+  normalizeRuntimeProviderIdentity,
   type RuntimeProviderBundle,
   type RuntimeProviderBundleRegistry,
   type RuntimeProviderChannelStopTransport,
   type RuntimeProviderContainerEngineOperation,
+  type RuntimeProviderFinalSandboxLiveness,
   type RuntimeProviderManagedProfileRestoreAuthority,
   type RuntimeProviderMutationOperation,
   type RuntimeProviderRuntimeReceipt,
@@ -20,6 +22,7 @@ import {
   type RuntimeProviderSnapshotRestoreReceipt,
   type RuntimeProviderSnapshotRestoreSource,
 } from "./contract";
+export { normalizeRuntimeProviderIdentity } from "./contract";
 import type {
   HostLocalInferenceOperation,
   HostLocalInferenceOperationInput,
@@ -55,6 +58,8 @@ const SNAPSHOT_LIFECYCLE_STATES = new Set<RuntimeProviderSnapshotLifecycleState>
   "stopped",
 ]);
 const GATEWAY_LAUNCHERS = new Set(["nemoclaw", "openshell"]);
+const FINAL_SANDBOX_LIVENESS_SOURCES: ReadonlySet<unknown> =
+  new Set<RuntimeProviderFinalSandboxLiveness>(["openshell-and-docker", "openshell-only"]);
 const CHANNEL_STOP_TRANSPORTS: ReadonlySet<unknown> = new Set<RuntimeProviderChannelStopTransport>([
   "docker-kubectl-first",
   "openshell",
@@ -82,8 +87,6 @@ const HOST_PLATFORMS = new Set<NodeJS.Platform>([
 ]);
 const MUTATION_OPERATIONS = new Set<RuntimeProviderMutationOperation>([
   "registration",
-  "start",
-  "stop",
   "inference-set",
   "rebuild",
   "clone",
@@ -402,7 +405,6 @@ function validateCapabilitiesSurface(surface: Record<string, unknown>): void {
   requireSupported("capabilities", surface);
   for (const field of [
     "hostLocalInference",
-    "directLifecycle",
     "legacyGatewayContainerInspection",
     "workloadImageCleanup",
   ] as const) {
@@ -445,6 +447,11 @@ function validateGatewaySurface(providerId: string, surface: Record<string, unkn
     );
   }
   requireBoolean(surface, "inspectLegacyContainer", "gateway");
+  if (!FINAL_SANDBOX_LIVENESS_SOURCES.has(surface.finalSandboxLiveness)) {
+    throw new RuntimeProviderRegistrationError(
+      "gateway.finalSandboxLiveness must be 'openshell-and-docker' or 'openshell-only'",
+    );
+  }
   requireBoolean(surface, "ownsHostReadiness", "gateway");
   if (surface.ownsHostReadiness === true) {
     requireFunction(surface, "observeOwnedGateway", "gateway");
@@ -489,9 +496,6 @@ function validateLifecycleSurface(providerId: string, surface: Record<string, un
         `lifecycle for '${providerId}' has an invalid channel-stop transport`,
       );
     }
-    requireFunction(surface, "start", "lifecycle");
-    requireFunction(surface, "verifyStarted", "lifecycle");
-    requireFunction(surface, "stop", "lifecycle");
     if (
       surface.containerMutationTimeoutMs !== undefined &&
       (!Number.isSafeInteger(surface.containerMutationTimeoutMs) ||
@@ -674,7 +678,6 @@ function validateSupportedSurfaceSchemas(
   }
   if (
     surfaces.capabilities.hostLocalInference !== (surfaces.hostLocalInference.supported === true) ||
-    surfaces.capabilities.directLifecycle !== (surfaces.lifecycle.supported === true) ||
     surfaces.capabilities.workloadImageCleanup !== (surfaces.cleanup.supported === true) ||
     surfaces.capabilities.legacyGatewayContainerInspection !==
       surfaces.gateway.inspectLegacyContainer
@@ -724,11 +727,6 @@ export function createRuntimeProviderBundleRegistry(
     registry[key] = cloneAndFreeze(bundle);
   }
   return Object.freeze(registry);
-}
-
-export function normalizeRuntimeProviderIdentity(driverName: string | null | undefined): string {
-  const normalized = driverName?.trim().toLowerCase();
-  return !normalized || normalized === "vm" ? "docker" : normalized;
 }
 
 export function resolveRuntimeProviderBundle(

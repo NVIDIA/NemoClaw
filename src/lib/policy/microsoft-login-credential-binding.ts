@@ -35,6 +35,22 @@ function findMicrosoftLoginEndpoint(policy: PolicyObject, policyKey: string): Po
 }
 
 /**
+ * Every reviewed Microsoft login endpoint on one policy, in declaration order.
+ *
+ * Unlike `findMicrosoftLoginEndpoint` this never refuses a shape. Giving a
+ * borrowed credential back is safe at any count: none means Teams borrowed
+ * nothing, and several means every Teams-owned copy must be released.
+ */
+function microsoftLoginEndpoints(policy: PolicyObject): PolicyObject[] {
+  const endpoints = policy.endpoints;
+  if (!Array.isArray(endpoints)) return [];
+  return endpoints.filter(
+    (endpoint): endpoint is PolicyObject =>
+      isPolicyObject(endpoint) && endpoint.host === MICROSOFT_LOGIN_HOST && endpoint.port === 443,
+  );
+}
+
+/**
  * OpenShell requires overlapping endpoints to carry identical credential
  * metadata. Outlook and Teams share Microsoft's OAuth host, so the Outlook
  * endpoint borrows Teams' bridge binding only for the lifetime of the Teams
@@ -64,21 +80,36 @@ export function reconcileTeamsOutlookLoginCredentialBinding(
 
   const teamsPolicy = networkPolicies[TEAMS_POLICY_KEY];
   const teamsActive = teamsActiveOverride ?? isPolicyObject(teamsPolicy);
-  const outlookEndpoint = findMicrosoftLoginEndpoint(outlookPolicy, OUTLOOK_POLICY_KEY);
   const expectedProvider = sandboxName ? `${sandboxName}-teams-bridge` : null;
   const expectedBinding = expectedProvider ? { provider: expectedProvider } : null;
-  const existingOutlookBinding = outlookEndpoint.credential_binding;
 
   if (!teamsActive) {
-    if (existingOutlookBinding === undefined) return policyContent;
-    if (!expectedBinding || !isDeepStrictEqual(existingOutlookBinding, expectedBinding)) {
+    // Removal reconciles against the live gateway policy, whose Outlook login
+    // endpoints need not match the pristine preset. Requiring exactly one here
+    // is an add-time invariant: it refused `channels remove teams` outright and
+    // left the channel half-removed, with no operator remedy short of editing
+    // the gateway policy by hand (#10679). Release every Teams-owned copy and
+    // still refuse a foreign binding, so only the revoking direction relaxes.
+    const boundLoginEndpoints = microsoftLoginEndpoints(outlookPolicy).filter(
+      (endpoint) => endpoint.credential_binding !== undefined,
+    );
+    if (boundLoginEndpoints.length === 0) return policyContent;
+    if (
+      !expectedBinding ||
+      boundLoginEndpoints.some(
+        (endpoint) => !isDeepStrictEqual(endpoint.credential_binding, expectedBinding),
+      )
+    ) {
       throw new Error(
         "Cannot restore Outlook Microsoft login policy metadata: the existing credential binding is not owned by Teams.",
       );
     }
-    delete outlookEndpoint.credential_binding;
+    for (const endpoint of boundLoginEndpoints) delete endpoint.credential_binding;
     return YAML.stringify(parsed);
   }
+
+  const outlookEndpoint = findMicrosoftLoginEndpoint(outlookPolicy, OUTLOOK_POLICY_KEY);
+  const existingOutlookBinding = outlookEndpoint.credential_binding;
 
   if (!expectedBinding) {
     throw new Error(

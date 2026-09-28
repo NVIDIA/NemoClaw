@@ -5,7 +5,7 @@ import { type HermesBuildSettings, readHermesBuildSettings } from "./build-env.t
 import {
   buildHermesManagedPolicy,
   finalizeHermesPlatformToolsets,
-  type HermesManagedPolicyV1,
+  type HermesManagedPolicyV3,
 } from "./managed-policy.ts";
 import { discoverModelSpecificSetups } from "./model-specific-setup.ts";
 import { type WrittenHermesConfig, writeHermesConfigFiles } from "./write-config.ts";
@@ -21,7 +21,7 @@ export type GeneratedHermesConfig = {
   settings: HermesBuildSettings;
   config: Record<string, unknown>;
   envLines: string[];
-  policy: HermesManagedPolicyV1;
+  policy: HermesManagedPolicyV3;
   written: WrittenHermesConfig;
 };
 
@@ -33,16 +33,17 @@ export function generateHermesConfig({
   log = console.log,
 }: GenerateHermesConfigOptions): GeneratedHermesConfig {
   const settings = readHermesBuildSettings(env);
-  discoverModelSpecificSetups(
-    "hermes",
-    {
-      model: settings.model,
-      providerKey: settings.providerKey,
-      inferenceApi: settings.inferenceApi,
-      baseUrl: settings.baseUrl,
-    },
-    { env, scriptDir },
-  );
+  if (settings.model !== null)
+    discoverModelSpecificSetups(
+      "hermes",
+      {
+        model: settings.model,
+        providerKey: settings.providerKey,
+        inferenceApi: settings.inferenceApi,
+        baseUrl: settings.baseUrl,
+      },
+      { env, scriptDir },
+    );
 
   const policy = buildHermesManagedPolicy(settings, env);
   const config = policy.config;
@@ -50,7 +51,11 @@ export function generateHermesConfig({
   finalizeHermesPlatformToolsets(config, settings);
   const written = writeHermesConfigFiles(config, envLines, policy, homeDir);
 
-  log(`[config] Wrote ${written.configPath} (model=${settings.model}, provider=custom)`);
+  log(
+    settings.model === null
+      ? `[config] Wrote ${written.configPath} (inference not configured)`
+      : `[config] Wrote ${written.configPath} (model=${settings.model}, provider=custom)`,
+  );
   log(`[config] Wrote ${written.envPath} (${written.envEntryCount} entries)`);
   log(`[config] Wrote ${written.policyPath} (schema=${policy.schema_version})`);
 

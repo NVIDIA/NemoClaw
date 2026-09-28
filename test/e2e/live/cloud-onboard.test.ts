@@ -8,7 +8,7 @@ import { execTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText, shellQuote } from "../fixtures/clients/command.ts";
 import { type HostCliClient } from "../fixtures/clients/host.ts";
-import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
+import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import {
   cleanupCorporateCaFixture,
   corporateCaMergeProbeScript,
@@ -19,6 +19,8 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { assertStockManagedImageReceipt } from "../fixtures/managed-image-receipt.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
+import { captureSandboxFailureDiagnostics } from "../fixtures/sandbox-failure-diagnostics.ts";
+import { createPublicInstallWorkspace } from "../fixtures/public-install-workspace.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-cloud-onboard";
@@ -27,7 +29,7 @@ const LIVE_TIMEOUT_MS = 60 * 60_000;
 const REASONING_PROPAGATION_PROBE = String.raw`
 const fs = require("node:fs");
 const expectedModel = process.argv[1];
-const runtimeEnvironmentPath = "/run/nemoclaw/managed-startup-runtime.env";
+const runtimeEnvironmentPath = "/tmp/nemoclaw-managed-startup-runtime.env";
 const runtimeEnvironmentStat = fs.lstatSync(runtimeEnvironmentPath);
 if (
   !runtimeEnvironmentStat.isFile() ||
@@ -82,7 +84,6 @@ function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
 
 async function cleanup(
   host: HostCliClient,
-  sandbox: SandboxClient,
   options: { verify: boolean; label: string; home: string },
 ): Promise<void> {
   const args = [path.join(REPO_ROOT, "test/e2e/e2e-cloud-experimental/cleanup.sh")];
@@ -96,16 +97,11 @@ async function cleanup(
     expect(cleanupResult.exitCode, resultText(cleanupResult)).toBe(0);
   }
 
-  const gatewayDestroy = await sandbox.openshell(["gateway", "destroy", "-g", "nemoclaw"], {
-    artifactName: `${options.label}-openshell-gateway-destroy`,
+  await host.cleanupGatewayRegistration("nemoclaw", {
+    artifactName: `${options.label}-openshell-gateway`,
     env: env({ HOME: options.home }),
     timeoutMs: 60_000,
   });
-  if (options.verify && gatewayDestroy.exitCode !== 0) {
-    expect(resultText(gatewayDestroy)).toMatch(
-      /unrecognized subcommand|not found|No active gateway/i,
-    );
-  }
 }
 
 function publicInstallRef(): string {
@@ -144,7 +140,9 @@ test(
     const installUrl =
       process.env.NEMOCLAW_INSTALL_SCRIPT_URL ??
       `https://raw.githubusercontent.com/NVIDIA/NemoClaw/${ref}/install.sh`;
-    const installCwd = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-public-install-"));
+    // Native SDK lifecycle operations require trusted ancestors for gateway state.
+    // Keep the disposable HOME outside the world-writable system temporary root.
+    const installCwd = createPublicInstallWorkspace(cleanupRegistry);
     const testHome = path.join(installCwd, "home");
     const legacyDir = path.join(testHome, ".nemoclaw");
     const legacyFile = path.join(legacyDir, "credentials.json");
@@ -155,9 +153,6 @@ test(
     delete hostedEnvWithoutCredentials[hosted.credentialEnv];
     fs.mkdirSync(testHome, { recursive: true, mode: 0o700 });
     const corporateCa = createCorporateCaFixture("explicit", "nemoclaw-cloud-corporate-ca-");
-    cleanupRegistry.trackDisposable("remove public installer workspace", () =>
-      fs.rmSync(installCwd, { recursive: true, force: true }),
-    );
     cleanupRegistry.trackDisposable("remove corporate CA fixture", () =>
       cleanupCorporateCaFixture(corporateCa),
     );
@@ -177,7 +172,7 @@ test(
           : []),
         "ordinary cloud onboard migrates an allowlisted legacy credential through the real gateway",
         "tampered non-credential legacy fields do not become gateway providers",
-        "successful onboard removes plaintext credentials.json",
+        "successful onboard retires migrated plaintext and preserves unrelated legacy entries",
         "sandbox appears healthy after cloud onboarding",
         "explicit corporate CA source is baked and merged with OpenShell trust inside the sandbox",
         "validated compatible-endpoint reasoning reaches the authenticated runtime handoff and OpenClaw model metadata",
@@ -193,19 +188,22 @@ test(
     });
 
     cleanupRegistry.trackDisposable("remove cloud-onboard sandbox", () =>
-      cleanup(host, sandbox, { home: testHome, label: "cleanup", verify: true }),
+      cleanup(host, { home: testHome, label: "cleanup", verify: true }),
     );
-    await cleanup(host, sandbox, { home: testHome, label: "pre-cleanup", verify: false });
+    await cleanup(host, { home: testHome, label: "pre-cleanup", verify: false });
 
     progress.phase("stage legacy plaintext credential");
+    const retainedLegacyEntries = {
+      OPENSHELL_GATEWAY: "evil-gw-from-tampered-file",
+      NODE_OPTIONS: "--require=/tmp/evil.js",
+    };
     fs.mkdirSync(legacyDir, { recursive: true, mode: 0o700 });
     fs.writeFileSync(
       legacyFile,
       JSON.stringify(
         {
           [hosted.credentialEnv]: hosted.apiKey,
-          OPENSHELL_GATEWAY: "evil-gw-from-tampered-file",
-          NODE_OPTIONS: "--require=/tmp/evil.js",
+          ...retainedLegacyEntries,
         },
         null,
         2,
@@ -249,9 +247,9 @@ test(
 
     progress.phase("verify migrated gateway credential");
     expect(
-      fs.existsSync(legacyFile),
-      "successful onboard must remove legacy credentials.json",
-    ).toBe(false);
+      JSON.parse(secrets.redact(fs.readFileSync(legacyFile, "utf8"), redactionValues)),
+      "successful onboard must retire migrated credentials and preserve unrelated entries",
+    ).toEqual(retainedLegacyEntries);
     const providers = await host.command(
       "openshell",
       ["-g", "nemoclaw", "provider", "list", "--names"],
@@ -360,11 +358,17 @@ test(
         redactionValues,
         timeoutMs: 180_000,
       });
+      await captureSandboxFailureDiagnostics(host, result, {
+        sandboxName: SANDBOX_NAME,
+        artifactPrefix: `cloud-check-${scriptName.replace(/\.sh$/, "")}-failure`,
+        redactionValues,
+        captureGatewayLog: true,
+      });
       expect(result.exitCode, `${scriptName}: ${resultText(result)}`).toBe(0);
     }
 
     progress.phase("remove cloud sandbox");
-    await cleanup(host, sandbox, { home: testHome, label: "final-cleanup", verify: true });
+    await cleanup(host, { home: testHome, label: "final-cleanup", verify: true });
     await artifacts.target.complete({
       id: "cloud-onboard",
       status: "passed",

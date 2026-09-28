@@ -8,4 +8,7 @@
 export {
   checkAndRecoverSandboxProcesses,
   isSandboxGatewayRunningForStatus,
+  resolveGatewayRecoveryWaitSeconds,
+  waitForStartedHermesGatewayProcess,
+  waitForStartedNativeGatewayProcess,
 } from "../process-recovery";

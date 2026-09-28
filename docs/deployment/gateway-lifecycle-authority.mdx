@@ -28,7 +28,11 @@ Choose the mode that matches the component responsible for process lifecycle ope
 | `nemoclaw-managed` | NemoClaw | Starts, stops, replaces, and recovers the gateway. |
 | `externally-supervised` | A declared platform supervisor | Validates and attaches to the running gateway without managing its process. |
 
-When nothing is declared, NemoClaw keeps its existing managed behavior.
+When `NEMOCLAW_GATEWAY_MANAGEMENT` is unset, NemoClaw uses implicit managed behavior only if no filesystem entry occupies `/etc/nemoclaw/gateway-management.json`.
+A file, directory, or symlink at that path blocks implicit managed behavior.
+To select a readable declaration at that path, set `NEMOCLAW_GATEWAY_MANAGEMENT=/etc/nemoclaw/gateway-management.json` before a gateway operation.
+If the entry is stale or unreadable, follow the platform owner's procedure to restore access, remove it, or relocate it.
+To select NemoClaw-managed behavior explicitly, point `NEMOCLAW_GATEWAY_MANAGEMENT` at a valid `nemoclaw-managed` declaration.
 On Linux, the installer selects a packaged gateway user service only after the systemd user manager reports the effective unit and executable identity.
 The installer verifies that identity and the gateway version before NemoClaw uses the service.
 It does not parse a static package unit as the effective service identity.

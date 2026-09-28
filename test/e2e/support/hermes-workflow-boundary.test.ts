@@ -8,7 +8,10 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
-import { validateHermesGpuStartupWorkflowBoundary } from "../../../tools/e2e/hermes-gpu-startup-workflow-boundary.mts";
+import {
+  validateHermesGpuStartupWorkflow,
+  validateHermesGpuStartupWorkflowBoundary,
+} from "../../../tools/e2e/hermes-gpu-startup-workflow-boundary.mts";
 import {
   HERMES_TIMEOUT_CONTRACTS,
   HERMES_TIMEOUT_HEADROOM_MAX_MINUTES,
@@ -133,6 +136,43 @@ describe("Hermes GPU boundary", () => {
     expect(validateHermesGpuStartupWorkflowBoundary()).toEqual([]);
   });
 
+  it.each([
+    [
+      "unconditional installation",
+      (job: Doc) => {
+        delete job.steps[0].if;
+      },
+    ],
+    [
+      "missing Podman configuration package",
+      (job: Doc) => {
+        job.steps[0].with.packages = job.steps[0].with.packages.replace(
+          "golang-github-containers-common ",
+          "",
+        );
+      },
+    ],
+    [
+      "unreviewed packages",
+      (job: Doc) => {
+        job.steps[0].with.packages = "curl";
+      },
+    ],
+    [
+      "installation after checkout",
+      (job: Doc) => {
+        job.steps.splice(1, 0, job.steps.shift());
+      },
+    ],
+  ] as const)("rejects %s of Podman host dependencies", (_label, mutate) => {
+    const workflow: Doc = readWorkflow();
+    mutate(workflow.jobs[GPU]);
+    const errors = validateHermesGpuStartupWorkflow(workflow);
+    expect(errors).toContain(
+      "hermes-gpu-startup must install reviewed Podman host dependencies before candidate checkout",
+    );
+  });
+
   it("requires each GPU scenario to identify its evidence shard", () => {
     const errors = wfErrors((workflow) => {
       delete workflow.jobs[GPU].env.NEMOCLAW_E2E_SHARD;
@@ -158,9 +198,8 @@ describe("Hermes GPU boundary", () => {
 
   it("rejects fail-open stale Docker CLI recovery", () => {
     const errors = wfErrors((workflow) => {
-      step(workflow.jobs[GPU], "Recover Docker CLI before native Podman E2E")[
-        "continue-on-error"
-      ] = true;
+      step(workflow.jobs[GPU], "Recover Docker CLI before native Podman E2E")["continue-on-error"] =
+        true;
     });
 
     expect(errors).toContain("hermes-gpu-startup trusted runtime boundary failed");
@@ -209,6 +248,54 @@ describe("Hermes GPU boundary", () => {
         "hermes-e2e job must leave hosted inference selection to the adapter",
         "workflow env must leave inference mode scoped to adapter-consuming jobs",
       ]),
+    );
+  });
+
+  it("requires the reviewed OpenShell SDK for live config export", () => {
+    const missingNeed = wfErrors((workflow) => {
+      workflow.jobs["hermes-e2e"].needs = ["base-image-publication", "generate-matrix"];
+    }, validateE2eWorkflowBoundary);
+    const wrongArtifact = wfErrors((workflow) => {
+      step(workflow.jobs["hermes-e2e"], "Download reviewed OpenShell SDK archive").with.name =
+        "unreviewed-sdk";
+    }, validateE2eWorkflowBoundary);
+    const unsafeInstall = wfErrors((workflow) => {
+      step(
+        workflow.jobs["hermes-e2e"],
+        "Install reviewed OpenShell SDK archive without package credentials",
+      ).uses = "./.github/actions/install-reviewed-openshell-sdk";
+    }, validateE2eWorkflowBoundary);
+
+    expect(missingNeed).toContain(
+      "hermes-e2e job must depend on publication, generate-matrix validation, and reviewed SDK packaging",
+    );
+    expect(wrongArtifact).toContain(
+      "hermes-e2e job must download the run-scoped reviewed SDK archive",
+    );
+    expect(unsafeInstall).toContain(
+      "hermes-e2e job must install the reviewed SDK archive without credentials or package scripts",
+    );
+  });
+
+  it("requires the shared reviewed SDK installer for external gateway health", () => {
+    const wrongArtifact = wfErrors((workflow) => {
+      step(
+        workflow.jobs["external-gateway-health"],
+        "Download reviewed OpenShell SDK archive",
+      ).with.path = "${{ runner.temp }}/unreviewed-sdk";
+    }, validateE2eWorkflowBoundary);
+    const unsafeInstall = wfErrors((workflow) => {
+      step(
+        workflow.jobs["external-gateway-health"],
+        "Install reviewed OpenShell SDK archive without package credentials",
+      ).uses = "./.github/actions/install-reviewed-openshell-sdk";
+    }, validateE2eWorkflowBoundary);
+
+    expect(wrongArtifact).toContain(
+      "external-gateway-health job must download the run-scoped reviewed SDK archive",
+    );
+    expect(unsafeInstall).toContain(
+      "external-gateway-health job must install the reviewed SDK with the shared action",
     );
   });
 

@@ -45,9 +45,7 @@ export const LOCAL_ADAPTER_HEALTH_MAX_RESPONSE_BYTES = 64 * 1024;
 export const OLLAMA_LOCALHOST = "127.0.0.1";
 export const OLLAMA_HOST_DOCKER_INTERNAL = "host.docker.internal";
 
-export type OllamaHostRoute =
-  | typeof OLLAMA_LOCALHOST
-  | typeof OLLAMA_HOST_DOCKER_INTERNAL;
+export type OllamaHostRoute = typeof OLLAMA_LOCALHOST | typeof OLLAMA_HOST_DOCKER_INTERNAL;
 
 /** Registry fields that identify a route backed by NemoClaw's host Ollama daemon. */
 export type OllamaRouteHolder = {
@@ -252,15 +250,11 @@ export function spawnDetachedNodeAdapter(options: {
   env: Record<string, string>;
   buildEnv: (extraEnv?: Record<string, string>) => NodeJS.ProcessEnv;
 }): ChildProcess {
-  const child = spawn(
-    process.execPath,
-    ["--no-warnings", options.scriptPath],
-    {
-      detached: true,
-      stdio: "ignore",
-      env: options.buildEnv(options.env),
-    },
-  );
+  const child = spawn(process.execPath, ["--no-warnings", options.scriptPath], {
+    detached: true,
+    stdio: "ignore",
+    env: options.buildEnv(options.env),
+  });
   child.unref();
   return child;
 }

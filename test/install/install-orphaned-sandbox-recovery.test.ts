@@ -25,13 +25,16 @@ const LEGACY_SKIP_LINE =
 const NO_REBUILD_LINE = "  No running stale sandboxes to rebuild.";
 const REBUILT_LINE = "  ✓ 1 sandbox(es) rebuilt.";
 
+/** Keep installer state and recovery logs inside the fixture's disposable home. */
 function installerTestEnv(home: string): Record<string, string> {
   return {
     HOME: home,
     PATH: process.env.PATH ?? "/usr/bin:/bin",
+    TMPDIR: home,
   };
 }
 
+/** Feed controlled CLI outcomes through the production recovery classifier. */
 function runRecoveryClassification(
   outputLines: string[],
   exitCode: number,
@@ -69,7 +72,8 @@ function runRecoveryClassification(
   };
 }
 
-function runPrintDone(flags: { recoveryRan: string; orphaned: string }): {
+/** Render completion guidance from explicit recovery flags without a live sandbox. */
+function runPrintDone(flags: { recoveryRan: string; orphaned: string; unconfirmed?: string }): {
   output: string;
   cleanup: () => void;
 } {
@@ -83,6 +87,7 @@ function runPrintDone(flags: { recoveryRan: string; orphaned: string }): {
     _CLI_BIN="nemoclaw"
     ONBOARD_RAN=false
     _PREEXISTING_SANDBOX_RECOVERY_RAN=${flags.recoveryRan}
+    _PREEXISTING_SANDBOX_RECOVERY_UNCONFIRMED=${flags.unconfirmed ?? "false"}
     _PREEXISTING_SANDBOX_ORPHANED=${flags.orphaned}
     _UPGRADE_SANDBOXES_FAILED=false
     print_done 2>&1
@@ -98,6 +103,7 @@ function runPrintDone(flags: { recoveryRan: string; orphaned: string }): {
   };
 }
 
+/** Preserve the real backup-to-recovery handoff while replacing external CLI effects. */
 function runStrictBackupRecoveryFlow(): { output: string; cleanup: () => void } {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-orphan-flow-"));
   const cliLog = path.join(tmp, "cli.log");
@@ -238,8 +244,38 @@ describe("install.sh print_done honesty for orphaned sandboxes (#6520)", () => {
       expect(output).toContain("completed with warnings");
       expect(output).not.toContain("Existing sandboxes were recovered and upgraded.");
       expect(output).not.toContain("No new sandbox onboarding was needed.");
+      expect(output).toContain("Check the recorded gateway");
+      expect(output).not.toContain("Check or start the recorded gateway");
+      expect(output).toContain("nemoclaw <name> status");
       expect(output).toContain("nemoclaw <name> destroy");
+      expect(output).toContain("nemoclaw <name> destroy --force");
+      expect(output).toContain("removes only the local record");
+      expect(output).toContain("verify or remove any remaining OpenShell sandbox");
       expect(output).toContain("nemoclaw onboard");
+      expect(output).not.toContain("Clear a stranded sandbox");
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("prioritises unconfirmed output over an orphaned flag in the completion guidance", () => {
+    const { output, cleanup } = runPrintDone({
+      recoveryRan: "true",
+      orphaned: "true",
+      unconfirmed: "true",
+    });
+    try {
+      expect(output).toContain("completed with warnings");
+      expect(output).toContain("could not inspect its output");
+      expect(output).toContain("nemoclaw upgrade-sandboxes --check");
+      expect(output).toContain(
+        "Generic onboarding was skipped because recovery verification is incomplete.",
+      );
+      expect(output).not.toContain("Some recorded sandboxes were not found");
+      expect(output).not.toContain(
+        "Generic onboarding was skipped because recorded sandboxes exist.",
+      );
+      expect(output).not.toContain("No new sandbox onboarding was needed.");
     } finally {
       cleanup();
     }

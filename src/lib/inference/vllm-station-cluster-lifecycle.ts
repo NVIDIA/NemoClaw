@@ -583,8 +583,8 @@ export function buildDualStationGpuSmokeRunArgs(
   const containerName = `${GPU_SMOKE_CONTAINER_PREFIX}-${role}-${nonce}`;
   const command = [
     "set -euo pipefail",
-    `test \"$(id -u)\" = \"${String(node.uid)}\"`,
-    `test \"$(id -g)\" = \"${String(node.gid)}\"`,
+    `test "$(id -u)" = "${String(node.uid)}"`,
+    `test "$(id -g)" = "${String(node.gid)}"`,
     "grep -Eq '^NoNewPrivs:[[:space:]]+1$' /proc/self/status",
     "! grep -Eq '^Cap(Inh|Prm|Eff|Bnd|Amb):[[:space:]]+[0-9a-fA-F]*[1-9a-fA-F][0-9a-fA-F]*$' /proc/self/status",
     'test "$(ulimit -l)" = "unlimited"',
@@ -684,15 +684,15 @@ const INSPECTION_FORMAT = [
   "{{.Names}}",
   "{{.State}}",
   "{{.Image}}",
-  `{{.Label \"${DUAL_STATION_VLLM_MANAGED_LABEL}\"}}`,
-  `{{.Label \"${DUAL_STATION_VLLM_ROLE_LABEL}\"}}`,
-  `{{.Label \"${DUAL_STATION_VLLM_ENDPOINT_LABEL}\"}}`,
-  `{{.Label \"${DUAL_STATION_VLLM_CLUSTER_LABEL}\"}}`,
-  `{{.Label \"${DUAL_STATION_VLLM_GPU_LABEL}\"}}`,
-  `{{.Label \"${DUAL_STATION_VLLM_LAUNCH_SCHEMA_LABEL}\"}}`,
-  `{{.Label \"${DUAL_STATION_VLLM_LAUNCH_CONTRACT_LABEL}\"}}`,
-  `{{.Label \"${DUAL_STATION_VLLM_API_KEY_FINGERPRINT_LABEL}\"}}`,
-  `{{.Label \"${DUAL_STATION_VLLM_TRANSACTION_LABEL}\"}}`,
+  `{{.Label "${DUAL_STATION_VLLM_MANAGED_LABEL}"}}`,
+  `{{.Label "${DUAL_STATION_VLLM_ROLE_LABEL}"}}`,
+  `{{.Label "${DUAL_STATION_VLLM_ENDPOINT_LABEL}"}}`,
+  `{{.Label "${DUAL_STATION_VLLM_CLUSTER_LABEL}"}}`,
+  `{{.Label "${DUAL_STATION_VLLM_GPU_LABEL}"}}`,
+  `{{.Label "${DUAL_STATION_VLLM_LAUNCH_SCHEMA_LABEL}"}}`,
+  `{{.Label "${DUAL_STATION_VLLM_LAUNCH_CONTRACT_LABEL}"}}`,
+  `{{.Label "${DUAL_STATION_VLLM_API_KEY_FINGERPRINT_LABEL}"}}`,
+  `{{.Label "${DUAL_STATION_VLLM_TRANSACTION_LABEL}"}}`,
 ].join("\t");
 
 function inspectRows(
@@ -809,8 +809,8 @@ const GPU_SMOKE_INSPECTION_FORMAT = [
   "{{.ID}}",
   "{{.Names}}",
   "{{.Image}}",
-  `{{.Label \"${DUAL_STATION_VLLM_GPU_SMOKE_LABEL}\"}}`,
-  `{{.Label \"${DUAL_STATION_VLLM_ROLE_LABEL}\"}}`,
+  `{{.Label "${DUAL_STATION_VLLM_GPU_SMOKE_LABEL}"}}`,
+  `{{.Label "${DUAL_STATION_VLLM_ROLE_LABEL}"}}`,
 ].join("\t");
 
 function inspectGpuSmokeContainer(

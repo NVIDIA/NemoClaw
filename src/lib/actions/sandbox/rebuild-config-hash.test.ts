@@ -9,7 +9,8 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import * as processRecovery from "./process-recovery";
+import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
+import * as commandTransport from "../../adapters/sandbox/command-transport";
 import {
   refreshMutableOpenClawConfigHashAfterPostRestoreWrites,
   verifyFinalMutableOpenClawConfigHash,
@@ -38,38 +39,75 @@ describe("OpenClaw rebuild config hash target selection", () => {
     vi.unstubAllEnvs();
   });
 
-  it("refreshes the config hash on the selected target instead of the ambient target (#10514)", () => {
-    const execute = vi.spyOn(processRecovery, "executeSandboxCommand").mockReturnValue({
+  it("refreshes the config hash on the selected target instead of the ambient target (#10514)", async () => {
+    const execute = vi.spyOn(commandTransport, "executeSandboxExecCommand").mockResolvedValue({
       status: 0,
       stdout: "",
       stderr: "",
     });
 
     expect(
-      refreshMutableOpenClawConfigHashAfterPostRestoreWrites("alpha", vi.fn(), runtimeSelection),
+      await refreshMutableOpenClawConfigHashAfterPostRestoreWrites(
+        "alpha",
+        vi.fn(),
+        runtimeSelection,
+      ),
     ).toBe(true);
     expect(execute).toHaveBeenCalledExactlyOnceWith(
       "alpha",
       buildRefreshMutableOpenClawConfigHashCommand(),
+      undefined,
       { runtimeSelection },
     );
     expect(process.env.OPENSHELL_GATEWAY).toBe("hostile-gateway");
   });
 
-  it("verifies the config hash on the selected target instead of the ambient target (#10514)", () => {
-    const execute = vi.spyOn(processRecovery, "executeSandboxCommand").mockReturnValue({
+  it("verifies the config hash on the selected target instead of the ambient target (#10514)", async () => {
+    const execute = vi.spyOn(commandTransport, "executeSandboxExecCommand").mockResolvedValue({
       status: 0,
       stdout: "",
       stderr: "",
     });
 
-    expect(verifyFinalMutableOpenClawConfigHash("alpha", vi.fn(), runtimeSelection)).toBe(true);
+    expect(await verifyFinalMutableOpenClawConfigHash("alpha", vi.fn(), runtimeSelection)).toBe(
+      true,
+    );
     expect(execute).toHaveBeenCalledExactlyOnceWith(
       "alpha",
       buildVerifyMutableOpenClawConfigHashCommand(),
+      undefined,
       { runtimeSelection },
     );
     expect(process.env.OPENSHELL_GATEWAY).toBe("hostile-gateway");
+  });
+});
+
+describe.each([
+  { run: refreshMutableOpenClawConfigHashAfterPostRestoreWrites, diagnostic: "was not refreshed" },
+  { run: verifyFinalMutableOpenClawConfigHash, diagnostic: "was not verified" },
+])("config hash transport failure: $diagnostic", ({ run, diagnostic }) => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it.each(["cancelled", "timeout", "capture", "invocation", "unavailable", "malformed"] as const)(
+    "records %s as unverified without retrying",
+    async (kind) => {
+      const execute = vi
+        .spyOn(commandTransport, "executeSandboxExecCommand")
+        .mockRejectedValue(new SandboxCommandTransportError(kind));
+      const error = vi.spyOn(console, "error").mockImplementation(() => {});
+      const log = vi.fn();
+      expect(await run("alpha", log, runtimeSelection)).toBe(false);
+      expect(execute).toHaveBeenCalledOnce();
+      expect(error).toHaveBeenCalledWith(expect.stringContaining(diagnostic));
+      expect(error).toHaveBeenCalledWith(expect.stringContaining(`(${kind})`));
+      expect(log).not.toHaveBeenCalled();
+    },
+  );
+
+  it("preserves unexpected authority errors", async () => {
+    const refusal = new Error("gateway authority refused");
+    vi.spyOn(commandTransport, "executeSandboxExecCommand").mockRejectedValue(refusal);
+    await expect(run("alpha", vi.fn(), runtimeSelection)).rejects.toBe(refusal);
   });
 });
 

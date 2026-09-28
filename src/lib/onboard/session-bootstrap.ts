@@ -7,7 +7,14 @@ import { normalizeProcessExitCode } from "../core/process-exit";
 import type { ServingProfileProvenance } from "../inference/serving/types";
 import { NEMOCLAW_VLLM_GPU_DEVICE_ENV, parseVllmGpuDevice } from "../inference/vllm-models";
 import { PERSONAL_POLICY_TIER_NAME } from "../policy/tiers";
-import { redact, redactFull, redactSensitiveText } from "../security/redact";
+export {
+  isTrustedOnboardError,
+  redactOnboardError,
+  redactOnboardErrorText,
+  redactOnboardDiagnosticText,
+  redactOnboardCommandDiagnosticText,
+  sanitizeOnboardFailure,
+} from "./diagnostics/redaction";
 import { isDecisionSelected } from "../state/onboard-checkpoint-decision";
 import {
   deriveCheckpointFromSession,
@@ -28,6 +35,7 @@ import {
 import { recordCheckpointSandboxIdentity } from "./checkpoint-record";
 import { checkpointProvesSandboxStepComplete } from "./checkpoint-replay";
 import { EXPERIMENTAL_PROFILE_ENV } from "./docker-driver-platform";
+import { assertNoIncompleteExternalComponentActivation } from "./external-component/onboarding";
 import type { PortableInferenceActivation } from "./experimental/portable-inference-descriptor";
 import { requireReadOnlyHostMountRuntimeSupport } from "./host-mount";
 import type { ResumeConfigConflict } from "./resume-config";
@@ -182,7 +190,8 @@ export class OnboardDeferredExitError extends Error {
 
 export function isOnboardDeferredExitError(error: unknown): error is OnboardDeferredExitError {
   const candidate = error as
-    (Error & { code?: unknown; [ONBOARD_DEFERRED_EXIT_ERROR]?: unknown }) | null;
+    | (Error & { code?: unknown; [ONBOARD_DEFERRED_EXIT_ERROR]?: unknown })
+    | null;
   return (
     candidate instanceof Error &&
     candidate[ONBOARD_DEFERRED_EXIT_ERROR] === true &&
@@ -224,19 +233,27 @@ export function wrapOnboardDeferredExit<TOptions extends DeferredExitOptions>(
   };
 }
 
-export function redactOnboardDiagnosticText(message: string): string {
-  return redactSensitiveText(message) ?? "";
+/** Reject conflicting fresh provider intent without changing the caller environment. */
+export function assertPortableOnboardProviderIntent(
+  env: NodeJS.ProcessEnv,
+  activation: PortableInferenceActivation | null,
+  options: { readonly resume?: boolean } = {},
+): void {
+  const requestedProvider = env.NEMOCLAW_PROVIDER?.trim();
+  if (!options.resume && !activation && requestedProvider && requestedProvider !== "ollama") {
+    throw new Error(
+      "Portable onboarding uses Ollama. Set NEMOCLAW_PROVIDER=ollama and choose an Ollama model, or remove --experimental-profile portable to use another provider.",
+    );
+  }
 }
 
-export function redactOnboardCommandDiagnosticText(message: string): string {
-  return redactSensitiveText(redact(redactFull(message))) ?? "";
-}
-
+/** Scope Portable environment changes while preserving activation and checkpoint authority. */
 export function createPortableOnboardEnvironmentScope(
   env: NodeJS.ProcessEnv,
   activation: PortableInferenceActivation | null,
   options: { readonly resume?: boolean } = {},
 ): PortableOnboardEnvironmentScope {
+  assertPortableOnboardProviderIntent(env, activation, options);
   const previous = new Map<string, PreviousEnvironmentValue>();
   for (const key of PORTABLE_OWNED_ENV_KEYS) {
     previous.set(key, {
@@ -574,6 +591,7 @@ async function prepareResumeSession(
   deps: OnboardSessionBootstrapDeps,
 ): Promise<OnboardSessionBootstrapResult> {
   let session = deps.loadSession();
+  assertNoIncompleteExternalComponentActivation(session);
   if (input.apfInterceptorRequested === true || session?.apfInterceptorRequested === true) {
     reportUnsupportedApfLifecycle("resume", deps);
   }
@@ -633,6 +651,7 @@ function prepareFreshSession(
   if (input.apfInterceptorRequested === true && input.checkpointProfile === "portable") {
     reportUnsupportedApfLifecycle("portable", deps);
   }
+  assertNoIncompleteExternalComponentActivation(deps.loadSession());
   deps.requireHostMountRuntimeSupport(input.requestedHostMounts, input.checkpointProfile);
   if (input.fresh) {
     deps.clearSession();

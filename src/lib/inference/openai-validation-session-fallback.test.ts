@@ -212,31 +212,30 @@ describe("OpenAI validation curl fallback", () => {
     expect(lookup).not.toHaveBeenCalled();
   });
 
-  it.each([
-    "CURL_CA_BUNDLE",
-    "SSL_CERT_FILE",
-    "SSL_CERT_DIR",
-  ])("uses curl without DNS pre-resolution when %s is configured", async (envName) => {
-    const legacyProbe: OpenAiValidationSessionDeps["legacyProbe"] = vi.fn(() => ({
-      ok: true,
-      api: "openai-completions",
-    }));
-    const lookup = vi.fn();
-    const harness = createOpenAiValidationTestDeps(legacyProbe);
-    harness.sessionOptions = { env: { [envName]: "/tmp/provider-tls-config" }, lookup };
+  it.each(["CURL_CA_BUNDLE", "SSL_CERT_FILE", "SSL_CERT_DIR"])(
+    "uses curl without DNS pre-resolution when %s is configured",
+    async (envName) => {
+      const legacyProbe: OpenAiValidationSessionDeps["legacyProbe"] = vi.fn(() => ({
+        ok: true,
+        api: "openai-completions",
+      }));
+      const lookup = vi.fn();
+      const harness = createOpenAiValidationTestDeps(legacyProbe);
+      harness.sessionOptions = { env: { [envName]: "/tmp/provider-tls-config" }, lookup };
 
-    const result = await probeOpenAiLikeEndpointWithValidationSession(
-      "https://provider.example.test/v1",
-      "test-model",
-      "test-key",
-      {},
-      harness,
-    );
+      const result = await probeOpenAiLikeEndpointWithValidationSession(
+        "https://provider.example.test/v1",
+        "test-model",
+        "test-key",
+        {},
+        harness,
+      );
 
-    expect(result).toMatchObject({ ok: true, api: "openai-completions" });
-    expect(legacyProbe).toHaveBeenCalledTimes(1);
-    expect(lookup).not.toHaveBeenCalled();
-  });
+      expect(result).toMatchObject({ ok: true, api: "openai-completions" });
+      expect(legacyProbe).toHaveBeenCalledTimes(1);
+      expect(lookup).not.toHaveBeenCalled();
+    },
+  );
 
   it("keeps preflight-pinned endpoints on curl without native DNS", async () => {
     const legacyProbe: OpenAiValidationSessionDeps["legacyProbe"] = vi.fn(() => ({

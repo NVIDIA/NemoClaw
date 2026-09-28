@@ -71,9 +71,22 @@ export function resolveGatewayLauncher(
  */
 export function gatewayStartGuidance(
   gatewayName?: string,
-  launcher: OpenShellGatewayLauncher = resolveGatewayLauncher({ gatewayName }),
+  launcher?: OpenShellGatewayLauncher,
 ): string {
-  if (launcher === "nemoclaw") {
+  let resolvedLauncher = launcher;
+  if (resolvedLauncher === undefined) {
+    try {
+      resolvedLauncher = resolveGatewayLauncher({ gatewayName });
+    } catch (error) {
+      const gatewayManagement =
+        require("./onboard/gateway-management") as typeof import("./onboard/gateway-management");
+      if (error instanceof gatewayManagement.GatewayManagementDeclarationError) {
+        return error.message;
+      }
+      throw error;
+    }
+  }
+  if (resolvedLauncher === "nemoclaw") {
     return `Start the gateway again with \`${CLI_NAME} onboard\`.`;
   }
   const subject = gatewayName ? `the '${gatewayName}' gateway` : "the OpenShell gateway";

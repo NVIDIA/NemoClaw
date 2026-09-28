@@ -61,8 +61,6 @@ describe("runInferenceSet OpenClaw routing", () => {
     });
     expect(deps.calls.writeSandboxConfig).toHaveBeenCalledWith("alpha", OPENCLAW_TARGET, config);
     expect(deps.calls.recomputeSandboxConfigHash).toHaveBeenCalledWith("alpha", OPENCLAW_TARGET);
-    // The dashboard re-seed is Hermes-only; OpenClaw has no isolated dashboard config. (#6893)
-    expect(deps.calls.seedHermesDashboardConfig).not.toHaveBeenCalled();
     expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
       "alpha",
       expect.objectContaining({
@@ -83,7 +81,7 @@ describe("runInferenceSet OpenClaw routing", () => {
     ]);
     expect(deps.getSession()).toMatchObject({
       provider: "nvidia-prod",
-      model: "nvidia/nemotron-3-super-120b-a12b",
+      model: "moonshotai/kimi-k2.6",
       endpointUrl: "https://inference.local/v1",
     });
     expect(result).toMatchObject({
@@ -92,10 +90,10 @@ describe("runInferenceSet OpenClaw routing", () => {
       model: "nvidia/nemotron-3-super-120b-a12b",
       primaryModelRef: "inference/nvidia/nemotron-3-super-120b-a12b",
       configChanged: true,
-      sessionUpdated: true,
       inSandboxConfigSynced: true,
     });
-    expect(deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
+    expect(deps.calls.restartSandboxGateway).toHaveBeenCalledOnce();
+    expect(deps.calls.restartSandboxGateway).toHaveBeenCalledWith("alpha");
     expect(deps.calls.settleOpenClawPairing).toHaveBeenCalledWith({
       sandboxName: "alpha",
       gatewayName: "nemoclaw",
@@ -107,7 +105,7 @@ describe("runInferenceSet OpenClaw routing", () => {
         action: "inference_set",
         sandbox: "alpha",
         reason:
-          "inference set openclaw:nvidia-prod:nvidia/nemotron-3-super-120b-a12b (pairing convergence pending)",
+          "inference set openclaw:nvidia-prod:nvidia/nemotron-3-super-120b-a12b (gateway restart and pairing convergence pending)",
       }),
     );
     expect(deps.calls.appendAuditEntry).toHaveBeenCalledWith(
@@ -115,7 +113,7 @@ describe("runInferenceSet OpenClaw routing", () => {
         action: "inference_set",
         sandbox: "alpha",
         reason:
-          "inference set openclaw:nvidia-prod:nvidia/nemotron-3-super-120b-a12b (pairing convergence completed)",
+          "inference set openclaw:nvidia-prod:nvidia/nemotron-3-super-120b-a12b (gateway restart and pairing convergence completed)",
       }),
     );
     expect(JSON.stringify(deps.calls.appendAuditEntry.mock.calls)).not.toContain("do-not-report");

@@ -186,8 +186,11 @@ test("discovers tools from case-variant SSE response media types (#7726)", async
     for await (const chunk of request) {
       bodyChunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
     }
-    let payload: { id?: string | number; method?: string; params?: { protocolVersion?: string } } =
-      {};
+    let payload: {
+      id?: string | number;
+      method?: string;
+      params?: { protocolVersion?: string };
+    } = {};
     try {
       payload = JSON.parse(Buffer.concat(bodyChunks).toString("utf8")) as typeof payload;
     } catch {
@@ -251,7 +254,7 @@ test("discovers tools from case-variant SSE response media types (#7726)", async
   const deadlineSignal = AbortSignal.timeout(MCP_TOOL_DISCOVERY_LIMITS.maxTotalTimeMs);
   const authorization = buildMcpToolDiscoveryAuthorizationPlaceholder(
     "EXAMPLE_MCP_TOKEN",
-    "openshell:resolve:env:v42_EXAMPLE_MCP_TOKEN",
+    `openshell:resolve:env:s${"a".repeat(64)}_EXAMPLE_MCP_TOKEN`,
   );
   assert.ok(authorization);
   const transport = new StreamableHTTPClientTransport(
@@ -309,7 +312,10 @@ test("discovers tools from case-variant SSE response media types (#7726)", async
   });
   const initialize = observed.find((request) => request.rpcMethod === "initialize");
   assert.equal(initialize?.accept, "application/json, text/event-stream");
-  assert.equal(initialize?.authorization, "Bearer openshell:resolve:env:v42_EXAMPLE_MCP_TOKEN");
+  assert.equal(
+    initialize?.authorization,
+    `Bearer openshell:resolve:env:s${"a".repeat(64)}_EXAMPLE_MCP_TOKEN`,
+  );
   const toolsList = observed.find((request) => request.rpcMethod === "tools/list");
   assert.equal(toolsList?.sessionId, sessionId);
   const initialized = observed.find((request) => request.rpcMethod === "notifications/initialized");

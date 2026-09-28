@@ -1,10 +1,46 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 // Import from compiled dist for parity with the other CLI tests in this project.
-import { collectGatewayWedgeDiagnostics, sanitizeWedgeLogLine } from "./gateway-wedge-diagnostics";
+import {
+  collectGatewayWedgeDiagnostics,
+  collectRedactedOpenShellSandboxLogs,
+  sanitizeWedgeLogLine,
+} from "./gateway-wedge-diagnostics";
+
+describe("collectRedactedOpenShellSandboxLogs", () => {
+  it("reads a bounded retained tail and sanitizes every returned line", async () => {
+    const read = vi.fn(async () => ({
+      content:
+        "[setup] released gateway launch\n" +
+        "gateway startup failed: OPENAI_API_KEY=example-not-a-real-value-0001\n",
+      diagnostic: "",
+      outcome: { kind: "completed" as const, exitCode: 0 },
+    }));
+    const target = { kind: "named" as const, gatewayName: "recorded-gateway" };
+
+    await expect(
+      collectRedactedOpenShellSandboxLogs("alpha", target, {
+        checkAvailability: vi.fn(),
+        follow: vi.fn() as never,
+        read,
+      }),
+    ).resolves.toEqual([
+      "[setup] released gateway launch",
+      "gateway startup failed: OPENAI_API_KEY=<REDACTED>",
+    ]);
+    expect(read).toHaveBeenCalledExactlyOnceWith({
+      target,
+      sandboxName: "alpha",
+      source: "openshell",
+      lines: "120",
+      since: null,
+      timeoutMs: 15_000,
+    });
+  });
+});
 
 describe("collectGatewayWedgeDiagnostics wedge signature (#4710)", () => {
   it("returns the matching gateway.log lines, trimmed", async () => {

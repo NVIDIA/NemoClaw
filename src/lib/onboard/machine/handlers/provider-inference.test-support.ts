@@ -130,7 +130,7 @@ export function createDeps(
       (
         _gatewayName: string,
         _provider: string,
-        endpointUrl: string | null,
+        _endpointUrl: string | null,
         _credentialEnv: string | null,
       ) => ({
         ok: true as const,

@@ -160,6 +160,43 @@ describe("rebuild session selection", () => {
     withRebuildLock("alpha", () => expect(session.loadSession()).toEqual(alpha));
   });
 
+  it("preserves incomplete external activation when selecting retained rebuild recovery", () => {
+    const alpha = withRebuildLock("alpha", () => begin("alpha"));
+    withRebuildLock("beta", () => undefined);
+    session.saveSession(
+      session.createSession({
+        sandboxName: "beta",
+        externalComponentActivation: {
+          schemaVersion: 1,
+          activationId: "4b5a8e18-f967-4e27-a3b2-f2cc315abe21",
+          componentId: "policy-governance",
+          lifecycleGeneration: "generation-1",
+          sandboxIdentityFingerprint: `sha256:${"b".repeat(64)}`,
+          resultClass: "ambiguous",
+        },
+      }),
+    );
+    const activation = session.markCancellationRecovery("beta", "b".repeat(64), {
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      lifecycleGeneration: "generation-1",
+      createAttemptNonce: "c".repeat(62),
+    });
+    expect(activation.resumable).toBe(false);
+    let refusal: unknown;
+    try {
+      withRebuildLock("alpha", () => undefined);
+    } catch (error) {
+      refusal = error;
+    }
+
+    expect(session.loadSession()).toEqual(activation);
+    expect(session.loadRebuildSession("alpha")).toEqual(alpha);
+    expect(refusal).toBeInstanceOf(Error);
+    expect((refusal as Error).message).toMatch(/activation.*incomplete/);
+    expect(session.isOnboardLockHeldByCurrentProcess()).toBe(false);
+  });
+
   it("still rejects a changed target for the same sandbox", () => {
     const alpha = withRebuildLock("alpha", () => begin("alpha"));
     withRebuildLock("beta", () => begin("beta"));

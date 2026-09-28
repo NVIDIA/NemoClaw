@@ -56,6 +56,7 @@ const pinModule = require("../../src/lib/onboard/openshell-pin") as {
       versionGte: (a: string, b: string) => boolean;
       listReleases?: () => string[] | null;
       log?: (m: string) => void;
+      error?: (m: string) => void;
     },
   ) => { env: Record<string, string | undefined> | null };
 };
@@ -404,8 +405,8 @@ describe("resolveOpenshellInstallPin", () => {
 });
 
 describe("computeOpenshellInstallEnv", () => {
-  it("does not apply stable release discovery to the dev channel", () => {
-    const channel = "dev";
+  it.each(["dev", " DEV "])("rejects the %s channel before stable release discovery", (channel) => {
+    const errors: string[] = [];
     const result = pinModule.computeOpenshellInstallEnv(
       {
         NEMOCLAW_OPENSHELL_CHANNEL: channel,
@@ -416,13 +417,11 @@ describe("computeOpenshellInstallEnv", () => {
         getBlueprintMaxOpenshellVersion: () => "0.0.72",
         versionGte,
         listReleases: () => ["v0.0.71"],
+        error: (message) => errors.push(message),
       },
     );
-    expect(result.env).not.toBe(null);
-    expect(result.env?.NEMOCLAW_OPENSHELL_CHANNEL).toBe(channel);
-    expect(result.env?.NEMOCLAW_OPENSHELL_PIN_VERSION).toBeUndefined();
-    expect(result.env?.NEMOCLAW_OPENSHELL_MIN_VERSION).toBe("0.0.72");
-    expect(result.env?.NEMOCLAW_OPENSHELL_MAX_VERSION).toBe("0.0.72");
+    expect(result.env).toBe(null);
+    expect(errors.join("\n")).toContain("requires exact stable OpenShell 0.0.116");
   });
 
   it("overlays MIN/MAX/PIN env vars from blueprint when latest exceeds max", () => {

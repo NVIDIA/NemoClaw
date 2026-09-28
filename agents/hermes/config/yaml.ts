@@ -52,7 +52,7 @@ function yamlString(s: string): string {
   if (s === "") {
     return JSON.stringify(s);
   }
-  if (/[:{}\[\],&*?|>!%@`#'"]/.test(s) || s.includes("\n") || s.trim() !== s) {
+  if (/[:{}[\],&*?|>!%@`#'"]/.test(s) || s.includes("\n") || s.trim() !== s) {
     return JSON.stringify(s);
   }
   return s;

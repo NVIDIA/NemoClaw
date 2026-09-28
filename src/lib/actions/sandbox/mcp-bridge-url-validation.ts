@@ -51,12 +51,12 @@ function rejectUnsupportedOpenShellMcpHostAlias(hostname: string): void {
   // invalidState: a host alias is accepted without an attested gateway address,
   // forcing broad private-range policy instead of an exact destination pin.
   // sourceBoundary: the pinned OpenShell release owns gateway-address discovery.
-  // whyNotSourceFix: v0.0.106 exposes no attested driver gateway address.
+  // whyNotSourceFix: v0.0.116 exposes no attested driver gateway address.
   // regressionTest: URL validation and all three live adapters reject aliases.
   // removalCondition: remove only after a reviewed OpenShell capability exposes
   // an attested address; a future version number alone is not that capability.
   throw new McpBridgeError(
-    `Authenticated MCP OpenShell host alias '${hostname}' is unavailable with OpenShell v0.0.106 because that release does not expose an attested driver gateway address for exact policy pinning. Use a normal HTTPS DNS endpoint with public address records.`,
+    `Authenticated MCP OpenShell host alias '${hostname}' is unavailable with OpenShell v0.0.116 because that release does not expose an attested driver gateway address for exact policy pinning. Use a normal HTTPS DNS endpoint with public address records.`,
     2,
   );
 }
@@ -66,7 +66,7 @@ function rejectUnsupportedOpenShellMcpIpv6Literal(hostname: string): void {
   // invalidState: an IPv6 literal reaches an OpenShell parser that cannot
   // represent and enforce its exact proxy target safely.
   // sourceBoundary: the pinned OpenShell proxy parser owns literal support.
-  // whyNotSourceFix: v0.0.106 does not support this target form.
+  // whyNotSourceFix: v0.0.116 does not support this target form.
   // regressionTest: URL normalization and resolved-target preflight both reject
   // private and public IPv6 literals with this capability-specific result.
   // removalCondition: remove only with reviewed parser support and parity proof;
@@ -178,7 +178,7 @@ export function normalizeMcpServerUrl(
     parsed.pathname.includes("%") ||
     rawUrl.includes("\\") ||
     /\/{2,}/.test(parsed.pathname) ||
-    /[\*\[\]\{\};]/.test(parsed.pathname)
+    /[*[\]{};]/.test(parsed.pathname)
   ) {
     throw new McpBridgeError(
       "MCP server URL paths must be literal and canonical; percent characters, backslashes, semicolons, and glob metacharacters are not supported.",
@@ -226,11 +226,12 @@ export function normalizeMcpServerUrl(
 export async function preflightMcpServerUrlResolvedTarget(
   parsed: URL,
   options: McpBridgeTargetPreflightOptions = {},
+  lookup: typeof resolveHostAddresses = resolveHostAddresses,
 ): Promise<McpBridgeTargetValidation> {
   // invalidState: a hostname is public at add time but later rebinds to an
   // unpinned address. sourceBoundary: NemoClaw pins the add-time public answers;
   // With its operator-controlled proxy_connect_by_hostname option disabled,
-  // OpenShell v0.0.106 resolves, validates every answer against allowed_ips, and
+  // OpenShell v0.0.116 resolves, validates every answer against allowed_ips, and
   // connects with that same SocketAddr list. This URL validator cannot observe
   // gateway configuration; the documented guarantee and residual risk are
   // therefore explicitly conditional on that option remaining disabled.
@@ -252,8 +253,10 @@ export async function preflightMcpServerUrlResolvedTarget(
   }
   const result = await assertEndpointResolvesPublic(
     parsed.toString(),
-    async (hostname) => resolveHostAddresses(hostname),
-    { trustedPrivateHosts: normalizedTrustedHosts },
+    async (hostname) => lookup(hostname),
+    {
+      trustedPrivateHosts: normalizedTrustedHosts,
+    },
   );
   if (!result.ok) {
     if (result.reasonCode === "private-answer" && result.offendingAddress) {
@@ -315,6 +318,33 @@ export async function preflightMcpServerUrlResolvedTarget(
     );
   }
   return { addresses };
+}
+
+export type McpBridgePublicPinStatus = Omit<McpBridgeRecordedPinStatus, "state"> & {
+  state: McpBridgeRecordedPinStatus["state"] | "rejected";
+};
+
+export async function inspectMcpRecordedPublicTargetPins(
+  parsed: URL,
+  recordedPins: readonly string[],
+  lookup: typeof resolveHostAddresses = resolveHostAddresses,
+): Promise<McpBridgePublicPinStatus> {
+  try {
+    const target = await preflightMcpServerUrlResolvedTarget(parsed, {}, lookup);
+    const policyPins = [...new Set(recordedPins.map((address) => address.toLowerCase()))].sort();
+    const matches =
+      policyPins.length === target.addresses.length &&
+      policyPins.every((address, index) => address === target.addresses[index]);
+    return {
+      state: matches ? "match" : "drift",
+      currentAddresses: target.addresses,
+      ...(!matches ? { detail: "Current public DNS answers differ from the recorded pins." } : {}),
+    };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    const unresolved = error instanceof McpBridgeError && error.reasonCode === "unresolved";
+    return { state: unresolved ? "unresolved" : "rejected", detail };
+  }
 }
 
 export async function inspectMcpRecordedTargetPins(

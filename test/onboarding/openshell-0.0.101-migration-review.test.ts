@@ -6,7 +6,6 @@ import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "../../src/lib/onboard/runtime-
 import { prepareNativePodmanGatewayHostRuntime } from "../../src/lib/onboard/runtime-provider/podman-runtime-surfaces.js";
 import { requireRuntimeProviderBundle } from "../../src/lib/onboard/runtime-provider/registry.js";
 
-
 describe("OpenShell 0.0.101 executable contracts", () => {
   it.each([{ scenario: "Docker" }, { scenario: "Podman" }])(
     "selects only Docker or Podman without configuring new v0.0.101 surfaces [$scenario] (#8599)",

@@ -30,19 +30,13 @@ function restoreOwnProperty(
 
 async function runConfigSetWithPrompt(prompt: () => Promise<string>) {
   const configPath = require.resolve("../../src/lib/sandbox/config");
-  const openshellPath =
-    require.resolve("../../src/lib/adapters/openshell/client");
+  const openshellPath = require.resolve("../../src/lib/adapters/openshell/client");
   const registryPath = require.resolve("../../src/lib/state/registry");
-  const operationalAuditPath =
-    require.resolve("../../src/lib/state/audit/operational");
-  const lifecycleLockPath =
-    require.resolve("../../src/lib/state/mcp-lifecycle-lock");
-  const configGuardPath =
-    require.resolve("../../src/lib/sandbox/openclaw-config-guard");
-  const privilegedExecPath =
-    require.resolve("../../src/lib/sandbox/privileged-exec");
-  const credentialStorePath =
-    require.resolve("../../src/lib/credentials/store");
+  const operationalAuditPath = require.resolve("../../src/lib/state/audit/operational");
+  const lifecycleLockPath = require.resolve("../../src/lib/state/mcp-lifecycle-lock");
+  const configGuardPath = require.resolve("../../src/lib/sandbox/openclaw-config-guard");
+  const privilegedExecPath = require.resolve("../../src/lib/sandbox/privileged-exec");
+  const credentialStorePath = require.resolve("../../src/lib/credentials/store");
   const modulePaths = [
     configPath,
     openshellPath,
@@ -59,10 +53,7 @@ async function runConfigSetWithPrompt(prompt: () => Promise<string>) {
       Object.getOwnPropertyDescriptor(requireCache, modulePath),
     ]),
   );
-  const stdinTtyDescriptor = Object.getOwnPropertyDescriptor(
-    process.stdin,
-    "isTTY",
-  );
+  const stdinTtyDescriptor = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
   const configWrite = vi.fn((_privileged: unknown, input: string) => ({
     issues: [],
     configSha256: createHash("sha256").update(input).digest("hex"),
@@ -84,10 +75,7 @@ async function runConfigSetWithPrompt(prompt: () => Promise<string>) {
     installMock(registryPath, { getSandbox: () => null });
     installMock(operationalAuditPath, { appendAuditEntry: vi.fn() });
     installMock(lifecycleLockPath, {
-      withSandboxMutationLock: (
-        _sandboxName: string,
-        callback: () => unknown,
-      ) => callback(),
+      withSandboxMutationLock: (_sandboxName: string, callback: () => unknown) => callback(),
     });
     installMock(configGuardPath, {
       writeOpenClawConfigCandidate: configWrite,

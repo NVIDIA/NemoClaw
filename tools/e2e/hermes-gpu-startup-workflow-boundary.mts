@@ -127,8 +127,7 @@ export function validateHermesGpuStartupWorkflow(
     errors.push(`${JOB_NAME} job must run on the native RTX PRO 6000 GPU runner`);
   }
   if (
-    JSON.stringify(job.needs) !==
-      JSON.stringify(["base-image-publication", "generate-matrix"]) ||
+    JSON.stringify(job.needs) !== JSON.stringify(["base-image-publication", "generate-matrix"]) ||
     job.if !== EXPECTED_SELECTOR
   ) {
     errors.push(`${JOB_NAME} job must use the trusted execution plan behind generate-matrix`);
@@ -213,6 +212,22 @@ export function validateHermesGpuStartupWorkflow(
       step.uses === CHECKOUT &&
       asRecord(step.with).ref === "${{ inputs.checkout_sha || github.sha }}",
   );
+  if (
+    prI !== 1 ||
+    !isDeepStrictEqual(steps[0], {
+      name: "Install native Podman host dependencies",
+      if: "${{ matrix.runtime_provider == 'podman' }}",
+      uses: E2E_ACTION_PROVENANCE.hostDependencies.reference,
+      with: {
+        packages:
+          "conmon fuse-overlayfs golang-github-containers-common iptables nftables slirp4netns uidmap",
+      },
+    })
+  ) {
+    errors.push(
+      `${JOB_NAME} must install reviewed Podman host dependencies before candidate checkout`,
+    );
+  }
   const ci = steps.findIndex((step) => step.name === "Checkout trusted Hermes GPU runtime fixture");
   const checkout = steps[ci];
   const ii = steps.findIndex((step) => step.name === "Install trusted Hermes GPU runtime fixture");
@@ -275,18 +290,21 @@ if ! @run restore`;
   const restoreI = steps.findIndex((step) => step.name === CLI_ARTIFACT_RESTORE_STEP);
   const ni = steps.findIndex((step) => step.name === "Reassert trusted Node runtime");
   const node = steps[ni];
-  const staleDockerRestore = steps[ni + 1];
-  const nativePodmanRuntime = steps[ni + 2];
+  const reviewedNpm = steps[ni + 1];
+  const staleDockerRestore = steps[ni + 2];
+  const nativePodmanRuntime = steps[ni + 3];
   if (
     runStep.shell !== BASH ||
     !trustedEnv(runStep) ||
     pi < 0 ||
     restoreI <= pi ||
     ni !== restoreI + 1 ||
-    ni + 3 !== steps.indexOf(runStep) ||
+    ni + 4 !== steps.indexOf(runStep) ||
     node?.uses !== "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020" ||
     !trustedEnv(node) ||
     asRecord(node?.env).NODE_OPTIONS !== "" ||
+    reviewedNpm?.name !== "Reinstall reviewed npm after Node reassertion" ||
+    reviewedNpm?.uses !== E2E_ACTION_PROVENANCE.reviewedNpmSetup.reference ||
     staleDockerRestore?.name !== "Recover Docker CLI before native Podman E2E" ||
     staleDockerRestore?.uses !== E2E_ACTION_PROVENANCE.restoreNativePodmanRuntime.reference ||
     staleDockerRestore?.if !== "${{ matrix.runtime_provider == 'podman' }}" ||

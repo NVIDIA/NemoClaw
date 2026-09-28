@@ -20,6 +20,11 @@ function writeNodeStub(fakeBin: string) {
     path.join(fakeBin, "node"),
     `#!/usr/bin/env bash
 if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then echo "v22.19.0"; exit 0; fi
+if [[ "\${1:-}" == *scripts/lib/openshell-sdk-install.mts ]]; then
+  if [ "\${2:-}" = "\${SDK_FAILURE_STAGE:-}" ]; then exit 1; fi
+  if [ "\${2:-}" = "check" ] && [ -f "$MANAGED_SOURCE/.missing-sdk" ]; then exit 1; fi
+  exit 0
+fi
 if [ -n "\${1:-}" ] && [ -f "$1" ]; then
   exec ${JSON.stringify(process.execPath)} "$@"
 fi
@@ -91,6 +96,7 @@ function runManagedCliInstallTwice({
   separateInstallerRuns = false,
   failLockfileRestore = false,
   installUmask,
+  sdkFailureStage,
   setupInitialState = setupManagedSource,
 }: {
   initialRevision?: string;
@@ -98,6 +104,7 @@ function runManagedCliInstallTwice({
   separateInstallerRuns?: boolean;
   failLockfileRestore?: boolean;
   installUmask?: string;
+  sdkFailureStage?: string;
   setupInitialState?: InitialStateSetup;
 } = {}) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-reuse-"));
@@ -226,6 +233,7 @@ printf 'PREPARED=%s MODE=%s SOURCE=%s\n' \
         ...process.env,
         COMMITTED_LOCKFILE,
         EXPECTED_REVISION: INSTALL_REUSE_REVISION,
+        SDK_FAILURE_STAGE: sdkFailureStage ?? "",
         FAIL_LOCKFILE_RESTORE: failLockfileRestore ? "1" : "",
         GIT_LOG_PATH: gitLogPath,
         HOME: home,
@@ -253,6 +261,31 @@ printf 'PREPARED=%s MODE=%s SOURCE=%s\n' \
 }
 
 describe("installer-managed CLI reuse", () => {
+  it.each(["prepare", "check"])("stops before building when SDK %s fails", (sdkFailureStage) => {
+    const { result, npmLog } = runManagedCliInstallTwice({
+      initialRevision: "b".repeat(40),
+      sdkFailureStage,
+    });
+    expect(result.status).not.toBe(0);
+    expect(npmLog).not.toMatch(/\|(run|link)\b/);
+  });
+
+  it("repairs an otherwise reusable installation when the SDK is missing", () => {
+    const { result, gitLog, npmLog } = runManagedCliInstallTwice({
+      setupInitialState: (fixture) => {
+        setupManagedSource(fixture);
+        fs.writeFileSync(path.join(fixture.sourceRoot, ".missing-sdk"), "");
+      },
+    });
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(gitLog.match(/^init\b/gm)).toHaveLength(1);
+    expect(
+      npmLog.match(
+        /\|install --ignore-scripts --prefer-offline --include=optional --@nvidia:registry=https:\/\/npm\.pkg\.github\.com$/gm,
+      ),
+    ).toHaveLength(1);
+  });
+
   it("creates owner-only managed state under an account umask of 0002 (#8795)", () => {
     const { result, stateMode } = runManagedCliInstallTwice({
       installUmask: "0002",
@@ -307,7 +340,11 @@ describe("installer-managed CLI reuse", () => {
     );
     expect(result.stdout).toContain("NemoClaw CLI was already prepared during this installer run");
     expect(gitLog.match(/^init\b/gm)).toHaveLength(1);
-    expect(npmLog.match(/\|install --ignore-scripts$/gm)).toHaveLength(1);
+    expect(
+      npmLog.match(
+        /\|install --ignore-scripts --prefer-offline --include=optional --@nvidia:registry=https:\/\/npm\.pkg\.github\.com$/gm,
+      ),
+    ).toHaveLength(1);
     expect(npmLog.match(/\|run --if-present build:cli$/gm)).toHaveLength(1);
     expect(npmLog.match(/\|ci --ignore-scripts$/gm)).toHaveLength(1);
     expect(npmLog.match(/\|run build$/gm)).toHaveLength(1);
@@ -324,7 +361,11 @@ describe("installer-managed CLI reuse", () => {
     expect(result.stdout).toContain("Reusing the installed NemoClaw CLI at the selected revision");
     expect(lockfile).toBe(COMMITTED_LOCKFILE);
     expect(gitLog.match(/^init\b/gm)).toHaveLength(1);
-    expect(npmLog.match(/\|install --ignore-scripts$/gm)).toHaveLength(1);
+    expect(
+      npmLog.match(
+        /\|install --ignore-scripts --prefer-offline --include=optional --@nvidia:registry=https:\/\/npm\.pkg\.github\.com$/gm,
+      ),
+    ).toHaveLength(1);
     expect(npmLog.match(/\|link --ignore-scripts$/gm)).toHaveLength(1);
   });
 
@@ -354,7 +395,11 @@ describe("installer-managed CLI reuse", () => {
     );
     expect(result.stdout).toContain("NemoClaw CLI was already prepared during this installer run");
     expect(gitLog.match(/^init\b/gm)).toHaveLength(1);
-    expect(npmLog.match(/\|install --ignore-scripts$/gm)).toHaveLength(1);
+    expect(
+      npmLog.match(
+        /\|install --ignore-scripts --prefer-offline --include=optional --@nvidia:registry=https:\/\/npm\.pkg\.github\.com$/gm,
+      ),
+    ).toHaveLength(1);
     expect(npmLog.match(/\|run --if-present build:cli$/gm)).toHaveLength(1);
     expect(npmLog.match(/\|ci --ignore-scripts$/gm)).toHaveLength(1);
     expect(npmLog.match(/\|run build$/gm)).toHaveLength(1);

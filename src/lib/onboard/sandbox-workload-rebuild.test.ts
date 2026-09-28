@@ -19,9 +19,9 @@ import {
   MANAGED_IMAGE_REPOSITORIES,
   MANAGED_IMAGE_SOURCE_REPOSITORY,
   MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
+  type ManagedImageAgent,
   type ManagedImageContractV1,
   type ManagedImagePlatform,
-  type ShippedManagedImageAgent,
 } from "./managed-image/contract";
 import type {
   BuiltManagedStartupOnboardProfile,
@@ -34,6 +34,7 @@ import {
 import type { RuntimeProviderBundle } from "./runtime-provider/contract";
 import {
   buildManagedWorkloadRebuildReceipt,
+  type ManagedWorkloadRebuildCatalogHandoff,
   type ManagedWorkloadRebuildHandoff,
   type ManagedWorkloadReceipt,
   managedWorkloadRebuildDependencies,
@@ -52,7 +53,7 @@ type RebuildProfileInput = Omit<
   "agentName" | "environment" | "corporateCa"
 >;
 
-function rebuildProfileInput(agent: ShippedManagedImageAgent): RebuildProfileInput {
+function rebuildProfileInput(agent: ManagedImageAgent): RebuildProfileInput {
   const common = {
     chatUiUrl: "http://127.0.0.1:18789",
     effectiveDashboardPort: 18_789,
@@ -113,12 +114,29 @@ function rebuildProfileInput(agent: ShippedManagedImageAgent): RebuildProfileInp
       manageDashboard: false,
       hermesDashboardState: { config: null, enabled: false },
     },
-  } as const satisfies Record<ShippedManagedImageAgent, RebuildProfileInput>;
+    pi: {
+      ...common,
+      inference: {
+        routeProvider: "inference",
+        upstreamProvider: "nvidia",
+        model: "nvidia/nemotron-3-super-120b-a12b",
+        routedBaseUrl: "https://inference.local/v1",
+        upstreamEndpointUrl: null,
+        api: "openai-completions",
+        primaryModelRef: null,
+        compatibility: null,
+      },
+      chatUiUrl: "",
+      effectiveDashboardPort: 0,
+      manageDashboard: false,
+      hermesDashboardState: { config: null, enabled: false },
+    },
+  } as const satisfies Record<ManagedImageAgent, RebuildProfileInput>;
   return profiles[agent];
 }
 
 function managedContract(
-  agent: ShippedManagedImageAgent,
+  agent: ManagedImageAgent,
   generation: "old" | "new",
   platform: ManagedImagePlatform = "linux/amd64",
 ): ManagedImageContractV1 {
@@ -143,7 +161,7 @@ function managedContract(
   };
 }
 
-function profileTransport(agent: ShippedManagedImageAgent): BuiltManagedStartupOnboardProfile {
+function profileTransport(agent: ManagedImageAgent): BuiltManagedStartupOnboardProfile {
   const profile = managedStartupE2eProfile(agent);
   const encodedProfile = encodeManagedStartupProfile(profile);
   return {
@@ -155,7 +173,7 @@ function profileTransport(agent: ShippedManagedImageAgent): BuiltManagedStartupO
 }
 
 function receipt(
-  agent: ShippedManagedImageAgent,
+  agent: ManagedImageAgent,
   generation: "old" | "new",
   platform: ManagedImagePlatform = "linux/amd64",
 ): ManagedWorkloadReceipt {
@@ -179,7 +197,7 @@ function receipt(
 }
 
 function entry(
-  agent: ShippedManagedImageAgent,
+  agent: ManagedImageAgent,
   platform: ManagedImagePlatform = "linux/amd64",
 ): SandboxEntry {
   const workload = receipt(agent, "old", platform);
@@ -241,14 +259,12 @@ function provider(
 }
 
 function replacement(
-  agent: ShippedManagedImageAgent,
+  agent: ManagedImageAgent,
   platform: ManagedImagePlatform = "linux/amd64",
   revision?: string,
 ) {
   const image = managedContract(agent, "new", platform);
-  const contract = revision
-    ? { ...image, source: { ...image.source, revision } }
-    : image;
+  const contract = revision ? { ...image, source: { ...image.source, revision } } : image;
   return {
     source: {
       kind: "managed-image" as const,
@@ -261,7 +277,7 @@ function replacement(
 }
 
 function completeHandoff(
-  agent: ShippedManagedImageAgent,
+  agent: ManagedImageAgent,
   catalog: Awaited<ReturnType<typeof prepareManagedWorkloadRebuildHandoff>>,
 ): ManagedWorkloadRebuildHandoff {
   return {
@@ -276,46 +292,47 @@ afterEach(() => {
 });
 
 describe("managed workload rebuild preflight", () => {
-  it.each(
-    AGENTS,
-  )("prepares exact current-release authority for %s without a Dockerfile fallback", async (agent) => {
-    const prepare = vi.fn(async () => replacement(agent));
-    managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource = prepare;
+  it.each(AGENTS)(
+    "prepares exact current-release authority for %s without a Dockerfile fallback",
+    async (agent) => {
+      const prepare = vi.fn(async () => replacement(agent));
+      managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource = prepare;
 
-    const handoff = await prepareManagedWorkloadRebuildHandoff(entry(agent), {
-      runtime: runtime(),
-      provider: provider(),
-      version: "0.0.100",
-    });
+      const handoff = await prepareManagedWorkloadRebuildHandoff(entry(agent), {
+        runtime: runtime(),
+        provider: provider(),
+        version: "0.0.100",
+      });
 
-    expect(handoff).toMatchObject({
-      schemaVersion: 1,
-      providerId: "mxc",
-      agent,
-      previousReceipt: {
-        kind: "managed-image",
-        platform: "linux/amd64",
-        release: "v0.0.99",
-      },
-      replacement: {
-        source: {
+      expect(handoff).toMatchObject({
+        schemaVersion: 1,
+        providerId: "mxc",
+        agent,
+        previousReceipt: {
           kind: "managed-image",
-          contract: { agent, platform: "linux/amd64" },
+          platform: "linux/amd64",
+          release: "v0.0.99",
         },
-        release: "v0.0.100",
-      },
-    });
-    expect(prepare).toHaveBeenCalledWith({
-      agentName: agent,
-      legacyDockerfilePath: "managed-rebuild-must-not-stage-this-dockerfile",
-      runtime: runtime(),
-      version: "0.0.100",
-      policy: "require-managed",
-    });
-    expect(Object.isFrozen(handoff)).toBe(true);
-    expect(Object.isFrozen(handoff?.previousProfile.proxy)).toBe(true);
-    expect(Object.isFrozen(handoff?.replacement.source.contract.source)).toBe(true);
-  });
+        replacement: {
+          source: {
+            kind: "managed-image",
+            contract: { agent, platform: "linux/amd64" },
+          },
+          release: "v0.0.100",
+        },
+      });
+      expect(prepare).toHaveBeenCalledWith({
+        agentName: agent,
+        legacyDockerfilePath: "managed-rebuild-must-not-stage-this-dockerfile",
+        runtime: runtime(),
+        version: "0.0.100",
+        policy: "require-managed",
+      });
+      expect(Object.isFrozen(handoff)).toBe(true);
+      expect(Object.isFrozen(handoff?.previousProfile.proxy)).toBe(true);
+      expect(Object.isFrozen(handoff?.replacement.source.contract.source)).toBe(true);
+    },
+  );
 
   it("rejects a Hermes base-image override before managed rebuild catalog resolution (#11138)", async () => {
     const credentialBearingOverride =
@@ -400,21 +417,16 @@ describe("managed workload rebuild preflight", () => {
   });
 
   it("uses the GitHub Actions qualification revision and retains the previous workload receipt during rebuild (#10970)", async () => {
-    const prepare = vi.fn(async () =>
-      replacement("openclaw", "linux/amd64", "c".repeat(40)),
-    );
+    const prepare = vi.fn(async () => replacement("openclaw", "linux/amd64", "c".repeat(40)));
     managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource = prepare;
     vi.stubEnv("GITHUB_ACTIONS", "true");
     vi.stubEnv("E2E_MANAGED_IMAGE_REVISION", "c".repeat(40));
 
-    const handoff = await prepareManagedWorkloadRebuildHandoff(
-      entry("openclaw"),
-      {
-        runtime: runtime(),
-        provider: provider(),
-        version: "0.0.100",
-      },
-    );
+    const handoff = await prepareManagedWorkloadRebuildHandoff(entry("openclaw"), {
+      runtime: runtime(),
+      provider: provider(),
+      version: "0.0.100",
+    });
 
     expect(handoff?.previousReceipt.sourceRevision).toBe("a".repeat(40));
     expect(handoff?.replacement.source.contract.source.revision).toBe("c".repeat(40));
@@ -429,9 +441,7 @@ describe("managed workload rebuild preflight", () => {
   });
 
   it("accepts an exact PR replacement catalog newer than durable authority (#9464)", async () => {
-    const prepare = vi.fn(async () =>
-      replacement("openclaw", "linux/amd64", "c".repeat(40)),
-    );
+    const prepare = vi.fn(async () => replacement("openclaw", "linux/amd64", "c".repeat(40)));
     const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-live-e2e-catalog-"));
     const catalogPath = path.join(fixtureRoot, "catalog.json");
     fs.writeFileSync(catalogPath, "{}\n", { mode: 0o600 });
@@ -555,18 +565,21 @@ describe("managed workload rebuild preflight", () => {
       provider("mxc", { authorizesRebuild: false }),
       /does not authorize 'rebuild'/u,
     ],
-  ] as const)("rejects %s drift before catalog resolution", async (_label, row, target, selected, error) => {
-    const prepare = vi.fn();
-    managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource = prepare;
+  ] as const)(
+    "rejects %s drift before catalog resolution",
+    async (_label, row, target, selected, error) => {
+      const prepare = vi.fn();
+      managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource = prepare;
 
-    await expect(
-      prepareManagedWorkloadRebuildHandoff(row, {
-        runtime: target,
-        provider: selected,
-      }),
-    ).rejects.toThrow(error);
-    expect(prepare).not.toHaveBeenCalled();
-  });
+      await expect(
+        prepareManagedWorkloadRebuildHandoff(row, {
+          runtime: target,
+          provider: selected,
+        }),
+      ).rejects.toThrow(error);
+      expect(prepare).not.toHaveBeenCalled();
+    },
+  );
 
   it("revalidates retained profile and receipt authority against the live row", async () => {
     managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource = vi.fn(async () =>
@@ -652,6 +665,44 @@ describe("managed workload rebuild preflight", () => {
       expect.arrayContaining([...catalog!.previousProfile.proxy.hostNoProxy]),
     );
   });
+
+  it.each([
+    ["explicit", 65_536, 8_192, false],
+    ["upper-bound", 4_194_304, 1_000_000_000, true],
+    ["omitted", null, null, null],
+  ] as const)(
+    "preserves Pi %s tuning instead of ambient values during startup-profile reconstruction",
+    (_label, contextWindow, maxTokens, reasoning) => {
+      const previousProfile = {
+        ...managedStartupE2eProfile("pi"),
+        tuning: { contextWindow, maxTokens, reasoning, reasoningEffort: null },
+      };
+      const encodedProfile = encodeManagedStartupProfile(previousProfile);
+      const catalog: ManagedWorkloadRebuildCatalogHandoff = {
+        schemaVersion: 1,
+        providerId: "mxc",
+        agent: "pi",
+        previousReceipt: {
+          ...receipt("pi", "old"),
+          encodedProfile,
+          startupProfileSha256: createHash("sha256").update(encodedProfile, "utf8").digest("hex"),
+        },
+        previousContract: managedContract("pi", "old"),
+        previousProfile,
+        replacement: replacement("pi"),
+        corporateCa: null,
+      };
+
+      const staged = stageManagedWorkloadRebuildProfile(catalog, rebuildProfileInput("pi"), {
+        NEMOCLAW_CONTEXT_WINDOW: "131072",
+        NEMOCLAW_MAX_TOKENS: "4096",
+        NEMOCLAW_REASONING: "false",
+      });
+      const decoded = decodeManagedStartupProfile(staged.replacementProfile.encodedProfile);
+
+      expect(decoded.tuning).toEqual(previousProfile.tuning);
+    },
+  );
 
   it("replays credential-bearing proxy intent without persisting credentials", async () => {
     managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource = vi.fn(async () =>

@@ -93,8 +93,20 @@ describe("rebuild target gateway preflight", () => {
     };
     const recover = vi.spyOn(gatewayRuntime, "recoverNamedGatewayRuntime").mockResolvedValue({
       recovered: true,
-      before: { state: "connected_other", status: "", gatewayInfo: "", activeGateway: null },
-      after: { state: "healthy_named", status: "", gatewayInfo: "", activeGateway: null },
+      before: {
+        state: "connected_other",
+        activeGateway: null,
+        diagnostic: "",
+        recoveryBlocked: false,
+        unavailable: false,
+      },
+      after: {
+        state: "healthy_named",
+        activeGateway: null,
+        diagnostic: "",
+        recoveryBlocked: false,
+        unavailable: false,
+      },
       attempted: true,
     });
 
@@ -127,12 +139,19 @@ describe("rebuild target gateway preflight", () => {
     process.env.OPENSHELL_WORKSPACE = "hostile-workspace";
     const recover = vi.spyOn(gatewayRuntime, "recoverNamedGatewayRuntime").mockResolvedValue({
       recovered: true,
-      before: { state: "connected_other", status: "", gatewayInfo: "", activeGateway: null },
+      before: {
+        state: "connected_other",
+        activeGateway: null,
+        diagnostic: "",
+        recoveryBlocked: false,
+        unavailable: false,
+      },
       after: {
         state: "healthy_named",
-        status: "",
-        gatewayInfo: "",
         activeGateway: "nemoclaw-19080",
+        diagnostic: "",
+        recoveryBlocked: false,
+        unavailable: false,
       },
       attempted: true,
     });
@@ -157,8 +176,20 @@ describe("rebuild target gateway preflight", () => {
   it("fails closed when the target gateway cannot become healthy", async () => {
     vi.spyOn(gatewayRuntime, "recoverNamedGatewayRuntime").mockResolvedValue({
       recovered: false,
-      before: { state: "connected_other", status: "", gatewayInfo: "", activeGateway: null },
-      after: { state: "missing_named", status: "", gatewayInfo: "", activeGateway: null },
+      before: {
+        state: "connected_other",
+        activeGateway: null,
+        diagnostic: "",
+        recoveryBlocked: false,
+        unavailable: false,
+      },
+      after: {
+        state: "missing_named",
+        activeGateway: null,
+        diagnostic: "",
+        recoveryBlocked: false,
+        unavailable: false,
+      },
       attempted: true,
     });
 
@@ -854,14 +885,13 @@ describe("backupSandboxStateForRebuild failure safety", () => {
 
 describe("warnUnpreservedUserManagedFiles", () => {
   let warnSpy: MockInstance;
-  let logSpy: MockInstance;
   let errorSpy: MockInstance;
   let backupSpy: MockInstance;
   let probeSpy: MockInstance;
 
   beforeEach(() => {
     warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     backupSpy = vi
@@ -1039,22 +1069,39 @@ describe("backupSandboxStateForRebuild stopped-container recovery (#11137)", () 
     expect(returnStoppedSpy).toHaveBeenCalledWith(startedForBackup);
   });
 
-  it("does not attempt recovery for a non-transport backup failure", async () => {
-    backupSpy.mockReturnValue({
-      success: false,
-      backedUpDirs: [],
-      backedUpFiles: [],
-      failedDirs: [".state"],
-      failedFiles: [],
-      manifest: null,
-      unreachable: false,
-    });
+  it.each(["non-transport", "captured"] as const)(
+    "does not start the source after a %s backup failure (#11165)",
+    async (kind) => {
+      backupSpy.mockReturnValue({
+        success: false,
+        backedUpDirs: [],
+        backedUpFiles: [],
+        failedDirs: [".state"],
+        failedFiles: [],
+        manifest: null,
+        unreachable: kind === "captured",
+      });
 
-    await expect(
-      backupSandboxStateForRebuild("alpha", makeSandboxEntry(), false, () => undefined, makeBail()),
-    ).rejects.toThrow("bail: Failed to back up sandbox state.");
-    expect(startSpy).not.toHaveBeenCalled();
-  });
+      await expect(
+        backupSandboxStateForRebuild(
+          "alpha",
+          makeSandboxEntry(),
+          false,
+          () => undefined,
+          makeBail(),
+          kind === "captured"
+            ? {
+                sandboxName: "alpha",
+                agentName: "openclaw",
+                directory: "/private/captured",
+                assertCurrent: vi.fn(),
+              }
+            : undefined,
+        ),
+      ).rejects.toThrow("bail: Failed to back up sandbox state.");
+      expect(startSpy).not.toHaveBeenCalled();
+    },
+  );
 
   it("falls through to the original abort when no stopped container can be found", async () => {
     backupSpy.mockReturnValue({

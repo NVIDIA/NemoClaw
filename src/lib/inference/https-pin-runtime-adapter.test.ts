@@ -562,35 +562,38 @@ describe("createHttpsPinRuntimeAdapterServer control plane (#6141)", () => {
     ["/tenant/messages", "/messages", "/tenant/messages/messages"],
     ["/v1", "/admin", "/v1/admin"],
     ["/v1", "/v10/chat/completions", "/v1/v10/chat/completions"],
-  ])("translates only the OpenAI gateway prefix when joining target base %s with suffix %s", async (targetPath, suffix, expectedPath) => {
-    const upstreamPaths: string[] = [];
-    const upstream = http.createServer((req, res) => {
-      upstreamPaths.push(req.url || "");
-      res.writeHead(200);
-      res.end();
-    });
-    const upstreamPort = new URL(await listen(upstream)).port;
-    const adapter = createHttpsPinRuntimeAdapterServer({
-      controlToken: TEST_CONTROL_TOKEN,
-      initialRoutes: {
-        scoped: {
-          targetBaseUrl: `http://real-upstream.example:${upstreamPort}${targetPath}`,
-          pinnedAddresses: ["127.0.0.1"],
-          providerType: "openai",
-          credentialValue: "sk-scoped",
-          generation: TEST_ROUTE_GENERATION,
+  ])(
+    "translates only the OpenAI gateway prefix when joining target base %s with suffix %s",
+    async (targetPath, suffix, expectedPath) => {
+      const upstreamPaths: string[] = [];
+      const upstream = http.createServer((req, res) => {
+        upstreamPaths.push(req.url || "");
+        res.writeHead(200);
+        res.end();
+      });
+      const upstreamPort = new URL(await listen(upstream)).port;
+      const adapter = createHttpsPinRuntimeAdapterServer({
+        controlToken: TEST_CONTROL_TOKEN,
+        initialRoutes: {
+          scoped: {
+            targetBaseUrl: `http://real-upstream.example:${upstreamPort}${targetPath}`,
+            pinnedAddresses: ["127.0.0.1"],
+            providerType: "openai",
+            credentialValue: "sk-scoped",
+            generation: TEST_ROUTE_GENERATION,
+          },
         },
-      },
-    });
-    const baseUrl = await listen(adapter);
+      });
+      const baseUrl = await listen(adapter);
 
-    const response = await fetch(`${baseUrl}/route/scoped${suffix}`, {
-      headers: { Authorization: `Bearer ${routeToken("scoped")}` },
-    });
+      const response = await fetch(`${baseUrl}/route/scoped${suffix}`, {
+        headers: { Authorization: `Bearer ${routeToken("scoped")}` },
+      });
 
-    expect(response.status).toBe(200);
-    expect(upstreamPaths).toEqual([expectedPath]);
-  });
+      expect(response.status).toBe(200);
+      expect(upstreamPaths).toEqual([expectedPath]);
+    },
+  );
 
   it("preserves the Anthropic v1 API suffix when joining its target base", () => {
     expect(
@@ -1205,7 +1208,6 @@ describe("adapter recovery lock (#6141)", () => {
     expect(isRunning).not.toHaveBeenCalled();
     expect(sleep).not.toHaveBeenCalled();
   });
-
 
   it("refuses replacement when the old adapter never exits within the bounded wait", async () => {
     const sleep = vi.fn(async () => {});

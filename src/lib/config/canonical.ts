@@ -4,7 +4,6 @@
 import { createHash } from "node:crypto";
 import YAML from "yaml";
 import { sortCanonicalMappings } from "./canonical-mapping";
-import type { NemoClawConfigSpec, ValidatedNemoClawConfig } from "./model";
 
 function canonicalYaml(value: unknown): string {
   return YAML.stringify(sortCanonicalMappings(value), { indent: 2, lineWidth: 0 });
@@ -22,12 +21,12 @@ export interface RenderedNemoClawConfig {
 
 /** Render one validated document and its digests without parsing it again. */
 export function renderCanonicalNemoClawConfig(
-  config: ValidatedNemoClawConfig,
+  config: Readonly<{ readonly spec: unknown }>,
 ): RenderedNemoClawConfig {
   const yaml = canonicalYaml(config);
   return {
     yaml,
     documentDigest: sha256(yaml),
-    specDigest: sha256(canonicalYaml(config.spec satisfies NemoClawConfigSpec)),
+    specDigest: sha256(canonicalYaml(config.spec)),
   };
 }

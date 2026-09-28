@@ -106,7 +106,7 @@ export function isMissingProviderProfile(output: string, profileId: string): boo
     .trim();
   const escapedProfileId = profileId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const missingMessage = new RegExp(
-    `^(?:(?:custom )?provider )?profile(?: ['\"]${escapedProfileId}['\"])? not found[.!]?$`,
+    `^(?:(?:custom )?provider )?profile(?: ['"]${escapedProfileId}['"])? not found[.!]?$`,
     "iu",
   );
   if (missingMessage.test(normalized)) return true;

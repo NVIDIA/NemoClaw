@@ -21,10 +21,12 @@ function observeNextLockPublicationAttempt(): { attempted: Promise<void>; restor
     reportAttempted = resolve;
   });
   const link = fsSync.promises.link.bind(fsSync.promises);
-  const spy = vi.spyOn(fsSync.promises, "link").mockImplementation(async (existingPath, newPath) => {
-    reportAttempted();
-    await link(existingPath, newPath);
-  });
+  const spy = vi
+    .spyOn(fsSync.promises, "link")
+    .mockImplementation(async (existingPath, newPath) => {
+      reportAttempted();
+      await link(existingPath, newPath);
+    });
   return { attempted, restore: () => spy.mockRestore() };
 }
 
@@ -85,7 +87,9 @@ describe("gateway route mutation lock", () => {
     } finally {
       restorePublication();
       releaseFirst();
-      await Promise.allSettled([first, second].filter((value): value is Promise<void> => Boolean(value)));
+      await Promise.allSettled(
+        [first, second].filter((value): value is Promise<void> => Boolean(value)),
+      );
       await fs.rm(stateDir, { recursive: true, force: true });
     }
   });

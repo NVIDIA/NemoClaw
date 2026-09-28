@@ -4,6 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { withCredentialOverrides } from "../../credentials/scoped-overrides";
+import { createManagedProviderAdapter } from "../../adapters/openshell/managed-provider-adapter";
 import { noAuthProxy, withOllamaProxyLifecycleTransaction } from "../../inference/ollama/proxy";
 import { hydrateCredentialEnv } from "../credential-env";
 import { setupRemoteProviderInference } from "./remote";
@@ -22,6 +23,10 @@ const CREDENTIAL_ENV = "COMPATIBLE_ANTHROPIC_API_KEY";
 const SANDBOX = "target-box";
 const NO_AUTH_ENV = "NEMOCLAW_OLLAMA_PROXY_TOKEN";
 const SUCCESS = { status: 0, stdout: "", stderr: "" };
+const ANTHROPIC_PROVIDER = {
+  ...SUCCESS,
+  stdout: `Name: ${PROVIDER}\nType: anthropic\nCredential keys: ${CREDENTIAL_ENV}\nConfig keys: ANTHROPIC_BASE_URL`,
+};
 
 function makeArgs(sandboxName: string | null) {
   return {
@@ -36,16 +41,11 @@ function makeArgs(sandboxName: string | null) {
 }
 
 function createHarness() {
-  const runOpenshell = vi.fn(() => SUCCESS);
+  const runOpenshell = vi.fn((args: string[]) =>
+    args[0] === "provider" && args[1] === "get" ? ANTHROPIC_PROVIDER : SUCCESS,
+  );
   const upsertProvider = vi.fn(async () => ({ ok: true }));
   const probeOpenAiLikeEndpoint = vi.fn(() => ({ ok: true }));
-  const readGatewayProviderMetadata = vi.fn(() => ({
-    name: PROVIDER,
-    type: "anthropic",
-    credentialKeys: [CREDENTIAL_ENV],
-    configKeys: ["ANTHROPIC_BASE_URL"],
-  }));
-  const deleteGatewayProvider = vi.fn(() => ({ ok: true }));
   const hydrateCredential = vi.fn((_name: string) => "test-secret");
   const exitProcess = vi.fn((code: number): never => {
     throw new Error(`EXIT_CALLED:${code}`);
@@ -107,8 +107,6 @@ function createHarness() {
     redact: vi.fn((value: string) => value),
     compactText: vi.fn((value: string) => value.trim()),
     probeOpenAiLikeEndpoint,
-    readGatewayProviderMetadata,
-    deleteGatewayProvider,
   } satisfies RemoteProviderDeps;
 
   return {
@@ -116,8 +114,6 @@ function createHarness() {
     runOpenshell,
     upsertProvider,
     probeOpenAiLikeEndpoint,
-    readGatewayProviderMetadata,
-    deleteGatewayProvider,
     exitProcess,
     error,
   };
@@ -192,14 +188,19 @@ describe("custom Anthropic provider replacement on the OpenAI surface", () => {
       "test-secret",
       { skipResponsesProbe: true, pinnedAddresses: ["93.184.216.34"] },
     );
-    expect(harness.readGatewayProviderMetadata).toHaveBeenCalledWith(
-      PROVIDER,
-      harness.runOpenshell,
+    expect(harness.runOpenshell).toHaveBeenNthCalledWith(
+      1,
+      ["provider", "get", PROVIDER],
+      expect.objectContaining({ ignoreError: true, suppressOutput: true }),
     );
-    expect(harness.runOpenshell).toHaveBeenNthCalledWith(1, ["provider", "delete", PROVIDER], {
-      ignoreError: true,
-      suppressOutput: true,
-    });
+    expect(harness.runOpenshell).toHaveBeenNthCalledWith(
+      2,
+      ["provider", "delete", PROVIDER],
+      expect.objectContaining({
+        ignoreError: true,
+        suppressOutput: true,
+      }),
+    );
     expect(harness.probeOpenAiLikeEndpoint.mock.invocationCallOrder[0]).toBeLessThan(
       harness.runOpenshell.mock.invocationCallOrder[0],
     );
@@ -210,27 +211,33 @@ describe("custom Anthropic provider replacement on the OpenAI surface", () => {
       OPENAI_SURFACE,
       { [CREDENTIAL_ENV]: "test-secret" },
     );
-    expect(harness.probeOpenAiLikeEndpoint.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(harness.runOpenshell.mock.invocationCallOrder[1]).toBeLessThan(
       harness.upsertProvider.mock.invocationCallOrder[0],
     );
   });
 
   it("authorizes detach recovery only for the current sandbox (#6294)", async () => {
     const harness = createHarness();
-    harness.runOpenshell.mockReturnValueOnce({
+    const providerAdapter = createManagedProviderAdapter(harness.runOpenshell);
+    const deleteProvider = vi.spyOn(providerAdapter, "deleteProvider");
+    const attached = {
       status: 1,
       stdout: "",
       stderr: `provider '${PROVIDER}' is attached to sandbox(es): ${SANDBOX}`,
-    });
+    };
+    harness.runOpenshell.mockReturnValueOnce(ANTHROPIC_PROVIDER).mockReturnValueOnce(attached);
 
-    await expect(setupRemoteProviderInference(makeArgs(SANDBOX), harness.deps)).resolves.toEqual({
-      done: false,
-    });
+    await expect(
+      setupRemoteProviderInference(makeArgs(SANDBOX), { ...harness.deps, providerAdapter }),
+    ).resolves.toEqual({ done: false });
 
-    expect(harness.deleteGatewayProvider).toHaveBeenCalledWith(PROVIDER, {
-      runOpenshell: harness.runOpenshell,
-      allowedSandboxes: [SANDBOX],
-    });
+    expect(harness.runOpenshell.mock.calls.slice(0, 4).map(([args]) => args)).toEqual([
+      ["provider", "get", PROVIDER],
+      ["provider", "delete", PROVIDER],
+      ["sandbox", "provider", "detach", SANDBOX, PROVIDER],
+      ["provider", "delete", PROVIDER],
+    ]);
+    expect(deleteProvider).toHaveBeenCalledTimes(2);
     expect(harness.upsertProvider).toHaveBeenCalledWith(
       PROVIDER,
       "openai",
@@ -238,14 +245,50 @@ describe("custom Anthropic provider replacement on the OpenAI surface", () => {
       OPENAI_SURFACE,
       { [CREDENTIAL_ENV]: "test-secret" },
     );
-    expect(harness.deleteGatewayProvider.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(harness.runOpenshell.mock.invocationCallOrder[3]).toBeLessThan(
       harness.upsertProvider.mock.invocationCallOrder[0],
     );
   });
 
+  it("does not retry deletion or register a provider after an uncertain detach", async () => {
+    const harness = createHarness();
+    const providerAdapter = createManagedProviderAdapter(harness.runOpenshell);
+    harness.deps.redact.mockImplementation((value) =>
+      value.replaceAll("test-secret", "[redacted]"),
+    );
+    vi.spyOn(providerAdapter, "detachProvider").mockResolvedValue({
+      ok: false,
+      error: { kind: "command", reason: "uncertain", message: "outcome unknown: test-secret" },
+    });
+    harness.runOpenshell.mockReturnValueOnce(ANTHROPIC_PROVIDER).mockReturnValueOnce({
+      status: 1,
+      stdout: "",
+      stderr: `provider '${PROVIDER}' is attached to sandbox(es): ${SANDBOX}`,
+    });
+
+    await expect(
+      setupRemoteProviderInference(makeArgs(SANDBOX), { ...harness.deps, providerAdapter }),
+    ).rejects.toThrow("EXIT_CALLED:1");
+
+    expect(harness.error).toHaveBeenCalledWith(
+      expect.stringContaining(`detach failures: ${SANDBOX}: outcome unknown: [redacted]`),
+    );
+    expect(harness.error.mock.calls.flat().join(" ")).not.toContain("test-secret");
+    expect(providerAdapter.detachProvider).toHaveBeenCalledExactlyOnceWith({
+      target: { kind: "selected" },
+      sandboxName: SANDBOX,
+      providerName: PROVIDER,
+    });
+    expect(harness.runOpenshell.mock.calls.map(([args]) => args)).toEqual([
+      ["provider", "get", PROVIDER],
+      ["provider", "delete", PROVIDER],
+    ]);
+    expect(harness.upsertProvider).not.toHaveBeenCalled();
+  });
+
   it("fails closed when a foreign sandbox is attached (#6294)", async () => {
     const harness = createHarness();
-    harness.runOpenshell.mockReturnValueOnce({
+    harness.runOpenshell.mockReturnValueOnce(ANTHROPIC_PROVIDER).mockReturnValueOnce({
       status: 1,
       stdout: "",
       stderr: `provider '${PROVIDER}' is attached to sandbox(es): ${SANDBOX}, foreign-box`,
@@ -259,13 +302,13 @@ describe("custom Anthropic provider replacement on the OpenAI surface", () => {
     expect(harness.error).toHaveBeenCalledWith(
       expect.stringContaining("attached to other sandbox(es) (foreign-box)"),
     );
-    expect(harness.deleteGatewayProvider).not.toHaveBeenCalled();
+    expect(harness.runOpenshell).toHaveBeenCalledTimes(2);
     expect(harness.upsertProvider).not.toHaveBeenCalled();
   });
 
   it("refuses detach recovery without a confirmed sandbox (#6294)", async () => {
     const harness = createHarness();
-    harness.runOpenshell.mockReturnValueOnce({
+    harness.runOpenshell.mockReturnValueOnce(ANTHROPIC_PROVIDER).mockReturnValueOnce({
       status: 1,
       stdout: "",
       stderr: `provider '${PROVIDER}' is attached to sandbox(es): ${SANDBOX}`,
@@ -279,7 +322,27 @@ describe("custom Anthropic provider replacement on the OpenAI surface", () => {
     expect(harness.error).toHaveBeenCalledWith(
       expect.stringContaining("no target sandbox was confirmed"),
     );
-    expect(harness.deleteGatewayProvider).not.toHaveBeenCalled();
+    expect(harness.runOpenshell).toHaveBeenCalledTimes(2);
+    expect(harness.upsertProvider).not.toHaveBeenCalled();
+  });
+
+  it("reports a redacted provider lookup failure through the setup result", async () => {
+    const harness = createHarness();
+    harness.runOpenshell.mockReturnValueOnce({
+      status: 1,
+      stdout: "",
+      stderr: "unauthorized token=secret",
+    });
+    harness.deps.redact.mockImplementation((value: string) => value.replaceAll("secret", "safe"));
+
+    await expect(setupRemoteProviderInference(makeArgs(SANDBOX), harness.deps)).rejects.toThrow(
+      "EXIT_CALLED:1",
+    );
+
+    expect(harness.error).toHaveBeenCalledWith(
+      "  Failed to inspect provider 'compatible-anthropic-endpoint' before replacement: OpenShell could not authenticate the provider operation.",
+    );
+    expect(JSON.stringify(harness.error.mock.calls)).not.toContain("secret");
     expect(harness.upsertProvider).not.toHaveBeenCalled();
   });
 });

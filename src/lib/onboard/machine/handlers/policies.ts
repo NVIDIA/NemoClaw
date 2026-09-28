@@ -7,6 +7,8 @@ import { normalizeAgentNameForResumeState } from "../../agent-resume-state";
 import {
   getActiveChannelsFromPlan,
   getDisabledChannelsFromPlan,
+  messagingChannelsWithReusableGatewayCredentials,
+  type MessagingGatewayCredentialInspector,
 } from "../../messaging-plan-session";
 import type { HostLocalInferenceSandboxProofAuthority } from "../../runtime-provider/host-local-inference-routing";
 import { advanceTo, type OnboardStateTransitionResult } from "../result";
@@ -57,6 +59,7 @@ export interface PoliciesStateOptions<Agent, WebSearchConfig> {
       selectedChannels: readonly string[],
       agent: Agent,
     ): string[];
+    inspectGatewayCredential: MessagingGatewayCredentialInspector;
     verifyCompatibleEndpointSandboxSmoke(options: {
       sandboxName: string;
       provider: string;
@@ -82,8 +85,11 @@ export interface PoliciesStateOptions<Agent, WebSearchConfig> {
         webSearchSupported: boolean;
         tierName?: string | null;
       },
-    ): PolicyResumeSelection;
-    arePolicyPresetsApplied(sandboxName: string, selectedPresets: string[]): boolean;
+    ): PolicyResumeSelection | Promise<PolicyResumeSelection>;
+    arePolicyPresetsApplied(
+      sandboxName: string,
+      selectedPresets: string[],
+    ): boolean | Promise<boolean>;
     skippedStepMessage(stepName: string, detail?: string | null): void;
     recordStateSkipped(
       state: "policies",
@@ -148,15 +154,19 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
   const activePlan = activeSandbox?.messaging?.plan;
   const activeMessagingChannels = getActiveChannelsFromPlan(activePlan);
   const planDisabledChannels = getDisabledChannelsFromPlan(activePlan);
-  // A channel the operator stopped configuring never reaches `disabledChannels`,
-  // so without this the reused plan keeps it enabled and every later onboarding
-  // run re-applies its egress preset. Adding it to `disabledChannels` here lets
-  // the existing disabled-channel pruning drop the preset from both the merged
-  // selection and the previously-applied set.
-  //
+  const reusableMessagingChannels = await messagingChannelsWithReusableGatewayCredentials(
+    activePlan ?? latestSession?.messagingPlan ?? null,
+    deps.inspectGatewayCredential,
+  );
+  // An active host-backed channel remains selected only while every recorded
+  // credential binding, or its gateway-minted bridge provider, still matches.
+  // Missing process inputs alone do not disable it because interactive values
+  // normally disappear between onboard runs. A missing or mismatched provider
+  // adds the channel to `disabledChannels`, so existing pruning removes its
+  // preset from the merged and previously applied sets.
   const unconfiguredMessagingChannels = deps.detectUnconfiguredMessagingChannels(
     [...recordedMessagingChannels, ...activeMessagingChannels],
-    selectedMessagingChannels,
+    [...new Set([...selectedMessagingChannels, ...reusableMessagingChannels])],
     agent,
   );
   const disabledChannels =
@@ -209,7 +219,7 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
   }
   if (!hostLocalInferenceRouteOnly) await verifySandboxInferenceRoute();
 
-  const policyResumeSelection = deps.preparePolicyPresetResumeSelection(sandboxName, {
+  const policyResumeSelection = await deps.preparePolicyPresetResumeSelection(sandboxName, {
     disabledChannels,
     enabledChannels: policyMessagingChannels,
     hermesToolGateways,
@@ -222,14 +232,15 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
   });
   const livePolicyPresetsForSupport = policyResumeSelection.policyPresets;
   const staleLocalInferencePolicy =
-    hostLocalInferenceRouteOnly && deps.arePolicyPresetsApplied(sandboxName, ["local-inference"]);
+    hostLocalInferenceRouteOnly &&
+    (await deps.arePolicyPresetsApplied(sandboxName, ["local-inference"]));
   const resumePolicies =
     resume &&
     !staleLocalInferencePolicy &&
     !policyResumeSelection.livePolicyPresetsNeedUpdate &&
     !policyResumeSelection.disabledMessagingPolicyPresetApplied &&
     !policyResumeSelection.suppressedAgentRequiredPresetsLive &&
-    deps.arePolicyPresetsApplied(sandboxName, livePolicyPresetsForSupport);
+    (await deps.arePolicyPresetsApplied(sandboxName, livePolicyPresetsForSupport));
 
   let appliedPolicyPresets = livePolicyPresetsForSupport;
   let session: Session | null;

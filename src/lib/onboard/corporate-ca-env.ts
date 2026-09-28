@@ -27,8 +27,11 @@ export function resolveCorporateCaFromEnv(
   if (explicit && explicit.trim()) {
     const sourcePath = explicit.trim();
     if (isKnownMergedTrustStorePath(sourcePath)) {
+      const reason =
+        "corporate CA bundle points at a merged OS trust store; export only your corporate root and intermediates to a small PEM file instead";
       throw new CorporateCaValidationError(
         `${CORPORATE_CA_EXPLICIT_ENV} points at a merged OS trust store (${sourcePath}); export only your corporate root (and intermediates) to a small PEM file instead`,
+        reason,
       );
     }
     const pem = validateCorporateCaFile(sourcePath);

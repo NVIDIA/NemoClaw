@@ -491,26 +491,22 @@ function probeHermesToolGatewayBrokerStart(options = {}) {
   const controlSocket = path.join(probeRoot, "control.sock");
   ensurePrivateDir(stateDir);
   try {
-    const result = spawnProbe(
-      process.execPath,
-      [HERMES_TOOL_GATEWAY_SCRIPT],
-      {
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "pipe"],
-        cwd: ROOT,
-        env: buildSubprocessEnv({
-          HERMES_TOOL_GATEWAY_PORT: String(probePort),
-          HERMES_TOOL_GATEWAY_STATE_DIR: stateDir,
-          HERMES_TOOL_GATEWAY_MATRIX_PATH,
-          HERMES_TOOL_GATEWAY_CONTROL_SOCKET: controlSocket,
-          HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV,
-          HERMES_TOOL_GATEWAY_PREFLIGHT_PROBE: "1",
-          NOUS_PORTAL_BASE_URL: process.env.NOUS_PORTAL_BASE_URL || oauth.DEFAULT_PORTAL_BASE_URL,
-          NEMOCLAW_OPENSHELL_BIN: process.env.NEMOCLAW_OPENSHELL_BIN || "openshell",
-        }),
-        timeout: 10_000,
-      },
-    );
+    const result = spawnProbe(process.execPath, [HERMES_TOOL_GATEWAY_SCRIPT], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      cwd: ROOT,
+      env: buildSubprocessEnv({
+        HERMES_TOOL_GATEWAY_PORT: String(probePort),
+        HERMES_TOOL_GATEWAY_STATE_DIR: stateDir,
+        HERMES_TOOL_GATEWAY_MATRIX_PATH,
+        HERMES_TOOL_GATEWAY_CONTROL_SOCKET: controlSocket,
+        HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV,
+        HERMES_TOOL_GATEWAY_PREFLIGHT_PROBE: "1",
+        NOUS_PORTAL_BASE_URL: process.env.NOUS_PORTAL_BASE_URL || oauth.DEFAULT_PORTAL_BASE_URL,
+        NEMOCLAW_OPENSHELL_BIN: process.env.NEMOCLAW_OPENSHELL_BIN || "openshell",
+      }),
+      timeout: 10_000,
+    });
     if (result.error) {
       throw new Error(
         `Hermes managed-tool broker preflight could not start: ${result.error.message}`,
@@ -730,30 +726,26 @@ function spawnHermesToolGatewayBroker(refreshToken, initialSandboxName = null) {
   if (typeof refreshToken === "string" && refreshToken.trim()) {
     credentialEnv[HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV] = refreshToken.trim();
   }
-  const child = spawn(
-    process.execPath,
-    [HERMES_TOOL_GATEWAY_SCRIPT],
-    {
-      detached: true,
-      stdio: "ignore",
-      cwd: ROOT,
-      env: buildSubprocessEnv({
-        HERMES_TOOL_GATEWAY_PORT: String(HERMES_TOOL_GATEWAY_PORT),
-        HERMES_TOOL_GATEWAY_STATE_DIR,
-        HERMES_TOOL_GATEWAY_MATRIX_PATH,
-        HERMES_TOOL_GATEWAY_CONTROL_SOCKET: HERMES_TOOL_GATEWAY_CONTROL_SOCKET_PATH,
-        HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV,
-        ...(initialSandboxName === null
-          ? {}
-          : {
-              HERMES_TOOL_GATEWAY_INITIAL_SANDBOX: validateName(initialSandboxName, "sandbox name"),
-            }),
-        NOUS_PORTAL_BASE_URL: process.env.NOUS_PORTAL_BASE_URL || oauth.DEFAULT_PORTAL_BASE_URL,
-        NEMOCLAW_OPENSHELL_BIN: process.env.NEMOCLAW_OPENSHELL_BIN || "openshell",
-        ...credentialEnv,
-      }),
-    },
-  );
+  const child = spawn(process.execPath, [HERMES_TOOL_GATEWAY_SCRIPT], {
+    detached: true,
+    stdio: "ignore",
+    cwd: ROOT,
+    env: buildSubprocessEnv({
+      HERMES_TOOL_GATEWAY_PORT: String(HERMES_TOOL_GATEWAY_PORT),
+      HERMES_TOOL_GATEWAY_STATE_DIR,
+      HERMES_TOOL_GATEWAY_MATRIX_PATH,
+      HERMES_TOOL_GATEWAY_CONTROL_SOCKET: HERMES_TOOL_GATEWAY_CONTROL_SOCKET_PATH,
+      HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV,
+      ...(initialSandboxName === null
+        ? {}
+        : {
+            HERMES_TOOL_GATEWAY_INITIAL_SANDBOX: validateName(initialSandboxName, "sandbox name"),
+          }),
+      NOUS_PORTAL_BASE_URL: process.env.NOUS_PORTAL_BASE_URL || oauth.DEFAULT_PORTAL_BASE_URL,
+      NEMOCLAW_OPENSHELL_BIN: process.env.NEMOCLAW_OPENSHELL_BIN || "openshell",
+      ...credentialEnv,
+    }),
+  });
   child.unref();
   writePid(child.pid);
   writeBrokerHash(brokerRuntimeHash());
@@ -782,8 +774,10 @@ function ensureHermesToolGatewayBroker(options = {}, deps = {}) {
   const desiredHash = brokerRuntimeHash();
   const hashMatches = readBrokerHash() === desiredHash;
   const pid = readPid();
-  const { owned: currentBrokerOwned, healthy: brokerHealthy } =
-    verifyHermesToolGatewayBroker(pid, deps);
+  const { owned: currentBrokerOwned, healthy: brokerHealthy } = verifyHermesToolGatewayBroker(
+    pid,
+    deps,
+  );
   const currentBrokerHealthy = currentBrokerOwned && brokerHealthy;
   // `/health` is unauthenticated on a fixed port, so reachability proves
   // liveness and never identity. Ownership comes only from a recorded pid that

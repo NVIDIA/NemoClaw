@@ -432,11 +432,7 @@ describe("Bedrock Runtime adapter fail-closed uninstall cleanup (#9552)", () => 
       expectedWarning: true,
       label: "another canonical launcher path",
       process: managedProcess({
-        argv: [
-          EXECUTABLE_PATH,
-          "--no-warnings",
-          "/tmp/foreign/bedrock-runtime-adapter.mts",
-        ],
+        argv: [EXECUTABLE_PATH, "--no-warnings", "/tmp/foreign/bedrock-runtime-adapter.mts"],
       }),
     },
   ])(

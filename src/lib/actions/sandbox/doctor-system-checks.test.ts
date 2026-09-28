@@ -101,16 +101,15 @@ describe("doctor system checks", () => {
       (command: readonly string[], options?: { env?: NodeJS.ProcessEnv }) =>
         command.join(" ").includes("Get-NetTCPConnection")
           ? "127.0.0.1"
-          : command[0] === "docker" &&
-              options?.env?.DOCKER_CONFIG === "/tmp/credential-free-docker"
-          ? command.includes("Host: rebinding.invalid")
-            ? "403"
-            : command.some(
-                  (argument) => argument === "http://host.docker.internal:11434/api/tags",
-                )
-              ? JSON.stringify({ models: [] })
-              : ""
-          : "",
+          : command[0] === "docker" && options?.env?.DOCKER_CONFIG === "/tmp/credential-free-docker"
+            ? command.includes("Host: rebinding.invalid")
+              ? "403"
+              : command.some(
+                    (argument) => argument === "http://host.docker.internal:11434/api/tags",
+                  )
+                ? JSON.stringify({ models: [] })
+                : ""
+            : "",
     );
     const { ollamaDoctorCheck } = requireDist(modulePath);
 

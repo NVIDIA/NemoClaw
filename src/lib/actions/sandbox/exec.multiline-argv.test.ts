@@ -5,7 +5,10 @@ import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createCliOpenShellSandboxCommandExecutor } from "../../adapters/openshell/sandbox-command-cli";
+import {
+  buildCliOpenShellSandboxExecArgs,
+  createCliOpenShellSandboxCommandExecutor,
+} from "../../adapters/openshell/sandbox-command-cli";
 import type { OpenShellSandboxCommandExecutor } from "../../adapters/openshell/sandbox-command";
 
 // The default CLI command executor shells out via spawn and chooses whether to
@@ -18,7 +21,6 @@ vi.mock("node:child_process", async (importOriginal) => {
 });
 
 import {
-  buildOpenshellExecArgs,
   execSandbox,
   type ExecSandboxDeps,
   type SandboxExecCleanupDeps,
@@ -59,7 +61,11 @@ function execDeps(executor: OpenShellSandboxCommandExecutor): ExecSandboxDeps {
 }
 
 function expectedExecArgs(sandboxName: string, command: readonly string[]): string[] {
-  return buildOpenshellExecArgs(sandboxName, wrapExecCommandWithRuntimeEnv(command));
+  return buildCliOpenShellSandboxExecArgs({
+    sandboxName,
+    target: { kind: "selected" },
+    command: wrapExecCommandWithRuntimeEnv(command),
+  });
 }
 
 function exitWithCode(): ReturnType<typeof vi.spyOn> {
@@ -178,7 +184,11 @@ describe("execSandbox multi-line argv", () => {
   });
 
   it("does not populate OpenShell's separately validated request-environment field", () => {
-    const argv = buildOpenshellExecArgs("multiline-test", ["printf", "line one\nline two"]);
+    const argv = buildCliOpenShellSandboxExecArgs({
+      sandboxName: "multiline-test",
+      target: { kind: "selected" },
+      command: ["printf", "line one\nline two"],
+    });
 
     // NemoClaw's public exec surface has no request-environment option. Runtime
     // metadata is sourced inside the command wrapper, so allowing line breaks

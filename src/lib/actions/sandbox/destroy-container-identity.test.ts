@@ -158,10 +158,7 @@ describe("classifyDestroyContainerIdentity", () => {
     const verdict = expectAmbiguous(
       classifyDestroyContainerIdentity(
         "destroytest",
-        observeRows([
-          MANAGED,
-          { ...MANAGED, id: "dddd000000000000", sandboxId: "sb-replacement" },
-        ]),
+        observeRows([MANAGED, { ...MANAGED, id: "dddd000000000000", sandboxId: "sb-replacement" }]),
         sandboxIdentityFingerprint,
       ),
     );

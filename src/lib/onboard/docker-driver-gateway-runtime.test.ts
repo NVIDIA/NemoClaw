@@ -7,7 +7,10 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as dockerDriverGatewayEnv from "./docker-driver-gateway-env";
-import { gatewayIdForStateDir } from "./docker-driver-gateway-config";
+import {
+  gatewayIdForStateDir,
+  NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV,
+} from "./docker-driver-gateway-config";
 import {
   createDockerDriverGatewayRuntimeHelpers,
   type DockerDriverGatewayRuntimeDeps,
@@ -37,7 +40,7 @@ function makeHelpers(overrides: Partial<DockerDriverGatewayRuntimeDeps> = {}): {
     loadDockerDriverGatewayEnv: () => dockerDriverGatewayEnv,
     runCapture,
     shouldUseOpenshellDevChannel: () => false,
-    supportedOpenshellFallbackVersion: "0.0.44",
+    supportedOpenshellFallbackVersion: "0.0.116",
     ...overrides,
   };
   return {
@@ -69,6 +72,15 @@ function withEnv<T>(values: Record<string, string | undefined>, callback: () => 
   }
 }
 
+function withTemporaryGatewayState<T>(callback: () => T): T {
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-runtime-test-"));
+  try {
+    return withEnv({ NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: stateDir }, callback);
+  } finally {
+    fs.rmSync(stateDir, { force: true, recursive: true });
+  }
+}
+
 describe("docker-driver gateway runtime helpers", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -89,7 +101,7 @@ describe("docker-driver gateway runtime helpers", () => {
         },
         () => {
           const { helpers } = makeHelpers({
-            supportedOpenshellFallbackVersion: "0.0.106",
+            supportedOpenshellFallbackVersion: "0.0.116",
           });
 
           expect(helpers.getDockerDriverGatewayStateDir()).toBe(path.resolve(stateDir));
@@ -103,7 +115,7 @@ describe("docker-driver gateway runtime helpers", () => {
           expect(env.OPENSHELL_DOCKER_NETWORK_NAME).toBe("custom-openshell-docker");
           expect(env.OPENSHELL_DOCKER_SUPERVISOR_BIN).toBe(path.resolve(sandboxBin));
           expect(env.OPENSHELL_DOCKER_SUPERVISOR_IMAGE).toBe(
-            "ghcr.io/nvidia/openshell/supervisor@sha256:722f44669722961b7f432b0b81de25b91a58f34a61d6403bef967acaf2b3af01",
+            "ghcr.io/nvidia/openshell/supervisor@sha256:c8c42aef16c200063e32cbf72e553e4ead027085427b555efafd95063ecead42",
           );
           expect(env.OPENSHELL_GATEWAY_CONFIG).toBe(
             path.join(path.resolve(stateDir), "openshell-gateway.toml"),
@@ -130,48 +142,64 @@ describe("docker-driver gateway runtime helpers", () => {
   it.each([
     ["relative", "relative-gateway-state"],
     ["shared root", path.join(os.homedir(), ".local", "state", "nemoclaw")],
-  ])(
-    "rejects a %s state-directory override through the binding owner",
-    (_scenario, configured) => {
-      withEnv({ NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: configured }, () => {
-        expect(() => makeHelpers().helpers.getDockerDriverGatewayStateDir()).toThrow(
-          /absolute dedicated gateway state directory|shared NemoClaw state root/,
-        );
-      });
-    },
-  );
-
-  it("uses the moving dev supervisor image for an explicit or detected dev runtime", () => {
-    const explicit = makeHelpers({ shouldUseOpenshellDevChannel: () => true });
-    expect(
-      explicit.helpers.getDockerDriverGatewayEnv("openshell 0.0.72", "linux")
-        .OPENSHELL_DOCKER_SUPERVISOR_IMAGE,
-    ).toBe("ghcr.io/nvidia/openshell/supervisor:dev");
-
-    const detected = makeHelpers({
-      isOpenshellDevVersion: (versionOutput) => String(versionOutput).includes("-dev."),
+  ])("rejects a %s state-directory override through the binding owner", (_scenario, configured) => {
+    withEnv({ NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: configured }, () => {
+      expect(() => makeHelpers().helpers.getDockerDriverGatewayStateDir()).toThrow(
+        /absolute dedicated gateway state directory|shared NemoClaw state root/,
+      );
     });
-    expect(
-      detected.helpers.getDockerDriverGatewayEnv("openshell 0.0.72-dev.8+g7bce1223", "linux")
-        .OPENSHELL_DOCKER_SUPERVISOR_IMAGE,
-    ).toBe("ghcr.io/nvidia/openshell/supervisor:dev");
   });
 
-  it("pins the stable 0.0.106 supervisor default while preserving an explicit override", () => {
+  it("rejects an explicit or detected dev runtime", () => {
+    withTemporaryGatewayState(() => {
+      const explicit = makeHelpers({ shouldUseOpenshellDevChannel: () => true });
+      expect(() => explicit.helpers.getDockerDriverGatewayEnv("openshell 0.0.72", "linux")).toThrow(
+        "exact stable OpenShell 0.0.116",
+      );
+
+      const detected = makeHelpers({
+        isOpenshellDevVersion: (versionOutput) => String(versionOutput).includes("-dev."),
+      });
+      expect(() =>
+        detected.helpers.getDockerDriverGatewayEnv("openshell 0.0.72-dev.8+g7bce1223", "linux"),
+      ).toThrow("exact stable OpenShell 0.0.116");
+    });
+  });
+
+  it("pins the stable 0.0.116 supervisor and rejects a foreign override", () => {
     const image = (fallback: string) =>
       makeHelpers({
-        getBlueprintMaxOpenshellVersion: () => "0.0.106",
+        getBlueprintMaxOpenshellVersion: () => "0.0.116",
         supportedOpenshellFallbackVersion: fallback,
       }).helpers.getDockerDriverGatewayEnv(null, "linux").OPENSHELL_DOCKER_SUPERVISOR_IMAGE;
-    const stable = withEnv({ OPENSHELL_DOCKER_SUPERVISOR_IMAGE: undefined }, () =>
-      image("0.0.106"),
+    const stable = withTemporaryGatewayState(() =>
+      withEnv({ OPENSHELL_DOCKER_SUPERVISOR_IMAGE: undefined }, () => image("0.0.116")),
     );
-    expect(stable).toBe(
-      "ghcr.io/nvidia/openshell/supervisor@sha256:722f44669722961b7f432b0b81de25b91a58f34a61d6403bef967acaf2b3af01",
-    );
-    const override = "registry.example.test/supervisor@sha256:override";
-    expect(withEnv({ OPENSHELL_DOCKER_SUPERVISOR_IMAGE: override }, () => image("0.0.106"))).toBe(
-      override,
+    const qualified =
+      "ghcr.io/nvidia/openshell/supervisor@sha256:c8c42aef16c200063e32cbf72e553e4ead027085427b555efafd95063ecead42";
+    expect(stable).toBe(qualified);
+    expect(
+      withTemporaryGatewayState(() =>
+        withEnv({ OPENSHELL_DOCKER_SUPERVISOR_IMAGE: qualified }, () => image("0.0.116")),
+      ),
+    ).toBe(qualified);
+    expect(() =>
+      withTemporaryGatewayState(() =>
+        withEnv(
+          {
+            OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "registry.example.test/supervisor@sha256:override",
+          },
+          () => image("0.0.116"),
+        ),
+      ),
+    ).toThrow("requires the reviewed Docker supervisor image");
+  });
+
+  it("rejects an installed 0.0.106 runtime before gateway recovery selects a supervisor", () => {
+    const { helpers } = makeHelpers();
+
+    expect(() => helpers.getDockerDriverGatewayEnv("openshell 0.0.106", "linux")).toThrow(
+      "requires exact stable OpenShell 0.0.116; found 0.0.106",
     );
   });
 
@@ -282,8 +310,7 @@ describe("docker-driver gateway runtime helpers", () => {
                 const gone = new Error("ESRCH") as NodeJS.ErrnoException;
                 gone.code = "ESRCH";
                 throw gone;
-              })()
-        ) as typeof process.kill);
+              })()) as typeof process.kill);
         const originalExistsSync = fs.existsSync.bind(fs);
         const originalReadFileSync = fs.readFileSync.bind(fs);
         const replacementCmdline = `/proc/${String(replacementPid)}/cmdline`;
@@ -291,15 +318,13 @@ describe("docker-driver gateway runtime helpers", () => {
         vi.spyOn(fs, "existsSync").mockImplementation(((candidate) =>
           candidate === gatewayBin || candidate === replacementCmdline
             ? true
-            : originalExistsSync(candidate)
-        ) as typeof fs.existsSync);
+            : originalExistsSync(candidate)) as typeof fs.existsSync);
         vi.spyOn(fs, "readFileSync").mockImplementation(((candidate, options) =>
           candidate === replacementCmdline
             ? `${gatewayBin}\0`
             : candidate === replacementEnvironment
               ? `NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE=${namespace}\0`
-              : originalReadFileSync(candidate, options as never)
-        ) as typeof fs.readFileSync);
+              : originalReadFileSync(candidate, options as never)) as typeof fs.readFileSync);
 
         expect(helpers.isDockerDriverGatewayStateInUse()).toBe(true);
       });
@@ -560,10 +585,74 @@ describe("docker-driver gateway runtime helpers", () => {
     ).toBe("NEMOCLAW_DOCKER_ENABLE_BIND_MOUNTS=1 (expected <unset>)");
   });
 
-  it("reuses a systemd-owned gateway without detached cleanup identity (#6903)", () => {
+  it("marks a gateway stale when its external component identity differs (#11340)", () => {
+    const { helpers } = makeHelpers();
+    expect(
+      helpers.getDockerDriverGatewayRuntimeDriftFromSnapshot({
+        processEnv: {
+          OPENSHELL_DRIVERS: "docker",
+          [NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV]: "prior-component",
+        },
+        processExe: "/usr/bin/openshell-gateway",
+        desiredEnv: {
+          OPENSHELL_DRIVERS: "docker",
+          [NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV]: "approved-component",
+        },
+        gatewayBin: "/usr/bin/openshell-gateway",
+      })?.reason,
+    ).toBe(
+      `${NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV}=prior-component (expected approved-component)`,
+    );
+  });
+
+  it("marks a gateway stale after persisted external component removal (#11340)", () => {
+    const { helpers } = makeHelpers();
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nc-component-removal-"));
+    try {
+      fs.chmodSync(stateDir, 0o700);
+      const options = {
+        platform: "linux" as const,
+        stateDir,
+        getDockerSupervisorImage: () => "supervisor:test",
+        resolveSandboxBin: () => "/usr/bin/openshell-sandbox",
+      };
+      const env = dockerDriverGatewayEnv.buildDockerDriverGatewayEnv(options);
+      dockerDriverGatewayEnv.configureDockerDriverGatewayExternalComponent(env, {
+        componentId: "policy-governance",
+        interceptorSocketPath: "/run/user/1000/component/interceptor.sock",
+      });
+      const processEnv = { ...env };
+      dockerDriverGatewayEnv.configureDockerDriverGatewayExternalComponent(env, null);
+      const desiredEnv = dockerDriverGatewayEnv.buildDockerDriverGatewayEnv(options);
+      const snapshot = {
+        processExe: "/usr/bin/openshell-gateway",
+        gatewayBin: "/usr/bin/openshell-gateway",
+        desiredEnv,
+      };
+      expect(desiredEnv[NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV]).toBe("none");
+      expect(
+        helpers.getDockerDriverGatewayRuntimeDriftFromSnapshot({ ...snapshot, processEnv })?.reason,
+      ).toBe(
+        `${NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV}=${processEnv[NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV]} (expected none)`,
+      );
+      expect(
+        helpers.getDockerDriverGatewayRuntimeDriftFromSnapshot({
+          ...snapshot,
+          processEnv: desiredEnv,
+        }),
+      ).toBeNull();
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("reuses a systemd-owned gateway with a legacy unset component identity (#11340)", () => {
     const pid = 12_350;
     const gatewayBin = "/usr/bin/openshell-gateway";
-    const desiredEnv = { OPENSHELL_DRIVERS: "docker" };
+    const desiredEnv = {
+      OPENSHELL_DRIVERS: "docker",
+      [NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV]: "none",
+    };
     const { helpers } = makeHelpers({
       runCapture: vi.fn(() => gatewayBin),
     });

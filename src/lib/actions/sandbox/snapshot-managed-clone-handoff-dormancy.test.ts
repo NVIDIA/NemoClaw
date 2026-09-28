@@ -60,9 +60,7 @@ describe("managed snapshot clone activation boundary", () => {
       runSandboxSnapshot("alpha", { kind: "restore", to: "beta", force: true, yes: true }),
     ).rejects.toMatchObject({ exitCode: 1 });
 
-    expect(consoleError.mock.calls.flat().join("\n")).toContain(
-      "uses a NemoClaw-managed image",
-    );
+    expect(consoleError.mock.calls.flat().join("\n")).toContain("uses a NemoClaw-managed image");
     expect(fixture.lifecycleMock.events).not.toContain("delete");
     expect(fixture.streamSandboxCreateMock).not.toHaveBeenCalled();
     expect(fixture.restoreSandboxStateMock).not.toHaveBeenCalled();

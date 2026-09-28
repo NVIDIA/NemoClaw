@@ -341,12 +341,8 @@ describe("managed-cluster vLLM materializer", () => {
 
     expect(plan.apiPort).toBe(19_000);
     expect(plan.roles[0].endpoint).toBe("http://192.168.100.10:19000");
-    expect(plan.roles[0].command.arguments).toEqual(
-      expect.arrayContaining(["--port", "19000"]),
-    );
-    expect(plan.roles[1].command.arguments).toEqual(
-      expect.arrayContaining(["--port", "19000"]),
-    );
+    expect(plan.roles[0].command.arguments).toEqual(expect.arrayContaining(["--port", "19000"]));
+    expect(plan.roles[1].command.arguments).toEqual(expect.arrayContaining(["--port", "19000"]));
     expect(plan.planId).not.toBe(defaultPlan.planId);
     expect(selection.recipe.spec.serve.arguments).toEqual(
       fixtureManagedClusterSelection().recipe.spec.serve.arguments,
@@ -354,9 +350,9 @@ describe("managed-cluster vLLM materializer", () => {
   });
 
   it.each([80, 65_536, 8_000.5])("rejects unsafe deployment API port %s", (apiPort) => {
-    expect(() =>
-      materializeManagedClusterVllmPlan(selectionWithDigests(), { apiPort }),
-    ).toThrow("configured API port must contain a valid TCP port");
+    expect(() => materializeManagedClusterVllmPlan(selectionWithDigests(), { apiPort })).toThrow(
+      "configured API port must contain a valid TCP port",
+    );
   });
 
   it("passes every recipe serving argument without embedding an API key", () => {
@@ -368,12 +364,12 @@ describe("managed-cluster vLLM materializer", () => {
       const index = headArguments.indexOf(argument.name);
       expect(index).toBeGreaterThan(-1);
     });
-    selection.recipe.spec.serve.arguments.filter(
-      ({ value }) => value !== undefined,
-    ).forEach((argument) => {
-      const index = headArguments.indexOf(argument.name);
-      expect(headArguments[index + 1]).toBe(String(argument.value));
-    });
+    selection.recipe.spec.serve.arguments
+      .filter(({ value }) => value !== undefined)
+      .forEach((argument) => {
+        const index = headArguments.indexOf(argument.name);
+        expect(headArguments[index + 1]).toBe(String(argument.value));
+      });
     expect(headArguments).not.toContain("--api-key");
     expect(plan.roles[1].command.arguments).not.toContain("--api-key");
   });

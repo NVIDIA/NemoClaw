@@ -16,7 +16,7 @@ import {
   resolveRuntimeProviderBundle,
 } from "../../onboard/runtime-provider/access";
 import { qualifyPortableAgentLifecycleAuthority } from "../../onboard/experimental/portable-agent-lifecycle";
-import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock-acquisition";
+import { withSandboxLifecycleLock } from "./lifecycle/lock";
 import type { SandboxEntry } from "../../state/registry";
 import { readCloudflaredState } from "../../tunnel/services";
 import {
@@ -26,7 +26,7 @@ import {
 import { captureHostCommand } from "./doctor-host-command";
 import type { DoctorCheck } from "./doctor-report";
 
-export const withSandboxDoctorLifecycleLock = withMcpLifecycleLock;
+export const withSandboxDoctorLifecycleLock = withSandboxLifecycleLock;
 
 export function gatewayDoctorStartHint(gatewayName: string): string {
   return `${gatewayStartGuidance(gatewayName)} Then retry this command.`;

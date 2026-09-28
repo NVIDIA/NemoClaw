@@ -383,7 +383,10 @@ describe("Ollama local provider sandbox-facing model gate", () => {
       ),
     ).rejects.toThrow("exit 1");
 
-    expect({ errorCalls: error.mock.calls, rollbackCalls: rollbackPersistedOllamaHost.mock.calls }).toEqual({
+    expect({
+      errorCalls: error.mock.calls,
+      rollbackCalls: rollbackPersistedOllamaHost.mock.calls,
+    }).toEqual({
       errorCalls: [[`  ${recoveryMessage}`]],
       rollbackCalls: [[]],
     });

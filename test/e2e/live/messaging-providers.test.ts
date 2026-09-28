@@ -53,7 +53,7 @@ import {
   tokenValues,
 } from "./messaging-providers-helpers.ts";
 import { runInstalledSlackRuntimeProof } from "./messaging-providers-slack-runtime-proof.ts";
-import { runInstalledTelegramRuntimeProof } from "./messaging-providers-telegram-runtime-proof.ts";
+import { sendWithInstalledTelegramRuntime } from "./messaging-providers-telegram-runtime-proof.ts";
 import { runInstalledWechatRuntimeProof } from "./messaging-providers-wechat-runtime-proof.ts";
 
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
@@ -496,10 +496,16 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
       "start-log-messaging-providers",
       redactionValues,
     );
+    const acceptedExtrasLine = startLog
+      .split(/\r?\n/u)
+      .find((line) =>
+        /^\[config\] NEMOCLAW_EXTRA_PLACEHOLDER_KEYS accepted \d+ entry\(ies\):/u.test(line),
+      );
     check(
-      /\[config\] NEMOCLAW_EXTRA_PLACEHOLDER_KEYS accepted \d+ entry\(ies\):/.test(startLog) &&
-        startLog.includes("TELEGRAM_BOT_TOKEN_AGENT_A") &&
-        !startLog.includes("GITHUB_TOKEN"),
+      Boolean(
+        acceptedExtrasLine?.includes("TELEGRAM_BOT_TOKEN_AGENT_A") &&
+        !acceptedExtrasLine.includes("GITHUB_TOKEN"),
+      ),
       "X5: accepted-extras breadcrumb proves extra keys reached in-container parser",
     );
 
@@ -1018,7 +1024,7 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
     );
     check(
       installedSlackProof.proof === "openclaw-pipeline-runtime",
-      `M-S17c: OpenClaw 2026.7.1 Slack proof used the reviewed pipeline/runtime exports (${installedSlackProof.proof})`,
+      `M-S17c: OpenClaw 2026.9.1 Slack proof used the reviewed pipeline/runtime exports (${installedSlackProof.proof})`,
     );
     const slackRuntimeCapture = lastJsonLine(
       fakeSlackBot.captureFile,
@@ -1057,8 +1063,9 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
     );
     const telegramMockTarget = "42424242";
     const telegramMockText = "NemoClaw OpenClaw Telegram plugin mock E2E";
-    const installedTelegramProof = await runInstalledTelegramRuntimeProof(
+    const installedTelegramProof = await sendWithInstalledTelegramRuntime(
       sandbox,
+      SANDBOX_NAME,
       fakeTelegram,
       telegramMockTarget,
       telegramMockText,
@@ -1123,7 +1130,7 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
     check(
       installedWechatProof.proof === "openclaw-weixin-runtime-send" &&
         installedWechatProof.accountId === state.wechatAccount &&
-        installedWechatProof.pluginVersion === "2.4.3",
+        installedWechatProof.pluginVersion === "2.4.9",
       "M-W11: installed WeChat runtime loaded the configured post-rebuild account",
     );
     const wechatRuntimeCapture = lastJsonLine(

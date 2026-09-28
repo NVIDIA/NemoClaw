@@ -69,6 +69,10 @@ export function spawnExitCode(result: {
 }): number {
   if (result.status !== null) return result.status;
   if (!result.signal) return 1;
-  const signalNumber = os.constants.signals[result.signal];
+  return signalExitCode(result.signal);
+}
+
+export function signalExitCode(signal: NodeJS.Signals): number {
+  const signalNumber = os.constants.signals[signal];
   return signalNumber ? 128 + signalNumber : 1;
 }

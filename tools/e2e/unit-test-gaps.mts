@@ -259,9 +259,7 @@ async function parallelMap<T, R>(
   return output;
 }
 
-function signaturesToLog(
-  signatures: ReadonlyArray<{ job: string; signature: string }>,
-): string {
+function signaturesToLog(signatures: ReadonlyArray<{ job: string; signature: string }>): string {
   if (signatures.length === 0) return "";
   return `${signatures.map(({ job, signature }) => `${job}\tstep\t${signature}`).join("\n")}\n`;
 }

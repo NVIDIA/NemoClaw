@@ -244,7 +244,7 @@ describe("provider route containment", () => {
     expect(calls.setupNim).toHaveBeenCalledOnce();
     expect(calls.preflightGatewayRouteDiscovery).toHaveBeenCalledWith({
       gatewayName: "nemoclaw-9090",
-      sandboxName: null,
+      sandboxName: "target-sandbox",
       route: {
         provider: "nvidia-prod",
         model: "nvidia/test",

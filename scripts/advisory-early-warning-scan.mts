@@ -6,7 +6,7 @@
 // GitHub Security Advisory JSON with the reviewed npm inventory derived from
 // ci/reviewed-npm-audit.json (committed package specs plus the locked-graph
 // package-locks) and prints structured, NON-blocking signals. Signals never
-// fail the process: enforcement stays with the reviewed npm audit gate.
+// fail the process: enforcement stays with the npm audit gate.
 //
 // Usage:
 //   advisory-early-warning-scan.mts [--inventory <inventory.json>] --list-packages

@@ -65,25 +65,19 @@ describe("trusted private endpoint hosts", () => {
 });
 
 describe("trusted private endpoint preflight", () => {
-  it.each([
-    "10.0.0.1",
-    "100.64.0.1",
-    "172.16.0.1",
-    "192.168.0.1",
-    "fd00::1",
-  ])("classifies the operator-trustable address %s (#8176)", (address) => {
-    expect(isOperatorTrustablePrivateIp(address)).toBe(true);
-  });
+  it.each(["10.0.0.1", "100.64.0.1", "172.16.0.1", "192.168.0.1", "fd00::1"])(
+    "classifies the operator-trustable address %s (#8176)",
+    (address) => {
+      expect(isOperatorTrustablePrivateIp(address)).toBe(true);
+    },
+  );
 
-  it.each([
-    "127.0.0.1",
-    "169.254.169.254",
-    "198.18.0.1",
-    "fe80::1",
-    "ff00::1",
-  ])("keeps the reserved address %s outside operator trust (#8176)", (address) => {
-    expect(isOperatorTrustablePrivateIp(address)).toBe(false);
-  });
+  it.each(["127.0.0.1", "169.254.169.254", "198.18.0.1", "fe80::1", "ff00::1"])(
+    "keeps the reserved address %s outside operator trust (#8176)",
+    (address) => {
+      expect(isOperatorTrustablePrivateIp(address)).toBe(false);
+    },
+  );
 
   it("issues a provenance-checked capability for an exact trusted host (#8176)", async () => {
     const result = await assertEndpointResolvesPublic(

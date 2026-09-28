@@ -84,6 +84,9 @@ const LIVE_READ_SOURCE_LABELS = {
   "sandbox-identity": "live sandbox identity",
   "inference-route": "live gateway inference route",
   "provider-metadata": "live inference provider metadata",
+  "web-search-provider": "live web-search provider metadata",
+  "managed-serving": "managed serving runtime",
+  "ollama-serving": "live Ollama daemon and proxy mapping",
   "effective-policy": "effective OpenShell policy",
 } satisfies Readonly<Record<ExportSnapshotReadStage, string>>;
 

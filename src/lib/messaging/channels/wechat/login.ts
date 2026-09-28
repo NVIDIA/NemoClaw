@@ -93,7 +93,6 @@ interface ResolvedLoginOptions {
  *  renderer don't pay the import cost or the side effect of writing to
  *  stdout. */
 function defaultRenderer(qrUrl: string): void {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const qrterm = require("qrcode-terminal") as {
     generate(text: string, opts: { small?: boolean }, cb?: (rendered: string) => void): void;
   };

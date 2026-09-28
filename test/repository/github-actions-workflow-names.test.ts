@@ -17,7 +17,7 @@ const CATEGORIES = [
   "Release",
   "Security",
 ] as const;
-const NAME_PATTERN = new RegExp(`^(?:${CATEGORIES.join("|")}) \/ [^/].+$`);
+const NAME_PATTERN = new RegExp(`^(?:${CATEGORIES.join("|")}) / [^/].+$`);
 
 type WorkflowIdentity = {
   name?: unknown;
