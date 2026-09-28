@@ -29,10 +29,7 @@ import {
 import { encodeManagedStartupProfile } from "../../src/lib/onboard/managed-startup/profile.ts";
 import { createManagedStartupRootApplyRequest } from "../../src/lib/onboard/managed-startup/root-apply.ts";
 import type {
-  applyProviderManagedStartupRootRequest,
-  finalizeProviderManagedStartupSharedState,
-  releaseManagedStartupHoldWithRetry,
-  releaseProviderManagedStartupHold,
+  completeProviderManagedStartup,
   RuntimeProviderBundle,
 } from "../../src/lib/onboard/runtime-provider/access.ts";
 import { createDockerRuntimeProviderBundle } from "../../src/lib/onboard/runtime-provider/docker.ts";
@@ -179,10 +176,7 @@ const MANAGED_IMAGE_E2E_ENVIRONMENT_KEYS = [
 
 type OnboardModule = {
   managedWorkloadOnboard: {
-    applyProviderManagedStartupRootRequest: typeof applyProviderManagedStartupRootRequest;
-    finalizeProviderManagedStartupSharedState: typeof finalizeProviderManagedStartupSharedState;
-    releaseManagedStartupHoldWithRetry: typeof releaseManagedStartupHoldWithRetry;
-    releaseProviderManagedStartupHold: typeof releaseProviderManagedStartupHold;
+    completeProviderManagedStartup: typeof completeProviderManagedStartup;
     managedStartupStateRoots(input: {
       readonly agent: ShippedManagedImageAgent;
       readonly sandboxName: string;
@@ -245,47 +239,11 @@ export function resolveManagedImageOnboardModule(onboardImport: unknown): Onboar
     typeof managedWorkload.managedStartupWorkspaceRoot !== "function" ||
     typeof managedWorkload?.prepareManagedStateVolumes !== "function" ||
     typeof managedWorkload.removeManagedStateVolumes !== "function" ||
-    typeof managedWorkload.applyProviderManagedStartupRootRequest !== "function" ||
-    typeof managedWorkload.finalizeProviderManagedStartupSharedState !== "function" ||
-    typeof managedWorkload.releaseManagedStartupHoldWithRetry !== "function" ||
-    typeof managedWorkload.releaseProviderManagedStartupHold !== "function"
+    typeof managedWorkload.completeProviderManagedStartup !== "function"
   ) {
     throw new Error("managed-image onboard module is missing required managed workload operations");
   }
   return candidate as OnboardModule;
-}
-
-export function applyProtectedManagedStartupProfile(
-  operations: Pick<
-    OnboardModule["managedWorkloadOnboard"],
-    | "applyProviderManagedStartupRootRequest"
-    | "finalizeProviderManagedStartupSharedState"
-    | "releaseManagedStartupHoldWithRetry"
-    | "releaseProviderManagedStartupHold"
-  >,
-  input: Parameters<typeof applyProviderManagedStartupRootRequest>[0],
-): void {
-  const transaction = operations.applyProviderManagedStartupRootRequest(input);
-  if (!transaction) return;
-  const owner = {
-    runtimeProvider: input.runtimeProvider,
-    sandboxName: input.sandboxName,
-    sandboxId: input.sandboxId,
-    transaction,
-  };
-  const sharedState = operations.finalizeProviderManagedStartupSharedState({
-    ...owner,
-    supervisorReady: true,
-  });
-  if (!sharedState.supervisorReady || sharedState.failure) {
-    throw sharedState.failure ?? new Error("Managed startup shared-state commit failed.");
-  }
-  operations.releaseManagedStartupHoldWithRetry(() =>
-    operations.releaseProviderManagedStartupHold({
-      ...owner,
-      profileFingerprint: input.request.profileFingerprint,
-    }),
-  );
 }
 
 function cleanupProtectedManagedStateVolumes(input: {
@@ -1315,7 +1273,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
       if (sandbox.status !== 0 || !sandboxId || !launch.managedBootstrapIdentity) {
         throw new Error("Managed startup requires the exact sandbox and bootstrap identities.");
       }
-      applyProtectedManagedStartupProfile(onboard.managedWorkloadOnboard, {
+      onboard.managedWorkloadOnboard.completeProviderManagedStartup({
         runtimeProvider: selectedRuntimeProvider,
         sandboxName: input.sandbox,
         sandboxId,

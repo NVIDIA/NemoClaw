@@ -422,6 +422,52 @@ export function releaseManagedStartupHoldWithRetry(release: () => void): void {
   throw failure;
 }
 
+/** Complete one exact-container profile application, commit, and hold release. */
+export function completeProviderManagedStartup(
+  input: Parameters<typeof applyProviderManagedStartupRootRequest>[0],
+  options: {
+    readonly onPhase?: (phase: "apply" | "commit" | "release") => void;
+    /** Preserve recovery protocol metadata before a later commit or release can fail. */
+    readonly onApplied?: (transaction: ProviderManagedStartupTransaction | null) => void;
+  } = {},
+  operations: {
+    readonly applyProviderManagedStartupRootRequest: typeof applyProviderManagedStartupRootRequest;
+    readonly finalizeProviderManagedStartupSharedState: typeof finalizeProviderManagedStartupSharedState;
+    readonly releaseProviderManagedStartupHold: typeof releaseProviderManagedStartupHold;
+  } = {
+    applyProviderManagedStartupRootRequest,
+    finalizeProviderManagedStartupSharedState,
+    releaseProviderManagedStartupHold,
+  },
+): ProviderManagedStartupTransaction | null {
+  options.onPhase?.("apply");
+  const transaction = operations.applyProviderManagedStartupRootRequest(input);
+  options.onApplied?.(transaction);
+  if (!transaction) return null;
+  const owner = {
+    runtimeProvider: input.runtimeProvider,
+    sandboxName: input.sandboxName,
+    sandboxId: input.sandboxId,
+    transaction,
+  };
+  options.onPhase?.("commit");
+  const sharedState = operations.finalizeProviderManagedStartupSharedState({
+    ...owner,
+    supervisorReady: true,
+  });
+  if (!sharedState.supervisorReady || sharedState.failure) {
+    throw sharedState.failure ?? new Error("Managed startup shared-state commit failed.");
+  }
+  options.onPhase?.("release");
+  releaseManagedStartupHoldWithRetry(() =>
+    operations.releaseProviderManagedStartupHold({
+      ...owner,
+      profileFingerprint: input.request.profileFingerprint,
+    }),
+  );
+  return transaction;
+}
+
 export function releaseProviderManagedStartupHold(input: {
   readonly runtimeProvider: RuntimeProviderBundle;
   readonly sandboxName: string;

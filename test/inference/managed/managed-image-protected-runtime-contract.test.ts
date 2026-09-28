@@ -20,7 +20,6 @@ import {
   withManagedImageLocalInferenceProfile,
 } from "../../../scripts/checks/managed-image-protected-runtime-contract.ts";
 import {
-  applyProtectedManagedStartupProfile,
   assertOpenClawHeartbeatStart,
   createBootstrapCompletionFailureInjection,
   managedOpenClawHeartbeatLogProbe,
@@ -103,8 +102,6 @@ function managedProfileApplyFixture(failure: Error | null = null) {
   };
   const events: string[] = [];
   const operations = {
-    releaseManagedStartupHoldWithRetry:
-      MANAGED_IMAGE_ONBOARD.managedWorkloadOnboard.releaseManagedStartupHoldWithRetry,
     applyProviderManagedStartupRootRequest: vi.fn(() => {
       events.push("apply");
       return transaction;
@@ -129,7 +126,14 @@ function managedProfileApplyFixture(failure: Error | null = null) {
 describe("protected managed-image runtime contract", () => {
   it("applies the selected profile and commits before releasing the exact workload", () => {
     const { input, operations, owner, events } = managedProfileApplyFixture();
-    applyProtectedManagedStartupProfile(operations, input);
+    const onPhase = vi.fn();
+    const transaction = MANAGED_IMAGE_ONBOARD.managedWorkloadOnboard.completeProviderManagedStartup(
+      input,
+      { onPhase },
+      operations,
+    );
+    expect(transaction).toBe(owner.transaction);
+    expect(onPhase.mock.calls).toEqual([["apply"], ["commit"], ["release"]]);
     expect(operations.applyProviderManagedStartupRootRequest).toHaveBeenCalledWith(input);
     expect(operations.finalizeProviderManagedStartupSharedState).toHaveBeenCalledWith({
       ...owner,
@@ -144,8 +148,16 @@ describe("protected managed-image runtime contract", () => {
 
   it("keeps the workload held when profile commit fails", () => {
     const failure = new Error("shared-state commit failed");
-    const { input, operations, events } = managedProfileApplyFixture(failure);
-    expect(() => applyProtectedManagedStartupProfile(operations, input)).toThrow(failure);
+    const { input, operations, owner, events } = managedProfileApplyFixture(failure);
+    const onApplied = vi.fn();
+    expect(() =>
+      MANAGED_IMAGE_ONBOARD.managedWorkloadOnboard.completeProviderManagedStartup(
+        input,
+        { onApplied },
+        operations,
+      ),
+    ).toThrow(failure);
+    expect(onApplied).toHaveBeenCalledWith(owner.transaction);
     expect(operations.releaseProviderManagedStartupHold).not.toHaveBeenCalled();
     expect(events).toEqual(["apply", "commit"]);
   });
@@ -156,7 +168,11 @@ describe("protected managed-image runtime contract", () => {
       events.push("release");
       throw new Error("release unavailable");
     });
-    applyProtectedManagedStartupProfile(operations, input);
+    MANAGED_IMAGE_ONBOARD.managedWorkloadOnboard.completeProviderManagedStartup(
+      input,
+      {},
+      operations,
+    );
     const release = { ...owner, profileFingerprint: input.request.profileFingerprint };
     expect(operations.releaseProviderManagedStartupHold.mock.calls).toEqual([[release], [release]]);
     expect(events).toEqual(["apply", "commit", "release", "release"]);
@@ -385,18 +401,9 @@ describe("protected managed-image runtime contract", () => {
     expect(MANAGED_IMAGE_ONBOARD.managedWorkloadOnboard.removeManagedStateVolumes).toBeTypeOf(
       "function",
     );
-    expect(
-      MANAGED_IMAGE_ONBOARD.managedWorkloadOnboard.applyProviderManagedStartupRootRequest,
-    ).toBeTypeOf("function");
-    expect(
-      MANAGED_IMAGE_ONBOARD.managedWorkloadOnboard.finalizeProviderManagedStartupSharedState,
-    ).toBeTypeOf("function");
-    expect(
-      MANAGED_IMAGE_ONBOARD.managedWorkloadOnboard.releaseProviderManagedStartupHold,
-    ).toBeTypeOf("function");
-    expect(
-      MANAGED_IMAGE_ONBOARD.managedWorkloadOnboard.releaseManagedStartupHoldWithRetry,
-    ).toBeTypeOf("function");
+    expect(MANAGED_IMAGE_ONBOARD.managedWorkloadOnboard.completeProviderManagedStartup).toBeTypeOf(
+      "function",
+    );
   });
 
   it("rejects a missing protected OpenShell operation with a precise contract error (#8759)", () => {
