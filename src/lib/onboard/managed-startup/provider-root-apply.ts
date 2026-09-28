@@ -23,6 +23,7 @@ import {
 const FULL_CONTAINER_ID_RE = /^[a-f0-9]{64}$/u;
 const IMMUTABLE_IMAGE_ID_RE = /^(?:sha256:)?[a-f0-9]{64}$/u;
 const ROOT_APPLY_TIMEOUT_MS = 300_000;
+const MANAGED_STARTUP_HOLD_RELEASE_ATTEMPTS = 3;
 const FIXED_ROOT_ENV = [
   "HOME=/root",
   "LANG=C.UTF-8",
@@ -405,6 +406,20 @@ export function finalizeProviderManagedStartupSharedState(input: {
     throw new Error(`Exact in-sandbox managed-startup rollback failed: ${commandDetail(rollback)}`);
   }
   return { supervisorReady: false, failure: null };
+}
+
+/** Retry the exact-container hold release before entering retained recovery. */
+export function releaseManagedStartupHoldWithRetry(release: () => void): void {
+  let failure: unknown;
+  for (let attempt = 0; attempt < MANAGED_STARTUP_HOLD_RELEASE_ATTEMPTS; attempt += 1) {
+    try {
+      release();
+      return;
+    } catch (error) {
+      failure = error;
+    }
+  }
+  throw failure;
 }
 
 export function releaseProviderManagedStartupHold(input: {

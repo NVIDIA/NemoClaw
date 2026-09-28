@@ -28,6 +28,7 @@ import {
 export {
   applyProviderManagedStartupRootRequest,
   finalizeProviderManagedStartupSharedState,
+  releaseManagedStartupHoldWithRetry,
   releaseProviderManagedStartupHold,
   refreshManagedStartupCorporateCaTrust,
   type ProviderManagedStartupTransaction,

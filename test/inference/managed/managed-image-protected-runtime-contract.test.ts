@@ -103,6 +103,8 @@ function managedProfileApplyFixture(failure: Error | null = null) {
   };
   const events: string[] = [];
   const operations = {
+    releaseManagedStartupHoldWithRetry:
+      MANAGED_IMAGE_ONBOARD.managedWorkloadOnboard.releaseManagedStartupHoldWithRetry,
     applyProviderManagedStartupRootRequest: vi.fn(() => {
       events.push("apply");
       return transaction;
@@ -146,6 +148,18 @@ describe("protected managed-image runtime contract", () => {
     expect(() => applyProtectedManagedStartupProfile(operations, input)).toThrow(failure);
     expect(operations.releaseProviderManagedStartupHold).not.toHaveBeenCalled();
     expect(events).toEqual(["apply", "commit"]);
+  });
+
+  it("reuses production release retry without repeating profile application or commit", () => {
+    const { input, operations, owner, events } = managedProfileApplyFixture();
+    operations.releaseProviderManagedStartupHold.mockImplementationOnce(() => {
+      events.push("release");
+      throw new Error("release unavailable");
+    });
+    applyProtectedManagedStartupProfile(operations, input);
+    const release = { ...owner, profileFingerprint: input.request.profileFingerprint };
+    expect(operations.releaseProviderManagedStartupHold.mock.calls).toEqual([[release], [release]]);
+    expect(events).toEqual(["apply", "commit", "release", "release"]);
   });
 
   it("retains redacted create-client failure evidence without authorizing a retry", async () => {
@@ -364,6 +378,7 @@ describe("protected managed-image runtime contract", () => {
   });
 
   it("loads managed workload operations through the existing onboard boundary", () => {
+    expect(MANAGED_IMAGE_ONBOARD.createForwardPortObserver).toBeTypeOf("function");
     expect(MANAGED_IMAGE_ONBOARD.managedWorkloadOnboard.prepareManagedStateVolumes).toBeTypeOf(
       "function",
     );
@@ -379,6 +394,9 @@ describe("protected managed-image runtime contract", () => {
     expect(
       MANAGED_IMAGE_ONBOARD.managedWorkloadOnboard.releaseProviderManagedStartupHold,
     ).toBeTypeOf("function");
+    expect(
+      MANAGED_IMAGE_ONBOARD.managedWorkloadOnboard.releaseManagedStartupHoldWithRetry,
+    ).toBeTypeOf("function");
   });
 
   it("rejects a missing protected OpenShell operation with a precise contract error (#8759)", () => {
@@ -389,6 +407,7 @@ describe("protected managed-image runtime contract", () => {
           runCaptureOpenshell: () => "",
           sleepSeconds: () => undefined,
           startGatewayForRecovery: async () => undefined,
+          createForwardPortObserver: () => async () => [],
         },
       }),
     ).toThrow("managed-image onboard module is missing required operation(s): runOpenshell");

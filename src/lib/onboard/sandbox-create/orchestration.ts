@@ -1050,22 +1050,6 @@ export async function finalizeCreatedSandboxBeforeHermesCredentialReconciliation
   return registration;
 }
 
-const MANAGED_STARTUP_HOLD_RELEASE_ATTEMPTS = 3;
-
-/** Retry the exact-container hold release before entering retained recovery. */
-export function releaseManagedStartupHoldWithRetry(release: () => void): void {
-  let failure: unknown;
-  for (let attempt = 0; attempt < MANAGED_STARTUP_HOLD_RELEASE_ATTEMPTS; attempt += 1) {
-    try {
-      release();
-      return;
-    } catch (error) {
-      failure = error;
-    }
-  }
-  throw failure;
-}
-
 export async function activateManagedStartupCorporateCaTrustBeforeIdentityRevalidation(input: {
   readonly corporateCaB64: string | null;
   readonly sandboxName: string;
@@ -3204,7 +3188,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                     }
                     console.log("  ✓ Committed managed startup shared state");
                     try {
-                      releaseManagedStartupHoldWithRetry(() =>
+                      managedWorkloadOnboard.releaseManagedStartupHoldWithRetry(() =>
                         managedWorkloadOnboard.releaseProviderManagedStartupHold({
                           runtimeProvider: managedStartupRuntimeProvider,
                           sandboxName,

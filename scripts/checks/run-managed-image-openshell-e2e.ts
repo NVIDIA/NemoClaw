@@ -7,7 +7,8 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { resolveAgent } from "../../src/lib/agent/onboard.ts";
+import { reserveCreateSandboxHermesApiPort, resolveAgent } from "../../src/lib/agent/onboard.ts";
+import type { OpenShellForwardPortObserver } from "../../src/lib/onboard/dashboard-port.ts";
 import { parseOpenShellSandboxId } from "../../src/lib/adapters/openshell/sandbox-identity.ts";
 import { createCliOpenShellSandboxCommandExecutor } from "../../src/lib/adapters/openshell/sandbox-command-cli.ts";
 import { createCliOpenShellSandboxObserverFromRunner } from "../../src/lib/adapters/openshell/sandbox-observer-cli.ts";
@@ -30,6 +31,7 @@ import { createManagedStartupRootApplyRequest } from "../../src/lib/onboard/mana
 import type {
   applyProviderManagedStartupRootRequest,
   finalizeProviderManagedStartupSharedState,
+  releaseManagedStartupHoldWithRetry,
   releaseProviderManagedStartupHold,
   RuntimeProviderBundle,
 } from "../../src/lib/onboard/runtime-provider/access.ts";
@@ -179,6 +181,7 @@ type OnboardModule = {
   managedWorkloadOnboard: {
     applyProviderManagedStartupRootRequest: typeof applyProviderManagedStartupRootRequest;
     finalizeProviderManagedStartupSharedState: typeof finalizeProviderManagedStartupSharedState;
+    releaseManagedStartupHoldWithRetry: typeof releaseManagedStartupHoldWithRetry;
     releaseProviderManagedStartupHold: typeof releaseProviderManagedStartupHold;
     managedStartupStateRoots(input: {
       readonly agent: ShippedManagedImageAgent;
@@ -203,6 +206,7 @@ type OnboardModule = {
   runCaptureOpenshell(args: string[], opts?: Record<string, unknown>): string;
   sleepSeconds(seconds: number): void;
   startGatewayForRecovery(options: { gatewayName: string; gatewayPort: number }): Promise<void>;
+  createForwardPortObserver(sandboxName: string, kind: "loopback"): OpenShellForwardPortObserver;
 };
 
 const REQUIRED_ONBOARD_OPERATIONS = [
@@ -211,6 +215,7 @@ const REQUIRED_ONBOARD_OPERATIONS = [
   "runCaptureOpenshell",
   "sleepSeconds",
   "startGatewayForRecovery",
+  "createForwardPortObserver",
 ] as const satisfies readonly (keyof OnboardModule)[];
 
 export function resolveManagedImageOnboardModule(onboardImport: unknown): OnboardModule {
@@ -242,6 +247,7 @@ export function resolveManagedImageOnboardModule(onboardImport: unknown): Onboar
     typeof managedWorkload.removeManagedStateVolumes !== "function" ||
     typeof managedWorkload.applyProviderManagedStartupRootRequest !== "function" ||
     typeof managedWorkload.finalizeProviderManagedStartupSharedState !== "function" ||
+    typeof managedWorkload.releaseManagedStartupHoldWithRetry !== "function" ||
     typeof managedWorkload.releaseProviderManagedStartupHold !== "function"
   ) {
     throw new Error("managed-image onboard module is missing required managed workload operations");
@@ -254,6 +260,7 @@ export function applyProtectedManagedStartupProfile(
     OnboardModule["managedWorkloadOnboard"],
     | "applyProviderManagedStartupRootRequest"
     | "finalizeProviderManagedStartupSharedState"
+    | "releaseManagedStartupHoldWithRetry"
     | "releaseProviderManagedStartupHold"
   >,
   input: Parameters<typeof applyProviderManagedStartupRootRequest>[0],
@@ -273,10 +280,12 @@ export function applyProtectedManagedStartupProfile(
   if (!sharedState.supervisorReady || sharedState.failure) {
     throw sharedState.failure ?? new Error("Managed startup shared-state commit failed.");
   }
-  operations.releaseProviderManagedStartupHold({
-    ...owner,
-    profileFingerprint: input.request.profileFingerprint,
-  });
+  operations.releaseManagedStartupHoldWithRetry(() =>
+    operations.releaseProviderManagedStartupHold({
+      ...owner,
+      profileFingerprint: input.request.profileFingerprint,
+    }),
+  );
 }
 
 function cleanupProtectedManagedStateVolumes(input: {
@@ -1063,6 +1072,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
   process.env.PATH = `${path.join(os.homedir(), ".local", "bin")}:${process.env.PATH ?? ""}`;
 
   let onboard: OnboardModule | null = null;
+  let hermesApiPort: Awaited<ReturnType<typeof reserveCreateSandboxHermesApiPort>> | null = null;
   let ownedContainerId: string | null = null;
   let initialSandboxPolicy: InitialSandboxPolicy | null = null;
   let runtimeProvider: RuntimeProviderBundle | null = null;
@@ -1090,6 +1100,14 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
       gatewayPort: GATEWAY_PORT,
     });
     configureLocalInferenceRoute(onboard, input, process.env);
+    if (input.agent === "hermes") {
+      // Reserve the fixed API port used by this fixture's in-sandbox health probe.
+      hermesApiPort = await reserveCreateSandboxHermesApiPort({
+        sandboxName: input.sandbox,
+        env: { NEMOCLAW_HERMES_API_PORT: "8642" },
+        observeForwardPorts: onboard.createForwardPortObserver(input.sandbox, "loopback"),
+      });
+    }
 
     const baseProfile = managedStartupE2eProfile(input.agent, false, true, true);
     const protectedProfile =
@@ -1158,6 +1176,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
       extraPlaceholderKeys: [],
       getDashboardForwardPort: () => "0",
       hermesDashboardState: { config: null, enabled: false },
+      hermesApiPort: hermesApiPort?.effectivePort,
       manageDashboard: false,
       openshellShellCommand: (args: string[]) => args.map((arg) => JSON.stringify(arg)).join(" "),
       openshellArgv: onboard.openshellArgv,
@@ -1361,6 +1380,13 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
     }
   } finally {
     process.exit = exit;
+    try {
+      await hermesApiPort?.reservation?.release();
+    } catch (error) {
+      cleanupErrors.push(
+        `Hermes API port reservation cleanup failed: ${managedImageFailureDetail(error)}`,
+      );
+    }
     if (onboard) {
       commandResult(
         onboard.openshellArgv(["sandbox", "delete", input.sandbox]),
