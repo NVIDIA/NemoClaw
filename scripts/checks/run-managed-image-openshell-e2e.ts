@@ -1109,6 +1109,13 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
       chatUiUrl: "",
       createArgs,
       env: {},
+      // The host CLI must find the isolated gateway without changing fixture configuration.
+      buildEnv: () =>
+        Object.fromEntries(
+          Object.entries(process.env).filter(
+            (entry): entry is [string, string] => entry[1] !== undefined,
+          ),
+        ),
       extraPlaceholderKeys: [],
       getDashboardForwardPort: () => "0",
       hermesDashboardState: { config: null, enabled: false },
