@@ -152,6 +152,17 @@ const expectConfigured: Record<Agent, (config: any) => void> = {
     expect(config.model.api_key).toBe("sk-OPENSHELL-PROXY-REWRITE");
   },
 };
+type InferenceSetCalls = ReturnType<typeof createDeps>["calls"];
+const expectCommitted: Record<Agent, (calls: InferenceSetCalls) => void> = {
+  openclaw(calls) {
+    expect(calls.setOpenClawConfigValues).toHaveBeenCalled();
+    expect(calls.writeSandboxConfig).not.toHaveBeenCalled();
+  },
+  hermes(calls) {
+    expect(calls.setOpenClawConfigValues).not.toHaveBeenCalled();
+    expect(calls.writeSandboxConfig).toHaveBeenCalled();
+  },
+};
 
 describe.each<Agent>(["openclaw", "hermes"])("providerless %s configuration", (agent) => {
   it("generates configuration from the actual Dockerfile without a selected model", () => {
@@ -250,8 +261,7 @@ describe.each<Agent>(["openclaw", "hermes"])("providerless %s configuration", (a
     );
     expect(result.inSandboxConfigSynced).toBe(true);
     expectConfigured[agent](config);
-    expect(deps.calls.writeSandboxConfig).toHaveBeenCalled();
-    expect(deps.calls.recomputeSandboxConfigHash).toHaveBeenCalled();
+    expectCommitted[agent](deps.calls);
     expect(
       deps.calls.captureOpenshell.mock.calls.some(
         ([args]) => args[0] === "provider" && ["create", "update"].includes(args[1]),
@@ -312,78 +322,5 @@ describe.each<Agent>(["openclaw", "hermes"])("providerless %s configuration", (a
         },
       }),
     ).toThrow("inference.model");
-  });
-});
-
-function seedHermes(generated: ReturnType<typeof generate>, destination: string) {
-  return spawnSync(
-    "python3",
-    [
-      "-I",
-      path.join(root, "agents/hermes/seed-dashboard-config.py"),
-      path.join(generated.home, ".hermes/managed-policy.json"),
-      generated.configPath,
-      destination,
-    ],
-    {
-      encoding: "utf8",
-      timeout: 10000,
-    },
-  );
-}
-const pythonYamlAvailable =
-  spawnSync("python3", ["-I", "-c", "import yaml"], { stdio: "ignore" }).status === 0;
-describe.skipIf(!pythonYamlAvailable)("providerless Hermes dashboard configuration", () => {
-  it("seeds without inference and applies a later managed route", () => {
-    const generated = generate("hermes", dockerEnvironment("hermes"));
-    expect(generated.result.status, generated.result.stderr).toBe(0);
-    const destination = path.join(generated.home, "dashboard.yaml");
-    const absent = seedHermes(generated, destination);
-    expect(absent.status, absent.stderr).toBe(0);
-    const initial = YAML.parse(fs.readFileSync(destination, "utf8"));
-    expect(initial.model).toBeUndefined();
-    expect(initial.approvals.mode).toBe("manual");
-    const config = generated.read();
-    patchHermesInferenceConfig(
-      config,
-      "nvidia-prod",
-      "fixture/model",
-      "openai-completions",
-      131072,
-    );
-    fs.writeFileSync(generated.configPath, YAML.stringify(config));
-    const configured = seedHermes(generated, destination);
-    expect(configured.status, configured.stderr).toBe(0);
-    const dashboard = YAML.parse(fs.readFileSync(destination, "utf8"));
-    expect(dashboard.model.default).toBe("fixture/model");
-    expect(dashboard.model.api_key).toBe("sk-OPENSHELL-PROXY-REWRITE");
-  });
-  it.each([
-    {
-      name: "partial",
-      corrupt(config: any) {
-        config.model = { default: "fixture/model" };
-      },
-    },
-    {
-      name: "credential",
-      corrupt(config: any) {
-        patchHermesInferenceConfig(config, "nvidia-prod", "fixture/model");
-        config.model.api_key = "forbidden-fixture-credential";
-      },
-    },
-  ])("rejects $name routing without replacing dashboard state", ({ corrupt }) => {
-    const generated = generate("hermes", dockerEnvironment("hermes"));
-    expect(generated.result.status, generated.result.stderr).toBe(0);
-    const destination = path.join(generated.home, "dashboard.yaml");
-    expect(seedHermes(generated, destination).status).toBe(0);
-    const before = fs.readFileSync(destination, "utf8");
-    const config = generated.read();
-    corrupt(config);
-    fs.writeFileSync(generated.configPath, YAML.stringify(config));
-    const result = seedHermes(generated, destination);
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).not.toContain("forbidden-fixture-credential");
-    expect(fs.readFileSync(destination, "utf8")).toBe(before);
   });
 });

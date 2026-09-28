@@ -1080,7 +1080,7 @@ async function addMcpBridgeUnlocked(
         throw error;
       }
     }
-    await reloadOpenClawGatewayAfterMcpMutation(sandboxName, [adapter]);
+    await reloadOpenClawGatewayAfterMcpMutation(sandboxName, [adapter], providerRuntimeSelection);
   } catch (error) {
     if (!rollbackAuthorized) throw error;
     const rollbackProviderInspection =

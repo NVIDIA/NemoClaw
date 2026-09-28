@@ -14,6 +14,7 @@ import fs from "node:fs";
 import { testTimeoutOptions } from "../../helpers/timeouts";
 import { test } from "../fixtures/e2e-test.ts";
 import { assertStockManagedImageReceipt } from "../fixtures/managed-image-receipt.ts";
+import { captureOpenClawOnboardFailure } from "../fixtures/openclaw-onboard-diagnostics.ts";
 import {
   accountBool,
   accountString,
@@ -164,6 +165,12 @@ test(
       skip("NVIDIA endpoint validation was rate-limited before messaging-provider assertions ran");
       return;
     }
+    await captureOpenClawOnboardFailure(install, sandbox, {
+      sandboxName: SANDBOX_NAME,
+      artifactPrefix: "messaging-onboard",
+      env: state.env,
+      redactionValues,
+    });
     expectExitZero(install, "M0: install.sh completed");
     assertStockManagedImageReceipt({
       environment: state.env,

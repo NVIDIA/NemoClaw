@@ -43,7 +43,7 @@ function runTests(...tests: string[]): () => string[] {
 export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern:
-      /(?:^|\/)(?:scripts\/generate-openclaw-config\.mts|agents\/hermes\/(?:generate-config\.ts|config\/[^/]+\.ts|managed_policy\.py|seed-dashboard-config\.py))$/,
+      /(?:^|\/)(?:scripts\/generate-openclaw-config\.mts|agents\/hermes\/(?:generate-config\.ts|config\/[^/]+\.ts|managed_policy\.py))$/,
     testsToRun: runTests("test/generation/providerless-agent-config.test.ts"),
   },
 

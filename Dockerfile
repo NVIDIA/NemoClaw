@@ -657,7 +657,6 @@ FROM scratch AS openclaw-patch-payload
 
 COPY scripts/patch-openclaw-tool-catalog.mts /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts
 COPY scripts/lib/patch-openclaw-npm12-pack-json.mts /usr/local/lib/nemoclaw/npm12.mts
-COPY scripts/patch-openclaw-chat-send.mts /usr/local/lib/nemoclaw/patch-openclaw-chat-send.mts
 COPY scripts/lib/patch-openclaw-container-restart.mts /usr/local/lib/nemoclaw/patch-openclaw-container-restart.mts
 COPY scripts/patch-openclaw-mcp-npx.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-npx.mts
 COPY scripts/patch-openclaw-mcp-reliability.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-reliability.mts
@@ -678,9 +677,7 @@ COPY scripts/lib/entrypoint-env-wrapper.sh /usr/local/lib/nemoclaw/entrypoint-en
 COPY scripts/lib/sandbox-rlimits.sh /usr/local/lib/nemoclaw/sandbox-rlimits.sh
 COPY scripts/lib/openclaw_device_approval_policy.py /usr/local/lib/nemoclaw/openclaw_device_approval_policy.py
 COPY scripts/lib/openclaw_pairing_state.py /usr/local/lib/nemoclaw/openclaw_pairing_state.py
-COPY scripts/lib/normalize_mutable_config_perms.py /usr/local/lib/nemoclaw/normalize_mutable_config_perms.py
 COPY scripts/lib/refresh-openclaw-wechat-placeholder.py /usr/local/lib/nemoclaw/refresh-openclaw-wechat-placeholder.py
-COPY scripts/openclaw-config-guard.py /usr/local/lib/nemoclaw/openclaw-config-guard.py
 COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start
 COPY scripts/managed-startup-hold.sh /usr/local/bin/nemoclaw-managed-startup-hold
 COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/
@@ -695,8 +692,7 @@ COPY --from=mcp-tool-discovery-runtime /opt/mcp-tool-discovery-runtime/dist/ /us
 
 # Stage 3: Runtime image — pull cached base from GHCR
 # hadolint ignore=DL3006
-FROM ${BASE_IMAGE}
-ARG BASE_IMAGE
+FROM ${BASE_IMAGE} AS openclaw-system
 # OpenShell blocks the link-local EC2 Instance Metadata Service. Keep AWS SDK
 # credential chains from attempting an impossible metadata discovery path.
 ENV AWS_EC2_METADATA_DISABLED=true
@@ -707,29 +703,6 @@ ENV AWS_EC2_METADATA_DISABLED=true
 # path removes this one instruction when it has just built Dockerfile.base from
 # the same Node image, avoiding a redundant 125 MB layer in that local-only case.
 COPY --from=builder /usr/local/bin/node /usr/local/bin/node
-
-ARG OPENCLAW_VERSION=2026.9.1
-ARG OPENCLAW_2026_9_1_INTEGRITY=sha512-0Ve0631CdgkJDwd4NNG1BawIdF5yCL2sO+Tts8amStw+H6vKURTj0K4rOa4+hFpJk1Dnw5LyKl5twzwX1VtA2w==
-ARG OPENCLAW_2026_9_1_TARBALL=https://registry.npmjs.org/openclaw/-/openclaw-2026.9.1.tgz
-ARG OPENCLAW_DIAGNOSTICS_OTEL_2026_9_1_INTEGRITY=sha512-3MWLli9L6HTVdrjqHmwOvNvIr6emsnuNQe4iE2sDqb8E5wn4Vq1rcsz+InL1YFudbStr089ZtS0tNAQ6qU+tnA==
-ARG OPENCLAW_BRAVE_PLUGIN_2026_9_1_INTEGRITY=sha512-4+j+eQTToV3k7Cb25MUL6h2uL8cJYyuLytfpd/sJK/HjR43dgKBqKpBsb1+I3w1Jr6PLpnjSf6/I3//3K0cdnA==
-# E2E-only legacy fixture pins used by stale-sandbox/rebuild tests that
-# intentionally build an older OpenClaw base image before proving upgrade
-# behavior. Production workflows reject the fixture flag, both legacy version
-# values, and these four pin overrides before docker build. Only explicit
-# fixture paths may select them; retirement is tracked in #5896 section 9.
-ARG NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW=0
-ARG OPENCLAW_2026_3_11_INTEGRITY=sha512-bxwiBmHPakwfpY5tqC9lrV5TCu5PKf0c1bHNc3nhrb+pqKcPEWV4zOjDVFLQUHr98ihgWA+3pacy4b3LQ8wduQ==
-ARG OPENCLAW_2026_3_11_TARBALL=https://registry.npmjs.org/openclaw/-/openclaw-2026.3.11.tgz
-ARG OPENCLAW_2026_4_24_INTEGRITY=sha512-W6u4XeIIP4+uG4DYV9G3JeS6QNuKwfhQIej1GIoL4BdcnUFgrnB8kHYNXL3MxiHRKuhZB9OYwUMGs8jKFZR/Vg==
-ARG OPENCLAW_2026_4_24_TARBALL=https://registry.npmjs.org/openclaw/-/openclaw-2026.4.24.tgz
-# Keep the mcporter version, integrity, runtime lock, license, and advisory baseline
-# synchronized with agents/openclaw/dependency-review.md.
-ARG MCPORTER_VERSION=0.7.3
-ARG MCPORTER_0_7_3_INTEGRITY=sha512-egoPVYqTnWb3NjRIxo+xc8OrAI0dlPrJm9pAiZx0pImuNIV5rKhGtTnIfH/Y1ldGPVu74ibj3KR5c9U/QSdQFA==
-ARG MCPORTER_0_7_3_TARBALL=https://registry.npmjs.org/mcporter/-/mcporter-0.7.3.tgz
-ARG NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256=
-ARG NEMOCLAW_MCPORTER_AUDIT_POLICY_RESULT_SHA256=
 
 # Preserve existing parent metadata while creating one final-image layer.
 COPY --from=openclaw-dependency-payload / /
@@ -843,8 +816,31 @@ RUN set -eu; \
     command -v tmux >/dev/null
 
 
-# Install runtime dependencies before copying mutable build outputs so source
-# and blueprint changes keep the production dependency layer cached.
+# Rebuild from prepared system inputs before copying locked npm seeds.
+FROM openclaw-system
+ARG BASE_IMAGE
+ARG OPENCLAW_VERSION=2026.9.1
+ARG OPENCLAW_2026_9_1_INTEGRITY=sha512-0Ve0631CdgkJDwd4NNG1BawIdF5yCL2sO+Tts8amStw+H6vKURTj0K4rOa4+hFpJk1Dnw5LyKl5twzwX1VtA2w==
+ARG OPENCLAW_2026_9_1_TARBALL=https://registry.npmjs.org/openclaw/-/openclaw-2026.9.1.tgz
+ARG OPENCLAW_DIAGNOSTICS_OTEL_2026_9_1_INTEGRITY=sha512-3MWLli9L6HTVdrjqHmwOvNvIr6emsnuNQe4iE2sDqb8E5wn4Vq1rcsz+InL1YFudbStr089ZtS0tNAQ6qU+tnA==
+ARG OPENCLAW_BRAVE_PLUGIN_2026_9_1_INTEGRITY=sha512-4+j+eQTToV3k7Cb25MUL6h2uL8cJYyuLytfpd/sJK/HjR43dgKBqKpBsb1+I3w1Jr6PLpnjSf6/I3//3K0cdnA==
+# E2E-only legacy fixture pins used by stale-sandbox/rebuild tests that
+# intentionally build an older OpenClaw base image before proving upgrade
+# behavior. Production workflows reject the fixture flag, both legacy version
+# values, and these four pin overrides before docker build. Only explicit
+# fixture paths may select them; retirement is tracked in #5896 section 9.
+ARG NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW=0
+ARG OPENCLAW_2026_3_11_INTEGRITY=sha512-bxwiBmHPakwfpY5tqC9lrV5TCu5PKf0c1bHNc3nhrb+pqKcPEWV4zOjDVFLQUHr98ihgWA+3pacy4b3LQ8wduQ==
+ARG OPENCLAW_2026_3_11_TARBALL=https://registry.npmjs.org/openclaw/-/openclaw-2026.3.11.tgz
+ARG OPENCLAW_2026_4_24_INTEGRITY=sha512-W6u4XeIIP4+uG4DYV9G3JeS6QNuKwfhQIej1GIoL4BdcnUFgrnB8kHYNXL3MxiHRKuhZB9OYwUMGs8jKFZR/Vg==
+ARG OPENCLAW_2026_4_24_TARBALL=https://registry.npmjs.org/openclaw/-/openclaw-2026.4.24.tgz
+# Keep the mcporter version, integrity, runtime lock, license, and advisory baseline
+# synchronized with agents/openclaw/dependency-review.md.
+ARG MCPORTER_VERSION=0.7.3
+ARG MCPORTER_0_7_3_INTEGRITY=sha512-egoPVYqTnWb3NjRIxo+xc8OrAI0dlPrJm9pAiZx0pImuNIV5rKhGtTnIfH/Y1ldGPVu74ibj3KR5c9U/QSdQFA==
+ARG MCPORTER_0_7_3_TARBALL=https://registry.npmjs.org/mcporter/-/mcporter-0.7.3.tgz
+ARG NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256=
+ARG NEMOCLAW_MCPORTER_AUDIT_POLICY_RESULT_SHA256=
 COPY nemoclaw/package.json nemoclaw/package-lock.json /opt/nemoclaw/
 COPY tools/mcp-tool-discovery-runtime/npm-ci-locked.sh /usr/local/lib/nemoclaw-build-tools/npm-ci-locked.sh
 COPY tools/mcp-tool-discovery-runtime/npm-cache-seed/ /usr/local/lib/nemoclaw-build-tools/npm-cache-seed/
@@ -893,7 +889,6 @@ COPY --from=openclaw-patch-payload / /
 
 RUN chmod 755 /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts \
         /usr/local/lib/nemoclaw/npm12.mts \
-        /usr/local/lib/nemoclaw/patch-openclaw-chat-send.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-container-restart.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-mcp-npx.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-mcp-reliability.mts \
@@ -1465,13 +1460,6 @@ RUN set -eu; \
     if grep -REq --include='*.js' 'DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = (1e4|15e3)' "$OC_DIST"; then echo "ERROR: Patch 5 left a short handshake-timeout constant" >&2; exit 1; fi; \
     if ! grep -REq --include='*.js' 'DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = 6e4' "$OC_DIST"; then echo "ERROR: Patch 5 did not find patched 6e4 constant" >&2; exit 1; fi
 
-# Patch OpenClaw chat.send gateway behavior: preserve lineage and suppress empty finals.
-# Remove when upstream openclaw/openclaw#70164 and #50298 are fixed,
-# or when NemoClaw no longer ships an affected OpenClaw version.
-# hadolint ignore=DL3059
-RUN node /usr/local/lib/nemoclaw/patch-openclaw-chat-send.mts \
-    /usr/local/lib/node_modules/openclaw/dist
-
 # Native OpenClaw restart must reload updated ESM plugins in OpenShell sandboxes.
 # Remove this bridge when upstream container restart refreshes the module graph.
 # hadolint ignore=DL3059
@@ -1760,7 +1748,10 @@ COPY scripts/openclaw-cli-wrapper.sh /usr/local/lib/nemoclaw/openclaw-cli-wrappe
 RUN rm -f /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/.bin/openclaw \
     && install -o root -g root -m 0755 \
         /usr/local/lib/nemoclaw/openclaw-cli-wrapper.sh \
-        /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/.bin/openclaw
+        /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/.bin/openclaw \
+    && node -e 'const JSON5=require("/usr/local/lib/node_modules/openclaw/node_modules/json5"); if (typeof JSON5.parse !== "function") process.exit(1)' \
+    && openclaw_json5_unsafe="$(find -L /usr/local/lib/node_modules/openclaw/node_modules/json5 \( ! -user root -o -perm /022 \) -print -quit)" \
+    && test -z "$openclaw_json5_unsafe"
 
 WORKDIR /sandbox
 RUN test "$(id -u sandbox):$(id -g sandbox):$(pwd)" = "998:998:/sandbox" \
@@ -2009,13 +2000,10 @@ RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \
         /scripts/validate-openclaw-tool-search.mts /src /src/lib \
     && chmod 444 /src/lib/*.ts \
         /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh \
-    && chown root:root /usr/local/lib/nemoclaw/openclaw-config-guard.py \
     && chmod 444 /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh \
         /usr/local/lib/nemoclaw/sandbox-rlimits.sh \
     && chmod 644 /usr/local/lib/nemoclaw/openclaw_device_approval_policy.py \
         /usr/local/lib/nemoclaw/openclaw_pairing_state.py \
-    && chmod 555 /usr/local/lib/nemoclaw/openclaw-config-guard.py \
-        /usr/local/lib/nemoclaw/normalize_mutable_config_perms.py \
     && if [ -d /usr/local/lib/nemoclaw/preloads-compiled-channels ]; then \
         find /usr/local/lib/nemoclaw/preloads-compiled-channels -path '*/runtime/*.js' -type f \
             -exec sh -c 'for file do cp "$file" "/usr/local/lib/nemoclaw/preloads/$(basename "$file")"; done' sh {} +; \
@@ -2280,10 +2268,11 @@ RUN if id gateway >/dev/null 2>&1 && id sandbox >/dev/null 2>&1; then \
         fi; \
     fi
 
-# Keep the image readable to the root entrypoint after capabilities are dropped.
-# Current base images already have a unified .openclaw tree. Avoid walking
-# plugin-runtime-deps on every build; only fall back to the broad repair when
-# the stale .openclaw-data migration path actually ran.
+# Keep the image readable to the root entrypoint. Current bases have a unified .openclaw tree.
+# Avoid walking plugin-runtime-deps on every build; only fall back to broad repair when
+# the stale .openclaw-data migration path actually ran. The sandbox-user image
+# starts with OpenClaw's native private modes. Root-mode images retain shared
+# access for the separate gateway identity.
 RUN set -eu; \
     if [ -e /tmp/nemoclaw-legacy-openclaw-layout ]; then \
         chown -R sandbox:sandbox /sandbox/.openclaw; \
@@ -2295,7 +2284,13 @@ RUN set -eu; \
             /sandbox/.openclaw \
             /sandbox/.openclaw/openclaw.json \
             /sandbox/.openclaw/plugin-runtime-deps; \
-        chmod 2770 /sandbox/.openclaw /sandbox/.openclaw/plugin-runtime-deps; \
+    fi; \
+    chmod 2770 /sandbox/.openclaw/plugin-runtime-deps; \
+    if [ "$NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER" = "sandbox" ]; then \
+        chmod 700 /sandbox/.openclaw; \
+        chmod 600 /sandbox/.openclaw/openclaw.json; \
+    else \
+        chmod 2770 /sandbox/.openclaw; \
         chmod 660 /sandbox/.openclaw/openclaw.json; \
     fi
 
@@ -2338,11 +2333,6 @@ RUN chmod 444 /usr/local/lib/nemoclaw/sandbox-rlimits.sh \
     && mv /etc/bash.bashrc.new /etc/bash.bashrc \
     && chmod 444 /etc/bash.bashrc
 
-# Pin config hash at build time so the entrypoint can verify integrity.
-RUN sha256sum /sandbox/.openclaw/openclaw.json > /sandbox/.openclaw/.config-hash \
-    && chmod 660 /sandbox/.openclaw/.config-hash \
-    && chown sandbox:sandbox /sandbox/.openclaw/.config-hash
-
 # DAC-protect .nemoclaw directory: /sandbox/.nemoclaw is Landlock read_write
 # (for plugin state/config), but the parent and blueprints are immutable at
 # runtime. Root ownership on the parent prevents the agent from renaming or
@@ -2370,7 +2360,7 @@ RUN chown root:root /sandbox/.nemoclaw \
 RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]; then \
         chmod -R a+rwX /sandbox/.openclaw; \
         find /sandbox/.openclaw -type d -exec chmod a+rwx {} +; \
-        chmod a+rw /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash; \
+        chmod a+rw /sandbox/.openclaw/openclaw.json; \
         for p in /sandbox/.nemoclaw/state /sandbox/.nemoclaw/migration /sandbox/.nemoclaw/snapshots /sandbox/.nemoclaw/staging; do \
             chmod -R a+rwX "$p"; \
             find "$p" -type d -exec chmod a+rwx {} +; \

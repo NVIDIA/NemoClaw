@@ -17,7 +17,6 @@ import { runRealOpenClawMcpStartRetryProof } from "../../helpers/openclaw-real-m
 
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 const DOCKERFILE = path.join(REPO_ROOT, "Dockerfile");
-const PATCH_OPENCLAW_CHAT_SEND = path.join(REPO_ROOT, "scripts", "patch-openclaw-chat-send.mts");
 const PATCH_OPENCLAW_ISSUE_4434_DIAGNOSTICS = path.join(
   REPO_ROOT,
   "scripts",
@@ -215,7 +214,7 @@ function shellQuote(value: string): string {
 function dockerfilePatchCommand(dist: string): string {
   return dockerRunCommandBetween(
     "# Patch OpenClaw media fetch for proxy-only sandbox",
-    "# Patch OpenClaw chat.send gateway behavior",
+    "# Native OpenClaw restart must reload",
   )
     .replaceAll("/usr/local/lib/node_modules/openclaw/dist", dist)
     .replaceAll("/usr/local/lib/nemoclaw/extract-semver", shellQuote(OPENCLAW_VERSION_EXTRACTOR));
@@ -677,87 +676,8 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
           process.env.PATH = previousPath;
         }
 
-        const retryPersistencePreimage = [
-          "\t\t\tlet suppressNextUserMessagePersistence = params.suppressNextUserMessagePersistence ?? false;",
-          "\t\t\tlet lastPersistedCurrentMessageId;",
-          "\t\t\tconst onUserMessagePersisted = (message) => {",
-          "\t\t\t\tif (params.currentMessageId !== void 0) lastPersistedCurrentMessageId = params.currentMessageId;",
-        ].join("\n");
-        const embeddedAgentFiles = fs
-          .readdirSync(dist)
-          .filter((file) => file.startsWith("embedded-agent-") && file.endsWith(".js"))
-          .map((file) => path.join(dist, file));
-        const retryPersistenceTargets = embeddedAgentFiles.filter(
-          (file) => fs.readFileSync(file, "utf-8").split(retryPersistencePreimage).length === 2,
-        );
-        const nativeRetryPersistenceGuard = [
-          "await sessionPromptState.waitForCurrentUserMessagePersistence();",
-          "sessionPromptState.suppressNextUserMessagePersistence = sessionPromptState.activePrompt.persisted;",
-        ];
-        const nativeRetryPersistenceTargets = embeddedAgentFiles.filter((file) => {
-          const source = fs.readFileSync(file, "utf-8");
-          return nativeRetryPersistenceGuard.every((line) => source.includes(line));
-        });
-        requireRuntimeEqual(
-          String(retryPersistenceTargets.length + nativeRetryPersistenceTargets.length),
-          "1",
-          "embedded-agent retry persistence legacy-or-native guard count",
-        );
-
         patchOpenClawContainerRestart(dist);
         patchOpenClawContainerRestart(dist, true);
-
-        const chatPatch = spawnSync(nodeRuntime.executable, [PATCH_OPENCLAW_CHAT_SEND, dist], {
-          encoding: "utf-8",
-          timeout: PATCH_COMMAND_TIMEOUT_MS,
-        });
-        requireSpawnSuccess(chatPatch, "apply chat.send compatibility patch");
-        requireRuntimeIncludes(
-          chatPatch.stdout,
-          "patched OpenClaw chat.send compatibility",
-          "chat.send patch output",
-        );
-
-        const audit = spawnSync(
-          nodeRuntime.executable,
-          [PATCH_OPENCLAW_CHAT_SEND, "--audit", dist],
-          {
-            encoding: "utf-8",
-            timeout: PATCH_COMMAND_TIMEOUT_MS,
-          },
-        );
-        requireSpawnSuccess(audit, "audit chat.send compatibility patch");
-        requireRuntimeIncludes(audit.stdout, "chat.send runtime:", "chat.send audit");
-        requireRuntimeIncludes(audit.stdout, "get-reply runtime:", "get-reply audit");
-        requireRuntimeIncludes(audit.stdout, "followup runner runtime:", "followup audit");
-        const retryPersistenceMarker = "nemoclaw: suppress persisted user turn on embedded retries";
-        const retryPersistenceTarget = (retryPersistenceTargets[0] ??
-          nativeRetryPersistenceTargets[0]) as string;
-        retryPersistenceTargets.length === 1
-          ? (() => {
-              requireRuntimeIncludes(
-                audit.stdout,
-                "embedded-agent retry runtime:",
-                "embedded-agent retry audit",
-              );
-              const retryPersistenceSource = fs.readFileSync(retryPersistenceTarget, "utf-8");
-              requireRuntimeEqual(
-                String(retryPersistenceSource.split(retryPersistenceMarker).length - 1),
-                "1",
-                "embedded-agent retry persistence marker count",
-              );
-            })()
-          : requireRuntimeEqual(
-              String(audit.stdout.includes("embedded-agent retry runtime:")),
-              "false",
-              "native embedded-agent retry guard must not be patched",
-            );
-        const embeddedAgentSyntax = spawnSync(
-          nodeRuntime.executable,
-          ["--check", retryPersistenceTarget],
-          { encoding: "utf-8", timeout: PATCH_COMMAND_TIMEOUT_MS },
-        );
-        requireSpawnSuccess(embeddedAgentSyntax, "validate patched embedded-agent syntax");
 
         const issue4434Patch = spawnSync(
           nodeRuntime.executable,
