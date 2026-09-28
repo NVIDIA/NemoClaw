@@ -1050,22 +1050,6 @@ export async function finalizeCreatedSandboxBeforeHermesCredentialReconciliation
   return registration;
 }
 
-const MANAGED_STARTUP_HOLD_RELEASE_ATTEMPTS = 3;
-
-/** Retry the exact-container hold release before entering retained recovery. */
-export function releaseManagedStartupHoldWithRetry(release: () => void): void {
-  let failure: unknown;
-  for (let attempt = 0; attempt < MANAGED_STARTUP_HOLD_RELEASE_ATTEMPTS; attempt += 1) {
-    try {
-      release();
-      return;
-    } catch (error) {
-      failure = error;
-    }
-  }
-  throw failure;
-}
-
 export async function activateManagedStartupCorporateCaTrustBeforeIdentityRevalidation(input: {
   readonly corporateCaB64: string | null;
   readonly sandboxName: string;
@@ -3157,72 +3141,52 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                   }
                   const managedStartupRuntimeProvider = managedWorkloadRuntime.runtimeProvider;
                   console.log("  Applying managed startup profile to the verified sandbox...");
-                  let managedStartupTransaction: ReturnType<
-                    typeof managedWorkloadOnboard.applyProviderManagedStartupRootRequest
-                  >;
+                  let managedStartupTransaction: ProviderManagedStartupTransaction | null;
+                  const progress: { phase: "apply" | "commit" | "release" } = { phase: "apply" };
                   try {
                     managedStartupTransaction =
-                      managedWorkloadOnboard.applyProviderManagedStartupRootRequest({
-                        runtimeProvider: managedStartupRuntimeProvider,
-                        sandboxName,
-                        sandboxId: identity.sandboxId,
-                        bootstrapIdentity: managedBootstrapIdentity,
-                        request: managedStartupRootApplyRequest,
-                        ...(expectedContainerId ? { expectedContainerId } : {}),
-                      });
-                    managedStartupProtocol =
-                      managedStartupTransaction?.protocol ?? "identity-bound";
-                  } catch (error) {
-                    console.error(
-                      `  Managed startup root apply failed: ${
-                        error instanceof Error ? error.message : "unknown root apply failure"
-                      }`,
-                    );
-                    throw error;
-                  }
-                  console.log("  ✓ Applied the managed startup profile");
-                  if (managedStartupTransaction) {
-                    console.log("  Committing managed startup shared state...");
-                    const sharedState =
-                      managedWorkloadOnboard.finalizeProviderManagedStartupSharedState({
-                        runtimeProvider: managedStartupRuntimeProvider,
-                        sandboxName,
-                        sandboxId: identity.sandboxId,
-                        transaction: managedStartupTransaction,
-                        supervisorReady: true,
-                      });
-                    if (!sharedState.supervisorReady || sharedState.failure) {
-                      console.error(
-                        `  Managed startup shared-state commit failed: ${
-                          sharedState.failure?.message ?? "startup supervisor was not ready"
-                        }`,
-                      );
-                      throw (
-                        sharedState.failure ??
-                        new Error("Managed startup shared-state commit failed.")
-                      );
-                    }
-                    console.log("  ✓ Committed managed startup shared state");
-                    try {
-                      releaseManagedStartupHoldWithRetry(() =>
-                        managedWorkloadOnboard.releaseProviderManagedStartupHold({
+                      managedWorkloadOnboard.completeProviderManagedStartup(
+                        {
                           runtimeProvider: managedStartupRuntimeProvider,
                           sandboxName,
                           sandboxId: identity.sandboxId,
-                          transaction: managedStartupTransaction,
-                          profileFingerprint: managedStartupRootApplyRequest.profileFingerprint,
-                        }),
+                          bootstrapIdentity: managedBootstrapIdentity,
+                          request: managedStartupRootApplyRequest,
+                          ...(expectedContainerId ? { expectedContainerId } : {}),
+                        },
+                        {
+                          onApplied(transaction) {
+                            managedStartupProtocol = transaction?.protocol ?? "identity-bound";
+                            console.log("  ✓ Applied the managed startup profile");
+                          },
+                          onPhase(phase) {
+                            progress.phase = phase;
+                            if (phase === "commit")
+                              console.log("  Committing managed startup shared state...");
+                            if (phase === "release")
+                              console.log("  ✓ Committed managed startup shared state");
+                          },
+                        },
+                        managedWorkloadOnboard,
                       );
-                    } catch (error) {
-                      console.error(
-                        `  Managed startup hold release failed after commit: ${
-                          error instanceof Error ? error.message : "unknown release failure"
-                        }`,
-                      );
-                      throw error;
-                    }
-                    console.log("  ✓ Released the managed startup hold");
+                  } catch (error) {
+                    const prefix = {
+                      apply: "Managed startup root apply failed",
+                      commit: "Managed startup shared-state commit failed",
+                      release: "Managed startup hold release failed after commit",
+                    }[progress.phase];
+                    const fallback = {
+                      apply: "unknown root apply failure",
+                      commit: "startup supervisor was not ready",
+                      release: "unknown release failure",
+                    }[progress.phase];
+                    console.error(
+                      `  ${prefix}: ${error instanceof Error ? error.message : fallback}`,
+                    );
+                    throw error;
                   }
+                  if (managedStartupTransaction)
+                    console.log("  ✓ Released the managed startup hold");
                   managedBootstrapCreateFinished = true;
                   context.revalidateSandboxIdentity(
                     `confirming managed startup profile for sandbox '${sandboxName}'`,

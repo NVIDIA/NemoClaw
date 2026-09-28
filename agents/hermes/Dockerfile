@@ -159,7 +159,7 @@ FROM hermes-managed-teams-${TARGETARCH}-wheels AS hermes-managed-teams-1-wheels
 FROM hermes-managed-teams-${NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION}-wheels AS hermes-managed-teams-wheels
 
 # hadolint ignore=DL3006
-FROM ${BASE_IMAGE}
+FROM ${BASE_IMAGE} AS hermes-system
 
 # Keep the stock-image lazy dependency target when a published base image lags
 # Dockerfile.base. The final stage also creates and verifies the directory.
@@ -329,6 +329,9 @@ RUN set -eu; \
     if command -v gcc >/dev/null 2>&1; then echo "ERROR: gcc survived runtime purge" >&2; exit 1; fi; \
     if command -v g++ >/dev/null 2>&1; then echo "ERROR: g++ survived runtime purge" >&2; exit 1; fi; \
     if command -v make >/dev/null 2>&1; then echo "ERROR: make survived runtime purge" >&2; exit 1; fi
+
+# Continue from prepared dependencies during protected offline builds.
+FROM hermes-system
 
 # Hermes' WeChat adapter (gateway/platforms/weixin.py:_make_ssl_connector)
 # builds aiohttp with ssl.create_default_context(cafile=certifi.where()),
