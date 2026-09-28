@@ -15,6 +15,11 @@ on:
         required: false
         type: boolean
         default: false
+      hermes_only:
+        description: "Run only the Hermes image build and contract tests"
+        required: false
+        type: boolean
+        default: false
     secrets:
       DOCKERHUB_USERNAME:
         required: false
@@ -26,6 +31,7 @@ permissions:
 
 jobs:
   build-sandbox-images:
+    if: ${{ inputs.hermes_only != true }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -334,6 +340,7 @@ jobs:
           docker system df || true
 
   messaging-plan-image-boundary:
+    if: ${{ inputs.hermes_only != true }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -410,7 +417,7 @@ jobs:
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
   build-sandbox-images-arm64:
-    if: inputs.run_arm64
+    if: ${{ inputs.hermes_only != true && inputs.run_arm64 }}
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 45
     steps:
@@ -437,6 +444,7 @@ jobs:
         run: bash .github/scripts/docker-auth-cleanup.sh
 
   runtime-overrides:
+    if: ${{ inputs.hermes_only != true }}
     runs-on: ubuntu-latest
     # The live target owns 45 minutes; retain 15 minutes for setup, image
     # transfer, and the always-running artifact upload.
@@ -483,6 +491,7 @@ jobs:
         uses: ./.github/actions/upload-e2e-artifacts
 
   managed-image-openclaw-security:
+    if: ${{ inputs.hermes_only != true }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: build-sandbox-images
@@ -553,6 +562,7 @@ jobs:
           path: ${{ env.E2E_ARTIFACT_DIR }}
 
   port-override-image-contract:
+    if: ${{ inputs.hermes_only != true }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: build-sandbox-images

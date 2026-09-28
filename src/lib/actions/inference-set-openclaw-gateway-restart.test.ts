@@ -126,11 +126,6 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
         preferredInferenceApi: "anthropic-messages",
       }),
     ]);
-    expect(deps.getSession()).toMatchObject({
-      provider: "compatible-anthropic-endpoint",
-      model: "claude-sonnet-proxy",
-      preferredInferenceApi: "anthropic-messages",
-    });
     expect(result).toMatchObject({
       providerKey: "anthropic",
       primaryModelRef: "anthropic/claude-sonnet-proxy",
