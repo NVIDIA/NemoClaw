@@ -263,7 +263,7 @@
     },
     {
       "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
-      "test": "executes pull request installer hash checks only from the PR base SHA",
+      "test": "executes pull request installer hash checks only from the reviewed revision",
       "category": "security"
     },
     {

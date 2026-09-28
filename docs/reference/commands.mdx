@@ -3075,9 +3075,15 @@ $$nemoclaw my-assistant rebuild [--retire-recovery <transaction-id> --yes] [--ye
 
 If another terminal has an active SSH session to the sandbox, `rebuild` prints an active-session warning and requires confirmation before destroying the sandbox. Pass `--yes`, `-y`, or `--force` to skip the prompt in scripted workflows.
 
+<AgentOnly variant="openclaw,deepagents">
+
+For a managed Docker OpenClaw or Deep Agents Code sandbox in `Error`, `rebuild` captures declared state without starting or executing in the stopped source. The original container must still exist, and any mounted managed state volume must have the expected ownership and be used only by that container. Capture or identity validation failure stops replacement before deletion. Deep Agents Code carries native MCP configuration through a bounded recovery handoff. See [Rebuild While Preserving State](../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes#rebuild-while-preserving-state) for preservation limits and recovery steps.
+
+</AgentOnly>
+
 <AgentOnly variant="openclaw">
 
-For a managed Docker OpenClaw sandbox in `Error`, `rebuild` captures declared state without starting or executing in the stopped source. The original container must still exist, and any mounted managed state volume must have the expected ownership and be used only by that container. Capture or identity validation failure stops replacement before deletion. User-managed files, including `.env` and `.mcp.json`, are excluded; keep secure host copies and add them again after recovery. See [Rebuild While Preserving State](../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes#rebuild-while-preserving-state) for preservation limits and recovery steps.
+User-managed `.env` and `.mcp.json` files are excluded. Keep secure host copies and add them again after recovery.
 
 </AgentOnly>
 
