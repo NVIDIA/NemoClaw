@@ -161,6 +161,16 @@ describe("full-uninstall bulk sandbox cleanup", () => {
       const selectedGatewayTlsDir = getDockerDriverGatewayLocalTlsBundle(
         path.join(home, ".local", "state", "nemoclaw", resolveGatewayStateDirName(8080)),
       ).localTlsDir;
+      const deleteInvocations = commandInvocations.filter(
+        ({ args }) => args.join(" ") === "sandbox delete --all",
+      );
+      expect(deleteInvocations).toHaveLength(1);
+      expect(deleteInvocations[0]?.env).toMatchObject({
+        OPENSHELL_GATEWAY: "nemoclaw",
+        OPENSHELL_LOCAL_TLS_DIR: selectedGatewayTlsDir,
+        OPENSHELL_WORKSPACE: "default",
+      });
+      expect(deleteInvocations[0]?.env?.OPENSHELL_GATEWAY_ENDPOINT).toBeUndefined();
       const providerEnvironments = commandInvocations
         .filter(({ args }) => args[0] === "provider" && args[1] === "delete")
         .map(({ env }) => env);
@@ -247,10 +257,17 @@ describe("full-uninstall bulk sandbox cleanup", () => {
     }
   });
 
-  it("revalidates custom gateway state ownership before bulk cleanup (#11831)", async () => {
+  it("revalidates explicit gateway state ownership inside the default root (#11831)", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-bulk-ownership-"));
     try {
-      const gatewayStateDir = path.join(home, "custom-gateway-state");
+      const gatewayStateDir = path.join(
+        home,
+        ".local",
+        "state",
+        "nemoclaw",
+        "explicit-gateway-state",
+      );
+      fs.mkdirSync(path.dirname(gatewayStateDir), { recursive: true });
       ensureManagedGatewayStateRoot({
         gatewayName: "nemoclaw",
         gatewayPort: 8080,

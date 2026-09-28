@@ -1781,9 +1781,11 @@ function canRemoveScopedOpenShellResources(
   teardownAuthority: GatewayOwner,
   requireLiveManagedProcess = false,
 ): boolean {
+  const configuredStateDir = runtime.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR?.trim();
   if (
     !scopedToSelectedGateway &&
-    (isExternallySupervised(teardownAuthority) || selectedGatewayStateDirIsWithinDefaultRoot(paths))
+    (isExternallySupervised(teardownAuthority) ||
+      (!configuredStateDir && selectedGatewayStateDirIsWithinDefaultRoot(paths)))
   ) {
     return true;
   }
@@ -1843,7 +1845,6 @@ function canRemoveScopedOpenShellResources(
         ? "Refusing scoped gateway cleanup because its sandbox namespace cannot be proven."
         : "Refusing gateway cleanup because the configured state directory's sandbox namespace cannot be proven.",
     );
-    const configuredStateDir = runtime.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR?.trim();
     runtime.warn(
       configuredStateDir
         ? `Gateway port ${String(GATEWAY_PORT)} is using OpenShell state directory ${JSON.stringify(configuredStateDir)}. Verify that it is the original resolved onboarding directory, then rerun uninstall.`
