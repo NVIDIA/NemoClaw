@@ -194,7 +194,7 @@ export async function retireHermesPortableOllamaFreshState(
   if (
     receipt.service !== "ollama" ||
     receipt.runtime.kind !== "container" ||
-    receipt.inference?.model !== input.model ||
+    receipt.inference === undefined ||
     receipt.publication === undefined
   ) {
     throw new Error("Hermes Portable fresh start found different published inference authority.");
@@ -261,7 +261,7 @@ export async function retireHermesPortableOllamaFreshState(
     name: input.sandboxName,
     agent: "hermes",
     provider: "ollama-local",
-    model: input.model,
+    model: receipt.inference.model,
     endpointUrl: HOST_LOCAL_INFERENCE_APPLICATION_BASE_URL,
     endpointSource: "inference-set",
     credentialEnv: null,
@@ -283,7 +283,7 @@ export async function retireHermesPortableOllamaFreshState(
     targetSha256: receipt.publication.targetSha256,
     gatewayName: options.gatewayName,
     sandboxName: input.sandboxName,
-    model: input.model,
+    model: receipt.inference.model,
     credentialEnv: options.credentialEnv,
     runGatewayOpenshell: options.runGatewayOpenshell,
     allowAbsent: true,

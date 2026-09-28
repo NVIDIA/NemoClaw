@@ -106,10 +106,11 @@ describe("Hermes portable onboarding gateway-port recovery", () => {
       typeof bundle.hostLocalInference,
       { supported: true }
     >;
-    prepareHostLocalInferenceStartup(
+    const preparedStartup = prepareHostLocalInferenceStartup(
       hostLocalInference.createOperation({ env: {}, acceleration: "nvidia-gpu" }),
       selection.request,
-    ).prepared.validateBeforeCommit();
+    );
+    preparedStartup.prepared.validateBeforeCommit();
     const baseUrl = "http://host.openshell.internal:11434/v1";
     const mutation = await selection.prepareGatewayMutation({
       gatewayName,
@@ -128,6 +129,7 @@ describe("Hermes portable onboarding gateway-port recovery", () => {
       ),
     ).toMatchObject({ ok: true });
     await mutation.commit();
+    preparedStartup.prepared.commit();
     const transactionRoot = path.join(fixture.resolverOptions.stateDir, "portable-inference");
     const directories = fs.readdirSync(transactionRoot);
     expect(directories).toHaveLength(1);
@@ -137,6 +139,9 @@ describe("Hermes portable onboarding gateway-port recovery", () => {
       intent: { transactionId: string };
     };
     const interruptedTransaction = interruptedJournal.intent.transactionId;
+    const interruptedContainer = fixture.harness.container();
+    expect(interruptedContainer).not.toBeNull();
+    const freshEventStart = fixture.events.length;
     const sessionApi =
       require("../../state/onboard-session") as typeof import("../../state/onboard-session");
     sessionApi.saveSession(
@@ -289,20 +294,29 @@ describe("Hermes portable onboarding gateway-port recovery", () => {
     expect(currentSession?.sessionId).toBeTruthy();
     expect(currentSession?.sessionId).not.toBe("portable-session");
     expect(currentSession?.steps.inference.status).toBe("complete");
-    expect(JSON.parse(fs.readFileSync(journalPath, "utf8"))).toMatchObject({
-      phase: "committed",
-      intent: { gatewayName, transactionId: interruptedTransaction },
-    });
+    const replacementJournal = JSON.parse(fs.readFileSync(journalPath, "utf8")) as {
+      phase: string;
+      intent: { gatewayName: string; transactionId: string };
+    };
+    expect(replacementJournal).toMatchObject({ phase: "committed", intent: { gatewayName } });
+    expect(replacementJournal.intent.transactionId).not.toBe(interruptedTransaction);
     expect(fs.existsSync(path.join(transactionDirectory, "portable-inference.json"))).toBe(true);
     expect(
       fixture.gatewayProvider
         .calls()
         .filter(({ args }) => args[0] === "provider" && args[1] === "create"),
-    ).toHaveLength(1);
+    ).toHaveLength(2);
     expect(
       fixture.gatewayProvider
         .calls()
         .some(({ args }) => args[0] === "provider" && args[1] === "delete"),
-    ).toBe(false);
+    ).toBe(true);
+    const freshEvents = fixture.events.slice(freshEventStart);
+    const retiredRuntime = freshEvents.findIndex((event) =>
+      event.includes(`podman:rm --force ${interruptedContainer!.id}`),
+    );
+    const replacementRuntime = freshEvents.findIndex((event) => event.includes("podman:run "));
+    expect(retiredRuntime).toBeGreaterThanOrEqual(0);
+    expect(replacementRuntime).toBeGreaterThan(retiredRuntime);
   }, 30_000);
 });

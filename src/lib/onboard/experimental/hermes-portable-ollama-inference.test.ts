@@ -188,6 +188,23 @@ describe("Hermes Portable Ollama inference activation", () => {
     expect(rebound?.request).not.toHaveProperty("resumeReceipt");
   });
 
+  it("retires the recorded model before a fresh retry selects a different model (#12291)", async () => {
+    const fixture = createRuntimeFixture();
+    await publishPortableInference(fixture);
+    const directory = path.dirname(gatewayJournalPath(fixture));
+
+    await expect(
+      retireHermesPortableOllamaFreshState(fixture.resolverOptions, {
+        ...freshPortableInput,
+        model: "llama3.2:1b",
+      }),
+    ).resolves.toBe(true);
+
+    expect(fixture.gatewayProvider.isPresent()).toBe(false);
+    expect(fixture.harness.container()).toBeNull();
+    expect(fs.existsSync(directory)).toBe(false);
+  });
+
   it("preserves abandoned publication state when live provider ownership changed (#12291)", async () => {
     const fixture = createRuntimeFixture();
     await publishPortableInference(fixture);
