@@ -39,9 +39,15 @@ server.listen(0, "127.0.0.1", () => parentPort.postMessage(server.address().port
 parentPort.on("message", () => parentPort.postMessage(requests));
 `;
 
-export async function startBraveBackend(status: number, passthroughCurl = false) {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-brave-integration-"));
-  const worker = new Worker(BACKEND, {
+export async function startBraveBackend(
+  status: number,
+  passthroughCurl = false,
+  options: { messageTimeoutMs?: number; workerSource?: string; temporaryRoot?: string } = {},
+) {
+  const directory = fs.mkdtempSync(
+    path.join(options.temporaryRoot ?? os.tmpdir(), "nemoclaw-brave-integration-"),
+  );
+  const worker = new Worker(options.workerSource ?? BACKEND, {
     eval: true,
     workerData: { key: BRAVE_TEST_KEY, result: RESULT, status },
   });
@@ -49,8 +55,19 @@ export async function startBraveBackend(status: number, passthroughCurl = false)
     await worker.terminate();
     fs.rmSync(directory, { recursive: true, force: true });
   };
+  const messageTimeoutMs = options.messageTimeoutMs ?? 5_000;
+  const receive = async (label: string) => {
+    try {
+      return await once(worker, "message", { signal: AbortSignal.timeout(messageTimeoutMs) });
+    } catch (cause) {
+      await close();
+      throw new Error(`Brave mock backend did not report ${label} within ${messageTimeoutMs}ms`, {
+        cause,
+      });
+    }
+  };
   try {
-    const [port] = await once(worker, "message");
+    const [port] = await receive("startup port");
     fs.writeFileSync(
       path.join(directory, "curl"),
       `#!${process.execPath}
@@ -75,7 +92,7 @@ process.exit(result.status ?? 91);
       directory,
       env: { PATH: `${directory}${path.delimiter}${process.env.PATH ?? ""}` },
       requests: async () => {
-        const received = once(worker, "message");
+        const received = receive("request report");
         worker.postMessage("requests");
         const [requests] = await received;
         return requests;
@@ -91,25 +108,28 @@ process.exit(result.status ?? 91);
 // This is the optional post-onboard service probe, never the credential guard.
 // Refuse its network request without claiming Brave egress succeeded. Every
 // other OpenShell command, including creation and isolation checks, stays real.
-export function writeBraveEgressStub(directory: string, openshell: string): string {
-  const wrapper = path.join(directory, "openshell");
+export function writeBraveEgressPreload(directory: string, openshell: string): string {
+  const preload = path.join(directory, "brave-egress.cjs");
   fs.writeFileSync(
-    wrapper,
-    `#!${process.execPath}
-const { spawnSync } = require("node:child_process");
+    preload,
+    `const childProcess = require("node:child_process");
 const fs = require("node:fs");
-const args = process.argv.slice(2);
-const command = args.slice(args.indexOf("--") + 1);
-if (args[0] === "sandbox" && args[1] === "exec" &&
+const { syncBuiltinESMExports } = require("node:module");
+const spawn = childProcess.spawn;
+childProcess.spawn = function (binary, args, options) {
+  const command = Array.isArray(args) ? args.slice(args.indexOf("--") + 1) : [];
+  if (binary === ${JSON.stringify(openshell)} && Array.isArray(args) &&
+    args[0] === "sandbox" && args[1] === "exec" &&
     command.length === 3 && command[0] === "sh" && command[1] === "-lc" &&
     command[2].startsWith("'curl' '-sS' '--compressed' '--max-time' '20' '-G' 'https://api.search.brave.com/res/v1/web/search' ")) {
-  fs.appendFileSync(${JSON.stringify(path.join(directory, "brave-egress-blocked"))}, "blocked\\n");
-  process.exit(69);
-}
-const result = spawnSync(${JSON.stringify(openshell)}, args, { stdio: "inherit" });
-process.exit(result.status ?? 91);
+    fs.appendFileSync(${JSON.stringify(path.join(directory, "brave-egress-blocked"))}, "blocked\\n");
+    return spawn.call(this, process.execPath, ["-e", "process.exit(69)"], options);
+  }
+  return spawn.apply(this, arguments);
+};
+syncBuiltinESMExports();
 `,
-    { mode: 0o700 },
+    { mode: 0o600 },
   );
-  return wrapper;
+  return preload;
 }

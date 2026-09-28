@@ -8,9 +8,8 @@ import { resolveOpenshell } from "../../../src/lib/adapters/openshell/resolve.ts
 import {
   BRAVE_TEST_KEY,
   startBraveBackend,
-  writeBraveEgressStub,
+  writeBraveEgressPreload,
 } from "../fixtures/brave-backend.ts";
-import { hasRequiredOpenshellMessagingFeatures } from "../../../src/lib/onboard/openshell-feature-gate.ts";
 import { testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
@@ -30,6 +29,7 @@ test(
       e2ePhases: [
         "onboard Brave-enabled OpenClaw sandbox with synthetic credentials",
         "inspect running OpenClaw credential isolation",
+        "inspect OpenClaw agent command credential isolation",
         "inspect fresh login shell credential isolation",
       ],
     },
@@ -38,11 +38,12 @@ test(
     await artifacts.target.declare({
       id: "brave-search",
       boundary:
-        "real OpenShell Brave provider attachment, running OpenClaw /proc environment and fresh login shell; mocked Brave HTTP",
+        "real OpenShell Brave provider attachment, gateway and agent /proc environments, and fresh login shell; mocked Brave HTTP",
       sandboxName: SANDBOX_NAME,
       contracts: [
         "production onboarding attaches Brave using a synthetic credential",
         "BRAVE_API_KEY is absent or an OpenShell placeholder in the running OpenClaw gateway",
+        "BRAVE_API_KEY is absent or an OpenShell placeholder in the OpenClaw agent command",
         "BRAVE_API_KEY is absent or an OpenShell placeholder in a fresh login shell",
       ],
     });
@@ -68,28 +69,7 @@ test(
     const backend = await startBraveBackend(200, true);
     cleanup.trackDisposable("remove Brave mock transport", backend.close);
     await prepareOwnedSandboxForOnboard(host, sandbox, cleanup, SANDBOX_NAME);
-    const wrapper = writeBraveEgressStub(backend.directory, openshell);
-    // The CLI wrapper is outside the installed component root. Bind the real
-    // gateway and supervisor explicitly so installation integrity checks do not
-    // replace it and accidentally restore the external Brave probe.
-    const gatewayBin = fs.realpathSync(
-      process.env.NEMOCLAW_OPENSHELL_GATEWAY_BIN ||
-        path.join(path.dirname(openshell), "openshell-gateway"),
-    );
-    const sandboxBin = fs.realpathSync(
-      process.env.NEMOCLAW_OPENSHELL_SANDBOX_BIN ||
-        path.join(path.dirname(openshell), "openshell-sandbox"),
-    );
-    assert(
-      hasRequiredOpenshellMessagingFeatures({
-        openshellBin: wrapper,
-        gatewayBin,
-        sandboxBin,
-        allowExternalGatewayBin: true,
-        allowExternalSandboxBin: true,
-      }),
-      "Brave mock transport must preserve the installed OpenShell component capabilities",
-    );
+    const preload = writeBraveEgressPreload(backend.directory, openshell);
     const redactionValues = [BRAVE_TEST_KEY, inference.apiKey];
 
     progress.phase("onboard Brave-enabled OpenClaw sandbox with synthetic credentials");
@@ -100,9 +80,8 @@ test(
         env: {
           ...env,
           ...backend.env,
-          NEMOCLAW_OPENSHELL_BIN: wrapper,
-          NEMOCLAW_OPENSHELL_GATEWAY_BIN: gatewayBin,
-          NEMOCLAW_OPENSHELL_SANDBOX_BIN: sandboxBin,
+          NEMOCLAW_OPENSHELL_BIN: openshell,
+          NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --require=${JSON.stringify(preload)}`,
         },
         redactionValues,
         timeoutMs: 25 * 60_000,
@@ -127,6 +106,19 @@ test(
       timeoutMs: 60_000,
     });
     expect(running.exitCode, resultText(running)).toBe(0);
+
+    progress.phase("inspect OpenClaw agent command credential isolation");
+    const agent = await sandbox.exec(
+      SANDBOX_NAME,
+      ["python3", "-c", BRAVE_PROCESS_BOUNDARY, "--launch-agent"],
+      {
+        artifactName: "openclaw-agent-brave-isolation",
+        env,
+        redactionValues,
+        timeoutMs: 30_000,
+      },
+    );
+    expect(agent.exitCode, resultText(agent)).toBe(0);
 
     progress.phase("inspect fresh login shell credential isolation");
     const shell = await sandbox.execShell(

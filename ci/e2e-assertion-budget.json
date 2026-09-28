@@ -15,9 +15,9 @@
     "testFileCount": 78,
     "liveFileCount": 186,
     "direct": {
-      "expectCalls": 1314,
-      "matcherAssertions": 1293,
-      "nodeAssertions": 105,
+      "expectCalls": 1315,
+      "matcherAssertions": 1294,
+      "nodeAssertions": 104,
       "namedAssertionHelpers": 437,
       "failCalls": 0,
       "throwGuards": 66,
@@ -27,16 +27,16 @@
       "generatedProbeConditions": 222
     },
     "unique": {
-      "expectCalls": 1739,
-      "matcherAssertions": 1713,
-      "nodeAssertions": 128,
+      "expectCalls": 1740,
+      "matcherAssertions": 1714,
+      "nodeAssertions": 127,
       "namedAssertionHelpers": 682,
       "failCalls": 1,
       "throwGuards": 546,
       "objectFieldAssertions": 245,
       "assertionPoints": 3315,
       "generatedProbeBlocks": 214,
-      "generatedProbeConditions": 726
+      "generatedProbeConditions": 728
     },
     "fileMetricOrder": [
       "directExpectCalls",
@@ -49,7 +49,7 @@
       "test/e2e/live/agent-turn-latency.test.ts": [15,15,15,26,1],
       "test/e2e/live/bedrock-runtime-compatible-anthropic.test.ts": [11,33,12,55,4],
       "test/e2e/live/bootstrap-install-smoke.test.ts": [0,0,14,30,3],
-      "test/e2e/live/brave-search.test.ts": [5,11,5,11,1],
+      "test/e2e/live/brave-search.test.ts": [6,11,6,11,1],
       "test/e2e/live/brev-workspace-cleanup.test.ts": [0,0,0,1,0],
       "test/e2e/live/channels-add-remove.test.ts": [40,90,40,92,0],
       "test/e2e/live/channels-stop-start.test.ts": [0,0,26,99,9],
