@@ -554,8 +554,13 @@ export async function backupSandboxStateForRebuild(
   // it to stopped. Any other failure (permission denied, absent state, audit
   // rejection) is not a transport problem and must not attempt this recovery.
   if (!capturedAgentState && !backup.success && backup.unreachable) {
+    // The initial backup may report an unreachable transport only after
+    // consuming its transaction budget. Start recovery with a fresh bounded
+    // deadline; the post-start backup/cleanup transaction gets another one
+    // after OpenShell accepts the start below.
+    const recoveryStartDeadlineMs = startedSandboxBackupTransactionDeadline();
     const started = await startStoppedSandboxContainerForBackup(sandboxName, {
-      deadlineMs: initialTransactionDeadlineMs,
+      deadlineMs: recoveryStartDeadlineMs,
     });
     if (started) {
       console.log("  Sandbox container is stopped; starting it to back up state before rebuild...");

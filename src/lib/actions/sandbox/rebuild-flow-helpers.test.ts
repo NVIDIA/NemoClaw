@@ -1167,6 +1167,26 @@ describe("backupSandboxStateForRebuild stopped-container recovery (#11137)", () 
     });
   });
 
+  it("starts stopped-sandbox recovery with a fresh deadline after the initial backup expires", async () => {
+    vi.spyOn(Date, "now").mockReturnValueOnce(1_000).mockReturnValue(331_001);
+    backupSpy.mockReturnValue({
+      success: false,
+      backedUpDirs: [],
+      backedUpFiles: [],
+      failedDirs: [".state"],
+      failedFiles: [],
+      manifest: null,
+      unreachable: true,
+    });
+    startSpy.mockReturnValue(null);
+
+    await expect(
+      backupSandboxStateForRebuild("alpha", makeSandboxEntry(), false, () => undefined, makeBail()),
+    ).rejects.toThrow("bail: Failed to back up sandbox state.");
+
+    expect(startSpy).toHaveBeenCalledWith("alpha", { deadlineMs: 661_001 });
+  });
+
   it("restores stopped state before removing a deadline-expired retry snapshot (#11936)", async () => {
     const order: string[] = [];
     vi.spyOn(Date, "now").mockReturnValueOnce(1_000).mockReturnValue(331_001);
