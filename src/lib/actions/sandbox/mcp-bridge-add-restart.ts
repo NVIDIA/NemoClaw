@@ -920,8 +920,10 @@ async function addMcpBridgeUnlocked(
     throw new McpBridgeError("--require-oauth requires an HTTPS MCP endpoint.", 2);
   }
 
-  // Supply-chain verification: if an existing entry has a pinned identity, verify it matches
-  if (existingEntry?.serverIdentity && options.serverIdentity) {
+  // Supply-chain verification: if an existing entry has a pinned identity, verify it matches.
+  // Also verify when a new pin is provided for an existing entry without a prior pin,
+  // so the verifier can report the supply-chain error before sameMcpAddIntent handles it.
+  if (existingEntry && options.serverIdentity) {
     await verifyMcpServerIdentity(existingEntry, options.serverIdentity);
   }
 

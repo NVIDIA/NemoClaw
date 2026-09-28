@@ -129,12 +129,10 @@ function renderMcpBridgePolicyYaml(
   const endpointDenyRules = isAllowlistMode || denyRules.length === 0 ? undefined : denyRules;
 
   // Store serverIdentity, transport, and requireOAuth in mcp config for persistence
+  // serverIdentity is stored separately from allow rules to avoid being interpreted as a tool permission
   const mcpExtras: Record<string, unknown> = {};
   if (serverIdentity) {
-    mcpExtras.allow = [
-      ...(mcpConfig.allow || []),
-      { params: { name: "__server_identity__", identity: serverIdentity } },
-    ];
+    mcpExtras.serverIdentity = serverIdentity;
   }
   if (transport) {
     mcpExtras.transport = transport;
