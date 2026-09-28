@@ -20,6 +20,7 @@ import { load, save } from "./registry/persistence";
 import {
   isCurrentSandboxInferenceRouteReservation,
   isCurrentPendingSandboxCreateReservation,
+  isRouteOnlySandboxReservation,
   normalizeSandboxInferenceRouteSelection,
   sandboxRegistrationMatchesInferenceRouteReservation,
   type QualifiedPendingSandboxCreateReservation,
@@ -119,6 +120,12 @@ export type SandboxRemovalReceipt = reversibleRemoval.RegistryRemovalReceipt<San
 
 export function getSandbox(name: string): SandboxEntry | null {
   return load().sandboxes[name] || null;
+}
+
+/** Report whether a registry row owns sandbox lifecycle state. */
+export function hasSandboxLifecycleAuthority(name: string): boolean {
+  const entry = getSandbox(name);
+  return entry !== null && !isRouteOnlySandboxReservation(entry);
 }
 
 export function getDefault(): string | null {

@@ -8,6 +8,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { prepareHostLocalInferenceStartup } from "../runtime-provider/host-local-inference-routing";
+import { portableHostFencePath } from "../../state/portable-uninstall-retirement";
 import { writeOkOpenshell } from "../../../../test/helpers/onboard-openshell-fixture";
 import {
   createHermesPortableInferenceFixture,
@@ -89,7 +90,7 @@ describe("Hermes portable onboarding gateway-port recovery", () => {
     expect(fixture.events).not.toContain("registry-update");
   });
 
-  it("recovers an interrupted provider through public fresh onboarding on a selected port", async () => {
+  it("retires an interrupted provider and route reservation through public fresh onboarding (#12291)", async () => {
     const gatewayName = "nemoclaw-18080";
     const fixture = createHermesPortableInferenceFixture(undefined, gatewayName);
     const fakeBin = path.join(fixture.homeDir, "bin");
@@ -151,6 +152,24 @@ describe("Hermes portable onboarding gateway-port recovery", () => {
         agent: "hermes",
       }),
     );
+    const registryApi = require("../../state/registry") as typeof import("../../state/registry");
+    expect(
+      registryApi.reserveSandboxInferenceRoute(freshPortableInput.sandboxName, {
+        provider: freshPortableInput.provider,
+        model: freshPortableInput.model,
+        endpointUrl: baseUrl,
+        endpointSource: "inference-set",
+        credentialEnv: null,
+        preferredInferenceApi: "openai-completions",
+        gatewayName,
+        reservationSessionId: "portable-session",
+      }),
+    ).toBe(true);
+    expect(
+      registryApi.isRouteOnlySandboxReservation(
+        registryApi.getSandbox(freshPortableInput.sandboxName)!,
+      ),
+    ).toBe(true);
     const runtime =
       require("../resume/locked-runtime") as typeof import("../resume/locked-runtime");
     const prepareRuntime = runtime.prepare;
@@ -176,7 +195,7 @@ describe("Hermes portable onboarding gateway-port recovery", () => {
     vi.spyOn(inference, "createHermesPortableOllamaInferenceBindings").mockImplementation(
       (options) => {
         expect(options.gatewayName).toBe(gatewayName);
-        return createBindings({
+        const bindings = createBindings({
           ...options,
           stateDir: fixture.resolverOptions.stateDir,
           captureSocketAuthority: fixture.resolverOptions.captureSocketAuthority,
@@ -184,6 +203,13 @@ describe("Hermes portable onboarding gateway-port recovery", () => {
           captureCdiDevices: fixture.resolverOptions.captureCdiDevices,
           podmanAuthorityDeps: fixture.resolverOptions.podmanAuthorityDeps,
         });
+        return {
+          ...bindings,
+          retireHostLocalInferenceFreshState: async (input) => {
+            expect(fs.existsSync(portableHostFencePath(fixture.homeDir))).toBe(true);
+            return await bindings.retireHostLocalInferenceFreshState(input);
+          },
+        };
       },
     );
     const runner = require("../../runner") as typeof import("../../runner");
@@ -294,6 +320,7 @@ describe("Hermes portable onboarding gateway-port recovery", () => {
     expect(currentSession?.sessionId).toBeTruthy();
     expect(currentSession?.sessionId).not.toBe("portable-session");
     expect(currentSession?.steps.inference.status).toBe("complete");
+    expect(registryApi.getSandbox(freshPortableInput.sandboxName)).toBeNull();
     const replacementJournal = JSON.parse(fs.readFileSync(journalPath, "utf8")) as {
       phase: string;
       intent: { gatewayName: string; transactionId: string };
