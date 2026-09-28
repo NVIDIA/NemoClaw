@@ -1042,6 +1042,14 @@ function validateExternalComponent(snapshot: QualifiedExportSnapshot): ExportFin
   const live = snapshot.gateway.externalComponent;
   if (!selection && !live) return [];
   const field = "spec.gateway.externalComponentRef";
+  if (live?.schemaVersion === 2)
+    return [
+      finding(
+        field,
+        "unsupported",
+        "External component protocol version 2 is not supported by config export.",
+      ),
+    ];
   if (!selection)
     return [
       finding(
@@ -1059,17 +1067,12 @@ function validateExternalComponent(snapshot: QualifiedExportSnapshot): ExportFin
       ),
     ];
   }
-  if (
-    !live ||
-    live.schemaVersion !== 1 ||
-    snapshot.registry.agent !== "openclaw" ||
-    snapshot.inference.topology !== "hosted"
-  ) {
+  if (!live || snapshot.registry.agent !== "openclaw" || snapshot.inference.topology !== "hosted") {
     return [
       finding(
         field,
         "unsupported",
-        "Only v1 components on hosted OpenClaw sandboxes are exportable.",
+        "Only external component protocol version 1 on hosted OpenClaw sandboxes is exportable.",
       ),
     ];
   }

@@ -261,29 +261,31 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
         unmigratedLegacyKeys: stagedLegacyKeys.filter((key) => !migratedLegacyKeys.has(key)),
       };
     }
-    let recorded = false;
-    try {
-      recorded = deps.recordCompletedExternalComponentSelection(sandboxName, {
-        schemaVersion: 1,
-        componentId: externalComponent.declaration.componentId,
-        gatewayName: proof.gatewayName,
-        lifecycleGeneration: proof.lifecycleGeneration,
-        sandboxIdentityFingerprint: proof.sandboxIdentityFingerprint.replace(/^sha256:/u, ""),
-      });
-    } catch {
-      // A failed durable write leaves activation ambiguous for export and resume.
-    }
-    if (!recorded) {
-      deps.error(
-        "  External component participation could not be retained. The sandbox was preserved.",
-      );
-      return {
-        stateResult: pauseOnboardMachine(
-          deps.toSessionUpdates({ externalComponentActivation: evidence("ambiguous") }),
-          { state: "finalizing", reason: "external_component_activation_incomplete" },
-        ),
-        unmigratedLegacyKeys: stagedLegacyKeys.filter((key) => !migratedLegacyKeys.has(key)),
-      };
+    if (externalComponent.declaration.schemaVersion === 1) {
+      let recorded = false;
+      try {
+        recorded = deps.recordCompletedExternalComponentSelection(sandboxName, {
+          schemaVersion: 1,
+          componentId: externalComponent.declaration.componentId,
+          gatewayName: proof.gatewayName,
+          lifecycleGeneration: proof.lifecycleGeneration,
+          sandboxIdentityFingerprint: proof.sandboxIdentityFingerprint.replace(/^sha256:/u, ""),
+        });
+      } catch {
+        // A failed durable write leaves activation ambiguous for export and resume.
+      }
+      if (!recorded) {
+        deps.error(
+          "  External component participation could not be retained. The sandbox was preserved.",
+        );
+        return {
+          stateResult: pauseOnboardMachine(
+            deps.toSessionUpdates({ externalComponentActivation: evidence("ambiguous") }),
+            { state: "finalizing", reason: "external_component_activation_incomplete" },
+          ),
+          unmigratedLegacyKeys: stagedLegacyKeys.filter((key) => !migratedLegacyKeys.has(key)),
+        };
+      }
     }
     deps.setExternalComponentActivationEvidence(null);
   }

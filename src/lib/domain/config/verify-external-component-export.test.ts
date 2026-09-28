@@ -111,10 +111,11 @@ describe("external component export (#11453)", () => {
     });
   });
 
-  it("rejects version 2 until that lifecycle is qualified", () => {
+  it("refuses version 2 export without requiring a version 1 activation record", () => {
     expectComponentFinding(
       {
         ...value,
+        registry: entry(),
         gateway: {
           ...gateway,
           externalComponent: { ...gateway.externalComponent, schemaVersion: 2 },
