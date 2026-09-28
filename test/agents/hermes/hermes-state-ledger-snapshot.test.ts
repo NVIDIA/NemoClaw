@@ -715,6 +715,29 @@ describe("Hermes legacy dashboard-state migration", () => {
     expect(fs.existsSync(legacy)).toBe(false);
   });
 
+  it.each(["dashboard-home", "profiles/dashboard-home"])(
+    "preserves a nested dashboard-home as user state from %s",
+    (legacyRelative) => {
+      const { hermes } = dashboardMigrationFixture();
+      const legacy = path.join(hermes, legacyRelative);
+      const nested = path.join(legacy, "workspace/dashboard-home");
+      writeDashboardMigrationFile(path.join(nested, "gateway_state.json"), "user gateway state\n");
+      writeDashboardMigrationFile(path.join(nested, "logs/user-note.txt"), "user log\n");
+      writeDashboardMigrationFile(path.join(nested, "state.db"), "user database\n");
+
+      const result = runDashboardMigration(hermes);
+
+      expect(result.status, result.stderr).toBe(0);
+      const migrated = path.join(hermes, "workspace/dashboard-home");
+      expect(fs.readFileSync(path.join(migrated, "gateway_state.json"), "utf8")).toBe(
+        "user gateway state\n",
+      );
+      expect(fs.readFileSync(path.join(migrated, "logs/user-note.txt"), "utf8")).toBe("user log\n");
+      expect(fs.readFileSync(path.join(migrated, "state.db"), "utf8")).toBe("user database\n");
+      expect(fs.existsSync(legacy)).toBe(false);
+    },
+  );
+
   it("refuses a conflicting native destination without deleting either copy", () => {
     const { hermes } = dashboardMigrationFixture();
     const legacy = path.join(hermes, "profiles/dashboard-home/MEMORY.md");

@@ -795,13 +795,14 @@ def _preflight_tree(
     policy: ShadowMigrationPolicy,
     budget: MigrationBudget,
     depth: int,
+    *,
+    at_legacy_root: bool,
 ) -> None:
     for name in _entries(source_fd):
         source_path = f"{source_display}/{name}"
         target_path = f"{target_display}/{name}"
         source = _identity(source_fd, name, source_path)
         budget.consume(source, source_path, depth)
-        at_legacy_root = source_display.rsplit("/", 1)[-1] == "dashboard-home"
         if at_legacy_root and name == LEGACY_STATE_DATABASE:
             if not stat.S_ISREG(source.mode):
                 raise MigrationError(f"legacy state database {source_path} is not a regular file")
@@ -820,7 +821,16 @@ def _preflight_tree(
                 raise MigrationError(f"stale runtime path {source_path} is not a directory")
             child = _open_dir(source_fd, name, source_path)
             try:
-                _preflight_tree(child, source_path, child, source_path, policy, budget, depth + 1)
+                _preflight_tree(
+                    child,
+                    source_path,
+                    child,
+                    source_path,
+                    policy,
+                    budget,
+                    depth + 1,
+                    at_legacy_root=False,
+                )
             finally:
                 os.close(child)
             continue
@@ -850,7 +860,14 @@ def _preflight_tree(
                 child = _open_dir(source_fd, name, source_path)
                 try:
                     _preflight_tree(
-                        child, source_path, child, source_path, policy, budget, depth + 1
+                        child,
+                        source_path,
+                        child,
+                        source_path,
+                        policy,
+                        budget,
+                        depth + 1,
+                        at_legacy_root=False,
                     )
                 finally:
                     os.close(child)
@@ -869,6 +886,7 @@ def _preflight_tree(
                         policy,
                         budget,
                         depth + 1,
+                        at_legacy_root=False,
                     )
                 finally:
                     os.close(target_child)
@@ -1231,6 +1249,8 @@ def _merge_tree(
     policy: ShadowMigrationPolicy,
     budget: MigrationBudget,
     depth: int,
+    *,
+    at_legacy_root: bool,
 ) -> None:
     with _owner_writable_directory(source_fd), _owner_writable_directory(target_fd):
         _merge_tree_entries(
@@ -1241,6 +1261,7 @@ def _merge_tree(
             policy,
             budget,
             depth,
+            at_legacy_root=at_legacy_root,
         )
 
 
@@ -1252,8 +1273,9 @@ def _merge_tree_entries(
     policy: ShadowMigrationPolicy,
     budget: MigrationBudget,
     depth: int,
+    *,
+    at_legacy_root: bool,
 ) -> None:
-    at_legacy_root = source_display.rsplit("/", 1)[-1] == "dashboard-home"
     for name in _entries(source_fd):
         source_path = f"{source_display}/{name}"
         target_path = f"{target_display}/{name}"
@@ -1332,6 +1354,7 @@ def _merge_tree_entries(
                             policy,
                             budget,
                             depth + 1,
+                            at_legacy_root=False,
                         )
                         os.fchmod(target_child, stat.S_IMODE(source.mode))
                     finally:
@@ -1356,6 +1379,7 @@ def _merge_tree_entries(
                         policy,
                         budget,
                         depth + 1,
+                        at_legacy_root=False,
                     )
                 finally:
                     os.close(target_child)
@@ -1453,6 +1477,7 @@ def migrate(
                     policy,
                     preflight_budget,
                     1,
+                    at_legacy_root=True,
                 )
             merge_budget = MigrationBudget(max_entries, max_depth, max_bytes)
             for relative, source_fd in sources:
@@ -1464,6 +1489,7 @@ def migrate(
                     policy,
                     merge_budget,
                     1,
+                    at_legacy_root=True,
                 )
                 parent_relative, name = (
                     relative.rsplit("/", 1) if "/" in relative else ("", relative)
