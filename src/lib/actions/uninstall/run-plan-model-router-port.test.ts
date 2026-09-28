@@ -18,6 +18,7 @@ import {
 } from "../../onboard/docker-driver-gateway-config";
 import { resolveGatewayStateDirName } from "../../onboard/gateway-binding";
 import { runUninstallPlan, type RunResult } from "./run-plan";
+import { createRouterMigrationHarness } from "./run-plan-model-router-port.test-support";
 import { readOnboardSessionModelRouter } from "./runtime-commands";
 
 const ok = (stdout = ""): RunResult => ({ status: 0, stdout, stderr: "" });
@@ -180,6 +181,83 @@ it.each([
       expect(fs.existsSync(routerRuntime)).toBe(false);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+
+it.each([
+  { oldPort: 4000, latestReceipt: "present", expectedPids: [55681, 55682] },
+  { oldPort: 14000, latestReceipt: "present", expectedPids: [55681, 55682] },
+  { oldPort: 4000, latestReceipt: "cleared", expectedPids: [55681] },
+  { oldPort: 4000, latestReceipt: "absent", expectedPids: [55681] },
+] as const)(
+  "cleans retained port $oldPort with a $latestReceipt latest receipt",
+  async (scenario) => {
+    const harness = createRouterMigrationHarness(scenario);
+    try {
+      expect((await harness.uninstall()).exitCode, harness.errors.join("\n")).toBe(0);
+      expect(harness.killed.sort()).toEqual(scenario.expectedPids);
+      expect(harness.live.size).toBe(0);
+      expect(fs.existsSync(harness.registryFile)).toBe(false);
+      expect(fs.existsSync(harness.routerRuntime)).toBe(false);
+    } finally {
+      harness.dispose();
+    }
+  },
+);
+
+it.each(["missing-lsof", "inventory-error", "malformed-pid", "stop-failed"] as const)(
+  "retains all router cleanup state after $0 and retries safely",
+  async (failure) => {
+    const harness = createRouterMigrationHarness({
+      oldPort: 4000,
+      latestReceipt: "present",
+      failure,
+    });
+    try {
+      expect((await harness.uninstall()).exitCode, harness.errors.join("\n")).toBe(1);
+      expect(harness.live.has(55681)).toBe(true);
+      expect(fs.existsSync(harness.registryFile)).toBe(true);
+      expect(fs.existsSync(harness.sessionFile)).toBe(true);
+      expect(fs.existsSync(harness.routerRuntime)).toBe(true);
+      harness.allowCleanup();
+      expect((await harness.uninstall()).exitCode, harness.errors.join("\n")).toBe(0);
+      expect(harness.killed.sort()).toEqual([55681, 55682]);
+      expect(harness.live.size).toBe(0);
+      expect(fs.existsSync(harness.registryFile)).toBe(false);
+      expect(fs.existsSync(harness.routerRuntime)).toBe(false);
+    } finally {
+      harness.dispose();
+    }
+  },
+);
+
+it.each([
+  { latestReceipt: "present", expectedPids: [55681, 55682] },
+  { latestReceipt: "cleared", expectedPids: [55681] },
+] as const)(
+  "preserves every sibling router with a $latestReceipt latest receipt",
+  async (scenario) => {
+    const harness = createRouterMigrationHarness({
+      oldPort: 4000,
+      latestReceipt: scenario.latestReceipt,
+      failure: "sibling",
+    });
+    try {
+      expect((await harness.uninstall()).exitCode, harness.errors.join("\n")).toBe(1);
+      expect(harness.killed).toEqual([]);
+      expect([...harness.live.keys()].sort()).toEqual(scenario.expectedPids);
+      expect(fs.existsSync(harness.registryFile)).toBe(true);
+      expect(fs.existsSync(harness.sessionFile)).toBe(true);
+      expect(fs.existsSync(harness.routerRuntime)).toBe(true);
+      harness.allowCleanup();
+      expect((await harness.uninstall()).exitCode, harness.errors.join("\n")).toBe(0);
+      expect(harness.killed.sort()).toEqual(scenario.expectedPids);
+      expect(harness.live.size).toBe(0);
+      expect(fs.existsSync(harness.registryFile)).toBe(false);
+      expect(fs.existsSync(harness.routerRuntime)).toBe(false);
+    } finally {
+      harness.dispose();
     }
   },
 );

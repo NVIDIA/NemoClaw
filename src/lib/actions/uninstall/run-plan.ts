@@ -94,6 +94,7 @@ import {
   type GatewayRegistryDocument,
   type GatewayRegistryEntry,
   listGatewayStateRoots,
+  listRecordedModelRouterPorts,
   readGatewayRegistryFile,
   releaseManagedGatewayStateLifecycleLock,
   registryEntryGatewayPort,
@@ -1154,16 +1155,59 @@ function tryStopModelRouterPid(pid: number, runtime: UninstallRuntime): boolean 
   return false;
 }
 
+function stopModelRouterOnPort(
+  routerPort: number,
+  recordedPid: number | null,
+  runtime: UninstallRuntime,
+): boolean {
+  const stopped = new Set<number>();
+  if (
+    recordedPid !== null &&
+    pidOwnedByCurrentUser(recordedPid, runtime) &&
+    isModelRouterPid(recordedPid, routerPort, runtime)
+  ) {
+    if (!tryStopModelRouterPid(recordedPid, runtime)) return false;
+    stopped.add(recordedPid);
+  }
+  if (!runtime.commandExists("lsof")) {
+    if (stopped.size > 0) return true;
+    runtime.warn(
+      `Cannot verify Model Router cleanup on port ${routerPort}: lsof is unavailable. Recovery state was retained.`,
+    );
+    return false;
+  }
+  const lsof = runtime.run("lsof", ["-ti", `:${routerPort}`], { env: runtime.env });
+  const lines = splitNonEmptyLines(lsof.stdout);
+  if (
+    (lsof.status !== 0 && lsof.status !== 1) ||
+    lsof.stderr.trim() ||
+    (lsof.status === 1 && lines.length > 0) ||
+    lines.some((line) => !/^[1-9]\d*$/.test(line) || !Number.isSafeInteger(Number(line)))
+  ) {
+    runtime.warn(
+      `Cannot verify Model Router listeners on port ${routerPort}. Recovery state was retained.`,
+    );
+    return false;
+  }
+  for (const pid of lines.map(Number)) {
+    if (stopped.has(pid)) continue;
+    if (!pidOwnedByCurrentUser(pid, runtime)) continue;
+    if (!isModelRouterPid(pid, routerPort, runtime)) continue;
+    if (!tryStopModelRouterPid(pid, runtime)) return false;
+    stopped.add(pid);
+  }
+  if (stopped.size === 0) runtime.log("No model router processes found");
+  return true;
+}
+
 function stopModelRouter(
   paths: UninstallPaths,
   runtime: UninstallRuntime,
   scanOrphans = true,
 ): boolean {
   // The model router is a detached child started during routed onboarding.
-  // Both its PID and exact bound port are recorded in onboard-session.json;
-  // cleanup must not guess from the current blueprint because that blueprint
-  // may have changed since the process started.
-  const stopped = new Set<number>();
+  // The latest PID and port live in onboard-session.json. Older routes retain
+  // their ports in sandbox registries; none may be guessed from today's blueprint.
   const recorded = readOnboardSessionModelRouter(paths.nemoclawStateDir);
   if (recorded.readFailed) {
     runtime.warn(
@@ -1171,21 +1215,16 @@ function stopModelRouter(
     );
     return false;
   }
-  if (recorded.port === null) {
-    if (recorded.expected) {
-      if (recorded.pid !== null) {
-        const observed = runtime.run("ps", ["-p", String(recorded.pid), "-o", "pid="], {
-          env: runtime.env,
-        });
-        // Only ps's no-match result proves absence. A command or permission
-        // failure must retain the cleanup receipt for another attempt.
-        if (observed.status === 1 && !observed.stdout.trim() && !observed.stderr.trim()) {
-          runtime.log(
-            `Recorded Model Router PID ${recorded.pid} is absent; continuing state cleanup.`,
-          );
-          return true;
-        }
-      }
+  if (recorded.port === null && recorded.expected) {
+    const observed =
+      recorded.pid === null
+        ? null
+        : runtime.run("ps", ["-p", String(recorded.pid), "-o", "pid="], { env: runtime.env });
+    // Only ps's no-match result proves absence. A command or permission
+    // failure must retain the cleanup receipt for another attempt.
+    if (observed?.status === 1 && !observed.stdout.trim() && !observed.stderr.trim()) {
+      runtime.log(`Recorded Model Router PID ${recorded.pid} is absent; continuing state cleanup.`);
+    } else {
       const pidDetail =
         recorded.pid === null ? "" : ` The recorded process is PID ${recorded.pid}.`;
       const recovery =
@@ -1196,9 +1235,23 @@ function stopModelRouter(
         `Model Router cleanup is incomplete because its recorded port is missing; refusing to guess from the current blueprint.${pidDetail} ${recovery} The onboarding session was retained for recovery.`,
       );
       return false;
-    } else {
-      runtime.log("No model router processes found");
     }
+  }
+  let ports: number[];
+  try {
+    // Read before registry removal, even when the latest session was cleared.
+    ports = [
+      ...new Set([
+        ...(recorded.port === null ? [] : [recorded.port]),
+        ...listRecordedModelRouterPorts(runtime.env.HOME || os.homedir()),
+      ]),
+    ];
+  } catch {
+    runtime.warn("Cannot read all recorded Model Router ports. Recovery state was retained.");
+    return false;
+  }
+  if (ports.length === 0) {
+    runtime.log("No model router processes found");
     return true;
   }
   // A scoped uninstall must leave shared inference services running, including
@@ -1209,52 +1262,30 @@ function stopModelRouter(
       recorded.pid === null
         ? { status: 1, stdout: "", stderr: "" }
         : runtime.run("ps", ["-p", String(recorded.pid), "-o", "pid="], { env: runtime.env });
-    const listener = runtime.commandExists("lsof")
-      ? runtime.run("lsof", ["-ti", `:${String(recorded.port)}`], { env: runtime.env })
-      : null;
+    const listenersAbsent = ports.every((port) => {
+      const listener = runtime.commandExists("lsof")
+        ? runtime.run("lsof", ["-ti", `:${port}`], { env: runtime.env })
+        : null;
+      return listener?.status === 1 && !listener.stdout.trim() && !listener.stderr.trim();
+    });
     if (
       process.status === 1 &&
       !process.stdout.trim() &&
       !process.stderr.trim() &&
-      listener?.status === 1 &&
-      !listener.stdout.trim() &&
-      !listener.stderr.trim()
+      listenersAbsent
     ) {
       runtime.log("The recorded shared Model Router is absent; continuing state cleanup.");
       return true;
     }
     runtime.warn(
-      `Sibling gateways remain; kept the shared Model Router and its onboarding session and runtime files. Stop the verified router on port ${String(recorded.port)} only after its dependent sandboxes no longer need it, then rerun uninstall. Uninstall must confirm both process and listener absence before removing this shared state.`,
+      `Sibling gateways remain; kept the shared Model Router and its onboarding session and runtime files. Stop the verified routers on ports ${ports.join(", ")} only after their dependent sandboxes no longer need them, then rerun uninstall. Uninstall must confirm both process and listener absence before removing this shared state.`,
     );
     return false;
   }
-  const routerPort = recorded.port;
-
-  const recordedPid = recorded.pid;
-  if (
-    recordedPid !== null &&
-    pidOwnedByCurrentUser(recordedPid, runtime) &&
-    isModelRouterPid(recordedPid, routerPort, runtime)
-  ) {
-    if (tryStopModelRouterPid(recordedPid, runtime)) stopped.add(recordedPid);
+  for (const port of ports) {
+    if (!stopModelRouterOnPort(port, port === recorded.port ? recorded.pid : null, runtime))
+      return false;
   }
-
-  if (!runtime.commandExists("lsof")) {
-    if (stopped.size === 0) {
-      runtime.warn("lsof not found; skipping orphan model router scan.");
-    }
-    return true;
-  }
-  const lsof = runtime.run("lsof", ["-ti", `:${routerPort}`], { env: runtime.env });
-  const pids = splitNonEmptyLines(lsof.stdout).map(Number).filter(Number.isFinite);
-  for (const pid of pids) {
-    if (stopped.has(pid)) continue;
-    if (!pidOwnedByCurrentUser(pid, runtime)) continue;
-    if (!isModelRouterPid(pid, routerPort, runtime)) continue;
-    if (tryStopModelRouterPid(pid, runtime)) stopped.add(pid);
-  }
-
-  if (stopped.size === 0) runtime.log("No model router processes found");
   return true;
 }
 

@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } fr
 import {
   createDestroyHarness,
   resetDestroyModuleCache,
+  sandboxListJson,
 } from "../../../../test/helpers/destroy-flow-test-harness";
 
 import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../inference/ollama/contract";
@@ -108,6 +109,59 @@ describe("confirmed destroy proxy cleanup", () => {
     resetDestroyModuleCache();
     fs.rmSync(testHome, { force: true, recursive: true });
   });
+
+  it.each(["compatible-endpoint", "compatible-anthropic-endpoint"])(
+    "keeps the proxy until destroy removes its final %s owner",
+    async (provider) => {
+      const harness = createDestroyHarness({ registeredSandboxCount: 2 });
+      const registry = harness.registry;
+      const original = registry.getSandbox("alpha")!;
+      let entries = [
+        original,
+        { ...original, name: "beta", provider, credentialEnv: OLLAMA_LOCAL_CREDENTIAL_ENV },
+      ];
+      const remoteNames = new Set(["alpha", "beta"]);
+      vi.mocked(registry.getSandbox).mockImplementation(
+        (name) => entries.find((entry) => entry.name === name) ?? null,
+      );
+      vi.mocked(registry.listSandboxes).mockImplementation(() => ({
+        sandboxes: entries,
+        defaultSandbox: null,
+      }));
+      harness.removeSandboxSpy.mockImplementation((name: string) => {
+        entries = entries.filter((entry) => entry.name !== name);
+        return true;
+      });
+      harness.setDockerIdentityResult({ status: 0, stdout: "" });
+      harness.runOpenshellSpy.mockImplementation((args: string[]) => {
+        const name = args.includes("alpha") ? "alpha" : "beta";
+        switch (`${args[0]}:${args[1]}`) {
+          case "sandbox:list":
+            return { status: 0, stdout: sandboxListJson([...remoteNames]), stderr: "" };
+          case "sandbox:get":
+            return remoteNames.has(name)
+              ? { status: 0, stdout: `Name: ${name}\nPhase: Ready`, stderr: "" }
+              : { status: 1, stdout: "", stderr: `Error: sandbox ${name} not found` };
+          case "sandbox:delete":
+            remoteNames.delete(name);
+            return { status: 0, stdout: "", stderr: "" };
+          default:
+            return { status: 0, stdout: "", stderr: "" };
+        }
+      });
+
+      await harness.destroySandbox("alpha", { yes: true, cleanupGateway: false });
+      expect(remoteNames).toEqual(new Set(["beta"]));
+      expect(entries.map((entry) => entry.name)).toEqual(["beta"]);
+      expect(harness.killStaleProxySpy).not.toHaveBeenCalled();
+
+      await harness.destroySandbox("beta", { yes: true, cleanupGateway: false });
+      expect(remoteNames.size).toBe(0);
+      expect(entries).toEqual([]);
+      expect(harness.killStaleProxySpy).toHaveBeenCalledOnce();
+      expect(harness.removeSandboxSpy.mock.calls).toEqual([["alpha"], ["beta"]]);
+    },
+  );
 
   it.each(["ollama-local", "compatible-endpoint", "compatible-anthropic-endpoint"])(
     "keeps the %s proxy when sandbox deletion fails",

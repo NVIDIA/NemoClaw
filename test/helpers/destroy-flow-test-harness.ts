@@ -48,6 +48,7 @@ export type DestroyHarness = {
   cleanupManagedLlamaCppRuntimeForSandboxSpy: MockInstance;
   preparePortableDestroyAuthoritySpy: MockInstance;
   promptSpy: MockInstance;
+  registry: Pick<typeof import("../../src/lib/state/registry"), "getSandbox" | "listSandboxes">;
   removeManagedAgentStateVolumesSpy: MockInstance;
   removeSandboxSpy: MockInstance;
   reconstructRetainedSandboxRecoverySpy: MockInstance;
@@ -770,6 +771,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     portableDestroyRevalidateSpy,
     portableDestroyVerifyAbsentSpy,
     promptSpy,
+    registry,
     removeManagedAgentStateVolumesSpy,
     removeSandboxSpy,
     reconstructRetainedSandboxRecoverySpy,
