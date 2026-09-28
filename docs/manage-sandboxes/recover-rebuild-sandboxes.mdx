@@ -259,8 +259,8 @@ If the sandbox is stopped, rebuild asks OpenShell to start that exact sandbox fo
 
 <AgentOnly variant="openclaw">
 On OpenShell 0.0.116, `start` cannot restart a sandbox in `Phase: Error`.
-Because NemoClaw must reach the native home/workspace to capture it completely, a sandbox in that error state cannot be rebuilt automatically.
-Repair the OpenShell lifecycle state or recover the data manually before retrying; NemoClaw does not fall back to a selective directory copy.
+When NemoClaw can identify the exact stopped Docker container and prove its immutable runtime authority, it captures the complete native root through the Docker provider without starting or executing inside the source. This recovery path supports stopped OpenClaw and Deep Agents Code sandboxes.
+If that stopped-source authority cannot be established, repair the OpenShell lifecycle state or recover the data manually before retrying; NemoClaw does not fall back to a selective directory copy.
 
 </AgentOnly>
 

@@ -16,6 +16,20 @@ process.env.HOME = TMP_HOME;
 const sandboxState = await import(
   pathToFileURL(path.join(import.meta.dirname, "../..", "src", "lib", "state", "sandbox.ts")).href
 );
+const { backupSandboxStateWithManagedAuthority } = await import(
+  pathToFileURL(
+    path.join(
+      import.meta.dirname,
+      "../..",
+      "src",
+      "lib",
+      "actions",
+      "sandbox",
+      "snapshot",
+      "backup-authority.ts",
+    ),
+  ).href
+);
 const BACKUPS_ROOT = path.join(TMP_HOME, ".nemoclaw", "rebuild-backups");
 
 afterAll(() => {
@@ -255,6 +269,50 @@ process.exit(93);
 }
 
 describe("complete native home persistence", () => {
+  it("rejects credential-bearing stopped-state handoff before publication", () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-stopped-credential-state-"));
+    try {
+      const nativeRoot = path.join(fixture, "native-home");
+      const credentialPath = path.join(nativeRoot, ".openclaw", ".env");
+      const sourceCredential = ["COMPATIBLE_API_KEY=ghp", "_", "0123456789abcdef", "\n"].join("");
+      fs.mkdirSync(path.dirname(credentialPath), { recursive: true });
+      fs.writeFileSync(credentialPath, sourceCredential);
+      writeOpenClawRegistry("alpha");
+      const assertCurrent = vi.fn();
+
+      const backup = backupSandboxStateWithManagedAuthority(
+        "alpha",
+        {
+          getSandbox: () => ({
+            name: "alpha",
+            agent: "openclaw",
+            openshellDriver: "docker",
+          }),
+          backup: sandboxState.backupSandboxState,
+        },
+        {
+          sandboxName: "alpha",
+          agentName: "openclaw",
+          nativeDirectory: nativeRoot,
+          directory: path.join(nativeRoot, ".openclaw"),
+          cleanupDirectory: fixture,
+          assertCurrent,
+          dispose: vi.fn(),
+        },
+      );
+
+      expect(backup.success).toBe(false);
+      expect(backup.manifest).toBeUndefined();
+      expect(backup.error).toContain("credential-bearing or uninspectable content");
+      expect(assertCurrent).toHaveBeenCalledOnce();
+      expect(fs.readFileSync(credentialPath, "utf8")).toBe(sourceCredential);
+      const sandboxBackups = path.join(BACKUPS_ROOT, "alpha");
+      expect(fs.existsSync(sandboxBackups) ? fs.readdirSync(sandboxBackups) : []).toEqual([]);
+    } finally {
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
   it("captures a prepared stopped tree without SSH and inspects only a requested subtree", () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-stopped-native-state-"));
     try {
