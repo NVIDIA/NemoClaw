@@ -69,6 +69,7 @@ import { runConnectAutoPairApprovalPass } from "./auto-pair-approval";
 import {
   exitOnSecretBoundaryRefusal,
   printGatewayTerminalRepairGuidance,
+  unmatchedSandboxContainerLines,
 } from "./connect-boundary-refusal";
 import { prepareHermesLightTerminalSkin } from "./connect-hermes-light-skin";
 import {
@@ -111,6 +112,7 @@ import { printGatewayWedgeDiagnostics } from "./gateway-wedge-diagnostics";
 import {
   createProbeTimingRecorder,
   createBoundLaunchReadinessDeps,
+  formatLaunchReadinessUnsafeAuthorityEvidence,
   inspectLaunchReadiness,
   portableOpenClawPairingIncompleteMessage,
   type ProbeTimingRecorder,
@@ -1284,6 +1286,28 @@ function failConnectReadinessDockerRuntimeDown(sandboxName: string): never {
   process.exit(1);
 }
 
+// A terminal phase can follow from a container identity that NemoClaw refused
+// to match rather than from a crashed sandbox. Name that boundary instead of
+// steering the user to runtime logs and status (#10869).
+function failConnectReadinessTerminalPhase(
+  sandboxName: string,
+  transition: string,
+  { inspectDockerIdentity, retryCommand }: { inspectDockerIdentity: boolean; retryCommand: string },
+): never {
+  console.error("");
+  console.error(`  Sandbox '${sandboxName}' ${transition} state.`);
+  const identityLines = inspectDockerIdentity
+    ? unmatchedSandboxContainerLines(sandboxName, `${CLI_NAME} ${sandboxName} ${retryCommand}`)
+    : null;
+  if (identityLines) {
+    for (const line of identityLines) console.error(`  ${line}`);
+  } else {
+    console.error(`  Run:  ${CLI_NAME} ${sandboxName} logs --follow`);
+    console.error(`  Run:  ${CLI_NAME} ${sandboxName} status`);
+  }
+  process.exit(1);
+}
+
 async function failIfGatewayBlocksConnectReadiness(sandboxName: string): Promise<void> {
   const sb = readConnectSandbox(sandboxName);
   const gatewayName = sb
@@ -1988,11 +2012,10 @@ export async function waitForSandboxReadyOrExit(
   let remainingInitialErrorGracePolls =
     allowInitialErrorAfterStart && status === "Error" ? START_INITIAL_ERROR_GRACE_POLLS - 1 : 0;
   if (status && TERMINAL_SANDBOX_PHASES.has(status) && remainingInitialErrorGracePolls === 0) {
-    console.error("");
-    console.error(`  Sandbox '${sandboxName}' is in '${status}' state.`);
-    console.error(`  Run:  ${CLI_NAME} ${sandboxName} logs --follow`);
-    console.error(`  Run:  ${CLI_NAME} ${sandboxName} status`);
-    process.exit(1);
+    failConnectReadinessTerminalPhase(sandboxName, `is in '${status}'`, {
+      inspectDockerIdentity: allowDockerRuntimeInspection,
+      retryCommand,
+    });
   }
   if (allowDockerRuntimeInspection && isDockerRuntimeDown(sandboxName)) {
     failConnectReadinessDockerRuntimeDown(sandboxName);
@@ -2026,11 +2049,10 @@ export async function waitForSandboxReadyOrExit(
       remainingInitialErrorGracePolls = 0;
     }
     if (TERMINAL_SANDBOX_PHASES.has(cur) && !waitingThroughInitialError) {
-      console.error("");
-      console.error(`  Sandbox '${sandboxName}' entered '${cur}' state.`);
-      console.error(`  Run:  ${CLI_NAME} ${sandboxName} logs --follow`);
-      console.error(`  Run:  ${CLI_NAME} ${sandboxName} status`);
-      process.exit(1);
+      failConnectReadinessTerminalPhase(sandboxName, `entered '${cur}'`, {
+        inspectDockerIdentity: allowDockerRuntimeInspection,
+        retryCommand,
+      });
     }
     if (allowDockerRuntimeInspection && isDockerRuntimeDown(sandboxName)) {
       failConnectReadinessDockerRuntimeDown(sandboxName);
@@ -3022,7 +3044,7 @@ async function prepareConnectSandboxWithinLifecycleFence(
       if (gated.kind === "unsafe") {
         probeTiming!.markFailureStage("publication");
         console.error(
-          "  Probe failed: complete probe and recovery did not run because the current launch-readiness epoch could not be safely revalidated. Repair the current user's secure OS runtime authority and NemoClaw state permissions, then retry.",
+          `  Probe failed: complete probe and recovery did not run because the current launch-readiness epoch could not be safely revalidated.${formatLaunchReadinessUnsafeAuthorityEvidence(gated.evidence)}`,
         );
         process.exit(1);
       }

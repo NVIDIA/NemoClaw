@@ -178,7 +178,7 @@ jobs:
           [[ "$TEST_FILE" =~ ^test/e2e/live/[A-Za-z0-9._-]+\.test\.ts$ ]] || fail "test file"
           [[ "$ARTIFACT_LAYOUT" == "target-shard" || "$ARTIFACT_LAYOUT" == "flat-shard" ]] || fail "artifact layout"
           [[ "$HOST_PREPARATION" == "none" || "$HOST_PREPARATION" == "hermes-swap" ]] || fail "host preparation"
-          [[ "$HOST_PACKAGES" == "" || "$HOST_PACKAGES" == "expect" || "$HOST_PACKAGES" == "iptables" || "$HOST_PACKAGES" == "expect iptables" ]] || fail "host packages"
+          [[ "$HOST_PACKAGES" == "" || "$HOST_PACKAGES" == "expect" || "$HOST_PACKAGES" == "iptables" || "$HOST_PACKAGES" == "expect iptables" || "$HOST_PACKAGES" == "conmon fuse-overlayfs golang-github-containers-common iptables nftables slirp4netns uidmap" ]] || fail "host packages"
           [[ "$INSTALL_MODE" == "none" || "$INSTALL_MODE" == "authenticated" || "$INSTALL_MODE" == "credential-free" ]] || fail "install mode"
           if [[ "$ARTIFACT_LAYOUT" == "flat-shard" && "$SHARD" == "default" ]]; then
             fail "flat shard layout requires a named shard"
@@ -412,7 +412,7 @@ jobs:
 
       - name: Install target host dependencies
         if: ${{ inputs.host_packages != '' }}
-        uses: NVIDIA/NemoClaw/.github/actions/host-dependency-setup@4def1501b34ce586f83b91af50a66b5d22b31d75
+        uses: NVIDIA/NemoClaw/.github/actions/host-dependency-setup@d511d704980d651909b52b18ee42fad41a017b7d
         with:
           packages: ${{ inputs.host_packages }}
 

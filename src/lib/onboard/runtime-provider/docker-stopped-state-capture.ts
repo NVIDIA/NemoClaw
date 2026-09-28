@@ -27,12 +27,13 @@ layout = json.loads(sys.argv[1])
 directories = set(layout['directories'])
 files = set(layout['files'])
 prefixes = tuple(layout['prefixes'])
+root_name = layout['root']
 root_seen = False
 with tarfile.open(fileobj=sys.stdin.buffer, mode='r|') as source:
     with tarfile.open(fileobj=sys.stdout.buffer, mode='w|') as target:
         for entry in source:
             parts = pathlib.PurePosixPath(entry.name).parts
-            if not parts or '\0' in entry.name or entry.name.startswith('/') or '..' in parts or parts[0] != '.openclaw':
+            if not parts or '\0' in entry.name or entry.name.startswith('/') or '..' in parts or parts[0] != root_name:
                 raise ValueError('invalid stopped state path')
             if len(parts) == 1:
                 if root_seen or not entry.isdir(): raise ValueError('state root is not one directory')
@@ -41,10 +42,12 @@ with tarfile.open(fileobj=sys.stdin.buffer, mode='r|') as source:
                 entry.mode = 0o700
             else:
                 if not root_seen: raise ValueError('state root header missing')
-                top = parts[1]
-                directory = top in directories or top.startswith(prefixes)
-                state_file = top in files and len(parts) == 2
-                if not directory and not state_file: continue
+                relative = '/'.join(parts[1:])
+                directory = any(relative == name or relative.startswith(name + '/') for name in directories) or parts[1].startswith(prefixes)
+                ancestor = any(name.startswith(relative + '/') for name in directories | files)
+                state_file = relative in files
+                if not directory and not state_file and not ancestor: continue
+                if ancestor and not entry.isdir(): raise ValueError('invalid state parent')
                 if state_file and not entry.isfile(): raise ValueError('invalid state file')
                 entry.name = '/'.join(parts[1:])
             if not (entry.isfile() or entry.isdir() or entry.issym()) or entry.sparse is not None:
@@ -59,6 +62,7 @@ function observeManagedStateMounts(
   mounts: readonly unknown[],
   roots: NonNullable<RuntimeProviderStoppedStateProjection["managedStateRoots"]>,
   containerId: string,
+  source: string,
   readDocker: (args: readonly string[]) => string | null,
 ): readonly unknown[] | null {
   const observations: Array<readonly [string, ...unknown[]]> = [];
@@ -73,7 +77,6 @@ function observeManagedStateMounts(
       path.posix.normalize(destination) !== destination
     )
       return null;
-    const source = "/sandbox/.openclaw";
     if (
       destination !== source &&
       !destination.startsWith(`${source}/`) &&
@@ -150,7 +153,7 @@ function observeManagedStateMounts(
 }
 
 /**
- * Read the OpenClaw state tree from one stopped Docker runtime. This operation
+ * Read declared agent state from one stopped Docker runtime. This operation
  * never starts or executes in the container and never mutates OpenShell state.
  * The provider owns interpretation of its opaque runtime handle.
  */
@@ -163,8 +166,10 @@ export function prepareStoppedDockerStateCapture(
     spawn?: typeof dockerSpawn;
   } = {},
 ): RuntimeProviderStoppedStateCapture {
+  const agentName = sandbox.agent ?? "openclaw";
+  const sourceDirectory = agentName === "openclaw" ? "/sandbox/.openclaw" : "/sandbox/.deepagents";
   if (
-    (sandbox.agent ?? "openclaw") !== "openclaw" ||
+    !["openclaw", "langchain-deepagents-code"].includes(agentName) ||
     sandbox.openshellDriver !== "docker" ||
     !sandbox.lifecycleLiveIdentityFingerprint ||
     runtime.providerId !== "docker" ||
@@ -173,15 +178,23 @@ export function prepareStoppedDockerStateCapture(
     runtime.runtime.runtime.kind !== "docker-container" ||
     !/^[a-f0-9]{64}$/u.test(runtime.runtime.runtime.handle)
   ) {
-    throw new Error("Stopped state capture requires an identified Docker OpenClaw sandbox.");
+    throw new Error(
+      "Stopped state capture requires an identified Docker OpenClaw or Deep Agents sandbox.",
+    );
   }
   if (
-    [...projection.directories, ...projection.prefixes, ...projection.files].some(
+    [...projection.directories, ...projection.files].some((name) =>
+      name
+        .split("/")
+        .some((part) => !/^[A-Za-z0-9._-]+$/u.test(part) || part === "." || part === ".."),
+    ) ||
+    projection.prefixes.some(
       (name) => !/^[A-Za-z0-9._-]+$/u.test(name) || name === "." || name === "..",
     )
   )
     throw new Error("Stopped state projection contains an invalid declared path.");
   const encodedProjection = JSON.stringify({
+    root: path.posix.basename(sourceDirectory),
     directories: projection.directories,
     prefixes: projection.prefixes,
     files: projection.files,
@@ -249,6 +262,7 @@ export function prepareStoppedDockerStateCapture(
       mounts,
       managedStateRoots,
       containerId,
+      sourceDirectory,
       readDocker,
     );
     if (!ownedVolumes)
@@ -283,7 +297,7 @@ export function prepareStoppedDockerStateCapture(
       await new Promise<void>((resolve, reject) => {
         // No -L or trailing '/.': an agent-replaced root symlink stays a link
         // in the archive and the state owner rejects it instead of following it.
-        const child = spawn(["cp", `${containerId}:/sandbox/.openclaw`, "-"], {
+        const child = spawn(["cp", `${containerId}:${sourceDirectory}`, "-"], {
           stdio: ["ignore", "pipe", "pipe"],
         });
         const filter = spawnHost(
