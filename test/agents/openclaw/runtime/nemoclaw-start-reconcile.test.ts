@@ -33,6 +33,7 @@ interface RunReconcileOptions {
    */
   gatewayRawOutput?: string;
   configWritable?: boolean;
+  customRouteReceipt?: "valid" | "invalid";
   env?: Record<string, string>;
   uid?: number;
 }
@@ -54,11 +55,20 @@ describe("agent identity reconciliation with provider (#3175)", () => {
     fs.mkdirSync(openclawDir, { recursive: true });
     const configPath = path.join(openclawDir, "openclaw.json");
     const hashPath = path.join(openclawDir, ".config-hash");
+    const receiptPath = path.join(openclawDir, ".nemoclaw-custom-route-pending");
     fs.writeFileSync(configPath, JSON.stringify(initialConfig));
     fs.writeFileSync(hashPath, "oldhash\n");
+    const receiptDigest =
+      options.customRouteReceipt === "valid"
+        ? createHash("sha256").update(fs.readFileSync(configPath)).digest("hex")
+        : options.customRouteReceipt === "invalid"
+          ? "0".repeat(64)
+          : null;
+    receiptDigest && fs.writeFileSync(receiptPath, `${receiptDigest}  openclaw.json\n`);
     fs.chmodSync(openclawDir, 0o2770);
     fs.chmodSync(configPath, options.configWritable === false ? 0o440 : 0o660);
     fs.chmodSync(hashPath, 0o660);
+    receiptDigest && fs.chmodSync(receiptPath, 0o660);
 
     const binDir = path.join(root, "bin");
     fs.mkdirSync(binDir);
@@ -109,7 +119,13 @@ describe("agent identity reconciliation with provider (#3175)", () => {
     fs.writeFileSync(script, wrapper, { mode: 0o700 });
     const childCredentials = prepareNonRootChildProcess({
       enabled: runAsActualNonRoot,
-      ownedPaths: [openclawDir, configPath, hashPath, script],
+      ownedPaths: [
+        openclawDir,
+        configPath,
+        hashPath,
+        ...(receiptDigest ? [receiptPath] : []),
+        script,
+      ],
       traversalRoot: root,
     });
     // Build PATH: when the test installs an openshell stub, prepend its
@@ -275,6 +291,54 @@ describe("agent identity reconciliation with provider (#3175)", () => {
       "nvidia/nemotron-3-super-120b-a12b",
     );
     expect(hash).toBe(expectedHash);
+  });
+
+  it("preserves an integrity-bound custom image route through first startup", () => {
+    const { result, config, hash, expectedHash } = runReconcile(
+      {
+        agents: { defaults: { model: { primary: "inference/selected-model" } } },
+        models: {
+          providers: {
+            inference: {
+              models: [{ id: "selected-model", name: "inference/selected-model" }],
+            },
+          },
+        },
+      },
+      {
+        customRouteReceipt: "valid",
+        gatewayModel: "nvidia/nemotron-3-super-120b-a12b",
+        uid: 1000,
+      },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(config.agents.defaults.model.primary).toBe("inference/selected-model");
+    expect(config.models.providers.inference.models[0].id).toBe("selected-model");
+    expect(hash).toBe(expectedHash);
+  });
+
+  it("fails closed when a custom image route receipt does not match its config", () => {
+    const initial = {
+      agents: { defaults: { model: { primary: "inference/selected-model" } } },
+      models: {
+        providers: {
+          inference: {
+            models: [{ id: "selected-model", name: "inference/selected-model" }],
+          },
+        },
+      },
+    };
+    const { result, config, hash } = runReconcile(initial, {
+      customRouteReceipt: "invalid",
+      gatewayModel: "nvidia/nemotron-3-super-120b-a12b",
+      uid: 1000,
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Refusing invalid custom-image route receipt");
+    expect(config).toEqual(initial);
+    expect(hash).toBe("oldhash\n");
   });
 
   it("reconciles a writable config when startup runs as a non-root sandbox user", () => {

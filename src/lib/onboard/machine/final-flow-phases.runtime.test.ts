@@ -70,7 +70,7 @@ describe("final onboard flow runtime boundary", () => {
         runtime: harness.boundary.getRuntime(),
         phases,
         recordRepairEvent: recorders.recordRepairEvent,
-        afterPoliciesReady: () => {
+        afterVerified: () => {
           order.push("disarm");
         },
       });
@@ -79,9 +79,9 @@ describe("final onboard flow runtime boundary", () => {
         "openclaw",
         "agent-forward",
         "policies",
-        "disarm",
         "set-default",
         "verify",
+        "disarm",
       ]);
       expect(harness.getSession()).toMatchObject({
         status: "complete",
@@ -134,7 +134,7 @@ describe("final onboard flow runtime boundary", () => {
         runtime: harness.boundary.getRuntime(),
         phases,
         recordRepairEvent,
-        afterPoliciesReady: () => {
+        afterVerified: () => {
           order.push("disarm");
         },
       });
@@ -144,9 +144,9 @@ describe("final onboard flow runtime boundary", () => {
           ? ["openclaw", "agent-forward"]
           : ["agent-setup", "agent-forward"]),
         "policies",
-        "disarm",
         "set-default",
         "verify",
+        "disarm",
       ]);
       expect(harness.getSession()).toMatchObject({
         status: "complete",
@@ -239,7 +239,7 @@ describe("final onboard flow runtime boundary", () => {
         runtime: harness.boundary.getRuntime(),
         phases,
         recordRepairEvent: recorders.recordRepairEvent,
-        afterPoliciesReady: () => {
+        afterVerified: () => {
           order.push("disarm");
         },
       });
@@ -248,9 +248,9 @@ describe("final onboard flow runtime boundary", () => {
         "agent-setup",
         "agent-forward",
         "policies",
-        "disarm",
         "set-default",
         "verify",
+        "disarm",
       ]);
       expect(harness.getSession()).toMatchObject({
         status: "complete",
@@ -310,7 +310,7 @@ describe("final onboard flow runtime boundary", () => {
       runtime: harness.boundary.getRuntime(),
       phases,
       recordRepairEvent: recorders.recordRepairEvent,
-      afterPoliciesReady: () => {
+      afterVerified: () => {
         order.push("disarm");
       },
       onContextUpdated: (updatedContext) => {
@@ -322,9 +322,9 @@ describe("final onboard flow runtime boundary", () => {
       "openclaw",
       "agent-forward",
       "policies",
-      "disarm",
       "set-default",
       "verify:slack,discord",
+      "disarm",
     ]);
   });
 
@@ -346,13 +346,81 @@ describe("final onboard flow runtime boundary", () => {
         },
         phases,
         recordRepairEvent: vi.fn(),
-        afterPoliciesReady: () => {
+        afterVerified: () => {
           order.push("disarm");
         },
       }),
     ).rejects.toThrow("recording failed");
 
     expect(order).toEqual(["openclaw", "agent-forward", "policies"]);
+  });
+
+  it("waits for asynchronous route retirement after final verification", async () => {
+    const order: string[] = [];
+    const harness = createRuntimeHarness(sessionAt("openclaw"));
+    const recorders = harness.boundary.recorders();
+    const phases = createPhases("openclaw", order, {
+      loadSession: harness.getSession,
+      recordStepSkipped: recorders.recordStepSkipped,
+      recordStateSkipped: recorders.recordStateSkipped,
+      startRecordedStep: recorders.startRecordedStep,
+      recordStepComplete: recorders.recordStepComplete,
+    });
+    let releaseRetirement!: () => void;
+    const retirementPending = new Promise<void>((resolve) => {
+      releaseRetirement = resolve;
+    });
+
+    const flow = runFinalOnboardFlowSlice({
+      context: context({ session: harness.getSession() }),
+      runtime: harness.boundary.getRuntime(),
+      phases,
+      recordRepairEvent: recorders.recordRepairEvent,
+      afterVerified: async () => {
+        order.push("retire-start");
+        await retirementPending;
+        order.push("retire-complete");
+      },
+    });
+    await vi.waitFor(() => expect(order).toContain("retire-start"));
+    expect(harness.getSession().machine.state).toBe("post_verify");
+
+    releaseRetirement();
+    await flow;
+
+    expect(order.slice(-2)).toEqual(["retire-start", "retire-complete"]);
+  });
+
+  it("keeps final verification retryable when route retirement fails", async () => {
+    const order: string[] = [];
+    const harness = createRuntimeHarness(sessionAt("openclaw"));
+    const recorders = harness.boundary.recorders();
+    const phases = createPhases("openclaw", order, {
+      loadSession: harness.getSession,
+      recordStepSkipped: recorders.recordStepSkipped,
+      recordStateSkipped: recorders.recordStateSkipped,
+      startRecordedStep: recorders.startRecordedStep,
+      recordStepComplete: recorders.recordStepComplete,
+    });
+
+    await expect(
+      runFinalOnboardFlowSlice({
+        context: context({ session: harness.getSession() }),
+        runtime: harness.boundary.getRuntime(),
+        phases,
+        recordRepairEvent: recorders.recordRepairEvent,
+        afterVerified: () => {
+          order.push("retire");
+          throw new Error("retirement failed");
+        },
+      }),
+    ).rejects.toThrow("retirement failed");
+
+    expect(order.at(-1)).toBe("retire");
+    expect(harness.getSession()).toMatchObject({
+      status: "in_progress",
+      machine: { state: "post_verify" },
+    });
   });
 
   it("keeps rollback armed when a policies prerequisite repair fails", async () => {
@@ -370,7 +438,7 @@ describe("final onboard flow runtime boundary", () => {
       },
     });
     const recordRepairEvent = vi.fn(recorders.recordRepairEvent);
-    const afterPoliciesReady = vi.fn();
+    const afterVerified = vi.fn();
 
     await expect(
       runFinalOnboardFlowSlice({
@@ -378,12 +446,12 @@ describe("final onboard flow runtime boundary", () => {
         runtime: harness.boundary.getRuntime(),
         phases,
         recordRepairEvent,
-        afterPoliciesReady,
+        afterVerified,
       }),
     ).rejects.toThrow("policy repair failed");
 
     expect(order).toEqual(["openclaw", "agent-forward", "policies"]);
-    expect(afterPoliciesReady).not.toHaveBeenCalled();
+    expect(afterVerified).not.toHaveBeenCalled();
     expect(recordRepairEvent).toHaveBeenLastCalledWith("state.repair.failed", {
       state: "policies",
       error: "policy repair failed",
@@ -415,20 +483,13 @@ describe("final onboard flow runtime boundary", () => {
         runtime: harness.boundary.getRuntime(),
         phases,
         recordRepairEvent: recorders.recordRepairEvent,
-        afterPoliciesReady: () => {
+        afterVerified: () => {
           order.push("disarm");
         },
       }),
     ).rejects.toThrow("verification failed");
 
-    expect(order).toEqual([
-      "openclaw",
-      "agent-forward",
-      "policies",
-      "disarm",
-      "set-default",
-      "verify",
-    ]);
+    expect(order).toEqual(["openclaw", "agent-forward", "policies", "set-default", "verify"]);
     expect(printDashboard).not.toHaveBeenCalled();
     expect(harness.getSession()).toMatchObject({
       status: "in_progress",
@@ -444,6 +505,7 @@ describe("final onboard flow runtime boundary", () => {
       .fn()
       .mockResolvedValueOnce(deploymentResult(false))
       .mockResolvedValueOnce(deploymentResult(true));
+    const afterVerified = vi.fn();
     const phases = createPhases("openclaw", order, {
       loadSession: harness.getSession,
       recordStepSkipped: recorders.recordStepSkipped,
@@ -458,7 +520,9 @@ describe("final onboard flow runtime boundary", () => {
       runtime: harness.boundary.getRuntime(),
       phases,
       recordRepairEvent: recorders.recordRepairEvent,
+      afterVerified,
     });
+    expect(afterVerified).not.toHaveBeenCalled();
 
     expect(first.session).toMatchObject({
       status: "in_progress",
@@ -471,9 +535,11 @@ describe("final onboard flow runtime boundary", () => {
       runtime: harness.boundary.getRuntime(),
       phases,
       recordRepairEvent: recorders.recordRepairEvent,
+      afterVerified,
     });
 
     expect(verifyDeployment).toHaveBeenCalledTimes(2);
+    expect(afterVerified).toHaveBeenCalledOnce();
     expect(resumed.session).toMatchObject({
       status: "complete",
       resumable: false,

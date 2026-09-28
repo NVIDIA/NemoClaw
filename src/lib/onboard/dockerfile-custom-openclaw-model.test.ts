@@ -122,6 +122,12 @@ describe("custom OpenClaw model reconciliation", () => {
     expect(fs.readFileSync(path.join(path.dirname(configPath), ".config-hash"), "utf8")).toBe(
       `${digest}  openclaw.json\n`,
     );
+    expect(
+      fs.readFileSync(
+        path.join(path.dirname(configPath), ".nemoclaw-custom-route-pending"),
+        "utf8",
+      ),
+    ).toBe(`${digest}  openclaw.json\n`);
     expect(fs.statSync(configPath).mode & 0o777).toBe(0o660);
   });
 

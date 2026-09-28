@@ -1143,6 +1143,7 @@ reconcile_agent_model_with_provider() {
 
   local config_file="/sandbox/.openclaw/openclaw.json"
   local hash_file="/sandbox/.openclaw/.config-hash"
+  local custom_route_receipt="/sandbox/.openclaw/.nemoclaw-custom-route-pending"
 
   [ -f "$config_file" ] || return 0
 
@@ -1151,12 +1152,82 @@ reconcile_agent_model_with_provider() {
     return 0
   fi
 
-  if [ -L "$config_file" ] || [ -L "$hash_file" ]; then
-    return 0
+  if [ -L "$config_file" ] || [ -L "$hash_file" ] || [ -L "$custom_route_receipt" ]; then
+    printf '[SECURITY] Refusing agent model reconciliation: config, hash, or receipt path is a symlink\n' >&2
+    return 1
+  fi
+  if [ -e "$custom_route_receipt" ] && [ ! -f "$custom_route_receipt" ]; then
+    printf '[SECURITY] Refusing agent model reconciliation: custom-image route receipt is not a regular file\n' >&2
+    return 1
   fi
 
   local gateway_model=""
-  if command -v openshell >/dev/null 2>&1; then
+  local model_source="gateway"
+  if [ -f "$custom_route_receipt" ]; then
+    if ! run_openclaw_config_as_owner /usr/bin/python3 -I - \
+      "$config_file" "$custom_route_receipt" <<'PYCUSTOMROUTE'; then
+import hashlib
+import os
+import re
+import stat
+import sys
+
+config_path, receipt_path = sys.argv[1:]
+flags = os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0)
+
+
+def open_regular(path):
+    descriptor = os.open(path, flags)
+    metadata = os.fstat(descriptor)
+    current = os.stat(path, follow_symlinks=False)
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_nlink != 1
+        or (metadata.st_dev, metadata.st_ino) != (current.st_dev, current.st_ino)
+    ):
+        os.close(descriptor)
+        raise OSError("path is not a trusted regular file")
+    return descriptor
+
+
+def read_bounded(descriptor, limit):
+    chunks = []
+    remaining = limit + 1
+    while remaining > 0:
+        chunk = os.read(descriptor, remaining)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
+
+
+try:
+    config_fd = open_regular(config_path)
+    receipt_fd = open_regular(receipt_path)
+    try:
+        config = read_bounded(config_fd, 8 * 1024 * 1024)
+        receipt = read_bounded(receipt_fd, 255)
+    finally:
+        os.close(receipt_fd)
+        os.close(config_fd)
+except OSError:
+    raise SystemExit(1)
+
+if len(config) > 8 * 1024 * 1024 or len(receipt) > 255:
+    raise SystemExit(1)
+match = re.fullmatch(rb"([a-f0-9]{64})  openclaw\.json\n", receipt)
+if match is None or hashlib.sha256(config).hexdigest().encode("ascii") != match.group(1):
+    raise SystemExit(1)
+PYCUSTOMROUTE
+      printf '[SECURITY] Refusing invalid custom-image route receipt\n' >&2
+      return 1
+    fi
+    # The staged Dockerfile bound the selected route to this exact config.
+    # Preserve it through the first launch; the host retires the receipt only
+    # after final deployment verification observes a healthy inference route.
+    model_source="custom-image"
+  elif command -v openshell >/dev/null 2>&1; then
     gateway_model="$(
       python3 - <<'PYPROBE'
 import os
@@ -1221,7 +1292,7 @@ PYPROBE
 
   local provider_model_ref
   provider_model_ref="$(
-    run_openclaw_config_as_owner /usr/bin/env GATEWAY_MODEL="${gateway_model:-}" \
+    run_openclaw_config_as_owner /usr/bin/env GATEWAY_MODEL="${gateway_model:-}" MODEL_SOURCE="$model_source" \
       /usr/bin/python3 -I - "$config_file" <<'PYRECONCILE_READ'
 import json, os, sys
 
@@ -1257,7 +1328,7 @@ if gateway_target is not None:
     first_id_ok = isinstance(first_id, str) and (first_id == bare or first_id == gateway_target)
     if primary_ok and first_name_ok and first_id_ok:
         sys.exit(0)
-    print(f"gateway\t{gateway_target}")
+    print(f"{os.environ.get('MODEL_SOURCE', 'gateway')}\t{gateway_target}")
     sys.exit(0)
 
 # Legacy fallback: gateway probe is unavailable. Align primary with
@@ -1270,10 +1341,19 @@ legacy_target = qualify(first.get("name") or first.get("id"))
 if legacy_target is None:
     sys.exit(0)
 if isinstance(primary, str) and primary == legacy_target:
+    if os.environ.get("MODEL_SOURCE") == "custom-image":
+        print("already-synced")
     sys.exit(0)
 print(f"legacy\t{legacy_target}")
 PYRECONCILE_READ
   )"
+
+  if [ "$provider_model_ref" = "already-synced" ]; then
+    # A valid custom-route receipt also binds the config hash. Refresh the
+    # mutable hash before the host runs its verification and retirement exec.
+    ensure_mutable_openclaw_config_hash
+    return $?
+  fi
 
   if [ -z "$provider_model_ref" ]; then
     return 0
@@ -1295,7 +1375,7 @@ config_file, provider_model = sys.argv[1], sys.argv[2]
 with open(config_file) as f:
     cfg = json.load(f)
 cfg.setdefault("agents", {}).setdefault("defaults", {}).setdefault("model", {})["primary"] = provider_model
-if os.environ.get("RECONCILE_SOURCE") == "gateway":
+if os.environ.get("RECONCILE_SOURCE") != "legacy":
     bare = (
         provider_model[len("inference/"):]
         if provider_model.startswith("inference/")

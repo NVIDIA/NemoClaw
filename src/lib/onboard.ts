@@ -52,7 +52,7 @@ const preparedDcodeRebuild: typeof import("./onboard/prepared-dcode-rebuild") = 
 const sandboxBuildPatchConfig: typeof import("./onboard/sandbox-build-patch-config") = require("./onboard/sandbox-build-patch-config");
 const baseImageResolutionFlow: typeof import("./onboard/base-image-resolution-flow") = require("./onboard/base-image-resolution-flow");
 const sandboxCreateIntentResolution: typeof import("./onboard/sandbox-create-intent-resolution") = require("./onboard/sandbox-create-intent-resolution");
-const sandboxCreateOrchestration: typeof import("./onboard/sandbox-create/orchestration") = require("./onboard/sandbox-create/orchestration");
+const sandboxCreate: typeof import("./onboard/sandbox-create/orchestration") = require("./onboard/sandbox-create/orchestration");
 const managedWorkloadOnboard: typeof import("./onboard/managed-workload/onboard-orchestration") = require("./onboard/managed-workload/onboard-orchestration");
 const onboardEntryOptions: typeof import("./onboard/entry-options") = require("./onboard/entry-options");
 const onboardSessionBootstrap: typeof import("./onboard/session-bootstrap") = require("./onboard/session-bootstrap");
@@ -117,6 +117,7 @@ const {
   completeOrdinaryOnboardSandboxCreation,
   createOnboardCreatedSandboxCompletion,
   createOnboardCreatedSandboxRegistration,
+  retireCustomOpenClawRouteReceipt,
 }: typeof import("./onboard/created-sandbox-finalization") = require("./onboard/created-sandbox-finalization");
 const providerKeyBridge: typeof import("./onboard/provider-key-bridge") = require("./onboard/provider-key-bridge");
 const compatibleEndpointGatewayRoute: typeof import("./onboard/inference-providers/compatible-endpoint-gateway-route") = require("./onboard/inference-providers/compatible-endpoint-gateway-route");
@@ -1422,7 +1423,7 @@ const { getSandboxRuntimeRegistryFields, hasSandboxGpuDrift, updateReusedSandbox
     getInstalledOpenshellVersion,
     runCaptureOpenshell,
   });
-const sandboxCreateOrchestrationRuntime = {
+const sandboxRuntime = {
   DASHBOARD_PORT,
   get GATEWAY_NAME() {
     return GATEWAY_NAME;
@@ -1443,6 +1444,7 @@ const sandboxCreateOrchestrationRuntime = {
   confirmRecreateForSelectionDrift,
   createOnboardCreatedSandboxCompletion,
   createOnboardCreatedSandboxRegistration,
+  retireCustomOpenClawRouteReceipt,
   createSandboxRecreateProtection,
   dashboardRuntime,
   dcodeAutoApprovalFlow,
@@ -1539,11 +1541,9 @@ const sandboxCreateOrchestrationRuntime = {
   dockerInfoFormat,
   runCapture,
 };
-export type SandboxCreateOrchestrationRuntime = typeof sandboxCreateOrchestrationRuntime;
+export type SandboxCreateOrchestrationRuntime = typeof sandboxRuntime;
 const createSandboxWithBaseImageResolution =
-  sandboxCreateOrchestration.createSandboxWithBaseImageResolution(
-    sandboxCreateOrchestrationRuntime,
-  );
+  sandboxCreate.createSandboxWithBaseImageResolution(sandboxRuntime);
 const { createSandbox, createSandboxWithTemporaryManagedRuntime } =
   agentOnboard.createHermesApiPortScopedSandboxEntryPoints({
     createBaseImageResolutionContext: () =>
@@ -3077,7 +3077,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             messagingChannelConfigsEqual,
             getSandboxReuseState,
             getSandboxRecreateObservation,
-            getDcodeSelectionDrift: sandboxCreateOrchestrationRuntime.readDcodeSelectionDrift,
+            getDcodeSelectionDrift: sandboxRuntime.readDcodeSelectionDrift,
             hasSandboxGpuDrift,
             getSandboxHermesToolGateways: (name) => registry.getSandbox(name)?.hermesToolGateways,
             getSandboxRegistryEntry: registry.getSandbox,
@@ -3297,7 +3297,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         runtime: onboardRuntimeBoundary.getRuntime(),
         phases: finalFlowPhases,
         recordRepairEvent,
-        afterPoliciesReady: () => sandboxCancelRollback.disarm(),
+        afterVerified: () => sandboxCreate.retireRoute(sandboxRuntime, finalFlowContext, agent),
         onContextUpdated: (context) => {
           liveFinalFlowContext = context;
         },

@@ -250,6 +250,9 @@ import stat
 
 config_path = os.environ["NEMOCLAW_CUSTOM_CONFIG_PATH"]
 hash_path = os.path.join(os.path.dirname(config_path), ".config-hash")
+receipt_path = os.path.join(
+    os.path.dirname(config_path), ".nemoclaw-custom-route-pending"
+)
 model = base64.b64decode(os.environ["NEMOCLAW_CUSTOM_MODEL_B64"], validate=True).decode()
 limits = json.loads(
     base64.b64decode(os.environ["NEMOCLAW_CUSTOM_MODEL_LIMITS_B64"], validate=True)
@@ -340,6 +343,32 @@ try:
         os.fsync(hash_fd)
     finally:
         os.close(hash_fd)
+
+    try:
+        os.unlink(receipt_path)
+    except FileNotFoundError:
+        pass
+    receipt_fd = os.open(
+        receipt_path,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | nofollow,
+        stat.S_IMODE(metadata.st_mode),
+    )
+    try:
+        receipt_metadata = os.fstat(receipt_fd)
+        receipt_current = os.stat(receipt_path, follow_symlinks=False)
+        if (
+            not stat.S_ISREG(receipt_metadata.st_mode)
+            or receipt_metadata.st_nlink != 1
+            or (receipt_metadata.st_dev, receipt_metadata.st_ino)
+            != (receipt_current.st_dev, receipt_current.st_ino)
+        ):
+            raise OSError("custom route receipt is not a trusted regular file")
+        os.fchown(receipt_fd, metadata.st_uid, metadata.st_gid)
+        os.fchmod(receipt_fd, stat.S_IMODE(metadata.st_mode))
+        os.write(receipt_fd, f"{digest}  openclaw.json\\n".encode())
+        os.fsync(receipt_fd)
+    finally:
+        os.close(receipt_fd)
 finally:
     os.close(config_fd)
 PYNEMOCLAWCUSTOMMODEL

@@ -25,6 +25,7 @@ const OPENCLAW_AUTO_PAIR_RUNTIME_ENV_KEYS = [
 ] as const;
 const OPENCLAW_DIAGNOSTIC_RUNTIME_ENV_KEYS = ["NEMOCLAW_MCP_SHADOW_DIAGNOSTICS"] as const;
 const OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_ENV = "NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS";
+const OPENCLAW_INFERENCE_GATEWAY_NAME_ENV = "NEMOCLAW_OPENSHELL_GATEWAY_NAME";
 const OPENCLAW_GATEWAY_URL_ENV = "OPENCLAW_GATEWAY_URL";
 const OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_MIN_MS = 1500;
 const OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_MAX_MS = 10_000;
@@ -100,6 +101,7 @@ export interface SandboxRuntimeEnvArgsInput {
   allowHermesApiPortOverride?: boolean;
   observabilityEnabled?: boolean;
   sandboxName?: string;
+  openshellGatewayName?: string;
   env: NodeJS.ProcessEnv;
   omitCredentialEnv?: boolean;
 }
@@ -125,6 +127,11 @@ export function buildSandboxRuntimeEnvArgs(input: SandboxRuntimeEnvArgsInput): {
   appendOpenClawAutoPairRuntimeEnvArgs(envArgs, agent, env);
   appendOpenClawDiagnosticRuntimeEnvArgs(envArgs, agent, env);
   appendOpenClawMcpToolsListTimeoutRuntimeEnvArg(envArgs, agent, env);
+  if ((!agent || agent.name === "openclaw") && input.openshellGatewayName) {
+    envArgs.push(
+      formatEnvAssignment(OPENCLAW_INFERENCE_GATEWAY_NAME_ENV, input.openshellGatewayName),
+    );
+  }
   appendHermesDashboardEnvArgs(envArgs, input.hermesDashboardState, formatEnvAssignment);
   if (agent?.name === "hermes" && input.sandboxName) {
     const apiPort =

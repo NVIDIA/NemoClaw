@@ -9,6 +9,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as restoreWindow from "../actions/sandbox/runtime/openclaw-lifecycle";
+import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
 import type { SandboxEntry } from "../state/registry";
 import type { QualifiedSandboxInferenceRouteReservation } from "../state/registry/route-reservation";
 import * as sandboxState from "../state/sandbox";
@@ -18,6 +19,7 @@ import {
   createOnboardCreatedSandboxCompletion,
   createOnboardCreatedSandboxRegistration,
   finalizeCreatedSandbox,
+  retireCustomOpenClawRouteReceipt,
   restoreSelectedOnboardSnapshot,
 } from "./created-sandbox-finalization";
 import { getDcodeSelectionDrift } from "./dcode-selection-drift";
@@ -47,6 +49,58 @@ beforeEach(() => {
   });
   vi.spyOn(restoreWindow, "abortUnregisteredOpenClawPostRestoreDoctor").mockResolvedValue({
     ok: true,
+  });
+});
+
+describe("custom OpenClaw route receipt retirement", () => {
+  it("retires through the selected sandbox after exact identity checks", async () => {
+    const order: string[] = [];
+    const runBuffered = vi.fn<OpenShellSandboxBufferedCommandExecutor["runBuffered"]>(async () => {
+      order.push("exec");
+      return {
+        outcome: { kind: "completed", exitCode: 0 },
+        stdout: "",
+        stderr: "",
+      };
+    });
+    const revalidateSandboxIdentity = vi.fn((operation: string) => {
+      order.push(operation.startsWith("retiring") ? "identity-before" : "identity-after");
+    });
+
+    await retireCustomOpenClawRouteReceipt({
+      sandboxName: "custom-box",
+      gatewayName: "nemoclaw-18080",
+      customOpenClawImage: true,
+      sandboxCommandExecutor: { runBuffered },
+      revalidateSandboxIdentity,
+    });
+
+    expect(order).toEqual(["identity-before", "exec", "identity-after"]);
+    expect(runBuffered).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxName: "custom-box",
+        target: { kind: "named", gatewayName: "nemoclaw-18080" },
+        command: ["/bin/rm", "-f", "--", "/sandbox/.openclaw/.nemoclaw-custom-route-pending"],
+      }),
+    );
+  });
+
+  it("fails closed when retirement does not complete", async () => {
+    await expect(
+      retireCustomOpenClawRouteReceipt({
+        sandboxName: "custom-box",
+        gatewayName: "nemoclaw-18080",
+        customOpenClawImage: true,
+        sandboxCommandExecutor: {
+          runBuffered: async () => ({
+            outcome: { kind: "completed", exitCode: 23 },
+            stdout: "",
+            stderr: "permission denied",
+          }),
+        },
+        revalidateSandboxIdentity: vi.fn(),
+      }),
+    ).rejects.toThrow("receipt retirement failed for sandbox 'custom-box' with exit code 23");
   });
 });
 
