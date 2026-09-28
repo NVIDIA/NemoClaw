@@ -347,6 +347,12 @@ function validateSnapshot(snapshot: unknown): asserts snapshot is CoordinatorSna
   ) {
     throw new Error("history.frozenContractKeys must be an array of strings");
   }
+  if (
+    (history.contractEvidence === "none" && history.frozenContractKeys.length !== 0) ||
+    (history.contractEvidence === "complete" && history.frozenContractKeys.length === 0)
+  ) {
+    throw new Error("history has inconsistent contract evidence");
+  }
   if (!Array.isArray(history.writes)) throw new Error("history.writes must be an array");
   for (const write of history.writes) {
     if (!isRecord(write)) throw new Error("history writes must be JSON objects");

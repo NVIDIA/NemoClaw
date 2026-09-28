@@ -227,6 +227,17 @@ describe("repository-owned PR review coordination", () => {
     expect(() => parseCoordinatorSnapshot(draft)).toThrow("pullRequest.draft must be a boolean");
   });
 
+  it("rejects contradictory contract evidence in the shared snapshot parser", () => {
+    expect(() =>
+      parseCoordinatorSnapshot(
+        snapshot({ contractEvidence: "none", frozenContractKeys: ["F-security-1"] }),
+      ),
+    ).toThrow("history has inconsistent contract evidence");
+    expect(() =>
+      parseCoordinatorSnapshot(snapshot({ contractEvidence: "complete", frozenContractKeys: [] })),
+    ).toThrow("history has inconsistent contract evidence");
+  });
+
   it("rejects unsupported Advisor identity", () => {
     const valid = snapshot({ advisor: clear() });
     const changed = {
@@ -579,6 +590,7 @@ function snapshot(
   } = {},
 ): CoordinatorSnapshot {
   const headSha = options.headSha ?? HEAD;
+  const frozenContractKeys = options.frozenContractKeys ?? [];
   return {
     version: 1,
     pullRequest: {
@@ -599,8 +611,9 @@ function snapshot(
       ...options.readiness,
     },
     history: {
-      contractEvidence: options.contractEvidence ?? "none",
-      frozenContractKeys: options.frozenContractKeys ?? [],
+      contractEvidence:
+        options.contractEvidence ?? (frozenContractKeys.length > 0 ? "complete" : "none"),
+      frozenContractKeys,
       writes: options.writes ?? [],
     },
   };
