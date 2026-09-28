@@ -292,6 +292,13 @@ describe("generated MCP policy", () => {
     expect(standardMethods.some((r) => r.allow.method === "initialize")).toBe(true);
     expect(standardMethods.some((r) => r.allow.method === "ping")).toBe(true);
     expect(standardMethods.some((r) => r.allow.method === "tools/list")).toBe(true);
+
+    // Ensure no unparameterized tools/call rule is present in allowlist mode.
+    const unparameterizedToolCall = rules.find(
+      (r): r is { allow: { method: string; params: { name: string } } } =>
+        "allow" in r && r.allow.method === "tools/call" && r.allow.params === undefined,
+    );
+    expect(unparameterizedToolCall).toBeUndefined();
   });
 
   it("applies directly to live OpenShell policy without a custom-policy registry row", async () => {

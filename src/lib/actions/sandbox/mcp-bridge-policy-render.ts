@@ -85,9 +85,9 @@ function renderMcpBridgePolicyYaml(
   providerName?: string,
   denyTools: readonly string[] = [],
   allowTools?: readonly string[],
-  serverIdentity?: McpServerIdentity,
-  transport?: McpTransport,
-  requireOAuth?: boolean,
+  _serverIdentity?: McpServerIdentity,
+  _transport?: McpTransport,
+  _requireOAuth?: boolean,
 ): string {
   const parsed = parseMcpUrlWithValidatedTarget(url, target);
   const key = buildMcpBridgePolicyKey(server);
@@ -128,18 +128,10 @@ function renderMcpBridgePolicyYaml(
   // In denylist mode, emit deny rules at endpoint level
   const endpointDenyRules = isAllowlistMode || denyRules.length === 0 ? undefined : denyRules;
 
-  // Store serverIdentity, transport, and requireOAuth in mcp config for persistence
-  // serverIdentity is stored separately from allow rules to avoid being interpreted as a tool permission
+  // No serverIdentity, transport, or requireOAuth in mcp config - these are unsupported by OpenShell v0.0.116.
+  // They are persisted separately in the bridge state and restored during add/rebuild.
+  // Keep mcpConfig clean with only supported fields (allow rules for allowlist mode).
   const mcpExtras: Record<string, unknown> = {};
-  if (serverIdentity) {
-    mcpExtras.serverIdentity = serverIdentity;
-  }
-  if (transport) {
-    mcpExtras.transport = transport;
-  }
-  if (requireOAuth !== undefined) {
-    mcpExtras.requireOAuth = requireOAuth;
-  }
 
   return YAML.stringify({
     preset: {

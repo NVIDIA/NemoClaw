@@ -165,7 +165,7 @@ export function computeServerIdentityHash(entry: McpSourceEntry): string {
     entry.url,
     entry.transport ?? "sse",
     entry.adapter ?? "unknown",
-    entry.env.sort().join(","),
+    [...entry.env].sort().join(","),
   ].join("|");
   return createHash("sha256").update(identitySource).digest("hex");
 }

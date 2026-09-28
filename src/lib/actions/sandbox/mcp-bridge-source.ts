@@ -591,10 +591,11 @@ async function enrichFromPolicy(
     ? endpoint.rules
         .filter(
           (rule): rule is { allow: { method: string; params: { name: string } } } =>
+            isObjectRecord(rule) &&
             "allow" in rule &&
-            rule.allow &&
+            isObjectRecord(rule.allow) &&
             rule.allow.method === "tools/call" &&
-            rule.allow.params &&
+            isObjectRecord(rule.allow.params) &&
             typeof rule.allow.params.name === "string",
         )
         .map((rule) => rule.allow.params.name)
@@ -605,7 +606,10 @@ async function enrichFromPolicy(
     ? endpoint.deny_rules
         .filter(
           (rule) =>
-            rule.method === "tools/call" && rule.params && typeof rule.params.name === "string",
+            isObjectRecord(rule) &&
+            rule.method === "tools/call" &&
+            isObjectRecord(rule.params) &&
+            typeof rule.params.name === "string",
         )
         .map((rule) => rule.params.name)
     : [];
