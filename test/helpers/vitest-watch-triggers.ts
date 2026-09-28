@@ -151,6 +151,10 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/agents/hermes/hermes-image-build-probes.test.ts"),
   },
   {
+    pattern: /(?:^|\/)agents\/hermes\/patch-agent-home\.py$/,
+    testsToRun: runTests("test/agents/hermes/hermes-agent-home-patch.test.ts"),
+  },
+  {
     pattern: /(?:^|\/)agents\/hermes\/patch-cron-restore-drain\.py$/,
     testsToRun: runTests("test/agents/hermes/hermes-cron-restore-drain-patch.test.ts"),
   },
