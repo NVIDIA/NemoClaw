@@ -77,7 +77,7 @@ describe("policy channel remove/enable flows", () => {
       name: agent,
       displayName: "Hermes",
       configPaths: { dir: `/sandbox/.${agent}` },
-      stateDirs: ["platforms", "profiles", "dashboard-home"],
+      stateDirs: ["platforms", "profiles"],
     } as unknown as defs.AgentDefinition);
     vi.spyOn(registry, "getSandbox").mockReturnValue(current);
     vi.spyOn(registry, "getConfiguredMessagingChannelsFromEntry").mockReturnValue([channel]);

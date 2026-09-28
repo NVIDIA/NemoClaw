@@ -213,6 +213,11 @@ export const restoreSandboxStateMock = vi.fn();
 export const beginOpenClawBackupQuiesceMock = vi.fn();
 export const finishOpenClawPostRestoreDoctorMock = vi.fn();
 export const abortOpenClawPostRestoreDoctorMock = vi.fn();
+export const migrateHermesLegacyDashboardStateMock = vi.fn(async () => ({
+  status: 0,
+  stdout: "",
+  stderr: "",
+}));
 export const restoreDeepAgentsNativeMcpConfigMock = vi.fn();
 export const getMcpProviderInspectionRuntimeSelectionMock = vi.fn(() => ({
   gatewayName: "nemoclaw-8091",
@@ -418,6 +423,11 @@ vi.mock("./runtime/openclaw-lifecycle", () => ({
   finishOpenClawPostRestoreDoctor: finishOpenClawPostRestoreDoctorMock,
 }));
 
+vi.mock("./snapshot-hermes-gateway-hint", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./snapshot-hermes-gateway-hint")>()),
+  migrateHermesLegacyDashboardState: migrateHermesLegacyDashboardStateMock,
+}));
+
 vi.mock("./snapshot/forward-port-allocation", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./snapshot/forward-port-allocation")>()),
   allocateSnapshotCloneForwardPorts: allocateSnapshotCloneForwardPortsMock,
@@ -507,6 +517,11 @@ export function resetSnapshotRestoreMocks(): void {
   abortOpenClawPostRestoreDoctorMock.mockImplementation(async () => {
     lifecycleMock.events.push("abort-openclaw-backup-quiesce");
     return { ok: true };
+  });
+  migrateHermesLegacyDashboardStateMock.mockReset().mockResolvedValue({
+    status: 0,
+    stdout: "",
+    stderr: "",
   });
   restoreDeepAgentsNativeMcpConfigMock.mockReset();
   getMcpProviderInspectionRuntimeSelectionMock.mockClear();

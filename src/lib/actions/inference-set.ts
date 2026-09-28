@@ -35,12 +35,11 @@ import {
 } from "../openshell-gateway-endpoint-guard";
 import {
   type AgentConfigTarget,
-  type HermesDashboardReseedResult,
   readSandboxConfig,
+  recomputeSandboxConfigHash,
   resolveAgentConfig,
   rewriteConfigUrlsWithDnsPinning,
   SandboxConfigError,
-  seedHermesDashboardConfig,
   type OpenClawConfigUpdate,
   setOpenClawConfigValues,
   writeSandboxConfig,
@@ -163,11 +162,6 @@ function providerCommitFailureAfterSelection(options: {
   );
 }
 
-interface InferenceSetMutationResult extends InferenceSetResult {
-  /** Internal post-commit convergence state used before returning to the CLI caller. */
-  dashboardConverged?: boolean;
-}
-
 export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
   getDefaultSandbox: () => string | null;
   getSandbox: (name: string) => SandboxEntry | null;
@@ -190,10 +184,7 @@ export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
   ) => void;
   setOpenClawConfigValues: typeof setOpenClawConfigValues;
   runtimeProviders?: RuntimeProviderBundleRegistry;
-  seedHermesDashboardConfig: (
-    sandboxName: string,
-    target: AgentConfigTarget,
-  ) => HermesDashboardReseedResult;
+  recomputeSandboxConfigHash: (sandboxName: string, target: AgentConfigTarget) => void;
   prepareRunOpenshell: () => void;
   captureOpenshell: (
     args: string[],
@@ -303,7 +294,7 @@ function defaultDeps(): InferenceSetDeps {
     readSandboxConfig,
     writeSandboxConfig,
     setOpenClawConfigValues,
-    seedHermesDashboardConfig,
+    recomputeSandboxConfigHash,
     prepareRunOpenshell: () => {
       getOpenshellBinary();
     },
@@ -343,10 +334,11 @@ function trimRequired(value: string | null | undefined, label: string): string {
 }
 
 /**
- * Reject an unsupported provider with suggestions from the selected gateway.
- * Falls back to supported provider names only when the read-only gateway query fails.
+ * Require either a built-in provider or an exact non-messaging provider already
+ * registered on the selected gateway. The latter keeps native-agent providers
+ * selectable without letting an unverified name create or borrow a route.
  */
-async function assertSupportedProvider(
+async function assertSelectableProvider(
   provider: string,
   model: string,
   gatewayName: string,
@@ -354,14 +346,12 @@ async function assertSupportedProvider(
 ): Promise<void> {
   if (getProviderSelectionConfig(provider, model) || provider === "nvidia-router") return;
   const registeredProviders = await queryRegisteredGatewayProviders(gatewayName, deps);
-  const selectableProviders = registeredProviders?.filter((name) =>
-    SUPPORTED_PROVIDER_NAMES.some((supportedName) => supportedName === name),
-  );
+  if (registeredProviders?.includes(provider)) return;
   const providerGuidance =
-    selectableProviders === undefined
+    registeredProviders === undefined
       ? `Supported provider names: ${SUPPORTED_PROVIDER_NAMES.join(", ")}.`
-      : selectableProviders.length > 0
-        ? `Selectable providers registered on gateway '${gatewayName}': ${selectableProviders.join(", ")}.`
+      : registeredProviders.length > 0
+        ? `Selectable providers registered on gateway '${gatewayName}': ${registeredProviders.join(", ")}.`
         : `No selectable providers are registered on gateway '${gatewayName}'.`;
   throw new InferenceSetError(`Unsupported provider '${provider}'. ${providerGuidance}`, 2);
 }
@@ -978,14 +968,14 @@ async function runInferenceSetWithoutHostLock(
   deps: InferenceSetDeps,
   expectedGatewayName: string,
   runtimeProvider: ReturnType<typeof requireInferenceSetRuntimeAuthority>,
-): Promise<InferenceMutation<InferenceSetMutationResult>> {
+): Promise<InferenceMutation<InferenceSetResult>> {
   // #6321: accept the installer-style provider name onboard uses (e.g.
   // `anthropicCompatible`) as well as the OpenShell provider name, by
   // normalizing to the OpenShell name before validation and all downstream use.
   const provider = normalizeInferenceSetProvider(trimRequired(options.provider, "provider"));
   const model = trimRequired(options.model, "model");
   const reasoningEffortRequest = resolveScopedReasoningEffortRequest(options.reasoningEffort);
-  await assertSupportedProvider(provider, model, expectedGatewayName, deps);
+  await assertSelectableProvider(provider, model, expectedGatewayName, deps);
   assertReasoningEffortProvider(reasoningEffortRequest, provider);
   if (!isSafeModelId(model)) {
     throw new InferenceSetError(
@@ -1574,6 +1564,16 @@ async function runInferenceSetWithoutHostLock(
         inSandboxConfigSynced = true;
       } else {
         deps.writeSandboxConfig(sandboxName, target, config);
+        try {
+          deps.recomputeSandboxConfigHash(sandboxName, target);
+        } catch (hashError) {
+          const detail =
+            hashError instanceof Error && hashError.message ? hashError.message : String(hashError);
+          deps.log(
+            `  Warning: wrote the Hermes config for '${sandboxName}', but failed to refresh its integrity hash: ${detail}.`,
+          );
+          throw hashError;
+        }
         inSandboxConfigSynced = true;
       }
     } catch (writeError) {
@@ -1588,35 +1588,18 @@ async function runInferenceSetWithoutHostLock(
         `  Run '${CLI_NAME} ${sandboxName} rebuild' to finish applying the model inside the sandbox.`,
       );
     }
-    // Hermes keeps an isolated dashboard profile config that only mirrors the gateway
-    // config's model routing at sandbox startup. Re-seed it after an in-place
-    // switch so Dashboard Chat (and /api/model/info) converge on the new model
-    // instead of silently staying on the previous one (#6893).
-    //   - "converged": dashboard now matches the switch.
-    //   - "absent":    Dashboard disabled — nothing to converge, still a success.
-    //   - "failed":    warn and fail after the committed mutation is finalized so
-    //                  callers cannot accept a partially converged switch.
-    let dashboardConverged: boolean | undefined;
-    if (agentName === "hermes" && inSandboxConfigSynced) {
-      const reseed = deps.seedHermesDashboardConfig(sandboxName, target);
-      dashboardConverged = reseed !== "failed";
-      if (reseed === "failed") {
-        deps.log(
-          `  Warning: updated the Hermes model route but could not refresh the dashboard ` +
-            `config for '${sandboxName}'. Restart the sandbox to converge Dashboard Chat.`,
-        );
-      }
-    }
-    const sessionUpdated = updateMatchingOnboardSession(
-      sandboxName,
-      provider,
-      model,
-      patched.route,
-      effectiveRegistryMetadata,
-      deps,
-      reasoningEffortRequest,
-    );
-
+    const sessionUpdated =
+      agentName === "openclaw"
+        ? updateMatchingOnboardSession(
+            sandboxName,
+            provider,
+            model,
+            patched.route,
+            effectiveRegistryMetadata,
+            deps,
+            reasoningEffortRequest,
+          )
+        : false;
     const mutation = finalizeInferenceMutation(
       {
         agentName,
@@ -1639,7 +1622,6 @@ async function runInferenceSetWithoutHostLock(
           configChanged: patched.changed,
           sessionUpdated,
           inSandboxConfigSynced,
-          dashboardConverged,
         },
       },
       deps,
@@ -1744,13 +1726,6 @@ export async function runInferenceSet(
     // this sandbox between the committed write, an optional restart, and
     // device-scope convergence.
     await completeInferencePostCommit(mutation, deps);
-    if (mutation.result.dashboardConverged === false) {
-      throw new InferenceSetError(
-        `Inference route and main Hermes config were updated for '${mutation.result.sandboxName}', ` +
-          `but the Dashboard config did not converge. The committed route was not rolled back. ` +
-          `Restart the sandbox to converge Dashboard Chat.`,
-      );
-    }
     return mutation.result;
   });
 }

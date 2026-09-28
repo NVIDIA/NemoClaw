@@ -56,7 +56,6 @@ describe("runtime shared gateway route containment", () => {
     expect(deps.calls.readSandboxConfig).not.toHaveBeenCalled();
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
-    expect(deps.calls.updateSession).not.toHaveBeenCalled();
   });
 
   it("rejects a pending onboarding route reservation before any mutation", async () => {
@@ -207,7 +206,6 @@ describe("runtime shared gateway route containment", () => {
     expect(deps.calls.readSandboxConfig).not.toHaveBeenCalled();
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
-    expect(deps.calls.updateSession).not.toHaveBeenCalled();
   });
 
   it("blocks a custom endpoint conflict before DNS validation or mutation (#6315)", async () => {
